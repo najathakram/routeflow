@@ -288,6 +288,7 @@ describe("RegulatedLedgerService", () => {
           returnId: "ret-1",
           orderId: "ord-1",
           returnedByProduct: new Map([["p1", 12]]),
+          returnedUnit: "PIECES", // B671 rd2: this fixture is piece-denominated, matching the INLINE caller
           db: prisma,
         });
         expect(written()).toHaveLength(1);
@@ -307,6 +308,7 @@ describe("RegulatedLedgerService", () => {
           returnId: "ret-1",
           orderId: "ord-1",
           returnedByProduct: new Map([["p1", 60]]),
+          returnedUnit: "PIECES", // B671 rd2: this fixture is piece-denominated, matching the INLINE caller
           db: prisma,
         });
         expect(written()[0]).toMatchObject({
@@ -563,6 +565,7 @@ describe("RegulatedLedgerService", () => {
         returnId: "ret-1",
         orderId: "ord-1",
         returnedByProduct: new Map([["p1", 3]]),
+        returnedUnit: "PIECES", // B671 rd2: this fixture is piece-denominated, matching the INLINE caller
         db: prisma,
       });
       expect(prisma.regulatedSalesLedger.createMany).toHaveBeenCalledTimes(1);
@@ -579,6 +582,35 @@ describe("RegulatedLedgerService", () => {
       });
     });
 
+    // B661/B671 rd2 (live production regression) — the regression pin CI actually runs. The
+    // DB-lane spec (return-reversal-unit-axis.db.spec.ts) proves this through the real caller,
+    // but nothing in CI invokes `npm run local:test:db`; this mock-level case is what a future
+    // refactor deleting the returnedUnit axis selection would actually break in the default
+    // test lane. Confirmed this fails (qty -0.417, unitBasisQty -5) with the fix reverted.
+    it("B661/B671 rd2: a LINE_UNIT caller (the standard return path) closes a box-unaware line on the QTY axis, not the pieces axis", async () => {
+      // Box-unaware: 5 boxes at pack 12 -> SALE.qty 5 (boxes), SALE.unitBasisQty 60 (pieces).
+      arrange({
+        sales: [saleRow({ qty: 5, unitBasisQty: 60, netSales: 50, categoryTax: 10 })],
+        items: [{ id: "ii-1", productId: "p1" }],
+      });
+      await service.reverseReturnEntries({
+        returnId: "ret-1",
+        orderId: "ord-1",
+        // The standard caller's returnedByProduct is in the LINE's own unit (boxes) — 5, a
+        // FULL return, never 60 (pieces).
+        returnedByProduct: new Map([["p1", 5]]),
+        returnedUnit: "LINE_UNIT",
+        db: prisma,
+      });
+      expect(written()[0]).toMatchObject({
+        entryType: "REVERSAL",
+        qty: -5, // NOT -0.417 (the pre-fix bug: 5 compared against the PIECES axis, frac 5/60)
+        unitBasisQty: -60, // NOT -5
+        netSales: -50, // NOT -4.17
+        categoryTax: -10, // NOT -0.83
+      });
+    });
+
     // ─── PR-1a (§5): idempotency key widened from returnId alone to (returnId, orderId) ───
 
     it("PR-1a: the prior-reversal check is keyed on (returnId, orderId), not returnId alone", async () => {
@@ -587,6 +619,7 @@ describe("RegulatedLedgerService", () => {
         returnId: "ret-1",
         orderId: "ord-1",
         returnedByProduct: new Map([["p1", 3]]),
+        returnedUnit: "PIECES", // B671 rd2: this fixture is piece-denominated, matching the INLINE caller
         db: prisma,
       });
       // Revert probe: dropping `orderId` from this where clause (back to `{ returnId,
@@ -632,6 +665,7 @@ describe("RegulatedLedgerService", () => {
         returnId: "ret-1",
         orderId: "ord-a",
         returnedByProduct: new Map([["p1", 3]]),
+        returnedUnit: "PIECES", // B671 rd2: this fixture is piece-denominated, matching the INLINE caller
         db: prisma,
       });
       expect(reversedPairs.has("ret-1:ord-a")).toBe(true);
@@ -642,6 +676,7 @@ describe("RegulatedLedgerService", () => {
         returnId: "ret-1",
         orderId: "ord-b",
         returnedByProduct: new Map([["p1", 3]]),
+        returnedUnit: "PIECES", // B671 rd2: this fixture is piece-denominated, matching the INLINE caller
         db: prisma,
       });
       expect(reversedPairs.has("ret-1:ord-b")).toBe(true);
@@ -655,6 +690,7 @@ describe("RegulatedLedgerService", () => {
         returnId: "ret-1",
         orderId: "ord-a",
         returnedByProduct: new Map([["p1", 3]]),
+        returnedUnit: "PIECES", // B671 rd2: this fixture is piece-denominated, matching the INLINE caller
         db: prisma,
       });
       expect(writtenRows).toHaveLength(0);
@@ -669,6 +705,7 @@ describe("RegulatedLedgerService", () => {
         returnId: "ret-1",
         orderId: "ord-1",
         returnedByProduct: new Map([["p1", 3]]),
+        returnedUnit: "PIECES", // B671 rd2: this fixture is piece-denominated, matching the INLINE caller
         db: prisma,
       });
       expect(written()[0]).toMatchObject({
@@ -687,6 +724,7 @@ describe("RegulatedLedgerService", () => {
         returnId: "ret-1",
         orderId: "ord-1",
         returnedByProduct: new Map([["p1", 1]]), // 1 of 3
+        returnedUnit: "PIECES", // B671 rd2: this fixture is piece-denominated, matching the INLINE caller
         db: prisma,
       });
       expect(written()[0]).toMatchObject({
@@ -703,6 +741,7 @@ describe("RegulatedLedgerService", () => {
         returnId: "ret-1",
         orderId: "ord-1",
         returnedByProduct: new Map([["p1", 1]]),
+        returnedUnit: "PIECES", // B671 rd2: this fixture is piece-denominated, matching the INLINE caller
         db: prisma,
       });
       expect(prisma.regulatedSalesLedger.createMany).not.toHaveBeenCalled();
@@ -714,6 +753,7 @@ describe("RegulatedLedgerService", () => {
         returnId: "ret-1",
         orderId: "ord-1",
         returnedByProduct: new Map([["p1", 1]]),
+        returnedUnit: "PIECES", // B671 rd2: this fixture is piece-denominated, matching the INLINE caller
         db: prisma,
       });
       expect(prisma.regulatedSalesLedger.createMany).not.toHaveBeenCalled();
@@ -748,6 +788,7 @@ describe("RegulatedLedgerService", () => {
         returnId: "ret-1",
         orderId: "ord-1",
         returnedByProduct: new Map([["p1", 4]]), // 2 from ii-1, 2 from ii-2
+        returnedUnit: "PIECES", // B671 rd2: this fixture is piece-denominated, matching the INLINE caller
         db: prisma,
       });
       const rows = written();
@@ -769,6 +810,7 @@ describe("RegulatedLedgerService", () => {
         returnId: "ret-2",
         orderId: "ord-1",
         returnedByProduct: new Map([["p1", 3]]), // wants 3, only 1 remains
+        returnedUnit: "PIECES", // B671 rd2: this fixture is piece-denominated, matching the INLINE caller
         db: prisma,
       });
       expect(written()[0]).toMatchObject({ qty: -1, unitBasisQty: -1, netSales: -10 });
@@ -790,6 +832,7 @@ describe("RegulatedLedgerService", () => {
         returnId: "ret-3",
         orderId: "ord-1",
         returnedByProduct: new Map([["p1", 1]]),
+        returnedUnit: "PIECES", // B671 rd2: this fixture is piece-denominated, matching the INLINE caller
         db: prisma,
       });
       expect(written()[0]).toMatchObject({ qty: -1, unitBasisQty: -1, netSales: -3.34 });
@@ -810,6 +853,7 @@ describe("RegulatedLedgerService", () => {
         returnId: "ret-dup",
         orderId: "ord-1",
         returnedByProduct: new Map([["p1", 3]]), // wants all 3, but 0 remain
+        returnedUnit: "PIECES", // B671 rd2: this fixture is piece-denominated, matching the INLINE caller
         db: prisma,
       });
       expect(prisma.regulatedSalesLedger.createMany).not.toHaveBeenCalled();
@@ -864,6 +908,7 @@ describe("RegulatedLedgerService", () => {
         returnId: "ret-2",
         orderId: "ord-1",
         returnedByProduct: new Map([["p1", 10]]),
+        returnedUnit: "PIECES", // B671 rd2: this fixture is piece-denominated, matching the INLINE caller
         db: prisma,
       });
       expect(prisma.regulatedSalesLedger.createMany).not.toHaveBeenCalled();
@@ -915,6 +960,7 @@ describe("RegulatedLedgerService", () => {
         returnId: "ret-2",
         orderId: "ord-1",
         returnedByProduct: new Map([["p1", 2]]),
+        returnedUnit: "PIECES", // B671 rd2: this fixture is piece-denominated, matching the INLINE caller
         db: prisma,
       });
       expect(written()).toHaveLength(1);
@@ -967,6 +1013,7 @@ describe("RegulatedLedgerService", () => {
         returnId: "ret-2",
         orderId: "ord-1",
         returnedByProduct: new Map([["p1", 10]]),
+        returnedUnit: "PIECES", // B671 rd2: this fixture is piece-denominated, matching the INLINE caller
         db: prisma,
       });
       expect(written()).toHaveLength(1);
@@ -1021,6 +1068,7 @@ describe("RegulatedLedgerService", () => {
         returnId: "ret-2",
         orderId: "ord-1",
         returnedByProduct: new Map([["p1", 7.7]]),
+        returnedUnit: "PIECES", // B671 rd2: this fixture is piece-denominated, matching the INLINE caller
         db: prisma,
       });
       expect(written()[0]).toMatchObject({ qty: -7.7, unitBasisQty: -7.7, netSales: -76 });
@@ -1074,6 +1122,7 @@ describe("RegulatedLedgerService", () => {
         returnId: "ret-2",
         orderId: "ord-1",
         returnedByProduct: new Map([["p1", 4]]),
+        returnedUnit: "PIECES", // B671 rd2: this fixture is piece-denominated, matching the INLINE caller
         db: prisma,
       });
       const row = written()[0];
@@ -1130,6 +1179,7 @@ describe("RegulatedLedgerService", () => {
         returnId: "ret-2",
         orderId: "ord-1",
         returnedByProduct: new Map([["p1", 7.7]]),
+        returnedUnit: "PIECES", // B671 rd2: this fixture is piece-denominated, matching the INLINE caller
         db: prisma,
       });
       expect(written()[0]).toMatchObject({
