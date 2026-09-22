@@ -7,6 +7,11 @@ jest.mock("@/lib/api-client", () => ({
   ...jest.requireActual("@/lib/api-client"),
   apiClient: { get: (...a: unknown[]) => get(...a) },
 }));
+let role = "OPERATOR";
+jest.mock("@/lib/auth-context", () => ({
+  ...jest.requireActual("@/lib/auth-context"),
+  useAuth: () => ({ user: { role } }),
+}));
 jest.mock("@/lib/page-title-context", () => ({ usePageTitle: () => ({ setTitle: jest.fn() }) }));
 
 const rule = (over: Record<string, unknown> = {}) => ({
@@ -34,7 +39,10 @@ const rule = (over: Record<string, unknown> = {}) => ({
 });
 const ok = (rows: unknown[]) => get.mockResolvedValueOnce({ data: rows });
 
-beforeEach(() => jest.clearAllMocks());
+beforeEach(() => {
+  jest.clearAllMocks();
+  role = "OPERATOR";
+});
 
 describe("RestrictionRulesPage", () => {
   it("lists a rule: target, status, state chips, channel, window, reason — no raw ids", async () => {
@@ -130,5 +138,21 @@ describe("RestrictionRulesPage", () => {
     renderWithProviders(<RestrictionRulesPage />);
     await screen.findAllByTestId("rule-card");
     expect(screen.queryByText(/Showing the newest/)).toBeNull();
+  });
+
+  it("a tenant admin gets a New rule button that opens the dialog; an operator does not", async () => {
+    ok([]);
+    const { unmount } = renderWithProviders(<RestrictionRulesPage />);
+    await screen.findByText("No selling restrictions yet");
+    expect(screen.queryByRole("button", { name: "New rule" })).toBeNull();
+    unmount();
+
+    role = "TENANT_ADMIN";
+    get.mockResolvedValue({ data: [] });
+    renderWithProviders(<RestrictionRulesPage />);
+    fireEvent.click(await screen.findByRole("button", { name: "New rule" }));
+    expect(
+      await screen.findByRole("dialog", { name: "New selling restriction" }),
+    ).toBeInTheDocument();
   });
 });
