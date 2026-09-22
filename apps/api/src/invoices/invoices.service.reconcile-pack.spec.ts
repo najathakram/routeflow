@@ -230,4 +230,57 @@ describe("SA-078(b) — reconcile rebuild carries the PRIOR InvoiceItem's unitsP
     const createdItem = prisma.invoice.update.mock.calls[0][0].data.items.create[0];
     expect(createdItem.unitsPerBox).toBe(24);
   });
+
+  // Second-review finding: rebuildIssuedDepositMirrorOnDelivery is a FOURTH caller of
+  // the shared rebuildSiblingDrafts core (a prepaid order's mirror invoice, issued at
+  // placement, has no open DRAFT for reconcileOrderDeliveredInvoices/
+  // reconcileOrderDraftInvoice to find). Its own nonVoid query never selected `items`,
+  // so `draft.items` was always undefined there -- the carried-pack map was always
+  // empty on this ONE path, and the original defect still reproduced for deposit-mirror
+  // orders after the first version of this fix. Private method -- called directly, the
+  // same as this file's other tests drive the real rebuild code, not a hand-made item.
+  describe("rebuildIssuedDepositMirrorOnDelivery (deposit-mirror orders, issued at placement)", () => {
+    const mirrorInvoice = {
+      id: "d1",
+      status: InvoiceStatus.SENT,
+      deliveryBatchId: null,
+      depositPercent: 50,
+      discount: 0,
+      shippingFee: 0,
+      dueDate: null,
+      payments: [],
+    };
+
+    function armMirrorRebuild(priorItems: { orderItemId: string; unitsPerBox: number | null }[]) {
+      prisma.invoice.findMany.mockResolvedValue([{ ...mirrorInvoice, items: priorItems }]);
+      prisma.order.findUnique.mockResolvedValue(order);
+      prisma.customer.findFirst.mockResolvedValue({ isTaxExempt: false });
+      prisma.invoiceItem.deleteMany.mockResolvedValue({});
+      prisma.invoice.update.mockImplementation((args: any) =>
+        Promise.resolve({ id: "d1", items: args.data.items.create }),
+      );
+      prisma.orderItem.update.mockResolvedValue({});
+    }
+
+    it("carries the prior InvoiceItem's own pack (12), not the live repacked product (24)", async () => {
+      armMirrorRebuild([{ orderItemId: "li1", unitsPerBox: 12 }]);
+      await (service as any).rebuildIssuedDepositMirrorOnDelivery("o1", prisma);
+      const createdItem = prisma.invoice.update.mock.calls[0][0].data.items.create[0];
+      expect(createdItem.unitsPerBox).toBe(12);
+    });
+
+    // This is the assertion that actually catches the second-review finding: a mock's
+    // resolved value is whatever the test hands it, REGARDLESS of the real query's own
+    // `select` -- reverting the source `select` clause does not change what a mocked
+    // `findMany` returns here, so the test above alone cannot detect a missing field.
+    // The genuine regression guard is on the QUERY SHAPE itself.
+    it("asks the nonVoid query for items.orderItemId/unitsPerBox -- without this, the carried-pack map is always empty on this path", async () => {
+      armMirrorRebuild([{ orderItemId: "li1", unitsPerBox: 12 }]);
+      await (service as any).rebuildIssuedDepositMirrorOnDelivery("o1", prisma);
+      const queryArgs = prisma.invoice.findMany.mock.calls[0][0];
+      expect(queryArgs.select.items).toEqual({
+        select: { orderItemId: true, unitsPerBox: true },
+      });
+    });
+  });
 });

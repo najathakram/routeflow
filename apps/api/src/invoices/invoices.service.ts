@@ -1699,14 +1699,13 @@ export class InvoicesService {
    * refused delivery left the mirror billing the FULL pre-delivery order — the
    * customer is charged for goods they never received.
    *
-   * Fence (mirrors reconcileOrderDraftInvoice's widened branch): the order's SOLE
-   * non-void invoice, no deliveryBatchId, `depositPercent != null` (a plain
-   * operator-issued invoice is never touched), and a status a live deposit mirror can
-   * be in. PAID is included on purpose — a fully-prepaid order that is short-delivered
-   * must still be restated to what was delivered; the overpayment is then surfaced by
-   * the existing credit-note workflow, exactly as the widened reconcile documents.
-   * DRAFT can't reach here (findOpenOrderDraft would have caught it) and WRITTEN_OFF /
-   * VOID stay terminal.
+   * Fence (mirrors reconcileOrderDraftInvoice's widened branch): the order's SOLE non-void
+   * invoice, no deliveryBatchId, `depositPercent != null` (a plain operator-issued invoice is
+   * never touched), and a status a live deposit mirror can be in. PAID is included on purpose
+   * — a fully-prepaid order that is short-delivered must still be restated to what was delivered;
+   * the overpayment is then surfaced by the existing credit-note workflow, exactly as the widened
+   * reconcile documents. DRAFT can't reach here (findOpenOrderDraft would have caught it) and
+   * WRITTEN_OFF / VOID stay terminal.
    *
    * Being the order's only invoice makes the (invoice → all its order lines) partition
    * trivially clean, so this reuses `rebuildSiblingDrafts` with `preserveStatus: true`
@@ -1729,6 +1728,7 @@ export class InvoicesService {
         discount: true,
         shippingFee: true,
         dueDate: true,
+        items: { select: { orderItemId: true, unitsPerBox: true } },
         payments: { select: { amount: true, status: true } },
       },
     });
