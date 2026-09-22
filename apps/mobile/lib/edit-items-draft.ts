@@ -29,6 +29,7 @@ import {
 import { editedLineFreeUnits } from "./invoice-totals";
 import { lineUnitsPerBox } from "./at-door-line-units";
 import { trayRowsFrom, type TrayRow } from "./scan-tray";
+import { unitPriceBase } from "./unit-options";
 import type { UpdateOrderItemInput } from "./api/orders";
 
 /** Shared with the route file's own "Add unlisted item" flow. */
@@ -67,6 +68,13 @@ export type DraftItem = {
    * (UNIT_AWARE_LINE) since a bare qty would be misread as pieces (B707).
    */
   unitLabel?: string | null;
+  /**
+   * units_v1: the currently-active unit's own resolved tier price — the comparison base
+   * `unitPrice` diverging from means a genuine operator override, in place of `catalogPrice`
+   * (the PACK's price) whenever `unitLabel` is set (a Case's price is never the Box's, even with
+   * no override typed). Unset while `unitLabel` is unset.
+   */
+  unitBasePrice?: number;
   /** Set when this row substitutes a different product onto its original line. */
   substituteProductId?: string;
   /**
@@ -281,7 +289,10 @@ export function stagedDiffItems(
     pieces: i.pieces ?? null,
     boxSplit: !!i.boxSplit,
     unitPrice: i.unitPrice,
-    basePrice: i.catalogPrice,
+    // units_v1: a unit-sold NEW line's override-vs-normal comparison (buildOrderItemDiff's
+    // `overridden` check) must use THAT unit's own resolved price, never the pack's
+    // `catalogPrice` — see lib/unit-options.ts#unitPriceBase.
+    basePrice: unitPriceBase(i, i.catalogPrice),
     overrideReason: i.overrideReason,
     substituteProductId: i.substituteProductId,
     notes: i.notes,
