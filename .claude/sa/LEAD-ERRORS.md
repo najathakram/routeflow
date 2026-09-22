@@ -5,7 +5,7 @@
 
 ## Tally
 
-A 7 · B 5 · C 1 · D 3 (lead) · SA own: A 5 · B 3 | needless asks ("you did not need to ask me"): 0 | measurements outsourced: 1 | evidence-free questions refused: 0
+A 7 · B 5 · C 1 · D 4 (lead) · SA own: A 5 · B 5 | needless asks ("you did not need to ask me"): 0 | measurements outsourced: 1 | evidence-free questions refused: 0
 
 ## Seeded from the lead's own account (role doc §0, 2026-09-20)
 
@@ -41,6 +41,9 @@ A 7 · B 5 · C 1 · D 3 (lead) · SA own: A 5 · B 3 | needless asks ("you did 
 - SA-E6 · 2026-09-21 · B · planned "funding extractions" to buy 50+ lines of room (SA-005, SA-014 B) → under the house rule a shrink lowers the baseline in the same PR, so an extraction leaves exactly 25 lines, cumulative. The path was not traced through the ratchet's own rule until the extraction was about to land.
 - SA-E7 · 2026-09-21 · B · ruled that the stored subtotal classifies a boxes-null line (SA-027) → a broken line's subtotal was computed by the same fallback, so both shapes store qty*unitPrice; the lead and R-ui caught it. The path was not traced through how the bad rows were produced.
 - SA-E8 · 2026-09-21 · B · the classifier ruling (SA-031) was not traced through non-boxed lines or partial copies → as ruled it floods unknown for ordinary lines and misreads a partial of 5 pieces against 5 boxes as 60. Caught by the SA on reading the implementation, before any consumer landed.
+- SA-E9 · 2026-09-22 · B · passed #1207 after reading reverseReturnEntries and reverseInvoiceEntries → the third reversal path, reverseCreditNoteEntries, still booked the box axis as unit basis (+55 phantom pieces per credited box-unaware line); the Opus reviewer found it. A ruling that moves one axis of a ledger must be checked against EVERY writer of that axis (grep `unitBasisQty:` across the file), not the two the PR touched.
+- E-017 · 2026-09-22 · D · #1207 left draft 06:26:37Z and merged 06:39:50Z (f45eaf52) with two independent reviews running and no PASS posted, against the coordinator's own 02:48Z rule on #938 requiring one → the Opus HOLD landed ~06:44Z; a confirmed filing defect (+55 phantom pieces per fully credited box-unaware line) is live on master and, by auto-deploy, in prod. The reviews worked; the merge did not wait. Guard: L-209's fresh read of the review channel immediately before `gh pr merge` — an unresolved REVIEW/HOLD line, or a review known to be running, is a merge-stop.
+- SA-E10 · 2026-09-22 · B · sent eight rulings (SA-045..SA-052) to "RouteFlow fleet lead" believing delivery possible → every send failed (no bridge until the owner enabled Remote Control ~14:30Z); they reached the fleet only through the Mac Lead's #938 relays. Channel-integrity rule: the first message of a session to any cross-machine address is a probe whose result is READ, and a failed send is logged as an open item, never assumed retried by someone else.
 - E-015 · 2026-09-20 · A · relayed the owner's deadline as "10:00 GMT" → the owner says 10 am Eastern (14:00Z). Four hours of plan, off.
 
 ## Prediction (update weekly)
