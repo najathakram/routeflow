@@ -266,6 +266,7 @@ describe("InvoicesService.update() — SA-068 pack comes from the payload, never
     prisma.product.findMany.mockResolvedValue([{ id: "prod-box", unitsPerBox: 12 }]);
     prisma.customer.findUnique.mockResolvedValue({ isTaxExempt: false });
     prisma.invoice.update.mockResolvedValue(draftInvoice);
+    const warn = jest.spyOn((service as any).logger, "warn").mockImplementation(() => undefined);
 
     await service.update("inv-box", {
       items: [
@@ -284,6 +285,45 @@ describe("InvoicesService.update() — SA-068 pack comes from the payload, never
     // 11 * 13/12 = 11.9166... -> 11.92. NOT 11 * 13 = 143.00.
     expect(created.subtotal).toBeCloseTo(11.92, 2);
     expect(created.unitsPerBox).toBe(12);
+    // SA-077: pricing at the live pack is new-line semantics and says so out loud.
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(warn.mock.calls[0][0]).toContain("new-line semantics");
+    warn.mockRestore();
+  });
+
+  it("(h) B717/SA-077: two stored lines for one product make the pairing positional, so the stored pack is NOT carried", async () => {
+    prisma.invoice.findUnique.mockResolvedValue(draftInvoice);
+    // The same product on two lines — which stored pack belongs to this payload row is
+    // positional, and a positionally-matched snapshot is refused.
+    prisma.invoiceItem.findMany.mockResolvedValue([
+      { id: "item-1", productId: "prod-box", unitsPerBox: 12 },
+      { id: "item-2", productId: "prod-box", unitsPerBox: 24 },
+    ]);
+    prisma.product.findMany.mockResolvedValue([{ id: "prod-box", unitsPerBox: 6 }]); // live
+    prisma.customer.findUnique.mockResolvedValue({ isTaxExempt: false });
+    prisma.invoice.update.mockResolvedValue(draftInvoice);
+    const warn = jest.spyOn((service as any).logger, "warn").mockImplementation(() => undefined);
+
+    await service.update("inv-box", {
+      items: [
+        {
+          productId: "prod-box",
+          description: "Boxed chips",
+          qty: 3,
+          unitPrice: 11,
+          boxes: 0,
+          pieces: 3,
+        },
+      ],
+    });
+
+    const created = prisma.invoice.update.mock.calls[0][0].data.items.create[0];
+    // Neither stored pack is used; the live pack (6) applies, on new-line semantics.
+    expect(created.unitsPerBox).toBe(6);
+    expect(created.subtotal).toBeCloseTo(5.5, 2); // 11 * 3/6
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(warn.mock.calls[0][0]).toContain("new-line semantics");
+    warn.mockRestore();
   });
 
   it("(g) B717: a save that carries no split must PRESERVE the line's stored pack snapshot, never null it", async () => {
