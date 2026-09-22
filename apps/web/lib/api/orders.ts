@@ -196,7 +196,7 @@ export function useOrders(
      */
     search?: string;
   },
-  options?: { refetchInterval?: number },
+  options?: { refetchInterval?: number; enabled?: boolean },
 ) {
   return useQuery<PaginatedResponse<Order>>({
     queryKey: ["orders", params],
