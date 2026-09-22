@@ -318,16 +318,27 @@
   before landing.**
 - **Guard:** none yet — propose `--stamp` refusing a sha that isn't reachable from master.
 
-### L-176 · 2026-09-16 · tooling · worktree without its own node_modules resolves to the main checkout
+### L-176 · 2026-09-16/22 · tooling · worktree without its own node_modules resolves to the main checkout (recurred twice: 2026-09-22)
 
 - **Symptom:** a worktree with no `node_modules` of its own resolved workspace deps up to the
   MAIN checkout's — a stale compiled `@routeflow/pricing` dist threw a missing-function error.
+  RECURRED 2026-09-22, twice: after a `@routeflow/pricing` change landed on master, other
+  worktrees' `packages/pricing/dist` stayed stale, so api/web tests there imported the OLD money
+  math and silently produced wrong zeros or drift instead of an error this time — the same root
+  cause as the original incident, but a quieter failure shape (wrong numbers, not a thrown
+  missing-function error) — twice in one session, still with the "none yet" guard below never
+  built.
 - **Root cause:** npm workspace symlinks/junctions in a worktree missing its own `npm ci` fall
   back to whatever the main checkout last had installed/built — never a guarantee of freshness.
 - **Lesson:** **A worktree needs its OWN `npm ci` before running web/api tests. After any
-  `packages/*` change lands on master, rebuild the shared dist in the main checkout too.**
-- **Guard:** none yet — propose a pre-test check comparing `packages/*/dist` mtimes against
-  source.
+  `packages/*` change lands on master, rebuild the shared dist in EVERY worktree that will test
+  against it (`npx turbo run build --filter=@routeflow/pricing --force` after fetching master),
+  not just the main checkout — a stale `packages/pricing/dist` can fail quietly (wrong money
+  values) as easily as it fails loudly (a missing-function throw), so don't wait for the loud
+  failure to remember this.**
+- **Guard:** still none automated after two recurrences — propose a pre-test check comparing
+  `packages/*/dist` mtimes against `src`, or a verify-chain step that refuses to run tests when
+  `dist` is older than `src` for any workspace package.
 
 ### L-175 · 2026-09-16 · tooling · shared dev host disk budget
 

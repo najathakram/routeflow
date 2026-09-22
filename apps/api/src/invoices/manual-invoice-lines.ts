@@ -85,6 +85,8 @@ export function buildManualInvoiceLines(
     // levies; a boxed selling-unit line expands via the product's box size.
     const category = product?.trackedCategoryId ? categoryMap.get(product.trackedCategoryId) : null;
     const upbForPieces = Number(product?.unitsPerBox ?? 0);
+    // B661-sweep: a line-tax (not ledger) box-unaware multiply — follow-up PR converts this to
+    // @routeflow/pricing's regulatedUnitBasis; see no-second-legacy-line-pieces.spec.ts's allowlist.
     const pieceQty = boxes != null ? qty : upbForPieces > 1 ? qty * upbForPieces : qty;
     const categoryTaxAmount = category
       ? computeCategoryTax({

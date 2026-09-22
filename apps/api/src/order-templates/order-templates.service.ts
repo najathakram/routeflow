@@ -474,6 +474,8 @@ export class OrderTemplatesService {
       // context sees the true piece count so QTY_BREAK thresholds are measured in pieces.
       const upb = Number(product.unitsPerBox ?? 0);
       const qtyUnits = item.qty;
+      // B661-sweep: a line-tax (not ledger) box-unaware multiply — follow-up PR converts this to
+      // @routeflow/pricing's regulatedUnitBasis; see no-second-legacy-line-pieces.spec.ts's allowlist.
       const qtyPieces = upb > 1 ? item.qty * upb : item.qty;
       const resolved = this.ordersService.resolveBuyerLinePrice(
         product,

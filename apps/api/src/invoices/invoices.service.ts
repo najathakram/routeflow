@@ -29,6 +29,7 @@ import {
   sumConfirmed,
 } from "./payment-predicates";
 import { PAYABLE, KPI_SUMMARY_EXCLUDED } from "./invoice-status-sets";
+import { packAtSaleByProduct, toSaleLedgerLines } from "./pack-at-sale";
 import { clampLimit } from "../common/pagination";
 import { isInternalEmail } from "../common/internal-email";
 import { loadMsrpMap } from "../common/msrp";
@@ -502,20 +503,13 @@ export class InvoicesService {
           },
         });
         if (hasRegulated) {
+          const packMap = await packAtSaleByProduct(tx, created.items ?? []);
           await this.ledger.writeSaleEntries({
             tenantId: this.prisma.getTenantId(),
             orderId: null,
             invoiceId: created.id,
             soldAt: created.issueDate ?? new Date(),
-            lines: (created.items ?? []).map((it: any) => ({
-              invoiceItemId: it.id,
-              orderItemId: it.orderItemId ?? null,
-              trackedCategoryId: it.trackedCategoryId ?? null,
-              trackedSubcategoryId: it.trackedSubcategoryId ?? null,
-              qty: Number(it.qty),
-              netSales: Number(it.subtotal),
-              categoryTax: Number(it.categoryTaxAmount ?? 0),
-            })),
+            lines: toSaleLedgerLines(created.items ?? [], packMap),
             db: tx,
           });
         }
@@ -1285,20 +1279,13 @@ export class InvoicesService {
         // W5: write the regulated-sales ledger from this invoice's regulated lines
         // (built off the created items, so invoiceItemId is real). orderItemId
         // provenance now flows through from the invoice item's stored order-line link.
+        const packMap = await packAtSaleByProduct(tx, inv.items ?? []);
         await this.ledger.writeSaleEntries({
           tenantId,
           orderId: order.id,
           invoiceId: inv.id,
           soldAt: inv.issueDate ?? new Date(),
-          lines: (inv.items ?? []).map((it: any) => ({
-            invoiceItemId: it.id,
-            orderItemId: it.orderItemId ?? null,
-            trackedCategoryId: it.trackedCategoryId ?? null,
-            trackedSubcategoryId: it.trackedSubcategoryId ?? null,
-            qty: Number(it.qty),
-            netSales: Number(it.subtotal),
-            categoryTax: Number(it.categoryTaxAmount ?? 0),
-          })),
+          lines: toSaleLedgerLines(inv.items ?? [], packMap),
           db: tx,
         });
       }
@@ -1815,20 +1802,13 @@ export class InvoicesService {
     // preserveReturns: cancel only the sale-record, leave any return/credit-note reversal
     // standing, so a re-reconcile after a return nets to (delivered − returned).
     await this.ledger.reverseInvoiceEntries({ invoiceId, db, preserveReturns: true });
+    const packMap = await packAtSaleByProduct(db, items ?? []);
     await this.ledger.writeSaleEntries({
       tenantId: this.prisma.getTenantId(),
       orderId,
       invoiceId,
       soldAt: new Date(),
-      lines: (items ?? []).map((it: any) => ({
-        invoiceItemId: it.id,
-        orderItemId: it.orderItemId ?? null,
-        trackedCategoryId: it.trackedCategoryId ?? null,
-        trackedSubcategoryId: it.trackedSubcategoryId ?? null,
-        qty: Number(it.qty),
-        netSales: Number(it.subtotal),
-        categoryTax: Number(it.categoryTaxAmount ?? 0),
-      })),
+      lines: toSaleLedgerLines(items ?? [], packMap),
       db,
     });
   }
@@ -3439,6 +3419,8 @@ export class InvoicesService {
           ? categoryMap.get(product.trackedCategoryId)
           : null;
         const upbForPieces = Number(product?.unitsPerBox ?? 0);
+        // B661-sweep: a line-tax (not ledger) box-unaware multiply — follow-up PR converts this to
+        // @routeflow/pricing's regulatedUnitBasis; see no-second-legacy-line-pieces.spec.ts's allowlist.
         const pieceQty = boxes != null ? qty : upbForPieces > 1 ? qty * upbForPieces : qty;
         const categoryTaxAmount = category
           ? computeCategoryTax({
@@ -6250,6 +6232,8 @@ export class InvoicesService {
       // falling back to the product's. Unused by PERCENT_OF_SALE (unitBasisQty is
       // ignored there) but correct for an EXCISE_PER_UNIT / PER_VOLUME /
       // DEPOSIT_PER_CONTAINER line.
+      // B661-sweep: a line-tax (not ledger) box-unaware multiply — follow-up PR converts this to
+      // @routeflow/pricing's regulatedUnitBasis; see no-second-legacy-line-pieces.spec.ts's allowlist.
       const linePieceQty = (li: any): number => {
         const qty = Number(li.qty) || 0;
         if (li.boxes != null) return qty;

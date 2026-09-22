@@ -5,3 +5,5 @@ export * from "./money-invariants";
 export * from "./unit-levels";
 export * from "./build-line";
 export * from "./po-line";
+export * from "./legacy-line-pieces";
+export * from "./regulated-unit-basis";

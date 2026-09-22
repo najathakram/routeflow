@@ -45,3 +45,9 @@ apps/web/e2e/setup/.auth/
 # commit was making lint-staged reformat a batch of these on unrelated branches (churn, not a
 # real diff) -- no format:check/prettier --check runs anywhere in verify or CI, so this is safe
 .claude/campaign/bugs/
+
+# same rule, same reason: machine-written by the code-map/lessons-learned skills, not
+# prettier-clean, produced 173 lines of reformat churn on an unrelated PR (#1119). validate-code-map
+# and validate-lessons read these files' CONTENT, never their formatting, so excluding them is safe.
+.claude/code-map/
+.claude/lessons/

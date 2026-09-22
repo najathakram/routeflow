@@ -175,7 +175,10 @@ export default function MergeRequestDetailPage() {
     <div className="p-6 md:p-8">
       {/* Header */}
       <div className="mb-6 flex items-center gap-3">
-        <Link href="/admin/buyers/merge-requests" className="text-slate-400 hover:text-white">
+        <Link
+          href="/admin/buyers/merge-requests"
+          className="admin-tap-text text-slate-400 hover:text-white"
+        >
           <ArrowLeft className="h-5 w-5" />
         </Link>
         <GitMerge className="h-5 w-5 text-indigo-400" />
