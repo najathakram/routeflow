@@ -1,6 +1,10 @@
 import { AdminAuditAction } from "./audit-actions.constant";
-import { CONFIG_SNAPSHOT_RESTORED_ACTION } from "../billing/config-snapshot-audit.constants";
-import { ADMIN_AUDIT_ACTION_LABELS } from "./audit-actions.constant";
+import {
+  CONFIG_SNAPSHOT_FLAG_AUDIT_ENTITY,
+  CONFIG_SNAPSHOT_FLAG_CHANGED_ACTION,
+  CONFIG_SNAPSHOT_RESTORED_ACTION,
+} from "../billing/config-snapshot-audit.constants";
+import { ADMIN_AUDIT_ACTION_LABELS, ADMIN_AUDIT_ENTITY } from "./audit-actions.constant";
 import { plainToInstance } from "class-transformer";
 import { validate } from "class-validator";
 import { PlatformAdminController } from "./platform-admin.controller";
@@ -24,6 +28,7 @@ function build() {
   const snapshotFlag = {
     isEnabled: jest.fn().mockResolvedValue(false),
     setEnabled: jest.fn().mockResolvedValue(undefined),
+    setEnabledAudited: jest.fn().mockResolvedValue(undefined),
   };
   const controller = new PlatformAdminController(
     svc as never,
@@ -88,7 +93,7 @@ describe("PlatformAdminController — config snapshot live flag (A2 decision 2)"
     expect(await controller.getConfigSnapshotFlag()).toEqual({ enabled: true });
   });
 
-  it("PUT switches it and audits the acting admin with the reason (platform-wide: no tenant)", async () => {
+  it("PUT switches it through the ONE audited transaction (acting admin + reason), with no separate audit call", async () => {
     const { controller, snapshotFlag, svc } = build();
 
     const res = await controller.setConfigSnapshotFlag(
@@ -97,23 +102,22 @@ describe("PlatformAdminController — config snapshot live flag (A2 decision 2)"
     );
 
     expect(res).toEqual({ enabled: true });
-    expect(snapshotFlag.setEnabled).toHaveBeenCalledWith(true);
-    expect(svc.recordAdminAction).toHaveBeenCalledWith(
-      null,
-      "admin-1",
-      AdminAuditAction.CONFIG_SNAPSHOT_FLAG_CHANGED,
-      { enabled: true, reason: "pilot on the test tenant" },
-    );
+    expect(snapshotFlag.setEnabledAudited).toHaveBeenCalledWith(true, {
+      userId: "admin-1",
+      reason: "pilot on the test tenant",
+    });
+    // the flag write and its audit row are one transaction inside the service: no second, swallowable write
+    expect(snapshotFlag.setEnabled).not.toHaveBeenCalled();
+    expect(svc.recordAdminAction).not.toHaveBeenCalled();
   });
 
-  it("a failed write is not audited as a change", async () => {
-    const { controller, snapshotFlag, svc } = build();
-    snapshotFlag.setEnabled.mockRejectedValueOnce(new Error("db"));
+  it("a failed flip (write OR audit) fails the request and reports no change", async () => {
+    const { controller, snapshotFlag } = build();
+    snapshotFlag.setEnabledAudited.mockRejectedValueOnce(new Error("db"));
 
     await expect(
       controller.setConfigSnapshotFlag({ enabled: true, reason: "why" }, { sub: "a" } as never),
     ).rejects.toThrow("db");
-    expect(svc.recordAdminAction).not.toHaveBeenCalled();
   });
 });
 
@@ -139,6 +143,13 @@ describe("SetConfigSnapshotFlagDto validation (the real pipe rules: whitelist + 
     expect((await check({ enabled: true, reason: "pilot", force: true })).length).toBeGreaterThan(
       0,
     );
+  });
+});
+
+describe("the flag-change audit row is written with the same action and entity the admin audit log filters on", () => {
+  it("CONFIG_SNAPSHOT_FLAG_CHANGED_ACTION / _AUDIT_ENTITY equal the platform-admin constants", () => {
+    expect(CONFIG_SNAPSHOT_FLAG_CHANGED_ACTION).toBe(AdminAuditAction.CONFIG_SNAPSHOT_FLAG_CHANGED);
+    expect(CONFIG_SNAPSHOT_FLAG_AUDIT_ENTITY).toBe(ADMIN_AUDIT_ENTITY);
   });
 });
 
