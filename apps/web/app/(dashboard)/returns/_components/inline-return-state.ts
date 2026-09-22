@@ -1,0 +1,231 @@
+// ─── RecordInlineReturnDialog — pure state helpers (no React) ──────────────────
+//
+// Everything here is pure data transformation so it can be unit-tested without mounting the
+// dialog. Money is NEVER computed here — every subtotal/tax/total rendered by the dialog
+// comes verbatim from the quote response (SA-071b item 5's sibling rule); the only "math"
+// done client-side is summing already-rounded, already-server-priced chunk figures for
+// display grouping (covered total, excess total), never deriving a NEW price from qty×rate.
+import type {
+  CaptureInlineReturnItem,
+  CaptureInlineReturnRequest,
+  InlineReturnQuoteChunk,
+  InlineReturnQuoteResponse,
+  QuoteInlineReturnItem,
+  QuoteInlineReturnRequest,
+  ReturnReason,
+} from "@routeflow/types";
+
+// ─── Step 1: line drafts ─────────────────────────────────────────────────────
+
+/** One product row in "What came back". `boxes`/`pieces` are kept as STRINGS (raw input
+ *  value) so an empty field reads as "nothing entered" rather than coercing to 0 and
+ *  looking pre-filled. */
+export interface InlineReturnLineDraft {
+  productId: string;
+  productName: string;
+  unit?: string | null;
+  /** > 1 means this product sells in boxes — render the boxes+pieces pair, never a bare
+   *  qty input (SA-071a #3). */
+  unitsPerBox?: number | null;
+  qtySold?: number;
+  qtyAlreadyReturned?: number;
+  boxes: string;
+  pieces: string;
+  /** Per-item reason override — optional; falls back to the capture-level reason. */
+  reason: ReturnReason | "";
+  note: string;
+}
+
+export function isBoxedProduct(line: Pick<InlineReturnLineDraft, "unitsPerBox">): boolean {
+  return Number(line.unitsPerBox ?? 0) > 1;
+}
+
+function parseNonNegativeInt(raw: string): number {
+  const n = Number.parseInt(raw, 10);
+  return Number.isFinite(n) && n > 0 ? n : 0;
+}
+
+/** "Get quote" enables when any line has boxes > 0 or pieces > 0. */
+export function hasAnyQtyEntered(lines: InlineReturnLineDraft[]): boolean {
+  return lines.some((l) => parseNonNegativeInt(l.boxes) > 0 || parseNonNegativeInt(l.pieces) > 0);
+}
+
+/**
+ * Builds the quote request from Step 1's drafts. `boxes`/`pieces` are ALWAYS sent
+ * explicitly (never a bare `qty`) — a bare `qty` on a boxed product means BOXES to the API
+ * (SA-071a #3), so sending both fields explicitly for every line, boxed or not, removes the
+ * ambiguity entirely rather than relying on the caller to know which products are boxed.
+ * `qty` is required by the DTO (`@IsInt() @Min(1)`) but is IGNORED server-side whenever
+ * `boxes`/`pieces` are present (`returnRequestPieces`) — set to `1` as a documented,
+ * unused-but-valid placeholder, never a real quantity guess.
+ */
+export function buildQuoteRequest(
+  customerId: string,
+  lines: InlineReturnLineDraft[],
+  routeRunStopId?: string,
+): QuoteInlineReturnRequest {
+  const items: QuoteInlineReturnItem[] = lines
+    .map((l) => ({
+      productId: l.productId,
+      boxes: parseNonNegativeInt(l.boxes),
+      pieces: parseNonNegativeInt(l.pieces),
+    }))
+    .filter((i) => i.boxes > 0 || i.pieces > 0)
+    .map((i) => ({ productId: i.productId, qty: 1, boxes: i.boxes, pieces: i.pieces }));
+  return routeRunStopId ? { customerId, items, routeRunStopId } : { customerId, items };
+}
+
+// ─── Step 2: quote chunk grouping (display only — no money math) ───────────────
+
+export interface GroupedQuoteChunks {
+  /** Newest-invoice-first, exactly as the quote returned them — never re-sorted. */
+  covered: InlineReturnQuoteChunk[];
+  /** Chunks matched to no invoice line at all ("Not on any invoice"). */
+  excess: InlineReturnQuoteChunk[];
+}
+
+export function groupQuoteChunks(quote: InlineReturnQuoteResponse): GroupedQuoteChunks {
+  const covered: InlineReturnQuoteChunk[] = [];
+  const excess: InlineReturnQuoteChunk[] = [];
+  for (const chunk of quote.chunks) {
+    (chunk.sourceOrderId != null ? covered : excess).push(chunk);
+  }
+  return { covered, excess };
+}
+
+export interface ChunkTotals {
+  subtotal: number;
+  taxAmount: number;
+  categoryTax: number;
+  total: number;
+}
+
+/** Sums already-server-priced chunk figures for a display subtotal — never derives a new
+ *  price. Each addend is a figure the quote already computed and rounded; this only groups
+ *  figures that already exist. */
+export function sumChunkTotals(chunks: InlineReturnQuoteChunk[]): ChunkTotals {
+  const subtotal = chunks.reduce((s, c) => s + c.subtotal, 0);
+  const taxAmount = chunks.reduce((s, c) => s + c.taxAmount, 0);
+  const categoryTax = chunks.reduce((s, c) => s + c.categoryTax, 0);
+  return { subtotal, taxAmount, categoryTax, total: subtotal + taxAmount + categoryTax };
+}
+
+// ─── Excess option (PR 1 ships exactly two — no "different price", no placeholder) ──────
+
+export type ExcessOption = "CREDIT_AT_CURRENT_PRICE" | "RETURN_ONLY_PURCHASED";
+
+export const DEFAULT_EXCESS_OPTION: ExcessOption = "CREDIT_AT_CURRENT_PRICE";
+
+/**
+ * Option 3 — "Return only what was bought": drops the excess entirely and re-quotes at
+ * exactly the pieces the FIRST quote actually matched to an invoice line per product (never
+ * the original requested amount). A product with zero covered pieces (nothing on file at
+ * all) drops out of the request entirely — there is nothing to return of it.
+ */
+export function dropExcessAndRequote(
+  customerId: string,
+  quote: InlineReturnQuoteResponse,
+  routeRunStopId?: string,
+): QuoteInlineReturnRequest {
+  const coveredPiecesByProduct = new Map<string, number>();
+  for (const chunk of quote.chunks) {
+    if (chunk.sourceOrderId == null) continue;
+    coveredPiecesByProduct.set(
+      chunk.productId,
+      (coveredPiecesByProduct.get(chunk.productId) ?? 0) + chunk.pieces,
+    );
+  }
+  const items: QuoteInlineReturnItem[] = [...coveredPiecesByProduct.entries()]
+    .filter(([, pieces]) => pieces > 0)
+    .map(([productId, pieces]) => ({ productId, qty: 1, boxes: 0, pieces }));
+  return routeRunStopId ? { customerId, items, routeRunStopId } : { customerId, items };
+}
+
+// ─── Capture request ────────────────────────────────────────────────────────────
+
+/**
+ * Builds the capture request. THE CLIENT SENDS QUANTITIES ONLY (SA-071b item 5) —
+ * boxes/pieces, reason codes, notes, `returnKey`. Never a price the quote displayed; the
+ * server recomputes through the same pricing engine at capture time.
+ */
+export function buildCaptureRequest(params: {
+  customerId: string;
+  orderId: string;
+  lines: InlineReturnLineDraft[];
+  returnKey: string;
+  reason: ReturnReason;
+  /** Capture-level note (distinct from each line's own optional note, which maps to that
+   *  item's `condition` — the DTO's only per-item free-text field). */
+  notes?: string;
+  routeRunStopId?: string;
+}): CaptureInlineReturnRequest {
+  const items: CaptureInlineReturnItem[] = params.lines
+    .map((l) => ({
+      productId: l.productId,
+      boxes: parseNonNegativeInt(l.boxes),
+      pieces: parseNonNegativeInt(l.pieces),
+      reason: l.reason || undefined,
+      condition: l.note.trim() || undefined,
+    }))
+    .filter((i) => i.boxes > 0 || i.pieces > 0)
+    .map((i) => ({
+      productId: i.productId,
+      qty: 1,
+      boxes: i.boxes,
+      pieces: i.pieces,
+      ...(i.reason ? { reason: i.reason } : {}),
+      ...(i.condition ? { condition: i.condition } : {}),
+    }));
+
+  return {
+    customerId: params.customerId,
+    orderId: params.orderId,
+    items,
+    returnKey: params.returnKey,
+    reason: params.reason,
+    ...(params.routeRunStopId ? { routeRunStopId: params.routeRunStopId } : {}),
+    ...(params.notes ? { notes: params.notes } : {}),
+  };
+}
+
+// ─── returnKey — one UUID per capture ATTEMPT, stable across a retry ───────────
+
+/** Mints a capture nonce. Called once per attempt (when the dialog opens Step 2 / is reset
+ *  for a new capture) — NEVER on every render and NEVER regenerated on a retry of the same
+ *  attempt (SA-071a #2: the same key re-sent unchanged is what makes a retry idempotent). */
+export function mintReturnKey(): string {
+  return crypto.randomUUID();
+}
+
+// ─── Refusal rendering ───────────────────────────────────────────────────────────
+//
+// An entitlement-gate refusal (AddonGuard/PlanFlagGuard — code ADDON_GATE / PLAN_GATE /
+// PLAN_GATE_UNAVAILABLE) always renders the fixed copy below, regardless of the guard's own
+// wording (`This feature requires the "orders_inline_returns" add-on.`) — the spec's copy.
+// Every OTHER refusal (VOID invoice not a candidate, cancelled order, driver not owner, a
+// returnKey collision) renders the API's own message verbatim — never a workaround, never a
+// bypass, never a retry loop.
+
+export const RETURNS_NOT_ENABLED_MESSAGE = "Returns are not enabled for this account";
+
+const ENTITLEMENT_GATE_CODES = new Set(["ADDON_GATE", "PLAN_GATE", "PLAN_GATE_UNAVAILABLE"]);
+
+interface ApiErrorLike {
+  response?: {
+    status?: number;
+    data?: {
+      code?: string;
+      message?: string | string[];
+    };
+  };
+}
+
+export function extractRefusalMessage(error: unknown, fallback = "Something went wrong"): string {
+  const body = (error as ApiErrorLike | undefined)?.response?.data;
+  const status = (error as ApiErrorLike | undefined)?.response?.status;
+  if (status === 403 && (body?.code == null || ENTITLEMENT_GATE_CODES.has(body.code))) {
+    return RETURNS_NOT_ENABLED_MESSAGE;
+  }
+  if (!body?.message) return fallback;
+  return Array.isArray(body.message) ? body.message.join(" ") : body.message;
+}

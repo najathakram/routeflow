@@ -17,6 +17,7 @@ import {
   Route,
   Clock,
   Pencil,
+  RotateCcw,
   Trash2,
   Zap,
   TrendingDown,
@@ -124,7 +125,13 @@ import {
 import { useUndo } from "@/lib/undo";
 import { useProducts } from "@/lib/api/products";
 import { useHasAddon } from "@/lib/api/tobacco";
-import { MSRP_ADDON, SALES_AGENTS_ADDON, useRoutesAccess } from "@/lib/api/addons";
+import {
+  MSRP_ADDON,
+  ORDERS_INLINE_RETURNS_ADDON,
+  SALES_AGENTS_ADDON,
+  useRoutesAccess,
+} from "@/lib/api/addons";
+import { RecordInlineReturnDialog } from "../../returns/_components/RecordInlineReturnDialog";
 import {
   useCustomerCurrentAgent,
   useSalesAgents,
@@ -1950,6 +1957,11 @@ function CustomerDetailPageInner({ id }: { id: string }) {
 
   const { data: customer, isLoading } = useCustomer(id);
   const { data: tierLabels } = useTierLabels();
+  // Record an inline return (Returns Inside Order Creation, PR 1 — office web capture).
+  // No entry order here — the dialog's own order picker requires the operator to choose
+  // which order the credit applies to.
+  const [recordReturnOpen, setRecordReturnOpen] = React.useState(false);
+  const hasInlineReturns = useHasAddon(ORDERS_INLINE_RETURNS_ADDON);
   const { data: ordersResult, isError: ordersError } = useCustomerOrders<ApiOrder>(id);
   const { data: customerRoutes } = useCustomerRoutes(id);
   const { data: orderTemplates } = useOrderTemplates(id);
@@ -2392,8 +2404,25 @@ function CustomerDetailPageInner({ id }: { id: string }) {
           >
             New Invoice
           </Button>
+          {hasInlineReturns && (
+            <Button
+              variant="secondary"
+              size="sm"
+              leftIcon={<RotateCcw className="h-3.5 w-3.5" />}
+              onClick={() => setRecordReturnOpen(true)}
+            >
+              Record return
+            </Button>
+          )}
         </div>
       </div>
+
+      <RecordInlineReturnDialog
+        open={recordReturnOpen}
+        onClose={() => setRecordReturnOpen(false)}
+        customerId={id}
+        customerName={customer.businessName}
+      />
 
       {/* Tabs */}
       <Tabs.Root value={activeTab} onValueChange={setActiveTab} className="flex flex-col">
