@@ -39,6 +39,9 @@
  * refusal, which rejects the shape and ships that query so anything already stored is listed.
  */
 
+import { BadRequestException } from "@nestjs/common";
+import { computeLineSubtotal, roundMoney, splitWithoutPack } from "@routeflow/pricing";
+
 /** A surviving `InvoiceItem` row, as this module needs it. */
 export interface PriorPackRow {
   productId: string | null;
@@ -85,6 +88,30 @@ export function buildPriorPackMap(rows: PriorPackRow[]): Map<string, number> {
   return packs;
 }
 
+/**
+ * SA-077(2): the 4xx message for a split that no pack can price, or null when the line is fine.
+ * Wraps `splitWithoutPack` — the ONE definition — and adds the line label so the caller's refusal
+ * names which line was rejected rather than failing the whole save anonymously.
+ */
+export function unpackableSplit(
+  line: {
+    productId?: string | null;
+    description?: string | null;
+    boxes?: number | null;
+    pieces?: number | null;
+  },
+  resolvedPack: number | undefined,
+): string | null {
+  const reason = splitWithoutPack({
+    boxes: line.boxes,
+    pieces: line.pieces,
+    unitsPerBox: resolvedPack ?? null,
+  });
+  if (reason == null) return null;
+  const label = line.description?.trim() || line.productId || "unnamed line";
+  return `Line "${label}": ${reason}`;
+}
+
 export interface UpdateLinePackResult {
   /** The pack to price and snapshot with; undefined leaves the line unboxed, as before. */
   pack?: number;
@@ -118,4 +145,46 @@ export function resolveUpdateLinePack(
       `carries one; pricing FROM THE SPLIT at the live pack ${live} (new-line semantics). qty is ` +
       `stored as sent, so a contradictory split under-files on the ledger's piece axis.`,
   };
+}
+
+/**
+ * Validate and price ONE line of the replace payload, post-discount — the money half of
+ * `update()`'s line mapper, lifted out of `invoices.service.ts` because that file is at its size
+ * ratchet and the ratchet's own instruction is to move code out rather than raise the baseline.
+ *
+ * Order matters: the unpackable split is refused BEFORE pricing, so a line no pack can price never
+ * reaches `computeLineSubtotal`'s non-boxed branch, where `unitPrice` would be read as a per-piece
+ * price. BUY_N_GET_M free units come off BEFORE pricing (never a rounded net unit price): dropping
+ * that snapshot re-prices an agreed 12-boxes-2-free line from $350 to 12 x $35 = $420 on a plain
+ * re-save. Reads no product — it takes the already-resolved pack — so it stays off the line-units
+ * call-site ratchet.
+ */
+export function priceReplacedLine(
+  item: {
+    productId?: string | null;
+    description?: string | null;
+    unitPrice: number;
+    discount?: number | null;
+    boxes?: number | null;
+    pieces?: number | null;
+  },
+  resolved: {
+    qty: number;
+    boxes: number | null;
+    pieces: number | null;
+    unitsPerBox?: number;
+    freeUnits: number;
+  },
+): number {
+  const bad = unpackableSplit(item, resolved.unitsPerBox);
+  if (bad) throw new BadRequestException(bad);
+  const beforeDiscount = computeLineSubtotal({
+    unitPrice: item.unitPrice,
+    qty: resolved.qty,
+    boxes: resolved.boxes,
+    pieces: resolved.pieces,
+    unitsPerBox: resolved.unitsPerBox,
+    freeUnits: resolved.freeUnits,
+  });
+  return roundMoney(beforeDiscount - (item.discount ?? 0));
 }
