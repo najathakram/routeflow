@@ -211,11 +211,18 @@ export class RegulatedReportService {
   ): Promise<RegulatedReport> {
     const ledgerRows = await this.prisma.forTenant().regulatedSalesLedger.findMany({
       where: { trackedCategoryId: category.id, soldAt: { gte: fromDate, lt: toExclusive } },
-      select: { invoiceId: true, invoiceItemId: true, unitBasisQty: true, netSales: true },
+      select: {
+        invoiceId: true,
+        invoiceItemId: true,
+        qty: true,
+        unitBasisQty: true,
+        netSales: true,
+      },
     });
     const txLedgerRows: TxLedgerRow[] = ledgerRows.map((r) => ({
       invoiceId: r.invoiceId,
       invoiceItemId: r.invoiceItemId,
+      qty: Number(r.qty),
       unitBasisQty: Number(r.unitBasisQty),
       netSales: Number(r.netSales),
     }));
