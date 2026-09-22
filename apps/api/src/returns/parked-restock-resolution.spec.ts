@@ -277,6 +277,10 @@ describe("cancel() undoes a RESOLVED restock exactly (36 pieces, not the typed 3
     await resolver.resolve("pr-1", 12, { id: "u-op" });
     const booked = prisma.stockMovement.create.mock.calls[0][0].data;
 
+    // cancel() must VOID the parked rows before it scans the movements — that order is what makes a
+    // concurrent resolve() either lose its claim or have its movement seen and undone (see cancel()'s
+    // comment). Scanning first would leave an orphan RET-<id> movement and permanently inflated stock.
+    const order: string[] = [];
     const tx = {
       return: {
         findUnique: jest.fn().mockResolvedValue({
@@ -288,12 +292,13 @@ describe("cancel() undoes a RESOLVED restock exactly (36 pieces, not the typed 3
       },
       product: { update: jest.fn() },
       stockMovement: {
-        findMany: jest
-          .fn()
-          .mockResolvedValue([{ productId: booked.productId, quantity: booked.quantity }]),
+        findMany: jest.fn(() => {
+          order.push("scan-movements");
+          return Promise.resolve([{ productId: booked.productId, quantity: booked.quantity }]);
+        }),
         deleteMany: jest.fn(),
       },
-      returnParkedRestock: { deleteMany: jest.fn() },
+      returnParkedRestock: { deleteMany: jest.fn(() => order.push("void-parked")) },
       $executeRaw: jest.fn().mockResolvedValue(0),
     };
     prisma.tenantTransaction.mockImplementation((fn: any) => fn(tx));
@@ -304,6 +309,7 @@ describe("cancel() undoes a RESOLVED restock exactly (36 pieces, not the typed 3
       items: [{ id: "ri-1", productId: "p1", qty: 3, restock: true }],
     });
     await returns.cancel(RETURN_ID, { sub: "u1", role: "OPERATOR" } as any);
+    expect(order).toEqual(["void-parked", "scan-movements"]);
     expect(tx.stockMovement.findMany).toHaveBeenCalledWith({
       where: { reference: booked.reference, type: booked.type },
       select: { productId: true, quantity: true },
