@@ -155,4 +155,19 @@ describe("RestrictionRulesPage", () => {
       await screen.findByRole("dialog", { name: "New selling restriction" }),
     ).toBeInTheDocument();
   });
+
+  it("lift is offered on active and scheduled rules only, and only to a tenant admin", async () => {
+    role = "TENANT_ADMIN";
+    ok([
+      rule({ id: "a", status: "ACTIVE" }),
+      rule({ id: "b", status: "SCHEDULED" }),
+      rule({ id: "c", status: "EXPIRED" }),
+      rule({ id: "d", status: "LIFTED", liftedAt: "2026-03-06T12:00:00Z" }),
+    ]);
+    renderWithProviders(<RestrictionRulesPage />);
+    await screen.findAllByTestId("rule-card");
+    expect(screen.getAllByRole("button", { name: "Lift rule" })).toHaveLength(2);
+    fireEvent.click(screen.getAllByRole("button", { name: "Lift rule" })[0]);
+    expect(await screen.findByRole("dialog", { name: "Lift this rule?" })).toBeInTheDocument();
+  });
 });

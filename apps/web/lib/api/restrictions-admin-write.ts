@@ -20,7 +20,6 @@ export function useCreateRestriction() {
 }
 
 /** Lift a rule now (TENANT_ADMIN). Same single-toast rule as create. */
-// scan-ok: dead-hook — its caller, the Lift-rule dialog (LANE-R step 5b-3), lands in a later PR; the size cap split it out. Remove this note then.
 export function useLiftRestriction() {
   const qc = useQueryClient();
   return useMutation<SellingRestrictionListItemDto, Error, { id: string; reason: string }>({
