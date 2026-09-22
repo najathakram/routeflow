@@ -8,6 +8,8 @@ import { AuthorizationGuardService } from "../authorizations/authorization-guard
 import { NotificationsService } from "../notifications/notifications.service";
 import { createMockPrisma } from "../testing/prisma-mock";
 import { decrementStockForSale } from "../orders/order-stock";
+import { UserRole } from "@prisma/client";
+import type { JwtPayload } from "../auth/jwt-payload.interface";
 
 /**
  * B647 + B658: a standing order is written through a bare `prisma.order.create()`, never
@@ -24,6 +26,18 @@ jest.mock("../orders/order-stock", () => ({
   decrementStockForSale: jest.fn().mockResolvedValue(undefined),
 }));
 const mockDecrementStockForSale = decrementStockForSale as jest.Mock;
+
+// @LeaderCron wraps generateDailyOrders in a Postgres advisory lock (common/cron-lock.ts).
+// There is no database here, so the lock is a PASS-THROUGH that still runs the body — same
+// mock as order-templates.removed-customer.spec.ts / recurring-invoices.service.spec.ts.
+jest.mock("../common/db-locks", () => ({
+  withAdvisoryLock: async (_opts: unknown, fn: () => Promise<unknown>) => ({
+    acquired: true,
+    value: await fn(),
+  }),
+  LockTimeoutError: class extends Error {},
+  LockUnavailableError: class extends Error {},
+}));
 
 describe("OrderTemplatesService — stock decrement + regulated levy on generated orders", () => {
   let service: OrderTemplatesService;
@@ -105,7 +119,16 @@ describe("OrderTemplatesService — stock decrement + regulated levy on generate
       expect(isStaffRole).toBe(true);
     });
 
-    it("aggregates one stockLine per product across multiple template lines", async () => {
+    // #1208 review low: this was titled "aggregates one stockLine per product" but used
+    // two DIFFERENT products, so it never exercised aggregation at all — the actual
+    // per-product fold (qtyByProduct) lives INSIDE decrementStockForSale itself, which
+    // this file mocks wholesale. What this level of the stack owns is passing ONE stock
+    // line per template line, unfolded, in a SINGLE call — the shared helper folds any
+    // repeats. Retitled to say that; a genuine same-product-twice fold is proven by
+    // decrementStockForSale's own contract (order-stock.ts's qtyByProduct), exercised
+    // unmocked below in "the real decrementStockForSale folds two lines of the same
+    // product into one UPDATE".
+    it("passes every template line as its own stockLine, all in ONE decrementStockForSale call", async () => {
       prisma.product.findMany.mockResolvedValue([
         { id: "p1", pricePerUnit: 10, unitsPerBox: null, trackedCategoryId: null },
         { id: "p2", pricePerUnit: 5, unitsPerBox: null, trackedCategoryId: null },
@@ -117,11 +140,48 @@ describe("OrderTemplatesService — stock decrement + regulated levy on generate
 
       await service.generateOrder("t1");
 
+      expect(mockDecrementStockForSale).toHaveBeenCalledTimes(1);
       const [, , stockLines] = mockDecrementStockForSale.mock.calls[0];
       expect(stockLines).toEqual([
         { productId: "p1", qty: 2 },
         { productId: "p2", qty: 4 },
       ]);
+    });
+
+    // #1208 review item 4: decrementStockForSale is mocked wholesale everywhere else in
+    // this file, so nothing here proved the currentStock write it actually produces for
+    // the stockLines a generated order hands it. Call the REAL helper directly (not
+    // through generateOrder — its own aggregation contract needs no service plumbing)
+    // with a minimal fake tx, and assert the exact UPDATE it issues.
+    it("the real decrementStockForSale folds two lines of the same product into one UPDATE with the summed qty", async () => {
+      const { decrementStockForSale: real } = jest.requireActual("../orders/order-stock");
+      const executeRaw = jest.fn().mockResolvedValue(0);
+      const fakeTx = {
+        $executeRaw: executeRaw,
+        product: {
+          findMany: jest.fn().mockResolvedValue([{ id: "p1", name: "Widget", currentStock: 100 }]),
+        },
+      };
+      // Two template lines for the SAME product — this is exactly the shape
+      // generateOrder's stockLines array can carry (one entry per template line,
+      // unfolded); decrementStockForSale must fold them into a single UPDATE row.
+      await real(
+        { logger: { warn: jest.fn() }, tenantId: "test-tenant" },
+        fakeTx,
+        [
+          { productId: "p1", qty: 2 },
+          { productId: "p1", qty: 4 },
+        ],
+        true,
+      );
+
+      // Call 1 = the FOR UPDATE lock, call 2 = the aggregated UPDATE.
+      expect(executeRaw).toHaveBeenCalledTimes(2);
+      const updateValues = executeRaw.mock.calls[1][1]; // first interpolated value: the VALUES row
+      // Prisma.sql's join of a single-entry array yields ONE Sql fragment whose own
+      // `values` carries [productId, qty] — qty must be the SUM (6), proving the fold,
+      // never two separate rows of 2 and 4.
+      expect(updateValues.values).toEqual(["p1", 6]);
     });
 
     it("never decrements a line skipped by the regulated license guard", async () => {
@@ -217,6 +277,78 @@ describe("OrderTemplatesService — stock decrement + regulated levy on generate
       const createArg = prisma.order.create.mock.calls[0][0].data;
       expect(createArg.lineItems.create[0].categoryTaxAmount).toBe(0);
       expect(createArg.total).toBe(11); // 10 + 1 (10% regular tax) + 0
+    });
+  });
+
+  // ─── #1208 review lows ───────────────────────────────────────────────────────
+
+  describe("#1208 review LOW-MED: isStaffRole threads from the actual caller, not a hardcoded true", () => {
+    it("generateOrderForUser as OPERATOR keeps the warn-and-oversell posture", async () => {
+      prisma.product.findMany.mockResolvedValue([
+        { id: "p1", pricePerUnit: 10, unitsPerBox: null, trackedCategoryId: null },
+      ]);
+      setTemplate([{ productId: "p1", qty: 3, notes: null }]);
+      const operator: JwtPayload = { sub: "u-op", role: UserRole.OPERATOR } as JwtPayload;
+
+      await service.generateOrderForUser("t1", operator);
+
+      const [, , , isStaffRole] = mockDecrementStockForSale.mock.calls[0];
+      expect(isStaffRole).toBe(true);
+    });
+
+    it("generateOrderForUser as CUSTOMER (buyer 'Reorder' via the operator portal) gets the hard block", async () => {
+      prisma.product.findMany.mockResolvedValue([
+        { id: "p1", pricePerUnit: 10, unitsPerBox: null, trackedCategoryId: null },
+      ]);
+      prisma.customer.findFirst.mockResolvedValue({ id: "c1" }); // owns template t1 (customerId: "c1")
+      setTemplate([{ productId: "p1", qty: 3, notes: null }]);
+      const customer: JwtPayload = { sub: "u-cust", role: UserRole.CUSTOMER } as JwtPayload;
+
+      await service.generateOrderForUser("t1", customer);
+
+      const [, , , isStaffRole] = mockDecrementStockForSale.mock.calls[0];
+      // A buyer's own "Reorder" gets the SAME hard block their checkout (orders.service.ts
+      // create()) would give them — never the operator/cron warn-and-oversell.
+      expect(isStaffRole).toBe(false);
+    });
+
+    it("the unattended cron path (generateDailyOrders) keeps isStaffRole=true regardless of caller threading", async () => {
+      prisma.tenant.findMany.mockResolvedValue([{ id: "test-tenant" }]);
+      prisma.orderTemplate.count.mockResolvedValue(0);
+      prisma.order.findFirst.mockResolvedValue(null); // not already generated today
+      const template = { id: "t1", customerId: "c1", name: "Weekly", isActive: true, items: [] };
+      prisma.orderTemplate.findMany.mockResolvedValue([template]);
+      // Spy on the shared private method itself (not the full price/tax/stock pipeline
+      // exercised elsewhere in this file) — this test's only claim is which isStaffRole
+      // value the cron loop passes down, not the whole generate flow again.
+      const spy = jest
+        .spyOn(service as any, "createOrderFromTemplate")
+        .mockResolvedValue({ id: "o1" });
+
+      await service.generateDailyOrders();
+
+      expect(spy).toHaveBeenCalledTimes(1);
+      const [, isStaffRole] = spy.mock.calls[0];
+      expect(isStaffRole).toBe(true);
+    });
+  });
+
+  describe("#1208 review LOW: the generated total is guarded by assertMoneyInvariantsOrThrow, like create()", () => {
+    it("refuses to generate an order whose computed total would be negative", async () => {
+      // A negative pricePerUnit is bad data, not a real scenario — but it is exactly the
+      // kind of computed-total corruption the guard exists to catch before anything is
+      // written, mirroring create()'s own money-invariant check (orders.service.ts
+      // :2164-2170) rather than trusting the arithmetic above it.
+      prisma.product.findMany.mockResolvedValue([
+        { id: "p1", pricePerUnit: -10, unitsPerBox: null, trackedCategoryId: null },
+      ]);
+      setTemplate([{ productId: "p1", qty: 1, notes: null }]);
+
+      await expect(service.generateOrder("t1")).rejects.toMatchObject({
+        response: expect.objectContaining({ code: "MONEY_INVARIANT" }),
+      });
+      expect(prisma.order.create).not.toHaveBeenCalled();
+      expect(mockDecrementStockForSale).not.toHaveBeenCalled();
     });
   });
 });

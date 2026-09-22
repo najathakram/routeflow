@@ -22,6 +22,7 @@ import { computeCategoryTax, computeLineSubtotal, roundMoney } from "@routeflow/
 import type { CategoryTaxType } from "@routeflow/pricing";
 import { taxRateFractionFrom } from "../common/tax-rate";
 import { decrementStockForSale } from "../orders/order-stock";
+import { assertMoneyInvariantsOrThrow } from "../common/money-invariants.util";
 
 function startOfDay(date: Date): Date {
   const d = new Date(date);
@@ -255,14 +256,17 @@ export class OrderTemplatesService {
 
   // ─── Order generation ─────────────────────────────────────────────────────────
 
-  async generateOrder(templateId: string) {
+  // #1208 review LOW-MED: `isStaffRole` defaults true so the cron path (which never
+  // passes it) and any other internal caller keep the pre-existing warn-and-oversell
+  // posture — only generateOrderForUser overrides it, per the caller's own JWT role.
+  async generateOrder(templateId: string, isStaffRole = true) {
     const template = await this.prisma.forTenant().orderTemplate.findUnique({
       where: { id: templateId },
       include: { items: true },
     });
     if (!template) throw new NotFoundException("Order template not found");
     if (!template.isActive) throw new BadRequestException("Template is not active");
-    const order = await this.createOrderFromTemplate(template);
+    const order = await this.createOrderFromTemplate(template, isStaffRole);
     // Null = every line was a license-gated category the customer isn't verified
     // for, so nothing was ordered. Surface it (the cron path tolerates null; a
     // manual reorder should tell the caller why the order is empty).
@@ -294,7 +298,12 @@ export class OrderTemplatesService {
 
   async generateOrderForUser(templateId: string, user: JwtPayload) {
     await this.findOneForUser(templateId, user);
-    return this.generateOrder(templateId);
+    // #1208 review LOW-MED: POST :id/generate is open to CUSTOMER (controller), and a
+    // hardcoded isStaffRole=true let a buyer's own "Reorder" silently oversell where
+    // their own checkout (orders.service.ts create()) returns 409 INSUFFICIENT_STOCK —
+    // same isStaffRole predicate orders.service.ts uses (:1647, :2661).
+    const isStaffRole = user.role === UserRole.OPERATOR || user.role === UserRole.TENANT_ADMIN;
+    return this.generateOrder(templateId, isStaffRole);
   }
 
   @LeaderCron("0 6 * * *", "order-templates.generateDailyOrders")
@@ -357,7 +366,8 @@ export class OrderTemplatesService {
           }
 
           try {
-            const order = await this.createOrderFromTemplate(template);
+            // Unattended cron run — same warn-and-oversell posture as an operator.
+            const order = await this.createOrderFromTemplate(template, true);
             // null = all lines were license-gated + skipped → nothing created.
             if (order) totalCreated++;
             else totalSkipped++;
@@ -376,12 +386,15 @@ export class OrderTemplatesService {
     );
   }
 
-  private async createOrderFromTemplate(template: {
-    id: string;
-    customerId: string;
-    name: string;
-    items: Array<{ productId: string; qty: number; notes?: string | null }>;
-  }) {
+  private async createOrderFromTemplate(
+    template: {
+      id: string;
+      customerId: string;
+      name: string;
+      items: Array<{ productId: string; qty: number; notes?: string | null }>;
+    },
+    isStaffRole: boolean,
+  ) {
     const productIds = template.items.map((i) => i.productId);
     const products = await this.prisma.forTenant().product.findMany({
       where: { id: { in: productIds } },
@@ -523,6 +536,15 @@ export class OrderTemplatesService {
       lineItemsData.reduce((s, li) => s + Number(li.categoryTaxAmount ?? 0), 0),
     );
     const total = roundMoney(subtotal + tax + categoryTax);
+
+    // #1208 review LOW: guard the generated total the same way create() does
+    // (orders.service.ts :2164-2170) — before the stock transaction opens, never after.
+    assertMoneyInvariantsOrThrow({
+      subtotal,
+      tax: tax + categoryTax,
+      total,
+    });
+
     const orderNumber = `ORD-${Date.now()}`;
     const today = new Date();
     const skipNote =
@@ -555,14 +577,15 @@ export class OrderTemplatesService {
         },
       });
       const stockLines = lineItemsData.map((li) => ({ productId: li.productId, qty: li.qty }));
-      // isStaffRole=true: an unattended cron run (or an operator's "Generate now") must
-      // never abort the whole run on insufficient stock — mirrors create()'s own operator
-      // posture (warn + oversell), never the customer/driver hard-block.
+      // #1208 review LOW-MED: the cron run and an operator's "Generate now" keep the
+      // warn-and-oversell posture (isStaffRole=true, unconditionally, above); a buyer's
+      // own "Reorder" now carries the SAME hard block their checkout would have given
+      // them, via the caller-supplied isStaffRole (generateOrderForUser → generateOrder).
       await decrementStockForSale(
         { logger: this.logger, tenantId: this.prisma.getTenantId() },
         tx,
         stockLines,
-        true,
+        isStaffRole,
       );
       return order;
     });
