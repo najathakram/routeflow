@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { X, StickyNote } from "lucide-react";
+import { X, StickyNote, Pencil } from "lucide-react";
 import { cn, type BadgeStatus } from "@routeflow/ui/web";
 import { computeLineSubtotal, perUnitPrice } from "@routeflow/pricing";
 import { MarginHint } from "@/components/MarginHint";
@@ -248,6 +248,12 @@ export function LineItemRow({
               <span className="text-xs text-navy/70">
                 ${li.unitPrice.toFixed(2)} / {li.unit}
               </span>
+            )}
+            {onTapPrice && (
+              <>
+                <Pencil aria-label="Change price" className="h-3 w-3 text-navy/50" />
+                <span className="text-[10px] text-navy/50 underline sm:hidden">Tap to change</span>
+              </>
             )}
           </div>
           {/* Price per piece (when product has box packaging) */}

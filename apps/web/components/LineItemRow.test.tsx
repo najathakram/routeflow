@@ -138,3 +138,17 @@ describe("LineItemRow behaviour is unchanged by the layout wrapper", () => {
     expect(screen.getByText("$82.48", { selector: "span.font-semibold" })).toBeInTheDocument();
   });
 });
+
+describe("B715: the tap-to-edit price has a visible affordance only when onTapPrice is set", () => {
+  it("renders the pencil icon and the phone-width helper when onTapPrice is provided", () => {
+    renderRow({ ...makeProps(plainItem), onTapPrice: jest.fn() });
+    expect(screen.getByLabelText("Change price")).toBeInTheDocument();
+    expect(screen.getByText("Tap to change")).toBeInTheDocument();
+  });
+
+  it("renders neither the pencil icon nor the helper when onTapPrice is omitted", () => {
+    renderRow(makeProps(plainItem));
+    expect(screen.queryByLabelText("Change price")).not.toBeInTheDocument();
+    expect(screen.queryByText("Tap to change")).not.toBeInTheDocument();
+  });
+});
