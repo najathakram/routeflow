@@ -15,10 +15,11 @@ jest.mock("@routeflow/ui/web", () => {
 });
 
 const mutate = jest.fn();
+let mockPending = false;
 // The modal builds its form from the FRESH purchase order, not the list row it was opened from.
 let mockDetail: PurchaseOrder | undefined;
 jest.mock("@/lib/api/inventory", () => ({
-  useUpdatePurchaseOrder: () => ({ mutate, isPending: false }),
+  useUpdatePurchaseOrder: () => ({ mutate, isPending: mockPending }),
   usePurchaseOrder: () => ({ data: mockDetail, isError: false }),
 }));
 
@@ -87,6 +88,7 @@ const save = () => fireEvent.click(screen.getByRole("button", { name: "Save chan
 beforeEach(() => {
   jest.clearAllMocks();
   mockDetail = undefined;
+  mockPending = false;
   mutate.mockImplementation((_vars, opts) => opts?.onSuccess?.());
 });
 
@@ -111,6 +113,38 @@ describe("prefill", () => {
     expect(screen.getByTitle("Boxes")).toHaveValue(2);
     expect(screen.getByTitle("Extra pieces")).toHaveValue(3);
     expect(screen.getByLabelText("Unit cost")).toHaveValue(24);
+  });
+
+  // #1199 pin: a boxed line's subtotal AND the running total must be the ENTERED case cost x
+  // cases, exact — never pieces x a rounded per-piece cost (1,000 cases of $11.00/box read as
+  // $11,000.40 before #1199, not $11,000.00). The stored per-piece unitCost (0.9167 at 4dp) is
+  // for costing only; PurchaseOrderLinesTable must route both figures through
+  // resolvePOLineAmounts(...).totalCost, never qty * unitCost, or this goes red the moment
+  // either sum is rebuilt inline.
+  it("a 1,000-case line reads back as exactly $11,000.00 subtotal AND total (#1199 exactness, pinned)", () => {
+    renderModal(
+      po({
+        status: "SENT",
+        items: [
+          {
+            id: "i10",
+            productId: "p2",
+            qtyOrdered: "12000", // 1,000 cases x 12/case
+            qtyReceived: "0",
+            unitCost: "0.9167", // per-piece, 4dp — for costing only, never re-multiplied
+            totalCost: "11000",
+            packSize: 12,
+          },
+        ],
+      }),
+    );
+    // Case cost reads back exact (derived from the stored total, not 0.9167 x 12 = 11.0004).
+    expect(screen.getByLabelText("Unit cost")).toHaveValue(11);
+    expect(screen.getByTitle("Boxes")).toHaveValue(1000);
+    expect(screen.getByTitle("Extra pieces")).toHaveValue(0);
+    // Subtotal (the line) and Total (the footer) both read the exact entered figure.
+    const amounts = screen.getAllByText("$11,000.00");
+    expect(amounts.length).toBeGreaterThanOrEqual(2);
   });
 });
 
@@ -274,18 +308,32 @@ describe("RECEIVED — protected lines and the re-apply question", () => {
     expect(screen.getByRole("button", { name: "Keep stock as is" })).toBeEnabled();
   });
 
-  it("PARTIAL is protected the same way as RECEIVED", () => {
-    renderModal(
-      po({
-        status: "PARTIAL",
-        items: [{ id: "i1", productId: "p1", qtyOrdered: "10", qtyReceived: "4", unitCost: "3" }],
-      }),
-    );
+  // The API treats PARTIAL exactly like RECEIVED for a line edit (inventory.service.ts
+  // updatePurchaseOrder: `wasReceived = PARTIAL || RECEIVED`, and a line/supplier edit on a
+  // received PO without `reapplyInventory` is a 400) — so the prompt is asked on BOTH, never on
+  // DRAFT/SENT, and never for a header-only edit.
+  const partial = () =>
+    po({
+      status: "PARTIAL",
+      items: [{ id: "i1", productId: "p1", qtyOrdered: "10", qtyReceived: "4", unitCost: "3" }],
+    });
+
+  it("PARTIAL is protected the same way as RECEIVED, and a line edit asks the Re-apply question", () => {
+    renderModal(partial());
     expect(screen.getByLabelText("Product")).toBeDisabled();
     expect(screen.getByLabelText("Quantity")).toHaveAttribute("min", "4");
     setCost("4");
     save();
     expect(screen.getByRole("dialog", { name: "Re-apply to inventory?" })).toBeInTheDocument();
+    expect(mutate).not.toHaveBeenCalled();
+  });
+
+  it("a PARTIAL PO's header-only edit (notes) asks nothing — only a line change does", () => {
+    renderModal(partial());
+    fireEvent.change(screen.getByLabelText("Notes"), { target: { value: "Moved to dock 5" } });
+    save();
+    expect(screen.queryByRole("dialog", { name: "Re-apply to inventory?" })).toBeNull();
+    expect(mutate.mock.calls[0][0]).toEqual({ id: "po1", notes: "Moved to dock 5" });
   });
 });
 
@@ -381,5 +429,54 @@ describe("values the API would reject are handled before the round trip", () => 
     expect(screen.getByRole("alert")).toHaveTextContent(
       "qtyOrdered must not be greater than 9999999; unitCost must be a number",
     );
+  });
+});
+
+describe("Escape (the modal is a hand-rolled overlay, so it must handle the key itself)", () => {
+  const esc = () => fireEvent.keyDown(document.body, { key: "Escape" });
+
+  it("closes the edit form, sending nothing", () => {
+    const onClose = renderModal(draft());
+    esc();
+    expect(onClose).toHaveBeenCalledTimes(1);
+    expect(mutate).not.toHaveBeenCalled();
+  });
+
+  it("on the Re-apply prompt it is Back: the form returns with the edit kept, nothing is sent, the modal stays open", () => {
+    const onClose = renderModal(po());
+    setCost("4");
+    save();
+    expect(screen.getByRole("dialog", { name: "Re-apply to inventory?" })).toBeInTheDocument();
+    esc();
+    expect(screen.queryByRole("dialog", { name: "Re-apply to inventory?" })).toBeNull();
+    expect(screen.getByLabelText("Unit cost")).toHaveValue(4);
+    expect(mutate).not.toHaveBeenCalled();
+    expect(onClose).not.toHaveBeenCalled();
+    // a second Escape now closes it
+    esc();
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("is ignored while a save is in flight, so a half-sent update is never abandoned", () => {
+    mockPending = true;
+    const onClose = renderModal(draft());
+    esc();
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
+  it("closes the Loading… placeholder too", () => {
+    mockDetail = undefined;
+    const onClose = jest.fn();
+    render(
+      <PurchaseOrdersEditModal
+        po={po()}
+        suppliers={suppliers}
+        products={products}
+        onClose={onClose}
+      />,
+    );
+    expect(screen.getByText("Loading…")).toBeInTheDocument();
+    esc();
+    expect(onClose).toHaveBeenCalledTimes(1);
   });
 });
