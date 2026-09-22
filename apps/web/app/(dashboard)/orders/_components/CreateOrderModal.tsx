@@ -29,6 +29,7 @@ import { BarcodeScannerButton } from "@/components/BarcodeScannerButton";
 import { LineItemRow } from "@/components/LineItemRow";
 import { useScanCodeHandler } from "./scan/useScanCodeHandler";
 import { ScanOrderScreen } from "./scan/ScanOrderScreen";
+import { PriceEditor } from "./scan/PriceEditor";
 import type { ScanHistoryEntry } from "./scan/scan-summary";
 import { LicenseGuardModal } from "./LicenseGuardModal";
 import { parseRegulatedAuthError, type BlockedCategory } from "@/lib/api/authorizations";
@@ -1166,7 +1167,7 @@ export function CreateOrderModal({
   })();
 
   // The same LineItemRow for the create-order list and the scan screen, so the two can never drift.
-  const renderLine = (li: LineItem, ctx?: { highlighted?: boolean }) => (
+  const renderLine = (li: LineItem, ctx?: { highlighted?: boolean; onTapPrice?: () => void }) => (
     <LineItemRow
       key={li.tempId}
       item={li}
@@ -1176,6 +1177,7 @@ export function CreateOrderModal({
       costRevealed={costRevealed.has(li.tempId)}
       priceHistoryEntry={priceHistory?.[li.productId]}
       highlighted={ctx?.highlighted}
+      onTapPrice={ctx?.onTapPrice}
       rowRef={(el) => {
         if (el) rowRefs.current.set(li.tempId, el);
         else rowRefs.current.delete(li.tempId);
@@ -1194,6 +1196,28 @@ export function CreateOrderModal({
       onUpdateUnlistedName={(name) => updateUnlistedName(li.tempId, name)}
       onUpdateUnlistedPrice={(value) => updateUnlistedPrice(li.tempId, value)}
       onRemove={() => removeLineItem(li.tempId)}
+    />
+  );
+
+  // The scan screen's price/quantity sheet for one line: the same handlers, and the same
+  // MarginHint floor check, the row uses — no separate write path.
+  const renderPriceEditor = (li: LineItem, close: () => void) => (
+    <PriceEditor
+      line={li}
+      marginFloor={floorForCategory(marginConfig, li.category)}
+      floorAcked={floorAcked.has(li.tempId)}
+      costRevealed={costRevealed.has(li.tempId)}
+      priceHistoryEntry={priceHistory?.[li.productId]}
+      onQtyDelta={(delta) => updateQty(li.tempId, delta)}
+      onSetBoxes={(value) => setBoxes(li.tempId, value)}
+      onSetPieces={(value) => setPieces(li.tempId, value)}
+      onSetUnitQty={(value) => setUnitQty(li.tempId, value)}
+      onSetSellBy={(mode) => setSellBy(li.tempId, mode)}
+      onSetDiscountedPrice={(value) => setDiscountedPrice(li.tempId, value)}
+      onSetToFloor={(floorPrice) => setDiscountedPrice(li.tempId, floorPrice)}
+      onAckFloor={() => ackFloor(li.tempId)}
+      onToggleCostRevealed={() => toggleCostRevealed(li.tempId)}
+      onClose={close}
     />
   );
 
@@ -1993,6 +2017,7 @@ export function CreateOrderModal({
           onClose={() => setScanScreenOpen(false)}
           lines={lineItems}
           renderLine={renderLine}
+          renderPriceEditor={renderPriceEditor}
           resolveCode={(code) => {
             // A qty typed for an Enter that added nothing must never ride into a camera scan.
             typedQtyRef.current = null;
