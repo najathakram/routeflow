@@ -1,10 +1,26 @@
+import { Logger } from "@nestjs/common";
+
+const logger = new Logger("packAtSale");
+
 /**
- * B661: the product's `unitsPerBox` AS OF THIS WRITE, for `writeSaleEntries`'s `packAtSale` — a
- * fresh read at the write, never a later one. `InvoiceItem.unitsPerBox` is only ever snapshotted
- * for a box-SPLIT line (schema comment), so a box-unaware line's own field is null and this is
- * the only way `regulatedUnitBasis`'s write-time fallback (branch 4) can see a pack at all. A
- * product not found (deleted / bad id) is simply absent from the map — `packAtSale` comes back
- * `undefined` for it, which the pricing function treats as "no pack" (never a wrong guess).
+ * B700 (SA-062): the LIVE product's `unitsPerBox`, read fresh at the write — the FALLBACK
+ * `packAtSale` source for a line with no snapshot of its own (a manual/freeform invoice line, or
+ * an invoice item written before the snapshot shipped). `toSaleLedgerLines` below always prefers
+ * the line's OWN `unitsPerBox` snapshot first; this map is only consulted when that's null.
+ *
+ * This header used to claim `InvoiceItem.unitsPerBox` is only ever snapshotted for a box-SPLIT
+ * line — that's false, and it's the false premise that justified reading the live product
+ * unconditionally. `invoices.service.ts` (~line 955) snapshots `unitsPerBox` on EVERY
+ * order-derived line (`finance.prisma`'s comment on the column: "Sale-time snapshot of the
+ * product's box size, carried from the order line... must use THIS value, not the live
+ * product"); only a manual/freeform line (no order line) or a pre-snapshot legacy row leaves it
+ * null. Reading the live product unconditionally re-interprets an old line's pack whenever the
+ * product is later repacked — a line snapshotted at pack 12, product later repacked to 24,
+ * silently re-books at 24 on the next delivered-basis reconcile: phantom pieces on a regulated
+ * tax filing (B700), not a rare edge case.
+ *
+ * A product not found (deleted / bad id) is simply absent from the map — the fallback comes back
+ * `undefined` for it, which `toSaleLedgerLines` treats as "no pack" (never a wrong guess).
  *
  * Own module (not a private method on InvoicesService) per the repo's size ratchet
  * (`common/size-ratchet.spec.ts`) — invoices.service.ts is one of the 15 tracked giants and this
@@ -24,24 +40,41 @@ export async function packAtSaleByProduct(
 }
 
 /**
- * B661: the one shared `SaleLedgerLine[]` builder for all three `writeSaleEntries` callers in
- * invoices.service.ts (create's manual path, createSplitInvoices, resyncInvoiceLedger) — they
+ * B661/B700: the one shared `SaleLedgerLine[]` builder for all three `writeSaleEntries` callers
+ * in invoices.service.ts (create's manual path, createSplitInvoices, resyncInvoiceLedger) — they
  * built byte-identical shapes off their own `items` array, so this is the actual DRY, not just a
- * line-count move. `packMap` comes from `packAtSaleByProduct` above, read once per write.
+ * line-count move.
+ *
+ * `packAtSale` prefers the LINE'S OWN `unitsPerBox` snapshot (frozen at order/invoice-creation
+ * time, immune to a later repack) over the live product (`packMap`, from `packAtSaleByProduct`
+ * above, read once per write) — never the other way around. Warns, never throws, when both exist
+ * and disagree: that's evidence the product was repacked since the line was written, worth
+ * knowing about even though the snapshot is still the right value to book.
  */
 export function toSaleLedgerLines(items: any[], packMap: Map<string, number>) {
-  return items.map((it: any) => ({
-    invoiceItemId: it.id,
-    orderItemId: it.orderItemId ?? null,
-    trackedCategoryId: it.trackedCategoryId ?? null,
-    trackedSubcategoryId: it.trackedSubcategoryId ?? null,
-    qty: Number(it.qty),
-    boxes: it.boxes ?? null,
-    pieces: it.pieces ?? null,
-    unitsPerBox: it.unitsPerBox ?? null,
-    unitLabel: it.unitLabel ?? null,
-    packAtSale: it.productId ? (packMap.get(it.productId) ?? null) : null,
-    netSales: Number(it.subtotal),
-    categoryTax: Number(it.categoryTaxAmount ?? 0),
-  }));
+  return items.map((it: any) => {
+    const snapshotPack: number | null = it.unitsPerBox ?? null;
+    const livePack =
+      it.productId && packMap.has(it.productId) ? (packMap.get(it.productId) as number) : null;
+    if (snapshotPack != null && livePack != null && snapshotPack !== livePack) {
+      logger.warn(
+        `toSaleLedgerLines: invoiceItemId ${it.id} — snapshot unitsPerBox ${snapshotPack} ` +
+          `differs from the live product's ${livePack}; using the snapshot`,
+      );
+    }
+    return {
+      invoiceItemId: it.id,
+      orderItemId: it.orderItemId ?? null,
+      trackedCategoryId: it.trackedCategoryId ?? null,
+      trackedSubcategoryId: it.trackedSubcategoryId ?? null,
+      qty: Number(it.qty),
+      boxes: it.boxes ?? null,
+      pieces: it.pieces ?? null,
+      unitsPerBox: it.unitsPerBox ?? null,
+      unitLabel: it.unitLabel ?? null,
+      packAtSale: snapshotPack ?? livePack,
+      netSales: Number(it.subtotal),
+      categoryTax: Number(it.categoryTaxAmount ?? 0),
+    };
+  });
 }
