@@ -18,6 +18,8 @@ import { useNavigation, useRouter } from "expo-router";
 import { ios } from "@routeflow/ui/tokens";
 import { FilterChipRow, NavBackButton, NavBar, SearchBar } from "@routeflow/ui/mobile/ios";
 import { apiClient } from "../lib/api-client";
+import { UnitPickerRow } from "./UnitPickerRow";
+import { unitPriceBase, type UnitOption } from "../lib/unit-options";
 import { useAdminCustomers } from "../lib/api/admin";
 import { useProductCategories } from "../lib/api/products";
 import { useProductSearch } from "../lib/use-product-search";
@@ -214,6 +216,19 @@ type LineState = {
   /** UI-only qty entry mode for a case-packed line. NEVER submitted — the
    *  payload always carries {qty, boxes, pieces} and the per-case unitPrice. */
   sellBy?: "case" | "unit";
+  /**
+   * units_v1: the unit this line is sold by ("Case"…), picked via `UnitPickerRow`. When set,
+   * `qty` is the unit COUNT (never expanded pieces) and boxes/pieces stay unset — see
+   * `submitOrder`'s catalogPayload builder.
+   */
+  unitLabel?: string | null;
+  /**
+   * units_v1: the chosen unit's own resolved tier price — the comparison base `unitPrice`
+   * diverging from means a genuine operator override, in place of `catalogPrice` (the PACK's
+   * price, which a Case's price will almost always differ from even with NO override typed).
+   * Unset while `unitLabel` is unset (the pack uses `catalogPrice` directly, as before).
+   */
+  unitBasePrice?: number;
 };
 
 /**
@@ -1047,6 +1062,34 @@ function ProductPickView({
 
   const setSellBy = (id: string, sellBy: "case" | "unit") =>
     setItems((m) => (m[id] ? { ...m, [id]: { ...m[id], sellBy } } : m));
+
+  /**
+   * units_v1: apply a `UnitPickerRow` choice. `qty` resets to 1 (a fresh unit assignment, never
+   * expanded pieces), boxes/pieces are cleared (a unit line is a plain qty*unitPrice line).
+   * `unitPrice` is left UNSET (not the option's price) so `effectiveUnitPrice`/`isOverridden`
+   * fall back to `unitBasePrice` exactly like a pack line falls back to `catalogPrice` — the
+   * option's own resolved price is a lookup, not an operator override, and must not be tagged as
+   * one. "" (the pack option) clears both `unitLabel` and `unitBasePrice`, restoring the plain
+   * pack behaviour byte for byte.
+   */
+  const setUnitLabel = (id: string, option: UnitOption) =>
+    setItems((m) => {
+      const prev = m[id];
+      if (!prev) return m;
+      const isPack = option.value === "";
+      return {
+        ...m,
+        [id]: {
+          ...prev,
+          unitLabel: isPack ? undefined : option.value,
+          unitBasePrice: isPack ? undefined : option.price,
+          qty: 1,
+          boxes: undefined,
+          pieces: undefined,
+          unitPrice: undefined,
+        },
+      };
+    });
 
   const setQty = (id: string, qty: number) =>
     setItems((m) => {
@@ -1921,7 +1964,9 @@ function ProductPickView({
         // differs from the customer's TIER price — a one-time discount (below)
         // or upsell (above). A line sitting at the tier price sends nothing so
         // the server applies the SPECIAL/tier price authoritatively.
-        const catalog = p ? tierPriceFor(p) : 0;
+        // units_v1: see lib/unit-options.ts#unitPriceBase — the comparison base is the ACTIVE
+        // unit's own resolved price, never the pack's `tierPriceFor`.
+        const catalog = unitPriceBase(line, p ? tierPriceFor(p) : 0);
         // SPECIAL lines drop any lingering override (e.g. from an old draft) —
         // web can't produce one there, and the server owns the tier price.
         const override =
@@ -1929,7 +1974,11 @@ function ProductPickView({
             ? { unitPrice: line.unitPrice }
             : {};
         const note = line.note?.trim() ? { notes: line.note.trim() } : {};
-        const base = { productId, qty, ...override, ...note };
+        const unitLabel = line.unitLabel?.trim() || undefined;
+        const base = { productId, qty, ...(unitLabel ? { unitLabel } : {}), ...override, ...note };
+        // units_v1: a unit-sold line never carries boxes/pieces (setUnitLabel clears them) — qty
+        // above is already the unit COUNT, so skip the box-split branch below entirely for it.
+        if (unitLabel) return base;
         // Include boxes/pieces when set so the server uses the BOX-price math
         // for proration and stores the split alongside the order line.
         if (line.boxes != null || line.pieces != null) {
@@ -2599,6 +2648,7 @@ function ProductPickView({
         priceHistory={priceHistory}
         tierPriceFor={tierPriceFor}
         isSpecialFor={isSpecialFor}
+        tierForProductId={effectiveTierFor}
         marginFloorFor={(p) => floorForCategory(marginConfig, p.category)}
         unlisted={unlisted}
         total={total}
@@ -2610,6 +2660,7 @@ function ProductPickView({
         onChangePieces={setPieces}
         onChangeUnits={setUnits}
         onChangeSellBy={setSellBy}
+        onChangeUnit={setUnitLabel}
         onChangeQty={setQty}
         onChangePrice={setLinePrice}
         onChangeNote={setLineNote}
@@ -2948,6 +2999,7 @@ function CartModal({
   priceHistory,
   tierPriceFor,
   isSpecialFor,
+  tierForProductId,
   marginFloorFor,
   unlisted,
   total,
@@ -2959,6 +3011,7 @@ function CartModal({
   onChangePieces,
   onChangeUnits,
   onChangeSellBy,
+  onChangeUnit,
   onChangeQty,
   onChangePrice,
   onChangeNote,
@@ -2987,6 +3040,9 @@ function CartModal({
   tierPriceFor: (p: Product) => number;
   /** SPECIAL (tier≠1) lines lock the price input — it's the customer's permanent price. */
   isSpecialFor: (p: Product) => boolean;
+  /** units_v1: the EFFECTIVE numeric tier (1-5) for a product — `UnitPickerRow` resolves the
+   *  ladder price at this tier, same source as `isSpecialFor`/`tierPriceFor`. */
+  tierForProductId: (productId: string) => number;
   /** The customer's effective margin floor (fraction) for a product's category. */
   marginFloorFor: (p: Product) => number;
   unlisted: UnlistedLine[];
@@ -3000,6 +3056,8 @@ function CartModal({
   /** Unit mode: total unit count, routed through setLineUnits. */
   onChangeUnits: (id: string, n: number) => void;
   onChangeSellBy: (id: string, sellBy: "case" | "unit") => void;
+  /** units_v1: a `UnitPickerRow` choice, routed through setUnitLabel. */
+  onChangeUnit: (id: string, option: UnitOption) => void;
   onChangeQty: (id: string, n: number) => void;
   onChangePrice: (id: string, value: number | null) => void;
   onChangeNote: (id: string, text: string) => void;
@@ -3072,12 +3130,14 @@ function CartModal({
                     line={line}
                     catalogPrice={tierPriceFor(product)}
                     isSpecial={isSpecialFor(product)}
+                    tier={tierForProductId(product.id)}
                     marginFloor={marginFloorFor(product)}
                     historyPrice={priceHistory?.[id]?.lastPrice}
                     onChangeBoxes={(n) => onChangeBoxes(id, n)}
                     onChangePieces={(n) => onChangePieces(id, n)}
                     onChangeUnits={(n) => onChangeUnits(id, n)}
                     onChangeSellBy={(v) => onChangeSellBy(id, v)}
+                    onChangeUnit={(opt) => onChangeUnit(id, opt)}
                     onChangeQty={(n) => onChangeQty(id, n)}
                     onChangePrice={(raw) => onChangePrice(id, raw)}
                     onChangeNote={(t) => onChangeNote(id, t)}
@@ -3186,12 +3246,14 @@ function CartRow({
   line,
   catalogPrice,
   isSpecial,
+  tier,
   marginFloor,
   historyPrice,
   onChangeBoxes,
   onChangePieces,
   onChangeUnits,
   onChangeSellBy,
+  onChangeUnit,
   onChangeQty,
   onChangePrice,
   onChangeNote,
@@ -3210,6 +3272,8 @@ function CartRow({
   catalogPrice: number;
   /** SPECIAL (tier≠1) price: the input is locked and overrides are ignored. */
   isSpecial: boolean;
+  /** units_v1: the EFFECTIVE numeric tier for `UnitPickerRow` to resolve the ladder price at. */
+  tier: number;
   /** Category margin floor (fraction) for the live cost/margin hint. */
   marginFloor: number;
   historyPrice?: number;
@@ -3218,6 +3282,8 @@ function CartRow({
   /** Unit mode: total unit count, routed through setLineUnits. */
   onChangeUnits: (n: number) => void;
   onChangeSellBy: (sellBy: "case" | "unit") => void;
+  /** units_v1: a `UnitPickerRow` choice, routed through setUnitLabel. */
+  onChangeUnit: (option: UnitOption) => void;
   onChangeQty: (n: number) => void;
   onChangePrice: (value: number | null) => void;
   onChangeNote: (text: string) => void;
@@ -3231,10 +3297,15 @@ function CartRow({
   onRemove: () => void;
 }) {
   const upb = Number(product.unitsPerBox ?? 0);
-  const isBoxed = upb > 1;
+  // units_v1: a unit-sold line is never boxed UI — its qty is a plain count and unitPrice is
+  // already per-unit (boxes/pieces are cleared by setUnitLabel), so it renders through the same
+  // non-boxed branch a factor-1 product does.
+  const isBoxed = upb > 1 && !line.unitLabel;
   const sellBy = line.sellBy ?? "case";
-  const effUnit = isSpecial ? catalogPrice : effectiveUnitPrice(line, catalogPrice);
-  const isOverridden = !isSpecial && line.unitPrice != null && line.unitPrice !== catalogPrice;
+  // units_v1: see lib/unit-options.ts#unitPriceBase.
+  const priceBase = unitPriceBase(line, catalogPrice);
+  const effUnit = isSpecial ? priceBase : effectiveUnitPrice(line, priceBase);
+  const isOverridden = !isSpecial && line.unitPrice != null && line.unitPrice !== priceBase;
   const qty = effectiveQty(line, product.unitsPerBox);
   const lineTotal = computeLineSubtotal({
     unitPrice: effUnit,
@@ -3304,7 +3375,7 @@ function CartRow({
           <Text style={styles.cartPriceCurrency}>$</Text>
           {isSpecial ? (
             <>
-              <Text style={styles.cartPriceFixed}>{catalogPrice.toFixed(2)}</Text>
+              <Text style={styles.cartPriceFixed}>{priceBase.toFixed(2)}</Text>
               <Text style={styles.cartPriceLockNote} numberOfLines={1}>
                 Customer price
               </Text>
@@ -3315,10 +3386,10 @@ function CartRow({
                 style={[styles.cartPriceInput, isOverridden && styles.cartPriceInputActive]}
                 value={line.unitPrice ?? null}
                 onChangeValue={onChangePrice}
-                placeholder={catalogPrice.toFixed(2)}
+                placeholder={priceBase.toFixed(2)}
                 returnKeyType="done"
               />
-              {isOverridden && line.unitPrice != null && line.unitPrice > catalogPrice ? (
+              {isOverridden && line.unitPrice != null && line.unitPrice > priceBase ? (
                 <Text
                   style={{ color: ios.system.greenInk, fontSize: 11, fontWeight: "600" }}
                   numberOfLines={1}
@@ -3327,9 +3398,9 @@ function CartRow({
                 </Text>
               ) : isOverridden ? (
                 <Text style={styles.cartPriceWas} numberOfLines={1}>
-                  Current: ${catalogPrice.toFixed(2)}
+                  Current: ${priceBase.toFixed(2)}
                 </Text>
-              ) : historyPrice != null && historyPrice !== catalogPrice ? (
+              ) : !line.unitLabel && historyPrice != null && historyPrice !== catalogPrice ? (
                 <Text style={styles.cartPriceWas} numberOfLines={1}>
                   Last: ${historyPrice.toFixed(2)}
                 </Text>
@@ -3371,6 +3442,21 @@ function CartRow({
         </View>
       ) : null}
 
+      <View style={{ marginBottom: isBoxed ? 2 : 8 }}>
+        <UnitPickerRow
+          line={{
+            productId: product.id,
+            unit: product.unit ?? "",
+            unitsPerBox: product.unitsPerBox,
+            listPrice: catalogPrice,
+            unitPrice: effUnit,
+            unitLabel: line.unitLabel,
+          }}
+          tier={tier}
+          onChange={onChangeUnit}
+        />
+      </View>
+
       {isBoxed ? (
         <>
           <View style={{ marginBottom: 2 }}>
@@ -3398,7 +3484,7 @@ function CartRow({
         </>
       ) : (
         <CartStepperRow
-          label={`Qty${product.unit ? ` (${product.unit})` : ""}`}
+          label={`Qty${line.unitLabel ? ` (${line.unitLabel})` : product.unit ? ` (${product.unit})` : ""}`}
           value={line.qty ?? 0}
           onChange={onChangeQty}
           onIncrement={onIncrement}

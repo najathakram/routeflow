@@ -20,6 +20,8 @@ import { useLocalSearchParams, useNavigation, useRouter } from "expo-router";
 import { ios } from "@routeflow/ui/tokens";
 import { NavBackButton, NavBar, SearchBar } from "@routeflow/ui/mobile/ios";
 import { useAdminOrder } from "../../../../../lib/api/admin";
+import { UnitPickerRow } from "../../../../../components/UnitPickerRow";
+import { unitPriceBase, type UnitOption } from "../../../../../lib/unit-options";
 import {
   useCreditNotes,
   useCreateCreditNote,
@@ -617,6 +619,34 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
 
   const setSellBy = (id: string, sellBy: "case" | "unit") =>
     setDraft((d) => (d[id] ? { ...d, [id]: { ...d[id], sellBy } } : d));
+
+  /**
+   * units_v1: apply a `UnitPickerRow` choice. `qty` resets to 1 (never expanded pieces), boxes/
+   * pieces clear (a unit line is a plain qty*unitPrice line). `unitPrice` AND `unitBasePrice` both
+   * take the option's own resolved price — same value in both, so `isOverridden` reads false
+   * immediately after picking (a lookup, not an operator override) until the operator's own price
+   * edit diverges the two. "" (the pack option) clears `unitLabel`/`unitBasePrice` and restores
+   * the stored catalog price, matching a plain pack line.
+   */
+  const setUnitLabel = (id: string, option: UnitOption) =>
+    setDraft((d) => {
+      const cur = d[id];
+      if (!cur) return d;
+      const isPack = option.value === "";
+      return {
+        ...d,
+        [id]: {
+          ...cur,
+          unitLabel: isPack ? undefined : option.value,
+          unitBasePrice: isPack ? undefined : option.price,
+          qty: 1,
+          boxes: undefined,
+          pieces: undefined,
+          boxSplit: false,
+          unitPrice: isPack ? cur.catalogPrice : option.price,
+        },
+      };
+    });
 
   // "Set to floor" one-tap fix (P10-POS-1) — same price-write path as the
   // price-override modal, minus the reason (the ack itself is the record).
@@ -1273,6 +1303,7 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
                     canSplitBoxes={canSplitBoxes}
                     canEditPrice={canEditPriceFor(it.productId)}
                     pricingReady={pricingReady}
+                    tier={effectiveTierFor(it.productId)}
                     marginFloor={floorForCategory(marginConfig, it.category)}
                     acked={floorAcked.has(it.lineId ?? it.productId)}
                     onSetToFloor={(price) => setLinePrice(it.productId, price)}
@@ -1286,6 +1317,7 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
                     onSetPieces={(n) => setPieces(it.productId, n)}
                     onSetUnits={(n) => setUnits(it.productId, n)}
                     onSetSellBy={(v) => setSellBy(it.productId, v)}
+                    onSetUnit={(opt) => setUnitLabel(it.productId, opt)}
                     onSetNote={(notes) => setLineNote(it.productId, notes)}
                     onPressPrice={() => setPriceEditItem(it)}
                     onPressSubstitute={() => {
@@ -1426,6 +1458,7 @@ function DraftItemCard({
   canSplitBoxes,
   canEditPrice,
   pricingReady,
+  tier,
   marginFloor,
   acked,
   onSetToFloor,
@@ -1437,6 +1470,7 @@ function DraftItemCard({
   onSetPieces,
   onSetUnits,
   onSetSellBy,
+  onSetUnit,
   onSetNote,
   onPressPrice,
   onPressSubstitute,
@@ -1446,6 +1480,8 @@ function DraftItemCard({
   canSplitBoxes: boolean;
   /** Price / discount editing is offered while the order is editable (DRAFT/PENDING/CONFIRMED). */
   canEditPrice: boolean;
+  /** units_v1: the EFFECTIVE numeric tier for `UnitPickerRow` to resolve the ladder price at. */
+  tier: number;
   /** B62 (REG-B62): false while the customer/customer-price queries are in
    *  flight — gates Substitute, which prices (and SENDS) the replacement line
    *  off the tier that isn't known yet. */
@@ -1464,18 +1500,26 @@ function DraftItemCard({
   /** Unit mode: total unit count, routed through setLineUnits. */
   onSetUnits: (n: number) => void;
   onSetSellBy: (sellBy: "case" | "unit") => void;
+  /** units_v1: a `UnitPickerRow` choice, routed through setUnitLabel. */
+  onSetUnit: (option: UnitOption) => void;
   onSetNote: (notes: string) => void;
   onPressPrice: () => void;
   onPressSubstitute: () => void;
   onRemove: () => void;
 }) {
   const [noteOpen, setNoteOpen] = useState(Boolean(item.notes?.trim()));
-  const isOverridden = item.unitPrice !== item.catalogPrice;
-  const isUpsell = item.unitPrice > item.catalogPrice;
+  // units_v1: while a unit is active, `unitBasePrice` (that unit's own resolved tier price,
+  // set alongside `unitPrice` by setUnitLabel) is the correct override-comparison base —
+  // `catalogPrice` is the PACK's price, which a Case's price always differs from regardless of
+  // any operator override — see lib/unit-options.ts#unitPriceBase.
+  const priceBase = unitPriceBase(item, item.catalogPrice);
+  const isOverridden = item.unitPrice !== priceBase;
+  const isUpsell = item.unitPrice > priceBase;
   // Green for an upsell (sold above catalog), orange for a discount.
   const overrideColor = isUpsell ? ios.system.greenInk : ios.system.orangeInk;
   const upb = Number(item.unitsPerBox ?? 0);
-  const isBoxed = upb > 1 && canSplitBoxes;
+  // units_v1: a unit-sold line is never boxed UI — see CartRow's identical gate.
+  const isBoxed = upb > 1 && canSplitBoxes && !item.unitLabel;
   const sellBy = item.sellBy ?? "case";
   const qty = effectiveQty(item, item.unitsPerBox);
   const freeUnits = draftFreeUnits(item);
@@ -1519,14 +1563,20 @@ function DraftItemCard({
             {canEditPrice ? (
               <Pressable onPress={onPressPrice} style={styles.priceTap} hitSlop={6}>
                 {isOverridden && !isUpsell ? (
-                  <Text style={styles.priceStrike}>${item.catalogPrice.toFixed(2)}</Text>
+                  <Text style={styles.priceStrike}>${priceBase.toFixed(2)}</Text>
                 ) : null}
                 <Text
                   style={[styles.cardMeta, isOverridden && { color: overrideColor }]}
                   numberOfLines={2}
                 >
                   ${item.unitPrice.toFixed(2)}
-                  {isBoxed ? ` / box of ${upb}` : item.unit ? ` / ${item.unit}` : ""}
+                  {isBoxed
+                    ? ` / box of ${upb}`
+                    : item.unitLabel
+                      ? ` / ${item.unitLabel}`
+                      : item.unit
+                        ? ` / ${item.unit}`
+                        : ""}
                   {perUnitHint != null ? ` · ≈ $${perUnitHint.toFixed(2)}/unit` : ""}
                 </Text>
                 {isUpsell ? (
@@ -1543,14 +1593,20 @@ function DraftItemCard({
             ) : (
               <View style={styles.priceTap}>
                 {isOverridden && !isUpsell ? (
-                  <Text style={styles.priceStrike}>${item.catalogPrice.toFixed(2)}</Text>
+                  <Text style={styles.priceStrike}>${priceBase.toFixed(2)}</Text>
                 ) : null}
                 <Text
                   style={[styles.cardMeta, isOverridden && { color: overrideColor }]}
                   numberOfLines={2}
                 >
                   ${item.unitPrice.toFixed(2)}
-                  {isBoxed ? ` / box of ${upb}` : item.unit ? ` / ${item.unit}` : ""}
+                  {isBoxed
+                    ? ` / box of ${upb}`
+                    : item.unitLabel
+                      ? ` / ${item.unitLabel}`
+                      : item.unit
+                        ? ` / ${item.unit}`
+                        : ""}
                   {perUnitHint != null ? ` · ≈ $${perUnitHint.toFixed(2)}/unit` : ""}
                 </Text>
                 {isUpsell ? (
@@ -1604,6 +1660,21 @@ function DraftItemCard({
       {/* Editor — a Cases/Units segmented control switches entry mode. Cases
           mode dials Boxes and Loose units independently; Units mode is a
           single uncapped total-unit stepper routed through setLineUnits. */}
+      <View style={{ marginBottom: isBoxed ? 2 : 8 }}>
+        <UnitPickerRow
+          line={{
+            productId: item.productId,
+            unit: item.unit ?? "",
+            unitsPerBox: item.unitsPerBox,
+            listPrice: item.catalogPrice,
+            unitPrice: item.unitPrice,
+            unitLabel: item.unitLabel,
+          }}
+          tier={tier}
+          onChange={onSetUnit}
+        />
+      </View>
+
       {isBoxed ? (
         <View style={{ gap: 8 }}>
           <SellByToggle value={sellBy} onChange={onSetSellBy} />
@@ -1629,7 +1700,7 @@ function DraftItemCard({
         </View>
       ) : (
         <StepperRow
-          label={`Qty${item.unit ? ` (${item.unit})` : ""}`}
+          label={`Qty${item.unitLabel ? ` (${item.unitLabel})` : item.unit ? ` (${item.unit})` : ""}`}
           value={item.qty}
           onChange={onSetQty}
           onIncrement={onIncQty}
@@ -1796,12 +1867,12 @@ function PriceOverrideModal({
    *  it, mirroring the server's own refusal and the web reference. */
   isSpecial?: boolean;
 }) {
+  // units_v1: see lib/unit-options.ts#unitPriceBase — same reasoning as the card's own priceBase.
+  const priceBase = unitPriceBase(item, item.catalogPrice);
   const [priceText, setPriceText] = useState(item.unitPrice.toFixed(2));
-  // "$ off / unit" is a lens over (catalogPrice - newPrice); the two inputs stay in sync.
+  // "$ off / unit" is a lens over (priceBase - newPrice); the two inputs stay in sync.
   const [offText, setOffText] = useState(
-    item.unitPrice < item.catalogPrice
-      ? roundMoney(item.catalogPrice - item.unitPrice).toFixed(2)
-      : "",
+    item.unitPrice < priceBase ? roundMoney(priceBase - item.unitPrice).toFixed(2) : "",
   );
   const [reason, setReason] = useState(item.overrideReason ?? "");
   const newPrice = toNumber(priceText);
@@ -1815,17 +1886,17 @@ function PriceOverrideModal({
       setOffText("");
       return;
     }
-    setOffText(parsed < item.catalogPrice ? roundMoney(item.catalogPrice - parsed).toFixed(2) : "");
+    setOffText(parsed < priceBase ? roundMoney(priceBase - parsed).toFixed(2) : "");
   };
 
   const onChangeOff = (raw: string) => {
     setOffText(raw);
     const off = parseFloat(raw);
     if (raw.trim() === "" || isNaN(off) || off <= 0) {
-      setPriceText(item.catalogPrice.toFixed(2));
+      setPriceText(priceBase.toFixed(2));
       return;
     }
-    setPriceText(roundMoney(Math.max(0, item.catalogPrice - off)).toFixed(2));
+    setPriceText(roundMoney(Math.max(0, priceBase - off)).toFixed(2));
   };
 
   return (
@@ -1834,7 +1905,7 @@ function PriceOverrideModal({
         <Pressable style={styles.modalCard} onPress={(e) => e.stopPropagation()}>
           <Text style={styles.modalTitle}>Override price</Text>
           <Text style={styles.modalSub}>{item.name}</Text>
-          <Text style={styles.modalLabel}>List price: ${item.catalogPrice.toFixed(2)}</Text>
+          <Text style={styles.modalLabel}>List price: ${priceBase.toFixed(2)}</Text>
 
           <Text style={styles.modalFieldLabel}>New unit price</Text>
           <TextInput
