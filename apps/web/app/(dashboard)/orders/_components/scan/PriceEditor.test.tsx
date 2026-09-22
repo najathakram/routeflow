@@ -139,6 +139,19 @@ describe("PriceEditor", () => {
       expect(props.onSetPieces).toHaveBeenLastCalledWith(2);
     });
 
+    // Clearing a number field fires change with "" and parseInt("") is NaN — which used to reach the
+    // row's setters (and from there qty / the subtotal). Same guard as the unit-quantity field.
+    it("clearing Cases or Extra units passes 0, never NaN, to the row's handlers", () => {
+      const props = setup(boxed({ boxes: 2, pieces: 3 }));
+      fireEvent.change(screen.getByLabelText("Cases"), { target: { value: "" } });
+      expect(props.onSetBoxes).toHaveBeenLastCalledWith(0);
+      fireEvent.change(screen.getByLabelText("Extra units"), { target: { value: "" } });
+      expect(props.onSetPieces).toHaveBeenLastCalledWith(0);
+      for (const fn of [props.onSetBoxes, props.onSetPieces]) {
+        for (const [arg] of (fn as jest.Mock).mock.calls) expect(Number.isNaN(arg)).toBe(false);
+      }
+    });
+
     it("extra units are capped below one case", () => {
       setup(boxed());
       expect(screen.getByLabelText("Extra units")).toHaveAttribute("max", "5");
