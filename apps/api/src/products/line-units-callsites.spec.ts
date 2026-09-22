@@ -21,13 +21,19 @@ import { join, relative, sep } from "path";
  */
 const BASELINE: Record<string, number> = {
   "orders/orders.service.ts": 20,
-  // B717/SA-077: 6 -> 3. SA-068b pinned this at 6 and said the count returns to 5 once the live
-  // pack becomes a PARAMETER to one helper. That is what landed: update()'s line mapper now takes
-  // ONE `livePack` read and passes it to `resolveUpdateLinePack` (invoices/update-pack-resolution.ts,
-  // which reads no product at all), so the divergence check, the warn and the pieces basis all
-  // reuse that local instead of re-reading the product — four reads became one. Lowered, never
-  // raised. The remaining 3 are buildInvoiceItemData's `li.product` fallback and two unrelated
-  // sites; the target is still zero.
+  // Three reads today (B717/SA-077 lowered this from 6; SA-068b's earlier note predicted 5, which
+  // the hoist overtook — four reads in update()'s mapper became one). Do not read that history as
+  // a forecast; what is left, and what retires each:
+  //   1. buildInvoiceItemData's `li.unitsPerBox ?? li.product?.unitsPerBox` — the legacy fallback
+  //      for an ORDER line that carries no snapshot. Retired by SA-078(c), which snapshots the
+  //      pack on box-unaware order lines at write time so there is a real one to prefer.
+  //   2. update()'s single `livePack` local — read once and passed as a PARAMETER to
+  //      `resolveUpdateLinePack` (invoices/update-pack-resolution.ts reads no product at all).
+  //      Retired when a sub-one-box line can no longer need new-line semantics, i.e. after
+  //      SA-077(2) refuses the still-ambiguous split and every line carries a snapshot.
+  //   3. `applyPriceAdjustment`'s `unitsPerBoxByProduct` map — a regulated BASIS lookup, never a
+  //      line-factor decision. Retired by moving it to a named non-line helper (SA-047 shape).
+  // The number may only go DOWN. The target is still zero.
   "invoices/invoices.service.ts": 3, // 4c-1 prefactor: create()'s line builder moved (3 reads) to:
   "invoices/manual-invoice-lines.ts": 3,
   // B645: create()'s itemsData mapper read product.unitsPerBox at 3 sites (qty
