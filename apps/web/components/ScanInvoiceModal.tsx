@@ -53,6 +53,7 @@ import { displayProductName } from "@/lib/product-display";
 import { fmtCalendarDate, fmtDate } from "@/lib/formatting";
 import { roundMoney } from "@routeflow/pricing";
 import { RAISED_PO_NOTE, raisePoBlocker } from "@/lib/raise-po";
+import { buildVendorBillPayload } from "@/lib/scan-bill-payload";
 import { RaisePoToggle } from "./RaisePoToggle";
 import { apiClient } from "@/lib/api-client";
 import { SELECTABLE_PAYMENT_METHODS, PAYMENT_METHOD_LABELS } from "@/lib/payment-methods";
@@ -1306,32 +1307,20 @@ export function ScanInvoiceModal({ open, onClose, onCreated }: Props) {
       let billId = inv.createdBillId;
       if (wantsBill && !billId) {
         const billItems = buildBillItems(inv);
-        const raisesPo = inv.raisePo && !raisePoBlocker(inv.supplierId, billItems);
-        const scannedTax = inv.scanResult?.tax ?? 0;
-        const scannedSubtotal = inv.scanResult?.subtotal ?? 0;
-        const bill = await createBill.mutateAsync({
-          supplierId: inv.supplierId,
-          billDate: inv.billDate,
-          dueDate: inv.dueDate || "",
-          items: billItems,
-          // Persist the supplier's own invoice number — it's how the operator
-          // reconciles against the supplier statement later.
-          notes: inv.invoiceNumber ? `Supplier invoice #${inv.invoiceNumber}` : undefined,
-          supplierInvoiceNumber: inv.invoiceNumber.trim() || undefined,
-          allowDuplicate: inv.allowDuplicate || undefined,
-          // The API turns the mapped lines into a draft PO linked to this bill; a switch left on
-          // while a line went unmatched is ignored rather than refused.
-          createPurchaseOrder: raisesPo ? true : undefined,
-          // Sales tax is owed too; the server folds it into totalOwed (line
-          // items only carry the pre-tax unit costs).
-          taxAmount: scannedTax > 0 ? roundMoney(scannedTax) : undefined,
-          // Pre-tax total as the invoice printed it — stored as evidence; the
-          // amount owed is still summed from the lines.
-          subtotal: scannedSubtotal > 0 ? roundMoney(scannedSubtotal) : undefined,
-          // Closes the loop from bill back to the document it came from, and
-          // marks that scan POSTED so the archive stops offering it as unfinished.
-          scanId: inv.scanResult?.scanId ?? undefined,
-        });
+        // Blocked (not just "off") gets its own note below — the switch was ON but couldn't fire.
+        const poBlockReason = inv.raisePo ? raisePoBlocker(inv.supplierId, billItems) : null;
+        const raisesPo = inv.raisePo && !poBlockReason;
+        const bill = await createBill.mutateAsync(
+          buildVendorBillPayload(
+            {
+              ...inv,
+              tax: inv.scanResult?.tax,
+              subtotal: inv.scanResult?.subtotal,
+              scanId: inv.scanResult?.scanId,
+            },
+            billItems,
+          ),
+        );
         billId = (bill as { id?: string })?.id ?? null;
         patchInvoiceById(invoiceId, { createdBillId: billId });
         // Auto-receive: transitions DRAFT → RECEIVED, which triggers stock movements
@@ -1345,9 +1334,11 @@ export function ScanInvoiceModal({ open, onClose, onCreated }: Props) {
             notes.push(
               raisesPo
                 ? `Vendor bill received. ${RAISED_PO_NOTE}`
-                : matchedItems > 0
-                  ? `Vendor bill received — inventory updated for ${matchedItems} item${matchedItems === 1 ? "" : "s"}`
-                  : "Vendor bill received",
+                : poBlockReason
+                  ? `Vendor bill received — no purchase order raised (${poBlockReason})`
+                  : matchedItems > 0
+                    ? `Vendor bill received — inventory updated for ${matchedItems} item${matchedItems === 1 ? "" : "s"}`
+                    : "Vendor bill received",
             );
           } catch (receiveErr: unknown) {
             // Bill was created but receive failed — surface the issue but don't lose the bill
