@@ -125,6 +125,19 @@ describe("standardRestockResolver (B665)", () => {
     expect(await resolver()(item(3))).toMatchObject({ unknown: true });
   });
 
+  it("a product with NO live order line PARKS instead of silently restocking the typed qty as pieces", async () => {
+    // The line was cancelled or replaced after the return was created (updateOrderItems recreates lines
+    // under fresh ids; cancelling one marks it CANCELLED and zeroes it), so the order has no live line for
+    // this product. Without a guard the empty factor set fell through to the factor-1 default and booked 3
+    // boxes as 3 PIECES — the B665 defect itself, un-parked and unlogged.
+    arm([], [invoiceWithSplit()]);
+    expect(await resolver()(item(3))).toMatchObject({ unknown: true });
+
+    // Also when the order has live lines, but none of them is this product.
+    arm([boxLine({ productId: "p2" })], [invoiceWithSplit()]);
+    expect(await resolver()(item(3, "p1"))).toMatchObject({ unknown: true });
+  });
+
   it("a product on lines with DIFFERENT packs (one box-aware, one box-unaware) is unknown: it parks, no guess", async () => {
     arm(
       [boxLine(), boxLine({ id: "oi-2", qty: 72, boxes: 6, unitsPerBox: 12 })],

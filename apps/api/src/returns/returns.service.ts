@@ -885,6 +885,21 @@ export class ReturnsService {
       // `GROUP BY status` count shows zero PROCESSED rows.
       if (fresh.status === "RECEIVED" || fresh.status === "PROCESSED") {
         const returnRef = `RET-${fresh.id.slice(0, 8)}`;
+        // A restock still parked for this return is void once the return is cancelled.
+        //
+        // This DELETE runs BEFORE the movement scan below, and the order is load-bearing. The parked row
+        // is the lock a concurrent `ParkedRestockResolutionService.resolve()` claims, so:
+        //   - resolve claimed first: this DELETE blocks on its row lock until resolve commits, then
+        //     matches 0 rows (resolvedAt is set) — and the movement scan below, a LATER statement with a
+        //     fresh snapshot, therefore SEES the movement resolve just booked and undoes it.
+        //   - this DELETE wins: the row is gone, so resolve's conditional claim matches 0 rows and books
+        //     nothing at all.
+        // Scanning the movements FIRST would let a resolve that commits in between book a movement this
+        // cancel has already looked past, leaving an orphan RET-<id> row and stock permanently inflated
+        // by the resolved pieces, with no second cancel to undo it.
+        await tx.returnParkedRestock.deleteMany({
+          where: { returnId: fresh.id, resolvedAt: null },
+        });
         // B665: undo EXACTLY what receive() restocked (in PIECES), read from its own RET-<id>
         // movements, never recomputed from the typed qty (a box-unaware line's qty counts BOXES). A parked
         // or restock:false item has no movement, so there is nothing to undo for it.
@@ -906,10 +921,6 @@ export class ReturnsService {
             where: { productId: item.productId, reference: returnRef },
           });
         }
-        // A restock still parked for this return is void once the return is cancelled.
-        await tx.returnParkedRestock.deleteMany({
-          where: { returnId: fresh.id, resolvedAt: null },
-        });
         // W5c: undo the regulated ledger reversal written at receive() (symmetric
         // to deleting the stock movements above). cancel() blocks REFUNDED returns,
         // so a finalized reversal is never touched.

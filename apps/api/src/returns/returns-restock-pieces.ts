@@ -61,6 +61,17 @@ export function standardRestockResolver(tx: any, orderId: string) {
     const { lines, packs } = await load();
     const qty = Number(item.qty);
     const mine = lines.filter((l) => l.productId === item.productId);
+    if (mine.length === 0) {
+      // No live order line for this product on the order, so there is nothing to read a pack from: the
+      // line was cancelled or replaced after the return was created (updateOrderItems replaces lines under
+      // fresh ids; cancelling a line zeroes it and marks it CANCELLED), or the row is not visible to this
+      // tenant. Falling through to the factor-1 default below would book the TYPED qty as pieces — 3 boxes
+      // as 3 pieces — which is precisely the B665 defect, un-parked and with no error log. Park instead.
+      return {
+        unknown: true,
+        reason: "no live order line for this product on the order to read a pack from",
+      };
+    }
     const factors = new Set<number>();
     for (const line of mine) {
       const p = packs.get(line.id);
@@ -71,6 +82,8 @@ export function standardRestockResolver(tx: any, orderId: string) {
     if (factors.size > 1) {
       return { unknown: true, reason: "the product is on order lines with different packs" };
     }
+    // factors is never empty here (the guard above returns), so the 0 case means every live line of this
+    // product was unambiguous — a split line or a pack-less product — which is genuinely factor 1.
     return { pieces: qty * (factors.size === 1 ? [...factors][0] : 1) };
   };
 }
