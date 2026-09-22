@@ -23,6 +23,11 @@ export interface OrderRecomputeTotals {
  * on a partial invoice must still reach the order even while the rest stays gated. `total`
  * shifts by exactly the fee's own delta so it stays consistent without re-deriving the
  * (still-gated) subtotal/tax. Returns the order's totals UNCHANGED otherwise (finding 4).
+ *
+ * Also syncs every active line's invoicedQty on this partial branch (#1185 review round 3,
+ * HIGH+MED) — see the inline comment above that loop for why: it's the only fix for both an
+ * invoice qty edit going stale while still partial, and a removed line's invoicedQty never
+ * releasing while a SIBLING line keeps the order from full coverage.
  */
 export async function checkOrderCoverage(params: {
   db: any;
@@ -38,14 +43,31 @@ export async function checkOrderCoverage(params: {
   invoices: any[];
 }): Promise<{ fullyCovered: true } | { fullyCovered: false; totals: OrderRecomputeTotals }> {
   const { db, orderId, order, byTarget, invoices } = params;
-  const fullyCovered = (order.lineItems as any[])
-    .filter((li) => li.status !== "CANCELLED")
-    .every((li) => {
-      const agg = byTarget.get(`line:${li.id}`);
-      if (agg) return agg.qty >= Number(li.qty);
-      return Number(li.invoicedQty ?? 0) > 0;
-    });
+  const activeLines = (order.lineItems as any[]).filter((li) => li.status !== "CANCELLED");
+  const fullyCovered = activeLines.every((li) => {
+    const agg = byTarget.get(`line:${li.id}`);
+    if (agg) return agg.qty >= Number(li.qty);
+    return Number(li.invoicedQty ?? 0) > 0;
+  });
   if (fullyCovered) return { fullyCovered: true };
+
+  // B667 (#1185 review round 3, HIGH+MED): the full-coverage path below is the only place that
+  // ever wrote OrderItem.invoicedQty, so while the order stays partially covered — this branch —
+  // an invoice-item edit never reached it and invoicedQty could go stale in EITHER direction: an
+  // up-edit under-counted what's now billed (order qty 10, invoice edited 4 -> 6, invoicedQty
+  // stuck at 4 -> a later invoice can still bill 6 more, 12 against 10); a down-edit or removal
+  // over-counted it (a billed-then-removed line keeps a non-zero invoicedQty forever and can
+  // never be invoiced again, even though it lost every invoice covering it). Sync every active
+  // line's invoicedQty to what its invoices bill RIGHT NOW — clamped to the line's own qty, 0
+  // when unmatched — independent of the heavier full-coverage rewrite (subtotal, boxes/pieces,
+  // status) below, which still only runs once every line is covered.
+  for (const li of activeLines) {
+    const agg = byTarget.get(`line:${li.id}`);
+    const billedQty = agg ? Math.min(Number(li.qty), agg.qty) : 0;
+    if (Number(li.invoicedQty ?? 0) !== billedQty) {
+      await db.orderItem.update({ where: { id: li.id }, data: { invoicedQty: billedQty } });
+    }
+  }
 
   const shippingFeeSum = roundMoney(
     invoices.reduce((s: number, inv: any) => s + Number(inv.shippingFee ?? 0), 0),
