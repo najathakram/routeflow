@@ -659,13 +659,11 @@ export class PlatformAdminController {
     @Body() dto: SetConfigSnapshotFlagDto,
     @CurrentUser() admin: JwtPayload,
   ) {
-    await this.snapshotFlag.setEnabled(dto.enabled);
-    await this.svc.recordAdminAction(
-      null,
-      admin.sub,
-      AdminAuditAction.CONFIG_SNAPSHOT_FLAG_CHANGED,
-      { enabled: dto.enabled, reason: dto.reason },
-    );
+    // The flag write and its audit row are ONE transaction (see setEnabledAudited): no unaudited flip.
+    await this.snapshotFlag.setEnabledAudited(dto.enabled, {
+      userId: admin.sub,
+      reason: dto.reason,
+    });
     return { enabled: dto.enabled };
   }
 
