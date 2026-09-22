@@ -11,8 +11,9 @@
  * today's pack for a line written yesterday reintroduces the bug this design retires.
  *
  * Branches, in order — the FIRST one that applies wins:
- *   (1) `line.unitLabel` is set — a Units/PO line: `qty` is already in the line's own base
- *       selling unit. `unitBasisQty = qty`.
+ *   (1) `line.unitLabel` is a non-blank string (`""`/null/undefined means "the pack" — no unit
+ *       requested, same convention as `orders/unit-line-build.ts`'s `requestsUnit`) — a Units/PO
+ *       line: `qty` is already in the line's own base selling unit. `unitBasisQty = qty`.
  *   (2) `line.boxes` or `line.pieces` is set (a box-split line, whichever branch is null) —
  *       `qty` is already a piece count. `unitBasisQty = qty`.
  *   (3) neither of the above, and `packAtSale` is not a real pack (`<= 1`, `null`, missing) —
@@ -35,7 +36,6 @@ export interface RegulatedUnitBasisLine {
   qty: number;
   boxes?: number | null;
   pieces?: number | null;
-  unitsPerBox?: number | null;
   unitLabel?: string | null;
 }
 
@@ -51,8 +51,9 @@ export function regulatedUnitBasis(
 ): RegulatedUnitBasisResult {
   const qty = Number(line.qty);
 
-  // (1) a Units/PO line: qty is already in the line's own base unit.
-  if (line.unitLabel != null) {
+  // (1) a Units/PO line: qty is already in the line's own base unit. `""`/null/undefined means
+  // "the pack" (no unit requested) — same convention as orders/unit-line-build.ts's requestsUnit.
+  if ((line.unitLabel ?? "").trim() !== "") {
     return { unitBasisQty: qty };
   }
   // (2) a box-split line: qty is already a piece count.

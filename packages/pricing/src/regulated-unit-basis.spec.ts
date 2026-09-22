@@ -6,6 +6,15 @@ describe("regulatedUnitBasis", () => {
     expect(regulatedUnitBasis({ qty: 60, unitLabel: "case" }, null)).toEqual({ unitBasisQty: 60 });
   });
 
+  it('(1) a BLANK unitLabel (""/whitespace) is NOT a unit request — same convention as requestsUnit — and falls through to branch (4) when boxed', () => {
+    const res = regulatedUnitBasis({ qty: 5, boxes: null, pieces: null, unitLabel: "" }, 12);
+    expect(res.unitBasisQty).toBe(60);
+    expect(res.warn).toMatch(/B644/);
+    expect(regulatedUnitBasis({ qty: 7, boxes: null, pieces: null, unitLabel: "   " }, 1)).toEqual({
+      unitBasisQty: 7,
+    });
+  });
+
   it("(2) a box-split line (boxes set): qty is already pieces — 5 boxes of 12 books 60, never 720", () => {
     expect(regulatedUnitBasis({ qty: 60, boxes: 5, pieces: 0 }, 12)).toEqual({ unitBasisQty: 60 });
   });
