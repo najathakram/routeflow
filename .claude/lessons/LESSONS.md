@@ -827,3 +827,42 @@
   N times.**
 - **Guard:** the landing procedure re-reads the coordination issue (#938) immediately before each
   merge; no unattended batch merge loops.
+
+### L-214 · 2026-09-22 · domain · a second quantity axis needs every writer AND every "already done" guard
+
+- **Symptom:** a FULL credit note against a box-unaware regulated line reversed 5 of the 60 pieces
+  it sold, leaving 55 phantom pieces on the tax filing per credited line. Net, qty and tax were all
+  correct — only the piece axis was wrong — and a later invoice void never cleared the residue, so
+  the rows stayed wrong permanently.
+- **Root cause:** B661 moved the SALE row's `unitBasisQty` onto a PIECE axis while `qty` stayed in
+  the line's own unit (boxes for a box-unaware line). `reverseCreditNoteEntries` kept booking the
+  line-unit value into the piece column, so the two sides no longer cancelled. Compounding it, the
+  "this line is already fully reversed, skip it" guard in `reverseInvoiceEntries` tested `qty`,
+  `netSales` and `categoryTax` but NOT `unitBasisQty` — so the one operation that could have healed
+  the residue was the operation that proved it invisible.
+- **Lesson:** **When a row carries two quantity axes that mean different things, moving ONE reader
+  or writer onto the new axis is never the whole change: sweep every OTHER writer that books a
+  paired row into the same column, and widen every "nothing left to do" guard to test EVERY axis it
+  guards. A guard that checks a subset of dimensions does not merely miss the bug — it makes the bug
+  permanent, because it convinces the healing path there is nothing to heal.**
+- **Same fix, second lesson (pro-rata source):** the replacement first took its pieces-per-unit
+  ratio from an AGGREGATE over every SALE row of the order line, which silently averages rows
+  written under different snapshots — a product repacked 12 -> 10 between the original write and a
+  delivered-basis reconcile gave 11, so a 2-box partial credit booked -22 where the truth was -20.
+  **A pro-rata ratio must be derived from the specific stored row being reversed, never from a sum
+  across the parent entity's rows.** This class is near-invisible in testing because the CLOSING
+  operation books the exact remaining and absorbs the difference, so the TOTAL always reconciles —
+  the error only surfaces as period attribution, and only when a partial straddles a period
+  boundary, which is the one moment anyone looks. Where a sibling path already pro-rates correctly
+  (`reverseReturnEntries` off the live row's own ratio), match it rather than inventing a second
+  derivation (cf. L-167).
+- **Guard:** `regulated-ledger.service.spec.ts` pins the piece axis on the credit path (full credit
+  closes to exactly 0 pieces, a partial pro-rates off the SALE row's own ratio, the second half
+  leaves no residue) and pins that a line square on money but carrying a piece residue is NOT
+  skipped by a void. When a fix makes existing fixtures fail, check case by case that each modelled
+  a shape a real writer can produce before changing it — four here defaulted the two axes
+  independently and modelled rows no writer emits, which is why changing them was correct. The test
+  that justifies such a change is not "the pair is unreachable" but "the AGGREGATE the case asserts
+  on is the defect's own signature": here qty netting to zero while pieces do not IS reachable (it
+  is the legacy residue), so the old assertion was asserting the bug, and removing it RAISED
+  coverage. A mixed-pack reconcile case pins the ratio source.

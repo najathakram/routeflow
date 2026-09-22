@@ -36,7 +36,8 @@ export function LiftRuleDialog({
     if (!rule) return;
     const trimmed = reason.trim();
     if (!trimmed) return setError("Add a reason");
-    if (trimmed.length > REASON_MAX) return setError("Keep the reason under 500 characters");
+    if (trimmed.length > REASON_MAX)
+      return setError(`Keep the reason under ${REASON_MAX} characters`);
     setError("");
     lift.mutate(
       { id: rule.id, reason: trimmed },
@@ -76,6 +77,7 @@ export function LiftRuleDialog({
         <Textarea
           label="Reason"
           rows={3}
+          maxLength={REASON_MAX + 50}
           value={reason}
           onChange={(e) => setReason(e.target.value)}
           error={error}

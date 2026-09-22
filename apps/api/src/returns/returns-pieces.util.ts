@@ -3,24 +3,25 @@
  * returns.service.ts — split out of `create()` so the same numbers are used by
  * both the STANDARD post-delivery flow and the (PR-1c/1d) INLINE capture flow.
  *
- * UNITS (corrected under B665; this header used to say "always PIECES", which is false). `OrderItem.qty`
- * is counted in the LINE'S OWN UNIT: pieces for a box-split or ordinary line, but BOXES for a box-unaware
- * boxed line (a standing-order / buyer bare-qty line of a boxed product is stored `boxes: null,
- * unitsPerBox: null`, qty = boxes). `ReturnItem.qty` of a STANDARD return is what the operator typed,
- * capped by that same raw line qty, so it is in the line's own unit too (every creator: web returns page,
- * mobile operator return, driver undelivered return). So `soldQtyForProduct` and the STANDARD returned qty
- * are consistent with each other, which is why `create()`'s cap works, but NEITHER is a piece count for a
- * box-unaware line. INLINE items (`returnedPiecesByProduct` below adds them in) ARE true pieces, so a
- * product that was returned by both paths on a box-unaware line sums two units: a known limit of that
- * reader, not fixed here. STOCK converts through `common/line-pack-factors.ts` (`legacyLinePieces`),
- * never by assuming this axis is pieces. The REGULATED LEDGER does not: `receive()` still passes the raw
- * per-item qty to `reverseReturnEntries`, so a box-unaware line's reversal is still on the line's own
- * axis. That is B660/B681's lane, deliberately not this one — do not read this header as a claim that the
- * ledger side is fixed.
+ * CORRECTED (live production regression, B661/B671 fix round 2): `OrderItem.qty` is stored in
+ * the LINE's OWN unit — boxes for a box-unaware boxed line, not pieces; `regulatedUnitBasis`
+ * (`packages/pricing`) is what expands it to pieces, at write time, for the regulated ledger
+ * only. `ReturnItem.qty` for a STANDARD return mirrors `OrderItem.qty` (same unit, via the
+ * identity conversion `standardReturnPieces` below), so it is ALSO the line's own unit, not
+ * pieces — the prior version of this comment claimed the opposite, and
+ * `RegulatedLedgerService.reverseReturnEntries` trusted it, comparing a box count against a
+ * piece-denominated remaining balance and reversing ~8% of a fully-returned box-unaware sale.
+ * `reverseReturnEntries`'s own `returnedUnit: "LINE_UNIT"` (the standard caller) vs `"PIECES"`
+ * (the INLINE caller, whose `ReturnItem.qty` genuinely IS pieces — see
+ * `inline-returns.service.ts`'s `capture()`) is the fix; this file's own comparisons
+ * (over-return refusal, prior-returned sums) never needed pieces and are unaffected — this is a
+ * documentation correction only, no logic in this file changes. `standardReturnPieces` remains
+ * an identity function — the seam (B4/m-6) is unused today, kept for a future box/piece-aware
+ * DTO.
  *
- * `standardReturnPieces` stays a named seam (B4/m-6) so a future box/piece-aware DTO can convert without
- * `create()`'s comparison or its refusal-message text changing shape; today it is an identity function on
- * the line's own axis.
+ * STOCK (B665, this branch): the restock path converts through `common/line-pack-factors.ts` (`legacyLinePieces`) and never assumes this axis is pieces; an
+ * unknown pack books no movement and PARKS. The regulated ledger's own axis is handled by
+ * `reverseReturnEntries`'s `returnedUnit` above, not here.
  */
 
 export interface OrderLineForPieces {
@@ -35,9 +36,10 @@ export interface OrderForPieces {
 }
 
 /**
- * Sold qty for (order, product) = the SUM of the product's non-CANCELLED
- * lines on that order, in the LINE'S OWN UNIT (see the file header: boxes for
- * a box-unaware boxed line, NOT pieces). Fixes the B4/m-6 undercount: the pre-fix code picked a single
+ * Sold qty for (order, product) = the SUM of the product's non-CANCELLED lines on that
+ * order, in EACH line's own unit (boxes for a box-unaware line — see the corrected file
+ * header; the function/param names here predate that correction and are kept as-is to avoid
+ * an unrelated rename). Fixes the B4/m-6 undercount: the pre-fix code picked a single
  * `.find()`-matched line, so a product split across two lines on the same
  * order (a re-added line, a post-edit split) undercounted what was actually
  * sold.
@@ -70,11 +72,11 @@ export function firstNonCancelledLine(
 }
 
 /**
- * Converts a STANDARD return DTO's `qty` to pieces off the axis of
- * `firstNonCancelledLine`, and returns a converter back to that line's own
- * unit for refusal messages — see the file header for why this is an
- * identity conversion today. `create()` and the shared prior-returned reader
- * both call this so a future non-identity conversion only has to change here.
+ * Converts a STANDARD return DTO's `qty` onto the axis of `firstNonCancelledLine` — the
+ * LINE's own unit, not pieces (corrected; see the file header) — and returns a converter
+ * back to that same unit for refusal messages; an identity conversion today for that reason.
+ * `create()` and the shared prior-returned reader both call this so a future non-identity
+ * conversion only has to change here.
  */
 export function standardReturnPieces(
   order: OrderForPieces,
