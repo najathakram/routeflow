@@ -154,7 +154,7 @@ export function PriceEditor({
                     type="number"
                     min={0}
                     value={li.boxes ?? 0}
-                    onChange={(e) => onSetBoxes(parseInt(e.target.value, 10))}
+                    onChange={(e) => onSetBoxes(parseInt(e.target.value, 10) || 0)}
                     onFocus={(e) => e.target.select()}
                     className={cn(inputCls, "w-20")}
                     aria-label="Cases"
@@ -165,7 +165,7 @@ export function PriceEditor({
                     min={0}
                     max={li.unitsPerBox! - 1}
                     value={li.pieces ?? 0}
-                    onChange={(e) => onSetPieces(parseInt(e.target.value, 10))}
+                    onChange={(e) => onSetPieces(parseInt(e.target.value, 10) || 0)}
                     onFocus={(e) => e.target.select()}
                     className={cn(inputCls, "w-20")}
                     aria-label="Extra units"
