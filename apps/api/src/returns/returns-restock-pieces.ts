@@ -5,8 +5,8 @@ import type { RestockPieces, RestockableReturnItem } from "./returns-restock.uti
  * B665: the resolver a STANDARD return's `receive()` hands to `restockReturnItems`. A STANDARD return stores
  * the qty the operator typed in the order line's OWN unit (every creator is capped by the raw line qty), which
  * is pieces for a box-split or ordinary line but BOXES for a box-unaware boxed line, while stock is counted in
- * pieces. The pack comes only from `legacyLinePieces` through the shared `resolvePackFactors` (own split, then
- * the line's linked InvoiceItem, then a same-product sibling with a split): NEVER the live product's
+ * pieces. The pack comes only from `legacyLinePieces` through the shared `resolvePackFactors` (own split, else
+ * the line's linked InvoiceItem when it carries a split — no sibling guess): NEVER the live product's
  * `unitsPerBox` (Senior Architect ruling 2026-09-21).
  *
  * A return has no line key, so an item is resolved against ALL of the order's non-cancelled lines of that
@@ -33,7 +33,7 @@ export function standardRestockResolver(tx: any, orderId: string) {
           product: { select: { unitsPerBox: true } },
         },
       });
-      const packs = await resolvePackFactors(tx, {
+      const packs = await resolvePackFactors({
         orderId,
         lines,
         loadInvoiceItems: async (lineIds) => {

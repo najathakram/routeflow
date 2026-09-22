@@ -2,8 +2,8 @@
  * B665 — a STANDARD return stores the qty the operator typed in the order line's OWN unit (boxes for a
  * box-unaware boxed line: every creator is capped by the raw line qty), but stock is counted in PIECES, so
  * receive() used to restock 3 boxes as +3 pieces (12x too few for a 12-pack). The fix converts through the
- * shared pack resolver (`legacyLinePieces`: own split, the line's linked InvoiceItem, a same-product sibling;
- * NEVER the live product's unitsPerBox), parks a restock whose pack is unknown, and makes cancel() undo exactly
+ * shared pack resolver (`legacyLinePieces`: own split, else the line's linked InvoiceItem when it carries a
+ * split — no sibling guess; NEVER the live product's unitsPerBox), parks a restock whose pack is unknown, and makes cancel() undo exactly
  * the RET-<id> movements receive() booked. INLINE captures store true pieces and are untouched.
  */
 import { Test, TestingModule } from "@nestjs/testing";
@@ -44,9 +44,9 @@ describe("standardRestockResolver (B665)", () => {
   let prisma: ReturnType<typeof createMockPrisma>;
   const resolver = () => standardRestockResolver(prisma, "ord-1");
   const item = (qty: number, productId = "p1") => ({ id: "ri-1", productId, qty, restock: true });
-  const arm = (lines: unknown[], invoiceItems: unknown[] = [], siblings: unknown[] = []) => {
+  const arm = (lines: unknown[], invoiceItems: unknown[] = []) => {
     prisma.orderItem.findMany.mockReset();
-    prisma.orderItem.findMany.mockResolvedValueOnce(lines).mockResolvedValueOnce(siblings);
+    prisma.orderItem.findMany.mockResolvedValueOnce(lines);
     prisma.invoiceItem.findMany.mockReset();
     prisma.invoiceItem.findMany.mockResolvedValue(invoiceItems);
   };
@@ -60,9 +60,12 @@ describe("standardRestockResolver (B665)", () => {
     expect(await resolver()(item(3))).toEqual({ pieces: 36 });
   });
 
-  it("falls back to a same-product sibling line with a split when the InvoiceItem has none", async () => {
-    arm([boxLine()], [], [{ productId: "p1", qty: 72, boxes: 6, pieces: 0, unitsPerBox: 12 }]);
-    expect(await resolver()(item(3))).toEqual({ pieces: 36 });
+  it("does NOT fall back: an InvoiceItem with no split is UNKNOWN (parks)", async () => {
+    arm(
+      [boxLine()],
+      [{ orderItemId: "oi-1", qty: 6, boxes: null, pieces: null, unitsPerBox: null }],
+    );
+    expect(await resolver()(item(3))).toMatchObject({ unknown: true });
   });
 
   it("a box-AWARE line and a product with no pack restock the typed qty as today (factor 1)", async () => {
@@ -72,7 +75,7 @@ describe("standardRestockResolver (B665)", () => {
     expect(await resolver()(item(4))).toEqual({ pieces: 4 });
   });
 
-  it("an UNKNOWN pack (no InvoiceItem split, no sibling) is unknown even though the live product says 12", async () => {
+  it("an UNKNOWN pack (no InvoiceItem split) is unknown even though the live product says 12", async () => {
     arm([boxLine()]);
     expect(await resolver()(item(3))).toMatchObject({ unknown: true });
   });

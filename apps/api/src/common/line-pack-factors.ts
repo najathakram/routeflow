@@ -7,8 +7,8 @@ import { legacyLinePieces } from "@routeflow/pricing";
  *
  * A line needs the classifier when it has NO split and a pack exists (its own snapshot > 1, or the live pack
  * > 1: the live product is only a TRIGGER here, never a factor). Lines with a split, and products with no
- * pack, are factor 1 and are absent from the result. Source precedence: the line's linked InvoiceItem when it
- * carries a split, then a same-product sibling order line with a split.
+ * pack, are factor 1 and are absent from the result. Source: the line's linked InvoiceItem only, when it
+ * carries a split. No InvoiceItem, or one with no split, is unknown — it PARKS, never a sibling guess.
  */
 export type PackFactor = { factor: number } | { unknown: true; reason: string };
 
@@ -34,35 +34,19 @@ const asLegacy = (x: any) => ({
   unitsPerBox: x.unitsPerBox ?? null,
 });
 
-export async function resolvePackFactors(
-  db: any,
-  args: {
-    orderId: string;
-    lines: PackLine[];
-    /** Line id -> the InvoiceItem billed from it (qty, boxes, pieces, unitsPerBox), for the ambiguous lines. */
-    loadInvoiceItems: (lineIds: string[]) => Promise<Map<string, any>>;
-  },
-): Promise<Map<string, PackFactor>> {
+export async function resolvePackFactors(args: {
+  orderId: string;
+  lines: PackLine[];
+  /** Line id -> the InvoiceItem billed from it (qty, boxes, pieces, unitsPerBox), for the ambiguous lines. */
+  loadInvoiceItems: (lineIds: string[]) => Promise<Map<string, any>>;
+}): Promise<Map<string, PackFactor>> {
   const out = new Map<string, PackFactor>();
   const ambiguous = args.lines.filter(needsPackResolution);
   if (ambiguous.length === 0) return out;
   const invByLine = await args.loadInvoiceItems(ambiguous.map((li) => li.id));
-  const needSibling = ambiguous.filter((li) => !hasSplit(invByLine.get(li.id)));
-  const siblings: any[] =
-    needSibling.length > 0
-      ? await db.orderItem.findMany({
-          where: {
-            orderId: args.orderId,
-            productId: { in: [...new Set(needSibling.map((li) => li.productId))] },
-            boxes: { not: null },
-          },
-          select: { productId: true, qty: true, boxes: true, pieces: true, unitsPerBox: true },
-        })
-      : [];
   for (const li of ambiguous) {
     const inv = invByLine.get(li.id);
-    const sibling = siblings.find((x) => x.productId === li.productId);
-    const source = hasSplit(inv) ? inv : (sibling ?? null);
+    const source = hasSplit(inv) ? inv : null;
     // relation "full": an order line is the 1:1 copy of its OWN InvoiceItem — a sibling line is never a
     // source (Senior Architect ruling 2026-09-21).
     //
