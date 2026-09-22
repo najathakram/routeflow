@@ -39,7 +39,8 @@
  * refusal, which rejects the shape and ships that query so anything already stored is listed.
  */
 
-import { splitWithoutPack } from "@routeflow/pricing";
+import { BadRequestException } from "@nestjs/common";
+import { computeLineSubtotal, roundMoney, splitWithoutPack } from "@routeflow/pricing";
 
 /** A surviving `InvoiceItem` row, as this module needs it. */
 export interface PriorPackRow {
@@ -144,4 +145,46 @@ export function resolveUpdateLinePack(
       `carries one; pricing FROM THE SPLIT at the live pack ${live} (new-line semantics). qty is ` +
       `stored as sent, so a contradictory split under-files on the ledger's piece axis.`,
   };
+}
+
+/**
+ * Validate and price ONE line of the replace payload, post-discount — the money half of
+ * `update()`'s line mapper, lifted out of `invoices.service.ts` because that file is at its size
+ * ratchet and the ratchet's own instruction is to move code out rather than raise the baseline.
+ *
+ * Order matters: the unpackable split is refused BEFORE pricing, so a line no pack can price never
+ * reaches `computeLineSubtotal`'s non-boxed branch, where `unitPrice` would be read as a per-piece
+ * price. BUY_N_GET_M free units come off BEFORE pricing (never a rounded net unit price): dropping
+ * that snapshot re-prices an agreed 12-boxes-2-free line from $350 to 12 x $35 = $420 on a plain
+ * re-save. Reads no product — it takes the already-resolved pack — so it stays off the line-units
+ * call-site ratchet.
+ */
+export function priceReplacedLine(
+  item: {
+    productId?: string | null;
+    description?: string | null;
+    unitPrice: number;
+    discount?: number | null;
+    boxes?: number | null;
+    pieces?: number | null;
+  },
+  resolved: {
+    qty: number;
+    boxes: number | null;
+    pieces: number | null;
+    unitsPerBox?: number;
+    freeUnits: number;
+  },
+): number {
+  const bad = unpackableSplit(item, resolved.unitsPerBox);
+  if (bad) throw new BadRequestException(bad);
+  const beforeDiscount = computeLineSubtotal({
+    unitPrice: item.unitPrice,
+    qty: resolved.qty,
+    boxes: resolved.boxes,
+    pieces: resolved.pieces,
+    unitsPerBox: resolved.unitsPerBox,
+    freeUnits: resolved.freeUnits,
+  });
+  return roundMoney(beforeDiscount - (item.discount ?? 0));
 }
