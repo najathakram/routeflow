@@ -13,6 +13,7 @@ import {
   editItemsSnapshotKey,
   hasUnsavedItemEdits,
   hasUnsavedWork,
+  hydrateFromOrder,
   isSnapshotStale,
   makeEditItemsSnapshot,
   orderOriginals,
@@ -516,5 +517,139 @@ describe("edit-items-draft: the picker's drawer (REG-EDIT-DRAFT-C)", () => {
       expect(h).toBeLessThanOrEqual(win.height - viewfinderBottom);
       expect(h).toBeGreaterThanOrEqual(200);
     }
+  });
+});
+
+/**
+ * B707 — a stored line's pack is its OWN snapshot (`li.unitsPerBox`), never
+ * the live product's: reading the live product ALONE (the pre-fix bug)
+ * refused every save of an order holding a unit line (409 UNIT_AWARE_LINE,
+ * since the fabricated qty change carried no unitLabel) and silently
+ * re-denominated a repacked legacy split line.
+ */
+describe("edit-items-draft: hydrateFromOrder reads a line's OWN pack snapshot (B707)", () => {
+  it("B707a: a unit line (boxes 3, snapshot 288, 'Case') hydrates unitsPerBox/unitLabel from ITS OWN line, not the live product's now-12 pack — untouched, no UPDATE", () => {
+    const order: BaselineOrderLike = {
+      id: "o1",
+      lineItems: [
+        {
+          id: "L1",
+          productId: "p1",
+          qty: 864,
+          boxes: 3,
+          pieces: 0,
+          unitsPerBox: 288,
+          unitLabel: "Case",
+          unitPrice: 20,
+          name: "Case widget",
+          notes: null,
+          status: "PENDING",
+          product: { id: "p1", name: "Case widget", unit: "box", unitsPerBox: 12 },
+        } as any,
+      ],
+    };
+
+    const { draft } = hydrateFromOrder(order);
+    expect(draft.p1.unitsPerBox).toBe(288);
+    expect(draft.p1.unitLabel).toBe("Case");
+    expect(draft.p1.boxes).toBe(3);
+
+    const originals = orderOriginals(order);
+    expect(stagedDiffItems({ draft, unlisted: [], pendingDeletes: [] }, originals)).toEqual([]);
+  });
+
+  it("B707b: editing the same unit line's box count 3 -> 4 sends {id, qty: <count>, unitLabel}, never the piece-expanded 1152", () => {
+    const order: BaselineOrderLike = {
+      id: "o1",
+      lineItems: [
+        {
+          id: "L1",
+          productId: "p1",
+          qty: 864,
+          boxes: 3,
+          pieces: 0,
+          unitsPerBox: 288,
+          unitLabel: "Case",
+          unitPrice: 20,
+          name: "Case widget",
+          notes: null,
+          status: "PENDING",
+          product: { id: "p1", name: "Case widget", unit: "box", unitsPerBox: 12 },
+        } as any,
+      ],
+    };
+    const { draft } = hydrateFromOrder(order);
+    const edited = { ...draft, p1: { ...draft.p1, boxes: 4 } };
+    const originals = orderOriginals(order);
+
+    expect(stagedDiffItems({ draft: edited, unlisted: [], pendingDeletes: [] }, originals)).toEqual(
+      [{ id: "L1", action: "UPDATE", qty: 4, unitLabel: "Case" }],
+    );
+  });
+
+  it("B707c: a repacked legacy split line (boxes 2, pieces 3, snapshot 12) prices off ITS OWN 12, not the live product's now-24 pack — untouched, no UPDATE", () => {
+    const order: BaselineOrderLike = {
+      id: "o1",
+      lineItems: [
+        {
+          id: "L2",
+          productId: "p2",
+          qty: 27,
+          boxes: 2,
+          pieces: 3,
+          unitsPerBox: 12,
+          unitPrice: 10,
+          name: "Split widget",
+          notes: null,
+          status: "PENDING",
+          product: { id: "p2", name: "Split widget", unit: "box", unitsPerBox: 24 },
+        } as any,
+      ],
+    };
+
+    const { draft } = hydrateFromOrder(order);
+    expect(draft.p2.unitsPerBox).toBe(12);
+
+    const atOwnPack = computeLineSubtotal({
+      unitPrice: 10,
+      qty: 27,
+      boxes: 2,
+      pieces: 3,
+      unitsPerBox: 12,
+    });
+    const atLivePack = computeLineSubtotal({
+      unitPrice: 10,
+      qty: 27,
+      boxes: 2,
+      pieces: 3,
+      unitsPerBox: 24,
+    });
+    expect(atOwnPack).toBe(22.5);
+    expect(atLivePack).toBe(21.25);
+    const row = draftTrayRows({ draft, unlisted: [], scanOrder: [] }).find((r) => r.id === "p2");
+    expect(row?.subtotal).toBe(atOwnPack);
+
+    const originals = orderOriginals(order);
+    expect(stagedDiffItems({ draft, unlisted: [], pendingDeletes: [] }, originals)).toEqual([]);
+  });
+
+  it("B707d: a line with no OWN pack snapshot still falls back to the live product's pack (a fresh/never-repacked line is unaffected)", () => {
+    const order: BaselineOrderLike = {
+      id: "o1",
+      lineItems: [
+        {
+          id: "L3",
+          productId: "p3",
+          qty: 12,
+          unitPrice: 5,
+          name: "New-ish widget",
+          notes: null,
+          status: "PENDING",
+          product: { id: "p3", name: "New-ish widget", unit: "box", unitsPerBox: 12 },
+        } as any,
+      ],
+    };
+    const { draft } = hydrateFromOrder(order);
+    expect(draft.p3.unitsPerBox).toBe(12);
   });
 });
