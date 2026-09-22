@@ -18,6 +18,10 @@
  * documentation correction only, no logic in this file changes. `standardReturnPieces` remains
  * an identity function — the seam (B4/m-6) is unused today, kept for a future box/piece-aware
  * DTO.
+ *
+ * STOCK (B665, this branch): the restock path converts through `common/line-pack-factors.ts` (`legacyLinePieces`) and never assumes this axis is pieces; an
+ * unknown pack books no movement and PARKS. The regulated ledger's own axis is handled by
+ * `reverseReturnEntries`'s `returnedUnit` above, not here.
  */
 
 export interface OrderLineForPieces {
@@ -40,7 +44,7 @@ export interface OrderForPieces {
  * order (a re-added line, a post-edit split) undercounted what was actually
  * sold.
  */
-export function soldPiecesForProduct(order: OrderForPieces, productId: string): number {
+export function soldQtyForProduct(order: OrderForPieces, productId: string): number {
   return (order.lineItems ?? [])
     .filter((li) => li.productId === productId && li.status !== "CANCELLED")
     .reduce((sum, li) => sum + Number(li.qty), 0);

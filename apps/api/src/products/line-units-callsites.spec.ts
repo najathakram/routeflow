@@ -47,6 +47,9 @@ const NON_WRITERS = new Set([
   // B661: packAtSaleByProduct's `p.unitsPerBox` read is a write-time SNAPSHOT for the ledger's
   // regulatedUnitBasis, not a line-factor decision — never re-read later to reclassify an old row.
   "invoices/pack-at-sale.ts",
+  // B665: the shared pack resolver reads the live pack ONLY to notice that a boxed product's line is
+  // ambiguous (no split); the pieces-per-unit itself comes from legacyLinePieces, never from this read.
+  "common/line-pack-factors.ts",
 ]);
 
 const strip = (s: string) => s.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:])\/\/.*$/gm, "$1");
