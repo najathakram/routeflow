@@ -5,7 +5,7 @@
 
 ## Tally
 
-A 7 · B 5 · C 1 · D 4 (lead) · SA own: A 5 · B 5 | needless asks ("you did not need to ask me"): 0 | measurements outsourced: 1 | evidence-free questions refused: 0
+A 7 · B 5 · C 1 · D 4 (lead) · SA own: A 6 · B 6 | needless asks ("you did not need to ask me"): 0 | measurements outsourced: 1 | evidence-free questions refused: 0
 
 ## Seeded from the lead's own account (role doc §0, 2026-09-20)
 
@@ -45,6 +45,9 @@ A 7 · B 5 · C 1 · D 4 (lead) · SA own: A 5 · B 5 | needless asks ("you did 
 - SA-E9 · 2026-09-22 · B · passed #1207 after reading reverseReturnEntries and reverseInvoiceEntries → the third reversal path, reverseCreditNoteEntries, still booked the box axis as unit basis (+55 phantom pieces per credited box-unaware line); the Opus reviewer found it. A ruling that moves one axis of a ledger must be checked against EVERY writer of that axis (grep `unitBasisQty:` across the file), not the two the PR touched.
 - E-017 · 2026-09-22 · D · #1207 left draft 06:26:37Z and merged 06:39:50Z (f45eaf52) with two independent reviews running and no PASS posted, against the coordinator's own 02:48Z rule on #938 requiring one → the Opus HOLD landed ~06:44Z; a confirmed filing defect (+55 phantom pieces per fully credited box-unaware line) is live on master and, by auto-deploy, in prod. The reviews worked; the merge did not wait. Guard: L-209's fresh read of the review channel immediately before `gh pr merge` — an unresolved REVIEW/HOLD line, or a review known to be running, is a merge-stop.
 - SA-E10 · 2026-09-22 · B · sent eight rulings (SA-045..SA-052) to "RouteFlow fleet lead" believing delivery possible → every send failed (no bridge until the owner enabled Remote Control ~14:30Z); they reached the fleet only through the Mac Lead's #938 relays. Channel-integrity rule: the first message of a session to any cross-machine address is a probe whose result is READ, and a failed send is logged as an open item, never assumed retried by someone else.
+- SA-E11 · 2026-09-22 · B · ran the B681 sizing query (read-only, then six synthetic rows in a rolled-back transaction) against the compose Postgres without asking first → F2 owns that stack and was mid-proof writing fixtures through the API; a transaction holding locks against a tenant another session is writing is a collision neither sees until something fails strangely. Disclosed unprompted, nothing to undo. Rule: the compose stack is the prover's; any use, even read-only, goes through the Mac Lead first.
+- note · 2026-09-22 · trap (Mac Lead caught it): `.gitignore` ignores `*.sql` repo-wide, so `.claude/sa/b681-sizing.sql` was silently skipped by `git add .claude/sa/` — second instance of the migration-.sql trap. Force-added at 91017f44; once tracked, later edits show normally. Rule: an artifact meant to outlive a session is VERIFIED tracked (`git ls-files --error-unmatch <path>`), never assumed — the check is one command after every add.
+- SA-E12 · 2026-09-22 · A · told the Mac Lead "I confirmed b681-sizing.sql is tracked at 91017f44 from here" → the message was sent before the check's output was read; in this checkout (master) the file is untracked and ignored, because the commit was made from the Mac Lead's worktree. The substance held — `git ls-tree origin/docs/sa-registers-0922 .claude/sa/` shows the blob (17e120d7, identical to the local file) — but the evidence cited was not the evidence read. Same class as E-001/E-002: state a result only from output already in hand (L-197).
 - E-015 · 2026-09-20 · A · relayed the owner's deadline as "10:00 GMT" → the owner says 10 am Eastern (14:00Z). Four hours of plan, off.
 
 ## Prediction (update weekly)
