@@ -66,6 +66,8 @@ Every row here is a pointer, not a description — open the linked file for the 
 | Smoke / pre-push verify                                        | `npm run verify`/`smoke`/`post-deploy-check`; `smoke-check` skill                                                    |
 | Root tooling, campaign infra, bug registry, Plane harness      | [`api`](api/root-tooling-campaign-infrastructure.md)                                                                 |
 | Production data-integrity forensics                            | [`api`](api/root-tooling-campaign-infrastructure.md) → `data-integrity-report.mjs` + `repair-integrity.mjs`          |
+| T6 NULL-tenantId forensics + data-questions report (read-only) | [`api`](api/catchup-2026-09-21-scripts-schema.md) → `scripts/t6-*.mjs`, `scripts/data-questions-report.mjs`         |
+| Multi-level product units editor (units_v1 step 2b)            | [`web`](web/catchup-2026-09-21.md) → `products/[id]/ProductUnitsCard.tsx`, `lib/api/product-units.ts`               |
 | Test-tenant policy guard (allowlist)                           | `scripts/lib/test-tenants.cjs` `assertTestTenant`; policy in CLAUDE.md                                               |
 | E2E Playwright                                                 | `apps/web/e2e/` — 6 spec files; `06-critical-paths.spec.ts` = money-math guard                                       |
 | Autonomous regression (CI/CD)                                  | `.github/workflows/{ci,nightly,post-deploy}.yml`; `/regression` skill                                                |

@@ -121,3 +121,24 @@
 - **Modified:** `bookkeeping/bookkeeping.service.ts` (nested creates carry tenantId #1128), `bookkeeping/dto/create-expense.dto.ts` (format-only #957)
 - **Modified:** `buyer/buyer.controller.ts` + `auth/jwt-payload.interface.ts` (buyer pseudo-users carry `type: "BUYER"` for the restrictions channel, #1044)
 - **Modified:** `app.module.ts` (imports RestrictionsSettings, ProductCategories, SellingRestrictionsAdmin, SellingRestrictions modules; #956/#990/#995/#1000), `instrument.ts` (Sentry release tagged with deployed git sha #1007), `testing/prisma-mock.ts` (`productUnit` model mock #947)
+
+## Update b8765689 → HEAD (units_v1 4c-1, B583 follow-up, B644, T6 fail-closed net)
+
+> Same-day continuation of the section above; drift baseline moves to HEAD. Non-test `apps/api/src/**` files touched since b8765689.
+
+### `orders/`
+- `order-lifecycle.ts` — **NEW**, order-lifecycle edits lifted VERBATIM out of `OrdersService` for size-ratchet headroom (byte-identical bodies, `this.`→`self.`; class keeps thin delegators): `updateShipmentImpl`, `updateFulfillPathImpl`, `toggleUrgentImpl`, `applyBuyerMergeHeaderImpl`, `setCommissionRateImpl`, `bulkDeleteOrdersImpl(self, ids, user?)`, `findOneOrThrowImpl(self, id)`. `deleteOrder` deliberately stays in the class (the one direct `orderItem`/`invoiceItem` write; `unit-line-writers.ast.spec.ts` only walks class methods).
+- `unit-aware-guard.ts` — doc-only update: order create (4b-2b) and manual-invoice create (4c-1) now mint unit-aware lines behind `flag.units_v1`; every rewrite path still fenced. No signature change.
+- **Modified:** `orders.service.ts` (-164/+39 net: `findOneOrThrow` made non-private for `order-lifecycle.ts`'s extracted callers; lifecycle methods now thin delegators to the file above).
+
+### `invoices/`
+- `invoice-unit-line.ts` — **NEW** (units_v1 4c-1), builds one manual-invoice line sold by a unit; `buildInvoiceUnitLine(input): { ... }` (deps `@routeflow/pricing`, `products/line-units`, `orders/unit-line-build` for `MAX_LINE_QTY`/`MAX_LINE_SUBTOTAL`); caller `manual-invoice-lines.ts`.
+- `manual-invoice-lines.ts` — **Modified**, `buildManualInvoiceLines` now branches per-line through `isUnitAware` (orders/unit-line-build) to `buildInvoiceUnitLine` vs the pack path.
+- `dto/create-invoice.dto.ts` — **Modified**, `CreateInvoiceItemDto` gains `unitLabel?: string | null` (`@IsOptional @IsString @MaxLength(64)`; behind `flag.units_v1`, blank = pack).
+- **Modified:** `invoices.service.ts` — `create()` now resolves every line's unit via `prepareUnitLadders`/`resolveLineUnits` (products/line-units, orders/unit-line-build) before `buildManualInvoiceLines`, staff-only (`isStaff: true`, POST is OPERATOR+); `applyMsrpSnapshots` skips a unit line (MSRP is per-pack); `update()` now 404s via `findOneOrThrow` first, then refuses `dto.items` containing `requestsUnit` (unit lines can be CREATED but not yet REWRITTEN, 4c-2 pending); the row→create-payload copier (`duplicate`, B644 #1159) now also carries `unitsPerBox`, `originalPrice`, `priceType`, `notes`; `duplicate()`'s new invoice now computes its OWN `issueDate`/`dueDate` from `TERM_DAYS[paymentTermsLabel]` (a label that can't drive a date is dropped with it — `finance.prisma`'s label/dueDate invariant) instead of copying the source's label+no-date pair verbatim.
+
+### `inventory/`
+- **Modified:** `inventory.service.ts` (B583 follow-up #984) — `postPoReceipt` takes an optional `movementAt?: Date` (a re-apply passes strictly increasing stamps so the FIFO/LIFO cost replay, which orders by `createdAt` then a random id, isn't a coin flip between compensating rows written in the same transaction/tick); `reversePoReceipts` takes a required `nextAt: () => Date` and now returns `{ lotDates }` (was a bare `Map`); `reapplyPurchaseOrder` builds one `nextAt` clock (`Date.now()` + monotonic tick) shared by the compensating reversal and the re-post. New doc block: a PO re-applied under #966 before B583 that surrendered a partly-consumed lot via a `notes`-text convention (`"(PO edited; N already consumed)"`) is NOT specially credited — `receiveStock` lets operator input set both `reference` and `notes`, so parsing that text back was a stock-minting hole (B608); such a PO now 409s `PO_LOT_PARTIALLY_CONSUMED` on re-apply like any other partly-consumed lot, no migration.
+
+### `common/testing/`
+- `db-spec.ts` — **NEW**, shared guard + harness for the `*.db.spec.ts` lane (real-Postgres specs, `npm run local:test:db`); `requireLocalDatabaseUrl(env?)` (throws off `LOCAL_HOSTS` allowlist — localhost/127.0.0.1/::1/postgres/db — deliberately NO CI override: CI's postgres is reachable at `localhost` already), `describeDb(name, fn)`, `PgQueryable` interface, `relaxTenantIdGuards(...)`.

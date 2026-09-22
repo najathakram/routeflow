@@ -49,3 +49,22 @@
 - **Modified (`scripts/campaign/`):** `bugs.mjs` (lock races B588 #993; macOS realpath B573/B574 #955); `plane-doctor.mjs` (B591 #1074); `plane-*.self-test.mjs` x6 (apply/doctor/intake/learning/sync/triage: retry runner #993, #1074, #955).
 - **Modified (`scripts/campaign/` self-tests, #993 #1074):** `plane-apply.self-test.mjs`, `plane-doctor.self-test.mjs`, `plane-intake.self-test.mjs`, `plane-learning.self-test.mjs`, `plane-sync.self-test.mjs`, `plane-triage.self-test.mjs` — event-driven lock-race + load-tolerant timing fixes; no signature change
 - **Modified (billing):** `apps/api/src/billing/billing-notification.templates.ts` — checkout-hook alarm/notification copy touched by B593 (#1081); template signatures unchanged
+
+## Update b8765689 → HEAD: T6 tenantId forensics, data-questions report, e2e-seed buyer fixture
+
+### Prisma schema folder (additive, A0 #1131)
+- `prisma/schema/finance.prisma` — `EstimateItem` gains `unitLabel String?`, `unitsPerBox Int?` (InvoiceItem's twins, null = pack); `RecurringInvoiceItem` gains `unitLabel String?`.
+- `prisma/schema/sales.prisma` — `OrderTemplateItem` gains `unitLabel String?` (OrderItem's twin, null = pack).
+
+### `scripts/lib/` (new shared helpers)
+- `local-db-target.cjs` — **NEW**, allowlist (never denylist) local-DB classifier; `isLocalDbTarget(dbUrl)`, `LOCAL_DB_HOSTS` (localhost/127.0.0.1/::1/postgres). Same host set as `assertSafeTarget` in `prisma/seed.ts`. No override flag. Caller: `e2e-seed.js` (keeps the global approved-buyer fixture off every non-local target).
+- `data-questions.cjs` — **NEW**, CommonJS question set + runner behind `data-questions-report.mjs`; `QUESTIONS` (16 read-only findings, each its own SAVEPOINT+timeout+row-cap), `assertReadOnly(sql)` (rejects anything not `select|with`), `parseOnly(arg)`, `runReport(...)`. CommonJS so the Jest spec can load it and drive the runner with a fake client.
+
+### `scripts/` (T6 — NULL-tenantId forensics, all read-only except the drop/stamp tools)
+- `t6-null-census.mjs` — **NEW**, read-only pre-check counting NULL `"tenantId"` rows across the 56 tables the T6 guard migration CHECKs; table list parsed from the migration itself so it can't disagree; exports `guardedTables(sql)`; `--guards` mode instead verifies the 56 constraints exist/are validated; exit 1 = NULL rows found (do not migrate).
+- `t6-backfill-census.mjs` — **NEW**, read-only census (counts only) of the 19 models left OUT of the guard migration because their writers were unproven; exports `BACKFILL_TABLES`.
+- `t6-null-rows-report.mjs` — **NEW**, identifies WHICH rows the census found (id + createdAt per guarded table); for StockLot/CreditNote (the two the prod census flagged) also prints the FK-derived tenant and whether it's UNAMBIGUOUS (exactly one distinct non-null tenant).
+- `t6-stamp-null-rows.mjs` — **NEW**, id-pinned remediation: stamps `tenantId` only on named, still-NULL, unambiguous-FK rows of StockLot/CreditNote; dry-run is the default and the only thing an `--ids`-less run does; `--live-tenant-override` + typed confirmation gates a live (non-test) tenant; never a table-wide UPDATE.
+- `t6-drop-guards.mjs` — **NEW**, rollback: drops all 56 `<table>_tenantId_nn` CHECK constraints in ONE transaction (all-or-nothing); refuses to run without `--yes-drop-t6-guards`. The only prod-writing T6 tool besides the migrations themselves.
+- `data-questions-report.mjs` — **NEW**, ONE read-only report turning the units/regulated-tax findings into per-tenant counts + dollar/stock deltas; 16 questions (`--only N,M`, `--list`), each its own READ ONLY SAVEPOINT with a timeout/row-cap so one bad question doesn't sink the rest; contains tenant ids — operator's terminal only, never a PR/issue/commit. Delegates the question set/runner to `lib/data-questions.cjs`.
+- **Modified:** `e2e-seed.js` (+107) — new approved-buyer fixture: `BUYER_EMAIL`/`BUYER_PASSWORD`/`BUYER_CUSTOMER` consts, a GLOBAL BuyerAccount (committed throwaway password) ACTIVE-linked to its OWN dedicated customer (`CustomerLink.customerId` is `@unique` — never reuses `harbor_cafe` or the picker fixtures); guarded by the new `isLocalDbTarget` (this script also runs against production via `railway run`, so the buyer is created only on a local target). Header now notes `npm run local:seed` runs `prisma/seed.ts`, NOT this script.
