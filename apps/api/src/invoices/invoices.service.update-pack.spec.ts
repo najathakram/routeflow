@@ -436,6 +436,58 @@ describe("InvoicesService.update() — SA-068 pack comes from the payload, never
     expect(created.subtotal).toBeCloseTo(56.83, 2); // 11 * (5 + 2/12), not 11 * 7
   });
 
+  // ─── SA-077(2): a split with no pack anywhere is REFUSED rather than silently dropped ───
+
+  it("(k) SA-077(2): update() refuses a split when no pack resolves anywhere, naming the line", async () => {
+    prisma.invoice.findUnique.mockResolvedValue(draftInvoice);
+    prisma.invoiceItem.findMany.mockResolvedValue([]); // nothing stored to carry
+    prisma.product.findMany.mockResolvedValue([{ id: "prod-flat", unitsPerBox: null }]); // unboxed
+    prisma.customer.findUnique.mockResolvedValue({ isTaxExempt: false });
+    prisma.invoice.update.mockResolvedValue(draftInvoice);
+
+    await expect(
+      service.update("inv-box", {
+        items: [
+          {
+            productId: "prod-flat",
+            description: "Flat widget",
+            // Deliberately NOT self-consistent: (10 - 2) / 3 = 2.667, so the payload implies no
+            // pack either. {qty 60, boxes 5, pieces 0} would NOT reach this guard — its own split
+            // implies 12, which resolves and prices correctly (that is B717's path, not this one).
+            qty: 10,
+            unitPrice: 11,
+            boxes: 3,
+            pieces: 2,
+          },
+        ],
+      }),
+    ).rejects.toThrow(/Flat widget/);
+    expect(prisma.invoice.update).not.toHaveBeenCalled(); // nothing written
+  });
+
+  it("(l) SA-077(2): a pack of exactly 1 is not a pack, so the split is refused too (cf. B664)", async () => {
+    prisma.invoice.findUnique.mockResolvedValue(draftInvoice);
+    prisma.invoiceItem.findMany.mockResolvedValue([]);
+    prisma.product.findMany.mockResolvedValue([{ id: "prod-flat", unitsPerBox: 1 }]);
+    prisma.customer.findUnique.mockResolvedValue({ isTaxExempt: false });
+    prisma.invoice.update.mockResolvedValue(draftInvoice);
+
+    await expect(
+      service.update("inv-box", {
+        items: [
+          {
+            productId: "prod-flat",
+            description: "Flat widget",
+            qty: 6,
+            unitPrice: 11,
+            boxes: 6,
+            pieces: 0,
+          },
+        ],
+      }),
+    ).rejects.toThrow(/no pack/);
+  });
+
   it("(d) a brand-new split line on a pack-24 product snapshots 24 (the payload's own implied pack)", async () => {
     prisma.invoice.findUnique.mockResolvedValue(draftInvoice);
     prisma.product.findMany.mockResolvedValue([{ id: "prod-new", unitsPerBox: 24 }]);

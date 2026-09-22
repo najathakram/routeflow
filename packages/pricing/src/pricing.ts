@@ -178,6 +178,35 @@ export class AmbiguousLineError extends Error {
  * should have rolled over via `normalizeBoxesPieces`); a non-integer `boxes`/`pieces`/boxed-`qty`;
  * or `boxes`/`pieces` given and their `boxes*unitsPerBox+pieces` disagrees with `qty`.
  */
+/**
+ * SA-077(2): a boxes/pieces split was given while NO pack resolves (`unitsPerBox` absent, 0 or 1).
+ * Returns the reason, or null when the shape is fine.
+ *
+ * There is no denominator, so the split cannot be priced. Every consumer used to drop it silently
+ * and charge `unitPrice * qty` — and on a line whose `unitPrice` is a CASE price that is the box
+ * price charged per piece, the B717 family's defect. `buildLine` has refused this at its own choke
+ * point since G1 (`./build-line.ts`), but `lineAmbiguity` did not, because every one of its box
+ * checks is gated on `unitsPerBox > 1`. Exported so the ONE definition serves both the guard and
+ * the API's 4xx, rather than being restated in a second place.
+ *
+ * Deliberately narrow: a split that contradicts itself on a line that DOES have a pack is NOT this
+ * shape. That one prices from the split at the resolved pack (B717) and must not be refused.
+ */
+export function splitWithoutPack(input: {
+  boxes?: number | null;
+  pieces?: number | null;
+  unitsPerBox?: number | null;
+}): string | null {
+  if (input.boxes == null && input.pieces == null) return null;
+  const upb = Number(input.unitsPerBox ?? 0);
+  if (upb > 1) return null;
+  return (
+    `boxes/pieces given (boxes:${input.boxes ?? 0}, pieces:${input.pieces ?? 0}) but no pack ` +
+    `resolves (unitsPerBox:${input.unitsPerBox ?? "none"}) — the split has no denominator, so it ` +
+    `cannot be priced and would be silently dropped`
+  );
+}
+
 export function lineAmbiguity(input: {
   qty: number;
   boxes?: number | null;
@@ -185,6 +214,24 @@ export function lineAmbiguity(input: {
   unitsPerBox?: number | null;
 }): string | null {
   const { qty, boxes, pieces, unitsPerBox } = input;
+  // FIRST (SA-077e). Be precise about what that ordering does and does not buy, because a future
+  // reader reordering these checks needs to know whether it is load-bearing for CORRECTNESS.
+  //
+  // It is NOT. A VALID split is never at risk of wrongful refusal whatever the order: it has a
+  // pack above 1, and `splitWithoutPack` only fires at a pack of 1 or less. Those preconditions
+  // are mutually exclusive.
+  //
+  // What the ordering decides is the MESSAGE on an input that trips two checks at once, and there
+  // is exactly one such input. The boxes/pieces integer loop below is the only check here that is
+  // NOT gated on `hasBoxPackaging`, so a split with no pack AND a non-integer box or piece count
+  // fires both. First position makes that report "no pack resolves" rather than "boxes must be an
+  // integer" — a precedence choice, not a safety one. Every other check requires unitsPerBox > 1
+  // and therefore cannot co-fire at all.
+  //
+  // The hole this closes is separate from the ordering: before it, a split with no pack passed
+  // every check below, all of which are pack-gated, and was reported as unambiguous.
+  const noPack = splitWithoutPack({ boxes, pieces, unitsPerBox });
+  if (noPack != null) return noPack;
   const upb = Number(unitsPerBox ?? 0);
   const hasBoxPackaging = upb > 1;
   const boxesGiven = boxes != null;
