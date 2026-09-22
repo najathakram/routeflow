@@ -1,12 +1,18 @@
-import { Injectable } from "@nestjs/common";
+import { Injectable, Logger } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
-import { roundMoney } from "@routeflow/pricing";
+import { roundMoney, regulatedUnitBasis } from "@routeflow/pricing";
 import { periodBucketOf } from "./period";
 
 /** Round a quantity to 3 decimals (matches the Decimal(12,3) ledger columns). */
 const round3 = (n: number) => Math.round(n * 1000) / 1000;
 
-/** One regulated invoice line, as seen at invoice-creation time. */
+/**
+ * One regulated invoice line, as seen at invoice-creation time. B661: the caller passes the
+ * line's own STORED SHAPE (never a pre-computed unit basis — see `writeSaleEntries`, which is
+ * the ONLY place `unitBasisQty` is derived, via `regulatedUnitBasis`). `qty` stays the line's own
+ * qty — it becomes the ledger row's `qty`, which reconciles to the invoice line — and is no
+ * longer read as an input to the row's `unitBasisQty`.
+ */
 export interface SaleLedgerLine {
   invoiceItemId: string;
   orderItemId: string | null;
@@ -15,6 +21,13 @@ export interface SaleLedgerLine {
   // SALE row for the filing breakdown; never affects the regulated filter or any math.
   trackedSubcategoryId?: string | null;
   qty: number;
+  boxes?: number | null;
+  pieces?: number | null;
+  unitsPerBox?: number | null;
+  unitLabel?: string | null;
+  /** The product's `unitsPerBox` AS SNAPSHOT at this write — never a later re-read. See
+   * `regulatedUnitBasis`'s box-unaware fallback (branch 4). */
+  packAtSale?: number | null;
   netSales: number; // the line's post-discount subtotal
   categoryTax: number; // computed category tax (0 today — tobacco is rate=0)
 }
@@ -42,6 +55,8 @@ export interface SaleLedgerLine {
  */
 @Injectable()
 export class RegulatedLedgerService {
+  private readonly logger = new Logger(RegulatedLedgerService.name);
+
   constructor(private readonly prisma: PrismaService) {}
 
   /**
@@ -64,24 +79,33 @@ export class RegulatedLedgerService {
     const bucket = periodBucketOf(soldAt);
     const rows = lines
       .filter((l) => l.trackedCategoryId)
-      .map((l) => ({
-        tenantId,
-        trackedCategoryId: l.trackedCategoryId as string,
-        // RF-3: reporting breakdown passthrough (null = section-only). Never gates.
-        trackedSubcategoryId: l.trackedSubcategoryId ?? null,
-        entryType: "SALE" as const,
-        orderId,
-        orderItemId: l.orderItemId,
-        invoiceId,
-        invoiceItemId: l.invoiceItemId,
-        qty: l.qty,
-        // W5: no unitBasis conversion yet (W3 owns pack/carton math) — passthrough.
-        unitBasisQty: l.qty,
-        netSales: roundMoney(l.netSales),
-        categoryTax: roundMoney(l.categoryTax),
-        soldAt,
-        periodBucket: bucket,
-      }));
+      .map((l) => {
+        // B661: the ONE place a SALE row's unitBasisQty is derived — from the line's own
+        // stored shape and its write-time pack snapshot, never a caller-supplied number.
+        const { unitBasisQty, warn } = regulatedUnitBasis(l, l.packAtSale);
+        if (warn) {
+          this.logger.warn(
+            `writeSaleEntries: invoiceItemId ${l.invoiceItemId} (orderItemId ${l.orderItemId}) — ${warn}`,
+          );
+        }
+        return {
+          tenantId,
+          trackedCategoryId: l.trackedCategoryId as string,
+          // RF-3: reporting breakdown passthrough (null = section-only). Never gates.
+          trackedSubcategoryId: l.trackedSubcategoryId ?? null,
+          entryType: "SALE" as const,
+          orderId,
+          orderItemId: l.orderItemId,
+          invoiceId,
+          invoiceItemId: l.invoiceItemId,
+          qty: l.qty,
+          unitBasisQty,
+          netSales: roundMoney(l.netSales),
+          categoryTax: roundMoney(l.categoryTax),
+          soldAt,
+          periodBucket: bucket,
+        };
+      });
     if (rows.length === 0) return;
     await db.regulatedSalesLedger.createMany({ data: rows });
   }

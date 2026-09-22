@@ -99,3 +99,90 @@ describe("no second legacyLinePieces reimplementation in apps/api/src", () => {
     expect(offenders).toEqual([]);
   });
 });
+
+/**
+ * B661 widening: the SECOND anti-pattern this design retires — a box-unaware qty multiplied by a
+ * pack size (`qty * unitsPerBox`, `qty * upb`, `Number(x.unitsPerBox)`, the `split ? ... : qty *
+ * upb : qty` ternary) OUTSIDE `regulatedUnitBasis` (`@routeflow/pricing`), the ONE place this
+ * design still allows it — inside `writeSaleEntries`, at write time, against a snapshot pack.
+ * ANY new match fails the build. An ALLOWLIST below names every site that already did this before
+ * B661 (Senior Architect ruling 2026-09-21: converting them is its own follow-up PR — 4 of the 6
+ * feed the LINE's own categoryTaxAmount snapshot, not the ledger, a different blast radius). Each
+ * allowlisted file carries a `B661-sweep` comment tag at every site (for a human to find) AND an
+ * exact match-COUNT pin below (the actual enforcement) — so the allowlist can only ever SHRINK: a
+ * stale count (converted a site but forgot to lower its number here) fails exactly like a NEW,
+ * unlisted match would.
+ */
+describe("no second box-unaware qty*pack multiplication in apps/api/src (B661)", () => {
+  const QTY_SIDE = String.raw`(?:Number\()?[\w.]*\bqty\b\)?`;
+  const PACK_SIDE = String.raw`(?:Number\()?[\w.]*(?:unitsPerBox\w*|upb\w*|\bpack\b)\)?`;
+  const MULTIPLY = new RegExp(
+    `(?:${QTY_SIDE}\\s*\\*\\s*${PACK_SIDE}|${PACK_SIDE}\\s*\\*\\s*${QTY_SIDE})`,
+    "g",
+  );
+
+  function multiplyMatchCount(strippedText: string): number {
+    const re = new RegExp(MULTIPLY.source, "g");
+    return (strippedText.match(re) ?? []).length;
+  }
+
+  // B661 sweep, follow-up (owner: coordinator-filed bug id — see the PR body). Converting these
+  // to regulatedUnitBasis is its OWN PR: orders.service.ts's three sites also drive each line's
+  // OWN categoryTaxAmount snapshot (not just a ledger read), a different, wider blast radius than
+  // this PR's ledger-only conversion.
+  const ALLOWLIST: { file: string; count: number }[] = [
+    { file: "orders/line-piece-qty.ts", count: 1 }, // linePieceQty
+    { file: "orders/orders.service.ts", count: 4 }, // create() ×1, updateOrderItems() ×3
+    { file: "invoices/invoices.service.ts", count: 2 }, // update() ×1, applyPriceAdjustment() ×1
+    { file: "invoices/manual-invoice-lines.ts", count: 1 }, // buildManualInvoiceLines()
+    { file: "order-templates/order-templates.service.ts", count: 1 }, // createOrderFromTemplate()
+    { file: "returns/inline-returns-quote.service.ts", count: 1 }, // fetchMatchingSet()
+    { file: "returns/inline-returns-pricing.ts", count: 1 }, // returnRequestPieces() — found by
+    // running this very scan before the tag/count were added (2026-09-21); not in the original
+    // manual audit.
+  ];
+
+  it("the scanner can actually see the multiply fingerprint (a regex matching nothing would pass vacuously)", () => {
+    expect(multiplyMatchCount("qty * upb")).toBe(1);
+    expect(multiplyMatchCount("item.qty * upb")).toBe(1);
+    expect(multiplyMatchCount("upb > 1 ? qty * upb : qty")).toBe(1);
+    expect(multiplyMatchCount("split ? split.qty : upb > 1 ? item.qty * upb : item.qty")).toBe(1);
+    expect(multiplyMatchCount("qty * unitsPerBoxNum")).toBe(1);
+    expect(multiplyMatchCount("Number(li.qty) * Number(product.unitsPerBox)")).toBe(1);
+    expect(multiplyMatchCount("upbForPieces * qty")).toBe(1); // reversed operand order
+    // NOT the dangerous pattern: "qtyPieces" is a whole different identifier, not `.qty`/`qty`.
+    expect(multiplyMatchCount("const qtyPieces = boxes != null ? qty : upb")).toBe(0);
+    // NOT the dangerous pattern: "package"/"packAtSale" are not the bare word "pack".
+    expect(multiplyMatchCount("qty * packageWeight")).toBe(0);
+    expect(multiplyMatchCount("qty * packAtSale")).toBe(0); // B661's OWN allowed write-time path
+  });
+
+  it("strips comments before scanning — a doc example referencing the shape doesn't self-trip", () => {
+    expect(multiplyMatchCount(strip("// qty * upb"))).toBe(0);
+    expect(multiplyMatchCount(strip("/* qty * upb */"))).toBe(0);
+  });
+
+  it("every allowlisted file still carries at least one B661-sweep tag comment (catches a site moving without its tag)", () => {
+    for (const { file } of ALLOWLIST) {
+      const text = fs.readFileSync(path.join(SRC_ROOT, file), "utf8");
+      expect(text.includes("B661-sweep")).toBe(true);
+    }
+  });
+
+  it("every allowlisted file's match count is EXACTLY what's pinned — never higher (a new site), never lower (a stale, shrunk entry)", () => {
+    for (const { file, count } of ALLOWLIST) {
+      const text = strip(fs.readFileSync(path.join(SRC_ROOT, file), "utf8"));
+      expect({ file, count: multiplyMatchCount(text) }).toEqual({ file, count });
+    }
+  });
+
+  it("no file OUTSIDE the allowlist has this multiplication — a new site fails the build, not just a changed one", () => {
+    const allowedFiles = new Set(ALLOWLIST.map((a) => a.file));
+    const offenders = FILES.filter((f) => {
+      const rel = path.relative(SRC_ROOT, f).replace(/\\/g, "/");
+      if (allowedFiles.has(rel)) return false;
+      return multiplyMatchCount(strip(fs.readFileSync(f, "utf8"))) > 0;
+    }).map((f) => path.relative(SRC_ROOT, f).replace(/\\/g, "/"));
+    expect(offenders).toEqual([]);
+  });
+});

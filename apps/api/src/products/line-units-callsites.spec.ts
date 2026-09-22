@@ -44,6 +44,9 @@ const NON_WRITERS = new Set([
   "products/line-units.ts",
   "orders/unit-line-build.ts", // copies unit/unitsPerBox into the ladder base; never derives a factor
   "regulated/tx-report.ts",
+  // B661: packAtSaleByProduct's `p.unitsPerBox` read is a write-time SNAPSHOT for the ledger's
+  // regulatedUnitBasis, not a line-factor decision — never re-read later to reclassify an old row.
+  "invoices/pack-at-sale.ts",
 ]);
 
 const strip = (s: string) => s.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:])\/\/.*$/gm, "$1");

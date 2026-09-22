@@ -130,6 +130,117 @@ describe("RegulatedLedgerService", () => {
     });
   });
 
+  // ─── B661/B671: the ledger derives unitBasisQty from the line's OWN shape ───
+  //
+  // writeSaleEntries is the ONLY place unitBasisQty is computed (regulatedUnitBasis, from
+  // @routeflow/pricing) — no caller passes one. See that function's own spec
+  // (packages/pricing/src/regulated-unit-basis.spec.ts) for the branch-by-branch unit tests;
+  // these prove the LEDGER wires it correctly end to end, off the row it actually writes.
+  describe("writeSaleEntries — B661 unit basis", () => {
+    const line = (over: Record<string, unknown> = {}) => ({
+      invoiceItemId: "ii-1",
+      orderItemId: "oi-1",
+      trackedCategoryId: "cat-tob",
+      qty: 5,
+      netSales: 50,
+      categoryTax: 10,
+      ...over,
+    });
+    const written = () => prisma.regulatedSalesLedger.createMany.mock.calls[0][0].data;
+
+    it("(1) a 5 boxes × 12 split line books 60, not 300 — qty already stores pieces (OrderItem invariant), boxes/pieces are the entry-snapshot only", async () => {
+      await service.writeSaleEntries({
+        tenantId: "t1",
+        orderId: "ord-1",
+        invoiceId: "inv-1",
+        soldAt: new Date("2026-09-01"),
+        lines: [line({ qty: 60, boxes: 5, pieces: 0, unitsPerBox: 12, packAtSale: 12 })],
+        db: prisma,
+      });
+      expect(written()[0]).toMatchObject({ qty: 60, unitBasisQty: 60 });
+    });
+
+    it("(2) a Case line with unitLabel and qty 60 books 60, never 720", async () => {
+      await service.writeSaleEntries({
+        tenantId: "t1",
+        orderId: "ord-1",
+        invoiceId: "inv-1",
+        soldAt: new Date("2026-09-01"),
+        lines: [line({ qty: 60, unitLabel: "Case", packAtSale: 12 })],
+        db: prisma,
+      });
+      expect(written()[0]).toMatchObject({ qty: 60, unitBasisQty: 60 });
+    });
+
+    it("(3) a box-unaware line of 5 with packAtSale 12 books 60, logs the warn reason, ledger qty stays 5", async () => {
+      const warnSpy = jest.spyOn((service as any).logger, "warn").mockImplementation(() => {});
+      await service.writeSaleEntries({
+        tenantId: "t1",
+        orderId: "ord-1",
+        invoiceId: "inv-1",
+        soldAt: new Date("2026-09-01"),
+        lines: [line({ qty: 5, boxes: null, pieces: null, packAtSale: 12 })],
+        db: prisma,
+      });
+      expect(written()[0]).toMatchObject({ qty: 5, unitBasisQty: 60 });
+      expect(warnSpy).toHaveBeenCalledTimes(1);
+      expect(warnSpy.mock.calls[0][0]).toMatch(/B644/);
+      warnSpy.mockRestore();
+    });
+
+    it("(4) a non-boxed line of 7 books 7 (no packAtSale, no split)", async () => {
+      await service.writeSaleEntries({
+        tenantId: "t1",
+        orderId: "ord-1",
+        invoiceId: "inv-1",
+        soldAt: new Date("2026-09-01"),
+        lines: [line({ qty: 7, boxes: null, pieces: null, packAtSale: null })],
+        db: prisma,
+      });
+      expect(written()[0]).toMatchObject({ qty: 7, unitBasisQty: 7 });
+    });
+
+    // (7) a caller cannot pass a precomputed unitBasisQty — pinned in
+    // `sale-ledger-line.type-pin.ts`, NOT here: `apps/api/tsconfig.json` excludes every
+    // `*.spec.ts` from `check-types`, so a `@ts-expect-error` written inside THIS file is never
+    // actually type-checked and silently pins nothing. This smoke test only proves the pin file
+    // itself still imports and evaluates cleanly at jest's (transpile-only) runtime; the real
+    // enforcement is `check-types` failing on that file if the excess property stops erroring.
+    it("(7) the SaleLedgerLine caller-shape pin exists and its non-error half still holds", () => {
+      const line: import("./regulated-ledger.service").SaleLedgerLine = {
+        invoiceItemId: "ii-1",
+        orderItemId: null,
+        trackedCategoryId: "cat",
+        qty: 5,
+        netSales: 50,
+        categoryTax: 0,
+      };
+      expect(line.qty).toBe(5);
+      expect(require("fs").existsSync(`${__dirname}/sale-ledger-line.type-pin.ts`)).toBe(true);
+    });
+
+    it("(8) the reversal of a box-unaware line nets its SALE row's unitBasisQty to exactly zero", async () => {
+      const warnSpy = jest.spyOn((service as any).logger, "warn").mockImplementation(() => {});
+      await service.writeSaleEntries({
+        tenantId: "t1",
+        orderId: "ord-1",
+        invoiceId: "inv-1",
+        soldAt: new Date("2026-09-01"),
+        lines: [line({ qty: 5, boxes: null, pieces: null, packAtSale: 12, netSales: 50 })],
+        db: prisma,
+      });
+      const sale = written()[0];
+      expect(sale.unitBasisQty).toBe(60); // the SALE row the reversal will act on
+      warnSpy.mockRestore();
+      prisma.regulatedSalesLedger.createMany.mockClear();
+      prisma.regulatedSalesLedger.findMany.mockResolvedValueOnce([{ ...sale, entryType: "SALE" }]);
+      await service.reverseInvoiceEntries({ invoiceId: "inv-1", db: prisma });
+      const reversal = written()[0];
+      expect(reversal).toMatchObject({ entryType: "REVERSAL", unitBasisQty: -60 });
+      expect(sale.unitBasisQty + reversal.unitBasisQty).toBe(0); // net exactly zero
+    });
+  });
+
   describe("reverseInvoiceEntries (net-aware)", () => {
     // Ledger-row factories (the shape findMany returns).
     const sale = (over: any = {}) => ({
