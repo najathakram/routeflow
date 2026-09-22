@@ -1054,6 +1054,7 @@ export class InventoryService {
         qtyOrdered: Prisma.Decimal;
         unitCost: Prisma.Decimal;
         /**
+         * INTERNAL CALLERS ONLY, never a DTO field (a client must never name a stored total).
          * The bill line's EXACT total (invoice denomination): a bill entered per case must not be re-derived as
          * pieces x the 4 dp per-piece cost (the same drift as a case-entered PO). Falls back to the product.
          */
@@ -1739,6 +1740,10 @@ export class InventoryService {
       // stores its pack; a per-piece line keeps qtyOrdered/unitCost (and whatever packSize it sent, as before).
       const items = dto.items!.map((l) => {
         const amounts = poLineFromInput(l);
+        // A case line's `cases` may be 0 (@Min(0)) with no loose pieces, so the DTO's per-piece @Min(0.001) no
+        // longer covers it: the same positive-quantity gate createPurchaseOrder has.
+        if (!(amounts.qtyOrdered > 0))
+          throw new BadRequestException("Item quantity must be positive");
         return {
           id: l.id,
           productId: l.productId,

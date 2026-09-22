@@ -176,6 +176,44 @@ describe("purchase order line money: exact totals from the entered case cost", (
       expect(nested().totalAmount).toBe(11000);
     });
 
+    it("MUST-FIX: a PATCH case line with cases 0 and no loose pieces is a 400 (the DTO allows cases 0, the service is the gate)", async () => {
+      arm("DRAFT");
+      for (const bad of [
+        { packSize: 12, caseCost: 11, cases: 0 },
+        { packSize: 12, caseCost: 11, cases: 0, loosePieces: 0 },
+      ]) {
+        await expect(
+          service.updatePurchaseOrder(
+            "po-1",
+            { items: [{ id: "poi-1", productId: "prod-1", ...bad }] } as any,
+            "u1",
+          ),
+        ).rejects.toThrow("Item quantity must be positive");
+      }
+      expect(prisma.purchaseOrder.update).not.toHaveBeenCalled();
+    });
+
+    it("loose pieces alone are a valid case-line quantity (cases 0, 6 pieces of 12 at $11 = $5.50)", async () => {
+      arm("DRAFT");
+      await service.updatePurchaseOrder(
+        "po-1",
+        {
+          items: [
+            {
+              id: "poi-1",
+              productId: "prod-1",
+              packSize: 12,
+              caseCost: 11,
+              cases: 0,
+              loosePieces: 6,
+            },
+          ],
+        } as any,
+        "u1",
+      );
+      expect(nested().items.update[0].data).toMatchObject({ qtyOrdered: 6, totalCost: 5.5 });
+    });
+
     it("a NEW case line on an edit gets the same exact total and stores its pack", async () => {
       arm("DRAFT");
       await service.updatePurchaseOrder(
