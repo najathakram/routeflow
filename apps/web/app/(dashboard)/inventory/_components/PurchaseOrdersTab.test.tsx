@@ -17,6 +17,7 @@ import {
   emptyPOLine,
   resolvePOLine,
   resolvePOLineAmounts,
+  resolveStoredPOLineAmounts,
   toCreateItem,
   type PurchaseOrder,
 } from "./purchase-orders-shared";
@@ -152,6 +153,55 @@ describe("resolvePOLineAmounts / toCreateItem (exact case cost)", () => {
   });
 });
 
+// A STORED line (POItem) carries the per-piece cost at 4 dp AND the exact document total the server wrote.
+// Display must read the total, never re-multiply pieces x the rounded per-piece cost (#1199 / B677).
+describe("resolveStoredPOLineAmounts (stored line, exact total)", () => {
+  const stored1000 = { qtyOrdered: "12000", unitCost: "0.9167", totalCost: "11000.00" };
+
+  it("1,000 cases of 12 stored at $11,000.00 display $11,000.00, not the $11,000.40 of qty x unitCost", () => {
+    const a = resolveStoredPOLineAmounts(stored1000, 12);
+    expect(a.totalCost).toBe(11000);
+    expect(a.qtyOrdered).toBe(12000);
+    expect(a.cases).toBe(1000);
+    expect(a.caseCost).toBe(11);
+    expect(Number(stored1000.qtyOrdered) * Number(stored1000.unitCost)).toBeCloseTo(11000.4, 6);
+  });
+
+  it("the stored total wins even where the 4 dp case cost could not rebuild it", () => {
+    // 3,000 cases at $1,000.01: a case cost read back at 4 dp (0.3333) rebuilds to $999.90
+    expect(
+      resolveStoredPOLineAmounts(
+        { qtyOrdered: "36000", unitCost: "0.0278", totalCost: "1000.01" },
+        12,
+      ).totalCost,
+    ).toBe(1000.01);
+  });
+
+  it("a row with no stored total is rebuilt from the per-piece cost, honestly drifted", () => {
+    const a = resolveStoredPOLineAmounts({ qtyOrdered: "12000", unitCost: "0.9167" }, 12);
+    expect(a.totalCost).toBe(11000.4);
+    expect(a.caseCost).toBe(11.0004);
+  });
+
+  it("a per-piece line is roundMoney(qty x unitCost), and the stored total still wins", () => {
+    expect(resolveStoredPOLineAmounts({ qtyOrdered: "3", unitCost: "0.3333" }, 0).totalCost).toBe(
+      1,
+    );
+    expect(
+      resolveStoredPOLineAmounts({ qtyOrdered: "3", unitCost: "0.3333", totalCost: "1.00" }, 0)
+        .totalCost,
+    ).toBe(1);
+  });
+
+  it("an unusable row never throws: the stored total, else zero", () => {
+    expect(
+      resolveStoredPOLineAmounts({ qtyOrdered: "abc", unitCost: "x", totalCost: "12.34" }, 12)
+        .totalCost,
+    ).toBe(12.34);
+    expect(resolveStoredPOLineAmounts({ qtyOrdered: "abc", unitCost: "x" }, 12).totalCost).toBe(0);
+  });
+});
+
 describe("PurchaseOrdersTab", () => {
   it("shows the empty state", () => {
     render(<PurchaseOrdersTab suppliers={[supplier]} products={products} />);
@@ -246,6 +296,34 @@ describe("PurchaseOrdersTab", () => {
     fireEvent.click(screen.getByRole("button", { name: /Close/ }));
     expect(closeMutate).toHaveBeenCalledWith("b", expect.any(Object));
     expect(sendMutate).not.toHaveBeenCalled();
+  });
+
+  it("the detail subtotal of a boxed line is the stored exact total, not qty x per-piece cost (#1199)", () => {
+    listData = { data: [po({ id: "c", poNumber: "PO-C", status: "SENT", total: 11000 })] };
+    detailById.c = po({
+      id: "c",
+      status: "SENT",
+      total: 11000,
+      items: [
+        {
+          id: "i1",
+          productId: "p2",
+          product: { id: "p2", name: "Boxed Gadget", unit: "ea" },
+          qtyOrdered: "12000",
+          qtyReceived: "0",
+          unitCost: "0.9167",
+          totalCost: "11000.00",
+          packSize: 12,
+        },
+      ],
+    });
+    render(<PurchaseOrdersTab suppliers={[supplier]} products={products} />);
+    fireEvent.click(screen.getByTitle("View details"));
+    expect(screen.getByText(unitsLabel(12000, 12))).toBeInTheDocument();
+    expect(screen.getByText("$0.9167")).toBeInTheDocument();
+    // the line subtotal and the row total agree on the exact document figure
+    expect(screen.getAllByText(formatMoney(11000)).length).toBeGreaterThanOrEqual(2);
+    expect(screen.queryByText(formatMoney(11000.4))).not.toBeInTheDocument();
   });
 });
 

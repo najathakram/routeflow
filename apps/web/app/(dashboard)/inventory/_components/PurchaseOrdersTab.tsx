@@ -12,7 +12,13 @@ import {
   useSendPurchaseOrder,
   useClosePurchaseOrder,
 } from "@/lib/api/inventory";
-import type { POItem, POStatus, PurchaseOrder, Supplier } from "./purchase-orders-shared";
+import {
+  resolveStoredPOLineAmounts,
+  type POItem,
+  type POStatus,
+  type PurchaseOrder,
+  type Supplier,
+} from "./purchase-orders-shared";
 import { CreatePOModal } from "./PurchaseOrdersCreateModal";
 import { ReceivePOModal } from "./PurchaseOrdersReceiveModal";
 import { PurchaseOrdersEditModal } from "./PurchaseOrdersEditModal";
@@ -85,6 +91,9 @@ function PODetailRow({
                   const isBoxed = upb > 1;
                   const ordered = Number(item.qtyOrdered ?? 0);
                   const received = Number(item.qtyReceived ?? 0);
+                  // MONEY: the stored exact total through the shared resolver — never `qtyOrdered x unitCost`,
+                  // which re-multiplies a boxed line's rounded per-piece cost (#1199: $11,000.40 for $11,000.00).
+                  const subtotal = resolveStoredPOLineAmounts(item, upb).totalCost;
                   return (
                     <tr key={item.id}>
                       <td className="px-3 py-2 font-medium text-navy">
@@ -108,9 +117,7 @@ function PODetailRow({
                           <span className="text-navy/30">—</span>
                         )}
                       </td>
-                      <td className="px-3 py-2 text-right text-navy/70">
-                        {formatMoney(ordered * Number(item.unitCost ?? 0))}
-                      </td>
+                      <td className="px-3 py-2 text-right text-navy/70">{formatMoney(subtotal)}</td>
                     </tr>
                   );
                 })}
