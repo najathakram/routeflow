@@ -1,4 +1,4 @@
-import { computeLineSubtotal, formatQtySplit } from "@routeflow/pricing";
+import { computeLineSubtotal, formatQtySplit, normalizeBoxesPieces } from "@routeflow/pricing";
 import { freeUnitsLabel } from "./buyer-cart-logic";
 
 /**
@@ -148,16 +148,6 @@ export interface OrderLineCardModel {
   spoken: string;
 }
 
-/** A piece count as whole boxes + loose pieces (delivery progress on a boxed line). */
-function splitIntoBoxes(
-  n: number,
-  unitsPerBox: number,
-): { qty: number; boxes: number; pieces: number } {
-  const whole = Math.max(0, Math.trunc(n));
-  const boxes = Math.floor(whole / unitsPerBox);
-  return { qty: n, boxes, pieces: whole - boxes * unitsPerBox };
-}
-
 /**
  * The screen-reader sentence for one card: name, quantity · price, price tag, free units, delivery
  * progress, then EITHER the total OR "Cancelled, no charge" — the status pill is spoken only when it
@@ -264,7 +254,7 @@ export function orderLineCardModel(li: LineInput, orderStatus: string): OrderLin
   // so progress must read in the same units ("0 of 2 boxes + 3 pcs", never "0 of 51") — B597.
   const qtyText = (n: number) =>
     boxed
-      ? formatQtySplit({ ...splitIntoBoxes(n, upb as number), boxLabel })
+      ? formatQtySplit({ ...normalizeBoxesPieces({ qty: n, unitsPerBox: upb }), boxLabel })
       : formatQtySplit({ qty: n });
   const delivered = li.deliveredQty == null ? null : Number(li.deliveredQty);
   const deliveryText =
