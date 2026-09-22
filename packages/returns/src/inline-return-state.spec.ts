@@ -107,9 +107,13 @@ describe("buildQuoteRequest — never a bare qty", () => {
     expect(req.items.map((i) => i.productId)).toEqual(["prod-1"]);
   });
 
-  it("omits routeRunStopId for an office (non-driver) caller", () => {
-    const req = buildQuoteRequest("cust-1", [line({ pieces: "1" })]);
-    expect(req).not.toHaveProperty("routeRunStopId");
+  it("includes routeRunStopId only when supplied (driver captures)", () => {
+    expect(buildQuoteRequest("cust-1", [line({ pieces: "1" })])).not.toHaveProperty(
+      "routeRunStopId",
+    );
+    expect(buildQuoteRequest("cust-1", [line({ pieces: "1" })], "stop-1").routeRunStopId).toBe(
+      "stop-1",
+    );
   });
 });
 
@@ -305,6 +309,18 @@ describe("buildCaptureRequest — quantities only, never a price the quote displ
     });
     expect(req.items[0].reason).toBe("QUALITY_ISSUE");
     expect(req.reason).toBe("DAMAGED");
+  });
+
+  it("includes routeRunStopId only for a driver capture", () => {
+    const req = buildCaptureRequest({
+      customerId: "cust-1",
+      orderId: "order-1",
+      lines: [line({ pieces: "1" })],
+      returnKey: "key-1",
+      reason: "DAMAGED",
+      routeRunStopId: "stop-1",
+    });
+    expect(req.routeRunStopId).toBe("stop-1");
   });
 
   it("drops a line with no qty entered", () => {
