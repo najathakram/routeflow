@@ -2,6 +2,7 @@ import { usePodStore } from "../store/podStore";
 import { useRunSettlementStore } from "../store/runSettlementStore";
 import { useStopCartStore } from "../store/stopCartStore";
 import { useReturnSubmissionStore } from "../store/returnSubmissionStore";
+import { useInlineReturnSubmissionStore } from "../store/inlineReturnSubmissionStore";
 
 interface MaybePersisted {
   persist?: { rehydrate?: () => void | Promise<void> };
@@ -19,8 +20,9 @@ async function rehydrateOne(store: unknown): Promise<void> {
  * D3 (cause-ruling.md §3 / REG-B136) — rehydrate the user-scoped persisted
  * stores now that the signed-in user is known.
  *
- * `store/podStore.ts`, `store/runSettlementStore.ts`, `store/stopCartStore.ts`
- * and `store/returnSubmissionStore.ts` (driver-durability lane) key their
+ * `store/podStore.ts`, `store/runSettlementStore.ts`, `store/stopCartStore.ts`,
+ * `store/returnSubmissionStore.ts` (driver-durability lane) and
+ * `store/inlineReturnSubmissionStore.ts` (Returns Inside Order Creation, PR 3) key their
  * storage by user id (`lib/user-scoped-storage.ts`), which cannot be resolved
  * at module evaluation time — zustand's `persist` otherwise hydrates
  * synchronously at store creation, i.e. from the `anon` bucket, so a capture
@@ -38,4 +40,5 @@ export async function rehydrateUserScopedStores(): Promise<void> {
   await rehydrateOne(useRunSettlementStore);
   await rehydrateOne(useStopCartStore);
   await rehydrateOne(useReturnSubmissionStore);
+  await rehydrateOne(useInlineReturnSubmissionStore);
 }
