@@ -186,13 +186,13 @@ export function LineItemRow({
             <span className="text-[10px] text-navy/70">/ {li.unit}</span>
           </div>
           {(li.noteOpen || li.note?.trim()) && (
-            <input
-              type="text"
-              maxLength={500}
+            <textarea
+              rows={2}
+              maxLength={2000}
               value={li.note ?? ""}
               onChange={(e) => onSetNote(e.target.value)}
               placeholder="Flavor or note for this item (prints on invoice)"
-              className="mt-1 w-full rounded border border-surface-border bg-white px-2 py-1 text-xs text-navy placeholder:text-navy/40 focus:outline-none focus:ring-1 focus:ring-brand-500"
+              className="mt-1 w-full resize-y rounded border border-surface-border bg-white px-2 py-1 text-xs text-navy placeholder:text-navy/40 focus:outline-none focus:ring-1 focus:ring-brand-500"
             />
           )}
         </div>
@@ -306,13 +306,13 @@ export function LineItemRow({
             />
           </div>
           {(li.noteOpen || li.note?.trim()) && (
-            <input
-              type="text"
-              maxLength={500}
+            <textarea
+              rows={2}
+              maxLength={2000}
               value={li.note ?? ""}
               onChange={(e) => onSetNote(e.target.value)}
               placeholder="Flavor or note for this item (prints on invoice)"
-              className="mt-1 w-full rounded border border-surface-border bg-white px-2 py-1 text-xs text-navy placeholder:text-navy/40 focus:outline-none focus:ring-1 focus:ring-brand-500"
+              className="mt-1 w-full resize-y rounded border border-surface-border bg-white px-2 py-1 text-xs text-navy placeholder:text-navy/40 focus:outline-none focus:ring-1 focus:ring-brand-500"
             />
           )}
         </div>

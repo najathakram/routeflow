@@ -20,7 +20,9 @@ const OPERATOR_INVOICE_PATH = join(
   "[id]",
   "page.tsx",
 );
-const NOTE_CLASS = "mt-0.5 text-xs font-normal italic text-navy/60";
+// Multi-line notes (B-notes-multiline): a bare "\n" collapses to a space in a plain <p>, so the
+// class picked up `whitespace-pre-line`. Updated deliberately, not fought — see the PR.
+const NOTE_CLASS = "mt-0.5 whitespace-pre-line text-xs font-normal italic text-navy/60";
 
 describe("static pin: buyer web per-line note render (R5.9 sweep)", () => {
   const buyerInvoiceSrc = readFileSync(BUYER_INVOICE_PATH, "utf8");

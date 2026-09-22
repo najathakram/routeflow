@@ -84,6 +84,7 @@ class UpdateOrderItemDto {
 
   @IsOptional()
   @IsString()
+  @MaxLength(2000)
   notes?: string;
 
   @IsOptional()

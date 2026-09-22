@@ -3441,8 +3441,8 @@ function CartRow({
           onChangeText={onChangeNote}
           placeholder="Flavor or note for this item (prints on invoice)"
           placeholderTextColor={ios.label3}
-          maxLength={500}
-          returnKeyType="done"
+          maxLength={2000}
+          multiline
           style={styles.cartNoteInput}
         />
       ) : (
@@ -3618,8 +3618,8 @@ function UnlistedCartRow({
           onChangeText={onChangeNote}
           placeholder="Flavor or note for this item (prints on invoice)"
           placeholderTextColor={ios.label3}
-          maxLength={500}
-          returnKeyType="done"
+          maxLength={2000}
+          multiline
           style={styles.cartNoteInput}
         />
       ) : (
