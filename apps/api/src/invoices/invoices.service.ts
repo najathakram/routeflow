@@ -18,6 +18,7 @@ import {
   normalizeBoxesPieces,
   isBlockingPayment,
   remainingCapacity,
+  packFromOwnSplit,
   type CategoryTaxType,
 } from "@routeflow/pricing";
 import { redactUpsellForCustomer } from "../common/upsell-redaction";
@@ -3383,21 +3384,32 @@ export class InvoicesService {
       let subtotal = 0;
       const itemsData = dto.items.map((item) => {
         const product = item.productId ? productMap.get(item.productId) : undefined;
-        let qty = item.qty;
+        const qty = item.qty;
         let boxes: number | null = null;
         let pieces: number | null = null;
         let unitsPerBox: number | undefined;
+        // SA-068: the pack comes from the PAYLOAD's own split, never the live product — the
+        // edit page already sends boxes/pieces/qty consistent with the line's OWN snapshot (or,
+        // for a brand-new line with no snapshot, consistent with the live pack it read at page
+        // load). Re-normalizing here at TODAY's live pack is what silently re-split a stored
+        // 2-box/3-piece (snapshot 12, qty 27) line at a since-changed pack of 24 on a plain
+        // notes-only save — and that corrupted qty back-synced onto the linked order line.
+        // qty/boxes/pieces are stored AS SENT, always; only whether `unitsPerBox` gets a
+        // snapshot (derivable) or stays null (not derivable — no boxes, non-integer, or exactly
+        // 1) differs. Never overwrite qty from boxes * livePack + pieces.
         if (item.productId && (item.boxes != null || item.pieces != null)) {
-          if (product?.unitsPerBox) {
-            unitsPerBox = product.unitsPerBox;
-            const split = normalizeBoxesPieces({
-              boxes: item.boxes,
-              pieces: item.pieces,
-              unitsPerBox,
-            });
-            boxes = split.boxes;
-            pieces = split.pieces;
-            qty = split.qty;
+          boxes = item.boxes ?? null;
+          pieces = item.pieces ?? null;
+          const pack = packFromOwnSplit({ qty: item.qty, boxes: item.boxes, pieces: item.pieces });
+          if (pack != null) {
+            unitsPerBox = pack;
+            if (product?.unitsPerBox && product.unitsPerBox !== pack) {
+              this.logger.warn(
+                `update(): invoiceId ${id} productId ${item.productId} — payload's implied pack ` +
+                  `${pack} differs from the live product's ${product.unitsPerBox}; using the ` +
+                  `payload's pack.`,
+              );
+            }
           }
         }
         // BUY_N_GET_M: the line's free-unit snapshot round-trips on the payload
