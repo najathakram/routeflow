@@ -850,14 +850,12 @@ export class InvoicesService {
     li: any,
     billQty: number,
     tenantId: string | null,
-    opts?: { priorBilledQty?: number; priorUnitsPerBox?: number | null },
+    opts?: { priorBilledQty?: number; priorPack?: number | null },
   ) {
     const orderQty = Number(li.qty) || 0;
     const storedSubtotal = li.subtotal != null ? Number(li.subtotal) : null;
     const unitPrice = Number(li.unitPrice);
-    const unitsPerBox = Number(
-      opts?.priorUnitsPerBox ?? li.unitsPerBox ?? li.product?.unitsPerBox ?? 0,
-    );
+    const unitsPerBox = Number(opts?.priorPack ?? li.unitsPerBox ?? li.product?.unitsPerBox ?? 0);
     const isBoxSplit = li.boxes != null; // stored WITH a box/piece split
 
     // Box/piece split for DISPLAY only (money is the stored subtotal). Selling-unit
@@ -1437,12 +1435,11 @@ export class InvoicesService {
       }
     }
     if (!draft) return null;
-
     const priorItems = await db.invoiceItem.findMany({
       where: { invoiceId: draft.id },
       select: { orderItemId: true, unitsPerBox: true },
     });
-    const priorUnitsPerBoxByOrderItemId = priorUnitsPerBoxMap(priorItems);
+    const priorPackByLine = priorUnitsPerBoxMap(priorItems);
     const order = await db.order.findUnique({
       where: { id: orderId },
       include: {
@@ -1472,9 +1469,7 @@ export class InvoicesService {
       .filter((x: any) => x.billQty > 0.001);
 
     const itemsData = billable.map(({ li, billQty }: any) =>
-      this.buildInvoiceItemData(li, billQty, tenantId, {
-        priorUnitsPerBox: priorUnitsPerBoxByOrderItemId.get(li.id),
-      }),
+      this.buildInvoiceItemData(li, billQty, tenantId, { priorPack: priorPackByLine.get(li.id) }),
     );
     await this.applyMsrpSnapshots(db, order.customerId, itemsData);
     const subtotal = roundMoney(itemsData.reduce((s: number, it: any) => s + it.subtotal, 0));
@@ -1851,14 +1846,12 @@ export class InvoicesService {
       basis === "delivered" ? Number(li.deliveredQty ?? 0) : Number(li.qty);
 
     const perDraft = pairs.map(({ draft, lines }) => {
-      const priorUnitsPerBoxByOrderItemId = priorUnitsPerBoxMap(draft.items ?? []);
+      const priorPackByLine = priorUnitsPerBoxMap(draft.items ?? []);
       const billable = lines
         .map((li: any) => ({ li, billQty: billQtyOf(li) }))
         .filter((x: any) => x.billQty > 0.001);
       const itemsData = billable.map(({ li, billQty }: any) =>
-        this.buildInvoiceItemData(li, billQty, tenantId, {
-          priorUnitsPerBox: priorUnitsPerBoxByOrderItemId.get(li.id),
-        }),
+        this.buildInvoiceItemData(li, billQty, tenantId, { priorPack: priorPackByLine.get(li.id) }),
       );
       // B294: stamp the order's effective regular-tax rate onto every line so a
       // later applyPriceAdjustment recompute reproduces this draft's regular tax.
