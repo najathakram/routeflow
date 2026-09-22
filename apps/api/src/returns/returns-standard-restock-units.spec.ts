@@ -85,6 +85,46 @@ describe("standardRestockResolver (B665)", () => {
     expect(await resolver()(item(12))).toEqual({ pieces: 12 });
   });
 
+  it("a line billed across TWO invoice items is UNKNOWN: none of them is a 1:1 source, so it parks", async () => {
+    // relation "full" unlocks the box-count inference (qty === source.boxes). That is only sound for a
+    // single WHOLE billing; against a partial, a coincidental match is a known false positive.
+    arm([boxLine()], [invoiceWithSplit(), invoiceWithSplit({ qty: 36, boxes: 3 })]);
+    expect(await resolver()(item(3))).toMatchObject({ unknown: true });
+  });
+
+  it("the two-invoice-item answer does NOT depend on the row order the query happens to return", async () => {
+    // The COUNT decides, so both orderings give the same result. Before this, the last row won and the
+    // same data could restock differently from run to run.
+    arm([boxLine()], [invoiceWithSplit(), invoiceWithSplit({ qty: 36, boxes: 3 })]);
+    const first = await resolver()(item(3));
+    arm([boxLine()], [invoiceWithSplit({ qty: 36, boxes: 3 }), invoiceWithSplit()]);
+    const second = await resolver()(item(3));
+    expect(first).toEqual(second);
+    expect(first).toMatchObject({ unknown: true });
+  });
+
+  it("excludes VOID invoices from the pack source: a cancelled billing is not evidence of how the line sold", async () => {
+    arm([boxLine()], [invoiceWithSplit()]);
+    await resolver()(item(3));
+    expect(prisma.invoiceItem.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ invoice: { status: { not: "VOID" } } }),
+      }),
+    );
+  });
+
+  it("refuses a FRACTIONAL pack: an internally inconsistent source never books a fractional movement", async () => {
+    // qty 75 over 6 boxes is 12.5 pieces per box — the source row cannot be right, so restocking 3 boxes
+    // would book 37.5 pieces. Refuse and park instead of writing a fraction into stock.
+    arm([boxLine()], [invoiceWithSplit({ qty: 75 })]);
+    expect(await resolver()(item(3))).toMatchObject({ unknown: true });
+  });
+
+  it("a zero-qty ambiguous line is UNKNOWN, not a silent factor 1 that outvotes a real sibling line", async () => {
+    arm([boxLine({ qty: 0 })], [invoiceWithSplit()]);
+    expect(await resolver()(item(3))).toMatchObject({ unknown: true });
+  });
+
   it("a product on lines with DIFFERENT packs (one box-aware, one box-unaware) is unknown: it parks, no guess", async () => {
     arm(
       [boxLine(), boxLine({ id: "oi-2", qty: 72, boxes: 6, unitsPerBox: 12 })],
