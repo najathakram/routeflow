@@ -163,6 +163,51 @@ describe("buildManualInvoiceLines", () => {
       expect(itemsData[0]).toMatchObject({ qty: 1, boxes: null, pieces: null, subtotal: 25 });
     });
   });
+
+  describe("subtotalSnapshot: a legacy split with no pack copies its money verbatim, never recomputed (B659 review round 2, Senior Architect ruling)", () => {
+    it("boxes/pieces snapshot LITERALLY (never normalizeBoxesPieces), unitsPerBox stays null, and the subtotal is the snapshot, not qty x unitPrice", () => {
+      const { itemsData, subtotal } = build([
+        {
+          description: "Legacy no-pack",
+          productId: "boxed", // a live pack of 12 exists — must never be consulted
+          qty: 6,
+          unitPrice: 10, // 6 x 10 = 60, but the snapshot below is 45 (a folded-in discount)
+          boxes: 0,
+          pieces: 6,
+          subtotalSnapshot: 45,
+        },
+      ]);
+      expect(itemsData[0]).toMatchObject({
+        qty: 6,
+        boxes: 0,
+        pieces: 6,
+        unitsPerBox: null,
+        subtotal: 45, // copied verbatim, never recomputed to 60
+        categoryTaxAmount: 4.5, // PERCENT_OF_SALE 10% of the copied 45, never of a recomputed 60
+      });
+      expect(subtotal).toBe(45);
+    });
+
+    it("a non-boxed product (no category, no pack at all) still copies the subtotal and reports unitBasisQty as qty for the levy basis", () => {
+      const { itemsData } = build([
+        {
+          description: "Legacy no-pack, untracked",
+          productId: "loose",
+          qty: 6,
+          unitPrice: 10,
+          boxes: 0,
+          pieces: 6,
+          subtotalSnapshot: 45,
+        },
+      ]);
+      expect(itemsData[0]).toMatchObject({
+        subtotal: 45,
+        boxes: 0,
+        pieces: 6,
+        categoryTaxAmount: 0,
+      });
+    });
+  });
 });
 
 // ─── SA-077(2) ───────────────────────────────────────────────────────────────

@@ -212,17 +212,19 @@ describe("EstimatesService.convertToInvoice — regulated levy and quoted pack (
       expect(created().items.create[0]).toMatchObject({ unitsPerBox: 12, subtotal: 60 });
     });
 
-    it("(3) an unrecoverable pack refuses with a 4xx naming the line, BEFORE a number is reserved or the claim is made", async () => {
-      // pieces-only split, no stored pack: there is nothing to derive it from
+    it("(3) a GENUINE positive box count with no recoverable pack still refuses, naming the line and a remedy it can act on, BEFORE a number is reserved or the claim is made", async () => {
+      // 2 boxes + 6 pieces, no stored pack, and qty doesn't derive one either: (13 - 6) / 2 = 3.5.
+      // Unlike a 0-boxes line (Senior Architect ruling, option b — see the describe block below),
+      // there ARE real boxes here whose worth cannot be safely reinterpreted as pure pieces.
       arm({
-        items: [line(), split({ boxes: null, pieces: 6, qty: 6 })],
+        items: [line(), split({ boxes: 2, pieces: 6, qty: 13 })],
         products: [regulatedProduct({ unitsPerBox: 12 })],
       });
       await expect(service.convertToInvoice("est-1")).rejects.toThrow(BadRequestException);
-      // B659 review finding 1: there is no estimate-update path, so the message must not name an
-      // impossible remedy ("re-save the estimate") — the only remedy is a fresh estimate.
+      // B659 review round 2: the box/piece counts this line already has are exactly what's
+      // missing a pack, not what's wrong with the estimate — never "void and recreate".
       await expect(service.convertToInvoice("est-1")).rejects.toThrow(
-        "pack unknown for line 2: void this estimate and create a new one",
+        "pack unknown for line 2: enter the box and piece count on the estimate, then convert",
       );
       expect(numbering.reserveNext).not.toHaveBeenCalled();
       expect(prisma.estimate.updateMany).not.toHaveBeenCalled();
@@ -353,6 +355,66 @@ describe("EstimatesService.convertToInvoice — regulated levy and quoted pack (
         subtotal: 50,
         boxes: null,
       });
+    });
+  });
+
+  describe("a pack of 1 is not a real box split — converts, never refuses forever (B659 HIGH finding, review round 2)", () => {
+    it("qty 3 / boxes 3, pieces 0, unitsPerBox 1 — the web estimate form's shape whenever a pack is set, including 1 (estimates/page.tsx) — converts as a plain qty line", async () => {
+      arm({
+        items: [line({ qty: 3, unitPrice: 10, subtotal: 30, boxes: 3, pieces: 0, unitsPerBox: 1 })],
+        subtotal: 30,
+      });
+      await service.convertToInvoice("est-1");
+      expect(created().items.create[0]).toMatchObject({
+        qty: 3,
+        boxes: null,
+        pieces: null,
+        unitsPerBox: null,
+        subtotal: 30,
+      });
+      expect(numbering.reserveNext).toHaveBeenCalled();
+      expect(prisma.invoice.create).toHaveBeenCalled();
+    });
+  });
+
+  describe("a legacy split with NO derivable pack converts WITHOUT one — money copied verbatim, never recomputed (B659 review round 2, Senior Architect ruling option b)", () => {
+    it("(i) 0 boxes + 6 pieces at a quoted subtotal converts to a 6-piece line at that subtotal, books unitBasisQty 6, and carries no pack", async () => {
+      arm({
+        items: [
+          line({ qty: 6, unitPrice: 10, subtotal: 60, boxes: 0, pieces: 6, unitsPerBox: null }),
+        ],
+        subtotal: 60,
+        products: [regulatedProduct({ unitsPerBox: 12 })], // a boxed product — still never consulted
+        category: perUnitCategory(1), // $1/piece, so categoryTaxAmount pins the basis unambiguously
+      });
+      await service.convertToInvoice("est-1");
+      expect(created().items.create[0]).toMatchObject({
+        qty: 6,
+        boxes: 0,
+        pieces: 6,
+        unitsPerBox: null,
+        subtotal: 60,
+        categoryTaxAmount: 6, // unitBasisQty 6 x $1 — pieces, never a live-pack multiple
+      });
+    });
+
+    it("(ii) the same shape at a DISCOUNTED subtotal (qty x unitPrice would recompute to a different, wrong figure) still converts at the stored figure — the case a derivation would have failed", async () => {
+      // 6 x $10 = $60, but the agreed quote was $45 (a discount already folded in): proves the
+      // money is COPIED verbatim, never recomputed through qty x unitPrice or any box math.
+      arm({
+        items: [
+          line({ qty: 6, unitPrice: 10, subtotal: 45, boxes: null, pieces: 6, unitsPerBox: null }),
+        ],
+        subtotal: 45,
+      });
+      await service.convertToInvoice("est-1");
+      expect(created().items.create[0]).toMatchObject({
+        subtotal: 45, // never recomputed to 60
+        boxes: 0,
+        pieces: 6,
+        unitsPerBox: null,
+      });
+      expect(created().subtotal).toBe(45);
     });
   });
 });

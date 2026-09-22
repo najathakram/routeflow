@@ -23,8 +23,17 @@ import {
  * A line to build. `packSnapshot` (B659) is the box size an EXISTING line was priced with (an estimate line
  * converted to an invoice): when set it replaces the LIVE product's `unitsPerBox` for the box split, so a
  * pack change since the quote cannot re-prorate the agreed subtotal. Absent = the live pack (a NEW line).
+ *
+ * `subtotalSnapshot` (B659 review round 2, Senior Architect ruling): set ONLY by estimate conversion, for a
+ * legacy split with no derivable pack at all (boxes not positive, genuine pieces, `packSnapshot: null`) —
+ * skips `computeLineSubtotal` entirely and copies this figure verbatim as the agreed quote price, since
+ * there is no honest box math to recompute it with. boxes/pieces are snapshotted literally (never
+ * re-split via `normalizeBoxesPieces`) when this is set. A manual invoice DTO never sets this.
  */
-export type ManualLineItem = CreateInvoiceDto["items"][number] & { packSnapshot?: number | null };
+export type ManualLineItem = CreateInvoiceDto["items"][number] & {
+  packSnapshot?: number | null;
+  subtotalSnapshot?: number | null;
+};
 
 export function buildManualInvoiceLines(
   items: ManualLineItem[],
@@ -62,43 +71,60 @@ export function buildManualInvoiceLines(
     let boxes: number | null = null;
     let pieces: number | null = null;
     let unitsPerBox: number | undefined;
-    if (item.productId && (item.boxes != null || item.pieces != null)) {
-      const pack = item.packSnapshot ?? product?.unitsPerBox;
-      // B659 (review finding 7): truthy, not `> 1`, let a pack of 1 through — `normalizeBoxesPieces`
-      // itself only does box math when unitsPerBox > 1 (its own `hasBoxPackaging` gate) and otherwise
-      // falls back to an `input.qty` this caller never passes, so a pack-1 product's split silently
-      // zeroed to qty 0 / $0. Match normalizeBoxesPieces's own threshold so a pack of 1 (or 0) skips
-      // the split entirely and the line's original qty survives untouched.
-      if (Number(pack) > 1) {
-        unitsPerBox = pack;
-        // Force integer boxes/pieces and roll pieces >= unitsPerBox into boxes.
-        const split = normalizeBoxesPieces({
-          boxes: item.boxes,
-          pieces: item.pieces,
-          unitsPerBox,
-        });
-        boxes = split.boxes;
-        pieces = split.pieces;
-        qty = split.qty;
+    let freeUnits = 0;
+    let lineSub: number;
+    if (item.subtotalSnapshot != null) {
+      // B659 review round 2 (Senior Architect ruling): a legacy estimate split with no derivable
+      // pack at all — boxes/pieces snapshot LITERALLY (never normalizeBoxesPieces, which would
+      // re-split them), qty stays as given, and the money is this stored figure, copied verbatim
+      // as the agreed quote price. Never recomputed: a discount already baked into the original
+      // subtotal cannot be reconstructed from qty x unitPrice. unitsPerBox stays undefined here,
+      // so the output below is null — no pack was ever recorded for this line.
+      boxes = Number(item.boxes ?? 0);
+      pieces = Number(item.pieces ?? 0);
+      lineSub = roundMoney(Number(item.subtotalSnapshot) - (item.discount ?? 0));
+    } else {
+      if (item.productId && (item.boxes != null || item.pieces != null)) {
+        const pack = item.packSnapshot ?? product?.unitsPerBox;
+        // B659 (review finding 7): truthy, not `> 1`, let a pack of 1 through — `normalizeBoxesPieces`
+        // itself only does box math when unitsPerBox > 1 (its own `hasBoxPackaging` gate) and otherwise
+        // falls back to an `input.qty` this caller never passes, so a pack-1 product's split silently
+        // zeroed to qty 0 / $0. Match normalizeBoxesPieces's own threshold so a pack of 1 (or 0) skips
+        // the split entirely and the line's original qty survives untouched.
+        if (Number(pack) > 1) {
+          unitsPerBox = pack;
+          // Force integer boxes/pieces and roll pieces >= unitsPerBox into boxes.
+          const split = normalizeBoxesPieces({
+            boxes: item.boxes,
+            pieces: item.pieces,
+            unitsPerBox,
+          });
+          boxes = split.boxes;
+          pieces = split.pieces;
+          qty = split.qty;
+        }
       }
+      // SA-077(2): a split that no pack can price is REFUSED rather than silently dropped — the
+      // shape buildLine's G1 has always rejected at its own choke point. Same ONE predicate the
+      // update path and `lineAmbiguity` use. A boxed product is unaffected: its pack resolves above.
+      // The subtotalSnapshot branch above is this rule's own escape hatch (Senior Architect ruling,
+      // option b) for the ONE caller (estimate conversion) that can safely convert an unpackable
+      // pieces-only split without a pack — everything else still refuses here.
+      const bad = unpackableSplit(item, unitsPerBox);
+      if (bad) throw new BadRequestException(bad);
+      // BUY_N_GET_M: free whole selling units come off the subtotal BEFORE pricing
+      // (never a rounded net unit price). 0 for every other line.
+      freeUnits = clampFreeUnits(item.promoFreeUnits, boxes, qty);
+      const beforeDiscount = computeLineSubtotal({
+        unitPrice: item.unitPrice,
+        qty,
+        boxes,
+        pieces,
+        unitsPerBox,
+        freeUnits,
+      });
+      lineSub = roundMoney(beforeDiscount - (item.discount ?? 0));
     }
-    // SA-077(2): a split that no pack can price is REFUSED rather than silently dropped — the
-    // shape buildLine's G1 has always rejected at its own choke point. Same ONE predicate the
-    // update path and `lineAmbiguity` use. A boxed product is unaffected: its pack resolves above.
-    const bad = unpackableSplit(item, unitsPerBox);
-    if (bad) throw new BadRequestException(bad);
-    // BUY_N_GET_M: free whole selling units come off the subtotal BEFORE pricing
-    // (never a rounded net unit price). 0 for every other line.
-    const freeUnits = clampFreeUnits(item.promoFreeUnits, boxes, qty);
-    const beforeDiscount = computeLineSubtotal({
-      unitPrice: item.unitPrice,
-      qty,
-      boxes,
-      pieces,
-      unitsPerBox,
-      freeUnits,
-    });
-    const lineSub = roundMoney(beforeDiscount - (item.discount ?? 0));
     subtotal += lineSub;
     // RF-4: per-line regulated category tax on the NET (post-discount) sale — the
     // same basis as the regular line tax. Piece count is the basis for per-unit

@@ -1061,8 +1061,11 @@ describe("EstimatesService — B8 accept/convert duplicate-invoice race", () => 
           },
         ],
       });
+      // echoInvoice (not a naive spread): writeInvoiceSaleEntries reads created.items as an
+      // ARRAY of created rows (Prisma's real nested-create return shape), not the {create:[...]}
+      // write-args shape a bare `...args.data` spread would leave it as.
       prisma.invoice.create.mockImplementation((args: any) =>
-        Promise.resolve({ id: "inv-645", ...args.data, customer: {} }),
+        Promise.resolve(echoInvoice("inv-645", args)),
       );
 
       await service.convertToInvoice("est-645");
@@ -1117,7 +1120,7 @@ describe("EstimatesService — B8 accept/convert duplicate-invoice race", () => 
         ],
       });
       prisma.invoice.create.mockImplementation((args: any) =>
-        Promise.resolve({ id: "inv-645-old", ...args.data, customer: {} }),
+        Promise.resolve(echoInvoice("inv-645-old", args)),
       );
 
       await service.convertToInvoice("est-645-old");
@@ -1159,7 +1162,7 @@ describe("EstimatesService — B8 accept/convert duplicate-invoice race", () => 
         ],
       });
       prisma.invoice.create.mockImplementation((args: any) =>
-        Promise.resolve({ id: "inv-645-old-unboxed", ...args.data, customer: {} }),
+        Promise.resolve(echoInvoice("inv-645-old-unboxed", args)),
       );
 
       await service.convertToInvoice("est-645-old-unboxed");
@@ -1206,7 +1209,7 @@ describe("EstimatesService — B8 accept/convert duplicate-invoice race", () => 
         ],
       });
       prisma.invoice.create.mockImplementation((args: any) =>
-        Promise.resolve({ id: "inv-645-box-price", ...args.data, customer: {} }),
+        Promise.resolve(echoInvoice("inv-645-box-price", args)),
       );
 
       await service.convertToInvoice("est-645-box-price");
