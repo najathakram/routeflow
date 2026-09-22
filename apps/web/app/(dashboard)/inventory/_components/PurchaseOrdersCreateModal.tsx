@@ -8,6 +8,8 @@ import { useCreatePurchaseOrder } from "@/lib/api/inventory";
 import {
   emptyPOLine,
   resolvePOLine,
+  resolvePOLineAmounts,
+  toCreateItem,
   type POLineItem,
   type Supplier,
 } from "./purchase-orders-shared";
@@ -39,10 +41,10 @@ export function CreatePOModal({
   const updateLine = (i: number, field: keyof POLineItem, val: string) =>
     setLines((l) => l.map((line, idx) => (idx === i ? { ...line, [field]: val } : line)));
 
-  const total = lines.reduce((sum, l) => {
-    const { qty, unitCost } = resolvePOLine(l, unitsPerBoxFor(l.productId));
-    return sum + qty * unitCost;
-  }, 0);
+  const total = lines.reduce(
+    (sum, l) => sum + resolvePOLineAmounts(l, unitsPerBoxFor(l.productId)).totalCost,
+    0,
+  );
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -52,10 +54,7 @@ export function CreatePOModal({
         const upb = unitsPerBoxFor(l.productId);
         return upb > 1 ? Number(l.boxes) > 0 || Number(l.pieces) > 0 : !!l.qty;
       })
-      .map((l) => {
-        const { qty, unitCost } = resolvePOLine(l, unitsPerBoxFor(l.productId));
-        return { productId: l.productId, qty, unitCost };
-      });
+      .map((l) => toCreateItem(l, unitsPerBoxFor(l.productId)));
 
     if (items.length === 0) {
       toast({
@@ -157,8 +156,8 @@ export function CreatePOModal({
                   {lines.map((line, i) => {
                     const upb = unitsPerBoxFor(line.productId);
                     const isBoxed = upb > 1;
-                    const { qty, unitCost } = resolvePOLine(line, upb);
-                    const subtotal = qty * unitCost;
+                    const { qty } = resolvePOLine(line, upb);
+                    const subtotal = resolvePOLineAmounts(line, upb).totalCost;
                     return (
                       <tr key={i}>
                         <td className="px-3 py-2">

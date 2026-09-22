@@ -111,4 +111,30 @@ describe("InventoryService.createDraftPurchaseOrderInTx", () => {
     }
     expect(prisma.purchaseOrder.create).not.toHaveBeenCalled();
   });
+
+  it("B677: a line handed its exact total stores THAT total (and the PO sums it), not qty x the 4 dp unitCost", async () => {
+    await service.createDraftPurchaseOrderInTx(prisma as any, {
+      supplierId: "sup-1",
+      lines: [
+        {
+          productId: "p1",
+          qtyOrdered: D(12000),
+          unitCost: D("0.9167"),
+          totalCost: 11000,
+          packSize: 12,
+        },
+      ],
+    });
+    const data = prisma.purchaseOrder.create.mock.calls[0][0].data;
+    expect(data.items.create[0].totalCost).toBe(11000);
+    expect(data.totalAmount).toBe(11000);
+  });
+
+  it("without a supplied total it still derives roundMoney(qty x unitCost) (existing callers unchanged)", async () => {
+    await service.createDraftPurchaseOrderInTx(prisma as any, {
+      supplierId: "sup-1",
+      lines: [{ productId: "p1", qtyOrdered: D(12000), unitCost: D("0.9167") }],
+    });
+    expect(prisma.purchaseOrder.create.mock.calls[0][0].data.totalAmount).toBe(11000.4);
+  });
 });

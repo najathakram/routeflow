@@ -4,7 +4,7 @@ import * as React from "react";
 import { Plus, X } from "lucide-react";
 import { formatMoney } from "@/lib/format";
 import { unitsLabel } from "@/lib/stock-label";
-import { resolvePOLine } from "./purchase-orders-shared";
+import { resolvePOLine, resolvePOLineAmounts } from "./purchase-orders-shared";
 import { emptyEditLine, type EditLine } from "./purchase-orders-edit";
 
 export type CatalogProduct = {
@@ -47,10 +47,10 @@ export function PurchaseOrderLinesTable({
     setLines((l) => l.map((line, idx) => (idx === i ? { ...line, ...patch } : line)));
   const removeLine = (i: number) => setLines((l) => l.filter((_, idx) => idx !== i));
 
-  const total = lines.reduce((sum, l) => {
-    const { qty, unitCost } = resolvePOLine(l, unitsPerBoxFor(l.productId));
-    return sum + qty * unitCost;
-  }, 0);
+  const total = lines.reduce(
+    (sum, l) => sum + resolvePOLineAmounts(l, unitsPerBoxFor(l.productId)).totalCost,
+    0,
+  );
 
   return (
     <div>
@@ -80,8 +80,8 @@ export function PurchaseOrderLinesTable({
               const upb = unitsPerBoxFor(line.productId);
               const isBoxed = upb > 1;
               const locked = received && !!line.id && line.received > 0;
-              const { qty, unitCost } = resolvePOLine(line, upb);
-              const subtotal = qty * unitCost;
+              const { qty } = resolvePOLine(line, upb);
+              const subtotal = resolvePOLineAmounts(line, upb).totalCost;
               return (
                 <tr key={line.id ?? `new-${i}`}>
                   <td className="px-3 py-2">
