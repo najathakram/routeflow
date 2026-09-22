@@ -3,14 +3,21 @@
  * returns.service.ts — split out of `create()` so the same numbers are used by
  * both the STANDARD post-delivery flow and the (PR-1c/1d) INLINE capture flow.
  *
- * `OrderItem.qty` is ALWAYS stored as total PIECES, for boxed and non-boxed
- * lines alike (`packages/pricing`'s `normalizeBoxesPieces` — `boxes`/`pieces`
- * are a sale-time entry snapshot, never the source of truth for the line
- * total). `ReturnItem.qty` for a STANDARD return is a raw piece count in that
- * same unit. Today that makes the "conversion" in `standardReturnPieces` an
- * identity function — it exists as a named seam (B4/m-6) so a future
- * box/piece-aware DTO can convert without `create()`'s comparison or its
- * refusal-message text changing shape.
+ * CORRECTED (live production regression, B661/B671 fix round 2): `OrderItem.qty` is stored in
+ * the LINE's OWN unit — boxes for a box-unaware boxed line, not pieces; `regulatedUnitBasis`
+ * (`packages/pricing`) is what expands it to pieces, at write time, for the regulated ledger
+ * only. `ReturnItem.qty` for a STANDARD return mirrors `OrderItem.qty` (same unit, via the
+ * identity conversion `standardReturnPieces` below), so it is ALSO the line's own unit, not
+ * pieces — the prior version of this comment claimed the opposite, and
+ * `RegulatedLedgerService.reverseReturnEntries` trusted it, comparing a box count against a
+ * piece-denominated remaining balance and reversing ~8% of a fully-returned box-unaware sale.
+ * `reverseReturnEntries`'s own `returnedUnit: "LINE_UNIT"` (the standard caller) vs `"PIECES"`
+ * (the INLINE caller, whose `ReturnItem.qty` genuinely IS pieces — see
+ * `inline-returns.service.ts`'s `capture()`) is the fix; this file's own comparisons
+ * (over-return refusal, prior-returned sums) never needed pieces and are unaffected — this is a
+ * documentation correction only, no logic in this file changes. `standardReturnPieces` remains
+ * an identity function — the seam (B4/m-6) is unused today, kept for a future box/piece-aware
+ * DTO.
  */
 
 export interface OrderLineForPieces {
@@ -25,9 +32,10 @@ export interface OrderForPieces {
 }
 
 /**
- * Sold pieces for (order, product) = the SUM of the product's non-CANCELLED
- * lines on that order, normalised to pieces (already pieces — see file
- * header). Fixes the B4/m-6 undercount: the pre-fix code picked a single
+ * Sold qty for (order, product) = the SUM of the product's non-CANCELLED lines on that
+ * order, in EACH line's own unit (boxes for a box-unaware line — see the corrected file
+ * header; the function/param names here predate that correction and are kept as-is to avoid
+ * an unrelated rename). Fixes the B4/m-6 undercount: the pre-fix code picked a single
  * `.find()`-matched line, so a product split across two lines on the same
  * order (a re-added line, a post-edit split) undercounted what was actually
  * sold.
@@ -60,11 +68,11 @@ export function firstNonCancelledLine(
 }
 
 /**
- * Converts a STANDARD return DTO's `qty` to pieces off the axis of
- * `firstNonCancelledLine`, and returns a converter back to that line's own
- * unit for refusal messages — see the file header for why this is an
- * identity conversion today. `create()` and the shared prior-returned reader
- * both call this so a future non-identity conversion only has to change here.
+ * Converts a STANDARD return DTO's `qty` onto the axis of `firstNonCancelledLine` — the
+ * LINE's own unit, not pieces (corrected; see the file header) — and returns a converter
+ * back to that same unit for refusal messages; an identity conversion today for that reason.
+ * `create()` and the shared prior-returned reader both call this so a future non-identity
+ * conversion only has to change here.
  */
 export function standardReturnPieces(
   order: OrderForPieces,
