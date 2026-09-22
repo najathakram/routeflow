@@ -12,8 +12,11 @@
  * are consistent with each other, which is why `create()`'s cap works, but NEITHER is a piece count for a
  * box-unaware line. INLINE items (`returnedPiecesByProduct` below adds them in) ARE true pieces, so a
  * product that was returned by both paths on a box-unaware line sums two units: a known limit of that
- * reader, not fixed here. Stock and the regulated ledger convert through `common/line-pack-factors.ts`
- * (`legacyLinePieces`), never by assuming this axis is pieces.
+ * reader, not fixed here. STOCK converts through `common/line-pack-factors.ts` (`legacyLinePieces`),
+ * never by assuming this axis is pieces. The REGULATED LEDGER does not: `receive()` still passes the raw
+ * per-item qty to `reverseReturnEntries`, so a box-unaware line's reversal is still on the line's own
+ * axis. That is B660/B681's lane, deliberately not this one — do not read this header as a claim that the
+ * ledger side is fixed.
  *
  * `standardReturnPieces` stays a named seam (B4/m-6) so a future box/piece-aware DTO can convert without
  * `create()`'s comparison or its refusal-message text changing shape; today it is an identity function on
