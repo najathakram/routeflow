@@ -1,5 +1,9 @@
 import { Injectable, Logger } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
+import {
+  CONFIG_SNAPSHOT_FLAG_AUDIT_ENTITY,
+  CONFIG_SNAPSHOT_FLAG_CHANGED_ACTION,
+} from "./config-snapshot-audit.constants";
 
 const FLAG_KEY = "entitlements.configSnapshot";
 
@@ -55,13 +59,48 @@ export class ConfigSnapshotFlagService {
   }
 
   async setEnabled(enabled: boolean): Promise<void> {
+    await this.writeFlag(this.prisma, enabled);
+    this.remember(enabled);
+  }
+
+  /**
+   * The admin switch: the flag write and its audit row commit TOGETHER or not at all (one transaction). The
+   * generic `AuditService.log` swallows its own failures by design, so writing the row after the flag left a
+   * window where a flip that turns on unattended tenant-config writes could go unrecorded. Here an audit
+   * failure rolls the flag back and the caller gets the error (fail-closed); the in-process cache moves only
+   * after the commit.
+   */
+  async setEnabledAudited(
+    enabled: boolean,
+    audit: { userId: string | null; reason: string },
+  ): Promise<void> {
+    await this.prisma.$transaction(async (tx) => {
+      await this.writeFlag(tx, enabled);
+      await tx.auditLog.create({
+        data: {
+          tenantId: null,
+          userId: audit.userId,
+          action: CONFIG_SNAPSHOT_FLAG_CHANGED_ACTION,
+          entityType: CONFIG_SNAPSHOT_FLAG_AUDIT_ENTITY,
+          entityId: null,
+          meta: { platformAdmin: true, enabled, reason: audit.reason },
+        },
+      });
+    });
+    this.remember(enabled);
+  }
+
+  private async writeFlag(db: { $executeRaw: PrismaService["$executeRaw"] }, enabled: boolean) {
     const value = enabled ? "on" : "off";
-    await this.prisma.$executeRaw`
+    await db.$executeRaw`
       INSERT INTO "PlatformConfig" ("id", "key", "value", "updatedAt")
         VALUES (gen_random_uuid()::text, ${FLAG_KEY}, ${value}, now())
       ON CONFLICT ("key")
         DO UPDATE SET "value" = EXCLUDED.value, "updatedAt" = now()
     `;
+  }
+
+  private remember(enabled: boolean) {
     this.cached = {
       value: enabled,
       expiresAt: Date.now() + ConfigSnapshotFlagService.CACHE_TTL_MS,
