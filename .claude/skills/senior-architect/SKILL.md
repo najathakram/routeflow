@@ -143,3 +143,48 @@ then says "at rest". Owner-run SQL lives beside the registers and is force-added
 The generalizable rules the seat has paid for — pack rule, axis rule, reversal writers, correction
 rows, filing gate, per-line-key deltas, returns credit what was paid, stock unit, refusals — are in
 `references/domain-principles.md`. Read it before any ruling on quantities, packs, or a ledger.
+
+## 7. The learning loop (mandatory — a seat that leaves no record taught nothing)
+
+The seat gets better only if every ruling feeds back into these files. Three steps, none optional.
+
+**7.1 Before a ruling ships — the seven checks** (each one is a rule an error produced; list the
+ones run in the ruling line as `checked: 1-7`, and say which were NOT run and why):
+1. **Origin, not tree** — facts re-derived from a freshly fetched sha, named in the line.
+2. **Wire, not internals** — every field a client displays or branches on is in the response
+   type or the controller's return path.
+3. **Entry condition** — every red case names the branch condition it passes through.
+4. **Run the number** — every expected value was produced by running the helper/fixture; unrun
+   values are written "observe and report" with no number.
+5. **Sweep the siblings** — every writer/reader of the field or axis the ruling moves is listed.
+6. **Newest message wins** — two messages from one sender: the later supersedes; verbatim record
+   requested before any halt.
+7. **Ownership** — shared stacks, files at a ratchet ceiling, and files another lane holds are
+   named as constraints, not discovered by the builder.
+
+**7.2 After every ruling outcome, builder catch, or own error — record in the same commit as the
+register change:**
+- A builder found the ruling wrong → `LEAD-ERRORS.md` gets an `SA-E` line (class, what, rule),
+  `references/error-catalogue.md` gets the row, and if the rule is new it becomes an `OP-` line in
+  §1 **the same day**. A catch that fits an existing rule cites it instead of minting a new one.
+- A ruling landed → `[LANDED as #n @ sha]` on its line; a ruling was amended → `[AMENDED …]`;
+  a residual was deferred → the bug id or follow-up named on the line, never "later".
+- Append one row to `references/ledger.md` per session (see 7.3). Estimates are forbidden there:
+  count from the register.
+
+**7.3 Every ten rulings (or at session close if sooner) — the retro, on numbers:**
+- Count from `RULINGS.md`/`LEAD-ERRORS.md`: rulings made · amended after execution · withdrawn ·
+  HOLD→PASS round-trips · builder catches · SA own errors by class · reads that merged before the
+  read. Append the row to `references/ledger.md`.
+- Compare with the previous row. A rule that fired zero times in three rows is retired from §1
+  into the catalogue; an error shape that recurred in two rows is promoted to a check in 7.1;
+  a check that never catches anything after five rows is demoted to the checklist.
+- Targets the seat drives toward (never a reason to skip a gate): errors per ruling → 0 ·
+  builder catches of SA arithmetic → 0 · reads that merged before the read → 0 ·
+  HOLD→PASS round-trips → ≤ 1 per money PR.
+- Write the one-line "lesson of the session" at the top of `HANDOFF.md`; a replacement SA reads
+  it, the catalogue and the ledger before its first ruling.
+
+**7.4 Proof of the skill itself:** every change to this skill cites the ledger row or catalogue
+entry that forced it. The skill never grows on taste, and a rule with no error behind it does not
+enter §1.
