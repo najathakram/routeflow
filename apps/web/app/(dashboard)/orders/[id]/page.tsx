@@ -1368,6 +1368,12 @@ export function EditableLineItems({
    * `applyLineUnit`). "Back to pack" (`option.kind === "pack"`) is a deliberate no-op here: this
    * row was loaded from the server with no pack-price snapshot to restore (no client pricing math
    * — reconstructing one would need the product's own ladder here, not just this line's state).
+   *
+   * `reasonBaselinePrice` is set to the NEW unit's own resolved price — same B465 pattern
+   * substitution already uses (see `restoredPrice`/`needsSpecialTierReason`): a unit switch jumps
+   * `unitPrice` from the pack's price to a differently-priced unit's, which is not an operator
+   * override and must never demand a reason on its own; only a manual price typed ON TOP of this
+   * new baseline (via `PriceEditRow`) should.
    */
   function setLineUnit(id: string, option: UnitOption, refresh: boolean) {
     if (option.kind === "pack") return;
@@ -1382,6 +1388,7 @@ export function EditableLineItems({
       unitPrice: option.price,
       basePrice: option.listPrice,
       overrideReason: undefined,
+      reasonBaselinePrice: option.price,
     });
   }
 

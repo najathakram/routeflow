@@ -7,7 +7,7 @@
  * byte.
  */
 import * as React from "react";
-import { renderWithProviders, screen } from "@/test-utils/render";
+import { fireEvent, renderWithProviders, screen } from "@/test-utils/render";
 import { EditableLineItems, type EditItemState } from "./page";
 
 let mockEnabled = true;
@@ -30,7 +30,7 @@ const CASE_LEVEL = {
   label: "Case",
   factorToBase: 192,
   price: "7680.00",
-  priceTier2: null,
+  priceTier2: "7200.00",
   priceTier3: null,
   priceTier4: null,
   priceTier5: null,
@@ -58,17 +58,37 @@ function caseLine(): EditItemState {
   };
 }
 
-function renderRow(items: EditItemState[]) {
+function packLine(): EditItemState {
+  return {
+    id: "li-pack",
+    originalProductId: "p-case",
+    originalProductName: "Widget",
+    originalQty: 24,
+    productId: "p-case",
+    productName: "Widget",
+    qty: 24,
+    unitPrice: 40,
+    basePrice: 40,
+    originalUnitPrice: 40,
+    cancelled: false,
+    unit: "Box",
+    unitsPerBox: 24,
+    boxSplit: false,
+    priceType: "STANDARD",
+  };
+}
+
+function renderRow(items: EditItemState[], onChange: (items: EditItemState[]) => void = () => {}) {
   return renderWithProviders(
     <EditableLineItems
       items={items}
-      onChange={() => {}}
+      onChange={onChange}
       onAdd={() => {}}
       onDelete={() => {}}
       canEditPrice={false}
       tierPriceFor={() => 40}
-      isSpecialTierFor={() => false}
-      tierForProductId={() => 1}
+      isSpecialTierFor={() => true}
+      tierForProductId={() => 2}
       pricingReady
     />,
   );
@@ -99,5 +119,31 @@ describe("EditableLineItems mounts OrderLineUnitPicker on the edit row (A3-2, c)
     mockUnits = [];
     renderRow([caseLine()]);
     expect(screen.queryByRole("combobox", { name: /Sell Widget by/i })).not.toBeInTheDocument();
+  });
+});
+
+describe("setLineUnit — picking a unit sets a fresh reasonBaselinePrice (A3-2)", () => {
+  it("assigns unitLabel/qty/unitPrice together and pins reasonBaselinePrice to the SAME resolved price, never the pack's", () => {
+    // This customer is at a special tier (isSpecialTierFor=true, tierForProductId=2 in
+    // renderRow) — exactly the case that needs a fresh baseline: without one, jumping from the
+    // pack's $40 to the Case's tier-2 ladder price would look like an undocumented operator
+    // override and block the save (B465's reason-required guard, needsSpecialTierReason).
+    let captured: EditItemState[] = [];
+    renderRow([packLine()], (items) => {
+      captured = items;
+    });
+    fireEvent.change(screen.getByRole("combobox", { name: /Sell Widget by/i }), {
+      target: { value: "Case" },
+    });
+    expect(captured).toHaveLength(1);
+    const updated = captured[0]!;
+    expect(updated.unitLabel).toBe("Case");
+    expect(updated.qty).toBe(1); // a fresh unit assignment starts at count 1, not the pack's qty
+    expect(updated.boxSplit).toBe(false);
+    expect(updated.overrideReason).toBeUndefined();
+    // The load-bearing assertion: unitPrice IS the baseline, so a plain unit switch can never
+    // read as a price change needing a reason.
+    expect(updated.reasonBaselinePrice).toBe(updated.unitPrice);
+    expect(updated.unitPrice).not.toBe(40); // genuinely moved off the pack's price
   });
 });
