@@ -59,6 +59,7 @@ import {
 import { useAuth } from "@/lib/auth-context";
 import { useHasAddon } from "@/lib/api/tobacco";
 import { SALES_AGENTS_ADDON, useOrderUiV2 } from "@/lib/api/addons";
+import { RecordReturnAction } from "../../returns/_components/RecordReturnAction";
 import { describeCancelImpact } from "@/lib/cancel-impact";
 import { fmtCalendarDate, isInternalEmail } from "@/lib/formatting";
 import { formatMoney, formatQty } from "@/lib/format";
@@ -2495,6 +2496,18 @@ export default function OrderDetailPage() {
               >
                 Edit Items
               </Button>
+            </ActionTier>
+          )}
+
+          {/* Record return (Returns Inside Order Creation, PR 1 — office web capture).
+              Any order, no cap — never gated on order status, unlike the buttons below. */}
+          {!isEditing && (
+            <ActionTier tier="secondary">
+              <RecordReturnAction
+                customerId={order.customerId}
+                customerName={order.customer?.businessName}
+                orderId={order.id}
+              />
             </ActionTier>
           )}
 

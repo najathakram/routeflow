@@ -276,9 +276,23 @@ describe("RegulatedLedgerService", () => {
       const arrangeReturn = (sale: any) => {
         prisma.regulatedSalesLedger.findMany
           .mockResolvedValueOnce([]) // prior-reversal idempotency check
-          .mockResolvedValueOnce([{ ...sale, entryType: "SALE" }]) // sales
+          .mockResolvedValueOnce([{ id: "sale-1", ...sale, entryType: "SALE" }]) // sales
           .mockResolvedValueOnce([]); // priorReversals
-        prisma.invoiceItem.findMany.mockResolvedValue([{ id: "ii-1", productId: "p1" }]);
+        // B681: this line IS genuinely boxed (packAtSale 12 above) — its own snapshot says so,
+        // matching the shape classifySaleAxis needs. Without it, the park guard cannot tell this
+        // row's qty(5) != unitBasisQty(60) is a post-B661 row that expanded correctly and would
+        // (correctly, per its own conservative design) park on "can't tell if it's boxed" before
+        // ever reaching the qty/unitBasisQty comparison that would have cleared it.
+        prisma.invoiceItem.findMany.mockResolvedValue([
+          {
+            id: "ii-1",
+            productId: "p1",
+            boxes: null,
+            pieces: null,
+            unitLabel: null,
+            unitsPerBox: 12,
+          },
+        ]);
       };
 
       it("a 12-piece return reverses exactly 1/5 (12/60) of the net and books -12 unitBasisQty, NOT the whole 5-box sale", async () => {
@@ -590,7 +604,16 @@ describe("RegulatedLedgerService", () => {
   });
 
   describe("reverseReturnEntries", () => {
+    // B681: classifySaleAxis's first check is `entryType !== "SALE"` — the pre-B681 fixture never
+    // set this (the real query already filters entryType: "SALE", so it never mattered before
+    // anything read the field on the mock row itself). Every row also needs its OWN `id` now, so
+    // the park guard's per-row Maps (line shape / corrections) key correctly instead of every row
+    // colliding on one shared default — a fresh counter per row, not a fixed string, so a test
+    // building several rows without naming each one still gets distinct keys.
+    let saleRowSeq = 0;
     const saleRow = (over: Record<string, unknown> = {}) => ({
+      id: `sale-${++saleRowSeq}`,
+      entryType: "SALE",
       tenantId: "t1",
       trackedCategoryId: "cat-A",
       orderId: "ord-1",
@@ -606,17 +629,38 @@ describe("RegulatedLedgerService", () => {
 
     // Arrange the 3 regulatedSalesLedger.findMany calls (prior→sales→priorReversals)
     // + the invoiceItem.findMany bridge.
+    //
+    // B681/SA-067: the PIECES branch now also calls loadSaleLineShapes (invoiceItem.findMany,
+    // already stubbed above, plus orderItem.findMany — defaults to [] via createMockPrisma,
+    // fine since these fixtures use invoiceItemId), loadCorrectionsBySaleId (one more
+    // regulatedSalesLedger.findMany call, past this helper's 3-deep mockResolvedValueOnce
+    // queue — falls through to the mock's persistent default `[]`, i.e. "no corrections",
+    // harmless) and loadProductPackNow (product.findMany). That last one is NOT harmless by
+    // default: an unconfigured product.findMany resolves `[]`, so `packNowByProduct` has no
+    // entry for "p1" and classifySaleAxis reads that as `productPackNow: undefined` — "caller
+    // doesn't know" — parking every one of THESE pre-existing fixtures, which predate B681 and
+    // were never meant to exercise it. Default it to "not boxed" (unitsPerBox: 1) so every
+    // existing PIECES-branch test keeps proceeding to a normal reversal, matching what it was
+    // actually testing; a test that wants a DIFFERENT product shape passes its own `products`.
     const arrange = (opts: {
       prior?: unknown[];
       sales: unknown[];
       priorReversals?: unknown[];
       items: unknown[];
+      products?: unknown[];
     }) => {
       prisma.regulatedSalesLedger.findMany
         .mockResolvedValueOnce(opts.prior ?? [])
         .mockResolvedValueOnce(opts.sales)
         .mockResolvedValueOnce(opts.priorReversals ?? []);
       prisma.invoiceItem.findMany.mockResolvedValue(opts.items);
+      prisma.product.findMany.mockResolvedValue(
+        opts.products ??
+          [...new Set(opts.items.map((i: any) => i.productId))].map((id) => ({
+            id,
+            unitsPerBox: 1,
+          })),
+      );
     };
 
     const written = () => prisma.regulatedSalesLedger.createMany.mock.calls[0][0].data;
@@ -716,6 +760,9 @@ describe("RegulatedLedgerService", () => {
       prisma.invoiceItem.findMany.mockImplementation(async (args: any) =>
         (args.where.id.in as string[]).map((id) => ({ id, productId: "p1" })),
       );
+      // B681: not boxed, so the park guard's classify step clears every row straight to
+      // piece-axis and this test exercises only what it says on the tin (the idempotency key).
+      prisma.product.findMany.mockResolvedValue([{ id: "p1", unitsPerBox: 1 }]);
       prisma.regulatedSalesLedger.createMany.mockImplementation(async (args: any) => {
         writtenRows.push(...args.data);
         for (const row of args.data) reversedPairs.add(`${row.returnId}:${row.orderId}`);
@@ -1253,11 +1300,515 @@ describe("RegulatedLedgerService", () => {
     });
   });
 
+  // ─── B681/SA-067: the park guard — reverseReturnEntries, PIECES branch only ───
+  //
+  // Red-first cases (a)-(h) from SA-067(6), observed and reported. `classifySaleAxis`
+  // (@routeflow/pricing, #1239) is the ONE shared predicate — imported by name, never a second
+  // copy. "Parked" here always means a RegulatedLedgerParkedReversal row; the B681 correction
+  // routine's OWN "parked" (an unknown-basis line it refuses and reports) is a different thing
+  // at a different layer and the two meanings are never conflated in these tests either.
+  describe("B681 park guard (SA-067) — reverseReturnEntries, PIECES branch", () => {
+    const arrangeParkTest = (opts: {
+      sale: Record<string, unknown>;
+      item: Record<string, unknown>;
+      corrections?: unknown[];
+      products?: unknown[];
+    }) => {
+      prisma.regulatedSalesLedger.findMany
+        .mockResolvedValueOnce([]) // prior-reversal idempotency
+        .mockResolvedValueOnce([opts.sale]) // sales
+        .mockResolvedValueOnce([]) // priorReversals
+        .mockResolvedValueOnce(opts.corrections ?? []); // loadCorrectionsBySaleId
+      prisma.invoiceItem.findMany.mockResolvedValue([opts.item]);
+      prisma.product.findMany.mockResolvedValue(
+        opts.products ?? [{ id: opts.item.productId, unitsPerBox: opts.item.unitsPerBox ?? null }],
+      );
+    };
+
+    it("(a) a legacy box-unaware SALE row (qty 5, unitBasisQty 5, pack 12) → NOT reversed, one parked row, warn logged", async () => {
+      const sale = {
+        id: "s-a",
+        entryType: "SALE",
+        tenantId: "t1",
+        trackedCategoryId: "cat-A",
+        orderId: "ord-1",
+        orderItemId: "oi-1",
+        invoiceId: "inv-1",
+        invoiceItemId: "ii-a",
+        qty: 5,
+        unitBasisQty: 5,
+        netSales: 50,
+        categoryTax: 10,
+      };
+      arrangeParkTest({
+        sale,
+        item: {
+          id: "ii-a",
+          productId: "p1",
+          boxes: null,
+          pieces: null,
+          unitLabel: null,
+          unitsPerBox: 12,
+        },
+      });
+      const warnSpy = jest
+        .spyOn((service as any).logger, "warn")
+        .mockImplementation(() => undefined);
+      await service.reverseReturnEntries({
+        returnId: "ret-1",
+        orderId: "ord-1",
+        returnedByProduct: new Map([["p1", 12]]), // "inline 12 pieces" per SA-067(6)(a)
+        returnedUnit: "PIECES",
+        db: prisma,
+      });
+      expect(prisma.regulatedSalesLedger.createMany).not.toHaveBeenCalled(); // no REVERSAL
+      expect(prisma.regulatedLedgerParkedReversal.createMany).toHaveBeenCalledWith({
+        data: [
+          expect.objectContaining({
+            tenantId: "t1",
+            returnId: "ret-1",
+            orderId: "ord-1",
+            orderItemId: "oi-1",
+            saleEntryId: "s-a",
+            returnedPieces: 12,
+          }),
+        ],
+        skipDuplicates: true,
+      });
+      expect(warnSpy).toHaveBeenCalled();
+    });
+
+    // Architect condition on the PASS at 5183e1d5: SA-067(2) says "a row with NO readable line
+    // parks too" — the code path exists (loadSaleLineShapes falls through to `null` when NEITHER
+    // the invoiceItemId nor the orderItemId resolves to anything), but nothing proved it directly.
+    //
+    // reverseReturnEntries only ever considers a SALE row a candidate once its invoiceItemId has
+    // ALREADY resolved to a live product (`productByItem`, built from the same InvoiceItem table
+    // earlier in this method) — so a row whose invoice item is genuinely gone is filtered out long
+    // before classifySaleAxis runs, by pre-existing logic this PR does not change. Proving "no
+    // readable line still parks, never guesses" therefore has to separate that PRE-EXISTING
+    // productId lookup (which must succeed for the row to reach this guard at all) from
+    // loadSaleLineShapes's OWN, later, fuller re-read of the same id (which is what can come back
+    // empty in reality: a reconcile can delete/rotate an invoice item's ROW between when the return
+    // service first resolves productByItem for its own separate purposes and when this guard reads
+    // the line's shape). Two sequential invoiceItem.findMany resolutions model exactly that: the
+    // first (productByItem's) still finds the old row's bare id/productId either from an
+    // in-progress read or a stale index entry; the second (loadSaleLineShapes's own) reflects the
+    // row already being gone. orderItem.findMany also finding nothing rules out the fallback.
+    it('(a2) invoiceItemId resolves a product (so the row is a live candidate) but loadSaleLineShapes\'s own line-shape re-read of that id finds nothing, and orderItemId has no fallback either → line null → unknown → parked ("no line to read a shape from")', async () => {
+      const sale = {
+        id: "s-a2",
+        entryType: "SALE",
+        tenantId: "t1",
+        trackedCategoryId: "cat-A",
+        orderId: "ord-1",
+        orderItemId: "oi-gone", // no OrderItem row for this id either — no fallback
+        invoiceId: "inv-1",
+        invoiceItemId: "ii-a2",
+        qty: 5,
+        unitBasisQty: 5,
+        netSales: 50,
+        categoryTax: 10,
+      };
+      prisma.regulatedSalesLedger.findMany
+        .mockResolvedValueOnce([]) // prior-reversal idempotency
+        .mockResolvedValueOnce([sale]) // sales
+        .mockResolvedValueOnce([]) // priorReversals
+        .mockResolvedValueOnce([]); // loadCorrectionsBySaleId
+      prisma.invoiceItem.findMany
+        // 1st call: productByItem — must resolve, or the row never becomes a candidate at all
+        // (pre-existing gate, unrelated to this guard) and this test would prove nothing.
+        .mockResolvedValueOnce([{ id: "ii-a2", productId: "p1" }])
+        // 2nd call: loadSaleLineShapes's own re-read of the SAME id — comes back empty.
+        .mockResolvedValueOnce([]);
+      prisma.orderItem.findMany.mockResolvedValue([]); // no fallback either
+      prisma.product.findMany.mockResolvedValue([]);
+      const warnSpy = jest
+        .spyOn((service as any).logger, "warn")
+        .mockImplementation(() => undefined);
+      await service.reverseReturnEntries({
+        returnId: "ret-1",
+        orderId: "ord-1",
+        returnedByProduct: new Map([["p1", 5]]),
+        returnedUnit: "PIECES",
+        db: prisma,
+      });
+      expect(prisma.regulatedSalesLedger.createMany).not.toHaveBeenCalled(); // no REVERSAL
+      expect(prisma.regulatedLedgerParkedReversal.createMany).toHaveBeenCalledWith({
+        data: [
+          expect.objectContaining({
+            saleEntryId: "s-a2",
+            reason: "no line to read a shape from",
+          }),
+        ],
+        skipDuplicates: true,
+      });
+      expect(warnSpy).toHaveBeenCalled();
+    });
+
+    it("(c) a SPLIT line (boxes 5) with qty 60 == unitBasisQty 60 → NOT parked (the false-positive guard)", async () => {
+      const sale = {
+        id: "s-c",
+        entryType: "SALE",
+        tenantId: "t1",
+        trackedCategoryId: "cat-A",
+        orderId: "ord-1",
+        orderItemId: "oi-1",
+        invoiceId: "inv-1",
+        invoiceItemId: "ii-c",
+        qty: 60,
+        unitBasisQty: 60,
+        netSales: 50,
+        categoryTax: 10,
+      };
+      arrangeParkTest({
+        sale,
+        item: {
+          id: "ii-c",
+          productId: "p1",
+          boxes: 5,
+          pieces: 0,
+          unitLabel: null,
+          unitsPerBox: 12,
+        },
+      });
+      await service.reverseReturnEntries({
+        returnId: "ret-1",
+        orderId: "ord-1",
+        returnedByProduct: new Map([["p1", 60]]),
+        returnedUnit: "PIECES",
+        db: prisma,
+      });
+      expect(prisma.regulatedLedgerParkedReversal.createMany).not.toHaveBeenCalled();
+      expect(prisma.regulatedSalesLedger.createMany).toHaveBeenCalledTimes(1);
+    });
+
+    it('(d) a unit line (unitLabel "Case") with qty 60 == unitBasisQty 60 → NOT parked', async () => {
+      const sale = {
+        id: "s-d",
+        entryType: "SALE",
+        tenantId: "t1",
+        trackedCategoryId: "cat-A",
+        orderId: "ord-1",
+        orderItemId: "oi-1",
+        invoiceId: "inv-1",
+        invoiceItemId: "ii-d",
+        qty: 60,
+        unitBasisQty: 60,
+        netSales: 50,
+        categoryTax: 10,
+      };
+      arrangeParkTest({
+        sale,
+        item: {
+          id: "ii-d",
+          productId: "p1",
+          boxes: null,
+          pieces: null,
+          unitLabel: "Case",
+          unitsPerBox: null,
+        },
+      });
+      await service.reverseReturnEntries({
+        returnId: "ret-1",
+        orderId: "ord-1",
+        returnedByProduct: new Map([["p1", 60]]),
+        returnedUnit: "PIECES",
+        db: prisma,
+      });
+      expect(prisma.regulatedLedgerParkedReversal.createMany).not.toHaveBeenCalled();
+      expect(prisma.regulatedSalesLedger.createMany).toHaveBeenCalledTimes(1);
+    });
+
+    it("(e) a non-boxed product (no line snapshot, live pack 1) with qty 7 == unitBasisQty 7 → NOT parked", async () => {
+      const sale = {
+        id: "s-e",
+        entryType: "SALE",
+        tenantId: "t1",
+        trackedCategoryId: "cat-A",
+        orderId: "ord-1",
+        orderItemId: "oi-1",
+        invoiceId: "inv-1",
+        invoiceItemId: "ii-e",
+        qty: 7,
+        unitBasisQty: 7,
+        netSales: 50,
+        categoryTax: 10,
+      };
+      arrangeParkTest({
+        sale,
+        item: {
+          id: "ii-e",
+          productId: "p1",
+          boxes: null,
+          pieces: null,
+          unitLabel: null,
+          unitsPerBox: null,
+        },
+        products: [{ id: "p1", unitsPerBox: 1 }],
+      });
+      await service.reverseReturnEntries({
+        returnId: "ret-1",
+        orderId: "ord-1",
+        returnedByProduct: new Map([["p1", 7]]),
+        returnedUnit: "PIECES",
+        db: prisma,
+      });
+      expect(prisma.regulatedLedgerParkedReversal.createMany).not.toHaveBeenCalled();
+      expect(prisma.regulatedSalesLedger.createMany).toHaveBeenCalledTimes(1);
+    });
+
+    it("(f) the same return re-run parks exactly once (createMany skipDuplicates against (returnId, saleEntryId))", async () => {
+      const sale = {
+        id: "s-f",
+        entryType: "SALE",
+        tenantId: "t1",
+        trackedCategoryId: "cat-A",
+        orderId: "ord-1",
+        orderItemId: "oi-1",
+        invoiceId: "inv-1",
+        invoiceItemId: "ii-f",
+        qty: 5,
+        unitBasisQty: 5,
+        netSales: 50,
+        categoryTax: 10,
+      };
+      arrangeParkTest({
+        sale,
+        item: {
+          id: "ii-f",
+          productId: "p1",
+          boxes: null,
+          pieces: null,
+          unitLabel: null,
+          unitsPerBox: 12,
+        },
+      });
+      await service.reverseReturnEntries({
+        returnId: "ret-1",
+        orderId: "ord-1",
+        returnedByProduct: new Map([["p1", 12]]),
+        returnedUnit: "PIECES",
+        db: prisma,
+      });
+      expect(prisma.regulatedLedgerParkedReversal.createMany).toHaveBeenCalledTimes(1);
+      expect(prisma.regulatedLedgerParkedReversal.createMany.mock.calls[0][0].skipDuplicates).toBe(
+        true,
+      );
+    });
+
+    it("(h) a LINE_UNIT (standard) return against the same legacy-shaped row is UNCHANGED — never parked, reverses normally", async () => {
+      const sale = {
+        id: "s-h",
+        entryType: "SALE",
+        tenantId: "t1",
+        trackedCategoryId: "cat-A",
+        orderId: "ord-1",
+        orderItemId: "oi-1",
+        invoiceId: "inv-1",
+        invoiceItemId: "ii-h",
+        qty: 5,
+        unitBasisQty: 5,
+        netSales: 50,
+        categoryTax: 10,
+      };
+      arrangeParkTest({
+        sale,
+        item: {
+          id: "ii-h",
+          productId: "p1",
+          boxes: null,
+          pieces: null,
+          unitLabel: null,
+          unitsPerBox: 12,
+        },
+      });
+      await service.reverseReturnEntries({
+        returnId: "ret-1",
+        orderId: "ord-1",
+        returnedByProduct: new Map([["p1", 5]]),
+        returnedUnit: "LINE_UNIT", // SA-067(1): the guard is PIECES-branch only
+        db: prisma,
+      });
+      expect(prisma.regulatedLedgerParkedReversal.createMany).not.toHaveBeenCalled();
+      expect(prisma.regulatedSalesLedger.createMany).toHaveBeenCalledTimes(1);
+      // classifySaleAxis / product / corrections were never even queried for a LINE_UNIT call.
+      expect(prisma.product.findMany).not.toHaveBeenCalled();
+    });
+
+    // The argument trap the fleet lead asked to be spec'd explicitly: an explicit `null` for
+    // productPackNow decides "not boxed" and PASSES; a genuinely OMITTED argument (no product
+    // found at all) means "caller doesn't know" and PARKS. Passing null when you mean "I don't
+    // know" silently turns a park into a pass — this is the seam most likely to be got backwards.
+    it("productPackNow: an explicit null (product found, unitsPerBox null) is NOT boxed → reverses normally, never parks", async () => {
+      const sale = {
+        id: "s-null",
+        entryType: "SALE",
+        tenantId: "t1",
+        trackedCategoryId: "cat-A",
+        orderId: "ord-1",
+        orderItemId: "oi-1",
+        invoiceId: "inv-1",
+        invoiceItemId: "ii-null",
+        qty: 5,
+        unitBasisQty: 5,
+        netSales: 50,
+        categoryTax: 10,
+      };
+      arrangeParkTest({
+        sale,
+        item: {
+          id: "ii-null",
+          productId: "p1",
+          boxes: null,
+          pieces: null,
+          unitLabel: null,
+          unitsPerBox: null,
+        },
+        products: [{ id: "p1", unitsPerBox: null }], // product EXISTS, explicitly not boxed
+      });
+      await service.reverseReturnEntries({
+        returnId: "ret-1",
+        orderId: "ord-1",
+        returnedByProduct: new Map([["p1", 5]]),
+        returnedUnit: "PIECES",
+        db: prisma,
+      });
+      expect(prisma.regulatedLedgerParkedReversal.createMany).not.toHaveBeenCalled();
+      expect(prisma.regulatedSalesLedger.createMany).toHaveBeenCalledTimes(1);
+    });
+
+    it("productPackNow: product genuinely NOT FOUND (omitted, not null) → parks, never guesses", async () => {
+      const sale = {
+        id: "s-omit",
+        entryType: "SALE",
+        tenantId: "t1",
+        trackedCategoryId: "cat-A",
+        orderId: "ord-1",
+        orderItemId: "oi-1",
+        invoiceId: "inv-1",
+        invoiceItemId: "ii-omit",
+        qty: 5,
+        unitBasisQty: 5,
+        netSales: 50,
+        categoryTax: 10,
+      };
+      arrangeParkTest({
+        sale,
+        item: {
+          id: "ii-omit",
+          productId: "p1",
+          boxes: null,
+          pieces: null,
+          unitLabel: null,
+          unitsPerBox: null,
+        },
+        products: [], // product NOT FOUND — packNowByProduct has no entry for "p1" at all
+      });
+      await service.reverseReturnEntries({
+        returnId: "ret-1",
+        orderId: "ord-1",
+        returnedByProduct: new Map([["p1", 5]]),
+        returnedUnit: "PIECES",
+        db: prisma,
+      });
+      expect(prisma.regulatedLedgerParkedReversal.createMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: [expect.objectContaining({ reason: "no snapshot and no product to gate on" })],
+        }),
+      );
+      expect(prisma.regulatedSalesLedger.createMany).not.toHaveBeenCalled();
+    });
+
+    // SA-070(b) Hazard 1, red-first from the spec verbatim: a SALE(5,5,$50) with a +55-unit
+    // correction row, PIECES return of 12 → books -1/-12/-$10 against the ORIGINAL row, the
+    // correction row is NEVER a source for the reversal, and the line's remaining unit basis
+    // started at 60 (5 + 55) — proven by returning MORE than the un-corrected row's own
+    // unitBasisQty(5) without over-reversing.
+    it("SA-070(b): a correction row is folded into remaining but never iterated as a candidate SALE row", async () => {
+      const original = {
+        id: "s-orig",
+        entryType: "SALE",
+        tenantId: "t1",
+        trackedCategoryId: "cat-A",
+        orderId: "ord-1",
+        orderItemId: "oi-1",
+        invoiceId: "inv-1",
+        invoiceItemId: "ii-corr",
+        qty: 5,
+        unitBasisQty: 5,
+        netSales: 50,
+        categoryTax: 10,
+      };
+      // The correction row itself: money-neutral (qty 0, net 0), units-only (+55), typed SALE,
+      // pointing back at the original via correctsEntryId — exactly B681's own shape.
+      const correction = {
+        id: "s-corr",
+        entryType: "SALE",
+        correctsEntryId: "s-orig",
+        tenantId: "t1",
+        trackedCategoryId: "cat-A",
+        orderId: "ord-1",
+        orderItemId: "oi-1",
+        invoiceId: "inv-1",
+        invoiceItemId: "ii-corr",
+        qty: 0,
+        unitBasisQty: 55,
+        netSales: 0,
+        categoryTax: 0,
+      };
+      prisma.regulatedSalesLedger.findMany
+        .mockResolvedValueOnce([]) // prior-reversal idempotency
+        .mockResolvedValueOnce([original, correction]) // sales — BOTH rows, as the real query would return
+        .mockResolvedValueOnce([]) // priorReversals
+        .mockResolvedValueOnce([{ correctsEntryId: "s-orig", qty: 0, unitBasisQty: 55 }]); // loadCorrectionsBySaleId
+      prisma.invoiceItem.findMany.mockResolvedValue([
+        {
+          id: "ii-corr",
+          productId: "p1",
+          boxes: null,
+          pieces: null,
+          unitLabel: null,
+          unitsPerBox: 12,
+        },
+      ]);
+      prisma.product.findMany.mockResolvedValue([{ id: "p1", unitsPerBox: 12 }]);
+      await service.reverseReturnEntries({
+        returnId: "ret-1",
+        orderId: "ord-1",
+        returnedByProduct: new Map([["p1", 12]]),
+        returnedUnit: "PIECES",
+        db: prisma,
+      });
+      // Corrected: effUbq(60) > effQty(5) -> piece-axis, never parked; the classic reversal math
+      // proceeds against the ORIGINAL row (s-orig), never the correction row.
+      expect(prisma.regulatedLedgerParkedReversal.createMany).not.toHaveBeenCalled();
+      const data = prisma.regulatedSalesLedger.createMany.mock.calls[0][0].data;
+      expect(data).toHaveLength(1);
+      expect(data[0]).toMatchObject({
+        invoiceItemId: "ii-corr",
+        qty: -1, // 12/60 of the ORIGINAL row's own qty(5) — never re-derived from the correction
+        unitBasisQty: -12,
+        netSales: -10, // 12/60 of $50
+        categoryTax: -2, // 12/60 of $10
+      });
+    });
+  });
+
   describe("unreverseReturnEntries", () => {
     it("deletes the return's REVERSAL rows", async () => {
       await service.unreverseReturnEntries({ returnId: "ret-1", db: prisma });
       expect(prisma.regulatedSalesLedger.deleteMany).toHaveBeenCalledWith({
         where: { returnId: "ret-1", entryType: "REVERSAL" },
+      });
+    });
+
+    // SA-067(4) / red-first (g): a return this guard parked leaves a RegulatedLedgerParkedReversal
+    // row that would otherwise block its period's filing forever once the return is cancelled.
+    it("B681/SA-067(4): also deletes the return's UNRESOLVED parked-reversal rows, never a resolved one", async () => {
+      await service.unreverseReturnEntries({ returnId: "ret-1", db: prisma });
+      expect(prisma.regulatedLedgerParkedReversal.deleteMany).toHaveBeenCalledWith({
+        where: { returnId: "ret-1", resolvedAt: null },
       });
     });
   });

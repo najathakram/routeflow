@@ -148,6 +148,7 @@ export * from "./api/customers";
 export * from "./api/products";
 export * from "./api/finance";
 export * from "./api/returns";
+export * from "./api/inline-returns";
 export * from "./api/regulated";
 export * from "./api/routes";
 export * from "./api/buyer";
