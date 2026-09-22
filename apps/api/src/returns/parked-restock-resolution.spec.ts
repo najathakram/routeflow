@@ -71,6 +71,8 @@ describe("ParkedRestockResolutionService", () => {
       currentStock: new Prisma.Decimal(100),
       averageCost: new Prisma.Decimal(2),
     } as any);
+    // The resolve path re-reads the return's status inside the transaction (a CANCELLED return is refused).
+    prisma.return.findFirst.mockResolvedValue({ status: "RECEIVED" } as any);
     prisma.stockMovement.create.mockImplementation(async (a: any) => ({ id: "mv-1", ...a.data }));
     const mod = await Test.createTestingModule({
       providers: [
@@ -136,6 +138,44 @@ describe("ParkedRestockResolutionService", () => {
     await expect(service.resolve("pr-1", 12, actor)).rejects.toBeInstanceOf(NotFoundException);
     expect(prisma.stockMovement.create).not.toHaveBeenCalled();
     expect(audit.log).not.toHaveBeenCalled();
+  });
+
+  it("refuses a CANCELLED return and books NOTHING, rolling the claim back so the row stays parked", async () => {
+    // A cancelled return's goods were never kept: restocking them would inflate stock with no offsetting
+    // movement, and cancel() cannot undo a movement booked after it ran.
+    prisma.return.findFirst.mockResolvedValue({ status: "CANCELLED" } as any);
+    await expect(service.resolve("pr-1", 12, actor)).rejects.toBeInstanceOf(NotFoundException);
+    expect(prisma.stockMovement.create).not.toHaveBeenCalled();
+    expect(prisma.product.update).not.toHaveBeenCalled();
+    expect(audit.log).not.toHaveBeenCalled();
+  });
+
+  it("makes the CANCELLED check INSIDE the transaction and AFTER the claim, so the claim's row lock serialises against cancel()", async () => {
+    // The claim's UPDATE and cancel()'s DELETE of unresolved parked rows contend for the same row: claiming
+    // first is what makes "cancel committed already" show up as a 0-count claim rather than a booking.
+    const order: string[] = [];
+    const model: any = (prisma as any).returnParkedRestock;
+    const claim = model.updateMany;
+    model.updateMany = jest.fn(async (a: any) => {
+      if (a.where?.resolvedAt === null) order.push("claim");
+      return claim(a);
+    });
+    prisma.return.findFirst.mockImplementation(async () => {
+      order.push("status-read");
+      return { status: "RECEIVED" } as any;
+    });
+    prisma.stockMovement.create.mockImplementation(async (a: any) => {
+      order.push("book");
+      return { id: "mv-1", ...a.data };
+    });
+    await service.resolve("pr-1", 12, actor);
+    expect(order).toEqual(["claim", "status-read", "book"]);
+  });
+
+  it("refuses when the return row is GONE, booking nothing", async () => {
+    prisma.return.findFirst.mockResolvedValue(null as any);
+    await expect(service.resolve("pr-1", 12, actor)).rejects.toBeInstanceOf(NotFoundException);
+    expect(prisma.stockMovement.create).not.toHaveBeenCalled();
   });
 
   it("the pack lives ONLY on the parked row: nothing is written to a line, invoice line or the product's pack", async () => {
@@ -230,6 +270,8 @@ describe("cancel() undoes a RESOLVED restock exactly (36 pieces, not the typed 3
       currentStock: new Prisma.Decimal(0),
       averageCost: null,
     } as any);
+    // resolve() re-reads the return's status inside its transaction; this return is live, not cancelled.
+    prisma.return.findFirst.mockResolvedValue({ status: "RECEIVED" } as any);
     prisma.stockMovement.create.mockImplementation(async (a: any) => ({ id: "mv-1", ...a.data }));
     const resolver = new ParkedRestockResolutionService(prisma as any, { log: jest.fn() } as any);
     await resolver.resolve("pr-1", 12, { id: "u-op" });

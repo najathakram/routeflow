@@ -29,10 +29,17 @@ export class ParkedRestockResolutionService {
   }
 
   /**
-   * ONE transaction: the conditional claim (`resolvedAt IS NULL`: the idempotency guard), the stock movement
-   * + increment, and the resolvedMovementId stamp. An already-resolved row is a no-op (`alreadyResolved`),
-   * another tenant's row is a 404, and a return CANCELLED since (which voids its unresolved parked rows) is
-   * a 404 too.
+   * ONE transaction: the conditional claim (`resolvedAt IS NULL`: the idempotency guard), the CANCELLED-return
+   * refusal, the stock movement + increment, and the resolvedMovementId stamp. An already-resolved row is a
+   * no-op (`alreadyResolved`), another tenant's row is a 404, and a CANCELLED return is a 404.
+   *
+   * ORDER MATTERS, and the claim deliberately comes FIRST. `cancel()` deletes this return's unresolved
+   * parked rows (`resolvedAt: null`), so the claim's UPDATE and that DELETE contend for the SAME row lock:
+   * if cancel committed first the row is gone and the claim matches 0 rows (nothing is booked); if the claim
+   * wins, cancel's delete waits on this transaction. The status re-read then happens INSIDE the same
+   * transaction, after the claim, so a return cancelled by any path that does NOT delete the parked row is
+   * still refused and the throw rolls the claim back with it. Checking before the transaction, or outside
+   * it, would leave a window where a stock movement is booked onto a cancelled return.
    */
   async resolve(id: string, unitsPerBoxSupplied: number, actor: { id: string }) {
     const tenantId = this.prisma.getTenantId();
@@ -51,6 +58,19 @@ export class ParkedRestockResolutionService {
           row: await tx.returnParkedRestock.findFirst({ where: { id } }),
         };
       }
+
+      // The claim is held; now refuse a CANCELLED return. A cancelled return's goods were never kept, so
+      // restocking them would inflate stock with no offsetting movement — and `cancel()` would not undo it,
+      // because it only removes movements that existed when it ran. The throw rolls the claim back, leaving
+      // the row parked and unresolved. Tenant-scoped read, so another tenant's return is a 404 here too.
+      const ret = await tx.return.findFirst({
+        where: { id: row.returnId },
+        select: { status: true },
+      });
+      if (!ret || ret.status === "CANCELLED") {
+        throw new NotFoundException("Parked restock not found");
+      }
+
       const pieces = new Prisma.Decimal(row.returnedQty).mul(unitsPerBoxSupplied);
       const movementId = await bookRestockMovement(tx, {
         returnId: row.returnId,
