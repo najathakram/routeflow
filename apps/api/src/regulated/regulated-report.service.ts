@@ -15,10 +15,23 @@ import {
 import { allColumnKeys, defaultColumnKeys } from "./template-registry";
 import { projectReportColumns } from "./report-projection";
 import { RegulatedReport } from "./report-types";
+import { listParkedReversals, parkedRestockNote, withParkedFirst } from "./parked-reversals";
+import { periodBucketOf } from "./period";
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 const DAY_MS = 24 * 60 * 60 * 1000;
 const MAX_RANGE_DAYS = 366;
+
+/** Every "YYYY-MM" ledger bucket a half-open [from, to) window touches (a partial month counts: conservative). */
+function bucketsCovering(from: Date, toExclusive: Date): string[] {
+  const out: string[] = [];
+  const cursor = new Date(Date.UTC(from.getUTCFullYear(), from.getUTCMonth(), 1));
+  while (cursor < toExclusive) {
+    out.push(periodBucketOf(cursor));
+    cursor.setUTCMonth(cursor.getUTCMonth() + 1);
+  }
+  return out;
+}
 
 /**
  * WP11: stateless regulated reporting — computes a `RegulatedReport` over an
@@ -169,7 +182,17 @@ export class RegulatedReportService {
       }
     }
 
-    return report;
+    // The filing gate's other half: unresolved parked reversals of the range's months (and the parked-restock
+    // stock note) lead the report; a preview with any is marked "do not file from this export".
+    const db = this.prisma.forTenant();
+    const [parked, restockNote] = await Promise.all([
+      listParkedReversals(db, {
+        trackedCategoryId: category.id,
+        buckets: bucketsCovering(fromDate, toExclusive),
+      }),
+      parkedRestockNote(db, { trackedCategoryId: category.id, from: fromDate, to: toExclusive }),
+    ]);
+    return withParkedFirst(report, parked, restockNote);
   }
 
   /**
