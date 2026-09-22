@@ -1318,6 +1318,70 @@ describe("RegulatedLedgerService", () => {
         // SALE 60 + first credit -30 + this -30 = 0 pieces remaining.
       });
 
+      it("takes the ratio from the CREDITED line's own SALE rows, not the order line's mixed-pack aggregate", async () => {
+        // A reconcile rotated the invoice item AFTER the product was repacked 12 -> 10, so the order
+        // line carries two SALE rows of different packs (the first already offset by a re-sync
+        // reversal). Averaging them gives 110/10 = 11 pieces per box and books -22 for a 2-box credit
+        // when the truth is 2 x 10 = -20. The total still closes, so the error is a FILING PERIOD
+        // mis-attribution: 2 phantom pieces this period, 2 too few in the closing one.
+        prisma.regulatedSalesLedger.findMany
+          .mockResolvedValueOnce([]) // idempotency
+          .mockResolvedValueOnce([
+            {
+              invoiceItemId: "ii-2",
+              netSales: 30,
+              qty: 5,
+              unitBasisQty: 50, // the LIVE credited line: pack 10
+              categoryTax: 0,
+              orderId: "ord-1",
+              orderItemId: "oi-1",
+              invoiceId: "inv-1",
+            },
+          ])
+          .mockResolvedValueOnce([
+            // the pre-reconcile row (pack 12) and its re-sync reversal, plus the live row
+            {
+              entryType: "SALE",
+              invoiceItemId: "ii-1",
+              orderItemId: "oi-1",
+              qty: 5,
+              unitBasisQty: 60,
+              netSales: 50,
+              categoryTax: 0,
+            },
+            {
+              entryType: "REVERSAL",
+              invoiceItemId: "ii-1",
+              orderItemId: "oi-1",
+              qty: -5,
+              unitBasisQty: -60,
+              netSales: -50,
+              categoryTax: 0,
+            },
+            {
+              entryType: "SALE",
+              invoiceItemId: "ii-2",
+              orderItemId: "oi-1",
+              qty: 5,
+              unitBasisQty: 50,
+              netSales: 30,
+              categoryTax: 0,
+            },
+          ]);
+        prisma.creditNoteItem.findMany.mockResolvedValue([
+          {
+            tenantId: "t1",
+            trackedCategoryId: "cat-A",
+            invoiceItemId: "ii-2",
+            amount: 12, // a partial: 2 of the 5 boxes
+            qty: 2,
+            categoryTax: 0,
+          },
+        ]);
+        await service.reverseCreditNoteEntries({ creditNoteId: "cn-1", db: prisma });
+        expect(booked().unitBasisQty).toBe(-20); // 2 boxes x the CREDITED line's own pack of 10
+      });
+
       it("an ordinary line where qty already IS the piece count is unchanged (unitBasisQty === qty)", async () => {
         armCredit(
           [boxUnawareSale({ qty: 60, unitBasisQty: 60 })],

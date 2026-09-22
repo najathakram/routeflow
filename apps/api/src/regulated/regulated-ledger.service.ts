@@ -202,8 +202,11 @@ export class RegulatedLedgerService {
         orderItemId: s.orderItemId,
         invoiceId: s.invoiceId,
         invoiceItemId,
-        qty: -agg.qty,
-        unitBasisQty: -agg.unitBasisQty,
+        // round3 like every other quantity writer: these are Decimal(12,3) columns and an unrounded
+        // float sum lands as e.g. -39.995999999999995 (Postgres rounds it, but no other writer relies
+        // on that).
+        qty: -round3(agg.qty),
+        unitBasisQty: -round3(agg.unitBasisQty),
         netSales: roundMoney(-agg.netSales),
         categoryTax: roundMoney(-agg.categoryTax),
         soldAt: now,
@@ -482,6 +485,10 @@ export class RegulatedLedgerService {
       select: {
         invoiceItemId: true,
         netSales: true,
+        // B661: both quantity axes of THIS credited line's own SALE rows — the pieces-per-line-unit
+        // ratio is taken from here, not from the order line's aggregate (see below).
+        qty: true,
+        unitBasisQty: true,
         orderId: true,
         orderItemId: true,
         invoiceId: true,
@@ -493,6 +500,8 @@ export class RegulatedLedgerService {
       string,
       {
         net: number;
+        qty: number;
+        unitBasis: number;
         orderId: string | null;
         orderItemId: string | null;
         invoiceId: string | null;
@@ -503,12 +512,16 @@ export class RegulatedLedgerService {
       const k = s.invoiceItemId ?? "";
       const cur = liveSaleByItem.get(k) ?? {
         net: 0,
+        qty: 0,
+        unitBasis: 0,
         orderId: s.orderId ?? null,
         orderItemId: s.orderItemId ?? null,
         invoiceId: s.invoiceId ?? null,
         trackedSubcategoryId: s.trackedSubcategoryId ?? null,
       };
       cur.net += Number(s.netSales);
+      cur.qty += Number(s.qty);
+      cur.unitBasis += Number(s.unitBasisQty);
       liveSaleByItem.set(k, cur);
     }
 
@@ -611,11 +624,19 @@ export class RegulatedLedgerService {
         if (qty < remQty) qty = remQty;
         if (tax < remTax) tax = remTax;
       }
-      // The piece axis follows the SALE row's own pieces-per-line-unit ratio, never the live product.
+      // The piece axis follows a pieces-per-line-unit ratio taken from the CREDITED LINE's OWN live SALE
+      // rows (`live`), never the live product and never the ORDER LINE's aggregate. The aggregate spans
+      // every SALE row of the line, including pre-reconcile rows already offset by re-sync reversals, so
+      // if the product was repacked between the original write and a reconcile it is a weighted average
+      // of two different packs — which books the right total but attributes pieces to the wrong FILING
+      // PERIOD when partials straddle a boundary. `reverseReturnEntries` pro-rates off the live row's own
+      // ratio for the same reason; this keeps the two paths consistent.
+      //
       // A closing credit books the EXACT remaining pieces, mirroring how net/qty/tax close, so repeated
-      // partials can never leave a residue. A degenerate SALE (qty 0) has no ratio to scale by, so the
-      // line-unit value is carried through unchanged — the pre-B661 behaviour.
-      let unitBasis = sale.qty !== 0 ? qty * (sale.unitBasis / sale.qty) : qty;
+      // partials can never leave a residue — including a residue left by a pre-fix credit note. A
+      // degenerate SALE (qty 0) has no ratio to scale by, so the line-unit value is carried through
+      // unchanged — the pre-B661 behaviour.
+      let unitBasis = live.qty !== 0 ? qty * (live.unitBasis / live.qty) : qty;
       if (closes) unitBasis = remUnitBasis;
       else if (unitBasis < remUnitBasis) unitBasis = remUnitBasis;
       const bookedNet = roundMoney(net);
