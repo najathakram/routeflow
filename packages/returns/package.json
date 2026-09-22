@@ -1,0 +1,35 @@
+{
+  "name": "@routeflow/returns",
+  "version": "0.0.1",
+  "private": true,
+  "description": "RouteFlow pure return logic — inline-return request/quote/refusal helpers shared by web and mobile; a candidate home for the standard-return pure logic to follow",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "dev": "tsc -p tsconfig.build.json --watch --preserveWatchOutput",
+    "clean": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\"",
+    "test": "jest",
+    "lint": "tsc --noEmit -p tsconfig.json",
+    "check-types": "tsc --noEmit -p tsconfig.json"
+  },
+  "devDependencies": {
+    "@routeflow/typescript-config": "*",
+    "@routeflow/types": "*",
+    "@types/jest": "^30.0.0",
+    "@types/node": "^20.19.43",
+    "jest": "^30.0.0",
+    "ts-jest": "^29.4.12",
+    "typescript": "^5.9.3"
+  }
+}

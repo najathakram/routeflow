@@ -32,7 +32,7 @@ import {
   sumChunkTotals,
   type ExcessOption,
   type InlineReturnLineDraft,
-} from "./inline-return-state";
+} from "@routeflow/returns";
 
 const REASON_OPTIONS: { value: ReturnReason; label: string }[] = [
   { value: "DAMAGED", label: "Damaged" },

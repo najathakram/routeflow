@@ -1,0 +1,20 @@
+{
+  "extends": "@routeflow/typescript-config/base.json",
+  "compilerOptions": {
+    "module": "commonjs",
+    "moduleResolution": "node",
+    "target": "ES2022",
+    "rootDir": "src",
+    "outDir": "dist",
+    "declaration": true,
+    "declarationMap": true,
+    "sourceMap": true,
+    // Matches @routeflow/pricing's shape: the moved body was written and compiled under
+    // apps/web (which does not enable noUncheckedIndexedAccess), so keep the base.json
+    // opt-in off here rather than editing the body to satisfy a stricter flag — this
+    // extraction is a pure move, not a rewrite.
+    "noUncheckedIndexedAccess": false,
+    "types": ["jest", "node"]
+  },
+  "include": ["src"]
+}
