@@ -178,6 +178,22 @@ describe("ParkedRestockResolutionService", () => {
     expect(prisma.stockMovement.create).not.toHaveBeenCalled();
   });
 
+  it("a factor-1 parked row RESOLVES: 3 stays 3 pieces, booked and stamped like any other (owner ruling 2026-09-22)", async () => {
+    // Reachable: a box-unaware line carrying a pack snapshot but NO split, on an uninvoiced order, has no
+    // InvoiceItem source, so it parks even though its qty is already a piece count. The true pack is 1.
+    // Before this ruling @Min(2) made such a row permanently unresolvable — a 100% undercount.
+    const res = await service.resolve("pr-1", 1, actor);
+    expect(Number(movement().quantity)).toBe(3);
+    expect(Number(prisma.product.update.mock.calls[0][0].data.currentStock.increment)).toBe(3);
+    expect(res).toEqual({ alreadyResolved: false, resolvedMovementId: "mv-1" });
+    expect(table[0].unitsPerBoxSupplied).toBe(1);
+    expect(audit.log).toHaveBeenCalledWith(
+      expect.objectContaining({
+        meta: expect.objectContaining({ unitsPerBoxSupplied: 1, pieces: 3 }),
+      }),
+    );
+  });
+
   it("the pack lives ONLY on the parked row: nothing is written to a line, invoice line or the product's pack", async () => {
     await service.resolve("pr-1", 12, actor);
     for (const model of ["orderItem", "invoiceItem"] as const) {
@@ -359,11 +375,16 @@ describe("parked restock endpoints: roles, no addon, and the body", () => {
   const run = (body: unknown) =>
     pipe.transform(body, { type: "body", metatype: ResolveParkedRestockDto });
 
-  it("the body is the PACK only: an integer 2..10000, and a retyped quantity is refused", async () => {
+  it("the body is the PACK only: an integer 1..10000, and a retyped quantity is refused", async () => {
     await expect(run({ unitsPerBoxSupplied: 12 })).resolves.toMatchObject({
       unitsPerBoxSupplied: 12,
     });
-    for (const bad of [1, 0, -12, 1.5, "abc", null, 10001, undefined]) {
+    // 1 is ACCEPTED (owner ruling 2026-09-22): a parked row can legitimately have a factor of 1, and
+    // rejecting it would leave those rows unresolvable forever — a 100% undercount.
+    await expect(run({ unitsPerBoxSupplied: 1 })).resolves.toMatchObject({
+      unitsPerBoxSupplied: 1,
+    });
+    for (const bad of [0, -12, 1.5, "abc", null, 10001, undefined]) {
       await expect(run({ unitsPerBoxSupplied: bad })).rejects.toBeInstanceOf(BadRequestException);
     }
     for (const extra of ["returnedQty", "qty", "pieces", "quantity", "unitsPerBox"]) {
