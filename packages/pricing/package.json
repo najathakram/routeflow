@@ -16,7 +16,7 @@
     "dist"
   ],
   "scripts": {
-    "build": "tsc -p tsconfig.build.json",
+    "build": "tsc -p tsconfig.build.json && node -e \"import('../../scripts/lib/assert-pricing-dist-fresh.mjs').then(m=>m.writeStamp(process.cwd()))\"",
     "dev": "tsc -p tsconfig.build.json --watch --preserveWatchOutput",
     "clean": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\"",
     "test": "jest",

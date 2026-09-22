@@ -1,11 +1,14 @@
 import { computeLineCorrection, deriveLinePack } from "./b681-correction";
 
 /**
- * B681/SA-058 through SA-073. Red-first, direct unit tests of this module's own decision table --
+ * B681/SA-058 through SA-076a. Red-first, direct unit tests of this module's own decision table --
  * not a reproduction of `regulated-ledger.service.ts`'s historical write-time booking algorithm
  * (that algorithm's "remaining"/"frac" state cannot be reliably reconstructed from stored rows
- * alone, which is exactly why `moneySafe` is scoped as narrowly as it is -- see the header of
- * `b681-correction.ts`). These cases exercise the function's contract against synthetic row data.
+ * alone, which is exactly why the return-driven money path compares TRUE returned pieces rather
+ * than replaying history -- see the header of `b681-correction.ts`). These cases exercise the
+ * function's contract against synthetic row data, including SA-066(1)'s over-close finding that
+ * overturned the first version of this module (a "fully netted, consistent-axis" reversal is that
+ * bug's exact signature, not proof of correctness).
  */
 describe("deriveLinePack", () => {
   // qty 60 (total pieces billed) deliberately != boxes 5, so the box-count-copy evidence is
@@ -24,8 +27,6 @@ describe("deriveLinePack", () => {
   });
 
   it("a non-integer derived factor -> unknown", () => {
-    // source qty 5 doesn't match line qty 5's boxes (7) or its own qty (5)... use a source whose
-    // pieces/qty ratio to the line is fractional to force a non-whole-number factor.
     expect(deriveLinePack({ qty: 4 }, { qty: 10, boxes: 2, pieces: 0, unitsPerBox: 5 })).toEqual({
       unknown: true,
       reason: "line qty (4) matches neither the source's boxes (2) nor its qty (10)",
@@ -38,12 +39,13 @@ describe("computeLineCorrection", () => {
   // qty 60 != boxes 5, same reason as deriveLinePack's own fixture above.
   const sourceProvesPack12 = { qty: 60, boxes: 5, pieces: 0, unitsPerBox: 12 };
 
-  it("no SALE rows at all -> clean, nothing to do", () => {
+  it("no SALE rows at all -> clean, nothing to do, nothing parked", () => {
     expect(computeLineCorrection([], boxUnaware, sourceProvesPack12, 12)).toEqual({
       category: "clean",
       packFactor: null,
       moneySafe: false,
       corrections: [],
+      parkedReversals: [],
       reason: "no SALE rows on this line",
     });
   });
@@ -59,14 +61,13 @@ describe("computeLineCorrection", () => {
         categoryTax: 0,
       },
     ];
-    // productPackNow 12 only feeds classifySaleAxis's boxed GATE here -- pack derivation never
-    // runs, since "clean" short-circuits before deriveLinePack is called at all.
     const res = computeLineCorrection(rows, boxUnaware, null, 12);
     expect(res.category).toBe("clean");
     expect(res.corrections).toEqual([]);
+    expect(res.parkedReversals).toEqual([]);
   });
 
-  it("category A: box-axis SALE + consistent box-axis REVERSAL -- axis-only correction for both rows", () => {
+  it("category A: box-axis SALE + consistent, NON-return-driven REVERSAL (e.g. a void) -- axis-only, nothing parked", () => {
     const rows = [
       {
         id: "s1",
@@ -89,16 +90,17 @@ describe("computeLineCorrection", () => {
     expect(res.category).toBe("A");
     expect(res.packFactor).toBe(12);
     expect(res.moneySafe).toBe(false);
+    expect(res.parkedReversals).toEqual([]);
     expect(res.corrections).toEqual(
       expect.arrayContaining([
-        { rowId: "s1", unitBasisDelta: 55, netDelta: 0, taxDelta: 0 },
-        { rowId: "r1", unitBasisDelta: -55, netDelta: 0, taxDelta: 0 },
+        { rowId: "s1", qtyDelta: 0, unitBasisDelta: 55, netDelta: 0, taxDelta: 0 },
+        { rowId: "r1", qtyDelta: 0, unitBasisDelta: -55, netDelta: 0, taxDelta: 0 },
       ]),
     );
     expect(res.corrections).toHaveLength(2);
   });
 
-  it("category A-piece-reversal, NOT fully closed -- axis correction only, no money touched", () => {
+  it("category A-piece-reversal via a NON-return-driven piece-axis reversal, NOT fully closed -- axis-only, nothing parked (no returnId to park against)", () => {
     const rows = [
       {
         id: "s1",
@@ -108,7 +110,6 @@ describe("computeLineCorrection", () => {
         netSales: 120,
         categoryTax: 0,
       },
-      // |unitBasisQty| 30 > |qty| 2 -- a piece-axis reversal against a box-axis sale
       {
         id: "r1",
         entryType: "REVERSAL" as const,
@@ -120,16 +121,17 @@ describe("computeLineCorrection", () => {
     ];
     const res = computeLineCorrection(rows, boxUnaware, sourceProvesPack12, 12);
     expect(res.category).toBe("A-piece-reversal");
-    expect(res.moneySafe).toBe(false); // net qty is 3, still outstanding -- not fully closed
+    expect(res.moneySafe).toBe(false);
+    expect(res.parkedReversals).toEqual([]); // not return-driven -- no table row can name it
     expect(res.corrections).toEqual(
       expect.arrayContaining([
-        { rowId: "s1", unitBasisDelta: 55, netDelta: 0, taxDelta: 0 }, // 60 - 5
-        { rowId: "r1", unitBasisDelta: 6, netDelta: 0, taxDelta: 0 }, // -24 - (-30)
+        { rowId: "s1", qtyDelta: 0, unitBasisDelta: 55, netDelta: 0, taxDelta: 0 },
+        { rowId: "r1", qtyDelta: 0, unitBasisDelta: 6, netDelta: 0, taxDelta: 0 },
       ]),
     );
   });
 
-  it("category A-piece-reversal, fully closed by ONE reversal -- money already exactly right, delta 0", () => {
+  it("category A-piece-reversal, non-return-driven, fully closed by ONE reversal -- money already exact, delta 0", () => {
     const rows = [
       {
         id: "s1",
@@ -151,14 +153,12 @@ describe("computeLineCorrection", () => {
     const res = computeLineCorrection(rows, boxUnaware, sourceProvesPack12, 12);
     expect(res.category).toBe("A-piece-reversal");
     expect(res.moneySafe).toBe(true);
-    // r1's axis (-60) and money (-120) were already exactly right -- it needs no correction at
-    // all. s1's axis still does (it's the box-axis SALE row itself: booked 5, target 60).
     expect(res.corrections).toEqual([
-      { rowId: "s1", unitBasisDelta: 55, netDelta: 0, taxDelta: 0 },
+      { rowId: "s1", qtyDelta: 0, unitBasisDelta: 55, netDelta: 0, taxDelta: 0 },
     ]);
   });
 
-  it("category A-piece-reversal, fully closed by TWO reversals with wrongly-split money -- redistributes by qty share, conserving the total", () => {
+  it("category A-piece-reversal, non-return-driven, fully closed by TWO reversals with wrongly-split money -- redistributes by qty share, conserving the total", () => {
     const rows = [
       {
         id: "s1",
@@ -186,20 +186,65 @@ describe("computeLineCorrection", () => {
       },
     ];
     const res = computeLineCorrection(rows, boxUnaware, sourceProvesPack12, 12);
-    expect(res.category).toBe("A-piece-reversal");
     expect(res.moneySafe).toBe(true);
     expect(res.corrections).toEqual(
       expect.arrayContaining([
-        { rowId: "s1", unitBasisDelta: 55, netDelta: 0, taxDelta: 0 }, // 60 - 5
-        { rowId: "r1", unitBasisDelta: -4, netDelta: 52, taxDelta: 0 }, // ubq: -24-(-20); net: -48-(-100)
-        { rowId: "r2", unitBasisDelta: -11, netDelta: -52, taxDelta: 0 }, // ubq: -36-(-25); net: -72-(-20)
+        { rowId: "s1", qtyDelta: 0, unitBasisDelta: 55, netDelta: 0, taxDelta: 0 },
+        { rowId: "r1", qtyDelta: 0, unitBasisDelta: -4, netDelta: 52, taxDelta: 0 },
+        { rowId: "r2", qtyDelta: 0, unitBasisDelta: -11, netDelta: -52, taxDelta: 0 },
       ]),
     );
     const totalNetDelta = res.corrections.reduce((s, c) => s + c.netDelta, 0);
-    expect(totalNetDelta).toBeCloseTo(0, 5); // redistribution, never a net money gain/loss
+    expect(totalNetDelta).toBeCloseTo(0, 5);
   });
 
-  it("fully closed but with an UNKNOWN-axis reversal alongside a piece-axis one -- moneySafe refused, axis still corrected", () => {
+  it("SA-066(1): a return-driven reversal reads axis-CONSISTENT (booked -5/-5) but over-closed a partial return -- mismatch caught, money AND both quantity axes corrected", () => {
+    const rows = [
+      {
+        id: "s1",
+        entryType: "SALE" as const,
+        qty: 5,
+        unitBasisQty: 5,
+        netSales: 100,
+        categoryTax: 0,
+      },
+      {
+        id: "r1",
+        entryType: "REVERSAL" as const,
+        qty: -5,
+        unitBasisQty: -5,
+        netSales: -100,
+        categoryTax: 0,
+        returnEvidence: {
+          returnId: "ret1",
+          kind: "inline" as const,
+          qtyOrPieces: 12,
+          attributionUnique: true,
+        },
+      },
+    ];
+    const res = computeLineCorrection(rows, boxUnaware, sourceProvesPack12, 12);
+    // The OLD (pre-SA-076) module would have read this as category "A" (|-5|===|-5|, axis
+    // "consistent") and left money untouched entirely -- exactly the silent over-close SA-066(1)
+    // named. The evidence-based check must override that ratio reading.
+    expect(res.category).toBe("A-piece-reversal");
+    expect(res.moneySafe).toBe(true);
+    expect(res.parkedReversals).toEqual([]);
+    expect(res.corrections).toEqual(
+      expect.arrayContaining([
+        { rowId: "s1", qtyDelta: 0, unitBasisDelta: 55, netDelta: 0, taxDelta: 0 }, // 60 - 5
+        {
+          rowId: "r1",
+          qtyDelta: 4, // target -1 (12 pieces / pack 12) - booked -5
+          unitBasisDelta: -7, // target -12 - booked -5
+          netDelta: 80, // target -100*(12/60)=-20 - booked -100
+          taxDelta: 0,
+        },
+      ]),
+    );
+  });
+
+  it("a return-pieces mismatch on a MULTI-reversal line -- parks every return-driven reversal on the line, including the one that matched, no money or axis correction for either", () => {
     const rows = [
       {
         id: "s1",
@@ -210,38 +255,125 @@ describe("computeLineCorrection", () => {
         categoryTax: 0,
       },
       {
+        // this one's own booked share genuinely matches its true pieces (24)
         id: "r1",
         entryType: "REVERSAL" as const,
         qty: -2,
-        unitBasisQty: -30,
+        unitBasisQty: -24,
         netSales: -48,
         categoryTax: 0,
-      }, // piece-axis
-      // |unitBasisQty| 1 < |qty| 3 -- malformed, unknown axis
+        returnEvidence: {
+          returnId: "retA",
+          kind: "standard" as const,
+          qtyOrPieces: 2,
+          attributionUnique: true,
+        },
+      },
       {
+        // this one over-closed: booked -3/-36 but only 12 pieces were truly returned
         id: "r2",
         entryType: "REVERSAL" as const,
         qty: -3,
-        unitBasisQty: -1,
+        unitBasisQty: -36,
         netSales: -72,
         categoryTax: 0,
+        returnEvidence: {
+          returnId: "retB",
+          kind: "inline" as const,
+          qtyOrPieces: 12,
+          attributionUnique: true,
+        },
       },
     ];
     const res = computeLineCorrection(rows, boxUnaware, sourceProvesPack12, 12);
-    expect(res.category).toBe("A-piece-reversal"); // r1 alone makes it so
-    expect(res.moneySafe).toBe(false); // r2's unknown axis refuses the money replay
-    expect(res.corrections.find((c) => c.rowId === "r2")).toEqual({
-      rowId: "r2",
-      unitBasisDelta: -35, // -36 - (-1)
-      netDelta: 0,
-      taxDelta: 0,
-    });
+    expect(res.category).toBe("A-piece-reversal");
+    expect(res.moneySafe).toBe(false);
+    expect(res.parkedReversals).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ reversalRowId: "r1", returnId: "retA", bookedShare: 24 }),
+        expect.objectContaining({ reversalRowId: "r2", returnId: "retB", bookedShare: 36 }),
+      ]),
+    );
+    expect(res.parkedReversals).toHaveLength(2);
+    // Only the SALE row's axis is corrected -- neither reversal is trusted enough to axis-correct
+    // on its own (r1 wasn't proven wrong, but the LINE's money question as a whole is declined).
+    expect(res.corrections).toEqual([
+      { rowId: "s1", qtyDelta: 0, unitBasisDelta: 55, netDelta: 0, taxDelta: 0 },
+    ]);
   });
 
-  it("more than one SALE row on the line -- moneySafe refused even when net qty is 0", () => {
+  it("return evidence unavailable (no unique matching ReturnItem) on an otherwise single-SALE/single-reversal line -- declines money, parks, no axis correction for that row", () => {
     const rows = [
-      // s1's qty (5) has to match sourceProvesPack12's boxes (5) for pack derivation to succeed --
-      // deriveLinePack only ever reads sales[0].
+      {
+        id: "s1",
+        entryType: "SALE" as const,
+        qty: 5,
+        unitBasisQty: 5,
+        netSales: 100,
+        categoryTax: 0,
+      },
+      {
+        id: "r1",
+        entryType: "REVERSAL" as const,
+        qty: -5,
+        unitBasisQty: -5,
+        netSales: -100,
+        categoryTax: 0,
+        returnEvidence: {
+          returnId: "ret1",
+          kind: "standard" as const,
+          qtyOrPieces: null,
+          attributionUnique: true,
+        },
+      },
+    ];
+    const res = computeLineCorrection(rows, boxUnaware, sourceProvesPack12, 12);
+    expect(res.category).toBe("A"); // axisOfReversal reads consistent; no mismatch was PROVEN
+    expect(res.moneySafe).toBe(false);
+    expect(res.parkedReversals).toEqual([
+      expect.objectContaining({ reversalRowId: "r1", returnId: "ret1", bookedShare: 5 }),
+    ]);
+    expect(res.corrections).toEqual([
+      { rowId: "s1", qtyDelta: 0, unitBasisDelta: 55, netDelta: 0, taxDelta: 0 },
+    ]);
+  });
+
+  it("a return-driven reversal that PROVABLY MATCHES its true pieces -- money never in question, nothing parked", () => {
+    const rows = [
+      {
+        id: "s1",
+        entryType: "SALE" as const,
+        qty: 5,
+        unitBasisQty: 5,
+        netSales: 100,
+        categoryTax: 0,
+      },
+      {
+        id: "r1",
+        entryType: "REVERSAL" as const,
+        qty: -5,
+        unitBasisQty: -60,
+        netSales: -100,
+        categoryTax: 0,
+        returnEvidence: {
+          returnId: "ret1",
+          kind: "inline" as const,
+          qtyOrPieces: 60,
+          attributionUnique: true,
+        },
+      },
+    ];
+    const res = computeLineCorrection(rows, boxUnaware, sourceProvesPack12, 12);
+    expect(res.category).toBe("A"); // matched, not a mismatch -- never counted toward A-piece-reversal
+    expect(res.moneySafe).toBe(false); // no branch claims credit for money that was never touched
+    expect(res.parkedReversals).toEqual([]);
+    expect(res.corrections).toEqual([
+      { rowId: "s1", qtyDelta: 0, unitBasisDelta: 55, netDelta: 0, taxDelta: 0 },
+    ]);
+  });
+
+  it("more than one SALE row on the line with a piece-axis reversal -- moneySafe refused even when net qty is 0", () => {
+    const rows = [
       {
         id: "s1",
         entryType: "SALE" as const,
@@ -298,6 +430,7 @@ describe("computeLineCorrection", () => {
       packFactor: null,
       moneySafe: false,
       corrections: [],
+      parkedReversals: [],
       reason: "SALE rows on this line are split across both axes -- not auto-corrected",
     });
   });
@@ -316,6 +449,7 @@ describe("computeLineCorrection", () => {
     const res = computeLineCorrection(rows, boxUnaware, null, undefined);
     expect(res.category).toBe("unknown-basis");
     expect(res.corrections).toEqual([]);
+    expect(res.parkedReversals).toEqual([]);
   });
 
   it("a prior correction already landed this SALE row on the pieces axis -- idempotent, reads clean", () => {
