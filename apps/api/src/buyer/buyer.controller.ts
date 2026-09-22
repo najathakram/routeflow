@@ -962,7 +962,12 @@ export class BuyerController {
     if (template.customerId !== ctx.customerId) {
       throw new ForbiddenException("This template does not belong to your account");
     }
-    return this.templatesService.generateOrder(id);
+    // #1208 review LOW-MED: this buyer-portal path bypasses generateOrderForUser (there
+    // is no JwtPayload here — ownership is already verified above against ctx.customerId),
+    // so it must pass isStaffRole=false itself, or it silently keeps the old hardcoded-true
+    // oversell posture. A buyer's "Reorder" gets the SAME hard block their own checkout
+    // (orders.service.ts create()) gives them — never the operator/cron warn-and-oversell.
+    return this.templatesService.generateOrder(id, false);
   }
 
   @Patch("templates/:id")

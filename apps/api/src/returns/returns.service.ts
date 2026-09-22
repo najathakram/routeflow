@@ -511,6 +511,10 @@ export class ReturnsService {
         returnId: ret.id,
         orderId: ret.orderId,
         returnedByProduct,
+        // The STANDARD path's ReturnItem.qty mirrors OrderItem.qty (the identity conversion
+        // returns-pieces.util.ts's standardReturnPieces documents) — the line's OWN unit,
+        // never pieces (live production regression, B661/B671 fix round 2).
+        returnedUnit: "LINE_UNIT",
         db: tx,
       });
       // Status already flipped to RECEIVED by the claim above; return the record.

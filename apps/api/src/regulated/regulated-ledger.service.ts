@@ -176,8 +176,16 @@ export class RegulatedLedgerService {
     for (const [invoiceItemId, agg] of byItem) {
       if (!agg.sale) continue; // no SALE for this line — nothing of ours to reverse
       // Skip a line whose sale is already fully reversed (net ~0 in every dimension).
+      //
+      // `unitBasisQty` is one of those dimensions. Since B661 it is a PIECE count while `qty` is in the
+      // line's own unit, so a line can be square on money, qty and tax while still carrying a piece
+      // residue — every row a pre-fix credit note wrote against a box-unaware line is exactly that shape.
+      // Leaving it out of this guard is what made those rows permanent: a later void read the line as
+      // already reversed and never cleared the phantom pieces off the filing. Including it means the void
+      // books a row that is zero in money and non-zero only on the axis that is actually outstanding.
       if (
         Math.abs(agg.qty) < EPS &&
+        Math.abs(agg.unitBasisQty) < EPS &&
         Math.abs(agg.netSales) < EPS &&
         Math.abs(agg.categoryTax) < EPS
       ) {
@@ -194,8 +202,11 @@ export class RegulatedLedgerService {
         orderItemId: s.orderItemId,
         invoiceId: s.invoiceId,
         invoiceItemId,
-        qty: -agg.qty,
-        unitBasisQty: -agg.unitBasisQty,
+        // round3 like every other quantity writer: these are Decimal(12,3) columns and an unrounded
+        // float sum lands as e.g. -39.995999999999995 (Postgres rounds it, but no other writer relies
+        // on that).
+        qty: -round3(agg.qty),
+        unitBasisQty: -round3(agg.unitBasisQty),
         netSales: roundMoney(-agg.netSales),
         categoryTax: roundMoney(-agg.categoryTax),
         soldAt: now,
@@ -214,7 +225,24 @@ export class RegulatedLedgerService {
    * category, which may have drifted). Idempotent per `(returnId, orderId)` (PR-1a —
    * widened from `returnId` alone so an INLINE return spanning multiple source orders
    * reverses each independently; a STANDARD return has exactly one source order, so
-   * this is unchanged for it). Everything already
+   * this is unchanged for it).
+   *
+   * `returnedUnit` (live production regression, B661/B671 fix, round 2): `returnedByProduct`
+   * arrives in a DIFFERENT unit per caller, and the caller must say which — never inferred.
+   * `returns.service.ts`'s standard `receive()` sums raw `ReturnItem.qty`, which mirrors
+   * `OrderItem.qty` (the identity conversion `returns-pieces.util.ts`'s `standardReturnPieces`
+   * documents) — the LINE's OWN unit, boxes for a box-unaware line, never pieces despite that
+   * file's header comment. `inline-returns.service.ts`'s `capture()` builds `ReturnItem.qty`
+   * from `priced.chunks[].pieces` — genuinely PIECES. B671 made `unitBasisQty` (pieces) the
+   * cap/closing/pro-rata axis unconditionally, which is correct for the inline (PIECES) caller
+   * but silently compared boxes against pieces for the standard (LINE_UNIT) caller: a
+   * box-unaware sale of 5 boxes at pack 12 fully returned computed `closesRow = 5 >= 60` as
+   * false and `frac = 5/60`, reversing ~8% of the sale instead of all of it. `returnedUnit`
+   * selects which axis (`remQtyByLine`/`s.qty` for LINE_UNIT, `remUnitBasisByLine`/
+   * `s.unitBasisQty` for PIECES — both already seeded below) caps/closes/pro-rates off; the
+   * OTHER axis is then derived proportionally by the same fraction, never independently
+   * clamped-and-rounded the way the native axis is (that would re-admit drift the closing rule
+   * exists to prevent). Everything already
    * reversed on the ORDER LINE (earlier returns, invoice voids, credit notes AND
    * reconcile re-syncs) is subtracted so cumulative reversed qty/net can never exceed
    * the sold amount — and the cap is keyed on `orderItemId` (not the invoice item), so
@@ -234,9 +262,13 @@ export class RegulatedLedgerService {
     returnId: string;
     orderId: string;
     returnedByProduct: Map<string, number>;
+    /** Which unit `returnedByProduct`'s values are in — see the doc above. Required, never
+     *  defaulted: the two callers disagree, and guessing wrong silently under- or
+     *  over-reverses the filing. */
+    returnedUnit: "LINE_UNIT" | "PIECES";
     db: any;
   }): Promise<void> {
-    const { returnId, orderId, returnedByProduct, db } = params;
+    const { returnId, orderId, returnedByProduct, returnedUnit, db } = params;
     if (!returnedByProduct || returnedByProduct.size === 0) return;
 
     // Idempotency key is (returnId, orderId), not returnId alone (PR-1a/§5): an INLINE
@@ -349,28 +381,34 @@ export class RegulatedLedgerService {
     const bucket = periodBucketOf(now);
     const rows: any[] = [];
 
+    // Which per-line remaining map is the CALLER's own axis — the one `returnedByProduct`'s
+    // values are directly comparable against (cap, closesRow, and the pro-rata fraction all
+    // read off this one; the other axis is DERIVED from it, never independently clamped).
+    const nativeRemByLine = returnedUnit === "PIECES" ? remUnitBasisByLine : remQtyByLine;
+
     for (const [productId, returnedQtyRaw] of returnedByProduct.entries()) {
-      // B671: PIECES (returnedPiecesByProduct) — the same axis unitBasisQty is on, never the
-      // line's own `qty` (boxes for a box-unaware line).
       let remaining = Number(returnedQtyRaw);
       if (!(remaining > 0)) continue;
       for (const s of salesByProduct.get(productId) ?? []) {
         if (remaining <= 0) break;
+        const saleQty = Number(s.qty);
         const saleUnitBasis = Number(s.unitBasisQty);
-        if (saleUnitBasis <= 0) continue;
+        const saleNativeAxis = returnedUnit === "PIECES" ? saleUnitBasis : saleQty;
+        if (saleNativeAxis <= 0) continue;
         const lk = lineKeyOfSale(s);
-        // Cap this chunk at the ORDER LINE's remaining un-reversed PIECES (survives a
-        // reconcile that rotated the invoice item), not just this row's own unitBasisQty —
-        // and not the line's own qty (B671: comparing PIECES against a box-unaware line's box
-        // count silently closed the whole line on a fractional-box return).
-        const rowRemainingUnitBasis = remUnitBasisByLine.get(lk) ?? 0;
-        if (rowRemainingUnitBasis <= 0) continue;
-        // This chunk CLOSES the line when it consumes all of its remaining PIECES.
-        const closesRow = remaining >= rowRemainingUnitBasis;
-        const rPieces = Math.min(remaining, rowRemainingUnitBasis);
-        remaining -= rPieces;
-        const frac = rPieces / saleUnitBasis; // pro-rate off the LIVE row's own unitBasisQty
+        // Cap this chunk at the ORDER LINE's remaining un-reversed amount ON THE CALLER'S OWN
+        // AXIS (survives a reconcile that rotated the invoice item), not the other axis — B671:
+        // comparing pieces against a box-unaware line's box count (or vice versa) silently
+        // closed the whole line on a fractional return, or reversed only a sliver of a full one.
+        const rowRemainingNative = nativeRemByLine.get(lk) ?? 0;
+        if (rowRemainingNative <= 0) continue;
+        // This chunk CLOSES the line when it consumes all of its remaining native-axis amount.
+        const closesRow = remaining >= rowRemainingNative;
+        const rNative = Math.min(remaining, rowRemainingNative);
+        remaining -= rNative;
+        const frac = rNative / saleNativeAxis; // pro-rate off the LIVE row's own native axis
         const rowRemainingQty = remQtyByLine.get(lk) ?? 0; // the line's OWN unit (boxes, etc.)
+        const rowRemainingUnitBasis = remUnitBasisByLine.get(lk) ?? 0; // pieces
         const netRem = remNetByLine.get(lk) ?? 0; // remaining line net (>= 0)
         const taxRem = remTaxByLine.get(lk) ?? 0;
         // Money: the chunk that CLOSES the line books its EXACT remaining balance so a
@@ -384,11 +422,24 @@ export class RegulatedLedgerService {
         let bookedTax = closesRow ? roundMoney(-taxRem) : roundMoney(-Number(s.categoryTax) * frac);
         if (bookedNet < -netRem) bookedNet = roundMoney(-netRem);
         if (bookedTax < -taxRem) bookedTax = roundMoney(-taxRem);
-        // qty (the line's OWN unit) moves by the same frac, same clamp pattern as net/tax.
-        let bookedQty = closesRow ? rowRemainingQty : round3(Number(s.qty) * frac);
-        if (bookedQty > rowRemainingQty) bookedQty = rowRemainingQty;
+        // The NATIVE axis is exactly rNative (never re-derived through frac — that would
+        // re-admit the rounding drift the closing rule exists to prevent). The OTHER axis is
+        // derived by the same frac, clamped to ITS OWN remaining the same way net/tax are.
+        let bookedQty: number;
+        let bookedUnitBasis: number;
+        if (returnedUnit === "PIECES") {
+          bookedUnitBasis = closesRow ? rowRemainingUnitBasis : rNative;
+          if (bookedUnitBasis > rowRemainingUnitBasis) bookedUnitBasis = rowRemainingUnitBasis;
+          bookedQty = closesRow ? rowRemainingQty : round3(saleQty * frac);
+          if (bookedQty > rowRemainingQty) bookedQty = rowRemainingQty;
+        } else {
+          bookedQty = closesRow ? rowRemainingQty : rNative;
+          if (bookedQty > rowRemainingQty) bookedQty = rowRemainingQty;
+          bookedUnitBasis = closesRow ? rowRemainingUnitBasis : round3(saleUnitBasis * frac);
+          if (bookedUnitBasis > rowRemainingUnitBasis) bookedUnitBasis = rowRemainingUnitBasis;
+        }
         remQtyByLine.set(lk, rowRemainingQty - bookedQty);
-        remUnitBasisByLine.set(lk, rowRemainingUnitBasis - rPieces);
+        remUnitBasisByLine.set(lk, rowRemainingUnitBasis - bookedUnitBasis);
         remNetByLine.set(lk, netRem + bookedNet);
         remTaxByLine.set(lk, taxRem + bookedTax);
         rows.push({
@@ -403,7 +454,7 @@ export class RegulatedLedgerService {
           invoiceItemId: s.invoiceItemId,
           returnId,
           qty: -round3(bookedQty),
-          unitBasisQty: -round3(rPieces),
+          unitBasisQty: -round3(bookedUnitBasis),
           netSales: bookedNet,
           categoryTax: bookedTax,
           soldAt: now,
@@ -474,6 +525,10 @@ export class RegulatedLedgerService {
       select: {
         invoiceItemId: true,
         netSales: true,
+        // B661: both quantity axes of THIS credited line's own SALE rows — the pieces-per-line-unit
+        // ratio is taken from here, not from the order line's aggregate (see below).
+        qty: true,
+        unitBasisQty: true,
         orderId: true,
         orderItemId: true,
         invoiceId: true,
@@ -485,6 +540,8 @@ export class RegulatedLedgerService {
       string,
       {
         net: number;
+        qty: number;
+        unitBasis: number;
         orderId: string | null;
         orderItemId: string | null;
         invoiceId: string | null;
@@ -495,12 +552,16 @@ export class RegulatedLedgerService {
       const k = s.invoiceItemId ?? "";
       const cur = liveSaleByItem.get(k) ?? {
         net: 0,
+        qty: 0,
+        unitBasis: 0,
         orderId: s.orderId ?? null,
         orderItemId: s.orderItemId ?? null,
         invoiceId: s.invoiceId ?? null,
         trackedSubcategoryId: s.trackedSubcategoryId ?? null,
       };
       cur.net += Number(s.netSales);
+      cur.qty += Number(s.qty);
+      cur.unitBasis += Number(s.unitBasisQty);
       liveSaleByItem.set(k, cur);
     }
 
@@ -529,6 +590,7 @@ export class RegulatedLedgerService {
         orderItemId: true,
         netSales: true,
         qty: true,
+        unitBasisQty: true,
         categoryTax: true,
       },
     });
@@ -548,14 +610,17 @@ export class RegulatedLedgerService {
     // credit-note, return, void AND reconcile re-sync reversals (signed negative) —
     // so cumulative reversal can never exceed the sold amount no matter which path or
     // since-rotated invoice item booked the earlier reversal.
-    const saleByLine = new Map<string, { net: number; qty: number; tax: number }>();
-    const revByLine = new Map<string, { net: number; qty: number; tax: number }>();
+    type LineBag = { net: number; qty: number; unitBasis: number; tax: number };
+    const emptyBag = (): LineBag => ({ net: 0, qty: 0, unitBasis: 0, tax: 0 });
+    const saleByLine = new Map<string, LineBag>();
+    const revByLine = new Map<string, LineBag>();
     for (const r of lineRows) {
       const lk = lineKeyOf(r);
       const bag = r.entryType === "SALE" ? saleByLine : revByLine;
-      const cur = bag.get(lk) ?? { net: 0, qty: 0, tax: 0 };
+      const cur = bag.get(lk) ?? emptyBag();
       cur.net += Number(r.netSales);
       cur.qty += Number(r.qty);
+      cur.unitBasis += Number(r.unitBasisQty);
       cur.tax += Number(r.categoryTax);
       bag.set(lk, cur);
     }
@@ -567,15 +632,20 @@ export class RegulatedLedgerService {
       const live = liveSaleByItem.get(it.invoiceItemId ?? "");
       if (!live || live.net <= 0) continue; // SALE-existence guard — no naked reversal.
       const lk = live.orderItemId ?? it.invoiceItemId ?? "";
-      const sale = saleByLine.get(lk) ?? { net: 0, qty: 0, tax: 0 };
+      const sale = saleByLine.get(lk) ?? emptyBag();
       if (sale.net <= 0) continue;
-      const already = revByLine.get(lk) ?? { net: 0, qty: 0, tax: 0 };
+      const already = revByLine.get(lk) ?? emptyBag();
       // Remaining capacity to reverse for the ORDER LINE (signed, negative). `sale.*`
       // is the line's gross SALE, `already.*` (<= 0) folds in the reconcile re-sync
       // reversals that offset the pre-reconcile SALE rows, so this nets to the current
       // un-reversed balance.
       const remNet = -sale.net - already.net;
       const remQty = -sale.qty - already.qty;
+      // B661: the SALE row's `unitBasisQty` is a PIECE count, while `qty` (and a CreditNoteItem's qty)
+      // is in the INVOICE LINE's own unit — boxes for a box-unaware line. The two axes are tracked
+      // separately and each is closed against its own remaining, or a full credit of a 5-box pack-12
+      // line books -5 against a SALE of 60 and strands 55 phantom pieces on the regulated filing.
+      const remUnitBasis = -sale.unitBasis - already.unitBasis;
       const remTax = -sale.tax - already.tax;
       if (remNet >= -0.005) continue; // line already fully reversed — nothing left.
 
@@ -594,8 +664,24 @@ export class RegulatedLedgerService {
         if (qty < remQty) qty = remQty;
         if (tax < remTax) tax = remTax;
       }
+      // The piece axis follows a pieces-per-line-unit ratio taken from the CREDITED LINE's OWN live SALE
+      // rows (`live`), never the live product and never the ORDER LINE's aggregate. The aggregate spans
+      // every SALE row of the line, including pre-reconcile rows already offset by re-sync reversals, so
+      // if the product was repacked between the original write and a reconcile it is a weighted average
+      // of two different packs — which books the right total but attributes pieces to the wrong FILING
+      // PERIOD when partials straddle a boundary. `reverseReturnEntries` pro-rates off the live row's own
+      // ratio for the same reason; this keeps the two paths consistent.
+      //
+      // A closing credit books the EXACT remaining pieces, mirroring how net/qty/tax close, so repeated
+      // partials can never leave a residue — including a residue left by a pre-fix credit note. A
+      // degenerate SALE (qty 0) has no ratio to scale by, so the line-unit value is carried through
+      // unchanged — the pre-B661 behaviour.
+      let unitBasis = live.qty !== 0 ? qty * (live.unitBasis / live.qty) : qty;
+      if (closes) unitBasis = remUnitBasis;
+      else if (unitBasis < remUnitBasis) unitBasis = remUnitBasis;
       const bookedNet = roundMoney(net);
       const bookedQty = round3(qty);
+      const bookedUnitBasis = round3(unitBasis);
       const bookedTax = roundMoney(tax);
       rows.push({
         tenantId: it.tenantId,
@@ -609,7 +695,7 @@ export class RegulatedLedgerService {
         invoiceItemId: it.invoiceItemId,
         creditNoteId,
         qty: bookedQty,
-        unitBasisQty: bookedQty,
+        unitBasisQty: bookedUnitBasis,
         netSales: bookedNet,
         categoryTax: bookedTax,
         soldAt: now,
@@ -620,6 +706,7 @@ export class RegulatedLedgerService {
       revByLine.set(lk, {
         net: already.net + bookedNet,
         qty: already.qty + bookedQty,
+        unitBasis: already.unitBasis + bookedUnitBasis,
         tax: already.tax + bookedTax,
       });
     }

@@ -1,6 +1,7 @@
 import * as React from "react";
 import { fireEvent, renderWithProviders, screen, waitFor } from "@/test-utils/render";
 import type { SellingRestrictionListItemDto } from "@/lib/api/restrictions-admin";
+import { REASON_MAX } from "@/lib/restriction-rule-form";
 import { LiftRuleDialog } from "./LiftRuleDialog";
 
 const post = jest.fn();
@@ -44,6 +45,19 @@ describe("LiftRuleDialog", () => {
     await waitFor(() => expect(post).toHaveBeenCalled());
     expect(onClose).not.toHaveBeenCalled();
     expect(screen.getByLabelText("Reason")).toHaveValue("Repealed");
+  });
+
+  it("caps the textarea past REASON_MAX and reports the real limit, not a hardcoded one", async () => {
+    open();
+    expect(screen.getByLabelText("Reason")).toHaveAttribute("maxLength", String(REASON_MAX + 50));
+    fireEvent.change(screen.getByLabelText("Reason"), {
+      target: { value: "x".repeat(REASON_MAX + 1) },
+    });
+    submit();
+    expect(
+      await screen.findByText(`Keep the reason under ${REASON_MAX} characters`),
+    ).toBeInTheDocument();
+    expect(post).not.toHaveBeenCalled();
   });
 
   it("Escape returns focus to the button that opened it", async () => {

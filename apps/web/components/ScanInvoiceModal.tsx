@@ -52,6 +52,9 @@ import { ProductCreateModal } from "./ProductCreateModal";
 import { displayProductName } from "@/lib/product-display";
 import { fmtCalendarDate, fmtDate } from "@/lib/formatting";
 import { roundMoney } from "@routeflow/pricing";
+import { RAISED_PO_NOTE, raisePoBlocker } from "@/lib/raise-po";
+import { buildVendorBillPayload } from "@/lib/scan-bill-payload";
+import { RaisePoToggle } from "./RaisePoToggle";
 import { apiClient } from "@/lib/api-client";
 import { SELECTABLE_PAYMENT_METHODS, PAYMENT_METHOD_LABELS } from "@/lib/payment-methods";
 
@@ -180,6 +183,8 @@ interface InvoiceGroup {
   billDate: string;
   dueDate: string;
   createMode: CreateMode;
+  /** Bill mode: also raise a draft PO from the lines, so the PO (not the bill) moves the stock. */
+  raisePo: boolean;
   expenseCategoryId: string;
   expenseDescription: string;
   expenseDate: string;
@@ -227,6 +232,7 @@ const makeInvoice = (kind: "pdf" | "images", files: File[]): InvoiceGroup => ({
   billDate: new Date().toISOString().slice(0, 10),
   dueDate: "",
   createMode: "bill",
+  raisePo: false,
   expenseCategoryId: "",
   expenseDescription: "",
   expenseDate: new Date().toISOString().slice(0, 10),
@@ -1301,28 +1307,20 @@ export function ScanInvoiceModal({ open, onClose, onCreated }: Props) {
       let billId = inv.createdBillId;
       if (wantsBill && !billId) {
         const billItems = buildBillItems(inv);
-        const scannedTax = inv.scanResult?.tax ?? 0;
-        const scannedSubtotal = inv.scanResult?.subtotal ?? 0;
-        const bill = await createBill.mutateAsync({
-          supplierId: inv.supplierId,
-          billDate: inv.billDate,
-          dueDate: inv.dueDate || "",
-          items: billItems,
-          // Persist the supplier's own invoice number — it's how the operator
-          // reconciles against the supplier statement later.
-          notes: inv.invoiceNumber ? `Supplier invoice #${inv.invoiceNumber}` : undefined,
-          supplierInvoiceNumber: inv.invoiceNumber.trim() || undefined,
-          allowDuplicate: inv.allowDuplicate || undefined,
-          // Sales tax is owed too; the server folds it into totalOwed (line
-          // items only carry the pre-tax unit costs).
-          taxAmount: scannedTax > 0 ? roundMoney(scannedTax) : undefined,
-          // Pre-tax total as the invoice printed it — stored as evidence; the
-          // amount owed is still summed from the lines.
-          subtotal: scannedSubtotal > 0 ? roundMoney(scannedSubtotal) : undefined,
-          // Closes the loop from bill back to the document it came from, and
-          // marks that scan POSTED so the archive stops offering it as unfinished.
-          scanId: inv.scanResult?.scanId ?? undefined,
-        });
+        // Blocked (not just "off") gets its own note below — the switch was ON but couldn't fire.
+        const poBlockReason = inv.raisePo ? raisePoBlocker(inv.supplierId, billItems) : null;
+        const raisesPo = inv.raisePo && !poBlockReason;
+        const bill = await createBill.mutateAsync(
+          buildVendorBillPayload(
+            {
+              ...inv,
+              tax: inv.scanResult?.tax,
+              subtotal: inv.scanResult?.subtotal,
+              scanId: inv.scanResult?.scanId,
+            },
+            billItems,
+          ),
+        );
         billId = (bill as { id?: string })?.id ?? null;
         patchInvoiceById(invoiceId, { createdBillId: billId });
         // Auto-receive: transitions DRAFT → RECEIVED, which triggers stock movements
@@ -1334,9 +1332,13 @@ export function ScanInvoiceModal({ open, onClose, onCreated }: Props) {
             // operator explicitly confirmed up front; without them it's a no-op.
             await receiveBill.mutateAsync({ id: billId, acknowledgeUnlinked: true });
             notes.push(
-              matchedItems > 0
-                ? `Vendor bill received — inventory updated for ${matchedItems} item${matchedItems === 1 ? "" : "s"}`
-                : "Vendor bill received",
+              raisesPo
+                ? `Vendor bill received. ${RAISED_PO_NOTE}`
+                : poBlockReason
+                  ? `Vendor bill received — no purchase order raised (${poBlockReason})`
+                  : matchedItems > 0
+                    ? `Vendor bill received — inventory updated for ${matchedItems} item${matchedItems === 1 ? "" : "s"}`
+                    : "Vendor bill received",
             );
           } catch (receiveErr: unknown) {
             // Bill was created but receive failed — surface the issue but don't lose the bill
@@ -2027,6 +2029,14 @@ export function ScanInvoiceModal({ open, onClose, onCreated }: Props) {
                                 className="w-full rounded-lg border border-surface-border bg-white px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
                               />
                             </div>
+                            <RaisePoToggle
+                              checked={!!active?.raisePo}
+                              blocker={raisePoBlocker(
+                                supplierId,
+                                active ? buildBillItems(active) : [],
+                              )}
+                              onChange={(v) => updateActive({ raisePo: v })}
+                            />
                           </div>
                         ) : (
                           <div>

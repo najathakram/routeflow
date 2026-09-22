@@ -1,0 +1,77 @@
+"use client";
+
+import * as React from "react";
+import { Select } from "@routeflow/ui/web";
+import type { LadderProduct } from "@routeflow/pricing";
+import type { ProductUnitLevel } from "@routeflow/types";
+import { buildUnitOptions, unitOptionText, type UnitOption } from "@/lib/unit-options";
+
+export interface UnitPickerProps {
+  product: LadderProduct;
+  /** The product's ladder (`useProductUnits`). Undefined while loading → no picker. */
+  units: readonly ProductUnitLevel[] | undefined;
+  /**
+   * The EFFECTIVE tier 1-5 for this product on this order — the server prices a unit line at
+   * `CustomerPrice.pricingTier ?? customer.pricingTier`, so pass that, not the customer's tier alone.
+   */
+  tier?: number | string;
+  /** The price the parent already shows for the pack (promotions / remembered upsell apply to it). */
+  packPrice?: number;
+  /** Accessible name; give each row's picker a distinct one (e.g. include the product name). */
+  ariaLabel?: string;
+  /** The `unitLabel` being sold; `""` = the pack. A stale label falls back to the pack. */
+  value: string;
+  onChange: (unitLabel: string) => void;
+  disabled?: boolean;
+  id?: string;
+  className?: string;
+}
+
+/**
+ * Which unit a line is sold by (units_v1, step 5a). Renders NOTHING for a product without levels, so a
+ * tenant without `flag.units_v1` (which never loads a ladder) and a product with no levels both see
+ * today's UI byte for byte. Display only: the server re-resolves the factor and price by label.
+ */
+export function UnitPicker({
+  product,
+  units,
+  tier = 1,
+  packPrice,
+  ariaLabel = "Sell by",
+  value,
+  onChange,
+  disabled,
+  id,
+  className,
+}: UnitPickerProps) {
+  const { options, ok } = React.useMemo<{ options: UnitOption[]; ok: boolean }>(() => {
+    if (!units) return { options: [], ok: false }; // still loading: nothing is known yet
+    if (units.length === 0) return { options: [], ok: true };
+    try {
+      return { options: buildUnitOptions(product, units, tier, packPrice), ok: true };
+    } catch {
+      // display-only: a bad tier must never unmount the order form (the server 400s it on save)
+      return { options: [], ok: false };
+    }
+  }, [product, units, tier, packPrice]);
+  const known = options.some((o) => o.value === value);
+  // A held label the ladder does not offer (product swapped, level deleted) would otherwise show the
+  // pack — or nothing — while the parent still SENDS the stale label and the server 400s the save.
+  // Tell the parent, never mask it; only once the ladder has loaded and resolved without error.
+  React.useEffect(() => {
+    if (ok && value && !known) onChange("");
+  }, [ok, value, known, onChange]);
+  if (options.length <= 1) return null;
+  const selected = known ? value : "";
+  return (
+    <Select
+      id={id}
+      aria-label={ariaLabel}
+      className={className}
+      disabled={disabled}
+      value={selected}
+      onChange={(e) => onChange(e.target.value)}
+      options={options.map((o) => ({ value: o.value, label: unitOptionText(o) }))}
+    />
+  );
+}
