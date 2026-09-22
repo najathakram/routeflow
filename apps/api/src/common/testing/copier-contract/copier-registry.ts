@@ -85,8 +85,9 @@ export const COPIERS: Copier[] = [
     fn: "create",
     target: "EstimateItem",
     anchor: { via: "prop", name: "items" },
-    carried: "description productId qty unitPrice subtotal priceType originalPrice boxes pieces",
-    gaps: { unitsPerBox: "B645", unitLabel: "unfiled" },
+    carried:
+      "description productId qty unitPrice subtotal priceType originalPrice boxes pieces unitsPerBox",
+    gaps: { unitLabel: "unfiled" },
   },
   {
     id: "C5",
@@ -94,14 +95,11 @@ export const COPIERS: Copier[] = [
     fn: "convertToInvoice",
     target: "InvoiceItem",
     anchor: { via: "prop", name: "items" },
-    carried: "description productId qty unitPrice subtotal",
+    carried: "description productId qty unitPrice subtotal boxes pieces unitsPerBox",
     rederived: "taxRate msrp",
     reset: "discount",
     na: "promoFreeUnits notes orderItemId", // the estimate line has no such column / no order link
     gaps: {
-      boxes: "B645",
-      pieces: "B645",
-      unitsPerBox: "B645",
       priceType: "unfiled",
       originalPrice: "unfiled",
       unitLabel: "unfiled",
@@ -154,13 +152,12 @@ export const COPIERS: Copier[] = [
     fn: "approveNextDelivery",
     target: "OrderItem",
     anchor: { via: "prop", name: "items" },
-    carried: "productId qty",
+    carried: "productId qty boxes pieces",
     rederived:
       "name unitPrice subtotal priceType originalPrice promoFreeUnits trackedCategoryId trackedSubcategoryId categoryTaxAmount position",
     na: ORDER_FRESH,
     gaps: {
-      boxes: "B655",
-      pieces: "B655",
+      // B655 (#1174) now writes boxes/pieces; the new line still carries no unitsPerBox snapshot.
       unitsPerBox: "B655",
       unitLabel: "unfiled",
       notes: "unverified",
