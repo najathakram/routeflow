@@ -582,6 +582,35 @@ describe("RegulatedLedgerService", () => {
       });
     });
 
+    // B661/B671 rd2 (live production regression) — the regression pin CI actually runs. The
+    // DB-lane spec (return-reversal-unit-axis.db.spec.ts) proves this through the real caller,
+    // but nothing in CI invokes `npm run local:test:db`; this mock-level case is what a future
+    // refactor deleting the returnedUnit axis selection would actually break in the default
+    // test lane. Confirmed this fails (qty -0.417, unitBasisQty -5) with the fix reverted.
+    it("B661/B671 rd2: a LINE_UNIT caller (the standard return path) closes a box-unaware line on the QTY axis, not the pieces axis", async () => {
+      // Box-unaware: 5 boxes at pack 12 -> SALE.qty 5 (boxes), SALE.unitBasisQty 60 (pieces).
+      arrange({
+        sales: [saleRow({ qty: 5, unitBasisQty: 60, netSales: 50, categoryTax: 10 })],
+        items: [{ id: "ii-1", productId: "p1" }],
+      });
+      await service.reverseReturnEntries({
+        returnId: "ret-1",
+        orderId: "ord-1",
+        // The standard caller's returnedByProduct is in the LINE's own unit (boxes) — 5, a
+        // FULL return, never 60 (pieces).
+        returnedByProduct: new Map([["p1", 5]]),
+        returnedUnit: "LINE_UNIT",
+        db: prisma,
+      });
+      expect(written()[0]).toMatchObject({
+        entryType: "REVERSAL",
+        qty: -5, // NOT -0.417 (the pre-fix bug: 5 compared against the PIECES axis, frac 5/60)
+        unitBasisQty: -60, // NOT -5
+        netSales: -50, // NOT -4.17
+        categoryTax: -10, // NOT -0.83
+      });
+    });
+
     // ─── PR-1a (§5): idempotency key widened from returnId alone to (returnId, orderId) ───
 
     it("PR-1a: the prior-reversal check is keyed on (returnId, orderId), not returnId alone", async () => {
