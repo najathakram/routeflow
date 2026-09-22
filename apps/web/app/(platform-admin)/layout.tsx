@@ -1,5 +1,6 @@
 "use client";
 
+import "./admin-tap-targets.css";
 import * as React from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";

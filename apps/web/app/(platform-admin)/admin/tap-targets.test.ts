@@ -9,14 +9,17 @@
  *      `admin-tap-text` (a standalone text link) or `admin-inline` (inside a sentence, exempt), so a
  *      new link cannot silently miss the floor;
  *   3. the admin layout root carries `.surface-admin`, the scope the rules key on.
+ * #1114 v2: the rules live in their OWN stylesheet (`admin-tap-targets.css`, imported by
+ * `layout.tsx`), not `globals.css` — an admin-only floor has no reason to ship to every
+ * non-admin page, and globals.css stays byte-identical to the marketing-port migration's pinned
+ * baseline (MKT-PIN T7) either way.
  * Browser measurement is the prover's job (PROOF-REQ), not this file's.
  */
 import * as fs from "fs";
 import * as path from "path";
 
-const APP = path.join(__dirname, "..", "..");
 const ROOT = path.join(__dirname, "..");
-const css = fs.readFileSync(path.join(APP, "globals.css"), "utf8");
+const adminCss = fs.readFileSync(path.join(ROOT, "admin-tap-targets.css"), "utf8");
 
 /** The rules inside every `@media (max-width: 768px) { ... }` block, as { selectors, declarations }. */
 function rulesAt768(source: string): Array<{ selectors: string[]; body: string }> {
@@ -53,7 +56,15 @@ function px(rules: ReturnType<typeof rulesAt768>, selector: string, prop: string
 }
 
 describe("platform-admin tap targets (F7): the requirement", () => {
-  const rules = rulesAt768(css);
+  const rules = rulesAt768(adminCss);
+
+  it("globals.css does NOT carry the admin tap-target rules — they live in their own stylesheet", () => {
+    const APP = path.join(ROOT, "..");
+    const globalsCss = fs.readFileSync(path.join(APP, "globals.css"), "utf8");
+    expect(rulesAt768(globalsCss).some((r) => r.selectors.includes(".surface-admin button"))).toBe(
+      false,
+    );
+  });
 
   it("at <= 768 px every admin button and each admin link class has a min-height of at least 40 px, all scoped to .surface-admin", () => {
     for (const sel of [
@@ -147,8 +158,8 @@ describe("platform-admin links choose a tap behaviour (F7)", () => {
   });
 
   it("no link opts in through a size guess (the old attribute selectors and per-element max-[768px] utilities are gone)", () => {
-    expect(css).not.toMatch(/\[class\*="rounded"\]/);
-    expect(css).not.toMatch(/\[class\*="hidden"\]/);
+    expect(adminCss).not.toMatch(/\[class\*="rounded"\]/);
+    expect(adminCss).not.toMatch(/\[class\*="hidden"\]/);
     const stray = files
       .filter((f) => /max-\[768px\]:(?:inline-flex|min-h-10)/.test(f.src))
       .map((f) => f.rel);
