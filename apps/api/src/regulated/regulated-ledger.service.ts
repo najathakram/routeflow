@@ -220,8 +220,8 @@ export class RegulatedLedgerService {
    *     line's own unit, so it is compared with the SALE qty as-is.
    *   - "PIECES" (INLINE captures): ReturnItem.qty is TRUE PIECES. For a box-unaware boxed line the
    *     returned pieces are compared with the line's PIECE qty, taken from `legacyLinePieces` (the line's
-   *     own split, else its linked InvoiceItem or a same-product sibling order line WITH a split, read by
-   *     comparing quantities: NEVER the live product's unitsPerBox, Senior Architect ruling 2026-09-21), and the booked reversal qty is converted back to the line's
+   *     own split, else its linked InvoiceItem WITH a split, read by comparing quantities: NEVER the live
+   *     product's unitsPerBox, Senior Architect ruling 2026-09-21), and the booked reversal qty is converted back to the line's
    *     unit; every other line has factor 1. Without this, returning 12 pieces against a line sold as 6
    *     BOXES closed the whole row (100% of net and tax reversed instead of 12/72).
    *   - UNKNOWN pack (the classifier says `unknown`): NOTHING is booked for that product (no guess, and the
@@ -382,7 +382,7 @@ export class RegulatedLedgerService {
       for (const sr of sales) {
         if (sr.orderItemId && !saleOfLine.has(sr.orderItemId)) saleOfLine.set(sr.orderItemId, sr);
       }
-      const packs = await resolvePackFactors(db, {
+      const packs = await resolvePackFactors({
         orderId,
         lines,
         // The SALE row's own linked InvoiceItem is the preferred source (same sale, same product).
