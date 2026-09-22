@@ -1,6 +1,12 @@
 import { Injectable, Logger } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
-import { roundMoney, regulatedUnitBasis } from "@routeflow/pricing";
+import {
+  roundMoney,
+  regulatedUnitBasis,
+  classifySaleAxis,
+  type SaleAxisLine,
+  type SaleAxisCorrection,
+} from "@routeflow/pricing";
 import { periodBucketOf } from "./period";
 
 /** Round a quantity to 3 decimals (matches the Decimal(12,3) ledger columns). */
@@ -258,6 +264,139 @@ export class RegulatedLedgerService {
    * reverses the regulated row — the per-line remaining cap prevents OVER-reversal, but
    * attribution is approximate. Fixing this needs a ReturnItem→line linkage.
    */
+
+  /**
+   * B681/SA-067(2): the line shape `classifySaleAxis` needs for one SALE row — its OWN stored
+   * boxes/pieces/unitLabel/unitsPerBox and productId, read from the InvoiceItem the row still
+   * points at, or the OrderItem when the invoice item has since rotated away (a delivered-basis
+   * reconcile deletes and recreates InvoiceItems under fresh ids, per `lineKeyOfSale` above).
+   * `line: null` when neither resolves — "a row with NO readable line parks too" (SA-067(2)).
+   */
+  private async loadSaleLineShapes(
+    db: any,
+    sales: Array<{ id: string; invoiceItemId: string | null; orderItemId: string | null }>,
+  ): Promise<Map<string, { line: SaleAxisLine | null; productId: string | null }>> {
+    const invoiceItemIds = [
+      ...new Set(sales.map((s) => s.invoiceItemId).filter(Boolean)),
+    ] as string[];
+    const orderItemIds = [...new Set(sales.map((s) => s.orderItemId).filter(Boolean))] as string[];
+    const [invoiceItems, orderItems] = await Promise.all([
+      invoiceItemIds.length > 0
+        ? db.invoiceItem.findMany({
+            where: { id: { in: invoiceItemIds } },
+            select: {
+              id: true,
+              boxes: true,
+              pieces: true,
+              unitLabel: true,
+              unitsPerBox: true,
+              productId: true,
+            },
+          })
+        : [],
+      orderItemIds.length > 0
+        ? db.orderItem.findMany({
+            where: { id: { in: orderItemIds } },
+            select: {
+              id: true,
+              boxes: true,
+              pieces: true,
+              unitLabel: true,
+              unitsPerBox: true,
+              productId: true,
+            },
+          })
+        : [],
+    ]);
+    const byInvoiceItem = new Map<string, any>(invoiceItems.map((i: any) => [i.id, i]));
+    const byOrderItem = new Map<string, any>(orderItems.map((i: any) => [i.id, i]));
+    const out = new Map<string, { line: SaleAxisLine | null; productId: string | null }>();
+    for (const s of sales) {
+      const shape =
+        (s.invoiceItemId ? byInvoiceItem.get(s.invoiceItemId) : undefined) ??
+        (s.orderItemId ? byOrderItem.get(s.orderItemId) : undefined) ??
+        null;
+      out.set(s.id, {
+        line: shape
+          ? {
+              boxes: shape.boxes,
+              pieces: shape.pieces,
+              unitLabel: shape.unitLabel,
+              unitsPerBox: shape.unitsPerBox,
+            }
+          : null,
+        productId: shape?.productId ?? null,
+      });
+    }
+    return out;
+  }
+
+  /** Prior correction rows for these SALE row ids (correctsEntryId -> its deltas), for
+   *  `classifySaleAxis`'s idempotency fold (SA-070(a)) — a row this routine already corrected
+   *  reads piece-axis from then on and is never re-parked. */
+  private async loadCorrectionsBySaleId(
+    db: any,
+    saleIds: string[],
+  ): Promise<Map<string, SaleAxisCorrection[]>> {
+    if (saleIds.length === 0) return new Map();
+    const corrections = await db.regulatedSalesLedger.findMany({
+      where: { correctsEntryId: { in: saleIds } },
+      select: { correctsEntryId: true, qty: true, unitBasisQty: true },
+    });
+    const out = new Map<string, SaleAxisCorrection[]>();
+    for (const c of corrections) {
+      const key = c.correctsEntryId as string;
+      const list = out.get(key) ?? [];
+      list.push({ qty: c.qty, unitBasisQty: c.unitBasisQty });
+      out.set(key, list);
+    }
+    return out;
+  }
+
+  /** The live `Product.unitsPerBox` for these product ids — `classifySaleAxis`'s boxed-gate
+   *  fallback (SA-038: a GATE, never a multiplier) when a line carries no pack snapshot of its
+   *  own. `undefined` (key absent) when the product itself can't be found — distinct from an
+   *  explicit `null`, which `classifySaleAxis` reads as "product exists, not boxed". */
+  private async loadProductPackNow(
+    db: any,
+    productIds: string[],
+  ): Promise<Map<string, number | null>> {
+    if (productIds.length === 0) return new Map();
+    const products = await db.product.findMany({
+      where: { id: { in: productIds } },
+      select: { id: true, unitsPerBox: true },
+    });
+    return new Map(products.map((p: any) => [p.id, p.unitsPerBox]));
+  }
+
+  /**
+   * SA-067(3): one row in `RegulatedLedgerParkedReversal` per (returnId, saleEntryId) —
+   * idempotent via `createMany skipDuplicates` against the table's own unique constraint, so a
+   * retried call parks the same row once. Naming: "parked" here names THIS db row; the B681
+   * correction routine also says "parked" for a line it classifies unknown-basis and refuses to
+   * touch — a different thing at a different layer. The two meanings must never be conflated in
+   * code, logs or comments.
+   */
+  private async parkReturnReversal(
+    db: any,
+    row: {
+      tenantId: string;
+      returnId: string;
+      orderId: string;
+      orderItemId: string | null;
+      saleEntryId: string;
+      returnedPieces: number;
+      reason: string;
+      periodBucket: string;
+    },
+  ): Promise<void> {
+    await db.regulatedLedgerParkedReversal.createMany({ data: [row], skipDuplicates: true });
+    this.logger.warn(
+      `B681 park guard: parked a return reversal (returnId=${row.returnId}, ` +
+        `saleEntryId=${row.saleEntryId}, reason="${row.reason}") — the sold line's box/piece axis ` +
+        `could not be classified; nothing booked, the return/restock/credit proceed untouched.`,
+    );
+  }
   async reverseReturnEntries(params: {
     returnId: string;
     orderId: string;
@@ -369,13 +508,43 @@ export class RegulatedLedgerService {
     // SALE rows grouped by product (FIFO within a product). Only LIVE sale rows
     // (invoice item still present) are reversal targets; the per-line remaining
     // above already accounts for the pre-reconcile rows on the deleted items.
+    // SA-070(b) Hazard 1: a `correctsEntryId != null` row is a units-only B681 correction
+    // typed like the row it corrects (its own qty/net are 0, unitBasisQty is a delta) — it is
+    // ALREADY folded into remQtyByLine/remUnitBasisByLine/etc above (it's still in `sales`), but
+    // must never be iterated here as a candidate to reverse against: on the PIECES axis it would
+    // consume returned pieces against a zero-net row and book a reversal with a unit basis but no
+    // money.
     const salesByProduct = new Map<string, any[]>();
     for (const s of sales) {
+      if (s.correctsEntryId != null) continue;
       const pid = productByItem.get(s.invoiceItemId);
       if (!pid) continue;
       if (!salesByProduct.has(pid)) salesByProduct.set(pid, []);
       salesByProduct.get(pid)!.push(s);
     }
+
+    // B681/SA-067: only the PIECES caller (the LINE_UNIT caller compares boxes to boxes
+    // correctly on a box-unaware row and must not park it) — preloaded once for every candidate
+    // row across every product, not per-row, to keep this one batch of queries regardless of how
+    // many products/rows the return touches.
+    const candidateSales = [...salesByProduct.values()].flat();
+    const lineShapeBySaleId =
+      returnedUnit === "PIECES"
+        ? await this.loadSaleLineShapes(db, candidateSales)
+        : new Map<string, { line: SaleAxisLine | null; productId: string | null }>();
+    const correctionsBySaleId =
+      returnedUnit === "PIECES"
+        ? await this.loadCorrectionsBySaleId(
+            db,
+            candidateSales.map((s) => s.id),
+          )
+        : new Map<string, SaleAxisCorrection[]>();
+    const packNowByProduct =
+      returnedUnit === "PIECES"
+        ? await this.loadProductPackNow(db, [
+            ...new Set([...lineShapeBySaleId.values()].map((v) => v.productId).filter(Boolean)),
+          ] as string[])
+        : new Map<string, number | null>();
 
     const now = new Date();
     const bucket = periodBucketOf(now);
@@ -392,9 +561,57 @@ export class RegulatedLedgerService {
       for (const s of salesByProduct.get(productId) ?? []) {
         if (remaining <= 0) break;
         const saleQty = Number(s.qty);
-        const saleUnitBasis = Number(s.unitBasisQty);
+        let saleUnitBasis = Number(s.unitBasisQty);
+
+        // B681/SA-067: PIECES branch only — the LINE_UNIT branch compares boxes to boxes
+        // correctly on a box-unaware row and must not park it. Before capping: can this SALE
+        // row's box/piece axis even be trusted? A box-unaware line (no stored split, no unit)
+        // that books unitBasisQty == qty is indistinguishable from "recorded in box units,
+        // never expanded to pieces" (the pre-B661 defect) UNLESS something else (a split, a
+        // unit label, or the product simply not being boxed) already explains it —
+        // `classifySaleAxis` is the one shared answer, folding in this row's own prior
+        // corrections so an already-corrected row is never re-parked.
+        const ownCorrections = correctionsBySaleId.get(s.id) ?? [];
+        if (returnedUnit === "PIECES") {
+          const shape = lineShapeBySaleId.get(s.id) ?? { line: null, productId: null };
+          const productPackNow = shape.productId
+            ? packNowByProduct.get(shape.productId)
+            : undefined;
+          const verdict = classifySaleAxis(
+            { entryType: s.entryType, qty: s.qty, unitBasisQty: s.unitBasisQty },
+            shape.line,
+            ownCorrections,
+            productPackNow,
+          );
+          if (verdict.state === "legacy" || verdict.state === "unknown") {
+            await this.parkReturnReversal(db, {
+              tenantId: s.tenantId,
+              returnId,
+              orderId: s.orderId ?? orderId,
+              orderItemId: s.orderItemId ?? null,
+              saleEntryId: s.id,
+              returnedPieces: remaining,
+              reason: verdict.reason,
+              periodBucket: bucket,
+            });
+            remaining = 0;
+            break;
+          }
+          // SA-070(b) Hazard 1 continued: excluding a correction row from `salesByProduct` stops
+          // it being consumed as its own fake sale, but the ORIGINAL row it corrects must still
+          // pro-rate against its TRUE current unit basis (this row's own stored figure plus every
+          // correction pointing at it), not the stale stored figure alone — otherwise a corrected
+          // row's `frac` is computed against a denominator smaller than what the line's remaining
+          // map (which DOES fold corrections in) already reflects, over-booking money and
+          // under-booking pieces relative to the actual remaining balance.
+          for (const c of ownCorrections) {
+            const d = Number(c.unitBasisQty);
+            if (Number.isFinite(d)) saleUnitBasis += d;
+          }
+        }
         const saleNativeAxis = returnedUnit === "PIECES" ? saleUnitBasis : saleQty;
         if (saleNativeAxis <= 0) continue;
+
         const lk = lineKeyOfSale(s);
         // Cap this chunk at the ORDER LINE's remaining un-reversed amount ON THE CALLER'S OWN
         // AXIS (survives a reconcile that rotated the invoice item), not the other axis — B671:
@@ -476,6 +693,13 @@ export class RegulatedLedgerService {
   async unreverseReturnEntries(params: { returnId: string; db: any }): Promise<void> {
     const { returnId, db } = params;
     await db.regulatedSalesLedger.deleteMany({ where: { returnId, entryType: "REVERSAL" } });
+    // B681/SA-067(4): a return this guard parked (because its sale row's box/piece axis
+    // couldn't be classified) leaves a RegulatedLedgerParkedReversal row blocking its period's
+    // filing. Without this, cancelling that return before the park is ever resolved leaves the
+    // row behind forever — deleted here, not resolved, because the return itself is undone, so
+    // there is nothing left to resolve it against. Only this return's UNRESOLVED rows: a row
+    // already resolved (resolvedAt set) recorded a real filing decision and must survive.
+    await db.regulatedLedgerParkedReversal.deleteMany({ where: { returnId, resolvedAt: null } });
   }
 
   /**
@@ -521,7 +745,13 @@ export class RegulatedLedgerService {
     // the SALE-existence guard (only a line that recorded a live regulated SALE can be
     // credited). Keyed by the credited invoice item.
     const liveSaleRows = await db.regulatedSalesLedger.findMany({
-      where: { invoiceItemId: { in: invoiceItemIds }, entryType: "SALE" },
+      // SA-070(b) Hazard 1: `correctsEntryId != null` excludes a B681 correction row — typed
+      // like the row it corrects (net 0, qty 0, unitBasisQty a delta) — from EVER being read as
+      // "the credited line's own live SALE row". Included here it would still skew `live.unitBasis`
+      // (used below for the pieces-per-line-unit ratio) even though it never moves live.net/qty.
+      // It is NOT excluded from `lineRows` below — the remaining-balance cap (`saleByLine`) must
+      // still fold in its real net/qty/unitBasis contribution.
+      where: { invoiceItemId: { in: invoiceItemIds }, entryType: "SALE", correctsEntryId: null },
       select: {
         invoiceItemId: true,
         netSales: true,

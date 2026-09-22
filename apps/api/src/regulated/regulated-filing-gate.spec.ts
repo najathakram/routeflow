@@ -127,6 +127,22 @@ describe("filing gate: unresolved parked reversals", () => {
       expect(prisma.regulatedFiling.update).not.toHaveBeenCalled();
     });
 
+    // B681/SA-067(5): this gate is the table's SECOND writer's surface (the park guard is the
+    // first) — it must refuse on a B681-shaped row exactly as it already does on a B660-shaped
+    // one. The reader (parked-reversals.ts) filters only on resolvedAt/periodBucket/category; it
+    // never inspects `reason`, so this proves that genericity holds for a writer that didn't
+    // exist when this gate was first built, not just documents an assumption about it.
+    it("REFUSES equally on a B681-shaped park row (reason: box-axis classification, not B660's pack-unknown wording)", async () => {
+      parkedTable.push(parkedRow({ id: "pk-681", reason: "box axis" }));
+      const err: any = await prepare().catch((e) => e);
+      expect(err).toBeInstanceOf(ConflictException);
+      expect(err.getResponse()).toMatchObject({
+        code: "PARKED_REVERSALS_UNRESOLVED",
+        count: 1,
+        reasons: ["box axis"],
+      });
+    });
+
     it("PASSES once the row is resolved (resolvedAt set)", async () => {
       parkedTable.push(parkedRow({ resolvedAt: new Date() }));
       await expect(prepare()).resolves.toMatchObject({ id: "filing-1" });
