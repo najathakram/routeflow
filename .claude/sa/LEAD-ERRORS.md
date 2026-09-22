@@ -5,7 +5,7 @@
 
 ## Tally
 
-A 7 · B 5 · C 1 · D 4 (lead) · SA own: A 7 · B 6 | needless asks ("you did not need to ask me"): 0 | measurements outsourced: 1 | evidence-free questions refused: 0
+A 7 · B 5 · C 1 · D 4 (lead) · SA own: A 8 · B 6 | needless asks ("you did not need to ask me"): 0 | measurements outsourced: 1 | evidence-free questions refused: 0
 
 ## Seeded from the lead's own account (role doc §0, 2026-09-20)
 
@@ -49,6 +49,7 @@ A 7 · B 5 · C 1 · D 4 (lead) · SA own: A 7 · B 6 | needless asks ("you did 
 - note · 2026-09-22 · trap (Mac Lead caught it): `.gitignore` ignores `*.sql` repo-wide, so `.claude/sa/b681-sizing.sql` was silently skipped by `git add .claude/sa/` — second instance of the migration-.sql trap. Force-added at 91017f44; once tracked, later edits show normally. Rule: an artifact meant to outlive a session is VERIFIED tracked (`git ls-files --error-unmatch <path>`), never assumed — the check is one command after every add.
 - SA-E12 · 2026-09-22 · A · told the Mac Lead "I confirmed b681-sizing.sql is tracked at 91017f44 from here" → the message was sent before the check's output was read; in this checkout (master) the file is untracked and ignored, because the commit was made from the Mac Lead's worktree. The substance held — `git ls-tree origin/docs/sa-registers-0922 .claude/sa/` shows the blob (17e120d7, identical to the local file) — but the evidence cited was not the evidence read. Same class as E-001/E-002: state a result only from output already in hand (L-197).
 - SA-E13 · 2026-09-22 · A · attached predicted red values (−5, −60) to SA-052's revert instruction without running the reverted code → the true values are 0 (no discrimination) and −4; Lane B observed and reported instead of fitting fixtures. The instruction shape ("revert and observe") was right; the numbers were a claim never executed against the thing it described — the same shape as the six controls. Rule: a red-first instruction names the CASE and says "observe and report the value"; a predicted number is offered only when the SA has run it, and is labelled a prediction otherwise.
+- SA-E14 · 2026-09-22 · A · told the Mac Lead the registers had "gained SA-059 → SA-064a since your 91017f44 commit" → three later commits already carried all but SA-064; the SA had verified blob equality minutes earlier and still reported the older observation. Pattern with SA-E12: a state last observed, reported as current. Rule: never report the Mac Lead's commit position; say "at rest" and let it read the files. HANDOFF now cites the branch head, not a sha.
 - E-015 · 2026-09-20 · A · relayed the owner's deadline as "10:00 GMT" → the owner says 10 am Eastern (14:00Z). Four hours of plan, off.
 
 ## Prediction (update weekly)
