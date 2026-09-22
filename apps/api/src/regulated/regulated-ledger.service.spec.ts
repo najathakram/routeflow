@@ -1123,6 +1123,9 @@ describe("RegulatedLedgerService", () => {
         });
 
         it("a source line WITHOUT a split does not count as a source: it parks", async () => {
+          // Post sibling-removal, "a source without a split" can only mean the linked InvoiceItem
+          // itself — this now pins the same path as "an InvoiceItem WITHOUT a split does NOT fall
+          // back: it PARKS" above, kept as its own case for readability.
           arrangeBox({ items: [{ id: "ii-1", productId: "p1" }] });
           armLines([boxLine()]);
           await reverse(12, "PIECES");
