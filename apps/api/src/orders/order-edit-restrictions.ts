@@ -41,6 +41,8 @@ export const EXISTING_LINE_SELECT = {
   pieces: true,
   unitsPerBox: true,
   status: true,
+  // units_v1 (A1): the post-lock unit-resolution recompute needs the line's own snapshot.
+  unitLabel: true,
 } as const;
 
 /** How `updateOrderItems` applies this payload for this principal (mirrors its branches). */

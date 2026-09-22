@@ -2594,7 +2594,7 @@ citations, closed-out with its own post-init assertion guard).
   advisory allowlist) needs its own named assertion — the next unrelated edit to that file can't
   silently delete it without a visible red diff.**
 - **Guard:** name the assertion after the floor it enforces (e.g. `it("enforces the CVE-2026-xxxx
-floor", ...)`), not after the generic thing being tested — restored in `next-version.spec.ts`.
+  floor", ...)`), not after the generic thing being tested — restored in `next-version.spec.ts`.
 
 ## Archived 2026-09-18 — headroom for source-text-assertion lesson (bookkeeping-batch window-6)
 
