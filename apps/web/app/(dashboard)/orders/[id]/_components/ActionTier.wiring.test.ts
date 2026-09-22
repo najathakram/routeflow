@@ -106,14 +106,7 @@ describe("order-detail action bar tiers (page wiring)", () => {
 
   it("SECONDARY holds only reversible, non-destructive actions", () => {
     expect(labels("secondary")).toEqual(
-      new Set([
-        "Edit Items",
-        "Record return",
-        "Unconfirm",
-        "Unmark shipped",
-        "Return to Confirmed",
-        "Reopen Order",
-      ]),
+      new Set(["Edit Items", "Unconfirm", "Unmark shipped", "Return to Confirmed", "Reopen Order"]),
     );
   });
 
@@ -142,7 +135,6 @@ describe("order-detail action bar tiers (page wiring)", () => {
       "Return to Confirmed",
       "Reopen Order",
       "Edit Items",
-      "Record return",
     ]) {
       expect(labels("danger").has(l)).toBe(false);
     }

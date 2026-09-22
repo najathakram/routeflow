@@ -58,8 +58,8 @@ import {
 } from "@/lib/api/orders";
 import { useAuth } from "@/lib/auth-context";
 import { useHasAddon } from "@/lib/api/tobacco";
-import { ORDERS_INLINE_RETURNS_ADDON, SALES_AGENTS_ADDON, useOrderUiV2 } from "@/lib/api/addons";
-import { RecordInlineReturnDialog } from "../../returns/_components/RecordInlineReturnDialog";
+import { SALES_AGENTS_ADDON, useOrderUiV2 } from "@/lib/api/addons";
+import { RecordReturnAction } from "../../returns/_components/RecordReturnAction";
 import { describeCancelImpact } from "@/lib/cancel-impact";
 import { fmtCalendarDate, isInternalEmail } from "@/lib/formatting";
 import { formatMoney, formatQty } from "@/lib/format";
@@ -1855,10 +1855,6 @@ export default function OrderDetailPage() {
   // Split-invoice modal (operator can split an order into multiple invoices)
   const [splitInvoiceOpen, setSplitInvoiceOpen] = React.useState(false);
 
-  // Record an inline return (Returns Inside Order Creation, PR 1 — office web capture)
-  const [recordReturnOpen, setRecordReturnOpen] = React.useState(false);
-  const hasInlineReturns = useHasAddon(ORDERS_INLINE_RETURNS_ADDON);
-
   // Floating invoice-preview popup (from the Invoices card).
   const [previewInvoiceId, setPreviewInvoiceId] = React.useState<string | null>(null);
 
@@ -2505,16 +2501,13 @@ export default function OrderDetailPage() {
 
           {/* Record return (Returns Inside Order Creation, PR 1 — office web capture).
               Any order, no cap — never gated on order status, unlike the buttons below. */}
-          {hasInlineReturns && !isEditing && (
+          {!isEditing && (
             <ActionTier tier="secondary">
-              <Button
-                size="sm"
-                variant="secondary"
-                leftIcon={<RotateCcw className="h-4 w-4" />}
-                onClick={() => setRecordReturnOpen(true)}
-              >
-                Record return
-              </Button>
+              <RecordReturnAction
+                customerId={order.customerId}
+                customerName={order.customer?.businessName}
+                orderId={order.id}
+              />
             </ActionTier>
           )}
 
@@ -3561,14 +3554,6 @@ export default function OrderDetailPage() {
         onClose={() => setPreviewInvoiceId(null)}
         invoiceId={previewInvoiceId ?? ""}
         orderTotal={Number(order.total)}
-      />
-
-      <RecordInlineReturnDialog
-        open={recordReturnOpen}
-        onClose={() => setRecordReturnOpen(false)}
-        customerId={order.customerId}
-        customerName={order.customer?.businessName}
-        orderId={order.id}
       />
 
       {/* Cancel confirmation */}
