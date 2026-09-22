@@ -264,22 +264,34 @@
   sufficient gate for tooling-timing changes, only for correctness.**
 - **Guard:** the merge session re-measures self-test wall-clock during its scoped review.
 
-### L-180 · 2026-09-16 · tooling · npm/dir junctions across worktrees are unsafe near git worktree ops
+### L-180 · 2026-09-16/22 · tooling · npm/dir junctions across worktrees are unsafe near git worktree ops (recurred: 2026-09-22)
 
 - **Symptom:** (a) after `git worktree move`, invalid-hook-call errors and mangled Jest paths;
   (b) a scratch worktree junctioned to a SIBLING's `node_modules` (to dodge `npm install` under
   disk pressure), then `git worktree remove --force` on the scratch tree cascaded a recursive
   delete through the junction, wiping the sibling's `node_modules` and ~2,388 tracked files.
+  RECURRED 2026-09-22: a PC reviewer agent's own worktree-cleanup `git worktree remove --force`
+  followed the SAME shape into the main checkout's `node_modules/@routeflow/*` links (which
+  point back into `apps/` and `packages/`), deleting 2,814 tracked files there — the "none yet"
+  guard below was never built between the two incidents.
 - **Root cause:** Windows npm junctions are absolute-path reparse points, invisible to git and
   not junction-aware to a naive recursive delete — `worktree move` leaves one pointing at the OLD
   path forever; `worktree remove --force`/`rm -rf` walks THROUGH one into its real target.
 - **Lesson:** **Never let a junction outlive the git worktree op around it. After
   `git worktree move`, treat `node_modules` as stale — `npm ci` (+ `prisma generate` for
-  apps/api) at the final path. Before removing/recursively deleting ANY worktree, `rmdir`
-  (never `rm -rf`) every junction inside it first. Best: never junction `node_modules` between
-  two DIFFERENT live worktrees — the disk saved isn't worth the blast radius.**
-- **Guard:** none yet — propose a pre-remove check refusing `git worktree remove` while a
-  junction exists under the tree, plus a post-move check comparing a junction's target to cwd.
+  apps/api) at the final path. Before removing/recursively deleting ANY worktree, prove no
+  junction remains (`dir /AL` or check `LinkType`), then unlink each one individually with
+  `cmd /c rmdir <link>` (no `/s`, which recurses through it) — never a bare `rm -rf`/
+  `--force` on a tree that might still hold one. Best: never junction `node_modules` between two
+  DIFFERENT live worktrees — the disk saved isn't worth the blast radius, and reviewer/audit
+  agents (whose job is to read, not build) should run read-only against the target checkout with
+  no worktree of their own at all, removing the temptation entirely.**
+- **Guard:** still none automated after two incidents — the proposed pre-remove check (refusing
+  `git worktree remove` while a junction exists under the tree, or a post-move check comparing a
+  junction's target to cwd) has not been built either time. Interim guard until it is: reviewer
+  agent prompts/instructions carry the read-only, no-worktree rule explicitly. Recovery from a
+  hit: `git ls-files --deleted -z -- <dirs> | xargs -0 git restore --`, then confirm
+  `git ls-files --deleted` is empty and diff clean before resuming any work in that checkout.
 
 ### L-179 · 2026-09-16 · tooling · campaign-check freshness ritual
 
@@ -564,20 +576,6 @@
 - **Guard:** `apps/api/src/common/enum-parity.spec.ts` — a generic table (40 enums) against
   `packages/types/api/enums.ts`, plus a regression layer pinning the drifted files and the
   mobile jest stub that can't `require` the shared package directly.
-
-### L-116 · 2026-09-12 · tooling · plane self-test machine-root invariants
-
-- **Symptom:** a lead's pre-push verify failed at a plane self-test's "shared runs.jsonl
-  byte-unchanged" check — ANOTHER session's own hooks had legitimately appended to it mid-run.
-- **Root cause:** every "byte-identical before/after" invariant in the plane self-tests binds on
-  `machineRoot()`'s shared dir (see [[L-114]]) — the SAME dir every worktree resolves to — so it
-  races any other session, not just a concurrent run of the same suite.
-- **Lesson:** **A self-test invariant must never bind to a shared machine-local file — assert
-  only on fixtures the run owns. A file another session can write at any moment needs a
-  throwaway stand-in, never the real shared path.**
-- **Guard:** `PLANE_MACHINE_ROOT` (gated behind `PLANE_SYNC_SELF_TEST=1`) lets every plane
-  self-test point `machineRoot()` at its own temp root; `T-concurrent-writer` proves isolation
-  under a genuine concurrent writer. Related [[L-114]].
 
 ### L-119 · 2026-09-13 · process · F38 round 4
 
