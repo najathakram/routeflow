@@ -28,6 +28,26 @@
  *      recompute stays gated — `Order.shippingFee` is DEFINED as Σ(non-void invoice fees), a
  *      property of the invoices alone.
  *
+ * #1185 review round 3 — round 2's own fix (decide coverage PER LINE, gate the rewrite behind
+ * it) introduced two new ways for OrderItem.invoicedQty to go stale, because the ONLY place that
+ * ever wrote it was the full-coverage rewrite loop — nothing touched it on the still-partial
+ * branch:
+ *   4. (HIGH) an invoice-item qty EDIT on a still-partial order never reached invoicedQty at
+ *      all. Order line qty 10, invoice bills 4 (invoicedQty -> 4 via createPartialFromOrder).
+ *      Edit that invoice's item UP to 6 -> still partial (6 < 10) -> old code returned early ->
+ *      invoicedQty stuck at 4 -> a later invoice can still bill `10 - 4 = 6` more, landing 12
+ *      billed against an order of 10. Edit DOWN instead (6 -> 2) -> invoicedQty stuck at the
+ *      stale higher value -> the line is under-billable by the same margin.
+ *   5. (MED) a line REMOVED from its invoice while a SIBLING line is what's actually keeping the
+ *      order partial never got its invoicedQty released either — L1 fully billed, L2 billed
+ *      then removed (invoicedQty stays stale, non-zero), L3 never billed (blocks coverage) ->
+ *      old code's early return left L2 permanently unbillable, since `qty - invoicedQty` never
+ *      recovers. Round 2's own finding-2 test (below) only covers the SINGLE-line case, where
+ *      removal makes the order newly fully-covered and the ALREADY-EXISTING orphan-cancel loop
+ *      runs — it can't reach a case gated behind a still-partial sibling.
+ * Fix: sync every active line's invoicedQty from byTarget on the partial branch too (clamped to
+ * the line's own qty, 0 when unmatched) — see `checkOrderCoverage`'s own loop and doc.
+ *
  * WHY THE DB LANE: a mocked Prisma can't prove the read-then-write sequence across TWO tables
  * (OrderItem + Order) inside `recomputeOrderFromInvoices`'s own transaction, nor that the
  * un-invoiced line's row is genuinely untouched (not just returned as if untouched by a mock).
@@ -487,6 +507,148 @@ describeDb(
       const refreshedB = await prisma.orderItem.findUniqueOrThrow({ where: { id: lineB.id } });
       expect(refreshedB.status).toBe("PENDING"); // still gated — NOT cancelled
       expect(Number(refreshedB.qty)).toBe(6);
+    });
+
+    it("finding 4 (HIGH, #1185 rd3): an invoice-item qty EDIT on a still-partial order keeps invoicedQty in sync in BOTH directions, so a later invoice can never over- or under-bill the gap", async () => {
+      const { tenant, customer } = await seedTenantAndCustomer("h");
+      const product = await prisma.product.create({
+        data: { name: `A ${tenant.slug}`, unit: "ea", pricePerUnit: 10, tenantId: tenant.id },
+      });
+      const order = await prisma.order.create({
+        data: {
+          customerId: customer.id,
+          status: "PARTIALLY_DELIVERED",
+          subtotal: 100,
+          total: 100,
+          tenantId: tenant.id,
+        },
+      });
+      const lineA = await prisma.orderItem.create({
+        data: {
+          orderId: order.id,
+          productId: product.id,
+          status: "PENDING",
+          qty: 10,
+          unitPrice: 10,
+          subtotal: 100,
+          tenantId: tenant.id,
+        },
+      });
+
+      const invoice = await tenantCtx.run(tenant.id, () =>
+        invoicesService.createPartialFromOrder(order.id, {
+          items: [{ orderItemId: lineA.id, qty: 4 }],
+        }),
+      );
+      const afterBill4 = await prisma.orderItem.findUniqueOrThrow({ where: { id: lineA.id } });
+      expect(Number(afterBill4.invoicedQty)).toBe(4);
+
+      // UP-edit: 4 -> 6. Still partial (6 < 10) — the old code returned early and left
+      // invoicedQty stuck at 4, letting a later invoice bill `10 - 4 = 6` more (12 against 10).
+      await tenantCtx.run(tenant.id, () =>
+        invoicesService.update((invoice as any).id, {
+          items: [{ productId: product.id, qty: 6, unitPrice: 10, description: "A" }],
+        } as any),
+      );
+      const afterUp = await prisma.orderItem.findUniqueOrThrow({ where: { id: lineA.id } });
+      expect(afterUp.status).toBe("PENDING"); // still gated — order not fully covered
+      expect(Number(afterUp.qty)).toBe(10); // the line's own qty is untouched (round 2, finding 1)
+      expect(Number(afterUp.invoicedQty)).toBe(6); // NOT stuck at 4
+
+      // DOWN-edit: 6 -> 2. The old code (had it even reached here) would have left invoicedQty
+      // at whatever stale value it last saw — this proves the sync tracks EITHER direction.
+      await tenantCtx.run(tenant.id, () =>
+        invoicesService.update((invoice as any).id, {
+          items: [{ productId: product.id, qty: 2, unitPrice: 10, description: "A" }],
+        } as any),
+      );
+      const afterDown = await prisma.orderItem.findUniqueOrThrow({ where: { id: lineA.id } });
+      expect(Number(afterDown.invoicedQty)).toBe(2); // NOT stuck at 6
+    });
+
+    it("finding 5 (MED, #1185 rd3): a line REMOVED from its invoice while a sibling keeps the order partial still releases its invoicedQty, so it can be invoiced again", async () => {
+      const { tenant, customer } = await seedTenantAndCustomer("i");
+      const productA = await prisma.product.create({
+        data: { name: `A ${tenant.slug}`, unit: "ea", pricePerUnit: 10, tenantId: tenant.id },
+      });
+      const productB = await prisma.product.create({
+        data: { name: `B ${tenant.slug}`, unit: "ea", pricePerUnit: 10, tenantId: tenant.id },
+      });
+      const order = await prisma.order.create({
+        data: {
+          customerId: customer.id,
+          status: "PARTIALLY_DELIVERED",
+          subtotal: 120,
+          total: 120,
+          tenantId: tenant.id,
+        },
+      });
+      // L1: fully billed. L2: billed, then removed. L3: never billed — the ONLY thing keeping
+      // the order partial once L2 is removed, so L2's release must NOT depend on becoming the
+      // sole blocker (round 2's own finding-2 test covers the single-line case, where removal
+      // makes the order newly fully-covered and the orphan-cancel loop runs instead of this sync).
+      const lineL1 = await prisma.orderItem.create({
+        data: {
+          orderId: order.id,
+          productId: productA.id,
+          status: "PENDING",
+          qty: 4,
+          unitPrice: 10,
+          subtotal: 40,
+          tenantId: tenant.id,
+        },
+      });
+      const lineL2 = await prisma.orderItem.create({
+        data: {
+          orderId: order.id,
+          productId: productB.id,
+          status: "PENDING",
+          qty: 3,
+          unitPrice: 10,
+          subtotal: 30,
+          tenantId: tenant.id,
+        },
+      });
+      const lineL3 = await prisma.orderItem.create({
+        data: {
+          orderId: order.id,
+          productId: null,
+          status: "PENDING",
+          qty: 5,
+          unitPrice: 10,
+          subtotal: 50,
+          tenantId: tenant.id,
+        },
+      });
+
+      const invoice = await tenantCtx.run(tenant.id, () =>
+        invoicesService.createPartialFromOrder(order.id, {
+          items: [
+            { orderItemId: lineL1.id, qty: 4 },
+            { orderItemId: lineL2.id, qty: 3 },
+          ],
+        }),
+      );
+      const afterBill = await prisma.orderItem.findUniqueOrThrow({ where: { id: lineL2.id } });
+      expect(Number(afterBill.invoicedQty)).toBe(3);
+
+      // Remove L2's item from the invoice, keeping L1's. L3 (never billed) is untouched and
+      // alone keeps the order partial — so this never reaches the fully-covered rewrite/orphan
+      // loop at all.
+      await tenantCtx.run(tenant.id, () =>
+        invoicesService.update((invoice as any).id, {
+          items: [{ productId: productA.id, qty: 4, unitPrice: 10, description: "A" }],
+        } as any),
+      );
+
+      const refreshedL2 = await prisma.orderItem.findUniqueOrThrow({ where: { id: lineL2.id } });
+      expect(refreshedL2.status).toBe("PENDING"); // NOT cancelled — this sync only releases qty
+      expect(Number(refreshedL2.qty)).toBe(3); // the line's own qty is untouched
+      expect(Number(refreshedL2.invoicedQty)).toBe(0); // released — billable again
+      const refreshedL1 = await prisma.orderItem.findUniqueOrThrow({ where: { id: lineL1.id } });
+      expect(Number(refreshedL1.invoicedQty)).toBe(4); // still-billed line stays in sync too
+      const refreshedL3 = await prisma.orderItem.findUniqueOrThrow({ where: { id: lineL3.id } });
+      expect(Number(refreshedL3.invoicedQty)).toBe(0); // never billed — unaffected
     });
 
     it("control: once the SECOND line is also billed in full, the recompute applies — order subtotal becomes the billed sum", async () => {

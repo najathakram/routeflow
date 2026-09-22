@@ -1820,7 +1820,7 @@ describe("InvoicesService", () => {
       expect(prisma.orderItem.update).toHaveBeenCalledWith(
         expect.objectContaining({
           where: { id: "li1" },
-          data: expect.objectContaining({ qty: 2, subtotal: 440 }),
+          data: expect.objectContaining({ qty: 2, subtotal: 440, invoicedQty: 2 }),
         }),
       );
       // Order totals: subtotal 440, tax = 440 * (10/100) = 44, total 484.
