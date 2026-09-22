@@ -468,6 +468,11 @@ export interface UpdateOrderItemInput {
   unitPrice?: number;
   overrideReason?: string;
   notes?: string;
+  /** units_v1: names the unit an UPDATE targeting a unit-aware line is sold by
+   *  (e.g. "Case") — the server already accepts this (DTO field, unchanged);
+   *  required whenever the target line already carries one, or it refuses
+   *  the edit (UNIT_AWARE_LINE). Never set by this client for a pack line. */
+  unitLabel?: string;
 }
 
 export function useUpdateOrderItems() {

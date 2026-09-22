@@ -12,7 +12,12 @@
  * - new catalog line → `{ productId, qty, [boxes,pieces], [unitPrice,overrideReason] }`;
  * - new unlisted line → `{ name, qty, unitPrice }`;
  * - existing UPDATE → `{ id, action:"UPDATE", qty, [boxes,pieces], [unitPrice,overrideReason] }`
- *   (qty always sent; price only when it changed vs the original);
+ *   (qty always sent; price only when it changed vs the original) — UNLESS the line
+ *   carries a units_v1 `unitLabel` (Case, Pallet…), in which case it's
+ *   `{ id, action:"UPDATE", qty:<unit count>, unitLabel, [unitPrice,overrideReason] }`
+ *   instead: the server's unit-aware branch reads `qty` as a COUNT OF THE UNIT and
+ *   refuses boxes/pieces outright, and needs `unitLabel` resent (unchanged — this
+ *   screen never sets or clears one) or it refuses the whole edit (B707);
  * - substitute → `{ id, substituteProductId, qty, [boxes,pieces], [unitPrice,overrideReason] }`
  *   (same box-split + override rules as a fresh add — the SUBSTITUTE's own LIST
  *   price, carried in `basePrice`, is what "diverges" is measured against: it is
@@ -60,6 +65,12 @@ export interface DiffCatalogLine {
   substituteProductId?: string;
   /** Per-line note (buyer-visible), carried onto the invoice line. */
   notes?: string;
+  /**
+   * units_v1: the unit this line is sold by ("Case"…), carried unchanged
+   * from the stored line. When set, an UPDATE's wire shape diverges from a
+   * pack line's — see the UPDATE branch below (B707).
+   */
+  unitLabel?: string | null;
 }
 
 export interface DiffUnlistedLine {
@@ -173,11 +184,20 @@ export function buildOrderItemDiff(args: {
     // A note-only edit is still a change (send the new value; empty clears it).
     const notesChanged = noteVal !== (orig.notes ?? "").trim();
     if (qtyChanged || priceChanged || reasonChanged || notesChanged) {
+      // units_v1 (B707): a line sold by a named unit stores qty/boxes/pieces
+      // in PACK PIECES (so qtyChanged above stays on the same basis as every
+      // other line), but the server's unit-aware UPDATE branch (buildUnitLine)
+      // takes `qty` as a COUNT OF THE UNIT and refuses boxes/pieces outright —
+      // sending the piece-expanded qty here billed a 3-case edit as 864
+      // "cases". `unitLabel` rides along UNCHANGED (this screen never sets or
+      // clears one) so the server's assertUnitLabelNamed never mistakes the
+      // save for a plain pieces edit and refuses it (UNIT_AWARE_LINE).
+      const unitLabel = line.unitLabel?.trim() || undefined;
       out.push({
         id: line.lineId,
         action: "UPDATE",
-        qty: line.qty, // server's UPDATE branch requires qty present
-        ...boxFields,
+        qty: unitLabel ? (line.boxes ?? line.qty) : line.qty, // server's UPDATE branch requires qty present
+        ...(unitLabel ? { unitLabel } : boxFields),
         // unitPrice is gated on priceChanged ALONE (R9): the server's edit
         // branch derives isManualOverride from whether the sent price differs
         // from the stored one, so echoing it back on a reason-only edit would
