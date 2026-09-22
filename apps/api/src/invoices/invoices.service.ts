@@ -3381,6 +3381,28 @@ export class InvoicesService {
         ).map((c: any) => [c.id, c]),
       );
 
+      // B717: this path DELETES and RECREATES every line, so a pack the line already
+      // carries is lost unless it is read first. Two saves need it: a sub-one-box split
+      // (`boxes: 0`), where the payload cannot imply a pack, and a box-UNAWARE line, whose
+      // payload carries no split at all. Without it the first re-prices at the CASE price
+      // per PIECE and the second nulls the sale-time snapshot that pack-at-sale (B700)
+      // exists to prefer. Keyed by productId because the replace payload carries no line
+      // ids; the FIRST non-null snapshot per product wins, which is the only ambiguity a
+      // repeated product can create and is still strictly better than today's live pack.
+      const priorPackByProduct = new Map<string, number>();
+      if (productIds.length > 0) {
+        const priorItems = await this.prisma.forTenant().invoiceItem.findMany({
+          where: { invoiceId: id, productId: { in: productIds } },
+          select: { productId: true, unitsPerBox: true },
+        });
+        for (const pi of priorItems) {
+          const prior = Number(pi.unitsPerBox ?? 0);
+          if (pi.productId && prior > 1 && !priorPackByProduct.has(pi.productId)) {
+            priorPackByProduct.set(pi.productId, prior);
+          }
+        }
+      }
+
       let subtotal = 0;
       const itemsData = dto.items.map((item) => {
         const product = item.productId ? productMap.get(item.productId) : undefined;
@@ -3401,6 +3423,26 @@ export class InvoicesService {
           boxes = item.boxes ?? null;
           pieces = item.pieces ?? null;
           const pack = packFromOwnSplit({ qty: item.qty, boxes: item.boxes, pieces: item.pieces });
+          // B717: `packFromOwnSplit` returns null whenever the split cannot imply a pack —
+          // most often `boxes: 0`, which is simply "fewer than one full case" and is what the
+          // edit page sends for any sub-case quantity. Leaving `unitsPerBox` undefined there
+          // sent computeLineSubtotal down its NON-boxed branch, where `unitPrice` is read as a
+          // PER-PIECE price: 5 pieces of a $11.00 case billed $55.00 instead of $4.58. The
+          // line's own stored snapshot is the correct denominator; the live product is the
+          // last resort and only for a line that has no snapshot yet.
+          // Scoped deliberately to "no boxes to divide by" (`boxes: 0`), NOT to every null.
+          // A split that contradicts itself ({qty 10, boxes 3, pieces 2}) stays exactly as
+          // case (c) of this path's spec already blesses it — stored as sent with a null
+          // pack — because no denominator there is defensible and that shape cannot come
+          // from the edit page, whose `lineSplit` always emits a consistent split. Widening
+          // to every null pack is a separate, deliberate decision, not a hotfix.
+          const noBoxesToDivideBy = Number(item.boxes ?? 0) <= 0;
+          const fallbackPack =
+            priorPackByProduct.get(item.productId) ??
+            (product?.unitsPerBox && product.unitsPerBox > 1 ? product.unitsPerBox : undefined);
+          if (pack == null && noBoxesToDivideBy && fallbackPack != null) {
+            unitsPerBox = fallbackPack;
+          }
           if (pack != null) {
             unitsPerBox = pack;
             if (product?.unitsPerBox && product.unitsPerBox !== pack) {
@@ -3454,7 +3496,16 @@ export class InvoicesService {
           boxes,
           pieces,
           // Snapshot the box size for a box-split line so later recompute is stable.
-          unitsPerBox: boxes != null && unitsPerBox ? unitsPerBox : null,
+          // B717: and never CLEAR a snapshot the line already carried. A box-unaware line
+          // sends no split, so the old `boxes != null && ...` gate stored null on every save
+          // and stripped the sale-time pack that `toSaleLedgerLines` (B700) prefers — after
+          // which the regulated ledger re-derived at TODAY's product pack. A line's own
+          // resolved pack wins; its prior snapshot is kept when this save could not resolve
+          // one; only a line that never had a pack stores null.
+          unitsPerBox:
+            (boxes != null && unitsPerBox ? unitsPerBox : undefined) ??
+            (item.productId ? priorPackByProduct.get(item.productId) : undefined) ??
+            null,
           // BUY_N_GET_M snapshot — preserved across the delete-and-recreate.
           promoFreeUnits: freeUnits > 0 ? freeUnits : null,
           // Re-snapshot the regulated category/subcategory from the (current) product,
