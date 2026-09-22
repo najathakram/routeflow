@@ -21,7 +21,7 @@ import {
   packFromOwnSplit,
   type CategoryTaxType,
 } from "@routeflow/pricing";
-import { loadPriorPacks, resolveUpdateLinePack } from "./update-pack-resolution";
+import { loadPriorPacks, priceReplacedLine, resolveUpdateLinePack } from "./update-pack-resolution";
 import { redactUpsellForCustomer } from "../common/upsell-redaction";
 import {
   CONFIRMED_PAYMENT,
@@ -3419,19 +3419,9 @@ export class InvoicesService {
             );
           }
         }
-        // BUY_N_GET_M: the line's free-unit snapshot round-trips on the payload
-        // (this path REPLACES every line). Dropping it re-prices an agreed
-        // 12-boxes-2-free line from $350 to 12 × $35 = $420 on a plain re-save.
+        // Refusal (SA-077(2)), BUY_N_GET_M and the money all live in priceReplacedLine now.
         const freeUnits = this.clampLineFreeUnits(item.promoFreeUnits, boxes, qty);
-        const beforeDiscount = computeLineSubtotal({
-          unitPrice: item.unitPrice,
-          qty,
-          boxes,
-          pieces,
-          unitsPerBox,
-          freeUnits,
-        });
-        const lineSub = roundMoney(beforeDiscount - (item.discount ?? 0));
+        const lineSub = priceReplacedLine(item, { qty, boxes, pieces, unitsPerBox, freeUnits });
         subtotal += lineSub;
         // RF-4: per-line category tax on the net sale (mirrors create()).
         const category = product?.trackedCategoryId

@@ -48,6 +48,15 @@ const BASELINE: Record<string, number> = {
   "buyer/replenishment.service.ts": 1,
   "buyer/buyer-catalog.service.ts": 3,
   "inventory/inventory.service.ts": 4,
+  // SA-079: loadProductPackNow's ONE read is classifySaleAxis's boxed-GATE fallback for a
+  // box-unaware line with no unitsPerBox snapshot of its own — it derives no line factor,
+  // quantity or price. But it is not inert: its output decides whether a return's SALE row is
+  // PARKED or COUNTED, which is exactly the figure a filing later sums — a wrong answer here
+  // changes what a period reports even though it changes no quantity or price anywhere. Count-
+  // pinned rather than NON_WRITERS-exempted (SA-047/SA-068b shape) because it is temporary: it
+  // goes to 0 when SA-078(c) snapshots unitsPerBox on box-unaware ORDER lines and this fallback
+  // becomes unreachable. Never raise this again after that.
+  "regulated/regulated-ledger.service.ts": 1,
 };
 
 // Files that legitimately read a product's pack and are not line writers.

@@ -1,3 +1,5 @@
+import { BadRequestException } from "@nestjs/common";
+import { unpackableSplit } from "./update-pack-resolution";
 import type { CreateInvoiceDto } from "./dto/create-invoice.dto";
 import type { ResolvedLineUnits } from "../products/line-units";
 import { isUnitAware } from "../orders/unit-line-build";
@@ -67,6 +69,11 @@ export function buildManualInvoiceLines(
         qty = split.qty;
       }
     }
+    // SA-077(2): a split that no pack can price is REFUSED rather than silently dropped — the
+    // shape buildLine's G1 has always rejected at its own choke point. Same ONE predicate the
+    // update path and `lineAmbiguity` use. A boxed product is unaffected: its pack resolves above.
+    const bad = unpackableSplit(item, unitsPerBox);
+    if (bad) throw new BadRequestException(bad);
     // BUY_N_GET_M: free whole selling units come off the subtotal BEFORE pricing
     // (never a rounded net unit price). 0 for every other line.
     const freeUnits = clampFreeUnits(item.promoFreeUnits, boxes, qty);

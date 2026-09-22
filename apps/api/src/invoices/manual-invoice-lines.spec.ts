@@ -64,3 +64,33 @@ describe("buildManualInvoiceLines", () => {
     expect(itemsData[1].promoFreeUnits).toBeNull();
   });
 });
+
+// ─── SA-077(2) ───────────────────────────────────────────────────────────────
+describe("SA-077(2): a split no pack can price is refused, never silently dropped", () => {
+  it("refuses a split on a product with no pack, naming the line", () => {
+    expect(() =>
+      build([
+        {
+          productId: "loose", // unitsPerBox: null
+          description: "Flat widget",
+          qty: 10,
+          unitPrice: 11,
+          boxes: 3,
+          pieces: 2,
+        },
+      ]),
+    ).toThrow(/Flat widget/);
+  });
+
+  it("leaves a boxed product's split alone — it has a pack, so it prices from the split", () => {
+    const out = build([
+      { productId: "boxed", description: "Boxed", qty: 24, unitPrice: 11, boxes: 2, pieces: 0 },
+    ]);
+    expect(out.itemsData[0].subtotal).toBeCloseTo(22, 2); // 11 * 2 boxes
+  });
+
+  it("leaves a plain unboxed line alone — no split, nothing to refuse", () => {
+    const out = build([{ productId: "loose", description: "Flat", qty: 10, unitPrice: 11 }]);
+    expect(out.itemsData[0].subtotal).toBeCloseTo(110, 2); // 11 per piece * 10
+  });
+});
