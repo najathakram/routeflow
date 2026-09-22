@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { createPortal } from "react-dom";
+import { createPortal, flushSync } from "react-dom";
 import { AlertTriangle, Keyboard, Undo2, X, Zap, ZapOff } from "lucide-react";
 import { Button, cn } from "@routeflow/ui/web";
 import {
@@ -40,12 +40,6 @@ const HIGHLIGHT_MS = 2000;
 const FEEDBACK_MS = 2500;
 /** How often the poor-signal queue checks for scans that are due a retry. */
 const RETRY_TICK_MS = 1500;
-/**
- * Pause between two retries. The modal decides add-vs-increment from the RENDER it last saw, so a
- * second retry of the same product started before React committed the first would read an empty
- * list and add a DUPLICATE row; yielding lets the commit land first.
- */
-const RETRY_COMMIT_YIELD_MS = 60;
 
 export interface ScanOrderScreenProps<T extends SummaryLine & { tempId: string }> {
   open: boolean;
@@ -302,10 +296,16 @@ export function ScanOrderScreen<T extends SummaryLine & { tempId: string }>({
               `Gave up on ${dropped.code} after ${PENDING_MAX_ATTEMPTS} tries - rescan it`,
             );
           }
-        } else {
+          return;
+        }
+        // flushSync, not a fixed sleep: the parent decides add-vs-merge from the render it last
+        // saw, so the NEXT retry's lookup must never start before THIS one's commit has actually
+        // landed (a stale render would read an empty/pre-add list and add a DUPLICATE row).
+        // flushSync forces that commit synchronously before `retryOne` returns.
+        flushSync(() => {
           setPendingBoth(removePending(pendingRef.current, item.id));
           applyResolution(item.code, res);
-        }
+        });
       } finally {
         retryInFlight.current.delete(item.id);
       }
@@ -328,7 +328,9 @@ export function ScanOrderScreen<T extends SummaryLine & { tempId: string }>({
   // line landing under the operator's cursor) or under the create-product dialog, and nothing while
   // the browser reports it is offline; the browser's `online` event makes everything due at once.
   const canRetry = live && !editorOpen;
-  retryAllowed.current = canRetry;
+  React.useEffect(() => {
+    retryAllowed.current = canRetry;
+  }, [canRetry]);
 
   // The "press again to discard" warning only applies while something is actually waiting.
   React.useEffect(() => {
@@ -336,8 +338,9 @@ export function ScanOrderScreen<T extends SummaryLine & { tempId: string }>({
   }, [pending.length]);
 
   /**
-   * Retries whatever is due - strictly ONE AT A TIME (see RETRY_COMMIT_YIELD_MS), never while a
-   * live scan is resolving, and it stops the moment retries are no longer allowed.
+   * Retries whatever is due - strictly ONE AT A TIME, never while a live scan is resolving, and it
+   * stops the moment retries are no longer allowed. `retryOne` itself flushes an added/merged line
+   * synchronously before returning, so this never needs a fixed pause between two retries.
    */
   const runDueRetries = React.useCallback(async () => {
     if (retryRunning.current) return;
@@ -347,7 +350,6 @@ export function ScanOrderScreen<T extends SummaryLine & { tempId: string }>({
       for (const item of dueScans(pendingRef.current, Date.now())) {
         if (!retryAllowed.current || engineRef.current.buffer.isResolving) break;
         await retryOne(item);
-        await new Promise((r) => setTimeout(r, RETRY_COMMIT_YIELD_MS));
       }
     } finally {
       retryRunning.current = false;
