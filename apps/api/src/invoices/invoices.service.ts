@@ -3407,19 +3407,16 @@ export class InvoicesService {
           boxes = item.boxes ?? null;
           pieces = item.pieces ?? null;
           const pack = packFromOwnSplit({ qty: item.qty, boxes: item.boxes, pieces: item.pieces });
-          // B717/SA-077: payload split -> the product's own stored line (exactly one) -> live.
+          // B717/SA-077: payload split -> the product's stored lines when unanimous -> live.
           const res = resolveUpdateLinePack(pack, item, livePack, priorPacks);
           if (res.pack != null) unitsPerBox = res.pack;
           if (res.warn) this.logger.warn(`update(): invoiceId ${id} ${res.warn}`);
-          if (pack != null) {
-            unitsPerBox = pack;
-            if (livePack && livePack !== pack) {
-              this.logger.warn(
-                `update(): invoiceId ${id} productId ${item.productId} — payload's implied pack ` +
-                  `${pack} differs from the live product's ${livePack}; using the ` +
-                  `payload's pack.`,
-              );
-            }
+          // The resolver already chose the pack; this only reports a payload/live divergence.
+          if (pack != null && livePack && livePack !== pack) {
+            this.logger.warn(
+              `update(): invoiceId ${id} productId ${item.productId} — payload's implied pack ` +
+                `${pack} differs from the live product's ${livePack}; using the payload's pack.`,
+            );
           }
         }
         // BUY_N_GET_M: the line's free-unit snapshot round-trips on the payload
@@ -3463,7 +3460,8 @@ export class InvoicesService {
           subtotal: lineSub,
           boxes,
           pieces,
-          // Snapshot the box size, and B717: never CLEAR one the line already carried.
+          // B717: never CLEAR a pack the line carried. Storage and pricing gate differently ON
+          // PURPOSE — see update-pack-resolution.ts's "STORAGE vs PRICING" note; spec (g) pins it.
           unitsPerBox:
             unitsPerBox ?? (item.productId ? priorPacks.get(item.productId) : null) ?? null,
           // BUY_N_GET_M snapshot — preserved across the delete-and-recreate.

@@ -13,17 +13,30 @@
  * price. 5 pieces of an $11.00 case billed $55.00 instead of $4.58; the multiplier is the pack
  * size, so a 24-pack overcharged 24x.
  *
- * THE ORDER (SA-077): the payload's own split, then the stored line for the SAME productId when
- * EXACTLY ONE such line exists on the invoice, then the live product — which is a guess about a
- * sale that may have happened at a different pack, so the caller warns and calls it new-line
- * semantics. Two stored lines for one product make the pairing POSITIONAL, and a positionally
- * matched snapshot is refused: such a line takes the live path instead.
+ * THE ORDER (SA-077 step 3, SA-077b/c): the payload's own split, then the stored lines of the SAME
+ * productId when they all AGREE, then the live product — the write moment is the snapshot moment
+ * for a new line — with a warn naming the contradiction. Stored lines that disagree carry nothing
+ * rather than one being picked arbitrarily. Money always comes FROM THE SPLIT at whichever pack
+ * resolves, so no shape is priced at the box price per piece.
  *
- * SCOPE. Only "no boxes to divide by" falls back. A split that contradicts itself
- * ({qty 10, boxes 3, pieces 2}) keeps today's behaviour — stored as sent with a null pack — because
- * no denominator there is defensible and the edit page cannot emit it. SA-077(2) will REFUSE that
- * shape through the existing `lineAmbiguity` guard so money fails closed; that is a deliberate
- * behaviour change for every client and lands as its own PR, not inside a hotfix.
+ * STORAGE vs PRICING gate differently, on purpose. `computeLineSubtotal` prorates only when a
+ * split is PRESENT, while the pack is a ledger fact that `toSaleLedgerLines` (B700) reads, so a
+ * box-unaware line is priced `unitPrice * qty` AND still stores its pack. `create()` has always
+ * done exactly this — `buildInvoiceItemData` stores the pack whenever it is > 0, split or not —
+ * so keeping it here makes `update()` AGREE with `create()`; nulling it was the divergence.
+ *
+ * QTY IS STORED AS SENT, ALWAYS — never recomputed as boxes * pack + pieces. That recomputation
+ * was designed and withdrawn (SA-077c): `update()` back-syncs to the linked order line through
+ * `recomputeOrderFromInvoices`, which writes the invoice item's qty onto `OrderItem.qty` and
+ * `invoicedQty`, so normalizing here would silently rewrite an order quantity nobody edited.
+ *
+ * KNOWN RESIDUAL, stated rather than hidden: a contradictory split keeps a qty that disagrees with
+ * its own boxes and pieces, so it under-files on the ledger's piece axis. It is bounded (no
+ * first-party client emits one — the DTO validates qty, boxes and pieces independently, so it
+ * arrives only from a hand-rolled caller), findable (this module's warn, plus a read-only query
+ * for InvoiceItems with a split where qty != boxes * unitsPerBox + pieces), not covered by the
+ * B681 guard (that is a piece-axis check, and this is a wrong qty), and CLOSED by the SA-077(2)
+ * refusal, which rejects the shape and ships that query so anything already stored is listed.
  */
 
 /** A surviving `InvoiceItem` row, as this module needs it. */
@@ -33,9 +46,12 @@ export interface PriorPackRow {
 }
 
 /**
- * The pack each product's own stored line carries, keyed by productId — and ONLY where exactly
- * one line on this invoice holds that product (see the header: positional pairing is refused).
- * A pack of 1 or 0 is not a pack and never enters the map.
+ * The pack each product's own stored lines carry, keyed by productId — and only where EVERY
+ * stored line of that product agrees (SA-077b). Unanimity is not a positional guess: it does not
+ * matter which stored line pairs with which payload row when they all say the same thing. On
+ * disagreement nothing is carried and the caller falls through to the live pack with a warn,
+ * rather than picking one arbitrarily. A line with no pack counts as disagreement when a sibling
+ * has one, because "no pack" is not evidence for a pack. A pack of 1 or 0 never enters the map.
  */
 export async function loadPriorPacks(
   invoiceItem: { findMany: (args: unknown) => Promise<PriorPackRow[]> },
@@ -52,17 +68,19 @@ export async function loadPriorPacks(
 }
 
 export function buildPriorPackMap(rows: PriorPackRow[]): Map<string, number> {
-  const linesPerProduct = new Map<string, number>();
+  const seen = new Map<string, Set<number>>();
   for (const r of rows) {
     if (!r.productId) continue;
-    linesPerProduct.set(r.productId, (linesPerProduct.get(r.productId) ?? 0) + 1);
+    const pack = Number(r.unitsPerBox ?? 0);
+    const set = seen.get(r.productId) ?? new Set<number>();
+    set.add(pack > 1 ? pack : 0); // 0 stands for "this line carries no pack"
+    seen.set(r.productId, set);
   }
   const packs = new Map<string, number>();
-  for (const r of rows) {
-    const pack = Number(r.unitsPerBox ?? 0);
-    if (r.productId && pack > 1 && linesPerProduct.get(r.productId) === 1) {
-      packs.set(r.productId, pack);
-    }
+  for (const [productId, set] of seen) {
+    if (set.size !== 1) continue; // the stored lines disagree — carry nothing
+    const [only] = [...set];
+    if (only > 1) packs.set(productId, only);
   }
   return packs;
 }
@@ -77,20 +95,27 @@ export interface UpdateLinePackResult {
 /** The order in this module's header. Never invents a pack for a self-contradictory split. */
 export function resolveUpdateLinePack(
   payloadPack: number | null,
-  line: { productId?: string | null; boxes?: number | null },
+  line: { productId?: string | null; boxes?: number | null; pieces?: number | null; qty?: number },
   livePack: number | null | undefined,
   storedPacks: Map<string, number>,
 ): UpdateLinePackResult {
   if (payloadPack != null) return { pack: payloadPack };
-  if (Number(line.boxes ?? 0) > 0) return {};
+  // Keyed off the pack being UNDERIVABLE, never off the box count. packFromOwnSplit returns null
+  // three ways — no boxes, a non-integer quotient, and a quotient of exactly 1 — and every one of
+  // them used to leave the pack undefined, which prices the split as loose pieces at the BOX
+  // price. All three resolve the same way here.
   const stored = line.productId ? storedPacks.get(line.productId) : undefined;
   if (stored != null && stored > 1) return { pack: stored };
   const live = Number(livePack ?? 0);
+  // No pack anywhere — the product is unboxed or gone. This is the one shape still priced
+  // unboxed tonight, and it is exactly what the SA-077(2) refusal closes.
   if (!(live > 1)) return {};
   return {
     pack: live,
     warn:
-      `productId ${line.productId ?? "?"} — a sub-one-box split carries no stored pack; ` +
-      `pricing at the LIVE product pack ${live} (new-line semantics).`,
+      `productId ${line.productId ?? "?"} — the payload's split (qty ${line.qty ?? "?"}, boxes ` +
+      `${line.boxes ?? 0}, pieces ${line.pieces ?? 0}) implies no usable pack and no stored line ` +
+      `carries one; pricing FROM THE SPLIT at the live pack ${live} (new-line semantics). qty is ` +
+      `stored as sent, so a contradictory split under-files on the ledger's piece axis.`,
   };
 }

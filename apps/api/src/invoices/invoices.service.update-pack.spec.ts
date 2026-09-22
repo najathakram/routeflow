@@ -188,24 +188,23 @@ describe("InvoicesService.update() — SA-068 pack comes from the payload, never
     warn.mockRestore();
   });
 
-  it("(c) a non-derivable-pack payload ({qty 10, boxes 3, pieces 2}) is stored AS SENT with unitsPerBox null, priced as an unboxed line", async () => {
+  it("(c) B717/SA-077c: a contradictory split prices FROM THE SPLIT at the live pack, qty stored AS SENT", async () => {
     prisma.invoice.findUnique.mockResolvedValue(draftInvoice);
+    prisma.invoiceItem.findMany.mockResolvedValue([]); // no stored line to carry
     prisma.product.findMany.mockResolvedValue([{ id: "prod-box", unitsPerBox: 12 }]);
     prisma.customer.findUnique.mockResolvedValue({ isTaxExempt: false });
     prisma.invoice.update.mockResolvedValue(draftInvoice);
+    const warn = jest.spyOn((service as any).logger, "warn").mockImplementation(() => undefined);
 
-    // (10 - 2) / 3 = 2.667, not an integer -> packFromOwnSplit returns null.
-    // NOTE: the {qty 10, boxes 3, pieces 1} example first given for this case
-    // does NOT actually produce a non-integer pack — (10-1)/3 = 3 exactly, a
-    // valid derivable pack — confirmed by running it (see PR body). Using a
-    // fixture that genuinely exercises the non-derivable path instead.
+    // (10 - 2) / 3 = 2.667 — the payload's split cannot imply a pack. This used to store a null
+    // pack and price 10 loose pieces at the BOX price.
     await service.update("inv-box", {
       items: [
         {
           productId: "prod-box",
           description: "Boxed chips",
           qty: 10,
-          unitPrice: 28.35,
+          unitPrice: 11,
           boxes: 3,
           pieces: 2,
         },
@@ -213,21 +212,18 @@ describe("InvoicesService.update() — SA-068 pack comes from the payload, never
     });
 
     const created = prisma.invoice.update.mock.calls[0][0].data.items.create[0];
+    // qty is stored AS SENT — never recomputed as boxes * pack + pieces, because that value
+    // back-syncs onto the linked OrderItem (recomputeOrderFromInvoices :2347) and would rewrite
+    // an order quantity nobody edited. KNOWN RESIDUAL: 10 != 3 * 12 + 2, so this row under-files
+    // on the ledger's piece axis; bounded, warned, and closed by the SA-077(2) refusal.
+    expect(created.subtotal).toBeCloseTo(34.83, 2); // 11 * (3 + 2/12), never 11 * 10
     expect(created.qty).toBe(10);
     expect(created.boxes).toBe(3);
     expect(created.pieces).toBe(2);
-    expect(created.unitsPerBox).toBeNull();
-    // Priced as an unboxed line: unitPrice * qty, no proration.
-    expect(created.subtotal).toBeCloseTo(283.5, 2);
+    expect(created.unitsPerBox).toBe(12); // the resolved pack is snapshotted
+    expect(warn).toHaveBeenCalled();
+    warn.mockRestore();
   });
-
-  // ─── B717: the sub-one-box split, and the snapshot a save must never destroy ───
-  // (a)-(d) above all send `boxes >= 2`. The shape the web edit page actually sends
-  // for a quantity BELOW one full case is `boxes: 0, pieces: N` — `lineSplit`
-  // (invoices/[id]/edit/page.tsx) normalizes qty 5 at pack 12 to exactly that, and the
-  // payload spreads `boxes: boxes ?? 0`. `packFromOwnSplit` refuses it (`!(boxes > 0)`),
-  // so before this fix `unitsPerBox` stayed undefined and `computeLineSubtotal` took its
-  // NON-boxed branch, charging the BOX price for every PIECE.
 
   it("(e) B717: a sub-one-box split ({qty 5, boxes 0, pieces 5}) prorates at the line's pack, never box-price-per-piece", async () => {
     prisma.invoice.findUnique.mockResolvedValue(draftInvoice);
@@ -291,15 +287,41 @@ describe("InvoicesService.update() — SA-068 pack comes from the payload, never
     warn.mockRestore();
   });
 
-  it("(h) B717/SA-077: two stored lines for one product make the pairing positional, so the stored pack is NOT carried", async () => {
+  it("(h) B717/SA-077b: two stored lines that AGREE carry their pack (unanimous is not a guess)", async () => {
     prisma.invoice.findUnique.mockResolvedValue(draftInvoice);
-    // The same product on two lines — which stored pack belongs to this payload row is
-    // positional, and a positionally-matched snapshot is refused.
+    prisma.invoiceItem.findMany.mockResolvedValue([
+      { id: "item-1", productId: "prod-box", unitsPerBox: 12 },
+      { id: "item-2", productId: "prod-box", unitsPerBox: 12 },
+    ]);
+    prisma.product.findMany.mockResolvedValue([{ id: "prod-box", unitsPerBox: 6 }]); // live differs
+    prisma.customer.findUnique.mockResolvedValue({ isTaxExempt: false });
+    prisma.invoice.update.mockResolvedValue(draftInvoice);
+
+    await service.update("inv-box", {
+      items: [
+        {
+          productId: "prod-box",
+          description: "Boxed chips",
+          qty: 3,
+          unitPrice: 11,
+          boxes: 0,
+          pieces: 3,
+        },
+      ],
+    });
+
+    const created = prisma.invoice.update.mock.calls[0][0].data.items.create[0];
+    expect(created.unitsPerBox).toBe(12); // the unanimous stored pack, not the live 6
+    expect(created.subtotal).toBeCloseTo(2.75, 2); // 11 * 3/12
+  });
+
+  it("(h2) B717/SA-077b: stored lines that DISAGREE carry nothing; the live pack applies, with a warn", async () => {
+    prisma.invoice.findUnique.mockResolvedValue(draftInvoice);
     prisma.invoiceItem.findMany.mockResolvedValue([
       { id: "item-1", productId: "prod-box", unitsPerBox: 12 },
       { id: "item-2", productId: "prod-box", unitsPerBox: 24 },
     ]);
-    prisma.product.findMany.mockResolvedValue([{ id: "prod-box", unitsPerBox: 6 }]); // live
+    prisma.product.findMany.mockResolvedValue([{ id: "prod-box", unitsPerBox: 6 }]);
     prisma.customer.findUnique.mockResolvedValue({ isTaxExempt: false });
     prisma.invoice.update.mockResolvedValue(draftInvoice);
     const warn = jest.spyOn((service as any).logger, "warn").mockImplementation(() => undefined);
@@ -318,11 +340,9 @@ describe("InvoicesService.update() — SA-068 pack comes from the payload, never
     });
 
     const created = prisma.invoice.update.mock.calls[0][0].data.items.create[0];
-    // Neither stored pack is used; the live pack (6) applies, on new-line semantics.
-    expect(created.unitsPerBox).toBe(6);
+    expect(created.unitsPerBox).toBe(6); // live, because the stored packs disagree
     expect(created.subtotal).toBeCloseTo(5.5, 2); // 11 * 3/6
-    expect(warn).toHaveBeenCalledTimes(1);
-    expect(warn.mock.calls[0][0]).toContain("new-line semantics");
+    expect(warn).toHaveBeenCalled();
     warn.mockRestore();
   });
 
@@ -354,6 +374,66 @@ describe("InvoicesService.update() — SA-068 pack comes from the payload, never
     expect(created.unitsPerBox).toBe(12); // not null, and not the live 24
     // Money is unchanged for a line with no split: unitPrice * qty.
     expect(created.subtotal).toBeCloseTo(55, 2);
+  });
+
+  // packFromOwnSplit returns null THREE ways, and all three left the pack undefined and priced
+  // loose pieces at the BOX price. (e)/(f) cover path 1 (no boxes). These cover the other two on a
+  // line that HAS a stored snapshot — carrying its own pack forward is not guessing one.
+
+  it("(i) B717 path 2 (non-integer quotient): a stored snapshot is carried, not destroyed", async () => {
+    prisma.invoice.findUnique.mockResolvedValue(draftInvoice);
+    prisma.invoiceItem.findMany.mockResolvedValue([
+      { id: "item-1", productId: "prod-box", unitsPerBox: 12 },
+    ]);
+    prisma.product.findMany.mockResolvedValue([{ id: "prod-box", unitsPerBox: 12 }]);
+    prisma.customer.findUnique.mockResolvedValue({ isTaxExempt: false });
+    prisma.invoice.update.mockResolvedValue(draftInvoice);
+
+    // (50 - 3) / 2 = 23.5 — not an integer, so packFromOwnSplit refuses it.
+    await service.update("inv-box", {
+      items: [
+        {
+          productId: "prod-box",
+          description: "Boxed chips",
+          qty: 50,
+          unitPrice: 11,
+          boxes: 2,
+          pieces: 3,
+        },
+      ],
+    });
+
+    const created = prisma.invoice.update.mock.calls[0][0].data.items.create[0];
+    expect(created.unitsPerBox).toBe(12); // carried, not nulled
+    expect(created.subtotal).toBeCloseTo(24.75, 2); // 11 * (2 + 3/12), not 11 * 50
+  });
+
+  it("(j) B717 path 3 (quotient of exactly 1): a stored snapshot is carried, not destroyed", async () => {
+    prisma.invoice.findUnique.mockResolvedValue(draftInvoice);
+    prisma.invoiceItem.findMany.mockResolvedValue([
+      { id: "item-1", productId: "prod-box", unitsPerBox: 12 },
+    ]);
+    prisma.product.findMany.mockResolvedValue([{ id: "prod-box", unitsPerBox: 12 }]);
+    prisma.customer.findUnique.mockResolvedValue({ isTaxExempt: false });
+    prisma.invoice.update.mockResolvedValue(draftInvoice);
+
+    // (7 - 2) / 5 = 1 — a "pack of one" is indistinguishable from unboxed, so it is refused.
+    await service.update("inv-box", {
+      items: [
+        {
+          productId: "prod-box",
+          description: "Boxed chips",
+          qty: 7,
+          unitPrice: 11,
+          boxes: 5,
+          pieces: 2,
+        },
+      ],
+    });
+
+    const created = prisma.invoice.update.mock.calls[0][0].data.items.create[0];
+    expect(created.unitsPerBox).toBe(12);
+    expect(created.subtotal).toBeCloseTo(56.83, 2); // 11 * (5 + 2/12), not 11 * 7
   });
 
   it("(d) a brand-new split line on a pack-24 product snapshots 24 (the payload's own implied pack)", async () => {
