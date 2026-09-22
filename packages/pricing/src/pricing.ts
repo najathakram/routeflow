@@ -178,6 +178,35 @@ export class AmbiguousLineError extends Error {
  * should have rolled over via `normalizeBoxesPieces`); a non-integer `boxes`/`pieces`/boxed-`qty`;
  * or `boxes`/`pieces` given and their `boxes*unitsPerBox+pieces` disagrees with `qty`.
  */
+/**
+ * SA-077(2): a boxes/pieces split was given while NO pack resolves (`unitsPerBox` absent, 0 or 1).
+ * Returns the reason, or null when the shape is fine.
+ *
+ * There is no denominator, so the split cannot be priced. Every consumer used to drop it silently
+ * and charge `unitPrice * qty` — and on a line whose `unitPrice` is a CASE price that is the box
+ * price charged per piece, the B717 family's defect. `buildLine` has refused this at its own choke
+ * point since G1 (`./build-line.ts`), but `lineAmbiguity` did not, because every one of its box
+ * checks is gated on `unitsPerBox > 1`. Exported so the ONE definition serves both the guard and
+ * the API's 4xx, rather than being restated in a second place.
+ *
+ * Deliberately narrow: a split that contradicts itself on a line that DOES have a pack is NOT this
+ * shape. That one prices from the split at the resolved pack (B717) and must not be refused.
+ */
+export function splitWithoutPack(input: {
+  boxes?: number | null;
+  pieces?: number | null;
+  unitsPerBox?: number | null;
+}): string | null {
+  if (input.boxes == null && input.pieces == null) return null;
+  const upb = Number(input.unitsPerBox ?? 0);
+  if (upb > 1) return null;
+  return (
+    `boxes/pieces given (boxes:${input.boxes ?? 0}, pieces:${input.pieces ?? 0}) but no pack ` +
+    `resolves (unitsPerBox:${input.unitsPerBox ?? "none"}) — the split has no denominator, so it ` +
+    `cannot be priced and would be silently dropped`
+  );
+}
+
 export function lineAmbiguity(input: {
   qty: number;
   boxes?: number | null;
@@ -185,6 +214,10 @@ export function lineAmbiguity(input: {
   unitsPerBox?: number | null;
 }): string | null {
   const { qty, boxes, pieces, unitsPerBox } = input;
+  // FIRST, so the narrow reason wins before any broader one can fire (SA-077e). Without it a
+  // split with no pack passed every check below, all of which are gated on unitsPerBox > 1.
+  const noPack = splitWithoutPack({ boxes, pieces, unitsPerBox });
+  if (noPack != null) return noPack;
   const upb = Number(unitsPerBox ?? 0);
   const hasBoxPackaging = upb > 1;
   const boxesGiven = boxes != null;

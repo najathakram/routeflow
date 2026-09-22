@@ -39,6 +39,8 @@
  * refusal, which rejects the shape and ships that query so anything already stored is listed.
  */
 
+import { splitWithoutPack } from "@routeflow/pricing";
+
 /** A surviving `InvoiceItem` row, as this module needs it. */
 export interface PriorPackRow {
   productId: string | null;
@@ -83,6 +85,30 @@ export function buildPriorPackMap(rows: PriorPackRow[]): Map<string, number> {
     if (only > 1) packs.set(productId, only);
   }
   return packs;
+}
+
+/**
+ * SA-077(2): the 4xx message for a split that no pack can price, or null when the line is fine.
+ * Wraps `splitWithoutPack` — the ONE definition — and adds the line label so the caller's refusal
+ * names which line was rejected rather than failing the whole save anonymously.
+ */
+export function unpackableSplit(
+  line: {
+    productId?: string | null;
+    description?: string | null;
+    boxes?: number | null;
+    pieces?: number | null;
+  },
+  resolvedPack: number | undefined,
+): string | null {
+  const reason = splitWithoutPack({
+    boxes: line.boxes,
+    pieces: line.pieces,
+    unitsPerBox: resolvedPack ?? null,
+  });
+  if (reason == null) return null;
+  const label = line.description?.trim() || line.productId || "unnamed line";
+  return `Line "${label}": ${reason}`;
 }
 
 export interface UpdateLinePackResult {
