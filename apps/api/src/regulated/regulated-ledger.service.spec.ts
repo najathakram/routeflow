@@ -1378,6 +1378,74 @@ describe("RegulatedLedgerService", () => {
       expect(warnSpy).toHaveBeenCalled();
     });
 
+    // Architect condition on the PASS at 5183e1d5: SA-067(2) says "a row with NO readable line
+    // parks too" — the code path exists (loadSaleLineShapes falls through to `null` when NEITHER
+    // the invoiceItemId nor the orderItemId resolves to anything), but nothing proved it directly.
+    //
+    // reverseReturnEntries only ever considers a SALE row a candidate once its invoiceItemId has
+    // ALREADY resolved to a live product (`productByItem`, built from the same InvoiceItem table
+    // earlier in this method) — so a row whose invoice item is genuinely gone is filtered out long
+    // before classifySaleAxis runs, by pre-existing logic this PR does not change. Proving "no
+    // readable line still parks, never guesses" therefore has to separate that PRE-EXISTING
+    // productId lookup (which must succeed for the row to reach this guard at all) from
+    // loadSaleLineShapes's OWN, later, fuller re-read of the same id (which is what can come back
+    // empty in reality: a reconcile can delete/rotate an invoice item's ROW between when the return
+    // service first resolves productByItem for its own separate purposes and when this guard reads
+    // the line's shape). Two sequential invoiceItem.findMany resolutions model exactly that: the
+    // first (productByItem's) still finds the old row's bare id/productId either from an
+    // in-progress read or a stale index entry; the second (loadSaleLineShapes's own) reflects the
+    // row already being gone. orderItem.findMany also finding nothing rules out the fallback.
+    it('(a2) invoiceItemId resolves a product (so the row is a live candidate) but loadSaleLineShapes\'s own line-shape re-read of that id finds nothing, and orderItemId has no fallback either → line null → unknown → parked ("no line to read a shape from")', async () => {
+      const sale = {
+        id: "s-a2",
+        entryType: "SALE",
+        tenantId: "t1",
+        trackedCategoryId: "cat-A",
+        orderId: "ord-1",
+        orderItemId: "oi-gone", // no OrderItem row for this id either — no fallback
+        invoiceId: "inv-1",
+        invoiceItemId: "ii-a2",
+        qty: 5,
+        unitBasisQty: 5,
+        netSales: 50,
+        categoryTax: 10,
+      };
+      prisma.regulatedSalesLedger.findMany
+        .mockResolvedValueOnce([]) // prior-reversal idempotency
+        .mockResolvedValueOnce([sale]) // sales
+        .mockResolvedValueOnce([]) // priorReversals
+        .mockResolvedValueOnce([]); // loadCorrectionsBySaleId
+      prisma.invoiceItem.findMany
+        // 1st call: productByItem — must resolve, or the row never becomes a candidate at all
+        // (pre-existing gate, unrelated to this guard) and this test would prove nothing.
+        .mockResolvedValueOnce([{ id: "ii-a2", productId: "p1" }])
+        // 2nd call: loadSaleLineShapes's own re-read of the SAME id — comes back empty.
+        .mockResolvedValueOnce([]);
+      prisma.orderItem.findMany.mockResolvedValue([]); // no fallback either
+      prisma.product.findMany.mockResolvedValue([]);
+      const warnSpy = jest
+        .spyOn((service as any).logger, "warn")
+        .mockImplementation(() => undefined);
+      await service.reverseReturnEntries({
+        returnId: "ret-1",
+        orderId: "ord-1",
+        returnedByProduct: new Map([["p1", 5]]),
+        returnedUnit: "PIECES",
+        db: prisma,
+      });
+      expect(prisma.regulatedSalesLedger.createMany).not.toHaveBeenCalled(); // no REVERSAL
+      expect(prisma.regulatedLedgerParkedReversal.createMany).toHaveBeenCalledWith({
+        data: [
+          expect.objectContaining({
+            saleEntryId: "s-a2",
+            reason: "no line to read a shape from",
+          }),
+        ],
+        skipDuplicates: true,
+      });
+      expect(warnSpy).toHaveBeenCalled();
+    });
+
     it("(c) a SPLIT line (boxes 5) with qty 60 == unitBasisQty 60 → NOT parked (the false-positive guard)", async () => {
       const sale = {
         id: "s-c",
