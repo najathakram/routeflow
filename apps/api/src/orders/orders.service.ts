@@ -15,6 +15,10 @@ import type { Queue } from "bull";
 import { PrismaService } from "../prisma/prisma.service";
 import { JwtPayload } from "../auth/jwt-payload.interface";
 import {
+  appendOrderRevision as appendOrderRevisionImpl,
+  AppendOrderRevisionArgs,
+} from "./order-revisions";
+import {
   computeCategoryTax,
   computeLineSubtotal,
   getTierPrice,
@@ -4938,67 +4942,9 @@ export class OrdersService implements OnApplicationBootstrap {
     });
   }
 
-  /**
-   * P5-08: append one immutable OrderRevision row capturing the order's line set +
-   * money totals AFTER an edit. The snapshot COPIES stored, already-rounded values
-   * verbatim — it never re-prices (no `qty*unitPrice`, no re-derived discounts). The
-   * per-order `revisionNumber` (max+1) is computed inside a tenant transaction so
-   * rapid autosaves can't collide on the `@@unique([orderId, revisionNumber])`.
-   */
-  private async appendOrderRevision(
-    orderId: string,
-    user: JwtPayload | undefined,
-    totals: { subtotal: number; tax: number; total: number; shippingFee?: number },
-    source: string,
-    reason?: string | null,
-  ) {
-    const tenantId = this.prisma.getTenantId();
-    const lines = await this.prisma.forTenant().orderItem.findMany({
-      where: { orderId, status: { not: "CANCELLED" } },
-      include: { product: { select: { name: true } } },
-      orderBy: { createdAt: "asc" },
-    });
-    const snapshot = {
-      subtotal: totals.subtotal,
-      tax: totals.tax,
-      total: totals.total,
-      shippingFee: totals.shippingFee ?? 0,
-      lineItems: lines.map((li) => ({
-        productId: li.productId,
-        name: li.name ?? li.product?.name ?? null,
-        qty: Number(li.qty),
-        unitPrice: Number(li.unitPrice),
-        subtotal: Number(li.subtotal),
-        originalPrice: li.originalPrice != null ? Number(li.originalPrice) : null,
-        priceType: li.priceType,
-        boxes: li.boxes,
-        pieces: li.pieces,
-        unitsPerBox: li.unitsPerBox,
-        trackedCategoryId: li.trackedCategoryId,
-        trackedSubcategoryId: li.trackedSubcategoryId,
-        notes: li.notes,
-        status: li.status,
-      })),
-    };
-    await this.prisma.tenantTransaction(async (tx) => {
-      const max = await tx.orderRevision.aggregate({
-        where: { orderId },
-        _max: { revisionNumber: true },
-      });
-      await tx.orderRevision.create({
-        data: {
-          tenantId,
-          orderId,
-          revisionNumber: (max._max.revisionNumber ?? 0) + 1,
-          editedById: user?.sub ?? null,
-          editedByName: user?.username ?? null,
-          editedByRole: user?.role ?? null,
-          source,
-          reason: reason ?? null,
-          snapshot,
-        },
-      });
-    });
+  /** P5-08: extracted verbatim to `order-revisions.ts` (SA-065 prefactor); thin delegator, same name. */
+  private appendOrderRevision(...args: AppendOrderRevisionArgs) {
+    return appendOrderRevisionImpl(this.prisma, ...args);
   }
 
   /** B283 / stock: extracted verbatim to `order-stock.ts` (B585 prefactor); thin delegators, same names. */
