@@ -21,7 +21,13 @@ import { join, relative, sep } from "path";
  */
 const BASELINE: Record<string, number> = {
   "orders/orders.service.ts": 20,
-  "invoices/invoices.service.ts": 5, // 4c-1 prefactor: create()'s line builder moved (3 reads) to:
+  // SA-068b: update() gained ONE new read — a divergence CHECK (payload's own implied pack vs
+  // product.unitsPerBox, warn-only) — never a line-factor decision; the pack itself now comes
+  // from packFromOwnSplit(the payload's own qty/boxes/pieces), never product.unitsPerBox. Count-
+  // pinned rather than NON_WRITERS-exempted (SA-047 shape) because it is meant to be temporary:
+  // SA-063's packOfStoredLine takes the live pack as a PARAMETER, so this read moves into that
+  // one helper and the count returns to 5 once that lands. Never raise this again after that.
+  "invoices/invoices.service.ts": 6, // 4c-1 prefactor: create()'s line builder moved (3 reads) to:
   "invoices/manual-invoice-lines.ts": 3,
   // B645: create()'s itemsData mapper read product.unitsPerBox at 3 sites (qty
   // resolve, computeLineSubtotal, and the B645 boxes/pieces/unitsPerBox snapshot
