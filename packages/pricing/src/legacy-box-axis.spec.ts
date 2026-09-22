@@ -144,4 +144,16 @@ describe("classifySaleAxis", () => {
       ),
     ).toEqual({ state: "unknown", reason: "corrected qty is not positive" });
   });
+
+  it("SA-073: a non-finite row qty (a non-numeric string) -> unknown, never silently defaults", () => {
+    expect(
+      classifySaleAxis({ entryType: "SALE", qty: "x", unitBasisQty: 5 }, boxUnaware, [], 12),
+    ).toEqual({ state: "unknown", reason: "row qty/unitBasisQty is not a usable number" });
+  });
+
+  it("SA-073: a non-finite row unitBasisQty (NaN) -> unknown, never silently defaults", () => {
+    expect(
+      classifySaleAxis({ entryType: "SALE", qty: 5, unitBasisQty: NaN }, boxUnaware, [], 12),
+    ).toEqual({ state: "unknown", reason: "row qty/unitBasisQty is not a usable number" });
+  });
 });

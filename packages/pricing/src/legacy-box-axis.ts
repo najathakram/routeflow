@@ -138,6 +138,9 @@ export function classifySaleAxis(
   for (const c of corrections) {
     const cQty = finiteOrNull(c.qty);
     const cUbq = finiteOrNull(c.unitBasisQty);
+    // SA-073: a non-finite correction figure is folded in as a no-op (skipped silently) rather
+    // than refused — acceptable because a Decimal-typed ledger column can never actually hold a
+    // non-finite value, so this branch is unreachable for a real correction row.
     if (cQty != null) effQty += cQty;
     if (cUbq != null) effUbq += cUbq;
   }
