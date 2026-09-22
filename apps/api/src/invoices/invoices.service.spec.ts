@@ -263,6 +263,9 @@ describe("InvoicesService", () => {
       expect(result.id).toBe("inv-3");
     });
 
+    // B661/B671 (spec 5, duplicate()'s ledger-write gap) moved to invoices.service.b661.spec.ts
+    // (size ratchet — this file may not grow).
+
     // REG-B100-E (cause-ruling.md §3, cause-refutation.md §7.4): duplicate() has no
     // P2002 catch today — a concurrent duplicate's unique-constraint hit propagates
     // as a raw 500. TODAY this rejects with the plain `{ code: "P2002" }` object,
@@ -814,6 +817,9 @@ describe("InvoicesService", () => {
         }),
       );
     });
+
+    // B661/B671 (spec 5/6, packAtSale plumbing) moved to invoices.service.b661.spec.ts (size
+    // ratchet — this file may not grow).
 
     it("create() does NOT touch the ledger for a purely non-regulated invoice", async () => {
       prisma.customer.findUnique.mockResolvedValue({ id: "cust-1", isTaxExempt: false });

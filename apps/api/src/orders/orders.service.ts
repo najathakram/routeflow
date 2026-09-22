@@ -2033,6 +2033,7 @@ export class OrdersService implements OnApplicationBootstrap {
       // in pieces already; a box-UNAWARE boxed line (boxes==null) stores qty as a
       // SELLING-UNIT (box) count, so expand it — mirrors the merge path so the same
       // buyer line prices identically at create vs edit.
+      // B661-sweep: box-unaware multiply, converts to regulatedUnitBasis in a follow-up PR.
       const qtyPieces = boxes != null ? qty : upb > 1 ? qty * upb : qty;
       // BUY_N_GET_M threshold is measured in whole SELLING units — a box for a
       // boxed line, a piece otherwise. `boxes` already holds the whole-box count
@@ -3423,6 +3424,7 @@ export class OrdersService implements OnApplicationBootstrap {
             // QTY_BREAK threshold is measured in PIECES: split.qty when re-split, else
             // box-count × unitsPerBox for boxed selling-unit lines, else the piece qty.
             // DRIVER edits keep the legacy list price (unchanged).
+            // B661-sweep: box-unaware multiply, converts to regulatedUnitBasis in a follow-up PR.
             const qtyPieces = split ? split.qty : upb > 1 ? item.qty * upb : item.qty;
             // BUY_N_GET_M threshold: whole SELLING units (boxes for a boxed line,
             // pieces otherwise) — mirrors create()'s qtyUnits derivation.
@@ -3808,6 +3810,7 @@ export class OrdersService implements OnApplicationBootstrap {
               const isManualOverride =
                 !bogoPriceUnchanged && overridePrice !== null && overridePrice !== catalogPrice;
               const upb = Number(product.unitsPerBox ?? 0);
+              // B661-sweep: box-unaware multiply, converts to regulatedUnitBasis in a follow-up PR.
               const qtyPieces = boxes != null ? qty : upb > 1 ? qty * upb : qty;
               const qtyUnits = boxes != null ? boxes : qty;
               const priced: {

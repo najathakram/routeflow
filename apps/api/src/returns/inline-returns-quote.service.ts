@@ -341,6 +341,8 @@ export class InlineReturnsQuoteService {
         // and stored on the line itself so priceMatchedChunk sees the same value.
         const upb = item.unitsPerBox ?? productUpbMap.get(item.productId) ?? null;
         const upbNum = Number(upb) || 0;
+        // B661-sweep: a box-unaware multiply — follow-up PR converts this to
+        // @routeflow/pricing's regulatedUnitBasis; see no-second-legacy-line-pieces.spec.ts's allowlist.
         const piecesQty = item.boxes != null ? qty : upbNum > 1 ? qty * upbNum : qty;
         lines.push({
           sourceOrderId: inv.orderId,

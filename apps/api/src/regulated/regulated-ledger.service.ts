@@ -1,12 +1,18 @@
-import { Injectable } from "@nestjs/common";
+import { Injectable, Logger } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
-import { roundMoney } from "@routeflow/pricing";
+import { roundMoney, regulatedUnitBasis } from "@routeflow/pricing";
 import { periodBucketOf } from "./period";
 
 /** Round a quantity to 3 decimals (matches the Decimal(12,3) ledger columns). */
 const round3 = (n: number) => Math.round(n * 1000) / 1000;
 
-/** One regulated invoice line, as seen at invoice-creation time. */
+/**
+ * One regulated invoice line, as seen at invoice-creation time. B661: the caller passes the
+ * line's own STORED SHAPE (never a pre-computed unit basis — see `writeSaleEntries`, which is
+ * the ONLY place `unitBasisQty` is derived, via `regulatedUnitBasis`). `qty` stays the line's own
+ * qty — it becomes the ledger row's `qty`, which reconciles to the invoice line — and is no
+ * longer read as an input to the row's `unitBasisQty`.
+ */
 export interface SaleLedgerLine {
   invoiceItemId: string;
   orderItemId: string | null;
@@ -15,6 +21,13 @@ export interface SaleLedgerLine {
   // SALE row for the filing breakdown; never affects the regulated filter or any math.
   trackedSubcategoryId?: string | null;
   qty: number;
+  boxes?: number | null;
+  pieces?: number | null;
+  unitsPerBox?: number | null;
+  unitLabel?: string | null;
+  /** The product's `unitsPerBox` AS SNAPSHOT at this write — never a later re-read. See
+   * `regulatedUnitBasis`'s box-unaware fallback (branch 4). */
+  packAtSale?: number | null;
   netSales: number; // the line's post-discount subtotal
   categoryTax: number; // computed category tax (0 today — tobacco is rate=0)
 }
@@ -42,6 +55,8 @@ export interface SaleLedgerLine {
  */
 @Injectable()
 export class RegulatedLedgerService {
+  private readonly logger = new Logger(RegulatedLedgerService.name);
+
   constructor(private readonly prisma: PrismaService) {}
 
   /**
@@ -64,24 +79,33 @@ export class RegulatedLedgerService {
     const bucket = periodBucketOf(soldAt);
     const rows = lines
       .filter((l) => l.trackedCategoryId)
-      .map((l) => ({
-        tenantId,
-        trackedCategoryId: l.trackedCategoryId as string,
-        // RF-3: reporting breakdown passthrough (null = section-only). Never gates.
-        trackedSubcategoryId: l.trackedSubcategoryId ?? null,
-        entryType: "SALE" as const,
-        orderId,
-        orderItemId: l.orderItemId,
-        invoiceId,
-        invoiceItemId: l.invoiceItemId,
-        qty: l.qty,
-        // W5: no unitBasis conversion yet (W3 owns pack/carton math) — passthrough.
-        unitBasisQty: l.qty,
-        netSales: roundMoney(l.netSales),
-        categoryTax: roundMoney(l.categoryTax),
-        soldAt,
-        periodBucket: bucket,
-      }));
+      .map((l) => {
+        // B661: the ONE place a SALE row's unitBasisQty is derived — from the line's own
+        // stored shape and its write-time pack snapshot, never a caller-supplied number.
+        const { unitBasisQty, warn } = regulatedUnitBasis(l, l.packAtSale);
+        if (warn) {
+          this.logger.warn(
+            `writeSaleEntries: invoiceItemId ${l.invoiceItemId} (orderItemId ${l.orderItemId}) — ${warn}`,
+          );
+        }
+        return {
+          tenantId,
+          trackedCategoryId: l.trackedCategoryId as string,
+          // RF-3: reporting breakdown passthrough (null = section-only). Never gates.
+          trackedSubcategoryId: l.trackedSubcategoryId ?? null,
+          entryType: "SALE" as const,
+          orderId,
+          orderItemId: l.orderItemId,
+          invoiceId,
+          invoiceItemId: l.invoiceItemId,
+          qty: l.qty,
+          unitBasisQty,
+          netSales: roundMoney(l.netSales),
+          categoryTax: roundMoney(l.categoryTax),
+          soldAt,
+          periodBucket: bucket,
+        };
+      });
     if (rows.length === 0) return;
     await db.regulatedSalesLedger.createMany({ data: rows });
   }
@@ -271,11 +295,19 @@ export class RegulatedLedgerService {
     // return can never drive the category SUM below 0. Seed each line with its total
     // SALE, then fold in every prior REVERSAL (qty/net/tax are stored negative).
     const remQtyByLine = new Map<string, number>();
+    // B671: `remaining`/`returnedByProduct` below are PIECE-denominated
+    // (returnedPiecesByProduct), but a box-unaware line's own `qty` is stored in the LINE's
+    // unit (boxes) — comparing pieces against a box count silently closed a whole multi-box
+    // line on a fractional-box return (Opus review, B661 PR #1207). `unitBasisQty` (this PR)
+    // is the row's own piece count, so it — not `qty` — is the axis capping/closesRow compares
+    // `remaining` against. Tracked in parallel with remQtyByLine, same seeding.
+    const remUnitBasisByLine = new Map<string, number>();
     const remNetByLine = new Map<string, number>(); // remaining net (>= 0 normally)
     const remTaxByLine = new Map<string, number>();
     for (const s of sales) {
       const lk = lineKeyOfSale(s);
       remQtyByLine.set(lk, (remQtyByLine.get(lk) ?? 0) + Number(s.qty));
+      remUnitBasisByLine.set(lk, (remUnitBasisByLine.get(lk) ?? 0) + Number(s.unitBasisQty));
       remNetByLine.set(lk, (remNetByLine.get(lk) ?? 0) + Number(s.netSales));
       remTaxByLine.set(lk, (remTaxByLine.get(lk) ?? 0) + Number(s.categoryTax));
     }
@@ -289,6 +321,7 @@ export class RegulatedLedgerService {
         invoiceItemId: true,
         orderItemId: true,
         qty: true,
+        unitBasisQty: true,
         netSales: true,
         categoryTax: true,
       },
@@ -296,6 +329,7 @@ export class RegulatedLedgerService {
     for (const r of priorReversals) {
       const lk = lineKeyOfReversal(r);
       remQtyByLine.set(lk, (remQtyByLine.get(lk) ?? 0) + Number(r.qty)); // r.qty <= 0
+      remUnitBasisByLine.set(lk, (remUnitBasisByLine.get(lk) ?? 0) + Number(r.unitBasisQty));
       remNetByLine.set(lk, (remNetByLine.get(lk) ?? 0) + Number(r.netSales));
       remTaxByLine.set(lk, (remTaxByLine.get(lk) ?? 0) + Number(r.categoryTax));
     }
@@ -316,22 +350,27 @@ export class RegulatedLedgerService {
     const rows: any[] = [];
 
     for (const [productId, returnedQtyRaw] of returnedByProduct.entries()) {
+      // B671: PIECES (returnedPiecesByProduct) — the same axis unitBasisQty is on, never the
+      // line's own `qty` (boxes for a box-unaware line).
       let remaining = Number(returnedQtyRaw);
       if (!(remaining > 0)) continue;
       for (const s of salesByProduct.get(productId) ?? []) {
         if (remaining <= 0) break;
-        const saleQty = Number(s.qty);
-        if (saleQty <= 0) continue;
+        const saleUnitBasis = Number(s.unitBasisQty);
+        if (saleUnitBasis <= 0) continue;
         const lk = lineKeyOfSale(s);
-        // Cap this chunk at the ORDER LINE's remaining un-reversed qty (survives a
-        // reconcile that rotated the invoice item), not just this row's own qty.
-        const rowRemaining = remQtyByLine.get(lk) ?? 0;
-        if (rowRemaining <= 0) continue;
-        // This chunk CLOSES the line when it consumes all of its remaining qty.
-        const closesRow = remaining >= rowRemaining;
-        const r = Math.min(remaining, rowRemaining);
-        remaining -= r;
-        const frac = r / saleQty; // pro-rate off the LIVE row's per-unit snapshot
+        // Cap this chunk at the ORDER LINE's remaining un-reversed PIECES (survives a
+        // reconcile that rotated the invoice item), not just this row's own unitBasisQty —
+        // and not the line's own qty (B671: comparing PIECES against a box-unaware line's box
+        // count silently closed the whole line on a fractional-box return).
+        const rowRemainingUnitBasis = remUnitBasisByLine.get(lk) ?? 0;
+        if (rowRemainingUnitBasis <= 0) continue;
+        // This chunk CLOSES the line when it consumes all of its remaining PIECES.
+        const closesRow = remaining >= rowRemainingUnitBasis;
+        const rPieces = Math.min(remaining, rowRemainingUnitBasis);
+        remaining -= rPieces;
+        const frac = rPieces / saleUnitBasis; // pro-rate off the LIVE row's own unitBasisQty
+        const rowRemainingQty = remQtyByLine.get(lk) ?? 0; // the line's OWN unit (boxes, etc.)
         const netRem = remNetByLine.get(lk) ?? 0; // remaining line net (>= 0)
         const taxRem = remTaxByLine.get(lk) ?? 0;
         // Money: the chunk that CLOSES the line books its EXACT remaining balance so a
@@ -345,7 +384,11 @@ export class RegulatedLedgerService {
         let bookedTax = closesRow ? roundMoney(-taxRem) : roundMoney(-Number(s.categoryTax) * frac);
         if (bookedNet < -netRem) bookedNet = roundMoney(-netRem);
         if (bookedTax < -taxRem) bookedTax = roundMoney(-taxRem);
-        remQtyByLine.set(lk, rowRemaining - r);
+        // qty (the line's OWN unit) moves by the same frac, same clamp pattern as net/tax.
+        let bookedQty = closesRow ? rowRemainingQty : round3(Number(s.qty) * frac);
+        if (bookedQty > rowRemainingQty) bookedQty = rowRemainingQty;
+        remQtyByLine.set(lk, rowRemainingQty - bookedQty);
+        remUnitBasisByLine.set(lk, rowRemainingUnitBasis - rPieces);
         remNetByLine.set(lk, netRem + bookedNet);
         remTaxByLine.set(lk, taxRem + bookedTax);
         rows.push({
@@ -359,8 +402,8 @@ export class RegulatedLedgerService {
           invoiceId: s.invoiceId,
           invoiceItemId: s.invoiceItemId,
           returnId,
-          qty: -round3(r),
-          unitBasisQty: -round3(Number(s.unitBasisQty) * frac),
+          qty: -round3(bookedQty),
+          unitBasisQty: -round3(rPieces),
           netSales: bookedNet,
           categoryTax: bookedTax,
           soldAt: now,
