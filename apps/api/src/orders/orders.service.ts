@@ -3272,7 +3272,7 @@ export class OrdersService implements OnApplicationBootstrap {
         await tx.$executeRaw`SELECT id FROM "Order" WHERE id = ${orderId} FOR UPDATE`;
         const heldItems = await tx.orderItem.findMany({
           where: { orderId },
-          // B709: plus every column the diff branch reads off an existing line (see requireHeld).
+          // B709: plus every column the diff branch reads off an existing line (see heldOrSnapshot).
           select: {
             ...EXISTING_LINE_SELECT,
             deliveredQty: true,
@@ -3289,21 +3289,13 @@ export class OrdersService implements OnApplicationBootstrap {
         // heldItems (never the pre-tx `order.lineItems`) before any write. `unitRows.set` keys
         // by the same `item` object reference, so this simply overwrites each entry in place.
         const heldById = new Map<string, any>(heldItems.map((h: any) => [h.id, h]));
-        // B709 (B135 shape): the diff branch reads every existing line from the LOCKED rows, never
-        // the pre-tx `order.lineItems` snapshot another writer may have replaced while this tx
-        // waited on the lock. An id the lock never held fails closed — no silent skip, no snapshot write.
-        const requireHeld = (id: string): any => {
-          const held = heldById.get(id);
-          if (!held) {
-            throw new ConflictException({
-              code: "CONCURRENT_UPDATE",
-              reason: "LINE_VANISHED",
-              retryable: true,
-              message: "Another update changed this order line. Try again.",
-            });
-          }
-          return held;
-        };
+        // B709: the diff branch reads every existing line from the LOCKED rows, never from the
+        // pre-tx `order.lineItems` snapshot another writer may have replaced while this tx waited
+        // on the lock. The `?? snapshot` arm is the B135 interim (`liveLine ?? li`): a row the held
+        // read lacks was hard-deleted under the lock, and its write then fails loudly on P2025. The
+        // items[].expectedQty follow-up turns that arm into a CONCURRENT_UPDATE 409.
+        const heldOrSnapshot = (id: string): any =>
+          heldById.get(id) ?? order.lineItems.find((l) => l.id === id);
         for (const item of dto.items ?? []) {
           const li = item.id ? heldById.get(item.id) : undefined;
           unitEdit.assertUnitLabelNamed(li, item);
@@ -3555,7 +3547,7 @@ export class OrdersService implements OnApplicationBootstrap {
           // gets fetched and the line silently falls back to the customer's DEFAULT
           // tier instead of a genuinely SPECIAL per-product row (or vice versa).
           const existingLineProductIds = dto.items
-            .map((i) => (i.id ? heldById.get(i.id)?.productId : null)) // B709: locked row
+            .map((i) => (i.id ? heldOrSnapshot(i.id)?.productId : null)) // B709: locked row
             .filter((id): id is string => !!id);
           // B466: a substitution's NEW product id must resolve tier pricing too — it
           // was missing from this collection entirely (neither a fresh add's productId
@@ -4161,7 +4153,7 @@ export class OrdersService implements OnApplicationBootstrap {
                 // Hard-remove a line added by mistake. Only safe when nothing
                 // downstream references it — a billed or delivered line is struck
                 // off instead so invoice/delivery history stays intact.
-                const li = requireHeld(item.id);
+                const li = heldOrSnapshot(item.id);
                 const hasDeliveries = await tx.deliveryMutation.count({
                   where: { orderItemId: item.id },
                 });
@@ -4203,7 +4195,7 @@ export class OrdersService implements OnApplicationBootstrap {
                   await unitEdit.updateUnitLine(uctx, item.id!, product, unitRow, item);
                   continue;
                 }
-                const existingQty = requireHeld(item.id!).qty ?? 1;
+                const existingQty = heldOrSnapshot(item.id!)?.qty ?? 1;
                 // Substitution may also carry a box/piece split when the substitute
                 // is itself a boxed product. Honor it the same way as a fresh add —
                 // but only when the SUBSTITUTE is case-packed: the incoming split is
@@ -4330,8 +4322,8 @@ export class OrdersService implements OnApplicationBootstrap {
                 item.overrideReason !== undefined ||
                 item.notes !== undefined
               ) {
-                if (!item.id) continue;
-                const li = requireHeld(item.id);
+                const li = item.id ? heldOrSnapshot(item.id) : undefined;
+                if (!li) continue;
 
                 // N4 (independent review round 2, PR-2): a payload carrying ONLY
                 // overrideReason/notes (no qty/boxes/pieces/unitPrice at all) must never fall

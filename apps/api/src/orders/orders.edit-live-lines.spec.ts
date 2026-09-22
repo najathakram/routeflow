@@ -10,8 +10,8 @@
  *
  * Red on master: a qty-only edit re-writes the snapshot's unitPrice over one T2 just committed
  * (money wrong, silent); a DELETE judged on the snapshot's invoicedQty hard-deletes a line an
- * invoice now bills; a line T2 hard-deleted is silently skipped. Green after: price from the live
- * row, cancel instead of delete, CONCURRENT_UPDATE when the payload names a line the lock never held.
+ * invoice now bills. Green after: price from the locked row, cancel instead of delete. The third
+ * case characterizes the B135-shaped fallback (snapshot only when the held read lacks the row).
  */
 
 jest.mock("../invoices/invoices.service", () => ({
@@ -217,8 +217,14 @@ describe("updateOrderItems — operator diff branch reads the locked line, not t
     );
   });
 
-  it("a payload line the lock never held (T2 hard-deleted it) fails closed with CONCURRENT_UPDATE", async () => {
+  it("a line hard-deleted under the lock is not silently skipped: its write fails loudly (P2025) and nothing else is written", async () => {
+    // B135's `liveLine ?? li` shape: the held read lacks the row, so the branch proceeds off the
+    // snapshot and the update hits the row Prisma no longer has. The mock rejects the way Prisma
+    // does; the pin is that the error is NOT swallowed and no other write follows. The clean
+    // CONCURRENT_UPDATE 409 for this case lands with the expectedQty token (see PR body).
     lockedLines([]);
+    const p2025 = Object.assign(new Error("Record to update not found."), { code: "P2025" });
+    prisma.orderItem.update.mockRejectedValue(p2025);
 
     await expect(
       service.updateOrderItems(
@@ -226,7 +232,10 @@ describe("updateOrderItems — operator diff branch reads the locked line, not t
         { items: [{ id: "li-1", action: "UPDATE", qty: 3 }] } as any,
         operator,
       ),
-    ).rejects.toMatchObject({ response: { code: "CONCURRENT_UPDATE", retryable: true } });
-    expect(prisma.orderItem.update).not.toHaveBeenCalled();
+    ).rejects.toBe(p2025);
+    expect(prisma.orderItem.update).toHaveBeenCalledTimes(1);
+    expect(prisma.orderItem.delete).not.toHaveBeenCalled();
+    expect(prisma.orderItem.create).not.toHaveBeenCalled();
+    expect(prisma.order.update).not.toHaveBeenCalled();
   });
 });
