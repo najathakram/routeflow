@@ -221,6 +221,34 @@ body {
   }
 }
 
+/* Lane B A3 F7 — platform-admin controls under 40 px tall at phone/tablet width (audit 2026-09-20).
+   A floor, not a redesign, and every rule is scoped to `.surface-admin` (the admin layout root) and to
+   <= 768 px (iPad portrait is exactly 768, so the media query, not Tailwind's `max-md`, decides it):
+   - every <button> gets a 40 px minimum height, an icon-only one also a 40 px minimum width;
+   - a link opts in by CLASS, never by guessing from its other classes: `admin-tap` for a button-styled
+     (boxed) link, `admin-tap-text` for a standalone text link (back link, "View", a row action), and
+     `admin-inline` for a link inside a sentence, which is deliberately left alone. A new link that carries
+     none of the three fails the tap-target guard, so the choice is always made.
+   Desktop is untouched. */
+@media (max-width: 768px) {
+  .surface-admin button,
+  .surface-admin .admin-tap,
+  .surface-admin .admin-tap-text {
+    min-height: 40px;
+  }
+  .surface-admin .admin-tap {
+    display: flex;
+    align-items: center;
+  }
+  .surface-admin .admin-tap-text {
+    display: inline-flex;
+    align-items: center;
+  }
+  .surface-admin button:has(> svg:only-child) {
+    min-width: 40px;
+  }
+}
+
 /* Print (WP4, R6.10) — hide the dashboard chrome so a printed invoice/PDF
    isn't framed by the sidebar/topbar. */
 @media print {

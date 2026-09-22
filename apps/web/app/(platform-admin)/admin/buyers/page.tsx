@@ -262,7 +262,7 @@ export default function AdminBuyersPage() {
                         <div className="flex items-center gap-2">
                           <Link
                             href={`/admin/buyers/${b.id}`}
-                            className="rounded px-2 py-1 text-xs font-medium text-indigo-400 hover:bg-indigo-900/30 hover:text-indigo-300"
+                            className="admin-tap rounded px-2 py-1 text-xs font-medium text-indigo-400 hover:bg-indigo-900/30 hover:text-indigo-300"
                           >
                             Manage
                           </Link>
@@ -370,7 +370,7 @@ export default function AdminBuyersPage() {
                 <div className="mt-3 flex items-center justify-end gap-2">
                   <Link
                     href={`/admin/buyers/merge-requests/${req.id}`}
-                    className="rounded px-3 py-1.5 text-xs font-medium text-slate-300 hover:bg-slate-700"
+                    className="admin-tap rounded px-3 py-1.5 text-xs font-medium text-slate-300 hover:bg-slate-700"
                   >
                     View details
                   </Link>
@@ -396,7 +396,7 @@ export default function AdminBuyersPage() {
             <div className="border-t border-slate-700 px-5 py-2 text-center">
               <Link
                 href="/admin/buyers/merge-requests"
-                className="text-xs text-indigo-400 hover:text-indigo-300"
+                className="admin-tap-text text-xs text-indigo-400 hover:text-indigo-300"
               >
                 View all {merges.pendingCount} merge requests
               </Link>

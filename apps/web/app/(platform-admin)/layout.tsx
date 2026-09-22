@@ -104,7 +104,7 @@ function SidebarNavItems({
                 onClick={onNavigate}
                 title={collapsed ? item.label : undefined}
                 className={cn(
-                  "flex items-center rounded-lg py-2.5 text-sm font-medium transition-colors",
+                  "admin-tap flex items-center rounded-lg py-2.5 text-sm font-medium transition-colors",
                   collapsed ? "justify-center px-2" : "gap-3 px-3",
                   active
                     ? "bg-indigo-600 text-white"
@@ -198,7 +198,7 @@ function Sidebar() {
             </div>
             <MobileDrawerCloseButton
               onClose={sidebar.closeMobileNav}
-              className="rounded-lg p-2 text-slate-400 transition-colors hover:bg-slate-800 hover:text-white"
+              className="rounded-lg p-2.5 text-slate-400 transition-colors hover:bg-slate-800 hover:text-white"
             />
           </div>
           <SidebarNavItems
@@ -223,7 +223,7 @@ function Sidebar() {
       <header className="flex h-14 shrink-0 items-center gap-3 border-b border-slate-700/50 bg-slate-900 px-4 lg:hidden">
         <MobileNavTrigger
           onOpen={sidebar.openMobileNav}
-          className="rounded-lg p-2 text-slate-400 transition-colors hover:bg-slate-800 hover:text-white"
+          className="rounded-lg p-2.5 text-slate-400 transition-colors hover:bg-slate-800 hover:text-white"
         />
         <BrandMark size={24} className="rounded" tone="light" />
         <span className="text-sm font-bold text-white">RouteFlow</span>
