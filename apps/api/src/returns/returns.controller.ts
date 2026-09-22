@@ -10,6 +10,8 @@ import { RequirePlanFlag } from "../billing/require-plan-flag.decorator";
 import { AddonGuard } from "../billing/addon.guard";
 import { RequireAddon } from "../billing/require-addon.decorator";
 import { ReturnsService } from "./returns.service";
+import { ParkedRestockResolutionService } from "./parked-restock-resolution.service";
+import { ResolveParkedRestockDto } from "./dto/resolve-parked-restock.dto";
 import { InlineReturnsQuoteService } from "./inline-returns-quote.service";
 import { InlineReturnsService } from "./inline-returns.service";
 import { ReceiveReturnDto } from "./dto/receive-return.dto";
@@ -30,6 +32,7 @@ export class ReturnsController {
     private readonly returnsService: ReturnsService,
     private readonly inlineQuote: InlineReturnsQuoteService,
     private readonly inlineReturns: InlineReturnsService,
+    private readonly parkedRestocks: ParkedRestockResolutionService,
   ) {}
 
   /** An optional `Idempotency-Key` header collapses a retried submission into the
@@ -102,6 +105,25 @@ export class ReturnsController {
   @RequireAddon("orders_inline_returns")
   cancelInline(@Param("id") id: string, @CurrentUser() user: JwtPayload) {
     return this.inlineReturns.cancel(id, user);
+  }
+
+  // Parked restocks (B665 follow-up): a STANDARD return's restock whose sold-line pack was unknown. Declared
+  // BEFORE the `:id` routes so `parked-restocks` is never read as a return id. The operator supplies the
+  // PACK only; the quantity is the stored one. No tobacco addon: returns exist for every tenant.
+  @Get("parked-restocks")
+  @Roles(UserRole.OPERATOR)
+  listParkedRestocks() {
+    return this.parkedRestocks.list();
+  }
+
+  @Post("parked-restocks/:id/resolve")
+  @Roles(UserRole.OPERATOR)
+  resolveParkedRestock(
+    @Param("id") id: string,
+    @Body() dto: ResolveParkedRestockDto,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.parkedRestocks.resolve(id, dto.unitsPerBoxSupplied, { id: user.sub });
   }
 
   @Get()

@@ -1,6 +1,7 @@
 import { Module } from "@nestjs/common";
 import { ReturnsController } from "./returns.controller";
 import { ReturnsService } from "./returns.service";
+import { ParkedRestockResolutionService } from "./parked-restock-resolution.service";
 import { InlineReturnsQuoteService } from "./inline-returns-quote.service";
 import { InlineReturnsService } from "./inline-returns.service";
 import { PrismaModule } from "../prisma/prisma.module";
@@ -31,7 +32,12 @@ import { SystemConfigModule } from "../system-config/system-config.module";
     SystemConfigModule,
   ],
   controllers: [ReturnsController],
-  providers: [ReturnsService, InlineReturnsQuoteService, InlineReturnsService],
+  providers: [
+    ReturnsService,
+    InlineReturnsQuoteService,
+    InlineReturnsService,
+    ParkedRestockResolutionService,
+  ],
   exports: [ReturnsService],
 })
 export class ReturnsModule {}

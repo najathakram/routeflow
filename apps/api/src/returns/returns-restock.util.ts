@@ -59,28 +59,46 @@ export async function restockReturnItems(
       );
       continue;
     }
-    // Restock at the current average — leaves the average unchanged but records the
-    // cost so COGS/valuation reporting stays complete.
-    const product = await (tx as any).product.findFirst({
-      where: { id: item.productId },
-      select: { currentStock: true, averageCost: true },
-    });
-    const qty = new Prisma.Decimal((resolved ? resolved.pieces : item.qty) as any);
-    await (tx as any).stockMovement.create({
-      data: {
-        productId: item.productId,
-        type: "RETURN",
-        quantity: qty,
-        unitCost: product?.averageCost ?? null,
-        avgCostAfter: product?.averageCost ?? null,
-        stockAfter: (product?.currentStock ?? new Prisma.Decimal(0)).add(qty),
-        performedById: userId,
-        reference: `RET-${ret.id.slice(0, 8)}`,
-      },
-    });
-    await (tx as any).product.update({
-      where: { id: item.productId },
-      data: { currentStock: { increment: qty } },
+    await bookRestockMovement(tx, {
+      returnId: ret.id,
+      productId: item.productId,
+      pieces: new Prisma.Decimal((resolved ? resolved.pieces : item.qty) as any),
+      userId,
     });
   }
+}
+
+/**
+ * Books ONE restock in PIECES: the RETURN stock movement (reference `RET-<id8>`, which `cancel()` sums per
+ * product to undo exactly what was booked) and the stock increment. Restocks at the current average: it leaves
+ * the average unchanged but records the cost so COGS/valuation reporting stays complete. The ONE writer for
+ * `receive()`, the INLINE capture and the operator resolution of a parked restock (B665 follow-up), so they
+ * cannot drift. Returns the movement's id.
+ */
+export async function bookRestockMovement(
+  tx: Prisma.TransactionClient,
+  params: { returnId: string; productId: string; pieces: Prisma.Decimal; userId: string | null },
+): Promise<string | null> {
+  const product = await (tx as any).product.findFirst({
+    where: { id: params.productId },
+    select: { currentStock: true, averageCost: true },
+  });
+  const qty = params.pieces;
+  const movement = await (tx as any).stockMovement.create({
+    data: {
+      productId: params.productId,
+      type: "RETURN",
+      quantity: qty,
+      unitCost: product?.averageCost ?? null,
+      avgCostAfter: product?.averageCost ?? null,
+      stockAfter: (product?.currentStock ?? new Prisma.Decimal(0)).add(qty),
+      performedById: params.userId,
+      reference: `RET-${params.returnId.slice(0, 8)}`,
+    },
+  });
+  await (tx as any).product.update({
+    where: { id: params.productId },
+    data: { currentStock: { increment: qty } },
+  });
+  return movement?.id ?? null;
 }
