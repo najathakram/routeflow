@@ -220,6 +220,53 @@ describe("coveredPiecesByProduct", () => {
   });
 });
 
+describe("invariant: submitted quantities never diverge from the last displayed quote (SA-071b §8.1a(5))", () => {
+  // Amendment to SA-071b §5 following the 36b5a200 fix: "the client sends quantities only"
+  // protects PRICES (the server recomputes money), but is not by itself sufficient — the
+  // submitted quantities must derive from the SAME state the displayed quote was computed
+  // against, and every re-quote must write back into the submit-state. A screen that can
+  // re-quote without syncing its own submit-state is a money bug every server-side price
+  // guard passes, because the server prices whatever quantity it's handed correctly.
+  it("after applyCoveredPiecesToLines, a line's own pieces exactly equal the quote's covered total for its product — never more, never less", () => {
+    const products = [
+      { productId: "prod-1", covered: 4, excess: 6 },
+      { productId: "prod-2", covered: 7, excess: 0 },
+    ];
+    const chunks = products.flatMap(({ productId, covered, excess }) => [
+      chunk({ productId, sourceOrderId: "order-1", pieces: covered }),
+      ...(excess > 0 ? [chunk({ productId, sourceOrderId: null, pieces: excess })] : []),
+    ]);
+    const quote = quoteResponse(chunks);
+    const lines = products.map(
+      ({ productId, covered, excess }) => line({ productId, pieces: String(covered + excess) }), // Step 1's original, larger ask
+    );
+
+    const synced = applyCoveredPiecesToLines(lines, quote);
+    const totals = coveredPiecesByProduct(quote);
+
+    for (const l of synced) {
+      expect(Number(l.pieces)).toBe(totals.get(l.productId));
+    }
+    // The invariant covers every product the quote priced — not just the first one.
+    expect(synced.map((l) => l.productId).sort()).toEqual(
+      [...totals.keys()].filter((k) => (totals.get(k) ?? 0) > 0).sort(),
+    );
+  });
+
+  it("RED case from the ruling: without the sync, a stale line would still carry the ORIGINAL over-return amount", () => {
+    // This is the exact shape of the bug 36b5a200 fixed: a line built from Step 1's raw input
+    // (never passed through applyCoveredPiecesToLines) still holds the original, larger ask —
+    // demonstrating why "the client sends quantities only" is not sufficient on its own.
+    const covered = chunk({ productId: "prod-1", sourceOrderId: "order-1", pieces: 4 });
+    const excess = chunk({ productId: "prod-1", sourceOrderId: null, pieces: 12 });
+    const quote = quoteResponse([covered, excess]);
+    const staleLine = line({ productId: "prod-1", pieces: "16" }); // never synced
+
+    expect(Number(staleLine.pieces)).not.toBe(coveredPiecesByProduct(quote).get("prod-1"));
+    expect(Number(staleLine.pieces)).toBe(16); // the divergence the ruling names
+  });
+});
+
 describe("buildCaptureRequest — quantities only, never a price the quote displayed", () => {
   it("sends only productId/qty/boxes/pieces/reason/condition per item — no price field", () => {
     const req = buildCaptureRequest({
