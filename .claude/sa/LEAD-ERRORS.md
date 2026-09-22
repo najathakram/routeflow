@@ -5,7 +5,7 @@
 
 ## Tally
 
-A 7 · B 5 · C 1 · D 4 (lead) · SA own: A 10 · B 7 | needless asks ("you did not need to ask me"): 0 | measurements outsourced: 1 | evidence-free questions refused: 0
+A 7 · B 5 · C 1 · D 4 (lead) · SA own: A 10 · B 8 | needless asks ("you did not need to ask me"): 0 | measurements outsourced: 1 | evidence-free questions refused: 0
 
 ## Seeded from the lead's own account (role doc §0, 2026-09-20)
 
@@ -54,6 +54,7 @@ A 7 · B 5 · C 1 · D 4 (lead) · SA own: A 10 · B 7 | needless asks ("you did
 - SA-E15 · 2026-09-23 · A · called a stop-the-line on "contradictory owner decisions" → the Mac Lead's two messages were sequential, the later superseding the earlier by one owner decision; the SA read the older as live. Same shape as SA-E14 (a state last observed, treated as current), on inbound messages this time. Rule: when two messages from the same sender disagree, the newer supersedes unless it says otherwise; verify by asking for the verbatim record, never by halting a lane that is building the item common to both lists.
 - SA-E16 · 2026-09-23 · A · SA-068 case (c) named {qty 10, boxes 3, pieces 1} as the non-derivable split → (10 − 1) / 3 = 3 exactly; it exercises the DERIVABLE branch and would have passed green testing nothing. Third SA-specified number tonight to fail execution (with SA-052's −5 and −60), all derived by reasoning about code, none labelled a prediction, each caught by a builder running it. Rule, tightened from SA-E13: before an expected value enters a spec, the SA runs the fixture through the real helper (a one-line node call against the pricing source takes seconds) and writes the OBSERVED value; a value the SA has not run is written as "observe and report" with no number at all.
 - SA-E17 · 2026-09-23 · B · SA-068 spec (3) said the stock delta was computed from a stale snapshot and named a price-only edit as the red case → on master heldItems is already the post-lock read (the stock delta was live) and the diff branch's entry condition excludes unitPrice (a price-only update never enters it). The stale reads were price/invoicedQty/promo. The MacBook traced the branch; the SA had read the lock comment and the find() sites, not the entry condition. Rule: a red case names the ENTRY CONDITION it passes through, or it is not a case.
+- SA-E19 · 2026-09-23 · B · SA-071a(b) told clients to branch on `replayed: true` → the flag is a service-local variable discarded at `return result.ret`; nothing attaches it to the response, and the test the brief asked for could only pass against a mock that lied about the wire shape. Read the service's internal object, not the controller's return path. Rule: a field a client branches on is verified ON THE WIRE (controller return path, response DTO, or a real response) before any ruling on how clients use it. Lane IR caught it by reading the source; the Mac Lead verified before relaying.
 - E-015 · 2026-09-20 · A · relayed the owner's deadline as "10:00 GMT" → the owner says 10 am Eastern (14:00Z). Four hours of plan, off.
 
 ## Prediction (update weekly)
