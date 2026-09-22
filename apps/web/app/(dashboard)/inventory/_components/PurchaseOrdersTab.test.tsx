@@ -13,7 +13,13 @@ import { ReceivePOModal } from "./PurchaseOrdersReceiveModal";
 import { formatMoney } from "@/lib/format";
 import { fmtCalendarDate } from "@/lib/formatting";
 import { unitsLabel } from "@/lib/stock-label";
-import { emptyPOLine, resolvePOLine, type PurchaseOrder } from "./purchase-orders-shared";
+import {
+  emptyPOLine,
+  resolvePOLine,
+  resolvePOLineAmounts,
+  toCreateItem,
+  type PurchaseOrder,
+} from "./purchase-orders-shared";
 
 const toast = jest.fn();
 jest.mock("@routeflow/ui/web", () => {
@@ -85,6 +91,62 @@ describe("resolvePOLine (pure)", () => {
     expect(resolvePOLine({ ...emptyPOLine(), qty: "abc", unitCost: "x" }, 0)).toEqual({
       qty: 0,
       unitCost: 0,
+    });
+  });
+});
+
+// PO line money: the total of a boxed line comes from the ENTERED case cost through the one pricing builder,
+// never pieces x the rounded per-piece cost (1,000 boxes of 12 at $11.00: $11,000.00, not $11,000.40).
+describe("resolvePOLineAmounts / toCreateItem (exact case cost)", () => {
+  const boxes1000 = {
+    ...emptyPOLine(),
+    productId: "p2",
+    boxes: "1000",
+    pieces: "0",
+    unitCost: "11",
+  };
+
+  it("1,000 boxes of 12 at $11.00 total exactly $11,000.00", () => {
+    const a = resolvePOLineAmounts(boxes1000, 12);
+    expect(a.totalCost).toBe(11000);
+    expect(a.qtyOrdered).toBe(12000);
+    expect(a.unitCost).toBe(0.9167); // costing only
+    expect(a.qtyOrdered * a.unitCost).toBeCloseTo(11000.4, 6); // the figure the old route displayed and stored
+  });
+
+  it("loose pieces are prorated: 5 boxes + 6 pieces at $11.00 = $60.50", () => {
+    expect(resolvePOLineAmounts({ ...boxes1000, boxes: "5", pieces: "6" }, 12).totalCost).toBe(
+      60.5,
+    );
+  });
+
+  it("a per-piece line is roundMoney(qty x unitCost)", () => {
+    expect(
+      resolvePOLineAmounts({ ...emptyPOLine(), qty: "3", unitCost: "0.3333" }, 0).totalCost,
+    ).toBe(1);
+  });
+
+  it("an unusable entry is an all-zero line, never a throw", () => {
+    expect(resolvePOLineAmounts(emptyPOLine(), 12).totalCost).toBe(0);
+    expect(
+      resolvePOLineAmounts({ ...emptyPOLine(), unitCost: "-5", boxes: "2" }, 12).totalCost,
+    ).toBe(0);
+  });
+
+  it("the create payload for a boxed line is the ENTERED case figures; a per-piece line is unchanged", () => {
+    expect(toCreateItem(boxes1000, 12)).toEqual({
+      productId: "p2",
+      packSize: 12,
+      caseCost: 11,
+      cases: 1000,
+      loosePieces: 0,
+    });
+    expect(
+      toCreateItem({ ...emptyPOLine(), productId: "p1", qty: "5", unitCost: "2.5" }, 0),
+    ).toEqual({
+      productId: "p1",
+      qty: 5,
+      unitCost: 2.5,
     });
   });
 });
@@ -181,7 +243,7 @@ describe("CreatePOModal", () => {
       {
         supplierId: undefined,
         expectedDate: undefined,
-        items: [{ productId: "p2", qty: 27, unitCost: 2 }],
+        items: [{ productId: "p2", packSize: 12, caseCost: 24, cases: 2, loosePieces: 3 }],
         notes: undefined,
       },
       expect.any(Object),

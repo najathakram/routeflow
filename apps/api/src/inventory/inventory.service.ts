@@ -10,6 +10,7 @@ import { CostingMethod, MovementType, Prisma } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import { normalizeBoxesPieces, roundMoney } from "@routeflow/pricing";
 import { fetchInvoicedSaleLines, roundQty } from "../common/invoiced-sales";
+import { poLineFromInput } from "./po-line-input";
 import { costDecimal, nextAverageCost, planLotConsumption, reverseAverageCost } from "./costing";
 import { RecordPurchaseDto } from "./dto/record-purchase.dto";
 import { RecordAdjustmentDto } from "./dto/record-adjustment.dto";
@@ -1052,6 +1053,11 @@ export class InventoryService {
         productId: string;
         qtyOrdered: Prisma.Decimal;
         unitCost: Prisma.Decimal;
+        /**
+         * The bill line's EXACT total (invoice denomination): a bill entered per case must not be re-derived as
+         * pieces x the 4 dp per-piece cost (the same drift as a case-entered PO). Falls back to the product.
+         */
+        totalCost?: number;
         sku?: string | null;
         packSize?: number | null;
       }[];
@@ -1089,7 +1095,10 @@ export class InventoryService {
       qtyOrdered: l.qtyOrdered,
       qtyReceived: 0,
       unitCost: l.unitCost,
-      totalCost: roundMoney(Number(l.qtyOrdered) * Number(l.unitCost)),
+      totalCost:
+        l.totalCost !== undefined
+          ? roundMoney(l.totalCost)
+          : roundMoney(Number(l.qtyOrdered) * Number(l.unitCost)),
       sku: l.sku ?? null,
       packSize: l.packSize ?? null,
     }));
@@ -1122,17 +1131,19 @@ export class InventoryService {
     const itemsData = dto.items.map((item: any) => {
       const prod = productMap.get(item.productId);
       if (!prod) throw new NotFoundException(`Product ${item.productId} not found`);
-      const qtyOrdered = item.qty ?? item.qtyOrdered;
-      if (!qtyOrdered || qtyOrdered <= 0)
-        throw new BadRequestException("Item quantity must be positive");
-      const totalCost = qtyOrdered * item.unitCost;
-      totalAmount += totalCost;
+      // Server-side line money through the one pricing builder: a line entered per case (caseCost) totals
+      // roundMoney(caseCost x cases) from the ENTERED figures; a per-piece line totals roundMoney(qty x unitCost).
+      const line = poLineFromInput(item);
+      if (!(line.qtyOrdered > 0)) throw new BadRequestException("Item quantity must be positive");
+      totalAmount = roundMoney(totalAmount + line.totalCost);
       return {
         productId: item.productId,
-        qtyOrdered,
+        qtyOrdered: line.qtyOrdered,
         qtyReceived: 0,
-        unitCost: item.unitCost,
-        totalCost,
+        unitCost: line.unitCost,
+        totalCost: line.totalCost,
+        // packSize is the denomination: stored only when the cost was entered per case
+        ...(line.packSize !== null ? { packSize: line.packSize } : {}),
       };
     });
     return this.prisma.forTenant().purchaseOrder.create({
@@ -1724,7 +1735,20 @@ export class InventoryService {
       }
 
       // ── Resolve the edited line set ──
-      const items = dto.items!;
+      // Every line through the one pricing builder: a case line (caseCost) totals from the ENTERED figures and
+      // stores its pack; a per-piece line keeps qtyOrdered/unitCost (and whatever packSize it sent, as before).
+      const items = dto.items!.map((l) => {
+        const amounts = poLineFromInput(l);
+        return {
+          id: l.id,
+          productId: l.productId,
+          sku: l.sku,
+          qtyOrdered: amounts.qtyOrdered,
+          unitCost: amounts.unitCost,
+          totalCost: amounts.totalCost,
+          packSize: amounts.packSize !== null ? amounts.packSize : l.packSize,
+        };
+      });
       const existingById = new Map<string, (typeof po.items)[number]>(
         po.items.map((i) => [i.id, i] as const),
       );
@@ -1806,10 +1830,9 @@ export class InventoryService {
       };
 
       const lineData = items.map((line) => {
-        const totalCost = roundMoney(line.qtyOrdered * line.unitCost);
         return {
           line,
-          totalCost,
+          totalCost: line.totalCost,
           qtyReceived: targetReceived(line),
         };
       });

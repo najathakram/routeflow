@@ -391,6 +391,12 @@ export class VendorBillsService {
                 productId: l.productId!,
                 qtyOrdered: new Prisma.Decimal(l.qty),
                 unitCost: new Prisma.Decimal(l.unitCost),
+                // the bill line's own exact total (cases x case cost), not pieces x the 4 dp per-piece cost
+                totalCost: roundMoney(
+                  new Prisma.Decimal(i.qty || 1)
+                    .mul(new Prisma.Decimal(i.unitCost ?? i.unitPrice ?? 0))
+                    .toNumber(),
+                ),
                 sku: l.sku,
                 packSize: l.packSize,
               };
