@@ -283,7 +283,7 @@ export function TenantPricingCard({ tenantId }: { tenantId: string }) {
                     href={checkoutUrl}
                     target="_blank"
                     rel="noreferrer"
-                    className="text-indigo-400 hover:underline"
+                    className="admin-inline text-indigo-400 hover:underline"
                   >
                     {checkoutUrl}
                   </a>
