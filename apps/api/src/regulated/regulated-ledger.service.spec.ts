@@ -872,18 +872,10 @@ describe("RegulatedLedgerService", () => {
         product: { unitsPerBox: 12 }, // the live pack: only a TRIGGER, never a factor
         ...over,
       });
-      /** A same-product line WITH a split: the source line that lets the classifier read the pack. */
-      const sourceWithSplit = () => ({
-        productId: "p1",
-        qty: 72,
-        boxes: 6,
-        pieces: 0,
-        unitsPerBox: 12,
-      });
-      /** Call 1 = the sale rows' order lines; call 2 (only for ambiguous lines) = same-product source lines. */
-      const armLines = (lines: unknown[], sources: unknown[] = []) => {
+      /** The one remaining orderItem.findMany call: the sale rows' own order lines. */
+      const armLines = (lines: unknown[]) => {
         prisma.orderItem.findMany.mockReset();
-        prisma.orderItem.findMany.mockResolvedValueOnce(lines).mockResolvedValueOnce(sources);
+        prisma.orderItem.findMany.mockResolvedValueOnce(lines);
       };
       const reverse = (qty: number, returnedUnit?: "LINE_UNIT" | "PIECES", returnId = "ret-1") =>
         service.reverseReturnEntries({
@@ -894,11 +886,15 @@ describe("RegulatedLedgerService", () => {
           db: prisma,
         });
       const arrangeBox = (extra: Record<string, unknown> = {}) =>
-        arrange({ sales: [boxSale()], items: [{ id: "ii-1", productId: "p1" }], ...extra });
+        arrange({
+          sales: [boxSale()],
+          items: [{ id: "ii-1", productId: "p1", qty: 72, boxes: 6, pieces: 0, unitsPerBox: 12 }],
+          ...extra,
+        });
 
       it("INLINE (PIECES): 12 pieces of a 6-box line reverse 1/6, not the whole row", async () => {
         arrangeBox();
-        armLines([boxLine()], [sourceWithSplit()]);
+        armLines([boxLine()]);
         await reverse(12, "PIECES");
         expect(written()).toHaveLength(1);
         expect(written()[0]).toMatchObject({
@@ -911,14 +907,14 @@ describe("RegulatedLedgerService", () => {
 
       it("INLINE (PIECES): a 3-piece return reverses 3/72 (about 4.2%), not 50%", async () => {
         arrangeBox();
-        armLines([boxLine()], [sourceWithSplit()]);
+        armLines([boxLine()]);
         await reverse(3, "PIECES");
         expect(written()[0]).toMatchObject({ qty: -0.25, netSales: -10, categoryTax: -2.5 });
       });
 
       it("INLINE (PIECES): returning ALL 72 pieces closes the line exactly", async () => {
         arrangeBox();
-        armLines([boxLine()], [sourceWithSplit()]);
+        armLines([boxLine()]);
         await reverse(72, "PIECES");
         expect(written()[0]).toMatchObject({ qty: -6, netSales: -240, categoryTax: -60 });
       });
@@ -928,13 +924,13 @@ describe("RegulatedLedgerService", () => {
           { invoiceItemId: "ii-1", orderItemId: "oi-1", qty: -1, netSales: -40, categoryTax: -10 },
         ];
         arrangeBox({ priorReversals: prior });
-        armLines([boxLine()], [sourceWithSplit()]);
+        armLines([boxLine()]);
         await reverse(12, "PIECES", "ret-2");
         expect(written()[0]).toMatchObject({ qty: -1, netSales: -40, categoryTax: -10 });
         // and it can never reverse more than the 5 boxes (60 pieces) still on the line
         prisma.regulatedSalesLedger.createMany.mockClear();
         arrangeBox({ priorReversals: prior });
-        armLines([boxLine()], [sourceWithSplit()]);
+        armLines([boxLine()]);
         await reverse(500, "PIECES", "ret-3");
         expect(written()[0]).toMatchObject({ qty: -5, netSales: -200, categoryTax: -50 });
       });
@@ -952,7 +948,7 @@ describe("RegulatedLedgerService", () => {
         const standard = written()[0];
         prisma.regulatedSalesLedger.createMany.mockClear();
         arrangeBox();
-        armLines([boxLine()], [sourceWithSplit()]);
+        armLines([boxLine()]);
         await reverse(12, "PIECES", "ret-inl");
         const inline = written()[0];
         const money = ({ qty, unitBasisQty, netSales, categoryTax }: any) => ({
@@ -1012,14 +1008,11 @@ describe("RegulatedLedgerService", () => {
             }),
           ],
           items: [
-            { id: "ii-1", productId: "p1" },
+            { id: "ii-1", productId: "p1", qty: 72, boxes: 6, pieces: 0, unitsPerBox: 12 },
             { id: "ii-2", productId: "p1" },
           ],
         });
-        armLines(
-          [boxLine(), boxLine({ id: "oi-2", qty: 72, boxes: 6, unitsPerBox: 12 })],
-          [sourceWithSplit()],
-        );
+        armLines([boxLine(), boxLine({ id: "oi-2", qty: 72, boxes: 6, unitsPerBox: 12 })]);
         await reverse(84, "PIECES"); // 72 pieces close the box line, 12 more come off the piece line
         expect(written()).toHaveLength(2);
         expect(written()[0]).toMatchObject({
@@ -1053,27 +1046,30 @@ describe("RegulatedLedgerService", () => {
             netSales: 360,
             categoryTax: 72,
           });
-        arrange({ sales: [pieceSale()], items: [{ id: "ii-1", productId: "p1" }] });
-        armLines([boxLine({ qty: 72, unitsPerBox: 12 })], [sourceWithSplit()]);
+        arrange({
+          sales: [pieceSale()],
+          items: [{ id: "ii-1", productId: "p1", qty: 72, boxes: 6, pieces: 0, unitsPerBox: 12 }],
+        });
+        armLines([boxLine({ qty: 72, unitsPerBox: 12 })]);
         await reverse(12, "PIECES");
         // qty === source.qty -> "source-pieces": 12 of 72 pieces is 1/6, NOT 12 x 12 pieces
         expect(written()[0]).toMatchObject({ qty: -12, netSales: -60, categoryTax: -12 });
-        expect(prisma.orderItem.findMany).toHaveBeenCalledTimes(2); // it DID go looking for a source
+        expect(prisma.orderItem.findMany).toHaveBeenCalledTimes(1); // order lines loaded once; the source is the linked InvoiceItem
       });
 
-      it("the linked InvoiceItem is the preferred source: a sibling is not even queried", async () => {
+      it("the linked InvoiceItem is the ONLY source: order lines loaded once", async () => {
         arrangeBox();
         prisma.invoiceItem.findMany.mockReset();
         prisma.invoiceItem.findMany
           .mockResolvedValueOnce([{ id: "ii-1", productId: "p1" }]) // the productId bridge
           .mockResolvedValueOnce([{ id: "ii-1", qty: 72, boxes: 6, pieces: 0, unitsPerBox: 12 }]);
-        armLines([boxLine()], [{ ...sourceWithSplit(), qty: 100, boxes: 8 }]); // a sibling that would say unknown
+        armLines([boxLine()]);
         await reverse(12, "PIECES");
         expect(written()[0]).toMatchObject({ qty: -1, netSales: -40, categoryTax: -10 });
-        expect(prisma.orderItem.findMany).toHaveBeenCalledTimes(1); // no sibling query
+        expect(prisma.orderItem.findMany).toHaveBeenCalledTimes(1); // order lines loaded once
       });
 
-      it("an InvoiceItem WITHOUT a split falls back to a same-product sibling with a split", async () => {
+      it("an InvoiceItem WITHOUT a split does NOT fall back: it PARKS", async () => {
         arrangeBox();
         prisma.invoiceItem.findMany.mockReset();
         prisma.invoiceItem.findMany
@@ -1081,10 +1077,16 @@ describe("RegulatedLedgerService", () => {
           .mockResolvedValueOnce([
             { id: "ii-1", qty: 6, boxes: null, pieces: null, unitsPerBox: null },
           ]);
-        armLines([boxLine()], [sourceWithSplit()]);
+        armLines([boxLine()]);
         await reverse(12, "PIECES");
-        expect(written()[0]).toMatchObject({ qty: -1, netSales: -40, categoryTax: -10 });
-        expect(prisma.orderItem.findMany).toHaveBeenCalledTimes(2);
+        expect(prisma.regulatedSalesLedger.createMany).not.toHaveBeenCalled();
+        const parked = (prisma as any).regulatedLedgerParkedReversal.createMany;
+        expect(parked).toHaveBeenCalledTimes(1);
+        expect(parked.mock.calls[0][0].data[0]).toMatchObject({
+          orderItemId: "oi-1",
+          saleEntryId: "sale-1",
+          returnedPieces: 12,
+        });
       });
 
       describe("unknown pack: parked, never a guess (Senior Architect ruling 2026-09-21)", () => {
@@ -1097,8 +1099,8 @@ describe("RegulatedLedgerService", () => {
         afterEach(() => errorSpy.mockRestore());
 
         it("a box-unaware line with NO own split and NO source line books NOTHING and PARKS the true pieces, even though the live product says 12", async () => {
-          arrangeBox();
-          armLines([boxLine({ product: { unitsPerBox: 12 } })], []); // live pack 12, no source with a split
+          arrangeBox({ items: [{ id: "ii-1", productId: "p1" }] }); // no split on the linked InvoiceItem either
+          armLines([boxLine({ product: { unitsPerBox: 12 } })]); // live pack 12, no source with a split
           await reverse(12, "PIECES");
           expect(prisma.regulatedSalesLedger.createMany).not.toHaveBeenCalled();
           expect(parkedMock()).toHaveBeenCalledTimes(1);
@@ -1121,11 +1123,8 @@ describe("RegulatedLedgerService", () => {
         });
 
         it("a source line WITHOUT a split does not count as a source: it parks", async () => {
-          arrangeBox();
-          armLines(
-            [boxLine()],
-            [{ productId: "p1", qty: 72, boxes: null, pieces: null, unitsPerBox: 12 }],
-          );
+          arrangeBox({ items: [{ id: "ii-1", productId: "p1" }] });
+          armLines([boxLine()]);
           await reverse(12, "PIECES");
           expect(prisma.regulatedSalesLedger.createMany).not.toHaveBeenCalled();
           expect(parkedMock()).toHaveBeenCalledTimes(1);
@@ -1150,7 +1149,7 @@ describe("RegulatedLedgerService", () => {
               { id: "ii-2", productId: "p1" },
             ],
           });
-          armLines([boxLine(), boxLine({ id: "oi-2", qty: 72, boxes: 6, unitsPerBox: 12 })], []);
+          armLines([boxLine(), boxLine({ id: "oi-2", qty: 72, boxes: 6, unitsPerBox: 12 })]);
           await reverse(84, "PIECES");
           expect(prisma.regulatedSalesLedger.createMany).not.toHaveBeenCalled();
           expect(parkedMock()).toHaveBeenCalledTimes(1);
@@ -1202,8 +1201,10 @@ describe("RegulatedLedgerService", () => {
         });
 
         it("a line whose qty matches neither the source's boxes nor its qty is unknown: it parks", async () => {
-          arrangeBox();
-          armLines([boxLine({ qty: 10 })], [{ ...sourceWithSplit(), qty: 100, boxes: 8 }]);
+          arrangeBox({
+            items: [{ id: "ii-1", productId: "p1", qty: 100, boxes: 8, pieces: 0 }],
+          });
+          armLines([boxLine({ qty: 10 })]);
           await reverse(12, "PIECES");
           expect(prisma.regulatedSalesLedger.createMany).not.toHaveBeenCalled();
           expect(parkedMock()).toHaveBeenCalledTimes(1);
@@ -1211,7 +1212,7 @@ describe("RegulatedLedgerService", () => {
 
         it("nothing is parked when the pack is known, or on the LINE_UNIT path", async () => {
           arrangeBox();
-          armLines([boxLine()], [sourceWithSplit()]);
+          armLines([boxLine()]);
           await reverse(12, "PIECES");
           arrangeBox();
           await reverse(1, "LINE_UNIT", "ret-2");

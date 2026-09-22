@@ -220,8 +220,8 @@ export class RegulatedLedgerService {
    *     line's own unit, so it is compared with the SALE qty as-is.
    *   - "PIECES" (INLINE captures): ReturnItem.qty is TRUE PIECES. For a box-unaware boxed line the
    *     returned pieces are compared with the line's PIECE qty, taken from `legacyLinePieces` (the line's
-   *     own split, else its linked InvoiceItem or a same-product sibling order line WITH a split, read by
-   *     comparing quantities: NEVER the live product's unitsPerBox, Senior Architect ruling 2026-09-21), and the booked reversal qty is converted back to the line's
+   *     own split, else its linked InvoiceItem WITH a split, read by comparing quantities: NEVER the live
+   *     product's unitsPerBox, Senior Architect ruling 2026-09-21), and the booked reversal qty is converted back to the line's
    *     unit; every other line has factor 1. Without this, returning 12 pieces against a line sold as 6
    *     BOXES closed the whole row (100% of net and tax reversed instead of 12/72).
    *   - UNKNOWN pack (the classifier says `unknown`): NOTHING is booked for that product (no guess, and the
@@ -370,8 +370,8 @@ export class RegulatedLedgerService {
           (Number(li.unitsPerBox ?? 0) > 1 || Number(li.product?.unitsPerBox ?? 0) > 1),
       );
       if (ambiguous.length > 0) {
-        // Source precedence: the SALE row's own linked InvoiceItem first (same sale, same product; it may
-        // carry the split), then a same-product sibling order line with a split.
+        // Source: the SALE row's own linked InvoiceItem only (same sale, same product; it may carry the
+        // split). No InvoiceItem, or one with no split, is unknown — it PARKS, never a sibling guess.
         const saleOfLine = new Map<string, any>();
         for (const sr of sales) {
           if (sr.orderItemId && !saleOfLine.has(sr.orderItemId)) saleOfLine.set(sr.orderItemId, sr);
@@ -387,26 +387,6 @@ export class RegulatedLedgerService {
               })
             : [];
         const invById = new Map<string, any>(invItems.map((x) => [x.id, x]));
-        const needSibling = ambiguous.filter(
-          (li) => !hasSplit(invById.get(invoiceItemIdOf(li) ?? "")),
-        );
-        const siblings: any[] =
-          needSibling.length > 0
-            ? await db.orderItem.findMany({
-                where: {
-                  orderId,
-                  productId: { in: [...new Set(needSibling.map((li) => li.productId))] },
-                  boxes: { not: null },
-                },
-                select: {
-                  productId: true,
-                  qty: true,
-                  boxes: true,
-                  pieces: true,
-                  unitsPerBox: true,
-                },
-              })
-            : [];
         const asLegacy = (x: any) => ({
           qty: Number(x.qty),
           boxes: x.boxes,
@@ -415,8 +395,7 @@ export class RegulatedLedgerService {
         });
         for (const li of ambiguous) {
           const inv = invById.get(invoiceItemIdOf(li) ?? "");
-          const sibling = siblings.find((x) => x.productId === li.productId);
-          const source = hasSplit(inv) ? inv : (sibling ?? null);
+          const source = hasSplit(inv) ? inv : null;
           const res = legacyLinePieces(asLegacy(li), source && asLegacy(source));
           if ("unknown" in res) unknownPackByOrderItem.set(li.id, res.reason);
           else if (Number(li.qty) > 0) {
