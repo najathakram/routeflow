@@ -660,9 +660,17 @@ function ProductPickView({
   const tierPriceFor = (p: Product) => getTierPrice(p, effectiveTierFor(p.id));
   /** SPECIAL (tier≠1) lines are the customer's permanent price — never overridable. */
   const isSpecialFor = (p: Product) => effectiveTierFor(p.id) !== 1;
-  /** What this line actually charges: overrides count only on non-SPECIAL lines (web parity). */
-  const lineUnitFor = (line: LineState | undefined, p: Product) =>
-    isSpecialFor(p) ? tierPriceFor(p) : effectiveUnitPrice(line, tierPriceFor(p));
+  /**
+   * What this line actually charges: overrides count only on non-SPECIAL lines (web parity).
+   * Routes the fallback through `unitPriceBase` so a unit-sold line (qty in that unit, no
+   * explicit override) prices off its OWN resolved level, never the pack's tier price — the
+   * same comparison-baseline fix as CartRow's `priceBase`/`effUnit`, applied here because this
+   * helper (not CartRow's local copy) is what the order total and invoice-split preview read.
+   */
+  const lineUnitFor = (line: LineState | undefined, p: Product) => {
+    const base = unitPriceBase(line ?? {}, tierPriceFor(p));
+    return isSpecialFor(p) ? base : effectiveUnitPrice(line, base);
+  };
   const [scanOpen, setScanOpen] = useState(false);
   /** Tray line (catalog id or unlisted local id) whose price is being edited. */
   const [priceEditId, setPriceEditId] = useState<string | null>(null);
@@ -1596,7 +1604,7 @@ function ProductPickView({
       const qty = line ? effectiveQty(line, p.unitsPerBox) : 0;
       const price = tierPriceFor(p);
       const band =
-        line && qty > 0 && Number(p.unitsPerBox ?? 0) > 1 ? (
+        line && qty > 0 && Number(p.unitsPerBox ?? 0) > 1 && !line.unitLabel ? (
           <BoxedQtyBand
             line={line}
             unitsPerBox={Number(p.unitsPerBox)}
