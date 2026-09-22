@@ -21,6 +21,7 @@ import {
   packFromOwnSplit,
   type CategoryTaxType,
 } from "@routeflow/pricing";
+import { loadPriorPacks, resolveUpdateLinePack } from "./update-pack-resolution";
 import { redactUpsellForCustomer } from "../common/upsell-redaction";
 import {
   CONFIRMED_PAYMENT,
@@ -3391,9 +3392,14 @@ export class InvoicesService {
         ).map((c: any) => [c.id, c]),
       );
 
+      // B717/SA-077: this replace path recreates every line, so a pack it carries is lost
+      // unless read first. Rule + reasoning: update-pack-resolution.ts.
+      const priorPacks = await loadPriorPacks(this.prisma.forTenant().invoiceItem, id, productIds);
+
       let subtotal = 0;
       const itemsData = dto.items.map((item) => {
         const product = item.productId ? productMap.get(item.productId) : undefined;
+        const livePack = product?.unitsPerBox ?? null; // B717: ONE read, passed as a parameter
         const qty = item.qty;
         let boxes: number | null = null;
         let pieces: number | null = null;
@@ -3411,15 +3417,16 @@ export class InvoicesService {
           boxes = item.boxes ?? null;
           pieces = item.pieces ?? null;
           const pack = packFromOwnSplit({ qty: item.qty, boxes: item.boxes, pieces: item.pieces });
-          if (pack != null) {
-            unitsPerBox = pack;
-            if (product?.unitsPerBox && product.unitsPerBox !== pack) {
-              this.logger.warn(
-                `update(): invoiceId ${id} productId ${item.productId} — payload's implied pack ` +
-                  `${pack} differs from the live product's ${product.unitsPerBox}; using the ` +
-                  `payload's pack.`,
-              );
-            }
+          // B717/SA-077: payload split -> the product's stored lines when unanimous -> live.
+          const res = resolveUpdateLinePack(pack, item, livePack, priorPacks);
+          if (res.pack != null) unitsPerBox = res.pack;
+          if (res.warn) this.logger.warn(`update(): invoiceId ${id} ${res.warn}`);
+          // The resolver already chose the pack; this only reports a payload/live divergence.
+          if (pack != null && livePack && livePack !== pack) {
+            this.logger.warn(
+              `update(): invoiceId ${id} productId ${item.productId} — payload's implied pack ` +
+                `${pack} differs from the live product's ${livePack}; using the payload's pack.`,
+            );
           }
         }
         // BUY_N_GET_M: the line's free-unit snapshot round-trips on the payload
@@ -3440,7 +3447,7 @@ export class InvoicesService {
         const category = product?.trackedCategoryId
           ? categoryMap.get(product.trackedCategoryId)
           : null;
-        const upbForPieces = Number(product?.unitsPerBox ?? 0);
+        const upbForPieces = Number(livePack ?? 0);
         // B661-sweep: a line-tax (not ledger) box-unaware multiply — follow-up PR converts this to
         // @routeflow/pricing's regulatedUnitBasis; see no-second-legacy-line-pieces.spec.ts's allowlist.
         const pieceQty = boxes != null ? qty : upbForPieces > 1 ? qty * upbForPieces : qty;
@@ -3463,8 +3470,10 @@ export class InvoicesService {
           subtotal: lineSub,
           boxes,
           pieces,
-          // Snapshot the box size for a box-split line so later recompute is stable.
-          unitsPerBox: boxes != null && unitsPerBox ? unitsPerBox : null,
+          // B717: never CLEAR a pack the line carried. Storage and pricing gate differently ON
+          // PURPOSE — see update-pack-resolution.ts's "STORAGE vs PRICING" note; spec (g) pins it.
+          unitsPerBox:
+            unitsPerBox ?? (item.productId ? priorPacks.get(item.productId) : null) ?? null,
           // BUY_N_GET_M snapshot — preserved across the delete-and-recreate.
           promoFreeUnits: freeUnits > 0 ? freeUnits : null,
           // Re-snapshot the regulated category/subcategory from the (current) product,
