@@ -1092,7 +1092,9 @@ export default function NewInvoicePage() {
         discount: Number(it.discount) || undefined,
         // Map the taxable checkbox to an actual tax rate sent to the API
         taxRate: it.taxable ? taxRate : 0,
-        ...(it.unitsPerBox ? { boxes: it.boxes ?? 0, pieces: it.pieces ?? 0 } : {}),
+        // Defense in depth (#1176 review): boxedUnitsPerBox() already keeps unitsPerBox out of
+        // item state for upb<=1, but a read site should never trust a single write-side guard.
+        ...((it.unitsPerBox ?? 0) > 1 ? { boxes: it.boxes ?? 0, pieces: it.pieces ?? 0 } : {}),
       })),
       notes: notes.trim() || undefined,
       referenceNumber: reference.trim() || undefined,
@@ -1257,7 +1259,9 @@ export default function NewInvoicePage() {
         productId: it.productId as string,
         qty: Number(it.qty),
         unitPrice: Number(it.unitPrice),
-        ...(it.unitsPerBox ? { boxes: it.boxes ?? 0, pieces: it.pieces ?? 0 } : {}),
+        // Defense in depth (#1176 review): boxedUnitsPerBox() already keeps unitsPerBox out of
+        // item state for upb<=1, but a read site should never trust a single write-side guard.
+        ...((it.unitsPerBox ?? 0) > 1 ? { boxes: it.boxes ?? 0, pieces: it.pieces ?? 0 } : {}),
       }));
 
     const errs: Record<string, string> = {};
@@ -1720,7 +1724,9 @@ export default function NewInvoicePage() {
                                     ) : (
                                       <span className="italic">no SKU</span>
                                     )}
-                                    {p.unitsPerBox ? <span> · {p.unitsPerBox} per box</span> : null}
+                                    {Number(p.unitsPerBox ?? 0) > 1 ? (
+                                      <span> · {p.unitsPerBox} per box</span>
+                                    ) : null}
                                   </p>
                                 </div>
                                 <div className="text-right">
@@ -1867,7 +1873,7 @@ export default function NewInvoicePage() {
                     </div>
 
                     {/* Qty — box/piece mode if unitsPerBox set, otherwise plain number */}
-                    {item.unitsPerBox ? (
+                    {(item.unitsPerBox ?? 0) > 1 ? (
                       item.sellBy === "unit" ? (
                         <div className="flex flex-col gap-0.5">
                           <input
@@ -1906,7 +1912,7 @@ export default function NewInvoicePage() {
                             <input
                               type="number"
                               min={0}
-                              max={item.unitsPerBox - 1}
+                              max={(item.unitsPerBox ?? 0) - 1}
                               value={item.pieces ?? 0}
                               onChange={(e) => {
                                 const pieces = Math.max(0, parseInt(e.target.value, 10) || 0);

@@ -1,6 +1,6 @@
 import * as React from "react";
 import userEvent from "@testing-library/user-event";
-import { renderWithProviders, screen, waitFor } from "@/test-utils/render";
+import { act, renderWithProviders, screen, waitFor } from "@/test-utils/render";
 import NewInvoicePage from "./page";
 
 /**
@@ -42,9 +42,10 @@ const mockProductsGet = jest.fn((url: string) => {
   }
   return Promise.resolve({ data: {} });
 });
+let mockSearchProducts: Array<Record<string, unknown>> = [];
 jest.mock("@/lib/api/products", () => ({
   ...jest.requireActual("@/lib/api/products"),
-  useProducts: () => ({ data: { data: [] } }),
+  useProducts: () => ({ data: { data: mockSearchProducts } }),
   useCreateProduct: () => ({ mutate: jest.fn(), mutateAsync: jest.fn(), isPending: false }),
 }));
 
@@ -90,6 +91,19 @@ jest.mock("@/components/BarcodeScannerButton", () => ({
   },
 }));
 
+// Same technique — the real modal needs form interaction impractical to drive here; capture
+// onCreated so a test can simulate "the operator just created this product" directly (#1176 pin).
+let capturedOnCreated: ((product: Record<string, unknown>) => void) | undefined;
+jest.mock("@/components/InlineCreateProductModal", () => ({
+  InlineCreateProductModal: (props: {
+    isOpen: boolean;
+    onCreated: (product: Record<string, unknown>) => void;
+  }) => {
+    if (props.isOpen) capturedOnCreated = props.onCreated;
+    return null;
+  },
+}));
+
 async function openStandaloneBuilder() {
   const user = userEvent.setup();
   renderWithProviders(<NewInvoicePage />);
@@ -107,8 +121,10 @@ describe("B664 — new-invoice form and a unitsPerBox = 1 product", () => {
   beforeEach(() => {
     jest.clearAllMocks();
     capturedOnScan = undefined;
+    capturedOnCreated = undefined;
     mockCustomers = [{ id: "cust-1", businessName: "Acme Co" }];
     mockBarcodeProduct = undefined;
+    mockSearchProducts = [];
   });
 
   it("REPRO (fails without the fix): a scanned unitsPerBox=1 product is sent with boxes/pieces, not as a plain qty-1 line", async () => {
@@ -172,5 +188,82 @@ describe("B664 — new-invoice form and a unitsPerBox = 1 product", () => {
     expect(sentItem.qty).toBe(1);
     expect(sentItem.boxes).toBeUndefined();
     expect(sentItem.pieces).toBeUndefined();
+  });
+
+  // #1176 review: pin the two OTHER state-seeding sites directly (not just incidentally via the
+  // scan path, which happens to funnel through the same selectProduct/onChange as the dropdown
+  // click does) — a future refactor of one path must not silently drop the other's guard.
+
+  it("pin: selecting a unitsPerBox=1 product from the SEARCH DROPDOWN (not scan) is also a plain qty-1 line", async () => {
+    mockSearchProducts = [
+      { id: "prod-4", name: "Dropdown Widget", pricePerUnit: "8", unitsPerBox: 1 },
+    ];
+    const user = await openStandaloneBuilder();
+
+    const input = screen.getByPlaceholderText("Description / product…");
+    await user.click(input);
+    await user.type(input, "Dropdown");
+    await user.click(await screen.findByText("Dropdown Widget"));
+
+    expect(screen.queryByTitle("Cases")).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: /save as draft/i }));
+    await waitFor(() => expect(createInvoiceMutate).toHaveBeenCalled());
+
+    const sentItem = (
+      createInvoiceMutate.mock.calls[0][0] as { items: Array<Record<string, unknown>> }
+    ).items[0];
+    expect(sentItem.qty).toBe(1);
+    expect(sentItem.boxes).toBeUndefined();
+    expect(sentItem.pieces).toBeUndefined();
+  });
+
+  it("pin: a just-created unitsPerBox=1 product (InlineCreateProductModal.onCreated) is also a plain qty-1 line", async () => {
+    const user = await openStandaloneBuilder();
+
+    // No search match -> "Create new product" is the only dropdown option.
+    const input = screen.getByPlaceholderText("Description / product…");
+    await user.click(input);
+    await user.type(input, "Brand New Thing");
+    await user.click(await screen.findByText(/create new product/i));
+
+    expect(capturedOnCreated).toBeDefined();
+    act(() => {
+      capturedOnCreated!({
+        id: "prod-5",
+        name: "Brand New Thing",
+        pricePerUnit: "12",
+        unitsPerBox: 1,
+      });
+    });
+    await screen.findByDisplayValue("Brand New Thing");
+
+    expect(screen.queryByTitle("Cases")).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: /save as draft/i }));
+    await waitFor(() => expect(createInvoiceMutate).toHaveBeenCalled());
+
+    const sentItem = (
+      createInvoiceMutate.mock.calls[0][0] as { items: Array<Record<string, unknown>> }
+    ).items[0];
+    expect(sentItem.qty).toBe(1);
+    expect(sentItem.boxes).toBeUndefined();
+    expect(sentItem.pieces).toBeUndefined();
+  });
+
+  it("pin: a non-boxed product in the search dropdown never shows '· 1 per box' (finding 4)", async () => {
+    // This listing is the top-level scan/quick-add bar (scanSuggestions), a DIFFERENT read site
+    // from the row's own ProductSearchInput dropdown used above — its own useProducts() call.
+    mockSearchProducts = [
+      { id: "prod-6", name: "Plain Widget", pricePerUnit: "3", unitsPerBox: 1 },
+    ];
+    const user = await openStandaloneBuilder();
+
+    const scanInput = screen.getByPlaceholderText(/scan barcode, or type product name/i);
+    await user.click(scanInput);
+    await user.type(scanInput, "Plain");
+    await screen.findByText("Plain Widget");
+
+    expect(screen.queryByText(/per box/i)).not.toBeInTheDocument();
   });
 });
