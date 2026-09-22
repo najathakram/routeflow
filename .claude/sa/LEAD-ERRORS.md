@@ -5,7 +5,7 @@
 
 ## Tally
 
-A 7 · B 5 · C 1 · D 4 (lead) · SA own: A 10 · B 8 | needless asks ("you did not need to ask me"): 0 | measurements outsourced: 1 | evidence-free questions refused: 0
+A 7 · B 5 · C 1 · D 4 (lead) · SA own: A 10 · B 9 | needless asks ("you did not need to ask me"): 0 | measurements outsourced: 1 | evidence-free questions refused: 0
 
 ## Seeded from the lead's own account (role doc §0, 2026-09-20)
 
@@ -55,6 +55,7 @@ A 7 · B 5 · C 1 · D 4 (lead) · SA own: A 10 · B 8 | needless asks ("you did
 - SA-E16 · 2026-09-23 · A · SA-068 case (c) named {qty 10, boxes 3, pieces 1} as the non-derivable split → (10 − 1) / 3 = 3 exactly; it exercises the DERIVABLE branch and would have passed green testing nothing. Third SA-specified number tonight to fail execution (with SA-052's −5 and −60), all derived by reasoning about code, none labelled a prediction, each caught by a builder running it. Rule, tightened from SA-E13: before an expected value enters a spec, the SA runs the fixture through the real helper (a one-line node call against the pricing source takes seconds) and writes the OBSERVED value; a value the SA has not run is written as "observe and report" with no number at all.
 - SA-E17 · 2026-09-23 · B · SA-068 spec (3) said the stock delta was computed from a stale snapshot and named a price-only edit as the red case → on master heldItems is already the post-lock read (the stock delta was live) and the diff branch's entry condition excludes unitPrice (a price-only update never enters it). The stale reads were price/invoicedQty/promo. The MacBook traced the branch; the SA had read the lock comment and the find() sites, not the entry condition. Rule: a red case names the ENTRY CONDITION it passes through, or it is not a case.
 - SA-E19 · 2026-09-23 · B · SA-071a(b) told clients to branch on `replayed: true` → the flag is a service-local variable discarded at `return result.ret`; nothing attaches it to the response, and the test the brief asked for could only pass against a mock that lied about the wire shape. Read the service's internal object, not the controller's return path. Rule: a field a client branches on is verified ON THE WIRE (controller return path, response DTO, or a real response) before any ruling on how clients use it. Lane IR caught it by reading the source; the Mac Lead verified before relaying.
+- SA-E20 · 2026-09-23 · B · SA-071a(a) required each covered chunk to show its source invoice's number and date → the quote chunk carries only source ids (order, invoice item, order item), no invoice id/number/date; the SA read the pricer's allocation, not the chunk's wire shape. Same shape as SA-E19, on a display field instead of a branch field. Rule (generalizes E19): a ruling that names a field a client must DISPLAY or BRANCH ON is a claim that the field is on the wire — check the response type before the ruling ships. Lane IR proceeded on a stated assumption (source ORDER shown) rather than guessing an invoice; correct.
 - E-015 · 2026-09-20 · A · relayed the owner's deadline as "10:00 GMT" → the owner says 10 am Eastern (14:00Z). Four hours of plan, off.
 
 ## Prediction (update weekly)

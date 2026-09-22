@@ -71,9 +71,12 @@ prod writes and flag flips; the SA gives options with a recommendation and never
 - **OP-13 Shared stacks belong to their prover.** Any use of a shared DB/compose stack, even
   read-only, is cleared through the lead first. When cleared: read-only transaction, or synthetic
   rows inside a rolled-back transaction with a post-check of zero rows persisted.
-- **OP-14 A field a client branches on is verified ON THE WIRE**, not in the service's local
-  variables — an internal `{ replayed }` never left `capture()`, and the test the spec asked for
-  could only pass against a mock that lied about the response. Read the controller's return path.
+- **OP-14 A field a client must DISPLAY or BRANCH ON is verified ON THE WIRE** — in the response
+  type or the controller's return path, never in a service's local variables or the pricer's
+  inputs. An internal `{ replayed }` never left `capture()`; a quote chunk carried source ids but
+  no invoice number or date. Both were caught by a builder reading the source; both were the
+  SA's to check before the ruling shipped. A builder that proceeds on a STATED assumption rather
+  than a guess is doing it right.
 - **OP-15 An artifact meant to outlive the session is verified tracked**
   (`git ls-files --error-unmatch <path>`), never assumed — a repo-wide `*.sql` ignore silently
   dropped an owner-run query from a plain `git add`.

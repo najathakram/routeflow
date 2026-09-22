@@ -15,6 +15,7 @@ Classes: **A** stale/second-hand · **B** untraced path · **C** unforced work �
 | E17 | B | Named a price-only edit as the red case; the branch's entry condition excludes it | A red case names the entry condition it passes through |
 | E18 | B | Named a stale set (stock delta) that the lock already made live | Read the lock and the read sites AND the entry condition before naming what is stale |
 | E19 | B | Ruled clients branch on `replayed: true`; the flag was a service-local variable discarded at `return result.ret` | A field a client branches on is verified on the wire (the controller's return path), never in a service's local control flow |
+| E20 | B | Ruled each quote chunk shows its source invoice number and date; the chunk carries only source ids | A field a client must display is a claim it is on the wire — read the response type before the ruling ships |
 
 Pattern across the night: **a state last observed, reported as current** (A) and **a claim that sounded right and had never been executed against the thing it describes** (B). The fix for both is mechanical — re-derive at the moment of decision, run before writing, name the sha or the output — and the fleet's builders reporting what they observed instead of fitting fixtures is what kept every one of these from becoming the record.
 
