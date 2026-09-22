@@ -19,6 +19,7 @@ import type {
   ReturnReason,
 } from "@routeflow/types";
 import {
+  applyCoveredPiecesToLines,
   buildCaptureRequest,
   buildQuoteRequest,
   DEFAULT_EXCESS_OPTION,
@@ -184,7 +185,12 @@ export function RecordInlineReturnDialog({
     setExcessOption(option);
     if (option !== "RETURN_ONLY_PURCHASED" || !quote) return;
     quoteMutation.mutate(dropExcessAndRequote(customerId, quote), {
-      onSuccess: (data) => setQuote(data),
+      onSuccess: (data) => {
+        setQuote(data);
+        // Capture reads quantities from `lines`, not from the quote — without this, a later
+        // confirm would still send the ORIGINAL (larger) request this option just dropped.
+        setLines((prev) => applyCoveredPiecesToLines(prev, data));
+      },
       onError: (err) => {
         setRefusalMessage(extractRefusalMessage(err));
         setStep("refused");

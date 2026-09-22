@@ -204,6 +204,31 @@ describe("RecordInlineReturnDialog — excess chunk (AC2)", () => {
     resolveNextQuote(quoteResponse([covered]));
     await waitFor(() => expect(screen.queryByText(/not on any invoice/i)).not.toBeInTheDocument());
   });
+
+  it("capture sends the REDUCED quantity after option 3 — never the original over-return amount", async () => {
+    await openToStep1();
+    await enterQtyAndGetQuote("16");
+
+    const covered = chunk({ sourceOrderId: "order-newest", pieces: 4 });
+    const excess = chunk({ sourceOrderId: null, sourceInvoiceItemId: null, pieces: 12 });
+    resolveNextQuote(quoteResponse([covered, excess]));
+    await screen.findByText(/not on any invoice/i);
+
+    fireEvent.click(screen.getByRole("radio", { name: /return only what was bought/i }));
+    await waitFor(() => expect(quoteMutate).toHaveBeenCalledTimes(2));
+    resolveNextQuote(quoteResponse([covered]));
+    await waitFor(() => expect(screen.queryByText(/not on any invoice/i)).not.toBeInTheDocument());
+
+    fireEvent.change(screen.getByLabelText(/^reason$/i), { target: { value: "DAMAGED" } });
+    fireEvent.click(screen.getByRole("button", { name: /issue credit note and receive goods/i }));
+    await waitFor(() => expect(captureMutate).toHaveBeenCalledTimes(1));
+
+    const captureReq = captureMutate.mock.calls[0][0];
+    // 4 — the covered amount the re-quote settled on — never 16, the original request. No
+    // per-item reason override was set, so it falls back to the capture-level reason below.
+    expect(captureReq.items).toEqual([{ productId: "prod-1", qty: 1, boxes: 0, pieces: 4 }]);
+    expect(captureReq.reason).toBe("DAMAGED");
+  });
 });
 
 describe("RecordInlineReturnDialog — boxed product (AC3)", () => {

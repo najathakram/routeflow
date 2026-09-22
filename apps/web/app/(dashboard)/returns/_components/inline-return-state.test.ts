@@ -1,6 +1,8 @@
 import {
+  applyCoveredPiecesToLines,
   buildCaptureRequest,
   buildQuoteRequest,
+  coveredPiecesByProduct,
   DEFAULT_EXCESS_OPTION,
   dropExcessAndRequote,
   extractRefusalMessage,
@@ -181,6 +183,40 @@ describe("dropExcessAndRequote — option 3, 'return only what was bought'", () 
     const b = chunk({ productId: "prod-1", sourceOrderId: "order-b", pieces: 2 });
     const req = dropExcessAndRequote("cust-1", quoteResponse([a, b]));
     expect(req.items).toEqual([{ productId: "prod-1", qty: 1, boxes: 0, pieces: 5 }]);
+  });
+});
+
+describe("applyCoveredPiecesToLines — keeps Step 1's own state in sync with option 3", () => {
+  it("caps a line's boxes/pieces to the covered total so a later capture never over-sends", () => {
+    const covered = chunk({ productId: "prod-1", sourceOrderId: "order-1", pieces: 4 });
+    const excess = chunk({ productId: "prod-1", sourceOrderId: null, pieces: 6 });
+    const lines = [line({ productId: "prod-1", boxes: "0", pieces: "10" })];
+    const result = applyCoveredPiecesToLines(lines, quoteResponse([covered, excess]));
+    expect(result).toEqual([{ ...lines[0], boxes: "0", pieces: "4" }]);
+  });
+
+  it("removes a line entirely when its product had zero covered pieces", () => {
+    const excessOnly = chunk({ productId: "prod-2", sourceOrderId: null, pieces: 9 });
+    const lines = [line({ productId: "prod-2", pieces: "9" })];
+    expect(applyCoveredPiecesToLines(lines, quoteResponse([excessOnly]))).toEqual([]);
+  });
+
+  it("leaves other fields (reason, note, productName) untouched", () => {
+    const covered = chunk({ productId: "prod-1", sourceOrderId: "order-1", pieces: 4 });
+    const lines = [
+      line({ productId: "prod-1", pieces: "10", reason: "DAMAGED", note: "dented box" }),
+    ];
+    const result = applyCoveredPiecesToLines(lines, quoteResponse([covered]));
+    expect(result[0]).toMatchObject({ reason: "DAMAGED", note: "dented box", pieces: "4" });
+  });
+});
+
+describe("coveredPiecesByProduct", () => {
+  it("sums only covered (matched) chunks — never the excess chunk", () => {
+    const covered = chunk({ productId: "prod-1", sourceOrderId: "order-1", pieces: 4 });
+    const excess = chunk({ productId: "prod-1", sourceOrderId: null, pieces: 6 });
+    const result = coveredPiecesByProduct(quoteResponse([covered, excess]));
+    expect(result.get("prod-1")).toBe(4);
   });
 });
 

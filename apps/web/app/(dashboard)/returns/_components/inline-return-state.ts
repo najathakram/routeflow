@@ -122,23 +122,41 @@ export const DEFAULT_EXCESS_OPTION: ExcessOption = "CREDIT_AT_CURRENT_PRICE";
  * the original requested amount). A product with zero covered pieces (nothing on file at
  * all) drops out of the request entirely — there is nothing to return of it.
  */
+export function coveredPiecesByProduct(quote: InlineReturnQuoteResponse): Map<string, number> {
+  const byProduct = new Map<string, number>();
+  for (const chunk of quote.chunks) {
+    if (chunk.sourceOrderId == null) continue;
+    byProduct.set(chunk.productId, (byProduct.get(chunk.productId) ?? 0) + chunk.pieces);
+  }
+  return byProduct;
+}
+
 export function dropExcessAndRequote(
   customerId: string,
   quote: InlineReturnQuoteResponse,
   routeRunStopId?: string,
 ): QuoteInlineReturnRequest {
-  const coveredPiecesByProduct = new Map<string, number>();
-  for (const chunk of quote.chunks) {
-    if (chunk.sourceOrderId == null) continue;
-    coveredPiecesByProduct.set(
-      chunk.productId,
-      (coveredPiecesByProduct.get(chunk.productId) ?? 0) + chunk.pieces,
-    );
-  }
-  const items: QuoteInlineReturnItem[] = [...coveredPiecesByProduct.entries()]
+  const items: QuoteInlineReturnItem[] = [...coveredPiecesByProduct(quote).entries()]
     .filter(([, pieces]) => pieces > 0)
     .map(([productId, pieces]) => ({ productId, qty: 1, boxes: 0, pieces }));
   return routeRunStopId ? { customerId, items, routeRunStopId } : { customerId, items };
+}
+
+/**
+ * Applies a "return only what was bought" re-quote result back onto Step 1's own line
+ * drafts, so a later `buildCaptureRequest` (which reads quantities from `lines`, not from
+ * the quote) captures the SAME reduced amount the re-quoted screen showed — never the
+ * original, larger request the excess option just dropped. A product with zero covered
+ * pieces is removed from `lines` entirely, matching `dropExcessAndRequote`'s own request.
+ */
+export function applyCoveredPiecesToLines(
+  lines: InlineReturnLineDraft[],
+  quote: InlineReturnQuoteResponse,
+): InlineReturnLineDraft[] {
+  const covered = coveredPiecesByProduct(quote);
+  return lines
+    .filter((l) => (covered.get(l.productId) ?? 0) > 0)
+    .map((l) => ({ ...l, boxes: "0", pieces: String(covered.get(l.productId) ?? 0) }));
 }
 
 // ─── Capture request ────────────────────────────────────────────────────────────
