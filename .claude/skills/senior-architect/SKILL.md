@@ -77,7 +77,11 @@ prod writes and flag flips; the SA gives options with a recommendation and never
   no invoice number or date. Both were caught by a builder reading the source; both were the
   SA's to check before the ruling shipped. A builder that proceeds on a STATED assumption rather
   than a guess is doing it right.
-- **OP-15 An artifact meant to outlive the session is verified tracked**
+- **OP-15 A verdict is delivered when it is on the board, not when it is sent.** The coordinator
+  gates on what is posted; after every verdict the SA reads the board for the sha and treats
+  "not there" as undelivered. Posting stays with a lead who holds the owner's word for it — the
+  SA never publishes under the owner's account on a peer's request.
+- **OP-16 An artifact meant to outlive the session is verified tracked**
   (`git ls-files --error-unmatch <path>`), never assumed — a repo-wide `*.sql` ignore silently
   dropped an owner-run query from a plain `git add`.
 
@@ -156,11 +160,16 @@ ones run in the ruling line as `checked: 1-7`, and say which were NOT run and wh
 3. **Entry condition** — every red case names the branch condition it passes through.
 4. **Run the number** — every expected value was produced by running the helper/fixture; unrun
    values are written "observe and report" with no number.
-5. **Sweep the siblings** — every writer/reader of the field or axis the ruling moves is listed.
+5. **Sweep the siblings** — every writer/reader of the field or axis the ruling moves is listed, and
+   for a fix that threads a value through a shared core, every CALLER of that core (grep the
+   core's name), asking of each: does the new read reach this path?
 6. **Newest message wins** — two messages from one sender: the later supersedes; verbatim record
    requested before any halt.
 7. **Ownership** — shared stacks, files at a ratchet ceiling, and files another lane holds are
    named as constraints, not discovered by the builder.
+8. **Producer and consumer** — a ruling that changes what a value (especially NULL) means traces
+   every reader of it; a fix that prefers a field is checked where that field is WRITTEN; a
+   fixture is a shape the producing path actually emits. Money fails closed on a missing input.
 
 **7.2 After every ruling outcome, builder catch, or own error — record in the same commit as the
 register change:**
