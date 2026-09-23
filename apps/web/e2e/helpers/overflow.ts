@@ -34,8 +34,13 @@ export interface Offender {
  * class this probe hunts. An unbounded "scrollable" wrapper that itself
  * escapes the viewport still counts as a real bug — only a wrapper BOTH
  * marked scrollable AND itself fitting the viewport is allowlisted. Returns
- * the worst offenders (by how far they escape) so a failure is diagnosable,
- * not just "something is 37px too wide".
+ * EVERY offender, sorted worst-first — NOT pre-sliced to a top-N. Pre-merge
+ * review caught the real reason that matters: an `ignore` predicate applied
+ * after a top-5 slice only sees whatever happened to be worst, so a page like
+ * the invoices list (B750's table produces dozens of offenders) would fill
+ * all 5 slots with the ignored defect and hide any OTHER real overflow on the
+ * same page — the ignore filter must run over the full set, and slicing for
+ * the error message happens after that, in assertNoOverflow.
  */
 export async function findViewportOverflow(page: Page): Promise<Offender[]> {
   return page.evaluate(() => {
@@ -83,7 +88,7 @@ export async function findViewportOverflow(page: Page): Promise<Offender[]> {
       });
     });
     offenders.sort((a, b) => b.escape - a.escape);
-    return offenders.slice(0, 5);
+    return offenders;
   });
 }
 
@@ -112,8 +117,12 @@ export async function assertNoOverflow(
 ) {
   let offenders = await findViewportOverflow(page);
   if (ignore) offenders = offenders.filter((o) => !ignore(o));
+  // Slice for the failure message only, AFTER the ignore filter — see
+  // findViewportOverflow's header for why filtering after a slice would have
+  // let an ignored defect's own offenders crowd out everything else.
+  const worst = offenders.slice(0, 5);
   expect(
     offenders,
-    `viewport overflow on ${screenLabel} at ${page.viewportSize()?.width}px — worst offenders: ${JSON.stringify(offenders)}`,
+    `viewport overflow on ${screenLabel} at ${page.viewportSize()?.width}px — ${offenders.length} offender(s), worst: ${JSON.stringify(worst)}`,
   ).toHaveLength(0);
 }
