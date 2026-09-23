@@ -37,9 +37,11 @@ import { UpdateTenantClassDto } from "./dto/update-tenant-class.dto";
 import { EnableAddonDto, DisableAddonDto } from "../billing/dto/manage-addon.dto";
 import { CreateFeatureOverrideDto } from "./dto/manage-feature-override.dto";
 import { SetEntitlementsModeDto } from "./dto/set-entitlements-mode.dto";
+import { SetConfigSnapshotFlagDto } from "./dto/set-config-snapshot-flag.dto";
 import { ExplainFeatureDiffDto } from "./dto/explain-feature-diff.dto";
 import { FEATURE_REGISTRY } from "../billing/feature-registry";
 import { EntitlementsModeService } from "../billing/entitlements-mode.service";
+import { ConfigSnapshotFlagService } from "../billing/config-snapshot-flag.service";
 import { FeatureDiffService } from "../billing/feature-diff.service";
 import { EntitlementAuthority } from "../billing/entitlement-authority.service";
 import { FeaturePreviewService } from "../billing/feature-preview.service";
@@ -61,6 +63,7 @@ export class PlatformAdminController {
     private readonly addonService: AddonService,
     private readonly featureOverrides: FeatureOverrideService,
     private readonly entitlementsMode: EntitlementsModeService,
+    private readonly configSnapshotFlag: ConfigSnapshotFlagService,
     private readonly featureDiffs: FeatureDiffService,
     private readonly authority: EntitlementAuthority,
     private readonly featurePreview: FeaturePreviewService,
@@ -465,6 +468,44 @@ export class PlatformAdminController {
       reason: dto.reason ?? null,
     });
     return { mode: dto.mode };
+  }
+
+  // ─── Config snapshot flag (Lane B A2c) ────────────────────────────────────
+  // One of the four production flags an agent never flips — read-only for anyone but the owner,
+  // who calls PUT directly. GET never mutates. Every PUT is audited with the actor and reason,
+  // regardless of the resulting value.
+
+  @Get("entitlements/config-snapshot")
+  @ApiOperation({
+    summary:
+      "Whether automatic config snapshot/restore on plan changes is switched on (default OFF)",
+  })
+  async getConfigSnapshotFlag() {
+    return { enabled: await this.configSnapshotFlag.isEnabled() };
+  }
+
+  @Put("entitlements/config-snapshot")
+  @ApiOperation({
+    summary:
+      "Switch automatic config snapshot/restore on plan changes on/off — live, no redeploy, effective across replicas within ~5 s. Audited with the reason and the actor.",
+  })
+  async setConfigSnapshotFlag(
+    @Body() dto: SetConfigSnapshotFlagDto,
+    @CurrentUser() admin: JwtPayload,
+  ) {
+    // The cache can be up to ~5 s stale — force a real database read before recording the
+    // flip, so the audit row's `previous` is the flag's actual last-committed value, not a
+    // possibly-stale cached one from before another replica's write.
+    this.configSnapshotFlag.invalidate();
+    const previous = await this.configSnapshotFlag.isEnabled();
+    await this.configSnapshotFlag.setEnabled(dto.enabled);
+    await this.svc.recordAdminAction(
+      null,
+      admin.sub,
+      AdminAuditAction.CONFIG_SNAPSHOT_FLAG_CHANGED,
+      { previous, enabled: dto.enabled, reason: dto.reason },
+    );
+    return { enabled: dto.enabled };
   }
 
   @Get("features/diffs")

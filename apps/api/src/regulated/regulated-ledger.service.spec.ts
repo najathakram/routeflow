@@ -1298,6 +1298,128 @@ describe("RegulatedLedgerService", () => {
         categoryTax: -15.2,
       });
     });
+
+    // B660a characterization — pinning the extracted booker's exit translations. Every test
+    // above uses ONE product with ONE live row, so a mutation turning `bookReversalChunk`'s
+    // "skip this row" (`continue`) into "stop this product" (as if parked) still passes them
+    // all; these three fail on that exact mutation.
+
+    it("B660a(a): a line already fully reversed is skipped (continue), and the return books against the SECOND line for the same product", async () => {
+      arrange({
+        sales: [
+          saleRow({ id: "s-1", orderItemId: "oi-1", invoiceItemId: "ii-1" }),
+          saleRow({ id: "s-2", orderItemId: "oi-2", invoiceItemId: "ii-2" }),
+        ],
+        priorReversals: [
+          {
+            invoiceItemId: "ii-1",
+            orderItemId: "oi-1",
+            qty: -3,
+            unitBasisQty: -3,
+            netSales: -30,
+            categoryTax: -6,
+          },
+        ],
+        items: [
+          { id: "ii-1", productId: "p1" },
+          { id: "ii-2", productId: "p1" },
+        ],
+      });
+      await service.reverseReturnEntries({
+        returnId: "ret-1",
+        orderId: "ord-1",
+        returnedByProduct: new Map([["p1", 3]]),
+        returnedUnit: "PIECES",
+        db: prisma,
+      });
+      expect(written()).toHaveLength(1);
+      expect(written()[0]).toMatchObject({ invoiceItemId: "ii-2", orderItemId: "oi-2", qty: -3 });
+    });
+
+    it("B660a(b): a zero-native-axis row is skipped (continue), and the return books against the SECOND live row", async () => {
+      arrange({
+        sales: [
+          saleRow({
+            id: "s-1",
+            orderItemId: "oi-1",
+            invoiceItemId: "ii-1",
+            qty: 0,
+            unitBasisQty: 0,
+            netSales: 0,
+            categoryTax: 0,
+          }),
+          saleRow({ id: "s-2", orderItemId: "oi-2", invoiceItemId: "ii-2" }),
+        ],
+        items: [
+          { id: "ii-1", productId: "p1" },
+          { id: "ii-2", productId: "p1" },
+        ],
+      });
+      await service.reverseReturnEntries({
+        returnId: "ret-1",
+        orderId: "ord-1",
+        returnedByProduct: new Map([["p1", 3]]),
+        returnedUnit: "PIECES",
+        db: prisma,
+      });
+      expect(written()).toHaveLength(1);
+      expect(written()[0]).toMatchObject({ invoiceItemId: "ii-2", orderItemId: "oi-2", qty: -3 });
+    });
+
+    it("B660a(c): one product parks (break, stops only ITS OWN product loop) while a second product in the same return still reverses", async () => {
+      arrange({
+        sales: [
+          // p1: legacy box-unaware -> parks (same shape as the B681 park guard's case (a)).
+          saleRow({
+            id: "s-p1",
+            orderItemId: "oi-p1",
+            invoiceItemId: "ii-p1",
+            qty: 5,
+            unitBasisQty: 5,
+            netSales: 50,
+            categoryTax: 10,
+          }),
+          // p2: ordinary non-boxed live row -> reverses normally.
+          saleRow({ id: "s-p2", orderItemId: "oi-p2", invoiceItemId: "ii-p2" }),
+        ],
+        items: [
+          {
+            id: "ii-p1",
+            productId: "p1",
+            boxes: null,
+            pieces: null,
+            unitLabel: null,
+            unitsPerBox: 12,
+          },
+          { id: "ii-p2", productId: "p2" },
+        ],
+        products: [
+          { id: "p1", unitsPerBox: 12 },
+          { id: "p2", unitsPerBox: 1 },
+        ],
+      });
+      const warnSpy = jest
+        .spyOn((service as any).logger, "warn")
+        .mockImplementation(() => undefined);
+      await service.reverseReturnEntries({
+        returnId: "ret-1",
+        orderId: "ord-1",
+        returnedByProduct: new Map([
+          ["p1", 12],
+          ["p2", 3],
+        ]),
+        returnedUnit: "PIECES",
+        db: prisma,
+      });
+      expect(warnSpy).toHaveBeenCalled(); // p1 parked
+      expect(prisma.regulatedLedgerParkedReversal.createMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: [expect.objectContaining({ saleEntryId: "s-p1", returnedPieces: 12 })],
+        }),
+      );
+      expect(written()).toHaveLength(1); // only p2 reversed
+      expect(written()[0]).toMatchObject({ invoiceItemId: "ii-p2", qty: -3 });
+    });
   });
 
   // ─── B681/SA-067: the park guard — reverseReturnEntries, PIECES branch only ───
