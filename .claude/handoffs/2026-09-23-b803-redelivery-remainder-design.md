@@ -207,3 +207,44 @@ driver confirms delivered this visit, 0..remaining)` — cumulative, per
 Branch: `fix/b803-redelivery-remainder-plan`, worktree `rf-lane-b803`, base
 `origin/master` @ b8863d56. No code changes yet — this file is the entire
 diff, pending the SA's ruling.
+
+## 9. SA-116 ruling (resolves §8) — HOLD, do not implement yet
+
+1. **The wire entry becomes PER-VISIT, not cumulative.** A `DeliveryMutation`
+   row is an event; `quantityDelivered` is what THIS visit delivered. The
+   server derives the cumulative figure from summing evidence rows
+   (SA-113b's `deliveredBasisByLine`). `deliveredQty` on `OrderItem` stays in
+   step by **increment**, never overwrite, until the column is removed
+   entirely. `assertDeliveriesFitStop` must bound THIS VISIT's amount
+   against the **remaining** qty (`orderedQty − deliveredBasisByLine`), not
+   the full original qty. Type composes with SA-109a: PARTIAL when
+   `0 < amount < remaining`, DELIVERED at `remaining`, REFUSED at `0`. **This
+   is Lane F's change and belongs in B785**, not B803.
+2. **Source of truth for "remaining" is the evidence rows, served by the
+   API** — not the raw `deliveredQty` column, and not client-side summation.
+   `RUN_LINE_ITEMS_SELECT` gains a _derived_ per-line `deliveredSoFar` field
+   computed server-side by `deliveredBasisByLine`. The client shows
+   `qty − deliveredSoFar` and never sums `DeliveryMutation` rows or reads
+   `deliveredQty` itself. (Resolves §8.1 against the evidence-row model, not
+   the scalar — the opposite of this memo's original default-shape guess in
+   §7.)
+3. **`PARTIALLY_DELIVERED` vs the unconditional `DELIVERED`: out of scope
+   for B803.** Its own status rule with its own readers (credit exposure,
+   returns eligibility, reports) — leave it manual; file separately if
+   wanted. (Resolves §8.3.)
+4. **Never use the reopen mechanic** (§3's destructive wipe) for a
+   remainder. `Routes.addStop` is the mechanism for the follow-up visit;
+   that stop's own completion sends the remainder as a fresh per-visit
+   entry. (Resolves §8.4 implicitly — a remainder is exactly one more
+   per-visit entry, not a special "Nth visit" case.)
+5. **Build B803 on B762's branch** (`fix/b762-multi-order-short-pick`, the
+   single shared `shortPickLinesFromOrder`/`adjustableLines` gate), not
+   master's four inline copies. (Resolves §8.5.)
+
+**Sequencing (HOLD on B803 implementation until this order completes):**
+`#1294` → `B762` → `#1274` round 7 and `B785` (B785 now carries the
+per-visit contract change from ruling (1)) → **then** `B803`. Before B785
+lands the per-visit semantics server-side, a remainder entry cannot be
+built correctly against EITHER reading (the current overwrite-cumulative
+column, or the not-yet-shipped evidence-row basis) — so B803 has no correct
+foundation to build against yet. No B803 code until B785 is on master.
