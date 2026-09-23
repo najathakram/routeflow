@@ -1,11 +1,12 @@
 import { BadRequestException, ForbiddenException } from "@nestjs/common";
 import { PriceType } from "@prisma/client";
-import type { LadderUnit } from "@routeflow/pricing";
+import type { CategoryTaxSnapshot, LadderUnit } from "@routeflow/pricing";
 import { resolveLineUnits } from "../products/line-units";
 import {
   MAX_LINE_QTY,
   assertMayUseUnits,
   buildUnitLine,
+  categoryTaxForLine,
   isUnitAware,
   requestsUnit,
 } from "./unit-line-build";
@@ -34,7 +35,15 @@ const units = [
   level({ label: "Case", factorToBase: 288, price: "480.00" }),
   level({ label: "Pallet", factorToBase: 5760 }),
 ];
-const taxFor = jest.fn((qty: number, subtotal: number) => qty + subtotal / 1000);
+const STUB_SNAPSHOT: CategoryTaxSnapshot = {
+  categoryTaxType: "EXCISE_PER_UNIT",
+  categoryTaxRate: 1.5,
+  categoryPriceIncludesTax: false,
+};
+const taxFor = jest.fn((qty: number, subtotal: number) => ({
+  amount: qty + subtotal / 1000,
+  snapshot: STUB_SNAPSHOT,
+}));
 const build = (item: Record<string, unknown>, tier = 1, label = "Case") =>
   buildUnitLine({
     product,
@@ -136,6 +145,13 @@ describe("buildUnitLine — an order line sold by a non-pack unit", () => {
     expect(l.categoryTaxAmount).toBe(864 + 1.44);
     expect(l.trackedCategoryId).toBe("cat-1");
     expect(l.trackedSubcategoryId).toBe("sub-1");
+  });
+
+  it("B297: carries the rate-snapshot trio taxFor returned alongside the amount", () => {
+    const l = build({});
+    expect(l.categoryTaxType).toBe("EXCISE_PER_UNIT");
+    expect(l.categoryTaxRate).toBe(1.5);
+    expect(l.categoryPriceIncludesTax).toBe(false);
   });
 
   it("a typed price is compared to the TIER-1 unit price, exactly like the pack branch", () => {
@@ -254,5 +270,25 @@ describe("requestsUnit / assertMayUseUnits — who may sell by a unit, and only 
     await expect(
       assertMayUseUnits([{ unitLabel: "Case", productId: "p1" }], ctx()),
     ).resolves.toBeUndefined();
+  });
+});
+
+describe("categoryTaxForLine — B297 amount + snapshot, one call, never independently computed", () => {
+  it("returns an all-null snapshot alongside a zero amount when there is no category", () => {
+    expect(categoryTaxForLine(null, 100, 1000)).toEqual({
+      amount: 0,
+      snapshot: { categoryTaxType: null, categoryTaxRate: null, categoryPriceIncludesTax: null },
+    });
+  });
+
+  it("stamps the trio the amount was actually computed from", () => {
+    const category = { taxType: "EXCISE_PER_UNIT", rate: "1.25", priceIncludesTax: false };
+    const result = categoryTaxForLine(category, 100, 1000);
+    expect(result.amount).toBe(125); // 1.25 * 100
+    expect(result.snapshot).toEqual({
+      categoryTaxType: "EXCISE_PER_UNIT",
+      categoryTaxRate: 1.25,
+      categoryPriceIncludesTax: false,
+    });
   });
 });

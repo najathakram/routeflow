@@ -7,7 +7,7 @@ import {
 } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { RouteKind, OrderStatus, FulfillPath } from "@prisma/client";
-import { RoutesService, RUN_LINE_ITEMS_SELECT } from "./routes.service";
+import { RoutesService, RUN_LINE_ITEMS_SELECT, RUN_STOP_INCLUDE } from "./routes.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { RouteFlowGateway } from "../gateways/routeflow.gateway";
 import { NotificationsService } from "../notifications/notifications.service";
@@ -2447,6 +2447,98 @@ describe("RoutesService", () => {
       const call = prisma.order.findMany.mock.calls[0][0];
       const actualSelect = call.select.lineItems.select;
       expect(actualSelect).toBe(RUN_LINE_ITEMS_SELECT);
+    });
+  });
+
+  // B305 round 5 — the money-fields REGRESSION: every prior B305 round enriched
+  // RUN_STOP_INCLUDE (subtotal/tax/total/discountAmount/shippingFee/invoices on
+  // the order, isTaxExempt on the customer) but findOneRun's stops clause was a
+  // SEPARATE, hand-rolled `include` that never referenced RUN_STOP_INCLUDE at
+  // all — so the driver's actual read path (GET /route-runs/:id, the only
+  // endpoint the stop/payment screens call) never carried any of it, and
+  // run-money.ts's orderAmountDue could only ever reach its pre-tax fallback.
+  // routes.run-stop-select.spec.ts's tests on the CONSTANT stayed green through
+  // every round; these pin what findOneRun's Prisma call ACTUALLY sends.
+  describe("findOneRun's stops query uses RUN_STOP_INCLUDE (B305 round 5 — the projection drift)", () => {
+    it("references RUN_STOP_INCLUDE's own sub-objects by identity, not a re-literalled copy", async () => {
+      prisma.routeRun.findUnique.mockResolvedValue({ ...MOCK_RUN, stops: [] });
+
+      await service.findOneRun("run-1");
+
+      const call = prisma.routeRun.findUnique.mock.calls[0][0];
+      const stopsInclude = call.include.stops.include;
+      // A spread (`{ ...RUN_STOP_INCLUDE, deliveryMutations }`) preserves each
+      // property's own reference — this is what a hand-rolled literal, however
+      // faithfully copied, could never pass.
+      expect(stopsInclude.customer).toBe(RUN_STOP_INCLUDE.customer);
+      expect(stopsInclude.orders).toBe(RUN_STOP_INCLUDE.orders);
+      expect(stopsInclude.routeStop).toBe(RUN_STOP_INCLUDE.routeStop);
+      // The one field findOneRun needs beyond the shared shape (list views don't).
+      expect(stopsInclude.deliveryMutations).toEqual(
+        expect.objectContaining({ select: expect.objectContaining({ orderItemId: true }) }),
+      );
+    });
+
+    it("carries the order money fields the driver's amount-due math needs (subtotal/tax/total/discountAmount/shippingFee/invoices)", async () => {
+      prisma.routeRun.findUnique.mockResolvedValue({ ...MOCK_RUN, stops: [] });
+
+      await service.findOneRun("run-1");
+
+      const orderSelect =
+        prisma.routeRun.findUnique.mock.calls[0][0].include.stops.include.orders.select;
+      expect(orderSelect).toEqual(
+        expect.objectContaining({
+          subtotal: true,
+          tax: true,
+          total: true,
+          discountAmount: true,
+          shippingFee: true,
+        }),
+      );
+      expect(orderSelect.invoices).toBeDefined();
+    });
+
+    it("carries the customer's tax-exemption column", async () => {
+      prisma.routeRun.findUnique.mockResolvedValue({ ...MOCK_RUN, stops: [] });
+
+      await service.findOneRun("run-1");
+
+      const customerSelect =
+        prisma.routeRun.findUnique.mock.calls[0][0].include.stops.include.customer.select;
+      expect(customerSelect.isTaxExempt).toBe(true);
+    });
+
+    it("the unlinked-orders fallback ALSO carries the money fields (same drift, second site)", async () => {
+      prisma.routeRun.findUnique.mockResolvedValue({
+        ...MOCK_RUN,
+        stops: [
+          {
+            id: "stop-1",
+            customerId: "cust-1",
+            customer: null,
+            customerAddress: { id: "addr-1" },
+            routeStop: null,
+            orders: [], // no stop has a linked order -> triggers the fallback
+            deliveryMutations: [],
+          },
+        ],
+      });
+      prisma.order.findMany.mockResolvedValue([]);
+
+      await service.findOneRun("run-1");
+
+      const call = prisma.order.findMany.mock.calls[0][0];
+      expect(call.select).toEqual(
+        expect.objectContaining({
+          customerId: true,
+          subtotal: true,
+          tax: true,
+          total: true,
+          discountAmount: true,
+          shippingFee: true,
+        }),
+      );
+      expect(call.select.invoices).toBe(RUN_STOP_INCLUDE.orders.select.invoices);
     });
   });
 

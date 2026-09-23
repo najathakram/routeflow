@@ -1,5 +1,6 @@
 import { Test } from "@nestjs/testing";
 import { EstimatesService } from "./estimates.service";
+import { RegulatedLedgerService } from "../regulated/regulated-ledger.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { EntitlementsService } from "../billing/entitlements.service";
 import { NumberingService } from "../import/numbering.service";
@@ -38,6 +39,7 @@ describe("EstimatesService.create — unvalidated discount/tax (B451 gap 4)", ()
           provide: NumberingService,
           useValue: { reserveNext: jest.fn().mockResolvedValue("EST-1") },
         },
+        { provide: RegulatedLedgerService, useValue: {} },
       ],
     }).compile();
     service = mod.get(EstimatesService);
