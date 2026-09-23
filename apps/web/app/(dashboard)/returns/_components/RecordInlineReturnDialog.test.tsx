@@ -46,8 +46,10 @@ const MIXED_UNIT_ENTRY_ORDER = {
   ...ENTRY_ORDER,
   id: "order-mixed",
   orderNumber: "1003",
-  // SA-108: two lines of the SAME product with DIFFERENT (agreeing-if-typed-the-same) packs
-  // — a Case line and a plain pack line. Before the fix, both hydrated rows shared one
+  // SA-108: two lines of the SAME product, same pack (12) — a Case line and a plain pack
+  // line that happen to agree on unitsPerBox (a genuinely mixed-pack pair is the SA-101(2)
+  // conflict guard's own concern, tested server-side; this fixture isolates the DIALOG's
+  // row-identity bug specifically). Before the fix, both hydrated rows shared one
   // productId-keyed identity: editing either row's Boxes field patched BOTH.
   lineItems: [
     {
@@ -423,6 +425,60 @@ describe("RecordInlineReturnDialog — SA-108: per-row identity for two lines of
 
     // REGRESSION pin: before SA-108, removeLine matched by productId and dropped BOTH rows.
     expect(screen.getAllByRole("spinbutton")).toHaveLength(2);
+  });
+
+  it("SA-108b, through the real drop-excess UI flow: capture sends the covered pieces ONCE, never doubled across the two rows", async () => {
+    mockEntryOrder = MIXED_UNIT_ENTRY_ORDER;
+    await openToStep1(MIXED_UNIT_ENTRY_ORDER.id);
+
+    const [row1Boxes] = screen.getAllByRole("spinbutton");
+    fireEvent.change(row1Boxes, { target: { value: "1" } });
+    fireEvent.change(screen.getByLabelText(/^reason$/i), { target: { value: "DAMAGED" } });
+    fireEvent.click(screen.getByRole("button", { name: /get quote/i }));
+    await waitFor(() => expect(quoteMutate).toHaveBeenCalledTimes(1));
+
+    const covered = chunk({ productId: "prod-mixed", sourceOrderId: "order-newest", pieces: 5 });
+    const excess = chunk({
+      productId: "prod-mixed",
+      sourceOrderId: null,
+      sourceInvoiceItemId: null,
+      pieces: 7,
+    });
+    resolveNextQuote(quoteResponse([covered, excess]));
+    await screen.findByText(/not on any invoice/i);
+
+    fireEvent.click(screen.getByRole("radio", { name: /return only what was bought/i }));
+    await waitFor(() => expect(quoteMutate).toHaveBeenCalledTimes(2));
+    resolveNextQuote(quoteResponse([covered]));
+    await waitFor(() => expect(screen.queryByText(/not on any invoice/i)).not.toBeInTheDocument());
+
+    fireEvent.click(screen.getByRole("button", { name: /issue credit note and receive goods/i }));
+    await waitFor(() => expect(captureMutate).toHaveBeenCalledTimes(1));
+    const captureReq = captureMutate.mock.calls[0][0];
+    // Exactly 5, once — never 10 (5+5, the pre-fix double-count from both rows getting the
+    // full covered total).
+    expect(captureReq.items).toEqual([{ productId: "prod-mixed", qty: 1, boxes: 0, pieces: 5 }]);
+  });
+
+  it("shows the server's pack-conflict 409 message (B774/SA-101(2)) in the dialog, naming the product and both packs", async () => {
+    await openToStep1();
+    await enterQtyAndGetQuote("10");
+
+    rejectNextQuote({
+      response: {
+        status: 409,
+        data: {
+          code: "INLINE_RETURN_PACK_CONFLICT",
+          message:
+            "Widget is packed at more than one size in this customer's recent history " +
+            "(4, 12) — return these lines from the order page's standard return instead.",
+        },
+      },
+    });
+    await screen.findByText(
+      "Widget is packed at more than one size in this customer's recent history " +
+        "(4, 12) — return these lines from the order page's standard return instead.",
+    );
   });
 });
 

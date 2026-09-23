@@ -251,6 +251,43 @@ describe("applyCoveredPiecesToLines — keeps Step 1's own state in sync with op
     const result = applyCoveredPiecesToLines(lines, quoteResponse([covered]));
     expect(result[0]).toMatchObject({ reason: "DAMAGED", note: "dented box", pieces: "4" });
   });
+
+  // SA-108b (Opus review of #1293): TWO rows of the SAME product (SA-108's own fix made this
+  // possible — a source order with a Case line and a pack line hydrate as two independently
+  // editable rows). Before this fix, BOTH rows were set to the FULL covered total, and
+  // buildCaptureRequest's own (correct) productId merge then summed them — a silent 2x credit.
+  it("two rows of the same product: the FIRST gets the covered total, siblings are zeroed — never each getting the full amount", () => {
+    const covered = chunk({ productId: "prod-1", sourceOrderId: "order-1", pieces: 4 });
+    const lines = [
+      line({ productId: "prod-1", pieces: "3", note: "row A" }),
+      line({ productId: "prod-1", pieces: "7", note: "row B" }),
+    ];
+    const result = applyCoveredPiecesToLines(lines, quoteResponse([covered]));
+    expect(result).toHaveLength(2);
+    expect(result[0]).toMatchObject({ note: "row A", pieces: "4" });
+    expect(result[1]).toMatchObject({ note: "row B", pieces: "0" });
+    // Never both rows carrying the covered amount — that's the exact double-count the fix
+    // guards against.
+    expect(result.filter((l) => l.pieces === "4")).toHaveLength(1);
+  });
+
+  it("the zeroed sibling naturally drops out of the built request — buildCaptureRequest filters boxes/pieces both 0", () => {
+    const covered = chunk({ productId: "prod-1", sourceOrderId: "order-1", pieces: 4 });
+    const lines = [
+      line({ productId: "prod-1", pieces: "3" }),
+      line({ productId: "prod-1", pieces: "7" }),
+    ];
+    const applied = applyCoveredPiecesToLines(lines, quoteResponse([covered]));
+    const req = buildCaptureRequest({
+      customerId: "cust-1",
+      orderId: "order-1",
+      lines: applied,
+      returnKey: "key-1",
+      reason: "DAMAGED",
+    });
+    // Exactly the covered amount — never 8 (4+4, the pre-fix double-count).
+    expect(req.items).toEqual([{ productId: "prod-1", qty: 1, boxes: 0, pieces: 4 }]);
+  });
 });
 
 describe("coveredPiecesByProduct", () => {

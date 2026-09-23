@@ -186,9 +186,23 @@ export function applyCoveredPiecesToLines(
   quote: InlineReturnQuoteResponse,
 ): InlineReturnLineDraft[] {
   const covered = coveredPiecesByProduct(quote);
+  // SA-108b (Opus review of #1293): `covered` is keyed by PRODUCT, but this dialog can carry
+  // TWO rows for one product (see SA-108's lineKey fix — a source order with a Case line and
+  // a pack line, say). Giving EVERY row of that product the FULL covered total, then letting
+  // buildCaptureRequest's own (correct) productId merge sum them, doubled the credit — the
+  // first row alone gets the product's covered amount; every sibling row is zeroed, never
+  // duplicated. A row zeroed this way stays visible in the dialog (0 pieces) but drops out of
+  // the wire request on its own (buildQuoteRequest/buildCaptureRequest already filter out any
+  // item with boxes/pieces both 0).
+  const seenProduct = new Set<string>();
   return lines
     .filter((l) => (covered.get(l.productId) ?? 0) > 0)
-    .map((l) => ({ ...l, boxes: "0", pieces: String(covered.get(l.productId) ?? 0) }));
+    .map((l) => {
+      const isFirstForProduct = !seenProduct.has(l.productId);
+      seenProduct.add(l.productId);
+      const amount = isFirstForProduct ? (covered.get(l.productId) ?? 0) : 0;
+      return { ...l, boxes: "0", pieces: String(amount) };
+    });
 }
 
 // ─── Capture request ────────────────────────────────────────────────────────────

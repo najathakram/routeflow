@@ -600,6 +600,27 @@ describe("InlineReturnsQuoteService — Opus fix-round BLOCKER: the matching/all
     expect(result.total).toBe(15.0);
   });
 
+  it("SA-108b: {pieces:5} with NO boxes field at all (not even 0) is also NOT refused with an unknown pack — the same guard, one field shape further", async () => {
+    (db.customer.findFirst as jest.Mock).mockResolvedValue({
+      id: "cust-1",
+      pricingTier: 1,
+      isTaxExempt: false,
+    });
+    (db.customerPrice.findMany as jest.Mock).mockResolvedValue([]);
+    (db.product.findMany as jest.Mock).mockResolvedValue([
+      { id: "prod-1", pricePerUnit: 3, priceTier2: 3, priceTier3: 3, priceTier4: 3, priceTier5: 3 },
+    ]);
+    (db.invoice.findMany as jest.Mock).mockResolvedValue([]);
+    (db.return.findMany as jest.Mock).mockResolvedValue([]);
+    (db.returnItem.findMany as jest.Mock).mockResolvedValue([]);
+
+    const result = await service.quote(
+      { customerId: "cust-1", items: [{ productId: "prod-1", qty: 1, pieces: 5 }] },
+      OPERATOR,
+    );
+    expect(result.total).toBe(15.0);
+  });
+
   it("SA-101(2): an unknown pack on a BARE qty request (no boxes/pieces given) is NOT refused — qty is already pieces, nothing to convert", async () => {
     (db.customer.findFirst as jest.Mock).mockResolvedValue({
       id: "cust-1",
