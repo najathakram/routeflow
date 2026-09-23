@@ -7,7 +7,7 @@ import { ArrowLeft, Plus, Trash2, Search, Loader2 } from "lucide-react";
 import { Button, Card, useToast, cn } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
 import { useInvoice, useUpdateInvoice, type CreateInvoiceItem } from "@/lib/api/invoices";
-import { hasUnitLine, unitLabelsOf } from "@/lib/invoice-line-unit";
+import { unitLabelsOf } from "@/lib/invoice-line-unit";
 import {
   useCustomers,
   useCustomer,
@@ -591,12 +591,20 @@ export default function EditInvoicePage() {
   // units_v1, FAIL CLOSED (B641): update() refuses a unit line (4c-2 is not built) and this form holds no
   // unit state, so re-saving would silently store the line as a PACK line — 3 Cases (864 pieces) become
   // 72 pieces while the money still reads $1,440. Refuse visibly instead of converting.
-  if (hasUnitLine(invoice.items)) {
+  //
+  // B797: also refuse on orderHasUnitAwareLine — recomputeOrderFromInvoices back-syncs
+  // an edit onto the LINKED ORDER's unit-aware line even when this invoice's own items
+  // carry no unitLabel (same reason the server's assertInvoiceRewriteAllowed checks
+  // both). The invoice's own labels are the only ones known client-side; when the
+  // order-only flag is what's tripping the guard, name the risk generically instead.
+  const ownUnitLabels = unitLabelsOf(invoice.items);
+  if (ownUnitLabels.length > 0 || invoice.orderHasUnitAwareLine) {
     return (
       <div className="mx-auto flex max-w-xl flex-col items-center gap-4 p-12 text-center">
         <p className="text-base font-medium text-navy">
-          This invoice has a line sold by the {unitLabelsOf(invoice.items).join(" / ")} and
-          can&apos;t be edited here yet.
+          {ownUnitLabels.length > 0
+            ? `This invoice has a line sold by the ${ownUnitLabels.join(" / ")} and can't be edited here yet.`
+            : "The order behind this invoice has a line sold by a unit, and can't be edited here yet."}
         </p>
         <p className="text-sm text-navy/70">
           Saving from this form would turn that line into a pack line and change its quantity. Open

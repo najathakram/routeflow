@@ -103,6 +103,27 @@ describe("invoice edit page — a draft holding a unit line", () => {
     renderWithProviders(<EditInvoicePage />);
     expect(screen.getByText(/sold by the Case \/ Pallet/i)).toBeInTheDocument();
   });
+
+  /**
+   * B797: recomputeOrderFromInvoices back-syncs an edit onto the linked
+   * order's unit-aware line even when the invoice's OWN items carry no
+   * unitLabel — so the guard must also refuse on the server's
+   * orderHasUnitAwareLine flag, not just the invoice's own items.
+   */
+  it("refuses when only the linked order (not the invoice's own items) has a unit-aware line", () => {
+    mockInvoice = { ...draft([packLine]), orderHasUnitAwareLine: true };
+    renderWithProviders(<EditInvoicePage />);
+
+    expect(screen.getByText(/sold by a unit/i)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /save changes/i })).toBeNull();
+    expect(updateMutate).not.toHaveBeenCalled();
+  });
+
+  it("does not refuse when orderHasUnitAwareLine is absent/false and the invoice's own items are plain", () => {
+    mockInvoice = { ...draft([packLine]), orderHasUnitAwareLine: false };
+    renderWithProviders(<EditInvoicePage />);
+    expect(screen.getByRole("button", { name: /save changes/i })).toBeInTheDocument();
+  });
 });
 
 describe("invoice edit page — FLAG-OFF characterization: a pack-only draft edits exactly as before", () => {

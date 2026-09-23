@@ -168,6 +168,11 @@ export interface Invoice {
   deliveryBatchId?: string | null;
   /** Linked order summary (present on the detail endpoint) — used to gate the pending-mirror draft. */
   order?: { status: string; orderNumber?: string | null };
+  /** B797: true when the linked order has a live unit-aware line, even if this
+   *  invoice's own items don't (recomputeOrderFromInvoices back-syncs an edit
+   *  onto that order line) — extends the B641 edit guard past the invoice's
+   *  own items. Existence-only; never the order's actual lines. */
+  orderHasUnitAwareLine?: boolean;
   recurringInvoiceId?: string;
   items?: InvoiceItem[];
   payments?: InvoicePayment[];

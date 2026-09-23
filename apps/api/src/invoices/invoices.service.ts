@@ -3237,7 +3237,22 @@ export class InvoicesService {
         },
         // The web invoice page gates Edit/Send for an order-linked DRAFT until the
         // order is delivered (the "pending mirror"). Surface the order's status here.
-        order: { select: { status: true, orderNumber: true } },
+        order: {
+          select: {
+            status: true,
+            orderNumber: true,
+            // B797: the client-side units_v1 edit guard (B641) only ever checked the
+            // invoice's OWN items, but recomputeOrderFromInvoices back-syncs an edit
+            // onto the linked order's unit-aware line even when the invoice's own
+            // items carry no unitLabel (same reason assertInvoiceRewriteAllowed below
+            // checks both) — existence-only, never returned raw (see orderHasUnitAwareLine).
+            lineItems: {
+              where: { unitLabel: { not: null }, status: { not: "CANCELLED" } },
+              select: { id: true },
+              take: 1,
+            },
+          },
+        },
       },
     });
     if (!inv) throw new NotFoundException("Invoice not found");
@@ -3282,8 +3297,14 @@ export class InvoicesService {
     // so CUSTOMER viewers of this same document honor the tenant's
     // hide-original-price preference too.
     const hideOriginalPrice = (await this.systemConfig.get("invoice.hideOriginalPrice")) === "true";
+    // B797: existence-only flag both clients use to extend their edit guard to the
+    // linked order's lines, not just the invoice's own — the raw lineItems array
+    // fetched above for this check is never returned.
+    const orderHasUnitAwareLine = (inv.order?.lineItems?.length ?? 0) > 0;
     return {
       ...inv,
+      order: inv.order ? { status: inv.order.status, orderNumber: inv.order.orderNumber } : null,
+      orderHasUnitAwareLine,
       balanceDue,
       paidAmount,
       creditApplied,
