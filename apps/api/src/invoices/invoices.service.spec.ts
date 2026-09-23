@@ -1787,8 +1787,6 @@ describe("InvoicesService", () => {
 
   // ─── Backward sync: recomputeOrderFromInvoices ─────────────────────────────
 
-  // Fixtures set qty/invoicedQty to what gets billed — the full-coverage gate (B667/#1185)
-  // requires that; an under-billed line is proven separately in recompute-order-partial.db.spec.ts.
   describe("recomputeOrderFromInvoices — backward sync (issue 2)", () => {
     it("rebuilds the order from the SUM of all its non-void invoices", async () => {
       // Two invoices each bill 1 unit of p1 @ 220 → order should show qty 2, $440.
