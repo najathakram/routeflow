@@ -217,6 +217,17 @@ export function hydrateFromOrder(order: { lineItems?: readonly any[] | null } | 
  * a FRESH key, never the bare productId: two new same-product rows added
  * in different units (or two independent adds before either is saved)
  * must never collide the same way hydration did.
+ *
+ * CAUTION (currently unreachable, but load-bearing the day it isn't): a
+ * `new:<id>` row's key is never re-keyed to the server's real id in place —
+ * this screen only ever re-reads it via `hydrateFromOrder` after a save,
+ * which always follows `leaveEditor()` and remounts the screen fresh. That
+ * is safe only as long as every successful save leaves the editor. The day a
+ * "save and stay" flow exists, a saved `new:<id>` row would keep its local
+ * key while the record it maps to now has a real lineId — any code added
+ * for that flow must explicitly re-key the draft entry (swap the `new:<id>`
+ * key for the returned lineId), not assume this function's callers already
+ * handle it.
  */
 export function resolveDraftKeyForPick(
   draft: Record<string, DraftItem>,
@@ -408,7 +419,10 @@ export function shouldRehydrateFromOrder(input: {
 
 // ─── The on-device snapshot ──────────────────────────────────────────────────
 
-export const EDIT_ITEMS_SNAPSHOT_VERSION = 1;
+// Bumped 1→2 (B775/SA-108): pre-fix snapshots stored `draft` keyed by
+// `productId`, which collides two same-product lines into one entry. A v1
+// snapshot must be discarded, never restored, so it can't resurrect that bug.
+export const EDIT_ITEMS_SNAPSHOT_VERSION = 2;
 /** Same TTL shape as `lib/list-ui-snapshot.ts`; a day-old staged edit is stale. */
 export const EDIT_ITEMS_SNAPSHOT_TTL_MS = 24 * 60 * 60 * 1000;
 /** Idle debounce before a snapshot write, matching the stock-count autosave. */

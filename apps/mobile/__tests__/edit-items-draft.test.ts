@@ -28,6 +28,7 @@ import {
   snapshotBaseline,
   stagedDiffItems,
   EDIT_ITEMS_SNAPSHOT_TTL_MS,
+  EDIT_ITEMS_SNAPSHOT_VERSION,
   type BaselineOrderLike,
   type DraftItem,
   type StagedEdit,
@@ -279,6 +280,32 @@ describe("edit-items-draft: the on-device snapshot (REG-EDIT-DRAFT-B)", () => {
       expect(() => deserializeEditItemsSnapshot(raw as string | null)).not.toThrow();
       expect(deserializeEditItemsSnapshot(raw as string | null)).toBeNull();
     }
+  });
+
+  it("REG-EDIT-DRAFT-B / B775: a well-formed v1 snapshot (pre-fix, productId-keyed draft) is discarded, never restored", () => {
+    // A real snapshot a pre-fix build could have written: otherwise
+    // well-formed, but `v: 1` and `draft` keyed by productId (the exact
+    // shape SA-108's version bump exists to keep off the device).
+    const v1 = JSON.stringify({
+      v: 1,
+      orderId: "o1",
+      savedAt: Date.now(),
+      baseline: "",
+      draft: { "shared-product": { productId: "shared-product", qty: 1, unitPrice: 1 } },
+      unlisted: [],
+      pendingDeletes: [],
+      selectedCreditIds: [],
+      creditsTouched: false,
+      floorAcked: [],
+    });
+    expect(deserializeEditItemsSnapshot(v1)).toBeNull();
+
+    // Not a blanket rejection of the shape — only the stale version number:
+    // the identical payload at the CURRENT version round-trips (covered
+    // above by "serialize -> deserialize round-trips every staged field").
+    const current = JSON.parse(v1);
+    current.v = EDIT_ITEMS_SNAPSHOT_VERSION;
+    expect(deserializeEditItemsSnapshot(JSON.stringify(current))).not.toBeNull();
   });
 
   it("REG-EDIT-DRAFT-B: a fresh snapshot against the same order is not stale", () => {
@@ -740,6 +767,40 @@ describe("edit-items-draft: two same-product lines never collide (B775)", () => 
     expect(items.some((i: any) => i.id === "La")).toBe(false);
   });
 
+  it("Opus round: TWO PLAIN (non-unit) same-product lines — not just Case+pack — also no-op on a zero-edit save", () => {
+    // Broader than the Case+pack repro fixture: two ordinary loose lines for
+    // the same product, neither unit-aware, pre-dating units_v1 or written by
+    // a path that never dedupes on productId (create()'s dto.items mapping).
+    const order: BaselineOrderLike = {
+      id: "o1",
+      lineItems: [
+        {
+          id: "Lc",
+          productId: "shared-product-2",
+          qty: 4,
+          unitPrice: 9,
+          name: "Widget (plain)",
+          notes: null,
+          status: "PENDING",
+        } as any,
+        {
+          id: "Ld",
+          productId: "shared-product-2",
+          qty: 6,
+          unitPrice: 9,
+          name: "Widget (plain)",
+          notes: null,
+          status: "PENDING",
+        } as any,
+      ],
+    };
+    const { draft } = hydrateFromOrder(order);
+    expect(Object.keys(draft).sort()).toEqual(["Lc", "Ld"]);
+    const originals = orderOriginals(order);
+    const items = stagedDiffItems({ draft, unlisted: [], pendingDeletes: [] }, originals);
+    expect(items).toEqual([]);
+  });
+
   it("a single-line order is unaffected — the fix is a pure superset, not a behavior change for the common case", () => {
     const order: BaselineOrderLike = {
       id: "o1",
@@ -777,6 +838,53 @@ describe("edit-items-draft: resolveDraftKeyForPick / newDraftKey (B775 fleet-lea
       La: { productId: productA, qty: 1, unitPrice: 10, catalogPrice: 10, name: "Widget" } as any,
     };
     expect(resolveDraftKeyForPick(draft, productA, null)).toBe("La");
+  });
+
+  it("SA-108: resolveDraftKeyForPick's result is NOT the item's own lineId-or-productId — the exact miss the old fallback made", () => {
+    // The banned formula was `it.lineId ?? it.productId`. A stored item whose
+    // OWN lineId/productId happens to equal "La" must not fool the resolver
+    // into a false match when the draft's actual storage key differs — proof
+    // the resolver reads the RECORD KEY, never re-derives one from fields.
+    const stored: DraftItem = {
+      productId: productA,
+      lineId: "La",
+      qty: 1,
+      unitPrice: 10,
+      catalogPrice: 10,
+      name: "Widget",
+    } as any;
+    const draft: Record<string, DraftItem> = { "storage-key-9": stored };
+    const bannedFormula = stored.lineId ?? stored.productId;
+    expect(resolveDraftKeyForPick(draft, productA, null)).not.toBe(bannedFormula);
+    expect(resolveDraftKeyForPick(draft, productA, null)).toBe("storage-key-9");
+
+    // And for a fresh add with NO existing line, the banned formula would
+    // resolve to the bare productId — the resolver must never do that either.
+    expect(resolveDraftKeyForPick({}, productA, null)).not.toBe(productA);
+  });
+
+  it("a scan that merges into an existing line produces exactly ONE UPDATE carrying that line's real id — never a stray CREATE", () => {
+    const order: BaselineOrderLike = {
+      id: "o1",
+      lineItems: [
+        {
+          id: "La",
+          productId: productA,
+          qty: 1,
+          unitPrice: 10,
+          name: "Widget",
+          notes: null,
+          status: "PENDING",
+        } as any,
+      ],
+    };
+    const { draft } = hydrateFromOrder(order);
+    const key = resolveDraftKeyForPick(draft, productA, null);
+    expect(key).toBe("La"); // resolves to the hydrated line's OWN key, not a new: key
+    const merged = { ...draft, [key]: { ...draft[key], qty: draft[key].qty + 1 } };
+    const originals = orderOriginals(order);
+    const items = stagedDiffItems({ draft: merged, unlisted: [], pendingDeletes: [] }, originals);
+    expect(items).toEqual([{ id: "La", action: "UPDATE", qty: 2 }]);
   });
 
   it("a unit-aware line (unitLabel set) for the same product is NEVER matched by a base/boxed scan", () => {
@@ -824,23 +932,73 @@ describe("edit-items-draft: resolveDraftKeyForPick / newDraftKey (B775 fleet-lea
 });
 
 /**
- * B775 review item 1 (SA-103): a source-level regression guard — the draft
- * record (and every render/handler key derived from it) must never again be
- * keyed by productId. Scoped to `(draft|next|d)[...]` bracket access, which
- * is how this file names the draft record everywhere it appears — a
- * function-argument use like `canEditPriceFor(it.productId)` or an unrelated
- * map like `priceHistory?.[p.id]` is not a draft-record access and is not
- * what this pin is about.
+ * B775 review item 1 (SA-103 + SA-108 Opus round): a source-level regression
+ * guard — the draft record (and every render/handler key derived from it)
+ * must never again be keyed by productId, and never re-derived from an
+ * item's own fields (the exact SA-108 regression: `it.lineId ?? it.productId`
+ * silently resolves wrong for a fresh add that has no `lineId` yet). Three
+ * shapes are scoped in:
+ *   1. `(draft|next|d)[...]` bracket ACCESS keyed by productId.
+ *   2. A computed object-literal KEY built from productId (`{[x.productId]:
+ *      ...}` / `{[p.id]: ...}`) — the shape the old `priceEditItem` re-keying
+ *      used before it became `{ key, item }`.
+ *   3. Any `lineId ?? ` fallback text at all, which is the SA-108 root cause.
+ * All three are matched against comment-stripped source — a function-argument
+ * use like `canEditPriceFor(it.productId)`, an unrelated map like
+ * `priceHistory?.[p.id]`, and this file's own explanatory prose (which
+ * necessarily discusses the banned pattern) must never satisfy or defeat this
+ * pin either way.
  */
 describe("edit-items.tsx source pin: the draft record is never keyed by productId (B775)", () => {
+  const stripComments = (text: string) =>
+    text.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/[^\n]*/g, "");
+  const source = stripComments(
+    readFileSync(join(__dirname, "../app/(operator)/(tabs)/orders/[id]/edit-items.tsx"), "utf8"),
+  );
+
   it("no (draft|next|d)[...productId] or (draft|next|d)[p.id] bracket access anywhere in the route file", () => {
-    const source = readFileSync(
-      join(__dirname, "../app/(operator)/(tabs)/orders/[id]/edit-items.tsx"),
-      "utf8",
-    );
     const offenders = source.match(
       /\b(?:draft|next|d)\[[^\]]*\.productId\]|\b(?:draft|next|d)\[p\.id\]/g,
     );
     expect(offenders).toBeNull();
+  });
+
+  it("no computed object-literal key built from productId ({[x.productId]: ...} / {[p.id]: ...})", () => {
+    const offenders = source.match(/\[[^\]]*\.productId\]\s*:|\[p\.id\]\s*:/g);
+    expect(offenders).toBeNull();
+  });
+
+  it("no `lineId ?? ` fallback anywhere — the exact SA-108 regression (a fresh add has no lineId yet)", () => {
+    expect(source).not.toContain("lineId ?? ");
+  });
+
+  it("the render loop reads the draft's key from Object.entries, never derives one", () => {
+    expect(source).toMatch(/Object\.entries\(draft\)/);
+  });
+
+  it("Opus finding 2 (stale closure): resolveDraftKeyForPick is called with the setDraft updater's OWN param, never the outer `draft` state", () => {
+    // The banned call is `resolveDraftKeyForPick(draft, ...)` — reading the
+    // render-time closure, which two picks in the same tick (before a
+    // re-render lands) would both see identically and stale.
+    expect(source).not.toMatch(/resolveDraftKeyForPick\(draft,/);
+    // The fix: called as resolveDraftKeyForPick(d, ...) where `d` is the
+    // setDraft((d) => ...) updater's parameter — always the latest value,
+    // even across back-to-back functional setState calls in one tick.
+    expect(source).toMatch(/resolveDraftKeyForPick\(d,/);
+  });
+
+  it("Opus finding 2: the resolved key is written to resolvedKeyRef.current INSIDE the updater, not read from an outer variable after setDraft returns", () => {
+    const setDraftCallStart = source.indexOf("setDraft((d) => {");
+    expect(setDraftCallStart).toBeGreaterThan(-1);
+    const resolveCallIndex = source.indexOf("resolveDraftKeyForPick(d,", setDraftCallStart);
+    const refWriteIndex = source.indexOf(
+      "resolvedKeyRef.current = resolvedKey;",
+      setDraftCallStart,
+    );
+    expect(resolveCallIndex).toBeGreaterThan(setDraftCallStart);
+    expect(refWriteIndex).toBeGreaterThan(resolveCallIndex);
+    // And the function hands the resolved key back out via the ref, not a
+    // variable captured from outside the updater.
+    expect(source).toMatch(/return resolvedKeyRef\.current;/);
   });
 });
