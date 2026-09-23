@@ -42,8 +42,22 @@ export interface Offender {
  * same page — the ignore filter must run over the full set, and slicing for
  * the error message happens after that, in assertNoOverflow.
  */
-export async function findViewportOverflow(page: Page): Promise<Offender[]> {
-  return page.evaluate(() => {
+/**
+ * `ignoreContainerSelectors`, when given, drops any offender that is a
+ * descendant of an element matching one of these plain CSS selectors —
+ * checked via `closest()` inside the page, so it catches content nested
+ * arbitrarily deep inside a known-bad container (a table's row-action
+ * buttons and their icons, not just the table/row/cell tags themselves).
+ * Reserve this for a container that is genuinely a SINGLE known, already
+ * filed defect on the page being checked (e.g. "the one table on this
+ * invoices list") — it is a coarser tool than the offender-level `ignore`
+ * predicate in assertNoOverflow and should be scoped just as narrowly.
+ */
+export async function findViewportOverflow(
+  page: Page,
+  ignoreContainerSelectors: string[] = [],
+): Promise<Offender[]> {
+  return page.evaluate((ignoreSelectors) => {
     const vw = window.innerWidth;
     const offenders: Array<{
       tag: string;
@@ -60,6 +74,8 @@ export async function findViewportOverflow(page: Page): Promise<Offender[]> {
       const leftEscape = -r.left;
       const escape = Math.max(rightEscape, leftEscape);
       if (escape <= 1) return;
+
+      if (ignoreSelectors.some((sel) => el.closest(sel))) return;
 
       let node: Element | null = el.parentElement;
       while (node && node !== document.body) {
@@ -89,7 +105,7 @@ export async function findViewportOverflow(page: Page): Promise<Offender[]> {
     });
     offenders.sort((a, b) => b.escape - a.escape);
     return offenders;
-  });
+  }, ignoreContainerSelectors);
 }
 
 /** Legacy document-level check — kept as a regression guard, but NOT
@@ -105,10 +121,13 @@ export async function documentLevelOverflowPx(page: Page): Promise<number> {
 
 /**
  * `ignore`, when given, filters out offenders that match a KNOWN, separately
- * filed defect, so a test can still assert everything ELSE on the page is
- * clean rather than skip the whole page. Keep this narrow and specific to the
- * one filed bug it exists for — a broad ignore predicate defeats the probe
- * the same way an unqualified page skip would.
+ * filed defect by their own tag/text, so a test can still assert everything
+ * ELSE on the page is clean rather than skip the whole page. `ignoreContainer`
+ * does the same but by ancestry (see findViewportOverflow) — use it instead
+ * when the known defect's own overflowing content is nested arbitrarily deep
+ * (a table's row-action buttons and icons, not just its cells). Keep either
+ * narrow and specific to the one filed bug it exists for — a broad ignore
+ * defeats the probe the same way an unqualified page skip would.
  *
  * Logs the URL it actually checked, always. A detail-page navigation that
  * silently no-ops (a locator matching 0, a click landing on the wrong
@@ -121,9 +140,10 @@ export async function assertNoOverflow(
   page: Page,
   screenLabel: string,
   ignore?: (o: Offender) => boolean,
+  ignoreContainer?: string[],
 ) {
   console.log(`[overflow probe] ${screenLabel} — checking ${page.url()}`);
-  let offenders = await findViewportOverflow(page);
+  let offenders = await findViewportOverflow(page, ignoreContainer);
   if (ignore) offenders = offenders.filter((o) => !ignore(o));
   // Slice for the failure message only, AFTER the ignore filter — see
   // findViewportOverflow's header for why filtering after a slice would have
