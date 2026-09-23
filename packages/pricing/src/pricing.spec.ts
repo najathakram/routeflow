@@ -22,6 +22,7 @@ import {
   isUpsellLine,
   effectiveBuyerPrice,
   formatQtySplit,
+  invoiceLineQtyText,
   type PromotionRule,
   type PromoScopeProduct,
 } from "./pricing";
@@ -1369,5 +1370,44 @@ describe("formatQtySplit", () => {
     expect(formatQtySplit({ qty: 288, boxes: 1, pieces: 0, boxLabel: "pallet" })).toBe("1 pallet");
     // A label already ending in "s" is not double-pluralised.
     expect(formatQtySplit({ qty: 4, boxes: 4, pieces: 0, boxLabel: "chassis" })).toBe("4 chassis");
+  });
+});
+
+// B653 review (2026-09-23): moved here from apps/web/lib/invoice-line-unit.ts so web, api
+// (PDF + email) and mobile all call the SAME formatter — no second copy of this decision.
+describe("invoiceLineQtyText", () => {
+  it("a pack line (no unitLabel) is EXACTLY formatQtySplit — byte-identical to before", () => {
+    expect(invoiceLineQtyText({ qty: 13, boxes: 2, pieces: 3 })).toBe(
+      formatQtySplit({ qty: 13, boxes: 2, pieces: 3 }),
+    );
+    expect(invoiceLineQtyText({ qty: 13, boxes: 2, pieces: 3, unitLabel: null })).toBe(
+      "2 boxes + 3 pcs",
+    );
+    expect(invoiceLineQtyText({ qty: 13, boxes: 2, pieces: 3, unitLabel: "   " })).toBe(
+      "2 boxes + 3 pcs",
+    );
+    expect(invoiceLineQtyText({ qty: 10 })).toBe("10");
+  });
+
+  it('a units_v1 line names its unit, not "boxes"', () => {
+    expect(invoiceLineQtyText({ qty: 864, boxes: 3, pieces: 0, unitLabel: "Case" })).toBe(
+      "3 Cases",
+    );
+    expect(invoiceLineQtyText({ qty: 288, boxes: 1, pieces: 0, unitLabel: "Case" })).toBe("1 Case");
+  });
+
+  it("a factor-1 unit line (no split) names its unit — never a bare qty", () => {
+    expect(invoiceLineQtyText({ qty: 5, boxes: null, pieces: null, unitLabel: "Piece" })).toBe(
+      "5 Piece",
+    );
+    expect(invoiceLineQtyText({ qty: 1, boxes: null, pieces: null, unitLabel: "Piece" })).toBe(
+      "1 Piece",
+    );
+  });
+
+  it("trims the label", () => {
+    expect(invoiceLineQtyText({ qty: 576, boxes: 2, pieces: 0, unitLabel: "  Case " })).toBe(
+      "2 Cases",
+    );
   });
 });

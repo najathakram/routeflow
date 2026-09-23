@@ -62,6 +62,7 @@ import { JwtPayload } from "../auth/jwt-payload.interface";
 import { RouteFlowGateway } from "../gateways/routeflow.gateway";
 import { EmailService } from "../email/email.service";
 import { InvoicePdfService } from "./invoice-pdf.service";
+import { invoiceItemQtyFields } from "./invoice-pdf-item";
 import { buildInvoiceEmailAttachment, InvoiceEmailAttachment } from "./invoice-attachment";
 import { SystemConfigService } from "../system-config/system-config.service";
 import { RegulatedLedgerService } from "../regulated/regulated-ledger.service";
@@ -3953,13 +3954,11 @@ export class InvoicesService {
         unitPrice: Number(it.unitPrice),
         subtotal: Number(it.subtotal),
         msrp: it.msrp != null ? Number(it.msrp) : null,
-        // F03/R9: the strikethrough + "N free" note buildInvoiceEmail renders are
-        // dead without these three scalars — the renderer can only show what this
-        // caller passes, and a BOGO line's reduced subtotal reads as a pricing
-        // error otherwise. Mirrors the PDF item payload and the web detail renderer.
+        // F03/R9: without these, buildInvoiceEmail's strike/"N free" note and a BOGO line's reduced subtotal read as a pricing error.
         originalPrice: it.originalPrice != null ? Number(it.originalPrice) : null,
         priceType: it.priceType ?? null,
         promoFreeUnits: it.promoFreeUnits != null ? Number(it.promoFreeUnits) : null,
+        ...invoiceItemQtyFields(it),
       })),
       pdfUrl,
       attachment,
@@ -4179,6 +4178,7 @@ export class InvoicesService {
         originalPrice: it.originalPrice != null ? Number(it.originalPrice) : null,
         priceType: it.priceType ?? null,
         promoFreeUnits: it.promoFreeUnits != null ? Number(it.promoFreeUnits) : null,
+        ...invoiceItemQtyFields(it),
       })),
       pdfUrl,
       attachment,
