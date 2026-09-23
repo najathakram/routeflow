@@ -1,3 +1,5 @@
+import { assertHttpUrl, escapeHtml } from "../common/html-escape";
+export { escapeHtml };
 // N3 (2026-09-16): billing-lifecycle email templates to the tenant admin — trial ending,
 // downgrade scheduled/applied, upgrade confirmed, cancelled, suspended.
 //
@@ -17,15 +19,6 @@ const PLATFORM_BRAND = "RouteFlow";
 
 const fmtMoney = (n: number): string =>
   new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(n);
-
-export function escapeHtml(value: string): string {
-  return String(value)
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#39;");
-}
 
 function baseLayout(params: { tagline: string; bodyHtml: string }): string {
   const brand = escapeHtml(PLATFORM_BRAND);
@@ -63,7 +56,7 @@ function baseLayout(params: { tagline: string; bodyHtml: string }): string {
 
 function ctaButtonHtml(url: string, label: string): string {
   return `<table cellpadding="0" cellspacing="0" style="margin:24px 0;"><tr><td style="border-radius:6px;background:#1a2033;">
-    <a href="${escapeHtml(url)}" style="display:inline-block;padding:12px 24px;font-size:14px;font-weight:600;color:#ffffff;text-decoration:none;">${escapeHtml(label)}</a>
+    <a href="${escapeHtml(assertHttpUrl(url))}" style="display:inline-block;padding:12px 24px;font-size:14px;font-weight:600;color:#ffffff;text-decoration:none;">${escapeHtml(label)}</a>
   </td></tr></table>`;
 }
 

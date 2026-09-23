@@ -1,6 +1,3 @@
-import { readFileSync } from "fs";
-import { join } from "path";
-import * as ts from "typescript";
 import { EmailService } from "./email.service";
 
 jest.mock("nodemailer", () => ({ createTransport: jest.fn() }));
@@ -11,100 +8,9 @@ jest.mock("nodemailer", () => ({ createTransport: jest.fn() }));
  * descriptions, customer names, invoice numbers, terms, dates and emails straight into HTML.
  */
 
-// ─── Structural guard: every ${…} in an HTML template literal is provably safe ─────────────────
-
-/**
- * A raw interpolation that is safe for a stated reason. The list may only SHRINK: a new raw
- * interpolation fails, and so does an entry that no longer appears in the file.
- */
-const ALLOWED: Record<string, string> = {
-  // Numbers: they render as digits and can carry no markup.
-  freeUnits: "number",
-  "params.expiryHours": "number",
-  "it.currentStock": "number",
-  "it.reorderPoint": "number",
-  overflow: "number",
-  "params.items.length": "number",
-  // HTML fragments built ONLY from HTML template literals in this file, which this scan checks
-  // too, so every value inside them is already held to the same rule.
-  "params.headerHtml": "brandHeaderHtml(): escapes the business name",
-  "params.bodyHtml": "renderBrandedEmail is module-private; every body is a scanned template",
-  amountPaidRow: "scanned fragment",
-  creditAppliedRow: "scanned fragment",
-  advanceAppliedRow: "scanned fragment",
-  reminderBanner: "scanned fragment",
-  depositBanner: "scanned fragment",
-  itemRows: "scanned fragment",
-  totalsFooter: "scanned fragment",
-  pdfButton: "scanned fragment",
-  signInLine: "scanned fragment (both callers pass HTML templates)",
-  rows: "scanned fragment",
-};
-
-const SRC = readFileSync(join(__dirname, "email.service.ts"), "utf8");
-const HTML_TAG = /<[a-zA-Z!/]/;
-
-/** Safe without an allow-list entry: escaped, money-formatted, a literal, or a brand constant. */
-function inherentlySafe(e: ts.Expression, src: ts.SourceFile): boolean {
-  if (ts.isParenthesizedExpression(e)) return inherentlySafe(e.expression, src);
-  if (ts.isStringLiteral(e) || ts.isNoSubstitutionTemplateLiteral(e)) return true;
-  // A nested template is itself scanned as HTML (see rawInterpolations), so it is safe HERE.
-  if (ts.isTemplateExpression(e)) return true;
-  if (ts.isIdentifier(e) && /^BRAND_[A-Z_]+$/.test(e.text)) return true;
-  if (ts.isCallExpression(e)) {
-    const callee = e.expression.getText(src);
-    // escapeHtml escapes; fmt is Intl currency formatting; renderBrandButton escapes its
-    // label and url inside (a scanned template).
-    return ["escapeHtml", "fmt", "renderBrandButton"].includes(callee);
-  }
-  // The condition never renders; only the branches do.
-  if (ts.isConditionalExpression(e)) {
-    return inherentlySafe(e.whenTrue, src) && inherentlySafe(e.whenFalse, src);
-  }
-  return false;
-}
-
-/** Every `${…}` inside an HTML template (one with a tag, or nested in one) that is not safe. */
-export function rawInterpolations(code: string): string[] {
-  const src = ts.createSourceFile("x.ts", code, ts.ScriptTarget.Latest, true);
-  const hits: string[] = [];
-  const visit = (n: ts.Node, inHtml: boolean) => {
-    let html = inHtml;
-    if (ts.isTemplateExpression(n)) {
-      html = inHtml || HTML_TAG.test(n.getText(src));
-      if (html) {
-        for (const span of n.templateSpans) {
-          if (!inherentlySafe(span.expression, src)) {
-            hits.push(span.expression.getText(src).replace(/\s+/g, " "));
-          }
-        }
-      }
-    }
-    ts.forEachChild(n, (c) => visit(c, html));
-  };
-  visit(src, false);
-  return hits;
-}
-
-describe("B807 — no unescaped interpolation in email.service.ts HTML bodies (REG-B807)", () => {
-  it("the scanner flags a raw value, including one nested in a tagless template (never vacuous)", () => {
-    expect(rawInterpolations("const a = `<p>${name}</p>`;")).toEqual(["name"]);
-    expect(rawInterpolations("const a = `<p>${x ? ` by ${d}` : ''}</p>`;")).toEqual(["d"]);
-    expect(
-      rawInterpolations("const a = `<p>${escapeHtml(name)} ${fmt(n)} ${BRAND_NAVY}</p>`;"),
-    ).toEqual([]);
-    expect(rawInterpolations("const a = `plain ${name}`;")).toEqual([]);
-  });
-
-  it("every raw interpolation in an HTML body is on the reasoned allow-list", () => {
-    expect(rawInterpolations(SRC).filter((t) => !(t in ALLOWED))).toEqual([]);
-  });
-
-  it("every allow-list entry still appears raw in an HTML body (the list may only shrink)", () => {
-    const raw = new Set(rawInterpolations(SRC));
-    expect(Object.keys(ALLOWED).filter((t) => !raw.has(t))).toEqual([]);
-  });
-});
+// The STRUCTURAL guard that used to live here (an email.service-only scan keyed by expression
+// text) is superseded by common/html-interpolation.spec.ts (B809): every api file, keyed by
+// location, following values through consts, parameters and call sites.
 
 // ─── Behavioral pins: a <script> payload in each field arrives escaped ─────────────────────────
 
@@ -211,5 +117,43 @@ describe("B807 — each tenant/buyer field is HTML-escaped in its email (REG-B80
     jest.spyOn(svc as any, "getTenantBusinessName").mockResolvedValue(XSS);
     await svc.sendTestEmail("owner@example.com");
     expectEscaped(htmls[0]);
+  });
+});
+
+/** sendSetPasswordEmail sends through sendPlatform, not send: capture that path. */
+function capturePlatformHtml(svc: EmailService): string[] {
+  const htmls: string[] = [];
+  jest.spyOn(svc, "sendPlatform").mockImplementation(async (p: any) => {
+    htmls.push(p.html);
+    return { delivered: true, transport: "smtp" } as any;
+  });
+  return htmls;
+}
+
+describe("B809 — the CTA button refuses a non-http(s) link (REG-B809)", () => {
+  it("sendSetPasswordEmail with a javascript: URL throws before anything is sent", async () => {
+    const svc = makeService();
+    const htmls = capturePlatformHtml(svc);
+    await expect(
+      svc.sendSetPasswordEmail({
+        to: "new.user@example.com",
+        username: "newuser",
+        setPasswordUrl: "javascript:alert(1)",
+        expiryHours: 72,
+      }),
+    ).rejects.toThrow(/only http\(s\) is allowed/);
+    expect(htmls).toHaveLength(0);
+  });
+
+  it("an https URL still renders as the button's href", async () => {
+    const svc = makeService();
+    const htmls = capturePlatformHtml(svc);
+    await svc.sendSetPasswordEmail({
+      to: "new.user@example.com",
+      username: "newuser",
+      setPasswordUrl: "https://app.example.com/reset-password?token=ab12",
+      expiryHours: 72,
+    });
+    expect(htmls[0]).toContain('href="https://app.example.com/reset-password?token=ab12"');
   });
 });

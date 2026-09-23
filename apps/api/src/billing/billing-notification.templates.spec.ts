@@ -65,6 +65,18 @@ describe("billing-notification.templates", () => {
       expect(billingSettingsUrl()).toBe("https://www.routeflow.info/settings/billing");
       expect(billingSettingsUrl()).not.toContain("localhost");
     });
+
+    it("B809: a non-http(s) base URL can never become the CTA's href (REG-B809)", () => {
+      process.env = { ...ORIGINAL_ENV, WEB_URL: "javascript:alert(1)//" };
+      expect(() =>
+        trialEndingTemplate({
+          businessName: "Acme Retail",
+          adminName: "Jamie",
+          milestone: "TRIAL_ENDING_7D",
+          trialEndsAt: "2026-09-23",
+        }),
+      ).toThrow(/only http\(s\) is allowed/);
+    });
   });
 
   describe("trialEndingTemplate", () => {
