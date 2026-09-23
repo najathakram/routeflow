@@ -5,7 +5,7 @@ import * as nodemailer from "nodemailer";
 import { PrismaService } from "../prisma/prisma.service";
 import { EncryptionService } from "../common/encryption.service";
 import { MailboxSendService } from "./mailbox/mailbox-send.service";
-import { assertHttpUrl, escapeHtml } from "../common/html-escape";
+import { escapeHtml, safeLinkHref } from "../common/html-escape";
 // F03/R9: ONE original-price display decision shared with the PDF, so the two
 // customer-facing documents of the same send can never disagree (a pure helper —
 // no Nest/module coupling, and unlike ./invoice-pdf-template it is not mocked
@@ -301,8 +301,15 @@ function renderBrandedEmail(params: {
 /** A branded CTA button — Route Teal, ≥44px tap target (14px vertical padding either side of
  *  a 16px line-height = 44px total, meeting the email tap-target guideline). */
 function renderBrandButton(label: string, url: string): string {
+  // B809: a non-http(s) URL renders the button WITHOUT an href (logged and counted), so the
+  // email still goes out but can never carry a javascript: or data: link.
+  const href = safeLinkHref(url, "renderBrandButton");
+  const style = `display:inline-block;padding:14px 28px;line-height:16px;font-family:Arial,Helvetica,sans-serif;font-size:15px;font-weight:700;color:${BRAND_WHITE};text-decoration:none;`;
+  const button = href
+    ? `<a href="${escapeHtml(href)}" style="${style}">${escapeHtml(label)}</a>`
+    : `<span style="${style}">${escapeHtml(label)}</span>`;
   return `<table cellpadding="0" cellspacing="0" role="presentation"><tr><td style="background:${BRAND_TEAL};border-radius:6px;" bgcolor="${BRAND_TEAL}">
-    <a href="${escapeHtml(assertHttpUrl(url))}" style="display:inline-block;padding:14px 28px;line-height:16px;font-family:Arial,Helvetica,sans-serif;font-size:15px;font-weight:700;color:${BRAND_WHITE};text-decoration:none;">${escapeHtml(label)}</a>
+    ${button}
   </td></tr></table>`;
 }
 

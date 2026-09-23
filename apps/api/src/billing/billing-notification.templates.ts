@@ -1,4 +1,4 @@
-import { assertHttpUrl, escapeHtml } from "../common/html-escape";
+import { escapeHtml, safeLinkHref } from "../common/html-escape";
 export { escapeHtml };
 // N3 (2026-09-16): billing-lifecycle email templates to the tenant admin — trial ending,
 // downgrade scheduled/applied, upgrade confirmed, cancelled, suspended.
@@ -55,8 +55,15 @@ function baseLayout(params: { tagline: string; bodyHtml: string }): string {
 }
 
 function ctaButtonHtml(url: string, label: string): string {
+  // B809: a non-http(s) URL renders the button WITHOUT an href (logged and counted).
+  const href = safeLinkHref(url, "ctaButtonHtml");
+  const style =
+    "display:inline-block;padding:12px 24px;font-size:14px;font-weight:600;color:#ffffff;text-decoration:none;";
+  const button = href
+    ? `<a href="${escapeHtml(href)}" style="${style}">${escapeHtml(label)}</a>`
+    : `<span style="${style}">${escapeHtml(label)}</span>`;
   return `<table cellpadding="0" cellspacing="0" style="margin:24px 0;"><tr><td style="border-radius:6px;background:#1a2033;">
-    <a href="${escapeHtml(assertHttpUrl(url))}" style="display:inline-block;padding:12px 24px;font-size:14px;font-weight:600;color:#ffffff;text-decoration:none;">${escapeHtml(label)}</a>
+    ${button}
   </td></tr></table>`;
 }
 

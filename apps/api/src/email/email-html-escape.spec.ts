@@ -1,3 +1,5 @@
+import { Logger } from "@nestjs/common";
+import { refusedEmailLinkCount } from "../common/html-escape";
 import { EmailService } from "./email.service";
 
 jest.mock("nodemailer", () => ({ createTransport: jest.fn() }));
@@ -130,19 +132,25 @@ function capturePlatformHtml(svc: EmailService): string[] {
   return htmls;
 }
 
-describe("B809 — the CTA button refuses a non-http(s) link (REG-B809)", () => {
-  it("sendSetPasswordEmail with a javascript: URL throws before anything is sent", async () => {
+describe("B809 — the CTA button refuses a non-http(s) link, and the email still goes out (REG-B809)", () => {
+  it("sendSetPasswordEmail with a javascript: URL sends the email with NO link and logs an error", async () => {
+    const errorSpy = jest.spyOn(Logger.prototype, "error").mockImplementation(() => undefined);
+    const before = refusedEmailLinkCount();
     const svc = makeService();
     const htmls = capturePlatformHtml(svc);
-    await expect(
-      svc.sendSetPasswordEmail({
-        to: "new.user@example.com",
-        username: "newuser",
-        setPasswordUrl: "javascript:alert(1)",
-        expiryHours: 72,
-      }),
-    ).rejects.toThrow(/only http\(s\) is allowed/);
-    expect(htmls).toHaveLength(0);
+    await svc.sendSetPasswordEmail({
+      to: "new.user@example.com",
+      username: "newuser",
+      setPasswordUrl: "javascript:alert(1)",
+      expiryHours: 72,
+    });
+    expect(htmls).toHaveLength(1); // the email still went out
+    expect(htmls[0]).not.toContain("javascript:");
+    expect(htmls[0]).not.toMatch(/<a [^>]*>Set your password</);
+    expect(htmls[0]).toMatch(/<span [^>]*>Set your password<\/span>/);
+    expect(refusedEmailLinkCount()).toBe(before + 1);
+    expect(errorSpy).toHaveBeenCalledWith(expect.stringMatching(/^renderBrandButton: refused/));
+    errorSpy.mockRestore();
   });
 
   it("an https URL still renders as the button's href", async () => {
