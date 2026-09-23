@@ -11,7 +11,11 @@
 // queued replay collapse onto the original capture instead of minting a second one.
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "../api-client";
-import { inlineReturnNonceKey, shouldSettleInlineReturnNonce } from "../inline-return-submit-key";
+import {
+  captureOutcomeFromError,
+  inlineReturnNonceKey,
+  shouldSettleInlineReturnNonce,
+} from "../inline-return-submit-key";
 import { useInlineReturnSubmissionStore } from "../../store/inlineReturnSubmissionStore";
 import type {
   CaptureInlineReturnRequest,
@@ -67,17 +71,26 @@ export function useCaptureInlineReturn() {
       }
     },
     onError: (error, variables) => {
-      // `err.response` present means the server actually answered (a refusal) — terminal,
-      // settle exactly like a success. Absent means the request never reached the server (a
-      // connectivity failure, or the app was killed first) — the offline queue is expected to
-      // replay this exact request, and the replay must reuse the SAME nonce or it becomes a
-      // second, duplicate capture. Disclosed residual: if the app is killed AFTER the server
-      // captured the return but BEFORE this handler runs, no handler runs at all and the nonce
-      // persists until the next settle — a later replay of the identical request still resolves
-      // correctly (the server's own returnKey uniqueness returns the same record), it is simply
-      // not cleared promptly. Same accepted policy as the sibling standard-return flow.
-      const reachedServer = (error as { response?: unknown })?.response != null;
-      if (shouldSettleInlineReturnNonce({ kind: "error", reachedServer })) {
+      // SA-091a/SA-091b precision: `captureOutcomeFromError` is the ONE place that classifies
+      // this endpoint's errors (shared with the offline-queue drain's settleAfterDrain, via the
+      // same isDefiniteInlineReturnRefusal core) — an `isOfflineQueued` error is a THIRD shape,
+      // "not attempted yet", never settled here; the queue's own drain settles it later, for
+      // real, once it actually lands or fails. A DEFINITE 4xx refusal is terminal, settle
+      // exactly like a success. A 5xx, the stuck-row retry-409 (inline-returns.service.ts's
+      // issueCreditInTx guard — retrying with the SAME returnKey is how that row's credit
+      // actually gets issued, since the Return row and its credit commit in SEPARATE
+      // transactions), and no response at all are all UNCERTAIN outcomes: settling would let a
+      // retry mint a fresh key and double-book if the first attempt actually landed. Disclosed
+      // residual, NOT the same policy as the sibling standard-return flow (that one clears on
+      // "landed OR queued" and blocks re-submits via its own `submitted` flag —
+      // returnSubmissionStore.ts's markSubmitted; this flow settles purely on outcome certainty
+      // and never blocks a later attempt): if the app is killed AFTER the server captures the
+      // return but BEFORE this handler runs, no handler runs at all and the nonce persists
+      // until the next settle. A later replay of the identical request still resolves correctly
+      // (the server's own returnKey uniqueness returns the same record), it is simply not
+      // cleared promptly.
+      const outcome = captureOutcomeFromError(error);
+      if (outcome.kind !== "queued" && shouldSettleInlineReturnNonce(outcome)) {
         markCaptureSettled(inlineReturnNonceKey(variables.customerId, variables.orderId));
       }
     },

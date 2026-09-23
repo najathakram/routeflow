@@ -617,6 +617,53 @@ describe("InlineReturnsService", () => {
     );
   });
 
+  // ─── the N-1 guarded link's exact refusal literal — pinned cross-boundary (SA-091b) ──
+  //
+  // The mobile client (apps/mobile/lib/inline-return-submit-key.ts's
+  // isDefiniteInlineReturnRefusal) parses THIS EXACT MESSAGE to decide the return-key is still
+  // safe to retry (this is a 409 the server DID answer, but whether the mint that already ran
+  // in this same transaction committed is what the ROLLBACK undoes — the caller must retry with
+  // the SAME returnKey, never mint a fresh one). No structured error code exists yet
+  // (RETURN_STATE_RACE_RETRY is a proposed follow-up); until then this string is the only
+  // contract between the two sides, so a reword here without a matching mobile update would
+  // silently break that retry classification. If this test ever needs to change, update
+  // RETURN_STATE_RACE_RETRY_MESSAGE in apps/mobile/lib/inline-return-submit-key.ts too.
+  it('issueCreditInTx\'s N-1 guarded-link miss throws EXACTLY "Return changed state during credit issue — retry" — pinned for the mobile retry-classification contract', async () => {
+    prisma.return.findFirst
+      .mockResolvedValueOnce(null) // capture()'s own pre-tx replay check
+      .mockResolvedValueOnce(null) // capture()'s in-tx replay check — none found, proceeds to create
+      .mockResolvedValueOnce({
+        id: "ret-1",
+        status: "RECEIVED",
+        creditNoteId: null,
+        holdReason: null,
+        customerId: "cust-1",
+        orderId: "ord-carrying",
+        creditSubtotal: 28,
+        creditTax: 2,
+        creditCategoryTax: 0,
+      }) // issueCredit's own unlocked pre-read (m-2)
+      .mockResolvedValueOnce({
+        id: "ret-1",
+        status: "RECEIVED",
+        creditNoteId: null,
+        holdReason: null,
+        customerId: "cust-1",
+        orderId: "ord-carrying",
+        creditSubtotal: 28,
+        creditTax: 2,
+        creditCategoryTax: 0,
+      }); // issueCredit's in-tx FOR-UPDATE re-read: still RECEIVED, proceeds to mint
+    // A racer's own issueCredit already linked this return's credit note between this call's
+    // FOR-UPDATE re-read and its own updateMany — the guarded link matches 0 rows.
+    prisma.return.updateMany.mockResolvedValue({ count: 0 });
+
+    await expect(service.capture(CAPTURE_DTO as any, OPERATOR)).rejects.toThrow(
+      "Return changed state during credit issue — retry",
+    );
+    expect(creditNotes.mintStandaloneInTx).toHaveBeenCalled();
+  });
+
   // ─── approve / reject (N-5, Q-C, HIGH-2, HIGH-4) ─────────────────────────────
 
   describe("approve", () => {

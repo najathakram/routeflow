@@ -4,6 +4,7 @@ import { userScopedStorage } from "../lib/user-scoped-storage";
 import {
   clearNonce,
   getOrCreateNonce as getOrCreateNonceIn,
+  settleAfterDrain as settleAfterDrainIn,
   type NonceMap,
 } from "../lib/inline-return-submit-key";
 
@@ -53,6 +54,13 @@ interface InlineReturnSubmissionState {
   /** The attempt for `key` reached a terminal state (landed, or a non-retryable refusal) —
    *  clears its nonce so the NEXT attempt for the same customer+order mints a fresh one. */
   markCaptureSettled: (key: string) => void;
+  /** SA-091b: the offline-queue drain's equivalent of `markCaptureSettled`, for a batch of
+   *  customer/order/nonceSuffix records (built by `inlineReturnDrainSettleRecords`) — each one
+   *  settles only when the stored nonce still matches, so a newer attempt's nonce is never
+   *  cleared out from under it. See `useNetworkSync.ts`'s post-drain step. */
+  settleAfterDrain: (
+    records: ReadonlyArray<{ customerId: string; orderId: string; nonceSuffix: string }>,
+  ) => void;
   // Driver-durability lane parity (RULINGS.md R1): sign-out (lib/session-teardown.ts) resets
   // this store too, so a kill-then-logout-then-login-as-someone-else can never surface, or
   // block, the prior user's inline-return attempts.
@@ -71,6 +79,8 @@ export const useInlineReturnSubmissionStore = create<InlineReturnSubmissionState
         return nonce;
       },
       markCaptureSettled: (key) => set((s) => ({ nonces: clearNonce(s.nonces, key) })),
+      settleAfterDrain: (records) =>
+        set((s) => ({ nonces: settleAfterDrainIn(records, s.nonces) })),
       reset: () => set({ nonces: {} }),
     }),
     {
