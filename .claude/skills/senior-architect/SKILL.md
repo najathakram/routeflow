@@ -172,7 +172,11 @@ ones run in the ruling line as `checked: 1-10`, and say which were NOT run and w
    every reader of it; a fix that prefers a field is checked where that field is WRITTEN; a
    fixture is a shape the producing path actually emits. Money fails closed on a missing input.
    Runs in BOTH directions: a fix at the wire is proven only from the state the wire is built
-   FROM (retro 4, E40 — a client-side double count survived a wire-side merge).
+   FROM (retro 4, E40 — a client-side double count survived a wire-side merge). Applies to a
+   SHAPE a ruling creates, not only a field: when a ruling makes two rows legal where one was
+   assumed, list every map/find keyed by the old identity on both sides of the wire before it
+   ships (retro 6, E46 — two same-product lines at two packs, and a product-keyed fold that
+   then deleted one of them).
 9. **Admitted shapes** — for every NEW refusal or narrowed guard, enumerate each live client's
    emitted shapes from that client's own builder function and run each through the guard's
    condition; a guard is sound only against the set actually sent (retro 4, E39 — `boxes: 0`
