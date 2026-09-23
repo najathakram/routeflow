@@ -2708,7 +2708,13 @@ describe("OrdersService", () => {
       expect(mergeSpy).toHaveBeenCalledWith("cust-b", {}, sweepOpts);
       expect(warnSpy).not.toHaveBeenCalled();
 
-      expect(result).toEqual({ customers: 2, merged: 2, skipped: 0, packMismatches: 0 });
+      expect(result).toEqual({
+        customers: 2,
+        merged: 2,
+        skipped: 0,
+        packMismatches: 0,
+        livePackFallbacks: 0,
+      });
     });
 
     it("REG-B323 a customer with one tenant-scoped pending order and one legacy null-tenant order is counted and warned, never dropped silently", async () => {
@@ -2736,7 +2742,13 @@ describe("OrdersService", () => {
           "sweepAllPendingOrders: customer cust-a has 1 pending order(s) without tenantId — not merged (B323)",
         ),
       );
-      expect(result).toEqual({ customers: 0, merged: 0, skipped: 1, packMismatches: 0 });
+      expect(result).toEqual({
+        customers: 0,
+        merged: 0,
+        skipped: 1,
+        packMismatches: 0,
+        livePackFallbacks: 0,
+      });
     });
   });
 

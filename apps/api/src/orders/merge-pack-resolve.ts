@@ -13,10 +13,12 @@
  *
  * SA-107a: `deriveUnitsPerBox` (`merge-items.ts`) is the FIRST implementation of the "own
  * snapshot, else derive from the line's own boxes/pieces/qty" precedence — `resolveLinePack` is
- * built ON it, not a second copy of the same two steps. `merge-items.ts` itself is untouched by
- * this import (frozen byte-identical by F06's R12); only its THIRD step (falling back to the
- * live pack) is new here, since `deriveUnitsPerBox` returns 0 rather than knowing what to do
- * with an unresolved pack.
+ * built ON it, not a second copy of the same two steps. `deriveUnitsPerBox` ITSELF stays frozen
+ * byte-identical by this import (F06's R12); only its THIRD step (falling back to the live pack)
+ * is new here, since `deriveUnitsPerBox` returns 0 rather than knowing what to do with an
+ * unresolved pack. `merge-items.ts` as a FILE is not untouched, though — SA-101(1)(d) gave
+ * `foldMergeItems` a refusal on a genuine pack disagreement, and SA-124a rebuilt its existing-line
+ * keying to productId + resolved pack (see that file's own header).
  */
 import { deriveUnitsPerBox } from "./merge-items";
 
@@ -53,11 +55,18 @@ export function resolveLinePack(c: PackCandidate, liveUnitsPerBox: number): Pack
 
 export interface PackGroup<T> {
   pack: number;
-  /** True when `winner` (the caller's designated "existing line" contribution) belongs here. */
+  /**
+   * SA-124a: the SPECIFIC winner-line contribution (object identity, `===`) that resolved into
+   * THIS group, if any. A product can now legitimately carry MULTIPLE winner lines at different
+   * packs (the durable result of an earlier pack-mismatch sweep) — each lands in its own group,
+   * so a write must never assume there is only one shared winner id to target.
+   */
+  winnerInGroup: T | undefined;
+  /** `winnerInGroup != null` — kept as a field for callers that only need the boolean. */
   isWinnerGroup: boolean;
   contributions: T[];
   /**
-   * True when this group is exactly one contribution and it is NOT the winner — a loser line
+   * True when this group is exactly one contribution and it is NOT a winner — a loser line
    * simply MOVING onto the winner order, nothing to fold it with. SA-101(1)(b): carried
    * byte-identical, never re-split through `mergeBoxedContributions`/`computeLineSubtotal`.
    */
@@ -74,18 +83,22 @@ export interface GroupedContributions<T> {
 }
 
 /**
- * Groups every contribution for ONE product by its resolved pack. `winner`, when present, is the
- * contribution object identity (`===`) that already has an existing OrderItem row — its group
- * becomes an UPDATE; every other group becomes a fresh CREATE. Never refuses, never folds across
- * a disagreement (SA-101(1)(b)) — that refusal belongs only to the interactive replace-all/
- * scan-merge site (a different function), never the sweep or the pending-order merge.
+ * Groups every contribution for ONE product by its resolved pack. Each entry in `winners` is an
+ * EXISTING OrderItem row's own contribution (object identity, `===`, decides which group it lands
+ * in) — a product may carry more than one, each at its own already-resolved pack (SA-124a: the
+ * durable result of an earlier pack-mismatch sweep, never collapsed to a single "the" winner).
+ * The group a winner lands in becomes an UPDATE to that specific line; a group with no winner
+ * becomes a fresh CREATE. Never refuses, never folds across a disagreement (SA-101(1)(b)) — that
+ * refusal belongs only to the interactive replace-all/scan-merge site (a different function),
+ * never the sweep or the pending-order merge.
  */
 export function groupContributionsByPack<T extends PackCandidate>(
-  winner: T | undefined,
+  winners: readonly T[],
   losers: readonly T[],
   liveUnitsPerBox: number,
 ): GroupedContributions<T> {
-  const all: T[] = winner ? [winner, ...losers] : [...losers];
+  const winnerSet = new Set<T>(winners);
+  const all: T[] = [...winners, ...losers];
   const byPack = new Map<number, T[]>();
   let usedLivePack = false;
   for (const c of all) {
@@ -98,11 +111,13 @@ export function groupContributionsByPack<T extends PackCandidate>(
   const packsSeen = [...byPack.keys()].sort((a, b) => a - b);
   const groups: PackGroup<T>[] = packsSeen.map((pack) => {
     const contributions = byPack.get(pack)!;
+    const winnerInGroup = contributions.find((c) => winnerSet.has(c));
     return {
       pack,
-      isWinnerGroup: winner != null && contributions.includes(winner),
+      winnerInGroup,
+      isWinnerGroup: winnerInGroup != null,
       contributions,
-      isSingleMove: contributions.length === 1 && contributions[0] !== winner,
+      isSingleMove: winnerInGroup == null && contributions.length === 1,
     };
   });
   return { groups, packsSeen, disagreement: packsSeen.length > 1, usedLivePack };

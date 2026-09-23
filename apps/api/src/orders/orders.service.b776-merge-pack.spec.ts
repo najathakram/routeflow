@@ -63,7 +63,13 @@ describe("OrdersService merges — B776 pack-mismatch red-first pins (SA-101(1))
     const created = h.prisma.orderItem.create.mock.calls.find(
       (c: any) => c[0]?.data?.productId === "prod-repack",
     );
-    expect(created![0].data).toMatchObject({ boxes: 1, pieces: 0, unitsPerBox: 12, subtotal: 36 });
+    expect(created![0].data).toMatchObject({
+      boxes: 1,
+      pieces: 0,
+      unitsPerBox: 12,
+      unitPrice: 36,
+      subtotal: 36,
+    });
   });
 
   it("2. product made unboxed: keeps the 12-pack at $36, never 12x overcharged", async () => {
@@ -187,6 +193,107 @@ describe("OrdersService merges — B776 pack-mismatch red-first pins (SA-101(1))
     expect(result.packMismatches).toBe(1);
     expect(warnSpy).toHaveBeenCalledWith(
       expect.stringContaining("contributing lines disagree on pack"),
+    );
+  });
+
+  it("7. SA-124a: a winner already carrying 12-pack and 6-pack lines (a prior mismatch's durable state) folds a NEW 6-pack loser into the matching line — no third line, the 12-pack line untouched", async () => {
+    h.prisma.order.findMany.mockResolvedValue([
+      {
+        id: "w1",
+        customerId: "cust-1",
+        status: "PENDING",
+        lineItems: [
+          box("w-12", { id: "w-12", unitsPerBox: 12, unitPrice: 36, subtotal: 36 }),
+          box("w-6", {
+            id: "w-6",
+            qty: 6,
+            boxes: 1,
+            pieces: 0,
+            unitsPerBox: 6,
+            unitPrice: 18,
+            subtotal: 18,
+          }),
+        ],
+      },
+      {
+        id: "l1",
+        customerId: "cust-1",
+        status: "PENDING",
+        lineItems: [
+          box("ll1", { qty: 6, boxes: 1, pieces: 0, unitsPerBox: 6, unitPrice: 18, subtotal: 18 }),
+        ],
+      },
+    ]);
+    h.prisma.product.findMany.mockResolvedValue([{ id: "prod-repack", unitsPerBox: 6 }]);
+
+    await h.service.mergeAllPendingForCustomer("cust-1");
+
+    const creates = h.prisma.orderItem.create.mock.calls.filter(
+      (c: any) => c[0]?.data?.productId === "prod-repack",
+    );
+    expect(creates).toHaveLength(0); // no third line — folds into the existing 6-pack line
+    const updates = h.prisma.orderItem.update.mock.calls.filter(
+      (c: any) => c[0]?.where?.id === "w-6",
+    );
+    expect(updates).toHaveLength(1);
+    expect(updates[0][0].data).toMatchObject({ boxes: 2, pieces: 0, unitsPerBox: 6, subtotal: 36 });
+    // the 12-pack line is never referenced by any write — untouched.
+    const touchedTwelve = h.prisma.orderItem.update.mock.calls.some(
+      (c: any) => c[0]?.where?.id === "w-12",
+    );
+    expect(touchedTwelve).toBe(false);
+  });
+
+  it("8. SA-124: a no-snapshot, no-split loser resolved at the live pack (12) warns and counts — no snapshot means genuinely no pack of its own", async () => {
+    h.prisma.order.groupBy.mockImplementation(({ where }: any) =>
+      where?.tenantId === null
+        ? Promise.resolve([])
+        : Promise.resolve([{ customerId: "cust-1", tenantId: "t1", _count: { _all: 2 } }]),
+    );
+    h.prisma.order.findMany.mockResolvedValue([
+      { id: "w1", customerId: "cust-1", status: "PENDING", lineItems: [] },
+      {
+        id: "l1",
+        customerId: "cust-1",
+        status: "PENDING",
+        // box-unaware, no unitsPerBox snapshot at all — nothing of its own to resolve a pack from.
+        lineItems: [box("ll1", { boxes: null, pieces: null, unitsPerBox: null })],
+      },
+    ]);
+    h.prisma.product.findMany.mockResolvedValue([{ id: "prod-repack", unitsPerBox: 12 }]);
+    const warnSpy = jest
+      .spyOn((h.service as any).logger, "warn")
+      .mockImplementation(() => undefined);
+
+    const result = await h.service.sweepAllPendingOrders();
+
+    expect(result.livePackFallbacks).toBe(1);
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining("had no pack snapshot on any contributing line"),
+    );
+  });
+
+  it("9. SA-124: a snapshotted or split line never falls back to the live pack — no warn, counter stays 0", async () => {
+    h.prisma.order.groupBy.mockImplementation(({ where }: any) =>
+      where?.tenantId === null
+        ? Promise.resolve([])
+        : Promise.resolve([{ customerId: "cust-1", tenantId: "t1", _count: { _all: 2 } }]),
+    );
+    h.prisma.order.findMany.mockResolvedValue([
+      { id: "w1", customerId: "cust-1", status: "PENDING", lineItems: [] },
+      // box("ll1") carries its own unitsPerBox: 12 snapshot — resolves without the live pack.
+      { id: "l1", customerId: "cust-1", status: "PENDING", lineItems: [box("ll1")] },
+    ]);
+    h.prisma.product.findMany.mockResolvedValue([{ id: "prod-repack", unitsPerBox: 6 }]);
+    const warnSpy = jest
+      .spyOn((h.service as any).logger, "warn")
+      .mockImplementation(() => undefined);
+
+    const result = await h.service.sweepAllPendingOrders();
+
+    expect(result.livePackFallbacks).toBe(0);
+    expect(warnSpy).not.toHaveBeenCalledWith(
+      expect.stringContaining("had no pack snapshot on any contributing line"),
     );
   });
 });

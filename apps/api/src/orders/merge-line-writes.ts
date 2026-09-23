@@ -6,7 +6,11 @@
  * contributing lines disagree on pack never folds across that disagreement.
  */
 import { PriceType } from "@prisma/client";
-import { copyCategoryTaxSnapshot, type CategoryTaxType, type PromotionRule } from "@routeflow/pricing";
+import {
+  copyCategoryTaxSnapshot,
+  type CategoryTaxType,
+  type PromotionRule,
+} from "@routeflow/pricing";
 import { mergeBoxedContributions } from "./buyer-merge-pricing";
 import { groupContributionsByPack, type PackCandidate } from "./merge-pack-resolve";
 
@@ -62,6 +66,11 @@ export type MergeLineWrite =
   | { kind: "create"; data: MergeLineWriteData };
 
 export interface MergeWarning {
+  /** SA-124: `packMismatch` is a genuine disagreement (packsSeen has 2+ entries); `livePackFallback`
+   * is SA-101(a)'s branch-4 last resort (a box-unaware contribution with no snapshot and no split —
+   * `packsSeen` here is always the single live pack every such contribution resolved to). The two
+   * are independent: a product can emit either, both, or neither. */
+  kind: "packMismatch" | "livePackFallback";
   productId: string;
   packs: number[];
 }
@@ -90,9 +99,16 @@ export function buildMergeLineWrites(
     list.push(li);
     loserByProduct.set(li.productId, list);
   }
-  const winnerByProduct = new Map<string, MergeLine>();
+  // SA-124a: a product may carry MORE THAN ONE winner line — the durable result of an earlier
+  // pack-mismatch sweep (two lines, at two packs, both left on the winner order). Collapsing to
+  // one-per-product here (the old `Map<string, MergeLine>`, last-write-wins) silently dropped
+  // whichever winner line lost the overwrite from every later merge/sweep touching that product.
+  const winnerByProduct = new Map<string, MergeLine[]>();
   for (const li of winnerLines) {
-    if (li.productId) winnerByProduct.set(li.productId, li);
+    if (!li.productId) continue;
+    const list = winnerByProduct.get(li.productId) ?? [];
+    list.push(li);
+    winnerByProduct.set(li.productId, list);
   }
   const productIds = new Set<string>([...winnerByProduct.keys(), ...loserByProduct.keys()]);
 
@@ -100,17 +116,22 @@ export function buildMergeLineWrites(
   const warnings: MergeWarning[] = [];
 
   for (const productId of productIds) {
-    const winnerLine = winnerByProduct.get(productId);
+    const winnerLinesForProduct = winnerByProduct.get(productId) ?? [];
     const losers = loserByProduct.get(productId) ?? [];
-    if (losers.length === 0) continue; // nothing contributed by any loser — the winner line is untouched.
+    if (losers.length === 0) continue; // nothing contributed by any loser — every winner line is untouched.
 
     const liveUpb = opts.liveUnitsPerBoxFor(productId);
-    const { groups, disagreement, packsSeen } = groupContributionsByPack(
-      winnerLine,
+    const { groups, disagreement, packsSeen, usedLivePack } = groupContributionsByPack(
+      winnerLinesForProduct,
       losers,
       liveUpb,
     );
-    if (disagreement) warnings.push({ productId, packs: packsSeen });
+    if (disagreement) warnings.push({ kind: "packMismatch", productId, packs: packsSeen });
+    // SA-124: the live-pack fallback (SA-101(a) branch 4) was computed but silently dropped —
+    // a box-unaware contribution with no snapshot and no split resolves at the LIVE product
+    // pack, which can drift from what the line was actually priced at. Independent of
+    // `disagreement` — a product can fall back to the live pack with or without also disagreeing.
+    if (usedLivePack) warnings.push({ kind: "livePackFallback", productId, packs: [liveUpb] });
 
     for (const group of groups) {
       if (group.isWinnerGroup && group.contributions.length === 1) continue; // untouched, no write.
@@ -144,7 +165,7 @@ export function buildMergeLineWrites(
         continue;
       }
 
-      const primary = group.isWinnerGroup ? winnerLine! : group.contributions[0];
+      const primary = group.winnerInGroup ?? group.contributions[0];
       const others = group.contributions.filter((c) => c !== primary);
       const merged = mergeBoxedContributions(
         [primary, ...others].map((c) => ({
@@ -170,7 +191,7 @@ export function buildMergeLineWrites(
       if (group.isWinnerGroup) {
         writes.push({
           kind: "update",
-          lineId: winnerLine!.id!,
+          lineId: group.winnerInGroup!.id!,
           data: {
             qty: merged.qty,
             boxes: merged.boxes,

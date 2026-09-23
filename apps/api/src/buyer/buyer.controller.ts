@@ -614,10 +614,16 @@ export class BuyerController {
             // register entry rather than fixed here: the fix belongs in the CUSTOMER
             // branch (honour a STORED override, still never a client-supplied one),
             // which is F07's file region.
-            const mergedItems = foldMergeItems(
+            const foldResult = foldMergeItems(
               normalizeBoxUnawareSnapshots(lineItems, upbForStoredSnapshots),
               normalizeBareIncomingSellingUnits(incomingItems, lineItems, upbByProduct),
-            ).filter((i) => i.productId);
+            );
+            if (foldResult.livePackFallbackProductIds.length > 0) {
+              this.logger.warn(
+                `foldMergeItems: order ${activeOrder.id} product(s) [${foldResult.livePackFallbackProductIds.join(", ")}] had box data but no resolvable pack of their own — deferred to the live product pack in updateOrderItems (B776/SA-124)`,
+              );
+            }
+            const mergedItems = foldResult.items.filter((i) => i.productId);
             await this.ordersService.updateOrderItems(
               activeOrder.id,
               { items: mergedItems, replaceAll: true } as UpdateOrderItemsDto,
