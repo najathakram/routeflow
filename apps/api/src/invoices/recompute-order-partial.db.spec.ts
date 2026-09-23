@@ -80,6 +80,7 @@ jest.mock("../storage/compress.util", () => ({
 }));
 
 import { Test, TestingModule } from "@nestjs/testing";
+import { BadRequestException } from "@nestjs/common";
 import { randomUUID } from "crypto";
 import { InvoicesService } from "./invoices.service";
 import { InvoicePdfService } from "./invoice-pdf.service";
@@ -1049,6 +1050,194 @@ describeDb(
       expect(Number(refreshedOther.invoicedQty)).toBe(0); // untouched
     });
 
+    // Round 7, finding 3 (MED, #1185): assertOrderItemIdsBelongToOrder previously checked only
+    // that the id resolved on this order -- a CANCELLED line, or a client-asserted productId
+    // that doesn't match the real line, both resolved as if valid.
+    describe("round 7, finding 3 (MED): assertOrderItemIdsBelongToOrder refuses more than a bare id match, real Postgres", () => {
+      it("refuses an orderItemId that points to a CANCELLED line", async () => {
+        const { tenant, customer } = await seedTenantAndCustomer("q1");
+        const product = await prisma.product.create({
+          data: { name: `A ${tenant.slug}`, unit: "ea", pricePerUnit: 10, tenantId: tenant.id },
+        });
+        const order = await prisma.order.create({
+          data: {
+            customerId: customer.id,
+            status: "PARTIALLY_DELIVERED",
+            subtotal: 150,
+            total: 150,
+            tenantId: tenant.id,
+          },
+        });
+        const lineActive = await prisma.orderItem.create({
+          data: {
+            orderId: order.id,
+            productId: product.id,
+            status: "PENDING",
+            qty: 5,
+            unitPrice: 10,
+            subtotal: 50,
+            tenantId: tenant.id,
+          },
+        });
+        const lineCancelled = await prisma.orderItem.create({
+          data: {
+            orderId: order.id,
+            productId: product.id,
+            status: "CANCELLED",
+            qty: 0,
+            unitPrice: 10,
+            subtotal: 0,
+            tenantId: tenant.id,
+          },
+        });
+
+        const invoice = await tenantCtx.run(tenant.id, () =>
+          invoicesService.createPartialFromOrder(order.id, {
+            items: [{ orderItemId: lineActive.id, qty: 5 }],
+          }),
+        );
+
+        await expect(
+          tenantCtx.run(tenant.id, () =>
+            invoicesService.update((invoice as any).id, {
+              items: [
+                {
+                  orderItemId: lineCancelled.id,
+                  productId: product.id,
+                  qty: 1,
+                  unitPrice: 10,
+                  description: "x",
+                },
+              ],
+            } as any),
+          ),
+        ).rejects.toThrow(BadRequestException);
+      });
+
+      it("refuses an orderItemId whose productId doesn't match a client-sent productId", async () => {
+        const { tenant, customer } = await seedTenantAndCustomer("q2");
+        const productA = await prisma.product.create({
+          data: { name: `A ${tenant.slug}`, unit: "ea", pricePerUnit: 10, tenantId: tenant.id },
+        });
+        const productB = await prisma.product.create({
+          data: { name: `B ${tenant.slug}`, unit: "ea", pricePerUnit: 10, tenantId: tenant.id },
+        });
+        const order = await prisma.order.create({
+          data: {
+            customerId: customer.id,
+            status: "PARTIALLY_DELIVERED",
+            subtotal: 50,
+            total: 50,
+            tenantId: tenant.id,
+          },
+        });
+        const lineA = await prisma.orderItem.create({
+          data: {
+            orderId: order.id,
+            productId: productA.id,
+            status: "PENDING",
+            qty: 5,
+            unitPrice: 10,
+            subtotal: 50,
+            tenantId: tenant.id,
+          },
+        });
+
+        const invoice = await tenantCtx.run(tenant.id, () =>
+          invoicesService.createPartialFromOrder(order.id, {
+            items: [{ orderItemId: lineA.id, qty: 5 }],
+          }),
+        );
+
+        await expect(
+          tenantCtx.run(tenant.id, () =>
+            // lineA is really productA -- claiming productB for the SAME orderItemId is refused.
+            invoicesService.update((invoice as any).id, {
+              items: [
+                {
+                  orderItemId: lineA.id,
+                  productId: productB.id,
+                  qty: 5,
+                  unitPrice: 10,
+                  description: "x",
+                },
+              ],
+            } as any),
+          ),
+        ).rejects.toThrow(BadRequestException);
+      });
+
+      it("refuses an orderItemId that belongs to a DIFFERENT order (foreign line)", async () => {
+        const { tenant, customer } = await seedTenantAndCustomer("q3");
+        const product = await prisma.product.create({
+          data: { name: `A ${tenant.slug}`, unit: "ea", pricePerUnit: 10, tenantId: tenant.id },
+        });
+        const order = await prisma.order.create({
+          data: {
+            customerId: customer.id,
+            status: "PARTIALLY_DELIVERED",
+            subtotal: 50,
+            total: 50,
+            tenantId: tenant.id,
+          },
+        });
+        const lineOnThisOrder = await prisma.orderItem.create({
+          data: {
+            orderId: order.id,
+            productId: product.id,
+            status: "PENDING",
+            qty: 5,
+            unitPrice: 10,
+            subtotal: 50,
+            tenantId: tenant.id,
+          },
+        });
+        // A second, unrelated order in the SAME tenant -- its line is foreign to the first order.
+        const otherOrder = await prisma.order.create({
+          data: {
+            customerId: customer.id,
+            status: "PARTIALLY_DELIVERED",
+            subtotal: 20,
+            total: 20,
+            tenantId: tenant.id,
+          },
+        });
+        const foreignLine = await prisma.orderItem.create({
+          data: {
+            orderId: otherOrder.id,
+            productId: product.id,
+            status: "PENDING",
+            qty: 2,
+            unitPrice: 10,
+            subtotal: 20,
+            tenantId: tenant.id,
+          },
+        });
+
+        const invoice = await tenantCtx.run(tenant.id, () =>
+          invoicesService.createPartialFromOrder(order.id, {
+            items: [{ orderItemId: lineOnThisOrder.id, qty: 5 }],
+          }),
+        );
+
+        await expect(
+          tenantCtx.run(tenant.id, () =>
+            invoicesService.update((invoice as any).id, {
+              items: [
+                {
+                  orderItemId: foreignLine.id,
+                  productId: product.id,
+                  qty: 2,
+                  unitPrice: 10,
+                  description: "x",
+                },
+              ],
+            } as any),
+          ),
+        ).rejects.toThrow(BadRequestException);
+      });
+    });
+
     it("round 5, item 3 (MED): the void path's product fallback never adjusts a CANCELLED line", async () => {
       const { tenant, customer } = await seedTenantAndCustomer("m");
       const product = await prisma.product.create({
@@ -1424,6 +1613,190 @@ describeDb(
         expect(refreshedA.status).toBe("PENDING");
         expect(Number(refreshedA.qty)).toBe(6);
         expect(Number(refreshedA.subtotal)).toBe(60);
+      });
+    });
+
+    // SA-113b (round 7, #1185, HIGH/money): ADD_ON rows (and any row with a null
+    // quantityDelivered, even a REFUSED-typed one) are order-change provenance, never delivery
+    // evidence -- an independent Opus 5.5 full re-read of round 6 found deliveredBasisByLine
+    // summing a change-request row's SIGNED delta qty as if it were an absolute delivered
+    // amount, which could either cancel a never-billed line or drop billable units.
+    describe("SA-113b (round 7): ADD_ON / change-request rows are never delivery evidence, real Postgres", () => {
+      it("(a) a lone CHANGE_QTY row (ADD_ON, qty -3, no quantityDelivered) on an undelivered order changes nothing", async () => {
+        const { tenant, customer } = await seedTenantAndCustomer("p1");
+        const product = await prisma.product.create({
+          data: { name: `A ${tenant.slug}`, unit: "ea", pricePerUnit: 10, tenantId: tenant.id },
+        });
+        const order = await prisma.order.create({
+          data: {
+            customerId: customer.id,
+            status: "PARTIALLY_DELIVERED",
+            subtotal: 100,
+            total: 100,
+            tenantId: tenant.id,
+          },
+        });
+        const lineA = await prisma.orderItem.create({
+          data: {
+            orderId: order.id,
+            productId: product.id,
+            status: "PENDING",
+            qty: 10,
+            unitPrice: 10,
+            subtotal: 100,
+            tenantId: tenant.id,
+          },
+        });
+        // Mirrors orders.service.ts's at-door change-request approval site: ADD_ON, `qty` is a
+        // SIGNED DELTA (a cut here), `quantityDelivered` is never set.
+        await prisma.deliveryMutation.create({
+          data: {
+            orderId: order.id,
+            orderItemId: lineA.id,
+            productId: product.id,
+            type: "ADD_ON",
+            qty: -3,
+            tenantId: tenant.id,
+          },
+        });
+
+        const invoice = await tenantCtx.run(tenant.id, () =>
+          invoicesService.createPartialFromOrder(order.id, {
+            items: [{ orderItemId: lineA.id, qty: 4 }],
+          }),
+        );
+        await tenantCtx.run(tenant.id, () =>
+          invoicesService.update((invoice as any).id, { discount: 0 } as any),
+        );
+
+        // The ADD_ON row is ignored entirely -- no evidence at all, so the line's remaining
+        // ordered qty (10) stays unconstrained (round 4's rule): still under-billed, order
+        // stays gated, nothing shrinks or cancels.
+        const refreshedA = await prisma.orderItem.findUniqueOrThrow({ where: { id: lineA.id } });
+        expect(refreshedA.status).toBe("PENDING");
+        expect(Number(refreshedA.qty)).toBe(10);
+        expect(Number(refreshedA.subtotal)).toBe(100);
+      });
+
+      it("(b) the SAME ADD_ON row next to a real DELIVERED row of 7 gives a basis of 7, the ADD_ON's -3 contributes nothing", async () => {
+        const { tenant, customer } = await seedTenantAndCustomer("p2");
+        const product = await prisma.product.create({
+          data: { name: `A ${tenant.slug}`, unit: "ea", pricePerUnit: 10, tenantId: tenant.id },
+        });
+        const order = await prisma.order.create({
+          data: {
+            customerId: customer.id,
+            status: "DELIVERED",
+            subtotal: 100,
+            total: 100,
+            tenantId: tenant.id,
+          },
+        });
+        const lineA = await prisma.orderItem.create({
+          data: {
+            orderId: order.id,
+            productId: product.id,
+            status: "PENDING",
+            qty: 10,
+            unitPrice: 10,
+            subtotal: 100,
+            tenantId: tenant.id,
+          },
+        });
+        await prisma.deliveryMutation.create({
+          data: {
+            orderId: order.id,
+            orderItemId: lineA.id,
+            productId: product.id,
+            type: "ADD_ON",
+            qty: -3,
+            tenantId: tenant.id,
+          },
+        });
+        await prisma.deliveryMutation.create({
+          data: {
+            orderId: order.id,
+            orderItemId: lineA.id,
+            productId: product.id,
+            type: "DELIVERED",
+            quantityDelivered: 7,
+            tenantId: tenant.id,
+          },
+        });
+
+        const invoice = await tenantCtx.run(tenant.id, () =>
+          invoicesService.createPartialFromOrder(order.id, {
+            items: [{ orderItemId: lineA.id, qty: 7 }],
+          }),
+        );
+        await tenantCtx.run(tenant.id, () =>
+          invoicesService.update((invoice as any).id, { discount: 0 } as any),
+        );
+
+        // Basis is 7 (the DELIVERED row alone) -- billed exactly 7, fully covered, shrunk to 7.
+        // If the ADD_ON's -3 had been summed in, the basis would be 4 and this would either
+        // refuse the qty-7 bill outright or mis-shrink the line.
+        const refreshedA = await prisma.orderItem.findUniqueOrThrow({ where: { id: lineA.id } });
+        expect(refreshedA.status).toBe("PENDING");
+        expect(Number(refreshedA.qty)).toBe(7);
+        expect(Number(refreshedA.subtotal)).toBe(70);
+      });
+
+      it("(c) a REMOVE_ITEM-shaped row (REFUSED, qty -10, no quantityDelivered) is NOT evidence and doesn't flip hasMutations", async () => {
+        const { tenant, customer } = await seedTenantAndCustomer("p3");
+        const product = await prisma.product.create({
+          data: { name: `A ${tenant.slug}`, unit: "ea", pricePerUnit: 10, tenantId: tenant.id },
+        });
+        const order = await prisma.order.create({
+          data: {
+            customerId: customer.id,
+            status: "PARTIALLY_DELIVERED",
+            subtotal: 100,
+            total: 100,
+            tenantId: tenant.id,
+          },
+        });
+        const lineA = await prisma.orderItem.create({
+          data: {
+            orderId: order.id,
+            productId: product.id,
+            status: "PENDING",
+            qty: 10,
+            unitPrice: 10,
+            subtotal: 100,
+            tenantId: tenant.id,
+          },
+        });
+        // orders.service.ts writes REFUSED (not ADD_ON) for a REMOVE_ITEM change request, but
+        // -- like every at-door change-request row -- never sets quantityDelivered. type alone
+        // is not enough to qualify as evidence; SA-113b requires quantityDelivered != null too.
+        await prisma.deliveryMutation.create({
+          data: {
+            orderId: order.id,
+            orderItemId: lineA.id,
+            productId: product.id,
+            type: "REFUSED",
+            qty: -10,
+            tenantId: tenant.id,
+          },
+        });
+
+        const invoice = await tenantCtx.run(tenant.id, () =>
+          invoicesService.createPartialFromOrder(order.id, {
+            items: [{ orderItemId: lineA.id, qty: 4 }],
+          }),
+        );
+        await tenantCtx.run(tenant.id, () =>
+          invoicesService.update((invoice as any).id, { discount: 0 } as any),
+        );
+
+        // hasMutations stays false (no QUALIFYING row) -- the line's ordered qty (10) stays
+        // unconstrained, exactly as if the REFUSED row didn't exist. If the row had wrongly
+        // counted, the line would read as billable 0 and finalizeOrderRecompute would cancel it.
+        const refreshedA = await prisma.orderItem.findUniqueOrThrow({ where: { id: lineA.id } });
+        expect(refreshedA.status).toBe("PENDING");
+        expect(Number(refreshedA.qty)).toBe(10);
+        expect(Number(refreshedA.subtotal)).toBe(100);
       });
     });
 

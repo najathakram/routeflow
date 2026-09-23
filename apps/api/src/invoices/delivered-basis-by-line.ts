@@ -1,6 +1,9 @@
+import { Prisma } from "@prisma/client";
+
 /**
- * SA-093a (round 6, #1185): the delivered basis for coverage/billing is EVIDENCE-keyed — real
- * `DeliveryMutation` rows — never `order.status` and never `OrderItem.deliveredQty`.
+ * SA-093a/SA-113b (rounds 6-7, #1185): the delivered basis for coverage/billing is
+ * EVIDENCE-keyed — real `DeliveryMutation` rows — never `order.status` and never
+ * `OrderItem.deliveredQty`.
  *
  * Why: on master, `DeliveryMutation` rows are written by THREE independent sites
  * (`routes.service.ts`'s `completeStop` and `completeWithPayment`, `orders.service.ts`'s
@@ -12,42 +15,74 @@
  * `finalizeOrderRecompute` cancelled all of them — a $100 order silently going to $0
  * (independent Opus 5.5 re-read, finding 1, verified on master by the fleet lead).
  *
+ * SA-113b, the EVIDENCE definition (shared with the at-door payment reconcile, SA-113a): a row
+ * is evidence iff `quantityDelivered != null` AND its type is DELIVERED/PARTIAL/SUBSTITUTED
+ * (delivered = quantityDelivered) or REFUSED (delivered = 0, the row's own quantityDelivered
+ * value is never read once it qualifies). `completeStop`/`completeWithPayment` always set
+ * `quantityDelivered`; `orders.service.ts`'s at-door change-request approval NEVER does, even
+ * for its REFUSED-typed REMOVE_ITEM rows — its `qty` field is a SIGNED CHANGE-REQUEST DELTA
+ * (split.qty − src.qty for a cut, an added line's own qty, −src.qty for a removal), not an
+ * absolute delivered amount. ADD_ON rows and any row with a null `quantityDelivered` are
+ * order-change provenance, not delivery evidence, and are IGNORED entirely (round 7, #1185,
+ * independent Opus 5.5 full re-read of round 6, finding 1, HIGH/money): treating a change-
+ * request row as evidence let a door cut from 10 to 7 write basis −3 (finalizeOrderRecompute
+ * then cancelled a never-billed line — B667's own failure reintroduced) and a door raise from
+ * 10 to 12 write basis 2 (a partial invoice of 4 read as fully covered, dropping 8 units). A
+ * line touched only by change-request rows is simply a line with no evidence row of its own —
+ * the next rule already covers it correctly.
+ *
  * The rule, precisely:
- *  - A line's billable qty = min(qty, its own DeliveryMutation-row qty). A REFUSED-type row
- *    contributes 0 regardless of any qty value it carries (the delivery was refused, not
- *    partially made) — never a negative, never the ordered qty.
- *  - A line with NO mutation row of its own keeps `qty` unconstrained (round 4's rule) — a
- *    mutation elsewhere on the order says nothing about a line delivery never touched.
- *  - An order with NO mutation rows AT ALL behaves as undelivered, regardless of its status —
- *    `order.status` is read for nothing here.
+ *  - A line's billable qty = min(qty, its own Σ evidence). A line with NO evidence row of its
+ *    own keeps `qty` unconstrained (round 4's rule) — evidence elsewhere on the order, or a
+ *    non-evidence row for this line, says nothing about a delivery never touched.
+ *  - An order with NO evidence rows AT ALL behaves as undelivered, regardless of its status —
+ *    `order.status` is read for nothing here, and neither is a change-request-only history.
  *  - `OrderItem.deliveredQty` is NEVER read for coverage. It may still be written (legacy,
  *    `completeWithPayment`) but this module never consults it.
  *
  * ONE core, never two derivations: `checkOrderCoverage`, `finalizeOrderRecompute` AND (once
- * B760 resumes) the invoice "remaining to bill" calculations all call `billableQtyFromBasis`
- * against the SAME `DeliveredBasis` a caller computes once via `deliveredBasisByLine`.
+ * B760/B785 resume) the invoice "remaining to bill" calculations and the at-door payment
+ * reconcile all call `billableQtyFromBasis` against the SAME `DeliveredBasis` a caller computes
+ * once via `deliveredBasisByLine`.
  */
 export interface DeliveredBasis {
-  /** True iff the order has at least one DeliveryMutation row at all (any line). */
+  /** True iff the order has at least one QUALIFYING DeliveryMutation row (see below), any line. */
   hasMutations: boolean;
-  /** orderItemId -> Σ delivered qty from that line's own mutation rows (REFUSED contributes 0). */
+  /** orderItemId -> Σ delivered qty from that line's own qualifying rows (REFUSED contributes 0). */
   byLineId: Map<string, number>;
 }
 
-export async function deliveredBasisByLine(db: any, orderId: string): Promise<DeliveredBasis> {
+/** Round 7 / SA-113b: the only types whose row can be delivery evidence. ADD_ON is deliberately
+ *  absent — see this module's own doc. */
+const DELIVERY_EVIDENCE_TYPES = new Set(["DELIVERED", "PARTIAL", "SUBSTITUTED", "REFUSED"]);
+
+/**
+ * SA-113b: an evidence row needs BOTH a qualifying type AND a non-null `quantityDelivered` --
+ * the close paths (completeStop/completeWithPayment) always set it; the at-door change-request
+ * path never does, even for its REFUSED-typed REMOVE_ITEM rows (qty carries the signed delta,
+ * not a delivered amount). A REFUSED row's own quantityDelivered value is never read (delivered
+ * is always forced to 0 for it) -- its non-null PRESENCE is only the qualification signal.
+ */
+function isEvidenceRow(m: { type: string; quantityDelivered: unknown }): boolean {
+  return m.quantityDelivered != null && DELIVERY_EVIDENCE_TYPES.has(m.type);
+}
+
+export async function deliveredBasisByLine(
+  db: Prisma.TransactionClient,
+  orderId: string,
+): Promise<DeliveredBasis> {
   const mutations = await db.deliveryMutation.findMany({
     where: { orderId },
-    select: { orderItemId: true, type: true, quantityDelivered: true, qty: true },
+    select: { orderItemId: true, type: true, quantityDelivered: true },
   });
+  const qualifying = mutations.filter(isEvidenceRow);
   const byLineId = new Map<string, number>();
-  for (const m of mutations as any[]) {
+  for (const m of qualifying) {
     if (!m.orderItemId) continue; // a free-text/no-line mutation attributes to nothing
-    // `completeStop`/`completeWithPayment` write `quantityDelivered`; the at-door
-    // change-request approval site (orders.service.ts) writes the older `qty` field instead.
-    const delta = m.type === "REFUSED" ? 0 : Number(m.quantityDelivered ?? m.qty ?? 0);
+    const delta = m.type === "REFUSED" ? 0 : Number(m.quantityDelivered);
     byLineId.set(m.orderItemId, (byLineId.get(m.orderItemId) ?? 0) + delta);
   }
-  return { hasMutations: mutations.length > 0, byLineId };
+  return { hasMutations: qualifying.length > 0, byLineId };
 }
 
 export function billableQtyFromBasis(

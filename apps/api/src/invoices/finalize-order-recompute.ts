@@ -1,4 +1,5 @@
 import { ServiceUnavailableException } from "@nestjs/common";
+import { Prisma } from "@prisma/client";
 import { roundMoney } from "@routeflow/pricing";
 import { effectiveTaxRateFromTotals } from "../common/tax-rate";
 import { withAdvisoryLock, LockTimeoutError, LockUnavailableError } from "../common/db-locks";
@@ -170,7 +171,7 @@ export async function withOrderRecomputeLock<T>(
  * that gates it.
  */
 export async function checkOrderCoverage(params: {
-  db: any;
+  db: Prisma.TransactionClient;
   orderId: string;
   order: {
     subtotal: unknown;
@@ -270,15 +271,15 @@ export async function checkOrderCoverage(params: {
  * be here at all — this only ever runs once every active order line is billed to its full
  * billable qty (the "wholly invoiced" precondition `resyncOrderInvoicesForEdit` documents,
  * reused not invented; see `checkOrderCoverage`'s own doc above for exactly what "billable"
- * means per order status).
+ * means — evidence-keyed per `delivered-basis-by-line.ts`, never order status).
  *
  * ORPHAN DEFINITION (#1185 review, finding 2): among the lines no live invoice resolved to,
  * `invoicedQty > 0` means this line WAS billed and has since been removed from every invoice —
  * a genuine orphan, cancel it (this is the mechanism's original purpose: an invoice-side removal
  * back-syncing onto the order). `invoicedQty === 0` means never billed at all — it must never
- * reach here while still active on a non-DELIVERED order (the caller's fullyCovered gate excludes
- * it), but an already-CANCELLED line with stale non-zero qty/subtotal (a prior return, a prior
- * recompute) still gets its numbers normalized to zero.
+ * reach here while still active on a line the delivered basis leaves unconstrained (the caller's
+ * fullyCovered gate excludes it), but an already-CANCELLED line with stale non-zero qty/subtotal
+ * (a prior return, a prior recompute) still gets its numbers normalized to zero.
  *
  * SA-093a, round 6: a line with its OWN mutation row showing 0 delivered (a REFUSED delivery)
  * is ALSO cancelled once the order is fully covered — the pre-PR behaviour, restored on purpose
@@ -288,7 +289,7 @@ export async function checkOrderCoverage(params: {
  * own is never "refused" by this rule, whatever the order's other lines or status say.
  */
 export async function finalizeOrderRecompute(params: {
-  db: any;
+  db: Prisma.TransactionClient;
   orderId: string;
   order: { subtotal: unknown; tax: unknown };
   deliveredBasis: DeliveredBasis;

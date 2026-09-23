@@ -179,4 +179,49 @@ describe("InvoicesService — B667 round 5", () => {
     );
     expect(warned).toBe(true);
   });
+
+  // Round 7, item 4 (LOW): the ambiguous-fallback warn above was the only spy test -- the
+  // free-text-invoice-item skip (no orderItemId, no productId at all) has warned since round 6
+  // but was never itself spy-tested.
+  it("recomputeOrderFromInvoices warns when it skips a free-text invoice item, never silently", async () => {
+    const warnSpy = jest.spyOn((service as any).logger, "warn").mockImplementation(() => {});
+    const l1 = { id: "l1", productId: "p1", status: "PENDING", qty: 4, invoicedQty: 0 };
+    prisma.order.findUnique.mockResolvedValue({
+      id: "order1",
+      status: "PENDING",
+      subtotal: 40,
+      tax: 0,
+      total: 40,
+      shippingFee: 0,
+      lineItems: [l1],
+    });
+    prisma.invoice.findMany.mockResolvedValue([
+      {
+        id: "inv1",
+        shippingFee: 0,
+        items: [
+          {
+            id: "freetext1",
+            orderItemId: null,
+            productId: null, // no provenance AND no product -- genuinely freeform
+            qty: 1,
+            subtotal: 10,
+            categoryTaxAmount: 0,
+            promoFreeUnits: 0,
+            unitPrice: 10,
+          },
+        ],
+      },
+    ]);
+    prisma.deliveryMutation.findMany.mockResolvedValue([]);
+    prisma.orderItem.update.mockResolvedValue({});
+    prisma.order.update.mockResolvedValue({});
+
+    await service.recomputeOrderFromInvoices("order1", prisma);
+
+    const warned = warnSpy.mock.calls.some(
+      (call) => String(call[0]).includes("order1") && String(call[0]).includes("freetext1"),
+    );
+    expect(warned).toBe(true);
+  });
 });
