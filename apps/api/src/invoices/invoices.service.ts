@@ -3285,7 +3285,7 @@ export class InvoicesService {
     const hideOriginalPrice = (await this.systemConfig.get("invoice.hideOriginalPrice")) === "true";
     return {
       ...inv,
-      ...orderSummaryWithUnitFlag(inv.order), // B797
+      ...orderSummaryWithUnitFlag(inv.orderId, inv.order), // B797
       balanceDue,
       paidAmount,
       creditApplied,

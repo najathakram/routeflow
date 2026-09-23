@@ -129,40 +129,52 @@ describe("InvoicesService — B797 (orderHasUnitAwareLine)", () => {
   });
 
   // Consolidated from 4 tests to 3 (redundant fixture setups merged); every original
-  // case is still asserted. Case coverage by test:
+  // case is still asserted, plus 2 review-round pins. Case coverage by test:
   //  - "order-only"  (order has one, invoice's own items don't) -> true,      1st test
   //  - "existing"    (invoice's own items ALSO have one)        -> true,      2nd test
   //  - "none"        (neither invoice's own items nor the order)-> false,     3rd test (part 1)
   //  - "unlisted"    (manual invoice, no linked order at all)   -> false,     3rd test (part 2)
   //  - never leaks the order's raw lineItems onto the response  -> asserted,  1st test
-  //  - the where clause matches unit-aware-guard.ts's own def   -> asserted,  1st test
+  //  - matches unit-aware-guard.ts's own isUnitAwareLine, not a re-derived where -> 1st test
+  //  - a blank ("") unitLabel is NOT unit-aware (review round 1)             -> 4th test
+  //  - orderId set but the order can't be read fails CLOSED (review round 1, optional) -> 5th test
 
   it("order-only: true when the order has a live unit-aware line (own items don't) — never leaks the raw lines", async () => {
     prisma.invoice.findUnique.mockResolvedValue(
       baseInv({
         id: "inv-1",
+        orderId: "ord-1",
         items: [{ id: "item-1", unitLabel: null }],
-        order: { status: "PENDING", orderNumber: "ORD-1", lineItems: [{ id: "oi-unit-1" }] },
+        order: {
+          status: "PENDING",
+          orderNumber: "ORD-1",
+          lineItems: [{ unitLabel: "Case", status: "PENDING" }],
+        },
       }),
     );
     const res = await service.findOne("inv-1");
     expect((res as any).orderHasUnitAwareLine).toBe(true);
     expect((res as any).order).toEqual({ status: "PENDING", orderNumber: "ORD-1" });
     expect((res as any).order.lineItems).toBeUndefined();
-    // Matches unit-aware-guard.ts's own definition: a live (not CANCELLED) line.
+    // Computed via unit-aware-guard.ts's own isUnitAwareLine (not a re-derived Prisma
+    // `where`, which drifted from that definition on blank labels — review round 1) —
+    // so the select must fetch every line's unitLabel/status, not a pre-filtered subset.
     const includeArg = (prisma.invoice.findUnique as jest.Mock).mock.calls[0][0].include;
-    expect(includeArg.order.select.lineItems.where).toEqual({
-      unitLabel: { not: null },
-      status: { not: "CANCELLED" },
-    });
+    expect(includeArg.order.select.lineItems.select).toEqual({ unitLabel: true, status: true });
+    expect(includeArg.order.select.lineItems.where).toBeUndefined();
   });
 
   it("existing: still true when the invoice's own items ALSO have a unit-aware line", async () => {
     prisma.invoice.findUnique.mockResolvedValue(
       baseInv({
         id: "inv-existing",
+        orderId: "ord-e",
         items: [{ id: "item-1", unitLabel: "Case" }],
-        order: { status: "PENDING", orderNumber: "ORD-E", lineItems: [{ id: "oi-unit-e" }] },
+        order: {
+          status: "PENDING",
+          orderNumber: "ORD-E",
+          lineItems: [{ unitLabel: "Case", status: "PENDING" }],
+        },
       }),
     );
     expect(((await service.findOne("inv-existing")) as any).orderHasUnitAwareLine).toBe(true);
@@ -170,11 +182,39 @@ describe("InvoicesService — B797 (orderHasUnitAwareLine)", () => {
 
   it("none / unlisted: false with no live unit-aware line on the order, or no linked order at all", async () => {
     prisma.invoice.findUnique.mockResolvedValue(
-      baseInv({ id: "inv-2", order: { status: "PENDING", orderNumber: "ORD-2", lineItems: [] } }),
+      baseInv({
+        id: "inv-2",
+        orderId: "ord-2",
+        order: { status: "PENDING", orderNumber: "ORD-2", lineItems: [] },
+      }),
     );
     expect(((await service.findOne("inv-2")) as any).orderHasUnitAwareLine).toBe(false);
 
-    prisma.invoice.findUnique.mockResolvedValue(baseInv({ id: "inv-3", order: null }));
+    prisma.invoice.findUnique.mockResolvedValue(
+      baseInv({ id: "inv-3", orderId: null, order: null }),
+    );
     expect(((await service.findOne("inv-3")) as any).orderHasUnitAwareLine).toBe(false);
+  });
+
+  it("a blank unitLabel ('') is NOT unit-aware — matches unit-aware-guard.ts's isUnitAwareLine exactly", async () => {
+    prisma.invoice.findUnique.mockResolvedValue(
+      baseInv({
+        id: "inv-blank",
+        orderId: "ord-blank",
+        order: {
+          status: "PENDING",
+          orderNumber: "ORD-BLANK",
+          lineItems: [{ unitLabel: "", status: "PENDING" }],
+        },
+      }),
+    );
+    expect(((await service.findOne("inv-blank")) as any).orderHasUnitAwareLine).toBe(false);
+  });
+
+  it("fails CLOSED when orderId is set but the order can't be read (cross-tenant/vanished)", async () => {
+    prisma.invoice.findUnique.mockResolvedValue(
+      baseInv({ id: "inv-unreadable", orderId: "ord-gone", order: null }),
+    );
+    expect(((await service.findOne("inv-unreadable")) as any).orderHasUnitAwareLine).toBe(true);
   });
 });
