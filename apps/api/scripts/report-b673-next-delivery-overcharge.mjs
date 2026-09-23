@@ -1,59 +1,75 @@
 /**
  * READ-ONLY report for B673 — next-delivery drafts billed 12x for a driver's door add.
  *
- * The defect (fixed in the B673 PR): an ADD_ITEM change request filed at the door carries
+ * The defect (fixed in #1282): an ADD_ITEM change request filed at the door carries
  * `{ qty: total pieces, boxes, pieces }`. Approving it for the NEXT delivery handed create() the
- * bare `qty`, which create() reads as a BOX count on a boxed product. 1 box of a 12-pack at $40
- * became a draft line for 12 boxes, $480. This report finds the lines that path created and
- * prices each one two ways: as stored, and as the filed split says it should have been.
+ * bare `qty`, which create() reads as a BOX count on a boxed product: 1 box of a 12-pack at $40
+ * became a draft line for 12 boxes, $480. This report finds the lines that path wrote and prices
+ * each one two ways: as stored, and as the filed split says it should have been.
  *
  * NEVER RUN FROM AN IMPLEMENTATION SESSION. The owner runs it:
  *
+ *   npm run build -w packages/pricing     # once — the script imports @routeflow/pricing's dist
  *   railway run --service postgres node apps/api/scripts/report-b673-next-delivery-overcharge.mjs
  *   ... add --json for machine-readable output.
  *   node apps/api/scripts/report-b673-next-delivery-overcharge.mjs --self-test   (no database)
  *
+ * WHICH DATABASE
+ *   Under `railway run --service postgres`, DATABASE_URL is the *.railway.internal host, which is
+ *   unreachable from the owner's machine. The URL is built from Railway's TCP-proxy variables via
+ *   the shared `resolveDatabaseUrl(env, { requireProxy: true })` (scripts/lib/railway-db-url.mjs):
+ *   a missing proxy variable REFUSES, never falls back to DATABASE_URL. The target is printed,
+ *   password redacted, before anything is read.
+ *
  * WHAT IT SELECTS
  *   Change requests with type ADD_ITEM, status APPROVED, resolution NEXT_DELIVERY and a filed box
  *   split (payload boxes > 0 or pieces > 0), then the non-cancelled lines for that product on the
- *   draft order they rolled to (`nextOrderId`).
- *   - AFFECTED: exactly one such line, still box-unaware (boxes IS NULL) with qty equal to the
- *     filed qty. That is the shape the defect wrote. It is priced stored vs expected.
- *   - REVIEW: anything else (no line, several lines, a box-aware line, or a qty that no longer
- *     matches because the line was edited or merged). Listed with its shape, never priced:
- *     a guess at a merged line's history would be worse than a flag.
- *   For each AFFECTED line it reports the order status, `invoicedQty`, and the ids and statuses
- *   of any invoices that carry it — whether the overcharge reached a customer is the question.
+ *   draft order they rolled to (`nextOrderId`). A line is AFFECTED only when EVERY one of these
+ *   holds; anything else is REVIEW, listed with the first reason it failed and never priced:
+ *   - exactly one such line, still box-unaware (boxes IS NULL), qty equal to the filed qty;
+ *   - its stored subtotal is exactly what create() writes for a bare qty —
+ *     computeLineSubtotal({ unitPrice, qty, freeUnits: promoFreeUnits }) — so it has not been
+ *     re-priced since;
+ *   - priceType is not DISCOUNTED or MANUAL (a hand-set or quantity-break price is not the
+ *     defect's price);
+ *   - the request filed boxes (> 0), so the filed pack (qty - pieces) / boxes is known, and the
+ *     product's LIVE pack still equals it (a product repacked since — or to 1 — is REVIEW);
+ *   - no BOGO free units on the line (promoFreeUnits 0): the correct free-unit count for the
+ *     filed quantity cannot be re-derived from the row, so the expected figure would be a guess.
  *
- * EXPECTED PRICE
- *   From @routeflow/pricing's computeLineSubtotal (the house money helper; no local math) at the
- *   line's own stored unitPrice (the box price) with the FILED split and the FILED pack,
- *   (qty - pieces) / boxes. A loose-pieces-only request (boxes 0) has no filed pack; it is
- *   priced at the product's LIVE pack and marked `livePackUsed` so the owner can weigh it.
+ * EXPECTED PRICE AND WHAT THE TOTAL MEANS
+ *   @routeflow/pricing's computeLineSubtotal (the house money helper; no local math) at the line's
+ *   own stored unitPrice (the box price) with the FILED split and pack. Amounts are rounded with
+ *   roundMoney. The overcharge is PRE-TAX: per-unit excise and sales tax on these lines were
+ *   inflated too and are NOT included — the real customer impact is larger than the printed delta.
+ *   For each AFFECTED line it prints the order status, `invoicedQty`, and the ids and statuses of
+ *   any invoices that carry it — whether the overcharge reached a customer is the question.
  *
  * WHAT IT PRINTS
  *   Ids only: tenant id, change-request id, order id, order-item id, invoice ids. Amounts:
- *   stored, expected, delta. Per-tenant and grand totals. No tenant slug, business name,
- *   product name, order number or invoice number is printed — an id can be looked up by the
- *   owner; a name in terminal scrollback cannot be un-shared.
+ *   stored, expected, delta. Per-tenant and grand totals. No tenant slug, business name, product
+ *   name, order number or invoice number is printed.
  *
  * SAFETY (this script must never be able to touch a client database):
- *   - `default_transaction_read_only = on` is set on the session before any other query runs,
- *     so the server itself rejects a write even if one slipped past review.
+ *   - `default_transaction_read_only = on`, then every query runs inside ONE
+ *     `BEGIN TRANSACTION READ ONLY` (a consistent snapshot) that is ROLLED BACK at the end.
  *   - `statement_timeout` caps every query.
- *   - Only SELECT queries appear below. The connection is closed in `finally`.
+ *   - `q()` refuses any SQL carrying a write/DDL verb before it reaches the server.
  *   - Any repair is a separate, dry-run-first script the owner asks for. This one changes nothing.
  */
 import { createRequire } from "module";
+import { pathToFileURL } from "url";
+import { resolveDatabaseUrl, redactUrl } from "./lib/railway-db-url.mjs";
 
 const require = createRequire(import.meta.url);
-const { computeLineSubtotal } = require("@routeflow/pricing");
+const { computeLineSubtotal, roundMoney } = require("@routeflow/pricing");
 
 const argv = process.argv.slice(2);
 const json = argv.includes("--json");
 const selfTest = argv.includes("--self-test");
 
 const num = (v) => (v == null ? null : Number(v));
+const NON_DEFECT_PRICE_TYPES = new Set(["DISCOUNTED", "MANUAL"]);
 
 /**
  * Classify one change request against the draft lines it could have produced, and price it.
@@ -64,67 +80,64 @@ export function assess(cr, lines, liveUnitsPerBox) {
   const boxes = num(cr.payload?.boxes) ?? 0;
   const pieces = num(cr.payload?.pieces) ?? 0;
   const base = { crId: cr.id, tenantId: cr.tenantId, orderId: cr.nextOrderId };
+  const review = (reason, line) => ({ ...base, kind: "REVIEW", reason, orderItemId: line?.id });
 
-  if (lines.length !== 1) {
-    return { ...base, kind: "REVIEW", reason: `${lines.length} matching lines on the draft` };
-  }
+  if (lines.length !== 1) return review(`${lines.length} matching lines on the draft`);
   const line = lines[0];
-  if (line.boxes != null) {
-    return {
-      ...base,
-      kind: "REVIEW",
-      reason: "line is box-aware (not the defect's shape)",
-      orderItemId: line.id,
-    };
-  }
+  if (line.boxes != null) return review("line is box-aware (not the defect's shape)", line);
   if (num(line.qty) !== qty) {
-    return {
-      ...base,
-      kind: "REVIEW",
-      reason: `line qty ${num(line.qty)} != filed qty ${qty} (edited or merged since)`,
-      orderItemId: line.id,
-    };
+    return review(`line qty ${num(line.qty)} != filed qty ${qty} (edited or merged since)`, line);
   }
-
-  let upb;
-  let livePackUsed = false;
-  if (boxes > 0) {
-    upb = (qty - pieces) / boxes;
-    if (!Number.isInteger(upb) || upb <= 1) {
-      return {
-        ...base,
-        kind: "REVIEW",
-        reason: `filed split gives no whole pack (${upb})`,
-        orderItemId: line.id,
-      };
-    }
-  } else {
-    upb = num(liveUnitsPerBox) ?? 0;
-    livePackUsed = true;
-    if (!(upb > 1)) {
-      return {
-        ...base,
-        kind: "REVIEW",
-        reason: "loose pieces only and no live pack",
-        orderItemId: line.id,
-      };
-    }
+  if (NON_DEFECT_PRICE_TYPES.has(line.priceType)) {
+    return review(`priceType ${line.priceType} (a hand-set or quantity-break price)`, line);
   }
-
+  const freeUnits = num(line.promoFreeUnits) ?? 0;
   const unitPrice = num(line.unitPrice);
   const stored = num(line.subtotal);
-  const expected = computeLineSubtotal({ unitPrice, qty, boxes, pieces, unitsPerBox: upb });
+  const bareSubtotal = computeLineSubtotal({ unitPrice, qty, freeUnits });
+  if (stored !== bareSubtotal) {
+    return review(
+      `stored subtotal ${stored} != the bare-qty price ${bareSubtotal} (re-priced since)`,
+      line,
+    );
+  }
+  if (freeUnits > 0) {
+    return review(
+      `${freeUnits} BOGO free unit(s): the correct free units cannot be re-derived`,
+      line,
+    );
+  }
+  if (boxes <= 0) return review("loose pieces only: no filed pack to confirm against", line);
+  const pack = (qty - pieces) / boxes;
+  if (!Number.isInteger(pack) || pack <= 1) {
+    return review(`filed split gives no whole pack (${pack})`, line);
+  }
+  const livePack = num(liveUnitsPerBox) ?? 0;
+  if (livePack !== pack) {
+    return review(`live pack ${livePack} != filed pack ${pack} (repacked since)`, line);
+  }
+
+  const expected = computeLineSubtotal({ unitPrice, qty, boxes, pieces, unitsPerBox: pack });
   return {
     ...base,
     kind: "AFFECTED",
     orderItemId: line.id,
-    filed: { qty, boxes, pieces, pack: upb },
-    livePackUsed,
+    filed: { qty, boxes, pieces, pack },
     unitPrice,
     stored,
     expected,
-    delta: Math.round((stored - expected) * 100) / 100,
+    delta: roundMoney(stored - expected),
   };
+}
+
+/** Refuse any SQL that could write or change schema, before it reaches the server. */
+const WRITE_VERB =
+  /\b(insert|update|delete|merge|upsert|drop|alter|truncate|create|grant|revoke|copy|vacuum|reindex|cluster|lock|call|do)\b/i;
+export function assertReadOnlySql(sql) {
+  const code = sql.replace(/'(?:[^']|'')*'/g, "''").replace(/"(?:[^"]|"")*"/g, '""');
+  const hit = code.match(WRITE_VERB);
+  if (hit) throw new Error(`refusing non-read-only SQL (found "${hit[1]}")`);
+  if (!/^\s*(select|with)\b/i.test(code)) throw new Error("refusing SQL that is not a SELECT");
 }
 
 function runSelfTest() {
@@ -136,37 +149,95 @@ function runSelfTest() {
     pieces: null,
     unitPrice: 40,
     subtotal: 480,
+    priceType: "STANDARD",
+    promoFreeUnits: null,
     ...over,
   });
+  const box = { qty: 12, boxes: 1, pieces: 0 };
   const cases = [
     [
-      "1 box of 12 at $40 billed $480",
-      assess(cr({ qty: 12, boxes: 1, pieces: 0 }), [line({})], 12),
+      "1 box of 12 at $40 billed $480 -> AFFECTED, expected $40, delta $440",
+      assess(cr(box), [line({})], 12),
       (r) => r.kind === "AFFECTED" && r.stored === 480 && r.expected === 40 && r.delta === 440,
     ],
     [
-      "5 loose pieces billed as 5 boxes",
-      assess(cr({ qty: 5, boxes: 0, pieces: 5 }), [line({ qty: 5, subtotal: 200 })], 12),
-      (r) =>
-        r.kind === "AFFECTED" &&
-        r.expected === 16.67 &&
-        r.delta === 183.33 &&
-        r.livePackUsed === true,
+      "2 boxes + 5 pieces billed as 29 boxes -> expected $96.67",
+      assess(cr({ qty: 29, boxes: 2, pieces: 5 }), [line({ qty: 29, subtotal: 1160 })], 12),
+      (r) => r.kind === "AFFECTED" && r.expected === 96.67 && r.delta === 1063.33,
     ],
     [
-      "a box-aware line is not the defect's shape",
-      assess(cr({ qty: 12, boxes: 1, pieces: 0 }), [line({ boxes: 1, pieces: 0 })], 12),
-      (r) => r.kind === "REVIEW",
+      "SPECIAL (tier) price is still the defect's shape -> AFFECTED",
+      assess(cr(box), [line({ priceType: "SPECIAL", unitPrice: 36, subtotal: 432 })], 12),
+      (r) => r.kind === "AFFECTED" && r.expected === 36,
     ],
     [
-      "an edited qty is flagged, not priced",
-      assess(cr({ qty: 12, boxes: 1, pieces: 0 }), [line({ qty: 13 })], 12),
+      "re-priced since (stored != bare-qty price) -> REVIEW, unpriced",
+      assess(cr(box), [line({ subtotal: 450 })], 12),
       (r) => r.kind === "REVIEW" && r.stored === undefined,
     ],
     [
-      "no line on the draft",
-      assess(cr({ qty: 12, boxes: 1, pieces: 0 }), [], 12),
+      "priceType DISCOUNTED -> REVIEW",
+      assess(cr(box), [line({ priceType: "DISCOUNTED" })], 12),
       (r) => r.kind === "REVIEW",
+    ],
+    [
+      "priceType MANUAL -> REVIEW",
+      assess(cr(box), [line({ priceType: "MANUAL" })], 12),
+      (r) => r.kind === "REVIEW",
+    ],
+    [
+      "repacked to 1 since filing -> REVIEW",
+      assess(cr(box), [line({})], 1),
+      (r) => r.kind === "REVIEW",
+    ],
+    [
+      "repacked 12 -> 24 since filing -> REVIEW",
+      assess(cr(box), [line({})], 24),
+      (r) => r.kind === "REVIEW",
+    ],
+    [
+      "BOGO free units on the line -> REVIEW",
+      assess(cr(box), [line({ promoFreeUnits: 1, subtotal: 440 })], 12),
+      (r) => r.kind === "REVIEW",
+    ],
+    [
+      "loose pieces only (no filed pack) -> REVIEW",
+      assess(cr({ qty: 5, boxes: 0, pieces: 5 }), [line({ qty: 5, subtotal: 200 })], 12),
+      (r) => r.kind === "REVIEW",
+    ],
+    [
+      "a box-aware line -> REVIEW",
+      assess(cr(box), [line({ boxes: 1, pieces: 0 })], 12),
+      (r) => r.kind === "REVIEW",
+    ],
+    [
+      "an edited qty -> REVIEW",
+      assess(cr(box), [line({ qty: 13, subtotal: 520 })], 12),
+      (r) => r.kind === "REVIEW",
+    ],
+    ["no line on the draft -> REVIEW", assess(cr(box), [], 12), (r) => r.kind === "REVIEW"],
+  ];
+  const sqlCases = [
+    [
+      "guard passes a SELECT",
+      () => assertReadOnlySql('SELECT cr.id FROM "ChangeRequest" cr'),
+      false,
+    ],
+    [
+      "guard passes a quoted column named like a verb",
+      () => assertReadOnlySql('SELECT "updatedAt" FROM "Order"'),
+      false,
+    ],
+    ["guard refuses UPDATE", () => assertReadOnlySql('UPDATE "Order" SET total = 0'), true],
+    [
+      "guard refuses a SELECT with a trailing DELETE",
+      () => assertReadOnlySql('SELECT 1; DELETE FROM "Order"'),
+      true,
+    ],
+    [
+      "guard refuses a data-modifying CTE",
+      () => assertReadOnlySql('WITH x AS (DELETE FROM "Order" RETURNING id) SELECT * FROM x'),
+      true,
     ],
   ];
   let failed = 0;
@@ -175,28 +246,51 @@ function runSelfTest() {
     if (!pass) failed++;
     console.log(`${pass ? "ok  " : "FAIL"} ${name}${pass ? "" : `  -> ${JSON.stringify(result)}`}`);
   }
+  for (const [name, fn, shouldThrow] of sqlCases) {
+    let threw = false;
+    try {
+      fn();
+    } catch {
+      threw = true;
+    }
+    const pass = threw === shouldThrow;
+    if (!pass) failed++;
+    console.log(`${pass ? "ok  " : "FAIL"} ${name}`);
+  }
   console.log(failed ? `\n${failed} self-test case(s) FAILED` : "\nself-test: all cases pass");
   process.exit(failed ? 1 : 0);
 }
 
 async function main() {
-  const databaseUrl = process.env.DATABASE_URL;
-  if (!databaseUrl) {
+  let url;
+  try {
+    url = resolveDatabaseUrl(process.env, { requireProxy: true });
+  } catch (e) {
     console.error(
-      "DATABASE_URL is required and not set. Run via " +
-        "`railway run --service postgres node apps/api/scripts/report-b673-next-delivery-overcharge.mjs`.",
+      `report-b673: ${e.message}\nRun via \`railway run --service postgres node apps/api/scripts/report-b673-next-delivery-overcharge.mjs\`.`,
     );
-    process.exit(1);
+    process.exit(2);
   }
+  if (!json) {
+    console.log(
+      `report-b673: target ${redactUrl(url)} (READ ONLY; prints tenant ids: keep off public issues)`,
+    );
+  }
+
   const { Client } = require("pg");
-  const client = new Client({ connectionString: databaseUrl });
-  const q = async (sql, params) => (await client.query(sql, params)).rows;
+  const client = new Client({ connectionString: url });
+  const q = async (sql, params) => {
+    assertReadOnlySql(sql);
+    return (await client.query(sql, params)).rows;
+  };
 
   await client.connect();
+  let inTx = false;
   try {
-    // Hard read-only guarantee + query cap, before anything else runs.
     await client.query("SET default_transaction_read_only = on");
     await client.query("SET statement_timeout = '60s'");
+    await client.query("BEGIN TRANSACTION READ ONLY"); // one consistent snapshot for every read
+    inTx = true;
 
     const crs = await q(
       `SELECT cr.id, cr."tenantId", cr."productId", cr."nextOrderId", cr.payload, cr."resolvedAt"
@@ -213,7 +307,8 @@ async function main() {
     const results = [];
     for (const cr of crs) {
       const lines = await q(
-        `SELECT oi.id, oi.qty, oi.boxes, oi.pieces, oi."unitPrice", oi.subtotal, oi."invoicedQty"
+        `SELECT oi.id, oi.qty, oi.boxes, oi.pieces, oi."unitPrice", oi.subtotal, oi."invoicedQty",
+                oi."priceType", oi."promoFreeUnits"
            FROM "OrderItem" oi
           WHERE oi."orderId" = $1 AND oi."productId" = $2 AND oi.status <> 'CANCELLED'`,
         [cr.nextOrderId, cr.productId],
@@ -245,19 +340,26 @@ async function main() {
         tenantId: r.tenantId,
         lines: 0,
         invoicedLines: 0,
-        delta: 0,
+        preTaxDelta: 0,
       };
       t.lines += 1;
       if ((r.invoices?.length ?? 0) > 0) t.invoicedLines += 1;
-      t.delta = Math.round((t.delta + r.delta) * 100) / 100;
+      t.preTaxDelta = roundMoney(t.preTaxDelta + r.delta);
       byTenant.set(r.tenantId, t);
     }
-    const grandDelta = Math.round(affected.reduce((s, r) => s + r.delta, 0) * 100) / 100;
+    const grandPreTaxDelta = roundMoney(affected.reduce((s, r) => s + r.delta, 0));
 
     if (json) {
       console.log(
         JSON.stringify(
-          { scanned: crs.length, affected, review, byTenant: [...byTenant.values()], grandDelta },
+          {
+            scanned: crs.length,
+            deltasArePreTax: true,
+            affected,
+            review,
+            byTenant: [...byTenant.values()],
+            grandPreTaxDelta,
+          },
           null,
           2,
         ),
@@ -276,8 +378,8 @@ async function main() {
         : "none";
       console.log(
         `AFFECTED tenant=${r.tenantId} cr=${r.crId} order=${r.orderId}(${r.orderStatus}) item=${r.orderItemId} ` +
-          `filed=${r.filed.boxes}b+${r.filed.pieces}p@${r.filed.pack}${r.livePackUsed ? "(LIVE pack)" : ""} ` +
-          `stored=${r.stored} expected=${r.expected} delta=${r.delta} invoicedQty=${r.invoicedQty} invoices=${inv}`,
+          `filed=${r.filed.boxes}b+${r.filed.pieces}p@${r.filed.pack} ` +
+          `stored=${r.stored} expected=${r.expected} preTaxDelta=${r.delta} invoicedQty=${r.invoicedQty} invoices=${inv}`,
       );
     }
     for (const r of review) {
@@ -285,24 +387,33 @@ async function main() {
         `REVIEW   tenant=${r.tenantId} cr=${r.crId} order=${r.orderId} item=${r.orderItemId ?? "-"} — ${r.reason}`,
       );
     }
-    console.log("\nper tenant (AFFECTED only):");
+    console.log("\nper tenant (AFFECTED only; PRE-TAX):");
     for (const t of byTenant.values()) {
       console.log(
-        `  ${t.tenantId}  lines=${t.lines}  invoicedLines=${t.invoicedLines}  overcharge=${t.delta}`,
+        `  ${t.tenantId}  lines=${t.lines}  invoicedLines=${t.invoicedLines}  preTaxOvercharge=${t.preTaxDelta}`,
       );
     }
-    console.log(`\ngrand total overcharge across AFFECTED lines: ${grandDelta}`);
+    console.log(`\ngrand PRE-TAX overcharge across AFFECTED lines: ${grandPreTaxDelta}`);
+    console.log(
+      "Per-unit excise and sales tax on these lines were inflated too and are NOT included above.",
+    );
     console.log(
       "Nothing was changed. Any repair is the owner's decision, via a separate dry-run-first script.",
     );
   } finally {
+    if (inTx) await client.query("ROLLBACK").catch(() => {});
     await client.end();
   }
 }
 
-if (selfTest) runSelfTest();
-else
-  main().catch((e) => {
-    console.error(e);
-    process.exit(1);
-  });
+// Run only when invoked directly — importing this module (for `assess` / `assertReadOnlySql`)
+// must never start a report.
+const invokedDirectly = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
+if (invokedDirectly) {
+  if (selfTest) runSelfTest();
+  else
+    main().catch((e) => {
+      console.error(e);
+      process.exit(1);
+    });
+}
