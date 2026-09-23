@@ -27,6 +27,7 @@ function build(opts: { tenant?: any; preview?: any; restore?: any } = {}) {
             : opts.tenant,
         ),
     },
+    auditLog: { findMany: jest.fn().mockResolvedValue([]) },
     $transaction: jest.fn(async (fn: any) => fn(tx)),
   };
   const planAllows = jest.fn().mockReturnValue(true);
@@ -70,6 +71,102 @@ describe("TenantConfigSnapshotAdminService (A2 step c)", () => {
     const { svc, snapshots, prisma } = build();
     await svc.list("t1");
     expect(snapshots.list).toHaveBeenCalledWith(prisma, "t1");
+  });
+
+  it("list() never queries the audit trail when nothing is restored", async () => {
+    const { svc, snapshots, prisma } = build();
+    snapshots.list.mockResolvedValueOnce([{ id: "s1", restoredAt: null }]);
+    const rows = await svc.list("t1");
+    expect(prisma.auditLog.findMany).not.toHaveBeenCalled();
+    expect(rows[0].restoreReport).toBeNull();
+  });
+
+  it("list() reads the restore report back from the row's own audit entry (no migration)", async () => {
+    const { svc, snapshots, prisma } = build();
+    snapshots.list.mockResolvedValueOnce([
+      { id: "s1", restoredAt: TAKEN, restoredToPlanKey: HIGH },
+    ]);
+    prisma.auditLog.findMany.mockResolvedValueOnce([
+      {
+        meta: {
+          automatic: false,
+          snapshotId: "s1",
+          report: { restored: 2, skipped: 1, keptNewer: 0, unchanged: 3 },
+        },
+      },
+    ]);
+
+    const rows = await svc.list("t1");
+
+    expect(prisma.auditLog.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { tenantId: "t1", action: "CONFIG_SNAPSHOT_RESTORED" },
+      }),
+    );
+    expect(rows[0].restoreReport).toEqual({
+      automatic: false,
+      restored: 2,
+      skipped: 1,
+      keptNewer: 0,
+      unchanged: 3,
+    });
+  });
+
+  it("list() marks an automatic restore's report distinctly from a manual one", async () => {
+    const { svc, snapshots, prisma } = build();
+    snapshots.list.mockResolvedValueOnce([{ id: "s1", restoredAt: TAKEN }]);
+    prisma.auditLog.findMany.mockResolvedValueOnce([
+      {
+        meta: {
+          automatic: true,
+          snapshotId: "s1",
+          report: { restored: 1, skipped: 0, keptNewer: 0, unchanged: 0 },
+        },
+      },
+    ]);
+
+    const rows = await svc.list("t1");
+
+    expect(rows[0].restoreReport?.automatic).toBe(true);
+  });
+
+  it("list() reports null for a restored row whose audit row is missing — never fabricates a count", async () => {
+    const { svc, snapshots, prisma } = build();
+    snapshots.list.mockResolvedValueOnce([{ id: "s1", restoredAt: TAKEN }]);
+    prisma.auditLog.findMany.mockResolvedValueOnce([]); // no matching audit row at all
+
+    const rows = await svc.list("t1");
+
+    expect(rows[0].restoreReport).toBeNull();
+  });
+
+  it("list() matches each restored row to its OWN audit entry, never mixing up two snapshots", async () => {
+    const { svc, snapshots, prisma } = build();
+    snapshots.list.mockResolvedValueOnce([
+      { id: "s1", restoredAt: TAKEN },
+      { id: "s2", restoredAt: TAKEN },
+    ]);
+    prisma.auditLog.findMany.mockResolvedValueOnce([
+      {
+        meta: {
+          automatic: false,
+          snapshotId: "s1",
+          report: { restored: 1, skipped: 0, keptNewer: 0, unchanged: 0 },
+        },
+      },
+      {
+        meta: {
+          automatic: true,
+          snapshotId: "s2",
+          report: { restored: 9, skipped: 9, keptNewer: 9, unchanged: 9 },
+        },
+      },
+    ]);
+
+    const rows = await svc.list("t1");
+
+    expect(rows.find((r) => r.id === "s1")?.restoreReport).toMatchObject({ restored: 1 });
+    expect(rows.find((r) => r.id === "s2")?.restoreReport).toMatchObject({ restored: 9 });
   });
 
   it("preview() judges the snapshot against the tenant's CURRENT plan and flattens the plan", async () => {

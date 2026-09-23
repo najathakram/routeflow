@@ -14,9 +14,26 @@ import { PlanTransitionConfigService } from "./plan-transition-config.service";
 import type { RestorePlan, SkippedEntry } from "./tenant-config-snapshot";
 import {
   TenantConfigSnapshotService,
+  AUTO_RESTORE_MAX_AGE_DAYS,
   type RestoreResult,
   type SnapshotListItem,
 } from "./tenant-config-snapshot.service";
+
+/** The restore report for one snapshot's LIST row — read back from its own audit row, never
+ *  re-derived. `restored`/`skipped`/`keptNewer`/`unchanged` mirror `RestoreResult["report"]`. */
+export interface RestoreReportView {
+  automatic: boolean;
+  restored: number;
+  skipped: number;
+  keptNewer: number;
+  unchanged: number;
+}
+
+/** `SnapshotListItem` plus the restore report, for a restored row — null when the row was never
+ *  restored (no report exists yet) or its audit row is missing/unreadable. */
+export interface ConfigSnapshotListItemView extends SnapshotListItem {
+  restoreReport: RestoreReportView | null;
+}
 
 /** What the admin "Restore now" dialog shows: the same plan a real restore runs, flattened. */
 export interface SnapshotPreviewView {
@@ -27,6 +44,8 @@ export interface SnapshotPreviewView {
   ageDays: number;
   /** Older than the automatic-restore horizon (90 days): this restore is a deliberate override. */
   beyondAutoRestoreHorizon: boolean;
+  /** The horizon itself (days), so the UI never hardcodes the number the flag copy quotes. */
+  autoRestoreMaxAgeDays: number;
   /** The plan the tenant is on NOW — the plan restore is judged against. */
   currentPlanKey: string;
   willRestore: { kind: "config" | "override"; featureKey: string }[];
@@ -65,8 +84,43 @@ export class TenantConfigSnapshotAdminService {
     private readonly configStore: FeatureConfigStore,
   ) {}
 
-  list(tenantId: string): Promise<SnapshotListItem[]> {
-    return this.snapshots.list(this.prisma, tenantId);
+  /**
+   * The restore report lives in the existing audit trail (no migration — see
+   * `config-snapshot-audit.constants.ts`), written by both restore paths inside the SAME
+   * transaction as the restore itself. One extra query, scoped to this tenant (AuditLog is
+   * indexed on tenantId); matched to each restored row by `meta.snapshotId`. A restored row
+   * whose audit row is missing or unreadable (should not happen; the write is transactional)
+   * reports `restoreReport: null` rather than guessing — never a fabricated report.
+   */
+  async list(tenantId: string): Promise<ConfigSnapshotListItemView[]> {
+    const items = await this.snapshots.list(this.prisma, tenantId);
+    const restoredIds = items.filter((i) => i.restoredAt).map((i) => i.id);
+    if (restoredIds.length === 0) {
+      return items.map((i) => ({ ...i, restoreReport: null }));
+    }
+    const auditRows = await this.prisma.auditLog.findMany({
+      where: { tenantId, action: CONFIG_SNAPSHOT_RESTORED_ACTION },
+      select: { meta: true },
+      orderBy: { createdAt: "desc" },
+    });
+    const reportBySnapshotId = new Map<string, RestoreReportView>();
+    for (const row of auditRows) {
+      const meta = row.meta as Record<string, unknown> | null;
+      const snapshotId = typeof meta?.snapshotId === "string" ? meta.snapshotId : null;
+      // Newest-first order + set-once: an id can appear twice only via a bug (idempotency guards
+      // both restore paths against a duplicate), so the first (newest) row wins if it ever did.
+      if (!snapshotId || reportBySnapshotId.has(snapshotId)) continue;
+      const report = meta?.report as Record<string, unknown> | undefined;
+      if (!report) continue;
+      reportBySnapshotId.set(snapshotId, {
+        automatic: meta?.automatic === true,
+        restored: Number(report.restored ?? 0),
+        skipped: Number(report.skipped ?? 0),
+        keptNewer: Number(report.keptNewer ?? 0),
+        unchanged: Number(report.unchanged ?? 0),
+      });
+    }
+    return items.map((i) => ({ ...i, restoreReport: reportBySnapshotId.get(i.id) ?? null }));
   }
 
   async preview(tenantId: string, snapshotId: string): Promise<SnapshotPreviewView> {
@@ -87,6 +141,7 @@ export class TenantConfigSnapshotAdminService {
       restoredAt: pre.restoredAt,
       ageDays: pre.ageDays,
       beyondAutoRestoreHorizon: pre.beyondAutoRestoreHorizon,
+      autoRestoreMaxAgeDays: AUTO_RESTORE_MAX_AGE_DAYS,
       currentPlanKey: planKey,
       ...flatten(pre.plan),
     };
