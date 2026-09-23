@@ -388,6 +388,8 @@ export class InvoicesService {
     });
     let subtotal = linesSubtotal;
     subtotal = roundMoney(subtotal);
+    // A regulated line makes this a filable sale — the SALE ledger rows are written below.
+    const hasRegulated = itemsData.some((it: any) => it.trackedCategoryId != null);
     await this.applyMsrpSnapshots(this.prisma.forTenant(), dto.customerId, itemsData);
 
     // Validate no line item has a negative subtotal (discount > line total) — B659: extracted to
