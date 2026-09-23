@@ -12,9 +12,20 @@
 // only, (5) npm cache, (6) proof/audit folders older than 7 days.
 //
 // NEVER touched, ever: Docker volumes / `docker system prune`, the main
-// checkout, a worktree with uncommitted changes or unpushed commits,
-// PROTECTED_WORKTREE_NAMES, or any branch this tool cannot prove is merged.
-// Those are reported, never acted on.
+// checkout, a worktree with uncommitted changes, a worktree whose HEAD moved
+// in the last RECENT_ACTIVITY_HOURS, PROTECTED_WORKTREE_NAMES, or any branch
+// this tool cannot prove is merged. A worktree with unpushed commits keeps its
+// checkout (only node_modules may go). Those are reported, never acted on.
+//
+// "Merged" (B800) needs PROOF THE BRANCH HAD WORK OF ITS OWN: plain ancestry is
+// not enough, because a branch just created from master (zero commits) points
+// at a mainline master commit and is trivially an ancestor — it used to count
+// as merged, so an active lane's fresh worktree could lose its node_modules or
+// be removed. A branch is merged when its tip is in origin/master but NOT on
+// master's first-parent mainline (it arrived through a merge), or when GitHub
+// reports its PR MERGED with the PR head equal to the local tip (this also
+// covers squash merges). A fast-forwarded branch is indistinguishable from a
+// fresh one and is left alone — a safe false negative.
 //
 // Safety rule (L-180/L-193): a Windows directory junction must NEVER be
 // deleted with a recursive delete that can follow it into its target — that
@@ -46,6 +57,7 @@ export const PROTECTED_WORKTREE_NAMES = new Set(["rf-migrate", "rf-crm-cloud"]);
 export const PROTECTED_BRANCHES = new Set(["master", "main"]);
 export const STALE_PROOF_AGE_DAYS = 7;
 export const DEFAULT_TARGET_GB = 10;
+export const RECENT_ACTIVITY_HOURS = 24;
 
 // ---------------------------------------------------------------------------
 // Pure classification logic — unit-tested with fixtures in
@@ -63,12 +75,27 @@ export function isProtectedBranch(branch, protectedBranches = PROTECTED_BRANCHES
 }
 
 /**
+ * B800: merged only on proof the branch carried work of its own (see the header).
+ * evidence: { tipIsAncestor, tipOnMainline, prMergedAtTip }
+ */
+export function isMergedEvidence({ tipIsAncestor, tipOnMainline, prMergedAtTip }) {
+  if (prMergedAtTip) return true;
+  return !!tipIsAncestor && !tipOnMainline;
+}
+
+/** Recently active = HEAD moved within `hours`. Unknown activity counts as recent (safe side). */
+export function isRecentlyActive(lastActivityMs, nowMs, hours = RECENT_ACTIVITY_HOURS) {
+  if (lastActivityMs == null || !Number.isFinite(lastActivityMs)) return true;
+  return nowMs - lastActivityMs < hours * 60 * 60 * 1000;
+}
+
+/**
  * Decide what (if anything) this tool may do to a worktree.
- * info: { name, branch, isMainCheckout, isMerged, isDirty, hasUnpushed }
+ * info: { name, branch, isMainCheckout, isMerged, isDirty, isRecent, hasUnpushed }
  * Returns { nodeModules: "clear"|"skip", worktree: "remove"|"skip", reason }
  */
 export function classifyWorktree(info) {
-  const { name, branch, isMainCheckout, isMerged, isDirty, hasUnpushed } = info;
+  const { name, branch, isMainCheckout, isMerged, isDirty, isRecent, hasUnpushed } = info;
   if (isMainCheckout) return { nodeModules: "skip", worktree: "skip", reason: "main checkout" };
   if (isProtectedWorktreeName(name)) {
     return { nodeModules: "skip", worktree: "skip", reason: "protected worktree" };
@@ -83,8 +110,19 @@ export function classifyWorktree(info) {
       reason: "branch not merged into origin/master",
     };
   }
-  // Merged: node_modules is always safe to clear (the checkout survives).
-  if (isDirty) return { nodeModules: "clear", worktree: "skip", reason: "uncommitted changes" };
+  // B800: a worktree someone may still be working in is never touched at all — not even
+  // node_modules, which an active lane needs to run its tests.
+  if (isDirty) {
+    return { nodeModules: "skip", worktree: "skip", reason: "uncommitted changes — never touched" };
+  }
+  if (isRecent) {
+    return {
+      nodeModules: "skip",
+      worktree: "skip",
+      reason: `HEAD moved in the last ${RECENT_ACTIVITY_HOURS}h (or unknown) — never touched`,
+    };
+  }
+  // Merged, clean and idle: node_modules is safe to clear (the checkout survives).
   if (hasUnpushed) return { nodeModules: "clear", worktree: "skip", reason: "unpushed commits" };
   return { nodeModules: "clear", worktree: "remove", reason: "merged, clean, pushed" };
 }
@@ -103,13 +141,20 @@ export function findOrphanWorktreeDirs(listedPaths, dirNames, worktreesRoot) {
   return dirNames.filter((name) => !listed.has(resolve(join(worktreesRoot, name))));
 }
 
-/** localBranches merged into origin/master, filtered to ones origin still carries. */
+/**
+ * Remote branches merged into origin/master and still on origin. B800: a branch whose tip is
+ * on master's mainline (`onMainline`) carries no work of its own — a fresh lane branch — and is
+ * never reported as merged.
+ */
 export function findStaleBranches(
   remoteBranches,
   mergedBranchNames,
   protectedBranches = PROTECTED_BRANCHES,
+  onMainline = new Set(),
 ) {
-  return remoteBranches.filter((b) => mergedBranchNames.has(b) && !protectedBranches.has(b));
+  return remoteBranches.filter(
+    (b) => mergedBranchNames.has(b) && !protectedBranches.has(b) && !onMainline.has(b),
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -201,16 +246,70 @@ function listWorktrees(repoRoot) {
   return entries;
 }
 
-function isMergedIntoMaster(repoRoot, branch) {
-  if (!branch) return false; // detached HEAD — cannot prove merged
-  const tip = trySh("git", ["-C", repoRoot, "rev-parse", branch]);
-  if (!tip) return false;
-  try {
-    execFileSync("git", ["-C", repoRoot, "merge-base", "--is-ancestor", tip, "origin/master"]);
-    return true;
-  } catch {
-    return false; // includes squash-merged branches — a known, SAFE-direction blind spot
+const mainlineCache = new Map();
+/** Every commit on `masterRef`'s first-parent chain (cached per repo + resolved master sha). */
+export function mainlineCommits(repoRoot, masterRef = "origin/master") {
+  // Keyed on the RESOLVED master sha, not the ref name, so a moved master never reads a stale set.
+  const head = trySh("git", ["-C", repoRoot, "rev-parse", masterRef]) ?? masterRef;
+  const key = `${repoRoot}\0${head}`;
+  if (!mainlineCache.has(key)) {
+    const out = trySh("git", ["-C", repoRoot, "rev-list", "--first-parent", masterRef]) ?? "";
+    mainlineCache.set(key, new Set(out.split("\n").filter(Boolean)));
   }
+  return mainlineCache.get(key);
+}
+
+/** B800: GitHub says this branch's PR MERGED, at exactly this local tip. Any failure: false. */
+function ghPrMergedAtTip(repoRoot, branch, tip) {
+  const out = trySh(
+    "gh",
+    ["pr", "list", "--head", branch, "--state", "merged", "--json", "headRefOid", "--limit", "5"],
+    { cwd: repoRoot },
+  );
+  if (!out) return false;
+  try {
+    return JSON.parse(out).some((p) => p.headRefOid === tip);
+  } catch {
+    return false;
+  }
+}
+
+/** The evidence isMergedEvidence() judges. `ghLookup` is injectable so the self-test is hermetic. */
+export function mergeEvidence(
+  repoRoot,
+  branch,
+  { masterRef = "origin/master", ghLookup = ghPrMergedAtTip } = {},
+) {
+  const none = { tipIsAncestor: false, tipOnMainline: false, prMergedAtTip: false };
+  if (!branch) return none; // detached HEAD — cannot prove merged
+  const tip = trySh("git", ["-C", repoRoot, "rev-parse", branch]);
+  if (!tip) return none;
+  let tipIsAncestor = false;
+  try {
+    execFileSync("git", ["-C", repoRoot, "merge-base", "--is-ancestor", tip, masterRef], {
+      stdio: "ignore",
+    });
+    tipIsAncestor = true;
+  } catch {
+    tipIsAncestor = false; // not in master by ancestry (squash merges land here)
+  }
+  return {
+    tipIsAncestor,
+    tipOnMainline: mainlineCommits(repoRoot, masterRef).has(tip),
+    prMergedAtTip: !!ghLookup(repoRoot, branch, tip),
+  };
+}
+
+export function isMergedIntoMaster(repoRoot, branch, opts) {
+  return isMergedEvidence(mergeEvidence(repoRoot, branch, opts));
+}
+
+/** When this worktree's HEAD last moved (commit, checkout, reset, rebase), from its HEAD reflog. */
+export function lastActivityMs(worktreePath) {
+  const gitDir = trySh("git", ["-C", worktreePath, "rev-parse", "--absolute-git-dir"]);
+  if (!gitDir) return null;
+  const log = join(gitDir, "logs", "HEAD");
+  return existsSync(log) ? statSync(log).mtimeMs : null;
 }
 
 function isDirty(worktreePath) {
@@ -246,6 +345,7 @@ function buildPlan(repoRoot, mainCheckoutPath, worktreesRoot) {
   const worktrees = listWorktrees(repoRoot);
   const actions = [];
   const skipped = [];
+  const nowMs = Date.now();
 
   for (const wt of worktrees) {
     const name = wt.path.split(/[\\/]/).pop();
@@ -257,6 +357,7 @@ function buildPlan(repoRoot, mainCheckoutPath, worktreesRoot) {
       isMainCheckout,
       isMerged,
       isDirty: isMainCheckout ? false : isDirty(wt.path),
+      isRecent: isMainCheckout ? false : isRecentlyActive(lastActivityMs(wt.path), nowMs),
       hasUnpushed: isMainCheckout ? false : hasUnpushedCommits(wt.path, wt.branch),
     };
     const verdict = classifyWorktree(info);
@@ -305,7 +406,7 @@ function describeAction(a) {
     case "node_modules":
       return `[1] clear node_modules — ${a.target} (worktree ${a.worktree}, merged)`;
     case "worktree":
-      return `[2] remove whole worktree — ${a.target} (merged, clean, pushed)`;
+      return `[2] remove whole worktree — ${a.target} (merged, clean, idle, pushed)`;
     case "orphan-dir":
       return `[3] remove orphan worktree dir — ${a.target} (not listed by git worktree)`;
     case "docker-build-cache":
@@ -366,7 +467,13 @@ function runStaleBranches(repoRoot) {
       .map((l) => l.trim().replace(/^origin\//, ""))
       .filter(Boolean),
   );
-  const stale = findStaleBranches(remoteBranches, merged);
+  const mainline = mainlineCommits(repoRoot, "origin/master");
+  const onMainline = new Set(
+    [...merged].filter((b) =>
+      mainline.has(trySh("git", ["-C", repoRoot, "rev-parse", `origin/${b}`])),
+    ),
+  );
+  const stale = findStaleBranches(remoteBranches, merged, PROTECTED_BRANCHES, onMainline);
   console.log(`Branches merged into origin/master but still on origin (${stale.length}):`);
   for (const b of stale) console.log(`  - origin/${b}`);
   console.log("Report only — never deletes a remote branch.");
