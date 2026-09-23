@@ -430,9 +430,17 @@ export default function EditInvoiceScreen() {
   // built yet) and this form holds no unit state, so saving would silently store the line as a
   // PACK line — 3 Cases (864 pieces) become 72 pieces while the money still reads $1,440. Refuse
   // visibly here instead of letting the operator discover it from the server's 409 on Save.
-  if (hasUnitLine(invoice.items)) {
+  //
+  // B797: also refuse on orderHasUnitAwareLine — recomputeOrderFromInvoices back-syncs an edit
+  // onto the LINKED ORDER's unit-aware line even when this invoice's own items carry no
+  // unitLabel (mirrors web's B797 fix). The invoice's own labels are the only ones known
+  // client-side; when the order-only flag is what's tripping the guard, name it generically.
+  if (hasUnitLine(invoice.items) || invoice.orderHasUnitAwareLine) {
+    const ownLabels = unitLabelsOf(invoice.items);
     return guard(
-      `This invoice has a line sold by the ${unitLabelsOf(invoice.items).join(" / ")}`,
+      ownLabels.length > 0
+        ? `This invoice has a line sold by the ${ownLabels.join(" / ")}`
+        : "The order behind this invoice has a line sold by a unit",
       "Saving from this screen would turn that line into a pack line and change its quantity. Open the invoice to review it, or delete this draft and create it again.",
     );
   }

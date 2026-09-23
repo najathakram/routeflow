@@ -374,6 +374,11 @@ export interface AdminInvoice {
   /** The linked order's status — drives the draft/final PDF default
    *  (deriveInvoiceVariant). Already returned by findOne's `include`, was untyped. */
   order?: { status?: string | null; orderNumber?: string | null } | null;
+  /** B797: true when the linked order has a live unit-aware line, even if this
+   *  invoice's own items don't (recomputeOrderFromInvoices back-syncs an edit
+   *  onto that order line) — extends the B784 edit guard past the invoice's
+   *  own items. Existence-only; never the order's actual lines. */
+  orderHasUnitAwareLine?: boolean;
   /** Set when this invoice was created as part of a regulated sale split;
    *  sibling invoices from the same split share this id. Same "already
    *  returned, just untyped" situation as orderId (P10-REG-C). */

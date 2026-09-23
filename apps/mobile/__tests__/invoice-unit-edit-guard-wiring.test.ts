@@ -32,3 +32,29 @@ describe("B784: the operator invoice edit screen refuses a unit-aware invoice up
     expect(src).toMatch(/unitLabelsOf\(invoice\.items\)/);
   });
 });
+
+/**
+ * B797 — recomputeOrderFromInvoices back-syncs an edit onto the LINKED ORDER's
+ * unit-aware line even when this invoice's own items carry no unitLabel (same
+ * reason the server's assertInvoiceRewriteAllowed checks both). The guard must
+ * also refuse on findOne's orderHasUnitAwareLine flag, not just the invoice's
+ * own items, and fall back to a generic message when that's the only reason.
+ */
+describe("B797: the operator invoice edit guard also refuses on orderHasUnitAwareLine", () => {
+  const src = readFileSync(
+    join(__dirname, "..", "app/(operator)/(tabs)/invoices/[id]/edit.tsx"),
+    "utf8",
+  );
+
+  it("the guard condition also checks invoice.orderHasUnitAwareLine", () => {
+    const at = src.indexOf("hasUnitLine(invoice.items)");
+    const ifAt = src.lastIndexOf("if (", at);
+    const conditionEnd = src.indexOf(") {", at);
+    const condition = src.slice(ifAt, conditionEnd);
+    expect(condition).toMatch(/invoice\.orderHasUnitAwareLine/);
+  });
+
+  it("falls back to a generic message when only the order (not the invoice's own items) is unit-aware", () => {
+    expect(src).toMatch(/sold by a unit/i);
+  });
+});
