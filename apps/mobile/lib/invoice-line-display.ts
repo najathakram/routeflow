@@ -1,28 +1,25 @@
-import { formatQtySplit } from "@routeflow/pricing";
-
 /**
  * B653: the operator invoice detail's per-line qty/unit text (`(operator)/(tabs)/invoices/[id].tsx`).
- * Pure and testable for the same reason `order-line-display.ts`'s helpers are — RN cannot import a
- * web component to assert against, so the display decision lives in its own file.
- *
- * The screen used to call `formatQtySplit({qty, boxes, pieces})` with no `boxLabel`, so a units_v1
- * line (sold by its own unit, e.g. "Case", not loose pieces) read "3 boxes" — and the price suffix
- * separately hardcoded "/box", so the same line ALSO read "$220.00/box" beside a per-Case price.
- * Both read off the line's own `unitLabel` now; an ordinary boxed line (no `unitLabel`) is
- * byte-identical to before (`formatQtySplit` already defaults to "box"/"boxes" on a null boxLabel,
- * and `invoiceLineUnitNoun` defaults to "box" the same way).
+ * `invoiceLineQtyText` itself now lives in `@routeflow/pricing` (the ONE formatter shared by
+ * web/api/mobile — this file's own local copy got the factor-1 unit case wrong: a bare "5"
+ * instead of "5 Piece", #1275 review round). `usesUnitDisplay`/`invoiceLineUnitNoun` are this
+ * screen's own routing/noun decisions and stay pure + testable here for the same reason
+ * `order-line-display.ts`'s helpers do — RN cannot import a web component to assert against.
  */
-export interface InvoiceLineQtyLike {
-  qty: number;
+
+/**
+ * Whether a line routes through the unit-aware display (qty text + unit noun) instead of the
+ * plain "qty × price" line. A boxed split routes through it as before; a units_v1 FACTOR-1 line
+ * (no split — e.g. "5 Piece") has neither boxes nor pieces but DOES carry its own unitLabel, so
+ * it must route through it too, or it silently falls back to the plain "5 × $2.00" form with no
+ * unit named at all (#1275 review round).
+ */
+export function usesUnitDisplay(item: {
   boxes?: number | null;
   pieces?: number | null;
   unitLabel?: string | null;
-}
-
-/** "3 Cases" / "2 boxes + 3 pcs" / "27" — mirrors the PDF's `qtyCellText`. */
-export function invoiceLineQtyText(item: InvoiceLineQtyLike): string {
-  const boxLabel = item.unitLabel?.trim() || null;
-  return formatQtySplit({ qty: item.qty, boxes: item.boxes, pieces: item.pieces, boxLabel });
+}): boolean {
+  return item.boxes != null || item.pieces != null || (item.unitLabel?.trim() ?? "") !== "";
 }
 
 /** The box-level noun for the "@ price/<noun>" suffix — "Case" for a units_v1 line, "box" default. */
