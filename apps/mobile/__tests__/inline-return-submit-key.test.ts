@@ -3,6 +3,7 @@ import {
   getOrCreateNonce,
   inlineReturnNonceKey,
   inlineReturnSubmitKey,
+  shouldSettleInlineReturnNonce,
   type NonceMap,
 } from "../lib/inline-return-submit-key";
 
@@ -134,5 +135,54 @@ describe("idempotency property — the whole reason this file exists", () => {
     const b = getOrCreateNonce(nonces, inlineReturnNonceKey("cust-1", "order-2"), () => "nonce-B");
     expect(b.nonce).toBe("nonce-B");
     expect(b.nonce).not.toBe(a.nonce);
+  });
+});
+
+describe("shouldSettleInlineReturnNonce — B742-sibling, SA-091", () => {
+  // Before this fix: nothing ever called markCaptureSettled from useCaptureInlineReturn, so a
+  // GENUINE second return with the same quantities on the same customer/order pair derived the
+  // SAME returnKey as the first and the server silently replayed the old record — no second
+  // return, no credit. These three cases are the whole fix.
+
+  it("success settles", () => {
+    expect(shouldSettleInlineReturnNonce({ kind: "success" })).toBe(true);
+  });
+
+  it("an error the server actually responded to (a refusal) settles — it is terminal, same as success", () => {
+    expect(shouldSettleInlineReturnNonce({ kind: "error", reachedServer: true })).toBe(true);
+  });
+
+  it("an error with no response at all (connectivity, or killed before one arrived) does NOT settle — the offline queue must replay with the SAME key", () => {
+    expect(shouldSettleInlineReturnNonce({ kind: "error", reachedServer: false })).toBe(false);
+  });
+
+  it("end-to-end: settling after success/a 4xx mints a genuinely fresh nonce for the next attempt; not settling after a connectivity error keeps the same one", () => {
+    const key = inlineReturnNonceKey("cust-1", "order-1");
+
+    // Success case.
+    let nonces: NonceMap = {};
+    const attempt1 = getOrCreateNonce(nonces, key, () => "nonce-A");
+    nonces = attempt1.nonces;
+    if (shouldSettleInlineReturnNonce({ kind: "success" })) nonces = clearNonce(nonces, key);
+    const attempt2 = getOrCreateNonce(nonces, key, () => "nonce-B");
+    expect(attempt2.nonce).not.toBe(attempt1.nonce);
+
+    // 4xx case, fresh map.
+    nonces = {};
+    const a1 = getOrCreateNonce(nonces, key, () => "nonce-C");
+    nonces = a1.nonces;
+    if (shouldSettleInlineReturnNonce({ kind: "error", reachedServer: true }))
+      nonces = clearNonce(nonces, key);
+    const a2 = getOrCreateNonce(nonces, key, () => "nonce-D");
+    expect(a2.nonce).not.toBe(a1.nonce);
+
+    // Connectivity-error case, fresh map: the nonce must survive for the queue's replay.
+    nonces = {};
+    const b1 = getOrCreateNonce(nonces, key, () => "nonce-E");
+    nonces = b1.nonces;
+    if (shouldSettleInlineReturnNonce({ kind: "error", reachedServer: false }))
+      nonces = clearNonce(nonces, key);
+    const b2 = getOrCreateNonce(nonces, key, () => "REGENERATED-NONCE-IS-A-BUG");
+    expect(b2.nonce).toBe(b1.nonce);
   });
 });

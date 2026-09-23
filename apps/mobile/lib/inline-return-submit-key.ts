@@ -97,3 +97,24 @@ export function clearNonce(nonces: NonceMap, key: string): NonceMap {
   const { [key]: _cleared, ...rest } = nonces;
   return rest;
 }
+
+/**
+ * B742's sibling money bug for this flow, ruled SA-091: settle the nonce on every TERMINAL
+ * outcome, keep it on anything the server never saw. A capture's outcome is one of three
+ * shapes, not two:
+ *  - success: the return landed. Settle — the NEXT attempt for this pair must mint fresh.
+ *  - a response the server sent (4xx/5xx): a refusal is terminal too, exactly like a success.
+ *    The operator saw an error and will act on it as final; the same nonce must not be reused
+ *    by a later, GENUINELY NEW capture on the same customer/order pair, or that new capture's
+ *    returnKey collides with the refused attempt's and the server silently replays the OLD
+ *    (refused, or worse, the pre-refusal) record instead of processing the new one.
+ *  - no response at all (a connectivity failure, or the app was killed before one arrived):
+ *    NOT terminal — the offline queue is expected to replay this exact request later, and the
+ *    replay must carry the SAME returnKey or it becomes a second, duplicate capture. Keep it.
+ */
+export type InlineReturnCaptureOutcome =
+  { kind: "success" } | { kind: "error"; reachedServer: boolean };
+
+export function shouldSettleInlineReturnNonce(outcome: InlineReturnCaptureOutcome): boolean {
+  return outcome.kind === "success" || outcome.reachedServer;
+}
