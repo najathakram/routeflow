@@ -435,3 +435,65 @@ describe("merge-items — overrideReason threading (B465 fix round 2, Opus BLOCK
     expect(merged[0]).not.toHaveProperty("overrideReason");
   });
 });
+
+describe("merge-items — B776 (SA-101(1)(d)): a genuine pack disagreement REFUSES, never re-denominates", () => {
+  it("stored at a 12-pack, scanned as a 6-pack: refuses naming both packs, before mutating anything", () => {
+    const existingLines: MergeLineSnapshot[] = [
+      { productId: "prod-repack", boxes: 1, pieces: 0, qty: 12, unitsPerBox: 12, unitPrice: 36 },
+    ];
+    const incoming: MergeIncomingItem[] = [
+      { productId: "prod-repack", qty: 6, boxes: 1, pieces: 0 },
+    ];
+
+    expect(() => foldMergeItems(existingLines, incoming)).toThrow(
+      expect.objectContaining({
+        response: expect.objectContaining({
+          code: "MERGE_PACK_MISMATCH",
+          productId: "prod-repack",
+          existingPack: 12,
+          incomingPack: 6,
+        }),
+      }),
+    );
+  });
+
+  it("a disagreeing pack for ONE product never re-denominates an untouched sibling line", () => {
+    const existingLines: MergeLineSnapshot[] = [
+      { productId: "prod-repack", boxes: 1, pieces: 0, qty: 12, unitsPerBox: 12, unitPrice: 36 },
+      { productId: "prod-fine", boxes: 1, pieces: 0, qty: 12, unitsPerBox: 12, unitPrice: 24 },
+    ];
+    const incoming: MergeIncomingItem[] = [
+      { productId: "prod-fine", qty: 12, boxes: 1, pieces: 0 },
+      { productId: "prod-repack", qty: 6, boxes: 1, pieces: 0 },
+    ];
+
+    // prod-fine is processed first and folds cleanly; prod-repack's disagreement still throws —
+    // the whole call fails atomically (the caller never sees a partial merge).
+    expect(() => foldMergeItems(existingLines, incoming)).toThrow(
+      expect.objectContaining({
+        response: expect.objectContaining({ code: "MERGE_PACK_MISMATCH" }),
+      }),
+    );
+  });
+
+  it("an UNRESOLVED accumulator pack (box-unaware existing line) still adopts the incoming pack, no refusal", () => {
+    // acc.unitsPerBox starts at 0 (existing line has no boxes/pieces) — not a disagreement,
+    // the existing "own pack, else packFromOwnSplit, else live" precedence's normal fill-in.
+    const existingLines: MergeLineSnapshot[] = [
+      { productId: "prod-1", qty: 2, unitPrice: 36 }, // box-unaware, boxes/pieces both null
+    ];
+    const incoming: MergeIncomingItem[] = [{ productId: "prod-1", qty: 12, boxes: 1, pieces: 0 }];
+
+    expect(() => foldMergeItems(existingLines, incoming)).not.toThrow();
+  });
+
+  it("agreeing packs still fold normally — the refusal never fires on a genuine match", () => {
+    const existingLines: MergeLineSnapshot[] = [
+      { productId: "prod-1", boxes: 1, pieces: 0, qty: 12, unitsPerBox: 12, unitPrice: 36 },
+    ];
+    const incoming: MergeIncomingItem[] = [{ productId: "prod-1", qty: 12, boxes: 1, pieces: 0 }];
+
+    const folded = foldMergeItems(existingLines, incoming);
+    expect(folded[0]).toMatchObject({ boxes: 2, pieces: 0, qty: 24 });
+  });
+});

@@ -1,0 +1,217 @@
+/**
+ * B776 (CRITICAL, SA-101(1)) — shared catalog-line write planning for `mergeAllPendingForCustomer`
+ * and `forceConsolidateCustomer`. Replaces each method's own "bump the winner's overlapping line,
+ * then create a line for every loser-only product" pair of loops: both now build PER-PRODUCT
+ * PACK GROUPS first (`merge-pack-resolve.ts`) and emit one write PER GROUP, so a product whose
+ * contributing lines disagree on pack never folds across that disagreement.
+ */
+import { PriceType } from "@prisma/client";
+import { copyCategoryTaxSnapshot, type CategoryTaxType, type PromotionRule } from "@routeflow/pricing";
+import { mergeBoxedContributions } from "./buyer-merge-pricing";
+import { groupContributionsByPack, type PackCandidate } from "./merge-pack-resolve";
+
+export interface MergeLine extends PackCandidate {
+  /** Set only on the winner's own existing OrderItem row — identity distinguishes it in a group. */
+  id?: string;
+  productId: string | null;
+  unitPrice: unknown;
+  subtotal: unknown;
+  priceType: PriceType;
+  originalPrice: unknown;
+  overrideReason: string | null;
+  overriddenBy: string | null;
+  notes: string | null;
+  promoFreeUnits: unknown;
+  trackedCategoryId: string | null;
+  /** B297 (SA-098a) — a Prisma `Decimal` at the real callsite (like `unitPrice`); coerced at use. */
+  categoryTaxType: CategoryTaxType | null;
+  categoryTaxRate: unknown;
+  categoryPriceIncludesTax: boolean | null;
+}
+
+export interface MergeLineWriteData {
+  productId: string;
+  qty: number;
+  boxes: number | null;
+  pieces: number | null;
+  /** SA-101(1)(c): the pack this line was actually priced at — never the live product row. */
+  unitsPerBox: number | null;
+  unitPrice: number;
+  subtotal: number;
+  promoFreeUnits: number | null;
+  priceType: PriceType;
+  originalPrice: number | null;
+  overrideReason: string | null;
+  overriddenBy: string | null;
+  notes: string | null;
+  trackedCategoryId: string | null;
+  /** B297/SA-098a: a new winner line is a new sale — COPIED verbatim from the losing line
+   * (`copyCategoryTaxSnapshot` — a merge is not a new sale, never re-derived from the live category). */
+  categoryTaxType: CategoryTaxType | null;
+  categoryTaxRate: number | null;
+  categoryPriceIncludesTax: boolean | null;
+}
+
+type MergeLineUpdateData = Pick<
+  MergeLineWriteData,
+  "qty" | "boxes" | "pieces" | "unitsPerBox" | "subtotal"
+> & { promoFreeUnits?: number | null };
+
+export type MergeLineWrite =
+  | { kind: "update"; lineId: string; data: MergeLineUpdateData }
+  | { kind: "create"; data: MergeLineWriteData };
+
+export interface MergeWarning {
+  productId: string;
+  packs: number[];
+}
+
+export interface BuildMergeLineWritesOptions {
+  promos: PromotionRule[];
+  canEarnNew: boolean;
+  categoryFor: (productId: string) => string | null;
+  liveUnitsPerBoxFor: (productId: string) => number;
+}
+
+/** `unitsPerBox` a NON-boxed line ends up written with — matches computeLineSubtotal's own
+ * "boxed only when boxes != null" contract: a group whose resolved pack is <= 1 never boxes. */
+const packForWrite = (pack: number, boxes: number | null) =>
+  boxes != null && pack > 1 ? pack : null;
+
+export function buildMergeLineWrites(
+  winnerLines: readonly MergeLine[],
+  loserLines: readonly MergeLine[],
+  opts: BuildMergeLineWritesOptions,
+): { writes: MergeLineWrite[]; warnings: MergeWarning[] } {
+  const loserByProduct = new Map<string, MergeLine[]>();
+  for (const li of loserLines) {
+    if (!li.productId) continue;
+    const list = loserByProduct.get(li.productId) ?? [];
+    list.push(li);
+    loserByProduct.set(li.productId, list);
+  }
+  const winnerByProduct = new Map<string, MergeLine>();
+  for (const li of winnerLines) {
+    if (li.productId) winnerByProduct.set(li.productId, li);
+  }
+  const productIds = new Set<string>([...winnerByProduct.keys(), ...loserByProduct.keys()]);
+
+  const writes: MergeLineWrite[] = [];
+  const warnings: MergeWarning[] = [];
+
+  for (const productId of productIds) {
+    const winnerLine = winnerByProduct.get(productId);
+    const losers = loserByProduct.get(productId) ?? [];
+    if (losers.length === 0) continue; // nothing contributed by any loser — the winner line is untouched.
+
+    const liveUpb = opts.liveUnitsPerBoxFor(productId);
+    const { groups, disagreement, packsSeen } = groupContributionsByPack(
+      winnerLine,
+      losers,
+      liveUpb,
+    );
+    if (disagreement) warnings.push({ productId, packs: packsSeen });
+
+    for (const group of groups) {
+      if (group.isWinnerGroup && group.contributions.length === 1) continue; // untouched, no write.
+
+      if (group.isSingleMove) {
+        const c = group.contributions[0];
+        writes.push({
+          kind: "create",
+          data: {
+            productId,
+            qty: Number(c.qty),
+            boxes: c.boxes,
+            pieces: c.pieces,
+            unitsPerBox: packForWrite(group.pack, c.boxes),
+            unitPrice: Number(c.unitPrice),
+            subtotal: Number(c.subtotal),
+            promoFreeUnits: c.promoFreeUnits != null ? Number(c.promoFreeUnits) : null,
+            priceType: c.priceType,
+            originalPrice: c.originalPrice != null ? Number(c.originalPrice) : null,
+            overrideReason: c.overrideReason,
+            overriddenBy: c.overriddenBy,
+            notes: c.notes,
+            trackedCategoryId: c.trackedCategoryId ?? null,
+            ...copyCategoryTaxSnapshot({
+              categoryTaxType: c.categoryTaxType,
+              categoryTaxRate: c.categoryTaxRate as number | string | null,
+              categoryPriceIncludesTax: c.categoryPriceIncludesTax,
+            }),
+          },
+        });
+        continue;
+      }
+
+      const primary = group.isWinnerGroup ? winnerLine! : group.contributions[0];
+      const others = group.contributions.filter((c) => c !== primary);
+      const merged = mergeBoxedContributions(
+        [primary, ...others].map((c) => ({
+          qty: c.qty,
+          boxes: c.boxes,
+          pieces: c.pieces,
+          promoFreeUnits: c.promoFreeUnits != null ? Number(c.promoFreeUnits) : null,
+          priceType: c.priceType,
+          overriddenBy: c.overriddenBy,
+        })),
+        Number(primary.unitPrice),
+        group.pack,
+        {
+          promos: opts.promos,
+          productId,
+          category: opts.categoryFor(productId),
+          canEarnNew: opts.canEarnNew,
+          pricePromoApplied: primary.priceType === PriceType.PROMO && primary.originalPrice != null,
+        },
+      );
+      const unitsPerBox = packForWrite(group.pack, merged.boxes);
+
+      if (group.isWinnerGroup) {
+        writes.push({
+          kind: "update",
+          lineId: winnerLine!.id!,
+          data: {
+            qty: merged.qty,
+            boxes: merged.boxes,
+            pieces: merged.pieces,
+            unitsPerBox,
+            subtotal: merged.subtotal,
+            // Untouched (key omitted, not re-written) when no contribution ever carried a
+            // free-unit snapshot — mirrors the pre-fix conditional spread exactly.
+            ...(merged.freeUnits > 0 || merged.storedFreeUnits > 0
+              ? { promoFreeUnits: merged.freeUnits > 0 ? merged.freeUnits : null }
+              : {}),
+          },
+        });
+      } else {
+        writes.push({
+          kind: "create",
+          data: {
+            productId,
+            qty: merged.qty,
+            boxes: merged.boxes,
+            pieces: merged.pieces,
+            unitsPerBox,
+            unitPrice: Number(primary.unitPrice),
+            subtotal: merged.subtotal,
+            promoFreeUnits: merged.freeUnits > 0 ? merged.freeUnits : null,
+            priceType: primary.priceType,
+            originalPrice: primary.originalPrice != null ? Number(primary.originalPrice) : null,
+            overrideReason: primary.overrideReason,
+            overriddenBy: primary.overriddenBy,
+            notes: primary.notes,
+            trackedCategoryId: primary.trackedCategoryId ?? null,
+            ...copyCategoryTaxSnapshot({
+              categoryTaxType: primary.categoryTaxType,
+              categoryTaxRate: primary.categoryTaxRate as number | string | null,
+              categoryPriceIncludesTax: primary.categoryPriceIncludesTax,
+            }),
+          },
+        });
+      }
+    }
+  }
+
+  return { writes, warnings };
+}

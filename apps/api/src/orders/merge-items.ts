@@ -1,3 +1,4 @@
+import { ConflictException } from "@nestjs/common";
 import { normalizeBoxesPieces } from "@routeflow/pricing";
 
 export interface MergeLineSnapshot {
@@ -166,6 +167,19 @@ export function foldMergeItems(
         notes: item.notes ?? null,
       });
       continue;
+    }
+    // B776 (SA-101(1)(d)): the accumulator's pack and this incoming item's OWN pack are both
+    // KNOWN and DISAGREE — refuse the whole fold rather than silently combining pieces priced
+    // under two different box sizes into one re-split line. Never re-denominates the other
+    // lines in the same payload; the caller (a single interactive request) simply retries.
+    if (acc.unitsPerBox > 1 && incomingUnitsPerBox > 1 && acc.unitsPerBox !== incomingUnitsPerBox) {
+      throw new ConflictException({
+        code: "MERGE_PACK_MISMATCH",
+        message: `Product ${item.productId} is on this order at a ${acc.unitsPerBox}-pack and the scanned item is a ${incomingUnitsPerBox}-pack — resolve the mismatch before merging.`,
+        productId: item.productId,
+        existingPack: acc.unitsPerBox,
+        incomingPack: incomingUnitsPerBox,
+      });
     }
     acc.boxes += incomingHasBoxData ? Number(item.boxes ?? 0) : 0;
     acc.pieces += incomingHasBoxData ? Number(item.pieces ?? 0) : Number(item.qty ?? 0);

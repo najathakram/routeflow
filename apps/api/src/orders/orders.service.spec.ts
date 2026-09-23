@@ -2699,16 +2699,16 @@ describe("OrdersService", () => {
 
       const result = await service.sweepAllPendingOrders();
 
-      // each group's merge ran inside ITS OWN tenant's context — never the other
-      // group's, and never ambient/unscoped.
+      // each group's merge ran inside ITS OWN tenant's context — never the other group's.
       expect(tenantCtx.run).toHaveBeenCalledTimes(2);
       expect(tenantCtx.run).toHaveBeenNthCalledWith(1, "tenant-a", expect.any(Function));
       expect(tenantCtx.run).toHaveBeenNthCalledWith(2, "tenant-b", expect.any(Function));
-      expect(mergeSpy).toHaveBeenCalledWith("cust-a");
-      expect(mergeSpy).toHaveBeenCalledWith("cust-b");
+      const sweepOpts = expect.objectContaining({ onPackMismatch: expect.any(Function) });
+      expect(mergeSpy).toHaveBeenCalledWith("cust-a", {}, sweepOpts);
+      expect(mergeSpy).toHaveBeenCalledWith("cust-b", {}, sweepOpts);
       expect(warnSpy).not.toHaveBeenCalled();
 
-      expect(result).toEqual({ customers: 2, merged: 2, skipped: 0 });
+      expect(result).toEqual({ customers: 2, merged: 2, skipped: 0, packMismatches: 0 });
     });
 
     it("REG-B323 a customer with one tenant-scoped pending order and one legacy null-tenant order is counted and warned, never dropped silently", async () => {
@@ -2736,7 +2736,7 @@ describe("OrdersService", () => {
           "sweepAllPendingOrders: customer cust-a has 1 pending order(s) without tenantId — not merged (B323)",
         ),
       );
-      expect(result).toEqual({ customers: 0, merged: 0, skipped: 1 });
+      expect(result).toEqual({ customers: 0, merged: 0, skipped: 1, packMismatches: 0 });
     });
   });
 
