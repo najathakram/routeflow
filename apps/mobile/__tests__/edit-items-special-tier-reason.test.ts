@@ -69,8 +69,11 @@ describe("edit-items.tsx PriceOverrideModal — SPECIAL-tier reason required (B4
     }
   });
 
-  it("REG-B465-5: the list branch passes isSpecialFor(priceEditItem.productId) — the SAME helper canEditPriceFor already uses to exclude SPECIAL lines from the affordance itself", () => {
-    expect(source).toMatch(/isSpecial=\{isSpecialFor\(priceEditItem\.productId\)\}/);
+  it("REG-B465-5: the list branch passes isSpecialFor(priceEditItem.item.productId) — the SAME helper canEditPriceFor already uses to exclude SPECIAL lines from the affordance itself", () => {
+    // B775/SA-108: `priceEditItem` is now `{ key, item }` (never re-derives
+    // its draft key from `item.lineId ?? item.productId`), so the price
+    // check reads off `.item.productId`, not a bare `.productId`.
+    expect(source).toMatch(/isSpecial=\{isSpecialFor\(priceEditItem\.item\.productId\)\}/);
   });
 
   it("REG-B465-6: ProductPicker forwards an isSpecialTierFor prop through to its own PriceOverrideModal mount", () => {

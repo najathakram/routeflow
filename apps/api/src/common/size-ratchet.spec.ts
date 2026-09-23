@@ -30,7 +30,7 @@ const HEADROOM = 25;
 /** Repo-relative path → baseline line count (measured 2026-09-19 at 91d323de). */
 const BASELINE: Record<string, number> = {
   "apps/api/src/orders/orders.service.ts": 5751, // SA-065 extraction: appendOrderRevision -> order-revisions.ts (was 5780; U1 before that: class tail -> order-lifecycle.ts, 5880)
-  "apps/api/src/invoices/invoices.service.ts": 6389, // 4c-1 prefactor: manual line builder -> manual-invoice-lines.ts (was 6412)
+  "apps/api/src/invoices/invoices.service.ts": 6358, // B659 prefactor: create() context/fold steps -> manual-invoice-context.ts (was 6389; verified by wc -l). The ledger-write extraction B659 originally also proposed was rejected on rebase (manual-invoice-context.ts's header comment) — but that rejection also silently dropped this file's OWN `hasRegulated` local (the extracted helper computed its own copy internally), a real ReferenceError caught only by running invoices.service.spec.ts in full; re-added 2 lines after itemsData, 6356 -> 6358.
   "apps/api/src/orders/orders.service.spec.ts": 9511,
   "apps/api/src/customers/customers.service.ts": 3307,
   "apps/api/src/invoices/invoices.service.spec.ts": 9351,
