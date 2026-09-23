@@ -41,12 +41,13 @@ import {
   roundMoney,
 } from "@routeflow/pricing";
 import { freeUnitsLabel } from "../../../../../lib/buyer-cart-logic";
-import { incrementLine, incrementLinePiece, setLineUnits } from "../../../../../lib/sale-line";
+import { setLineUnits } from "../../../../../lib/sale-line";
 import { buildSubstituteLine } from "../../../../../lib/substitute-line";
 import { findExactScanMatch, looksLikeScanCode, scanUnitKind } from "../../../../../lib/wedge-scan";
 import type { ScanOutcome } from "../../../../../lib/scan-loop";
 import { useMarginConfig, floorForCategory } from "../../../../../lib/api/margin";
 import {
+  applyPickToDraft,
   draftFreeUnits,
   draftTrayRows,
   deserializeEditItemsSnapshot,
@@ -58,6 +59,7 @@ import {
   newLocalId,
   orderOriginals,
   pickerTrayExpandedHeight,
+  resolveDraftKeyForPick,
   serializeEditItemsSnapshot,
   shouldRehydrateFromOrder,
   snapshotBaseline,
@@ -189,12 +191,30 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
   // Tenant margin config for the live cost/margin hint (P10-POS-1).
   const { data: marginConfig } = useMarginConfig();
   // Lines explicitly acked as "sell anyway" below the margin floor —
-  // session-local, keyed by lineId ?? productId.
+  // session-local, keyed by the SAME draft key as `draft` itself (SA-108:
+  // the line's own identity — li.id, or a fresh key for a not-yet-saved row
+  // — never re-derived from the item's fields).
   const [floorAcked, setFloorAcked] = useState<Set<string>>(new Set());
 
+  // SA-108: keyed by the line's own identity, never productId — see
+  // hydrateFromOrder/resolveDraftKeyForPick (lib/edit-items-draft.ts).
   const [draft, setDraft] = useState<Record<string, DraftItem>>({});
+  // SA-108d (E44 correction of SA-108a): a manually-kept-fresh mirror of
+  // `draft`. React's functional setState eager-dispatch path needs BOTH the
+  // fiber's AND its alternate's lanes empty — after this component's own
+  // earlier state-driven renders the alternate can retain stale lanes, so
+  // even the FIRST setDraft call of a burst is often deferred too, not just
+  // the second. A ref write placed INSIDE the updater is therefore never
+  // reliable as a synchronization point. Instead: assigned here on every
+  // render, AND at every mutation's own call site via `draftRef.current =
+  // apply(draftRef.current)` (a pure transform, run once synchronously by
+  // us) immediately before handing that SAME pure function to `setDraft` —
+  // never inside a setDraft updater itself, so it never depends on whether
+  // or when React actually invokes it.
+  const draftRef = useRef<Record<string, DraftItem>>({});
+  draftRef.current = draft;
   // New + existing ad-hoc lines (productId null). Kept separate from `draft`
-  // (which is keyed by productId) and diffed on save so they aren't dropped.
+  // and diffed on save so they aren't dropped.
   const [unlisted, setUnlisted] = useState<UnlistedDraft[]>([]);
   // Existing line ids removed with the trash button → emitted as DELETE actions
   // in the incremental diff (the server hard-deletes only uninvoiced/undelivered
@@ -215,7 +235,9 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
   const [scanOrder, setScanOrder] = useState<string[]>([]);
   const [trayFlash, setTrayFlash] = useState<ScanFlash | null>(null);
   const [substituteFor, setSubstituteFor] = useState<string | null>(null);
-  const [priceEditItem, setPriceEditItem] = useState<DraftItem | null>(null);
+  // SA-108: the item ALONE can't say where to write it back (a new row has
+  // no lineId) — carry its draft key alongside it, set at every setPriceEditItem call.
+  const [priceEditItem, setPriceEditItem] = useState<{ key: string; item: DraftItem } | null>(null);
   const [licenseBlock, setLicenseBlock] = useState<BlockedCategory[] | null>(null);
   const [restrictedBlock, setRestrictedBlock] = useState<BlockedLine[] | null>(null);
   const [creditBlock, setCreditBlock] = useState<CreditLimitExceededInfo | null>(null);
@@ -643,6 +665,10 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
    * PIECE-barcode (unitSku) hit: one LOOSE piece instead of a box, rolling
    * into a box at unitsPerBox — the same semantics as the sale builders.
    * Shared by tap-pick (closes the picker) and add-and-stay (scans/wedge).
+   * Returns the draft key the line ended up at, so callers that track "the
+   * last thing added" (the picker's price-edit affordance) point at the
+   * right entry — never assume it is `p.id` (B775: the draft record is
+   * keyed by lineId/a fresh local id, not productId).
    */
   const addPickedToDraft = (
     p: {
@@ -657,50 +683,49 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
       unitsPerBox?: number | null;
     },
     kind: "case" | "piece" = "case",
-  ) => {
+  ): string => {
     const catalogPrice = tierPriceFor(p);
     const listPrice = toNumber(p.pricePerUnit);
     const isSpecial = (cpMap.get(p.id) ?? customerTier ?? 1) !== 1;
     const upbRaw = p.unitsPerBox;
     const unitsPerBox = upbRaw == null ? null : Number(upbRaw);
-    setDraft((d) => {
-      const existing = d[p.id];
-      const upb = Number(existing?.unitsPerBox ?? unitsPerBox ?? 0);
-      const boxed = upb > 1;
-      if (existing) {
-        if (boxed) {
-          const line =
-            kind === "piece"
-              ? incrementLinePiece(existing, true, upb)
-              : incrementLine(existing, true, upb);
-          return { ...d, [p.id]: { ...line, boxSplit: true } };
-        }
-        return { ...d, [p.id]: { ...existing, qty: (existing.qty ?? 0) + 1 } };
-      }
-      // Fresh add: conditionally pre-fill the remembered price — only a
-      // genuine discount (below tier) or upsell (above list), never over
-      // a SPECIAL tier price. Else start at the tier price.
-      const hist = priceHistory?.[p.id];
-      const startPrice =
-        !isSpecial && hist != null && (hist.lastPrice < catalogPrice || hist.lastPrice > listPrice)
-          ? hist.lastPrice
-          : catalogPrice;
-      const base = {
+    // Fresh-add starting price — only a genuine discount (below tier) or
+    // upsell (above list), never over a SPECIAL tier price. Else the tier
+    // price. Resolved unconditionally: applyPickToDraft only USES it on a
+    // fresh add, but it must be a plain value handed into a PURE transform,
+    // never re-derived inside one (see SA-108d below).
+    const hist = priceHistory?.[p.id];
+    const startPrice =
+      !isSpecial && hist != null && (hist.lastPrice < catalogPrice || hist.lastPrice > listPrice)
+        ? hist.lastPrice
+        : catalogPrice;
+    // SA-108d (E44 correction of SA-108a): mint the key OUTSIDE from
+    // draftRef.current, then build a PURE `apply(d)` closed over the key and
+    // the pick's inputs — no ref write inside it. React's eager-dispatch
+    // path for a functional setState updater needs BOTH the fiber's and its
+    // alternate's lanes empty; after this component's own earlier renders
+    // the alternate can retain stale lanes, so even the FIRST setDraft call
+    // of a same-tick burst is often deferred, not just the second — a ref
+    // write placed INSIDE the updater (SA-108a's shape) is therefore never a
+    // reliable synchronization point. Instead: `apply` is pure (same `d` in,
+    // same `next` out, always), so running it synchronously ourselves to
+    // update the ref AND handing the identical function to setDraft (which
+    // may run it again, eagerly or not, whenever React gets to it) is safe —
+    // both calls, if they both occur, produce the same result.
+    const resolvedKey = resolveDraftKeyForPick(draftRef.current, p.id, null);
+    const apply = (d: Record<string, DraftItem>) =>
+      applyPickToDraft(d, resolvedKey, {
         productId: p.id,
         unitsPerBox,
-        unitPrice: startPrice,
+        startPrice,
         catalogPrice,
         name: p.name,
         unit: p.unit,
-      };
-      if (boxed) {
-        // 1 box for a case scan/tap; 1 LOOSE piece for a piece-code scan.
-        return kind === "piece"
-          ? { ...d, [p.id]: { ...base, qty: 1, boxes: 0, pieces: 1, boxSplit: true } }
-          : { ...d, [p.id]: { ...base, qty: upb, boxes: 1, pieces: 0, boxSplit: true } };
-      }
-      return { ...d, [p.id]: { ...base, qty: 1 } };
-    });
+        kind,
+      });
+    draftRef.current = apply(draftRef.current);
+    setDraft(apply);
+    return resolvedKey;
   };
 
   const decQty = (id: string) => {
@@ -953,19 +978,24 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
 
       {priceEditItem ? (
         <PriceOverrideModal
-          item={priceEditItem}
-          isSpecial={isSpecialFor(priceEditItem.productId)}
+          item={priceEditItem.item}
+          isSpecial={isSpecialFor(priceEditItem.item.productId)}
           onSave={(price, reason) => {
             // B263 D2: rounding + lineTotal recompute now live in the shared
             // helper (money discipline) — never write the raw typed price.
-            const updated = applyPriceOverride(priceEditItem, {
+            const updated = applyPriceOverride(priceEditItem.item, {
               unitPrice: price,
               reason: reason || undefined,
             });
+            // SA-108: write back to priceEditItem's OWN stored key — never
+            // re-derived from the item's fields (a new row has no lineId,
+            // so `lineId ?? productId` would create a SECOND entry at the
+            // bare productId next to the real `new:` one: a silent double CREATE).
+            const key = priceEditItem.key;
             setDraft((d) => ({
               ...d,
-              [priceEditItem.productId]: {
-                ...priceEditItem,
+              [key]: {
+                ...priceEditItem.item,
                 unitPrice: updated.unitPrice,
                 overrideReason: updated.overrideReason,
               },
@@ -1049,10 +1079,11 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
             substituteFor
               ? undefined
               : (p, kind) => {
-                  addPickedToDraft(p, kind);
-                  setLastScannedId(p.id);
-                  setScanOrder((o) => bumpScanOrder(o, p.id));
-                  setTrayFlash((f) => nextFlash(f, p.id));
+                  // B775: track the draft KEY (addPickedToDraft's return), not p.id.
+                  const key = addPickedToDraft(p, kind);
+                  setLastScannedId(key);
+                  setScanOrder((o) => bumpScanOrder(o, key));
+                  setTrayFlash((f) => nextFlash(f, key));
                 }
           }
           trayRows={trayRows}
@@ -1075,23 +1106,27 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
                 )
               : null
           }
-          lastAddedAcked={
-            lastAddedLine ? floorAcked.has(lastAddedLine.lineId ?? lastAddedLine.productId) : false
-          }
+          lastAddedAcked={lastScannedId ? floorAcked.has(lastScannedId) : false}
           // Finding B263-H: the same floor-FRACTION call the list row's own
           // `marginFloor` prop uses (`:983`) — lets the strip classify
           // `lastAdded` with the row's exact derivation, not a hand-rolled one.
           marginFloor={floorForCategory(marginConfig, lastAddedLine?.category)}
           // The list row's Set-to-floor writer, verbatim (`setLinePrice`) —
-          // one price-write path for both surfaces.
-          onSetToFloor={(item, price) => setLinePrice(item.productId, price)}
-          onEditPrice={(item, price, reason) => {
+          // one price-write path for both surfaces. SA-108: `lastScannedId`
+          // IS the draft key (addPickedToDraft's own return value) — never
+          // re-derive one from the item's fields (no lineId on a new row).
+          onSetToFloor={(_item, price) => {
+            if (lastScannedId) setLinePrice(lastScannedId, price);
+          }}
+          onEditPrice={(_item, price, reason) => {
+            const key = lastScannedId;
+            if (!key) return;
             setDraft((d) => {
-              const cur = d[item.productId];
+              const cur = d[key];
               if (!cur) return d;
               return {
                 ...d,
-                [item.productId]: { ...cur, unitPrice: price, overrideReason: reason },
+                [key]: { ...cur, unitPrice: price, overrideReason: reason },
               };
             });
           }}
@@ -1108,12 +1143,15 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
               setDraft((d) => {
                 const next = { ...d };
                 const old = next[substituteFor];
-                delete next[substituteFor];
                 // Re-denominates the inherited piece count against the
                 // SUBSTITUTE's box size and keeps its LIST price as the line's
                 // base, so the box split and the customer's tier price both
                 // reach the server (lib/substitute-line.ts).
-                next[p.id] = buildSubstituteLine({
+                // B775: reuse `substituteFor` itself as the key (the line's own
+                // identity — see hydrateFromOrder) rather than re-keying by the
+                // substitute PRODUCT's id, which could collide with an
+                // unrelated already-hydrated line for that same product.
+                next[substituteFor] = buildSubstituteLine({
                   previous: old,
                   product: { id: p.id, name: p.name, unit: p.unit, unitsPerBox: p.unitsPerBox },
                   tierPrice,
@@ -1123,9 +1161,10 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
               });
               setSubstituteFor(null);
             } else {
-              addPickedToDraft(p, kind);
-              setScanOrder((o) => bumpScanOrder(o, p.id));
-              setTrayFlash((f) => nextFlash(f, p.id));
+              // B775: track the draft KEY, not p.id — see the onPickAndStay note above.
+              const key = addPickedToDraft(p, kind);
+              setScanOrder((o) => bumpScanOrder(o, key));
+              setTrayFlash((f) => nextFlash(f, key));
             }
             setShowPicker(false);
             setPickerScanIntent(false);
@@ -1266,40 +1305,48 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
               {Object.values(draft).length === 0 && unlisted.length === 0 ? (
                 <Text style={styles.empty}>No items. Add one below.</Text>
               ) : (
-                Object.values(draft).map((it) => (
-                  <DraftItemCard
-                    key={it.productId}
-                    item={it}
-                    canSplitBoxes={canSplitBoxes}
-                    canEditPrice={canEditPriceFor(it.productId)}
-                    pricingReady={pricingReady}
-                    marginFloor={floorForCategory(marginConfig, it.category)}
-                    acked={floorAcked.has(it.lineId ?? it.productId)}
-                    onSetToFloor={(price) => setLinePrice(it.productId, price)}
-                    onSellAnyway={() =>
-                      setFloorAcked((prev) => new Set(prev).add(it.lineId ?? it.productId))
-                    }
-                    onIncQty={() => incQty(it.productId)}
-                    onDecQty={() => decQty(it.productId)}
-                    onSetQty={(n) => setQty(it.productId, n)}
-                    onSetBoxes={(n) => setBoxes(it.productId, n)}
-                    onSetPieces={(n) => setPieces(it.productId, n)}
-                    onSetUnits={(n) => setUnits(it.productId, n)}
-                    onSetSellBy={(v) => setSellBy(it.productId, v)}
-                    onSetNote={(notes) => setLineNote(it.productId, notes)}
-                    onPressPrice={() => setPriceEditItem(it)}
-                    onPressSubstitute={() => {
-                      setSubstituteFor(it.productId);
-                      setShowPicker(true);
-                    }}
-                    onRemove={() =>
-                      confirm("Remove item?", it.name, () => removeLine(it.productId), {
-                        confirmText: "Remove",
-                        destructive: true,
-                      })
-                    }
-                  />
-                ))
+                // SA-108 review of B775: the draft record's KEY is a line's
+                // ONLY identity and is NEVER re-derived from its own fields
+                // (`it.lineId ?? it.productId` reads `undefined` for a
+                // not-yet-saved row — only hydrateFromOrder stamps lineId —
+                // so every writer below would silently target the wrong,
+                // nonexistent key, and a brand-new line could never again be
+                // stepped, priced, noted, substituted or removed). Object.entries
+                // hands back the TRUE key straight from iteration; no formula.
+                Object.entries(draft).map(([key, it]) => {
+                  return (
+                    <DraftItemCard
+                      key={key}
+                      item={it}
+                      canSplitBoxes={canSplitBoxes}
+                      canEditPrice={canEditPriceFor(it.productId)}
+                      pricingReady={pricingReady}
+                      marginFloor={floorForCategory(marginConfig, it.category)}
+                      acked={floorAcked.has(key)}
+                      onSetToFloor={(price) => setLinePrice(key, price)}
+                      onSellAnyway={() => setFloorAcked((prev) => new Set(prev).add(key))}
+                      onIncQty={() => incQty(key)}
+                      onDecQty={() => decQty(key)}
+                      onSetQty={(n) => setQty(key, n)}
+                      onSetBoxes={(n) => setBoxes(key, n)}
+                      onSetPieces={(n) => setPieces(key, n)}
+                      onSetUnits={(n) => setUnits(key, n)}
+                      onSetSellBy={(v) => setSellBy(key, v)}
+                      onSetNote={(notes) => setLineNote(key, notes)}
+                      onPressPrice={() => setPriceEditItem({ key, item: it })}
+                      onPressSubstitute={() => {
+                        setSubstituteFor(key);
+                        setShowPicker(true);
+                      }}
+                      onRemove={() =>
+                        confirm("Remove item?", it.name, () => removeLine(key), {
+                          confirmText: "Remove",
+                          destructive: true,
+                        })
+                      }
+                    />
+                  );
+                })
               )}
               {unlisted.map((u) => (
                 <UnlistedDraftCard

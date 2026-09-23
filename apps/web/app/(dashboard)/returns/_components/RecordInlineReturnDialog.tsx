@@ -34,6 +34,22 @@ import {
   type InlineReturnLineDraft,
 } from "@routeflow/returns";
 
+/**
+ * SA-108 (Opus review of #1293/B774): `InlineReturnLineDraft` itself has no per-ROW identity
+ * — only `productId`. Keying this dialog's state (and its React list `key`) by `productId`
+ * meant TWO rows of the same product (a source order with, say, a Case line and a pack line)
+ * could never be edited independently: `updateLine`/`removeLine` matched EVERY row sharing
+ * that productId, so typing into one row silently patched the other to match, and
+ * `buildQuoteRequest`'s same-productId merge (B774) then summed what looked like two
+ * genuine entries but was really one value counted twice — a silent 2x credit whenever the
+ * two rows' packs happened to agree (a pack MISmatch is instead caught server-side by the
+ * B774 conflict guard). `lineKey` is a dialog-local synthetic id, never sent on the wire —
+ * `buildQuoteRequest`/`buildCaptureRequest` still take plain `InlineReturnLineDraft[]` and
+ * still merge by `productId`, which is correct: TWO independently-typed rows for one
+ * product are meant to sum into one request item once each carries its own real value.
+ */
+type DialogLine = InlineReturnLineDraft & { lineKey: string };
+
 const REASON_OPTIONS: { value: ReturnReason; label: string }[] = [
   { value: "DAMAGED", label: "Damaged" },
   { value: "WRONG_ITEM", label: "Wrong Item" },
@@ -75,7 +91,7 @@ export function RecordInlineReturnDialog({
 
   const [step, setStep] = React.useState<DialogStep>("lines");
   const [carryingOrderId, setCarryingOrderId] = React.useState(orderId ?? "");
-  const [lines, setLines] = React.useState<InlineReturnLineDraft[]>([]);
+  const [lines, setLines] = React.useState<DialogLine[]>([]);
   const [captureReason, setCaptureReason] = React.useState<ReturnReason | "">("");
   const [quote, setQuote] = React.useState<InlineReturnQuoteResponse | null>(null);
   const [excessOption, setExcessOption] = React.useState<ExcessOption>(DEFAULT_EXCESS_OPTION);
@@ -113,6 +129,7 @@ export function RecordInlineReturnDialog({
         entryOrder.lineItems
           .filter((li) => !!li.productId && li.status !== "CANCELLED")
           .map((li) => ({
+            lineKey: crypto.randomUUID(),
             productId: li.productId as string,
             productName: li.product?.name ?? li.name ?? "Unlisted item",
             unit: li.product?.unit,
@@ -132,12 +149,12 @@ export function RecordInlineReturnDialog({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, orderId, entryOrder?.id]);
 
-  function updateLine(productId: string, patch: Partial<InlineReturnLineDraft>) {
-    setLines((prev) => prev.map((l) => (l.productId === productId ? { ...l, ...patch } : l)));
+  function updateLine(lineKey: string, patch: Partial<InlineReturnLineDraft>) {
+    setLines((prev) => prev.map((l) => (l.lineKey === lineKey ? { ...l, ...patch } : l)));
   }
 
-  function removeLine(productId: string) {
-    setLines((prev) => prev.filter((l) => l.productId !== productId));
+  function removeLine(lineKey: string) {
+    setLines((prev) => prev.filter((l) => l.lineKey !== lineKey));
   }
 
   function addProduct(product: {
@@ -150,6 +167,7 @@ export function RecordInlineReturnDialog({
     setLines((prev) => [
       ...prev,
       {
+        lineKey: crypto.randomUUID(),
         productId: product.id,
         productName: product.name,
         unit: product.unit,
@@ -189,7 +207,10 @@ export function RecordInlineReturnDialog({
         setQuote(data);
         // Capture reads quantities from `lines`, not from the quote — without this, a later
         // confirm would still send the ORIGINAL (larger) request this option just dropped.
-        setLines((prev) => applyCoveredPiecesToLines(prev, data));
+        // Cast is safe: applyCoveredPiecesToLines spreads each input line into its output
+        // ({...l, boxes, pieces}), so a DialogLine's lineKey survives at runtime even though
+        // the shared package's own return type only promises InlineReturnLineDraft.
+        setLines((prev) => applyCoveredPiecesToLines(prev, data) as DialogLine[]);
       },
       onError: (err) => {
         setRefusalMessage(extractRefusalMessage(err));
@@ -265,7 +286,7 @@ export function RecordInlineReturnDialog({
               {lines.map((line) => {
                 const boxed = isBoxedProduct(line);
                 return (
-                  <div key={line.productId} className="rounded-lg border border-surface-border p-3">
+                  <div key={line.lineKey} className="rounded-lg border border-surface-border p-3">
                     <div className="flex items-center justify-between gap-2">
                       <div>
                         <p className="text-sm font-medium text-navy">{line.productName}</p>
@@ -281,7 +302,7 @@ export function RecordInlineReturnDialog({
                       <button
                         type="button"
                         className="text-xs text-navy/50 hover:text-danger"
-                        onClick={() => removeLine(line.productId)}
+                        onClick={() => removeLine(line.lineKey)}
                       >
                         Remove
                       </button>
@@ -295,7 +316,7 @@ export function RecordInlineReturnDialog({
                             min={0}
                             inputMode="numeric"
                             value={line.boxes}
-                            onChange={(e) => updateLine(line.productId, { boxes: e.target.value })}
+                            onChange={(e) => updateLine(line.lineKey, { boxes: e.target.value })}
                           />
                           <Input
                             label="Pieces"
@@ -303,7 +324,7 @@ export function RecordInlineReturnDialog({
                             min={0}
                             inputMode="numeric"
                             value={line.pieces}
-                            onChange={(e) => updateLine(line.productId, { pieces: e.target.value })}
+                            onChange={(e) => updateLine(line.lineKey, { pieces: e.target.value })}
                           />
                         </>
                       ) : (
@@ -313,14 +334,14 @@ export function RecordInlineReturnDialog({
                           min={0}
                           inputMode="numeric"
                           value={line.pieces}
-                          onChange={(e) => updateLine(line.productId, { pieces: e.target.value })}
+                          onChange={(e) => updateLine(line.lineKey, { pieces: e.target.value })}
                         />
                       )}
                       <Select
                         label="Reason (optional)"
                         value={line.reason}
                         onChange={(e) =>
-                          updateLine(line.productId, {
+                          updateLine(line.lineKey, {
                             reason: e.target.value as ReturnReason | "",
                           })
                         }
@@ -329,7 +350,7 @@ export function RecordInlineReturnDialog({
                       <Input
                         label="Note (optional)"
                         value={line.note}
-                        onChange={(e) => updateLine(line.productId, { note: e.target.value })}
+                        onChange={(e) => updateLine(line.lineKey, { note: e.target.value })}
                       />
                     </div>
                   </div>
