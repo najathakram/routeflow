@@ -107,7 +107,8 @@ import {
 } from "../lib/pending-scroll";
 import { isCatalogHeader, visibleCatalogRows, type CatalogRow } from "../lib/visible-cart";
 import { unlistedAffordancePlacement } from "../lib/unlisted-affordance";
-import { decideResumeLine, orderSubmitGate } from "../lib/order-draft-logic";
+import { orderSubmitGate, resolveResumeLinePricing } from "../lib/order-draft-logic";
+import { hydrateParkedLine } from "../lib/resume-draft-hydration";
 import { getOrderSubmitKey, resetOrderSubmitKey } from "../lib/order-submit-key";
 import { fmtCalendarDate } from "../lib/format-date";
 // Parked drafts (PR-3): NewOrderScreen resolves ?resumeDraft= and hydrates
@@ -118,7 +119,6 @@ import {
   toOrderDraftPayload,
   fromOrderDraftPayload,
   draftParkable,
-  unitLineRefusal,
   type OrderDraftPayload,
   type DraftBuilderState,
   type DraftCatalogLine,
@@ -712,8 +712,6 @@ function ProductPickView({
   // `cancelable` on native), and nothing else re-triggers the effect — so the
   // retry ALSO lives in the spinner view itself, never only in the dialog.
   const [hydrateFailed, setHydrateFailed] = useState(false);
-  // A draft this screen can't hold (a line sold by a unit, B638) is refused whole, untouched.
-  const [hydrateRefusal, setHydrateRefusal] = useState<string | null>(null);
   const retryHydrate = useCallback(() => {
     setHydrateFailed(false);
     setHydrateAttempt((n) => n + 1);
@@ -723,27 +721,12 @@ function ProductPickView({
     if (!hydrating || hydrationStartedRef.current) return;
     hydrationStartedRef.current = true;
     const parkedLines: DraftCatalogLine[] = draftSeed?.items ?? [];
-    const refusal = unitLineRefusal(parkedLines);
-    if (refusal) return setHydrateRefusal(refusal); // `hydrating` stays true: no autosave, draft intact
     let cancelled = false;
     (async () => {
-      const results = await Promise.all(
-        parkedLines.map(async (li) => {
-          try {
-            const { data } = await apiClient.get<Product>(`/products/${li.productId}`);
-            // findOne returns an archived product too (unlike the catalog list,
-            // which filters isActive:true) — and it is KEPT: the ladder resolves
-            // archived products, so dropping one here deleted a line the
-            // operator had just scanned in and parked (REG-B195). The row flags
-            // itself as archived instead. Only a 404 drops a line; a timeout or
-            // 5xx aborts the whole hydration rather than truncating the cart.
-            return { li, ...decideResumeLine<Product>({ ok: true, product: data }) };
-          } catch (err) {
-            const status = (err as { response?: { status?: number } })?.response?.status;
-            return { li, ...decideResumeLine<Product>({ ok: false, status }) };
-          }
-        }),
-      );
+      // Archived products are KEPT (row flags itself instead, REG-B195); only a 404 drops a
+      // line. B747 (SA-085a) also fetches a unit-sold line's live ladder. See
+      // lib/resume-draft-hydration.ts for the fetch/drop/abort rules.
+      const results = await Promise.all(parkedLines.map((li) => hydrateParkedLine(li)));
       if (cancelled) return;
       if (results.some((r) => r.failed)) {
         // Abort the whole hydration: `hydrating` stays true, so the builder
@@ -764,7 +747,7 @@ function ProductPickView({
       const nextItems: Record<string, LineState> = {};
       const nextScanned: Record<string, Product> = {};
       const droppedNames: string[] = [];
-      for (const { li, product } of results) {
+      for (const { li, product, units } of results) {
         if (!product) {
           droppedNames.push(li.productName || li.productId);
           continue;
@@ -793,12 +776,18 @@ function ProductPickView({
         if (boxes != null) line.boxes = boxes;
         if (pieces != null) line.pieces = pieces;
         if (li.note) line.note = li.note;
-        // Pin the parked price ONLY for a genuine operator override — every
-        // other line re-derives from the LIVE tier price (lineUnitFor below),
-        // matching submitOrder's own override rule; the server owns tier/promo
-        // pricing, so a stale tier/list price is never allowed to stick.
-        if (li.priceType === "MANUAL" && li.unitPrice != null) {
-          line.unitPrice = li.unitPrice;
+        // B747/B755: re-resolve unit/override pricing off LIVE data, never the parked price.
+        const pricing = resolveResumeLinePricing(li, product, units, customerTier);
+        if (pricing.fallbackWarning) {
+          // eslint-disable-next-line no-console
+          console.warn(pricing.fallbackWarning);
+        } else {
+          if (pricing.unitLabel !== undefined) line.unitLabel = pricing.unitLabel;
+          if (pricing.unitBasePrice !== undefined) line.unitBasePrice = pricing.unitBasePrice;
+          if (pricing.unitPrice !== undefined) {
+            line.unitPrice = pricing.unitPrice;
+            line.priceSource = "operator";
+          }
         }
         nextItems[li.productId] = line;
       }
@@ -894,7 +883,13 @@ function ProductPickView({
         kind === "piece" && !isUnitLine(prev)
           ? incrementLinePiece(prev, isBoxed, upb)
           : stepLineQty(prev, 1, isBoxed, upb)!;
-      if (isNew && prefill != null) line.unitPrice = prefill;
+      if (isNew && prefill != null) {
+        line.unitPrice = prefill;
+        // B755: tag this as a HISTORY pre-fill, not an operator override — resuming this
+        // parked line under a DIFFERENT customer must re-price to that customer instead of
+        // silently keeping this one's remembered price.
+        line.priceSource = "history";
+      }
       return { ...m, [id]: line };
     });
     // Retain a snapshot for EVERY added line, not just scanned ones.
@@ -1039,10 +1034,12 @@ function ProductPickView({
       const prev = m[id];
       if (!prev) return m;
       if (value == null || value < 0) {
-        const { unitPrice: _drop, ...rest } = prev;
+        const { unitPrice: _drop, priceSource: _dropSource, ...rest } = prev;
         return { ...m, [id]: rest };
       }
-      return { ...m, [id]: { ...prev, unitPrice: value } };
+      // B755: the ONE place an operator types a price on a catalog line — tagged "operator"
+      // so a resume never mistakes it for a history pre-fill (addOne) and re-prices it away.
+      return { ...m, [id]: { ...prev, unitPrice: value, priceSource: "operator" } };
     });
 
   // ── Unlisted (ad-hoc, non-catalog) line helpers ──────────────────────────
@@ -1571,10 +1568,17 @@ function ProductPickView({
       const special = isSpecialFor(p);
       const tierPrice = tierPriceFor(p);
       const listPrice = toNumber(p.pricePerUnit);
+      // B747: a unit-sold line's comparison base is its OWN resolved price, never the pack's
+      // tier price — same fix as lineUnitFor/computeOrderTotal (lib/cart-order-total.ts). Before
+      // this, a parked unit line was written to the wire as a plain STANDARD/pack line (no
+      // unitLabel at all), so this screen's own drafts never actually carried the field the old
+      // whole-draft resume refusal keyed on — that refusal only ever fired for a draft parked by
+      // a different client.
+      const priceBase = unitPriceBase(line, tierPrice);
       // Mobile has no separate "permanent discount" concept — any explicit
       // override the operator set is tagged MANUAL (never DISCOUNTED), which
       // is exactly what the resume-hydration pin rule above checks for.
-      const hasOverride = !special && line.unitPrice != null && line.unitPrice !== tierPrice;
+      const hasOverride = !special && line.unitPrice != null && line.unitPrice !== priceBase;
       lines.push({
         productId,
         productName: displayName(p),
@@ -1582,12 +1586,14 @@ function ProductPickView({
         listPrice,
         ...(special ? { specialPrice: tierPrice } : {}),
         ...(hasOverride ? { discountedPrice: line.unitPrice } : {}),
-        unitPrice: special ? tierPrice : hasOverride ? line.unitPrice! : listPrice,
+        unitPrice: special ? priceBase : hasOverride ? line.unitPrice! : priceBase,
         priceType: special ? "SPECIAL" : hasOverride ? "MANUAL" : "STANDARD",
         qty,
         ...(p.unitsPerBox ? { unitsPerBox: Number(p.unitsPerBox) } : {}),
         ...(line.boxes != null ? { boxes: line.boxes } : {}),
         ...(line.pieces != null ? { pieces: line.pieces } : {}),
+        ...(line.unitLabel ? { unitLabel: line.unitLabel } : {}),
+        ...(hasOverride && line.priceSource ? { priceSource: line.priceSource } : {}),
         ...(p.averageCost != null
           ? { unitCost: toNumber(p.averageCost) }
           : p.standardCost != null
@@ -2167,26 +2173,21 @@ function ProductPickView({
           }
         />
         <View style={styles.hydrateState}>
-          {hydrateFailed || hydrateRefusal ? (
+          {hydrateFailed ? (
             <>
-              <Text style={styles.hydrateFailTitle}>
-                {hydrateRefusal ? "Open this draft on the web" : "Couldn't restore your order"}
-              </Text>
+              <Text style={styles.hydrateFailTitle}>Couldn't restore your order</Text>
               <Text style={styles.hydrateFailText}>
-                {hydrateRefusal ??
-                  "Some items couldn't be loaded. Check your connection and try again."}
+                Some items couldn't be loaded. Check your connection and try again.
               </Text>
-              {!hydrateRefusal && (
-                <Pressable
-                  style={styles.hydrateRetryBtn}
-                  onPress={retryHydrate}
-                  accessibilityRole="button"
-                  accessibilityLabel="Retry restoring your parked order"
-                >
-                  <Ionicons name="refresh" size={16} color={ios.brand} />
-                  <Text style={styles.hydrateRetryText}>Retry</Text>
-                </Pressable>
-              )}
+              <Pressable
+                style={styles.hydrateRetryBtn}
+                onPress={retryHydrate}
+                accessibilityRole="button"
+                accessibilityLabel="Retry restoring your parked order"
+              >
+                <Ionicons name="refresh" size={16} color={ios.brand} />
+                <Text style={styles.hydrateRetryText}>Retry</Text>
+              </Pressable>
             </>
           ) : (
             <>
