@@ -42,11 +42,21 @@
 //   (d) The prod `/api/v1/health` response's `commit` must equal the NEWEST
 //       deploying sha in the window — not necessarily master's HEAD, since
 //       the window can close on a docs-only commit that deployed nothing new.
-//   (e) The latest CI ("CI" workflow) run whose `head_sha` is master's FINAL
-//       sha must be a real `success`: `status: completed`, `conclusion:
-//       success`, AND at least one job with a non-empty `steps` array (the
-//       billing-block artifact reports a conclusion with zero recorded
-//       steps — see the module comment above).
+//   (e) `ci.yml` has NO `push:` trigger (see CLAUDE.md/ci.yml's own header),
+//       so a "CI" run keyed on master's FINAL sha (a squash-merge commit)
+//       essentially never exists — checking for one directly can never pass.
+//       Instead: find the merged PR for master's final sha
+//       (`GET commits/{sha}/pulls`), require the commit tree of master's
+//       final sha to equal the commit tree of that PR's head sha (proves the
+//       squash commit actually IS that PR's content, nothing slipped in
+//       during the merge), then require a real, non-billing-block `success`
+//       CI run keyed on the PR HEAD sha (where `pull_request` actually ran
+//       `verify`). If master's final sha is docs-only and has no PR CI of
+//       its own (paths-ignore skipped it), the verdict is carried forward
+//       from the newest DEPLOYING commit's own PR — proven the same way, not
+//       assumed — since nothing code-shaped changed between it and HEAD; if
+//       that predecessor has no sound verdict either, this fails closed and
+//       says exactly why.
 //   (f) Print a markdown table (sha, subject, deploying?, deploy status, CI)
 //       plus the raw served commit / master head / newest-deploying-sha next
 //       to the verdict, then exit 0 only if every check above passed.
@@ -211,6 +221,191 @@ function ghApi(path) {
   return spawnGhJson(cmd, [...args, "api", path], timeoutMs());
 }
 
+/** `commit.tree.sha` for one commit, via `GET repos/{repo}/commits/{sha}`. */
+function ghCommitTreeSha(repo, sha) {
+  const res = ghApi(`repos/${repo}/commits/${sha}`);
+  if (!res.ok) return { ok: false, reason: res.reason };
+  const treeSha = res.json?.commit?.tree?.sha;
+  if (typeof treeSha !== "string") {
+    return {
+      ok: false,
+      reason: `commit ${sha} response missing commit.tree.sha: ${truncate(JSON.stringify(res.json), MAX_BODY_CHARS)}`,
+    };
+  }
+  return { ok: true, treeSha };
+}
+
+/** The merged PR's head sha for one commit, via `GET commits/{sha}/pulls`.
+ *  `kind` distinguishes a genuinely EMPTY/no-match answer ("no-pr" — a valid
+ *  response that just has nothing in it, eligible for the docs-only
+ *  fallback) from a real API failure ("api-error" — gh failed, or the body
+ *  isn't the shape it should be, never eligible for the fallback: an outage
+ *  must never be mistaken for "nothing to check here"). */
+function ghMergedPrHeadSha(repo, sha) {
+  const res = ghApi(`repos/${repo}/commits/${sha}/pulls`);
+  if (!res.ok) return { ok: false, kind: "api-error", reason: res.reason };
+  if (!Array.isArray(res.json)) {
+    return {
+      ok: false,
+      kind: "api-error",
+      reason: `commits/${sha}/pulls response was not a JSON array: ${truncate(JSON.stringify(res.json), MAX_BODY_CHARS)}`,
+    };
+  }
+  const headSha = findMergedPrHeadSha(res.json);
+  if (!headSha) return { ok: false, kind: "no-pr", reason: `no merged PR found for commit ${sha}` };
+  return { ok: true, headSha };
+}
+
+/** A real, non-billing-block `success` CI run keyed on `sha` — the mechanical
+ *  "list runs, pick newest CI run, check it's a real success" step shared by
+ *  every sha this script checks CI for (master's final sha directly, or a
+ *  PR head sha once one has been resolved). `kind` lets the caller decide
+ *  whether a failure here is eligible for the docs-only fallback. */
+function realCiSuccessForSha(repo, sha) {
+  const runsRes = ghApi(`repos/${repo}/actions/runs?head_sha=${sha}&per_page=20`);
+  if (!runsRes.ok) {
+    return {
+      ok: false,
+      kind: "api-error",
+      reason: `could not list workflow runs: ${runsRes.reason}`,
+    };
+  }
+  const runs = Array.isArray(runsRes.json?.workflow_runs) ? runsRes.json.workflow_runs : null;
+  if (!runs) {
+    return {
+      ok: false,
+      kind: "api-error",
+      reason: `runs response missing workflow_runs array: ${truncate(JSON.stringify(runsRes.json), MAX_BODY_CHARS)}`,
+    };
+  }
+  const ciRuns = runs
+    .filter((r) => r && r.name === "CI")
+    .sort((a, b) => new Date(b.created_at ?? 0) - new Date(a.created_at ?? 0));
+  if (ciRuns.length === 0) {
+    return {
+      ok: false,
+      kind: "no-ci-run",
+      reason: `no "CI" workflow run found for head_sha ${sha}`,
+    };
+  }
+  const run = ciRuns[0];
+  if (run.status !== "completed" || run.conclusion !== "success") {
+    return {
+      ok: false,
+      kind: "ci-not-success",
+      reason: `run ${run.id} is not a real success (status=${run.status}, conclusion=${run.conclusion})`,
+    };
+  }
+  const jobsRes = ghApi(`repos/${repo}/actions/runs/${run.id}/jobs`);
+  if (!jobsRes.ok) {
+    return {
+      ok: false,
+      kind: "api-error",
+      reason: `could not read jobs for run ${run.id}: ${jobsRes.reason}`,
+    };
+  }
+  if (isBillingBlockJobs(jobsRes.json)) {
+    return {
+      ok: false,
+      kind: "billing-block",
+      reason: `run ${run.id} looks like the billing-block artifact (0 steps recorded)`,
+    };
+  }
+  return { ok: true, kind: "success", run };
+}
+
+/**
+ * The full CI verdict for one master commit: find its merged PR, require the
+ * PR head's tree to match the commit's own tree (see `treesMatch`), then
+ * require a real CI success keyed on the PR HEAD sha (never the squash
+ * commit's own sha — `ci.yml` has no `push:` trigger, so no run is ever keyed
+ * on that). `kind` classifies the failure so the caller can decide whether a
+ * docs-only fallback to a predecessor commit is even eligible:
+ * "no-pr"/"no-ci-run" (nothing to check here) are eligible; "tree-mismatch",
+ * "ci-not-success", "billing-block" and "api-error" are real problems and are
+ * never silently papered over by a fallback.
+ */
+function ciVerdictForCommit(repo, sha) {
+  const pr = ghMergedPrHeadSha(repo, sha);
+  if (!pr.ok) return { ok: false, kind: pr.kind, reason: pr.reason };
+
+  const headTree = ghCommitTreeSha(repo, sha);
+  if (!headTree.ok) {
+    return {
+      ok: false,
+      kind: "api-error",
+      reason: `tree lookup for ${sha} failed: ${headTree.reason}`,
+    };
+  }
+  const prTree = ghCommitTreeSha(repo, pr.headSha);
+  if (!prTree.ok) {
+    return {
+      ok: false,
+      kind: "api-error",
+      reason: `tree lookup for PR head ${pr.headSha} failed: ${prTree.reason}`,
+    };
+  }
+  if (!treesMatch(headTree.treeSha, prTree.treeSha)) {
+    return {
+      ok: false,
+      kind: "tree-mismatch",
+      reason: `tree of ${sha} (${headTree.treeSha}) does not match tree of its PR head ${pr.headSha} (${prTree.treeSha})`,
+    };
+  }
+
+  const ci = realCiSuccessForSha(repo, pr.headSha);
+  if (!ci.ok) {
+    return {
+      ok: false,
+      kind: ci.kind,
+      reason: `PR head ${pr.headSha}: ${ci.reason}`,
+      prHeadSha: pr.headSha,
+    };
+  }
+  return { ok: true, prHeadSha: pr.headSha, run: ci.run };
+}
+
+/**
+ * Ties `ciVerdictForCommit` together with the docs-only fallback rule: when
+ * master's final sha itself has nothing to check (no PR, or a PR but no CI
+ * run — both expected for a paths-ignore'd docs-only commit) AND that commit
+ * is genuinely docs-only (per the watchPatterns classification, not merely
+ * "CI didn't run"), the verdict is carried forward from the newest DEPLOYING
+ * commit in the window, verified with the exact same rigor. Any other
+ * failure kind (tree mismatch, a real CI failure, a billing-block artifact,
+ * an API error) is never eligible for the fallback — those are real
+ * problems, not "nothing changed here".
+ */
+function resolveCiVerdict(repo, masterHead, headIsDocsOnly, newestDeploying) {
+  const headVerdict = ciVerdictForCommit(repo, masterHead);
+  if (headVerdict.ok) return headVerdict;
+
+  const fallbackEligible =
+    headIsDocsOnly && (headVerdict.kind === "no-pr" || headVerdict.kind === "no-ci-run");
+  if (!fallbackEligible) return headVerdict;
+
+  if (!newestDeploying) {
+    return {
+      ok: false,
+      kind: "no-deploying-commit",
+      reason: `docs-only HEAD ${masterHead} has no PR CI (${headVerdict.reason}), and there is no deploying commit in the window to carry a verdict forward`,
+    };
+  }
+
+  const predecessor = ciVerdictForCommit(repo, newestDeploying);
+  if (predecessor.ok) {
+    return {
+      ...predecessor,
+      note: `docs-only HEAD ${masterHead} has no PR CI of its own (${headVerdict.reason}) — carried forward from predecessor deploying sha ${newestDeploying}`,
+    };
+  }
+  return {
+    ok: false,
+    kind: predecessor.kind,
+    reason: `docs-only HEAD ${masterHead} has no PR CI (${headVerdict.reason}); predecessor deploying sha ${newestDeploying} could not carry a verdict forward either: ${predecessor.reason}`,
+  };
+}
+
 /** Latest deployments, UNFILTERED (never `?sha=` — see KNOWN TRAPS), matched
  *  client-side against a full 40-char sha. */
 export function findDeployment(deployments, sha) {
@@ -229,6 +424,24 @@ export function isBillingBlockJobs(jobsPayload) {
   const jobs = Array.isArray(jobsPayload?.jobs) ? jobsPayload.jobs : null;
   if (!jobs || jobs.length === 0) return true;
   return jobs.every((j) => !Array.isArray(j.steps) || j.steps.length === 0);
+}
+
+/** The merged PR's head sha out of a `GET commits/{sha}/pulls` response —
+ *  prefers a PR with `merged_at` set (there can be more than one PR
+ *  associated with a commit; only a merged one is a candidate for "the PR
+ *  that produced this squash commit"), falling back to the first entry. */
+export function findMergedPrHeadSha(pulls) {
+  if (!Array.isArray(pulls) || pulls.length === 0) return null;
+  const merged = pulls.find((p) => p && p.merged_at) ?? pulls[0];
+  const sha = merged?.head?.sha;
+  return typeof sha === "string" ? sha : null;
+}
+
+/** Two Git tree shas name the exact same file content — used to prove a
+ *  squash-merge commit on master really does carry the PR's content and
+ *  nothing else, since a tree sha is a pure function of file contents+paths. */
+export function treesMatch(treeShaA, treeShaB) {
+  return Boolean(treeShaA) && Boolean(treeShaB) && treeShaA === treeShaB;
 }
 
 // ── http (prod /health) — node's http/https, not fetch: fetch's default
@@ -430,47 +643,12 @@ async function main() {
     if (served.ok) served = { ok: true, commit: served.json?.commit ?? null };
   }
 
-  // (e) CI on master's final sha — real success, not a skip or a billing-block artifact.
-  let ci = { ok: false, reason: "not checked" };
-  const runsRes = ghApi(`repos/${args.repo}/actions/runs?head_sha=${masterHead}&per_page=20`);
-  if (!runsRes.ok) {
-    ci = { ok: false, reason: `could not list workflow runs: ${runsRes.reason}` };
-  } else {
-    const runs = Array.isArray(runsRes.json?.workflow_runs) ? runsRes.json.workflow_runs : null;
-    if (!runs) {
-      ci = {
-        ok: false,
-        reason: `runs response missing workflow_runs array: ${truncate(JSON.stringify(runsRes.json), MAX_BODY_CHARS)}`,
-      };
-    } else {
-      const ciRuns = runs
-        .filter((r) => r && r.name === "CI")
-        .sort((a, b) => new Date(b.created_at ?? 0) - new Date(a.created_at ?? 0));
-      if (ciRuns.length === 0) {
-        ci = { ok: false, reason: `no "CI" workflow run found for head_sha ${masterHead}` };
-      } else {
-        const run = ciRuns[0];
-        if (run.status !== "completed" || run.conclusion !== "success") {
-          ci = {
-            ok: false,
-            reason: `run ${run.id} is not a real success (status=${run.status}, conclusion=${run.conclusion})`,
-          };
-        } else {
-          const jobsRes = ghApi(`repos/${args.repo}/actions/runs/${run.id}/jobs`);
-          if (!jobsRes.ok) {
-            ci = { ok: false, reason: `could not read jobs for run ${run.id}: ${jobsRes.reason}` };
-          } else if (isBillingBlockJobs(jobsRes.json)) {
-            ci = {
-              ok: false,
-              reason: `run ${run.id} looks like the billing-block artifact (0 steps recorded)`,
-            };
-          } else {
-            ci = { ok: true, run };
-          }
-        }
-      }
-    }
-  }
+  // (e) CI on master's final sha — via its merged PR's head sha, since
+  // ci.yml has no push: trigger and a run keyed on the squash commit itself
+  // essentially never exists (see the ALGORITHM comment above).
+  const headCommit = commits[commits.length - 1];
+  const ci = resolveCiVerdict(args.repo, masterHead, !headCommit.deploying, newestDeploying);
+  if (ci.note) console.log(`note: ${ci.note}`);
 
   for (const c of commits) {
     c.ci = c.sha === masterHead ? (ci.ok ? "success" : "FAIL") : "";

@@ -119,4 +119,69 @@ describe("pre-merge-ancestry-check.mjs contract", () => {
     expect(stderr).toContain("usage:");
     expect(status).toBe(1);
   });
+
+  it("T4 · a real `git merge --squash` scenario pins the squash mechanism directly: a stale branch predating the squash commit REFUSES, a branch cut after it ACCEPTS", () => {
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), "ancestry-squash-"));
+    initRepo(dir);
+    commitFile(dir, "README.md", "base\n", "base"); // A
+
+    // A real PR branch, later squash-merged into master.
+    git(dir, ["checkout", "-q", "-b", "feature/squashed"]);
+    const featureHeadSha = commitFile(
+      dir,
+      "feature.txt",
+      "feature work\n",
+      "feat: real feature work",
+    );
+
+    // The squash merge itself: `git merge --squash` stages the diff but records no
+    // parent link to featureHeadSha, then `git commit` creates a NEW commit (single
+    // parent = A) — the exact shape RouteFlow's "squash" merge strategy produces on
+    // master (CLAUDE.md: "merge the PR to master (squash)"). This is the load-bearing
+    // difference from every other test here: featureHeadSha is deliberately NOT an
+    // ancestor of the resulting commit, even though its content landed.
+    git(dir, ["checkout", "-q", "master"]);
+    git(dir, ["merge", "--squash", "feature/squashed"]);
+    git(dir, ["commit", "-q", "-m", "feat: real feature work (squash)"]);
+    const squashSha = git(dir, ["rev-parse", "HEAD"]);
+    // Sanity on the fixture itself: the squash commit's sole parent is A (master^),
+    // confirming this really is the single-parent shape a squash merge produces —
+    // not a two-parent merge commit that would trivially keep featureHeadSha an
+    // ancestor and make the REFUSE assertion below meaningless.
+    expect(
+      spawnSync("git", ["merge-base", "--is-ancestor", "master^", squashSha], { cwd: dir }).status,
+    ).toBe(0);
+
+    // A second PR branch cut BEFORE the squash landed, never rebased — the exact
+    // 2026-09-22 shape, now with a squash-merge commit as master's tip.
+    git(dir, ["checkout", "-q", "-b", "feature/stale-before-squash", "master^"]);
+    const staleSha = commitFile(
+      dir,
+      "stale.txt",
+      "stale work\n",
+      "feat: stale, predates the squash",
+    );
+
+    const refuse = run(dir, ["--base", squashSha, "--head", staleSha]);
+    expect(refuse.stdout).toContain("REFUSE");
+    expect(refuse.stdout).toContain(squashSha);
+    expect(refuse.stdout).toContain(staleSha);
+    expect(refuse.status).toBe(1);
+
+    // A third PR branch cut AFTER the squash commit landed — contains it, by
+    // construction.
+    git(dir, ["checkout", "-q", "-b", "feature/after-squash", squashSha]);
+    const afterSha = commitFile(dir, "after.txt", "after work\n", "feat: cut after the squash");
+
+    const accept = run(dir, ["--base", squashSha, "--head", afterSha]);
+    expect(accept.stdout).toContain("OK");
+    expect(accept.status).toBe(0);
+
+    // And the squashed PR's OWN branch tip is correctly NOT treated as containing
+    // the squash commit it produced — squash merges break DAG ancestry on purpose,
+    // and this script must reflect that rather than special-casing it.
+    const ownBranchRefuse = run(dir, ["--base", squashSha, "--head", featureHeadSha]);
+    expect(ownBranchRefuse.stdout).toContain("REFUSE");
+    expect(ownBranchRefuse.status).toBe(1);
+  });
 });

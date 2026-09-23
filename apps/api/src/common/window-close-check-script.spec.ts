@@ -10,6 +10,14 @@ import path from "node:path";
 // FAILED, and the API kept serving the older cb88378f for ~90 minutes before anyone
 // noticed, because nothing checked deploy status before the public->private flip.
 //
+// Independent review of the first version required a redesign of step (e): ci.yml has
+// no `push:` trigger, so a "CI" run keyed on master's own (squash-merge) head sha
+// essentially never exists — the original design could never pass. The fix looks up
+// the merged PR for a commit (`commits/{sha}/pulls`), requires that PR head's Git tree
+// to match the commit's own tree (`treesMatch`), and checks CI on the PR HEAD sha
+// instead. A docs-only tail with no PR CI of its own carries the verdict forward from
+// the newest deploying commit, verified with the same rigor — never assumed.
+//
 // This spec never talks to the real GitHub API or a real prod URL: `gh` is replaced
 // with a fake driver (WINDOW_CLOSE_GH_CMD, mirroring CI_FRESHNESS_GH_CMD in
 // ci-freshness-guard-script.spec.ts) and `/api/v1/health` is served by a tiny local
@@ -24,9 +32,12 @@ const SCRIPT = path.join(REPO_ROOT, "scripts/window-close-check.mjs");
 
 // ─── fake `gh` driver ─────────────────────────────────────────────────────────────
 // Routes are supplied per-test via the FAKE_GH_ROUTES env var (a JSON array of
-// { match, body, status? }). The first route whose `match` substring appears in the
-// joined `gh api ...` argv wins; no match is a hard error (surfaces a test that
-// forgot to stub a call, rather than silently returning empty data).
+// { match, body, status? }). The LONGEST `match` substring found in the joined
+// `gh api ...` argv wins — not merely the first in array order — because
+// "commits/<sha>/pulls" always contains "commits/<sha>" as a substring, and route
+// construction order must not silently decide which one a call resolves to. No match
+// at all is a hard error (surfaces a test that forgot to stub a call, rather than
+// silently returning empty data).
 
 let scratchDir: string;
 let fakeGhDriver: string;
@@ -39,7 +50,9 @@ beforeAll(() => {
     [
       "const routes = JSON.parse(process.env.FAKE_GH_ROUTES || '[]');",
       "const joined = process.argv.slice(2).join(' ');",
-      "const route = routes.find((r) => joined.includes(r.match));",
+      "const candidates = routes.filter((r) => joined.includes(r.match));",
+      "candidates.sort((a, b) => b.match.length - a.match.length);",
+      "const route = candidates[0];",
       "if (!route) {",
       "  process.stderr.write(`no fake-gh route for: ${joined}\\n`);",
       "  process.exit(1);",
@@ -63,6 +76,22 @@ function startHealthServer(
     const server = http.createServer((_req, res) => {
       res.writeHead(200, { "content-type": "application/json" });
       res.end(JSON.stringify({ status: "ok", commit, branch: "master" }));
+    });
+    server.listen(0, "127.0.0.1", () => {
+      const { port } = server.address() as AddressInfo;
+      resolve({
+        url: `http://127.0.0.1:${port}`,
+        close: () => new Promise((r) => server.close(() => r())),
+      });
+    });
+  });
+}
+
+/** A /health server that never responds — for the timeout fail-closed case. */
+function startHangingHealthServer(): Promise<{ url: string; close: () => Promise<void> }> {
+  return new Promise((resolve) => {
+    const server = http.createServer(() => {
+      // deliberately never calls res.end()
     });
     server.listen(0, "127.0.0.1", () => {
       const { port } = server.address() as AddressInfo;
@@ -205,6 +234,15 @@ function runsRoute(headSha: string, runs: unknown[]): Route {
 function jobsRoute(runId: number, jobs: unknown[]): Route {
   return { match: `actions/runs/${runId}/jobs`, body: { jobs } };
 }
+function pullsRoute(sha: string, prs: unknown[]): Route {
+  return { match: `commits/${sha}/pulls`, body: prs };
+}
+function commitRoute(sha: string, treeSha: string): Route {
+  return { match: `commits/${sha}`, body: { sha, commit: { tree: { sha: treeSha } } } };
+}
+function mergedPr(headSha: string, number = 1) {
+  return { number, merged_at: "2026-09-23T00:00:00Z", head: { sha: headSha } };
+}
 const realJobs = [
   { name: "verify", steps: [{ name: "checkout" }, { name: "npm ci" }, { name: "verify" }] },
 ];
@@ -218,6 +256,22 @@ function greenCiRun(headSha: string, id: number) {
     conclusion: "success",
     created_at: "2026-09-23T00:00:00Z",
   };
+}
+/** The full "this commit's PR checked out clean and CI on its head sha is a real
+ *  success" route bundle — the common case every deploying commit needs. */
+function prCiSuccessRoutes(
+  sha: string,
+  prHeadSha: string,
+  treeSha: string,
+  runId: number,
+): Route[] {
+  return [
+    pullsRoute(sha, [mergedPr(prHeadSha)]),
+    commitRoute(sha, treeSha),
+    commitRoute(prHeadSha, treeSha), // same tree — the squash carried the PR's content exactly
+    runsRoute(prHeadSha, [greenCiRun(prHeadSha, runId)]),
+    jobsRoute(runId, realJobs),
+  ];
 }
 
 describe("window-close-check.mjs contract", () => {
@@ -239,8 +293,11 @@ describe("window-close-check.mjs contract", () => {
         ]),
         statusesRoute(101, ["in_progress", "success"]), // c1: succeeded
         statusesRoute(102, ["in_progress", "failure"]), // c2: FAILED — never a success
-        runsRoute(fixture.c3, [greenCiRun(fixture.c3, 199)]),
-        jobsRoute(199, realJobs),
+        // HEAD (c3) is docs-only and has no PR of its own -> falls back to c2, whose
+        // own PR/tree/CI check is fully valid (isolates this test to the deploy
+        // failure + served mismatch, not a CI finding).
+        pullsRoute(fixture.c3, []),
+        ...prCiSuccessRoutes(fixture.c2, "pr-head-c2", "tree-c2", 501),
       ];
       const { status, stdout } = await runScript(
         fixture.workDir,
@@ -261,7 +318,7 @@ describe("window-close-check.mjs contract", () => {
     }
   });
 
-  it("T2 · a docs-only final sha must NOT require served == HEAD — served == newest DEPLOYING sha is enough -> PASS", async () => {
+  it("T2 · a docs-only final sha must NOT require served == HEAD, and carries its CI verdict forward from the predecessor deploying sha's PR -> PASS", async () => {
     root = fs.mkdtempSync(path.join(os.tmpdir(), "window-close-repo-"));
     const fixture = buildFixtureRepo(root, 3);
     const health = await startHealthServer(fixture.c2); // served = c2 = the newest DEPLOYING sha, not c3 (HEAD)
@@ -273,8 +330,8 @@ describe("window-close-check.mjs contract", () => {
         ]),
         statusesRoute(201, ["success"]),
         statusesRoute(202, ["success"]), // this time c2 also succeeded
-        runsRoute(fixture.c3, [greenCiRun(fixture.c3, 298)]),
-        jobsRoute(298, realJobs),
+        pullsRoute(fixture.c3, []), // HEAD (c3) genuinely has no PR of its own
+        ...prCiSuccessRoutes(fixture.c2, "pr-head-c2", "tree-c2", 502),
       ];
       const { status, stdout } = await runScript(
         fixture.workDir,
@@ -283,6 +340,7 @@ describe("window-close-check.mjs contract", () => {
       );
 
       expect(fixture.c2).not.toBe(fixture.c3); // sanity: served genuinely differs from HEAD
+      expect(stdout).toContain("carried forward from predecessor deploying sha");
       expect(stdout).toContain("PASS:");
       expect(status).toBe(0);
     } finally {
@@ -297,8 +355,7 @@ describe("window-close-check.mjs contract", () => {
     try {
       const routes = [
         deploymentRoute([]), // nothing recorded for c1 at all
-        runsRoute(fixture.c1, [greenCiRun(fixture.c1, 301)]),
-        jobsRoute(301, realJobs),
+        ...prCiSuccessRoutes(fixture.c1, "pr-head-c1", "tree-c1", 301),
       ];
       const { status, stdout } = await runScript(
         fixture.workDir,
@@ -315,7 +372,7 @@ describe("window-close-check.mjs contract", () => {
     }
   });
 
-  it("T4 · a billing-block CI artifact (real success conclusion, zero recorded steps) on master's final sha -> FAIL, never mistaken for a real success", async () => {
+  it("T4 · a billing-block CI artifact (real success conclusion, zero recorded steps) on the PR head sha -> FAIL, never mistaken for a real success", async () => {
     root = fs.mkdtempSync(path.join(os.tmpdir(), "window-close-repo-"));
     const fixture = buildFixtureRepo(root, 1); // window = (c0, c1] only
     const health = await startHealthServer(fixture.c1);
@@ -323,7 +380,10 @@ describe("window-close-check.mjs contract", () => {
       const routes = [
         deploymentRoute([{ sha: fixture.c1, id: 401 }]),
         statusesRoute(401, ["success"]),
-        runsRoute(fixture.c1, [greenCiRun(fixture.c1, 402)]),
+        pullsRoute(fixture.c1, [mergedPr("pr-head-c1")]),
+        commitRoute(fixture.c1, "tree-c1"),
+        commitRoute("pr-head-c1", "tree-c1"),
+        runsRoute("pr-head-c1", [greenCiRun("pr-head-c1", 402)]),
         jobsRoute(402, billingBlockJobs), // conclusion says success; 0 steps says otherwise
       ];
       const { status, stdout } = await runScript(
@@ -340,6 +400,163 @@ describe("window-close-check.mjs contract", () => {
       expect(stdout).toContain("billing-block artifact");
       expect(stdout).toContain("FAIL:");
       expect(status).toBe(1);
+    } finally {
+      await health.close();
+    }
+  });
+
+  it("T5 · the squash master head itself has no CI run keyed on its own sha, but the PR head does and the trees match -> PASS", async () => {
+    root = fs.mkdtempSync(path.join(os.tmpdir(), "window-close-repo-"));
+    const fixture = buildFixtureRepo(root, 1); // masterHead = c1, a deploying commit with its own PR
+    const health = await startHealthServer(fixture.c1);
+    try {
+      const routes = [
+        deploymentRoute([{ sha: fixture.c1, id: 501 }]),
+        statusesRoute(501, ["success"]),
+        // Deliberately NO `actions/runs?head_sha=<c1>` route: if the script ever
+        // regressed to checking CI on the squash commit's OWN sha again, the fake
+        // driver would find no route and this test would hard-fail instead of
+        // silently passing for the wrong reason.
+        ...prCiSuccessRoutes(fixture.c1, "pr-head-c1-t5", "tree-t5", 900),
+      ];
+      const { status, stdout } = await runScript(
+        fixture.workDir,
+        ["--since", fixture.c0, "--base-url", health.url],
+        ghEnv(routes),
+      );
+
+      expect(stdout).toContain("PASS:");
+      expect(status).toBe(0);
+    } finally {
+      await health.close();
+    }
+  });
+
+  it("T6 · the squash commit's tree does not match its PR head's tree -> FAIL", async () => {
+    root = fs.mkdtempSync(path.join(os.tmpdir(), "window-close-repo-"));
+    const fixture = buildFixtureRepo(root, 1);
+    const health = await startHealthServer(fixture.c1);
+    try {
+      const routes = [
+        deploymentRoute([{ sha: fixture.c1, id: 601 }]),
+        statusesRoute(601, ["success"]),
+        pullsRoute(fixture.c1, [mergedPr("pr-head-c1-t6")]),
+        commitRoute(fixture.c1, "tree-master-side"),
+        commitRoute("pr-head-c1-t6", "tree-pr-side"), // deliberately different
+        runsRoute("pr-head-c1-t6", [greenCiRun("pr-head-c1-t6", 602)]),
+        jobsRoute(602, realJobs),
+      ];
+      const { status, stdout } = await runScript(
+        fixture.workDir,
+        ["--since", fixture.c0, "--base-url", health.url],
+        ghEnv(routes),
+      );
+
+      expect(stdout).not.toContain("deploy FAILED");
+      expect(stdout).toContain("does not match tree of its PR head");
+      expect(stdout).toContain("FAIL:");
+      expect(status).toBe(1);
+    } finally {
+      await health.close();
+    }
+  });
+
+  it("T7a · API-error surface: a non-JSON gh response body -> FAIL closed", async () => {
+    root = fs.mkdtempSync(path.join(os.tmpdir(), "window-close-repo-"));
+    const fixture = buildFixtureRepo(root, 1);
+    const health = await startHealthServer(fixture.c1);
+    try {
+      const routes: Route[] = [
+        { match: "deployments?per_page=100", body: "this is not json" }, // corrupted on purpose
+        ...prCiSuccessRoutes(fixture.c1, "pr-head-c1-t7a", "tree-t7a", 701),
+      ];
+      const { status, stdout } = await runScript(
+        fixture.workDir,
+        ["--since", fixture.c0, "--base-url", health.url],
+        ghEnv(routes),
+      );
+
+      expect(stdout).toContain("FAIL:");
+      expect(stdout).toContain("unparseable response");
+      expect(status).toBe(1);
+    } finally {
+      await health.close();
+    }
+  });
+
+  it("T7b · API-error surface: gh exits non-zero -> FAIL closed", async () => {
+    root = fs.mkdtempSync(path.join(os.tmpdir(), "window-close-repo-"));
+    const fixture = buildFixtureRepo(root, 1);
+    const health = await startHealthServer(fixture.c1);
+    try {
+      const routes: Route[] = [
+        deploymentRoute([{ sha: fixture.c1, id: 702 }]),
+        statusesRoute(702, ["success"]),
+        // The PR lookup itself fails hard (rate limit / outage) — never eligible
+        // for the docs-only fallback, and never silently treated as "no PR".
+        {
+          match: `commits/${fixture.c1}/pulls`,
+          body: '{"message":"rate limit exceeded"}',
+          status: 17,
+        },
+      ];
+      const { status, stdout } = await runScript(
+        fixture.workDir,
+        ["--since", fixture.c0, "--base-url", health.url],
+        ghEnv(routes),
+      );
+
+      expect(stdout).toContain("FAIL:");
+      expect(stdout).toContain("CI on master HEAD");
+      expect(stdout).toContain("exit 17");
+      expect(status).toBe(1);
+    } finally {
+      await health.close();
+    }
+  });
+
+  it("T7c · API-error surface: prod /health times out -> FAIL closed", async () => {
+    root = fs.mkdtempSync(path.join(os.tmpdir(), "window-close-repo-"));
+    const fixture = buildFixtureRepo(root, 1);
+    const hanging = await startHangingHealthServer();
+    try {
+      const routes = [
+        deploymentRoute([{ sha: fixture.c1, id: 703 }]),
+        statusesRoute(703, ["success"]),
+        ...prCiSuccessRoutes(fixture.c1, "pr-head-c1-t7c", "tree-t7c", 703),
+      ];
+      const { status, stdout } = await runScript(
+        fixture.workDir,
+        ["--since", fixture.c0, "--base-url", hanging.url],
+        { ...ghEnv(routes), WINDOW_CLOSE_HTTP_TIMEOUT_MS: "300" },
+      );
+
+      expect(stdout).toContain("FAIL:");
+      expect(stdout).toContain("timed out");
+      expect(status).toBe(1);
+    } finally {
+      await hanging.close();
+    }
+  });
+
+  it("T8 · the real Railway status sequence [in_progress, success, inactive] counts as a success -> PASS", async () => {
+    root = fs.mkdtempSync(path.join(os.tmpdir(), "window-close-repo-"));
+    const fixture = buildFixtureRepo(root, 1);
+    const health = await startHealthServer(fixture.c1);
+    try {
+      const routes = [
+        deploymentRoute([{ sha: fixture.c1, id: 801 }]),
+        statusesRoute(801, ["in_progress", "success", "inactive"]),
+        ...prCiSuccessRoutes(fixture.c1, "pr-head-c1-t8", "tree-t8", 801),
+      ];
+      const { status, stdout } = await runScript(
+        fixture.workDir,
+        ["--since", fixture.c0, "--base-url", health.url],
+        ghEnv(routes),
+      );
+
+      expect(stdout).toContain("PASS:");
+      expect(status).toBe(0);
     } finally {
       await health.close();
     }
