@@ -1326,6 +1326,65 @@ describe("BookkeepingService", () => {
       expect(data.amount).toBe(0.3);
       expect(data.amount).not.toBe(0.30000000000000004);
     });
+
+    it("a mileage expense with a CLIENT-supplied rate snapshot is still rounded (the auto-lookup branch never runs for it)", async () => {
+      // The web mileage form always sends mileageRateSnapshot, so `!rateSnapshot`
+      // is false and the auto-lookup branch above is skipped entirely — the
+      // unrounded distance*rate arrives here as a plain `amount` passthrough.
+      prisma.expense.create.mockResolvedValue({ id: "exp-mileage-snapshot" });
+
+      await service.createExpense(
+        {
+          date: new Date("2026-09-01T00:00:00Z"),
+          isMileage: true,
+          distance: 3,
+          mileageUnit: "MILE",
+          mileageRateSnapshot: 0.335,
+          amount: 3 * 0.335,
+        },
+        "u1",
+      );
+
+      const data = prisma.expense.create.mock.calls[0][0].data;
+      expect(data.amount).toBe(1.01);
+      expect(data.amount).not.toBe(1.0050000000000001);
+    });
+
+    it("a plain (non-mileage, non-itemized) expense's amount is still rounded", async () => {
+      prisma.expense.create.mockResolvedValue({ id: "exp-plain" });
+
+      await service.createExpense(
+        { date: new Date("2026-09-01T00:00:00Z"), amount: 0.1 + 0.2 },
+        "u1",
+      );
+
+      const data = prisma.expense.create.mock.calls[0][0].data;
+      expect(data.amount).toBe(0.3);
+      expect(data.amount).not.toBe(0.30000000000000004);
+    });
+
+    it("each itemized line is rounded on write, so the stored lines always sum to the header total", async () => {
+      // 0.005 + 0.005: each line rounds independently to 0.01, header is their
+      // sum (0.02) — never a raw-float sum that could drift from the lines.
+      prisma.expense.create.mockResolvedValue({ id: "exp-itemized-lines" });
+
+      await service.createExpense(
+        {
+          date: new Date("2026-09-01T00:00:00Z"),
+          isItemized: true,
+          lineItems: [
+            { account: "Supplies", amount: 0.005 },
+            { account: "Fuel", amount: 0.005 },
+          ],
+        },
+        "u1",
+      );
+
+      const data = prisma.expense.create.mock.calls[0][0].data;
+      const created = data.lineItems.create;
+      expect(created.map((li: any) => li.amount)).toEqual([0.01, 0.01]);
+      expect(data.amount).toBe(0.02);
+    });
   });
 
   describe("extractExpenseItems", () => {

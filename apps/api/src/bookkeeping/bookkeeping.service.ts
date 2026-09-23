@@ -470,13 +470,22 @@ export class BookkeepingService implements OnModuleInit {
       }
     }
 
-    // For itemized expenses, amount = sum of line items
-    if (isItemized && lineItems?.length) {
-      // B781: round every monetary write — see the mileage branch's comment above.
-      computedAmount = roundMoney(
-        lineItems.reduce((s: number, li: any) => s + Number(li.amount), 0),
-      );
+    // For itemized expenses, amount = sum of the ROUNDED line items — each line
+    // is rounded below at write time too, so the header total always equals
+    // the sum of the stored lines (never a mismatch from summing raw floats).
+    const roundedLineItems = isItemized
+      ? lineItems?.map((li: any) => ({ ...li, amount: roundMoney(Number(li.amount)) }))
+      : undefined;
+    if (isItemized && roundedLineItems?.length) {
+      computedAmount = roundedLineItems.reduce((s: number, li: any) => s + li.amount, 0);
     }
+
+    // B781: round every monetary write, on every path — including a plain
+    // passthrough `rest.amount` and a mileage expense whose rate the CLIENT
+    // already snapshotted (the web form always sends mileageRateSnapshot, so
+    // the auto-lookup branch above never rounds it there; distance x a
+    // sub-cent rate still lands off-cent in float either way).
+    computedAmount = roundMoney(Number(computedAmount));
 
     const expense = await this.prisma.forTenant().expense.create({
       data: {
@@ -497,10 +506,10 @@ export class BookkeepingService implements OnModuleInit {
         mileageUnit: rest.mileageUnit,
         distance: rest.distance ?? null,
         mileageRateSnapshot: rateSnapshot ?? null,
-        ...(isItemized && lineItems?.length
+        ...(isItemized && roundedLineItems?.length
           ? {
               lineItems: {
-                create: lineItems.map((li: any) => ({
+                create: roundedLineItems.map((li: any) => ({
                   account: li.account,
                   notes: li.notes,
                   amount: li.amount,
