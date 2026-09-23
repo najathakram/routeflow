@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import { useQueries } from "@tanstack/react-query";
 import {
   ActivityIndicator,
   Alert,
@@ -33,7 +34,7 @@ import {
   DATA_URL_MAX_WIDTH,
   MAX_POD_DATA_URL_LENGTH,
 } from "../../../../../lib/pod-image";
-import { useOrder } from "../../../../../lib/api/orders";
+import { orderQueryOptions, type Order } from "../../../../../lib/api/orders";
 import { useDriverPayments } from "../../../../../lib/api/addons";
 import { useUploadPaymentImage } from "../../../../../lib/api/payments";
 import { productImageFile } from "../../../../../lib/product-image";
@@ -53,9 +54,9 @@ import {
   isStopAlreadyCompletedError,
 } from "../../../../../lib/offline-errors";
 import {
-  buildDeliveries,
-  freeUnitSizeFor,
+  buildStopDeliveries,
   reconciledTotal,
+  shortPickLinesFromOrder,
   type ShortPickLine,
 } from "../../../../../lib/short-pick";
 import { showToast } from "../../../../../lib/toast";
@@ -97,6 +98,33 @@ function fullOrderTotal(order: RouteRunOrder, isTaxExempt: boolean): number {
   return orderAmountDue(order, isTaxExempt);
 }
 
+/**
+ * B762: the delivery-payload lines for an order whose richer per-order
+ * fetch hasn't landed yet (or has nothing left to adjust) — built from the
+ * stop's OWN embedded snapshot (`RouteRunOrder.lineItems`, already
+ * available with no extra fetch) so `closeStop` still covers the order
+ * FULLY rather than omitting it (which the server reads as UNDELIVERED).
+ * No BOGO netting (`freeUnits: 0`/`freeUnitSize: 1`) and no CANCELLED
+ * filter — matches the pre-B762 screen's own raw fallback exactly, since a
+ * `deliveredQtyById` override can't realistically exist for an order whose
+ * review screen could never have loaded to record one: every line here
+ * resolves to `deliveryTypeForQty`'s DELIVERED-at-full-qty case regardless.
+ */
+function fallbackShortPickLines(order: RouteRunOrder): ShortPickLine[] {
+  return (order.lineItems ?? []).map((li) => ({
+    orderItemId: li.id,
+    productId: li.productId,
+    orderedQty: Number(li.qty ?? 0),
+    // Prisma Decimal may arrive as a string over the wire — normalize like
+    // run-money.ts#lineItemSubtotal. Unused by this fallback path in
+    // practice (invoiceTotal reads fullOrderTotal(o) for it, never
+    // reconciledTotal), but must still satisfy ShortPickLine's type.
+    subtotal: li.subtotal != null ? Number(li.subtotal) : null,
+    freeUnits: 0,
+    freeUnitSize: 1,
+  }));
+}
+
 export default function PaymentScreen() {
   const router = useRouter();
   const qc = useQueryClient();
@@ -108,43 +136,56 @@ export default function PaymentScreen() {
   const { data: run, isLoading } = useRouteRun(runId ?? "");
   const stop = useMemo(() => run?.stops?.find((s) => s.id === stopId), [run, stopId]);
 
-  const orderId = stop?.orders?.[0]?.id;
-  const { data: order } = useOrder(orderId ?? "");
+  // B762: fetch EVERY order on the stop, not just orders[0] — the short-pick
+  // review (short-pick.tsx) now lets the driver reconcile any order at the
+  // stop, so this screen must be able to read a reconciled plan for any of
+  // them too, not just the first. Same shared query definition useOrder
+  // uses (orderQueryOptions) — lands on the same cache entry, never a
+  // second, divergent fetch. Not gated on `isLoading` below (matches the
+  // pre-B762 screen exactly): the driver can tap Close before every order's
+  // richer data has landed, so `closeStop`/`invoiceTotal` both fall back to
+  // the stop's own embedded snapshot per order rather than blocking.
+  const stopOrderIds = useMemo(() => (stop?.orders ?? []).map((o) => o.id), [stop]);
+  const { ordersById } = useQueries({
+    queries: stopOrderIds.map((id) => orderQueryOptions(id)),
+    combine: (results) => ({
+      ordersById: Object.fromEntries(
+        stopOrderIds
+          .map((id, i) => [id, results[i]?.data] as const)
+          .filter((entry): entry is [string, Order] => !!entry[1]),
+      ),
+    }),
+  });
   const deliveredQtyById = useDeliveryPlanStore((s) =>
     stopId ? (s.plansByStop[stopId] ?? EMPTY_DELIVERY_PLAN) : EMPTY_DELIVERY_PLAN,
   );
   const clearPlan = useDeliveryPlanStore((s) => s.clearStop);
 
-  const shortPickLines: ShortPickLine[] = useMemo(
-    () =>
-      (order?.lineItems ?? [])
-        .filter((li) => li.status !== "CANCELLED" && Number(li.deliveredQty ?? 0) === 0)
-        .map((li) => ({
-          orderItemId: li.id,
-          productId: li.productId,
-          orderedQty: Number(li.qty),
-          subtotal: li.subtotal ?? null,
-          freeUnits: li.promoFreeUnits ?? 0,
-          // `promoFreeUnits` counts whole SELLING units (BOXES on a box-split
-          // line) while `orderedQty` and the delivery plan are in PIECES — the
-          // same axis bridge the server oracle calls `freeUnitSize`
-          // (invoices.service.ts#buildInvoiceItemData). Without it a boxed BOGO
-          // line's partial estimate under-bills by up to one box.
-          freeUnitSize: freeUnitSizeFor(li),
-        })),
-    [order],
-  );
+  // The RECONCILED lines per order — empty for an order whose richer fetch
+  // hasn't landed (or that has nothing left to adjust). `deliveredQtyById`
+  // is shared/flat across every order (keyed by orderItemId, which is
+  // globally unique), so it's safe to hand the SAME map to every order's
+  // own reconciliation without partitioning it.
+  const richShortPickLinesByOrder: Record<string, ShortPickLine[]> = useMemo(() => {
+    const map: Record<string, ShortPickLine[]> = {};
+    for (const id of stopOrderIds) map[id] = shortPickLinesFromOrder(ordersById[id]);
+    return map;
+  }, [stopOrderIds, ordersById]);
 
-  // Charge across EVERY order on the stop. The short-pick review only reconciles
-  // order[0], so that order uses its reconciled (post-short-pick) total once its
-  // richer `order` has loaded (else its full ordered total during the brief
-  // loading window); every OTHER order on the stop always contributes its full
-  // ordered total. Summing all orders is what keeps a multi-order stop charged in
-  // full instead of collecting only order[0]'s amount.
-  const invoiceTotal = (stop?.orders ?? []).reduce(
-    (sum, o) =>
+  // Charge across EVERY order on the stop (B762: generalized from order[0]
+  // only — the short-pick review now reconciles ANY order at the stop, not
+  // just the first). Each order uses ITS OWN reconciled (post-short-pick)
+  // total once its richer per-order fetch has landed, else its full ordered
+  // total (covers both "not yet loaded" and "loaded but nothing left to
+  // adjust" — matches the pre-B762 screen's own fallback exactly, just no
+  // longer gated to a single order). Summing all orders is what keeps a
+  // multi-order stop charged in full instead of collecting only one order's
+  // amount.
+  const invoiceTotal = (stop?.orders ?? []).reduce((sum, o) => {
+    const shortPickLines = richShortPickLinesByOrder[o.id] ?? [];
+    return (
       sum +
-      (o.id === orderId && shortPickLines.length > 0
+      (shortPickLines.length > 0
         ? // REG-B305 round 2 (RULING 3): follow the SERVER's own delivered-basis
           // rule (invoices.service.ts#reconcileOrderDraftInvoice) — regular tax
           // scales by the delivered share of the ORDER's own subtotal, category
@@ -184,15 +225,20 @@ export default function PaymentScreen() {
             // projects the column; RouteRunStop.customer.isTaxExempt above).
             isTaxExempt: stop?.customer?.isTaxExempt === true,
           })
-        : fullOrderTotal(o, stop?.customer?.isTaxExempt === true)),
-    0,
-  );
+        : fullOrderTotal(o, stop?.customer?.isTaxExempt === true))
+    );
+  }, 0);
   // REG-B305 round 2 (RULING 3): the short-pick branch bills an ESTIMATE (the
   // server recomputes the real invoice total independently once the batch
-  // lands) — flag it inline so the driver doesn't read it as the final figure.
+  // lands) — flag it inline so the driver doesn't read it as the final
+  // figure. B762: true once ANY order on the stop is reconciled, not just
+  // the first.
+  const anyOrderReconciled = (stop?.orders ?? []).some(
+    (o) => (richShortPickLinesByOrder[o.id]?.length ?? 0) > 0,
+  );
   const invoiceLabel = stop?.orders?.[0]?.orderNumber
     ? `ORDER ${stop.orders[0].orderNumber} · ${(stop.customer?.businessName ?? "Customer").toUpperCase()}${
-        shortPickLines.length > 0 ? " (est. — final on invoice)" : ""
+        anyOrderReconciled ? " (est. — final on invoice)" : ""
       }`
     : "PAYMENT";
 
@@ -285,36 +331,27 @@ export default function PaymentScreen() {
 
     // RF-005: use the atomic complete-with-payment endpoint so both writes
     // succeed or fail together (no orphaned completed stop without payment).
-    // P10-POS-7: when the short-pick review screen recorded per-line delivered
-    // qty for order[0], honor it (PARTIAL/REFUSED reprice via the server's own
-    // proration — see lib/short-pick.ts); null until its richer `order` loads.
-    const reconciledFirst =
-      shortPickLines.length > 0
-        ? buildDeliveries(shortPickLines, deliveredQtyById).map((d) => ({
-            orderItemId: d.orderItemId,
-            productId: d.productId,
-            type: d.type,
-            quantityDelivered: d.qty,
-          }))
-        : null;
-    // Emit mutations for EVERY order on the stop: order[0] uses its reconciled
-    // plan when available; every other order (and order[0] as a fallback before
-    // it loads) is delivered in full. Iterating all stop.orders is what stops a
-    // second order at the same stop from silently getting zero delivery mutations
-    // (marked DELIVERED server-side yet never entering a delivery batch/invoice).
-    const deliveries = (stop.orders ?? []).flatMap((o) =>
-      o.id === orderId && reconciledFirst
-        ? reconciledFirst
-        : (o.lineItems ?? []).map((li) => ({
-            orderItemId: li.id,
-            productId: li.productId,
-            type: "DELIVERED" as const,
-            // Send the EXACT ordered qty (server accepts decimals). Since the
-            // payment path now bills on deliveredQty (reconcile basis:"delivered"),
-            // rounding here would over/under-bill a fractional line (loose/weight
-            // units); the short-pick path above is already exact.
-            quantityDelivered: Number(li.qty ?? 0),
-          })),
+    // P10-POS-7/B762: when the short-pick review screen recorded per-line
+    // delivered qty for an order, honor it (PARTIAL/REFUSED reprice via the
+    // server's own proration — see lib/short-pick.ts). SA-109/SA-109a: EVERY
+    // order on the stop must appear with EXPLICIT per-line entries — an
+    // order missing from this array entirely reads as fully UNDELIVERED
+    // server-side — and `type` always goes through `deliveryTypeForQty`
+    // (via buildDeliveries), never a hardcoded literal, so it stays
+    // consistent with `quantityDelivered` even for an order whose richer
+    // fetch hasn't landed yet (falls back to the stop's own embedded
+    // snapshot at full qty — deliveryTypeForQty(ordered, ordered) is always
+    // DELIVERED, so this is exactly the same outcome the old hardcoded
+    // literal produced, just derived instead of assumed).
+    const deliveries = buildStopDeliveries(
+      (stop.orders ?? []).map((o) => {
+        const rich = richShortPickLinesByOrder[o.id] ?? [];
+        return {
+          orderId: o.id,
+          lines: rich.length > 0 ? rich : fallbackShortPickLines(o),
+          deliveredQtyById,
+        };
+      }),
     );
 
     // NEW-m1-3: validate that at least one item is being delivered
