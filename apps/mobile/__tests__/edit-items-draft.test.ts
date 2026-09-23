@@ -976,29 +976,57 @@ describe("edit-items.tsx source pin: the draft record is never keyed by productI
     expect(source).toMatch(/Object\.entries\(draft\)/);
   });
 
-  it("Opus finding 2 (stale closure): resolveDraftKeyForPick is called with the setDraft updater's OWN param, never the outer `draft` state", () => {
-    // The banned call is `resolveDraftKeyForPick(draft, ...)` — reading the
-    // render-time closure, which two picks in the same tick (before a
-    // re-render lands) would both see identically and stale.
+  it("SA-108a (fix round 2): resolveDraftKeyForPick's ONLY call form reads draftRef.current, never `draft` and never the updater's own `d`", () => {
+    // Both banned forms: `resolveDraftKeyForPick(draft, ...)` (the
+    // render-time closure — stale across a same-tick burst) AND
+    // `resolveDraftKeyForPick(d, ...)` (the updater's own param — correct
+    // only when React happens to run that particular updater eagerly,
+    // which it does NOT for every call after the first in a same-tick
+    // burst; SA-108a's own regression). draftRef is kept synchronously
+    // fresh by BOTH a per-render assignment and an in-updater assignment,
+    // so reading it before setDraft is called is correct regardless of
+    // React's eager/deferred choice for any individual dispatch.
     expect(source).not.toMatch(/resolveDraftKeyForPick\(draft,/);
-    // The fix: called as resolveDraftKeyForPick(d, ...) where `d` is the
-    // setDraft((d) => ...) updater's parameter — always the latest value,
-    // even across back-to-back functional setState calls in one tick.
-    expect(source).toMatch(/resolveDraftKeyForPick\(d,/);
+    expect(source).not.toMatch(/resolveDraftKeyForPick\(d,/);
+    expect(source).toMatch(/resolveDraftKeyForPick\(draftRef\.current,/);
   });
 
-  it("Opus finding 2: the resolved key is written to resolvedKeyRef.current INSIDE the updater, not read from an outer variable after setDraft returns", () => {
-    const setDraftCallStart = source.indexOf("setDraft((d) => {");
-    expect(setDraftCallStart).toBeGreaterThan(-1);
-    const resolveCallIndex = source.indexOf("resolveDraftKeyForPick(d,", setDraftCallStart);
-    const refWriteIndex = source.indexOf(
-      "resolvedKeyRef.current = resolvedKey;",
-      setDraftCallStart,
+  it("SA-108a: draftRef is assigned on every render AND inside addPickedToDraft's setDraft updater before it returns — never left to go stale either way", () => {
+    // Per-render mirror: assigned directly in the render body (not inside
+    // an effect, which would be one render behind).
+    expect(source).toMatch(/draftRef\.current = draft;/);
+    // In-updater mirror: the SAME synchronous point every dispatch of THIS
+    // updater reaches, eager or deferred, so a subsequent same-tick read of
+    // draftRef.current is always this call's own result. Scoped to
+    // addPickedToDraft's own body — the file has several other
+    // `setDraft((d) => {` call sites this pin must not accidentally match.
+    const addPickedStart = source.indexOf("const addPickedToDraft = (");
+    expect(addPickedStart).toBeGreaterThan(-1);
+    const nextConstStart = source.indexOf("\n  const decQty = ", addPickedStart);
+    const fnSrc = source.slice(
+      addPickedStart,
+      nextConstStart === -1 ? source.length : nextConstStart,
     );
-    expect(resolveCallIndex).toBeGreaterThan(setDraftCallStart);
-    expect(refWriteIndex).toBeGreaterThan(resolveCallIndex);
-    // And the function hands the resolved key back out via the ref, not a
-    // variable captured from outside the updater.
-    expect(source).toMatch(/return resolvedKeyRef\.current;/);
+    const setDraftCallStart = fnSrc.indexOf("setDraft((d) => {");
+    expect(setDraftCallStart).toBeGreaterThan(-1);
+    const refWriteIndex = fnSrc.indexOf("draftRef.current = next;", setDraftCallStart);
+    const returnNextIndex = fnSrc.indexOf("return next;", setDraftCallStart);
+    expect(refWriteIndex).toBeGreaterThan(setDraftCallStart);
+    expect(returnNextIndex).toBeGreaterThan(refWriteIndex);
+  });
+
+  it("SA-108a: addPickedToDraft returns the SAME key it resolved before setDraft, never a ref written from inside the updater", () => {
+    expect(source).not.toMatch(/resolvedKeyRef/);
+    expect(source).toMatch(
+      /const resolvedKey = resolveDraftKeyForPick\(draftRef\.current, p\.id, null\);/,
+    );
+    const addPickedStart = source.indexOf("const addPickedToDraft = (");
+    expect(addPickedStart).toBeGreaterThan(-1);
+    const nextConstStart = source.indexOf("\n  const decQty = ", addPickedStart);
+    const fnSrc = source.slice(
+      addPickedStart,
+      nextConstStart === -1 ? source.length : nextConstStart,
+    );
+    expect(fnSrc).toMatch(/return resolvedKey;/);
   });
 });
