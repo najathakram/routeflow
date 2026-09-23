@@ -54,6 +54,8 @@ import {
 import {
   buildDeliveries,
   freeUnitSizeFor,
+  normalizeDeliveryPlan,
+  planPendingButLinesNotLoaded,
   reconciledTotal,
   type ShortPickLine,
 } from "../../../../../lib/short-pick";
@@ -128,12 +130,25 @@ export default function PaymentScreen() {
           // (invoices.service.ts#buildInvoiceItemData). Without it a boxed BOGO
           // line's partial estimate under-bills by up to one box.
           freeUnitSize: freeUnitSizeFor(li),
-          // B648: a units_v1 line (unitLabel set) is never short-picked — see
-          // lib/short-pick.ts#isUnitAwareLine. Must stay byte-identical to
-          // short-pick.tsx's mapping for the same REG-B50 reason as freeUnits.
+          // B648/SA-094: a units_v1 line whose own unitsPerBox > 1 gets the
+          // whole-Case stepper — see lib/short-pick.ts#isUnitAwareLine. Must
+          // stay byte-identical to short-pick.tsx's mapping for the same
+          // REG-B50 reason as freeUnits.
           unitLabel: li.unitLabel ?? null,
+          unitsPerBox: li.unitsPerBox ?? null,
+          boxes: li.boxes ?? null,
         })),
     [order],
+  );
+
+  // SA-094b: the ONE normalized plan every reader of deliveredQtyById must
+  // use — a raw entry for a unit-aware line can be any leftover piece count;
+  // only this snapped map is safe to feed the category-tax half (which has
+  // no unit-awareness of its own) so it agrees with reconciledTotal's own
+  // (already-snapped) subtotal.
+  const normalizedPlan = useMemo(
+    () => normalizeDeliveryPlan(shortPickLines, deliveredQtyById),
+    [shortPickLines, deliveredQtyById],
   );
 
   // Charge across EVERY order on the stop. The short-pick review only reconciles
@@ -160,11 +175,11 @@ export default function PaymentScreen() {
           reconciledAmountDue({
             drafts: o.invoices ?? [],
             order: { subtotal: o.subtotal, tax: o.tax },
-            deliveredSubtotal: reconciledTotal(shortPickLines, deliveredQtyById),
+            deliveredSubtotal: reconciledTotal(shortPickLines, normalizedPlan),
             deliveredCategoryTax: shortPickCategoryTax(
               o.lineItems ?? [],
               shortPickLines,
-              deliveredQtyById,
+              normalizedPlan,
             ),
             // B305 round 3: an exempt customer's server-side reconcile zeroes
             // BOTH tax terms — mirror that here (RUN_STOP_INCLUDE.customer
@@ -270,6 +285,14 @@ export default function PaymentScreen() {
     }
     setAmountError(null);
 
+    // SA-094a review (5): see lib/short-pick.ts#planPendingButLinesNotLoaded
+    // -- refuse to close rather than silently discard a driver's recorded
+    // short-pick choices while order[0]'s richer data is still loading.
+    if (planPendingButLinesNotLoaded(deliveredQtyById, shortPickLines)) {
+      setAmountError("Delivery details are still loading — wait a moment and try again.");
+      return;
+    }
+
     // RF-005: use the atomic complete-with-payment endpoint so both writes
     // succeed or fail together (no orphaned completed stop without payment).
     // P10-POS-7: when the short-pick review screen recorded per-line delivered
@@ -277,7 +300,7 @@ export default function PaymentScreen() {
     // proration — see lib/short-pick.ts); null until its richer `order` loads.
     const reconciledFirst =
       shortPickLines.length > 0
-        ? buildDeliveries(shortPickLines, deliveredQtyById).map((d) => ({
+        ? buildDeliveries(shortPickLines, normalizedPlan).map((d) => ({
             orderItemId: d.orderItemId,
             productId: d.productId,
             type: d.type,

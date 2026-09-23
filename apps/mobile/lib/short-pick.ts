@@ -35,51 +35,91 @@ export interface ShortPickLine {
   freeUnitSize?: number;
   /**
    * B648: the units_v1 selling unit ("Case", "Pallet"…) this line is sold by;
-   * null/undefined for a plain piece/pack line. `orderedQty` on a unit-aware
-   * line is base PIECES (count × the line's own `unitsPerBox` snapshot), and
-   * a delivered qty other than a whole multiple of the case size has no
-   * physical meaning a piece-counting stepper can represent — a PARTIAL
-   * count is REFUSED (this module has no case-aware stepper to offer).
-   * REFUSING partial is not the same as FORCING full, though: a unit-aware
-   * line still supports the same binary DELIVERED/REFUSED choice every other
-   * line does. An earlier version of this fix hid the choice entirely and
-   * always billed such a line in full, which would silently over-charge the
-   * customer for a Case the driver genuinely could not deliver (the B663
-   * class: a short delivery billed in full). `effectiveDeliveredQty` below
-   * resolves this — 0 or `orderedQty`, never an implicit full and never a
-   * raw piece count in between.
+   * null/undefined for a plain piece/pack line. `orderedQty` on such a line
+   * is base PIECES (count × the line's own `unitsPerBox` snapshot).
    */
   unitLabel?: string | null;
-}
-
-/** B648: true when a line is sold by a units_v1 unit and so only supports a binary delivered/not-delivered choice — see `ShortPickLine.unitLabel`. Exported so the review screen can render that choice instead of a piece stepper. */
-export function isUnitAwareLine(li: Pick<ShortPickLine, "unitLabel">): boolean {
-  return (li.unitLabel ?? "").trim() !== "";
+  /**
+   * SA-094: the line's own selling-unit-per-base-pack factor snapshot
+   * (`OrderItem.unitsPerBox`). `isUnitAwareLine` requires this to be > 1 —
+   * `unit-line-build.ts` stores a FACTOR-1 unit line ("Piece") with
+   * `boxes: null`, `unitsPerBox: 1`, and its pieces ARE individually
+   * countable, so it keeps the ordinary piece stepper (a units_v1 line whose
+   * "unit" already IS a piece has no whole-case granularity to protect).
+   */
+  unitsPerBox?: number | null;
+  /**
+   * SA-094a: the STORED count of the selling unit on this line
+   * (`unit-line-build.ts` stores `boxes = count` for a factor>1 unit line —
+   * "stored like a box-split line whose 'box' is the unit"). The whole-Case
+   * stepper's upper bound; never derived from the live product.
+   */
+  boxes?: number | null;
 }
 
 /**
- * B648: the delivered qty this module ever uses for a line. For a unit-aware
- * line, `deliveredQtyById`'s entry (when present) snaps to a BINARY 0 or the
- * full `orderedQty` — never the raw value in between, so a stray/leftover
- * piece count (e.g. a value from before the line was known to be
- * unit-aware) can never leak into the money math as a fractional case. No
- * entry at all is the universal "untouched" default every other line
- * already uses: fully delivered — this is NOT the bug an earlier version of
- * this fix had (that version ignored the entry ENTIRELY, so there was no
- * way to ever record a genuine "not delivered"; this version honors an
- * explicit 0, it just never treats a non-zero, non-full entry as a partial
- * case). Every function below reads through this ONE place.
+ * B648/SA-094: true when a line is sold by a units_v1 unit whose OWN pack
+ * snapshot is > 1 base piece per unit — the case a piece-counting stepper
+ * cannot represent one-for-one, so it gets the whole-Case stepper instead
+ * (see `effectiveDeliveredQty`). A factor-1 unit line (`unitsPerBox` 1 or
+ * absent, e.g. "Piece") is EXCLUDED here even though `unitLabel` is set — its
+ * pieces are individually countable, so it keeps the ordinary piece stepper
+ * and clamp. Exported so the review screen can pick which control to render.
+ */
+export function isUnitAwareLine(li: Pick<ShortPickLine, "unitLabel" | "unitsPerBox">): boolean {
+  return (li.unitLabel ?? "").trim() !== "" && Number(li.unitsPerBox ?? 0) > 1;
+}
+
+/**
+ * B648/SA-094a: the delivered qty this module ever uses for a line. For a
+ * unit-aware line (`isUnitAwareLine`, factor > 1), `deliveredQtyById`'s raw
+ * entry SNAPS DOWN to the nearest whole multiple of the line's own
+ * `unitsPerBox` — `clamp(floor(raw / unitsPerBox) * unitsPerBox, 0,
+ * orderedQty)` — so a stray/leftover piece count (e.g. 300 on a 288-piece
+ * Case) can never leak a fractional Case into the money math (300 -> 288,
+ * one whole Case, never 300 pieces of "partial"). n=0 -> REFUSED, n=count ->
+ * DELIVERED, anything between -> PARTIAL at that many WHOLE cases. No entry
+ * at all is the universal "untouched" default every other line already
+ * uses: fully delivered. Every function below reads through this ONE place —
+ * `normalizeDeliveryPlan` exports the same snapping for every caller that
+ * needs a full plan map, not just one line's value (SA-094b's normalizer
+ * requirement: the category-tax half and the review row's own badge must
+ * read the SAME snapped number reconciledTotal/buildDeliveries already do).
  */
 function effectiveDeliveredQty(
-  li: Pick<ShortPickLine, "orderItemId" | "orderedQty" | "unitLabel">,
+  li: Pick<ShortPickLine, "orderItemId" | "orderedQty" | "unitLabel" | "unitsPerBox">,
   deliveredQtyById: Record<string, number>,
 ): number {
+  const raw = deliveredQtyById[li.orderItemId];
   if (isUnitAwareLine(li)) {
-    const raw = deliveredQtyById[li.orderItemId];
-    return raw == null || raw > 0 ? li.orderedQty : 0;
+    if (raw == null) return li.orderedQty;
+    const upb = Number(li.unitsPerBox);
+    const snapped = Math.floor(Math.max(0, raw) / upb) * upb;
+    return Math.max(0, Math.min(snapped, li.orderedQty));
   }
-  const raw = deliveredQtyById[li.orderItemId] ?? li.orderedQty;
-  return Math.max(0, Math.min(raw, li.orderedQty));
+  return Math.max(0, Math.min(raw ?? li.orderedQty, li.orderedQty));
+}
+
+/**
+ * SA-094b: the SAME `effectiveDeliveredQty` snap, for every line in one
+ * call — the map every caller must pass to BOTH money halves
+ * (`deliveredCategoryTax`/`shortPickCategoryTax`, which have no
+ * unit-awareness of their own) AND the review row's displayed qty/badge.
+ * Reading the raw `deliveredQtyById` in only one of those places is exactly
+ * how a stray 288-of-864 entry used to bill the full subtotal (via
+ * `reconciledTotal`, already normalized) while charging only a third of the
+ * category tax (via the un-normalized `deliveredCategoryTax`) and showing a
+ * "Short" badge next to a "Delivered" total.
+ */
+export function normalizeDeliveryPlan(
+  lines: ShortPickLine[],
+  deliveredQtyById: Record<string, number>,
+): Record<string, number> {
+  const out: Record<string, number> = {};
+  for (const li of lines) {
+    out[li.orderItemId] = effectiveDeliveredQty(li, deliveredQtyById);
+  }
+  return out;
 }
 
 /**
@@ -185,4 +225,23 @@ export function isFullyDelivered(
   deliveredQtyById: Record<string, number>,
 ): boolean {
   return lines.every((li) => effectiveDeliveredQty(li, deliveredQtyById) >= li.orderedQty);
+}
+
+/**
+ * SA-094a review (5): true when the driver already recorded short-pick
+ * choices for this stop (a non-empty `deliveredQtyById`, persisted in
+ * useDeliveryPlanStore from an earlier short-pick screen visit) but the
+ * order's richer data hasn't loaded yet (`shortPickLines` empty) — closing
+ * the stop right now would silently DISCARD those choices: payment.tsx's
+ * `reconciledFirst` derives from `shortPickLines`, so it would read `null`
+ * and order[0] would fall through to the "every other order" branch,
+ * delivering everything in full instead of what the driver actually
+ * recorded. The caller must refuse to close (not silently drop the plan)
+ * until `shortPickLines` loads.
+ */
+export function planPendingButLinesNotLoaded(
+  deliveredQtyById: Record<string, number>,
+  shortPickLines: ShortPickLine[],
+): boolean {
+  return Object.keys(deliveredQtyById).length > 0 && shortPickLines.length === 0;
 }

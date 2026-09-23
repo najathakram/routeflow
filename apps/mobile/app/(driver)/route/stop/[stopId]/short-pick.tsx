@@ -21,6 +21,7 @@ import {
   reconciledTotal,
   deliveryTypeForQty,
   isUnitAwareLine,
+  normalizeDeliveryPlan,
   type ShortPickLine,
 } from "../../../../../lib/short-pick";
 import { sanitizeIntInput, parseIntQty } from "../../../../../lib/qty";
@@ -75,10 +76,13 @@ export default function ShortPickScreen() {
         // line) while `orderedQty` and the qty steppers below are in PIECES —
         // the server oracle's `freeUnitSize` bridges the two axes.
         freeUnitSize: freeUnitSizeFor(li),
-        // B648: a units_v1 line (unitLabel set) is never short-picked — see
-        // lib/short-pick.ts#isUnitAwareLine. Must also stay byte-identical to
-        // payment.tsx's mapping for the same REG-B50 reason as freeUnits.
+        // B648/SA-094: a units_v1 line whose unitsPerBox > 1 gets the
+        // whole-Case stepper — see lib/short-pick.ts#isUnitAwareLine. Must
+        // also stay byte-identical to payment.tsx's mapping for the same
+        // REG-B50 reason as freeUnits.
         unitLabel: li.unitLabel ?? null,
+        unitsPerBox: li.unitsPerBox ?? null,
+        boxes: li.boxes ?? null,
       })),
     [lines],
   );
@@ -94,7 +98,20 @@ export default function ShortPickScreen() {
   );
   const setPlanQty = useDeliveryPlanStore((s) => s.setQty);
 
-  const total = useMemo(() => reconciledTotal(shortPickLines, qtyById), [shortPickLines, qtyById]);
+  // SA-094b: the ONE normalized plan every reader here must use — the row's
+  // displayed qty/badge AND the total, so a stray/un-snapped entry can never
+  // show one number on the row and bill a different one (must stay in step
+  // with payment.tsx's own normalizedPlan, since both feed the SAME money
+  // functions from lib/run-money.ts).
+  const normalizedPlan = useMemo(
+    () => normalizeDeliveryPlan(shortPickLines, qtyById),
+    [shortPickLines, qtyById],
+  );
+
+  const total = useMemo(
+    () => reconciledTotal(shortPickLines, normalizedPlan),
+    [shortPickLines, normalizedPlan],
+  );
   const orderedTotal = useMemo(() => reconciledTotal(shortPickLines, {}), [shortPickLines]);
   const anyShort = total < orderedTotal - 0.005;
 
@@ -138,7 +155,7 @@ export default function ShortPickScreen() {
           <ShortPickRow
             key={li.id}
             li={li}
-            qty={qtyById[li.id] ?? li.qty}
+            qty={normalizedPlan[li.id] ?? li.qty}
             onChangeQty={(q) => setQtyById((m) => ({ ...m, [li.id]: q }))}
           />
         ))}
@@ -174,12 +191,19 @@ function ShortPickRow({
   const ordered = Number(li.qty);
   const type = deliveryTypeForQty(qty, ordered);
   const [draft, setDraft] = useState(String(qty));
-  // B648: a units_v1 line ("Case"…) has no partial-count stepper here — its
-  // ordered qty is base pieces, and a piece stepper can't represent a
-  // partial case — but it still gets the same binary delivered/refused
-  // choice every other line has (never an implicit "always full": a driver
-  // who couldn't deliver the Case must be able to say so).
+  // SA-094/SA-094a: a units_v1 line whose OWN unitsPerBox > 1 gets a
+  // whole-Case stepper — its ordered qty is base pieces, and a partial
+  // piece count within one Case has no physical meaning. A factor-1 unit
+  // line ("Piece") is excluded (isUnitAwareLine requires unitsPerBox > 1)
+  // and keeps the ordinary piece stepper below.
   const unitAware = isUnitAwareLine(li);
+  const hasUnitLabel = (li.unitLabel ?? "").trim() !== "";
+  const unitsPerBox = Number(li.unitsPerBox ?? 0);
+  // The STORED count (never derived from the live product) — unit-line-build.ts
+  // stores `boxes = count` for a factor>1 unit line. Falls back to
+  // ordered/unitsPerBox only for a malformed/legacy row missing `boxes`.
+  const caseCount = li.boxes ?? (unitsPerBox > 0 ? Math.round(ordered / unitsPerBox) : 0);
+  const casesDelivered = unitAware && unitsPerBox > 0 ? Math.round(qty / unitsPerBox) : 0;
 
   return (
     <View style={styles.card}>
@@ -189,12 +213,11 @@ function ShortPickRow({
             {li.product?.name ?? li.name ?? "Item"}
           </Text>
           <Text style={styles.cardMeta}>
-            Ordered {unitAware ? `${li.boxes ?? ""} ${li.unitLabel}`.trim() : ordered}
+            Ordered{" "}
+            {hasUnitLabel ? `${li.boxes ?? Number(li.qty)} ${li.unitLabel}`.trim() : ordered}
           </Text>
         </View>
         {type !== "DELIVERED" ? (
-          // A unit-aware line's type is always DELIVERED or REFUSED (never
-          // PARTIAL — effectiveDeliveredQty only ever snaps it to 0 or full).
           <View
             style={[styles.badge, type === "REFUSED" ? styles.badgeRefused : styles.badgeShort]}
           >
@@ -204,23 +227,32 @@ function ShortPickRow({
       </View>
       {unitAware ? (
         <View style={styles.stepperRow}>
-          <Text style={styles.stepperLabel}>Sold by the {li.unitLabel}: delivered?</Text>
-          <View style={styles.unitChoiceRow}>
+          <Text style={styles.stepperLabel}>
+            Cases delivered: {casesDelivered} of {caseCount}
+          </Text>
+          <View style={styles.stepper}>
             <Pressable
-              style={[styles.unitChoiceBtn, qty > 0 && styles.unitChoiceBtnDelivered]}
-              onPress={() => onChangeQty(ordered)}
+              style={styles.stepBtn}
+              onPress={() => onChangeQty(Math.max(0, casesDelivered - 1) * unitsPerBox)}
+              hitSlop={6}
+              disabled={casesDelivered <= 0}
+              accessibilityRole="button"
+              accessibilityLabel={`One fewer ${li.unitLabel} delivered`}
+              accessibilityState={{ disabled: casesDelivered <= 0 }}
             >
-              <Text style={[styles.unitChoiceText, qty > 0 && styles.unitChoiceTextActive]}>
-                Delivered
-              </Text>
+              <Text style={styles.stepText}>−</Text>
             </Pressable>
+            <Text style={styles.qtyInput}>{casesDelivered}</Text>
             <Pressable
-              style={[styles.unitChoiceBtn, qty <= 0 && styles.unitChoiceBtnRefused]}
-              onPress={() => onChangeQty(0)}
+              style={styles.stepBtn}
+              onPress={() => onChangeQty(Math.min(caseCount, casesDelivered + 1) * unitsPerBox)}
+              hitSlop={6}
+              disabled={casesDelivered >= caseCount}
+              accessibilityRole="button"
+              accessibilityLabel={`One more ${li.unitLabel} delivered`}
+              accessibilityState={{ disabled: casesDelivered >= caseCount }}
             >
-              <Text style={[styles.unitChoiceText, qty <= 0 && styles.unitChoiceTextActive]}>
-                Not delivered
-              </Text>
+              <Text style={styles.stepText}>+</Text>
             </Pressable>
           </View>
         </View>
@@ -296,7 +328,8 @@ const styles = StyleSheet.create({
   cardMeta: { fontSize: 12, fontFamily: "Inter_400Regular", color: ios.label2, marginTop: 2 },
   badge: { borderRadius: 8, paddingHorizontal: 8, paddingVertical: 4 },
   badgeShort: { backgroundColor: "#FEF3C7" },
-  badgeRefused: { backgroundColor: "#FEE2E2" },
+  // SA-094a review (6): a design token instead of a hard-coded hex.
+  badgeRefused: { backgroundColor: ios.system.redWash },
   badgeText: { fontSize: 11, fontFamily: "Inter_700Bold", color: ios.label },
   stepperRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
   stepperLabel: { fontSize: 13, fontFamily: "Inter_500Medium", color: ios.label2 },
@@ -310,18 +343,6 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   stepText: { fontSize: 18, fontFamily: "Inter_600SemiBold", color: ios.label },
-  // B648: the units_v1 line's binary delivered/not-delivered choice.
-  unitChoiceRow: { flexDirection: "row", gap: 6 },
-  unitChoiceBtn: {
-    borderRadius: 8,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    backgroundColor: ios.fill3,
-  },
-  unitChoiceBtnDelivered: { backgroundColor: ios.brand },
-  unitChoiceBtnRefused: { backgroundColor: "#FEE2E2" },
-  unitChoiceText: { fontSize: 12, fontFamily: "Inter_600SemiBold", color: ios.label2 },
-  unitChoiceTextActive: { color: ios.label },
   qtyInput: {
     minWidth: 40,
     textAlign: "center",
