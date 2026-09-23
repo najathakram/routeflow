@@ -270,6 +270,26 @@ describe("SA-078(b) — reconcile rebuild carries the PRIOR InvoiceItem's unitsP
       const createdItem = prisma.invoice.update.mock.calls[0][0].data.items.create[0];
       expect(createdItem.unitsPerBox).toBe(12);
     });
+
+    // This is the assertion that actually catches the second-review finding: a mock's
+    // resolved value is whatever the test hands it, REGARDLESS of the real query's own
+    // `select` -- reverting the source `select` clause does not change what a mocked
+    // `findMany` returns here, so the test above alone cannot detect a missing field.
+    // The genuine regression guard is on the QUERY SHAPE itself.
+    //
+    // B736: kept BESIDE the source-grep spec below, not replaced by it -- this checks
+    // what's actually passed to prisma at RUNTIME for this one caller (the SA's #1257
+    // PASS cited it as proven to discriminate, and a source-grep spec can't see a select
+    // built through a variable or helper), while the source-grep spec below is what
+    // extends the same discrimination to the other three callers B736 found blind.
+    it("asks the nonVoid query for items.orderItemId/unitsPerBox -- without this, the carried-pack map is always empty on this path", async () => {
+      armMirrorRebuild([{ orderItemId: "li1", unitsPerBox: 12 }]);
+      await (service as any).rebuildIssuedDepositMirrorOnDelivery("o1", prisma);
+      const queryArgs = prisma.invoice.findMany.mock.calls[0][0];
+      expect(queryArgs.select.items).toEqual({
+        select: { orderItemId: true, unitsPerBox: true },
+      });
+    });
   });
 });
 
