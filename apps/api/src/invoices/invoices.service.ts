@@ -3954,10 +3954,7 @@ export class InvoicesService {
         unitPrice: Number(it.unitPrice),
         subtotal: Number(it.subtotal),
         msrp: it.msrp != null ? Number(it.msrp) : null,
-        // F03/R9: the strikethrough + "N free" note buildInvoiceEmail renders are
-        // dead without these three scalars — the renderer can only show what this
-        // caller passes, and a BOGO line's reduced subtotal reads as a pricing
-        // error otherwise. Mirrors the PDF item payload and the web detail renderer.
+        // F03/R9: without these, buildInvoiceEmail's strike/"N free" note and a BOGO line's reduced subtotal read as a pricing error.
         originalPrice: it.originalPrice != null ? Number(it.originalPrice) : null,
         priceType: it.priceType ?? null,
         promoFreeUnits: it.promoFreeUnits != null ? Number(it.promoFreeUnits) : null,
