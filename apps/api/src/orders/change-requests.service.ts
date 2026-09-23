@@ -42,8 +42,11 @@ const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one :
  * the 12x overcharge itself (create() reads a bare qty on a boxed product as a BOX count).
  * An inconsistent split is refused as INVALID_LINE_SPLIT — never reinterpreted.
  *
- * Every refusal is thrown before any write, so the change request stays PENDING and can be
- * declined or approved at the stop instead.
+ * Every refusal is thrown before any write, so the change request stays PENDING. The message
+ * points the operator at DECLINE + a fresh add on the next order — never at approve-at-stop: the
+ * item was not on the truck, approve-at-stop fails once the stop is done, and on an order holding
+ * an old box-unaware line its merge re-prices at 12x (B753(a): $520 for $80). Revisit once B753
+ * is fixed.
  */
 export function reconcileFiledAddSplit(args: {
   qty: number;
@@ -77,7 +80,7 @@ export function reconcileFiledAddSplit(args: {
   const refuse = (reason: string) =>
     new BadRequestException({
       code: "CHANGE_REQUEST_PACK_CHANGED",
-      message: `Change request filed as ${filed}${reason}. Decline and re-quote, or approve at stop.`,
+      message: `Change request filed as ${filed}${reason}. Decline it and re-add the item to the next order.`,
     });
 
   if (b === 0) {

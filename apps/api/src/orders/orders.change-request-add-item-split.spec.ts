@@ -8,9 +8,10 @@ import { buildOrdersService, operatorPayload } from "./testing/orders-service-ha
  * of the same payloads. Its new-line branch is correct today. Its MERGE branch is B753: it adds
  * `payload.qty` to `existing.qty` without reading the split, so it mixes axes whenever the two
  * producers (driver: pieces + split; buyer: bare boxes) and the existing line's shape (box-split
- * vs box-unaware) disagree. The two merge cases are `it.failing` characterizations — each was run
- * as a plain `it` and failed on exactly the defect's own subtotal, never on a harness error — so
- * the defect lives in code until B753 is fixed, and each flips to a plain `it` when it is.
+ * vs box-unaware) disagree. The two merge cases PIN TODAY'S WRONG VALUES ($520 and $43.33) as plain
+ * `it` tests: `it.failing` would pass on ANY error, a broken setup included, so it could not tell
+ * the defect from a harness fault. These go RED the day B753 changes that math — whoever fixes
+ * B753 then flips each assertion to the correct $80.
  *
  * Its own file (not orders.service.spec.ts) because that spec is pinned at its size-ratchet
  * ceiling; `buildOrdersService` is the shared at-stop harness.
@@ -104,61 +105,55 @@ describe("OrdersService.approveChangeRequestAtStop — a door add's box split (B
     });
   });
 
-  it.failing(
-    "B753(a): a driver's 1 box merged into a LEGACY box-unaware line of 1 box bills $80 (today $520: 13 bare 'boxes')",
-    async () => {
-      h.prisma.changeRequest.findUnique.mockResolvedValue(
-        addItem({ qty: 12, boxes: 1, pieces: 0 }),
-      );
-      mergeInto({
-        id: "li-1",
-        orderId: "ord-1",
-        productId: "prod-1",
-        qty: 1, // a box-unaware boxed line: qty IS the box count
-        boxes: null,
-        pieces: null,
-        unitsPerBox: null,
-        unitPrice: 40,
-        subtotal: 40,
-        status: "PENDING",
-        deliveredQty: 0,
-      });
+  it("B753(a) — TODAY'S WRONG VALUE, pinned: a driver's 1 box merged into a LEGACY box-unaware line of 1 box bills $520 (correct: $80)", async () => {
+    h.prisma.changeRequest.findUnique.mockResolvedValue(addItem({ qty: 12, boxes: 1, pieces: 0 }));
+    mergeInto({
+      id: "li-1",
+      orderId: "ord-1",
+      productId: "prod-1",
+      qty: 1, // a box-unaware boxed line: qty IS the box count
+      boxes: null,
+      pieces: null,
+      unitsPerBox: null,
+      unitPrice: 40,
+      subtotal: 40,
+      status: "PENDING",
+      deliveredQty: 0,
+    });
 
-      await h.service.approveChangeRequestAtStop("cr-1", driver, null);
+    await h.service.approveChangeRequestAtStop("cr-1", driver, null);
 
-      expect(h.prisma.orderItem.update).toHaveBeenCalledWith({
-        where: { id: "li-1" },
-        data: expect.objectContaining({ subtotal: 80 }),
-      });
-    },
-  );
+    expect(h.prisma.orderItem.update).toHaveBeenCalledWith({
+      where: { id: "li-1" },
+      // B753: 13 bare 'boxes' at $40. Correct is 2 boxes = $80.
+      data: expect.objectContaining({ subtotal: 520 }),
+    });
+  });
 
-  it.failing(
-    "B753(b): a buyer's bare 1 (a box) merged into a box-SPLIT line of 1 box bills $80 (today $43.33: 13 pieces)",
-    async () => {
-      h.prisma.changeRequest.findUnique.mockResolvedValue(
-        addItem({ qty: 1, boxes: null, pieces: null }, "CUSTOMER"),
-      );
-      mergeInto({
-        id: "li-1",
-        orderId: "ord-1",
-        productId: "prod-1",
-        qty: 12, // a box-split line: qty is total pieces
-        boxes: 1,
-        pieces: 0,
-        unitsPerBox: 12,
-        unitPrice: 40,
-        subtotal: 40,
-        status: "PENDING",
-        deliveredQty: 0,
-      });
+  it("B753(b) — TODAY'S WRONG VALUE, pinned: a buyer's bare 1 (a box) merged into a box-SPLIT line of 1 box bills $43.33 (correct: $80)", async () => {
+    h.prisma.changeRequest.findUnique.mockResolvedValue(
+      addItem({ qty: 1, boxes: null, pieces: null }, "CUSTOMER"),
+    );
+    mergeInto({
+      id: "li-1",
+      orderId: "ord-1",
+      productId: "prod-1",
+      qty: 12, // a box-split line: qty is total pieces
+      boxes: 1,
+      pieces: 0,
+      unitsPerBox: 12,
+      unitPrice: 40,
+      subtotal: 40,
+      status: "PENDING",
+      deliveredQty: 0,
+    });
 
-      await h.service.approveChangeRequestAtStop("cr-1", operatorPayload as never, null);
+    await h.service.approveChangeRequestAtStop("cr-1", operatorPayload as never, null);
 
-      expect(h.prisma.orderItem.update).toHaveBeenCalledWith({
-        where: { id: "li-1" },
-        data: expect.objectContaining({ subtotal: 80 }),
-      });
-    },
-  );
+    expect(h.prisma.orderItem.update).toHaveBeenCalledWith({
+      where: { id: "li-1" },
+      // B753: 13 pieces = 1 box + 1 piece. Correct is 2 boxes = $80.
+      data: expect.objectContaining({ subtotal: 43.33 }),
+    });
+  });
 });

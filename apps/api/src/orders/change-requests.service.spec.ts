@@ -903,6 +903,10 @@ describe("ChangeRequestsService", () => {
       expect(body.message).toContain("12 per box");
       expect(body.message).toContain("6 per box");
       expect(body.message).toContain("Sample Cola 12pk");
+      // The advice: decline and re-add on the next order. Never approve-at-stop — the item was not
+      // on the truck, and that path's merge re-prices at 12x on an old box-unaware line (B753(a)).
+      expect(body.message).toContain("Decline it and re-add the item to the next order");
+      expect(body.message).not.toMatch(/approve at stop/i);
       expect(prisma.changeRequest.updateMany).not.toHaveBeenCalled();
     });
 
