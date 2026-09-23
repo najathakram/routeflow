@@ -125,10 +125,17 @@
    caught what escaped one — see (dashboard)/layout.tsx, buyer/portal/layout.tsx
    and (platform-admin)/layout.tsx for the per-shell fixes; marketing and auth
    (which has no layout.tsx at all) have no containment of their own and rely
-   on this rule alone. `clip` rather than `hidden` — `hidden` establishes a new
-   formatting context that breaks `position: sticky` for any descendant;
-   `clip` (Overflow Level 3) clips painted content the same way without that
-   side effect. Zoom itself is NOT the bug and must stay unlocked — both
+   on this rule alone. `clip` rather than `hidden` — on the root element
+   `hidden` gets the CSS Overflow spec's root-propagation treatment, so it
+   would visually clip the same way and doesn't carry the sticky-breaking
+   side effect it has on an ordinary nested element. The reason to prefer
+   `clip` here is different: `hidden` still establishes a scroll container
+   that CAN be scrolled programmatically or via focus (`scrollIntoView`,
+   keyboard navigation into an off-screen focused element) even with no
+   visible scrollbar — exactly the kind of drift a touch gesture or a stray
+   focus change could re-trigger. `clip` (Overflow Level 3) removes the
+   scroll container entirely, so there is no scroll position left to drift
+   into, on either axis. Zoom itself is NOT the bug and must stay unlocked — both
    viewport declarations (app/layout.tsx, app/buyer/layout.tsx) deliberately
    omit maximumScale/userScalable per WCAG 2.1 SC 1.4.4; a page that cannot
    grow wider than the viewport in the first place has nothing to "settle"
