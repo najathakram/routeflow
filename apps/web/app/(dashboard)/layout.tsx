@@ -707,7 +707,12 @@ function Header({
             <DropdownMenu.Content
               align="end"
               sideOffset={8}
-              className="z-50 w-80 rounded-lg border border-surface-border bg-white shadow-dropdown animate-in fade-in-0 zoom-in-95"
+              // max-w clamp mirrors packages/ui/src/web/Toast.tsx's Viewport — a
+              // Radix portal renders to document.body, escaping every shell's own
+              // overflow containment, so a bare fixed width is the one place that
+              // clamp has to be authored on the element itself rather than relying
+              // on an ancestor.
+              className="z-50 w-80 max-w-[calc(100vw-2rem)] rounded-lg border border-surface-border bg-white shadow-dropdown animate-in fade-in-0 zoom-in-95"
             >
               {/* Panel header */}
               <div className="flex items-center justify-between border-b border-surface-border px-4 py-3">
