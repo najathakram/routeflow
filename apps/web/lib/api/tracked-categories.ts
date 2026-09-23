@@ -1,11 +1,13 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "../api-client";
 import type {
+  RegulatedFilingStatus,
   RegulatedLedgerResponse,
   RegulatedReportPreview,
   ReportTemplateDef,
 } from "@routeflow/types";
 export type {
+  RegulatedFilingStatus,
   RegulatedLedgerResponse,
   RegulatedLedgerRow,
   RegulatedReportColumn,
@@ -242,8 +244,6 @@ export function useToggleSubcategory() {
 }
 
 // ─── Filings (W5b) ──────────────────────────────────────────────────────────────
-
-export type RegulatedFilingStatus = "GENERATED" | "FAILED";
 
 export interface RegulatedFiling {
   id: string;
