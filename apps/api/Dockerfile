@@ -15,7 +15,11 @@ COPY packages/eslint-config/package.json     packages/eslint-config/
 # already be here — a manifest-only copy makes that build fail with no inputs.
 COPY packages/pricing/                       packages/pricing/
 COPY packages/scanning/package.json          packages/scanning/
-COPY packages/types/package.json             packages/types/
+# The same postinstall then builds @routeflow/returns (`npm run build -w
+# @routeflow/returns`), and returns imports types from `@routeflow/types` —
+# so both need a full-directory copy here too, not just their manifests.
+COPY packages/returns/                       packages/returns/
+COPY packages/types/                         packages/types/
 # Whole directory, not just the manifest: packages/pricing/tsconfig.json extends
 # `@routeflow/typescript-config/base.json`, which the postinstall build above
 # resolves during `npm ci` — a manifest-only copy leaves that file missing.
