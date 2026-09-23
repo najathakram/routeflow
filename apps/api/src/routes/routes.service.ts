@@ -2580,9 +2580,9 @@ export class RoutesService {
               quantityDelivered: d.quantityDelivered,
             },
           });
-          // Record the delivered qty so a payment-path invoice bills what was
-          // actually delivered (short/refused lines don't over-bill). Consumed by
-          // recordDeliveryPaymentInTx → reconcileOrderDraftInvoice(basis:"delivered").
+          // Record the delivered qty so the invoice reconcile below (step 4) bills
+          // what was actually delivered (short/refused lines don't over-bill).
+          // Consumed by reconcileDeliveredOrdersInTx (delivered-reconcile.ts).
           await tx.orderItem.update({
             where: { id: d.orderItemId },
             data: { deliveredQty: (d.type as any) === "REFUSED" ? 0 : d.quantityDelivered },
@@ -2703,6 +2703,7 @@ export class RoutesService {
     const postReconcileTotalByOrder = await resolvePostReconcileOrderTotals(
       this.prisma.forTenant(),
       routableOrderIds,
+      this.logger,
     );
     for (const o of stop.orders) {
       if (NON_ROUTABLE_ORDER_STATUSES.includes(o.status)) continue;

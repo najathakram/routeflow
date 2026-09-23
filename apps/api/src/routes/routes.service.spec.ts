@@ -2069,6 +2069,64 @@ describe("RoutesService", () => {
       );
     });
 
+    // Opus review of #1292: this shape (no `payment` at all — the ordinary case for
+    // most tenants) had no coverage in the CI-run unit lane, and the DB lane's path
+    // filter doesn't cover routes/**, so a regression that moved the reconcile call
+    // back behind `if (dto.payment...)` — B663's ENTIRE bug — would pass CI unnoticed.
+    it("B663: an on-account completion (no payment) still reconciles to the delivered basis, and never calls recordDeliveryPaymentInTx", async () => {
+      prisma.routeRun.findUnique.mockResolvedValue(IN_PROGRESS_RUN);
+      prisma.routeRunStop.findFirst.mockResolvedValue({
+        id: "stop-1",
+        routeRunId: "run-1",
+        status: "PENDING",
+        signatureUrl: null,
+        orders: [
+          { id: "ord-1", status: "PENDING", customerId: "cust-1", orderNumber: "SO-1", total: 50 },
+        ],
+      });
+      prisma.driver.findFirst.mockResolvedValue(null);
+      const txMock = {
+        ...prisma,
+        routeRunStop: {
+          ...prisma.routeRunStop,
+          findMany: jest.fn().mockResolvedValue([{ id: "stop-1", status: "PENDING" }]),
+          update: jest.fn().mockResolvedValue({}),
+        },
+        routeRun: { ...prisma.routeRun, update: jest.fn().mockResolvedValue({}) },
+        order: { ...prisma.order, updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
+        orderItem: {
+          ...prisma.orderItem,
+          findFirst: jest.fn().mockResolvedValue({ orderId: "ord-1" }),
+          findMany: jest.fn().mockResolvedValue([{ id: "oi-1", orderId: "ord-1", qty: 10 }]),
+          update: jest.fn().mockResolvedValue({}),
+        },
+        deliveryMutation: { ...prisma.deliveryMutation, create: jest.fn() },
+        $executeRaw: jest.fn().mockResolvedValue(0),
+      };
+      (prisma.tenantTransaction as jest.Mock).mockImplementation((fn: any) => fn(txMock));
+      prisma.routeRunStop.findUniqueOrThrow.mockResolvedValue({
+        id: "stop-1",
+        status: "COMPLETED",
+      });
+
+      await service.completeWithPayment(
+        "run-1",
+        "stop-1",
+        {
+          deliveries: [{ orderItemId: "oi-1", type: "SHORT", quantityDelivered: 7 }],
+          // No `payment` at all — on-account, the ordinary case for most tenants.
+        },
+        operatorPayload,
+      );
+
+      expect(invoicesService.reconcileDeliveredOrdersInTx).toHaveBeenCalledWith(
+        txMock,
+        ["ord-1"],
+        ["ord-1"],
+      );
+      expect(invoicesService.recordDeliveryPaymentInTx).not.toHaveBeenCalled();
+    });
+
     it("should throw BadRequestException for CASH payment with amount=0 (RF-006)", async () => {
       const inProgressRun = { ...MOCK_RUN, status: "IN_PROGRESS" as const };
       prisma.routeRun.findUnique.mockResolvedValue(inProgressRun);

@@ -54,7 +54,9 @@ export async function reconcileDeliveredOrdersInTx(
       });
       // Create a fresh DRAFT only when the order has no live invoice at all; if a
       // non-DRAFT invoice already exists (e.g. the office already sent one), leave
-      // it and just pay it below.
+      // it alone — there is no draft for this function to reconcile, and the
+      // caller's own payment step (recordDeliveryPaymentInTx) still applies cash
+      // to whatever invoice(s) are already there.
       if (!existing) {
         await deps.createInvoiceFromOrder(orderId, tx);
         draft = await deps.findOpenOrderDraft(orderId, tx);

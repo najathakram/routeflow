@@ -1,7 +1,7 @@
 import { InvoiceStatus, OrderStatus } from "@prisma/client";
 import { roundMoney } from "@routeflow/pricing";
 
-export interface DeliveredReconcileDeps {
+export interface StopReconcileDeps {
   // Structurally matches InvoicesService itself — callers pass the service instance
   // directly (correct `this` on the method: it's invoked as deps.reconcileDeliveredOrdersInTx(...)).
   reconcileDeliveredOrdersInTx(
@@ -24,7 +24,7 @@ export interface DeliveredReconcileDeps {
  * called from a one-line call site in `RoutesService.completeWithPayment`.
  */
 export async function reconcileDeliveredStopOrders(
-  deps: DeliveredReconcileDeps,
+  deps: StopReconcileDeps,
   tx: any,
   stopOrders: ReadonlyArray<{ id: string; status: OrderStatus }>,
   deliveredOrderIdSet: ReadonlySet<string>,
@@ -53,23 +53,31 @@ export interface InvoiceTotalsDb {
  * reconcile updates the order's non-void INVOICE totals, never `Order.total` itself
  * (`recomputeOrderFromInvoices`, the thing that would, is not in this call chain), so
  * the DELIVERED notification must read the invoice(s) fresh, post-transaction, falling
- * back to the pre-tx order total only when an order has no non-void invoice at all
- * (shouldn't happen for a routed order, but never silently notify a wrong amount).
+ * back to the pre-tx order total when an order has no non-void invoice at all (shouldn't
+ * happen for a routed order, but never silently notify a wrong amount) OR when the
+ * lookup itself throws — by this point the stop is already committed and saved
+ * (fire-and-forget notification prep, post-tx), so a throw here must never surface as a
+ * 500: the caller would see the stop fail to save even though it didn't, the idempotency
+ * key would never get stored, and a retry would find "Stop is already completed".
  */
 export async function resolvePostReconcileOrderTotals(
   db: InvoiceTotalsDb,
   routableOrderIds: readonly string[],
+  logger?: { warn(message: string): void },
 ): Promise<Map<string, number>> {
-  const invoices =
-    routableOrderIds.length > 0
-      ? await db.invoice.findMany({
-          where: {
-            orderId: { in: routableOrderIds as string[] },
-            status: { not: InvoiceStatus.VOID },
-          },
-          select: { orderId: true, total: true },
-        })
-      : [];
+  if (routableOrderIds.length === 0) return new Map();
+  let invoices: Array<{ orderId: string | null; total: unknown }>;
+  try {
+    invoices = await db.invoice.findMany({
+      where: { orderId: { in: routableOrderIds as string[] }, status: { not: InvoiceStatus.VOID } },
+      select: { orderId: true, total: true },
+    });
+  } catch (err) {
+    logger?.warn(
+      `resolvePostReconcileOrderTotals: invoice lookup failed, notifying with pre-tx order totals: ${(err as Error)?.message}`,
+    );
+    return new Map();
+  }
   const totalByOrder = new Map<string, number>();
   for (const inv of invoices) {
     if (!inv.orderId) continue;

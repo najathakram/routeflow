@@ -167,13 +167,24 @@ describe("InvoicesService — B663", () => {
 
     it("reconciles a SPLIT-invoice order too (sibling-aware — no gate, no double-bill)", async () => {
       // A SEPARATE_INVOICE regulated order has base + -R# sibling drafts. The
-      // sibling-aware reconcile rebuilds each from ITS OWN lines, so it now runs
-      // (the old invoiceCount<=1 skip is gone) without folding lines onto the base.
+      // sibling-aware reconcile rebuilds each from ITS OWN lines (proven in
+      // reconcileOrderDeliveredInvoices's own describe block below), so it now
+      // runs (the old invoiceCount<=1 skip is gone) without folding lines onto
+      // the base. THIS layer's own guarantee is narrower — and is what the
+      // assertion below actually proves: it delegates to
+      // reconcileOrderDeliveredInvoices exactly ONCE per order, never once per
+      // sibling invoice, which is what would double-bill (running the
+      // sibling-aware rebuild redundantly against the same siblings).
       (service.findOpenOrderDraft as jest.Mock).mockReset().mockResolvedValue({ id: "inv-base" });
+      prisma.invoice.findMany.mockResolvedValue([
+        { id: "inv-base", invoiceNumber: "INV-9", total: 60 },
+        { id: "inv-r1", invoiceNumber: "INV-9-R1", total: 40 },
+      ]);
 
       await service.reconcileDeliveredOrdersInTx(prisma as any, ["ord-1"]);
 
       expect(service.reconcileOrderDeliveredInvoices).toHaveBeenCalledWith("ord-1", prisma);
+      expect(service.reconcileOrderDeliveredInvoices).toHaveBeenCalledTimes(1);
     });
 
     // B2 (WP-D1): a deposit mirror issued at placement is SENT — there is no open
