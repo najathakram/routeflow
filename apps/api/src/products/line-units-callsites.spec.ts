@@ -35,12 +35,11 @@ const BASELINE: Record<string, number> = {
   //      line-factor decision. Retired by moving it to a named non-line helper (SA-047 shape).
   // The number may only go DOWN. The target is still zero.
   "invoices/invoices.service.ts": 3, // 4c-1 prefactor: create()'s line builder moved (3 reads) to:
-  "invoices/manual-invoice-lines.ts": 3,
-  // B659: item.packSnapshot ?? product?.unitsPerBox — still one direct read site in this file
-  // (unchanged by B659; the `??` only gates which value WINS, the live-product read itself is
-  // still there and still counted). estimates.service.ts's own count is corrected below to the
-  // real post-B659 content, verified by direct count, not carried forward from the stale
-  // pre-B717/B681 draft this commit was originally cut against.
+  // B659: two direct read sites in this file (box-split branch's `item.packSnapshot ??
+  // product?.unitsPerBox`, and the no-split branch's `upbForPieces` gaining the same fallback per
+  // review finding 2). Verified by running the scanner's own regex directly against the file, not
+  // carried forward from the stale pre-B717/B681 draft this commit was originally cut against.
+  "invoices/manual-invoice-lines.ts": 2,
   "estimates/estimates.service.ts": 1,
   "order-templates/order-templates.service.ts": 1,
   "returns/inline-returns-quote.service.ts": 3,
