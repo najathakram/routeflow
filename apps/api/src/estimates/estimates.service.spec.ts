@@ -1053,7 +1053,11 @@ describe("EstimatesService — B8 accept/convert duplicate-invoice race", () => 
             description: "Widget (case of 12)",
             productId: "prod-645",
             qty: 144,
-            unitPrice: 10,
+            // Box-split lines price by the BOX: 12 boxes @ $120/box = $1,440. (A $10 figure here
+            // was internally inconsistent with the fixture's own subtotal/box math — a per-unit
+            // price would need qty(144) x $10 = $1,440, but computeLineSubtotal prices a box-split
+            // line off boxes x unitPrice, not qty x unitPrice.)
+            unitPrice: 120,
             subtotal: 1440,
             boxes: 12,
             pieces: 0,
@@ -1095,10 +1099,10 @@ describe("EstimatesService — B8 accept/convert duplicate-invoice race", () => 
         id: "est-645-old",
         status: "ACCEPTED",
         customerId: "cust-645",
-        subtotal: 500,
+        subtotal: 600,
         taxAmount: 0,
         discount: 0,
-        total: 500,
+        total: 600,
         notes: null,
         terms: null,
         items: [
@@ -1109,10 +1113,11 @@ describe("EstimatesService — B8 accept/convert duplicate-invoice race", () => 
             // 6 boxes with no loose pieces means qty is 72 (pack 12), never 5.
             // unitsPerBox is null because this row predates the create()
             // snapshot this fix added; the pack is still recoverable from the
-            // line's own split, (72 - 0) / 6 = 12.
+            // line's own split, (72 - 0) / 6 = 12. Box-split lines price by the
+            // BOX: 6 boxes @ $100/box = $600 (was an inconsistent 500).
             qty: 72,
             unitPrice: 100,
-            subtotal: 500,
+            subtotal: 600,
             boxes: 6,
             pieces: 0,
             unitsPerBox: null,
@@ -1168,7 +1173,9 @@ describe("EstimatesService — B8 accept/convert duplicate-invoice race", () => 
       await service.convertToInvoice("est-645-old-unboxed");
 
       const createdLine = prisma.invoice.create.mock.calls[0][0].data.items.create[0];
-      expect(createdLine.boxes).toBe(0);
+      // A 0/0 "split" is NO split (B659 review finding 6): boxes:0, pieces:0 never counts as
+      // hasSplit, so this line converts as a plain qty line — boxes stays null, not 0.
+      expect(createdLine.boxes).toBeNull();
       expect(createdLine.unitsPerBox).toBeNull();
     });
 

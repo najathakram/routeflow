@@ -84,8 +84,10 @@ export function buildManualInvoiceLines(
       pieces = Number(item.pieces ?? 0);
       lineSub = roundMoney(Number(item.subtotalSnapshot) - (item.discount ?? 0));
     } else {
+      let packRecorded = false;
       if (item.productId && (item.boxes != null || item.pieces != null)) {
         const pack = item.packSnapshot ?? product?.unitsPerBox;
+        packRecorded = pack != null;
         // B659 (review finding 7): truthy, not `> 1`, let a pack of 1 through — `normalizeBoxesPieces`
         // itself only does box math when unitsPerBox > 1 (its own `hasBoxPackaging` gate) and otherwise
         // falls back to an `input.qty` this caller never passes, so a pack-1 product's split silently
@@ -109,9 +111,13 @@ export function buildManualInvoiceLines(
       // update path and `lineAmbiguity` use. A boxed product is unaffected: its pack resolves above.
       // The subtotalSnapshot branch above is this rule's own escape hatch (Senior Architect ruling,
       // option b) for the ONE caller (estimate conversion) that can safely convert an unpackable
-      // pieces-only split without a pack — everything else still refuses here.
-      const bad = unpackableSplit(item, unitsPerBox);
-      if (bad) throw new BadRequestException(bad);
+      // pieces-only split without a pack — everything else still refuses here. Skipped when a pack
+      // WAS genuinely recorded but is degenerate (<=1, finding 7 above): that is a known value, not
+      // an unresolvable one, and splitWithoutPack's own `upb > 1` gate can't tell the two apart.
+      if (!packRecorded) {
+        const bad = unpackableSplit(item, unitsPerBox);
+        if (bad) throw new BadRequestException(bad);
+      }
       // BUY_N_GET_M: free whole selling units come off the subtotal BEFORE pricing
       // (never a rounded net unit price). 0 for every other line.
       freeUnits = clampFreeUnits(item.promoFreeUnits, boxes, qty);

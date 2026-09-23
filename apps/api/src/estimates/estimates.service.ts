@@ -538,14 +538,15 @@ export class EstimatesService {
         // predates B661/B700/SA-078 and omits boxes/pieces/unitsPerBox/packAtSale entirely;
         // using it here would silently ship the box-axis bug that work fixed everywhere else,
         // just for converted estimates.
-        if ((inv.items ?? []).some((it: any) => it.trackedCategoryId != null)) {
-          const packMap = await packAtSaleByProduct(tx, inv.items ?? []);
+        const invItems: any[] = Array.isArray(inv.items) ? inv.items : [];
+        if (invItems.some((it: any) => it.trackedCategoryId != null)) {
+          const packMap = await packAtSaleByProduct(tx, invItems);
           await this.ledger.writeSaleEntries({
             tenantId,
             orderId: null,
             invoiceId: inv.id,
             soldAt: inv.issueDate ?? new Date(),
-            lines: toSaleLedgerLines(inv.items ?? [], packMap),
+            lines: toSaleLedgerLines(invItems, packMap),
             db: tx,
           });
         }
