@@ -3,6 +3,7 @@ import { roundMoney } from "@routeflow/pricing";
 import { effectiveTaxRateFromTotals } from "../common/tax-rate";
 import { withAdvisoryLock, LockTimeoutError, LockUnavailableError } from "../common/db-locks";
 import { QTY_EPSILON } from "../orders/merge-idempotency";
+import { billableQtyFromBasis, type DeliveredBasis } from "./delivered-basis-by-line";
 
 export interface OrderRecomputeTotals {
   orderId: string;
@@ -70,15 +71,24 @@ export function resolveProductMatches(lineItems: any[]): {
  * pattern in customers.service.ts); the check below is defensive only, to type-check the result.
  */
 export async function withOrderRecomputeLock<T>(
-  prisma: { tenantTransaction<R>(fn: (tx: any) => Promise<R>): Promise<R> },
+  prisma: {
+    tenantTransaction<R>(fn: (tx: any) => Promise<R>, options?: { timeout?: number }): Promise<R>;
+  },
   orderId: string,
   fn: (tx: any) => Promise<T>,
 ): Promise<T> {
   let result;
   try {
     result = await withAdvisoryLock(
-      { family: "order-merge", key: orderId, mode: "wait", waitMs: 20_000 },
-      () => prisma.tenantTransaction((innerTx: any) => fn(innerTx)),
+      // waitMs 10_000: the order-merge lock pool's own connectionTimeoutMillis budget is 10s
+      // (common/db-locks.ts's lockPool) -- a 20_000 wait could never actually be reached; the
+      // pool checkout itself would already have failed with LockUnavailableError well before it.
+      { family: "order-merge", key: orderId, mode: "wait", waitMs: 10_000 },
+      // {timeout: 15_000}, matching voidInvoice's own tenantTransaction call (invoices.service.ts
+      // ~:4358) -- without it, Prisma's default 5s transaction timeout can fire on a busy order
+      // before this recompute's own (already lock-serialized, so never actually concurrent with
+      // a sibling) write work finishes.
+      () => prisma.tenantTransaction((innerTx: any) => fn(innerTx), { timeout: 15_000 }),
     );
   } catch (e) {
     if (e instanceof LockTimeoutError) {
@@ -142,24 +152,27 @@ export async function withOrderRecomputeLock<T>(
  * caller's `existingByProduct` map picks a match anyway, silently crediting one active line's
  * billed qty onto an unrelated active sibling of the same product and releasing the other,
  * enabling a double-bill). `ambiguousLineIds` names every such line; the sync loop below SKIPS
- * them entirely — bails rather than guesses, the same principle `resyncOrderInvoicesForEdit`
- * applies to a provenance-less invoice line, at the per-line grain this partial branch needs
- * rather than that method's whole-order bail.
+ * a line named there ONLY when it has no precise `byTarget` match of its own (SA-093a round 6 —
+ * see the loop's own comment: a line with a genuine orderItemId match is trusted regardless of
+ * what its product-sharing siblings look like). Bails rather than guesses, the same principle
+ * `resyncOrderInvoicesForEdit` applies to a provenance-less invoice line, at the per-line grain
+ * this partial branch needs rather than that method's whole-order bail.
  *
- * SA-093 (A) — coverage basis by order status: on a DELIVERED order (never PARTIALLY_DELIVERED,
- * which is NOT a delivered state for this rule), a line's billable qty is capped at what was
- * actually delivered (`min(qty, deliveredQty)`) — a REFUSED line (deliveredQty 0) requires
- * nothing and never blocks coverage. Every other status keeps the ORDERED qty as the billable
- * target (round 4's rule, unchanged). This is the ONLY change coverage needs for the DELIVERED
- * case: once `billableQtyOf` reflects deliveredQty, the CALLER's own existing-line rewrite loop
- * (gated on `fullyCovered`, in invoices.service.ts) already shrinks a short line's qty/subtotal
- * to what it was actually billed — that loop needed no change, only the threshold that gates it.
+ * SA-093a (round 6) — coverage basis is EVIDENCE-keyed, never order.status: see
+ * `delivered-basis-by-line.ts`'s own doc for the full rule and why round 5's status-keyed
+ * version was itself a money bug (finding 1: an order marked DELIVERED with no mutation rows
+ * read every line as billable 0). The caller computes one `DeliveredBasis` per recompute (via
+ * `deliveredBasisByLine`) and passes it to both this function and `finalizeOrderRecompute` —
+ * ONE core, never two derivations. This is the ONLY change coverage needs: once
+ * `billableQtyFromBasis` reflects the mutation-row basis, the CALLER's own existing-line
+ * rewrite loop (gated on `fullyCovered`, in invoices.service.ts) already shrinks a short line's
+ * qty/subtotal to what it was actually billed — that loop needed no change, only the threshold
+ * that gates it.
  */
 export async function checkOrderCoverage(params: {
   db: any;
   orderId: string;
   order: {
-    status: unknown;
     subtotal: unknown;
     tax: unknown;
     total: unknown;
@@ -168,15 +181,22 @@ export async function checkOrderCoverage(params: {
   };
   byTarget: Map<string, { qty: number }>;
   invoices: any[];
-  /** #1185 review round 5, item 2: active line ids whose product has more than one active line
-   *  AND at least one unresolved (no-orderItemId) invoice item — unresolvable, skip entirely. */
+  deliveredBasis: DeliveredBasis;
+  /** SA-093a round 6: active line ids whose product has more than one active line — the sync
+   *  loop only actually skips one when it ALSO has no precise `byTarget` match of its own (a
+   *  genuine orderItemId always wins). Now rare in practice (a client sending a validated
+   *  orderItemId matches precisely, never lands here); this fallback still exists for
+   *  legacy/free-text items. The caller warns on every line actually skipped — never silent
+   *  (ruling 2+3's "never silently" requirement). */
   ambiguousLineIds?: Set<string>;
-}): Promise<{ fullyCovered: true } | { fullyCovered: false; totals: OrderRecomputeTotals }> {
-  const { db, orderId, order, byTarget, invoices, ambiguousLineIds } = params;
-  const isDelivered = order.status === "DELIVERED";
+}): Promise<
+  | { fullyCovered: true }
+  | { fullyCovered: false; totals: OrderRecomputeTotals; skippedAmbiguousLineIds: string[] }
+> {
+  const { db, orderId, order, byTarget, invoices, deliveredBasis, ambiguousLineIds } = params;
+  const skippedAmbiguousLineIds: string[] = [];
   const activeLines = (order.lineItems as any[]).filter((li) => li.status !== "CANCELLED");
-  const billableQtyOf = (li: any) =>
-    isDelivered ? Math.min(Number(li.qty ?? 0), Number(li.deliveredQty ?? 0)) : Number(li.qty ?? 0);
+  const billableQtyOf = (li: any) => billableQtyFromBasis(li, deliveredBasis);
   // Reuse merge-idempotency.ts's shouldSkipInPlaceResync tolerance/zero-qty rule exactly: `qty`
   // is Decimal(10,3), and Node's float math (0.7 + 0.1 === 0.7999999999999999) means a strict
   // `>=` never counts a fully-billed line as covered. A zero-billable-qty line (never billable
@@ -203,10 +223,17 @@ export async function checkOrderCoverage(params: {
   // when unmatched — independent of the heavier full-coverage rewrite (subtotal, boxes/pieces,
   // status) below, which still only runs once every line is covered.
   for (const li of activeLines) {
-    // Round 5 item 2: an ambiguous product match is unknowable, not just unmatched — leave the
-    // line exactly as stored rather than guess (and possibly release a genuinely-billed line).
-    if (ambiguousLineIds?.has(li.id)) continue;
     const agg = byTarget.get(`line:${li.id}`);
+    // Round 5 item 2 / SA-093a round 6 (caller now warns, never silent): `ambiguousLineIds`
+    // names every line sharing an ambiguous product, but that only matters when THIS line has
+    // no precise match of its own — an invoice item that carried a valid orderItemId resolves
+    // directly to `agg` regardless of what its product-sharing siblings look like, and must
+    // never be skipped just because one of them is ambiguous (ruling 2+3's root fix: a real
+    // orderItemId always wins over product-sharing ambiguity, never the other way around).
+    if (!agg && ambiguousLineIds?.has(li.id)) {
+      skippedAmbiguousLineIds.push(li.id);
+      continue;
+    }
     const billedQty = agg ? Math.min(Number(li.qty), agg.qty) : 0;
     if (Number(li.invoicedQty ?? 0) !== billedQty) {
       await db.orderItem.update({ where: { id: li.id }, data: { invoicedQty: billedQty } });
@@ -233,6 +260,7 @@ export async function checkOrderCoverage(params: {
       total: orderTotal,
       shippingFee: shippingFeeSum,
     },
+    skippedAmbiguousLineIds,
   };
 }
 
@@ -252,36 +280,36 @@ export async function checkOrderCoverage(params: {
  * it), but an already-CANCELLED line with stale non-zero qty/subtotal (a prior return, a prior
  * recompute) still gets its numbers normalized to zero.
  *
- * SA-093 (A), round 5: on a DELIVERED order, a REFUSED line (deliveredQty 0, so it was never
- * billable and never blocked coverage) is ALSO cancelled once the order is fully covered — the
- * pre-PR behaviour, restored on purpose for this specific state: a refused line was never going
- * to be billed at all, so once delivery is done there is nothing left pending for it.
+ * SA-093a, round 6: a line with its OWN mutation row showing 0 delivered (a REFUSED delivery)
+ * is ALSO cancelled once the order is fully covered — the pre-PR behaviour, restored on purpose
+ * for this specific line: a refused line was never going to be billed at all, so once delivery
+ * is done there is nothing left pending for it. This is keyed on THAT line's own mutation row,
+ * never on order.status (see `delivered-basis-by-line.ts`) — a line with no mutation row of its
+ * own is never "refused" by this rule, whatever the order's other lines or status say.
  */
 export async function finalizeOrderRecompute(params: {
   db: any;
   orderId: string;
-  order: { status: unknown; subtotal: unknown; tax: unknown };
+  order: { subtotal: unknown; tax: unknown };
+  deliveredBasis: DeliveredBasis;
   /** Order lines no invoice line resolved to (the caller's existing-line loop already removed
    *  every line it matched). */
-  unbilled: Map<
-    string,
-    { id: string; status?: string; invoicedQty?: unknown; deliveredQty?: unknown }
-  >;
+  unbilled: Map<string, { id: string; status?: string; invoicedQty?: unknown }>;
   subtotal: number;
   categoryTaxSum: number;
   invoices: any[];
 }): Promise<OrderRecomputeTotals> {
-  const { db, orderId, order, unbilled, categoryTaxSum, invoices } = params;
-  const isDelivered = order.status === "DELIVERED";
+  const { db, orderId, order, deliveredBasis, unbilled, categoryTaxSum, invoices } = params;
 
-  // Cancel a genuine orphan (was billed, now removed), a refused line on a DELIVERED order, and
-  // normalize an already-cancelled line's stale qty/subtotal. A line that was NEVER billed and
-  // isn't refused/already-cancelled is left untouched — it should not appear here at all while
-  // the caller's gate holds.
+  // Cancel a genuine orphan (was billed, now removed), a line refused by its OWN mutation row,
+  // and normalize an already-cancelled line's stale qty/subtotal. A line that was NEVER billed
+  // and isn't refused/already-cancelled is left untouched — it should not appear here at all
+  // while the caller's gate holds.
   for (const orphan of unbilled.values()) {
     const wasBilled = Number(orphan.invoicedQty ?? 0) > 0;
     const alreadyCancelled = orphan.status === "CANCELLED";
-    const refused = isDelivered && Number(orphan.deliveredQty ?? 0) <= QTY_EPSILON;
+    const deliveredForLine = deliveredBasis.byLineId.get(orphan.id);
+    const refused = deliveredForLine !== undefined && deliveredForLine <= QTY_EPSILON;
     if (!wasBilled && !alreadyCancelled && !refused) continue;
     await db.orderItem.update({
       where: { id: orphan.id },

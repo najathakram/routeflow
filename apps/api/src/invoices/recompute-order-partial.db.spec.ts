@@ -98,6 +98,7 @@ import { CommissionEngineService } from "../sales-agents/commission-engine.servi
 import { EstimatesService } from "../estimates/estimates.service";
 import { NumberingService } from "../import/numbering.service";
 import { describeDb, requireLocalDatabaseUrl } from "../common/testing/db-spec";
+import { withAdvisoryLock } from "../common/db-locks";
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const { assertTestTenant } = require("../../../../scripts/lib/test-tenants.cjs");
@@ -896,6 +897,158 @@ describeDb(
       expect(Number(refreshedL3.invoicedQty)).toBe(0); // untouched, unrelated product
     });
 
+    // SA-093a ruling (2+3), round 6: the ROOT fix. Same ambiguous-product shape as the test
+    // above, but the client round-trips orderItemId on the edit -- proving the precise match
+    // sidesteps the whole ambiguous-fallback path entirely (never even reaches the skip), so an
+    // up-edit's new qty actually lands instead of the line staying stuck at its old invoicedQty.
+    it("round 6 (ruling 2+3, HIGH): an up-edit WITH orderItemId syncs precisely even though the product is ambiguous -- no over-bill door", async () => {
+      const { tenant, customer } = await seedTenantAndCustomer("o1");
+      const product = await prisma.product.create({
+        data: { name: `P ${tenant.slug}`, unit: "ea", pricePerUnit: 10, tenantId: tenant.id },
+      });
+      const order = await prisma.order.create({
+        data: {
+          customerId: customer.id,
+          status: "PARTIALLY_DELIVERED",
+          subtotal: 150,
+          total: 150,
+          tenantId: tenant.id,
+        },
+      });
+      // L1 and L2 share a product -- the SAME shape the round-5 interim fix could only bail on.
+      const lineL1 = await prisma.orderItem.create({
+        data: {
+          orderId: order.id,
+          productId: product.id,
+          status: "PENDING",
+          qty: 4,
+          unitPrice: 10,
+          subtotal: 40,
+          tenantId: tenant.id,
+        },
+      });
+      const lineL2 = await prisma.orderItem.create({
+        data: {
+          orderId: order.id,
+          productId: product.id,
+          status: "PENDING",
+          qty: 10,
+          unitPrice: 10,
+          subtotal: 100,
+          tenantId: tenant.id,
+        },
+      });
+      const lineL3 = await prisma.orderItem.create({
+        data: {
+          orderId: order.id,
+          productId: null,
+          status: "PENDING",
+          qty: 5,
+          unitPrice: 10,
+          subtotal: 50,
+          tenantId: tenant.id,
+        },
+      });
+
+      const invoice = await tenantCtx.run(tenant.id, () =>
+        invoicesService.createPartialFromOrder(order.id, {
+          items: [{ orderItemId: lineL2.id, qty: 4 }],
+        }),
+      );
+      const afterBill = await prisma.orderItem.findUniqueOrThrow({ where: { id: lineL2.id } });
+      expect(Number(afterBill.invoicedQty)).toBe(4);
+
+      // Up-edit 4 -> 6, WITH orderItemId this time (the client round-trips it, per the DTO's new
+      // field). The precise match must apply -- L2's invoicedQty must actually MOVE to 6, not
+      // stay stuck at 4 (which would let a later invoice bill 6 more: 4 + 6 + 6 = 16 against 10).
+      await tenantCtx.run(tenant.id, () =>
+        invoicesService.update((invoice as any).id, {
+          items: [
+            {
+              orderItemId: lineL2.id,
+              productId: product.id,
+              qty: 6,
+              unitPrice: 10,
+              description: "P",
+            },
+          ],
+        } as any),
+      );
+
+      const refreshedL2 = await prisma.orderItem.findUniqueOrThrow({ where: { id: lineL2.id } });
+      expect(Number(refreshedL2.invoicedQty)).toBe(6); // moved -- precise match, not stuck at 4
+      const refreshedL1 = await prisma.orderItem.findUniqueOrThrow({ where: { id: lineL1.id } });
+      expect(Number(refreshedL1.invoicedQty)).toBe(0); // untouched -- never confused with L2
+      const refreshedL3 = await prisma.orderItem.findUniqueOrThrow({ where: { id: lineL3.id } });
+      expect(Number(refreshedL3.invoicedQty)).toBe(0); // untouched, unrelated product
+    });
+
+    // SA-093a ruling (2+3): finding 3's own repro. A free-text (no productId) line that DOES
+    // have an orderItemId must round-trip it through an edit -- losing it was finding 3's exact
+    // bug (the line became matchless, its invoicedQty reset to 0, enabling a re-bill).
+    it("round 6 (ruling 2+3, HIGH): a free-text line (no productId) WITH orderItemId is never re-billed after an edit", async () => {
+      const { tenant, customer } = await seedTenantAndCustomer("o2");
+      const order = await prisma.order.create({
+        data: {
+          customerId: customer.id,
+          status: "PARTIALLY_DELIVERED",
+          subtotal: 150,
+          total: 150,
+          tenantId: tenant.id,
+        },
+      });
+      // No productId at all -- a manually-entered custom line item on the order.
+      const lineFree = await prisma.orderItem.create({
+        data: {
+          orderId: order.id,
+          productId: null,
+          status: "PENDING",
+          qty: 10,
+          unitPrice: 10,
+          subtotal: 100,
+          tenantId: tenant.id,
+        },
+      });
+      const lineOther = await prisma.orderItem.create({
+        data: {
+          orderId: order.id,
+          productId: null,
+          status: "PENDING",
+          qty: 5,
+          unitPrice: 10,
+          subtotal: 50,
+          tenantId: tenant.id,
+        },
+      });
+
+      const invoice = await tenantCtx.run(tenant.id, () =>
+        invoicesService.createPartialFromOrder(order.id, {
+          items: [{ orderItemId: lineFree.id, qty: 10 }],
+        }),
+      );
+      const afterBill = await prisma.orderItem.findUniqueOrThrow({ where: { id: lineFree.id } });
+      expect(Number(afterBill.invoicedQty)).toBe(10);
+
+      // A no-op discount edit, but round-tripping orderItemId on the free-text item this time.
+      await tenantCtx.run(tenant.id, () =>
+        invoicesService.update((invoice as any).id, {
+          items: [
+            { orderItemId: lineFree.id, qty: 10, unitPrice: 10, description: "Custom charge" },
+          ],
+        } as any),
+      );
+
+      const refreshedFree = await prisma.orderItem.findUniqueOrThrow({
+        where: { id: lineFree.id },
+      });
+      // Still billed 10 -- NOT reset to 0 (finding 3's bug), so it can never be billed again.
+      expect(Number(refreshedFree.invoicedQty)).toBe(10);
+      const refreshedOther = await prisma.orderItem.findUniqueOrThrow({
+        where: { id: lineOther.id },
+      });
+      expect(Number(refreshedOther.invoicedQty)).toBe(0); // untouched
+    });
+
     it("round 5, item 3 (MED): the void path's product fallback never adjusts a CANCELLED line", async () => {
       const { tenant, customer } = await seedTenantAndCustomer("m");
       const product = await prisma.product.create({
@@ -962,8 +1115,8 @@ describeDb(
       expect(Number(refreshedCancelled.invoicedQty)).toBe(0); // untouched throughout
     });
 
-    describe("SA-093 (A): DELIVERED-order coverage basis, real Postgres", () => {
-      it("(1) DELIVERED: a short-delivered line shrinks to its billed qty, a refused sibling is cancelled", async () => {
+    describe("SA-093a (round 6): mutation-row-keyed coverage basis, real Postgres", () => {
+      it("(1) a short-delivered line (real DeliveryMutation row) shrinks to its billed qty, a refused sibling (REFUSED row) is cancelled", async () => {
         const { tenant, customer } = await seedTenantAndCustomer("n1");
         const productA = await prisma.product.create({
           data: { name: `A ${tenant.slug}`, unit: "ea", pricePerUnit: 10, tenantId: tenant.id },
@@ -981,14 +1134,13 @@ describeDb(
           },
         });
         // A: ordered 10, delivered 6, billed 6 (a short delivery, correctly billed for what
-        // arrived). B: ordered 6, delivered 0 (refused) — never billed, never billable.
+        // arrived). B: ordered 6, refused — never billed, never billable.
         const lineA = await prisma.orderItem.create({
           data: {
             orderId: order.id,
             productId: productA.id,
             status: "PENDING",
             qty: 10,
-            deliveredQty: 6,
             unitPrice: 10,
             subtotal: 100,
             tenantId: tenant.id,
@@ -1000,9 +1152,30 @@ describeDb(
             productId: productB.id,
             status: "PENDING",
             qty: 6,
-            deliveredQty: 0,
             unitPrice: 10,
             subtotal: 60,
+            tenantId: tenant.id,
+          },
+        });
+        // SA-093a: the basis is the real DeliveryMutation ROW, never the deliveredQty column
+        // (left at its default 0 for both lines here) and never order.status.
+        await prisma.deliveryMutation.create({
+          data: {
+            orderId: order.id,
+            orderItemId: lineA.id,
+            productId: productA.id,
+            type: "DELIVERED",
+            quantityDelivered: 6,
+            tenantId: tenant.id,
+          },
+        });
+        await prisma.deliveryMutation.create({
+          data: {
+            orderId: order.id,
+            orderItemId: lineB.id,
+            productId: productB.id,
+            type: "REFUSED",
+            quantityDelivered: 0,
             tenantId: tenant.id,
           },
         });
@@ -1026,11 +1199,7 @@ describeDb(
         expect(Number(refreshedOrder.total)).toBe(60);
       });
 
-      it("(2) the SAME shape on a PARTIALLY_DELIVERED order changes nothing (round 4's rule stays)", async () => {
-        // SA-093's own ruling: "PARTIALLY_DELIVERED is NOT a delivered state for this rule" --
-        // the explicit contrast case, and the only OTHER status assertOrderInvoiceUnlocked
-        // allows an invoice edit on (a CONFIRMED order's mirrored invoice can't be edited at
-        // all, so it can't exercise this code path).
+      it("(2) the SAME shape with NO DeliveryMutation rows at all changes nothing, even though the order status is DELIVERED (round 4's rule, unconstrained qty)", async () => {
         const { tenant, customer } = await seedTenantAndCustomer("n2");
         const productA = await prisma.product.create({
           data: { name: `A ${tenant.slug}`, unit: "ea", pricePerUnit: 10, tenantId: tenant.id },
@@ -1041,7 +1210,7 @@ describeDb(
         const order = await prisma.order.create({
           data: {
             customerId: customer.id,
-            status: "PARTIALLY_DELIVERED",
+            status: "DELIVERED", // status alone must not matter -- see (4) below, its own pin
             subtotal: 160,
             total: 160,
             tenantId: tenant.id,
@@ -1053,7 +1222,6 @@ describeDb(
             productId: productA.id,
             status: "PENDING",
             qty: 10,
-            deliveredQty: 6,
             unitPrice: 10,
             subtotal: 100,
             tenantId: tenant.id,
@@ -1065,7 +1233,6 @@ describeDb(
             productId: productB.id,
             status: "PENDING",
             qty: 6,
-            deliveredQty: 0,
             unitPrice: 10,
             subtotal: 60,
             tenantId: tenant.id,
@@ -1081,19 +1248,19 @@ describeDb(
           invoicesService.update((invoice as any).id, { discount: 0 } as any),
         );
 
-        // Round 4's rule (ordered qty is the billable target on every non-DELIVERED status): A
-        // is still under-billed (6 of 10), so the order stays gated — NOTHING shrinks/cancels.
+        // No mutation rows -> hasMutations:false -> every line's billable qty is unconstrained
+        // (round 4's rule). A is still under-billed (6 of 10), so the order stays gated.
         const refreshedA = await prisma.orderItem.findUniqueOrThrow({ where: { id: lineA.id } });
         expect(refreshedA.status).toBe("PENDING");
         expect(Number(refreshedA.qty)).toBe(10); // NOT shrunk
         expect(Number(refreshedA.subtotal)).toBe(100);
         const refreshedB = await prisma.orderItem.findUniqueOrThrow({ where: { id: lineB.id } });
-        expect(refreshedB.status).toBe("PENDING"); // NOT cancelled — refused-cancel is DELIVERED-only
+        expect(refreshedB.status).toBe("PENDING"); // NOT cancelled — no mutation row says it's refused
         const refreshedOrder = await prisma.order.findUniqueOrThrow({ where: { id: order.id } });
         expect(Number(refreshedOrder.subtotal)).toBe(160); // unchanged — still gated
       });
 
-      it("(3) DELIVERED: a fully-delivered-and-billed line, then removed from its invoice, is released — NOT cancelled", async () => {
+      it("(3) a fully-delivered-and-billed line (real DeliveryMutation row), then removed from its invoice, is released — NOT cancelled", async () => {
         const { tenant, customer } = await seedTenantAndCustomer("n3");
         const product = await prisma.product.create({
           data: { name: `A ${tenant.slug}`, unit: "ea", pricePerUnit: 10, tenantId: tenant.id },
@@ -1113,9 +1280,18 @@ describeDb(
             productId: product.id,
             status: "PENDING",
             qty: 10,
-            deliveredQty: 10,
             unitPrice: 10,
             subtotal: 100,
+            tenantId: tenant.id,
+          },
+        });
+        await prisma.deliveryMutation.create({
+          data: {
+            orderId: order.id,
+            orderItemId: lineA.id,
+            productId: product.id,
+            type: "DELIVERED",
+            quantityDelivered: 10,
             tenantId: tenant.id,
           },
         });
@@ -1136,31 +1312,172 @@ describeDb(
         expect(refreshedA.status).toBe("PENDING"); // NOT cancelled — genuinely under-billed still
         expect(Number(refreshedA.invoicedQty)).toBe(0); // released
       });
+
+      // SA-093a, finding 1's own repro: an order can be marked DELIVERED (changeStatus, the van
+      // sale, or completeStop with no `dto.deliveries`) WITHOUT ever writing a DeliveryMutation
+      // row or stamping deliveredQty. Round 5's status-keyed rule read every line on such an
+      // order as billable 0 and finalizeOrderRecompute cancelled all of them -- a $160 order
+      // silently going to $0. This is (2) above in a single-line shape, named as its own pin
+      // because it's the exact repro the independent review verified against master.
+      it("(4) DELIVERED via a bare status update (changeStatus shape), no mutation rows at all: nothing shrinks, nothing cancels -- stays fully priced (finding 1 repro)", async () => {
+        const { tenant, customer } = await seedTenantAndCustomer("n4");
+        const product = await prisma.product.create({
+          data: { name: `A ${tenant.slug}`, unit: "ea", pricePerUnit: 10, tenantId: tenant.id },
+        });
+        const order = await prisma.order.create({
+          data: {
+            customerId: customer.id,
+            status: "PENDING",
+            subtotal: 100,
+            total: 100,
+            tenantId: tenant.id,
+          },
+        });
+        const lineA = await prisma.orderItem.create({
+          data: {
+            orderId: order.id,
+            productId: product.id,
+            status: "PENDING",
+            qty: 10,
+            unitPrice: 10,
+            subtotal: 100,
+            tenantId: tenant.id,
+          },
+        });
+        const invoice = await tenantCtx.run(tenant.id, () =>
+          invoicesService.createPartialFromOrder(order.id, {
+            items: [{ orderItemId: lineA.id, qty: 4 }],
+          }),
+        );
+        // The office marks the order DELIVERED directly (changeStatus's own shape) -- no
+        // DeliveryMutation row, no deliveredQty stamp, exactly the gap the review found.
+        await prisma.order.update({ where: { id: order.id }, data: { status: "DELIVERED" } });
+
+        await tenantCtx.run(tenant.id, () =>
+          invoicesService.update((invoice as any).id, { discount: 0 } as any),
+        );
+
+        const refreshedA = await prisma.orderItem.findUniqueOrThrow({ where: { id: lineA.id } });
+        expect(refreshedA.status).toBe("PENDING"); // NOT cancelled
+        expect(Number(refreshedA.qty)).toBe(10); // NOT shrunk to the 4 billed so far
+        expect(Number(refreshedA.subtotal)).toBe(100); // NOT zeroed
+        const refreshedOrder = await prisma.order.findUniqueOrThrow({ where: { id: order.id } });
+        expect(Number(refreshedOrder.subtotal)).toBe(100); // the $100 stays $100, not $0
+      });
+
+      // completeStop writes DeliveryMutation rows but, unlike completeWithPayment, never stamps
+      // OrderItem.deliveredQty -- proving the mutation-row basis is what actually governs, not
+      // that stale/never-written column (which stays 0 here throughout).
+      it("(5) DELIVERED via completeStop's shape (mutation rows present, deliveredQty column left at 0): the mutation basis applies", async () => {
+        const { tenant, customer } = await seedTenantAndCustomer("n5");
+        const product = await prisma.product.create({
+          data: { name: `A ${tenant.slug}`, unit: "ea", pricePerUnit: 10, tenantId: tenant.id },
+        });
+        const order = await prisma.order.create({
+          data: {
+            customerId: customer.id,
+            status: "DELIVERED",
+            subtotal: 100,
+            total: 100,
+            tenantId: tenant.id,
+          },
+        });
+        const lineA = await prisma.orderItem.create({
+          data: {
+            orderId: order.id,
+            productId: product.id,
+            status: "PENDING",
+            qty: 10,
+            unitPrice: 10,
+            subtotal: 100,
+            tenantId: tenant.id,
+            // deliveredQty deliberately omitted -- stays at its schema default (0), exactly what
+            // completeStop leaves it at (only completeWithPayment ever writes that column).
+          },
+        });
+        await prisma.deliveryMutation.create({
+          data: {
+            orderId: order.id,
+            orderItemId: lineA.id,
+            productId: product.id,
+            type: "DELIVERED",
+            quantityDelivered: 6,
+            tenantId: tenant.id,
+          },
+        });
+
+        const preCheck = await prisma.orderItem.findUniqueOrThrow({ where: { id: lineA.id } });
+        expect(Number(preCheck.deliveredQty)).toBe(0); // the column really is untouched
+
+        const invoice = await tenantCtx.run(tenant.id, () =>
+          invoicesService.createPartialFromOrder(order.id, {
+            items: [{ orderItemId: lineA.id, qty: 6 }],
+          }),
+        );
+        await tenantCtx.run(tenant.id, () =>
+          invoicesService.update((invoice as any).id, { discount: 0 } as any),
+        );
+
+        // Billed exactly the mutation row's 6 -> fully covered and shrunk to 6, DESPITE the
+        // deliveredQty column reading 0 throughout -- the mutation row is what actually governed.
+        const refreshedA = await prisma.orderItem.findUniqueOrThrow({ where: { id: lineA.id } });
+        expect(refreshedA.status).toBe("PENDING");
+        expect(Number(refreshedA.qty)).toBe(6);
+        expect(Number(refreshedA.subtotal)).toBe(60);
+      });
     });
 
     describe("SA-093 (B): concurrency, real Postgres", () => {
-      it("two concurrent recomputes on one order end in the sequential state (order-keyed advisory lock)", async () => {
+      // Round 6: the ORIGINAL version of this test fired two concurrent update() calls and
+      // asserted only the final state -- it could never actually fail, because Postgres's own
+      // row lock on Order.update() already serializes two writers to the SAME row regardless of
+      // whether the order-keyed advisory lock exists at all; both writes "land cleanly" either
+      // way. This version proves the ADVISORY LOCK ITSELF blocks a concurrent recompute: the
+      // test takes the lock first and holds it, fires a real update() that must wait on it,
+      // confirms the order is genuinely UNCHANGED while the lock is held (not just eventually
+      // consistent), then releases and confirms the blocked call completes.
+      it("a concurrent recompute genuinely BLOCKS on the order-keyed advisory lock (not just Postgres row-lock serialization)", async () => {
         const { order, lineB, invoice } = await seedPartiallyInvoicedOrder("o1");
 
-        // Two concurrent DRAFT edits on the same order-linked invoice, both calling
-        // recomputeOrderFromInvoices without a tx (the real, unmocked path) -- the order-keyed
-        // advisory lock must serialize them rather than interleave their read-then-write.
-        await tenantCtx.run(order.tenantId!, () =>
-          Promise.all([
-            invoicesService.update((invoice as any).id, { discount: 0 } as any),
-            invoicesService.update((invoice as any).id, { shippingFee: 5 } as any),
-          ]),
+        let releaseTestLock: () => void = () => {};
+        const testLockHeld = new Promise<void>((resolve) => {
+          releaseTestLock = resolve;
+        });
+        const lockAcquired = new Promise<void>((resolve) => {
+          void withAdvisoryLock(
+            { family: "order-merge", key: order.id, mode: "wait" },
+            async () => {
+              resolve();
+              await testLockHeld;
+            },
+          );
+        });
+        await lockAcquired;
+
+        const updatePromise = tenantCtx.run(order.tenantId!, () =>
+          invoicesService.update((invoice as any).id, { shippingFee: 5 } as any),
         );
 
-        // Whichever ran second wins the final state -- but it must be a CONSISTENT, sequential
-        // state (both writes landed cleanly), never a torn/interleaved read-then-write result.
+        // finally, not a plain follow-on statement: a failed mid-check must still release the
+        // test's own lock-holding connection, or a genuine (probe) failure here hangs the whole
+        // suite on a dangling advisory-lock session instead of reporting a clean red.
+        try {
+          await new Promise((r) => setTimeout(r, 300));
+          // Still blocked on the lock this test holds -- the write must not have landed yet.
+          const midOrder = await prisma.order.findUniqueOrThrow({ where: { id: order.id } });
+          expect(Number(midOrder.shippingFee)).toBe(0);
+        } finally {
+          releaseTestLock();
+        }
+        await updatePromise;
+
         const refreshedOrder = await prisma.order.findUniqueOrThrow({ where: { id: order.id } });
         expect(Number(refreshedOrder.shippingFee)).toBe(5);
         expect(Number(refreshedOrder.subtotal)).toBe(70); // still gated — unbilled line B stands
         expect(Number(refreshedOrder.total)).toBe(75); // 70 + the 5 fee, never a torn partial sum
         const refreshedB = await prisma.orderItem.findUniqueOrThrow({ where: { id: lineB.id } });
         expect(refreshedB.status).toBe("PENDING");
-        expect(Number(refreshedB.qty)).toBe(6); // untouched by either concurrent call
+        expect(Number(refreshedB.qty)).toBe(6); // untouched
       });
     });
   },

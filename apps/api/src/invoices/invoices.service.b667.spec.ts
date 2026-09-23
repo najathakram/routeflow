@@ -130,4 +130,53 @@ describe("InvoicesService — B667 round 5", () => {
     expect(update).toHaveBeenCalledWith({ where: { id: "a1" }, data: { invoicedQty: 0 } });
     expect(update).not.toHaveBeenCalledWith(expect.objectContaining({ where: { id: "c1" } }));
   });
+
+  // SA-093a ruling (2+3), round 6: "never silently" -- an ambiguous-product fallback skip (no
+  // orderItemId on the invoice item, 2+ active lines share its product) must log a warn naming
+  // the order, not just silently leave the lines untouched (round 5's original behavior).
+  it("recomputeOrderFromInvoices warns when it skips an ambiguous-product fallback match, never silently", async () => {
+    const warnSpy = jest.spyOn((service as any).logger, "warn").mockImplementation(() => {});
+    const l1 = { id: "l1", productId: "p1", status: "PENDING", qty: 4, invoicedQty: 0 };
+    const l2 = { id: "l2", productId: "p1", status: "PENDING", qty: 6, invoicedQty: 0 };
+    const l3 = { id: "l3", productId: "p2", status: "PENDING", qty: 5, invoicedQty: 0 };
+    prisma.order.findUnique.mockResolvedValue({
+      id: "order1",
+      status: "PENDING",
+      subtotal: 150,
+      tax: 0,
+      total: 150,
+      shippingFee: 0,
+      lineItems: [l1, l2, l3],
+    });
+    prisma.invoice.findMany.mockResolvedValue([
+      {
+        id: "inv1",
+        shippingFee: 0,
+        items: [
+          {
+            orderItemId: null, // no provenance -- forces the product fallback
+            productId: "p1", // shared by l1 AND l2 -- ambiguous
+            qty: 6,
+            subtotal: 60,
+            categoryTaxAmount: 0,
+            promoFreeUnits: 0,
+            unitPrice: 10,
+          },
+        ],
+      },
+    ]);
+    prisma.deliveryMutation.findMany.mockResolvedValue([]);
+    prisma.orderItem.update.mockResolvedValue({});
+    prisma.order.update.mockResolvedValue({});
+
+    await service.recomputeOrderFromInvoices("order1", prisma);
+
+    const warned = warnSpy.mock.calls.some(
+      (call) =>
+        String(call[0]).includes("order1") &&
+        String(call[0]).includes("l1") &&
+        String(call[0]).includes("l2"),
+    );
+    expect(warned).toBe(true);
+  });
 });

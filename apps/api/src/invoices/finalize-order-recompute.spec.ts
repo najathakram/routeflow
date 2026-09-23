@@ -2,6 +2,11 @@ import * as fs from "fs";
 import * as path from "path";
 import * as ts from "typescript";
 import { checkOrderCoverage, finalizeOrderRecompute } from "./finalize-order-recompute";
+import type { DeliveredBasis } from "./delivered-basis-by-line";
+
+// SA-093a (round 6): no DeliveryMutation rows at all -- the order behaves as undelivered,
+// whatever its status (delivered-basis-by-line.ts's own rule).
+const NO_DELIVERY: DeliveredBasis = { hasMutations: false, byLineId: new Map() };
 
 describe("checkOrderCoverage", () => {
   // #1185 tier-1 review, finding 2: `qty` is Decimal(10,3), and Node's float math means summing
@@ -33,9 +38,10 @@ describe("checkOrderCoverage", () => {
     const result = await checkOrderCoverage({
       db: dbNeverCalled,
       orderId: "o1",
-      order: { status: "PENDING", subtotal: 8, tax: 0, total: 8, shippingFee: 0, lineItems: [li] },
+      order: { subtotal: 8, tax: 0, total: 8, shippingFee: 0, lineItems: [li] },
       byTarget: new Map([["line:li1", { qty: aggQty }]]),
       invoices: [],
+      deliveredBasis: NO_DELIVERY,
     });
 
     expect(result.fullyCovered).toBe(true);
@@ -47,7 +53,6 @@ describe("checkOrderCoverage", () => {
       db: { orderItem: { update: async () => ({}) }, order: { update: async () => ({}) } },
       orderId: "o1",
       order: {
-        status: "PENDING",
         subtotal: 100,
         tax: 0,
         total: 100,
@@ -56,6 +61,7 @@ describe("checkOrderCoverage", () => {
       },
       byTarget: new Map([["line:li1", { qty: 6 }]]), // genuinely under-billed, not float noise
       invoices: [],
+      deliveredBasis: NO_DELIVERY,
     });
 
     expect(result.fullyCovered).toBe(false);
@@ -80,7 +86,6 @@ describe("checkOrderCoverage", () => {
       db: dbNeverCalled,
       orderId: "o1",
       order: {
-        status: "PENDING",
         subtotal: 40,
         tax: 0,
         total: 40,
@@ -89,6 +94,7 @@ describe("checkOrderCoverage", () => {
       },
       byTarget: new Map([["line:li1", { qty: 4 }]]),
       invoices: [],
+      deliveredBasis: NO_DELIVERY,
     });
 
     expect(result.fullyCovered).toBe(true);
@@ -103,7 +109,6 @@ describe("checkOrderCoverage", () => {
       db: { orderItem: { update: async () => ({}) }, order: { update: async () => ({}) } },
       orderId: "o1",
       order: {
-        status: "PENDING",
         subtotal: 100,
         tax: 0,
         total: 100,
@@ -112,6 +117,7 @@ describe("checkOrderCoverage", () => {
       },
       byTarget: new Map(), // no invoice item resolves to this line at all -- unmatched
       invoices: [],
+      deliveredBasis: NO_DELIVERY,
     });
 
     expect(result.fullyCovered).toBe(false);
@@ -123,7 +129,6 @@ describe("checkOrderCoverage", () => {
       db: { orderItem: { update: async () => ({}) }, order: { update: async () => ({}) } },
       orderId: "o1",
       order: {
-        status: "PENDING",
         subtotal: 100,
         tax: 0,
         total: 100,
@@ -132,14 +137,19 @@ describe("checkOrderCoverage", () => {
       },
       byTarget: new Map(),
       invoices: [],
+      deliveredBasis: NO_DELIVERY,
     });
 
     expect(result.fullyCovered).toBe(true);
   });
 
-  // #1185 round 5, item 2: an ambiguous line is skipped by the partial-branch sync loop entirely
-  // -- its invoicedQty is left exactly as stored, never guessed at from the (unreliable) agg.
-  it("an ambiguous line's invoicedQty is never touched by the partial-branch sync", async () => {
+  // #1185 round 5, item 2: an ambiguous line with NO precise match of its own is skipped by the
+  // partial-branch sync loop entirely -- its invoicedQty is left exactly as stored, never
+  // guessed at. (`ambiguousLineIds` can only ever apply here when `byTarget` has no `line:`
+  // entry for it: resolveProductMatches never adds an ambiguous product to `existingByProduct`,
+  // so a real `byTarget` entry for one of these lines can only exist via a genuine orderItemId
+  // match -- see the next test.)
+  it("an ambiguous line with NO precise match of its own is never touched by the partial-branch sync", async () => {
     const ambiguousLine = { id: "li1", qty: 4, invoicedQty: 0, status: "PENDING" };
     const blockingLine = { id: "li3", qty: 5, invoicedQty: 0, status: "PENDING" }; // keeps order partial
     const writes: any[] = [];
@@ -147,17 +157,15 @@ describe("checkOrderCoverage", () => {
       db: { orderItem: { update: async (args: any) => writes.push(args) } },
       orderId: "o1",
       order: {
-        status: "PENDING",
         subtotal: 90,
         tax: 0,
         total: 90,
         shippingFee: 0,
         lineItems: [ambiguousLine, blockingLine],
       },
-      // Wrongly-aggregated data for the ambiguous line's product, if the caller had resolved it
-      // -- must never be consulted since ambiguousLineIds names li1.
-      byTarget: new Map([["line:li1", { qty: 4 }]]),
+      byTarget: new Map(), // genuinely unresolved -- no line: entry for li1
       invoices: [],
+      deliveredBasis: NO_DELIVERY,
       ambiguousLineIds: new Set(["li1"]),
     });
 
@@ -165,82 +173,130 @@ describe("checkOrderCoverage", () => {
     expect(writes.some((w) => w.where.id === "li1")).toBe(false); // never written
   });
 
-  // SA-093 (A): on a DELIVERED order, a line's billable qty is min(qty, deliveredQty) -- a
-  // refused line (deliveredQty 0) requires nothing and never blocks coverage.
-  describe("SA-093 (A): DELIVERED-order coverage basis", () => {
-    it("a DELIVERED line billed to its DELIVERED qty (short of its ordered qty) IS covered", async () => {
-      const li = { id: "li1", qty: 10, deliveredQty: 6, invoicedQty: 0, status: "PENDING" };
+  // SA-093a ruling (2+3), round 6: a line named in ambiguousLineIds (its product is shared) but
+  // that ALSO has its own precise byTarget match (only reachable via a real orderItemId) must be
+  // trusted and synced -- ambiguity among its product-sharing siblings never overrides a
+  // genuine, precise match for THIS line.
+  it("a line that IS ambiguous by product but has its OWN precise byTarget match is still synced, not skipped", async () => {
+    const li1 = { id: "li1", qty: 4, invoicedQty: 0, status: "PENDING" }; // precisely matched
+    const li2 = { id: "li2", qty: 6, invoicedQty: 0, status: "PENDING" }; // shares li1's product, unresolved
+    const blockingLine = { id: "li3", qty: 5, invoicedQty: 0, status: "PENDING" }; // keeps order partial
+    const writes: any[] = [];
+    const result = await checkOrderCoverage({
+      db: { orderItem: { update: async (args: any) => writes.push(args) } },
+      orderId: "o1",
+      order: {
+        subtotal: 150,
+        tax: 0,
+        total: 150,
+        shippingFee: 0,
+        lineItems: [li1, li2, blockingLine],
+      },
+      byTarget: new Map([["line:li1", { qty: 4 }]]), // li1's own precise orderItemId match
+      invoices: [],
+      deliveredBasis: NO_DELIVERY,
+      ambiguousLineIds: new Set(["li1", "li2"]), // both share the product
+    });
+
+    expect(result.fullyCovered).toBe(false);
+    const li1Write = writes.find((w) => w.where.id === "li1");
+    expect(li1Write?.data).toMatchObject({ invoicedQty: 4 }); // trusted, synced
+    expect(writes.some((w) => w.where.id === "li2")).toBe(false); // still genuinely unresolved
+  });
+
+  // SA-093a (round 6): a line's billable qty is min(qty, its own DeliveryMutation-row qty) --
+  // EVIDENCE-keyed, never order.status. A REFUSED row contributes 0 and never blocks coverage.
+  // See delivered-basis-by-line.ts's own doc for the full rule.
+  describe("SA-093a (round 6): mutation-row-keyed coverage basis", () => {
+    it("a line delivered short of its ordered qty (mutation row present) IS covered at the delivered qty", async () => {
+      const li = { id: "li1", qty: 10, invoicedQty: 0, status: "PENDING" };
       const result = await checkOrderCoverage({
         db: { orderItem: { update: async () => ({}) }, order: { update: async () => ({}) } },
         orderId: "o1",
-        order: {
-          status: "DELIVERED",
-          subtotal: 100,
-          tax: 0,
-          total: 100,
-          shippingFee: 0,
-          lineItems: [li],
-        },
+        order: { subtotal: 100, tax: 0, total: 100, shippingFee: 0, lineItems: [li] },
         byTarget: new Map([["line:li1", { qty: 6 }]]), // billed exactly what was delivered
         invoices: [],
+        deliveredBasis: { hasMutations: true, byLineId: new Map([["li1", 6]]) },
       });
 
       expect(result.fullyCovered).toBe(true);
     });
 
-    it("the SAME shape on a NON-delivered order is NOT covered (round 4's rule, unchanged)", async () => {
-      const li = { id: "li1", qty: 10, deliveredQty: 6, invoicedQty: 0, status: "PENDING" };
+    it("the SAME line with NO mutation rows at all is NOT covered (round 4's rule, unconstrained qty)", async () => {
+      const li = { id: "li1", qty: 10, invoicedQty: 0, status: "PENDING" };
       const result = await checkOrderCoverage({
         db: { orderItem: { update: async () => ({}) }, order: { update: async () => ({}) } },
         orderId: "o1",
-        order: {
-          status: "PARTIALLY_DELIVERED", // explicitly NOT a delivered state for this rule
-          subtotal: 100,
-          tax: 0,
-          total: 100,
-          shippingFee: 0,
-          lineItems: [li],
-        },
+        order: { subtotal: 100, tax: 0, total: 100, shippingFee: 0, lineItems: [li] },
         byTarget: new Map([["line:li1", { qty: 6 }]]),
         invoices: [],
+        deliveredBasis: NO_DELIVERY,
       });
 
       expect(result.fullyCovered).toBe(false);
     });
 
-    it("a REFUSED line (deliveredQty 0) on a DELIVERED order never blocks coverage", async () => {
-      const refused = { id: "li1", qty: 5, deliveredQty: 0, invoicedQty: 0, status: "PENDING" };
-      const billed = { id: "li2", qty: 4, deliveredQty: 4, invoicedQty: 0, status: "PENDING" };
+    it("a REFUSED line (its own mutation row delivers 0) never blocks coverage", async () => {
+      const refused = { id: "li1", qty: 5, invoicedQty: 0, status: "PENDING" };
+      const billed = { id: "li2", qty: 4, invoicedQty: 0, status: "PENDING" };
       const result = await checkOrderCoverage({
         db: { orderItem: { update: async () => ({}) }, order: { update: async () => ({}) } },
         orderId: "o1",
-        order: {
-          status: "DELIVERED",
-          subtotal: 40,
-          tax: 0,
-          total: 40,
-          shippingFee: 0,
-          lineItems: [refused, billed],
-        },
+        order: { subtotal: 40, tax: 0, total: 40, shippingFee: 0, lineItems: [refused, billed] },
         byTarget: new Map([["line:li2", { qty: 4 }]]),
         invoices: [],
+        deliveredBasis: {
+          hasMutations: true,
+          byLineId: new Map([
+            ["li1", 0],
+            ["li2", 4],
+          ]),
+        },
       });
 
       expect(result.fullyCovered).toBe(true);
     });
+
+    // SA-093a: a mutation row ELSEWHERE on the order says nothing about a line delivery never
+    // touched -- that line keeps its full ordered qty as the billable target (round 4's rule),
+    // even though the order overall "has mutations".
+    it("a line with NO mutation row of its own keeps its full ordered qty, even when a SIBLING line has one", async () => {
+      const touched = { id: "li1", qty: 6, invoicedQty: 0, status: "PENDING" };
+      const untouched = { id: "li2", qty: 10, invoicedQty: 0, status: "PENDING" };
+      const result = await checkOrderCoverage({
+        db: { orderItem: { update: async () => ({}) }, order: { update: async () => ({}) } },
+        orderId: "o1",
+        order: {
+          subtotal: 160,
+          tax: 0,
+          total: 160,
+          shippingFee: 0,
+          lineItems: [touched, untouched],
+        },
+        byTarget: new Map([
+          ["line:li1", { qty: 6 }],
+          ["line:li2", { qty: 6 }], // billed only 6 of li2's 10 -- unconstrained qty still gates
+        ]),
+        invoices: [],
+        deliveredBasis: { hasMutations: true, byLineId: new Map([["li1", 6]]) },
+      });
+
+      expect(result.fullyCovered).toBe(false);
+    });
   });
 
-  describe("SA-093 (A): finalizeOrderRecompute cancels a refused line on a DELIVERED order", () => {
-    it("a refused line (deliveredQty 0, never billed) IS cancelled once the order is fully covered", async () => {
+  describe("SA-093a (round 6): finalizeOrderRecompute cancels a line refused by its OWN mutation row", () => {
+    it("a refused line (its own mutation row delivers 0, never billed) IS cancelled once the order is fully covered", async () => {
       const writes: any[] = [];
-      const refused = { id: "li1", status: "PENDING", invoicedQty: 0, deliveredQty: 0 };
+      const refused = { id: "li1", status: "PENDING", invoicedQty: 0 };
       await finalizeOrderRecompute({
         db: {
           orderItem: { update: async (args: any) => writes.push(args) },
           order: { update: async () => ({}) },
         },
         orderId: "o1",
-        order: { status: "DELIVERED", subtotal: 40, tax: 0 },
+        order: { subtotal: 40, tax: 0 },
+        deliveredBasis: { hasMutations: true, byLineId: new Map([["li1", 0]]) },
         unbilled: new Map([["li1", refused]]),
         subtotal: 40,
         categoryTaxSum: 0,
@@ -251,16 +307,17 @@ describe("checkOrderCoverage", () => {
       expect(write?.data).toMatchObject({ status: "CANCELLED", qty: 0, subtotal: 0 });
     });
 
-    it("the SAME never-billed line on a NON-delivered order is left untouched (round 4's rule)", async () => {
+    it("the SAME never-billed line with NO mutation row of its own is left untouched (round 4's rule)", async () => {
       const writes: any[] = [];
-      const neverBilled = { id: "li1", status: "PENDING", invoicedQty: 0, deliveredQty: 0 };
+      const neverBilled = { id: "li1", status: "PENDING", invoicedQty: 0 };
       await finalizeOrderRecompute({
         db: {
           orderItem: { update: async (args: any) => writes.push(args) },
           order: { update: async () => ({}) },
         },
         orderId: "o1",
-        order: { status: "PENDING", subtotal: 40, tax: 0 },
+        order: { subtotal: 40, tax: 0 },
+        deliveredBasis: NO_DELIVERY,
         unbilled: new Map([["li1", neverBilled]]),
         subtotal: 40,
         categoryTaxSum: 0,

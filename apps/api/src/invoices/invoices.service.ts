@@ -42,6 +42,8 @@ import {
   resolveProductMatches,
   withOrderRecomputeLock,
 } from "./finalize-order-recompute";
+import { deliveredBasisByLine } from "./delivered-basis-by-line";
+import { assertOrderItemIdsBelongToOrder, logSkippedMatches } from "./order-item-provenance";
 import { EntitlementsService } from "../billing/entitlements.service";
 import {
   CheckStatus,
@@ -2303,13 +2305,17 @@ export class InvoicesService {
       sample: any; // an invoice item, for the box/piece + upb snapshot
     };
     const byTarget = new Map<string, Agg>();
+    const freeformSkipped: string[] = []; // SA-093a rd6: no orderItemId, no productId -- warn, never silent
     for (const inv of invoices) {
       for (const it of inv.items as any[]) {
         const line =
           (it.orderItemId && existingById.get(it.orderItemId)) ||
           (it.productId && existingByProduct.get(it.productId)) ||
           null;
-        if (!line && !it.productId) continue; // freeform — nothing to sync
+        if (!line && !it.productId) {
+          freeformSkipped.push(it.id);
+          continue;
+        }
         const key = line ? `line:${line.id}` : `product:${it.productId}`;
         const prev = byTarget.get(key) ?? {
           line,
@@ -2331,6 +2337,7 @@ export class InvoicesService {
       }
     }
 
+    const deliveredBasis = await deliveredBasisByLine(db, orderId); // SA-093a rd6
     // B667: coverage decided BEFORE any line is rewritten — see checkOrderCoverage's doc.
     const coverage = await checkOrderCoverage({
       db,
@@ -2338,8 +2345,10 @@ export class InvoicesService {
       order,
       byTarget,
       invoices,
+      deliveredBasis,
       ambiguousLineIds,
     });
+    logSkippedMatches(this.logger, orderId, freeformSkipped, coverage);
     if (!coverage.fullyCovered) return coverage.totals;
 
     let subtotal = 0;
@@ -2411,6 +2420,7 @@ export class InvoicesService {
       db,
       orderId,
       order,
+      deliveredBasis,
       unbilled: existingById,
       subtotal,
       categoryTaxSum,
@@ -3348,6 +3358,7 @@ export class InvoicesService {
     }
 
     if (dto.items) {
+      await assertOrderItemIdsBelongToOrder(this.prisma.forTenant(), inv.orderId, dto.items); // SA-093a rd6
       // Pre-fetch products for boxes/pieces resolution AND the regulated-category
       // snapshot (so an edited DRAFT re-attributes its regulated lines).
       const productIds = [
@@ -3440,6 +3451,7 @@ export class InvoicesService {
         return {
           description: item.description,
           productId: item.productId,
+          orderItemId: item.orderItemId ?? null, // SA-093a rd6: root fix for findings 2/3
           qty,
           unitPrice: item.unitPrice,
           discount: item.discount ?? 0,
