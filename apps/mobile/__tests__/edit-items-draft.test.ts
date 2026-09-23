@@ -994,29 +994,62 @@ describe("edit-items.tsx source pin: the draft record is never keyed by productI
     expect(source).toMatch(/draftRef\.current = draft;/);
   });
 
-  it("SA-108d pin 2: draftRef.current = apply(draftRef.current) immediately precedes setDraft(apply), and no `draftRef.current =` assignment exists inside ANY setDraft updater", () => {
-    // The ref-first shape: apply() is a PURE function of `d` alone. Running
-    // it once, synchronously, ourselves — right before handing the SAME
-    // function to setDraft — is what makes the ref trustworthy regardless
-    // of whether/when React itself gets around to invoking it.
-    expect(source).toMatch(
-      /draftRef\.current = apply\(draftRef\.current\);\s*\n\s*setDraft\(apply\);/,
-    );
-    // No functional setState updater anywhere in the file writes to
-    // draftRef — that was SA-108a's exact mistake (a ref write is only
-    // reliable at a call site WE control, never inside a callback React
-    // decides when, or whether more than once, to invoke).
-    const updaterBodies = [
-      ...source.matchAll(/setDraft\(\((?:d|_d)\) => \{([\s\S]*?)\n\s{4}\}\);/g),
-    ];
-    expect(updaterBodies.length).toBeGreaterThan(0);
-    for (const [, body] of updaterBodies) {
-      expect(body).not.toMatch(/draftRef\.current\s*=/);
-    }
+  it("SA-108d pin 2: updateDraft's OWN body is draftRef.current = fn(draftRef.current) immediately followed by setDraft(fn) — the ref-first shape lives in ONE place now", () => {
+    // B805: every writer funnels through updateDraft, so the ref-first
+    // pattern only needs to be correct ONCE, here, rather than re-proven at
+    // each of the ~12 call sites. fn is a PURE function of `d` alone;
+    // running it once, synchronously, ourselves — right before handing the
+    // SAME function to setDraft — is what makes the ref trustworthy
+    // regardless of whether/when React actually invokes it.
+    const updateDraftStart = source.indexOf("const updateDraft = (fn:");
+    expect(updateDraftStart).toBeGreaterThan(-1);
+    const body = source.slice(updateDraftStart, updateDraftStart + 300);
+    expect(body).toMatch(/draftRef\.current = fn\(draftRef\.current\);\s*\n\s*setDraft\(fn\);/);
   });
 
   it("SA-108a's resolvedKeyRef is gone entirely — superseded by the ref-first apply() shape", () => {
     expect(source).not.toMatch(/resolvedKeyRef/);
+  });
+
+  it("B805: no `draftRef.current =` assignment exists inside ANY updateDraft(fn) call's fn body — that write belongs to updateDraft alone", () => {
+    // The exact SA-108a mistake, generalized: a ref write is only reliable
+    // at a call site WE control (updateDraft's own body), never inside a
+    // callback React decides when, or whether more than once, to invoke.
+    // Scoped to updateDraft CALL SITES specifically (the arrow function
+    // passed as `fn`), not updateDraft's own definition just pinned above.
+    const callSites = [...source.matchAll(/updateDraft\(\((?:d|_d)\) => [\s\S]{0,20}?\{/g)];
+    expect(callSites.length).toBeGreaterThan(0);
+    for (const m of callSites) {
+      const start = m.index! + m[0].length;
+      // Bound the scan to the next top-level `};` a couple hundred chars out
+      // — every one of these fn bodies is short; this is generous enough to
+      // never truncate one while staying well clear of the NEXT call site.
+      const body = source.slice(start, start + 800);
+      expect(body).not.toMatch(/draftRef\.current\s*=/);
+    }
+  });
+
+  it("B805: every per-line draft writer calls updateDraft(, never setDraft( directly — setDraft appears only inside updateDraft's own body and the three whole-draft lifecycle replacements (hydrate/restore/post-save rebuild)", () => {
+    // Scoped to EditOrderItemsScreen's own body: StepperRow (a later,
+    // unrelated component in this same file) declares its OWN local
+    // `const [draft, setDraft] = useState(...)` for a text-input string — a
+    // pure naming collision, not the draft record, and out of scope here.
+    const screenStart = source.indexOf("export function EditOrderItemsScreen(");
+    expect(screenStart).toBeGreaterThan(-1);
+    const stepperRowStart = source.indexOf("function StepperRow(", screenStart);
+    expect(stepperRowStart).toBeGreaterThan(screenStart);
+    const screenSrc = source.slice(screenStart, stepperRowStart);
+    const setDraftCalls = [...screenSrc.matchAll(/\bsetDraft\(/g)];
+    // updateDraft's own `setDraft(fn);` + hydrateFromOrder's `setDraft(next);`
+    // + the snapshot-restore `setDraft(restored.draft);` + the post-save
+    // rebuild `setDraft(rebuilt.draft);` — exactly 4, all VALUE or bare-fn
+    // dispatch at a lifecycle boundary, never an inline arrow-function
+    // updater doing a per-line edit.
+    expect(setDraftCalls.length).toBe(4);
+    expect(screenSrc).toMatch(/setDraft\(fn\);/);
+    expect(screenSrc).toMatch(/setDraft\(next\);/);
+    expect(screenSrc).toMatch(/setDraft\(restored\.draft\);/);
+    expect(screenSrc).toMatch(/setDraft\(rebuilt\.draft\);/);
   });
 });
 

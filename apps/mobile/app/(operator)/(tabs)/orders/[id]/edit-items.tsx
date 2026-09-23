@@ -213,6 +213,21 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
   // or when React actually invokes it.
   const draftRef = useRef<Record<string, DraftItem>>({});
   draftRef.current = draft;
+  // B805: the ONE write path every draft mutator goes through — setQty,
+  // setBoxes, setPieces, setUnits, setSellBy, setLinePrice, setLineNote,
+  // removeLine, the price-override modal, the last-added strip's price
+  // edit, the substitute-apply branch, and addPickedToDraft. `fn` MUST be
+  // pure (SA-108d): it may run twice for one logical call — once here,
+  // synchronously, to keep draftRef an accurate same-tick mirror, and once
+  // more whenever React actually processes the functional setState update
+  // it's ALSO handed (eager or deferred, never reliably either one — see
+  // the draftRef comment above). A writer with its own side effect (e.g.
+  // removeLine's pendingDeletes append) must perform that OUTSIDE fn,
+  // never inside it.
+  const updateDraft = (fn: (d: Record<string, DraftItem>) => Record<string, DraftItem>) => {
+    draftRef.current = fn(draftRef.current);
+    setDraft(fn);
+  };
   // New + existing ad-hoc lines (productId null). Kept separate from `draft`
   // and diffed on save so they aren't dropped.
   const [unlisted, setUnlisted] = useState<UnlistedDraft[]>([]);
@@ -584,7 +599,7 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
   // ── Per-line helpers ──────────────────────────────────────────────────────
 
   const setQty = (id: string, qty: number) =>
-    setDraft((d) => {
+    updateDraft((d) => {
       const cur = d[id];
       if (!cur) return d;
       const q = Math.max(0, Math.floor(qty));
@@ -596,7 +611,7 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
     });
 
   const setBoxes = (id: string, boxes: number) =>
-    setDraft((d) => {
+    updateDraft((d) => {
       const cur = d[id];
       if (!cur) return d;
       const upb = Number(cur.unitsPerBox ?? 0);
@@ -610,7 +625,7 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
     });
 
   const setPieces = (id: string, pieces: number) =>
-    setDraft((d) => {
+    updateDraft((d) => {
       const cur = d[id];
       if (!cur) return d;
       const upb = Number(cur.unitsPerBox ?? 0);
@@ -626,7 +641,7 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
   /** Unit mode: the operator types a TOTAL unit count; normalize it back into
    *  cases + loose (7 units of a 6-pack -> 1 case + 1 loose) via setLineUnits. */
   const setUnits = (id: string, units: number) =>
-    setDraft((d) => {
+    updateDraft((d) => {
       const cur = d[id];
       if (!cur) return d;
       const upb = Number(cur.unitsPerBox ?? 0);
@@ -638,19 +653,19 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
     });
 
   const setSellBy = (id: string, sellBy: "case" | "unit") =>
-    setDraft((d) => (d[id] ? { ...d, [id]: { ...d[id], sellBy } } : d));
+    updateDraft((d) => (d[id] ? { ...d, [id]: { ...d[id], sellBy } } : d));
 
   // "Set to floor" one-tap fix (P10-POS-1) — same price-write path as the
   // price-override modal, minus the reason (the ack itself is the record).
   const setLinePrice = (id: string, unitPrice: number) =>
-    setDraft((d) => {
+    updateDraft((d) => {
       const cur = d[id];
       if (!cur) return d;
       return { ...d, [id]: { ...cur, unitPrice } };
     });
 
   const setLineNote = (id: string, notes: string) =>
-    setDraft((d) => (d[id] ? { ...d, [id]: { ...d[id], notes } } : d));
+    updateDraft((d) => (d[id] ? { ...d, [id]: { ...d[id], notes } } : d));
 
   const incQty = (id: string) => {
     const cur = draft[id];
@@ -713,7 +728,9 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
     // may run it again, eagerly or not, whenever React gets to it) is safe —
     // both calls, if they both occur, produce the same result.
     const resolvedKey = resolveDraftKeyForPick(draftRef.current, p.id, null);
-    const apply = (d: Record<string, DraftItem>) =>
+    // B805: addPickedToDraft now goes through the same updateDraft every
+    // other writer uses — it no longer needs its own inline ref-first dance.
+    updateDraft((d) =>
       applyPickToDraft(d, resolvedKey, {
         productId: p.id,
         unitsPerBox,
@@ -722,9 +739,8 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
         name: p.name,
         unit: p.unit,
         kind,
-      });
-    draftRef.current = apply(draftRef.current);
-    setDraft(apply);
+      }),
+    );
     return resolvedKey;
   };
 
@@ -736,17 +752,28 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
     else setQty(id, Math.max(0, (cur.qty ?? 0) - 1));
   };
 
-  const removeLine = (id: string) =>
-    setDraft((d) => {
-      const cur = d[id];
-      // An existing (already-saved) line must be explicitly DELETE'd in the diff
-      // — otherwise the incremental merge would leave it untouched on the order.
-      if (cur?.lineId)
-        setPendingDeletes((prev) => (prev.includes(cur.lineId!) ? prev : [...prev, cur.lineId!]));
+  const removeLine = (id: string) => {
+    // B805: the pendingDeletes append is a SIDE EFFECT, so it must run
+    // OUTSIDE the pure fn handed to updateDraft (which may run twice — see
+    // updateDraft's own comment). Read from draftRef.current, the same
+    // synchronously-accurate mirror updateDraft itself maintains, not the
+    // component-level `draft` state (which could be a render behind inside
+    // a same-tick burst). If a later action in the same batch re-adds this
+    // SAME lineId (a rescan, or the price modal), order-item-diff.ts's
+    // `buildOrderItemDiff` drops a pendingDelete whose id survives as a live
+    // catalog entry — the surviving state wins, never a DELETE alongside
+    // that entry's own UPDATE.
+    const cur = draftRef.current[id];
+    if (cur?.lineId) {
+      const lineId = cur.lineId;
+      setPendingDeletes((prev) => (prev.includes(lineId) ? prev : [...prev, lineId]));
+    }
+    updateDraft((d) => {
       const next = { ...d };
       delete next[id];
       return next;
     });
+  };
 
   // ── The picker's pull-out drawer ──────────────────────────────────────────
   // Rows come from the ONE tray derivation the sale builders use
@@ -992,7 +1019,7 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
             // so `lineId ?? productId` would create a SECOND entry at the
             // bare productId next to the real `new:` one: a silent double CREATE).
             const key = priceEditItem.key;
-            setDraft((d) => ({
+            updateDraft((d) => ({
               ...d,
               [key]: {
                 ...priceEditItem.item,
@@ -1121,7 +1148,7 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
           onEditPrice={(_item, price, reason) => {
             const key = lastScannedId;
             if (!key) return;
-            setDraft((d) => {
+            updateDraft((d) => {
               const cur = d[key];
               if (!cur) return d;
               return {
@@ -1140,7 +1167,7 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
             if (substituteFor) {
               const tierPrice = tierPriceFor(p);
               const listPrice = toNumber(p.pricePerUnit);
-              setDraft((d) => {
+              updateDraft((d) => {
                 const next = { ...d };
                 const old = next[substituteFor];
                 // Re-denominates the inherited piece count against the
