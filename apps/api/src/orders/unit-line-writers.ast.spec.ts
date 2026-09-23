@@ -162,8 +162,8 @@ const INVENTORY: Record<string, Row> = {
     why: "removes the invoice's lines",
   },
   "estimates/estimates.service.ts::EstimatesService.convertToInvoice": {
-    kind: "PACK_ONLY_CREATE",
-    why: "EstimateItem has no unit columns; writes plain lines",
+    kind: "CONVERTED",
+    why: "unit-aware estimate lines are refused pre-flight (assertNoUnitAwareLines) before reserveNext; convertToInvoice stays CONVERTED — it still calls resolveLineUnits per line inside the tx, and buildManualInvoiceLines builds the invoice lines (B659)",
   },
   "import/import.service.ts::ImportService.importInvoices": {
     kind: "PACK_ONLY_CREATE",
