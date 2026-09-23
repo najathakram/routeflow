@@ -38,34 +38,46 @@ export interface ShortPickLine {
    * null/undefined for a plain piece/pack line. `orderedQty` on a unit-aware
    * line is base PIECES (count × the line's own `unitsPerBox` snapshot), and
    * a delivered qty other than a whole multiple of the case size has no
-   * physical meaning a piece-counting stepper can represent — REFUSE rather
-   * than let one silently mis-count pieces as a case. `effectiveDeliveredQty`
-   * always treats such a line as fully delivered, ignoring any
-   * `deliveredQtyById` entry for it (ordered/refused zero-vs-full is still a
-   * meaningful choice at the driver's stop-detail screen; a PARTIAL case
-   * count is not, and this module has no case-aware stepper to offer).
+   * physical meaning a piece-counting stepper can represent — a PARTIAL
+   * count is REFUSED (this module has no case-aware stepper to offer).
+   * REFUSING partial is not the same as FORCING full, though: a unit-aware
+   * line still supports the same binary DELIVERED/REFUSED choice every other
+   * line does. An earlier version of this fix hid the choice entirely and
+   * always billed such a line in full, which would silently over-charge the
+   * customer for a Case the driver genuinely could not deliver (the B663
+   * class: a short delivery billed in full). `effectiveDeliveredQty` below
+   * resolves this — 0 or `orderedQty`, never an implicit full and never a
+   * raw piece count in between.
    */
   unitLabel?: string | null;
 }
 
-/**
- * B648: the delivered qty this module ever uses for a line — `orderedQty`
- * outright for a unit-aware line (see `ShortPickLine.unitLabel`), regardless
- * of what `deliveredQtyById` holds, else the normal clamped lookup. Every
- * function below reads through this ONE place so a unit-aware line can never
- * be short-picked via a stale map entry or a UI that doesn't yet know to
- * hide its stepper.
- */
-/** B648: true when a line is sold by a units_v1 unit and so is never short-pickable — see `ShortPickLine.unitLabel`. Exported so the review screen can hide/disable its stepper for the same lines this module already refuses to adjust. */
+/** B648: true when a line is sold by a units_v1 unit and so only supports a binary delivered/not-delivered choice — see `ShortPickLine.unitLabel`. Exported so the review screen can render that choice instead of a piece stepper. */
 export function isUnitAwareLine(li: Pick<ShortPickLine, "unitLabel">): boolean {
   return (li.unitLabel ?? "").trim() !== "";
 }
 
+/**
+ * B648: the delivered qty this module ever uses for a line. For a unit-aware
+ * line, `deliveredQtyById`'s entry (when present) snaps to a BINARY 0 or the
+ * full `orderedQty` — never the raw value in between, so a stray/leftover
+ * piece count (e.g. a value from before the line was known to be
+ * unit-aware) can never leak into the money math as a fractional case. No
+ * entry at all is the universal "untouched" default every other line
+ * already uses: fully delivered — this is NOT the bug an earlier version of
+ * this fix had (that version ignored the entry ENTIRELY, so there was no
+ * way to ever record a genuine "not delivered"; this version honors an
+ * explicit 0, it just never treats a non-zero, non-full entry as a partial
+ * case). Every function below reads through this ONE place.
+ */
 function effectiveDeliveredQty(
   li: Pick<ShortPickLine, "orderItemId" | "orderedQty" | "unitLabel">,
   deliveredQtyById: Record<string, number>,
 ): number {
-  if (isUnitAwareLine(li)) return li.orderedQty;
+  if (isUnitAwareLine(li)) {
+    const raw = deliveredQtyById[li.orderItemId];
+    return raw == null || raw > 0 ? li.orderedQty : 0;
+  }
   const raw = deliveredQtyById[li.orderItemId] ?? li.orderedQty;
   return Math.max(0, Math.min(raw, li.orderedQty));
 }

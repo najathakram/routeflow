@@ -174,9 +174,11 @@ function ShortPickRow({
   const ordered = Number(li.qty);
   const type = deliveryTypeForQty(qty, ordered);
   const [draft, setDraft] = useState(String(qty));
-  // B648: a units_v1 line ("Case"…) is never short-picked here — its ordered
-  // qty is base pieces, and this stepper only counts pieces, so it has no way
-  // to represent a partial case. Read-only, always DELIVERED-in-full.
+  // B648: a units_v1 line ("Case"…) has no partial-count stepper here — its
+  // ordered qty is base pieces, and a piece stepper can't represent a
+  // partial case — but it still gets the same binary delivered/refused
+  // choice every other line has (never an implicit "always full": a driver
+  // who couldn't deliver the Case must be able to say so).
   const unitAware = isUnitAwareLine(li);
 
   return (
@@ -190,7 +192,9 @@ function ShortPickRow({
             Ordered {unitAware ? `${li.boxes ?? ""} ${li.unitLabel}`.trim() : ordered}
           </Text>
         </View>
-        {!unitAware && type !== "DELIVERED" ? (
+        {type !== "DELIVERED" ? (
+          // A unit-aware line's type is always DELIVERED or REFUSED (never
+          // PARTIAL — effectiveDeliveredQty only ever snaps it to 0 or full).
           <View
             style={[styles.badge, type === "REFUSED" ? styles.badgeRefused : styles.badgeShort]}
           >
@@ -199,9 +203,27 @@ function ShortPickRow({
         ) : null}
       </View>
       {unitAware ? (
-        <Text style={styles.stepperLabel}>
-          Sold by the {li.unitLabel} — adjust this line from the office if it's short.
-        </Text>
+        <View style={styles.stepperRow}>
+          <Text style={styles.stepperLabel}>Sold by the {li.unitLabel}: delivered?</Text>
+          <View style={styles.unitChoiceRow}>
+            <Pressable
+              style={[styles.unitChoiceBtn, qty > 0 && styles.unitChoiceBtnDelivered]}
+              onPress={() => onChangeQty(ordered)}
+            >
+              <Text style={[styles.unitChoiceText, qty > 0 && styles.unitChoiceTextActive]}>
+                Delivered
+              </Text>
+            </Pressable>
+            <Pressable
+              style={[styles.unitChoiceBtn, qty <= 0 && styles.unitChoiceBtnRefused]}
+              onPress={() => onChangeQty(0)}
+            >
+              <Text style={[styles.unitChoiceText, qty <= 0 && styles.unitChoiceTextActive]}>
+                Not delivered
+              </Text>
+            </Pressable>
+          </View>
+        </View>
       ) : (
         <View style={styles.stepperRow}>
           <Text style={styles.stepperLabel}>Delivered</Text>
@@ -288,6 +310,18 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   stepText: { fontSize: 18, fontFamily: "Inter_600SemiBold", color: ios.label },
+  // B648: the units_v1 line's binary delivered/not-delivered choice.
+  unitChoiceRow: { flexDirection: "row", gap: 6 },
+  unitChoiceBtn: {
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    backgroundColor: ios.fill3,
+  },
+  unitChoiceBtnDelivered: { backgroundColor: ios.brand },
+  unitChoiceBtnRefused: { backgroundColor: "#FEE2E2" },
+  unitChoiceText: { fontSize: 12, fontFamily: "Inter_600SemiBold", color: ios.label2 },
+  unitChoiceTextActive: { color: ios.label },
   qtyInput: {
     minWidth: 40,
     textAlign: "center",

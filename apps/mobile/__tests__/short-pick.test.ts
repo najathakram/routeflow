@@ -88,12 +88,15 @@ describe("isFullyDelivered", () => {
   });
 });
 
-// B648: a units_v1 line (unitLabel set — "Case", "Pallet"…) is NEVER
-// short-picked. `orderedQty` there is base PIECES (count × the line's
-// unitsPerBox snapshot); a delivered qty other than a whole multiple of the
-// case size has no physical meaning, so every function below must treat such
-// a line as fully delivered regardless of what deliveredQtyById holds.
-describe("B648: a unit-aware line (unitLabel set) is never short-picked", () => {
+// B648: a units_v1 line (unitLabel set — "Case", "Pallet"…) never supports a
+// PARTIAL count — `orderedQty` there is base PIECES (count × the line's
+// unitsPerBox snapshot), and a delivered qty other than a whole multiple of
+// the case size has no physical meaning. It still supports the same binary
+// DELIVERED/REFUSED choice every other line does — refusing partial is not
+// the same as forcing full (a driver who could not deliver the Case must be
+// able to record that, or the customer is billed for goods never delivered:
+// the B663 class of bug).
+describe("B648: a unit-aware line supports delivered/not-delivered, never a partial count", () => {
   const caseLine = {
     orderItemId: "li-case",
     productId: "p-case",
@@ -109,31 +112,47 @@ describe("B648: a unit-aware line (unitLabel set) is never short-picked", () => 
     expect(isUnitAwareLine({ unitLabel: "" })).toBe(false);
   });
 
-  it("buildDeliveries ignores a deliveredQtyById entry for it — always DELIVERED at the full ordered qty", () => {
-    // Today (pre-fix): a stray 288 (meaning "1 of 3 cases") would be read
-    // straight through as 288 PIECES delivered out of 864 -> PARTIAL, wrong.
+  it("untouched (no entry) defaults to DELIVERED at the full ordered qty, same as every other line", () => {
+    expect(buildDeliveries([caseLine], {})).toEqual([
+      { orderItemId: "li-case", productId: "p-case", type: "DELIVERED", qty: 864 },
+    ]);
+    expect(reconciledTotal([caseLine], {})).toBe(300);
+    expect(isFullyDelivered([caseLine], {})).toBe(true);
+  });
+
+  it("an explicit not-delivered (0) gives REFUSED at qty 0, and the reconciled total excludes the line", () => {
+    expect(buildDeliveries([caseLine], { "li-case": 0 })).toEqual([
+      { orderItemId: "li-case", productId: "p-case", type: "REFUSED", qty: 0 },
+    ]);
+    expect(reconciledTotal([caseLine], { "li-case": 0 })).toBe(0);
+    expect(isFullyDelivered([caseLine], { "li-case": 0 })).toBe(false);
+  });
+
+  it("an explicit delivered (full ordered qty) gives DELIVERED at the full amount", () => {
+    expect(buildDeliveries([caseLine], { "li-case": 864 })).toEqual([
+      { orderItemId: "li-case", productId: "p-case", type: "DELIVERED", qty: 864 },
+    ]);
+    expect(reconciledTotal([caseLine], { "li-case": 864 })).toBe(300);
+  });
+
+  it("a stray partial piece count (e.g. a leftover value from before unit-awareness was known) still cannot leak into the math — resolves to the full amount, never the raw value or a prorated fraction", () => {
+    // Today's (pre-fix) bug this pins against: 288 (meaning "1 of 3 cases")
+    // read straight through as 288 PIECES delivered out of 864 -> PARTIAL.
     const out = buildDeliveries([caseLine], { "li-case": 288 });
     expect(out).toEqual([
       { orderItemId: "li-case", productId: "p-case", type: "DELIVERED", qty: 864 },
     ]);
-  });
-
-  it("reconciledTotal ignores the same entry — charges the full $300, never a prorated fraction", () => {
     expect(reconciledTotal([caseLine], { "li-case": 288 })).toBe(300);
   });
 
-  it("isFullyDelivered stays true for it even with a reduced entry in the map", () => {
-    expect(isFullyDelivered([caseLine], { "li-case": 288 })).toBe(true);
-  });
-
-  it("a mix of a unit-aware line and a plain line: only the plain one is short-pickable", () => {
+  it("a mix of a unit-aware line and a plain line: only the plain one is short-pickable to a partial", () => {
     const plain = { orderItemId: "li-plain", productId: "p-plain", orderedQty: 10, subtotal: 100 };
-    const qtyById = { "li-case": 288, "li-plain": 5 };
+    const qtyById = { "li-case": 0, "li-plain": 5 };
     expect(buildDeliveries([caseLine, plain], qtyById)).toEqual([
-      { orderItemId: "li-case", productId: "p-case", type: "DELIVERED", qty: 864 },
+      { orderItemId: "li-case", productId: "p-case", type: "REFUSED", qty: 0 },
       { orderItemId: "li-plain", productId: "p-plain", type: "PARTIAL", qty: 5 },
     ]);
-    // 300 (whole case line, unaffected) + 50 (100 * 5/10) = 350.
-    expect(reconciledTotal([caseLine, plain], qtyById)).toBe(350);
+    // 0 (case line refused) + 50 (100 * 5/10) = 50.
+    expect(reconciledTotal([caseLine, plain], qtyById)).toBe(50);
   });
 });
