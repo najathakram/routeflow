@@ -9,6 +9,7 @@
 // added to a scoped run so its tests execute — see scripts/lib/verify-scope.mjs `withStale`.
 // CI's full run is the authority.
 import { spawnSync } from "node:child_process";
+import { totalmem } from "node:os";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { dirname, join } from "node:path";
 import { decideScope } from "./lib/verify-scope.mjs";
@@ -61,6 +62,45 @@ export function buildArgv(args, turboFlags, passthrough = []) {
 }
 
 /**
+ * B772: the Mac mini is 16 GB — a bare `git push` there can't reach the memory-pressure
+ * incident line (2026-09-22) unless VERIFY_CONCURRENCY=1 / JEST_MAX_WORKERS=2 are set inline,
+ * which lanes forgot twice in one night. Below 24 GB total memory, default BOTH to the
+ * incident's known-safe values when the env doesn't already set them — an explicit env value
+ * always wins, independently per variable. A host with >= 24 GB (CI, the PC) gets `""` for
+ * both when unset, byte-identical to today's raw `process.env.X || ""` read.
+ */
+export const LOW_MEM_THRESHOLD_BYTES = 24 * 1024 ** 3;
+const LOW_MEM_VERIFY_CONCURRENCY = "1";
+const LOW_MEM_JEST_MAX_WORKERS = "2";
+
+/** Pure — no env/os read inside. `env` is a plain object (e.g. `process.env`); `totalMemBytes`
+ *  is the host's total memory in bytes (e.g. `os.totalmem()`). Returns the two resolved values
+ *  plus `message` (a single explanatory line) — `null` when nothing was defaulted, so a
+ *  high-memory host or an already-fully-explicit low-memory host prints nothing new. */
+export function chooseVerifyDefaults({ totalMemBytes, env }) {
+  const envConcurrency = (env.VERIFY_CONCURRENCY || "").trim();
+  const envJestWorkers = (env.JEST_MAX_WORKERS || "").trim();
+  const isLowMem = totalMemBytes < LOW_MEM_THRESHOLD_BYTES;
+
+  const defaultedConcurrency = isLowMem && !envConcurrency;
+  const defaultedJestWorkers = isLowMem && !envJestWorkers;
+
+  const verifyConcurrency =
+    envConcurrency || (defaultedConcurrency ? LOW_MEM_VERIFY_CONCURRENCY : "");
+  const jestMaxWorkers = envJestWorkers || (defaultedJestWorkers ? LOW_MEM_JEST_MAX_WORKERS : "");
+
+  let message = null;
+  if (defaultedConcurrency || defaultedJestWorkers) {
+    const gb = Math.round(totalMemBytes / 1024 ** 3);
+    message =
+      `verify: low-memory host (${gb} GB) → concurrency ${verifyConcurrency || "2"}, ` +
+      `jest workers ${jestMaxWorkers || "unset"}`;
+  }
+
+  return { verifyConcurrency, jestMaxWorkers, message };
+}
+
+/**
  * Everything below is side-effecting (reads env, spawns real processes, calls `process.exit`) —
  * kept behind `main()` and the direct-execution guard at the bottom so `verify-turbo.self-test.mjs`
  * can `import` the pure builders above without ALSO running a real verify (an ES module runs its
@@ -69,8 +109,10 @@ export function buildArgv(args, turboFlags, passthrough = []) {
  * `scripts/janitor.mjs`.
  */
 export function main() {
-  const JEST_MAX_WORKERS = process.env.JEST_MAX_WORKERS || "";
-  const VERIFY_CONCURRENCY = process.env.VERIFY_CONCURRENCY || "";
+  const defaults = chooseVerifyDefaults({ totalMemBytes: totalmem(), env: process.env });
+  if (defaults.message) console.log(defaults.message);
+  const JEST_MAX_WORKERS = defaults.jestMaxWorkers;
+  const VERIFY_CONCURRENCY = defaults.verifyConcurrency;
   const TURBO_FLAGS = buildTurboFlags(VERIFY_CONCURRENCY);
 
   function turbo(args) {
