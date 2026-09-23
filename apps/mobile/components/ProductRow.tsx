@@ -55,7 +55,10 @@ export const ProductRow = React.memo(function ProductRow({
 }: ProductRowProps) {
   const upb = Number(unitsPerBox ?? 0);
   const isBoxed = upb > 1 && !unitLabel;
-  const isSpecial = price < listPrice - 0.0001;
+  // units_v1 (SA-105 LOW): listPrice is the PACK's own list price — comparing a unit-sold
+  // line's price against it is meaningless (a $2 Piece would read "was $24.00 $2.00 / Piece").
+  // Suppress the marker on a unit line rather than fetch its own list price just for this hint.
+  const isSpecial = !unitLabel && price < listPrice - 0.0001;
   // Display-only hint on the case price — never fed back into line math.
   const perUnitHint = isBoxed ? perUnitPrice(price, upb) : null;
   const showBand = isBoxed && qty > 0 && children != null;
