@@ -1058,6 +1058,11 @@ describe("edit-items.tsx source pin: the draft record is never keyed by productI
   const source = stripComments(
     readFileSync(join(__dirname, "../app/(operator)/(tabs)/orders/[id]/edit-items.tsx"), "utf8"),
   );
+  // size-ratchet extraction moved resolveDraftKeyForPick's own call site into
+  // resolvePickTarget (lib/edit-items-draft.ts) — some pins below check there instead.
+  const libSource = stripComments(
+    readFileSync(join(__dirname, "../lib/edit-items-draft.ts"), "utf8"),
+  );
 
   it("no (draft|next|d)[...productId] or (draft|next|d)[p.id] bracket access anywhere in the route file", () => {
     const offenders = source.match(
@@ -1079,17 +1084,20 @@ describe("edit-items.tsx source pin: the draft record is never keyed by productI
     expect(source).toMatch(/Object\.entries\(draft\)/);
   });
 
-  it("SA-108d pin 4: resolveDraftKeyForPick's ONLY call form reads draftRef.current, never `draft` and never any updater's own `d`", () => {
-    // All three banned forms: `resolveDraftKeyForPick(draft, ...)` (the
-    // render-time closure — stale across a same-tick burst); `(d, ...)`
-    // (an updater's own param — SA-108a's regression, correct only when
-    // React happens to run THAT updater eagerly, which it does not
-    // reliably for ANY call, first or later, once the alternate fiber
-    // carries stale lanes — SA-108d/E44); and a bare `apply(draftRef...`
-    // typo-shaped call would still need the literal call form below.
-    expect(source).not.toMatch(/resolveDraftKeyForPick\(draft,/);
-    expect(source).not.toMatch(/resolveDraftKeyForPick\(d,/);
-    expect(source).toMatch(/resolveDraftKeyForPick\(draftRef\.current,/);
+  it("SA-108d pin 4: resolvePickTarget's ONLY call form reads draftRef.current, never `draft` and never any updater's own `d`", () => {
+    // All three banned forms: `resolvePickTarget(draft, ...)` (the render-time
+    // closure — stale across a same-tick burst); `(d, ...)` (an updater's own
+    // param — SA-108a's regression, correct only when React happens to run
+    // THAT updater eagerly, which it does not reliably for ANY call, first or
+    // later, once the alternate fiber carries stale lanes — SA-108d/E44); and
+    // a bare `apply(draftRef...` typo-shaped call would still need the
+    // literal call form below. resolvePickTarget itself (lib/edit-items-draft.ts,
+    // size-ratchet extraction) then feeds that same value straight into
+    // resolveDraftKeyForPick as its own `draft` param — never re-closed-over.
+    expect(source).not.toMatch(/resolvePickTarget\(draft,/);
+    expect(source).not.toMatch(/resolvePickTarget\(d,/);
+    expect(source).toMatch(/resolvePickTarget\(draftRef\.current,/);
+    expect(libSource).toMatch(/resolveDraftKeyForPick\(draft,/);
   });
 
   it("SA-108d pin 3: draftRef is assigned in the render body (the per-render mirror)", () => {

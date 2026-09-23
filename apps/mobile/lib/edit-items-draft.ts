@@ -467,6 +467,61 @@ export function applyPickToDraft(
   return { ...draft, [key]: { ...base, qty: 1 } };
 }
 
+/** The screen's own resolved inputs a pick needs, beyond what `PickInput` already covers. */
+export interface ResolvePickTargetInput {
+  productId: string;
+  name: string;
+  unit?: string;
+  unitsPerBox: number | null;
+  kind: "case" | "piece";
+  startPrice: number;
+  catalogPrice: number;
+  packLadder?: LadderProduct;
+}
+
+/**
+ * size-ratchet extraction out of edit-items.tsx's `addPickedToDraft`: resolve
+ * the draft key AND build the pure `apply(d)` updater for one pick, in a
+ * single call — everything about a pick that does NOT need React state
+ * (`setDraft`/`draftRef`/`confirm`, which stay in the screen).
+ *
+ * units_v1 (SA-085i): a piece scan on an already unit-sold line adds a whole
+ * unit — the caller confirms before committing when `existingLabel` comes
+ * back set. Found by VALUE (productId + unitLabel), never a productId-keyed
+ * lookup (B775/SA-108) — `resolveDraftKeyForPick` deliberately EXCLUDES a
+ * unit-labeled line from its own match, so this line's own key is resolved
+ * separately here and reused for the confirmed add.
+ */
+export function resolvePickTarget(
+  draft: Record<string, DraftItem>,
+  input: ResolvePickTargetInput,
+): {
+  key: string;
+  existingLabel?: string;
+  apply: (d: Record<string, DraftItem>) => Record<string, DraftItem>;
+} {
+  const existingUnitEntry = Object.entries(draft).find(
+    ([, it]) => it.productId === input.productId && it.unitLabel,
+  );
+  const existingLabel = existingUnitEntry?.[1].unitLabel ?? undefined;
+  const key =
+    input.kind === "piece" && existingUnitEntry
+      ? existingUnitEntry[0]
+      : resolveDraftKeyForPick(draft, input.productId, null);
+  const apply = (d: Record<string, DraftItem>) =>
+    applyPickToDraft(d, key, {
+      productId: input.productId,
+      unitsPerBox: input.unitsPerBox,
+      startPrice: input.startPrice,
+      catalogPrice: input.catalogPrice,
+      name: input.name,
+      unit: input.unit,
+      kind: input.kind,
+      packLadder: input.packLadder,
+    });
+  return { key, existingLabel, apply };
+}
+
 /**
  * BUY_N_GET_M free units for THIS draft row, rescaled to the qty now on screen
  * (shared helper, same rule as the invoice edit form and the server's
