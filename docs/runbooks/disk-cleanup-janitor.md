@@ -78,6 +78,26 @@ under the target (read-only `Get-ChildItem`) and unlinks each one individually w
 `cmd /c rmdir "<path>"` (no `/s`, which is the flag that can follow a reparse point) before running
 `cmd /c rmdir /s /q` on what remains.
 
+On macOS and Linux (B815) the same rule applies to symlinks: the tool walks the tree itself and
+`lstat`s every entry. A symlink, whether to a file or a directory, is **unlinked, never followed**;
+only real directories are descended into. This matters because a lane worktree's `node_modules` can
+be a symlink into the MAIN checkout (the MacBook's per-worktree overlay). Before B815, `--apply`
+could not delete anything on macOS/Linux at all: it shelled out to Windows-only `cmd /c rmdir`.
+
+Walking a tree with `lstat` cannot see a symlink in a **parent** folder (a lane whose `apps/` is a
+link to `main/apps/` makes "the lane's `apps/api/node_modules`" really be the main checkout's). So
+every delete first passes a **containment guard** on the target's real path: the main checkout is
+never a target; nothing inside it may be deleted except under `.claude/worktrees/` and
+`local-assets/`; and a `node_modules` target must resolve inside its own worktree. A refused delete
+is skipped and printed as `REFUSED`, never forced.
+
+## Where it runs from (B816)
+
+The janitor always acts on the repo's **main checkout** (the first entry of `git worktree list`) and
+its `.claude/worktrees/`, whichever worktree you run it from. Before B816 it used
+`git rev-parse --show-toplevel`, so a run from inside a lane worktree treated the real main checkout
+as an ordinary worktree that could be cleaned.
+
 ## Preflight thresholds (guidance for callers, not enforced by the tool)
 
 `--preflight <gb>` is a generic "is free space >= this number" check; a lane decides what number
