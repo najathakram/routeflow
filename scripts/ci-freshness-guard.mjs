@@ -53,10 +53,11 @@
 
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
+import { pathToFileURL } from "node:url";
 
-const DEFAULT_TIMEOUT_MS = 30_000;
-const MAX_BODY_CHARS = 200;
-const MAX_BUFFER = 10 * 1024 * 1024; // 10 MiB
+export const DEFAULT_TIMEOUT_MS = 30_000;
+export const MAX_BODY_CHARS = 200;
+export const MAX_BUFFER = 10 * 1024 * 1024; // 10 MiB
 
 function appendOutput(name, value) {
   const file = process.env.GITHUB_OUTPUT;
@@ -74,11 +75,56 @@ function appendOutput(name, value) {
 
 // Collapses whitespace and caps length — used only on response bodies/error
 // text, never on the token, so quoting it in a log line is safe.
-function truncate(text, max) {
+// Exported: scripts/window-close-check.mjs reuses this for its own gh-api
+// error messages instead of redefining the same truncation rule.
+export function truncate(text, max) {
   if (!text) return "(empty)";
   const oneLine = String(text).replace(/\s+/g, " ").trim();
   if (!oneLine) return "(empty)";
   return oneLine.length > max ? `${oneLine.slice(0, max)}…` : oneLine;
+}
+
+// Mechanical "run `gh` under a bound, parse the JSON body" step — no
+// decision-making (that stays with each caller, since one fails open and the
+// other, window-close-check.mjs, fails closed). Extracted so a second script
+// never re-implements the same spawnSync/timeout/JSON.parse safety dance.
+// Returns a discriminated result: { ok: true, status, json } on a clean parse,
+// or { ok: false, status, reason } for a spawn error, non-zero exit, or a body
+// that is not valid JSON — `reason` is already truncated and safe to print.
+export function spawnGhJson(cmd, args, timeoutMs) {
+  const result = spawnSync(cmd, args, {
+    shell: false,
+    timeout: timeoutMs,
+    maxBuffer: MAX_BUFFER,
+    env: process.env,
+    encoding: "utf8",
+  });
+
+  if (result.error) {
+    return {
+      ok: false,
+      status: result.status ?? null,
+      reason: `exit ${result.status ?? "n/a"}: ${truncate(result.error.message, MAX_BODY_CHARS)}`,
+    };
+  }
+
+  if (result.status !== 0) {
+    return {
+      ok: false,
+      status: result.status,
+      reason: `exit ${result.status}: ${truncate(result.stdout || result.stderr, MAX_BODY_CHARS)}`,
+    };
+  }
+
+  try {
+    return { ok: true, status: result.status, json: JSON.parse(result.stdout) };
+  } catch {
+    return {
+      ok: false,
+      status: result.status,
+      reason: `exit ${result.status}: unparseable response: ${truncate(result.stdout, MAX_BODY_CHARS)}`,
+    };
+  }
 }
 
 function ghCommand(repo) {
@@ -124,38 +170,15 @@ function main() {
   const timeoutMs = Number(process.env.CI_FRESHNESS_GH_TIMEOUT_MS) || DEFAULT_TIMEOUT_MS;
   const { cmd, args } = ghCommand(repo);
 
-  const result = spawnSync(cmd, args, {
-    shell: false,
-    timeout: timeoutMs,
-    maxBuffer: MAX_BUFFER,
-    env: process.env,
-    encoding: "utf8",
-  });
-
-  if (result.error) {
-    return failOpen(
-      `exit ${result.status ?? "n/a"}: ${truncate(result.error.message, MAX_BODY_CHARS)}`,
-    );
+  const spawned = spawnGhJson(cmd, args, timeoutMs);
+  if (!spawned.ok) {
+    return failOpen(spawned.reason);
   }
-
-  if (result.status !== 0) {
-    return failOpen(
-      `exit ${result.status}: ${truncate(result.stdout || result.stderr, MAX_BODY_CHARS)}`,
-    );
-  }
-
-  let parsed;
-  try {
-    parsed = JSON.parse(result.stdout);
-  } catch {
-    return failOpen(
-      `exit ${result.status}: unparseable response: ${truncate(result.stdout, MAX_BODY_CHARS)}`,
-    );
-  }
+  const parsed = spawned.json;
 
   if (!Array.isArray(parsed)) {
     return failOpen(
-      `exit ${result.status}: response was not a JSON array: ${truncate(result.stdout, MAX_BODY_CHARS)}`,
+      `exit ${spawned.status}: response was not a JSON array: ${truncate(JSON.stringify(parsed), MAX_BODY_CHARS)}`,
     );
   }
 
@@ -168,7 +191,7 @@ function main() {
   const latest = parsed[0] && typeof parsed[0].sha === "string" ? parsed[0].sha : null;
   if (!latest) {
     return failOpen(
-      `exit ${result.status}: newest deployment entry has no sha: ${truncate(result.stdout, MAX_BODY_CHARS)}`,
+      `exit ${spawned.status}: newest deployment entry has no sha: ${truncate(JSON.stringify(parsed), MAX_BODY_CHARS)}`,
     );
   }
 
@@ -183,4 +206,15 @@ function main() {
   return 0;
 }
 
-process.exit(main());
+// Guarded, not a bare `process.exit(main())`: scripts/window-close-check.mjs
+// imports this module's `truncate`/`spawnGhJson` for real (see its header) —
+// without this guard, that `import` alone ran this script's OWN main() and
+// called process.exit() before the importer's main() ever got to run
+// (reproduced while building window-close-check.mjs: every one of its tests
+// printed THIS script's "DEPLOY_SHA is not set" warning and exited early).
+// pathToFileURL, not a bare `file://${argv[1]}` template — see
+// scripts/release-health.mjs's identical guard for why (argv[1] is a
+// backslash path on Windows).
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  process.exit(main());
+}

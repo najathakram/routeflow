@@ -18,12 +18,13 @@ this routine covers PR CI only.
 > green in 10–12 minutes while the repo was **private** (#778 run 35082061621, #781 run
 > 35089782573, #789 run 35118809863), so the 0-step billing failure above no longer reproduces.
 > Private runs still consume metered minutes. In practice this shortened windows to 3–8 minutes:
-> push and let CI go green while private, then open the window only for merge + deploy (step 3's
-> `SUCCESS` and served-commit check still apply — the deploy snapshot is why the window remains).
+> push and let CI go green while private, then open the window only for merge + deploy (step 4's
+> `SUCCESS` and served-commit check, and step 5's window-close check, still apply — the deploy
+> snapshot is why the window remains).
 
 ## Actions minutes
 
-Runs that happen **inside** a public window (this routine's step 1–4) are free — public-repo
+Runs that happen **inside** a public window (this routine's step 1–6) are free — public-repo
 Actions minutes are unlimited. Private-minute exposure comes only from runs triggered **while
 the repo is private**: Dependabot PRs (opened on Dependabot's own schedule, independent of any
 window) and manual `workflow_dispatch` runs. `ci.yml`'s `verify` job now skips `pull_request`
@@ -52,7 +53,7 @@ Verify it started (log at `local-assets/visibility-watchdog.log`, gitignored —
 line) before proceeding to step 1. A flip-to-private by the watchdog while CI, a merge, or a
 deploy is still running is the CORRECT outcome, not a failure — a GitHub Actions run on a private
 repo just fails on billing (see below); rerun it once the window reopens. The watchdog's later
-flip is harmless if the routine's own step 4 already flipped private first.
+flip is harmless if the routine's own step 6 already flipped private first.
 
 **Failure marker — `local-assets/visibility-watchdog.FAILED` in the MAIN checkout.** The watchdog
 resolves `local-assets/` against the main checkout (via `git rev-parse --git-common-dir`), never
@@ -67,9 +68,15 @@ after every attempt failed, and clears it itself on the next confirmed flip.
 
 1. **Make the repo public:**
    `gh repo edit najathakram/routeflow --visibility public --accept-visibility-change-consequences`
-2. **Push, let CI go green, merge the PR to `master`** (squash). The `master` push triggers
+2. **Before merging, prove the landing PR's head contains master's current tip:**
+   `node scripts/pre-merge-ancestry-check.mjs --base origin/master --head <pr-branch-or-sha>`
+   (run `git fetch origin master` first so `origin/master` is current). A branch cut before an
+   earlier merge and never rebased can otherwise land anyway — see the 2026-09-22 incident this
+   guards against, in scripts/pre-merge-ancestry-check.mjs's own header. Exit 0 = safe to merge;
+   any other exit REFUSES and names both shas — do not merge until it passes.
+3. **Push, let CI go green, merge the PR to `master`** (squash). The `master` push triggers
    Railway's own auto-deploy — nothing in this routine drives that.
-3. **Wait until BOTH deployments (`@routeflow/api` and `@routeflow/web`) reach `SUCCESS`** — never
+4. **Wait until BOTH deployments (`@routeflow/api` and `@routeflow/web`) reach `SUCCESS`** — never
    flip on `BUILDING` (see Failure modes: that is not a safe flip point, only timing luck made it
    look like one). `SUCCESS` typically lands ≈2.5 minutes after the merge:
 
@@ -98,10 +105,29 @@ after every attempt failed, and clears it itself on the next confirmed flip.
    `success` (#801 and #802, 2026-09-17). Read the whole status history at most — the served commits
    are the proof.
 
-4. **Make the repo private again — as a `finally`.** Run this even if CI failed, the merge failed,
+5. **Run the window-close check — MANDATORY before any private flip:**
+
+   ```bash
+   node scripts/window-close-check.mjs --since <sha the window opened from>
+   ```
+
+   This re-derives, from GitHub's own record, everything step 4 asked a human to eyeball by
+   hand: every commit pushed to master during the window either deployed successfully or was
+   legitimately docs-only, the prod API is currently serving the newest commit that DID need to
+   deploy, and CI's own verdict on master's tip is a real `success` — never a skip, and never the
+   ~2-second "billing-block" artifact (a run whose jobs recorded zero steps; see the retirement
+   checklist below — "a 0-step green is still the billing block, not proof it's fixed"). It exits
+   0 only when every check passes; otherwise it FAILS CLOSED and names each failing commit/check —
+   do not flip private on a nonzero exit, fix forward instead (see Failure modes below).
+   **Paste its printed table on issue #938** so the window's close is on the record, the same way
+   the deploy proof already lived only in a terminal until now. This closes the hole from the night
+   of 2026-09-22, where PR #1262's (f894d974) failed deploy sat unnoticed for about 90 minutes
+   because nothing re-checked deploy status before the repo went back private.
+
+6. **Make the repo private again — as a `finally`.** Run this even if CI failed, the merge failed,
    or the deploy failed:
    `gh repo edit najathakram/routeflow --visibility private --accept-visibility-change-consequences`
-5. **Read the visibility back in a retry loop and confirm `PRIVATE`** before moving on — a network
+7. **Read the visibility back in a retry loop and confirm `PRIVATE`** before moving on — a network
    error from `gh repo edit` can leave the repo public while printing nothing useful.
 
 > **Owner authorization (2026-07-31):** the assistant IS authorized to perform the visibility
@@ -113,10 +139,10 @@ after every attempt failed, and clears it itself on the next confirmed flip.
   #371, and two before them): flipping private in the same breath as the merge lands inside
   Railway's ~2s post-merge snapshot window and invalidates the GitHub App's installation token
   mid-clone — a race, not a permissions problem (the App has "All repositories" access; #318
-  deployed fine fully private). Fix: wait for `BUILDING` (step 3), never flip at `INITIALIZING`
+  deployed fine fully private). Fix: wait for `BUILDING` (step 4), never flip at `INITIALIZING`
   (verified the hard way on #376 — both services FAILED at that stage).
 - **`gh repo edit` fails over the network** and leaves the repo public with no clear error (#374).
-  Fix: step 5's read-back-and-retry, always.
+  Fix: step 7's read-back-and-retry, always.
 - **`BUILDING` is not a safe flip point** — both 1b413d07 deployments (#652, 2026-09-07) FAILED at
   the code snapshot with no build log when the flip came 7 seconds after reaching `BUILDING`;
   #650's 3-second flip at `BUILDING` had succeeded, but that was timing luck, not a rule.
@@ -124,7 +150,7 @@ after every attempt failed, and clears it itself on the next confirmed flip.
   `.railwayignore`, and this repo's worktrees live under the root checkout, so a raw upload risks
   shipping worktree content). Recovery: from a spare worktree, push an empty
   `chore(deploy): retrigger …` commit as `master` while the repo is still public, wait for
-  `SUCCESS` (never `BUILDING`), then flip private. Fix: flip only after step 3's `SUCCESS`.
+  `SUCCESS` (never `BUILDING`), then flip private. Fix: flip only after step 4's `SUCCESS`.
 - **Migration replay does not fire on `ready_for_review`.** Its `pull_request` trigger only fires
   on opened/synchronize, so flipping a draft to ready (or the CI rerun button on a private-time
   skipped run) leaves it SKIPPED. Dispatch it: `gh workflow run "Migration replay" --ref <branch>`
