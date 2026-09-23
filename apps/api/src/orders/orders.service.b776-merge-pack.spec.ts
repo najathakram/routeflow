@@ -296,4 +296,106 @@ describe("OrdersService merges — B776 pack-mismatch red-first pins (SA-101(1))
       expect.stringContaining("had no pack snapshot on any contributing line"),
     );
   });
+
+  it("10. SA-124c: two winner lines at the SAME pack — only the primary folds the loser, the second winner line is untouched, never double-counted", async () => {
+    h.prisma.order.findMany.mockResolvedValue([
+      {
+        id: "w1",
+        customerId: "cust-1",
+        status: "PENDING",
+        lineItems: [
+          box("w-A", { id: "w-A", qty: 12, boxes: 1, pieces: 0, subtotal: 36 }),
+          box("w-B", { id: "w-B", qty: 24, boxes: 2, pieces: 0, subtotal: 72 }),
+        ],
+      },
+      { id: "l1", customerId: "cust-1", status: "PENDING", lineItems: [box("ll1")] },
+    ]);
+    h.prisma.product.findMany.mockResolvedValue([{ id: "prod-repack", unitsPerBox: 12 }]);
+
+    await h.service.mergeAllPendingForCustomer("cust-1");
+
+    // A (the primary) folds only the loser: 1 + 1 = 2 boxes. NEVER 4 (the pre-fix bug's
+    // A + B + loser = 1 + 2 + 1), which would double-count B's 2 boxes on top of its own
+    // untouched row.
+    const updatesA = h.prisma.orderItem.update.mock.calls.filter(
+      (c: any) => c[0]?.where?.id === "w-A",
+    );
+    expect(updatesA).toHaveLength(1);
+    expect(updatesA[0][0].data).toMatchObject({ boxes: 2, pieces: 0, subtotal: 72 });
+    expect(updatesA[0][0].data.boxes).not.toBe(4);
+
+    // B is never referenced by ANY write — its own row (2 boxes) survives exactly as stored.
+    const touchedB = h.prisma.orderItem.update.mock.calls.some(
+      (c: any) => c[0]?.where?.id === "w-B",
+    );
+    expect(touchedB).toBe(false);
+
+    // No third line created for this product either.
+    const creates = h.prisma.orderItem.create.mock.calls.filter(
+      (c: any) => c[0]?.data?.productId === "prod-repack",
+    );
+    expect(creates).toHaveLength(0);
+  });
+
+  it("11. Opus round 3 (MED): a plain (never-boxed) product merge never counts a live-pack fallback — the live pack itself is <= 1", async () => {
+    h.prisma.order.groupBy.mockImplementation(({ where }: any) =>
+      where?.tenantId === null
+        ? Promise.resolve([])
+        : Promise.resolve([{ customerId: "cust-1", tenantId: "t1", _count: { _all: 2 } }]),
+    );
+    h.prisma.order.findMany.mockResolvedValue([
+      { id: "w1", customerId: "cust-1", status: "PENDING", lineItems: [] },
+      {
+        id: "l1",
+        customerId: "cust-1",
+        status: "PENDING",
+        lineItems: [box("ll1", { boxes: null, pieces: null, unitsPerBox: null })],
+      },
+    ]);
+    h.prisma.product.findMany.mockResolvedValue([{ id: "prod-repack", unitsPerBox: null }]);
+    const warnSpy = jest
+      .spyOn((h.service as any).logger, "warn")
+      .mockImplementation(() => undefined);
+
+    const result = await h.service.sweepAllPendingOrders();
+
+    expect(result.livePackFallbacks).toBe(0);
+    expect(warnSpy).not.toHaveBeenCalledWith(
+      expect.stringContaining("had no pack snapshot on any contributing line"),
+    );
+  });
+
+  it("12. Opus round 3 (MED 4): forceConsolidateCustomer warns on BOTH kinds and logs their counts (it has no counter field to return, unlike the sweep)", async () => {
+    h.prisma.order.findMany.mockResolvedValue([
+      { id: "w1", customerId: "cust-1", status: "PENDING", lineItems: [] },
+      {
+        id: "l1",
+        customerId: "cust-1",
+        status: "PENDING",
+        lineItems: [box("ll1", { unitsPerBox: 12, unitPrice: 36, subtotal: 36 })],
+      },
+      {
+        id: "l2",
+        customerId: "cust-1",
+        status: "PENDING",
+        lineItems: [
+          box("ll2", { qty: 6, boxes: 1, pieces: 0, unitsPerBox: 6, unitPrice: 18, subtotal: 18 }),
+        ],
+      },
+    ]);
+    h.prisma.product.findMany.mockResolvedValue([{ id: "prod-repack", unitsPerBox: 6 }]);
+    const warnSpy = jest
+      .spyOn((h.service as any).logger, "warn")
+      .mockImplementation(() => undefined);
+    const logSpy = jest.spyOn((h.service as any).logger, "log").mockImplementation(() => undefined);
+
+    await h.service.forceConsolidateCustomer("cust-1");
+
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining("contributing lines disagree on pack"),
+    );
+    expect(logSpy).toHaveBeenCalledWith(
+      expect.stringContaining("1 pack mismatch(es), 0 live-pack fallback(s)"),
+    );
+  });
 });

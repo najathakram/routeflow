@@ -133,8 +133,15 @@ export function buildMergeLineWrites(
     // `disagreement` — a product can fall back to the live pack with or without also disagreeing.
     if (usedLivePack) warnings.push({ kind: "livePackFallback", productId, packs: [liveUpb] });
 
+    // SA-124c: a SECOND winner line can land in the same group as the primary (a legacy
+    // same-product duplicate at the same pack, or a diff-add) — it must never be folded into
+    // the primary's update (that double-counts it: its own row survives untouched AND its
+    // qty gets summed into the primary). Only LOSER contributions are ever fold candidates.
+    const winnerSet = new Set(winnerLinesForProduct);
+
     for (const group of groups) {
-      if (group.isWinnerGroup && group.contributions.length === 1) continue; // untouched, no write.
+      const losersInGroup = group.contributions.filter((c) => !winnerSet.has(c));
+      if (losersInGroup.length === 0) continue; // nothing to fold — every line in this group, winner or not, is untouched.
 
       if (group.isSingleMove) {
         const c = group.contributions[0];
@@ -165,8 +172,10 @@ export function buildMergeLineWrites(
         continue;
       }
 
-      const primary = group.winnerInGroup ?? group.contributions[0];
-      const others = group.contributions.filter((c) => c !== primary);
+      const primary = group.winnerInGroup ?? losersInGroup[0];
+      // SA-124c: LOSERS only — a second winner line at this same pack (already excluded from
+      // losersInGroup) stays out of the fold entirely, never summed into the primary.
+      const others = losersInGroup.filter((c) => c !== primary);
       const merged = mergeBoxedContributions(
         [primary, ...others].map((c) => ({
           qty: c.qty,

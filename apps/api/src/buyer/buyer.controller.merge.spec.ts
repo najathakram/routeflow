@@ -260,7 +260,11 @@ describe("BuyerController.createOrder merge branch (TP3 / REG-B47 / REG-B78)", (
     await controller.createOrder(dto as any, MOCK_CTX as any);
 
     const [, updateDto] = ordersService.updateOrderItems.mock.calls[0];
-    expect(updateDto.items).toEqual([{ productId: "prod-boxed", qty: 48, boxes: 4, pieces: 0 }]);
+    // SA-124e(1): the fold's output now carries the bucket's own resolved pack, so the
+    // replaceAll rebuild recreates this line at pack 12 — never the live product row.
+    expect(updateDto.items).toEqual([
+      { productId: "prod-boxed", qty: 48, boxes: 4, pieces: 0, unitsPerBox: 12 },
+    ]);
   });
 
   // ─── REG-B78 (T14): header fields forwarded, ordered before the sibling sweep ──

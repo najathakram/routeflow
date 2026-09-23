@@ -117,29 +117,33 @@ type FoldAcc = {
 export function foldMergeItems(
   existingLines: MergeLineSnapshot[],
   incoming: MergeIncomingItem[],
+  // SA-124e(3): needed only to decide whether a bucket's price re-derives (bucket pack ==
+  // live pack) or survives as-is (bucket pack != live pack). Optional, defaulting to empty —
+  // a caller that omits it gets the pre-SA-124e behavior (price re-derives whenever the line
+  // wasn't a stored MANUAL override, regardless of pack).
+  liveUnitsPerBoxByProductId: Map<string, number> = new Map(),
 ): FoldMergeItemsResult {
-  // SA-124a: keyed by productId -> ONE bucket per DISTINCT pack `deriveUnitsPerBox` resolves an
-  // existing line to (own snapshot/split only — never the live pack: an existing line's own
-  // resolution decides which bucket it starts in). A product can now legitimately carry more
-  // than one bucket — the durable result of an earlier pack-mismatch sweep leaving two lines on
-  // the SAME order at two packs — so an incoming scan must be matched to the SAME-PACK bucket,
-  // never folded across them (that used to silently happen via a single `Map<string, Acc>`
-  // keyed by productId ALONE: the second existing line for a product overwrote the first before
-  // any incoming item was even considered, a silent data-loss bug independent of this fold's own
-  // refusal check below). A genuinely unresolved existing line (own pack 0) shares bucket key 0,
-  // exactly the single "no snapshot, no split" bucket this fold has always used.
-  const bucketsByProduct = new Map<string, Map<number, FoldAcc>>();
+  // SA-124a/SA-124e MED-5: keyed by productId -> a LIST of buckets, one per EXISTING LINE (never
+  // collapsed by pack) plus one per genuinely new pack an incoming item introduces. Two existing
+  // lines at the SAME resolved pack (a genuine legacy duplicate) each keep their OWN bucket now —
+  // the earlier `Map<number, FoldAcc>` keyed by pack alone let the SECOND same-pack line silently
+  // overwrite the first (`.set(ownPack, ...)`), and the caller's replaceAll then DELETES the
+  // first line outright since it never made it into the output — lost goods, not just a
+  // double-count. An incoming scan matching a resolved pack folds into the FIRST bucket at that
+  // pack in display order (`Array.prototype.find`'s own semantics — SA-103/104's rule); a scan
+  // matching NEITHER pack in the list refuses, naming every pack present.
+  const bucketsByProduct = new Map<string, FoldAcc[]>();
   // Unlisted lines (no productId) can't be keyed by product — pass them
   // through as their own line items so a merge never drops them.
   const unlisted: Array<{ name?: string; qty: number; unitPrice: number; notes?: string }> = [];
 
   const bucketsFor = (productId: string) => {
-    let m = bucketsByProduct.get(productId);
-    if (!m) {
-      m = new Map<number, FoldAcc>();
-      bucketsByProduct.set(productId, m);
+    let list = bucketsByProduct.get(productId);
+    if (!list) {
+      list = [];
+      bucketsByProduct.set(productId, list);
     }
-    return m;
+    return list;
   };
 
   for (const li of existingLines) {
@@ -154,7 +158,7 @@ export function foldMergeItems(
     }
     const hasBoxData = li.boxes != null || li.pieces != null;
     const ownPack = deriveUnitsPerBox(li);
-    bucketsFor(li.productId).set(ownPack, {
+    bucketsFor(li.productId).push({
       boxes: hasBoxData ? Number(li.boxes ?? 0) : 0,
       // A plain (box-unaware) line's whole qty folds in as loose pieces.
       pieces: hasBoxData ? Number(li.pieces ?? 0) : Number(li.qty ?? 0),
@@ -202,9 +206,9 @@ export function foldMergeItems(
     const incomingUnitsPerBox = deriveUnitsPerBox(item);
     const buckets = bucketsByProduct.get(item.productId);
 
-    if (!buckets || buckets.size === 0) {
+    if (!buckets || buckets.length === 0) {
       // Brand-new line for this merge — no existing accumulator to fold into.
-      bucketsFor(item.productId).set(incomingUnitsPerBox, {
+      bucketsFor(item.productId).push({
         boxes: incomingHasBoxData ? Number(item.boxes ?? 0) : 0,
         pieces: incomingHasBoxData ? Number(item.pieces ?? 0) : Number(item.qty ?? 0),
         unitsPerBox: incomingUnitsPerBox,
@@ -217,12 +221,16 @@ export function foldMergeItems(
       continue;
     }
 
-    if (buckets.size === 1) {
+    if (buckets.length === 1) {
       // The common case, unaffected by pack-keying: exactly one existing bucket for this
       // product — fold in exactly as before (agree, fill-in-if-unresolved, or a same-bucket
       // disagreement, which still refuses below).
-      const [[existingPack, acc]] = [...buckets.entries()];
-      if (existingPack > 1 && incomingUnitsPerBox > 1 && existingPack !== incomingUnitsPerBox) {
+      const acc = buckets[0];
+      if (
+        acc.unitsPerBox > 1 &&
+        incomingUnitsPerBox > 1 &&
+        acc.unitsPerBox !== incomingUnitsPerBox
+      ) {
         // B776 (SA-101(1)(d)): the accumulator's pack and this incoming item's OWN pack are
         // both KNOWN and DISAGREE — refuse the whole fold rather than silently combining
         // pieces priced under two different box sizes into one re-split line. Never
@@ -230,9 +238,9 @@ export function foldMergeItems(
         // interactive request) simply retries.
         throw new ConflictException({
           code: "MERGE_PACK_MISMATCH",
-          message: `Product ${item.productId} is on this order at a ${existingPack}-pack and the scanned item is a ${incomingUnitsPerBox}-pack — resolve the mismatch before merging.`,
+          message: `Product ${item.productId} is on this order at a ${acc.unitsPerBox}-pack and the scanned item is a ${incomingUnitsPerBox}-pack — resolve the mismatch before merging.`,
           productId: item.productId,
-          existingPacks: [existingPack],
+          existingPacks: [acc.unitsPerBox],
           incomingPack: incomingUnitsPerBox,
         });
       }
@@ -240,18 +248,22 @@ export function foldMergeItems(
       continue;
     }
 
-    // SA-124a: 2+ existing buckets for this product (a durable split from an earlier
-    // pack-mismatch sweep). A scan whose own pack matches ONE of them folds into THAT line,
-    // the other(s) untouched byte-identical. A scan matching NEITHER — known or unresolvable —
-    // refuses naming every existing pack, rather than guessing which line it belongs to.
+    // SA-124a/SA-124e MED-5: 2+ existing buckets for this product (either a durable split from
+    // an earlier pack-mismatch sweep, or a genuine same-pack duplicate). A scan whose own pack
+    // matches one of them folds into the FIRST such bucket in display order (`.find`'s own
+    // semantics), the other(s) untouched byte-identical — never summed across duplicates. A
+    // scan matching NONE of them — known or unresolvable — refuses naming every pack present,
+    // rather than guessing which line it belongs to.
     if (incomingUnitsPerBox > 1) {
-      const acc = buckets.get(incomingUnitsPerBox);
+      const acc = buckets.find((b) => b.unitsPerBox === incomingUnitsPerBox);
       if (acc) {
         foldInto(acc, item, incomingHasBoxData);
         continue;
       }
     }
-    const existingPacks = [...buckets.keys()].sort((a, b) => a - b);
+    const existingPacks = [...new Set(buckets.map((b) => b.unitsPerBox).filter((p) => p > 1))].sort(
+      (a, b) => a - b,
+    );
     throw new ConflictException({
       code: "MERGE_PACK_MISMATCH",
       message:
@@ -267,7 +279,8 @@ export function foldMergeItems(
   const merged: Array<Record<string, unknown>> = [];
   const livePackFallbackProductIds: string[] = [];
   for (const [productId, buckets] of bucketsByProduct.entries()) {
-    for (const acc of buckets.values()) {
+    const livePack = liveUnitsPerBoxByProductId.get(productId) ?? 0;
+    for (const acc of buckets) {
       let qty = acc.pieces;
       let boxes: number | null = null;
       let pieces: number | null = null;
@@ -298,13 +311,25 @@ export function foldMergeItems(
       // derived prices re-derive at the merged quantity. A brand-new merged line
       // keeps the incoming price (create-path semantics, unchanged).
       const denominationOk = !(acc.hadExisting && !acc.existingBoxAware && acc.boxAware);
-      const overrideOk = !acc.hadExisting || acc.existingPriceType === "MANUAL";
+      // SA-124e(3): a bucket resolved at a DIFFERENT pack than the product's CURRENT live pack
+      // carries a price that IS the price for that pack (a 12-pack line's $36/box is correct
+      // at pack 12 even after the product becomes a 6-pack) — never re-derived from the live
+      // catalog, which prices at the LIVE pack. Re-derivation (R0's original rule) still
+      // applies only when this bucket's own pack MATCHES the live pack, or when there is no
+      // live-pack info supplied at all (unchanged legacy behavior for a caller that omits it).
+      const packDiffersFromLive =
+        acc.unitsPerBox > 1 && livePack > 1 && acc.unitsPerBox !== livePack;
+      const overrideOk =
+        !acc.hadExisting || acc.existingPriceType === "MANUAL" || packDiffersFromLive;
       const priceSurvives = denominationOk && overrideOk;
       merged.push({
         productId,
         qty,
         ...(boxes != null ? { boxes } : {}),
         ...(pieces != null ? { pieces } : {}),
+        // SA-124e(1): the bucket's own resolved pack rides along so a replace-all rebuild can
+        // recreate this line at the pack it was ACTUALLY priced at, never the live product row.
+        ...(acc.unitsPerBox > 1 ? { unitsPerBox: acc.unitsPerBox } : {}),
         ...(acc.unitPrice != null && priceSurvives ? { unitPrice: acc.unitPrice } : {}),
         // B465: the reason travels with the price it justifies — never survives
         // when the price itself doesn't (a re-derived line has nothing to

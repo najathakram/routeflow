@@ -33,8 +33,12 @@ export interface PackCandidate {
 
 export interface PackResolution {
   pack: number;
-  /** True only when NEITHER the line's own snapshot NOR its own split could resolve a pack —
-   * the live product pack was used instead (SA-101(1)(a)'s last-resort, box-unaware case). */
+  /** True only when NEITHER the line's own snapshot NOR its own split could resolve a pack, AND
+   * the live product pack resolved to something genuinely boxed (> 1) — a real fallback to a
+   * real box size (SA-101(1)(a)'s last-resort, box-unaware case). False for a plain/never-boxed
+   * product (live pack <= 1 too): that isn't a "fallback" at all, just the product never having
+   * a box concept — Opus's round-3 finding that the old unconditional `true` fired this warning
+   * on the overwhelming majority of merges (most products aren't boxed). */
   usedLivePack: boolean;
 }
 
@@ -45,12 +49,14 @@ export interface PackResolution {
  * exactly recoverable, regardless of what the live product pack currently is). Else (c) — nothing
  * resolved (a box-unaware line: `boxes`/`pieces` both null, `qty` a bare selling-unit/box count,
  * or a degenerate split `deriveUnitsPerBox` can't derive from) — the ONLY remaining signal is the
- * live product pack, used with a warn.
+ * live product pack. `usedLivePack` is true only when that live pack is itself > 1 (a real box
+ * size) — a plain/never-boxed product (live pack <= 1) resolves to "no pack, never boxed", not a
+ * fallback worth a warn.
  */
 export function resolveLinePack(c: PackCandidate, liveUnitsPerBox: number): PackResolution {
   const own = deriveUnitsPerBox(c);
   if (own > 1) return { pack: own, usedLivePack: false };
-  return { pack: liveUnitsPerBox, usedLivePack: true };
+  return { pack: liveUnitsPerBox, usedLivePack: liveUnitsPerBox > 1 };
 }
 
 export interface PackGroup<T> {

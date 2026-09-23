@@ -21,6 +21,13 @@ describe("resolveLinePack — SA-101(1)(a) precedence", () => {
     const r = resolveLinePack({ qty: 5, boxes: 0, pieces: 5, unitsPerBox: null }, 6);
     expect(r).toEqual({ pack: 6, usedLivePack: true });
   });
+
+  it("Opus round 3 (MED): a PLAIN product (live pack <= 1 too) resolves with usedLivePack false — never boxed is not a fallback", () => {
+    const r = resolveLinePack({ qty: 5, boxes: null, pieces: null, unitsPerBox: null }, 0);
+    expect(r).toEqual({ pack: 0, usedLivePack: false });
+    const r2 = resolveLinePack({ qty: 5, boxes: null, pieces: null, unitsPerBox: null }, 1);
+    expect(r2).toEqual({ pack: 1, usedLivePack: false });
+  });
 });
 
 describe("groupContributionsByPack — SA-101(1)(b)", () => {

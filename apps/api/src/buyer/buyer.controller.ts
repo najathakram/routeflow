@@ -617,6 +617,9 @@ export class BuyerController {
             const foldResult = foldMergeItems(
               normalizeBoxUnawareSnapshots(lineItems, upbForStoredSnapshots),
               normalizeBareIncomingSellingUnits(incomingItems, lineItems, upbByProduct),
+              // SA-124e(3): the price basis follows the RESOLVED pack, not the live one —
+              // already built above for the denomination normalizers.
+              upbByProduct,
             );
             if (foldResult.livePackFallbackProductIds.length > 0) {
               this.logger.warn(

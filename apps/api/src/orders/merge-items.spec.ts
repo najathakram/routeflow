@@ -559,4 +559,46 @@ describe("merge-items — SA-124a: existing lines keyed by productId + resolved 
       }),
     );
   });
+
+  it("SA-124e MED-5: two SAME-pack duplicate existing lines each keep their own bucket — a scan folds into the FIRST, the second survives byte-identical", () => {
+    const first: MergeLineSnapshot = {
+      productId: "prod-dup",
+      boxes: 1,
+      pieces: 0,
+      qty: 12,
+      unitsPerBox: 12,
+      unitPrice: 36,
+      priceType: "STANDARD",
+    };
+    const second: MergeLineSnapshot = {
+      productId: "prod-dup",
+      boxes: 2,
+      pieces: 0,
+      qty: 24,
+      unitsPerBox: 12,
+      unitPrice: 30,
+      priceType: "MANUAL",
+      overrideReason: "operator discount",
+    };
+    const incoming: MergeIncomingItem[] = [{ productId: "prod-dup", qty: 12, boxes: 1, pieces: 0 }];
+
+    const { items } = foldMergeItems([first, second], incoming);
+
+    // Both lines present after the fold — neither overwritten, neither dropped.
+    expect(items).toHaveLength(2);
+    // The first becomes 2 boxes (1 + the scanned 1) — the ONLY one touched.
+    const grown = items.find((i) => i.boxes === 2 && i.unitPrice === undefined);
+    expect(grown).toMatchObject({ productId: "prod-dup", boxes: 2, pieces: 0, qty: 24 });
+    // The second survives byte-identical, including its MANUAL price and override reason —
+    // never summed across duplicates, never dropped.
+    const untouched = items.find((i) => i.unitPrice === 30);
+    expect(untouched).toMatchObject({
+      productId: "prod-dup",
+      boxes: 2,
+      pieces: 0,
+      qty: 24,
+      unitPrice: 30,
+      overrideReason: "operator discount",
+    });
+  });
 });
