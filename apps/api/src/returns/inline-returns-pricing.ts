@@ -150,12 +150,19 @@ export interface ReturnPackFactorResult {
  * caller throws (see `inline-returns-quote.service.ts`). The durable fix (carrying the
  * actual `sourceOrderItemId` on the wire, so the factor is never guessed at all) is a
  * later PR; this only stops the silent wrong guess.
+ *
+ * SA-108 precision: a pack of exactly 1 (or null) means "no packaging" (R-029) — the same
+ * convention `isBoxedProduct`/`ResolveParkedRestockDto` use elsewhere (only `> 1` is a real
+ * box size). A candidate line legitimately carrying `unitsPerBox: 1` must never conflict
+ * with a genuinely boxed sibling at, say, 12 — it is not a competing PACK claim, it is a
+ * line that was never boxed in the first place. Only distinct values `> 1` count toward a
+ * conflict; a lone `1` among the candidates is simply ignored, exactly like `null`.
  */
 export function resolveReturnPackFactor(
   candidatePacks: ReadonlyArray<number | null | undefined>,
   productUnitsPerBox: number | null,
 ): ReturnPackFactorResult {
-  const distinct = [...new Set(candidatePacks.filter((p): p is number => p != null && p > 0))].sort(
+  const distinct = [...new Set(candidatePacks.filter((p): p is number => p != null && p > 1))].sort(
     (a, b) => a - b,
   );
   if (distinct.length > 1) {

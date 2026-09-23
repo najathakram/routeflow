@@ -42,6 +42,35 @@ const BOXED_ENTRY_ORDER = {
   ],
 };
 
+const MIXED_UNIT_ENTRY_ORDER = {
+  ...ENTRY_ORDER,
+  id: "order-mixed",
+  orderNumber: "1003",
+  // SA-108: two lines of the SAME product with DIFFERENT (agreeing-if-typed-the-same) packs
+  // — a Case line and a plain pack line. Before the fix, both hydrated rows shared one
+  // productId-keyed identity: editing either row's Boxes field patched BOTH.
+  lineItems: [
+    {
+      id: "li-case",
+      productId: "prod-mixed",
+      product: { id: "prod-mixed", name: "Widget", unit: "case", unitsPerBox: 12 },
+      unitsPerBox: 12,
+      qty: 1,
+      unitPrice: 24,
+      status: "CONFIRMED",
+    },
+    {
+      id: "li-pack",
+      productId: "prod-mixed",
+      product: { id: "prod-mixed", name: "Widget", unit: "case", unitsPerBox: 12 },
+      unitsPerBox: 12,
+      qty: 3,
+      unitPrice: 24,
+      status: "CONFIRMED",
+    },
+  ],
+};
+
 const SOURCE_ORDER_NEWEST = { id: "order-newest", orderNumber: "2002", orderDate: "2026-09-10" };
 const SOURCE_ORDER_OLDER = { id: "order-older", orderNumber: "1500", orderDate: "2026-08-01" };
 
@@ -49,6 +78,7 @@ let mockEntryOrder: any = ENTRY_ORDER;
 const mockOrdersById: Record<string, any> = {
   [ENTRY_ORDER.id]: ENTRY_ORDER,
   [BOXED_ENTRY_ORDER.id]: BOXED_ENTRY_ORDER,
+  [MIXED_UNIT_ENTRY_ORDER.id]: MIXED_UNIT_ENTRY_ORDER,
   [SOURCE_ORDER_NEWEST.id]: SOURCE_ORDER_NEWEST,
   [SOURCE_ORDER_OLDER.id]: SOURCE_ORDER_OLDER,
 };
@@ -343,6 +373,56 @@ describe("RecordInlineReturnDialog — 403 copy (AC6)", () => {
       },
     });
     await screen.findByText(RETURNS_NOT_ENABLED_MESSAGE);
+  });
+});
+
+describe("RecordInlineReturnDialog — SA-108: per-row identity for two lines of one product", () => {
+  // Both rows render an input LABELLED "Boxes", and the shared <Input> component derives
+  // its DOM id from the label text (`label.toLowerCase().replace(/\s+/g, "-")`) rather than
+  // a per-instance id — a PRE-EXISTING, unrelated limitation that collides once two rows
+  // share a label, breaking getAllByLabelText's for/id association. Query by role instead:
+  // each boxed row renders exactly two number inputs (Boxes, then Pieces), in DOM order.
+  it("editing one row's Boxes never patches the other row, and the quote request sums only what was actually typed (not doubled)", async () => {
+    mockEntryOrder = MIXED_UNIT_ENTRY_ORDER;
+    await openToStep1(MIXED_UNIT_ENTRY_ORDER.id);
+
+    const spinbuttons = screen.getAllByRole("spinbutton");
+    expect(spinbuttons).toHaveLength(4); // 2 rows x (Boxes, Pieces)
+    const [row1Boxes, , row2Boxes] = spinbuttons;
+    expect((row1Boxes as HTMLInputElement).value).toBe("");
+    expect((row2Boxes as HTMLInputElement).value).toBe("");
+
+    fireEvent.change(row1Boxes, { target: { value: "1" } });
+
+    // REGRESSION pin: before SA-108, both rows were keyed by productId, so updateLine
+    // patched every row sharing it — the second row's Boxes field would also read "1".
+    expect((row1Boxes as HTMLInputElement).value).toBe("1");
+    expect((row2Boxes as HTMLInputElement).value).toBe("");
+
+    // A per-line reason is optional; set the capture-level reason instead.
+    fireEvent.change(screen.getByLabelText(/^reason$/i), { target: { value: "DAMAGED" } });
+    fireEvent.click(screen.getByRole("button", { name: /get quote/i }));
+    await waitFor(() => expect(quoteMutate).toHaveBeenCalledTimes(1));
+
+    const req = quoteMutate.mock.calls[0][0];
+    // ONE merged item (buildQuoteRequest's own productId merge is correct here — it is
+    // merging two REAL, independently-typed rows) at exactly what was typed into row 1;
+    // row 2 (never touched) contributed nothing. Pre-fix this was boxes: 2 (doubled).
+    expect(req.items).toEqual([{ productId: "prod-mixed", qty: 1, boxes: 1, pieces: 0 }]);
+  });
+
+  it("removing one row never removes the other row of the same product", async () => {
+    mockEntryOrder = MIXED_UNIT_ENTRY_ORDER;
+    await openToStep1(MIXED_UNIT_ENTRY_ORDER.id);
+
+    expect(screen.getAllByRole("spinbutton")).toHaveLength(4);
+    const removeButtons = screen.getAllByRole("button", { name: /remove/i });
+    expect(removeButtons).toHaveLength(2);
+
+    fireEvent.click(removeButtons[0]);
+
+    // REGRESSION pin: before SA-108, removeLine matched by productId and dropped BOTH rows.
+    expect(screen.getAllByRole("spinbutton")).toHaveLength(2);
   });
 });
 

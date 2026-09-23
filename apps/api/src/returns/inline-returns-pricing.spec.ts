@@ -198,6 +198,26 @@ describe("resolveReturnPackFactor — SA-101(2)/B3/B765 interim guard", () => {
       conflictingPacks: null,
     });
   });
+
+  // SA-108 (R-029): a pack of exactly 1 means "no packaging" — the same convention
+  // isBoxedProduct/ResolveParkedRestockDto use — never a competing distinct pack claim.
+  it("a pack of 1 is ignored too, exactly like null/undefined/zero — never a distinct pack", () => {
+    expect(resolveReturnPackFactor([1, 1, 1], null)).toEqual({
+      factor: null,
+      conflictingPacks: null,
+    });
+  });
+
+  it("packs 1 and 12 do NOT conflict — 1 means no packaging, 12 wins as the real pack", () => {
+    expect(resolveReturnPackFactor([1, 12], null)).toEqual({ factor: 12, conflictingPacks: null });
+  });
+
+  it("packs 1 and 12 and 4 STILL conflict on the two real packs — the 1 just drops out", () => {
+    expect(resolveReturnPackFactor([1, 12, 4], null)).toEqual({
+      factor: null,
+      conflictingPacks: [4, 12],
+    });
+  });
 });
 
 describe("allocateReturnedPieces", () => {
