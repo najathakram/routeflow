@@ -163,6 +163,14 @@ live rate is a backdated re-price" rule) in the docs follow-up.
 - Pilot pack-edit and B681 routine: no interaction (different columns, different writers); the B681
   correction rows carry `correctsEntryId` and are included in D5's net-held per SA-034(a).
 
+## 4a. Resequencing (SA-096, 2026-09-23)
+
+PR 1 + PR 2 ship as ONE PR (L-184 ordering still binds). PR 5 (backfill) lands BEFORE PR 3, because the owner's
+production sizing found zero mismatches, so the backfill is exact. PR 3's NULL branch simplifies to "keep the
+stored amount, warn naming the line" (no basisBefore plumbing), guarded structurally by (i) the PR-2 callsite
+allow-list over every creator of a regulated line and (ii) a standing count gate (regulated lines with a NULL
+trio = 0) in post-deploy-check / the drift lane. See SA-096 in RULINGS.
+
 ## 5. Explicit non-goals
 
 Rate effective-dating on `TrackedCategory` (history table): not needed once the line carries its rate.
