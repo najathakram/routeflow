@@ -213,7 +213,11 @@ export default function BuyerInvoiceDetailPage() {
       </button>
 
       {/* Header */}
-      <div className="flex items-start justify-between mb-6">
+      {/* flex-wrap: the Pay/PDF button group otherwise has nowhere to go at
+          390px (p-6 leaves 342px) — the old overflow-auto let a user scroll
+          to reach them, the new containment (globals.css's overflow-x:clip)
+          makes them unreachable outright unless this row can wrap. */}
+      <div className="flex flex-wrap items-start justify-between gap-3 mb-6">
         <div>
           <h1 className="text-2xl font-bold text-navy">{invoice.invoiceNumber}</h1>
           <p className="text-sm text-navy/70 mt-1">
@@ -221,7 +225,7 @@ export default function BuyerInvoiceDetailPage() {
             {paymentTermsLabel ? ` · Terms: ${paymentTermsLabel}` : ""}
           </p>
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center gap-3">
           <Badge variant={getStatusVariant(invoice.status)}>
             {invoice.status.replace(/_/g, " ")}
           </Badge>
@@ -270,8 +274,11 @@ export default function BuyerInvoiceDetailPage() {
         </div>
       )}
 
-      {/* Summary cards */}
-      <div className="grid grid-cols-4 gap-4 mb-6">
+      {/* Summary cards — grid-cols-2 sm:grid-cols-4, mirroring
+          buyer/portal/[seller]/orders/[id]/page.tsx:717. A flat grid-cols-4
+          at 390px leaves ~70px per card, too narrow for a Balance Due of
+          $1,000+ to render without spilling its border. */}
+      <div className="grid grid-cols-2 gap-4 sm:grid-cols-4 mb-6">
         {[
           { label: "Subtotal", value: fmt(Number(invoice.subtotal)), icon: FileText },
           { label: "Tax", value: fmt(Number(invoice.taxAmount)), icon: FileText },
