@@ -4,7 +4,7 @@
  * The owner reported that on a phone browser nearly every page drifts
  * horizontally on a vertical swipe, and after pinch-zooming the page does not
  * settle back to full width. Root cause (see apps/web/app/globals.css's new
- * `html { overflow-x: clip }` rule and this shell's own layout.tsx): every
+ * `html { overflow-x: hidden }` rule and this shell's own layout.tsx): every
  * shell handled overflow differently and nothing caught what escaped one.
  * The operator dashboard shell — `(dashboard)/layout.tsx`'s
  * `<main className="flex-1 overflow-x-hidden overflow-y-auto ...">` — was

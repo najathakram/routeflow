@@ -8,9 +8,9 @@
  * `<main>` set `overflow-auto` (both axes live) rather than constraining the
  * horizontal axis, so its main element could drag diagonally on every buyer
  * page. Fixed to explicit `overflow-x-hidden overflow-y-auto`, backed by the
- * new project-wide `html { overflow-x: clip }` safety net in
- * apps/web/app/globals.css (see that file's comment for why `clip` rather
- * than `hidden`, and why zoom itself is deliberately never locked).
+ * new project-wide `html { overflow-x: hidden }` safety net in
+ * apps/web/app/globals.css (see that file's comment for why `hidden` over
+ * `clip` here, and why zoom itself is deliberately never locked).
  *
  * Uses the same probe as 52-platform-admin-mobile-overflow.spec.ts (see that
  * spec's header for why a naive `documentElement.scrollWidth <= innerWidth`

@@ -215,7 +215,7 @@ export default function BuyerInvoiceDetailPage() {
       {/* Header */}
       {/* flex-wrap: the Pay/PDF button group otherwise has nowhere to go at
           390px (p-6 leaves 342px) — the old overflow-auto let a user scroll
-          to reach them, the new containment (globals.css's overflow-x:clip)
+          to reach them, the new containment (globals.css's overflow-x:hidden)
           makes them unreachable outright unless this row can wrap. */}
       <div className="flex flex-wrap items-start justify-between gap-3 mb-6">
         <div>

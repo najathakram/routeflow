@@ -561,7 +561,7 @@ export default function BuyerPortalLayout({ children }: { children: React.ReactN
         {/* overflow-y-auto + overflow-x-hidden explicitly, not the bare `overflow-auto`
             this had — a live-both-axes scroll container is exactly what let this
             main element drag diagonally on every buyer page (owner-reported mobile
-            horizontal drift). See globals.css's `html { overflow-x: clip }` for the
+            horizontal drift). See globals.css's `html { overflow-x: hidden }` for the
             project-wide net this is one layer of. */}
         <main className="flex-1 overflow-x-hidden overflow-y-auto">
           <BuyerPortalErrorBoundary>{children}</BuyerPortalErrorBoundary>
