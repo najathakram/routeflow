@@ -35,12 +35,11 @@ const BASELINE: Record<string, number> = {
   //      line-factor decision. Retired by moving it to a named non-line helper (SA-047 shape).
   // The number may only go DOWN. The target is still zero.
   "invoices/invoices.service.ts": 3, // 4c-1 prefactor: create()'s line builder moved (3 reads) to:
-  "invoices/manual-invoice-lines.ts": 3,
-  // B645: create()'s itemsData mapper read product.unitsPerBox at 3 sites (qty
-  // resolve, computeLineSubtotal, and the B645 boxes/pieces/unitsPerBox snapshot
-  // this fix added) — hoisted to one `productUnitsPerBox` local reused at all
-  // three, so the counted baseline goes DOWN from 2 to 1 even though a 3rd
-  // logical use was added.
+  // B659: two direct read sites in this file (box-split branch's `item.packSnapshot ??
+  // product?.unitsPerBox`, and the no-split branch's `upbForPieces` gaining the same fallback per
+  // review finding 2). Verified by running the scanner's own regex directly against the file, not
+  // carried forward from the stale pre-B717/B681 draft this commit was originally cut against.
+  "invoices/manual-invoice-lines.ts": 2,
   "estimates/estimates.service.ts": 1,
   "order-templates/order-templates.service.ts": 1,
   "returns/inline-returns-quote.service.ts": 3,

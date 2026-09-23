@@ -15,6 +15,9 @@ const editItemsSrc = readFileSync(
   join(__dirname, "..", "app", "(operator)", "(tabs)", "orders", "[id]", "edit-items.tsx"),
   "utf8",
 );
+// B775/SA-108: a re-scan's merge-into-existing-entry transform (applyPickToDraft)
+// moved out of this screen into the pure lib, so its unit-guard is pinned there.
+const editItemsDraftSrc = readFileSync(join(__dirname, "..", "lib", "edit-items-draft.ts"), "utf8");
 
 describe("NewOrderScreen.tsx routes every +/- through stepLineQty (create flow)", () => {
   it("addOne/removeOne call stepLineQty, never the raw pack box math", () => {
@@ -52,8 +55,8 @@ describe("edit-items.tsx routes every +/- through unit-aware helpers (edit flow)
     );
   });
 
-  it("a re-scan's incrementLine/incrementLinePiece call is unit-guarded", () => {
-    expect(editItemsSrc).toMatch(/if \(boxed && !isUnitLine\(existing\)\)/);
+  it("a re-scan's incrementLine/incrementLinePiece call is unit-guarded (lib/edit-items-draft.ts#applyPickToDraft)", () => {
+    expect(editItemsDraftSrc).toMatch(/if \(boxed && !isUnitLine\(existing\)\)/);
   });
 
   it("the drawer sends a unit line's typed total through setQty, never setUnits", () => {

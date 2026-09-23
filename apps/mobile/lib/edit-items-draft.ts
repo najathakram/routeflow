@@ -30,6 +30,7 @@ import { editedLineFreeUnits } from "./invoice-totals";
 import { lineUnitsPerBox } from "./at-door-line-units";
 import { trayRowsFrom, type TrayRow } from "./scan-tray";
 import { unitPriceBase, type UnitOption } from "./unit-options";
+import { incrementLine, incrementLinePiece, isUnitLine } from "./sale-line";
 import type { UpdateOrderItemInput } from "./api/orders";
 
 /** Shared with the route file's own "Add unlisted item" flow. */
@@ -186,7 +187,17 @@ export function hydrateFromOrder(order: { lineItems?: readonly any[] | null } | 
     // (Case) N" — and `buildOrderItemDiff`'s existing `line.boxes ?? line.qty` wire fallback
     // still resolves correctly (boxes is now always unset for a unit line).
     const qty = unitLabel ? toNumber(li.boxes != null ? li.boxes : li.qty) : toNumber(li.qty);
-    next[li.productId] = {
+    // B775 (SA-101/SA-108): key by the line's OWN id — the record key is the
+    // ONLY identity, never a `?? productId` fallback. units_v1 can legitimately
+    // carry two lines for the same product (a Case line + a pack line), and a
+    // non-unit order can too (create() maps dto.items one OrderItem per entry
+    // with no dedupe, no @@unique([orderId, productId])). Keying by productId
+    // collapsed the second line into the first at hydration; order-item-diff.ts
+    // then read the dropped line's id as missing from the surviving set and
+    // emitted {id, action:"DELETE"} for it — even on a zero-edit Save, since
+    // the collision happens here, before any operator interaction. `li.id` is
+    // always present for an existing (server-loaded) line.
+    next[li.id] = {
       productId: li.productId,
       qty,
       boxes: unitLabel ? undefined : (li.boxes ?? undefined),
@@ -329,6 +340,131 @@ export function applyPieceEdit(cur: DraftItem, pieces: number, unitsPerBox: numb
   const pcs = Math.max(0, Math.floor(pieces));
   const boxes = cur.boxes ?? 0;
   return { ...cur, boxes, pieces: pcs, qty: boxes * unitsPerBox + pcs, boxSplit: true };
+}
+
+/**
+ * B775 (fleet lead review, rules 1+2): the draft key a scan/add should
+ * write to. Merges into an EXISTING entry for the SAME product AND the
+ * SAME unit (`unitLabel` — `undefined`/`null` both mean "base/boxed", the
+ * only shape a scan can ever represent; a scan must never merge into a
+ * units_v1 selling-unit line like a Case). Matched by VALUE, since the
+ * draft record is keyed by lineId/a fresh local id, never bare productId.
+ * `Object.entries` iteration order is the draft's own (display) order, so
+ * with more than one legacy match (two non-unit lines already on one
+ * product — reachable only pre-fix, or from data written outside this
+ * screen) this deliberately merges into the FIRST and never touches the
+ * others. No match at all — including every genuinely new addition — gets
+ * a FRESH key, never the bare productId: two new same-product rows added
+ * in different units (or two independent adds before either is saved)
+ * must never collide the same way hydration did.
+ *
+ * CAUTION (currently unreachable, but load-bearing the day it isn't): a
+ * `new:<id>` row's key is never re-keyed to the server's real id in place —
+ * this screen only ever re-reads it via `hydrateFromOrder` after a save,
+ * which always follows `leaveEditor()` and remounts the screen fresh. That
+ * is safe only as long as every successful save leaves the editor. The day a
+ * "save and stay" flow exists, a saved `new:<id>` row would keep its local
+ * key while the record it maps to now has a real lineId — any code added
+ * for that flow must explicitly re-key the draft entry (swap the `new:<id>`
+ * key for the returned lineId), not assume this function's callers already
+ * handle it.
+ */
+export function resolveDraftKeyForPick(
+  draft: Record<string, DraftItem>,
+  productId: string,
+  unitLabel?: string | null,
+): string {
+  if (!unitLabel) {
+    const match = Object.entries(draft).find(
+      ([, it]) => it.productId === productId && !it.unitLabel,
+    );
+    if (match) return match[0];
+  }
+  return newDraftKey();
+}
+
+/**
+ * B775 (SA-103): the key for a NOT-YET-SAVED row — always `new:` prefixed,
+ * never a bare productId (two unsaved same-product rows, e.g. one added
+ * per unit, would collide again exactly like the hydration bug this fixes)
+ * and never a bare counter alone (recognizably distinct from a real DB
+ * line id, e.g. for the save response's re-key step). Reuses `newLocalId`'s
+ * existing per-session-unique generator rather than introducing separate
+ * counter state.
+ */
+export function newDraftKey(): string {
+  return `new:${newLocalId()}`;
+}
+
+/** The inputs `applyPickToDraft` needs beyond the draft key it writes to. */
+export interface PickInput {
+  productId: string;
+  unitsPerBox: number | null;
+  /** The price to start a FRESH row at — already resolved (price-history vs.
+   *  tier/list) by the caller; this function never re-derives it. */
+  startPrice: number;
+  catalogPrice: number;
+  name: string;
+  unit?: string;
+  kind: "case" | "piece";
+  /** The fresh-add ladder snapshot (`ladderProductFor`'s real-tier-prices
+   *  input) — only used on a fresh add; an existing entry keeps its own. */
+  packLadder?: LadderProduct;
+}
+
+/**
+ * SA-108d (E44 correction of SA-108a): the merge/add transform a scan or tap
+ * applies to the draft, extracted to a PURE function of `(draft, key, input)`
+ * alone — no closure over component state, no side effects. This is what
+ * makes it safe to run TWICE for one logical pick: once synchronously by the
+ * caller (`draftRef.current = applyPickToDraft(draftRef.current, key,
+ * input)`) to keep the ref an accurate same-tick mirror, and once more
+ * whenever React actually processes the `setDraft` update it was ALSO handed
+ * to — a functional setState updater must never itself write to a ref (see
+ * `resolveDraftKeyForPick`'s caller in edit-items.tsx): React does not
+ * reliably run it synchronously even for the first call in a same-tick
+ * burst, since the eager-dispatch path also requires the alternate fiber's
+ * lanes to be empty, which a component's own earlier renders can leave
+ * non-empty. `key` is resolved by the CALLER (via `resolveDraftKeyForPick`)
+ * before this runs — never re-derived here, and never re-derived from an
+ * existing entry's own fields (the SA-108 bug this whole lineage fixes).
+ */
+export function applyPickToDraft(
+  draft: Record<string, DraftItem>,
+  key: string,
+  input: PickInput,
+): Record<string, DraftItem> {
+  const existing = draft[key];
+  const upb = Number(existing?.unitsPerBox ?? input.unitsPerBox ?? 0);
+  const boxed = upb > 1;
+  if (existing) {
+    // units_v1 (SA-085f): a re-scan of an already unit-sold line merges into
+    // its COUNT — never the pack's box math, regardless of scan kind.
+    if (boxed && !isUnitLine(existing)) {
+      const line =
+        input.kind === "piece"
+          ? incrementLinePiece(existing, true, upb)
+          : incrementLine(existing, true, upb);
+      return { ...draft, [key]: { ...line, boxSplit: true } };
+    }
+    return { ...draft, [key]: { ...existing, qty: (existing.qty ?? 0) + 1 } };
+  }
+  const base = {
+    productId: input.productId,
+    unitsPerBox: input.unitsPerBox,
+    unitPrice: input.startPrice,
+    catalogPrice: input.catalogPrice,
+    name: input.name,
+    unit: input.unit,
+    packLadder: input.packLadder,
+  };
+  if (boxed) {
+    // 1 box for a case scan/tap; 1 LOOSE piece for a piece-code scan.
+    return input.kind === "piece"
+      ? { ...draft, [key]: { ...base, qty: 1, boxes: 0, pieces: 1, boxSplit: true } }
+      : { ...draft, [key]: { ...base, qty: upb, boxes: 1, pieces: 0, boxSplit: true } };
+  }
+  return { ...draft, [key]: { ...base, qty: 1 } };
 }
 
 /**
@@ -506,7 +642,10 @@ export function shouldRehydrateFromOrder(input: {
 
 // ─── The on-device snapshot ──────────────────────────────────────────────────
 
-export const EDIT_ITEMS_SNAPSHOT_VERSION = 1;
+// Bumped 1→2 (B775/SA-108): pre-fix snapshots stored `draft` keyed by
+// `productId`, which collides two same-product lines into one entry. A v1
+// snapshot must be discarded, never restored, so it can't resurrect that bug.
+export const EDIT_ITEMS_SNAPSHOT_VERSION = 2;
 /** Same TTL shape as `lib/list-ui-snapshot.ts`; a day-old staged edit is stale. */
 export const EDIT_ITEMS_SNAPSHOT_TTL_MS = 24 * 60 * 60 * 1000;
 /** Idle debounce before a snapshot write, matching the stock-count autosave. */
