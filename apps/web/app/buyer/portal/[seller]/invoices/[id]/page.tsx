@@ -304,55 +304,65 @@ export default function BuyerInvoiceDetailPage() {
         <div className="border-b border-surface-border bg-surface-raised px-4 py-3">
           <h2 className="text-sm font-semibold text-navy">Items ({invoice.items?.length ?? 0})</h2>
         </div>
-        <table className="w-full">
-          <thead>
-            <tr className="border-b border-surface-border text-xs text-navy/70 uppercase tracking-wider">
-              <th className="px-4 py-2.5 text-left">Description</th>
-              <th className="px-4 py-2.5 text-right w-20">Qty</th>
-              <th className="px-4 py-2.5 text-right w-28">Unit Price</th>
-              <th className="px-4 py-2.5 text-right w-28">Subtotal</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-surface-border">
-            {(invoice.items ?? []).map((item) => {
-              const msrp = itemMsrp(item);
-              return (
-                <tr key={item.id} className="hover:bg-surface-raised/50">
-                  <td className="px-4 py-3 text-sm font-medium text-navy">
-                    {item.description}
-                    {item.notes?.trim() && (
-                      <p className="mt-0.5 whitespace-pre-line text-xs font-normal italic text-navy/60">
-                        {item.notes}
-                      </p>
-                    )}
-                  </td>
-                  <td className="px-4 py-3 text-right text-sm text-navy">
-                    {Number(item.qty)}
-                    {/* BUY_N_GET_M: name the free units, or the reduced subtotal
+        {/* overflow-x-auto + a min-w on the table: found by pre-merge review —
+            once the shell stopped absorbing overflow via scroll, this table's
+            fixed-width Qty/Unit Price/Subtotal columns (304px) left no room
+            for Description in the ~340px available at 390px, clipping the
+            right-aligned Subtotal column with no way to reach it. Mirrors
+            orders/[id]/page.tsx's OrderLineItemsTable. The outer card keeps
+            overflow-hidden so its rounded corners still clip the header
+            strip; only the table itself scrolls. */}
+        <div className="overflow-x-auto">
+          <table className="w-full min-w-[500px]">
+            <thead>
+              <tr className="border-b border-surface-border text-xs text-navy/70 uppercase tracking-wider">
+                <th className="px-4 py-2.5 text-left">Description</th>
+                <th className="px-4 py-2.5 text-right w-20">Qty</th>
+                <th className="px-4 py-2.5 text-right w-28">Unit Price</th>
+                <th className="px-4 py-2.5 text-right w-28">Subtotal</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-surface-border">
+              {(invoice.items ?? []).map((item) => {
+                const msrp = itemMsrp(item);
+                return (
+                  <tr key={item.id} className="hover:bg-surface-raised/50">
+                    <td className="px-4 py-3 text-sm font-medium text-navy">
+                      {item.description}
+                      {item.notes?.trim() && (
+                        <p className="mt-0.5 whitespace-pre-line text-xs font-normal italic text-navy/60">
+                          {item.notes}
+                        </p>
+                      )}
+                    </td>
+                    <td className="px-4 py-3 text-right text-sm text-navy">
+                      {Number(item.qty)}
+                      {/* BUY_N_GET_M: name the free units, or the reduced subtotal
                         reads as a pricing error. */}
-                    {Number(item.promoFreeUnits ?? 0) > 0 && (
-                      <p className="mt-0.5 inline-flex items-center rounded-full bg-buyer-50 px-1.5 py-0.5 text-[10px] font-semibold text-buyer-700">
-                        {Number(item.promoFreeUnits)} free
-                      </p>
-                    )}
-                  </td>
-                  <td className="px-4 py-3 text-right text-sm text-navy/70">
-                    {fmt(Number(item.unitPrice))}
-                    {/* Suggested retail price, snapshotted at line creation. Keyed off
+                      {Number(item.promoFreeUnits ?? 0) > 0 && (
+                        <p className="mt-0.5 inline-flex items-center rounded-full bg-buyer-50 px-1.5 py-0.5 text-[10px] font-semibold text-buyer-700">
+                          {Number(item.promoFreeUnits)} free
+                        </p>
+                      )}
+                    </td>
+                    <td className="px-4 py-3 text-right text-sm text-navy/70">
+                      {fmt(Number(item.unitPrice))}
+                      {/* Suggested retail price, snapshotted at line creation. Keyed off
                         data presence, not the addon flag, so an issued invoice keeps
                         rendering it even if the seller later loses the MSRP addon. */}
-                    {msrp != null && (
-                      <p className="mt-0.5 text-[10px] text-navy/50">MSRP {fmt(msrp)}/pc</p>
-                    )}
-                  </td>
-                  <td className="px-4 py-3 text-right text-sm font-medium text-navy">
-                    {fmt(Number(item.subtotal))}
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
+                      {msrp != null && (
+                        <p className="mt-0.5 text-[10px] text-navy/50">MSRP {fmt(msrp)}/pc</p>
+                      )}
+                    </td>
+                    <td className="px-4 py-3 text-right text-sm font-medium text-navy">
+                      {fmt(Number(item.subtotal))}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
       </div>
 
       {/* Payment history */}
@@ -363,42 +373,46 @@ export default function BuyerInvoiceDetailPage() {
               Payment History ({invoice.payments.length})
             </h2>
           </div>
-          <table className="w-full">
-            <thead>
-              <tr className="border-b border-surface-border text-xs text-navy/70 uppercase tracking-wider">
-                <th className="px-4 py-2.5 text-left">Date</th>
-                <th className="px-4 py-2.5 text-left">Method</th>
-                <th className="px-4 py-2.5 text-left">Status</th>
-                <th className="px-4 py-2.5 text-right">Amount</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-surface-border">
-              {invoice.payments.map((p) => {
-                const badge = checkBadgeFor(p);
-                const voided = p.status === "VOID";
-                return (
-                  <tr key={p.id} className="hover:bg-surface-raised/50">
-                    <td className="px-4 py-3 text-sm text-navy">
-                      {formatDate(p.paidAt ?? p.createdAt ?? null)}
-                    </td>
-                    <td className="px-4 py-3 text-sm text-navy/70">
-                      {p.method.replace(/_/g, " ")}
-                    </td>
-                    <td className="px-4 py-3 text-sm">
-                      {badge && <Badge variant={badge.variant}>{badge.label}</Badge>}
-                    </td>
-                    <td
-                      className={`px-4 py-3 text-right text-sm font-medium ${
-                        voided ? "text-danger line-through" : "text-success"
-                      }`}
-                    >
-                      {fmt(Number(p.amount))}
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
+          {/* Same overflow-x-auto + min-w fix as the line-items table above —
+              this table has the same four-narrow-columns-in-no-space shape. */}
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[480px]">
+              <thead>
+                <tr className="border-b border-surface-border text-xs text-navy/70 uppercase tracking-wider">
+                  <th className="px-4 py-2.5 text-left">Date</th>
+                  <th className="px-4 py-2.5 text-left">Method</th>
+                  <th className="px-4 py-2.5 text-left">Status</th>
+                  <th className="px-4 py-2.5 text-right">Amount</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-surface-border">
+                {invoice.payments.map((p) => {
+                  const badge = checkBadgeFor(p);
+                  const voided = p.status === "VOID";
+                  return (
+                    <tr key={p.id} className="hover:bg-surface-raised/50">
+                      <td className="px-4 py-3 text-sm text-navy">
+                        {formatDate(p.paidAt ?? p.createdAt ?? null)}
+                      </td>
+                      <td className="px-4 py-3 text-sm text-navy/70">
+                        {p.method.replace(/_/g, " ")}
+                      </td>
+                      <td className="px-4 py-3 text-sm">
+                        {badge && <Badge variant={badge.variant}>{badge.label}</Badge>}
+                      </td>
+                      <td
+                        className={`px-4 py-3 text-right text-sm font-medium ${
+                          voided ? "text-danger line-through" : "text-success"
+                        }`}
+                      >
+                        {fmt(Number(p.amount))}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
         </div>
       )}
 
