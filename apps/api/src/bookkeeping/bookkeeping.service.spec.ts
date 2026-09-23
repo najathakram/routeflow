@@ -220,6 +220,48 @@ describe("BookkeepingService", () => {
 
   // ─── recordPayment ────────────────────────────────────────────────────────
 
+  describe("recordPayment — B812: alreadyPaid/remaining/totalPaid are rounded, so a fully-paid invoice actually flips to PAID", () => {
+    // 0.70 + 0.10 === 0.7999999999999999 in plain JS float addition — an
+    // $0.80 invoice with a $0.70 payment already on it never reached PAID
+    // when this $0.10 payment landed, and (B812) every payment after that
+    // was refused as "exceeds remaining balance" off a near-zero float
+    // residual instead of the correct "already fully paid".
+    function mockInvoice(existingPayments: Array<{ amount: number }>) {
+      const update = jest.fn().mockResolvedValue({ id: "inv-b812" });
+      const create = jest.fn();
+      prisma.tenantTransaction.mockImplementation(async (fn: any) =>
+        fn({
+          invoice: {
+            findUnique: jest
+              .fn()
+              .mockResolvedValue({ id: "inv-b812", total: 0.8, payments: existingPayments }),
+            update,
+          },
+          invoicePayment: { create },
+        }),
+      );
+      return { update, create };
+    }
+
+    it("REG-B812: a $0.10 payment on a $0.70-already-paid $0.80 invoice flips status to PAID, not PARTIAL", async () => {
+      const { update } = mockInvoice([{ amount: 0.7 }]);
+
+      await service.recordPayment("inv-b812", { amount: 0.1, method: "CASH" as any });
+
+      expect(update).toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ status: "PAID" }) }),
+      );
+    });
+
+    it("REG-B812: a further payment on that now-fully-paid invoice is refused as already paid, not as an overpayment", async () => {
+      mockInvoice([{ amount: 0.7 }, { amount: 0.1 }]);
+
+      await expect(
+        service.recordPayment("inv-b812", { amount: 0.01, method: "CASH" as any }),
+      ).rejects.toThrow("Transaction is already fully paid");
+    });
+  });
+
   describe("recordPayment", () => {
     it("should throw NotFoundException when transaction does not exist", async () => {
       // recordPayment uses tenantTransaction (not $transaction)
