@@ -1285,6 +1285,49 @@ describe("BookkeepingService", () => {
     });
   });
 
+  describe("createExpense — B781: the computed amount is rounded to the cent", () => {
+    it("a mileage expense's distance x rate is cent-exact, not a float artifact", async () => {
+      // 3 x 0.335 === 1.0050000000000001 in plain JS float multiplication — a
+      // real-world sub-cent mileage rate (33.5c/mile).
+      prisma.mileageRate.findFirst.mockResolvedValue({ ratePerUnit: 0.335 });
+      prisma.expense.create.mockResolvedValue({ id: "exp-mileage" });
+
+      await service.createExpense(
+        {
+          date: new Date("2026-09-01T00:00:00Z"),
+          isMileage: true,
+          distance: 3,
+          mileageUnit: "MILE",
+        },
+        "u1",
+      );
+
+      const data = prisma.expense.create.mock.calls[0][0].data;
+      expect(data.amount).toBe(1.01);
+      expect(data.amount).not.toBe(1.0050000000000001);
+    });
+
+    it("an itemized expense's line-item sum is cent-exact, not a float artifact", async () => {
+      prisma.expense.create.mockResolvedValue({ id: "exp-itemized" });
+
+      await service.createExpense(
+        {
+          date: new Date("2026-09-01T00:00:00Z"),
+          isItemized: true,
+          lineItems: [
+            { account: "Supplies", amount: 0.1 },
+            { account: "Fuel", amount: 0.2 },
+          ],
+        },
+        "u1",
+      );
+
+      const data = prisma.expense.create.mock.calls[0][0].data;
+      expect(data.amount).toBe(0.3);
+      expect(data.amount).not.toBe(0.30000000000000004);
+    });
+  });
+
   describe("extractExpenseItems", () => {
     const RECEIPT_MODEL = "claude-opus-4-5-20251101";
 

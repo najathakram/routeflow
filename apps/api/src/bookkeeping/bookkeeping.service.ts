@@ -464,13 +464,18 @@ export class BookkeepingService implements OnModuleInit {
       const rate = await this.getApplicableMileageRate(date, rest.mileageUnit ?? "MILE");
       if (rate) {
         rateSnapshot = Number(rate.ratePerUnit);
-        computedAmount = Number(rest.distance) * rateSnapshot;
+        // B781: round every monetary write — distance x a sub-cent rate (e.g. $0.335/mi)
+        // lands off-cent in float (3 x 0.335 === 1.0050000000000001).
+        computedAmount = roundMoney(Number(rest.distance) * rateSnapshot);
       }
     }
 
     // For itemized expenses, amount = sum of line items
     if (isItemized && lineItems?.length) {
-      computedAmount = lineItems.reduce((s: number, li: any) => s + Number(li.amount), 0);
+      // B781: round every monetary write — see the mileage branch's comment above.
+      computedAmount = roundMoney(
+        lineItems.reduce((s: number, li: any) => s + Number(li.amount), 0),
+      );
     }
 
     const expense = await this.prisma.forTenant().expense.create({
