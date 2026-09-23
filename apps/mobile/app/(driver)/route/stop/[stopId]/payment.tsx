@@ -43,6 +43,7 @@ import { useDeliveryPlanStore } from "../../../../../store/delivery-plan-store";
 import { useRunSettlementStore } from "../../../../../store/runSettlementStore";
 import type { CollectedMethod } from "../../../../../lib/run-settlement";
 import {
+  activeOrderSubtotal,
   orderAmountDue,
   reconciledAmountDue,
   shortPickCategoryTax,
@@ -166,6 +167,12 @@ export default function PaymentScreen() {
               discountAmount: o.discountAmount,
               shippingFee: o.shippingFee,
             },
+            // SA-092b: the FULL active-line subtotal (ALL of o.lineItems,
+            // never the delivered-basis shortPickLines below) — gives the
+            // discount its own SEEDING share, distinct from the delivered
+            // share applied to regular tax. See run-money.ts's
+            // ReconciledAmountDueInput.activeSubtotal docstring.
+            activeSubtotal: activeOrderSubtotal({ lineItems: o.lineItems ?? [] }),
             deliveredSubtotal: reconciledTotal(shortPickLines, deliveredQtyById),
             deliveredCategoryTax: shortPickCategoryTax(
               o.lineItems ?? [],

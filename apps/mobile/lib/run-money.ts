@@ -116,6 +116,21 @@ export function sumOrderLineItems(order: RunMoneyOrder): number {
   return (order.lineItems ?? []).reduce((sum, li) => sum + lineItemSubtotal(li), 0);
 }
 
+/**
+ * Σ non-CANCELLED lines' `lineItemSubtotal` — the ACTIVE line subtotal a
+ * fresh invoice would be SEEDED from right now (`createSplitInvoices`'s
+ * first pass, SA-092). Used by `orderAmountDue`'s own fallback and, as
+ * `ReconciledAmountDueInput.activeSubtotal`, to give `reconciledAmountDue`
+ * the discount's seeding share — see that function's docstring.
+ */
+export function activeOrderSubtotal(order: RunMoneyOrder): number {
+  return roundMoney(
+    (order.lineItems ?? [])
+      .filter((li) => li.status !== "CANCELLED")
+      .reduce((sum, li) => sum + lineItemSubtotal(li), 0),
+  );
+}
+
 export function sumStopOrders(stop: RunMoneyStop): number {
   return (stop.orders ?? []).reduce((sum, order) => sum + sumOrderLineItems(order), 0);
 }
@@ -143,17 +158,25 @@ export function sumStopOrders(stop: RunMoneyStop): number {
  *          quote (nothing has been short-picked yet), unlike
  *          `deliveredCategoryTax`'s delivered-share scaling for the
  *          post-delivery path; reusing that here would under-quote.
- *        due = subtotal − order.discountAmount + order.shippingFee +
- *          regularTax + categoryTax — discount/shippingFee stay WHOLE,
- *          never prorated, exactly as `reconciledAmountDue` already does.
- *          SA-092: the driver's actual completion path (`completeWithPayment`
- *          -> `recordDeliveryPaymentInTx`, no existing draft -> `createInvoiceFromOrder`
- *          -> `createSplitInvoices` over the FULL order, share 1.0, so
- *          discount/fee seed WHOLE -> `reconcileOrderDraftInvoice(delivered)`,
- *          which keeps the already-seeded discount/fee unchanged) never
- *          prorates either one. `createSplitInvoices`'s own proportional-
- *          discount formula (invoices.service.ts ~1172) only fires on a
- *          SECOND-PASS office-side invoice generation, never on this path.
+ *        due = subtotal − discount×r + order.shippingFee + regularTax +
+ *          categoryTax — shippingFee stays WHOLE. discount and regularTax
+ *          BOTH scale by r (SA-092b: `r = subtotal / (orderSubtotal || 1)`,
+ *          the exact `Number(order.subtotal) || 1` pattern
+ *          `rebuildSiblingDrafts`/`reconcileOrderDraftInvoice` use) — never
+ *          prorated is WRONG as a blanket claim (an earlier round's own
+ *          error): the driver's actual completion path
+ *          (`completeWithPayment` -> `recordDeliveryPaymentInTx`, no
+ *          existing draft -> `createInvoiceFromOrder` -> `createSplitInvoices`
+ *          over the FULL order, first pass, share r=1 so discount SEEDS
+ *          whole -> `reconcileOrderDeliveredInvoices`, byte-identical for a
+ *          single group to `reconcileOrderDraftInvoice(delivered)`, which
+ *          keeps that seeded discount unchanged) means r is 1 in the
+ *          overwhelming majority of reads, but the formula itself DOES
+ *          scale by r whenever the active line set diverges from
+ *          `order.subtotal` (a stale/partial client snapshot) — exactly
+ *          mirroring how `createSplitInvoices`'s own proportional-discount
+ *          formula (invoices.service.ts ~1172) computes the SAME ratio on
+ *          its first pass, at share 1.0 on this path.
  *      RULING 2 stands unchanged: `Order.total` itself is never read here —
  *      its discount term depends on which write path last touched it
  *      (CREATE nets it, every edit/merge drops it), so it can never be a
@@ -172,26 +195,26 @@ export function orderAmountDue(order: RunMoneyOrder, isTaxExempt?: boolean): num
     return roundMoney(finiteTotals.reduce((sum, n) => sum + n, 0));
   }
 
-  const active = (order.lineItems ?? []).filter((li) => li.status !== "CANCELLED");
-  const subtotal = roundMoney(active.reduce((sum, li) => sum + lineItemSubtotal(li), 0));
+  const subtotal = activeOrderSubtotal(order);
   const orderSubtotal = finiteOrNull(order.subtotal);
-  if (orderSubtotal == null || !(orderSubtotal > 0)) {
-    // B305 PR B review (Opus): `order.subtotal` missing/unusable means the
-    // WHOLE RUN_STOP_INCLUDE-driven projection (order.tax, discountAmount,
-    // shippingFee, and the caller's isTaxExempt) may be just as unpopulated
-    // — the exact shape of an OTA shipping this fix ahead of #1272's server
-    // deploy (expo-updates ships with no store-build gate). `li.categoryTaxAmount`
-    // is a DIFFERENT, already-live projection (RUN_LINE_ITEMS_SELECT), so
-    // without this bail the tax math below would still charge it — to an
-    // EXEMPT customer too, since `isTaxExempt` would silently read `undefined`
-    // (never `true`). Mirrors reconciledAmountDue's identical bail (below):
-    // the bare active-line subtotal is the only figure safe to trust when
-    // the order projection itself is incomplete.
+  if (orderSubtotal == null) {
+    // B305 PR B review (Opus, narrowed SA-092b): `order.subtotal` itself
+    // missing means the WHOLE RUN_STOP_INCLUDE-driven projection (order.tax,
+    // discountAmount, shippingFee, and the caller's isTaxExempt) may be just
+    // as unpopulated — the exact shape of an OTA shipping this fix ahead of
+    // #1272's server deploy (expo-updates ships with no store-build gate).
+    // `li.categoryTaxAmount` is a DIFFERENT, already-live projection
+    // (RUN_LINE_ITEMS_SELECT), so without this bail the tax math below would
+    // still charge it — to an EXEMPT customer too, since `isTaxExempt` would
+    // silently read `undefined` (never `true`). A genuinely-zero
+    // `order.subtotal` is NOT this case (the field IS present and IS a real
+    // number) — it flows through the normal formula below, `r` landing at 0
+    // via `orderSubtotal || 1`, exactly as the server treats a $0 order.
     return roundMoney(subtotal);
   }
-  const r = subtotal / orderSubtotal;
+  const r = subtotal / (orderSubtotal || 1);
 
-  const discount = finiteOrNull(order.discountAmount) ?? 0;
+  const discount = (finiteOrNull(order.discountAmount) ?? 0) * r;
   const shippingFee = Math.max(0, finiteOrNull(order.shippingFee) ?? 0);
 
   if (isTaxExempt) {
@@ -200,7 +223,9 @@ export function orderAmountDue(order: RunMoneyOrder, isTaxExempt?: boolean): num
 
   const regularTax = roundMoney((finiteOrNull(order.tax) ?? 0) * r);
   const categoryTax = roundMoney(
-    active.reduce((sum, li) => sum + (finiteOrNull(li.categoryTaxAmount) ?? 0), 0),
+    (order.lineItems ?? [])
+      .filter((li) => li.status !== "CANCELLED")
+      .reduce((sum, li) => sum + (finiteOrNull(li.categoryTaxAmount) ?? 0), 0),
   );
 
   return roundMoney(subtotal - discount + shippingFee + regularTax + categoryTax);
@@ -295,6 +320,23 @@ export interface ReconciledAmountDueInput {
     discountAmount?: number | string | null;
     shippingFee?: number | string | null;
   };
+  /**
+   * SA-092b: the order's FULL active (non-CANCELLED) line subtotal — NOT
+   * `deliveredSubtotal` below. Used ONLY when no draft exists, to compute
+   * the discount's SEEDING share (`activeSubtotal / order.subtotal`): the
+   * server seeds a fresh invoice's discount at the active-line share
+   * (`createSplitInvoices`, first pass) and the delivered-basis rebuild
+   * (`reconcileOrderDeliveredInvoices`, byte-identical for a single group
+   * to `reconcileOrderDraftInvoice(delivered)`) keeps that seeded figure
+   * UNCHANGED — it is never re-scaled by how much was actually delivered.
+   * Applying the delivered share here instead would under-subtract the
+   * discount on every short pick. Optional: defaults to `order.subtotal`
+   * itself (seeding share 1, i.e. the discount stays whole) when omitted,
+   * matching every caller's behavior before this field existed. Ignored
+   * when a draft already exists — its stored `discount` IS the seeded
+   * figure, used as-is.
+   */
+  activeSubtotal?: number;
   /** The delivered/short-picked share of the order's pre-tax line subtotal (`reconciledTotal`). */
   deliveredSubtotal: number;
   /** Σ each delivered line's category tax share — see `deliveredCategoryTax`. */
@@ -317,18 +359,25 @@ export interface ReconciledAmountDueInput {
  * `regularTax` scales with the delivered SHARE of the order's own subtotal
  * (`orderTax * (deliveredSubtotal / orderSubtotal)`, never the draft's whole
  * `taxAmount`), `categoryTax` is the caller's own per-line
- * `deliveredCategoryTax`, and discount/shipping fee stay WHOLE — SA-092: the
- * driver's actual completion path never prorates either one (see
- * `orderAmountDue`'s docstring above for the full call chain). B305 round 5:
- * discount/shippingFee source from the
- * open draft(s) when one exists, else the ORDER's own columns — previously
- * NO drafts meant an early return of the bare pre-tax `deliveredSubtotal`,
- * which is the DEFAULT state pre-completion (the server only creates a draft
- * at stop-completion), so a short-picked stop omitted tax on every normal
- * delivery. Still falls back to the bare `deliveredSubtotal` only when the
- * order's own subtotal isn't a usable basis at all (<=0 or missing) —
- * prorating against zero would divide by zero, and that shape means the
- * order projection itself is incomplete, not merely undrafted.
+ * `deliveredCategoryTax`, and shipping fee stays WHOLE. SA-092b: discount
+ * does NOT share regularTax's delivered-share scaling — when no draft
+ * exists it scales by the discount's own SEEDING share instead
+ * (`activeSubtotal / orderSubtotal`, see `ReconciledAmountDueInput.activeSubtotal`),
+ * because the server seeds a fresh invoice's discount at the active-line
+ * share and the delivered-basis rebuild (`reconcileOrderDeliveredInvoices`,
+ * byte-identical for a single group to `reconcileOrderDraftInvoice(delivered)`)
+ * keeps that seeded figure unchanged — never re-scaled by delivered qty.
+ * When a draft already exists, its own stored `discount` is used as-is (it
+ * already IS the seeded figure). B305 round 5: discount/shippingFee source
+ * from the open draft(s) when one exists, else the ORDER's own columns —
+ * previously NO drafts meant an early return of the bare pre-tax
+ * `deliveredSubtotal`, which is the DEFAULT state pre-completion (the server
+ * only creates a draft at stop-completion), so a short-picked stop omitted
+ * tax on every normal delivery. Still falls back to the bare
+ * `deliveredSubtotal` only when the order's own subtotal isn't a usable
+ * basis at all (<=0 or missing) — prorating against zero would divide by
+ * zero, and that shape means the order projection itself is incomplete, not
+ * merely undrafted.
  */
 export function reconciledAmountDue(input: ReconciledAmountDueInput): number {
   const deliveredSubtotal = Number.isFinite(input.deliveredSubtotal) ? input.deliveredSubtotal : 0;
@@ -338,20 +387,28 @@ export function reconciledAmountDue(input: ReconciledAmountDueInput): number {
   }
 
   const drafts = input.drafts ?? [];
+  // SA-092b: the discount's SEEDING share — defaults to orderSubtotal itself
+  // (seeding share 1, discount stays whole) when the caller doesn't supply
+  // activeSubtotal, matching every pre-existing caller's behavior.
+  const activeSubtotal = Number.isFinite(input.activeSubtotal)
+    ? (input.activeSubtotal as number)
+    : orderSubtotal;
+  const rSeed = activeSubtotal / orderSubtotal;
   const discount =
     drafts.length > 0
       ? drafts.reduce((sum, d) => sum + (finiteOrNull(d.discount) ?? 0), 0)
-      : (finiteOrNull(input.order?.discountAmount) ?? 0);
+      : (finiteOrNull(input.order?.discountAmount) ?? 0) * rSeed;
   const shippingFee =
     drafts.length > 0
       ? drafts.reduce((sum, d) => sum + (finiteOrNull(d.shippingFee) ?? 0), 0)
       : Math.max(0, finiteOrNull(input.order?.shippingFee) ?? 0);
 
   // B305 round 3: an exempt customer's server-side reconcile
-  // (invoices.service.ts#reconcileOrderDraftInvoice) zeroes BOTH the regular
-  // tax term and the per-line category tax — reproduce that exactly, or a
-  // short-picked stop over-collects at the door. Discount/shipping fee still
-  // stay whole — SA-092: never prorated on the driver's actual completion path.
+  // (invoices.service.ts#reconcileOrderDeliveredInvoices) zeroes BOTH the
+  // regular tax term and the per-line category tax — reproduce that
+  // exactly, or a short-picked stop over-collects at the door. `discount`
+  // above already carries its own seeding-share scaling (or is used as-is
+  // from a draft); shipping fee stays whole either way.
   if (input.isTaxExempt) {
     return roundMoney(deliveredSubtotal - discount + shippingFee);
   }

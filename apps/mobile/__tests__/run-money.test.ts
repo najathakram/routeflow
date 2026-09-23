@@ -296,6 +296,58 @@ describe("REG-B305 tax-inclusive amount due (round 2: read off the draft invoice
       expect(due).toBe(20);
       expect(Number.isNaN(due)).toBe(false);
     });
+
+    // SA-092b: this is the ACTUAL guard-removal repro (the earlier "exempt
+    // customer's fallback" tests above all supplied order.subtotal, so none
+    // of them exercised the `orderSubtotal == null` bail at all — removing
+    // the guard left every one of them green). order.subtotal is absent
+    // here, matching an OTA of this mobile fix shipped ahead of #1272's
+    // server deploy.
+    it("GUARD: order.subtotal entirely absent (pre-#1272-deploy shape) -> bare active subtotal, never the leaked category tax", () => {
+      const order = {
+        lineItems: [{ subtotal: 100, categoryTaxAmount: 8, status: "PENDING" }],
+        // subtotal/tax intentionally absent.
+      };
+      expect(orderAmountDue(order as any)).toBe(100);
+      expect(orderAmountDue(order as any)).not.toBe(108); // the leaked categoryTaxAmount
+    });
+
+    it("GUARD via stopAmountDue: same repro, exercised through the real caller chain", () => {
+      const stop = {
+        orders: [{ lineItems: [{ subtotal: 100, categoryTaxAmount: 8, status: "PENDING" }] }],
+        customer: {},
+      };
+      expect(stopAmountDue(stop as any)).toBe(100);
+      expect(stopAmountDue(stop as any)).not.toBe(108);
+    });
+
+    // SA-092b: a GENUINELY zero order.subtotal is NOT the guard case (the
+    // field IS present) — r lands at 0 via `orderSubtotal || 1`, matching
+    // the server's own `Number(order.subtotal) || 1` pattern exactly.
+    it("a genuinely $0 order.subtotal is not the guard case: fee stays whole, discount and tax scale to zero (r = 0)", () => {
+      const order = {
+        lineItems: [],
+        subtotal: 0,
+        tax: 0,
+        discountAmount: 3,
+        shippingFee: 5,
+      };
+      expect(orderAmountDue(order as any)).toBe(5);
+      expect(orderAmountDue(order as any)).not.toBe(2); // whole discount (0 - 3 + 5) — the old bug
+    });
+
+    it("pins discount x r at r = 0.5 (active-line subtotal is HALF of order.subtotal)", () => {
+      // Active lines sum to 50, order.subtotal 100 -> r = 0.5. discount 10 x
+      // 0.5 = 5 subtracted, never the whole 10.
+      const order = {
+        lineItems: [{ qty: 1, unitPrice: 50, subtotal: 50, status: "PENDING" }],
+        subtotal: 100,
+        tax: 0,
+        discountAmount: 10,
+      };
+      expect(orderAmountDue(order as any)).toBe(45); // 50 - 5
+      expect(orderAmountDue(order as any)).not.toBe(40); // whole discount (50 - 10) — the old bug
+    });
   });
 
   it("REG-B305 coerces string-Decimal draft totals", () => {
@@ -436,6 +488,49 @@ describe("reconciledAmountDue (REG-B305 RULING 3: the server's delivered-basis r
         deliveredCategoryTax: 5,
       }),
     ).toBe(49.2);
+  });
+
+  // SA-092b: the discount's share is the SEEDING share (activeSubtotal /
+  // orderSubtotal), NEVER the delivered share applied to regular tax — the
+  // server seeds the discount at the active-line share when the invoice is
+  // first created and the delivered-basis rebuild never re-scales it.
+  it("SA-092b discriminator: delivered share 0.5, seeding share (r_seed) 1 -> discount stays WHOLE (10), never scaled to the delivered share (5)", () => {
+    // order.subtotal 100 == activeSubtotal 100 -> r_seed 1. deliveredSubtotal
+    // 50 -> delivered share 0.5. If the code wrongly applied the DELIVERED
+    // share to discount, this would read 5, not 10.
+    const due = reconciledAmountDue({
+      drafts: [],
+      order: { subtotal: 100, tax: 0, discountAmount: 10, shippingFee: 0 },
+      activeSubtotal: 100,
+      deliveredSubtotal: 50,
+      deliveredCategoryTax: 0,
+    });
+    expect(due).toBe(40); // 50 - 10 + 0 + 0*0.5 + 0
+    expect(due).not.toBe(45); // 50 - 5 (wrongly delivered-share-scaled discount)
+  });
+
+  it("SA-092b: seeding share (r_seed) 0.5 scales the discount to 5, distinct from the delivered share", () => {
+    // activeSubtotal 50 vs order.subtotal 100 -> r_seed 0.5. discount 10 x
+    // 0.5 = 5.
+    const due = reconciledAmountDue({
+      drafts: [],
+      order: { subtotal: 100, tax: 0, discountAmount: 10, shippingFee: 0 },
+      activeSubtotal: 50,
+      deliveredSubtotal: 50,
+      deliveredCategoryTax: 0,
+    });
+    expect(due).toBe(45); // 50 - 5 + 0 + 0 + 0
+  });
+
+  it("SA-092b: a draft's own stored discount is used as-is, never re-scaled by r_seed", () => {
+    const due = reconciledAmountDue({
+      drafts: [{ discount: 10, shippingFee: 0 }],
+      order: { subtotal: 100, tax: 0 },
+      activeSubtotal: 50, // r_seed 0.5 -- must NOT touch a draft's own discount
+      deliveredSubtotal: 50,
+      deliveredCategoryTax: 0,
+    });
+    expect(due).toBe(40); // 50 - 10 (draft's own discount, whole) + 0 + 0 + 0
   });
 
   it("REG-B305 falls back to the bare delivered subtotal when the order's own subtotal isn't a usable basis", () => {
