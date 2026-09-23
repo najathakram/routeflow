@@ -14,9 +14,11 @@
 export const SPEC_FILE = /\.spec\.ts$/;
 export const HEAP_MB = 4096;
 export const OOM_HINT =
-  `the type-check ran out of memory. It needs a ${HEAP_MB} MB heap: run it through ` +
-  `\`npm run check-types -w @routeflow/api\` (which sets it), or run it with ` +
-  `NODE_OPTIONS=--max-old-space-size=${HEAP_MB}; on an 8 GB machine, stop other heavy jobs first`;
+  `the type-check ran out of memory at the ${HEAP_MB} MB heap this script already sets ` +
+  `(--max-old-space-size=${HEAP_MB}, also exported in NODE_OPTIONS to the compile worker). ` +
+  `Free memory first (on an 8 GB machine: no other verify, push or Jest run at the same time); ` +
+  `if the program has genuinely outgrown it, raise HEAP_MB in scripts/lib/check-types-ratchet-core.mjs`;
+export const NOCHECK = /^\s*\/\/\s*@ts-nocheck\b/m;
 
 const fileOf = (d) => d.file ?? "<no file>";
 
@@ -31,9 +33,11 @@ export function countByFile(diagnostics) {
  * @param {{file: string|null, code: number, line: number, message: string}[]} diagnostics
  * @param {Record<string, number>} baseline spec file -> allowed error count
  */
-export function evaluate(diagnostics, baseline) {
+export function evaluate(diagnostics, baseline, nocheckFiles = []) {
   const counts = countByFile(diagnostics);
   const failures = [];
+  // A `// @ts-nocheck` file reports no diagnostics at all, so it would silently lower its own count.
+  for (const file of [...nocheckFiles].sort()) failures.push({ kind: "ts-nocheck", file });
   for (const file of Object.keys(baseline).sort()) {
     if (!SPEC_FILE.test(file)) failures.push({ kind: "baseline-non-spec", file });
   }
@@ -82,6 +86,8 @@ export function describeFailure(f) {
       return `${f.file}: ${f.actual} type error(s), the baseline allows ${f.allowed}. Fix the new error(s); the baseline never goes up.`;
     case "stale-baseline":
       return `${f.file}: only ${f.actual} type error(s) left but the baseline still allows ${f.allowed}. Lower it: node scripts/check-types-ratchet.mjs --lower-baseline`;
+    case "ts-nocheck":
+      return `${f.file}: \`// @ts-nocheck\` switches the type-check off for the whole file, which would hide its errors from this gate. Remove it and fix (or baseline) the errors.`;
     case "baseline-non-spec":
       return `${f.file}: the baseline lists a non-spec file. Only *.spec.ts files can be allow-listed; remove the entry.`;
     default:

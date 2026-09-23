@@ -24,6 +24,12 @@ const CONFIG = path.join(API_DIR, "tsconfig.spec.json");
 const WORKER = path.join(API_DIR, "scripts/lib/check-types-worker.mjs");
 const BASELINE = path.join(API_DIR, "check-types.spec-baseline.json");
 const mode = process.argv[2] ?? "check";
+if (!["check", "--lower-baseline", "--init-baseline"].includes(mode)) {
+  console.error(
+    `check-types (api): unknown argument "${mode}" (expected --lower-baseline or --init-baseline).`,
+  );
+  process.exit(2);
+}
 
 const heapFlag = `--max-old-space-size=${HEAP_MB}`;
 const nodeOptions = [process.env.NODE_OPTIONS ?? "", heapFlag].join(" ").trim();
@@ -37,6 +43,7 @@ const res = spawnSync(process.execPath, [heapFlag, WORKER, CONFIG], {
 const oom = classifyWorkerExit(res);
 if (oom) {
   console.error(`check-types (api): FAILED: ${oom.message}.`);
+  if (res.stderr) console.error(res.stderr.trim().split("\n").slice(-12).join("\n"));
   process.exit(1);
 }
 if (res.status !== 0 || !res.stdout.trim()) {
@@ -46,7 +53,9 @@ if (res.status !== 0 || !res.stdout.trim()) {
   if (res.stderr) console.error(res.stderr.trim().split("\n").slice(-20).join("\n"));
   process.exit(1);
 }
-const { files, diagnostics, wallMs, peakRssMb } = JSON.parse(res.stdout.trim().split("\n").pop());
+const { files, diagnostics, nocheck, wallMs, peakRssMb } = JSON.parse(
+  res.stdout.trim().split("\n").pop(),
+);
 const baseline = existsSync(BASELINE) ? JSON.parse(readFileSync(BASELINE, "utf8")) : null;
 
 console.log(
@@ -76,7 +85,7 @@ if (mode === "--init-baseline") {
   process.exit(0);
 }
 
-const result = evaluate(diagnostics, baseline ?? {});
+const result = evaluate(diagnostics, baseline ?? {}, nocheck);
 
 if (mode === "--lower-baseline") {
   const blocking = result.failures.filter((f) => f.kind !== "stale-baseline");

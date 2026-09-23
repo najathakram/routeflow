@@ -25,8 +25,14 @@ const program = ts.createProgram({
   projectReferences: parsed.projectReferences,
   configFileParsingDiagnostics: ts.getConfigFileParsingDiagnostics(parsed),
 });
+const rel = (f) => path.relative(apiDir, f).split(path.sep).join("/");
+const nocheck = program
+  .getSourceFiles()
+  .filter((sf) => !rel(sf.fileName).startsWith("..") && !sf.isDeclarationFile)
+  .filter((sf) => /^\s*\/\/\s*@ts-nocheck\b/m.test(sf.text))
+  .map((sf) => rel(sf.fileName));
 const diagnostics = ts.getPreEmitDiagnostics(program).map((d) => ({
-  file: d.file ? path.relative(apiDir, d.file.fileName).split(path.sep).join("/") : null,
+  file: d.file ? rel(d.file.fileName) : null,
   line:
     d.file && d.start !== undefined ? d.file.getLineAndCharacterOfPosition(d.start).line + 1 : 0,
   code: d.code,
@@ -37,6 +43,7 @@ process.stdout.write(
   JSON.stringify({
     files: parsed.fileNames.length,
     diagnostics,
+    nocheck,
     wallMs: Math.round(performance.now() - started),
     peakRssMb: Math.round(process.resourceUsage().maxRSS / 1024),
   }) + "\n",

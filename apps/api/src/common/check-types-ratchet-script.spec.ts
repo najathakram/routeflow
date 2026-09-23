@@ -91,7 +91,8 @@ describe("check-types ratchet rules (B806)", () => {
       c.classifyWorkerExit({ status: 0, signal: null, stderr: "" }),
     ]));`);
     expect(out[0].kind).toBe("oom");
-    expect(out[0].message).toContain("NODE_OPTIONS=--max-old-space-size=4096");
+    expect(out[0].message).toContain("--max-old-space-size=4096");
+    expect(out[0].message).toContain("raise HEAP_MB");
     expect(out[1]).toBeNull();
   });
 
@@ -104,10 +105,23 @@ describe("check-types ratchet rules (B806)", () => {
     expect(core(`console.log(JSON.stringify(c.HEAP_MB));`)).toBe(4096);
   });
 
-  it("tsconfig.spec.json compiles the specs the default tsconfig excludes", () => {
+  it("tsconfig.spec.json covers everything the old check-types did, plus the specs", () => {
     const spec = JSON.parse(readFileSync(path.join(API_DIR, "tsconfig.spec.json"), "utf8"));
     expect(spec.extends).toBe("./tsconfig.json");
-    expect(spec.include).toEqual(["src/**/*.ts"]);
-    expect(JSON.stringify(spec.exclude ?? [])).not.toMatch(/spec/);
+    // No include list: like tsconfig.json, every .ts/.tsx in the package (test/app.e2e-spec.ts,
+    // a new unimported src/**/*.tsx) stays checked; only the spec exclusions are dropped.
+    expect(spec.include).toBeUndefined();
+    expect(JSON.stringify(spec.exclude ?? [])).not.toMatch(/spec|test/);
+  });
+
+  it("RED: a `// @ts-nocheck` file fails, since it would hide its own errors from the count", () => {
+    const out = core(`
+      const r = c.evaluate([], { "src/a.spec.ts": 2 }, ["src/a.spec.ts"]);
+      console.log(JSON.stringify(r.failures.map((f) => [f.kind, f.file])));`);
+    expect(out).toEqual([
+      ["ts-nocheck", "src/a.spec.ts"],
+      ["stale-baseline", "src/a.spec.ts"],
+    ]);
+    expect(core(`console.log(JSON.stringify(c.NOCHECK.test("// @ts-nocheck\\nx")))`)).toBe(true);
   });
 });

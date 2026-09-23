@@ -4,6 +4,5 @@
     "noEmit": true,
     "incremental": false
   },
-  "include": ["src/**/*.ts"],
-  "exclude": ["prisma.config.ts", "scripts/**", "prisma/**"]
+  "exclude": ["prisma.config.ts", "scripts/**", "prisma/**", "dist", "node_modules"]
 }
