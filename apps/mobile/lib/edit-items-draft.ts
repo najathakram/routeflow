@@ -29,6 +29,7 @@ import {
 import { editedLineFreeUnits } from "./invoice-totals";
 import { lineUnitsPerBox } from "./at-door-line-units";
 import { trayRowsFrom, type TrayRow } from "./scan-tray";
+import { incrementLine, incrementLinePiece } from "./sale-line";
 import type { UpdateOrderItemInput } from "./api/orders";
 
 /** Shared with the route file's own "Add unlisted item" flow. */
@@ -254,6 +255,71 @@ export function resolveDraftKeyForPick(
  */
 export function newDraftKey(): string {
   return `new:${newLocalId()}`;
+}
+
+/** The inputs `applyPickToDraft` needs beyond the draft key it writes to. */
+export interface PickInput {
+  productId: string;
+  unitsPerBox: number | null;
+  /** The price to start a FRESH row at — already resolved (price-history vs.
+   *  tier/list) by the caller; this function never re-derives it. */
+  startPrice: number;
+  catalogPrice: number;
+  name: string;
+  unit?: string;
+  kind: "case" | "piece";
+}
+
+/**
+ * SA-108d (E44 correction of SA-108a): the merge/add transform a scan or tap
+ * applies to the draft, extracted to a PURE function of `(draft, key, input)`
+ * alone — no closure over component state, no side effects. This is what
+ * makes it safe to run TWICE for one logical pick: once synchronously by the
+ * caller (`draftRef.current = applyPickToDraft(draftRef.current, key,
+ * input)`) to keep the ref an accurate same-tick mirror, and once more
+ * whenever React actually processes the `setDraft` update it was ALSO handed
+ * to — a functional setState updater must never itself write to a ref (see
+ * `resolveDraftKeyForPick`'s caller in edit-items.tsx): React does not
+ * reliably run it synchronously even for the first call in a same-tick
+ * burst, since the eager-dispatch path also requires the alternate fiber's
+ * lanes to be empty, which a component's own earlier renders can leave
+ * non-empty. `key` is resolved by the CALLER (via `resolveDraftKeyForPick`)
+ * before this runs — never re-derived here, and never re-derived from an
+ * existing entry's own fields (the SA-108 bug this whole lineage fixes).
+ */
+export function applyPickToDraft(
+  draft: Record<string, DraftItem>,
+  key: string,
+  input: PickInput,
+): Record<string, DraftItem> {
+  const existing = draft[key];
+  const upb = Number(existing?.unitsPerBox ?? input.unitsPerBox ?? 0);
+  const boxed = upb > 1;
+  if (existing) {
+    if (boxed) {
+      const line =
+        input.kind === "piece"
+          ? incrementLinePiece(existing, true, upb)
+          : incrementLine(existing, true, upb);
+      return { ...draft, [key]: { ...line, boxSplit: true } };
+    }
+    return { ...draft, [key]: { ...existing, qty: (existing.qty ?? 0) + 1 } };
+  }
+  const base = {
+    productId: input.productId,
+    unitsPerBox: input.unitsPerBox,
+    unitPrice: input.startPrice,
+    catalogPrice: input.catalogPrice,
+    name: input.name,
+    unit: input.unit,
+  };
+  if (boxed) {
+    // 1 box for a case scan/tap; 1 LOOSE piece for a piece-code scan.
+    return input.kind === "piece"
+      ? { ...draft, [key]: { ...base, qty: 1, boxes: 0, pieces: 1, boxSplit: true } }
+      : { ...draft, [key]: { ...base, qty: upb, boxes: 1, pieces: 0, boxSplit: true } };
+  }
+  return { ...draft, [key]: { ...base, qty: 1 } };
 }
 
 /**

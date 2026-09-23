@@ -41,12 +41,13 @@ import {
   roundMoney,
 } from "@routeflow/pricing";
 import { freeUnitsLabel } from "../../../../../lib/buyer-cart-logic";
-import { incrementLine, incrementLinePiece, setLineUnits } from "../../../../../lib/sale-line";
+import { setLineUnits } from "../../../../../lib/sale-line";
 import { buildSubstituteLine } from "../../../../../lib/substitute-line";
 import { findExactScanMatch, looksLikeScanCode, scanUnitKind } from "../../../../../lib/wedge-scan";
 import type { ScanOutcome } from "../../../../../lib/scan-loop";
 import { useMarginConfig, floorForCategory } from "../../../../../lib/api/margin";
 import {
+  applyPickToDraft,
   draftFreeUnits,
   draftTrayRows,
   deserializeEditItemsSnapshot,
@@ -198,16 +199,18 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
   // SA-108: keyed by the line's own identity, never productId — see
   // hydrateFromOrder/resolveDraftKeyForPick (lib/edit-items-draft.ts).
   const [draft, setDraft] = useState<Record<string, DraftItem>>({});
-  // SA-108a: a manually-kept-fresh mirror of `draft`, read by
-  // addPickedToDraft BEFORE calling setDraft. React only runs a functional
-  // setState updater eagerly (synchronously) when the fiber has no update
-  // already pending — true for the FIRST setDraft call in a same-tick burst,
-  // false for every call after it, which are deferred to the real render.
-  // Resolving the merge key INSIDE the updater (the original fix) therefore
-  // read stale data on a second same-tick call for a DIFFERENT product.
-  // Assigned here on every render, and again inside the updater itself
-  // before it returns — both are synchronous, so this stays correct across
-  // a same-tick burst without depending on React's eager/deferred choice.
+  // SA-108d (E44 correction of SA-108a): a manually-kept-fresh mirror of
+  // `draft`. React's functional setState eager-dispatch path needs BOTH the
+  // fiber's AND its alternate's lanes empty — after this component's own
+  // earlier state-driven renders the alternate can retain stale lanes, so
+  // even the FIRST setDraft call of a burst is often deferred too, not just
+  // the second. A ref write placed INSIDE the updater is therefore never
+  // reliable as a synchronization point. Instead: assigned here on every
+  // render, AND at every mutation's own call site via `draftRef.current =
+  // apply(draftRef.current)` (a pure transform, run once synchronously by
+  // us) immediately before handing that SAME pure function to `setDraft` —
+  // never inside a setDraft updater itself, so it never depends on whether
+  // or when React actually invokes it.
   const draftRef = useRef<Record<string, DraftItem>>({});
   draftRef.current = draft;
   // New + existing ad-hoc lines (productId null). Kept separate from `draft`
@@ -686,68 +689,42 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
     const isSpecial = (cpMap.get(p.id) ?? customerTier ?? 1) !== 1;
     const upbRaw = p.unitsPerBox;
     const unitsPerBox = upbRaw == null ? null : Number(upbRaw);
-    // SA-108a (fix round 2): resolve the merge key from `draftRef.current`
-    // BEFORE calling setDraft, never inside the updater. The prior fix
-    // resolved inside the updater expecting React to always run it
-    // synchronously against the latest value — it doesn't: a functional
-    // setState updater only runs eagerly (synchronously, at dispatch time)
-    // when the fiber has no update already pending, which is true for the
-    // FIRST setDraft call in a same-tick burst but false for every call
-    // after it (deferred to the real render). Two DIFFERENT products
-    // scanned in one tick would resolve the SECOND product's key from the
-    // FIRST product's stale in-updater `d`. `draftRef` sidesteps this
-    // entirely: it's assigned synchronously on every render AND again
-    // inside this same updater before it returns, so a same-tick second
-    // call always reads the first call's result regardless of whether
-    // React ran that first call's updater eagerly or not.
+    // Fresh-add starting price — only a genuine discount (below tier) or
+    // upsell (above list), never over a SPECIAL tier price. Else the tier
+    // price. Resolved unconditionally: applyPickToDraft only USES it on a
+    // fresh add, but it must be a plain value handed into a PURE transform,
+    // never re-derived inside one (see SA-108d below).
+    const hist = priceHistory?.[p.id];
+    const startPrice =
+      !isSpecial && hist != null && (hist.lastPrice < catalogPrice || hist.lastPrice > listPrice)
+        ? hist.lastPrice
+        : catalogPrice;
+    // SA-108d (E44 correction of SA-108a): mint the key OUTSIDE from
+    // draftRef.current, then build a PURE `apply(d)` closed over the key and
+    // the pick's inputs — no ref write inside it. React's eager-dispatch
+    // path for a functional setState updater needs BOTH the fiber's and its
+    // alternate's lanes empty; after this component's own earlier renders
+    // the alternate can retain stale lanes, so even the FIRST setDraft call
+    // of a same-tick burst is often deferred, not just the second — a ref
+    // write placed INSIDE the updater (SA-108a's shape) is therefore never a
+    // reliable synchronization point. Instead: `apply` is pure (same `d` in,
+    // same `next` out, always), so running it synchronously ourselves to
+    // update the ref AND handing the identical function to setDraft (which
+    // may run it again, eagerly or not, whenever React gets to it) is safe —
+    // both calls, if they both occur, produce the same result.
     const resolvedKey = resolveDraftKeyForPick(draftRef.current, p.id, null);
-    setDraft((d) => {
-      const existing = d[resolvedKey];
-      const upb = Number(existing?.unitsPerBox ?? unitsPerBox ?? 0);
-      const boxed = upb > 1;
-      let next: Record<string, DraftItem>;
-      if (existing) {
-        if (boxed) {
-          const line =
-            kind === "piece"
-              ? incrementLinePiece(existing, true, upb)
-              : incrementLine(existing, true, upb);
-          next = { ...d, [resolvedKey]: { ...line, boxSplit: true } };
-        } else {
-          next = { ...d, [resolvedKey]: { ...existing, qty: (existing.qty ?? 0) + 1 } };
-        }
-      } else {
-        // Fresh add: conditionally pre-fill the remembered price — only a
-        // genuine discount (below tier) or upsell (above list), never over
-        // a SPECIAL tier price. Else start at the tier price.
-        const hist = priceHistory?.[p.id];
-        const startPrice =
-          !isSpecial &&
-          hist != null &&
-          (hist.lastPrice < catalogPrice || hist.lastPrice > listPrice)
-            ? hist.lastPrice
-            : catalogPrice;
-        const base = {
-          productId: p.id,
-          unitsPerBox,
-          unitPrice: startPrice,
-          catalogPrice,
-          name: p.name,
-          unit: p.unit,
-        };
-        if (boxed) {
-          // 1 box for a case scan/tap; 1 LOOSE piece for a piece-code scan.
-          next =
-            kind === "piece"
-              ? { ...d, [resolvedKey]: { ...base, qty: 1, boxes: 0, pieces: 1, boxSplit: true } }
-              : { ...d, [resolvedKey]: { ...base, qty: upb, boxes: 1, pieces: 0, boxSplit: true } };
-        } else {
-          next = { ...d, [resolvedKey]: { ...base, qty: 1 } };
-        }
-      }
-      draftRef.current = next;
-      return next;
-    });
+    const apply = (d: Record<string, DraftItem>) =>
+      applyPickToDraft(d, resolvedKey, {
+        productId: p.id,
+        unitsPerBox,
+        startPrice,
+        catalogPrice,
+        name: p.name,
+        unit: p.unit,
+        kind,
+      });
+    draftRef.current = apply(draftRef.current);
+    setDraft(apply);
     return resolvedKey;
   };
 

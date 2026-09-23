@@ -10,6 +10,7 @@ import { join } from "path";
 import { computeLineSubtotal } from "@routeflow/pricing";
 import { buildOrderItemDiff } from "../lib/order-item-diff";
 import {
+  applyPickToDraft,
   deserializeEditItemsSnapshot,
   draftTrayRows,
   editItemsSnapshotKey,
@@ -976,57 +977,107 @@ describe("edit-items.tsx source pin: the draft record is never keyed by productI
     expect(source).toMatch(/Object\.entries\(draft\)/);
   });
 
-  it("SA-108a (fix round 2): resolveDraftKeyForPick's ONLY call form reads draftRef.current, never `draft` and never the updater's own `d`", () => {
-    // Both banned forms: `resolveDraftKeyForPick(draft, ...)` (the
-    // render-time closure — stale across a same-tick burst) AND
-    // `resolveDraftKeyForPick(d, ...)` (the updater's own param — correct
-    // only when React happens to run that particular updater eagerly,
-    // which it does NOT for every call after the first in a same-tick
-    // burst; SA-108a's own regression). draftRef is kept synchronously
-    // fresh by BOTH a per-render assignment and an in-updater assignment,
-    // so reading it before setDraft is called is correct regardless of
-    // React's eager/deferred choice for any individual dispatch.
+  it("SA-108d pin 4: resolveDraftKeyForPick's ONLY call form reads draftRef.current, never `draft` and never any updater's own `d`", () => {
+    // All three banned forms: `resolveDraftKeyForPick(draft, ...)` (the
+    // render-time closure — stale across a same-tick burst); `(d, ...)`
+    // (an updater's own param — SA-108a's regression, correct only when
+    // React happens to run THAT updater eagerly, which it does not
+    // reliably for ANY call, first or later, once the alternate fiber
+    // carries stale lanes — SA-108d/E44); and a bare `apply(draftRef...`
+    // typo-shaped call would still need the literal call form below.
     expect(source).not.toMatch(/resolveDraftKeyForPick\(draft,/);
     expect(source).not.toMatch(/resolveDraftKeyForPick\(d,/);
     expect(source).toMatch(/resolveDraftKeyForPick\(draftRef\.current,/);
   });
 
-  it("SA-108a: draftRef is assigned on every render AND inside addPickedToDraft's setDraft updater before it returns — never left to go stale either way", () => {
-    // Per-render mirror: assigned directly in the render body (not inside
-    // an effect, which would be one render behind).
+  it("SA-108d pin 3: draftRef is assigned in the render body (the per-render mirror)", () => {
     expect(source).toMatch(/draftRef\.current = draft;/);
-    // In-updater mirror: the SAME synchronous point every dispatch of THIS
-    // updater reaches, eager or deferred, so a subsequent same-tick read of
-    // draftRef.current is always this call's own result. Scoped to
-    // addPickedToDraft's own body — the file has several other
-    // `setDraft((d) => {` call sites this pin must not accidentally match.
-    const addPickedStart = source.indexOf("const addPickedToDraft = (");
-    expect(addPickedStart).toBeGreaterThan(-1);
-    const nextConstStart = source.indexOf("\n  const decQty = ", addPickedStart);
-    const fnSrc = source.slice(
-      addPickedStart,
-      nextConstStart === -1 ? source.length : nextConstStart,
-    );
-    const setDraftCallStart = fnSrc.indexOf("setDraft((d) => {");
-    expect(setDraftCallStart).toBeGreaterThan(-1);
-    const refWriteIndex = fnSrc.indexOf("draftRef.current = next;", setDraftCallStart);
-    const returnNextIndex = fnSrc.indexOf("return next;", setDraftCallStart);
-    expect(refWriteIndex).toBeGreaterThan(setDraftCallStart);
-    expect(returnNextIndex).toBeGreaterThan(refWriteIndex);
   });
 
-  it("SA-108a: addPickedToDraft returns the SAME key it resolved before setDraft, never a ref written from inside the updater", () => {
-    expect(source).not.toMatch(/resolvedKeyRef/);
+  it("SA-108d pin 2: draftRef.current = apply(draftRef.current) immediately precedes setDraft(apply), and no `draftRef.current =` assignment exists inside ANY setDraft updater", () => {
+    // The ref-first shape: apply() is a PURE function of `d` alone. Running
+    // it once, synchronously, ourselves — right before handing the SAME
+    // function to setDraft — is what makes the ref trustworthy regardless
+    // of whether/when React itself gets around to invoking it.
     expect(source).toMatch(
-      /const resolvedKey = resolveDraftKeyForPick\(draftRef\.current, p\.id, null\);/,
+      /draftRef\.current = apply\(draftRef\.current\);\s*\n\s*setDraft\(apply\);/,
     );
-    const addPickedStart = source.indexOf("const addPickedToDraft = (");
-    expect(addPickedStart).toBeGreaterThan(-1);
-    const nextConstStart = source.indexOf("\n  const decQty = ", addPickedStart);
-    const fnSrc = source.slice(
-      addPickedStart,
-      nextConstStart === -1 ? source.length : nextConstStart,
-    );
-    expect(fnSrc).toMatch(/return resolvedKey;/);
+    // No functional setState updater anywhere in the file writes to
+    // draftRef — that was SA-108a's exact mistake (a ref write is only
+    // reliable at a call site WE control, never inside a callback React
+    // decides when, or whether more than once, to invoke).
+    const updaterBodies = [
+      ...source.matchAll(/setDraft\(\((?:d|_d)\) => \{([\s\S]*?)\n\s{4}\}\);/g),
+    ];
+    expect(updaterBodies.length).toBeGreaterThan(0);
+    for (const [, body] of updaterBodies) {
+      expect(body).not.toMatch(/draftRef\.current\s*=/);
+    }
+  });
+
+  it("SA-108a's resolvedKeyRef is gone entirely — superseded by the ref-first apply() shape", () => {
+    expect(source).not.toMatch(/resolvedKeyRef/);
+  });
+});
+
+describe("edit-items-draft: applyPickToDraft (SA-108d pin 1 — the transform lives in lib, pure)", () => {
+  const productA = "shared-product";
+  const boxedInput = {
+    productId: productA,
+    unitsPerBox: 12,
+    startPrice: 24,
+    catalogPrice: 24,
+    name: "Boxed widget",
+    unit: "box",
+    kind: "case" as const,
+  };
+
+  it("a fresh add (boxed) starts at 1 box, unitPrice = startPrice", () => {
+    const next = applyPickToDraft({}, "new:1", boxedInput);
+    expect(next["new:1"]).toMatchObject({
+      productId: productA,
+      qty: 12,
+      boxes: 1,
+      pieces: 0,
+      boxSplit: true,
+      unitPrice: 24,
+    });
+  });
+
+  it("merging into an existing line increments by one box, preserving every other field (a price override survives)", () => {
+    const draft: Record<string, DraftItem> = {
+      L1: { ...boxedInput, qty: 12, boxes: 1, pieces: 0, unitPrice: 20, overrideReason: "deal" },
+    };
+    const next = applyPickToDraft(draft, "L1", boxedInput);
+    expect(next.L1).toMatchObject({ qty: 24, boxes: 2, pieces: 0, unitPrice: 20 });
+    expect(next.L1!.overrideReason).toBe("deal");
+  });
+
+  it("is a PURE function: the same (draft, key, input) always produces a deep-equal result, and never mutates its input draft", () => {
+    const draft: Record<string, DraftItem> = { L1: { ...boxedInput, qty: 12 } as any };
+    const snapshot = JSON.parse(JSON.stringify(draft));
+    const a = applyPickToDraft(draft, "L1", boxedInput);
+    const b = applyPickToDraft(draft, "L1", boxedInput);
+    expect(a).toEqual(b);
+    expect(draft).toEqual(snapshot); // input draft untouched
+  });
+
+  it("SA-108d pin 1: applied TWICE to an empty draft with the key minted per call the way the screen does — via resolveDraftKeyForPick against a ref updated synchronously after each apply — merges into ONE row at qty 2 (boxes 2), never two rows", () => {
+    // Mirrors exactly what addPickedToDraft now does: mint the key from the
+    // ref BEFORE building `apply`, then update the ref synchronously with
+    // apply's own result — simulating two same-tick picks of the SAME
+    // product where React has not (and, per SA-108d, may never reliably)
+    // run either setDraft updater yet.
+    let draftRef: Record<string, DraftItem> = {};
+    const pickOnce = () => {
+      const key = resolveDraftKeyForPick(draftRef, productA, null);
+      draftRef = applyPickToDraft(draftRef, key, boxedInput);
+      return key;
+    };
+    const key1 = pickOnce();
+    const key2 = pickOnce();
+    expect(key2).toBe(key1); // merged into the SAME row, never a second `new:` key
+    expect(Object.keys(draftRef)).toEqual([key1]);
+    expect(draftRef[key1]).toMatchObject({ qty: 24, boxes: 2, pieces: 0 });
   });
 });
