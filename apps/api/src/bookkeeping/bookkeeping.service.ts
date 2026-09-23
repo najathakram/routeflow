@@ -215,16 +215,19 @@ export class BookkeepingService implements OnModuleInit {
       if (remaining <= 0) {
         throw new BadRequestException("Transaction is already fully paid");
       }
-      if (dto.amount > remaining + 0.001) {
+      // B801/SA-121: round every monetary write — a sub-cent dto.amount (e.g.
+      // 10.005) would otherwise land off-cent in the stored payment.
+      const paymentAmount = roundMoney(dto.amount);
+      if (paymentAmount > remaining + 0.001) {
         throw new BadRequestException(
-          `Payment of ${dto.amount} exceeds remaining balance of ${remaining.toFixed(2)}`,
+          `Payment of ${paymentAmount} exceeds remaining balance of ${remaining.toFixed(2)}`,
         );
       }
 
       await tx.invoicePayment.create({
         data: {
           invoiceId: id,
-          amount: dto.amount,
+          amount: paymentAmount,
           method: dto.method as any,
           reference: dto.reference,
           notes: dto.notes,
@@ -234,7 +237,7 @@ export class BookkeepingService implements OnModuleInit {
         },
       });
 
-      const totalPaid = alreadyPaid + dto.amount;
+      const totalPaid = alreadyPaid + paymentAmount;
       const newInvStatus =
         totalPaid >= totalOwed
           ? InvoiceStatus.PAID
@@ -546,7 +549,8 @@ export class BookkeepingService implements OnModuleInit {
     const updated = await this.prisma.forTenant().expense.update({
       where: { id },
       data: {
-        ...(dto.amount !== undefined && { amount: dto.amount }),
+        // SA-121/B801: round every monetary write.
+        ...(dto.amount !== undefined && { amount: roundMoney(dto.amount) }),
         ...(dto.date && { date: new Date(dto.date) }),
         ...(dto.description !== undefined && { description: dto.description }),
         ...(dto.notes !== undefined && { notes: dto.notes }),

@@ -220,6 +220,27 @@ describe("BookkeepingService", () => {
 
   // ─── recordPayment ────────────────────────────────────────────────────────
 
+  describe("recordPayment — SA-121: dto.amount is rounded to the cent", () => {
+    it("a sub-cent amount (10.005) is stored cent-exact, not silently truncated", async () => {
+      const create = jest.fn();
+      prisma.tenantTransaction.mockImplementation(async (fn: any) =>
+        fn({
+          invoice: {
+            findUnique: jest.fn().mockResolvedValue({ id: "inv-sa121", total: 100, payments: [] }),
+            update: jest.fn().mockResolvedValue({ id: "inv-sa121" }),
+          },
+          invoicePayment: { create },
+        }),
+      );
+
+      await service.recordPayment("inv-sa121", { amount: 10.005, method: "CASH" as any });
+
+      expect(create).toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ amount: 10.01 }) }),
+      );
+    });
+  });
+
   describe("recordPayment", () => {
     it("should throw NotFoundException when transaction does not exist", async () => {
       // recordPayment uses tenantTransaction (not $transaction)
@@ -1384,6 +1405,24 @@ describe("BookkeepingService", () => {
       const created = data.lineItems.create;
       expect(created.map((li: any) => li.amount)).toEqual([0.01, 0.01]);
       expect(data.amount).toBe(0.02);
+    });
+  });
+
+  describe("updateExpense — SA-121: dto.amount is rounded to the cent", () => {
+    it("a float-artifact amount (0.1 + 0.2) is stored cent-exact, not 0.30000000000000004", async () => {
+      prisma.expense.findFirst.mockResolvedValue({
+        id: "exp-1",
+        status: "PENDING",
+        receivedAt: null,
+        paidAt: null,
+      });
+      prisma.expense.update.mockResolvedValue({ id: "exp-1" });
+
+      await service.updateExpense("exp-1", { amount: 0.1 + 0.2 });
+
+      const data = prisma.expense.update.mock.calls[0][0].data;
+      expect(data.amount).toBe(0.3);
+      expect(data.amount).not.toBe(0.30000000000000004);
     });
   });
 
