@@ -29,13 +29,29 @@ export interface PackLine {
   boxes?: number | null;
   pieces?: number | null;
   unitsPerBox?: number | null;
+  /** units_v1: a non-blank label marks a unit-aware line, whose stored qty is already base pieces. */
+  unitLabel?: string | null;
   product?: { unitsPerBox?: number | null } | null;
 }
 
 const hasSplit = (x: any): boolean => !!x && (x.boxes != null || x.pieces != null);
 
+/**
+ * B802: a unit-aware line already counts base pieces — a factor-1 unit keeps no split and snapshots
+ * unitsPerBox 1, a factor > 1 unit stores a boxes/pieces split (`unit-line-build.ts`) — so it is factor 1,
+ * as `regulatedUnitBasis`'s branch 1 reads it. Without this a factor-1 unit line on a boxed product was
+ * sent to the classifier on the live pack alone and parked as unknown. The label alone is not trusted:
+ * an order edit that moves a unit line back to the pack leaves the label behind on a box-count line, so
+ * only the exact shape the unit writers produce (label AND snapshot 1; split lines are skipped anyway)
+ * short-circuits — anything else still resolves through its InvoiceItem or parks.
+ */
+const isUnitAware = (li: PackLine): boolean =>
+  (li.unitLabel ?? "").trim() !== "" && Number(li.unitsPerBox ?? 0) === 1;
+
 export const needsPackResolution = (li: PackLine): boolean =>
-  !hasSplit(li) && (Number(li.unitsPerBox ?? 0) > 1 || Number(li.product?.unitsPerBox ?? 0) > 1);
+  !isUnitAware(li) &&
+  !hasSplit(li) &&
+  (Number(li.unitsPerBox ?? 0) > 1 || Number(li.product?.unitsPerBox ?? 0) > 1);
 
 const asLegacy = (x: any) => ({
   qty: Number(x.qty),
