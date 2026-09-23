@@ -1,9 +1,4 @@
-import {
-  createUnitLine,
-  loadUnitCategoryMap,
-  updateUnitLine,
-  type UnitWriteContext,
-} from "./unit-line-edit";
+import { createUnitLine, updateUnitLine, type UnitWriteContext } from "./unit-line-edit";
 import { resolveLineUnits } from "../products/line-units";
 import type { LadderUnit } from "@routeflow/pricing";
 
@@ -72,9 +67,16 @@ describe("createUnitLine / updateUnitLine — price + stamp the trio at write (S
     expect(data.categoryPriceIncludesTax).toBe(false);
   });
 
-  it("updateUnitLine on a regulated product carries a NON-NULL trio and a NON-ZERO amount", async () => {
+  it("updateUnitLine on a SUBSTITUTE to a regulated product carries a NON-NULL trio and a NON-ZERO amount", async () => {
     const ctx = makeCtx();
-    await updateUnitLine(ctx, "line-1", regulatedProduct, resolved, { qty: 2, unitLabel: "Case" });
+    await updateUnitLine(
+      ctx,
+      "line-1",
+      regulatedProduct,
+      resolved,
+      { qty: 2, unitLabel: "Case" },
+      true,
+    );
 
     expect(ctx.tx.orderItem.update).toHaveBeenCalledTimes(1);
     const data = ctx.tx.orderItem.update.mock.calls[0][0].data;
@@ -82,6 +84,28 @@ describe("createUnitLine / updateUnitLine — price + stamp the trio at write (S
     expect(data.categoryTaxType).toBe("EXCISE_PER_UNIT");
     expect(data.categoryTaxRate).toBe(0.5);
     expect(data.categoryPriceIncludesTax).toBe(false);
+  });
+
+  it("updateUnitLine on a SAME-PRODUCT qty/price edit (isSubstitute: false) never writes the trio keys at all — a rate change since sale must not move it", async () => {
+    const ctx = makeCtx();
+    await updateUnitLine(
+      ctx,
+      "line-1",
+      regulatedProduct,
+      resolved,
+      { qty: 4, unitLabel: "Case" },
+      false,
+    );
+
+    expect(ctx.tx.orderItem.update).toHaveBeenCalledTimes(1);
+    const data = ctx.tx.orderItem.update.mock.calls[0][0].data;
+    // The trio keys are absent entirely (not null) — Prisma leaves the stored columns untouched.
+    expect("categoryTaxType" in data).toBe(false);
+    expect("categoryTaxRate" in data).toBe(false);
+    expect("categoryPriceIncludesTax" in data).toBe(false);
+    // The amount still gets SOME value (deferred to the post-mutation recompute, unchanged from
+    // pre-B297 behaviour on this branch) — money isn't what this pin is about.
+    expect(typeof data.categoryTaxAmount).toBe("number");
   });
 
   it("a non-regulated product still carries an all-null snapshot and a zero amount — nothing invented", async () => {
@@ -101,31 +125,5 @@ describe("createUnitLine / updateUnitLine — price + stamp the trio at write (S
     expect(data.categoryTaxType).toBeNull();
     expect(data.categoryTaxRate).toBeNull();
     expect(data.categoryPriceIncludesTax).toBeNull();
-  });
-});
-
-describe("loadUnitCategoryMap", () => {
-  it("skips the query entirely when nothing in products is regulated", async () => {
-    const findMany = jest.fn();
-    const map = await loadUnitCategoryMap(
-      { trackedCategory: { findMany } },
-      new Map([["p2", unregulatedProduct]]),
-    );
-    expect(findMany).not.toHaveBeenCalled();
-    expect(map.size).toBe(0);
-  });
-
-  it("fetches and keys by trackedCategoryId for every regulated product, de-duplicated", async () => {
-    const findMany = jest.fn().mockResolvedValue([{ id: "cat-1", ...category }]);
-    const map = await loadUnitCategoryMap(
-      { trackedCategory: { findMany } },
-      new Map([
-        ["p1", regulatedProduct],
-        ["p1b", { ...regulatedProduct, id: "p1b" }],
-      ]),
-    );
-    expect(findMany).toHaveBeenCalledTimes(1);
-    expect(findMany).toHaveBeenCalledWith({ where: { id: { in: ["cat-1"] } } });
-    expect(map.get("cat-1")).toEqual({ id: "cat-1", ...category });
   });
 });

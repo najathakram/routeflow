@@ -533,6 +533,32 @@ export function categoryTaxSnapshotOf(
   };
 }
 
+/**
+ * COPIES a line's own already-stamped trio verbatim (a merge/consolidation folding a losing
+ * line into a winner, or an invoice line duplicated from another) — never re-derives it from any
+ * category, live or otherwise. A merge is not a new sale (SA-098a): the line's own snapshot is
+ * the fact. `null`/`undefined` copies through as an all-null snapshot (nothing to copy).
+ */
+export function copyCategoryTaxSnapshot(
+  src:
+    | {
+        categoryTaxType: CategoryTaxType | null;
+        categoryTaxRate: number | string | null;
+        categoryPriceIncludesTax: boolean | null;
+      }
+    | null
+    | undefined,
+): CategoryTaxSnapshot {
+  if (!src) {
+    return { categoryTaxType: null, categoryTaxRate: null, categoryPriceIncludesTax: null };
+  }
+  return {
+    categoryTaxType: src.categoryTaxType,
+    categoryTaxRate: src.categoryTaxRate == null ? null : Number(src.categoryTaxRate),
+    categoryPriceIncludesTax: src.categoryPriceIncludesTax,
+  };
+}
+
 // ─── Promotions (P5-04, + BUY_N_GET_M) ────────────────────────────────────────
 // A promotion adjusts the per-SELLING-UNIT price of a matching line. It composes
 // with computeLineSubtotal exactly like any other unitPrice: resolve the NET

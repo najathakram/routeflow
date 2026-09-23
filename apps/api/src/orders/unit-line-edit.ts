@@ -75,24 +75,6 @@ export async function prepareUnitEditContext(
 }
 
 /**
- * trackedCategoryId -> TrackedCategory row, for every product this edit's unit-aware context
- * touched (B297) — feeds `UnitWriteContext.categoryMap` so `createUnitLine`/`updateUnitLine` can
- * price + stamp a regulated unit line at write, instead of deferring to a post-mutation pass.
- * Empty when nothing in `products` is regulated: no extra query.
- */
-export async function loadUnitCategoryMap(
-  tx: { trackedCategory: { findMany(a: any): Promise<any[]> } },
-  products: Map<string, any>,
-): Promise<Map<string, any>> {
-  const ids = [
-    ...new Set([...products.values()].map((p: any) => p.trackedCategoryId).filter(Boolean)),
-  ] as string[];
-  if (!ids.length) return new Map();
-  const rows = await tx.trackedCategory.findMany({ where: { id: { in: ids } } });
-  return new Map(rows.map((c: any) => [c.id, c]));
-}
-
-/**
  * The money seam: an edit that targets an existing unit-aware line (qty, price, or substitute —
  * never a bare CANCEL/DELETE/reason-only touch, which changes no money) MUST name that line's
  * unit; an item with no unitLabel aimed at one is REFUSED here, never silently interpreted against
@@ -167,27 +149,50 @@ export async function createUnitLine(
   await ctx.tx.orderItem.create({ data: { orderId, ...built } });
 }
 
-/** SUBSTITUTE + the qty/price UPDATE of an existing line — same product or a new one. */
+/**
+ * SUBSTITUTE + the qty/price UPDATE of an existing line — same product or a new one.
+ *
+ * B297 (SA-098a b): `isSubstitute` decides the trio's fate — the two cases are NOT the same
+ * writer. A SUBSTITUTE is, in substance, a new line (the product and its category changed), so it
+ * re-stamps from the NEW product's category, same as `createUnitLine`. A same-product qty/price
+ * edit is NOT a new sale, so the trio must never move — the 3 trio keys are stripped out of
+ * `buildUnitLine`'s return before the Prisma call, so `data` never names them and the existing
+ * columns are left untouched (Prisma only writes fields present in `data`). The amount still
+ * prices from `product`'s own category either way (the unchanged product on a same-product edit,
+ * the new one on a substitute) — harmless even for the same-product case, since
+ * `recomputeLineCategoryTaxes` unconditionally overwrites every active line's amount from the
+ * live category right after this transaction, same as it always has. Only the TRIO is the thing
+ * this function must not touch on a same-product edit.
+ */
 export async function updateUnitLine(
   ctx: UnitWriteContext,
   lineId: string,
   product: UnitLineProduct & { id: string },
   resolved: ResolvedLineUnits,
   item: any,
+  isSubstitute: boolean,
 ): Promise<void> {
   const category = product.trackedCategoryId
     ? ctx.categoryMap.get(product.trackedCategoryId)
     : null;
-  const { position: _position, ...built } = buildUnitLine({
+  const {
+    position: _position,
+    categoryTaxType,
+    categoryTaxRate,
+    categoryPriceIncludesTax,
+    ...rest
+  } = buildUnitLine({
     product,
     units: ctx.ladders.get(product.id) ?? [],
     resolved,
     item: { ...item, productId: product.id },
     tier: ctx.tier(product.id),
-    // B297: same write-time pricing as createUnitLine above — see its comment.
     taxFor: (qty, sub) => categoryTaxForLine(category, qty, sub),
     position: 0,
     tenantId: ctx.tenantId,
   });
-  await ctx.tx.orderItem.update({ where: { id: lineId }, data: built });
+  const data = isSubstitute
+    ? { ...rest, categoryTaxType, categoryTaxRate, categoryPriceIncludesTax }
+    : rest;
+  await ctx.tx.orderItem.update({ where: { id: lineId }, data });
 }

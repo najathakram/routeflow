@@ -13,6 +13,7 @@ import {
   classifyMargin,
   computeCategoryTax,
   categoryTaxSnapshotOf,
+  copyCategoryTaxSnapshot,
   applyBestPromotion,
   promotionMatchesProduct,
   ruleCanZeroPrice,
@@ -674,6 +675,56 @@ describe("categoryTaxSnapshotOf — B297 sale-time trio (SA-088 D1)", () => {
       categoryTaxType: "PERCENT_OF_SALE",
       categoryTaxRate: 0.0525,
       categoryPriceIncludesTax: false,
+    });
+  });
+});
+
+describe("copyCategoryTaxSnapshot — B297 verbatim copy for merges/duplicates (SA-098a)", () => {
+  it("returns an all-null snapshot when there is nothing to copy", () => {
+    const allNull = {
+      categoryTaxType: null,
+      categoryTaxRate: null,
+      categoryPriceIncludesTax: null,
+    };
+    expect(copyCategoryTaxSnapshot(null)).toEqual(allNull);
+    expect(copyCategoryTaxSnapshot(undefined)).toEqual(allNull);
+  });
+
+  it("copies a stamped trio verbatim, never re-deriving it", () => {
+    expect(
+      copyCategoryTaxSnapshot({
+        categoryTaxType: "EXCISE_PER_UNIT",
+        categoryTaxRate: 1.25,
+        categoryPriceIncludesTax: false,
+      }),
+    ).toEqual({
+      categoryTaxType: "EXCISE_PER_UNIT",
+      categoryTaxRate: 1.25,
+      categoryPriceIncludesTax: false,
+    });
+  });
+
+  it("copies a NULL trio through as NULL — never invents a rate for a legacy line", () => {
+    expect(
+      copyCategoryTaxSnapshot({
+        categoryTaxType: null,
+        categoryTaxRate: null,
+        categoryPriceIncludesTax: null,
+      }),
+    ).toEqual({ categoryTaxType: null, categoryTaxRate: null, categoryPriceIncludesTax: null });
+  });
+
+  it("coerces a Decimal-shaped rate to a number", () => {
+    expect(
+      copyCategoryTaxSnapshot({
+        categoryTaxType: "PERCENT_OF_SALE",
+        categoryTaxRate: "0.0525" as unknown as number,
+        categoryPriceIncludesTax: true,
+      }),
+    ).toEqual({
+      categoryTaxType: "PERCENT_OF_SALE",
+      categoryTaxRate: 0.0525,
+      categoryPriceIncludesTax: true,
     });
   });
 });

@@ -112,6 +112,7 @@ import { AuthorizationGuardService } from "../authorizations/authorization-guard
 import { resolveLineUnits } from "../products/line-units";
 import * as unitLines from "./unit-line-build";
 import * as unitEdit from "./unit-line-edit";
+import { loadCategoryMapForProducts } from "./category-map";
 import { assertBuyerCartPricesCurrent } from "./buyer-cart-price-check";
 import { restrictionChannelForPrincipal } from "../selling-restrictions/selling-restrictions.core";
 import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
@@ -3589,7 +3590,7 @@ export class OrdersService implements OnApplicationBootstrap {
             ladders: unitCtx.ladders,
             tenantId: this.prisma.getTenantId(),
             tier: (pid) => (isStaffEdit ? (operatorCpMap.get(pid) ?? operatorDefaultTier) : 1),
-            categoryMap: await unitEdit.loadUnitCategoryMap(tx, unitCtx.products), // B297
+            categoryMap: await loadCategoryMapForProducts(tx, unitCtx.products), // B297
           };
 
           if (replaceAll) {
@@ -4198,7 +4199,7 @@ export class OrdersService implements OnApplicationBootstrap {
                 });
                 const unitRow = unitRows.get(item);
                 if (unitRow && unitLines.isUnitAware(unitRow)) {
-                  await unitEdit.updateUnitLine(uctx, item.id!, product, unitRow, item);
+                  await unitEdit.updateUnitLine(uctx, item.id!, product, unitRow, item, true);
                   continue;
                 }
                 const existingQty = heldOrSnapshot(item.id!)?.qty ?? 1;
@@ -4369,7 +4370,8 @@ export class OrdersService implements OnApplicationBootstrap {
                 const unitRow = unitRows.get(item);
                 if (unitRow && unitLines.isUnitAware(unitRow)) {
                   const p = unitCtx.products.get(li.productId!)!;
-                  await unitEdit.updateUnitLine(uctx, item.id!, p, unitRow, item);
+                  // B297: same product, not a substitute — updateUnitLine must PRESERVE the trio.
+                  await unitEdit.updateUnitLine(uctx, item.id!, p, unitRow, item, false);
                   continue;
                 }
                 // A zero boxes+pieces payload is "not using box entry", not "zero
