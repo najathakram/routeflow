@@ -35,6 +35,7 @@ import {
   type BadgeVariant,
 } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
+import { scheduleScannerRefocus } from "@/lib/refocus-scanner";
 import { useUrlSearch } from "@/lib/hooks/useUrlSearch";
 import { useUrlPage, useClampPage } from "@/lib/hooks/useUrlPage";
 import {
@@ -507,7 +508,7 @@ function CreateBillModal({ isOpen, onClose }: { isOpen: boolean; onClose: () => 
       if (!product) {
         toast({ title: `Item not found: ${code.trim()}`, variant: "error" });
         setScanInput("");
-        setTimeout(() => scanInputRef.current?.focus(), 50);
+        scheduleScannerRefocus(scanInputRef, 50);
         return;
       }
       const existing = lineItemsRef.current.findIndex((li) => li.productId === product!.id);
@@ -532,7 +533,7 @@ function CreateBillModal({ isOpen, onClose }: { isOpen: boolean; onClose: () => 
         });
       }
       setScanInput("");
-      setTimeout(() => scanInputRef.current?.focus(), 50);
+      scheduleScannerRefocus(scanInputRef, 50);
     },
     [toast],
   );

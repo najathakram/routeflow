@@ -9,6 +9,7 @@ import { Modal, Textarea, Button, cn, useToast } from "@routeflow/ui/web";
 import { useQuery } from "@tanstack/react-query";
 import { useCustomers, useCustomerPrices, useCustomer } from "@/lib/api/customers";
 import { useProducts } from "@/lib/api/products";
+import { scheduleScannerRefocus } from "@/lib/refocus-scanner";
 import {
   useCreateOrder,
   useActiveOrderForCustomer,
@@ -566,7 +567,7 @@ export function CreateOrderModal({
       setScrollToId(existing.tempId);
       setProductSearch("");
       setDebouncedProductSearch("");
-      setTimeout(() => productSearchRef.current?.focus(), 50);
+      scheduleScannerRefocus(productSearchRef, 50);
       return;
     }
     const newTempId = product.id + "-" + Date.now();
@@ -628,7 +629,7 @@ export function CreateOrderModal({
     setDebouncedProductSearch("");
     setLineItemsError("");
     // Re-focus the product search so the scanner is ready for the next item
-    setTimeout(() => productSearchRef.current?.focus(), 50);
+    scheduleScannerRefocus(productSearchRef, 50);
   };
 
   /** A pick from the search dropdown: applies the typed Qty, then clears it. */
