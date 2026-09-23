@@ -1632,6 +1632,7 @@ describe("CustomersService", () => {
       ).rejects.toThrow("Cannot apply advance payment to invoice with status DRAFT");
       expect(prisma.invoicePayment.create).not.toHaveBeenCalled();
       expect(prisma.invoice.update).not.toHaveBeenCalled();
+      expect(prisma.advancePayment.update).not.toHaveBeenCalled();
     });
 
     it("REG-B310 two concurrent applies of the SAME advance never drive its balance negative", async () => {
