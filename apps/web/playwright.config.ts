@@ -800,5 +800,22 @@ export default defineConfig({
         navigationTimeout: 60_000,
       },
     },
+
+    // Operator dashboard mobile overflow (owner report, spec 53) — the probe
+    // from spec 52 extended to this shell, per the same owner report (mobile
+    // pages drift sideways and don't settle after pinch-zoom). Same shape as
+    // "platform-admin-mobile" above, operator auth instead of super-admin.
+    // WITHOUT THIS ENTRY THE SPEC NEVER RUNS — see 08-create-order-escape's
+    // header for the precedent.
+    {
+      name: "operator-dashboard-mobile",
+      testMatch: /53-operator-dashboard-mobile-overflow\.spec\.ts/,
+      dependencies: ["setup"],
+      use: {
+        ...devices["Desktop Chrome"],
+        storageState: path.join(AUTH_DIR, "operator.json"),
+        navigationTimeout: 60_000,
+      },
+    },
   ],
 });
