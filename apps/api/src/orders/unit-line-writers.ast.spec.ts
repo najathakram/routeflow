@@ -60,6 +60,13 @@ interface Row {
    * that it's fine — it is simply out of THIS round's audited scope.
    */
   trioVia?: string[];
+  /**
+   * SA-100 hardening — the explicit, reasoned escape hatch: a row whose line-write literally sets
+   * `trackedCategoryId` (so the MANDATORY check below would otherwise demand `trioVia`) but never
+   * legitimately needs the trio, e.g. a literal `trackedCategoryId: null` constant on a line that
+   * can never be regulated. Required in place of `trioVia`, never both.
+   */
+  trioViaExempt?: string;
 }
 
 const G = "assertOrderEditAllowed";
@@ -81,13 +88,16 @@ const INVENTORY: Record<string, Row> = {
     kind: "GUARDED",
     needs: "assertNoUnitAwareLines",
     why: "merge folds by productId",
-    trioVia: ["collectMergeLines"],
+    // SA-100: named on the actual STAMP call inside the create() write, not collectMergeLines
+    // (called earlier, for an unrelated purpose — deleting the create()'s spread wouldn't have
+    // removed the ONLY reference to that name in this method, so it couldn't catch a regression).
+    trioVia: ["copyCategoryTaxSnapshot"],
   },
   "orders/orders.service.ts::OrdersService.mergeAllPendingForCustomer": {
     kind: "GUARDED",
     needs: "isUnitAwareLine",
     why: "merge folds by productId; bails out when any candidate is unit-aware",
-    trioVia: ["collectMergeLines"],
+    trioVia: ["copyCategoryTaxSnapshot"],
   },
   "orders/orders.service.ts::OrdersService.create": {
     kind: "CONVERTED",
@@ -389,6 +399,46 @@ function lineWrites(node: ts.Node, sf: ts.SourceFile): string[] {
   return [...new Set(hits)];
 }
 
+/**
+ * SA-100 hardening — every line-write's own `data:` object literal (a direct `x.orderItem.create/
+ * update({ data: {...} })` call) that ALSO sets `key` as a property, i.e. "this write can touch a
+ * regulated line." Backs the MANDATORY trioVia check below: a row that writes `trackedCategoryId`
+ * has no excuse to skip declaring how it produces the trio.
+ *
+ * LIMIT (same class as this file's other documented limits): only DIRECT table calls are checked —
+ * a nested `lineItems`/`items` relation write is invisible here, same as `lineWrites` already
+ * documents for its own NULL-tenant/B635 blind spots. No currently-classified row relies on a
+ * nested write to set `trackedCategoryId`, so this is a real, not theoretical, narrowing.
+ */
+function writeDataLiteralsWithKey(node: ts.Node, sf: ts.SourceFile, key: string): ts.Node[] {
+  const hits: ts.Node[] = [];
+  const hasKey = (lit: ts.ObjectLiteralExpression) =>
+    lit.properties.some((p) => p.name && p.name.getText(sf) === key);
+  const visit = (n: ts.Node) => {
+    if (ts.isCallExpression(n) && ts.isPropertyAccessExpression(n.expression)) {
+      const table = n.expression.expression;
+      if (
+        WRITE_OPS.has(n.expression.name.text) &&
+        ts.isPropertyAccessExpression(table) &&
+        LINE_TABLES.has(table.name.text)
+      ) {
+        const arg = n.arguments[0];
+        const dataProp =
+          arg && ts.isObjectLiteralExpression(arg)
+            ? arg.properties.find(
+                (p): p is ts.PropertyAssignment =>
+                  ts.isPropertyAssignment(p) && p.name.getText(sf) === "data",
+              )
+            : undefined;
+        if (dataProp && objectLiterals(dataProp.initializer).some(hasKey)) hits.push(n);
+      }
+    }
+    ts.forEachChild(n, visit);
+  };
+  visit(node);
+  return hits;
+}
+
 const isFalseLiteral = (e: ts.Expression) => e.kind === ts.SyntaxKind.FalseKeyword;
 
 /** True when `n` sits on a branch that can never run for real: `if (false)`, or a `catch` handler. */
@@ -619,6 +669,20 @@ describe("every order/invoice line writer is classified (units_v1)", () => {
       const satisfied = row.trioVia.some((name) => references(node, name, { callOnly: false }));
       if (!satisfied) {
         failures.push(`${key} references none of: ${row.trioVia.join(", ")}`);
+      }
+    }
+    expect(failures).toEqual([]);
+  });
+
+  it("SA-100: trioVia is MANDATORY (or an explicit, reasoned trioViaExempt) for any row whose line-write literally sets trackedCategoryId", () => {
+    const failures: string[] = [];
+    for (const [key, row] of Object.entries(INVENTORY)) {
+      const { node, sf } = methodNode(key);
+      const setters = writeDataLiteralsWithKey(node, sf, "trackedCategoryId");
+      if (setters.length === 0) continue;
+      if (row.trioViaExempt) continue;
+      if (!row.trioVia || row.trioVia.length === 0) {
+        failures.push(`${key} writes trackedCategoryId but declares no trioVia or trioViaExempt`);
       }
     }
     expect(failures).toEqual([]);

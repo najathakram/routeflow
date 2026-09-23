@@ -11,6 +11,7 @@ import {
   type CategoryTaxType,
   type LadderProduct,
   type LadderUnit,
+  type TrackedCategoryRow,
   roundMoney,
 } from "@routeflow/pricing";
 import { lineUnitsPerBoxSnapshot, type ResolvedLineUnits } from "../products/line-units";
@@ -187,24 +188,24 @@ export function replayLineKey(
  * together, so a unit line's snapshot can never drift from the amount it priced.
  */
 export const categoryTaxForLine = (
-  category: { taxType: unknown; rate: unknown; priceIncludesTax: boolean } | null | undefined,
+  category: TrackedCategoryRow | null | undefined,
   qtyPieces: number,
   lineSubtotal: number,
 ): { amount: number; snapshot: CategoryTaxSnapshot } => ({
   amount: category
     ? computeCategoryTax({
-        taxType: category.taxType as CategoryTaxType,
+        taxType: category.taxType,
         rate: Number(category.rate),
         unitBasisQty: qtyPieces,
         lineSubtotal,
-        priceIncludesTax: category.priceIncludesTax,
+        priceIncludesTax: category.priceIncludesTax ?? undefined,
       })
     : 0,
   snapshot: categoryTaxSnapshotOf(
     category
       ? {
-          taxType: category.taxType as CategoryTaxType,
-          rate: category.rate as number | string,
+          taxType: category.taxType,
+          rate: category.rate,
           priceIncludesTax: category.priceIncludesTax,
         }
       : null,

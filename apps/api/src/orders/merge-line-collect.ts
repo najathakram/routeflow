@@ -7,6 +7,27 @@ import { copyCategoryTaxSnapshot, type CategoryTaxType } from "@routeflow/pricin
  * `orders.service.ts` inside its size ratchet, B297 round 3).
  */
 
+/** A loser order's line item, exactly the fields this module reads off it. */
+export interface MergeCandidateLine {
+  productId: string | null;
+  name: string | null;
+  qty: unknown;
+  unitPrice: unknown;
+  priceType: PriceType;
+  originalPrice: unknown;
+  overrideReason: string | null;
+  overriddenBy: string | null;
+  notes: string | null;
+  boxes: number | null;
+  pieces: number | null;
+  promoFreeUnits: unknown;
+  trackedCategoryId: string | null;
+  categoryTaxType: CategoryTaxType | null;
+  /** A Prisma `Decimal` at the real callsite (like `qty`/`unitPrice` above) — coerced at use. */
+  categoryTaxRate: unknown;
+  categoryPriceIncludesTax: boolean | null;
+}
+
 export interface LoserContribution {
   qty: unknown;
   boxes: number | null;
@@ -61,7 +82,7 @@ export interface CollectedMergeLines {
  * trio must never be re-derived from the live category here.
  */
 export function collectMergeLines(
-  losers: ReadonlyArray<{ lineItems: ReadonlyArray<any> }>,
+  losers: ReadonlyArray<{ lineItems: ReadonlyArray<MergeCandidateLine> }>,
   winnerProductIds: ReadonlySet<string | null>,
 ): CollectedMergeLines {
   const loserContribsByProduct = new Map<string, LoserContribution[]>();
@@ -88,7 +109,7 @@ export function collectMergeLines(
         qty: li.qty,
         boxes: li.boxes,
         pieces: li.pieces,
-        promoFreeUnits: (li as any).promoFreeUnits ?? null,
+        promoFreeUnits: (li.promoFreeUnits as number | null | undefined) ?? null,
         priceType: li.priceType,
         overriddenBy: li.overriddenBy,
       });
@@ -102,7 +123,11 @@ export function collectMergeLines(
           overriddenBy: li.overriddenBy,
           notes: li.notes,
           trackedCategoryId: li.trackedCategoryId ?? null,
-          ...copyCategoryTaxSnapshot(li as any),
+          ...copyCategoryTaxSnapshot({
+            categoryTaxType: li.categoryTaxType,
+            categoryTaxRate: li.categoryTaxRate as number | string | null,
+            categoryPriceIncludesTax: li.categoryPriceIncludesTax,
+          }),
         });
       }
     }

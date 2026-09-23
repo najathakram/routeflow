@@ -1,5 +1,5 @@
 import { ConflictException } from "@nestjs/common";
-import type { LadderUnit } from "@routeflow/pricing";
+import type { LadderUnit, TrackedCategoryRow } from "@routeflow/pricing";
 import {
   assertMayUseUnits,
   buildUnitLine,
@@ -112,7 +112,7 @@ export interface UnitWriteContext {
   tenantId: string | null | undefined;
   tier: (productId: string) => number;
   /** trackedCategoryId -> TrackedCategory row, for the products this edit touches (B297). */
-  categoryMap: Map<string, any>;
+  categoryMap: Map<string, TrackedCategoryRow>;
 }
 
 /**

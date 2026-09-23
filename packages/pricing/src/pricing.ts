@@ -510,6 +510,18 @@ export interface CategoryTaxSnapshot {
 }
 
 /**
+ * What a sale writer needs from a live `TrackedCategory` row to stamp the trio — never the
+ * full Prisma model, just the fields `categoryTaxSnapshotOf`/`computeCategoryTax` actually
+ * read. A `loadCategoryMapForProducts`-shaped loader's `Map<string, TrackedCategoryRow>` is
+ * the ONE place callers should type this against, instead of each hand-rolling its own `any`.
+ */
+export interface TrackedCategoryRow {
+  taxType: CategoryTaxType;
+  rate: number | string;
+  priceIncludesTax?: boolean | null;
+}
+
+/**
  * The ONE place a sale writer turns "the category this line belongs to" into the three
  * columns it stamps onto the line. `null`/`undefined` (a non-regulated line — no
  * trackedCategoryId) yields an all-null snapshot; any tracked category — even one whose
@@ -518,10 +530,7 @@ export interface CategoryTaxSnapshot {
  * fields at a call site — that's how one of them drifts from the other two (B297-SPEC.md D1).
  */
 export function categoryTaxSnapshotOf(
-  category:
-    | { taxType: CategoryTaxType; rate: number | string; priceIncludesTax?: boolean | null }
-    | null
-    | undefined,
+  category: TrackedCategoryRow | null | undefined,
 ): CategoryTaxSnapshot {
   if (!category) {
     return { categoryTaxType: null, categoryTaxRate: null, categoryPriceIncludesTax: null };
