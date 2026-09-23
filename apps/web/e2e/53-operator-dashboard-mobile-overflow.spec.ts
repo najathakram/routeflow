@@ -110,14 +110,19 @@ for (const vp of VIEWPORTS) {
       await assertNoOverflow(page, "orders (list)");
 
       // ── Order detail (real navigation through the list, not a side-channel
-      // API call) — only if a seeded order exists. ────────────────────────
-      const firstOrderLink = page.locator('a[href^="/orders/"]').first();
-      if (await firstOrderLink.count()) {
-        await firstOrderLink.click();
-        await expect(page.getByText(/line items/i)).toBeVisible({ timeout: 15_000 });
-        await assertNoOverflow(page, "orders/[id]");
-        expect(await documentLevelOverflowPx(page)).toBeLessThanOrEqual(0);
-      }
+      // API call). The row itself has no <a href> — it's a button, not a
+      // link (`aria-label="View order details"` in orders/page.tsx) — an
+      // `a[href^=...]` locator here would always match 0 and silently skip
+      // this whole check without ever failing. Asserted, not skipped: a
+      // seeded order is a baseline fixture on the e2e-routeflow tenant.
+      await expect(
+        page.getByRole("button", { name: "View order details" }).first(),
+        "no seeded order on the e2e-routeflow tenant to open — check the seed",
+      ).toBeVisible({ timeout: 15_000 });
+      await page.getByRole("button", { name: "View order details" }).first().click();
+      await expect(page.getByText(/line items/i)).toBeVisible({ timeout: 15_000 });
+      await assertNoOverflow(page, "orders/[id]");
+      expect(await documentLevelOverflowPx(page)).toBeLessThanOrEqual(0);
 
       // ── Customers list — B749 ignored, only at 390 (see header) ─────────
       // At 768/1440 there's room for the toolbar and no ignore is applied,
@@ -172,6 +177,16 @@ test.describe("operator dashboard — notification dropdown clamp at 280px", () 
     await bell.first().click();
     const panel = page.getByText("Notifications", { exact: true }).first();
     await expect(panel).toBeVisible({ timeout: 5_000 });
+
+    // Direct check on the dropdown's own box (Radix's DropdownMenu.Content
+    // renders role="menu"), not just the general page-wide probe below —
+    // this is the one element the test exists to prove, so assert it by
+    // name rather than only by absence from a generic offender list.
+    const menuBox = await page.getByRole("menu").boundingBox();
+    expect(menuBox, "notification menu did not render").not.toBeNull();
+    expect(menuBox!.x).toBeGreaterThanOrEqual(0);
+    expect(menuBox!.x + menuBox!.width).toBeLessThanOrEqual(280);
+
     await assertNoOverflow(page, "dashboard — notifications dropdown open at 280px");
   });
 });
