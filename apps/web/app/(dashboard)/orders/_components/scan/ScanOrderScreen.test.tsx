@@ -614,6 +614,66 @@ describe("ScanOrderScreen", () => {
       expect(resolve).toHaveBeenCalledTimes(4); // now retry #2
     });
 
+    it("REG: the real add-vs-merge decision (a stateful caller, not a canned mock) still lands ONE line, not two, for two queued retries of the SAME product", async () => {
+      // ScanOrderScreen itself keeps no cart ("the screen keeps no cart of its own" — see the
+      // list/count/total describe block above), so `resolve` returning `added(...)` twice proves
+      // nothing about merging on its own: a mock that just returns a canned value can't tell two
+      // ADDS from an add-then-merge. This harness plays the real caller's part (CreateOrderModal's
+      // own job) — a `lines` ref read fresh by EVERY call, exactly the shape the bug comment
+      // describes ("the modal decides add-vs-increment from the render it last saw") — so the
+      // rendered row count is real evidence of whether the loop's serialization (and, in the
+      // production code, `flushSync`) actually held the window shut, not a stand-in for it.
+      function StatefulHarness() {
+        const linesRef = React.useRef<Line[]>([]);
+        const [lines, setLines] = React.useState<Line[]>([]);
+        const callCount = React.useRef(0);
+        const resolveCode = React.useCallback(async (): Promise<ScanResolution> => {
+          callCount.current += 1;
+          // The first two calls are the two LIVE scans of "111"/"222" — both queue for lack of
+          // signal, exactly like the real gate. Every call after that is a retry, and merges.
+          if (callCount.current <= 2) return offline();
+          const current = linesRef.current;
+          const existing = current.find((l) => l.productId === "p1");
+          const next = existing
+            ? current.map((l) => (l.productId === "p1" ? { ...l, qty: l.qty + 1 } : l))
+            : [...current, L({ tempId: `t${current.length + 1}`, qty: 1 })];
+          linesRef.current = next;
+          setLines(next);
+          return added("p1", "Widget");
+        }, []);
+        return (
+          <ScanOrderScreen
+            open
+            onClose={jest.fn()}
+            lines={lines}
+            renderLine={(l) => (
+              <li key={l.tempId} data-testid={`row-${l.tempId}`}>
+                {l.name} ×{l.qty}
+              </li>
+            )}
+            resolveCode={resolveCode}
+            onUndo={jest.fn()}
+            hasCustomer
+          />
+        );
+      }
+
+      render(<StatefulHarness />);
+      await scan("111");
+      await scan("222");
+      expect(screen.getByLabelText("Waiting for signal")).toHaveTextContent("(2)");
+
+      await act(async () => {
+        window.dispatchEvent(new Event("online"));
+      });
+      await advance(RETRY_WINDOW);
+
+      // The real assertion the old test's name promised but never checked: ONE row, at qty 2 —
+      // never two separate "Widget" rows from a stale-state add.
+      expect(screen.queryAllByText(/^Widget ×/).length).toBe(1);
+      expect(screen.getByText("Widget ×2")).toBeInTheDocument();
+    });
+
     it("'Retry now' says so when the browser is still offline, instead of doing nothing", async () => {
       const resolve = jest.fn<Promise<ScanResolution>, [string]>().mockResolvedValue(offline());
       setup({}, resolve);
