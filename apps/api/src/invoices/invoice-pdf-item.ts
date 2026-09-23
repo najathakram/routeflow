@@ -12,7 +12,7 @@
  * `apps/web/app/(dashboard)/invoices/[id]/page.tsx` :2408-2481.
  */
 
-import { formatQtySplit } from "@routeflow/pricing";
+import { invoiceLineQtyText } from "@routeflow/pricing";
 
 /** Mirrors `invoice-pdf-template.tsx`'s own `DecimalLike` — a Prisma Decimal, a plain
  *  number, or a numeric string, all seen on the wire depending on the read path. */
@@ -73,20 +73,18 @@ export type InvoicePdfQtyItemLike = {
 };
 
 /**
- * B653: the invoice PDF's qty-column text — "2 boxes + 3 pcs" for an ordinary boxed
- * line, unchanged, but "3 Case" (not "3 boxes") for a units_v1 line, whose own
- * `unitLabel` is the box-level label `formatQtySplit` was already built to accept
- * (units/PO minimal, 2026-09-19) and this template simply never passed through.
- * `unitLabel` is used ONLY as `boxLabel` here — `formatQtySplit`'s own `unitLabel`
- * param names the LOOSE-PIECE noun (defaults "pcs"), a different axis a units_v1
- * line's `pieces: 0` never reaches anyway.
+ * B653: the invoice PDF's qty-column text — the SAME `invoiceLineQtyText` formatter
+ * web (`apps/web/lib/invoice-line-unit.ts`) and mobile (`invoice-line-display.ts`)
+ * call, so a units_v1 line reads identically everywhere: "3 Cases" for a boxed
+ * split, never "3 boxes"; "5 Piece" for a factor-1 unit (no split to attach the
+ * label to), never a bare "5". A pack line (no `unitLabel`) is unchanged.
  */
 export function qtyCellText(item: InvoicePdfQtyItemLike): string {
-  return formatQtySplit({
+  return invoiceLineQtyText({
     qty: toNum(item.qty),
     boxes: item.boxes,
     pieces: item.pieces,
-    boxLabel: item.unitLabel,
+    unitLabel: item.unitLabel,
   });
 }
 

@@ -1535,7 +1535,7 @@ export class EmailService {
         return `
         <tr>
           <td style="padding:8px 12px;border-bottom:1px solid #f0f0f0;font-size:14px;color:#1D2A3D;">${it.description}</td>
-          <td style="padding:8px 12px;border-bottom:1px solid #f0f0f0;font-size:14px;color:#1D2A3D;text-align:center;">${qtyCellText(it)}${
+          <td style="padding:8px 12px;border-bottom:1px solid #f0f0f0;font-size:14px;color:#1D2A3D;text-align:center;">${escapeHtml(qtyCellText(it))}${
             freeUnits > 0
               ? `<div style="font-size:11px;color:#b45309;font-weight:600;margin-top:2px;">${freeUnits} free</div>`
               : ""

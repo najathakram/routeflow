@@ -1315,9 +1315,10 @@ describe("EmailService.sendInvoice — BOGO/promo item display (T-B103, R9, REG-
  * "qty 36 @ $40.00 = $120.00" in the invoice email: `qty` is the BASE PIECE count
  * (`buildInvoiceUnitLine`: `qty = count x unitsPerBox`), so a customer doing the
  * arithmetic gets $1,440, not the real $120 subtotal. The email is the only
- * customer-facing document that never read boxes/pieces/unitLabel at all — the PDF,
- * web and mobile invoice detail all show "3 Cases" already. Fixture: 3 Cases of 12
- * ($40/Case) — qty 36, boxes 3, pieces 0.
+ * customer-facing document that never read boxes/pieces/unitLabel at all — the PDF
+ * (this same PR) and web invoice detail already show "3 Cases"; the mobile piece
+ * (fix/b653-mobile-invoice-detail-unit, PR #1275) is not yet merged to master.
+ * Fixture: 3 Cases of 12 ($40/Case) — qty 36, boxes 3, pieces 0.
  */
 describe("EmailService.sendInvoice — units_v1 qty text (B653)", () => {
   const unitLine = {
@@ -1382,12 +1383,15 @@ describe("EmailService.sendInvoice — units_v1 qty text (B653)", () => {
     expect(text).not.toContain("qty 36");
   });
 
-  it("PIN-B653-email: an ordinary boxed line (no unitLabel) is unchanged — still the bare box/piece split", async () => {
+  it('REG-B653-email: an ordinary boxed line (no unitLabel) reads "2 boxes + 3 pcs" @ the box price, never the pre-fix bare piece-qty (27) — master rendered this exact fixture wrong too', async () => {
     const svc = makeService();
     const sendSpy = jest
       .spyOn(svc, "send")
       .mockResolvedValue({ delivered: true, transport: "smtp" } as any);
 
+    // unitsPerBox 12: 2 boxes + 3 pcs = 27 pieces (qty). unitPrice is the BOX
+    // price ($40, not a per-piece figure) — subtotal is the stored box-prorated
+    // total (2 + 3/12) * 40 = $90, read verbatim, never re-derived from qty.
     await svc.sendInvoice({
       to: "buyer@example.com",
       customerName: "Acme Buyer",
@@ -1395,16 +1399,17 @@ describe("EmailService.sendInvoice — units_v1 qty text (B653)", () => {
       invoiceId: "inv-4003",
       issueDate: "Jan 1, 2026",
       dueDate: "Jan 31, 2026",
-      total: 100,
+      total: 90,
       totalPaid: 0,
-      balanceDue: 100,
-      items: [
-        { description: "Widget", qty: 27, boxes: 2, pieces: 3, unitPrice: 3.7, subtotal: 100 },
-      ],
+      balanceDue: 90,
+      items: [{ description: "Widget", qty: 27, boxes: 2, pieces: 3, unitPrice: 40, subtotal: 90 }],
     } as any);
 
     const row = itemRowsOf(sendSpy.mock.calls[0][0].html);
     expect(row).toContain("2 boxes + 3 pcs");
+    expect(row).not.toMatch(/>27</);
+    expect(row).toContain("$40.00");
+    expect(row).toContain("$90.00");
   });
 
   it("PIN-B653-email: a plain non-boxed line is unaffected — still the bare qty", async () => {
@@ -1428,6 +1433,40 @@ describe("EmailService.sendInvoice — units_v1 qty text (B653)", () => {
 
     const row = itemRowsOf(sendSpy.mock.calls[0][0].html);
     expect(row).toMatch(/>5</);
+  });
+
+  it("REG-B653-email-xss: a tenant-set unitLabel containing HTML is escaped in the HTML row, never injected raw", async () => {
+    const svc = makeService();
+    const sendSpy = jest
+      .spyOn(svc, "send")
+      .mockResolvedValue({ delivered: true, transport: "smtp" } as any);
+
+    await svc.sendInvoice({
+      to: "buyer@example.com",
+      customerName: "Acme Buyer",
+      invoiceNumber: "INV-4005",
+      invoiceId: "inv-4005",
+      issueDate: "Jan 1, 2026",
+      dueDate: "Jan 31, 2026",
+      total: 40,
+      totalPaid: 0,
+      balanceDue: 40,
+      items: [
+        {
+          description: "Widget",
+          qty: 1,
+          boxes: 1,
+          pieces: 0,
+          unitLabel: "<img src=x onerror=alert(1)>",
+          unitPrice: 40,
+          subtotal: 40,
+        },
+      ],
+    } as any);
+
+    const row = itemRowsOf(sendSpy.mock.calls[0][0].html);
+    expect(row).not.toContain("<img src=x onerror=alert(1)>");
+    expect(row).toContain("&lt;img src=x onerror=alert(1)&gt;");
   });
 });
 

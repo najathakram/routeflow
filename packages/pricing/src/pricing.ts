@@ -953,6 +953,33 @@ export function formatQtySplit({ qty, boxes, pieces, unitLabel, boxLabel }: QtyS
   return parts.length > 0 ? parts.join(" + ") : "0";
 }
 
+export interface UnitLineQtyInput {
+  qty: number | string;
+  boxes?: number | null;
+  pieces?: number | null;
+  /** units_v1 (2026-09-19): the line's own selling unit ("Case") when this line
+   *  was sold by a non-pack unit rather than by loose pieces. Empty/whitespace
+   *  is the pack (every existing call, no `unitLabel`, is unchanged). */
+  unitLabel?: string | null;
+}
+
+/**
+ * The quantity text of a line that may be sold by its own unit (units_v1) — the ONE
+ * formatter for the invoice/order qty cell on web, api (PDF + email) and mobile, so a
+ * units_v1 line reads the same everywhere: "3 Cases" (boxed split), never "3 boxes"
+ * (B653), and "5 Piece" for a factor-1 unit (no split to attach the label to — web
+ * parity, B757 follow-up), never a bare "5". A pack line (no `unitLabel`) is EXACTLY
+ * `formatQtySplit` — byte-identical to before this function existed, so a tenant
+ * without `flag.units_v1` (which can never hold a unit line) sees no change.
+ */
+export function invoiceLineQtyText(item: UnitLineQtyInput): string {
+  const split = { qty: item.qty, boxes: item.boxes, pieces: item.pieces };
+  const label = (item.unitLabel ?? "").trim();
+  if (!label) return formatQtySplit(split);
+  if (item.boxes == null && item.pieces == null) return `${formatQtySplit(split)} ${label}`;
+  return formatQtySplit({ ...split, boxLabel: label });
+}
+
 // ─── Per-unit cost rounding ───────────────────────────────────────────────────
 
 /**

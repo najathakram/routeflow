@@ -3961,9 +3961,6 @@ export class InvoicesService {
         originalPrice: it.originalPrice != null ? Number(it.originalPrice) : null,
         priceType: it.priceType ?? null,
         promoFreeUnits: it.promoFreeUnits != null ? Number(it.promoFreeUnits) : null,
-        // B653: the email's qty text needs the same split the PDF/web/mobile
-        // documents already read — omitted before, so a units_v1 line's email
-        // showed the base piece count next to the per-unit price.
         ...invoiceItemQtyFields(it),
       })),
       pdfUrl,
@@ -4184,9 +4181,6 @@ export class InvoicesService {
         originalPrice: it.originalPrice != null ? Number(it.originalPrice) : null,
         priceType: it.priceType ?? null,
         promoFreeUnits: it.promoFreeUnits != null ? Number(it.promoFreeUnits) : null,
-        // B653: the email's qty text needs the same split the PDF/web/mobile
-        // documents already read — omitted before, so a units_v1 line's email
-        // showed the base piece count next to the per-unit price.
         ...invoiceItemQtyFields(it),
       })),
       pdfUrl,
