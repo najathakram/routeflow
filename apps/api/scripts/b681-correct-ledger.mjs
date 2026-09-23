@@ -75,17 +75,65 @@ const PRICING_ROOT = resolve(REPO_ROOT, "packages/pricing");
 const SELF = resolve(dirname(fileURLToPath(import.meta.url)), "b681-correct-ledger.mjs");
 const LIVE_HEALTH_URL = "https://routeflowapi-production.up.railway.app/api/v1/health";
 
+/** One source of truth for the apply gate's statement timeout (used identically by the dry
+ *  run's read-only transaction and apply's write transaction) -- a single constant so the two
+ *  can never drift onto two different values. */
+export const STATEMENT_TIMEOUT_SQL = "SET LOCAL statement_timeout = '120s'";
+
 const argOf = (name) => {
   const i = process.argv.indexOf(name);
   return i >= 0 ? process.argv[i + 1] : undefined;
 };
 
-function sha256(obj) {
+export function sha256(obj) {
   return createHash("sha256").update(JSON.stringify(obj)).digest("hex");
 }
 
 function round2(n) {
   return Math.round(n * 100) / 100;
+}
+
+/** Assembles the dry run's plan object -- pure, no I/O. `pricingDistStamp` (SA-076a Ruling 1)
+ *  is the shared `assert-pricing-dist-fresh.mjs` stamp recorded straight into the plan apply()
+ *  later re-checks against; `planHash` is `sha256` of every OTHER field (added last, so it can
+ *  never hash itself), the exact value `--confirm-plan` must equal. */
+export function buildPlan({ fp, pricingStamp, corrections, parkedReversals, generatedAt }) {
+  const plan = {
+    generatedAt: generatedAt ?? new Date().toISOString(),
+    fingerprint: fp,
+    pricingDistStamp: pricingStamp.srcHash,
+    corrections,
+    parkedReversals,
+  };
+  return { ...plan, planHash: sha256(plan) };
+}
+
+/** SA-076a's explicit apply-time refusal in place of a DB-enforced unique index (that index is
+ *  a follow-up with its own migration): a row this plan wants to correct that ALREADY has a
+ *  correction pointing at it means this plan (or a later one) was already applied -- pure over
+ *  the query result rows, so it's unit-testable without a DB connection. */
+export function refuseIfExistingCorrections(existingRows) {
+  if (existingRows.length > 0) {
+    throw Object.assign(
+      new Error(
+        `${existingRows.length} row(s) in this plan already have a correction pointing at them -- this plan (or a later one) was already applied; refusing`,
+      ),
+      { refuse: true },
+    );
+  }
+}
+
+/** Same idempotency contract as `refuseIfExistingCorrections`, for `RegulatedLedgerParkedReversal`
+ *  -- the other table this routine writes. */
+export function refuseIfExistingParkedReversals(existingRows) {
+  if (existingRows.length > 0) {
+    throw Object.assign(
+      new Error(
+        `${existingRows.length} parked-reversal row(s) in this plan already exist -- this plan (or a later one) was already applied; refusing`,
+      ),
+      { refuse: true },
+    );
+  }
 }
 
 function resolveTarget() {
@@ -242,20 +290,13 @@ async function dryRun() {
 async function dryRunInner(client, pricingStamp) {
   try {
     await client.query("BEGIN TRANSACTION READ ONLY");
-    await client.query("SET LOCAL statement_timeout = '120s'");
+    await client.query(STATEMENT_TIMEOUT_SQL);
     const fp = await fingerprint(client);
     const { report, corrections, parkedReversals } = await classify(client);
     await client.query("ROLLBACK");
 
-    const plan = {
-      generatedAt: new Date().toISOString(),
-      fingerprint: fp,
-      pricingDistStamp: pricingStamp.srcHash,
-      corrections,
-      parkedReversals,
-    };
-    const hash = sha256(plan);
-    const stamped = { ...plan, planHash: hash };
+    const stamped = buildPlan({ fp, pricingStamp, corrections, parkedReversals });
+    const hash = stamped.planHash;
 
     const dir = resolve(REPO_ROOT, "local-assets/handoff", new Date().toISOString().slice(0, 10));
     mkdirSync(dir, { recursive: true });
@@ -300,12 +341,14 @@ export async function fingerprint(client) {
   return { database: db.rows[0].db, tenantIds: tenants.rows.map((t) => t.id) };
 }
 
-function verifyGuardSha(guardSha) {
-  const headSha = execFileSync("git", ["-C", REPO_ROOT, "rev-parse", "HEAD"], {
-    encoding: "utf8",
-  }).trim();
+/** `deps.exec` defaults to the real `execFileSync` -- overridable so this can be unit-tested
+ *  without shelling out to git. Behavior at every real call site is unchanged. */
+export function verifyGuardSha(guardSha, deps = {}) {
+  const exec = deps.exec ?? execFileSync;
+  const repoRoot = deps.repoRoot ?? REPO_ROOT;
+  const headSha = exec("git", ["-C", repoRoot, "rev-parse", "HEAD"], { encoding: "utf8" }).trim();
   try {
-    execFileSync("git", ["-C", REPO_ROOT, "merge-base", "--is-ancestor", guardSha, headSha]);
+    exec("git", ["-C", repoRoot, "merge-base", "--is-ancestor", guardSha, headSha]);
   } catch {
     throw Object.assign(
       new Error(`--guard-sha ${guardSha} is not an ancestor of this checkout's HEAD (${headSha})`),
@@ -319,11 +362,21 @@ function verifyGuardSha(guardSha) {
  *  way. Once the live commit is actually resolved, `git merge-base --is-ancestor` is the
  *  DEFINITIVE answer and its failure (exit 1 = provably not an ancestor, or any other exit = the
  *  question could not be answered) always REFUSES -- a stale-or-undetermined production deploy
- *  and a dropped connection must never look the same to the caller. */
-async function verifyLiveDeployedSha(guardSha) {
+ *  and a dropped connection must never look the same to the caller.
+ *
+ *  `deps` (fetchImpl/exec/repoRoot/healthUrl) default to the real network/git/module-level
+ *  values -- overridable so this refuse-vs-warn contract can be unit-tested without a live
+ *  network call, a real git checkout, or a real production deploy. Behavior at the one real
+ *  call site (apply()) is unchanged. */
+export async function verifyLiveDeployedSha(guardSha, deps = {}) {
+  const fetchImpl = deps.fetchImpl ?? fetch;
+  const exec = deps.exec ?? execFileSync;
+  const repoRoot = deps.repoRoot ?? REPO_ROOT;
+  const healthUrl = deps.healthUrl ?? LIVE_HEALTH_URL;
+
   let liveSha;
   try {
-    const res = await fetch(LIVE_HEALTH_URL);
+    const res = await fetchImpl(healthUrl);
     const body = await res.json();
     liveSha = body?.commit;
   } catch (e) {
@@ -339,10 +392,10 @@ async function verifyLiveDeployedSha(guardSha) {
     return;
   }
   try {
-    execFileSync("git", ["-C", REPO_ROOT, "cat-file", "-e", liveSha], { stdio: "ignore" });
+    exec("git", ["-C", repoRoot, "cat-file", "-e", liveSha], { stdio: "ignore" });
   } catch {
     try {
-      execFileSync("git", ["-C", REPO_ROOT, "fetch", "origin", liveSha], { stdio: "ignore" });
+      exec("git", ["-C", repoRoot, "fetch", "origin", liveSha], { stdio: "ignore" });
     } catch (e) {
       console.warn(
         `b681-correct-ledger: WARN -- could not fetch the live deployed commit ${liveSha} (${e.message}); ancestry not confirmed`,
@@ -351,7 +404,7 @@ async function verifyLiveDeployedSha(guardSha) {
     }
   }
   try {
-    execFileSync("git", ["-C", REPO_ROOT, "merge-base", "--is-ancestor", guardSha, liveSha]);
+    exec("git", ["-C", repoRoot, "merge-base", "--is-ancestor", guardSha, liveSha]);
   } catch (e) {
     throw Object.assign(
       new Error(
@@ -403,7 +456,7 @@ async function apply() {
     await client.connect();
     try {
       await client.query("BEGIN");
-      await client.query("SET LOCAL statement_timeout = '120s'");
+      await client.query(STATEMENT_TIMEOUT_SQL);
       await assertRequiredColumns(client);
 
       const fp = await fingerprint(client);
@@ -434,27 +487,13 @@ async function apply() {
       const existing = await client.query(EXISTING_CORRECTION_SQL, [
         plan.corrections.map((c) => c.rowId),
       ]);
-      if (existing.rows.length > 0) {
-        throw Object.assign(
-          new Error(
-            `${existing.rows.length} row(s) in this plan already have a correction pointing at them -- this plan (or a later one) was already applied; refusing`,
-          ),
-          { refuse: true },
-        );
-      }
+      refuseIfExistingCorrections(existing.rows);
       if (plan.parkedReversals.length > 0) {
         const existingParked = await client.query(EXISTING_PARKED_REVERSAL_SQL, [
           plan.parkedReversals.map((p) => p.returnId),
           plan.parkedReversals.map((p) => p.saleEntryId),
         ]);
-        if (existingParked.rows.length > 0) {
-          throw Object.assign(
-            new Error(
-              `${existingParked.rows.length} parked-reversal row(s) in this plan already exist -- this plan (or a later one) was already applied; refusing`,
-            ),
-            { refuse: true },
-          );
-        }
+        refuseIfExistingParkedReversals(existingParked.rows);
       }
 
       // FIX 3b: concurrency scoped to the PLAN's own affected line keys, FOR UPDATE, never the
