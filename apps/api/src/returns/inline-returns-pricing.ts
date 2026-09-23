@@ -128,6 +128,49 @@ export interface QuoteBreakdown {
   total: number;
 }
 
+/** Result of {@link resolveReturnPackFactor}. */
+export interface ReturnPackFactorResult {
+  /** The pack size to use, or null when none is known at all (no candidate line has one
+   * and the product itself has no box size). */
+  factor: number | null;
+  /** Non-null (2+ distinct values, ascending) when the candidate lines DISAGREE on pack
+   * size — the caller must refuse the whole item rather than guess which one applies. */
+  conflictingPacks: number[] | null;
+}
+
+/**
+ * SA-101(2) interim guard (B3/B765): resolves the pack (unitsPerBox) factor for one
+ * return-request item from ALL of its product's candidate invoice lines, not just the
+ * newest. Before this fix, the caller picked `matchingSet.find(l => l.productId ===
+ * productId)?.unitsPerBox` — the newest invoice's line — and silently applied that pack
+ * size even when an OLDER line (the one the operator actually saw) used a different one:
+ * a product with a 12-pack line and a newer 48-unit Case line would price a return typed
+ * against the 12-pack order at the Case's factor instead, a 4x mis-credit. This function
+ * makes that ambiguity an explicit, reported conflict instead of a silent guess — the
+ * caller throws (see `inline-returns-quote.service.ts`). The durable fix (carrying the
+ * actual `sourceOrderItemId` on the wire, so the factor is never guessed at all) is a
+ * later PR; this only stops the silent wrong guess.
+ *
+ * SA-108 precision: a pack of exactly 1 (or null) means "no packaging" (R-029) — the same
+ * convention `isBoxedProduct`/`ResolveParkedRestockDto` use elsewhere (only `> 1` is a real
+ * box size). A candidate line legitimately carrying `unitsPerBox: 1` must never conflict
+ * with a genuinely boxed sibling at, say, 12 — it is not a competing PACK claim, it is a
+ * line that was never boxed in the first place. Only distinct values `> 1` count toward a
+ * conflict; a lone `1` among the candidates is simply ignored, exactly like `null`.
+ */
+export function resolveReturnPackFactor(
+  candidatePacks: ReadonlyArray<number | null | undefined>,
+  productUnitsPerBox: number | null,
+): ReturnPackFactorResult {
+  const distinct = [...new Set(candidatePacks.filter((p): p is number => p != null && p > 1))].sort(
+    (a, b) => a - b,
+  );
+  if (distinct.length > 1) {
+    return { factor: null, conflictingPacks: distinct };
+  }
+  return { factor: distinct[0] ?? productUnitsPerBox ?? null, conflictingPacks: null };
+}
+
 // ─── §3.1 matching / allocation ────────────────────────────────────────────────
 
 /** Converts a return-request DTO qty (raw qty, or an explicit boxes/pieces split) into

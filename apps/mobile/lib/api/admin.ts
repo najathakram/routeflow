@@ -425,6 +425,9 @@ export interface AdminInvoice {
     promoFreeUnits?: number | null;
     /** Product this line was cut from — needed to round-trip an items PATCH. */
     productId?: string | null;
+    /** units_v1: the unit this line is sold by ("Case"…); null on a plain/pack line.
+     *  B784: names the unit-aware-edit guard's refusal message. */
+    unitLabel?: string | null;
   }>;
 }
 
