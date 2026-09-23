@@ -1486,5 +1486,58 @@ describe("BookkeepingService", () => {
         expect.objectContaining({ feature: "ocr.expense_receipt", success: false }),
       );
     });
+
+    it("REG-B801: a single OCR line item's amount is cent-exact, not a float artifact", async () => {
+      const lineItemModel = graftExpenseLineItem();
+      mockAnthropicCreate.mockResolvedValue({
+        content: [
+          {
+            type: "text",
+            // 3 x 0.335 === 1.0050000000000001 in plain JS float multiplication.
+            text: JSON.stringify({
+              vendor: "Acme",
+              items: [{ description: "Delivery", qty: 3, unitCost: 0.335, amount: 3 * 0.335 }],
+            }),
+          },
+        ],
+        usage: { input_tokens: 1, output_tokens: 1 },
+      });
+
+      await service.extractExpenseItems("exp-1");
+
+      const created = lineItemModel.createMany.mock.calls[0][0].data;
+      expect(created[0].amount).toBe(1.01);
+      expect(created[0].amount).not.toBe(1.0050000000000001);
+
+      const updateData = prisma.expense.update.mock.calls[0][0].data;
+      expect(updateData.amount).toBe(1.01);
+    });
+
+    it("REG-B801: each OCR line item is rounded on write, so the stored lines sum exactly to the header total", async () => {
+      const lineItemModel = graftExpenseLineItem();
+      mockAnthropicCreate.mockResolvedValue({
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify({
+              vendor: "Acme",
+              items: [
+                { description: "A", amount: 0.005 },
+                { description: "B", amount: 0.005 },
+              ],
+            }),
+          },
+        ],
+        usage: { input_tokens: 1, output_tokens: 1 },
+      });
+
+      await service.extractExpenseItems("exp-1");
+
+      const created = lineItemModel.createMany.mock.calls[0][0].data;
+      expect(created.map((li: any) => li.amount)).toEqual([0.01, 0.01]);
+
+      const updateData = prisma.expense.update.mock.calls[0][0].data;
+      expect(updateData.amount).toBe(0.02);
+    });
   });
 });

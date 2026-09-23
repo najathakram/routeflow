@@ -902,23 +902,31 @@ export class BookkeepingService implements OnModuleInit {
     }
 
     const items: any[] = parsed.items ?? [];
+    // B801: round every monetary write — an OCR-extracted amount (or a
+    // distance/rate-style value) can land off-cent in float, exactly like
+    // B781's mileage/itemized case. Round each line here, once, and reuse the
+    // SAME rounded value for both the stored line and the header total below,
+    // so the header always equals the sum of the stored lines.
+    const roundedAmounts = items.map((item: any) =>
+      roundMoney(Number(item.amount ?? item.unitCost ?? 0)),
+    );
 
     // Replace existing line items with extracted ones
     await this.prisma.forTenant().expenseLineItem.deleteMany({ where: { expenseId: id } });
     if (items.length > 0) {
       await this.prisma.forTenant().expenseLineItem.createMany({
-        data: items.map((item: any) => ({
+        data: items.map((item: any, idx: number) => ({
           expenseId: id,
           account: item.description ?? "Item",
           notes: null,
-          amount: Number(item.amount ?? item.unitCost ?? 0),
+          amount: roundedAmounts[idx],
           unitCost: item.unitCost != null ? Number(item.unitCost) : null,
           qty: item.qty != null ? Number(item.qty) : null,
         })),
       });
     }
 
-    const totalFromItems = items.reduce((s: number, i: any) => s + Number(i.amount ?? 0), 0);
+    const totalFromItems = roundMoney(roundedAmounts.reduce((s: number, a: number) => s + a, 0));
 
     const updated = await this.prisma.forTenant().expense.update({
       where: { id },
