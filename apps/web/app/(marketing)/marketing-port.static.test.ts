@@ -310,8 +310,10 @@ describe("marketing.css is delivered from the root layout — R-MKT T6", () => {
 // -- <path>` is empty for both at plan time — see the test-plan's T7 row).
 // globals.css re-pinned by B511 (touch-reveal media query, a legitimate
 // unrelated dashboard change — this pin exists to catch the marketing port
-// leaking into shared files, not to freeze globals.css forever).
-const GLOBALS_CSS_SHA256 = "01b57813d6654b2407573517d22b9e12a0587551f731aaebb3b8696ce1fd6461";
+// leaking into shared files, not to freeze globals.css forever), and again
+// here for the owner-reported mobile horizontal-drift fix: a global
+// `html { overflow-x: hidden }` safety net, unrelated to the marketing port.
+const GLOBALS_CSS_SHA256 = "80bf4ebb92b7c7d48dde5c0113b734b0ec5d925ec7cbb64ec984d2e33caeb743";
 const TAILWIND_CONFIG_SHA256 = "5b62085fee3f38bba484393c94238b8651806d8c7e0e47efc9a91cce68ff9754";
 
 function sha256OfFile(filePath: string): string {
