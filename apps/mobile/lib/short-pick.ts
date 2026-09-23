@@ -59,6 +59,45 @@ export function freeUnitSizeFor(li: {
   return upb > 0 ? upb : 1;
 }
 
+/** The shape `shortPickLinesFromOrder` reads off an order's own line items. */
+export interface ShortPickSourceLine {
+  id: string;
+  productId: string | null;
+  status?: string | null;
+  deliveredQty?: number | string | null;
+  qty: number | string;
+  subtotal?: number | null;
+  promoFreeUnits?: number | null;
+  boxes?: number | null;
+  unitsPerBox?: number | null;
+  product?: { unitsPerBox?: number | null } | null;
+}
+
+/**
+ * An order's lines -> `ShortPickLine[]` (B762): the SAME mapping
+ * short-pick.tsx and payment.tsx each used to inline separately, byte-
+ * identical between them by convention — both screens feed the same
+ * `reconciledTotal`/`buildDeliveries`/`buildStopDeliveries`, so a single
+ * shared derivation is what keeps that convention enforced rather than
+ * merely documented. Excludes CANCELLED lines (not adjustable) and lines
+ * already delivered (a reopened, partially-completed stop shouldn't
+ * re-offer an already-settled line).
+ */
+export function shortPickLinesFromOrder(
+  order: { lineItems?: readonly ShortPickSourceLine[] | null } | null | undefined,
+): ShortPickLine[] {
+  return (order?.lineItems ?? [])
+    .filter((li) => li.status !== "CANCELLED" && Number(li.deliveredQty ?? 0) === 0)
+    .map((li) => ({
+      orderItemId: li.id,
+      productId: li.productId,
+      orderedQty: Number(li.qty),
+      subtotal: li.subtotal ?? null,
+      freeUnits: li.promoFreeUnits ?? 0,
+      freeUnitSize: freeUnitSizeFor(li),
+    }));
+}
+
 /** DELIVERED at the full ordered qty, REFUSED at 0, else PARTIAL. */
 export function deliveryTypeForQty(deliveredQty: number, orderedQty: number): DeliveryType {
   if (deliveredQty <= 0) return "REFUSED";

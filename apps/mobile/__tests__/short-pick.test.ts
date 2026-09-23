@@ -4,6 +4,7 @@ import {
   reconciledTotal,
   isFullyDelivered,
   buildStopDeliveries,
+  shortPickLinesFromOrder,
 } from "../lib/short-pick";
 
 const lines = [
@@ -85,6 +86,72 @@ describe("isFullyDelivered", () => {
   });
   it("false once any line is reduced", () => {
     expect(isFullyDelivered(lines, { "li-1": 5 })).toBe(false);
+  });
+});
+
+describe("shortPickLinesFromOrder (B762: the shared derivation both driver screens now use)", () => {
+  it("maps an order's lines to ShortPickLine, carrying freeUnits/freeUnitSize", () => {
+    const order = {
+      lineItems: [
+        {
+          id: "li-1",
+          productId: "p-1",
+          status: "PENDING",
+          deliveredQty: 0,
+          qty: 10,
+          subtotal: 100,
+          promoFreeUnits: 1,
+          boxes: 1,
+          unitsPerBox: 5,
+        },
+      ],
+    };
+    expect(shortPickLinesFromOrder(order)).toEqual([
+      { orderItemId: "li-1", productId: "p-1", orderedQty: 10, subtotal: 100, freeUnits: 1, freeUnitSize: 5 },
+    ]);
+  });
+
+  it("excludes CANCELLED lines", () => {
+    const order = {
+      lineItems: [
+        { id: "li-1", productId: "p-1", status: "CANCELLED", qty: 10, subtotal: 100 },
+        { id: "li-2", productId: "p-2", status: "PENDING", qty: 5, subtotal: 50 },
+      ],
+    };
+    expect(shortPickLinesFromOrder(order).map((l) => l.orderItemId)).toEqual(["li-2"]);
+  });
+
+  it("excludes a line already delivered (a reopened, partially-completed stop doesn't re-offer a settled line)", () => {
+    const order = {
+      lineItems: [
+        { id: "li-1", productId: "p-1", status: "PENDING", deliveredQty: 10, qty: 10, subtotal: 100 },
+        { id: "li-2", productId: "p-2", status: "PENDING", deliveredQty: 0, qty: 5, subtotal: 50 },
+      ],
+    };
+    expect(shortPickLinesFromOrder(order).map((l) => l.orderItemId)).toEqual(["li-2"]);
+  });
+
+  it("null/undefined order or missing lineItems -> empty array, never throws", () => {
+    expect(shortPickLinesFromOrder(null)).toEqual([]);
+    expect(shortPickLinesFromOrder(undefined)).toEqual([]);
+    expect(shortPickLinesFromOrder({})).toEqual([]);
+  });
+
+  it("feeds buildStopDeliveries directly for a real multi-order flow — no adapter needed", () => {
+    const orderA = {
+      lineItems: [{ id: "li-1", productId: "p-1", status: "PENDING", qty: 4, subtotal: 40 }],
+    };
+    const orderB = {
+      lineItems: [{ id: "li-2", productId: "p-2", status: "PENDING", qty: 6, subtotal: 60 }],
+    };
+    const out = buildStopDeliveries([
+      { orderId: "A", lines: shortPickLinesFromOrder(orderA), deliveredQtyById: {} },
+      { orderId: "B", lines: shortPickLinesFromOrder(orderB), deliveredQtyById: { "li-2": 0 } },
+    ]);
+    expect(out).toEqual([
+      { orderItemId: "li-1", productId: "p-1", type: "DELIVERED", quantityDelivered: 4 },
+      { orderItemId: "li-2", productId: "p-2", type: "REFUSED", quantityDelivered: 0 },
+    ]);
   });
 });
 
