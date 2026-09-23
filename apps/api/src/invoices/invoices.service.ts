@@ -2276,7 +2276,14 @@ export class InvoicesService {
     const existingByProduct = new Map<string, any>();
     for (const li of order.lineItems as any[]) {
       existingById.set(li.id, li);
-      if (li.productId) existingByProduct.set(li.productId, li);
+      // #1185 review round 4: FIRST match over NON-CANCELLED lines only, consistent with the
+      // void path's array-order-first-match (~L4392) -- `Map.set` on every line let the LAST
+      // (and even a CANCELLED) line win, so an item edit (which drops orderItemId and re-matches
+      // by product alone) could credit an active line's billed qty onto an unrelated cancelled
+      // sibling of the same product and reset the active line's invoicedQty to 0 -- rebillable.
+      if (li.productId && li.status !== "CANCELLED" && !existingByProduct.has(li.productId)) {
+        existingByProduct.set(li.productId, li);
+      }
     }
 
     // Aggregate billed qty + subtotal, resolving each invoice line to its source

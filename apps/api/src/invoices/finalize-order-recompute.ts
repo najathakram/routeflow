@@ -44,10 +44,15 @@ export async function checkOrderCoverage(params: {
 }): Promise<{ fullyCovered: true } | { fullyCovered: false; totals: OrderRecomputeTotals }> {
   const { db, orderId, order, byTarget, invoices } = params;
   const activeLines = (order.lineItems as any[]).filter((li) => li.status !== "CANCELLED");
-  const fullyCovered = activeLines.every((li) => {
+  // Reuse merge-idempotency.ts's shouldSkipInPlaceResync tolerance/zero-qty rule exactly: `qty`
+  // is Decimal(10,3), and Node's float math (0.7 + 0.1 === 0.7999999999999999) means a strict
+  // `>=` never counts a fully-billed line as covered. A zero-qty line can never be billed, so it
+  // never blocks coverage either.
+  const billableLines = activeLines.filter((li) => Number(li.qty ?? 0) > 0.001);
+  const fullyCovered = billableLines.every((li) => {
     const agg = byTarget.get(`line:${li.id}`);
-    if (agg) return agg.qty >= Number(li.qty);
-    return Number(li.invoicedQty ?? 0) > 0;
+    if (agg) return agg.qty >= Number(li.qty) - 0.001;
+    return Number(li.invoicedQty ?? 0) > 0.001;
   });
   if (fullyCovered) return { fullyCovered: true };
 

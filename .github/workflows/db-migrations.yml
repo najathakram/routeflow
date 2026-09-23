@@ -51,6 +51,10 @@ on:
       - "apps/api/src/billing/config-snapshot-flag.service.ts"
       - "apps/api/src/import/numbering.service.ts"
       - "apps/api/src/invoices/invoices.service.ts"
+      # B667 (#1185 review round 4): recomputeOrderFromInvoices' coverage/orphan-cancel logic
+      # lives here, proven only by recompute-order-partial.db.spec.ts -- an edit to this file
+      # ALONE (not invoices.service.ts) must still run this lane.
+      - "apps/api/src/invoices/finalize-order-recompute.ts"
       - "apps/api/src/estimates/estimates.service.ts"
       - "apps/api/.squawk.toml"
       - "scripts/lint-migrations.mjs"

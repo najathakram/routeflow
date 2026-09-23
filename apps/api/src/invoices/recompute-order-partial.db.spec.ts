@@ -651,6 +651,87 @@ describeDb(
       expect(Number(refreshedL3.invoicedQty)).toBe(0); // never billed — unaffected
     });
 
+    it("review round 4 (HIGH): an item edit's product-only re-match must never credit an active line's billed qty onto a CANCELLED sibling of the same product", async () => {
+      const { tenant, customer } = await seedTenantAndCustomer("j");
+      const product = await prisma.product.create({
+        data: { name: `P ${tenant.slug}`, unit: "ea", pricePerUnit: 10, tenantId: tenant.id },
+      });
+      const order = await prisma.order.create({
+        data: {
+          customerId: customer.id,
+          status: "PARTIALLY_DELIVERED",
+          subtotal: 90,
+          total: 90,
+          tenantId: tenant.id,
+        },
+      });
+      // L1: active, billed in full below. L2: SAME product, but CANCELLED -- created AFTER L1,
+      // so the old `existingByProduct` Map (last-write-wins, no cancelled filter) resolves
+      // product P to L2, not L1. L3: unbilled, keeps the order partial so this exercises the
+      // invoicedQty-sync branch (not the full-coverage rewrite).
+      const lineL1 = await prisma.orderItem.create({
+        data: {
+          orderId: order.id,
+          productId: product.id,
+          status: "PENDING",
+          qty: 4,
+          unitPrice: 10,
+          subtotal: 40,
+          tenantId: tenant.id,
+        },
+      });
+      const lineL2 = await prisma.orderItem.create({
+        data: {
+          orderId: order.id,
+          productId: product.id,
+          status: "CANCELLED",
+          qty: 0,
+          unitPrice: 10,
+          subtotal: 0,
+          tenantId: tenant.id,
+        },
+      });
+      const lineL3 = await prisma.orderItem.create({
+        data: {
+          orderId: order.id,
+          productId: null,
+          status: "PENDING",
+          qty: 5,
+          unitPrice: 10,
+          subtotal: 50,
+          tenantId: tenant.id,
+        },
+      });
+
+      const invoice = await tenantCtx.run(tenant.id, () =>
+        invoicesService.createPartialFromOrder(order.id, {
+          items: [{ orderItemId: lineL1.id, qty: 4 }],
+        }),
+      );
+      const afterBill = await prisma.orderItem.findUniqueOrThrow({ where: { id: lineL1.id } });
+      expect(Number(afterBill.invoicedQty)).toBe(4);
+
+      // The item edit drops orderItemId (SplitInvoiceModal/manual-edit shape) -- the only way
+      // recomputeOrderFromInvoices' byTarget re-matches by product alone. L3 (never billed)
+      // keeps the order partial, so this lands in the invoicedQty-sync loop, not the
+      // full-coverage rewrite.
+      await tenantCtx.run(tenant.id, () =>
+        invoicesService.update((invoice as any).id, {
+          items: [{ productId: product.id, qty: 4, unitPrice: 10, description: "P" }],
+        } as any),
+      );
+
+      const refreshedL1 = await prisma.orderItem.findUniqueOrThrow({ where: { id: lineL1.id } });
+      // The old bug: the product-only match resolved to L2 (last-write-wins, cancelled-blind),
+      // so L1's own row was never found in byTarget -> billedQty computed as 0 -> L1.invoicedQty
+      // reset to 0, silently making the already-billed line billable again.
+      expect(Number(refreshedL1.invoicedQty)).toBe(4); // NOT reset to 0
+      expect(refreshedL1.status).toBe("PENDING");
+      const refreshedL2 = await prisma.orderItem.findUniqueOrThrow({ where: { id: lineL2.id } });
+      expect(refreshedL2.status).toBe("CANCELLED"); // untouched
+      expect(Number(refreshedL2.invoicedQty)).toBe(0);
+    });
+
     it("control: once the SECOND line is also billed in full, the recompute applies — order subtotal becomes the billed sum", async () => {
       const { order, lineA, lineB, invoice } = await seedPartiallyInvoicedOrder("c");
 
