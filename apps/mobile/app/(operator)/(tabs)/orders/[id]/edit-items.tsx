@@ -111,6 +111,7 @@ import {
 } from "../../../../../lib/credit-limit-error";
 import { useAuthStore } from "../../../../../lib/auth-store";
 import { fmtCalendarDate } from "../../../../../lib/format-date";
+import { useEditItemsDraft } from "../../../../../hooks/useEditItemsDraft";
 
 function toNumber(v: number | string | null | undefined): number {
   if (typeof v === "number") return v;
@@ -196,38 +197,9 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
   // — never re-derived from the item's fields).
   const [floorAcked, setFloorAcked] = useState<Set<string>>(new Set());
 
-  // SA-108: keyed by the line's own identity, never productId — see
-  // hydrateFromOrder/resolveDraftKeyForPick (lib/edit-items-draft.ts).
-  const [draft, setDraft] = useState<Record<string, DraftItem>>({});
-  // SA-108d (E44 correction of SA-108a): a manually-kept-fresh mirror of
-  // `draft`. React's functional setState eager-dispatch path needs BOTH the
-  // fiber's AND its alternate's lanes empty — after this component's own
-  // earlier state-driven renders the alternate can retain stale lanes, so
-  // even the FIRST setDraft call of a burst is often deferred too, not just
-  // the second. A ref write placed INSIDE the updater is therefore never
-  // reliable as a synchronization point. Instead: assigned here on every
-  // render, AND at every mutation's own call site via `draftRef.current =
-  // apply(draftRef.current)` (a pure transform, run once synchronously by
-  // us) immediately before handing that SAME pure function to `setDraft` —
-  // never inside a setDraft updater itself, so it never depends on whether
-  // or when React actually invokes it.
-  const draftRef = useRef<Record<string, DraftItem>>({});
-  draftRef.current = draft;
-  // B805: the ONE write path every draft mutator goes through — setQty,
-  // setBoxes, setPieces, setUnits, setSellBy, setLinePrice, setLineNote,
-  // removeLine, the price-override modal, the last-added strip's price
-  // edit, the substitute-apply branch, and addPickedToDraft. `fn` MUST be
-  // pure (SA-108d): it may run twice for one logical call — once here,
-  // synchronously, to keep draftRef an accurate same-tick mirror, and once
-  // more whenever React actually processes the functional setState update
-  // it's ALSO handed (eager or deferred, never reliably either one — see
-  // the draftRef comment above). A writer with its own side effect (e.g.
-  // removeLine's pendingDeletes append) must perform that OUTSIDE fn,
-  // never inside it.
-  const updateDraft = (fn: (d: Record<string, DraftItem>) => Record<string, DraftItem>) => {
-    draftRef.current = fn(draftRef.current);
-    setDraft(fn);
-  };
+  // B805: the stateful draft/draftRef/updateDraft trio lives in this shared
+  // hook now — see its own doc comment for the SA-108/SA-108d rationale.
+  const { draft, setDraft, draftRef, updateDraft } = useEditItemsDraft();
   // New + existing ad-hoc lines (productId null). Kept separate from `draft`
   // and diffed on save so they aren't dropped.
   const [unlisted, setUnlisted] = useState<UnlistedDraft[]>([]);
@@ -387,7 +359,8 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
     );
     setCreditsTouched(false);
     setJustCreatedCredits([]);
-  }, [order, id]);
+    // setDraft: stable useState setter, forwarded through useEditItemsDraft.
+  }, [order, id, setDraft]);
 
   // The snapshot key resolves SYNCHRONOUSLY from the store (unlike
   // lib/user-scoped-storage.ts's async key, whose extra hop that module's own
@@ -449,7 +422,7 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
     setCreditsTouched(restored.creditsTouched);
     setFloorAcked(new Set(restored.floorAcked));
     setRestoreState("applied");
-  }, [order, baselineOrder, restored, restoreState]);
+  }, [order, baselineOrder, restored, restoreState, setDraft]);
 
   // Live total mirrors the server math (BOX-price proration when split).
   const total = useMemo(() => {
