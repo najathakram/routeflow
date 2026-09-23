@@ -145,6 +145,8 @@ export function returnRequestPieces(input: {
     return Math.trunc(Number(input.boxes ?? 0)) * upb + Math.trunc(Number(input.pieces ?? 0));
   }
   const upb = Number(input.unitsPerBox ?? 0);
+  // B661-sweep: a box-unaware multiply — follow-up PR converts this to
+  // @routeflow/pricing's regulatedUnitBasis; see no-second-legacy-line-pieces.spec.ts's allowlist.
   return upb > 1 ? Math.trunc(Number(input.qty) * upb) : Math.trunc(Number(input.qty));
 }
 

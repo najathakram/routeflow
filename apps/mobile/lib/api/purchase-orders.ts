@@ -18,7 +18,16 @@ export interface POItem {
   // Prisma Decimals serialize as numeric strings over JSON — coerce with Number().
   qtyOrdered: number | string;
   qtyReceived: number | string;
+  /** Per-PIECE cost at 4 dp — for costing only. On a boxed line it is a ROUNDED figure (B698). */
   unitCost: number | string;
+  /**
+   * The exact line total the server stored (`Decimal(10,2)`). B698: the document figure — render it,
+   * never `qtyOrdered x unitCost`, which re-multiplies the rounded per-piece cost (see
+   * `lib/po-line-subtotal.ts`). Optional only for rows older than the column.
+   */
+  totalCost?: number | string | null;
+  /** Non-null = the cost was entered per case of this size (B677); null = per piece. */
+  packSize?: number | null;
 }
 
 export interface PurchaseOrder {

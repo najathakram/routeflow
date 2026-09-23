@@ -105,6 +105,9 @@ export class InlineReturnsService {
         returnId: ret.id,
         orderId: sourceOrderId,
         returnedByProduct,
+        // capture()'s ReturnItem.qty comes from priced.chunks[].pieces — genuinely
+        // piece-denominated, unlike the standard path's ReturnItem.qty.
+        returnedUnit: "PIECES",
         db: tx,
       });
     }

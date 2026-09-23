@@ -18,8 +18,10 @@ import {
   normalizeBoxesPieces,
   isBlockingPayment,
   remainingCapacity,
+  packFromOwnSplit,
   type CategoryTaxType,
 } from "@routeflow/pricing";
+import { loadPriorPacks, priceReplacedLine, resolveUpdateLinePack } from "./update-pack-resolution";
 import { redactUpsellForCustomer } from "../common/upsell-redaction";
 import {
   CONFIRMED_PAYMENT,
@@ -29,6 +31,7 @@ import {
   sumConfirmed,
 } from "./payment-predicates";
 import { PAYABLE, KPI_SUMMARY_EXCLUDED } from "./invoice-status-sets";
+import { packAtSaleByProduct, priorUnitsPerBoxMap, toSaleLedgerLines } from "./pack-at-sale";
 import { clampLimit } from "../common/pagination";
 import { isInternalEmail } from "../common/internal-email";
 import { loadMsrpMap } from "../common/msrp";
@@ -502,20 +505,13 @@ export class InvoicesService {
           },
         });
         if (hasRegulated) {
+          const packMap = await packAtSaleByProduct(tx, created.items ?? []);
           await this.ledger.writeSaleEntries({
             tenantId: this.prisma.getTenantId(),
             orderId: null,
             invoiceId: created.id,
             soldAt: created.issueDate ?? new Date(),
-            lines: (created.items ?? []).map((it: any) => ({
-              invoiceItemId: it.id,
-              orderItemId: it.orderItemId ?? null,
-              trackedCategoryId: it.trackedCategoryId ?? null,
-              trackedSubcategoryId: it.trackedSubcategoryId ?? null,
-              qty: Number(it.qty),
-              netSales: Number(it.subtotal),
-              categoryTax: Number(it.categoryTaxAmount ?? 0),
-            })),
+            lines: toSaleLedgerLines(created.items ?? [], packMap),
             db: tx,
           });
         }
@@ -854,14 +850,12 @@ export class InvoicesService {
     li: any,
     billQty: number,
     tenantId: string | null,
-    opts?: { priorBilledQty?: number },
+    opts?: { priorBilledQty?: number; priorPack?: number | null },
   ) {
     const orderQty = Number(li.qty) || 0;
     const storedSubtotal = li.subtotal != null ? Number(li.subtotal) : null;
     const unitPrice = Number(li.unitPrice);
-    // Snapshot the box size: prefer the order line's own snapshot, fall back to the
-    // live product for legacy rows created before the snapshot column shipped.
-    const unitsPerBox = Number(li.unitsPerBox ?? li.product?.unitsPerBox ?? 0);
+    const unitsPerBox = Number(opts?.priorPack ?? li.unitsPerBox ?? li.product?.unitsPerBox ?? 0);
     const isBoxSplit = li.boxes != null; // stored WITH a box/piece split
 
     // Box/piece split for DISPLAY only (money is the stored subtotal). Selling-unit
@@ -1285,20 +1279,13 @@ export class InvoicesService {
         // W5: write the regulated-sales ledger from this invoice's regulated lines
         // (built off the created items, so invoiceItemId is real). orderItemId
         // provenance now flows through from the invoice item's stored order-line link.
+        const packMap = await packAtSaleByProduct(tx, inv.items ?? []);
         await this.ledger.writeSaleEntries({
           tenantId,
           orderId: order.id,
           invoiceId: inv.id,
           soldAt: inv.issueDate ?? new Date(),
-          lines: (inv.items ?? []).map((it: any) => ({
-            invoiceItemId: it.id,
-            orderItemId: it.orderItemId ?? null,
-            trackedCategoryId: it.trackedCategoryId ?? null,
-            trackedSubcategoryId: it.trackedSubcategoryId ?? null,
-            qty: Number(it.qty),
-            netSales: Number(it.subtotal),
-            categoryTax: Number(it.categoryTaxAmount ?? 0),
-          })),
+          lines: toSaleLedgerLines(inv.items ?? [], packMap),
           db: tx,
         });
       }
@@ -1448,7 +1435,11 @@ export class InvoicesService {
       }
     }
     if (!draft) return null;
-
+    const priorItems = await db.invoiceItem.findMany({
+      where: { invoiceId: draft.id },
+      select: { orderItemId: true, unitsPerBox: true },
+    });
+    const priorPackByLine = priorUnitsPerBoxMap(priorItems);
     const order = await db.order.findUnique({
       where: { id: orderId },
       include: {
@@ -1478,7 +1469,7 @@ export class InvoicesService {
       .filter((x: any) => x.billQty > 0.001);
 
     const itemsData = billable.map(({ li, billQty }: any) =>
-      this.buildInvoiceItemData(li, billQty, tenantId),
+      this.buildInvoiceItemData(li, billQty, tenantId, { priorPack: priorPackByLine.get(li.id) }),
     );
     await this.applyMsrpSnapshots(db, order.customerId, itemsData);
     const subtotal = roundMoney(itemsData.reduce((s: number, it: any) => s + it.subtotal, 0));
@@ -1631,7 +1622,7 @@ export class InvoicesService {
         deliveryBatchId: true,
         discount: true,
         shippingFee: true,
-        items: { select: { orderItemId: true } },
+        items: { select: { orderItemId: true, unitsPerBox: true } },
       },
     });
     const drafts = invoices.filter(
@@ -1738,6 +1729,7 @@ export class InvoicesService {
         discount: true,
         shippingFee: true,
         dueDate: true,
+        items: { select: { orderItemId: true, unitsPerBox: true } },
         payments: { select: { amount: true, status: true } },
       },
     });
@@ -1815,20 +1807,13 @@ export class InvoicesService {
     // preserveReturns: cancel only the sale-record, leave any return/credit-note reversal
     // standing, so a re-reconcile after a return nets to (delivered − returned).
     await this.ledger.reverseInvoiceEntries({ invoiceId, db, preserveReturns: true });
+    const packMap = await packAtSaleByProduct(db, items ?? []);
     await this.ledger.writeSaleEntries({
       tenantId: this.prisma.getTenantId(),
       orderId,
       invoiceId,
       soldAt: new Date(),
-      lines: (items ?? []).map((it: any) => ({
-        invoiceItemId: it.id,
-        orderItemId: it.orderItemId ?? null,
-        trackedCategoryId: it.trackedCategoryId ?? null,
-        trackedSubcategoryId: it.trackedSubcategoryId ?? null,
-        qty: Number(it.qty),
-        netSales: Number(it.subtotal),
-        categoryTax: Number(it.categoryTaxAmount ?? 0),
-      })),
+      lines: toSaleLedgerLines(items ?? [], packMap),
       db,
     });
   }
@@ -1862,11 +1847,12 @@ export class InvoicesService {
       basis === "delivered" ? Number(li.deliveredQty ?? 0) : Number(li.qty);
 
     const perDraft = pairs.map(({ draft, lines }) => {
+      const priorPackByLine = priorUnitsPerBoxMap(draft.items ?? []);
       const billable = lines
         .map((li: any) => ({ li, billQty: billQtyOf(li) }))
         .filter((x: any) => x.billQty > 0.001);
       const itemsData = billable.map(({ li, billQty }: any) =>
-        this.buildInvoiceItemData(li, billQty, tenantId),
+        this.buildInvoiceItemData(li, billQty, tenantId, { priorPack: priorPackByLine.get(li.id) }),
       );
       // B294: stamp the order's effective regular-tax rate onto every line so a
       // later applyPriceAdjustment recompute reproduces this draft's regular tax.
@@ -2042,7 +2028,7 @@ export class InvoicesService {
           discount: true,
           shippingFee: true,
           dueDate: true,
-          items: { select: { orderItemId: true } },
+          items: { select: { orderItemId: true, unitsPerBox: true } },
           payments: { select: { amount: true, status: true } },
         },
       });
@@ -2190,7 +2176,7 @@ export class InvoicesService {
         deliveryBatchId: true,
         discount: true,
         shippingFee: true,
-        items: { select: { orderItemId: true, trackedCategoryId: true } },
+        items: { select: { orderItemId: true, trackedCategoryId: true, unitsPerBox: true } },
       },
     });
     const drafts = invoices.filter(
@@ -3400,45 +3386,54 @@ export class InvoicesService {
         ).map((c: any) => [c.id, c]),
       );
 
+      // B717/SA-077: this replace path recreates every line, so a pack it carries is lost
+      // unless read first. Rule + reasoning: update-pack-resolution.ts.
+      const priorPacks = await loadPriorPacks(this.prisma.forTenant().invoiceItem, id, productIds);
+
       let subtotal = 0;
       const itemsData = dto.items.map((item) => {
         const product = item.productId ? productMap.get(item.productId) : undefined;
-        let qty = item.qty;
+        const livePack = product?.unitsPerBox ?? null; // B717: ONE read, passed as a parameter
+        const qty = item.qty;
         let boxes: number | null = null;
         let pieces: number | null = null;
         let unitsPerBox: number | undefined;
+        // SA-068: the pack comes from the PAYLOAD's own split, never the live product — the
+        // edit page already sends boxes/pieces/qty consistent with the line's OWN snapshot (or,
+        // for a brand-new line with no snapshot, consistent with the live pack it read at page
+        // load). Re-normalizing here at TODAY's live pack is what silently re-split a stored
+        // 2-box/3-piece (snapshot 12, qty 27) line at a since-changed pack of 24 on a plain
+        // notes-only save — and that corrupted qty back-synced onto the linked order line.
+        // qty/boxes/pieces are stored AS SENT, always; only whether `unitsPerBox` gets a
+        // snapshot (derivable) or stays null (not derivable — no boxes, non-integer, or exactly
+        // 1) differs. Never overwrite qty from boxes * livePack + pieces.
         if (item.productId && (item.boxes != null || item.pieces != null)) {
-          if (product?.unitsPerBox) {
-            unitsPerBox = product.unitsPerBox;
-            const split = normalizeBoxesPieces({
-              boxes: item.boxes,
-              pieces: item.pieces,
-              unitsPerBox,
-            });
-            boxes = split.boxes;
-            pieces = split.pieces;
-            qty = split.qty;
+          boxes = item.boxes ?? null;
+          pieces = item.pieces ?? null;
+          const pack = packFromOwnSplit({ qty: item.qty, boxes: item.boxes, pieces: item.pieces });
+          // B717/SA-077: payload split -> the product's stored lines when unanimous -> live.
+          const res = resolveUpdateLinePack(pack, item, livePack, priorPacks);
+          if (res.pack != null) unitsPerBox = res.pack;
+          if (res.warn) this.logger.warn(`update(): invoiceId ${id} ${res.warn}`);
+          // The resolver already chose the pack; this only reports a payload/live divergence.
+          if (pack != null && livePack && livePack !== pack) {
+            this.logger.warn(
+              `update(): invoiceId ${id} productId ${item.productId} — payload's implied pack ` +
+                `${pack} differs from the live product's ${livePack}; using the payload's pack.`,
+            );
           }
         }
-        // BUY_N_GET_M: the line's free-unit snapshot round-trips on the payload
-        // (this path REPLACES every line). Dropping it re-prices an agreed
-        // 12-boxes-2-free line from $350 to 12 × $35 = $420 on a plain re-save.
+        // Refusal (SA-077(2)), BUY_N_GET_M and the money all live in priceReplacedLine now.
         const freeUnits = this.clampLineFreeUnits(item.promoFreeUnits, boxes, qty);
-        const beforeDiscount = computeLineSubtotal({
-          unitPrice: item.unitPrice,
-          qty,
-          boxes,
-          pieces,
-          unitsPerBox,
-          freeUnits,
-        });
-        const lineSub = roundMoney(beforeDiscount - (item.discount ?? 0));
+        const lineSub = priceReplacedLine(item, { qty, boxes, pieces, unitsPerBox, freeUnits });
         subtotal += lineSub;
         // RF-4: per-line category tax on the net sale (mirrors create()).
         const category = product?.trackedCategoryId
           ? categoryMap.get(product.trackedCategoryId)
           : null;
-        const upbForPieces = Number(product?.unitsPerBox ?? 0);
+        const upbForPieces = Number(livePack ?? 0);
+        // B661-sweep: a line-tax (not ledger) box-unaware multiply — follow-up PR converts this to
+        // @routeflow/pricing's regulatedUnitBasis; see no-second-legacy-line-pieces.spec.ts's allowlist.
         const pieceQty = boxes != null ? qty : upbForPieces > 1 ? qty * upbForPieces : qty;
         const categoryTaxAmount = category
           ? computeCategoryTax({
@@ -3459,8 +3454,10 @@ export class InvoicesService {
           subtotal: lineSub,
           boxes,
           pieces,
-          // Snapshot the box size for a box-split line so later recompute is stable.
-          unitsPerBox: boxes != null && unitsPerBox ? unitsPerBox : null,
+          // B717: never CLEAR a pack the line carried. Storage and pricing gate differently ON
+          // PURPOSE — see update-pack-resolution.ts's "STORAGE vs PRICING" note; spec (g) pins it.
+          unitsPerBox:
+            unitsPerBox ?? (item.productId ? priorPacks.get(item.productId) : null) ?? null,
           // BUY_N_GET_M snapshot — preserved across the delete-and-recreate.
           promoFreeUnits: freeUnits > 0 ? freeUnits : null,
           // Re-snapshot the regulated category/subcategory from the (current) product,
@@ -6250,6 +6247,8 @@ export class InvoicesService {
       // falling back to the product's. Unused by PERCENT_OF_SALE (unitBasisQty is
       // ignored there) but correct for an EXCISE_PER_UNIT / PER_VOLUME /
       // DEPOSIT_PER_CONTAINER line.
+      // B661-sweep: a line-tax (not ledger) box-unaware multiply — follow-up PR converts this to
+      // @routeflow/pricing's regulatedUnitBasis; see no-second-legacy-line-pieces.spec.ts's allowlist.
       const linePieceQty = (li: any): number => {
         const qty = Number(li.qty) || 0;
         if (li.boxes != null) return qty;

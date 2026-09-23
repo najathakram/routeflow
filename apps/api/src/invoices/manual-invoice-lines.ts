@@ -1,3 +1,5 @@
+import { BadRequestException } from "@nestjs/common";
+import { unpackableSplit } from "./update-pack-resolution";
 import type { CreateInvoiceDto } from "./dto/create-invoice.dto";
 import type { ResolvedLineUnits } from "../products/line-units";
 import { isUnitAware } from "../orders/unit-line-build";
@@ -67,6 +69,11 @@ export function buildManualInvoiceLines(
         qty = split.qty;
       }
     }
+    // SA-077(2): a split that no pack can price is REFUSED rather than silently dropped — the
+    // shape buildLine's G1 has always rejected at its own choke point. Same ONE predicate the
+    // update path and `lineAmbiguity` use. A boxed product is unaffected: its pack resolves above.
+    const bad = unpackableSplit(item, unitsPerBox);
+    if (bad) throw new BadRequestException(bad);
     // BUY_N_GET_M: free whole selling units come off the subtotal BEFORE pricing
     // (never a rounded net unit price). 0 for every other line.
     const freeUnits = clampFreeUnits(item.promoFreeUnits, boxes, qty);
@@ -85,6 +92,8 @@ export function buildManualInvoiceLines(
     // levies; a boxed selling-unit line expands via the product's box size.
     const category = product?.trackedCategoryId ? categoryMap.get(product.trackedCategoryId) : null;
     const upbForPieces = Number(product?.unitsPerBox ?? 0);
+    // B661-sweep: a line-tax (not ledger) box-unaware multiply — follow-up PR converts this to
+    // @routeflow/pricing's regulatedUnitBasis; see no-second-legacy-line-pieces.spec.ts's allowlist.
     const pieceQty = boxes != null ? qty : upbForPieces > 1 ? qty * upbForPieces : qty;
     const categoryTaxAmount = category
       ? computeCategoryTax({

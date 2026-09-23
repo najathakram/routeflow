@@ -367,7 +367,7 @@ export default function BillingPage() {
                     <td className="px-4 py-3">
                       <Link
                         href={`/admin/tenants/${s.tenantId}`}
-                        className="text-xs text-indigo-400 hover:text-indigo-300"
+                        className="admin-tap-text text-xs text-indigo-400 hover:text-indigo-300"
                       >
                         View
                       </Link>

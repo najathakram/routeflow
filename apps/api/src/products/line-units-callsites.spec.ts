@@ -21,7 +21,20 @@ import { join, relative, sep } from "path";
  */
 const BASELINE: Record<string, number> = {
   "orders/orders.service.ts": 20,
-  "invoices/invoices.service.ts": 5, // 4c-1 prefactor: create()'s line builder moved (3 reads) to:
+  // Three reads today (B717/SA-077 lowered this from 6; SA-068b's earlier note predicted 5, which
+  // the hoist overtook — four reads in update()'s mapper became one). Do not read that history as
+  // a forecast; what is left, and what retires each:
+  //   1. buildInvoiceItemData's `li.unitsPerBox ?? li.product?.unitsPerBox` — the legacy fallback
+  //      for an ORDER line that carries no snapshot. Retired by SA-078(c), which snapshots the
+  //      pack on box-unaware order lines at write time so there is a real one to prefer.
+  //   2. update()'s single `livePack` local — read once and passed as a PARAMETER to
+  //      `resolveUpdateLinePack` (invoices/update-pack-resolution.ts reads no product at all).
+  //      Retired when a sub-one-box line can no longer need new-line semantics, i.e. after
+  //      SA-077(2) refuses the still-ambiguous split and every line carries a snapshot.
+  //   3. `applyPriceAdjustment`'s `unitsPerBoxByProduct` map — a regulated BASIS lookup, never a
+  //      line-factor decision. Retired by moving it to a named non-line helper (SA-047 shape).
+  // The number may only go DOWN. The target is still zero.
+  "invoices/invoices.service.ts": 3, // 4c-1 prefactor: create()'s line builder moved (3 reads) to:
   "invoices/manual-invoice-lines.ts": 3,
   // B645: create()'s itemsData mapper read product.unitsPerBox at 3 sites (qty
   // resolve, computeLineSubtotal, and the B645 boxes/pieces/unitsPerBox snapshot
@@ -35,6 +48,15 @@ const BASELINE: Record<string, number> = {
   "buyer/replenishment.service.ts": 1,
   "buyer/buyer-catalog.service.ts": 3,
   "inventory/inventory.service.ts": 4,
+  // SA-079: loadProductPackNow's ONE read is classifySaleAxis's boxed-GATE fallback for a
+  // box-unaware line with no unitsPerBox snapshot of its own — it derives no line factor,
+  // quantity or price. But it is not inert: its output decides whether a return's SALE row is
+  // PARKED or COUNTED, which is exactly the figure a filing later sums — a wrong answer here
+  // changes what a period reports even though it changes no quantity or price anywhere. Count-
+  // pinned rather than NON_WRITERS-exempted (SA-047/SA-068b shape) because it is temporary: it
+  // goes to 0 when SA-078(c) snapshots unitsPerBox on box-unaware ORDER lines and this fallback
+  // becomes unreachable. Never raise this again after that.
+  "regulated/regulated-ledger.service.ts": 1,
 };
 
 // Files that legitimately read a product's pack and are not line writers.
@@ -44,6 +66,12 @@ const NON_WRITERS = new Set([
   "products/line-units.ts",
   "orders/unit-line-build.ts", // copies unit/unitsPerBox into the ladder base; never derives a factor
   "regulated/tx-report.ts",
+  // B661: packAtSaleByProduct's `p.unitsPerBox` read is a write-time SNAPSHOT for the ledger's
+  // regulatedUnitBasis, not a line-factor decision — never re-read later to reclassify an old row.
+  "invoices/pack-at-sale.ts",
+  // B665: the shared pack resolver reads the live pack ONLY to notice that a boxed product's line is
+  // ambiguous (no split); the pieces-per-unit itself comes from legacyLinePieces, never from this read.
+  "common/line-pack-factors.ts",
 ]);
 
 const strip = (s: string) => s.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:])\/\/.*$/gm, "$1");

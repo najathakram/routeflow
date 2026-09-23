@@ -15,6 +15,10 @@ import type { Queue } from "bull";
 import { PrismaService } from "../prisma/prisma.service";
 import { JwtPayload } from "../auth/jwt-payload.interface";
 import {
+  appendOrderRevision as appendOrderRevisionImpl,
+  AppendOrderRevisionArgs,
+} from "./order-revisions";
+import {
   computeCategoryTax,
   computeLineSubtotal,
   getTierPrice,
@@ -2033,6 +2037,7 @@ export class OrdersService implements OnApplicationBootstrap {
       // in pieces already; a box-UNAWARE boxed line (boxes==null) stores qty as a
       // SELLING-UNIT (box) count, so expand it — mirrors the merge path so the same
       // buyer line prices identically at create vs edit.
+      // B661-sweep: box-unaware multiply, converts to regulatedUnitBasis in a follow-up PR.
       const qtyPieces = boxes != null ? qty : upb > 1 ? qty * upb : qty;
       // BUY_N_GET_M threshold is measured in whole SELLING units — a box for a
       // boxed line, a piece otherwise. `boxes` already holds the whole-box count
@@ -3267,7 +3272,15 @@ export class OrdersService implements OnApplicationBootstrap {
         await tx.$executeRaw`SELECT id FROM "Order" WHERE id = ${orderId} FOR UPDATE`;
         const heldItems = await tx.orderItem.findMany({
           where: { orderId },
-          select: { ...EXISTING_LINE_SELECT, deliveredQty: true },
+          // B709: plus every column the diff branch reads off an existing line (see heldOrSnapshot).
+          select: {
+            ...EXISTING_LINE_SELECT,
+            deliveredQty: true,
+            invoicedQty: true,
+            unitPrice: true,
+            promoFreeUnits: true,
+            overrideReason: true,
+          },
         });
         restrictionPlan?.assertHeld(heldItems);
 
@@ -3276,6 +3289,13 @@ export class OrdersService implements OnApplicationBootstrap {
         // heldItems (never the pre-tx `order.lineItems`) before any write. `unitRows.set` keys
         // by the same `item` object reference, so this simply overwrites each entry in place.
         const heldById = new Map<string, any>(heldItems.map((h: any) => [h.id, h]));
+        // B709: the diff branch reads every existing line from the LOCKED rows, never from the
+        // pre-tx `order.lineItems` snapshot another writer may have replaced while this tx waited
+        // on the lock. The `?? snapshot` arm is the B135 interim (`liveLine ?? li`): a row the held
+        // read lacks was hard-deleted under the lock, and its write then fails loudly on P2025. The
+        // items[].expectedQty follow-up turns that arm into a CONCURRENT_UPDATE 409.
+        const heldOrSnapshot = (id: string): any =>
+          heldById.get(id) ?? order.lineItems.find((l) => l.id === id);
         for (const item of dto.items ?? []) {
           const li = item.id ? heldById.get(item.id) : undefined;
           unitEdit.assertUnitLabelNamed(li, item);
@@ -3423,6 +3443,7 @@ export class OrdersService implements OnApplicationBootstrap {
             // QTY_BREAK threshold is measured in PIECES: split.qty when re-split, else
             // box-count × unitsPerBox for boxed selling-unit lines, else the piece qty.
             // DRIVER edits keep the legacy list price (unchanged).
+            // B661-sweep: box-unaware multiply, converts to regulatedUnitBasis in a follow-up PR.
             const qtyPieces = split ? split.qty : upb > 1 ? item.qty * upb : item.qty;
             // BUY_N_GET_M threshold: whole SELLING units (boxes for a boxed line,
             // pieces otherwise) — mirrors create()'s qtyUnits derivation.
@@ -3526,7 +3547,7 @@ export class OrdersService implements OnApplicationBootstrap {
           // gets fetched and the line silently falls back to the customer's DEFAULT
           // tier instead of a genuinely SPECIAL per-product row (or vice versa).
           const existingLineProductIds = dto.items
-            .map((i) => (i.id ? order.lineItems.find((li) => li.id === i.id)?.productId : null))
+            .map((i) => (i.id ? heldOrSnapshot(i.id)?.productId : null)) // B709: locked row
             .filter((id): id is string => !!id);
           // B466: a substitution's NEW product id must resolve tier pricing too — it
           // was missing from this collection entirely (neither a fresh add's productId
@@ -3808,6 +3829,7 @@ export class OrdersService implements OnApplicationBootstrap {
               const isManualOverride =
                 !bogoPriceUnchanged && overridePrice !== null && overridePrice !== catalogPrice;
               const upb = Number(product.unitsPerBox ?? 0);
+              // B661-sweep: box-unaware multiply, converts to regulatedUnitBasis in a follow-up PR.
               const qtyPieces = boxes != null ? qty : upb > 1 ? qty * upb : qty;
               const qtyUnits = boxes != null ? boxes : qty;
               const priced: {
@@ -4131,7 +4153,7 @@ export class OrdersService implements OnApplicationBootstrap {
                 // Hard-remove a line added by mistake. Only safe when nothing
                 // downstream references it — a billed or delivered line is struck
                 // off instead so invoice/delivery history stays intact.
-                const li = order.lineItems.find((l) => l.id === item.id);
+                const li = heldOrSnapshot(item.id);
                 const hasDeliveries = await tx.deliveryMutation.count({
                   where: { orderItemId: item.id },
                 });
@@ -4173,7 +4195,7 @@ export class OrdersService implements OnApplicationBootstrap {
                   await unitEdit.updateUnitLine(uctx, item.id!, product, unitRow, item);
                   continue;
                 }
-                const existingQty = order.lineItems.find((li) => li.id === item.id)?.qty ?? 1;
+                const existingQty = heldOrSnapshot(item.id!)?.qty ?? 1;
                 // Substitution may also carry a box/piece split when the substitute
                 // is itself a boxed product. Honor it the same way as a fresh add —
                 // but only when the SUBSTITUTE is case-packed: the incoming split is
@@ -4300,7 +4322,7 @@ export class OrdersService implements OnApplicationBootstrap {
                 item.overrideReason !== undefined ||
                 item.notes !== undefined
               ) {
-                const li = order.lineItems.find((li) => li.id === item.id);
+                const li = item.id ? heldOrSnapshot(item.id) : undefined;
                 if (!li) continue;
 
                 // N4 (independent review round 2, PR-2): a payload carrying ONLY
@@ -4935,67 +4957,9 @@ export class OrdersService implements OnApplicationBootstrap {
     });
   }
 
-  /**
-   * P5-08: append one immutable OrderRevision row capturing the order's line set +
-   * money totals AFTER an edit. The snapshot COPIES stored, already-rounded values
-   * verbatim — it never re-prices (no `qty*unitPrice`, no re-derived discounts). The
-   * per-order `revisionNumber` (max+1) is computed inside a tenant transaction so
-   * rapid autosaves can't collide on the `@@unique([orderId, revisionNumber])`.
-   */
-  private async appendOrderRevision(
-    orderId: string,
-    user: JwtPayload | undefined,
-    totals: { subtotal: number; tax: number; total: number; shippingFee?: number },
-    source: string,
-    reason?: string | null,
-  ) {
-    const tenantId = this.prisma.getTenantId();
-    const lines = await this.prisma.forTenant().orderItem.findMany({
-      where: { orderId, status: { not: "CANCELLED" } },
-      include: { product: { select: { name: true } } },
-      orderBy: { createdAt: "asc" },
-    });
-    const snapshot = {
-      subtotal: totals.subtotal,
-      tax: totals.tax,
-      total: totals.total,
-      shippingFee: totals.shippingFee ?? 0,
-      lineItems: lines.map((li) => ({
-        productId: li.productId,
-        name: li.name ?? li.product?.name ?? null,
-        qty: Number(li.qty),
-        unitPrice: Number(li.unitPrice),
-        subtotal: Number(li.subtotal),
-        originalPrice: li.originalPrice != null ? Number(li.originalPrice) : null,
-        priceType: li.priceType,
-        boxes: li.boxes,
-        pieces: li.pieces,
-        unitsPerBox: li.unitsPerBox,
-        trackedCategoryId: li.trackedCategoryId,
-        trackedSubcategoryId: li.trackedSubcategoryId,
-        notes: li.notes,
-        status: li.status,
-      })),
-    };
-    await this.prisma.tenantTransaction(async (tx) => {
-      const max = await tx.orderRevision.aggregate({
-        where: { orderId },
-        _max: { revisionNumber: true },
-      });
-      await tx.orderRevision.create({
-        data: {
-          tenantId,
-          orderId,
-          revisionNumber: (max._max.revisionNumber ?? 0) + 1,
-          editedById: user?.sub ?? null,
-          editedByName: user?.username ?? null,
-          editedByRole: user?.role ?? null,
-          source,
-          reason: reason ?? null,
-          snapshot,
-        },
-      });
-    });
+  /** P5-08: extracted verbatim to `order-revisions.ts` (SA-065 prefactor); thin delegator, same name. */
+  private appendOrderRevision(...args: AppendOrderRevisionArgs) {
+    return appendOrderRevisionImpl(this.prisma, ...args);
   }
 
   /** B283 / stock: extracted verbatim to `order-stock.ts` (B585 prefactor); thin delegators, same names. */
