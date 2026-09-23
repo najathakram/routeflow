@@ -817,5 +817,20 @@ export default defineConfig({
         navigationTimeout: 60_000,
       },
     },
+
+    // Buyer portal mobile overflow (owner report, spec 54) — same probe, buyer
+    // auth. No "setup" dependency and no storageState: this spec logs in
+    // itself via loginAsBuyer (the "buyer" project above follows the same
+    // convention — buyer tests handle their own auth flows rather than using
+    // a shared storage-state file). WITHOUT THIS ENTRY THE SPEC NEVER RUNS —
+    // see 08-create-order-escape's header for the precedent.
+    {
+      name: "buyer-portal-mobile",
+      testMatch: /54-buyer-portal-mobile-overflow\.spec\.ts/,
+      use: {
+        ...devices["Desktop Chrome"],
+        navigationTimeout: 60_000,
+      },
+    },
   ],
 });
