@@ -47,10 +47,7 @@ import {
   incrementLine,
   incrementLinePiece,
   isUnitLine,
-  setLineBoxes,
-  setLinePieces,
   setLineUnits,
-  stepLineQty,
 } from "../../../../../lib/sale-line";
 import { buildSubstituteLine } from "../../../../../lib/substitute-line";
 import { findExactScanMatch, looksLikeScanCode, scanUnitKind } from "../../../../../lib/wedge-scan";
@@ -59,6 +56,8 @@ import { useMarginConfig, floorForCategory } from "../../../../../lib/api/margin
 import {
   draftFreeUnits,
   draftTrayRows,
+  applyBoxEdit,
+  applyPieceEdit,
   applyUnitPick,
   buildPackLadder,
   deserializeEditItemsSnapshot,
@@ -586,27 +585,23 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
       return next;
     });
 
-  // units_v1 (SA-085h): setLineBoxes/setLinePieces now refuse a unit-line split executably.
+  // units_v1 (SA-085i(c)): applyBoxEdit/applyPieceEdit refuse a unit split AND match master's
+  // OLD non-unit math byte-for-byte — see their doc comment.
+  const commitLine = (d: Record<string, DraftItem>, id: string, line: DraftItem) => {
+    if (line.qty > 0) return { ...d, [id]: line };
+    const next = { ...d };
+    delete next[id];
+    return next;
+  };
   const setBoxes = (id: string, boxes: number) =>
     setDraft((d) => {
       const cur = d[id];
-      if (!cur) return d;
-      const line = setLineBoxes(cur, boxes, Number(cur.unitsPerBox ?? 0));
-      const next = { ...d };
-      if (!line) delete next[id];
-      else next[id] = { ...line, boxSplit: isUnitLine(cur) ? cur.boxSplit : true };
-      return next;
+      return cur ? commitLine(d, id, applyBoxEdit(cur, boxes, Number(cur.unitsPerBox ?? 0))) : d;
     });
-
   const setPieces = (id: string, pieces: number) =>
     setDraft((d) => {
       const cur = d[id];
-      if (!cur) return d;
-      const line = setLinePieces(cur, pieces, Number(cur.unitsPerBox ?? 0));
-      const next = { ...d };
-      if (!line) delete next[id];
-      else next[id] = { ...line, boxSplit: isUnitLine(cur) ? cur.boxSplit : true };
-      return next;
+      return cur ? commitLine(d, id, applyPieceEdit(cur, pieces, Number(cur.unitsPerBox ?? 0))) : d;
     });
 
   /** Unit mode: the operator types a TOTAL unit count; normalize it back into
@@ -650,16 +645,16 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
   const setLineNote = (id: string, notes: string) =>
     setDraft((d) => (d[id] ? { ...d, [id]: { ...d[id], notes } } : d));
 
-  // units_v1 (SA-085f BLOCKER): a unit line's qty is a COUNT — stepLineQty steps ±1 without
-  // consulting unitsPerBox; every other line falls through to the existing box-fold math.
-  const incQty = (id: string) =>
-    setDraft((d) => {
-      const cur = d[id];
-      if (!cur) return d;
-      const upb = Number(cur.unitsPerBox ?? 0);
-      const line = stepLineQty(cur, 1, upb > 1, upb)!;
-      return { ...d, [id]: { ...line, boxSplit: !isUnitLine(cur) && upb > 1 } };
-    });
+  // units_v1 (SA-085i(c)): a unit line steps its COUNT via setQty; a non-unit line delegates
+  // to setBoxes/setQty exactly like master did.
+  const incQty = (id: string) => {
+    const cur = draft[id];
+    if (!cur) return;
+    if (cur.unitLabel) return setQty(id, (cur.qty ?? 0) + 1);
+    const upb = Number(cur.unitsPerBox ?? 0);
+    if (upb > 1) setBoxes(id, (cur.boxes ?? 0) + 1);
+    else setQty(id, (cur.qty ?? 0) + 1);
+  };
 
   /**
    * Add a picked/scanned product to the draft. `kind === "piece"` is a
@@ -686,60 +681,69 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
     const isSpecial = (cpMap.get(p.id) ?? customerTier ?? 1) !== 1;
     const upbRaw = p.unitsPerBox;
     const unitsPerBox = upbRaw == null ? null : Number(upbRaw);
-    setDraft((d) => {
-      const existing = d[p.id];
-      const upb = Number(existing?.unitsPerBox ?? unitsPerBox ?? 0);
-      const boxed = upb > 1;
-      if (existing) {
-        // units_v1 (SA-085f): a re-scan of an already unit-sold line merges into its
-        // COUNT — never the pack's box math, regardless of scan kind (see incQty/decQty).
-        if (boxed && !isUnitLine(existing)) {
-          const line =
-            kind === "piece"
-              ? incrementLinePiece(existing, true, upb)
-              : incrementLine(existing, true, upb);
-          return { ...d, [p.id]: { ...line, boxSplit: true } };
+    const commit = () =>
+      setDraft((d) => {
+        const existing = d[p.id];
+        const upb = Number(existing?.unitsPerBox ?? unitsPerBox ?? 0);
+        const boxed = upb > 1;
+        if (existing) {
+          // units_v1 (SA-085f): a re-scan of an already unit-sold line merges into its
+          // COUNT — never the pack's box math, regardless of scan kind (see incQty/decQty).
+          if (boxed && !isUnitLine(existing)) {
+            const line =
+              kind === "piece"
+                ? incrementLinePiece(existing, true, upb)
+                : incrementLine(existing, true, upb);
+            return { ...d, [p.id]: { ...line, boxSplit: true } };
+          }
+          return { ...d, [p.id]: { ...existing, qty: (existing.qty ?? 0) + 1 } };
         }
-        return { ...d, [p.id]: { ...existing, qty: (existing.qty ?? 0) + 1 } };
-      }
-      // Fresh add: conditionally pre-fill the remembered price — only a
-      // genuine discount (below tier) or upsell (above list), never over
-      // a SPECIAL tier price. Else start at the tier price.
-      const hist = priceHistory?.[p.id];
-      const startPrice =
-        !isSpecial && hist != null && (hist.lastPrice < catalogPrice || hist.lastPrice > listPrice)
-          ? hist.lastPrice
-          : catalogPrice;
-      const base = {
-        productId: p.id,
-        unitsPerBox,
-        unitPrice: startPrice,
-        catalogPrice,
-        name: p.name,
-        unit: p.unit,
-        packLadder: buildPackLadder({ ...p, unitsPerBox }),
-      };
-      if (boxed) {
-        // 1 box for a case scan/tap; 1 LOOSE piece for a piece-code scan.
-        return kind === "piece"
-          ? { ...d, [p.id]: { ...base, qty: 1, boxes: 0, pieces: 1, boxSplit: true } }
-          : { ...d, [p.id]: { ...base, qty: upb, boxes: 1, pieces: 0, boxSplit: true } };
-      }
-      return { ...d, [p.id]: { ...base, qty: 1 } };
-    });
+        // Fresh add: conditionally pre-fill the remembered price — only a
+        // genuine discount (below tier) or upsell (above list), never over
+        // a SPECIAL tier price. Else start at the tier price.
+        const hist = priceHistory?.[p.id];
+        const startPrice =
+          !isSpecial &&
+          hist != null &&
+          (hist.lastPrice < catalogPrice || hist.lastPrice > listPrice)
+            ? hist.lastPrice
+            : catalogPrice;
+        const base = {
+          productId: p.id,
+          unitsPerBox,
+          unitPrice: startPrice,
+          catalogPrice,
+          name: p.name,
+          unit: p.unit,
+          packLadder: buildPackLadder({ ...p, unitsPerBox }),
+        };
+        if (boxed) {
+          // 1 box for a case scan/tap; 1 LOOSE piece for a piece-code scan.
+          return kind === "piece"
+            ? { ...d, [p.id]: { ...base, qty: 1, boxes: 0, pieces: 1, boxSplit: true } }
+            : { ...d, [p.id]: { ...base, qty: upb, boxes: 1, pieces: 0, boxSplit: true } };
+        }
+        return { ...d, [p.id]: { ...base, qty: 1 } };
+      });
+    // units_v1 (SA-085i): a piece scan on an already unit-sold line adds a whole unit — confirm.
+    const existingLabel = draft[p.id]?.unitLabel;
+    if (kind === "piece" && existingLabel) {
+      confirm(`Add 1 ${existingLabel}?`, `${p.name} is sold by ${existingLabel}.`, commit, {
+        confirmText: `Add 1 ${existingLabel}`,
+      });
+      return;
+    }
+    commit();
   };
 
-  const decQty = (id: string) =>
-    setDraft((d) => {
-      const cur = d[id];
-      if (!cur) return d;
-      const upb = Number(cur.unitsPerBox ?? 0);
-      const line = stepLineQty(cur, -1, upb > 1, upb);
-      const next = { ...d };
-      if (!line) delete next[id];
-      else next[id] = { ...line, boxSplit: !isUnitLine(cur) && upb > 1 };
-      return next;
-    });
+  const decQty = (id: string) => {
+    const cur = draft[id];
+    if (!cur) return;
+    if (cur.unitLabel) return setQty(id, Math.max(0, (cur.qty ?? 0) - 1));
+    const upb = Number(cur.unitsPerBox ?? 0);
+    if (upb > 1) setBoxes(id, Math.max(0, (cur.boxes ?? 0) - 1));
+    else setQty(id, Math.max(0, (cur.qty ?? 0) - 1));
+  };
 
   const removeLine = (id: string) =>
     setDraft((d) => {

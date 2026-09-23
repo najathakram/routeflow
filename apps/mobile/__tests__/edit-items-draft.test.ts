@@ -8,6 +8,8 @@
 import { computeLineSubtotal } from "@routeflow/pricing";
 import { buildOrderItemDiff } from "../lib/order-item-diff";
 import {
+  applyBoxEdit,
+  applyPieceEdit,
   deserializeEditItemsSnapshot,
   draftTrayRows,
   editItemsSnapshotKey,
@@ -748,5 +750,82 @@ describe("edit-items-draft: hydrateFromOrder reads a line's OWN pack snapshot (B
     };
     const { draft } = hydrateFromOrder(order);
     expect(draft.p3.unitsPerBox).toBe(12);
+  });
+});
+
+/**
+ * SA-085i(c): a NON-unit line's Cases/Loose edit must match master's OLD inline rule
+ * byte-for-byte — the typed count REPLACES qty; a legacy line's plain (un-split) qty is
+ * NEVER reinterpreted as loose pieces. The shared sale-line.ts fold (splitFromPrev, correct
+ * for the CREATE screen's own in-session cart accumulation) would read a no-split qty as
+ * pieces, inventing phantom loose units the first time this screen's own steppers touch a
+ * STORED historical line — a real regression the earlier round's setLineBoxes/setLinePieces
+ * routing introduced. Not fixed by that route in THIS PR (a separate, pre-existing fold bug
+ * would need its own fix); applyBoxEdit/applyPieceEdit simply never take it.
+ */
+describe("applyBoxEdit / applyPieceEdit (SA-085i(c))", () => {
+  it("a legacy line (qty 3, boxes null, upb 12) edited via Cases to 4 gives 4 boxes, 0 pieces, qty 48 — NEVER 3 phantom loose pieces", () => {
+    const legacy: DraftItem = {
+      productId: "p1",
+      qty: 3,
+      unitsPerBox: 12,
+      unitPrice: 5,
+      catalogPrice: 5,
+      name: "Legacy widget",
+    };
+    const result = applyBoxEdit(legacy, 4, 12);
+    expect(result.boxes).toBe(4);
+    expect(result.pieces).toBe(0);
+    expect(result.qty).toBe(48);
+    // The shipped-bug reconstruction: the shared fold would read qty:3 as 3 loose pieces
+    // first, giving {boxes:4, pieces:3, qty:51} instead.
+    expect(result.qty).not.toBe(51);
+    expect(result.pieces).not.toBe(3);
+  });
+
+  it("a legacy line's Loose edit is equally unaffected by its own un-split qty", () => {
+    const legacy: DraftItem = {
+      productId: "p1",
+      qty: 3,
+      unitsPerBox: 12,
+      unitPrice: 5,
+      catalogPrice: 5,
+      name: "Legacy widget",
+    };
+    const result = applyPieceEdit(legacy, 5, 12);
+    expect(result.boxes).toBe(0); // cur.boxes ?? 0 — nothing folded in from the plain qty
+    expect(result.pieces).toBe(5);
+    expect(result.qty).toBe(5);
+  });
+
+  it("a unit-sold line refuses the split outright, returning it unchanged", () => {
+    const unitLine: DraftItem = {
+      productId: "p1",
+      qty: 2,
+      unitsPerBox: 240,
+      unitLabel: "Case",
+      unitPrice: 220,
+      catalogPrice: 24,
+      name: "Case widget",
+    };
+    expect(applyBoxEdit(unitLine, 5, 240)).toEqual(unitLine);
+    expect(applyPieceEdit(unitLine, 5, 240)).toEqual(unitLine);
+  });
+
+  it("preserves an ALREADY-split line's other pieces/boxes exactly like master's old rule", () => {
+    const split: DraftItem = {
+      productId: "p1",
+      qty: 27,
+      boxes: 2,
+      pieces: 3,
+      unitsPerBox: 12,
+      unitPrice: 5,
+      catalogPrice: 5,
+      name: "Split widget",
+    };
+    // Setting boxes to 4 keeps the existing 3 loose pieces (master's rule: pcs = cur.pieces).
+    expect(applyBoxEdit(split, 4, 12)).toMatchObject({ boxes: 4, pieces: 3, qty: 51 });
+    // Setting pieces to 5 keeps the existing 2 boxes.
+    expect(applyPieceEdit(split, 5, 12)).toMatchObject({ boxes: 2, pieces: 5, qty: 29 });
   });
 });

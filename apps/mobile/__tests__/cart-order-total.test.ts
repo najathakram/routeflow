@@ -1,4 +1,9 @@
-import { computeOrderTotal, lineUnitFor } from "../lib/cart-order-total";
+import {
+  computeOrderTotal,
+  lineUnitFor,
+  priceEditorPrefill,
+  priceEditorSaveOverride,
+} from "../lib/cart-order-total";
 import { effectiveUnitPrice, type LineState, type Product } from "../lib/cart-line-state";
 import { getTierPrice, resolveUnitPrice } from "@routeflow/pricing";
 import { buildUnitOptions, unitPriceBase } from "../lib/unit-options";
@@ -54,6 +59,37 @@ describe("lineUnitFor — the fixed derivation", () => {
     const plain: LineState = { qty: 1 };
     expect(lineUnitFor(plain, product, 1)).toBe(24);
     expect(lineUnitFor(plain, product, 2)).toBe(25);
+  });
+});
+
+/**
+ * SA-085i(b): the tray price-editor's pre-fill and Save-writes-an-override decision, lifted
+ * into lib so a regression to `tierPriceFor(p)` (the shipped bug — a Case's pre-fill showed
+ * $24, and Save then wrote it as a $24 DISCOUNTED override) fails a VALUE test, not just a
+ * presence pin the screen could quietly stop calling.
+ */
+describe("priceEditorPrefill (SA-085i)", () => {
+  it("a Case line's pre-fill is 220, never the pack's 24", () => {
+    expect(priceEditorPrefill(unitLine(), product, 1)).toBe(220);
+    expect(priceEditorPrefill(unitLine(), product, 1)).not.toBe(24);
+  });
+
+  it("a plain pack line's pre-fill is unaffected — still the tier price", () => {
+    expect(priceEditorPrefill({ qty: 1 }, product, 1)).toBe(24);
+  });
+});
+
+describe("priceEditorSaveOverride (SA-085i)", () => {
+  it("typed === base writes NO override (an untouched pre-fill must never become one)", () => {
+    expect(priceEditorSaveOverride(220, 220)).toBeNull();
+  });
+
+  it("typed !== base writes the override, with base as the comparison point", () => {
+    expect(priceEditorSaveOverride(200, 220)).toBe(200);
+  });
+
+  it("a clear (null) passes through unchanged", () => {
+    expect(priceEditorSaveOverride(null, 220)).toBeNull();
   });
 });
 

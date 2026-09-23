@@ -20,7 +20,13 @@ import { FilterChipRow, NavBackButton, NavBar, SearchBar } from "@routeflow/ui/m
 import { apiClient } from "../lib/api-client";
 import { unitPriceBase, type UnitOption } from "../lib/unit-options";
 import { toNumber, type LineState, type Product } from "../lib/cart-line-state";
-import { computeOrderTotal, lineUnitFor, type UnlistedTotalLine } from "../lib/cart-order-total";
+import {
+  computeOrderTotal,
+  lineUnitFor,
+  priceEditorPrefill,
+  priceEditorSaveOverride,
+  type UnlistedTotalLine,
+} from "../lib/cart-order-total";
 import { CartRow } from "./CartRow";
 import { CartStepperRow } from "./CartStepperRow";
 import { useAdminCustomers } from "../lib/api/admin";
@@ -569,15 +575,6 @@ function ProductPickView({
   const tierPriceFor = (p: Product) => getTierPrice(p, effectiveTierFor(p.id));
   /** SPECIAL (tier≠1) lines are the customer's permanent price — never overridable. */
   const isSpecialFor = (p: Product) => effectiveTierFor(p.id) !== 1;
-  /**
-   * What this line actually charges — thin wrapper over the pure, unit-tested
-   * `lineUnitFor` (lib/cart-order-total.ts): overrides count only on non-SPECIAL lines (web
-   * parity), and a unit-sold line prices off its OWN resolved level, never the pack's tier
-   * price — the same comparison-baseline fix as CartRow's `priceBase`/`effUnit`, applied here
-   * because this is what the order total and invoice-split preview read.
-   */
-  const lineUnitForProduct = (line: LineState | undefined, p: Product) =>
-    lineUnitFor(line, p, effectiveTierFor(p.id));
   const [scanOpen, setScanOpen] = useState(false);
   /** Tray line (catalog id or unlisted local id) whose price is being edited. */
   const [priceEditId, setPriceEditId] = useState<string | null>(null);
@@ -1316,7 +1313,7 @@ function ProductPickView({
       if (qty <= 0) continue;
       splitLines.push({
         trackedCategoryId: p.trackedCategoryId ?? null,
-        unitPrice: lineUnitForProduct(line, p),
+        unitPrice: lineUnitFor(line, p, effectiveTierFor(p.id)),
         qty,
         boxes: line.boxes ?? null,
         pieces: line.pieces ?? null,
@@ -1340,11 +1337,10 @@ function ProductPickView({
         unlisted,
         scanOrder,
         lookup: (id) => productById.get(id),
-        // units_v1 (SA-085h HIGH): the SAME price every other reader uses — never the pack's
-        // tier price for a unit-sold line (2 Cases at $220 total $440, not 2 x the pack's $24).
+        // units_v1 (SA-085i(b)): lib's lineUnitFor directly, never the pack's tier price.
         priceFor: (p) => {
           const full = productById.get(p.id);
-          return full ? lineUnitForProduct(items[p.id], full) : 0;
+          return full ? lineUnitFor(items[p.id], full, effectiveTierFor(p.id)) : 0;
         },
         overridable: (p) => {
           const full = productById.get(p.id);
@@ -1474,8 +1470,8 @@ function ProductPickView({
     return {
       id: priceEditId,
       name: displayName(p, products),
-      // The override if set, else what's billed today (SA-085h HIGH: never the pack's price).
-      unitPrice: lineUnitForProduct(items[priceEditId], p),
+      // SA-085i(b): the override if set, else what's billed today — never the pack's price.
+      unitPrice: priceEditorPrefill(items[priceEditId], p, effectiveTierFor(p.id)),
       unlisted: false,
     };
   })();
@@ -1509,14 +1505,15 @@ function ProductPickView({
       if (isCatalogHeader(p)) return <CatalogSectionLabel label={p.label} />;
       const line = items[p.id];
       const qty = line ? effectiveQty(line, p.unitsPerBox) : 0;
-      const price = tierPriceFor(p);
+      // SA-085i: never the pack's tier price for a unit-sold line ("/Case", not "/each").
+      const price = line ? lineUnitFor(line, p, effectiveTierFor(p.id)) : tierPriceFor(p);
       const band =
         line && qty > 0 && Number(p.unitsPerBox ?? 0) > 1 && !line.unitLabel ? (
           <BoxedQtyBand
             line={line}
             unitsPerBox={Number(p.unitsPerBox)}
             unit={p.unit}
-            unitPrice={lineUnitForProduct(line, p)}
+            unitPrice={price}
             productName={displayName(p)}
             onChangeBoxes={(n) => onRowChangeBoxes(p.id, n)}
             onChangePieces={(n) => onRowChangePieces(p.id, n)}
@@ -1538,7 +1535,7 @@ function ProductPickView({
           onChangeQty={onRowChangeQty}
           onIncrement={onRowIncrement}
           onDecrement={onRowDecrement}
-          unitSold={!!line?.unitLabel}
+          unitLabel={line?.unitLabel}
         >
           {band}
         </ProductRow>
@@ -2552,11 +2549,11 @@ function ProductPickView({
           // here — the tray/footer re-derive it through computeLineSubtotal from this price.
           const price = value == null ? null : roundMoney(value);
           if (target.unlisted) return updateUnlistedPrice(target.id, price);
-          // SA-085h: write an override ONLY when it diverges from the base (same comparison
+          // SA-085i(b): write an override ONLY when it diverges from the base (same comparison
           // submit/park make) — saving the pre-fill UNTOUCHED must never store one.
           const p = productById.get(target.id);
           const base = p ? unitPriceBase(items[target.id] ?? {}, tierPriceFor(p)) : null;
-          setLinePrice(target.id, price != null && price === base ? null : price);
+          setLinePrice(target.id, base != null ? priceEditorSaveOverride(price, base) : price);
         }}
       />
 

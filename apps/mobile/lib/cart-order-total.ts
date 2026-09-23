@@ -19,6 +19,30 @@ export function lineUnitFor(line: LineState | undefined, product: Product, tier:
   return isSpecial ? base : effectiveUnitPrice(line, base);
 }
 
+/**
+ * SA-085i(b): the tray price-editor's pre-fill — the SAME price every other reader of this
+ * line uses (`lineUnitFor`), never the pack's tier price for a unit-sold line. A thin, named
+ * wrapper so the screen's call site and this function's own tests both read as "the pre-fill,"
+ * not a second derivation.
+ */
+export function priceEditorPrefill(
+  line: LineState | undefined,
+  product: Product,
+  tier: number,
+): number {
+  return lineUnitFor(line, product, tier);
+}
+
+/**
+ * SA-085i(b): what the price editor's Save writes — an override ONLY when the typed price
+ * actually diverges from the resolved base (the same comparison submit/park already make).
+ * Saving a pre-fill UNTOUCHED must never store a redundant override (a unit line's pre-fill
+ * equals its own base, never the pack's tier price — the bug the pre-fill fix itself closed).
+ */
+export function priceEditorSaveOverride(typed: number | null, base: number): number | null {
+  return typed != null && typed === base ? null : typed;
+}
+
 export interface UnlistedTotalLine {
   qty: number;
   unitPrice: number;

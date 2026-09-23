@@ -35,10 +35,21 @@ describe("NewOrderScreen.tsx routes every +/- through stepLineQty (create flow)"
   });
 });
 
-describe("edit-items.tsx routes every +/- through stepLineQty (edit flow)", () => {
-  it("incQty/decQty call stepLineQty, never setBoxes's raw box math", () => {
-    expect(editItemsSrc).toMatch(/stepLineQty\(cur, 1, upb > 1, upb\)/);
-    expect(editItemsSrc).toMatch(/stepLineQty\(cur, -1, upb > 1, upb\)/);
+describe("edit-items.tsx routes every +/- through unit-aware helpers (edit flow)", () => {
+  it("incQty/decQty step a unit line's COUNT via setQty, never setBoxes's box math (SA-085i(c))", () => {
+    expect(editItemsSrc).toMatch(
+      /if \(cur\.unitLabel\) return setQty\(id, \(cur\.qty \?\? 0\) \+ 1\)/,
+    );
+    expect(editItemsSrc).toMatch(
+      /if \(cur\.unitLabel\) return setQty\(id, Math\.max\(0, \(cur\.qty \?\? 0\) - 1\)\)/,
+    );
+  });
+
+  it("setBoxes/setPieces route through applyBoxEdit/applyPieceEdit, which refuse a unit-line split AND match master's non-unit math byte-for-byte", () => {
+    expect(editItemsSrc).toMatch(/applyBoxEdit\(cur, boxes, Number\(cur\.unitsPerBox \?\? 0\)\)/);
+    expect(editItemsSrc).toMatch(
+      /applyPieceEdit\(cur, pieces, Number\(cur\.unitsPerBox \?\? 0\)\)/,
+    );
   });
 
   it("a re-scan's incrementLine/incrementLinePiece call is unit-guarded", () => {
@@ -47,5 +58,10 @@ describe("edit-items.tsx routes every +/- through stepLineQty (edit flow)", () =
 
   it("the drawer sends a unit line's typed total through setQty, never setUnits", () => {
     expect(editItemsSrc).toMatch(/isUnitLine\(d\.draft\[id\] \?\? \{\}\)/);
+  });
+
+  it("a piece-code scan on an already unit-sold line confirms before committing (SA-085i)", () => {
+    expect(editItemsSrc).toMatch(/kind === "piece" && existingLabel/);
+    expect(editItemsSrc).toMatch(/confirm\(/);
   });
 });

@@ -307,6 +307,31 @@ export function applyUnitPick(
 }
 
 /**
+ * SA-085i(c): a non-unit line's Cases/Loose edit matches master's OLD inline rule byte-for-
+ * byte — the typed count REPLACES qty; a legacy line's plain (un-split) qty is never
+ * reinterpreted as loose pieces. The shared sale-line.ts fold (`splitFromPrev`, correct for
+ * NewOrderScreen's own in-session cart accumulation) reads a no-split qty as PIECES, which
+ * would invent phantom loose units out of a STORED historical qty the first time this screen's
+ * own Cases/Loose steppers touch it — a separate, pre-existing bug, not fixed here. A
+ * unit-sold line refuses the edit outright (returns unchanged; the UI never shows this
+ * control for one, but this is the executable half of that guarantee).
+ */
+export function applyBoxEdit(cur: DraftItem, boxes: number, unitsPerBox: number): DraftItem {
+  if (cur.unitLabel) return cur;
+  const b = Math.max(0, Math.floor(boxes));
+  const pieces = cur.pieces ?? 0;
+  return { ...cur, boxes: b, pieces, qty: b * unitsPerBox + pieces, boxSplit: true };
+}
+
+/** SA-085i(c): the loose-pieces counterpart of `applyBoxEdit` — see its doc comment. */
+export function applyPieceEdit(cur: DraftItem, pieces: number, unitsPerBox: number): DraftItem {
+  if (cur.unitLabel) return cur;
+  const pcs = Math.max(0, Math.floor(pieces));
+  const boxes = cur.boxes ?? 0;
+  return { ...cur, boxes, pieces: pcs, qty: boxes * unitsPerBox + pcs, boxSplit: true };
+}
+
+/**
  * BUY_N_GET_M free units for THIS draft row, rescaled to the qty now on screen
  * (shared helper, same rule as the invoice edit form and the server's
  * `rescaleBogoFreeUnits` fallback). A pending SUBSTITUTION earns nothing — the
