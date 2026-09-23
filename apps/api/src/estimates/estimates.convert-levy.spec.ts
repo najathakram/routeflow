@@ -347,9 +347,30 @@ describe("EstimatesService.convertToInvoice — regulated levy and quoted pack (
       });
     });
 
-    it("(e) SA-077a: a recorded pack <= 1 WITH a split uses qty = boxes + pieces, never a different stored qty", async () => {
-      // 3 + 2 = 5, non-trivial (neither boxes nor pieces alone equals qty) so this actually pins
-      // the boxes+pieces sum, not just "whatever qty happened to be forwarded".
+    it("(e) SA-095d: a recorded pack <= 1 WITH a split PASSES THROUGH the stored qty — the split is informational on conversion, never recomputed", async () => {
+      // Deliberately inconsistent: boxes(3) + pieces(2) = 5, but the stored qty is 2. If case 1
+      // ever recomputed qty from the split (SA-077a, ruled OUT by SA-095d for a stored document —
+      // that rule applies to incoming payloads, never to what was already quoted), this would
+      // silently change the qty the customer agreed to. unitsPerBox: 0 is a RECORDED (not missing)
+      // degenerate pack, so this still hits case 1, not case 2/3.
+      arm({
+        items: [line({ qty: 2, unitPrice: 3, subtotal: 6, boxes: 3, pieces: 2, unitsPerBox: 0 })],
+        subtotal: 6,
+        products: [regulatedProduct({ unitsPerBox: 12 })],
+        category: perUnitCategory(1),
+      });
+      await service.convertToInvoice("est-1");
+      expect(created().items.create[0]).toMatchObject({
+        qty: 2, // the estimate's own recorded qty — never boxes + pieces (5)
+        boxes: null,
+        pieces: null,
+        categoryTaxAmount: 2, // qty(2) x $1 — never 5 x $1
+      });
+    });
+
+    it("(e-sibling) a recorded pack of 1 with a CONSISTENT split (qty already equals boxes + pieces) passes through unchanged", async () => {
+      // qty(5) happens to equal boxes(3) + pieces(2) here, but that's coincidence, not recomputation
+      // — same passthrough rule as (e), just with a stored qty that doesn't expose the difference.
       arm({
         items: [line({ qty: 5, unitPrice: 3, subtotal: 15, boxes: 3, pieces: 2, unitsPerBox: 1 })],
         subtotal: 15,
@@ -358,7 +379,7 @@ describe("EstimatesService.convertToInvoice — regulated levy and quoted pack (
       });
       await service.convertToInvoice("est-1");
       expect(created().items.create[0]).toMatchObject({
-        qty: 5, // 3 boxes + 2 pieces, the estimate form's own convention for a pack-1 line
+        qty: 5,
         boxes: null,
         pieces: null,
         categoryTaxAmount: 5,
