@@ -91,6 +91,13 @@ describe("multi-line per-item notes — the form's blanket Enter-preventDefault 
     const user = userEvent.setup();
     renderWithProviders(<CreateOrderModal isOpen onClose={jest.fn()} />);
     await pick("Sample Cola");
+    // B742: adding a line schedules a 50ms setTimeout (CreateOrderModal.tsx ~:631) that
+    // refocuses the product search box for the next barcode scan. Opening the note and typing
+    // before that timer fires steals focus mid-keystroke — the remaining characters land in
+    // the search box, and an eventual Enter there can even open InlineCreateProductModal (its
+    // own unmatched-code path). A real operator never opens a note within 50ms of adding a
+    // line; wait for the re-arm to actually land first, matching that real sequence.
+    await waitFor(() => expect(search()).toHaveFocus());
     const line = lineFor("Sample Cola");
 
     fireEvent.click(within(line).getByTitle("Add flavor / note"));
@@ -108,6 +115,9 @@ describe("multi-line per-item notes — the form's blanket Enter-preventDefault 
     const onClose = jest.fn();
     renderWithProviders(<CreateOrderModal isOpen onClose={onClose} />);
     await pick("Sample Cola");
+    // B742 — see the sibling test above for the full mechanism (the scanner re-arm's 50ms
+    // refocus timer racing a note-open that happens before it fires).
+    await waitFor(() => expect(search()).toHaveFocus());
     const line = lineFor("Sample Cola");
     fireEvent.click(within(line).getByTitle("Add flavor / note"));
     const noteField = within(line).getByPlaceholderText(
