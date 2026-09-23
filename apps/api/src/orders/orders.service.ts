@@ -31,6 +31,7 @@ import {
 } from "@routeflow/pricing";
 import { lockRowsNoWait, withAdvisoryLock, type LockMode } from "../common/db-locks";
 import { assertMoneyInvariantsOrThrow } from "../common/money-invariants.util";
+import { atStopConflict } from "./at-stop-conflicts";
 import {
   LOCK_UNAVAILABLE,
   LOCK_UNAVAILABLE_MESSAGE,
@@ -4975,17 +4976,16 @@ export class OrdersService implements OnApplicationBootstrap {
     });
     if (!order) throw new NotFoundException("Order not found");
     if (!["PENDING", "CONFIRMED", "OUT_FOR_DELIVERY"].includes(order.status)) {
-      throw new ConflictException({ code: "CHANGE_WINDOW_CLOSED", reason: "ORDER_STATUS" });
+      throw atStopConflict("CHANGE_WINDOW_CLOSED:ORDER_STATUS");
     }
     if (order.routeRun == null || order.routeRun.status !== "IN_PROGRESS") {
-      throw new ConflictException({ code: "CHANGE_WINDOW_CLOSED", reason: "RUN_NOT_ACTIVE" });
+      throw atStopConflict("CHANGE_WINDOW_CLOSED:RUN_NOT_ACTIVE");
     }
     if (
       order.routeRunStop != null &&
       ["COMPLETED", "SKIPPED"].includes(order.routeRunStop.status)
     ) {
-      // The at-door authority window is over — resolve as next-delivery instead.
-      throw new ConflictException({ code: "STOP_ALREADY_COMPLETED" });
+      throw atStopConflict("STOP_ALREADY_COMPLETED");
     }
 
     // NOTE-type requests carry no money delta: claim + return, nothing else.
@@ -5106,16 +5106,16 @@ export class OrdersService implements OnApplicationBootstrap {
         });
         if (!live) throw new NotFoundException("Order not found");
         if (!["PENDING", "CONFIRMED", "OUT_FOR_DELIVERY"].includes(live.status)) {
-          throw new ConflictException({ code: "CHANGE_WINDOW_CLOSED", reason: "ORDER_STATUS" });
+          throw atStopConflict("CHANGE_WINDOW_CLOSED:ORDER_STATUS");
         }
         if (live.routeRun == null || live.routeRun.status !== "IN_PROGRESS") {
-          throw new ConflictException({ code: "CHANGE_WINDOW_CLOSED", reason: "RUN_NOT_ACTIVE" });
+          throw atStopConflict("CHANGE_WINDOW_CLOSED:RUN_NOT_ACTIVE");
         }
         if (
           live.routeRunStop != null &&
           ["COMPLETED", "SKIPPED"].includes(live.routeRunStop.status)
         ) {
-          throw new ConflictException({ code: "STOP_ALREADY_COMPLETED" });
+          throw atStopConflict("STOP_ALREADY_COMPLETED");
         }
 
         // B134 (REG-B134): auto-revert a SENT pending-mirror invoice to DRAFT INSIDE the merge tx
