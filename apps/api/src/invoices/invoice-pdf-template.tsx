@@ -1,8 +1,8 @@
 import React from "react";
 import { Document, Page, Text, View, StyleSheet, Image, Link } from "@react-pdf/renderer";
 import { carrierLabel, getTrackingUrl } from "../common/shipping";
-import { formatQtySplit, roundMoney } from "@routeflow/pricing";
-import { promoNote, showOriginalPrice } from "./invoice-pdf-item";
+import { roundMoney } from "@routeflow/pricing";
+import { promoNote, qtyCellText, showOriginalPrice } from "./invoice-pdf-item";
 import { CREDIT_NOTE_METHOD, resolveConfirmedAmounts } from "./payment-predicates";
 
 type DecimalLike = { toNumber(): number } | number | string;
@@ -90,6 +90,8 @@ export interface InvoicePdfData {
     boxes?: number | null;
     pieces?: number | null;
     unitsPerBox?: number | null;
+    /** units_v1 (B653): the line's own selling unit ("Case") — see `qtyCellText`. */
+    unitLabel?: string | null;
     /**
      * Suggested retail price snapshot, per PIECE, taken when this line was
      * created — display-only, never re-read from the live product. Null/undefined
@@ -616,10 +618,11 @@ export function InvoicePdfTemplate({ invoice }: { invoice: InvoicePdfData }) {
                 </View>
                 <View style={styles.colQty}>
                   <Text style={styles.cellTextRight}>
-                    {formatQtySplit({
-                      qty: toNum(item.qty),
+                    {qtyCellText({
+                      qty: item.qty,
                       boxes: item.boxes,
                       pieces: item.pieces,
+                      unitLabel: item.unitLabel,
                     })}
                   </Text>
                   {/* BUY_N_GET_M: name the free units, or the reduced subtotal reads
