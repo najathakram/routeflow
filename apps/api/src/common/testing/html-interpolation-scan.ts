@@ -66,8 +66,9 @@ export function scanHtmlInterpolations(code: string): HtmlHit[] {
     }
     return "<module>";
   };
-  const hit = (e: ts.Node) => {
-    const key = `${enclosingFnName(e)} :: ${text(e)}`;
+  /** `prefix` "href " marks an SA-127 href hit, kept apart from the escaping hits. */
+  const hit = (e: ts.Node, prefix = "") => {
+    const key = `${enclosingFnName(e)} :: ${prefix}${text(e)}`;
     const line = src.getLineAndCharacterOfPosition(e.getStart(src)).line + 1;
     hits.set(`${key}@${line}`, { key, line });
   };
@@ -147,6 +148,57 @@ export function scanHtmlInterpolations(code: string): HtmlHit[] {
     return undefined;
   };
 
+  /** True when a `let`/`var` binding is assigned again (`x = …`, `x += …`) anywhere it is visible. */
+  const isReassigned = (decl: ts.VariableDeclaration): boolean => {
+    if (!ts.isIdentifier(decl.name)) return false;
+    const list = decl.parent;
+    if (!ts.isVariableDeclarationList(list) || (list.flags & ts.NodeFlags.Const) !== 0) {
+      return false;
+    }
+    const name = decl.name.text;
+    let found = false;
+    const look = (n: ts.Node) => {
+      if (found) return;
+      if (
+        ts.isBinaryExpression(n) &&
+        n.operatorToken.kind >= ts.SyntaxKind.FirstAssignment &&
+        n.operatorToken.kind <= ts.SyntaxKind.LastAssignment &&
+        ts.isIdentifier(n.left) &&
+        n.left.text === name &&
+        declOf(n.left) === decl
+      ) {
+        found = true;
+      }
+      ts.forEachChild(n, look);
+    };
+    look(src);
+    return found;
+  };
+
+  /**
+   * SA-127: a value in `href="…"` is accepted only when it comes from `safeLinkHref` (the
+   * http(s)-only scheme guard), directly, through `escapeHtml(…)`, or through a `const` holding
+   * one. Escaping alone does not stop a `javascript:` URL.
+   */
+  const fromSafeLinkHref = (e: ts.Expression): boolean => {
+    if (ts.isParenthesizedExpression(e)) return fromSafeLinkHref(e.expression);
+    if (ts.isCallExpression(e)) {
+      const callee = e.expression.getText(src);
+      if (callee === "safeLinkHref") return true;
+      if (callee === "escapeHtml" && e.arguments[0]) return fromSafeLinkHref(e.arguments[0]);
+      return false;
+    }
+    if (ts.isIdentifier(e)) {
+      const decl = declOf(e);
+      if (!decl || !ts.isVariableDeclaration(decl) || !decl.initializer || isReassigned(decl)) {
+        return false;
+      }
+      const init = decl.initializer;
+      return guarded(decl, () => fromSafeLinkHref(init));
+    }
+    return false;
+  };
+
   /** Every value `fn` can return. */
   const returnsOf = (fn: FnLike): ts.Expression[] => {
     if (!fn.body) return [];
@@ -203,6 +255,8 @@ export function scanHtmlInterpolations(code: string): HtmlHit[] {
         if (ts.isVariableDeclaration(decl) && ts.isObjectBindingPattern(decl.name)) {
           return !!decl.initializer && safeProp(decl.initializer, e.text);
         }
+        // Opus note: a reassigned `let` can hold anything after its initializer — unsafe.
+        if (ts.isVariableDeclaration(decl) && isReassigned(decl)) return false;
         if (ts.isVariableDeclaration(decl)) return !!decl.initializer && safe(decl.initializer);
         if (ts.isParameter(decl) && isFnLike(decl.parent)) {
           return safeAtEveryCall(decl.parent, decl.parent.parameters.indexOf(decl));
@@ -328,7 +382,14 @@ export function scanHtmlInterpolations(code: string): HtmlHit[] {
   const scanTemplate = (t: ts.TemplateExpression) => {
     if (scanned.has(t)) return;
     scanned.add(t);
-    for (const span of t.templateSpans) sink(span.expression);
+    t.templateSpans.forEach((span, i) => {
+      sink(span.expression);
+      // SA-127: the text just before this value opens an href attribute.
+      const before = i === 0 ? t.head.text : t.templateSpans[i - 1].literal.text;
+      if (/href\s*=\s*["']?$/i.test(before) && !fromSafeLinkHref(span.expression)) {
+        hit(span.expression, "href ");
+      }
+    });
   };
 
   const visit = (n: ts.Node) => {

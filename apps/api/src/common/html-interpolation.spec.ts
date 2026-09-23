@@ -16,6 +16,8 @@ import { scanHtmlInterpolations } from "./testing/html-interpolation-scan";
 const TRANSPORT =
   "transport: forwards html a caller built, and every caller is scanned at its source";
 const NUMBER = "a number: renders as digits, cannot carry markup";
+/** SA-127: an href not built by safeLinkHref — the server's own URL, never tenant input. */
+const ENV_LINK = "env base + server token";
 const ALLOWED: Record<string, Record<string, string>> = {
   "email/email.service.ts": {
     "send :: params.html": TRANSPORT,
@@ -26,6 +28,7 @@ const ALLOWED: Record<string, Record<string, string>> = {
     "buildLowStockDigestEmail :: it.reorderPoint": NUMBER,
     "buildLowStockDigestEmail :: overflow": NUMBER,
     "buildLowStockDigestEmail :: params.items.length": NUMBER,
+    "buildInvoiceEmail :: href escapeHtml(params.pdfUrl)": "the server's own PDF link",
   },
   "email/mailbox/mailbox-send.service.ts": {
     "buildMimeBuffer :: opts.html": TRANSPORT,
@@ -38,12 +41,33 @@ const ALLOWED: Record<string, Record<string, string>> = {
   "messaging/providers/email-channel.provider.ts": {
     "send :: html": "built by buildNotificationEmailHtml, which this guard scans (0 hits)",
   },
+  "auth/auth.service.ts": {
+    "requestPasswordReset :: href escapeHtml(resetUrl)": ENV_LINK,
+  },
+  "buyer/buyer-auth.service.ts": {
+    "issueVerificationEmail :: href escapeHtml(verifyUrl)": ENV_LINK,
+    "requestPasswordReset :: href escapeHtml(resetUrl)": ENV_LINK,
+  },
+  "customers/portal-invite-email.ts": {
+    "portalInviteEmailHtml :: href url": ENV_LINK,
+  },
+  "demo-booking/demo-booking.service.ts": {
+    "buildBookingEmail :: href escapeHtml(booking.meetUrl)":
+      "the Meet link Google Calendar returned for the booking, never user input",
+    "buildBookingEmail :: href escapeHtml(baseUrl)": ENV_LINK,
+    "buildBookingEmail :: href escapeHtml(manageUrl)": ENV_LINK,
+  },
+  "tenants/tenants.service.ts": {
+    "register :: href escapeHtml(verifyUrl)": ENV_LINK,
+    "resendVerification :: href escapeHtml(verifyUrl)": ENV_LINK,
+  },
   "customers/customers.service.ts": {
     "sendPortalInvite :: portalInviteEmailHtml(sellerName, inviteUrl)":
       "built in customers/portal-invite-email.ts, which this guard scans (0 hits)",
   },
   "platform-admin/platform-admin.service.ts": {
     "createTenant :: trialDays": NUMBER,
+    "createTenant :: href escapeHtml(checkoutUrl)": "the Stripe checkout URL the API created",
   },
 };
 
@@ -127,6 +151,32 @@ describe("B809 — the HTML interpolation scanner (never passes vacuously)", () 
     expect(
       keys('function f(n: string) { throw new Error(`bad "${n}" (expected "<area>.<method>")`); }'),
     ).toEqual([]);
+  });
+
+  it("SA-127: an href is accepted only from safeLinkHref; a raw or merely escaped one is flagged", () => {
+    expect(keys('function f(u: string) { return `<a href="${u}">x</a>`; }')).toEqual([
+      "f :: u",
+      "f :: href u",
+    ]);
+    expect(keys('function f(u: string) { return `<a href="${escapeHtml(u)}">x</a>`; }')).toEqual([
+      "f :: href escapeHtml(u)",
+    ]);
+    const guarded = `function f(u: string) {
+      const href = safeLinkHref(u, "f");
+      return \`<a href="\${escapeHtml(href)}">x</a>\`;
+    }`;
+    expect(keys(guarded)).toEqual([]);
+  });
+
+  it("Opus: a reassigned let is never safe, even when its initializer was", () => {
+    const code = `function f(raw: string) {
+      let v = escapeHtml("ok");
+      v += raw;
+      return \`<p>\${v}</p>\`;
+    }`;
+    expect(keys(code)).toEqual(["f :: v"]);
+    // The same binding without a reassignment stays safe.
+    expect(keys('function f() { let v = escapeHtml("ok"); return `<p>${v}</p>`; }')).toEqual([]);
   });
 
   it("keys two uses of the same text in different functions separately", () => {
