@@ -30,13 +30,16 @@
  * The order-detail and invoice-detail checks are each gated by a plain `if
  * (await locator.count())` — not test.skip(), which mid-test would abort
  * everything after it in the same test function, including the unrelated
- * invoices-list check. Each skip logs why, explicitly. The seeded buyer's
- * linked customer ("E2E Buyer Portal Cafe") has no orders/invoices to open,
- * which is its actual state on this DB today (confirmed directly — zero of
- * either, and apps/api/scripts/e2e-seed.js never creates one for this
- * fixture). Different from the locator bugs earlier fixed on this branch:
- * those were an unverified assumption of "no data" that was actually wrong;
- * this one is checked against the DB, not guessed.
+ * invoices-list check. Each skip logs why, explicitly.
+ * apps/api/scripts/e2e-seed.js never gives the buyer's linked customer
+ * ("E2E Buyer Portal Cafe") an order or invoice on its own (confirmed
+ * directly against the DB, not guessed — different from the locator bugs
+ * earlier fixed on this branch, which were an unverified "no data"
+ * assumption that was actually wrong). local-assets/scripts/seed-buyer-order-invoice.mjs
+ * (gitignored, one-off, run manually against a local stack) fills that gap
+ * through the real `/orders/sell` API so these two checks actually execute
+ * instead of just logging why they didn't — the `if` stays regardless, since
+ * a fresh DB or CI run won't have that script's output.
  *
  * Uses the seeded, ACTIVE-linked buyer credential from helpers/constants.ts
  * (already has a seller selected, so no register→invite→accept dance is
@@ -48,7 +51,7 @@
 import { test, expect } from "@playwright/test";
 import { loginAsBuyer } from "./helpers/auth";
 import { CREDENTIALS } from "./helpers/constants";
-import { assertNoOverflow, documentLevelOverflowPx } from "./helpers/overflow";
+import { assertNoOverflow, documentLevelOverflowPx, waitForDataLoaded } from "./helpers/overflow";
 
 const VIEWPORTS = [
   { width: 390, height: 844, label: "390" },
@@ -74,9 +77,13 @@ for (const vp of VIEWPORTS) {
       // picker itself is clean before clicking through, since it's a real
       // page a buyer sees.
       await expect(page.getByText(/select a seller/i)).toBeVisible({ timeout: 15_000 });
+      await waitForDataLoaded(page);
       await assertNoOverflow(page, "buyer — seller picker");
       await page.getByText("E2E Test RouteFlow", { exact: false }).first().click();
-      await page.waitForURL(/\/buyer\/portal\/[^/]+/, { timeout: 15_000 });
+      // 30s — same first-compile-under-next-dev reasoning as the order/
+      // invoice detail waits below: found flaking here for real at 768px
+      // (a genuine navigation, just slow under dev's on-demand compile).
+      await page.waitForURL(/\/buyer\/portal\/[^/]+/, { timeout: 30_000 });
 
       const sellerSlug = page.url().split("/buyer/portal/")[1]?.split("/")[0];
       test.skip(
@@ -87,6 +94,7 @@ for (const vp of VIEWPORTS) {
       // ── Dashboard (navigate there explicitly — the click above lands on
       // orders, not dashboard) ────────────────────────────────────────────
       await page.goto(`/buyer/portal/${sellerSlug}/dashboard`);
+      await waitForDataLoaded(page);
       await assertNoOverflow(page, "buyer dashboard");
       expect(await documentLevelOverflowPx(page)).toBeLessThanOrEqual(0);
       // The buyer main element is this shell's own scroll container (see
@@ -99,14 +107,17 @@ for (const vp of VIEWPORTS) {
 
       // ── Shop ─────────────────────────────────────────────────────────────
       await page.goto(`/buyer/portal/${sellerSlug}/shop`);
+      await waitForDataLoaded(page);
       await assertNoOverflow(page, "buyer shop");
 
       // ── Cart ─────────────────────────────────────────────────────────────
       await page.goto(`/buyer/portal/${sellerSlug}/cart`);
+      await waitForDataLoaded(page);
       await assertNoOverflow(page, "buyer cart");
 
       // ── Orders ───────────────────────────────────────────────────────────
       await page.goto(`/buyer/portal/${sellerSlug}/orders`);
+      await waitForDataLoaded(page);
       await assertNoOverflow(page, "buyer orders (list)");
 
       // Real order detail. This list renders TWO different things depending
@@ -140,19 +151,29 @@ for (const vp of VIEWPORTS) {
           : page.getByTestId("buyer-orders-table").locator("tbody tr").first();
       if (await orderLink.count()) {
         await orderLink.click();
+        // 30s, not 15s: found running this for real — under `next dev`, the
+        // FIRST hit on an order-detail route pays a one-time on-demand
+        // compile that can exceed 15s, timing out `waitForURL`'s "load"
+        // wait even though the click and navigation both genuinely
+        // succeeded (confirmed via the failure's own page snapshot: the
+        // link showed `[active]` and the real target URL). Not a locator
+        // bug — a dev-server-only cold-compile cost a production build
+        // doesn't have.
         await page.waitForURL(new RegExp(`/buyer/portal/${sellerSlug}/orders/[^/]+$`), {
-          timeout: 15_000,
+          timeout: 30_000,
         });
+        await waitForDataLoaded(page);
         await assertNoOverflow(page, "buyer orders/[id]");
         expect(await documentLevelOverflowPx(page)).toBeLessThanOrEqual(0);
       } else {
         console.log(
-          "[overflow probe] buyer orders/[id] — skipped: no seeded order for the buyer's linked customer (E2E Buyer Portal Cafe), confirmed via direct DB query",
+          "[overflow probe] buyer orders/[id] — skipped: no order seeded for the buyer's linked customer (E2E Buyer Portal Cafe) on this run. e2e-seed.js doesn't create one; local-assets/scripts/seed-buyer-order-invoice.mjs (gitignored, one-off) does, via the real /orders/sell API — run it once against a fresh DB to exercise this check.",
         );
       }
 
       // ── Invoices ─────────────────────────────────────────────────────────
       await page.goto(`/buyer/portal/${sellerSlug}/invoices`);
+      await waitForDataLoaded(page);
       await assertNoOverflow(page, "buyer invoices (list)");
 
       // Real invoice detail. Same bare-<tr onClick> shape at every width —
@@ -166,22 +187,22 @@ for (const vp of VIEWPORTS) {
       // overflow-auto let a user scroll to reach the buttons; the fix makes
       // them wrap instead — see the page's own comments at those two spots).
       //
-      // Same non-fatal-if reasoning as orders above — confirmed directly
-      // against the local DB that the buyer's linked customer has zero
-      // invoices too (invoices are generated from orders on this tenant, so
-      // this follows from that same fixture gap rather than being a second,
-      // separate one).
+      // Same non-fatal-if reasoning as orders above, and same fixture-gap
+      // dependency — see local-assets/scripts/seed-buyer-order-invoice.mjs.
       const invoiceRow = page.locator("tbody tr").first();
       if (await invoiceRow.count()) {
         await invoiceRow.click();
+        // 30s — same first-compile-under-next-dev reasoning as the order
+        // detail wait above.
         await page.waitForURL(new RegExp(`/buyer/portal/${sellerSlug}/invoices/[^/]+$`), {
-          timeout: 15_000,
+          timeout: 30_000,
         });
+        await waitForDataLoaded(page);
         await assertNoOverflow(page, "buyer invoices/[id]");
         expect(await documentLevelOverflowPx(page)).toBeLessThanOrEqual(0);
       } else {
         console.log(
-          "[overflow probe] buyer invoices/[id] — skipped: no seeded invoice for the buyer's linked customer (E2E Buyer Portal Cafe), confirmed via direct DB query",
+          "[overflow probe] buyer invoices/[id] — skipped: no invoice seeded for the buyer's linked customer (E2E Buyer Portal Cafe) on this run.",
         );
       }
     });
