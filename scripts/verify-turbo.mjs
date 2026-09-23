@@ -66,8 +66,18 @@ export function buildArgv(args, turboFlags, passthrough = []) {
  * incident line (2026-09-22) unless VERIFY_CONCURRENCY=1 / JEST_MAX_WORKERS=2 are set inline,
  * which lanes forgot twice in one night. Below 24 GB total memory, default BOTH to the
  * incident's known-safe values when the env doesn't already set them — an explicit env value
- * always wins, independently per variable. A host with >= 24 GB (CI, the PC) gets `""` for
- * both when unset, byte-identical to today's raw `process.env.X || ""` read.
+ * always wins, independently per variable (a SET-BUT-EMPTY value, e.g. `VERIFY_CONCURRENCY=""`,
+ * counts as an explicit opt-out — checked by presence, `"X" in env`, never by truthiness).
+ *
+ * CI is EXCLUDED from the low-memory default entirely (`env.CI` truthy), never by its own
+ * memory size: GitHub's standard `ubuntu-latest` runner is ~16 GB on a public repo and ~7 GB on
+ * a private one (GitHub's own docs) — both are UNDER this threshold, not over it, so CI would
+ * silently get concurrency 1 / --maxWorkers=2 (and the split-invocation code path) without this
+ * exclusion, breaking the "CI is bit-for-bit unchanged" promise the original worker-cap comment
+ * above already makes, and costing Actions minutes against the 20-minute timeout. On CI (no
+ * explicit override), both resolve to `""`, byte-identical to today's raw
+ * `process.env.X || ""` read — never trimmed, so a whitespace-only explicit value on ANY host
+ * (including a real >=24 GB one) is preserved exactly as `process.env.X || ""` always has been.
  */
 export const LOW_MEM_THRESHOLD_BYTES = 24 * 1024 ** 3;
 const LOW_MEM_VERIFY_CONCURRENCY = "1";
@@ -75,26 +85,33 @@ const LOW_MEM_JEST_MAX_WORKERS = "2";
 
 /** Pure — no env/os read inside. `env` is a plain object (e.g. `process.env`); `totalMemBytes`
  *  is the host's total memory in bytes (e.g. `os.totalmem()`). Returns the two resolved values
- *  plus `message` (a single explanatory line) — `null` when nothing was defaulted, so a
- *  high-memory host or an already-fully-explicit low-memory host prints nothing new. */
+ *  plus `message` (a single explanatory line) — `null` when nothing was defaulted, so CI, a
+ *  real high-memory host, or an already-fully-explicit low-memory host prints nothing new. */
 export function chooseVerifyDefaults({ totalMemBytes, env }) {
-  const envConcurrency = (env.VERIFY_CONCURRENCY || "").trim();
-  const envJestWorkers = (env.JEST_MAX_WORKERS || "").trim();
-  const isLowMem = totalMemBytes < LOW_MEM_THRESHOLD_BYTES;
+  const hasEnvConcurrency = "VERIFY_CONCURRENCY" in env;
+  const hasEnvJestWorkers = "JEST_MAX_WORKERS" in env;
+  const envConcurrency = env.VERIFY_CONCURRENCY || "";
+  const envJestWorkers = env.JEST_MAX_WORKERS || "";
+  const isLowMem = !env.CI && totalMemBytes < LOW_MEM_THRESHOLD_BYTES;
 
-  const defaultedConcurrency = isLowMem && !envConcurrency;
-  const defaultedJestWorkers = isLowMem && !envJestWorkers;
+  const defaultedConcurrency = isLowMem && !hasEnvConcurrency;
+  const defaultedJestWorkers = isLowMem && !hasEnvJestWorkers;
 
-  const verifyConcurrency =
-    envConcurrency || (defaultedConcurrency ? LOW_MEM_VERIFY_CONCURRENCY : "");
-  const jestMaxWorkers = envJestWorkers || (defaultedJestWorkers ? LOW_MEM_JEST_MAX_WORKERS : "");
+  const verifyConcurrency = hasEnvConcurrency
+    ? envConcurrency
+    : defaultedConcurrency
+      ? LOW_MEM_VERIFY_CONCURRENCY
+      : "";
+  const jestMaxWorkers = hasEnvJestWorkers
+    ? envJestWorkers
+    : defaultedJestWorkers
+      ? LOW_MEM_JEST_MAX_WORKERS
+      : "";
 
   let message = null;
   if (defaultedConcurrency || defaultedJestWorkers) {
     const gb = Math.round(totalMemBytes / 1024 ** 3);
-    message =
-      `verify: low-memory host (${gb} GB) → concurrency ${verifyConcurrency || "2"}, ` +
-      `jest workers ${jestMaxWorkers || "unset"}`;
+    message = `verify: low-memory host (${gb} GB) → concurrency ${verifyConcurrency}, jest workers ${jestMaxWorkers}`;
   }
 
   return { verifyConcurrency, jestMaxWorkers, message };

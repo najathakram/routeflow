@@ -474,6 +474,17 @@ check(
   { verifyConcurrency: "3", jestMaxWorkers: "4", message: null },
 );
 check(
+  "WC12b a SET-BUT-EMPTY VERIFY_CONCURRENCY is an explicit opt-out (checked by presence, " +
+    '`"X" in env`, never truthiness) — stays empty, never silently defaulted; the unset ' +
+    "JEST_MAX_WORKERS still defaults",
+  chooseVerifyDefaults({ totalMemBytes: MINI_MEM, env: { VERIFY_CONCURRENCY: "" } }),
+  {
+    verifyConcurrency: "",
+    jestMaxWorkers: "2",
+    message: "verify: low-memory host (16 GB) → concurrency , jest workers 2",
+  },
+);
+check(
   "WC13 at/above 24 GB with no env set: both stay unset, byte-identical to today, no message",
   chooseVerifyDefaults({ totalMemBytes: PC_MEM, env: {} }),
   { verifyConcurrency: "", jestMaxWorkers: "", message: null },
@@ -482,6 +493,22 @@ check(
   "WC13b exactly the 24 GB threshold is treated as high-memory (< not <=)",
   chooseVerifyDefaults({ totalMemBytes: LOW_MEM_THRESHOLD_BYTES, env: {} }),
   { verifyConcurrency: "", jestMaxWorkers: "", message: null },
+);
+check(
+  "WC13c CI is EXCLUDED from the low-memory default regardless of its own host memory — " +
+    "GitHub's ubuntu-latest is ~16 GB public / ~7 GB private, both under the threshold, so " +
+    "without this CI would silently get concurrency 1 / --maxWorkers=2 and break the " +
+    "'bit-for-bit unchanged' promise",
+  chooseVerifyDefaults({ totalMemBytes: MINI_MEM, env: { CI: "true" } }),
+  { verifyConcurrency: "", jestMaxWorkers: "", message: null },
+);
+check(
+  "WC13d CI does not block an explicit override — a CI job that DOES set the vars is still honoured",
+  chooseVerifyDefaults({
+    totalMemBytes: MINI_MEM,
+    env: { CI: "true", VERIFY_CONCURRENCY: "2", JEST_MAX_WORKERS: "3" },
+  }),
+  { verifyConcurrency: "2", jestMaxWorkers: "3", message: null },
 );
 check(
   "WC14 at/above 24 GB with env explicitly set: explicit values pass through untouched, no message",
