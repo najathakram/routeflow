@@ -58,8 +58,15 @@ export async function findViewportOverflow(page: Page): Promise<Offender[]> {
 
       let node: Element | null = el.parentElement;
       while (node && node !== document.body) {
+        // MAIN is never allowlisted here, even if it carries overflow-auto /
+        // overflow-x-auto: MAIN is exactly the shell-level element these
+        // specs hold accountable (see (dashboard)/layout.tsx,
+        // buyer/portal/layout.tsx, (platform-admin)/layout.tsx). If a shell
+        // regressed to the old bare `overflow-auto` this fix removed, a MAIN
+        // exemption would silently allowlist it — the same bug this probe
+        // exists to catch, from the one element the probe must never trust.
         const cls = (node.className || "").toString();
-        if (/\boverflow(-x)?-(auto|scroll)\b/.test(cls)) {
+        if (node.tagName !== "MAIN" && /\boverflow(-x)?-(auto|scroll)\b/.test(cls)) {
           const wr = node.getBoundingClientRect();
           if (wr.right <= vw + 1 && wr.left >= -1) return; // contained, intentional scroll
         }
@@ -91,8 +98,20 @@ export async function documentLevelOverflowPx(page: Page): Promise<number> {
   return scrollWidth - innerWidth;
 }
 
-export async function assertNoOverflow(page: Page, screenLabel: string) {
-  const offenders = await findViewportOverflow(page);
+/**
+ * `ignore`, when given, filters out offenders that match a KNOWN, separately
+ * filed defect, so a test can still assert everything ELSE on the page is
+ * clean rather than skip the whole page. Keep this narrow and specific to the
+ * one filed bug it exists for — a broad ignore predicate defeats the probe
+ * the same way an unqualified page skip would.
+ */
+export async function assertNoOverflow(
+  page: Page,
+  screenLabel: string,
+  ignore?: (o: Offender) => boolean,
+) {
+  let offenders = await findViewportOverflow(page);
+  if (ignore) offenders = offenders.filter((o) => !ignore(o));
   expect(
     offenders,
     `viewport overflow on ${screenLabel} at ${page.viewportSize()?.width}px — worst offenders: ${JSON.stringify(offenders)}`,
