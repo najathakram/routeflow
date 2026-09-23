@@ -43,6 +43,7 @@ import { useDeliveryPlanStore } from "../../../../../store/delivery-plan-store";
 import { useRunSettlementStore } from "../../../../../store/runSettlementStore";
 import type { CollectedMethod } from "../../../../../lib/run-settlement";
 import {
+  activeOrderSubtotal,
   orderAmountDue,
   reconciledAmountDue,
   shortPickCategoryTax,
@@ -90,8 +91,10 @@ async function readDriverLocation(): Promise<{ lat: number; lng: number } | null
 const EMPTY_DELIVERY_PLAN: Record<string, number> = {};
 
 // REG-B305: the driver "amount due" is the server's tax-inclusive total.
-function fullOrderTotal(order: RouteRunOrder): number {
-  return orderAmountDue(order);
+// `isTaxExempt` mirrors reconciledAmountDue's own input just below — an
+// exempt customer's server-side reconcile zeroes BOTH tax terms.
+function fullOrderTotal(order: RouteRunOrder, isTaxExempt: boolean): number {
+  return orderAmountDue(order, isTaxExempt);
 }
 
 export default function PaymentScreen() {
@@ -155,7 +158,21 @@ export default function PaymentScreen() {
           // while contributing zero subtotal (see run-money.ts#shortPickCategoryTax).
           reconciledAmountDue({
             drafts: o.invoices ?? [],
-            order: { subtotal: o.subtotal, tax: o.tax },
+            order: {
+              subtotal: o.subtotal,
+              tax: o.tax,
+              // B305 round 5: the no-draft fallback basis (this order's own
+              // discount/fee) when o.invoices is empty — the DEFAULT state
+              // pre-completion.
+              discountAmount: o.discountAmount,
+              shippingFee: o.shippingFee,
+            },
+            // SA-092b: the FULL active-line subtotal (ALL of o.lineItems,
+            // never the delivered-basis shortPickLines below) — gives the
+            // discount its own SEEDING share, distinct from the delivered
+            // share applied to regular tax. See run-money.ts's
+            // ReconciledAmountDueInput.activeSubtotal docstring.
+            activeSubtotal: activeOrderSubtotal({ lineItems: o.lineItems ?? [] }),
             deliveredSubtotal: reconciledTotal(shortPickLines, deliveredQtyById),
             deliveredCategoryTax: shortPickCategoryTax(
               o.lineItems ?? [],
@@ -167,7 +184,7 @@ export default function PaymentScreen() {
             // projects the column; RouteRunStop.customer.isTaxExempt above).
             isTaxExempt: stop?.customer?.isTaxExempt === true,
           })
-        : fullOrderTotal(o)),
+        : fullOrderTotal(o, stop?.customer?.isTaxExempt === true)),
     0,
   );
   // REG-B305 round 2 (RULING 3): the short-pick branch bills an ESTIMATE (the
