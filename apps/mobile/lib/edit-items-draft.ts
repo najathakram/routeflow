@@ -19,7 +19,7 @@
  * screen's BUY_N_GET_M netting through so the drawer, the line card and the
  * footer cannot disagree.
  */
-import { roundMoney, effectiveQty } from "@routeflow/pricing";
+import { roundMoney, effectiveQty, type LadderProduct } from "@routeflow/pricing";
 import {
   buildOrderItemDiff,
   type DiffCatalogLine,
@@ -29,7 +29,7 @@ import {
 import { editedLineFreeUnits } from "./invoice-totals";
 import { lineUnitsPerBox } from "./at-door-line-units";
 import { trayRowsFrom, type TrayRow } from "./scan-tray";
-import { unitPriceBase } from "./unit-options";
+import { unitPriceBase, type UnitOption } from "./unit-options";
 import type { UpdateOrderItemInput } from "./api/orders";
 
 /** Shared with the route file's own "Add unlisted item" flow. */
@@ -75,6 +75,16 @@ export type DraftItem = {
    * no override typed). Unset while `unitLabel` is unset.
    */
   unitBasePrice?: number;
+  /**
+   * units_v1 (SA-085f HIGH #2): the REAL product's ladder inputs — its own pack
+   * unit/unitsPerBox and all 5 tier-price columns — snapshotted once from the embedded
+   * `product` record (hydration) or the picker's product (a fresh add). Never reconstructed
+   * from this row's own mutable fields: a stored unit line's `unitsPerBox` is the CHOSEN
+   * UNIT's own factor (the server's snapshot convention, unit-line-build.ts), not the pack's,
+   * and this row's `catalogPrice`/`unitPrice` are the line's price, not the product's tier
+   * ladder. `UnitPickerRow` prices off THIS, exactly like `resolveUnitPrice` does server-side.
+   */
+  packLadder?: LadderProduct;
   /** Set when this row substitutes a different product onto its original line. */
   substituteProductId?: string;
   /**
@@ -167,22 +177,39 @@ export function hydrateFromOrder(order: { lineItems?: readonly any[] | null } | 
     const product = (li as any).product ?? {};
     const catalogPrice = toNumber(product.pricePerUnit ?? li.unitPrice);
     const unitsPerBox = lineUnitsPerBox({ unitsPerBox: li.unitsPerBox, product });
+    const unitLabel = li.unitLabel ?? undefined;
+    // SA-085f MEDIUM #4: a stored unit line persists qty/boxes/pieces on the server's PACK-PIECE
+    // basis (buildUnitLine, unit-line-build.ts — a 2-Case line is qty:480, boxes:2), so its
+    // ONE qty basis is the COUNT, matching every unit line this session picks fresh via
+    // setUnitLabel (qty:<count>, boxes/pieces unset). Normalize once, here, so the count is
+    // `item.qty` everywhere downstream — the steppers, the margin hint, the on-screen "Qty
+    // (Case) N" — and `buildOrderItemDiff`'s existing `line.boxes ?? line.qty` wire fallback
+    // still resolves correctly (boxes is now always unset for a unit line).
+    const qty = unitLabel ? toNumber(li.boxes != null ? li.boxes : li.qty) : toNumber(li.qty);
     next[li.productId] = {
       productId: li.productId,
-      qty: toNumber(li.qty),
-      boxes: li.boxes ?? undefined,
-      pieces: li.pieces ?? undefined,
+      qty,
+      boxes: unitLabel ? undefined : (li.boxes ?? undefined),
+      pieces: unitLabel ? undefined : (li.pieces ?? undefined),
       unitsPerBox,
-      unitLabel: li.unitLabel ?? undefined,
+      unitLabel,
       unitPrice: toNumber(li.unitPrice),
       catalogPrice,
+      // The product's OWN pack factor — never the line's `unitsPerBox` above, which on a
+      // stored unit line is the chosen unit's factor, not the pack's (see the field doc).
+      packLadder: buildPackLadder({
+        ...product,
+        pricePerUnit: product.pricePerUnit ?? li.unitPrice ?? 0,
+      }),
       name: product.name ?? "Item",
       unit: product.unit,
       overrideReason: li.overrideReason ?? undefined,
       notes: (li as any).notes ?? undefined,
       lineId: li.id ?? undefined,
-      // Preserve the stored denomination so a qty-only edit doesn't invent a split.
-      boxSplit: li.boxes != null || li.pieces != null,
+      // Preserve the stored denomination so a qty-only edit doesn't invent a split. A unit
+      // line is never box-split (its boxes/pieces are normalized away above, matching
+      // setUnitLabel's own convention for a freshly-picked one).
+      boxSplit: !unitLabel && (li.boxes != null || li.pieces != null),
       // NEW (P10-POS-1): read via the existing `any`-cast `product` ref above —
       // the server already returns these on the order's embedded product, only
       // AdminOrder's TS type doesn't declare them yet (out of scope here).
@@ -197,6 +224,86 @@ export function hydrateFromOrder(order: { lineItems?: readonly any[] | null } | 
     };
   }
   return { draft: next, unlisted: nextUnlisted };
+}
+
+/**
+ * Apply a `UnitPickerRow` choice to a draft line (SA-085f, size-ratchet extraction out of
+ * edit-items.tsx's `setUnitLabel` — the route file's own tsc-guarded line cap). `qty` resets to
+ * the count (1), boxes/pieces clear (a unit line is a plain qty x unitPrice line). `unitPrice`
+ * AND `unitBasePrice` both take the option's own resolved price — same value in both, so
+ * `isOverridden` reads false immediately after picking (a lookup, not an operator override)
+ * until the operator's own price edit diverges the two.
+ *
+ * `unitsPerBox` means "the current selling unit's own factor" (SA-085f HIGH #3): the pack's own
+ * factor while unset (restored from `packLadder`, the untouched real snapshot — never `cur`'s own
+ * mutable field, which IS that factor while a unit is active), else the picked unit's factor —
+ * so the margin/floor hint always multiplies cost by the right pieces-per-unit.
+ *
+ * `packTierPrice` is the caller's already-resolved live tier price for the pack (SA-085f LOW:
+ * `cur.catalogPrice` is the product's LIST price on a hydrated/stored line, never tier-adjusted —
+ * restoring it on a pack-switch would show the wrong price to a tier≠1 customer).
+ */
+/**
+ * The REAL product's ladder inputs for a draft row's `UnitPickerRow` (SA-085f HIGH #2,
+ * size-ratchet extraction) — the snapshotted `packLadder` when one exists, else a best-effort
+ * fallback (a legacy on-device snapshot from before this field existed) that at least carries
+ * the pack's own price, never the corrupted `unitsPerBox`/`catalogPrice` a mini-product built
+ * from the row's OWN mutable fields used to.
+ */
+export function ladderProductFor(
+  item: Pick<DraftItem, "unit" | "unitsPerBox" | "catalogPrice" | "packLadder">,
+): LadderProduct {
+  return (
+    item.packLadder ?? {
+      unit: item.unit ?? null,
+      unitsPerBox: item.unitsPerBox ?? null,
+      pricePerUnit: item.catalogPrice,
+      priceTier2: null,
+      priceTier3: null,
+      priceTier4: null,
+      priceTier5: null,
+    }
+  );
+}
+
+/** A fresh add's ladder snapshot (SA-085f HIGH #2, size-ratchet extraction) — see `packLadder`. */
+export function buildPackLadder(p: {
+  unit?: string;
+  unitsPerBox?: number | null;
+  pricePerUnit: number | string;
+  priceTier2?: number | string | null;
+  priceTier3?: number | string | null;
+  priceTier4?: number | string | null;
+  priceTier5?: number | string | null;
+}): LadderProduct {
+  return {
+    unit: p.unit ?? null,
+    unitsPerBox: p.unitsPerBox ?? null,
+    pricePerUnit: p.pricePerUnit,
+    priceTier2: p.priceTier2 ?? null,
+    priceTier3: p.priceTier3 ?? null,
+    priceTier4: p.priceTier4 ?? null,
+    priceTier5: p.priceTier5 ?? null,
+  };
+}
+
+export function applyUnitPick(
+  cur: DraftItem,
+  option: UnitOption,
+  packTierPrice: number,
+): DraftItem {
+  const isPack = option.value === "";
+  return {
+    ...cur,
+    unitLabel: isPack ? undefined : option.value,
+    unitBasePrice: isPack ? undefined : option.price,
+    unitsPerBox: isPack ? (cur.packLadder?.unitsPerBox ?? cur.unitsPerBox) : option.factorToBase,
+    qty: 1,
+    boxes: undefined,
+    pieces: undefined,
+    boxSplit: false,
+    unitPrice: isPack ? packTierPrice : option.price,
+  };
 }
 
 /**
@@ -243,6 +350,9 @@ export interface BaselineLine {
   notes?: string | null;
   status?: string | null;
   overrideReason?: string | null;
+  /** units_v1 (SA-085f MEDIUM #4): present only on a unit-sold line — see `orderOriginals`. */
+  unitLabel?: string | null;
+  boxes?: number | null;
 }
 
 export interface BaselineOrderLike {
@@ -255,6 +365,12 @@ export interface BaselineOrderLike {
  * The order's non-cancelled lines as `buildOrderItemDiff` compares against.
  * Exported so the dirty check and the save share ONE derivation — a second
  * hand-rolled comparison is how "Save changes" and "are there changes?" drift.
+ *
+ * SA-085f MEDIUM #4: `qty` here must be on the SAME basis `hydrateFromOrder` normalizes the
+ * draft to — the unit COUNT for a unit-sold line (`li.boxes ?? li.qty`, matching the server's
+ * pack-piece storage convention), never the raw `li.qty` (total base pieces, e.g. 480 for 2
+ * Cases). Comparing an un-normalized 480 against the draft's normalized 2 would read every
+ * UNTOUCHED unit line as "changed" and send a spurious UPDATE on every save.
  */
 export function orderOriginals(order: BaselineOrderLike | null | undefined): OriginalLine[] {
   return (order?.lineItems ?? [])
@@ -262,7 +378,7 @@ export function orderOriginals(order: BaselineOrderLike | null | undefined): Ori
     .map((li) => ({
       id: li.id,
       productId: li.productId ?? null,
-      qty: toNumber(li.qty),
+      qty: li.unitLabel ? toNumber(li.boxes != null ? li.boxes : li.qty) : toNumber(li.qty),
       unitPrice: toNumber(li.unitPrice),
       name: li.name ?? null,
       notes: li.notes ?? null,

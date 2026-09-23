@@ -165,6 +165,41 @@ export function setLinePieces<T extends SaleLineQty>(
   return { ...prev, qty, boxes, pieces: pcs };
 }
 
+/** A unit-sold line (units_v1): `qty` is a COUNT of `unitLabel`, never pieces-in-a-box. */
+export function isUnitLine(line: { unitLabel?: string | null }): boolean {
+  return line.unitLabel != null && line.unitLabel !== "";
+}
+
+/**
+ * The ONE qty step for a line, unit-aware (SA-085f BLOCKER). Every ± writer on both sale
+ * builders (NewOrderScreen's addOne/removeOne + cart row, edit-items.tsx's incQty/decQty) must
+ * route through this instead of calling incrementLine/decrementLine directly.
+ *
+ * Root cause: once `unitLabel` is set, `qty` gained a second meaning — the unit COUNT (a Case
+ * line's qty:1 means "one Case," never "one piece of a 24-pack"). incrementLine/decrementLine's
+ * `isBoxed`/`unitsPerBox` params exist to fold a PACK's pieces into boxes; applied to a unit
+ * line they instead fold the unit count into "boxes" of the PACK's size, so tapping + on a
+ * Case line ({qty:1}, 24-pack) produced {qty:25, boxes:1, pieces:1} — a line that reads
+ * $229.17 on screen but bills qty×unitPrice = 25×220 = $5,500 server-side. A unit line's step
+ * is always a plain ±1 on the count, boxes/pieces left untouched (unset, as setUnitLabel leaves
+ * them) and `unitsPerBox`/`isBoxed` never consulted.
+ */
+export function stepLineQty<T extends SaleLineQty & { unitLabel?: string | null }>(
+  prev: T,
+  delta: 1 | -1,
+  isBoxed: boolean,
+  unitsPerBox: number,
+): (T & { qty: number; boxes?: number | null; pieces?: number | null }) | null {
+  if (isUnitLine(prev)) {
+    const qty = Math.max(0, Math.trunc(prev.qty ?? 0) + delta);
+    if (qty === 0) return null;
+    return { ...prev, qty };
+  }
+  return delta === 1
+    ? incrementLine(prev, isBoxed, unitsPerBox)
+    : decrementLine(prev, isBoxed, unitsPerBox);
+}
+
 /**
  * Sell-by-unit entry: the operator types a TOTAL unit count for a case-packed line, and we
  * normalize it back into cases + loose units (7 units of a 6-pack -> 1 case + 1 loose).

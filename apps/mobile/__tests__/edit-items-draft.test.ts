@@ -528,15 +528,15 @@ describe("edit-items-draft: the picker's drawer (REG-EDIT-DRAFT-C)", () => {
  * re-denominated a repacked legacy split line.
  */
 describe("edit-items-draft: hydrateFromOrder reads a line's OWN pack snapshot (B707)", () => {
-  it("B707a: a unit line (boxes 3, snapshot 288, 'Case') hydrates unitsPerBox/unitLabel from ITS OWN line, not the live product's now-12 pack — untouched, no UPDATE", () => {
+  it("B707a / SA-085f #4: a unit line (boxes 3, snapshot 288, 'Case') hydrates unitsPerBox/unitLabel from ITS OWN line, and normalizes qty to the COUNT (boxes/pieces dropped) — untouched, no UPDATE", () => {
     const order: BaselineOrderLike = {
       id: "o1",
       lineItems: [
         {
           id: "L1",
           productId: "p1",
-          qty: 864,
-          boxes: 3,
+          qty: 864, // server's pack-piece storage: 3 cases x 288 = 864
+          boxes: 3, // the COUNT — unit-line-build.ts stores it here for a unit line
           pieces: 0,
           unitsPerBox: 288,
           unitLabel: "Case",
@@ -552,13 +552,19 @@ describe("edit-items-draft: hydrateFromOrder reads a line's OWN pack snapshot (B
     const { draft } = hydrateFromOrder(order);
     expect(draft.p1.unitsPerBox).toBe(288);
     expect(draft.p1.unitLabel).toBe("Case");
-    expect(draft.p1.boxes).toBe(3);
+    // SA-085f MEDIUM #4: qty is normalized to the COUNT (3) — never the raw piece-expanded 864 —
+    // and boxes/pieces are dropped, matching what setUnitLabel produces for a freshly-picked
+    // line. The "Qty (Case) N" stepper reads `item.qty` directly; this is what makes it 3, not 480.
+    expect(draft.p1.qty).toBe(3);
+    expect(draft.p1.boxes).toBeUndefined();
+    expect(draft.p1.pieces).toBeUndefined();
+    expect(draft.p1.boxSplit).toBe(false);
 
     const originals = orderOriginals(order);
     expect(stagedDiffItems({ draft, unlisted: [], pendingDeletes: [] }, originals)).toEqual([]);
   });
 
-  it("B707b: editing the same unit line's box count 3 -> 4 sends {id, qty: <count>, unitLabel}, never the piece-expanded 1152", () => {
+  it("B707b: incrementing the same unit line's count 3 -> 4 sends {id, qty:4, unitLabel}, never the piece-expanded 1152", () => {
     const order: BaselineOrderLike = {
       id: "o1",
       lineItems: [
@@ -579,7 +585,8 @@ describe("edit-items-draft: hydrateFromOrder reads a line's OWN pack snapshot (B
       ],
     };
     const { draft } = hydrateFromOrder(order);
-    const edited = { ...draft, p1: { ...draft.p1, boxes: 4 } };
+    // The stepper's own step (stepLineQty's unit branch): +1 on the normalized count.
+    const edited = { ...draft, p1: { ...draft.p1, qty: draft.p1.qty + 1 } };
     const originals = orderOriginals(order);
 
     // productId rides along with unitLabel (mobile unit picker, order-item-diff.ts) so the

@@ -22,6 +22,13 @@ export interface OrderItem {
     name: string;
     unit: string;
     unitsPerBox?: number | null; // NEW — boxed-line steppers (at-door adjust, P10-POS-3)
+    pricePerUnit?: number | string;
+    /** units_v1 (SA-085f): the pack's tier-price columns — the unit picker's ladder ties to
+     *  the SAME product record `resolveUnitPrice` prices with server-side. */
+    priceTier2?: number | string | null;
+    priceTier3?: number | string | null;
+    priceTier4?: number | string | null;
+    priceTier5?: number | string | null;
     averageCost?: number | string | null; // NEW
     category?: string | null; // NEW
     /** Row anatomy (order-ui T1/T8): SKU line + read-time variant-name composition — the order

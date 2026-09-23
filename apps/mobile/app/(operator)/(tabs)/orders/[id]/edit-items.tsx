@@ -43,7 +43,13 @@ import {
   roundMoney,
 } from "@routeflow/pricing";
 import { freeUnitsLabel } from "../../../../../lib/buyer-cart-logic";
-import { incrementLine, incrementLinePiece, setLineUnits } from "../../../../../lib/sale-line";
+import {
+  incrementLine,
+  incrementLinePiece,
+  isUnitLine,
+  setLineUnits,
+  stepLineQty,
+} from "../../../../../lib/sale-line";
 import { buildSubstituteLine } from "../../../../../lib/substitute-line";
 import { findExactScanMatch, looksLikeScanCode, scanUnitKind } from "../../../../../lib/wedge-scan";
 import type { ScanOutcome } from "../../../../../lib/scan-loop";
@@ -51,11 +57,14 @@ import { useMarginConfig, floorForCategory } from "../../../../../lib/api/margin
 import {
   draftFreeUnits,
   draftTrayRows,
+  applyUnitPick,
+  buildPackLadder,
   deserializeEditItemsSnapshot,
   editItemsSnapshotKey,
   hasUnsavedWork,
   hydrateFromOrder,
   isSnapshotStale,
+  ladderProductFor,
   makeEditItemsSnapshot,
   newLocalId,
   orderOriginals,
@@ -620,32 +629,16 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
   const setSellBy = (id: string, sellBy: "case" | "unit") =>
     setDraft((d) => (d[id] ? { ...d, [id]: { ...d[id], sellBy } } : d));
 
-  /**
-   * units_v1: apply a `UnitPickerRow` choice. `qty` resets to 1 (never expanded pieces), boxes/
-   * pieces clear (a unit line is a plain qty*unitPrice line). `unitPrice` AND `unitBasePrice` both
-   * take the option's own resolved price — same value in both, so `isOverridden` reads false
-   * immediately after picking (a lookup, not an operator override) until the operator's own price
-   * edit diverges the two. "" (the pack option) clears `unitLabel`/`unitBasePrice` and restores
-   * the stored catalog price, matching a plain pack line.
-   */
+  // units_v1: apply a `UnitPickerRow` choice — see lib/edit-items-draft.ts#applyUnitPick
+  // (pack-restore tier price, the current-selling-unit-factor convention; size-ratchet extraction).
   const setUnitLabel = (id: string, option: UnitOption) =>
     setDraft((d) => {
       const cur = d[id];
       if (!cur) return d;
-      const isPack = option.value === "";
-      return {
-        ...d,
-        [id]: {
-          ...cur,
-          unitLabel: isPack ? undefined : option.value,
-          unitBasePrice: isPack ? undefined : option.price,
-          qty: 1,
-          boxes: undefined,
-          pieces: undefined,
-          boxSplit: false,
-          unitPrice: isPack ? cur.catalogPrice : option.price,
-        },
-      };
+      const packTierPrice = cur.packLadder
+        ? tierPriceFor({ id: cur.productId, ...cur.packLadder })
+        : cur.catalogPrice;
+      return { ...d, [id]: applyUnitPick(cur, option, packTierPrice) };
     });
 
   // "Set to floor" one-tap fix (P10-POS-1) — same price-write path as the
@@ -660,13 +653,16 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
   const setLineNote = (id: string, notes: string) =>
     setDraft((d) => (d[id] ? { ...d, [id]: { ...d[id], notes } } : d));
 
-  const incQty = (id: string) => {
-    const cur = draft[id];
-    if (!cur) return;
-    const upb = Number(cur.unitsPerBox ?? 0);
-    if (upb > 1) setBoxes(id, (cur.boxes ?? 0) + 1);
-    else setQty(id, (cur.qty ?? 0) + 1);
-  };
+  // units_v1 (SA-085f BLOCKER): a unit line's qty is a COUNT — stepLineQty steps ±1 without
+  // consulting unitsPerBox; every other line falls through to the existing box-fold math.
+  const incQty = (id: string) =>
+    setDraft((d) => {
+      const cur = d[id];
+      if (!cur) return d;
+      const upb = Number(cur.unitsPerBox ?? 0);
+      const line = stepLineQty(cur, 1, upb > 1, upb)!;
+      return { ...d, [id]: { ...line, boxSplit: !isUnitLine(cur) && upb > 1 } };
+    });
 
   /**
    * Add a picked/scanned product to the draft. `kind === "piece"` is a
@@ -698,7 +694,9 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
       const upb = Number(existing?.unitsPerBox ?? unitsPerBox ?? 0);
       const boxed = upb > 1;
       if (existing) {
-        if (boxed) {
+        // units_v1 (SA-085f): a re-scan of an already unit-sold line merges into its
+        // COUNT — never the pack's box math, regardless of scan kind (see incQty/decQty).
+        if (boxed && !isUnitLine(existing)) {
           const line =
             kind === "piece"
               ? incrementLinePiece(existing, true, upb)
@@ -722,6 +720,7 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
         catalogPrice,
         name: p.name,
         unit: p.unit,
+        packLadder: buildPackLadder({ ...p, unitsPerBox }),
       };
       if (boxed) {
         // 1 box for a case scan/tap; 1 LOOSE piece for a piece-code scan.
@@ -733,13 +732,17 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
     });
   };
 
-  const decQty = (id: string) => {
-    const cur = draft[id];
-    if (!cur) return;
-    const upb = Number(cur.unitsPerBox ?? 0);
-    if (upb > 1) setBoxes(id, Math.max(0, (cur.boxes ?? 0) - 1));
-    else setQty(id, Math.max(0, (cur.qty ?? 0) - 1));
-  };
+  const decQty = (id: string) =>
+    setDraft((d) => {
+      const cur = d[id];
+      if (!cur) return d;
+      const upb = Number(cur.unitsPerBox ?? 0);
+      const line = stepLineQty(cur, -1, upb > 1, upb);
+      const next = { ...d };
+      if (!line) delete next[id];
+      else next[id] = { ...line, boxSplit: !isUnitLine(cur) && upb > 1 };
+      return next;
+    });
 
   const removeLine = (id: string) =>
     setDraft((d) => {
@@ -765,8 +768,10 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
   // so these four have to be referentially stable — a "latest deps" ref keeps
   // them stable while still dispatching against the current draft.
   const trayDepsRef = useRef({
+    draft,
     unlisted,
     setUnits,
+    setQty,
     incQty,
     decQty,
     removeLine,
@@ -774,8 +779,10 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
     removeUnlisted,
   });
   trayDepsRef.current = {
+    draft,
     unlisted,
     setUnits,
+    setQty,
     incQty,
     decQty,
     removeLine,
@@ -784,10 +791,12 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
   };
   const unlistedRow = (id: string) => trayDepsRef.current.unlisted.find((u) => u.id === id);
   // ScanTray hands a TOTAL UNIT count (ScanTray.tsx), which is exactly what
-  // `setUnits` normalises back into cases + loose.
+  // `setUnits` normalises back into cases + loose — except a unit-sold line (units_v1,
+  // SA-085f), whose total IS the count already, so it goes through `setQty` instead.
   const onTrayChangeQty = useCallback((id: string, units: number) => {
     const d = trayDepsRef.current;
     if (unlistedRow(id)) d.setUnlistedQty(id, units);
+    else if (isUnitLine(d.draft[id] ?? {})) d.setQty(id, units);
     else d.setUnits(id, units);
   }, []);
   const onTrayIncrement = useCallback((id: string) => {
@@ -1660,20 +1669,17 @@ function DraftItemCard({
       {/* Editor — a Cases/Units segmented control switches entry mode. Cases
           mode dials Boxes and Loose units independently; Units mode is a
           single uncapped total-unit stepper routed through setLineUnits. */}
-      <View style={{ marginBottom: isBoxed ? 2 : 8 }}>
-        <UnitPickerRow
-          line={{
-            productId: item.productId,
-            unit: item.unit ?? "",
-            unitsPerBox: item.unitsPerBox,
-            listPrice: item.catalogPrice,
-            unitPrice: item.unitPrice,
-            unitLabel: item.unitLabel,
-          }}
-          tier={tier}
-          onChange={onSetUnit}
-        />
-      </View>
+      <UnitPickerRow
+        line={{
+          productId: item.productId,
+          unitPrice: item.unitPrice,
+          unitLabel: item.unitLabel,
+        }}
+        product={ladderProductFor(item)}
+        tier={tier}
+        onChange={onSetUnit}
+        style={{ marginBottom: isBoxed ? 2 : 8 }}
+      />
 
       {isBoxed ? (
         <View style={{ gap: 8 }}>

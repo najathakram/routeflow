@@ -11,7 +11,7 @@ import {
   priceForMarginFloor,
 } from "@routeflow/pricing";
 import { displayProductName as displayName } from "../lib/product-display";
-import { unitPriceBase, type UnitOption } from "../lib/unit-options";
+import { marginFactorFor, unitPriceBase, type UnitOption } from "../lib/unit-options";
 import { MONEY_INPUT_MAX_WIDTH } from "../lib/row-layout";
 import { effectiveUnitPrice, toNumber, type LineState, type Product } from "../lib/cart-line-state";
 import { MoneyTextInput } from "./MoneyTextInput";
@@ -110,17 +110,18 @@ export function CartRow({
         : null;
   // 0 is a real cost; only null hides the eye/hint entirely.
   const hasCost = pieceCost != null && Number.isFinite(pieceCost);
-  const sellingUnitCost = hasCost ? costPerSellingUnit(pieceCost!, product.unitsPerBox) : null;
-  const marginFrac = hasCost
-    ? computeMarginFraction(effUnit, pieceCost, product.unitsPerBox)
-    : null;
+  // units_v1 (SA-085f HIGH #3): a unit-sold line's cost basis is the CHOSEN unit's own
+  // factor, never the pack's unitsPerBox — see lib/unit-options.ts#marginFactorFor.
+  const marginFactor = marginFactorFor(line, product.unitsPerBox);
+  const sellingUnitCost = hasCost ? costPerSellingUnit(pieceCost!, marginFactor) : null;
+  const marginFrac = hasCost ? computeMarginFraction(effUnit, pieceCost, marginFactor) : null;
   const marginClass = classifyMargin(marginFrac, marginFloor);
   // Negotiation floor (pos-cost-roles-spec §1): the one-tap fix price + the
   // below-floor/below-cost gate. `historyOpen` opens the cost-tap sheet.
   const [historyOpen, setHistoryOpen] = useState(false);
   const floorPrice =
     hasCost && marginClass != null
-      ? priceForMarginFloor(pieceCost!, marginFloor, product.unitsPerBox)
+      ? priceForMarginFloor(pieceCost!, marginFloor, marginFactor)
       : null;
   const below = marginClass === "belowCost" || marginClass === "belowFloor";
 
@@ -225,20 +226,17 @@ export function CartRow({
         </View>
       ) : null}
 
-      <View style={{ marginBottom: isBoxed ? 2 : 8 }}>
-        <UnitPickerRow
-          line={{
-            productId: product.id,
-            unit: product.unit ?? "",
-            unitsPerBox: product.unitsPerBox,
-            listPrice: catalogPrice,
-            unitPrice: effUnit,
-            unitLabel: line.unitLabel,
-          }}
-          tier={tier}
-          onChange={onChangeUnit}
-        />
-      </View>
+      <UnitPickerRow
+        line={{
+          productId: product.id,
+          unitPrice: effUnit,
+          unitLabel: line.unitLabel,
+        }}
+        product={product}
+        tier={tier}
+        onChange={onChangeUnit}
+        style={{ marginBottom: isBoxed ? 2 : 8 }}
+      />
 
       {isBoxed ? (
         <>

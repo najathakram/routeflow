@@ -1,6 +1,8 @@
 import type { ProductUnitLevel } from "@routeflow/types";
+import { resolveUnitPrice } from "@routeflow/pricing";
 import {
   buildUnitOptions,
+  marginFactorFor,
   unitLineSubtotal,
   unitOptionText,
   unitPriceBase,
@@ -84,6 +86,61 @@ describe("unitLineSubtotal", () => {
     expect(unitLineSubtotal(by("Case"), 3, 400)).toBe(1200);
     expect(unitLineSubtotal(by("Case"), 0)).toBe(0);
     expect(unitLineSubtotal(by("Case"), Number.NaN)).toBe(0);
+  });
+});
+
+describe("buildUnitOptions at a non-1 tier ties to the server's own pricer (SA-085f HIGH #2)", () => {
+  it("prices a level off the PRODUCT's OWN tier-2 column, agreeing with resolveUnitPrice called independently", () => {
+    const opts = buildUnitOptions(product, [CASE, PALLET], 2);
+    const at = (v: string) => opts.find((o) => o.value === v)!;
+    expect(at("Case").price).toBe(240); // 480 (tier1, explicit) x 21/42 (pack's tier2/tier1 ratio)
+    expect(at("Case").price).toBe(resolveUnitPrice(product, [CASE, PALLET], "Case", 2));
+    expect(at("Pallet").price).toBe(resolveUnitPrice(product, [CASE, PALLET], "Pallet", 2));
+  });
+
+  it("RED PROOF: a mini-product missing the pack's tier columns (UnitPickerRow's old { unit, unitsPerBox, pricePerUnit: listPrice }) prices every tier the same as tier 1", () => {
+    const brokenMiniProduct = {
+      unit: product.unit,
+      unitsPerBox: product.unitsPerBox,
+      pricePerUnit: product.pricePerUnit, // no priceTier2/3 — the shipped shape
+    };
+    const broken = buildUnitOptions(brokenMiniProduct, [CASE, PALLET], 2);
+    expect(broken.find((o) => o.value === "Case")!.price).toBe(480); // wrong: tier 1's price
+    // The real product, proven above, correctly diverges from it at tier 2.
+    expect(
+      buildUnitOptions(product, [CASE, PALLET], 2).find((o) => o.value === "Case")!.price,
+    ).toBe(240);
+  });
+
+  it("RED PROOF: a mini-product carrying a STORED unit line's OWN factor as unitsPerBox (the other shipped bug — edit-items.tsx's old mini-product) mis-derives the Piece's price", () => {
+    // A stored Case line snapshots unitsPerBox = the Case's own factor (288), not the pack's
+    // real 24 (server: unit-line-build.ts's `unitsPerBox: factor`) — exactly what the old
+    // mini-product carried forward as the ladder's pack factor.
+    const brokenMiniProduct = {
+      unit: product.unit,
+      unitsPerBox: 288,
+      pricePerUnit: product.pricePerUnit,
+    };
+    const broken = buildUnitOptions(brokenMiniProduct, [CASE, PALLET], 1);
+    const real = buildUnitOptions(product, [CASE, PALLET], 1);
+    expect(real.find((o) => o.value === "Piece")!.price).toBe(1.75); // 42 / 24, golden fixture above
+    expect(broken.find((o) => o.value === "Piece")!.price).toBe(0.15); // 42 / 288 — a silent under-bill
+  });
+});
+
+describe("marginFactorFor (SA-085f HIGH #3)", () => {
+  it("uses the pack's unitsPerBox while no unit is selected — unchanged, pre-existing behaviour", () => {
+    expect(marginFactorFor({ unitLabel: undefined }, 24)).toBe(24);
+    expect(marginFactorFor({ unitLabel: null }, 24)).toBe(24);
+  });
+
+  it("uses the CHOSEN unit's own factor once one is selected, never the pack's", () => {
+    // A Case's factor (288) is nothing like the pack's (24) — cost-per-piece x 288, not x 24.
+    expect(marginFactorFor({ unitLabel: "Case", unitFactor: 288 }, 24)).toBe(288);
+  });
+
+  it("falls back to 1 when a unit is selected but its factor wasn't stored (defensive, should not happen)", () => {
+    expect(marginFactorFor({ unitLabel: "Case", unitFactor: undefined }, 24)).toBe(1);
   });
 });
 

@@ -1,7 +1,8 @@
 import * as React from "react";
-import { Pressable, StyleSheet, Text, View } from "react-native";
+import { Pressable, StyleSheet, Text, View, type StyleProp, type ViewStyle } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { ios } from "@routeflow/ui/tokens";
+import type { LadderProduct } from "@routeflow/pricing";
 import { useProductUnits, useUnitsEnabled } from "../lib/api/product-units";
 import { buildUnitOptions, unitOptionDetail, type UnitOption } from "../lib/unit-options";
 import { OptionPickerSheet, type PickerOption } from "./OptionPickerSheet";
@@ -10,11 +11,6 @@ import { OptionPickerSheet, type PickerOption } from "./OptionPickerSheet";
 export interface UnitPickerLine {
   productId: string;
   isUnlisted?: boolean;
-  /** The product's PACK unit label (e.g. "Box") — the ladder's pack-row fallback. */
-  unit: string;
-  unitsPerBox?: number | null;
-  /** The pack's tier-1 list price — the pack option's `listPrice` anchor. */
-  listPrice: number;
   /**
    * This line's CURRENT effective price — the pack's (a remembered discount/upsell applies to
    * pack lines only, v1 ruling) while `unitLabel` is unset, else the already-selected unit's own
@@ -40,23 +36,36 @@ export interface UnitPickerLine {
  */
 export function UnitPickerRow({
   line,
+  product,
   tier,
   onChange,
+  style,
 }: {
   line: UnitPickerLine;
+  /**
+   * The REAL product's ladder inputs (pack unit/unitsPerBox + all 5 tier-price columns) —
+   * SA-085f HIGH #2: a reconstructed mini-product built from the LINE's own fields (its
+   * current listPrice, or a stored unit line's `unitsPerBox`, which the server snapshots as
+   * the CHOSEN UNIT's own factor, not the pack's) silently mispriced every non-tier-1 customer
+   * and every product with a level whose price derives from the pack. This must be the
+   * product's own record, unclobbered by anything a line mutates.
+   */
+  product: LadderProduct;
   /** The EFFECTIVE tier for this product (`CustomerPrice.pricingTier ?? customer.pricingTier ?? 1`). */
   tier: number;
   onChange: (option: UnitOption) => void;
+  /**
+   * SA-085f LOW: spacing applied only when this control actually renders. A caller-side wrapper
+   * View reserved this margin even with the flag off or a level-less product (self-gated below),
+   * adding 2–8px of dead space to EVERY row for every tenant.
+   */
+  style?: StyleProp<ViewStyle>;
 }) {
   const [open, setOpen] = React.useState(false);
   const enabled = useUnitsEnabled();
   const { data: units } = useProductUnits(
     line.productId,
     enabled && !line.isUnlisted && !!line.productId,
-  );
-  const product = React.useMemo(
-    () => ({ unit: line.unit, unitsPerBox: line.unitsPerBox, pricePerUnit: line.listPrice }),
-    [line.unit, line.unitsPerBox, line.listPrice],
   );
   // Only while STILL on the pack does `line.unitPrice` mean the pack's price — see the field doc.
   const packPrice = line.unitLabel ? undefined : line.unitPrice;
@@ -80,7 +89,7 @@ export function UnitPickerRow({
   }));
 
   return (
-    <>
+    <View style={style}>
       <Pressable
         style={styles.trigger}
         onPress={() => setOpen(true)}
@@ -107,7 +116,7 @@ export function UnitPickerRow({
           if (chosen) onChange(chosen);
         }}
       />
-    </>
+    </View>
   );
 }
 

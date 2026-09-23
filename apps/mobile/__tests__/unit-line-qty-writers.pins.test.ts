@@ -1,0 +1,51 @@
+import { readFileSync } from "fs";
+import { join } from "path";
+
+/**
+ * SA-085f BLOCKER. Every qty writer on both sale builders must route a unit-sold line
+ * (unitLabel set) through `stepLineQty`/`isUnitLine` (lib/sale-line.ts) instead of the
+ * pack's box math (incrementLine/decrementLine, which fold a unit COUNT into "boxes" of the
+ * PACK's size — see sale-line.test.ts's RED PROOF for the exact shipped-bug numbers). Mobile's
+ * Jest is pure-logic only (no RN tree), so each screen's wiring is pinned at the source level,
+ * the same technique wedge-submit.test.ts and order-draft-gate.test.ts already use.
+ */
+
+const newOrderSrc = readFileSync(join(__dirname, "..", "components", "NewOrderScreen.tsx"), "utf8");
+const editItemsSrc = readFileSync(
+  join(__dirname, "..", "app", "(operator)", "(tabs)", "orders", "[id]", "edit-items.tsx"),
+  "utf8",
+);
+
+describe("NewOrderScreen.tsx routes every +/- through stepLineQty (create flow)", () => {
+  it("addOne/removeOne call stepLineQty, never the raw pack box math", () => {
+    expect(newOrderSrc).toMatch(/stepLineQty\(prev, 1, isBoxed, upb\)/);
+    expect(newOrderSrc).toMatch(/stepLineQty\(prev, -1, isBoxed, upb\)/);
+    // incrementLine/decrementLine are no longer imported or called directly anywhere in this
+    // screen — every case a unit-aware line could reach them is gone, not just guarded.
+    expect(newOrderSrc).not.toMatch(/[^.]\bincrementLine\(/);
+    expect(newOrderSrc).not.toMatch(/\bdecrementLine\(/);
+  });
+
+  it("the remaining incrementLinePiece call (a PIECE-barcode scan) is unit-guarded", () => {
+    expect(newOrderSrc).toMatch(/kind === "piece" && !isUnitLine\(prev\)/);
+  });
+
+  it("the tray sends a unit line's typed total through setQty, never setUnits", () => {
+    expect(newOrderSrc).toMatch(/!a\.isUnitLine\(id\) && a\.unitsPerBox\(id\) > 1/);
+  });
+});
+
+describe("edit-items.tsx routes every +/- through stepLineQty (edit flow)", () => {
+  it("incQty/decQty call stepLineQty, never setBoxes's raw box math", () => {
+    expect(editItemsSrc).toMatch(/stepLineQty\(cur, 1, upb > 1, upb\)/);
+    expect(editItemsSrc).toMatch(/stepLineQty\(cur, -1, upb > 1, upb\)/);
+  });
+
+  it("a re-scan's incrementLine/incrementLinePiece call is unit-guarded", () => {
+    expect(editItemsSrc).toMatch(/if \(boxed && !isUnitLine\(existing\)\)/);
+  });
+
+  it("the drawer sends a unit line's typed total through setQty, never setUnits", () => {
+    expect(editItemsSrc).toMatch(/isUnitLine\(d\.draft\[id\] \?\? \{\}\)/);
+  });
+});

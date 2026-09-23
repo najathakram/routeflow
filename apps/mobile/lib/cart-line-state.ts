@@ -69,6 +69,13 @@ export type LineState = {
    * Unset while `unitLabel` is unset (the pack uses `catalogPrice` directly, as before).
    */
   unitBasePrice?: number;
+  /**
+   * units_v1 (SA-085f HIGH #3): pieces per ONE of `unitLabel` (`UnitOption.factorToBase`) —
+   * the basis the margin/floor hint multiplies cost by, in place of the PACK's `unitsPerBox`
+   * (a Case's cost is cost-per-piece × the Case's OWN factor, which for a level like "Pallet"
+   * spanning several packs is not `unitsPerBox` at all). Unset while `unitLabel` is unset.
+   */
+  unitFactor?: number;
 };
 
 export function toNumber(v: number | string | null | undefined): number {

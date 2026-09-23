@@ -122,6 +122,22 @@ export function unitPriceBase(
   return line.unitLabel ? (line.unitBasePrice ?? catalogPrice) : catalogPrice;
 }
 
+/**
+ * The pieces-per-unit basis a line's margin/floor hint multiplies per-piece cost by
+ * (SA-085f HIGH #3) — the chosen unit's OWN factor (`unitFactor`, set alongside
+ * `unitBasePrice` by `setUnitLabel`), never the pack's `unitsPerBox`: a Case's cost is
+ * cost-per-piece × the CASE's factor, which for a level spanning several packs (a Pallet of
+ * 10 cases) is not `unitsPerBox` at all; a Piece must not inherit the pack's whole-case cost
+ * either. Falls back to the pack's own factor while no unit is selected — today's behaviour,
+ * unchanged.
+ */
+export function marginFactorFor(
+  line: { unitLabel?: string | null; unitFactor?: number },
+  packUnitsPerBox?: number | null,
+): number | null | undefined {
+  return line.unitLabel ? (line.unitFactor ?? 1) : packUnitsPerBox;
+}
+
 // ─── Display formatting (mobile has no shared `lib/format.ts` — see file doc) ──────────────────
 
 const moneyFmt = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" });

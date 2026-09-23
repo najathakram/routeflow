@@ -2,10 +2,12 @@ import {
   decrementLine,
   incrementLine,
   incrementLinePiece,
+  isUnitLine,
   setLineBoxes,
   setLinePieces,
   setLineQty,
   setLineUnits,
+  stepLineQty,
 } from "../lib/sale-line";
 
 describe("incrementLine", () => {
@@ -201,6 +203,62 @@ describe("setLineUnits", () => {
   it("returns null for a non-case-packed product (unitsPerBox 1)", () => {
     const prev = { qty: 1 };
     expect(setLineUnits(prev, 5, 1)).toBeNull();
+  });
+});
+
+/**
+ * SA-085f BLOCKER: qty gained a second meaning once `unitLabel` is set — a Case line's
+ * qty is the unit COUNT, never pieces-in-a-box. Every +/- writer on both sale builders
+ * must route through `stepLineQty` instead of incrementLine/decrementLine directly.
+ */
+describe("isUnitLine / stepLineQty (SA-085f BLOCKER)", () => {
+  it("isUnitLine is true only for a non-empty unitLabel", () => {
+    expect(isUnitLine({ unitLabel: "Case" })).toBe(true);
+    expect(isUnitLine({ unitLabel: undefined })).toBe(false);
+    expect(isUnitLine({ unitLabel: null })).toBe(false);
+    expect(isUnitLine({ unitLabel: "" })).toBe(false);
+    expect(isUnitLine({})).toBe(false);
+  });
+
+  it("+ on a Case line ({qty:1}, 24-pack) steps the COUNT to 2 — no box/piece split", () => {
+    const prev = { qty: 1, unitLabel: "Case", unitPrice: 220, unitBasePrice: 220 };
+    const next = stepLineQty(prev, 1, true, 24);
+    expect(next).toEqual({ qty: 2, unitLabel: "Case", unitPrice: 220, unitBasePrice: 220 });
+  });
+
+  it("RED PROOF: the old unconditional incrementLine reconstructs the shipped bug on the same line", () => {
+    // The exact worked example: a Case line on a 24-pack, tapped +, priced at $220/case.
+    // The fix's own line (above) reads {qty:2, ...}; the OLD call this replaced —
+    // incrementLine(prev, isBoxed, upb) with no unitLabel check — read {qty:25,...}
+    // and would bill 25 x $220 = $5,500 for what the screen showed as $229.17.
+    const prev = { qty: 1, unitLabel: "Case", unitPrice: 220, unitBasePrice: 220 };
+    const oldBuggyNext = incrementLine(prev, true, 24);
+    expect(oldBuggyNext.qty).toBe(25);
+    expect(oldBuggyNext.boxes).toBe(1);
+    expect(oldBuggyNext.pieces).toBe(1);
+    expect(oldBuggyNext.qty).not.toBe(2); // the fixed behaviour, proven above
+  });
+
+  it("- on a Case line ({qty:3}) steps the COUNT down to 2", () => {
+    const prev = { qty: 3, unitLabel: "Case", unitPrice: 220 };
+    const next = stepLineQty(prev, -1, true, 24);
+    expect(next).toEqual({ qty: 2, unitLabel: "Case", unitPrice: 220 });
+  });
+
+  it("- on a Case line at count 1 removes the line (returns null), never a fractional box", () => {
+    const prev = { qty: 1, unitLabel: "Case", unitPrice: 220 };
+    expect(stepLineQty(prev, -1, true, 24)).toBeNull();
+  });
+
+  it("a non-unit line falls through to the existing pack box-math unchanged", () => {
+    const prev = { qty: 12, boxes: 1, pieces: 0, unitPrice: 20 };
+    expect(stepLineQty(prev, 1, true, 12)).toEqual(incrementLine(prev, true, 12));
+    expect(stepLineQty(prev, -1, true, 12)).toEqual(decrementLine(prev, true, 12));
+  });
+
+  it("a non-boxed, non-unit line steps by plain +/-1", () => {
+    expect(stepLineQty({ qty: 4 }, 1, false, 0)).toEqual({ qty: 5 });
+    expect(stepLineQty({ qty: 4 }, -1, false, 0)).toEqual({ qty: 3 });
   });
 });
 

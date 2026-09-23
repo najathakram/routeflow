@@ -78,13 +78,13 @@ import { InlineToast, useInlineToast } from "./InlineToast";
 import { ProductRow } from "./ProductRow";
 import { ScanOrderSheet } from "./ScanOrderSheet";
 import {
-  decrementLine,
-  incrementLine,
   incrementLinePiece,
+  isUnitLine,
   setLineBoxes,
   setLinePieces,
   setLineQty,
   setLineUnits,
+  stepLineQty,
 } from "../lib/sale-line";
 import { LicenseGuardModal } from "./LicenseGuardModal";
 import { BlockedLinesModal } from "./BlockedLinesModal";
@@ -890,10 +890,13 @@ function ProductPickView({
       const prev: LineState = m[id] ?? { qty: 0 };
       // Spread prev inside incrementLine so a repeat scan / +1 keeps the operator's
       // unitPrice override + note (previously wiped on every increment).
+      // A unit-sold line (re-scanned or "+1"-ed) always steps its COUNT via
+      // stepLineQty, regardless of scan kind — "piece" only means something for a
+      // PACK's own barcode split (SA-085f BLOCKER: box math on a unit line).
       const line =
-        kind === "piece"
+        kind === "piece" && !isUnitLine(prev)
           ? incrementLinePiece(prev, isBoxed, upb)
-          : incrementLine(prev, isBoxed, upb);
+          : stepLineQty(prev, 1, isBoxed, upb)!;
       if (isNew && prefill != null) line.unitPrice = prefill;
       return { ...m, [id]: line };
     });
@@ -920,7 +923,7 @@ function ProductPickView({
     setItems((m) => {
       const prev = m[id];
       if (!prev) return m;
-      const line = decrementLine(prev, isBoxed, upb);
+      const line = stepLineQty(prev, -1, isBoxed, upb);
       if (!line) {
         const next = { ...m };
         delete next[id];
@@ -998,6 +1001,7 @@ function ProductPickView({
           ...prev,
           unitLabel: isPack ? undefined : option.value,
           unitBasePrice: isPack ? undefined : option.price,
+          unitFactor: isPack ? undefined : option.factorToBase,
           qty: 1,
           boxes: undefined,
           pieces: undefined,
@@ -1364,6 +1368,9 @@ function ProductPickView({
     updateUnlistedQty,
     removeUnlisted,
     unitsPerBox: (id: string) => Number(productById.get(id)?.unitsPerBox ?? 0),
+    // units_v1 (SA-085f): a unit-sold line's qty is a COUNT — the tray must send it
+    // through setQty, never setUnits (which treats the typed number as total PACK pieces).
+    isUnitLine: (id: string) => isUnitLine(items[id] ?? {}),
     // Owner ask: after CHOOSING the searched item, the field clears. Only on
     // the row's first Add (not stepper increments — the settled list must not
     // swap mid-repeat-tap); the added row survives the swap back to the
@@ -1407,7 +1414,7 @@ function ProductPickView({
   const onTrayChangeQty = useCallback((id: string, qty: number) => {
     const a = actionsRef.current;
     if (a.isUnlisted(id)) a.updateUnlistedQty(id, qty);
-    else if (a.unitsPerBox(id) > 1) a.setUnits(id, qty);
+    else if (!a.isUnitLine(id) && a.unitsPerBox(id) > 1) a.setUnits(id, qty);
     else a.setQty(id, qty);
   }, []);
   const onTrayIncrement = useCallback((id: string) => {
@@ -1517,6 +1524,7 @@ function ProductPickView({
           onChangeQty={onRowChangeQty}
           onIncrement={onRowIncrement}
           onDecrement={onRowDecrement}
+          unitSold={!!line?.unitLabel}
         >
           {band}
         </ProductRow>

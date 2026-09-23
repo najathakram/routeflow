@@ -23,6 +23,12 @@ export interface ProductRowProps {
   onDecrement: (id: string) => void;
   /** Case/unit entry band for a case-packed line that already has a qty. */
   children?: React.ReactNode;
+  /**
+   * units_v1 (SA-085f): true when this line is sold by a unit (Case…) rather than the pack.
+   * Its qty is a COUNT, never pieces-in-a-box, so it always gets the plain stepper — never the
+   * boxed band — even though the product itself is boxed.
+   */
+  unitSold?: boolean;
 }
 
 /**
@@ -44,9 +50,10 @@ export const ProductRow = React.memo(function ProductRow({
   onIncrement,
   onDecrement,
   children,
+  unitSold,
 }: ProductRowProps) {
   const upb = Number(unitsPerBox ?? 0);
-  const isBoxed = upb > 1;
+  const isBoxed = upb > 1 && !unitSold;
   const isSpecial = price < listPrice - 0.0001;
   // Display-only hint on the case price — never fed back into line math.
   const perUnitHint = isBoxed ? perUnitPrice(price, upb) : null;
