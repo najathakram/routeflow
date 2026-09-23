@@ -1616,11 +1616,8 @@ describe("CustomersService", () => {
       );
     });
 
-    // B310, DRAFT half (the concurrency half was #719; this is the remaining scope the
-    // 2026-09-14 note left open). CREDIT_NOT_APPLICABLE deliberately excludes DRAFT — other
-    // consumers of that shared set (credit-exposure reads, customers.service.ts:1835) rely on
-    // DRAFT staying OUT of it — so this is a guard dedicated to the advance-apply path, not an
-    // edit to the shared set.
+    // B310, DRAFT half (#719 fixed the concurrency half). DRAFT joins this check directly,
+    // not CREDIT_NOT_APPLICABLE — :1835's exposure reads need DRAFT to stay out of that set.
     it("REG-B310 an advance cannot be applied to a DRAFT invoice — it has not been sent yet", async () => {
       prisma.advancePayment.findUnique.mockResolvedValue({ id: "ap-1", balance: 100 });
       prisma.invoice.findUnique.mockResolvedValue({
@@ -1630,13 +1627,9 @@ describe("CustomersService", () => {
         dueDate: null,
         payments: [],
       });
-
-      // Without the fix: DRAFT is absent from CREDIT_NOT_APPLICABLE, so this proceeds —
-      // applyAmount resolves to 100 and the DRAFT invoice is written straight to PAID.
       await expect(
         service.applyAdvancePaymentToInvoice("ap-1", { invoiceId: "inv-draft" }),
-      ).rejects.toThrow("Cannot apply advance payment to a DRAFT invoice");
-
+      ).rejects.toThrow("Cannot apply advance payment to invoice with status DRAFT");
       expect(prisma.invoicePayment.create).not.toHaveBeenCalled();
       expect(prisma.invoice.update).not.toHaveBeenCalled();
     });
