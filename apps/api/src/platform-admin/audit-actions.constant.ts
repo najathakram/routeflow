@@ -35,6 +35,7 @@ export const AdminAuditAction = {
   ENTITLEMENTS_MODE_CHANGED: "ENTITLEMENTS_MODE_CHANGED",
   FEATURE_DIFF_EXPLAINED: "FEATURE_DIFF_EXPLAINED",
   CONFIG_SNAPSHOT_RESTORED: "CONFIG_SNAPSHOT_RESTORED",
+  CONFIG_SNAPSHOT_FLAG_CHANGED: "CONFIG_SNAPSHOT_FLAG_CHANGED",
 } as const;
 
 export type AdminAuditActionCode = (typeof AdminAuditAction)[keyof typeof AdminAuditAction];
@@ -61,6 +62,7 @@ export const ADMIN_AUDIT_ACTION_LABELS: Record<AdminAuditActionCode, string> = {
   ENTITLEMENTS_MODE_CHANGED: "Entitlements mode changed",
   FEATURE_DIFF_EXPLAINED: "Feature resolver diff explained",
   CONFIG_SNAPSHOT_RESTORED: "Configuration snapshot restored",
+  CONFIG_SNAPSHOT_FLAG_CHANGED: "Config snapshot flag changed",
 };
 
 /** Facet list for the audit-log filter dropdown (code + label), ordered as declared. */

@@ -23,6 +23,13 @@ export interface ProductRowProps {
   onDecrement: (id: string) => void;
   /** Case/unit entry band for a case-packed line that already has a qty. */
   children?: React.ReactNode;
+  /**
+   * units_v1 (SA-085f/i): set when this line is sold by a unit (Case…) rather than the pack.
+   * Its qty is a COUNT, never pieces-in-a-box, so it always gets the plain stepper — never the
+   * boxed band — even though the product itself is boxed. Shown in place of `unit` too
+   * ("$220.00 / Case", never "$220.00 / each") — a unit-sold line's price is per THAT unit.
+   */
+  unitLabel?: string | null;
 }
 
 /**
@@ -44,10 +51,14 @@ export const ProductRow = React.memo(function ProductRow({
   onIncrement,
   onDecrement,
   children,
+  unitLabel,
 }: ProductRowProps) {
   const upb = Number(unitsPerBox ?? 0);
-  const isBoxed = upb > 1;
-  const isSpecial = price < listPrice - 0.0001;
+  const isBoxed = upb > 1 && !unitLabel;
+  // units_v1 (SA-105 LOW): listPrice is the PACK's own list price — comparing a unit-sold
+  // line's price against it is meaningless (a $2 Piece would read "was $24.00 $2.00 / Piece").
+  // Suppress the marker on a unit line rather than fetch its own list price just for this hint.
+  const isSpecial = !unitLabel && price < listPrice - 0.0001;
   // Display-only hint on the case price — never fed back into line math.
   const perUnitHint = isBoxed ? perUnitPrice(price, upb) : null;
   const showBand = isBoxed && qty > 0 && children != null;
@@ -67,7 +78,13 @@ export const ProductRow = React.memo(function ProductRow({
             {sku ? `SKU ${sku} · ` : ""}
             {isSpecial ? <Text style={styles.metaWas}>${listPrice.toFixed(2)} </Text> : null}
             <Text style={isSpecial ? styles.metaSpecial : undefined}>${price.toFixed(2)}</Text>
-            {isBoxed ? ` / case of ${upb}` : unit ? ` / ${unit}` : ""}
+            {isBoxed
+              ? ` / case of ${upb}`
+              : unitLabel
+                ? ` / ${unitLabel}`
+                : unit
+                  ? ` / ${unit}`
+                  : ""}
             {perUnitHint != null ? ` · ≈ $${perUnitHint.toFixed(2)}/unit` : ""}
           </Text>
         </View>
