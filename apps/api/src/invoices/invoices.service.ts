@@ -987,12 +987,7 @@ export class InvoicesService {
       // the order-line snapshot, fall back to the live product for pre-RF-3 lines.
       trackedSubcategoryId: li.trackedSubcategoryId ?? li.product?.trackedSubcategoryId ?? null,
       categoryTaxAmount,
-      // B297 (SA-088, D6): COPY the order line's own rate snapshot verbatim — never a live-product
-      // fallback (unlike trackedCategoryId/trackedSubcategoryId above). A pre-B297 order line
-      // (li.categoryTaxType null) yields a null invoice-line snapshot too: there is nothing
-      // truthful to copy, and inventing one from the live category is exactly the bug this work
-      // fixes. The invoice inherits the order's sale-time rate; it never re-reads the category.
-      categoryTaxType: li.categoryTaxType ?? null,
+      categoryTaxType: li.categoryTaxType ?? null, // B297: COPY verbatim, never a live fallback.
       categoryTaxRate: li.categoryTaxRate != null ? Number(li.categoryTaxRate) : null,
       categoryPriceIncludesTax: li.categoryPriceIncludesTax ?? null,
       ...(tenantId ? { tenantId } : {}),
@@ -3453,18 +3448,6 @@ export class InvoicesService {
               priceIncludesTax: category.priceIncludesTax,
             })
           : 0;
-        // B297 (SA-088): freeze the trio categoryTaxAmount above was computed from — this write
-        // re-reads the LIVE category (comment above), so this IS a fresh snapshot moment, same as
-        // create().
-        const categorySnapshot = categoryTaxSnapshotOf(
-          category
-            ? {
-                taxType: category.taxType as CategoryTaxType,
-                rate: category.rate,
-                priceIncludesTax: category.priceIncludesTax,
-              }
-            : null,
-        );
         return {
           description: item.description,
           productId: item.productId,
@@ -3487,8 +3470,7 @@ export class InvoicesService {
           trackedSubcategoryId: product?.trackedSubcategoryId ?? null,
           // RF-4: per-line category tax snapshot (folded into taxTotal below).
           categoryTaxAmount,
-          // B297 (SA-088): the rate trio categoryTaxAmount was computed from.
-          ...categorySnapshot,
+          ...categoryTaxSnapshotOf(category ?? null), // B297: re-reads the LIVE category above.
           // Preserve per-line notes across the delete-and-recreate edit — dropping
           // this silently wipes notes the order carried onto the invoice.
           notes: item.notes ?? null,
@@ -4661,10 +4643,14 @@ export class InvoicesService {
       // product/customer MSRP.
       msrp: (i as any).msrp != null ? Number((i as any).msrp) : null,
       subtotal: roundMoney(Number(i.subtotal)),
-      // RF-4: carry each line's category tax + regulated snapshots onto the copy.
+      // RF-4/B297: category tax + regulated snapshots (incl. the rate trio) travel to the copy.
       trackedCategoryId: (i as any).trackedCategoryId ?? null,
       trackedSubcategoryId: (i as any).trackedSubcategoryId ?? null,
       categoryTaxAmount: roundMoney(Number((i as any).categoryTaxAmount ?? 0)),
+      categoryTaxType: (i as any).categoryTaxType ?? null,
+      categoryTaxRate:
+        (i as any).categoryTaxRate != null ? Number((i as any).categoryTaxRate) : null,
+      categoryPriceIncludesTax: (i as any).categoryPriceIncludesTax ?? null,
       tenantId: this.prisma.getTenantId(),
     }));
     const subtotal = roundMoney(itemsData.reduce((s, i) => s + Number(i.subtotal), 0));

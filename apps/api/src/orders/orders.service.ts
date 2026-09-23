@@ -2117,17 +2117,8 @@ export class OrdersService implements OnApplicationBootstrap {
             priceIncludesTax: category.priceIncludesTax,
           })
         : 0;
-      // B297 (SA-088): freeze the trio this line was actually priced under, alongside
-      // categoryTaxAmount above — a later category rate edit must never silently re-price it.
-      const categorySnapshot = categoryTaxSnapshotOf(
-        category
-          ? {
-              taxType: category.taxType as CategoryTaxType,
-              rate: category.rate,
-              priceIncludesTax: category.priceIncludesTax,
-            }
-          : null,
-      );
+      // B297 (SA-088): the trio this line was priced under — a later rate edit must never re-price it.
+      const categorySnapshot = categoryTaxSnapshotOf(category ?? null);
 
       return {
         productId: item.productId as string | null,
@@ -2154,8 +2145,7 @@ export class OrdersService implements OnApplicationBootstrap {
         trackedSubcategoryId: (product.trackedSubcategoryId ?? null) as string | null,
         // RF-4: per-line regulated category tax, snapshotted (folded into the order total).
         categoryTaxAmount,
-        // B297 (SA-088): the rate trio categoryTaxAmount above was computed from — see
-        // categoryTaxSnapshotOf. Recompute (PR3) reads THESE, never the live category.
+        // B297 (SA-088): the rate trio — recompute (PR3) reads THESE, never the live category.
         ...categorySnapshot,
         // R2: preserve scan/insertion order (array index) for read-back.
         position: index,

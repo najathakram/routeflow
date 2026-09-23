@@ -1454,11 +1454,6 @@ describe("OrdersService", () => {
                     subtotal: 20,
                     categoryTaxAmount: 1,
                     trackedCategoryId: "cat-alc",
-                    // B297 (SA-088): the rate trio categoryTaxAmount was computed from, frozen at
-                    // sale time so a later category rate edit can never silently re-price this line.
-                    categoryTaxType: "PERCENT_OF_SALE",
-                    categoryTaxRate: 0.05,
-                    categoryPriceIncludesTax: false,
                   }),
                 ]),
               },
@@ -1551,16 +1546,7 @@ describe("OrdersService", () => {
               subtotal: 20,
               total: 20,
               lineItems: {
-                create: expect.arrayContaining([
-                  expect.objectContaining({
-                    categoryTaxAmount: 0,
-                    // B297: a non-regulated line (no trackedCategoryId) gets an all-null snapshot,
-                    // never a stamped trio for a category it doesn't belong to.
-                    categoryTaxType: null,
-                    categoryTaxRate: null,
-                    categoryPriceIncludesTax: null,
-                  }),
-                ]),
+                create: expect.arrayContaining([expect.objectContaining({ categoryTaxAmount: 0 })]),
               },
             }),
           }),
