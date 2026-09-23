@@ -51,6 +51,36 @@ export function hasAnyQtyEntered(lines: InlineReturnLineDraft[]): boolean {
 }
 
 /**
+ * SA-101(2)/B3/B765 interim guard: merges request items that share a `productId` — BEFORE
+ * they reach the wire — by summing `boxes`/`pieces`. `lines` is keyed by `productId`
+ * throughout this dialog (`updateLine`/`removeLine`), so a source order with two lines of
+ * one product (a Case line and a pack line, say) can hydrate two draft rows for the same
+ * product; without this merge each would become its OWN request item, and the server's
+ * per-item allocation (`allocateReturnedPieces`) rebuilds its remaining-supply view fresh
+ * per item rather than decrementing a shared one — two items for the same product would
+ * each draw against the SAME undiminished supply, silently crediting it twice. Other
+ * per-item fields (a capture item's `reason`/`condition`) are kept from the FIRST
+ * occurrence — only quantities are summed. The durable fix (carrying the specific source
+ * line on the wire, so two lines of one product are never conflated into a single qty at
+ * all) is a later PR; this only stops the silent double-count.
+ */
+function mergeDuplicateProductItems<T extends { productId: string; boxes: number; pieces: number }>(
+  items: T[],
+): T[] {
+  const merged = new Map<string, T>();
+  for (const item of items) {
+    const existing = merged.get(item.productId);
+    if (existing) {
+      existing.boxes += item.boxes;
+      existing.pieces += item.pieces;
+    } else {
+      merged.set(item.productId, { ...item });
+    }
+  }
+  return [...merged.values()];
+}
+
+/**
  * Builds the quote request from Step 1's drafts. `boxes`/`pieces` are ALWAYS sent
  * explicitly (never a bare `qty`) — a bare `qty` on a boxed product means BOXES to the API
  * (SA-071a #3), so sending both fields explicitly for every line, boxed or not, removes the
@@ -64,14 +94,16 @@ export function buildQuoteRequest(
   lines: InlineReturnLineDraft[],
   routeRunStopId?: string,
 ): QuoteInlineReturnRequest {
-  const items: QuoteInlineReturnItem[] = lines
-    .map((l) => ({
-      productId: l.productId,
-      boxes: parseNonNegativeInt(l.boxes),
-      pieces: parseNonNegativeInt(l.pieces),
-    }))
-    .filter((i) => i.boxes > 0 || i.pieces > 0)
-    .map((i) => ({ productId: i.productId, qty: 1, boxes: i.boxes, pieces: i.pieces }));
+  const items: QuoteInlineReturnItem[] = mergeDuplicateProductItems(
+    lines
+      .map((l) => ({
+        productId: l.productId,
+        boxes: parseNonNegativeInt(l.boxes),
+        pieces: parseNonNegativeInt(l.pieces),
+      }))
+      .filter((i) => i.boxes > 0 || i.pieces > 0)
+      .map((i) => ({ productId: i.productId, qty: 1, boxes: i.boxes, pieces: i.pieces })),
+  );
   return routeRunStopId ? { customerId, items, routeRunStopId } : { customerId, items };
 }
 
@@ -177,23 +209,24 @@ export function buildCaptureRequest(params: {
   notes?: string;
   routeRunStopId?: string;
 }): CaptureInlineReturnRequest {
-  const items: CaptureInlineReturnItem[] = params.lines
-    .map((l) => ({
-      productId: l.productId,
-      boxes: parseNonNegativeInt(l.boxes),
-      pieces: parseNonNegativeInt(l.pieces),
-      reason: l.reason || undefined,
-      condition: l.note.trim() || undefined,
-    }))
-    .filter((i) => i.boxes > 0 || i.pieces > 0)
-    .map((i) => ({
-      productId: i.productId,
-      qty: 1,
-      boxes: i.boxes,
-      pieces: i.pieces,
-      ...(i.reason ? { reason: i.reason } : {}),
-      ...(i.condition ? { condition: i.condition } : {}),
-    }));
+  const items: CaptureInlineReturnItem[] = mergeDuplicateProductItems(
+    params.lines
+      .map((l) => ({
+        productId: l.productId,
+        boxes: parseNonNegativeInt(l.boxes),
+        pieces: parseNonNegativeInt(l.pieces),
+        reason: l.reason || undefined,
+        condition: l.note.trim() || undefined,
+      }))
+      .filter((i) => i.boxes > 0 || i.pieces > 0),
+  ).map((i) => ({
+    productId: i.productId,
+    qty: 1,
+    boxes: i.boxes,
+    pieces: i.pieces,
+    ...(i.reason ? { reason: i.reason } : {}),
+    ...(i.condition ? { condition: i.condition } : {}),
+  }));
 
   return {
     customerId: params.customerId,

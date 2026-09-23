@@ -7,7 +7,12 @@
  * then hands everything to the pure `inline-returns-pricing.ts` engine. Read-only:
  * nothing here writes a Return/ReturnItem row (that's PR-1c/1d's capture path).
  */
-import { ForbiddenException, Injectable, NotFoundException } from "@nestjs/common";
+import {
+  ConflictException,
+  ForbiddenException,
+  Injectable,
+  NotFoundException,
+} from "@nestjs/common";
 import {
   InvoiceStatus,
   OrderStatus,
@@ -26,6 +31,7 @@ import {
   allocateReturnedPieces,
   priceMatchedChunk,
   priceUnreferencedChunk,
+  resolveReturnPackFactor,
   returnRequestPieces,
   totalChunks,
   type CandidateInvoiceLine,
@@ -213,20 +219,42 @@ export class InlineReturnsQuoteService {
     for (const item of dto.items) {
       const product = productMap.get(item.productId);
 
+      // SA-101(2)/B3/B765 interim guard: resolve the pack size from EVERY candidate line
+      // for this product, not just the newest (`matchingSet.find(...)` picked the first —
+      // i.e. newest-invoice — match, silently applying ITS pack size even when an older
+      // line, the one the operator was actually shown, used a different one). A product
+      // whose candidate lines disagree on pack size refuses outright rather than guess.
+      const candidatePacksForProduct = matchingSet
+        .filter((l) => l.productId === item.productId)
+        .map((l) => l.unitsPerBox);
+      const { factor: resolvedUnitsPerBox, conflictingPacks } = resolveReturnPackFactor(
+        candidatePacksForProduct,
+        product?.unitsPerBox ?? null,
+      );
+      if (conflictingPacks) {
+        throw new ConflictException(
+          `Product ${item.productId} is packed at more than one size in this customer's ` +
+            `recent history (${conflictingPacks.join(", ")}) — quote which order this return applies to separately`,
+        );
+      }
+      // A return typed as boxes/pieces needs a real factor to convert to pieces — an
+      // unknown factor must never silently multiply boxes by 0 and credit $0 for real
+      // returned goods (the returnRequestPieces boxes*upb branch does exactly that when
+      // unitsPerBox is null).
+      if (
+        (item.boxes != null || item.pieces != null) &&
+        (resolvedUnitsPerBox == null || resolvedUnitsPerBox <= 0)
+      ) {
+        throw new ConflictException(
+          `Product ${item.productId}'s pack size is unknown — cannot convert a boxed return to pieces`,
+        );
+      }
+
       const requestedPieces = returnRequestPieces({
         qty: item.qty,
         boxes: item.boxes ?? null,
         pieces: item.pieces ?? null,
-        // The caller's own product-level box size — returnRequestPieces uses it both to
-        // scale a bare `qty` (no boxes/pieces split) into pieces AND to scale an explicit
-        // `boxes` count into pieces. Prefer a matching-set line's own snapshot, but a
-        // fully unreferenced item (no matching line at all) still needs the product's
-        // own unitsPerBox so a bare `qty: 1` on a boxed product is read as one box, not
-        // one loose piece.
-        unitsPerBox:
-          matchingSet.find((l) => l.productId === item.productId)?.unitsPerBox ??
-          product?.unitsPerBox ??
-          null,
+        unitsPerBox: resolvedUnitsPerBox,
       });
 
       const allocated = allocateReturnedPieces(

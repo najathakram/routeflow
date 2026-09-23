@@ -5,7 +5,7 @@
  * these tests focus on the scoping gate and basic service wiring.
  */
 import { Test, TestingModule } from "@nestjs/testing";
-import { ForbiddenException, NotFoundException } from "@nestjs/common";
+import { ConflictException, ForbiddenException, NotFoundException } from "@nestjs/common";
 import { InlineReturnsQuoteService } from "./inline-returns-quote.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { SystemConfigService } from "../system-config/system-config.service";
@@ -402,6 +402,197 @@ describe("InlineReturnsQuoteService — Opus fix-round BLOCKER: the matching/all
 
     expect(result.total).toBe(8.0);
     expect(result.total).not.toBe(48.0);
+  });
+
+  // SA-101(2)/B3/B765 interim guard: before this fix, `matchingSet.find(l => l.productId
+  // === productId)?.unitsPerBox` picked the NEWEST invoice's line and silently applied its
+  // pack size — even when an older line (the one the operator actually saw) used a
+  // different one. These pin the guard: a genuine conflict refuses with a 409 naming both
+  // packs; a single agreed pack still prices normally; an unknown pack on a boxed request
+  // refuses rather than silently crediting $0.
+  it("SA-101(2): candidate lines packed at 12 AND 4 refuse with a 409 naming both packs, never silently pick the newest", async () => {
+    (db.customer.findFirst as jest.Mock).mockResolvedValue({
+      id: "cust-1",
+      pricingTier: 1,
+      isTaxExempt: false,
+    });
+    (db.customerPrice.findMany as jest.Mock).mockResolvedValue([]);
+    (db.product.findMany as jest.Mock).mockResolvedValue([
+      {
+        id: "prod-1",
+        pricePerUnit: 24,
+        priceTier2: 24,
+        priceTier3: 24,
+        priceTier4: 24,
+        priceTier5: 24,
+      },
+    ]);
+    // Newest invoice first (issueDate desc is the query's own order — the mock returns them
+    // pre-sorted the same way the real orderBy would) — packed at 4; the OLDER invoice (the
+    // one an operator's return dialog was actually opened from) is packed at 12.
+    (db.invoice.findMany as jest.Mock).mockResolvedValue([
+      {
+        orderId: "order-newer",
+        subtotal: 40,
+        discount: 0,
+        taxAmount: 0,
+        items: [
+          {
+            id: "invitem-newer",
+            orderItemId: "oi-newer",
+            productId: "prod-1",
+            qty: 10,
+            unitPrice: 4,
+            subtotal: 40,
+            boxes: null,
+            pieces: null,
+            unitsPerBox: 4,
+            promoFreeUnits: null,
+            taxRate: 0,
+            categoryTaxAmount: 0,
+          },
+        ],
+      },
+      {
+        orderId: "order-older",
+        subtotal: 60,
+        discount: 0,
+        taxAmount: 0,
+        items: [
+          {
+            id: "invitem-older",
+            orderItemId: "oi-older",
+            productId: "prod-1",
+            qty: 5,
+            unitPrice: 12,
+            subtotal: 60,
+            boxes: null,
+            pieces: null,
+            unitsPerBox: 12,
+            promoFreeUnits: null,
+            taxRate: 0,
+            categoryTaxAmount: 0,
+          },
+        ],
+      },
+    ]);
+    (db.return.findMany as jest.Mock).mockResolvedValue([]);
+    (db.returnItem.findMany as jest.Mock).mockResolvedValue([]);
+
+    await expect(
+      service.quote(
+        { customerId: "cust-1", items: [{ productId: "prod-1", qty: 1, boxes: 1, pieces: 0 }] },
+        OPERATOR,
+      ),
+    ).rejects.toThrow(ConflictException);
+    await expect(
+      service.quote(
+        { customerId: "cust-1", items: [{ productId: "prod-1", qty: 1, boxes: 1, pieces: 0 }] },
+        OPERATOR,
+      ),
+    ).rejects.toThrow(/4, 12/);
+  });
+
+  it("SA-101(2): a SINGLE candidate pack (no conflict) still prices normally — the sound case, not over-refused", async () => {
+    (db.customer.findFirst as jest.Mock).mockResolvedValue({
+      id: "cust-1",
+      pricingTier: 1,
+      isTaxExempt: false,
+    });
+    (db.customerPrice.findMany as jest.Mock).mockResolvedValue([]);
+    (db.product.findMany as jest.Mock).mockResolvedValue([
+      {
+        id: "prod-1",
+        pricePerUnit: 12,
+        priceTier2: 12,
+        priceTier3: 12,
+        priceTier4: 12,
+        priceTier5: 12,
+      },
+    ]);
+    (db.invoice.findMany as jest.Mock).mockResolvedValue([
+      {
+        orderId: "order-1",
+        subtotal: 12,
+        discount: 0,
+        taxAmount: 0,
+        items: [
+          {
+            id: "invitem-1",
+            orderItemId: "oi-1",
+            productId: "prod-1",
+            qty: 1,
+            unitPrice: 12,
+            subtotal: 12,
+            boxes: null,
+            pieces: null,
+            unitsPerBox: 12,
+            promoFreeUnits: null,
+            taxRate: 0,
+            categoryTaxAmount: 0,
+          },
+        ],
+      },
+    ]);
+    (db.return.findMany as jest.Mock).mockResolvedValue([]);
+    (db.returnItem.findMany as jest.Mock).mockResolvedValue([]);
+
+    const result = await service.quote(
+      { customerId: "cust-1", items: [{ productId: "prod-1", qty: 1, boxes: 1, pieces: 0 }] },
+      OPERATOR,
+    );
+    expect(result.total).toBe(12.0);
+  });
+
+  it("SA-101(2): an unknown pack (no candidate lines, no product.unitsPerBox) refuses a BOXED request with a 409 — never silently credits $0", async () => {
+    (db.customer.findFirst as jest.Mock).mockResolvedValue({
+      id: "cust-1",
+      pricingTier: 1,
+      isTaxExempt: false,
+    });
+    (db.customerPrice.findMany as jest.Mock).mockResolvedValue([]);
+    (db.product.findMany as jest.Mock).mockResolvedValue([
+      {
+        id: "prod-1",
+        pricePerUnit: 12,
+        priceTier2: 12,
+        priceTier3: 12,
+        priceTier4: 12,
+        priceTier5: 12,
+      },
+    ]);
+    // No invoiced sales at all — and the product itself carries no unitsPerBox either.
+    (db.invoice.findMany as jest.Mock).mockResolvedValue([]);
+    (db.return.findMany as jest.Mock).mockResolvedValue([]);
+    (db.returnItem.findMany as jest.Mock).mockResolvedValue([]);
+
+    await expect(
+      service.quote(
+        { customerId: "cust-1", items: [{ productId: "prod-1", qty: 1, boxes: 1, pieces: 0 }] },
+        OPERATOR,
+      ),
+    ).rejects.toThrow(ConflictException);
+  });
+
+  it("SA-101(2): an unknown pack on a BARE qty request (no boxes/pieces given) is NOT refused — qty is already pieces, nothing to convert", async () => {
+    (db.customer.findFirst as jest.Mock).mockResolvedValue({
+      id: "cust-1",
+      pricingTier: 1,
+      isTaxExempt: false,
+    });
+    (db.customerPrice.findMany as jest.Mock).mockResolvedValue([]);
+    (db.product.findMany as jest.Mock).mockResolvedValue([
+      { id: "prod-1", pricePerUnit: 3, priceTier2: 3, priceTier3: 3, priceTier4: 3, priceTier5: 3 },
+    ]);
+    (db.invoice.findMany as jest.Mock).mockResolvedValue([]);
+    (db.return.findMany as jest.Mock).mockResolvedValue([]);
+    (db.returnItem.findMany as jest.Mock).mockResolvedValue([]);
+
+    const result = await service.quote(
+      { customerId: "cust-1", items: [{ productId: "prod-1", qty: 5 }] },
+      OPERATOR,
+    );
+    expect(result.total).toBe(15.0);
   });
 });
 

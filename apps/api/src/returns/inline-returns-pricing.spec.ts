@@ -7,6 +7,7 @@ import {
   priceManualChunk,
   priceMatchedChunk,
   priceUnreferencedChunk,
+  resolveReturnPackFactor,
   returnRequestPieces,
   totalChunks,
   type CandidateInvoiceLine,
@@ -161,6 +162,41 @@ describe("returnRequestPieces", () => {
   });
   it("bare qty with no box size is already pieces", () => {
     expect(returnRequestPieces({ qty: 15 })).toBe(15);
+  });
+});
+
+describe("resolveReturnPackFactor — SA-101(2)/B3/B765 interim guard", () => {
+  it("a single candidate pack is used — the sound case, no conflict", () => {
+    expect(resolveReturnPackFactor([12], null)).toEqual({ factor: 12, conflictingPacks: null });
+  });
+
+  it("packs 12 and 4 disagree — reports the conflict, ascending, no usable factor", () => {
+    expect(resolveReturnPackFactor([12, 4], null)).toEqual({
+      factor: null,
+      conflictingPacks: [4, 12],
+    });
+  });
+
+  it("the same pack repeated across multiple lines is NOT a conflict", () => {
+    expect(resolveReturnPackFactor([12, 12, 12], null)).toEqual({
+      factor: 12,
+      conflictingPacks: null,
+    });
+  });
+
+  it("no candidate lines at all falls back to the product's own unitsPerBox", () => {
+    expect(resolveReturnPackFactor([], 6)).toEqual({ factor: 6, conflictingPacks: null });
+  });
+
+  it("no candidates AND no product unitsPerBox: a null factor — the caller must refuse before using it as a boxed multiplier", () => {
+    expect(resolveReturnPackFactor([], null)).toEqual({ factor: null, conflictingPacks: null });
+  });
+
+  it("null/undefined/zero entries among the candidates are ignored, not counted as a distinct pack", () => {
+    expect(resolveReturnPackFactor([null, undefined, 0, 12], null)).toEqual({
+      factor: 12,
+      conflictingPacks: null,
+    });
   });
 });
 

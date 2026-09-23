@@ -115,6 +115,44 @@ describe("buildQuoteRequest — never a bare qty", () => {
       "stop-1",
     );
   });
+
+  // SA-101(2)/B3/B765: `lines` is keyed by productId elsewhere in the dialog
+  // (updateLine/removeLine), so a source order with two lines of one product (a Case line
+  // and a pack line, say) can hydrate two draft rows sharing a productId. Before this fix
+  // each became its OWN request item; the server's per-item allocation re-derives its
+  // remaining-supply view fresh per item rather than decrementing a shared one, so two
+  // items for one product would each draw against the SAME undiminished supply — a silent
+  // double-count. This pins that the request always merges them into ONE item.
+  it("merges two draft rows sharing a productId into ONE request item, summing boxes/pieces (never double-counted)", () => {
+    const req = buildQuoteRequest("cust-1", [
+      line({ productId: "prod-1", boxes: "1", pieces: "0" }),
+      line({ productId: "prod-1", boxes: "0", pieces: "5" }),
+    ]);
+    expect(req.items).toEqual([{ productId: "prod-1", qty: 1, boxes: 1, pieces: 5 }]);
+  });
+
+  it("three rows sharing a productId still merge into one — not just a pairwise merge", () => {
+    const req = buildQuoteRequest("cust-1", [
+      line({ productId: "prod-1", pieces: "2" }),
+      line({ productId: "prod-1", pieces: "3" }),
+      line({ productId: "prod-1", pieces: "4" }),
+    ]);
+    expect(req.items).toEqual([{ productId: "prod-1", qty: 1, boxes: 0, pieces: 9 }]);
+  });
+
+  it("does NOT merge across different products — each keeps its own item", () => {
+    const req = buildQuoteRequest("cust-1", [
+      line({ productId: "prod-1", pieces: "2" }),
+      line({ productId: "prod-2", pieces: "3" }),
+    ]);
+    expect(req.items).toEqual(
+      expect.arrayContaining([
+        { productId: "prod-1", qty: 1, boxes: 0, pieces: 2 },
+        { productId: "prod-2", qty: 1, boxes: 0, pieces: 3 },
+      ]),
+    );
+    expect(req.items).toHaveLength(2);
+  });
 });
 
 describe("groupQuoteChunks", () => {
@@ -332,6 +370,44 @@ describe("buildCaptureRequest — quantities only, never a price the quote displ
       reason: "DAMAGED",
     });
     expect(req.items.map((i) => i.productId)).toEqual(["prod-1"]);
+  });
+
+  // SA-101(2)/B3/B765 — same double-count guard as buildQuoteRequest's, on the capture path.
+  it("merges two draft rows sharing a productId into ONE capture item, summing boxes/pieces", () => {
+    const req = buildCaptureRequest({
+      customerId: "cust-1",
+      orderId: "order-1",
+      lines: [
+        line({ productId: "prod-1", boxes: "1", pieces: "0" }),
+        line({ productId: "prod-1", boxes: "0", pieces: "3" }),
+      ],
+      returnKey: "key-1",
+      reason: "DAMAGED",
+    });
+    expect(req.items).toEqual([{ productId: "prod-1", qty: 1, boxes: 1, pieces: 3 }]);
+  });
+
+  it("merging keeps the FIRST occurrence's reason/condition — quantities are the only thing summed", () => {
+    const req = buildCaptureRequest({
+      customerId: "cust-1",
+      orderId: "order-1",
+      lines: [
+        line({ productId: "prod-1", pieces: "2", reason: "DAMAGED", note: "first row" }),
+        line({ productId: "prod-1", pieces: "3", reason: "WRONG_ITEM", note: "second row" }),
+      ],
+      returnKey: "key-1",
+      reason: "QUALITY_ISSUE",
+    });
+    expect(req.items).toEqual([
+      {
+        productId: "prod-1",
+        qty: 1,
+        boxes: 0,
+        pieces: 5,
+        reason: "DAMAGED",
+        condition: "first row",
+      },
+    ]);
   });
 });
 
