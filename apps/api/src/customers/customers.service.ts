@@ -1506,6 +1506,14 @@ export class CustomersService {
         include: { payments: true },
       });
       if (!inv) throw new NotFoundException("Invoice not found");
+      // B310 (DRAFT half): a DRAFT invoice has not been issued yet — its line items are still
+      // editable and no legal document exists. CREDIT_NOT_APPLICABLE deliberately excludes
+      // DRAFT (other consumers of that shared set, e.g. the credit-exposure reads at :1835,
+      // rely on DRAFT staying applicable there), so this is a guard dedicated to the
+      // advance-apply path, never an edit to the shared set — see invoice-status-sets.ts.
+      if (inv.status === "DRAFT") {
+        throw new BadRequestException("Cannot apply advance payment to a DRAFT invoice");
+      }
       if (CREDIT_NOT_APPLICABLE.includes(inv.status)) {
         throw new BadRequestException(
           `Cannot apply advance payment to invoice with status ${inv.status}`,
