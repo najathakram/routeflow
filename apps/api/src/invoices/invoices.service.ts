@@ -7,6 +7,7 @@ import {
   NotFoundException,
 } from "@nestjs/common";
 import * as unitAware from "../orders/unit-aware-guard";
+import { ORDER_UNIT_AWARE_LINE_SELECT, orderSummaryWithUnitFlag } from "./order-unit-aware-flag";
 import { assertNoNegativeLineSubtotal } from "../common/money-invariants.util";
 import { randomUUID } from "crypto";
 import { PrismaService } from "../prisma/prisma.service";
@@ -3237,22 +3238,7 @@ export class InvoicesService {
         },
         // The web invoice page gates Edit/Send for an order-linked DRAFT until the
         // order is delivered (the "pending mirror"). Surface the order's status here.
-        order: {
-          select: {
-            status: true,
-            orderNumber: true,
-            // B797: the client-side units_v1 edit guard (B641) only ever checked the
-            // invoice's OWN items, but recomputeOrderFromInvoices back-syncs an edit
-            // onto the linked order's unit-aware line even when the invoice's own
-            // items carry no unitLabel (same reason assertInvoiceRewriteAllowed below
-            // checks both) — existence-only, never returned raw (see orderHasUnitAwareLine).
-            lineItems: {
-              where: { unitLabel: { not: null }, status: { not: "CANCELLED" } },
-              select: { id: true },
-              take: 1,
-            },
-          },
-        },
+        order: { select: { status: true, orderNumber: true, ...ORDER_UNIT_AWARE_LINE_SELECT } },
       },
     });
     if (!inv) throw new NotFoundException("Invoice not found");
@@ -3297,14 +3283,9 @@ export class InvoicesService {
     // so CUSTOMER viewers of this same document honor the tenant's
     // hide-original-price preference too.
     const hideOriginalPrice = (await this.systemConfig.get("invoice.hideOriginalPrice")) === "true";
-    // B797: existence-only flag both clients use to extend their edit guard to the
-    // linked order's lines, not just the invoice's own — the raw lineItems array
-    // fetched above for this check is never returned.
-    const orderHasUnitAwareLine = (inv.order?.lineItems?.length ?? 0) > 0;
     return {
       ...inv,
-      order: inv.order ? { status: inv.order.status, orderNumber: inv.order.orderNumber } : null,
-      orderHasUnitAwareLine,
+      ...orderSummaryWithUnitFlag(inv.order), // B797
       balanceDue,
       paidAmount,
       creditApplied,
@@ -3327,15 +3308,13 @@ export class InvoicesService {
       throw new BadRequestException("Only DRAFT invoices can be edited");
     await this.assertOrderInvoiceUnlocked(inv);
 
-    // units_v1: BOTH rewrite paths — the item replace (re-split at the LIVE pack) and the
-    // discount/shipping recompute, whose order back-sync writes onto the linked order's lines.
+    // units_v1: guards BOTH rewrite paths (item replace; discount/shipping's order back-sync).
     if (dto.items || dto.discount !== undefined || dto.shippingFee !== undefined) {
       await unitAware.assertInvoiceRewriteAllowed(this.prisma.forTenant(), inv);
     }
 
     if (dto.items) {
-      // Pre-fetch products for boxes/pieces resolution AND the regulated-category
-      // snapshot (so an edited DRAFT re-attributes its regulated lines).
+      // Pre-fetch products for boxes/pieces + the regulated-category snapshot (re-attribution).
       const productIds = [
         ...new Set(dto.items.filter((i) => i.productId).map((i) => i.productId!)),
       ];
