@@ -11,7 +11,7 @@ jest.mock("../common/msrp", () => ({
 }));
 
 import { Test } from "@nestjs/testing";
-import { BadRequestException, ForbiddenException } from "@nestjs/common";
+import { BadRequestException, ForbiddenException, NotFoundException } from "@nestjs/common";
 import { InvoicesService } from "./invoices.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { EntitlementsService } from "../billing/entitlements.service";
@@ -158,9 +158,18 @@ describe("InvoicesService.create — sell a line by a unit (units_v1, 4c-1)", ()
   });
 
   it("a unit on an invoice EDIT is refused (the shared DTO accepts it; update() would store a pack line)", async () => {
+    prisma.invoice.findUnique.mockResolvedValue({ id: "inv-1", status: "DRAFT" });
     await expect(
       service.update("inv-1", { items: [line({ unitLabel: "Case" })] } as never),
     ).rejects.toThrow(/invoice edit yet/);
+    expect(prisma.invoice.update).not.toHaveBeenCalled();
+  });
+
+  it("a unit edit of a MISSING invoice is a 404, not the unit refusal (findOneOrThrow runs first)", async () => {
+    prisma.invoice.findUnique.mockResolvedValue(null);
+    await expect(
+      service.update("nope", { items: [line({ unitLabel: "Case" })] } as never),
+    ).rejects.toBeInstanceOf(NotFoundException);
     expect(prisma.invoice.update).not.toHaveBeenCalled();
   });
 

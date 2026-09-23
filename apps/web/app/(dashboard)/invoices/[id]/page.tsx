@@ -32,8 +32,7 @@ import {
   Clock,
   Wallet,
 } from "lucide-react";
-import { Badge, Button, Card, Modal, cn,
-  TAP_TARGET, useToast } from "@routeflow/ui/web";
+import { Badge, Button, Card, Modal, cn, TAP_TARGET, useToast } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
 import {
   useInvoice,
@@ -43,7 +42,6 @@ import {
   useVoidInvoice,
   useReopenInvoice,
   useRecordInvoicePayment,
-  useCreateInvoice,
   useWriteOffInvoice,
   useUpdateInvoicePayment,
   useDeleteInvoicePayment,
@@ -71,7 +69,9 @@ import { useUnapplyCreditNote } from "@/lib/api/credit-notes";
 import { useCustomerAdvancePayments } from "@/lib/api/customers";
 import { fmt, fmtCalendarDate, fmtDate, isInternalEmail, todayIso } from "@/lib/formatting";
 import { getDaysForTerms, addDaysIso } from "@/lib/invoice-terms";
-import { formatQtySplit, remainingCapacity, resolveConfirmedAmounts } from "@routeflow/pricing";
+import { remainingCapacity, resolveConfirmedAmounts } from "@routeflow/pricing";
+import { useDuplicateInvoiceAction } from "@/lib/use-duplicate-invoice-action";
+import { invoiceLineQtyText } from "@/lib/invoice-line-unit";
 import { CHECK_TRANSITIONS } from "@routeflow/types";
 import { InvoiceTotalsSummary } from "./InvoiceTotalsSummary";
 import {
@@ -496,7 +496,10 @@ function RecordPaymentModal({
               <button
                 type="button"
                 onClick={() => setFile(null)}
-                className={cn(TAP_TARGET, "shrink-0 text-navy/50 transition-colors hover:text-danger")}
+                className={cn(
+                  TAP_TARGET,
+                  "shrink-0 text-navy/50 transition-colors hover:text-danger",
+                )}
                 title="Remove attachment"
               >
                 <X className="h-3.5 w-3.5" />
@@ -1530,7 +1533,7 @@ export default function InvoiceDetailPage() {
   const voidInvoice = useVoidInvoice();
   const reopenInvoice = useReopenInvoice();
   const recordPayment = useRecordInvoicePayment();
-  const createInvoice = useCreateInvoice();
+  const { duplicate: duplicateInvoice } = useDuplicateInvoiceAction();
   const writeOffInvoice = useWriteOffInvoice();
   const updatePayment = useUpdateInvoicePayment();
   const deletePayment = useDeleteInvoicePayment();
@@ -2051,38 +2054,10 @@ export default function InvoiceDetailPage() {
     );
   };
 
-  const handleDuplicate = () => {
-    const dto = {
-      customerId: invoice.customerId,
-      dueDate: (() => {
-        const d = new Date();
-        d.setDate(d.getDate() + 30);
-        return d.toISOString().slice(0, 10);
-      })(),
-      items: (invoice.items ?? []).map((it) => ({
-        productId: it.productId,
-        description: it.description,
-        qty: Number(it.qty),
-        unitPrice: Number(it.unitPrice),
-      })),
-      notes: invoice.notes,
-      referenceNumber: invoice.referenceNumber,
-      subject: invoice.subject,
-    };
-    createInvoice.mutate(dto, {
-      onSuccess: (newInv) => {
-        toast({
-          title: "Invoice duplicated",
-          description: `New invoice ${newInv.invoiceNumber} created as a draft.`,
-          variant: "success",
-        });
-        router.push(`/invoices/${newInv.id}`);
-      },
-      onError: () => {
-        toast({ title: "Failed to duplicate invoice", variant: "error" });
-      },
-    });
-  };
+  // B644: the SERVER duplicates (it copies each line's stored boxes/pieces/subtotal verbatim). The web
+  // never rebuilds a line from { qty, unitPrice }: qty is in base pieces, a boxed line's unitPrice is per
+  // box, so that rebuild billed 6 boxes of 12 at $40 ($240) as 72 x $40 = $2,880.
+  const handleDuplicate = () => duplicateInvoice(invoice.id);
 
   const handleUpdateTerms = (fields: EditTermsFields) => {
     updateTerms.mutate(
@@ -2540,7 +2515,7 @@ export default function InvoiceDetailPage() {
                         <td className="px-8 py-3 font-medium text-navy">
                           {item.description}
                           {item.notes && (
-                            <p className="mt-0.5 text-xs font-normal italic text-navy/60">
+                            <p className="mt-0.5 whitespace-pre-line text-xs font-normal italic text-navy/60">
                               {item.notes}
                             </p>
                           )}
@@ -2554,11 +2529,7 @@ export default function InvoiceDetailPage() {
                                 : undefined
                             }
                           >
-                            {formatQtySplit({
-                              qty: item.qty,
-                              boxes: item.boxes,
-                              pieces: item.pieces,
-                            })}
+                            {invoiceLineQtyText(item)}
                           </span>
                           {/* BUY_N_GET_M: name the free units, or the reduced
                               subtotal reads as a pricing error. */}
@@ -2805,14 +2776,20 @@ export default function InvoiceDetailPage() {
                               <>
                                 <button
                                   onClick={() => setEditingPayment(pmt)}
-                                  className={cn(TAP_TARGET, "touch-reveal rounded p-1 text-navy/30 opacity-0 transition-all group-hover:opacity-100 hover:text-brand-500")}
+                                  className={cn(
+                                    TAP_TARGET,
+                                    "touch-reveal rounded p-1 text-navy/30 opacity-0 transition-all group-hover:opacity-100 hover:text-brand-500",
+                                  )}
                                   title="Edit payment"
                                 >
                                   <Pencil className="h-3.5 w-3.5" />
                                 </button>
                                 <button
                                   onClick={() => setDeletingPayment(pmt)}
-                                  className={cn(TAP_TARGET, "touch-reveal rounded p-1 text-navy/30 opacity-0 transition-all group-hover:opacity-100 hover:text-danger")}
+                                  className={cn(
+                                    TAP_TARGET,
+                                    "touch-reveal rounded p-1 text-navy/30 opacity-0 transition-all group-hover:opacity-100 hover:text-danger",
+                                  )}
                                   title="Delete payment"
                                 >
                                   <Trash2 className="h-3.5 w-3.5" />

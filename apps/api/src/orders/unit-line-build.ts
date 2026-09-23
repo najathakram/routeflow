@@ -87,7 +87,11 @@ export const isUnitAware = (resolved: ResolvedLineUnits): boolean => resolved.un
  * (unlisted) line has no ladder, so a unit on one is refused rather than silently dropped.
  */
 export async function assertMayUseUnits(
-  items: ReadonlyArray<{ unitLabel?: string | null; productId?: string | null }>,
+  items: ReadonlyArray<{
+    unitLabel?: string | null;
+    productId?: string | null;
+    id?: string | null;
+  }>,
   ctx: {
     isStaff: boolean;
     tenantId: string | null | undefined;
@@ -98,7 +102,9 @@ export async function assertMayUseUnits(
   if (!ctx.isStaff) {
     throw new BadRequestException("Only staff can choose a selling unit on an order line.");
   }
-  if (items.some((i) => requestsUnit(i) && !i.productId)) {
+  // An `id`-only edit of an EXISTING line (updateOrderItems, A1) carries no productId of its
+  // own — that never means "custom/unlisted" the way it does on a fresh create() line.
+  if (items.some((i) => requestsUnit(i) && !i.productId && !i.id)) {
     throw new BadRequestException("A custom line has no selling units — pick a catalog product.");
   }
   if (!ctx.tenantId || !(await ctx.hasFlag(ctx.tenantId, "flag.units_v1"))) {

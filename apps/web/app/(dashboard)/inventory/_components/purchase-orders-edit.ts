@@ -1,7 +1,13 @@
-import { normalizeBoxesPieces, roundUnitCost } from "@routeflow/pricing";
+import {
+  buildPOLine,
+  derivedCaseCost,
+  normalizeBoxesPieces,
+  roundUnitCost,
+} from "@routeflow/pricing";
 import type { UpdatePurchaseOrderItemInput } from "@/lib/api/inventory";
 import {
   resolvePOLine,
+  resolvePOLineAmounts,
   type POItem,
   type POLineItem,
   type PurchaseOrder,
@@ -68,7 +74,16 @@ export function toEditLine(item: POItem, unitsPerBox: number): EditLine {
       qty: "",
       boxes: String(split.boxes ?? 0),
       pieces: String(split.pieces ?? 0),
-      unitCost: String(roundUnitCost(cost * unitsPerBox)),
+      // the case cost derived from the stored EXACT total when there is one (a new row of 1,000 cases at
+      // $11,000.00 reads back 11), else honestly from the per-piece cost at 4 dp: an OLD drifted row (0.9167 a
+      // piece, total 11,000.40) reads back 11.0004, never masked; the operator re-enters 11.00 (reading
+      // never rewrites a row)
+      unitCost: String(
+        derivedCaseCost(cost, unitsPerBox, {
+          totalCost: item.totalCost != null ? Number(item.totalCost) : null,
+          qtyOrdered: ordered,
+        }),
+      ),
     };
   }
   return { ...base, qty: String(ordered), boxes: "", pieces: "", unitCost: String(cost) };
@@ -103,7 +118,11 @@ export function validateEditLines(
   return null;
 }
 
-/** The PATCH `items` array — pieces and a per-piece cost, existing lines keep their id / sku / pack size. */
+/**
+ * The PATCH `items` array. A boxed line goes as the ENTERED case figures (packSize, caseCost, cases,
+ * loosePieces): the server computes quantity, per-piece cost and the exact total and ignores any client figure.
+ * A per-piece line goes as pieces and a per-piece cost. Existing lines keep their id / sku (and pack size).
+ */
 export function buildUpdateItems(
   lines: EditLine[],
   unitsPerBoxFor: (productId: string) => number,
@@ -111,7 +130,21 @@ export function buildUpdateItems(
   return lines
     .filter((l) => l.productId || l.id)
     .map((l) => {
-      const { qty, unitCost } = resolvePOLine(l, unitsPerBoxFor(l.productId));
+      const upb = unitsPerBoxFor(l.productId);
+      if (upb > 1) {
+        const a = resolvePOLineAmounts(l, upb);
+        return {
+          ...(l.id ? { id: l.id } : {}),
+          productId: l.productId,
+          packSize: upb,
+          // Decimal(10,4) at most, as the DTO enforces
+          caseCost: roundUnitCost(a.caseCost ?? 0),
+          cases: a.cases ?? 0,
+          loosePieces: a.loosePieces ?? 0,
+          ...(l.id ? { sku: l.sku ?? null } : {}),
+        };
+      }
+      const { qty, unitCost } = resolvePOLine(l, upb);
       return {
         ...(l.id ? { id: l.id } : {}),
         productId: l.productId,
@@ -123,7 +156,27 @@ export function buildUpdateItems(
     });
 }
 
-/** Did the operator actually change the lines (vs. only the header)? Tolerant of decimal round-trips. */
+/** What an update item stores: quantity, per-piece cost and the exact line total (null if it is unusable). */
+function amountsOf(it: UpdatePurchaseOrderItemInput) {
+  try {
+    return it.caseCost !== undefined
+      ? buildPOLine({
+          packSize: it.packSize ?? 0,
+          caseCost: it.caseCost,
+          cases: it.cases ?? 0,
+          loosePieces: it.loosePieces ?? 0,
+        })
+      : buildPOLine({ qtyOrdered: it.qtyOrdered ?? 0, unitCost: it.unitCost ?? 0 });
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Did the operator actually change the lines (vs. only the header)? Tolerant of decimal round-trips. The line
+ * TOTAL is compared too: re-entering the case cost 11.0004 as 11.00 changes the total (11,000.40 to 11,000.00)
+ * with the same quantity and the same 4 dp per-piece cost, so quantity and cost alone would miss it.
+ */
 export function linesChanged(
   po: Pick<PurchaseOrder, "items">,
   items: UpdatePurchaseOrderItemInput[],
@@ -135,8 +188,12 @@ export function linesChanged(
     const was = it.id ? byId.get(it.id) : undefined;
     if (!was) return true;
     if (was.productId !== it.productId) return true;
-    if (Math.abs(Number(was.qtyOrdered) - it.qtyOrdered) > 0.0005) return true;
-    if (Math.abs(Number(was.unitCost) - it.unitCost) > 0.00005) return true;
+    const now = amountsOf(it);
+    if (!now) return true;
+    if (Math.abs(Number(was.qtyOrdered) - now.qtyOrdered) > 0.0005) return true;
+    if (Math.abs(Number(was.unitCost) - now.unitCost) > 0.00005) return true;
+    if (was.totalCost != null && Math.abs(Number(was.totalCost) - now.totalCost) > 0.005)
+      return true;
   }
   return false;
 }

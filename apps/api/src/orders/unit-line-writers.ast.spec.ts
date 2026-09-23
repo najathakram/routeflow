@@ -36,15 +36,23 @@ interface Row {
   kind: Kind;
   why: string;
   needs?: string;
+  /**
+   * HYBRID rows only (units_v1 A1): additional named calls that must ALSO precede the first line
+   * write. `updateOrderItems` is the one row that is neither purely GUARDED nor purely CONVERTED —
+   * STAFF is converted (resolves + builds via `resolveLineUnits`), CUSTOMER/DRIVER stay refused by
+   * the narrowed `assertOrderEditAllowed`. A plain CONVERTED row has no ordering requirement; a
+   * HYBRID one is checked on BOTH its `needs` call and every `alsoNeeds` call.
+   */
+  alsoNeeds?: string[];
 }
 
 const G = "assertOrderEditAllowed";
 const INVENTORY: Record<string, Row> = {
   // ── orders ──────────────────────────────────────────────────────────────────
   "orders/orders.service.ts::OrdersService.updateOrderItems": {
-    kind: "GUARDED",
-    needs: G,
-    why: "every branch re-derives factor+price from the live product",
+    kind: "CONVERTED",
+    alsoNeeds: [G],
+    why: "HYBRID (units_v1 A1): staff resolves+builds every unit-aware site via resolveLineUnits (resolved once, up front, into a map — unit-line-edit.ts); CUSTOMER/DRIVER stay refused by the narrowed assertOrderEditAllowed",
   },
   "orders/orders.service.ts::OrdersService.approveChangeRequestAtStop": {
     kind: "GUARDED",
@@ -154,8 +162,8 @@ const INVENTORY: Record<string, Row> = {
     why: "removes the invoice's lines",
   },
   "estimates/estimates.service.ts::EstimatesService.convertToInvoice": {
-    kind: "PACK_ONLY_CREATE",
-    why: "EstimateItem has no unit columns; writes plain lines",
+    kind: "CONVERTED",
+    why: "unit-aware estimate lines are refused pre-flight (assertNoUnitAwareLines) before reserveNext; convertToInvoice stays CONVERTED — it still calls resolveLineUnits per line inside the tx, and buildManualInvoiceLines builds the invoice lines (B659)",
   },
   "import/import.service.ts::ImportService.importInvoices": {
     kind: "PACK_ONLY_CREATE",
@@ -548,9 +556,20 @@ describe("every order/invoice line writer is classified (units_v1)", () => {
         failures.push(`${key} does not call ${needs}`);
         continue;
       }
-      // SAFE_COPY calls the builder while writing; only GUARDED must dominate the first write.
-      if (row.kind === "GUARDED" && Math.min(...positions) > firstLineWritePos(node, sf)) {
+      // SAFE_COPY calls the builder while writing; GUARDED and a HYBRID CONVERTED row (alsoNeeds)
+      // must dominate the first write on BOTH their own call and every alsoNeeds call.
+      const firstWrite = firstLineWritePos(node, sf);
+      const isHybrid = (row.alsoNeeds?.length ?? 0) > 0;
+      if ((row.kind === "GUARDED" || isHybrid) && Math.min(...positions) > firstWrite) {
         failures.push(`${key} calls ${needs} only AFTER its first line write`);
+      }
+      for (const also of row.alsoNeeds ?? []) {
+        const alsoPositions = referencePositions(node, also, { callOnly: true });
+        if (alsoPositions.length === 0) {
+          failures.push(`${key} does not call ${also}`);
+        } else if (Math.min(...alsoPositions) > firstWrite) {
+          failures.push(`${key} calls ${also} only AFTER its first line write`);
+        }
       }
     }
     expect(failures).toEqual([]);

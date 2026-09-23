@@ -100,7 +100,7 @@ export default function MergeRequestsPage() {
         <Link
           href="/admin/buyers"
           aria-label="Back to buyers"
-          className="text-slate-400 hover:text-white"
+          className="admin-tap-text text-slate-400 hover:text-white"
         >
           <ArrowLeft className="h-5 w-5" />
         </Link>
@@ -211,7 +211,7 @@ export default function MergeRequestsPage() {
                       )}
                       <Link
                         href={`/admin/buyers/merge-requests/${req.id}`}
-                        className="flex items-center gap-1 text-indigo-400 hover:text-indigo-300 text-xs font-medium"
+                        className="admin-tap-text flex items-center gap-1 text-indigo-400 hover:text-indigo-300 text-xs font-medium"
                       >
                         Review <ExternalLink className="h-3 w-3" />
                       </Link>

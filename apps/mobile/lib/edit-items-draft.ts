@@ -27,8 +27,15 @@ import {
   type OriginalLine,
 } from "./order-item-diff";
 import { editedLineFreeUnits } from "./invoice-totals";
+import { lineUnitsPerBox } from "./at-door-line-units";
 import { trayRowsFrom, type TrayRow } from "./scan-tray";
+import { incrementLine, incrementLinePiece } from "./sale-line";
 import type { UpdateOrderItemInput } from "./api/orders";
+
+/** Shared with the route file's own "Add unlisted item" flow. */
+export function newLocalId(): string {
+  return `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
 
 /**
  * One row of the in-progress edit. `qty` is total pieces (server's source of
@@ -54,6 +61,13 @@ export type DraftItem = {
   lineId?: string;
   /** The line was stored with a box split — send boxes/pieces on save only then. */
   boxSplit?: boolean;
+  /**
+   * units_v1: the unit this line is sold by ("Case"…), carried unchanged from
+   * the stored line — this screen never sets or clears one. Required on the
+   * UPDATE wire payload whenever set, or the server refuses the edit
+   * (UNIT_AWARE_LINE) since a bare qty would be misread as pieces (B707).
+   */
+  unitLabel?: string | null;
   /** Set when this row substitutes a different product onto its original line. */
   substituteProductId?: string;
   /**
@@ -102,6 +116,210 @@ function toNumber(v: number | string | null | undefined): number {
     return Number.isFinite(n) ? n : 0;
   }
   return 0;
+}
+
+/**
+ * Server lines -> the editor's staged shape. Lives here, not the route file,
+ * so red-first tests can reach it directly — jest cannot import a route file
+ * (expo-router hooks fire on import), same reason B657/#1171 pulled
+ * `lineUnitsPerBox` out of `adjust.tsx` into `at-door-line-units.ts`.
+ *
+ * B707: `unitsPerBox` comes from the line's OWN stored snapshot first via
+ * `lineUnitsPerBox` — the live product is only a fallback for a legacy line
+ * with none, never the other way. Reading the live product ALONE (the
+ * pre-fix bug) desyncs an already-agreed line the moment its product is
+ * repacked: a unit line's fabricated qty change gets refused server-side
+ * (UNIT_AWARE_LINE, since the request then carries no `unitLabel`), and a
+ * legacy box-split line is silently re-denominated at the new pack size.
+ * `unitLabel` is carried through unchanged too — this screen never sets or
+ * clears a line's unit, only resends the one it was loaded with (see
+ * `stagedDiffItems` below, which puts it on the wire for a unit line's save).
+ */
+export function hydrateFromOrder(order: { lineItems?: readonly any[] | null } | null | undefined): {
+  draft: Record<string, DraftItem>;
+  unlisted: UnlistedDraft[];
+} {
+  const next: Record<string, DraftItem> = {};
+  const nextUnlisted: UnlistedDraft[] = [];
+  for (const li of order?.lineItems ?? []) {
+    // Unlisted line (no productId): carry it through the replace-all save so
+    // it isn't lost. `name` holds the free-text label.
+    // Skip already-cancelled lines (they aren't editable and shouldn't diff).
+    if ((li as any).status === "CANCELLED") continue;
+    if (!li.productId) {
+      nextUnlisted.push({
+        id: li.id ?? newLocalId(),
+        lineId: li.id ?? undefined,
+        name: li.name ?? "Unlisted item",
+        unitPrice: toNumber(li.unitPrice),
+        qty: toNumber(li.qty),
+        notes: (li as any).notes ?? undefined,
+      });
+      continue;
+    }
+    const product = (li as any).product ?? {};
+    const catalogPrice = toNumber(product.pricePerUnit ?? li.unitPrice);
+    const unitsPerBox = lineUnitsPerBox({ unitsPerBox: li.unitsPerBox, product });
+    // B775 (SA-101): key by the line's OWN id, never productId. units_v1 can
+    // legitimately carry two lines for the same product (a Case line + a pack
+    // line), and a non-unit order can too (create() maps dto.items one
+    // OrderItem per entry with no dedupe, no @@unique([orderId, productId])).
+    // Keying by productId collapsed the second line into the first at
+    // hydration; order-item-diff.ts then read the dropped line's id as
+    // missing from the surviving set and emitted {id, action:"DELETE"} for
+    // it — even on a zero-edit Save, since the collision happens here, before
+    // any operator interaction. `li.id` is always present for an existing
+    // (server-loaded) line; the `?? li.productId` fallback only guards a
+    // malformed row from ever producing an unusable `undefined` key.
+    next[li.id ?? li.productId] = {
+      productId: li.productId,
+      qty: toNumber(li.qty),
+      boxes: li.boxes ?? undefined,
+      pieces: li.pieces ?? undefined,
+      unitsPerBox,
+      unitLabel: li.unitLabel ?? undefined,
+      unitPrice: toNumber(li.unitPrice),
+      catalogPrice,
+      name: product.name ?? "Item",
+      unit: product.unit,
+      overrideReason: li.overrideReason ?? undefined,
+      notes: (li as any).notes ?? undefined,
+      lineId: li.id ?? undefined,
+      // Preserve the stored denomination so a qty-only edit doesn't invent a split.
+      boxSplit: li.boxes != null || li.pieces != null,
+      // NEW (P10-POS-1): read via the existing `any`-cast `product` ref above —
+      // the server already returns these on the order's embedded product, only
+      // AdminOrder's TS type doesn't declare them yet (out of scope here).
+      averageCost: product.averageCost ?? null,
+      category: product.category ?? null,
+      // BUY_N_GET_M: the snapshot plus the selling-unit count it was earned
+      // at, so a qty edit rescales it exactly like the server does on save.
+      promoFreeUnits: li.promoFreeUnits ?? null,
+      promoBaseUnits: li.promoFreeUnits
+        ? Math.trunc(Number(li.boxes != null ? li.boxes : li.qty) || 0)
+        : null,
+    };
+  }
+  return { draft: next, unlisted: nextUnlisted };
+}
+
+/**
+ * B775 (fleet lead review, rules 1+2): the draft key a scan/add should
+ * write to. Merges into an EXISTING entry for the SAME product AND the
+ * SAME unit (`unitLabel` — `undefined`/`null` both mean "base/boxed", the
+ * only shape a scan can ever represent; a scan must never merge into a
+ * units_v1 selling-unit line like a Case). Matched by VALUE, since the
+ * draft record is keyed by lineId/a fresh local id, never bare productId.
+ * `Object.entries` iteration order is the draft's own (display) order, so
+ * with more than one legacy match (two non-unit lines already on one
+ * product — reachable only pre-fix, or from data written outside this
+ * screen) this deliberately merges into the FIRST and never touches the
+ * others. No match at all — including every genuinely new addition — gets
+ * a FRESH key, never the bare productId: two new same-product rows added
+ * in different units (or two independent adds before either is saved)
+ * must never collide the same way hydration did.
+ *
+ * CAUTION (currently unreachable, but load-bearing the day it isn't): a
+ * `new:<id>` row's key is never re-keyed to the server's real id in place —
+ * this screen only ever re-reads it via `hydrateFromOrder` after a save,
+ * which always follows `leaveEditor()` and remounts the screen fresh. That
+ * is safe only as long as every successful save leaves the editor. The day a
+ * "save and stay" flow exists, a saved `new:<id>` row would keep its local
+ * key while the record it maps to now has a real lineId — any code added
+ * for that flow must explicitly re-key the draft entry (swap the `new:<id>`
+ * key for the returned lineId), not assume this function's callers already
+ * handle it.
+ */
+export function resolveDraftKeyForPick(
+  draft: Record<string, DraftItem>,
+  productId: string,
+  unitLabel?: string | null,
+): string {
+  if (!unitLabel) {
+    const match = Object.entries(draft).find(
+      ([, it]) => it.productId === productId && !it.unitLabel,
+    );
+    if (match) return match[0];
+  }
+  return newDraftKey();
+}
+
+/**
+ * B775 (SA-103): the key for a NOT-YET-SAVED row — always `new:` prefixed,
+ * never a bare productId (two unsaved same-product rows, e.g. one added
+ * per unit, would collide again exactly like the hydration bug this fixes)
+ * and never a bare counter alone (recognizably distinct from a real DB
+ * line id, e.g. for the save response's re-key step). Reuses `newLocalId`'s
+ * existing per-session-unique generator rather than introducing separate
+ * counter state.
+ */
+export function newDraftKey(): string {
+  return `new:${newLocalId()}`;
+}
+
+/** The inputs `applyPickToDraft` needs beyond the draft key it writes to. */
+export interface PickInput {
+  productId: string;
+  unitsPerBox: number | null;
+  /** The price to start a FRESH row at — already resolved (price-history vs.
+   *  tier/list) by the caller; this function never re-derives it. */
+  startPrice: number;
+  catalogPrice: number;
+  name: string;
+  unit?: string;
+  kind: "case" | "piece";
+}
+
+/**
+ * SA-108d (E44 correction of SA-108a): the merge/add transform a scan or tap
+ * applies to the draft, extracted to a PURE function of `(draft, key, input)`
+ * alone — no closure over component state, no side effects. This is what
+ * makes it safe to run TWICE for one logical pick: once synchronously by the
+ * caller (`draftRef.current = applyPickToDraft(draftRef.current, key,
+ * input)`) to keep the ref an accurate same-tick mirror, and once more
+ * whenever React actually processes the `setDraft` update it was ALSO handed
+ * to — a functional setState updater must never itself write to a ref (see
+ * `resolveDraftKeyForPick`'s caller in edit-items.tsx): React does not
+ * reliably run it synchronously even for the first call in a same-tick
+ * burst, since the eager-dispatch path also requires the alternate fiber's
+ * lanes to be empty, which a component's own earlier renders can leave
+ * non-empty. `key` is resolved by the CALLER (via `resolveDraftKeyForPick`)
+ * before this runs — never re-derived here, and never re-derived from an
+ * existing entry's own fields (the SA-108 bug this whole lineage fixes).
+ */
+export function applyPickToDraft(
+  draft: Record<string, DraftItem>,
+  key: string,
+  input: PickInput,
+): Record<string, DraftItem> {
+  const existing = draft[key];
+  const upb = Number(existing?.unitsPerBox ?? input.unitsPerBox ?? 0);
+  const boxed = upb > 1;
+  if (existing) {
+    if (boxed) {
+      const line =
+        input.kind === "piece"
+          ? incrementLinePiece(existing, true, upb)
+          : incrementLine(existing, true, upb);
+      return { ...draft, [key]: { ...line, boxSplit: true } };
+    }
+    return { ...draft, [key]: { ...existing, qty: (existing.qty ?? 0) + 1 } };
+  }
+  const base = {
+    productId: input.productId,
+    unitsPerBox: input.unitsPerBox,
+    unitPrice: input.startPrice,
+    catalogPrice: input.catalogPrice,
+    name: input.name,
+    unit: input.unit,
+  };
+  if (boxed) {
+    // 1 box for a case scan/tap; 1 LOOSE piece for a piece-code scan.
+    return input.kind === "piece"
+      ? { ...draft, [key]: { ...base, qty: 1, boxes: 0, pieces: 1, boxSplit: true } }
+      : { ...draft, [key]: { ...base, qty: upb, boxes: 1, pieces: 0, boxSplit: true } };
+  }
+  return { ...draft, [key]: { ...base, qty: 1 } };
 }
 
 /**
@@ -198,6 +416,7 @@ export function stagedDiffItems(
     overrideReason: i.overrideReason,
     substituteProductId: i.substituteProductId,
     notes: i.notes,
+    unitLabel: i.unitLabel ?? null,
   }));
   const unlistedLines: DiffUnlistedLine[] = staged.unlisted.map((u) => ({
     lineId: u.lineId,
@@ -266,7 +485,10 @@ export function shouldRehydrateFromOrder(input: {
 
 // ─── The on-device snapshot ──────────────────────────────────────────────────
 
-export const EDIT_ITEMS_SNAPSHOT_VERSION = 1;
+// Bumped 1→2 (B775/SA-108): pre-fix snapshots stored `draft` keyed by
+// `productId`, which collides two same-product lines into one entry. A v1
+// snapshot must be discarded, never restored, so it can't resurrect that bug.
+export const EDIT_ITEMS_SNAPSHOT_VERSION = 2;
 /** Same TTL shape as `lib/list-ui-snapshot.ts`; a day-old staged edit is stale. */
 export const EDIT_ITEMS_SNAPSHOT_TTL_MS = 24 * 60 * 60 * 1000;
 /** Idle debounce before a snapshot write, matching the stock-count autosave. */

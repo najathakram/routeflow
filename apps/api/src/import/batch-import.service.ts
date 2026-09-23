@@ -40,6 +40,15 @@ interface ExtractedInvoice {
   notes?: string | null;
 }
 
+/**
+ * B666: `{ packSize }` for a scanned line that printed a whole units-per-case above 1; `{}` otherwise (no
+ * pack, 1, or a value that is not a whole number is NOT guessed at: the line keeps today's pieces path).
+ */
+export function packSizeOf(raw: unknown): { packSize?: number } {
+  const n = Number(raw);
+  return raw != null && Number.isInteger(n) && n > 1 ? { packSize: n } : {};
+}
+
 /** Numeric confidence per line, to store a representative (worst-case) value. */
 const CONF_SCORE: Record<ScanConfidence, number> = { high: 1, medium: 0.66, low: 0.33, none: 0 };
 
@@ -427,6 +436,10 @@ export class BatchImportService {
         description: l.extractedName,
         qty: l.qty,
         unitCost: l.unitCost,
+        // B666: the units-per-case the invoice printed. Without it vendor-bills' lineInventoryDelta reads
+        // the line as PIECES (5 cases of 12 = +5 pieces at the case price), skewing stock and averageCost
+        // by the pack. The line's OWN packSize only, never the live product's.
+        ...packSizeOf(l.packSize),
       }));
       // Use the invoice's OWN date for costing/AP aging — falling back to
       // today only when the scan genuinely didn't extract one.

@@ -3,6 +3,7 @@
 import * as React from "react";
 import { Badge, Button, Card, EmptyState, PageHeader, Skeleton, cn } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
+import { useAuth } from "@/lib/auth-context";
 import {
   RULES_LIST_CAP,
   useRestrictionRules,
@@ -20,8 +21,10 @@ import {
   surfaceText,
   windowText,
 } from "@/lib/restriction-rules";
+import { LiftRuleDialog } from "./_components/LiftRuleDialog";
+import { RuleFormDialog } from "./_components/RuleFormDialog";
 
-function RuleCard({ rule }: { rule: SellingRestrictionListItemDto }) {
+function RuleCard({ rule, onLift }: { rule: SellingRestrictionListItemDto; onLift?: () => void }) {
   const target = ruleTarget(rule);
   const badge = STATUS_BADGE[rule.status];
   return (
@@ -71,6 +74,12 @@ function RuleCard({ rule }: { rule: SellingRestrictionListItemDto }) {
         {rule.createdByName ? ` by ${rule.createdByName}` : ""}
       </p>
 
+      {onLift && (rule.status === "ACTIVE" || rule.status === "SCHEDULED") && (
+        <Button size="sm" variant="secondary" onClick={onLift}>
+          Lift rule
+        </Button>
+      )}
+
       {rule.liftedAt && (
         <div className="rounded-lg bg-warning-bg px-3 py-2 text-sm text-navy/80">
           <p className="font-medium">
@@ -88,6 +97,9 @@ export default function RestrictionRulesPage() {
   const { setTitle } = usePageTitle();
   React.useEffect(() => setTitle("Selling restrictions"), [setTitle]);
 
+  const isAdmin = useAuth().user?.role === "TENANT_ADMIN";
+  const [creating, setCreating] = React.useState(false);
+  const [lifting, setLifting] = React.useState<SellingRestrictionListItemDto | null>(null);
   const [filter, setFilter] = React.useState<RestrictionStatus | "ALL">("ALL");
   const rules = useRestrictionRules(filter === "ALL" ? undefined : filter);
   const data = rules.data ?? [];
@@ -99,7 +111,10 @@ export default function RestrictionRulesPage() {
       <PageHeader
         title="Restriction rules"
         subtitle="Rules that stop products being sold where they are banned."
+        action={isAdmin ? <Button onClick={() => setCreating(true)}>New rule</Button> : undefined}
       />
+      {isAdmin && creating && <RuleFormDialog open onClose={() => setCreating(false)} />}
+      {isAdmin && <LiftRuleDialog rule={lifting} onClose={() => setLifting(null)} />}
 
       <div role="group" aria-label="Filter rules by status" className="flex flex-wrap gap-2">
         {STATUS_FILTERS.map((f) => (
@@ -155,7 +170,7 @@ export default function RestrictionRulesPage() {
           <ul className="space-y-3" aria-label="Restriction rules">
             {data.map((r) => (
               <li key={r.id}>
-                <RuleCard rule={r} />
+                <RuleCard rule={r} onLift={isAdmin ? () => setLifting(r) : undefined} />
               </li>
             ))}
           </ul>

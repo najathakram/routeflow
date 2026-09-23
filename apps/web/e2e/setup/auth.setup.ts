@@ -13,6 +13,7 @@ import fs from "fs";
 import path from "path";
 import { fillWorkspaceIfShown, setTenantCookie } from "../helpers/auth";
 import { CREDENTIALS, HAS_SUPER_ADMIN_CREDS, TENANT_SLUG, isLocalUrl } from "../helpers/constants";
+import { assertSafeSetupTarget } from "../../lib/e2e-setup-guard";
 
 export const AUTH_DIR = path.join(__dirname, ".auth");
 export const SUPER_ADMIN_AUTH = path.join(AUTH_DIR, "super-admin.json");
@@ -20,8 +21,11 @@ export const OPERATOR_AUTH = path.join(AUTH_DIR, "operator.json");
 export const CUSTOMER_AUTH = path.join(AUTH_DIR, "customer.json");
 export const BUYER_AUTH = path.join(AUTH_DIR, "buyer.json");
 
-const BASE_URL =
-  process.env.PLAYWRIGHT_BASE_URL ?? "https://routeflowweb-production.up.railway.app";
+// Fail-closed (lib/e2e-setup-guard.ts): this throws at load — before any page opens or any
+// password is typed — unless PLAYWRIGHT_BASE_URL is set to a local http(s) target and the tenant
+// is an approved test tenant. GitHub Actions and a human's explicit E2E_ALLOW_REMOTE_AUTH=1 are
+// the only sanctioned remote paths; an agent must never set that variable.
+const { baseUrl: BASE_URL } = assertSafeSetupTarget();
 
 // ── Super Admin ────────────────────────────────────────────────────────────────
 
@@ -76,7 +80,7 @@ setup("authenticate as customer", async ({ page, context }) => {
 // renders the card as a <button> (a pending one is a <div>), hence the button selector.
 setup("authenticate as buyer", async ({ page, baseURL }) => {
   // First line of output, so whoever mints sees where this is pointing (an unset
-  // PLAYWRIGHT_BASE_URL resolves to PRODUCTION - which this step must never log in to).
+  // PLAYWRIGHT_BASE_URL is now refused at load by assertSafeSetupTarget above).
   console.log(`[buyer setup] base URL: ${baseURL ?? "(unset)"}`);
   // The buyer is seeded on LOCAL databases only (a committed throwaway password on a global
   // account), so never contact a non-local target: skip before any request, and write nothing —

@@ -44,6 +44,17 @@ and unsets `CI`. To run a subset by hand, use the same wrapper directly:
 node scripts/local-env.mjs --e2e -- "npm --prefix apps/web run test:e2e -- --project=setup --project=critical-paths"
 ```
 
+### The setup guard (fail-closed)
+
+`PLAYWRIGHT_BASE_URL` has **no default**: unset/empty aborts the run (it used to resolve to
+production). The `setup` project (the auth mint) additionally refuses unless the target parses as
+`http(s)://localhost|127.0.0.1|[::1]` and the tenant passes `assertTestTenant` — see
+`apps/web/lib/e2e-setup-guard.ts` (table-tested in `e2e-setup-guard.test.ts`). A non-local target
+is human-only: it runs only on GitHub Actions (`GITHUB_ACTIONS=true`, so post-deploy/nightly are
+unchanged) or when a human sets `E2E_ALLOW_REMOTE_AUTH=1` for that run. **An agent never sets that
+variable and never targets a non-local host** — a refusal is the guard working, not a bug to route
+around.
+
 ## The allow-list (`local:e2e`)
 
 `setup` plus the money/guard projects, trimmed to stay ≤ 10 min wall clock on this machine:
@@ -123,6 +134,30 @@ file's directory, so `local-env.mjs` computes an **absolute** path
 `../../`-relative one — a relative value here would depend on whatever cwd the child process
 happens to run from. `scripts/campaign-check.mjs` carries a one-line pointer to this file for
 exactly that reason.
+
+## The dev-preview trap (a Claude Code worktree, not this e2e lane, but the same family)
+
+Two ways to capture a screenshot of a new local dev route and end up looking at the wrong app
+without any error saying so — found while proving B715's tap-to-edit affordance at 390px.
+
+**The wrong-checkout trap.** The Claude Code Browser pane's `preview_start({name: "web"})` reads
+`.claude/launch.json` relative to the session's own primary working directory, not the worktree
+you're actually editing in — on this machine that's a separate checkout of the same repo
+(`/Users/maznahamanullah/code/routeflow`, not `routeflow-clean`). A brand-new route added in your
+worktree 404s there because the file genuinely doesn't exist in that other checkout, while every
+pre-existing page renders fine (it's a real, working Next.js server — just the wrong tree).
+Workaround: run `next dev` manually inside your own worktree on an explicit port
+(`npx next dev -H 127.0.0.1 -p <port>`), then attach the pane with `preview_start({url:
+"http://localhost:<port>"})` instead of `{name}`.
+
+**The mobile-UA proxy trap.** The pane's viewport emulation for any width under 768 (including 390) also sends an Android Chrome user agent. `middleware.ts`'s `isMobileUserAgent(ua)` check
+then proxies any path that isn't explicitly carved out (marketing, `/api/`, web-only paths) to
+the **separate Expo mobile-web deployment** — so a brand-new dev-only route gets silently
+rewritten away to a build that has never heard of it, and you see that build's own "Unmatched
+Route" 404 instead of anything from your own app. Nothing in the response says "proxied" — it
+just looks like your route doesn't exist. Workaround: append `?desktop=1` (the same escape
+hatch the middleware ships for a real user intentionally viewing desktop on a phone) to bypass
+the mobile redirect regardless of viewport width.
 
 ## Shared auth state audit (item 6a)
 

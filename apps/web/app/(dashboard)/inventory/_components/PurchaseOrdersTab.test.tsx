@@ -13,7 +13,14 @@ import { ReceivePOModal } from "./PurchaseOrdersReceiveModal";
 import { formatMoney } from "@/lib/format";
 import { fmtCalendarDate } from "@/lib/formatting";
 import { unitsLabel } from "@/lib/stock-label";
-import { emptyPOLine, resolvePOLine, type PurchaseOrder } from "./purchase-orders-shared";
+import {
+  emptyPOLine,
+  resolvePOLine,
+  resolvePOLineAmounts,
+  resolveStoredPOLineAmounts,
+  toCreateItem,
+  type PurchaseOrder,
+} from "./purchase-orders-shared";
 
 const toast = jest.fn();
 jest.mock("@routeflow/ui/web", () => {
@@ -34,6 +41,7 @@ jest.mock("@/lib/api/inventory", () => ({
   useClosePurchaseOrder: () => ({ mutate: closeMutate, isPending: false }),
   useCreatePurchaseOrder: () => ({ mutate: createMutate, isPending: false }),
   useReceivePurchaseOrder: () => ({ mutate: receiveMutate, isPending: false }),
+  useUpdatePurchaseOrder: () => ({ mutate: jest.fn(), isPending: false }),
 }));
 
 const supplier = { id: "s1", name: "Acme Supply", isActive: true };
@@ -89,6 +97,111 @@ describe("resolvePOLine (pure)", () => {
   });
 });
 
+// PO line money: the total of a boxed line comes from the ENTERED case cost through the one pricing builder,
+// never pieces x the rounded per-piece cost (1,000 boxes of 12 at $11.00: $11,000.00, not $11,000.40).
+describe("resolvePOLineAmounts / toCreateItem (exact case cost)", () => {
+  const boxes1000 = {
+    ...emptyPOLine(),
+    productId: "p2",
+    boxes: "1000",
+    pieces: "0",
+    unitCost: "11",
+  };
+
+  it("1,000 boxes of 12 at $11.00 total exactly $11,000.00", () => {
+    const a = resolvePOLineAmounts(boxes1000, 12);
+    expect(a.totalCost).toBe(11000);
+    expect(a.qtyOrdered).toBe(12000);
+    expect(a.unitCost).toBe(0.9167); // costing only
+    expect(a.qtyOrdered * a.unitCost).toBeCloseTo(11000.4, 6); // the figure the old route displayed and stored
+  });
+
+  it("loose pieces are prorated: 5 boxes + 6 pieces at $11.00 = $60.50", () => {
+    expect(resolvePOLineAmounts({ ...boxes1000, boxes: "5", pieces: "6" }, 12).totalCost).toBe(
+      60.5,
+    );
+  });
+
+  it("a per-piece line is roundMoney(qty x unitCost)", () => {
+    expect(
+      resolvePOLineAmounts({ ...emptyPOLine(), qty: "3", unitCost: "0.3333" }, 0).totalCost,
+    ).toBe(1);
+  });
+
+  it("an unusable entry is an all-zero line, never a throw", () => {
+    expect(resolvePOLineAmounts(emptyPOLine(), 12).totalCost).toBe(0);
+    expect(
+      resolvePOLineAmounts({ ...emptyPOLine(), unitCost: "-5", boxes: "2" }, 12).totalCost,
+    ).toBe(0);
+  });
+
+  it("the create payload for a boxed line is the ENTERED case figures; a per-piece line is unchanged", () => {
+    expect(toCreateItem(boxes1000, 12)).toEqual({
+      productId: "p2",
+      packSize: 12,
+      caseCost: 11,
+      cases: 1000,
+      loosePieces: 0,
+    });
+    expect(
+      toCreateItem({ ...emptyPOLine(), productId: "p1", qty: "5", unitCost: "2.5" }, 0),
+    ).toEqual({
+      productId: "p1",
+      qty: 5,
+      unitCost: 2.5,
+    });
+  });
+});
+
+// A STORED line (POItem) carries the per-piece cost at 4 dp AND the exact document total the server wrote.
+// Display must read the total, never re-multiply pieces x the rounded per-piece cost (#1199 / B677).
+describe("resolveStoredPOLineAmounts (stored line, exact total)", () => {
+  const stored1000 = { qtyOrdered: "12000", unitCost: "0.9167", totalCost: "11000.00" };
+
+  it("1,000 cases of 12 stored at $11,000.00 display $11,000.00, not the $11,000.40 of qty x unitCost", () => {
+    const a = resolveStoredPOLineAmounts(stored1000, 12);
+    expect(a.totalCost).toBe(11000);
+    expect(a.qtyOrdered).toBe(12000);
+    expect(a.cases).toBe(1000);
+    expect(a.caseCost).toBe(11);
+    expect(Number(stored1000.qtyOrdered) * Number(stored1000.unitCost)).toBeCloseTo(11000.4, 6);
+  });
+
+  it("the stored total wins even where the 4 dp case cost could not rebuild it", () => {
+    // 3,000 cases at $1,000.01: a case cost read back at 4 dp (0.3333) rebuilds to $999.90
+    expect(
+      resolveStoredPOLineAmounts(
+        { qtyOrdered: "36000", unitCost: "0.0278", totalCost: "1000.01" },
+        12,
+      ).totalCost,
+    ).toBe(1000.01);
+  });
+
+  it("a row with no stored total is rebuilt from the per-piece cost, honestly drifted", () => {
+    const a = resolveStoredPOLineAmounts({ qtyOrdered: "12000", unitCost: "0.9167" }, 12);
+    expect(a.totalCost).toBe(11000.4);
+    expect(a.caseCost).toBe(11.0004);
+  });
+
+  it("a per-piece line is roundMoney(qty x unitCost), and the stored total still wins", () => {
+    expect(resolveStoredPOLineAmounts({ qtyOrdered: "3", unitCost: "0.3333" }, 0).totalCost).toBe(
+      1,
+    );
+    expect(
+      resolveStoredPOLineAmounts({ qtyOrdered: "3", unitCost: "0.3333", totalCost: "1.00" }, 0)
+        .totalCost,
+    ).toBe(1);
+  });
+
+  it("an unusable row never throws: the stored total, else zero", () => {
+    expect(
+      resolveStoredPOLineAmounts({ qtyOrdered: "abc", unitCost: "x", totalCost: "12.34" }, 12)
+        .totalCost,
+    ).toBe(12.34);
+    expect(resolveStoredPOLineAmounts({ qtyOrdered: "abc", unitCost: "x" }, 12).totalCost).toBe(0);
+  });
+});
+
 describe("PurchaseOrdersTab", () => {
   it("shows the empty state", () => {
     render(<PurchaseOrdersTab suppliers={[supplier]} products={products} />);
@@ -113,6 +226,27 @@ describe("PurchaseOrdersTab", () => {
     expect(within(row("PO-D")).queryByTitle("Send")).toBeNull();
     expect(within(row("PO-D")).queryByTitle("Receive")).toBeNull();
     expect(within(row("PO-D")).getByText("Closed")).toBeInTheDocument();
+  });
+
+  it("offers Edit on every status except CLOSED, and it opens the edit modal", () => {
+    listData = {
+      data: [
+        po({ id: "a", poNumber: "PO-A", status: "DRAFT" }),
+        po({ id: "b", poNumber: "PO-B", status: "SENT" }),
+        po({ id: "c", poNumber: "PO-C", status: "PARTIAL" }),
+        po({ id: "r", poNumber: "PO-R", status: "RECEIVED" }),
+        po({ id: "d", poNumber: "PO-D", status: "CLOSED" }),
+      ],
+    };
+    render(<PurchaseOrdersTab suppliers={[supplier]} products={products} />);
+    const row = (n: string) => screen.getByText(n).closest("tr") as HTMLElement;
+    for (const n of ["PO-A", "PO-B", "PO-C", "PO-R"]) {
+      expect(within(row(n)).getByTitle("Edit")).toBeInTheDocument();
+    }
+    expect(within(row("PO-D")).queryByTitle("Edit")).toBeNull();
+
+    fireEvent.click(within(row("PO-C")).getByTitle("Edit"));
+    expect(screen.getByText("Edit PO-C")).toBeInTheDocument();
   });
 
   it("renders the row total and expected date through the shared formatters", () => {
@@ -163,6 +297,34 @@ describe("PurchaseOrdersTab", () => {
     expect(closeMutate).toHaveBeenCalledWith("b", expect.any(Object));
     expect(sendMutate).not.toHaveBeenCalled();
   });
+
+  it("the detail subtotal of a boxed line is the stored exact total, not qty x per-piece cost (#1199)", () => {
+    listData = { data: [po({ id: "c", poNumber: "PO-C", status: "SENT", total: 11000 })] };
+    detailById.c = po({
+      id: "c",
+      status: "SENT",
+      total: 11000,
+      items: [
+        {
+          id: "i1",
+          productId: "p2",
+          product: { id: "p2", name: "Boxed Gadget", unit: "ea" },
+          qtyOrdered: "12000",
+          qtyReceived: "0",
+          unitCost: "0.9167",
+          totalCost: "11000.00",
+          packSize: 12,
+        },
+      ],
+    });
+    render(<PurchaseOrdersTab suppliers={[supplier]} products={products} />);
+    fireEvent.click(screen.getByTitle("View details"));
+    expect(screen.getByText(unitsLabel(12000, 12))).toBeInTheDocument();
+    expect(screen.getByText("$0.9167")).toBeInTheDocument();
+    // the line subtotal and the row total agree on the exact document figure
+    expect(screen.getAllByText(formatMoney(11000)).length).toBeGreaterThanOrEqual(2);
+    expect(screen.queryByText(formatMoney(11000.4))).not.toBeInTheDocument();
+  });
 });
 
 describe("CreatePOModal", () => {
@@ -181,7 +343,7 @@ describe("CreatePOModal", () => {
       {
         supplierId: undefined,
         expectedDate: undefined,
-        items: [{ productId: "p2", qty: 27, unitCost: 2 }],
+        items: [{ productId: "p2", packSize: 12, caseCost: 24, cases: 2, loosePieces: 3 }],
         notes: undefined,
       },
       expect.any(Object),

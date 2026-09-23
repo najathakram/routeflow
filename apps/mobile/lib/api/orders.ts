@@ -19,6 +19,13 @@ export interface OrderItem {
     unitsPerBox?: number | null; // NEW — boxed-line steppers (at-door adjust, P10-POS-3)
     averageCost?: number | string | null; // NEW
     category?: string | null; // NEW
+    /** Row anatomy (order-ui T1/T8): SKU line + read-time variant-name composition — the order
+     *  detail read (`GET /orders/:id`) selects these. */
+    sku?: string | null;
+    unitSku?: string | null;
+    variantName?: string | null;
+    parentProductId?: string | null;
+    parent?: { name: string } | null;
   };
   qty: number;
   unitPrice: number;
@@ -461,6 +468,11 @@ export interface UpdateOrderItemInput {
   unitPrice?: number;
   overrideReason?: string;
   notes?: string;
+  /** units_v1: names the unit an UPDATE targeting a unit-aware line is sold by
+   *  (e.g. "Case") — the server already accepts this (DTO field, unchanged);
+   *  required whenever the target line already carries one, or it refuses
+   *  the edit (UNIT_AWARE_LINE). Never set by this client for a pack line. */
+  unitLabel?: string;
 }
 
 export function useUpdateOrderItems() {

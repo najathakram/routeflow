@@ -47,22 +47,41 @@ const EMPTY_ITEM = (index: number): LineItem => ({
 type LineTextField = "qtyOrdered" | "boxes" | "pieces" | "unitCost";
 
 /**
- * Mirror of web's `resolvePOLine` (apps/web/app/(dashboard)/inventory/page.tsx).
- * A boxed line is entered as boxes + loose pieces at a cost per BOX, but
- * `PurchaseOrderItem.qtyOrdered`/`unitCost` are stored in PIECES and per PIECE
- * — receivePurchaseOrder takes the stored line at face value — so the
- * conversion has to happen before the PO is posted.
+ * A boxed line is entered as boxes + loose pieces at a cost per BOX. It is posted as those ENTERED figures
+ * (packSize, caseCost, cases, loosePieces): the server computes the pieces, the 4 dp per-piece cost (for
+ * costing only) and the exact total roundMoney(caseCost x pieces / packSize), so 1,000 boxes at $11.00 is
+ * $11,000.00 (the old client-side per-piece route stored $11,000.40). No money math lives here. Non-boxed
+ * lines are pieces and a per-piece cost, as before.
  */
-function resolvePOLine(item: LineItem): { qty: number; unitCost: number } {
+function resolvePOLine(item: LineItem): { qty: number } {
   const upb = item.unitsPerBox;
   if (upb > 1) {
     const boxes = Math.max(0, Math.trunc(Number(item.boxes) || 0));
     const pieces = Math.max(0, Math.trunc(Number(item.pieces) || 0));
-    const qty = normalizeBoxesPieces({ boxes, pieces, unitsPerBox: upb }).qty;
-    const costPerBox = Number(item.unitCost) || 0;
-    return { qty, unitCost: roundUnitCost(costPerBox / upb) };
+    return { qty: normalizeBoxesPieces({ boxes, pieces, unitsPerBox: upb }).qty };
   }
-  return { qty: Number(item.qtyOrdered) || 0, unitCost: Number(item.unitCost) || 0 };
+  return { qty: Number(item.qtyOrdered) || 0 };
+}
+
+function toPOItem(item: LineItem) {
+  const upb = item.unitsPerBox;
+  if (upb > 1) {
+    const boxes = Math.max(0, Math.trunc(Number(item.boxes) || 0));
+    const pieces = Math.max(0, Math.trunc(Number(item.pieces) || 0));
+    const split = normalizeBoxesPieces({ boxes, pieces, unitsPerBox: upb });
+    return {
+      productId: item.productId,
+      packSize: upb,
+      caseCost: Number(item.unitCost) || 0,
+      cases: split.boxes ?? 0,
+      loosePieces: split.pieces ?? 0,
+    };
+  }
+  return {
+    productId: item.productId,
+    qtyOrdered: Number(item.qtyOrdered) || 0,
+    unitCost: Number(item.unitCost) || 0,
+  };
 }
 
 export default function NewPurchaseOrderScreen() {
@@ -159,18 +178,14 @@ export default function NewPurchaseOrderScreen() {
     // Boxed lines convert to a piece total + per-piece cost here: the PO row is
     // stored in PIECES and receiving trusts it at face value (an over-receipt is
     // now rejected, not clamped — a box-denominated PO cannot be received).
-    const parsedItems = items
-      .filter((it) => it.productId)
-      .map((it) => {
-        const { qty, unitCost } = resolvePOLine(it);
-        return { productId: it.productId, qtyOrdered: qty, unitCost };
-      });
+    const picked = items.filter((it) => it.productId);
+    const parsedItems = picked.map(toPOItem);
 
     if (parsedItems.length === 0) {
       showToast("Add at least one product.");
       return;
     }
-    if (parsedItems.some((it) => it.qtyOrdered <= 0)) {
+    if (picked.some((it) => resolvePOLine(it).qty <= 0)) {
       showToast("Each item needs a quantity greater than 0.");
       return;
     }

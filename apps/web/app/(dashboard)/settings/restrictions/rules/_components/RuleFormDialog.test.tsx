@@ -185,4 +185,23 @@ describe("RuleFormDialog", () => {
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
     await waitFor(() => expect(opener).toHaveFocus());
   });
+
+  it("product search says when the list is at its limit of 8, and only then", async () => {
+    const products = (n: number) =>
+      Array.from({ length: n }, (_, i) => ({ id: `p${i}`, name: `Gummies ${i}`, sku: `G${i}` }));
+    for (const [count, hint] of [
+      [8, true],
+      [7, false],
+    ] as const) {
+      get.mockImplementation((url: string) =>
+        Promise.resolve({ data: url === "/product-categories" ? CATS : { data: products(count) } }),
+      );
+      const { unmount } = renderWithProviders(<RuleFormDialog open onClose={jest.fn()} />);
+      fireEvent.click(screen.getByRole("radio", { name: "One product" }));
+      fireEvent.change(screen.getByLabelText("Search products"), { target: { value: "gum" } });
+      await screen.findByRole("button", { name: /Gummies 0/ }, { timeout: 2000 });
+      expect(!!screen.queryByText(/Showing the first 8\. Refine your search\./)).toBe(hint);
+      unmount();
+    }
+  });
 });

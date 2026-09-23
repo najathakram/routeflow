@@ -56,7 +56,11 @@ export function OrderLineItemsTable({
                     >
                       {orderLineName(li) ?? "Custom item"}
                     </span>
-                    {li.notes && <p className="mt-0.5 text-xs italic text-navy/60">{li.notes}</p>}
+                    {li.notes && (
+                      <p className="mt-0.5 whitespace-pre-line text-xs italic text-navy/60">
+                        {li.notes}
+                      </p>
+                    )}
                   </div>
                   {!li.productId && (
                     <span className="rounded-full bg-brand-50 px-1.5 py-0.5 text-[10px] font-medium text-brand-700 ring-1 ring-brand-200">

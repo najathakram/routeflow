@@ -206,6 +206,11 @@ export function SearchableProductPicker({
   };
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    // B672 audit: a wedge-scan Enter (BarcodeScannerButton, when this input carries a companion
+    // scanner via `inputRef`) already called preventDefault() and handled itself — this handler
+    // must not also treat it as a manual Enter (opening the dropdown / picking the highlighted
+    // row), or a real scan double-fires.
+    if (e.defaultPrevented) return;
     if (!open && (e.key === "ArrowDown" || e.key === "Enter")) {
       e.preventDefault();
       setOpen(true);
