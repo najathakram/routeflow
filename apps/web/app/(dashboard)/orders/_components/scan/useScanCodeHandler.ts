@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import type { useToast } from "@routeflow/ui/web";
-import { resolveProductByCode } from "@/lib/barcode-resolve";
+import { resolveProductByCode, type BarcodeResolveResult } from "@/lib/barcode-resolve";
 
 type ToastFn = ReturnType<typeof useToast>["toast"];
 
@@ -75,7 +75,7 @@ export function useScanCodeHandler(deps: ScanCodeHandlerDeps) {
     code: string,
     opts?: { quiet?: boolean; background?: boolean },
   ): Promise<ScanResolution> => {
-    let result: Awaited<ReturnType<typeof resolveProductByCode>>;
+    let result: BarcodeResolveResult;
     try {
       // Opus item 5: the try/catch covers ONLY the lookup. It used to also wrap `addLineItem`
       // below, so a throw from THAT (nothing to do with connectivity) was caught here and
