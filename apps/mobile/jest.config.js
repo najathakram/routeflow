@@ -34,6 +34,8 @@ module.exports = {
     "^@routeflow/pricing$": "<rootDir>/../../packages/pricing/src/index.ts",
     // Same reason for the scan engine: resolve to SOURCE, no build step to depend on.
     "^@routeflow/scanning$": "<rootDir>/../../packages/scanning/src/index.ts",
+    // Same reason for the shared return-state helpers: resolve to SOURCE, no build step to depend on.
+    "^@routeflow/returns$": "<rootDir>/../../packages/returns/src/index.ts",
     "^expo-secure-store$": "<rootDir>/__tests__/__mocks__/expo-secure-store.js",
     "^@routeflow/ui/(.*)$": "<rootDir>/__tests__/__mocks__/@routeflow/ui.js",
     "^@routeflow/types$": "<rootDir>/__tests__/__mocks__/@routeflow/types.js",
