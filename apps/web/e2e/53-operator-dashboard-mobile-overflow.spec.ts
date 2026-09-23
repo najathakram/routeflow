@@ -25,20 +25,42 @@
  * Scope: a representative set of the pages the owner actually uses, not an
  * exhaustive sweep of this shell's ~25 route groups (that breadth belongs to
  * a dedicated responsive-QA pass, not a bug-fix PR) — dashboard, orders
- * (list + a real order detail), products, routes, settings, and the
- * notification dropdown opened on top of each. Customers and invoices are
- * deliberately excluded: extending the probe here found genuine,
- * pre-existing, unrelated overflow in both (an unwrapped toolbar on
- * customers — filed as B749 — and an unwrapped table on invoices — filed as
- * B750 — see the inline comments at each), reported and filed rather than
- * fixed inline or silently asserted clean. Both only fail at 390 — there's
- * room at 768/1440.
+ * (list + a real order detail), customers, products, invoices, routes,
+ * settings, and the notification dropdown opened on top of each. Customers
+ * and invoices are visited at every width, but at 390 only, each ignores its
+ * own already-filed, unrelated defect — not the whole page, and not at
+ * 768/1440, where there's room and no ignore applies: an unwrapped toolbar on
+ * customers (B749, matched by its "New Customer" button text) and an
+ * unwrapped table on invoices (B750, matched by table-family tags). Narrowed
+ * this way rather than excluded outright, so a regression anywhere else on
+ * either page still fails. See isB749Toolbar/isB750Table below.
+ *
+ * The notification-dropdown clamp itself is untested BELOW 352px here: Radix
+ * already repositions the menu to stay on screen above that width via its own
+ * collision avoidance, so 390/768/1440 all pass whether or not the
+ * max-w-[calc(100vw-2rem)] clamp this batch added is even present. A
+ * dedicated 280px-viewport test below proves the clamp specifically — narrower
+ * than the panel's own natural 320px width, where repositioning alone can't
+ * help and the clamp has to actually shrink it.
  *
  * Read-only: no data is created or mutated. Targets the seeded e2e-routeflow
  * tenant (approved test tenant) — never a live client tenant.
  */
 import { test, expect, type Page } from "@playwright/test";
-import { assertNoOverflow, documentLevelOverflowPx } from "./helpers/overflow";
+import { assertNoOverflow, documentLevelOverflowPx, type Offender } from "./helpers/overflow";
+
+// B749: the customers-list toolbar's "New Customer" button group has no wrap
+// and overflows at 390. Matched by text rather than class — the offending
+// classes (`shrink-0`, `flex items-center gap-2`) are generic Tailwind
+// utilities shared all over the app; the toolbar's own button labels are the
+// stable thing to match on this specific page.
+const isB749Toolbar = (o: Offender) => o.text.includes("New Customer");
+
+// B750: the invoices-list table has no scroll wrapper at all and overflows at
+// 390. Matched by tag — on this page, any TABLE-family element escaping the
+// viewport IS this bug; nothing else on the page renders those tags.
+const TABLE_TAGS = new Set(["TABLE", "THEAD", "TBODY", "TFOOT", "TR", "TH", "TD"]);
+const isB750Table = (o: Offender) => TABLE_TAGS.has(o.tag);
 
 const VIEWPORTS = [
   { width: 390, height: 844, label: "390" },
@@ -97,23 +119,23 @@ for (const vp of VIEWPORTS) {
         expect(await documentLevelOverflowPx(page)).toBeLessThanOrEqual(0);
       }
 
-      // ── Customers list — DELIBERATELY EXCLUDED, see header. Filed B749. ──
-      // The list's toolbar (Import/Export/Select/New Customer, a plain
-      // `flex items-center gap-2` row with no wrap and no min-w-0) overflows
-      // 56px at 390 — a real, pre-existing, unrelated bug this probe found
-      // while extending it here, not a regression from this change and not
-      // something this PR's scope covers. Filed as B749 rather than fixed
-      // inline or silently left green.
+      // ── Customers list — B749 ignored, only at 390 (see header) ─────────
+      // At 768/1440 there's room for the toolbar and no ignore is applied,
+      // so a regression there still fails.
+      await page.goto("/customers");
+      await assertNoOverflow(
+        page,
+        "customers (list)",
+        vp.width === 390 ? isB749Toolbar : undefined,
+      );
 
       // ── Products list ────────────────────────────────────────────────────
       await page.goto("/products");
       await assertNoOverflow(page, "products (list)");
 
-      // ── Invoices list — DELIBERATELY EXCLUDED, see header. Filed B750. ───
-      // The list table has no scroll wrapper at all (unlike the shared
-      // `<Table>` component's `overflow-auto` — see helpers/overflow.ts's
-      // allowlist comment) and overflows 312px at 390. Filed as B750 — same
-      // class of pre-existing, unrelated bug as the customers list above (B749).
+      // ── Invoices list — B750 ignored, only at 390 (see header) ──────────
+      await page.goto("/invoices");
+      await assertNoOverflow(page, "invoices (list)", vp.width === 390 ? isB750Table : undefined);
 
       // ── Routes list ──────────────────────────────────────────────────────
       await page.goto("/routes");
@@ -126,3 +148,30 @@ for (const vp of VIEWPORTS) {
     });
   });
 }
+
+test.describe("operator dashboard — notification dropdown clamp at 280px", () => {
+  // 280, not one of the three standard widths above: the dropdown's own
+  // natural width is w-80 (320px). At 390/768/1440, and even at exactly
+  // 320px, Radix's built-in collision avoidance can reposition the panel to
+  // stay on screen without needing the max-w-[calc(100vw-2rem)] clamp this
+  // batch added — repositioning alone can't help once the viewport is
+  // narrower than the panel's own natural width, so 280 is the width where
+  // this test can actually tell the clamp apart from Radix's own behavior.
+  // At 280px, max-w-[calc(100vw-2rem)] computes to 248px (< 320px) — the
+  // panel MUST shrink to fit, proving the clamp is doing real work.
+  test.use({ viewport: { width: 280, height: 844 } });
+
+  test("the portaled dropdown itself never exceeds a viewport narrower than its own natural width", async ({
+    page,
+  }) => {
+    await page.goto("/dashboard");
+    await expect(page.getByRole("heading", { name: /dashboard/i })).toBeVisible({
+      timeout: 15_000,
+    });
+    const bell = page.getByRole("button", { name: /notification/i });
+    await bell.first().click();
+    const panel = page.getByText("Notifications", { exact: true }).first();
+    await expect(panel).toBeVisible({ timeout: 5_000 });
+    await assertNoOverflow(page, "dashboard — notifications dropdown open at 280px");
+  });
+});
