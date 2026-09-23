@@ -26,6 +26,7 @@ on the line (fixes a), and a resync must write nothing when nothing changed and 
 sale's period is closed (fixes b).
 
 Other LIVE-rate sites, classified (every `computeCategoryTax(` caller outside pricing):
+
 - NEW-sale writers (rate at write time IS the snapshot moment — correct, but they must now also STORE it):
   orders.service.ts:2111 (create), order-templates.service.ts:503, invoices.service.ts:3439 (invoice
   update rebuilds lines), manual-invoice-lines.ts:99, invoice-unit-line.ts:76, unit-line-build.ts:189
@@ -69,19 +70,19 @@ period never locks), it is GENERATED, and `assertNoParkedReversals` passes for i
 explicit tenant-admin action with a required reason and an audit row; there is NO unlock endpoint in this
 work (an unlock is a later super-admin ruling with its own PR). Semantics: a LOCKED filing closes the
 (tenant, category, periodKey) triple. Two guards, defence in depth:
-  (a) EDIT GUARD (user-facing): before a money-bearing change to a regulated line whose invoice SALE rows
-      bucket into a LOCKED filing for that category, refuse with 409 `FILED_PERIOD_LOCKED` naming the filing
-      and period. Money-bearing = qty/boxes/pieces/unitLabel/subtotal/categoryTaxAmount of a regulated line
-      changes, or a regulated line is added/removed/cancelled. Non-money edits (notes, delivery date,
-      shipping) proceed and, with D5, write no ledger rows. Sites: `updateOrderItems` (before the tx),
-      `applyPriceAdjustment`, invoice `update` on an ISSUED invoice, credit-note and return paths that
-      reverse a locked-period SALE are NOT blocked (a return is a new event booked today per the
-      never-backdate rule; the locked period's SUM is untouched) — state this in the body so nobody "fixes" it.
-  (b) LEDGER GUARD (last line): `writeSaleEntries` / `reverseInvoiceEntries` / the correction writers refuse
-      any row whose `periodBucket` (of its `soldAt`) is covered by a LOCKED filing for the row's category:
-      throw `LEDGER_PERIOD_LOCKED`, never write. Under never-backdate this can only fire when the current
-      period is locked, which (a)'s `periodEnd <= now` rule makes impossible except across the bucket
-      boundary — it exists to make the invariant structural, not to be hit.
+(a) EDIT GUARD (user-facing): before a money-bearing change to a regulated line whose invoice SALE rows
+bucket into a LOCKED filing for that category, refuse with 409 `FILED_PERIOD_LOCKED` naming the filing
+and period. Money-bearing = qty/boxes/pieces/unitLabel/subtotal/categoryTaxAmount of a regulated line
+changes, or a regulated line is added/removed/cancelled. Non-money edits (notes, delivery date,
+shipping) proceed and, with D5, write no ledger rows. Sites: `updateOrderItems` (before the tx),
+`applyPriceAdjustment`, invoice `update` on an ISSUED invoice, credit-note and return paths that
+reverse a locked-period SALE are NOT blocked (a return is a new event booked today per the
+never-backdate rule; the locked period's SUM is untouched) — state this in the body so nobody "fixes" it.
+(b) LEDGER GUARD (last line): `writeSaleEntries` / `reverseInvoiceEntries` / the correction writers refuse
+any row whose `periodBucket` (of its `soldAt`) is covered by a LOCKED filing for the row's category:
+throw `LEDGER_PERIOD_LOCKED`, never write. Under never-backdate this can only fire when the current
+period is locked, which (a)'s `periodEnd <= now` rule makes impossible except across the bucket
+boundary — it exists to make the invariant structural, not to be hit.
 
 D5 · RESYNC WRITES ONLY WHEN SOMETHING CHANGED. `resyncInvoiceLedger` computes, per invoice line, the TARGET
 (qty, unitBasisQty, netSales, categoryTax from the rebuilt line) and the NET HELD (Σ signed rows for the
@@ -166,9 +167,10 @@ live rate is a backdated re-price" rule) in the docs follow-up.
 ## 4a. Resequencing (SA-096, 2026-09-23)
 
 PR 1 + PR 2 ship as ONE PR (L-184 ordering still binds). PR 5 (backfill) lands BEFORE PR 3, because the owner's
-production sizing found zero mismatches, so the backfill is exact. PR 3's NULL branch simplifies to "keep the
-stored amount, warn naming the line" (no basisBefore plumbing), guarded structurally by (i) the PR-2 callsite
-allow-list over every creator of a regulated line and (ii) a standing count gate (regulated lines with a NULL
+production sizing found zero mismatches, so the backfill is exact. PR 3's NULL branch is "price at live ONCE and stamp the trio used, warn naming the line" (SA-096a — never
+"keep": seven creators defer the amount to the recompute with a NULL trio, SA-098a) (no basisBefore plumbing), guarded structurally by (i) the PR-2 callsite
+allow-list over every creator of a regulated line, keyed on `trackedCategoryId:` writes (SA-098a(c)), with merges
+COPYING the losing line's trio and same-product edits PRESERVING it (only a substitute re-stamps) and (ii) a standing count gate (regulated lines with a NULL
 trio = 0) in post-deploy-check / the drift lane. See SA-096 in RULINGS.
 
 ## 5. Explicit non-goals
