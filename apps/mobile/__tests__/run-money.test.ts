@@ -218,12 +218,54 @@ describe("REG-B305 tax-inclusive amount due (round 2: read off the draft invoice
     });
 
     it("an exempt customer's fallback zeroes BOTH tax terms, same repro line", () => {
+      // categoryTaxAmount 7.50 on the line: without it, this fixture can't
+      // tell "zeroes BOTH regular tax AND category tax" apart from "zeroes
+      // only regular tax" — there'd be no category tax present to leak.
       const order = {
-        lineItems: [{ qty: 1, unitPrice: 116.83, subtotal: 116.83, status: "PENDING" }],
+        lineItems: [
+          {
+            qty: 1,
+            unitPrice: 116.83,
+            subtotal: 116.83,
+            categoryTaxAmount: 7.5,
+            status: "PENDING",
+          },
+        ],
         subtotal: 116.83,
         tax: 11.68,
       };
       expect(orderAmountDue(order as any, true)).toBe(116.83);
+      expect(orderAmountDue(order as any, true)).not.toBe(124.33); // 116.83 + leaked 7.50 category tax
+    });
+
+    it("an exempt customer's proportional-tax fixture (r = 0.5): still zero, never a fraction of either tax term", () => {
+      // active-line subtotal 50 vs order.subtotal 100 -> r = 0.5. Exempt
+      // zeroes both terms outright — r never enters the exempt branch at all,
+      // so this must read 50 flat, never 50 + half of anything.
+      const order = {
+        lineItems: [
+          { qty: 1, unitPrice: 50, subtotal: 50, categoryTaxAmount: 6, status: "PENDING" },
+        ],
+        subtotal: 100,
+        tax: 10,
+      };
+      expect(orderAmountDue(order as any, true)).toBe(50);
+    });
+
+    it("pins the proportional regularTax at r = 0.5 (active-line subtotal is HALF of order.subtotal)", () => {
+      // Active lines sum to 50 while order.subtotal is 100 (r = 0.5) — a line
+      // removed from the client's lineItems snapshot without a fresh
+      // order.subtotal write. regularTax = 10 * 0.5 = 5; categoryTax = 3
+      // (full stored value, never scaled by r). due = 50 + 5 + 3 = 58.
+      const order = {
+        lineItems: [
+          { qty: 1, unitPrice: 50, subtotal: 50, categoryTaxAmount: 3, status: "PENDING" },
+        ],
+        subtotal: 100,
+        tax: 10,
+      };
+      expect(orderAmountDue(order as any)).toBe(58);
+      expect(orderAmountDue(order as any)).not.toBe(63); // r=1 mistake: regularTax 10 flat, not 5
     });
 
     it("subtracts the order's own discount and adds its shipping fee, whole, never prorated", () => {
@@ -284,6 +326,24 @@ describe("REG-B305 tax-inclusive amount due (round 2: read off the draft invoice
     // No draft AND a malformed total -> falls all the way to the line sum.
     const brokenOrder = { lineItems: [{ qty: 1, unitPrice: 5, subtotal: 5 }], total: "garbage" };
     expect(stopAmountDue({ orders: [draftOrder, legacyOrder, brokenOrder] } as any)).toBe(80);
+  });
+
+  it("stopAmountDue: an exempt customer's no-draft order with category tax zeroes BOTH tax terms at the stop level", () => {
+    // No draft (the default pre-completion state) -> orderAmountDue's
+    // fallback runs. categoryTaxAmount 8 on the line: an exempt customer
+    // must not see it leak in via stopAmountDue's isTaxExempt plumbing
+    // (stop.customer.isTaxExempt -> orderAmountDue's isTaxExempt param).
+    const order = {
+      lineItems: [
+        { qty: 1, unitPrice: 100, subtotal: 100, categoryTaxAmount: 8, status: "PENDING" },
+      ],
+      subtotal: 100,
+      tax: 10,
+    };
+    const stop = { orders: [order], customer: { isTaxExempt: true } };
+    expect(stopAmountDue(stop as any)).toBe(100);
+    expect(stopAmountDue(stop as any)).not.toBe(118); // regular tax (10) + leaked category tax (8)
+    expect(stopAmountDue(stop as any)).not.toBe(110); // regular tax leaked, category tax correctly zeroed
   });
 });
 

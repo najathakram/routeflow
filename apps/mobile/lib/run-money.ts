@@ -145,8 +145,15 @@ export function sumStopOrders(stop: RunMoneyStop): number {
  *          post-delivery path; reusing that here would under-quote.
  *        due = subtotal − order.discountAmount + order.shippingFee +
  *          regularTax + categoryTax — discount/shippingFee stay WHOLE,
- *          never prorated, exactly as `reconciledAmountDue` already does
- *          (the server never prorates them either).
+ *          never prorated, exactly as `reconciledAmountDue` already does.
+ *          SA-092: the driver's actual completion path (`completeWithPayment`
+ *          -> `recordDeliveryPaymentInTx`, no existing draft -> `createInvoiceFromOrder`
+ *          -> `createSplitInvoices` over the FULL order, share 1.0, so
+ *          discount/fee seed WHOLE -> `reconcileOrderDraftInvoice(delivered)`,
+ *          which keeps the already-seeded discount/fee unchanged) never
+ *          prorates either one. `createSplitInvoices`'s own proportional-
+ *          discount formula (invoices.service.ts ~1172) only fires on a
+ *          SECOND-PASS office-side invoice generation, never on this path.
  *      RULING 2 stands unchanged: `Order.total` itself is never read here —
  *      its discount term depends on which write path last touched it
  *      (CREATE nets it, every edit/merge drops it), so it can never be a
@@ -168,7 +175,21 @@ export function orderAmountDue(order: RunMoneyOrder, isTaxExempt?: boolean): num
   const active = (order.lineItems ?? []).filter((li) => li.status !== "CANCELLED");
   const subtotal = roundMoney(active.reduce((sum, li) => sum + lineItemSubtotal(li), 0));
   const orderSubtotal = finiteOrNull(order.subtotal);
-  const r = orderSubtotal != null && orderSubtotal > 0 ? subtotal / orderSubtotal : 1;
+  if (orderSubtotal == null || !(orderSubtotal > 0)) {
+    // B305 PR B review (Opus): `order.subtotal` missing/unusable means the
+    // WHOLE RUN_STOP_INCLUDE-driven projection (order.tax, discountAmount,
+    // shippingFee, and the caller's isTaxExempt) may be just as unpopulated
+    // — the exact shape of an OTA shipping this fix ahead of #1272's server
+    // deploy (expo-updates ships with no store-build gate). `li.categoryTaxAmount`
+    // is a DIFFERENT, already-live projection (RUN_LINE_ITEMS_SELECT), so
+    // without this bail the tax math below would still charge it — to an
+    // EXEMPT customer too, since `isTaxExempt` would silently read `undefined`
+    // (never `true`). Mirrors reconciledAmountDue's identical bail (below):
+    // the bare active-line subtotal is the only figure safe to trust when
+    // the order projection itself is incomplete.
+    return roundMoney(subtotal);
+  }
+  const r = subtotal / orderSubtotal;
 
   const discount = finiteOrNull(order.discountAmount) ?? 0;
   const shippingFee = Math.max(0, finiteOrNull(order.shippingFee) ?? 0);
@@ -296,8 +317,10 @@ export interface ReconciledAmountDueInput {
  * `regularTax` scales with the delivered SHARE of the order's own subtotal
  * (`orderTax * (deliveredSubtotal / orderSubtotal)`, never the draft's whole
  * `taxAmount`), `categoryTax` is the caller's own per-line
- * `deliveredCategoryTax`, and discount/shipping fee stay WHOLE (the server
- * never prorates them). B305 round 5: discount/shippingFee source from the
+ * `deliveredCategoryTax`, and discount/shipping fee stay WHOLE — SA-092: the
+ * driver's actual completion path never prorates either one (see
+ * `orderAmountDue`'s docstring above for the full call chain). B305 round 5:
+ * discount/shippingFee source from the
  * open draft(s) when one exists, else the ORDER's own columns — previously
  * NO drafts meant an early return of the bare pre-tax `deliveredSubtotal`,
  * which is the DEFAULT state pre-completion (the server only creates a draft
@@ -328,7 +351,7 @@ export function reconciledAmountDue(input: ReconciledAmountDueInput): number {
   // (invoices.service.ts#reconcileOrderDraftInvoice) zeroes BOTH the regular
   // tax term and the per-line category tax — reproduce that exactly, or a
   // short-picked stop over-collects at the door. Discount/shipping fee still
-  // stay whole (the server never prorates them either way).
+  // stay whole — SA-092: never prorated on the driver's actual completion path.
   if (input.isTaxExempt) {
     return roundMoney(deliveredSubtotal - discount + shippingFee);
   }
