@@ -18,8 +18,10 @@ import { useNavigation, useRouter } from "expo-router";
 import { ios } from "@routeflow/ui/tokens";
 import { FilterChipRow, NavBackButton, NavBar, SearchBar } from "@routeflow/ui/mobile/ios";
 import { apiClient } from "../lib/api-client";
-import { UnitPickerRow } from "./UnitPickerRow";
 import { unitPriceBase, type UnitOption } from "../lib/unit-options";
+import { effectiveUnitPrice, toNumber, type LineState, type Product } from "../lib/cart-line-state";
+import { CartRow } from "./CartRow";
+import { CartStepperRow } from "./CartStepperRow";
 import { useAdminCustomers } from "../lib/api/admin";
 import { useProductCategories } from "../lib/api/products";
 import { useProductSearch } from "../lib/use-product-search";
@@ -44,18 +46,13 @@ import { createScanAcceptGuard } from "../lib/scan-accept-guard";
 // Compose "<Parent> - <Variant>" so scanned variants don't show as "Strawberry" alone.
 import { displayProductName as displayName } from "../lib/product-display";
 import {
-  classifyMargin,
   computeLineSubtotal,
-  computeMarginFraction,
-  costPerSellingUnit,
   effectiveQty,
   getTierPrice,
   normalizeBoxesPieces,
-  priceForMarginFloor,
   roundMoney,
 } from "@routeflow/pricing";
 import { useMarginConfig, floorForCategory } from "../lib/api/margin";
-import { CostHistorySheet } from "./CostHistorySheet";
 import { useTrackedCategories } from "../lib/api/tracked-categories";
 import {
   groupLinesForInvoiceSplit,
@@ -66,12 +63,11 @@ import {
 import { MoneyTextInput } from "./MoneyTextInput";
 import { InlineCreateProductSheet } from "./InlineCreateProductSheet";
 import { ProductPickerSheet } from "./ProductPickerSheet";
-import { SellByToggle } from "./SellByToggle";
 import { BoxedQtyBand } from "./BoxedQtyBand";
 import { QtyStepper } from "./QtyStepper";
 import type { CreatedProduct } from "../lib/api/products";
 import { sanitizeIntInput } from "../lib/qty";
-import { MONEY_INPUT_MAX_WIDTH, QTY_INPUT_WIDTH } from "../lib/row-layout";
+import { MONEY_INPUT_MAX_WIDTH } from "../lib/row-layout";
 import { useAuthStore } from "../lib/auth-store";
 // chooseAction + alertInfo render the same dialogs cross-platform — RN's
 // Alert.alert silently no-ops 3-button alerts on Expo Web (the user's
@@ -158,79 +154,6 @@ export interface NewOrderScreenProps {
   resumeDraftId?: string;
 }
 
-type Product = {
-  id: string;
-  name: string;
-  sku?: string | null;
-  /** Retail-unit code — scannable, so the local scan fast path must see it. */
-  unitSku?: string | null;
-  barcode?: string | null;
-  unit?: string;
-  pricePerUnit: number | string;
-  // Tier price columns (Decimal, serialised as strings; 0 ⇒ inherit list). The
-  // /products payload already carries these — getTierPrice coerces + guards.
-  priceTier2?: number | string | null;
-  priceTier3?: number | string | null;
-  priceTier4?: number | string | null;
-  priceTier5?: number | string | null;
-  category?: string | null;
-  /** Regulated category this product belongs to (drives the license-guard remove-line exit). */
-  trackedCategoryId?: string | null;
-  /** Per-piece average cost — drives the live margin hint + the cost eye (web uses
-   *  averageCost, not standardCost). Operator/driver endpoints return it; buyers
-   *  never get this screen and their endpoints strip cost fields. */
-  averageCost?: number | string | null;
-  standardCost?: number | string | null;
-  unitsPerBox?: number | null;
-  parentProductId?: string | null;
-  parent?: { id: string; name: string } | null;
-  /**
-   * `GET /products/:id` (draft-resume hydration) and the barcode ladder both
-   * return an archived product, unlike the catalog list. Such a line is KEPT
-   * on resume — it is still orderable server-side — and the cart row flags it
-   * as Archived rather than deleting the operator's scanned work (R5/B195).
-   */
-  isActive?: boolean | null;
-};
-
-/**
- * Per-line cart state. `qty` is total pieces and stays the source of truth for
- * non-boxed products. When `boxes`/`pieces` are set, the server recomputes qty
- * from them on submit (see apps/api/src/orders/orders.service.ts:594) and the
- * line subtotal uses the BOX price × box-equivalent formula.
- */
-type LineState = {
-  qty: number;
-  boxes?: number;
-  pieces?: number;
-  /**
-   * Optional one-time price override (the "discounted price"). When unset the
-   * catalog price is used. For boxed products this is the BOX price, matching
-   * the catalog price unit; computeLineSubtotal prorates loose pieces.
-   */
-  unitPrice?: number;
-  /** Optional per-line note — carried onto the invoice line (buyer-visible). */
-  note?: string;
-  /** Note input expanded for this row (note text survives collapse). */
-  noteOpen?: boolean;
-  /** UI-only qty entry mode for a case-packed line. NEVER submitted — the
-   *  payload always carries {qty, boxes, pieces} and the per-case unitPrice. */
-  sellBy?: "case" | "unit";
-  /**
-   * units_v1: the unit this line is sold by ("Case"…), picked via `UnitPickerRow`. When set,
-   * `qty` is the unit COUNT (never expanded pieces) and boxes/pieces stay unset — see
-   * `submitOrder`'s catalogPayload builder.
-   */
-  unitLabel?: string | null;
-  /**
-   * units_v1: the chosen unit's own resolved tier price — the comparison base `unitPrice`
-   * diverging from means a genuine operator override, in place of `catalogPrice` (the PACK's
-   * price, which a Case's price will almost always differ from even with NO override typed).
-   * Unset while `unitLabel` is unset (the pack uses `catalogPrice` directly, as before).
-   */
-  unitBasePrice?: number;
-};
-
 /**
  * An ad-hoc, non-catalog ("unlisted") line. Has a free-text name + a required
  * per-piece price; never boxed. Serialised as `{ name, qty, unitPrice }` on
@@ -248,21 +171,6 @@ type UnlistedLine = {
 
 function newLocalId(): string {
   return `${Date.now()}-${Math.random().toString(36).slice(2)}`;
-}
-
-function toNumber(v: number | string | null | undefined): number {
-  if (typeof v === "number") return v;
-  if (typeof v === "string") {
-    const n = Number(v);
-    return Number.isFinite(n) ? n : 0;
-  }
-  return 0;
-}
-
-/** The effective per-unit price for a line: the override, else the resolved base
- *  (tier) price. Callers pass the customer's effective tier price as `basePrice`. */
-function effectiveUnitPrice(line: LineState | undefined, basePrice: number): number {
-  return line?.unitPrice != null ? line.unitPrice : basePrice;
 }
 
 const productKey = (p: CatalogRow<Product>) => (isCatalogHeader(p) ? `hdr-${p.__header}` : p.id);
@@ -3249,405 +3157,6 @@ function CartModal({
   );
 }
 
-function CartRow({
-  product,
-  line,
-  catalogPrice,
-  isSpecial,
-  tier,
-  marginFloor,
-  historyPrice,
-  onChangeBoxes,
-  onChangePieces,
-  onChangeUnits,
-  onChangeSellBy,
-  onChangeUnit,
-  onChangeQty,
-  onChangePrice,
-  onChangeNote,
-  onToggleNote,
-  showCostEye,
-  acked,
-  onSellAnyway,
-  onIncrement,
-  onDecrement,
-  onRemove,
-}: {
-  product: Product;
-  line: LineState;
-  /** The customer's effective tier price for this product (the base to compare
-   *  an override against and to fall back to when no override is set). */
-  catalogPrice: number;
-  /** SPECIAL (tier≠1) price: the input is locked and overrides are ignored. */
-  isSpecial: boolean;
-  /** units_v1: the EFFECTIVE numeric tier for `UnitPickerRow` to resolve the ladder price at. */
-  tier: number;
-  /** Category margin floor (fraction) for the live cost/margin hint. */
-  marginFloor: number;
-  historyPrice?: number;
-  onChangeBoxes: (n: number) => void;
-  onChangePieces: (n: number) => void;
-  /** Unit mode: total unit count, routed through setLineUnits. */
-  onChangeUnits: (n: number) => void;
-  onChangeSellBy: (sellBy: "case" | "unit") => void;
-  /** units_v1: a `UnitPickerRow` choice, routed through setUnitLabel. */
-  onChangeUnit: (option: UnitOption) => void;
-  onChangeQty: (n: number) => void;
-  onChangePrice: (value: number | null) => void;
-  onChangeNote: (text: string) => void;
-  onToggleNote: () => void;
-  showCostEye: boolean;
-  /** Whether this line was already acked as "sell anyway" below the floor. */
-  acked: boolean;
-  onSellAnyway: () => void;
-  onIncrement: () => void;
-  onDecrement: () => void;
-  onRemove: () => void;
-}) {
-  const upb = Number(product.unitsPerBox ?? 0);
-  // units_v1: a unit-sold line is never boxed UI — its qty is a plain count and unitPrice is
-  // already per-unit (boxes/pieces are cleared by setUnitLabel), so it renders through the same
-  // non-boxed branch a factor-1 product does.
-  const isBoxed = upb > 1 && !line.unitLabel;
-  const sellBy = line.sellBy ?? "case";
-  // units_v1: see lib/unit-options.ts#unitPriceBase.
-  const priceBase = unitPriceBase(line, catalogPrice);
-  const effUnit = isSpecial ? priceBase : effectiveUnitPrice(line, priceBase);
-  const isOverridden = !isSpecial && line.unitPrice != null && line.unitPrice !== priceBase;
-  const qty = effectiveQty(line, product.unitsPerBox);
-  const lineTotal = computeLineSubtotal({
-    unitPrice: effUnit,
-    qty,
-    boxes: line.boxes ?? null,
-    pieces: line.pieces ?? null,
-    unitsPerBox: product.unitsPerBox ?? null,
-  });
-
-  // Cost eye + live margin hint (mirror web): both read one per-piece cost —
-  // averageCost, else standardCost. Cost eye is hidden by default (session-local);
-  // the margin pill (classifyMargin vs the category floor) hides when no cost.
-  const [costVisible, setCostVisible] = useState(false);
-  const pieceCost =
-    product.averageCost != null
-      ? toNumber(product.averageCost)
-      : product.standardCost != null
-        ? toNumber(product.standardCost)
-        : null;
-  // 0 is a real cost; only null hides the eye/hint entirely.
-  const hasCost = pieceCost != null && Number.isFinite(pieceCost);
-  const sellingUnitCost = hasCost ? costPerSellingUnit(pieceCost!, product.unitsPerBox) : null;
-  const marginFrac = hasCost
-    ? computeMarginFraction(effUnit, pieceCost, product.unitsPerBox)
-    : null;
-  const marginClass = classifyMargin(marginFrac, marginFloor);
-  // Negotiation floor (pos-cost-roles-spec §1): the one-tap fix price + the
-  // below-floor/below-cost gate. `historyOpen` opens the cost-tap sheet.
-  const [historyOpen, setHistoryOpen] = useState(false);
-  const floorPrice =
-    hasCost && marginClass != null
-      ? priceForMarginFloor(pieceCost!, marginFloor, product.unitsPerBox)
-      : null;
-  const below = marginClass === "belowCost" || marginClass === "belowFloor";
-
-  return (
-    <View style={styles.cartRow}>
-      <View style={styles.cartRowHeader}>
-        <View style={{ flex: 1, minWidth: 0 }}>
-          <Text style={styles.cartRowName} numberOfLines={2}>
-            {displayName(product)}
-          </Text>
-          <Text style={styles.cartRowMeta} numberOfLines={1}>
-            {isBoxed ? `case of ${upb}` : product.unit ? `per ${product.unit}` : ""}
-            {product.sku ? `${isBoxed || product.unit ? " · " : ""}${product.sku}` : ""}
-          </Text>
-          {/* R5/B195: an archived product is kept on the order (it is still
-              orderable) — flagged, never silently deleted on draft-resume. */}
-          {product.isActive === false ? (
-            <Text style={styles.cartRowArchived} numberOfLines={1}>
-              Archived — no longer in the catalog
-            </Text>
-          ) : null}
-        </View>
-        <Pressable onPress={onRemove} hitSlop={8} style={styles.cartRowRemove}>
-          <Ionicons name="trash-outline" size={18} color={ios.system.redInk} />
-        </Pressable>
-      </View>
-
-      {/* Editable price — the "discounted price". Defaults to the catalog price;
-          typing a lower value records a one-time override sent as the line's
-          unitPrice. SPECIAL (tier≠1) lines lock it (web parity: the input is
-          hidden there — a tier price is the customer's permanent price). */}
-      <View style={styles.cartPriceRow}>
-        <Text style={styles.cartPriceLabel}>Price{isBoxed ? " / case" : ""}</Text>
-        <View style={styles.cartPriceInputWrap}>
-          <Text style={styles.cartPriceCurrency}>$</Text>
-          {isSpecial ? (
-            <>
-              <Text style={styles.cartPriceFixed}>{priceBase.toFixed(2)}</Text>
-              <Text style={styles.cartPriceLockNote} numberOfLines={1}>
-                Customer price
-              </Text>
-            </>
-          ) : (
-            <>
-              <MoneyTextInput
-                style={[styles.cartPriceInput, isOverridden && styles.cartPriceInputActive]}
-                value={line.unitPrice ?? null}
-                onChangeValue={onChangePrice}
-                placeholder={priceBase.toFixed(2)}
-                returnKeyType="done"
-              />
-              {isOverridden && line.unitPrice != null && line.unitPrice > priceBase ? (
-                <Text
-                  style={{ color: ios.system.greenInk, fontSize: 11, fontWeight: "600" }}
-                  numberOfLines={1}
-                >
-                  Upsell
-                </Text>
-              ) : isOverridden ? (
-                <Text style={styles.cartPriceWas} numberOfLines={1}>
-                  Current: ${priceBase.toFixed(2)}
-                </Text>
-              ) : !line.unitLabel && historyPrice != null && historyPrice !== catalogPrice ? (
-                <Text style={styles.cartPriceWas} numberOfLines={1}>
-                  Last: ${historyPrice.toFixed(2)}
-                </Text>
-              ) : null}
-            </>
-          )}
-        </View>
-      </View>
-
-      {/* Live margin hint — margin on the effective price vs the product's cost. */}
-      {marginFrac != null ? (
-        <Text
-          style={[
-            styles.marginHint,
-            marginClass === "belowCost" || marginClass === "belowFloor"
-              ? { color: ios.system.red }
-              : marginClass === "warn"
-                ? { color: ios.system.orange }
-                : { color: ios.label2 },
-          ]}
-        >
-          {marginClass === "belowCost"
-            ? `Below cost (${Math.round(marginFrac * 100)}%)`
-            : marginClass === "belowFloor"
-              ? `Below floor · ${Math.round(marginFrac * 100)}% margin`
-              : `${Math.round(marginFrac * 100)}% margin`}
-        </Text>
-      ) : null}
-
-      {/* Below-floor one-tap fix + ack, mirrors web MarginHint. */}
-      {below && !acked && floorPrice != null ? (
-        <View style={{ flexDirection: "row", gap: 10, marginTop: 2 }}>
-          <Pressable onPress={() => onChangePrice(floorPrice!)} style={styles.floorFixBtn}>
-            <Text style={styles.floorFixBtnText}>Set to floor ${floorPrice.toFixed(2)}</Text>
-          </Pressable>
-          <Pressable onPress={onSellAnyway} hitSlop={6}>
-            <Text style={styles.sellAnywayText}>Sell anyway</Text>
-          </Pressable>
-        </View>
-      ) : null}
-
-      <View style={{ marginBottom: isBoxed ? 2 : 8 }}>
-        <UnitPickerRow
-          line={{
-            productId: product.id,
-            unit: product.unit ?? "",
-            unitsPerBox: product.unitsPerBox,
-            listPrice: catalogPrice,
-            unitPrice: effUnit,
-            unitLabel: line.unitLabel,
-          }}
-          tier={tier}
-          onChange={onChangeUnit}
-        />
-      </View>
-
-      {isBoxed ? (
-        <>
-          <View style={{ marginBottom: 2 }}>
-            <SellByToggle value={sellBy} onChange={onChangeSellBy} />
-          </View>
-          {sellBy === "unit" ? (
-            <CartStepperRow
-              label={`Total ${product.unit ? `${product.unit}s` : "units"}`}
-              value={qty}
-              onChange={onChangeUnits}
-              hint={`${upb} per case`}
-            />
-          ) : (
-            <>
-              <CartStepperRow label="Cases" value={line.boxes ?? 0} onChange={onChangeBoxes} />
-              <CartStepperRow
-                label={`Loose ${product.unit ?? "units"}`}
-                value={line.pieces ?? 0}
-                onChange={onChangePieces}
-                max={upb - 1}
-                hint={`${upb} per case`}
-              />
-            </>
-          )}
-        </>
-      ) : (
-        <CartStepperRow
-          label={`Qty${line.unitLabel ? ` (${line.unitLabel})` : product.unit ? ` (${product.unit})` : ""}`}
-          value={line.qty ?? 0}
-          onChange={onChangeQty}
-          onIncrement={onIncrement}
-          onDecrement={onDecrement}
-        />
-      )}
-
-      {/* Cost eye — OFF by default; reveals the selling-unit cost + margin.
-          Once visible, the cost text itself is tappable → cost history sheet. */}
-      {showCostEye && hasCost ? (
-        <View style={styles.cartNoteAdd}>
-          <Pressable
-            onPress={() => setCostVisible((v) => !v)}
-            hitSlop={6}
-            style={{ flexDirection: "row", alignItems: "center", gap: 4 }}
-          >
-            <Ionicons
-              name={costVisible ? "eye-off-outline" : "eye-outline"}
-              size={14}
-              color={costVisible ? ios.label2 : ios.brand}
-            />
-            {!costVisible ? <Text style={styles.cartNoteAddText}>Cost</Text> : null}
-          </Pressable>
-          {costVisible ? (
-            <Pressable onPress={() => setHistoryOpen(true)} hitSlop={6}>
-              <Text style={styles.cartCostText}>
-                Cost ${sellingUnitCost!.toFixed(2)}
-                {isBoxed ? " / box" : ""}
-                {marginFrac != null ? ` · ${(marginFrac * 100).toFixed(1)}%` : ""}
-              </Text>
-            </Pressable>
-          ) : null}
-        </View>
-      ) : null}
-
-      {/* Per-line note — carried onto the invoice line (buyer-visible). */}
-      {line.noteOpen || line.note?.trim() ? (
-        <TextInput
-          value={line.note ?? ""}
-          onChangeText={onChangeNote}
-          placeholder="Flavor or note for this item (prints on invoice)"
-          placeholderTextColor={ios.label3}
-          maxLength={2000}
-          multiline
-          style={styles.cartNoteInput}
-        />
-      ) : (
-        <Pressable onPress={onToggleNote} hitSlop={6} style={styles.cartNoteAdd}>
-          <Ionicons name="create-outline" size={14} color={ios.brand} />
-          <Text style={styles.cartNoteAddText}>Add flavor / note</Text>
-        </Pressable>
-      )}
-
-      <View style={styles.cartRowFooter}>
-        <Text style={styles.cartRowFooterLabel}>Line total</Text>
-        <Text style={styles.cartRowFooterValue}>${lineTotal.toFixed(2)}</Text>
-      </View>
-
-      <CostHistorySheet
-        visible={historyOpen}
-        productId={product.id}
-        onClose={() => setHistoryOpen(false)}
-      />
-    </View>
-  );
-}
-
-function CartStepperRow({
-  label,
-  value,
-  onChange,
-  onIncrement,
-  onDecrement,
-  max,
-  hint,
-}: {
-  label: string;
-  value: number;
-  onChange: (n: number) => void;
-  onIncrement?: () => void;
-  onDecrement?: () => void;
-  max?: number;
-  hint?: string;
-}) {
-  // Local string state so the user can clear the input mid-edit without it
-  // snapping back to "0". Synced to `value` whenever the parent updates it
-  // (e.g. via the stepper buttons or another row affecting the line state).
-  const [draft, setDraft] = useState(String(value));
-  useEffect(() => {
-    setDraft(String(value));
-  }, [value]);
-
-  const dec = () => {
-    if (onDecrement) onDecrement();
-    else onChange(Math.max(0, value - 1));
-  };
-  const inc = () => {
-    if (onIncrement) onIncrement();
-    else {
-      const next = max != null ? Math.min(max, value + 1) : value + 1;
-      onChange(next);
-    }
-  };
-
-  return (
-    <View style={styles.cartStepperRow}>
-      <View style={{ flex: 1 }}>
-        {/* Clamped: unclamped, a squeezed column renders "Qty (Jar)" one
-            letter per line on react-native-web. See lib/row-layout.ts. */}
-        <Text style={styles.cartStepperLabel} numberOfLines={1}>
-          {label}
-        </Text>
-        {hint ? (
-          <Text style={styles.cartStepperHint} numberOfLines={1}>
-            {hint}
-          </Text>
-        ) : null}
-      </View>
-      <View style={styles.stepper}>
-        <Pressable style={styles.stepBtn} onPress={dec} hitSlop={6}>
-          <Text style={styles.stepBtnText}>−</Text>
-        </Pressable>
-        <TextInput
-          style={styles.cartStepperInput}
-          value={draft}
-          onChangeText={(txt) => {
-            // Integer-only: strip non-digits + leading zeros live (no "05", no
-            // decimals even when Android shows a decimal key); allow empty mid-edit.
-            const clean = sanitizeIntInput(txt);
-            setDraft(clean);
-            if (clean === "") return;
-            const n = parseInt(clean, 10);
-            if (Number.isFinite(n)) {
-              const clamped = max != null ? Math.min(max, n) : n;
-              onChange(clamped);
-            }
-          }}
-          onBlur={() => {
-            // Empty input → commit 0 (which removes the line if both fields are 0)
-            if (draft === "") onChange(0);
-            setDraft(String(value));
-          }}
-          keyboardType="number-pad"
-          returnKeyType="done"
-          maxLength={5}
-          selectTextOnFocus
-        />
-        <Pressable style={styles.stepBtn} onPress={inc} hitSlop={6}>
-          <Text style={styles.stepBtnText}>+</Text>
-        </Pressable>
-      </View>
-    </View>
-  );
-}
-
 /** Cart row for an ad-hoc (unlisted) line: editable price + qty, "Custom" tag, no image. */
 function UnlistedCartRow({
   line,
@@ -4182,17 +3691,6 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontFamily: "Inter_400Regular",
   },
-  stepper: {
-    flexDirection: "row",
-    alignItems: "center",
-    backgroundColor: ios.bgElev,
-    borderRadius: 10,
-    padding: 3,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: ios.separator,
-  },
-  stepBtn: { width: 30, height: 30, alignItems: "center", justifyContent: "center" },
-  stepBtnText: { color: ios.brand, fontSize: 18 },
   footer: {
     paddingHorizontal: 16,
     paddingTop: 10,
@@ -4344,19 +3842,6 @@ const styles = StyleSheet.create({
     color: ios.label,
     letterSpacing: -0.2,
   },
-  cartRowMeta: {
-    fontSize: 12,
-    fontFamily: "Inter_400Regular",
-    color: ios.label2,
-    marginTop: 2,
-    fontVariant: ["tabular-nums"],
-  },
-  cartRowArchived: {
-    fontSize: 12,
-    fontFamily: "Inter_600SemiBold",
-    color: ios.system.orangeInk,
-    marginTop: 2,
-  },
   cartRowRemove: {
     width: 32,
     height: 32,
@@ -4405,92 +3890,6 @@ const styles = StyleSheet.create({
     fontVariant: ["tabular-nums"],
   },
   cartPriceInputActive: { borderColor: ios.brand, color: ios.brand },
-  // SPECIAL-line locked price: same weight as the input's text, no field chrome.
-  cartPriceFixed: {
-    fontSize: 15,
-    fontFamily: "Inter_600SemiBold",
-    color: ios.label,
-    fontVariant: ["tabular-nums"],
-  },
-  cartPriceLockNote: {
-    fontSize: 11,
-    fontFamily: "Inter_400Regular",
-    color: ios.label2,
-    flexShrink: 1,
-  },
-  marginHint: {
-    fontSize: 11,
-    fontFamily: "Inter_500Medium",
-    marginTop: -4,
-    marginBottom: 2,
-    textAlign: "right",
-  },
-  cartPriceWas: {
-    fontSize: 11,
-    fontFamily: "Inter_400Regular",
-    color: ios.label2,
-    textDecorationLine: "line-through",
-    flexShrink: 1,
-  },
-  floorFixBtn: {
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: ios.system.red,
-    borderRadius: 6,
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-  },
-  floorFixBtnText: {
-    fontSize: 11,
-    fontFamily: "Inter_600SemiBold",
-    color: ios.system.redInk,
-  },
-  sellAnywayText: {
-    fontSize: 11,
-    fontFamily: "Inter_500Medium",
-    color: ios.label2,
-    textDecorationLine: "underline",
-  },
-  cartStepperRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 12,
-  },
-  cartStepperLabel: {
-    fontSize: 14,
-    fontFamily: "Inter_500Medium",
-    color: ios.label,
-  },
-  cartStepperHint: {
-    fontSize: 11,
-    fontFamily: "Inter_400Regular",
-    color: ios.label3,
-    marginTop: 1,
-  },
-  cartStepperInput: {
-    // Definite width, not minWidth — see lib/row-layout.ts for why.
-    width: QTY_INPUT_WIDTH.cart,
-    flexShrink: 0,
-    paddingHorizontal: 6,
-    paddingVertical: 4,
-    textAlign: "center",
-    fontSize: 16,
-    fontFamily: "Inter_700Bold",
-    color: ios.label,
-    fontVariant: ["tabular-nums"],
-  },
-  cartNoteAdd: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 4,
-    paddingVertical: 4,
-  },
-  cartNoteAddText: { fontSize: 12, fontFamily: "Inter_500Medium", color: ios.brand },
-  cartCostText: {
-    fontSize: 12,
-    fontFamily: "Inter_500Medium",
-    color: ios.label2,
-    fontVariant: ["tabular-nums"],
-  },
   cartNoteInput: {
     backgroundColor: ios.fill3,
     borderRadius: 8,
@@ -4520,6 +3919,13 @@ const styles = StyleSheet.create({
     color: ios.label,
     fontVariant: ["tabular-nums"],
   },
+  cartNoteAdd: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    paddingVertical: 4,
+  },
+  cartNoteAddText: { fontSize: 12, fontFamily: "Inter_500Medium", color: ios.brand },
   splitBanner: {
     marginTop: 4,
     marginBottom: 4,
