@@ -2788,3 +2788,23 @@ citations, closed-out with its own post-init assertion guard).
   cap — zero cross-references elsewhere in LESSONS.md/CLAUDE.md, and the guard is a standing,
   automated test isolation mechanism rather than a rule a session needs to recall by reading
   this prose.)
+
+## Archived 2026-09-23 — headroom for L-176's third recurrence (B660 PR B bookkeeping)
+
+### L-169 · 2026-09-16 · domain · B421 / PR-1a shared-helper precondition no-op (two call sites)
+
+- **Symptom:** two surfaces hit the same shape: a shared helper re-checked `.status` generically,
+  but the callers' own `select` never fetched it, so it silently read `undefined`. Both tests
+  passed anyway because their mocks supplied the field directly.
+- **Root cause:** a shared helper that re-derives a precondition has no knowledge of a caller's
+  query shape — it assumes the field is present, and a caller whose `select` never needed it
+  before silently hands the helper `undefined`, which the check absorbs as real.
+- **Lesson:** **Before wiring a caller into a shared helper that re-derives a precondition
+  generically, check the caller's `select` actually fetches the field — a mock supplying it
+  directly proves nothing. A type-check alone won't catch a field silently resolving to
+  `undefined`.**
+- **Guard:** both selects now fetch `status`; `returns-lineitems-select.spec.ts` pins the real
+  shape at every call site. (Archived 2026-09-23 to make room at cap — zero citations anywhere
+  outside the register, and the guard is a permanent code fix plus a standing regression spec
+  pinning the exact shape at both call sites, rather than a rule a session needs to recall by
+  reading this prose.)
