@@ -1306,7 +1306,11 @@ export class RoutesService {
         const orders = await this.prisma.forTenant().order.findMany({
           where: {
             customerId: { in: customerIds },
-            status: { notIn: [OrderStatus.CANCELLED] },
+            // B756: excludes DELIVERED too, mirroring getRunPackingList's sibling
+            // read path — without it, a customer's already-DELIVERED order
+            // history (from ANY run) gets folded into this run's stop and
+            // quoted to the driver as if it were still open on this delivery.
+            status: { notIn: [OrderStatus.CANCELLED, OrderStatus.DELIVERED] },
           },
           select: {
             id: true,

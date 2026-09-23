@@ -2370,6 +2370,38 @@ describe("RoutesService", () => {
       const actualSelect = call.select.lineItems.select;
       expect(actualSelect).toBe(RUN_LINE_ITEMS_SELECT);
     });
+
+    // B756: the fallback's own `where` filters `status: { notIn: [CANCELLED] }` only,
+    // with no limit — getRunPackingList (the sibling read path) excludes DELIVERED
+    // too (:2755, `notIn: [OrderStatus.CANCELLED, OrderStatus.DELIVERED]`). Without
+    // the same exclusion here, a customer's already-DELIVERED order history — from
+    // ANY run, not just this one — gets folded into this run's stop and quoted to
+    // the driver as if it were still open on this delivery.
+    it("B756: the fallback excludes DELIVERED orders too, not just CANCELLED", async () => {
+      prisma.routeRun.findUnique.mockResolvedValue({
+        ...MOCK_RUN,
+        stops: [
+          {
+            id: "stop-1",
+            customerId: "cust-1",
+            customer: null,
+            customerAddress: { id: "addr-1" },
+            routeStop: null,
+            orders: [], // no stop has a linked order -> triggers the fallback
+            deliveryMutations: [],
+          },
+        ],
+      });
+      prisma.order.findMany.mockResolvedValue([]);
+
+      await service.findOneRun("run-1");
+
+      expect(prisma.order.findMany).toHaveBeenCalled();
+      const call = prisma.order.findMany.mock.calls[0][0];
+      expect(call.where.status.notIn).toEqual(
+        expect.arrayContaining([OrderStatus.CANCELLED, OrderStatus.DELIVERED]),
+      );
+    });
   });
 
   // ─── F05: server-truth run cash collections ──────────────────────────────

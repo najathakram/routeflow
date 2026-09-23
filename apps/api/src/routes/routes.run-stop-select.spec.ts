@@ -70,4 +70,14 @@ describe("REG-B305 driver run/stop order projection", () => {
   it("REG-B305 round 3: the stop's customer select carries the tax-exemption column", () => {
     expect(RUN_STOP_INCLUDE.customer.select.isTaxExempt).toBe(true);
   });
+
+  // #1272 review follow-up (b305a-exempt-pin), landing with B756 since it touches the
+  // same fallback: round 3 fixed the DIRECT stop.customer.isTaxExempt gap, but the
+  // routeStop-fallback customer path (seeded/legacy runs whose stop never got a direct
+  // customer link — see findOneRun's normalisedStops fallback) still had no
+  // isTaxExempt, so a short-pick estimate on one of THOSE stops over-collects tax from
+  // an exempt customer exactly the way round 3 fixed for the direct-link case.
+  it("REG-B305/#1272: the routeStop-fallback customer select also carries the tax-exemption column", () => {
+    expect(RUN_STOP_INCLUDE.routeStop.include.customer.select.isTaxExempt).toBe(true);
+  });
 });
