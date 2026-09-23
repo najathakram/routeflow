@@ -192,12 +192,17 @@ describe("ParkedReversalResolutionService", () => {
       verdictAfter: null,
       unresolvableReason: "corrected qty is not positive",
     });
-    await expect(service.resolve("pr-1", 12, "reason text", actor)).rejects.toThrow(
-      ConflictException,
-    );
-    await expect(service.resolve("pr-1", 12, "reason text", actor)).rejects.toThrow(
-      /corrected qty is not positive/,
-    );
+    // ONE call: a mock transaction doesn't actually roll back the claim mutation on throw the
+    // way a real Postgres transaction would, so a second call here would see resolvedAt
+    // already set and report alreadyResolved instead of re-throwing.
+    let caught: unknown;
+    try {
+      await service.resolve("pr-1", 12, "reason text", actor);
+    } catch (e) {
+      caught = e;
+    }
+    expect(caught).toBeInstanceOf(ConflictException);
+    expect((caught as ConflictException).message).toMatch(/corrected qty is not positive/);
     expect(audit.log).not.toHaveBeenCalled();
   });
 
@@ -285,10 +290,12 @@ describe("parked reversal endpoints: roles, the tobacco addon, and the body", ()
   });
 
   it("carries the tobacco_dealer addon gate — unlike parked-restocks, this surface is regulated-only", () => {
+    // RequireAddon always stores an array (it also supports "any of several addons") — a bare
+    // string here would be wrong even for one addon.
     for (const h of [proto.resolveParkedReversal, proto.listParkedReversals]) {
-      expect(reflector.getAllAndOverride(REQUIRE_ADDON_KEY, [h, RegulatedController])).toBe(
+      expect(reflector.getAllAndOverride(REQUIRE_ADDON_KEY, [h, RegulatedController])).toEqual([
         "tobacco_dealer",
-      );
+      ]);
     }
   });
 
