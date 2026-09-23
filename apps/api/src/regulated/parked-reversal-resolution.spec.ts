@@ -1,0 +1,320 @@
+/**
+ * SA-089 — B660 PR B: the operator RESOLUTION of a parked regulated-ledger reversal. The
+ * classify/correct/book money math is `RegulatedLedgerService.resolveParkedReversal`'s own
+ * job (tested in regulated-ledger.service.spec.ts) — stubbed here as a black box, matching
+ * parked-restock-resolution.spec.ts's own convention of not re-testing the underlying writer.
+ * These tests cover the claim-first transaction shape, the audit, and the endpoint wiring.
+ */
+import {
+  BadRequestException,
+  ConflictException,
+  ExecutionContext,
+  NotFoundException,
+  ValidationPipe,
+} from "@nestjs/common";
+import { Reflector } from "@nestjs/core";
+import { Test } from "@nestjs/testing";
+import { UserRole } from "@prisma/client";
+import { ParkedReversalResolutionService } from "./parked-reversal-resolution.service";
+import { RegulatedController } from "./regulated.controller";
+import { ResolveParkedReversalDto } from "./dto/resolve-parked-reversal.dto";
+import { PrismaService } from "../prisma/prisma.service";
+import { AuditService } from "../audit/audit.service";
+import { RegulatedLedgerService } from "./regulated-ledger.service";
+import { RolesGuard } from "../auth/guards/roles.guard";
+import { REQUIRE_ADDON_KEY } from "../billing/require-addon.decorator";
+import { createMockPrisma } from "../testing/prisma-mock";
+
+const RETURN_ID = "ret-12345678-abcd";
+const parked = (over: Record<string, unknown> = {}) => ({
+  id: "pr-1",
+  tenantId: "t1",
+  returnId: RETURN_ID,
+  orderId: "ord-1",
+  orderItemId: "oi-1",
+  saleEntryId: "s-1",
+  returnedPieces: 5,
+  reason: "no snapshot and no product to gate on",
+  periodBucket: "2026-07",
+  createdAt: new Date("2026-09-01T00:00:00Z"),
+  resolvedAt: null as Date | null,
+  resolvedById: null as string | null,
+  unitsPerBoxSupplied: null as number | null,
+  resolvedEntryId: null as string | null,
+  ...over,
+});
+
+const BOOKED_RESOLUTION = {
+  outcome: "booked" as const,
+  correctionEntryId: "corr-1",
+  resolvedEntryId: "rev-1",
+  bookedPieces: 5,
+  bookedQty: 5,
+  bookedNet: -50,
+  bookedTax: -10,
+  verdictAfter: "legacy" as const,
+  unresolvableReason: null,
+};
+
+describe("ParkedReversalResolutionService", () => {
+  let service: ParkedReversalResolutionService;
+  let prisma: ReturnType<typeof createMockPrisma>;
+  let audit: { log: jest.Mock };
+  let ledger: { resolveParkedReversal: jest.Mock };
+  let table: ReturnType<typeof parked>[];
+  const actor = { id: "u-op" };
+
+  beforeEach(async () => {
+    prisma = createMockPrisma();
+    audit = { log: jest.fn().mockResolvedValue(undefined) };
+    ledger = { resolveParkedReversal: jest.fn().mockResolvedValue(BOOKED_RESOLUTION) };
+    table = [parked()];
+    const model: any = (prisma as any).regulatedLedgerParkedReversal;
+    model.findFirst = jest.fn(
+      async ({ where }: any) => table.find((r) => r.id === where.id) ?? null,
+    );
+    model.updateMany = jest.fn(async ({ where, data }: any) => {
+      const hit = table.filter(
+        (r) => r.id === where.id && (where.resolvedAt === null ? r.resolvedAt === null : true),
+      );
+      hit.forEach((r) => Object.assign(r, data));
+      return { count: hit.length };
+    });
+    model.findMany = jest.fn(async () => table.filter((r) => r.resolvedAt === null));
+    prisma.return.findFirst.mockResolvedValue({ status: "RECEIVED" } as any);
+    const mod = await Test.createTestingModule({
+      providers: [
+        ParkedReversalResolutionService,
+        { provide: PrismaService, useValue: prisma },
+        { provide: AuditService, useValue: audit },
+        { provide: RegulatedLedgerService, useValue: ledger },
+      ],
+    }).compile();
+    service = mod.get(ParkedReversalResolutionService);
+  });
+
+  it("stamps resolvedAt / resolvedById / unitsPerBoxSupplied on a CONDITIONAL claim, then the resolvedEntryId", async () => {
+    const res = await service.resolve("pr-1", 12, "confirmed the case size on the invoice", actor);
+    const model: any = (prisma as any).regulatedLedgerParkedReversal;
+    expect(model.updateMany.mock.calls[0][0]).toMatchObject({
+      where: { id: "pr-1", resolvedAt: null },
+      data: { resolvedById: "u-op", unitsPerBoxSupplied: 12 },
+    });
+    expect(table[0].resolvedAt).toBeInstanceOf(Date);
+    expect(model.updateMany.mock.calls[1][0]).toMatchObject({
+      where: { id: "pr-1" },
+      data: { resolvedEntryId: "rev-1" },
+    });
+    expect(table[0].resolvedEntryId).toBe("rev-1");
+    expect(res).toEqual({ alreadyResolved: false, outcome: "booked", resolvedEntryId: "rev-1" });
+  });
+
+  it("passes the parked row's own fields and the supplied pack into RegulatedLedgerService.resolveParkedReversal", async () => {
+    await service.resolve("pr-1", 12, "reason text", actor);
+    expect(ledger.resolveParkedReversal).toHaveBeenCalledWith(
+      expect.anything(),
+      {
+        returnId: RETURN_ID,
+        orderId: "ord-1",
+        orderItemId: "oi-1",
+        saleEntryId: "s-1",
+        returnedPieces: 5,
+      },
+      12,
+    );
+  });
+
+  it("a SECOND resolve is a no-op: no ledger call, the first answer stands, no second audit", async () => {
+    await service.resolve("pr-1", 12, "first reason", actor);
+    ledger.resolveParkedReversal.mockClear();
+    audit.log.mockClear();
+    const again = await service.resolve("pr-1", 6, "second reason", { id: "u-other" });
+    expect(again).toMatchObject({ alreadyResolved: true, resolvedEntryId: "rev-1" });
+    expect(ledger.resolveParkedReversal).not.toHaveBeenCalled();
+    expect(table[0]).toMatchObject({ resolvedById: "u-op", unitsPerBoxSupplied: 12 });
+    expect(audit.log).not.toHaveBeenCalled();
+  });
+
+  it("a concurrent resolve that loses the claim (count 0) never calls the ledger", async () => {
+    (prisma as any).regulatedLedgerParkedReversal.updateMany.mockResolvedValueOnce({ count: 0 });
+    const res = await service.resolve("pr-1", 12, "reason text", actor);
+    expect(res.alreadyResolved).toBe(true);
+    expect(ledger.resolveParkedReversal).not.toHaveBeenCalled();
+  });
+
+  it("404s a row the tenant cannot see, calling the ledger for nothing", async () => {
+    table = [];
+    await expect(service.resolve("pr-1", 12, "reason text", actor)).rejects.toBeInstanceOf(
+      NotFoundException,
+    );
+    expect(ledger.resolveParkedReversal).not.toHaveBeenCalled();
+    expect(audit.log).not.toHaveBeenCalled();
+  });
+
+  it("refuses a CANCELLED return and calls the ledger for nothing, rolling the claim back so the row stays parked", async () => {
+    prisma.return.findFirst.mockResolvedValue({ status: "CANCELLED" } as any);
+    await expect(service.resolve("pr-1", 12, "reason text", actor)).rejects.toBeInstanceOf(
+      NotFoundException,
+    );
+    expect(ledger.resolveParkedReversal).not.toHaveBeenCalled();
+    expect(audit.log).not.toHaveBeenCalled();
+  });
+
+  it("makes the CANCELLED check INSIDE the transaction and AFTER the claim, so the claim's row lock serialises against cancel()", async () => {
+    const order: string[] = [];
+    const model: any = (prisma as any).regulatedLedgerParkedReversal;
+    const claim = model.updateMany;
+    model.updateMany = jest.fn(async (a: any) => {
+      if (a.where?.resolvedAt === null) order.push("claim");
+      return claim(a);
+    });
+    prisma.return.findFirst.mockImplementation(async () => {
+      order.push("status-read");
+      return { status: "RECEIVED" } as any;
+    });
+    ledger.resolveParkedReversal.mockImplementation(async () => {
+      order.push("book");
+      return BOOKED_RESOLUTION;
+    });
+    await service.resolve("pr-1", 12, "reason text", actor);
+    expect(order).toEqual(["claim", "status-read", "book"]);
+  });
+
+  it("an unresolvable verdict refuses with a 409 PARKED_REVERSAL_UNRESOLVABLE, naming the reason — no audit", async () => {
+    ledger.resolveParkedReversal.mockResolvedValue({
+      outcome: "unresolvable",
+      correctionEntryId: null,
+      resolvedEntryId: null,
+      bookedPieces: 0,
+      bookedQty: 0,
+      bookedNet: 0,
+      bookedTax: 0,
+      verdictAfter: null,
+      unresolvableReason: "corrected qty is not positive",
+    });
+    await expect(service.resolve("pr-1", 12, "reason text", actor)).rejects.toThrow(
+      ConflictException,
+    );
+    await expect(service.resolve("pr-1", 12, "reason text", actor)).rejects.toThrow(
+      /corrected qty is not positive/,
+    );
+    expect(audit.log).not.toHaveBeenCalled();
+  });
+
+  it("audits the actor, the classify verdict, the correction/reversal ids, the booked figures and the operator's own reason", async () => {
+    await service.resolve("pr-1", 12, "confirmed with the supplier's packing slip", actor);
+    expect(audit.log).toHaveBeenCalledWith(
+      expect.objectContaining({
+        userId: "u-op",
+        action: "regulated_ledger.parked_reversal_resolved",
+        entityType: "RegulatedLedgerParkedReversal",
+        entityId: "pr-1",
+        meta: expect.objectContaining({
+          returnId: RETURN_ID,
+          saleEntryId: "s-1",
+          orderItemId: "oi-1",
+          parkReason: "no snapshot and no product to gate on",
+          unitsPerBoxSupplied: 12,
+          verdictAfter: "legacy",
+          correctionEntryId: "corr-1",
+          returnedPieces: 5,
+          bookedPieces: 5,
+          bookedQty: 5,
+          bookedNet: -50,
+          bookedTax: -10,
+          resolvedEntryId: "rev-1",
+          periodBucket: "2026-07",
+          operatorReason: "confirmed with the supplier's packing slip",
+        }),
+      }),
+    );
+  });
+
+  it("a CLOSED outcome (already fully reversed) still stamps resolvedAt and audits, with a null resolvedEntryId", async () => {
+    ledger.resolveParkedReversal.mockResolvedValue({
+      outcome: "closed",
+      correctionEntryId: null,
+      resolvedEntryId: null,
+      bookedPieces: 0,
+      bookedQty: 0,
+      bookedNet: 0,
+      bookedTax: 0,
+      verdictAfter: "piece-axis",
+      unresolvableReason: null,
+    });
+    const res = await service.resolve("pr-1", 12, "reason text", actor);
+    expect(res).toEqual({ alreadyResolved: false, outcome: "closed", resolvedEntryId: null });
+    expect(table[0].resolvedAt).toBeInstanceOf(Date);
+    expect(audit.log).toHaveBeenCalledWith(
+      expect.objectContaining({
+        meta: expect.objectContaining({ bookedPieces: 0, resolvedEntryId: null }),
+      }),
+    );
+  });
+
+  it("lists the tenant's unresolved parked reversals, oldest first", async () => {
+    const rows = await service.list();
+    expect(rows).toHaveLength(1);
+    expect((prisma as any).regulatedLedgerParkedReversal.findMany.mock.calls[0][0]).toEqual({
+      where: { resolvedAt: null },
+      orderBy: { createdAt: "asc" },
+    });
+  });
+});
+
+describe("parked reversal endpoints: roles, the tobacco addon, and the body", () => {
+  const reflector = new Reflector();
+  const guard = new RolesGuard(reflector);
+  const proto = RegulatedController.prototype;
+  const ctx = (handler: any, role?: UserRole): ExecutionContext =>
+    ({
+      getHandler: () => handler,
+      getClass: () => RegulatedController,
+      switchToHttp: () => ({ getRequest: () => ({ user: role ? { role } : undefined }) }),
+    }) as unknown as ExecutionContext;
+
+  it("OPERATOR and TENANT_ADMIN may resolve/list; DRIVER, CUSTOMER and anonymous are refused (403)", () => {
+    for (const role of [UserRole.OPERATOR, UserRole.TENANT_ADMIN]) {
+      expect(guard.canActivate(ctx(proto.resolveParkedReversal, role))).toBe(true);
+      expect(guard.canActivate(ctx(proto.listParkedReversals, role))).toBe(true);
+    }
+    for (const role of [UserRole.DRIVER, UserRole.CUSTOMER, undefined]) {
+      expect(guard.canActivate(ctx(proto.resolveParkedReversal, role))).toBe(false);
+      expect(guard.canActivate(ctx(proto.listParkedReversals, role))).toBe(false);
+    }
+  });
+
+  it("carries the tobacco_dealer addon gate — unlike parked-restocks, this surface is regulated-only", () => {
+    for (const h of [proto.resolveParkedReversal, proto.listParkedReversals]) {
+      expect(reflector.getAllAndOverride(REQUIRE_ADDON_KEY, [h, RegulatedController])).toBe(
+        "tobacco_dealer",
+      );
+    }
+  });
+
+  const pipe = new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true, transform: true });
+  const run = (body: unknown) =>
+    pipe.transform(body, { type: "body", metatype: ResolveParkedReversalDto });
+
+  it("the body is PACK (1..10000) and a REQUIRED reason (>= 3 chars) — no other field", async () => {
+    await expect(run({ pack: 12, reason: "confirmed" })).resolves.toMatchObject({
+      pack: 12,
+      reason: "confirmed",
+    });
+    // 1 is accepted — same owner ruling as the parked-restock DTO: a genuinely unboxed line.
+    await expect(run({ pack: 1, reason: "was never boxed" })).resolves.toMatchObject({ pack: 1 });
+    for (const bad of [0, -12, 1.5, "abc", null, 10001, undefined]) {
+      await expect(run({ pack: bad, reason: "confirmed" })).rejects.toBeInstanceOf(
+        BadRequestException,
+      );
+    }
+    for (const bad of ["", "ok", "  ", undefined, null]) {
+      await expect(run({ pack: 12, reason: bad })).rejects.toBeInstanceOf(BadRequestException);
+    }
+    for (const extra of ["unitsPerBoxSupplied", "returnedPieces", "qty"]) {
+      await expect(run({ pack: 12, reason: "confirmed", [extra]: 99 })).rejects.toBeInstanceOf(
+        BadRequestException,
+      );
+    }
+  });
+});

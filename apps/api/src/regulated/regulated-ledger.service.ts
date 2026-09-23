@@ -6,6 +6,7 @@ import {
   classifySaleAxis,
   type SaleAxisLine,
   type SaleAxisCorrection,
+  type SaleAxisState,
 } from "@routeflow/pricing";
 import { periodBucketOf } from "./period";
 
@@ -817,6 +818,189 @@ export class RegulatedLedgerService {
     // there is nothing left to resolve it against. Only this return's UNRESOLVED rows: a row
     // already resolved (resolvedAt set) recorded a real filing decision and must survive.
     await db.regulatedLedgerParkedReversal.deleteMany({ where: { returnId, resolvedAt: null } });
+  }
+
+  /**
+   * SA-089 — B660: the operator resolution of ONE parked reversal row. Lives here (not a
+   * separate injectable) because both `buildLineRemainingBalances` and `bookReversalChunk`
+   * are private to this class — SA-090's own note. `ParkedReversalResolutionService`
+   * (returns module) is the thin claim-first/audit wrapper that calls this; this method does
+   * no claiming and no auditing, only the classify/correct/book money math, so it can be
+   * called from inside the wrapper's own `tenantTransaction`.
+   *
+   * WHICH PACK (SA-089 §1): re-runs `classifySaleAxis` with the sale row's OWN line shape,
+   * `unitsPerBox` REPLACED by the operator-supplied pack (never the line's own stale/absent
+   * snapshot, never the live product) — a line with none resolved at all (deleted invoice
+   * item, orphaned order item) uses the supplied pack as the WHOLE shape. `piece-axis` books
+   * directly. `legacy` (box axis — the defect) appends ONE correction row first (SALE-typed,
+   * `correctsEntryId` the sale row, `unitBasisQty` delta `+qty*(pack-1)`) so the SALE's basis
+   * is fixed for every later reader and the classifier answers piece-axis from then on
+   * (never re-parks — SA-070 hazard 2). `unknown` after the pack refuses outright — nothing
+   * is written, the row stays parked.
+   *
+   * REMAINING CHANGED SINCE PARKING (SA-089 §2): `buildLineRemainingBalances` is called
+   * FRESH here, never the parked row's own stale `returnedPieces` denominator — later
+   * returns/credits/corrections are folded in automatically. `bookReversalChunk` (the SAME
+   * booker the live reversal path uses, called with a single-row candidate set) caps the
+   * booking at the line's current remaining and reports whatever it actually booked; a
+   * capped booking is not an error.
+   *
+   * FULLY REVERSED NOW (SA-089 §3): `bookReversalChunk` itself pushes nothing to `rows` when
+   * the line's remaining is already exhausted — that IS the close case, detected here as
+   * `rows.length === 0`. No zero REVERSAL row is ever written for it.
+   *
+   * ONE-WAY (SA-089 §4): this method makes no resolved/claim state of its own — the wrapper
+   * stamps `resolvedAt`/`unitsPerBoxSupplied` under the SAME transaction as the DB writes
+   * this method makes, so a caller that rolls back the transaction rolls back the correction
+   * row and the REVERSAL row together with the claim.
+   */
+  async resolveParkedReversal(
+    db: any,
+    parked: {
+      returnId: string;
+      orderId: string;
+      orderItemId: string | null;
+      saleEntryId: string;
+      returnedPieces: number;
+    },
+    pack: number,
+  ): Promise<{
+    outcome: "booked" | "closed" | "unresolvable";
+    correctionEntryId: string | null;
+    resolvedEntryId: string | null;
+    bookedPieces: number;
+    bookedQty: number;
+    bookedNet: number;
+    bookedTax: number;
+    verdictAfter: SaleAxisState | null;
+    unresolvableReason: string | null;
+  }> {
+    const unresolvable = (reason: string, correctionEntryId: string | null = null) => ({
+      outcome: "unresolvable" as const,
+      correctionEntryId,
+      resolvedEntryId: null,
+      bookedPieces: 0,
+      bookedQty: 0,
+      bookedNet: 0,
+      bookedTax: 0,
+      verdictAfter: null,
+      unresolvableReason: reason,
+    });
+
+    const saleRow = await db.regulatedSalesLedger.findFirst({
+      where: { id: parked.saleEntryId },
+    });
+    // The sale row should never actually be missing (it is never deleted elsewhere) — treated
+    // as unresolvable rather than silently booking against nothing if it somehow is.
+    if (!saleRow) return unresolvable("the sale row no longer exists");
+
+    const shapes = await this.loadSaleLineShapes(db, [saleRow]);
+    const shape = shapes.get(saleRow.id) ?? { line: null, productId: null };
+    const lineWithSuppliedPack: SaleAxisLine = shape.line
+      ? { ...shape.line, unitsPerBox: pack }
+      : { boxes: null, pieces: null, unitLabel: null, unitsPerBox: pack };
+
+    let correctionsBySaleId = await this.loadCorrectionsBySaleId(db, [saleRow.id]);
+    const verdict = classifySaleAxis(
+      { entryType: saleRow.entryType, qty: saleRow.qty, unitBasisQty: saleRow.unitBasisQty },
+      lineWithSuppliedPack,
+      correctionsBySaleId.get(saleRow.id) ?? [],
+      pack,
+    );
+    if (verdict.state === "unknown") return unresolvable(verdict.reason);
+
+    let correctionEntryId: string | null = null;
+    if (verdict.state === "legacy") {
+      const qty = Number(saleRow.qty);
+      const correction = await db.regulatedSalesLedger.create({
+        data: {
+          tenantId: saleRow.tenantId,
+          trackedCategoryId: saleRow.trackedCategoryId,
+          trackedSubcategoryId: saleRow.trackedSubcategoryId ?? null,
+          entryType: "SALE",
+          orderId: saleRow.orderId ?? parked.orderId,
+          orderItemId: saleRow.orderItemId,
+          invoiceId: saleRow.invoiceId,
+          invoiceItemId: saleRow.invoiceItemId,
+          correctsEntryId: saleRow.id,
+          originalSoldAt: saleRow.soldAt,
+          soldAt: new Date(),
+          qty: 0,
+          unitBasisQty: qty * (pack - 1),
+          netSales: 0,
+          categoryTax: 0,
+          periodBucket: periodBucketOf(new Date()),
+        },
+      });
+      correctionEntryId = correction.id;
+      // Refresh so bookReversalChunk's OWN classify call below folds the new row in and
+      // answers piece-axis — it must never re-park what was just corrected.
+      correctionsBySaleId = await this.loadCorrectionsBySaleId(db, [saleRow.id]);
+    }
+
+    const built = await this.buildLineRemainingBalances(db, parked.orderId);
+    if (!built) return unresolvable("no SALE rows remain on this order", correctionEntryId);
+    const { lineKeyOfSale, remQtyByLine, remUnitBasisByLine, remNetByLine, remTaxByLine } = built;
+
+    const now = new Date();
+    const bucket = periodBucketOf(now);
+    const rows: any[] = [];
+    const chunk = await this.bookReversalChunk({
+      db,
+      s: saleRow,
+      remaining: parked.returnedPieces,
+      returnId: parked.returnId,
+      orderId: parked.orderId,
+      returnedUnit: "PIECES",
+      bucket,
+      now,
+      lineKeyOfSale,
+      nativeRemByLine: remUnitBasisByLine,
+      remQtyByLine,
+      remUnitBasisByLine,
+      remNetByLine,
+      remTaxByLine,
+      lineShapeBySaleId: new Map([
+        [saleRow.id, { line: lineWithSuppliedPack, productId: shape.productId }],
+      ]),
+      correctionsBySaleId,
+      packNowByProduct: new Map(shape.productId ? [[shape.productId, pack]] : []),
+      rows,
+    });
+
+    // Defensive: our own pre-classify above already ruled out "unknown", so
+    // bookReversalChunk's internal re-classify (same data, now with the correction folded
+    // in when one was written) should never disagree and park again — if it somehow does,
+    // treat it as unresolvable rather than silently reporting success.
+    if (chunk.parked)
+      return unresolvable("classification disagreed after correction", correctionEntryId);
+
+    if (rows.length === 0) {
+      return {
+        outcome: "closed",
+        correctionEntryId,
+        resolvedEntryId: null,
+        bookedPieces: 0,
+        bookedQty: 0,
+        bookedNet: 0,
+        bookedTax: 0,
+        verdictAfter: verdict.state,
+        unresolvableReason: null,
+      };
+    }
+
+    const created = await db.regulatedSalesLedger.create({ data: rows[0] });
+    return {
+      outcome: "booked",
+      correctionEntryId,
+      resolvedEntryId: created.id,
+      bookedPieces: -Number(created.unitBasisQty),
+      bookedQty: -Number(created.qty),
+      bookedNet: -Number(created.netSales),
+      bookedTax: -Number(created.categoryTax),
+      verdictAfter: verdict.state,
+      unresolvableReason: null,
+    };
   }
 
   /**
