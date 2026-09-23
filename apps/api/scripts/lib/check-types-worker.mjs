@@ -4,6 +4,7 @@
 import path from "node:path";
 import { performance } from "node:perf_hooks";
 import ts from "typescript";
+import { isNoCheckFile } from "./check-types-ratchet-core.mjs";
 
 const started = performance.now();
 const configPath = path.resolve(process.argv[2] ?? "tsconfig.spec.json");
@@ -29,7 +30,7 @@ const rel = (f) => path.relative(apiDir, f).split(path.sep).join("/");
 const nocheck = program
   .getSourceFiles()
   .filter((sf) => !rel(sf.fileName).startsWith("..") && !sf.isDeclarationFile)
-  .filter((sf) => /^\s*\/\/\s*@ts-nocheck\b/m.test(sf.text))
+  .filter((sf) => isNoCheckFile(sf))
   .map((sf) => rel(sf.fileName));
 const diagnostics = ts.getPreEmitDiagnostics(program).map((d) => ({
   file: d.file ? rel(d.file.fileName) : null,

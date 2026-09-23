@@ -2,6 +2,40 @@ import type { Prisma } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 
 /**
+ * The delegate methods createMockPrisma() replaces with jest.fn() on every model. The type below is
+ * DERIVED from this list, so the runtime mock and the type can never disagree in either direction.
+ */
+const MODEL_METHODS = [
+  "findMany",
+  "findUnique",
+  "findUniqueOrThrow",
+  "findFirst",
+  "findFirstOrThrow",
+  "create",
+  "createMany",
+  "update",
+  "updateMany",
+  "delete",
+  "deleteMany",
+  "count",
+  "aggregate",
+  "groupBy",
+  "upsert",
+] as const;
+type MockModelMethod = (typeof MODEL_METHODS)[number];
+
+/**
+ * B806: `jest.Mocked<PrismaService>` is SHALLOW, so `prisma.order.findUnique` kept the real Prisma
+ * delegate type and every `.mockResolvedValue(...)` on it was a type error (6,328 of them, invisible
+ * only because check-types excluded specs). Each model's delegate methods are typed as the jest.fn()
+ * they are at runtime. The object this function builds is unchanged (same method list, now
+ * hoisted to MODEL_METHODS so the type is derived from it).
+ */
+export type MockPrisma = jest.Mocked<PrismaService> & {
+  [K in Uncapitalize<Prisma.ModelName>]: Record<MockModelMethod, jest.Mock>;
+};
+
+/**
  * Creates a deeply-mocked PrismaService where every model property
  * (customer, order, product, etc.) and every method (findMany, create,
  * update, etc.) is a jest.fn().
@@ -9,52 +43,8 @@ import { PrismaService } from "../prisma/prisma.service";
  * Usage:
  *   providers: [{ provide: PrismaService, useValue: createMockPrisma() }]
  */
-/** The delegate methods createMockPrisma() replaces with jest.fn() on every model. */
-type MockModelMethod =
-  | "findMany"
-  | "findUnique"
-  | "findUniqueOrThrow"
-  | "findFirst"
-  | "findFirstOrThrow"
-  | "create"
-  | "createMany"
-  | "update"
-  | "updateMany"
-  | "delete"
-  | "deleteMany"
-  | "count"
-  | "aggregate"
-  | "groupBy"
-  | "upsert";
-
-/**
- * B806: `jest.Mocked<PrismaService>` is SHALLOW, so `prisma.order.findUnique` kept the real Prisma
- * delegate type and every `.mockResolvedValue(...)` on it was a type error (6,328 of them, invisible
- * only because check-types excluded specs). Each model's delegate methods are typed as the jest.fn()
- * they are at runtime. TYPES ONLY: the object this function builds is unchanged.
- */
-export type MockPrisma = jest.Mocked<PrismaService> & {
-  [K in Uncapitalize<Prisma.ModelName>]: Record<MockModelMethod, jest.Mock>;
-};
-
 export function createMockPrisma(): MockPrisma {
-  const modelMethods = [
-    "findMany",
-    "findUnique",
-    "findUniqueOrThrow",
-    "findFirst",
-    "findFirstOrThrow",
-    "create",
-    "createMany",
-    "update",
-    "updateMany",
-    "delete",
-    "deleteMany",
-    "count",
-    "aggregate",
-    "groupBy",
-    "upsert",
-  ] as const satisfies readonly MockModelMethod[];
+  const modelMethods = MODEL_METHODS;
 
   // Sensible defaults so services don't crash when a mock isn't explicitly set up
   const defaultReturnValues: Record<string, unknown> = {

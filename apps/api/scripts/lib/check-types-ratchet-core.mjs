@@ -18,7 +18,17 @@ export const OOM_HINT =
   `(--max-old-space-size=${HEAP_MB}, also exported in NODE_OPTIONS to the compile worker). ` +
   `Free memory first (on an 8 GB machine: no other verify, push or Jest run at the same time); ` +
   `if the program has genuinely outgrown it, raise HEAP_MB in scripts/lib/check-types-ratchet-core.mjs`;
-export const NOCHECK = /^\s*\/\/\s*@ts-nocheck\b/m;
+// `// @ts-nocheck`, `/// @ts-nocheck`, any case — the text fallback for isNoCheckFile().
+export const NOCHECK = /^\s*\/{2,3}\s*@ts-nocheck\b/im;
+
+/**
+ * A source file the compiler will skip entirely. TypeScript records the pragma itself as
+ * `checkJsDirective.enabled === false`; the text match is the fallback. Takes a ts.SourceFile or
+ * any `{ checkJsDirective?, text }`, so the self-test exercises the exact function the worker runs.
+ */
+export function isNoCheckFile(sf) {
+  return sf?.checkJsDirective?.enabled === false || NOCHECK.test(sf?.text ?? "");
+}
 
 const fileOf = (d) => d.file ?? "<no file>";
 

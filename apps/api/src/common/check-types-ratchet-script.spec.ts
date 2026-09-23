@@ -11,7 +11,7 @@ import { pathToFileURL } from "node:url";
 const API_DIR = path.resolve(__dirname, "../..");
 const CORE = pathToFileURL(path.join(API_DIR, "scripts/lib/check-types-ratchet-core.mjs")).href;
 
-function core(body: string): any {
+function core(body: string): unknown {
   const res = spawnSync(
     process.execPath,
     ["--input-type=module", "-e", `import * as c from "${CORE}";\n${body}`],
@@ -24,13 +24,14 @@ function core(body: string): any {
 }
 
 /** evaluate() over diagnostics given as [file, count] pairs. */
-const judge = (files: Array<[string | null, number]>, baseline: Record<string, number>) =>
+type Judged = { ok: boolean; failures: Array<[string, string | null]> };
+const judge = (files: Array<[string | null, number]>, baseline: Record<string, number>): Judged =>
   core(`
     const d = ${JSON.stringify(files)}.flatMap(([file, n]) =>
       Array.from({ length: n }, (_, i) => ({ file, line: i + 1, code: 2339, message: "m" })));
     const r = c.evaluate(d, ${JSON.stringify(baseline)});
     console.log(JSON.stringify({ ok: r.ok, failures: r.failures.map((f) => [f.kind, f.file]) }));
-  `);
+  `) as Judged;
 
 describe("check-types ratchet rules (B806)", () => {
   it("passes when every spec file is at its baseline and no source file has an error", () => {
@@ -89,10 +90,10 @@ describe("check-types ratchet rules (B806)", () => {
     const out = core(`console.log(JSON.stringify([
       c.classifyWorkerExit({ status: 134, signal: null, stderr: "FATAL ERROR: Reached heap limit Allocation failed - JavaScript heap out of memory" }),
       c.classifyWorkerExit({ status: 0, signal: null, stderr: "" }),
-    ]));`);
-    expect(out[0].kind).toBe("oom");
-    expect(out[0].message).toContain("--max-old-space-size=4096");
-    expect(out[0].message).toContain("raise HEAP_MB");
+    ]));`) as Array<{ kind: string; message: string } | null>;
+    expect(out[0]?.kind).toBe("oom");
+    expect(out[0]?.message).toContain("--max-old-space-size=4096");
+    expect(out[0]?.message).toContain("raise HEAP_MB");
     expect(out[1]).toBeNull();
   });
 
@@ -122,6 +123,18 @@ describe("check-types ratchet rules (B806)", () => {
       ["ts-nocheck", "src/a.spec.ts"],
       ["stale-baseline", "src/a.spec.ts"],
     ]);
-    expect(core(`console.log(JSON.stringify(c.NOCHECK.test("// @ts-nocheck\\nx")))`)).toBe(true);
+    // One detector, the one the worker imports: the compiler's own pragma flag, then the text.
+    expect(
+      core(`console.log(JSON.stringify([
+        c.isNoCheckFile({ checkJsDirective: { enabled: false }, text: "" }),
+        c.isNoCheckFile({ text: "// @ts-nocheck\\nx" }),
+        c.isNoCheckFile({ text: "/// @ts-nocheck\\nx" }),
+        c.isNoCheckFile({ text: "// @TS-NOCHECK\\nx" }),
+        c.isNoCheckFile({ checkJsDirective: { enabled: true }, text: "// @ts-check\\nx" }),
+        c.isNoCheckFile({ text: "const a = 1;" }),
+      ]))`),
+    ).toEqual([true, true, true, true, false, false]);
+    const worker = readFileSync(path.join(API_DIR, "scripts/lib/check-types-worker.mjs"), "utf8");
+    expect(worker).toMatch(/import \{ isNoCheckFile \} from "\.\/check-types-ratchet-core\.mjs"/);
   });
 });
