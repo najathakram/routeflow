@@ -9,6 +9,15 @@ import { expect, type Page } from "@playwright/test";
  * `documentElement.scrollWidth <= innerWidth` check is structurally blind to
  * overflow absorbed by an inner `overflow-y: auto` container, and why walking
  * every real element's bounding box is the check that actually catches it.
+ *
+ * Two, DIFFERENT checks live here, both walking `body *`: (1) a box escaping
+ * the viewport (findViewportOverflow's main pass), and (2) content clipped
+ * INSIDE an in-viewport box by its own `overflow-hidden`/`clip` (the second
+ * pass) — added after pre-merge review caught this branch's own probe
+ * missing exactly this on `(dashboard)/dashboard/page.tsx`'s order-pipeline
+ * strip ("Cancelled" hard-clipped to "Cancelle", no ellipsis). Check (1)'s
+ * box can be perfectly in-bounds while check (2) still fires, and vice
+ * versa — they are not redundant.
  */
 
 export interface Offender {
@@ -53,12 +62,20 @@ export interface Offender {
  * invoices list") — it is a coarser tool than the offender-level `ignore`
  * predicate in assertNoOverflow and should be scoped just as narrowly.
  */
+export interface OverflowResult {
+  offenders: Offender[];
+  /** Count of elements dropped by ignoreContainerSelectors — see
+   * assertNoOverflow's "the ignore actually ignored something" assertion. */
+  ignoredByContainer: number;
+}
+
 export async function findViewportOverflow(
   page: Page,
   ignoreContainerSelectors: string[] = [],
-): Promise<Offender[]> {
+): Promise<OverflowResult> {
   return page.evaluate((ignoreSelectors) => {
     const vw = window.innerWidth;
+    let ignoredByContainer = 0;
     const offenders: Array<{
       tag: string;
       cls: string;
@@ -75,7 +92,10 @@ export async function findViewportOverflow(
       const escape = Math.max(rightEscape, leftEscape);
       if (escape <= 1) return;
 
-      if (ignoreSelectors.some((sel) => el.closest(sel))) return;
+      if (ignoreSelectors.some((sel) => el.closest(sel))) {
+        ignoredByContainer++;
+        return;
+      }
 
       let node: Element | null = el.parentElement;
       while (node && node !== document.body) {
@@ -103,8 +123,66 @@ export async function findViewportOverflow(
         escape: Math.round(escape),
       });
     });
+
+    // SECOND, SEPARATE pass: content clipped INSIDE an in-viewport box.
+    // Pre-merge review found this class of miss directly: the dashboard's
+    // order-pipeline strip ((dashboard)/dashboard/page.tsx:788-789) renders
+    // "Cancelled" hard-clipped to "Cancelle", no ellipsis — the strip's own
+    // box, and the label's own box, both fit inside the viewport; only the
+    // rendered TEXT overflows its cell. The escape-based check above can
+    // never see this: it compares a box to the viewport, not a box's
+    // content to the box itself. `overflow-hidden`/`overflow-x-hidden`/
+    // `clip`/`overflow-x-clip` (never `auto`/`scroll` — those are the
+    // allowlist's job above, a DIFFERENT and unrelated question of whether
+    // the container's own box fits) have no scroll affordance at all, so
+    // `scrollWidth > clientWidth` on one of them is unreachable BY
+    // DEFINITION — there's no "intentional, reachable" case to allowlist,
+    // unlike the escape check's overflow-auto allowance. Excludes anything
+    // using `text-overflow: ellipsis`, which is a deliberate, self-
+    // documenting truncation pattern, not a bug.
+    document.querySelectorAll("body *").forEach((el) => {
+      // MAIN excluded here too, same shell-boundary reasoning as the first
+      // pass, but for a different specific reason: found running this for
+      // real, on the customers list at 390px, where the operator-dashboard
+      // shell's own `overflow-x-hidden` — the intentional backstop THIS PR
+      // ships, working exactly as designed — got reported as if it were
+      // ITSELF the clip bug, just because some descendant's content is
+      // wider than MAIN's box. That is the fix doing its job (absorbing
+      // excess width so it can't drift the whole page), not a "text
+      // silently clipped with no way to see it" bug like the pipeline
+      // strip. A genuine clip bug should be attributable to a more specific
+      // element (a card, a table wrapper) — if one exists, THAT element
+      // carries its own overflow-hidden/clip class and this pass still
+      // catches it independently; MAIN absorbing the overflow one level up
+      // is not itself a second, separate defect to report.
+      if (el.tagName === "MAIN") return;
+      const cls = (el.className || "").toString();
+      if (!/\boverflow(-x)?-(hidden|clip)\b/.test(cls)) return;
+      if (el.scrollWidth <= el.clientWidth + 1) return;
+      const style = getComputedStyle(el);
+      if (style.textOverflow === "ellipsis") return;
+      // Found running this for real: ignoreSelectors was only ever checked
+      // in the FIRST pass above — a known, filed clip defect (the dashboard
+      // pipeline strip) caught by THIS pass had no way to be ignored, and
+      // assertNoOverflow's own "ignoreContainer matched nothing" guard threw
+      // exactly as designed, on this exact gap. Both passes must honor it.
+      if (ignoreSelectors.some((sel) => el.closest(sel))) {
+        ignoredByContainer++;
+        return;
+      }
+      const r = el.getBoundingClientRect();
+      offenders.push({
+        tag: el.tagName,
+        cls: cls.slice(0, 90),
+        text: `[clipped content] ${(el.textContent || "").trim().slice(0, 40)}`,
+        left: Math.round(r.left),
+        right: Math.round(r.right),
+        escape: el.scrollWidth - el.clientWidth,
+      });
+    });
+
     offenders.sort((a, b) => b.escape - a.escape);
-    return offenders;
+    return { offenders, ignoredByContainer };
   }, ignoreContainerSelectors);
 }
 
@@ -135,7 +213,39 @@ export async function documentLevelOverflowPx(page: Page): Promise<number> {
  * conditional check simply skipped with nothing in the test output to show
  * for it — this is the fleet's own fix for that, not just this file's:
  * every call proves, in the log, which real URL it ran the probe against.
+ *
+ * Both `ignore` and `ignoreContainer`, when given, must actually match
+ * something, or this throws — a stale ignore rule (the underlying bug got
+ * fixed for real, or the app changed shape under it) must fail loudly, not
+ * silently keep passing while proving nothing. Remove the rule instead of
+ * letting it go quiet.
  */
+/**
+ * Waits for a list/table page's OWN loading UI to clear before a probe
+ * measures it — so a probe can't fire against a loading skeleton instead of
+ * the real table rows or empty state. Found necessary by pre-merge review:
+ * a page-shell wait (a static heading or toolbar button, present before data
+ * ever loads) is not the same thing as a data-presence wait, and several of
+ * this app's list pages render measurably different layouts while loading
+ * vs. once real content lands (e.g. a bare skeleton block with no headers or
+ * columns at all).
+ *
+ * Checks three DIFFERENT conventions this codebase actually uses for a
+ * loading state, not one — a single selector would silently miss whichever
+ * pages use the others: `animate-pulse` skeleton blocks (customers, products,
+ * routes), an `animate-spin` icon (orders, invoices), and literal "Loading…"
+ * text (settings' users tab). `.not.toBeVisible()` on a locator that matches
+ * zero elements passes immediately, so this is a no-op on any page that
+ * doesn't use a given convention or that already finished loading by the
+ * time this runs — it never invents a wait where there was nothing to wait
+ * for.
+ */
+export async function waitForDataLoaded(page: Page) {
+  await expect(page.locator(".animate-pulse").first()).not.toBeVisible({ timeout: 15_000 });
+  await expect(page.locator(".animate-spin").first()).not.toBeVisible({ timeout: 15_000 });
+  await expect(page.getByText(/^Loading/i).first()).not.toBeVisible({ timeout: 15_000 });
+}
+
 export async function assertNoOverflow(
   page: Page,
   screenLabel: string,
@@ -143,8 +253,30 @@ export async function assertNoOverflow(
   ignoreContainer?: string[],
 ) {
   console.log(`[overflow probe] ${screenLabel} — checking ${page.url()}`);
-  let offenders = await findViewportOverflow(page, ignoreContainer);
-  if (ignore) offenders = offenders.filter((o) => !ignore(o));
+  const { offenders: allOffenders, ignoredByContainer } = await findViewportOverflow(
+    page,
+    ignoreContainer,
+  );
+  let offenders = allOffenders;
+  let ignoredByPredicate = 0;
+  if (ignore) {
+    ignoredByPredicate = offenders.filter(ignore).length;
+    offenders = offenders.filter((o) => !ignore(o));
+  }
+  if (ignore && ignoredByPredicate === 0) {
+    throw new Error(
+      `[overflow probe] ${screenLabel}: the ignore predicate matched nothing — either the ` +
+        `defect it was filed for is already fixed (remove the ignore) or the app changed shape ` +
+        `under it (the predicate needs updating). Either way, a silently-inert ignore is not safe to keep.`,
+    );
+  }
+  if (ignoreContainer && ignoredByContainer === 0) {
+    throw new Error(
+      `[overflow probe] ${screenLabel}: ignoreContainer (${JSON.stringify(ignoreContainer)}) matched nothing — ` +
+        `either the defect it was filed for is already fixed (remove the ignore) or the container ` +
+        `selector no longer matches the app's markup. Either way, a silently-inert ignore is not safe to keep.`,
+    );
+  }
   // Slice for the failure message only, AFTER the ignore filter — see
   // findViewportOverflow's header for why filtering after a slice would have
   // let an ignored defect's own offenders crowd out everything else.
