@@ -137,6 +137,38 @@ export class InlineReturnsService {
   }
 
   /**
+   * B735: attaches the return's own unresolved `RegulatedLedgerParkedReversal` rows to a
+   * response about to leave `capture()`/`approve()` — a FRESH read, never a value threaded up
+   * from the reversal call itself. `reverseLedgerForReturn` is `void` all the way down
+   * (`reverseReturnEntries`'s B681/SA-067 park branch only writes the row + warns), and
+   * `capture()` has three replay/idempotency exits that never call it at all — a threaded
+   * value would show a parked capture as clean on a retry or double-tap. Reading fresh by
+   * `returnId` catches every exit uniformly, needs no signature change to the ledger service
+   * (whose OTHER caller, standard returns, can never park), and stays correct after `cancel()`
+   * (which deletes unresolved parked rows). `tenantId` is included in the `where` explicitly —
+   * belt-and-suspenders regardless of whether `forTenant()` already scopes this model.
+   */
+  private async withParkedReversals<T extends { id: string }>(
+    ret: T,
+  ): Promise<T & { parkedReversals: { count: number; pieces: number } | null }> {
+    const tenantId = this.prisma.getTenantId();
+    // No tenant context (SUPER_ADMIN) never has a real parked reversal to report — same
+    // null-tenant convention as writeSaleEntries/assertGranted elsewhere in this file.
+    if (!tenantId) return { ...ret, parkedReversals: null };
+    const rows = await this.prisma.forTenant().regulatedLedgerParkedReversal.findMany({
+      where: { returnId: ret.id, tenantId, resolvedAt: null },
+      select: { returnedPieces: true },
+    });
+    const parkedReversals = rows.length
+      ? {
+          count: rows.length,
+          pieces: rows.reduce((sum: number, r: any) => sum + Number(r.returnedPieces), 0),
+        }
+      : null;
+    return { ...ret, parkedReversals };
+  }
+
+  /**
    * Captures an inline return against an existing carrying order: prices it (the same
    * engine the quote endpoint uses), and either restocks + reverses the regulated ledger +
    * issues a standalone credit note immediately, or (above the driver cap) holds the whole
@@ -358,11 +390,14 @@ export class InlineReturnsService {
     // after this same capture committed. Either way, (re-)issue idempotently before returning.
     if (result.ret.status === "RECEIVED" && !result.ret.creditNoteId && !result.ret.holdReason) {
       await this.issueCredit(result.ret.id);
-      return this.prisma
+      const reissued = await this.prisma
         .forTenant()
         .return.findUnique({ where: { id: result.ret.id }, include: { items: true } });
+      // Should-never-happen: the row was just written/read in this same request. Fall back
+      // to the pre-issue snapshot rather than let a stale/missing read surface as a 500.
+      return this.withParkedReversals(reissued ?? result.ret);
     }
-    return result.ret;
+    return this.withParkedReversals(result.ret);
   }
 
   /**
@@ -549,7 +584,13 @@ export class InlineReturnsService {
     });
 
     if (!result.skipped && minted) this.emitCreditNoteCreated(tenantId, minted);
-    return this.prisma.forTenant().return.findUnique({ where: { id }, include: { items: true } });
+    const afterApprove = await this.prisma
+      .forTenant()
+      .return.findUnique({ where: { id }, include: { items: true } });
+    // The row was locked and (on the non-skipped path) just written inside the transaction
+    // above under this same id — a null read here would mean it vanished mid-request.
+    if (!afterApprove) throw new NotFoundException("Return not found");
+    return this.withParkedReversals(afterApprove);
   }
 
   /** Q-C: declines a driver-cap hold outright. HIGH-4: nothing was ever restocked or
