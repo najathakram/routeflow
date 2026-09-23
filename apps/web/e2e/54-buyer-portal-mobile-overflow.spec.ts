@@ -98,33 +98,49 @@ for (const vp of VIEWPORTS) {
       await page.goto(`/buyer/portal/${sellerSlug}/orders`);
       await assertNoOverflow(page, "buyer orders (list)");
 
-      // Real order detail, only if one exists — real navigation through the
-      // list rather than a side-channel API call.
-      const firstOrderLink = page.locator(`a[href^="/buyer/portal/${sellerSlug}/orders/"]`).first();
-      if (await firstOrderLink.count()) {
-        await firstOrderLink.click();
-        await assertNoOverflow(page, "buyer orders/[id]");
-        expect(await documentLevelOverflowPx(page)).toBeLessThanOrEqual(0);
-      }
+      // Real order detail — the list row has no <a href>, it's a bare
+      // `<tr onClick>` (orders/page.tsx:224-226) that calls router.push
+      // directly, so an `a[href^=...]` locator here always matched 0 and
+      // silently skipped this whole check without ever failing (found on
+      // pre-merge review of the identical bug in the invoices list below).
+      // Asserted, not skipped: a seeded order is a baseline fixture on the
+      // e2e-routeflow tenant.
+      const orderRow = page.locator("tbody tr").first();
+      await expect(
+        orderRow,
+        "no seeded order on the e2e-routeflow tenant to open — check the seed",
+      ).toBeVisible({ timeout: 15_000 });
+      await orderRow.click();
+      await page.waitForURL(new RegExp(`/buyer/portal/${sellerSlug}/orders/[^/]+$`), {
+        timeout: 15_000,
+      });
+      await assertNoOverflow(page, "buyer orders/[id]");
+      expect(await documentLevelOverflowPx(page)).toBeLessThanOrEqual(0);
 
       // ── Invoices ─────────────────────────────────────────────────────────
       await page.goto(`/buyer/portal/${sellerSlug}/invoices`);
       await assertNoOverflow(page, "buyer invoices (list)");
 
-      // Real invoice detail, only if one exists — real navigation through the
-      // list rather than a side-channel API call. Added per pre-merge review:
-      // this page's header row (Pay/PDF buttons) and its 4-column summary
-      // grid both overflowed at 390 under the new containment (the old
+      // Real invoice detail. Same bare-<tr onClick> shape as orders above
+      // (invoices/page.tsx:182-186) — this locator was the actual pre-merge
+      // review finding: `a[href^=...]` always matched 0, so this page was
+      // never actually visited despite the earlier commit claiming coverage.
+      // Its header row (Pay/PDF buttons) and 4-column summary grid both
+      // overflowed at 390 under the new shell containment (the old
       // overflow-auto let a user scroll to reach the buttons; the fix makes
       // them wrap instead — see the page's own comments at those two spots).
-      const firstInvoiceLink = page
-        .locator(`a[href^="/buyer/portal/${sellerSlug}/invoices/"]`)
-        .first();
-      if (await firstInvoiceLink.count()) {
-        await firstInvoiceLink.click();
-        await assertNoOverflow(page, "buyer invoices/[id]");
-        expect(await documentLevelOverflowPx(page)).toBeLessThanOrEqual(0);
-      }
+      // Asserted, not skipped, for the same reason as orders above.
+      const invoiceRow = page.locator("tbody tr").first();
+      await expect(
+        invoiceRow,
+        "no seeded invoice on the e2e-routeflow tenant to open — check the seed",
+      ).toBeVisible({ timeout: 15_000 });
+      await invoiceRow.click();
+      await page.waitForURL(new RegExp(`/buyer/portal/${sellerSlug}/invoices/[^/]+$`), {
+        timeout: 15_000,
+      });
+      await assertNoOverflow(page, "buyer invoices/[id]");
+      expect(await documentLevelOverflowPx(page)).toBeLessThanOrEqual(0);
     });
   });
 }
