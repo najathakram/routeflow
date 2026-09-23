@@ -51,7 +51,10 @@ describe("pin: edit-items screen per-line flavor/note field", () => {
   });
 
   it("wires both setters into their card's onSetNote at the two call sites", () => {
-    expect(src).toMatch(/onSetNote=\{\(notes\) => setLineNote\(it\.productId, notes\)\}/);
+    // B775: the catalog card's key is `it.lineId ?? it.productId` (never
+    // bare productId, so two same-product lines never collide) — threaded
+    // through the render loop as `key` and passed to every handler here.
+    expect(src).toMatch(/onSetNote=\{\(notes\) => setLineNote\(key, notes\)\}/);
     expect(src).toMatch(/onSetNote=\{\(notes\) => setUnlistedNote\(u\.id, notes\)\}/);
   });
 
