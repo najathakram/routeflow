@@ -54,7 +54,12 @@
  * tenant (approved test tenant) — never a live client tenant.
  */
 import { test, expect, type Page } from "@playwright/test";
-import { assertNoOverflow, documentLevelOverflowPx, type Offender } from "./helpers/overflow";
+import {
+  assertNoOverflow,
+  documentLevelOverflowPx,
+  waitForDataLoaded,
+  type Offender,
+} from "./helpers/overflow";
 
 // B749: the customers-list toolbar's "New Customer" button group has no wrap
 // and overflows at 390. Matched by text rather than class — the offending
@@ -66,12 +71,18 @@ const isB749Toolbar = (o: Offender) => o.text.includes("New Customer");
 // B750: the invoices-list table's own wrapper is overflow-hidden (clips,
 // offers NO scroll access at all — worse than "the invoices-list table has
 // no scroll wrapper", the description this was filed under; there IS a
-// wrapper, it just clips instead of scrolling) and overflows at 390. Ignored
-// by container (`table` — this page has exactly one), not by tag: a plain
-// tag allowlist misses the row-action buttons and their icons nested inside
-// an overflowing cell, which still individually escape the viewport as their
-// own elements even though their ancestor TD/TR tags would have matched.
-const B750_TABLE_CONTAINER = ["table"];
+// wrapper, it just clips instead of scrolling) and overflows at 390.
+// Two selectors, for two DIFFERENT passes' offender shapes (found running
+// this for real, once helpers/overflow.ts's second pass started honoring
+// ignoreContainer too): "table" catches the escape-pass's offenders — row-
+// action buttons/icons NESTED INSIDE an overflowing cell, matched via
+// `el.closest("table")` since they're descendants of one; a plain tag
+// allowlist would miss them even though their ancestor TD/TR tags matched.
+// "div:has(> table)" catches the clip-pass's offender instead — that pass
+// flags the WRAPPER div itself (its own overflow-hidden class + scrollWidth
+// > clientWidth), which is an ANCESTOR of the table, not a descendant, so
+// `closest("table")` alone never matches it.
+const B750_TABLE_CONTAINER = ["table", "div:has(> table)"];
 
 // Third instance of the SAME toolbar-overflow shape as B749 (a no-wrap
 // `flex items-center gap-2` action row), found on the invoices list while
@@ -85,6 +96,30 @@ const B750_TABLE_CONTAINER = ["table"];
 const isInvoicesToolbar = (o: Offender) =>
   o.text.includes("ExportPayments") || o.text === "New Invoice";
 
+// Found by pre-merge review, not by this branch's own exploration: the
+// dashboard's order-pipeline strip ((dashboard)/dashboard/page.tsx:788-789)
+// hard-clips "Cancelled" to "Cancelle" inside an overflow-hidden wrapper — a
+// class of miss the escape-based probe alone can never catch (see
+// helpers/overflow.ts's module header for the two-pass explanation).
+//
+// Container-matched, not text-matched — found running this for real: the
+// second pass's `scrollWidth > clientWidth` check fires on the OUTER wrapper
+// (the only element in this strip actually carrying the `overflow-hidden`
+// class; the individual "Cancelled" label span does not), so the offender's
+// own `text` is the wrapper's FULL concatenated textContent ("2Pending0Con...",
+// truncated to 40 chars) — "Cancelled" sits at the END of that string and
+// never survives the truncation. A text-based `ignore` predicate looking for
+// "Cancelle" therefore matches nothing, which is exactly the "stale ignore"
+// shape assertNoOverflow's own throw-if-zero guard is designed to catch (and
+// did, the first time this ran for real). The container selector below
+// targets the wrapper directly and by structure (its `overflow-hidden
+// rounded-lg` class combo alone is NOT unique on this page — 6 other cards
+// share it — so `:has()` pins it to the one that also directly contains the
+// pipeline strip's own `grid grid-cols-5 divide-x` row).
+const DASHBOARD_PIPELINE_STRIP_CONTAINER = [
+  ".overflow-hidden.rounded-lg:has(> .grid.grid-cols-5.divide-x)",
+];
+
 const VIEWPORTS = [
   { width: 390, height: 844, label: "390" },
   { width: 768, height: 1024, label: "768" },
@@ -95,14 +130,32 @@ const VIEWPORTS = [
  * itself never escapes the viewport — the probe walks `body *` so it already
  * covers this, but asserting the dropdown's own bounding box by name makes a
  * regression here diagnosable at a glance rather than buried in a 5-offender
- * list. */
-async function assertNotificationDropdownContained(page: Page, screenLabel: string) {
+ * list.
+ *
+ * `ignoreContainer`, when given, is forwarded to this call's own
+ * assertNoOverflow — found necessary running this for real: opening the
+ * dropdown doesn't navigate away, so whatever page it was opened ON (here,
+ * the dashboard) is still underneath it, pipeline-strip clip defect and all.
+ * The main dashboard assertNoOverflow call ignoring that defect doesn't
+ * carry over to this SEPARATE call on the same still-rendered page — each
+ * assertNoOverflow call is independent, so each needs to be told.
+ */
+async function assertNotificationDropdownContained(
+  page: Page,
+  screenLabel: string,
+  ignoreContainer?: string[],
+) {
   const bell = page.getByRole("button", { name: /notification/i });
   if ((await bell.count()) === 0) return; // not present on every screen's header state
   await bell.first().click();
   const panel = page.getByText("Notifications", { exact: true }).first();
   await expect(panel).toBeVisible({ timeout: 5_000 });
-  await assertNoOverflow(page, `${screenLabel} — notifications dropdown open`);
+  await assertNoOverflow(
+    page,
+    `${screenLabel} — notifications dropdown open`,
+    undefined,
+    ignoreContainer,
+  );
   // Close it so it doesn't shadow the next screen's own interactions.
   await page.keyboard.press("Escape");
 }
@@ -121,15 +174,45 @@ for (const vp of VIEWPORTS) {
       await expect(page.getByRole("heading", { name: /dashboard/i })).toBeVisible({
         timeout: 15_000,
       });
-      await assertNoOverflow(page, "dashboard");
+      // Wait for the order-pipeline strip's own data, not just the page
+      // shell — it renders conditionally on `!ordersLoading`
+      // ((dashboard)/dashboard/page.tsx:787), so a heading-only wait can
+      // still measure a loading skeleton instead of the real layout.
+      // Found running this for real, twice: (1) a bare getByText("Pending")
+      // is a strict-mode violation — the same word also renders as an
+      // order-status BADGE elsewhere on the page (a recent-orders list),
+      // which isn't a link, so scoping by role fixes that. (2) exact: true
+      // then failed outright — the link's accessible name concatenates BOTH
+      // its child spans (dashboard/page.tsx:825-833: the count span plus the
+      // label span), so it's actually "2 Pending"/"0 Pending"/etc, never the
+      // bare word. A non-exact, case-insensitive match is what's needed —
+      // it's also exactly what Playwright's own strict-mode error suggested
+      // the first time ("aka getByRole('link', { name: 'Pending' })", no
+      // `exact`), which this branch initially over-corrected past.
+      await expect(page.getByRole("link", { name: /pending/i })).toBeVisible({
+        timeout: 15_000,
+      });
+      await assertNoOverflow(
+        page,
+        "dashboard",
+        undefined,
+        vp.width === 390 ? DASHBOARD_PIPELINE_STRIP_CONTAINER : undefined,
+      );
       expect(await documentLevelOverflowPx(page)).toBeLessThanOrEqual(0);
-      await assertNotificationDropdownContained(page, "dashboard");
+      await assertNotificationDropdownContained(
+        page,
+        "dashboard",
+        vp.width === 390 ? DASHBOARD_PIPELINE_STRIP_CONTAINER : undefined,
+      );
 
       // ── Orders list ──────────────────────────────────────────────────────
       await page.goto("/orders");
       await expect(page.getByRole("button", { name: "New Order" })).toBeVisible({
         timeout: 15_000,
       });
+      // "New Order" is the static toolbar, present before data ever loads —
+      // not proof the table itself finished loading (see waitForDataLoaded).
+      await waitForDataLoaded(page);
       await assertNoOverflow(page, "orders (list)");
 
       // ── Order detail (real navigation through the list, not a side-channel
@@ -162,6 +245,7 @@ for (const vp of VIEWPORTS) {
       // At 768/1440 there's room for the toolbar and no ignore is applied,
       // so a regression there still fails.
       await page.goto("/customers");
+      await waitForDataLoaded(page);
       await assertNoOverflow(
         page,
         "customers (list)",
@@ -170,11 +254,13 @@ for (const vp of VIEWPORTS) {
 
       // ── Products list ────────────────────────────────────────────────────
       await page.goto("/products");
+      await waitForDataLoaded(page);
       await assertNoOverflow(page, "products (list)");
 
       // ── Invoices list — B750 (table) + the newly-found toolbar overflow
       // ignored, only at 390 (see header) ─────────────────────────────────
       await page.goto("/invoices");
+      await waitForDataLoaded(page);
       await assertNoOverflow(
         page,
         "invoices (list)",
@@ -184,10 +270,12 @@ for (const vp of VIEWPORTS) {
 
       // ── Routes list ──────────────────────────────────────────────────────
       await page.goto("/routes");
+      await waitForDataLoaded(page);
       await assertNoOverflow(page, "routes (list)");
 
       // ── Settings ─────────────────────────────────────────────────────────
       await page.goto("/settings");
+      await waitForDataLoaded(page);
       await assertNoOverflow(page, "settings");
       expect(await documentLevelOverflowPx(page)).toBeLessThanOrEqual(0);
     });
