@@ -49,7 +49,7 @@ interface Row {
    * line carrying `trackedCategoryId` also produces the rate trio (`categoryTaxType`/Rate/
    * PriceIncludesTax), rather than leaving it null. Any ONE entry satisfies it: a call to a
    * trio-deriving/copying helper (`categoryTaxSnapshotOf`, `copyCategoryTaxSnapshot`,
-   * `collectMergeLines`, `buildInvoiceItemData`, `buildManualInvoiceLines`, `categoryTaxForLine`),
+   * `buildMergeLineWrites`, `buildInvoiceItemData`, `buildManualInvoiceLines`, `categoryTaxForLine`),
    * or — for a method that copies the trio inline rather than through a named helper — a direct
    * reference to the `categoryTaxType` field name (existence only, EXACTLY the same permissiveness
    * SAFE_COPY's own `needs` check already uses; not an ordering proof). Retires the file-count-pin
@@ -88,16 +88,19 @@ const INVENTORY: Record<string, Row> = {
     kind: "GUARDED",
     needs: "assertNoUnitAwareLines",
     why: "merge folds by productId",
-    // SA-100: named on the actual STAMP call inside the create() write, not collectMergeLines
-    // (called earlier, for an unrelated purpose — deleting the create()'s spread wouldn't have
-    // removed the ONLY reference to that name in this method, so it couldn't catch a regression).
-    trioVia: ["copyCategoryTaxSnapshot"],
+    // B776 (SA-101(1)): the trio stamp moved from an inline create() call in this method into
+    // the shared `buildMergeLineWrites` (merge-line-writes.ts), which is where
+    // `copyCategoryTaxSnapshot` is now actually called — this method only calls
+    // `buildMergeLineWrites`, so that's the reference the AST scanner can still see here (same
+    // cross-file pattern as `buildInvoiceItemData` below).
+    trioVia: ["buildMergeLineWrites"],
   },
   "orders/orders.service.ts::OrdersService.mergeAllPendingForCustomer": {
     kind: "GUARDED",
     needs: "isUnitAwareLine",
     why: "merge folds by productId; bails out when any candidate is unit-aware",
-    trioVia: ["copyCategoryTaxSnapshot"],
+    // B776: see forceConsolidateCustomer's note — same shared buildMergeLineWrites call site.
+    trioVia: ["buildMergeLineWrites"],
   },
   "orders/orders.service.ts::OrdersService.create": {
     kind: "CONVERTED",
