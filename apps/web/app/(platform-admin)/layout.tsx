@@ -240,7 +240,13 @@ export default function PlatformAdminLayout({ children }: { children: React.Reac
     <SuperAdminGuard>
       <div className="surface-admin flex h-screen flex-col overflow-hidden bg-slate-950 lg:flex-row">
         <Sidebar />
-        <main className="flex-1 overflow-y-auto">{children}</main>
+        {/* overflow-x-hidden explicitly — `overflow-y-auto` alone lets the CSS
+            Overflow spec compute the other axis as `auto` too (the diagnosed
+            cause of B559: AdminTabs' unwrapped flex row overflowed sideways and
+            this shell silently absorbed it into a second, undocumented scroll
+            container). B559's fix addressed that one instance; this closes the
+            shell-level cause so the next unwrapped-content bug can't repeat it. */}
+        <main className="flex-1 overflow-x-hidden overflow-y-auto">{children}</main>
       </div>
     </SuperAdminGuard>
   );
