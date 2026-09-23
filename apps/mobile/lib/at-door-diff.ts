@@ -73,3 +73,24 @@ export function buildAtDoorChangeRequests(args: {
 
   return out;
 }
+
+/**
+ * Drops the `added` draft whose ADD_ITEM change request just succeeded (B795).
+ * Apply this as EACH entry resolves during a batch, not only at the end: a
+ * later entry's failure stops the batch, and a bare re-tap of "Save changes"
+ * rebuilds a fresh diff from `added` at index 0 -- an already-succeeded
+ * ADD_ITEM still sitting in `added` gets re-diffed and double-adds the line
+ * server-side. CHANGE_QTY/REMOVE_ITEM need no equivalent: the diff is built
+ * against a freshly refetched order, so an already-applied edit self-heals
+ * (the line's stored qty already matches, so the diff-builder skips it).
+ * A no-match `productId` (already dropped, or a non-ADD_ITEM entry) is a no-op
+ * and returns the SAME array reference, so callers can skip a re-render.
+ */
+export function dropSucceededAddedLine<T extends { productId: string }>(
+  added: T[],
+  entry: CreateChangeRequestInput,
+): T[] {
+  if (entry.type !== "ADD_ITEM" || !entry.productId) return added;
+  if (!added.some((a) => a.productId === entry.productId)) return added;
+  return added.filter((a) => a.productId !== entry.productId);
+}
