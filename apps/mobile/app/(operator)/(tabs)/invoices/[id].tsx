@@ -52,7 +52,7 @@ import { isCreditOpenForApply, openCreditBalance } from "../../../../lib/credit-
 import { siblingInvoicesOf } from "../../../../lib/invoice-siblings";
 import { showToast } from "../../../../lib/toast";
 import { alertInfo, confirm, chooseAction } from "../../../../lib/confirm";
-import { formatQtySplit } from "@routeflow/pricing";
+import { invoiceLineQtyText, invoiceLineUnitNoun } from "../../../../lib/invoice-line-display";
 import { freeUnitsLabel } from "../../../../lib/buyer-cart-logic";
 import { ACTIVATION_BUDGET_MS, sharePdf } from "../../../../lib/share-pdf";
 import { printPdf } from "../../../../lib/print-pdf";
@@ -858,8 +858,10 @@ export default function InvoiceDetailScreen() {
                       <Text style={styles.itemSub}>
                         {it.boxes != null || it.pieces != null
                           ? // Boxed line: unitPrice is the BOX price — "qty × price"
-                            // would read as pieces × box-price (visually wrong).
-                            `${formatQtySplit({ qty: it.qty, boxes: it.boxes, pieces: it.pieces })} @ ${fmtCurrency(it.unitPrice)}/box`
+                            // would read as pieces × box-price (visually wrong). B653:
+                            // both the qty noun and the price-per-unit noun read the
+                            // line's own unitLabel ("Case"), not a hardcoded "box".
+                            `${invoiceLineQtyText(it)} @ ${fmtCurrency(it.unitPrice)}/${invoiceLineUnitNoun(it)}`
                           : `${it.qty} × ${fmtCurrency(it.unitPrice)}`}
                       </Text>
                       {/* Suggested retail price snapshot — per PIECE, display-only. */}

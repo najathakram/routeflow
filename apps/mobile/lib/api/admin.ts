@@ -407,6 +407,9 @@ export interface AdminInvoice {
     boxes?: number | null;
     pieces?: number | null;
     unitsPerBox?: number | null;
+    /** units_v1 (B653): the line's own selling unit ("Case") when sold by a non-pack
+     *  unit rather than loose pieces — see `apps/mobile/lib/invoice-line-display.ts`. */
+    unitLabel?: string | null;
     unitPrice: number;
     /** Catalog base for an override line; unitPrice > originalPrice = upsell. */
     originalPrice?: number | null;
