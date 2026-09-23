@@ -24,6 +24,7 @@ import {
 } from "../../../../../lib/api/change-requests";
 import {
   buildAtDoorChangeRequests,
+  dropSucceededAddedLine,
   type AtDoorAddedLine,
   type AtDoorEditedLine,
 } from "../../../../../lib/at-door-diff";
@@ -284,12 +285,19 @@ export default function AdjustOrderScreen() {
   // (still present in local `added` state) is never re-diffed and resent.
   async function processDiff(diff: CreateChangeRequestInput[], startIndex: number) {
     for (let i = startIndex; i < diff.length; i++) {
-      const ok = await submitEntry(diff[i]!);
+      const entry = diff[i]!;
+      const ok = await submitEntry(entry);
       if (!ok) {
         pendingRef.current = { diff, index: i };
         setSaving(false);
         return;
       }
+      // B795: a bare re-tap of "Save changes" (the credit-block Cancel, a
+      // message-less 409, an offline drop, and the license modal's Cancel all
+      // leave the driver here) rebuilds a FRESH diff from `added` at index 0 --
+      // drop this entry's draft now, or a succeeded ADD_ITEM gets re-diffed and
+      // double-adds the line server-side.
+      setAdded((prev) => dropSucceededAddedLine(prev, entry));
     }
     pendingRef.current = null;
     setSaving(false);
