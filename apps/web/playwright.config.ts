@@ -832,5 +832,21 @@ export default defineConfig({
         navigationTimeout: 60_000,
       },
     },
+
+    // Marketing + auth mobile overflow (spec 55) — the 8 buyer-auth pages
+    // that rely solely on the new global html overflow-x rule, plus the
+    // marketing mobile-menu scroll-lock test. No auth of any kind needed
+    // (every page here is pre-login), same "no dependency" convention as
+    // "marketing"/"auth-redesign" above. WITHOUT THIS ENTRY THE SPEC NEVER
+    // RUNS — see 08-create-order-escape's header for the precedent.
+    {
+      name: "marketing-auth-mobile",
+      testMatch: /55-marketing-auth-mobile-overflow\.spec\.ts/,
+      dependencies: [],
+      use: {
+        ...devices["Desktop Chrome"],
+        navigationTimeout: 60_000,
+      },
+    },
   ],
 });
