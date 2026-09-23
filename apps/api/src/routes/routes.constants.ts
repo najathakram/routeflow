@@ -102,6 +102,10 @@ export const RUN_STOP_INCLUDE = {
           phone: true,
           deliveryWindowStart: true,
           deliveryWindowEnd: true,
+          // #1272 review follow-up (b305a-exempt-pin): round 3 fixed this same gap
+          // for the DIRECT stop.customer path (above) but missed the
+          // routeStop-fallback customer path a seeded/legacy stop resolves through.
+          isTaxExempt: true,
         },
       },
       customerAddress: true,
