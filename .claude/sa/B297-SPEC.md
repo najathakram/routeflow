@@ -168,7 +168,9 @@ live rate is a backdated re-price" rule) in the docs follow-up.
 
 PR 1 + PR 2 ship as ONE PR (L-184 ordering still binds). PR 5 (backfill) lands BEFORE PR 3, because the owner's
 production sizing found zero mismatches, so the backfill is exact. PR 3's NULL branch is "price at live ONCE and stamp the trio used, warn naming the line" (SA-096a — never
-"keep": seven creators defer the amount to the recompute with a NULL trio, SA-098a) (no basisBefore plumbing), guarded structurally by (i) the PR-2 callsite
+"keep": seven creators defer the amount to the recompute with a NULL trio, SA-098a) (no basisBefore plumbing).
+The stamp-on-NULL net is PART OF PR 3's definition (SA-098b): PR 3 never lands without it, and it fills a NULL
+trio only — never overwrites a present one., guarded structurally by (i) the PR-2 callsite
 allow-list over every creator of a regulated line, keyed on `trackedCategoryId:` writes (SA-098a(c)), with merges
 COPYING the losing line's trio and same-product edits PRESERVING it (only a substitute re-stamps) and (ii) a standing count gate (regulated lines with a NULL
 trio = 0) in post-deploy-check / the drift lane. See SA-096 in RULINGS.
