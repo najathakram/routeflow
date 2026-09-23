@@ -37,6 +37,12 @@
  * belt-and-braces regression guard, and separately re-runs the real-element
  * check after clicking into every tab (state, not just the URL's default).
  *
+ * The probe itself now lives in helpers/overflow.ts — 53 (operator dashboard)
+ * and 54 (buyer portal) reuse it verbatim (owner-reported: mobile pages drift
+ * sideways and don't settle after pinch-zoom; this shell was the third of
+ * three shells with the same class of gap, see globals.css and those specs'
+ * headers).
+ *
  * Read-only: no tenant/buyer data is created or mutated, matching
  * 01-super-admin.spec.ts's convention. Targets the seeded e2e-routeflow tenant
  * (approved test tenant) — never a live client tenant.
@@ -45,6 +51,7 @@ import { test, expect, type Page } from "@playwright/test";
 import fs from "fs";
 import path from "path";
 import { HAS_SUPER_ADMIN_CREDS, TENANT_SLUG } from "./helpers/constants";
+import { assertNoOverflow, documentLevelOverflowPx } from "./helpers/overflow";
 
 test.skip(!HAS_SUPER_ADMIN_CREDS, "PLAYWRIGHT_SA_USERNAME / PLAYWRIGHT_SA_PASSWORD not set");
 
@@ -58,92 +65,6 @@ const PROOF_DIR = path.join(
   __dirname,
   "../../../local-assets/proofs/2026-09-18/platform-admin-mobile",
 );
-
-interface Offender {
-  tag: string;
-  cls: string;
-  text: string;
-  left: number;
-  right: number;
-}
-
-/** The RIGHT probe (see header): any element whose rendered box escapes the
- * viewport horizontally, wherever the overflow is actually contained — EXCEPT
- * inside a wrapper this codebase deliberately marked scrollable
- * (`overflow-x-auto`/`overflow-x-scroll` in its own authored className, per
- * the house pattern CLAUDE.md documents: a data table wrapped in
- * `overflow-x-auto` with an explicit `min-w-[Npx]`, e.g. the tenants list).
- * That is intentional, reachable-by-scroll UX, not the bug this spec hunts.
- * The AdminTabs bug is different in exactly this respect: `<main>`'s
- * `overflow-x: auto` is never authored — it's the CSS Overflow spec's side
- * effect of `overflow-y: auto` alone (see header) — so it never matches this
- * allowlist and stays flagged. Only a wrapper BOTH marked scrollable AND
- * itself fitting the viewport counts (an unbounded "scrollable" wrapper that
- * itself escapes the viewport is still a real bug). Returns the worst
- * offenders (by how far they escape) so a failure is diagnosable, not just
- * "something, somewhere is 37px too wide". */
-async function findViewportOverflow(page: Page): Promise<Offender[]> {
-  return page.evaluate(() => {
-    const vw = window.innerWidth;
-    const offenders: Array<{
-      tag: string;
-      cls: string;
-      text: string;
-      left: number;
-      right: number;
-      escape: number;
-    }> = [];
-    document.querySelectorAll("body *").forEach((el) => {
-      const r = el.getBoundingClientRect();
-      if (r.width <= 0 || r.height <= 0) return;
-      const rightEscape = r.right - vw;
-      const leftEscape = -r.left;
-      const escape = Math.max(rightEscape, leftEscape);
-      if (escape <= 1) return;
-
-      let node: Element | null = el.parentElement;
-      while (node && node !== document.body) {
-        const cls = (node.className || "").toString();
-        if (/overflow-x-(auto|scroll)/.test(cls)) {
-          const wr = node.getBoundingClientRect();
-          if (wr.right <= vw + 1 && wr.left >= -1) return; // contained, intentional scroll
-        }
-        node = node.parentElement;
-      }
-
-      offenders.push({
-        tag: el.tagName,
-        cls: (el.className || "").toString().slice(0, 90),
-        text: (el.textContent || "").trim().slice(0, 40),
-        left: Math.round(r.left),
-        right: Math.round(r.right),
-        escape: Math.round(escape),
-      });
-    });
-    offenders.sort((a, b) => b.escape - a.escape);
-    return offenders.slice(0, 5);
-  });
-}
-
-/** Legacy document-level check — kept as a regression guard, but NOT sufficient
- * on its own (see header): it never trips for this bug class because the
- * overflow is absorbed by an inner `overflow-y:auto` container before it
- * reaches `documentElement`. */
-async function documentLevelOverflowPx(page: Page): Promise<number> {
-  const [scrollWidth, innerWidth] = await page.evaluate(() => [
-    document.documentElement.scrollWidth,
-    window.innerWidth,
-  ]);
-  return scrollWidth - innerWidth;
-}
-
-async function assertNoOverflow(page: Page, screenLabel: string) {
-  const offenders = await findViewportOverflow(page);
-  expect(
-    offenders,
-    `viewport overflow on ${screenLabel} at ${page.viewportSize()?.width}px — worst offenders: ${JSON.stringify(offenders)}`,
-  ).toHaveLength(0);
-}
 
 async function screenshot(page: Page, name: string) {
   fs.mkdirSync(PROOF_DIR, { recursive: true });
