@@ -25,6 +25,7 @@ function build() {
   const configSnapshotFlag = {
     isEnabled: jest.fn().mockResolvedValue(false),
     setEnabled: jest.fn().mockResolvedValue(undefined),
+    invalidate: jest.fn(),
   };
   const svc = { recordAdminAction: jest.fn().mockResolvedValue(undefined) };
   const controller = new PlatformAdminController(
@@ -134,8 +135,9 @@ describe("PlatformAdminController — config snapshot flag", () => {
     expect(configSnapshotFlag.setEnabled).not.toHaveBeenCalled();
   });
 
-  it("PUT flips the flag and audits the actor + reason, regardless of the resulting value", async () => {
+  it("PUT flips the flag and audits the actor + reason + previous value, regardless of the resulting value", async () => {
     const { controller, configSnapshotFlag, svc } = build();
+    configSnapshotFlag.isEnabled.mockResolvedValueOnce(false); // the real, forced read
 
     const res = await controller.setConfigSnapshotFlag(
       { enabled: true, reason: "owner ruling 2026-09-23" },
@@ -147,13 +149,14 @@ describe("PlatformAdminController — config snapshot flag", () => {
       null,
       "admin-1",
       AdminAuditAction.CONFIG_SNAPSHOT_FLAG_CHANGED,
-      { enabled: true, reason: "owner ruling 2026-09-23" },
+      { previous: false, enabled: true, reason: "owner ruling 2026-09-23" },
     );
     expect(res).toEqual({ enabled: true });
   });
 
   it("PUT audits a flip to OFF the same as a flip to ON", async () => {
     const { controller, configSnapshotFlag, svc } = build();
+    configSnapshotFlag.isEnabled.mockResolvedValueOnce(true);
 
     await controller.setConfigSnapshotFlag({ enabled: false, reason: "owner ruling 2026-09-23" }, {
       sub: "admin-1",
@@ -164,8 +167,25 @@ describe("PlatformAdminController — config snapshot flag", () => {
       null,
       "admin-1",
       AdminAuditAction.CONFIG_SNAPSHOT_FLAG_CHANGED,
-      { enabled: false, reason: "owner ruling 2026-09-23" },
+      { previous: true, enabled: false, reason: "owner ruling 2026-09-23" },
     );
+  });
+
+  it("forces a real database read before recording `previous` — the cached value can be ~5 s stale", async () => {
+    const { controller, configSnapshotFlag } = build();
+
+    await controller.setConfigSnapshotFlag({ enabled: true, reason: "owner ruling 2026-09-23" }, {
+      sub: "admin-1",
+    } as never);
+
+    // invalidate() then isEnabled(), and BOTH before setEnabled() — never after, which would
+    // read back the value this same call just wrote.
+    expect(configSnapshotFlag.invalidate).toHaveBeenCalledTimes(1);
+    const invalidateOrder = configSnapshotFlag.invalidate.mock.invocationCallOrder[0];
+    const isEnabledOrder = configSnapshotFlag.isEnabled.mock.invocationCallOrder[0];
+    const setEnabledOrder = configSnapshotFlag.setEnabled.mock.invocationCallOrder[0];
+    expect(invalidateOrder).toBeLessThan(isEnabledOrder);
+    expect(isEnabledOrder).toBeLessThan(setEnabledOrder);
   });
 
   it("a failed flag write is NOT audited as a success", async () => {

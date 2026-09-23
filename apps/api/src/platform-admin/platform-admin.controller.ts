@@ -493,12 +493,17 @@ export class PlatformAdminController {
     @Body() dto: SetConfigSnapshotFlagDto,
     @CurrentUser() admin: JwtPayload,
   ) {
+    // The cache can be up to ~5 s stale — force a real database read before recording the
+    // flip, so the audit row's `previous` is the flag's actual last-committed value, not a
+    // possibly-stale cached one from before another replica's write.
+    this.configSnapshotFlag.invalidate();
+    const previous = await this.configSnapshotFlag.isEnabled();
     await this.configSnapshotFlag.setEnabled(dto.enabled);
     await this.svc.recordAdminAction(
       null,
       admin.sub,
       AdminAuditAction.CONFIG_SNAPSHOT_FLAG_CHANGED,
-      { enabled: dto.enabled, reason: dto.reason },
+      { previous, enabled: dto.enabled, reason: dto.reason },
     );
     return { enabled: dto.enabled };
   }
