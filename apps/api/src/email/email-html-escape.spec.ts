@@ -19,7 +19,6 @@ jest.mock("nodemailer", () => ({ createTransport: jest.fn() }));
  */
 const ALLOWED: Record<string, string> = {
   // Numbers: they render as digits and can carry no markup.
-  "it.qty": "number",
   freeUnits: "number",
   "params.expiryHours": "number",
   "it.currentStock": "number",
