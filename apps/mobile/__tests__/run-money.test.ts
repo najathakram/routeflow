@@ -6,6 +6,7 @@
  */
 import {
   deliveredCategoryTax,
+  earlierVisitsRemaining,
   lineItemSubtotal,
   orderAmountDue,
   reconciledAmountDue,
@@ -102,27 +103,20 @@ describe("sumOrderLineItems / sumStopOrders (REG-B49)", () => {
  * REG-B305 round 2 (Opus BLOCKER on round 1's basis): `Order.total` carries
  * NO discount and, on a split delivery, bills the WHOLE shipping fee on
  * every visit — it is not what the invoice actually bills. The driver's
- * amount due must be the order's OPEN DRAFT INVOICE as the server last
- * computed it (`order.invoices[0]`: `total = subtotal + taxAmount +
- * shippingFee - discount`). These fixtures pin that basis; before the fix,
- * `orderAmountDue`/`reconciledAmountDue` read `order.total` directly and the
- * discount/split-fee assertions below are red on the WRONG (pre-fix) value,
- * not on a missing export.
+ * amount due must be the order's own PAYABLE INVOICE(S) as the server last
+ * computed them (B810: `order.payableInvoices[].balanceDue`, server-computed
+ * as `total - confirmed payments` — reduces to `total` here since these
+ * fixtures carry no payments, byte-identical to the pre-B810 basis). These
+ * fixtures pin that basis; before the ORIGINAL fix, `orderAmountDue`/
+ * `reconciledAmountDue` read `order.total` directly and the discount/
+ * split-fee assertions below are red on the WRONG (pre-fix) value, not on a
+ * missing export.
  */
 describe("REG-B305 tax-inclusive amount due (round 2: read off the draft invoice)", () => {
   it("REG-B305 the bug's own numbers: quotes and collects the draft invoice's total", () => {
     const order = {
       lineItems: [{ qty: 1, unitPrice: 116.83, subtotal: 116.83 }],
-      invoices: [
-        {
-          id: "inv-1",
-          subtotal: "116.83",
-          taxAmount: "11.68",
-          discount: "0",
-          shippingFee: "0",
-          total: "128.51",
-        },
-      ],
+      payableInvoices: [{ id: "inv-1", status: "DRAFT", balanceDue: "128.51" }],
     };
     expect(orderAmountDue(order as any)).toBe(128.51);
     // Driver collected $130 cash; change should be $1.49, not $13.17 (pre-tax basis).
@@ -139,9 +133,7 @@ describe("REG-B305 tax-inclusive amount due (round 2: read off the draft invoice
       tax: 10,
       total: 110,
       discountAmount: 15,
-      invoices: [
-        { id: "inv-1", subtotal: 100, taxAmount: 10, discount: 15, shippingFee: 0, total: 95 },
-      ],
+      payableInvoices: [{ id: "inv-1", status: "DRAFT", balanceDue: 95 }],
     };
     expect(orderAmountDue(order as any)).toBe(95);
     expect(orderAmountDue(order as any)).not.toBe(110);
@@ -153,16 +145,12 @@ describe("REG-B305 tax-inclusive amount due (round 2: read off the draft invoice
     const baseOrder = { lineItems: [], subtotal: 50, tax: 5, total: 121 };
     const firstVisit = {
       ...baseOrder,
-      invoices: [
-        { id: "inv-1", subtotal: 50, taxAmount: 5, discount: 0, shippingFee: 10, total: 65 },
-      ],
+      payableInvoices: [{ id: "inv-1", status: "DRAFT", balanceDue: 65 }],
     };
     expect(orderAmountDue(firstVisit as any)).toBe(65);
     const secondVisit = {
       ...baseOrder,
-      invoices: [
-        { id: "inv-2", subtotal: 50, taxAmount: 5, discount: 0, shippingFee: 0, total: 55 },
-      ],
+      payableInvoices: [{ id: "inv-2", status: "DRAFT", balanceDue: 55 }],
     };
     expect(orderAmountDue(secondVisit as any)).toBe(55);
     expect(orderAmountDue(secondVisit as any)).not.toBe(121);
@@ -171,9 +159,9 @@ describe("REG-B305 tax-inclusive amount due (round 2: read off the draft invoice
   it("REG-B305 RULING 1: sums ALL open drafts, not just the first (a regulated split can have several)", () => {
     const order = {
       lineItems: [],
-      invoices: [
-        { id: "base", subtotal: 60, taxAmount: 0, discount: 0, shippingFee: 0, total: 120 },
-        { id: "base-R1", subtotal: 40, taxAmount: 0, discount: 0, shippingFee: 0, total: 80 },
+      payableInvoices: [
+        { id: "base", status: "DRAFT", balanceDue: 120 },
+        { id: "base-R1", status: "DRAFT", balanceDue: 80 },
       ],
     };
     expect(orderAmountDue(order as any)).toBe(200);
@@ -355,16 +343,7 @@ describe("REG-B305 tax-inclusive amount due (round 2: read off the draft invoice
     expect(
       orderAmountDue({
         ...base,
-        invoices: [
-          {
-            id: "i1",
-            subtotal: "10",
-            taxAmount: "0",
-            discount: "0",
-            shippingFee: "0",
-            total: "10",
-          },
-        ],
+        payableInvoices: [{ id: "i1", status: "DRAFT", balanceDue: "10" }],
       } as any),
     ).toBe(10);
   });
@@ -372,7 +351,7 @@ describe("REG-B305 tax-inclusive amount due (round 2: read off the draft invoice
   it("REG-B305 stopAmountDue mixes a draft-bearing order with a legacy order, never NaN", () => {
     const draftOrder = {
       lineItems: [],
-      invoices: [{ id: "i1", subtotal: 50, taxAmount: 5, discount: 0, shippingFee: 0, total: 55 }],
+      payableInvoices: [{ id: "i1", status: "DRAFT", balanceDue: 55 }],
     };
     const legacyOrder = { lineItems: [{ qty: 1, unitPrice: 20, subtotal: 20 }] };
     // No draft AND a malformed total -> falls all the way to the line sum.
@@ -396,6 +375,93 @@ describe("REG-B305 tax-inclusive amount due (round 2: read off the draft invoice
     expect(stopAmountDue(stop as any)).toBe(100);
     expect(stopAmountDue(stop as any)).not.toBe(118); // regular tax (10) + leaked category tax (8)
     expect(stopAmountDue(stop as any)).not.toBe(110); // regular tax leaked, category tax correctly zeroed
+  });
+});
+
+/**
+ * REG-B810 (SA-125 ruling): once an order's invoice progresses past DRAFT
+ * (SENT/PARTIAL), the driver's amount due must reflect what the invoice
+ * ACTUALLY still owes — `balanceDue = total - confirmed payments`, server-
+ * computed — never the invoice's raw `total` re-billed as if nothing had
+ * been paid. Before the fix, `orderAmountDue` read `order.invoices[]`, which
+ * only ever carried DRAFT invoices (`deliveryBatchId: null`) — a SENT or
+ * PARTIAL invoice was invisible to it, so a part-paid order fell through to
+ * the order-total fallback and re-quoted the driver the FULL original total.
+ */
+describe("REG-B810 orderAmountDue sums payableInvoices[].balanceDue, including SENT/PARTIAL", () => {
+  it("a SENT invoice already paid 40 of 100 -> balanceDue 60, never the raw total 100", () => {
+    const order = {
+      lineItems: [],
+      payableInvoices: [{ id: "inv-1", status: "SENT", balanceDue: 60 }],
+    };
+    expect(orderAmountDue(order as any)).toBe(60);
+    expect(orderAmountDue(order as any)).not.toBe(100);
+  });
+
+  it("a PARTIAL invoice's balanceDue is used as-is, never its total", () => {
+    const order = {
+      lineItems: [],
+      payableInvoices: [{ id: "inv-1", status: "PARTIAL", balanceDue: 25 }],
+    };
+    expect(orderAmountDue(order as any)).toBe(25);
+  });
+
+  it("SA-125 worked example: DRAFT 50 + PARTIAL 100/paid 40 (balanceDue 60) -> 110, not 150", () => {
+    const order = {
+      lineItems: [],
+      payableInvoices: [
+        { id: "draft-1", status: "DRAFT", balanceDue: 50 },
+        { id: "partial-1", status: "PARTIAL", balanceDue: 60 },
+      ],
+    };
+    expect(orderAmountDue(order as any)).toBe(110);
+    expect(orderAmountDue(order as any)).not.toBe(150); // 50 + the PARTIAL's raw total (100)
+  });
+
+  it("an OVERDUE invoice's balanceDue is summed the same as SENT/PARTIAL", () => {
+    const order = {
+      lineItems: [],
+      payableInvoices: [{ id: "inv-1", status: "OVERDUE", balanceDue: 30 }],
+    };
+    expect(orderAmountDue(order as any)).toBe(30);
+  });
+});
+
+describe("REG-B810 earlierVisitsRemaining", () => {
+  it("sums balanceDue across non-DRAFT payable invoices", () => {
+    const payableInvoices = [
+      { id: "sent-1", status: "SENT", balanceDue: 60 },
+      { id: "partial-1", status: "PARTIAL", balanceDue: 25 },
+    ];
+    expect(earlierVisitsRemaining(payableInvoices as any)).toBe(85);
+  });
+
+  it("excludes DRAFT invoices from the sum", () => {
+    const payableInvoices = [
+      { id: "draft-1", status: "DRAFT", balanceDue: 50 },
+      { id: "sent-1", status: "SENT", balanceDue: 60 },
+    ];
+    expect(earlierVisitsRemaining(payableInvoices as any)).toBe(60);
+  });
+
+  it("returns 0 for an empty list", () => {
+    expect(earlierVisitsRemaining([])).toBe(0);
+  });
+
+  it("coerces a string-Decimal balanceDue and rounds the sum", () => {
+    const payableInvoices = [
+      { id: "sent-1", status: "SENT", balanceDue: "10.005" },
+      { id: "sent-2", status: "SENT", balanceDue: "0.005" },
+    ];
+    expect(earlierVisitsRemaining(payableInvoices as any)).toBe(10.01);
+  });
+
+  it("ignores a non-finite balanceDue rather than producing NaN", () => {
+    const payableInvoices = [
+      { id: "sent-1", status: "SENT", balanceDue: 60 },
+      { id: "sent-2", status: "SENT", balanceDue: "garbage" },
+    ];
+    expect(earlierVisitsRemaining(payableInvoices as any)).toBe(60);
   });
 });
 

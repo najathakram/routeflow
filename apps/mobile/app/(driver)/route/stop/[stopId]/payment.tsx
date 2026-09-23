@@ -45,6 +45,7 @@ import { useRunSettlementStore } from "../../../../../store/runSettlementStore";
 import type { CollectedMethod } from "../../../../../lib/run-settlement";
 import {
   activeOrderSubtotal,
+  earlierVisitsRemaining,
   orderAmountDue,
   reconciledAmountDue,
   shortPickCategoryTax,
@@ -198,7 +199,13 @@ export default function PaymentScreen() {
             // BOTH tax terms — mirror that here (RUN_STOP_INCLUDE.customer
             // projects the column; RouteRunStop.customer.isTaxExempt above).
             isTaxExempt: stop?.customer?.isTaxExempt === true,
-          })
+          }) +
+          // B810 (SA-125): reconciledAmountDue only ever estimates THIS
+          // visit's delivery — it knows nothing about a SENT/PARTIAL invoice
+          // left over from an earlier visit on the same order (a regulated
+          // split delivery). Add what's still owed on those separately, or a
+          // part-paid earlier invoice silently drops off the driver's total.
+          earlierVisitsRemaining(o.payableInvoices ?? [])
         : fullOrderTotal(o, stop?.customer?.isTaxExempt === true))
     );
   }, 0);

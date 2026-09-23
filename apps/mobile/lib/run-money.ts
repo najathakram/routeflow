@@ -59,6 +59,22 @@ export interface RunMoneyInvoice {
   total: number | string | null;
 }
 
+/**
+ * B810: EVERY payable invoice (DRAFT/SENT/PARTIAL/OVERDUE — mirrors the
+ * server's own payment write path, recordDeliveryPaymentInTx), each carrying
+ * a server-computed `balanceDue` (B421's formula: total - confirmed
+ * payments). This is `orderAmountDue`'s basis now, not `RunMoneyInvoice`
+ * above (which stays `reconciledAmountDue`'s DRAFT-only reconcile basis,
+ * unchanged) — fixes a SENT/PARTIAL invoice reading the full order total
+ * instead of what's actually still owed. NEVER derive `balanceDue`
+ * client-side (B305's standing rule, extended here to every status).
+ */
+export interface RunMoneyPayableInvoice {
+  id: string;
+  status: string;
+  balanceDue: number | string | null;
+}
+
 export interface RunMoneyOrder {
   lineItems: RunMoneyLineItem[];
   /** Prisma Decimals — may arrive as strings over the wire. */
@@ -78,8 +94,12 @@ export interface RunMoneyOrder {
    */
   discountAmount?: number | string | null;
   shippingFee?: number | string | null;
-  /** ALL of the order's open draft invoices (RULING 1 — never just the first). */
+  /** ALL of the order's open draft invoices (RULING 1 — never just the first).
+   *  `reconciledAmountDue`'s own reconcile basis only — see `payableInvoices`
+   *  below for `orderAmountDue`'s basis (B810). */
   invoices?: RunMoneyInvoice[];
+  /** B810: see `RunMoneyPayableInvoice`'s own docstring. */
+  payableInvoices?: RunMoneyPayableInvoice[];
 }
 
 export interface RunMoneyStop {
@@ -136,13 +156,19 @@ export function sumStopOrders(stop: RunMoneyStop): number {
 }
 
 /**
- * REG-B305 round 2 (RULING 1): the driver "amount due" is the SUM of every
- * open draft invoice's total, as the server last computed each — a regulated
- * split order can have several (base + `-R#` siblings), and each is real
- * money the invoice bills. Only drafts with a finite `total` count; a
- * malformed one is skipped rather than poisoning the sum.
+ * B810: the driver "amount due" is the SUM of every PAYABLE invoice's
+ * server-computed `balanceDue` (DRAFT/SENT/PARTIAL/OVERDUE — mirrors
+ * recordDeliveryPaymentInTx's own predicate, the driver's actual payment
+ * write path) — not just open drafts (REG-B305 round 2's original basis).
+ * An order whose invoice has already progressed to SENT/PARTIAL used to fall
+ * through to the order-total formula below, showing the FULL order total and
+ * ignoring any payment already collected. Only entries with a finite
+ * `balanceDue` count; a malformed one is skipped rather than poisoning the
+ * sum (same defensive shape REG-B305 round 2 established for `total`).
  *
- *  (a) one or more drafts with a finite `total` -> Σ those totals, rounded;
+ *  (a) one or more payable invoices with a finite `balanceDue` -> Σ those
+ *      balances, rounded — DRAFT's own balanceDue reduces to its `total`
+ *      when it carries no payments, byte-identical to before B810;
  *  (b) else (B305 round 5 — the DEFAULT state for a route order: the server
  *      only creates/reconciles a draft at stop-completion time) the
  *      tax-inclusive quote over the order's own ACTIVE lines, mirroring
@@ -187,9 +213,9 @@ export function sumStopOrders(stop: RunMoneyStop): number {
  * this never returns NaN.
  */
 export function orderAmountDue(order: RunMoneyOrder, isTaxExempt?: boolean): number {
-  const drafts = order.invoices ?? [];
-  const finiteTotals = drafts
-    .map((d) => finiteOrNull(d.total))
+  const payable = order.payableInvoices ?? [];
+  const finiteTotals = payable
+    .map((i) => finiteOrNull(i.balanceDue))
     .filter((n): n is number => n != null);
   if (finiteTotals.length > 0) {
     return roundMoney(finiteTotals.reduce((sum, n) => sum + n, 0));
@@ -229,6 +255,24 @@ export function orderAmountDue(order: RunMoneyOrder, isTaxExempt?: boolean): num
   );
 
   return roundMoney(subtotal - discount + shippingFee + regularTax + categoryTax);
+}
+
+/**
+ * B810 (SA-125): the door figure while actively reconciling a visit is
+ * `reconciledAmountDue(...) + earlierVisitsRemaining(...)` — the fresh
+ * estimate for what THIS visit is delivering, plus whatever remains on
+ * invoices already issued on an EARLIER visit (a prior partial delivery of
+ * the same multi-visit order). Excludes DRAFT: a draft is what THIS visit's
+ * reconcile rebuilds/creates, so including it here would double-count with
+ * `reconciledAmountDue`'s own figure. Never scaled by the delivered share —
+ * each is already a fixed, previously-issued amount, not an estimate.
+ */
+export function earlierVisitsRemaining(payableInvoices: RunMoneyPayableInvoice[]): number {
+  const finite = payableInvoices
+    .filter((i) => i.status !== "DRAFT")
+    .map((i) => finiteOrNull(i.balanceDue))
+    .filter((n): n is number => n != null);
+  return roundMoney(finite.reduce((sum, n) => sum + n, 0));
 }
 
 export function stopAmountDue(stop: RunMoneyStop): number {

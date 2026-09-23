@@ -2464,6 +2464,115 @@ describe("RoutesService", () => {
     });
   });
 
+  // ─── B810 (SA-125): balanceDue wiring at all 4 RUN_STOP_INCLUDE call sites ──
+  // withBalanceDue/withRunOrderBalances (run-invoice-balance.spec.ts) are the
+  // proven money math in isolation — these prove the SERVICE actually applies
+  // them before a response leaves, at every one of the 4 sites.
+  describe("B810: balanceDue is computed and payment rows are stripped at every call site", () => {
+    const rawPayableInvoices = [
+      { id: "inv-sent", status: "SENT", total: 100, payments: [{ amount: 40, status: "PAID" }] },
+    ];
+
+    it("findOneRun's normal path computes balanceDue and strips raw payments", async () => {
+      prisma.invoicePayment.findMany.mockResolvedValue([]);
+      prisma.advancePayment.findMany.mockResolvedValue([]);
+      prisma.routeRun.findUnique.mockResolvedValue({
+        ...MOCK_RUN,
+        stops: [
+          {
+            id: "stop-1",
+            customer: { id: "cust-1" },
+            customerAddress: { id: "addr-1" },
+            routeStop: null,
+            orders: [{ id: "ord-1", payableInvoices: rawPayableInvoices }],
+          },
+        ],
+      });
+
+      const result: any = await service.findOneRun("run-1");
+
+      const payable = result.stops[0].orders[0].payableInvoices;
+      expect(payable).toEqual([{ id: "inv-sent", status: "SENT", balanceDue: 60 }]);
+      expect(JSON.stringify(result)).not.toContain('"payments"');
+    });
+
+    it("findOneRun's unlinked-orders fallback ALSO computes balanceDue and strips payments (same drift, second site)", async () => {
+      prisma.invoicePayment.findMany.mockResolvedValue([]);
+      prisma.advancePayment.findMany.mockResolvedValue([]);
+      prisma.routeRun.findUnique.mockResolvedValue({
+        ...MOCK_RUN,
+        stops: [
+          {
+            id: "stop-1",
+            customerId: "cust-1",
+            customer: null,
+            customerAddress: { id: "addr-1" },
+            routeStop: null,
+            orders: [], // no stop has a linked order -> triggers the fallback
+            deliveryMutations: [],
+          },
+        ],
+      });
+      prisma.order.findMany.mockResolvedValue([
+        { id: "ord-1", customerId: "cust-1", payableInvoices: rawPayableInvoices },
+      ]);
+
+      const result: any = await service.findOneRun("run-1");
+
+      const payable = result.stops[0].orders[0].payableInvoices;
+      expect(payable).toEqual([{ id: "inv-sent", status: "SENT", balanceDue: 60 }]);
+      expect(JSON.stringify(result)).not.toContain('"payments"');
+    });
+
+    it("findAllRuns computes balanceDue and strips payments", async () => {
+      prisma.routeRun.findMany.mockResolvedValue([
+        {
+          ...MOCK_RUN,
+          stops: [
+            {
+              id: "stop-1",
+              customer: { id: "cust-1" },
+              customerAddress: { id: "addr-1" },
+              routeStop: null,
+              orders: [{ id: "ord-1", payableInvoices: rawPayableInvoices }],
+            },
+          ],
+        },
+      ]);
+      prisma.routeRun.count.mockResolvedValue(1);
+
+      const result: any = await service.findAllRuns({} as any, operatorPayload);
+
+      const payable = result.data[0].stops[0].orders[0].payableInvoices;
+      expect(payable).toEqual([{ id: "inv-sent", status: "SENT", balanceDue: 60 }]);
+      expect(JSON.stringify(result)).not.toContain('"payments"');
+    });
+
+    it("findMyRuns computes balanceDue and strips payments", async () => {
+      prisma.driver.findFirst.mockResolvedValue({ id: "drv-1" });
+      prisma.routeRun.findMany.mockResolvedValue([
+        {
+          ...MOCK_RUN,
+          stops: [
+            {
+              id: "stop-1",
+              customer: { id: "cust-1" },
+              customerAddress: { id: "addr-1" },
+              routeStop: null,
+              orders: [{ id: "ord-1", payableInvoices: rawPayableInvoices }],
+            },
+          ],
+        },
+      ]);
+
+      const result: any = await service.findMyRuns(driverPayload);
+
+      const payable = result.data[0].stops[0].orders[0].payableInvoices;
+      expect(payable).toEqual([{ id: "inv-sent", status: "SENT", balanceDue: 60 }]);
+      expect(JSON.stringify(result)).not.toContain('"payments"');
+    });
+  });
+
   // ─── F05: server-truth run cash collections ──────────────────────────────
 
   // T-B152a / R5 / REG-B152 — findOneRun exposes zero collected-payment data

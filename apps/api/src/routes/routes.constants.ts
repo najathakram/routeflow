@@ -1,4 +1,5 @@
 import { InvoiceStatus, OrderStatus } from "@prisma/client";
+import { RUN_PAYABLE_INVOICE_SELECT } from "./run-invoice-balance";
 
 // F11 (B129 / B211): the `resolutionReason` stamped on a ChangeRequest that a
 // run-terminal release declined. Exported so a UI/report can recognise a
@@ -89,6 +90,13 @@ export const RUN_STOP_INCLUDE = {
           total: true,
         },
       },
+      // B810: a SEPARATE list from `invoices` above (SA-125) — `invoices` stays
+      // the DRAFT-only reconcile basis; this mirrors recordDeliveryPaymentInTx's
+      // own PAYABLE query so the driver's pre-payment quote never disagrees
+      // with what their completion action will actually charge. Raw payment
+      // rows are stripped server-side (run-invoice-balance.ts#withBalanceDue)
+      // before the response leaves the service.
+      payableInvoices: RUN_PAYABLE_INVOICE_SELECT,
       lineItems: { select: RUN_LINE_ITEMS_SELECT },
     },
   },

@@ -7,6 +7,7 @@
  */
 import { InvoiceStatus } from "@prisma/client";
 import { RUN_LINE_ITEMS_SELECT, RUN_STOP_INCLUDE } from "./routes.service";
+import { RUN_PAYABLE_INVOICE_SELECT } from "./run-invoice-balance";
 
 describe("REG-B305 driver run/stop order projection", () => {
   it("REG-B305 the driver run/stop payload projects the order's subtotal, tax and total", () => {
@@ -69,5 +70,28 @@ describe("REG-B305 driver run/stop order projection", () => {
   // is exempt and over-collects at the door on a partial delivery.
   it("REG-B305 round 3: the stop's customer select carries the tax-exemption column", () => {
     expect(RUN_STOP_INCLUDE.customer.select.isTaxExempt).toBe(true);
+  });
+
+  // B810 (SA-125): a SEPARATE payableInvoices list, mirroring
+  // recordDeliveryPaymentInTx's own PAYABLE query — the DRAFT-only `invoices`
+  // list above stays byte-identical (it's reconciledAmountDue's reconcile
+  // basis), never widened.
+  it("B810: projects a SEPARATE payableInvoices select, referencing RUN_PAYABLE_INVOICE_SELECT by identity", () => {
+    expect(RUN_STOP_INCLUDE.orders.select.payableInvoices).toBe(RUN_PAYABLE_INVOICE_SELECT);
+  });
+
+  it("B810: the DRAFT-only invoices list stays byte-identical to before — never widened", () => {
+    expect(RUN_STOP_INCLUDE.orders.select.invoices).toEqual({
+      where: { status: InvoiceStatus.DRAFT, deliveryBatchId: null },
+      select: {
+        id: true,
+        subtotal: true,
+        taxAmount: true,
+        discount: true,
+        shippingFee: true,
+        total: true,
+      },
+      orderBy: { createdAt: "asc" },
+    });
   });
 });

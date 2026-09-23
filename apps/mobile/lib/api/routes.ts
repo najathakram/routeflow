@@ -66,6 +66,15 @@ export interface RouteRunOrder {
     shippingFee: number | string | null;
     total: number | string | null;
   }>;
+  // B810: EVERY payable invoice (DRAFT/SENT/PARTIAL/OVERDUE — mirrors the
+  // server's own payment write path), each carrying a server-computed
+  // `balanceDue` (total - confirmed payments). Never a client
+  // total-minus-payments — see lib/run-money.ts#orderAmountDue.
+  payableInvoices?: Array<{
+    id: string;
+    status: string;
+    balanceDue: number | string | null;
+  }>;
 }
 
 export interface RouteRunStop {
