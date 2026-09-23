@@ -2,7 +2,7 @@ import * as React from "react";
 import { act } from "react";
 import { fireEvent, renderWithProviders, screen, waitFor } from "@/test-utils/render";
 import { RecordInlineReturnDialog } from "./RecordInlineReturnDialog";
-import { RETURNS_NOT_ENABLED_MESSAGE } from "./inline-return-state";
+import { RETURNS_NOT_ENABLED_MESSAGE } from "@routeflow/returns";
 import type { InlineReturnQuoteChunk, InlineReturnQuoteResponse } from "@routeflow/types";
 
 // ─── Mocks — one per hook this dialog depends on, house convention (mock the hook module
