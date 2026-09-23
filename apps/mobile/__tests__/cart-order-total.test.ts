@@ -1,7 +1,8 @@
 import { computeOrderTotal, lineUnitFor } from "../lib/cart-order-total";
 import { effectiveUnitPrice, type LineState, type Product } from "../lib/cart-line-state";
-import { getTierPrice } from "@routeflow/pricing";
-import { unitPriceBase } from "../lib/unit-options";
+import { getTierPrice, resolveUnitPrice } from "@routeflow/pricing";
+import { buildUnitOptions, unitPriceBase } from "../lib/unit-options";
+import type { ProductUnitLevel } from "@routeflow/types";
 
 /**
  * SA-085 pre-read requirement for #1264-v2 (c2caf627): "nothing executable pins" the
@@ -111,5 +112,55 @@ describe("computeOrderTotal — the footer/order-total memo's real implementatio
     // And unitPriceBase is exactly the seam that closes the gap: feeding the OLD
     // derivation's tierPrice through it recovers the correct answer.
     expect(unitPriceBase(line, getTierPrice(product, 1))).toBe(220);
+  });
+});
+
+describe("computeOrderTotal ties phone to server — not two hand-picked numbers agreeing by construction", () => {
+  // Every test above hand-writes `unitBasePrice: 220` into the fixture, so a footer that
+  // agrees with `qty * 220` is circular: both sides were chosen by the test author, never by
+  // the real pricing code. The seam that can actually diverge is upstream of computeOrderTotal
+  // entirely — `buildUnitOptions`'s own call to `resolveUnitPrice` when a picker option is
+  // built. This test drives THAT function (the same one `setUnitLabel` calls when an operator
+  // picks a unit) to get `unitBasePrice`, then checks it against `resolveUnitPrice` called
+  // independently — the SAME function the server prices unit lines with
+  // (apps/api/src/orders/unit-line-build.ts:266, re-exported from @routeflow/pricing) — so
+  // agreement here is a real proof that phone and server would bill the same amount, not an
+  // assertion against a number this file chose by hand.
+  const CASE_LEVEL: ProductUnitLevel = {
+    id: "case-1",
+    label: "Case",
+    factorToBase: 240,
+    price: "220.00", // tier 1
+    priceTier2: "200.00", // tier 2 — deliberately NOT the same as tier 1, so a tier mix-up shows
+    priceTier3: null,
+    priceTier4: null,
+    priceTier5: null,
+    isDefaultSelling: false,
+    sortOrder: 0,
+  };
+  const tier = 2;
+
+  it("RED — a plausible real bug (tier dropped, tier-1's Case price used at tier 2) disagrees with the server price", () => {
+    const wrongUnitBasePrice = resolveUnitPrice(product, [CASE_LEVEL], "Case", 1); // 220, wrong tier
+    const line: LineState = { qty: 3, unitLabel: "Case", unitBasePrice: wrongUnitBasePrice };
+    const { total } = computeOrderTotal({ p1: line }, new Map([["p1", product]]), [], () => tier);
+
+    const serverTotal = 3 * resolveUnitPrice(product, [CASE_LEVEL], "Case", tier); // 3 * 200 = 600
+    expect(total).not.toBe(serverTotal); // 660 !== 600 — this is what a tier mix-up looks like
+  });
+
+  it("GREEN — unitBasePrice built the way setUnitLabel does (via buildUnitOptions) agrees with resolveUnitPrice at the customer's real tier", () => {
+    const options = buildUnitOptions(product, [CASE_LEVEL], tier);
+    const caseOption = options.find((o) => o.value === "Case");
+    expect(caseOption).toBeDefined();
+
+    // The exact assignment setUnitLabel makes when an operator picks this option (see
+    // NewOrderScreen.tsx / edit-items.tsx's setUnitLabel: `unitBasePrice: option.price`).
+    const line: LineState = { qty: 3, unitLabel: "Case", unitBasePrice: caseOption!.price };
+    const { total } = computeOrderTotal({ p1: line }, new Map([["p1", product]]), [], () => tier);
+
+    const serverTotal = 3 * resolveUnitPrice(product, [CASE_LEVEL], "Case", tier);
+    expect(total).toBe(serverTotal);
+    expect(total).toBe(600); // 3 * 200 — the tier-2 Case price, not tier-1's 220
   });
 });
