@@ -2606,11 +2606,7 @@ export class RoutesService {
       // quantities, UNCONDITIONALLY — see complete-payment-reconcile.ts for the
       // full rationale (why this must not live behind the payment step below).
       const deliveredOrderIds = await reconcileDeliveredStopOrders(
-        {
-          reconcileDeliveredOrdersInTx: this.invoicesService.reconcileDeliveredOrdersInTx.bind(
-            this.invoicesService,
-          ),
-        },
+        this.invoicesService,
         tx,
         stop.orders,
         deliveredOrderIdSet,

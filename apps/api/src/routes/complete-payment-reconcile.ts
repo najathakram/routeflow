@@ -2,11 +2,13 @@ import { InvoiceStatus, OrderStatus } from "@prisma/client";
 import { roundMoney } from "@routeflow/pricing";
 
 export interface DeliveredReconcileDeps {
-  reconcileDeliveredOrdersInTx: (
+  // Structurally matches InvoicesService itself — callers pass the service instance
+  // directly (correct `this` on the method: it's invoked as deps.reconcileDeliveredOrdersInTx(...)).
+  reconcileDeliveredOrdersInTx(
     tx: any,
     orderIds: string[],
     reconcileOrderIds: string[],
-  ) => Promise<void>;
+  ): Promise<void>;
 }
 
 /**
