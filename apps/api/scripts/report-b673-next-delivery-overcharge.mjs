@@ -32,8 +32,10 @@
  *   - its stored subtotal is exactly what create() writes for a bare qty —
  *     computeLineSubtotal({ unitPrice, qty, freeUnits: promoFreeUnits }) — so it has not been
  *     re-priced since;
- *   - priceType is not DISCOUNTED or MANUAL (a hand-set or quantity-break price is not the
- *     defect's price);
+ *   - priceType is not DISCOUNTED, MANUAL or PROMO. A hand-set price (DISCOUNTED / MANUAL) is not
+ *     the defect's price. A promotion — which is how a QUANTITY BREAK is priced — depends on the
+ *     quantity: the bare-qty line earned it at 12 "boxes", the correct 1 box may not, so pricing
+ *     the filed split at the promo price would OVERSTATE the overcharge by (list - promo) x boxes;
  *   - the request filed boxes (> 0), so the filed pack (qty - pieces) / boxes is known, and the
  *     product's LIVE pack still equals it (a product repacked since — or to 1 — is REVIEW);
  *   - no BOGO free units on the line (promoFreeUnits 0): the correct free-unit count for the
@@ -59,8 +61,10 @@
  *   - `q()` refuses any SQL carrying a write/DDL verb before it reaches the server.
  *   - Any repair is a separate, dry-run-first script the owner asks for. This one changes nothing.
  */
+import { realpathSync } from "fs";
 import { createRequire } from "module";
-import { pathToFileURL } from "url";
+import { basename } from "path";
+import { fileURLToPath } from "url";
 import { resolveDatabaseUrl, redactUrl } from "./lib/railway-db-url.mjs";
 
 const require = createRequire(import.meta.url);
@@ -71,7 +75,10 @@ const json = argv.includes("--json");
 const selfTest = argv.includes("--self-test");
 
 const num = (v) => (v == null ? null : Number(v));
-const NON_DEFECT_PRICE_TYPES = new Set(["DISCOUNTED", "MANUAL"]);
+// DISCOUNTED / MANUAL: a hand-set price. PROMO: a promotion, which is how a quantity break is
+// priced — the bare 12-"box" line may have earned a break the correct 1 box would not, so its
+// expected figure would be understated and the overcharge overstated. All three go to REVIEW.
+const NON_DEFECT_PRICE_TYPES = new Set(["DISCOUNTED", "MANUAL", "PROMO"]);
 
 /**
  * Classify one change request against the draft lines it could have produced, and price it.
@@ -101,7 +108,11 @@ export function assess(cr, lines, liveUnitsPerBox) {
     return review(`line qty ${num(line.qty)} != filed qty ${qty} (edited or merged since)`, line);
   }
   if (NON_DEFECT_PRICE_TYPES.has(line.priceType)) {
-    return review(`priceType ${line.priceType} (a hand-set or quantity-break price)`, line);
+    return review(
+      `priceType ${line.priceType} (a hand-set or promotional price; the correct price for the ` +
+        `filed quantity cannot be re-derived)`,
+      line,
+    );
   }
   const freeUnits = num(line.promoFreeUnits) ?? 0;
   const unitPrice = num(line.unitPrice);
@@ -200,6 +211,11 @@ function runSelfTest() {
       "priceType MANUAL -> REVIEW",
       assess(cr(box), [line({ priceType: "MANUAL" })], 12),
       (r) => r.kind === "REVIEW",
+    ],
+    [
+      "priceType PROMO (e.g. a quantity break) -> REVIEW, never an overstated AFFECTED",
+      assess(cr(box), [line({ priceType: "PROMO", unitPrice: 36, subtotal: 432 })], 12),
+      (r) => r.kind === "REVIEW" && r.delta === undefined && r.stored === 432,
     ],
     [
       "repacked to 1 since filing -> REVIEW",
@@ -428,10 +444,35 @@ async function main() {
   }
 }
 
-// Run only when invoked directly — importing this module (for `assess` / `assertReadOnlySql`)
-// must never start a report.
-const invokedDirectly = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
-if (invokedDirectly) {
+/**
+ * Run only when invoked directly: importing this module (for `assess` / `assertReadOnlySql`) must
+ * never start a report. Both paths are compared after realpath, case-insensitively on Windows,
+ * where a drive-letter case or a junction can make an exact URL comparison fail. That failure
+ * used to exit 0 silently, which reads as "no findings". So when the file NAMES match but the
+ * paths still differ, the report warns and runs anyway rather than doing nothing.
+ */
+export function isInvokedDirectly(entry = process.argv[1], self = fileURLToPath(import.meta.url)) {
+  if (!entry) return false;
+  const norm = (p) => {
+    let r = p;
+    try {
+      r = realpathSync(p);
+    } catch {
+      // keep the path as given
+    }
+    return process.platform === "win32" ? r.toLowerCase() : r;
+  };
+  if (norm(entry) === norm(self)) return true;
+  if (basename(entry).toLowerCase() === basename(self).toLowerCase()) {
+    console.error(
+      `report-b673: warning: entry path ${entry} did not match ${self} exactly; running anyway.`,
+    );
+    return true;
+  }
+  return false;
+}
+
+if (isInvokedDirectly()) {
   if (selfTest) runSelfTest();
   else
     main().catch((e) => {
