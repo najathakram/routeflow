@@ -98,6 +98,58 @@ export function shortPickLinesFromOrder(
     }));
 }
 
+/** The shape `fallbackShortPickLines` reads off the STOP's own embedded snapshot. */
+export interface StopSnapshotLine {
+  id: string;
+  productId: string | null;
+  status?: string | null;
+  qty: number | string;
+  subtotal?: number | string | null;
+}
+
+/**
+ * SA-115: the delivery-payload lines for an order whose richer per-order
+ * fetch has NOT LANDED — built from the STOP's own embedded snapshot
+ * (already available with no extra fetch), so `closeStop` (payment.tsx)
+ * still covers the order rather than blocking on every order's fetch
+ * (which would cost only a spinner, but also break an offline close). The
+ * CALLER is responsible for using this ONLY when the order's fetch truly
+ * hasn't landed — never merely because `shortPickLinesFromOrder` came back
+ * empty for a LANDED order (that's a real "nothing adjustable" state, not
+ * missing data, and must send zero entries, not re-claim full delivery).
+ *
+ * CANCELLED lines are filtered (SA-115 required (1), reasoning corrected in
+ * SA-115a): `status` rides this snapshot on the wire, and an office cancel
+ * leaves `qty` untouched, so an unfiltered map would send a CANCELLED line
+ * as DELIVERED at full qty. Billing it isn't live on master today, but the
+ * server would still stamp `deliveredQty` on the cancelled line and write
+ * a DELIVERED mutation row for it — false evidence every later reader of
+ * those rows (audit, reports, a future billing path) trusts as real.
+ *
+ * No BOGO netting (`freeUnits: 0`/`freeUnitSize: 1`): a `deliveredQtyById`
+ * override can't realistically exist for an order whose review screen
+ * never loaded to record one, so every surviving line resolves to
+ * `deliveryTypeForQty`'s DELIVERED-at-full-qty case regardless.
+ *
+ * SA-115 residual (accepted, filed separately, not B762): this snapshot
+ * carries no `deliveredQty`, so a re-delivery stop for an order that never
+ * loaded here would re-claim full delivery rather than "the remaining N".
+ */
+export function fallbackShortPickLines(
+  order: { lineItems?: readonly StopSnapshotLine[] | null } | null | undefined,
+): ShortPickLine[] {
+  return (order?.lineItems ?? [])
+    .filter((li) => li.status !== "CANCELLED")
+    .map((li) => ({
+      orderItemId: li.id,
+      productId: li.productId,
+      orderedQty: Number(li.qty ?? 0),
+      subtotal: li.subtotal != null ? Number(li.subtotal) : null,
+      freeUnits: 0,
+      freeUnitSize: 1,
+    }));
+}
+
 /** DELIVERED at the full ordered qty, REFUSED at 0, else PARTIAL. */
 export function deliveryTypeForQty(deliveredQty: number, orderedQty: number): DeliveryType {
   if (deliveredQty <= 0) return "REFUSED";

@@ -55,6 +55,7 @@ import {
 } from "../../../../../lib/offline-errors";
 import {
   buildStopDeliveries,
+  fallbackShortPickLines,
   reconciledTotal,
   shortPickLinesFromOrder,
   type ShortPickLine,
@@ -96,33 +97,6 @@ const EMPTY_DELIVERY_PLAN: Record<string, number> = {};
 // exempt customer's server-side reconcile zeroes BOTH tax terms.
 function fullOrderTotal(order: RouteRunOrder, isTaxExempt: boolean): number {
   return orderAmountDue(order, isTaxExempt);
-}
-
-/**
- * B762: the delivery-payload lines for an order whose richer per-order
- * fetch hasn't landed yet (or has nothing left to adjust) — built from the
- * stop's OWN embedded snapshot (`RouteRunOrder.lineItems`, already
- * available with no extra fetch) so `closeStop` still covers the order
- * FULLY rather than omitting it (which the server reads as UNDELIVERED).
- * No BOGO netting (`freeUnits: 0`/`freeUnitSize: 1`) and no CANCELLED
- * filter — matches the pre-B762 screen's own raw fallback exactly, since a
- * `deliveredQtyById` override can't realistically exist for an order whose
- * review screen could never have loaded to record one: every line here
- * resolves to `deliveryTypeForQty`'s DELIVERED-at-full-qty case regardless.
- */
-function fallbackShortPickLines(order: RouteRunOrder): ShortPickLine[] {
-  return (order.lineItems ?? []).map((li) => ({
-    orderItemId: li.id,
-    productId: li.productId,
-    orderedQty: Number(li.qty ?? 0),
-    // Prisma Decimal may arrive as a string over the wire — normalize like
-    // run-money.ts#lineItemSubtotal. Unused by this fallback path in
-    // practice (invoiceTotal reads fullOrderTotal(o) for it, never
-    // reconciledTotal), but must still satisfy ShortPickLine's type.
-    subtotal: li.subtotal != null ? Number(li.subtotal) : null,
-    freeUnits: 0,
-    freeUnitSize: 1,
-  }));
 }
 
 export default function PaymentScreen() {
@@ -337,21 +311,25 @@ export default function PaymentScreen() {
     // order on the stop must appear with EXPLICIT per-line entries — an
     // order missing from this array entirely reads as fully UNDELIVERED
     // server-side — and `type` always goes through `deliveryTypeForQty`
-    // (via buildDeliveries), never a hardcoded literal, so it stays
-    // consistent with `quantityDelivered` even for an order whose richer
-    // fetch hasn't landed yet (falls back to the stop's own embedded
-    // snapshot at full qty — deliveryTypeForQty(ordered, ordered) is always
-    // DELIVERED, so this is exactly the same outcome the old hardcoded
-    // literal produced, just derived instead of assumed).
+    // (via buildDeliveries), never a hardcoded literal.
+    //
+    // SA-115 required (2): the fallback triggers ONLY when the order's
+    // fetch has NOT LANDED (`ordersById[o.id]` undefined) — never merely
+    // because its rich lines came back empty. A LANDED order with nothing
+    // adjustable (every line already delivered on an earlier visit, or all
+    // cancelled) sends its rich (empty) lines as-is — zero entries for
+    // THIS close, which the server reads as no new delivery action for it,
+    // not a downgrade of an order that's already DELIVERED. Falling back to
+    // the raw snapshot for that case would have re-claimed full delivery on
+    // lines the driver's own loaded data says are already settled.
     const deliveries = buildStopDeliveries(
-      (stop.orders ?? []).map((o) => {
-        const rich = richShortPickLinesByOrder[o.id] ?? [];
-        return {
-          orderId: o.id,
-          lines: rich.length > 0 ? rich : fallbackShortPickLines(o),
-          deliveredQtyById,
-        };
-      }),
+      (stop.orders ?? []).map((o) => ({
+        orderId: o.id,
+        lines: ordersById[o.id]
+          ? (richShortPickLinesByOrder[o.id] ?? [])
+          : fallbackShortPickLines(o),
+        deliveredQtyById,
+      })),
     );
 
     // NEW-m1-3: validate that at least one item is being delivered

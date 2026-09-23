@@ -5,6 +5,7 @@ import {
   isFullyDelivered,
   buildStopDeliveries,
   shortPickLinesFromOrder,
+  fallbackShortPickLines,
 } from "../lib/short-pick";
 
 const lines = [
@@ -107,7 +108,14 @@ describe("shortPickLinesFromOrder (B762: the shared derivation both driver scree
       ],
     };
     expect(shortPickLinesFromOrder(order)).toEqual([
-      { orderItemId: "li-1", productId: "p-1", orderedQty: 10, subtotal: 100, freeUnits: 1, freeUnitSize: 5 },
+      {
+        orderItemId: "li-1",
+        productId: "p-1",
+        orderedQty: 10,
+        subtotal: 100,
+        freeUnits: 1,
+        freeUnitSize: 5,
+      },
     ]);
   });
 
@@ -124,7 +132,14 @@ describe("shortPickLinesFromOrder (B762: the shared derivation both driver scree
   it("excludes a line already delivered (a reopened, partially-completed stop doesn't re-offer a settled line)", () => {
     const order = {
       lineItems: [
-        { id: "li-1", productId: "p-1", status: "PENDING", deliveredQty: 10, qty: 10, subtotal: 100 },
+        {
+          id: "li-1",
+          productId: "p-1",
+          status: "PENDING",
+          deliveredQty: 10,
+          qty: 10,
+          subtotal: 100,
+        },
         { id: "li-2", productId: "p-2", status: "PENDING", deliveredQty: 0, qty: 5, subtotal: 50 },
       ],
     };
@@ -151,6 +166,60 @@ describe("shortPickLinesFromOrder (B762: the shared derivation both driver scree
     expect(out).toEqual([
       { orderItemId: "li-1", productId: "p-1", type: "DELIVERED", quantityDelivered: 4 },
       { orderItemId: "li-2", productId: "p-2", type: "REFUSED", quantityDelivered: 0 },
+    ]);
+  });
+});
+
+describe("fallbackShortPickLines (SA-115: the un-landed-order fallback)", () => {
+  it("SA-115 required (1): filters CANCELLED lines — a snapshot with one CANCELLED line produces no entry for it", () => {
+    const order = {
+      lineItems: [
+        { id: "li-1", productId: "p-1", status: "CANCELLED", qty: 10, subtotal: 100 },
+        { id: "li-2", productId: "p-2", status: "PENDING", qty: 5, subtotal: 50 },
+      ],
+    };
+    expect(fallbackShortPickLines(order).map((l) => l.orderItemId)).toEqual(["li-2"]);
+  });
+
+  it("a surviving (non-CANCELLED) line resolves to DELIVERED at full qty through deliveryTypeForQty — no BOGO netting", () => {
+    const order = {
+      lineItems: [{ id: "li-1", productId: "p-1", status: "PENDING", qty: 8, subtotal: 80 }],
+    };
+    const [line] = fallbackShortPickLines(order);
+    expect(line).toEqual({
+      orderItemId: "li-1",
+      productId: "p-1",
+      orderedQty: 8,
+      subtotal: 80,
+      freeUnits: 0,
+      freeUnitSize: 1,
+    });
+    expect(deliveryTypeForQty(line!.orderedQty, line!.orderedQty)).toBe("DELIVERED");
+  });
+
+  it("null/undefined order or missing lineItems -> empty array, never throws", () => {
+    expect(fallbackShortPickLines(null)).toEqual([]);
+    expect(fallbackShortPickLines(undefined)).toEqual([]);
+    expect(fallbackShortPickLines({})).toEqual([]);
+  });
+
+  it("SA-115 required (2), the composition an un-landed vs. a landed order must produce: an un-landed order's fallback lines contribute their full-qty snapshot to buildStopDeliveries; a LANDED order with nothing adjustable (empty rich lines) contributes NO entries at all — never a re-claimed full delivery", () => {
+    const unlandedSnapshot = {
+      lineItems: [{ id: "li-1", productId: "p-1", status: "PENDING", qty: 6, subtotal: 60 }],
+    };
+    // A landed order whose shortPickLinesFromOrder came back empty (e.g.
+    // every line already delivered on an earlier visit) — the caller must
+    // pass its RICH (empty) lines here, never fallbackShortPickLines(o).
+    const out = buildStopDeliveries([
+      {
+        orderId: "unlanded",
+        lines: fallbackShortPickLines(unlandedSnapshot),
+        deliveredQtyById: {},
+      },
+      { orderId: "landed-nothing-adjustable", lines: [], deliveredQtyById: {} },
+    ]);
+    expect(out).toEqual([
+      { orderItemId: "li-1", productId: "p-1", type: "DELIVERED", quantityDelivered: 6 },
     ]);
   });
 });
