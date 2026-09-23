@@ -1616,6 +1616,25 @@ describe("CustomersService", () => {
       );
     });
 
+    // B310, DRAFT half (#719 fixed the concurrency half). DRAFT joins this check directly,
+    // not CREDIT_NOT_APPLICABLE — :1835's exposure reads need DRAFT to stay out of that set.
+    it("REG-B310 an advance cannot be applied to a DRAFT invoice — it has not been sent yet", async () => {
+      prisma.advancePayment.findUnique.mockResolvedValue({ id: "ap-1", balance: 100 });
+      prisma.invoice.findUnique.mockResolvedValue({
+        id: "inv-draft",
+        total: 100,
+        status: "DRAFT",
+        dueDate: null,
+        payments: [],
+      });
+      await expect(
+        service.applyAdvancePaymentToInvoice("ap-1", { invoiceId: "inv-draft" }),
+      ).rejects.toThrow("Cannot apply advance payment to invoice with status DRAFT");
+      expect(prisma.invoicePayment.create).not.toHaveBeenCalled();
+      expect(prisma.invoice.update).not.toHaveBeenCalled();
+      expect(prisma.advancePayment.update).not.toHaveBeenCalled();
+    });
+
     it("REG-B310 two concurrent applies of the SAME advance never drive its balance negative", async () => {
       // The mocked `withAdvisoryLock` is a module-level jest.fn shared across every test in this
       // file (a prior test above also calls applyAdvancePaymentToInvoice) — clear its call

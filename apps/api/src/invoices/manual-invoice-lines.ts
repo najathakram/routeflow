@@ -5,6 +5,7 @@ import type { ResolvedLineUnits } from "../products/line-units";
 import { isUnitAware } from "../orders/unit-line-build";
 import { buildInvoiceUnitLine } from "./invoice-unit-line";
 import {
+  categoryTaxSnapshotOf,
   computeCategoryTax,
   computeLineSubtotal,
   normalizeBoxesPieces,
@@ -148,6 +149,16 @@ export function buildManualInvoiceLines(
           priceIncludesTax: category.priceIncludesTax,
         })
       : 0;
+    // B297 (SA-088): freeze the trio categoryTaxAmount above was computed from.
+    const categorySnapshot = categoryTaxSnapshotOf(
+      category
+        ? {
+            taxType: category.taxType as CategoryTaxType,
+            rate: category.rate,
+            priceIncludesTax: category.priceIncludesTax,
+          }
+        : null,
+    );
     return {
       description: item.description,
       productId: item.productId,
@@ -174,6 +185,8 @@ export function buildManualInvoiceLines(
       trackedSubcategoryId: product?.trackedSubcategoryId ?? null,
       // RF-4: per-line category tax snapshot (folded into taxTotal below).
       categoryTaxAmount,
+      // B297 (SA-088): the rate trio categoryTaxAmount was computed from.
+      ...categorySnapshot,
       notes: item.notes ?? null,
       // MSRP snapshot — set below by applyMsrpSnapshots (null when flag.msrp is off).
       msrp: null as number | null,

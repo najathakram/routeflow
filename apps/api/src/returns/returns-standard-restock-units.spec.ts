@@ -169,6 +169,77 @@ describe("standardRestockResolver (B665)", () => {
   });
 });
 
+/**
+ * A4-F3 (units_v1) — a unit-aware line (non-blank `unitLabel`) already stores its qty in BASE PIECES
+ * (`unit-line-build.ts`: a factor-1 unit keeps boxes/pieces null and snapshots unitsPerBox 1; a factor > 1
+ * unit stores a boxes/pieces split), which is exactly `regulatedUnitBasis`'s branch 1. The restock resolver
+ * must read the label and take factor 1 for it, never park it on the live product's pack.
+ */
+describe("standardRestockResolver — unit-aware lines (A4-F3)", () => {
+  let prisma: ReturnType<typeof createMockPrisma>;
+  const resolver = () => standardRestockResolver(prisma, "ord-1");
+  const item = (qty: number, productId = "p1") => ({ id: "ri-1", productId, qty, restock: true });
+  const arm = (lines: unknown[], invoiceItems: unknown[] = []) => {
+    prisma.orderItem.findMany.mockReset();
+    prisma.orderItem.findMany.mockResolvedValueOnce(lines);
+    prisma.invoiceItem.findMany.mockReset();
+    prisma.invoiceItem.findMany.mockResolvedValue(invoiceItems);
+  };
+  /** 10 loose Pieces of a product whose pack is 12: factor-1 unit, no split, snapshot 1. */
+  const pieceLine = (over: Record<string, unknown> = {}) =>
+    boxLine({ qty: 10, unitsPerBox: 1, unitLabel: "Piece", ...over });
+  /** Its invoice copy: also no split, snapshot 1 (invoice-unit-line.ts). */
+  const pieceInvoice = { orderItemId: "oi-1", qty: 10, boxes: null, pieces: null, unitsPerBox: 1 };
+
+  beforeEach(() => {
+    prisma = createMockPrisma();
+  });
+
+  it("REG-A4F3-1: 4 returned from a factor-1 Piece line on a 12-pack product restocks 4 pieces, never parks", async () => {
+    arm([pieceLine()], [pieceInvoice]);
+    expect(await resolver()(item(4))).toEqual({ pieces: 4 });
+  });
+
+  it("REG-A4F3-2: the restock loader reads the line's unitLabel", async () => {
+    arm([pieceLine()], [pieceInvoice]);
+    await resolver()(item(4));
+    expect(prisma.orderItem.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ select: expect.objectContaining({ unitLabel: true }) }),
+    );
+  });
+
+  it("a Case line (factor 144, stored as a split) is unchanged: factor 1 on its base-piece qty", async () => {
+    arm([pieceLine({ qty: 432, boxes: 3, pieces: 0, unitsPerBox: 144, unitLabel: "Case" })]);
+    expect(await resolver()(item(144))).toEqual({ pieces: 144 });
+  });
+
+  it("a blank or whitespace unitLabel means the pack: the box-unaware line still resolves x12 via its InvoiceItem", async () => {
+    for (const unitLabel of ["", "   ", null]) {
+      arm([boxLine({ unitLabel })], [invoiceWithSplit()]);
+      expect(await resolver()(item(3))).toEqual({ pieces: 36 });
+    }
+  });
+
+  it("a STALE label on a box-count line (moved back to the pack, label left behind) is not trusted: it resolves via its InvoiceItem or parks", async () => {
+    const stale = pieceLine({ qty: 3, unitsPerBox: null }); // label "Piece", no split, no snapshot
+    arm([stale], [invoiceWithSplit({ qty: 36, boxes: 3 })]);
+    expect(await resolver()(item(3))).toEqual({ pieces: 36 });
+    arm([stale], []);
+    expect(await resolver()(item(3))).toMatchObject({ unknown: true });
+  });
+
+  it("a product sold as loose Pieces AND as box-unaware boxes on one order still parks: two packs, no guess", async () => {
+    arm(
+      [pieceLine({ id: "oi-2" }), boxLine()],
+      [{ ...pieceInvoice, orderItemId: "oi-2" }, invoiceWithSplit()],
+    );
+    expect(await resolver()(item(2))).toEqual({
+      unknown: true,
+      reason: "the product is on order lines with different packs",
+    });
+  });
+});
+
 describe("restockReturnItems with a resolver (B665)", () => {
   let prisma: ReturnType<typeof createMockPrisma>;
   let errorSpy: jest.SpyInstance;
