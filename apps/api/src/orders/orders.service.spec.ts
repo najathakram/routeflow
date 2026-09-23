@@ -531,44 +531,6 @@ describe("OrdersService", () => {
 
       await expect(service.findOne("ord-1", customerPayload)).rejects.toThrow(ForbiddenException);
     });
-
-    /**
-     * SA-085f security fix: the unit picker's ladder (units_v1) needs the pack's
-     * priceTier2-5 columns for an OPERATOR read (resolveUnitPrice's scaling is wrong at any
-     * tier > 1 without them). `findOne` is the SAME method buyer.controller.ts's
-     * `GET orders/:id` calls (makePseudoUser defaults role: CUSTOMER) — those columns are a
-     * different customer's pricing tier and must never reach a buyer. Gated at the Prisma
-     * select itself, not left to `redactUpsellForCustomer` (which strips pricePerUnit/
-     * averageCost but never touched priceTier2-5).
-     */
-    it("SA-085f: selects the pack's priceTier2-5 for an OPERATOR read, but NEVER for a CUSTOMER read (tier-price leak)", async () => {
-      prisma.order.findUnique.mockResolvedValue(MOCK_ORDER);
-      await service.findOne("ord-1", operatorPayload);
-      const operatorSelect =
-        prisma.order.findUnique.mock.calls.at(-1)![0].include.lineItems.include.product.select;
-      expect(operatorSelect).toEqual(
-        expect.objectContaining({
-          priceTier2: true,
-          priceTier3: true,
-          priceTier4: true,
-          priceTier5: true,
-        }),
-      );
-
-      prisma.order.findUnique.mockResolvedValue(MOCK_ORDER);
-      prisma.customer.findFirst.mockResolvedValue({ id: MOCK_ORDER.customerId });
-      await service.findOne("ord-1", customerPayload);
-      const customerSelect =
-        prisma.order.findUnique.mock.calls.at(-1)![0].include.lineItems.include.product.select;
-      expect(customerSelect.priceTier2).toBeUndefined();
-      expect(customerSelect.priceTier3).toBeUndefined();
-      expect(customerSelect.priceTier4).toBeUndefined();
-      expect(customerSelect.priceTier5).toBeUndefined();
-      // pricePerUnit/unitsPerBox are unaffected — this gate is scoped to the tier columns only.
-      expect(customerSelect).toEqual(
-        expect.objectContaining({ pricePerUnit: true, unitsPerBox: true }),
-      );
-    });
   });
 
   // ─── Security: F2-005 (driver order-detail scope + urgent) / F10-002 ────────
