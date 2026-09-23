@@ -18,7 +18,14 @@
  * via the shared helpers/overflow.ts.
  *
  * Scope: the pages a buyer actually spends time on — dashboard, shop, cart,
- * orders, and invoices — not every route this portal has.
+ * orders (list + detail), and invoices (list + detail) — not every route
+ * this portal has. The invoice detail page was added per pre-merge review:
+ * at 390 its header row (Pay/PDF buttons, a no-wrap `flex justify-between`)
+ * and its `grid-cols-4` summary cards both overflowed once the new shell
+ * containment stopped the old `overflow-auto` from letting a user scroll to
+ * reach them — a regression the fix (flex-wrap on the header,
+ * `grid-cols-2 sm:grid-cols-4` on the summary, mirroring
+ * orders/[id]/page.tsx's own pattern) closes, and this test locks in.
  *
  * Uses the seeded, ACTIVE-linked buyer credential from helpers/constants.ts
  * (already has a seller selected, so no register→invite→accept dance is
@@ -103,6 +110,21 @@ for (const vp of VIEWPORTS) {
       // ── Invoices ─────────────────────────────────────────────────────────
       await page.goto(`/buyer/portal/${sellerSlug}/invoices`);
       await assertNoOverflow(page, "buyer invoices (list)");
+
+      // Real invoice detail, only if one exists — real navigation through the
+      // list rather than a side-channel API call. Added per pre-merge review:
+      // this page's header row (Pay/PDF buttons) and its 4-column summary
+      // grid both overflowed at 390 under the new containment (the old
+      // overflow-auto let a user scroll to reach the buttons; the fix makes
+      // them wrap instead — see the page's own comments at those two spots).
+      const firstInvoiceLink = page
+        .locator(`a[href^="/buyer/portal/${sellerSlug}/invoices/"]`)
+        .first();
+      if (await firstInvoiceLink.count()) {
+        await firstInvoiceLink.click();
+        await assertNoOverflow(page, "buyer invoices/[id]");
+        expect(await documentLevelOverflowPx(page)).toBeLessThanOrEqual(0);
+      }
     });
   });
 }
