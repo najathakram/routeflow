@@ -8,8 +8,10 @@ import { MailboxSendService } from "./mailbox/mailbox-send.service";
 // F03/R9: ONE original-price display decision shared with the PDF, so the two
 // customer-facing documents of the same send can never disagree (a pure helper —
 // no Nest/module coupling, and unlike ./invoice-pdf-template it is not mocked
-// away under Jest).
-import { showOriginalPrice } from "../invoices/invoice-pdf-item";
+// away under Jest). B653: qtyCellText is the SAME per-line qty-text decision, now
+// shared with the email too — one formatter, never a second copy of the same
+// boxes/pieces/unitLabel display logic.
+import { showOriginalPrice, qtyCellText } from "../invoices/invoice-pdf-item";
 
 // F6-001: SSRF guard — block private/loopback/metadata IPs as SMTP hosts.
 // Tenants control smtpHost; without this guard they could point it at
@@ -1049,6 +1051,11 @@ export class EmailService {
       priceType?: string | null;
       /** BUY_N_GET_M free units on this line — null/0 renders no note. */
       promoFreeUnits?: number | null;
+      /** units_v1/boxed split (B653) — null/null renders the bare `qty`, unchanged. */
+      boxes?: number | null;
+      pieces?: number | null;
+      /** units_v1 sold-unit noun ("Case") — null/undefined defaults to "box"/"boxes". */
+      unitLabel?: string | null;
     }[];
     pdfUrl?: string;
     isReminder?: boolean;
@@ -1495,6 +1502,11 @@ export class EmailService {
         priceType?: string | null;
         /** BUY_N_GET_M free units on this line — null/0 renders no note. */
         promoFreeUnits?: number | null;
+        /** units_v1/boxed split (B653) — null/null renders the bare `qty`, unchanged. */
+        boxes?: number | null;
+        pieces?: number | null;
+        /** units_v1 sold-unit noun ("Case") — null/undefined defaults to "box"/"boxes". */
+        unitLabel?: string | null;
       }[];
       pdfUrl?: string;
       isReminder?: boolean;
@@ -1523,7 +1535,7 @@ export class EmailService {
         return `
         <tr>
           <td style="padding:8px 12px;border-bottom:1px solid #f0f0f0;font-size:14px;color:#1D2A3D;">${it.description}</td>
-          <td style="padding:8px 12px;border-bottom:1px solid #f0f0f0;font-size:14px;color:#1D2A3D;text-align:center;">${it.qty}${
+          <td style="padding:8px 12px;border-bottom:1px solid #f0f0f0;font-size:14px;color:#1D2A3D;text-align:center;">${escapeHtml(qtyCellText(it))}${
             freeUnits > 0
               ? `<div style="font-size:11px;color:#b45309;font-weight:600;margin-top:2px;">${freeUnits} free</div>`
               : ""
@@ -1699,7 +1711,7 @@ export class EmailService {
       params.items
         .map((it) => {
           const freeUnits = it.promoFreeUnits != null ? Number(it.promoFreeUnits) : 0;
-          return `${it.description} — qty ${it.qty}${freeUnits > 0 ? ` (${freeUnits} free)` : ""} @ ${fmt(it.unitPrice)} = ${fmt(it.subtotal)}`;
+          return `${it.description} — qty ${qtyCellText(it)}${freeUnits > 0 ? ` (${freeUnits} free)` : ""} @ ${fmt(it.unitPrice)} = ${fmt(it.subtotal)}`;
         })
         .join("\n"),
     );

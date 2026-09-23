@@ -19,6 +19,7 @@
 import { Test, TestingModule } from "@nestjs/testing";
 import { randomUUID } from "crypto";
 import { EstimatesService } from "./estimates.service";
+import { RegulatedLedgerService } from "../regulated/regulated-ledger.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { TenantContextService } from "../tenant/tenant-context.service";
 import { EntitlementsService } from "../billing/entitlements.service";
@@ -55,6 +56,7 @@ describeDb("REG-B79 estimates issueDate — real Postgres round-trip (T17)", () 
         NumberingService,
         { provide: PrismaService, useValue: prisma },
         { provide: EntitlementsService, useValue: mockEntitlements },
+        { provide: RegulatedLedgerService, useValue: {} }, // create() never touches the ledger
       ],
     }).compile();
 

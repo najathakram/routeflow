@@ -35,14 +35,9 @@ import { archivedMessage, resolveProductByCode } from "../../../../../lib/barcod
 import { BarcodeFab } from "../../../../../components/BarcodeFab";
 import { LicenseGuardModal } from "../../../../../components/LicenseGuardModal";
 import { CreditLimitGuardModal } from "../../../../../components/CreditLimitGuardModal";
-import {
-  parseRegulatedAuthError,
-  type BlockedCategory,
-} from "../../../../../lib/api/authorizations";
-import {
-  parseCreditLimitError,
-  type CreditLimitExceededInfo,
-} from "../../../../../lib/credit-limit-error";
+import { type BlockedCategory } from "../../../../../lib/api/authorizations";
+import { type CreditLimitExceededInfo } from "../../../../../lib/credit-limit-error";
+import { classifyAtStopResolveError } from "../../../../../lib/at-stop-cr-outcome";
 import { showToast } from "../../../../../lib/toast";
 import { useOfflineQueue } from "../../../../../store/offlineQueue";
 
@@ -111,8 +106,11 @@ export default function AdjustOrderScreen() {
   const [creditBlock, setCreditBlock] = useState<CreditLimitExceededInfo | null>(null);
   const pendingRef = useRef<{ diff: CreateChangeRequestInput[]; index: number } | null>(null);
   // Id of a CR that was created (buyer already notified) but blocked at resolve
-  // by the regulated guard — remembered so it can be declined (cleaned up) when
-  // the driver removes the offending line or cancels, instead of lingering PENDING.
+  // BY THE REGULATED GUARD SPECIFICALLY — remembered so it can be declined (cleaned
+  // up) when the driver removes the offending line or cancels, instead of lingering
+  // PENDING. Deliberately deferred (not declined immediately like every other resolve
+  // failure below, B790): removing the line or getting an override are both real next
+  // steps here, not just "retry the same thing again".
   const blockedCrRef = useRef<string | null>(null);
 
   const createCr = useCreateChangeRequest(orderId ?? "");
@@ -244,38 +242,46 @@ export default function AdjustOrderScreen() {
       qc.invalidateQueries({ queryKey: ["route-runs"] });
       return true;
     } catch (e: any) {
-      // Connection dropped mid-batch: the two-step create→resolve can't complete
-      // offline (resolve needs the create's server id), so stop honestly rather
-      // than echo the interceptor's reassuring "Action queued." The driver must
-      // retry once back online (handleSave also refuses to start while offline).
-      if (e?.isOfflineQueued) {
-        showToast("Connection lost — reconnect and save again.");
-        return false;
+      const outcome = classifyAtStopResolveError(e);
+      switch (outcome.action) {
+        case "offline":
+          // Connection dropped mid-batch: the two-step create→resolve can't complete
+          // offline (resolve needs the create's server id), so stop honestly rather
+          // than echo the interceptor's reassuring "Action queued." The driver must
+          // retry once back online (handleSave also refuses to start while offline).
+          // The create itself may have landed — its own queued resolve will settle
+          // it once reconnected, so this is NOT a decline-worthy failure (B790).
+          showToast("Connection lost — reconnect and save again.");
+          return false;
+        case "regulated":
+          // The CR was created (and the buyer notified) but the regulated guard
+          // rejected it at resolve — remember it so the Remove/Cancel exits can
+          // decline the otherwise-orphaned PENDING request (deferred — see
+          // blockedCrRef above for why this one stays deferred, B790).
+          blockedCrRef.current = createdCrId;
+          setLicenseBlock(outcome.blocked);
+          return false;
+        case "already-resolved":
+          showToast("That line changed elsewhere — refreshed.");
+          return true; // don't block the rest of the batch on a benign race
+        case "credit":
+          // B790: decline immediately, unlike the regulated case above — there is
+          // no driver-safe next step that resolves THIS CR (Cancel is the only
+          // exit; see CreditLimitGuardModal below), so leaving it PENDING would
+          // just accumulate a duplicate on every retry.
+          if (createdCrId) declineCr.mutate({ crId: createdCrId, reason: outcome.reason });
+          setCreditBlock(outcome.info);
+          return false;
+        case "decline":
+          // LINE_ALREADY_DELIVERED / STOP_ALREADY_COMPLETED / CHANGE_WINDOW_CLOSED /
+          // any other or future code (B753) — decline immediately (B790: this used
+          // to just toast and return false, leaving the CR PENDING forever while a
+          // bare retry created a second one for the same edit) and surface the
+          // server's message. Never a partial silent failure.
+          if (createdCrId) declineCr.mutate({ crId: createdCrId, reason: outcome.reason });
+          showToast(outcome.reason);
+          return false;
       }
-      const blocked = parseRegulatedAuthError(e);
-      if (blocked && blocked.length > 0) {
-        // The CR was created (and the buyer notified) but the regulated guard
-        // rejected it at resolve — remember it so the Remove/Cancel exits can
-        // decline the otherwise-orphaned PENDING request.
-        blockedCrRef.current = createdCrId;
-        setLicenseBlock(blocked);
-        return false;
-      }
-      const code = e?.response?.data?.code;
-      if (code === "CHANGE_REQUEST_ALREADY_RESOLVED") {
-        showToast("That line changed elsewhere — refreshed.");
-        return true; // don't block the rest of the batch on a benign race
-      }
-      const creditInfo = parseCreditLimitError(e);
-      if (creditInfo) {
-        setCreditBlock(creditInfo);
-        return false;
-      }
-      // LINE_ALREADY_DELIVERED / STOP_ALREADY_COMPLETED / CHANGE_WINDOW_CLOSED /
-      // generic — surface the server message, stop the batch (never a partial
-      // silent failure).
-      showToast(e?.response?.data?.message ?? e?.message ?? "Couldn't save that change.");
-      return false;
     }
   }
 
