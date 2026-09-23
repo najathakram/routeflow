@@ -25,7 +25,9 @@
  *   Change requests with type ADD_ITEM, status APPROVED, resolution NEXT_DELIVERY and a filed box
  *   split (payload boxes > 0 or pieces > 0), then the non-cancelled lines for that product on the
  *   draft order they rolled to (`nextOrderId`). A line is AFFECTED only when EVERY one of these
- *   holds; anything else is REVIEW, listed with the first reason it failed and never priced:
+ *   holds; anything else is REVIEW — never priced and never in the totals, but listed with its
+ *   ids, its STORED qty and subtotal, and the first reason it failed, because a REVIEW row can
+ *   still be an overcharge (5 loose pieces billed at a box price is exactly that):
  *   - exactly one such line, still box-unaware (boxes IS NULL), qty equal to the filed qty;
  *   - its stored subtotal is exactly what create() writes for a bare qty —
  *     computeLineSubtotal({ unitPrice, qty, freeUnits: promoFreeUnits }) — so it has not been
@@ -80,7 +82,17 @@ export function assess(cr, lines, liveUnitsPerBox) {
   const boxes = num(cr.payload?.boxes) ?? 0;
   const pieces = num(cr.payload?.pieces) ?? 0;
   const base = { crId: cr.id, tenantId: cr.tenantId, orderId: cr.nextOrderId };
-  const review = (reason, line) => ({ ...base, kind: "REVIEW", reason, orderItemId: line?.id });
+  // REVIEW rows are never PRICED (no expected, no delta), but they carry the line's stored qty and
+  // subtotal: a REVIEW row can still be an overcharge (5 loose pieces billed at a box price), and
+  // the owner must see the amount to judge it.
+  const review = (reason, line) => ({
+    ...base,
+    kind: "REVIEW",
+    reason,
+    orderItemId: line?.id,
+    storedQty: line ? num(line.qty) : undefined,
+    stored: line ? num(line.subtotal) : undefined,
+  });
 
   if (lines.length !== 1) return review(`${lines.length} matching lines on the draft`);
   const line = lines[0];
@@ -171,9 +183,13 @@ function runSelfTest() {
       (r) => r.kind === "AFFECTED" && r.expected === 36,
     ],
     [
-      "re-priced since (stored != bare-qty price) -> REVIEW, unpriced",
+      "re-priced since (stored != bare-qty price) -> REVIEW: unpriced, stored amount shown",
       assess(cr(box), [line({ subtotal: 450 })], 12),
-      (r) => r.kind === "REVIEW" && r.stored === undefined,
+      (r) =>
+        r.kind === "REVIEW" &&
+        r.expected === undefined &&
+        r.delta === undefined &&
+        r.stored === 450,
     ],
     [
       "priceType DISCOUNTED -> REVIEW",
@@ -201,9 +217,9 @@ function runSelfTest() {
       (r) => r.kind === "REVIEW",
     ],
     [
-      "loose pieces only (no filed pack) -> REVIEW",
+      "loose pieces only (no filed pack) -> REVIEW, with its $200 stored amount visible",
       assess(cr({ qty: 5, boxes: 0, pieces: 5 }), [line({ qty: 5, subtotal: 200 })], 12),
-      (r) => r.kind === "REVIEW",
+      (r) => r.kind === "REVIEW" && r.stored === 200 && r.storedQty === 5 && r.delta === undefined,
     ],
     [
       "a box-aware line -> REVIEW",
@@ -371,7 +387,12 @@ async function main() {
     console.log(
       `scanned ${crs.length} approved next-delivery ADD_ITEM requests that carried a box split`,
     );
-    console.log(`AFFECTED ${affected.length} · REVIEW ${review.length}\n`);
+    console.log(`AFFECTED ${affected.length} · REVIEW ${review.length}`);
+    console.log(
+      "REVIEW rows are NOT priced and NOT in the totals below, but they may still be overcharged " +
+        "(e.g. loose pieces billed at a box price). Each is listed with its ids and stored amount " +
+        "so it can be checked by hand.\n",
+    );
     for (const r of affected) {
       const inv = r.invoices.length
         ? r.invoices.map((i) => `${i.id}(${i.status})`).join(",")
@@ -384,7 +405,8 @@ async function main() {
     }
     for (const r of review) {
       console.log(
-        `REVIEW   tenant=${r.tenantId} cr=${r.crId} order=${r.orderId} item=${r.orderItemId ?? "-"} — ${r.reason}`,
+        `REVIEW   tenant=${r.tenantId} cr=${r.crId} order=${r.orderId} item=${r.orderItemId ?? "-"} ` +
+          `storedQty=${r.storedQty ?? "-"} stored=${r.stored ?? "-"} — ${r.reason}`,
       );
     }
     console.log("\nper tenant (AFFECTED only; PRE-TAX):");
