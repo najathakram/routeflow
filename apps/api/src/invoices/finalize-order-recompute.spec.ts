@@ -1,7 +1,7 @@
 import * as fs from "fs";
 import * as path from "path";
 import * as ts from "typescript";
-import { checkOrderCoverage } from "./finalize-order-recompute";
+import { checkOrderCoverage, finalizeOrderRecompute } from "./finalize-order-recompute";
 
 describe("checkOrderCoverage", () => {
   // #1185 tier-1 review, finding 2: `qty` is Decimal(10,3), and Node's float math means summing
@@ -33,7 +33,7 @@ describe("checkOrderCoverage", () => {
     const result = await checkOrderCoverage({
       db: dbNeverCalled,
       orderId: "o1",
-      order: { subtotal: 8, tax: 0, total: 8, shippingFee: 0, lineItems: [li] },
+      order: { status: "PENDING", subtotal: 8, tax: 0, total: 8, shippingFee: 0, lineItems: [li] },
       byTarget: new Map([["line:li1", { qty: aggQty }]]),
       invoices: [],
     });
@@ -46,7 +46,14 @@ describe("checkOrderCoverage", () => {
     const result = await checkOrderCoverage({
       db: { orderItem: { update: async () => ({}) }, order: { update: async () => ({}) } },
       orderId: "o1",
-      order: { subtotal: 100, tax: 0, total: 100, shippingFee: 0, lineItems: [li] },
+      order: {
+        status: "PENDING",
+        subtotal: 100,
+        tax: 0,
+        total: 100,
+        shippingFee: 0,
+        lineItems: [li],
+      },
       byTarget: new Map([["line:li1", { qty: 6 }]]), // genuinely under-billed, not float noise
       invoices: [],
     });
@@ -73,6 +80,7 @@ describe("checkOrderCoverage", () => {
       db: dbNeverCalled,
       orderId: "o1",
       order: {
+        status: "PENDING",
         subtotal: 40,
         tax: 0,
         total: 40,
@@ -84,6 +92,183 @@ describe("checkOrderCoverage", () => {
     });
 
     expect(result.fullyCovered).toBe(true);
+  });
+
+  // #1185 round 5, item 1: an UNMATCHED line only counts as covered when it was billed to its
+  // FULL billable qty -- a partial-then-removed line must fall through to the partial branch
+  // (which releases it), never get treated as a covered/orphan-cancel candidate.
+  it("an unmatched line billed for only PART of its qty is NOT covered (falls through to partial)", async () => {
+    const li = { id: "li1", qty: 10, invoicedQty: 4, status: "PENDING" }; // billed 4 of 10, now unmatched
+    const result = await checkOrderCoverage({
+      db: { orderItem: { update: async () => ({}) }, order: { update: async () => ({}) } },
+      orderId: "o1",
+      order: {
+        status: "PENDING",
+        subtotal: 100,
+        tax: 0,
+        total: 100,
+        shippingFee: 0,
+        lineItems: [li],
+      },
+      byTarget: new Map(), // no invoice item resolves to this line at all -- unmatched
+      invoices: [],
+    });
+
+    expect(result.fullyCovered).toBe(false);
+  });
+
+  it("an unmatched line billed to its FULL qty IS covered (the genuine orphan case)", async () => {
+    const li = { id: "li1", qty: 10, invoicedQty: 10, status: "PENDING" }; // billed in full, now removed
+    const result = await checkOrderCoverage({
+      db: { orderItem: { update: async () => ({}) }, order: { update: async () => ({}) } },
+      orderId: "o1",
+      order: {
+        status: "PENDING",
+        subtotal: 100,
+        tax: 0,
+        total: 100,
+        shippingFee: 0,
+        lineItems: [li],
+      },
+      byTarget: new Map(),
+      invoices: [],
+    });
+
+    expect(result.fullyCovered).toBe(true);
+  });
+
+  // #1185 round 5, item 2: an ambiguous line is skipped by the partial-branch sync loop entirely
+  // -- its invoicedQty is left exactly as stored, never guessed at from the (unreliable) agg.
+  it("an ambiguous line's invoicedQty is never touched by the partial-branch sync", async () => {
+    const ambiguousLine = { id: "li1", qty: 4, invoicedQty: 0, status: "PENDING" };
+    const blockingLine = { id: "li3", qty: 5, invoicedQty: 0, status: "PENDING" }; // keeps order partial
+    const writes: any[] = [];
+    const result = await checkOrderCoverage({
+      db: { orderItem: { update: async (args: any) => writes.push(args) } },
+      orderId: "o1",
+      order: {
+        status: "PENDING",
+        subtotal: 90,
+        tax: 0,
+        total: 90,
+        shippingFee: 0,
+        lineItems: [ambiguousLine, blockingLine],
+      },
+      // Wrongly-aggregated data for the ambiguous line's product, if the caller had resolved it
+      // -- must never be consulted since ambiguousLineIds names li1.
+      byTarget: new Map([["line:li1", { qty: 4 }]]),
+      invoices: [],
+      ambiguousLineIds: new Set(["li1"]),
+    });
+
+    expect(result.fullyCovered).toBe(false);
+    expect(writes.some((w) => w.where.id === "li1")).toBe(false); // never written
+  });
+
+  // SA-093 (A): on a DELIVERED order, a line's billable qty is min(qty, deliveredQty) -- a
+  // refused line (deliveredQty 0) requires nothing and never blocks coverage.
+  describe("SA-093 (A): DELIVERED-order coverage basis", () => {
+    it("a DELIVERED line billed to its DELIVERED qty (short of its ordered qty) IS covered", async () => {
+      const li = { id: "li1", qty: 10, deliveredQty: 6, invoicedQty: 0, status: "PENDING" };
+      const result = await checkOrderCoverage({
+        db: { orderItem: { update: async () => ({}) }, order: { update: async () => ({}) } },
+        orderId: "o1",
+        order: {
+          status: "DELIVERED",
+          subtotal: 100,
+          tax: 0,
+          total: 100,
+          shippingFee: 0,
+          lineItems: [li],
+        },
+        byTarget: new Map([["line:li1", { qty: 6 }]]), // billed exactly what was delivered
+        invoices: [],
+      });
+
+      expect(result.fullyCovered).toBe(true);
+    });
+
+    it("the SAME shape on a NON-delivered order is NOT covered (round 4's rule, unchanged)", async () => {
+      const li = { id: "li1", qty: 10, deliveredQty: 6, invoicedQty: 0, status: "PENDING" };
+      const result = await checkOrderCoverage({
+        db: { orderItem: { update: async () => ({}) }, order: { update: async () => ({}) } },
+        orderId: "o1",
+        order: {
+          status: "PARTIALLY_DELIVERED", // explicitly NOT a delivered state for this rule
+          subtotal: 100,
+          tax: 0,
+          total: 100,
+          shippingFee: 0,
+          lineItems: [li],
+        },
+        byTarget: new Map([["line:li1", { qty: 6 }]]),
+        invoices: [],
+      });
+
+      expect(result.fullyCovered).toBe(false);
+    });
+
+    it("a REFUSED line (deliveredQty 0) on a DELIVERED order never blocks coverage", async () => {
+      const refused = { id: "li1", qty: 5, deliveredQty: 0, invoicedQty: 0, status: "PENDING" };
+      const billed = { id: "li2", qty: 4, deliveredQty: 4, invoicedQty: 0, status: "PENDING" };
+      const result = await checkOrderCoverage({
+        db: { orderItem: { update: async () => ({}) }, order: { update: async () => ({}) } },
+        orderId: "o1",
+        order: {
+          status: "DELIVERED",
+          subtotal: 40,
+          tax: 0,
+          total: 40,
+          shippingFee: 0,
+          lineItems: [refused, billed],
+        },
+        byTarget: new Map([["line:li2", { qty: 4 }]]),
+        invoices: [],
+      });
+
+      expect(result.fullyCovered).toBe(true);
+    });
+  });
+
+  describe("SA-093 (A): finalizeOrderRecompute cancels a refused line on a DELIVERED order", () => {
+    it("a refused line (deliveredQty 0, never billed) IS cancelled once the order is fully covered", async () => {
+      const writes: any[] = [];
+      const refused = { id: "li1", status: "PENDING", invoicedQty: 0, deliveredQty: 0 };
+      await finalizeOrderRecompute({
+        db: {
+          orderItem: { update: async (args: any) => writes.push(args) },
+          order: { update: async () => ({}) },
+        },
+        orderId: "o1",
+        order: { status: "DELIVERED", subtotal: 40, tax: 0 },
+        unbilled: new Map([["li1", refused]]),
+        subtotal: 40,
+        categoryTaxSum: 0,
+        invoices: [],
+      });
+
+      const write = writes.find((w) => w.where.id === "li1");
+      expect(write?.data).toMatchObject({ status: "CANCELLED", qty: 0, subtotal: 0 });
+    });
+
+    it("the SAME never-billed line on a NON-delivered order is left untouched (round 4's rule)", async () => {
+      const writes: any[] = [];
+      const neverBilled = { id: "li1", status: "PENDING", invoicedQty: 0, deliveredQty: 0 };
+      await finalizeOrderRecompute({
+        db: {
+          orderItem: { update: async (args: any) => writes.push(args) },
+          order: { update: async () => ({}) },
+        },
+        orderId: "o1",
+        order: { status: "PENDING", subtotal: 40, tax: 0 },
+        unbilled: new Map([["li1", neverBilled]]),
+        subtotal: 40,
+        categoryTaxSum: 0,
+        invoices: [],
+      });
+
+      expect(writes.some((w) => w.where.id === "li1")).toBe(false);
+    });
   });
 });
 
@@ -104,14 +289,25 @@ describe("finalize-order-recompute.ts's own writers stay within their pinned, kn
   const src = fs.readFileSync(path.join(__dirname, "finalize-order-recompute.ts"), "utf8");
   const sf = ts.createSourceFile("finalize-order-recompute.ts", src, ts.ScriptTarget.Latest, true);
 
-  /** Every `orderItem.update({ ..., data: { k1, k2, ... } })` call's data keys, inside `fn`. */
+  // Round 5 item 6: generalized past a single hardcoded "update" -- also walks `.create` and
+  // `.updateMany`, so a NEW orderItem write op this file might grow can't silently skip the pin.
+  const ORDER_ITEM_WRITE_OPS = new Set(["update", "create", "updateMany"]);
+
+  /**
+   * Every `orderItem.<update|create|updateMany>({ ..., data: { k1, k2, ... } })` call's data
+   * keys, inside `fn`. A `...spread` in the data object is represented as a `"...<expr>"`
+   * sentinel string rather than silently dropped -- round 5 item 6: the old `.map(p => p.name)`
+   * mapping returned `undefined` for a `SpreadAssignment` (it has no `name`), and the trailing
+   * `.filter(Boolean)` threw that `undefined` away, so a spread could inject arbitrary extra
+   * fields (e.g. `...deriveFromLiveProduct(li)`) completely invisible to this pin.
+   */
   function orderItemUpdateDataKeys(fn: ts.FunctionDeclaration): string[][] {
     const calls: string[][] = [];
     const visit = (n: ts.Node) => {
       if (
         ts.isCallExpression(n) &&
         ts.isPropertyAccessExpression(n.expression) &&
-        n.expression.name.text === "update" &&
+        ORDER_ITEM_WRITE_OPS.has(n.expression.name.text) &&
         ts.isPropertyAccessExpression(n.expression.expression) &&
         n.expression.expression.name.text === "orderItem"
       ) {
@@ -123,9 +319,11 @@ describe("finalize-order-recompute.ts's own writers stay within their pinned, kn
           );
           if (dataProp && ts.isObjectLiteralExpression(dataProp.initializer)) {
             calls.push(
-              dataProp.initializer.properties
-                .map((p) => p.name?.getText(sf))
-                .filter((k): k is string => !!k),
+              dataProp.initializer.properties.map((p) =>
+                ts.isSpreadAssignment(p)
+                  ? `...${p.expression.getText(sf)}`
+                  : (p.name?.getText(sf) ?? "<unnamed>"),
+              ),
             );
           }
         }
@@ -160,6 +358,26 @@ describe("finalize-order-recompute.ts's own writers stay within their pinned, kn
         expect(keys).not.toContain("unitsPerBox");
         expect(keys).not.toContain("unitPrice");
       }
+    }
+  });
+
+  // Round 5 item 6: a `...spread` inside `data:` would surface as a `"...<expr>"` sentinel (see
+  // orderItemUpdateDataKeys' own doc) -- assert neither writer ever has one, today or later.
+  it("neither writer's orderItem write ever spreads an object into data -- every field is named, so this pin can see it", () => {
+    for (const fnName of ["checkOrderCoverage", "finalizeOrderRecompute"]) {
+      for (const keys of orderItemUpdateDataKeys(topLevelFn(fnName))) {
+        for (const key of keys) expect(key.startsWith("...")).toBe(false);
+      }
+    }
+  });
+
+  // Round 5 item 6: `orderItem.create`/`orderItem.updateMany` carry the same footgun as `.update`
+  // -- neither writer uses them today, but the scanner must not go blind if one is added later.
+  it("neither writer ever calls orderItem.create or orderItem.updateMany today", () => {
+    for (const fnName of ["checkOrderCoverage", "finalizeOrderRecompute"]) {
+      const fnText = topLevelFn(fnName).getText(sf);
+      expect(fnText).not.toMatch(/orderItem\.create\(/);
+      expect(fnText).not.toMatch(/orderItem\.updateMany\(/);
     }
   });
 });

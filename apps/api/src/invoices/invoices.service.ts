@@ -36,7 +36,12 @@ import { clampLimit } from "../common/pagination";
 import { isInternalEmail } from "../common/internal-email";
 import { loadMsrpMap } from "../common/msrp";
 import { effectiveTaxRateFromTotals } from "../common/tax-rate";
-import { checkOrderCoverage, finalizeOrderRecompute } from "./finalize-order-recompute";
+import {
+  checkOrderCoverage,
+  finalizeOrderRecompute,
+  resolveProductMatches,
+  withOrderRecomputeLock,
+} from "./finalize-order-recompute";
 import { EntitlementsService } from "../billing/entitlements.service";
 import {
   CheckStatus,
@@ -2249,16 +2254,21 @@ export class InvoicesService {
    * order's line items + totals from the SUM of ALL its non-void invoices, so
    * editing an invoice keeps the order in step with what was actually billed.
    *
-   * Aggregates billed qty + subtotal per SOURCE ORDER LINE (via the invoice item's
-   * `orderItemId` provenance; falls back to productId for legacy invoice rows),
-   * copies the billed subtotal verbatim, and PRESERVES each order line's stored
-   * box/piece denomination + unitsPerBox snapshot — it never re-splits against the
-   * live product (which used to turn selling-unit lines into phantom box splits).
-   * Cancels order lines no invoice bills; preserves the order's effective tax rate.
-   * No-op when the order has no surviving (non-void) invoices.
+   * Aggregates billed qty + subtotal per SOURCE ORDER LINE (via the invoice item's `orderItemId`
+   * provenance; falls back to productId for legacy invoice rows), copies the billed subtotal
+   * verbatim, and PRESERVES each order line's stored box/piece denomination + unitsPerBox
+   * snapshot — it never re-splits against the live product (which used to turn selling-unit
+   * lines into phantom box splits). Cancels order lines no invoice bills; preserves the order's
+   * effective tax rate. No-op when the order has no surviving (non-void) invoices.
    */
   async recomputeOrderFromInvoices(orderId: string, tx?: any) {
-    const db = tx ?? this.prisma.forTenant();
+    // SA-093 (#1185 round 5, item B) -- see withOrderRecomputeLock's own doc for the deadlock analysis.
+    if (!tx) {
+      return withOrderRecomputeLock(this.prisma, orderId, (innerTx) =>
+        this.recomputeOrderFromInvoices(orderId, innerTx),
+      );
+    }
+    const db = tx;
     const order = await db.order.findUnique({
       where: { id: orderId },
       include: { lineItems: true },
@@ -2273,18 +2283,9 @@ export class InvoicesService {
 
     const tenantId = this.prisma.getTenantId();
     const existingById = new Map<string, any>();
-    const existingByProduct = new Map<string, any>();
-    for (const li of order.lineItems as any[]) {
-      existingById.set(li.id, li);
-      // #1185 review round 4: FIRST match over NON-CANCELLED lines only, consistent with the
-      // void path's array-order-first-match (~L4392) -- `Map.set` on every line let the LAST
-      // (and even a CANCELLED) line win, so an item edit (which drops orderItemId and re-matches
-      // by product alone) could credit an active line's billed qty onto an unrelated cancelled
-      // sibling of the same product and reset the active line's invoicedQty to 0 -- rebillable.
-      if (li.productId && li.status !== "CANCELLED" && !existingByProduct.has(li.productId)) {
-        existingByProduct.set(li.productId, li);
-      }
-    }
+    for (const li of order.lineItems as any[]) existingById.set(li.id, li);
+    // #1185 round 5, item 2 -- see resolveProductMatches' own doc.
+    const { existingByProduct, ambiguousLineIds } = resolveProductMatches(order.lineItems);
 
     // Aggregate billed qty + subtotal, resolving each invoice line to its source
     // order line: prefer the stored orderItemId; else first-match by productId
@@ -2331,7 +2332,14 @@ export class InvoicesService {
     }
 
     // B667: coverage decided BEFORE any line is rewritten — see checkOrderCoverage's doc.
-    const coverage = await checkOrderCoverage({ db, orderId, order, byTarget, invoices });
+    const coverage = await checkOrderCoverage({
+      db,
+      orderId,
+      order,
+      byTarget,
+      invoices,
+      ambiguousLineIds,
+    });
     if (!coverage.fullyCovered) return coverage.totals;
 
     let subtotal = 0;
@@ -4380,7 +4388,7 @@ export class InvoicesService {
 
     const orderItems = await tx.orderItem.findMany({
       where: { orderId },
-      select: { id: true, productId: true, qty: true, invoicedQty: true },
+      select: { id: true, productId: true, status: true, qty: true, invoicedQty: true },
     });
     const adjust = async (oi: any, qtyDelta: number) => {
       // Clamp into [0, line qty]: never negative, never claim more than the line has.
@@ -4396,7 +4404,10 @@ export class InvoicesService {
       if (target) await adjust(target, qty);
     }
     for (const [productId, qty] of byProduct) {
-      const target = orderItems.find((oi: any) => oi.productId === productId);
+      // #1185 round 5, item 3: never pick a CANCELLED line as the fallback target.
+      const target = orderItems.find(
+        (oi: any) => oi.productId === productId && oi.status !== "CANCELLED",
+      );
       if (target) await adjust(target, qty);
     }
   }

@@ -1812,7 +1812,7 @@ describe("InvoicesService", () => {
       prisma.orderItem.update.mockResolvedValue({});
       prisma.order.update.mockResolvedValue({});
 
-      const res = await service.recomputeOrderFromInvoices("o1");
+      const res = await service.recomputeOrderFromInvoices("o1", prisma);
 
       // Order line synced to the aggregate.
       expect(prisma.orderItem.update).toHaveBeenCalledWith(
@@ -1849,7 +1849,7 @@ describe("InvoicesService", () => {
       prisma.orderItem.update.mockResolvedValue({});
       prisma.order.update.mockResolvedValue({});
 
-      await service.recomputeOrderFromInvoices("o1");
+      await service.recomputeOrderFromInvoices("o1", prisma);
 
       expect(prisma.orderItem.update).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -1883,7 +1883,7 @@ describe("InvoicesService", () => {
       prisma.orderItem.update.mockResolvedValue({});
       prisma.order.update.mockResolvedValue({});
 
-      await service.recomputeOrderFromInvoices("o1");
+      await service.recomputeOrderFromInvoices("o1", prisma);
 
       expect(prisma.orderItem.update).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -1901,7 +1901,7 @@ describe("InvoicesService", () => {
       });
       prisma.invoice.findMany.mockResolvedValue([]);
 
-      const res = await service.recomputeOrderFromInvoices("o1");
+      const res = await service.recomputeOrderFromInvoices("o1", prisma);
       expect(res).toBeNull();
       expect(prisma.order.update).not.toHaveBeenCalled();
       expect(prisma.orderItem.update).not.toHaveBeenCalled();
@@ -1937,7 +1937,7 @@ describe("InvoicesService", () => {
       prisma.orderItem.update.mockResolvedValue({});
       prisma.order.update.mockResolvedValue({});
 
-      const res = await service.recomputeOrderFromInvoices("o1");
+      const res = await service.recomputeOrderFromInvoices("o1", prisma);
 
       const data = prisma.order.update.mock.calls[0][0].data;
       expect(data.shippingFee).toBe(6);
