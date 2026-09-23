@@ -12,6 +12,15 @@ import { EntitlementsService } from "../billing/entitlements.service";
 import { EmailService } from "../email/email.service";
 import { createMockPrisma } from "../testing/prisma-mock";
 
+// Same stand-in as customers.service.spec.ts: a real advisory lock needs a live DB connection,
+// which is out of scope for a unit test — this reproduces just the property
+// applyAdvancePaymentToInvoice's lock depends on (mutual exclusion by key), nothing more.
+jest.mock("../common/db-locks", () => ({
+  withAdvisoryLock: jest.fn((_opts: any, fn: () => Promise<any>) =>
+    fn().then((value) => ({ acquired: true, value })),
+  ),
+}));
+
 const MOCK_CUSTOMER = { id: "cust-1", businessName: "Acme Corp" };
 
 // B769: split into its own file rather than grown inline — customers.service.spec.ts is
@@ -46,7 +55,11 @@ describe("CustomersService — B769 money rounding", () => {
   });
 
   it("REG-B769 applyAdvancePaymentToInvoice rounds a sub-cent apply amount before writing (10.005 -> 10.01)", async () => {
-    prisma.advancePayment.findUnique.mockResolvedValue({ id: "ap-1", balance: 1000 });
+    prisma.advancePayment.findUnique.mockResolvedValue({
+      id: "ap-1",
+      balance: 1000,
+      customerId: "cust-1",
+    });
     prisma.invoice.findUnique.mockResolvedValue({
       id: "inv-1",
       total: 1000,
