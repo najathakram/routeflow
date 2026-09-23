@@ -5047,62 +5047,25 @@ export class InvoicesService {
   }
 
   /**
-   * Record a driver-collected payment at stop completion, resolving the target
-   * invoice(s) SERVER-side from the delivered orders. The mobile client cannot
-   * supply an invoiceId (Order has no invoiceId scalar and the run/stop payload
-   * never carries one), which is why every at-door payment silently vanished.
-   * Runs INSIDE the caller's transaction so it is atomic with stop completion.
-   *
-   * Per delivered order: ensure a finalized invoice exists — reconcile an open
-   * DRAFT "pending mirror" (full-order basis, as changeStatus→DELIVERED does),
-   * else create one from the order. Then apply the lump-sum across the orders'
-   * non-VOID invoices OLDEST-first (base invoice before any regulated `-R#`
-   * split siblings), capped at each invoice's remaining. Each application
-   * finalizes a DRAFT→SENT (recomputeStatus treats DRAFT as terminal, so a
-   * payment on a still-DRAFT invoice would never move it off DRAFT) and is
-   * recorded the canonical way — an InvoicePayment row + recomputeStatus over
-   * the non-VOID payment sum, NEVER the (non-existent) `balance` scalar the old
-   * completeWithPayment code tried to decrement.
+   * B663: per delivered order, ensure a finalized invoice exists — reconcile an open
+   * DRAFT "pending mirror" (full-order basis, as changeStatus→DELIVERED does) or a
+   * SENT deposit mirror onto the DELIVERED quantities, else create a fresh DRAFT from
+   * the order. Extracted out of `recordDeliveryPaymentInTx` (B663) so a completion
+   * with NO payment (on-account, amount 0 — the ordinary case for most tenants) still
+   * gets this: it must run on EVERY delivery completion, never only when cash changes
+   * hands. `recordDeliveryPaymentInTx` no longer does this itself; `completeWithPayment`
+   * calls this unconditionally, then calls `recordDeliveryPaymentInTx` only when there
+   * is a real payment to record.
    *
    * @param reconcileOrderIds the subset of `orderIds` actually delivered in this
-   *          completion — only these have their DRAFT rebuilt on the delivered
-   *          quantity (and only when single-invoice). Defaults to all `orderIds`.
-   * @param context optional `{ runId, stopId }` used only to tag a booked
-   *          over-collection advance's `reference` (`RUN:<runId>:STOP:<stopId>`).
-   * @returns `applied` (< amount only when the orders' invoices were already
-   *          covered, or there is a residual over-collection) plus `excess` — the
-   *          undropped remainder. When the delivered orders resolve to exactly one
-   *          customer, `excess` is booked as an AdvancePayment (`advancePaymentId`
-   *          set); a multi-customer stop books no advance (`advancePaymentId`
-   *          null) and the caller keeps its warn for that case.
+   *          completion — only these have their DRAFT/mirror rebuilt on the delivered
+   *          quantity. Defaults to all `orderIds`.
    */
-  async recordDeliveryPaymentInTx(
+  async reconcileDeliveredOrdersInTx(
     tx: any,
     orderIds: string[],
-    amount: number,
-    method: string,
     reconcileOrderIds?: string[],
-    context?: { runId?: string; stopId?: string },
-  ): Promise<{
-    applied: number;
-    invoiceIds: string[];
-    paymentIds: string[];
-    excess: number;
-    advancePaymentId: string | null;
-  }> {
-    if (!(amount > 0) || orderIds.length === 0)
-      return { applied: 0, invoiceIds: [], paymentIds: [], excess: 0, advancePaymentId: null };
-    // CREDIT_NOTE/ADVANCE must debit a source balance (see recordPayment); a driver
-    // at-door collection is never one of these (On-account sends amount 0), so
-    // refuse to book a phantom payment rather than bypass the source debit.
-    if (method === "CREDIT_NOTE" || method === "ADVANCE")
-      return { applied: 0, invoiceIds: [], paymentIds: [], excess: 0, advancePaymentId: null };
-
-    // Payable statuses — exclude terminal VOID/WRITTEN_OFF: a written-off bad debt
-    // must not swallow the cash (recomputeStatus can't advance it), which would also
-    // starve a live sibling since we apply oldest-first.
-    // (shared with credit-notes.service.ts via invoice-status-sets.ts, F09/R3a)
-
+  ): Promise<void> {
     // Only orders actually delivered in THIS completion may be rebuilt on the
     // delivered basis. Default to all orderIds for callers that don't distinguish
     // (there are none today) — but the driver path passes the real subset so an
@@ -5110,12 +5073,12 @@ export class InvoicesService {
     // never zeroed.
     const reconcileSet = new Set(reconcileOrderIds ?? orderIds);
 
-    // 1. Ensure each delivered order has a DRAFT invoice, then reconcile it to the
-    //    DELIVERED quantities so short/refused lines bill what was delivered, not
-    //    the full order. createInvoiceFromOrder makes a DRAFT when the order has no
-    //    live invoice yet; reconcileOrderDraftInvoice(basis:"delivered") rebuilds it
-    //    on OrderItem.deliveredQty and telescopes invoicedQty (idempotent with the
-    //    office from-order flow — a later re-delivery bills only the remainder).
+    // Ensure each delivered order has a DRAFT invoice, then reconcile it to the
+    // DELIVERED quantities so short/refused lines bill what was delivered, not
+    // the full order. createInvoiceFromOrder makes a DRAFT when the order has no
+    // live invoice yet; reconcileOrderDraftInvoice(basis:"delivered") rebuilds it
+    // on OrderItem.deliveredQty and telescopes invoicedQty (idempotent with the
+    // office from-order flow — a later re-delivery bills only the remainder).
     for (const orderId of orderIds) {
       let draft = await this.findOpenOrderDraft(orderId, tx);
       if (!draft) {
@@ -5149,6 +5112,60 @@ export class InvoicesService {
         await this.reconcileOrderDeliveredInvoices(orderId, tx);
       }
     }
+  }
+
+  /**
+   * Record a driver-collected payment at stop completion, resolving the target
+   * invoice(s) SERVER-side from the delivered orders. The mobile client cannot
+   * supply an invoiceId (Order has no invoiceId scalar and the run/stop payload
+   * never carries one), which is why every at-door payment silently vanished.
+   * Runs INSIDE the caller's transaction so it is atomic with stop completion.
+   *
+   * B663: this no longer reconciles the delivered orders' invoices itself — see
+   * `reconcileDeliveredOrdersInTx`, which the caller (`completeWithPayment`) runs
+   * unconditionally before this, whether or not there is a payment to record. This
+   * function applies the lump-sum across the orders' non-VOID invoices OLDEST-first
+   * (base invoice before any regulated `-R#` split siblings), capped at each
+   * invoice's remaining. Each application finalizes a DRAFT→SENT (recomputeStatus
+   * treats DRAFT as terminal, so a payment on a still-DRAFT invoice would never move
+   * it off DRAFT) and is recorded the canonical way — an InvoicePayment row +
+   * recomputeStatus over the non-VOID payment sum, NEVER the (non-existent) `balance`
+   * scalar the old completeWithPayment code tried to decrement.
+   *
+   * @param context optional `{ runId, stopId }` used only to tag a booked
+   *          over-collection advance's `reference` (`RUN:<runId>:STOP:<stopId>`).
+   * @returns `applied` (< amount only when the orders' invoices were already
+   *          covered, or there is a residual over-collection) plus `excess` — the
+   *          undropped remainder. When the delivered orders resolve to exactly one
+   *          customer, `excess` is booked as an AdvancePayment (`advancePaymentId`
+   *          set); a multi-customer stop books no advance (`advancePaymentId`
+   *          null) and the caller keeps its warn for that case.
+   */
+  async recordDeliveryPaymentInTx(
+    tx: any,
+    orderIds: string[],
+    amount: number,
+    method: string,
+    context?: { runId?: string; stopId?: string },
+  ): Promise<{
+    applied: number;
+    invoiceIds: string[];
+    paymentIds: string[];
+    excess: number;
+    advancePaymentId: string | null;
+  }> {
+    if (!(amount > 0) || orderIds.length === 0)
+      return { applied: 0, invoiceIds: [], paymentIds: [], excess: 0, advancePaymentId: null };
+    // CREDIT_NOTE/ADVANCE must debit a source balance (see recordPayment); a driver
+    // at-door collection is never one of these (On-account sends amount 0), so
+    // refuse to book a phantom payment rather than bypass the source debit.
+    if (method === "CREDIT_NOTE" || method === "ADVANCE")
+      return { applied: 0, invoiceIds: [], paymentIds: [], excess: 0, advancePaymentId: null };
+
+    // Payable statuses — exclude terminal VOID/WRITTEN_OFF: a written-off bad debt
+    // must not swallow the cash (recomputeStatus can't advance it), which would also
+    // starve a live sibling since we apply oldest-first.
+    // (shared with credit-notes.service.ts via invoice-status-sets.ts, F09/R3a)
 
     // 2. The orders' payable invoices, oldest-first.
     const invoices = await tx.invoice.findMany({

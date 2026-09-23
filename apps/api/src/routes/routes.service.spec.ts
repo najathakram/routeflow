@@ -89,7 +89,11 @@ describe("RoutesService", () => {
   >;
   let notifications: jest.Mocked<Pick<NotificationsService, "sendToDriver">>;
   let messaging: { notify: jest.Mock; notifyEvent: jest.Mock };
-  let invoicesService: { recordDeliveryPaymentInTx: jest.Mock; reverseRunAdvancesInTx: jest.Mock };
+  let invoicesService: {
+    recordDeliveryPaymentInTx: jest.Mock;
+    reconcileDeliveredOrdersInTx: jest.Mock;
+    reverseRunAdvancesInTx: jest.Mock;
+  };
   let storage: { upload: jest.Mock; presignedUrl: jest.Mock; delete: jest.Mock };
 
   beforeEach(async () => {
@@ -98,6 +102,7 @@ describe("RoutesService", () => {
       recordDeliveryPaymentInTx: jest
         .fn()
         .mockResolvedValue({ applied: 0, invoiceIds: [], paymentIds: [] }),
+      reconcileDeliveredOrdersInTx: jest.fn().mockResolvedValue(undefined),
       reverseRunAdvancesInTx: jest.fn().mockResolvedValue(1),
     };
 
@@ -1964,17 +1969,25 @@ describe("RoutesService", () => {
         operatorPayload,
       );
 
-      // 5th arg = the orders delivered in THIS completion (empty here — no
-      // deliveries were sent — so nothing is reconciled to the delivered basis).
-      // 6th arg = the run/stop context B83 turns into the AdvancePayment
+      // B663: the reconcile-to-delivered-basis step is reconcileDeliveredOrdersInTx's
+      // job now, called unconditionally before this regardless of payment — see the
+      // "passes only the orders delivered in THIS completion" test below for that.
+      // 5th arg here = the run/stop context B83 turns into the AdvancePayment
       // `reference` token — load-bearing for the settlement cash lookup.
       expect(invoicesService.recordDeliveryPaymentInTx).toHaveBeenCalledWith(
         txMock,
         ["ord-1"],
         50,
         "CASH",
-        [],
         { runId: "run-1", stopId: "stop-1" },
+      );
+      // B663: reconciled unconditionally too, even though a payment was ALSO
+      // collected here — no deliveries were sent in this payload, so nothing is
+      // reconciled to the delivered basis (empty subset).
+      expect(invoicesService.reconcileDeliveredOrdersInTx).toHaveBeenCalledWith(
+        txMock,
+        ["ord-1"],
+        [],
       );
       // Additive field: the driver app attaches a best-effort payment photo to
       // paymentIds[0] after the stop completes — must be surfaced on the response.
@@ -2037,15 +2050,22 @@ describe("RoutesService", () => {
         operatorPayload,
       );
 
-      // Bill/collect across BOTH non-cancelled orders, but reconcile-to-delivered
-      // ONLY ord-1 — ord-2 (not delivered here) must keep its invoice, not be zeroed.
+      // Bill/collect across BOTH non-cancelled orders (recordDeliveryPaymentInTx no
+      // longer takes a reconcile subset at all — B663 moved that decision to
+      // reconcileDeliveredOrdersInTx, asserted separately below).
       expect(invoicesService.recordDeliveryPaymentInTx).toHaveBeenCalledWith(
         txMock,
         ["ord-1", "ord-2"],
         50,
         "CASH",
-        ["ord-1"],
         { runId: "run-1", stopId: "stop-1" },
+      );
+      // reconcile-to-delivered ONLY ord-1 — ord-2 (not delivered here) must keep its
+      // invoice, not be zeroed.
+      expect(invoicesService.reconcileDeliveredOrdersInTx).toHaveBeenCalledWith(
+        txMock,
+        ["ord-1", "ord-2"],
+        ["ord-1"],
       );
     });
 
