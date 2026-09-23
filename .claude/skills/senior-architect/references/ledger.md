@@ -10,6 +10,8 @@
 
 | 2026-09-23 (retro 3; SA-091…SA-100 + sub-rulings, ≈33 lines) | 33 | 4 (092→092b, 093→093a, 096→096a, 098→098a) | 5 PASSes withdrawn after an independent read (#1274 ×2, #1281 ×2, #1279 ×1) | 6 (Opus ×5, Lane B ×1) | — | 0 A / 9 B (E29–E37) | 0 | All nine are shape B. Promoted: sweep readers AND writers of every derived field on a second meaning; key money bases on evidence rows and list a column's writers; name what a rule governs (intent vs contract). The seat's value was the ruling after each catch; the first read must slow at every "second meaning" and "every writer" claim. |
 
+| 2026-09-23 (retro 4; SA-101…SA-110 + sub-rulings 100a, 104a, 107a, 107b, 109a — 15 lines by grep of `^- SA-1(0[0-9]\|10)[a-z]* `) | 15 | 1 (SA-104 → SA-104a: six S2 gaps, two narrowing) | 1 (SA-104's "approve as a new line" remedy) | 0 completed (#1293 and #1294 holds await their pushes; #1292's Opus items are the lead's) | 9 corrections (MacBook lane/Opus ×6 on B753, Opus ×2 on #1293, Opus ×1 on #1294) + 2 additions (#1294 stale closure, snapshot version) | 0 A / 4 B (E38–E41) | 0 (#1289, #1292, #1293, #1294, #1295 all OPEN at retro time) | Errors per ruling 4/15 = 0.27, flat against retro 3's 9/33 = 0.27; every error is still shape B and two of the four are REPEATS of a catalogued class (E39 = E32's narrowed-guard values; E40 = check 8 not applied client-side). Promoted to 7.1: check 9 — for every new refusal, enumerate each live client's emitted shapes from its own builder and run each through the guard; check 8 restated as bidirectional (a wire fix is proven from the state the wire is built from). E41 adds a distinction to check 5's sweep: readers miss silently, writers create. Nothing retired (three-row rule). Reads-before-merge stayed 0 for the third row. |
+
 ## Reading the row
 
 - **amended after execution** — rulings a builder or lead proved wrong by running or reading; the number the seat most wants at zero.
@@ -18,4 +20,4 @@
 
 ## Retro cadence
 
-Every ten rulings, or at session close: append the row, compare with the previous, then promote/retire per SKILL.md §7.3. Retro 1 done at SA-080 (2026-09-23 ~21:00Z). Retro 3 done at SA-100 (2026-09-23). The next retro is due at SA-110 or session close, whichever is first.
+Every ten rulings, or at session close: append the row, compare with the previous, then promote/retire per SKILL.md §7.3. Retro 1 done at SA-080 (2026-09-23 ~21:00Z). Retro 3 done at SA-100 (2026-09-23). Retro 4 done at SA-110 (2026-09-23). The next retro is due at SA-120 or session close, whichever is first.

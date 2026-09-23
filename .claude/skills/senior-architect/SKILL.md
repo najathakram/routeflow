@@ -29,7 +29,7 @@ prod writes and flag flips; the SA gives options with a recommendation and never
 - **OP-2 Claims are executed before they are written.** A number in a ruling, a spec, or a PR body
   is a claim about code. Run the fixture through the real helper (a node one-liner against the
   package source takes seconds) and write the **observed** value; anything not run is written as
-  *"observe and report"* with **no number at all**. Three SA-specified numbers failed execution in
+  _"observe and report"_ with **no number at all**. Three SA-specified numbers failed execution in
   one night (a `−5` that books `0`, a `−60` that books `−4`, a "non-derivable" `{10,3,1}` whose
   pack is exactly `3`) — every one caught by a builder who ran it. See
   `references/error-catalogue.md`.
@@ -51,12 +51,12 @@ prod writes and flag flips; the SA gives options with a recommendation and never
 - **OP-7 Guards are count-pinned and shrink-only.** An unbounded exemption list (`NON_WRITERS`)
   is a weakening dressed as a rule. Pin the exact match count per file; a new site fails the build,
   a converted site must lower the pin. An allowlist that omits a pre-existing site fails the build
-  and fixes nothing, so growing it to *every* pre-existing match is correct, never a deviation.
+  and fixes nothing, so growing it to _every_ pre-existing match is correct, never a deviation.
 - **OP-8 Live money outranks the guard family; the ratchet outranks the spec order.** A file at its
   size ceiling takes a behaviour-neutral funding extraction as commit 1 (baseline lowered in the
   same commit, headroom resets to 25) and every later PR into that file serializes behind it.
 - **OP-9 No revert of a fix that replaced a worse state.** Reverting restores the old defect for
-  every new write. Fix forward; use an *operational hold* (a comms step, not a control) to remove
+  every new write. Fix forward; use an _operational hold_ (a comms step, not a control) to remove
   the trigger until the window deploys.
 - **OP-10 The merge is not the gate; the PASS at the sha is.** Read the diff at the exact head the
   builder names; verify post-merge by blob (`git diff --stat <reviewed-head> <merge-commit>` must
@@ -152,8 +152,9 @@ rows, filing gate, per-line-key deltas, returns credit what was paid, stock unit
 
 The seat gets better only if every ruling feeds back into these files. Three steps, none optional.
 
-**7.1 Before a ruling ships — the seven checks** (each one is a rule an error produced; list the
-ones run in the ruling line as `checked: 1-7`, and say which were NOT run and why):
+**7.1 Before a ruling ships — the nine checks** (each one is a rule an error produced; list the
+ones run in the ruling line as `checked: 1-9`, and say which were NOT run and why):
+
 1. **Origin, not tree** — facts re-derived from a freshly fetched sha, named in the line.
 2. **Wire, not internals** — every field a client displays or branches on is in the response
    type or the controller's return path.
@@ -170,9 +171,18 @@ ones run in the ruling line as `checked: 1-7`, and say which were NOT run and wh
 8. **Producer and consumer** — a ruling that changes what a value (especially NULL) means traces
    every reader of it; a fix that prefers a field is checked where that field is WRITTEN; a
    fixture is a shape the producing path actually emits. Money fails closed on a missing input.
+   Runs in BOTH directions: a fix at the wire is proven only from the state the wire is built
+   FROM (retro 4, E40 — a client-side double count survived a wire-side merge).
+9. **Admitted shapes** — for every NEW refusal or narrowed guard, enumerate each live client's
+   emitted shapes from that client's own builder function and run each through the guard's
+   condition; a guard is sound only against the set actually sent (retro 4, E39 — `boxes: 0`
+   from the web dialog 409'd every loose-product return; E32 was the same class). In a key
+   sweep (check 5), separate READERS (a miss is a no-op) from WRITERS (a miss creates a row) —
+   the consequence and the pin differ (E41).
 
 **7.2 After every ruling outcome, builder catch, or own error — record in the same commit as the
 register change:**
+
 - A builder found the ruling wrong → `LEAD-ERRORS.md` gets an `SA-E` line (class, what, rule),
   `references/error-catalogue.md` gets the row, and if the rule is new it becomes an `OP-` line in
   §1 **the same day**. A catch that fits an existing rule cites it instead of minting a new one.
@@ -182,6 +192,7 @@ register change:**
   count from the register.
 
 **7.3 Every ten rulings (or at session close if sooner) — the retro, on numbers:**
+
 - Count from `RULINGS.md`/`LEAD-ERRORS.md`: rulings made · amended after execution · withdrawn ·
   HOLD→PASS round-trips · builder catches · SA own errors by class · reads that merged before the
   read. Append the row to `references/ledger.md`.
