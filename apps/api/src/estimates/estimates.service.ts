@@ -533,11 +533,9 @@ export class EstimatesService {
           },
           include: { customer: { select: { id: true, businessName: true } }, items: true },
         });
-        // Same pattern invoices.service.ts's own create() uses (pack-at-sale.ts) — not the
-        // manual-invoice-context.ts writeInvoiceSaleEntries helper, whose line mapping
-        // predates B661/B700/SA-078 and omits boxes/pieces/unitsPerBox/packAtSale entirely;
-        // using it here would silently ship the box-axis bug that work fixed everywhere else,
-        // just for converted estimates.
+        // Same pattern invoices.service.ts's own create() uses (pack-at-sale.ts): the FULL
+        // boxes/pieces/unitsPerBox/packAtSale shape, never a thinner ledger-line mapping that
+        // would re-derive the pack from the live product for a converted estimate line.
         const invItems: any[] = Array.isArray(inv.items) ? inv.items : [];
         if (invItems.some((it: any) => it.trackedCategoryId != null)) {
           const packMap = await packAtSaleByProduct(tx, invItems);

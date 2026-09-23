@@ -1040,8 +1040,9 @@ describe("EstimatesService — B8 accept/convert duplicate-invoice race", () => 
         id: "est-645",
         status: "ACCEPTED",
         customerId: "cust-645",
-        // 12 boxes * 12 units/box @ $10/unit = $1,440 — the exact repro shape
-        // from the live bug report (12x, $1,440 -> $17,280 on a naive re-price).
+        // 12 boxes @ $120/box = $1,440 — the exact repro shape from the live bug report (a
+        // dropped box-split re-prices this as qty(144) x unitPrice, 12x too high or too low
+        // depending which figure survives).
         subtotal: 1440,
         taxAmount: 0,
         discount: 0,
@@ -1065,7 +1066,7 @@ describe("EstimatesService — B8 accept/convert duplicate-invoice race", () => 
           },
         ],
       });
-      // echoInvoice (not a naive spread): writeInvoiceSaleEntries reads created.items as an
+      // echoInvoice (not a naive spread): the ledger-write below reads created.items as an
       // ARRAY of created rows (Prisma's real nested-create return shape), not the {create:[...]}
       // write-args shape a bare `...args.data` spread would leave it as.
       prisma.invoice.create.mockImplementation((args: any) =>

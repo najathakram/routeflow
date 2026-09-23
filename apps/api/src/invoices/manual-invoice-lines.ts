@@ -84,10 +84,8 @@ export function buildManualInvoiceLines(
       pieces = Number(item.pieces ?? 0);
       lineSub = roundMoney(Number(item.subtotalSnapshot) - (item.discount ?? 0));
     } else {
-      let packRecorded = false;
       if (item.productId && (item.boxes != null || item.pieces != null)) {
         const pack = item.packSnapshot ?? product?.unitsPerBox;
-        packRecorded = pack != null;
         // B659 (review finding 7): truthy, not `> 1`, let a pack of 1 through — `normalizeBoxesPieces`
         // itself only does box math when unitsPerBox > 1 (its own `hasBoxPackaging` gate) and otherwise
         // falls back to an `input.qty` this caller never passes, so a pack-1 product's split silently
@@ -109,15 +107,13 @@ export function buildManualInvoiceLines(
       // SA-077(2): a split that no pack can price is REFUSED rather than silently dropped — the
       // shape buildLine's G1 has always rejected at its own choke point. Same ONE predicate the
       // update path and `lineAmbiguity` use. A boxed product is unaffected: its pack resolves above.
-      // The subtotalSnapshot branch above is this rule's own escape hatch (Senior Architect ruling,
-      // option b) for the ONE caller (estimate conversion) that can safely convert an unpackable
-      // pieces-only split without a pack — everything else still refuses here. Skipped when a pack
-      // WAS genuinely recorded but is degenerate (<=1, finding 7 above): that is a known value, not
-      // an unresolvable one, and splitWithoutPack's own `upb > 1` gate can't tell the two apart.
-      if (!packRecorded) {
-        const bad = unpackableSplit(item, unitsPerBox);
-        if (bad) throw new BadRequestException(bad);
-      }
+      // SA-095a: unconditional, no bypass for a recorded-but-degenerate pack (<=1) — a pack-1
+      // split was already refused here before B659, admitting one would let create() and update()
+      // disagree and would also admit 0/negative packs. Not needed by the estimate-conversion
+      // caller either: its case 1 forwards packSnapshot without boxes/pieces, so this never fires
+      // for that shape. The subtotalSnapshot branch above remains the one true escape hatch.
+      const bad = unpackableSplit(item, unitsPerBox);
+      if (bad) throw new BadRequestException(bad);
       // BUY_N_GET_M: free whole selling units come off the subtotal BEFORE pricing
       // (never a rounded net unit price). 0 for every other line.
       freeUnits = clampFreeUnits(item.promoFreeUnits, boxes, qty);
@@ -163,8 +159,12 @@ export function buildManualInvoiceLines(
       boxes,
       pieces,
       // Snapshot the box size when this line was priced as a box split, so a later
-      // edit/PDF recompute uses the sale-time size (mirrors order-derived lines).
-      unitsPerBox: boxes != null && unitsPerBox ? unitsPerBox : null,
+      // edit/PDF recompute uses the sale-time size (mirrors order-derived lines). SA-095(b): a
+      // NO-SPLIT line (boxes stays null here) still stores its own QUOTED packSnapshot when one
+      // exists (estimate conversion's no-split/case-1 lines) — toSaleLedgerLines/
+      // applyPriceAdjustment read THIS stored field, never packSnapshot directly, so without it
+      // they'd fall back to the live product for a line whose pack was actually known.
+      unitsPerBox: boxes != null && unitsPerBox ? unitsPerBox : (item.packSnapshot ?? null),
       // BUY_N_GET_M snapshot — stored so the next edit re-prices off it.
       promoFreeUnits: freeUnits > 0 ? freeUnits : null,
       // Snapshot the regulated category/subcategory AT SALE TIME (never re-read the

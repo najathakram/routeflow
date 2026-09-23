@@ -153,14 +153,19 @@ describe("buildManualInvoiceLines", () => {
   });
 
   describe("a pack of 1 is not a box split — the `if (pack)` guard must be `> 1` (B659 review finding 7)", () => {
-    it("boxes 1, pieces 0 on a unitsPerBox-1 product keeps qty 1 and its full price, never collapses to qty 0", () => {
-      const { itemsData } = build([
-        { description: "Single", productId: "upb1", qty: 1, boxes: 1, pieces: 0, unitPrice: 25 },
-      ]);
-      // A truthy `if (pack)` let unitsPerBox 1 through into normalizeBoxesPieces, whose OWN gate
-      // (hasBoxPackaging = upb > 1) then falls back to an `input.qty` this caller never passes —
-      // silently zeroing the line to qty 0 / $0 for every caller (API, mobile).
-      expect(itemsData[0]).toMatchObject({ qty: 1, boxes: null, pieces: null, subtotal: 25 });
+    // SA-095a: restored to an unconditional refusal (no packRecorded bypass). A split with a
+    // pack of 1 was already refused here before B659 touched this file — the "silently zeroed
+    // to qty 0" state finding 7 describes predates SA-077(2) (#1256) and can't be reached on
+    // master today. The HIGH gap (a pack-of-1 product can never convert) is still fixed, at the
+    // estimate-conversion CALLER: case 1 in estimate-convert-lines.ts forwards packSnapshot
+    // without boxes/pieces for a recorded-but-degenerate pack, so this refusal never fires for
+    // that path — see estimates.convert-levy.spec.ts's own pack-of-1 coverage.
+    it("boxes 1, pieces 0 on a unitsPerBox-1 product refuses, naming the line — SA-077(2) applies here too", () => {
+      expect(() =>
+        build([
+          { description: "Single", productId: "upb1", qty: 1, boxes: 1, pieces: 0, unitPrice: 25 },
+        ]),
+      ).toThrow(/Single/);
     });
   });
 

@@ -221,10 +221,9 @@ describe("EstimatesService.convertToInvoice — regulated levy and quoted pack (
         products: [regulatedProduct({ unitsPerBox: 12 })],
       });
       await expect(service.convertToInvoice("est-1")).rejects.toThrow(BadRequestException);
-      // B659 review round 2: the box/piece counts this line already has are exactly what's
-      // missing a pack, not what's wrong with the estimate — never "void and recreate".
+      // There is no estimate-update endpoint to fix a line in place — the only real remedy.
       await expect(service.convertToInvoice("est-1")).rejects.toThrow(
-        "pack unknown for line 2: enter the box and piece count on the estimate, then convert",
+        "pack unknown for line 2: void this estimate and create a new one",
       );
       expect(numbering.reserveNext).not.toHaveBeenCalled();
       expect(prisma.estimate.updateMany).not.toHaveBeenCalled();
@@ -243,7 +242,9 @@ describe("EstimatesService.convertToInvoice — regulated levy and quoted pack (
           ...o,
         }) as any;
       expect(estimateLinePack(it({ unitsPerBox: 12 }))).toBe(12);
-      expect(estimateLinePack(it({ unitsPerBox: 1 }))).toBe(12); // 1 is not a pack: derive
+      // SA-095: a recorded value is a KNOWN fact, even when degenerate — never re-derived from
+      // boxes/qty math just because it's <= 1. "1" genuinely means "no packaging".
+      expect(estimateLinePack(it({ unitsPerBox: 1 }))).toBe(1);
       expect(estimateLinePack(it({}))).toBe(12);
       expect(estimateLinePack(it({ qty: 31 }))).toBeNull(); // (31 - 6) / 2 = 12.5
       expect(estimateLinePack(it({ qty: 8 }))).toBeNull(); // (8 - 6) / 2 = 1: not a pack
@@ -289,7 +290,78 @@ describe("EstimatesService.convertToInvoice — regulated levy and quoted pack (
       await service.convertToInvoice("est-1");
       expect(created().items.create[0]).toMatchObject({
         boxes: null,
+        unitsPerBox: 12, // SA-095(b): stored on the line even though there's no box split
         categoryTaxAmount: 60, // 5 x 12 = 60 pieces x $1 — never 5 x 6 = 30
+      });
+      // SA-095(b) parity: the ledger row must read the SAME quoted pack, never the live one — a
+      // no-split line's stored unitsPerBox is exactly what toSaleLedgerLines/applyPriceAdjustment
+      // read later, so if THIS drifts from the invoice levy above, a re-price or the filing itself
+      // would silently re-base off the live pack even though the levy above got it right.
+      expect(ledger.writeSaleEntries.mock.calls[0][0].lines[0]).toMatchObject({
+        packAtSale: 12,
+        unitsPerBox: 12,
+      });
+    });
+
+    it("(c) SA-095: a NO-SPLIT line RECORDED at pack 1 (no packaging) bases the levy on qty, never qty x a live repack to 12", async () => {
+      // Recorded 1 is a KNOWN fact ("no packaging"), never conflated with "nothing recorded" —
+      // that conflation was the actual bug: estimateLinePack used to return null for any recorded
+      // value <= 1, indistinguishable from "unknown", so this line fell through to the LIVE pack.
+      arm({
+        items: [line({ qty: 5, unitPrice: 3, subtotal: 15, unitsPerBox: 1 })],
+        subtotal: 15,
+        products: [regulatedProduct({ unitsPerBox: 12 })], // live repack to 12 AFTER the quote
+        category: perUnitCategory(1), // $1/piece
+      });
+      await service.convertToInvoice("est-1");
+      expect(created().items.create[0]).toMatchObject({
+        boxes: null,
+        unitsPerBox: 1, // stored verbatim — SA-095(b) parity, same as any other recorded pack
+        categoryTaxAmount: 5, // qty(5) x $1 — NEVER qty x live pack (5 x 12 x $1 = 60)
+      });
+      expect(ledger.writeSaleEntries.mock.calls[0][0].lines[0]).toMatchObject({
+        packAtSale: 1,
+        unitsPerBox: 1,
+      });
+    });
+
+    it("(d) SA-095: a SPLIT line RECORDED at pack 1 (case 1: not really boxed) bases the levy on qty, never a live repack to 12", async () => {
+      arm({
+        items: [line({ qty: 5, unitPrice: 3, subtotal: 15, boxes: 5, pieces: 0, unitsPerBox: 1 })],
+        subtotal: 15,
+        products: [regulatedProduct({ unitsPerBox: 12 })], // live repack to 12 AFTER the quote
+        category: perUnitCategory(1), // $1/piece
+      });
+      await service.convertToInvoice("est-1");
+      // Case 1 forwards packSnapshot but no boxes/pieces (so SA-077(2)'s unconditional refusal
+      // in buildManualInvoiceLines never sees a split to refuse) — the line converts as plain qty.
+      expect(created().items.create[0]).toMatchObject({
+        boxes: null,
+        pieces: null,
+        unitsPerBox: 1,
+        categoryTaxAmount: 5, // qty(5) x $1 — never 5 x 12 x $1 = 60
+      });
+      expect(ledger.writeSaleEntries.mock.calls[0][0].lines[0]).toMatchObject({
+        packAtSale: 1,
+        unitsPerBox: 1,
+      });
+    });
+
+    it("(e) SA-077a: a recorded pack <= 1 WITH a split uses qty = boxes + pieces, never a different stored qty", async () => {
+      // 3 + 2 = 5, non-trivial (neither boxes nor pieces alone equals qty) so this actually pins
+      // the boxes+pieces sum, not just "whatever qty happened to be forwarded".
+      arm({
+        items: [line({ qty: 5, unitPrice: 3, subtotal: 15, boxes: 3, pieces: 2, unitsPerBox: 1 })],
+        subtotal: 15,
+        products: [regulatedProduct({ unitsPerBox: 12 })],
+        category: perUnitCategory(1),
+      });
+      await service.convertToInvoice("est-1");
+      expect(created().items.create[0]).toMatchObject({
+        qty: 5, // 3 boxes + 2 pieces, the estimate form's own convention for a pack-1 line
+        boxes: null,
+        pieces: null,
+        categoryTaxAmount: 5,
       });
     });
   });
@@ -369,7 +441,7 @@ describe("EstimatesService.convertToInvoice — regulated levy and quoted pack (
         qty: 3,
         boxes: null,
         pieces: null,
-        unitsPerBox: null,
+        unitsPerBox: 1, // SA-095(b): stored verbatim — same parity fix as any other recorded pack
         subtotal: 30,
       });
       expect(numbering.reserveNext).toHaveBeenCalled();
@@ -395,6 +467,14 @@ describe("EstimatesService.convertToInvoice — regulated levy and quoted pack (
         unitsPerBox: null,
         subtotal: 60,
         categoryTaxAmount: 6, // unitBasisQty 6 x $1 — pieces, never a live-pack multiple
+      });
+      // The title's own claim ("books unitBasisQty 6") was previously unasserted. boxes:0 (not
+      // null) is what makes the ledger's own basis computation read qty directly as the piece
+      // count, regardless of packAtSale — never a pack-multiplied figure.
+      expect(ledger.writeSaleEntries.mock.calls[0][0].lines[0]).toMatchObject({
+        qty: 6,
+        boxes: 0,
+        pieces: 6,
       });
     });
 
