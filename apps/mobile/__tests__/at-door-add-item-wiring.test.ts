@@ -32,3 +32,51 @@ describe("adjust.tsx drops a succeeded ADD_ITEM from `added` mid-batch (B795)", 
     expect(body).toMatch(/setAdded\(\(prev\) => dropSucceededAddedLine\(prev, entry\)\)/);
   });
 });
+
+// Opus review round 1 on #1302 (same B795 class, pre-existing): a resolve
+// POST that times out AFTER the server committed the create is a network
+// error, gets queued offline, and REPLAYS later (applying the item) -- while
+// submitEntry's own return value is false and the draft stays in `added`, so
+// the next Save sends a SECOND ADD_ITEM on top of the queued replay.
+describe("submitEntry drops the draft when a successful create's resolve goes offline (round 1 finding 2)", () => {
+  const src = readFileSync(
+    join(__dirname, "..", "app/(driver)/route/stop/[stopId]/adjust.tsx"),
+    "utf8",
+  );
+  const fnAt = src.indexOf("async function submitEntry(");
+  const fnEnd = src.indexOf("\n  // Resumable batch runner", fnAt);
+  const body = src.slice(fnAt, fnEnd);
+  const offlineAt = body.indexOf("isOfflineQueued");
+  const branchEnd = body.indexOf("return false;", offlineAt);
+  const branchBody = body.slice(offlineAt, branchEnd);
+
+  it("finds the isOfflineQueued branch", () => {
+    expect(offlineAt).toBeGreaterThan(-1);
+    expect(branchEnd).toBeGreaterThan(offlineAt);
+  });
+
+  it("drops the draft via dropSucceededAddedLine only when the create already succeeded and the entry is an ADD_ITEM", () => {
+    expect(branchBody).toMatch(/createdCrId/);
+    expect(branchBody).toMatch(/entry\.type === "ADD_ITEM"/);
+    expect(branchBody).toMatch(/dropSucceededAddedLine/);
+  });
+});
+
+// Opus review round 1 on #1302, finding 3 (minor): the "already resolved"
+// toast read the same generic "changed elsewhere" whether the office
+// APPROVED or DECLINED the CR -- name a decline distinctly.
+describe("submitEntry names a DECLINED already-resolved CR distinctly (round 1 finding 3)", () => {
+  const src = readFileSync(
+    join(__dirname, "..", "app/(driver)/route/stop/[stopId]/adjust.tsx"),
+    "utf8",
+  );
+  const at = src.indexOf('"CHANGE_REQUEST_ALREADY_RESOLVED"');
+  const branchEnd = src.indexOf("return true;", at);
+  const branchBody = src.slice(at, branchEnd);
+
+  it("checks the resolved status and uses a distinct declined message", () => {
+    expect(at).toBeGreaterThan(-1);
+    expect(branchBody).toMatch(/DECLINED/);
+    expect(branchBody).toMatch(/declined/i);
+  });
+});

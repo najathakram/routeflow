@@ -251,6 +251,13 @@ export default function AdjustOrderScreen() {
       // retry once back online (handleSave also refuses to start while offline).
       if (e?.isOfflineQueued) {
         showToast("Connection lost — reconnect and save again.");
+        if (createdCrId && entry.type === "ADD_ITEM" && entry.productId) {
+          // The create already succeeded and the resolve is now queued for
+          // offline replay — it WILL land once reconnected, so drop the
+          // draft now, or the next Save resends this ADD_ITEM on top of the
+          // queued replay (Opus review, #1302 round 1, finding 2).
+          setAdded((prev) => dropSucceededAddedLine(prev, entry));
+        }
         return false;
       }
       const blocked = parseRegulatedAuthError(e);
@@ -264,7 +271,15 @@ export default function AdjustOrderScreen() {
       }
       const code = e?.response?.data?.code;
       if (code === "CHANGE_REQUEST_ALREADY_RESOLVED") {
-        showToast("That line changed elsewhere — refreshed.");
+        // Name a DECLINED resolution distinctly (Opus review, #1302 round 1,
+        // finding 3) — an APPROVED-elsewhere race and an office decline read
+        // very differently to the driver.
+        const status = e?.response?.data?.status;
+        showToast(
+          status === "DECLINED"
+            ? "That line was declined by the office — refreshed."
+            : "That line changed elsewhere — refreshed.",
+        );
         return true; // don't block the rest of the batch on a benign race
       }
       const creditInfo = parseCreditLimitError(e);

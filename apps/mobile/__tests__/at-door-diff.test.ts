@@ -93,6 +93,45 @@ describe("dropSucceededAddedLine", () => {
       added,
     );
   });
+
+  // Opus review round 1 on #1302: a driver can re-scan product X while X's
+  // ADD_ITEM is still in flight, growing the local draft's qty. Dropping the
+  // WHOLE draft by productId on that entry's success would silently lose the
+  // extra units the re-scan added (an under-bill) -- subtract only what was
+  // actually sent, and keep whatever landed on top of it mid-flight.
+  it("subtracts the sent qty instead of dropping the whole draft when a concurrent re-scan grew it", () => {
+    // Sent while qty was 2; a 3rd scan landed mid-flight, growing the draft to 3.
+    const inFlight = [{ productId: "p-1", qty: 3 }];
+    expect(
+      dropSucceededAddedLine(inFlight, { type: "ADD_ITEM", productId: "p-1", qty: 2 }),
+    ).toEqual([{ productId: "p-1", qty: 1 }]);
+  });
+
+  it("subtracts boxes/pieces alongside qty for a boxed product's concurrent re-scan", () => {
+    // Sent as 1 case (qty 12) while a 2nd scan landed mid-flight (draft now 2 cases, qty 24).
+    const inFlight = [{ productId: "p-2", qty: 24, boxes: 2, pieces: 0 }];
+    expect(
+      dropSucceededAddedLine(inFlight, {
+        type: "ADD_ITEM",
+        productId: "p-2",
+        qty: 12,
+        boxes: 1,
+        pieces: 0,
+      }),
+    ).toEqual([{ productId: "p-2", qty: 12, boxes: 1, pieces: 0 }]);
+  });
+
+  it("still drops entirely when the sent qty exactly covers the draft (no concurrent growth)", () => {
+    expect(
+      dropSucceededAddedLine([{ productId: "p-2", qty: 26, boxes: 2, pieces: 2 }], {
+        type: "ADD_ITEM",
+        productId: "p-2",
+        qty: 26,
+        boxes: 2,
+        pieces: 2,
+      }),
+    ).toEqual([]);
+  });
 });
 
 describe("B795: a two-entry added batch whose second entry fails — re-Save sends only the second", () => {
