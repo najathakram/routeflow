@@ -89,3 +89,17 @@ export function qtyCellText(item: InvoicePdfQtyItemLike): string {
     boxLabel: item.unitLabel,
   });
 }
+
+/** boxes/pieces/unitLabel, normalized — the fields an invoice-email item payload
+ *  threads through for `qtyCellText` on its own send (B653). */
+export function invoiceItemQtyFields(item: {
+  boxes?: number | string | null;
+  pieces?: number | string | null;
+  unitLabel?: string | null;
+}): { boxes: number | null; pieces: number | null; unitLabel: string | null } {
+  return {
+    boxes: item.boxes != null ? Number(item.boxes) : null,
+    pieces: item.pieces != null ? Number(item.pieces) : null,
+    unitLabel: item.unitLabel ?? null,
+  };
+}

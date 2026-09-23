@@ -1310,6 +1310,127 @@ describe("EmailService.sendInvoice — BOGO/promo item display (T-B103, R9, REG-
   });
 });
 
+/**
+ * B653 — a units_v1 line (sold by its own unit, e.g. "Case", not loose pieces) read
+ * "qty 36 @ $40.00 = $120.00" in the invoice email: `qty` is the BASE PIECE count
+ * (`buildInvoiceUnitLine`: `qty = count x unitsPerBox`), so a customer doing the
+ * arithmetic gets $1,440, not the real $120 subtotal. The email is the only
+ * customer-facing document that never read boxes/pieces/unitLabel at all — the PDF,
+ * web and mobile invoice detail all show "3 Cases" already. Fixture: 3 Cases of 12
+ * ($40/Case) — qty 36, boxes 3, pieces 0.
+ */
+describe("EmailService.sendInvoice — units_v1 qty text (B653)", () => {
+  const unitLine = {
+    description: "Widget (Case)",
+    qty: 36,
+    boxes: 3,
+    pieces: 0,
+    unitLabel: "Case",
+    unitPrice: 40,
+    subtotal: 120,
+  };
+
+  function itemRowsOf(html: string): string {
+    return (html.match(/<tbody>([\s\S]*?)<\/tbody>/) ?? ["", ""])[1];
+  }
+
+  it('REG-B653-email: the HTML item row reads "3 Cases", never the bare base-piece qty (36)', async () => {
+    const svc = makeService();
+    const sendSpy = jest
+      .spyOn(svc, "send")
+      .mockResolvedValue({ delivered: true, transport: "smtp" } as any);
+
+    await svc.sendInvoice({
+      to: "buyer@example.com",
+      customerName: "Acme Buyer",
+      invoiceNumber: "INV-4001",
+      invoiceId: "inv-4001",
+      issueDate: "Jan 1, 2026",
+      dueDate: "Jan 31, 2026",
+      total: 120,
+      totalPaid: 0,
+      balanceDue: 120,
+      items: [unitLine],
+    } as any);
+
+    const row = itemRowsOf(sendSpy.mock.calls[0][0].html);
+    expect(row).toContain("3 Cases");
+    expect(row).not.toMatch(/>36</);
+  });
+
+  it('REG-B653-email: the plaintext body reads "qty 3 Cases", never "qty 36"', async () => {
+    const svc = makeService();
+    const sendSpy = jest
+      .spyOn(svc, "send")
+      .mockResolvedValue({ delivered: true, transport: "smtp" } as any);
+
+    await svc.sendInvoice({
+      to: "buyer@example.com",
+      customerName: "Acme Buyer",
+      invoiceNumber: "INV-4002",
+      invoiceId: "inv-4002",
+      issueDate: "Jan 1, 2026",
+      dueDate: "Jan 31, 2026",
+      total: 120,
+      totalPaid: 0,
+      balanceDue: 120,
+      items: [unitLine],
+    } as any);
+
+    const text = sendSpy.mock.calls[0][0].text as string;
+    expect(text).toContain("qty 3 Cases");
+    expect(text).not.toContain("qty 36");
+  });
+
+  it("PIN-B653-email: an ordinary boxed line (no unitLabel) is unchanged — still the bare box/piece split", async () => {
+    const svc = makeService();
+    const sendSpy = jest
+      .spyOn(svc, "send")
+      .mockResolvedValue({ delivered: true, transport: "smtp" } as any);
+
+    await svc.sendInvoice({
+      to: "buyer@example.com",
+      customerName: "Acme Buyer",
+      invoiceNumber: "INV-4003",
+      invoiceId: "inv-4003",
+      issueDate: "Jan 1, 2026",
+      dueDate: "Jan 31, 2026",
+      total: 100,
+      totalPaid: 0,
+      balanceDue: 100,
+      items: [
+        { description: "Widget", qty: 27, boxes: 2, pieces: 3, unitPrice: 3.7, subtotal: 100 },
+      ],
+    } as any);
+
+    const row = itemRowsOf(sendSpy.mock.calls[0][0].html);
+    expect(row).toContain("2 boxes + 3 pcs");
+  });
+
+  it("PIN-B653-email: a plain non-boxed line is unaffected — still the bare qty", async () => {
+    const svc = makeService();
+    const sendSpy = jest
+      .spyOn(svc, "send")
+      .mockResolvedValue({ delivered: true, transport: "smtp" } as any);
+
+    await svc.sendInvoice({
+      to: "buyer@example.com",
+      customerName: "Acme Buyer",
+      invoiceNumber: "INV-4004",
+      invoiceId: "inv-4004",
+      issueDate: "Jan 1, 2026",
+      dueDate: "Jan 31, 2026",
+      total: 50,
+      totalPaid: 0,
+      balanceDue: 50,
+      items: [{ description: "Widget", qty: 5, unitPrice: 10, subtotal: 50 }],
+    } as any);
+
+    const row = itemRowsOf(sendSpy.mock.calls[0][0].html);
+    expect(row).toMatch(/>5</);
+  });
+});
+
 // ─── N2: account + invite email templates ──────────────────────────────────────
 
 describe("EmailService — N2 account/invite templates", () => {

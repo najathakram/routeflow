@@ -62,6 +62,7 @@ import { JwtPayload } from "../auth/jwt-payload.interface";
 import { RouteFlowGateway } from "../gateways/routeflow.gateway";
 import { EmailService } from "../email/email.service";
 import { InvoicePdfService } from "./invoice-pdf.service";
+import { invoiceItemQtyFields } from "./invoice-pdf-item";
 import { buildInvoiceEmailAttachment, InvoiceEmailAttachment } from "./invoice-attachment";
 import { SystemConfigService } from "../system-config/system-config.service";
 import { RegulatedLedgerService } from "../regulated/regulated-ledger.service";
@@ -3960,6 +3961,10 @@ export class InvoicesService {
         originalPrice: it.originalPrice != null ? Number(it.originalPrice) : null,
         priceType: it.priceType ?? null,
         promoFreeUnits: it.promoFreeUnits != null ? Number(it.promoFreeUnits) : null,
+        // B653: the email's qty text needs the same split the PDF/web/mobile
+        // documents already read — omitted before, so a units_v1 line's email
+        // showed the base piece count next to the per-unit price.
+        ...invoiceItemQtyFields(it),
       })),
       pdfUrl,
       attachment,
@@ -4179,6 +4184,10 @@ export class InvoicesService {
         originalPrice: it.originalPrice != null ? Number(it.originalPrice) : null,
         priceType: it.priceType ?? null,
         promoFreeUnits: it.promoFreeUnits != null ? Number(it.promoFreeUnits) : null,
+        // B653: the email's qty text needs the same split the PDF/web/mobile
+        // documents already read — omitted before, so a units_v1 line's email
+        // showed the base piece count next to the per-unit price.
+        ...invoiceItemQtyFields(it),
       })),
       pdfUrl,
       attachment,
