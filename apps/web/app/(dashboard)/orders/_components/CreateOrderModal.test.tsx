@@ -504,6 +504,77 @@ describe("CreateOrderModal", () => {
         expect(screen.queryByLabelText("Waiting for signal")).not.toBeInTheDocument();
       });
 
+      it("SA-090/Opus item 1 REG: a LIVE scan racing an in-flight retry of the SAME product lands ONE row at qty 2, never two", async () => {
+        // The bug: `addLineItem` decided add-vs-merge from `lineItems` captured in the render the
+        // CALL started in, not the render current when it actually commits. A retry's lookup
+        // starts, then — before it resolves — a LIVE scan of the same product resolves and reads
+        // "not present yet" (true, at that moment) and appends a new row via the unconditional
+        // spread. When the retry's own held lookup finally resolves, IT also decided
+        // "not present yet" from the SAME stale snapshot and would append a SECOND row for the
+        // same product — this is the exact race, proven here with a real, held Promise, not a
+        // same-tick ref a synchronous test can't make stale.
+        let releaseRetry!: (v: Awaited<ReturnType<typeof mockResolveProductByCode>>) => void;
+        const held = new Promise<Awaited<ReturnType<typeof mockResolveProductByCode>>>(
+          (r) => (releaseRetry = r),
+        );
+        mockResolveProductByCode.mockRejectedValueOnce(networkError()); // "111" queues
+        mockResolveProductByCode.mockReturnValueOnce(held); // its retry hangs
+        await openScreen();
+        await scanCode("111");
+        expect(await screen.findByLabelText("Waiting for signal")).toHaveTextContent("(1)");
+
+        await act(async () => {
+          window.dispatchEvent(new Event("online")); // retry starts, now in flight (held)
+        });
+
+        // A LIVE scan of the SAME product resolves normally WHILE the retry above is still out.
+        mockResolveProductByCode.mockResolvedValueOnce(widget);
+        await scanCode("222");
+        await waitFor(() => expect(screen.getByText("1 item · $9.99")).toBeInTheDocument());
+        expect(screen.getAllByText("Widget")).toHaveLength(1);
+
+        // Now the retry's own held lookup finally resolves.
+        await act(async () => releaseRetry(widget));
+
+        await waitFor(() => expect(screen.getByText("1 item · $19.98")).toBeInTheDocument(), {
+          timeout: 4000,
+        });
+        // The real assertion: ONE row, at qty 2 — never two separate "Widget" rows.
+        expect(screen.getAllByText("Widget")).toHaveLength(1);
+      });
+
+      it("SA-090 REG: a Discard tap during an in-flight retry can never orphan the resolver's own add — the line still lands, undoable", async () => {
+        // The REAL resolver (CreateOrderModal's addLineItem) adds the line as a side effect of
+        // resolving — it does this whether or not the operator still wants the outcome. Before
+        // the fix, "still queued?" was checked only AFTER the lookup, so a Discard tap landing in
+        // the gap made retryOne walk away from a line the resolver had already added: no history
+        // entry, nothing Undo could reach — a phantom line on the order. The item is claimed out
+        // of the queue the instant its lookup starts now, so the Discard button for it is simply
+        // gone by the time an operator could tap it during that window; if a tap could still race
+        // it, the resolver's add must land anyway.
+        let releaseRetry!: (v: Awaited<ReturnType<typeof mockResolveProductByCode>>) => void;
+        const held = new Promise<Awaited<ReturnType<typeof mockResolveProductByCode>>>(
+          (r) => (releaseRetry = r),
+        );
+        mockResolveProductByCode.mockRejectedValueOnce(networkError());
+        mockResolveProductByCode.mockReturnValueOnce(held);
+        await openScreen();
+        await scanCode("111");
+        expect(await screen.findByLabelText("Waiting for signal")).toHaveTextContent("(1)");
+
+        await act(async () => {
+          window.dispatchEvent(new Event("online")); // retry starts, now in flight (held) — claimed
+        });
+        // Claimed out of the queue the moment the lookup started: nothing left to discard.
+        expect(screen.queryByRole("button", { name: "Discard 111" })).not.toBeInTheDocument();
+
+        await act(async () => releaseRetry(widget));
+
+        // The line lands — never silently orphaned.
+        await waitFor(() => expect(screen.getByText("1 item · $9.99")).toBeInTheDocument());
+        expect(screen.getByText("Widget")).toBeInTheDocument();
+      });
+
       it("a real HTTP failure (server answered) is not queued", async () => {
         mockResolveProductByCode.mockRejectedValue(
           Object.assign(new Error("boom"), {

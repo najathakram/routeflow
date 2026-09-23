@@ -75,24 +75,13 @@ export function useScanCodeHandler(deps: ScanCodeHandlerDeps) {
     code: string,
     opts?: { quiet?: boolean; background?: boolean },
   ): Promise<ScanResolution> => {
+    let result: Awaited<ReturnType<typeof resolveProductByCode>>;
     try {
-      const result = await resolveProductByCode(code);
-      if (result.archived) {
-        // F30 / R5: the product exists but is retired — never put it on an
-        // order silently, and never fall through to "create a new product"
-        // for something the catalog already has.
-        const name = result.product?.name || "Item";
-        deps.toast({
-          variant: "error",
-          title: `${name} is archived — reactivate to sell`,
-        });
-        return { kind: "archived", name };
-      }
-      if (!result.notFound && result.product) {
-        // addLineItem clears search + refocuses
-        const added = deps.addLineItem(result.product);
-        return { kind: "added", product: result.product, created: added?.created ?? true };
-      }
+      // Opus item 5: the try/catch covers ONLY the lookup. It used to also wrap `addLineItem`
+      // below, so a throw from THAT (nothing to do with connectivity) was caught here and
+      // misreported as `offline: true` — which queues the code for a retry that then adds it a
+      // SECOND time, on top of whatever the first (throwing) call already committed.
+      result = await resolveProductByCode(code);
     } catch (err: any) {
       // Network / 5xx — a transient failure is NOT "product doesn't exist";
       // don't open the create-product modal over it.
@@ -106,6 +95,23 @@ export function useScanCodeHandler(deps: ScanCodeHandlerDeps) {
         });
       }
       return { kind: "error", message, offline: isConnectivityError(err) };
+    }
+    if (result.archived) {
+      // F30 / R5: the product exists but is retired — never put it on an
+      // order silently, and never fall through to "create a new product"
+      // for something the catalog already has.
+      const name = result.product?.name || "Item";
+      deps.toast({
+        variant: "error",
+        title: `${name} is archived — reactivate to sell`,
+      });
+      return { kind: "archived", name };
+    }
+    if (!result.notFound && result.product) {
+      // addLineItem clears search + refocuses — outside the try above: a throw here is a real
+      // bug, never a connectivity failure, and must never be silently queued/re-added.
+      const added = deps.addLineItem(result.product);
+      return { kind: "added", product: result.product, created: added?.created ?? true };
     }
     // Nothing found — let the caller open create-product with the scanned barcode as SKU. Not for a
     // BACKGROUND retry: a queued scan resolving minutes later must not pop a dialog mid-scan (and

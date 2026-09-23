@@ -419,7 +419,10 @@ describe("ScanOrderScreen", () => {
         "Waiting for signal (1)",
       );
       expect(screen.getByLabelText("Waiting for signal")).toHaveTextContent("111");
-      expect(playScanCue).toHaveBeenCalledWith("rejected");
+      // Opus item 4: NOT "rejected" — an operator scanning by ear hears "rejected" as
+      // "rescan that", which is exactly how a queued-then-later-retried scan becomes a double
+      // count. No dedicated "queued" tone exists, so silence is correct here.
+      expect(playScanCue).toHaveBeenCalledWith("none");
       expect(props.onUndo).not.toHaveBeenCalled();
       // A queued scan is not an added scan, so there is nothing to undo.
       expect(screen.getByRole("button", { name: /undo last scan/i })).toBeDisabled();
@@ -538,7 +541,14 @@ describe("ScanOrderScreen", () => {
       expect(resolve).toHaveBeenCalledTimes(1); // never retried
     });
 
-    it("an answer that arrives AFTER the operator discarded the scan is ignored (no line appears)", async () => {
+    it("SA-090 REG: a Discard tap during an in-flight retry can never orphan the resolver's own add — the cue and history entry still land", async () => {
+      // The real resolver ADDS the line as a side effect of resolving, whether or not anyone is
+      // still listening for the outcome — this mock returning `added(...)` stands in for that.
+      // Before SA-090's fix, "still queued?" was checked AFTER the await, so a Discard tap that
+      // landed in the gap made retryOne walk away from a line the resolver had already added: no
+      // cue, no history entry, nothing Undo could reach. The item is claimed out of the queue the
+      // moment its lookup starts now, so a Discard tap here can only ever discard the QUEUE ROW —
+      // it can no longer race the outcome once the lookup is already in flight.
       let release!: (r: ScanResolution) => void;
       const late = new Promise<ScanResolution>((r) => (release = r));
       const resolve = jest
@@ -547,13 +557,17 @@ describe("ScanOrderScreen", () => {
         .mockReturnValueOnce(late);
       setup({}, resolve);
       await scan("111");
-      await advance(RETRY_WINDOW); // retry in flight
-      fireEvent.click(screen.getByRole("button", { name: "Discard 111" }));
+      await advance(RETRY_WINDOW); // retry in flight — already claimed, removed from the queue
+      // The row (and its Discard button) is gone the moment the lookup claimed it.
+      expect(screen.queryByRole("button", { name: "Discard 111" })).not.toBeInTheDocument();
 
       await act(async () => release(added("p1", "Widget")));
 
-      expect(screen.queryByText("Added Widget")).not.toBeInTheDocument();
-      expect(screen.getByRole("button", { name: /undo last scan/i })).toBeDisabled();
+      // Never dropped: the cue plays and the line is undoable, exactly as a live (non-queued)
+      // scan would be — a Discard tap during the in-flight lookup changed nothing about the
+      // outcome, because there was nothing left in the queue for it to discard by then.
+      expect(await screen.findByText("Added Widget")).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: /undo last scan/i })).not.toBeDisabled();
     });
 
     it("an HTTP failure (the server answered) is reported, NOT queued", async () => {
@@ -614,65 +628,13 @@ describe("ScanOrderScreen", () => {
       expect(resolve).toHaveBeenCalledTimes(4); // now retry #2
     });
 
-    it("REG: the real add-vs-merge decision (a stateful caller, not a canned mock) still lands ONE line, not two, for two queued retries of the SAME product", async () => {
-      // ScanOrderScreen itself keeps no cart ("the screen keeps no cart of its own" — see the
-      // list/count/total describe block above), so `resolve` returning `added(...)` twice proves
-      // nothing about merging on its own: a mock that just returns a canned value can't tell two
-      // ADDS from an add-then-merge. This harness plays the real caller's part (CreateOrderModal's
-      // own job) — a `lines` ref read fresh by EVERY call, exactly the shape the bug comment
-      // describes ("the modal decides add-vs-increment from the render it last saw") — so the
-      // rendered row count is real evidence of whether the loop's serialization (and, in the
-      // production code, `flushSync`) actually held the window shut, not a stand-in for it.
-      function StatefulHarness() {
-        const linesRef = React.useRef<Line[]>([]);
-        const [lines, setLines] = React.useState<Line[]>([]);
-        const callCount = React.useRef(0);
-        const resolveCode = React.useCallback(async (): Promise<ScanResolution> => {
-          callCount.current += 1;
-          // The first two calls are the two LIVE scans of "111"/"222" — both queue for lack of
-          // signal, exactly like the real gate. Every call after that is a retry, and merges.
-          if (callCount.current <= 2) return offline();
-          const current = linesRef.current;
-          const existing = current.find((l) => l.productId === "p1");
-          const next = existing
-            ? current.map((l) => (l.productId === "p1" ? { ...l, qty: l.qty + 1 } : l))
-            : [...current, L({ tempId: `t${current.length + 1}`, qty: 1 })];
-          linesRef.current = next;
-          setLines(next);
-          return added("p1", "Widget");
-        }, []);
-        return (
-          <ScanOrderScreen
-            open
-            onClose={jest.fn()}
-            lines={lines}
-            renderLine={(l) => (
-              <li key={l.tempId} data-testid={`row-${l.tempId}`}>
-                {l.name} ×{l.qty}
-              </li>
-            )}
-            resolveCode={resolveCode}
-            onUndo={jest.fn()}
-            hasCustomer
-          />
-        );
-      }
-
-      render(<StatefulHarness />);
-      await scan("111");
-      await scan("222");
-      expect(screen.getByLabelText("Waiting for signal")).toHaveTextContent("(2)");
-
-      await act(async () => {
-        window.dispatchEvent(new Event("online"));
-      });
-      await advance(RETRY_WINDOW);
-
-      // The real assertion the old test's name promised but never checked: ONE row, at qty 2 —
-      // never two separate "Widget" rows from a stale-state add.
-      expect(screen.queryAllByText(/^Widget ×/).length).toBe(1);
-      expect(screen.getByText("Widget ×2")).toBeInTheDocument();
-    });
+    // Opus review (#1271): the harness that lived here read `linesRef.current`, a ref updated
+    // SYNCHRONOUSLY in the same tick as the decision — it can never observe a stale-render race,
+    // so it stayed green even before ANY of this file's real fixes existed and proved nothing.
+    // The real add-vs-merge decision lives in CreateOrderModal's `addLineItem`, which this screen
+    // doesn't mount — moved to CreateOrderModal.test.tsx ("SA-090/Opus item 1 REG"), which renders
+    // the real merge logic against genuinely async React state, with an actual await between the
+    // decision and the commit.
 
     it("'Retry now' says so when the browser is still offline, instead of doing nothing", async () => {
       const resolve = jest.fn<Promise<ScanResolution>, [string]>().mockResolvedValue(offline());
@@ -700,6 +662,31 @@ describe("ScanOrderScreen", () => {
         screen.getByText(/1 scan still waiting for signal - press Done again to discard/),
       ).toBeInTheDocument();
 
+      fireEvent.click(screen.getByRole("button", { name: "Done" }));
+      expect(props.onClose).toHaveBeenCalledTimes(1);
+    });
+
+    it("SA-090: Done (even pressed twice) never closes while a retry is actually in flight", async () => {
+      let release!: (r: ScanResolution) => void;
+      const hanging = new Promise<ScanResolution>((r) => (release = r));
+      const resolve = jest
+        .fn<Promise<ScanResolution>, [string]>()
+        .mockResolvedValueOnce(offline())
+        .mockReturnValueOnce(hanging);
+      const { props } = setup({}, resolve);
+      await scan("111");
+      await act(async () => {
+        window.dispatchEvent(new Event("online"));
+      });
+      await advance(RETRY_WINDOW); // retry claimed, lookup in flight, held
+
+      fireEvent.click(screen.getByRole("button", { name: "Done" }));
+      expect(props.onClose).not.toHaveBeenCalled();
+      fireEvent.click(screen.getByRole("button", { name: "Done" }));
+      expect(props.onClose).not.toHaveBeenCalled(); // still not closed — a second press must not help
+
+      await act(async () => release(added("p1", "Widget")));
+      // The lookup is done now — Done is free to close (and there is nothing left queued).
       fireEvent.click(screen.getByRole("button", { name: "Done" }));
       expect(props.onClose).toHaveBeenCalledTimes(1);
     });

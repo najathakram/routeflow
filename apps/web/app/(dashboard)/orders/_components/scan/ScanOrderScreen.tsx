@@ -206,11 +206,19 @@ export function ScanOrderScreen<T extends SummaryLine & { tempId: string }>({
         Date.now(),
         `q${++pendingSeq.current}`,
       );
-      playScanCue("rejected");
       if (accepted) {
+        // Opus item 4: NOT "rejected" — a queued scan is not a rejection, and an operator
+        // scanning by ear hears "rejected" as "that didn't take, scan it again", which is
+        // exactly how a queued-then-later-retried scan becomes a double count. No dedicated
+        // "queued" tone exists (ScanCue is only accepted/rejected/none), so silence here is the
+        // correct choice between the two the ruling allows, not a placeholder for a future one —
+        // the visible "Waiting for signal" pill (below) is the queued-state signal instead.
+        playScanCue("none");
         setPendingBoth(queue);
         showFeedback("queued", `No signal - ${code} queued, will retry`);
       } else {
+        // The queue is genuinely full — this scan really was refused, not queued.
+        playScanCue("rejected");
         showFeedback("error", "Too many scans are waiting for signal - reconnect, then rescan");
       }
     },
@@ -276,6 +284,23 @@ export function ScanOrderScreen<T extends SummaryLine & { tempId: string }>({
     async (item: PendingScan) => {
       if (retryInFlight.current.has(item.id)) return;
       retryInFlight.current.add(item.id);
+      // SA-090: claim BEFORE calling the resolver, not after. The resolver ADDS the line to the
+      // order as a side effect of resolving — it does this whether or not anyone is still
+      // listening for the outcome — so the item must be irrevocably committed to THIS attempt
+      // before that side effect can happen. Checking "is it still queued?" only after the await
+      // let a Discard tap (or the session closing) land in the gap and made `retryOne` walk away
+      // from a line the resolver had already added: no cue, no history entry, and nothing Undo
+      // could reach.
+      //
+      // NOT what prevents a duplicate row for a same-product retry-vs-live-scan race (Opus review
+      // item 1, #1271): this flushSync only commits THIS screen's own `pending` queue state. The
+      // add-vs-merge decision lives in CreateOrderModal's `addLineItem`, which now makes that
+      // decision — and its own flushSync — INSIDE its `setLineItems` updater, against the true
+      // latest order state, so it is correct regardless of what this screen's queue looks like.
+      // An earlier version of this comment claimed this flushSync was that guarantee; it was not.
+      flushSync(() => {
+        setPendingBoth(removePending(pendingRef.current, item.id));
+      });
       try {
         let res: ScanResolution;
         try {
@@ -284,11 +309,13 @@ export function ScanOrderScreen<T extends SummaryLine & { tempId: string }>({
           // An unexpected throw is treated as transient; the attempt cap bounds it.
           res = { kind: "error", message: "lookup failed", offline: true };
         }
-        // Discarded (or the session ended) while the lookup was in flight: the answer is moot.
-        if (!pendingRef.current.some((p) => p.id === item.id)) return;
         if (res.kind === "error" && res.offline) {
-          const { queue, dropped } = recordFailure(pendingRef.current, item.id, Date.now());
-          setPendingBoth(queue);
+          // The item is no longer in the live queue to look up by id (claimed above) — recompute
+          // its own next attempt from the ORIGINAL item this closure already holds, through the
+          // same recordFailure the rest of the queue uses (a singleton queue of just this one
+          // item), then merge the result back in.
+          const { queue, dropped } = recordFailure([item], item.id, Date.now());
+          flushSync(() => setPendingBoth([...pendingRef.current, ...queue]));
           if (dropped) {
             playScanCue("rejected");
             showFeedback(
@@ -298,14 +325,11 @@ export function ScanOrderScreen<T extends SummaryLine & { tempId: string }>({
           }
           return;
         }
-        // flushSync, not a fixed sleep: the parent decides add-vs-merge from the render it last
-        // saw, so the NEXT retry's lookup must never start before THIS one's commit has actually
-        // landed (a stale render would read an empty/pre-add list and add a DUPLICATE row).
-        // flushSync forces that commit synchronously before `retryOne` returns.
-        flushSync(() => {
-          setPendingBoth(removePending(pendingRef.current, item.id));
-          applyResolution(item.code, res);
-        });
+        // SA-090: never drop an "added" (or any non-offline) outcome — applyResolution runs
+        // regardless of queue/session state, because a Discard or a closed session cannot
+        // un-happen the resolver's own add. The cue and history entry MUST show, so Undo can
+        // still reach the line even if the operator discarded the queue row that requested it.
+        flushSync(() => applyResolution(item.code, res));
       } finally {
         retryInFlight.current.delete(item.id);
       }
@@ -339,8 +363,11 @@ export function ScanOrderScreen<T extends SummaryLine & { tempId: string }>({
 
   /**
    * Retries whatever is due - strictly ONE AT A TIME, never while a live scan is resolving, and it
-   * stops the moment retries are no longer allowed. `retryOne` itself flushes an added/merged line
-   * synchronously before returning, so this never needs a fixed pause between two retries.
+   * stops the moment retries are no longer allowed. No fixed pause between two retries: `retryOne`
+   * claims its item before calling the resolver (flushed synchronously), so the next iteration's
+   * own claim can never race it — the resolver's own add-vs-merge decision (CreateOrderModal's
+   * `addLineItem`) is a separate guarantee, made fresh against live state at commit time, not
+   * something this loop's own timing needs to protect.
    */
   const runDueRetries = React.useCallback(async () => {
     if (retryRunning.current) return;
@@ -387,8 +414,19 @@ export function ScanOrderScreen<T extends SummaryLine & { tempId: string }>({
   /**
    * Close / Done / Escape. With scans still waiting for signal the FIRST press only warns (they
    * would be discarded with the session); a second press closes.
+   *
+   * SA-090: refuses outright while a retry is actually in flight (claimed, resolver called, not
+   * yet returned) — closing there would tear the session down mid-lookup, and the resolver's own
+   * add still lands after the screen (and this closure's `pendingRef`) is gone, with nothing left
+   * to show a cue or history entry for it. This is not the same gate as the warn-then-discard
+   * above: a scan merely WAITING for its next retry tick is safe to discard (nothing is running);
+   * one whose lookup already started is not.
    */
   const requestClose = () => {
+    if (retryInFlight.current.size > 0) {
+      showFeedback("queued", "A queued scan is being looked up - wait a moment before closing.");
+      return;
+    }
     if (pendingRef.current.length > 0 && !closeArmed) {
       setCloseArmed(true);
       const n = pendingRef.current.length;
@@ -398,6 +436,14 @@ export function ScanOrderScreen<T extends SummaryLine & { tempId: string }>({
       );
       return;
     }
+    // Opus/SA-090 follow-up: `open` going false does NOT unmount this component (it renders
+    // null and stays mounted — see the "shell" tests), and the session-reset effect above only
+    // clears the queue on the NEXT open, never on close. Without this, an abandoned queue item
+    // sits in `pendingRef` where a later retry tick could still fire — invisibly, since the
+    // screen renders nothing — and the resolver's own add would land with no UI open to show a
+    // cue for it. Cleared explicitly here rather than left for whichever open happens next.
+    pendingRef.current = [];
+    setPending([]);
     onClose();
   };
 
