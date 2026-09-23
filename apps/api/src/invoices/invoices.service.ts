@@ -13,6 +13,7 @@ import { PrismaService } from "../prisma/prisma.service";
 import { StorageService } from "../storage/storage.service";
 import { compressDocument } from "../storage/compress.util";
 import {
+  categoryTaxSnapshotOf,
   computeLineSubtotal,
   computeCategoryTax,
   roundMoney,
@@ -63,6 +64,7 @@ import { JwtPayload } from "../auth/jwt-payload.interface";
 import { RouteFlowGateway } from "../gateways/routeflow.gateway";
 import { EmailService } from "../email/email.service";
 import { InvoicePdfService } from "./invoice-pdf.service";
+import { invoiceItemQtyFields } from "./invoice-pdf-item";
 import { buildInvoiceEmailAttachment, InvoiceEmailAttachment } from "./invoice-attachment";
 import { SystemConfigService } from "../system-config/system-config.service";
 import { RegulatedLedgerService } from "../regulated/regulated-ledger.service";
@@ -939,6 +941,9 @@ export class InvoicesService {
       // the order-line snapshot, fall back to the live product for pre-RF-3 lines.
       trackedSubcategoryId: li.trackedSubcategoryId ?? li.product?.trackedSubcategoryId ?? null,
       categoryTaxAmount,
+      categoryTaxType: li.categoryTaxType ?? null, // B297: COPY verbatim, never a live fallback.
+      categoryTaxRate: li.categoryTaxRate != null ? Number(li.categoryTaxRate) : null,
+      categoryPriceIncludesTax: li.categoryPriceIncludesTax ?? null,
       ...(tenantId ? { tenantId } : {}),
     };
   }
@@ -3419,6 +3424,7 @@ export class InvoicesService {
           trackedSubcategoryId: product?.trackedSubcategoryId ?? null,
           // RF-4: per-line category tax snapshot (folded into taxTotal below).
           categoryTaxAmount,
+          ...categoryTaxSnapshotOf(category ?? null), // B297: re-reads the LIVE category above.
           // Preserve per-line notes across the delete-and-recreate edit — dropping
           // this silently wipes notes the order carried onto the invoice.
           notes: item.notes ?? null,
@@ -3906,13 +3912,11 @@ export class InvoicesService {
         unitPrice: Number(it.unitPrice),
         subtotal: Number(it.subtotal),
         msrp: it.msrp != null ? Number(it.msrp) : null,
-        // F03/R9: the strikethrough + "N free" note buildInvoiceEmail renders are
-        // dead without these three scalars — the renderer can only show what this
-        // caller passes, and a BOGO line's reduced subtotal reads as a pricing
-        // error otherwise. Mirrors the PDF item payload and the web detail renderer.
+        // F03/R9: without these, buildInvoiceEmail's strike/"N free" note and a BOGO line's reduced subtotal read as a pricing error.
         originalPrice: it.originalPrice != null ? Number(it.originalPrice) : null,
         priceType: it.priceType ?? null,
         promoFreeUnits: it.promoFreeUnits != null ? Number(it.promoFreeUnits) : null,
+        ...invoiceItemQtyFields(it),
       })),
       pdfUrl,
       attachment,
@@ -4132,6 +4136,7 @@ export class InvoicesService {
         originalPrice: it.originalPrice != null ? Number(it.originalPrice) : null,
         priceType: it.priceType ?? null,
         promoFreeUnits: it.promoFreeUnits != null ? Number(it.promoFreeUnits) : null,
+        ...invoiceItemQtyFields(it),
       })),
       pdfUrl,
       attachment,
@@ -4591,10 +4596,14 @@ export class InvoicesService {
       // product/customer MSRP.
       msrp: (i as any).msrp != null ? Number((i as any).msrp) : null,
       subtotal: roundMoney(Number(i.subtotal)),
-      // RF-4: carry each line's category tax + regulated snapshots onto the copy.
+      // RF-4/B297: category tax + regulated snapshots (incl. the rate trio) travel to the copy.
       trackedCategoryId: (i as any).trackedCategoryId ?? null,
       trackedSubcategoryId: (i as any).trackedSubcategoryId ?? null,
       categoryTaxAmount: roundMoney(Number((i as any).categoryTaxAmount ?? 0)),
+      categoryTaxType: (i as any).categoryTaxType ?? null,
+      categoryTaxRate:
+        (i as any).categoryTaxRate != null ? Number((i as any).categoryTaxRate) : null,
+      categoryPriceIncludesTax: (i as any).categoryPriceIncludesTax ?? null,
       tenantId: this.prisma.getTenantId(),
     }));
     const subtotal = roundMoney(itemsData.reduce((s, i) => s + Number(i.subtotal), 0));
@@ -5194,7 +5203,7 @@ export class InvoicesService {
     // payments-modal flow does the same thing at :5028 — this mirrors that
     // shape). A multi-customer stop is an anomaly today's UI can't produce
     // deliberately, so it books no advance and the caller keeps its warn.
-    const excess = remaining;
+    const excess = roundMoney(remaining);
     let advancePaymentId: string | null = null;
     if (excess > 0.001) {
       // Same-customer resolution: prefer the payable invoices already loaded
@@ -5726,7 +5735,7 @@ export class InvoicesService {
 
       // Handle excess amount → create AdvancePayment
       const allocatedTotal = dto.allocations.reduce((s, a) => s + a.amount, 0);
-      const excess = dto.totalAmount - allocatedTotal;
+      const excess = roundMoney(dto.totalAmount - allocatedTotal);
       if (excess > 0.001) {
         await tx.advancePayment.create({
           data: {
