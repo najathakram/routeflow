@@ -84,6 +84,7 @@ const storage = {
 const inventory = {
   recomputeProductInTx: jest.fn(),
   fireStockAlerts: jest.fn(),
+  createDraftPurchaseOrderInTx: jest.fn(),
 };
 
 /**
@@ -146,6 +147,11 @@ describe("VendorBillsService", () => {
     }).compile();
     inventory.recomputeProductInTx.mockReset();
     inventory.fireStockAlerts.mockReset();
+    inventory.createDraftPurchaseOrderInTx.mockReset();
+    inventory.createDraftPurchaseOrderInTx.mockResolvedValue({
+      id: "po-1",
+      poNumber: "PO-2026-0001",
+    });
 
     service = module.get<VendorBillsService>(VendorBillsService);
   });
@@ -515,6 +521,175 @@ describe("VendorBillsService", () => {
 
       await expect(service.receive("bill-1")).rejects.toThrow("Bill already received");
     });
+
+    // ── B743: PACK_SIZE_UNKNOWN gate, DARK by default ──────────────────────────
+    describe("B743 — PACK_SIZE_UNKNOWN (dark by default)", () => {
+      const boxedItem = (overrides: Record<string, unknown> = {}) =>
+        linkedItem({
+          qty: D(2),
+          unitCost: D(125.9),
+          packSize: null,
+          product: {
+            id: "prod-1",
+            name: "Flour 25lb",
+            currentStock: D(0),
+            averageCost: null,
+            unitsPerBox: 10,
+          },
+          ...overrides,
+        });
+
+      afterEach(() => {
+        delete process.env.PACK_SIZE_GATE_ENFORCED;
+      });
+
+      it("repro (dark): qty 2, unitCost 125.90, packSize null, product pack 10 — posts 2 pieces at 125.90 each, TODAY's silent wrong value, on purpose while dark", async () => {
+        prisma.vendorBill.findUnique.mockResolvedValueOnce(bill({ items: [boxedItem()] }));
+        prisma.product.findFirst.mockResolvedValue({
+          currentStock: D(0),
+          averageCost: null,
+          costingMethod: "AVCO",
+        });
+
+        await service.receive("bill-1", undefined, "user-1");
+
+        const movementArgs = prisma.stockMovement.create.mock.calls[0][0].data;
+        expect(movementArgs.quantity.toString()).toBe("2");
+        expect(movementArgs.unitCost.toString()).toBe("125.9");
+      });
+
+      it("enforced: refuses the same line with PACK_SIZE_UNKNOWN, naming the product's own pack as a hint, and posts nothing", async () => {
+        process.env.PACK_SIZE_GATE_ENFORCED = "on";
+        prisma.vendorBill.findUnique.mockResolvedValueOnce(bill({ items: [boxedItem()] }));
+
+        await expect(service.receive("bill-1")).rejects.toMatchObject({
+          constructor: ConflictException,
+          response: expect.objectContaining({
+            code: "PACK_SIZE_UNKNOWN",
+            packSizeUnknownItems: [
+              expect.objectContaining({
+                productId: "prod-1",
+                productName: "Flour 25lb",
+                qty: 2,
+                unitCost: 125.9,
+                productPack: 10,
+              }),
+            ],
+          }),
+        });
+        expect(prisma.stockMovement.create).not.toHaveBeenCalled();
+        expect(prisma.product.update).not.toHaveBeenCalled();
+      });
+
+      it("enforced + acknowledgePackSizeUnknown: posts through exactly like dark mode", async () => {
+        process.env.PACK_SIZE_GATE_ENFORCED = "on";
+        prisma.vendorBill.findUnique.mockResolvedValueOnce(bill({ items: [boxedItem()] }));
+        prisma.product.findFirst.mockResolvedValue({
+          currentStock: D(0),
+          averageCost: null,
+          costingMethod: "AVCO",
+        });
+
+        await service.receive("bill-1", { acknowledgePackSizeUnknown: true }, "user-1");
+
+        expect(prisma.stockMovement.create).toHaveBeenCalledTimes(1);
+      });
+
+      it("enforced: a stated pack (packSize 10) never trips the gate", async () => {
+        process.env.PACK_SIZE_GATE_ENFORCED = "on";
+        prisma.vendorBill.findUnique.mockResolvedValueOnce(
+          bill({ items: [boxedItem({ packSize: 10 })] }),
+        );
+        prisma.product.findFirst.mockResolvedValue({
+          currentStock: D(0),
+          averageCost: null,
+          costingMethod: "AVCO",
+        });
+
+        await service.receive("bill-1", undefined, "user-1");
+
+        expect(prisma.stockMovement.create).toHaveBeenCalledTimes(1);
+      });
+
+      it("enforced: a product with NO pack ladder never trips the gate — today's loose-piece line is unaffected", async () => {
+        process.env.PACK_SIZE_GATE_ENFORCED = "on";
+        prisma.vendorBill.findUnique.mockResolvedValueOnce(
+          bill({
+            items: [
+              linkedItem({
+                packSize: null,
+                product: { id: "prod-1", name: "Napkins", currentStock: D(0), averageCost: null },
+              }),
+            ],
+          }),
+        );
+        prisma.product.findFirst.mockResolvedValue({
+          currentStock: D(0),
+          averageCost: null,
+          costingMethod: "AVCO",
+        });
+
+        await service.receive("bill-1", undefined, "user-1");
+
+        expect(prisma.stockMovement.create).toHaveBeenCalledTimes(1);
+      });
+
+      it("enforced: a units_v1 ProductUnit ladder alone (no unitsPerBox) also trips the gate", async () => {
+        process.env.PACK_SIZE_GATE_ENFORCED = "on";
+        prisma.vendorBill.findUnique.mockResolvedValueOnce(
+          bill({
+            items: [
+              boxedItem({
+                product: {
+                  id: "prod-1",
+                  name: "Flour 25lb",
+                  currentStock: D(0),
+                  averageCost: null,
+                  unitsPerBox: null,
+                  units: [{ factorToBase: 24 }],
+                },
+              }),
+            ],
+          }),
+        );
+
+        await expect(service.receive("bill-1")).rejects.toMatchObject({
+          response: expect.objectContaining({ code: "PACK_SIZE_UNKNOWN" }),
+        });
+      });
+
+      it("enforced: a line already partly received (top-up) is never re-asked", async () => {
+        process.env.PACK_SIZE_GATE_ENFORCED = "on";
+        prisma.vendorBill.findUnique.mockResolvedValueOnce(
+          bill({
+            status: "PARTIAL",
+            receivedDate: new Date("2026-06-02"),
+            items: [boxedItem({ qty: D(10), qtyReceived: D(4) })],
+          }),
+        );
+        prisma.product.findFirst.mockResolvedValue({
+          currentStock: D(0),
+          averageCost: null,
+          costingMethod: "AVCO",
+        });
+
+        await service.receive("bill-1", undefined, "user-1");
+
+        expect(prisma.stockMovement.create).toHaveBeenCalledTimes(1);
+      });
+
+      it("enforced: a PO-linked bill never trips the gate — receive() posts no stock for it at all", async () => {
+        process.env.PACK_SIZE_GATE_ENFORCED = "on";
+        prisma.vendorBill.findUnique.mockResolvedValueOnce(
+          bill({ purchaseOrderId: "po-1", items: [boxedItem()] }),
+        );
+
+        // Guard (e): a PO-linked bill's stock moves through the PO's own
+        // receive, never here — so it must never trip a PACK_SIZE_UNKNOWN 409.
+        await expect(service.receive("bill-1", undefined, "user-1")).resolves.toBeDefined();
+        expect(prisma.stockMovement.create).not.toHaveBeenCalled();
+      });
+    });
   });
 
   // ─── revertToDraft ──────────────────────────────────────────────────────────
@@ -801,6 +976,84 @@ describe("VendorBillsService", () => {
           items: [{ description: "A", qty: 1, unitCost: 10 }],
         }),
       ).resolves.toMatchObject({ id: "bill-1" });
+    });
+
+    // ── B743: raising a PO from the bill's own lines becomes the stock-mover ──
+    describe("create — raising a PO from the bill (B743 PACK_SIZE_UNKNOWN, dark by default)", () => {
+      const raiseDto = (overrides: Record<string, unknown> = {}) => ({
+        supplierId: "sup-1",
+        createPurchaseOrder: true,
+        items: [{ productId: "prod-1", description: "Flour 25lb", qty: 2, unitCost: 125.9 }],
+        ...overrides,
+      });
+
+      afterEach(() => {
+        delete process.env.PACK_SIZE_GATE_ENFORCED;
+      });
+
+      it("repro (dark): raises the PO with the piece-basis unaffected — TODAY's silent wrong value, on purpose while dark", async () => {
+        prisma.product.findMany.mockResolvedValueOnce([
+          { id: "prod-1", name: "Flour 25lb", unitsPerBox: 10, units: [] },
+        ]);
+
+        await service.create(raiseDto());
+
+        const lines = inventory.createDraftPurchaseOrderInTx.mock.calls[0][1].lines;
+        expect(lines[0].qtyOrdered.toString()).toBe("2");
+        expect(lines[0].unitCost.toString()).toBe("125.9");
+      });
+
+      it("enforced: refuses to raise the PO at all when a line's pack is unknown for a boxed product", async () => {
+        process.env.PACK_SIZE_GATE_ENFORCED = "on";
+        prisma.product.findMany.mockResolvedValueOnce([
+          { id: "prod-1", name: "Flour 25lb", unitsPerBox: 10, units: [] },
+        ]);
+
+        await expect(service.create(raiseDto())).rejects.toMatchObject({
+          constructor: ConflictException,
+          response: expect.objectContaining({
+            code: "PACK_SIZE_UNKNOWN",
+            packSizeUnknownItems: [expect.objectContaining({ id: null, productId: "prod-1" })],
+          }),
+        });
+        expect(inventory.createDraftPurchaseOrderInTx).not.toHaveBeenCalled();
+        expect(prisma.vendorBill.create).not.toHaveBeenCalled();
+      });
+
+      it("enforced + acknowledgePackSizeUnknown: raises the PO through exactly like dark mode", async () => {
+        process.env.PACK_SIZE_GATE_ENFORCED = "on";
+        prisma.product.findMany.mockResolvedValueOnce([
+          { id: "prod-1", name: "Flour 25lb", unitsPerBox: 10, units: [] },
+        ]);
+
+        await service.create(raiseDto({ acknowledgePackSizeUnknown: true }));
+
+        expect(inventory.createDraftPurchaseOrderInTx).toHaveBeenCalledTimes(1);
+      });
+
+      it("enforced: a stated pack never trips the gate", async () => {
+        process.env.PACK_SIZE_GATE_ENFORCED = "on";
+        prisma.product.findMany.mockResolvedValueOnce([
+          { id: "prod-1", name: "Flour 25lb", unitsPerBox: 10, units: [] },
+        ]);
+
+        await service.create(
+          raiseDto({ items: [{ productId: "prod-1", qty: 2, unitCost: 125.9, packSize: 10 }] }),
+        );
+
+        expect(inventory.createDraftPurchaseOrderInTx).toHaveBeenCalledTimes(1);
+      });
+
+      it("enforced: a product with no pack ladder never trips the gate", async () => {
+        process.env.PACK_SIZE_GATE_ENFORCED = "on";
+        prisma.product.findMany.mockResolvedValueOnce([
+          { id: "prod-1", name: "Napkins", unitsPerBox: null, units: [] },
+        ]);
+
+        await service.create(raiseDto());
+
+        expect(inventory.createDraftPurchaseOrderInTx).toHaveBeenCalledTimes(1);
+      });
     });
   });
 
