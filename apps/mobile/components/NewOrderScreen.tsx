@@ -19,7 +19,8 @@ import { ios } from "@routeflow/ui/tokens";
 import { FilterChipRow, NavBackButton, NavBar, SearchBar } from "@routeflow/ui/mobile/ios";
 import { apiClient } from "../lib/api-client";
 import { unitPriceBase, type UnitOption } from "../lib/unit-options";
-import { effectiveUnitPrice, toNumber, type LineState, type Product } from "../lib/cart-line-state";
+import { toNumber, type LineState, type Product } from "../lib/cart-line-state";
+import { computeOrderTotal, lineUnitFor, type UnlistedTotalLine } from "../lib/cart-order-total";
 import { CartRow } from "./CartRow";
 import { CartStepperRow } from "./CartStepperRow";
 import { useAdminCustomers } from "../lib/api/admin";
@@ -569,16 +570,14 @@ function ProductPickView({
   /** SPECIAL (tier≠1) lines are the customer's permanent price — never overridable. */
   const isSpecialFor = (p: Product) => effectiveTierFor(p.id) !== 1;
   /**
-   * What this line actually charges: overrides count only on non-SPECIAL lines (web parity).
-   * Routes the fallback through `unitPriceBase` so a unit-sold line (qty in that unit, no
-   * explicit override) prices off its OWN resolved level, never the pack's tier price — the
-   * same comparison-baseline fix as CartRow's `priceBase`/`effUnit`, applied here because this
-   * helper (not CartRow's local copy) is what the order total and invoice-split preview read.
+   * What this line actually charges — thin wrapper over the pure, unit-tested
+   * `lineUnitFor` (lib/cart-order-total.ts): overrides count only on non-SPECIAL lines (web
+   * parity), and a unit-sold line prices off its OWN resolved level, never the pack's tier
+   * price — the same comparison-baseline fix as CartRow's `priceBase`/`effUnit`, applied here
+   * because this is what the order total and invoice-split preview read.
    */
-  const lineUnitFor = (line: LineState | undefined, p: Product) => {
-    const base = unitPriceBase(line ?? {}, tierPriceFor(p));
-    return isSpecialFor(p) ? base : effectiveUnitPrice(line, base);
-  };
+  const lineUnitForProduct = (line: LineState | undefined, p: Product) =>
+    lineUnitFor(line, p, effectiveTierFor(p.id));
   const [scanOpen, setScanOpen] = useState(false);
   /** Tray line (catalog id or unlisted local id) whose price is being edited. */
   const [priceEditId, setPriceEditId] = useState<string | null>(null);
@@ -1276,36 +1275,15 @@ function ProductPickView({
     listRef.current?.scrollToIndex({ index: scrollIndex, viewPosition: 0.12, animated: true });
   }, [pendingScroll, filtered]);
 
-  // Total + count, computed from items + the unified product map so scanned
-  // items that aren't in the local list still contribute. Subtotal uses the
-  // shared box/piece-aware formula so the footer agrees with what the server
-  // will compute on submit.
-  const { total, totalItems } = useMemo(() => {
-    let total = 0;
-    let totalItems = 0;
-    for (const [id, line] of Object.entries(items)) {
-      const p = productById.get(id);
-      if (!p) continue;
-      const qty = effectiveQty(line, p.unitsPerBox);
-      if (qty <= 0) continue;
-      totalItems += qty;
-      total += computeLineSubtotal({
-        unitPrice: lineUnitFor(line, p),
-        qty,
-        boxes: line.boxes ?? null,
-        pieces: line.pieces ?? null,
-        unitsPerBox: p.unitsPerBox ?? null,
-      });
-    }
-    // Unlisted lines: never boxed, simple unitPrice × qty.
-    for (const u of unlisted) {
-      if (u.qty <= 0) continue;
-      totalItems += u.qty;
-      total += computeLineSubtotal({ unitPrice: u.unitPrice, qty: u.qty });
-    }
-    return { total: roundMoney(total), totalItems };
+  // Total + count — thin wrapper over the pure, unit-tested `computeOrderTotal`
+  // (lib/cart-order-total.ts). Computed from items + the unified product map so scanned
+  // items that aren't in the local list still contribute. Subtotal uses the shared
+  // box/piece-aware formula so the footer agrees with what the server will compute on submit.
+  const { total, totalItems } = useMemo(
+    () => computeOrderTotal(items, productById, unlisted as UnlistedTotalLine[], effectiveTierFor),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [items, productById, unlisted, cpMap, customerTier]);
+    [items, productById, unlisted, cpMap, customerTier],
+  );
 
   // REG-4: live, DISPLAY-ONLY preview of how this cart will split into invoices.
   // Same iteration/inputs as the total memo above (by design — it can never
@@ -1322,7 +1300,7 @@ function ProductPickView({
       if (qty <= 0) continue;
       splitLines.push({
         trackedCategoryId: p.trackedCategoryId ?? null,
-        unitPrice: lineUnitFor(line, p),
+        unitPrice: lineUnitForProduct(line, p),
         qty,
         boxes: line.boxes ?? null,
         pieces: line.pieces ?? null,
@@ -1517,7 +1495,7 @@ function ProductPickView({
             line={line}
             unitsPerBox={Number(p.unitsPerBox)}
             unit={p.unit}
-            unitPrice={lineUnitFor(line, p)}
+            unitPrice={lineUnitForProduct(line, p)}
             productName={displayName(p)}
             onChangeBoxes={(n) => onRowChangeBoxes(p.id, n)}
             onChangePieces={(n) => onRowChangePieces(p.id, n)}
