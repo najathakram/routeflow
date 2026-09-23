@@ -2,6 +2,7 @@ import { Test, TestingModule } from "@nestjs/testing";
 import {
   BadRequestException,
   ConflictException,
+  Logger,
   ServiceUnavailableException,
   UnprocessableEntityException,
 } from "@nestjs/common";
@@ -558,27 +559,52 @@ describe("VendorBillsService", () => {
         expect(movementArgs.unitCost.toString()).toBe("125.9");
       });
 
-      it("enforced: refuses the same line with PACK_SIZE_UNKNOWN, naming the product's own pack as a hint, and posts nothing", async () => {
+      it("Opus review finding 5: PACK_SIZE_GATE_ENFORCED=on alone never refuses — PACK_SIZE_GATE_READY_FOR_ENFORCEMENT stays false until PR D's reviewed diff flips it", async () => {
+        // Before the code-constant requirement landed, this env var alone
+        // threw PACK_SIZE_UNKNOWN and posted nothing (see pack-size-gate.ts's
+        // review comment: an env-var-only switch is exactly the shape that
+        // caused a PLAN_FLAG_ENFORCEMENT P0 in production). Now it posts
+        // through exactly like dark mode, and still logs the would-deny (see
+        // the Logger.prototype.warn spy test below).
         process.env.PACK_SIZE_GATE_ENFORCED = "on";
         prisma.vendorBill.findUnique.mockResolvedValueOnce(bill({ items: [boxedItem()] }));
-
-        await expect(service.receive("bill-1")).rejects.toMatchObject({
-          constructor: ConflictException,
-          response: expect.objectContaining({
-            code: "PACK_SIZE_UNKNOWN",
-            packSizeUnknownItems: [
-              expect.objectContaining({
-                productId: "prod-1",
-                productName: "Flour 25lb",
-                qty: 2,
-                unitCost: 125.9,
-                productPack: 10,
-              }),
-            ],
-          }),
+        prisma.product.findFirst.mockResolvedValue({
+          currentStock: D(0),
+          averageCost: null,
+          costingMethod: "AVCO",
         });
-        expect(prisma.stockMovement.create).not.toHaveBeenCalled();
-        expect(prisma.product.update).not.toHaveBeenCalled();
+
+        await service.receive("bill-1", undefined, "user-1");
+
+        const movementArgs = prisma.stockMovement.create.mock.calls[0][0].data;
+        expect(movementArgs.quantity.toString()).toBe("2");
+        expect(movementArgs.unitCost.toString()).toBe("125.9");
+      });
+
+      it("Opus review finding 2: the dark would-deny log fires (Logger.prototype.warn spy) with path, bill, tenant, and the product's own pack hint", async () => {
+        const warnSpy = jest.spyOn(Logger.prototype, "warn").mockImplementation(() => undefined);
+        try {
+          prisma.vendorBill.findUnique.mockResolvedValueOnce(bill({ items: [boxedItem()] }));
+          prisma.product.findFirst.mockResolvedValue({
+            currentStock: D(0),
+            averageCost: null,
+            costingMethod: "AVCO",
+          });
+
+          await service.receive("bill-1", undefined, "user-1");
+
+          const call = warnSpy.mock.calls.find(([msg]) =>
+            String(msg).includes("PACK_SIZE_UNKNOWN"),
+          );
+          expect(call).toBeDefined();
+          const message = String(call![0]);
+          expect(message).toContain("path=receive");
+          expect(message).toContain("bill=bill-1(BILL-2026-0001)");
+          expect(message).toContain("lines=1");
+          expect(message).toContain("prod-1:pack=10");
+        } finally {
+          warnSpy.mockRestore();
+        }
       });
 
       it("enforced + acknowledgePackSizeUnknown: posts through exactly like dark mode", async () => {
@@ -634,28 +660,46 @@ describe("VendorBillsService", () => {
         expect(prisma.stockMovement.create).toHaveBeenCalledTimes(1);
       });
 
-      it("enforced: a units_v1 ProductUnit ladder alone (no unitsPerBox) also trips the gate", async () => {
-        process.env.PACK_SIZE_GATE_ENFORCED = "on";
-        prisma.vendorBill.findUnique.mockResolvedValueOnce(
-          bill({
-            items: [
-              boxedItem({
-                product: {
-                  id: "prod-1",
-                  name: "Flour 25lb",
-                  currentStock: D(0),
-                  averageCost: null,
-                  unitsPerBox: null,
-                  units: [{ factorToBase: 24 }],
-                },
-              }),
-            ],
-          }),
-        );
+      it("a units_v1 ProductUnit ladder alone (no unitsPerBox) also trips the gate (dark: logs, still posts)", async () => {
+        // Opus review finding 5: PACK_SIZE_GATE_ENFORCED alone can no longer
+        // throw (see the finding-5 test above) — this now pins that the
+        // SERVICE still correctly wires a ProductUnit-ladder-only ambiguous
+        // line into the gate at all (classification itself is covered
+        // directly in bill-line-pack.spec.ts), observable via the dark log.
+        const warnSpy = jest.spyOn(Logger.prototype, "warn").mockImplementation(() => undefined);
+        try {
+          prisma.vendorBill.findUnique.mockResolvedValueOnce(
+            bill({
+              items: [
+                boxedItem({
+                  product: {
+                    id: "prod-1",
+                    name: "Flour 25lb",
+                    currentStock: D(0),
+                    averageCost: null,
+                    unitsPerBox: null,
+                    units: [{ factorToBase: 24 }],
+                  },
+                }),
+              ],
+            }),
+          );
+          prisma.product.findFirst.mockResolvedValue({
+            currentStock: D(0),
+            averageCost: null,
+            costingMethod: "AVCO",
+          });
 
-        await expect(service.receive("bill-1")).rejects.toMatchObject({
-          response: expect.objectContaining({ code: "PACK_SIZE_UNKNOWN" }),
-        });
+          await service.receive("bill-1", undefined, "user-1");
+
+          const call = warnSpy.mock.calls.find(([msg]) =>
+            String(msg).includes("PACK_SIZE_UNKNOWN"),
+          );
+          expect(call).toBeDefined();
+          expect(prisma.stockMovement.create).toHaveBeenCalledTimes(1);
+        } finally {
+          warnSpy.mockRestore();
+        }
       });
 
       it("enforced: a line already partly received (top-up) is never re-asked", async () => {
@@ -1003,21 +1047,40 @@ describe("VendorBillsService", () => {
         expect(lines[0].unitCost.toString()).toBe("125.9");
       });
 
-      it("enforced: refuses to raise the PO at all when a line's pack is unknown for a boxed product", async () => {
+      it("Opus review finding 5: PACK_SIZE_GATE_ENFORCED=on alone never refuses raising the PO — the code constant stays false until PR D", async () => {
         process.env.PACK_SIZE_GATE_ENFORCED = "on";
         prisma.product.findMany.mockResolvedValueOnce([
           { id: "prod-1", name: "Flour 25lb", unitsPerBox: 10, units: [] },
         ]);
 
-        await expect(service.create(raiseDto())).rejects.toMatchObject({
-          constructor: ConflictException,
-          response: expect.objectContaining({
-            code: "PACK_SIZE_UNKNOWN",
-            packSizeUnknownItems: [expect.objectContaining({ id: null, productId: "prod-1" })],
-          }),
-        });
-        expect(inventory.createDraftPurchaseOrderInTx).not.toHaveBeenCalled();
-        expect(prisma.vendorBill.create).not.toHaveBeenCalled();
+        // Raises the PO exactly like dark mode — see the finding-5 receive()
+        // test above for the same code-constant reasoning.
+        await service.create(raiseDto());
+
+        const lines = inventory.createDraftPurchaseOrderInTx.mock.calls[0][1].lines;
+        expect(lines[0].qtyOrdered.toString()).toBe("2");
+      });
+
+      it("Opus review finding 2: the dark would-deny log fires for the raise-PO path (path=raise-po, bill=new before the bill exists)", async () => {
+        const warnSpy = jest.spyOn(Logger.prototype, "warn").mockImplementation(() => undefined);
+        try {
+          prisma.product.findMany.mockResolvedValueOnce([
+            { id: "prod-1", name: "Flour 25lb", unitsPerBox: 10, units: [] },
+          ]);
+
+          await service.create(raiseDto());
+
+          const call = warnSpy.mock.calls.find(([msg]) =>
+            String(msg).includes("PACK_SIZE_UNKNOWN"),
+          );
+          expect(call).toBeDefined();
+          const message = String(call![0]);
+          expect(message).toContain("path=raise-po");
+          expect(message).toContain("bill=new");
+          expect(message).toContain("prod-1:pack=10");
+        } finally {
+          warnSpy.mockRestore();
+        }
       });
 
       it("enforced + acknowledgePackSizeUnknown: raises the PO through exactly like dark mode", async () => {

@@ -73,6 +73,12 @@ export function classifyBillLinePack(
   packSize: number | null | undefined,
   product: PackLadderProduct | null | undefined,
 ): BillLinePackClass {
-  if (Number(packSize ?? 0) > 1) return "case";
+  // Opus review (B743 PR A, finding 4): truncate BEFORE the > 1 check, the
+  // same way vendor-bills.service.ts#billLineToPieces truncates before ever
+  // converting a line — otherwise a fractional pack (a DTO-allowed 1.5)
+  // classifies as a known "case" here while the actual conversion logic
+  // truncates it to 1 and treats the line as NOT boxed, so the two silently
+  // disagree on the exact lines this gate exists to catch.
+  if (Math.trunc(Number(packSize ?? 0)) > 1) return "case";
   return productHasPackLadder(product) ? "unknown" : "loose";
 }

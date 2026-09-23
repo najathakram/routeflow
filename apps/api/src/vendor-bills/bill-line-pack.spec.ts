@@ -1,4 +1,25 @@
+import { readFileSync } from "fs";
+import { join } from "path";
 import { classifyBillLinePack, knownPackHint, productHasPackLadder } from "./bill-line-pack";
+
+// SA non-blocking pin: this module is a PURE classifier — it decides
+// whether to ask, never writes anything itself. A future edit that starts
+// importing Prisma or calling .create(/.update( here would mean the module
+// stopped being pure and this pin should fail loudly rather than let a
+// write slip in unreviewed.
+describe("bill-line-pack.ts stays a pure classifier (SA non-blocking pin)", () => {
+  const source = readFileSync(join(__dirname, "bill-line-pack.ts"), "utf8");
+
+  it("imports no Prisma client", () => {
+    expect(source).not.toMatch(/from ["']@prisma\/client["']/);
+    expect(source).not.toMatch(/PrismaService|PrismaClient/);
+  });
+
+  it("calls no .create( or .update(", () => {
+    expect(source).not.toMatch(/\.create\(/);
+    expect(source).not.toMatch(/\.update\(/);
+  });
+});
 
 describe("bill-line-pack: classifyBillLinePack (B743 — purchase-cost silent default)", () => {
   it("repro: qty 2, unitCost 125.90, packSize null, product pack 10 -> unknown (today silently treated as pieces)", () => {
@@ -22,6 +43,20 @@ describe("bill-line-pack: classifyBillLinePack (B743 — purchase-cost silent de
     expect(classifyBillLinePack(null, null)).toBe("loose");
     expect(classifyBillLinePack(0, { unitsPerBox: 1 })).toBe("loose");
     expect(classifyBillLinePack(undefined, { unitsPerBox: 0 })).toBe("loose");
+  });
+
+  it("Opus review finding 4: a fractional pack (1.5) truncates to 1 BEFORE the > 1 check, matching billLineToPieces's own Math.trunc — never classified as a known 'case'", () => {
+    // vendor-bills.service.ts#billLineToPieces truncates packSize via
+    // Math.trunc before ever converting a line; without the same
+    // truncation here, 1.5 (> 1) would classify as "case" while the actual
+    // conversion logic treats it as pack 1 (not boxed) — the two silently
+    // disagree on exactly the lines this gate exists to catch.
+    expect(classifyBillLinePack(1.5, { unitsPerBox: 10 })).toBe("unknown");
+    expect(classifyBillLinePack(1.5, { unitsPerBox: 10 })).not.toBe("case");
+    // A genuine fractional CASE size (2.5) still truncates to 2, which IS > 1
+    // -> correctly still "case" (truncation only removes the fractional part,
+    // it doesn't zero out a real multi-unit pack).
+    expect(classifyBillLinePack(2.5, { unitsPerBox: 10 })).toBe("case");
   });
 
   it("a units_v1 selling ladder alone (no unitsPerBox) also makes a null pack 'unknown'", () => {

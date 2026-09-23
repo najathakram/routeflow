@@ -350,6 +350,7 @@ export class VendorBillsService {
           product: productsById.get(item.productId),
         })),
         !!dto.acknowledgePackSizeUnknown,
+        { path: "raise-po", billId: null, billNumber: null },
       );
     }
 
@@ -1055,9 +1056,16 @@ export class VendorBillsService {
         this.prisma.getTenantId(),
         plan
           .filter(({ item }) => item.productId && this.lineReceivedQty(bill, item).lte(0))
-          .map(({ item }, lineIndex) => ({
+          .map(({ item }) => ({
             id: item.id,
-            lineIndex,
+            // Opus review (B743 PR A, finding 3): this array is FILTERED
+            // (see .filter above) — indexing it directly gave the position
+            // in the filtered plan, not the line's real position on the
+            // bill. Every line here already carries a real `item.id`
+            // (unlike create()'s raise-PO path, where lineIndex is the only
+            // identifier for a not-yet-persisted line) — findIndex against
+            // the bill's own full item list is the line's true position.
+            lineIndex: bill.items.findIndex((i) => i.id === item.id),
             description: item.description,
             productId: item.productId!,
             packSize: item.packSize,
@@ -1066,6 +1074,7 @@ export class VendorBillsService {
             product: item.product,
           })),
         !!dto?.acknowledgePackSizeUnknown,
+        { path: "receive", billId: bill.id, billNumber: bill.billNumber },
       );
     }
 
