@@ -3,6 +3,7 @@ import {
   buildDeliveries,
   reconciledTotal,
   isFullyDelivered,
+  buildStopDeliveries,
 } from "../lib/short-pick";
 
 const lines = [
@@ -84,5 +85,73 @@ describe("isFullyDelivered", () => {
   });
   it("false once any line is reduced", () => {
     expect(isFullyDelivered(lines, { "li-1": 5 })).toBe(false);
+  });
+});
+
+describe("buildStopDeliveries (B762/SA-109/SA-109a: multi-order stop coverage)", () => {
+  const orderALines = lines; // li-1 (qty 10), li-2 (qty 2)
+  const orderBLines = [
+    { orderItemId: "li-3", productId: "p-3", orderedQty: 5, subtotal: 50 },
+    { orderItemId: "li-4", productId: "p-4", orderedQty: 4, subtotal: 40 },
+  ];
+
+  it("Case 1 — all delivered: every line of every order gets an explicit DELIVERED entry at full qty, even an order the driver never touched (empty deliveredQtyById)", () => {
+    const out = buildStopDeliveries([
+      { orderId: "A", lines: orderALines, deliveredQtyById: {} },
+      { orderId: "B", lines: orderBLines, deliveredQtyById: {} },
+    ]);
+    expect(out).toEqual([
+      { orderItemId: "li-1", productId: "p-1", type: "DELIVERED", quantityDelivered: 10 },
+      { orderItemId: "li-2", productId: "p-2", type: "DELIVERED", quantityDelivered: 2 },
+      { orderItemId: "li-3", productId: "p-3", type: "DELIVERED", quantityDelivered: 5 },
+      { orderItemId: "li-4", productId: "p-4", type: "DELIVERED", quantityDelivered: 4 },
+    ]);
+  });
+
+  it("Case 2 — one order entirely refused: EVERY line of the refused order carries an explicit REFUSED/0 entry — never simply absent from the payload", () => {
+    const out = buildStopDeliveries([
+      { orderId: "A", lines: orderALines, deliveredQtyById: {} },
+      { orderId: "B", lines: orderBLines, deliveredQtyById: { "li-3": 0, "li-4": 0 } },
+    ]);
+    // Order A: untouched, full DELIVERED (Case 1's guarantee holds alongside a refused sibling).
+    expect(out.filter((d) => d.orderItemId === "li-1" || d.orderItemId === "li-2")).toEqual([
+      { orderItemId: "li-1", productId: "p-1", type: "DELIVERED", quantityDelivered: 10 },
+      { orderItemId: "li-2", productId: "p-2", type: "DELIVERED", quantityDelivered: 2 },
+    ]);
+    // Order B: both lines explicitly REFUSED at qty 0 — not omitted, not defaulted to delivered.
+    expect(out.filter((d) => d.orderItemId === "li-3" || d.orderItemId === "li-4")).toEqual([
+      { orderItemId: "li-3", productId: "p-3", type: "REFUSED", quantityDelivered: 0 },
+      { orderItemId: "li-4", productId: "p-4", type: "REFUSED", quantityDelivered: 0 },
+    ]);
+    expect(out).toHaveLength(4);
+  });
+
+  it("Case 3 — partial/mixed: order A full, order B has one short line — B's OTHER line still gets its own explicit full-qty entry, never omitted just because a sibling line is short", () => {
+    const out = buildStopDeliveries([
+      { orderId: "A", lines: orderALines, deliveredQtyById: {} },
+      { orderId: "B", lines: orderBLines, deliveredQtyById: { "li-3": 2 } }, // li-4 untouched -> full
+    ]);
+    expect(out).toEqual([
+      { orderItemId: "li-1", productId: "p-1", type: "DELIVERED", quantityDelivered: 10 },
+      { orderItemId: "li-2", productId: "p-2", type: "DELIVERED", quantityDelivered: 2 },
+      { orderItemId: "li-3", productId: "p-3", type: "PARTIAL", quantityDelivered: 2 },
+      { orderItemId: "li-4", productId: "p-4", type: "DELIVERED", quantityDelivered: 4 },
+    ]);
+  });
+
+  it("type always matches quantityDelivered exactly (SA-109a: server 400s a mismatch) — REFUSED only at 0, DELIVERED only at the full ordered qty", () => {
+    const out = buildStopDeliveries([
+      { orderId: "A", lines: orderALines, deliveredQtyById: { "li-1": 0, "li-2": 1 } },
+    ]);
+    for (const entry of out) {
+      const src = [...orderALines].find((l) => l.orderItemId === entry.orderItemId)!;
+      expect(entry.type).toBe(deliveryTypeForQty(entry.quantityDelivered, src.orderedQty));
+    }
+  });
+
+  it("an order omitted from the input array entirely contributes NOTHING — callers must pass every order the driver handled, never rely on this function to fill gaps", () => {
+    const out = buildStopDeliveries([{ orderId: "A", lines: orderALines, deliveredQtyById: {} }]);
+    expect(out.some((d) => d.orderItemId === "li-3" || d.orderItemId === "li-4")).toBe(false);
+    expect(out).toHaveLength(2);
   });
 });

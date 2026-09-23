@@ -141,3 +141,45 @@ export function isFullyDelivered(
 ): boolean {
   return lines.every((li) => (deliveredQtyById[li.orderItemId] ?? li.orderedQty) >= li.orderedQty);
 }
+
+/** One order's worth of `buildDeliveries` inputs, for a multi-order stop. */
+export interface StopOrderDeliveryPlan {
+  orderId: string;
+  lines: ShortPickLine[];
+  /** Missing lines default to their full ordered qty (buildDeliveries) — an
+   *  order the driver never touched still contributes explicit DELIVERED
+   *  entries, never zero entries. To mark a whole order refused, every one
+   *  of its lines must be present here at 0 — omission is never "refused". */
+  deliveredQtyById: Record<string, number>;
+}
+
+export interface StopDeliveryEntry {
+  orderItemId: string;
+  productId: string | null;
+  type: DeliveryType;
+  quantityDelivered: number;
+}
+
+/**
+ * The `deliveries` array for `useCompleteWithPayment`, across EVERY order at
+ * a multi-order stop (B762/SA-109/SA-109a). Full coverage per order, never
+ * omission: `buildDeliveries` already defaults an order's untouched lines to
+ * their full ordered qty/DELIVERED, so an order this array includes with an
+ * EMPTY `deliveredQtyById` still emits one explicit entry per line — the
+ * server reads a wholly OMITTED order (missing from this array entirely) as
+ * fully UNDELIVERED, so every order at the stop the driver actually handled
+ * must appear here, never be left out. `type` is always
+ * `deliveryTypeForQty(qty, orderedQty)`, matching `quantityDelivered`
+ * exactly — the server 400s a type/qty mismatch (SA-109a): REFUSED only at
+ * qty 0, DELIVERED only at the full ordered qty, PARTIAL otherwise.
+ */
+export function buildStopDeliveries(orders: StopOrderDeliveryPlan[]): StopDeliveryEntry[] {
+  return orders.flatMap((o) =>
+    buildDeliveries(o.lines, o.deliveredQtyById).map((d) => ({
+      orderItemId: d.orderItemId,
+      productId: d.productId,
+      type: d.type,
+      quantityDelivered: d.qty,
+    })),
+  );
+}
