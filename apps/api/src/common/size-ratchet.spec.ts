@@ -30,7 +30,7 @@ const HEADROOM = 25;
 /** Repo-relative path → baseline line count (measured 2026-09-19 at 91d323de). */
 const BASELINE: Record<string, number> = {
   "apps/api/src/orders/orders.service.ts": 5751, // SA-065 extraction: appendOrderRevision -> order-revisions.ts (was 5780; U1 before that: class tail -> order-lifecycle.ts, 5880)
-  "apps/api/src/invoices/invoices.service.ts": 6380, // B667: recomputeOrderFromInvoices tail (orphan-cancel + order-total rewrite, now full-coverage-gated) -> finalize-order-recompute.ts (was 6389)
+  "apps/api/src/invoices/invoices.service.ts": 6385, // B667: recomputeOrderFromInvoices tail (orphan-cancel + order-total rewrite, now full-coverage-gated) -> finalize-order-recompute.ts (was 6389; net -4 after B667 round 5)
   "apps/api/src/orders/orders.service.spec.ts": 9511,
   "apps/api/src/customers/customers.service.ts": 3307,
   "apps/api/src/invoices/invoices.service.spec.ts": 9351,
