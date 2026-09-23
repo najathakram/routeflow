@@ -116,9 +116,15 @@ after every attempt failed, and clears it itself on the next confirmed flip.
    legitimately docs-only, the prod API is currently serving the newest commit that DID need to
    deploy, and CI's own verdict on master's tip is a real `success` — never a skip, and never the
    ~2-second "billing-block" artifact (a run whose jobs recorded zero steps; see the retirement
-   checklist below — "a 0-step green is still the billing block, not proof it's fixed"). It exits
-   0 only when every check passes; otherwise it FAILS CLOSED and names each failing commit/check —
-   do not flip private on a nonzero exit, fix forward instead (see Failure modes below).
+   checklist below — "a 0-step green is still the billing block, not proof it's fixed"). Because
+   `ci.yml` has no `push:` trigger, that CI verdict is checked on the merged PR's head sha, not the
+   squash commit itself — which is why the check also requires the squash commit's own Git tree to
+   equal its PR head's tree (`commits/{sha}`'s `commit.tree.sha`): **a tree mismatch between a
+   merged commit and its PR head means the PR landed without containing master's tip, so the
+   tested tree is not the tree that shipped. The pre-merge ancestry check (step 2) prevents this;
+   treat a mismatch as a gate failure, never relax it to a diff comparison.** It exits 0 only when
+   every check passes; otherwise it FAILS CLOSED and names each failing commit/check — do not flip
+   private on a nonzero exit, fix forward instead (see Failure modes below).
    **Paste its printed table on issue #938** so the window's close is on the record, the same way
    the deploy proof already lived only in a terminal until now. This closes the hole from the night
    of 2026-09-22, where PR #1262's (f894d974) failed deploy sat unnoticed for about 90 minutes
