@@ -1,5 +1,6 @@
 /**
- * Per-line promo/original-price display decisions for the invoice PDF (F03 R9).
+ * Per-line promo/original-price/qty-label display decisions for the invoice PDF (F03 R9,
+ * B653).
  *
  * WHY a helper rather than assertions on the template: `./invoice-pdf-template` is
  * replaced wholesale by `apps/api/test/__mocks__/invoice-pdf-template.js` through
@@ -10,6 +11,18 @@
  * The visual reference is the web invoice detail renderer,
  * `apps/web/app/(dashboard)/invoices/[id]/page.tsx` :2408-2481.
  */
+
+import { formatQtySplit } from "@routeflow/pricing";
+
+/** Mirrors `invoice-pdf-template.tsx`'s own `DecimalLike` — a Prisma Decimal, a plain
+ *  number, or a numeric string, all seen on the wire depending on the read path. */
+type DecimalLike = { toNumber(): number } | number | string;
+
+const toNum = (val: DecimalLike): number => {
+  if (typeof val === "number") return val;
+  if (typeof val === "string") return parseFloat(val);
+  return val.toNumber();
+};
 
 export type InvoicePdfItemLike = {
   qty?: number | string | null;
@@ -45,4 +58,34 @@ export function showOriginalPrice(item: InvoicePdfItemLike, hideOriginalPrice: b
   // MANUAL upsell (charged ABOVE the base price): never expose the lower base.
   if (item.priceType === "MANUAL" && unitPrice > original) return false;
   return true;
+}
+
+export type InvoicePdfQtyItemLike = {
+  qty: DecimalLike;
+  boxes?: number | null;
+  pieces?: number | null;
+  /** units_v1 (2026-09-19): the line's own selling unit ("Case") when this line was
+   *  sold by a non-pack unit rather than by loose pieces — see `buildInvoiceUnitLine`.
+   *  A units_v1 line stores `boxes = count` (the unit count, NOT box count) and
+   *  `pieces = 0`, so without this the qty cell reads "N boxes" for a genuine "N Case"
+   *  line (B653). */
+  unitLabel?: string | null;
+};
+
+/**
+ * B653: the invoice PDF's qty-column text — "2 boxes + 3 pcs" for an ordinary boxed
+ * line, unchanged, but "3 Case" (not "3 boxes") for a units_v1 line, whose own
+ * `unitLabel` is the box-level label `formatQtySplit` was already built to accept
+ * (units/PO minimal, 2026-09-19) and this template simply never passed through.
+ * `unitLabel` is used ONLY as `boxLabel` here — `formatQtySplit`'s own `unitLabel`
+ * param names the LOOSE-PIECE noun (defaults "pcs"), a different axis a units_v1
+ * line's `pieces: 0` never reaches anyway.
+ */
+export function qtyCellText(item: InvoicePdfQtyItemLike): string {
+  return formatQtySplit({
+    qty: toNum(item.qty),
+    boxes: item.boxes,
+    pieces: item.pieces,
+    boxLabel: item.unitLabel,
+  });
 }

@@ -37,7 +37,7 @@ jest.mock("@react-pdf/renderer", () => ({
 
 import { Test, TestingModule } from "@nestjs/testing";
 import { InvoicePdfService } from "./invoice-pdf.service";
-import { promoNote, showOriginalPrice } from "./invoice-pdf-item";
+import { promoNote, qtyCellText, showOriginalPrice } from "./invoice-pdf-item";
 import { PrismaService } from "../prisma/prisma.service";
 import { StorageService } from "../storage/storage.service";
 import { SystemConfigService } from "../system-config/system-config.service";
@@ -327,5 +327,34 @@ describe("invoice-pdf-item — BOGO/promo line display (T-B103, R9, REG-B103)", 
     expect(
       showOriginalPrice({ qty: 1, unitPrice: 9, originalPrice: 12, priceType: "MANUAL" }, false),
     ).toBe(true);
+  });
+});
+
+describe("invoice-pdf-item — qty cell text (B653)", () => {
+  it('REG-B653-pdf: a units_v1 line (boxes = unit count, pieces = 0, unitLabel "Case") reads "N Case(s)", never "N boxes"', () => {
+    expect(qtyCellText({ qty: 36, boxes: 3, pieces: 0, unitLabel: "Case" })).toBe("3 Cases");
+    // Singular stays unpluralized — same rule formatQtySplit already applies to boxLabel.
+    expect(qtyCellText({ qty: 12, boxes: 1, pieces: 0, unitLabel: "Case" })).toBe("1 Case");
+  });
+
+  it("PIN-B653-pdf: a factor-1 units_v1 line (boxes AND pieces null) stays a bare count — out of this fix's scope", () => {
+    // buildInvoiceUnitLine: factor === 1 stores boxes: null, pieces: null (a
+    // factor-1 unit is per-piece and snapshots as such). formatQtySplit's FIRST
+    // branch (`boxes == null && pieces == null`) fires before boxLabel is ever
+    // consulted, so this line renders identically to an ordinary non-boxed
+    // product's plain qty — unaffected by this fix either way. Documented, not
+    // silently widened: B653's own filing is specifically about a Case (boxed,
+    // factor > 1) line reading "boxes"; a factor-1 custom unit reading bare is a
+    // separate, smaller question if it's wanted at all.
+    expect(qtyCellText({ qty: 5, boxes: null, pieces: null, unitLabel: "Bag" })).toBe("5");
+  });
+
+  it('REG-B653-pdf: an ordinary boxed line (no unitLabel) is unchanged — still "boxes"/"pcs"', () => {
+    expect(qtyCellText({ qty: 27, boxes: 2, pieces: 3 })).toBe("2 boxes + 3 pcs");
+    expect(qtyCellText({ qty: 27, boxes: 2, pieces: 3, unitLabel: null })).toBe("2 boxes + 3 pcs");
+  });
+
+  it("REG-B653-pdf: a plain non-boxed line is unaffected", () => {
+    expect(qtyCellText({ qty: 5, boxes: null, pieces: null })).toBe("5");
   });
 });
