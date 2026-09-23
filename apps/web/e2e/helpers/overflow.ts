@@ -109,12 +109,20 @@ export async function documentLevelOverflowPx(page: Page): Promise<number> {
  * clean rather than skip the whole page. Keep this narrow and specific to the
  * one filed bug it exists for — a broad ignore predicate defeats the probe
  * the same way an unqualified page skip would.
+ *
+ * Logs the URL it actually checked, always. A detail-page navigation that
+ * silently no-ops (a locator matching 0, a click landing on the wrong
+ * element, client-side navigation that never completes) used to leave a
+ * conditional check simply skipped with nothing in the test output to show
+ * for it — this is the fleet's own fix for that, not just this file's:
+ * every call proves, in the log, which real URL it ran the probe against.
  */
 export async function assertNoOverflow(
   page: Page,
   screenLabel: string,
   ignore?: (o: Offender) => boolean,
 ) {
+  console.log(`[overflow probe] ${screenLabel} — checking ${page.url()}`);
   let offenders = await findViewportOverflow(page);
   if (ignore) offenders = offenders.filter((o) => !ignore(o));
   // Slice for the failure message only, AFTER the ignore filter — see

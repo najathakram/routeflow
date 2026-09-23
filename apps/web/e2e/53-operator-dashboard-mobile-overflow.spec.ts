@@ -120,6 +120,11 @@ for (const vp of VIEWPORTS) {
         "no seeded order on the e2e-routeflow tenant to open — check the seed",
       ).toBeVisible({ timeout: 15_000 });
       await page.getByRole("button", { name: "View order details" }).first().click();
+      // Explicit URL proof, not just content visibility — a click landing on
+      // the wrong element or a navigation that silently no-ops could still
+      // leave *some* matching text on screen; the URL is the one thing that
+      // can't lie about whether we actually reached the detail page.
+      await page.waitForURL(/\/orders\/[^/]+$/, { timeout: 15_000 });
       await expect(page.getByText(/line items/i)).toBeVisible({ timeout: 15_000 });
       await assertNoOverflow(page, "orders/[id]");
       expect(await documentLevelOverflowPx(page)).toBeLessThanOrEqual(0);
