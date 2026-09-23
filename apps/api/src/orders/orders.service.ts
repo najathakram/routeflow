@@ -387,14 +387,21 @@ export class OrdersService implements OnApplicationBootstrap {
                 unit: true,
                 unitsPerBox: true,
                 pricePerUnit: true,
-                // units_v1 (SA-085f HIGH #2): the pack's tier-price columns. The unit picker's
-                // ladder must be built from the PRODUCT's own tier prices — resolveUnitPrice's
-                // scaling is wrong at any tier > 1 without them (a reconstructed mini-product
-                // with only pricePerUnit silently priced every non-tier-1 customer off tier 1).
-                priceTier2: true,
-                priceTier3: true,
-                priceTier4: true,
-                priceTier5: true,
+                // units_v1 (SA-085f HIGH #2): the pack's tier-price columns, OPERATOR-ONLY —
+                // the unit picker's ladder must be built from the PRODUCT's own tier prices
+                // (resolveUnitPrice's scaling is wrong at any tier > 1 without them), but a
+                // customer/buyer must never see another customer's pricing tier. `findOne` is
+                // shared with buyer.controller.ts's `GET orders/:id` (makePseudoUser defaults
+                // role: CUSTOMER, and that read path calls no redaction at all), so this is
+                // gated at the query itself rather than trusted to a later redaction step.
+                ...(user.role !== UserRole.CUSTOMER
+                  ? {
+                      priceTier2: true,
+                      priceTier3: true,
+                      priceTier4: true,
+                      priceTier5: true,
+                    }
+                  : {}),
                 averageCost: true,
                 category: true,
                 // Read-site name composition + SKU line (order-ui-redesign-spec §2/§4): a catalog
