@@ -159,7 +159,18 @@ export function hydrateFromOrder(order: { lineItems?: readonly any[] | null } | 
     const product = (li as any).product ?? {};
     const catalogPrice = toNumber(product.pricePerUnit ?? li.unitPrice);
     const unitsPerBox = lineUnitsPerBox({ unitsPerBox: li.unitsPerBox, product });
-    next[li.productId] = {
+    // B775 (SA-101): key by the line's OWN id, never productId. units_v1 can
+    // legitimately carry two lines for the same product (a Case line + a pack
+    // line), and a non-unit order can too (create() maps dto.items one
+    // OrderItem per entry with no dedupe, no @@unique([orderId, productId])).
+    // Keying by productId collapsed the second line into the first at
+    // hydration; order-item-diff.ts then read the dropped line's id as
+    // missing from the surviving set and emitted {id, action:"DELETE"} for
+    // it — even on a zero-edit Save, since the collision happens here, before
+    // any operator interaction. `li.id` is always present for an existing
+    // (server-loaded) line; the `?? li.productId` fallback only guards a
+    // malformed row from ever producing an unusable `undefined` key.
+    next[li.id ?? li.productId] = {
       productId: li.productId,
       qty: toNumber(li.qty),
       boxes: li.boxes ?? undefined,
@@ -189,6 +200,49 @@ export function hydrateFromOrder(order: { lineItems?: readonly any[] | null } | 
     };
   }
   return { draft: next, unlisted: nextUnlisted };
+}
+
+/**
+ * B775 (fleet lead review, rules 1+2): the draft key a scan/add should
+ * write to. Merges into an EXISTING entry for the SAME product AND the
+ * SAME unit (`unitLabel` — `undefined`/`null` both mean "base/boxed", the
+ * only shape a scan can ever represent; a scan must never merge into a
+ * units_v1 selling-unit line like a Case). Matched by VALUE, since the
+ * draft record is keyed by lineId/a fresh local id, never bare productId.
+ * `Object.entries` iteration order is the draft's own (display) order, so
+ * with more than one legacy match (two non-unit lines already on one
+ * product — reachable only pre-fix, or from data written outside this
+ * screen) this deliberately merges into the FIRST and never touches the
+ * others. No match at all — including every genuinely new addition — gets
+ * a FRESH key, never the bare productId: two new same-product rows added
+ * in different units (or two independent adds before either is saved)
+ * must never collide the same way hydration did.
+ */
+export function resolveDraftKeyForPick(
+  draft: Record<string, DraftItem>,
+  productId: string,
+  unitLabel?: string | null,
+): string {
+  if (!unitLabel) {
+    const match = Object.entries(draft).find(
+      ([, it]) => it.productId === productId && !it.unitLabel,
+    );
+    if (match) return match[0];
+  }
+  return newDraftKey();
+}
+
+/**
+ * B775 (SA-103): the key for a NOT-YET-SAVED row — always `new:` prefixed,
+ * never a bare productId (two unsaved same-product rows, e.g. one added
+ * per unit, would collide again exactly like the hydration bug this fixes)
+ * and never a bare counter alone (recognizably distinct from a real DB
+ * line id, e.g. for the save response's re-key step). Reuses `newLocalId`'s
+ * existing per-session-unique generator rather than introducing separate
+ * counter state.
+ */
+export function newDraftKey(): string {
+  return `new:${newLocalId()}`;
 }
 
 /**

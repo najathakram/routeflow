@@ -58,6 +58,7 @@ import {
   newLocalId,
   orderOriginals,
   pickerTrayExpandedHeight,
+  resolveDraftKeyForPick,
   serializeEditItemsSnapshot,
   shouldRehydrateFromOrder,
   snapshotBaseline,
@@ -643,6 +644,10 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
    * PIECE-barcode (unitSku) hit: one LOOSE piece instead of a box, rolling
    * into a box at unitsPerBox — the same semantics as the sale builders.
    * Shared by tap-pick (closes the picker) and add-and-stay (scans/wedge).
+   * Returns the draft key the line ended up at, so callers that track "the
+   * last thing added" (the picker's price-edit affordance) point at the
+   * right entry — never assume it is `p.id` (B775: the draft record is
+   * keyed by lineId/a fresh local id, not productId).
    */
   const addPickedToDraft = (
     p: {
@@ -657,14 +662,18 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
       unitsPerBox?: number | null;
     },
     kind: "case" | "piece" = "case",
-  ) => {
+  ): string => {
     const catalogPrice = tierPriceFor(p);
     const listPrice = toNumber(p.pricePerUnit);
     const isSpecial = (cpMap.get(p.id) ?? customerTier ?? 1) !== 1;
     const upbRaw = p.unitsPerBox;
     const unitsPerBox = upbRaw == null ? null : Number(upbRaw);
+    // B775 (fleet lead review, rules 1+2): resolveDraftKeyForPick decides
+    // whether this scan merges into an existing same-product/same-unit line
+    // or starts a fresh one — see its own docstring (lib/edit-items-draft.ts).
+    const resolvedKey = resolveDraftKeyForPick(draft, p.id, null);
     setDraft((d) => {
-      const existing = d[p.id];
+      const existing = d[resolvedKey];
       const upb = Number(existing?.unitsPerBox ?? unitsPerBox ?? 0);
       const boxed = upb > 1;
       if (existing) {
@@ -673,9 +682,9 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
             kind === "piece"
               ? incrementLinePiece(existing, true, upb)
               : incrementLine(existing, true, upb);
-          return { ...d, [p.id]: { ...line, boxSplit: true } };
+          return { ...d, [resolvedKey]: { ...line, boxSplit: true } };
         }
-        return { ...d, [p.id]: { ...existing, qty: (existing.qty ?? 0) + 1 } };
+        return { ...d, [resolvedKey]: { ...existing, qty: (existing.qty ?? 0) + 1 } };
       }
       // Fresh add: conditionally pre-fill the remembered price — only a
       // genuine discount (below tier) or upsell (above list), never over
@@ -696,11 +705,12 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
       if (boxed) {
         // 1 box for a case scan/tap; 1 LOOSE piece for a piece-code scan.
         return kind === "piece"
-          ? { ...d, [p.id]: { ...base, qty: 1, boxes: 0, pieces: 1, boxSplit: true } }
-          : { ...d, [p.id]: { ...base, qty: upb, boxes: 1, pieces: 0, boxSplit: true } };
+          ? { ...d, [resolvedKey]: { ...base, qty: 1, boxes: 0, pieces: 1, boxSplit: true } }
+          : { ...d, [resolvedKey]: { ...base, qty: upb, boxes: 1, pieces: 0, boxSplit: true } };
       }
-      return { ...d, [p.id]: { ...base, qty: 1 } };
+      return { ...d, [resolvedKey]: { ...base, qty: 1 } };
     });
+    return resolvedKey;
   };
 
   const decQty = (id: string) => {
@@ -962,9 +972,11 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
               unitPrice: price,
               reason: reason || undefined,
             });
+            // B775: write back to the SAME key hydrateFromOrder/the list used —
+            // productId alone would miss a same-product second line entirely.
             setDraft((d) => ({
               ...d,
-              [priceEditItem.productId]: {
+              [priceEditItem.lineId ?? priceEditItem.productId]: {
                 ...priceEditItem,
                 unitPrice: updated.unitPrice,
                 overrideReason: updated.overrideReason,
@@ -1049,10 +1061,11 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
             substituteFor
               ? undefined
               : (p, kind) => {
-                  addPickedToDraft(p, kind);
-                  setLastScannedId(p.id);
-                  setScanOrder((o) => bumpScanOrder(o, p.id));
-                  setTrayFlash((f) => nextFlash(f, p.id));
+                  // B775: track the draft KEY (addPickedToDraft's return), not p.id.
+                  const key = addPickedToDraft(p, kind);
+                  setLastScannedId(key);
+                  setScanOrder((o) => bumpScanOrder(o, key));
+                  setTrayFlash((f) => nextFlash(f, key));
                 }
           }
           trayRows={trayRows}
@@ -1083,15 +1096,17 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
           // `lastAdded` with the row's exact derivation, not a hand-rolled one.
           marginFloor={floorForCategory(marginConfig, lastAddedLine?.category)}
           // The list row's Set-to-floor writer, verbatim (`setLinePrice`) —
-          // one price-write path for both surfaces.
-          onSetToFloor={(item, price) => setLinePrice(item.productId, price)}
+          // one price-write path for both surfaces. B775: key by lineId (the
+          // same key hydrateFromOrder/the list use), not productId.
+          onSetToFloor={(item, price) => setLinePrice(item.lineId ?? item.productId, price)}
           onEditPrice={(item, price, reason) => {
+            const key = item.lineId ?? item.productId;
             setDraft((d) => {
-              const cur = d[item.productId];
+              const cur = d[key];
               if (!cur) return d;
               return {
                 ...d,
-                [item.productId]: { ...cur, unitPrice: price, overrideReason: reason },
+                [key]: { ...cur, unitPrice: price, overrideReason: reason },
               };
             });
           }}
@@ -1108,12 +1123,15 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
               setDraft((d) => {
                 const next = { ...d };
                 const old = next[substituteFor];
-                delete next[substituteFor];
                 // Re-denominates the inherited piece count against the
                 // SUBSTITUTE's box size and keeps its LIST price as the line's
                 // base, so the box split and the customer's tier price both
                 // reach the server (lib/substitute-line.ts).
-                next[p.id] = buildSubstituteLine({
+                // B775: reuse `substituteFor` itself as the key (the line's own
+                // identity — see hydrateFromOrder) rather than re-keying by the
+                // substitute PRODUCT's id, which could collide with an
+                // unrelated already-hydrated line for that same product.
+                next[substituteFor] = buildSubstituteLine({
                   previous: old,
                   product: { id: p.id, name: p.name, unit: p.unit, unitsPerBox: p.unitsPerBox },
                   tierPrice,
@@ -1123,9 +1141,10 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
               });
               setSubstituteFor(null);
             } else {
-              addPickedToDraft(p, kind);
-              setScanOrder((o) => bumpScanOrder(o, p.id));
-              setTrayFlash((f) => nextFlash(f, p.id));
+              // B775: track the draft KEY, not p.id — see the onPickAndStay note above.
+              const key = addPickedToDraft(p, kind);
+              setScanOrder((o) => bumpScanOrder(o, key));
+              setTrayFlash((f) => nextFlash(f, key));
             }
             setShowPicker(false);
             setPickerScanIntent(false);
@@ -1266,40 +1285,48 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
               {Object.values(draft).length === 0 && unlisted.length === 0 ? (
                 <Text style={styles.empty}>No items. Add one below.</Text>
               ) : (
-                Object.values(draft).map((it) => (
-                  <DraftItemCard
-                    key={it.productId}
-                    item={it}
-                    canSplitBoxes={canSplitBoxes}
-                    canEditPrice={canEditPriceFor(it.productId)}
-                    pricingReady={pricingReady}
-                    marginFloor={floorForCategory(marginConfig, it.category)}
-                    acked={floorAcked.has(it.lineId ?? it.productId)}
-                    onSetToFloor={(price) => setLinePrice(it.productId, price)}
-                    onSellAnyway={() =>
-                      setFloorAcked((prev) => new Set(prev).add(it.lineId ?? it.productId))
-                    }
-                    onIncQty={() => incQty(it.productId)}
-                    onDecQty={() => decQty(it.productId)}
-                    onSetQty={(n) => setQty(it.productId, n)}
-                    onSetBoxes={(n) => setBoxes(it.productId, n)}
-                    onSetPieces={(n) => setPieces(it.productId, n)}
-                    onSetUnits={(n) => setUnits(it.productId, n)}
-                    onSetSellBy={(v) => setSellBy(it.productId, v)}
-                    onSetNote={(notes) => setLineNote(it.productId, notes)}
-                    onPressPrice={() => setPriceEditItem(it)}
-                    onPressSubstitute={() => {
-                      setSubstituteFor(it.productId);
-                      setShowPicker(true);
-                    }}
-                    onRemove={() =>
-                      confirm("Remove item?", it.name, () => removeLine(it.productId), {
-                        confirmText: "Remove",
-                        destructive: true,
-                      })
-                    }
-                  />
-                ))
+                Object.values(draft).map((it) => {
+                  // B775 (SA-101): the draft record is keyed by li.id (falling
+                  // back to productId only for a not-yet-saved new row) — see
+                  // lib/edit-items-draft.ts#hydrateFromOrder. Every writer
+                  // below must target that SAME key, or a same-product second
+                  // line silently stops being editable (the write would miss
+                  // every entry, since nothing is keyed by bare productId
+                  // once two lines for one product exist).
+                  const key = it.lineId ?? it.productId;
+                  return (
+                    <DraftItemCard
+                      key={key}
+                      item={it}
+                      canSplitBoxes={canSplitBoxes}
+                      canEditPrice={canEditPriceFor(it.productId)}
+                      pricingReady={pricingReady}
+                      marginFloor={floorForCategory(marginConfig, it.category)}
+                      acked={floorAcked.has(key)}
+                      onSetToFloor={(price) => setLinePrice(key, price)}
+                      onSellAnyway={() => setFloorAcked((prev) => new Set(prev).add(key))}
+                      onIncQty={() => incQty(key)}
+                      onDecQty={() => decQty(key)}
+                      onSetQty={(n) => setQty(key, n)}
+                      onSetBoxes={(n) => setBoxes(key, n)}
+                      onSetPieces={(n) => setPieces(key, n)}
+                      onSetUnits={(n) => setUnits(key, n)}
+                      onSetSellBy={(v) => setSellBy(key, v)}
+                      onSetNote={(notes) => setLineNote(key, notes)}
+                      onPressPrice={() => setPriceEditItem(it)}
+                      onPressSubstitute={() => {
+                        setSubstituteFor(key);
+                        setShowPicker(true);
+                      }}
+                      onRemove={() =>
+                        confirm("Remove item?", it.name, () => removeLine(key), {
+                          confirmText: "Remove",
+                          destructive: true,
+                        })
+                      }
+                    />
+                  );
+                })
               )}
               {unlisted.map((u) => (
                 <UnlistedDraftCard

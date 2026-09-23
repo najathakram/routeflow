@@ -5,6 +5,8 @@
  * the Save payload, the on-device snapshot and the drawer's rows. The screen's
  * JSX wiring is pinned separately by `edit-items-drawer.test.ts`.
  */
+import { readFileSync } from "fs";
+import { join } from "path";
 import { computeLineSubtotal } from "@routeflow/pricing";
 import { buildOrderItemDiff } from "../lib/order-item-diff";
 import {
@@ -16,8 +18,10 @@ import {
   hydrateFromOrder,
   isSnapshotStale,
   makeEditItemsSnapshot,
+  newDraftKey,
   orderOriginals,
   pickerTrayExpandedHeight,
+  resolveDraftKeyForPick,
   editItemsSnapshotUserPrefix,
   serializeEditItemsSnapshot,
   shouldRehydrateFromOrder,
@@ -549,10 +553,13 @@ describe("edit-items-draft: hydrateFromOrder reads a line's OWN pack snapshot (B
       ],
     };
 
+    // B775: the draft record is keyed by the line's OWN id (L1), never
+    // productId (p1) — a units_v1 two-level order can carry a second line
+    // for the SAME product, which a productId key would silently collapse.
     const { draft } = hydrateFromOrder(order);
-    expect(draft.p1.unitsPerBox).toBe(288);
-    expect(draft.p1.unitLabel).toBe("Case");
-    expect(draft.p1.boxes).toBe(3);
+    expect(draft.L1.unitsPerBox).toBe(288);
+    expect(draft.L1.unitLabel).toBe("Case");
+    expect(draft.L1.boxes).toBe(3);
 
     const originals = orderOriginals(order);
     expect(stagedDiffItems({ draft, unlisted: [], pendingDeletes: [] }, originals)).toEqual([]);
@@ -579,7 +586,7 @@ describe("edit-items-draft: hydrateFromOrder reads a line's OWN pack snapshot (B
       ],
     };
     const { draft } = hydrateFromOrder(order);
-    const edited = { ...draft, p1: { ...draft.p1, boxes: 4 } };
+    const edited = { ...draft, L1: { ...draft.L1, boxes: 4 } };
     const originals = orderOriginals(order);
 
     expect(stagedDiffItems({ draft: edited, unlisted: [], pendingDeletes: [] }, originals)).toEqual(
@@ -608,7 +615,7 @@ describe("edit-items-draft: hydrateFromOrder reads a line's OWN pack snapshot (B
     };
 
     const { draft } = hydrateFromOrder(order);
-    expect(draft.p2.unitsPerBox).toBe(12);
+    expect(draft.L2.unitsPerBox).toBe(12);
 
     const atOwnPack = computeLineSubtotal({
       unitPrice: 10,
@@ -626,7 +633,7 @@ describe("edit-items-draft: hydrateFromOrder reads a line's OWN pack snapshot (B
     });
     expect(atOwnPack).toBe(22.5);
     expect(atLivePack).toBe(21.25);
-    const row = draftTrayRows({ draft, unlisted: [], scanOrder: [] }).find((r) => r.id === "p2");
+    const row = draftTrayRows({ draft, unlisted: [], scanOrder: [] }).find((r) => r.id === "L2");
     expect(row?.subtotal).toBe(atOwnPack);
 
     const originals = orderOriginals(order);
@@ -650,6 +657,190 @@ describe("edit-items-draft: hydrateFromOrder reads a line's OWN pack snapshot (B
       ],
     };
     const { draft } = hydrateFromOrder(order);
-    expect(draft.p3.unitsPerBox).toBe(12);
+    expect(draft.L3.unitsPerBox).toBe(12);
+  });
+});
+
+/**
+ * B775 (CRITICAL, live for every tenant — SA-101/SA-103): `hydrateFromOrder`
+ * used to key the draft by `productId`. A second line for the same product
+ * (units_v1's Case+pack two-level model, OR a plain non-unit order — create()
+ * maps dto.items one OrderItem per entry with no dedupe and no
+ * @@unique([orderId, productId])) silently overwrote the first at hydration.
+ * `order-item-diff.ts` then read the dropped line's id as absent from the
+ * surviving set and emitted `{id, action:"DELETE"}` for it — on a ZERO-EDIT
+ * Save, since the collision happens at hydration, before any operator
+ * interaction. Fix: key the draft (and every derived map/render key) by the
+ * line's own id.
+ */
+describe("edit-items-draft: two same-product lines never collide (B775)", () => {
+  // Matches the reported live repro exactly: line a is a Case at $80 (a
+  // units_v1 unit-aware line), line b a pack at $36, same product — a
+  // no-op save took the order from $116 to $36 (line a silently deleted).
+  function twoLineOrder(overrides: { line1?: any; line2?: any } = {}): BaselineOrderLike {
+    return {
+      id: "o1",
+      lineItems: [
+        {
+          id: "La",
+          productId: "shared-product",
+          qty: 288,
+          boxes: 1,
+          pieces: 0,
+          unitsPerBox: 288,
+          unitLabel: "Case",
+          unitPrice: 80,
+          name: "Widget (Case)",
+          notes: null,
+          status: "PENDING",
+          product: { id: "shared-product", name: "Widget", unit: "box", unitsPerBox: 12 },
+          ...overrides.line1,
+        },
+        {
+          id: "Lb",
+          productId: "shared-product",
+          qty: 3,
+          unitPrice: 12,
+          name: "Widget (pack)",
+          notes: null,
+          status: "PENDING",
+          product: { id: "shared-product", name: "Widget", unit: "box", unitsPerBox: 12 },
+          ...overrides.line2,
+        },
+      ] as any,
+    };
+  }
+
+  it("BOTH lines survive hydration, each keyed by its OWN id — never collapsed to one entry", () => {
+    const { draft } = hydrateFromOrder(twoLineOrder());
+    expect(Object.keys(draft).sort()).toEqual(["La", "Lb"]);
+    expect(draft.La.qty).toBe(288);
+    expect(draft.Lb.qty).toBe(3);
+  });
+
+  it("a ZERO-EDIT save sends ZERO DELETEs and ZERO UPDATEs (the exact live money bug: a no-op Save deleted a real billed line)", () => {
+    const order = twoLineOrder();
+    const { draft } = hydrateFromOrder(order);
+    const originals = orderOriginals(order);
+    const items = stagedDiffItems({ draft, unlisted: [], pendingDeletes: [] }, originals);
+    expect(items).toEqual([]);
+    expect(items.filter((i: any) => i.action === "DELETE")).toEqual([]);
+    expect(items.filter((i: any) => i.action === "UPDATE")).toEqual([]);
+  });
+
+  it("editing ONE line (line b's qty 3 -> 5) sends an UPDATE for ONLY that line — the other (the Case line) is byte-identical to its original, no DELETE anywhere", () => {
+    const order = twoLineOrder();
+    const { draft } = hydrateFromOrder(order);
+    const edited = { ...draft, Lb: { ...draft.Lb, qty: 5 } };
+    const originals = orderOriginals(order);
+    const items = stagedDiffItems({ draft: edited, unlisted: [], pendingDeletes: [] }, originals);
+    expect(items).toEqual([{ id: "Lb", action: "UPDATE", qty: 5 }]);
+    // Line a (the Case line) never appears in the payload at all — untouched
+    // lines emit nothing, and it is specifically NOT a DELETE.
+    expect(items.some((i: any) => i.id === "La")).toBe(false);
+  });
+
+  it("a single-line order is unaffected — the fix is a pure superset, not a behavior change for the common case", () => {
+    const order: BaselineOrderLike = {
+      id: "o1",
+      lineItems: [
+        {
+          id: "Lsolo",
+          productId: "p-solo",
+          qty: 5,
+          unitPrice: 10,
+          name: "Solo widget",
+          notes: null,
+          status: "PENDING",
+          product: { id: "p-solo", name: "Solo widget", unit: "box", unitsPerBox: 1 },
+        } as any,
+      ],
+    };
+    const { draft } = hydrateFromOrder(order);
+    expect(Object.keys(draft)).toEqual(["Lsolo"]);
+    const originals = orderOriginals(order);
+    expect(stagedDiffItems({ draft, unlisted: [], pendingDeletes: [] }, originals)).toEqual([]);
+  });
+});
+
+describe("edit-items-draft: resolveDraftKeyForPick / newDraftKey (B775 fleet-lead review, rules 1+2)", () => {
+  const productA = "shared-product";
+
+  it("no existing line for the product -> a fresh new: key, never the bare productId", () => {
+    const key = resolveDraftKeyForPick({}, productA, null);
+    expect(key.startsWith("new:")).toBe(true);
+    expect(key).not.toBe(productA);
+  });
+
+  it("exactly one non-unit match -> merges into that line's OWN key", () => {
+    const draft: Record<string, DraftItem> = {
+      La: { productId: productA, qty: 1, unitPrice: 10, catalogPrice: 10, name: "Widget" } as any,
+    };
+    expect(resolveDraftKeyForPick(draft, productA, null)).toBe("La");
+  });
+
+  it("a unit-aware line (unitLabel set) for the same product is NEVER matched by a base/boxed scan", () => {
+    const draft: Record<string, DraftItem> = {
+      La: {
+        productId: productA,
+        qty: 12,
+        unitPrice: 80,
+        catalogPrice: 80,
+        name: "Widget",
+        unitLabel: "Case",
+      } as any,
+    };
+    const key = resolveDraftKeyForPick(draft, productA, null);
+    expect(key).not.toBe("La");
+    expect(key.startsWith("new:")).toBe(true);
+  });
+
+  it("two legacy non-unit lines for the same product (pre-fix data, or written outside this screen): merges into the FIRST in display order, never touches the second, never creates a third", () => {
+    const draft: Record<string, DraftItem> = {
+      La: { productId: productA, qty: 1, unitPrice: 10, catalogPrice: 10, name: "Widget" } as any,
+      Lb: { productId: productA, qty: 3, unitPrice: 10, catalogPrice: 10, name: "Widget" } as any,
+    };
+    expect(resolveDraftKeyForPick(draft, productA, null)).toBe("La");
+  });
+
+  it("two NEW same-product rows (e.g. one per unit) each get a distinct key — never collide, both survive as CREATEs", () => {
+    const k1 = newDraftKey();
+    const k2 = newDraftKey();
+    expect(k1).not.toBe(k2);
+    const draft: Record<string, DraftItem> = {
+      [k1]: { productId: productA, qty: 1, unitPrice: 80, catalogPrice: 80, name: "Widget" } as any,
+      [k2]: {
+        productId: productA,
+        qty: 3,
+        unitPrice: 12,
+        catalogPrice: 12,
+        name: "Widget",
+      } as any,
+    };
+    const originals = orderOriginals({ id: "o1", lineItems: [] });
+    const items = stagedDiffItems({ draft, unlisted: [], pendingDeletes: [] }, originals);
+    expect(items.filter((i: any) => !i.id)).toHaveLength(2); // both are CREATEs (no lineId)
+  });
+});
+
+/**
+ * B775 review item 1 (SA-103): a source-level regression guard — the draft
+ * record (and every render/handler key derived from it) must never again be
+ * keyed by productId. Scoped to `(draft|next|d)[...]` bracket access, which
+ * is how this file names the draft record everywhere it appears — a
+ * function-argument use like `canEditPriceFor(it.productId)` or an unrelated
+ * map like `priceHistory?.[p.id]` is not a draft-record access and is not
+ * what this pin is about.
+ */
+describe("edit-items.tsx source pin: the draft record is never keyed by productId (B775)", () => {
+  it("no (draft|next|d)[...productId] or (draft|next|d)[p.id] bracket access anywhere in the route file", () => {
+    const source = readFileSync(
+      join(__dirname, "../app/(operator)/(tabs)/orders/[id]/edit-items.tsx"),
+      "utf8",
+    );
+    const offenders = source.match(
+      /\b(?:draft|next|d)\[[^\]]*\.productId\]|\b(?:draft|next|d)\[p\.id\]/g,
+    );
+    expect(offenders).toBeNull();
   });
 });
