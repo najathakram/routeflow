@@ -318,7 +318,7 @@
   before landing.**
 - **Guard:** none yet — propose `--stamp` refusing a sha that isn't reachable from master.
 
-### L-176 · 2026-09-16/22 · tooling · worktree without its own node_modules resolves to the main checkout (recurred twice: 2026-09-22)
+### L-176 · 2026-09-16/22/23 · tooling · worktree without its own node_modules resolves to the main checkout (recurred three times: 2026-09-22, 2026-09-23)
 
 - **Symptom:** a worktree with no `node_modules` of its own resolved workspace deps up to the
   MAIN checkout's — a stale compiled `@routeflow/pricing` dist threw a missing-function error.
@@ -327,18 +327,26 @@
   math and silently produced wrong zeros or drift instead of an error this time — the same root
   cause as the original incident, but a quieter failure shape (wrong numbers, not a thrown
   missing-function error) — twice in one session, still with the "none yet" guard below never
-  built.
-- **Root cause:** npm workspace symlinks/junctions in a worktree missing its own `npm ci` fall
-  back to whatever the main checkout last had installed/built — never a guarantee of freshness.
+  built. RECURRED a third time, 2026-09-23 (B660 PR B lane, `apps/web` + `@routeflow/returns`,
+  same worktree/session, no master-sync involved): editing `packages/returns/src/*.ts` had zero
+  effect on a web dialog test (still failing on the PRE-fix value) though the package's own
+  source-direct suite passed — `apps/web`'s jest config has no `moduleNameMapper` for
+  `@routeflow/returns` (unlike `apps/mobile`'s), so it resolves via `node_modules` →
+  `package.json`'s `main`/`types` → the STALE PREBUILT `dist/index.js`. Fixed by
+  `npm run build -w packages/returns`; not a real pipeline risk since turbo's task graph rebuilds
+  it correctly during `npm run verify`.
+- **Root cause:** npm workspace symlinks in a worktree missing its own `npm ci` fall back to
+  whatever the main checkout last built; even within one freshly-`npm ci`'d worktree, a consumer's
+  jest config may resolve a package via prebuilt `dist` instead of live `src` absent a
+  `moduleNameMapper` override — inconsistent per app.
 - **Lesson:** **A worktree needs its OWN `npm ci` before running web/api tests. After any
   `packages/*` change lands on master, rebuild the shared dist in EVERY worktree that will test
-  against it (`npx turbo run build --filter=@routeflow/pricing --force` after fetching master),
-  not just the main checkout — a stale `packages/pricing/dist` can fail quietly (wrong money
-  values) as easily as it fails loudly (a missing-function throw), so don't wait for the loud
-  failure to remember this.**
-- **Guard:** still none automated after two recurrences — propose a pre-test check comparing
-  `packages/*/dist` mtimes against `src`, or a verify-chain step that refuses to run tests when
-  `dist` is older than `src` for any workspace package.
+  against it, not just the main checkout — a stale dist fails quietly (wrong values) as easily as
+  loudly. Same rule mid-session, same worktree: after editing a package's own `src`, before
+  trusting a DIFFERENT app's test result against it, check that app's jest config for a
+  `moduleNameMapper` override — absent one, `npm run build -w <pkg>` first.**
+- **Guard:** still none automated — a pre-test check comparing `packages/*/dist` mtimes against
+  `src` (or which consumers lack a `moduleNameMapper`) would surface this earlier.
 
 ### L-175 · 2026-09-16 · tooling · shared dev host disk budget
 
