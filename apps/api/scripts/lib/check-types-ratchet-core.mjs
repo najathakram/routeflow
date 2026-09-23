@@ -1,0 +1,90 @@
+// B806: the pure rules behind `check-types` for apps/api (scripts/check-types-ratchet.mjs).
+//
+// apps/api/tsconfig.json excludes **/*.spec.ts, and ts-jest reads `isolatedModules: true` from that
+// same tsconfig and so transpiles every spec WITHOUT type-checking it: a spec could drift from the
+// code it tests and still compile and run green (#1286's stale fixture). check-types now compiles
+// src AND specs in ONE program and judges the result here:
+//   - a SOURCE file (anything not *.spec.ts, including a diagnostic with no file) is zero-tolerance,
+//     exactly as before, and can never be allow-listed;
+//   - a SPEC file may carry at most its count in check-types.spec-baseline.json, and the baseline
+//     only ever moves DOWN: a new or rising count fails, and so does a fixed error whose baseline
+//     entry was not lowered in the same diff.
+// Pinned in both directions by src/common/check-types-ratchet-script.spec.ts.
+
+export const SPEC_FILE = /\.spec\.ts$/;
+export const HEAP_MB = 4096;
+export const OOM_HINT =
+  `the type-check ran out of memory. It needs a ${HEAP_MB} MB heap: run it through ` +
+  `\`npm run check-types -w @routeflow/api\` (which sets it), or run it with ` +
+  `NODE_OPTIONS=--max-old-space-size=${HEAP_MB}; on an 8 GB machine, stop other heavy jobs first`;
+
+const fileOf = (d) => d.file ?? "<no file>";
+
+/** Per-file diagnostic counts. A diagnostic with no file is keyed "<no file>" (a source error). */
+export function countByFile(diagnostics) {
+  const counts = new Map();
+  for (const d of diagnostics) counts.set(fileOf(d), (counts.get(fileOf(d)) ?? 0) + 1);
+  return counts;
+}
+
+/**
+ * @param {{file: string|null, code: number, line: number, message: string}[]} diagnostics
+ * @param {Record<string, number>} baseline spec file -> allowed error count
+ */
+export function evaluate(diagnostics, baseline) {
+  const counts = countByFile(diagnostics);
+  const failures = [];
+  for (const file of Object.keys(baseline).sort()) {
+    if (!SPEC_FILE.test(file)) failures.push({ kind: "baseline-non-spec", file });
+  }
+  for (const [file, actual] of [...counts].sort(([a], [b]) => a.localeCompare(b))) {
+    if (!SPEC_FILE.test(file)) {
+      failures.push({ kind: "source-error", file, actual });
+      continue;
+    }
+    const allowed = baseline[file] ?? 0;
+    if (actual > allowed) failures.push({ kind: "spec-regression", file, allowed, actual });
+  }
+  for (const file of Object.keys(baseline).sort()) {
+    if (!SPEC_FILE.test(file)) continue;
+    const actual = counts.get(file) ?? 0;
+    if (actual < baseline[file]) {
+      failures.push({ kind: "stale-baseline", file, allowed: baseline[file], actual });
+    }
+  }
+  return { ok: failures.length === 0, failures, counts, total: diagnostics.length };
+}
+
+/** The baseline lowered to what is left: never raised, entries at 0 dropped, keys sorted. */
+export function lowerBaseline(baseline, counts) {
+  const out = {};
+  for (const file of Object.keys(baseline).sort()) {
+    const lowered = Math.min(baseline[file], counts.get(file) ?? 0);
+    if (lowered > 0) out[file] = lowered;
+  }
+  return out;
+}
+
+/** An out-of-memory worker exit, turned into an actionable message instead of a raw V8 FATAL. */
+export function classifyWorkerExit({ status, signal, stderr }) {
+  const oom =
+    /heap out of memory|Allocation failed/i.test(stderr ?? "") ||
+    status === 134 ||
+    signal === "SIGABRT";
+  return oom ? { kind: "oom", message: OOM_HINT } : null;
+}
+
+export function describeFailure(f) {
+  switch (f.kind) {
+    case "source-error":
+      return `${f.file}: ${f.actual} type error(s) in a SOURCE file. Source files are zero-tolerance; fix them.`;
+    case "spec-regression":
+      return `${f.file}: ${f.actual} type error(s), the baseline allows ${f.allowed}. Fix the new error(s); the baseline never goes up.`;
+    case "stale-baseline":
+      return `${f.file}: only ${f.actual} type error(s) left but the baseline still allows ${f.allowed}. Lower it: node scripts/check-types-ratchet.mjs --lower-baseline`;
+    case "baseline-non-spec":
+      return `${f.file}: the baseline lists a non-spec file. Only *.spec.ts files can be allow-listed; remove the entry.`;
+    default:
+      return `${f.file}: ${f.kind}`;
+  }
+}
