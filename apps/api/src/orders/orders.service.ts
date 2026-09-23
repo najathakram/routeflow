@@ -3589,6 +3589,7 @@ export class OrdersService implements OnApplicationBootstrap {
             ladders: unitCtx.ladders,
             tenantId: this.prisma.getTenantId(),
             tier: (pid) => (isStaffEdit ? (operatorCpMap.get(pid) ?? operatorDefaultTier) : 1),
+            categoryMap: await unitEdit.loadUnitCategoryMap(tx, unitCtx.products), // B297
           };
 
           if (replaceAll) {

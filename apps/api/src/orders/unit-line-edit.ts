@@ -1,8 +1,9 @@
 import { ConflictException } from "@nestjs/common";
-import { categoryTaxSnapshotOf, type LadderUnit } from "@routeflow/pricing";
+import type { LadderUnit } from "@routeflow/pricing";
 import {
   assertMayUseUnits,
   buildUnitLine,
+  categoryTaxForLine,
   loadUnitLadders,
   requestsUnit,
   type UnitLineProduct,
@@ -74,6 +75,24 @@ export async function prepareUnitEditContext(
 }
 
 /**
+ * trackedCategoryId -> TrackedCategory row, for every product this edit's unit-aware context
+ * touched (B297) — feeds `UnitWriteContext.categoryMap` so `createUnitLine`/`updateUnitLine` can
+ * price + stamp a regulated unit line at write, instead of deferring to a post-mutation pass.
+ * Empty when nothing in `products` is regulated: no extra query.
+ */
+export async function loadUnitCategoryMap(
+  tx: { trackedCategory: { findMany(a: any): Promise<any[]> } },
+  products: Map<string, any>,
+): Promise<Map<string, any>> {
+  const ids = [
+    ...new Set([...products.values()].map((p: any) => p.trackedCategoryId).filter(Boolean)),
+  ] as string[];
+  if (!ids.length) return new Map();
+  const rows = await tx.trackedCategory.findMany({ where: { id: { in: ids } } });
+  return new Map(rows.map((c: any) => [c.id, c]));
+}
+
+/**
  * The money seam: an edit that targets an existing unit-aware line (qty, price, or substitute —
  * never a bare CANCEL/DELETE/reason-only touch, which changes no money) MUST name that line's
  * unit; an item with no unitLabel aimed at one is REFUSED here, never silently interpreted against
@@ -110,6 +129,8 @@ export interface UnitWriteContext {
   ladders: Map<string, LadderUnit[]>;
   tenantId: string | null | undefined;
   tier: (productId: string) => number;
+  /** trackedCategoryId -> TrackedCategory row, for the products this edit touches (B297). */
+  categoryMap: Map<string, any>;
 }
 
 /**
@@ -128,16 +149,18 @@ export async function createUnitLine(
   item: any,
   position: number,
 ): Promise<void> {
+  // B297: price + stamp the trio at WRITE, like every other writer — a NULL/zero placeholder here
+  // would become a PERMANENT $0 levy once PR 3's "keep the stored amount" rule reads it back.
+  const category = product.trackedCategoryId
+    ? ctx.categoryMap.get(product.trackedCategoryId)
+    : null;
   const built = buildUnitLine({
     product,
     units: ctx.ladders.get(product.id) ?? [],
     resolved,
     item: { ...item, productId: product.id },
     tier: ctx.tier(product.id),
-    // The post-mutation recomputeLineCategoryTaxes pass fixes the amount for every line — the
-    // snapshot is deferred the same way (B297), never stamped from a category read here that the
-    // amount doesn't actually reflect yet.
-    taxFor: () => ({ amount: 0, snapshot: categoryTaxSnapshotOf(null) }),
+    taxFor: (qty, sub) => categoryTaxForLine(category, qty, sub),
     position,
     tenantId: ctx.tenantId,
   });
@@ -152,14 +175,17 @@ export async function updateUnitLine(
   resolved: ResolvedLineUnits,
   item: any,
 ): Promise<void> {
+  const category = product.trackedCategoryId
+    ? ctx.categoryMap.get(product.trackedCategoryId)
+    : null;
   const { position: _position, ...built } = buildUnitLine({
     product,
     units: ctx.ladders.get(product.id) ?? [],
     resolved,
     item: { ...item, productId: product.id },
     tier: ctx.tier(product.id),
-    // Same deferral as createUnitLine above — see its comment.
-    taxFor: () => ({ amount: 0, snapshot: categoryTaxSnapshotOf(null) }),
+    // B297: same write-time pricing as createUnitLine above — see its comment.
+    taxFor: (qty, sub) => categoryTaxForLine(category, qty, sub),
     position: 0,
     tenantId: ctx.tenantId,
   });
