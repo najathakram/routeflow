@@ -152,8 +152,8 @@ rows, filing gate, per-line-key deltas, returns credit what was paid, stock unit
 
 The seat gets better only if every ruling feeds back into these files. Three steps, none optional.
 
-**7.1 Before a ruling ships — the nine checks** (each one is a rule an error produced; list the
-ones run in the ruling line as `checked: 1-9`, and say which were NOT run and why):
+**7.1 Before a ruling ships — the ten checks** (each one is a rule an error produced; list the
+ones run in the ruling line as `checked: 1-10`, and say which were NOT run and why):
 
 1. **Origin, not tree** — facts re-derived from a freshly fetched sha, named in the line.
 2. **Wire, not internals** — every field a client displays or branches on is in the response
@@ -179,6 +179,14 @@ ones run in the ruling line as `checked: 1-9`, and say which were NOT run and wh
    from the web dialog 409'd every loose-product return; E32 was the same class). In a key
    sweep (check 5), separate READERS (a miss is a no-op) from WRITERS (a miss creates a row) —
    the consequence and the pin differ (E41).
+10. **Context of the line** — never name what a line does from the line alone: read the loop
+    that calls it (E42 — a per-row write became 2× once rows doubled), the WRITERS that fill the
+    table it reads and what each writer's rows mean (E43 — change-request rows summed as
+    delivery evidence), the query that feeds it (E45 — a CANCELLED filter twenty lines above
+    the billing line), and, for any claim about a framework's scheduling or internals, the
+    actual source condition, or require the form that does not depend on it (E44 — React's
+    eager path also needs the alternate fiber's lanes empty). Retro 5: all four errors of the
+    window had this one shape.
 
 **7.2 After every ruling outcome, builder catch, or own error — record in the same commit as the
 register change:**
