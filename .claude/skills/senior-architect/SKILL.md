@@ -190,7 +190,10 @@ ones run in the ruling line as `checked: 1-10`, and say which were NOT run and w
     the billing line), and, for any claim about a framework's scheduling or internals, the
     actual source condition, or require the form that does not depend on it (E44 — React's
     eager path also needs the alternate fiber's lanes empty). Retro 5: all four errors of the
-    window had this one shape.
+    window had this one shape. A Prisma select/include is a line whose context is the SCHEMA:
+    it is proven only by executing it (a compose run or a DB spec), never by a mocked client
+    that accepts any shape (E47 — a non-existent relation passed review and would have 500'd
+    every run read).
 
 **7.2 After every ruling outcome, builder catch, or own error — record in the same commit as the
 register change:**
