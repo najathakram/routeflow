@@ -72,6 +72,10 @@ import {
 import { FeatureConfigService } from "../billing/feature-config.service";
 import { ROUTES_DISPATCH_KEY, assertRouteKindDispatchAllowed } from "./route-dispatch-mode";
 import { observeRunCredit } from "./run-credit-observation";
+import {
+  reconcileDeliveredStopOrders,
+  resolvePostReconcileOrderTotals,
+} from "./complete-payment-reconcile";
 
 // The run/stop select shapes and status constants live in routes.constants.ts (size-ratchet
 // prefactor, verbatim move); re-exported here so every existing import path keeps working.
@@ -2599,22 +2603,18 @@ export class RoutesService {
       }
 
       // 4. B663: reconcile every delivered order's invoice onto the DELIVERED
-      // quantities, UNCONDITIONALLY — a short or refused line must bill what was
-      // actually delivered whether or not any payment was collected at the door
-      // (on-account completions send no payment at all, and used to skip this
-      // entirely because it lived behind the payment step below).
-      const deliveredOrderIds = stop.orders
-        // DELIVERED stays in (the office may have marked it already; it keeps its invoice), but a
-        // DRAFT is not a commitment yet: never invoiced or paid at the door.
-        .filter((o) => o.status !== OrderStatus.CANCELLED && o.status !== OrderStatus.DRAFT)
-        .map((o) => o.id);
-      if (deliveredOrderIds.length > 0) {
-        await this.invoicesService.reconcileDeliveredOrdersInTx(
-          tx,
-          deliveredOrderIds,
-          Array.from(deliveredOrderIdSet),
-        );
-      }
+      // quantities, UNCONDITIONALLY — see complete-payment-reconcile.ts for the
+      // full rationale (why this must not live behind the payment step below).
+      const deliveredOrderIds = await reconcileDeliveredStopOrders(
+        {
+          reconcileDeliveredOrdersInTx: this.invoicesService.reconcileDeliveredOrdersInTx.bind(
+            this.invoicesService,
+          ),
+        },
+        tx,
+        stop.orders,
+        deliveredOrderIdSet,
+      );
 
       // 5. Record payment (atomic with stop completion — RF-005). The invoice is
       // resolved SERVER-side from the delivered orders — the mobile client cannot
@@ -2699,30 +2699,15 @@ export class RoutesService {
     // P6-5: DELIVERED per order this completion flipped (driver bypasses
     // changeStatus). AFTER the tx, fire-and-forget; skip DRAFT/CANCELLED/DELIVERED.
     //
-    // B663/I2: `o.total` is the pre-transaction snapshot read at the top of this
-    // method (before step 4's delivered-basis reconcile ever ran) — it is the FULL
-    // ordered total, not what a short or refused delivery actually bills. The
-    // reconcile updates the order's non-void INVOICE totals, never Order.total
-    // itself (recomputeOrderFromInvoices, the thing that would, is not in this
-    // call chain), so the notification must read the invoice(s) fresh, post-tx.
+    // B663/I2: see complete-payment-reconcile.ts — orderTotal must read the
+    // reconciled invoice(s) post-tx, never the stale pre-reconcile Order.total.
     const routableOrderIds = stop.orders
       .filter((o) => !NON_ROUTABLE_ORDER_STATUSES.includes(o.status))
       .map((o) => o.id);
-    const postReconcileInvoices =
-      routableOrderIds.length > 0
-        ? await this.prisma.forTenant().invoice.findMany({
-            where: { orderId: { in: routableOrderIds }, status: { not: InvoiceStatus.VOID } },
-            select: { orderId: true, total: true },
-          })
-        : [];
-    const postReconcileTotalByOrder = new Map<string, number>();
-    for (const inv of postReconcileInvoices) {
-      if (!inv.orderId) continue;
-      postReconcileTotalByOrder.set(
-        inv.orderId,
-        roundMoney((postReconcileTotalByOrder.get(inv.orderId) ?? 0) + Number(inv.total)),
-      );
-    }
+    const postReconcileTotalByOrder = await resolvePostReconcileOrderTotals(
+      this.prisma.forTenant(),
+      routableOrderIds,
+    );
     for (const o of stop.orders) {
       if (NON_ROUTABLE_ORDER_STATUSES.includes(o.status)) continue;
       // No non-void invoice at all (shouldn't happen for a routed order, but never
