@@ -10,7 +10,15 @@
  * group contributions by that resolved pack before folding. Disagreeing packs are never folded
  * together and the merge/sweep is never refused for it — each pack gets its OWN output line, at
  * its own snapshot and price, with a warn.
+ *
+ * SA-107a: `deriveUnitsPerBox` (`merge-items.ts`) is the FIRST implementation of the "own
+ * snapshot, else derive from the line's own boxes/pieces/qty" precedence — `resolveLinePack` is
+ * built ON it, not a second copy of the same two steps. `merge-items.ts` itself is untouched by
+ * this import (frozen byte-identical by F06's R12); only its THIRD step (falling back to the
+ * live pack) is new here, since `deriveUnitsPerBox` returns 0 rather than knowing what to do
+ * with an unresolved pack.
  */
+import { deriveUnitsPerBox } from "./merge-items";
 
 /** SA-101(1)(a): per-contribution pack precedence, own snapshot first, live pack last. */
 export interface PackCandidate {
@@ -29,24 +37,17 @@ export interface PackResolution {
 }
 
 /**
- * (a) own `unitsPerBox` snapshot, else (b) `packFromOwnSplit` — a box-split line
- * (`boxes`/`pieces` set) with no snapshot (a pre-snapshot-era row): `qty` is total pieces =
- * `boxes * pack + pieces` with `pieces < pack` by construction (`normalizeBoxesPieces`'s own
- * invariant), so `pack` is exactly recoverable from the line's OWN stored triple, regardless of
- * what the live product pack currently is — else (c) a box-unaware line (no split at all: `boxes`
- * and `pieces` both null, `qty` is a bare selling-unit/box count) has no stored ratio to derive a
- * pack from; the ONLY remaining signal is the live product pack, used with a warn.
+ * (a)+(b) `deriveUnitsPerBox` (`merge-items.ts`): own `unitsPerBox` snapshot, else derive it from
+ * the line's own `boxes`/`pieces`/`qty` triple (`qty` is total pieces = `boxes * pack + pieces`
+ * with `pieces < pack` by construction — `normalizeBoxesPieces`'s own invariant — so `pack` is
+ * exactly recoverable, regardless of what the live product pack currently is). Else (c) — nothing
+ * resolved (a box-unaware line: `boxes`/`pieces` both null, `qty` a bare selling-unit/box count,
+ * or a degenerate split `deriveUnitsPerBox` can't derive from) — the ONLY remaining signal is the
+ * live product pack, used with a warn.
  */
 export function resolveLinePack(c: PackCandidate, liveUnitsPerBox: number): PackResolution {
-  if (c.unitsPerBox != null && c.unitsPerBox > 1) {
-    return { pack: c.unitsPerBox, usedLivePack: false };
-  }
-  if (c.boxes != null && c.boxes > 0) {
-    const derived = (Number(c.qty) - Number(c.pieces ?? 0)) / c.boxes;
-    if (Number.isFinite(derived) && derived > 1) {
-      return { pack: Math.round(derived), usedLivePack: false };
-    }
-  }
+  const own = deriveUnitsPerBox(c);
+  if (own > 1) return { pack: own, usedLivePack: false };
   return { pack: liveUnitsPerBox, usedLivePack: true };
 }
 
