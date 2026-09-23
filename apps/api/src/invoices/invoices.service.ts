@@ -5203,7 +5203,7 @@ export class InvoicesService {
     // payments-modal flow does the same thing at :5028 — this mirrors that
     // shape). A multi-customer stop is an anomaly today's UI can't produce
     // deliberately, so it books no advance and the caller keeps its warn.
-    const excess = remaining;
+    const excess = roundMoney(remaining);
     let advancePaymentId: string | null = null;
     if (excess > 0.001) {
       // Same-customer resolution: prefer the payable invoices already loaded
@@ -5735,7 +5735,7 @@ export class InvoicesService {
 
       // Handle excess amount → create AdvancePayment
       const allocatedTotal = dto.allocations.reduce((s, a) => s + a.amount, 0);
-      const excess = dto.totalAmount - allocatedTotal;
+      const excess = roundMoney(dto.totalAmount - allocatedTotal);
       if (excess > 0.001) {
         await tx.advancePayment.create({
           data: {
