@@ -159,6 +159,18 @@ just looks like your route doesn't exist. Workaround: append `?desktop=1` (the s
 hatch the middleware ships for a real user intentionally viewing desktop on a phone) to bypass
 the mobile redirect regardless of viewport width.
 
+**The `.next/types` stub trap.** Following the wrong-checkout workaround above — running
+`next dev` manually in your own worktree — to capture a throwaway proof route leaves a
+Next-generated type stub at `.next/types/app/<route>/page.ts` that outlives the route once you
+delete its source file. `check-types` (`tsc --noEmit`) then fails on that stub pointing at a
+file that no longer exists, and the error names a path under `.next/`, not your actual source —
+easy to misread as an unrelated build-cache problem rather than your own cleanup. This is a
+direct consequence of the first trap's workaround, not an independent one: anyone who spins up
+a manual dev server to capture a route and then deletes it will hit this on their next push.
+Workaround: `rm -rf .next` in the worktree before pushing, and re-run `tsc --noEmit` **after**
+any manual-server capture, not before — running it only beforehand (as the natural order would
+suggest) misses a stub that dev server creates.
+
 ## Shared auth state audit (item 6a)
 
 Sweep of every `logout`/`password` hit in specs 01, 02, 03, 04, 05, 07 (the ones flagged by the
