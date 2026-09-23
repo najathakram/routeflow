@@ -558,6 +558,14 @@
   `undefined`.**
 - **Guard:** both selects now fetch `status`; `returns-lineitems-select.spec.ts` pins the real
   shape at every call site.
+- **Related lesson, different fix (SA-078b, #1257):** a `rebuildSiblingDrafts` fix updated every
+  caller it found — and still reproduced its own defect, because a fourth caller
+  (`rebuildIssuedDepositMirrorOnDelivery`) never selects items and so never routed through the
+  fix. A PASS was withdrawn on re-reading fresh at the same sha. One level up from above: not a
+  known caller mis-selecting, a whole caller missed because it didn't look related by name.
+  **"Did I update the callers I found" is not the review question — grep the OUTCOME (every path
+  that can touch the same field/value), not just the helper's own call sites; a PASS before that
+  sweep is provisional.**
 
 ### L-170 · 2026-09-16 · domain · #743 fix round F3 (roundMoney before comparison)
 
