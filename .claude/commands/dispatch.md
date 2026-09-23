@@ -11,7 +11,7 @@ checkout, never touch another session's worktree.
    Then, in the new worktree, install with scripts ON (`npm ci` — **never `--ignore-scripts`**: husky's
    `prepare` creates `.husky/_`, and without it git silently runs NO hooks, so every push skips the
    pre-push verify while looking like it passed) and run `node scripts/check-git-hooks.mjs`; it must print
-   `ok`. If it fails, `npx husky`, re-run, and STOP if it still fails (B637).
+   `ok`. If it fails, `npx husky`, re-run, and STOP if it still fails (B642).
 
 2. **Handoff card** at `.claude/handoffs/<YYYY-MM-DD>-<slug>.md`, the format from `~/.claude/commands/
 handoff.md` (Task/State/Branch/Run/Decided/Next/Open for owner/Do not/Areas touched), but State is

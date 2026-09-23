@@ -1,4 +1,4 @@
-// B637 guard — the repo's git hooks must actually be INSTALLED, or a "green" push/verify means nothing.
+// B642 guard — the repo's git hooks must actually be INSTALLED, or a "green" push/verify means nothing.
 //
 // The incident: husky sets `core.hooksPath = .husky/_` (a RELATIVE path, in the shared repo config)
 // and its `prepare` script generates that directory. A worktree created with `npm ci --ignore-scripts`

@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// B637 guard CLI. `node scripts/check-git-hooks.mjs`: exit 0 hooks installed (or nothing to check: CI,
+// B642 guard CLI. `node scripts/check-git-hooks.mjs`: exit 0 hooks installed (or nothing to check: CI,
 // or not inside a git work tree), 1 hooks missing, 2 inside a work tree but the state is unreadable.
 // `--warn` is the session-start diagnostic: read-only, ALWAYS exits 0 (it can never block or fail a
 // session), prints NOTHING when healthy, skipped (CI / not a work tree), and one line only when there

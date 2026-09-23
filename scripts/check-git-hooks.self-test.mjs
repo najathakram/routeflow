@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Self-test for scripts/lib/check-git-hooks.mjs (B637). Real temp git repos, no network, no jest.
+// Self-test for scripts/lib/check-git-hooks.mjs (B642). Real temp git repos, no network, no jest.
 // Wired into `npm run verify`. Exit 0 when every check passes, 1 otherwise.
 import { execFileSync, spawnSync } from "node:child_process";
 import {
