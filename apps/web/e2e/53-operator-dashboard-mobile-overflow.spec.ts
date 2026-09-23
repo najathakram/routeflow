@@ -29,9 +29,10 @@
  * notification dropdown opened on top of each. Customers and invoices are
  * deliberately excluded: extending the probe here found genuine,
  * pre-existing, unrelated overflow in both (an unwrapped toolbar on
- * customers, an unwrapped table on invoices — see the inline comments at
- * each), reported to the fleet lead rather than fixed inline or silently
- * asserted clean. Both only fail at 390 — there's room at 768/1440.
+ * customers — filed as B749 — and an unwrapped table on invoices — filed as
+ * B750 — see the inline comments at each), reported and filed rather than
+ * fixed inline or silently asserted clean. Both only fail at 390 — there's
+ * room at 768/1440.
  *
  * Read-only: no data is created or mutated. Targets the seeded e2e-routeflow
  * tenant (approved test tenant) — never a live client tenant.
@@ -96,23 +97,23 @@ for (const vp of VIEWPORTS) {
         expect(await documentLevelOverflowPx(page)).toBeLessThanOrEqual(0);
       }
 
-      // ── Customers list — DELIBERATELY EXCLUDED, see header ──────────────
+      // ── Customers list — DELIBERATELY EXCLUDED, see header. Filed B749. ──
       // The list's toolbar (Import/Export/Select/New Customer, a plain
       // `flex items-center gap-2` row with no wrap and no min-w-0) overflows
       // 56px at 390 — a real, pre-existing, unrelated bug this probe found
       // while extending it here, not a regression from this change and not
-      // something this PR's scope covers. Reported to the fleet lead rather
-      // than fixed inline or silently left green.
+      // something this PR's scope covers. Filed as B749 rather than fixed
+      // inline or silently left green.
 
       // ── Products list ────────────────────────────────────────────────────
       await page.goto("/products");
       await assertNoOverflow(page, "products (list)");
 
-      // ── Invoices list — DELIBERATELY EXCLUDED, see header ────────────────
+      // ── Invoices list — DELIBERATELY EXCLUDED, see header. Filed B750. ───
       // The list table has no scroll wrapper at all (unlike the shared
       // `<Table>` component's `overflow-auto` — see helpers/overflow.ts's
-      // allowlist comment) and overflows 312px at 390. Same class of
-      // pre-existing, unrelated bug as the customers list above.
+      // allowlist comment) and overflows 312px at 390. Filed as B750 — same
+      // class of pre-existing, unrelated bug as the customers list above (B749).
 
       // ── Routes list ──────────────────────────────────────────────────────
       await page.goto("/routes");
