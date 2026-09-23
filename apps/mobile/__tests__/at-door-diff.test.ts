@@ -1,4 +1,8 @@
-import { buildAtDoorChangeRequests, dropSucceededAddedLine } from "../lib/at-door-diff";
+import {
+  buildAtDoorChangeRequests,
+  dropSucceededAddedLine,
+  leftoverAddedMessage,
+} from "../lib/at-door-diff";
 
 describe("buildAtDoorChangeRequests", () => {
   const originals = [
@@ -161,5 +165,30 @@ describe("B795: a two-entry added batch whose second entry fails — re-Save sen
       added: addedAfterFirstSuccess,
     });
     expect(retryDiff).toEqual([{ type: "ADD_ITEM", productId: "p-2", qty: 1 }]);
+  });
+});
+
+// Opus review round 2 on #1302 (fleet lead relay): a successful batch called
+// router.back() unconditionally, discarding any units a concurrent re-scan
+// left in `added` mid-flight -- an under-bill in the common case, not an edge
+// case. The batch runner must never silently navigate away with leftovers.
+describe("leftoverAddedMessage", () => {
+  it("is null when nothing is left to send", () => {
+    expect(leftoverAddedMessage([])).toBeNull();
+  });
+
+  it("names a single leftover item", () => {
+    expect(leftoverAddedMessage([{ productId: "p-1", qty: 1 }])).toBe(
+      "1 item still to send — tap Save again.",
+    );
+  });
+
+  it("names multiple leftover items with plural wording", () => {
+    expect(
+      leftoverAddedMessage([
+        { productId: "p-1", qty: 1 },
+        { productId: "p-2", qty: 1 },
+      ]),
+    ).toBe("2 items still to send — tap Save again.");
   });
 });

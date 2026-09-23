@@ -80,3 +80,48 @@ describe("submitEntry names a DECLINED already-resolved CR distinctly (round 1 f
     expect(branchBody).toMatch(/declined/i);
   });
 });
+
+// Opus review round 2 on #1302 (fleet lead relay): the scan FAB stayed live
+// during Save, and a successful batch called router.back() unconditionally --
+// discarding any units a concurrent re-scan left in `added` mid-flight. An
+// under-bill in the COMMON case, not an edge case.
+describe("adjust.tsx never silently discards leftover added units (round 2)", () => {
+  const src = readFileSync(
+    join(__dirname, "..", "app/(driver)/route/stop/[stopId]/adjust.tsx"),
+    "utf8",
+  );
+
+  it("hides the scan FAB while a save is in progress, not just during the license block", () => {
+    const at = src.indexOf("<BarcodeFab");
+    expect(at).toBeGreaterThan(-1);
+    const tagEnd = src.indexOf("/>", at);
+    const tag = src.slice(at, tagEnd);
+    expect(tag).toMatch(/hidden=\{saving \|\| !!licenseBlock\}/);
+  });
+
+  it("processDiff's success path never calls router.back() or shows 'Order updated' directly", () => {
+    const fnAt = src.indexOf("async function processDiff(");
+    const fnEnd = src.indexOf("batchJustCompletedRef.current = true;", fnAt);
+    expect(fnEnd).toBeGreaterThan(-1);
+    const body = src.slice(fnAt, fnEnd);
+    expect(body).not.toMatch(/router\.back\(\)/);
+    expect(body).not.toMatch(/Order updated/);
+  });
+
+  it("imports leftoverAddedMessage and uses it to decide whether to stay or navigate away", () => {
+    expect(src).toMatch(/leftoverAddedMessage/);
+    const at = src.indexOf("leftoverAddedMessage(");
+    expect(at).toBeGreaterThan(-1);
+  });
+
+  it("the leftover-decision effect reads the CURRENT `added` and `saving` (never a stale closure)", () => {
+    const at = src.indexOf("leftoverAddedMessage(");
+    const effectStart = src.lastIndexOf("useEffect(", at);
+    const depsAt = src.indexOf("}, [", at);
+    const depsEnd = src.indexOf(")", depsAt);
+    const deps = src.slice(depsAt, depsEnd);
+    expect(effectStart).toBeGreaterThan(-1);
+    expect(deps).toMatch(/\bsaving\b/);
+    expect(deps).toMatch(/\badded\b/);
+  });
+});

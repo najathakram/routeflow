@@ -25,6 +25,7 @@ import {
 import {
   buildAtDoorChangeRequests,
   dropSucceededAddedLine,
+  leftoverAddedMessage,
   type AtDoorAddedLine,
   type AtDoorEditedLine,
 } from "../../../../../lib/at-door-diff";
@@ -115,6 +116,11 @@ export default function AdjustOrderScreen() {
   // by the regulated guard — remembered so it can be declined (cleaned up) when
   // the driver removes the offending line or cancels, instead of lingering PENDING.
   const blockedCrRef = useRef<string | null>(null);
+  // Set by processDiff right after a batch finishes successfully — the actual
+  // toast/navigate decision waits for the effect below, which reads `added`
+  // only once React has settled it to its TRUE latest value (never a value
+  // read mid-function, which could miss a concurrent re-scan's own setAdded).
+  const batchJustCompletedRef = useRef(false);
 
   const createCr = useCreateChangeRequest(orderId ?? "");
   const resolveCr = useResolveChangeRequestAtStop(orderId ?? "");
@@ -316,9 +322,28 @@ export default function AdjustOrderScreen() {
     }
     pendingRef.current = null;
     setSaving(false);
+    // B795 review round 2: the toast/navigate decision below waits for the
+    // effect (reads the TRUE latest `added`) rather than deciding here --
+    // a concurrent re-scan's own setAdded may not have committed yet.
+    batchJustCompletedRef.current = true;
+  }
+
+  // Fires once the batch-completion flag is set AND `saving` has settled to
+  // false, reading whatever `added` React has ACTUALLY committed by then. A
+  // concurrent re-scan mid-batch can leave units here that were never part of
+  // the diff just processed -- never silently discard them by navigating away
+  // (Opus review, #1302 round 2: router.back() used to fire unconditionally).
+  useEffect(() => {
+    if (!batchJustCompletedRef.current || saving) return;
+    batchJustCompletedRef.current = false;
+    const leftover = leftoverAddedMessage(added);
+    if (leftover) {
+      showToast(leftover);
+      return;
+    }
     showToast("Order updated");
     router.back();
-  }
+  }, [saving, added, router]);
 
   async function handleSave() {
     if (!orderId) return;
@@ -469,7 +494,10 @@ export default function AdjustOrderScreen() {
         </View>
       </ScrollView>
 
-      <BarcodeFab onScanned={handleScanned} hidden={!!licenseBlock} />
+      {/* B795 review round 2: hide the scanner while saving too, not just
+          during the license block -- a scan landing mid-batch grows a draft
+          past what a just-sent ADD_ITEM already covers. */}
+      <BarcodeFab onScanned={handleScanned} hidden={saving || !!licenseBlock} />
 
       {/* Regulated-license guard — drivers can't capture/override (403 server-side),
           so this is read-only; the only real exit besides Cancel is dropping the

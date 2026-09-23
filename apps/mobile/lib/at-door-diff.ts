@@ -110,3 +110,13 @@ export function dropSucceededAddedLine<
   };
   return added.map((a, i) => (i === idx ? next : a));
 }
+
+/**
+ * The toast shown when a batch finishes but `added` still holds units a
+ * concurrent re-scan grew mid-flight -- never silently discard them by
+ * navigating away (Opus review, #1302 round 2). null when nothing is left.
+ */
+export function leftoverAddedMessage(added: ReadonlyArray<unknown>): string | null {
+  if (added.length === 0) return null;
+  return `${added.length} item${added.length === 1 ? "" : "s"} still to send — tap Save again.`;
+}
