@@ -920,7 +920,7 @@ export default function BuyerOrderDetailPage() {
                           )}
                         </p>
                         {li.notes?.trim() && (
-                          <p className="mt-0.5 text-xs font-normal italic text-navy/60">
+                          <p className="mt-0.5 whitespace-pre-line text-xs font-normal italic text-navy/60">
                             {li.notes}
                           </p>
                         )}

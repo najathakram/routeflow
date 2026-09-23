@@ -1644,8 +1644,8 @@ function DraftItemCard({
           onChangeText={onSetNote}
           placeholder="Flavor or note for this item (prints on invoice)"
           placeholderTextColor={ios.label3}
-          maxLength={500}
-          returnKeyType="done"
+          maxLength={2000}
+          multiline
           style={styles.cartNoteInput}
         />
       ) : (
@@ -1961,8 +1961,8 @@ function UnlistedDraftCard({
           onChangeText={onSetNote}
           placeholder="Flavor or note for this item (prints on invoice)"
           placeholderTextColor={ios.label3}
-          maxLength={500}
-          returnKeyType="done"
+          maxLength={2000}
+          multiline
           style={styles.cartNoteInput}
         />
       ) : (

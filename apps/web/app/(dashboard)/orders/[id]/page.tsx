@@ -1668,13 +1668,13 @@ export function EditableLineItems({
           {/* Per-line note — carried onto the invoice line (buyer-visible). */}
           {!item.cancelled && (
             <div className="ml-11 mt-1">
-              <input
-                type="text"
-                maxLength={500}
+              <textarea
+                rows={2}
+                maxLength={2000}
                 value={item.notes ?? ""}
                 onChange={(e) => update(item.id, { notes: e.target.value })}
                 placeholder="Note for this line (prints on invoice)"
-                className="w-full rounded border border-surface-border bg-white px-2 py-1 text-xs text-navy placeholder:text-navy/40 focus:outline-none focus:ring-1 focus:ring-brand-500"
+                className="w-full resize-y rounded border border-surface-border bg-white px-2 py-1 text-xs text-navy placeholder:text-navy/40 focus:outline-none focus:ring-1 focus:ring-brand-500"
               />
             </div>
           )}

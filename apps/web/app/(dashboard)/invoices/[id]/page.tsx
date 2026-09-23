@@ -2515,7 +2515,7 @@ export default function InvoiceDetailPage() {
                         <td className="px-8 py-3 font-medium text-navy">
                           {item.description}
                           {item.notes && (
-                            <p className="mt-0.5 text-xs font-normal italic text-navy/60">
+                            <p className="mt-0.5 whitespace-pre-line text-xs font-normal italic text-navy/60">
                               {item.notes}
                             </p>
                           )}
