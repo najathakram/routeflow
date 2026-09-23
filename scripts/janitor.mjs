@@ -250,10 +250,14 @@ const mainlineCache = new Map();
 /** Every commit on `masterRef`'s first-parent chain (cached per repo + resolved master sha). */
 export function mainlineCommits(repoRoot, masterRef = "origin/master") {
   // Keyed on the RESOLVED master sha, not the ref name, so a moved master never reads a stale set.
-  const head = trySh("git", ["-C", repoRoot, "rev-parse", masterRef]) ?? masterRef;
+  const head = trySh("git", ["-C", repoRoot, "rev-parse", masterRef]);
+  if (!head) return null;
   const key = `${repoRoot}\0${head}`;
   if (!mainlineCache.has(key)) {
-    const out = trySh("git", ["-C", repoRoot, "rev-list", "--first-parent", masterRef]) ?? "";
+    const out = trySh("git", ["-C", repoRoot, "rev-list", "--first-parent", head], {
+      maxBuffer: 256 * 1024 * 1024,
+    });
+    if (out == null) return null; // unreadable: callers fail CLOSED (treat as on the mainline)
     mainlineCache.set(key, new Set(out.split("\n").filter(Boolean)));
   }
   return mainlineCache.get(key);
@@ -264,7 +268,7 @@ function ghPrMergedAtTip(repoRoot, branch, tip) {
   const out = trySh(
     "gh",
     ["pr", "list", "--head", branch, "--state", "merged", "--json", "headRefOid", "--limit", "5"],
-    { cwd: repoRoot },
+    { cwd: repoRoot, timeout: 15_000 }, // a network hang never blocks the report; timeout = not proven
   );
   if (!out) return false;
   try {
@@ -293,10 +297,14 @@ export function mergeEvidence(
   } catch {
     tipIsAncestor = false; // not in master by ancestry (squash merges land here)
   }
+  const mainline = mainlineCommits(repoRoot, masterRef);
+  const tipOnMainline = mainline ? mainline.has(tip) : true; // unreadable mainline: fail closed
+  // Ancestry through a merge is already proof; only ask GitHub when it is not.
+  const proven = tipIsAncestor && !tipOnMainline;
   return {
     tipIsAncestor,
-    tipOnMainline: mainlineCommits(repoRoot, masterRef).has(tip),
-    prMergedAtTip: !!ghLookup(repoRoot, branch, tip),
+    tipOnMainline,
+    prMergedAtTip: proven ? false : !!ghLookup(repoRoot, branch, tip),
   };
 }
 
@@ -468,9 +476,10 @@ function runStaleBranches(repoRoot) {
       .filter(Boolean),
   );
   const mainline = mainlineCommits(repoRoot, "origin/master");
+  // Unreadable mainline: report nothing as merged rather than guess (fail closed).
   const onMainline = new Set(
-    [...merged].filter((b) =>
-      mainline.has(trySh("git", ["-C", repoRoot, "rev-parse", `origin/${b}`])),
+    [...merged].filter(
+      (b) => !mainline || mainline.has(trySh("git", ["-C", repoRoot, "rev-parse", `origin/${b}`])),
     ),
   );
   const stale = findStaleBranches(remoteBranches, merged, PROTECTED_BRANCHES, onMainline);

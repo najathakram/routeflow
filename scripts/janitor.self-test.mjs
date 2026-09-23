@@ -24,6 +24,12 @@ import {
 // Run inside a git hook, GIT_DIR / GIT_INDEX_FILE / GIT_WORK_TREE would point every `git -C <tmp>`
 // below at the REAL repo. Scrub them before any git call (the janitor inherits this env).
 for (const k of Object.keys(process.env)) if (k.startsWith("GIT_")) delete process.env[k];
+// ...and ignore the machine's global/system git config, so commit signing, a global hooks path or
+// a template-dir commit-msg hook can never make the throwaway-repo commits below fail.
+const emptyGitConfig = join(mkdtempSync(join(tmpdir(), "janitor-gitcfg-")), "config");
+writeFileSync(emptyGitConfig, "");
+process.env.GIT_CONFIG_GLOBAL = emptyGitConfig;
+process.env.GIT_CONFIG_NOSYSTEM = "1";
 
 let pass = 0;
 const failures = [];

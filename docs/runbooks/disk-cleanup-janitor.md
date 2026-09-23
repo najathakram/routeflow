@@ -26,9 +26,16 @@ shortfall never triggers the more aggressive later steps.
 2. **Whole worktrees** that meet step 1's conditions AND have no unpushed commits —
    `git worktree remove --force`, then a fallback recursive delete if Windows left files behind
    (file locks are common), then `git worktree prune`.
+3. **Orphan directories** under `.claude/worktrees/` that `git worktree list` no longer
+   recognizes (left behind by a worktree removed outside this tool).
+4. **Docker BUILD CACHE only** — `docker builder prune -a -f`.
+5. **npm cache** — `npm cache clean --force`.
+6. **Proof/audit folders** under `local-assets/proofs/` and `local-assets/handoff/` older than
+   7 days (owner's retention choice).
 
-**What "merged" means (B800).** Ancestry alone is not proof: a branch just created from master,
-with **zero commits of its own**, points at a mainline master commit and is trivially an ancestor
+## What "merged" means (B800)
+
+Ancestry alone is not proof: a branch just created from master, with **zero commits of its own**, points at a mainline master commit and is trivially an ancestor
 of `origin/master` — it used to count as merged, so an active lane's fresh worktree could lose its
 `node_modules` or be removed. A branch is merged only when
 
@@ -38,9 +45,12 @@ of `origin/master` — it used to count as merged, so an active lane's fresh wor
   merges; any `gh` failure means "not proven").
 
 A fast-forwarded branch is indistinguishable from a fresh one and is left alone — a safe false
-negative. 3. **Orphan directories** under `.claude/worktrees/` that `git worktree list` no longer
-recognizes (left behind by a worktree removed outside this tool). 4. **Docker BUILD CACHE only** — `docker builder prune -a -f`. 5. **npm cache** — `npm cache clean --force`. 6. **Proof/audit folders** under `local-assets/proofs/` and `local-assets/handoff/` older than
-7 days (owner's retention choice).
+negative.
+
+Known residual (safe in practice): a branch with zero commits of its own, cut from the **tip of an
+old `--no-ff`-merged feature branch** (off the mainline), still reads as merged. master has been
+squash-only since 2026-07-30 and lanes branch from the mainline, and the uncommitted-changes and
+24-hour guards come first, so the realistic worst case is losing `node_modules` after a day idle.
 
 ## What it never touches
 
