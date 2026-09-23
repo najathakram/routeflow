@@ -3,6 +3,7 @@ import {
   buildDeliveries,
   reconciledTotal,
   isFullyDelivered,
+  isUnitAwareLine,
 } from "../lib/short-pick";
 
 const lines = [
@@ -84,5 +85,55 @@ describe("isFullyDelivered", () => {
   });
   it("false once any line is reduced", () => {
     expect(isFullyDelivered(lines, { "li-1": 5 })).toBe(false);
+  });
+});
+
+// B648: a units_v1 line (unitLabel set — "Case", "Pallet"…) is NEVER
+// short-picked. `orderedQty` there is base PIECES (count × the line's
+// unitsPerBox snapshot); a delivered qty other than a whole multiple of the
+// case size has no physical meaning, so every function below must treat such
+// a line as fully delivered regardless of what deliveredQtyById holds.
+describe("B648: a unit-aware line (unitLabel set) is never short-picked", () => {
+  const caseLine = {
+    orderItemId: "li-case",
+    productId: "p-case",
+    orderedQty: 864, // 3 Cases of 288
+    subtotal: 300,
+    unitLabel: "Case",
+  };
+
+  it("isUnitAwareLine identifies it, and not a plain pack/piece line", () => {
+    expect(isUnitAwareLine(caseLine)).toBe(true);
+    expect(isUnitAwareLine({ unitLabel: null })).toBe(false);
+    expect(isUnitAwareLine({ unitLabel: undefined })).toBe(false);
+    expect(isUnitAwareLine({ unitLabel: "" })).toBe(false);
+  });
+
+  it("buildDeliveries ignores a deliveredQtyById entry for it — always DELIVERED at the full ordered qty", () => {
+    // Today (pre-fix): a stray 288 (meaning "1 of 3 cases") would be read
+    // straight through as 288 PIECES delivered out of 864 -> PARTIAL, wrong.
+    const out = buildDeliveries([caseLine], { "li-case": 288 });
+    expect(out).toEqual([
+      { orderItemId: "li-case", productId: "p-case", type: "DELIVERED", qty: 864 },
+    ]);
+  });
+
+  it("reconciledTotal ignores the same entry — charges the full $300, never a prorated fraction", () => {
+    expect(reconciledTotal([caseLine], { "li-case": 288 })).toBe(300);
+  });
+
+  it("isFullyDelivered stays true for it even with a reduced entry in the map", () => {
+    expect(isFullyDelivered([caseLine], { "li-case": 288 })).toBe(true);
+  });
+
+  it("a mix of a unit-aware line and a plain line: only the plain one is short-pickable", () => {
+    const plain = { orderItemId: "li-plain", productId: "p-plain", orderedQty: 10, subtotal: 100 };
+    const qtyById = { "li-case": 288, "li-plain": 5 };
+    expect(buildDeliveries([caseLine, plain], qtyById)).toEqual([
+      { orderItemId: "li-case", productId: "p-case", type: "DELIVERED", qty: 864 },
+      { orderItemId: "li-plain", productId: "p-plain", type: "PARTIAL", qty: 5 },
+    ]);
+    // 300 (whole case line, unaffected) + 50 (100 * 5/10) = 350.
+    expect(reconciledTotal([caseLine, plain], qtyById)).toBe(350);
   });
 });

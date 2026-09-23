@@ -20,6 +20,7 @@ import {
   freeUnitSizeFor,
   reconciledTotal,
   deliveryTypeForQty,
+  isUnitAwareLine,
   type ShortPickLine,
 } from "../../../../../lib/short-pick";
 import { sanitizeIntInput, parseIntQty } from "../../../../../lib/qty";
@@ -74,6 +75,10 @@ export default function ShortPickScreen() {
         // line) while `orderedQty` and the qty steppers below are in PIECES —
         // the server oracle's `freeUnitSize` bridges the two axes.
         freeUnitSize: freeUnitSizeFor(li),
+        // B648: a units_v1 line (unitLabel set) is never short-picked — see
+        // lib/short-pick.ts#isUnitAwareLine. Must also stay byte-identical to
+        // payment.tsx's mapping for the same REG-B50 reason as freeUnits.
+        unitLabel: li.unitLabel ?? null,
       })),
     [lines],
   );
@@ -169,6 +174,10 @@ function ShortPickRow({
   const ordered = Number(li.qty);
   const type = deliveryTypeForQty(qty, ordered);
   const [draft, setDraft] = useState(String(qty));
+  // B648: a units_v1 line ("Case"…) is never short-picked here — its ordered
+  // qty is base pieces, and this stepper only counts pieces, so it has no way
+  // to represent a partial case. Read-only, always DELIVERED-in-full.
+  const unitAware = isUnitAwareLine(li);
 
   return (
     <View style={styles.card}>
@@ -177,9 +186,11 @@ function ShortPickRow({
           <Text style={styles.cardName} numberOfLines={2}>
             {li.product?.name ?? li.name ?? "Item"}
           </Text>
-          <Text style={styles.cardMeta}>Ordered {ordered}</Text>
+          <Text style={styles.cardMeta}>
+            Ordered {unitAware ? `${li.boxes ?? ""} ${li.unitLabel}`.trim() : ordered}
+          </Text>
         </View>
-        {type !== "DELIVERED" ? (
+        {!unitAware && type !== "DELIVERED" ? (
           <View
             style={[styles.badge, type === "REFUSED" ? styles.badgeRefused : styles.badgeShort]}
           >
@@ -187,48 +198,54 @@ function ShortPickRow({
           </View>
         ) : null}
       </View>
-      <View style={styles.stepperRow}>
-        <Text style={styles.stepperLabel}>Delivered</Text>
-        <View style={styles.stepper}>
-          <Pressable
-            style={styles.stepBtn}
-            onPress={() => {
-              const n = Math.max(0, qty - 1);
-              onChangeQty(n);
-              setDraft(String(n));
-            }}
-            hitSlop={6}
-          >
-            <Text style={styles.stepText}>−</Text>
-          </Pressable>
-          <TextInput
-            style={styles.qtyInput}
-            value={draft}
-            onChangeText={(txt) => {
-              const clean = sanitizeIntInput(txt);
-              setDraft(clean);
-              if (clean === "") return;
-              onChangeQty(Math.min(ordered, parseIntQty(clean, qty)));
-            }}
-            onBlur={() => setDraft(String(qty))}
-            keyboardType="number-pad"
-            returnKeyType="done"
-            maxLength={5}
-            selectTextOnFocus
-          />
-          <Pressable
-            style={styles.stepBtn}
-            onPress={() => {
-              const n = Math.min(ordered, qty + 1);
-              onChangeQty(n);
-              setDraft(String(n));
-            }}
-            hitSlop={6}
-          >
-            <Text style={styles.stepText}>+</Text>
-          </Pressable>
+      {unitAware ? (
+        <Text style={styles.stepperLabel}>
+          Sold by the {li.unitLabel} — adjust this line from the office if it's short.
+        </Text>
+      ) : (
+        <View style={styles.stepperRow}>
+          <Text style={styles.stepperLabel}>Delivered</Text>
+          <View style={styles.stepper}>
+            <Pressable
+              style={styles.stepBtn}
+              onPress={() => {
+                const n = Math.max(0, qty - 1);
+                onChangeQty(n);
+                setDraft(String(n));
+              }}
+              hitSlop={6}
+            >
+              <Text style={styles.stepText}>−</Text>
+            </Pressable>
+            <TextInput
+              style={styles.qtyInput}
+              value={draft}
+              onChangeText={(txt) => {
+                const clean = sanitizeIntInput(txt);
+                setDraft(clean);
+                if (clean === "") return;
+                onChangeQty(Math.min(ordered, parseIntQty(clean, qty)));
+              }}
+              onBlur={() => setDraft(String(qty))}
+              keyboardType="number-pad"
+              returnKeyType="done"
+              maxLength={5}
+              selectTextOnFocus
+            />
+            <Pressable
+              style={styles.stepBtn}
+              onPress={() => {
+                const n = Math.min(ordered, qty + 1);
+                onChangeQty(n);
+                setDraft(String(n));
+              }}
+              hitSlop={6}
+            >
+              <Text style={styles.stepText}>+</Text>
+            </Pressable>
+          </View>
         </View>
-      </View>
+      )}
     </View>
   );
 }

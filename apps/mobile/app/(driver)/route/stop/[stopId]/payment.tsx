@@ -128,6 +128,10 @@ export default function PaymentScreen() {
           // (invoices.service.ts#buildInvoiceItemData). Without it a boxed BOGO
           // line's partial estimate under-bills by up to one box.
           freeUnitSize: freeUnitSizeFor(li),
+          // B648: a units_v1 line (unitLabel set) is never short-picked — see
+          // lib/short-pick.ts#isUnitAwareLine. Must stay byte-identical to
+          // short-pick.tsx's mapping for the same REG-B50 reason as freeUnits.
+          unitLabel: li.unitLabel ?? null,
         })),
     [order],
   );

@@ -33,6 +33,41 @@ export interface ShortPickLine {
    * axis, which is every selling-unit line.
    */
   freeUnitSize?: number;
+  /**
+   * B648: the units_v1 selling unit ("Case", "Pallet"…) this line is sold by;
+   * null/undefined for a plain piece/pack line. `orderedQty` on a unit-aware
+   * line is base PIECES (count × the line's own `unitsPerBox` snapshot), and
+   * a delivered qty other than a whole multiple of the case size has no
+   * physical meaning a piece-counting stepper can represent — REFUSE rather
+   * than let one silently mis-count pieces as a case. `effectiveDeliveredQty`
+   * always treats such a line as fully delivered, ignoring any
+   * `deliveredQtyById` entry for it (ordered/refused zero-vs-full is still a
+   * meaningful choice at the driver's stop-detail screen; a PARTIAL case
+   * count is not, and this module has no case-aware stepper to offer).
+   */
+  unitLabel?: string | null;
+}
+
+/**
+ * B648: the delivered qty this module ever uses for a line — `orderedQty`
+ * outright for a unit-aware line (see `ShortPickLine.unitLabel`), regardless
+ * of what `deliveredQtyById` holds, else the normal clamped lookup. Every
+ * function below reads through this ONE place so a unit-aware line can never
+ * be short-picked via a stale map entry or a UI that doesn't yet know to
+ * hide its stepper.
+ */
+/** B648: true when a line is sold by a units_v1 unit and so is never short-pickable — see `ShortPickLine.unitLabel`. Exported so the review screen can hide/disable its stepper for the same lines this module already refuses to adjust. */
+export function isUnitAwareLine(li: Pick<ShortPickLine, "unitLabel">): boolean {
+  return (li.unitLabel ?? "").trim() !== "";
+}
+
+function effectiveDeliveredQty(
+  li: Pick<ShortPickLine, "orderItemId" | "orderedQty" | "unitLabel">,
+  deliveredQtyById: Record<string, number>,
+): number {
+  if (isUnitAwareLine(li)) return li.orderedQty;
+  const raw = deliveredQtyById[li.orderItemId] ?? li.orderedQty;
+  return Math.max(0, Math.min(raw, li.orderedQty));
 }
 
 /**
@@ -94,8 +129,7 @@ export function buildDeliveries(
 ): PlannedDelivery[] {
   const out: PlannedDelivery[] = [];
   for (const li of lines) {
-    const raw = deliveredQtyById[li.orderItemId] ?? li.orderedQty;
-    const clamped = Math.max(0, Math.min(raw, li.orderedQty));
+    const clamped = effectiveDeliveredQty(li, deliveredQtyById);
     out.push({
       orderItemId: li.orderItemId,
       productId: li.productId,
@@ -121,8 +155,7 @@ export function reconciledTotal(
 ): number {
   let sum = 0;
   for (const li of lines) {
-    const raw = deliveredQtyById[li.orderItemId] ?? li.orderedQty;
-    const clamped = Math.max(0, Math.min(raw, li.orderedQty));
+    const clamped = effectiveDeliveredQty(li, deliveredQtyById);
     sum += prorateLineSubtotal(
       li.subtotal,
       clamped,
@@ -139,5 +172,5 @@ export function isFullyDelivered(
   lines: ShortPickLine[],
   deliveredQtyById: Record<string, number>,
 ): boolean {
-  return lines.every((li) => (deliveredQtyById[li.orderItemId] ?? li.orderedQty) >= li.orderedQty);
+  return lines.every((li) => effectiveDeliveredQty(li, deliveredQtyById) >= li.orderedQty);
 }
