@@ -603,6 +603,19 @@ export function RecordInlineReturnDialog({
               </dd>
             </div>
           </dl>
+          {result.parkedReversals && (
+            <div
+              data-testid="inline-return-parked-warning"
+              className="rounded-lg border border-amber-300 bg-amber-50 p-3"
+            >
+              <p className="text-sm font-medium text-navy">Ledger reversal parked</p>
+              <p className="text-xs text-navy/70">
+                {result.parkedReversals.pieces} piece(s) across {result.parkedReversals.count}{" "}
+                line(s) could not be booked to the regulated ledger. It stays on the regulated
+                report until resolved.
+              </p>
+            </div>
+          )}
           <div className="flex justify-end">
             <Button onClick={onClose}>Done</Button>
           </div>

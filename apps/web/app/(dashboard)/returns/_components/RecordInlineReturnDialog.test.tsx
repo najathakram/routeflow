@@ -676,3 +676,101 @@ describe("RecordInlineReturnDialog — the excess option resets on every re-quot
     ).not.toBeInTheDocument();
   });
 });
+
+describe("RecordInlineReturnDialog — B735: a parked ledger reversal must be visible", () => {
+  async function captureToSuccess(response: unknown) {
+    await openToStep1();
+    await enterQtyAndGetQuote("10");
+    resolveNextQuote(quoteResponse([chunk()]));
+    await screen.findByText(/issue credit note and receive goods/i);
+    fireEvent.click(screen.getByRole("button", { name: /issue credit note and receive goods/i }));
+    await waitFor(() => expect(captureMutate).toHaveBeenCalledTimes(1));
+    resolveNextCapture(response);
+    await screen.findByText(/return recorded/i);
+  }
+
+  it("REG-B735-web-dialog-parked-warning: a response carrying parkedReversals renders a visible warning naming the piece count, heading unchanged", async () => {
+    await captureToSuccess({
+      id: "ret-1",
+      returnNumber: "R-1",
+      orderId: "order-1",
+      customerId: "cust-1",
+      status: "RECEIVED",
+      parkedReversals: { count: 2, pieces: 5 },
+      items: [],
+    });
+
+    const warning = screen.getByTestId("inline-return-parked-warning");
+    expect(warning).toHaveTextContent(/parked/i);
+    expect(warning).toHaveTextContent("5");
+    // Still the same heading and shape as any other success — this is additive, not a
+    // replacement UI (that distinction is what separates B735 from a DRIVER_CAP hold).
+    expect(screen.getByText(/return recorded/i)).toBeInTheDocument();
+  });
+
+  it("REG-B735-web-dialog-no-field-no-warning: a response with no parkedReversals field (or null) renders no warning", async () => {
+    await captureToSuccess({
+      id: "ret-1",
+      returnNumber: "R-1",
+      orderId: "order-1",
+      customerId: "cust-1",
+      status: "RECEIVED",
+      parkedReversals: null,
+      items: [],
+    });
+
+    expect(screen.queryByTestId("inline-return-parked-warning")).not.toBeInTheDocument();
+    expect(screen.queryByText(/parked/i)).not.toBeInTheDocument();
+  });
+
+  it("PIN-B735-web-dialog-replay-shows-warning-both-times: a retry of a parked capture must not lose the warning on the replay response", async () => {
+    await openToStep1();
+    await enterQtyAndGetQuote("10");
+    resolveNextQuote(quoteResponse([chunk()]));
+    await screen.findByText(/issue credit note and receive goods/i);
+    fireEvent.click(screen.getByRole("button", { name: /issue credit note and receive goods/i }));
+    await waitFor(() => expect(captureMutate).toHaveBeenCalledTimes(1));
+
+    // First attempt: network failure AFTER the server actually committed and parked (the
+    // dialog never learns this — it only sees the dropped connection).
+    rejectNextCapture({ response: { status: 500, data: { message: "Network error" } } });
+    await screen.findByText("Network error");
+    fireEvent.click(screen.getByRole("button", { name: /^back$/i }));
+    await screen.findByText(/issue credit note and receive goods/i);
+    fireEvent.click(screen.getByRole("button", { name: /issue credit note and receive goods/i }));
+    await waitFor(() => expect(captureMutate).toHaveBeenCalledTimes(2));
+
+    // The retry replays the SAME returnKey — the server's fresh-DB-read design (B735) means
+    // the replay response still carries the park, unlike a value threaded only through the
+    // original reversal call.
+    resolveNextCapture({
+      id: "ret-1",
+      returnNumber: "R-1",
+      orderId: "order-1",
+      customerId: "cust-1",
+      status: "RECEIVED",
+      parkedReversals: { count: 1, pieces: 3 },
+      items: [],
+    });
+    await screen.findByText(/return recorded/i);
+    expect(screen.getByTestId("inline-return-parked-warning")).toHaveTextContent("3");
+  });
+
+  it("PIN-B735-web-dialog-holdreason-still-plain: a DRIVER_CAP hold response with parkedReversals: null still shows plain success, no held/approve/parked text", async () => {
+    await captureToSuccess({
+      id: "ret-1",
+      returnNumber: "R-1",
+      orderId: "order-1",
+      customerId: "cust-1",
+      holdReason: "DRIVER_CAP",
+      heldAmount: 22,
+      status: "RECEIVED",
+      parkedReversals: null,
+      items: [],
+    });
+
+    expect(screen.queryByText(/held/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/approve/i)).not.toBeInTheDocument();
+    expect(screen.queryByTestId("inline-return-parked-warning")).not.toBeInTheDocument();
+  });
+});
