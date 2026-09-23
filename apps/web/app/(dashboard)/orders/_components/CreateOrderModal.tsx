@@ -248,6 +248,12 @@ export function CreateOrderModal({
   // Dialog must come back, never stay closed behind a screen that is no longer rendered.
   const scanScreenActive = scanV2 && scanScreenOpen;
   // A closed order builder (or a gate that turned off) never reopens straight into the scan screen.
+  // Opus review (#1271, optional item): this bypasses ScanOrderScreen's own requestClose guard (which
+  // refuses to close while a retry lookup is actually in flight) — accepted as harmless rather than
+  // plumbed through, because the whole order builder is closing here; any in-flight retry's own
+  // eventual add still lands (the screen stays mounted, rendering null, until its next open resets
+  // it), but it lands into a draft the operator has already abandoned, same as any other unsaved
+  // in-flight edit at close time.
   React.useEffect(() => {
     if (!isOpen || !scanV2) setScanScreenOpen(false);
   }, [isOpen, scanV2]);

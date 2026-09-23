@@ -628,6 +628,42 @@ describe("ScanOrderScreen", () => {
       expect(resolve).toHaveBeenCalledTimes(4); // now retry #2
     });
 
+    it("Opus review (#1271): discarding a later queued item while an earlier one's retry is still in flight must never retry (or double-count) the discarded one", async () => {
+      // `runDueRetries` snapshots its due list ONCE when the loop starts (dueScans(pendingRef.current,
+      // ...) is evaluated a single time, not re-read each iteration). If 222 is discarded while 111's
+      // retry is still awaiting its resolver, the loop still holds 222's stale snapshot entry and,
+      // without a synchronous still-queued check immediately before the claim, would retry (and add)
+      // an item the operator already discarded — typically because they had already rescanned it,
+      // making this a real double count.
+      let release!: (r: ScanResolution) => void;
+      const held = new Promise<ScanResolution>((r) => (release = r));
+      const resolve = jest
+        .fn<Promise<ScanResolution>, [string]>()
+        .mockResolvedValueOnce(offline()) // 111's original lookup
+        .mockResolvedValueOnce(offline()) // 222's original lookup
+        .mockReturnValueOnce(held) // 111's retry hangs
+        .mockResolvedValueOnce(added("p2", "Gadget")); // would be 222's retry, if it were ever asked
+      setup({}, resolve);
+      await scan("111");
+      await scan("222");
+      expect(screen.getByLabelText("Waiting for signal")).toHaveTextContent("(2)");
+
+      await act(async () => {
+        window.dispatchEvent(new Event("online"));
+      });
+      expect(resolve).toHaveBeenCalledTimes(3); // 111's retry is the one in flight
+
+      fireEvent.click(screen.getByRole("button", { name: "Discard 222" }));
+
+      await act(async () => release(added("p1", "Widget")));
+      await advance(1_000);
+
+      // 222's lookup must NEVER fire — the loop's stale snapshot entry for it must be refused at
+      // the synchronous still-queued check, not retried.
+      expect(resolve).toHaveBeenCalledTimes(3);
+      expect(screen.queryByText("Added Gadget")).not.toBeInTheDocument();
+    });
+
     // Opus review (#1271): the harness that lived here read `linesRef.current`, a ref updated
     // SYNCHRONOUSLY in the same tick as the decision — it can never observe a stale-render race,
     // so it stayed green even before ANY of this file's real fixes existed and proved nothing.

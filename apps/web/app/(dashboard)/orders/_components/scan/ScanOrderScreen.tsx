@@ -298,6 +298,16 @@ export function ScanOrderScreen<T extends SummaryLine & { tempId: string }>({
       // decision — and its own flushSync — INSIDE its `setLineItems` updater, against the true
       // latest order state, so it is correct regardless of what this screen's queue looks like.
       // An earlier version of this comment claimed this flushSync was that guarantee; it was not.
+      //
+      // Opus review (#1271): `runDueRetries` snapshots its due list ONCE when the loop starts, so an
+      // item discarded while an EARLIER item in that same snapshot is still awaiting its resolver is
+      // stale by the time the loop reaches it. This check must sit immediately before the claim below
+      // with NO await between them (SA-090c) — anything after an await could let another claim or
+      // another discard slip into the gap.
+      if (!pendingRef.current.some((p) => p.id === item.id)) {
+        retryInFlight.current.delete(item.id);
+        return;
+      }
       flushSync(() => {
         setPendingBoth(removePending(pendingRef.current, item.id));
       });
