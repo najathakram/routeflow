@@ -19,8 +19,10 @@ import {
   AppendOrderRevisionArgs,
 } from "./order-revisions";
 import {
+  categoryTaxSnapshotOf,
   computeCategoryTax,
   computeLineSubtotal,
+  copyCategoryTaxSnapshot,
   getTierPrice,
   normalizeBoxesPieces,
   roundMoney,
@@ -111,6 +113,8 @@ import { AuthorizationGuardService } from "../authorizations/authorization-guard
 import { resolveLineUnits } from "../products/line-units";
 import * as unitLines from "./unit-line-build";
 import * as unitEdit from "./unit-line-edit";
+import { loadCategoryMapForProducts } from "./category-map";
+import { collectMergeLines } from "./merge-line-collect";
 import { assertBuyerCartPricesCurrent } from "./buyer-cart-price-check";
 import { restrictionChannelForPrincipal } from "../selling-restrictions/selling-restrictions.core";
 import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
@@ -656,84 +660,10 @@ export class OrdersService implements OnApplicationBootstrap {
           // can be re-prorated by piece count (see mergeBoxedContributions), not a
           // naive qty sum. Iteration is updatedAt DESC so the first occurrence wins on
           // price/metadata.
-          const loserContribsByProduct = new Map<
-            string,
-            Array<{
-              qty: unknown;
-              boxes: number | null;
-              pieces: number | null;
-              // BUY_N_GET_M snapshot so the merged line re-derives its free units.
-              promoFreeUnits: number | null;
-              // Whether the contribution is buyer-priced — gates earning NEW free units.
-              priceType: PriceType;
-              overriddenBy: string | null;
-            }>
-          >();
-          const newItemMetaByProduct = new Map<
-            string,
-            {
-              unitPrice: number;
-              priceType: PriceType;
-              originalPrice: number | null;
-              overrideReason: string | null;
-              overriddenBy: string | null;
-              notes: string | null;
-              trackedCategoryId: string | null;
-            }
-          >();
-          // Unlisted (catalog-free) loser lines can't be keyed by product — each is
-          // appended to the winner as its own new line (never boxed).
-          const unlistedNewItems: Array<{
-            name: string | null;
-            qty: number;
-            unitPrice: number;
-            priceType: PriceType;
-            originalPrice: number | null;
-            overrideReason: string | null;
-            overriddenBy: string | null;
-            notes: string | null;
-          }> = [];
-
-          for (const loser of losers) {
-            for (const li of loser.lineItems) {
-              if (!li.productId) {
-                unlistedNewItems.push({
-                  name: li.name,
-                  qty: Number(li.qty),
-                  unitPrice: Number(li.unitPrice),
-                  priceType: li.priceType,
-                  originalPrice: li.originalPrice !== null ? Number(li.originalPrice) : null,
-                  overrideReason: li.overrideReason,
-                  overriddenBy: li.overriddenBy,
-                  notes: li.notes,
-                });
-                continue;
-              }
-              const contribs = loserContribsByProduct.get(li.productId) ?? [];
-              contribs.push({
-                qty: li.qty,
-                boxes: li.boxes,
-                pieces: li.pieces,
-                promoFreeUnits: (li as any).promoFreeUnits ?? null,
-                priceType: li.priceType,
-                overriddenBy: li.overriddenBy,
-              });
-              loserContribsByProduct.set(li.productId, contribs);
-              if (!winnerProductIds.has(li.productId) && !newItemMetaByProduct.has(li.productId)) {
-                newItemMetaByProduct.set(li.productId, {
-                  unitPrice: Number(li.unitPrice),
-                  priceType: li.priceType,
-                  originalPrice: li.originalPrice !== null ? Number(li.originalPrice) : null,
-                  overrideReason: li.overrideReason,
-                  overriddenBy: li.overriddenBy,
-                  notes: li.notes,
-                  // Carry the loser line's sale-time regulated-category snapshot so the
-                  // new winner line keeps it (invoice split + ledger depend on it).
-                  trackedCategoryId: li.trackedCategoryId ?? null,
-                });
-              }
-            }
-          }
+          // B297: collectMergeLines carries the trio (copyCategoryTaxSnapshot — a merge is
+          // not a new sale) through newItemMetaByProduct, verbatim from the losing line.
+          const { loserContribsByProduct, newItemMetaByProduct, unlistedNewItems } =
+            collectMergeLines(losers, winnerProductIds);
 
           // unitsPerBox for every product involved so boxed lines prorate by the box.
           const contributingLines = [...winner.lineItems, ...losers.flatMap((l) => l.lineItems)];
@@ -854,9 +784,10 @@ export class OrdersService implements OnApplicationBootstrap {
                   overrideReason: meta.overrideReason,
                   overriddenBy: meta.overriddenBy,
                   notes: meta.notes,
-                  // Preserve the regulated-category snapshot through the merge (was
-                  // dropped, so a merged regulated line invoiced as standard).
+                  // Preserve the regulated-category snapshot + rate trio through the merge
+                  // (was dropped, so a merged regulated line invoiced as standard/re-priced).
                   trackedCategoryId: meta.trackedCategoryId,
+                  ...copyCategoryTaxSnapshot(meta),
                 },
               });
             }
@@ -998,78 +929,10 @@ export class OrdersService implements OnApplicationBootstrap {
             winner.routeRunId == null ? (losers.find((o) => o.routeRunId != null) ?? null) : null;
 
           const winnerProductIds = new Set(winner.lineItems.map((li) => li.productId));
-          const loserContribsByProduct = new Map<
-            string,
-            Array<{
-              qty: unknown;
-              boxes: number | null;
-              pieces: number | null;
-              // BUY_N_GET_M snapshot so the merged line re-derives its free units.
-              promoFreeUnits: number | null;
-            }>
-          >();
-          const newItemMetaByProduct = new Map<
-            string,
-            {
-              unitPrice: number;
-              priceType: PriceType;
-              originalPrice: number | null;
-              overrideReason: string | null;
-              overriddenBy: string | null;
-              notes: string | null;
-              trackedCategoryId: string | null;
-            }
-          >();
-          // Unlisted (catalog-free) loser lines are appended as their own winner lines.
-          const unlistedNewItems: Array<{
-            name: string | null;
-            qty: number;
-            unitPrice: number;
-            priceType: PriceType;
-            originalPrice: number | null;
-            overrideReason: string | null;
-            overriddenBy: string | null;
-            notes: string | null;
-          }> = [];
-
-          for (const loser of losers) {
-            for (const li of loser.lineItems) {
-              if (!li.productId) {
-                unlistedNewItems.push({
-                  name: li.name,
-                  qty: Number(li.qty),
-                  unitPrice: Number(li.unitPrice),
-                  priceType: li.priceType,
-                  originalPrice: li.originalPrice !== null ? Number(li.originalPrice) : null,
-                  overrideReason: li.overrideReason,
-                  overriddenBy: li.overriddenBy,
-                  notes: li.notes,
-                });
-                continue;
-              }
-              const contribs = loserContribsByProduct.get(li.productId) ?? [];
-              contribs.push({
-                qty: li.qty,
-                boxes: li.boxes,
-                pieces: li.pieces,
-                promoFreeUnits: (li as any).promoFreeUnits ?? null,
-              });
-              loserContribsByProduct.set(li.productId, contribs);
-              if (!winnerProductIds.has(li.productId) && !newItemMetaByProduct.has(li.productId)) {
-                newItemMetaByProduct.set(li.productId, {
-                  unitPrice: Number(li.unitPrice),
-                  priceType: li.priceType,
-                  originalPrice: li.originalPrice !== null ? Number(li.originalPrice) : null,
-                  overrideReason: li.overrideReason,
-                  overriddenBy: li.overriddenBy,
-                  notes: li.notes,
-                  // Carry the loser line's sale-time regulated-category snapshot so the
-                  // new winner line keeps it (invoice split + ledger depend on it).
-                  trackedCategoryId: li.trackedCategoryId ?? null,
-                });
-              }
-            }
-          }
+          // B297: collectMergeLines carries the trio (copyCategoryTaxSnapshot — a merge is
+          // not a new sale) through newItemMetaByProduct, verbatim from the losing line.
+          const { loserContribsByProduct, newItemMetaByProduct, unlistedNewItems } =
+            collectMergeLines(losers, winnerProductIds);
 
           // unitsPerBox for every product involved so boxed lines prorate by the box.
           const involvedProductIds = [
@@ -1180,9 +1043,10 @@ export class OrdersService implements OnApplicationBootstrap {
                   overrideReason: meta.overrideReason,
                   overriddenBy: meta.overriddenBy,
                   notes: meta.notes,
-                  // Preserve the regulated-category snapshot through the merge (was
-                  // dropped, so a merged regulated line invoiced as standard).
+                  // Preserve the regulated-category snapshot + rate trio through the merge
+                  // (was dropped, so a merged regulated line invoiced as standard/re-priced).
                   trackedCategoryId: meta.trackedCategoryId,
+                  ...copyCategoryTaxSnapshot(meta),
                 },
               });
             }
@@ -2116,6 +1980,8 @@ export class OrdersService implements OnApplicationBootstrap {
             priceIncludesTax: category.priceIncludesTax,
           })
         : 0;
+      // B297 (SA-088): the trio this line was priced under — a later rate edit must never re-price it.
+      const categorySnapshot = categoryTaxSnapshotOf(category ?? null);
 
       return {
         productId: item.productId as string | null,
@@ -2142,6 +2008,8 @@ export class OrdersService implements OnApplicationBootstrap {
         trackedSubcategoryId: (product.trackedSubcategoryId ?? null) as string | null,
         // RF-4: per-line regulated category tax, snapshotted (folded into the order total).
         categoryTaxAmount,
+        // B297 (SA-088): the rate trio — recompute (PR3) reads THESE, never the live category.
+        ...categorySnapshot,
         // R2: preserve scan/insertion order (array index) for read-back.
         position: index,
         tenantId: this.prisma.getTenantId(), // nested creates bypass forTenant() extension
@@ -3328,6 +3196,9 @@ export class OrdersService implements OnApplicationBootstrap {
           const productIds = dto.items.map((i) => i.productId).filter(Boolean) as string[];
           const products = await tx.product.findMany({ where: { id: { in: productIds } } });
           const productMap = new Map<string, any>(products.map((p: any) => [p.id, p]));
+          // B297 (SA-098a): this pack-line create() is disconnected from `uctx.categoryMap`
+          // (which only covers unit-aware `unitCtx.products`) — its own scoped load.
+          const buyerCategoryMap = await loadCategoryMapForProducts(tx, productMap);
 
           // P5-04: buyer pricing context (tier + per-product override + active promos).
           // Loaded only for the buyer (CUSTOMER) merge path; DRIVER edits keep the
@@ -3494,6 +3365,14 @@ export class OrdersService implements OnApplicationBootstrap {
                 trackedCategoryId: product.trackedCategoryId ?? null,
                 // RF-3: reporting-only subcategory snapshot (mirrors trackedCategoryId).
                 trackedSubcategoryId: product.trackedSubcategoryId ?? null,
+                // B297 (SA-098a): a fresh/re-created line is a new sale — stamp the rate
+                // trio from the live category, never leave it null (recompute only ever
+                // fixes the amount, never the trio).
+                ...categoryTaxSnapshotOf(
+                  product.trackedCategoryId
+                    ? (buyerCategoryMap.get(product.trackedCategoryId) ?? null)
+                    : null,
+                ),
                 // R2: preserve the client's line order on full replace.
                 position: pos++,
               },
@@ -3584,6 +3463,7 @@ export class OrdersService implements OnApplicationBootstrap {
             ladders: unitCtx.ladders,
             tenantId: this.prisma.getTenantId(),
             tier: (pid) => (isStaffEdit ? (operatorCpMap.get(pid) ?? operatorDefaultTier) : 1),
+            categoryMap: await loadCategoryMapForProducts(tx, unitCtx.products), // B297
           };
 
           if (replaceAll) {
@@ -3593,6 +3473,9 @@ export class OrdersService implements OnApplicationBootstrap {
             const productIds = dto.items.map((i) => i.productId).filter(Boolean) as string[];
             const products = await tx.product.findMany({ where: { id: { in: productIds } } });
             const productMap = new Map<string, any>(products.map((p: any) => [p.id, p]));
+            // B297 (SA-098a): a superset of `uctx.categoryMap` (unit-aware products only) —
+            // this pack-line create() below needs every product this replaceAll touches.
+            const operatorReplaceCategoryMap = await loadCategoryMapForProducts(tx, productMap);
 
             // B60 (REG-B60): a staff replaceAll at an unchanged/echoed price must
             // land exactly where a qty edit of the same line lands — reuse the
@@ -3932,6 +3815,13 @@ export class OrdersService implements OnApplicationBootstrap {
                   trackedCategoryId: product.trackedCategoryId ?? null,
                   // RF-3: reporting-only subcategory snapshot (mirrors trackedCategoryId).
                   trackedSubcategoryId: product.trackedSubcategoryId ?? null,
+                  // B297 (SA-098a): stamp the trio from the live category — a re-created
+                  // line on a staff replaceAll is a new sale, never a deferred placeholder.
+                  ...categoryTaxSnapshotOf(
+                    product.trackedCategoryId
+                      ? (operatorReplaceCategoryMap.get(product.trackedCategoryId) ?? null)
+                      : null,
+                  ),
                   // R2: preserve the client's line order on full replace.
                   position: pos++,
                 },
@@ -3974,6 +3864,9 @@ export class OrdersService implements OnApplicationBootstrap {
                 ? await tx.product.findMany({ where: { id: { in: addProductIds } } })
                 : [];
             const addProductMap = new Map<string, any>(addProducts.map((p: any) => [p.id, p]));
+            // B297 (SA-098a): `uctx.categoryMap` only covers unit-aware `unitCtx.products` —
+            // a diff-add's own pack-line create() below needs its own scoped load.
+            const addCategoryMap = await loadCategoryMapForProducts(tx, addProductMap);
             const unresolvedAddIds = addProductIds.filter((id) => !addProductMap.has(id));
             if (unresolvedAddIds.length > 0) {
               throw new BadRequestException(
@@ -4143,6 +4036,12 @@ export class OrdersService implements OnApplicationBootstrap {
                     trackedCategoryId: product.trackedCategoryId ?? null,
                     // RF-3: reporting-only subcategory snapshot (mirrors trackedCategoryId).
                     trackedSubcategoryId: product.trackedSubcategoryId ?? null,
+                    // B297 (SA-098a): a diff-added line is a new sale — stamp the trio.
+                    ...categoryTaxSnapshotOf(
+                      product.trackedCategoryId
+                        ? (addCategoryMap.get(product.trackedCategoryId) ?? null)
+                        : null,
+                    ),
                     // R2: append this newly-added line after the existing lines.
                     position: nextPos++,
                   },
@@ -4192,9 +4091,13 @@ export class OrdersService implements OnApplicationBootstrap {
                 });
                 const unitRow = unitRows.get(item);
                 if (unitRow && unitLines.isUnitAware(unitRow)) {
-                  await unitEdit.updateUnitLine(uctx, item.id!, product, unitRow, item);
+                  // updateUnitLine re-stamps from uctx.categoryMap itself (isSubstitute flag) —
+                  // this branch never needs its own category load.
+                  await unitEdit.updateUnitLine(uctx, item.id!, product, unitRow, item, true);
                   continue;
                 }
+                // B297 (SA-098a): the pack-line substitute path only — its own scoped load.
+                const substituteCategoryMap = await loadCategoryMapForProducts(tx, [product]);
                 const existingQty = heldOrSnapshot(item.id!)?.qty ?? 1;
                 // Substitution may also carry a box/piece split when the substitute
                 // is itself a boxed product. Honor it the same way as a fresh add —
@@ -4308,6 +4211,14 @@ export class OrdersService implements OnApplicationBootstrap {
                     trackedCategoryId: product.trackedCategoryId ?? null,
                     // RF-3: re-snapshot the reporting subcategory alongside the category.
                     trackedSubcategoryId: product.trackedSubcategoryId ?? null,
+                    // B297 (SA-098a): the product changed — re-stamp the trio from the
+                    // NEW product's live category, same substance as updateUnitLine's
+                    // isSubstitute:true arm.
+                    ...categoryTaxSnapshotOf(
+                      product.trackedCategoryId
+                        ? (substituteCategoryMap.get(product.trackedCategoryId) ?? null)
+                        : null,
+                    ),
                   },
                 });
               } else if (
@@ -4363,7 +4274,8 @@ export class OrdersService implements OnApplicationBootstrap {
                 const unitRow = unitRows.get(item);
                 if (unitRow && unitLines.isUnitAware(unitRow)) {
                   const p = unitCtx.products.get(li.productId!)!;
-                  await unitEdit.updateUnitLine(uctx, item.id!, p, unitRow, item);
+                  // B297: same product, not a substitute — updateUnitLine must PRESERVE the trio.
+                  await unitEdit.updateUnitLine(uctx, item.id!, p, unitRow, item, false);
                   continue;
                 }
                 // A zero boxes+pieces payload is "not using box entry", not "zero
@@ -5375,6 +5287,9 @@ export class OrdersService implements OnApplicationBootstrap {
             where: { id: (cr.productId ?? payload.productId) as string },
           });
           if (!product) throw new BadRequestException("Product no longer exists");
+          // B297 (SA-098a): only reached below when this is a genuinely NEW line —
+          // an existing-line quantity bump preserves its stored trio untouched.
+          const addItemCategoryMap = await loadCategoryMapForProducts(tx, [product]);
           const upb = Number(product.unitsPerBox ?? 0);
           const addQty = Number(payload.qty);
           if (!(addQty > 0)) throw new BadRequestException("qty must be > 0");
@@ -5507,6 +5422,12 @@ export class OrdersService implements OnApplicationBootstrap {
                 trackedCategoryId: product.trackedCategoryId ?? null,
                 // RF-3: reporting-only subcategory snapshot (mirrors trackedCategoryId).
                 trackedSubcategoryId: product.trackedSubcategoryId ?? null,
+                // B297 (SA-098a): a fresh at-door line is a new sale — stamp the trio.
+                ...categoryTaxSnapshotOf(
+                  product.trackedCategoryId
+                    ? (addItemCategoryMap.get(product.trackedCategoryId) ?? null)
+                    : null,
+                ),
               },
             });
             mutationRow = {

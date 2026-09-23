@@ -501,6 +501,73 @@ export function computeCategoryTax(input: CategoryTaxInput): number {
   }
 }
 
+/** The trio B297 (SA-088) freezes on a line at sale time — see the `categoryTaxType` /
+ *  `categoryTaxRate` / `categoryPriceIncludesTax` columns on OrderItem/InvoiceItem. */
+export interface CategoryTaxSnapshot {
+  categoryTaxType: CategoryTaxType | null;
+  categoryTaxRate: number | null;
+  categoryPriceIncludesTax: boolean | null;
+}
+
+/**
+ * What a sale writer needs from a live `TrackedCategory` row to stamp the trio — never the
+ * full Prisma model, just the fields `categoryTaxSnapshotOf`/`computeCategoryTax` actually
+ * read. A `loadCategoryMapForProducts`-shaped loader's `Map<string, TrackedCategoryRow>` is
+ * the ONE place callers should type this against, instead of each hand-rolling its own `any`.
+ */
+export interface TrackedCategoryRow {
+  taxType: CategoryTaxType;
+  rate: number | string;
+  priceIncludesTax?: boolean | null;
+}
+
+/**
+ * The ONE place a sale writer turns "the category this line belongs to" into the three
+ * columns it stamps onto the line. `null`/`undefined` (a non-regulated line — no
+ * trackedCategoryId) yields an all-null snapshot; any tracked category — even one whose
+ * `taxType` is NONE — yields a full trio, because the line WAS priced under that category's
+ * rules (zero tax is still a recorded basis, not "no snapshot"). Never hand-type these three
+ * fields at a call site — that's how one of them drifts from the other two (B297-SPEC.md D1).
+ */
+export function categoryTaxSnapshotOf(
+  category: TrackedCategoryRow | null | undefined,
+): CategoryTaxSnapshot {
+  if (!category) {
+    return { categoryTaxType: null, categoryTaxRate: null, categoryPriceIncludesTax: null };
+  }
+  return {
+    categoryTaxType: category.taxType,
+    categoryTaxRate: Number(category.rate),
+    categoryPriceIncludesTax: !!category.priceIncludesTax,
+  };
+}
+
+/**
+ * COPIES a line's own already-stamped trio verbatim (a merge/consolidation folding a losing
+ * line into a winner, or an invoice line duplicated from another) — never re-derives it from any
+ * category, live or otherwise. A merge is not a new sale (SA-098a): the line's own snapshot is
+ * the fact. `null`/`undefined` copies through as an all-null snapshot (nothing to copy).
+ */
+export function copyCategoryTaxSnapshot(
+  src:
+    | {
+        categoryTaxType: CategoryTaxType | null;
+        categoryTaxRate: number | string | null;
+        categoryPriceIncludesTax: boolean | null;
+      }
+    | null
+    | undefined,
+): CategoryTaxSnapshot {
+  if (!src) {
+    return { categoryTaxType: null, categoryTaxRate: null, categoryPriceIncludesTax: null };
+  }
+  return {
+    categoryTaxType: src.categoryTaxType,
+    categoryTaxRate: src.categoryTaxRate == null ? null : Number(src.categoryTaxRate),
+    categoryPriceIncludesTax: src.categoryPriceIncludesTax,
+  };
+}
+
 // ─── Promotions (P5-04, + BUY_N_GET_M) ────────────────────────────────────────
 // A promotion adjusts the per-SELLING-UNIT price of a matching line. It composes
 // with computeLineSubtotal exactly like any other unitPrice: resolve the NET
