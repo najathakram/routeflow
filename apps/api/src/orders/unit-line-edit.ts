@@ -1,8 +1,9 @@
 import { ConflictException } from "@nestjs/common";
-import type { LadderUnit } from "@routeflow/pricing";
+import type { LadderUnit, TrackedCategoryRow } from "@routeflow/pricing";
 import {
   assertMayUseUnits,
   buildUnitLine,
+  categoryTaxForLine,
   loadUnitLadders,
   requestsUnit,
   type UnitLineProduct,
@@ -110,6 +111,8 @@ export interface UnitWriteContext {
   ladders: Map<string, LadderUnit[]>;
   tenantId: string | null | undefined;
   tier: (productId: string) => number;
+  /** trackedCategoryId -> TrackedCategory row, for the products this edit touches (B297). */
+  categoryMap: Map<string, TrackedCategoryRow>;
 }
 
 /**
@@ -128,36 +131,68 @@ export async function createUnitLine(
   item: any,
   position: number,
 ): Promise<void> {
+  // B297: price + stamp the trio at WRITE, like every other writer — a NULL/zero placeholder here
+  // would become a PERMANENT $0 levy once PR 3's "keep the stored amount" rule reads it back.
+  const category = product.trackedCategoryId
+    ? ctx.categoryMap.get(product.trackedCategoryId)
+    : null;
   const built = buildUnitLine({
     product,
     units: ctx.ladders.get(product.id) ?? [],
     resolved,
     item: { ...item, productId: product.id },
     tier: ctx.tier(product.id),
-    taxFor: () => 0, // the post-mutation recomputeLineCategoryTaxes pass fixes this for every line
+    taxFor: (qty, sub) => categoryTaxForLine(category, qty, sub),
     position,
     tenantId: ctx.tenantId,
   });
   await ctx.tx.orderItem.create({ data: { orderId, ...built } });
 }
 
-/** SUBSTITUTE + the qty/price UPDATE of an existing line — same product or a new one. */
+/**
+ * SUBSTITUTE + the qty/price UPDATE of an existing line — same product or a new one.
+ *
+ * B297 (SA-098a b): `isSubstitute` decides the trio's fate — the two cases are NOT the same
+ * writer. A SUBSTITUTE is, in substance, a new line (the product and its category changed), so it
+ * re-stamps from the NEW product's category, same as `createUnitLine`. A same-product qty/price
+ * edit is NOT a new sale, so the trio must never move — the 3 trio keys are stripped out of
+ * `buildUnitLine`'s return before the Prisma call, so `data` never names them and the existing
+ * columns are left untouched (Prisma only writes fields present in `data`). The amount still
+ * prices from `product`'s own category either way (the unchanged product on a same-product edit,
+ * the new one on a substitute) — harmless even for the same-product case, since
+ * `recomputeLineCategoryTaxes` unconditionally overwrites every active line's amount from the
+ * live category right after this transaction, same as it always has. Only the TRIO is the thing
+ * this function must not touch on a same-product edit.
+ */
 export async function updateUnitLine(
   ctx: UnitWriteContext,
   lineId: string,
   product: UnitLineProduct & { id: string },
   resolved: ResolvedLineUnits,
   item: any,
+  isSubstitute: boolean,
 ): Promise<void> {
-  const { position: _position, ...built } = buildUnitLine({
+  const category = product.trackedCategoryId
+    ? ctx.categoryMap.get(product.trackedCategoryId)
+    : null;
+  const {
+    position: _position,
+    categoryTaxType,
+    categoryTaxRate,
+    categoryPriceIncludesTax,
+    ...rest
+  } = buildUnitLine({
     product,
     units: ctx.ladders.get(product.id) ?? [],
     resolved,
     item: { ...item, productId: product.id },
     tier: ctx.tier(product.id),
-    taxFor: () => 0,
+    taxFor: (qty, sub) => categoryTaxForLine(category, qty, sub),
     position: 0,
     tenantId: ctx.tenantId,
   });
-  await ctx.tx.orderItem.update({ where: { id: lineId }, data: built });
+  const data = isSubstitute
+    ? { ...rest, categoryTaxType, categoryTaxRate, categoryPriceIncludesTax }
+    : rest;
+  await ctx.tx.orderItem.update({ where: { id: lineId }, data });
 }
