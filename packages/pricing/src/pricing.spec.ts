@@ -12,6 +12,7 @@ import {
   priceForMarginFloor,
   classifyMargin,
   computeCategoryTax,
+  categoryTaxSnapshotOf,
   applyBestPromotion,
   promotionMatchesProduct,
   ruleCanZeroPrice,
@@ -633,6 +634,47 @@ describe("computeCategoryTax — regulated items (W3)", () => {
         lineSubtotal: Number.NaN,
       }),
     ).toBe(0);
+  });
+});
+
+describe("categoryTaxSnapshotOf — B297 sale-time trio (SA-088 D1)", () => {
+  it("returns an all-null snapshot for a non-regulated line (no category)", () => {
+    expect(categoryTaxSnapshotOf(null)).toEqual({
+      categoryTaxType: null,
+      categoryTaxRate: null,
+      categoryPriceIncludesTax: null,
+    });
+    expect(categoryTaxSnapshotOf(undefined)).toEqual({
+      categoryTaxType: null,
+      categoryTaxRate: null,
+      categoryPriceIncludesTax: null,
+    });
+  });
+
+  it("stamps the full trio for a regulated category", () => {
+    expect(
+      categoryTaxSnapshotOf({ taxType: "EXCISE_PER_UNIT", rate: 1.25, priceIncludesTax: false }),
+    ).toEqual({
+      categoryTaxType: "EXCISE_PER_UNIT",
+      categoryTaxRate: 1.25,
+      categoryPriceIncludesTax: false,
+    });
+  });
+
+  it("stamps a NONE-taxType category too — zero tax is still a recorded basis, not 'no snapshot'", () => {
+    expect(categoryTaxSnapshotOf({ taxType: "NONE", rate: 0, priceIncludesTax: false })).toEqual({
+      categoryTaxType: "NONE",
+      categoryTaxRate: 0,
+      categoryPriceIncludesTax: false,
+    });
+  });
+
+  it("coerces a numeric-string rate to a number and a missing priceIncludesTax to false", () => {
+    expect(categoryTaxSnapshotOf({ taxType: "PERCENT_OF_SALE", rate: "0.0525" })).toEqual({
+      categoryTaxType: "PERCENT_OF_SALE",
+      categoryTaxRate: 0.0525,
+      categoryPriceIncludesTax: false,
+    });
   });
 });
 

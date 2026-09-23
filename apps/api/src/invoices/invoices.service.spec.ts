@@ -755,6 +755,34 @@ describe("InvoicesService", () => {
       expect(created[0].notes).toBe("No ice, deliver chilled");
       expect(created[1].notes).toBeNull();
     });
+
+    it("B297 (SA-088): update() rebuilds a regulated line's rate trio from the CURRENT category — a fresh snapshot moment, same as create()", async () => {
+      prisma.invoice.findUnique.mockResolvedValue(draftInvoice);
+      prisma.product.findMany.mockResolvedValue([
+        { id: "prod-tob", unitsPerBox: null, trackedCategoryId: "cat-tob" },
+      ]);
+      prisma.trackedCategory.findMany.mockResolvedValue([
+        {
+          id: "cat-tob",
+          name: "Tobacco",
+          taxType: "PERCENT_OF_SALE",
+          rate: 0.1,
+          priceIncludesTax: false,
+        },
+      ]);
+      prisma.customer.findUnique.mockResolvedValue({ isTaxExempt: false });
+      prisma.invoice.update.mockResolvedValue(draftInvoice);
+
+      await service.update("inv-box", {
+        items: [{ productId: "prod-tob", description: "Cigs", qty: 3, unitPrice: 10 }],
+      });
+
+      const created = prisma.invoice.update.mock.calls[0][0].data.items.create[0];
+      expect(created.categoryTaxAmount).toBeCloseTo(3, 2); // 10% of 30
+      expect(created.categoryTaxType).toBe("PERCENT_OF_SALE");
+      expect(created.categoryTaxRate).toBeCloseTo(0.1, 4);
+      expect(created.categoryPriceIncludesTax).toBe(false);
+    });
   });
 
   // ─── RF-1: manual-create / draft-update reach the regulated sales ledger ───
@@ -948,6 +976,10 @@ describe("InvoicesService", () => {
       expect(Number(data.taxAmount)).toBe(3);
       expect(Number(data.total)).toBe(33);
       expect(Number(data.items.create[0].categoryTaxAmount)).toBe(3);
+      // B297 (SA-088): the manual-invoice-line writer stamps the trio alongside the amount.
+      expect(data.items.create[0].categoryTaxType).toBe("PERCENT_OF_SALE");
+      expect(Number(data.items.create[0].categoryTaxRate)).toBe(0.1);
+      expect(data.items.create[0].categoryPriceIncludesTax).toBe(false);
     });
 
     it("tax-exempt customer → category tax 0 (both the total AND the line snapshot)", async () => {
@@ -2660,6 +2692,53 @@ describe("InvoicesService", () => {
       expect(line.pieces).toBeNull();
       expect(line.qty).toBe(4);
       expect(line.orderItemId).toBe("oi-1");
+    });
+
+    it("B297 (SA-088, D6): copies the ORDER line's rate-snapshot trio verbatim, never the live category — the category's rate changed between sale and this rebuild", () => {
+      const li = {
+        id: "oi-reg",
+        productId: "p-reg",
+        qty: 10,
+        boxes: null,
+        pieces: null,
+        unitsPerBox: null,
+        unitPrice: 10,
+        subtotal: 100,
+        trackedCategoryId: "cat-1",
+        // Sold when the category's rate was 5% — frozen on the order line at sale time.
+        categoryTaxType: "PERCENT_OF_SALE",
+        categoryTaxRate: 0.05,
+        categoryPriceIncludesTax: false,
+        categoryTaxAmount: 5,
+        // The LIVE category (e.g. read via li.product.trackedCategory in a real query) now sits
+        // at a different rate — buildInvoiceItemData must never consult it for the trio.
+        product: { name: "Widget", unitsPerBox: 0, trackedCategoryId: "cat-1" },
+      };
+      const line = build(li, 10);
+      expect(line.categoryTaxType).toBe("PERCENT_OF_SALE");
+      expect(line.categoryTaxRate).toBe(0.05);
+      expect(line.categoryPriceIncludesTax).toBe(false);
+    });
+
+    it("B297: a pre-B297 order line (no rate snapshot) yields a null invoice-line snapshot too — never invented from the live product/category", () => {
+      const li = {
+        id: "oi-legacy",
+        productId: "p-reg",
+        qty: 10,
+        boxes: null,
+        pieces: null,
+        unitsPerBox: null,
+        unitPrice: 10,
+        subtotal: 100,
+        trackedCategoryId: "cat-1",
+        categoryTaxAmount: 5,
+        // No categoryTaxType/categoryTaxRate/categoryPriceIncludesTax fields at all (legacy row).
+        product: { name: "Widget", unitsPerBox: 0, trackedCategoryId: "cat-1" },
+      };
+      const line = build(li, 10);
+      expect(line.categoryTaxType).toBeNull();
+      expect(line.categoryTaxRate).toBeNull();
+      expect(line.categoryPriceIncludesTax).toBeNull();
     });
 
     it("carries the order line's unitLabel to the invoice line (units_v1) — and null for a pack line", () => {

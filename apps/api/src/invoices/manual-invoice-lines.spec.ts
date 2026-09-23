@@ -39,6 +39,10 @@ describe("buildManualInvoiceLines", () => {
       trackedCategoryId: "cat",
       trackedSubcategoryId: "sub",
       categoryTaxAmount: 6, // 10% of the 60 sale
+      // B297 (SA-088): the rate trio categoryTaxAmount was computed from.
+      categoryTaxType: "PERCENT_OF_SALE",
+      categoryTaxRate: 0.1,
+      categoryPriceIncludesTax: false,
       tenantId: "t-1", // a nested create bypasses forTenant()
     });
     expect(subtotal).toBe(60);
@@ -50,7 +54,15 @@ describe("buildManualInvoiceLines", () => {
       { description: "Loose", productId: "loose", qty: 2, unitPrice: 4.5 },
     ]);
     expect(itemsData.map((l) => l.subtotal)).toEqual([25, 9]);
-    expect(itemsData[0]).toMatchObject({ boxes: null, unitsPerBox: null, categoryTaxAmount: 0 });
+    expect(itemsData[0]).toMatchObject({
+      boxes: null,
+      unitsPerBox: null,
+      categoryTaxAmount: 0,
+      // B297: no category (untracked line) → an all-null snapshot.
+      categoryTaxType: null,
+      categoryTaxRate: null,
+      categoryPriceIncludesTax: null,
+    });
     expect(subtotal).toBe(34);
   });
 

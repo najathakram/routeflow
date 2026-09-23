@@ -1,5 +1,5 @@
 import { ConflictException } from "@nestjs/common";
-import type { LadderUnit } from "@routeflow/pricing";
+import { categoryTaxSnapshotOf, type LadderUnit } from "@routeflow/pricing";
 import {
   assertMayUseUnits,
   buildUnitLine,
@@ -134,7 +134,10 @@ export async function createUnitLine(
     resolved,
     item: { ...item, productId: product.id },
     tier: ctx.tier(product.id),
-    taxFor: () => 0, // the post-mutation recomputeLineCategoryTaxes pass fixes this for every line
+    // The post-mutation recomputeLineCategoryTaxes pass fixes the amount for every line — the
+    // snapshot is deferred the same way (B297), never stamped from a category read here that the
+    // amount doesn't actually reflect yet.
+    taxFor: () => ({ amount: 0, snapshot: categoryTaxSnapshotOf(null) }),
     position,
     tenantId: ctx.tenantId,
   });
@@ -155,7 +158,8 @@ export async function updateUnitLine(
     resolved,
     item: { ...item, productId: product.id },
     tier: ctx.tier(product.id),
-    taxFor: () => 0,
+    // Same deferral as createUnitLine above — see its comment.
+    taxFor: () => ({ amount: 0, snapshot: categoryTaxSnapshotOf(null) }),
     position: 0,
     tenantId: ctx.tenantId,
   });
