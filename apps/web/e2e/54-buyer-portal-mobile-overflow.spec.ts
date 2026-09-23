@@ -98,19 +98,28 @@ for (const vp of VIEWPORTS) {
       await page.goto(`/buyer/portal/${sellerSlug}/orders`);
       await assertNoOverflow(page, "buyer orders (list)");
 
-      // Real order detail — the list row has no <a href>, it's a bare
-      // `<tr onClick>` (orders/page.tsx:224-226) that calls router.push
-      // directly, so an `a[href^=...]` locator here always matched 0 and
-      // silently skipped this whole check without ever failing (found on
-      // pre-merge review of the identical bug in the invoices list below).
-      // Asserted, not skipped: a seeded order is a baseline fixture on the
+      // Real order detail. This list renders TWO different things depending
+      // on viewport — orders/page.tsx:162-199: under 640px (sm) a card list
+      // (data-testid="buyer-orders-cards", each <li> a real <Link href=...>,
+      // :164-168) because the 5-column table only scrolled sideways there;
+      // from 640px up, the table (data-testid="buyer-orders-table",
+      // :197-199, a genuine <tbody tr>). A single `tbody tr` locator (this
+      // spec's own prior fix) only ever matches the table half — correct at
+      // 768/1440, but at 390 the table is `hidden` and that locator times
+      // out instead of finding the card. Re-review caught it: fixing one
+      // viewport's locator bug by reintroducing the mirror-image bug at the
+      // other viewport. Branch on vp.width; both paths asserted, not
+      // skipped, since a seeded order is a baseline fixture on the
       // e2e-routeflow tenant.
-      const orderRow = page.locator("tbody tr").first();
+      const orderLink =
+        vp.width < 640
+          ? page.getByTestId("buyer-orders-cards").locator("a").first()
+          : page.getByTestId("buyer-orders-table").locator("tbody tr").first();
       await expect(
-        orderRow,
+        orderLink,
         "no seeded order on the e2e-routeflow tenant to open — check the seed",
       ).toBeVisible({ timeout: 15_000 });
-      await orderRow.click();
+      await orderLink.click();
       await page.waitForURL(new RegExp(`/buyer/portal/${sellerSlug}/orders/[^/]+$`), {
         timeout: 15_000,
       });
