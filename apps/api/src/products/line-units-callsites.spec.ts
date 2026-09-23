@@ -71,6 +71,10 @@ const NON_WRITERS = new Set([
   // B665: the shared pack resolver reads the live pack ONLY to notice that a boxed product's line is
   // ambiguous (no split); the pieces-per-unit itself comes from legacyLinePieces, never from this read.
   "common/line-pack-factors.ts",
+  // B743: reads the live product ONLY to notice that a vendor-bill line's OWN packSize is missing —
+  // the conversion itself (lineInventoryDelta) still reads packSize from the bill line alone; this
+  // module never supplies the missing number, it only decides whether to ask.
+  "vendor-bills/bill-line-pack.ts",
 ]);
 
 const strip = (s: string) => s.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:])\/\/.*$/gm, "$1");
