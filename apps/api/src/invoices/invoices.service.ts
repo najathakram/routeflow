@@ -5727,7 +5727,7 @@ export class InvoicesService {
         const payment = await tx.invoicePayment.create({
           data: {
             invoiceId: alloc.invoiceId,
-            amount: alloc.amount,
+            amount: roundMoney(alloc.amount),
             method: dto.method as any,
             paidAt,
             settledAt,
@@ -5772,7 +5772,7 @@ export class InvoicesService {
       }
 
       // Handle excess amount → create AdvancePayment
-      const allocatedTotal = dto.allocations.reduce((s, a) => s + a.amount, 0);
+      const allocatedTotal = dto.allocations.reduce((s, a) => s + roundMoney(a.amount), 0);
       const excess = dto.totalAmount - allocatedTotal;
       if (excess > 0.001) {
         await tx.advancePayment.create({

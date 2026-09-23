@@ -1286,12 +1286,12 @@ export class CustomersService {
     },
   ) {
     await this.findCustomerOrThrow(customerId);
-    if (dto.amount <= 0) throw new BadRequestException("Amount must be greater than 0");
+    if (roundMoney(dto.amount) <= 0) throw new BadRequestException("Amount must be greater than 0");
     return this.prisma.forTenant().advancePayment.create({
       data: {
         customerId,
-        amount: dto.amount,
-        balance: dto.amount, // initial balance equals amount
+        amount: roundMoney(dto.amount),
+        balance: roundMoney(dto.amount), // initial balance equals amount
         method: dto.method as any,
         reference: dto.reference,
         notes: dto.notes,
@@ -1525,7 +1525,7 @@ export class CustomersService {
       await tx.invoicePayment.create({
         data: {
           invoiceId: dto.invoiceId,
-          amount: applyAmount,
+          amount: roundMoney(applyAmount),
           method: "ADVANCE" as any,
           advancePaymentId: ap.id,
           reference: `AP-${ap.id.slice(0, 8)}`,
@@ -1534,7 +1534,7 @@ export class CustomersService {
 
       await tx.advancePayment.update({
         where: { id: ap.id },
-        data: { balance: { decrement: applyAmount } },
+        data: { balance: { decrement: roundMoney(applyAmount) } },
       });
 
       // PR-2 review (routeflow-Lead, 2026-09-16): the status recompute must stay
