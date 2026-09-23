@@ -559,6 +559,17 @@ export function serializeEditItemsSnapshot(snapshot: EditItemsSnapshot): string 
  * version, or structurally wrong returns null, because a corrupt blob on disk
  * must degrade to "no restore offered", never to a crashed editor.
  */
+/**
+ * SA-085h LOW: a unit-sold DraftItem still carrying `boxes` (an on-device snapshot saved by a
+ * build from before hydrateFromOrder normalized qty to the COUNT — a 2-Case line stored as
+ * qty:480, boxes:2) is un-normalized. Fold it to the SAME count basis hydrateFromOrder always
+ * produces, so a restored snapshot's stepper/display/diff agree with a freshly-hydrated line.
+ */
+function normalizeUnitLineQty(item: DraftItem): DraftItem {
+  if (!item.unitLabel || item.boxes == null) return item;
+  return { ...item, qty: item.boxes, boxes: undefined, pieces: undefined, boxSplit: false };
+}
+
 export function deserializeEditItemsSnapshot(
   raw: string | null | undefined,
 ): EditItemsSnapshot | null {
@@ -586,7 +597,12 @@ export function deserializeEditItemsSnapshot(
     savedAt: s.savedAt,
     baseline: s.baseline,
     orderUpdatedAt: s.orderUpdatedAt ?? null,
-    draft: s.draft as Record<string, DraftItem>,
+    draft: Object.fromEntries(
+      Object.entries(s.draft as Record<string, DraftItem>).map(([id, item]) => [
+        id,
+        normalizeUnitLineQty(item),
+      ]),
+    ),
     unlisted: s.unlisted as UnlistedDraft[],
     pendingDeletes: s.pendingDeletes as string[],
     selectedCreditIds: s.selectedCreditIds as string[],
@@ -679,7 +695,15 @@ export function draftTrayRows(input: {
       const it = input.draft[id];
       return it ? { id, name: it.name, unitsPerBox: it.unitsPerBox ?? null } : undefined;
     },
-    priceFor: (product) => input.draft[product.id]?.catalogPrice ?? 0,
+    // SA-085h: the SAME comparison base every other reader of this line uses — a unit-sold
+    // line's reference price is its own resolved level, never the pack's catalogPrice. (This
+    // is the fallback the tray subtotal uses only when overridable is false or unitPrice is
+    // unset; a DraftItem always has both, so it never actually reaches this value today —
+    // fixed for consistency with the create screen's identical tray.)
+    priceFor: (product) => {
+      const item = input.draft[product.id];
+      return item ? unitPriceBase(item, item.catalogPrice) : 0;
+    },
     overridable: () => true,
     freeUnitsFor: (id) => draftFreeUnits(input.draft[id]),
   });

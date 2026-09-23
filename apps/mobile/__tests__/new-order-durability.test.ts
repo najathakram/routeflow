@@ -181,10 +181,14 @@ describe("NewOrderScreen scan-tray price affordance (REG-NEWORDER-TRAYPRICE)", (
     const mount = (screen.match(/<LinePriceModal[\s\S]*?\/>/) ?? [""])[0];
     expect(mount).toBeTruthy();
     expect(mount).toMatch(/roundMoney\(value\)/);
-    expect(mount).toMatch(/setLinePrice\(target\.id, price\)/);
+    expect(mount).toMatch(/setLinePrice\(target\.id,/);
     expect(mount).toMatch(/updateUnlistedPrice\(target\.id, price\)/);
     // No line total is ever written here — the tray and footer re-derive it.
     expect(mount).not.toMatch(/lineTotal|\*\s*qty|qty\s*\*/);
+    // SA-085h: an untouched pre-fill (price === the resolved base) must never be stored as a
+    // redundant override — the same comparison submit/park already make.
+    expect(mount).toMatch(/unitPriceBase\(items\[target\.id\] \?\? \{\}, tierPriceFor\(p\)\)/);
+    expect(mount).toMatch(/price === base \? null : price/);
   });
 
   it("REG-NEWORDER-TRAYPRICE-C: a SPECIAL-tier line refuses the edit", () => {
@@ -201,6 +205,27 @@ describe("NewOrderScreen scan-tray price affordance (REG-NEWORDER-TRAYPRICE)", (
     expect(screen).toMatch(
       /paused=\{createCode != null \|\| pickCode != null \|\| priceEditId != null\}/,
     );
+  });
+});
+
+/**
+ * SA-085h LOW: a PIECE-barcode hit on a line already sold by a unit adds a whole unit
+ * (240 pieces for a Case, not one loose piece) — confirmed before committing rather than
+ * silently added.
+ */
+describe("NewOrderScreen piece-scan-on-a-unit-line confirm (SA-085h LOW)", () => {
+  it("gates a piece-kind accept on the line's unitLabel before calling addOne, via the confirm dialog", () => {
+    const fn = (screen.match(/const acceptScannedProduct = \([\s\S]*?\n  \};/) ?? [""])[0];
+    expect(fn).toBeTruthy();
+    expect(fn).toMatch(/unitKind !== "piece" \|\| !label\) return finishAccept/);
+    expect(fn).toMatch(/confirm\(/);
+    // Declining does nothing: addOne only happens inside finishAccept, called from onYes.
+    expect(fn).not.toMatch(/^\s*addOne\(/m);
+  });
+
+  it("a non-unit line's piece scan is unaffected — no confirm, straight to finishAccept", () => {
+    const fn = (screen.match(/const acceptScannedProduct = \([\s\S]*?\n  \};/) ?? [""])[0];
+    expect(fn).toMatch(/return finishAccept\(product, unitKind\);/);
   });
 });
 

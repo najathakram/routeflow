@@ -154,6 +154,11 @@ describe("setLineBoxes", () => {
     const prev = { qty: 12, boxes: 1, pieces: 0 };
     expect(setLineBoxes(prev, 0, 12)).toBeNull();
   });
+
+  it("SA-085h MEDIUM: REFUSES a split on a unit-sold line, returning it unchanged", () => {
+    const prev = { qty: 2, unitLabel: "Case", unitPrice: 220 };
+    expect(setLineBoxes(prev, 5, 24)).toEqual(prev);
+  });
 });
 
 describe("setLinePieces", () => {
@@ -171,6 +176,11 @@ describe("setLinePieces", () => {
   it("returns null when boxes and pieces both resolve to 0", () => {
     const prev = { qty: 0, boxes: 0, pieces: 0 };
     expect(setLinePieces(prev, 0, 12)).toBeNull();
+  });
+
+  it("SA-085h MEDIUM: REFUSES a split on a unit-sold line, returning it unchanged", () => {
+    const prev = { qty: 2, unitLabel: "Case", unitPrice: 220 };
+    expect(setLinePieces(prev, 5, 24)).toEqual(prev);
   });
 });
 
@@ -203,6 +213,23 @@ describe("setLineUnits", () => {
   it("returns null for a non-case-packed product (unitsPerBox 1)", () => {
     const prev = { qty: 1 };
     expect(setLineUnits(prev, 5, 1)).toBeNull();
+  });
+
+  it("SA-085h MEDIUM: on a unit-sold line, the typed total IS the new count — setQty, never a split", () => {
+    const prev = { qty: 1, unitLabel: "Case", unitPrice: 220 };
+    const next = setLineUnits(prev, 3, 24);
+    expect(next).toEqual({
+      qty: 3,
+      unitLabel: "Case",
+      unitPrice: 220,
+      boxes: undefined,
+      pieces: undefined,
+    });
+  });
+
+  it("SA-085h: a unit-sold line resolving to 0 is removed, same as setQty", () => {
+    const prev = { qty: 1, unitLabel: "Case", unitPrice: 220 };
+    expect(setLineUnits(prev, 0, 24)).toBeNull();
   });
 });
 

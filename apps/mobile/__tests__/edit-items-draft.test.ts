@@ -11,6 +11,7 @@ import {
   deserializeEditItemsSnapshot,
   draftTrayRows,
   editItemsSnapshotKey,
+  EDIT_ITEMS_SNAPSHOT_VERSION,
   hasUnsavedItemEdits,
   hasUnsavedWork,
   hydrateFromOrder,
@@ -257,6 +258,70 @@ describe("edit-items-draft: the on-device snapshot (REG-EDIT-DRAFT-B)", () => {
     expect(back?.draft.p1.promoBaseUnits).toBe(2);
     expect(back?.draft.p1.substituteProductId).toBe("p9");
     expect(back?.floorAcked).toEqual(["L1"]);
+  });
+
+  it("SA-085h LOW: normalizes a unit line an OLD on-device snapshot saved un-normalized (qty 480, boxes 2 -> count 2)", () => {
+    // A snapshot written by a build from before hydrateFromOrder normalized qty to the
+    // COUNT — exactly the server's own pack-piece storage shape for a 2-Case line.
+    const staleRaw = JSON.stringify({
+      v: EDIT_ITEMS_SNAPSHOT_VERSION,
+      orderId: "o1",
+      savedAt: 1_700_000_000_000,
+      baseline: "b",
+      orderUpdatedAt: null,
+      draft: {
+        p1: {
+          productId: "p1",
+          qty: 480,
+          boxes: 2,
+          pieces: 0,
+          unitsPerBox: 240,
+          unitLabel: "Case",
+          unitPrice: 220,
+          catalogPrice: 24,
+          name: "Case widget",
+          boxSplit: true,
+        },
+      },
+      unlisted: [],
+      pendingDeletes: [],
+      selectedCreditIds: [],
+      creditsTouched: false,
+      floorAcked: [],
+    });
+    const back = deserializeEditItemsSnapshot(staleRaw);
+    expect(back?.draft.p1.qty).toBe(2);
+    expect(back?.draft.p1.boxes).toBeUndefined();
+    expect(back?.draft.p1.pieces).toBeUndefined();
+    expect(back?.draft.p1.boxSplit).toBe(false);
+    expect(back?.draft.p1.unitLabel).toBe("Case");
+  });
+
+  it("SA-085h LOW: an already-normalized unit line (boxes unset) round-trips untouched", () => {
+    const raw = JSON.stringify({
+      v: EDIT_ITEMS_SNAPSHOT_VERSION,
+      orderId: "o1",
+      savedAt: 1_700_000_000_000,
+      baseline: "b",
+      orderUpdatedAt: null,
+      draft: {
+        p1: {
+          productId: "p1",
+          qty: 2,
+          unitsPerBox: 240,
+          unitLabel: "Case",
+          unitPrice: 220,
+          catalogPrice: 24,
+          name: "Case widget",
+        },
+      },
+      unlisted: [],
+      pendingDeletes: [],
+      selectedCreditIds: [],
+      creditsTouched: false,
+      floorAcked: [],
+    });
+    expect(deserializeEditItemsSnapshot(raw)?.draft.p1.qty).toBe(2);
   });
 
   it("REG-EDIT-DRAFT-B: deserializeEditItemsSnapshot never throws on hostile input", () => {

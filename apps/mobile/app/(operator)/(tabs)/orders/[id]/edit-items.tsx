@@ -47,6 +47,8 @@ import {
   incrementLine,
   incrementLinePiece,
   isUnitLine,
+  setLineBoxes,
+  setLinePieces,
   setLineUnits,
   stepLineQty,
 } from "../../../../../lib/sale-line";
@@ -584,17 +586,15 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
       return next;
     });
 
+  // units_v1 (SA-085h): setLineBoxes/setLinePieces now refuse a unit-line split executably.
   const setBoxes = (id: string, boxes: number) =>
     setDraft((d) => {
       const cur = d[id];
       if (!cur) return d;
-      const upb = Number(cur.unitsPerBox ?? 0);
-      const b = Math.max(0, Math.floor(boxes));
-      const pcs = cur.pieces ?? 0;
-      const qty = b * upb + pcs;
+      const line = setLineBoxes(cur, boxes, Number(cur.unitsPerBox ?? 0));
       const next = { ...d };
-      if (qty === 0) delete next[id];
-      else next[id] = { ...cur, boxes: b, pieces: pcs, qty, boxSplit: true };
+      if (!line) delete next[id];
+      else next[id] = { ...line, boxSplit: isUnitLine(cur) ? cur.boxSplit : true };
       return next;
     });
 
@@ -602,13 +602,10 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
     setDraft((d) => {
       const cur = d[id];
       if (!cur) return d;
-      const upb = Number(cur.unitsPerBox ?? 0);
-      const pcs = Math.max(0, Math.floor(pieces));
-      const b = cur.boxes ?? 0;
-      const qty = b * upb + pcs;
+      const line = setLinePieces(cur, pieces, Number(cur.unitsPerBox ?? 0));
       const next = { ...d };
-      if (qty === 0) delete next[id];
-      else next[id] = { ...cur, boxes: b, pieces: pcs, qty, boxSplit: true };
+      if (!line) delete next[id];
+      else next[id] = { ...line, boxSplit: isUnitLine(cur) ? cur.boxSplit : true };
       return next;
     });
 
@@ -622,7 +619,7 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
       const line = setLineUnits(cur, units, upb);
       const next = { ...d };
       if (!line) delete next[id];
-      else next[id] = { ...line, boxSplit: true };
+      else next[id] = { ...line, boxSplit: isUnitLine(cur) ? false : true };
       return next;
     });
 

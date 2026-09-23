@@ -73,7 +73,7 @@ import { useAuthStore } from "../lib/auth-store";
 // chooseAction + alertInfo render the same dialogs cross-platform — RN's
 // Alert.alert silently no-ops 3-button alerts on Expo Web (the user's
 // "Confirm button frozen" report), so use these everywhere instead.
-import { alertInfo, chooseAction } from "../lib/confirm";
+import { alertInfo, chooseAction, confirm } from "../lib/confirm";
 import { InlineToast, useInlineToast } from "./InlineToast";
 import { ProductRow } from "./ProductRow";
 import { ScanOrderSheet } from "./ScanOrderSheet";
@@ -1105,10 +1105,7 @@ function ProductPickView({
   };
   const scanGuardRef = useRef(createScanAcceptGuard<Product>());
 
-  const acceptScannedProduct = (
-    product: Product,
-    unitKind: "case" | "piece" = "case",
-  ): ScanOutcome => {
+  const finishAccept = (product: Product, unitKind: "case" | "piece"): ScanOutcome => {
     addOne(product.id, product, unitKind);
     bumpScanned(product.id);
     clearSearch();
@@ -1117,11 +1114,26 @@ function ProductPickView({
         ? `Added 1 loose · ${displayName(product)}`
         : `Added ${displayName(product)}`;
     if (scanOpen) return; // the tray row is the confirmation
-    // Only reachable from a non-sheet caller. Web's equivalent scrolls the new
-    // line into view with `block: "nearest"` — a no-op when it is already
-    // visible — so mirror that rather than always animating.
+    // Only reachable from a non-sheet caller — mirrors web's scrollIntoView({block:"nearest"}).
     setPendingScroll((s) => requestScroll(s, product.id));
     return { feedback: { kind: "added", text: label } };
+  };
+
+  // units_v1 (SA-085h LOW): a PIECE-barcode hit on an already unit-sold line would add a
+  // whole unit, not one loose piece — confirm rather than silently adding a large jump.
+  const acceptScannedProduct = (
+    product: Product,
+    unitKind: "case" | "piece" = "case",
+  ): ScanOutcome => {
+    const label = items[product.id]?.unitLabel;
+    if (unitKind !== "piece" || !label) return finishAccept(product, unitKind);
+    const onYes = () => {
+      const o = finishAccept(product, unitKind);
+      if (o?.feedback?.kind === "added") showInline(o.feedback.text);
+    };
+    confirm(`Add 1 ${label}?`, `${displayName(product)} is sold by ${label}.`, onYes, {
+      confirmText: `Add 1 ${label}`,
+    });
   };
 
   // Continuous-scan handler: the scan sheet stays open between items; only the
@@ -1328,9 +1340,11 @@ function ProductPickView({
         unlisted,
         scanOrder,
         lookup: (id) => productById.get(id),
+        // units_v1 (SA-085h HIGH): the SAME price every other reader uses — never the pack's
+        // tier price for a unit-sold line (2 Cases at $220 total $440, not 2 x the pack's $24).
         priceFor: (p) => {
           const full = productById.get(p.id);
-          return full ? tierPriceFor(full) : 0;
+          return full ? lineUnitForProduct(items[p.id], full) : 0;
         },
         overridable: (p) => {
           const full = productById.get(p.id);
@@ -1460,8 +1474,8 @@ function ProductPickView({
     return {
       id: priceEditId,
       name: displayName(p, products),
-      // The override if one is set, else what this customer is billed today.
-      unitPrice: items[priceEditId]?.unitPrice ?? tierPriceFor(p),
+      // The override if set, else what's billed today (SA-085h HIGH: never the pack's price).
+      unitPrice: lineUnitForProduct(items[priceEditId], p),
       unlisted: false,
     };
   })();
@@ -2534,12 +2548,15 @@ function ProductPickView({
           const target = priceEditTarget;
           setPriceEditId(null);
           if (!target) return;
-          // Money discipline: round every monetary write. The line TOTAL is
-          // never written here — the tray and the footer both re-derive it
-          // through computeLineSubtotal from this unit price.
+          // Money discipline: round every monetary write. The line TOTAL is never written
+          // here — the tray/footer re-derive it through computeLineSubtotal from this price.
           const price = value == null ? null : roundMoney(value);
-          if (target.unlisted) updateUnlistedPrice(target.id, price);
-          else setLinePrice(target.id, price);
+          if (target.unlisted) return updateUnlistedPrice(target.id, price);
+          // SA-085h: write an override ONLY when it diverges from the base (same comparison
+          // submit/park make) — saving the pre-fill UNTOUCHED must never store one.
+          const p = productById.get(target.id);
+          const base = p ? unitPriceBase(items[target.id] ?? {}, tierPriceFor(p)) : null;
+          setLinePrice(target.id, price != null && price === base ? null : price);
         }}
       />
 

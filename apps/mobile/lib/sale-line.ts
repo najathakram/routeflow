@@ -136,11 +136,15 @@ export function setLineQty<T extends SaleLineQty>(
  * A typed plain qty carries over as those loose pieces (REG-B194) instead of
  * being dropped. Returns null when the line reaches empty (0 boxes + 0 pieces).
  */
-export function setLineBoxes<T extends SaleLineQty>(
+export function setLineBoxes<T extends SaleLineQty & { unitLabel?: string | null }>(
   prev: T,
   boxes: number,
   unitsPerBox: number,
 ): (T & { qty: number; boxes: number; pieces: number }) | null {
+  // units_v1 (SA-085h MEDIUM): a unit-sold line REFUSES a box/piece split outright — its qty
+  // is a COUNT (stepLineQty's job), never pieces-in-a-box. Executable here, not a UI gate
+  // (CartRow.tsx's isBoxed/DraftItemCard's isBoxed are the ONLY reason this was safe before).
+  if (isUnitLine(prev)) return prev as T & { qty: number; boxes: number; pieces: number };
   const b = Math.max(0, Math.floor(boxes));
   const { pieces } = splitFromPrev(prev, unitsPerBox);
   const qty = b * unitsPerBox + pieces;
@@ -153,11 +157,13 @@ export function setLineBoxes<T extends SaleLineQty>(
  * A typed plain qty contributes its whole cases here (REG-B194) instead of
  * being dropped. Returns null when the line reaches empty (0 boxes + 0 pieces).
  */
-export function setLinePieces<T extends SaleLineQty>(
+export function setLinePieces<T extends SaleLineQty & { unitLabel?: string | null }>(
   prev: T,
   pieces: number,
   unitsPerBox: number,
 ): (T & { qty: number; boxes: number; pieces: number }) | null {
+  // units_v1 (SA-085h MEDIUM): see setLineBoxes — a unit-sold line refuses a piece split too.
+  if (isUnitLine(prev)) return prev as T & { qty: number; boxes: number; pieces: number };
   const pcs = Math.max(0, Math.floor(pieces));
   const { boxes } = splitFromPrev(prev, unitsPerBox);
   const qty = boxes * unitsPerBox + pcs;
@@ -208,12 +214,24 @@ export function stepLineQty<T extends SaleLineQty & { unitLabel?: string | null 
  * Returns null when the line reaches zero, matching decrementLine's remove signal.
  */
 export function setLineUnits<
-  T extends { qty: number; boxes?: number | null; pieces?: number | null },
+  T extends {
+    qty: number;
+    boxes?: number | null;
+    pieces?: number | null;
+    unitLabel?: string | null;
+  },
 >(
   prev: T,
   units: number,
   unitsPerBox: number,
-): (T & { qty: number; boxes: number; pieces: number }) | null {
+): (T & { qty: number; boxes?: number; pieces?: number }) | null {
+  // units_v1 (SA-085h MEDIUM): on a unit-sold line the typed total IS the new count — the
+  // same thing setQty/stepLineQty do, never a box/piece split.
+  if (isUnitLine(prev)) {
+    const qty = Math.max(0, Math.trunc(Number(units) || 0));
+    if (qty === 0) return null;
+    return { ...prev, qty, boxes: undefined, pieces: undefined };
+  }
   const upb = Math.trunc(Number(unitsPerBox));
   if (!(upb > 1)) return null;
   const total = Math.max(0, Math.trunc(Number(units) || 0));
