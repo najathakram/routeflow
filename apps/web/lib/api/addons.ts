@@ -99,3 +99,13 @@ export const MSRP_ADDON = "msrp";
 // sales-agents / commissions surfaces. UX gate only — every /sales-agents and
 // /commission-statements route independently 403s via PlanFlagGuard.
 export const SALES_AGENTS_ADDON = "sales_agents";
+
+// ─── Inline returns (Returns Inside Order Creation, "orders_inline_returns") ──
+//
+// Read with `useHasAddon(ORDERS_INLINE_RETURNS_ADDON)` (lib/api/tobacco.ts) to gate the
+// "Record return" entry points (order detail, customer detail — RecordInlineReturnDialog).
+// UX gate only — every /returns/inline/* route independently 403s via AddonGuard
+// (`returns.controller.ts`'s `@RequireAddon("orders_inline_returns")`), registered
+// ENFORCED from day one (feature-registry.ts), so a stale/missing addons fetch here just
+// hides the entry point — it never lets a capture through the gate.
+export const ORDERS_INLINE_RETURNS_ADDON = "orders_inline_returns";

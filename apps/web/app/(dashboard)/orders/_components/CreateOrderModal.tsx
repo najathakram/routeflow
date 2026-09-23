@@ -1354,7 +1354,11 @@ export function CreateOrderModal({
         onSubmit={handleSubmit(onSubmit)}
         noValidate
         onKeyDown={(e) => {
-          if (e.key === "Enter") e.preventDefault();
+          // A <textarea> (the per-line note) owns Enter for itself — a newline, never a submit.
+          // Every other control keeps the no-Enter-submit behavior this form has always had.
+          if (e.key === "Enter" && !(e.target instanceof HTMLTextAreaElement)) {
+            e.preventDefault();
+          }
         }}
         className="max-h-[65vh] overflow-y-auto pr-1"
       >

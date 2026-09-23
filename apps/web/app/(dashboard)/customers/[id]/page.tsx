@@ -125,6 +125,7 @@ import { useUndo } from "@/lib/undo";
 import { useProducts } from "@/lib/api/products";
 import { useHasAddon } from "@/lib/api/tobacco";
 import { MSRP_ADDON, SALES_AGENTS_ADDON, useRoutesAccess } from "@/lib/api/addons";
+import { RecordReturnAction } from "../../returns/_components/RecordReturnAction";
 import {
   useCustomerCurrentAgent,
   useSalesAgents,
@@ -2392,6 +2393,7 @@ function CustomerDetailPageInner({ id }: { id: string }) {
           >
             New Invoice
           </Button>
+          <RecordReturnAction customerId={id} customerName={customer.businessName} />
         </div>
       </div>
 

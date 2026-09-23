@@ -881,7 +881,7 @@ export default function InvoiceDetailScreen() {
                         </Text>
                       ) : null}
                       {it.notes?.trim() ? (
-                        <Text style={[styles.itemSub, { fontStyle: "italic" }]} numberOfLines={2}>
+                        <Text style={[styles.itemSub, { fontStyle: "italic" }]} numberOfLines={4}>
                           {it.notes}
                         </Text>
                       ) : null}

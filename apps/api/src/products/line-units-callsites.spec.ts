@@ -21,19 +21,25 @@ import { join, relative, sep } from "path";
  */
 const BASELINE: Record<string, number> = {
   "orders/orders.service.ts": 20,
-  // SA-068b: update() gained ONE new read — a divergence CHECK (payload's own implied pack vs
-  // product.unitsPerBox, warn-only) — never a line-factor decision; the pack itself now comes
-  // from packFromOwnSplit(the payload's own qty/boxes/pieces), never product.unitsPerBox. Count-
-  // pinned rather than NON_WRITERS-exempted (SA-047 shape) because it is meant to be temporary:
-  // SA-063's packOfStoredLine takes the live pack as a PARAMETER, so this read moves into that
-  // one helper and the count returns to 5 once that lands. Never raise this again after that.
-  "invoices/invoices.service.ts": 6, // 4c-1 prefactor: create()'s line builder moved (3 reads) to:
-  "invoices/manual-invoice-lines.ts": 3,
-  // B645: create()'s itemsData mapper read product.unitsPerBox at 3 sites (qty
-  // resolve, computeLineSubtotal, and the B645 boxes/pieces/unitsPerBox snapshot
-  // this fix added) — hoisted to one `productUnitsPerBox` local reused at all
-  // three, so the counted baseline goes DOWN from 2 to 1 even though a 3rd
-  // logical use was added.
+  // Three reads today (B717/SA-077 lowered this from 6; SA-068b's earlier note predicted 5, which
+  // the hoist overtook — four reads in update()'s mapper became one). Do not read that history as
+  // a forecast; what is left, and what retires each:
+  //   1. buildInvoiceItemData's `li.unitsPerBox ?? li.product?.unitsPerBox` — the legacy fallback
+  //      for an ORDER line that carries no snapshot. Retired by SA-078(c), which snapshots the
+  //      pack on box-unaware order lines at write time so there is a real one to prefer.
+  //   2. update()'s single `livePack` local — read once and passed as a PARAMETER to
+  //      `resolveUpdateLinePack` (invoices/update-pack-resolution.ts reads no product at all).
+  //      Retired when a sub-one-box line can no longer need new-line semantics, i.e. after
+  //      SA-077(2) refuses the still-ambiguous split and every line carries a snapshot.
+  //   3. `applyPriceAdjustment`'s `unitsPerBoxByProduct` map — a regulated BASIS lookup, never a
+  //      line-factor decision. Retired by moving it to a named non-line helper (SA-047 shape).
+  // The number may only go DOWN. The target is still zero.
+  "invoices/invoices.service.ts": 3, // 4c-1 prefactor: create()'s line builder moved (3 reads) to:
+  // B659: two direct read sites in this file (box-split branch's `item.packSnapshot ??
+  // product?.unitsPerBox`, and the no-split branch's `upbForPieces` gaining the same fallback per
+  // review finding 2). Verified by running the scanner's own regex directly against the file, not
+  // carried forward from the stale pre-B717/B681 draft this commit was originally cut against.
+  "invoices/manual-invoice-lines.ts": 2,
   "estimates/estimates.service.ts": 1,
   "order-templates/order-templates.service.ts": 1,
   "returns/inline-returns-quote.service.ts": 3,
@@ -41,6 +47,15 @@ const BASELINE: Record<string, number> = {
   "buyer/replenishment.service.ts": 1,
   "buyer/buyer-catalog.service.ts": 3,
   "inventory/inventory.service.ts": 4,
+  // SA-079: loadProductPackNow's ONE read is classifySaleAxis's boxed-GATE fallback for a
+  // box-unaware line with no unitsPerBox snapshot of its own — it derives no line factor,
+  // quantity or price. But it is not inert: its output decides whether a return's SALE row is
+  // PARKED or COUNTED, which is exactly the figure a filing later sums — a wrong answer here
+  // changes what a period reports even though it changes no quantity or price anywhere. Count-
+  // pinned rather than NON_WRITERS-exempted (SA-047/SA-068b shape) because it is temporary: it
+  // goes to 0 when SA-078(c) snapshots unitsPerBox on box-unaware ORDER lines and this fallback
+  // becomes unreachable. Never raise this again after that.
+  "regulated/regulated-ledger.service.ts": 1,
 };
 
 // Files that legitimately read a product's pack and are not line writers.

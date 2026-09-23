@@ -718,7 +718,7 @@ export default function OrderDetailScreen() {
                         </Text>
                       ) : null}
                       {li.notes?.trim() ? (
-                        <Text style={[styles.itemSub, { fontStyle: "italic" }]} numberOfLines={2}>
+                        <Text style={[styles.itemSub, { fontStyle: "italic" }]} numberOfLines={4}>
                           {li.notes}
                         </Text>
                       ) : null}
