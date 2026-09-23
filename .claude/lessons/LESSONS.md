@@ -335,18 +335,25 @@
   `package.json`'s `main`/`types` → the STALE PREBUILT `dist/index.js`. Fixed by
   `npm run build -w packages/returns`; not a real pipeline risk since turbo's task graph rebuilds
   it correctly during `npm run verify`.
-- **Root cause:** npm workspace symlinks in a worktree missing its own `npm ci` fall back to
-  whatever the main checkout last built; even within one freshly-`npm ci`'d worktree, a consumer's
-  jest config may resolve a package via prebuilt `dist` instead of live `src` absent a
-  `moduleNameMapper` override — inconsistent per app.
+- **Root cause:** npm workspace symlinks/junctions in a worktree missing its own `npm ci` fall
+  back to whatever the main checkout last had installed/built — never a guarantee of freshness.
+  The third recurrence adds a distinct wrinkle: even within one freshly-`npm ci`'d worktree, a
+  consumer's jest config may resolve a package via prebuilt `dist` instead of live `src` absent a
+  `moduleNameMapper` override — inconsistent per app, so one app going green proves nothing about
+  another.
 - **Lesson:** **A worktree needs its OWN `npm ci` before running web/api tests. After any
   `packages/*` change lands on master, rebuild the shared dist in EVERY worktree that will test
-  against it, not just the main checkout — a stale dist fails quietly (wrong values) as easily as
-  loudly. Same rule mid-session, same worktree: after editing a package's own `src`, before
-  trusting a DIFFERENT app's test result against it, check that app's jest config for a
-  `moduleNameMapper` override — absent one, `npm run build -w <pkg>` first.**
-- **Guard:** still none automated — a pre-test check comparing `packages/*/dist` mtimes against
-  `src` (or which consumers lack a `moduleNameMapper`) would surface this earlier.
+  against it (`npx turbo run build --filter=@routeflow/pricing --force` after fetching master),
+  not just the main checkout — a stale `packages/pricing/dist` can fail quietly (wrong money
+  values) as easily as it fails loudly (a missing-function throw), so don't wait for the loud
+  failure to remember this. Same rule applies mid-session, same worktree: after editing a
+  workspace package's own `src`, before trusting a DIFFERENT app's test result against it, check
+  that app's jest config for a `moduleNameMapper` override — absent one, `npm run build -w <pkg>`
+  first.**
+- **Guard:** still none automated after two recurrences — propose a pre-test check comparing
+  `packages/*/dist` mtimes against `src`, or a verify-chain step that refuses to run tests when
+  `dist` is older than `src` for any workspace package; the third recurrence's specific gap (which
+  consumers lack a `moduleNameMapper` for which package) would need the same kind of check.
 
 ### L-175 · 2026-09-16 · tooling · shared dev host disk budget
 
@@ -551,21 +558,6 @@
 - **Guard:** a route boundary needs a real "still resolving" state distinct from both outcomes;
   `layout.plan-gate-boundary.test.tsx` pins children absent from the tree while
   resolving/locked, not just visually hidden.
-
-### L-169 · 2026-09-16 · domain · B421 / PR-1a shared-helper precondition no-op (two call sites)
-
-- **Symptom:** two surfaces hit the same shape: a shared helper re-checked `.status` generically,
-  but the callers' own `select` never fetched it, so it silently read `undefined`. Both tests
-  passed anyway because their mocks supplied the field directly.
-- **Root cause:** a shared helper that re-derives a precondition has no knowledge of a caller's
-  query shape — it assumes the field is present, and a caller whose `select` never needed it
-  before silently hands the helper `undefined`, which the check absorbs as real.
-- **Lesson:** **Before wiring a caller into a shared helper that re-derives a precondition
-  generically, check the caller's `select` actually fetches the field — a mock supplying it
-  directly proves nothing. A type-check alone won't catch a field silently resolving to
-  `undefined`.**
-- **Guard:** both selects now fetch `status`; `returns-lineitems-select.spec.ts` pins the real
-  shape at every call site.
 
 ### L-170 · 2026-09-16 · domain · #743 fix round F3 (roundMoney before comparison)
 
