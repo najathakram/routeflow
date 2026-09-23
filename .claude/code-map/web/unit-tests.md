@@ -87,6 +87,16 @@ now contributes alongside api/mobile).
   `app/(dashboard)/routes/_components/late-stops.test.ts` (F12, PR #652 — `lateStopsFromAnalysis`;
   `CreateRouteModal.tsx`+`.test.tsx` DELETED same PR, B31 dead code),
   `components/MoneyInput.test.tsx`.
+- **`app/(dashboard)/orders/_components/CreateOrderModal.multiline-notes.test.tsx`** (PR #1261) —
+  ⚠️ adding a line schedules a 50ms `setTimeout` (`CreateOrderModal.tsx` ~:631, ~:569, ~:942) that
+  unconditionally refocuses the product search box for the next barcode scan, stealing focus from
+  whatever's typing regardless of what it is. Any test that opens a per-line note (or types
+  anything) right after adding a line MUST `await waitFor(() => expect(search()).toHaveFocus())`
+  first (#1267/B742) — skipping it races the real timer and can even land keystrokes in
+  `InlineCreateProductModal`'s name input via the search box's unmatched-code Enter path. The
+  underlying production bug (an operator, not just a test, can lose keystrokes the same way if
+  they're faster than 50ms) is tracked separately as B744 across 8 sites in 4 screens — this test
+  fix does not close B744.
 - **Auth-redesign specs (PR #663, spec 46)** — `components/auth/AuthShell.test.tsx`
   (`describe("AuthShell — T1")`, the shell component itself); `app/(auth)/auth-redesign.static.test.ts`
   (454 lines, 12 `describe`s: all 15 pages render `AuthShell` — T2a; `.rf-auth` CSS scoping —

@@ -350,19 +350,21 @@
   below a threshold before launching more work, not after operations start failing.**
 - **Guard:** none yet — propose a session-start hook warning at < 30 GB free.
 
-### L-174 · 2026-09-16 · tooling · demo-booking lane (raw NUL byte from an escape literal)
-
-- **Symptom:** a source file kept "working" after an agent tool chain wrote a `\uXXXX`-shaped
-  escape literal into it — until `file`/git/prettier treated it as binary, because what actually
-  landed was the raw byte the escape describes, not the 6-char sequence.
-- **Root cause:** a tool-chain step decoded the escape before the write, turning a literal meant
-  to stay text into its raw byte — nothing downstream checked the file was still actually text.
-- **Lesson:** **After writing any escape-sequence literal through an agent tool chain, verify it
-  landed as literal text, not the decoded byte.**
-- **Guard:** `file <path>` (must say "text") or `grep -cP '\x00' <path>` (must be 0) before
-  trusting the write; a pre-commit NUL-byte check on text sources is the durable fix.
-
 ## testing
+
+### L-215 · 2026-09-23 · testing · a timer-race test must wait for the observable condition (B742)
+
+- **Symptom:** `CreateOrderModal.multiline-notes.test.tsx` (#1261) typed into a note immediately
+  after adding a line — inside the 50ms window of a `setTimeout` (`CreateOrderModal.tsx` ~:631)
+  that unconditionally refocuses the search box for the next scan, stealing focus mid-keystroke.
+- **Root cause:** the test modeled "add, then act" as instantaneous. A slow CI runner can pass a
+  race a fast host fails — extra scheduling latency lets the timer win by accident — so a green
+  run there is not evidence against the bug, only that the race didn't lose that time.
+- **Lesson:** **A timer-race test must wait for the observable condition the timer produces,
+  never a fixed delay or an exit code. Prove both directions: the wait makes it pass, removing it
+  reproduces the failure exactly — a fix-revert probe, not just a green run.**
+- **Guard:** `await waitFor(() => expect(search()).toHaveFocus())` before any note interaction
+  (#1267). Test-only — the production race itself is open as B744 across 8 sites, 4 screens.
 
 ### L-205 · 2026-09-18 · testing · regression tests pinned literal source text, not behavior
 
@@ -711,19 +713,22 @@
 - **Guard:** none yet — propose a lint/review checklist item flagging `token`/`code`/`secret`-
   named query params on any new route.
 
-### L-178 · 2026-09-16 · security · demo-booking PR-2 (raw error message leak)
-
-- **Symptom:** a public-facing catch handler rendered a caught error's `.message` verbatim, so
-  an unauthenticated route could show NestJS's own raw 404 body instead of a curated message.
-- **Root cause:** the load path assumed every reachable error was one of its own curated
-  exceptions; it never accounted for a transport-level failure with no safe message behind it.
-- **Lesson:** **A public unauthenticated page's catch handler must show a FIXED, generic message
-  for any path that can receive a transport-level failure, never `error.message` — a curated
-  message is safe to show only when every source feeding that catch is known and typed.**
-- **Guard:** `demo-scheduler.test.tsx` pins a raw framework 404, a bare network failure, and a
-  raw 500 all rendering the SAME fixed message, never the response body.
-
 ## deploy
+
+### L-216 · 2026-09-23 · deploy · a hand-kept Docker COPY list drifts the first time a build-time package gains an import (B745)
+
+- **Symptom:** #1262 extracted `packages/returns`, CI went green, but the production deploy
+  failed — the API Dockerfile never copied the new workspace package, so the image build couldn't
+  resolve it. Production stayed on #1261's sha while master had already moved past it.
+- **Root cause:** the Dockerfile's workspace-package `COPY` list is hand-maintained, not derived
+  from the real dependency graph. A new package compiles and passes CI (full-checkout, not the
+  Docker build context) right up until the image build itself needs it.
+- **Lesson:** **A hand-kept list mirroring a dependency graph drifts the first time that graph
+  changes — compute the set from the real graph (workspace `package.json`s / lockfile), never a
+  parallel hand-written list.** CI green is not evidence the Docker build would have succeeded;
+  the two contexts differ, and a workspace-resolution gap is invisible to a checkout-based run.
+- **Guard:** fix in progress (B745) — Dockerfile package list to derive from the workspace graph.
+  Entry to be finalized with the actual mechanism once it lands.
 
 ### L-184 · 2026-09-17 · deploy · #777 merged/deployed without its migration or a drift check
 

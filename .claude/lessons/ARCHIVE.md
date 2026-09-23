@@ -2788,3 +2788,34 @@ citations, closed-out with its own post-init assertion guard).
   cap — zero cross-references elsewhere in LESSONS.md/CLAUDE.md, and the guard is a standing,
   automated test isolation mechanism rather than a rule a session needs to recall by reading
   this prose.)
+
+## Archived 2026-09-23 — headroom for L-215/L-216 (#1267 B742 timer-race + B745 Docker-copy-drift, Option B follow-up)
+
+### L-174 · 2026-09-16 · tooling · demo-booking lane (raw NUL byte from an escape literal)
+
+- **Symptom:** a source file kept "working" after an agent tool chain wrote a `\uXXXX`-shaped
+  escape literal into it — until `file`/git/prettier treated it as binary, because what actually
+  landed was the raw byte the escape describes, not the 6-char sequence.
+- **Root cause:** a tool-chain step decoded the escape before the write, turning a literal meant
+  to stay text into its raw byte — nothing downstream checked the file was still actually text.
+- **Lesson:** **After writing any escape-sequence literal through an agent tool chain, verify it
+  landed as literal text, not the decoded byte.**
+- **Guard:** `file <path>` (must say "text") or `grep -cP '\x00' <path>` (must be 0) before
+  trusting the write; a pre-commit NUL-byte check on text sources is the durable fix. (Archived
+  2026-09-23 to make room at cap — zero cross-references elsewhere in LESSONS.md, single
+  tool-chain incident, and the verification command itself is the durable guard regardless of
+  whether this prose is read again.)
+
+### L-178 · 2026-09-16 · security · demo-booking PR-2 (raw error message leak)
+
+- **Symptom:** a public-facing catch handler rendered a caught error's `.message` verbatim, so
+  an unauthenticated route could show NestJS's own raw 404 body instead of a curated message.
+- **Root cause:** the load path assumed every reachable error was one of its own curated
+  exceptions; it never accounted for a transport-level failure with no safe message behind it.
+- **Lesson:** **A public unauthenticated page's catch handler must show a FIXED, generic message
+  for any path that can receive a transport-level failure, never `error.message` — a curated
+  message is safe to show only when every source feeding that catch is known and typed.**
+- **Guard:** `demo-scheduler.test.tsx` pins a raw framework 404, a bare network failure, and a
+  raw 500 all rendering the SAME fixed message, never the response body. (Archived 2026-09-23 to
+  make room at cap — zero cross-references elsewhere in LESSONS.md, single-feature incident, and
+  the pinned test is a standing, automated regression guard independent of this prose.)
