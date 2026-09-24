@@ -10,12 +10,15 @@
 // Usage:
 //   node scripts/work/claim.mjs <issue#> --worker "<person> · <machine> · <session title>"
 //   node scripts/work/claim.mjs <issue#> --release --note "<where it stands>"
-import { execFileSync } from "node:child_process";
-import { pathToFileURL } from "node:url";
+import { execFileSync, spawn } from "node:child_process";
+import { join, dirname } from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 const REPO_OWNER = "najathakram";
 const REPO_NAME = "routeflow";
 const REPO = `${REPO_OWNER}/${REPO_NAME}`;
+const ROOT = dirname(dirname(dirname(fileURLToPath(import.meta.url))));
+const TRIGGER_PATH = join(ROOT, "scripts", "work", "trigger.mjs");
 
 // ════════════════════════════════════════════════════════════════════════
 // PURE
@@ -90,6 +93,24 @@ function ghJson(args) {
   return JSON.parse(gh(args));
 }
 
+/** Fires scripts/work/trigger.mjs (its own debounced, detached spawn of
+ * reconcile.mjs) so the board reflects a claim/release right away instead
+ * of waiting for the next 5-minute poll. Best-effort — never lets a
+ * refresh-scheduling problem fail the claim/release that already
+ * succeeded. */
+function fireTrigger() {
+  try {
+    const child = spawn(process.execPath, [TRIGGER_PATH], {
+      cwd: ROOT,
+      detached: true,
+      stdio: "ignore",
+    });
+    child.unref();
+  } catch {
+    // best-effort only.
+  }
+}
+
 function fetchIssue(number) {
   return ghJson([
     "issue",
@@ -149,6 +170,7 @@ function main() {
     const note = args.note ?? "released";
     gh(["issue", "edit", String(args.number), "--repo", REPO, "--remove-assignee", "@me"]);
     gh(["issue", "comment", String(args.number), "--repo", REPO, "--body", `Released: ${note}`]);
+    fireTrigger();
     console.log(`Released #${args.number}: ${note}`);
     return;
   }
@@ -179,6 +201,8 @@ function main() {
     "--body",
     `Claimed by ${args.worker}`,
   ]);
+
+  fireTrigger();
 
   const kind = kindOf(issue.labels);
   const branch = branchName(kind, issue.number, issue.title);
