@@ -150,14 +150,11 @@ Workaround: run `next dev` manually inside your own worktree on an explicit port
 (`npx next dev -H 127.0.0.1 -p <port>`), then attach the pane with `preview_start({url:
 "http://localhost:<port>"})` instead of `{name}`.
 
-**The mobile-UA proxy trap.** The pane's viewport emulation for any width under 768 (including 390) also sends an Android Chrome user agent. `middleware.ts`'s `isMobileUserAgent(ua)` check
-then proxies any path that isn't explicitly carved out (marketing, `/api/`, web-only paths) to
-the **separate Expo mobile-web deployment** — so a brand-new dev-only route gets silently
-rewritten away to a build that has never heard of it, and you see that build's own "Unmatched
-Route" 404 instead of anything from your own app. Nothing in the response says "proxied" — it
-just looks like your route doesn't exist. Workaround: append `?desktop=1` (the same escape
-hatch the middleware ships for a real user intentionally viewing desktop on a phone) to bypass
-the mobile redirect regardless of viewport width.
+**The mobile-UA proxy trap — REMOVED.** `middleware.ts` used to rewrite any phone-UA request to
+a separate Expo mobile-web deployment, which made the pane's mobile viewport emulation (any
+width under 768, including 390) proxy every dev-only route to a build that had never heard of
+it. Owner ruling: phones now get the same redesigned Next web site as desktop, so the proxy —
+and this trap — no longer exist; the middleware doesn't branch on user-agent at all.
 
 ## Shared auth state audit (item 6a)
 
