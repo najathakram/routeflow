@@ -33,6 +33,7 @@ import {
   sumConfirmed,
 } from "./payment-predicates";
 import { PAYABLE, KPI_SUMMARY_EXCLUDED } from "./invoice-status-sets";
+import { reconcileDeliveredOrdersInTx as reconcileDeliveredOrdersInTxImpl } from "./delivered-reconcile";
 import { packAtSaleByProduct, priorUnitsPerBoxMap, toSaleLedgerLines } from "./pack-at-sale";
 import { clampLimit } from "../common/pagination";
 import { isInternalEmail } from "../common/internal-email";
@@ -5017,26 +5018,48 @@ export class InvoicesService {
   }
 
   /**
+   * B663: per delivered order, ensure a finalized invoice exists — reconcile an open
+   * DRAFT "pending mirror" onto the DELIVERED quantities, or a SENT deposit mirror,
+   * else create a fresh DRAFT from the order. Body lives in `delivered-reconcile.ts`
+   * (size-ratchet: this file has no headroom for it) — see that file for the full
+   * rationale and the `reconcileOrderIds` param.
+   */
+  async reconcileDeliveredOrdersInTx(
+    tx: any,
+    orderIds: string[],
+    reconcileOrderIds?: string[],
+  ): Promise<void> {
+    return reconcileDeliveredOrdersInTxImpl(
+      {
+        findOpenOrderDraft: this.findOpenOrderDraft.bind(this),
+        createInvoiceFromOrder: this.createInvoiceFromOrder.bind(this),
+        rebuildIssuedDepositMirrorOnDelivery: this.rebuildIssuedDepositMirrorOnDelivery.bind(this),
+        reconcileOrderDeliveredInvoices: this.reconcileOrderDeliveredInvoices.bind(this),
+      },
+      tx,
+      orderIds,
+      reconcileOrderIds,
+    );
+  }
+
+  /**
    * Record a driver-collected payment at stop completion, resolving the target
    * invoice(s) SERVER-side from the delivered orders. The mobile client cannot
    * supply an invoiceId (Order has no invoiceId scalar and the run/stop payload
    * never carries one), which is why every at-door payment silently vanished.
    * Runs INSIDE the caller's transaction so it is atomic with stop completion.
    *
-   * Per delivered order: ensure a finalized invoice exists — reconcile an open
-   * DRAFT "pending mirror" (full-order basis, as changeStatus→DELIVERED does),
-   * else create one from the order. Then apply the lump-sum across the orders'
-   * non-VOID invoices OLDEST-first (base invoice before any regulated `-R#`
-   * split siblings), capped at each invoice's remaining. Each application
-   * finalizes a DRAFT→SENT (recomputeStatus treats DRAFT as terminal, so a
-   * payment on a still-DRAFT invoice would never move it off DRAFT) and is
-   * recorded the canonical way — an InvoicePayment row + recomputeStatus over
-   * the non-VOID payment sum, NEVER the (non-existent) `balance` scalar the old
-   * completeWithPayment code tried to decrement.
+   * B663: this no longer reconciles the delivered orders' invoices itself — see
+   * `reconcileDeliveredOrdersInTx`, which the caller (`completeWithPayment`) runs
+   * unconditionally before this, whether or not there is a payment to record. This
+   * function applies the lump-sum across the orders' non-VOID invoices OLDEST-first
+   * (base invoice before any regulated `-R#` split siblings), capped at each
+   * invoice's remaining. Each application finalizes a DRAFT→SENT (recomputeStatus
+   * treats DRAFT as terminal, so a payment on a still-DRAFT invoice would never move
+   * it off DRAFT) and is recorded the canonical way — an InvoicePayment row +
+   * recomputeStatus over the non-VOID payment sum, NEVER the (non-existent) `balance`
+   * scalar the old completeWithPayment code tried to decrement.
    *
-   * @param reconcileOrderIds the subset of `orderIds` actually delivered in this
-   *          completion — only these have their DRAFT rebuilt on the delivered
-   *          quantity (and only when single-invoice). Defaults to all `orderIds`.
    * @param context optional `{ runId, stopId }` used only to tag a booked
    *          over-collection advance's `reference` (`RUN:<runId>:STOP:<stopId>`).
    * @returns `applied` (< amount only when the orders' invoices were already
@@ -5051,7 +5074,6 @@ export class InvoicesService {
     orderIds: string[],
     amount: number,
     method: string,
-    reconcileOrderIds?: string[],
     context?: { runId?: string; stopId?: string },
   ): Promise<{
     applied: number;
@@ -5072,53 +5094,6 @@ export class InvoicesService {
     // must not swallow the cash (recomputeStatus can't advance it), which would also
     // starve a live sibling since we apply oldest-first.
     // (shared with credit-notes.service.ts via invoice-status-sets.ts, F09/R3a)
-
-    // Only orders actually delivered in THIS completion may be rebuilt on the
-    // delivered basis. Default to all orderIds for callers that don't distinguish
-    // (there are none today) — but the driver path passes the real subset so an
-    // order merely linked to the stop yet not delivered here (deliveredQty 0) is
-    // never zeroed.
-    const reconcileSet = new Set(reconcileOrderIds ?? orderIds);
-
-    // 1. Ensure each delivered order has a DRAFT invoice, then reconcile it to the
-    //    DELIVERED quantities so short/refused lines bill what was delivered, not
-    //    the full order. createInvoiceFromOrder makes a DRAFT when the order has no
-    //    live invoice yet; reconcileOrderDraftInvoice(basis:"delivered") rebuilds it
-    //    on OrderItem.deliveredQty and telescopes invoicedQty (idempotent with the
-    //    office from-order flow — a later re-delivery bills only the remainder).
-    for (const orderId of orderIds) {
-      let draft = await this.findOpenOrderDraft(orderId, tx);
-      if (!draft) {
-        const existing = await tx.invoice.findFirst({
-          where: { orderId, status: { in: PAYABLE } },
-          select: { id: true },
-        });
-        // Create a fresh DRAFT only when the order has no live invoice at all; if a
-        // non-DRAFT invoice already exists (e.g. the office already sent one), leave
-        // it and just pay it below.
-        if (!existing) {
-          await this.createInvoiceFromOrder(orderId, tx);
-          draft = await this.findOpenOrderDraft(orderId, tx);
-        }
-      }
-      if (!draft && reconcileSet.has(orderId)) {
-        // B2 / WP-D1: no open DRAFT, but the order may carry a deposit mirror that was
-        // ISSUED (SENT) at placement — it has no draft to find, yet it is still the
-        // order's live bill and MUST be restated to what was actually delivered before
-        // the cash below lands on it. Otherwise a short/refused delivery collects
-        // against the full pre-delivery total. No-op for every other shape.
-        await this.rebuildIssuedDepositMirrorOnDelivery(orderId, tx);
-      } else if (draft && reconcileSet.has(orderId)) {
-        // Rebuild the order's open DRAFT(s) on the delivered qty, SIBLING-AWARE: a
-        // regulated SEPARATE_INVOICE order (base + -R#) has each draft rebuilt from
-        // ONLY its own lines, so a short/refused line bills its delivered qty on its
-        // own sibling and is never folded onto the base (no double-bill). A
-        // single-group order is byte-identical to the group-unaware delivered
-        // reconcile. (Replaces the old invoiceCount<=1 skip that left split orders
-        // billing the full ordered qty.)
-        await this.reconcileOrderDeliveredInvoices(orderId, tx);
-      }
-    }
 
     // 2. The orders' payable invoices, oldest-first.
     const invoices = await tx.invoice.findMany({
