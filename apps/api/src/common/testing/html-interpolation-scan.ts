@@ -171,9 +171,9 @@ export function scanHtmlInterpolations(code: string): HtmlHit[] {
       if (ts.isSpreadAssignment(t) || ts.isSpreadElement(t)) return writes(t.expression);
       if (ts.isObjectLiteralExpression(t)) return t.properties.some(writes);
       if (ts.isArrayLiteralExpression(t)) return t.elements.some(writes);
-      if (ts.isBinaryExpression(t) && t.operatorToken.kind === ts.SyntaxKind.EqualsToken) {
-        return writes(t.left); // a destructuring default: `[x = 1] = a`
-      }
+      // A destructuring default (`[x = 1] = a`) needs no case here: its inner `x = 1` is itself
+      // an assignment, which the walk below reaches on its own (a mutant of a separate branch
+      // for it survived every test, so it was dead code).
       return false;
     };
     const scope = (() => {
@@ -217,10 +217,31 @@ export function scanHtmlInterpolations(code: string): HtmlHit[] {
     return found;
   };
 
-  /** The href-opening test: the text just before a value ends inside `href="` (any quoting). */
   /** Stands for text that cannot be known statically; it never matches HREF_OPEN. */
   const UNKNOWN = "\u0000";
-  const HREF_OPEN = /href\s*=\s*["']?\s*$/i;
+  /**
+   * The href-opening test: the text just before a value ends inside `href="` (any quoting), after
+   * any whitespace, raw or entity-encoded (`&#32;`, `&#x20;`, `&Tab;`, `&NewLine;`; B821 round 2).
+   */
+  const HREF_OPEN =
+    /href\s*=\s*["']?(?:\s|&(?:#0*(?:9|1[03]|32)|#x0*(?:9|a|d|20)|Tab|NewLine);)*$/i;
+
+  /** Every value a `let`/`var` is given by a plain `x = value` assignment after its declaration. */
+  const assignedValues = (decl: ts.VariableDeclaration): ts.Expression[] => {
+    if (!ts.isIdentifier(decl.name)) return [];
+    const name = decl.name.text;
+    const out: ts.Expression[] = [];
+    const look = (n: ts.Node) => {
+      if (ts.isBinaryExpression(n) && n.operatorToken.kind === ts.SyntaxKind.EqualsToken) {
+        let left: ts.Expression = n.left;
+        while (ts.isParenthesizedExpression(left)) left = left.expression;
+        if (ts.isIdentifier(left) && left.text === name && declOf(left) === decl) out.push(n.right);
+      }
+      ts.forEachChild(n, look);
+    };
+    look(src);
+    return out;
+  };
 
   /**
    * B821: the literal text a value ends with, through `+` chains, templates and `const` prefixes,
@@ -241,8 +262,14 @@ export function scanHtmlInterpolations(code: string): HtmlHit[] {
     }
     if (ts.isIdentifier(e)) {
       const decl = declOf(e);
-      if (decl && ts.isVariableDeclaration(decl) && decl.initializer && !isReassigned(decl)) {
-        return trailingText(decl.initializer, depth + 1);
+      if (decl && ts.isVariableDeclaration(decl) && decl.initializer) {
+        if (!isReassigned(decl)) return trailingText(decl.initializer, depth + 1);
+        // B821 round 2: a reassigned binding can end with ANY value it is ever given, so it
+        // opens an href when any one of them does (never just its initializer).
+        const opening = [decl.initializer, ...assignedValues(decl)]
+          .map((v) => trailingText(v, depth + 1))
+          .find((t) => HREF_OPEN.test(t));
+        return opening ?? UNKNOWN;
       }
     }
     return UNKNOWN;
@@ -470,6 +497,16 @@ export function scanHtmlInterpolations(code: string): HtmlHit[] {
 
   const visit = (n: ts.Node) => {
     if (ts.isTemplateExpression(n) && TAG.test(n.getText(src))) scanTemplate(n);
+    // B821 round 2: a concat href held in a const, or returned from a function, is never a sink
+    // itself, so every `+` in the file is checked (hits are position-keyed: no double count).
+    if (
+      ts.isBinaryExpression(n) &&
+      n.operatorToken.kind === ts.SyntaxKind.PlusToken &&
+      HREF_OPEN.test(trailingText(n.left)) &&
+      !fromSafeLinkHref(n.right)
+    ) {
+      hit(n.right, "href ");
+    }
     if (ts.isPropertyAssignment(n) && HTML_PROP.test(n.name.getText(src))) sink(n.initializer);
     if (ts.isShorthandPropertyAssignment(n) && HTML_PROP.test(n.name.text)) sink(n.name);
     ts.forEachChild(n, visit);

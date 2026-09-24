@@ -34,6 +34,13 @@ function overAllowed(keys: readonly string[], entries: Record<string, Allowed> =
     .filter(([key, n]) => n > allowedCount(entries[key]))
     .map(([key, n]) => `${key} | x${n}, allowed x${allowedCount(entries[key])}`);
 }
+/** Entries seen LESS often than they allow (a site was fixed: lower or drop the entry). */
+function underAllowed(keys: readonly string[], entries: Record<string, Allowed> = {}): string[] {
+  return Object.entries(entries)
+    .map(([key, v]) => [key, keys.filter((k) => k === key).length, allowedCount(v)] as const)
+    .filter(([, n, allowed]) => n < allowed)
+    .map(([key, n, allowed]) => `${key} | x${n}, allowed x${allowed}`);
+}
 const ALLOWED: Record<string, Record<string, Allowed>> = {
   "email/email.service.ts": {
     "send :: params.html": { reason: TRANSPORT, count: 5 },
@@ -271,6 +278,56 @@ describe("B809 — the HTML interpolation scanner (never passes vacuously)", () 
     ]);
   });
 
+  // ─── B821 round 2 (Opus, #1327 at 96c23c45) ───────────────────────────────────────────────
+
+  it("B821r2: a concat href held in a const, or returned from a function, is flagged", () => {
+    const heldInConst = `function f(u: string) {
+      const a = '<a href="' + escapeHtml(u) + '">x</a>';
+      return \`<p>\${a}</p>\`;
+    }`;
+    expect(keys(heldInConst)).toContain("f :: href escapeHtml(u)");
+    const returned = `function link(u: string) { return '<a href="' + escapeHtml(u) + '">x</a>'; }
+      function g(u: string) { send({ html: link(u) }); }`;
+    expect(keys(returned)).toContain("link :: href escapeHtml(u)");
+  });
+
+  it.each(["&#32;", "&#x20;", "&Tab;", "&NewLine;", "&#9;", "&#10;", "&#13;", "&#0032;"])(
+    "B821r2: entity-encoded whitespace %s after the quote is still an href",
+    (entity) => {
+      const code = `function f(u: string) { return \`<a href="${entity}\${escapeHtml(u)}">x</a>\`; }`;
+      expect(keys(code)).toContain("f :: href escapeHtml(u)");
+    },
+  );
+
+  it.each([
+    ["v++;", "postfix ++"],
+    ["--v;", "prefix --"],
+    ['[v = "d"] = arr;', "a destructuring default"],
+  ])("B821r2: a let rewritten by %s (%s) is never safe", (stmt) => {
+    const code = `function f(raw: string, arr: any[]) {
+      let v: any = escapeHtml("ok");
+      ${stmt}
+      return \`<p>\${v}</p>\`;
+    }`;
+    expect(keys(code)).toEqual(["f :: v"]);
+  });
+
+  it("B821r2: a reassigned prefix opens an href when ANY value it is given does", () => {
+    const code = `function f(u: string) {
+      let open = "<b>";
+      open = '<a href="';
+      return \`\${open}\${escapeHtml(u)}">x</a>\`;
+    }`;
+    expect(keys(code)).toContain("f :: href escapeHtml(u)");
+  });
+
+  it("B821r2: an entry seen LESS often than its count is stale (the list may only shrink)", () => {
+    const entries: Record<string, Allowed> = { "f :: n": { reason: "r", count: 2 }, "g :: m": "r" };
+    expect(underAllowed(["f :: n", "f :: n", "g :: m"], entries)).toEqual([]);
+    expect(underAllowed(["f :: n", "g :: m"], entries)).toEqual(["f :: n | x1, allowed x2"]);
+    expect(underAllowed(["f :: n", "f :: n"], entries)).toEqual(["g :: m | x0, allowed x1"]);
+  });
+
   it("keys two uses of the same text in different functions separately", () => {
     const code =
       "function a(n: string) { return `<p>${n}</p>`; } function b(n: string) { return `<p>${n}</p>`; }";
@@ -290,12 +347,8 @@ describe("B809 — no unescaped value reaches email HTML in any api file (REG-B8
   it("every allow-list entry still matches a hit (each list may only shrink)", () => {
     const stale: string[] = [];
     for (const [file, entries] of Object.entries(ALLOWED)) {
-      const keys = hitsByFile.get(file) ?? [];
-      for (const [key, v] of Object.entries(entries)) {
-        const n = keys.filter((k) => k === key).length;
-        if (n < allowedCount(v))
-          stale.push(`${file} | ${key} | x${n}, allowed x${allowedCount(v)}`);
-      }
+      for (const u of underAllowed(hitsByFile.get(file) ?? [], entries))
+        stale.push(`${file} | ${u}`);
     }
     expect(stale).toEqual([]);
   });
