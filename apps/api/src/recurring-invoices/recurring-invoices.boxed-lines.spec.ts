@@ -1,9 +1,11 @@
 /**
  * B646 — a recurring template line is a PACK COUNT (boxes typed against a per-box price). It reached
- * `invoicesService.create` as a bare qty, so a 12-pack line of 6 boxes was stored as qty 6 in the PIECES
- * column (COGS and the levy basis 12x too small). The generator now passes the split, so the shared line
- * builder derives qty = boxes x pack, the prorated subtotal and the pieces-basis levy. Generation is a NEW
- * sale, so the LIVE pack is the right one.
+ * `invoicesService.create` as a bare qty, so a 12-pack line of 6 boxes was STORED as qty 6 in the PIECES
+ * column, with no boxes/pieces and no unitsPerBox snapshot: every reader of the stored line (the regulated
+ * ledger's pieces, COGS, returns, a later price adjustment) saw 6 pieces. The billed subtotal and the
+ * invoice-line levy were already right (the builder multiplied the levy basis by the live pack), so the fix
+ * is STORAGE-only for money on the invoice: the contrast case below pins that. Generation is a NEW sale, so
+ * the LIVE pack is the right one.
  */
 jest.mock("../common/db-locks", () => ({
   withAdvisoryLock: async (_opts: unknown, fn: () => Promise<unknown>) => ({
@@ -116,6 +118,22 @@ describe("RecurringInvoicesService generation — boxed template lines (B646)", 
       clampFreeUnits: () => 0,
     });
 
+  it("a failed LIVE-pack read after the claim gives the cycle back as FAILED and creates nothing", async () => {
+    prisma.product.findMany.mockImplementation(async (args: any) => {
+      if (args?.select?.unitsPerBox) throw new Error("pack read failed");
+      return LIVE_PRODUCTS;
+    });
+    const ri = template([tmplLine()]);
+    await expect((service as any).generateInvoiceFromTemplate(ri)).rejects.toThrow(
+      "pack read failed",
+    );
+    expect(invoices.create).not.toHaveBeenCalled();
+    const restore = prisma.recurringInvoice.updateMany.mock.calls
+      .map((c: any[]) => c[0])
+      .find((a: any) => a?.data?.lastError === "pack read failed");
+    expect(restore?.data).toMatchObject({ nextRunAt: ri.nextRunAt, lastRunStatus: "FAILED" });
+  });
+
   it("a 12-pack template line of qty 6 at $40/box generates $240 stored as 72 PIECES, not qty 6 (or $2,880)", async () => {
     const items = await generatedItems([tmplLine()]);
     expect(items[0]).toMatchObject({ qty: 6, boxes: 6, pieces: 0, unitPrice: 40 });
@@ -131,6 +149,7 @@ describe("RecurringInvoicesService generation — boxed template lines (B646)", 
     expect(subtotal).not.toBe(2880); // 72 x $40: the per-piece re-price this must never become
   });
 
+  // Not a red case: the no-split path already levied on pieces (see the contrast below). Kept as a pin.
   it("the levy is on the PIECES basis (72 x 0.5 = 36), not the box count", async () => {
     const { itemsData } = build(await generatedItems([tmplLine()]));
     expect(itemsData[0].categoryTaxAmount).toBe(36);
@@ -141,6 +160,9 @@ describe("RecurringInvoicesService generation — boxed template lines (B646)", 
       { description: "Case", productId: "p-12", qty: 6, unitPrice: 40, discount: 0, taxRate: 0 },
     ]);
     expect(itemsData[0]).toMatchObject({ qty: 6, boxes: null, unitsPerBox: null });
+    // ...while the money on the invoice was already right: the fix changes what is STORED, not the bill.
+    expect(itemsData[0].subtotal).toBe(240);
+    expect(itemsData[0].categoryTaxAmount).toBe(36);
   });
 
   it("a non-boxed control is generated exactly as before (no split keys)", async () => {

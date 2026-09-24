@@ -281,20 +281,21 @@ export class RecurringInvoicesService {
       ...new Set(ri.items.map((item: any) => item.productId).filter(Boolean) as string[]),
     ];
     const archivedNote = await this.buildArchivedItemsNote(templateProductIds);
-    // B646: the LIVE pack at generation time (generation is the sale), to store a boxed line's boxes.
-    const packRows: any[] =
-      templateProductIds.length > 0
-        ? await this.prisma.forTenant().product.findMany({
-            where: { id: { in: templateProductIds } },
-            select: { id: true, unitsPerBox: true },
-          })
-        : [];
-    const packByProduct = new Map<string, number | null>(
-      (packRows ?? []).map((p: any) => [p.id, p.unitsPerBox ?? null]),
-    );
 
     let invoice: any;
     try {
+      // B646: the LIVE pack at generation time (generation is the sale), to store a boxed line's boxes.
+      // Read INSIDE the try, after the claim: a failed read records FAILED and gives the cycle back.
+      const packRows: any[] =
+        templateProductIds.length > 0
+          ? await this.prisma.forTenant().product.findMany({
+              where: { id: { in: templateProductIds } },
+              select: { id: true, unitsPerBox: true },
+            })
+          : [];
+      const packByProduct = new Map<string, number | null>(
+        (packRows ?? []).map((p: any) => [p.id, p.unitsPerBox ?? null]),
+      );
       invoice = await this.invoicesService.create({
         customerId: ri.customerId,
         discount: Number(ri.discount),
