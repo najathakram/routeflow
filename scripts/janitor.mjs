@@ -105,7 +105,14 @@ export function deleteRefusal({
   allowedInMainReal = [],
   worktreeReal = null,
   kind,
+  caseInsensitive = false,
 }) {
+  // #1326 review: on Windows paths compare case-insensitively and without the \\?\ prefix.
+  const norm = (p) => (caseInsensitive && p ? p.replace(/^\\\\\?\\/, "").toLowerCase() : p);
+  targetReal = norm(targetReal);
+  mainReal = norm(mainReal);
+  allowedInMainReal = allowedInMainReal.map(norm);
+  worktreeReal = norm(worktreeReal);
   const within = (child, parent) => child === parent || child.startsWith(parent + sep);
   if (targetReal === mainReal) return "target is the main checkout";
   if (within(targetReal, mainReal) && !allowedInMainReal.some((root) => within(targetReal, root))) {
@@ -127,17 +134,20 @@ export function isRecentlyActive(lastActivityMs, nowMs, hours = RECENT_ACTIVITY_
 
 /**
  * Decide what (if anything) this tool may do to a worktree.
- * info: { name, branch, isMainCheckout, isMerged, isDirty, isRecent, hasUnpushed }
+ * info: { name, branch, isMainCheckout, isMerged, isDirty, isRecent, hasUnpushed, isLocked }
  * Returns { nodeModules: "clear"|"skip", worktree: "remove"|"skip", reason }
  */
 export function classifyWorktree(info) {
-  const { name, branch, isMainCheckout, isMerged, isDirty, isRecent, hasUnpushed } = info;
+  const { name, branch, isMainCheckout, isMerged, isDirty, isRecent, hasUnpushed, isLocked } = info;
   if (isMainCheckout) return { nodeModules: "skip", worktree: "skip", reason: "main checkout" };
   if (isProtectedWorktreeName(name)) {
     return { nodeModules: "skip", worktree: "skip", reason: "protected worktree" };
   }
   if (isProtectedBranch(branch)) {
     return { nodeModules: "skip", worktree: "skip", reason: "protected branch" };
+  }
+  if (isLocked) {
+    return { nodeModules: "skip", worktree: "skip", reason: "locked worktree — never touched" };
   }
   if (!isMerged) {
     return {
@@ -253,6 +263,15 @@ export function psLiteral(s) {
   return `'${String(s).replace(/['\u2018\u2019\u201A\u201B]/g, (q) => q + q)}'`;
 }
 
+/** True when `p` is itself a symlink or junction (Node reports a junction as a symlink). */
+function isLinkPath(p) {
+  try {
+    return lstatSync(p).isSymbolicLink();
+  } catch {
+    return false;
+  }
+}
+
 function findJunctions(dir) {
   if (!isWindows() || !existsSync(dir)) return [];
   const out = trySh("powershell", [
@@ -301,6 +320,7 @@ export function refuseDelete(target, ctx, { kind, worktreePath = null } = {}) {
     ],
     worktreeReal: worktreePath ? realOr(worktreePath) : null,
     kind,
+    caseInsensitive: isWindows(),
   });
 }
 
@@ -340,6 +360,7 @@ export function safeRemoveTree(dir) {
   }
   windowsRemoveTree(dir, {
     findJunctions,
+    isLink: isLinkPath,
     unlinkJunction: (j) => trySh("cmd", ["/c", "rmdir", j]),
     exists: existsSync,
     rmdirS: (d) => execFileSync("cmd", ["/c", "rmdir", "/s", "/q", d]),
@@ -347,6 +368,18 @@ export function safeRemoveTree(dir) {
 }
 
 /** The Windows removal sequence, with its OS calls injected (so it is testable anywhere). */
+// #1326 review (HIGH): `cmd /c rmdir` gets an UNQUOTED path (Node quotes only spaces and quotes),
+// and cmd splits on & | < > and drops ^, so deleting `wt\a&b` deleted the SIBLING `wt\a`. Any path
+// holding a cmd metacharacter is refused before cmd ever sees it; a human deletes it by hand.
+// `,` `;` `=` too: for cmd's built-ins they separate arguments exactly like a space (and Node only
+// quotes a path containing a space, tab or quote), so `rmdir /s /q wt\a,b` removes `wt\a` and `b`.
+export const CMD_UNSAFE = /[&|<>^%!"(),;=]/;
+function assertCmdSafe(p) {
+  if (CMD_UNSAFE.test(p)) {
+    throw new Error(`refusing a Windows delete of a path with a cmd metacharacter: ${p}`);
+  }
+}
+
 /**
  * B818: unlink every junction under `dir` and PROVE it: a failed scan refuses, each unlink is
  * verified, and a re-scan must come back empty. Shared by windowsRemoveTree and unlinkLinksWithin.
@@ -354,6 +387,7 @@ export function safeRemoveTree(dir) {
 export function unlinkJunctionsVerified(dir, { findJunctions: find, unlinkJunction, exists }) {
   const junctions = find(dir);
   if (junctions == null) throw new Error(`junction scan failed for ${dir}: refusing to delete it`);
+  junctions.forEach(assertCmdSafe); // all checked BEFORE any unlink
   for (const junction of junctions) {
     unlinkJunction(junction);
     if (exists(junction)) throw new Error(`junction ${junction} survived its unlink: refusing`);
@@ -365,6 +399,15 @@ export function unlinkJunctionsVerified(dir, { findJunctions: find, unlinkJuncti
 }
 
 export function windowsRemoveTree(dir, deps) {
+  if (typeof deps.isLink !== "function") throw new Error("windowsRemoveTree needs deps.isLink");
+  assertCmdSafe(dir);
+  // #1326 review: a target that IS a junction (a lane's node_modules -> main's) must never be
+  // scanned — Get-ChildItem -Recurse walks INTO the target. Unlink the link alone, and prove it.
+  if (deps.isLink(dir)) {
+    deps.unlinkJunction(dir);
+    if (deps.exists(dir)) throw new Error(`link ${dir} survived its unlink: refusing`);
+    return;
+  }
   // `rmdir /s` follows a junction, so it only ever runs on a tree PROVEN junction-free.
   unlinkJunctionsVerified(dir, deps);
   if (deps.exists(dir)) deps.rmdirS(dir);
@@ -379,9 +422,9 @@ export function windowsRemoveTree(dir, deps) {
 export function resolveRepoContext(cwd = process.cwd()) {
   const out = trySh("git", ["-C", cwd, "worktree", "list", "--porcelain"]);
   const first = out?.split("\n").find((l) => l.startsWith("worktree "));
-  const main = first
-    ? first.slice("worktree ".length).trim()
-    : (trySh("git", ["-C", cwd, "rev-parse", "--show-toplevel"]) ?? cwd);
+  // #1326 review: never GUESS a main checkout; a janitor that cannot identify it must not run.
+  if (!first) throw new Error(`not inside a git repository (git worktree list failed in ${cwd})`);
+  const main = first.slice("worktree ".length).trim();
   return {
     repoRoot: main,
     mainCheckoutPath: main,
@@ -396,9 +439,11 @@ function listWorktrees(repoRoot) {
   for (const line of out.split("\n")) {
     if (line.startsWith("worktree ")) {
       if (cur) entries.push(cur);
-      cur = { path: line.slice("worktree ".length).trim(), branch: null };
+      cur = { path: line.slice("worktree ".length).trim(), branch: null, locked: false };
     } else if (line.startsWith("branch ") && cur) {
       cur.branch = line.slice("branch ".length).replace("refs/heads/", "").trim();
+    } else if ((line === "locked" || line.startsWith("locked ")) && cur) {
+      cur.locked = true; // `git worktree lock`: someone asked git to keep this one
     }
   }
   if (cur) entries.push(cur);
@@ -496,9 +541,9 @@ export function lastActivityMs(worktreePath) {
 // local-assets folder, a scratch note) is someone's data and makes the worktree "dirty".
 const REGENERABLE_IGNORED = [
   /(^|\/)node_modules\/?$/,
-  /(^|\/)dist\/?$/,
-  /(^|\/)build\/?$/,
-  /(^|\/)coverage\/?$/,
+  // #1326 review: build output only at the top level or a package root — a source folder that
+  // happens to be called `build` (apps/api/src/build/) is someone's code, not output.
+  /^((apps|packages)\/[^/]+\/)?(dist|build|coverage)\/?$/,
   /(^|\/)\.next\/?$/,
   /(^|\/)\.turbo\/?$/,
   /(^|\/)\.expo\/?$/,
@@ -594,6 +639,7 @@ function buildPlan(repoRoot, mainCheckoutPath, worktreesRoot) {
       branch: wt.branch,
       isMainCheckout,
       isMerged,
+      isLocked: !!wt.locked,
       isDirty: isMainCheckout ? false : isDirty(wt.path),
       isRecent: isMainCheckout ? false : isRecentlyActive(lastActivityMs(wt.path), nowMs),
       hasUnpushed: isMainCheckout ? false : hasUnpushedCommits(wt.path, wt.branch),
@@ -741,6 +787,12 @@ export function removeWorktreeSafely(
 /** B817: unlink every symlink/junction inside `dir`, following none. Throws when unsure. */
 export function unlinkLinksWithin(dir) {
   if (isWindows()) {
+    assertCmdSafe(dir);
+    if (isLinkPath(dir)) {
+      trySh("cmd", ["/c", "rmdir", dir]);
+      if (existsSync(dir)) throw new Error(`link ${dir} survived its unlink: refusing`);
+      return;
+    }
     unlinkJunctionsVerified(dir, {
       findJunctions,
       unlinkJunction: (j) => trySh("cmd", ["/c", "rmdir", j]),
@@ -798,14 +850,15 @@ function runStaleBranches(repoRoot) {
 
 function main() {
   const argv = process.argv.slice(2);
-  const { repoRoot, mainCheckoutPath, worktreesRoot } = resolveRepoContext();
 
+  // --preflight is a free-space check only; it needs no repo context.
   if (argv.includes("--preflight")) {
     const gb = Number(flagValue(argv, "--preflight", "6"));
     const free = getFreeSpaceGb();
     console.log(`free space: ${free.toFixed(1)} GB (threshold ${gb} GB)`);
     process.exit(meetsThreshold(free, gb) ? 0 : 1);
   }
+  const { repoRoot, mainCheckoutPath, worktreesRoot } = resolveRepoContext();
 
   if (argv.includes("--stale-branches")) {
     runStaleBranches(repoRoot);

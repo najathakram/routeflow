@@ -63,10 +63,11 @@ squash-only since 2026-07-30 and lanes branch from the mainline, and the uncommi
 - Any worktree with **uncommitted changes**, or whose **HEAD moved in the last 24 hours** (or whose
   activity cannot be read) — neither its `node_modules` nor the worktree is touched. "Uncommitted"
   (B819) also means: `git status` could not be read, or an **ignored** path other than build output
-  exists (a `.env`, `local-assets/`, a scratch file). The only ignored paths treated as disposable are `node_modules`, `dist`, `build`,
-  `coverage`, `.next`, `.turbo`, `.expo`, `test-output`, `*.tsbuildinfo`, `.DS_Store`,
+  exists (a `.env`, `local-assets/`, a scratch file). The only ignored paths treated as disposable are `node_modules`; `dist`, `build` and
+  `coverage` at the repo root or a package root (never deeper, where they may be source); `.next`, `.turbo`, `.expo`, `test-output`, `*.tsbuildinfo`, `.DS_Store`,
   `.campaign/`, `next-env.d.ts`, everything under `.husky/_/` and `.claude/settings.local.json`.
 - An orphan dir under `.claude/worktrees/` that holds a `.git` entry or changed in the last 24 hours.
+- A **locked** worktree (`git worktree lock`).
 - Any merged, clean, idle worktree with unpushed commits — its `node_modules` may be cleared, but
   the worktree itself is kept.
 - **Docker volumes** and `docker system prune` — never run. Only `docker builder prune -a -f`.
@@ -100,9 +101,19 @@ never a target; nothing inside it may be deleted except under `.claude/worktrees
 `local-assets/`; and a `node_modules` target must resolve inside its own worktree. A refused delete
 is skipped and printed as `REFUSED`, never forced.
 
+**Windows, since the #1326 review.**
+
+- A delete path containing a cmd metacharacter (`& | < > ^ % ! " ( ) , ; =`; the last three split arguments like a space) is **refused**, not
+  deleted. `cmd /c rmdir` receives the path unquoted, and cmd splits on `&`: a probe deleting
+  `wt\a&b` removed the SIBLING `wt\a`. Such a folder is left for a human to delete by hand.
+- A delete target that **is itself** a junction (a lane's `node_modules` pointing at the main
+  checkout's) is unlinked alone with a bare `rmdir`, verified gone, and never scanned. A recursive
+  scan of a junction walks into its target and would unlink the main checkout's own links.
+- Path comparisons in the containment guard are case-insensitive and ignore the `\\?\` prefix.
+
 ## Where it runs from (B816)
 
-The janitor always acts on the repo's **main checkout** (the first entry of `git worktree list`) and
+The janitor always acts on the repo's **main checkout** (the first entry of `git worktree list`; if that cannot be read it refuses to run rather than guess) and
 its `.claude/worktrees/`, whichever worktree you run it from. Before B816 it used
 `git rev-parse --show-toplevel`, so a run from inside a lane worktree treated the real main checkout
 as an ordinary worktree that could be cleaned.

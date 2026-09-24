@@ -16,7 +16,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
-import { join } from "node:path";
+import { join, resolve, sep } from "node:path";
 import {
   isProtectedWorktreeName,
   isProtectedBranch,
@@ -39,6 +39,7 @@ import {
   orphanEligible,
   branchTip,
   execute,
+  CMD_UNSAFE,
   unlinkLinksWithin,
 } from "./janitor.mjs";
 
@@ -152,24 +153,26 @@ t("classifyWorktree (B800): merged + clean but recently active is never touched"
 });
 
 t("deleteRefusal (B815): the containment rules", () => {
-  const m = "/r/main";
-  const allowed = ["/r/main/.claude/worktrees", "/r/main/local-assets"];
+  // Platform paths (resolve + sep), so this holds on Windows too (#1326 review).
+  const P = (...parts) => resolve(sep, ...parts);
+  const m = P("r", "main");
+  const allowed = [P("r", "main", ".claude", "worktrees"), P("r", "main", "local-assets")];
   const r = (targetReal, kind = "orphan-dir", worktreeReal = null) =>
     deleteRefusal({ targetReal, mainReal: m, allowedInMainReal: allowed, worktreeReal, kind });
   assert.match(r(m) ?? "", /main checkout/);
-  assert.match(r("/r/main/node_modules") ?? "", /inside the main checkout/);
-  assert.equal(r("/r/main/.claude/worktrees/old"), null);
-  assert.equal(r("/r/main/local-assets/proofs/x", "stale-proof-dir"), null);
-  assert.equal(r("/r/lane/node_modules", "node_modules", "/r/lane"), null);
+  assert.match(r(P("r", "main", "node_modules")) ?? "", /inside the main checkout/);
+  assert.equal(r(P("r", "main", ".claude", "worktrees", "old")), null);
+  assert.equal(r(P("r", "main", "local-assets", "proofs", "x"), "stale-proof-dir"), null);
+  assert.equal(r(P("r", "lane", "node_modules"), "node_modules", P("r", "lane")), null);
   assert.match(
-    r("/r/other/node_modules", "node_modules", "/r/lane") ?? "",
+    r(P("r", "other", "node_modules"), "node_modules", P("r", "lane")) ?? "",
     /outside its own worktree/,
   );
   assert.match(
-    r("/r/main/.claude/worktrees/w/node_modules", "node_modules", m) ?? "",
+    r(P("r", "main", ".claude", "worktrees", "w", "node_modules"), "node_modules", m) ?? "",
     /main checkout/,
   );
-  assert.equal(r("/r/mainly/x"), null); // a sibling whose name merely starts with "main"
+  assert.equal(r(P("r", "mainly", "x")), null); // a sibling whose name merely starts with "main"
 });
 
 t("isRecentlyActive (B800): inside the window is recent, outside is not, unknown is recent", () => {
@@ -502,6 +505,7 @@ t(
     return {
       log,
       deps: (find) => ({
+        isLink: () => false,
         findJunctions: find,
         unlinkJunction: (j) => (log.push(`unlink ${j}`), present.delete(j)),
         exists: (p) => present.has(p),
@@ -737,6 +741,141 @@ t(
     });
   } finally {
     rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+// #1326 review (Windows) — (1) HIGH: cmd splits an unquoted path on & | < > ^ ... so a delete
+// of `wt\a&b` deleted the SIBLING `wt\a`. Any such path is refused before cmd ever sees it.
+{
+  const fake = (junctions = []) => {
+    const log = [];
+    return {
+      log,
+      deps: {
+        isLink: () => false,
+        findJunctions: () => junctions,
+        unlinkJunction: (j) => log.push(`unlink ${j}`),
+        exists: () => true,
+        rmdirS: (d) => log.push(`rmdirS ${d}`),
+      },
+    };
+  };
+  for (const bad of [
+    "C:\\wt\\a&b",
+    "C:\\wt\\a|b",
+    "C:\\wt\\a^b",
+    "C:\\wt\\a%PATH%",
+    "C:\\wt\\a(b)",
+    'C:\\wt\\a"b',
+    "C:\\wt\\a!b",
+    "C:\\wt\\a,b",
+    "C:\\wt\\a;b",
+    "C:\\wt\\a=b",
+  ]) {
+    t(`REG-1326-1: a Windows delete of ${JSON.stringify(bad)} is refused before cmd runs`, () => {
+      const f = fake();
+      f.deps.exists = () => false; // an unlink "succeeded" — still must never reach cmd
+      assert.throws(() => windowsRemoveTree(bad, f.deps), /refus/i);
+      assert.deepEqual(f.log, []);
+    });
+  }
+  t("REG-1326-1: a JUNCTION path with a cmd metacharacter is refused before ANY unlink", () => {
+    const f = fake(["C:\\wt\\nm\\ok", "C:\\wt\\nm\\a&b"]);
+    f.deps.exists = () => false; // unlinks would "succeed" — only the guard can stop this
+    assert.throws(() => windowsRemoveTree("C:\\wt\\nm", f.deps), /metacharacter/);
+    assert.deepEqual(f.log, []); // not even the safe junction was unlinked first
+  });
+
+  // (2) MED: when the TARGET itself is a junction (a lane's node_modules -> main's), scanning it
+  // walks into MAIN; it must be unlinked with a bare rmdir and never scanned or rmdir /s'd.
+  t("REG-1326-2: a delete target that IS a junction is unlinked alone, never scanned", () => {
+    const log = [];
+    let gone = false;
+    windowsRemoveTree("C:\\wt\\lane\\node_modules", {
+      isLink: () => true,
+      findJunctions: (d) => (log.push(`scan ${d}`), []),
+      unlinkJunction: (j) => (log.push(`unlink ${j}`), (gone = true)),
+      exists: () => !gone,
+      rmdirS: (d) => log.push(`rmdirS ${d}`),
+    });
+    assert.deepEqual(log, ["unlink C:\\wt\\lane\\node_modules"]);
+  });
+}
+
+// LOWs from the same review.
+t("REG-1326-L1: on Windows the guard compares paths case-insensitively and without \\\\?\\", () => {
+  const why = deleteRefusal({
+    targetReal: "\\\\?\\C:\\R\\Main",
+    mainReal: "c:\\r\\main",
+    allowedInMainReal: [],
+    kind: "orphan-dir",
+    caseInsensitive: true,
+  });
+  assert.match(why ?? "", /main checkout/);
+});
+t("REG-1326-L2: a LOCKED worktree is never touched", () => {
+  const v = classifyWorktree({
+    name: "rf-locked",
+    branch: "fix/shipped",
+    isMainCheckout: false,
+    isMerged: true,
+    isDirty: false,
+    isRecent: false,
+    hasUnpushed: false,
+    isLocked: true,
+  });
+  assert.equal(v.nodeModules, "skip");
+  assert.equal(v.worktree, "skip");
+  assert.match(v.reason, /locked/);
+});
+t("REG-1326-L3: outside a git repo the context THROWS (never guesses a main checkout)", () => {
+  const dir = mkdtempSync(join(tmpdir(), "janitor-norepo-"));
+  try {
+    assert.throws(() => resolveRepoContext(dir));
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+t("REG-1326-L4: build/dist/coverage are disposable only at the top level or a package root", () => {
+  assert.equal(
+    dirtyFromStatus("", "!! apps/api/dist/\n!! packages/pricing/dist/\n!! coverage/\n"),
+    false,
+  );
+  assert.equal(dirtyFromStatus("", "!! apps/api/src/build/\n"), true); // a source folder named build
+  assert.equal(dirtyFromStatus("", "!! apps/web/app/coverage/\n"), true);
+});
+
+// A REAL Windows junction (runs only on win32; the PC lane runs this before any merge).
+// A %TEMP% holding a cmd metacharacter (e.g. a username with "&" or "(") would make these fail on
+// the refusal rather than on a real bug, so they use a cmd-safe base or skip loudly.
+const winBase = CMD_UNSAFE.test(tmpdir()) ? join(process.env.SystemDrive || "C:", "\\") : tmpdir();
+if (process.platform === "win32" && CMD_UNSAFE.test(winBase)) {
+  console.log(`SKIP: no cmd-safe temp base for the Windows junction tests (${winBase})`);
+} else if (process.platform === "win32") {
+  const root = mkdtempSync(join(winBase, "janitor-junction-"));
+  try {
+    const target = join(root, "main-nm");
+    mkdirSync(join(target, "pkg"), { recursive: true });
+    writeFileSync(join(target, "pkg", "SENTINEL"), "keep");
+    const lane = join(root, "lane");
+    mkdirSync(lane);
+    symlinkSync(target, join(lane, "node_modules"), "junction");
+    t("WIN: deleting a junction target removes only the junction; its target survives", () => {
+      safeRemoveTree(join(lane, "node_modules"));
+      assert.equal(existsSync(join(lane, "node_modules")), false);
+      assert.equal(existsSync(join(target, "pkg", "SENTINEL")), true);
+    });
+    const tree = join(root, "tree");
+    mkdirSync(join(tree, "a"), { recursive: true });
+    writeFileSync(join(tree, "a", "f.txt"), "x");
+    symlinkSync(target, join(tree, "a", "linked"), "junction");
+    t("WIN: deleting a tree that CONTAINS a junction removes the tree; the target survives", () => {
+      safeRemoveTree(tree);
+      assert.equal(existsSync(tree), false);
+      assert.equal(existsSync(join(target, "pkg", "SENTINEL")), true);
+    });
+  } finally {
+    rmSync(root, { recursive: true, force: true });
   }
 }
 
