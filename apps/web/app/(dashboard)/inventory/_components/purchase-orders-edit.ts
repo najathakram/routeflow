@@ -11,6 +11,7 @@ import {
   type POItem,
   type POLineItem,
   type PurchaseOrder,
+  linePack,
 } from "./purchase-orders-shared";
 
 /**
@@ -57,7 +58,8 @@ export const emptyEditLine = (): EditLine => ({
  * Cost-per-Box — the same entry the Create form uses — so `resolvePOLine` converts
  * it back to pieces and a per-piece cost on save.
  */
-export function toEditLine(item: POItem, unitsPerBox: number): EditLine {
+export function toEditLine(item: POItem, livePack: number): EditLine {
+  const unitsPerBox = linePack(item, livePack); // B699: the line's own stored pack wins
   const ordered = Number(item.qtyOrdered ?? 0);
   const cost = Number(item.unitCost ?? 0);
   const base = {
@@ -102,7 +104,7 @@ export function validateEditLines(
   if (filled.length > MAX_LINES) return `A purchase order can have at most ${MAX_LINES} lines.`;
   for (const l of filled) {
     if (!l.productId) return "Choose a product for every line.";
-    const { qty, unitCost } = resolvePOLine(l, unitsPerBoxFor(l.productId));
+    const { qty, unitCost } = resolvePOLine(l, linePack(l, unitsPerBoxFor(l.productId)));
     if (!(qty > 0)) return "Every line needs a quantity above zero.";
     if (!(unitCost >= 0)) return "Every line needs a valid cost.";
     if (qty < MIN_QTY) return "Every line needs a quantity of at least 0.001.";
@@ -130,7 +132,7 @@ export function buildUpdateItems(
   return lines
     .filter((l) => l.productId || l.id)
     .map((l) => {
-      const upb = unitsPerBoxFor(l.productId);
+      const upb = linePack(l, unitsPerBoxFor(l.productId)); // B699: stored pack wins
       if (upb > 1) {
         const a = resolvePOLineAmounts(l, upb);
         return {

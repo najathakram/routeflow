@@ -33,6 +33,7 @@ import { UpdateFulfillPathDto } from "./dto/update-fulfill-path.dto";
 import { CreateChangeRequestDto } from "./dto/create-change-request.dto";
 import { ResolveChangeRequestDto } from "./dto/resolve-change-request.dto";
 import { foldMergeItems } from "./merge-items";
+import { assertNoUnitAwareLines } from "./unit-aware-guard";
 import { mergeRequestHash } from "./merge-idempotency";
 import { withAdvisoryLock } from "../common/db-locks";
 import {
@@ -222,6 +223,22 @@ export class OrdersController {
                     return { kind: "merged" as const, orderId: replayedOrderId, replayed: true };
                   }
                 }
+                // B649: foldMergeItems has no unitLabel field on MergeIncomingItem and never
+                // reads or forwards one — a Case count merged into an open order would
+                // silently fold as loose pieces/pack units at the pack price. The existing
+                // unit-aware fence (assertOrderEditAllowed, called inside updateOrderItems
+                // below) only inspects the ORDER's pre-fold lineItems, never this incoming
+                // dto.items — by the time that guard runs, the fold has already happened and
+                // the label is already gone. Refuse here instead, while the real unitLabel is
+                // still on the wire, same fail-closed posture as every other un-converted
+                // rewrite path (unit-aware-guard.ts's own doc comment).
+                assertNoUnitAwareLines(
+                  dto.items ?? [],
+                  "added to an existing order this way",
+                  // SA-142: this is the CREATE path — there is no existing order to send the
+                  // operator to edit yet. The actual remedy is to not merge at all.
+                  'Choose "Create as a separate order" instead.',
+                );
                 const mergedItems = foldMergeItems(current.lineItems ?? [], dto.items ?? []);
                 const foldDto = {
                   items: mergedItems,
