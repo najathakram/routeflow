@@ -255,6 +255,7 @@ describeDb("B776 R1 chain (SA-124g/h gate) — real Postgres", () => {
         total: "0",
         lineItems: {
           create: lines.map((l, i) => ({
+            tenantId,
             productId: l.productId,
             qty: l.qty.toString(),
             boxes: l.boxes,
