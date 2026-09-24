@@ -504,6 +504,39 @@ describe("CreateOrderModal", () => {
         expect(screen.queryByLabelText("Waiting for signal")).not.toBeInTheDocument();
       });
 
+      // #1271 merge combined pin (#1261 per-line notes + SA-090/Opus item 1's flushSync merge
+      // path): a live scan lands the line first, the operator notes it, THEN a retry of the same
+      // product merges in. The note lives on the LineItem object every merge path (mergeQtyIntoLine
+      // / stepLineUnit / the plain qty+1 fallback) reaches only via `{ ...li, ... }` — never
+      // reconstructed from scratch — so it must survive a post-note merge exactly as this proves.
+      it("a retry merging into a noted line keeps the note - one row, note intact", async () => {
+        mockResolveProductByCode.mockResolvedValueOnce(widget); // "111" live scan lands it
+        mockResolveProductByCode.mockRejectedValueOnce(networkError()); // "222" queues
+        mockResolveProductByCode.mockResolvedValueOnce(widget); // "222"'s retry
+        await openScreen();
+        await scanCode("111");
+        await screen.findByText("Widget");
+
+        fireEvent.click(screen.getByTitle("Add flavor / note"));
+        fireEvent.change(
+          screen.getByPlaceholderText("Flavor or note for this item (prints on invoice)"),
+          { target: { value: "Extra cold, please" } },
+        );
+
+        await scanCode("222");
+        expect(await screen.findByLabelText("Waiting for signal")).toHaveTextContent("(1)");
+
+        await act(async () => {
+          window.dispatchEvent(new Event("online"));
+        });
+
+        await waitFor(() => expect(screen.getByText("1 item · $19.98")).toBeInTheDocument(), {
+          timeout: 4000,
+        });
+        expect(screen.getAllByText("Widget")).toHaveLength(1);
+        expect(screen.getByDisplayValue("Extra cold, please")).toBeInTheDocument();
+      });
+
       it("SA-090/Opus item 1 REG: a LIVE scan racing an in-flight retry of the SAME product lands ONE row at qty 2, never two", async () => {
         // The bug: `addLineItem` decided add-vs-merge from `lineItems` captured in the render the
         // CALL started in, not the render current when it actually commits. A retry's lookup
