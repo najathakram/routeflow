@@ -232,7 +232,13 @@ export class OrdersController {
                 // the label is already gone. Refuse here instead, while the real unitLabel is
                 // still on the wire, same fail-closed posture as every other un-converted
                 // rewrite path (unit-aware-guard.ts's own doc comment).
-                assertNoUnitAwareLines(dto.items ?? [], "added to an existing order this way");
+                assertNoUnitAwareLines(
+                  dto.items ?? [],
+                  "added to an existing order this way",
+                  // SA-142: this is the CREATE path — there is no existing order to send the
+                  // operator to edit yet. The actual remedy is to not merge at all.
+                  'Choose "Create as a separate order" instead.',
+                );
                 const mergedItems = foldMergeItems(current.lineItems ?? [], dto.items ?? []);
                 const foldDto = {
                   items: mergedItems,

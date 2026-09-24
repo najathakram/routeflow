@@ -159,6 +159,23 @@ describe("OrdersController.create — staff merge refuses a unit-aware incoming 
     expect(svc.updateOrderItems).not.toHaveBeenCalled();
   });
 
+  it("SA-142: the refusal message points at the CREATE-path remedy, not the edit-an-existing-order one", async () => {
+    const svc = fakeOrdersService();
+    const controller = buildController(svc);
+
+    let message = "";
+    try {
+      await controller.create(
+        mergeDto({ productId: "prod-2", qty: 3, unitLabel: "Case" }),
+        operatorPayload as any,
+      );
+    } catch (err: any) {
+      message = err.response?.message ?? "";
+    }
+    expect(message).toContain("Create as a separate order");
+    expect(message).not.toContain("Edit it from the web order screen");
+  });
+
   it("RED PROOF — reverting the guard reproduces the exact drop this bug is about: the merge proceeds and unitLabel is gone from the folded payload", async () => {
     // The real (buggy) shape, reconstructed here rather than reverted in source: what
     // foldMergeItems ALONE produces for a unit-labeled incoming item, with no guard in
