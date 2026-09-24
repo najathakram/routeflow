@@ -35,6 +35,11 @@ jest.mock("../invoices/invoices.service", () => ({
     reconcileOrderDraftInvoice: jest.fn().mockResolvedValue(null),
     resyncOrderInvoicesForEdit: jest.fn().mockResolvedValue([]),
     revertLinkedInvoicesForOrderEdit: jest.fn().mockResolvedValue([]),
+    // forceConsolidateCustomer's loser-cleanup loop calls this unconditionally
+    // (orders.service.ts:1103) — the unit-test harness's own InvoicesService mock
+    // (testing/orders-service-harness.ts:102) already carries it; this manual mock missed it,
+    // which is why F2's first run of (b) threw "findOpenOrderDraft is not a function".
+    findOpenOrderDraft: jest.fn().mockResolvedValue(null),
   })),
 }));
 jest.mock("../notifications/notifications.service", () => ({
@@ -68,6 +73,7 @@ import { CreditNotesService } from "../credit-notes/credit-notes.service";
 import { CommissionEngineService } from "../sales-agents/commission-engine.service";
 import { EntitlementsService } from "../billing/entitlements.service";
 import { RegulatedLedgerService } from "../regulated/regulated-ledger.service";
+import { foldMergeItems } from "./merge-items";
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const { assertTestTenant } = require("../../../../scripts/lib/test-tenants.cjs");
@@ -286,16 +292,21 @@ describeDb("B776 R1 chain (SA-124g/h gate) — real Postgres", () => {
   it("(a) sweep: a 12-pack loser folds into the 12-pack winner line at $36", async () => {
     const customerId = await seedCustomer("a");
     const productId = await seedProduct("prod-a", 12, 3);
-    const winner = await seedPendingOrder(customerId, [
+    // Neither seeded order is necessarily the merge's own winner: mergeAllPendingForCustomer
+    // (orders.service.ts:664) orders pendingOrders by updatedAt DESC and takes the FIRST as
+    // winner (:673) — the second-created row here, not the first, since nothing updates either
+    // between creation. Read the actual surviving order id off the call's own return value
+    // instead of assuming which locally-seeded order survives.
+    await seedPendingOrder(customerId, [
       { productId, qty: 12, boxes: 1, pieces: 0, unitsPerBox: 12, unitPrice: 36 },
     ]);
     await seedPendingOrder(customerId, [
       { productId, qty: 12, boxes: 1, pieces: 0, unitsPerBox: 12, unitPrice: 36 },
     ]);
 
-    await tenantCtx.run(tenantId, () => svc.mergeAllPendingForCustomer(customerId));
+    const merged = await tenantCtx.run(tenantId, () => svc.mergeAllPendingForCustomer(customerId));
 
-    const items = await itemsOf(winner.id);
+    const items = await itemsOf(merged!.id);
     const line = items.find((i) => i.productId === productId)!;
     expect(line).toMatchObject({
       boxes: 2,
@@ -310,16 +321,18 @@ describeDb("B776 R1 chain (SA-124g/h gate) — real Postgres", () => {
   it("(b) forceConsolidateCustomer: the same", async () => {
     const customerId = await seedCustomer("b");
     const productId = await seedProduct("prod-b", 12, 3);
-    const winner = await seedPendingOrder(customerId, [
+    // Same updatedAt-DESC winner selection as (a) (orders.service.ts:940/947) — read the
+    // surviving order id off the call's own return value.
+    await seedPendingOrder(customerId, [
       { productId, qty: 12, boxes: 1, pieces: 0, unitsPerBox: 12, unitPrice: 36 },
     ]);
     await seedPendingOrder(customerId, [
       { productId, qty: 12, boxes: 1, pieces: 0, unitsPerBox: 12, unitPrice: 36 },
     ]);
 
-    await tenantCtx.run(tenantId, () => svc.forceConsolidateCustomer(customerId));
+    const merged = await tenantCtx.run(tenantId, () => svc.forceConsolidateCustomer(customerId));
 
-    const items = await itemsOf(winner.id);
+    const items = await itemsOf(merged!.id);
     const line = items.find((i) => i.productId === productId)!;
     expect(line).toMatchObject({ boxes: 2, pieces: 0, unitsPerBox: 12 });
     expect(Number(line.unitPrice)).toBe(36);
@@ -362,12 +375,21 @@ describeDb("B776 R1 chain (SA-124g/h gate) — real Postgres", () => {
       { productId, qty: 5, boxes: null, pieces: null, unitsPerBox: null, unitPrice: 2 },
       { productId, qty: 3, boxes: null, pieces: null, unitsPerBox: null, unitPrice: 2 },
     ]);
-    const beforeIds = (await itemsOf(order.id)).map((i) => i.id);
+
+    // "Duplicates preserved, first grows" (Opus HIGH #2 / SA-124g/h item 3) is foldMergeItems'
+    // own contract (merge-items.ts), which the controller layer runs BEFORE updateOrderItems
+    // (orders.controller.ts:225, buyer.controller.ts:617) to build the full replaceAll payload.
+    // This spec constructs OrdersService directly with no controller in its DI graph, so it
+    // must fold explicitly here too — calling updateOrderItems with a bare single-item payload
+    // (as the original draft did) exercises a different contract: replaceAll's OWN "the payload
+    // IS the full desired line set" semantics, where a one-item payload correctly discards the
+    // second line. That is not a bug; it is the wrong layer for what this case means to pin.
+    const foldResult = foldMergeItems(order.lineItems, [{ productId, qty: 4 }]);
 
     await tenantCtx.run(tenantId, () =>
       svc.updateOrderItems(
         order.id,
-        { replaceAll: true, items: [{ productId, qty: 4 }] } as never,
+        { replaceAll: true, items: foldResult.items } as never,
         operatorPayload as never,
       ),
     );
@@ -377,8 +399,6 @@ describeDb("B776 R1 chain (SA-124g/h gate) — real Postgres", () => {
     expect(after.map((i) => Number(i.qty)).sort((a, b) => a - b)).toEqual(
       [3, 9].sort((a, b) => a - b),
     );
-    // no assertion on which original row id survives — replaceAll deletes and recreates.
-    void beforeIds;
   });
 
   it("(e) a normal same-pack replace-all (payload pack == live pack) is unchanged from master", async () => {
