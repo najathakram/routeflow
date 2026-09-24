@@ -7,7 +7,7 @@
 // Usage:
 //   node scripts/roadmap/render.mjs --validate
 //   node scripts/roadmap/render.mjs --status
-//   node scripts/roadmap/render.mjs [--prs <gh-pr-list.json>] [--out <dir>]
+//   node scripts/roadmap/render.mjs [--prs <pr-list.json>] [--out <dir>]
 //   node scripts/roadmap/render.mjs --help
 //
 // --prs takes a JSON file shaped like the output of:
@@ -84,7 +84,7 @@ export function loadRegisters(dir = regDir()) {
 }
 
 // ── validation ──────────────────────────────────────────────────────────────
-function validate(features, deferred, releases) {
+export function validate(features, deferred, releases) {
   const errors = [];
   const fIds = new Set();
   for (const f of features) {
@@ -542,7 +542,7 @@ export function statusReport({
 
 // ── CLI ───────────────────────────────────────────────────────────────────
 const USAGE =
-  "Usage: render.mjs [--validate] [--status] [--prs <gh-pr-list.json>] [--out <dir>] [--help]";
+  "Usage: render.mjs [--validate] [--status] [--prs <pr-list.json>] [--out <dir>] [--help]";
 function parseArgs(argv) {
   if (argv.includes("--help") || argv.includes("-h")) return { help: true };
   const args = { validate: false, status: false, prs: null, out: defaultOutDir() };
