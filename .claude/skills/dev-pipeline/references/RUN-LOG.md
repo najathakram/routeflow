@@ -10,6 +10,13 @@ Knobs change on ledger evidence (ten-run rules), never on one entry.
 
 ---
 
+## 2026-09-24-policy-layer-phase1 · light-loop · major · $22.95 · 0:42 · 2026-09-24
+
+- Caught: Gate & Review (7) — one independent Opus read at the sha: 1 important (the credit band would have reached buyer/driver tokens via `/tenants/me/features` modes — a SPEC gap, SA-138 §3.5), 6 minor; all fixed or documented in one follow-up commit.
+- Wasted: the first concurrency DB test passed with the lock bypassed (vacuous, L-202) — caught only by a fix-revert probe; fixed with a test-scoped sleep trigger that opens the race.
+- Knob candidate: make a fix-revert probe of every concurrency/lock test mandatory before review — evidence: this run's race test was green without the lock until probed (one run; watch for recurrence before proposing).
+- Deviation: the owner's "run PR-A through dev-pipeline" rule reached the builder after the build finished inline; the run was closed through the light-loop shape (artifacts + independent verify + verdict + closeout), not the pipeline.js engine. Compose images could not build in the cloud container (no network inside docker build); the gate ran on the host-booted dist instead.
+
 ## 2026-09-15-session-c47433e0 · light-loop · unknown-scale · $3.86 · 0:30 · 2026-09-15
 
 - Caught: (no confirmedByPhase data in result.json)
