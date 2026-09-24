@@ -425,6 +425,39 @@ describe("ci-freshness-guard.mjs contract", () => {
     },
   );
 
+  // Opus 7ec75f57 finding 1: "live" is ANY success in the successor's status history, not just the
+  // newest status. A redeploy of the same sha goes in_progress again while the earlier success still
+  // serves, and a live deployment can be flipped to inactive; neither may route to the fallback.
+  const history = (...states: string[]) => ({ body: states.map((st) => ({ state: st })) });
+  it.each([
+    ["a redeploy in progress over an earlier success", ["in_progress", "success"]],
+    ["an inactive status over an earlier success", ["inactive", "success"]],
+  ])(
+    "#1134 · %s counts as LIVE -> exit 3 with the re-run hint, never the fallback",
+    (_l, states) => {
+      const { res, outFile } = superseded({
+        deployments: [dep(NEW)],
+        runs: [
+          runs({ status: "completed", conclusion: "cancelled", html_url: "https://gh/run/12" }),
+        ],
+        statuses: [history(...states)],
+      });
+      expect(readOutputs(outFile)).toMatchObject({ run: "false", reason: "unconfirmed" });
+      expect(res.stdout).toContain("https://gh/run/12");
+      expect(res.status).toBe(3);
+    },
+  );
+
+  it("#1134 · a FAILED statuses read fails closed (exit 3), never the fallback", () => {
+    const { res, outFile } = superseded({
+      deployments: [dep(NEW)],
+      runs: [runs({ status: "completed", conclusion: "cancelled" })],
+      statuses: [{ code: 1, body: "boom 502" }],
+    });
+    expect(readOutputs(outFile)).toMatchObject({ run: "false", reason: "unconfirmed" });
+    expect(res.status).toBe(3);
+  });
+
   // Opus fad6aa19 finding 2: every deployed sha carries ONE completed/skipped workflow run (the
   // deployment_status `in_progress` echo, all jobs gated off). It is not an E2E attempt, so it must not
   // count as "the successor has runs": with only that, a timeout is still the red exit 3.

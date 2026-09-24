@@ -176,8 +176,13 @@ function pollSuccessor(repo, deploySha) {
   const live = runs.json.workflow_runs.find(isLiveRun);
   if (live) return { kind: "confirmed", sha: top.sha, url: String(live.html_url ?? live.id) };
 
-  const st = ghApi(`repos/${repo}/deployments/${top.id}/statuses?per_page=1`);
-  const state = st.ok && Array.isArray(st.json) && st.json[0] ? String(st.json[0].state) : null;
+  // The status HISTORY (newest first). Opus 7ec75f57: "is the successor live?" is ANY `success` in it,
+  // not the newest status alone: a redeploy of the same sha goes in_progress again while the earlier
+  // success still serves, and a live deployment can be flipped to `inactive`.
+  const st = ghApi(`repos/${repo}/deployments/${top.id}/statuses?per_page=100`);
+  const history = st.ok && Array.isArray(st.json) ? st.json : null;
+  const state = history && history[0] ? String(history[0].state) : null;
+  const everLive = history ? history.some((h) => h && h.state === "success") : null;
   if (state === "failure" || state === "error") return { kind: "failed", sha: top.sha, state };
   // Opus fad6aa19 finding 2: every deployed sha carries one completed/`skipped` run (the
   // deployment_status `in_progress` echo, all jobs gated off). It is not an E2E attempt, so it never
@@ -191,6 +196,7 @@ function pollSuccessor(repo, deploySha) {
     sha: top.sha,
     seen: attempts.length,
     state,
+    everLive,
     rerunUrl: rerun ? String(rerun.html_url) : null,
     why: `no live E2E run for ${top.sha} yet (${attempts.length} E2E attempt(s), none live; deployment state ${state ?? "unknown"})`,
   };
@@ -291,7 +297,9 @@ function main() {
     appendOutput("run", "true");
     return 0;
   }
-  if (v.kind === "wait" && v.seen > 0 && v.state !== "success") {
+  // `everLive === false` only: `true` = the successor is (or was) live; `null` = the statuses read
+  // failed, which fails CLOSED to the red below like every other API error while confirming.
+  if (v.kind === "wait" && v.seen > 0 && v.everLive === false) {
     // #1134 Opus item 2: the successor HAS real E2E attempts, but none is exercising the suite by the
     // deadline (cancelled, or still only queued), AND its deployment is not live yet, so this sha may
     // well be what production still serves. Failing would leave a permanent red; skipping would be
