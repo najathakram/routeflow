@@ -130,9 +130,14 @@ describe("no second box-unaware qty*pack multiplication in apps/api/src (B661)",
   // to regulatedUnitBasis is its OWN PR: orders.service.ts's three sites also drive each line's
   // OWN categoryTaxAmount snapshot (not just a ledger read), a different, wider blast radius than
   // this PR's ledger-only conversion.
+  //
+  // B776 round-4 prefactor (SA-124h): updateOrderItems' replaceAll per-item build (one of the
+  // three updateOrderItems() sites) moved verbatim to orders/replace-all-line-build.ts — same
+  // multiplication, same B661-sweep tag, only relocated. orders.service.ts 4 -> 3.
   const ALLOWLIST: { file: string; count: number }[] = [
     { file: "orders/line-piece-qty.ts", count: 1 }, // linePieceQty
-    { file: "orders/orders.service.ts", count: 4 }, // create() ×1, updateOrderItems() ×3
+    { file: "orders/orders.service.ts", count: 3 }, // create() ×1, updateOrderItems() ×2
+    { file: "orders/replace-all-line-build.ts", count: 1 }, // updateOrderItems' replaceAll rebuild
     { file: "invoices/invoices.service.ts", count: 2 }, // update() ×1, applyPriceAdjustment() ×1
     { file: "invoices/manual-invoice-lines.ts", count: 1 }, // buildManualInvoiceLines()
     { file: "order-templates/order-templates.service.ts", count: 1 }, // createOrderFromTemplate()
