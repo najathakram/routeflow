@@ -55,6 +55,7 @@ Every row here is a pointer, not a description — open the linked file for the 
 | A domain end-to-end (e.g. invoices)                            | api `src/invoices/` → web `app/(dashboard)/invoices/` → mobile `lib/api/invoices.ts`                                 |
 | Money / line totals (round, boxed)                             | [`packages`](packages.md) → `pricing` (`computeLineSubtotal`/`normalizeBoxesPieces`/`roundMoney`)                    |
 | Invoice↔Order sync (both directions)                           | api `invoices.service.ts` `reconcileOrderDraftInvoice` (fwd) + `recomputeOrderFromInvoices` (back)                   |
+| Delivered/billable basis for coverage (evidence, not status)    | `api/catchup-2026-09-21-src.md#invoices` — `invoices/delivered-basis-by-line.ts`                                     |
 | MSRP / suggested retail on invoices                            | in-flight branch, NOT on master — see `api/where-to-find.md`                                                         |
 | Duplicate purchase-invoice detection                           | [`api`](api/feature-modules-6.md) → `import/duplicate-match.service.ts`                                              |
 | Supplier-statement reconciliation (AI)                         | [`api`](api/feature-modules-5.md) → `src/supplier-statements/`                                                       |

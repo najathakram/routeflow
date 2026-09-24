@@ -102,6 +102,12 @@ export const RUN_STOP_INCLUDE = {
           phone: true,
           deliveryWindowStart: true,
           deliveryWindowEnd: true,
+          // B305 round 5: findOneRun falls back to THIS customer
+          // (`s.customer ?? s.routeStop?.customer`) for a legacy/seeded run
+          // with no direct stop-customer link — without isTaxExempt here too,
+          // that fallback path silently over-collects tax from an exempt
+          // customer exactly as round 3 fixed for the direct link.
+          isTaxExempt: true,
         },
       },
       customerAddress: true,

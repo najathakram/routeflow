@@ -30,6 +30,7 @@ export function standardRestockResolver(tx: any, orderId: string) {
           boxes: true,
           pieces: true,
           unitsPerBox: true,
+          unitLabel: true, // A4-F3: a unit-aware line is already base pieces (factor 1)
           product: { select: { unitsPerBox: true } },
         },
       });
