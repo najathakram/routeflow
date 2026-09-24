@@ -6,6 +6,7 @@
  * rows and, once they exist, INLINE `ReturnItem` rows) regardless of which was
  * written first.
  */
+import { ConflictException } from "@nestjs/common";
 import {
   firstNonCancelledLine,
   returnedPiecesByProduct,
@@ -81,17 +82,28 @@ describe("firstNonCancelledLine", () => {
   });
 });
 
-describe("standardReturnPieces (m-6 conversion seam)", () => {
-  it("is an identity conversion today — ReturnItem.qty is already pieces, like OrderItem.qty", () => {
-    const order = {
-      lineItems: [
-        { productId: "p1", qty: 30, boxes: 2, pieces: 6, unitsPerBox: 12, status: "PENDING" },
-      ],
-    };
-    const { pieces, toLineUnit } = standardReturnPieces(order, "p1", 12);
+describe("standardReturnPieces (SA-158 conversion)", () => {
+  it("a split line (factor 1): pieces = typed qty, round trip is the identity", () => {
+    const bases = new Map([["p1", { factor: 1 }]]);
+    const { pieces, toLineUnit } = standardReturnPieces(bases, "p1", 12);
     expect(pieces).toBe(12);
-    expect(toLineUnit(12)).toBe(12);
     expect(toLineUnit(30)).toBe(30);
+  });
+
+  it("a box-unaware 12-pack line: 3 boxes = 36 pieces and back", () => {
+    const { pieces, toLineUnit } = standardReturnPieces(new Map([["p1", { factor: 12 }]]), "p1", 3);
+    expect(pieces).toBe(36);
+    expect(toLineUnit(36)).toBe(3);
+  });
+
+  it("refuses (409) an unknown basis, a mixed basis and a product with no basis", () => {
+    const bases = new Map<string, any>([
+      ["u", { unknown: true, reason: "no source" }],
+      ["m", { mixed: true, factors: [1, 12] }],
+    ]);
+    expect(() => standardReturnPieces(bases, "u", 1)).toThrow(/basis unknown for product u/i);
+    expect(() => standardReturnPieces(bases, "m", 1)).toThrow(/1 and 12 pieces per unit/);
+    expect(() => standardReturnPieces(bases, "zz", 1)).toThrow(ConflictException);
   });
 });
 
@@ -99,6 +111,15 @@ describe("returnedPiecesByProduct (B4 shared reader, kind-aware)", () => {
   const fakeTx = (opts: { standardReturns?: any[]; inlineItems?: any[] }) => ({
     return: { findMany: jest.fn().mockResolvedValue(opts.standardReturns ?? []) },
     returnItem: { findMany: jest.fn().mockResolvedValue(opts.inlineItems ?? []) },
+    // SA-158: STANDARD items convert through the order's pack basis; these lines are all factor 1.
+    orderItem: {
+      findMany: jest
+        .fn()
+        .mockResolvedValue(
+          ["p1", "p2"].map((productId) => ({ id: `l-${productId}`, productId, qty: 10 })),
+        ),
+    },
+    invoiceItem: { findMany: jest.fn().mockResolvedValue([]) },
   });
 
   it("sums STANDARD Return rows alone when no INLINE rows exist (today's only case)", async () => {

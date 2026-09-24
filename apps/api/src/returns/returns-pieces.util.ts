@@ -15,20 +15,53 @@
  * (the INLINE caller, whose `ReturnItem.qty` genuinely IS pieces — see
  * `inline-returns.service.ts`'s `capture()`) is the fix; this file's own comparisons
  * (over-return refusal, prior-returned sums) never needed pieces and are unaffected — this is a
- * documentation correction only, no logic in this file changes. `standardReturnPieces` remains
- * an identity function — the seam (B4/m-6) is unused today, kept for a future box/piece-aware
- * DTO.
+ * documentation correction only, no logic in this file changes.
+ *
+ * SA-158 (B650/B754/B671): the over-return CAP and the prior-returned sum are computed in PIECES.
+ * `standardReturnPieces` converts a typed qty (line unit) with the product's pack factor, resolved by
+ * the same `resolvePackFactors` the restock resolver uses (`productPackBasis`); an unknown pack, or a
+ * product on lines with different factors, is REFUSED with a 409 — never booked as factor 1.
+ * `ReturnItem.qty` on disk, and every money figure, stay in the line's own unit.
  *
  * STOCK (B665, this branch): the restock path converts through `common/line-pack-factors.ts` (`legacyLinePieces`) and never assumes this axis is pieces; an
  * unknown pack books no movement and PARKS. The regulated ledger's own axis is handled by
  * `reverseReturnEntries`'s `returnedUnit` above, not here.
  */
 
+import { ConflictException } from "@nestjs/common";
+import { resolvePackFactors, type PackLine } from "../common/line-pack-factors";
+import {
+  liveInvoiceItemsByLine,
+  productPackBasis,
+  type ProductPackBasis,
+} from "./returns-restock-pieces";
+
+/** The order-line columns `resolvePackFactors` reads — shared by every loader of this order's lines. */
+export const PACK_LINE_SELECT = {
+  id: true,
+  productId: true,
+  qty: true,
+  status: true,
+  position: true,
+  boxes: true,
+  pieces: true,
+  unitsPerBox: true,
+  unitLabel: true,
+  product: { select: { unitsPerBox: true } },
+} as const;
+
 export interface OrderLineForPieces {
+  /** Feeds `resolvePackFactors`; absent on a fixture line that carries no pack evidence. */
+  id?: string;
   productId: string | null;
   qty: unknown;
   status?: string | null;
   position?: number | null;
+  boxes?: number | null;
+  pieces?: number | null;
+  unitsPerBox?: number | null;
+  unitLabel?: string | null;
+  product?: { unitsPerBox?: number | null } | null;
 }
 
 export interface OrderForPieces {
@@ -72,25 +105,69 @@ export function firstNonCancelledLine(
 }
 
 /**
- * Converts a STANDARD return DTO's `qty` onto the axis of `firstNonCancelledLine` — the
- * LINE's own unit, not pieces (corrected; see the file header) — and returns a converter
- * back to that same unit for refusal messages; an identity conversion today for that reason.
- * `create()` and the shared prior-returned reader both call this so a future non-identity
- * conversion only has to change here.
+ * The pack basis of every product on the order's non-cancelled lines: a line's factor comes from
+ * `resolvePackFactors` (own split, unit-aware label, else its one linked live InvoiceItem), and a
+ * product's factor from `productPackBasis` (all lines must agree). Only the ambiguous lines touch the
+ * DB (`tx.invoiceItem`), so a split or unit-aware order costs no extra query.
+ */
+export async function standardPackBases(
+  tx: any,
+  orderId: string,
+  lines: OrderLineForPieces[],
+): Promise<Map<string, ProductPackBasis>> {
+  const live = (lines ?? []).filter((li) => li.productId && li.status !== "CANCELLED");
+  const packs = await resolvePackFactors({
+    orderId,
+    lines: live as PackLine[],
+    loadInvoiceItems: liveInvoiceItemsByLine(tx),
+  });
+  const out = new Map<string, ProductPackBasis>();
+  for (const li of live) {
+    if (!out.has(li.productId as string))
+      out.set(li.productId as string, productPackBasis(live, packs, li.productId as string));
+  }
+  return out;
+}
+
+/**
+ * The factor (pieces per line unit) for a product, or a 409. Unknown is never factor 1 (that
+ * fallthrough is the B650 bug), and mixed factors cannot attribute a product-level typed qty to a line:
+ * the operator returns it inline, per line. The messages carry a product id and factors only.
+ */
+export function requirePackFactor(bases: Map<string, ProductPackBasis>, productId: string): number {
+  const basis = bases.get(productId);
+  if (!basis || "noLines" in basis)
+    throw new ConflictException(
+      `Quantity basis unknown for product ${productId}: no live order line`,
+    );
+  if ("unknown" in basis)
+    throw new ConflictException(`Quantity basis unknown for product ${productId}: ${basis.reason}`);
+  if ("mixed" in basis)
+    throw new ConflictException(
+      `Product ${productId} is on order lines with different pack sizes (${basis.factors.join(" and ")} pieces per unit), so a returned quantity cannot be attributed to one; return it inline, per line.`,
+    );
+  return basis.factor;
+}
+
+/**
+ * Converts a STANDARD return DTO's typed `qty` (the LINE's own unit) to PIECES with the product's pack
+ * factor, and returns a converter back to the line unit for refusal messages. Throws 409 for an unknown
+ * or mixed basis (`requirePackFactor`). `create()` and the shared prior-returned reader both call this.
  */
 export function standardReturnPieces(
-  order: OrderForPieces,
+  bases: Map<string, ProductPackBasis>,
   productId: string,
   qty: number,
 ): { pieces: number; toLineUnit: (pieces: number) => number } {
-  // Keeps `firstNonCancelledLine` a live dependency of this seam (unused by the
-  // identity conversion itself) so a future axis-aware conversion has it ready.
-  void firstNonCancelledLine(order, productId);
-  return { pieces: qty, toLineUnit: (pieces: number) => pieces };
+  const factor = requirePackFactor(bases, productId);
+  return { pieces: qty * factor, toLineUnit: (pieces: number) => pieces / factor };
 }
 
 /** Minimal shape `returnedPiecesByProduct` needs from a transaction/prisma client. */
 export interface ReturnsPiecesTx {
+  orderItem?: {
+    findMany: (args: any) => Promise<any[]>;
+  };
   return: {
     findMany: (args: any) => Promise<any[]>;
   };
@@ -113,6 +190,7 @@ export interface ReturnsPiecesTx {
 export async function returnedPiecesByProduct(
   tx: ReturnsPiecesTx,
   orderId: string,
+  bases?: Map<string, ProductPackBasis>,
 ): Promise<Record<string, number>> {
   const [standardReturns, inlineItems] = await Promise.all([
     tx.return.findMany({
@@ -129,10 +207,20 @@ export async function returnedPiecesByProduct(
   ]);
 
   const result: Record<string, number> = {};
-  for (const ret of standardReturns) {
-    for (const item of ret.items ?? []) {
-      result[item.productId] = (result[item.productId] ?? 0) + Number(item.qty);
-    }
+  // B671: a STANDARD item's qty is in its line's own unit and an INLINE item's is in pieces — put them
+  // on ONE axis (pieces) before adding. The pack basis is only loaded when a STANDARD item exists.
+  const standardItems = standardReturns.flatMap((ret) => ret.items ?? []);
+  let basisMap = bases;
+  if (standardItems.length && !basisMap) {
+    const lines = await tx.orderItem!.findMany({
+      where: { orderId, status: { not: "CANCELLED" } },
+      select: PACK_LINE_SELECT,
+    });
+    basisMap = await standardPackBases(tx, orderId, lines);
+  }
+  for (const item of standardItems) {
+    const { pieces } = standardReturnPieces(basisMap!, item.productId, Number(item.qty));
+    result[item.productId] = (result[item.productId] ?? 0) + pieces;
   }
   for (const item of inlineItems) {
     if (!item.productId) continue;

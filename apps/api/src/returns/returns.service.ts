@@ -35,8 +35,11 @@ import { CREDIT_SOURCE_EXCLUDED } from "../invoices/invoice-status-sets";
 import { IdempotencyService } from "../common/idempotency.service";
 import { NumberingService } from "../import/numbering.service";
 import {
+  PACK_LINE_SELECT,
+  requirePackFactor,
   returnedPiecesByProduct,
   soldQtyForProduct,
+  standardPackBases,
   standardReturnPieces,
 } from "./returns-pieces.util";
 import { restockReturnItems } from "./returns-restock.util";
@@ -171,12 +174,9 @@ export class ReturnsService {
           // real query never selected).
           lineItems: {
             select: {
-              productId: true,
-              qty: true,
+              ...PACK_LINE_SELECT, // id + the pack evidence the piece-axis cap reads (SA-158)
               unitPrice: true,
               subtotal: true,
-              status: true,
-              position: true,
             },
           },
           invoices: { select: { id: true } },
@@ -219,7 +219,11 @@ export class ReturnsService {
       // B4/m-6: prior-returned pieces per product, shared with the (PR-1c/1d) INLINE
       // capture flow — sums STANDARD Return rows AND (once they exist) INLINE
       // ReturnItem rows sourced from this order. See returns-pieces.util.ts.
-      const alreadyReturned = await returnedPiecesByProduct(tx, dto.orderId);
+      // SA-158: cap, prior-returned and remaining are all in PIECES; the pack basis is resolved once
+      // per order (only ambiguous lines query) and shared, so a mixed or unknown basis refuses (409)
+      // before anything is written.
+      const packBases = await standardPackBases(tx, dto.orderId, order.lineItems as any);
+      const alreadyReturned = await returnedPiecesByProduct(tx, dto.orderId, packBases);
 
       // Validate return qty does not exceed ordered qty per item (cumulative)
       for (const item of dto.items) {
@@ -238,14 +242,15 @@ export class ReturnsService {
         // order (not just the first one `.find()` happened to match) — see
         // returns-pieces.util.ts. A product absent from every live line still 400s,
         // matching the pre-fix "not in the original order" behaviour.
-        const orderedQty = soldQtyForProduct(order as any, item.productId);
-        if (orderedQty <= 0)
+        const soldLineUnits = soldQtyForProduct(order as any, item.productId);
+        if (soldLineUnits <= 0)
           throw new BadRequestException(`Product ${item.productId} was not in the original order`);
         const { pieces: returnPieces, toLineUnit } = standardReturnPieces(
-          order as any,
+          packBases,
           item.productId,
           Number(item.qty),
         );
+        const orderedQty = soldLineUnits * requirePackFactor(packBases, item.productId);
         const previouslyReturned = alreadyReturned[item.productId] ?? 0;
         const remaining = orderedQty - previouslyReturned;
         if (returnPieces > remaining)
