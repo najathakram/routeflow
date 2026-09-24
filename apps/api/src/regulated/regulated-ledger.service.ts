@@ -397,36 +397,200 @@ export class RegulatedLedgerService {
         `could not be classified; nothing booked, the return/restock/credit proceed untouched.`,
     );
   }
-  async reverseReturnEntries(params: {
+
+  /**
+   * B660a — pure extraction from `reverseReturnEntries`'s inner loop, zero behavior change:
+   * classify ONE sale row's box/piece axis, park it if unclassifiable, or cap/pro-rate it
+   * against its order line's remaining balance and push a REVERSAL row onto `params.rows`.
+   * Split out so a future parked-reversal RESOLUTION path (B660) can book a single row through
+   * the exact same money math, rather than a second copy of it — mutates
+   * remQtyByLine/remUnitBasisByLine/remNetByLine/remTaxByLine in place (the caller's own Map
+   * instances) exactly as the inline code did; returns the updated `remaining` for the product
+   * and whether this row parked (the caller `break`s on true, matching the original `break`).
+   */
+  private async bookReversalChunk(params: {
+    db: any;
+    s: any;
+    remaining: number;
     returnId: string;
     orderId: string;
-    returnedByProduct: Map<string, number>;
-    /** Which unit `returnedByProduct`'s values are in — see the doc above. Required, never
-     *  defaulted: the two callers disagree, and guessing wrong silently under- or
-     *  over-reverses the filing. */
     returnedUnit: "LINE_UNIT" | "PIECES";
-    db: any;
-  }): Promise<void> {
-    const { returnId, orderId, returnedByProduct, returnedUnit, db } = params;
-    if (!returnedByProduct || returnedByProduct.size === 0) return;
+    bucket: string;
+    now: Date;
+    lineKeyOfSale: (s: any) => string;
+    nativeRemByLine: Map<string, number>;
+    remQtyByLine: Map<string, number>;
+    remUnitBasisByLine: Map<string, number>;
+    remNetByLine: Map<string, number>;
+    remTaxByLine: Map<string, number>;
+    lineShapeBySaleId: Map<string, { line: SaleAxisLine | null; productId: string | null }>;
+    correctionsBySaleId: Map<string, SaleAxisCorrection[]>;
+    packNowByProduct: Map<string, number | null>;
+    rows: any[];
+  }): Promise<{ remaining: number; parked: boolean }> {
+    const {
+      db,
+      s,
+      returnId,
+      orderId,
+      returnedUnit,
+      bucket,
+      now,
+      lineKeyOfSale,
+      nativeRemByLine,
+      remQtyByLine,
+      remUnitBasisByLine,
+      remNetByLine,
+      remTaxByLine,
+      lineShapeBySaleId,
+      correctionsBySaleId,
+      packNowByProduct,
+      rows,
+    } = params;
+    let remaining = params.remaining;
 
-    // Idempotency key is (returnId, orderId), not returnId alone (PR-1a/§5): an INLINE
-    // return's goods can be sold across MULTIPLE source orders, and this method is called
-    // once PER source order (`orderId` here is the SOURCE order, `ret.orderId` for a
-    // STANDARD caller — see receive()). Keying on returnId alone would treat the second
-    // source order's call as an already-reversed no-op. A STANDARD return has exactly one
-    // source order, so this is a no-op change for it.
-    const prior = await db.regulatedSalesLedger.findMany({
-      where: { returnId, orderId, entryType: "REVERSAL" },
-      select: { id: true },
+    const saleQty = Number(s.qty);
+    let saleUnitBasis = Number(s.unitBasisQty);
+
+    // B681/SA-067: PIECES branch only — the LINE_UNIT branch compares boxes to boxes
+    // correctly on a box-unaware row and must not park it. Before capping: can this SALE
+    // row's box/piece axis even be trusted? A box-unaware line (no stored split, no unit)
+    // that books unitBasisQty == qty is indistinguishable from "recorded in box units,
+    // never expanded to pieces" (the pre-B661 defect) UNLESS something else (a split, a
+    // unit label, or the product simply not being boxed) already explains it —
+    // `classifySaleAxis` is the one shared answer, folding in this row's own prior
+    // corrections so an already-corrected row is never re-parked.
+    const ownCorrections = correctionsBySaleId.get(s.id) ?? [];
+    if (returnedUnit === "PIECES") {
+      const shape = lineShapeBySaleId.get(s.id) ?? { line: null, productId: null };
+      const productPackNow = shape.productId ? packNowByProduct.get(shape.productId) : undefined;
+      const verdict = classifySaleAxis(
+        { entryType: s.entryType, qty: s.qty, unitBasisQty: s.unitBasisQty },
+        shape.line,
+        ownCorrections,
+        productPackNow,
+      );
+      if (verdict.state === "legacy" || verdict.state === "unknown") {
+        await this.parkReturnReversal(db, {
+          tenantId: s.tenantId,
+          returnId,
+          orderId: s.orderId ?? orderId,
+          orderItemId: s.orderItemId ?? null,
+          saleEntryId: s.id,
+          returnedPieces: remaining,
+          reason: verdict.reason,
+          periodBucket: bucket,
+        });
+        return { remaining: 0, parked: true };
+      }
+      // SA-070(b) Hazard 1 continued: excluding a correction row from `salesByProduct` stops
+      // it being consumed as its own fake sale, but the ORIGINAL row it corrects must still
+      // pro-rate against its TRUE current unit basis (this row's own stored figure plus every
+      // correction pointing at it), not the stale stored figure alone — otherwise a corrected
+      // row's `frac` is computed against a denominator smaller than what the line's remaining
+      // map (which DOES fold corrections in) already reflects, over-booking money and
+      // under-booking pieces relative to the actual remaining balance.
+      for (const c of ownCorrections) {
+        const d = Number(c.unitBasisQty);
+        if (Number.isFinite(d)) saleUnitBasis += d;
+      }
+    }
+    const saleNativeAxis = returnedUnit === "PIECES" ? saleUnitBasis : saleQty;
+    if (saleNativeAxis <= 0) return { remaining, parked: false };
+
+    const lk = lineKeyOfSale(s);
+    // Cap this chunk at the ORDER LINE's remaining un-reversed amount ON THE CALLER'S OWN
+    // AXIS (survives a reconcile that rotated the invoice item), not the other axis — B671:
+    // comparing pieces against a box-unaware line's box count (or vice versa) silently
+    // closed the whole line on a fractional return, or reversed only a sliver of a full one.
+    const rowRemainingNative = nativeRemByLine.get(lk) ?? 0;
+    if (rowRemainingNative <= 0) return { remaining, parked: false };
+    // This chunk CLOSES the line when it consumes all of its remaining native-axis amount.
+    const closesRow = remaining >= rowRemainingNative;
+    const rNative = Math.min(remaining, rowRemainingNative);
+    remaining -= rNative;
+    const frac = rNative / saleNativeAxis; // pro-rate off the LIVE row's own native axis
+    const rowRemainingQty = remQtyByLine.get(lk) ?? 0; // the line's OWN unit (boxes, etc.)
+    const rowRemainingUnitBasis = remUnitBasisByLine.get(lk) ?? 0; // pieces
+    const netRem = remNetByLine.get(lk) ?? 0; // remaining line net (>= 0)
+    const taxRem = remTaxByLine.get(lk) ?? 0;
+    // Money: the chunk that CLOSES the line books its EXACT remaining balance so a
+    // fully-reversed line nets to 0 across any number of partial returns. A
+    // non-closing chunk books the pro-rated share, but clamped to the line's
+    // remaining — the LIVE row's per-unit can exceed the remaining per-unit after a
+    // reconcile RE-PRICED the line (old rows folded in at a different price), and a
+    // fractional partial just under the full remaining qty could otherwise
+    // over-reverse the net/tax dimensions past 0.
+    let bookedNet = closesRow ? roundMoney(-netRem) : roundMoney(-Number(s.netSales) * frac);
+    let bookedTax = closesRow ? roundMoney(-taxRem) : roundMoney(-Number(s.categoryTax) * frac);
+    if (bookedNet < -netRem) bookedNet = roundMoney(-netRem);
+    if (bookedTax < -taxRem) bookedTax = roundMoney(-taxRem);
+    // The NATIVE axis is exactly rNative (never re-derived through frac — that would
+    // re-admit the rounding drift the closing rule exists to prevent). The OTHER axis is
+    // derived by the same frac, clamped to ITS OWN remaining the same way net/tax are.
+    let bookedQty: number;
+    let bookedUnitBasis: number;
+    if (returnedUnit === "PIECES") {
+      bookedUnitBasis = closesRow ? rowRemainingUnitBasis : rNative;
+      if (bookedUnitBasis > rowRemainingUnitBasis) bookedUnitBasis = rowRemainingUnitBasis;
+      bookedQty = closesRow ? rowRemainingQty : round3(saleQty * frac);
+      if (bookedQty > rowRemainingQty) bookedQty = rowRemainingQty;
+    } else {
+      bookedQty = closesRow ? rowRemainingQty : rNative;
+      if (bookedQty > rowRemainingQty) bookedQty = rowRemainingQty;
+      bookedUnitBasis = closesRow ? rowRemainingUnitBasis : round3(saleUnitBasis * frac);
+      if (bookedUnitBasis > rowRemainingUnitBasis) bookedUnitBasis = rowRemainingUnitBasis;
+    }
+    remQtyByLine.set(lk, rowRemainingQty - bookedQty);
+    remUnitBasisByLine.set(lk, rowRemainingUnitBasis - bookedUnitBasis);
+    remNetByLine.set(lk, netRem + bookedNet);
+    remTaxByLine.set(lk, taxRem + bookedTax);
+    rows.push({
+      tenantId: s.tenantId,
+      trackedCategoryId: s.trackedCategoryId,
+      // RF-3: carry the SALE's reporting breakdown onto the REVERSAL (pure passthrough).
+      trackedSubcategoryId: s.trackedSubcategoryId ?? null,
+      entryType: "REVERSAL" as const,
+      orderId: s.orderId,
+      orderItemId: s.orderItemId,
+      invoiceId: s.invoiceId,
+      invoiceItemId: s.invoiceItemId,
+      returnId,
+      qty: -round3(bookedQty),
+      unitBasisQty: -round3(bookedUnitBasis),
+      netSales: bookedNet,
+      categoryTax: bookedTax,
+      soldAt: now,
+      periodBucket: bucket,
     });
-    if (prior.length > 0) return;
+    return { remaining, parked: false };
+  }
 
+  /**
+   * B660a — pure extraction from `reverseReturnEntries`, zero behavior change: the order's SALE
+   * rows, their product lookup, the line-keying (survives a reconcile's invoice-item rotation),
+   * and each order line's remaining un-reversed balance (Σ SALE + Σ REVERSAL, signed, corrections
+   * already folded into `sales`) — everything a resolution path (B660) needs to know the CURRENT
+   * remaining for one line, re-derived fresh rather than trusted from park time. `null` when the
+   * order has no SALE rows (the caller's original early return).
+   */
+  private async buildLineRemainingBalances(
+    db: any,
+    orderId: string,
+  ): Promise<{
+    sales: any[];
+    productByItem: Map<string, string>;
+    lineKeyOfSale: (s: any) => string;
+    remQtyByLine: Map<string, number>;
+    remUnitBasisByLine: Map<string, number>;
+    remNetByLine: Map<string, number>;
+    remTaxByLine: Map<string, number>;
+  } | null> {
     // The order's SALE rows are the snapshot we reverse against.
     const sales = await db.regulatedSalesLedger.findMany({
       where: { orderId, entryType: "SALE" },
     });
-    if (sales.length === 0) return;
+    if (sales.length === 0) return null;
 
     // SALE rows carry no productId — recover it via each row's invoice item.
     const invoiceItemIds = [
@@ -505,6 +669,54 @@ export class RegulatedLedgerService {
       remTaxByLine.set(lk, (remTaxByLine.get(lk) ?? 0) + Number(r.categoryTax));
     }
 
+    return {
+      sales,
+      productByItem,
+      lineKeyOfSale,
+      remQtyByLine,
+      remUnitBasisByLine,
+      remNetByLine,
+      remTaxByLine,
+    };
+  }
+
+  async reverseReturnEntries(params: {
+    returnId: string;
+    orderId: string;
+    returnedByProduct: Map<string, number>;
+    /** Which unit `returnedByProduct`'s values are in — see the doc above. Required, never
+     *  defaulted: the two callers disagree, and guessing wrong silently under- or
+     *  over-reverses the filing. */
+    returnedUnit: "LINE_UNIT" | "PIECES";
+    db: any;
+  }): Promise<void> {
+    const { returnId, orderId, returnedByProduct, returnedUnit, db } = params;
+    if (!returnedByProduct || returnedByProduct.size === 0) return;
+
+    // Idempotency key is (returnId, orderId), not returnId alone (PR-1a/§5): an INLINE
+    // return's goods can be sold across MULTIPLE source orders, and this method is called
+    // once PER source order (`orderId` here is the SOURCE order, `ret.orderId` for a
+    // STANDARD caller — see receive()). Keying on returnId alone would treat the second
+    // source order's call as an already-reversed no-op. A STANDARD return has exactly one
+    // source order, so this is a no-op change for it.
+    const prior = await db.regulatedSalesLedger.findMany({
+      where: { returnId, orderId, entryType: "REVERSAL" },
+      select: { id: true },
+    });
+    if (prior.length > 0) return;
+
+    const built = await this.buildLineRemainingBalances(db, orderId);
+    if (!built) return;
+    const {
+      sales,
+      productByItem,
+      lineKeyOfSale,
+      remQtyByLine,
+      remUnitBasisByLine,
+      remNetByLine,
+      remTaxByLine,
+    } = built;
+
     // SALE rows grouped by product (FIFO within a product). Only LIVE sale rows
     // (invoice item still present) are reversal targets; the per-line remaining
     // above already accounts for the pre-reconcile rows on the deleted items.
@@ -560,123 +772,28 @@ export class RegulatedLedgerService {
       if (!(remaining > 0)) continue;
       for (const s of salesByProduct.get(productId) ?? []) {
         if (remaining <= 0) break;
-        const saleQty = Number(s.qty);
-        let saleUnitBasis = Number(s.unitBasisQty);
-
-        // B681/SA-067: PIECES branch only — the LINE_UNIT branch compares boxes to boxes
-        // correctly on a box-unaware row and must not park it. Before capping: can this SALE
-        // row's box/piece axis even be trusted? A box-unaware line (no stored split, no unit)
-        // that books unitBasisQty == qty is indistinguishable from "recorded in box units,
-        // never expanded to pieces" (the pre-B661 defect) UNLESS something else (a split, a
-        // unit label, or the product simply not being boxed) already explains it —
-        // `classifySaleAxis` is the one shared answer, folding in this row's own prior
-        // corrections so an already-corrected row is never re-parked.
-        const ownCorrections = correctionsBySaleId.get(s.id) ?? [];
-        if (returnedUnit === "PIECES") {
-          const shape = lineShapeBySaleId.get(s.id) ?? { line: null, productId: null };
-          const productPackNow = shape.productId
-            ? packNowByProduct.get(shape.productId)
-            : undefined;
-          const verdict = classifySaleAxis(
-            { entryType: s.entryType, qty: s.qty, unitBasisQty: s.unitBasisQty },
-            shape.line,
-            ownCorrections,
-            productPackNow,
-          );
-          if (verdict.state === "legacy" || verdict.state === "unknown") {
-            await this.parkReturnReversal(db, {
-              tenantId: s.tenantId,
-              returnId,
-              orderId: s.orderId ?? orderId,
-              orderItemId: s.orderItemId ?? null,
-              saleEntryId: s.id,
-              returnedPieces: remaining,
-              reason: verdict.reason,
-              periodBucket: bucket,
-            });
-            remaining = 0;
-            break;
-          }
-          // SA-070(b) Hazard 1 continued: excluding a correction row from `salesByProduct` stops
-          // it being consumed as its own fake sale, but the ORIGINAL row it corrects must still
-          // pro-rate against its TRUE current unit basis (this row's own stored figure plus every
-          // correction pointing at it), not the stale stored figure alone — otherwise a corrected
-          // row's `frac` is computed against a denominator smaller than what the line's remaining
-          // map (which DOES fold corrections in) already reflects, over-booking money and
-          // under-booking pieces relative to the actual remaining balance.
-          for (const c of ownCorrections) {
-            const d = Number(c.unitBasisQty);
-            if (Number.isFinite(d)) saleUnitBasis += d;
-          }
-        }
-        const saleNativeAxis = returnedUnit === "PIECES" ? saleUnitBasis : saleQty;
-        if (saleNativeAxis <= 0) continue;
-
-        const lk = lineKeyOfSale(s);
-        // Cap this chunk at the ORDER LINE's remaining un-reversed amount ON THE CALLER'S OWN
-        // AXIS (survives a reconcile that rotated the invoice item), not the other axis — B671:
-        // comparing pieces against a box-unaware line's box count (or vice versa) silently
-        // closed the whole line on a fractional return, or reversed only a sliver of a full one.
-        const rowRemainingNative = nativeRemByLine.get(lk) ?? 0;
-        if (rowRemainingNative <= 0) continue;
-        // This chunk CLOSES the line when it consumes all of its remaining native-axis amount.
-        const closesRow = remaining >= rowRemainingNative;
-        const rNative = Math.min(remaining, rowRemainingNative);
-        remaining -= rNative;
-        const frac = rNative / saleNativeAxis; // pro-rate off the LIVE row's own native axis
-        const rowRemainingQty = remQtyByLine.get(lk) ?? 0; // the line's OWN unit (boxes, etc.)
-        const rowRemainingUnitBasis = remUnitBasisByLine.get(lk) ?? 0; // pieces
-        const netRem = remNetByLine.get(lk) ?? 0; // remaining line net (>= 0)
-        const taxRem = remTaxByLine.get(lk) ?? 0;
-        // Money: the chunk that CLOSES the line books its EXACT remaining balance so a
-        // fully-reversed line nets to 0 across any number of partial returns. A
-        // non-closing chunk books the pro-rated share, but clamped to the line's
-        // remaining — the LIVE row's per-unit can exceed the remaining per-unit after a
-        // reconcile RE-PRICED the line (old rows folded in at a different price), and a
-        // fractional partial just under the full remaining qty could otherwise
-        // over-reverse the net/tax dimensions past 0.
-        let bookedNet = closesRow ? roundMoney(-netRem) : roundMoney(-Number(s.netSales) * frac);
-        let bookedTax = closesRow ? roundMoney(-taxRem) : roundMoney(-Number(s.categoryTax) * frac);
-        if (bookedNet < -netRem) bookedNet = roundMoney(-netRem);
-        if (bookedTax < -taxRem) bookedTax = roundMoney(-taxRem);
-        // The NATIVE axis is exactly rNative (never re-derived through frac — that would
-        // re-admit the rounding drift the closing rule exists to prevent). The OTHER axis is
-        // derived by the same frac, clamped to ITS OWN remaining the same way net/tax are.
-        let bookedQty: number;
-        let bookedUnitBasis: number;
-        if (returnedUnit === "PIECES") {
-          bookedUnitBasis = closesRow ? rowRemainingUnitBasis : rNative;
-          if (bookedUnitBasis > rowRemainingUnitBasis) bookedUnitBasis = rowRemainingUnitBasis;
-          bookedQty = closesRow ? rowRemainingQty : round3(saleQty * frac);
-          if (bookedQty > rowRemainingQty) bookedQty = rowRemainingQty;
-        } else {
-          bookedQty = closesRow ? rowRemainingQty : rNative;
-          if (bookedQty > rowRemainingQty) bookedQty = rowRemainingQty;
-          bookedUnitBasis = closesRow ? rowRemainingUnitBasis : round3(saleUnitBasis * frac);
-          if (bookedUnitBasis > rowRemainingUnitBasis) bookedUnitBasis = rowRemainingUnitBasis;
-        }
-        remQtyByLine.set(lk, rowRemainingQty - bookedQty);
-        remUnitBasisByLine.set(lk, rowRemainingUnitBasis - bookedUnitBasis);
-        remNetByLine.set(lk, netRem + bookedNet);
-        remTaxByLine.set(lk, taxRem + bookedTax);
-        rows.push({
-          tenantId: s.tenantId,
-          trackedCategoryId: s.trackedCategoryId,
-          // RF-3: carry the SALE's reporting breakdown onto the REVERSAL (pure passthrough).
-          trackedSubcategoryId: s.trackedSubcategoryId ?? null,
-          entryType: "REVERSAL" as const,
-          orderId: s.orderId,
-          orderItemId: s.orderItemId,
-          invoiceId: s.invoiceId,
-          invoiceItemId: s.invoiceItemId,
+        const chunk = await this.bookReversalChunk({
+          db,
+          s,
+          remaining,
           returnId,
-          qty: -round3(bookedQty),
-          unitBasisQty: -round3(bookedUnitBasis),
-          netSales: bookedNet,
-          categoryTax: bookedTax,
-          soldAt: now,
-          periodBucket: bucket,
+          orderId,
+          returnedUnit,
+          bucket,
+          now,
+          lineKeyOfSale,
+          nativeRemByLine,
+          remQtyByLine,
+          remUnitBasisByLine,
+          remNetByLine,
+          remTaxByLine,
+          lineShapeBySaleId,
+          correctionsBySaleId,
+          packNowByProduct,
+          rows,
         });
+        remaining = chunk.remaining;
+        if (chunk.parked) break;
       }
     }
 

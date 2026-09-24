@@ -11,6 +11,7 @@ import { EmailService } from "../email/email.service";
 import { ConfigService } from "@nestjs/config";
 import { RouteFlowGateway } from "../gateways/routeflow.gateway";
 import type { RequestSellerDto } from "./dto/request-seller.dto";
+import { escapeHtml } from "../common/html-escape";
 
 @Injectable()
 export class BuyerService {
@@ -497,7 +498,7 @@ export class BuyerService {
           html: `
           <div style="font-family: Arial, sans-serif; max-width: 600px;">
             <h2>New buyer connection request</h2>
-            <p>A buyer with email <strong>${requestEmail}</strong> has requested to connect with your customer account <strong>${customer.businessName}</strong>.</p>
+            <p>A buyer with email <strong>${escapeHtml(requestEmail)}</strong> has requested to connect with your customer account <strong>${escapeHtml(customer.businessName)}</strong>.</p>
             <p>Log in to RouteFlow to approve or decline this request from the customer's portal status page.</p>
           </div>
         `,
