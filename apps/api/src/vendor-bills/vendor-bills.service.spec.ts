@@ -306,7 +306,9 @@ describe("VendorBillsService", () => {
       await service.receive("bill-1", undefined, "user-1");
 
       const movementArgs = prisma.stockMovement.create.mock.calls[0][0].data;
-      expect(movementArgs.createdAt).toEqual(new Date("2026-06-01"));
+      // B562: the bill date is the accounting date (effectiveAt); createdAt stays write-once.
+      expect(movementArgs.effectiveAt).toEqual(new Date("2026-06-01"));
+      expect(movementArgs.createdAt).toBeUndefined();
       const lotArgs = prisma.stockLot.create.mock.calls[0][0].data;
       expect(lotArgs.purchaseDate).toEqual(new Date("2026-06-01"));
     });

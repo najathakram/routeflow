@@ -25,7 +25,7 @@ const D = (n: number | string) => new Prisma.Decimal(n);
  *
  * A PO re-apply is append-only: the original PURCHASE stays, a costed negative ADJUSTMENT compensates
  * it, and the receipt is re-posted as a NEW PURCHASE. The regulated purchase report sums
- * `type: "PURCHASE"` movements by createdAt — the compensating ADJUSTMENT is invisible to it — so it
+ * `type: "PURCHASE"` movements by effectiveAt — the compensating ADJUSTMENT is invisible to it — so it
  * would report the same delivery TWICE. This spec pins that mechanism against the real report
  * service, so the guard is not folklore: delete the guard and this is the report that gets filed.
  */

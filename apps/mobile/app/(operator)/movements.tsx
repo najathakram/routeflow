@@ -162,7 +162,8 @@ export default function MovementsScreen() {
 function MovementRow({ m, onPress }: { m: InventoryMovement; onPress?: () => void }) {
   const p = pillForType(m.type);
   const positive = m.quantity > 0;
-  const date = new Date(m.createdAt).toLocaleDateString(undefined, {
+  // B562: the movement's accounting date (a backdated receipt shows its own date).
+  const date = new Date(m.effectiveAt ?? m.createdAt).toLocaleDateString(undefined, {
     month: "short",
     day: "numeric",
     hour: "numeric",
