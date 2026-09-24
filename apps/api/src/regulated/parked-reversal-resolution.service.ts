@@ -163,7 +163,14 @@ export class ParkedReversalResolutionService {
       resolvedEntryId: result.alreadyResolved
         ? (result.row?.resolvedEntryId ?? null)
         : result.resolution.resolvedEntryId,
+      // The full resolution, not just the outcome (SA-167): the operator surface and the DB lane read
+      // the verdict after correction and every booked/parked/unbooked figure. null on a replay.
+      correctionEntryId: result.alreadyResolved ? null : result.resolution.correctionEntryId,
+      verdictAfter: result.alreadyResolved ? null : result.resolution.verdictAfter,
       bookedPieces: result.alreadyResolved ? null : result.resolution.bookedPieces,
+      bookedQty: result.alreadyResolved ? null : result.resolution.bookedQty,
+      bookedNet: result.alreadyResolved ? null : result.resolution.bookedNet,
+      bookedTax: result.alreadyResolved ? null : result.resolution.bookedTax,
       parkedPieces: result.alreadyResolved ? null : result.resolution.parkedPieces,
       parkedRowIds: result.alreadyResolved ? [] : result.resolution.parkedRowIds,
       unbookedPieces: result.alreadyResolved ? null : result.resolution.unbookedPieces,
