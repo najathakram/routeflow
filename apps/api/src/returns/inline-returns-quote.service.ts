@@ -266,7 +266,7 @@ export class InlineReturnsQuoteService {
       }
 
       const requestedPieces = returnRequestPieces({
-        qty: item.qty,
+        qty: item.qty ?? 0,
         boxes: item.boxes ?? null,
         pieces: item.pieces ?? null,
         unitsPerBox: resolvedUnitsPerBox,
