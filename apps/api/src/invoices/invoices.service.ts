@@ -22,6 +22,7 @@ import {
   remainingCapacity,
   packFromOwnSplit,
   type CategoryTaxType,
+  inferredFlatRate,
 } from "@routeflow/pricing";
 import { loadPriorPacks, priceReplacedLine, resolveUpdateLinePack } from "./update-pack-resolution";
 import { redactUpsellForCustomer } from "../common/upsell-redaction";
@@ -6203,6 +6204,15 @@ export class InvoicesService {
         return upb > 1 ? qty * upb : qty;
       };
 
+      // B294 (SA-141): a legacy order/estimate-derived invoice (every line taxRate 0, a real
+      // regular tax) keeps its tax — stamp the inferred flat rate onto its lines first.
+      const inferred = inferredFlatRate({ ...inv, lines: inv.items });
+      if (inferred?.verified) {
+        await this.prisma.forTenant().invoiceItem.updateMany({
+          where: { invoiceId: inv.id, taxRate: 0 },
+          data: { taxRate: inferred.rate },
+        });
+      }
       for (const item of inv.items) {
         const newPrice = localPriceMap.get(item.id);
         if (newPrice == null) continue;
