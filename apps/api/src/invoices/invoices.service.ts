@@ -45,7 +45,7 @@ import {
   resolveProductMatches,
   withOrderRecomputeLock,
 } from "./finalize-order-recompute";
-import { deliveredBasisByLine } from "./delivered-basis-by-line";
+import { deliveredBasisByLine, billableQtyFromBasis } from "./delivered-basis-by-line";
 import { assertOrderItemIdsBelongToOrder, logSkippedMatches } from "./order-item-provenance";
 import { EntitlementsService } from "../billing/entitlements.service";
 import {
@@ -551,13 +551,17 @@ export class InvoicesService {
     });
     if (!order) throw new NotFoundException("Order not found");
 
-    // Build per-item remaining qty (qty - invoicedQty). If all items are fully invoiced,
-    // skip — the order has already been split-invoiced by the operator/driver and there's
-    // nothing left to bill.
+    // B760/SA-106/SA-113(ii): remaining = min(qty, delivered basis) - invoicedQty, via the
+    // ONE evidence-keyed basis shared with checkOrderCoverage/finalizeOrderRecompute — never
+    // a second derivation of delivered qty. A line with no evidence keeps qty unconstrained
+    // (delivered-basis-by-line.ts's own rule); an order with no mutations at all behaves as
+    // undelivered, matching today's qty - invoicedQty exactly. If all items are fully
+    // invoiced, skip — the order has already been split-invoiced and there's nothing left.
+    const deliveredBasis = await deliveredBasisByLine(db, orderId);
     const remainingItems = order.lineItems
       .map((li: any) => ({
         li,
-        remainingQty: Number(li.qty) - Number(li.invoicedQty ?? 0),
+        remainingQty: billableQtyFromBasis(li, deliveredBasis) - Number(li.invoicedQty ?? 0),
       }))
       .filter((x: any) => x.remainingQty > 0.001);
 
@@ -2651,6 +2655,9 @@ export class InvoicesService {
     if (!order) throw new NotFoundException("Order not found");
 
     const itemById = new Map(order.lineItems.map((li: any) => [li.id, li]));
+    // B760/SA-106/SA-113(ii): same evidence-keyed basis as createInvoiceFromOrder — see its
+    // own comment. One derivation, shared.
+    const deliveredBasis = await deliveredBasisByLine(this.prisma.forTenant(), orderId);
 
     // Validate every requested item exists on the order and qty is within remaining.
     const itemsData: any[] = [];
@@ -2662,7 +2669,7 @@ export class InvoicesService {
           `Order item ${req.orderItemId} not found on order ${orderId}`,
         );
       }
-      const remaining = Number(li.qty) - Number(li.invoicedQty ?? 0);
+      const remaining = billableQtyFromBasis(li, deliveredBasis) - Number(li.invoicedQty ?? 0);
       if (req.qty > remaining + 0.001) {
         throw new BadRequestException(
           `Requested qty ${req.qty} exceeds remaining ${remaining} for ${li.product?.name ?? li.productId}`,
