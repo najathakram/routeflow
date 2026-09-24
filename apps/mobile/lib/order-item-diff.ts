@@ -213,10 +213,17 @@ export function buildOrderItemDiff(args: {
       // filed, unfixed server gap; sending productId unconditionally here
       // is free and closes it for every case, not just the new one).
       const unitLabel = line.unitLabel?.trim() || undefined;
+      // B718: `line.boxes` here means "the unit COUNT" (a 3-Case line stores boxes:3), never a
+      // real pack box count — but `?? ` alone only catches null/undefined, not a MEANINGLESS
+      // boxes:0 (the shape a fresh piece-code scan leaves — lib/edit-items-draft.ts's
+      // applyPickToDraft — on a line that had no unitLabel at the time). `line.qty <= 0` is
+      // already refused above, so falling through to it here can never itself introduce a
+      // zero; only a genuinely positive `boxes` should ever be preferred over it.
+      const unitQty = unitLabel && line.boxes != null && line.boxes > 0 ? line.boxes : line.qty;
       out.push({
         id: line.lineId,
         action: "UPDATE",
-        qty: unitLabel ? (line.boxes ?? line.qty) : line.qty, // server's UPDATE branch requires qty present
+        qty: unitLabel ? unitQty : line.qty, // server's UPDATE branch requires qty present
         ...(unitLabel ? { unitLabel, productId: line.productId } : boxFields),
         // unitPrice is gated on priceChanged ALONE (R9): the server's edit
         // branch derives isManualOverride from whether the sent price differs
