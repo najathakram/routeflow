@@ -35,8 +35,8 @@ const CFG = {
     // implementation — writing code to a file — is NEVER Fable; it is Sonnet.
     // What to write (design, root cause, fix design) is Opus. Review on HIGH-risk
     // is Opus. Fable keeps only planning (S1–S5) and the final-pass read.
-    opus: 'claude-opus-5',
-    fallbackModel: 'claude-opus-5',
+    opus: 'claude-opus-5-5',
+    fallbackModel: 'claude-opus-5-5',
   },
   // Effort per role. 'implement' is the default implementer tier; a task with
   // risk 'HIGH' keeps Sonnet but escalates to 'implementHigh' effort (ruling 2026-09-13).
@@ -98,7 +98,7 @@ const CFG = {
   prices: {
     asOf: '2026-06-24',
     'claude-fable-5-1': { input: 10, output: 50, cacheWrite1h: 20, cacheRead: 0.25 },
-    'claude-opus-5': { input: 5, output: 25, cacheWrite1h: 10, cacheRead: 0.50 },
+    'claude-opus-5-5': { input: 5, output: 25, cacheWrite1h: 10, cacheRead: 0.50 },
     'claude-sonnet-5': { input: 2, output: 10, cacheWrite1h: 4, cacheRead: 0.20 },
     'claude-haiku-4-5': { input: 1, output: 5, cacheWrite1h: 2, cacheRead: 0.10 },
   },
