@@ -7,7 +7,12 @@ import {
 } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { RouteKind, OrderStatus, FulfillPath } from "@prisma/client";
-import { RoutesService, RUN_LINE_ITEMS_SELECT, RUN_STOP_INCLUDE } from "./routes.service";
+import {
+  RoutesService,
+  RUN_LINE_ITEMS_SELECT,
+  RUN_STOP_INCLUDE,
+  NON_ROUTABLE_ORDER_STATUSES,
+} from "./routes.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { RouteFlowGateway } from "../gateways/routeflow.gateway";
 import { NotificationsService } from "../notifications/notifications.service";
@@ -2371,15 +2376,14 @@ describe("RoutesService", () => {
       expect(actualSelect).toBe(RUN_LINE_ITEMS_SELECT);
     });
 
-    // B756: the fallback's own `where` filters `status: { notIn: [CANCELLED] }` only,
-    // with no limit — getRunPackingList (the sibling read path) excludes DELIVERED
-    // too (:2755, `notIn: [OrderStatus.CANCELLED, OrderStatus.DELIVERED]`). Without
-    // the same exclusion here, a customer's already-DELIVERED order history — from
-    // ANY run, not just this one — gets folded into this run's stop and quoted to
-    // the driver as if it were still open on this delivery.
-    it("B756: the fallback excludes DELIVERED orders too, not just CANCELLED", async () => {
+    // SA-131 / B756: an OPEN run's fallback filters `status: { notIn: NON_ROUTABLE_ORDER_STATUSES }`
+    // (DRAFT, DELIVERED, CANCELLED — not just DELIVERED), mirroring getRunPackingList's sibling
+    // read path. Without it, a customer's already-DELIVERED (or still-DRAFT) order history — from
+    // ANY run, not just this one — gets folded into this run's stop and quoted to the driver as if
+    // it were still open on this delivery.
+    it("the fallback excludes every non-routable status, not just DELIVERED", async () => {
       prisma.routeRun.findUnique.mockResolvedValue({
-        ...MOCK_RUN,
+        ...MOCK_RUN, // SCHEDULED — the open-run branch
         stops: [
           {
             id: "stop-1",
@@ -2398,9 +2402,68 @@ describe("RoutesService", () => {
 
       expect(prisma.order.findMany).toHaveBeenCalled();
       const call = prisma.order.findMany.mock.calls[0][0];
-      expect(call.where.status.notIn).toEqual(
-        expect.arrayContaining([OrderStatus.CANCELLED, OrderStatus.DELIVERED]),
+      // Exact set equality, not arrayContaining: a status silently added to (or dropped from)
+      // NON_ROUTABLE_ORDER_STATUSES must fail this test, not pass it by partial match.
+      expect([...call.where.status.notIn].sort()).toEqual([...NON_ROUTABLE_ORDER_STATUSES].sort());
+    });
+
+    // SA-131: a CLOSED run (COMPLETED/CANCELLED) reaching this fallback must never read the
+    // customer's live order history — it shows exactly the orders this run recorded delivery
+    // evidence for (a DeliveryMutation row keyed by routeRunStopId), at ANY status.
+    it("a CLOSED run's unlinked stop resolves orders from DeliveryMutation evidence, never a customer lookup", async () => {
+      prisma.routeRun.findUnique.mockResolvedValue({
+        ...MOCK_RUN,
+        status: "COMPLETED",
+        stops: [
+          {
+            id: "stop-1",
+            customerId: "cust-1",
+            customer: null,
+            customerAddress: { id: "addr-1" },
+            routeStop: null,
+            orders: [],
+            deliveryMutations: [],
+          },
+        ],
+      });
+      prisma.deliveryMutation.findMany.mockResolvedValue([
+        { routeRunStopId: "stop-1", orderId: "ord-evidence" },
+      ]);
+      prisma.order.findMany.mockResolvedValue([{ id: "ord-evidence", status: "DELIVERED" }]);
+
+      const result: any = await service.findOneRun("run-1");
+
+      expect(prisma.deliveryMutation.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { routeRunStopId: { in: ["stop-1"] } } }),
       );
+      expect(prisma.order.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { id: { in: ["ord-evidence"] } } }),
+      );
+      expect(result.stops[0].orders.map((o: any) => o.id)).toEqual(["ord-evidence"]);
+    });
+
+    it("a CLOSED run's stop with no recorded DeliveryMutation evidence shows no orders", async () => {
+      prisma.routeRun.findUnique.mockResolvedValue({
+        ...MOCK_RUN,
+        status: "COMPLETED",
+        stops: [
+          {
+            id: "stop-1",
+            customerId: "cust-1",
+            customer: null,
+            customerAddress: { id: "addr-1" },
+            routeStop: null,
+            orders: [],
+            deliveryMutations: [],
+          },
+        ],
+      });
+      prisma.deliveryMutation.findMany.mockResolvedValue([]);
+
+      const result: any = await service.findOneRun("run-1");
+
+      expect(prisma.order.findMany).not.toHaveBeenCalled();
+      expect(result.stops[0].orders).toEqual([]);
     });
   });
 

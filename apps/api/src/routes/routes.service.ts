@@ -1249,31 +1249,55 @@ export class RoutesService {
     }
 
     // Fallback for runs where orders were not linked at dispatch time (legacy/seeded data):
-    // if no stop has linked orders, fetch active orders per customer and merge them in.
+    // if no stop has linked orders, resolve them a different way depending on whether the run
+    // is still open (SA-131).
     const anyLinked = normalisedStops.some((s: any) => (s.orders as any[]).length > 0);
-    // F11 (spec R4): a run that has gone TERMINAL has released the undelivered
-    // orders of every stop that recorded no work, so it is exactly the "no stop
-    // has linked orders" shape this legacy fallback keys on — without the guard
-    // its detail page would display the customers' CURRENT open orders (created
-    // days later, in any state) as if they had been on the run. Both terminal
-    // states reach that shape: a cancel releases every non-COMPLETED stop's
-    // orders, and a run completed with EVERY stop skipped releases all of them
-    // too. (An un-cancelled, fully-released run still reaches the fallback —
-    // recorded as a follow-up row; the durable fix is retiring the fallback.)
-    //
-    // The COMPLETED arm is NARROWED to the shape a release can actually
-    // produce: the helper is only ever handed the ids of stops whose status is
-    // not COMPLETED, so a COMPLETED run whose stops are ALL COMPLETED was never
-    // released by F11 — its empty `orders` arrays are the genuine legacy/seeded
-    // shape this fallback exists for (demo-seed's `past-1`/`past-2` runs are
-    // exactly that: every stop COMPLETED, no `Order.routeRunStopId` ever
-    // written). Blanket-skipping COMPLETED would blank every stop on those
-    // detail pages.
-    const runWentTerminal =
-      run.status === RouteRunStatus.CANCELLED ||
-      (run.status === RouteRunStatus.COMPLETED &&
-        normalisedStops.some((s: any) => s.status !== "COMPLETED"));
-    if (!anyLinked && normalisedStops.length > 0 && !runWentTerminal) {
+    if (!anyLinked && normalisedStops.length > 0) {
+      const isTerminalRun =
+        run.status === RouteRunStatus.COMPLETED || run.status === RouteRunStatus.CANCELLED;
+
+      if (isTerminalRun) {
+        // SA-131: a CLOSED run's unlinked stops show exactly the orders this run actually
+        // recorded delivery evidence for (a DeliveryMutation row keyed by routeRunStopId), at
+        // ANY status — never the customer's live/current order history, which the open-run
+        // branch below reads and could include orders created long after this run closed
+        // (demo-seed's `past-1`/`past-2` runs are exactly this legacy/seeded shape: every stop
+        // COMPLETED, no `Order.routeRunStopId` ever written). A stop with no recorded mutation
+        // rows shows NO orders, never the customer's DELIVERED history — if a demo run needs
+        // evidence rows to display anything, that is a demo-seed follow-up, not this query's job.
+        const stopIds = normalisedStops.map((s: any) => s.id);
+        const mutations = await this.prisma.forTenant().deliveryMutation.findMany({
+          where: { routeRunStopId: { in: stopIds } },
+          select: { routeRunStopId: true, orderId: true },
+        });
+        const orderIdsByStop = new Map<string, Set<string>>();
+        for (const m of mutations) {
+          if (!m.routeRunStopId) continue;
+          const set = orderIdsByStop.get(m.routeRunStopId) ?? new Set<string>();
+          set.add(m.orderId);
+          orderIdsByStop.set(m.routeRunStopId, set);
+        }
+        const orderIds = [...new Set(mutations.map((m) => m.orderId))];
+        const orders =
+          orderIds.length > 0
+            ? await this.prisma.forTenant().order.findMany({
+                where: { id: { in: orderIds } },
+                select: RUN_STOP_INCLUDE.orders.select,
+              })
+            : [];
+        const orderById = new Map(orders.map((o) => [o.id, o]));
+        return {
+          ...run,
+          stops: normalisedStops.map((s: any) => ({
+            ...s,
+            orders: [...(orderIdsByStop.get(s.id) ?? [])]
+              .map((id) => orderById.get(id))
+              .filter((o): o is (typeof orders)[number] => Boolean(o)),
+          })),
+          collectedPayments,
+        };
+      }
+
       const customerIds = normalisedStops
         .map((s: any) => s._resolvedCustomerId)
         .filter((cid: string | null): cid is string => cid !== null);
@@ -1281,11 +1305,12 @@ export class RoutesService {
         const orders = await this.prisma.forTenant().order.findMany({
           where: {
             customerId: { in: customerIds },
-            // B756: excludes DELIVERED too, mirroring getRunPackingList's sibling
-            // read path — without it, a customer's already-DELIVERED order
-            // history (from ANY run) gets folded into this run's stop and
-            // quoted to the driver as if it were still open on this delivery.
-            status: { notIn: [OrderStatus.CANCELLED, OrderStatus.DELIVERED] },
+            // SA-131 / B756: excludes every NON_ROUTABLE_ORDER_STATUSES status (DRAFT,
+            // DELIVERED, CANCELLED — not just DELIVERED), mirroring getRunPackingList's
+            // sibling read path — without it, a customer's already-DELIVERED (or
+            // still-DRAFT) order history from ANY run gets folded into this run's stop
+            // and quoted to the driver as if it were open here.
+            status: { notIn: NON_ROUTABLE_ORDER_STATUSES },
           },
           // B305 round 5: same drift as the main stops query above — this
           // legacy fallback had its own hand-rolled select, missing the same
