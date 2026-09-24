@@ -85,7 +85,7 @@ import {
   RUN_LINE_ITEMS_SELECT,
   RUN_STOP_INCLUDE,
 } from "./routes.constants";
-import { withPayableInvoices } from "./run-invoice-balance";
+import { withPayableInvoices, withPayableInvoicesForRuns } from "./run-invoice-balance";
 export {
   NON_ROUTABLE_ORDER_STATUSES,
   RELEASED_CHANGE_REQUEST_REASON,
@@ -1144,20 +1144,14 @@ export class RoutesService {
       })),
     }));
     // B810/SA-130a: ONE batched invoice.findMany across every order on this
-    // whole PAGE of runs (never per-run, via withPayableInvoices — call site
-    // 1 of 4). `payableInvoices` is NOT a Prisma relation on Order — see
-    // run-invoice-balance.ts's module doc for why this can never move back
-    // into RUN_STOP_INCLUDE's `select`.
-    const pageStopsWithBalances = await withPayableInvoices(
+    // whole PAGE of runs (never per-run, via withPayableInvoicesForRuns —
+    // call site 1 of 4). `payableInvoices` is NOT a Prisma relation on Order
+    // — see run-invoice-balance.ts's module doc for why this can never move
+    // back into RUN_STOP_INCLUDE's `select`.
+    const normalisedData = await withPayableInvoicesForRuns(
       this.prisma.forTenant(),
-      normalisedRuns.flatMap((r) => r.stops),
+      normalisedRuns,
     );
-    let pageCursor = 0;
-    const normalisedData = normalisedRuns.map((run) => {
-      const stops = pageStopsWithBalances.slice(pageCursor, pageCursor + run.stops.length);
-      pageCursor += run.stops.length;
-      return { ...run, stops };
-    });
 
     // F05 / R5: `collectedPayments` only for a driver's own list — operator-wide
     // lists (every run, every driver) skip it; the operator reads cash truth
@@ -2924,16 +2918,10 @@ export class RoutesService {
         customerAddress: s.customerAddress ?? s.routeStop?.customerAddress ?? null,
       })),
     }));
-    const myStopsWithBalances = await withPayableInvoices(
+    const normalisedData = await withPayableInvoicesForRuns(
       this.prisma.forTenant(),
-      myNormalisedRuns.flatMap((r) => r.stops),
+      myNormalisedRuns,
     );
-    let myCursor = 0;
-    const normalisedData = myNormalisedRuns.map((run) => {
-      const stops = myStopsWithBalances.slice(myCursor, myCursor + run.stops.length);
-      myCursor += run.stops.length;
-      return { ...run, stops };
-    });
 
     // F05 / R5: this endpoint is always driver-scoped (the authenticated
     // driver's own runs), so it always gets `collectedPayments`.

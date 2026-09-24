@@ -3,6 +3,7 @@ import {
   groupPayableInvoicesByOrder,
   payableInvoiceFindManyArgs,
   withPayableInvoices,
+  withPayableInvoicesForRuns,
   type RawInvoiceForBalance,
 } from "./run-invoice-balance";
 
@@ -249,5 +250,59 @@ describe("withPayableInvoices", () => {
     ]);
     expect(findMany).not.toHaveBeenCalled();
     expect(result[0]!.orders).toEqual([]);
+  });
+});
+
+describe("withPayableInvoicesForRuns", () => {
+  it("runs ONE batched invoice.findMany across EVERY run's stops on the page (never per-run), then re-chunks back onto each run in order", async () => {
+    const findMany = jest.fn().mockResolvedValue([
+      row({
+        id: "i1",
+        orderId: "o1",
+        status: "SENT",
+        total: 100,
+        payments: [{ amount: 40, status: "PAID" }],
+      }),
+      row({
+        id: "i2",
+        orderId: "o2",
+        status: "PARTIAL",
+        total: 50,
+        payments: [{ amount: 10, status: "PAID" }],
+      }),
+    ]);
+    const runs = [
+      { id: "run-1", stops: [{ id: "stop-1", orders: [{ id: "o1" }] }] },
+      {
+        id: "run-2",
+        stops: [
+          { id: "stop-2", orders: [{ id: "o2" }] },
+          { id: "stop-3", orders: [] },
+        ],
+      },
+    ];
+
+    const result = await withPayableInvoicesForRuns({ invoice: { findMany } }, runs);
+
+    expect(findMany).toHaveBeenCalledTimes(1); // ONE call for the whole page, not one per run
+    expect(findMany.mock.calls[0]![0].where.orderId.in.sort()).toEqual(["o1", "o2"]);
+    expect(result[0]!.id).toBe("run-1");
+    expect(result[0]!.stops).toHaveLength(1);
+    expect(result[0]!.stops[0]!.orders[0]!.payableInvoices).toEqual([
+      { id: "i1", status: "SENT", total: 100, balanceDue: 60, isDepositMirror: false },
+    ]);
+    expect(result[1]!.id).toBe("run-2");
+    expect(result[1]!.stops).toHaveLength(2); // stop-2 and stop-3 both preserved, in order
+    expect(result[1]!.stops[0]!.orders[0]!.payableInvoices).toEqual([
+      { id: "i2", status: "PARTIAL", total: 50, balanceDue: 40, isDepositMirror: false },
+    ]);
+    expect(result[1]!.stops[1]!.orders).toEqual([]);
+  });
+
+  it("tolerates an empty page of runs", async () => {
+    const findMany = jest.fn();
+    const result = await withPayableInvoicesForRuns({ invoice: { findMany } }, []);
+    expect(findMany).not.toHaveBeenCalled();
+    expect(result).toEqual([]);
   });
 });

@@ -173,3 +173,27 @@ export async function withPayableInvoices<
   const rows = await db.invoice.findMany(payableInvoiceFindManyArgs(orderIds));
   return attachPayableInvoices(stops, groupPayableInvoicesByOrder(rows));
 }
+
+/**
+ * `withPayableInvoices`'s page-of-runs variant (findAllRuns/findMyRuns — call
+ * sites 1 and 4 of 4): ONE batched invoice.findMany across EVERY run's stops
+ * on the page (never per-run), then re-chunked back onto each run in order.
+ * Extracted here (not left as the read-site's own cursor-slicing loop) to
+ * keep routes.service.ts's per-call-site code to a single call.
+ */
+export async function withPayableInvoicesForRuns<
+  TOrder extends { id: string },
+  TStop extends { orders?: TOrder[] | null },
+  TRun extends { stops: TStop[] },
+>(db: InvoiceFindManyClient, runs: TRun[]) {
+  const allStops = await withPayableInvoices(
+    db,
+    runs.flatMap((r) => r.stops),
+  );
+  let cursor = 0;
+  return runs.map((run) => {
+    const stops = allStops.slice(cursor, cursor + run.stops.length);
+    cursor += run.stops.length;
+    return { ...run, stops };
+  });
+}

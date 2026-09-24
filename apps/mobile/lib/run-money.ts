@@ -315,6 +315,11 @@ export function earlierVisitsRemaining(payableInvoices: RunMoneyPayableInvoice[]
  * `reconciledAmountDue` itself is UNCHANGED by this round — only this
  * caller-side composition (payment.tsx) changes.
  */
+/** total - balanceDue for one payable invoice — how much of it is already paid. Never negative-poisoning: a malformed field is treated as 0. */
+function alreadyPaidOn(inv: RunMoneyPayableInvoice): number {
+  return (finiteOrNull(inv.total) ?? 0) - (finiteOrNull(inv.balanceDue) ?? 0);
+}
+
 export function reconciledDoorDue(input: {
   hasOpenDraft: boolean;
   reconciledEstimate: number;
@@ -322,23 +327,40 @@ export function reconciledDoorDue(input: {
 }): number {
   const { hasOpenDraft, reconciledEstimate, payableInvoices } = input;
   if (hasOpenDraft || payableInvoices.length === 0) {
-    // With no payable invoice at all yet, earlierVisitsRemaining([]) is 0, so
-    // this correctly reduces to the bare estimate — the pre-B810 no-invoice
-    // shape — rather than falling into case (c)'s pure-balance-sum (which
-    // would wrongly return 0 instead of the estimate).
-    return roundMoney(reconciledEstimate + earlierVisitsRemaining(payableInvoices));
+    // B822 (round 2): `reconciledEstimate` is re-derived from the order's own
+    // CURRENT line items — it has no idea a confirmed payment (e.g. an
+    // applied advance) already landed against THIS visit's own draft(s), so
+    // that must be subtracted here too, not just assumed away. With no
+    // payable invoice at all yet, both sums are 0, so this correctly reduces
+    // to the bare estimate — the pre-B810 no-invoice shape — rather than
+    // falling into case (c)'s pure-balance-sum (which would wrongly return 0
+    // instead of the estimate).
+    const draftAlreadyPaid = payableInvoices
+      .filter((i) => i.status === "DRAFT")
+      .reduce((sum, i) => sum + alreadyPaidOn(i), 0);
+    return roundMoney(
+      reconciledEstimate - draftAlreadyPaid + earlierVisitsRemaining(payableInvoices),
+    );
   }
   const soleMirror =
     payableInvoices.length === 1 && payableInvoices[0]!.isDepositMirror
       ? payableInvoices[0]!
       : null;
   if (soleMirror) {
-    const mirrorTotal = finiteOrNull(soleMirror.total) ?? 0;
-    const mirrorBalance = finiteOrNull(soleMirror.balanceDue) ?? 0;
-    const alreadyPaid = mirrorTotal - mirrorBalance;
-    return roundMoney(reconciledEstimate - alreadyPaid);
+    // Round 2: floor at 0 — a mirror restated DOWN by a short-pick (a
+    // partial delivery billing less than what was already collected as a
+    // deposit) must never go negative; the excess is a refund/credit
+    // question for the office, not something this quote surfaces as a
+    // negative "amount due".
+    return roundMoney(Math.max(0, reconciledEstimate - alreadyPaidOn(soleMirror)));
   }
-  return roundMoney(earlierVisitsRemaining(payableInvoices));
+  // (c) round 2: sum EVERY payable's balanceDue, including a DRAFT one —
+  // `hasOpenDraft` is already false in this branch (from `o.invoices`, the
+  // separate DRAFT-only projection), so a DRAFT entry reaching here is not
+  // "this visit's own draft" being double-counted; excluding it via
+  // `earlierVisitsRemaining` (built for case (a)'s different semantics)
+  // would silently drop it from the total instead.
+  return roundMoney(payableInvoices.reduce((sum, i) => sum + (finiteOrNull(i.balanceDue) ?? 0), 0));
 }
 
 export function stopAmountDue(stop: RunMoneyStop): number {

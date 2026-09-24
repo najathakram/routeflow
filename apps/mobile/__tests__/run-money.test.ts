@@ -557,17 +557,77 @@ describe("REG-B810 reconciledDoorDue (SA-130a)", () => {
     expect(due).toBe(90);
   });
 
-  it("two non-mirror payables with no draft never enter the (b) branch even if one happens to be flagged a mirror — mirror rule requires SOLE payable", () => {
+  it("fleet-lead round 2 pin (F2/B822): a $100 DRAFT with a $30 confirmed advance, short-picked to an estimate of $60 -> the door shows $30", () => {
     const payableInvoices = [
-      { id: "mirror-1", status: "SENT", total: 100, balanceDue: 100, isDepositMirror: true },
-      { id: "other", status: "PARTIAL", total: 20, balanceDue: 20, isDepositMirror: false },
+      { id: "draft-1", status: "DRAFT", total: 100, balanceDue: 70, isDepositMirror: false },
+    ];
+    const due = reconciledDoorDue({
+      hasOpenDraft: true,
+      reconciledEstimate: 60,
+      payableInvoices,
+    });
+    expect(due).toBe(30);
+  });
+
+  it("F2: the draft-already-paid subtraction composes with earlierVisitsRemaining over OTHER non-DRAFT payables", () => {
+    const payableInvoices = [
+      { id: "draft-1", status: "DRAFT", total: 100, balanceDue: 70, isDepositMirror: false },
+      { id: "sent-1", status: "SENT", total: 40, balanceDue: 40, isDepositMirror: false },
+    ];
+    const due = reconciledDoorDue({
+      hasOpenDraft: true,
+      reconciledEstimate: 60,
+      payableInvoices,
+    });
+    expect(due).toBe(70); // 60 - (100-70) + 40
+  });
+
+  it("F3: a PARTIAL mirror of $100 with $70 paid, restated to $50 -> floors at 0, never negative", () => {
+    const payableInvoices = [
+      { id: "mirror-1", status: "PARTIAL", total: 100, balanceDue: 30, isDepositMirror: true },
+    ];
+    const due = reconciledDoorDue({
+      hasOpenDraft: false,
+      reconciledEstimate: 50,
+      payableInvoices,
+    });
+    expect(due).toBe(0);
+    expect(due).not.toBeLessThan(0);
+  });
+
+  it("F3: a two-order stop sums correctly when one order's mirror floors at 0 and the other has a normal positive due", () => {
+    const orderA = reconciledDoorDue({
+      hasOpenDraft: false,
+      reconciledEstimate: 50,
+      payableInvoices: [
+        { id: "mirror-1", status: "PARTIAL", total: 100, balanceDue: 30, isDepositMirror: true },
+      ],
+    });
+    const orderB = reconciledDoorDue({
+      hasOpenDraft: false,
+      reconciledEstimate: 999,
+      payableInvoices: [
+        { id: "sent-1", status: "SENT", total: 25, balanceDue: 25, isDepositMirror: false },
+      ],
+    });
+    expect(orderA + orderB).toBe(25); // 0 + 25, never a negative order dragging the stop total down
+  });
+
+  it("F4 (LOW): case (c) includes a DRAFT-status payable in the plain Σ balanceDue sum, never silently dropped via earlierVisitsRemaining's DRAFT exclusion", () => {
+    // hasOpenDraft is false (the separate o.invoices projection saw no open
+    // draft), yet payableInvoices still carries a DRAFT-status row -- must
+    // still be summed, not excluded the way case (a)'s earlierVisitsRemaining
+    // would exclude it.
+    const payableInvoices = [
+      { id: "draft-1", status: "DRAFT", total: 40, balanceDue: 40, isDepositMirror: false },
+      { id: "sent-1", status: "SENT", total: 60, balanceDue: 60, isDepositMirror: false },
     ];
     const due = reconciledDoorDue({
       hasOpenDraft: false,
       reconciledEstimate: 999,
       payableInvoices,
     });
-    expect(due).toBe(120); // case (c): plain Σ balanceDue, reconciledEstimate ignored
+    expect(due).toBe(100); // 40 + 60, DRAFT included
   });
 });
 
