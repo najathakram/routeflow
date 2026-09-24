@@ -619,6 +619,27 @@ export function buildAddItemsMutation(projectId, contentIds) {
   return `mutation {\n${parts.join("\n")}\n}`;
 }
 
+/**
+ * Splits one addProjectV2ItemById batch result into added items, contents that
+ * are ALREADY on the board (GitHub answers "Content already exists in this
+ * project", e.g. after the Project's own auto-add-sub-issues workflow put them
+ * there first; not an error for us), and genuine failures.
+ */
+export function classifyAddResults(contentIds, data = {}, errors = []) {
+  const added = new Map();
+  const existing = [];
+  const fatal = [];
+  contentIds.forEach((contentId, i) => {
+    const alias = `a${i}`;
+    const id = data?.[alias]?.item?.id;
+    if (id) return added.set(contentId, id);
+    const err = errors.find((e) => Array.isArray(e.path) && e.path[0] === alias);
+    if (err && /already exists/i.test(err.message ?? "")) return existing.push(contentId);
+    fatal.push(err?.message ?? `no item returned for ${alias}`);
+  });
+  return { added, existing, fatal };
+}
+
 /** Removes board items outright (fix 1: #938 / work-status issues that were
  * already on the board before the exclusion rule fired). itemIds are
  * ProjectV2Item ids, not content ids. */
@@ -916,15 +937,50 @@ function fetchOpenRepoNodes(kind) {
   return { nodes, rateRemaining };
 }
 
+// Like graphql(), but returns partial data + errors instead of throwing, because
+// gh exits non-zero whenever ANY alias in a batched mutation errors.
+function graphqlPartial(query) {
+  let out;
+  try {
+    out = execFileSync("gh", ["api", "graphql", "-f", `query=${query}`], {
+      encoding: "utf8",
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+  } catch (e) {
+    out = e.stdout;
+    if (!out) throw new Error(`gh api graphql failed: ${e.stderr ?? e.message}`);
+  }
+  const parsed = JSON.parse(out);
+  return { data: parsed.data ?? {}, errors: parsed.errors ?? [] };
+}
+
+function lookupExistingItemIds(projectId, contentIds) {
+  const found = new Map();
+  for (const group of chunk(contentIds, 50)) {
+    const data = graphql(
+      `query { nodes(ids: [${group.map(gqlStr).join(", ")}]) {
+        ... on Issue { id projectItems(first: 20) { nodes { id project { id } } } }
+        ... on PullRequest { id projectItems(first: 20) { nodes { id project { id } } } } } }`,
+    );
+    for (const n of data.nodes ?? []) {
+      const item = n?.projectItems?.nodes?.find((pi) => pi.project?.id === projectId);
+      if (item) found.set(n.id, item.id);
+    }
+  }
+  return found;
+}
+
 function addItemsToProject(projectId, contentIds) {
   const idByContentId = new Map();
+  const alreadyThere = [];
   for (const group of chunk(contentIds, MUTATION_CHUNK)) {
-    const mutation = buildAddItemsMutation(projectId, group);
-    const data = graphql(mutation);
-    group.forEach((contentId, i) => {
-      idByContentId.set(contentId, data[`a${i}`].item.id);
-    });
+    const { data, errors } = graphqlPartial(buildAddItemsMutation(projectId, group));
+    const { added, existing, fatal } = classifyAddResults(group, data, errors);
+    if (fatal.length) throw new Error(`adding board items failed: ${fatal.join("; ")}`);
+    for (const [c, id] of added) idByContentId.set(c, id);
+    alreadyThere.push(...existing);
   }
+  for (const [c, id] of lookupExistingItemIds(projectId, alreadyThere)) idByContentId.set(c, id);
   return idByContentId;
 }
 

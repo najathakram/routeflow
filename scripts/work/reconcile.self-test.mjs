@@ -8,6 +8,7 @@
 //
 // Run: node scripts/work/reconcile.self-test.mjs
 import {
+  classifyAddResults,
   parseLabels,
   extractClosesRefs,
   extractBranchIssueNumber,
@@ -1048,6 +1049,21 @@ const pr = (overrides = {}) => ({
     chunk(new Array(45).fill(0), 20).map((c) => c.length),
     [20, 20, 5],
   );
+}
+
+// ── add-items: "already exists" is success, not failure ─────────────────
+{
+  const r = classifyAddResults(
+    ["C1", "C2", "C3"],
+    { a0: { item: { id: "I1" } }, a1: null, a2: null },
+    [
+      { path: ["a1"], message: "Content already exists in this project" },
+      { path: ["a2"], message: "Could not resolve to a node" },
+    ],
+  );
+  check("classifyAddResults: added item keeps its id", [...r.added], [["C1", "I1"]]);
+  check("classifyAddResults: already-on-board content is not an error", r.existing, ["C2"]);
+  check("classifyAddResults: any other error is fatal", r.fatal, ["Could not resolve to a node"]);
 }
 
 // ── result ────────────────────────────────────────────────────────────────
