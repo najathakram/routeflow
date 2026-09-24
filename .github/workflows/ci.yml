@@ -442,6 +442,8 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           DEPLOY_SHA: ${{ github.event.deployment.sha }}
+          # #1134 item 4: "newest deployment" is read for THIS deployment's environment only.
+          DEPLOY_ENV: ${{ github.event.deployment.environment }}
           GITHUB_REPOSITORY: ${{ github.repository }}
           # Dispatch runs carry no deployment: the guard reports that as a
           # notice and proceeds, instead of warning about an API read that

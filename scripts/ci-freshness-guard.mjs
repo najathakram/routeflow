@@ -139,13 +139,27 @@ function sleep(ms) {
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 }
 
-// A run that will (or did) actually exercise the suite. cancelled/skipped/neutral do NOT count.
+// A run that IS (or did) actually exercise the suite. cancelled/skipped/neutral do NOT count, and
+// (#1134 Opus item 1) neither does `queued`/`waiting`/`requested`/`pending`: the e2e job's per-SHA
+// concurrency group has cancel-in-progress, so a run that has not started can still be cancelled by a
+// later echo of the same deployment and never exercise anything.
 const LIVE_CONCLUSIONS = new Set(["success", "failure", "timed_out"]);
-const isLiveRun = (r) => r && (r.status !== "completed" || LIVE_CONCLUSIONS.has(r.conclusion));
+const isLiveRun = (r) =>
+  !!r &&
+  (r.status === "in_progress" || (r.status === "completed" && LIVE_CONCLUSIONS.has(r.conclusion)));
+
+// #1134 Opus item 4: "the newest deployment" means the newest one of THIS deployment's environment,
+// so a deployment to another environment can never supersede it. DEPLOY_ENV comes from
+// `github.event.deployment.environment`; when it is absent (not a deployment event) no filter is
+// invented.
+function deploymentsEndpoint(repo) {
+  const env = process.env.DEPLOY_ENV;
+  return `repos/${repo}/deployments?per_page=1${env ? `&environment=${encodeURIComponent(env)}` : ""}`;
+}
 
 // One look at the world. Returns { kind: "newest" | "confirmed" | "failed" | "wait", ... }.
 function pollSuccessor(repo, deploySha) {
-  const dep = ghApi(`repos/${repo}/deployments?per_page=1`);
+  const dep = ghApi(deploymentsEndpoint(repo));
   if (!dep.ok) return { kind: "wait", why: `deployments read failed: ${dep.why}` };
   const top = Array.isArray(dep.json) ? dep.json[0] : null;
   if (!top || typeof top.sha !== "string")
@@ -169,6 +183,7 @@ function pollSuccessor(repo, deploySha) {
   return {
     kind: "wait",
     sha: top.sha,
+    seen,
     why: `no live E2E run for ${top.sha} yet (${seen} run(s), all cancelled/skipped or none; deployment state ${state ?? "unknown"})`,
   };
 }
@@ -216,7 +231,7 @@ function main() {
     return failOpen("GITHUB_REPOSITORY is not set");
   }
 
-  const first = ghApi(`repos/${repo}/deployments?per_page=1`);
+  const first = ghApi(deploymentsEndpoint(repo));
   if (!first.ok) return failOpen(first.why);
   const parsed = first.json;
   if (!Array.isArray(parsed)) {
@@ -265,6 +280,18 @@ function main() {
       `::notice::The newer deployment ${v.sha} ended in state "${v.state}" and will never have an E2E run; running E2E for ${deploySha} against whatever is live instead of skipping`,
     );
     appendOutput("reason", "successor-failed");
+    appendOutput("run", "true");
+    return 0;
+  }
+  if (v.kind === "wait" && v.seen > 0) {
+    // #1134 Opus item 2: the successor HAS runs, but none of them is exercising the suite by the
+    // deadline (all cancelled/skipped, or still only queued). Failing here would leave a PERMANENT
+    // red on this sha that nothing ever clears; skipping would be the silent green B621 exists to
+    // stop. So run E2E here, against what is live, exactly as for a failed successor, and say so.
+    console.log(
+      `::notice::The newer deployment ${v.sha} has ${v.seen} E2E run(s) but none is exercising the suite (${v.why}); running E2E for ${deploySha} against whatever is live instead of failing or skipping`,
+    );
+    appendOutput("reason", "successor-unconfirmed");
     appendOutput("run", "true");
     return 0;
   }

@@ -52,6 +52,7 @@ beforeAll(() => {
       // { deployments: [...], runs: [...], statuses: [...] }; each list is a queue of
       // { code?, body } consumed one entry per call (the last repeats), counted in a state file
       // because every `gh` call is a fresh process.
+      "if (process.env.FAKE_GH_LOG) fs.appendFileSync(process.env.FAKE_GH_LOG, endpoint + '\\n');",
       "if (process.env.FAKE_GH_STEPS) {",
       "  const steps = JSON.parse(process.env.FAKE_GH_STEPS);",
       "  const key = /\\/statuses/.test(endpoint) ? 'statuses' : /\\/runs/.test(endpoint) ? 'runs' : 'deployments';",
@@ -340,7 +341,7 @@ describe("ci-freshness-guard.mjs contract", () => {
   const dep = (sha: string) => ({ body: [{ sha, id: 2 }] });
   const runs = (...r: object[]) => ({ body: { workflow_runs: r } });
   const state = (st: string) => ({ body: [{ state: st }] });
-  function superseded(steps: Record<string, object[]>) {
+  function superseded(steps: Record<string, object[]>, extra: Record<string, string> = {}) {
     const stateFile = path.join(dir, `state-${Math.random().toString(36).slice(2)}.json`);
     return runScriptDirect(
       fakeEnv("match", {
@@ -348,6 +349,7 @@ describe("ci-freshness-guard.mjs contract", () => {
         FAKE_GH_STATE: stateFile,
         CI_E2E_SUCCESSOR_TIMEOUT_MS: "400",
         CI_E2E_SUCCESSOR_INTERVAL_MS: "50",
+        ...extra,
       }),
     );
   }
@@ -385,14 +387,70 @@ describe("ci-freshness-guard.mjs contract", () => {
       ],
       statuses: [state("success")],
     });
-    expect(readOutputs(outFile).reason).toBe("unconfirmed");
-    expect(res.status).toBe(3);
+    expect(readOutputs(outFile).reason).not.toBe("confirmed");
+  });
+
+  // #1134 Opus item 2: a successor whose runs were all cancelled/skipped must NOT leave a permanent
+  // red on the OLD sha after the poll. The old run's E2E runs instead, against what is live (the
+  // same fallback as a failed successor), and says so: real test signal, never a quiet skip.
+  it("#1134 item 2 · a cancelled successor at the deadline -> run=true here (fallback), exit 0, says so", () => {
+    const { res, outFile } = superseded({
+      deployments: [dep(NEW)],
+      runs: [runs({ status: "completed", conclusion: "cancelled" })],
+      statuses: [state("success")],
+    });
+    expect(readOutputs(outFile)).toMatchObject({ run: "true", reason: "successor-unconfirmed" });
+    expect(res.stdout).toMatch(/running E2E for abc123 against whatever is live/);
+    expect(res.status).toBe(0);
+  });
+
+  // #1134 Opus item 1: `queued` is not confirmation. Per-SHA e2e concurrency with
+  // cancel-in-progress means a queued successor can still be cancelled by a later echo.
+  it("#1134 item 1 · a successor that is only QUEUED is never confirmation (falls back, never skips)", () => {
+    const { res, outFile } = superseded({
+      deployments: [dep(NEW)],
+      runs: [runs({ status: "queued", html_url: "https://gh/run/11" })],
+      statuses: [state("success")],
+    });
+    expect(readOutputs(outFile)).toMatchObject({ run: "true", reason: "successor-unconfirmed" });
+    expect(res.stdout).not.toContain("https://gh/run/11");
+    expect(res.status).toBe(0);
+  });
+
+  // #1134 Opus item 4: the newest deployment is read for THIS deployment's environment only, so a
+  // deployment to another environment (a preview, the web service) can never supersede this one.
+  it("#1134 item 4 · every deployments read carries the triggering deployment's environment", () => {
+    const log = path.join(dir, `log-${Math.random().toString(36).slice(2)}.txt`);
+    superseded(
+      { deployments: [dep(NEW)], runs: [runs({ status: "in_progress", html_url: "u" })] },
+      { DEPLOY_ENV: "acme / production", FAKE_GH_LOG: log },
+    );
+    const deps = fs
+      .readFileSync(log, "utf8")
+      .split("\n")
+      .filter((l) => /\/deployments\?/.test(l));
+    expect(deps.length).toBeGreaterThanOrEqual(2); // the first read and the confirmation poll
+    for (const d of deps) expect(d).toContain("environment=acme%20%2F%20production");
+  });
+
+  it("#1134 item 4 · no DEPLOY_ENV (a dispatch-like env) -> no environment filter is invented", () => {
+    const log = path.join(dir, `log-${Math.random().toString(36).slice(2)}.txt`);
+    superseded(
+      { deployments: [dep(NEW)], runs: [runs({ status: "in_progress", html_url: "u" })] },
+      { FAKE_GH_LOG: log },
+    );
+    const deps = fs
+      .readFileSync(log, "utf8")
+      .split("\n")
+      .filter((l) => /\/deployments\?/.test(l));
+    expect(deps.length).toBeGreaterThanOrEqual(1);
+    for (const d of deps) expect(d).not.toContain("environment=");
   });
 
   it("B621 · successor still deploying, its run appears later -> confirmed after polling", () => {
     const { res, outFile } = superseded({
       deployments: [dep(NEW)],
-      runs: [runs(), runs({ status: "queued", html_url: "https://gh/run/10" })],
+      runs: [runs(), runs({ status: "in_progress", html_url: "https://gh/run/10" })],
       statuses: [state("in_progress")],
     });
     expect(readOutputs(outFile).reason).toBe("confirmed");
@@ -471,6 +529,10 @@ describe("ci-freshness-guard.mjs contract", () => {
     // EVENT_NAME is what lets the script tell a dispatch run apart from a
     // genuine deployments-API failure.
     expect((freshnessStep().env ?? {}).EVENT_NAME).toBe("${{ github.event_name }}");
+    // #1134 item 4: the environment filter comes from the triggering deployment itself.
+    expect((freshnessStep().env ?? {}).DEPLOY_ENV).toBe(
+      "${{ github.event.deployment.environment }}",
+    );
     // Explicit fail-open fallback for a crash OUTSIDE the script's own logic.
     expect(freshnessRunText()).toContain("run=true");
     // B621: a superseded deployment must SKIP the e2e job, never leave a green job whose every step
