@@ -642,13 +642,18 @@ export function CreateOrderModal({
         return next;
       });
     });
-    if (lastAddResultRef.current === null) {
+    // TS's flow analysis can't see the assignment inside the flushSync/setLineItems closure above,
+    // so it still treats `lastAddResultRef.current` as the `null` this function set it to before
+    // flushSync — an explicit cast to the ref's own declared type restores real narrowing for the
+    // runtime check below (the pre-#1271-review code used a bare `!` for the same closure-blindness
+    // reason; this keeps the throw instead of silently asserting).
+    const result = lastAddResultRef.current as { created: boolean; mergedInto?: LineItem } | null;
+    if (result === null) {
       throw new Error(
         "addLineItem: lastAddResultRef was never set — the setLineItems updater did not run " +
           "inside flushSync as expected",
       );
     }
-    const result = lastAddResultRef.current;
 
     // SA-090f (#1271): the commit above already landed — nothing in this tail (a toast, building
     // the merged-line message, the search-field reset/refocus) may ever throw back to the caller,
