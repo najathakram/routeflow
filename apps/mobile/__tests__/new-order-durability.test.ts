@@ -181,10 +181,24 @@ describe("NewOrderScreen scan-tray price affordance (REG-NEWORDER-TRAYPRICE)", (
     const mount = (screen.match(/<LinePriceModal[\s\S]*?\/>/) ?? [""])[0];
     expect(mount).toBeTruthy();
     expect(mount).toMatch(/roundMoney\(value\)/);
-    expect(mount).toMatch(/setLinePrice\(target\.id, price\)/);
+    expect(mount).toMatch(/setLinePrice\(target\.id,/);
     expect(mount).toMatch(/updateUnlistedPrice\(target\.id, price\)/);
     // No line total is ever written here — the tray and footer re-derive it.
     expect(mount).not.toMatch(/lineTotal|\*\s*qty|qty\s*\*/);
+    // SA-085i(b): an untouched pre-fill (price === the resolved base) must never be stored as
+    // a redundant override — priceEditorSaveOverride makes the SAME comparison submit/park do,
+    // as a lib function with its own value tests (cart-order-total.test.ts), not re-derived here.
+    expect(mount).toMatch(/unitPriceBase\(items\[target\.id\] \?\? \{\}, tierPriceFor\(p\)\)/);
+    expect(mount).toMatch(/priceEditorSaveOverride\(price, base\)/);
+  });
+
+  it("REG-NEWORDER-TRAYPRICE-E: the pre-fill and the tray's price both call the lib's price functions (SA-085i(b)), not tierPriceFor directly", () => {
+    const target = (screen.match(/const priceEditTarget = \(\(\)[\s\S]*?\}\)\(\);/) ?? [""])[0];
+    expect(target).toMatch(
+      /priceEditorPrefill\(items\[priceEditId\], p, effectiveTierFor\(p\.id\)\)/,
+    );
+    const tray = (screen.match(/trayRowsFrom\(\{[\s\S]*?\}\),/) ?? [""])[0];
+    expect(tray).toMatch(/lineUnitFor\(items\[p\.id\], full, effectiveTierFor\(p\.id\)\)/);
   });
 
   it("REG-NEWORDER-TRAYPRICE-C: a SPECIAL-tier line refuses the edit", () => {
@@ -201,6 +215,48 @@ describe("NewOrderScreen scan-tray price affordance (REG-NEWORDER-TRAYPRICE)", (
     expect(screen).toMatch(
       /paused=\{createCode != null \|\| pickCode != null \|\| priceEditId != null\}/,
     );
+  });
+});
+
+/**
+ * SA-085i: the catalog row (renderProduct) still passed the pack's tierPriceFor to
+ * ProductRow regardless of unitLabel — a Case line at $220 showed "$24.00 / each" in the
+ * catalog list next to its count, while the tray and footer already showed $440.
+ */
+describe("NewOrderScreen catalog row prices/labels a unit-sold line correctly (SA-085i)", () => {
+  it("renderProduct's price is lineUnitFor when a line exists, tierPriceFor only for an unadded product", () => {
+    const fn = (screen.match(/const renderProduct = useCallback\([\s\S]*?\n    \[/) ?? [""])[0];
+    expect(fn).toBeTruthy();
+    expect(fn).toMatch(
+      /const price = line \? lineUnitFor\(line, p, effectiveTierFor\(p\.id\)\) : tierPriceFor\(p\);/,
+    );
+  });
+
+  it("passes the line's unitLabel to ProductRow so it shows next to the price, never a bare unitSold boolean", () => {
+    const fn = (screen.match(/const renderProduct = useCallback\([\s\S]*?\n    \[/) ?? [""])[0];
+    expect(fn).toMatch(/unitLabel=\{line\?\.unitLabel\}/);
+    expect(fn).not.toMatch(/unitSold=/);
+  });
+});
+
+/**
+ * SA-085h LOW: a PIECE-barcode hit on a line already sold by a unit adds a whole unit
+ * (240 pieces for a Case, not one loose piece) — confirmed before committing rather than
+ * silently added.
+ */
+describe("NewOrderScreen piece-scan-on-a-unit-line confirm (SA-085h LOW)", () => {
+  it("gates a piece-kind accept on the line's unitLabel before calling addOne, via the confirm dialog", () => {
+    const fn = (screen.match(/const acceptScannedProduct = \([\s\S]*?\n  \};/) ?? [""])[0];
+    expect(fn).toBeTruthy();
+    expect(fn).toMatch(/unitKind !== "piece" \|\| !label\) return finishAccept/);
+    expect(fn).toMatch(/confirm\(/);
+    // Declining does nothing: addOne only happens inside finishAccept, called from onYes.
+    expect(fn).not.toMatch(/^\s*addOne\(/m);
+  });
+
+  it("a non-unit line's piece scan is unaffected — no confirm, straight to finishAccept", () => {
+    const fn = (screen.match(/const acceptScannedProduct = \([\s\S]*?\n  \};/) ?? [""])[0];
+    expect(fn).toMatch(/return finishAccept\(product, unitKind\);/);
   });
 });
 
