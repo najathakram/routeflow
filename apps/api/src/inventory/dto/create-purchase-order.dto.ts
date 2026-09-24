@@ -8,6 +8,11 @@ import {
   IsUUID,
   Min,
   ValidateNested,
+  ValidatorConstraint,
+  ValidatorConstraintInterface,
+  ValidationArguments,
+  Validate,
+  ArrayNotEmpty,
 } from "class-validator";
 import { Type } from "class-transformer";
 
@@ -33,18 +38,58 @@ export class CreatePurchaseOrderDto {
   @IsOptional() @IsString() notes?: string;
 }
 
-export class ReceivePurchaseOrderDto {
+/**
+ * B780: each item needs an identifier the service can match against a PO line
+ * (`id ?? itemId`, falling back to `productId` — InventoryService.
+ * receivePurchaseOrder) AND a quantity (`receivedQty`/`qtyReceived`, or a
+ * `boxes`/`pieces` split) — every field below is individually optional (web
+ * sends `id`+`receivedQty`; mobile sends `itemId` and either `qtyReceived` or
+ * `boxes`+`pieces`), so nothing here catches an item with NEITHER.
+ */
+@ValidatorConstraint({ name: "hasReceiveIdentifierAndQuantity", async: false })
+class HasReceiveIdentifierAndQuantityConstraint implements ValidatorConstraintInterface {
+  validate(_value: unknown, args: ValidationArguments) {
+    const item = args.object as ReceivePurchaseOrderItemDto;
+    const hasIdentifier = !!(item.id || item.itemId || item.productId);
+    const hasQuantity =
+      item.receivedQty != null ||
+      item.qtyReceived != null ||
+      item.boxes != null ||
+      item.pieces != null;
+    return hasIdentifier && hasQuantity;
+  }
+  defaultMessage() {
+    return "each receive item needs an identifier (id/itemId/productId) and a quantity (receivedQty/qtyReceived/boxes/pieces)";
+  }
+}
+
+export class ReceivePurchaseOrderItemDto {
+  // Web sends `id`; mobile sends `itemId`; the service also falls back to
+  // matching by `productId` alone. All optional — see the class validator below.
+  @IsOptional() @IsUUID() id?: string;
+  @IsOptional() @IsUUID() itemId?: string;
+  @IsOptional() @IsUUID() productId?: string;
   /**
-   * Per-item receipt. `qtyReceived` is base units (pieces) — omit it and send
-   * `boxes`/`pieces` instead to receive in boxes; InventoryService.
-   * receivePurchaseOrder resolves the piece QUANTITY from the split, exactly
-   * like recordPurchase. A bare `qtyReceived` KEEPS meaning pieces — existing
-   * callers are unaffected. The split never changes the cost basis: the line's
-   * `unitCost` was stored per piece at creation and is used as-is.
-   * The resolved quantity may not exceed what is outstanding on the line
-   * (`qtyOrdered - qtyReceived`) — an over-receipt is rejected, not clamped.
+   * Base units (pieces). Omit and send `boxes`/`pieces` instead to receive in
+   * boxes; InventoryService.receivePurchaseOrder resolves the piece QUANTITY
+   * from the split, exactly like recordPurchase. A bare `receivedQty`/
+   * `qtyReceived` KEEPS meaning pieces — existing callers are unaffected. No
+   * `@Type(() => Number)` here: a string quantity is REJECTED, not silently
+   * coerced (the string-concatenation bug this DTO exists to close).
    */
-  @IsArray()
-  items: Array<{ itemId: string; qtyReceived: number; boxes?: number; pieces?: number }>;
+  @IsOptional() @IsNumber() @Min(0) receivedQty?: number;
+  @IsOptional() @IsNumber() @Min(0) qtyReceived?: number;
+  @IsOptional() @IsInt() @Min(0) boxes?: number;
+  @IsOptional() @IsInt() @Min(0) pieces?: number;
+
+  @Validate(HasReceiveIdentifierAndQuantityConstraint)
+  private readonly _hasIdentifierAndQuantity?: never;
+}
+
+export class ReceivePurchaseOrderDto {
+  @ArrayNotEmpty()
+  @ValidateNested({ each: true })
+  @Type(() => ReceivePurchaseOrderItemDto)
+  items: ReceivePurchaseOrderItemDto[];
   @IsOptional() @IsString() notes?: string;
 }
