@@ -1288,8 +1288,10 @@ export class RoutesService {
             ? await this.prisma.forTenant().order.findMany({
                 where: { id: { in: orderIds } },
                 // customerId isn't needed to resolve THIS branch's own orders (they're already
-                // grouped by stop via the mutation rows), but every order row leaving findOneRun
-                // carries the same shape regardless of which branch resolved it.
+                // grouped by stop via the mutation rows), but matching the open-run fallback
+                // branch's own projection (which DOES need customerId, to group by customer)
+                // keeps the two fallback branches' order shape identical — the main,
+                // linked-orders query below has its own separate select with no customerId at all.
                 select: { ...RUN_STOP_INCLUDE.orders.select, customerId: true },
               })
             : [];

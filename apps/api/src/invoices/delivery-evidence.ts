@@ -1,4 +1,4 @@
-import type { MutationType } from "@prisma/client";
+import type { MutationType, Prisma } from "@prisma/client";
 
 /**
  * B785/SA-131a: a DeliveryMutation row is genuine delivery evidence — proof that a delivery
@@ -11,16 +11,20 @@ import type { MutationType } from "@prisma/client";
  *   row with `quantityDelivered: 0`, a real refusal, which DOES count.
  *
  * The shared source: #1274's own `isEvidenceRow` moves onto these constants in Lane F's B785
- * follow-up — this file is not touched by that migration, only consumed by it.
+ * follow-up — this file is not touched by that migration, only consumed by it. Finalized here
+ * (readonly, `satisfies`-checked against Prisma's own input types) since Lane F copies it
+ * byte-identically.
  */
-export const DELIVERY_EVIDENCE_TYPES: MutationType[] = [
+export const DELIVERY_EVIDENCE_TYPES = [
   "DELIVERED",
   "PARTIAL",
   "SUBSTITUTED",
   "REFUSED",
-];
+] as const satisfies readonly MutationType[];
 
 export const DELIVERY_EVIDENCE_WHERE = {
   quantityDelivered: { not: null },
-  type: { in: DELIVERY_EVIDENCE_TYPES },
-} as const;
+  // Prisma's generated `in` filter wants a mutable array — spread the readonly
+  // DELIVERY_EVIDENCE_TYPES into a fresh one rather than loosen its own type.
+  type: { in: [...DELIVERY_EVIDENCE_TYPES] },
+} satisfies Prisma.DeliveryMutationWhereInput;

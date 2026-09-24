@@ -248,9 +248,12 @@ describeDb("B756/SA-131 findOneRun legacy fallback — real Postgres round-trip"
       const result: any = await tenantCtx.run(tenant.id, () => routesService.findOneRun(runId));
 
       const stop = result.stops[0];
+      // This id-set check is what actually pins the fix: the API's own list is exactly
+      // [pending], so DRAFT/DELIVERED/CANCELLED can never reach any downstream summation.
       expect(stop.orders.map((o: any) => o.id)).toEqual([pending.id]);
-      // A naive unfiltered sum over stop.orders (exactly what stopAmountDue does) now equals
-      // the PENDING order's own total alone — not 140 (all four orders summed).
+      // Mirrors stopAmountDue's own unfiltered sum over stop.orders — illustrative, not a
+      // second oracle: with the id-set already exactly [pending], this can only ever equal
+      // the PENDING order's own total.
       const naiveSum = stop.orders.reduce((sum: number, o: any) => sum + Number(o.total), 0);
       expect(naiveSum).toEqual(Number(pending.total));
     },
@@ -358,6 +361,9 @@ describeDb("B756/SA-131 findOneRun legacy fallback — real Postgres round-trip"
     const otherTenant = await seedTenant();
     const customer = await seedCustomer(tenant.id);
     const delivered = await seedOrder(tenant.id, customer.id, "DELIVERED");
+    // No evidence of its own — this order must stay un-surfaced unless the mis-tenanted row
+    // below wrongly reaches it.
+    const noEvidence = await seedOrder(tenant.id, customer.id, "PENDING");
     const { runId, stopIds } = await seedUnlinkedRun(tenant.id, "COMPLETED", [customer.id]);
 
     // A real evidence row for tenant's own order.
@@ -370,13 +376,15 @@ describeDb("B756/SA-131 findOneRun legacy fallback — real Postgres round-trip"
         tenantId: tenant.id,
       },
     });
-    // A mis-tenanted row: tenantId=otherTenant, but routeRunStopId points at tenant's own
-    // stop — proves forTenant()'s scoping on the DeliveryMutation lookup itself, not just an
-    // accidental id mismatch.
-    const strayOrder = await seedOrder(otherTenant.id, customer.id, "DELIVERED");
+    // A mis-tenanted row: tenantId=otherTenant, but routeRunStopId points at tenant's own stop
+    // AND orderId points at tenant's own (otherwise un-evidenced) order. This is deliberately
+    // NOT a stray order some other tenant could never resolve on its own — if forTenant() were
+    // ever dropped from this lookup, this row alone would wrongly surface `noEvidence`, since
+    // its orderId is perfectly resolvable on THIS tenant. Only forTenant()'s tenantId scope on
+    // the DeliveryMutation query itself keeps it out.
     await prisma.deliveryMutation.create({
       data: {
-        orderId: strayOrder.id,
+        orderId: noEvidence.id,
         routeRunStopId: stopIds[0],
         type: "DELIVERED",
         quantityDelivered: 1,
