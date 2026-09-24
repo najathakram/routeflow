@@ -34,16 +34,31 @@ switch. Keep the SAME session titles below for the new sessions — the PC's
 - **Standing lesson for next time:** always use `df -h`, never `df -g` (its column order reads
   as Used where a skim expects Available — this session's own near-miss).
 
-## Worktree cleanup (the owner's fuller ask — IN PROGRESS, not finished at handoff)
+## Worktree cleanup (the owner's fuller ask)
 
-The safe node_modules-only reclaim above unblocked everything; the full
-INVENTORY → CLASSIFY (ACTIVE / MERGED / USELESS / SALVAGE) → SALVAGE-commit-push-PR → REMOVE pass
-the owner separately asked for **has not been completed** — there are ~49 worktrees under
-`.claude/worktrees/` and this ran out of session time. The next Mac Lead should pick this up as
-its own pass, per the fleet lead's exact procedure (find symlinks → unlink → delete
-node_modules → `git worktree remove` without --force → `git worktree prune` → `git branch -d`,
-`-D` only on a confirmed squash-merge). **Do not run `janitor --apply`** (B800 hazard: it can
-misclassify a fresh zero-commit branch as merged).
+**SALVAGE step done for the 5 branches that had no PR anywhere and real unpushed commits** (the
+highest-risk ones — genuinely the only copy of that work). Each was checked for staleness first
+(`git rev-list --count HEAD..origin/master`); 4 were 43-174 commits behind and needed
+`npm ci` + `prisma generate` (stale node_modules/Prisma client, not a code issue) plus a
+`git merge origin/master` before they'd push clean:
+
+| Worktree                      | Branch                             | PR                                                        | Notes                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| ----------------------------- | ---------------------------------- | --------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| rf-lane-R-service-4           | feat/r-2b-template-call-site       | **#1357** (draft)                                         | 174 behind, merged clean, npm-ci fix for stale prisma client                                                                                                                                                                                                                                                                                                                                                                              |
+| rf-lane-R-ui-local-lane-note  | docs/local-lane-dotnext-trap       | **#1359** (draft)                                         | 57 behind; its old test copy reproduced an ALREADY-FIXED race (B742) — confirmed via diff against master before merging, no code touched                                                                                                                                                                                                                                                                                                  |
+| rf-lane-b736-rebuild-coverage | test/b736-rebuild-caller-coverage  | **#1360** (draft)                                         | 57 behind, merged clean                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| rf-lane-b803                  | fix/b803-redelivery-remainder-plan | **#1361** (draft)                                         | 54 behind, merged clean                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| rf-lane-b805                  | fix/b805-edit-items-update-draft   | **#1362** (draft) — **⚠ UNMERGED, CONFLICTS WITH MASTER** | 43 behind; `git merge origin/master` produced real content conflicts in `apps/mobile/__tests__/edit-items-draft.test.ts` and `apps/mobile/app/(operator)/(tabs)/orders/[id]/edit-items.tsx` — resolving those is a product-code call, not something to freehand during a cleanup pass. Pushed AS-IS (original tip, unmerged) so the work isn't lost; **whoever picks it up must merge master and resolve both files before it can land.** |
+
+**Remaining, NOT done:** the other ~10 branches from the earlier survey table already had an
+open or merged PR tracking that exact branch (nothing new to preserve there — see the table
+below for which), and the full REMOVE step (unlink symlinks → delete node_modules →
+`git worktree remove` without `--force` → `git worktree prune` → `git branch -d`, `-D` only on a
+confirmed squash-merge) across the ~49 worktrees has **not been run** — this session ran out of
+time after the SALVAGE step. The next Mac Lead should pick up REMOVE from the survey table below,
+re-verifying each branch's PR/merge state is still current before deleting anything.
+**Do not run `janitor --apply`** (B800 hazard: it can misclassify a fresh zero-commit branch as
+merged).
 
 A raw worktree survey (branch, ahead-count, dirty-file-count) taken during this handoff is below,
 useful as the INVENTORY step's starting point:
