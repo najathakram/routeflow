@@ -23,6 +23,9 @@ import { StripHtml } from "../../common/transforms/strip-html.transform";
 export class CreateInvoiceItemDto {
   @IsString() description: string;
   @IsOptional() @IsUUID() productId?: string;
+  /** SA-093a round 6: this line's source order line, server-validated against the invoice's own
+   *  order. Round-trip it on every edit — omitting it drops the line to product-match fallback. */
+  @IsOptional() @IsUUID() orderItemId?: string;
   @IsNumber() @Min(0.001) qty: number;
   @IsNumber() @Min(0) unitPrice: number;
   @IsOptional() @IsNumber() @Min(0) discount?: number;

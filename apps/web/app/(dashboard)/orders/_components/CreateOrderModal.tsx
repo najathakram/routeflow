@@ -10,6 +10,7 @@ import { Modal, Textarea, Button, cn, useToast } from "@routeflow/ui/web";
 import { useQuery } from "@tanstack/react-query";
 import { useCustomers, useCustomerPrices, useCustomer } from "@/lib/api/customers";
 import { useProducts } from "@/lib/api/products";
+import { scheduleScannerRefocus } from "@/lib/refocus-scanner";
 import {
   useCreateOrder,
   useActiveOrderForCustomer,
@@ -561,7 +562,6 @@ export function CreateOrderModal({
         : scanV2
           ? stepLineUnit(li, 1)
           : { ...li, qty: li.qty + 1 };
-
     // Built once, outside the updater — none of it depends on `prev`, only on `product`/the
     // customer/pricing context, so there is nothing here a race could make stale.
     const newTempId = product.id + "-" + Date.now();
@@ -653,7 +653,7 @@ export function CreateOrderModal({
       setScrollToId(result.mergedInto!.tempId);
       setProductSearch("");
       setDebouncedProductSearch("");
-      setTimeout(() => productSearchRef.current?.focus(), 50);
+      scheduleScannerRefocus(productSearchRef, 50);
       return { created: false };
     }
     setScrollToId(newTempId);
@@ -661,7 +661,7 @@ export function CreateOrderModal({
     setDebouncedProductSearch("");
     setLineItemsError("");
     // Re-focus the product search so the scanner is ready for the next item
-    setTimeout(() => productSearchRef.current?.focus(), 50);
+    scheduleScannerRefocus(productSearchRef, 50);
     return { created: true };
   };
 
