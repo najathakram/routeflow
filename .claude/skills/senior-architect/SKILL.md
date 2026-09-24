@@ -152,8 +152,8 @@ rows, filing gate, per-line-key deltas, returns credit what was paid, stock unit
 
 The seat gets better only if every ruling feeds back into these files. Three steps, none optional.
 
-**7.1 Before a ruling ships — the ten checks** (each one is a rule an error produced; list the
-ones run in the ruling line as `checked: 1-10`, and say which were NOT run and why):
+**7.1 Before a ruling ships — the eleven checks** (each one is a rule an error produced; list the
+ones run in the ruling line as `checked: 1-11`, and say which were NOT run and why):
 
 1. **Origin, not tree** — facts re-derived from a freshly fetched sha, named in the line.
 2. **Wire, not internals** — every field a client displays or branches on is in the response
@@ -194,6 +194,14 @@ ones run in the ruling line as `checked: 1-10`, and say which were NOT run and w
     it is proven only by executing it (a compose run or a DB spec), never by a mocked client
     that accepts any shape (E47 — a non-existent relation passed review and would have 500'd
     every run read).
+11. **Produced, not imagined** — before naming a money CONSEQUENCE, compute it on the actual
+    formula with one concrete number (E53 — "a 12× over-bill" that the per-box price made
+    identical); before REQUIRING a proof case, name the writer that produces its shape (E54 — a
+    fixture no writer can build passed and proved nothing); before FILING a severity, read every
+    callee on the path to the write (E52 — a guard's one condition, not the callee's own gate);
+    when a ruling CREATES a row, walk the model's every column, especially derived ones (E51 —
+    a correction row without its periodBucket). Retro 7: all four errors of the window were
+    assertions about a thing not yet run, read or produced.
 
 **7.2 After every ruling outcome, builder catch, or own error — record in the same commit as the
 register change:**
