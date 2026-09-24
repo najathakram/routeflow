@@ -17,15 +17,18 @@
 import { roundMoney } from "@routeflow/pricing";
 
 /**
- * How the template's price relates to the product's per-box price: "box" (>= half the box price),
- * "pieces" (<= 1.5x the per-piece price), or "unclear" (in between, or no product price to compare).
+ * How the template's price relates to the product's per-box price: "pieces" (<= 1.5x the per-piece
+ * price, tested FIRST), "box" (>= max(half the box price, 1.5x the per-piece price)), or "unclear" (in
+ * between, a $0 price, or no product price to compare). For a 2-pack the per-piece price IS half the box
+ * price, so the box band starts at 1.5/pack there: a per-piece 2-pack line is never read as box-priced.
  */
 export function priceBasis(unitPrice, boxPrice, pack) {
   const box = Number(boxPrice);
   if (!(box > 0)) return "unclear";
   const ratio = Number(unitPrice) / box;
-  if (ratio >= 0.5) return "box";
+  if (!(ratio > 0)) return "unclear";
   if (ratio <= 1.5 / pack) return "pieces";
+  if (ratio >= Math.max(0.5, 1.5 / pack)) return "box";
   return "unclear";
 }
 

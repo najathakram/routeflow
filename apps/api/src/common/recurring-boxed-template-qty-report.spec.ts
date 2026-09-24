@@ -97,6 +97,19 @@ describe("B646 pre-landing report: classifyTemplateLine", () => {
     expect(b).toMatchObject({ priceBasis: "unclear", flagged: true, possibleOverbillPerCycle: 0 });
   });
 
+  // Opus B646 review (a642f2c7) MED: for a 2-pack the per-piece price is exactly half the box price, so
+  // testing "box" first (ratio >= 0.5) read a per-piece 2-pack line as box-priced and left it unflagged.
+  it("a PIECES-priced 2-pack ($20 of a $40 2-pack) is pieces and flagged; a box-priced 3-pack is box; $0 unclear", () => {
+    const [two, three, zero] = run("classify", [
+      line({ qty: 2, unitPrice: 20, productPrice: 40, unitsPerBox: 2 }),
+      line({ qty: 2, unitPrice: 40, productPrice: 40, unitsPerBox: 3 }),
+      line({ unitPrice: 0 }),
+    ]);
+    expect(two).toMatchObject({ priceBasis: "pieces", flagged: true, postFixUnitsRecorded: 4 });
+    expect(three).toMatchObject({ priceBasis: "box", flagged: false });
+    expect(zero).toMatchObject({ priceBasis: "unclear", flagged: true });
+  });
+
   it("a non-integer qty is flagged; 2.5 splits (30 units), 1.3 does not (stays 1.3)", () => {
     const [a, b] = run("classify", [line({ qty: 2.5 }), line({ qty: 1.3 })]);
     expect(a).toMatchObject({ flagged: true, reasons: ["non-integer"], splits: true });
