@@ -1,13 +1,19 @@
 import {
   computeLineSubtotal,
+  computeLineSubtotalStrict,
+  lineAmbiguity,
+  AmbiguousLineError,
   roundMoney,
   normalizeBoxesPieces,
+  packFromOwnSplit,
   perUnitPrice,
   costPerSellingUnit,
   computeMarginFraction,
   priceForMarginFloor,
   classifyMargin,
   computeCategoryTax,
+  categoryTaxSnapshotOf,
+  copyCategoryTaxSnapshot,
   applyBestPromotion,
   promotionMatchesProduct,
   ruleCanZeroPrice,
@@ -18,6 +24,7 @@ import {
   isUpsellLine,
   effectiveBuyerPrice,
   formatQtySplit,
+  invoiceLineQtyText,
   type PromotionRule,
   type PromoScopeProduct,
 } from "./pricing";
@@ -153,6 +160,129 @@ describe("pricing — money discipline", () => {
     });
   });
 
+  describe("computeLineSubtotalStrict — B644's guard for NEW writes (design doc, #938)", () => {
+    it("MONEY: agrees with computeLineSubtotal for every non-ambiguous shape", () => {
+      expect(
+        computeLineSubtotalStrict({
+          unitPrice: 220,
+          qty: 22,
+          boxes: 2,
+          pieces: 0,
+          unitsPerBox: 11,
+        }),
+      ).toBe(440);
+      expect(
+        computeLineSubtotalStrict({
+          unitPrice: 220,
+          qty: 21,
+          boxes: 1,
+          pieces: 10,
+          unitsPerBox: 11,
+        }),
+      ).toBe(420);
+      expect(computeLineSubtotalStrict({ unitPrice: 220, qty: 2 })).toBe(440);
+      expect(computeLineSubtotalStrict({ unitPrice: 5.25, qty: 4, unitsPerBox: 1 })).toBe(21);
+    });
+
+    it("MONEY: throws AmbiguousLineError on the exact B644 shape (6 boxes of 12, qty alone)", () => {
+      // The bug: computeLineSubtotal({unitPrice: 40, qty: 72, unitsPerBox: 12}) silently returns
+      // 40 x 72 = 2880 (72 x the BOX price) instead of refusing. Strict must never return that.
+      expect(() => computeLineSubtotalStrict({ unitPrice: 40, qty: 72, unitsPerBox: 12 })).toThrow(
+        AmbiguousLineError,
+      );
+      expect(() => computeLineSubtotalStrict({ unitPrice: 40, qty: 72, unitsPerBox: 12 })).toThrow(
+        /ambiguous/i,
+      );
+    });
+
+    it("a non-boxed product with qty alone is NOT ambiguous (unitsPerBox null/1)", () => {
+      expect(computeLineSubtotalStrict({ unitPrice: 5.25, qty: 4, unitsPerBox: null })).toBe(21);
+      expect(computeLineSubtotalStrict({ unitPrice: 5.25, qty: 4, unitsPerBox: 1 })).toBe(21);
+    });
+
+    it("throws when pieces >= unitsPerBox (a stale split that should have rolled over)", () => {
+      expect(() =>
+        computeLineSubtotalStrict({
+          unitPrice: 10,
+          qty: 25,
+          boxes: 1,
+          pieces: 15,
+          unitsPerBox: 10,
+        }),
+      ).toThrow(AmbiguousLineError);
+    });
+
+    it("throws when qty disagrees with boxes*unitsPerBox+pieces", () => {
+      expect(() =>
+        computeLineSubtotalStrict({ unitPrice: 10, qty: 99, boxes: 2, pieces: 0, unitsPerBox: 10 }),
+      ).toThrow(AmbiguousLineError);
+    });
+
+    it.each([
+      ["qty", { unitPrice: 10, qty: 1.5, boxes: 0, pieces: 0, unitsPerBox: 10 }],
+      ["boxes", { unitPrice: 10, qty: 10, boxes: 1.5, pieces: 0, unitsPerBox: 10 }],
+      ["pieces", { unitPrice: 10, qty: 10, boxes: 0, pieces: 5.5, unitsPerBox: 10 }],
+    ])("throws on a non-integer %s", (_name, input) => {
+      expect(() => computeLineSubtotalStrict(input)).toThrow(AmbiguousLineError);
+    });
+
+    it("every AmbiguousLineError carries code AMBIGUOUS_LINE", () => {
+      try {
+        computeLineSubtotalStrict({ unitPrice: 40, qty: 72, unitsPerBox: 12 });
+        throw new Error("expected a throw");
+      } catch (e) {
+        expect(e).toBeInstanceOf(AmbiguousLineError);
+        expect((e as AmbiguousLineError).code).toBe("AMBIGUOUS_LINE");
+      }
+    });
+
+    it("HOLD 1: a non-boxed product's fractional qty is NEVER flagged — OrderItem.qty is Decimal(10,3)", () => {
+      expect(computeLineSubtotalStrict({ unitPrice: 10, qty: 1.5, unitsPerBox: null })).toBe(15);
+      expect(computeLineSubtotalStrict({ unitPrice: 10, qty: 1.5, unitsPerBox: 1 })).toBe(15);
+    });
+
+    it("N1 (R-ui PC-probe follow-up): refuses boxes:0, pieces:0 on a boxed product — used to mint a $0 line", () => {
+      // buildLine already refuses this (N1); a caller of computeLineSubtotalStrict directly must
+      // get the same refusal, not just a $0 result, so the two never disagree.
+      expect(() =>
+        computeLineSubtotalStrict({ unitPrice: 10, qty: 0, boxes: 0, pieces: 0, unitsPerBox: 12 }),
+      ).toThrow(AmbiguousLineError);
+    });
+  });
+
+  describe("lineAmbiguity — the pure, non-throwing form (HOLD 3, #938)", () => {
+    it("returns null for every non-ambiguous shape strict accepts", () => {
+      expect(lineAmbiguity({ qty: 72, boxes: 6, pieces: 0, unitsPerBox: 12 })).toBeNull();
+      expect(lineAmbiguity({ qty: 2 })).toBeNull();
+      expect(lineAmbiguity({ qty: 1.5, unitsPerBox: null })).toBeNull(); // HOLD 1
+    });
+
+    it("returns the same reason strict throws, for the B644 shape — never throws itself", () => {
+      const reason = lineAmbiguity({ qty: 72, unitsPerBox: 12 });
+      expect(reason).toMatch(/ambiguous/i);
+      expect(() => lineAmbiguity({ qty: 72, unitsPerBox: 12 })).not.toThrow();
+    });
+
+    it("computeLineSubtotalStrict throws exactly when lineAmbiguity is non-null (same predicate)", () => {
+      const cases = [
+        { qty: 72, unitsPerBox: 12 },
+        { qty: 25, boxes: 1, pieces: 15, unitsPerBox: 10 },
+        { qty: 99, boxes: 2, pieces: 0, unitsPerBox: 10 },
+        { qty: 22, boxes: 2, pieces: 0, unitsPerBox: 11 },
+      ];
+      for (const c of cases) {
+        const ambiguous = lineAmbiguity(c) != null;
+        let threw = false;
+        try {
+          computeLineSubtotalStrict({ ...c, unitPrice: 10 });
+        } catch (e) {
+          threw = e instanceof AmbiguousLineError;
+        }
+        expect(threw).toBe(ambiguous);
+      }
+    });
+  });
+
   describe("perUnitPrice — display-only case-price / units-per-case hint", () => {
     it("divides the case price by units-per-case, rounded to cents", () => {
       expect(perUnitPrice(10, 6)).toBe(1.67);
@@ -229,6 +359,36 @@ describe("pricing — money discipline", () => {
         pieces: null,
         qty: 0,
       });
+    });
+  });
+
+  // B645 review gap: an existing EstimateItem/InvoiceItem written before unitsPerBox
+  // was itself snapshotted has it null, but still stores boxes/pieces/qty — and that
+  // split alone is enough to recover the pack, per the invariant normalizeBoxesPieces
+  // enforces (qty === boxes * pack + pieces). NEVER read the live product for this —
+  // it may have been repacked since the line was written.
+  describe("packFromOwnSplit — recovering a legacy line's pack from its own split", () => {
+    it("derives the pack from a whole-box line (6 boxes, 0 pieces, qty 72 -> 12)", () => {
+      expect(packFromOwnSplit({ qty: 72, boxes: 6, pieces: 0 })).toBe(12);
+    });
+
+    it("derives the pack from a line with loose pieces (2 boxes, 3 pieces, qty 51 -> 24)", () => {
+      expect(packFromOwnSplit({ qty: 51, boxes: 2, pieces: 3 })).toBe(24);
+    });
+
+    it("returns null when there are no boxes to divide by", () => {
+      expect(packFromOwnSplit({ qty: 10, boxes: 0, pieces: 0 })).toBeNull();
+      expect(packFromOwnSplit({ qty: 10, boxes: null, pieces: null })).toBeNull();
+    });
+
+    it("returns null when the split doesn't land on a whole number", () => {
+      // (10 - 0) / 3 = 3.33...
+      expect(packFromOwnSplit({ qty: 10, boxes: 3, pieces: 0 })).toBeNull();
+    });
+
+    it("returns null for a pack of exactly 1 (indistinguishable from not boxed)", () => {
+      // (6 - 0) / 6 = 1
+      expect(packFromOwnSplit({ qty: 6, boxes: 6, pieces: 0 })).toBeNull();
     });
   });
 
@@ -476,6 +636,97 @@ describe("computeCategoryTax — regulated items (W3)", () => {
         lineSubtotal: Number.NaN,
       }),
     ).toBe(0);
+  });
+});
+
+describe("categoryTaxSnapshotOf — B297 sale-time trio (SA-088 D1)", () => {
+  it("returns an all-null snapshot for a non-regulated line (no category)", () => {
+    expect(categoryTaxSnapshotOf(null)).toEqual({
+      categoryTaxType: null,
+      categoryTaxRate: null,
+      categoryPriceIncludesTax: null,
+    });
+    expect(categoryTaxSnapshotOf(undefined)).toEqual({
+      categoryTaxType: null,
+      categoryTaxRate: null,
+      categoryPriceIncludesTax: null,
+    });
+  });
+
+  it("stamps the full trio for a regulated category", () => {
+    expect(
+      categoryTaxSnapshotOf({ taxType: "EXCISE_PER_UNIT", rate: 1.25, priceIncludesTax: false }),
+    ).toEqual({
+      categoryTaxType: "EXCISE_PER_UNIT",
+      categoryTaxRate: 1.25,
+      categoryPriceIncludesTax: false,
+    });
+  });
+
+  it("stamps a NONE-taxType category too — zero tax is still a recorded basis, not 'no snapshot'", () => {
+    expect(categoryTaxSnapshotOf({ taxType: "NONE", rate: 0, priceIncludesTax: false })).toEqual({
+      categoryTaxType: "NONE",
+      categoryTaxRate: 0,
+      categoryPriceIncludesTax: false,
+    });
+  });
+
+  it("coerces a numeric-string rate to a number and a missing priceIncludesTax to false", () => {
+    expect(categoryTaxSnapshotOf({ taxType: "PERCENT_OF_SALE", rate: "0.0525" })).toEqual({
+      categoryTaxType: "PERCENT_OF_SALE",
+      categoryTaxRate: 0.0525,
+      categoryPriceIncludesTax: false,
+    });
+  });
+});
+
+describe("copyCategoryTaxSnapshot — B297 verbatim copy for merges/duplicates (SA-098a)", () => {
+  it("returns an all-null snapshot when there is nothing to copy", () => {
+    const allNull = {
+      categoryTaxType: null,
+      categoryTaxRate: null,
+      categoryPriceIncludesTax: null,
+    };
+    expect(copyCategoryTaxSnapshot(null)).toEqual(allNull);
+    expect(copyCategoryTaxSnapshot(undefined)).toEqual(allNull);
+  });
+
+  it("copies a stamped trio verbatim, never re-deriving it", () => {
+    expect(
+      copyCategoryTaxSnapshot({
+        categoryTaxType: "EXCISE_PER_UNIT",
+        categoryTaxRate: 1.25,
+        categoryPriceIncludesTax: false,
+      }),
+    ).toEqual({
+      categoryTaxType: "EXCISE_PER_UNIT",
+      categoryTaxRate: 1.25,
+      categoryPriceIncludesTax: false,
+    });
+  });
+
+  it("copies a NULL trio through as NULL — never invents a rate for a legacy line", () => {
+    expect(
+      copyCategoryTaxSnapshot({
+        categoryTaxType: null,
+        categoryTaxRate: null,
+        categoryPriceIncludesTax: null,
+      }),
+    ).toEqual({ categoryTaxType: null, categoryTaxRate: null, categoryPriceIncludesTax: null });
+  });
+
+  it("coerces a Decimal-shaped rate to a number", () => {
+    expect(
+      copyCategoryTaxSnapshot({
+        categoryTaxType: "PERCENT_OF_SALE",
+        categoryTaxRate: "0.0525" as unknown as number,
+        categoryPriceIncludesTax: true,
+      }),
+    ).toEqual({
+      categoryTaxType: "PERCENT_OF_SALE",
+      categoryTaxRate: 0.0525,
+      categoryPriceIncludesTax: true,
+    });
   });
 });
 
@@ -1212,5 +1463,44 @@ describe("formatQtySplit", () => {
     expect(formatQtySplit({ qty: 288, boxes: 1, pieces: 0, boxLabel: "pallet" })).toBe("1 pallet");
     // A label already ending in "s" is not double-pluralised.
     expect(formatQtySplit({ qty: 4, boxes: 4, pieces: 0, boxLabel: "chassis" })).toBe("4 chassis");
+  });
+});
+
+// B653 review (2026-09-23): moved here from apps/web/lib/invoice-line-unit.ts so web, api
+// (PDF + email) and mobile all call the SAME formatter — no second copy of this decision.
+describe("invoiceLineQtyText", () => {
+  it("a pack line (no unitLabel) is EXACTLY formatQtySplit — byte-identical to before", () => {
+    expect(invoiceLineQtyText({ qty: 13, boxes: 2, pieces: 3 })).toBe(
+      formatQtySplit({ qty: 13, boxes: 2, pieces: 3 }),
+    );
+    expect(invoiceLineQtyText({ qty: 13, boxes: 2, pieces: 3, unitLabel: null })).toBe(
+      "2 boxes + 3 pcs",
+    );
+    expect(invoiceLineQtyText({ qty: 13, boxes: 2, pieces: 3, unitLabel: "   " })).toBe(
+      "2 boxes + 3 pcs",
+    );
+    expect(invoiceLineQtyText({ qty: 10 })).toBe("10");
+  });
+
+  it('a units_v1 line names its unit, not "boxes"', () => {
+    expect(invoiceLineQtyText({ qty: 864, boxes: 3, pieces: 0, unitLabel: "Case" })).toBe(
+      "3 Cases",
+    );
+    expect(invoiceLineQtyText({ qty: 288, boxes: 1, pieces: 0, unitLabel: "Case" })).toBe("1 Case");
+  });
+
+  it("a factor-1 unit line (no split) names its unit — never a bare qty", () => {
+    expect(invoiceLineQtyText({ qty: 5, boxes: null, pieces: null, unitLabel: "Piece" })).toBe(
+      "5 Piece",
+    );
+    expect(invoiceLineQtyText({ qty: 1, boxes: null, pieces: null, unitLabel: "Piece" })).toBe(
+      "1 Piece",
+    );
+  });
+
+  it("trims the label", () => {
+    expect(invoiceLineQtyText({ qty: 576, boxes: 2, pieces: 0, unitLabel: "  Case " })).toBe(
+      "2 Cases",
+    );
   });
 });

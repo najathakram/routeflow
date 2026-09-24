@@ -13,6 +13,8 @@ import {
 import { showToast } from "../../../lib/toast";
 import { confirm } from "../../../lib/confirm";
 import { fmtCalendarDate } from "../../../lib/format-date";
+import { poLineSubtotal } from "../../../lib/po-line-subtotal";
+import { poDisplayTotal } from "../../../lib/po-list-logic";
 
 function statusPill(status: POStatus): {
   variant: "brand" | "green" | "orange" | "red" | "gray";
@@ -98,11 +100,9 @@ export default function PurchaseOrderDetailScreen() {
   const totalReceived = po.items.reduce((sum, it) => sum + Number(it.qtyReceived), 0);
   const receivedRatio = totalOrdered > 0 ? totalReceived / totalOrdered : 0;
 
-  const computedTotal = po.items.reduce(
-    (sum, it) => sum + Number(it.qtyOrdered) * Number(it.unitCost),
-    0,
-  );
-  const displayTotal = Number(po.totalAmount) || computedTotal;
+  // B698: the stored total, else the sum of the STORED line totals — never qtyOrdered x unitCost.
+  // Same helper the LIST row uses, so the two screens can never disagree on one order's total.
+  const displayTotal = poDisplayTotal(po);
 
   return (
     <SafeAreaView style={styles.safe} edges={["top", "left", "right"]}>
@@ -205,7 +205,8 @@ export default function PurchaseOrderDetailScreen() {
 
 function ItemRow({ item, isFirst }: { item: POItem; isFirst: boolean }) {
   const productName = item.product?.name ?? `Product ${item.productId}`;
-  const subtotal = Number(item.qtyOrdered) * Number(item.unitCost);
+  // B698: the stored exact line total; the multiply is only the fallback for a row without one.
+  const subtotal = poLineSubtotal(item);
   const remaining = Number(item.qtyOrdered) - Number(item.qtyReceived);
 
   return (

@@ -782,6 +782,10 @@ export function StockCountTab() {
                   } else if (e.key === "Escape") {
                     setSuggestOpen(false);
                   } else if (e.key === "Enter") {
+                    // B672: BarcodeScannerButton's own USB-wedge detector shares this input and
+                    // calls preventDefault() on a real scan — which does NOT stop this separate
+                    // React handler from also firing. Bail so a real scan isn't double-added.
+                    if (e.defaultPrevented) return;
                     e.preventDefault();
                     if (suggestOpen && suggestions[suggestIndex]) {
                       pickSuggestion(suggestions[suggestIndex]);

@@ -79,6 +79,12 @@ export class CreateVendorBillDto {
   @IsOptional() @IsString() supplierInvoiceNumber?: string;
   /** Operator override after the duplicate warning — records the bill anyway. */
   @IsOptional() @IsBoolean() allowDuplicate?: boolean;
+  /**
+   * Operator confirmed a raised-PO line with no stated pack size should be
+   * recorded as loose pieces anyway (B743). Only meaningful once the
+   * PACK_SIZE_UNKNOWN gate is enforced.
+   */
+  @IsOptional() @IsBoolean() acknowledgePackSizeUnknown?: boolean;
 
   @IsOptional()
   @IsArray()

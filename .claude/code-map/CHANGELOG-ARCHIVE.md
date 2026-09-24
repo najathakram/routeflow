@@ -2,6 +2,59 @@
 
 Verbatim overflow from `.claude/code-map/CHANGELOG.md` once it exceeds the newest-30 / 40,000-byte cap (split 2026-09-13, docs/code-map-split-land). Newest first, oldest at the bottom — same one-dated-bullet-per-session convention as the live file.
 
+- **2026-09-11** — (branch `fix/train4-order-idempotency-key`, train 4 Run B, **B215**; map + lesson land
+  IN-PR per the 2026-09-10 owner ruling, base `70d15a87`) — **the staff-merge replay store is now a
+  per-request key ROW, and a replay re-runs the convergent post-fold tail.** The old store was the single
+  first-key-wins `Order.idempotencyKey` column, so a later merge wave's key was silently dropped and its
+  retry folded the cart AGAIN (the fold writes ABSOLUTE totals ⇒ the order inflated). NEW model
+  **`OrderIdempotencyKey`** in `prisma/schema/sales.prisma` (migration `20260911000000_order_idempotency_key_table`,
+  additive: `@@unique([tenantId, key])`, `@@index([orderId])`, `responseHash`, order FK `onDelete: Cascade`,
+  `Order.mergeIdempotencyKeys` back-relation) — mapped `sales` in `split-prisma-schema.mjs`'s `MODEL_DOMAIN`,
+  added to `apps/api/scripts/apply-rls.js`'s `TENANT_TABLES` (the step that actually arms RLS in prod, missed in
+  the first pass) and to the parked `prisma/deferred-rls/20260909000000_rls` arrays. NEW pure module
+  **`apps/api/src/orders/merge-idempotency.ts`**: `mergeRequestHash({customerId, items?, appliedCreditNotes?})`
+  (sha256 over canonical JSON; BOTH lists stable-serialized then SORTED, so neither's wire order can turn an
+  honest retry into a cart mismatch) and the error-code const `IDEMPOTENCY_KEY_CONFLICT`.
+  `orders.service.ts`: `recordMergeIdempotencyKey(tx, orderId, {key, responseHash})` writes the row inside the
+  FOLD's own transaction (P2002 ⇒ 409 aborting the fold); `updateOrderItems`'s 4th arg
+  `opts?: { idempotency? }` is passed only when a key exists; `findOrderIdByIdempotencyKey(key, customerId,
+requestHash?)`'s lookup order is now **key table (this customer) → this customer's Order column → tenant-wide
+  key-table refusal** — the column read MUST precede the tenant-wide check, or a legitimate replay of the
+  caller's own key 409s whenever any other customer holds a key row; both 409s carry
+  `{code: IDEMPOTENCY_KEY_CONFLICT, reason: "CART_MISMATCH"|"HELD_BY_OTHER_ORDER", orderId, message}`. The
+  post-fold tail was extracted to private **`reconcileOrderAfterEdit(orderId, customerId, appliedCreditNotes,
+{postDeliveryEdit, skipInPlaceResync})`** (invoice resync / draft reconcile + the Serializable credit
+  sync+settle) with public **`replayMergeReconcile(orderId, customerId, appliedCreditNotes)`** called from the
+  controller's merge branch on its `replayed: true` path, still inside the customer advisory lock — the status
+  event and `appendOrderRevision` stay fold-only (append-only, not convergent), and a replay passes
+  `skipInPlaceResync: true` because the pre-edit cumulative `invoicedQty` the partial-billing guard needs is gone
+  by then. `create()` and its P2002 recovery both route through private `findReplayCandidateByKey(key)` (table
+  first, column fallback), so a keyed merge that fell through to `create()` replays instead of minting a
+  duplicate. `POST_DELIVERY_EDIT_STATUSES` is now one module const read by both callers.
+  **Schema-spec collateral:** `schema-folder.spec.ts`'s model-count pin 125 → 126 and its **case (h) RETIRED** —
+  it asserted the folder still block-identical (207 blocks) to the retired single `schema.prisma` at `e39bf9db`,
+  a one-time split-time proof that no block count can satisfy once the folder legitimately gains models (208 vs
+  207), and it `it.skip`ped itself on a depth-1 CI clone anyway; the standing lossless guard is
+  `apps/api/scripts/schema-drift.mjs` (`npm run local:drift` / the CI db-migrations replay). `CLAUDE.md`,
+  `no-single-schema-path.spec.ts`, `split-prisma-schema.mjs`'s header and `docs/IMPROVEMENTS.md` say so too.
+  **Mobile (`mobile.md`):** `NewOrderScreen.tsx` rotates the cart-session submit key on a REAL customer switch
+  (a `keyCustomerIdRef` stamped in `onChangeCustomer`, compared in `onPick` — re-picking the same customer keeps
+  its key) and its submit `onError` gained an `IDEMPOTENCY_KEY_CONFLICT` branch offering "Open order" (navigate
+  by the body's `orderId`, reset the key, retire the bound draft) instead of wedging on a bare message;
+  `lib/order-submit-key.ts`'s doc comment lists the switch as reset condition (3).
+  **Tests:** `orders/orders.merge-idempotency.spec.ts` (REG-B215 T1-T17 + pins P1-P5, incl. T2b reconcile-on-replay
+  - no-revision, T11b credit-set order-insensitivity, T16 `create()`'s key-table replay, T17 the lookup order)
+    and the DB lane `orders/order-idempotency-key.db.spec.ts` (D1-D4, PD1-PD3 against real Postgres; D3 = the
+    pre-fold refusal, D4 = the in-tx P2002 rollback). Lesson **L-104** appended (domain), **L-099** archived for
+    headroom. api.md/mobile.md updated; web.md/packages.md untouched (no diff there).
+- **2026-09-11** — (WP3, DECIDE-29/OPS-23 Google sign-in monitor, small dev-pipeline run) —
+  INDEX.md gains a "Where to find" row for the new `scripts/lib/google-signin-check.mjs`
+  (`checkGoogleSignIn`/`checkApexDns`) + its self-test, the `scripts/post-deploy-check.mjs`/
+  `scripts/smoke.mjs` Google-door sections, `scripts/google-signin-monitor.mjs`, and
+  `.github/workflows/google-signin-monitor.yml`; new runbook
+  `docs/runbooks/mandatory-dependencies.md` (Google OAuth client + apex DNS, break-glass, no
+  secrets/uuids/client ids). api.md/web.md/mobile.md/packages.md untouched (no diff there). Round-1 Opus corrections are in the row too: `decodeAuthError` (URL-first classification off the base64url `authError` param — the ~800 KB error page has no marker in the 64 KB body window), a POSITIVE-signal requirement for `ok` (else `unexpected_page`), the Google/Apex sections HOISTED above post-deploy-check's login gate (now 2/3; Login..Divergence 4-7), and `finalPage` (origin+pathname) as the only form a caller may log.
+Older entries: `git log -- .claude/code-map`
 - **2026-09-08** — (branch `docs/675-b263-bookkeeping`, Option-B bookkeeping follow-up for PR #675, mapped at `f52005f3`) — **B263 option B mapped: price edit inside the scan flow over a paused camera.** `mobile.md`'s "Barcode scanner" table row gains `active?: boolean` (default `true`, forwarded to `<ScanCamera active={active && !paused}>`) on both `BarcodeScanner.tsx`/`.web.tsx`, plus `feedback.action` now rendered as a pressable pill (previously dead — `onAmbiguous`/`onCreate` in `lib/scan-ladder.ts` could never fire). New dated section (`### 2026-09-08 — B263 option B`) documents NEW `lib/price-override.ts` (pure: `applyPriceOverride(item, {unitPrice, reason})` rounds via `roundMoney` + recomputes `lineTotal` via `computeLineSubtotal`, fixing a pre-existing unrounded-write gap on the list-branch modal too; `needsMarginAck(item, newPrice, floorPrice)` is the shared margin-floor decision helper) and `app/(operator)/(tabs)/orders/[id]/edit-items.tsx`'s `ProductPicker` gaining `canEditPrice`/`marginFloor`/`onScanSessionStart` props plus `pickerPriceEditItem` state: the SAME `PriceOverrideModal` now mounts inside the picker branch too, over the camera paused (not torn down) via the new `active` prop — scan → Edit price → Apply → scan next is now 2 taps / 0 remounts (was 5 taps / 2 camera lifecycles). A round-3 light-loop fix (after the engine's main pass) made the picker strip's margin-floor label derive from the same `computeMarginFraction`/`classifyMargin` calls `DraftItemCard` uses instead of a hardcoded literal, so the two surfaces cannot disagree on wording. New Tests bullet: `price-override.test.ts` (REG-B263-A), `edit-items-scan-price.test.ts` (REG-B263-B, REG-B263-H, `PIN-B263-D4`), `barcode-scanner-active.test.ts` (REG-B263-C). **Registry:** `move B263 --to F30 --tier T1` (B246's batch), analysis sections (Summary/What this feature is for/Root cause/User impact/Fix approach and UX/Test plan) filled from `cause-ruling.md` §1-2 and `bug-test-plan.md`, `prove`/`discharge` on #675 (master `f52005f3`) — done; B246's row gets a history note that the option-B twin landed. Sibling money-math gap found in review: `needsMarginAck` rounds to the nearest cent while the list/picker labels classify by the exact fraction, disagreeing by up to half a cent at the boundary — filed unbatched as **B280** (low; `bugs.mjs file`'s auto-classifier only scans title+location and neither string tripped the money regex, so `sensitive`/`sensitiveFor` were hand-set to `true`/`money` in the record frontmatter and `bugs.mjs index` resync'd `bugs.jsonl` from it). Lesson **L-099** appended (domain — a sheet that must return to a live surface mounts OVER it with a pause prop, never swaps the surface out; a secondary surface repeating a classification derives it from the same helper the primary uses). Register was 40/40 (at cap): no "next headroom" candidate was pre-flagged in `_meta.json.note` or the last 3 commits touching it, so a fresh oldest-first sweep ran — **L-010/L-025/L-027/L-034/L-035** (the oldest `none — judgment`-class entries) are each cited outside `.claude/lessons/**`/`.claude/pipeline/**`/`code-map/CHANGELOG.md`/`code-map/_meta.json` (`HANDOFF.md`; mobile test/source files + `code-map/mobile.md`; `tools/bugflow/docs/MIGRATION.md`; `scripts/campaign-check.mjs`+`scripts/jest-campaign-reporter.cjs`; `.claude/campaign/bugs/B34.md`, respectively) and stay active — archived **L-038** (2026-09-01, tooling, bot-authored lockfile regeneration) instead, grep-confirmed clean, its guard already `none — validate-lock passes either way` (no dedicated automated check). Back to 40/40 with L-099 added, 39.4/40.0 KB, archived 55, nextId 100. `node scripts/validate-lessons.mjs` exit 0.
 
 - **2026-09-08** — (branch `docs/673-signin-menu-bookkeeping`, Option-B bookkeeping follow-up for PR #673, mapped at `c138289c`) — **Sign-in menu focus-ring hotfix mapped.** `web.md`'s `components/site-header.tsx` bullet documents the Sign-in `DropdownMenu.Item asChild` anchors (`role="menuitem"`, icon + label + `ArrowUpRight` glyph): the `.signin-menu [role="menuitem"]` rule in `marketing.css` is now `display: flex; align-items: center; width: 100%; white-space: nowrap` with its own `:focus-visible` ring (`outline` + `outline-offset`) and `> * { outline: none }` on its children — was `inline`, so the ring painted once per line box (icon/label/arrow) and the arrow wrapped; resting colour unified `#6b81a0` → `#202124`. The `marketing-port.static.test.ts` bullet notes the 3 new R-MKT signin-menu CSS-rule-parser assertions (suite 59/59). Registry: B279 filed unbatched (ui-ux, medium) — `bugs.mjs prove`/`discharge` both require a `--batch` ledger shard by design (confirmed from source), so an unbatched row cannot reach `done`; full root-cause/fix/test-plan evidence written via `note` instead of a fabricated state. Lessons: L-098 appended (domain — a focusable element with more than one child is a flex/grid/block container with `white-space: nowrap`, the focus ring lives on the element never its children, pin with a CSS-rule test not a source-text grep); L-051 (2026-09-02, process, the pre-flagged headroom candidate from the #671 follow-up's own `_meta.json` note) archived, grep-confirmed clean. Register back to 40/40.

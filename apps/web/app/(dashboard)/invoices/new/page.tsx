@@ -20,6 +20,7 @@ import {
 } from "lucide-react";
 import { Button, Card, Input, useToast, cn } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
+import { scheduleScannerRefocus } from "@/lib/refocus-scanner";
 import { useQuery } from "@tanstack/react-query";
 import {
   useCreateInvoice,
@@ -402,6 +403,20 @@ function createEmptyItem(): LineItemState {
     discount: 0,
     taxable: false,
   };
+}
+
+/**
+ * B664: only unitsPerBox > 1 is real box packaging. A product can carry unitsPerBox = 1
+ * (the DTO has no minimum), and a truthy check alone (`upb ? … : undefined`) seeds a line
+ * with boxes:1/pieces:0/unitsPerBox:1 for it — on the server, `manual-invoice-lines.ts`
+ * re-derives quantity from those boxes/pieces via `normalizeBoxesPieces` and, because
+ * `pricing.ts`'s own `hasBoxPackaging` is also `upb > 1`, stores the line at qty 0 / $0.
+ * The edit form's hydrate already guards with `> 1` (see its onChange callback); this
+ * mirrors that so the new-invoice form never sends boxes/pieces for a degenerate upb.
+ */
+function boxedUnitsPerBox(value: unknown): number | undefined {
+  const n = Number(value);
+  return Number.isFinite(n) && n > 1 ? n : undefined;
 }
 
 function lineTotal(item: LineItemState): number {
@@ -862,7 +877,7 @@ export default function NewInvoicePage() {
    * (or 1 unit) — same ergonomics as the order scan flow.
    */
   function addProductFromCatalog(product: any) {
-    const upb = product.unitsPerBox ? Number(product.unitsPerBox) : undefined;
+    const upb = boxedUnitsPerBox(product.unitsPerBox);
     const listPrice = parseFloat(String(product.pricePerUnit ?? 0));
     // Per-product tier override first, then the customer's own tier ladder —
     // a Tier-3 customer previously billed at LIST on every catalog add here.
@@ -925,7 +940,7 @@ export default function NewInvoicePage() {
     setScrollToKey(existing ? existing.key : lineItem.key);
     setErrors((e) => ({ ...e, items: "" }));
     // Refocus the scanner input so a sequence of scans is uninterrupted.
-    setTimeout(() => scanInputRef.current?.focus(), 30);
+    scheduleScannerRefocus(scanInputRef, 30);
   }
 
   // ── Top-of-table scan/search input ───────────────────────────────────────────
@@ -1078,7 +1093,9 @@ export default function NewInvoicePage() {
         discount: Number(it.discount) || undefined,
         // Map the taxable checkbox to an actual tax rate sent to the API
         taxRate: it.taxable ? taxRate : 0,
-        ...(it.unitsPerBox ? { boxes: it.boxes ?? 0, pieces: it.pieces ?? 0 } : {}),
+        // Defense in depth (#1176 review): boxedUnitsPerBox() already keeps unitsPerBox out of
+        // item state for upb<=1, but a read site should never trust a single write-side guard.
+        ...((it.unitsPerBox ?? 0) > 1 ? { boxes: it.boxes ?? 0, pieces: it.pieces ?? 0 } : {}),
       })),
       notes: notes.trim() || undefined,
       referenceNumber: reference.trim() || undefined,
@@ -1243,7 +1260,9 @@ export default function NewInvoicePage() {
         productId: it.productId as string,
         qty: Number(it.qty),
         unitPrice: Number(it.unitPrice),
-        ...(it.unitsPerBox ? { boxes: it.boxes ?? 0, pieces: it.pieces ?? 0 } : {}),
+        // Defense in depth (#1176 review): boxedUnitsPerBox() already keeps unitsPerBox out of
+        // item state for upb<=1, but a read site should never trust a single write-side guard.
+        ...((it.unitsPerBox ?? 0) > 1 ? { boxes: it.boxes ?? 0, pieces: it.pieces ?? 0 } : {}),
       }));
 
     const errs: Record<string, string> = {};
@@ -1706,7 +1725,9 @@ export default function NewInvoicePage() {
                                     ) : (
                                       <span className="italic">no SKU</span>
                                     )}
-                                    {p.unitsPerBox ? <span> · {p.unitsPerBox} per box</span> : null}
+                                    {Number(p.unitsPerBox ?? 0) > 1 ? (
+                                      <span> · {p.unitsPerBox} per box</span>
+                                    ) : null}
                                   </p>
                                 </div>
                                 <div className="text-right">
@@ -1804,7 +1825,7 @@ export default function NewInvoicePage() {
                           const specialPrice = pid ? priceMap[pid] : undefined;
                           const effectivePrice =
                             specialPrice ?? (price ? parseFloat(price) : item.unitPrice);
-                          const upb = unitsPerBox ?? undefined;
+                          const upb = boxedUnitsPerBox(unitsPerBox);
                           updateItem(item.key, {
                             description: desc,
                             productId: pid || undefined,
@@ -1853,7 +1874,7 @@ export default function NewInvoicePage() {
                     </div>
 
                     {/* Qty — box/piece mode if unitsPerBox set, otherwise plain number */}
-                    {item.unitsPerBox ? (
+                    {(item.unitsPerBox ?? 0) > 1 ? (
                       item.sellBy === "unit" ? (
                         <div className="flex flex-col gap-0.5">
                           <input
@@ -1892,7 +1913,7 @@ export default function NewInvoicePage() {
                             <input
                               type="number"
                               min={0}
-                              max={item.unitsPerBox - 1}
+                              max={(item.unitsPerBox ?? 0) - 1}
                               value={item.pieces ?? 0}
                               onChange={(e) => {
                                 const pieces = Math.max(0, parseInt(e.target.value, 10) || 0);
@@ -2147,7 +2168,7 @@ export default function NewInvoicePage() {
           if (createProductTargetIdx !== null) {
             // Real box size so a just-created boxed product gets the Boxes+Pcs
             // editor — mirrors the ProductSearchInput onChange handler above.
-            const upb = product.unitsPerBox ?? undefined;
+            const upb = boxedUnitsPerBox(product.unitsPerBox);
             setItems((prev) =>
               prev.map((item, i) =>
                 i === createProductTargetIdx

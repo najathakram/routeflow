@@ -190,8 +190,18 @@ export function usePurchaseOrder(id: string | null) {
  */
 export interface PurchaseOrderItemInput {
   productId: string;
-  qty: number;
-  unitCost: number;
+  /** Per-piece line: pieces and a per-piece cost. */
+  qty?: number;
+  unitCost?: number;
+  /**
+   * Per-case line (a boxed product): the ENTERED figures. The server computes the quantity, the per-piece
+   * cost and the exact total (roundMoney(caseCost x (cases + loosePieces / packSize))) and ignores any client
+   * total or per-piece figure; `packSize` is stored as the denomination.
+   */
+  packSize?: number;
+  caseCost?: number;
+  cases?: number;
+  loosePieces?: number;
 }
 
 export interface CreatePurchaseOrderInput {
@@ -257,8 +267,13 @@ export function useReceivePurchaseOrder() {
 export interface UpdatePurchaseOrderItemInput {
   id?: string;
   productId: string;
-  qtyOrdered: number;
-  unitCost: number;
+  /** Per-piece line. */
+  qtyOrdered?: number;
+  unitCost?: number;
+  /** Per-case line (see PurchaseOrderItemInput): packSize + caseCost + cases (+ loosePieces). */
+  caseCost?: number;
+  cases?: number;
+  loosePieces?: number;
   sku?: string | null;
   packSize?: number | null;
 }
@@ -276,7 +291,6 @@ export interface UpdatePurchaseOrderInput {
   reapplyInventory?: boolean;
 }
 
-// scan-ok: dead-hook — its caller, the Edit-PO modal (LANE-U step 6 web, part 3 of 3), lands in a later PR; the size cap split it out. Remove this note then.
 export function useUpdatePurchaseOrder() {
   const qc = useQueryClient();
   return useMutation({

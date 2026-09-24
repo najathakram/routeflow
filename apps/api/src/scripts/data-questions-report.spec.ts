@@ -23,11 +23,18 @@ const lib = require("../../scripts/lib/data-questions.cjs") as {
   parseOnly: (arg: string | null) => Set<number> | null;
   runReport: (
     client: unknown,
-    opts: { only?: Set<number> | null; cap?: number; timeoutMs?: number },
+    opts: { only?: Set<number> | null; cap?: number; timeoutMs?: number; lockTimeoutMs?: number },
     log: (l: string) => void,
-  ) => Promise<void>;
+  ) => Promise<
+    { n: number; bug: string; statements: number; rows: number; failed: number; capped: number }[]
+  >;
+  execute: (
+    client: unknown,
+    opts: { only?: Set<number> | null; cap?: number },
+    log: (l: string) => void,
+  ) => Promise<unknown>;
 };
-const { QUESTIONS, assertReadOnly, parseOnly, runReport } = lib;
+const { QUESTIONS, assertReadOnly, parseOnly, runReport, execute } = lib;
 
 const MODELS = new Map(
   Prisma.dmmf.datamodel.models.map((m) => [
@@ -64,6 +71,14 @@ const fakeClient = (
   const seen: string[] = [];
   return {
     seen,
+    connected: 0,
+    ended: 0,
+    connect: async function (this: { connected: number }) {
+      this.connected++;
+    },
+    end: async function (this: { ended: number }) {
+      this.ended++;
+    },
     query: async (sql: string) => {
       seen.push(sql);
       if (fail(sql)) throw new Error(`boom: column does not exist\ndetail line`);
@@ -89,7 +104,6 @@ describe("data-questions-report", () => {
     );
     for (const w of [
       'DELETE FROM "Order"',
-      'SELECT 1; DROP TABLE "Order"',
       'WITH x AS (DELETE FROM "Order" RETURNING 1) SELECT 1',
       'UPDATE "Order" SET status = 1',
       'INSERT INTO "Order" DEFAULT VALUES',
@@ -97,6 +111,25 @@ describe("data-questions-report", () => {
       expect(() => assertReadOnly(w)).toThrow(/non-read-only/);
     // a write keyword inside a quoted identifier or a string literal is not a write
     expect(() => assertReadOnly(`SELECT "update", 'delete' FROM "Order"`)).not.toThrow();
+    // CASE ... END is fine: only a statement-level END would be transaction control, and that cannot start a SELECT/WITH
+    expect(() => assertReadOnly(`SELECT CASE WHEN 1 = 1 THEN 1 ELSE 0 END`)).not.toThrow();
+  });
+
+  it("the guard refuses a second statement on the SEMICOLON itself, and transaction control", () => {
+    // fails on the semicolon, not on the DROP that follows it
+    expect(() => assertReadOnly("SELECT 1; SELECT 2")).toThrow(/semicolon/);
+    expect(() => assertReadOnly('SELECT 1; DROP TABLE "Order"')).toThrow(/semicolon/);
+    expect(() => assertReadOnly("SELECT 1;")).toThrow(/semicolon/);
+    // a semicolon inside a string literal or a quoted identifier is not a statement separator
+    expect(() => assertReadOnly(`SELECT 'a;b', "c;d" FROM "Order"`)).not.toThrow();
+    for (const t of [
+      "COMMIT",
+      "ROLLBACK",
+      "SET TRANSACTION READ WRITE",
+      "SELECT 1 WHERE (SELECT COMMIT)",
+      "WITH x AS (SELECT 1) SELECT * FROM x -- ROLLBACK",
+    ])
+      expect(() => assertReadOnly(t)).toThrow(/transaction control/);
   });
 
   it("every table and column named exists in the Prisma schema (and the checker catches a fake one)", () => {
@@ -128,11 +161,12 @@ describe("data-questions-report", () => {
     await runReport(c, { cap: 5, timeoutMs: 1234 }, () => undefined);
     expect(c.seen[0]).toBe("BEGIN READ ONLY");
     expect(c.seen[1]).toBe("SET LOCAL statement_timeout = 1234");
+    expect(c.seen[2]).toBe("SET LOCAL lock_timeout = 2000"); // review item 5
     expect(c.seen[c.seen.length - 1]).toBe("ROLLBACK");
     expect(c.seen.filter((s) => /^(BEGIN|COMMIT)/.test(s))).toEqual(["BEGIN READ ONLY"]);
     for (const s of c.seen)
       expect(s).toMatch(
-        /^(BEGIN READ ONLY|SET LOCAL statement_timeout|SAVEPOINT|RELEASE SAVEPOINT|ROLLBACK|SELECT \* FROM)/,
+        /^(BEGIN READ ONLY|SET LOCAL (statement|lock)_timeout|SAVEPOINT|RELEASE SAVEPOINT|ROLLBACK|SELECT \* FROM)/,
       );
     expect(c.seen.filter((s) => /^SELECT \* FROM/.test(s)).length).toBe(
       QUESTIONS.reduce((n, q) => n + q.stmts.length, 0),
@@ -169,6 +203,95 @@ describe("data-questions-report", () => {
     expect(out.filter((l) => l.startsWith('   {"tenantId"')).length).toBe(
       3 * QUESTIONS.filter((q) => q.n === 7 || q.n === 15).reduce((n, q) => n + q.stmts.length, 0),
     );
+  });
+
+  it("returns an id-free summary (question, statements, rows, failures) and keeps ids in the detail log only", async () => {
+    const c = fakeClient(
+      (sql) => sql.includes('FROM "Estimate" e') && sql.includes("WITH aff"),
+      () => [{ tenantId: "tenant-secret-1", productId: "product-secret-2", n: 1 }],
+    );
+    const out: string[] = [];
+    const summary = await runReport(c, { only: new Set([1]) }, (l) => out.push(l));
+    expect(summary).toEqual([{ n: 1, bug: "B645", statements: 2, rows: 1, failed: 1, capped: 0 }]);
+    expect(JSON.stringify(summary)).not.toMatch(/secret/);
+    expect(out.join("\n")).toMatch(/tenant-secret-1/); // the private file keeps them
+  });
+
+  it("a failing BEGIN or SET still closes the client and runs no question", async () => {
+    for (const bad of ["BEGIN READ ONLY", "SET LOCAL statement_timeout = 30000"]) {
+      const c = fakeClient((sql) => sql === bad);
+      await expect(execute(c, {}, () => undefined)).rejects.toThrow(/boom/);
+      expect(c.connected).toBe(1);
+      expect(c.ended).toBe(1);
+      expect(c.seen.filter((x) => /^SELECT \* FROM/.test(x))).toEqual([]);
+      expect(c.seen.filter((x) => x.startsWith("SAVEPOINT"))).toEqual([]);
+    }
+  });
+
+  it("a real Postgres rejecting a write inside BEGIN READ ONLY is NOT covered here (needs the *.db.spec.ts lane)", () => {
+    // the guard, the fake-client transaction shape and the SQL text are what this hermetic spec can prove
+    expect(QUESTIONS.length).toBe(16);
+  });
+
+  describe("review-item pins (SQL shape; row semantics need a real DB)", () => {
+    const sql = (n: number) => QUESTIONS.find((q) => q.n === n)!.stmts.map((s) => s.sql);
+    it("Q12: reversals are aggregated per line BEFORE the sale is joined, never per reversal row", () => {
+      for (const t of sql(12)) {
+        expect(t).toMatch(/WITH rev AS[\s\S]*GROUP BY 1, 2, 3[\s\S]*sale AS/);
+        expect(t).not.toMatch(/JOIN LATERAL/);
+      }
+      expect(sql(12).some((t) => /sourceOrderItemId/.test(t))).toBe(true); // INLINE keyed to the line
+    });
+    it("Q13: never relies on deliveredQty IS NOT NULL (NOT NULL DEFAULT 0); buckets are split", () => {
+      for (const t of sql(13)) expect(t).not.toMatch(/deliveredQty" IS NOT NULL/);
+      expect(sql(13)[0]).toMatch(/deliveredQty" > 0 AND oi."deliveredQty" < oi.qty/);
+      expect(sql(13)[1]).toMatch(/deliveredQty" = 0/);
+    });
+    it("Q1: estimate and invoice lines are summed per product before a 1:1 join", () => {
+      const t = sql(1)[1];
+      expect(t).toMatch(/WITH aff AS[\s\S]*GROUP BY 1, 2, 3, 4[\s\S]*est AS/);
+      expect(t).not.toMatch(
+        /JOIN "EstimateItem" ei ON ei."estimateId" = e.id AND ei."productId" = ii."productId"/,
+      );
+    });
+    it("Q16: order lines are tested with EXISTS, never joined (no row multiplication)", () => {
+      const t = sql(16)[0];
+      expect(t).not.toMatch(/JOIN "OrderItem"/);
+      expect(t).toMatch(/EXISTS \(SELECT 1 FROM "OrderItem" oi/);
+    });
+
+    it("Q10 (round 2): estimate and invoice lines are summed per (document, product) in their own CTE before a 1:1 join", () => {
+      const t = sql(10)[0];
+      expect(t).toMatch(/WITH est AS[\s\S]*GROUP BY 1, 2, 3, 4[\s\S]*inv AS/);
+      expect(t).not.toMatch(
+        /LEFT JOIN "InvoiceItem" ii ON ii\."invoiceId" = e\."invoiceId" AND ii\."productId" = ei\."productId"/,
+      );
+    });
+
+    it("Q5 (round 2): each draft order's total is counted once, not once per change request that points at it", () => {
+      const t = sql(5)[0];
+      // the dedup happens BEFORE the sum: drafts is DISTINCT on (tenantId, type, order id), draft_totals sums
+      // that deduped set, and the outer query reads it with max() (already 1:1 per group), never a raw sum
+      // over one row per change request.
+      expect(t).toMatch(
+        /drafts AS \(\s*SELECT DISTINCT nd\."tenantId", nd\.type, nd\."nextOrderId"/,
+      );
+      expect(t).toMatch(/draft_totals AS \([\s\S]*sum\(n\.total\)[\s\S]*FROM drafts d/);
+      expect(t).toMatch(/max\(dt\.drafts_total_dollars\)/);
+    });
+
+    it("Q16 (round 2): the Return join checks tenantId, and an ambiguous id-prefix match is excluded", () => {
+      const t = sql(16)[0];
+      expect(t).toMatch(/JOIN "Return" r ON r\."tenantId" = m\."tenantId"/);
+      expect(t).toMatch(/NOT EXISTS[\s\S]*"Return" r2[\s\S]*r2\.id <> r\.id/);
+    });
+
+    it("Q1 (round 2): qualifies each pair via EXISTS, then sums ALL invoice lines of the pair (not only re-created ones)", () => {
+      const t = sql(1)[1];
+      expect(t).toMatch(/EXISTS \(\s*SELECT 1 FROM "InvoiceItem" ii2/);
+      expect(t).toMatch(/ii2\."createdAt" > i\."createdAt" \+ interval '1 minute'/);
+      expect(t).not.toMatch(/\bii\.boxes IS NULL/);
+    });
   });
 
   it("holds no client identifier: no uuid and no credential-shaped URL in the script or the library", () => {

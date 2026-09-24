@@ -76,6 +76,13 @@ const PAYMENT_MODEL_RECEIVER =
   /\.invoicePayment\.\s*(findMany|findFirst|findUnique|update|updateMany|count|aggregate)\s*\(/;
 // A `payments:` relation key in a Prisma where/include — always InvoicePayment.
 const PAYMENTS_RELATION_KEY = /\bpayments\s*:\s*\{/;
+// An `invoice:` relation key in a Prisma where/include — the INVOICE's own status, whatever model the
+// query itself is on. The mirror of PAYMENTS_RELATION_KEY: `tx.invoiceItem.findMany({ where: { invoice:
+// { status: { not: "VOID" } } } })` filters Invoice.status, not InvoicePayment.status, and the receiver
+// (`.invoiceItem.`) matches neither OTHER_MODEL_RECEIVER nor INVOICE_MODEL_RECEIVER. Only consulted when
+// the window carries NO payment signal at all, so it can never exempt a real payment site that merely
+// happens to sit near an `invoice:` key.
+const INVOICE_RELATION_KEY = /\binvoice\s*:\s*\{/;
 
 // Variable-name receivers known to be a different model's already-fetched row
 // (never an InvoicePayment) vs. known to be an InvoicePayment row — checked in
@@ -120,12 +127,20 @@ interface Offender extends Candidate {
 }
 
 function isOtherModel(lines: string[], idx: number): boolean {
+  const start = Math.max(0, idx - 4);
   // Look at the current line and up to 4 lines above for the nearest model
   // receiver — Prisma where-clauses commonly split the receiver call and the
   // `status` key across lines.
-  for (let i = idx; i >= Math.max(0, idx - 4); i--) {
+  for (let i = idx; i >= start; i--) {
     if (PAYMENT_MODEL_RECEIVER.test(lines[i]) || PAYMENTS_RELATION_KEY.test(lines[i])) return false;
     if (OTHER_MODEL_RECEIVER.test(lines[i]) || INVOICE_MODEL_RECEIVER.test(lines[i])) return true;
+  }
+  // No model receiver resolved it. A nested `invoice: {` relation key in the same window means the status
+  // being filtered is the INVOICE's. Deliberately checked only after the loop above found NO payment
+  // signal anywhere in the window, so a genuine InvoicePayment site sitting beside an `invoice:` key is
+  // still flagged rather than exempted.
+  for (let i = idx; i >= start; i--) {
+    if (INVOICE_RELATION_KEY.test(lines[i])) return true;
   }
   return false;
 }
@@ -252,6 +267,25 @@ describe("no un-marked hand-rolled InvoicePayment not-VOID filters (PR-2, model-
       const isComparison = NOT_VOID_COMPARISON_FWD.test(line) || NOT_VOID_COMPARISON_REV.test(line);
       expect(isFilter || isComparison).toBe(true);
     }
+  });
+
+  it("treats a nested `invoice: {` relation filter as the Invoice's status, but never exempts a real payment site beside one", () => {
+    // An InvoiceItem query filtering its parent invoice's status is not an InvoicePayment site, and its
+    // receiver matches neither model-receiver regex — the relation key is what resolves it.
+    const invoiceRelation = [
+      "const items = await tx.invoiceItem.findMany({",
+      '  where: { orderItemId: { in: lineIds }, invoice: { status: { not: "VOID" } } },',
+    ];
+    expect(isOtherModel(invoiceRelation, 1)).toBe(true);
+
+    // The guard that keeps the above from becoming a loophole: a real InvoicePayment filter is still
+    // caught even with an `invoice: {` key in the same window.
+    const paymentBesideInvoiceKey = [
+      "const paid = await tx.invoicePayment.findMany({",
+      "  where: { invoice: { tenantId } , ",
+      '    status: { not: "VOID" } },',
+    ];
+    expect(isOtherModel(paymentBesideInvoiceKey, 2)).toBe(false);
   });
 
   it("has zero un-marked InvoicePayment not-VOID sites", () => {

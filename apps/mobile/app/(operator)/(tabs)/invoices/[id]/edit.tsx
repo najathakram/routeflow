@@ -31,12 +31,14 @@ import {
   type InvoiceTotalsLine,
 } from "../../../../../lib/invoice-totals";
 import { isPendingOrderMirror } from "../../../../../lib/invoices-logic";
+import { hasUnitLine, unitLabelsOf } from "../../../../../lib/invoice-line-unit";
 import { computeLineSubtotal } from "@routeflow/pricing";
 import { showToast } from "../../../../../lib/toast";
 import {
   hasUnsavedInvoiceLineEdits,
   type InvoiceEditSnapshot,
 } from "../../../../../lib/discard-guard";
+import { hydratedLineTax } from "../../../../../lib/invoice-edit-tax";
 
 /**
  * Invoice edit screen — DRAFT-only, mirroring web's invoices/[id]/edit page.
@@ -113,7 +115,9 @@ export default function EditInvoiceScreen() {
   useEffect(() => {
     if (!invoice || invoice.status !== "DRAFT" || hydratedFor.current === invoice.id) return;
     hydratedFor.current = invoice.id;
-    const hydratedLines = (invoice.items ?? []).map((it) => ({
+    // B294 (SA-141): a legacy invoice's 0-rate lines load at its verified inferred rate.
+    const lineTax = hydratedLineTax(invoice);
+    const hydratedLines = (invoice.items ?? []).map((it, i) => ({
       key: newKey(),
       productId: it.productId ?? null,
       description: it.description,
@@ -123,8 +127,7 @@ export default function EditInvoiceScreen() {
       unitsPerBox: it.unitsPerBox ?? null,
       unitPrice: Number(it.unitPrice),
       discount: it.discount != null && Number(it.discount) > 0 ? Number(it.discount) : null,
-      taxRate: Number(it.taxRate ?? 0),
-      taxable: Number(it.taxRate ?? 0) > 0,
+      ...lineTax[i],
       note: it.notes ?? "",
       promoFreeUnits: it.promoFreeUnits ?? null,
       promoBaseUnits: it.promoFreeUnits
@@ -423,6 +426,16 @@ export default function EditInvoiceScreen() {
     return guard(
       "Edit the order instead",
       `This invoice mirrors order ${invoice.order?.orderNumber ?? ""} and updates automatically until the order is delivered.`,
+    );
+  }
+  // units_v1, FAIL CLOSED (B784, mirrors web's B641): update() refuses a unit line (4c-2 is not
+  // built yet) and this form holds no unit state, so saving would silently store the line as a
+  // PACK line — 3 Cases (864 pieces) become 72 pieces while the money still reads $1,440. Refuse
+  // visibly here instead of letting the operator discover it from the server's 409 on Save.
+  if (hasUnitLine(invoice.items)) {
+    return guard(
+      `This invoice has a line sold by the ${unitLabelsOf(invoice.items).join(" / ")}`,
+      "Saving from this screen would turn that line into a pack line and change its quantity. Open the invoice to review it, or delete this draft and create it again.",
     );
   }
 
