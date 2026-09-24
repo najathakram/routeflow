@@ -168,3 +168,29 @@ describe("safeOperatorRedirect", () => {
     expect(routing.safeOperatorRedirect?.(value)).toBe("/dashboard");
   });
 });
+
+describe("landingForRole (PHASE 1a — driver-mode 1a)", () => {
+  it("REG-1a: a DRIVER's default landing (/dashboard) becomes /routes/my-runs", () => {
+    expect(routing.landingForRole?.("/dashboard", "DRIVER")).toBe("/routes/my-runs");
+  });
+
+  it.each([["OPERATOR"], ["SUPER_ADMIN"], ["TENANT_ADMIN"], [null], [undefined]])(
+    "REG-1a: a non-DRIVER role (%p) keeps the default /dashboard landing",
+    (role) => {
+      expect(routing.landingForRole?.("/dashboard", role as any)).toBe("/dashboard");
+    },
+  );
+
+  it("REG-1a: an explicit valid redirect still wins for a DRIVER (e.g. a deep-link bounce)", () => {
+    expect(routing.landingForRole?.("/orders", "DRIVER")).toBe("/orders");
+  });
+
+  it("REG-1a: a DRIVER explicitly redirected to /dashboard itself still lands on my-runs", () => {
+    // safeOperatorRedirect("/dashboard") resolves to "/dashboard" whether that
+    // came from an explicit ?redirect=/dashboard or the no-redirect default —
+    // either way a driver has no reason to see the operator dashboard.
+    expect(
+      routing.landingForRole?.(routing.safeOperatorRedirect?.("/dashboard") ?? "", "DRIVER"),
+    ).toBe("/routes/my-runs");
+  });
+});
