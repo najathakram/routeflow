@@ -587,10 +587,10 @@ describe("InventoryService", () => {
 
       const result = await service.recordSale("prod-1", D(2), null, null, tx());
 
-      // Purchase-only + deterministic ordering (createdAt, then id).
+      // Purchase-only + deterministic ordering (effectiveAt, then createdAt, then id — B562).
       expect(prisma.stockMovement.findFirst).toHaveBeenCalledWith({
         where: { productId: "prod-1", type: "PURCHASE" },
-        orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+        orderBy: [{ effectiveAt: "desc" }, { createdAt: "desc" }, { id: "desc" }],
         select: { unitCost: true },
       });
       expect(result.unitCost.toString()).toBe("3.5");
@@ -1317,6 +1317,75 @@ describe("InventoryService", () => {
       expect(row.totalUsed30Days).toBe(0);
       expect(row.daysRemaining).toBeNull();
       expect(row.needsReorder).toBe(false);
+    });
+  });
+
+  // ─── B562 PR-1 (SA-136 §3): effectiveAt is the accounting date ─────────────
+  describe("B562 effectiveAt", () => {
+    const at = "2026-06-01T00:00:00.000Z";
+
+    it("a backdated purchase writes effectiveAt = effectiveDate, leaves createdAt to the DB, and counts later rows by effectiveAt", async () => {
+      prisma.product.findUnique.mockResolvedValue(product());
+      prisma.stockMovement.count.mockResolvedValue(0);
+
+      await service.recordPurchase(
+        { productId: "prod-1", quantity: 5, unitCost: 3.5, effectiveDate: at } as any,
+        "user-1",
+      );
+
+      const data = prisma.stockMovement.create.mock.calls[0][0].data;
+      expect(data.effectiveAt).toEqual(new Date(at));
+      expect(data).not.toHaveProperty("createdAt");
+      expect(prisma.stockMovement.count).toHaveBeenCalledWith({
+        where: { productId: "prod-1", effectiveAt: { gt: new Date(at) } },
+      });
+    });
+
+    it("a backdated adjustment writes effectiveAt = effectiveDate and leaves createdAt to the DB", async () => {
+      prisma.product.findUnique.mockResolvedValue(product());
+      prisma.stockMovement.count.mockResolvedValue(0);
+
+      await service.recordAdjustment(
+        { productId: "prod-1", quantity: 2, effectiveDate: at } as any,
+        "user-1",
+      );
+
+      const data = prisma.stockMovement.create.mock.calls[0][0].data;
+      expect(data.effectiveAt).toEqual(new Date(at));
+      expect(data).not.toHaveProperty("createdAt");
+      expect(prisma.stockMovement.count).toHaveBeenCalledWith({
+        where: { productId: "prod-1", effectiveAt: { gt: new Date(at) } },
+      });
+    });
+
+    it("the cost replay reads the ledger in accounting order: effectiveAt, then createdAt, then id", async () => {
+      prisma.product.findMany.mockResolvedValue([product()]);
+      prisma.stockMovement.findMany.mockResolvedValue([]);
+
+      await service.recomputeCosts({ dryRun: true });
+
+      expect(prisma.stockMovement.findMany.mock.calls[0][0].orderBy).toEqual([
+        { effectiveAt: "asc" },
+        { createdAt: "asc" },
+        { id: "asc" },
+      ]);
+    });
+
+    it("the movement list filters and sorts on effectiveAt", async () => {
+      prisma.stockMovement.findMany.mockResolvedValue([]);
+      prisma.stockMovement.count.mockResolvedValue(0);
+
+      await service.listMovements({ from: "2026-06-01", to: "2026-06-30" } as any);
+
+      const args = prisma.stockMovement.findMany.mock.calls[0][0];
+      expect(args.where.effectiveAt.gte).toEqual(new Date("2026-06-01"));
+      expect(args.where.effectiveAt.lte.toISOString()).toBe("2026-06-30T23:59:59.999Z");
+      expect(args.where).not.toHaveProperty("createdAt");
+      expect(args.orderBy).toEqual([
+        { effectiveAt: "desc" },
+        { createdAt: "desc" },
+        { id: "desc" },
+      ]);
     });
   });
 });
