@@ -608,6 +608,8 @@ export class RegulatedLedgerService {
     sales: any[];
     productByItem: Map<string, string>;
     lineKeyOfSale: (s: any) => string;
+    lineKeyOfReversal: (r: any) => string;
+    invoiceItemIds: string[];
     remQtyByLine: Map<string, number>;
     remUnitBasisByLine: Map<string, number>;
     remNetByLine: Map<string, number>;
@@ -700,11 +702,39 @@ export class RegulatedLedgerService {
       sales,
       productByItem,
       lineKeyOfSale,
+      lineKeyOfReversal,
+      invoiceItemIds,
       remQtyByLine,
       remUnitBasisByLine,
       remNetByLine,
       remTaxByLine,
     };
+  }
+
+  /**
+   * SA-167 (OP-5, one routine): the per-product walk over an ordered list of SALE rows — book a
+   * chunk capped at each row's line remaining, stop at the first row that PARKS (its leftover goes
+   * to a parked row of its own). `reverseReturnEntries` (live) and `resolveParkedReversal`
+   * (resumption) both drive it, so they can never disagree on row order or on what a still-legacy
+   * row does with the leftover. Returns what is left unbooked and, if the walk stopped on a park,
+   * that row and the pieces parked on it.
+   */
+  private async walkSaleRows(
+    params: Omit<Parameters<RegulatedLedgerService["bookReversalChunk"]>[0], "s" | "remaining"> & {
+      sales: any[];
+      remaining: number;
+    },
+  ): Promise<{ remaining: number; parkedOn: { row: any; pieces: number } | null }> {
+    const { sales, ...chunkParams } = params;
+    let remaining = params.remaining;
+    for (const s of sales) {
+      if (remaining <= 0) break;
+      const before = remaining;
+      const chunk = await this.bookReversalChunk({ ...chunkParams, s, remaining });
+      remaining = chunk.remaining;
+      if (chunk.parked) return { remaining, parkedOn: { row: s, pieces: before } };
+    }
+    return { remaining, parkedOn: null };
   }
 
   async reverseReturnEntries(params: {
@@ -797,31 +827,26 @@ export class RegulatedLedgerService {
     for (const [productId, returnedQtyRaw] of returnedByProduct.entries()) {
       let remaining = Number(returnedQtyRaw);
       if (!(remaining > 0)) continue;
-      for (const s of salesByProduct.get(productId) ?? []) {
-        if (remaining <= 0) break;
-        const chunk = await this.bookReversalChunk({
-          db,
-          s,
-          remaining,
-          returnId,
-          orderId,
-          returnedUnit,
-          bucket,
-          now,
-          lineKeyOfSale,
-          nativeRemByLine,
-          remQtyByLine,
-          remUnitBasisByLine,
-          remNetByLine,
-          remTaxByLine,
-          lineShapeBySaleId,
-          correctionsBySaleId,
-          packNowByProduct,
-          rows,
-        });
-        remaining = chunk.remaining;
-        if (chunk.parked) break;
-      }
+      await this.walkSaleRows({
+        db,
+        sales: salesByProduct.get(productId) ?? [],
+        remaining,
+        returnId,
+        orderId,
+        returnedUnit,
+        bucket,
+        now,
+        lineKeyOfSale,
+        nativeRemByLine,
+        remQtyByLine,
+        remUnitBasisByLine,
+        remNetByLine,
+        remTaxByLine,
+        lineShapeBySaleId,
+        correctionsBySaleId,
+        packNowByProduct,
+        rows,
+      });
     }
 
     if (rows.length === 0) return;
@@ -926,13 +951,21 @@ export class RegulatedLedgerService {
     },
     pack: number,
   ): Promise<{
-    outcome: "booked" | "closed" | "unresolvable";
+    /** `partial` (SA-167): something was booked or parked but not everything — read
+     *  `parkedPieces`/`unbookedPieces`; a bare `booked` means every returned piece is booked. */
+    outcome: "booked" | "partial" | "closed" | "unresolvable";
     correctionEntryId: string | null;
+    /** The FIRST REVERSAL row booked. */
     resolvedEntryId: string | null;
     bookedPieces: number;
     bookedQty: number;
     bookedNet: number;
     bookedTax: number;
+    /** Pieces parked on a NEW parked row (a still-legacy row further down the walk). */
+    parkedPieces: number;
+    parkedRowIds: string[];
+    /** Pieces the walk could not book anywhere (an over-return), mirroring the live path. */
+    unbookedPieces: number;
     verdictAfter: SaleAxisState | null;
     unresolvableReason: string | null;
   }> {
@@ -945,6 +978,9 @@ export class RegulatedLedgerService {
       bookedQty: 0,
       bookedNet: 0,
       bookedTax: 0,
+      parkedPieces: 0,
+      parkedRowIds: [] as string[],
+      unbookedPieces: 0,
       verdictAfter: null,
       unresolvableReason: reason,
     });
@@ -990,6 +1026,9 @@ export class RegulatedLedgerService {
         bookedQty: 0,
         bookedNet: 0,
         bookedTax: 0,
+        parkedPieces: 0,
+        parkedRowIds: [] as string[],
+        unbookedPieces: 0,
         verdictAfter: verdict.state,
         unresolvableReason: null,
       };
@@ -1031,10 +1070,20 @@ export class RegulatedLedgerService {
       // reversal's unitBasisQty diverges from its qty by construction) — never re-corrected if
       // it already carries a correction of its own (defensive; the one-way design means this
       // should not happen in practice).
-      if (saleRow.invoiceItemId) {
-        const candidateReversals = await db.regulatedSalesLedger.findMany({
-          where: { invoiceItemId: { in: [saleRow.invoiceItemId] }, entryType: "REVERSAL" },
-        });
+      {
+        // SA-167(2): select by the SAME line key the balance builder folds reversals in by
+        // (`lineKeyOfReversal`: the order line, else the invoice item), never by this row's invoice
+        // item alone — a split or replaced invoice item's reversal carries a different
+        // invoiceItemId but the same order line and would escape the restatement.
+        const lineOrs: any[] = [
+          { invoiceItemId: { in: builtBefore.invoiceItemIds } },
+          ...(saleRow.orderItemId ? [{ orderItemId: saleRow.orderItemId }] : []),
+        ];
+        const candidateReversals = (
+          await db.regulatedSalesLedger.findMany({
+            where: { entryType: "REVERSAL", OR: lineOrs },
+          })
+        ).filter((r: any) => builtBefore.lineKeyOfReversal(r) === lineKey);
         for (const r of candidateReversals) {
           if (r.correctsEntryId != null) continue;
           const rQty = Number(r.qty);
@@ -1075,13 +1124,11 @@ export class RegulatedLedgerService {
     const now = new Date();
     const bucket = periodBucketOf(now);
     const rows: RegulatedCorrectionRowInput[] = [];
-    const chunk = await this.bookReversalChunk({
+    const walkBase = {
       db,
-      s: saleRow,
-      remaining: parked.returnedPieces,
       returnId: parked.returnId,
       orderId: parked.orderId,
-      returnedUnit: "PIECES",
+      returnedUnit: "PIECES" as const,
       bucket,
       now,
       lineKeyOfSale,
@@ -1090,12 +1137,18 @@ export class RegulatedLedgerService {
       remUnitBasisByLine,
       remNetByLine,
       remTaxByLine,
+      rows,
+    };
+    // The parked row first, on the operator's pack; then RESUME the live walk (SA-167).
+    const chunk = await this.bookReversalChunk({
+      ...walkBase,
+      s: saleRow,
+      remaining: parked.returnedPieces,
       lineShapeBySaleId: new Map([
         [saleRow.id, { line: lineWithSuppliedPack, productId: shape.productId }],
       ]),
       correctionsBySaleId,
       packNowByProduct: new Map(shape.productId ? [[shape.productId, pack]] : []),
-      rows,
     });
 
     // Defensive: our own pre-classify above already ruled out "unknown", so
@@ -1110,29 +1163,93 @@ export class RegulatedLedgerService {
     // piece-axis here).
     const verdictAfter = classify().state;
 
+    // SA-167 (the Opus REQUIRED silent under-reversal): the park recorded the product's WHOLE
+    // leftover on this first legacy row; whatever this row could not absorb continues down the
+    // product's remaining live sale rows through the SAME walk the live path runs. A row that is
+    // still legacy parks the leftover as a NEW parked row (idempotent via the unique) and stops,
+    // exactly as the live path would have; an over-return is reported, never invented.
+    let leftover = chunk.remaining;
+    let parkedPieces = 0;
+    const parkedRowIds: string[] = [];
+    if (leftover > 0) {
+      const productId = built.productByItem.get(saleRow.invoiceItemId) ?? shape.productId;
+      const ordered = built.sales.filter(
+        (s: any) =>
+          s.correctsEntryId == null && built.productByItem.get(s.invoiceItemId) === productId,
+      );
+      const at = ordered.findIndex((s: any) => s.id === saleRow.id);
+      const rest = at >= 0 ? ordered.slice(at + 1) : [];
+      if (rest.length > 0) {
+        const restShapes = await this.loadSaleLineShapes(db, rest);
+        const restCorrections = await this.loadCorrectionsBySaleId(
+          db,
+          rest.map((s: any) => s.id),
+        );
+        const restPackNow = await this.loadProductPackNow(db, [
+          ...new Set([...restShapes.values()].map((v) => v.productId).filter(Boolean)),
+        ] as string[]);
+        const walked = await this.walkSaleRows({
+          ...walkBase,
+          sales: rest,
+          remaining: leftover,
+          lineShapeBySaleId: restShapes,
+          correctionsBySaleId: restCorrections,
+          packNowByProduct: restPackNow,
+        });
+        leftover = walked.remaining;
+        if (walked.parkedOn) {
+          parkedPieces = walked.parkedOn.pieces;
+          const newRows = await db.regulatedLedgerParkedReversal.findMany({
+            where: { returnId: parked.returnId, saleEntryId: { in: [walked.parkedOn.row.id] } },
+            select: { id: true },
+          });
+          parkedRowIds.push(...newRows.map((r: any) => r.id));
+        }
+      }
+    }
+    const unbookedPieces = parkedPieces > 0 ? 0 : Math.max(0, leftover);
+
     if (rows.length === 0) {
       return {
-        outcome: "closed",
+        outcome: parkedPieces > 0 || unbookedPieces > 0 ? "partial" : "closed",
         correctionEntryId,
         resolvedEntryId: null,
         bookedPieces: 0,
         bookedQty: 0,
         bookedNet: 0,
         bookedTax: 0,
+        parkedPieces,
+        parkedRowIds,
+        unbookedPieces,
         verdictAfter,
         unresolvableReason: null,
       };
     }
 
-    const created = await db.regulatedSalesLedger.create({ data: rows[0] });
+    let firstId: string | null = null;
+    let bookedPieces = 0;
+    let bookedQty = 0;
+    let bookedNet = 0;
+    let bookedTax = 0;
+    for (const row of rows) {
+      const created = await db.regulatedSalesLedger.create({ data: row });
+      firstId ??= created.id;
+      bookedPieces += -Number(created.unitBasisQty);
+      bookedQty += -Number(created.qty);
+      bookedNet += -Number(created.netSales);
+      bookedTax += -Number(created.categoryTax);
+    }
     return {
-      outcome: "booked",
+      outcome: parkedPieces > 0 || unbookedPieces > 0 ? "partial" : "booked",
       correctionEntryId,
-      resolvedEntryId: created.id,
-      bookedPieces: -Number(created.unitBasisQty),
-      bookedQty: -Number(created.qty),
-      bookedNet: -Number(created.netSales),
-      bookedTax: -Number(created.categoryTax),
+      resolvedEntryId: firstId,
+      bookedPieces: round3(bookedPieces),
+      bookedQty: round3(bookedQty),
+      bookedNet: roundMoney(bookedNet),
+      bookedTax: roundMoney(bookedTax),
+      parkedPieces,
+      parkedRowIds,
+      unbookedPieces,
       verdictAfter,
       unresolvableReason: null,
     };

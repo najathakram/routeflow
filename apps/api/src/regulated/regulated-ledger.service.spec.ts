@@ -2727,6 +2727,16 @@ describe("RegulatedLedgerService", () => {
         if (where?.orderId != null && where?.entryType === "SALE") {
           return saleRows.filter((s) => s.orderId === where.orderId);
         }
+        if (where?.OR && where?.entryType === "REVERSAL") {
+          // SA-167(2): the restatement selects by the balance builder's own line key.
+          return priorReversals.filter((r) =>
+            where.OR.some((c: any) =>
+              c.invoiceItemId?.in
+                ? c.invoiceItemId.in.includes(r.invoiceItemId)
+                : c.orderItemId === r.orderItemId,
+            ),
+          );
+        }
         if (where?.invoiceItemId?.in && where?.entryType === "REVERSAL") {
           return priorReversals.filter((r) => where.invoiceItemId.in.includes(r.invoiceItemId));
         }
@@ -2848,7 +2858,9 @@ describe("RegulatedLedgerService", () => {
       );
 
       // Only 10 pieces remained (60 - 50); the requested 20 is capped there, not booked in full.
-      expect(result.outcome).toBe("booked");
+      // SA-167: the 10 that could not be booked are REPORTED (a bare "booked" never hides them).
+      expect(result.outcome).toBe("partial");
+      expect(result.unbookedPieces).toBe(10);
       expect(result.bookedPieces).toBe(10);
       expect(result.bookedPieces).not.toBe(20);
     });

@@ -1,4 +1,5 @@
-import { IsInt, IsString, Max, Min, MinLength } from "class-validator";
+import { Transform } from "class-transformer";
+import { IsInt, IsString, Max, MaxLength, Min, MinLength } from "class-validator";
 
 /**
  * The operator's answer for a parked regulated-ledger reversal (SA-089/B660): the PACK the
@@ -13,7 +14,9 @@ export class ResolveParkedReversalDto {
   @Max(10000)
   pack!: number;
 
+  @Transform(({ value }) => (typeof value === "string" ? value.trim() : value))
   @IsString()
   @MinLength(3)
+  @MaxLength(500)
   reason!: string;
 }

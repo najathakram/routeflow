@@ -52,6 +52,9 @@ const BOOKED_RESOLUTION = {
   bookedQty: 5,
   bookedNet: -50,
   bookedTax: -10,
+  parkedPieces: 0,
+  parkedRowIds: [] as string[],
+  unbookedPieces: 0,
   verdictAfter: "legacy" as const,
   unresolvableReason: null,
 };
@@ -112,10 +115,18 @@ describe("ParkedReversalResolutionService", () => {
       data: { resolvedEntryId: "rev-1" },
     });
     expect(table[0].resolvedEntryId).toBe("rev-1");
-    expect(res).toEqual({ alreadyResolved: false, outcome: "booked", resolvedEntryId: "rev-1" });
+    expect(res).toEqual({
+      alreadyResolved: false,
+      outcome: "booked",
+      resolvedEntryId: "rev-1",
+      bookedPieces: 5,
+      parkedPieces: 0,
+      parkedRowIds: [],
+      unbookedPieces: 0,
+    });
   });
 
-  it("SA-089b: locks the Order row (FOR UPDATE) AFTER the claim and BEFORE reading the sale/corrections/remaining, inside the SAME transaction", async () => {
+  it("SA-167(2): locks the Order row (FOR UPDATE) BEFORE the claim (cancel() is Return -> Order -> parked delete) and BEFORE reading the sale/corrections/remaining, inside the SAME transaction", async () => {
     let capturedExecuteRaw: jest.Mock | undefined;
     (prisma.tenantTransaction as jest.Mock).mockImplementationOnce((fn: any) => {
       const tx: any = { ...(prisma as any), $executeRaw: jest.fn().mockResolvedValue(0) };
@@ -130,9 +141,9 @@ describe("ParkedReversalResolutionService", () => {
     expect(sql).toContain('"Order"');
     expect(sql).toContain("FOR UPDATE");
     const model: any = (prisma as any).regulatedLedgerParkedReversal;
-    // AFTER the claim (the first updateMany), BEFORE resolveParkedReversal is ever called (which
-    // is where the sale/corrections/remaining are read).
-    expect(capturedExecuteRaw!.mock.invocationCallOrder[0]).toBeGreaterThan(
+    // BEFORE the claim (the first updateMany) — claim-then-Order deadlocks against cancel() — and
+    // BEFORE resolveParkedReversal is ever called (where the sale/corrections/remaining are read).
+    expect(capturedExecuteRaw!.mock.invocationCallOrder[0]).toBeLessThan(
       model.updateMany.mock.invocationCallOrder[0],
     );
     expect(capturedExecuteRaw!.mock.invocationCallOrder[0]).toBeLessThan(
@@ -140,7 +151,7 @@ describe("ParkedReversalResolutionService", () => {
     );
   });
 
-  it("never locks the Order row on an already-resolved / lost-claim no-op", async () => {
+  it("an already-resolved row still takes the Order lock first (the lock precedes every read of the resolved state) and books nothing", async () => {
     table[0].resolvedAt = new Date();
     let capturedExecuteRaw: jest.Mock | undefined;
     (prisma.tenantTransaction as jest.Mock).mockImplementationOnce((fn: any) => {
@@ -149,8 +160,55 @@ describe("ParkedReversalResolutionService", () => {
       return fn(tx);
     });
 
-    await service.resolve("pr-1", 12, "confirmed the case size on the invoice", actor);
-    expect(capturedExecuteRaw).not.toHaveBeenCalled();
+    const res = await service.resolve("pr-1", 12, "confirmed the case size on the invoice", actor);
+    expect(capturedExecuteRaw).toHaveBeenCalledTimes(1);
+    expect(res.alreadyResolved).toBe(true);
+    expect(ledger.resolveParkedReversal).not.toHaveBeenCalled();
+  });
+
+  it("SA-167(2): a row cancel() deleted while this waited for the Order lock is a 404, never alreadyResolved", async () => {
+    const model: any = (prisma as any).regulatedLedgerParkedReversal;
+    let reads = 0;
+    model.findFirst = jest.fn(async () => (++reads === 1 ? table[0] : null));
+    await expect(service.resolve("pr-1", 12, "reason text", actor)).rejects.toBeInstanceOf(
+      NotFoundException,
+    );
+    expect(ledger.resolveParkedReversal).not.toHaveBeenCalled();
+    expect(audit.log).not.toHaveBeenCalled();
+  });
+
+  it("SA-167(2): losing the claim to a cancel() that deleted the row is a 404 too", async () => {
+    const model: any = (prisma as any).regulatedLedgerParkedReversal;
+    let reads = 0;
+    model.findFirst = jest.fn(async () => (++reads <= 2 ? table[0] : null));
+    model.updateMany = jest.fn(async () => ({ count: 0 }));
+    await expect(service.resolve("pr-1", 12, "reason text", actor)).rejects.toBeInstanceOf(
+      NotFoundException,
+    );
+  });
+
+  it("SA-167: the audit and the answer carry every piece — parked and unbooked pieces are never hidden behind 'booked'", async () => {
+    ledger.resolveParkedReversal.mockResolvedValue({
+      ...BOOKED_RESOLUTION,
+      outcome: "partial",
+      bookedPieces: 24,
+      parkedPieces: 36,
+      parkedRowIds: ["pr-2"],
+      unbookedPieces: 0,
+    });
+    const res = await service.resolve("pr-1", 12, "reason text", actor);
+    expect(res).toMatchObject({ outcome: "partial", parkedPieces: 36, parkedRowIds: ["pr-2"] });
+    expect(audit.log).toHaveBeenCalledWith(
+      expect.objectContaining({
+        meta: expect.objectContaining({
+          outcome: "partial",
+          bookedPieces: 24,
+          parkedPieces: 36,
+          parkedRowIds: ["pr-2"],
+          unbookedPieces: 0,
+        }),
+      }),
+    );
   });
 
   it("passes the parked row's own fields and the supplied pack into RegulatedLedgerService.resolveParkedReversal", async () => {
@@ -288,11 +346,22 @@ describe("ParkedReversalResolutionService", () => {
       bookedQty: 0,
       bookedNet: 0,
       bookedTax: 0,
+      parkedPieces: 0,
+      parkedRowIds: [],
+      unbookedPieces: 0,
       verdictAfter: "piece-axis",
       unresolvableReason: null,
     });
     const res = await service.resolve("pr-1", 12, "reason text", actor);
-    expect(res).toEqual({ alreadyResolved: false, outcome: "closed", resolvedEntryId: null });
+    expect(res).toEqual({
+      alreadyResolved: false,
+      outcome: "closed",
+      resolvedEntryId: null,
+      bookedPieces: 0,
+      parkedPieces: 0,
+      parkedRowIds: [],
+      unbookedPieces: 0,
+    });
     expect(table[0].resolvedAt).toBeInstanceOf(Date);
     expect(audit.log).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -360,6 +429,14 @@ describe("parked reversal endpoints: roles, the tobacco addon, and the body", ()
       );
     }
     for (const bad of ["", "ok", "  ", undefined, null]) {
+      await expect(run({ pack: 12, reason: bad })).rejects.toBeInstanceOf(BadRequestException);
+    }
+    // SA-167(2): trimmed, then 3..500 — whitespace padding cannot satisfy the minimum.
+    await expect(run({ pack: 12, reason: "  confirmed  " })).resolves.toMatchObject({
+      reason: "confirmed",
+    });
+    await expect(run({ pack: 12, reason: "a".repeat(500) })).resolves.toBeDefined();
+    for (const bad of ["  ok  ", " a ", "a".repeat(501)]) {
       await expect(run({ pack: 12, reason: bad })).rejects.toBeInstanceOf(BadRequestException);
     }
     for (const extra of ["unitsPerBoxSupplied", "returnedPieces", "qty"]) {

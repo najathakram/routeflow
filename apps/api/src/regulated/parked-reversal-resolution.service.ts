@@ -42,18 +42,15 @@ export class ParkedReversalResolutionService {
    * cancel's delete waits on this transaction and the CANCELLED-return check below still
    * catches a cancel that does NOT delete the row on some other path.
    *
-   * SA-089a(c)/SA-089b: `SELECT id FROM "Order" WHERE id = $orderId FOR UPDATE`, taken AFTER
-   * the claim, inside this SAME transaction — the SAME lock the live create/cancel paths take
+   * SA-089a(c)/SA-167(2): `SELECT id FROM "Order" WHERE id = $orderId FOR UPDATE` is taken FIRST,
+   * before the claim, inside this SAME transaction — the SAME lock the live create/cancel paths take
    * around their own read-then-book (`inline-returns.service.ts`'s `capture()`/`cancel()`, both
-   * `Order FOR UPDATE` before touching the regulated ledger). Not an advisory lock: an advisory
-   * lock (a SEPARATE session-level lock on its own dedicated connection) does not exclude a
-   * `FOR UPDATE` row lock (a transactional lock on the same connection as the writes) — an
-   * earlier version of this method took `withAdvisoryLock("order-merge", orderId)`, which would
-   * have looked correct while providing NO real serialization against the live paths' own row
-   * lock (caught in review before merge). `buildLineRemainingBalances`'s remaining is a SUM
-   * over every SALE/REVERSAL row of one order line, not a single row, so this must be the whole
-   * ORDER, never a `FOR UPDATE` on the sale row alone. Lock order stays acyclic: this method
-   * locks Order only; `cancel()` locks Return then Order — never the reverse in either path.
+   * `Order FOR UPDATE` before touching the regulated ledger). It is a row lock, not an advisory lock
+   * (an advisory lock does not exclude a `FOR UPDATE` row lock), and it covers the WHOLE order:
+   * `buildLineRemainingBalances`'s remaining is a SUM over every SALE/REVERSAL row of an order line.
+   * Lock order is Order -> parked row here; `cancel()` is Return -> Order -> parked-row delete, so the
+   * two never wait on each other in a cycle (claim-then-Order would). A row `cancel()` deleted while
+   * this waited for the Order is a 404, never `alreadyResolved`.
    *
    * An `unresolvable` verdict (classifier still says legacy/unknown after the supplied pack)
    * throws a 409 `PARKED_REVERSAL_UNRESOLVABLE` — the throw rolls back the claim, leaving the
@@ -62,6 +59,14 @@ export class ParkedReversalResolutionService {
   async resolve(id: string, pack: number, reason: string, actor: { id: string }) {
     const tenantId = this.prisma.getTenantId();
     const result = await this.prisma.tenantTransaction(async (tx: any) => {
+      const peek = await tx.regulatedLedgerParkedReversal.findFirst({ where: { id } });
+      if (!peek) throw new NotFoundException("Parked reversal not found");
+
+      // SA-167(2), amends SA-089b: the Order row lock FIRST, then the conditional claim.
+      // `cancel()` takes Return -> Order -> deleteMany(parked), so claim-then-Order here would
+      // deadlock against it. A row cancel deleted while we waited for the lock is a 404, never
+      // "already resolved".
+      await tx.$executeRaw`SELECT id FROM "Order" WHERE id = ${peek.orderId} FOR UPDATE`;
       const row = await tx.regulatedLedgerParkedReversal.findFirst({ where: { id } });
       if (!row) throw new NotFoundException("Parked reversal not found");
       if (row.resolvedAt) return { alreadyResolved: true as const, row };
@@ -76,14 +81,10 @@ export class ParkedReversalResolutionService {
         },
       });
       if (claim.count === 0) {
-        return {
-          alreadyResolved: true as const,
-          row: await tx.regulatedLedgerParkedReversal.findFirst({ where: { id } }),
-        };
+        const again = await tx.regulatedLedgerParkedReversal.findFirst({ where: { id } });
+        if (!again) throw new NotFoundException("Parked reversal not found");
+        return { alreadyResolved: true as const, row: again };
       }
-
-      // SA-089b: the Order row lock, taken AFTER the claim — see the method doc above.
-      await tx.$executeRaw`SELECT id FROM "Order" WHERE id = ${row.orderId} FOR UPDATE`;
 
       // The claim is held; now refuse a CANCELLED return — its goods were never kept, so a
       // reversal against it would misstate the filing, and cancel() would not undo it (it
@@ -144,6 +145,12 @@ export class ParkedReversalResolutionService {
           bookedQty: result.resolution.bookedQty,
           bookedNet: result.resolution.bookedNet,
           bookedTax: result.resolution.bookedTax,
+          // SA-167: every piece is accounted for — "booked" alone is never reported when any
+          // piece was parked on a further row or could not be booked.
+          outcome: result.resolution.outcome,
+          parkedPieces: result.resolution.parkedPieces,
+          parkedRowIds: result.resolution.parkedRowIds,
+          unbookedPieces: result.resolution.unbookedPieces,
           resolvedEntryId: result.resolution.resolvedEntryId,
           periodBucket: result.row.periodBucket,
           operatorReason: reason,
@@ -156,6 +163,10 @@ export class ParkedReversalResolutionService {
       resolvedEntryId: result.alreadyResolved
         ? (result.row?.resolvedEntryId ?? null)
         : result.resolution.resolvedEntryId,
+      bookedPieces: result.alreadyResolved ? null : result.resolution.bookedPieces,
+      parkedPieces: result.alreadyResolved ? null : result.resolution.parkedPieces,
+      parkedRowIds: result.alreadyResolved ? [] : result.resolution.parkedRowIds,
+      unbookedPieces: result.alreadyResolved ? null : result.resolution.unbookedPieces,
     };
   }
 }
