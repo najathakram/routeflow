@@ -648,6 +648,82 @@ t("REG-B820: an orphan dir touched in the last 24h (or unreadable) is never dele
     });
     return { out, calls };
   };
+  // B748 hardening: node_modules/worktree deletes with a worktreePath re-verify CLEANLINESS at the
+  // moment of deletion (TOCTOU: the plan is built once, execute() may run later or be reordered).
+  // A dirty check that goes stale between plan and execute must never delete uncommitted work.
+  t(
+    "execute (B748): a node_modules delete re-checks isDirty NOW and refuses if the worktree went dirty",
+    () => {
+      const calls = [];
+      const out = execute(
+        { kind: "node_modules", target: "/w/lane/node_modules", worktreePath: "/w/lane" },
+        {
+          refuseDelete: () => null,
+          isDirty: (p) => (calls.push(`isDirty ${p}`), true), // dirty NOW, even though the plan said clean
+          removeTree: (t) => calls.push(`removeTree ${t}`),
+          removeWorktree: (t) => calls.push(`removeWorktree ${t}`),
+          run: () => {},
+          log: (m) => calls.push(`log ${m}`),
+        },
+      );
+      assert.equal(out, "refused");
+      assert.deepEqual(calls, [
+        "isDirty /w/lane",
+        "log    REFUSED, skipped: /w/lane/node_modules (worktree went dirty since the plan was built)",
+      ]);
+    },
+  );
+  t(
+    "execute (B748): a worktree removal also re-checks isDirty NOW before removeWorktreeSafely",
+    () => {
+      const calls = [];
+      const out = execute(
+        { kind: "worktree", target: "/w/lane", worktreePath: "/w/lane" },
+        {
+          refuseDelete: () => null,
+          isDirty: () => true,
+          removeTree: () => {},
+          removeWorktree: (t) => calls.push(`removeWorktree ${t}`),
+          run: () => {},
+          log: (m) => calls.push(`log ${m}`),
+        },
+      );
+      assert.equal(out, "refused");
+      assert.deepEqual(calls, [
+        "log    REFUSED, skipped: /w/lane (worktree went dirty since the plan was built)",
+      ]);
+    },
+  );
+  t("execute (B748): clean now -> proceeds as before, isDirty checked but not refused", () => {
+    const calls = [];
+    execute(
+      { kind: "node_modules", target: "/w/lane/node_modules", worktreePath: "/w/lane" },
+      {
+        refuseDelete: () => null,
+        isDirty: () => false,
+        removeTree: (t) => calls.push(`removeTree ${t}`),
+        removeWorktree: () => {},
+        run: () => {},
+        log: () => {},
+      },
+    );
+    assert.deepEqual(calls, ["removeTree /w/lane/node_modules"]);
+  });
+  t("execute (B748): no worktreePath (orphan/stale-proof) -> isDirty is never called", () => {
+    const calls = [];
+    execute(
+      { kind: "orphan-dir", target: "/w/orphan" },
+      {
+        refuseDelete: () => null,
+        isDirty: () => calls.push("isDirty") && true,
+        removeTree: (t) => calls.push(`removeTree ${t}`),
+        removeWorktree: () => {},
+        run: () => {},
+        log: () => {},
+      },
+    );
+    assert.deepEqual(calls, ["removeTree /w/orphan"]);
+  });
   t("execute: node_modules / orphan / stale-proof deletes pass the guard, then removeTree", () => {
     for (const kind of ["node_modules", "orphan-dir", "stale-proof-dir"]) {
       const r = run({ kind, target: "/w/x" });
