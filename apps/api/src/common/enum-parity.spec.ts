@@ -100,6 +100,9 @@ const ENUM_TABLE: Array<[string, keyof typeof PrismaEnums]> = [
   ["RESTRICTION_JURISDICTION_VALUES", "RestrictionJurisdiction"],
   ["RESTRICTION_SURFACE_VALUES", "RestrictionSurface"],
   ["SNAPSHOT_REASON_VALUES", "SnapshotReason"],
+  // SA-138 policy layer phase 1 (2026-09-24): PolicyScopeType is a brand-new Prisma enum — see
+  // the triage tripwire below.
+  ["POLICY_SCOPE_TYPE_VALUES", "PolicyScopeType"],
   // Post-dated check payments PR-1 (2026-09-15): CheckReturnReason is a brand-new Prisma enum
   // (not a value added to an existing one) — see the triage tripwire below.
   ["CHECK_RETURN_REASON_VALUES", "CheckReturnReason"],
@@ -187,7 +190,11 @@ describe("enum parity: packages/types/api/enums.ts vs @prisma/client", () => {
 // tenant_feature_config_snapshot migration — mirrored immediately as `SNAPSHOT_REASON_VALUES` +
 // its `ENUM_TABLE` row above; verified via `node apps/api/scripts/split-prisma-schema.mjs --check`
 // (95 → 96).
-const PINNED_PRISMA_ENUM_COUNT = 96;
+// Triage for PolicyScopeType (SA-138 policy layer phase 1, 2026-09-24): one brand-new Prisma enum
+// in the policy_value migration — mirrored immediately as `POLICY_SCOPE_TYPE_VALUES` + its
+// `ENUM_TABLE` row above; verified via `node apps/api/scripts/split-prisma-schema.mjs --check`
+// (96 → 97).
+const PINNED_PRISMA_ENUM_COUNT = 97;
 
 describe("enum triage tripwire: generated Prisma enum count (L-072)", () => {
   it("pins the number of generated Prisma enums — a new enum must be triaged into ENUM_TABLE or explicitly left unmirrored", () => {

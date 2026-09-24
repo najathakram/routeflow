@@ -393,3 +393,7 @@ export type RestrictionAddressPrecedence = (typeof RESTRICTION_ADDRESS_PRECEDENC
 /** Why a TenantFeatureConfigSnapshot was taken (Lane B A2): automatic on a downgrade, or by an admin. */
 export const SNAPSHOT_REASON_VALUES = ["DOWNGRADE", "MANUAL"] as const;
 export type SnapshotReasonValue = (typeof SNAPSHOT_REASON_VALUES)[number];
+
+/** SA-138: the layer a tenant POLICY value applies to (PolicyValue.scopeType). */
+export const POLICY_SCOPE_TYPE_VALUES = ["TENANT", "CATEGORY", "CUSTOMER"] as const;
+export type PolicyScopeTypeValue = (typeof POLICY_SCOPE_TYPE_VALUES)[number];

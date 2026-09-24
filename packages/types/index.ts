@@ -163,6 +163,7 @@ export * from "./api/product-labels";
 export * from "./api/restrictions-admin";
 export * from "./api/us-states";
 export * from "./api/config-snapshots";
+export * from "./api/policies";
 
 // ─── Developer mode (hidden dispatch/driver/route addon) ──────────────────────
 
