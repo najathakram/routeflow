@@ -2514,6 +2514,8 @@ describe("RoutesService", () => {
         // B305 round 2 (RULING 1/3): per-line regulated-category tax snapshot —
         // see routes.run-stop-select.spec.ts for the dedicated oracle.
         categoryTaxAmount: true,
+        // B648: units_v1 selling unit — see routes.run-stop-select.spec.ts.
+        unitLabel: true,
       });
     });
 

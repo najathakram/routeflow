@@ -112,7 +112,7 @@ export class UpdatePaymentDto {
 
 export class AllocationDto {
   @IsString() @IsNotEmpty() invoiceId: string;
-  @IsNumber() @Min(0.01) amount: number;
+  @IsNumber({ maxDecimalPlaces: 2 }) @Min(0.01) amount: number;
 }
 
 export class StandalonePaymentDto {
