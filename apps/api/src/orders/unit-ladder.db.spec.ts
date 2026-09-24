@@ -105,6 +105,8 @@ describeDb("units_v1 ladder — real Postgres", () => {
           tx,
           [{ productId, qty }],
           true,
+          // B562 PR-2: the SALE movement's reference/event (this spec has no acting user).
+          { orderId: orderId || "unit-ladder-spec", notes: "CREATE", performedById: null },
         );
       }),
     );
@@ -208,6 +210,7 @@ describeDb("units_v1 ladder — real Postgres", () => {
     await raw.orderItem.deleteMany({ where: { orderId } });
     await raw.order.deleteMany({ where: { id: orderId } });
     await raw.productUnit.deleteMany({ where: { productId } });
+    await raw.stockMovement.deleteMany({ where: { productId } }); // B562 PR-2: the SALE rows
     await raw.product.deleteMany({ where: { id: productId } });
     await raw.customer.deleteMany({ where: { id: customerId } });
     await raw.user.deleteMany({ where: { id: userId } });
