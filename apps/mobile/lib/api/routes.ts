@@ -66,14 +66,20 @@ export interface RouteRunOrder {
     shippingFee: number | string | null;
     total: number | string | null;
   }>;
-  // B810: EVERY payable invoice (DRAFT/SENT/PARTIAL/OVERDUE — mirrors the
-  // server's own payment write path), each carrying a server-computed
-  // `balanceDue` (total - confirmed payments). Never a client
-  // total-minus-payments — see lib/run-money.ts#orderAmountDue.
+  // B810/SA-130a: EVERY payable invoice (DRAFT/SENT/PARTIAL/OVERDUE — mirrors
+  // the server's own payment write path), fetched by the server as its OWN
+  // batched query (NOT a nested Order relation — Order has no such relation),
+  // each carrying a server-computed `balanceDue` (total - confirmed
+  // payments) and `isDepositMirror` (SA-102's WP-D1 shape: this invoice IS
+  // the order's own live bill, not a separately-finalized one — see
+  // lib/run-money.ts#reconciledDoorDue for the three-way rule this field
+  // feeds). Never a client total-minus-payments — see run-money.ts#orderAmountDue.
   payableInvoices?: Array<{
     id: string;
     status: string;
+    total: number | string | null;
     balanceDue: number | string | null;
+    isDepositMirror?: boolean;
   }>;
 }
 

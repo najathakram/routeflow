@@ -7,7 +7,6 @@
  */
 import { InvoiceStatus } from "@prisma/client";
 import { RUN_LINE_ITEMS_SELECT, RUN_STOP_INCLUDE } from "./routes.service";
-import { RUN_PAYABLE_INVOICE_SELECT } from "./run-invoice-balance";
 
 describe("REG-B305 driver run/stop order projection", () => {
   it("REG-B305 the driver run/stop payload projects the order's subtotal, tax and total", () => {
@@ -72,12 +71,15 @@ describe("REG-B305 driver run/stop order projection", () => {
     expect(RUN_STOP_INCLUDE.customer.select.isTaxExempt).toBe(true);
   });
 
-  // B810 (SA-125): a SEPARATE payableInvoices list, mirroring
-  // recordDeliveryPaymentInTx's own PAYABLE query — the DRAFT-only `invoices`
-  // list above stays byte-identical (it's reconciledAmountDue's reconcile
-  // basis), never widened.
-  it("B810: projects a SEPARATE payableInvoices select, referencing RUN_PAYABLE_INVOICE_SELECT by identity", () => {
-    expect(RUN_STOP_INCLUDE.orders.select.payableInvoices).toBe(RUN_PAYABLE_INVOICE_SELECT);
+  // B810/SA-130a: `payableInvoices` is NOT a Prisma relation on Order (only
+  // `invoices` is) — nesting it here would throw `Unknown field
+  // 'payableInvoices'` against the real client. It must never be reintroduced
+  // into this select; it's fetched as its own batched `invoice.findMany` (see
+  // run-invoice-balance.ts) and attached after the read.
+  it("B810/SA-130a: RUN_STOP_INCLUDE.orders.select never re-introduces a payableInvoices relation", () => {
+    expect(
+      Object.prototype.hasOwnProperty.call(RUN_STOP_INCLUDE.orders.select, "payableInvoices"),
+    ).toBe(false);
   });
 
   it("B810: the DRAFT-only invoices list stays byte-identical to before — never widened", () => {

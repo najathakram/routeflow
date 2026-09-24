@@ -72,7 +72,15 @@ export interface RunMoneyInvoice {
 export interface RunMoneyPayableInvoice {
   id: string;
   status: string;
+  total: number | string | null;
   balanceDue: number | string | null;
+  /**
+   * SA-102's WP-D1 shape (server-computed, see run-invoice-balance.ts): true
+   * when this invoice IS the order's own live bill (its sole non-void
+   * invoice, no deliveryBatchId, carrying a deposit) rather than a
+   * separately-finalized one. Feeds `reconciledDoorDue`'s three-way rule.
+   */
+  isDepositMirror?: boolean;
 }
 
 export interface RunMoneyOrder {
@@ -273,6 +281,64 @@ export function earlierVisitsRemaining(payableInvoices: RunMoneyPayableInvoice[]
     .map((i) => finiteOrNull(i.balanceDue))
     .filter((n): n is number => n != null);
   return roundMoney(finite.reduce((sum, n) => sum + n, 0));
+}
+
+/**
+ * SA-130a (Opus round on B810/SA-125): the SA-125 shape above
+ * (`reconciledAmountDue(...) + earlierVisitsRemaining(...)`, unconditionally
+ * added) double-counts once an order has NO open draft and its only payable
+ * is a plain, already-finalized invoice — a SENT $100 invoice with a 6-of-10
+ * short-pick re-derived `reconciledAmountDue` to ~$90 and then ADDED the
+ * invoice's own $100 on top (~$190), when the answer is simply $100: a
+ * previously-issued invoice doesn't retroactively change because a LATER
+ * visit short-picks. This function is the caller's ONE decision point,
+ * per order, on the reconciled (active short-pick) path:
+ *
+ *  (a) an open draft exists (`hasOpenDraft`) -> `reconciledEstimate` (already
+ *      computed by the caller from THIS order's own drafts, byte-identical
+ *      to the pre-SA-130a call) plus `earlierVisitsRemaining` over the
+ *      non-DRAFT payables — unchanged from SA-125, and also covers the case
+ *      of NO payable invoice at all yet (earlierVisitsRemaining is 0, so
+ *      this reduces to the bare estimate — the pre-B810 no-invoice shape).
+ *  (b) no open draft, and the ONLY payable is a deposit mirror
+ *      (`isDepositMirror`) -> the mirror IS this order's own bill, so it's
+ *      legitimate to restate it against the delivered share via
+ *      `reconciledEstimate` (computed by the caller the SAME way, with an
+ *      empty `drafts` — `reconciledAmountDue`'s own fallback basis), then
+ *      subtract whatever the mirror already collected
+ *      (`mirror.total - mirror.balanceDue`) so a part-paid deposit is never
+ *      re-billed in full.
+ *  (c) no open draft, a plain (non-mirror) payable -> Σ `balanceDue` ONLY,
+ *      no reconciled term at all — a finalized invoice is the bill, full
+ *      stop, regardless of what a later visit short-picks.
+ *
+ * `reconciledAmountDue` itself is UNCHANGED by this round — only this
+ * caller-side composition (payment.tsx) changes.
+ */
+export function reconciledDoorDue(input: {
+  hasOpenDraft: boolean;
+  reconciledEstimate: number;
+  payableInvoices: RunMoneyPayableInvoice[];
+}): number {
+  const { hasOpenDraft, reconciledEstimate, payableInvoices } = input;
+  if (hasOpenDraft || payableInvoices.length === 0) {
+    // With no payable invoice at all yet, earlierVisitsRemaining([]) is 0, so
+    // this correctly reduces to the bare estimate — the pre-B810 no-invoice
+    // shape — rather than falling into case (c)'s pure-balance-sum (which
+    // would wrongly return 0 instead of the estimate).
+    return roundMoney(reconciledEstimate + earlierVisitsRemaining(payableInvoices));
+  }
+  const soleMirror =
+    payableInvoices.length === 1 && payableInvoices[0]!.isDepositMirror
+      ? payableInvoices[0]!
+      : null;
+  if (soleMirror) {
+    const mirrorTotal = finiteOrNull(soleMirror.total) ?? 0;
+    const mirrorBalance = finiteOrNull(soleMirror.balanceDue) ?? 0;
+    const alreadyPaid = mirrorTotal - mirrorBalance;
+    return roundMoney(reconciledEstimate - alreadyPaid);
+  }
+  return roundMoney(earlierVisitsRemaining(payableInvoices));
 }
 
 export function stopAmountDue(stop: RunMoneyStop): number {

@@ -81,7 +81,7 @@ import {
   RUN_LINE_ITEMS_SELECT,
   RUN_STOP_INCLUDE,
 } from "./routes.constants";
-import { withBalanceDue, withRunOrderBalances } from "./run-invoice-balance";
+import { withPayableInvoices } from "./run-invoice-balance";
 export {
   NON_ROUTABLE_ORDER_STATUSES,
   RELEASED_CHANGE_REQUEST_REASON,
@@ -1131,18 +1131,29 @@ export class RoutesService {
     // Same normalisation as findOneRun: legacy/seeded run stops may lack a
     // direct customer/address link — fall back to the template RouteStop's
     // data so address-dependent UI (Maps button, "no location" badge) works.
-    // B810: withRunOrderBalances computes each order's payableInvoices[].balanceDue
-    // server-side and strips the raw payment rows (SA-125, call site 1 of 4).
-    const normalisedData = data.map((run: any) => ({
+    const normalisedRuns = data.map((run) => ({
       ...run,
-      stops: withRunOrderBalances(
-        run.stops.map((s: any) => ({
-          ...s,
-          customer: s.customer ?? s.routeStop?.customer ?? null,
-          customerAddress: s.customerAddress ?? s.routeStop?.customerAddress ?? null,
-        })),
-      ),
+      stops: run.stops.map((s) => ({
+        ...s,
+        customer: s.customer ?? s.routeStop?.customer ?? null,
+        customerAddress: s.customerAddress ?? s.routeStop?.customerAddress ?? null,
+      })),
     }));
+    // B810/SA-130a: ONE batched invoice.findMany across every order on this
+    // whole PAGE of runs (never per-run, via withPayableInvoices — call site
+    // 1 of 4). `payableInvoices` is NOT a Prisma relation on Order — see
+    // run-invoice-balance.ts's module doc for why this can never move back
+    // into RUN_STOP_INCLUDE's `select`.
+    const pageStopsWithBalances = await withPayableInvoices(
+      this.prisma.forTenant(),
+      normalisedRuns.flatMap((r) => r.stops),
+    );
+    let pageCursor = 0;
+    const normalisedData = normalisedRuns.map((run) => {
+      const stops = pageStopsWithBalances.slice(pageCursor, pageCursor + run.stops.length);
+      pageCursor += run.stops.length;
+      return { ...run, stops };
+    });
 
     // F05 / R5: `collectedPayments` only for a driver's own list — operator-wide
     // lists (every run, every driver) skip it; the operator reads cash truth
@@ -1295,14 +1306,18 @@ export class RoutesService {
           // is the one extra field this fallback needs to group by.
           select: { ...RUN_STOP_INCLUDE.orders.select, customerId: true },
         });
-        // B810: this fallback's `orders` is a flat array (not stops-wrapped),
-        // so withBalanceDue applies directly per order (SA-125, call site 2 of 4).
-        const byCustomer: Record<string, any[]> = {};
-        for (const o of orders as any[]) {
-          (byCustomer[o.customerId] ??= []).push({
-            ...o,
-            payableInvoices: withBalanceDue(o.payableInvoices ?? []),
-          });
+        // B810/SA-130a: this fallback's `orders` is a flat array (not stops-
+        // wrapped) and, since it no longer comes through RUN_STOP_INCLUDE's
+        // select at all, needs its OWN batched invoice.findMany — same as the
+        // other 3 call sites (call site 2 of 4). withPayableInvoices takes a
+        // stops shape, so wrap/unwrap a single pseudo-stop.
+        const [{ orders: ordersWithBalances }] = await withPayableInvoices(
+          this.prisma.forTenant(),
+          [{ orders }],
+        );
+        const byCustomer: Record<string, typeof ordersWithBalances> = {};
+        for (const o of ordersWithBalances) {
+          (byCustomer[o.customerId] ??= []).push(o);
         }
         return {
           ...run,
@@ -1315,8 +1330,13 @@ export class RoutesService {
       }
     }
 
-    // B810: SA-125, call site 3 of 4 (findOneRun's normal, non-fallback path).
-    return { ...run, stops: withRunOrderBalances(normalisedStops), collectedPayments };
+    // B810/SA-130a: call site 3 of 4 (findOneRun's normal, non-fallback path)
+    // — ONE batched invoice.findMany over every order on this run's stops.
+    return {
+      ...run,
+      stops: await withPayableInvoices(this.prisma.forTenant(), normalisedStops),
+      collectedPayments,
+    };
   }
 
   async updateRun(
@@ -2872,17 +2892,26 @@ export class RoutesService {
       orderBy: { scheduledDate: "asc" },
     });
 
-    // B810: SA-125, call site 4 of 4 (findMyRuns).
-    const normalisedData = data.map((run: any) => ({
+    // B810/SA-130a: call site 4 of 4 (findMyRuns) — ONE batched
+    // invoice.findMany across every order on this whole page of runs.
+    const myNormalisedRuns = data.map((run) => ({
       ...run,
-      stops: withRunOrderBalances(
-        run.stops.map((s: any) => ({
-          ...s,
-          customer: s.customer ?? s.routeStop?.customer ?? null,
-          customerAddress: s.customerAddress ?? s.routeStop?.customerAddress ?? null,
-        })),
-      ),
+      stops: run.stops.map((s) => ({
+        ...s,
+        customer: s.customer ?? s.routeStop?.customer ?? null,
+        customerAddress: s.customerAddress ?? s.routeStop?.customerAddress ?? null,
+      })),
     }));
+    const myStopsWithBalances = await withPayableInvoices(
+      this.prisma.forTenant(),
+      myNormalisedRuns.flatMap((r) => r.stops),
+    );
+    let myCursor = 0;
+    const normalisedData = myNormalisedRuns.map((run) => {
+      const stops = myStopsWithBalances.slice(myCursor, myCursor + run.stops.length);
+      myCursor += run.stops.length;
+      return { ...run, stops };
+    });
 
     // F05 / R5: this endpoint is always driver-scoped (the authenticated
     // driver's own runs), so it always gets `collectedPayments`.

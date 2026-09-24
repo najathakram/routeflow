@@ -1,7 +1,71 @@
 # B810 plan: driver's amount-to-collect ignores a SENT/PARTIAL invoice
 
-**Status:** RULED (SA-125) and IMPLEMENTED — server + mobile, red-first, both sides green.
+**Status:** RULED (SA-125, superseded by SA-130a's Opus round) and IMPLEMENTED — server +
+mobile, red-first, both sides green.
 **Branch:** `fix/b810-driver-amount-due-sent-partial` (worktree `rf-lane-b810-driver-amount-due-sent-partial`, off `origin/master`).
+
+## SA-130a round (Opus REQUIRED CHANGES on SA-125's original shape — supersedes it below)
+
+Opus's review of the SA-125 implementation (PR #1319 at `60d432f3`) found two real defects the
+mocked-Prisma specs could not see:
+
+1. **BLOCKER:** SA-125's design nested `payableInvoices` under `RUN_STOP_INCLUDE.orders.select`
+   as if it were a Prisma relation on `Order`. `Order` has no such relation — only `invoices`
+   (sales.prisma:649) — so the REAL Prisma client throws `Unknown field 'payableInvoices'` on
+   every one of the 4 run reads (findAllRuns, findOneRun's normal path and its fallback,
+   findMyRuns). A mocked `PrismaService` happily returns whatever fixture shape a test hands it,
+   so this was invisible to every one of my own unit tests until the type-checker was allowed to
+   validate the real query shape (see "the `as const` trap" below).
+   - **Fix:** `payableInvoices` is now a SEPARATE, batched `invoice.findMany` call
+     (`run-invoice-balance.ts#payableInvoiceFindManyArgs`/`groupPayableInvoicesByOrder`/
+     `attachPayableInvoices`, orchestrated by `withPayableInvoices`), run ONCE per response
+     (never per-run/per-order) and attached onto the stops array after the main query returns.
+     `RUN_STOP_INCLUDE.orders.select` never mentions `payableInvoices` again.
+   - **The `as const` trap:** `payableInvoiceFindManyArgs`'s return value originally carried a
+     top-level `as const`. That deep-froze the `select` object enough that Prisma's own generic
+     `SelectSubset` inference could no longer narrow `invoice.findMany`'s return type to the
+     selected fields — TypeScript silently fell back to the FULL `Invoice` model shape, so even
+     `npx tsc --noEmit` passed against code that was actually broken. Removing the outer
+     `as const` (keeping only `"asc" as const` on the two literal orderBy strings, which Prisma's
+     literal-string orderBy typing does need) restored real inference, and `tsc` then correctly
+     flagged the exact call sites — proof the fix works, not just that it compiles.
+2. **MONEY:** the original composition (`reconciledAmountDue(...) + earlierVisitsRemaining(...)`,
+   unconditionally) double-counts once an order has no open draft and its only payable is a
+   plain, already-finalized invoice: a SENT $100 invoice, short-picked to ~$90 by a later visit's
+   partial delivery, quoted ~$190 (the re-derived estimate PLUS the invoice's own full balance) —
+   never $100, the actually-correct answer, since a previously-issued invoice doesn't retroactively
+   change because a later visit short-picks.
+   - **Fix — `run-money.ts#reconciledDoorDue`, the ONE decision point per order on the reconciled
+     path:**
+     - (a) an open draft exists → `reconciledEstimate + earlierVisitsRemaining(non-DRAFT payables)`
+       — unchanged from SA-125, and also covers "no payable invoice at all yet" (reduces to the
+       bare estimate).
+     - (b) no open draft, the SOLE payable is a deposit mirror (`isDepositMirror`, SA-102's WP-D1
+       shape) → the mirror IS the order's own bill, so restate it via `reconciledEstimate` (the
+       SAME call, with an empty `drafts` — `reconciledAmountDue`'s own fallback basis) minus
+       whatever it already collected (`mirror.total - mirror.balanceDue`).
+     - (c) no open draft, a plain (non-mirror) payable → Σ `balanceDue` ONLY — the reconciled
+       estimate is never added on top.
+   - `isDepositMirror` is a new server-computed boolean on each payable row (SA-102's WP-D1
+     shape, mirroring `reconcileOrderDraftInvoice`'s own detection in `invoices.service.ts`
+     exactly: the order's SOLE non-void invoice, no `deliveryBatchId`, `depositPercent != null`,
+     status SENT/VIEWED/PARTIAL/OVERDUE). `RunMoneyPayableInvoice` also gained `total` (needed
+     for the mirror's already-paid subtraction).
+3. **B822 folded in** (a DRAFT already carrying a confirmed payment, e.g. an applied advance, was
+   re-derived at its delivered total without subtracting that payment): already covered by
+   `groupPayableInvoicesByOrder`'s UNIFORM `balanceDue` formula (applies `total - confirmed
+payments` to every status including DRAFT, no per-status assumption) — this was true from the
+   very first implementation, and this round adds an explicit named test for it.
+4. **The flagged `any`s removed:** `run-invoice-balance.ts`'s old `withRunOrderBalances<T extends
+{orders?: any[]}>` is gone (replaced by properly-generic `attachPayableInvoices`/
+   `withPayableInvoices`); `routes.service.ts`'s `orders as any[]` cast (introduced by the
+   original SA-125 implementation, not pre-existing) is gone too.
+5. **Standing gate this round established:** any Prisma `select`/`include` change must be proven
+   against a REAL Postgres — a mocked-Prisma spec cannot catch a schema/query mismatch (see
+   finding 1 above). `run-invoice-balance.db.spec.ts` (7 cases) is the proof for this query;
+   `npm run local:test:db` or a compose run is the gate before this PR can land.
+
+## Original SA-125 ruling (superseded above where noted, otherwise still accurate)
 
 ## The bug
 

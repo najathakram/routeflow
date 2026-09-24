@@ -1,149 +1,253 @@
 import {
-  RUN_PAYABLE_INVOICE_SELECT,
-  withBalanceDue,
-  withRunOrderBalances,
+  attachPayableInvoices,
+  groupPayableInvoicesByOrder,
+  payableInvoiceFindManyArgs,
+  withPayableInvoices,
+  type RawInvoiceForBalance,
 } from "./run-invoice-balance";
 
-describe("withBalanceDue (B810 — SA-125)", () => {
-  it("SENT 100 paid 40 -> balanceDue 60, not the full total", () => {
-    const out = withBalanceDue([
-      {
-        id: "inv-1",
+function row(over: Partial<RawInvoiceForBalance>): RawInvoiceForBalance {
+  return {
+    id: "inv-1",
+    orderId: "order-1",
+    status: "SENT",
+    total: 100,
+    depositPercent: null,
+    deliveryBatchId: null,
+    payments: [],
+    ...over,
+  };
+}
+
+describe("payableInvoiceFindManyArgs", () => {
+  it("filters by orderId IN the given ids and excludes VOID only (not PAYABLE-only) — isDepositMirror needs the full non-void set", () => {
+    const args = payableInvoiceFindManyArgs(["o1", "o2"]);
+    expect(args.where).toEqual({ orderId: { in: ["o1", "o2"] }, status: { not: "VOID" } });
+  });
+
+  it("orders oldest-first, matching recordDeliveryPaymentInTx", () => {
+    const args = payableInvoiceFindManyArgs(["o1"]);
+    expect(args.orderBy).toEqual([{ createdAt: "asc" }, { invoiceNumber: "asc" }]);
+  });
+
+  it("selects the fields isDepositMirror/balanceDue need, and confirmed-only payments — no unfiltered payments read", () => {
+    const args = payableInvoiceFindManyArgs(["o1"]);
+    expect(args.select).toEqual(
+      expect.objectContaining({
+        id: true,
+        orderId: true,
+        status: true,
+        total: true,
+        depositPercent: true,
+        deliveryBatchId: true,
+      }),
+    );
+    expect(args.select.payments.where).toBeDefined();
+  });
+});
+
+describe("groupPayableInvoicesByOrder", () => {
+  it("a SENT invoice with a confirmed partial payment -> balanceDue = total - paid, never total", () => {
+    const byOrder = groupPayableInvoicesByOrder([
+      row({
+        id: "i1",
+        orderId: "o1",
         status: "SENT",
         total: 100,
         payments: [{ amount: 40, status: "PAID" }],
-      },
+      }),
     ]);
-    expect(out).toEqual([{ id: "inv-1", status: "SENT", balanceDue: 60 }]);
-  });
-
-  it("PARTIAL 100 paid 40 -> balanceDue 60 (same formula as SENT)", () => {
-    const out = withBalanceDue([
-      { id: "inv-2", status: "PARTIAL", total: 100, payments: [{ amount: 40, status: "PAID" }] },
+    expect(byOrder["o1"]).toEqual([
+      { id: "i1", status: "SENT", total: 100, balanceDue: 60, isDepositMirror: false },
     ]);
-    expect(out[0]!.balanceDue).toBe(60);
   });
 
-  it("DRAFT with no payments -> balanceDue equals total, byte-identical to today's number", () => {
-    const out = withBalanceDue([{ id: "inv-3", status: "DRAFT", total: 50, payments: [] }]);
-    expect(out[0]!.balanceDue).toBe(50);
-  });
-
-  it("uniform formula: a DRAFT with a confirmed payment (an applied advance) nets down too", () => {
-    const out = withBalanceDue([
-      { id: "inv-4", status: "DRAFT", total: 50, payments: [{ amount: 20, status: "PAID" }] },
+  it("a PARTIAL invoice uses the same formula", () => {
+    const byOrder = groupPayableInvoicesByOrder([
+      row({ id: "i1", status: "PARTIAL", total: 50, payments: [{ amount: 10, status: "PAID" }] }),
     ]);
-    expect(out[0]!.balanceDue).toBe(30);
+    expect(byOrder["order-1"]![0]!.balanceDue).toBe(40);
   });
 
-  it("only CONFIRMED payments count -- an unconfirmed/DRAFT payment row is ignored", () => {
-    const out = withBalanceDue([
-      {
-        id: "inv-5",
+  it("an OVERDUE invoice uses the same formula (still PAYABLE)", () => {
+    const byOrder = groupPayableInvoicesByOrder([row({ status: "OVERDUE", total: 30 })]);
+    expect(byOrder["order-1"]![0]!.balanceDue).toBe(30);
+  });
+
+  it("B822: a DRAFT with a confirmed payment (an applied advance) nets down too — uniform formula, no per-status assumption", () => {
+    const byOrder = groupPayableInvoicesByOrder([
+      row({ status: "DRAFT", total: 100, payments: [{ amount: 25, status: "PAID" }] }),
+    ]);
+    expect(byOrder["order-1"]![0]!).toEqual({
+      id: "inv-1",
+      status: "DRAFT",
+      total: 100,
+      balanceDue: 75,
+      isDepositMirror: false,
+    });
+  });
+
+  it("a DRAFT with no payments -> balanceDue === total, byte-identical to the pre-B810 number", () => {
+    const byOrder = groupPayableInvoicesByOrder([row({ status: "DRAFT", total: 42 })]);
+    expect(byOrder["order-1"]![0]!.balanceDue).toBe(42);
+  });
+
+  it("clamps at 0 rather than going negative on an overpayment", () => {
+    const byOrder = groupPayableInvoicesByOrder([
+      row({ total: 50, payments: [{ amount: 60, status: "PAID" }] }),
+    ]);
+    expect(byOrder["order-1"]![0]!.balanceDue).toBe(0);
+  });
+
+  it("a PAID sibling is excluded entirely (not PAYABLE) even though it's non-void", () => {
+    const byOrder = groupPayableInvoicesByOrder([
+      row({ id: "i1", status: "SENT", total: 50 }),
+      row({ id: "i2", status: "PAID", total: 30 }),
+    ]);
+    expect(byOrder["order-1"]!.map((i) => i.id)).toEqual(["i1"]);
+  });
+
+  it("a VOID sibling never reaches this function at all (excluded by the query's own where)", () => {
+    // groupPayableInvoicesByOrder trusts its input has no VOID rows — this
+    // documents that payableInvoiceFindManyArgs is what actually excludes it.
+    const byOrder = groupPayableInvoicesByOrder([row({ id: "i1", status: "SENT" })]);
+    expect(byOrder["order-1"]).toHaveLength(1);
+  });
+
+  it("multiple PAYABLE siblings (a regulated split) each contribute their own balanceDue", () => {
+    const byOrder = groupPayableInvoicesByOrder([
+      row({ id: "base", status: "SENT", total: 60 }),
+      row({ id: "base-R1", status: "SENT", total: 40, payments: [{ amount: 10, status: "PAID" }] }),
+    ]);
+    expect(byOrder["order-1"]).toEqual([
+      { id: "base", status: "SENT", total: 60, balanceDue: 60, isDepositMirror: false },
+      { id: "base-R1", status: "SENT", total: 40, balanceDue: 30, isDepositMirror: false },
+    ]);
+  });
+
+  it("never returns raw payments rows on the mapped shape", () => {
+    const byOrder = groupPayableInvoicesByOrder([
+      row({ payments: [{ amount: 40, status: "PAID" }] }),
+    ]);
+    expect(JSON.stringify(byOrder)).not.toContain("payments");
+  });
+
+  it("groups independently across multiple orders", () => {
+    const byOrder = groupPayableInvoicesByOrder([
+      row({ id: "i1", orderId: "o1", total: 10 }),
+      row({ id: "i2", orderId: "o2", total: 20 }),
+    ]);
+    expect(byOrder["o1"]!.map((i) => i.id)).toEqual(["i1"]);
+    expect(byOrder["o2"]!.map((i) => i.id)).toEqual(["i2"]);
+  });
+
+  it("skips a row with no orderId rather than crashing or grouping it under 'null'", () => {
+    const byOrder = groupPayableInvoicesByOrder([row({ orderId: null })]);
+    expect(Object.keys(byOrder)).toHaveLength(0);
+  });
+
+  describe("isDepositMirror (SA-102's WP-D1 shape, mirrors reconcileOrderDraftInvoice exactly)", () => {
+    it("true: the order's SOLE non-void invoice, no deliveryBatchId, a deposit, a mirror-eligible status", () => {
+      const byOrder = groupPayableInvoicesByOrder([
+        row({ status: "SENT", depositPercent: 25, deliveryBatchId: null, total: 100 }),
+      ]);
+      expect(byOrder["order-1"]![0]!.isDepositMirror).toBe(true);
+    });
+
+    it("false: a plain operator-issued SENT invoice with no deposit is never a mirror", () => {
+      const byOrder = groupPayableInvoicesByOrder([
+        row({ status: "SENT", depositPercent: null, total: 100 }),
+      ]);
+      expect(byOrder["order-1"]![0]!.isDepositMirror).toBe(false);
+    });
+
+    it("false: a deposit invoice tagged to a deliveryBatchId is never a mirror (that's a per-batch delivery invoice, not the order-tracking one)", () => {
+      const byOrder = groupPayableInvoicesByOrder([
+        row({ status: "SENT", depositPercent: 25, deliveryBatchId: "batch-1" }),
+      ]);
+      expect(byOrder["order-1"]![0]!.isDepositMirror).toBe(false);
+    });
+
+    it("false: a DRAFT deposit invoice is never a mirror — only SENT/VIEWED/PARTIAL/OVERDUE are mirror-eligible statuses", () => {
+      const byOrder = groupPayableInvoicesByOrder([
+        row({ status: "DRAFT", depositPercent: 25, deliveryBatchId: null }),
+      ]);
+      expect(byOrder["order-1"]![0]!.isDepositMirror).toBe(false);
+    });
+
+    it("false when there are TWO non-void invoices even if one carries a deposit — never a mirror once it's not sole", () => {
+      const byOrder = groupPayableInvoicesByOrder([
+        row({ id: "i1", status: "SENT", depositPercent: 25, deliveryBatchId: null }),
+        row({ id: "i2", status: "PAID", total: 10 }),
+      ]);
+      expect(byOrder["order-1"]!.find((i) => i.id === "i1")!.isDepositMirror).toBe(false);
+    });
+
+    it("PARTIAL and OVERDUE are mirror-eligible statuses too, same as SENT", () => {
+      for (const status of ["PARTIAL", "OVERDUE"]) {
+        const byOrder = groupPayableInvoicesByOrder([
+          row({ status, depositPercent: 25, deliveryBatchId: null }),
+        ]);
+        expect(byOrder["order-1"]![0]!.isDepositMirror).toBe(true);
+      }
+    });
+
+    it("a VIEWED deposit mirror is mirror-eligible per the status check, but VIEWED isn't in PAYABLE at all — so it never surfaces in payableInvoices for the driver to see, mirror or not", () => {
+      const byOrder = groupPayableInvoicesByOrder([
+        row({ status: "VIEWED", depositPercent: 25, deliveryBatchId: null }),
+      ]);
+      expect(byOrder["order-1"] ?? []).toEqual([]);
+    });
+  });
+});
+
+describe("attachPayableInvoices", () => {
+  it("attaches each order's payableInvoices from the byOrder map, defaulting to [] when absent", () => {
+    const stops = [{ id: "stop-1", orders: [{ id: "o1" }, { id: "o2" }] }];
+    const byOrder = {
+      o1: [{ id: "i1", status: "SENT", total: 100, balanceDue: 60, isDepositMirror: false }],
+    };
+    const result = attachPayableInvoices(stops, byOrder);
+    expect(result[0]!.orders[0]!.payableInvoices).toEqual(byOrder["o1"]);
+    expect(result[0]!.orders[1]!.payableInvoices).toEqual([]);
+  });
+
+  it("tolerates a stop with no orders", () => {
+    const result = attachPayableInvoices([{ id: "stop-1" }], {});
+    expect(result[0]!.orders).toEqual([]);
+  });
+});
+
+describe("withPayableInvoices", () => {
+  it("runs ONE batched invoice.findMany over every order id across the given stops, then attaches", async () => {
+    const findMany = jest.fn().mockResolvedValue([
+      row({
+        id: "i1",
+        orderId: "o1",
         status: "SENT",
         total: 100,
-        payments: [
-          { amount: 40, status: "PAID" },
-          { amount: 25, status: "DRAFT" },
-        ],
-      },
+        payments: [{ amount: 40, status: "PAID" }],
+      }),
     ]);
-    expect(out[0]!.balanceDue).toBe(60);
-  });
-
-  it("clamps at 0 -- an overpayment never reads negative", () => {
-    const out = withBalanceDue([
-      { id: "inv-6", status: "PARTIAL", total: 50, payments: [{ amount: 75, status: "PAID" }] },
-    ]);
-    expect(out[0]!.balanceDue).toBe(0);
-  });
-
-  it("never returns the raw payments rows", () => {
-    const out = withBalanceDue([
-      { id: "inv-7", status: "SENT", total: 100, payments: [{ amount: 10, status: "PAID" }] },
-    ]);
-    expect((out[0] as any).payments).toBeUndefined();
-    expect((out[0] as any).total).toBeUndefined();
-  });
-});
-
-describe("RUN_PAYABLE_INVOICE_SELECT (B810 — SA-125)", () => {
-  it("filters to PAYABLE statuses (DRAFT/SENT/PARTIAL/OVERDUE), excluding PAID/VOID/WRITTEN_OFF", () => {
-    expect(RUN_PAYABLE_INVOICE_SELECT.where.status.in).toEqual([
-      "DRAFT",
-      "SENT",
-      "PARTIAL",
-      "OVERDUE",
-    ]);
-  });
-
-  it("carries NO deliveryBatchId gate -- a batch-tagged SENT invoice must still be counted", () => {
-    expect(RUN_PAYABLE_INVOICE_SELECT.where).not.toHaveProperty("deliveryBatchId");
-  });
-
-  it("orders oldest-first, mirroring recordDeliveryPaymentInTx's own query exactly", () => {
-    expect(RUN_PAYABLE_INVOICE_SELECT.orderBy).toEqual([
-      { createdAt: "asc" },
-      { invoiceNumber: "asc" },
-    ]);
-  });
-});
-
-describe("withRunOrderBalances (B810 — SA-125, the one mapper applied at all 4 call sites)", () => {
-  it("maps every order's payableInvoices within a stops array", () => {
     const stops = [
-      {
-        id: "stop-1",
-        orders: [
-          {
-            id: "ord-1",
-            payableInvoices: [
-              {
-                id: "inv-1",
-                status: "SENT",
-                total: 100,
-                payments: [{ amount: 40, status: "PAID" }],
-              },
-            ],
-          },
-        ],
-      },
+      { id: "stop-1", orders: [{ id: "o1" }] },
+      { id: "stop-2", orders: [{ id: "o2" }] },
     ];
-    const out = withRunOrderBalances(stops);
-    expect(out[0]!.orders[0]!.payableInvoices).toEqual([
-      { id: "inv-1", status: "SENT", balanceDue: 60 },
+    const result = await withPayableInvoices({ invoice: { findMany } }, stops);
+    expect(findMany).toHaveBeenCalledTimes(1);
+    expect(findMany.mock.calls[0]![0].where.orderId.in.sort()).toEqual(["o1", "o2"]);
+    expect(result[0]!.orders[0]!.payableInvoices).toEqual([
+      { id: "i1", status: "SENT", total: 100, balanceDue: 60, isDepositMirror: false },
     ]);
+    expect(result[1]!.orders[0]!.payableInvoices).toEqual([]);
   });
 
-  it("never leaks the raw payments rows onto the serialized stop", () => {
-    const stops = [
-      {
-        id: "stop-1",
-        orders: [
-          {
-            id: "ord-1",
-            payableInvoices: [
-              {
-                id: "inv-1",
-                status: "SENT",
-                total: 100,
-                payments: [{ amount: 40, status: "PAID" }],
-              },
-            ],
-          },
-        ],
-      },
-    ];
-    const out = withRunOrderBalances(stops);
-    const serialized = JSON.stringify(out);
-    expect(serialized).not.toContain('"payments"');
-  });
-
-  it("tolerates a stop with no orders, or an order with no payableInvoices", () => {
-    expect(withRunOrderBalances([{ id: "stop-1", orders: [] }])[0]!.orders).toEqual([]);
-    expect(
-      withRunOrderBalances([{ id: "stop-1", orders: [{ id: "ord-1" }] }])[0]!.orders[0]!
-        .payableInvoices,
-    ).toEqual([]);
+  it("skips the query entirely when there are no orders at all — never a findMany with an empty IN", async () => {
+    const findMany = jest.fn();
+    const result = await withPayableInvoices({ invoice: { findMany } }, [
+      { id: "stop-1", orders: [] },
+    ]);
+    expect(findMany).not.toHaveBeenCalled();
+    expect(result[0]!.orders).toEqual([]);
   });
 });

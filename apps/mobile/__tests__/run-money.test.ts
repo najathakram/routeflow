@@ -10,6 +10,7 @@ import {
   lineItemSubtotal,
   orderAmountDue,
   reconciledAmountDue,
+  reconciledDoorDue,
   shortPickCategoryTax,
   stopAmountDue,
   sumOrderLineItems,
@@ -462,6 +463,111 @@ describe("REG-B810 earlierVisitsRemaining", () => {
       { id: "sent-2", status: "SENT", balanceDue: "garbage" },
     ];
     expect(earlierVisitsRemaining(payableInvoices as any)).toBe(60);
+  });
+});
+
+/**
+ * REG-B810 round 2 (SA-130a/Opus): SA-125's original shape
+ * (`reconciledAmountDue(...) + earlierVisitsRemaining(...)`, unconditionally
+ * added in payment.tsx) double-counted once an order had no open draft and
+ * its only payable was a plain, already-finalized invoice. `reconciledDoorDue`
+ * is the fix: the caller's one decision point, per order, on the reconciled
+ * path.
+ */
+describe("REG-B810 reconciledDoorDue (SA-130a)", () => {
+  it("SA-130a's own repro: SENT 100 (no payments), no draft, short-picked to a reconciled estimate of 90 -> the invoice's OWN balanceDue (100), never ~190", () => {
+    const payableInvoices = [
+      { id: "inv-1", status: "SENT", total: 100, balanceDue: 100, isDepositMirror: false },
+    ];
+    const due = reconciledDoorDue({
+      hasOpenDraft: false,
+      reconciledEstimate: 90, // what a short-picked re-derivation of the order would give
+      payableInvoices,
+    });
+    expect(due).toBe(100);
+    expect(due).not.toBeCloseTo(190, 0);
+  });
+
+  it("(a) an open draft exists: reconciledEstimate + Σ balanceDue over the non-DRAFT payables — the existing SA-125 shape, unchanged", () => {
+    const payableInvoices = [
+      { id: "draft-1", status: "DRAFT", total: 50, balanceDue: 50, isDepositMirror: false },
+      { id: "partial-1", status: "PARTIAL", total: 100, balanceDue: 60, isDepositMirror: false },
+    ];
+    const due = reconciledDoorDue({
+      hasOpenDraft: true,
+      reconciledEstimate: 50, // the draft's own reconciled figure
+      payableInvoices,
+    });
+    expect(due).toBe(110); // the existing 110 example, unchanged
+  });
+
+  it("(a) also covers no payable invoice at all yet: reduces to the bare reconciled estimate, never 0", () => {
+    const due = reconciledDoorDue({
+      hasOpenDraft: false,
+      reconciledEstimate: 128.51,
+      payableInvoices: [],
+    });
+    expect(due).toBe(128.51);
+  });
+
+  it("(b) no open draft, the sole payable is a deposit mirror: reconciledEstimate minus what the mirror already collected", () => {
+    // A SENT deposit mirror of 100 with 30 paid (balanceDue 70), short-picked
+    // to a restated reconciledEstimate of 70 -> 70 - (100-70) = 40.
+    const payableInvoices = [
+      { id: "mirror-1", status: "SENT", total: 100, balanceDue: 70, isDepositMirror: true },
+    ];
+    const due = reconciledDoorDue({
+      hasOpenDraft: false,
+      reconciledEstimate: 70,
+      payableInvoices,
+    });
+    expect(due).toBe(40);
+  });
+
+  it("(b) an unpaid deposit mirror subtracts nothing — reconciledEstimate passes through unchanged", () => {
+    const payableInvoices = [
+      { id: "mirror-1", status: "SENT", total: 100, balanceDue: 100, isDepositMirror: true },
+    ];
+    const due = reconciledDoorDue({ hasOpenDraft: false, reconciledEstimate: 60, payableInvoices });
+    expect(due).toBe(60);
+  });
+
+  it("(c) no open draft, a plain (non-mirror) payable: Σ balanceDue ONLY — the reconciled estimate is never added on top", () => {
+    const payableInvoices = [
+      { id: "inv-1", status: "SENT", total: 100, balanceDue: 60, isDepositMirror: false },
+    ];
+    const due = reconciledDoorDue({
+      hasOpenDraft: false,
+      reconciledEstimate: 90, // a wrong-shaped caller would add this on top -- must be ignored
+      payableInvoices,
+    });
+    expect(due).toBe(60);
+  });
+
+  it("(c) sums MULTIPLE plain payables (a regulated split with no draft) rather than picking just one", () => {
+    const payableInvoices = [
+      { id: "base", status: "SENT", total: 60, balanceDue: 60, isDepositMirror: false },
+      { id: "base-R1", status: "PARTIAL", total: 40, balanceDue: 30, isDepositMirror: false },
+    ];
+    const due = reconciledDoorDue({
+      hasOpenDraft: false,
+      reconciledEstimate: 999,
+      payableInvoices,
+    });
+    expect(due).toBe(90);
+  });
+
+  it("two non-mirror payables with no draft never enter the (b) branch even if one happens to be flagged a mirror — mirror rule requires SOLE payable", () => {
+    const payableInvoices = [
+      { id: "mirror-1", status: "SENT", total: 100, balanceDue: 100, isDepositMirror: true },
+      { id: "other", status: "PARTIAL", total: 20, balanceDue: 20, isDepositMirror: false },
+    ];
+    const due = reconciledDoorDue({
+      hasOpenDraft: false,
+      reconciledEstimate: 999,
+      payableInvoices,
+    });
+    expect(due).toBe(120); // case (c): plain Σ balanceDue, reconciledEstimate ignored
   });
 });
 
