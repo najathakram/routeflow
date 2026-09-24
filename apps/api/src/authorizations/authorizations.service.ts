@@ -8,6 +8,7 @@ import { CreateAuthorizationDto } from "./dto/create-authorization.dto";
 import { RejectAuthorizationDto } from "./dto/reject-authorization.dto";
 import { RenewAuthorizationDto } from "./dto/renew-authorization.dto";
 import { SubmitAuthorizationDto } from "./dto/submit-authorization.dto";
+import { escapeHtml } from "../common/html-escape";
 
 export interface BuyerAuthorizationRow {
   trackedCategoryId: string;
@@ -433,7 +434,11 @@ export class AuthorizationsService {
       await this.notifications.sendToUser(op.id, { title: subject, body }).catch(() => {});
       if (op.email && !op.email.startsWith("no-email+")) {
         await this.email
-          .send({ to: op.email, subject: `${who} — ${subject}`, html: `<p>${body}</p>` })
+          .send({
+            to: op.email,
+            subject: `${who} — ${subject}`,
+            html: `<p>${escapeHtml(body)}</p>`,
+          })
           .catch(() => {});
       }
     }

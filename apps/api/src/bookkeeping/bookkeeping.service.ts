@@ -209,9 +209,13 @@ export class BookkeepingService implements OnModuleInit {
         );
       }
 
-      const alreadyPaid = inv.payments.reduce((sum, p) => sum + Number(p.amount), 0);
+      // B812: round every monetary write — summing already-rounded payments can
+      // still land off-cent in float (0.70 + 0.10 === 0.7999999999999999), which
+      // left a fully-paid invoice stuck at PARTIAL and refused every further
+      // payment as an overpayment (matches payBillFully's own pattern below).
+      const alreadyPaid = roundMoney(inv.payments.reduce((sum, p) => sum + Number(p.amount), 0));
       const totalOwed = Number(inv.total);
-      const remaining = totalOwed - alreadyPaid;
+      const remaining = roundMoney(totalOwed - alreadyPaid);
       if (remaining <= 0) {
         throw new BadRequestException("Transaction is already fully paid");
       }
@@ -237,7 +241,7 @@ export class BookkeepingService implements OnModuleInit {
         },
       });
 
-      const totalPaid = alreadyPaid + paymentAmount;
+      const totalPaid = roundMoney(alreadyPaid + paymentAmount);
       const newInvStatus =
         totalPaid >= totalOwed
           ? InvoiceStatus.PAID
