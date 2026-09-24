@@ -392,6 +392,12 @@ export class OrdersService implements OnApplicationBootstrap {
                 unit: true,
                 unitsPerBox: true,
                 pricePerUnit: true,
+                // units_v1 (SA-085f #2): pack tier prices for the picker's ladder, OPERATOR-ONLY
+                // — a buyer (this same findOne, buyer.controller.ts) must never see another
+                // customer's pricing tier; redactUpsellForCustomer never touched these columns.
+                ...(user.role !== UserRole.CUSTOMER
+                  ? { priceTier2: true, priceTier3: true, priceTier4: true, priceTier5: true }
+                  : {}),
                 averageCost: true,
                 category: true,
                 // Read-site name composition + SKU line (order-ui-redesign-spec §2/§4): a catalog
