@@ -88,27 +88,32 @@ describe("decideResumeLine", () => {
  */
 describe("decideResumeHydrationStart (B747 REQUIRED)", () => {
   it("waits when customerDetail hasn't loaded, even if prices already settled", () => {
-    expect(decideResumeHydrationStart(false, true, false, undefined)).toBe("waiting");
+    expect(decideResumeHydrationStart(false, true, false, false, undefined)).toBe("waiting");
   });
 
   it("waits while the prices query is still in flight (neither fetched nor errored)", () => {
-    expect(decideResumeHydrationStart(true, false, false, undefined)).toBe("waiting");
+    expect(decideResumeHydrationStart(true, false, false, true, undefined)).toBe("waiting");
   });
 
   it("starts once prices fetch successfully", () => {
-    expect(decideResumeHydrationStart(true, true, false, undefined)).toBe("start");
+    expect(decideResumeHydrationStart(true, true, false, false, undefined)).toBe("start");
   });
 
   it("starts on a 403 — the pricing_tiers plan gate means genuinely no overrides, not a failure", () => {
-    expect(decideResumeHydrationStart(true, false, true, 403)).toBe("start");
+    expect(decideResumeHydrationStart(true, false, true, false, 403)).toBe("start");
   });
 
   it("fails on any other error status — a 5xx must never silently resume at the default tier", () => {
-    expect(decideResumeHydrationStart(true, false, true, 500)).toBe("failed");
+    expect(decideResumeHydrationStart(true, false, true, false, 500)).toBe("failed");
   });
 
   it("fails on a network error / timeout with no response status at all", () => {
-    expect(decideResumeHydrationStart(true, false, true, undefined)).toBe("failed");
+    expect(decideResumeHydrationStart(true, false, true, false, undefined)).toBe("failed");
+  });
+
+  it("SA-165 REQUIRED: errored AND currently refetching (a Retry in flight) is waiting, not an instant re-fail", () => {
+    expect(decideResumeHydrationStart(true, false, true, true, 500)).toBe("waiting");
+    expect(decideResumeHydrationStart(true, false, true, true, 403)).toBe("waiting");
   });
 });
 
@@ -396,15 +401,28 @@ describe("NewOrderScreen resume prices off the PER-PRODUCT tier (R2, B747)", () 
 describe("NewOrderScreen resume never hangs on a plan-gated prices query (SA-136b/SA-153, B747)", () => {
   const screenSrc = readFileSync(join(__dirname, "..", "components", "NewOrderScreen.tsx"), "utf8");
 
-  it("destructures isFetched/isError/error from useCustomerPrices, not just data", () => {
+  it("destructures isFetched/isError/isFetching/error/refetch from useCustomerPrices, not just data", () => {
     expect(screenSrc).toMatch(
-      /const\s*\{\s*data:\s*customerPrices,\s*isFetched:\s*pricesFetched,\s*isError:\s*pricesErrored,\s*error:\s*pricesError,?\s*\}\s*=\s*useCustomerPrices/,
+      /const\s*\{\s*data:\s*customerPrices,\s*isFetched:\s*fetched,\s*isError:\s*errored,\s*isFetching:\s*fetching,\s*error:\s*pricesError,\s*refetch:\s*refetchPrices,?\s*\}\s*=\s*useCustomerPrices/,
     );
   });
 
-  it("pricesSettled (fetched OR errored, never just isFetched alone) is a real dependency, not read inline-only", () => {
-    expect(screenSrc).toMatch(/const pricesSettled = pricesFetched \|\| pricesErrored;/);
+  it("pricesSettled excludes an in-flight refetch (SA-165) and is not read inline-only", () => {
+    expect(screenSrc).toMatch(/const pricesSettled = \(fetched \|\| errored\) && !fetching;/);
     expect(screenSrc).not.toMatch(/!customerDetail\s*\|\|\s*customerPrices\s*===\s*undefined/);
+  });
+
+  it("SA-165 wiring: retryHydrate calls refetchPrices before bumping hydrateAttempt", () => {
+    const retrySrc = screenSrc.slice(
+      screenSrc.indexOf("const retryHydrate = useCallback"),
+      screenSrc.indexOf("const hydrationStartedRef"),
+    );
+    expect(retrySrc).toMatch(/refetchPrices\(\)/);
+    expect(retrySrc.indexOf("refetchPrices()")).toBeLessThan(retrySrc.indexOf("setHydrateAttempt"));
+  });
+
+  it("Opus wiring: an already-showing failure dialog is never re-triggered by a later dep change", () => {
+    expect(screenSrc).toMatch(/gate === "failed" && !hydrateFailed/);
   });
 
   it("the cleanup resets hydrationStartedRef — a dep-cancelled run can always be re-run, never stranded", () => {

@@ -543,11 +543,13 @@ function ProductPickView({
   const { data: customerDetail } = useCustomer(customerId);
   const {
     data: customerPrices,
-    isFetched: pricesFetched,
-    isError: pricesErrored,
+    isFetched: fetched,
+    isError: errored,
+    isFetching: fetching,
     error: pricesError,
+    refetch: refetchPrices,
   } = useCustomerPrices(customerId);
-  const pricesSettled = pricesFetched || pricesErrored;
+  const pricesSettled = (fetched || errored) && !fetching;
   // Tenant margin config for the live cost/margin hint in the cart rows.
   const { data: marginConfig } = useMarginConfig();
   // Lines the operator explicitly acked as "sell anyway" below the margin
@@ -710,8 +712,7 @@ function ProductPickView({
   const [hydrating, setHydrating] = useState<boolean>(
     () => !!draftSeed && draftSeed.items.length > 0,
   );
-  // Bumped by the retry action below to re-run a hydration that failed for a
-  // reason other than "the product is gone" (flaky connection, 5xx).
+  // Bumped by the retry action below to re-run a hydration that failed for a non-404 reason.
   const [hydrateAttempt, setHydrateAttempt] = useState(0);
   // The alert offering that retry is dismissible (backdrop tap on web,
   // `cancelable` on native), and nothing else re-triggers the effect — so the
@@ -719,8 +720,9 @@ function ProductPickView({
   const [hydrateFailed, setHydrateFailed] = useState(false);
   const retryHydrate = useCallback(() => {
     setHydrateFailed(false);
+    void refetchPrices(); // SA-165: hydrateAttempt alone never re-fires the prices query
     setHydrateAttempt((n) => n + 1);
-  }, []);
+  }, [refetchPrices]);
   const hydrationStartedRef = useRef(false);
   const failHydration = useCallback(() => {
     hydrationStartedRef.current = false;
@@ -737,8 +739,8 @@ function ProductPickView({
   useEffect(() => {
     if (!hydrating || hydrationStartedRef.current) return;
     const status = (pricesError as { response?: { status?: number } })?.response?.status;
-    const gate = decideResumeHydrationStart(!!customerDetail, pricesFetched, pricesErrored, status);
-    if (gate !== "start") return gate === "failed" ? failHydration() : undefined;
+    const gate = decideResumeHydrationStart(!!customerDetail, fetched, errored, fetching, status);
+    if (gate !== "start") return gate === "failed" && !hydrateFailed ? failHydration() : undefined;
     hydrationStartedRef.current = true;
     const parkedLines: DraftCatalogLine[] = draftSeed?.items ?? [];
     let cancelled = false;

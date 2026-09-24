@@ -78,9 +78,13 @@ export function decideResumeHydrationStart(
   hasCustomerDetail: boolean,
   pricesFetched: boolean,
   pricesErrored: boolean,
+  pricesFetching: boolean,
   pricesErrorStatus: number | null | undefined,
 ): "waiting" | "start" | "failed" {
-  if (!hasCustomerDetail || !(pricesFetched || pricesErrored)) return "waiting";
+  // SA-165: TanStack keeps isError true DURING a refetch, so "errored" alone is not settled — a
+  // Retry that re-fires the query must gate back to waiting, never re-fail before the new attempt
+  // resolves (else the "couldn't restore" dialog reopens the instant Retry is tapped).
+  if (!hasCustomerDetail || !(pricesFetched || pricesErrored) || pricesFetching) return "waiting";
   if (pricesErrored && pricesErrorStatus !== 403) return "failed";
   return "start";
 }
