@@ -49,6 +49,7 @@ import {
 } from "@/lib/api/vendor-bills";
 import { useSuppliers as useInventorySuppliers, usePurchaseOrders } from "@/lib/api/inventory";
 import { getPoBillRefusal, type PoBillRefusal } from "@/lib/po-bill-refusal";
+import { poTotal, type PORow } from "./po-ledger-total";
 import { useProducts } from "@/lib/api/products";
 import {
   useExpenses,
@@ -1622,17 +1623,6 @@ function InventoryPurchasesTab() {
 
 // ─── Purchase Orders Tab ──────────────────────────────────────────────────────
 
-interface PORow {
-  id: string;
-  poNumber: string;
-  status: string;
-  supplier?: { id: string; name: string };
-  expectedDate?: string;
-  createdAt?: string;
-  totalAmount?: number;
-  items?: Array<{ qtyOrdered: number; unitCost: number }>;
-}
-
 const PO_STATUS_FILTERS = [
   { value: "", label: "All" },
   { value: "DRAFT", label: "Draft" },
@@ -1641,14 +1631,6 @@ const PO_STATUS_FILTERS = [
   { value: "RECEIVED", label: "Received" },
   { value: "CLOSED", label: "Closed" },
 ];
-
-function poTotal(po: PORow): number {
-  if (po.totalAmount != null) return Number(po.totalAmount);
-  return (po.items ?? []).reduce(
-    (sum, i) => sum + Number(i.qtyOrdered ?? 0) * Number(i.unitCost ?? 0),
-    0,
-  );
-}
 
 function PurchaseOrdersTab() {
   const [statusFilter, setStatusFilter] = React.useState("");

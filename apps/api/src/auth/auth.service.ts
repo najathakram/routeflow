@@ -16,6 +16,7 @@ import { EmailService } from "../email/email.service";
 import { AppConfig } from "../config/configuration";
 import { JwtPayload } from "./jwt-payload.interface";
 import { EntitlementsService } from "../billing/entitlements.service";
+import { escapeHtml } from "../common/html-escape";
 
 export interface DeviceInfo {
   userAgent?: string;
@@ -211,9 +212,9 @@ export class AuthService {
             to: (user as any).email as string,
             subject: "New login detected on your RouteFlow account",
             html: `<p>A new login was detected on your RouteFlow account.</p>
-                   <p><strong>Device:</strong> ${deviceName}</p>
-                   <p><strong>IP address:</strong> ${deviceInfo.ipAddress ?? "unknown"}</p>
-                   <p><strong>Time:</strong> ${loginTime}</p>
+                   <p><strong>Device:</strong> ${escapeHtml(deviceName)}</p>
+                   <p><strong>IP address:</strong> ${escapeHtml(deviceInfo.ipAddress ?? "unknown")}</p>
+                   <p><strong>Time:</strong> ${escapeHtml(loginTime)}</p>
                    <p>If this wasn't you, please contact support immediately and change your password.</p>`,
             // email-connect-google PR-3: a security notification must never leave from a
             // tenant's own connected mailbox/SMTP — platform sender only.
@@ -521,7 +522,7 @@ export class AuthService {
         subject: "Reset your RouteFlow password",
         html: `<p>Hi,</p>
 <p>We received a request to reset the password for your RouteFlow account.</p>
-<p><a href="${resetUrl}" style="display:inline-block;background:#4f46e5;color:#fff;padding:12px 24px;border-radius:6px;text-decoration:none;font-weight:600;">Reset password</a></p>
+<p><a href="${escapeHtml(resetUrl)}" style="display:inline-block;background:#4f46e5;color:#fff;padding:12px 24px;border-radius:6px;text-decoration:none;font-weight:600;">Reset password</a></p>
 <p>This link expires in <strong>15 minutes</strong>. If you didn't request this, you can safely ignore this email — your password will not change.</p>`,
         // email-connect-google PR-3: platform sender only — never a tenant mailbox/SMTP.
         senderClass: "platform",
@@ -654,8 +655,8 @@ export class AuthService {
           to: user.email,
           subject: "A password was set on your RouteFlow account",
           html: `<p>A password was just set on your RouteFlow account, which previously signed in with Google only.</p>
-                 <p><strong>Time:</strong> ${new Date().toUTCString()}</p>
-                 <p><strong>IP address:</strong> ${deviceInfo?.ipAddress ?? "unknown"}</p>
+                 <p><strong>Time:</strong> ${escapeHtml(new Date().toUTCString())}</p>
+                 <p><strong>IP address:</strong> ${escapeHtml(deviceInfo?.ipAddress ?? "unknown")}</p>
                  <p>You can now sign in with your username and this password as well as with Google. If this wasn't you, reset your password immediately and contact support.</p>`,
           // email-connect-google PR-3: platform sender only — never a tenant mailbox/SMTP.
           senderClass: "platform",
