@@ -27,8 +27,18 @@ import { displayProductName } from "@/lib/product-display";
 import { InlineCreateProductModal } from "@/components/InlineCreateProductModal";
 import { BarcodeScannerButton } from "@/components/BarcodeScannerButton";
 import { LineItemRow } from "@/components/LineItemRow";
+import { OrderLineUnitPicker } from "@/components/OrderLineUnitPicker";
+import {
+  applyLineUnit,
+  mergeSameLine,
+  sameProductUnit,
+  unitLabelPayload,
+  type PackBase,
+} from "@/lib/order-line-unit";
+import type { UnitOption } from "@/lib/unit-options";
 import { useScanCodeHandler } from "./scan/useScanCodeHandler";
 import { ScanOrderScreen } from "./scan/ScanOrderScreen";
+import { PriceEditor } from "./scan/PriceEditor";
 import type { ScanHistoryEntry } from "./scan/scan-summary";
 import { LicenseGuardModal } from "./LicenseGuardModal";
 import { parseRegulatedAuthError, type BlockedCategory } from "@/lib/api/authorizations";
@@ -104,6 +114,10 @@ interface LineItem {
   /** UI-only qty entry mode for case-packed lines. NEVER submitted — the payload always
    *  carries {qty, boxes, pieces} and the per-case unitPrice. */
   sellBy?: "case" | "unit";
+  /** units_v1: the non-pack unit this line sells by (`undefined` = the pack); see LineItemRowItem. */
+  unitLabel?: string;
+  /** UI-only: the pack fields a unit switch overwrote (restored when the pack is chosen again). */
+  packBase?: PackBase;
   /**
    * The product's tier-price columns, snapshotted when the line is added, so a customer chosen
    * AFTER scanning can still re-price the line (owner ruling D1) without refetching the product.
@@ -329,7 +343,7 @@ export function CreateOrderModal({
     addLineItem: (product) => {
       // `created` is read in the same closure that performs the add, so it is exact even
       // though setLineItems has not flushed yet (the scan screen uses it to undo).
-      const created = !lineItems.some((li) => li.productId === product.id);
+      const created = !lineItems.some((li) => sameProductUnit(li, { productId: product.id }));
       const typed = typedQtyRef.current;
       typedQtyRef.current = null;
       const fresh = !!typed && Date.now() - typed.at < 5000;
@@ -424,7 +438,8 @@ export function CreateOrderModal({
     setLineItems((prev) => {
       let changed = false;
       const next = prev.map((li) => {
-        if (li.isUnlisted || !li.tierPrices) return li;
+        // a unit line is re-priced by its own picker from the product's ladder, not the pack's tiers
+        if (li.isUnlisted || !li.tierPrices || li.unitLabel) return li;
         if (li.priceType === "DISCOUNTED" || li.priceType === "MANUAL") return li;
         if (li.discountedPrice != null) return li;
         const tier = cpMap.get(li.productId) ?? selectedCustomer?.pricingTier ?? 1;
@@ -532,15 +547,14 @@ export function CreateOrderModal({
         : scanV2
           ? stepLineUnit(li, 1)
           : { ...li, qty: li.qty + 1 };
-    // KNOWN LIMITATION (do not "fix" the mapping below in isolation): a line is matched on
-    // `productId` ALONE — `find` takes the first, and the `map` updates EVERY line with that
-    // productId. That is right while a product has one line, but once `units_v1` lets one order
-    // hold two unit levels of the same product (a case line AND a piece line), a single add would
-    // increment both. The re-key to productId + unit belongs to the create-order picker work
-    // (Lane U units, with its own spec), not to this typed-qty step.
-    const existing = lineItems.find((li) => li.productId === product.id);
+    // Matched by product AND unit (sameProductUnit): once units_v1 lets one order hold two unit
+    // levels of the same product (a case line and a piece line), a scan/add must merge only into
+    // the line with the matching unit, never both.
+    const existing = lineItems.find((li) => sameProductUnit(li, { productId: product.id }));
     if (existing) {
-      setLineItems((prev) => prev.map((li) => (li.productId === product.id ? merge(li) : li)));
+      setLineItems((prev) =>
+        prev.map((li) => (sameProductUnit(li, { productId: product.id }) ? merge(li) : li)),
+      );
       // The scan screen shows its own running rows (a toast per repeat scan would bury them).
       if (orderUiV2 && !scanScreenActive) {
         toast({
@@ -743,6 +757,29 @@ export function CreateOrderModal({
 
   const setSellBy = (tempId: string, sellBy: "case" | "unit") =>
     setLineItems((prev) => prev.map((li) => (li.tempId === tempId ? { ...li, sellBy } : li)));
+
+  /** The effective price tier for a product on this order (per-product override, else the customer's). */
+  const tierForProduct = (productId: string) =>
+    cpMap.get(productId) ?? selectedCustomer?.pricingTier ?? 1;
+
+  /**
+   * units_v1: sell a line by another unit (or back by the pack). A line switched to a unit the
+   * product already has on this order folds into that line (product + unit is the line's identity).
+   */
+  const setLineUnit = (tempId: string, option: UnitOption, refresh: boolean) =>
+    setLineItems((prev) => {
+      const target = prev.find((li) => li.tempId === tempId);
+      if (!target) return prev;
+      const next = applyLineUnit(target, option, {
+        tier: tierForProduct(target.productId),
+        keepQty: refresh,
+      });
+      const twin = prev.find((li) => li.tempId !== tempId && sameProductUnit(li, next));
+      if (!twin) return prev.map((li) => (li.tempId === tempId ? next : li));
+      return prev
+        .filter((li) => li.tempId !== tempId)
+        .map((li) => (li.tempId === twin.tempId ? mergeSameLine(li, next) : li));
+    });
 
   const setDiscountedPrice = (tempId: string, value: number | null) => {
     setLineItems((prev) =>
@@ -1031,6 +1068,7 @@ export function CreateOrderModal({
             productId: li.productId,
             qty: li.qty,
             ...(li.unitsPerBox ? { boxes: li.boxes ?? 0, pieces: li.pieces ?? 0 } : {}),
+            ...unitLabelPayload(li),
             // Send unitPrice for one-time overrides — discounts (below list) and
             // upsells (MANUAL, above list). Not for permanent SPECIAL tier prices
             // (backend handles those via CustomerPrice).
@@ -1166,7 +1204,7 @@ export function CreateOrderModal({
   })();
 
   // The same LineItemRow for the create-order list and the scan screen, so the two can never drift.
-  const renderLine = (li: LineItem, ctx?: { highlighted?: boolean }) => (
+  const renderLine = (li: LineItem, ctx?: { highlighted?: boolean; onTapPrice?: () => void }) => (
     <LineItemRow
       key={li.tempId}
       item={li}
@@ -1174,8 +1212,10 @@ export function CreateOrderModal({
       marginFloor={floorForCategory(marginConfig, li.category)}
       floorAcked={floorAcked.has(li.tempId)}
       costRevealed={costRevealed.has(li.tempId)}
-      priceHistoryEntry={priceHistory?.[li.productId]}
+      // the remembered price is a PACK price (the server excludes unit lines from it, B606)
+      priceHistoryEntry={li.unitLabel ? undefined : priceHistory?.[li.productId]}
       highlighted={ctx?.highlighted}
+      onTapPrice={ctx?.onTapPrice}
       rowRef={(el) => {
         if (el) rowRefs.current.set(li.tempId, el);
         else rowRefs.current.delete(li.tempId);
@@ -1194,6 +1234,35 @@ export function CreateOrderModal({
       onUpdateUnlistedName={(name) => updateUnlistedName(li.tempId, name)}
       onUpdateUnlistedPrice={(value) => updateUnlistedPrice(li.tempId, value)}
       onRemove={() => removeLineItem(li.tempId)}
+      unitSlot={
+        <OrderLineUnitPicker
+          line={li}
+          tier={tierForProduct(li.productId)}
+          onChange={(option, refresh) => setLineUnit(li.tempId, option, refresh)}
+        />
+      }
+    />
+  );
+
+  // The scan screen's price/quantity sheet for one line: the same handlers, and the same
+  // MarginHint floor check, the row uses — no separate write path.
+  const renderPriceEditor = (li: LineItem, close: () => void) => (
+    <PriceEditor
+      line={li}
+      marginFloor={floorForCategory(marginConfig, li.category)}
+      floorAcked={floorAcked.has(li.tempId)}
+      costRevealed={costRevealed.has(li.tempId)}
+      priceHistoryEntry={priceHistory?.[li.productId]}
+      onQtyDelta={(delta) => updateQty(li.tempId, delta)}
+      onSetBoxes={(value) => setBoxes(li.tempId, value)}
+      onSetPieces={(value) => setPieces(li.tempId, value)}
+      onSetUnitQty={(value) => setUnitQty(li.tempId, value)}
+      onSetSellBy={(mode) => setSellBy(li.tempId, mode)}
+      onSetDiscountedPrice={(value) => setDiscountedPrice(li.tempId, value)}
+      onSetToFloor={(floorPrice) => setDiscountedPrice(li.tempId, floorPrice)}
+      onAckFloor={() => ackFloor(li.tempId)}
+      onToggleCostRevealed={() => toggleCostRevealed(li.tempId)}
+      onClose={close}
     />
   );
 
@@ -1201,7 +1270,7 @@ export function CreateOrderModal({
   // it is still that single unit — so an operator who has since edited the quantity (or two rapid
   // scans that both recorded "created") never loses the whole line to one Undo.
   const undoScan = ({ productId, created }: ScanHistoryEntry) => {
-    const line = lineItems.find((li) => li.productId === productId);
+    const line = lineItems.find((li) => sameProductUnit(li, { productId }));
     if (!line) return; // the operator already removed it by hand
     const singleUnit = line.unitsPerBox
       ? (line.boxes ?? 0) <= 1 && (line.pieces ?? 0) === 0
@@ -1285,7 +1354,11 @@ export function CreateOrderModal({
         onSubmit={handleSubmit(onSubmit)}
         noValidate
         onKeyDown={(e) => {
-          if (e.key === "Enter") e.preventDefault();
+          // A <textarea> (the per-line note) owns Enter for itself — a newline, never a submit.
+          // Every other control keeps the no-Enter-submit behavior this form has always had.
+          if (e.key === "Enter" && !(e.target instanceof HTMLTextAreaElement)) {
+            e.preventDefault();
+          }
         }}
         className="max-h-[65vh] overflow-y-auto pr-1"
       >
@@ -1993,6 +2066,7 @@ export function CreateOrderModal({
           onClose={() => setScanScreenOpen(false)}
           lines={lineItems}
           renderLine={renderLine}
+          renderPriceEditor={renderPriceEditor}
           resolveCode={(code) => {
             // A qty typed for an Enter that added nothing must never ride into a camera scan.
             typedQtyRef.current = null;

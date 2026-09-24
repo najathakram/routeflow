@@ -138,3 +138,55 @@ describe("LineItemRow behaviour is unchanged by the layout wrapper", () => {
     expect(screen.getByText("$82.48", { selector: "span.font-semibold" })).toBeInTheDocument();
   });
 });
+
+describe("B715: the tap-to-edit price has a visible affordance only when onTapPrice is set", () => {
+  it("renders the pencil icon and the phone-width helper when onTapPrice is provided", () => {
+    renderRow({ ...makeProps(plainItem), onTapPrice: jest.fn() });
+    expect(screen.getByLabelText("Change price")).toBeInTheDocument();
+    expect(screen.getByText("Tap to change")).toBeInTheDocument();
+  });
+
+  it("renders neither the pencil icon nor the helper when onTapPrice is omitted", () => {
+    renderRow(makeProps(plainItem));
+    expect(screen.queryByLabelText("Change price")).not.toBeInTheDocument();
+    expect(screen.queryByText("Tap to change")).not.toBeInTheDocument();
+  });
+});
+
+describe("multi-line per-item notes", () => {
+  const noteFieldFor = (item: LineItemRowItem) =>
+    renderRow(makeProps({ ...item, noteOpen: true })).getByPlaceholderText(
+      /note for this item/i,
+    ) as HTMLTextAreaElement;
+
+  it("the note field is a <textarea>, not a single-line <input>", () => {
+    const field = noteFieldFor(plainItem);
+    expect(field.tagName).toBe("TEXTAREA");
+  });
+
+  it("caps at 2000 characters, the same cap raised server-side for updateOrderItems", () => {
+    const field = noteFieldFor(plainItem);
+    expect(field).toHaveAttribute("maxLength", "2000");
+  });
+
+  it("Enter inserts a newline instead of doing nothing (the field has no onKeyDown of its own)", async () => {
+    const user = userEvent.setup();
+    const props = makeProps({ ...plainItem, noteOpen: true, note: "line one" });
+    renderRow(props);
+    const field = screen.getByPlaceholderText(/note for this item/i) as HTMLTextAreaElement;
+    // Cursor explicitly at the end of the existing value — onSetNote is a bare mock with no
+    // state to feed back, so this proves the browser's native textarea behavior inserts \n
+    // (nothing here does it manually), not a controlled-component re-render artifact.
+    await user.type(field, "{Enter}line two", {
+      initialSelectionStart: field.value.length,
+      initialSelectionEnd: field.value.length,
+    });
+    const calls = (props.onSetNote as jest.Mock).mock.calls.map((c) => c[0] as string);
+    expect(calls.some((v) => v.includes("\n"))).toBe(true);
+  });
+
+  it("a note already carrying multiple lines round-trips through the value prop intact", () => {
+    const field = noteFieldFor({ ...plainItem, note: "line one\nline two\nline three" });
+    expect(field.value).toBe("line one\nline two\nline three");
+  });
+});

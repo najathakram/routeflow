@@ -875,6 +875,32 @@ async function main() {
     });
   }
 
+  // ─── Feature override: flag.units_v1 ─────────────────────────────────────────
+  // Multi-level units ships ENFORCED-BUT-UNGRANTED (feature-registry.ts) — no plan bundles it,
+  // so nothing above grants it, and CLAUDE.md's standing rule is that it may only ever be
+  // granted on the `test` tenant. assertSafeTarget()/assertTestTenant() above already cover
+  // this insert (same script, same guarded target); this only ever runs where the rest of the
+  // file's writes are already allowed to run. Idempotent: the partial unique index is
+  // `WHERE revokedAt IS NULL`, so re-running the seed must check for an existing active row
+  // itself rather than rely on Prisma's upsert (there is no plain `@@unique` for it to key on).
+  const existingUnitsOverride = await prisma.tenantFeatureOverride.findFirst({
+    where: { tenantId, featureKey: "flag.units_v1", revokedAt: null },
+  });
+  if (!existingUnitsOverride) {
+    await prisma.tenantFeatureOverride.create({
+      data: {
+        tenantId,
+        featureKey: "flag.units_v1",
+        effect: "GRANT",
+        kind: "COMP",
+        reason: "Local dev/test fixture — multi-level units (units_v1) local coverage and proofs.",
+        expiresAt: null,
+        createdById: null,
+      },
+    });
+    console.log(`Granted flag.units_v1 on "${TENANT_SLUG}" (${tenantId})`);
+  }
+
   console.log(
     `Seeded tenant "${TENANT_SLUG}" (${tenantId}): 7 users, ${productDefs.length} products, ` +
       `10 orders, transactions for delivered orders`,

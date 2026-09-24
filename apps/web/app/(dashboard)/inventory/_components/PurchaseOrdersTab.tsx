@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { Plus, Eye, Send, PackageCheck, ChevronDown, ChevronUp } from "lucide-react";
+import { Plus, Eye, Pencil, Send, PackageCheck, ChevronDown, ChevronUp } from "lucide-react";
 import { Badge, Button, useToast } from "@routeflow/ui/web";
 import { formatMoney } from "@/lib/format";
 import { unitsLabel } from "@/lib/stock-label";
@@ -12,9 +12,17 @@ import {
   useSendPurchaseOrder,
   useClosePurchaseOrder,
 } from "@/lib/api/inventory";
-import type { POItem, POStatus, PurchaseOrder, Supplier } from "./purchase-orders-shared";
+import {
+  resolveStoredPOLineAmounts,
+  type POItem,
+  type POStatus,
+  type PurchaseOrder,
+  type Supplier,
+} from "./purchase-orders-shared";
 import { CreatePOModal } from "./PurchaseOrdersCreateModal";
 import { ReceivePOModal } from "./PurchaseOrdersReceiveModal";
+import { PurchaseOrdersEditModal } from "./PurchaseOrdersEditModal";
+import { isEditable } from "./purchase-orders-edit";
 
 function poStatusBadge(status: POStatus) {
   const map: Record<
@@ -83,6 +91,9 @@ function PODetailRow({
                   const isBoxed = upb > 1;
                   const ordered = Number(item.qtyOrdered ?? 0);
                   const received = Number(item.qtyReceived ?? 0);
+                  // MONEY: the stored exact total through the shared resolver — never `qtyOrdered x unitCost`,
+                  // which re-multiplies a boxed line's rounded per-piece cost (#1199: $11,000.40 for $11,000.00).
+                  const subtotal = resolveStoredPOLineAmounts(item, upb).totalCost;
                   return (
                     <tr key={item.id}>
                       <td className="px-3 py-2 font-medium text-navy">
@@ -106,9 +117,7 @@ function PODetailRow({
                           <span className="text-navy/30">—</span>
                         )}
                       </td>
-                      <td className="px-3 py-2 text-right text-navy/70">
-                        {formatMoney(ordered * Number(item.unitCost ?? 0))}
-                      </td>
+                      <td className="px-3 py-2 text-right text-navy/70">{formatMoney(subtotal)}</td>
                     </tr>
                   );
                 })}
@@ -181,6 +190,7 @@ export function PurchaseOrdersTab({
   const [showCreateModal, setShowCreateModal] = React.useState(false);
   const [expandedId, setExpandedId] = React.useState<string | null>(null);
   const [receivePO, setReceivePO] = React.useState<PurchaseOrder | null>(null);
+  const [editPO, setEditPO] = React.useState<PurchaseOrder | null>(null);
 
   const { data: poData, isLoading } = usePurchaseOrders({
     status: statusFilter || undefined,
@@ -317,6 +327,15 @@ export function PurchaseOrdersTab({
                         >
                           <Eye className="h-4 w-4" />
                         </button>
+                        {isEditable(po) && (
+                          <button
+                            onClick={() => setEditPO(po)}
+                            title="Edit"
+                            className="rounded p-1.5 text-navy/70 hover:bg-surface-raised hover:text-navy"
+                          >
+                            <Pencil className="h-4 w-4" />
+                          </button>
+                        )}
                         {po.status === "DRAFT" && <SendPOButton poId={po.id} />}
                         {(po.status === "SENT" || po.status === "PARTIAL") && (
                           <button
@@ -368,6 +387,14 @@ export function PurchaseOrdersTab({
       )}
       {receivePO && (
         <ReceivePOModal po={receivePO} products={products} onClose={() => setReceivePO(null)} />
+      )}
+      {editPO && (
+        <PurchaseOrdersEditModal
+          po={editPO}
+          suppliers={suppliers}
+          products={products}
+          onClose={() => setEditPO(null)}
+        />
       )}
     </>
   );

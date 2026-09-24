@@ -146,7 +146,7 @@ export default function AdminDashboardPage() {
         </div>
         <Link
           href="/admin/tenants/new"
-          className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-indigo-500"
+          className="admin-tap rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-indigo-500"
         >
           + Create Tenant
         </Link>
@@ -329,7 +329,7 @@ export default function AdminDashboardPage() {
                         <td className="px-4 py-2">
                           <Link
                             href={`/admin/tenants/${t.id}`}
-                            className="text-xs text-indigo-400 hover:text-indigo-300"
+                            className="admin-tap-text text-xs text-indigo-400 hover:text-indigo-300"
                           >
                             View
                           </Link>
@@ -387,7 +387,7 @@ export default function AdminDashboardPage() {
                       <td className="px-4 py-2">
                         <Link
                           href={`/admin/tenants/${t.id}`}
-                          className="text-xs text-indigo-400 hover:text-indigo-300"
+                          className="admin-tap-text text-xs text-indigo-400 hover:text-indigo-300"
                         >
                           View
                         </Link>
@@ -405,7 +405,10 @@ export default function AdminDashboardPage() {
       <AdminCard
         title="Recent Tenants"
         actions={
-          <Link href="/admin/tenants" className="text-xs text-indigo-400 hover:text-indigo-300">
+          <Link
+            href="/admin/tenants"
+            className="admin-tap-text text-xs text-indigo-400 hover:text-indigo-300"
+          >
             View all
           </Link>
         }
@@ -428,7 +431,7 @@ export default function AdminDashboardPage() {
                   <td className="px-5 py-3">
                     <Link
                       href={`/admin/tenants/${t.id}`}
-                      className="font-mono text-indigo-400 hover:text-indigo-300"
+                      className="admin-tap-text font-mono text-indigo-400 hover:text-indigo-300"
                     >
                       {t.slug}
                     </Link>

@@ -306,7 +306,7 @@ function LineItemRow({ item, last }: { item: BuyerInvoiceItem; last: boolean }) 
           {item.discount ? ` − $${Number(item.discount).toFixed(2)} disc` : ""}
         </Text>
         {item.notes?.trim() ? (
-          <Text style={styles.itemNote} numberOfLines={2}>
+          <Text style={styles.itemNote} numberOfLines={4}>
             {item.notes}
           </Text>
         ) : null}

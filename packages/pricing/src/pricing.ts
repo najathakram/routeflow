@@ -178,6 +178,35 @@ export class AmbiguousLineError extends Error {
  * should have rolled over via `normalizeBoxesPieces`); a non-integer `boxes`/`pieces`/boxed-`qty`;
  * or `boxes`/`pieces` given and their `boxes*unitsPerBox+pieces` disagrees with `qty`.
  */
+/**
+ * SA-077(2): a boxes/pieces split was given while NO pack resolves (`unitsPerBox` absent, 0 or 1).
+ * Returns the reason, or null when the shape is fine.
+ *
+ * There is no denominator, so the split cannot be priced. Every consumer used to drop it silently
+ * and charge `unitPrice * qty` — and on a line whose `unitPrice` is a CASE price that is the box
+ * price charged per piece, the B717 family's defect. `buildLine` has refused this at its own choke
+ * point since G1 (`./build-line.ts`), but `lineAmbiguity` did not, because every one of its box
+ * checks is gated on `unitsPerBox > 1`. Exported so the ONE definition serves both the guard and
+ * the API's 4xx, rather than being restated in a second place.
+ *
+ * Deliberately narrow: a split that contradicts itself on a line that DOES have a pack is NOT this
+ * shape. That one prices from the split at the resolved pack (B717) and must not be refused.
+ */
+export function splitWithoutPack(input: {
+  boxes?: number | null;
+  pieces?: number | null;
+  unitsPerBox?: number | null;
+}): string | null {
+  if (input.boxes == null && input.pieces == null) return null;
+  const upb = Number(input.unitsPerBox ?? 0);
+  if (upb > 1) return null;
+  return (
+    `boxes/pieces given (boxes:${input.boxes ?? 0}, pieces:${input.pieces ?? 0}) but no pack ` +
+    `resolves (unitsPerBox:${input.unitsPerBox ?? "none"}) — the split has no denominator, so it ` +
+    `cannot be priced and would be silently dropped`
+  );
+}
+
 export function lineAmbiguity(input: {
   qty: number;
   boxes?: number | null;
@@ -185,6 +214,24 @@ export function lineAmbiguity(input: {
   unitsPerBox?: number | null;
 }): string | null {
   const { qty, boxes, pieces, unitsPerBox } = input;
+  // FIRST (SA-077e). Be precise about what that ordering does and does not buy, because a future
+  // reader reordering these checks needs to know whether it is load-bearing for CORRECTNESS.
+  //
+  // It is NOT. A VALID split is never at risk of wrongful refusal whatever the order: it has a
+  // pack above 1, and `splitWithoutPack` only fires at a pack of 1 or less. Those preconditions
+  // are mutually exclusive.
+  //
+  // What the ordering decides is the MESSAGE on an input that trips two checks at once, and there
+  // is exactly one such input. The boxes/pieces integer loop below is the only check here that is
+  // NOT gated on `hasBoxPackaging`, so a split with no pack AND a non-integer box or piece count
+  // fires both. First position makes that report "no pack resolves" rather than "boxes must be an
+  // integer" — a precedence choice, not a safety one. Every other check requires unitsPerBox > 1
+  // and therefore cannot co-fire at all.
+  //
+  // The hole this closes is separate from the ordering: before it, a split with no pack passed
+  // every check below, all of which are pack-gated, and was reported as unambiguous.
+  const noPack = splitWithoutPack({ boxes, pieces, unitsPerBox });
+  if (noPack != null) return noPack;
   const upb = Number(unitsPerBox ?? 0);
   const hasBoxPackaging = upb > 1;
   const boxesGiven = boxes != null;
@@ -452,6 +499,73 @@ export function computeCategoryTax(input: CategoryTaxInput): number {
     default:
       return 0;
   }
+}
+
+/** The trio B297 (SA-088) freezes on a line at sale time — see the `categoryTaxType` /
+ *  `categoryTaxRate` / `categoryPriceIncludesTax` columns on OrderItem/InvoiceItem. */
+export interface CategoryTaxSnapshot {
+  categoryTaxType: CategoryTaxType | null;
+  categoryTaxRate: number | null;
+  categoryPriceIncludesTax: boolean | null;
+}
+
+/**
+ * What a sale writer needs from a live `TrackedCategory` row to stamp the trio — never the
+ * full Prisma model, just the fields `categoryTaxSnapshotOf`/`computeCategoryTax` actually
+ * read. A `loadCategoryMapForProducts`-shaped loader's `Map<string, TrackedCategoryRow>` is
+ * the ONE place callers should type this against, instead of each hand-rolling its own `any`.
+ */
+export interface TrackedCategoryRow {
+  taxType: CategoryTaxType;
+  rate: number | string;
+  priceIncludesTax?: boolean | null;
+}
+
+/**
+ * The ONE place a sale writer turns "the category this line belongs to" into the three
+ * columns it stamps onto the line. `null`/`undefined` (a non-regulated line — no
+ * trackedCategoryId) yields an all-null snapshot; any tracked category — even one whose
+ * `taxType` is NONE — yields a full trio, because the line WAS priced under that category's
+ * rules (zero tax is still a recorded basis, not "no snapshot"). Never hand-type these three
+ * fields at a call site — that's how one of them drifts from the other two (B297-SPEC.md D1).
+ */
+export function categoryTaxSnapshotOf(
+  category: TrackedCategoryRow | null | undefined,
+): CategoryTaxSnapshot {
+  if (!category) {
+    return { categoryTaxType: null, categoryTaxRate: null, categoryPriceIncludesTax: null };
+  }
+  return {
+    categoryTaxType: category.taxType,
+    categoryTaxRate: Number(category.rate),
+    categoryPriceIncludesTax: !!category.priceIncludesTax,
+  };
+}
+
+/**
+ * COPIES a line's own already-stamped trio verbatim (a merge/consolidation folding a losing
+ * line into a winner, or an invoice line duplicated from another) — never re-derives it from any
+ * category, live or otherwise. A merge is not a new sale (SA-098a): the line's own snapshot is
+ * the fact. `null`/`undefined` copies through as an all-null snapshot (nothing to copy).
+ */
+export function copyCategoryTaxSnapshot(
+  src:
+    | {
+        categoryTaxType: CategoryTaxType | null;
+        categoryTaxRate: number | string | null;
+        categoryPriceIncludesTax: boolean | null;
+      }
+    | null
+    | undefined,
+): CategoryTaxSnapshot {
+  if (!src) {
+    return { categoryTaxType: null, categoryTaxRate: null, categoryPriceIncludesTax: null };
+  }
+  return {
+    categoryTaxType: src.categoryTaxType,
+    categoryTaxRate: src.categoryTaxRate == null ? null : Number(src.categoryTaxRate),
+    categoryPriceIncludesTax: src.categoryPriceIncludesTax,
+  };
 }
 
 // ─── Promotions (P5-04, + BUY_N_GET_M) ────────────────────────────────────────
@@ -904,6 +1018,33 @@ export function formatQtySplit({ qty, boxes, pieces, unitLabel, boxLabel }: QtyS
   if (b > 0) parts.push(`${b} ${b === 1 ? boxSingular : boxPlural}`);
   if (p > 0) parts.push(`${p} ${label}`);
   return parts.length > 0 ? parts.join(" + ") : "0";
+}
+
+export interface UnitLineQtyInput {
+  qty: number | string;
+  boxes?: number | null;
+  pieces?: number | null;
+  /** units_v1 (2026-09-19): the line's own selling unit ("Case") when this line
+   *  was sold by a non-pack unit rather than by loose pieces. Empty/whitespace
+   *  is the pack (every existing call, no `unitLabel`, is unchanged). */
+  unitLabel?: string | null;
+}
+
+/**
+ * The quantity text of a line that may be sold by its own unit (units_v1) — the ONE
+ * formatter for the invoice/order qty cell on web, api (PDF + email) and mobile, so a
+ * units_v1 line reads the same everywhere: "3 Cases" (boxed split), never "3 boxes"
+ * (B653), and "5 Piece" for a factor-1 unit (no split to attach the label to — web
+ * parity, B757 follow-up), never a bare "5". A pack line (no `unitLabel`) is EXACTLY
+ * `formatQtySplit` — byte-identical to before this function existed, so a tenant
+ * without `flag.units_v1` (which can never hold a unit line) sees no change.
+ */
+export function invoiceLineQtyText(item: UnitLineQtyInput): string {
+  const split = { qty: item.qty, boxes: item.boxes, pieces: item.pieces };
+  const label = (item.unitLabel ?? "").trim();
+  if (!label) return formatQtySplit(split);
+  if (item.boxes == null && item.pieces == null) return `${formatQtySplit(split)} ${label}`;
+  return formatQtySplit({ ...split, boxLabel: label });
 }
 
 // ─── Per-unit cost rounding ───────────────────────────────────────────────────
