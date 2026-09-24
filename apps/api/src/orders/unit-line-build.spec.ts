@@ -139,6 +139,18 @@ describe("buildUnitLine — an order line sold by a non-pack unit", () => {
     ).toThrow(/unit-aware/);
   });
 
+  // B682/SA-145: this is the EDIT-path wrong-money shape — Math.trunc used to
+  // silently bill 1 Case for a typed 1.5. CREATE's own DTO is already @IsInt,
+  // so it never reached here fractional; unit-line-edit.ts's looser DTO
+  // (@IsNumber @Min(1)) does. Now refused, with buildLine's error mapped to
+  // this endpoint's own wording — the SAME wording invoice-unit-line.ts uses.
+  it("B682: a fractional unit count is refused, never truncated (the EDIT-path wrong-money shape)", () => {
+    expect(() => build({ qty: 1.5 })).toThrow(
+      "A line sold by the Case needs a whole number of Case.",
+    );
+    expect(() => build({ qty: 2.9 })).toThrow(BadRequestException);
+  });
+
   it("hands the regulated-tax callback the BASE piece count and the line subtotal, and carries the snapshots", () => {
     const l = build({});
     expect(taxFor).toHaveBeenCalledWith(864, 1440);

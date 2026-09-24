@@ -27,6 +27,68 @@ describe("buildReorderItems", () => {
     } as any;
     expect(buildReorderItems(order)).toEqual([]);
   });
+
+  describe("B651 — a unit-sold line refuses the WHOLE reorder", () => {
+    it("an order with ONE Case line and no other lines returns [] (Reorder hides — canDoReorder reads .length > 0)", () => {
+      const order = {
+        lineItems: [{ id: "1", productId: "p1", qty: 3, unitLabel: "Case", status: "DELIVERED" }],
+      } as any;
+      expect(buildReorderItems(order)).toEqual([]);
+    });
+
+    it("a Case line MIXED with normal lines refuses the ENTIRE reorder, not just the Case line — a partial reorder that quietly drops it is its own surprise", () => {
+      const order = {
+        lineItems: [
+          { id: "1", productId: "p1", qty: 3, unitLabel: "Case", status: "DELIVERED" },
+          { id: "2", productId: "p2", qty: 5, status: "DELIVERED" },
+        ],
+      } as any;
+      expect(buildReorderItems(order)).toEqual([]);
+    });
+
+    it("a null/empty unitLabel is still a plain pack line — unaffected, byte-identical behaviour", () => {
+      const order = {
+        lineItems: [
+          { id: "1", productId: "p1", qty: 3, unitLabel: null, status: "DELIVERED" },
+          { id: "2", productId: "p2", qty: 5, unitLabel: "", status: "DELIVERED" },
+        ],
+      } as any;
+      expect(buildReorderItems(order)).toEqual([
+        { productId: "p1", qty: 3 },
+        { productId: "p2", qty: 5 },
+      ]);
+    });
+
+    it("RED PROOF — the pre-fix shape (unitLabel simply not read) would have copied the Case line through as an indistinguishable plain-qty line", () => {
+      // The OLD buildReorderItems, reconstructed verbatim (no unitLabel field, no check at
+      // all) — what shipped before this fix. This is what B651 is about: not an error, a
+      // SILENT downgrade — the copied line is byte-identical to a real pack line, so the
+      // server (createOrder's merge/create path) has no way left to know it should have
+      // been a Case, and either re-splits it at the live pack or reads its bare qty as
+      // selling units (~unitsPerBox x over for a factor-1 Piece line).
+      function oldBuildReorderItems(order: { lineItems: any[] }) {
+        return order.lineItems
+          .filter((li) => li.status !== "CANCELLED" && !!li.productId && Number(li.qty) > 0)
+          .map((li) => ({
+            productId: li.productId,
+            qty: Number(li.qty),
+            ...(li.boxes != null ? { boxes: li.boxes } : {}),
+            ...(li.pieces != null ? { pieces: li.pieces } : {}),
+          }));
+      }
+
+      const order = {
+        lineItems: [{ id: "1", productId: "p1", qty: 3, unitLabel: "Case", status: "DELIVERED" }],
+      } as any;
+
+      const oldResult = oldBuildReorderItems(order);
+      const newResult = buildReorderItems(order);
+
+      expect(oldResult).toEqual([{ productId: "p1", qty: 3 }]); // indistinguishable from a pack line
+      expect(newResult).toEqual([]); // refused instead
+      expect(oldResult).not.toEqual(newResult);
+    });
+  });
 });
 
 describe("canReorder", () => {
