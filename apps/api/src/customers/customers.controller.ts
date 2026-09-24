@@ -38,6 +38,7 @@ import { CreateAddressDto } from "./dto/create-address.dto";
 import { UpdateAddressDto } from "./dto/update-address.dto";
 import { ListCustomersDto } from "./dto/list-customers.dto";
 import { UpsertCustomerPriceDto } from "./dto/customer-price.dto";
+import { CreateAdvancePaymentDto, ApplyAdvancePaymentDto } from "./dto/advance-payment.dto";
 
 @ApiTags("customers")
 @ApiBearerAuth()
@@ -217,7 +218,7 @@ export class CustomersController {
 
   @Post(":id/advance-payments")
   @Roles(UserRole.OPERATOR)
-  createAdvancePayment(@Param("id") id: string, @Body() dto: any) {
+  createAdvancePayment(@Param("id") id: string, @Body() dto: CreateAdvancePaymentDto) {
     return this.customersService.createAdvancePayment(id, dto);
   }
 
@@ -229,7 +230,7 @@ export class CustomersController {
 
   @Post(":id/advance-payments/:apId/apply")
   @Roles(UserRole.OPERATOR)
-  applyAdvancePayment(@Param("apId") apId: string, @Body() dto: any) {
+  applyAdvancePayment(@Param("apId") apId: string, @Body() dto: ApplyAdvancePaymentDto) {
     return this.customersService.applyAdvancePaymentToInvoice(apId, dto);
   }
 

@@ -92,6 +92,7 @@ import { buildManualInvoiceLines } from "./manual-invoice-lines";
 import { foldCategoryTax, loadManualLineContext } from "./manual-invoice-context";
 import { resolveLineUnits } from "../products/line-units";
 import { prepareUnitLadders, requestsUnit } from "../orders/unit-line-build";
+import { standaloneAllocationTotals } from "./standalone-payment-totals";
 
 const TERM_DAYS: Record<string, number> = {
   "Due on Receipt": 0,
@@ -5615,6 +5616,8 @@ export class InvoicesService {
     // One bank date for the whole allocation group — the money landed once.
     const settledAt = dto.settledAt ? new Date(dto.settledAt) : null;
     const status = dto.status ?? "PAID";
+    // B769 / SA-112: rounded totals, and Σ allocations ≤ payment — refused before any write.
+    const { excess } = standaloneAllocationTotals(dto);
 
     // Standalone reservation, committed BEFORE the payment tx opens (B269): a
     // rolled-back booking burns the reserved block instead of re-minting the
@@ -5673,7 +5676,7 @@ export class InvoicesService {
         const payment = await tx.invoicePayment.create({
           data: {
             invoiceId: alloc.invoiceId,
-            amount: alloc.amount,
+            amount: roundMoney(alloc.amount),
             method: dto.method as any,
             paidAt,
             settledAt,
@@ -5717,9 +5720,7 @@ export class InvoicesService {
         await this.commissionEngine.syncInvoiceCommissionSafe(alloc.invoiceId, tx);
       }
 
-      // Handle excess amount → create AdvancePayment
-      const allocatedTotal = dto.allocations.reduce((s, a) => s + a.amount, 0);
-      const excess = roundMoney(dto.totalAmount - allocatedTotal);
+      // Handle excess amount → create AdvancePayment (rounded up front, SA-112)
       if (excess > 0.001) {
         await tx.advancePayment.create({
           data: {

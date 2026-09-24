@@ -116,7 +116,16 @@ export function packFromOwnSplit(input: {
 
 export interface LineSubtotalInput {
   unitPrice: number;
-  /** Total qty in pieces — kept for backward compat & non-boxed products. */
+  /**
+   * B683: on a NON-boxed product this is genuinely pieces (the selling unit
+   * IS the piece). On a BOXED product (`unitsPerBox > 1`) with no `boxes`/
+   * `pieces` split, this is the legacy/lenient convention instead: `qty` is
+   * the SELLING-UNIT (box) count and `unitPrice` the per-box price — NOT
+   * pieces, despite the name. `computeLineSubtotal` cannot tell the two
+   * conventions apart on its own; it trusts the caller. See
+   * `computeLineSubtotal`'s own fallback-branch comment, and `lineAmbiguity`/
+   * `buildLine`, which refuse this exact ambiguous shape going forward.
+   */
   qty: number;
   /** Number of full boxes (only meaningful when unitsPerBox > 1). */
   boxes?: number | null;
@@ -148,7 +157,17 @@ export function computeLineSubtotal(input: LineSubtotalInput): number {
     return roundMoney(unitPrice * boxEquivalent);
   }
 
-  // Non-boxed product (or caller didn't split): unitPrice is per piece, qty in pieces.
+  // B683: two DIFFERENT shapes reach here, and this line prices them identically
+  // (unitPrice * qty) without being able to tell them apart:
+  //   - a genuinely non-boxed product (unitsPerBox <= 1): qty is pieces,
+  //     unitPrice is per piece — the comment this replaced was accurate here.
+  //   - a BOXED product (unitsPerBox > 1) whose caller sent a bare qty with no
+  //     boxes/pieces split (the legacy/lenient/ambiguous shape `lineAmbiguity`
+  //     and `buildLine` refuse going forward, B644/B682): qty is conventionally
+  //     the SELLING-UNIT (box) count and unitPrice the per-box price — NEVER
+  //     pieces. A caller needing an actual piece count for this shape (e.g. a
+  //     regulated per-unit tax basis) must multiply by unitsPerBox itself; see
+  //     manual-invoice-lines.ts's pieceQty for the pattern.
   return roundMoney(unitPrice * Math.max(0, qty - free));
 }
 
