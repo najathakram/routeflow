@@ -1393,7 +1393,10 @@ describe("RoutesService", () => {
 
   // ─── RF-016: Auto-complete run when last stop is DELIVERED ────────────────
 
-  describe("completeStop (RF-016)", () => {
+  // B783: completeStop retired — every test below now drives completeWithPayment (on-account,
+  // no payment), the only completion path left. RF-016's own behavior is unconditional on
+  // whether a payment was collected, so these guards are unchanged in substance.
+  describe("completeWithPayment (RF-016)", () => {
     const IN_PROGRESS_RUN = { ...MOCK_RUN, status: "IN_PROGRESS" as const };
 
     it("should auto-complete the run when the last remaining stop is completed", async () => {
@@ -1432,7 +1435,7 @@ describe("RoutesService", () => {
         status: "COMPLETED",
       });
 
-      await service.completeStop("run-1", "stop-1", {}, operatorPayload);
+      await service.completeWithPayment("run-1", "stop-1", {}, operatorPayload);
 
       expect(txMock.routeRun.update).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -1473,118 +1476,14 @@ describe("RoutesService", () => {
         status: "COMPLETED",
       });
 
-      await service.completeStop("run-1", "stop-1", {}, operatorPayload);
+      await service.completeWithPayment("run-1", "stop-1", {}, operatorPayload);
 
       expect(txMock.routeRun.update).not.toHaveBeenCalled();
     });
 
-    // T-B152d / R7b / REG-B152 — RF-016 bypasses updateRunStatus entirely, so on
-    // the common path (last stop closes with cash in hand) no backstop there can
-    // ever fire. The auto-complete itself must refuse to flip the run when cash
-    // sits uncollected and no settlementNote exists yet.
-    it("REG-B152: RF-016 does not auto-complete when cash sits uncollected and no settlementNote is set", async () => {
-      prisma.routeRun.findUnique.mockResolvedValue({ ...IN_PROGRESS_RUN, settlementNote: null });
-      prisma.routeRunStop.findFirst.mockResolvedValue({
-        id: "stop-1",
-        routeRunId: "run-1",
-        status: "PENDING",
-        orders: [],
-      });
-      prisma.driver.findFirst.mockResolvedValue(null);
-      prisma.invoicePayment.findMany.mockResolvedValue([{ amount: 40, method: "CASH" }]);
-      const txMock = {
-        ...prisma,
-        routeRunStop: {
-          ...prisma.routeRunStop,
-          findMany: jest.fn().mockResolvedValue([
-            { id: "stop-1", status: "PENDING" },
-            { id: "stop-2", status: "COMPLETED" },
-          ]),
-          update: jest.fn().mockResolvedValue({}),
-          findUniqueOrThrow: jest.fn().mockResolvedValue({ id: "stop-1", status: "COMPLETED" }),
-        },
-        routeRun: {
-          ...prisma.routeRun,
-          update: jest.fn().mockResolvedValue({}),
-        },
-        order: { ...prisma.order, updateMany: jest.fn().mockResolvedValue({ count: 0 }) },
-        orderItem: { ...prisma.orderItem, findFirst: jest.fn().mockResolvedValue(null) },
-        deliveryMutation: { ...prisma.deliveryMutation, create: jest.fn() },
-        $executeRaw: jest.fn().mockResolvedValue(0),
-      };
-      (prisma.tenantTransaction as jest.Mock).mockImplementation((fn: any) => fn(txMock));
-      prisma.routeRunStop.findUniqueOrThrow.mockResolvedValue({
-        id: "stop-1",
-        status: "COMPLETED",
-      });
-
-      await service.completeStop("run-1", "stop-1", {}, operatorPayload);
-
-      // Every stop is done (allDone=true) yet the run must stay IN_PROGRESS.
-      expect(txMock.routeRun.update).not.toHaveBeenCalled();
-    });
-
-    // T-B148b / R3 / REG-B148 — findOneRun selects productId and reopenStop gates
-    // stock-restore on it, but both deliveryMutation.create sites omit it. The
-    // value persisted is the ORDER ITEM's productId (a real Product FK read
-    // through the tenant-scoped tx), never the client's — the payload below
-    // deliberately carries a different id to pin that.
-    it("REG-B148: deliveryMutation.create receives the order item's productId, not the client's", async () => {
-      prisma.routeRun.findUnique.mockResolvedValue(IN_PROGRESS_RUN);
-      prisma.routeRunStop.findFirst.mockResolvedValue({
-        id: "stop-1",
-        routeRunId: "run-1",
-        status: "PENDING",
-        orders: [
-          { id: "ord-1", status: "PENDING", customerId: "cust-1", orderNumber: "SO-1", total: 50 },
-        ],
-      });
-      prisma.driver.findFirst.mockResolvedValue(null);
-      const txMock = {
-        ...prisma,
-        routeRunStop: {
-          ...prisma.routeRunStop,
-          findMany: jest.fn().mockResolvedValue([{ id: "stop-1", status: "PENDING" }]),
-          update: jest.fn().mockResolvedValue({}),
-        },
-        routeRun: { ...prisma.routeRun, update: jest.fn() },
-        order: { ...prisma.order, updateMany: jest.fn().mockResolvedValue({ count: 0 }) },
-        orderItem: {
-          ...prisma.orderItem,
-          findFirst: jest
-            .fn()
-            .mockResolvedValue({ orderId: "ord-1", productId: "prod-1", unitPrice: 10 }),
-          findMany: jest.fn().mockResolvedValue([{ id: "oi-1", orderId: "ord-1", qty: 10 }]),
-        },
-        deliveryMutation: { ...prisma.deliveryMutation, create: jest.fn() },
-        $executeRaw: jest.fn().mockResolvedValue(0),
-      };
-      (prisma.tenantTransaction as jest.Mock).mockImplementation((fn: any) => fn(txMock));
-      prisma.routeRunStop.findUniqueOrThrow.mockResolvedValue({
-        id: "stop-1",
-        status: "COMPLETED",
-      });
-
-      await service.completeStop(
-        "run-1",
-        "stop-1",
-        {
-          deliveries: [
-            {
-              orderItemId: "oi-1",
-              productId: "prod-from-client",
-              type: "DELIVERED",
-              quantityDelivered: 3,
-            },
-          ],
-        } as any,
-        operatorPayload,
-      );
-
-      expect(txMock.deliveryMutation.create).toHaveBeenCalledWith(
-        expect.objectContaining({ data: expect.objectContaining({ productId: "prod-1" }) }),
-      );
-    });
+    // B783: REG-B152 (the cash-uncollected backstop) and REG-B148 (deliveryMutation.create's
+    // productId) both dropped from here — the "completeWithPayment (RF-005)" describe block
+    // below already proves each identically for completeWithPayment.
 
     // P6-5: transactional trigger — DELIVERED fires per eligible order after
     // the tx commits (driver completion bypasses changeStatus entirely).
@@ -1638,7 +1537,7 @@ describe("RoutesService", () => {
         status: "COMPLETED",
       });
 
-      await service.completeStop("run-1", "stop-1", {}, operatorPayload);
+      await service.completeWithPayment("run-1", "stop-1", {}, operatorPayload);
 
       expect(messaging.notifyEvent).toHaveBeenCalledTimes(1);
       expect(messaging.notifyEvent).toHaveBeenCalledWith(
@@ -1681,7 +1580,7 @@ describe("RoutesService", () => {
         status: "COMPLETED",
       });
 
-      await service.completeStop(
+      await service.completeWithPayment(
         "run-1",
         "stop-1",
         {
@@ -2316,7 +2215,9 @@ describe("RoutesService", () => {
 
   // ─── RF-019: Idempotency key deduplication ───────────────────────────────
 
-  describe("completeStop idempotency (RF-019)", () => {
+  // B783: completeStop retired — completeWithPayment shares the same checkIdempotencyKey/
+  // saveIdempotencyKey machinery (routes.service.ts), so this is the only remaining proof of it.
+  describe("completeWithPayment idempotency (RF-019)", () => {
     const IN_PROGRESS_RUN = { ...MOCK_RUN, status: "IN_PROGRESS" as const };
 
     it("should return cached response for duplicate idempotency key", async () => {
@@ -2334,7 +2235,7 @@ describe("RoutesService", () => {
         { response: JSON.stringify(cachedStop) },
       ]);
 
-      const result = await service.completeStop(
+      const result = await service.completeWithPayment(
         "run-1",
         "stop-1",
         { idempotencyKey: "test-key-123" },

@@ -240,7 +240,9 @@ describe("RoutesService — delivery lines must belong to this stop and fit the 
     expect(tx.orderItem.update).toHaveBeenCalledTimes(2);
   });
 
-  it("REPRO (b3): completeStop refuses a foreign-order line and an over-qty line too, before any write", async () => {
+  it("REPRO (b3): a foreign-order line is refused, before any write", async () => {
+    // B783: completeStop retired; this guard lives entirely in the shared code
+    // completeWithPayment now runs too, so it alone proves it.
     prisma.routeRun.findUnique.mockResolvedValue({ ...RUN_FIXTURE, status: "IN_PROGRESS" });
     prisma.routeRunStop.findFirst.mockResolvedValue(
       stopWith([
@@ -258,7 +260,7 @@ describe("RoutesService — delivery lines must belong to this stop and fit the 
     tx.orderItem.findMany.mockResolvedValue([{ id: "oi-9", orderId: "ord-OTHER", qty: 5 }]);
 
     await expect(
-      service.completeStop(
+      service.completeWithPayment(
         "run-1",
         "stop-1",
         { deliveries: [{ orderItemId: "oi-9", type: "DELIVERED", quantityDelivered: 1 }] } as any,
@@ -332,8 +334,8 @@ describe("RoutesService — delivery lines must belong to this stop and fit the 
       expect(tx.orderItem.update).not.toHaveBeenCalled();
     });
 
-    it("the foreign-stop and over-qty refusals name the offending item", async () => {
-      arrange([
+    it("the foreign-stop and over-qty refusals name the offending item, before any write", async () => {
+      const tx = arrange([
         { id: "oi-a", orderId: "ord-OTHER", qty: 5 },
         { id: "oi-b", orderId: "ord-1", qty: 2 },
       ]);
@@ -346,6 +348,8 @@ describe("RoutesService — delivery lines must belong to this stop and fit the 
         )
         .catch((e) => e);
       expect(foreign.message).toContain("oi-a");
+      expect(tx.routeRunStop.update).not.toHaveBeenCalled();
+      expect(tx.deliveryMutation.create).not.toHaveBeenCalled();
 
       const over: any = await service
         .completeWithPayment(
@@ -356,6 +360,8 @@ describe("RoutesService — delivery lines must belong to this stop and fit the 
         )
         .catch((e) => e);
       expect(over.message).toContain("oi-b");
+      expect(tx.routeRunStop.update).not.toHaveBeenCalled();
+      expect(tx.deliveryMutation.create).not.toHaveBeenCalled();
     });
   });
 });

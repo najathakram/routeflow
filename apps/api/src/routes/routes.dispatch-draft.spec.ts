@@ -194,7 +194,7 @@ describe("RoutesService — DRAFT orders never ride a dispatch or complete as de
     expect(where.status.notIn).toContain(OrderStatus.DRAFT);
   });
 
-  it("(a3) a DRAFT order on a completed stop gets NO delivered notification (completeStop and completeWithPayment)", async () => {
+  it("(a3) a DRAFT order on a completed stop gets NO delivered notification", async () => {
     prisma.routeRun.findUnique.mockResolvedValue({ ...RUN_FIXTURE, status: "IN_PROGRESS" });
     prisma.routeRunStop.findFirst.mockResolvedValue(
       stopWith([
@@ -205,7 +205,7 @@ describe("RoutesService — DRAFT orders never ride a dispatch or complete as de
     txFor();
     prisma.routeRunStop.findUniqueOrThrow.mockResolvedValue({ id: "stop-1", status: "COMPLETED" });
 
-    await service.completeStop("run-1", "stop-1", { deliveries: [] } as any, operatorPayload);
+    // B783: completeStop retired — this guard is shared, so completeWithPayment alone proves it.
     await service.completeWithPayment(
       "run-1",
       "stop-1",

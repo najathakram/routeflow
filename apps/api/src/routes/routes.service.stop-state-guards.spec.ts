@@ -565,34 +565,8 @@ describe("RoutesService — F10 stop-state guards (REG-B54/B55/B71/B72/B120/B121
       });
     });
 
-    it("T13 — REG-B72: completeStop refuses a driver who is not assigned to the run, before any POD ingest or transaction", async () => {
-      prisma.routeRun.findUnique.mockResolvedValue({
-        ...RUN_FIXTURE,
-        status: "IN_PROGRESS",
-        driverId: "drv-1",
-      });
-      prisma.routeRunStop.findFirst.mockResolvedValue({
-        id: "stop-1",
-        routeRunId: "run-1",
-        status: "PENDING",
-        orders: [
-          {
-            id: "order-1",
-            status: "CONFIRMED",
-            customerId: "cust-1",
-            orderNumber: "ORD-1",
-            total: 100,
-          },
-        ],
-      });
-      prisma.driver.findFirst.mockResolvedValue({ id: "drv-2" });
-
-      await expect(
-        service.completeStop("run-1", "stop-1", { signatureUrl: SIG_DATA_URL }, driverPayload),
-      ).rejects.toThrow(ForbiddenException);
-      expect(prisma.tenantTransaction).not.toHaveBeenCalled();
-      expect(storage.upload).not.toHaveBeenCalled();
-    });
+    // B783: T13 (the same guard on completeStop) retired along with completeStop itself —
+    // T14 below is the only completion path left, and it already proves this guard.
 
     it("T14 — REG-B72: completeWithPayment refuses an unassigned driver before the transaction", async () => {
       prisma.routeRun.findUnique.mockResolvedValue({

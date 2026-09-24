@@ -830,7 +830,7 @@ async function completeDeliveries(runs, orders, customers, products) {
       if (deliveries.length > 0) {
         await api(
           "POST",
-          `/route-runs/${routeA.id}/stops/${stop.id}/complete`,
+          `/route-runs/${routeA.id}/stops/${stop.id}/complete-with-payment`,
           {
             deliveries,
             driverNote: "Delivered to front desk",
@@ -918,7 +918,7 @@ async function completeDeliveries(runs, orders, customers, products) {
       if (deliveries.length > 0) {
         await api(
           "POST",
-          `/route-runs/${routeB.id}/stops/${stop.id}/complete`,
+          `/route-runs/${routeB.id}/stops/${stop.id}/complete-with-payment`,
           { deliveries },
           driverTok,
         );

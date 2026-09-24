@@ -6,6 +6,7 @@ import {
   Delete,
   Body,
   Headers,
+  Logger,
   Param,
   Query,
   UseGuards,
@@ -139,6 +140,8 @@ export class RoutesController {
 @Controller("route-runs")
 @RequireAddon("recurring_routes", "order_delivery", "developer_mode")
 export class RouteRunsController {
+  private readonly logger = new Logger(RouteRunsController.name);
+
   constructor(private readonly routesService: RoutesService) {}
 
   @Get()
@@ -183,6 +186,13 @@ export class RouteRunsController {
     return this.routesService.findOneRun(id, user);
   }
 
+  // B783/SA-111: RETIRED for one release. The bare completion path had no web or mobile
+  // caller — every real completion (including $0 on-account) already goes through
+  // complete-with-payment for its delivered-basis reconcile (see the comment below). This
+  // route now just delegates there with no payment (CompleteStopDto has no payment field, and
+  // the DTO whitelist rejects one if a stray caller sent it, so nothing bypasses
+  // DriverPaymentsGuard). The warn log is the owner's gauge for any external caller still
+  // hitting this URL before the next release deletes it outright.
   @Post(":id/stops/:stopId/complete")
   @UseGuards(RolesGuard)
   @Roles(UserRole.OPERATOR, UserRole.DRIVER)
@@ -193,7 +203,11 @@ export class RouteRunsController {
     @Headers("idempotency-key") idempotencyKey: string | undefined,
     @CurrentUser() user: JwtPayload,
   ) {
-    return this.routesService.completeStop(runId, stopId, { ...body, idempotencyKey }, user);
+    this.logger.warn(
+      `completeStop: bare completion route called (retired, delegating to ` +
+        `complete-with-payment) — tenant ${user.tenantId} run ${runId} stop ${stopId}`,
+    );
+    return this.routesService.completeWithPayment(runId, stopId, { ...body, idempotencyKey }, user);
   }
 
   // RF-005: Atomic complete + payment

@@ -662,54 +662,8 @@ describe("RoutesService — F11 run-terminal release (REG-B129 / REG-B211)", () 
     });
   });
 
-  describe("completeStop — RF-016 auto-completion releases SKIPPED stops' orders (R6 / REG-B211)", () => {
-    it("T9 — REG-B211: RF-016 auto-completion inside completeStop releases the skipped stops' orders in the same transaction", async () => {
-      prisma.routeRun.findUnique.mockResolvedValue({ ...RUN_FIXTURE, status: "IN_PROGRESS" });
-      prisma.routeRunStop.findFirst.mockResolvedValue({
-        id: "s2",
-        routeRunId: "run-1",
-        status: "PENDING",
-        signatureUrl: null,
-        orders: [
-          { id: "B", status: "CONFIRMED", customerId: "c2", orderNumber: "ORD-B", total: 100 },
-        ],
-      });
-      prisma.driver.findFirst.mockResolvedValue(null);
-      const tx = makeTx();
-      tx.routeRunStop.findMany.mockResolvedValue([
-        { id: "s1", status: "COMPLETED" },
-        { id: "s2", status: "COMPLETED" },
-        { id: "s3", status: "SKIPPED" },
-      ]);
-      tx.order.findMany.mockResolvedValue([{ id: "C" }]);
-      (prisma.tenantTransaction as jest.Mock).mockImplementation((fn: any) => fn(tx));
-      prisma.routeRunStop.findUniqueOrThrow.mockResolvedValue({ id: "s2", status: "COMPLETED" });
-
-      await service.completeStop("run-1", "s2", {} as any, operatorPayload);
-
-      // "autoCompleted" has no field on completeStop's response (verified at
-      // c60fe214: it returns only the stop row) — the load-bearing proof that
-      // the internal flag became true IS the COMPLETED write below, which the
-      // real code sets it from directly.
-      expect(tx.routeRun.update).toHaveBeenCalledWith(
-        expect.objectContaining({ data: expect.objectContaining({ status: "COMPLETED" }) }),
-      );
-      expect(tx.order.updateMany).toHaveBeenCalledWith({
-        where: {
-          id: { in: ["C"] },
-          routeRunStopId: { in: ["s3"] },
-          routeRunStop: { status: { not: "COMPLETED" } },
-          status: { notIn: ["DELIVERED", "CANCELLED"] },
-        },
-        data: { routeRunId: null, routeRunStopId: null },
-      });
-      // Control — the pre-existing DELIVERED flip still fires, proving the
-      // fixture actually completed the stop.
-      expect(tx.order.updateMany).toHaveBeenCalledWith(
-        expect.objectContaining({ data: { status: "DELIVERED" } }),
-      );
-    });
-  });
+  // B783: T9 (the same RF-016 release proof on completeStop) retired along with completeStop
+  // itself — T10 below is the only completion path left, and it already proves this guard.
 
   describe("completeWithPayment — RF-016 auto-completion releases SKIPPED stops' orders (R6 / REG-B211)", () => {
     it("T10 — REG-B211: RF-016 in completeWithPayment releases skipped stops' orders — and the just-completed stop is never released", async () => {

@@ -397,7 +397,7 @@ async function seedData() {
     if (deliveries.length > 0) {
       await api(
         "POST",
-        `/route-runs/${run.id}/stops/${stop.id}/complete`,
+        `/route-runs/${run.id}/stops/${stop.id}/complete-with-payment`,
         {
           deliveries,
           driverNote: "QA delivery test",

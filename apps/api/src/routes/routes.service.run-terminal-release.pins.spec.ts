@@ -432,7 +432,9 @@ describe("RoutesService — F11 run cancel/skip pins (no REG- token; excluded fr
     (prisma.tenantTransaction as jest.Mock).mockImplementation((fn: any) => fn(txMock));
     prisma.routeRunStop.findUniqueOrThrow.mockResolvedValue({ id: "s2", status: "COMPLETED" });
 
-    await service.completeStop("run-1", "s2", {}, operatorPayload);
+    // B783: completeStop retired — completeWithPayment (no payment: on-account) is the only
+    // completion path left, and RF-016's withheld-cash branch lives in its own shared code.
+    await service.completeWithPayment("run-1", "s2", {}, operatorPayload);
 
     // The run stays IN_PROGRESS — no auto-completion is committed.
     expect(txMock.routeRun.update).not.toHaveBeenCalled();
@@ -486,7 +488,9 @@ describe("RoutesService — F11 run cancel/skip pins (no REG- token; excluded fr
     (prisma.tenantTransaction as jest.Mock).mockImplementation((fn: any) => fn(txMock));
     prisma.routeRunStop.findUniqueOrThrow.mockResolvedValue({ id: "s2", status: "COMPLETED" });
 
-    await service.completeStop("run-1", "s2", {}, operatorPayload);
+    // B783: completeStop retired — completeWithPayment (no payment: on-account) is the only
+    // completion path left.
+    await service.completeWithPayment("run-1", "s2", {}, operatorPayload);
 
     // The run is untouched — RF-016 did not fire.
     expect(txMock.routeRun.update).not.toHaveBeenCalled();

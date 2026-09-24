@@ -1591,7 +1591,7 @@ async function section3() {
     }));
     const r = await api(
       "POST",
-      `/route-runs/${state.routeRunId}/stops/${state.runStopId}/complete`,
+      `/route-runs/${state.routeRunId}/stops/${state.runStopId}/complete-with-payment`,
       { deliveries, signatureUrl: "https://qa.test/sig.png" },
       state.driverToken,
     );
@@ -1653,7 +1653,7 @@ async function section3() {
     }
     const r = await api(
       "POST",
-      `/route-runs/${newRun.id}/stops/${stopId}/complete`,
+      `/route-runs/${newRun.id}/stops/${stopId}/complete-with-payment`,
       { deliveries: [{ orderItemId: li.id, type: "PARTIAL", quantityDelivered: 2 }] },
       state.driverToken,
     );
