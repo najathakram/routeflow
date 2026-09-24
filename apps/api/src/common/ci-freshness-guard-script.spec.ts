@@ -387,17 +387,22 @@ describe("ci-freshness-guard.mjs contract", () => {
       ],
       statuses: [state("success")],
     });
-    expect(readOutputs(outFile).reason).not.toBe("confirmed");
+    // Successor deployment LIVE (state success) with its E2E cancelled: running the OLD sha's suite
+    // would only wait out the readiness gate against a newer live commit and go red later (Opus
+    // fad6aa19 finding 1). So this is a clear red that names the run to re-run, not a fallback.
+    expect(readOutputs(outFile)).toMatchObject({ run: "false", reason: "unconfirmed" });
+    expect(res.stdout).toMatch(/re-run/i);
+    expect(res.status).toBe(3);
   });
 
   // #1134 Opus item 2: a successor whose runs were all cancelled/skipped must NOT leave a permanent
   // red on the OLD sha after the poll. The old run's E2E runs instead, against what is live (the
   // same fallback as a failed successor), and says so: real test signal, never a quiet skip.
-  it("#1134 item 2 · a cancelled successor at the deadline -> run=true here (fallback), exit 0, says so", () => {
+  it("#1134 item 2 · a cancelled successor STILL DEPLOYING at the deadline -> run=true here, exit 0, says so", () => {
     const { res, outFile } = superseded({
       deployments: [dep(NEW)],
       runs: [runs({ status: "completed", conclusion: "cancelled" })],
-      statuses: [state("success")],
+      statuses: [state("in_progress")],
     });
     expect(readOutputs(outFile)).toMatchObject({ run: "true", reason: "successor-unconfirmed" });
     expect(res.stdout).toMatch(/running E2E for abc123 against whatever is live/);
@@ -406,15 +411,31 @@ describe("ci-freshness-guard.mjs contract", () => {
 
   // #1134 Opus item 1: `queued` is not confirmation. Per-SHA e2e concurrency with
   // cancel-in-progress means a queued successor can still be cancelled by a later echo.
-  it("#1134 item 1 · a successor that is only QUEUED is never confirmation (falls back, never skips)", () => {
+  it.each(["queued", "pending", "waiting", "requested"])(
+    "#1134 item 1 · a successor run that is only %s is never confirmation (falls back, never skips)",
+    (status) => {
+      const { res, outFile } = superseded({
+        deployments: [dep(NEW)],
+        runs: [runs({ status, html_url: "https://gh/run/11" })],
+        statuses: [state("in_progress")],
+      });
+      expect(readOutputs(outFile)).toMatchObject({ run: "true", reason: "successor-unconfirmed" });
+      expect(res.stdout).not.toContain("Skipping (confirmed)");
+      expect(res.status).toBe(0);
+    },
+  );
+
+  // Opus fad6aa19 finding 2: every deployed sha carries ONE completed/skipped workflow run (the
+  // deployment_status `in_progress` echo, all jobs gated off). It is not an E2E attempt, so it must not
+  // count as "the successor has runs": with only that, a timeout is still the red exit 3.
+  it("#1134 · the successor's lone SKIPPED echo run does not count as a run -> exit 3, not a fallback", () => {
     const { res, outFile } = superseded({
       deployments: [dep(NEW)],
-      runs: [runs({ status: "queued", html_url: "https://gh/run/11" })],
-      statuses: [state("success")],
+      runs: [runs({ status: "completed", conclusion: "skipped" })],
+      statuses: [state("in_progress")],
     });
-    expect(readOutputs(outFile)).toMatchObject({ run: "true", reason: "successor-unconfirmed" });
-    expect(res.stdout).not.toContain("https://gh/run/11");
-    expect(res.status).toBe(0);
+    expect(readOutputs(outFile)).toMatchObject({ run: "false", reason: "unconfirmed" });
+    expect(res.status).toBe(3);
   });
 
   // #1134 Opus item 4: the newest deployment is read for THIS deployment's environment only, so a

@@ -179,12 +179,20 @@ function pollSuccessor(repo, deploySha) {
   const st = ghApi(`repos/${repo}/deployments/${top.id}/statuses?per_page=1`);
   const state = st.ok && Array.isArray(st.json) && st.json[0] ? String(st.json[0].state) : null;
   if (state === "failure" || state === "error") return { kind: "failed", sha: top.sha, state };
-  const seen = runs.json.workflow_runs.length;
+  // Opus fad6aa19 finding 2: every deployed sha carries one completed/`skipped` run (the
+  // deployment_status `in_progress` echo, all jobs gated off). It is not an E2E attempt, so it never
+  // counts as "the successor has runs"; only a real attempt (queued, cancelled, ...) does.
+  const attempts = runs.json.workflow_runs.filter(
+    (r) => !(r && r.status === "completed" && r.conclusion === "skipped"),
+  );
+  const rerun = attempts.find((r) => r && r.status === "completed" && r.html_url);
   return {
     kind: "wait",
     sha: top.sha,
-    seen,
-    why: `no live E2E run for ${top.sha} yet (${seen} run(s), all cancelled/skipped or none; deployment state ${state ?? "unknown"})`,
+    seen: attempts.length,
+    state,
+    rerunUrl: rerun ? String(rerun.html_url) : null,
+    why: `no live E2E run for ${top.sha} yet (${attempts.length} E2E attempt(s), none live; deployment state ${state ?? "unknown"})`,
   };
 }
 
@@ -283,11 +291,13 @@ function main() {
     appendOutput("run", "true");
     return 0;
   }
-  if (v.kind === "wait" && v.seen > 0) {
-    // #1134 Opus item 2: the successor HAS runs, but none of them is exercising the suite by the
-    // deadline (all cancelled/skipped, or still only queued). Failing here would leave a PERMANENT
-    // red on this sha that nothing ever clears; skipping would be the silent green B621 exists to
-    // stop. So run E2E here, against what is live, exactly as for a failed successor, and say so.
+  if (v.kind === "wait" && v.seen > 0 && v.state !== "success") {
+    // #1134 Opus item 2: the successor HAS real E2E attempts, but none is exercising the suite by the
+    // deadline (cancelled, or still only queued), AND its deployment is not live yet, so this sha may
+    // well be what production still serves. Failing would leave a permanent red; skipping would be
+    // the silent green B621 exists to stop. So run E2E here and say so. (Once the successor IS live,
+    // this sha's suite would only wait out the readiness gate against the newer commit and go red
+    // late (Opus fad6aa19 finding 1), so that case stays the red below, naming the run to re-run.)
     console.log(
       `::notice::The newer deployment ${v.sha} has ${v.seen} E2E run(s) but none is exercising the suite (${v.why}); running E2E for ${deploySha} against whatever is live instead of failing or skipping`,
     );
@@ -295,8 +305,12 @@ function main() {
     appendOutput("run", "true");
     return 0;
   }
+  const rerunHint =
+    v.kind === "wait" && v.rerunUrl
+      ? ` Re-run the newest deployment's E2E: ${v.rerunUrl}`
+      : " Re-run E2E for the newest deployment.";
   console.log(
-    `::error::Superseded by ${latest} but NO E2E run was confirmed for the newest deployment (${v.why}). Failing instead of reporting a green that ran no tests.`,
+    `::error::Superseded by ${latest} but NO E2E run was confirmed for the newest deployment (${v.why}). Failing instead of reporting a green that ran no tests.${rerunHint}`,
   );
   appendOutput("reason", "unconfirmed");
   appendOutput("run", "false");
