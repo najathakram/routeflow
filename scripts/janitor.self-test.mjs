@@ -364,6 +364,99 @@ t(
   },
 );
 
+// B748 — squash merges without `gh`. GitHub's "Squash and merge" rewrites the branch's work into
+// ONE new commit on master, so the branch tip is never an ancestor and `tipOnMainline` is false:
+// every ancestry signal says "not merged". B800 closed the opposite direction (a fresh branch is
+// not merged); this closes the squash direction WITHOUT depending on the `gh` CLI, which is absent
+// on CI runners and on this cloud container. Evidence is patch-id equality between the branch's
+// own combined diff (merge-base..tip) and a commit on master's first-parent chain.
+{
+  const dir = mkdtempSync(join(tmpdir(), "janitor-b748-"));
+  const git = (...args) =>
+    execFileSync("git", ["-C", dir, ...args], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    }).trim();
+  const commit = (file, body, msg) => {
+    writeFileSync(join(dir, file), body);
+    git("add", file);
+    git("-c", "user.name=t", "-c", "user.email=t@example.com", "commit", "-q", "-m", msg);
+  };
+  const noGh = () => false; // `gh` unavailable — the whole point of this block
+  const merged = (branch) =>
+    isMergedIntoMaster(dir, branch, { masterRef: "master", ghLookup: noGh });
+  try {
+    git("init", "-q", "-b", "master");
+    commit("a.txt", "m1", "base");
+
+    // One-commit squash: master gains a NEW commit carrying the same diff.
+    git("checkout", "-q", "-b", "sq-one");
+    commit("one.txt", "one", "sq-one work");
+    git("checkout", "-q", "master");
+    git("merge", "-q", "--squash", "sq-one");
+    git(
+      "-c",
+      "user.name=t",
+      "-c",
+      "user.email=t@example.com",
+      "commit",
+      "-q",
+      "-m",
+      "squash sq-one",
+    );
+
+    t("REG-B748: a squash-merged branch IS merged without gh (one commit)", () => {
+      assert.equal(merged("sq-one"), true);
+    });
+
+    // Multi-commit squash: the collapsed commit matches no INDIVIDUAL branch commit's patch-id,
+    // only the branch's COMBINED diff — which is why `git cherry` alone would miss this.
+    git("checkout", "-q", "-b", "sq-many");
+    commit("m1.txt", "x", "sq-many 1");
+    commit("m2.txt", "y", "sq-many 2");
+    git("checkout", "-q", "master");
+    git("merge", "-q", "--squash", "sq-many");
+    git(
+      "-c",
+      "user.name=t",
+      "-c",
+      "user.email=t@example.com",
+      "commit",
+      "-q",
+      "-m",
+      "squash sq-many",
+    );
+
+    t("REG-B748: a multi-commit squash IS merged (combined diff, not per-commit)", () => {
+      assert.equal(merged("sq-many"), true);
+    });
+
+    // The safety direction. Deleting live work is the catastrophic error, so each of these must
+    // stay false even though the new evidence path now runs for all of them.
+    git("branch", "fresh-after"); // zero commits of its own, tip == master
+    t("REG-B748 guard: a fresh zero-commit branch is still NOT merged", () => {
+      assert.equal(merged("fresh-after"), false);
+    });
+
+    git("checkout", "-q", "-b", "live");
+    commit("live.txt", "unmerged", "live work");
+    t("REG-B748 guard: a branch with its own unmerged work is still NOT merged", () => {
+      assert.equal(merged("live"), false);
+    });
+
+    // A branch whose diff merely RESEMBLES merged work must not be swept: same file, different
+    // content means a different patch-id.
+    git("checkout", "-q", "master");
+    git("checkout", "-q", "-b", "look-alike");
+    commit("one.txt", "DIFFERENT", "look-alike");
+    t("REG-B748 guard: a similar-but-different diff is NOT merged", () => {
+      assert.equal(merged("look-alike"), false);
+    });
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
 // B815 — deletes on macOS/Linux: never follow a symlink out of the tree being removed.
 if (process.platform !== "win32") {
   const root = mkdtempSync(join(tmpdir(), "janitor-b815-"));

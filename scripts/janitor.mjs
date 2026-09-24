@@ -86,8 +86,14 @@ export function isProtectedBranch(branch, protectedBranches = PROTECTED_BRANCHES
  * B800: merged only on proof the branch carried work of its own (see the header).
  * evidence: { tipIsAncestor, tipOnMainline, prMergedAtTip }
  */
-export function isMergedEvidence({ tipIsAncestor, tipOnMainline, prMergedAtTip }) {
+export function isMergedEvidence({
+  tipIsAncestor,
+  tipOnMainline,
+  prMergedAtTip,
+  squashPatchId,
+}) {
   if (prMergedAtTip) return true;
+  if (squashPatchId) return true; // B748: squash proof that needs no `gh`
   return !!tipIsAncestor && !tipOnMainline;
 }
 
@@ -564,12 +570,74 @@ export function branchTip(repoRoot, branch) {
   ]);
 }
 
+/** patch-id of a diff produced by `git <args>`, or null. Empty diff => null (carried no work). */
+function patchIdOf(repoRoot, gitArgs) {
+  const diff = trySh("git", ["-C", repoRoot, ...gitArgs], { maxBuffer: 256 * 1024 * 1024 });
+  if (!diff) return null; // unreadable OR empty diff — both mean "no proof", never "merged"
+  // `input` needs a real stdin, so the ignore-stdin default of trySh must be overridden here.
+  const out = trySh("git", ["patch-id", "--stable"], {
+    input: diff,
+    cwd: repoRoot,
+    stdio: ["pipe", "pipe", "ignore"],
+    maxBuffer: 256 * 1024 * 1024,
+  });
+  return out ? out.split(/\s+/)[0] || null : null;
+}
+
+/**
+ * B748: proof WITHOUT `gh` that a squash merge landed this branch's work on master.
+ *
+ * GitHub's "Squash and merge" replays the branch as ONE new commit, so the tip is not an ancestor
+ * and is not on the mainline — every ancestry signal reads "not merged", and `ghPrMergedAtTip` is
+ * the only thing that saved it. `gh` is absent on CI runners and on the cloud container, so that
+ * proof is unavailable exactly where the janitor runs unattended.
+ *
+ * The branch's OWN combined change is `merge-base..tip`; a squash commit on master carries that
+ * same change, so their patch-ids match. Per-commit matching (`git cherry`) is not enough: a
+ * multi-commit branch collapses to one commit whose patch-id equals the COMBINED diff and no
+ * individual commit's.
+ *
+ * Fails CLOSED everywhere — unreadable history, an empty diff (a branch with no work of its own,
+ * which B800 says is never merged), or a scan longer than `maxScan` all return false. A false
+ * negative leaves disk behind; a false positive deletes someone's work.
+ */
+export function squashMergedByPatchId(
+  repoRoot,
+  tip,
+  { masterRef = "origin/master", maxScan = 1000 } = {},
+) {
+  if (!tip) return false;
+  const mergeBase = trySh("git", ["-C", repoRoot, "merge-base", masterRef, tip]);
+  if (!mergeBase || mergeBase === tip) return false; // nothing of its own to have been squashed
+  const own = patchIdOf(repoRoot, ["diff", "--binary", mergeBase, tip]);
+  if (!own) return false;
+  const list = trySh("git", [
+    "-C",
+    repoRoot,
+    "rev-list",
+    "--first-parent",
+    `${mergeBase}..${masterRef}`,
+  ]);
+  if (list == null) return false; // unreadable mainline: fail closed
+  const shas = list.split("\n").filter(Boolean);
+  if (shas.length > maxScan) return false; // pathological range: fail closed rather than churn
+  for (const sha of shas) {
+    if (patchIdOf(repoRoot, ["diff-tree", "-p", "--binary", sha]) === own) return true;
+  }
+  return false;
+}
+
 export function mergeEvidence(
   repoRoot,
   branch,
   { masterRef = "origin/master", ghLookup = ghPrMergedAtTip } = {},
 ) {
-  const none = { tipIsAncestor: false, tipOnMainline: false, prMergedAtTip: false };
+  const none = {
+    tipIsAncestor: false,
+    tipOnMainline: false,
+    prMergedAtTip: false,
+    squashPatchId: false,
+  };
   if (!branch) return none; // detached HEAD — cannot prove merged
   const tip = branchTip(repoRoot, branch);
   if (!tip) return none;
@@ -586,11 +654,12 @@ export function mergeEvidence(
   const tipOnMainline = mainline ? mainline.has(tip) : true; // unreadable mainline: fail closed
   // Ancestry through a merge is already proof; only ask GitHub when it is not.
   const proven = tipIsAncestor && !tipOnMainline;
-  return {
-    tipIsAncestor,
-    tipOnMainline,
-    prMergedAtTip: proven ? false : !!ghLookup(repoRoot, branch, tip),
-  };
+  const prMergedAtTip = proven ? false : !!ghLookup(repoRoot, branch, tip);
+  // B748: only when nothing cheaper proved it. The patch-id scan walks master since the merge
+  // base, so it must never run on the common already-proven paths.
+  const squashPatchId =
+    proven || prMergedAtTip ? false : squashMergedByPatchId(repoRoot, tip, { masterRef });
+  return { tipIsAncestor, tipOnMainline, prMergedAtTip, squashPatchId };
 }
 
 export function isMergedIntoMaster(repoRoot, branch, opts) {
