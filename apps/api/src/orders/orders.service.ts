@@ -102,7 +102,7 @@ import {
   resolveBuyerLinePrice,
 } from "./buyer-merge-pricing";
 import { buildMergeLineWrites, type MergeLine, type MergeWarning } from "./merge-line-writes";
-import { buildPriorOrderPackInfo, resolveReplaceAllLinePack } from "./replace-all-pack-resolution";
+import { assertReplaceAllPackMatchesLive } from "./replace-all-pack-resolution";
 import {
   assertCreditAtEnforcementPoint,
   assertWithinCreditLimit,
@@ -3616,31 +3616,6 @@ export class OrdersService implements OnApplicationBootstrap {
                 });
               }
             }
-            // SA-124f: keyed by LINE id, never ambiguous under the two-pack shape the way
-            // existingLineByProduct is (its "exactly one pre-edit/incoming line" guard EXCLUDES
-            // a genuine two-pack product entirely, so a fold-output item for either pack falls
-            // through to being treated as an unqualified price change). `foldMergeItems` carries
-            // each output item's own SOURCE line id (`sourceLineId`) — when present, this is the
-            // authoritative, unambiguous comparison target; the product-keyed map above is the
-            // fallback for a payload item with no id (a direct manual replaceAll edit that never
-            // went through the fold).
-            const existingLineById = new Map<
-              string,
-              { unitPrice: number; priceType: string | null; overrideReason: string | null }
-            >();
-            for (const li of order.lineItems ?? []) {
-              if (!li.id || li.status === "CANCELLED") continue;
-              existingLineById.set(li.id, {
-                unitPrice: Number(li.unitPrice),
-                priceType: li.priceType ?? null,
-                overrideReason: (li as any).overrideReason ?? null,
-              });
-            }
-
-            // SA-124e: the pack each product's pre-edit lines carried, read BEFORE the delete
-            // below erases them — the ONE input `resolveReplaceAllLinePack`'s step (b) needs.
-            const priorPacks = buildPriorOrderPackInfo(order.lineItems ?? []);
-            const replaceAllLivePackFallbackProductIds: string[] = [];
 
             await tx.orderItem.deleteMany({ where: { orderId } });
             // R2: full replace — stamp position from the client's array order.
@@ -3671,36 +3646,32 @@ export class OrdersService implements OnApplicationBootstrap {
               }
               const product = productMap.get(item.productId);
               if (!product) throw new BadRequestException(`Product ${item.productId} not found`);
+              // SA-124g/h R1: the ONE guard on top of the otherwise-reverted-to-master rebuild
+              // below — a payload item whose OWN resolved pack disagrees with the live product
+              // pack refuses (rolled back with the rest of this transaction) rather than being
+              // silently re-split at the live pack's size (SA-124e's original bug).
+              assertReplaceAllPackMatchesLive(item, Number(product.unitsPerBox ?? 0));
               const unitRow = unitRows.get(item);
               if (unitRow && unitLines.isUnitAware(unitRow)) {
                 await unitEdit.createUnitLine(uctx, orderId, product, unitRow, item, pos++);
                 continue;
               }
 
-              // SA-124e: resolve the pack THIS ITEM prices at — the payload's own pack
-              // (`foldMergeItems`'s bucket output, or derived from its own boxes/pieces/qty
-              // split), else the SAME product's sole surviving pre-edit line when unambiguous,
-              // else the live product pack with a warn. Never the live pack by default — that
-              // silently re-split a pack-keyed fold's bucket at the WRONG size (SA-124a/124c
-              // could resolve two lines at two distinct packs, but this rebuild re-split both
-              // of them at whatever the live product happens to be today).
-              const { pack: resolvedPack, usedLivePack: replaceAllUsedLivePack } =
-                resolveReplaceAllLinePack(item, priorPacks, Number(product.unitsPerBox ?? 0));
-              if (replaceAllUsedLivePack) replaceAllLivePackFallbackProductIds.push(item.productId);
-
-              // Normalize to integers and roll loose pieces >= unitsPerBox into boxes. A
-              // resolved pack of <= 1 (undefined here) leaves the line box-unaware, matching
-              // createOrder's own "a zero boxes+pieces payload is 'not using box entry'"
-              // contract — boxes/pieces stay null instead of 0.
+              // Recompute qty from boxes/pieces when the operator split a boxed
+              // product (matches createOrder's authority). Normalize to integers and
+              // roll loose pieces >= unitsPerBox into boxes. Falls back to plain qty.
+              // A zero boxes+pieces payload is "not using box entry", not "zero
+              // quantity" (see create()) — a POSITIVE check keeps it from zeroing a
+              // real qty, and boxes/pieces stay null (box-unaware) instead of 0.
               let qty = item.qty ?? 0;
               let boxes: number | null = null;
               let pieces: number | null = null;
-              if (resolvedPack != null && resolvedPack > 1) {
+              if ((item.boxes ?? 0) > 0 || (item.pieces ?? 0) > 0) {
                 const split = normalizeBoxesPieces({
                   boxes: item.boxes,
                   pieces: item.pieces,
                   qty,
-                  unitsPerBox: resolvedPack,
+                  unitsPerBox: product.unitsPerBox,
                 });
                 qty = split.qty;
                 boxes = split.boxes;
@@ -3737,13 +3708,7 @@ export class OrdersService implements OnApplicationBootstrap {
               // reason forward as `item.overrideReason`; when the payload omits
               // one anyway, fall back to the existing line's own stored reason
               // before refusing (mirrors the UPDATE branch's same fallback).
-              // SA-124f: prefer the fold's own sourceLineId (unambiguous even under the
-              // two-pack shape) — the product-keyed map is the fallback for a payload item
-              // with no id (a direct manual replaceAll edit that never went through the fold).
-              const sourceLineId = (item as { sourceLineId?: string }).sourceLineId;
-              const replaceAllExisting = sourceLineId
-                ? existingLineById.get(sourceLineId)
-                : existingLineByProduct.get(item.productId);
+              const replaceAllExisting = existingLineByProduct.get(item.productId);
               const replaceAllPriceUnchanged =
                 replaceAllExisting != null &&
                 (overridePrice === null ||
@@ -3794,12 +3759,7 @@ export class OrdersService implements OnApplicationBootstrap {
               // override either, even if it differs from today's catalog list price.
               const isManualOverride =
                 !bogoPriceUnchanged && overridePrice !== null && overridePrice !== catalogPrice;
-              // SA-124e(3): the price basis follows the RESOLVED pack, never the live product
-              // row — a 12-pack line's $36/box is the price AT PACK 12, and stays so even after
-              // the product becomes a 6-pack. `resolvedPack` is exactly what this line's boxes
-              // were just split against above; re-reading `product.unitsPerBox` here would
-              // silently price (and re-store) it at the LIVE pack instead.
-              const upb = resolvedPack != null && resolvedPack > 1 ? resolvedPack : 0;
+              const upb = Number(product.unitsPerBox ?? 0);
               // B661-sweep: box-unaware multiply, converts to regulatedUnitBasis in a follow-up PR.
               const qtyPieces = boxes != null ? qty : upb > 1 ? qty * upb : qty;
               const qtyUnits = boxes != null ? boxes : qty;
@@ -3861,8 +3821,7 @@ export class OrdersService implements OnApplicationBootstrap {
                 qty,
                 boxes,
                 pieces,
-                // SA-124e(3): price at the RESOLVED pack, not the live product row.
-                unitsPerBox: upb,
+                unitsPerBox: product.unitsPerBox,
                 freeUnits: priced.freeUnits,
               });
               await tx.orderItem.create({
@@ -3872,9 +3831,11 @@ export class OrdersService implements OnApplicationBootstrap {
                   qty,
                   boxes,
                   pieces,
-                  // Snapshot the sale-time box size on box-split lines (see create()) — the
-                  // RESOLVED pack (SA-124e), never the live product row.
-                  unitsPerBox: boxes != null && upb > 1 ? upb : null,
+                  // Snapshot the sale-time box size on box-split lines (see create()).
+                  unitsPerBox:
+                    boxes != null && Number(product.unitsPerBox ?? 0) > 1
+                      ? Number(product.unitsPerBox)
+                      : null,
                   unitPrice,
                   subtotal,
                   status: "PENDING",
@@ -3913,14 +3874,6 @@ export class OrdersService implements OnApplicationBootstrap {
                   position: pos++,
                 },
               });
-            }
-            // SA-124: same livePackFallback signal as the sweep/fold paths — a product this
-            // replace-all recreated with no payload pack and no unambiguous pre-edit snapshot,
-            // deferred to the live product pack.
-            if (replaceAllLivePackFallbackProductIds.length > 0) {
-              this.logger.warn(
-                `updateOrderItems (replaceAll): order ${orderId} product(s) [${replaceAllLivePackFallbackProductIds.join(", ")}] had no pack of their own — resolved via the live product pack (B776/SA-124e)`,
-              );
             }
           } else {
             // Individual item updates (dispatcher workflow with explicit item IDs).

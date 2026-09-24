@@ -601,4 +601,35 @@ describe("merge-items — SA-124a: existing lines keyed by productId + resolved 
       overrideReason: "operator discount",
     });
   });
+
+  it("SA-124g/h R1 item 3 (Opus HIGH): two PLAIN-product duplicate lines (no pack at all) fold a scan into the FIRST — NEVER a 409 naming empty packs", () => {
+    // Two genuinely never-boxed lines of the same product — each its own bucket (MED-5), both
+    // unitsPerBox 0 (unresolved). Pre-fix, this refused with existingPacks: [] ("at packs []").
+    const first: MergeLineSnapshot = {
+      productId: "prod-plain",
+      qty: 5,
+      boxes: null,
+      pieces: null,
+      unitsPerBox: null,
+      unitPrice: 2,
+    };
+    const second: MergeLineSnapshot = {
+      productId: "prod-plain",
+      qty: 3,
+      boxes: null,
+      pieces: null,
+      unitsPerBox: null,
+      unitPrice: 2,
+    };
+    const incoming: MergeIncomingItem[] = [{ productId: "prod-plain", qty: 4 }];
+
+    const { items } = foldMergeItems([first, second], incoming);
+
+    expect(items).toHaveLength(2);
+    // The first grows by the scanned 4 pieces; the second survives byte-identical.
+    const grown = items.find((i) => i.qty === 9);
+    expect(grown).toMatchObject({ productId: "prod-plain", qty: 9 });
+    const untouched = items.find((i) => i.qty === 3);
+    expect(untouched).toMatchObject({ productId: "prod-plain", qty: 3 });
+  });
 });

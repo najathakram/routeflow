@@ -258,32 +258,37 @@ export function foldMergeItems(
       continue;
     }
 
-    // SA-124a/SA-124e MED-5: 2+ existing buckets for this product (either a durable split from
-    // an earlier pack-mismatch sweep, or a genuine same-pack duplicate). A scan whose own pack
-    // matches one of them folds into the FIRST such bucket in display order (`.find`'s own
-    // semantics), the other(s) untouched byte-identical — never summed across duplicates. A
-    // scan matching NONE of them — known or unresolvable — refuses naming every pack present,
-    // rather than guessing which line it belongs to.
+    // SA-124g/h R1: 2+ existing buckets for this product (either a durable split from an
+    // earlier pack-mismatch sweep, or a genuine same-pack/plain-product duplicate). A scan
+    // whose own pack matches one of them folds into the FIRST such bucket in display order
+    // (`.find`'s own semantics), the other(s) untouched byte-identical — never summed across
+    // duplicates. The refusal below fires ONLY for a genuine, confident disagreement: 2+
+    // DISTINCT KNOWN packs (> 1) among the buckets, and the incoming item's OWN pack is ALSO
+    // known and matches none of them. Every other case — an unresolvable incoming pack (bare
+    // qty or a degenerate split), or fewer than 2 known packs among the buckets (plain-product
+    // duplicates, all ≤ 1) — folds into the FIRST bucket instead; guessing wrong there costs a
+    // display-order surprise, refusing wrongly costs a broken auto-merge/cart-submit for the
+    // overwhelming majority of products, which are not boxed at all (Opus's HIGH finding).
     if (incomingUnitsPerBox > 1) {
       const acc = buckets.find((b) => b.unitsPerBox === incomingUnitsPerBox);
       if (acc) {
         foldInto(acc, item, incomingHasBoxData);
         continue;
       }
+      const knownPacks = [...new Set(buckets.map((b) => b.unitsPerBox).filter((p) => p > 1))].sort(
+        (a, b) => a - b,
+      );
+      if (knownPacks.length >= 2) {
+        throw new ConflictException({
+          code: "MERGE_PACK_MISMATCH",
+          message: `Product ${item.productId} is on this order at packs [${knownPacks.join(", ")}] and the scanned item is a ${incomingUnitsPerBox}-pack — resolve the mismatch before merging.`,
+          productId: item.productId,
+          existingPacks: knownPacks,
+          incomingPack: incomingUnitsPerBox,
+        });
+      }
     }
-    const existingPacks = [...new Set(buckets.map((b) => b.unitsPerBox).filter((p) => p > 1))].sort(
-      (a, b) => a - b,
-    );
-    throw new ConflictException({
-      code: "MERGE_PACK_MISMATCH",
-      message:
-        incomingUnitsPerBox > 1
-          ? `Product ${item.productId} is on this order at packs [${existingPacks.join(", ")}] and the scanned item is a ${incomingUnitsPerBox}-pack — resolve the mismatch before merging.`
-          : `Product ${item.productId} is on this order at packs [${existingPacks.join(", ")}] and the scanned item carries no pack of its own — resolve the mismatch before merging.`,
-      productId: item.productId,
-      existingPacks,
-      incomingPack: incomingUnitsPerBox,
-    });
+    foldInto(buckets[0], item, incomingHasBoxData);
   }
 
   const merged: Array<Record<string, unknown>> = [];

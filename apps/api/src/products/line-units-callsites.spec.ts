@@ -20,12 +20,10 @@ import { join, relative, sep } from "path";
  * named variable (`row.unitsPerBox`) is invisible. Code review + the 4b/4c conversion PRs cover it.
  */
 const BASELINE: Record<string, number> = {
-  // SA-124e HIGH 2: the replaceAll rebuild's split/pricing/stored-unitsPerBox all now read the
-  // RESOLVED pack (resolveReplaceAllLinePack's output) instead of product.unitsPerBox directly —
-  // 4 direct reads retired (20 -> 16). One read remains in this same block: the live pack is
-  // still fed to the resolver itself (as its own step-(c) fallback input), which is the resolver's
-  // job, not a line-factor decision made directly off the live product.
-  "orders/orders.service.ts": 16,
+  // SA-124g/h R1: the replaceAll rebuild is reverted to master byte-for-byte (SA-124e's HIGH 2
+  // resolver — which had retired 4 of these 20 reads — is R2 scope now), restoring the original
+  // 20 reads, plus ONE new read feeding `assertReplaceAllPackMatchesLive`'s live-pack guard.
+  "orders/orders.service.ts": 21,
   // Three reads today (B717/SA-077 lowered this from 6; SA-068b's earlier note predicted 5, which
   // the hoist overtook — four reads in update()'s mapper became one). Do not read that history as
   // a forecast; what is left, and what retires each:

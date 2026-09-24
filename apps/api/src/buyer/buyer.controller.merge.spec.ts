@@ -225,7 +225,10 @@ describe("BuyerController.createOrder merge branch (TP3 / REG-B47 / REG-B78)", (
     const [, updateDto] = ordersService.updateOrderItems.mock.calls[0];
     // toEqual, not toMatchObject: a boxes/pieces key appearing here at all is the
     // bug — it flips the line into box-split denomination server-side.
-    expect(updateDto.items).toEqual([{ productId: "prod-boxed", qty: 4 }]);
+    // SA-124f: sourceLineId rides along (kept for R2's R-PRICE; unconsumed under R1).
+    expect(updateDto.items).toEqual([
+      { productId: "prod-boxed", qty: 4, sourceLineId: "li-boxed-unaware" },
+    ]);
   });
 
   it("REG-B47 (T14 companion): a BARE-qty incoming add against a box-SPLIT stored line expands to boxes — 2 boxes + 2 = {qty:48, boxes:4}, never {qty:26, boxes:2, pieces:2}", async () => {
@@ -260,10 +263,18 @@ describe("BuyerController.createOrder merge branch (TP3 / REG-B47 / REG-B78)", (
     await controller.createOrder(dto as any, MOCK_CTX as any);
 
     const [, updateDto] = ordersService.updateOrderItems.mock.calls[0];
-    // SA-124e(1): the fold's output now carries the bucket's own resolved pack, so the
-    // replaceAll rebuild recreates this line at pack 12 — never the live product row.
+    // SA-124e(1): the fold's output still carries the bucket's own resolved pack (kept for
+    // R2's R-PRICE — R1's guard reads it too) plus sourceLineId (also kept, unconsumed by R1's
+    // reverted rebuild).
     expect(updateDto.items).toEqual([
-      { productId: "prod-boxed", qty: 48, boxes: 4, pieces: 0, unitsPerBox: 12 },
+      {
+        productId: "prod-boxed",
+        qty: 48,
+        boxes: 4,
+        pieces: 0,
+        unitsPerBox: 12,
+        sourceLineId: "li-boxed-split",
+      },
     ]);
   });
 

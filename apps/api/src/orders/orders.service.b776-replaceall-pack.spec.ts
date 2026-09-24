@@ -1,8 +1,8 @@
-// SA-124e HIGH 2 — the staff/buyer replace-all rebuild (updateOrderItems) used to re-split
-// EVERY boxed item against the LIVE product pack, undoing SA-124a/SA-124c's pack-keyed fold: a
-// 12-pack bucket's 1 box became 6 pieces at a live pack of 6, and its price was dropped and
-// re-derived from the live catalog. Pinned end-to-end through updateOrderItems, red-first
-// against the pre-fix `normalizeBoxesPieces({ ..., unitsPerBox: product.unitsPerBox })`.
+// SA-124g/h R1 — the replace-all rebuild in updateOrderItems is reverted to master
+// byte-for-byte (see replace-all-pack-resolution.ts's header for why: R-PRICE, the full
+// SA-077 resolution order, is R2's scope). The ONE thing R1 adds on top is
+// assertReplaceAllPackMatchesLive: refuse (rolled back, nothing written) a payload item whose
+// own resolved pack disagrees with the live product pack, instead of silently re-splitting it.
 jest.mock("../common/db-locks", () => ({
   ...jest.requireActual("../common/db-locks"),
   withAdvisoryLock: jest.fn(async (_opts: unknown, fn: () => Promise<unknown>) => ({
@@ -47,11 +47,14 @@ const line = (over: Record<string, unknown>) => ({
   ...over,
 });
 
-describe("OrdersService.updateOrderItems replaceAll — SA-124e HIGH 2 pack resolution", () => {
+describe("OrdersService.updateOrderItems replaceAll — SA-124g/h R1's ONE guard", () => {
   let h: Awaited<ReturnType<typeof buildOrdersService>>;
 
   beforeEach(async () => {
     h = await buildOrdersService();
+  });
+
+  it("gate (c): a payload item carrying its own 12-pack against a live-repacked-to-6 product refuses — nothing written", async () => {
     h.prisma.product.findMany.mockResolvedValue([
       {
         id: "prod-repack",
@@ -61,79 +64,9 @@ describe("OrdersService.updateOrderItems replaceAll — SA-124e HIGH 2 pack reso
         trackedCategoryId: null,
       },
     ]);
-  });
-
-  it("HIGH 2 pin: lines at 12 and 6, live pack 6, a 6-pack scan grows the 6 line; the 12 line is recreated as 1 box / 12 / $36, never 6 pieces, never re-priced", async () => {
     h.prisma.order.findUnique.mockResolvedValue({
       ...MOCK_ORDER,
-      lineItems: [
-        line({
-          id: "li-12",
-          productId: "prod-repack",
-          qty: 12,
-          boxes: 1,
-          pieces: 0,
-          unitsPerBox: 12,
-          unitPrice: 36,
-          subtotal: 36,
-        }),
-        line({
-          id: "li-6",
-          productId: "prod-repack",
-          qty: 6,
-          boxes: 1,
-          pieces: 0,
-          unitsPerBox: 6,
-          unitPrice: 18,
-          subtotal: 18,
-        }),
-      ],
-    });
-
-    await h.service.updateOrderItems(
-      "ord-1",
-      {
-        replaceAll: true,
-        items: [
-          // the fold's own output for each bucket, carrying its OWN resolved pack (SA-124e(1)):
-          {
-            productId: "prod-repack",
-            qty: 12,
-            boxes: 1,
-            pieces: 0,
-            unitsPerBox: 12,
-            unitPrice: 36,
-          },
-          { productId: "prod-repack", qty: 12, boxes: 2, pieces: 0, unitsPerBox: 6, unitPrice: 18 },
-        ],
-      } as never,
-      operatorPayload as never,
-    );
-
-    const creates = h.prisma.orderItem.create.mock.calls.filter(
-      (c: any) => c[0]?.data?.productId === "prod-repack",
-    );
-    expect(creates).toHaveLength(2);
-    const twelvePackLine = creates.find((c: any) => c[0].data.unitPrice === 36);
-    expect(twelvePackLine![0].data).toMatchObject({ boxes: 1, pieces: 0, qty: 12, unitPrice: 36 });
-    const sixPackLine = creates.find((c: any) => c[0].data.unitPrice === 18);
-    expect(sixPackLine![0].data).toMatchObject({ boxes: 2, pieces: 0, qty: 12 });
-  });
-
-  it("a pieces-only payload for a product with two stored packs refuses (409), never re-splits at the live pack", async () => {
-    h.prisma.order.findUnique.mockResolvedValue({
-      ...MOCK_ORDER,
-      lineItems: [
-        line({
-          id: "li-12",
-          productId: "prod-repack",
-          qty: 12,
-          boxes: 1,
-          pieces: 0,
-          unitsPerBox: 12,
-        }),
-        line({ id: "li-6", productId: "prod-repack", qty: 6, boxes: 1, pieces: 0, unitsPerBox: 6 }),
-      ],
+      lineItems: [line({ id: "li-12" })],
     });
 
     const err = await h.service
@@ -141,7 +74,16 @@ describe("OrdersService.updateOrderItems replaceAll — SA-124e HIGH 2 pack reso
         "ord-1",
         {
           replaceAll: true,
-          items: [{ productId: "prod-repack", qty: 5, boxes: null, pieces: 5 }],
+          items: [
+            {
+              productId: "prod-repack",
+              qty: 12,
+              boxes: 1,
+              pieces: 0,
+              unitsPerBox: 12,
+              unitPrice: 36,
+            },
+          ],
         } as never,
         operatorPayload as never,
       )
@@ -149,48 +91,69 @@ describe("OrdersService.updateOrderItems replaceAll — SA-124e HIGH 2 pack reso
 
     expect(err).toBeInstanceOf(Error);
     expect(err.response ?? err).toMatchObject(
-      expect.objectContaining({ code: "MERGE_PACK_MISMATCH", existingPacks: [6, 12] }),
+      expect.objectContaining({
+        code: "MERGE_PACK_MISMATCH",
+        existingPacks: [12],
+        incomingPack: 6,
+      }),
     );
+    expect(h.prisma.orderItem.create).not.toHaveBeenCalled();
   });
 
-  it("one stored snapshot plus a bare-qty payload — the snapshot wins, the line is recreated boxed at that pack", async () => {
+  it("gate (e): a normal same-pack replace-all (payload pack matches live pack) is unchanged from master — no refusal", async () => {
+    h.prisma.product.findMany.mockResolvedValue([
+      {
+        id: "prod-repack",
+        name: "Widget",
+        unitsPerBox: 12,
+        pricePerUnit: 3,
+        trackedCategoryId: null,
+      },
+    ]);
     h.prisma.order.findUnique.mockResolvedValue({
       ...MOCK_ORDER,
-      lineItems: [
-        line({
-          id: "li-12",
-          productId: "prod-repack",
-          qty: 12,
-          boxes: 1,
-          pieces: 0,
-          unitsPerBox: 12,
-        }),
-      ],
+      lineItems: [line({ id: "li-12" })],
     });
 
     await h.service.updateOrderItems(
       "ord-1",
-      { replaceAll: true, items: [{ productId: "prod-repack", qty: 12 }] } as never,
+      {
+        replaceAll: true,
+        items: [
+          {
+            productId: "prod-repack",
+            qty: 24,
+            boxes: 2,
+            pieces: 0,
+            unitsPerBox: 12,
+            unitPrice: 36,
+          },
+        ],
+      } as never,
       operatorPayload as never,
     );
 
     const created = h.prisma.orderItem.create.mock.calls.find(
       (c: any) => c[0]?.data?.productId === "prod-repack",
     );
-    expect(created![0].data).toMatchObject({ boxes: 1, pieces: 0, qty: 12, unitsPerBox: 12 });
+    expect(created![0].data).toMatchObject({ boxes: 2, pieces: 0, qty: 24 });
   });
 
-  it("no stored line and no split falls to the live pack, with a warn", async () => {
+  it("a payload item with no resolvable own pack (pieces-only) never refuses — matches pre-B776 master exactly", async () => {
+    h.prisma.product.findMany.mockResolvedValue([
+      {
+        id: "prod-repack",
+        name: "Widget",
+        unitsPerBox: 6,
+        pricePerUnit: 6,
+        trackedCategoryId: null,
+      },
+    ]);
     h.prisma.order.findUnique.mockResolvedValue({ ...MOCK_ORDER, lineItems: [] });
-    const warnSpy = jest
-      .spyOn((h.service as any).logger, "warn")
-      .mockImplementation(() => undefined);
 
     await h.service.updateOrderItems(
       "ord-1",
       {
-        // pieces-only: packFromOwnSplit refuses it (no boxes), so nothing resolves except
-        // the live pack — no prior line for this product either, so it's not a conflict.
         replaceAll: true,
         items: [{ productId: "prod-repack", qty: 5, boxes: null, pieces: 5 }],
       } as never,
@@ -200,9 +163,7 @@ describe("OrdersService.updateOrderItems replaceAll — SA-124e HIGH 2 pack reso
     const created = h.prisma.orderItem.create.mock.calls.find(
       (c: any) => c[0]?.data?.productId === "prod-repack",
     );
-    expect(created![0].data).toMatchObject({ unitsPerBox: 6 });
-    expect(warnSpy).toHaveBeenCalledWith(
-      expect.stringContaining("had no pack of their own — resolved via the live product pack"),
-    );
+    expect(created).toBeDefined();
+    expect(created![0].data.unitsPerBox).toBe(6); // live pack, master's original behavior
   });
 });
