@@ -605,6 +605,10 @@ describe("PlatformAdminService — audit provenance", () => {
       slug: "acme",
       plan: "STARTER",
       status: "ACTIVE",
+      // SA-140: updatePlan()'s wasPaying/isPaying now route through isPayingRow, which needs
+      // class/deletedAt too.
+      class: "PRODUCTION",
+      deletedAt: null,
     } as any);
     prisma.tenant.update.mockResolvedValue({
       id: TENANT_ID,
@@ -691,6 +695,8 @@ describe("PlatformAdminService — audit provenance", () => {
       slug: "acme",
       plan: "STARTER",
       status: "ACTIVE",
+      class: "PRODUCTION",
+      deletedAt: null,
     } as any);
     prisma.tenant.update.mockResolvedValue({
       id: TENANT_ID,
@@ -737,6 +743,8 @@ describe("PlatformAdminService — audit provenance", () => {
       slug: "acme",
       plan: "STARTER",
       status: "ACTIVE",
+      class: "PRODUCTION",
+      deletedAt: null,
     } as any);
     prisma.tenant.update.mockResolvedValue({
       id: TENANT_ID,
@@ -1553,6 +1561,39 @@ describe("PlatformAdminService — audit provenance", () => {
       const args = (prisma.tenant.findMany as jest.Mock).mock.calls.at(-1)![0];
       expect(args.where.deletedAt).toBeUndefined();
     });
+
+    it("SA-140/B556: a drifted tenant (real Tenant.plan, no resolved subscription.planKey) keeps `plan` as the raw legacy enum but resolves `planKey` through the fallback — never silently shown as fully explained by the legacy field alone", async () => {
+      // The exact B556 evidence shape: Tenant.plan=PROFESSIONAL, subscription.planKey=null.
+      prisma.tenant.findMany.mockResolvedValue([
+        { id: TENANT_ID, slug: "acme", plan: "PROFESSIONAL", subscription: { planKey: null } },
+      ] as any);
+      prisma.tenant.count.mockResolvedValue(1);
+
+      const result = await service.listTenants(1, 20, {});
+
+      expect(result.data[0].plan).toBe("PROFESSIONAL"); // shape unchanged (SA precision 4)
+      expect(result.data[0].planKey).toBe("SCALE"); // planKeyFromEnum(PROFESSIONAL) fallback
+    });
+
+    it("SA-140/B556: a resolved subscription.planKey wins over the legacy plan enum for `planKey`", async () => {
+      prisma.tenant.findMany.mockResolvedValue([
+        { id: TENANT_ID, slug: "acme", plan: "PROFESSIONAL", subscription: { planKey: "SCALE" } },
+      ] as any);
+      prisma.tenant.count.mockResolvedValue(1);
+
+      const result = await service.listTenants(1, 20, {});
+
+      expect(result.data[0].plan).toBe("PROFESSIONAL");
+      expect(result.data[0].planKey).toBe("SCALE");
+    });
+
+    it("SA-140/L-169: the subscription select gains planKey (a caller's select must actually fetch what the shared predicate reads)", async () => {
+      prisma.tenant.findMany.mockResolvedValue([]);
+      prisma.tenant.count.mockResolvedValue(0);
+      await service.listTenants(1, 20, {});
+      const args = (prisma.tenant.findMany as jest.Mock).mock.calls.at(-1)![0];
+      expect(args.include.subscription.select.planKey).toBe(true);
+    });
   });
 
   describe("getTenantEntitlements", () => {
@@ -2312,6 +2353,66 @@ describe("PlatformAdminService — audit provenance", () => {
       );
 
       expect(billingEventService.emit).not.toHaveBeenCalled();
+    });
+
+    it("SA-140 item 2: entering PRODUCTION books a compensating delta = live priceTenant() minus the pre-existing ledger sum, priced with tx AFTER the class write", async () => {
+      prisma.tenant.findUniqueOrThrow.mockResolvedValue({
+        id: TENANT_ID,
+        slug: "acme",
+        class: "DEMO",
+      } as any);
+      prisma.tenant.update.mockResolvedValue({
+        id: TENANT_ID,
+        slug: "acme",
+        class: "PRODUCTION",
+      } as any);
+      (prisma as any).billingEvent = {
+        aggregate: jest.fn().mockResolvedValue({ _sum: { amountDelta: 150 } }),
+      };
+      mrrService.priceTenant.mockResolvedValue(59);
+
+      await service.updateTenantClass(
+        TENANT_ID,
+        { class: "PRODUCTION", reason: "reclassified as a real customer" } as any,
+        ADMIN_ID,
+      );
+
+      // priced through tx (the SAME mock object the transaction body operates on), not
+      // this.prisma directly — the whole point of the fix (SA-140: a call outside tx would
+      // still see the OLD class under read-committed isolation and silently return 0).
+      expect(mrrService.priceTenant).toHaveBeenCalledWith(TENANT_ID, expect.anything());
+      expect(billingEventService.emit).toHaveBeenCalledWith(
+        TENANT_ID,
+        "tenant.class_changed",
+        expect.objectContaining({ from: "DEMO", to: "PRODUCTION" }),
+        expect.objectContaining({ amountDelta: -91 }), // 59 − 150
+      );
+    });
+
+    it("SA-140 item 2: entering PRODUCTION with no pre-existing ledger history books the live contribution alone", async () => {
+      prisma.tenant.findUniqueOrThrow.mockResolvedValue({
+        id: TENANT_ID,
+        slug: "fresh",
+        class: "TEST",
+      } as any);
+      prisma.tenant.update.mockResolvedValue({
+        id: TENANT_ID,
+        slug: "fresh",
+        class: "PRODUCTION",
+      } as any);
+      (prisma as any).billingEvent = {
+        aggregate: jest.fn().mockResolvedValue({ _sum: { amountDelta: null } }),
+      };
+      mrrService.priceTenant.mockResolvedValue(249);
+
+      await service.updateTenantClass(TENANT_ID, { class: "PRODUCTION" } as any, ADMIN_ID);
+
+      expect(billingEventService.emit).toHaveBeenCalledWith(
+        TENANT_ID,
+        "tenant.class_changed",
+        expect.anything(),
+        expect.objectContaining({ amountDelta: 249 }),
+      );
     });
 
     it("rejects and leaves nothing else applied when the BillingEvent emit throws", async () => {

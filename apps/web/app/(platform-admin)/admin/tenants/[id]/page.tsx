@@ -37,6 +37,9 @@ interface TenantDetail {
   name: string;
   status: string;
   plan: string;
+  // SA-140/B556: display-resolved — falls back to `plan` only when no subscription.planKey is
+  // set (a drifted tenant). `plan` itself is unchanged.
+  planKey: string;
   trialEndsAt: string | null;
   createdAt: string;
   deletedAt: string | null;
@@ -367,7 +370,9 @@ function OverviewTab({
         <div className="rounded-xl bg-slate-800 p-5 ring-1 ring-white/5">
           <p className="text-xs font-medium uppercase tracking-wider text-slate-400">Est. MRR</p>
           <p className="mt-2 text-2xl font-bold text-white">{usd(tenant.estMrrUsd ?? 0)}</p>
-          <p className="mt-1 text-xs text-slate-400">{planLabel(tenant.plan)} · stopgap estimate</p>
+          <p className="mt-1 text-xs text-slate-400">
+            {planLabel(tenant.planKey ?? tenant.plan)} · stopgap estimate
+          </p>
         </div>
         <div className="rounded-xl bg-slate-800 p-5 ring-1 ring-white/5">
           <p className="text-xs font-medium uppercase tracking-wider text-slate-400">Orders, 30d</p>
@@ -406,7 +411,7 @@ function OverviewTab({
             [
               "Plan",
               <AdminBadge key="plan" variant="plan">
-                {tenant.plan}
+                {tenant.planKey ?? tenant.plan}
               </AdminBadge>,
             ],
             ["Status", <AdminBadge key="status">{tenant.status}</AdminBadge>],
@@ -822,7 +827,7 @@ function BillingTab({
       {/* Current Plan */}
       <AdminCard title="Current Plan">
         <div className="flex items-center gap-4 mb-4">
-          <AdminBadge variant="plan">{tenant.plan}</AdminBadge>
+          <AdminBadge variant="plan">{tenant.planKey ?? tenant.plan}</AdminBadge>
           <AdminBadge>{tenant.status}</AdminBadge>
         </div>
         {daysLeft !== null && (
@@ -1885,7 +1890,7 @@ export default function AdminTenantDetailPage() {
         <span className="text-slate-400">/</span>
         <h1 className="text-xl font-bold text-white">{tenant.businessName ?? tenant.name}</h1>
         <AdminBadge>{tenant.status}</AdminBadge>
-        <AdminBadge variant="plan">{tenant.plan}</AdminBadge>
+        <AdminBadge variant="plan">{tenant.planKey ?? tenant.plan}</AdminBadge>
       </div>
       <p className="mb-4 text-sm text-slate-400">
         <span className="font-mono">{tenant.slug}</span>.routeflow.info · created{" "}
