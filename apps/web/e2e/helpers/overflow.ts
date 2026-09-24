@@ -241,8 +241,14 @@ export async function documentLevelOverflowPx(page: Page): Promise<number> {
  * for.
  */
 export async function waitForDataLoaded(page: Page) {
-  await expect(page.locator(".animate-pulse").first()).not.toBeVisible({ timeout: 15_000 });
-  await expect(page.locator(".animate-spin").first()).not.toBeVisible({ timeout: 15_000 });
+  // `:visible` + toHaveCount(0), not `.first()` + not.toBeVisible() — found
+  // by review: `.first()` only tracks ONE element in DOM order, so a page
+  // with several simultaneous skeleton blocks (a plausible real case, not
+  // hypothetical) could pass the moment the FIRST one resolves while others
+  // are still pulsing. Counting every currently-visible match to zero is the
+  // check that actually means "nothing is loading anymore".
+  await expect(page.locator(".animate-pulse:visible")).toHaveCount(0, { timeout: 15_000 });
+  await expect(page.locator(".animate-spin:visible")).toHaveCount(0, { timeout: 15_000 });
   await expect(page.getByText(/^Loading/i).first()).not.toBeVisible({ timeout: 15_000 });
 }
 
