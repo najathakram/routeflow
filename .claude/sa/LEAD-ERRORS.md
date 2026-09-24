@@ -100,6 +100,8 @@ A 7 · B 5 · C 1 · D 4 (lead) · SA own: A 11 · B 14 | needless asks ("you di
 
 - SA-E55 · 2026-09-24 · B · SA-135b (1) asserted a levy change from a DB spec's TITLE ("the levy is on the PIECES basis, 72 × 0.5 = 36") without reading the pre-fix levy path (manual-invoice-lines.ts :141-142 already multiplied a no-split line by the pack). The lane's own it.each pin said identical. Rule (check 11): a spec title is a claim; before naming a before/after money delta, read BOTH branches' code and run the number on each — and when a pin already asserts equality, the burden is to break the pin, not to restate the title.
 
+- SA-E56 · 2026-09-24 · A · SA-144 triaged B740 as BLOCKS-FLIP from the registry row's title; the row was filed from a sweep snapshot older than #1147, which had already fixed it. Caught by the fleet lead with a master grep. Rule: a BLOCKS-FLIP (or any gating) call on a registry row is only as current as the row — verify the claimed gap against current master before listing it, or mark it "per record, unverified"; check 1 applies to registry rows, not only to code.
+
 ## Prediction (update weekly)
 
 - 2026-09-20 · A dominates (5 of 11) → the fix is mechanical: re-derive at the moment of decision and name the sha. Next likely instance: a "ready to land", "N behind" or ratchet figure relayed from a lane across a merge window. D is the expensive class: watch every "the flag is off" and every merge list that is mostly one lane.
