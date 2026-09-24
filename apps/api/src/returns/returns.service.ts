@@ -914,19 +914,31 @@ export class ReturnsService {
         const undo = new Map<string, number>();
         for (const m of moved)
           undo.set(m.productId, (undo.get(m.productId) ?? 0) + Number(m.quantity));
+        // B562 PR-2 (SA-136 §2): nothing deletes a movement. The undo APPENDS one reversing RETURN row
+        // per product (negative quantity, same reference, notes RETURN_CANCELLED) with `stockAfter`
+        // read from the decrement's own result, so the reference nets to zero and the history stays.
         for (const [productId, qty] of undo) {
-          await tx.product.update({
+          if (qty === 0) continue;
+          const updated = await tx.product.update({
             where: { id: productId },
             data: { currentStock: { decrement: qty } },
           });
-        }
-        for (const item of fresh.items) {
-          await tx.stockMovement.deleteMany({
-            where: { productId: item.productId, reference: returnRef },
+          await tx.stockMovement.create({
+            data: {
+              productId,
+              type: "RETURN",
+              quantity: new Prisma.Decimal(qty).neg(),
+              unitCost: updated.averageCost ?? null,
+              avgCostAfter: updated.averageCost ?? null,
+              stockAfter: updated.currentStock,
+              reference: returnRef,
+              notes: "RETURN_CANCELLED",
+              performedById: user?.sub ?? null,
+            },
           });
         }
         // W5c: undo the regulated ledger reversal written at receive() (symmetric
-        // to deleting the stock movements above). cancel() blocks REFUNDED returns,
+        // to reversing the stock movements above). cancel() blocks REFUNDED returns,
         // so a finalized reversal is never touched.
         await this.ledger.unreverseReturnEntries({ returnId: fresh.id, db: tx });
       }

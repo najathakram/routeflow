@@ -1,6 +1,7 @@
 import { ConflictException } from "@nestjs/common";
 import { Prisma, UserRole } from "@prisma/client";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
+import { recordSaleMovement } from "../inventory/sale-movement";
 
 /**
  * Stock bookkeeping for order writes — lifted verbatim out of `OrdersService` (B585 prefactor:
@@ -13,6 +14,19 @@ export interface OrderStockDeps {
   /** The ambient tenant id (`PrismaService.getTenantId()`), read where the class read it. */
   tenantId: string | null | undefined;
 }
+
+/**
+ * B562 PR-2 (SA-136 §2): which order stock event a SALE movement records. `reference` on the row is
+ * `ORDER:<orderId>`; `notes` is the event — CREATE | EDIT | CANCEL | UNCANCEL | PROMOTE | DEMOTE |
+ * TEMPLATE:<templateId>; `performedById` is the acting user, or null for the standing-order cron.
+ */
+export interface OrderStockEvent {
+  orderId: string;
+  notes: string;
+  performedById: string | null;
+}
+
+export const orderStockReference = (orderId: string) => `ORDER:${orderId}`;
 
 /**
  * B283: the ONE stock-decrement code path for turning a set of order lines
@@ -29,6 +43,7 @@ export async function decrementStockForSale(
   tx: any,
   stockLines: Array<{ productId: string; qty: number }>,
   isStaffRole: boolean,
+  event: OrderStockEvent,
 ): Promise<void> {
   if (stockLines.length === 0) return;
   const productIds = stockLines.map((li) => li.productId);
@@ -86,13 +101,27 @@ export async function decrementStockForSale(
       ([productId, qty]) => Prisma.sql`(${productId}::text, ${qty}::numeric)`,
     ),
   );
-  await tx.$executeRaw`
+  // B562 PR-2: RETURNING the counter each row now holds — the SALE movement's `stockAfter` is read
+  // from the write that moved it (SA-136 §2), never from the pre-lock read above. A product the
+  // UPDATE did not match (cross-tenant id) returns no row and gets no movement, as it moved nothing.
+  const moved: Array<{ id: string; currentStock: Prisma.Decimal }> = await tx.$queryRaw`
     UPDATE "Product" AS p
     SET "currentStock" = p."currentStock" - v.qty
     FROM (VALUES ${stockValues}) AS v(id, qty)
     WHERE p.id = v.id
       ${stockTenantId ? Prisma.sql`AND p."tenantId" = ${stockTenantId}` : Prisma.empty}
+    RETURNING p.id, p."currentStock"
   `;
+  for (const row of moved) {
+    await recordSaleMovement(tx, {
+      productId: row.id,
+      quantity: -(qtyByProduct.get(row.id) ?? 0),
+      stockAfter: row.currentStock,
+      reference: orderStockReference(event.orderId),
+      notes: event.notes,
+      performedById: event.performedById,
+    });
+  }
 }
 
 /**
@@ -137,8 +166,8 @@ export async function decrementStockForSale(
  * reading currentStock — mirroring create()'s lock (:1863-1867). The old
  * validate-only assert read unlocked because it reserved nothing; now that
  * this method WRITES currentStock, the lock is load-bearing (closes the
- * same concurrent-oversell race create() closes). No StockMovement rows are
- * written — matches create(), which tracks currentStock only.
+ * same concurrent-oversell race create() closes). B562 PR-2: each write now
+ * appends its SALE StockMovement (SA-136 §1/§2), like create().
  *
  * Applies to DELIVERED/OUT_FOR_DELIVERY orders too: a qty increase on an
  * already-dispatched order means more goods physically went out the door,
@@ -168,6 +197,8 @@ export async function settleStockForEdit(
   heldItems: Array<{ productId: string | null; qty: any; deliveredQty?: any; status?: string }>,
   finalActiveItems: Array<{ productId: string | null; qty: any }>,
   user?: JwtPayload,
+  /** B562 PR-2: the event the SALE rows record (default EDIT); the acting user wins over `performedById`. */
+  event: { notes: string; performedById?: string | null } = { notes: "EDIT" },
 ): Promise<void> {
   if (order.status === "DRAFT") return;
 
@@ -291,14 +322,24 @@ export async function settleStockForEdit(
   // (LINE_ALREADY_DELIVERED, ~:4205); crediting a delivered line's full qty
   // would invent inventory that physically left the warehouse. Cap =
   // max(0, held − deliveredHeld); a fully-delivered line's cap is 0, so it
-  // is skipped entirely (no write at all). No StockMovement rows — matches
-  // create(), which tracks currentStock only.
+  // is skipped entirely (no write at all). B562 PR-2: every write appends its
+  // SALE movement (−increase / +credit), `stockAfter` from the update's own row.
+  const saleRow = (productId: string, quantity: number, updated: { currentStock: any }) =>
+    recordSaleMovement(db, {
+      productId,
+      quantity,
+      stockAfter: updated.currentStock,
+      reference: orderStockReference(order.id),
+      notes: event.notes,
+      performedById: user?.sub ?? event.performedById ?? null,
+    });
   for (const [productId, delta] of deltas) {
     if (delta > 0) {
-      await db.product.update({
+      const updated = await db.product.update({
         where: { id: productId },
         data: { currentStock: { decrement: delta } },
       });
+      await saleRow(productId, -delta, updated);
       continue;
     }
     const undelivered = Math.max(
@@ -307,9 +348,10 @@ export async function settleStockForEdit(
     );
     const credit = Math.min(-delta, undelivered);
     if (credit <= 0) continue;
-    await db.product.update({
+    const updated = await db.product.update({
       where: { id: productId },
       data: { currentStock: { increment: credit } },
     });
+    await saleRow(productId, credit, updated);
   }
 }

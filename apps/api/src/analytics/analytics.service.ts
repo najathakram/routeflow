@@ -793,9 +793,9 @@ export class AnalyticsService {
    * one payload so the card's metric toggle never refetches.
    *
    * Source is invoiced sales: `InvoiceItem` has no business date of its own, so the
-   * window filters `Invoice.issueDate`. `StockMovement type:"SALE"` — the source the
-   * inventory forecasting tab uses — is not viable here: it is only written on the
-   * route-delivery path, so a tenant that invoices directly has none at all.
+   * window filters `Invoice.issueDate`. `StockMovement type:"SALE"` is not viable here: its
+   * rows are a stock-ledger record written only since B562 PR-2 (order stock events), so
+   * earlier history has none — see common/invoiced-sales.ts.
    *
    * ⚠️ Queried THROUGH Invoice, never `invoiceItem.findMany`. Invoice lines are created
    * as NESTED writes, which bypass the tenant extension's `data.tenantId` injection, so

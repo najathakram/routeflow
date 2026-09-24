@@ -604,6 +604,8 @@ export class OrderTemplatesService {
         tx,
         stockLines,
         isStaffRole,
+        // B562 PR-2: the standing order's SALE rows; the cron run has no acting user.
+        { orderId: order.id, notes: `TEMPLATE:${template.id}`, performedById: null },
       );
       return order;
     });

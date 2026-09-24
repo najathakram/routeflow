@@ -9,6 +9,7 @@ import {
   OnApplicationBootstrap,
   ServiceUnavailableException,
 } from "@nestjs/common";
+import { randomUUID } from "crypto";
 import { LeaderCron } from "../common/cron-lock";
 import { InjectQueue } from "@nestjs/bull";
 import type { Queue } from "bull";
@@ -93,7 +94,7 @@ import { redactUpsellForCustomer } from "../common/upsell-redaction";
 import { currentTaxRate } from "../common/tax-rate";
 import { NotificationsService } from "../notifications/notifications.service";
 import { InvoicesService } from "../invoices/invoices.service";
-import { decrementStockForSale, settleStockForEdit } from "./order-stock";
+import { decrementStockForSale, settleStockForEdit, type OrderStockEvent } from "./order-stock";
 import { linePieceQty } from "./line-piece-qty";
 import {
   isBuyerPricedLine,
@@ -2098,16 +2099,23 @@ export class OrdersService implements OnApplicationBootstrap {
             const stockLines = lineItemsData.filter(
               (li): li is typeof li & { productId: string } => !!li.productId,
             );
+            // B562 PR-2: the id is minted here so the SALE rows can reference the order.
+            const orderId = randomUUID();
             if (!isDraft && stockLines.length > 0) {
               // B283: extracted to `decrementStockForSale` — changeStatus()'s
               // DRAFT→PENDING promotion is the SAME "becomes a real sale" moment
               // as a non-draft create(), so it calls the identical helper (no
               // second implementation of the lock/oversell-check/decrement).
-              await this.decrementStockForSale(tx, stockLines, isStaffRole);
+              await this.decrementStockForSale(tx, stockLines, isStaffRole, {
+                orderId,
+                notes: "CREATE",
+                performedById: user.sub,
+              });
             }
 
             return tx.order.create({
               data: {
+                id: orderId,
                 customerId,
                 orderNumber,
                 // F30/R8: persist the replay key (null for every caller that
@@ -2574,7 +2582,11 @@ export class OrdersService implements OnApplicationBootstrap {
             const stockLines = activeItems
               .filter((li): li is { productId: string; qty: any } => !!li.productId)
               .map((li) => ({ productId: li.productId, qty: Number(li.qty) }));
-            await this.decrementStockForSale(tx, stockLines, isStaffRole);
+            await this.decrementStockForSale(tx, stockLines, isStaffRole, {
+              orderId: id,
+              notes: "PROMOTE",
+              performedById: user.sub,
+            });
             return tx.order.findUniqueOrThrow({ where: { id } });
           },
           { isolationLevel: "Serializable", timeout: 15_000 },
@@ -2604,7 +2616,14 @@ export class OrdersService implements OnApplicationBootstrap {
               where: { orderId: id, status: { not: "CANCELLED" } },
               select: { productId: true, qty: true, deliveredQty: true, status: true },
             });
-            await this.settleStockForEdit(tx, { id, status: OrderStatus.PENDING }, activeItems, []);
+            await this.settleStockForEdit(
+              tx,
+              { id, status: OrderStatus.PENDING },
+              activeItems,
+              [],
+              user,
+              { notes: "DEMOTE" },
+            );
             return tx.order.findUniqueOrThrow({ where: { id } });
           },
           { isolationLevel: "Serializable", timeout: 15_000 },
@@ -2729,7 +2748,7 @@ export class OrdersService implements OnApplicationBootstrap {
             // Return the creation-time decrement, clamped to the undelivered
             // remainder (settleStockForEdit with an empty final set). `order` here
             // is the PRE-cancel record (status not yet CANCELLED in memory).
-            await this.settleStockForEdit(tx, order, activeItems, []);
+            await this.settleStockForEdit(tx, order, activeItems, [], user, { notes: "CANCEL" });
           }
 
           const invoices = await tx.invoice.findMany({
@@ -2936,6 +2955,8 @@ export class OrdersService implements OnApplicationBootstrap {
               status: "PENDING",
             })),
             cancelledLines.map((li) => ({ productId: li.productId, qty: Number(li.qty) })),
+            undefined,
+            { notes: "UNCANCEL" },
           );
         }
 
@@ -4890,8 +4911,9 @@ export class OrdersService implements OnApplicationBootstrap {
     tx: any,
     stockLines: Array<{ productId: string; qty: number }>,
     isStaffRole: boolean,
+    event: OrderStockEvent,
   ): Promise<void> {
-    return decrementStockForSale(this.stockDeps(), tx, stockLines, isStaffRole);
+    return decrementStockForSale(this.stockDeps(), tx, stockLines, isStaffRole, event);
   }
 
   private settleStockForEdit(
@@ -4900,8 +4922,17 @@ export class OrdersService implements OnApplicationBootstrap {
     heldItems: Array<{ productId: string | null; qty: any; deliveredQty?: any; status?: string }>,
     finalActiveItems: Array<{ productId: string | null; qty: any }>,
     user?: JwtPayload,
+    event?: { notes: string; performedById?: string | null },
   ): Promise<void> {
-    return settleStockForEdit(this.stockDeps(), db, order, heldItems, finalActiveItems, user);
+    return settleStockForEdit(
+      this.stockDeps(),
+      db,
+      order,
+      heldItems,
+      finalActiveItems,
+      user,
+      event,
+    );
   }
 
   /**

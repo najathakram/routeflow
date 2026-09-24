@@ -1983,12 +1983,14 @@ describe("OrdersService", () => {
        * reader hands back the `[productId, qty]` pairs in VALUES-list order.
        */
       function captureStockDecrement() {
-        const txExecuteRaw: jest.Mock = jest.fn().mockResolvedValue(0);
+        // B562 PR-2: the aggregated decrement is a `$queryRaw … RETURNING`, the lock an `$executeRaw`;
+        // one spy serves both so the oracle below sees the decrement wherever it is issued.
+        const txExecuteRaw: jest.Mock = jest.fn().mockResolvedValue([]);
         prisma.tenantTransaction.mockImplementation((fn: any) =>
           fn({
             ...(prisma as unknown as Record<string, any>),
             $executeRaw: txExecuteRaw,
-            $queryRaw: jest.fn().mockResolvedValue([]),
+            $queryRaw: txExecuteRaw,
           }),
         );
         const isSql = (v: any) => typeof v?.sql === "string" && Array.isArray(v?.values);
@@ -3155,12 +3157,13 @@ describe("OrdersService", () => {
     }
 
     function mockTenantTransactionWithRawSpy(): jest.Mock {
-      const txExecuteRaw = jest.fn().mockResolvedValue(0);
+      // B562 PR-2: one spy for the lock (`$executeRaw`) and the `$queryRaw … RETURNING` decrement.
+      const txExecuteRaw = jest.fn().mockResolvedValue([]);
       prisma.tenantTransaction.mockImplementation((fn: any) =>
         fn({
           ...(prisma as unknown as Record<string, any>),
           $executeRaw: txExecuteRaw,
-          $queryRaw: jest.fn().mockResolvedValue([]),
+          $queryRaw: txExecuteRaw,
         }),
       );
       return txExecuteRaw;
@@ -3362,6 +3365,9 @@ describe("OrdersService", () => {
         { id: "ord-1", status: "PENDING" },
         expect.arrayContaining([expect.objectContaining({ productId: "prod-box12", qty: 27 })]),
         [],
+        // B562 PR-2: the acting user and the event the SALE rows record.
+        operatorPayload,
+        { notes: "DEMOTE" },
       );
 
       // Now the credit-back itself rejects — the claim already flipped the row
@@ -8210,9 +8216,12 @@ describe("OrdersService", () => {
         $executeRaw: jest.fn().mockResolvedValue(0),
         product: {
           findMany: jest.fn().mockResolvedValue([]),
-          update: jest.fn().mockResolvedValue({}),
+          // B562 PR-2: update() returns the written row; the SALE movement reads its counter.
+          update: jest.fn().mockResolvedValue({ currentStock: 0 }),
+          findFirst: jest.fn().mockResolvedValue(null),
         },
-      };
+        stockMovement: { create: jest.fn().mockResolvedValue({ id: "mv" }), findFirst: jest.fn() },
+      } as any;
     });
 
     it("(a) increase 1→3 boxes (qty 12→36) decrements 24", async () => {

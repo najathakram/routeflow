@@ -306,13 +306,15 @@ describe("cancel() undoes a RESOLVED restock exactly (36 pieces, not the typed 3
         }),
         updateMany: jest.fn().mockResolvedValue({ count: 1 }),
       },
-      product: { update: jest.fn() },
+      // B562 PR-2: update() returns the written row — the reversing movement reads its counter.
+      product: { update: jest.fn().mockResolvedValue({ currentStock: 0, averageCost: null }) },
       stockMovement: {
         findMany: jest.fn(() => {
           order.push("scan-movements");
           return Promise.resolve([{ productId: booked.productId, quantity: booked.quantity }]);
         }),
         deleteMany: jest.fn(),
+        create: jest.fn().mockResolvedValue({ id: "mv-rev" }),
       },
       returnParkedRestock: { deleteMany: jest.fn(() => order.push("void-parked")) },
       $executeRaw: jest.fn().mockResolvedValue(0),
