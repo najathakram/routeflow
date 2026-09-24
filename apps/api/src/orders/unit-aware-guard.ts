@@ -37,16 +37,23 @@ export const ORDER_HAS_NO_UNIT_AWARE_LINE = {
   lineItems: { none: { unitLabel: { not: null }, status: { not: "CANCELLED" } } },
 } as const;
 
-/** Throws 409 `UNIT_AWARE_LINE` if any of `lines` is a live unit-aware line. */
+/**
+ * Throws 409 `UNIT_AWARE_LINE` if any of `lines` is a live unit-aware line. `remedy` is the
+ * sentence the message ends on — defaults to the EDIT-path remedy ("Edit it from the web order
+ * screen."), which fits every REWRITE call site below. SA-142: a CREATE-path call site (nothing
+ * exists yet to "edit") must pass its own remedy instead — see orders.controller.ts's merge
+ * branch, which points at "Create as a separate order" rather than the web order screen.
+ */
 export function assertNoUnitAwareLines(
   lines: ReadonlyArray<LineLike> | null | undefined,
   action = "edited this way",
+  remedy = "Edit it from the web order screen.",
 ): void {
   const hit = (lines ?? []).find(isUnitAwareLine);
   if (!hit) return;
   throw new ConflictException({
     code: UNIT_AWARE_LINE,
-    message: `A line on this order is sold by the ${hit.unitLabel}, so it can't be ${action} yet. Edit it from the web order screen.`,
+    message: `A line on this order is sold by the ${hit.unitLabel}, so it can't be ${action} yet. ${remedy}`,
   });
 }
 

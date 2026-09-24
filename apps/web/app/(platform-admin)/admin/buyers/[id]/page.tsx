@@ -308,7 +308,10 @@ export default function BuyerDetailPage() {
   if (error || !buyer) {
     return (
       <div className="p-6">
-        <div className="rounded-lg bg-red-900/40 px-4 py-3 text-sm text-red-400 ring-1 ring-red-700">
+        <div
+          role="alert"
+          className="rounded-lg bg-red-900/40 px-4 py-3 text-sm text-red-400 ring-1 ring-red-700"
+        >
           {error ?? "Buyer not found"}
         </div>
         <Link
@@ -430,7 +433,10 @@ export default function BuyerDetailPage() {
           <h2 className="mb-4 text-sm font-semibold text-slate-300">Edit Profile</h2>
 
           {saveError && (
-            <div className="mb-4 rounded-lg bg-red-900/40 px-3 py-2 text-sm text-red-400 ring-1 ring-red-700">
+            <div
+              role="alert"
+              className="mb-4 rounded-lg bg-red-900/40 px-3 py-2 text-sm text-red-400 ring-1 ring-red-700"
+            >
               {saveError}
             </div>
           )}
@@ -673,7 +679,10 @@ export default function BuyerDetailPage() {
       >
         <div className="space-y-4">
           {addLinkError && (
-            <div className="rounded-lg bg-red-900/40 px-3 py-2 text-sm text-red-400 ring-1 ring-red-700">
+            <div
+              role="alert"
+              className="rounded-lg bg-red-900/40 px-3 py-2 text-sm text-red-400 ring-1 ring-red-700"
+            >
               {addLinkError}
             </div>
           )}

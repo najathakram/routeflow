@@ -57,6 +57,7 @@ import { addressStateFields } from "./address-state";
 // Same grace window BillingCronService.expireGrace() clears hourly — the create()
 // gate applies it synchronously rather than waiting for the cron to run.
 import { GRACE_DAYS } from "../billing/plan-catalog.constants";
+import { portalInviteEmailHtml } from "./portal-invite-email";
 
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 
@@ -1286,12 +1287,12 @@ export class CustomersService {
     },
   ) {
     await this.findCustomerOrThrow(customerId);
-    if (dto.amount <= 0) throw new BadRequestException("Amount must be greater than 0");
+    if (roundMoney(dto.amount) <= 0) throw new BadRequestException("Amount must be greater than 0");
     return this.prisma.forTenant().advancePayment.create({
       data: {
         customerId,
-        amount: dto.amount,
-        balance: dto.amount, // initial balance equals amount
+        amount: roundMoney(dto.amount),
+        balance: roundMoney(dto.amount), // initial balance equals amount
         method: dto.method as any,
         reference: dto.reference,
         notes: dto.notes,
@@ -1525,7 +1526,7 @@ export class CustomersService {
       await tx.invoicePayment.create({
         data: {
           invoiceId: dto.invoiceId,
-          amount: applyAmount,
+          amount: roundMoney(applyAmount),
           method: "ADVANCE" as any,
           advancePaymentId: ap.id,
           reference: `AP-${ap.id.slice(0, 8)}`,
@@ -1534,7 +1535,7 @@ export class CustomersService {
 
       await tx.advancePayment.update({
         where: { id: ap.id },
-        data: { balance: { decrement: applyAmount } },
+        data: { balance: { decrement: roundMoney(applyAmount) } },
       });
 
       // PR-2 review (routeflow-Lead, 2026-09-16): the status recompute must stay
@@ -2985,13 +2986,7 @@ export class CustomersService {
     const sendResult = await this.email.send({
       to: toEmail,
       subject: `${sellerName} invited you to their RouteFlow buyer portal`,
-      html: `<p>Hi,</p>
-<p><strong>${sellerName}</strong> has invited you to connect on the RouteFlow buyer portal — track orders, invoices, and statements in one place.</p>
-<p style="margin:24px 0;">
-  <a href="${inviteUrl}" style="display:inline-block;padding:12px 24px;background:#2563eb;color:#fff;border-radius:8px;text-decoration:none;font-weight:600;font-size:15px;">Accept Invite</a>
-</p>
-<p>Or paste this link into your browser:<br/><a href="${inviteUrl}">${inviteUrl}</a></p>
-<p><em>This link expires in 7 days.</em></p>`,
+      html: portalInviteEmailHtml(sellerName, inviteUrl),
       // Security review Phase 2: a buyer-portal invite carries an account-linking action
       // link — platform sender only, never a tenant's connected mailbox/SMTP.
       senderClass: "platform",

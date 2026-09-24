@@ -51,6 +51,13 @@ ARG NEXT_PUBLIC_API_URL=https://routeflowapi-production.up.railway.app/api/v1
 ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL
 ARG NEXT_PUBLIC_GOOGLE_MAPS_KEY=""
 ENV NEXT_PUBLIC_GOOGLE_MAPS_KEY=$NEXT_PUBLIC_GOOGLE_MAPS_KEY
+# B826: the driver-app link (lib/driver-app-link.ts, used by the /login footer
+# link and the dashboard driver banner) needs this baked in — same default the
+# removed middleware proxy used to fall back to. B825's return_origin is
+# resolved server-side (apps/api) from the browser's own window.location.origin
+# at runtime, not from this build-time var.
+ARG NEXT_PUBLIC_MOBILE_WEB_URL=https://routeflowmobile-production.up.railway.app
+ENV NEXT_PUBLIC_MOBILE_WEB_URL=$NEXT_PUBLIC_MOBILE_WEB_URL
 # Release-health tagging (SentryInit.tsx): the browser-side Sentry release tag.
 # RAILWAY_GIT_COMMIT_SHA is a Railway system var proven present at container
 # RUNTIME (see apps/web/app/api/health/route.ts) but NOT proven present at
