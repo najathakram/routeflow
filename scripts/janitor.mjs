@@ -58,7 +58,7 @@ import {
   statSync,
   unlinkSync,
 } from "node:fs";
-import { basename, dirname, join, resolve, sep } from "node:path";
+import { basename, dirname, join, resolve, sep, win32 } from "node:path";
 import { pathToFileURL } from "node:url";
 
 export const PROTECTED_WORKTREE_NAMES = new Set(["rf-migrate", "rf-crm-cloud"]);
@@ -272,6 +272,19 @@ function isLinkPath(p) {
   }
 }
 
+/**
+ * #1326 Windows re-review: is anything at `p`, the link ITSELF included? existsSync follows a link,
+ * so a link that survived its unlink but points at a missing target would read as removed.
+ */
+export function pathPresent(p) {
+  try {
+    lstatSync(p);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function findJunctions(dir) {
   if (!isWindows() || !existsSync(dir)) return [];
   const out = trySh("powershell", [
@@ -358,13 +371,7 @@ export function safeRemoveTree(dir) {
     posixRemoveTree(dir);
     return;
   }
-  windowsRemoveTree(dir, {
-    findJunctions,
-    isLink: isLinkPath,
-    unlinkJunction: (j) => trySh("cmd", ["/c", "rmdir", j]),
-    exists: existsSync,
-    rmdirS: (d) => execFileSync("cmd", ["/c", "rmdir", "/s", "/q", d]),
-  });
+  windowsRemoveTree(dir, WINDOWS_DEPS);
 }
 
 /** The Windows removal sequence, with its OS calls injected (so it is testable anywhere). */
@@ -378,6 +385,24 @@ function assertCmdSafe(p) {
   if (CMD_UNSAFE.test(p)) {
     throw new Error(`refusing a Windows delete of a path with a cmd metacharacter: ${p}`);
   }
+}
+
+/**
+ * #1326 Windows re-review (REQUIRED): the ONLY way a path reaches cmd. `git worktree list
+ * --porcelain` prints forward slashes (`C:/…`) and cmd reads a `/segment` as a switch, so a path of
+ * `s`/`q` segments could turn `rmdir /s /q C:/…` into `rd /s /q C:`. The path must be absolute; it
+ * is backslashed with path.win32.resolve, and a drive or share root is refused outright.
+ */
+export function cmdRmdirArgs(p, { recursive = false } = {}) {
+  assertCmdSafe(p);
+  if (!/^[A-Za-z]:[\\/]/.test(p) && !/^[\\/]{2}[^\\/]/.test(p)) {
+    throw new Error(`refusing a Windows delete of a non-absolute path: ${p}`);
+  }
+  const abs = win32.resolve(p);
+  if (abs.includes("/") || win32.parse(abs).root === abs || win32.dirname(abs) === abs) {
+    throw new Error(`refusing a Windows delete of a root or unnormalised path: ${p}`);
+  }
+  return ["/c", "rmdir", ...(recursive ? ["/s", "/q"] : []), abs];
 }
 
 /**
@@ -398,20 +423,42 @@ export function unlinkJunctionsVerified(dir, { findJunctions: find, unlinkJuncti
   }
 }
 
-export function windowsRemoveTree(dir, deps) {
-  if (typeof deps.isLink !== "function") throw new Error("windowsRemoveTree needs deps.isLink");
+/**
+ * #1326 review: a target that IS a junction (a lane's node_modules -> main's) must never be
+ * scanned — Get-ChildItem -Recurse walks INTO the target. Unlink the link alone and prove it with
+ * deps.exists (lstat-based in WINDOWS_DEPS). Returns true when `dir` was a link. deps.isLink is
+ * REQUIRED: a missing one would silently treat every junction target as a plain tree.
+ */
+function unlinkIfLink(dir, deps, who) {
+  if (typeof deps.isLink !== "function") throw new Error(`${who} needs deps.isLink`);
   assertCmdSafe(dir);
-  // #1326 review: a target that IS a junction (a lane's node_modules -> main's) must never be
-  // scanned — Get-ChildItem -Recurse walks INTO the target. Unlink the link alone, and prove it.
-  if (deps.isLink(dir)) {
-    deps.unlinkJunction(dir);
-    if (deps.exists(dir)) throw new Error(`link ${dir} survived its unlink: refusing`);
-    return;
-  }
+  if (!deps.isLink(dir)) return false;
+  deps.unlinkJunction(dir);
+  if (deps.exists(dir)) throw new Error(`link ${dir} survived its unlink: refusing`);
+  return true;
+}
+
+export function windowsRemoveTree(dir, deps) {
+  if (unlinkIfLink(dir, deps, "windowsRemoveTree")) return;
   // `rmdir /s` follows a junction, so it only ever runs on a tree PROVEN junction-free.
   unlinkJunctionsVerified(dir, deps);
   if (deps.exists(dir)) deps.rmdirS(dir);
 }
+
+/** B817 on Windows, with its OS calls injected: unlink every junction in `dir`, following none. */
+export function unlinkLinksWindows(dir, deps) {
+  if (unlinkIfLink(dir, deps, "unlinkLinksWindows")) return;
+  unlinkJunctionsVerified(dir, deps);
+}
+
+/** The real Windows OS calls. Every cmd path goes through cmdRmdirArgs; every "gone?" is lstat. */
+export const WINDOWS_DEPS = Object.freeze({
+  findJunctions,
+  isLink: isLinkPath,
+  unlinkJunction: (j) => trySh("cmd", cmdRmdirArgs(j)),
+  exists: pathPresent,
+  rmdirS: (d) => execFileSync("cmd", cmdRmdirArgs(d, { recursive: true })),
+});
 
 /**
  * B816: where the janitor operates — the repo's MAIN checkout and its .claude/worktrees root — no
@@ -731,7 +778,7 @@ const EXECUTE_DEPS = {
     removeWorktreeSafely(t, {
       git: (...args) => trySh("git", ["-C", repoRoot, ...args]),
       unlinkLinksWithin,
-      exists: existsSync,
+      exists: pathPresent,
       removeTree: safeRemoveTree,
     });
   },
@@ -787,17 +834,7 @@ export function removeWorktreeSafely(
 /** B817: unlink every symlink/junction inside `dir`, following none. Throws when unsure. */
 export function unlinkLinksWithin(dir) {
   if (isWindows()) {
-    assertCmdSafe(dir);
-    if (isLinkPath(dir)) {
-      trySh("cmd", ["/c", "rmdir", dir]);
-      if (existsSync(dir)) throw new Error(`link ${dir} survived its unlink: refusing`);
-      return;
-    }
-    unlinkJunctionsVerified(dir, {
-      findJunctions,
-      unlinkJunction: (j) => trySh("cmd", ["/c", "rmdir", j]),
-      exists: existsSync,
-    });
+    unlinkLinksWindows(dir, WINDOWS_DEPS);
     return;
   }
   const walk = (d) => {

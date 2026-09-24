@@ -110,6 +110,11 @@ is skipped and printed as `REFUSED`, never forced.
   checkout's) is unlinked alone with a bare `rmdir`, verified gone, and never scanned. A recursive
   scan of a junction walks into its target and would unlink the main checkout's own links.
 - Path comparisons in the containment guard are case-insensitive and ignore the `\\?\` prefix.
+- Every path handed to cmd is **absolute and backslashed** first, and a drive or share root is
+  refused. `git worktree list` prints `C:/...` paths, and cmd reads a `/segment` as a switch, so an
+  unnormalised `rmdir /s /q C:/.../s/q` could have turned into `rd /s /q C:`.
+- "Did the link go?" is checked with `lstat`, never `existsSync`. `existsSync` follows the link, so a
+  link that survived its unlink but points at a missing target would read as removed.
 
 ## Where it runs from (B816)
 

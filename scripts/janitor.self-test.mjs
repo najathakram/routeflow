@@ -9,6 +9,7 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readFileSync,
   realpathSync,
   rmSync,
   symlinkSync,
@@ -41,6 +42,10 @@ import {
   execute,
   CMD_UNSAFE,
   unlinkLinksWithin,
+  cmdRmdirArgs,
+  pathPresent,
+  unlinkLinksWindows,
+  WINDOWS_DEPS,
 } from "./janitor.mjs";
 
 // Run inside a git hook, GIT_DIR / GIT_INDEX_FILE / GIT_WORK_TREE would point every `git -C <tmp>`
@@ -799,6 +804,92 @@ t(
       rmdirS: (d) => log.push(`rmdirS ${d}`),
     });
     assert.deepEqual(log, ["unlink C:\\wt\\lane\\node_modules"]);
+  });
+}
+
+// #1326 Windows re-review (REQUIRED): `git worktree list --porcelain` prints forward-slash paths
+// (`C:/…`) and cmd reads a `/segment` as a SWITCH, so `rmdir /s /q C:/wt/s/q` could become
+// `rd /s /q C:`. Every cmd path argument goes through cmdRmdirArgs: absolute, backslashed, never
+// a drive root, metacharacters refused.
+t(
+  "REG-1326-3: a forward-slash worktree path reaches cmd backslashed (no /segment switches)",
+  () => {
+    assert.deepEqual(cmdRmdirArgs("C:/ClaudeCode/wt/s/q"), [
+      "/c",
+      "rmdir",
+      "C:\\ClaudeCode\\wt\\s\\q",
+    ]);
+    const rec = cmdRmdirArgs("C:/ClaudeCode/wt/s/q", { recursive: true });
+    assert.deepEqual(rec, ["/c", "rmdir", "/s", "/q", "C:\\ClaudeCode\\wt\\s\\q"]);
+    assert.equal(rec.at(-1).includes("/"), false);
+  },
+);
+for (const bad of ["C:/", "C:\\", "C:", "wt/s/q", "\\s\\q", "C:/wt/a&b"]) {
+  t(`REG-1326-3: cmdRmdirArgs refuses ${JSON.stringify(bad)} (root, relative or unsafe)`, () => {
+    assert.throws(() => cmdRmdirArgs(bad), /refus/i);
+    assert.throws(() => cmdRmdirArgs(bad, { recursive: true }), /refus/i);
+  });
+}
+t("REG-1326-3: janitor.mjs never hands cmd a hand-built argv (all go through cmdRmdirArgs)", () => {
+  const src = readFileSync(fileURLToPath(new URL("./janitor.mjs", import.meta.url)), "utf8");
+  const cmdCalls = src.match(/["']cmd["']\s*,\s*[^)]*/g) ?? [];
+  assert.ok(cmdCalls.length >= 2, `expected the cmd call sites, found ${cmdCalls.length}`);
+  for (const c of cmdCalls) assert.match(c, /^["']cmd["']\s*,\s*cmdRmdirArgs\(/, c);
+});
+t("REG-1326-3: the real Windows deps route through cmdRmdirArgs and lstat", () => {
+  assert.equal(WINDOWS_DEPS.exists, pathPresent);
+  assert.equal(typeof WINDOWS_DEPS.isLink, "function");
+});
+// Nit: the "did the link go?" check must lstat. existsSync FOLLOWS a link, so a link that survived
+// its unlink but points at a missing target reads as gone.
+{
+  const dir = mkdtempSync(join(tmpdir(), "janitor-dangling-"));
+  try {
+    const target = join(dir, "gone");
+    mkdirSync(target);
+    const link = join(dir, "link");
+    symlinkSync(target, link, process.platform === "win32" ? "junction" : "dir");
+    rmSync(target, { recursive: true, force: true });
+    t("REG-1326-4: pathPresent sees a dangling link that existsSync reports as gone", () => {
+      assert.equal(existsSync(link), false); // the trap: existsSync follows the link
+      assert.equal(pathPresent(link), true);
+      assert.equal(pathPresent(join(dir, "never-existed")), false);
+    });
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+t("REG-1326-4: unlinkLinksWindows refuses when a link survives its unlink", () => {
+  const log = [];
+  assert.throws(
+    () =>
+      unlinkLinksWindows("C:\\wt\\lane", {
+        isLink: () => true,
+        findJunctions: (d) => (log.push(`scan ${d}`), []),
+        unlinkJunction: (j) => log.push(`unlink ${j}`),
+        exists: () => true, // lstat still sees the link
+      }),
+    /survived/,
+  );
+  assert.deepEqual(log, ["unlink C:\\wt\\lane"]); // never scanned through the link
+});
+for (const [name, fn] of [
+  ["windowsRemoveTree", windowsRemoveTree],
+  ["unlinkLinksWindows", unlinkLinksWindows],
+]) {
+  t(`REG-1326-5: ${name} REQUIRES deps.isLink (never fails open)`, () => {
+    const log = [];
+    assert.throws(
+      () =>
+        fn("C:\\wt\\lane", {
+          findJunctions: (d) => (log.push(`scan ${d}`), []),
+          unlinkJunction: (j) => log.push(`unlink ${j}`),
+          exists: () => false,
+          rmdirS: (d) => log.push(`rmdirS ${d}`),
+        }),
+      /needs deps\.isLink/,
+    );
+    assert.deepEqual(log, []);
   });
 }
 
