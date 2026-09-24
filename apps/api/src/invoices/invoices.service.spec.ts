@@ -1794,7 +1794,7 @@ describe("InvoicesService", () => {
         id: "o1",
         subtotal: 100, // prior values — used to derive effective tax rate (10%)
         tax: 10,
-        lineItems: [{ id: "li1", productId: "p1" }],
+        lineItems: [{ id: "li1", productId: "p1", qty: 2 }],
       });
       prisma.invoice.findMany.mockResolvedValue([
         {
@@ -1812,7 +1812,7 @@ describe("InvoicesService", () => {
       prisma.orderItem.update.mockResolvedValue({});
       prisma.order.update.mockResolvedValue({});
 
-      const res = await service.recomputeOrderFromInvoices("o1");
+      const res = await service.recomputeOrderFromInvoices("o1", prisma);
 
       // Order line synced to the aggregate.
       expect(prisma.orderItem.update).toHaveBeenCalledWith(
@@ -1837,7 +1837,7 @@ describe("InvoicesService", () => {
         id: "o1",
         subtotal: 100,
         tax: 0,
-        lineItems: [{ id: "li1", productId: "p1", boxes: 2, pieces: 0, unitsPerBox: 11 }],
+        lineItems: [{ id: "li1", productId: "p1", boxes: 2, pieces: 0, unitsPerBox: 11, qty: 22 }],
       });
       prisma.invoice.findMany.mockResolvedValue([
         {
@@ -1849,7 +1849,7 @@ describe("InvoicesService", () => {
       prisma.orderItem.update.mockResolvedValue({});
       prisma.order.update.mockResolvedValue({});
 
-      await service.recomputeOrderFromInvoices("o1");
+      await service.recomputeOrderFromInvoices("o1", prisma);
 
       expect(prisma.orderItem.update).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -1871,7 +1871,7 @@ describe("InvoicesService", () => {
         id: "o1",
         subtotal: 100,
         tax: 0,
-        lineItems: [{ id: "li1", productId: "p1", boxes: null, pieces: null }],
+        lineItems: [{ id: "li1", productId: "p1", boxes: null, pieces: null, qty: 4 }],
       });
       prisma.invoice.findMany.mockResolvedValue([
         {
@@ -1883,7 +1883,7 @@ describe("InvoicesService", () => {
       prisma.orderItem.update.mockResolvedValue({});
       prisma.order.update.mockResolvedValue({});
 
-      await service.recomputeOrderFromInvoices("o1");
+      await service.recomputeOrderFromInvoices("o1", prisma);
 
       expect(prisma.orderItem.update).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -1901,7 +1901,7 @@ describe("InvoicesService", () => {
       });
       prisma.invoice.findMany.mockResolvedValue([]);
 
-      const res = await service.recomputeOrderFromInvoices("o1");
+      const res = await service.recomputeOrderFromInvoices("o1", prisma);
       expect(res).toBeNull();
       expect(prisma.order.update).not.toHaveBeenCalled();
       expect(prisma.orderItem.update).not.toHaveBeenCalled();
@@ -1916,7 +1916,7 @@ describe("InvoicesService", () => {
         id: "o1",
         subtotal: 100,
         tax: 10,
-        lineItems: [{ id: "li1", productId: "p1" }],
+        lineItems: [{ id: "li1", productId: "p1", qty: 2 }],
       });
       prisma.invoice.findMany.mockResolvedValue([
         {
@@ -1937,7 +1937,7 @@ describe("InvoicesService", () => {
       prisma.orderItem.update.mockResolvedValue({});
       prisma.order.update.mockResolvedValue({});
 
-      const res = await service.recomputeOrderFromInvoices("o1");
+      const res = await service.recomputeOrderFromInvoices("o1", prisma);
 
       const data = prisma.order.update.mock.calls[0][0].data;
       expect(data.shippingFee).toBe(6);

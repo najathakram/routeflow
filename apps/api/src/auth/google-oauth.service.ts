@@ -19,6 +19,7 @@ import type { JwtPayload } from "./jwt-payload.interface";
 import type { BuyerJwtPayload } from "../buyer/interfaces/buyer-jwt-payload.interface";
 import { EntitlementsService } from "../billing/entitlements.service";
 import type { DeviceInfo } from "./auth.service";
+import { escapeHtml } from "../common/html-escape";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -330,7 +331,7 @@ export class GoogleOAuthService {
         .send({
           to: user.email,
           subject: "Google Sign-In linked to your RouteFlow account",
-          html: `<p>Your Google account (<strong>${email}</strong>) has been linked to your RouteFlow account.</p><p>If you did not authorise this, please contact support immediately.</p>`,
+          html: `<p>Your Google account (<strong>${escapeHtml(email)}</strong>) has been linked to your RouteFlow account.</p><p>If you did not authorise this, please contact support immediately.</p>`,
           // email-connect-google PR-3: platform sender only — never a tenant mailbox/SMTP.
           senderClass: "platform",
         })
@@ -657,7 +658,7 @@ export class GoogleOAuthService {
           .send({
             to: buyer.email,
             subject: "Google Sign-In linked to your RouteFlow account",
-            html: `<p>Your Google account (<strong>${profile.email}</strong>) has been linked to your RouteFlow portal account.</p><p>If you did not authorise this, please contact support immediately.</p>`,
+            html: `<p>Your Google account (<strong>${escapeHtml(profile.email)}</strong>) has been linked to your RouteFlow portal account.</p><p>If you did not authorise this, please contact support immediately.</p>`,
             // email-connect-google PR-3: platform sender only — never a tenant mailbox/SMTP.
             senderClass: "platform",
           })
