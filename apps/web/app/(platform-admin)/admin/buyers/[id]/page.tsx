@@ -341,7 +341,7 @@ export default function BuyerDetailPage() {
           <ArrowLeft className="h-4 w-4" /> Back to Buyers
         </Link>
 
-        <div className="flex items-start justify-between gap-4">
+        <div className="flex flex-col items-start justify-between gap-4 sm:flex-row">
           <div>
             <div className="flex items-center gap-3">
               <h1 className="text-2xl font-bold text-white">{buyer.name}</h1>
@@ -358,8 +358,16 @@ export default function BuyerDetailPage() {
             </p>
           </div>
 
-          {/* Quick actions */}
-          <div className="flex shrink-0 flex-wrap items-center gap-2">
+          {/* Quick actions — found on #1288's platform-admin overflow spec:
+              `shrink-0` beside the title meant this row could never get
+              narrower than its own content, so flex-wrap alone did nothing
+              (there was no room to wrap INTO — the row's own box was already
+              being pushed off the 390px viewport by the title sitting next
+              to it). Stacks below sm instead: the parent goes column-then-row
+              (flex-col sm:flex-row), and this row takes the full width below
+              sm (w-full sm:w-auto, shrink-0 only from sm up) so wrapping has
+              somewhere to happen. */}
+          <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto sm:shrink-0">
             {buyer.status === "ACTIVE" && (
               <button
                 disabled={impersonating}

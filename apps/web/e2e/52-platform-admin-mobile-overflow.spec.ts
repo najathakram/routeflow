@@ -104,8 +104,13 @@ for (const vp of VIEWPORTS) {
         `no "${TENANT_SLUG}" row in the tenants table — seed may not have run`,
       );
       await tenantLink.click();
+      // 30s, not 15s — found flaking for real (owner's run): under `next
+      // dev`, the FIRST hit on /admin/tenants/[id] pays a one-time
+      // on-demand compile that can exceed 15s even though the click and
+      // navigation both genuinely succeed. Same allowance as specs 53/54's
+      // own cold-compile bumps.
       await expect(page.getByRole("button", { name: "Overview" })).toBeVisible({
-        timeout: 15_000,
+        timeout: 30_000,
       });
       // Overview (the default tab — what a URL-only sweep would have seen).
       await assertNoOverflow(page, "admin/tenants/[id] — Overview");
@@ -151,8 +156,10 @@ for (const vp of VIEWPORTS) {
       const manageLink = page.getByRole("link", { name: "Manage" }).first();
       if (await manageLink.count()) {
         await manageLink.click();
+        // 30s — same cold-compile allowance as the tenant-detail navigation
+        // above, for /admin/buyers/[id]'s first hit.
         await expect(page.getByRole("button", { name: "Profile" })).toBeVisible({
-          timeout: 15_000,
+          timeout: 30_000,
         });
         await assertNoOverflow(page, "admin/buyers/[id] — Profile");
         await screenshot(page, `${vp.label}-07-buyer-detail-profile.png`);
