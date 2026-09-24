@@ -110,7 +110,7 @@ export function groupPayableInvoicesByOrder(
   }
   const result: Record<string, RunPayableInvoice[]> = {};
   for (const [orderId, nonVoid] of byOrder) {
-    const sole = nonVoid.length === 1 ? nonVoid[0]! : null;
+    const sole = nonVoid.length === 1 ? nonVoid[0] : null;
     const isSoleDepositMirror =
       sole != null &&
       sole.deliveryBatchId == null &&

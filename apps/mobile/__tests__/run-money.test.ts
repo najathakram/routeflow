@@ -557,6 +557,18 @@ describe("REG-B810 reconciledDoorDue (SA-130a)", () => {
     expect(due).toBe(90);
   });
 
+  it("SA-130b's exact repro: order 100, a 40 advance applied on the DRAFT, short-picked to an estimate of 90 -> the door shows 50, matching what recordDeliveryPaymentInTx collects (never the un-netted 90)", () => {
+    const payableInvoices = [
+      { id: "draft-1", status: "DRAFT", total: 100, balanceDue: 60, isDepositMirror: false },
+    ];
+    const due = reconciledDoorDue({
+      hasOpenDraft: true,
+      reconciledEstimate: 90,
+      payableInvoices,
+    });
+    expect(due).toBe(50);
+  });
+
   it("fleet-lead round 2 pin (F2/B822): a $100 DRAFT with a $30 confirmed advance, short-picked to an estimate of $60 -> the door shows $30", () => {
     const payableInvoices = [
       { id: "draft-1", status: "DRAFT", total: 100, balanceDue: 70, isDepositMirror: false },

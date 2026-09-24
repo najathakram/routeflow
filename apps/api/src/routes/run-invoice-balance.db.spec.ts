@@ -212,4 +212,60 @@ describeDb("payableInvoiceFindManyArgs — real Postgres proof (B810/SA-130a)", 
     const rowsUnderOther = await fetchRaw(other.tenantId, [s.orderId]);
     expect(rowsUnderOther).toEqual([]);
   });
+
+  /**
+   * Fleet-lead/SA-130b PROOF REQUEST (F2's own case, not asserted here as
+   * "correct" — this test only CHARACTERIZES the current data shape so F2
+   * and the SA can judge it against `recordDeliveryPaymentInTx`'s actual
+   * collection behavior): an order carries a SENT deposit invoice
+   * (`depositPercent` set) that is NOT the order's sole non-void invoice,
+   * because a separate DRAFT invoice also exists for the same order (e.g.
+   * an order edit after the deposit was collected re-reconciled a fresh
+   * draft for the new lines). `isDepositMirror` must read false here (the
+   * SENT invoice is no longer sole) — confirmed below. What this does NOT
+   * answer, and what F2/the SA must judge from the printed totals: does the
+   * DRAFT's own `total` already net out the deposit already collected via
+   * the SENT invoice, or would `reconciledDoorDue`'s branch (a) formula
+   * (reconciledEstimate − Σ_DRAFT(total−balanceDue) + earlierVisitsRemaining
+   * over the SENT invoice's balanceDue) double-count it against what
+   * `recordDeliveryPaymentInTx` would actually collect from BOTH invoices
+   * (SENT's own balanceDue + the DRAFT's own balanceDue, oldest-first, per
+   * its PAYABLE query)?
+   */
+  it("SA-130b proof case: a SENT deposit invoice NOT sole (an open DRAFT also exists) — isDepositMirror is false, and both invoices' totals are printed for F2/SA review", async () => {
+    const s = await seed("deposit-not-sole");
+    const depositInvoice = await invoice(s, "deposit", {
+      status: "SENT",
+      total: 40,
+      depositPercent: 40,
+    });
+    const draftInvoice = await invoice(s, "draft", { status: "DRAFT", total: 100 });
+
+    const rows = await fetchRaw(s.tenantId, [s.orderId]);
+    const byOrder = groupPayableInvoicesByOrder(rows);
+    const payable = byOrder[s.orderId] ?? [];
+
+    // isDepositMirror is false: the deposit invoice is no longer the order's
+    // SOLE non-void invoice once the draft exists alongside it.
+    const depositRow = payable.find((p) => p.id === depositInvoice.id);
+    expect(depositRow?.isDepositMirror).toBe(false);
+
+    // Ground truth for recordDeliveryPaymentInTx's own collection, oldest
+    // first: it would collect depositRow.balanceDue from the SENT invoice,
+    // then draftRow.balanceDue from the DRAFT, in that order — NEVER
+    // reconciledDoorDue's reconciledEstimate figure, which is a CLIENT-side
+    // re-derivation from the order's current lines, not the draft's own
+    // stored `total`.
+    const draftRow = payable.find((p) => p.id === draftInvoice.id);
+    // eslint-disable-next-line no-console
+    console.log("SA-130b proof case totals:", {
+      depositInvoice: { total: depositRow?.total, balanceDue: depositRow?.balanceDue },
+      draftInvoice: { total: draftRow?.total, balanceDue: draftRow?.balanceDue },
+      // What recordDeliveryPaymentInTx would actually collect (PAYABLE,
+      // oldest-first, capped per invoice at its own balanceDue):
+      serverCollects: (depositRow?.balanceDue ?? 0) + (draftRow?.balanceDue ?? 0),
+    });
+    expect(draftRow?.total).toBe(100);
+    expect(depositRow?.total).toBe(40);
+  });
 });

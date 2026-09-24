@@ -51,11 +51,17 @@ mocked-Prisma specs could not see:
      exactly: the order's SOLE non-void invoice, no `deliveryBatchId`, `depositPercent != null`,
      status SENT/VIEWED/PARTIAL/OVERDUE). `RunMoneyPayableInvoice` also gained `total` (needed
      for the mirror's already-paid subtraction).
-3. **B822 folded in** (a DRAFT already carrying a confirmed payment, e.g. an applied advance, was
-   re-derived at its delivered total without subtracting that payment): already covered by
-   `groupPayableInvoicesByOrder`'s UNIFORM `balanceDue` formula (applies `total - confirmed
-payments` to every status including DRAFT, no per-status assumption) — this was true from the
-   very first implementation, and this round adds an explicit named test for it.
+3. **B822, two distinct halves — do not conflate them (SA-130b correction):**
+   - **Server-side `balanceDue`** (`groupPayableInvoicesByOrder`): already uniform from the very
+     first implementation — `total - confirmed payments` applies to every status including
+     DRAFT, no per-status assumption. This alone does NOT fix the driver's on-screen number.
+   - **Driver-side `reconciledDoorDue`** (SA-130b REQUIRED CHANGE, a separate defect from the
+     server half above): `reconciledEstimate` is re-derived from the order's CURRENT line items
+     and has no idea a confirmed payment already landed against THIS visit's own open draft(s).
+     Case (a) now explicitly subtracts `Σ_DRAFT(total - balanceDue)` before adding
+     `earlierVisitsRemaining`. SA-130b's own repro: order 100, a 40 advance applied on the DRAFT,
+     short-picked to an estimate of 90 — the server collects 50 (`recordDeliveryPaymentInTx`);
+     before this fix the driver was quoted the un-netted 90. Pinned with those exact numbers.
 4. **The flagged `any`s removed:** `run-invoice-balance.ts`'s old `withRunOrderBalances<T extends
 {orders?: any[]}>` is gone (replaced by properly-generic `attachPayableInvoices`/
    `withPayableInvoices`); `routes.service.ts`'s `orders as any[]` cast (introduced by the
