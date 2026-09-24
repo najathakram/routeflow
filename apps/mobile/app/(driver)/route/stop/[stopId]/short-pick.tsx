@@ -20,6 +20,8 @@ import { useDeliveryPlanStore } from "../../../../../store/delivery-plan-store";
 import {
   reconciledTotal,
   deliveryTypeForQty,
+  isUnitAwareLine,
+  normalizeDeliveryPlan,
   shortPickLinesFromOrder,
   type ShortPickLine,
 } from "../../../../../lib/short-pick";
@@ -86,6 +88,10 @@ export default function ShortPickScreen() {
     return map;
   }, [stopOrderIds, ordersById]);
 
+  // B648/B762 merge: shortPickLinesFromOrder now carries unitLabel/
+  // unitsPerBox/boxes through (see lib/short-pick.ts), so this flattened,
+  // multi-order form is both the B762 fan-out AND B648's whole-Case data —
+  // no separate inline mapping needed.
   const shortPickLines: ShortPickLine[] = useMemo(
     () => stopOrderIds.flatMap((id) => shortPickLinesFromOrder(ordersById[id])),
     [stopOrderIds, ordersById],
@@ -102,7 +108,20 @@ export default function ShortPickScreen() {
   );
   const setPlanQty = useDeliveryPlanStore((s) => s.setQty);
 
-  const total = useMemo(() => reconciledTotal(shortPickLines, qtyById), [shortPickLines, qtyById]);
+  // SA-094b: the ONE normalized plan every reader here must use — the row's
+  // displayed qty/badge AND the total, so a stray/un-snapped entry can never
+  // show one number on the row and bill a different one (must stay in step
+  // with payment.tsx's own normalizedPlan, since both feed the SAME money
+  // functions from lib/run-money.ts).
+  const normalizedPlan = useMemo(
+    () => normalizeDeliveryPlan(shortPickLines, qtyById),
+    [shortPickLines, qtyById],
+  );
+
+  const total = useMemo(
+    () => reconciledTotal(shortPickLines, normalizedPlan),
+    [shortPickLines, normalizedPlan],
+  );
   const orderedTotal = useMemo(() => reconciledTotal(shortPickLines, {}), [shortPickLines]);
   const anyShort = total < orderedTotal - 0.005;
 
@@ -156,7 +175,11 @@ export default function ShortPickScreen() {
                 <ShortPickRow
                   key={li.id}
                   li={li}
-                  qty={qtyById[li.id] ?? li.qty}
+                  // B648/SA-094b: normalizedPlan is the stop-WIDE snapped map
+                  // (item 3 of the B762 adaptation) — every order's rows read
+                  // the SAME snapped number the total/badge use, never the
+                  // raw qtyById entry.
+                  qty={normalizedPlan[li.id] ?? li.qty}
                   onChangeQty={(q) => setQtyById((m) => ({ ...m, [li.id]: q }))}
                 />
               ))}
@@ -195,6 +218,19 @@ function ShortPickRow({
   const ordered = Number(li.qty);
   const type = deliveryTypeForQty(qty, ordered);
   const [draft, setDraft] = useState(String(qty));
+  // SA-094/SA-094a: a units_v1 line whose OWN unitsPerBox > 1 gets a
+  // whole-Case stepper — its ordered qty is base pieces, and a partial
+  // piece count within one Case has no physical meaning. A factor-1 unit
+  // line ("Piece") is excluded (isUnitAwareLine requires unitsPerBox > 1)
+  // and keeps the ordinary piece stepper below.
+  const unitAware = isUnitAwareLine(li);
+  const hasUnitLabel = (li.unitLabel ?? "").trim() !== "";
+  const unitsPerBox = Number(li.unitsPerBox ?? 0);
+  // The STORED count (never derived from the live product) — unit-line-build.ts
+  // stores `boxes = count` for a factor>1 unit line. Falls back to
+  // ordered/unitsPerBox only for a malformed/legacy row missing `boxes`.
+  const caseCount = li.boxes ?? (unitsPerBox > 0 ? Math.round(ordered / unitsPerBox) : 0);
+  const casesDelivered = unitAware && unitsPerBox > 0 ? Math.round(qty / unitsPerBox) : 0;
 
   return (
     <View style={styles.card}>
@@ -203,7 +239,10 @@ function ShortPickRow({
           <Text style={styles.cardName} numberOfLines={2}>
             {li.product?.name ?? li.name ?? "Item"}
           </Text>
-          <Text style={styles.cardMeta}>Ordered {ordered}</Text>
+          <Text style={styles.cardMeta}>
+            Ordered{" "}
+            {hasUnitLabel ? `${li.boxes ?? Number(li.qty)} ${li.unitLabel}`.trim() : ordered}
+          </Text>
         </View>
         {type !== "DELIVERED" ? (
           <View
@@ -213,48 +252,81 @@ function ShortPickRow({
           </View>
         ) : null}
       </View>
-      <View style={styles.stepperRow}>
-        <Text style={styles.stepperLabel}>Delivered</Text>
-        <View style={styles.stepper}>
-          <Pressable
-            style={styles.stepBtn}
-            onPress={() => {
-              const n = Math.max(0, qty - 1);
-              onChangeQty(n);
-              setDraft(String(n));
-            }}
-            hitSlop={6}
-          >
-            <Text style={styles.stepText}>−</Text>
-          </Pressable>
-          <TextInput
-            style={styles.qtyInput}
-            value={draft}
-            onChangeText={(txt) => {
-              const clean = sanitizeIntInput(txt);
-              setDraft(clean);
-              if (clean === "") return;
-              onChangeQty(Math.min(ordered, parseIntQty(clean, qty)));
-            }}
-            onBlur={() => setDraft(String(qty))}
-            keyboardType="number-pad"
-            returnKeyType="done"
-            maxLength={5}
-            selectTextOnFocus
-          />
-          <Pressable
-            style={styles.stepBtn}
-            onPress={() => {
-              const n = Math.min(ordered, qty + 1);
-              onChangeQty(n);
-              setDraft(String(n));
-            }}
-            hitSlop={6}
-          >
-            <Text style={styles.stepText}>+</Text>
-          </Pressable>
+      {unitAware ? (
+        <View style={styles.stepperRow}>
+          <Text style={styles.stepperLabel}>
+            Cases delivered: {casesDelivered} of {caseCount}
+          </Text>
+          <View style={styles.stepper}>
+            <Pressable
+              style={styles.stepBtn}
+              onPress={() => onChangeQty(Math.max(0, casesDelivered - 1) * unitsPerBox)}
+              hitSlop={6}
+              disabled={casesDelivered <= 0}
+              accessibilityRole="button"
+              accessibilityLabel={`One fewer ${li.unitLabel} delivered`}
+              accessibilityState={{ disabled: casesDelivered <= 0 }}
+            >
+              <Text style={styles.stepText}>−</Text>
+            </Pressable>
+            <Text style={styles.qtyInput}>{casesDelivered}</Text>
+            <Pressable
+              style={styles.stepBtn}
+              onPress={() => onChangeQty(Math.min(caseCount, casesDelivered + 1) * unitsPerBox)}
+              hitSlop={6}
+              disabled={casesDelivered >= caseCount}
+              accessibilityRole="button"
+              accessibilityLabel={`One more ${li.unitLabel} delivered`}
+              accessibilityState={{ disabled: casesDelivered >= caseCount }}
+            >
+              <Text style={styles.stepText}>+</Text>
+            </Pressable>
+          </View>
         </View>
-      </View>
+      ) : (
+        <View style={styles.stepperRow}>
+          <Text style={styles.stepperLabel}>Delivered</Text>
+          <View style={styles.stepper}>
+            <Pressable
+              style={styles.stepBtn}
+              onPress={() => {
+                const n = Math.max(0, qty - 1);
+                onChangeQty(n);
+                setDraft(String(n));
+              }}
+              hitSlop={6}
+            >
+              <Text style={styles.stepText}>−</Text>
+            </Pressable>
+            <TextInput
+              style={styles.qtyInput}
+              value={draft}
+              onChangeText={(txt) => {
+                const clean = sanitizeIntInput(txt);
+                setDraft(clean);
+                if (clean === "") return;
+                onChangeQty(Math.min(ordered, parseIntQty(clean, qty)));
+              }}
+              onBlur={() => setDraft(String(qty))}
+              keyboardType="number-pad"
+              returnKeyType="done"
+              maxLength={5}
+              selectTextOnFocus
+            />
+            <Pressable
+              style={styles.stepBtn}
+              onPress={() => {
+                const n = Math.min(ordered, qty + 1);
+                onChangeQty(n);
+                setDraft(String(n));
+              }}
+              hitSlop={6}
+            >
+              <Text style={styles.stepText}>+</Text>
+            </Pressable>
+          </View>
+        </View>
+      )}
     </View>
   );
 }
@@ -291,7 +363,8 @@ const styles = StyleSheet.create({
   cardMeta: { fontSize: 12, fontFamily: "Inter_400Regular", color: ios.label2, marginTop: 2 },
   badge: { borderRadius: 8, paddingHorizontal: 8, paddingVertical: 4 },
   badgeShort: { backgroundColor: "#FEF3C7" },
-  badgeRefused: { backgroundColor: "#FEE2E2" },
+  // SA-094a review (6): a design token instead of a hard-coded hex.
+  badgeRefused: { backgroundColor: ios.system.redWash },
   badgeText: { fontSize: 11, fontFamily: "Inter_700Bold", color: ios.label },
   stepperRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
   stepperLabel: { fontSize: 13, fontFamily: "Inter_500Medium", color: ios.label2 },

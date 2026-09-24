@@ -47,6 +47,8 @@ const ALLOWED: Record<string, string> = {
   "t6-backfill-census.mjs": "--local mode only",
   "t6-null-census.mjs": "--local mode only",
   "t6-null-rows-report.mjs": "--local mode only",
+  // B294: a gated WRITER; production resolves with requireProxy, DATABASE_URL is --local only.
+  "backfill-b294-order-line-taxrate.mjs": "--local mode only (writer: requireProxy otherwise)",
   // The drift gate and the production guard deliberately read the raw variable.
   "schema-drift.mjs": "drift gate (railway-db-url.mjs: read-only drift check)",
   "lib/production-guard.js": "the guard that inspects DATABASE_URL itself",

@@ -236,8 +236,7 @@ export class RegulatedLedgerService {
    * `returnedUnit` (live production regression, B661/B671 fix, round 2): `returnedByProduct`
    * arrives in a DIFFERENT unit per caller, and the caller must say which — never inferred.
    * `returns.service.ts`'s standard `receive()` sums raw `ReturnItem.qty`, which mirrors
-   * `OrderItem.qty` (the identity conversion `returns-pieces.util.ts`'s `standardReturnPieces`
-   * documents) — the LINE's OWN unit, boxes for a box-unaware line, never pieces despite that
+   * `OrderItem.qty` (`returns-pieces.util.ts` converts to pieces only for the over-return cap, never on disk) — the LINE's OWN unit, boxes for a box-unaware line, never pieces despite that
    * file's header comment. `inline-returns.service.ts`'s `capture()` builds `ReturnItem.qty`
    * from `priced.chunks[].pieces` — genuinely PIECES. B671 made `unitBasisQty` (pieces) the
    * cap/closing/pro-rata axis unconditionally, which is correct for the inline (PIECES) caller

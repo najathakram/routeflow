@@ -1,22 +1,33 @@
+import { regulatedUnitBasis } from "@routeflow/pricing";
+
 /**
- * RF-4: the piece count a per-unit category tax multiplies. Box-split lines
- * store `qty` already in pieces; a boxed selling-unit line (boxes null) stores
- * `qty` in SELLING UNITS, so expand it by the snapshot `unitsPerBox`. PER_VOLUME
- * stays approximate (pieces, not true volume) until a `Product.volumePerUnit`
- * field lands — see computeCategoryTax's contract.
+ * RF-4: the piece count a per-unit category tax multiplies. B679: a thin wrapper over
+ * `regulatedUnitBasis` (`@routeflow/pricing`) — the ONE place this conversion happens — rather
+ * than an independent copy of its box-unaware fallback branch. `unitsPerBoxFallback` is the
+ * PRODUCT's live `unitsPerBox`, used when the stored line didn't snapshot its own (a boxed
+ * selling-unit line only snapshots `unitsPerBox` on a box-split; a Units/PO line's `unitLabel`
+ * branch ignores both).
  */
 export function linePieceQty(
-  li: { qty: unknown; boxes: unknown; unitsPerBox?: unknown },
+  li: {
+    qty: unknown;
+    boxes: unknown;
+    pieces?: unknown;
+    unitsPerBox?: unknown;
+    unitLabel?: unknown;
+  },
   unitsPerBoxFallback?: number,
 ): number {
-  const qty = Number(li.qty) || 0;
-  if (li.boxes != null) return qty; // already pieces
-  // A boxed product ordered as SELLING UNITS stores unitsPerBox:null on the line
-  // (create only snapshots it for box-split lines), so fall back to the product's
-  // unitsPerBox — otherwise a per-unit levy collapses by a factor of unitsPerBox on
-  // any later edit (create expanded qty→pieces but the recompute couldn't).
-  // B661-sweep: a line-tax (not ledger) box-unaware multiply — follow-up PR converts this to
-  // @routeflow/pricing's regulatedUnitBasis; see no-second-legacy-line-pieces.spec.ts's allowlist.
-  const upb = Number(li.unitsPerBox ?? unitsPerBoxFallback ?? 0);
-  return upb > 1 ? qty * upb : qty;
+  const packAtSale = li.unitsPerBox != null ? Number(li.unitsPerBox) : unitsPerBoxFallback;
+  // The `warn` result is discarded on purpose: the regulated ledger's own write point
+  // (regulated-ledger.service.ts:91) is the one place this box-unaware fallback gets logged.
+  return regulatedUnitBasis(
+    {
+      qty: Number(li.qty) || 0,
+      boxes: li.boxes as number | null | undefined,
+      pieces: li.pieces as number | null | undefined,
+      unitLabel: li.unitLabel as string | null | undefined,
+    },
+    packAtSale,
+  ).unitBasisQty;
 }
