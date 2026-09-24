@@ -995,31 +995,105 @@ describe("VendorBillsService", () => {
       expect(items[1]).toMatchObject({ sku: null, packSize: null, lineTotal: null });
     });
 
-    it("marks the originating scan POSTED and links it to the new bill", async () => {
-      prisma.vendorBill.create.mockResolvedValue(bill({ id: "bill-77" }));
-
-      await service.create({
-        requireSupplier: false,
-        scanId: "scan-5",
-        items: [{ description: "A", qty: 1, unitCost: 10 }],
-      });
-
-      expect(invoiceScan.updateMany).toHaveBeenCalledWith({
-        where: { id: "scan-5" },
-        data: { status: "POSTED", vendorBillId: "bill-77" },
-      });
-    });
-
-    it("still returns the bill when the scan link fails — the bill is already written", async () => {
-      invoiceScan.updateMany.mockRejectedValue(new Error("scan gone"));
-
-      await expect(
+    // ── B710: a scan backs at most one live bill; the claim is in the bill's transaction ──
+    describe("create — claiming the originating scan (B710)", () => {
+      const post = () =>
         service.create({
           requireSupplier: false,
           scanId: "scan-5",
           items: [{ description: "A", qty: 1, unitCost: 10 }],
-        }),
-      ).resolves.toMatchObject({ id: "bill-1" });
+        });
+
+      /** Records whether each scan claim ran INSIDE tenantTransaction. */
+      const trackTx = () => {
+        const run = prisma.tenantTransaction.getMockImplementation()!;
+        const inTx: boolean[] = [];
+        let open = false;
+        prisma.tenantTransaction.mockImplementation(async (fn: any) => {
+          open = true;
+          try {
+            return await run(fn);
+          } finally {
+            open = false;
+          }
+        });
+        invoiceScan.updateMany.mockImplementation(async () => {
+          inTx.push(open);
+          return { count: 1 };
+        });
+        return inTx;
+      };
+
+      it("claims a fresh scan with a guarded update inside the bill's transaction", async () => {
+        prisma.vendorBill.create.mockResolvedValue(bill({ id: "bill-77" }));
+        const inTx = trackTx();
+
+        await post();
+
+        expect(invoiceScan.updateMany).toHaveBeenCalledWith({
+          where: { id: "scan-5", OR: [{ status: { not: "POSTED" } }, { vendorBillId: null }] },
+          data: { status: "POSTED", vendorBillId: "bill-77" },
+        });
+        expect(inTx).toEqual([true]);
+      });
+
+      it("REG-B710: a second post of a scan whose bill is live is refused, not a second bill", async () => {
+        invoiceScan.updateMany.mockResolvedValue({ count: 0 });
+        invoiceScan.findFirst.mockResolvedValue({
+          vendorBillId: "bill-1",
+          vendorBill: { billNumber: "BILL-2026-0001", status: "DRAFT" },
+        });
+
+        await expect(post()).rejects.toMatchObject({
+          response: {
+            code: "SCAN_ALREADY_POSTED",
+            vendorBillId: "bill-1",
+            billNumber: "BILL-2026-0001",
+          },
+        });
+      });
+
+      it("PIN: a scan whose bill was VOIDed can be posted again (compare-and-swap on the void bill)", async () => {
+        prisma.vendorBill.create.mockResolvedValue(bill({ id: "bill-78" }));
+        invoiceScan.updateMany
+          .mockResolvedValueOnce({ count: 0 })
+          .mockResolvedValueOnce({ count: 1 });
+        invoiceScan.findFirst.mockResolvedValue({
+          vendorBillId: "bill-old",
+          vendorBill: { billNumber: "BILL-2026-0003", status: "VOID" },
+        });
+
+        await expect(post()).resolves.toMatchObject({ id: "bill-78" });
+        expect(invoiceScan.updateMany).toHaveBeenLastCalledWith({
+          where: { id: "scan-5", status: "POSTED", vendorBillId: "bill-old" },
+          data: { status: "POSTED", vendorBillId: "bill-78" },
+        });
+      });
+
+      it("PIN: the loser of two concurrent re-posts after a void is refused", async () => {
+        invoiceScan.updateMany.mockResolvedValue({ count: 0 });
+        invoiceScan.findFirst.mockResolvedValue({
+          vendorBillId: "bill-old",
+          vendorBill: { billNumber: "BILL-2026-0003", status: "VOID" },
+        });
+
+        await expect(post()).rejects.toMatchObject({
+          response: { code: "SCAN_ALREADY_POSTED" },
+        });
+      });
+
+      it("PIN: a bad or foreign scanId still never fails the bill (kept, unlinked)", async () => {
+        invoiceScan.updateMany.mockResolvedValue({ count: 0 });
+        invoiceScan.findFirst.mockResolvedValue(null);
+
+        await expect(post()).resolves.toMatchObject({ id: "bill-1" });
+      });
+
+      it("PIN: a claim that errors fails the post; it cannot prove this is not a second one", async () => {
+        invoiceScan.updateMany.mockRejectedValue(new Error("scan gone"));
+
+        await expect(post()).rejects.toThrow("scan gone");
+      });
     });
 
     // ── B743: raising a PO from the bill's own lines becomes the stock-mover ──
