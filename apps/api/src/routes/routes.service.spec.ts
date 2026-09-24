@@ -2544,6 +2544,158 @@ describe("RoutesService", () => {
     });
   });
 
+  // ─── B810 (SA-125): balanceDue wiring at all 4 RUN_STOP_INCLUDE call sites ──
+  // withBalanceDue/withRunOrderBalances (run-invoice-balance.spec.ts) are the
+  // proven money math in isolation — these prove the SERVICE actually applies
+  // them before a response leaves, at every one of the 4 sites.
+  describe("B810/SA-130a: balanceDue is computed via a SEPARATE batched invoice.findMany, and payment rows are stripped, at every call site", () => {
+    // Raw non-void rows as invoice.findMany would actually return them —
+    // orderId-keyed, since payableInvoices is NOT a Prisma relation on Order
+    // and can never come back nested under an `orders` fixture.
+    const rawNonVoidInvoices = [
+      {
+        id: "inv-sent",
+        orderId: "ord-1",
+        status: "SENT",
+        total: 100,
+        depositPercent: null,
+        deliveryBatchId: null,
+        payments: [{ amount: 40, status: "PAID" }],
+      },
+    ];
+    const expectedPayable = [
+      { id: "inv-sent", status: "SENT", total: 100, balanceDue: 60, isDepositMirror: false },
+    ];
+
+    it("findOneRun's normal path computes balanceDue and strips raw payments", async () => {
+      prisma.invoicePayment.findMany.mockResolvedValue([]);
+      prisma.advancePayment.findMany.mockResolvedValue([]);
+      prisma.invoice.findMany.mockResolvedValue(rawNonVoidInvoices);
+      prisma.routeRun.findUnique.mockResolvedValue({
+        ...MOCK_RUN,
+        stops: [
+          {
+            id: "stop-1",
+            customer: { id: "cust-1" },
+            customerAddress: { id: "addr-1" },
+            routeStop: null,
+            orders: [{ id: "ord-1" }],
+          },
+        ],
+      });
+
+      const result: any = await service.findOneRun("run-1");
+
+      expect(prisma.invoice.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({ where: expect.objectContaining({ orderId: { in: ["ord-1"] } }) }),
+      );
+      const payable = result.stops[0].orders[0].payableInvoices;
+      expect(payable).toEqual(expectedPayable);
+      expect(JSON.stringify(result)).not.toContain('"payments"');
+    });
+
+    it("findOneRun's unlinked-orders fallback ALSO computes balanceDue and strips payments (same drift, second site)", async () => {
+      prisma.invoicePayment.findMany.mockResolvedValue([]);
+      prisma.advancePayment.findMany.mockResolvedValue([]);
+      prisma.routeRun.findUnique.mockResolvedValue({
+        ...MOCK_RUN,
+        stops: [
+          {
+            id: "stop-1",
+            customerId: "cust-1",
+            customer: null,
+            customerAddress: { id: "addr-1" },
+            routeStop: null,
+            orders: [], // no stop has a linked order -> triggers the fallback
+            deliveryMutations: [],
+          },
+        ],
+      });
+      prisma.order.findMany.mockResolvedValue([{ id: "ord-1", customerId: "cust-1" }]);
+      prisma.invoice.findMany.mockResolvedValue(rawNonVoidInvoices);
+
+      const result: any = await service.findOneRun("run-1");
+
+      const payable = result.stops[0].orders[0].payableInvoices;
+      expect(payable).toEqual(expectedPayable);
+      expect(JSON.stringify(result)).not.toContain('"payments"');
+    });
+
+    it("findAllRuns computes balanceDue and strips payments", async () => {
+      prisma.invoice.findMany.mockResolvedValue(rawNonVoidInvoices);
+      prisma.routeRun.findMany.mockResolvedValue([
+        {
+          ...MOCK_RUN,
+          stops: [
+            {
+              id: "stop-1",
+              customer: { id: "cust-1" },
+              customerAddress: { id: "addr-1" },
+              routeStop: null,
+              orders: [{ id: "ord-1" }],
+            },
+          ],
+        },
+      ]);
+      prisma.routeRun.count.mockResolvedValue(1);
+
+      const result: any = await service.findAllRuns({} as any, operatorPayload);
+
+      expect(prisma.invoice.findMany).toHaveBeenCalledTimes(1); // ONE batched call for the whole page, never per-run
+      const payable = result.data[0].stops[0].orders[0].payableInvoices;
+      expect(payable).toEqual(expectedPayable);
+      expect(JSON.stringify(result)).not.toContain('"payments"');
+    });
+
+    it("findMyRuns computes balanceDue and strips payments", async () => {
+      prisma.driver.findFirst.mockResolvedValue({ id: "drv-1" });
+      prisma.invoice.findMany.mockResolvedValue(rawNonVoidInvoices);
+      prisma.routeRun.findMany.mockResolvedValue([
+        {
+          ...MOCK_RUN,
+          stops: [
+            {
+              id: "stop-1",
+              customer: { id: "cust-1" },
+              customerAddress: { id: "addr-1" },
+              routeStop: null,
+              orders: [{ id: "ord-1" }],
+            },
+          ],
+        },
+      ]);
+
+      const result: any = await service.findMyRuns(driverPayload);
+
+      const payable = result.data[0].stops[0].orders[0].payableInvoices;
+      expect(payable).toEqual(expectedPayable);
+      expect(JSON.stringify(result)).not.toContain('"payments"');
+    });
+
+    it("SA-130a BLOCKER regression: never selects `payableInvoices` as a nested Order field — the real Prisma client has no such relation", async () => {
+      prisma.invoicePayment.findMany.mockResolvedValue([]);
+      prisma.advancePayment.findMany.mockResolvedValue([]);
+      prisma.invoice.findMany.mockResolvedValue([]);
+      prisma.routeRun.findUnique.mockResolvedValue({
+        ...MOCK_RUN,
+        stops: [
+          {
+            id: "stop-1",
+            customer: { id: "cust-1" },
+            customerAddress: { id: "addr-1" },
+            routeStop: null,
+            orders: [{ id: "ord-1" }],
+          },
+        ],
+      });
+
+      await service.findOneRun("run-1");
+
+      const stopsCall = prisma.routeRun.findUnique.mock.calls[0]![0];
+      expect(stopsCall.include.stops.include.orders.select).not.toHaveProperty("payableInvoices");
+    });
+  });
+
   // ─── F05: server-truth run cash collections ──────────────────────────────
 
   // T-B152a / R5 / REG-B152 — findOneRun exposes zero collected-payment data

@@ -1,7 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "../api-client";
 import { invalidateOrderCaches } from "./orders";
-import type { RouteAnalysisResult, RouteSettings, StopETA } from "@routeflow/types";
+import type { InvoiceStatus, RouteAnalysisResult, RouteSettings, StopETA } from "@routeflow/types";
 export type { RouteAnalysisResult, RouteSettings, StopETA } from "@routeflow/types";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -71,6 +71,21 @@ export interface RouteRunOrder {
     discount: number | string | null;
     shippingFee: number | string | null;
     total: number | string | null;
+  }>;
+  // B810/SA-130a: EVERY payable invoice (DRAFT/SENT/PARTIAL/OVERDUE — mirrors
+  // the server's own payment write path), fetched by the server as its OWN
+  // batched query (NOT a nested Order relation — Order has no such relation),
+  // each carrying a server-computed `balanceDue` (total - confirmed
+  // payments) and `isDepositMirror` (SA-102's WP-D1 shape: this invoice IS
+  // the order's own live bill, not a separately-finalized one — see
+  // lib/run-money.ts#reconciledDoorDue for the three-way rule this field
+  // feeds). Never a client total-minus-payments — see run-money.ts#orderAmountDue.
+  payableInvoices?: Array<{
+    id: string;
+    status: InvoiceStatus;
+    total: number | string | null;
+    balanceDue: number | string | null;
+    isDepositMirror?: boolean;
   }>;
 }
 

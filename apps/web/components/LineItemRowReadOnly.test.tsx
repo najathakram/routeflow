@@ -222,6 +222,29 @@ describe("LineItemRowReadOnly — SKU, thumbnail, status, delivery, note", () =>
     expect(screen.getByText("0 of 8 delivered")).toBeInTheDocument();
   });
 
+  it("a boxed line reads progress in boxes + pieces, never raw pieces (B597 web twin)", () => {
+    // qty 51 = 2 boxes of 24 + 3 pieces
+    const r = renderRow({
+      qty: 51,
+      boxes: 2,
+      pieces: 3,
+      unitsPerBox: 24,
+      deliveredQty: 0,
+      showDeliveryProgress: true,
+    });
+    expect(screen.getByText("0 of 2 boxes + 3 pcs delivered")).toBeInTheDocument();
+    r.unmount();
+    renderRow({
+      qty: 51,
+      boxes: 2,
+      pieces: 3,
+      unitsPerBox: 24,
+      deliveredQty: 27,
+      showDeliveryProgress: true,
+    });
+    expect(screen.getByText("1 box + 3 pcs of 2 boxes + 3 pcs delivered")).toBeInTheDocument();
+  });
+
   it("compares Decimal strings numerically, never lexicographically (10.000 is not < 8.000)", () => {
     const { container } = renderRow({
       deliveredQty: "10.000",

@@ -87,7 +87,7 @@ function check(name, cond, extra) {
   else { failures++; console.log(`  FAIL ${name}${extra ? ` — ${extra}` : ''}`) }
 }
 const byLabel = (calls, p) => calls.filter((c) => c.label.startsWith(p))
-const FULL_IDS = ['claude-fable-5-1', 'claude-opus-5', 'claude-sonnet-5', 'claude-haiku-4-5']
+const FULL_IDS = ['claude-fable-5-1', 'claude-opus-5-5', 'claude-sonnet-5', 'claude-haiku-4-5']
 
 // The house rules every scenario re-checks (mirrors dry-run.mjs's houseRules).
 function houseRules(calls) {
@@ -227,7 +227,7 @@ const scenarios = [
     assert({ result: r, calls }) {
       const reviews = byLabel(calls, 'review:')
       check('exactly two review lenses ran', reviews.length === 2, reviews.map((c) => c.label))
-      check('both lenses ran on Opus at high effort', reviews.every((c) => c.model === 'claude-opus-5' && c.effort === 'high'))
+      check('both lenses ran on Opus at high effort', reviews.every((c) => c.model === 'claude-opus-5-5' && c.effort === 'high'))
       check('both lenses tagged PHASE: Gate & Review', reviews.every((c) => c.phase === 'Gate & Review'))
       check('a warm-up preceded the two-lens wave', byLabel(calls, 'warmup').length >= 1)
     },
@@ -240,7 +240,7 @@ const scenarios = [
     assert({ result: r, calls }) {
       const plans = calls.filter((c) => c.label === 'fix-plan' || c.label === 'fix-plan:fallback')
       check('fix-plan (Fable) then fix-plan:fallback (Opus xhigh) both ran', plans.length === 2 && plans[0].label === 'fix-plan' && plans[1].label === 'fix-plan:fallback', JSON.stringify(plans.map((c) => c.label)))
-      check('the fallback ran on Opus at xhigh effort', plans[1].model === 'claude-opus-5' && plans[1].effort === 'xhigh')
+      check('the fallback ran on Opus at xhigh effort', plans[1].model === 'claude-opus-5-5' && plans[1].effort === 'xhigh')
       check('the fallback\'s decision was actually used to execute a fix', byLabel(calls, 'execute:').length === 1)
       check('the Opus FALLBACK fix-planner is EXEMPT from the F8 tool-call cap — it decides from brief text alone, zero repo access', !plans[1].prompt.includes('tool calls'), plans[1].prompt)
     },
@@ -296,7 +296,7 @@ const scenarios = [
       check('result.rounds is 1 (== maxFixRounds — the cap still applies under BLOCK)', r.rounds === 1, r.rounds)
       check('result.clean is false (recheck still reports BLOCK/findings)', r.clean === false)
       const exec = calls.find((c) => c.label === 'execute:0')
-      check('the opus-tier executor ran on Opus at high effort', !!exec && exec.model === 'claude-opus-5' && exec.effort === 'high')
+      check('the opus-tier executor ran on Opus at high effort', !!exec && exec.model === 'claude-opus-5-5' && exec.effort === 'high')
       check('the opus-tier executor prompt carries the 12-tool-call cap (F8)', !!exec && exec.prompt.includes('Hard cap: 12 tool calls'))
       const recheckCall = calls.find((c) => c.label === 'recheck')
       check('the recheck prompt carries the 12-tool-call cap (F8)', !!recheckCall && recheckCall.prompt.includes('Hard cap: 12 tool calls'))

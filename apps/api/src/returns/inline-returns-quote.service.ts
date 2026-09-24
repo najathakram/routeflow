@@ -199,7 +199,9 @@ export class InlineReturnsQuoteService {
     const remainingByKey: RemainingSupply[] = [];
     for (const [key, sold] of soldByOrderProduct) {
       const [sourceOrderId, productId] = key.split("::");
-      const priorReturned = priorReturnedMap.get(sourceOrderId)?.[productId] ?? 0;
+      const prior = priorReturnedMap.get(sourceOrderId)?.[productId];
+      // An unclassifiable prior refuses THIS product's line below; the supply entry is inert.
+      const priorReturned = prior && "pieces" in prior ? prior.pieces : 0;
       remainingByKey.push({
         sourceOrderId,
         productId,
@@ -237,6 +239,19 @@ export class InlineReturnsQuoteService {
         product?.unitsPerBox ?? null,
       );
       const productName = product?.name ?? "This product";
+      // SA-159: a prior STANDARD return of THIS product whose basis cannot be classified refuses only
+      // this product's line; other products on the same source order still quote.
+      for (const orderId of new Set(
+        matchingSet.filter((l) => l.productId === item.productId).map((l) => l.sourceOrderId),
+      )) {
+        const prior = priorReturnedMap.get(orderId)?.[item.productId];
+        if (prior && "unknown" in prior) {
+          throw new ConflictException({
+            code: "INLINE_RETURN_PRIOR_BASIS_UNKNOWN",
+            message: `${productName}: an earlier return on this customer's order cannot be counted (${prior.reason}) — credit it with a credit note or ask support; the standard return cannot classify it either.`,
+          });
+        }
+      }
       if (conflictingPacks) {
         throw new ConflictException({
           code: "INLINE_RETURN_PACK_CONFLICT",
