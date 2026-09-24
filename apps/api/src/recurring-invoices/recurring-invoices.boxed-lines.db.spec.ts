@@ -141,6 +141,8 @@ describeDb("B646 — a boxed recurring template line is stored in pieces, real P
         () => prisma.invoiceItem.deleteMany({ where: { tenantId } }),
         () => prisma.stockMovement.deleteMany({ where: { tenantId } }),
         () => prisma.invoice.deleteMany({ where: { tenantId } }),
+        // nextInvoiceNumber upserts a per-tenant sequence row (no FK): delete it too, or one leaks per run.
+        () => prisma.numberingSequence.deleteMany({ where: { tenantId } }),
         () => prisma.recurringInvoiceItem.deleteMany({ where: { tenantId } }),
         () => prisma.recurringInvoice.deleteMany({ where: { tenantId } }),
         () => prisma.product.deleteMany({ where: { tenantId } }),
@@ -148,9 +150,12 @@ describeDb("B646 — a boxed recurring template line is stored in pieces, real P
         () => prisma.user.deleteMany({ where: { tenantId } }),
         () => prisma.tenant.delete({ where: { id: tenantId } }),
       ]) {
-        // Best-effort, FK order: a failed cleanup must never mask a test's own result.
+        // Best-effort, FK order: a failed cleanup must never mask a test's own result, but it is
+        // LOGGED (a swallowed tenant.delete failure would otherwise hide leaked rows).
         // eslint-disable-next-line no-await-in-loop
-        await del().catch(() => undefined);
+        await del().catch((e: unknown) =>
+          console.warn(`B646 db spec cleanup (${tenantId}): ${e instanceof Error ? e.message : e}`),
+        );
       }
     }
     await prisma?.$disconnect();

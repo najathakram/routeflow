@@ -4,15 +4,16 @@
  * Templates whose qty looks like PIECES on a boxed product; each cycle billed qty x per-box price.
  *
  * Lists every ACTIVE recurring template line for a boxed product (unitsPerBox > 1, no selling-unit
- * label), per tenant id, with:
- *   (i)  possible PAST over-billing: a pieces-intent line (qty > unitsPerBox, or a non-integer qty) was
- *        billed qty x the per-box price on every cycle; `possibleOverbillPerCycle` is that figure minus
- *        what it would be if qty meant pieces;
- *   (ii) the FUTURE stock change the B646 fix introduces: pieces decremented per cycle today
- *        (`currentDecrementPieces`, qty stored in the pieces column) vs after the fix
- *        (`postFixDecrementPieces`, qty x unitsPerBox). A pieces-intent template must be corrected
- *        (qty / unitsPerBox) BEFORE the fix's first cycle runs on it.
- * The fix never changes the billed amount (pinned in recurring-invoices.boxed-lines.spec.ts).
+ * label), per tenant id (the TEMPLATE's tenant), with:
+ *   (i)  possible PAST over-billing: a BOX-priced line whose qty > unitsPerBox was billed qty x the
+ *        per-box price every cycle; `possibleOverbillPerCycle` is that figure minus the pieces-intent one;
+ *   (ii) the units RECORDED as sold per cycle today (`currentUnitsRecorded`, qty) vs after the fix
+ *        (`postFixUnitsRecorded`, qty x unitsPerBox). Invoice creation moves no stock, but the recorded
+ *        units feed usage, COGS / invoiced-sales analytics and regulated (tobacco) reporting.
+ * A line is FLAGGED when its qty exceeds unitsPerBox, is not an integer, or its price looks PER PIECE
+ * (about the product's box price / unitsPerBox) or unclear. A flagged template is corrected to box terms
+ * BEFORE the fix's first cycle runs on it. The fix never changes the billed amount (pinned in
+ * recurring-invoices.boxed-lines.spec.ts).
  *
  * The owner runs it on prod BEFORE B646 lands. Output carries tenant, template and item ids and numbers
  * only: never a slug, name, SKU or description.
@@ -51,7 +52,8 @@ async function main() {
       unitLabel: true,
       tenantId: true,
       recurringInvoiceId: true,
-      product: { select: { unitsPerBox: true } },
+      recurringInvoice: { select: { tenantId: true } },
+      product: { select: { unitsPerBox: true, pricePerUnit: true } },
     },
   });
   const rows = [];
@@ -62,10 +64,12 @@ async function main() {
       unitPrice: it.unitPrice,
       unitLabel: it.unitLabel,
       unitsPerBox: it.product?.unitsPerBox ?? null,
+      productPrice: it.product?.pricePerUnit ?? null,
     });
     if (c)
       rows.push({
-        tenantId: it.tenantId,
+        // The TEMPLATE's tenant (an item's own tenantId is nullable on legacy rows).
+        tenantId: it.recurringInvoice?.tenantId ?? it.tenantId,
         templateId: it.recurringInvoiceId,
         itemId: it.id,
         ...c,
@@ -81,13 +85,13 @@ async function main() {
   );
   for (const t of summary) {
     console.log(
-      `\ntenant ${t.tenantId}: ${t.lines} line(s), ${t.flagged} flagged; stock delta per cycle +${t.stockDeltaPerCycle} pieces; possible over-bill per cycle $${t.possibleOverbillPerCycle}`,
+      `\ntenant ${t.tenantId}: ${t.lines} line(s), ${t.flagged} flagged; units recorded per cycle +${t.unitsRecordedDeltaPerCycle}; possible over-bill per cycle $${t.possibleOverbillPerCycle}`,
     );
     for (const r of t.rows) {
       console.log(
-        `  ${r.flagged ? "FLAG" : "ok  "} template ${r.templateId} item ${r.itemId}: qty ${r.qty} of a ${r.unitsPerBox}-pack @ $${r.unitPrice}` +
+        `  ${r.flagged ? "FLAG" : "ok  "} template ${r.templateId} item ${r.itemId}: qty ${r.qty} of a ${r.unitsPerBox}-pack @ $${r.unitPrice} (${r.priceBasis}-priced)` +
           ` | billed/cycle $${r.billedPerCycle} (pieces-intent $${r.billedIfPiecesIntent})` +
-          ` | stock/cycle ${r.currentDecrementPieces} -> ${r.postFixDecrementPieces} pieces` +
+          ` | units recorded/cycle ${r.currentUnitsRecorded} -> ${r.postFixUnitsRecorded}` +
           (r.reasons.length ? ` [${r.reasons.join(", ")}]` : ""),
       );
     }

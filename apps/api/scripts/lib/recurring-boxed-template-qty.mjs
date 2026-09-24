@@ -1,22 +1,37 @@
 /**
  * B646 / SA-135a — pure classification behind report-recurring-boxed-template-qty.mjs (no I/O).
  *
- * A recurring template line for a BOXED product (unitsPerBox > 1, no selling-unit label) has always
- * been BILLED as `qty x unitPrice` with `unitPrice` the per-box price, i.e. qty counted BOXES. Until the
- * B646 fix, the generated invoice line was STORED with that same qty in the pieces column, so stock
- * moved `qty` PIECES per cycle. After the fix it is stored as `qty x unitsPerBox` pieces.
+ * A recurring template line for a BOXED product (unitsPerBox > 1, no selling-unit label) is BILLED as
+ * `qty x unitPrice`. Until the B646 fix the generated invoice line RECORDED that same qty as the units
+ * sold (the pieces column); after the fix it records `qty x unitsPerBox` (qty read as BOXES). The bill
+ * itself never changes. Invoice creation writes no stock movement, but the recorded units feed usage,
+ * COGS / invoiced-sales analytics and regulated (tobacco) reporting.
  *
- * So for each such line this reports two things, neither of which changes the bill going forward:
- *   (i)  possible PAST over-billing: a template whose qty looks like PIECES (qty > unitsPerBox, or not
- *        an integer) was billed qty x per-box price every cycle, unitsPerBox times a pieces-intent figure;
- *   (ii) the FUTURE stock change the fix introduces: pieces decremented per cycle today vs after the fix.
- *        A pieces-intent template must be corrected (qty / unitsPerBox) BEFORE the fix's first cycle.
+ * Two template shapes need the owner BEFORE the fix's first cycle:
+ *   - BOX-priced but qty looks like PIECES (qty > unitsPerBox at about the box price): possibly
+ *     OVER-BILLED every past cycle (qty boxes billed, pieces meant), and after the fix it records
+ *     qty x unitsPerBox units. Correct it to qty / unitsPerBox boxes.
+ *   - PIECES-priced (unitPrice about the box price / unitsPerBox): billed and recorded correctly until
+ *     now, but after the fix it records qty x unitsPerBox units for qty pieces. Correct it to box terms.
  */
 import { roundMoney } from "@routeflow/pricing";
 
 /**
+ * How the template's price relates to the product's per-box price: "box" (>= half the box price),
+ * "pieces" (<= 1.5x the per-piece price), or "unclear" (in between, or no product price to compare).
+ */
+export function priceBasis(unitPrice, boxPrice, pack) {
+  const box = Number(boxPrice);
+  if (!(box > 0)) return "unclear";
+  const ratio = Number(unitPrice) / box;
+  if (ratio >= 0.5) return "box";
+  if (ratio <= 1.5 / pack) return "pieces";
+  return "unclear";
+}
+
+/**
  * @param {{ productId: string|null, qty: unknown, unitPrice: unknown, unitLabel?: string|null,
- *           unitsPerBox?: number|null }} line
+ *           unitsPerBox?: number|null, productPrice?: unknown }} line
  * @returns {null | object} null when the fix does not touch this line (not a boxed pack count).
  */
 export function classifyTemplateLine(line) {
@@ -32,29 +47,34 @@ export function classifyTemplateLine(line) {
   const loosePieces = Math.round(looseExact);
   const splits = Math.abs(looseExact - loosePieces) <= 1e-6;
 
+  const basis = priceBasis(unitPrice, line.productPrice, pack);
   const reasons = [];
   if (qty > pack) reasons.push("qty>unitsPerBox");
   if (!Number.isInteger(qty)) reasons.push("non-integer");
+  if (basis === "pieces") reasons.push("pieces-priced");
+  if (basis === "unclear") reasons.push("price-basis-unclear");
 
-  const currentDecrementPieces = qty; // pre-fix: qty stored in the pieces column
-  const postFixDecrementPieces = splits ? wholeBoxes * pack + loosePieces : qty;
+  const currentUnitsRecorded = qty; // pre-fix: qty recorded as the units sold
+  const postFixUnitsRecorded = splits ? wholeBoxes * pack + loosePieces : qty;
   const billedPerCycle = roundMoney(qty * unitPrice);
   const billedIfPiecesIntent = roundMoney((qty / pack) * unitPrice);
   return {
     unitsPerBox: pack,
     qty,
     unitPrice,
+    priceBasis: basis,
     flagged: reasons.length > 0,
     reasons,
     splits,
-    currentDecrementPieces,
-    postFixDecrementPieces,
-    stockDeltaPerCycle: postFixDecrementPieces - currentDecrementPieces,
+    currentUnitsRecorded,
+    postFixUnitsRecorded,
+    unitsRecordedDeltaPerCycle: postFixUnitsRecorded - currentUnitsRecorded,
     billedPerCycle,
     billedIfPiecesIntent,
-    possibleOverbillPerCycle: reasons.includes("qty>unitsPerBox")
-      ? roundMoney(billedPerCycle - billedIfPiecesIntent)
-      : 0,
+    // Only a BOX-priced line whose qty looks like pieces can have been over-billed: a pieces-priced
+    // line was billed at a per-piece price all along.
+    possibleOverbillPerCycle:
+      qty > pack && basis === "box" ? roundMoney(billedPerCycle - billedIfPiecesIntent) : 0,
   };
 }
 
@@ -70,7 +90,7 @@ export function summarizeByTenant(rows) {
     tenantId,
     lines: list.length,
     flagged: list.filter((r) => r.flagged).length,
-    stockDeltaPerCycle: list.reduce((s, r) => s + r.stockDeltaPerCycle, 0),
+    unitsRecordedDeltaPerCycle: list.reduce((s, r) => s + r.unitsRecordedDeltaPerCycle, 0),
     possibleOverbillPerCycle: roundMoney(list.reduce((s, r) => s + r.possibleOverbillPerCycle, 0)),
     rows: [...list].sort((a, b) => Number(b.flagged) - Number(a.flagged)),
   }));
