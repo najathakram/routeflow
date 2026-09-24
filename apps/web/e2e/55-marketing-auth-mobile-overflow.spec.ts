@@ -2,24 +2,28 @@
  * Marketing + auth mobile overflow — owner report, spec 55.
  *
  * Of the app's shells, marketing and auth are the two with NO containment of
- * their own: auth has no `layout.tsx` at all, and marketing's layout has no
- * overflow class anywhere in it (confirmed: no `layout.tsx` under any of the
- * buyer auth route folders below). For every other shell this batch fixed
- * (operator dashboard, buyer portal, platform-admin), the new
- * `html { overflow-x: hidden }` safety net in apps/web/app/globals.css is a
- * backstop on top of an explicit element-level fix — see specs 52/53/54's
- * own headers. For these pages, it's the ONLY containment that exists: if it
- * were ever removed or scoped away from one of them, nothing else here would
- * catch a regression. This spec exists to make that dependency an explicit,
- * regression-locked fact instead of an implicit one — found by pre-merge
- * review, not by this branch's own original exploration.
+ * their own: auth has no `layout.tsx` at all (confirmed for every page listed
+ * below, both `(auth)`'s operator pages and `app/buyer/*`'s buyer pages —
+ * neither the individual route folder nor any shared route-group layout
+ * exists), and marketing's layout has no overflow class anywhere in it. For
+ * every other shell this batch fixed (operator dashboard, buyer portal,
+ * platform-admin), the new `html { overflow-x: hidden }` safety net in
+ * apps/web/app/globals.css is a backstop on top of an explicit element-level
+ * fix — see specs 52/53/54's own headers. For these pages, it's the ONLY
+ * containment that exists: if it were ever removed or scoped away from one
+ * of them, nothing else here would catch a regression.
  *
- * Pages: the buyer-only auth flow (login, register, invite, forgot-password,
- * reset-password, verify-email, verify-merge, change-password — none of
- * these folders has its own layout.tsx) plus the global not-found page.
- * Register/invite/verify-merge have no operator-side equivalent (they're
- * buyer-account concepts), which is why this spec targets `/buyer/*` rather
- * than `(auth)`'s operator-facing login/forgot/reset-password pages.
+ * This spec covers the pages found and fixed in this PR's own review round
+ * — it is NOT an exhaustive sweep of every global-rule-only page in the app
+ * (a prior version of this comment overclaimed "regression-locked" coverage
+ * without actually including the operator `(auth)` pages below; corrected
+ * per review). Pages: the buyer auth flow (login, register, invite,
+ * forgot-password, reset-password, verify-email, verify-merge,
+ * change-password — register/invite/verify-merge have no operator-side
+ * equivalent, they're buyer-account concepts), the operator-side `/login`
+ * and `/forgot-password` (added per review — these were left out of the
+ * first pass even though they have exactly the same no-layout shape as their
+ * buyer counterparts), and the global not-found page.
  *
  * Read-only: no data is created or mutated. Targets the seeded e2e-routeflow
  * tenant (approved test tenant) — never a live client tenant.
@@ -37,6 +41,8 @@ const VIEWPORTS = [
 // directly, not assumed — so each depends entirely on the root layout +
 // globals.css's global rule for horizontal containment.
 const GLOBAL_RULE_ONLY_PAGES = [
+  { label: "operator login", path: "/login" },
+  { label: "operator forgot-password", path: "/forgot-password" },
   { label: "buyer login", path: "/buyer/login" },
   { label: "buyer register", path: "/buyer/register" },
   // No real invite token exists (or needs to) for this check — the page's
@@ -105,6 +111,21 @@ test.describe("marketing mobile menu — scroll-lock + sticky header under the g
       "page must actually be scrolled for this test to mean anything",
     ).toBeGreaterThan(100);
 
+    // Baseline, added per review: prove the wheel gesture itself actually
+    // scrolls the page BEFORE the sheet ever opens. Without this, "scrollY
+    // didn't change while the sheet was open" is equally consistent with a
+    // working scroll-lock OR with the wheel event just not doing anything on
+    // this page/environment to begin with — the assertion below would pass
+    // for the wrong reason either way.
+    await page.mouse.wheel(0, 100);
+    await expect
+      .poll(() => page.evaluate(() => window.scrollY), {
+        message:
+          "the wheel gesture didn't scroll the page while the sheet was closed — this test's own baseline is broken, not proof of a lock",
+      })
+      .toBeGreaterThan(scrollYBeforeOpen);
+    const scrollYBaseline = await page.evaluate(() => window.scrollY);
+
     await page.getByRole("button", { name: /open menu/i }).click();
     const sheet = page.getByRole("dialog");
     await expect(sheet).toBeVisible();
@@ -113,11 +134,17 @@ test.describe("marketing mobile menu — scroll-lock + sticky header under the g
     // open, then confirm the page didn't move. A real scroll-lock (Radix's
     // own, via react-remove-scroll) intercepts this; our global rule doing
     // something unexpected to html/body would show up here as a discrepancy.
+    // expect.poll, not a single synchronous read right after the wheel event
+    // (review's finding: the read could race the scroll effect) — a poll
+    // that already matches on its first check still passes immediately, so
+    // this doesn't weaken the "never moved" claim, it just stops a fast
+    // browser turning a real race into a false pass.
     await page.mouse.wheel(0, 300);
-    const scrollYWhileOpen = await page.evaluate(() => window.scrollY);
-    expect(scrollYWhileOpen, "background scrolled while the mobile sheet was open").toBe(
-      scrollYBeforeOpen,
-    );
+    await expect
+      .poll(() => page.evaluate(() => window.scrollY), {
+        message: "background scrolled while the mobile sheet was open",
+      })
+      .toBe(scrollYBaseline);
 
     // The sheet itself must not introduce new horizontal overflow either.
     await assertNoOverflow(page, "marketing mobile menu — sheet open, scrolled");
@@ -130,16 +157,18 @@ test.describe("marketing mobile menu — scroll-lock + sticky header under the g
     // time, must still be visible/functional afterward (a broken sticky
     // context after a lock/unlock cycle would show up as either the header
     // disappearing or the page failing to scroll further).
-    const scrollYAfterClose = await page.evaluate(() => window.scrollY);
-    expect(scrollYAfterClose, "scroll position lost or altered by opening/closing the sheet").toBe(
-      scrollYBeforeOpen,
-    );
+    await expect
+      .poll(() => page.evaluate(() => window.scrollY), {
+        message: "scroll position lost or altered by opening/closing the sheet",
+      })
+      .toBe(scrollYBaseline);
     await expect(page.locator(".site-header")).toBeVisible();
     await page.mouse.wheel(0, 300);
-    const scrollYAfterFurtherScroll = await page.evaluate(() => window.scrollY);
-    expect(
-      scrollYAfterFurtherScroll,
-      "page can no longer scroll after the sheet was opened and closed — scroll-lock stuck",
-    ).toBeGreaterThan(scrollYAfterClose);
+    await expect
+      .poll(() => page.evaluate(() => window.scrollY), {
+        message:
+          "page can no longer scroll after the sheet was opened and closed — scroll-lock stuck",
+      })
+      .toBeGreaterThan(scrollYBaseline);
   });
 });
