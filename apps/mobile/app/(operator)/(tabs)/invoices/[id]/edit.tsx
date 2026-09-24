@@ -38,6 +38,7 @@ import {
   hasUnsavedInvoiceLineEdits,
   type InvoiceEditSnapshot,
 } from "../../../../../lib/discard-guard";
+import { hydratedLineTax } from "../../../../../lib/invoice-edit-tax";
 
 /**
  * Invoice edit screen — DRAFT-only, mirroring web's invoices/[id]/edit page.
@@ -114,7 +115,9 @@ export default function EditInvoiceScreen() {
   useEffect(() => {
     if (!invoice || invoice.status !== "DRAFT" || hydratedFor.current === invoice.id) return;
     hydratedFor.current = invoice.id;
-    const hydratedLines = (invoice.items ?? []).map((it) => ({
+    // B294 (SA-141): a legacy invoice's 0-rate lines load at its verified inferred rate.
+    const lineTax = hydratedLineTax(invoice);
+    const hydratedLines = (invoice.items ?? []).map((it, i) => ({
       key: newKey(),
       productId: it.productId ?? null,
       description: it.description,
@@ -124,8 +127,7 @@ export default function EditInvoiceScreen() {
       unitsPerBox: it.unitsPerBox ?? null,
       unitPrice: Number(it.unitPrice),
       discount: it.discount != null && Number(it.discount) > 0 ? Number(it.discount) : null,
-      taxRate: Number(it.taxRate ?? 0),
-      taxable: Number(it.taxRate ?? 0) > 0,
+      ...lineTax[i],
       note: it.notes ?? "",
       promoFreeUnits: it.promoFreeUnits ?? null,
       promoBaseUnits: it.promoFreeUnits
