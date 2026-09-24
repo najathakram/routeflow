@@ -24,19 +24,20 @@ cold from the issue alone. Sessions forget; issues don't.
 
 ## Statuses (derived)
 
-| Status | Meaning (what the reconciler looks at) |
-|---|---|
-| Inbox | open, labelled `needs-triage` |
-| Ready | triaged, no assignee |
-| In progress | assigned, with a branch or a draft PR |
-| In review | its PR is marked ready for review |
-| Blocked | labelled `blocked:owner` or `blocked` (say what it waits on in a comment) |
-| Done | closed (its PR merged) |
+| Status      | Meaning (what the reconciler looks at)                                    |
+| ----------- | ------------------------------------------------------------------------- |
+| Inbox       | open, labelled `needs-triage`                                             |
+| Ready       | triaged, no assignee                                                      |
+| In progress | assigned, with a branch or a draft PR                                     |
+| In review   | its PR is marked ready for review                                         |
+| Blocked     | labelled `blocked:owner` or `blocked` (say what it waits on in a comment) |
+| Done        | closed (its PR merged)                                                    |
 
 ## Intake: anyone, any wording
 
 Open an issue with one sentence, from your phone if you like, using the **Quick ask** template.
 It gets `needs-triage`. The intake agent picks it up on its next sweep and:
+
 1. searches open issues and PRs for a duplicate, and links to it if one exists;
 2. finds the area and the files from the code map;
 3. sets the kind, severity, priority, lane and release;
@@ -45,12 +46,12 @@ It gets `needs-triage`. The intake agent picks it up on its next sweep and:
 
 ## Priority = severity × urgency
 
-| Severity \ urgency | Now (customers hit it) | Soon (this release) | Later |
-|---|---|---|---|
-| critical (money/data loss, outage) | **P0** | P1 | P1 |
-| high (wrong result, workaround exists) | P1 | P1 | P2 |
-| medium | P2 | P2 | P3 |
-| low | P3 | P3 | P3 |
+| Severity \ urgency                     | Now (customers hit it) | Soon (this release) | Later |
+| -------------------------------------- | ---------------------- | ------------------- | ----- |
+| critical (money/data loss, outage)     | **P0**                 | P1                  | P1    |
+| high (wrong result, workaround exists) | P1                     | P1                  | P2    |
+| medium                                 | P2                     | P2                  | P3    |
+| low                                    | P3                     | P3                  | P3    |
 
 - **P0:** drop everything; a hotfix lane takes it immediately.
 - **P1:** this week's cycle.
