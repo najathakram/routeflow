@@ -252,6 +252,7 @@ async function buildPlan(client, ops, overBudgetReason) {
       const body = { name: op.name };
       if (op.state !== undefined) body.state = resolveStateId(ctx, op.state, index);
       if (op.priority !== undefined) body.priority = op.priority;
+      if (op.target_date !== undefined) body.target_date = op.target_date;
       if (op.description_html !== undefined) body.description_html = op.description_html;
       if (op.labels !== undefined) body.labels = resolveLabelIds(ctx, op.labels, index);
       if (op.type !== undefined) {

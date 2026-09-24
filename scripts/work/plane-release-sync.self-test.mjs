@@ -9,7 +9,9 @@
 // end) is run separately, by hand, per the task's own instructions.
 import {
   autoMatchReleaseRef,
+  buildReleaseCreateOp,
   buildReleaseOps,
+  buildReleasePlanForMilestone,
   computeAtRisk,
   computeReleaseSnapshot,
   countRealSyncsToday,
@@ -18,9 +20,12 @@ import {
   diffRelease,
   escapeHtml,
   extractFeatureKey,
+  findByExactReleaseName,
   formatDate,
   formatDescriptionLine,
+  generateReleaseName,
   loadMapping,
+  parseReleaseMilestoneTitle,
   resolveReleaseRef,
   upsertReleaseLine,
 } from "./plane-release-sync.mjs";
@@ -317,6 +322,105 @@ check(
     }),
     "ROAD-200",
   );
+  check(
+    "resolveReleaseRef: a snapshot-recorded ref wins over auto-match/exact-name",
+    resolveReleaseRef({
+      milestoneTitle: "R1",
+      topLevelItems: topLevel,
+      releaseOverrides: {},
+      snapshotReleaseRef: "ROAD-500",
+    }),
+    "ROAD-500",
+  );
+  check(
+    "resolveReleaseRef: a snapshot ref survives even if the item's name later changed (no exact/auto match)",
+    resolveReleaseRef({
+      milestoneTitle: "R2 — Lite",
+      topLevelItems: [{ sequence_id: 7, name: "Renamed by a human" }],
+      releaseOverrides: {},
+      snapshotReleaseRef: "ROAD-7",
+    }),
+    "ROAD-7",
+  );
+}
+
+// ── parseReleaseMilestoneTitle / generateReleaseName / findByExactReleaseName
+{
+  check("parseReleaseMilestoneTitle: bare 'R1'", parseReleaseMilestoneTitle("R1"), {
+    id: "1",
+    rest: "",
+  });
+  check(
+    "parseReleaseMilestoneTitle: 'R1.1 — follow-ups'",
+    parseReleaseMilestoneTitle("R1.1 — follow-ups"),
+    {
+      id: "1.1",
+      rest: "follow-ups",
+    },
+  );
+  check("parseReleaseMilestoneTitle: 'R2 — Lite'", parseReleaseMilestoneTitle("R2 — Lite"), {
+    id: "2",
+    rest: "Lite",
+  });
+  check(
+    "parseReleaseMilestoneTitle: 'R3 — CRM + K-hub'",
+    parseReleaseMilestoneTitle("R3 — CRM + K-hub"),
+    {
+      id: "3",
+      rest: "CRM + K-hub",
+    },
+  );
+  check(
+    "parseReleaseMilestoneTitle: plain hyphen also accepted",
+    parseReleaseMilestoneTitle("R2 - Lite"),
+    {
+      id: "2",
+      rest: "Lite",
+    },
+  );
+  check(
+    "parseReleaseMilestoneTitle: not a release title -> null",
+    parseReleaseMilestoneTitle("F-01 · Sell and edit orders by unit"),
+    null,
+  );
+
+  check("generateReleaseName: bare 'R1' -> 'Release 1'", generateReleaseName("R1"), "Release 1");
+  check(
+    "generateReleaseName: matches the lead's own example exactly",
+    generateReleaseName("R1.1 — follow-ups"),
+    "Release 1.1 — follow-ups",
+  );
+  check("generateReleaseName: 'R2 — Lite'", generateReleaseName("R2 — Lite"), "Release 2 — Lite");
+  check(
+    "generateReleaseName: 'R3 — CRM + K-hub'",
+    generateReleaseName("R3 — CRM + K-hub"),
+    "Release 3 — CRM + K-hub",
+  );
+  check(
+    "generateReleaseName: non-release title -> null",
+    generateReleaseName("Bug-register burn-down"),
+    null,
+  );
+
+  const topLevel = [
+    { sequence_id: 96, name: "Release 1 — compressed (ships Tue 22 Sep 14:00Z)" },
+    { sequence_id: 200, name: "Release 1.1 — follow-ups" },
+  ];
+  check(
+    "findByExactReleaseName: finds an item this tool created (exact name)",
+    findByExactReleaseName("R1.1 — follow-ups", topLevel),
+    "ROAD-200",
+  );
+  check(
+    "findByExactReleaseName: a PREFIX match (ROAD-96) is not an exact match for a different milestone",
+    findByExactReleaseName("R2 — Lite", topLevel),
+    null,
+  );
+  check(
+    "findByExactReleaseName: no match at all -> null",
+    findByExactReleaseName("R3 — CRM + K-hub", topLevel),
+    null,
+  );
 }
 
 // ── formatDescriptionLine / upsertReleaseLine ────────────────────────────
@@ -491,6 +595,147 @@ check(
     reopenedOps.unmappedFeatures,
     [],
   );
+}
+
+// ── buildReleaseCreateOp / buildReleasePlanForMilestone (the create-when-
+// missing path, and the create-then-reuse scenario the lead specifically
+// asked to be self-tested: no duplicate create on a second run) ───────────
+{
+  const openNoProgress = {
+    number: 2,
+    title: "R1.1 — follow-ups",
+    htmlUrl: "https://github.com/najathakram/routeflow/milestone/2",
+    state: "open",
+    dueOn: "2026-09-25T00:00:00Z",
+    total: 4,
+    closed: 0,
+    open: 4,
+    percentDone: 0,
+    atRisk: true,
+    features: {},
+  };
+
+  const createOp = buildReleaseCreateOp({
+    milestoneTitle: "R1.1 — follow-ups",
+    current: openNoProgress,
+  });
+  check(
+    "buildReleaseCreateOp: op/project/name",
+    { op: createOp.op, project: createOp.project, name: createOp.name },
+    {
+      op: "create",
+      project: "ROAD",
+      name: "Release 1.1 — follow-ups",
+    },
+  );
+  check("buildReleaseCreateOp: NO type field (paid-tier)", "type" in createOp, false);
+  check("buildReleaseCreateOp: target_date from the due date", createOp.target_date, "2026-09-25");
+  check("buildReleaseCreateOp: open, no progress yet -> Backlog", createOp.state, "Backlog");
+  checkTrue(
+    "buildReleaseCreateOp: description carries the marker line",
+    createOp.description_html.includes('data-plane-release-sync="1"'),
+  );
+
+  check(
+    "buildReleaseCreateOp: open WITH progress -> In progress (best-effort 'started')",
+    buildReleaseCreateOp({
+      milestoneTitle: "R1.1 — follow-ups",
+      current: { ...openNoProgress, percentDone: 25 },
+    }).state,
+    "In progress",
+  );
+  check(
+    "buildReleaseCreateOp: closed milestone -> Done",
+    buildReleaseCreateOp({
+      milestoneTitle: "R1.1 — follow-ups",
+      current: { ...openNoProgress, state: "closed" },
+    }).state,
+    "Done",
+  );
+  check(
+    "buildReleaseCreateOp: a title that isn't 'R<N>' at all -> null (nothing sensible to create)",
+    buildReleaseCreateOp({ milestoneTitle: "Some other thing", current: openNoProgress }),
+    null,
+  );
+
+  const noChangeDiff = {
+    changed: true,
+    majorRelease: false,
+    reasons: ["atRisk false -> true"],
+    closedOrReopened: [],
+  };
+
+  // FIRST RUN: no Plane item found anywhere (override/snapshot/auto-match/
+  // exact-name all miss) -> the dispatcher queues exactly one `create`.
+  const firstRun = buildReleasePlanForMilestone({
+    milestoneTitle: "R1.1 — follow-ups",
+    current: openNoProgress,
+    diff: noChangeDiff,
+    releaseRef: null,
+    currentDescriptionHtml: "",
+    mappingFeatures: {},
+  });
+  check("buildReleasePlanForMilestone (1st run): exactly one op", firstRun.ops.length, 1);
+  check("buildReleasePlanForMilestone (1st run): it's a create", firstRun.ops[0].op, "create");
+  check("buildReleasePlanForMilestone (1st run): created=true", firstRun.created, true);
+
+  // SECOND RUN: the item now exists (as if the first run's create succeeded
+  // and either the snapshot recorded its ref, or findByExactReleaseName()
+  // re-discovers it live) -> resolveReleaseRef finds it, so the dispatcher
+  // takes the UPDATE path instead — never a second create.
+  const nowExists = [{ sequence_id: 201, name: "Release 1.1 — follow-ups", description_html: "" }];
+  const rediscoveredRef = resolveReleaseRef({
+    milestoneTitle: "R1.1 — follow-ups",
+    topLevelItems: nowExists,
+    releaseOverrides: {},
+    snapshotReleaseRef: null,
+  });
+  check(
+    "create-then-reuse: second run re-discovers the SAME item by exact name",
+    rediscoveredRef,
+    "ROAD-201",
+  );
+  const secondRun = buildReleasePlanForMilestone({
+    milestoneTitle: "R1.1 — follow-ups",
+    current: openNoProgress,
+    diff: noChangeDiff,
+    releaseRef: rediscoveredRef,
+    currentDescriptionHtml: "",
+    mappingFeatures: {},
+  });
+  check("create-then-reuse: second run produces NO create op", secondRun.created, false);
+  checkTrue(
+    "create-then-reuse: second run's ops are all update/comment, never create",
+    secondRun.ops.every((op) => op.op !== "create"),
+  );
+  check(
+    "create-then-reuse: second run targets the discovered ref, not a new one",
+    secondRun.ops[0].ref,
+    "ROAD-201",
+  );
+
+  // Same idea, but via a snapshot-recorded ref instead of a live exact-name
+  // scan (the OTHER re-discovery path the lead asked for).
+  const viaSnapshot = resolveReleaseRef({
+    milestoneTitle: "R1.1 — follow-ups",
+    topLevelItems: [],
+    releaseOverrides: {},
+    snapshotReleaseRef: "ROAD-201",
+  });
+  check(
+    "create-then-reuse: a snapshot-recorded ref also prevents a second create",
+    viaSnapshot,
+    "ROAD-201",
+  );
+  const thirdRun = buildReleasePlanForMilestone({
+    milestoneTitle: "R1.1 — follow-ups",
+    current: openNoProgress,
+    diff: noChangeDiff,
+    releaseRef: viaSnapshot,
+    currentDescriptionHtml: "",
+    mappingFeatures: {},
+  });
+  check("create-then-reuse (via snapshot ref): still no create op", thirdRun.created, false);
 }
 
 // ── loadMapping ───────────────────────────────────────────────────────────

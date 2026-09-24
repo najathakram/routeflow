@@ -19,23 +19,28 @@
 // plane-apply's `update` op has no field to stamp them (only
 // state/priority/target_date/name/description_html/labels/parent/assignee).
 // So this tool resolves the GitHub<->Plane bridge two ways, in order:
-//   1. RELEASES, automatically: a milestone titled exactly "R<N>" (no
-//      suffix) is matched against ROAD's own TOP-LEVEL items (parent=null)
-//      whose name starts with "Release <N>" — the one naming convention
-//      already proven live (ROAD-96 for "R1"). A milestone with a suffix
-//      ("R1.1 — follow-ups", "R2 — Lite", "R3 — CRM + K-hub") is NOT
-//      auto-matched — there is no "Release 1.1"/"Release 2"/"Release 3" item
-//      in ROAD yet, and guessing one from the major version number alone
-//      would let two distinct milestones fight over one Plane item's
-//      description/comments. `releaseOverrides` in plane-release-map.json
-//      lets a human pin one explicitly once such an item exists.
+//   1. RELEASES: a milestone titled exactly "R<N>" (no suffix) is
+//      auto-matched against ROAD's own TOP-LEVEL items (parent=null) whose
+//      name starts with "Release <N>" — the naming convention already
+//      proven live (ROAD-96 for "R1"). `releaseOverrides` in
+//      plane-release-map.json lets a human pin one explicitly. When NEITHER
+//      finds an item (true today for R1.1/R2/R3 — no "Release 1.1"/"Release
+//      2"/"Release 3" item exists), this tool DOES create one — a single
+//      plane-apply `create` op, no `type` (paid-tier), named exactly
+//      "Release <id> — <rest>" (buildReleaseCreateOp/generateReleaseName;
+//      e.g. "Release 1.1 — follow-ups"). Every LATER run re-discovers that
+//      same item first — by the ref this tool records in the snapshot after
+//      creating it, and independently by that exact generated name
+//      (findByExactReleaseName) even if the snapshot is lost — so a release
+//      is created AT MOST ONCE, never duplicated.
 //   2. FEATURES, by a human-curated map keyed by GitHub issue NUMBER, in
 //      plane-release-map.json (checked into git, small, editable) — every
 //      current ROAD-9x child's description was read and compared against
 //      its matching GitHub issue's title/body by hand (2026-09-24) to seed
 //      the 7 high-confidence entries that exist today. A feature with no
-//      entry is reported as unmapped, never guessed, never used to create a
-//      new Plane item (this tool never creates work items).
+//      entry is reported as unmapped, never guessed, and — unlike a release
+//      — never created either: only a release's own top-level tracking item
+//      gets auto-created; a feature always needs a human to add the mapping.
 //
 // CHANGE DETECTION: per release, compare the freshly computed snapshot
 // against `local-assets/work/plane-release-state.json` — the state as of
@@ -56,8 +61,9 @@
 // (one log line still gets written every run, per-run, regardless of
 // decision — "quiet" means stdout, not the log).
 //
-// NEVER: creates a Plane work item, deletes anything, touches
-// BUGS/OPS/DECIDE/CLIENT, or writes Plane any way other than through
+// NEVER: creates a work item for a FEATURE (only a release's own top-level
+// item, and only at most once — see RELEASES above), deletes anything,
+// touches BUGS/OPS/DECIDE/CLIENT, or writes Plane any way other than through
 // plane-apply's `runApply()`.
 import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -256,9 +262,60 @@ export function autoMatchReleaseRef(milestoneTitle, topLevelItems) {
   return hit ? `ROAD-${hit.sequence_id}` : null;
 }
 
-export function resolveReleaseRef({ milestoneTitle, topLevelItems, releaseOverrides = {} }) {
+// "R1" / "R1.1 — follow-ups" / "R2 — Lite" / "R3 — CRM + K-hub" -> {id, rest}
+// (id keeps any ".N" suffix; rest is "" for a bare "R<N>"). Accepts either an
+// em dash or a plain hyphen as the separator, matching how these titles have
+// been written in this repo so far.
+const RELEASE_TITLE_RE = /^R(\d+(?:\.\d+)?)\s*(?:[—-]\s*(.*))?$/;
+
+export function parseReleaseMilestoneTitle(title) {
+  const m = RELEASE_TITLE_RE.exec(String(title ?? "").trim());
+  if (!m) return null;
+  return { id: m[1], rest: (m[2] ?? "").trim() };
+}
+
+// The exact name this tool gives a release item IT creates — e.g. "Release
+// 1.1 — follow-ups" for milestone "R1.1 — follow-ups", or plain "Release 1"
+// for a bare "R1". Returns null for a title that doesn't follow the R<N>
+// convention at all (nothing sensible to create).
+export function generateReleaseName(milestoneTitle) {
+  const parsed = parseReleaseMilestoneTitle(milestoneTitle);
+  if (!parsed) return null;
+  return parsed.rest ? `Release ${parsed.id} — ${parsed.rest}` : `Release ${parsed.id}`;
+}
+
+// Finds an existing ROAD top-level item whose name is EXACTLY what this tool
+// would generate for `milestoneTitle` — the live, always-correct way to
+// re-discover an item this tool created on a PRIOR run (no reliance on a
+// cached ref that could go stale if the snapshot file is lost/reset). This
+// is what makes create-then-reuse safe: a second run never queues a second
+// `create` for the same milestone, because it finds the first one here.
+export function findByExactReleaseName(milestoneTitle, topLevelItems) {
+  const name = generateReleaseName(milestoneTitle);
+  if (!name) return null;
+  const hit = (topLevelItems ?? []).find((it) => (it.name ?? "").trim() === name);
+  return hit ? `ROAD-${hit.sequence_id}` : null;
+}
+
+// Resolution order: a human's explicit pin, THEN a ref this tool itself
+// recorded in the snapshot after creating the item (see runReleaseSync()'s
+// post-apply re-discovery step — survives a later rename of the Plane item),
+// THEN the "R1"-style prefix auto-match against ROAD-96's own naming
+// precedent, THEN an exact match against the name this tool would itself
+// generate (catches "we created it, but the snapshot never got the ref" —
+// e.g. a dry-run/self-test scenario, or a lost/reset snapshot file).
+export function resolveReleaseRef({
+  milestoneTitle,
+  topLevelItems,
+  releaseOverrides = {},
+  snapshotReleaseRef = null,
+}) {
   return (
-    releaseOverrides[milestoneTitle] ?? autoMatchReleaseRef(milestoneTitle, topLevelItems) ?? null
+    releaseOverrides[milestoneTitle] ??
+    snapshotReleaseRef ??
+    autoMatchReleaseRef(milestoneTitle, topLevelItems) ??
+    findByExactReleaseName(milestoneTitle, topLevelItems) ??
+    null
   );
 }
 
@@ -280,15 +337,39 @@ export function upsertReleaseLine(currentHtml, lineHtml) {
   return base ? `${base}\n${lineHtml}` : lineHtml;
 }
 
-// Builds the ops for ONE changed, Plane-mapped release: one `update` (the
-// upserted description line, + target_date, + state:"Done" only when the
-// milestone itself just closed — an OPEN release's Plane state is left
-// alone so this never fights a human's own "move to In Progress"), one
-// `comment` summarizing the diff, and one `update` per feature that just
-// closed AND has a mapping (`mappingFeatures`, keyed by GitHub issue
-// number). A closed feature with NO mapping is never guessed at — it goes
-// into `unmappedFeatures` for the report instead, per the task's own rule
-// ("if none can be found, don't create items, list them in the report").
+// One `update` per feature that just closed AND has a mapping
+// (`mappingFeatures`, keyed by GitHub issue number). A closed feature with NO
+// mapping is never guessed at — it goes into `unmappedFeatures` for the
+// report instead, per the task's own rule ("if none can be found, don't
+// create items, list them in the report"). Independent of whether the
+// release's OWN Plane item exists yet — a feature's mapping is to its own
+// separate Plane item, unaffected by buildReleaseOps() vs
+// buildReleaseCreateOp() below.
+function buildFeatureOps(diff, mappingFeatures) {
+  const ops = [];
+  const unmappedFeatures = [];
+  for (const change of diff.closedOrReopened) {
+    if (change.to !== "CLOSED") continue;
+    const mapped = mappingFeatures[String(change.number)];
+    if (!mapped) {
+      unmappedFeatures.push({
+        key: change.key,
+        number: change.number,
+        reason: "no Plane item mapped",
+      });
+      continue;
+    }
+    ops.push({ op: "update", ref: mapped.road, set: { state: "Done" } });
+  }
+  return { ops, unmappedFeatures };
+}
+
+// Builds the ops for ONE changed release that ALREADY has a Plane item: one
+// `update` (the upserted description line, + target_date, + state:"Done"
+// only when the milestone itself just closed — an OPEN release's Plane
+// state is left alone so this never fights a human's own "move to In
+// Progress"), one `comment` summarizing the diff, then buildFeatureOps()'s
+// per-feature updates.
 export function buildReleaseOps({
   releaseRef,
   current,
@@ -316,21 +397,73 @@ export function buildReleaseOps({
     html: `<p>Release sync: ${escapeHtml(summary)}. Now ${current.closed}/${current.total} features done${current.atRisk ? " — AT RISK" : ""}.</p>`,
   });
 
-  const unmappedFeatures = [];
-  for (const change of diff.closedOrReopened) {
-    if (change.to !== "CLOSED") continue;
-    const mapped = mappingFeatures[String(change.number)];
-    if (!mapped) {
-      unmappedFeatures.push({
-        key: change.key,
-        number: change.number,
-        reason: "no Plane item mapped",
-      });
-      continue;
-    }
-    ops.push({ op: "update", ref: mapped.road, set: { state: "Done" } });
+  const featureOps = buildFeatureOps(diff, mappingFeatures);
+  return { ops: [...ops, ...featureOps.ops], unmappedFeatures: featureOps.unmappedFeatures };
+}
+
+// Builds the ONE `create` op for a release that has NO Plane item at all
+// yet — no `type` (a paid-tier Plane feature this workspace's plan doesn't
+// have), description = the same marked GitHub line buildReleaseOps() would
+// upsert (nothing to preserve on a brand-new item), target_date = the due
+// date (plane-apply's `create` accepts this — see plane-apply.mjs T403),
+// and state:
+//   - "Done" when the milestone is already closed,
+//   - "In progress" when it's open and at least one feature has already
+//     closed (best-effort "started" signal — this ROAD project carries two
+//     same-named "In progress" states, a known, pre-existing ambiguity
+//     ROAD-96's own description flags; which duplicate wins is outside this
+//     tool's control),
+//   - "Backlog" otherwise (an open release nothing has touched yet — the
+//     same default ROAD-96 itself was left at).
+// Returns null when the milestone title doesn't follow the "R<N>"
+// convention at all (nothing sensible to create).
+export function buildReleaseCreateOp({ milestoneTitle, current }) {
+  const name = generateReleaseName(milestoneTitle);
+  if (!name) return null;
+  const description_html = formatDescriptionLine({
+    htmlUrl: current.htmlUrl,
+    closed: current.closed,
+    total: current.total,
+    dueOn: current.dueOn,
+  });
+  const op = { op: "create", project: ROAD_PROJECT_IDENTIFIER, name, description_html };
+  const targetDate = formatDate(current.dueOn);
+  if (targetDate) op.target_date = targetDate;
+  if (current.state === "closed") op.state = "Done";
+  else if (current.percentDone > 0) op.state = "In progress";
+  else op.state = "Backlog";
+  return op;
+}
+
+// The per-milestone dispatcher: an already-mapped release takes the
+// buildReleaseOps() update path; an unmapped one gets a single
+// buildReleaseCreateOp() `create` instead (never both, never a second create
+// once the item exists — see findByExactReleaseName()/resolveReleaseRef()).
+// Feature updates run either way. `created` tells the caller whether this
+// release's ref needs re-discovering after a successful real apply (see
+// runReleaseSync()).
+export function buildReleasePlanForMilestone({
+  milestoneTitle,
+  current,
+  diff,
+  releaseRef,
+  currentDescriptionHtml,
+  mappingFeatures = {},
+}) {
+  if (releaseRef) {
+    const built = buildReleaseOps({
+      releaseRef,
+      current,
+      diff,
+      currentDescriptionHtml,
+      mappingFeatures,
+    });
+    return { ops: built.ops, unmappedFeatures: built.unmappedFeatures, created: false };
   }
-  return { ops, unmappedFeatures };
+  const createOp = buildReleaseCreateOp({ milestoneTitle, current });
+  const featureOps = buildFeatureOps(diff, mappingFeatures);
+  const ops = createOp ? [createOp, ...featureOps.ops] : featureOps.ops;
+  return { ops, unmappedFeatures: featureOps.unmappedFeatures, created: Boolean(createOp) };
 }
 
 // Normalizes a parsed plane-release-map.json into {releaseOverrides,
@@ -529,6 +662,7 @@ export async function runReleaseSync({
       milestoneTitle: milestone.title,
       topLevelItems,
       releaseOverrides: mapping.releaseOverrides,
+      snapshotReleaseRef: snapshot.releases?.[milestone.title]?.releaseRef ?? null,
     });
     releases[milestone.title] = { current, diff, releaseRef };
     if (diff.changed) anyChanged = true;
@@ -561,11 +695,15 @@ export async function runReleaseSync({
 
   if (!throttle.proceed) return result;
 
-  // Build the combined plan across every changed (or force-all'd), mapped
-  // release. A changed release with NO Plane item found is reported, never
-  // guessed — see resolveReleaseRef()/autoMatchReleaseRef().
+  // Build the combined plan across every changed (or force-all'd) release.
+  // One that has no Plane item yet gets a `create` (buildReleaseCreateOp,
+  // via the dispatcher) instead of being merely reported — see the file
+  // header comment. `releasePlans` is kept per-title so the post-apply
+  // re-discovery step below knows which releases were just CREATED (and so
+  // need their new ref looked up) versus already had one.
   const ops = [];
   const unmappedFeatures = [];
+  const releasePlans = {};
   const consideredReleases = forceAll
     ? Object.keys(releases)
     : Object.entries(releases)
@@ -574,24 +712,27 @@ export async function runReleaseSync({
 
   for (const title of consideredReleases) {
     const { current, diff, releaseRef } = releases[title];
-    if (!releaseRef) {
-      result.unmappedReleases.push({
-        title,
-        reason: "no Plane item found (see autoMatchReleaseRef / releaseOverrides)",
-      });
-      continue;
-    }
-    const seq = Number(releaseRef.split("-")[1]);
-    const item = itemBySeq.get(seq);
-    const built = buildReleaseOps({
-      releaseRef,
+    const item = releaseRef ? itemBySeq.get(Number(releaseRef.split("-")[1])) : null;
+    const built = buildReleasePlanForMilestone({
+      milestoneTitle: title,
       current,
       diff,
+      releaseRef,
       currentDescriptionHtml: item?.description_html ?? "",
       mappingFeatures: mapping.features,
     });
+    releasePlans[title] = built;
     ops.push(...built.ops);
     unmappedFeatures.push(...built.unmappedFeatures.map((u) => ({ ...u, release: title })));
+    if (!releaseRef && !built.created) {
+      // The milestone title doesn't follow the "R<N>" convention at all
+      // (generateReleaseName() returned null) — nothing sensible to create,
+      // never guessed.
+      result.unmappedReleases.push({
+        title,
+        reason: "no Plane item found and no sensible name to create (see resolveReleaseRef)",
+      });
+    }
   }
 
   result.plan = { ops, unmappedFeatures };
@@ -612,16 +753,35 @@ export async function runReleaseSync({
 
     // SNAPSHOT PERSISTENCE: only a REAL (`dryRun===false`), successful
     // (`exitCode===0`) apply advances the baseline, and only for the
-    // releases actually included in this run's plan (mapped + changed). A
-    // dry-run preview, a throttled/no-op skip, or a failed apply all leave
-    // the snapshot untouched, so the SAME change keeps showing as "changed"
-    // (and keeps getting reported) on every future run until it is actually
-    // synced — see the file header comment for why this reads "last SYNCED
-    // snapshot" literally rather than "last observed".
+    // releases actually included in this run's plan. A dry-run preview, a
+    // throttled/no-op skip, or a failed apply all leave the snapshot
+    // untouched, so the SAME change keeps showing as "changed" (and keeps
+    // getting reported) on every future run until it is actually synced —
+    // see the file header comment for why this reads "last SYNCED snapshot"
+    // literally rather than "last observed".
     if (!dryRun && applyResult.exitCode === 0) {
+      // A release this run just asked plane-apply to CREATE has no known
+      // ref yet — runApply()'s own return value carries no per-op result
+      // data (plane-apply.mjs only counts applied/deferred), so the only
+      // reliable way to learn the new item's ref is to ask Plane again, via
+      // the SAME exact-name match every future run already uses to detect
+      // "already created" (findByExactReleaseName) — belt-and-braces with
+      // recording it below, per the lead's ask.
+      const createdTitles = consideredReleases.filter((t) => releasePlans[t]?.created);
+      let refreshedTopLevel = topLevelItems;
+      if (createdTitles.length) {
+        const refreshedItems = await client.listAll(`projects/${project.id}/work-items/`, {
+          query: { per_page: "100" },
+        });
+        refreshedTopLevel = refreshedItems.filter((it) => !it.parent);
+      }
       const nextReleases = { ...(snapshot.releases ?? {}) };
       for (const title of consideredReleases) {
-        if (releases[title].releaseRef) nextReleases[title] = releases[title].current;
+        const plan = releasePlans[title];
+        if (!plan) continue;
+        let ref = releases[title].releaseRef;
+        if (!ref && plan.created) ref = findByExactReleaseName(title, refreshedTopLevel);
+        if (ref) nextReleases[title] = { ...releases[title].current, releaseRef: ref };
       }
       mkdirSync(workDir(), { recursive: true });
       writeFileSync(
@@ -672,7 +832,7 @@ function printHumanReport(result) {
   }
   if (result.plan.ops.length) {
     console.log(`  plan (${result.plan.ops.length} op(s)):`);
-    for (const op of result.plan.ops) console.log(`    - ${op.op} ${op.ref}`);
+    for (const op of result.plan.ops) console.log(`    - ${op.op} ${op.ref ?? op.name}`);
   }
   if (result.plan.unmappedFeatures.length) {
     console.log("  unmapped features (closed, no Plane item):");

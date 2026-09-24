@@ -195,6 +195,32 @@ async function main() {
     await server.close();
   }
 
+  // ── T403 — `create` accepts `target_date`, mirroring `update`'s existing
+  // `set.target_date`. Needed by scripts/work/plane-release-sync.mjs, which
+  // creates a ROAD release item with a due date on day one (no follow-up
+  // update in the same run can set it — the new item's ref isn't known until
+  // this create's own response).
+  {
+    const server = await startFakePlane({ workItems: { ROAD: [] } });
+    const stateDir = makeTmpDir();
+    const opsPath = writeOpsFile([
+      {
+        op: "create",
+        project: "ROAD",
+        name: "Release 2 — Lite",
+        state: "Backlog",
+        target_date: "2026-10-02",
+      },
+    ]);
+    const before = server.requests.length;
+    const { code } = await runCli([opsPath], { baseUrl: server.url, stateDir });
+    check("T403: create with target_date exits 0", code, 0);
+    const writes = writesSince(server, before);
+    check("T403: exactly one write", writes.length, 1);
+    check("T403: the POST body carries target_date", writes[0]?.body?.target_date, "2026-10-02");
+    await server.close();
+  }
+
   // ── T9 (5 phases) + T9b — shared fixture ──────────────────────────────────
   // ROAD-15 (In progress, group started — also T9b's archive target),
   // ROAD-68 (Backlog — the `create` op's `parent`), OPS-23 (Backlog),
