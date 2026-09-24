@@ -480,10 +480,16 @@ function spawnTriage(claudeBin, logPath) {
         TRIAGE_PROMPT,
         "--model",
         "sonnet",
+        // Default mode: in -p nothing outside --allowedTools can run. Triage only needs gh +
+        // reads; a file edit would dirty the runner checkout and break its next detach-sync.
         "--permission-mode",
-        "acceptEdits",
+        "default",
         "--allowedTools",
         ...TRIAGE_ALLOWED_TOOLS,
+        "--disallowedTools",
+        "Edit",
+        "Write",
+        "NotebookEdit",
         "--no-session-persistence",
       ],
       {
