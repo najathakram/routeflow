@@ -547,9 +547,14 @@ export default function EditInvoicePage() {
         router.push(`/invoices/${id}`);
       },
       onError: (err: any) => {
+        // A class-validator 400 carries `message` as a string[] when more than
+        // one constraint fails at once — join it into one readable sentence
+        // instead of handing the array straight to the toast (B788).
+        const message = err?.response?.data?.message;
         toast({
           title: "Failed to update invoice",
-          description: err?.response?.data?.message ?? "Please try again.",
+          description:
+            (Array.isArray(message) ? message.join("; ") : message) || "Please try again.",
           variant: "error",
         });
       },
