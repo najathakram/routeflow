@@ -118,6 +118,12 @@ export function buildManualInvoiceLines(
       // BUY_N_GET_M: free whole selling units come off the subtotal BEFORE pricing
       // (never a rounded net unit price). 0 for every other line.
       freeUnits = clampFreeUnits(item.promoFreeUnits, boxes, qty);
+      // B683: on a boxed product with no boxes/pieces split (`boxes == null`),
+      // `qty` here is the SELLING-UNIT (box) count, not a piece count — see
+      // computeLineSubtotal's own fallback-branch comment. `pieceQty` below
+      // converts this SAME `qty` to an actual piece count for the tax basis;
+      // don't confuse the two — this `qty` and that `pieceQty` disagree by a
+      // factor of `unitsPerBox` whenever the product is boxed and unsplit.
       const beforeDiscount = computeLineSubtotal({
         unitPrice: item.unitPrice,
         qty,

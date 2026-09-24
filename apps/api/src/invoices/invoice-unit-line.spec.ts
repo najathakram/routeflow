@@ -107,6 +107,19 @@ describe("buildInvoiceUnitLine — a manual invoice line sold by a non-pack unit
     expect(() => build({ qty: 99_999, unitPrice: 999_999 }, "Each")).toThrow(/total is over/);
   });
 
+  // B682/SA-145: the count/split/pricing math is now buildLine's unit axis —
+  // AmbiguousLineError must map to this endpoint's OWN pre-existing wording,
+  // not buildLine's own generic message, for both the non-integer and the
+  // non-positive count shape.
+  it("B682: a fractional or zero count keeps this endpoint's own wording after the buildLine migration", () => {
+    expect(() => build({ qty: 2.5 })).toThrow(
+      "A line sold by the Case needs a whole number of Case.",
+    );
+    expect(() => build({ qty: 0 })).toThrow(
+      "A line sold by the Case needs a whole number of Case.",
+    );
+  });
+
   it("only a unit-aware resolution is accepted (the pack stays on the caller's pack branch)", () => {
     expect(() =>
       buildInvoiceUnitLine({
