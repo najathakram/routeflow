@@ -15,6 +15,7 @@ import {
   stopAmountDue,
   sumOrderLineItems,
   sumStopOrders,
+  type RunMoneyPayableInvoice,
 } from "../lib/run-money";
 import { computeLineSubtotal, roundMoney } from "@routeflow/pricing";
 import { freeUnitSizeFor, reconciledTotal, type ShortPickLine } from "../lib/short-pick";
@@ -476,7 +477,7 @@ describe("REG-B810 earlierVisitsRemaining", () => {
  */
 describe("REG-B810 reconciledDoorDue (SA-130a)", () => {
   it("SA-130a's own repro: SENT 100 (no payments), no draft, short-picked to a reconciled estimate of 90 -> the invoice's OWN balanceDue (100), never ~190", () => {
-    const payableInvoices = [
+    const payableInvoices: RunMoneyPayableInvoice[] = [
       { id: "inv-1", status: "SENT", total: 100, balanceDue: 100, isDepositMirror: false },
     ];
     const due = reconciledDoorDue({
@@ -489,7 +490,7 @@ describe("REG-B810 reconciledDoorDue (SA-130a)", () => {
   });
 
   it("(a) an open draft exists: reconciledEstimate + Σ balanceDue over the non-DRAFT payables — the existing SA-125 shape, unchanged", () => {
-    const payableInvoices = [
+    const payableInvoices: RunMoneyPayableInvoice[] = [
       { id: "draft-1", status: "DRAFT", total: 50, balanceDue: 50, isDepositMirror: false },
       { id: "partial-1", status: "PARTIAL", total: 100, balanceDue: 60, isDepositMirror: false },
     ];
@@ -513,7 +514,7 @@ describe("REG-B810 reconciledDoorDue (SA-130a)", () => {
   it("(b) no open draft, the sole payable is a deposit mirror: reconciledEstimate minus what the mirror already collected", () => {
     // A SENT deposit mirror of 100 with 30 paid (balanceDue 70), short-picked
     // to a restated reconciledEstimate of 70 -> 70 - (100-70) = 40.
-    const payableInvoices = [
+    const payableInvoices: RunMoneyPayableInvoice[] = [
       { id: "mirror-1", status: "SENT", total: 100, balanceDue: 70, isDepositMirror: true },
     ];
     const due = reconciledDoorDue({
@@ -525,7 +526,7 @@ describe("REG-B810 reconciledDoorDue (SA-130a)", () => {
   });
 
   it("(b) an unpaid deposit mirror subtracts nothing — reconciledEstimate passes through unchanged", () => {
-    const payableInvoices = [
+    const payableInvoices: RunMoneyPayableInvoice[] = [
       { id: "mirror-1", status: "SENT", total: 100, balanceDue: 100, isDepositMirror: true },
     ];
     const due = reconciledDoorDue({ hasOpenDraft: false, reconciledEstimate: 60, payableInvoices });
@@ -533,7 +534,7 @@ describe("REG-B810 reconciledDoorDue (SA-130a)", () => {
   });
 
   it("(c) no open draft, a plain (non-mirror) payable: Σ balanceDue ONLY — the reconciled estimate is never added on top", () => {
-    const payableInvoices = [
+    const payableInvoices: RunMoneyPayableInvoice[] = [
       { id: "inv-1", status: "SENT", total: 100, balanceDue: 60, isDepositMirror: false },
     ];
     const due = reconciledDoorDue({
@@ -545,7 +546,7 @@ describe("REG-B810 reconciledDoorDue (SA-130a)", () => {
   });
 
   it("(c) sums MULTIPLE plain payables (a regulated split with no draft) rather than picking just one", () => {
-    const payableInvoices = [
+    const payableInvoices: RunMoneyPayableInvoice[] = [
       { id: "base", status: "SENT", total: 60, balanceDue: 60, isDepositMirror: false },
       { id: "base-R1", status: "PARTIAL", total: 40, balanceDue: 30, isDepositMirror: false },
     ];
@@ -558,7 +559,7 @@ describe("REG-B810 reconciledDoorDue (SA-130a)", () => {
   });
 
   it("SA-130b's exact repro: order 100, a 40 advance applied on the DRAFT, short-picked to an estimate of 90 -> the door shows 50, matching what recordDeliveryPaymentInTx collects (never the un-netted 90)", () => {
-    const payableInvoices = [
+    const payableInvoices: RunMoneyPayableInvoice[] = [
       { id: "draft-1", status: "DRAFT", total: 100, balanceDue: 60, isDepositMirror: false },
     ];
     const due = reconciledDoorDue({
@@ -570,7 +571,7 @@ describe("REG-B810 reconciledDoorDue (SA-130a)", () => {
   });
 
   it("fleet-lead round 2 pin (F2/B822): a $100 DRAFT with a $30 confirmed advance, short-picked to an estimate of $60 -> the door shows $30", () => {
-    const payableInvoices = [
+    const payableInvoices: RunMoneyPayableInvoice[] = [
       { id: "draft-1", status: "DRAFT", total: 100, balanceDue: 70, isDepositMirror: false },
     ];
     const due = reconciledDoorDue({
@@ -582,7 +583,7 @@ describe("REG-B810 reconciledDoorDue (SA-130a)", () => {
   });
 
   it("F2: the draft-already-paid subtraction composes with earlierVisitsRemaining over OTHER non-DRAFT payables", () => {
-    const payableInvoices = [
+    const payableInvoices: RunMoneyPayableInvoice[] = [
       { id: "draft-1", status: "DRAFT", total: 100, balanceDue: 70, isDepositMirror: false },
       { id: "sent-1", status: "SENT", total: 40, balanceDue: 40, isDepositMirror: false },
     ];
@@ -594,8 +595,34 @@ describe("REG-B810 reconciledDoorDue (SA-130a)", () => {
     expect(due).toBe(70); // 60 - (100-70) + 40
   });
 
+  it("Opus round 4: case (a) floors the draft-netted estimate at 0 -- draft 100 total, fully paid (balanceDue 0), short-picked to an estimate of 90 -> 0, never -10", () => {
+    const payableInvoices: RunMoneyPayableInvoice[] = [
+      { id: "draft-1", status: "DRAFT", total: 100, balanceDue: 0, isDepositMirror: false },
+    ];
+    const due = reconciledDoorDue({
+      hasOpenDraft: true,
+      reconciledEstimate: 90,
+      payableInvoices,
+    });
+    expect(due).toBe(0);
+    expect(due).not.toBeLessThan(0);
+  });
+
+  it("Opus round 4: a draft overpayment never offsets an unrelated SENT balance -- floors the draft term alone, then adds the SENT balance whole", () => {
+    const payableInvoices: RunMoneyPayableInvoice[] = [
+      { id: "draft-1", status: "DRAFT", total: 100, balanceDue: 0, isDepositMirror: false },
+      { id: "sent-1", status: "SENT", total: 50, balanceDue: 50, isDepositMirror: false },
+    ];
+    const due = reconciledDoorDue({
+      hasOpenDraft: true,
+      reconciledEstimate: 90,
+      payableInvoices,
+    });
+    expect(due).toBe(50); // max(0, 90-100) + 50 = 0 + 50, never 90-100+50=40
+  });
+
   it("F3: a PARTIAL mirror of $100 with $70 paid, restated to $50 -> floors at 0, never negative", () => {
-    const payableInvoices = [
+    const payableInvoices: RunMoneyPayableInvoice[] = [
       { id: "mirror-1", status: "PARTIAL", total: 100, balanceDue: 30, isDepositMirror: true },
     ];
     const due = reconciledDoorDue({
@@ -630,7 +657,7 @@ describe("REG-B810 reconciledDoorDue (SA-130a)", () => {
     // draft), yet payableInvoices still carries a DRAFT-status row -- must
     // still be summed, not excluded the way case (a)'s earlierVisitsRemaining
     // would exclude it.
-    const payableInvoices = [
+    const payableInvoices: RunMoneyPayableInvoice[] = [
       { id: "draft-1", status: "DRAFT", total: 40, balanceDue: 40, isDepositMirror: false },
       { id: "sent-1", status: "SENT", total: 60, balanceDue: 60, isDepositMirror: false },
     ];

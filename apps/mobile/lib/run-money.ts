@@ -8,6 +8,7 @@
  * proration) only when it doesn't. Pure — no React import — Jest-testable.
  */
 import { computeLineSubtotal, roundMoney } from "@routeflow/pricing";
+import type { InvoiceStatus } from "@routeflow/types";
 
 export interface RunMoneyLineItem {
   /** OrderItem id — the key `deliveredQtyById` (short-pick's `orderItemId`) uses. */
@@ -71,7 +72,7 @@ export interface RunMoneyInvoice {
  */
 export interface RunMoneyPayableInvoice {
   id: string;
-  status: string;
+  status: InvoiceStatus;
   total: number | string | null;
   balanceDue: number | string | null;
   /**
@@ -338,8 +339,13 @@ export function reconciledDoorDue(input: {
     const draftAlreadyPaid = payableInvoices
       .filter((i) => i.status === "DRAFT")
       .reduce((sum, i) => sum + alreadyPaidOn(i), 0);
+    // Round 3: floor the draft-netted estimate at 0 BEFORE adding
+    // earlierVisitsRemaining — a draft overpayment (an advance exceeding
+    // what THIS visit's re-derived estimate says is owed) must never bleed
+    // negative into (and silently discount) an unrelated SENT balance from
+    // an earlier visit.
     return roundMoney(
-      reconciledEstimate - draftAlreadyPaid + earlierVisitsRemaining(payableInvoices),
+      Math.max(0, reconciledEstimate - draftAlreadyPaid) + earlierVisitsRemaining(payableInvoices),
     );
   }
   const soleMirror =

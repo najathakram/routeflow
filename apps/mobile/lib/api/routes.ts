@@ -1,7 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "../api-client";
 import { invalidateOrderCaches } from "./orders";
-import type { RouteAnalysisResult, RouteSettings, StopETA } from "@routeflow/types";
+import type { InvoiceStatus, RouteAnalysisResult, RouteSettings, StopETA } from "@routeflow/types";
 export type { RouteAnalysisResult, RouteSettings, StopETA } from "@routeflow/types";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -76,7 +76,7 @@ export interface RouteRunOrder {
   // feeds). Never a client total-minus-payments — see run-money.ts#orderAmountDue.
   payableInvoices?: Array<{
     id: string;
-    status: string;
+    status: InvoiceStatus;
     total: number | string | null;
     balanceDue: number | string | null;
     isDepositMirror?: boolean;

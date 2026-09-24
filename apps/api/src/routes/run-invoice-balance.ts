@@ -90,6 +90,14 @@ export interface RunPayableInvoice {
   balanceDue: number;
   /** SA-102's WP-D1 shape — see the module doc above. */
   isDepositMirror: boolean;
+  // `deliveryBatchId` (fetched above for `isDepositMirror`'s detection) is
+  // deliberately NOT carried to this output shape: `payableInvoiceFindManyArgs`
+  // never gates on it (mirrors recordDeliveryPaymentInTx's own PAYABLE query
+  // exactly, SA-130a), so it plays no role in which invoices are included or
+  // in `balanceDue`'s formula — a batch-tagged SENT invoice is summed and
+  // collected identically to a non-batch one. Nothing downstream (mobile's
+  // run-money.ts) branches on it, so exposing it would be dead weight on the
+  // wire, not a correctness gap.
 }
 
 /**
