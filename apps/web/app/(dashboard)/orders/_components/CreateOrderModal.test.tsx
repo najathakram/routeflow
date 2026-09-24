@@ -551,34 +551,52 @@ describe("CreateOrderModal", () => {
       // "offline" and re-queued, and the RETRY of the resolver added the line again. The toast
       // itself is skipped on the scan screen (its own running rows would be buried by one per
       // repeat scan), so scheduleScannerRefocus — the one tail call that fires unconditionally —
-      // is what this pins throwing.
+      // is what this pins throwing. Fake timers, scoped to this one test: the bug's own re-queue
+      // schedules its next attempt ~10s out (backoffMs(2)), which real timers and a short waitFor
+      // cannot observe — the first version of this pin passed green against the unfixed code for
+      // exactly that reason (confirmed by reverting the fix and re-running it before this rewrite).
       it("SA-090f: a post-commit throw on a retry's merge still lands exactly one row, never re-queued", async () => {
-        mockResolveProductByCode.mockResolvedValueOnce(widget); // "111" live scan creates the line
-        mockResolveProductByCode.mockRejectedValueOnce(networkError()); // "222" (same product) queues
-        mockResolveProductByCode.mockResolvedValueOnce(widget); // "222"'s retry — merges
-        mockScheduleScannerRefocus.mockImplementationOnce(() => {
-          throw new Error("refocus boom");
-        });
-        await openScreen();
-        await scanCode("111");
-        await screen.findByText("Widget");
+        jest.useFakeTimers();
+        try {
+          mockResolveProductByCode.mockResolvedValueOnce(widget); // "111" live scan creates the line
+          mockResolveProductByCode.mockRejectedValueOnce(networkError()); // "222" (same product) queues
+          mockResolveProductByCode.mockResolvedValueOnce(widget); // "222"'s retry — merges
+          // scheduleScannerRefocus's 1st call is "111"'s own (create-branch) tail — must stay a
+          // no-op so the throw lands on the 2nd call, "222"'s retry (merge-branch) tail.
+          mockScheduleScannerRefocus.mockImplementationOnce(() => {});
+          mockScheduleScannerRefocus.mockImplementationOnce(() => {
+            throw new Error("refocus boom");
+          });
+          await openScreen();
+          await scanCode("111");
+          await screen.findByText("Widget");
 
-        await scanCode("222");
-        expect(await screen.findByLabelText("Waiting for signal")).toHaveTextContent("(1)");
+          await scanCode("222");
+          expect(await screen.findByLabelText("Waiting for signal")).toHaveTextContent("(1)");
 
-        await act(async () => {
-          window.dispatchEvent(new Event("online"));
-        });
+          await act(async () => {
+            window.dispatchEvent(new Event("online"));
+          });
 
-        // The merge landed (qty 2) despite the post-commit throw, and nothing re-queued it.
-        await waitFor(() => expect(screen.getByText("1 item · $19.98")).toBeInTheDocument(), {
-          timeout: 4000,
-        });
-        expect(screen.getAllByText("Widget")).toHaveLength(1);
-        expect(screen.queryByLabelText("Waiting for signal")).not.toBeInTheDocument();
-        // Exactly TWO lookups for "222" — the original (queued) live attempt plus ONE retry —
-        // never a THIRD, which would be the double-add this pin closes.
-        expect(mockResolveProductByCode.mock.calls.filter((c) => c[0] === "222")).toHaveLength(2);
+          // The merge landed (qty 2) despite the post-commit throw, and nothing re-queued it.
+          await waitFor(() => expect(screen.getByText("1 item · $19.98")).toBeInTheDocument());
+          expect(screen.getAllByText("Widget")).toHaveLength(1);
+          expect(screen.queryByLabelText("Waiting for signal")).not.toBeInTheDocument();
+
+          // Advance well past the bug's own ~10s re-queue backoff — if it wrongly re-queued, a
+          // second retry would be due and calls would climb to 3; a real fix has nothing left to
+          // retry, so this changes nothing.
+          await act(async () => {
+            await jest.advanceTimersByTimeAsync(20_000);
+          });
+
+          // Exactly TWO lookups for "222" — the original (queued) live attempt plus ONE retry —
+          // never a THIRD, which would be the double-add this pin closes.
+          expect(mockResolveProductByCode.mock.calls.filter((c) => c[0] === "222")).toHaveLength(2);
+          expect(screen.getAllByText("Widget")).toHaveLength(1);
+        } finally {
+          jest.useRealTimers();
+        }
       });
 
       it("SA-090/Opus item 1 REG: a LIVE scan racing an in-flight retry of the SAME product lands ONE row at qty 2, never two", async () => {
