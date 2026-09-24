@@ -113,6 +113,9 @@ is skipped and printed as `REFUSED`, never forced.
 - Every path handed to cmd is **absolute and backslashed** first, and a drive or share root is
   refused. `git worktree list` prints `C:/...` paths, and cmd reads a `/segment` as a switch, so an
   unnormalised `rmdir /s /q C:/.../s/q` could have turned into `rd /s /q C:`.
+  A `\\?\` or `\\.\` device prefix, a UNC path without a share, a `.` or `..` segment, a segment
+  ending in a dot or a space (Win32 strips those, so cmd would act on a different folder than the
+  guard approved), and control characters (cmd stops reading at a newline) are all refused.
 - "Did the link go?" is checked with `lstat`, never `existsSync`. `existsSync` follows the link, so a
   link that survived its unlink but points at a missing target would read as removed.
 

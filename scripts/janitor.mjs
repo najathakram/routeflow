@@ -380,7 +380,8 @@ export function safeRemoveTree(dir) {
 // holding a cmd metacharacter is refused before cmd ever sees it; a human deletes it by hand.
 // `,` `;` `=` too: for cmd's built-ins they separate arguments exactly like a space (and Node only
 // quotes a path containing a space, tab or quote), so `rmdir /s /q wt\a,b` removes `wt\a` and `b`.
-export const CMD_UNSAFE = /[&|<>^%!"(),;=]/;
+// Control characters too: Node does not quote a newline, and cmd stops reading at one.
+export const CMD_UNSAFE = /[&|<>^%!"(),;=\x00-\x1f]/;
 function assertCmdSafe(p) {
   if (CMD_UNSAFE.test(p)) {
     throw new Error(`refusing a Windows delete of a path with a cmd metacharacter: ${p}`);
@@ -390,17 +391,35 @@ function assertCmdSafe(p) {
 /**
  * #1326 Windows re-review (REQUIRED): the ONLY way a path reaches cmd. `git worktree list
  * --porcelain` prints forward slashes (`C:/…`) and cmd reads a `/segment` as a switch, so a path of
- * `s`/`q` segments could turn `rmdir /s /q C:/…` into `rd /s /q C:`. The path must be absolute; it
- * is backslashed with path.win32.resolve, and a drive or share root is refused outright.
+ * `s`/`q` segments could turn `rmdir /s /q C:/…` into `rd /s /q C:`. So the path must be
+ * absolute, either a drive path (`C:\…`) or a UNC path with a server AND a share. A `\\?\` or
+ * `\\.\` device prefix is refused; git never prints one. A `.` or `..` segment, or one ending in
+ * a dot or a space, is refused too: Win32 strips those, so cmd would delete a different folder
+ * than the one the containment guard approved. The path is then backslashed with
+ * path.win32.resolve, and a drive or share root is refused.
  */
+const refuseCmd = (why, p) => {
+  throw new Error(`refusing a Windows delete of ${why}: ${JSON.stringify(p)}`);
+};
 export function cmdRmdirArgs(p, { recursive = false } = {}) {
   assertCmdSafe(p);
-  if (!/^[A-Za-z]:[\\/]/.test(p) && !/^[\\/]{2}[^\\/]/.test(p)) {
-    throw new Error(`refusing a Windows delete of a non-absolute path: ${p}`);
+  if (/^[\\/]{2}[?.][\\/]/.test(p)) refuseCmd("a device or long-path prefix", p);
+  const drive = /^[A-Za-z]:[\\/]/.test(p);
+  const unc = /^[\\/]{2}[^\\/?.][^\\/]*[\\/]+[^\\/]+/.test(p);
+  if (!drive && !unc) refuseCmd("a non-absolute path", p);
+  const segments = p.split(/[\\/]+/).filter((seg, i) => seg && !(drive && i === 0));
+  if (segments.some((seg) => seg === "." || seg === ".." || /[. ]$/.test(seg))) {
+    refuseCmd("a path with a dot segment or a trailing dot or space", p);
   }
   const abs = win32.resolve(p);
-  if (abs.includes("/") || win32.parse(abs).root === abs || win32.dirname(abs) === abs) {
-    throw new Error(`refusing a Windows delete of a root or unnormalised path: ${p}`);
+  const sameRootKind = drive ? /^[A-Za-z]:\\/.test(abs) : /^\\\\[^\\?.]/.test(abs);
+  if (
+    abs.includes("/") ||
+    !sameRootKind ||
+    win32.parse(abs).root === abs ||
+    win32.dirname(abs) === abs
+  ) {
+    refuseCmd("a root or unnormalised path", p);
   }
   return ["/c", "rmdir", ...(recursive ? ["/s", "/q"] : []), abs];
 }
@@ -412,7 +431,7 @@ export function cmdRmdirArgs(p, { recursive = false } = {}) {
 export function unlinkJunctionsVerified(dir, { findJunctions: find, unlinkJunction, exists }) {
   const junctions = find(dir);
   if (junctions == null) throw new Error(`junction scan failed for ${dir}: refusing to delete it`);
-  junctions.forEach(assertCmdSafe); // all checked BEFORE any unlink
+  junctions.forEach((j) => cmdRmdirArgs(j)); // every junction is checked BEFORE any unlink
   for (const junction of junctions) {
     unlinkJunction(junction);
     if (exists(junction)) throw new Error(`junction ${junction} survived its unlink: refusing`);
@@ -431,7 +450,7 @@ export function unlinkJunctionsVerified(dir, { findJunctions: find, unlinkJuncti
  */
 function unlinkIfLink(dir, deps, who) {
   if (typeof deps.isLink !== "function") throw new Error(`${who} needs deps.isLink`);
-  assertCmdSafe(dir);
+  cmdRmdirArgs(dir); // the whole cmd path contract, before any OS call
   if (!deps.isLink(dir)) return false;
   deps.unlinkJunction(dir);
   if (deps.exists(dir)) throw new Error(`link ${dir} survived its unlink: refusing`);

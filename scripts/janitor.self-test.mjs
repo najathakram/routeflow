@@ -824,17 +824,85 @@ t(
     assert.equal(rec.at(-1).includes("/"), false);
   },
 );
-for (const bad of ["C:/", "C:\\", "C:", "wt/s/q", "\\s\\q", "C:/wt/a&b"]) {
+t("REG-1326-3: a UNC path with a server and a share, and trailing slashes, are accepted", () => {
+  assert.equal(cmdRmdirArgs("//server/share/wt/lane").at(-1), "\\\\server\\share\\wt\\lane");
+  assert.equal(cmdRmdirArgs("C:/wt//lane/").at(-1), "C:\\wt\\lane");
+});
+for (const bad of [
+  "C:/",
+  "C:\\",
+  "C:",
+  "wt/s/q",
+  "\\s\\q",
+  "C:/wt/a&b",
+  // Opus re-review: roots reached through `..`, bare servers, share roots, device prefixes.
+  "C:/a/..",
+  "C:/a/../..",
+  "//server",
+  "\\\\server",
+  "//server/",
+  "//server/share",
+  "\\\\server\\share\\..",
+  "\\\\?\\UNC\\server\\share",
+  "\\\\?\\C:\\x\\..\\..",
+  "\\\\.\\C:\\x",
+  // Win32 strips a trailing dot or space, so cmd would act on a different folder than approved.
+  "C:/wt/lane/...",
+  "C:/wt/lane/node_modules.",
+  "C:/wt/lane/node_modules ",
+  "C:/wt/./lane",
+  "C:/x/link/../lane",
+  // Node does not quote a newline and cmd stops reading at one: `rmdir C:\wt\a` would run.
+  "C:/wt/a\nb",
+]) {
   t(`REG-1326-3: cmdRmdirArgs refuses ${JSON.stringify(bad)} (root, relative or unsafe)`, () => {
     assert.throws(() => cmdRmdirArgs(bad), /refus/i);
     assert.throws(() => cmdRmdirArgs(bad, { recursive: true }), /refus/i);
   });
 }
-t("REG-1326-3: janitor.mjs never hands cmd a hand-built argv (all go through cmdRmdirArgs)", () => {
-  const src = readFileSync(fileURLToPath(new URL("./janitor.mjs", import.meta.url)), "utf8");
-  const cmdCalls = src.match(/["']cmd["']\s*,\s*[^)]*/g) ?? [];
-  assert.ok(cmdCalls.length >= 2, `expected the cmd call sites, found ${cmdCalls.length}`);
-  for (const c of cmdCalls) assert.match(c, /^["']cmd["']\s*,\s*cmdRmdirArgs\(/, c);
+t(
+  "REG-1326-3: every process janitor.mjs spawns is a known literal; cmd only via cmdRmdirArgs",
+  () => {
+    const src = readFileSync(fileURLToPath(new URL("./janitor.mjs", import.meta.url)), "utf8");
+    assert.doesNotMatch(src, /shell\s*:\s*true/);
+    const callRe =
+      /(function\s+)?\b(execFileSync|execSync|spawnSync|spawn|exec|trySh|sh|run)\(\s*([^,)]+),?\s*(\S*)/g;
+    const calls = [...src.matchAll(callRe)].filter((m) => !m[1]); // not the sh/trySh definitions
+    const exes = new Set(["git", "gh", "powershell", "df", "cmd", "docker", "npm"]);
+    let passThroughs = 0;
+    let cmdCalls = 0;
+    for (const [text, , fn, first, next] of calls) {
+      assert.ok(!["execSync", "spawnSync", "spawn", "exec"].includes(fn), text);
+      const lit = /^"([^"]+)"$/.exec(first.trim());
+      if (!lit) {
+        assert.equal(first.trim(), "cmd", `a non-literal executable: ${text}`);
+        passThroughs++;
+        continue;
+      }
+      assert.ok(exes.has(lit[1]), `unexpected executable ${lit[1]}`);
+      if (/^cmd(\.exe)?$/i.test(lit[1])) {
+        cmdCalls++;
+        assert.match(next, /^cmdRmdirArgs\(/, text);
+      }
+    }
+    assert.equal(passThroughs, 3, "only sh, trySh and EXECUTE_DEPS.run pass an executable through");
+    assert.equal(cmdCalls, 2, "exactly the two WINDOWS_DEPS cmd calls");
+  },
+);
+t("REG-1326-3: a late bad junction is refused before ANY junction is unlinked", () => {
+  const log = [];
+  assert.throws(
+    () =>
+      windowsRemoveTree("C:\\wt\\nm", {
+        isLink: () => false,
+        findJunctions: () => ["C:\\wt\\nm\\ok", "C:\\wt\\nm\\trail."],
+        unlinkJunction: (j) => log.push(`unlink ${j}`),
+        exists: () => false,
+        rmdirS: (d) => log.push(`rmdirS ${d}`),
+      }),
+    /refus/,
+  );
+  assert.deepEqual(log, []);
 });
 t("REG-1326-3: the real Windows deps route through cmdRmdirArgs and lstat", () => {
   assert.equal(WINDOWS_DEPS.exists, pathPresent);
