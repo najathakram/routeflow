@@ -25,6 +25,7 @@ import {
   copyCategoryTaxSnapshot,
   getTierPrice,
   normalizeBoxesPieces,
+  regulatedUnitBasis,
   roundMoney,
   type CategoryTaxType,
   type PromotionRule,
@@ -1908,8 +1909,14 @@ export class OrdersService implements OnApplicationBootstrap {
       // in pieces already; a box-UNAWARE boxed line (boxes==null) stores qty as a
       // SELLING-UNIT (box) count, so expand it — mirrors the merge path so the same
       // buyer line prices identically at create vs edit.
-      // B661-sweep: box-unaware multiply, converts to regulatedUnitBasis in a follow-up PR.
-      const qtyPieces = boxes != null ? qty : upb > 1 ? qty * upb : qty;
+      // B679: the tax basis is derived through regulatedUnitBasis — the ONE place this
+      // design allows a box-unaware qty*pack expansion — never an inline copy of it. `item`
+      // is never a unit-labeled line here: unitLines.isUnitAware(resolvedUnits) already
+      // returned its own unitLine above for those.
+      const qtyPieces = regulatedUnitBasis(
+        { qty, boxes, pieces, unitLabel: item.unitLabel ?? null },
+        upb,
+      ).unitBasisQty;
       // BUY_N_GET_M threshold is measured in whole SELLING units — a box for a
       // boxed line, a piece otherwise. `boxes` already holds the whole-box count
       // once split; a box-unaware boxed line's `qty` IS the box count (no split

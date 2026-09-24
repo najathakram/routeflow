@@ -106,8 +106,10 @@ describe("no second legacyLinePieces reimplementation in apps/api/src", () => {
  * upb : qty` ternary) OUTSIDE `regulatedUnitBasis` (`@routeflow/pricing`), the ONE place this
  * design still allows it — inside `writeSaleEntries`, at write time, against a snapshot pack.
  * ANY new match fails the build. An ALLOWLIST below names every site that already did this before
- * B661 (Senior Architect ruling 2026-09-21: converting them is its own follow-up PR — 4 of the 6
- * feed the LINE's own categoryTaxAmount snapshot, not the ledger, a different blast radius). Each
+ * B661 (Senior Architect ruling 2026-09-21). B679 (SA-144b, 2026-09-24) converted the four sites
+ * that fed a LINE's own categoryTaxAmount snapshot — orders.service.ts's create(), both
+ * invoices.service.ts sites, and the shared linePieceQty helper — leaving only sites that feed
+ * something other than category tax (a promo threshold, not this ratchet's concern). Each
  * allowlisted file carries a `B661-sweep` comment tag at every site (for a human to find) AND an
  * exact match-COUNT pin below (the actual enforcement) — so the allowlist can only ever SHRINK: a
  * stale count (converted a site but forgot to lower its number here) fails exactly like a NEW,
@@ -126,14 +128,15 @@ describe("no second box-unaware qty*pack multiplication in apps/api/src (B661)",
     return (strippedText.match(re) ?? []).length;
   }
 
-  // B661 sweep, follow-up (owner: coordinator-filed bug id — see the PR body). Converting these
-  // to regulatedUnitBasis is its OWN PR: orders.service.ts's three sites also drive each line's
-  // OWN categoryTaxAmount snapshot (not just a ledger read), a different, wider blast radius than
-  // this PR's ledger-only conversion.
+  // B661 sweep, follow-up. B679 converted the four sites that actually fed
+  // computeCategoryTax's unitBasisQty (orders.service.ts's create(), both
+  // invoices.service.ts sites, and the shared linePieceQty helper) to regulatedUnitBasis —
+  // see line-piece-qty.ts, orders.service.ts's create(), and invoices.service.ts's update()/
+  // applyPriceAdjustment(). orders.service.ts's remaining three updateOrderItems() sites are
+  // NOT category tax: they feed resolveBuyerLinePrice's QTY_BREAK/BUY_N_GET_M promo threshold
+  // for pack lines (B789's stamping-rule scope, not this one).
   const ALLOWLIST: { file: string; count: number }[] = [
-    { file: "orders/line-piece-qty.ts", count: 1 }, // linePieceQty
-    { file: "orders/orders.service.ts", count: 4 }, // create() ×1, updateOrderItems() ×3
-    { file: "invoices/invoices.service.ts", count: 2 }, // update() ×1, applyPriceAdjustment() ×1
+    { file: "orders/orders.service.ts", count: 3 }, // updateOrderItems() ×3 (promo threshold, B789)
     { file: "invoices/manual-invoice-lines.ts", count: 1 }, // buildManualInvoiceLines()
     { file: "order-templates/order-templates.service.ts", count: 1 }, // createOrderFromTemplate()
     { file: "returns/inline-returns-quote.service.ts", count: 1 }, // fetchMatchingSet()
