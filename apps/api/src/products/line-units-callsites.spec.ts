@@ -56,6 +56,13 @@ const BASELINE: Record<string, number> = {
   // goes to 0 when SA-078(c) snapshots unitsPerBox on box-unaware ORDER lines and this fallback
   // becomes unreachable. Never raise this again after that.
   "regulated/regulated-ledger.service.ts": 1,
+  // B673: approveNextDelivery reads the LIVE pack ONLY for an ADD_ITEM that carries a filed
+  // box split (a driver's door add), to compare it with the pack the request was filed at —
+  // (qty - pieces) / boxes. It derives no line factor, quantity or price: a match hands the
+  // filed split to create() unchanged, a mismatch REFUSES naming both packs. CHANGE_QTY never
+  // reaches it (B655's SA ruling). Count-pinned rather than exempted, so a second read here
+  // still fails the build.
+  "orders/change-requests.service.ts": 1,
 };
 
 // Files that legitimately read a product's pack and are not line writers.
@@ -71,6 +78,10 @@ const NON_WRITERS = new Set([
   // B665: the shared pack resolver reads the live pack ONLY to notice that a boxed product's line is
   // ambiguous (no split); the pieces-per-unit itself comes from legacyLinePieces, never from this read.
   "common/line-pack-factors.ts",
+  // B743: reads the live product ONLY to notice that a vendor-bill line's OWN packSize is missing —
+  // the conversion itself (lineInventoryDelta) still reads packSize from the bill line alone; this
+  // module never supplies the missing number, it only decides whether to ask.
+  "vendor-bills/bill-line-pack.ts",
 ]);
 
 const strip = (s: string) => s.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:])\/\/.*$/gm, "$1");

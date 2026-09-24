@@ -215,16 +215,19 @@ export class BookkeepingService implements OnModuleInit {
       if (remaining <= 0) {
         throw new BadRequestException("Transaction is already fully paid");
       }
-      if (dto.amount > remaining + 0.001) {
+      // B801/SA-121: round every monetary write — a sub-cent dto.amount (e.g.
+      // 10.005) would otherwise land off-cent in the stored payment.
+      const paymentAmount = roundMoney(dto.amount);
+      if (paymentAmount > remaining + 0.001) {
         throw new BadRequestException(
-          `Payment of ${dto.amount} exceeds remaining balance of ${remaining.toFixed(2)}`,
+          `Payment of ${paymentAmount} exceeds remaining balance of ${remaining.toFixed(2)}`,
         );
       }
 
       await tx.invoicePayment.create({
         data: {
           invoiceId: id,
-          amount: dto.amount,
+          amount: paymentAmount,
           method: dto.method as any,
           reference: dto.reference,
           notes: dto.notes,
@@ -234,7 +237,7 @@ export class BookkeepingService implements OnModuleInit {
         },
       });
 
-      const totalPaid = alreadyPaid + dto.amount;
+      const totalPaid = alreadyPaid + paymentAmount;
       const newInvStatus =
         totalPaid >= totalOwed
           ? InvoiceStatus.PAID
@@ -464,14 +467,28 @@ export class BookkeepingService implements OnModuleInit {
       const rate = await this.getApplicableMileageRate(date, rest.mileageUnit ?? "MILE");
       if (rate) {
         rateSnapshot = Number(rate.ratePerUnit);
-        computedAmount = Number(rest.distance) * rateSnapshot;
+        // B781: round every monetary write — distance x a sub-cent rate (e.g. $0.335/mi)
+        // lands off-cent in float (3 x 0.335 === 1.0050000000000001).
+        computedAmount = roundMoney(Number(rest.distance) * rateSnapshot);
       }
     }
 
-    // For itemized expenses, amount = sum of line items
-    if (isItemized && lineItems?.length) {
-      computedAmount = lineItems.reduce((s: number, li: any) => s + Number(li.amount), 0);
+    // For itemized expenses, amount = sum of the ROUNDED line items — each line
+    // is rounded below at write time too, so the header total always equals
+    // the sum of the stored lines (never a mismatch from summing raw floats).
+    const roundedLineItems = isItemized
+      ? lineItems?.map((li: any) => ({ ...li, amount: roundMoney(Number(li.amount)) }))
+      : undefined;
+    if (isItemized && roundedLineItems?.length) {
+      computedAmount = roundedLineItems.reduce((s: number, li: any) => s + li.amount, 0);
     }
+
+    // B781: round every monetary write, on every path — including a plain
+    // passthrough `rest.amount` and a mileage expense whose rate the CLIENT
+    // already snapshotted (the web form always sends mileageRateSnapshot, so
+    // the auto-lookup branch above never rounds it there; distance x a
+    // sub-cent rate still lands off-cent in float either way).
+    computedAmount = roundMoney(Number(computedAmount));
 
     const expense = await this.prisma.forTenant().expense.create({
       data: {
@@ -492,10 +509,10 @@ export class BookkeepingService implements OnModuleInit {
         mileageUnit: rest.mileageUnit,
         distance: rest.distance ?? null,
         mileageRateSnapshot: rateSnapshot ?? null,
-        ...(isItemized && lineItems?.length
+        ...(isItemized && roundedLineItems?.length
           ? {
               lineItems: {
-                create: lineItems.map((li: any) => ({
+                create: roundedLineItems.map((li: any) => ({
                   account: li.account,
                   notes: li.notes,
                   amount: li.amount,
@@ -532,7 +549,8 @@ export class BookkeepingService implements OnModuleInit {
     const updated = await this.prisma.forTenant().expense.update({
       where: { id },
       data: {
-        ...(dto.amount !== undefined && { amount: dto.amount }),
+        // SA-121/B801: round every monetary write.
+        ...(dto.amount !== undefined && { amount: roundMoney(dto.amount) }),
         ...(dto.date && { date: new Date(dto.date) }),
         ...(dto.description !== undefined && { description: dto.description }),
         ...(dto.notes !== undefined && { notes: dto.notes }),
@@ -884,23 +902,31 @@ export class BookkeepingService implements OnModuleInit {
     }
 
     const items: any[] = parsed.items ?? [];
+    // B801: round every monetary write — an OCR-extracted amount (or a
+    // distance/rate-style value) can land off-cent in float, exactly like
+    // B781's mileage/itemized case. Round each line here, once, and reuse the
+    // SAME rounded value for both the stored line and the header total below,
+    // so the header always equals the sum of the stored lines.
+    const roundedAmounts = items.map((item: any) =>
+      roundMoney(Number(item.amount ?? item.unitCost ?? 0)),
+    );
 
     // Replace existing line items with extracted ones
     await this.prisma.forTenant().expenseLineItem.deleteMany({ where: { expenseId: id } });
     if (items.length > 0) {
       await this.prisma.forTenant().expenseLineItem.createMany({
-        data: items.map((item: any) => ({
+        data: items.map((item: any, idx: number) => ({
           expenseId: id,
           account: item.description ?? "Item",
           notes: null,
-          amount: Number(item.amount ?? item.unitCost ?? 0),
+          amount: roundedAmounts[idx],
           unitCost: item.unitCost != null ? Number(item.unitCost) : null,
           qty: item.qty != null ? Number(item.qty) : null,
         })),
       });
     }
 
-    const totalFromItems = items.reduce((s: number, i: any) => s + Number(i.amount ?? 0), 0);
+    const totalFromItems = roundMoney(roundedAmounts.reduce((s: number, a: number) => s + a, 0));
 
     const updated = await this.prisma.forTenant().expense.update({
       where: { id },
