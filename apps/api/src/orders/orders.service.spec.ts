@@ -1960,7 +1960,7 @@ describe("OrdersService", () => {
     // contract, and settle must reproduce it exactly (held/requested are
     // compared in each line's own stored denomination) — so this spec
     // documents what create() already does today.
-    describe("WP1 — boxed-line qty basis on CREATE (regression, no behavior change)", () => {
+    describe("WP1 + B703 — boxed-line qty basis on CREATE (always pieces)", () => {
       const BOXED_12 = {
         id: "prod-box12",
         name: "Water Case",
@@ -1975,8 +1975,7 @@ describe("OrdersService", () => {
         (service as any).systemConfig.get.mockResolvedValue("0");
       });
 
-      // B116: ONE aggregated `UPDATE … FROM (VALUES …)` (B562: `$queryRaw … RETURNING`, one spy with the
-      // lock); the reader returns its `[productId, qty]` bindings — the qty BASIS (27 pieces / 2 units).
+      // B116/B562: the one aggregated `$queryRaw` UPDATE's `[productId, qty]` bindings (pieces).
       function captureStockDecrement() {
         const txExecuteRaw: jest.Mock = jest.fn().mockResolvedValue([]);
         prisma.tenantTransaction.mockImplementation((fn: any) =>
@@ -2037,7 +2036,7 @@ describe("OrdersService", () => {
         expect(readDecrement()).toContain("test-tenant");
       });
 
-      it("the same boxed product ordered legacy-style with bare qty:2 (no boxes/pieces keys) decrements 2 — the SELLING-UNITS basis", async () => {
+      it("B703 (SA-136b): the same boxed product ordered box-unaware (bare qty:2) decrements 24 pieces", async () => {
         prisma.product.findMany.mockResolvedValue([BOXED_12]);
         const readDecrement = captureStockDecrement();
 
@@ -2047,7 +2046,7 @@ describe("OrdersService", () => {
         );
 
         expect(prisma.product.update).not.toHaveBeenCalled();
-        expect(readDecrement().slice(0, 2)).toEqual(["prod-box12", 2]);
+        expect(readDecrement().slice(0, 2)).toEqual(["prod-box12", 24]);
         expect(readDecrement()).toContain("test-tenant");
       });
     });

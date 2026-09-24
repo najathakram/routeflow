@@ -937,13 +937,17 @@ export class InventoryService {
   ): Promise<{ unitCost: Prisma.Decimal; stockAfter: Prisma.Decimal }> {
     // B562 PR-2: the cost resolver and the SALE row writer live in sale-movement.ts, shared with
     // the order stock paths (orders/order-stock.ts) so a sale is costed one way everywhere.
-    const product = await tx.product.findFirst({
-      where: { id: productId },
-      select: { currentStock: true },
-    });
+    // SA-136b: the row is written AFTER the counter moves, with `stockAfter` read off the update's
+    // own returned row — never a pre-read (a concurrent writer between the two would falsify it).
     const cost = await resolveSaleCost(tx, productId, quantity);
     const { unitCost, lotConsumptions } = cost;
-    const stockAfter = (product?.currentStock ?? new Prisma.Decimal(0)).sub(quantity);
+
+    const updated = await tx.product.update({
+      where: { id: productId },
+      data: { currentStock: { decrement: quantity } },
+      select: { currentStock: true },
+    });
+    const stockAfter = updated.currentStock;
 
     await recordSaleMovement(tx, {
       productId,
@@ -952,11 +956,6 @@ export class InventoryService {
       reference,
       performedById,
       cost,
-    });
-
-    await tx.product.update({
-      where: { id: productId },
-      data: { currentStock: { decrement: quantity } },
     });
 
     for (const consumption of lotConsumptions) {

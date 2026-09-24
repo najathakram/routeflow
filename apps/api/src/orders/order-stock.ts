@@ -2,6 +2,7 @@ import { ConflictException } from "@nestjs/common";
 import { Prisma, UserRole } from "@prisma/client";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
 import { recordSaleMovement } from "../inventory/sale-movement";
+import { linePieceQty } from "./line-piece-qty";
 
 /**
  * Stock bookkeeping for order writes — lifted verbatim out of `OrdersService` (B585 prefactor:
@@ -29,6 +30,41 @@ export interface OrderStockEvent {
 export const orderStockReference = (orderId: string) => `ORDER:${orderId}`;
 
 /**
+ * B703 (SA-136b): the unit fields `linePieceQty` reads off a line. `currentStock` is counted in
+ * PIECES, but a line's `qty` is in its own stored unit — pieces for a box-split or Units line, BOXES
+ * for a box-unaware boxed line (boxes/pieces null, no unitLabel). Every stock path converts each line
+ * to pieces ONCE, with the line's own `unitsPerBox` snapshot first and the product's live pack only
+ * as the fallback, and feeds that one number to both the counter write and the SALE row.
+ */
+export interface StockLineUnits {
+  boxes?: unknown;
+  pieces?: unknown;
+  unitsPerBox?: unknown;
+  unitLabel?: unknown;
+}
+export type StockLine = StockLineUnits & { productId: string; qty: any };
+/** Spread into an `orderItem.findMany` select so a settle caller hands over the unit fields. */
+export const STOCK_LINE_UNIT_SELECT = {
+  boxes: true,
+  pieces: true,
+  unitsPerBox: true,
+  unitLabel: true,
+} as const;
+
+/** A box-unaware line with no own snapshot: only the product's live pack can size it. */
+const needsLivePack = (li: StockLineUnits) =>
+  li.unitsPerBox == null &&
+  li.boxes == null &&
+  li.pieces == null &&
+  !(typeof li.unitLabel === "string" && li.unitLabel.trim() !== "");
+
+/** `qty` (the line's own unit) in pieces, at the column's 3 decimals. */
+const toPieces = (li: StockLineUnits, qty: unknown, livePack: unknown): number => {
+  const pack = livePack != null ? Number(livePack) : undefined;
+  return Math.round(linePieceQty({ ...li, boxes: li.boxes ?? null, qty }, pack) * 1000) / 1000;
+};
+
+/**
  * B283: the ONE stock-decrement code path for turning a set of order lines
  * into a real (non-draft) sale — locks the touched product rows FOR UPDATE,
  * blocks (customer/driver) or warns (staff) on insufficient stock, then
@@ -41,7 +77,7 @@ export const orderStockReference = (orderId: string) => `ORDER:${orderId}`;
 export async function decrementStockForSale(
   deps: OrderStockDeps,
   tx: any,
-  stockLines: Array<{ productId: string; qty: number }>,
+  stockLines: StockLine[],
   isStaffRole: boolean,
   event: OrderStockEvent,
 ): Promise<void> {
@@ -56,15 +92,25 @@ export async function decrementStockForSale(
 
   const lockedProducts = await tx.product.findMany({
     where: { id: { in: productIds } },
-    select: { id: true, name: true, currentStock: true },
+    select: { id: true, name: true, currentStock: true, unitsPerBox: true },
   });
+  // B703 (SA-136b): each line in PIECES, once — the oversell check, the decrement and the SALE row
+  // all read this one number (a 2-box line of a 12-pack is 24, never 2).
+  const pieceLines = stockLines.map((li) => ({
+    productId: li.productId,
+    pieces: toPieces(
+      li,
+      li.qty,
+      lockedProducts.find((lp: any) => lp.id === li.productId)?.unitsPerBox,
+    ),
+  }));
 
   const oosItems: string[] = [];
-  for (const li of stockLines) {
+  for (const li of pieceLines) {
     const p = lockedProducts.find((lp: any) => lp.id === li.productId);
-    if (p && Number(p.currentStock) < li.qty) {
+    if (p && Number(p.currentStock) < li.pieces) {
       oosItems.push(
-        `${p.name ?? li.productId} (available: ${Number(p.currentStock)}, requested: ${li.qty})`,
+        `${p.name ?? li.productId} (available: ${Number(p.currentStock)}, requested: ${li.pieces})`,
       );
     }
   }
@@ -93,8 +139,9 @@ export async function decrementStockForSale(
   // call had in that same context.
   const stockTenantId = deps.tenantId;
   const qtyByProduct = new Map<string, number>();
-  for (const li of stockLines) {
-    qtyByProduct.set(li.productId, (qtyByProduct.get(li.productId) ?? 0) + li.qty);
+  for (const li of pieceLines) {
+    const sum = (qtyByProduct.get(li.productId) ?? 0) + li.pieces;
+    qtyByProduct.set(li.productId, Math.round(sum * 1000) / 1000);
   }
   const stockValues = Prisma.join(
     [...qtyByProduct.entries()].map(
@@ -158,9 +205,12 @@ export async function decrementStockForSale(
  * (operator/admin/undefined = internal caller) may knowingly oversell —
  * warn-only log, and then (unlike the old validate-only guard) the write
  * still proceeds, matching create()'s oversell-writes-anyway posture.
- * Quantities compare in each line's own stored denomination (pieces for
- * box-split lines, selling units otherwise) — the same mixed-denomination
- * convention create() uses against currentStock.
+ * B703 (SA-136b): every quantity — held, delivered, requested — is converted to
+ * PIECES per line (`linePieceQty`, the line's own pack snapshot first, the
+ * product's live pack as the fallback) before anything is summed, so the delta,
+ * the undelivered cap, the counter write and the SALE row are all in the unit
+ * `currentStock` counts. (It used to compare each line's stored unit — boxes for
+ * a box-unaware line — against a piece counter.)
  *
  * `SELECT ... FOR UPDATE` locks the touched product rows FIRST, before
  * reading currentStock — mirroring create()'s lock (:1863-1867). The old
@@ -194,8 +244,10 @@ export async function settleStockForEdit(
   deps: OrderStockDeps,
   db: any,
   order: { id: string; status: string },
-  heldItems: Array<{ productId: string | null; qty: any; deliveredQty?: any; status?: string }>,
-  finalActiveItems: Array<{ productId: string | null; qty: any }>,
+  heldItems: Array<
+    StockLineUnits & { productId: string | null; qty: any; deliveredQty?: any; status?: string }
+  >,
+  finalActiveItems: Array<StockLineUnits & { productId: string | null; qty: any }>,
   user?: JwtPayload,
   /** B562 PR-2: the event the SALE rows record (default EDIT); the acting user wins over `performedById`. */
   event: { notes: string; performedById?: string | null } = { notes: "EDIT" },
@@ -210,24 +262,35 @@ export async function settleStockForEdit(
   // with deliveredQty > 0 is refused outright (LINE_ALREADY_DELIVERED,
   // ~:4205) — the operator edit path allows the edit but credits back only
   // the UNDELIVERED remainder.
-  const held = new Map<string, number>();
-  const deliveredHeld = new Map<string, number>();
+  //
+  // B703 (SA-136b): all three sums end up in PIECES. Per product each is `fixed` (lines sized without
+  // the live pack: box-split, Units, or their own pack snapshot) plus `perPack` (the raw
+  // qty of box-unaware lines, which only the product's LIVE pack can size — the pack create() sized
+  // them by). A product whose `fixed` and `perPack` are both unchanged has a zero delta at any pack,
+  // so it is dropped before any lock or read (DELTA_MAP short circuit below); the rest read the live
+  // pack in the same locked row read as `currentStock`.
+  type Parts = { fixed: number; perPack: number };
+  const add = (
+    m: Map<string, Parts>,
+    li: StockLineUnits & { productId: string | null },
+    qty: unknown,
+  ) => {
+    const cur = m.get(li.productId as string) ?? { fixed: 0, perPack: 0 };
+    if (needsLivePack(li)) cur.perPack += Number(qty) || 0;
+    else cur.fixed += toPieces(li, qty, undefined);
+    m.set(li.productId as string, cur);
+  };
+  const heldParts = new Map<string, Parts>();
+  const deliveredParts = new Map<string, Parts>();
   for (const li of heldItems ?? []) {
     if (li.productId && li.status !== "CANCELLED") {
-      held.set(li.productId, (held.get(li.productId) ?? 0) + Number(li.qty));
-      deliveredHeld.set(
-        li.productId,
-        (deliveredHeld.get(li.productId) ?? 0) + Number(li.deliveredQty ?? 0),
-      );
+      add(heldParts, li, li.qty);
+      add(deliveredParts, li, li.deliveredQty ?? 0);
     }
   }
   // Qty the edit requests per product (post-edit active line set).
-  const requested = new Map<string, number>();
-  for (const li of finalActiveItems) {
-    if (li.productId) {
-      requested.set(li.productId, (requested.get(li.productId) ?? 0) + Number(li.qty));
-    }
-  }
+  const requestedParts = new Map<string, Parts>();
+  for (const li of finalActiveItems) if (li.productId) add(requestedParts, li, li.qty);
 
   // Delta per product over the UNION of both sides — a product present only
   // in `held` (its line was removed/zeroed in the edit) still gets an entry
@@ -239,26 +302,43 @@ export async function settleStockForEdit(
   // a real delta and would write a phantom 1e-15 stock adjustment. Round to
   // the column's 3 decimals BEFORE the zero check, and write the ROUNDED
   // value.
-  const deltas = new Map<string, number>();
-  for (const productId of new Set([...held.keys(), ...requested.keys()])) {
-    const raw = (requested.get(productId) ?? 0) - (held.get(productId) ?? 0);
-    const delta = Math.round(raw * 1000) / 1000;
-    if (delta !== 0) deltas.set(productId, delta);
-  }
-  if (deltas.size === 0) return;
+  const round3 = (n: number) => Math.round(n * 1000) / 1000;
+  const zero: Parts = { fixed: 0, perPack: 0 };
+  const touched = [...new Set([...heldParts.keys(), ...requestedParts.keys()])].filter((id) => {
+    const h = heldParts.get(id) ?? zero;
+    const r = requestedParts.get(id) ?? zero;
+    return round3(r.fixed - h.fixed) !== 0 || round3(r.perPack - h.perPack) !== 0;
+  });
+  if (touched.length === 0) return;
 
-  const productIds = [...deltas.keys()];
   // RF-017 parity: lock the touched product rows BEFORE reading
   // currentStock, mirroring create()'s lock (:1863-1867).
   await db.$executeRaw`
     SELECT id FROM "Product"
-    WHERE id IN (${Prisma.join(productIds)})
+    WHERE id IN (${Prisma.join(touched)})
     FOR UPDATE
   `;
   const products = await db.product.findMany({
-    where: { id: { in: productIds } },
-    select: { id: true, name: true, currentStock: true },
+    where: { id: { in: touched } },
+    select: { id: true, name: true, currentStock: true, unitsPerBox: true },
   });
+  const pieces = (m: Map<string, Parts>, id: string) => {
+    const { fixed, perPack } = m.get(id) ?? zero;
+    const pack = products.find((p: any) => p.id === id)?.unitsPerBox;
+    return round3(fixed + toPieces({ boxes: null }, perPack, pack));
+  };
+  const held = new Map<string, number>();
+  const deliveredHeld = new Map<string, number>();
+  const requested = new Map<string, number>();
+  const deltas = new Map<string, number>();
+  for (const id of touched) {
+    held.set(id, pieces(heldParts, id));
+    deliveredHeld.set(id, pieces(deliveredParts, id));
+    requested.set(id, pieces(requestedParts, id));
+    const delta = round3(requested.get(id)! - held.get(id)!);
+    if (delta !== 0) deltas.set(id, delta);
+  }
+  if (deltas.size === 0) return;
 
   const increases = [...deltas.entries()]
     .filter(([, delta]) => delta > 0)
@@ -342,9 +422,10 @@ export async function settleStockForEdit(
       await saleRow(productId, -delta, updated);
       continue;
     }
+    // Held and delivered are both pieces (above), so the cap is too.
     const undelivered = Math.max(
       0,
-      (held.get(productId) ?? 0) - (deliveredHeld.get(productId) ?? 0),
+      round3((held.get(productId) ?? 0) - (deliveredHeld.get(productId) ?? 0)),
     );
     const credit = Math.min(-delta, undelivered);
     if (credit <= 0) continue;

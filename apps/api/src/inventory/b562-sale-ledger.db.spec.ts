@@ -387,6 +387,41 @@ describeDb("B562 PR-2 sale ledger — real Postgres", () => {
     expect(await ledgerSum(w.productId)).toBe(100);
   });
 
+  it("B703 (SA-136b): a box-unaware 2-box line on a 12-pack moves 24 pieces; the cancel credit is capped in pieces", async () => {
+    const w = await seedWorld("b703");
+    await prisma.product.update({ where: { id: w.productId }, data: { unitsPerBox: 12 } });
+    // qty is a BOX count: no boxes/pieces split, no unitLabel, no own pack snapshot.
+    const boxUnaware = { productId: w.productId, boxes: null, pieces: null, unitsPerBox: null };
+    await inTx(w, (tx) =>
+      decrementStockForSale(deps(w), tx, [{ ...boxUnaware, qty: 2 }], true, {
+        orderId: w.orderId,
+        notes: "CREATE",
+        performedById: w.operatorId,
+      }),
+    );
+    expect(await counter(w.productId)).toBe(76);
+    // One box went out the door, then the order is cancelled: only the undelivered 12 come back.
+    await inTx(w, (tx) =>
+      settleStockForEdit(
+        deps(w),
+        tx,
+        { id: w.orderId, status: "PENDING" },
+        [{ ...boxUnaware, qty: 2, deliveredQty: 1, status: "PENDING" }],
+        [],
+        operator(w),
+        { notes: "CANCEL" },
+      ),
+    );
+    expect(await counter(w.productId)).toBe(88);
+    const sales = await rowsOf(w.productId, "SALE");
+    expect(sales.map((m) => [n(m.quantity), n(m.stockAfter), m.notes])).toEqual([
+      [-24, 76, "CREATE"],
+      [12, 88, "CANCEL"],
+    ]);
+    expect(await ledgerSum(w.productId)).toBe(88);
+    expect(runGapDetector(w).status).toBe(0);
+  });
+
   it("the ledger explains the counter: the gap detector exits 0 and the replay reports no gap", async () => {
     const w = await seedWorld("gap-zero");
     await inTx(w, (tx) =>

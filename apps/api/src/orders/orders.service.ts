@@ -94,7 +94,14 @@ import { redactUpsellForCustomer } from "../common/upsell-redaction";
 import { currentTaxRate } from "../common/tax-rate";
 import { NotificationsService } from "../notifications/notifications.service";
 import { InvoicesService } from "../invoices/invoices.service";
-import { decrementStockForSale, settleStockForEdit, type OrderStockEvent } from "./order-stock";
+import {
+  decrementStockForSale,
+  settleStockForEdit,
+  STOCK_LINE_UNIT_SELECT,
+  type OrderStockEvent,
+  type StockLine,
+  type StockLineUnits,
+} from "./order-stock";
 import { linePieceQty } from "./line-piece-qty";
 import {
   isBuyerPricedLine,
@@ -2567,10 +2574,10 @@ export class OrdersService implements OnApplicationBootstrap {
                 "This order is no longer DRAFT — someone else already changed its status.",
               );
             }
-            const activeItems: Array<{ productId: string | null; qty: any }> =
+            const activeItems: Array<StockLineUnits & { productId: string | null; qty: any }> =
               await tx.orderItem.findMany({
                 where: { orderId: id, status: { not: "CANCELLED" } },
-                select: { productId: true, qty: true },
+                select: { productId: true, qty: true, ...STOCK_LINE_UNIT_SELECT },
               });
             // The Lane R check ran outside this tx: a product added since (a concurrent draft
             // edit) was never judged — roll back (the claim above included) and promote again.
@@ -2579,9 +2586,7 @@ export class OrdersService implements OnApplicationBootstrap {
                 "The order's items changed while it was being promoted — review it and promote again.",
               );
             }
-            const stockLines = activeItems
-              .filter((li): li is { productId: string; qty: any } => !!li.productId)
-              .map((li) => ({ productId: li.productId, qty: Number(li.qty) }));
+            const stockLines = activeItems.filter((li): li is StockLine => !!li.productId);
             await this.decrementStockForSale(tx, stockLines, isStaffRole, {
               orderId: id,
               notes: "PROMOTE",
@@ -2614,7 +2619,13 @@ export class OrdersService implements OnApplicationBootstrap {
             }
             const activeItems = await tx.orderItem.findMany({
               where: { orderId: id, status: { not: "CANCELLED" } },
-              select: { productId: true, qty: true, deliveredQty: true, status: true },
+              select: {
+                productId: true,
+                qty: true,
+                deliveredQty: true,
+                status: true,
+                ...STOCK_LINE_UNIT_SELECT,
+              },
             });
             await this.settleStockForEdit(
               tx,
@@ -2743,7 +2754,13 @@ export class OrdersService implements OnApplicationBootstrap {
           if (cancelReturnsStock) {
             const activeItems = await tx.orderItem.findMany({
               where: { orderId: id, status: { not: "CANCELLED" } },
-              select: { productId: true, qty: true, deliveredQty: true, status: true },
+              select: {
+                productId: true,
+                qty: true,
+                deliveredQty: true,
+                status: true,
+                ...STOCK_LINE_UNIT_SELECT,
+              },
             });
             // Return the creation-time decrement, clamped to the undelivered
             // remainder (settleStockForEdit with an empty final set). `order` here
@@ -2931,7 +2948,7 @@ export class OrdersService implements OnApplicationBootstrap {
         // re-decrements nothing — era consistency, not a regression).
         const cancelledLines = await tx.orderItem.findMany({
           where: { orderId: id, status: ItemStatus.CANCELLED },
-          select: { productId: true, qty: true, deliveredQty: true },
+          select: { productId: true, qty: true, deliveredQty: true, ...STOCK_LINE_UNIT_SELECT },
         });
 
         // Revert cancelled line items back to PENDING
@@ -2949,12 +2966,12 @@ export class OrdersService implements OnApplicationBootstrap {
             tx,
             { id, status: OrderStatus.PENDING },
             cancelledLines.map((li) => ({
-              productId: li.productId,
+              ...li,
               qty: Number(li.deliveredQty ?? 0),
               deliveredQty: Number(li.deliveredQty ?? 0),
               status: "PENDING",
             })),
-            cancelledLines.map((li) => ({ productId: li.productId, qty: Number(li.qty) })),
+            cancelledLines.map((li) => ({ ...li, qty: Number(li.qty) })),
             undefined,
             { notes: "UNCANCEL" },
           );
@@ -4909,7 +4926,7 @@ export class OrdersService implements OnApplicationBootstrap {
 
   private decrementStockForSale(
     tx: any,
-    stockLines: Array<{ productId: string; qty: number }>,
+    stockLines: StockLine[],
     isStaffRole: boolean,
     event: OrderStockEvent,
   ): Promise<void> {
@@ -4919,8 +4936,8 @@ export class OrdersService implements OnApplicationBootstrap {
   private settleStockForEdit(
     db: any,
     order: { id: string; status: string },
-    heldItems: Array<{ productId: string | null; qty: any; deliveredQty?: any; status?: string }>,
-    finalActiveItems: Array<{ productId: string | null; qty: any }>,
+    heldItems: Parameters<typeof settleStockForEdit>[3],
+    finalActiveItems: Parameters<typeof settleStockForEdit>[4],
     user?: JwtPayload,
     event?: { notes: string; performedById?: string | null },
   ): Promise<void> {
