@@ -34,6 +34,7 @@ import { unitsLabel } from "@/lib/stock-label";
 import { useFinanceDashboard } from "@/lib/api/finance";
 import { useInvoices, type Invoice } from "@/lib/api/invoices";
 import { useRoutesAccess } from "@/lib/api/addons";
+import { DriverAppBanner } from "./DriverAppBanner";
 
 // ─── Column definitions (stable refs, defined outside component) ───────────────
 
@@ -521,6 +522,12 @@ export default function DashboardPage() {
 
   const canActAsDriver = user?.canActAsDriver === true && baseIsOperator && routesAccess;
 
+  // Owner ruling (mobile-web-proxy-redesign): a DRIVER-role account signed in
+  // on the web dashboard is nudged toward the installed driver app — not
+  // forced there (web driver mode is the PHASE 1a work still in progress).
+  // Dismissed for the rest of this mount only; reappears on the next sign-in.
+  const [driverBannerDismissed, setDriverBannerDismissed] = React.useState(false);
+
   // View mode for dual-role users — persisted across visits
   const [viewMode, setViewMode] = React.useState<ViewMode>("operator");
   React.useEffect(() => {
@@ -633,6 +640,12 @@ export default function DashboardPage() {
 
   return (
     <div className="space-y-6 p-6">
+      {/* ── Driver-app nudge (DRIVER-role account, web) ── */}
+      <DriverAppBanner
+        visible={baseIsDriver && !driverBannerDismissed}
+        onDismiss={() => setDriverBannerDismissed(true)}
+      />
+
       {/* ── Mode switcher (dual-role users only) ── */}
       {canActAsDriver && (
         <div className="-mb-3 flex justify-end">

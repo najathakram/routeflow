@@ -155,7 +155,8 @@
       "audit-allowlist-retired\\.spec\\.ts$",
       "bugs-self-test-script\\.spec\\.ts$",
       "size-ratchet\\.spec\\.ts$",
-      "owner-report-db-url\\.spec\\.ts$"
+      "owner-report-db-url\\.spec\\.ts$",
+      "no-collection-time-clock-fuse\\.spec\\.ts$"
     ],
     "transform": {
       "^.+\\.(t|j)s$": "ts-jest"
