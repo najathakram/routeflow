@@ -622,7 +622,7 @@ scenario(
     const r4Labels = calls.filter((c) => c.label === 'fix-brief:T1:r4' || c.label === 'fix-plan:T1:r4').map((c) => c.label)
     check('F: round 4 makes the same fix-brief then fix-plan call pair, on Opus, not a collapsed single call (finding 10)', JSON.stringify(r4Labels) === JSON.stringify(['fix-brief:T1:r4', 'fix-plan:T1:r4']), JSON.stringify(r4Labels))
     const r4PlanCall = calls.find((c) => c.label === 'fix-plan:T1:r4')
-    check('F: round 4\'s fix-plan (design) call runs on Opus (finding 10)', !!r4PlanCall && r4PlanCall.model === 'claude-opus-5', JSON.stringify(r4PlanCall))
+    check('F: round 4\'s fix-plan (design) call runs on Opus (finding 10)', !!r4PlanCall && r4PlanCall.model === 'claude-opus-5-5', JSON.stringify(r4PlanCall))
     // finding 11: per-round {plan, design, exec} evidence retained; the
     // Ruling cites something concrete, not a bare count.
     check('F: roundHistory retains all 4 rounds with plan/exec evidence (finding 11)', !!t1 && Array.isArray(t1.roundHistory) && t1.roundHistory.length === 4 && t1.roundHistory.every((r) => r.plan && 'exec' in r), JSON.stringify(t1 && t1.roundHistory))
@@ -1118,7 +1118,7 @@ scenario(
     const implCall = calls.find((c) => c.label === 'impl:F1')
     check('G: the HIGH-risk fix implementer runs on Sonnet at implementHigh effort', !!implCall && implCall.model === 'claude-sonnet-5' && implCall.effort === 'high', JSON.stringify(implCall))
     const reviewCall = calls.find((c) => c.label === 'review:F1')
-    check('G: the HIGH-risk fix reviewer runs on Opus', !!reviewCall && reviewCall.model === 'claude-opus-5', JSON.stringify(reviewCall))
+    check('G: the HIGH-risk fix reviewer runs on Opus', !!reviewCall && reviewCall.model === 'claude-opus-5-5', JSON.stringify(reviewCall))
     // Fix round 1, finding 1: RC1 declares no `risk` field and empty
     // files/tests -- the natural, realistic shape for a root-cause
     // investigation (per the plan and every fixture). Its dependent fix
@@ -1127,7 +1127,7 @@ scenario(
     // silently run on Sonnet just because the root-cause task itself has
     // nothing to classify.
     const rootCauseCall = calls.find((c) => c.label === 'root-cause:RC1')
-    check('G: RC1\'s root-cause investigation also runs on Opus, because its dependent fix F1 is HIGH-risk', !!rootCauseCall && rootCauseCall.model === 'claude-opus-5', JSON.stringify(rootCauseCall))
+    check('G: RC1\'s root-cause investigation also runs on Opus, because its dependent fix F1 is HIGH-risk', !!rootCauseCall && rootCauseCall.model === 'claude-opus-5-5', JSON.stringify(rootCauseCall))
     const probeLabels = calls.filter((c) => c.label === 'probe:RP1' || c.label === 'probe:RP2').map((c) => c.label)
     check('G: both revert-probes ran', probeLabels.length === 2, JSON.stringify(probeLabels))
     check(
@@ -1207,7 +1207,7 @@ scenario(
     const rc1Call = calls.find((c) => c.label === 'root-cause:RC1')
     check(
       'AN: RC1 (only a TRANSITIVE ancestor of HIGH-risk F1, via RT1) still runs on Opus',
-      !!rc1Call && rc1Call.model === 'claude-opus-5',
+      !!rc1Call && rc1Call.model === 'claude-opus-5-5',
       JSON.stringify(rc1Call),
     )
     const rc2Call = calls.find((c) => c.label === 'root-cause:RC2')
