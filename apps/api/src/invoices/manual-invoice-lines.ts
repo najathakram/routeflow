@@ -5,6 +5,7 @@ import type { ResolvedLineUnits } from "../products/line-units";
 import { isUnitAware } from "../orders/unit-line-build";
 import { buildInvoiceUnitLine } from "./invoice-unit-line";
 import {
+  categoryTaxSnapshotOf,
   computeCategoryTax,
   computeLineSubtotal,
   normalizeBoxesPieces,
@@ -117,6 +118,12 @@ export function buildManualInvoiceLines(
       // BUY_N_GET_M: free whole selling units come off the subtotal BEFORE pricing
       // (never a rounded net unit price). 0 for every other line.
       freeUnits = clampFreeUnits(item.promoFreeUnits, boxes, qty);
+      // B683: on a boxed product with no boxes/pieces split (`boxes == null`),
+      // `qty` here is the SELLING-UNIT (box) count, not a piece count — see
+      // computeLineSubtotal's own fallback-branch comment. `pieceQty` below
+      // converts this SAME `qty` to an actual piece count for the tax basis;
+      // don't confuse the two — this `qty` and that `pieceQty` disagree by a
+      // factor of `unitsPerBox` whenever the product is boxed and unsplit.
       const beforeDiscount = computeLineSubtotal({
         unitPrice: item.unitPrice,
         qty,
@@ -148,6 +155,16 @@ export function buildManualInvoiceLines(
           priceIncludesTax: category.priceIncludesTax,
         })
       : 0;
+    // B297 (SA-088): freeze the trio categoryTaxAmount above was computed from.
+    const categorySnapshot = categoryTaxSnapshotOf(
+      category
+        ? {
+            taxType: category.taxType as CategoryTaxType,
+            rate: category.rate,
+            priceIncludesTax: category.priceIncludesTax,
+          }
+        : null,
+    );
     return {
       description: item.description,
       productId: item.productId,
@@ -174,6 +191,8 @@ export function buildManualInvoiceLines(
       trackedSubcategoryId: product?.trackedSubcategoryId ?? null,
       // RF-4: per-line category tax snapshot (folded into taxTotal below).
       categoryTaxAmount,
+      // B297 (SA-088): the rate trio categoryTaxAmount was computed from.
+      ...categorySnapshot,
       notes: item.notes ?? null,
       // MSRP snapshot — set below by applyMsrpSnapshots (null when flag.msrp is off).
       msrp: null as number | null,

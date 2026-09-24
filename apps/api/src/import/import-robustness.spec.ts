@@ -263,6 +263,30 @@ describe("ImportService — import robustness (F17)", () => {
     });
   });
 
+  describe("REG-B779 — the synthetic PAID/PARTIAL payment amount is rounded to the cent", () => {
+    it("REG-B779: a PARTIAL invoice's synthetic payment (total - balanceDue) is cent-exact, not a float artifact", async () => {
+      prisma.customer.findFirst.mockResolvedValue({ id: "cust-1", businessName: "Acme Corp" });
+
+      // 100.10 - 55.33 === 44.769999999999996 in plain JS float subtraction —
+      // both operands are already individually cent-rounded by parseImportMoney,
+      // so this artifact comes ONLY from the subtraction itself.
+      const csv =
+        "Invoice Number,Customer Name,Total,Balance Due,Invoice Status\n" +
+        "INV-7791,Acme Corp,100.10,55.33,Overdue\n";
+
+      await service.importInvoices(Buffer.from(csv), "user-1");
+
+      expect(prisma.invoice.create).toHaveBeenCalledTimes(1);
+      const invoiceData = (prisma.invoice.create.mock.calls[0][0] as any).data;
+      expect(invoiceData.status).toBe(InvoiceStatus.PARTIAL);
+
+      expect(prisma.invoicePayment.create).toHaveBeenCalledTimes(1);
+      const paymentData = (prisma.invoicePayment.create.mock.calls[0][0] as any).data;
+      expect(paymentData.amount).toBe(44.77);
+      expect(paymentData.amount).not.toBe(44.769999999999996);
+    });
+  });
+
   describe("REG-B99 — payments dedupe with snapshot semantics", () => {
     it("REG-B99 (T-B99): a re-uploaded payments row (no InvoicePayment ID) dedupes against history without re-flipping statuses, while two identical rows in one file both import", async () => {
       // Stateful invoice fake so the post-loop status recalc really runs on BOTH

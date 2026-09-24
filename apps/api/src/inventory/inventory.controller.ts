@@ -19,6 +19,7 @@ import { PlanFlagGuard } from "../billing/plan-flag.guard";
 import { RequirePlanFlag } from "../billing/require-plan-flag.decorator";
 import { InventoryService } from "./inventory.service";
 import { RecordPurchaseDto } from "./dto/record-purchase.dto";
+import { ReceivePurchaseOrderDto } from "./dto/create-purchase-order.dto";
 import { RecordAdjustmentDto } from "./dto/record-adjustment.dto";
 import { CommitStockCountDto } from "./dto/commit-stock-count.dto";
 import { ListMovementsDto } from "./dto/list-movements.dto";
@@ -218,7 +219,11 @@ export class InventoryController {
   }
 
   @Post("purchase-orders/:id/receive")
-  receivePO(@Param("id") id: string, @Body() dto: any, @CurrentUser() user: { id: string }) {
+  receivePO(
+    @Param("id") id: string,
+    @Body() dto: ReceivePurchaseOrderDto,
+    @CurrentUser() user: { id: string },
+  ) {
     return this.inventoryService.receivePurchaseOrder(id, dto, user.id);
   }
 

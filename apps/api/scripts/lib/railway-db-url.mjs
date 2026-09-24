@@ -26,6 +26,12 @@ export function resolveDatabaseUrl(env = process.env, { requireProxy = false } =
     );
   }
   if (!requireProxy && env.DATABASE_URL) return env.DATABASE_URL;
+  if (requireProxy) {
+    // B799: a writer never falls back, so "or set DATABASE_URL" would send the operator the wrong way.
+    throw new Error(
+      `Missing Railway proxy variables: ${missing.join(", ")} — this caller requires the Railway proxy and never falls back to DATABASE_URL; run it under 'railway run --service postgres'`,
+    );
+  }
   throw new Error(
     `No DATABASE_URL and missing Railway variables: ${missing.join(", ")} — run under 'railway run --service postgres' or set DATABASE_URL`,
   );
