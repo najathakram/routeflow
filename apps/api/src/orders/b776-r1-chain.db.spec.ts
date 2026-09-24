@@ -420,7 +420,7 @@ describeDb("B776 R1 chain (SA-124g/h gate) — real Postgres", () => {
     // (as the original draft did) exercises a different contract: replaceAll's OWN "the payload
     // IS the full desired line set" semantics, where a one-item payload correctly discards the
     // second line. That is not a bug; it is the wrong layer for what this case means to pin.
-    const foldResult = foldMergeItems(order.lineItems, [{ productId, qty: 4 }]);
+    const foldResult = foldMergeItems(await itemsOf(order.id), [{ productId, qty: 4 }]);
 
     await tenantCtx.run(tenantId, () =>
       svc.updateOrderItems(
@@ -439,7 +439,7 @@ describeDb("B776 R1 chain (SA-124g/h gate) — real Postgres", () => {
 
   it("(e) a normal same-pack replace-all (payload pack == live pack) is unchanged from master", async () => {
     const customerId = await seedCustomer("e");
-    const productId = await seedProduct("prod-e", 12, 3);
+    const productId = await seedProduct("prod-e", 12, 36);
     const order = await seedPendingOrder(customerId, [
       { productId, qty: 12, boxes: 1, pieces: 0, unitsPerBox: 12, unitPrice: 36 },
     ]);
@@ -462,7 +462,12 @@ describeDb("B776 R1 chain (SA-124g/h gate) — real Postgres", () => {
 
   it("(f) same-pack duplicates at DIFFERENT prices plus a same-pack scan — both lines keep their own price and priceType, manualLines unchanged (SA-124i option i / Opus MED #3)", async () => {
     const customerId = await seedCustomer("f");
-    const productId = await seedProduct("prod-f", 12, 3);
+    // SA-124k: pricePerUnit is the price of ONE SELLING UNIT — a box, at 12 here, never a
+    // per-piece amount needing multiplication by unitsPerBox (create(), the web create modal
+    // and SA-124g all share this convention). 36 matches the lines' own $36/box; seeding 3
+    // (a per-piece price) was this fixture's own bug — the rebuild correctly re-derived $3/box
+    // from it, which F2 read as a 12x undercharge in the fixture, not the code.
+    const productId = await seedProduct("prod-f", 12, 36);
     const order = await seedPendingOrder(customerId, [
       {
         productId,
@@ -490,7 +495,7 @@ describeDb("B776 R1 chain (SA-124g/h gate) — real Postgres", () => {
     // echoes both lines' prices verbatim (foldMergeItems never produces that shape: a
     // derived/STANDARD line's price never survives the fold, REG-B465-MERGE-2). The scan
     // matches the order's own 12-pack, so it folds into the FIRST bucket (the STANDARD line).
-    const foldResult = foldMergeItems(order.lineItems, [
+    const foldResult = foldMergeItems(await itemsOf(order.id), [
       { productId, qty: 12, boxes: 1, pieces: 0 },
     ]);
 
@@ -524,13 +529,13 @@ describeDb("B776 R1 chain (SA-124g/h gate) — real Postgres", () => {
 
   it("(g) same-pack duplicates at the SAME price plus a same-pack scan — the first grows, the second is byte-identical, nothing refused", async () => {
     const customerId = await seedCustomer("g");
-    const productId = await seedProduct("prod-g", 12, 3);
+    const productId = await seedProduct("prod-g", 12, 36);
     const order = await seedPendingOrder(customerId, [
       { productId, qty: 12, boxes: 1, pieces: 0, unitsPerBox: 12, unitPrice: 36 },
       { productId, qty: 36, boxes: 3, pieces: 0, unitsPerBox: 12, unitPrice: 36 },
     ]);
 
-    const foldResult = foldMergeItems(order.lineItems, [
+    const foldResult = foldMergeItems(await itemsOf(order.id), [
       { productId, qty: 12, boxes: 1, pieces: 0 },
     ]);
 
@@ -578,7 +583,7 @@ describeDb("B776 R1 chain (SA-124g/h gate) — real Postgres", () => {
 
     // A staff create-merge: fold a bare 3-piece scan (no box data of its own — the incoming
     // side never claims a pack; only the EXISTING line's stale snapshot does).
-    const foldResult = foldMergeItems(order.lineItems, [{ productId, qty: 3 }]);
+    const foldResult = foldMergeItems(await itemsOf(order.id), [{ productId, qty: 3 }]);
 
     const err = await tenantCtx
       .run(tenantId, () =>

@@ -226,4 +226,44 @@ describe("OrdersService.updateOrderItems replaceAll — SA-124g/h R1's ONE guard
     expect(created40![0].data.overrideReason).toBe("reason A");
     expect(created60![0].data.overrideReason).toBe("reason B");
   });
+
+  it("SA-124k: a folded STANDARD bucket with no unitPrice re-derives at product.pricePerUnit verbatim — the BOX price, never divided or multiplied by unitsPerBox", async () => {
+    // pricePerUnit is the price of ONE SELLING UNIT — a box, when unitsPerBox > 1 (create(),
+    // the web create modal and SA-124g all share this convention; common/msrp.ts:33 states it
+    // explicitly for the same reason). getTierPrice/resolveBuyerLinePrice must read it
+    // VERBATIM. A chain-spec fixture (b776-r1-chain.db.spec.ts case (f)) once seeded a
+    // per-piece price here by mistake and misread the correct $3/box re-derivation as a 12x
+    // bug in this code — this pin exists so that mistake can't recur silently.
+    h.prisma.product.findMany.mockResolvedValue([
+      {
+        id: "prod-box",
+        name: "Widget",
+        unitsPerBox: 12,
+        pricePerUnit: 36, // the BOX price, not 36/12
+        trackedCategoryId: null,
+      },
+    ]);
+    h.prisma.order.findUnique.mockResolvedValue({
+      ...MOCK_ORDER,
+      lineItems: [line({ id: "li-box", productId: "prod-box", boxes: 2, qty: 24, unitPrice: 36 })],
+    });
+
+    // A folded item with NO unitPrice — exactly foldMergeItems' own output for a grown
+    // STANDARD/derived bucket (REG-B465-MERGE-2: a derived line's price never survives the
+    // fold), forcing this code down the resolveBuyerLinePrice re-derivation branch.
+    await h.service.updateOrderItems(
+      "ord-1",
+      {
+        replaceAll: true,
+        items: [{ productId: "prod-box", sourceLineId: "li-box", qty: 36, boxes: 3, pieces: 0 }],
+      } as never,
+      operatorPayload as never,
+    );
+
+    const created = h.prisma.orderItem.create.mock.calls.find(
+      (c: any) => c[0]?.data?.productId === "prod-box",
+    );
+    expect(created![0].data.priceType).toBe("STANDARD");
+    expect(Number(created![0].data.unitPrice)).toBe(36);
+  });
 });
