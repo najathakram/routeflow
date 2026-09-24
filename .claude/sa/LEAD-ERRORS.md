@@ -96,6 +96,8 @@ A 7 · B 5 · C 1 · D 4 (lead) · SA own: A 11 · B 14 | needless asks ("you di
 
 - SA-E53 · 2026-09-24 · B · SA-135 (3) asserted a future 12× over-bill from a storage change without reading how the template price is denominated (per box) or how create() derives the subtotal (boxed proration — identical for any qty). Same shape as E38: a money harm named without tracing it to the write. Rule: before naming a money consequence, compute it on the actual formula with one concrete number; a storage change is not a money change until the subtotal path says so.
 
+- SA-E54 · 2026-09-24 · B · SA-130b required a proof for a fixture shape ("a separate SENT deposit invoice beside a draft") without checking the deposit model — a deposit is a percent on one invoice, derived at read time. The lane built the fixture, it "passed", and the number meant nothing. Rule: before requiring a proof case, verify the shape can be PRODUCED by the real writers; name the writer that produces it in the request.
+
 ## Prediction (update weekly)
 
 - 2026-09-20 · A dominates (5 of 11) → the fix is mechanical: re-derive at the moment of decision and name the sha. Next likely instance: a "ready to land", "N behind" or ratchet figure relayed from a lane across a merge window. D is the expensive class: watch every "the flag is off" and every merge list that is mostly one lane.
