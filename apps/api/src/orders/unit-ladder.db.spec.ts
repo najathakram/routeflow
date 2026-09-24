@@ -31,7 +31,12 @@ import { PrismaService } from "../prisma/prisma.service";
 import { TenantContextService } from "../tenant/tenant-context.service";
 import { resolveLineUnits } from "../products/line-units";
 import { decrementStockForSale } from "./order-stock";
-import { MAX_LINE_QTY, MAX_LINE_SUBTOTAL, buildUnitLine } from "./unit-line-build";
+import {
+  MAX_LINE_QTY,
+  MAX_LINE_SUBTOTAL,
+  buildUnitLine,
+  categoryTaxForLine,
+} from "./unit-line-build";
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const { assertTestTenant } = require("../../../../scripts/lib/test-tenants.cjs");
@@ -79,7 +84,13 @@ describeDb("units_v1 ladder — real Postgres", () => {
   let orderId = "";
   let productId = "";
 
-  const taxNone = () => 0;
+  // B297/SA-088 (#938 fix): this fixture's product carries no trackedCategoryId, so a NULL
+  // category — never a bare 0 — is the correct "no regulated tax" shape. Reuses the real
+  // production helper `categoryTaxForLine` (the ONE place taxFor's {amount, snapshot} shape
+  // is produced) instead of hand-rolling an equivalent that can drift from the real contract
+  // the way the old `() => 0` did: buildUnitLine destructures `taxFor(...).snapshot.categoryTaxType`,
+  // and a bare number crashes with "Cannot read properties of undefined (reading 'categoryTaxType')".
+  const taxNone = (qty: number, subtotal: number) => categoryTaxForLine(null, qty, subtotal);
   const stockOf = async () =>
     Number((await raw.product.findUniqueOrThrow({ where: { id: productId } })).currentStock);
   const ladderOf = (tenantId: string) =>

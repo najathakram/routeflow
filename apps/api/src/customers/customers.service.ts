@@ -57,6 +57,7 @@ import { addressStateFields } from "./address-state";
 // Same grace window BillingCronService.expireGrace() clears hourly — the create()
 // gate applies it synchronously rather than waiting for the cron to run.
 import { GRACE_DAYS } from "../billing/plan-catalog.constants";
+import { portalInviteEmailHtml } from "./portal-invite-email";
 
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 
@@ -1506,7 +1507,7 @@ export class CustomersService {
         include: { payments: true },
       });
       if (!inv) throw new NotFoundException("Invoice not found");
-      if (CREDIT_NOT_APPLICABLE.includes(inv.status)) {
+      if (inv.status === "DRAFT" || CREDIT_NOT_APPLICABLE.includes(inv.status)) {
         throw new BadRequestException(
           `Cannot apply advance payment to invoice with status ${inv.status}`,
         );
@@ -2985,13 +2986,7 @@ export class CustomersService {
     const sendResult = await this.email.send({
       to: toEmail,
       subject: `${sellerName} invited you to their RouteFlow buyer portal`,
-      html: `<p>Hi,</p>
-<p><strong>${sellerName}</strong> has invited you to connect on the RouteFlow buyer portal — track orders, invoices, and statements in one place.</p>
-<p style="margin:24px 0;">
-  <a href="${inviteUrl}" style="display:inline-block;padding:12px 24px;background:#2563eb;color:#fff;border-radius:8px;text-decoration:none;font-weight:600;font-size:15px;">Accept Invite</a>
-</p>
-<p>Or paste this link into your browser:<br/><a href="${inviteUrl}">${inviteUrl}</a></p>
-<p><em>This link expires in 7 days.</em></p>`,
+      html: portalInviteEmailHtml(sellerName, inviteUrl),
       // Security review Phase 2: a buyer-portal invite carries an account-linking action
       // link — platform sender only, never a tenant's connected mailbox/SMTP.
       senderClass: "platform",

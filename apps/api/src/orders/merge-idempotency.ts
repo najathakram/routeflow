@@ -75,6 +75,15 @@ export const IDEMPOTENCY_KEY_CONFLICT = "IDEMPOTENCY_KEY_CONFLICT";
 export const IDEMPOTENCY_REPLAY_NEEDS_RECONCILE = "IDEMPOTENCY_REPLAY_NEEDS_RECONCILE";
 
 /**
+ * B667 (#1185 review round 5, item 6): the one shared tolerance for "is a Decimal(10,3) qty
+ * effectively equal/at-least another" across every qty-coverage predicate in this family
+ * (`shouldSkipInPlaceResync` below, `checkOrderCoverage` in finalize-order-recompute.ts) — Node's
+ * float math (0.7 + 0.1 === 0.7999999999999999) means a strict comparison can misjudge a
+ * genuinely-exact sum. One constant so it can never drift into two different literals.
+ */
+export const QTY_EPSILON = 0.001;
+
+/**
  * B215/R2: the partial-billing guard `updateOrderItems` applies to a POST-DELIVERY edit, as a
  * pure predicate over the line rows it reads — so the replay path can evaluate the SAME rule
  * instead of hard-coding one side of it.
@@ -89,10 +98,10 @@ export const IDEMPOTENCY_REPLAY_NEEDS_RECONCILE = "IDEMPOTENCY_REPLAY_NEEDS_RECO
 export function shouldSkipInPlaceResync(
   lines: ReadonlyArray<{ qty?: unknown; invoicedQty?: unknown }>,
 ): boolean {
-  const billableLines = lines.filter((li) => Number(li.qty ?? 0) > 0.001);
-  const anyInvoiced = billableLines.some((li) => Number(li.invoicedQty ?? 0) > 0.001);
+  const billableLines = lines.filter((li) => Number(li.qty ?? 0) > QTY_EPSILON);
+  const anyInvoiced = billableLines.some((li) => Number(li.invoicedQty ?? 0) > QTY_EPSILON);
   const allFullyInvoiced = billableLines.every(
-    (li) => Number(li.invoicedQty ?? 0) >= Number(li.qty ?? 0) - 0.001,
+    (li) => Number(li.invoicedQty ?? 0) >= Number(li.qty ?? 0) - QTY_EPSILON,
   );
   return anyInvoiced && !allFullyInvoiced;
 }

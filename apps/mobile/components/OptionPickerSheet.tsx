@@ -5,6 +5,12 @@ import { ios } from "@routeflow/ui/tokens";
 export interface PickerOption {
   id: string;
   label: string;
+  /**
+   * Optional second line under the label (units_v1's per-level "240 pcs · $220.00" detail —
+   * mirrors `ProductPickerSheet`'s name+meta row). Undefined for every pre-existing caller, which
+   * keeps their single-line row byte-for-byte unchanged (see the row rendering below).
+   */
+  subtitle?: string;
 }
 
 interface Props {
@@ -57,9 +63,19 @@ export function OptionPickerSheet({
                   style={[styles.row, active && styles.rowActive]}
                   onPress={() => onSelect(opt)}
                 >
-                  <Text style={[styles.rowText, active && styles.rowTextActive]} numberOfLines={1}>
-                    {opt.label}
-                  </Text>
+                  <View style={styles.rowTextWrap}>
+                    <Text
+                      style={[styles.rowText, active && styles.rowTextActive]}
+                      numberOfLines={1}
+                    >
+                      {opt.label}
+                    </Text>
+                    {opt.subtitle ? (
+                      <Text style={styles.rowSubtitle} numberOfLines={1}>
+                        {opt.subtitle}
+                      </Text>
+                    ) : null}
+                  </View>
                   {active ? <Ionicons name="checkmark" size={16} color={ios.brand} /> : null}
                 </Pressable>
               );
@@ -116,8 +132,18 @@ const styles = StyleSheet.create({
     borderTopColor: ios.separator,
   },
   rowActive: { backgroundColor: ios.brandWash },
-  rowText: { fontSize: 15, fontFamily: "Inter_400Regular", color: ios.label, flex: 1 },
+  // flex:1 lives on the wrapper (not `rowText` itself) so a subtitle-less row renders the exact
+  // same single Text node's width/height it always has — adding the wrapping View around it does
+  // not change layout for any pre-existing (title-only) caller.
+  rowTextWrap: { flex: 1 },
+  rowText: { fontSize: 15, fontFamily: "Inter_400Regular", color: ios.label },
   rowTextActive: { fontFamily: "Inter_600SemiBold", color: ios.brand },
+  rowSubtitle: {
+    fontSize: 12,
+    fontFamily: "Inter_400Regular",
+    color: ios.label2,
+    marginTop: 2,
+  },
   empty: {
     fontSize: 14,
     fontFamily: "Inter_400Regular",

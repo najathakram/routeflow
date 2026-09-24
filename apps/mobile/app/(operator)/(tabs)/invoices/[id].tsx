@@ -52,7 +52,8 @@ import { isCreditOpenForApply, openCreditBalance } from "../../../../lib/credit-
 import { siblingInvoicesOf } from "../../../../lib/invoice-siblings";
 import { showToast } from "../../../../lib/toast";
 import { alertInfo, confirm, chooseAction } from "../../../../lib/confirm";
-import { formatQtySplit } from "@routeflow/pricing";
+import { invoiceLineUnitNoun, usesUnitDisplay } from "../../../../lib/invoice-line-display";
+import { invoiceLineQtyText } from "@routeflow/pricing";
 import { freeUnitsLabel } from "../../../../lib/buyer-cart-logic";
 import { ACTIVATION_BUDGET_MS, sharePdf } from "../../../../lib/share-pdf";
 import { printPdf } from "../../../../lib/print-pdf";
@@ -856,10 +857,14 @@ export default function InvoiceDetailScreen() {
                         {it.description}
                       </Text>
                       <Text style={styles.itemSub}>
-                        {it.boxes != null || it.pieces != null
+                        {usesUnitDisplay(it)
                           ? // Boxed line: unitPrice is the BOX price — "qty × price"
-                            // would read as pieces × box-price (visually wrong).
-                            `${formatQtySplit({ qty: it.qty, boxes: it.boxes, pieces: it.pieces })} @ ${fmtCurrency(it.unitPrice)}/box`
+                            // would read as pieces × box-price (visually wrong). B653:
+                            // both the qty noun and the price-per-unit noun read the
+                            // line's own unitLabel ("Case"), not a hardcoded "box".
+                            // #1275: a factor-1 unit line (no split) also routes here —
+                            // usesUnitDisplay catches it via unitLabel alone.
+                            `${invoiceLineQtyText(it)} @ ${fmtCurrency(it.unitPrice)}/${invoiceLineUnitNoun(it)}`
                           : `${it.qty} × ${fmtCurrency(it.unitPrice)}`}
                       </Text>
                       {/* Suggested retail price snapshot — per PIECE, display-only. */}
