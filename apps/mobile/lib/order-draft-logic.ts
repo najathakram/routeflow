@@ -1,4 +1,4 @@
-import type { LadderProduct } from "@routeflow/pricing";
+import { normalizeBoxesPieces, type LadderProduct } from "@routeflow/pricing";
 import type { ProductUnitLevel } from "@routeflow/types";
 import { buildUnitOptions } from "./unit-options";
 
@@ -76,6 +76,8 @@ export interface ResumeUnitLineInput {
 export interface ResumeUnitOption {
   value: string;
   price: number;
+  /** Pieces per one of this unit — CartRow's margin hint basis (unit-options.ts#marginFactorFor). */
+  factorToBase: number;
 }
 
 export interface ResumeUnitPriceDecision {
@@ -87,6 +89,11 @@ export interface ResumeUnitPriceDecision {
   /** A genuine operator override, PINNED ON TOP of unitBasePrice — never instead of it. Undefined
    *  when there's no override, or the parked price was only a history pre-fill (B755). */
   operatorUnitPrice: number | undefined;
+  /** W/N (Opus REQUIRED, B747): the unit's pieces-per-unit factor, restored from the LIVE ladder
+   *  match — the live picker sets this on every unit pick (NewOrderScreen's unitFactor:
+   *  option.factorToBase); resume must too, or CartRow's marginFactorFor falls back to 1 and
+   *  prices/costs a Case's margin hint as if it were a single piece. */
+  unitFactor: number | undefined;
   /** True when the parked unitLabel no longer matches any level on the live ladder — the line
    *  fell back to the pack. The caller warns; this function never logs. */
   fellBackToPack: boolean;
@@ -113,6 +120,7 @@ export function decideResumeUnitPrice(
       unitLabel: undefined,
       unitBasePrice: undefined,
       operatorUnitPrice: undefined,
+      unitFactor: undefined,
       fellBackToPack: false,
     };
   }
@@ -122,6 +130,7 @@ export function decideResumeUnitPrice(
       unitLabel: undefined,
       unitBasePrice: undefined,
       operatorUnitPrice: undefined,
+      unitFactor: undefined,
       fellBackToPack: true,
     };
   }
@@ -131,6 +140,7 @@ export function decideResumeUnitPrice(
     unitLabel: label,
     unitBasePrice: match.price,
     operatorUnitPrice: isOperatorOverride ? li.unitPrice : undefined,
+    unitFactor: match.factorToBase,
     fellBackToPack: false,
   };
 }
@@ -148,6 +158,10 @@ export interface ResumeLinePricingResult {
   /** A genuine operator override — from either branch below, always tagged "operator" (a
    *  history-sourced price is never carried across a resume, so it never reaches here). */
   unitPrice?: number;
+  /** W/N (Opus REQUIRED, B747): CartRow's margin-hint pieces-per-unit basis — see
+   *  ResumeUnitPriceDecision.unitFactor. Undefined for a plain pack line (marginFactorFor then
+   *  reads the product's own unitsPerBox instead, same as a freshly-picked pack line). */
+  unitFactor?: number;
   /** Set (with nothing else) when a unit-labeled line's ladder lost that level — the caller
    *  should console.warn this and apply NOTHING else from this result (the line resumes as
    *  a plain pack, same as a line with no unitLabel at all). */
@@ -177,6 +191,7 @@ export function resolveResumeLinePricing(
     const result: ResumeLinePricingResult = {
       unitLabel: decision.unitLabel,
       unitBasePrice: decision.unitBasePrice,
+      unitFactor: decision.unitFactor,
     };
     if (decision.operatorUnitPrice != null) result.unitPrice = decision.operatorUnitPrice;
     return result;
@@ -185,4 +200,43 @@ export function resolveResumeLinePricing(
     return { unitPrice: li.unitPrice };
   }
   return {};
+}
+
+/** `resolveResumeLineBoxes`'s parked-line input — a structural slice of `DraftCatalogLine`. */
+export interface ResumeLineBoxesInput {
+  unitLabel?: string | null;
+  boxes?: number;
+  pieces?: number;
+  qty: number;
+  unitsPerBox?: number;
+}
+
+export interface ResumeLineBoxesResult {
+  boxes?: number;
+  pieces?: number;
+  qty: number;
+}
+
+/**
+ * W/N (Opus REQUIRED, B747) — re-derives boxes/pieces/qty when the LIVE product's unitsPerBox
+ * differs from the parked snapshot (never keep the stale qty: silent over/under-charge). NEVER
+ * for a unit-labeled line — its qty is a plain COUNT of the chosen unit, unrelated to the pack's
+ * own box size; re-splitting it would inject boxes/pieces onto a line units_v1 forbids that on.
+ */
+export function resolveResumeLineBoxes(
+  li: ResumeLineBoxesInput,
+  liveUnitsPerBox: number,
+): ResumeLineBoxesResult {
+  let boxes = li.boxes;
+  let pieces = li.pieces;
+  let qty = li.qty;
+  const parkedUpb = Number(li.unitsPerBox ?? 0);
+  const liveUpb = Number(liveUnitsPerBox ?? 0);
+  if (!li.unitLabel && liveUpb !== parkedUpb) {
+    const n = normalizeBoxesPieces({ boxes, pieces, qty, unitsPerBox: liveUpb });
+    boxes = n.boxes ?? undefined;
+    pieces = n.pieces ?? undefined;
+    qty = n.qty;
+  }
+  return { boxes, pieces, qty };
 }

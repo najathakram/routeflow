@@ -10,6 +10,7 @@ import {
   decideResumeLine,
   decideResumeUnitPrice,
   orderSubmitGate,
+  resolveResumeLineBoxes,
   resolveResumeLinePricing,
 } from "../lib/order-draft-logic";
 
@@ -109,9 +110,9 @@ describe("NewOrderScreen delegates resume-line classification (REG-B195 wiring)"
  */
 describe("decideResumeUnitPrice (B747 / B755)", () => {
   const liveOptions = [
-    { value: "", price: 24 },
-    { value: "Case", price: 220 },
-    { value: "Piece", price: 1 },
+    { value: "", price: 24, factorToBase: 1 },
+    { value: "Case", price: 220, factorToBase: 12 },
+    { value: "Piece", price: 1, factorToBase: 1 },
   ];
 
   it("a parked Case line resumes as a Case line, priced at the LIVE ladder's CURRENT tier — never the parked price", () => {
@@ -121,6 +122,7 @@ describe("decideResumeUnitPrice (B747 / B755)", () => {
       unitLabel: "Case",
       unitBasePrice: 220,
       operatorUnitPrice: undefined,
+      unitFactor: 12,
       fellBackToPack: false,
     });
   });
@@ -130,6 +132,7 @@ describe("decideResumeUnitPrice (B747 / B755)", () => {
       unitLabel: undefined,
       unitBasePrice: undefined,
       operatorUnitPrice: undefined,
+      unitFactor: undefined,
       fellBackToPack: false,
     });
   });
@@ -141,6 +144,7 @@ describe("decideResumeUnitPrice (B747 / B755)", () => {
       unitLabel: undefined,
       unitBasePrice: undefined,
       operatorUnitPrice: undefined,
+      unitFactor: undefined,
       fellBackToPack: true, // the caller's job to console.warn on this
     });
   });
@@ -155,6 +159,7 @@ describe("decideResumeUnitPrice (B747 / B755)", () => {
       unitLabel: "Case",
       unitBasePrice: 220, // still the LIVE price — the override rides alongside it, not over it
       operatorUnitPrice: 200,
+      unitFactor: 12,
       fellBackToPack: false,
     });
 
@@ -178,8 +183,18 @@ describe("decideResumeUnitPrice (B747 / B755)", () => {
       unitLabel: "Case",
       unitBasePrice: 220,
       operatorUnitPrice: undefined, // the history price (210) is discarded, not pinned
+      unitFactor: 12,
       fellBackToPack: false,
     });
+  });
+
+  it("W/N (Opus REQUIRED, B747): a Case's piece factor is restored from the live ladder match — never left undefined, which CartRow's marginFactorFor reads as 1", () => {
+    expect(
+      decideResumeUnitPrice({ unitLabel: "Case", priceType: "STANDARD" }, liveOptions).unitFactor,
+    ).toBe(12);
+    expect(
+      decideResumeUnitPrice({ unitLabel: "Piece", priceType: "STANDARD" }, liveOptions).unitFactor,
+    ).toBe(1);
   });
 });
 
@@ -220,7 +235,17 @@ describe("resolveResumeLinePricing (B747/B755 — the size-ratchet extraction)",
         units,
         1,
       ),
-    ).toEqual({ unitLabel: "Case", unitBasePrice: liveCasePrice });
+    ).toEqual({ unitLabel: "Case", unitBasePrice: liveCasePrice, unitFactor: 288 });
+  });
+
+  it("W/N (Opus REQUIRED, B747): restores the Case's real piece factor (288), never leaving it undefined for CartRow's margin hint", () => {
+    const result = resolveResumeLinePricing(
+      { unitLabel: "Case", priceType: "STANDARD", productId: "p1" },
+      product,
+      units,
+      1,
+    );
+    expect(result.unitFactor).toBe(288);
   });
 
   it("a ladder that lost the parked level returns ONLY a fallbackWarning naming the unit and product", () => {
@@ -276,5 +301,91 @@ describe("NewOrderScreen resume no longer refuses a unit-aware draft (B747 wirin
   it("size-ratchet: hydration fetch/decide is delegated to hydrateParkedLine, not inlined", () => {
     expect(screenSrc).toMatch(/hydrateParkedLine/);
     expect(screenSrc).not.toMatch(/decideResumeLine/);
+  });
+});
+
+/**
+ * R2 (Opus REQUIRED, B747): resume used to price a unit-labeled line at the header
+ * `customerTier` — which reads 1 until `useCustomer` resolves and is read exactly once (the
+ * hydration effect's own ref-guard never re-runs it) — instead of `effectiveTierFor(productId)`,
+ * the per-product tier every OTHER price computation in this screen already uses (the picker,
+ * the cart total, the price editor). A per-product CustomerPrice override, or simply resuming
+ * before customerDetail/customerPrices finished loading, silently priced the line wrong forever.
+ * Mobile tests are pure-logic only (no RN tree) — pinned at the source level, the technique this
+ * file already uses for the screen's other resume wiring.
+ */
+describe("NewOrderScreen resume prices off the PER-PRODUCT tier (R2, B747)", () => {
+  const screenSrc = readFileSync(join(__dirname, "..", "components", "NewOrderScreen.tsx"), "utf8");
+  const hydrationEffectSrc = screenSrc.slice(
+    screenSrc.indexOf("const hydrationStartedRef"),
+    screenSrc.indexOf("hydrating, hydrateAttempt, customerDetail, customerPrices"),
+  );
+
+  it("resolveResumeLinePricing is called with effectiveTierFor(li.productId), never the bare customerTier", () => {
+    expect(hydrationEffectSrc).toMatch(
+      /resolveResumeLinePricing\([^)]*effectiveTierFor\(li\.productId\)/,
+    );
+    expect(hydrationEffectSrc).not.toMatch(
+      /resolveResumeLinePricing\(\s*li,\s*product,\s*units,\s*customerTier\s*\)/,
+    );
+  });
+
+  it("the hydration effect waits for customerDetail AND customerPrices before running — never commits a tier-1 price early", () => {
+    expect(hydrationEffectSrc).toMatch(
+      /if\s*\(\s*!customerDetail\s*\|\|\s*customerPrices\s*===\s*undefined\s*\)\s*return;/,
+    );
+  });
+
+  it("the effect re-runs once customerDetail/customerPrices load — both are in its dependency array", () => {
+    expect(screenSrc).toMatch(/\[hydrating, hydrateAttempt, customerDetail, customerPrices\]/);
+  });
+});
+
+/**
+ * W/N (Opus REQUIRED, B747): the pack-changed re-split (normalizeBoxesPieces, triggered when the
+ * live product's unitsPerBox differs from the parked snapshot) must never run for a unit-labeled
+ * line — its qty is a plain COUNT of the chosen unit, unrelated to the pack's own box size, and
+ * the units_v1 convention requires boxes/pieces to stay undefined on such a line.
+ */
+describe("resolveResumeLineBoxes — never re-splits a unit-labeled line (W/N, B747)", () => {
+  it("a plain pack line whose product's unitsPerBox shrank re-splits (and rolls loose pieces over) via normalizeBoxesPieces", () => {
+    // Parked: 2 boxes of 12 + 10 loose = 34 pieces. Live pack shrank to 8: the SAME 2 physical
+    // boxes + 10 loose reinterprets to 2*8+10=26 pieces, which rolls over into 3 boxes + 2 loose.
+    expect(resolveResumeLineBoxes({ qty: 34, boxes: 2, pieces: 10, unitsPerBox: 12 }, 8)).toEqual({
+      boxes: 3,
+      pieces: 2,
+      qty: 26,
+    });
+  });
+
+  it("a plain pack line whose product's unitsPerBox is UNCHANGED is left exactly as parked", () => {
+    expect(resolveResumeLineBoxes({ qty: 27, boxes: 2, pieces: 3, unitsPerBox: 12 }, 12)).toEqual({
+      boxes: 2,
+      pieces: 3,
+      qty: 27,
+    });
+  });
+
+  it("W/N (red on the pre-fix code): a unit-labeled line is NEVER re-split, even when unitsPerBox changed", () => {
+    expect(resolveResumeLineBoxes({ qty: 3, unitLabel: "Case", unitsPerBox: 12 }, 24)).toEqual({
+      boxes: undefined,
+      pieces: undefined,
+      qty: 3,
+    });
+  });
+});
+
+describe("NewOrderScreen resume wiring (W/N, B747)", () => {
+  const screenSrc = readFileSync(join(__dirname, "..", "components", "NewOrderScreen.tsx"), "utf8");
+
+  it("delegates the pack-changed re-split to resolveResumeLineBoxes, never re-implements it inline", () => {
+    expect(screenSrc).toMatch(/resolveResumeLineBoxes\(li, Number\(product\.unitsPerBox/);
+    expect(screenSrc).not.toMatch(/normalizeBoxesPieces/);
+  });
+
+  it("restores unitFactor from resolveResumeLinePricing's result onto the resumed line", () => {
+    expect(screenSrc).toMatch(
+      /pricing\.unitFactor\s*!==\s*undefined\)\s*line\.unitFactor\s*=\s*pricing\.unitFactor/,
+    );
   });
 });

@@ -52,13 +52,7 @@ import { createScanAttempt, createWedgeSubmitHandler } from "../lib/wedge-submit
 import { createScanAcceptGuard } from "../lib/scan-accept-guard";
 // Compose "<Parent> - <Variant>" so scanned variants don't show as "Strawberry" alone.
 import { displayProductName as displayName } from "../lib/product-display";
-import {
-  computeLineSubtotal,
-  effectiveQty,
-  getTierPrice,
-  normalizeBoxesPieces,
-  roundMoney,
-} from "@routeflow/pricing";
+import { computeLineSubtotal, effectiveQty, getTierPrice, roundMoney } from "@routeflow/pricing";
 import { useMarginConfig, floorForCategory } from "../lib/api/margin";
 import { useTrackedCategories } from "../lib/api/tracked-categories";
 import {
@@ -107,7 +101,11 @@ import {
 } from "../lib/pending-scroll";
 import { isCatalogHeader, visibleCatalogRows, type CatalogRow } from "../lib/visible-cart";
 import { unlistedAffordancePlacement } from "../lib/unlisted-affordance";
-import { orderSubmitGate, resolveResumeLinePricing } from "../lib/order-draft-logic";
+import {
+  orderSubmitGate,
+  resolveResumeLinePricing,
+  resolveResumeLineBoxes,
+} from "../lib/order-draft-logic";
 import { hydrateParkedLine } from "../lib/resume-draft-hydration";
 import { getOrderSubmitKey, resetOrderSubmitKey } from "../lib/order-submit-key";
 import { fmtCalendarDate } from "../lib/format-date";
@@ -719,6 +717,9 @@ function ProductPickView({
   const hydrationStartedRef = useRef(false);
   useEffect(() => {
     if (!hydrating || hydrationStartedRef.current) return;
+    // R2: wait for customerDetail/customerPrices — the resume price commits ONCE, so
+    // running early silently bakes in tier 1 forever (see effectiveTierFor below).
+    if (!customerDetail || customerPrices === undefined) return;
     hydrationStartedRef.current = true;
     const parkedLines: DraftCatalogLine[] = draftSeed?.items ?? [];
     let cancelled = false;
@@ -753,37 +754,28 @@ function ProductPickView({
           continue;
         }
         nextScanned[li.productId] = product;
-        const liveUpb = Number(product.unitsPerBox ?? 0);
-        const parkedUpb = Number(li.unitsPerBox ?? 0);
-        let boxes = li.boxes;
-        let pieces = li.pieces;
-        let qty = li.qty;
-        // unitsPerBox changed on the live product: keep the parked PHYSICAL
-        // counts (boxes/pieces) and re-derive qty with the LIVE packaging —
-        // never keep the stale qty, which would silently over/under-charge.
-        // Every direction of the change has to go through the helper, not just
-        // case→case: a line that LOST its packaging must shed boxes/pieces
-        // (otherwise effectiveQty reads `boxes*0 + pieces`), and a plain-qty
-        // line whose product GAINED packaging must gain the split (otherwise
-        // computeLineSubtotal charges the new CASE price per piece).
-        if (liveUpb !== parkedUpb) {
-          const n = normalizeBoxesPieces({ boxes, pieces, qty, unitsPerBox: liveUpb });
-          boxes = n.boxes ?? undefined;
-          pieces = n.pieces ?? undefined;
-          qty = n.qty;
-        }
+        // Pack-changed re-split (W/N: never for a unit-labeled line) — order-draft-logic.ts.
+        const { boxes, pieces, qty } = resolveResumeLineBoxes(li, Number(product.unitsPerBox ?? 0));
         const line: LineState = { qty };
         if (boxes != null) line.boxes = boxes;
         if (pieces != null) line.pieces = pieces;
         if (li.note) line.note = li.note;
         // B747/B755: re-resolve unit/override pricing off LIVE data, never the parked price.
-        const pricing = resolveResumeLinePricing(li, product, units, customerTier);
+        // R2: the per-product tier (effectiveTierFor), never the bare header customerTier.
+        const pricing = resolveResumeLinePricing(
+          li,
+          product,
+          units,
+          effectiveTierFor(li.productId),
+        );
         if (pricing.fallbackWarning) {
           // eslint-disable-next-line no-console
           console.warn(pricing.fallbackWarning);
         } else {
           if (pricing.unitLabel !== undefined) line.unitLabel = pricing.unitLabel;
           if (pricing.unitBasePrice !== undefined) line.unitBasePrice = pricing.unitBasePrice;
+          // W/N: restore the piece factor CartRow's marginFactorFor needs (else falls back to 1).
+          if (pricing.unitFactor !== undefined) line.unitFactor = pricing.unitFactor;
           if (pricing.unitPrice !== undefined) {
             line.unitPrice = pricing.unitPrice;
             line.priceSource = "operator";
@@ -805,7 +797,7 @@ function ProductPickView({
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [hydrating, hydrateAttempt]);
+  }, [hydrating, hydrateAttempt, customerDetail, customerPrices]);
 
   /**
    * Debounced, server-filtered, 50-rows-at-a-time. This used to be a single
