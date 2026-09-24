@@ -81,6 +81,18 @@ describe("buildInvoiceUnitLine — a manual invoice line sold by a non-pack unit
     expect(build({}, "Case", category).categoryTaxAmount).toBe(432);
   });
 
+  it("B297 (SA-088): stamps the rate-snapshot trio alongside categoryTaxAmount, and an all-null snapshot with no category", () => {
+    const withCat = build({}, "Case", category);
+    expect(withCat.categoryTaxType).toBe("EXCISE_PER_UNIT");
+    expect(withCat.categoryTaxRate).toBe(0.5);
+    expect(withCat.categoryPriceIncludesTax).toBe(false);
+
+    const noCat = build({}, "Case", null);
+    expect(noCat.categoryTaxType).toBeNull();
+    expect(noCat.categoryTaxRate).toBeNull();
+    expect(noCat.categoryPriceIncludesTax).toBeNull();
+  });
+
   it("refuses boxes, pieces and promotions beside a unit, a fractional or zero count, and an oversize line", () => {
     for (const bad of [
       { boxes: 1 },

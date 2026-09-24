@@ -16,6 +16,7 @@ import { tenantSlugFromHostname } from "@/lib/tenant-host";
 import { safeOperatorRedirect } from "@/lib/portal-routing";
 import { usePortalPresence } from "@/lib/hooks/usePortalPresence";
 import { AuthShell } from "@/components/auth";
+import { DRIVER_APP_LOGIN_URL } from "@/lib/driver-app-link";
 
 // ─── Schema ───────────────────────────────────────────────────────────────────
 
@@ -195,6 +196,12 @@ export default function LoginPage() {
             New to RouteFlow?{" "}
             <a href="/signup" className="text-[#0B6E6B] hover:underline font-medium">
               Start your 14-day free trial
+            </a>
+          </p>
+          <p className="text-xs text-navy/70">
+            Driver?{" "}
+            <a href={DRIVER_APP_LOGIN_URL} className="text-[#0B6E6B] hover:underline font-medium">
+              Open the driver app →
             </a>
           </p>
         </>

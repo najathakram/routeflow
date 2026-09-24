@@ -85,7 +85,7 @@ export type ReturnPriceSource = (typeof RETURN_PRICE_SOURCE_VALUES)[number];
 export const CREDIT_NOTE_STATUS_VALUES = ["ISSUED", "APPLIED", "VOID"] as const;
 export type CreditNoteStatus = (typeof CREDIT_NOTE_STATUS_VALUES)[number];
 
-export const REGULATED_FILING_STATUS_VALUES = ["GENERATED", "FAILED"] as const;
+export const REGULATED_FILING_STATUS_VALUES = ["GENERATED", "FAILED", "LOCKED"] as const;
 export type RegulatedFilingStatus = (typeof REGULATED_FILING_STATUS_VALUES)[number];
 
 export const INVOICE_TREATMENT_VALUES = [

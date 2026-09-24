@@ -601,7 +601,10 @@ describe("AuthService", () => {
 
   describe("refresh — in-place rotation (B155)", () => {
     const T0 = new Date("2026-01-01T00:00:00.000Z");
-    const stored = {
+    // B791: built PER TEST. Built at collection time, its 60 s expiry would start when Jest
+    // COLLECTS the file, so a slow run (a loaded host, CI) executed the tests after their own
+    // fixture had expired.
+    const makeStored = () => ({
       id: "rt-1",
       userId: "user-1",
       tokenHash: "h-old",
@@ -611,7 +614,11 @@ describe("AuthService", () => {
       userAgent: null,
       ipAddress: null,
       deviceName: null,
-    };
+    });
+    let stored: ReturnType<typeof makeStored>;
+    beforeEach(() => {
+      stored = makeStored();
+    });
     const sha256 = (value: string) =>
       require("crypto").createHash("sha256").update(value).digest("hex");
     // The rotated token jwtService.sign() mints in this suite is "mock-token";

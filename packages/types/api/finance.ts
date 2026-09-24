@@ -180,6 +180,31 @@ export interface UnlinkedItemsError {
   unlinkedItems: { id: string; description: string; qty: number; unitCost: number }[];
 }
 
+/**
+ * B743: a bill line's pack size wasn't stated (or was left at 0/1, which
+ * never means "confirmed one piece") for a product the catalog already
+ * knows is sold by the case. Mirrors `UnlinkedItemsError`'s warn-and-confirm
+ * shape — retry with `acknowledgePackSizeUnknown: true` (receive) or
+ * `acknowledgePackSizeUnknown: true` (create's raise-PO path) to record the
+ * line as loose pieces anyway.
+ */
+export interface PackSizeUnknownError {
+  code: "PACK_SIZE_UNKNOWN";
+  message: string;
+  packSizeUnknownItems: {
+    /** The existing VendorBillItem id; null for a line not yet saved. */
+    id: string | null;
+    lineIndex: number;
+    description: string;
+    productId: string;
+    productName: string;
+    qty: number;
+    unitCost: number;
+    /** The product's own known pack — a HINT only, never applied automatically. */
+    productPack: number;
+  }[];
+}
+
 /** An already-recorded bill that matches the one being entered. */
 export interface DuplicateVendorBillInfo {
   billId: string;
