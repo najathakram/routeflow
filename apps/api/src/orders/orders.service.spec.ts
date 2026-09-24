@@ -9426,6 +9426,14 @@ describe("OrdersService", () => {
       expect(pieceQty({ qty: 8, boxes: null, unitsPerBox: null }, 0)).toBe(8);
       expect(pieceQty({ qty: 8, boxes: null, unitsPerBox: null })).toBe(8);
     });
+
+    it("SA-144e: a unit-labeled line stays at its own count — unitLabel wins even over a boxed unitsPerBox, never expanded by it", () => {
+      expect(pieceQty({ qty: 10, boxes: null, unitsPerBox: 1, unitLabel: "Piece" }, 12)).toBe(10);
+    });
+
+    it("SA-144e: a line's OWN snapshotted unitsPerBox beats the fallback — never the other way round", () => {
+      expect(pieceQty({ qty: 5, boxes: null, unitsPerBox: 12 }, 6)).toBe(60);
+    });
   });
 });
 

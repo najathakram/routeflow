@@ -19,6 +19,8 @@ export function linePieceQty(
   unitsPerBoxFallback?: number,
 ): number {
   const packAtSale = li.unitsPerBox != null ? Number(li.unitsPerBox) : unitsPerBoxFallback;
+  // The `warn` result is discarded on purpose: the regulated ledger's own write point
+  // (regulated-ledger.service.ts:91) is the one place this box-unaware fallback gets logged.
   return regulatedUnitBasis(
     {
       qty: Number(li.qty) || 0,
