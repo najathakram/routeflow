@@ -23,6 +23,7 @@ import { displayProductName } from "@/lib/product-display";
 import {
   computeLineSubtotal,
   normalizeBoxesPieces,
+  packFromOwnSplit,
   roundMoney,
   getTierPrice,
 } from "@routeflow/pricing";
@@ -418,8 +419,16 @@ export default function EditInvoicePage() {
               // the product's packaging changed since, would re-price the line and
               // show the per-box price as the whole line total). Selling-unit lines
               // (boxes == null) stay non-boxed so qty × unitPrice is preserved.
+              // B674/SA-144: a legacy line (boxes stored, unitsPerBox never
+              // snapshotted) recovers its pack from its OWN split via
+              // packFromOwnSplit — never the live product, which is what silently
+              // re-split a repacked line's pieces on the next save.
               const isBoxSplit = it.boxes != null;
-              const upb = Number(it.unitsPerBox ?? it.product?.unitsPerBox ?? 0);
+              const upb = Number(
+                it.unitsPerBox ??
+                  packFromOwnSplit({ qty: it.qty, boxes: it.boxes, pieces: it.pieces }) ??
+                  0,
+              );
               return {
                 key: it.id,
                 productId: it.productId,

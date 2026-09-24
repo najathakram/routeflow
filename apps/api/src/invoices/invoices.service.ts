@@ -3354,7 +3354,19 @@ export class InvoicesService {
 
       // B717/SA-077: this replace path recreates every line, so a pack it carries is lost
       // unless read first. Rule + reasoning: update-pack-resolution.ts.
-      const priorPacks = await loadPriorPacks(this.prisma.forTenant().invoiceItem, id, productIds);
+      const { packs: priorPacks, hasUnitAwareLine } = await loadPriorPacks(
+        this.prisma.forTenant().invoiceItem,
+        id,
+        productIds,
+      );
+      // SA-144: fence unit-aware lines out of update() entirely — checked against the invoice's
+      // OWN surviving rows for these products, not just the incoming payload (dto.items rarely
+      // carries unitLabel back; the edit clients don't round-trip it), so an existing unit-aware
+      // line simply carried through an unrelated edit (a notes change, a different line's price)
+      // is still caught, not just a NEW unit request (the requestsUnit() check above).
+      if (hasUnitAwareLine) {
+        throw new BadRequestException("Selling by a unit can't be edited on an invoice yet.");
+      }
 
       let subtotal = 0;
       const itemsData = dto.items.map((item) => {

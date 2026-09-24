@@ -32,7 +32,7 @@ import {
 } from "../../../../../lib/invoice-totals";
 import { isPendingOrderMirror } from "../../../../../lib/invoices-logic";
 import { hasUnitLine, unitLabelsOf } from "../../../../../lib/invoice-line-unit";
-import { computeLineSubtotal } from "@routeflow/pricing";
+import { computeLineSubtotal, packFromOwnSplit } from "@routeflow/pricing";
 import { showToast } from "../../../../../lib/toast";
 import {
   hasUnsavedInvoiceLineEdits,
@@ -124,7 +124,14 @@ export default function EditInvoiceScreen() {
       qty: Number(it.qty),
       boxes: it.boxes ?? null,
       pieces: it.boxes != null ? (it.pieces ?? 0) : null,
-      unitsPerBox: it.unitsPerBox ?? null,
+      // B674/SA-144: a legacy line (boxes stored, unitsPerBox never snapshotted) recovers its
+      // pack from its OWN split via packFromOwnSplit — web's exact fix. Without this, a legacy
+      // line hydrated here with unitsPerBox null failed isSplit's upb > 1 check below, so the
+      // case/piece stepper never rendered and a save re-priced the line as loose pieces.
+      unitsPerBox:
+        it.unitsPerBox ??
+        packFromOwnSplit({ qty: Number(it.qty), boxes: it.boxes, pieces: it.pieces }) ??
+        null,
       unitPrice: Number(it.unitPrice),
       discount: it.discount != null && Number(it.discount) > 0 ? Number(it.discount) : null,
       ...lineTax[i],
