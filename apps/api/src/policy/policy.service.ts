@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ForbiddenException,
   Injectable,
   Logger,
   NotFoundException,
@@ -97,6 +98,8 @@ const LAYERS: readonly PolicyScopeType[] = ["TENANT", "CATEGORY", "CUSTOMER"];
 export class PolicyService {
   private readonly logger = new Logger(PolicyService.name);
   private readonly cache = new Map<string, CacheEntry>();
+  /** Bumped by invalidate(): a read that started before a write never re-caches its old rows. */
+  private readonly generation = new Map<string, number>();
 
   constructor(private readonly prisma: PrismaService) {}
 
@@ -132,13 +135,14 @@ export class PolicyService {
   /**
    * The TENANT-scope effective value of every registry key that allows TENANT scope, encoded for
    * `TenantFeaturesResponse.modes` (a `Record<string, string>`): an enum value verbatim, a
-   * money/set value as JSON text. Category/customer values never leave the server this way.
+   * money/set value as JSON text. Category/customer values never leave the server this way, and
+   * neither does an entry marked `clientVisible: false` (the modes record reaches buyer tokens).
    * Never throws (resolve() doesn't).
    */
   async effectiveForClient(tenantId: string): Promise<Record<string, string>> {
     const out: Record<string, string> = {};
     for (const entry of POLICY_REGISTRY as readonly PolicyEntry<unknown>[]) {
-      if (!entry.scopes.includes("TENANT")) continue;
+      if (!entry.scopes.includes("TENANT") || entry.clientVisible === false) continue;
       const value = await this.resolve(tenantId, entry.key as PolicyKey);
       out[entry.key] =
         entry.kind === "enum" && typeof value === "string" ? value : JSON.stringify(value);
@@ -166,6 +170,7 @@ export class PolicyService {
   /** Drop a tenant's cached rows — called after every write this process makes. */
   invalidate(tenantId: string): void {
     this.cache.delete(tenantId);
+    this.generation.set(tenantId, (this.generation.get(tenantId) ?? 0) + 1);
   }
 
   // ─── Write ───────────────────────────────────────────────────────────────
@@ -176,6 +181,7 @@ export class PolicyService {
    * all in one transaction. Returns the new row.
    */
   async set(params: SetPolicyParams): Promise<PolicyValue> {
+    this.requireMatchingContext(params.tenantId);
     const entry = this.requireEntry(params.key);
     const scopeId = this.requireScope(entry, params.scopeType, params.scopeId);
     const reason = this.requireReason(params.reason);
@@ -256,6 +262,7 @@ export class PolicyService {
    * when nothing is set there. Returns the superseded row.
    */
   async clear(params: ClearPolicyParams): Promise<PolicyValue> {
+    this.requireMatchingContext(params.tenantId);
     const entry = this.requireEntry(params.key);
     const scopeId = this.requireScope(entry, params.scopeType, params.scopeId);
     const reason = this.requireReason(params.reason);
@@ -318,12 +325,17 @@ export class PolicyService {
     const cached = this.cache.get(tenantId);
     if (cached && cached.expiresAt > now) return cached.rows;
 
+    const gen = this.generation.get(tenantId) ?? 0;
     const rows = await this.prisma.policyValue.findMany({
       where: { tenantId, supersededAt: null },
       select: { id: true, key: true, scopeType: true, scopeId: true, value: true, createdAt: true },
     });
-    this.cache.set(tenantId, { rows, expiresAt: now + CACHE_TTL_MS });
-    if (this.cache.size > 1000) this.pruneExpired(now);
+    // An invalidate() that landed during the await means these rows may predate a write this
+    // process just made — serve them to this caller, but never cache them.
+    if ((this.generation.get(tenantId) ?? 0) === gen) {
+      this.cache.set(tenantId, { rows, expiresAt: now + CACHE_TTL_MS });
+      if (this.cache.size > 1000) this.pruneExpired(now);
+    }
     return rows;
   }
 
@@ -353,7 +365,13 @@ export class PolicyService {
       let newest: CachedRow | undefined;
       for (const r of rows) {
         if (r.key !== entry.key || r.scopeType !== scopeType || r.scopeId !== scopeId) continue;
-        if (!newest || r.createdAt > newest.createdAt) newest = r;
+        if (
+          !newest ||
+          r.createdAt > newest.createdAt ||
+          (r.createdAt.getTime() === newest.createdAt.getTime() && r.id > newest.id)
+        ) {
+          newest = r;
+        }
       }
       if (!newest) continue;
       const parsed = entry.schema.safeParse(newest.value);
@@ -367,6 +385,22 @@ export class PolicyService {
       value = parsed.data;
     }
     return value;
+  }
+
+  /**
+   * `tenantTransaction` scopes every write to the request's ALS tenant, while the lock key, the
+   * scope-target check and invalidate() use `params.tenantId` — they must be the same tenant. A
+   * caller with no context (a script) is fine: every where/create here names the tenant itself.
+   */
+  private requireMatchingContext(tenantId: string): void {
+    const ctx = this.prisma.getTenantId();
+    if (ctx !== null && ctx !== tenantId) {
+      throw new ForbiddenException({
+        statusCode: 403,
+        code: "POLICY_TENANT_MISMATCH",
+        message: "Policy writes are limited to the caller's own tenant.",
+      });
+    }
   }
 
   private requireEntry(key: string): PolicyEntry<unknown> {

@@ -102,7 +102,6 @@ describe("TenantsController.getMyFeatures — SA-138 policy modes carrier", () =
   it("serves the tenant-scope effective policy values in `modes`, for this tenant only", async () => {
     const modes = {
       "orders.driverAtDoorEdit": "amend",
-      "credit.approvalThreshold": "null",
       "invoicing.priceDisclosure": '["originalPrice","discount","msrp"]',
     };
     const { controller, policies } = build(modes);

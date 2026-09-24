@@ -52,6 +52,7 @@ function build(rows: unknown[] | Error = []) {
     customer: { findFirst: jest.fn().mockResolvedValue({ id: "cust-1" }) },
     trackedCategory: { findFirst: jest.fn().mockResolvedValue({ id: "cat-1" }) },
     tenantTransaction: jest.fn(async (fn: (t: unknown) => unknown) => fn(tx)),
+    getTenantId: jest.fn().mockReturnValue(null),
   };
   const svc = new PolicyService(prisma as never);
   return { svc, prisma, tx, findMany };
@@ -113,6 +114,32 @@ describe("PolicyService.resolve", () => {
     await expect(svc.resolve(T, "credit.approvalThreshold")).resolves.toBeNull();
   });
 
+  it("a read that races an invalidate() never re-caches its pre-write rows", async () => {
+    const { svc, findMany } = build([]);
+    let release!: () => void;
+    findMany.mockImplementationOnce(
+      () => new Promise((r) => (release = () => r([row({ value: "amend" })]))),
+    );
+    const inFlight = svc.resolve(T, "orders.driverAtDoorEdit");
+    await Promise.resolve();
+    svc.invalidate(T); // a write committed while the read was awaiting
+    release();
+    await inFlight;
+    findMany.mockResolvedValueOnce([row({ value: "replace" })]);
+    expect(await svc.resolve(T, "orders.driverAtDoorEdit")).toBe("replace"); // re-read, not stale
+  });
+
+  it("an exact createdAt tie is broken deterministically by id", async () => {
+    const rows = [
+      row({ id: "b", value: "disabled", createdAt: at(1) }),
+      row({ id: "a", value: "replace", createdAt: at(1) }),
+    ];
+    expect(await build(rows).svc.resolve(T, "orders.driverAtDoorEdit")).toBe("disabled");
+    expect(await build([...rows].reverse()).svc.resolve(T, "orders.driverAtDoorEdit")).toBe(
+      "disabled",
+    );
+  });
+
   it("caches per tenant for 30 s and invalidate() forces a fresh read", async () => {
     const { svc, findMany } = build([]);
     await svc.resolve(T, "orders.driverAtDoorEdit");
@@ -125,14 +152,10 @@ describe("PolicyService.resolve", () => {
 });
 
 describe("PolicyService.effectiveForClient", () => {
-  it("encodes enum values verbatim and money/set values as JSON text", async () => {
-    const { svc } = build([
-      row({ key: "credit.approvalThreshold", value: 250 }),
-      row({ key: "invoicing.priceDisclosure", value: ["discount"] }),
-    ]);
+  it("encodes enum values verbatim and set values as JSON text", async () => {
+    const { svc } = build([row({ key: "invoicing.priceDisclosure", value: ["discount"] })]);
     expect(await svc.effectiveForClient(T)).toEqual({
       "orders.driverAtDoorEdit": "amend",
-      "credit.approvalThreshold": "250",
       "invoicing.priceDisclosure": '["discount"]',
     });
   });
@@ -141,9 +164,14 @@ describe("PolicyService.effectiveForClient", () => {
     const { svc } = build([]);
     expect(await svc.effectiveForClient(T)).toEqual({
       "orders.driverAtDoorEdit": "amend",
-      "credit.approvalThreshold": "null",
       "invoicing.priceDisclosure": '["originalPrice","discount","msrp"]',
     });
+  });
+
+  it("never exposes a clientVisible:false key — the credit band stays server-side even when set", async () => {
+    const { svc } = build([row({ key: "credit.approvalThreshold", value: 250 })]);
+    expect(await svc.effectiveForClient(T)).not.toHaveProperty(["credit.approvalThreshold"]);
+    expect(await svc.resolve(T, "credit.approvalThreshold")).toBe(250); // the server still sees it
   });
 });
 
@@ -238,6 +266,14 @@ describe("PolicyService.set / clear validation (400s never reach the lock)", () 
       new locks.LockTimeoutError("policy-write", `${T}:orders.driverAtDoorEdit`, 10_000),
     );
     await expect(svc.set(base)).rejects.toBeInstanceOf(ServiceUnavailableException);
+  });
+
+  it("403 when the request context names a different tenant than the write", async () => {
+    const { svc, prisma } = build([]);
+    prisma.getTenantId.mockReturnValue("tenant-2");
+    const err = await svc.set(base).catch((e) => e);
+    expect(err.getResponse().code).toBe("POLICY_TENANT_MISMATCH");
+    expect(locks.withAdvisoryLock).not.toHaveBeenCalled();
   });
 
   it("clear 404s when nothing is set at that scope", async () => {

@@ -127,6 +127,11 @@ describe("POLICY_REGISTRY pins (SA-138 §3.1)", () => {
     expect(ENTRIES.every((e) => ["enum", "money", "set"].includes(e.kind))).toBe(true);
   });
 
+  it("P2d: the credit approval band is server-only — never carried to clients through `modes`", () => {
+    const credit = ENTRIES.find((e) => e.key === "credit.approvalThreshold");
+    expect(credit?.clientVisible).toBe(false);
+  });
+
   it("P2c: PolicyService / the policy registry is never imported by a *.guard.ts", () => {
     const offenders = sourceFiles((f) => f.endsWith(".guard.ts"))
       .filter((file) => {

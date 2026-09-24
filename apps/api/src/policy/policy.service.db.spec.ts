@@ -270,15 +270,16 @@ describeDb("PolicyService — real Postgres (SA-138 phase 1)", () => {
     // (only for this test's `race-*` reasons). Without the lock both transactions read "no active
     // row" before either commits and BOTH rows stay active — verified by bypassing the lock. The
     // trigger and its function are dropped in `finally`, so the shared DB lane is left untouched.
+    const RACE = `qa_policy_race_${RUN}`; // per-run name: parallel DB lanes never share it
     await prisma.$executeRawUnsafe(`
-      CREATE OR REPLACE FUNCTION qa_policy_race_sleep() RETURNS trigger AS $$
+      CREATE OR REPLACE FUNCTION ${RACE}() RETURNS trigger AS $$
       BEGIN
         IF NEW."reason" LIKE 'race-%' THEN PERFORM pg_sleep(0.3); END IF;
         RETURN NEW;
       END $$ LANGUAGE plpgsql`);
     await prisma.$executeRawUnsafe(`
-      CREATE TRIGGER qa_policy_race_sleep BEFORE INSERT ON "PolicyValue"
-      FOR EACH ROW EXECUTE FUNCTION qa_policy_race_sleep()`);
+      CREATE TRIGGER ${RACE} BEFORE INSERT ON "PolicyValue"
+      FOR EACH ROW EXECUTE FUNCTION ${RACE}()`);
     let results;
     try {
       results = await Promise.all([
@@ -304,10 +305,8 @@ describeDb("PolicyService — real Postgres (SA-138 phase 1)", () => {
         ),
       ]);
     } finally {
-      await prisma.$executeRawUnsafe(
-        `DROP TRIGGER IF EXISTS qa_policy_race_sleep ON "PolicyValue"`,
-      );
-      await prisma.$executeRawUnsafe(`DROP FUNCTION IF EXISTS qa_policy_race_sleep()`);
+      await prisma.$executeRawUnsafe(`DROP TRIGGER IF EXISTS ${RACE} ON "PolicyValue"`);
+      await prisma.$executeRawUnsafe(`DROP FUNCTION IF EXISTS ${RACE}()`);
     }
 
     const rows = await prisma.policyValue.findMany({

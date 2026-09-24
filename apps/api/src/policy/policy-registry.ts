@@ -11,6 +11,9 @@
  * The failure rule is one rule, not per key: a failed or invalid read resolves to `default`, and
  * every `default` IS today's behaviour. That is why an entry carries no `failMode` field.
  *
+ * Call-site convention (P1a/P1b scan for it): inject PolicyService as `policies` (or `policy` /
+ * `policyService`) and pass the key as a string literal, the second argument of `resolve`.
+ *
  * `schema` validates stored JSON at read AND write. It is a zod v4 schema so `GET /policies` can
  * hand the admin UI a JSON-schema of it (`z.toJSONSchema`).
  */
@@ -42,6 +45,12 @@ export interface PolicyEntry<T = unknown> {
    * PR removes its key's flag and `POLICY_PILOT_PENDING_ALLOWLIST` entry together (P3).
    */
   pilotPending?: true;
+  /**
+   * `false` keeps the key out of `TenantFeaturesResponse.modes`, which every tenant-bearing token
+   * (buyer, driver) can read. Set it on any policy that is the tenant's INTERNAL business rule
+   * rather than something a client renders — the office still reads it through `GET /policies`.
+   */
+  clientVisible?: false;
 }
 
 function entry<T>(e: PolicyEntry<T>): PolicyEntry<T> {
@@ -85,6 +94,8 @@ export const POLICY_REGISTRY = [
       .nullable(),
     default: null,
     scopes: ["TENANT", "CUSTOMER"],
+    // The seller's credit-risk band: a buyer must never learn how far over its limit it can go.
+    clientVisible: false,
     description:
       "How far over a customer's credit limit an office order may go and still be accepted as " +
       "awaiting credit approval. Empty = no band: every order over the limit is blocked (today).",
@@ -106,7 +117,7 @@ export const POLICY_REGISTRY = [
     added: "2026-09-24",
     pilotPending: true,
   }),
-] as const satisfies readonly PolicyEntry<any>[];
+] as const;
 
 /**
  * P3: the ONLY keys that may carry `pilotPending`. Shrink-only — a pilot PR deletes its key here
