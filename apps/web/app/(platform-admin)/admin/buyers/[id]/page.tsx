@@ -316,7 +316,7 @@ export default function BuyerDetailPage() {
         </div>
         <Link
           href="/admin/buyers"
-          className="mt-4 inline-flex items-center gap-2 text-sm text-slate-400 hover:text-white"
+          className="admin-tap-text mt-4 inline-flex items-center gap-2 text-sm text-slate-400 hover:text-white"
         >
           <ArrowLeft className="h-4 w-4" /> Back to Buyers
         </Link>
@@ -339,7 +339,7 @@ export default function BuyerDetailPage() {
       <div className="mb-6">
         <Link
           href="/admin/buyers"
-          className="mb-3 inline-flex items-center gap-1.5 text-sm text-slate-400 hover:text-white"
+          className="admin-tap-text mb-3 inline-flex items-center gap-1.5 text-sm text-slate-400 hover:text-white"
         >
           <ArrowLeft className="h-4 w-4" /> Back to Buyers
         </Link>

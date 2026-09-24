@@ -81,6 +81,14 @@ describe("OrderLineItemsTable — columns and a plain line", () => {
     renderTable([line({ notes: "leave at dock" })]);
     expect(screen.getByText("leave at dock")).toBeInTheDocument();
   });
+
+  it("a multi-line note keeps its line breaks (whitespace-pre-line, not collapsed to a space)", () => {
+    renderTable([line({ notes: "leave at dock\nring bell twice\nask for Sam" })]);
+    const note = screen.getByText(
+      (_, el) => el?.textContent === "leave at dock\nring bell twice\nask for Sam",
+    );
+    expect(note.className).toEqual(expect.stringContaining("whitespace-pre-line"));
+  });
 });
 
 describe("OrderLineItemsTable — quantity", () => {

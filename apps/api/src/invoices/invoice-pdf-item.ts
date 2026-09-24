@@ -1,5 +1,6 @@
 /**
- * Per-line promo/original-price display decisions for the invoice PDF (F03 R9).
+ * Per-line promo/original-price/qty-label display decisions for the invoice PDF (F03 R9,
+ * B653).
  *
  * WHY a helper rather than assertions on the template: `./invoice-pdf-template` is
  * replaced wholesale by `apps/api/test/__mocks__/invoice-pdf-template.js` through
@@ -10,6 +11,18 @@
  * The visual reference is the web invoice detail renderer,
  * `apps/web/app/(dashboard)/invoices/[id]/page.tsx` :2408-2481.
  */
+
+import { invoiceLineQtyText } from "@routeflow/pricing";
+
+/** Mirrors `invoice-pdf-template.tsx`'s own `DecimalLike` — a Prisma Decimal, a plain
+ *  number, or a numeric string, all seen on the wire depending on the read path. */
+type DecimalLike = { toNumber(): number } | number | string;
+
+const toNum = (val: DecimalLike): number => {
+  if (typeof val === "number") return val;
+  if (typeof val === "string") return parseFloat(val);
+  return val.toNumber();
+};
 
 export type InvoicePdfItemLike = {
   qty?: number | string | null;
@@ -45,4 +58,46 @@ export function showOriginalPrice(item: InvoicePdfItemLike, hideOriginalPrice: b
   // MANUAL upsell (charged ABOVE the base price): never expose the lower base.
   if (item.priceType === "MANUAL" && unitPrice > original) return false;
   return true;
+}
+
+export type InvoicePdfQtyItemLike = {
+  qty: DecimalLike;
+  boxes?: number | null;
+  pieces?: number | null;
+  /** units_v1 (2026-09-19): the line's own selling unit ("Case") when this line was
+   *  sold by a non-pack unit rather than by loose pieces — see `buildInvoiceUnitLine`.
+   *  A units_v1 line stores `boxes = count` (the unit count, NOT box count) and
+   *  `pieces = 0`, so without this the qty cell reads "N boxes" for a genuine "N Case"
+   *  line (B653). */
+  unitLabel?: string | null;
+};
+
+/**
+ * B653: the invoice PDF's qty-column text — the SAME `invoiceLineQtyText` formatter
+ * web (`apps/web/lib/invoice-line-unit.ts`) and mobile (`invoice-line-display.ts`)
+ * call, so a units_v1 line reads identically everywhere: "3 Cases" for a boxed
+ * split, never "3 boxes"; "5 Piece" for a factor-1 unit (no split to attach the
+ * label to), never a bare "5". A pack line (no `unitLabel`) is unchanged.
+ */
+export function qtyCellText(item: InvoicePdfQtyItemLike): string {
+  return invoiceLineQtyText({
+    qty: toNum(item.qty),
+    boxes: item.boxes,
+    pieces: item.pieces,
+    unitLabel: item.unitLabel,
+  });
+}
+
+/** boxes/pieces/unitLabel, normalized — the fields an invoice-email item payload
+ *  threads through for `qtyCellText` on its own send (B653). */
+export function invoiceItemQtyFields(item: {
+  boxes?: number | string | null;
+  pieces?: number | string | null;
+  unitLabel?: string | null;
+}): { boxes: number | null; pieces: number | null; unitLabel: string | null } {
+  return {
+    boxes: item.boxes != null ? Number(item.boxes) : null,
+    pieces: item.pieces != null ? Number(item.pieces) : null,
+    unitLabel: item.unitLabel ?? null,
+  };
 }

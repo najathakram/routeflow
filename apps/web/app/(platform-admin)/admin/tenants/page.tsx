@@ -339,7 +339,7 @@ export default function AdminTenantsPage() {
         </div>
         <Link
           href="/admin/tenants/new"
-          className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-indigo-500"
+          className="admin-tap rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-indigo-500"
         >
           + Create New Tenant
         </Link>
@@ -674,7 +674,7 @@ export default function AdminTenantsPage() {
                         <div className="flex items-center gap-2">
                           <Link
                             href={`/admin/tenants/${t.id}`}
-                            className="rounded px-2 py-1 text-xs font-medium text-indigo-400 hover:bg-indigo-900/30 hover:text-indigo-300"
+                            className="admin-tap rounded px-2 py-1 text-xs font-medium text-indigo-400 hover:bg-indigo-900/30 hover:text-indigo-300"
                           >
                             View
                           </Link>
@@ -722,7 +722,7 @@ export default function AdminTenantsPage() {
                             No tenants yet.{" "}
                             <Link
                               href="/admin/tenants/new"
-                              className="text-indigo-400 hover:underline"
+                              className="admin-inline text-indigo-400 hover:underline"
                             >
                               Create one
                             </Link>

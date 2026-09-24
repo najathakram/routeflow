@@ -2,13 +2,16 @@ import { BadRequestException, ForbiddenException } from "@nestjs/common";
 import { PriceType } from "@prisma/client";
 import {
   InvalidTierError,
+  categoryTaxSnapshotOf,
   computeCategoryTax,
   computeLineSubtotal,
   normalizeBoxesPieces,
   resolveUnitPrice,
+  type CategoryTaxSnapshot,
   type CategoryTaxType,
   type LadderProduct,
   type LadderUnit,
+  type TrackedCategoryRow,
   roundMoney,
 } from "@routeflow/pricing";
 import { lineUnitsPerBoxSnapshot, type ResolvedLineUnits } from "../products/line-units";
@@ -87,7 +90,11 @@ export const isUnitAware = (resolved: ResolvedLineUnits): boolean => resolved.un
  * (unlisted) line has no ladder, so a unit on one is refused rather than silently dropped.
  */
 export async function assertMayUseUnits(
-  items: ReadonlyArray<{ unitLabel?: string | null; productId?: string | null }>,
+  items: ReadonlyArray<{
+    unitLabel?: string | null;
+    productId?: string | null;
+    id?: string | null;
+  }>,
   ctx: {
     isStaff: boolean;
     tenantId: string | null | undefined;
@@ -98,7 +105,9 @@ export async function assertMayUseUnits(
   if (!ctx.isStaff) {
     throw new BadRequestException("Only staff can choose a selling unit on an order line.");
   }
-  if (items.some((i) => requestsUnit(i) && !i.productId)) {
+  // An `id`-only edit of an EXISTING line (updateOrderItems, A1) carries no productId of its
+  // own — that never means "custom/unlisted" the way it does on a fresh create() line.
+  if (items.some((i) => requestsUnit(i) && !i.productId && !i.id)) {
     throw new BadRequestException("A custom line has no selling units — pick a catalog product.");
   }
   if (!ctx.tenantId || !(await ctx.hasFlag(ctx.tenantId, "flag.units_v1"))) {
@@ -173,21 +182,35 @@ export function replayLineKey(
   return `${r.productId ?? `unlisted:${r.name ?? ""}`}×${Number(count)}${unit ? `@${unit}` : ""}`;
 }
 
-/** Regulated per-category tax for a unit line (0 when the product has no tracked category). */
+/**
+ * Regulated per-category tax for a unit line (0 when the product has no tracked category), PLUS
+ * (B297/SA-088) the rate trio it was computed from — the ONE place `taxFor` below produces both
+ * together, so a unit line's snapshot can never drift from the amount it priced.
+ */
 export const categoryTaxForLine = (
-  category: { taxType: unknown; rate: unknown; priceIncludesTax: boolean } | null | undefined,
+  category: TrackedCategoryRow | null | undefined,
   qtyPieces: number,
   lineSubtotal: number,
-): number =>
-  category
+): { amount: number; snapshot: CategoryTaxSnapshot } => ({
+  amount: category
     ? computeCategoryTax({
-        taxType: category.taxType as CategoryTaxType,
+        taxType: category.taxType,
         rate: Number(category.rate),
         unitBasisQty: qtyPieces,
         lineSubtotal,
-        priceIncludesTax: category.priceIncludesTax,
+        priceIncludesTax: category.priceIncludesTax ?? undefined,
       })
-    : 0;
+    : 0,
+  snapshot: categoryTaxSnapshotOf(
+    category
+      ? {
+          taxType: category.taxType,
+          rate: category.rate,
+          priceIncludesTax: category.priceIncludesTax,
+        }
+      : null,
+  ),
+});
 
 /** OrderItem.qty is Decimal(10,3) and subtotal Decimal(10,2): a bigger line would 500 the order. */
 export const MAX_LINE_QTY = 9_999_999;
@@ -210,6 +233,9 @@ export interface UnitLineData {
   trackedCategoryId: string | null;
   trackedSubcategoryId: string | null;
   categoryTaxAmount: number;
+  categoryTaxType: CategoryTaxSnapshot["categoryTaxType"];
+  categoryTaxRate: CategoryTaxSnapshot["categoryTaxRate"];
+  categoryPriceIncludesTax: CategoryTaxSnapshot["categoryPriceIncludesTax"];
   position: number;
   tenantId: string | null | undefined;
 }
@@ -221,8 +247,16 @@ export function buildUnitLine(input: {
   item: UnitLineRequest;
   /** The customer's pricing tier for this product (1..5). */
   tier: number;
-  /** Regulated per-category tax for a line of `qtyPieces` base pieces worth `subtotal`. */
-  taxFor: (qtyPieces: number, subtotal: number) => number;
+  /**
+   * Regulated per-category tax for a line of `qtyPieces` base pieces worth `subtotal`, PLUS
+   * (B297) the rate trio it was priced under — see `categoryTaxForLine`. A caller that defers
+   * the amount to a later recompute pass (unit-line-edit.ts's `taxFor: () => 0`) defers the
+   * snapshot the same way — the two must never disagree about whether this line has been priced.
+   */
+  taxFor: (
+    qtyPieces: number,
+    subtotal: number,
+  ) => { amount: number; snapshot: CategoryTaxSnapshot };
   /** Set on every line by the caller's tenancy: a nested create bypasses `forTenant()`. */
   position: number;
   tenantId: string | null | undefined;
@@ -293,6 +327,7 @@ export function buildUnitLine(input: {
     );
   }
 
+  const categoryTax = taxFor(split.qty, subtotal);
   return {
     productId: item.productId,
     name: null,
@@ -309,7 +344,12 @@ export function buildUnitLine(input: {
     notes: item.itemNote || item.notes || undefined,
     trackedCategoryId: product.trackedCategoryId ?? null,
     trackedSubcategoryId: product.trackedSubcategoryId ?? null,
-    categoryTaxAmount: taxFor(split.qty, subtotal),
+    categoryTaxAmount: categoryTax.amount,
+    // B297 (SA-088): the rate trio categoryTaxAmount was computed from (or, for a caller that
+    // defers the amount to a later recompute pass, deferred the same way — see `taxFor`).
+    categoryTaxType: categoryTax.snapshot.categoryTaxType,
+    categoryTaxRate: categoryTax.snapshot.categoryTaxRate,
+    categoryPriceIncludesTax: categoryTax.snapshot.categoryPriceIncludesTax,
     position: input.position,
     tenantId: input.tenantId,
   };

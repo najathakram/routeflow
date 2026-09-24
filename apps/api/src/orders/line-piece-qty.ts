@@ -15,6 +15,8 @@ export function linePieceQty(
   // (create only snapshots it for box-split lines), so fall back to the product's
   // unitsPerBox — otherwise a per-unit levy collapses by a factor of unitsPerBox on
   // any later edit (create expanded qty→pieces but the recompute couldn't).
+  // B661-sweep: a line-tax (not ledger) box-unaware multiply — follow-up PR converts this to
+  // @routeflow/pricing's regulatedUnitBasis; see no-second-legacy-line-pieces.spec.ts's allowlist.
   const upb = Number(li.unitsPerBox ?? unitsPerBoxFallback ?? 0);
   return upb > 1 ? qty * upb : qty;
 }

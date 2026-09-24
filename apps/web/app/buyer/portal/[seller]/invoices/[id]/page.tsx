@@ -314,7 +314,9 @@ export default function BuyerInvoiceDetailPage() {
                   <td className="px-4 py-3 text-sm font-medium text-navy">
                     {item.description}
                     {item.notes?.trim() && (
-                      <p className="mt-0.5 text-xs font-normal italic text-navy/60">{item.notes}</p>
+                      <p className="mt-0.5 whitespace-pre-line text-xs font-normal italic text-navy/60">
+                        {item.notes}
+                      </p>
                     )}
                   </td>
                   <td className="px-4 py-3 text-right text-sm text-navy">

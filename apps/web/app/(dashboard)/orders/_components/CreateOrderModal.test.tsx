@@ -143,6 +143,16 @@ jest.mock("./scan/useContinuousScanCamera", () => ({
 jest.mock("@/lib/scan-cue", () => ({ playScanCue: jest.fn(), unlockScanCue: jest.fn() }));
 
 const mockResolveProductByCode = jest.fn();
+
+// units_v1: the flag and the product's ladder, mutable per test (default: flag OFF = today's modal).
+let mockUnitsEnabled = false;
+let mockProductUnits: unknown[] = [];
+jest.mock("@/lib/api/product-units", () => ({
+  useUnitsEnabled: () => mockUnitsEnabled,
+  useProductUnits: (_id: string, enabled: boolean) => ({
+    data: enabled ? mockProductUnits : undefined,
+  }),
+}));
 jest.mock("@/lib/barcode-resolve", () => ({
   resolveProductByCode: (code: string) => mockResolveProductByCode(code),
 }));
@@ -165,6 +175,8 @@ describe("CreateOrderModal", () => {
     cameraDetect = undefined;
     cameraEnabled = undefined;
     mockScanV2 = false;
+    mockUnitsEnabled = false;
+    mockProductUnits = [];
   });
 
   it("blocks submit with 'Please select a customer' and never calls the create mutation", async () => {
@@ -437,6 +449,66 @@ describe("CreateOrderModal", () => {
       expect(screen.getByText("Case Soda")).toBeInTheDocument();
     });
 
+    describe("price editor (step 6)", () => {
+      const openEditor = async () => {
+        mockResolveProductByCode.mockResolvedValue(widget);
+        await openScreen();
+        await scanCode("012345678905");
+        await screen.findByText("Widget");
+        fireEvent.click(screen.getByText("$9.99 / each"));
+        return screen.findByRole("dialog", { name: "Edit Widget" });
+      };
+
+      it("tapping a scanned row's price opens the sheet for that line", async () => {
+        const editor = await openEditor();
+        expect(editor).toBeInTheDocument();
+      });
+
+      it("setting a one-time price re-prices the line and the pinned total, through the row's own handler", async () => {
+        await openEditor();
+
+        fireEvent.change(screen.getByLabelText("Price"), { target: { value: "8.50" } });
+
+        await waitFor(() => expect(screen.getByText("1 item · $8.50")).toBeInTheDocument());
+      });
+
+      it("stepping the quantity from the sheet updates the same line", async () => {
+        await openEditor();
+
+        fireEvent.click(screen.getByLabelText("One more"));
+
+        await waitFor(() => expect(screen.getByText("1 item · $19.98")).toBeInTheDocument());
+      });
+
+      it("Escape closes the sheet but leaves the scan screen (and the order) open", async () => {
+        await openEditor();
+
+        fireEvent.keyDown(document.body, { key: "Escape" });
+
+        await waitFor(() =>
+          expect(screen.queryByRole("dialog", { name: "Edit Widget" })).not.toBeInTheDocument(),
+        );
+        expect(screen.getByRole("dialog", { name: "Scan items" })).toBeInTheDocument();
+        expect(screen.getByText("Widget")).toBeInTheDocument();
+      });
+
+      it("Done in the sheet returns to the scan screen with the edit applied", async () => {
+        await openEditor();
+        fireEvent.change(screen.getByLabelText("Price"), { target: { value: "8.50" } });
+
+        fireEvent.click(
+          within(screen.getByRole("dialog", { name: "Edit Widget" })).getByRole("button", {
+            name: "Done",
+          }),
+        );
+
+        await waitFor(() =>
+          expect(screen.queryByRole("dialog", { name: "Edit Widget" })).not.toBeInTheDocument(),
+        );
+        expect(screen.getByText("1 item · $8.50")).toBeInTheDocument();
+      });
+    });
+
     it("an UNKNOWN code opens create-product with the code as SKU and pauses the screen beneath it", async () => {
       mockResolveProductByCode.mockResolvedValue({ notFound: true, archived: false });
       await openScreen();
@@ -698,6 +770,95 @@ describe("CreateOrderModal", () => {
         await pickCustomer("Acme Foods");
         expect(screen.getByText("Over their credit limit of 100.00.")).toBeInTheDocument();
       });
+    });
+  });
+  describe("units_v1 - selling an order line by a unit", () => {
+    const caseLevel = {
+      id: "u1",
+      label: "Case",
+      factorToBase: 288,
+      price: "480.00",
+      priceTier2: null,
+      priceTier3: null,
+      priceTier4: null,
+      priceTier5: null,
+      isDefaultSelling: false,
+      sortOrder: 0,
+    };
+    const boxed = {
+      notFound: false,
+      archived: false,
+      product: { id: "prod-1", name: "Widget", pricePerUnit: "42", unit: "Box", unitsPerBox: 24 },
+    };
+    const cust = { id: "c1", businessName: "Acme Foods", pricingTier: 1 };
+
+    const setup = async () => {
+      mockUnitsEnabled = true;
+      mockProductUnits = [caseLevel];
+      mockCustomers = [cust];
+      mockResolveProductByCode.mockResolvedValue(boxed);
+      renderWithProviders(<CreateOrderModal isOpen onClose={jest.fn()} />);
+      fireEvent.change(screen.getByPlaceholderText("Search by business name…"), {
+        target: { value: "Acm" },
+      });
+      fireEvent.click(await screen.findByText("Acme Foods"));
+      capturedOnScan!("111");
+      return screen.findByLabelText("Sell Widget by");
+    };
+    const saveDraft = () => {
+      fireEvent.click(screen.getByRole("button", { name: /save as draft/i }));
+      expect(createOrderMutate).toHaveBeenCalledTimes(1);
+      return createOrderMutate.mock.calls[0][0].items;
+    };
+
+    it("a line sold by the Case is sent as { productId, qty: count, unitLabel } — no boxes, pieces or price", async () => {
+      fireEvent.change(await setup(), { target: { value: "Case" } });
+      expect(await screen.findByText("$480.00 / Case")).toBeInTheDocument();
+      expect(saveDraft()).toEqual([{ productId: "prod-1", qty: 1, unitLabel: "Case" }]);
+    });
+
+    it("choosing the pack again restores the case-packed line exactly (no unitLabel)", async () => {
+      const select = await setup();
+      fireEvent.change(select, { target: { value: "Case" } });
+      fireEvent.change(await screen.findByLabelText("Sell Widget by"), { target: { value: "" } });
+      expect(saveDraft()).toEqual([{ productId: "prod-1", qty: 24, boxes: 1, pieces: 0 }]);
+    });
+
+    it("re-key: product + unit is the line's identity — a scan after switching to Case adds a PACK line, not +1 Case", async () => {
+      fireEvent.change(await setup(), { target: { value: "Case" } });
+      await screen.findByText("$480.00 / Case");
+      capturedOnScan!("111");
+      await waitFor(() => expect(screen.getAllByLabelText("Sell Widget by")).toHaveLength(2));
+      expect(saveDraft()).toEqual([
+        { productId: "prod-1", qty: 1, unitLabel: "Case" },
+        { productId: "prod-1", qty: 24, boxes: 1, pieces: 0 },
+      ]);
+    });
+
+    it("re-key: switching the pack line to a Case that already exists folds the two into one line", async () => {
+      fireEvent.change(await setup(), { target: { value: "Case" } });
+      await screen.findByText("$480.00 / Case");
+      capturedOnScan!("111");
+      await waitFor(() => expect(screen.getAllByLabelText("Sell Widget by")).toHaveLength(2));
+      fireEvent.change(screen.getAllByLabelText("Sell Widget by")[1], {
+        target: { value: "Case" },
+      });
+      await waitFor(() => expect(screen.getAllByLabelText("Sell Widget by")).toHaveLength(1));
+      expect(saveDraft()).toEqual([{ productId: "prod-1", qty: 2, unitLabel: "Case" }]);
+    });
+
+    it("without flag.units_v1 there is no picker and no unitLabel — today's modal", async () => {
+      mockCustomers = [cust];
+      mockResolveProductByCode.mockResolvedValue(boxed);
+      renderWithProviders(<CreateOrderModal isOpen onClose={jest.fn()} />);
+      fireEvent.change(screen.getByPlaceholderText("Search by business name…"), {
+        target: { value: "Acm" },
+      });
+      fireEvent.click(await screen.findByText("Acme Foods"));
+      capturedOnScan!("111");
+      await screen.findByText(/24 pcs total/);
+      expect(screen.queryByLabelText("Sell Widget by")).toBeNull();
+      expect(saveDraft()).toEqual([{ productId: "prod-1", qty: 24, boxes: 1, pieces: 0 }]);
     });
   });
 });

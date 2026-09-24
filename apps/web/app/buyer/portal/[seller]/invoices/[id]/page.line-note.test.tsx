@@ -100,4 +100,34 @@ describe("buyer invoice detail — per-line note (R5.8)", () => {
     const notes = document.querySelectorAll("p.italic");
     expect(notes.length).toBe(1);
   });
+
+  it("a multi-line note keeps its line breaks (whitespace-pre-line, not collapsed to a space)", () => {
+    mockUseBuyerInvoice.mockReturnValue({
+      data: makeInvoice({
+        items: [
+          {
+            id: "item-1",
+            description: "Mango Juice",
+            productId: "p1",
+            qty: 1,
+            unitPrice: 10,
+            discount: 0,
+            subtotal: 10,
+            priceType: "STANDARD",
+            notes: "Extra ice\nSide door\nCall on arrival",
+          },
+        ],
+      }),
+      isLoading: false,
+      isError: false,
+    });
+    renderWithProviders(<Page />);
+    // A plain <p> collapses "\n" to a space in the rendered browser text, so this must be a DOM
+    // query (the raw text content, not what a browser would visually show) plus the CSS rule that
+    // makes the browser actually respect it — not a text match, which can't tell the two apart.
+    const noteEl = screen.getByText(
+      (_, el) => el?.textContent === "Extra ice\nSide door\nCall on arrival",
+    );
+    expect(noteEl.className).toEqual(expect.stringContaining("whitespace-pre-line"));
+  });
 });

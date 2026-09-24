@@ -48,6 +48,10 @@ export interface TxLedgerRow {
   invoiceId: string | null;
   /** Ledger rows carry the invoice line they were booked from; may dangle (no FK). */
   invoiceItemId: string | null;
+  /** Signed: REVERSAL rows are negative. The line's own unit in EVERY ledger era
+   *  (B661 changed `unitBasisQty`, never this column) — the legacy no-split boxed
+   *  branch's CASES count reads this, not `unitBasisQty`. */
+  qty: number;
   /** Signed: REVERSAL rows are negative. */
   unitBasisQty: number;
   netSales: number;
@@ -327,8 +331,13 @@ export function buildTxReport(input: {
 
     const effUpb = line.unitsPerBox ?? product?.unitsPerBox ?? 0;
     if (effUpb > 1) {
-      // LEGACY NO-SPLIT BOXED LINE: qty is already in CASES — do NOT multiply.
-      addBucket(row.invoiceId, product, itemType, uomCase, qty, net);
+      // LEGACY NO-SPLIT BOXED LINE: the CASES count is `row.qty` — the line's own
+      // unit in EVERY ledger era. B661 changed `unitBasisQty` to PIECES and left
+      // `qty` alone (bookedQty still derives from the line's own qty post-fix), so
+      // this is correct both before and after f45eaf52 with no era flag needed. Do
+      // NOT read `qty` (the unitBasisQty-derived local, pieces post-fix) here — a
+      // post-fix 5-box pack-12 row would report 60 cases instead of 5.
+      addBucket(row.invoiceId, product, itemType, uomCase, Number(row.qty), net);
       continue;
     }
     // Non-boxed product: everything is units.
