@@ -1,17 +1,22 @@
 /**
- * B776/SA-124g/h — R1's gate: the whole chain (sweep, forceConsolidate, staff replace-all) on
- * REAL Postgres, asserting on the STORED columns. Cases (a)-(g), per SA-124h:
- *   (a) the sweep with a 12-pack loser folds into the 12-pack winner line at $36
+ * B776/SA-124g/h/i — R1's gate: the whole chain (sweep, forceConsolidate, staff replace-all) on
+ * REAL Postgres, asserting on the STORED columns. Cases (a)-(h), per SA-124h/i and Opus's
+ * round-5 required changes (#938):
+ *   (a) the sweep folds contributing lines at their OWN snapshot pack, never the live pack —
+ *       a repacked (12 -> live 6) and a made-fully-unboxed (12 -> live null) product
  *   (b) forceConsolidateCustomer, the same
  *   (c) a staff replace-all on a product repacked 12 -> 6 -> 409, nothing written
- *   (d) plain duplicates (no pack at all) plus a plain scan -> the first grows, the second is
- *       byte-identical, no refusal
+ *   (d) plain duplicates (no pack at all) plus a plain scan, folded through foldMergeItems ->
+ *       the first grows, the second is byte-identical, no refusal
  *   (e) a normal same-pack replace-all (payload pack == live pack) is unchanged from master
- *   (f) same-pack duplicates at DIFFERENT prices plus a same-pack scan -> pin the ACTUAL
- *       behavior (a fail-closed "reason required" 4xx is acceptable for R1; a silently minted
- *       MANUAL override is NOT — if that happens, sourceLineId is not moot after all)
- *   (g) same-pack duplicates at the SAME price plus a same-pack scan -> the first grows, the
- *       second is byte-identical, nothing refused
+ *   (f) same-pack duplicates at DIFFERENT prices plus a same-pack scan, folded through
+ *       foldMergeItems -> both lines keep their own price and priceType, manualLines unchanged
+ *       (SA-124i option i: sourceLineId disambiguates the two same-product lines)
+ *   (g) same-pack duplicates at the SAME price plus a same-pack scan, folded through
+ *       foldMergeItems -> the first grows, the second is byte-identical, nothing refused
+ *   (h) a MANUAL 2x12 line whose product has since been made fully UNBOXED — a staff
+ *       create-merge scan REFUSES (409), never bills the stale box price per piece (Opus
+ *       REQUIRED HIGH #1)
  *
  * Constructs a REAL OrdersService (the harness's own provider list, `testing/orders-service-
  * harness.ts`) with PrismaService and TenantContextService swapped for genuinely DB-connected
@@ -74,6 +79,7 @@ import { CommissionEngineService } from "../sales-agents/commission-engine.servi
 import { EntitlementsService } from "../billing/entitlements.service";
 import { RegulatedLedgerService } from "../regulated/regulated-ledger.service";
 import { foldMergeItems } from "./merge-items";
+import { computeLineSubtotal } from "@routeflow/pricing";
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const { assertTestTenant } = require("../../../../scripts/lib/test-tenants.cjs");
@@ -268,7 +274,16 @@ describeDb("B776 R1 chain (SA-124g/h gate) — real Postgres", () => {
             pieces: l.pieces,
             unitsPerBox: l.unitsPerBox,
             unitPrice: l.unitPrice.toString(),
-            subtotal: (l.unitPrice * l.qty).toString(),
+            // Opus round-5 LOW: unitPrice*qty is the WRONG formula for a boxed line — unitPrice
+            // is the BOX price, so a 1-box/qty-12 line at $36 would seed subtotal 432 instead of
+            // 36. Use the shared money-math helper every other writer in this codebase uses.
+            subtotal: computeLineSubtotal({
+              unitPrice: l.unitPrice,
+              qty: l.qty,
+              boxes: l.boxes,
+              pieces: l.pieces,
+              unitsPerBox: l.unitsPerBox,
+            }).toString(),
             status: "PENDING",
             priceType: l.priceType ?? "STANDARD",
             overrideReason: l.overrideReason ?? null,
@@ -289,54 +304,75 @@ describeDb("B776 R1 chain (SA-124g/h gate) — real Postgres", () => {
     });
   }
 
-  it("(a) sweep: a 12-pack loser folds into the 12-pack winner line at $36", async () => {
+  it("(a) sweep: contributing lines fold at their OWN snapshot pack, never the live pack — a repacked (12->live 6) product and one made fully unboxed (12->live null)", async () => {
+    // Opus MED #4 (#938, round 5): the original (a) seeded the LIVE pack equal to the lines'
+    // own snapshot (12 == 12), so master's pre-B776 code — which re-split at the LIVE pack —
+    // would have passed this too. Seeding a DIFFERENT live pack (and a fully-unboxed live
+    // pack) is what actually proves buildMergeLineWrites groups by the SNAPSHOT pack the
+    // lines were priced at, never the live product row (SA-101(1)).
     const customerId = await seedCustomer("a");
-    const productId = await seedProduct("prod-a", 12, 3);
+    const productRepack = await seedProduct("prod-a-repack", 6, 6); // LIVE pack now 6 (was 12)
+    const productUnboxed = await seedProduct("prod-a-unboxed", null, 8); // LIVE now fully unboxed
     // Neither seeded order is necessarily the merge's own winner: mergeAllPendingForCustomer
     // (orders.service.ts:664) orders pendingOrders by updatedAt DESC and takes the FIRST as
     // winner (:673) — the second-created row here, not the first, since nothing updates either
     // between creation. Read the actual surviving order id off the call's own return value
     // instead of assuming which locally-seeded order survives.
     await seedPendingOrder(customerId, [
-      { productId, qty: 12, boxes: 1, pieces: 0, unitsPerBox: 12, unitPrice: 36 },
+      { productId: productRepack, qty: 12, boxes: 1, pieces: 0, unitsPerBox: 12, unitPrice: 36 },
+      { productId: productUnboxed, qty: 12, boxes: 1, pieces: 0, unitsPerBox: 12, unitPrice: 48 },
     ]);
     await seedPendingOrder(customerId, [
-      { productId, qty: 12, boxes: 1, pieces: 0, unitsPerBox: 12, unitPrice: 36 },
+      { productId: productRepack, qty: 12, boxes: 1, pieces: 0, unitsPerBox: 12, unitPrice: 36 },
+      { productId: productUnboxed, qty: 12, boxes: 1, pieces: 0, unitsPerBox: 12, unitPrice: 48 },
     ]);
 
     const merged = await tenantCtx.run(tenantId, () => svc.mergeAllPendingForCustomer(customerId));
 
     const items = await itemsOf(merged!.id);
-    const line = items.find((i) => i.productId === productId)!;
-    expect(line).toMatchObject({
+    const repackLine = items.find((i) => i.productId === productRepack)!;
+    expect(repackLine).toMatchObject({
       boxes: 2,
       pieces: 0,
-      unitsPerBox: 12,
+      unitsPerBox: 12, // the SNAPSHOT pack, never re-split at the live 6
       subtotal: expect.anything(),
     });
-    expect(Number(line.unitPrice)).toBe(36);
-    expect(Number(line.subtotal)).toBe(72);
+    expect(Number(repackLine.unitPrice)).toBe(36);
+    expect(Number(repackLine.subtotal)).toBe(72);
+
+    const unboxedLine = items.find((i) => i.productId === productUnboxed)!;
+    expect(unboxedLine).toMatchObject({ boxes: 2, pieces: 0, unitsPerBox: 12 });
+    expect(Number(unboxedLine.unitPrice)).toBe(48);
+    expect(Number(unboxedLine.subtotal)).toBe(96);
   });
 
   it("(b) forceConsolidateCustomer: the same", async () => {
     const customerId = await seedCustomer("b");
-    const productId = await seedProduct("prod-b", 12, 3);
+    const productRepack = await seedProduct("prod-b-repack", 6, 6);
+    const productUnboxed = await seedProduct("prod-b-unboxed", null, 8);
     // Same updatedAt-DESC winner selection as (a) (orders.service.ts:940/947) — read the
     // surviving order id off the call's own return value.
     await seedPendingOrder(customerId, [
-      { productId, qty: 12, boxes: 1, pieces: 0, unitsPerBox: 12, unitPrice: 36 },
+      { productId: productRepack, qty: 12, boxes: 1, pieces: 0, unitsPerBox: 12, unitPrice: 36 },
+      { productId: productUnboxed, qty: 12, boxes: 1, pieces: 0, unitsPerBox: 12, unitPrice: 48 },
     ]);
     await seedPendingOrder(customerId, [
-      { productId, qty: 12, boxes: 1, pieces: 0, unitsPerBox: 12, unitPrice: 36 },
+      { productId: productRepack, qty: 12, boxes: 1, pieces: 0, unitsPerBox: 12, unitPrice: 36 },
+      { productId: productUnboxed, qty: 12, boxes: 1, pieces: 0, unitsPerBox: 12, unitPrice: 48 },
     ]);
 
     const merged = await tenantCtx.run(tenantId, () => svc.forceConsolidateCustomer(customerId));
 
     const items = await itemsOf(merged!.id);
-    const line = items.find((i) => i.productId === productId)!;
-    expect(line).toMatchObject({ boxes: 2, pieces: 0, unitsPerBox: 12 });
-    expect(Number(line.unitPrice)).toBe(36);
-    expect(Number(line.subtotal)).toBe(72);
+    const repackLine = items.find((i) => i.productId === productRepack)!;
+    expect(repackLine).toMatchObject({ boxes: 2, pieces: 0, unitsPerBox: 12 });
+    expect(Number(repackLine.unitPrice)).toBe(36);
+    expect(Number(repackLine.subtotal)).toBe(72);
+
+    const unboxedLine = items.find((i) => i.productId === productUnboxed)!;
+    expect(unboxedLine).toMatchObject({ boxes: 2, pieces: 0, unitsPerBox: 12 });
+    expect(Number(unboxedLine.unitPrice)).toBe(48);
+    expect(Number(unboxedLine.subtotal)).toBe(96);
   });
 
   it("(c) staff replace-all on a product repacked 12 -> 6 refuses (409) — nothing written", async () => {
@@ -424,7 +460,7 @@ describeDb("B776 R1 chain (SA-124g/h gate) — real Postgres", () => {
     expect(items[0]).toMatchObject({ boxes: 2, pieces: 0, unitsPerBox: 12 });
   });
 
-  it("(f) same-pack duplicates at DIFFERENT prices plus a same-pack scan — pins the ACTUAL behavior (a fail-closed 4xx is acceptable for R1; a minted MANUAL override is NOT)", async () => {
+  it("(f) same-pack duplicates at DIFFERENT prices plus a same-pack scan — both lines keep their own price and priceType, manualLines unchanged (SA-124i option i / Opus MED #3)", async () => {
     const customerId = await seedCustomer("f");
     const productId = await seedProduct("prod-f", 12, 3);
     const order = await seedPendingOrder(customerId, [
@@ -448,37 +484,42 @@ describeDb("B776 R1 chain (SA-124g/h gate) — real Postgres", () => {
         overrideReason: "operator discount",
       },
     ]);
-    const before = await itemsOf(order.id);
 
-    const result = await tenantCtx
-      .run(tenantId, () =>
-        svc.updateOrderItems(
-          order.id,
-          {
-            replaceAll: true,
-            items: [
-              { productId, qty: 12, boxes: 1, pieces: 0, unitsPerBox: 12, unitPrice: 36 },
-              { productId, qty: 24, boxes: 2, pieces: 0, unitsPerBox: 12, unitPrice: 30 },
-            ],
-          } as never,
-          operatorPayload as never,
-        ),
-      )
-      .catch((e: any) => e);
+    // Opus HIGH #2 / MED #3: a genuine scan, folded through foldMergeItems (the real
+    // controller's own step, orders.controller.ts:225) — never a hand-built payload that
+    // echoes both lines' prices verbatim (foldMergeItems never produces that shape: a
+    // derived/STANDARD line's price never survives the fold, REG-B465-MERGE-2). The scan
+    // matches the order's own 12-pack, so it folds into the FIRST bucket (the STANDARD line).
+    const foldResult = foldMergeItems(order.lineItems, [
+      { productId, qty: 12, boxes: 1, pieces: 0 },
+    ]);
 
-    if (result instanceof Error) {
-      // Fail-closed — acceptable for R1. Nothing written.
-      const after = await itemsOf(order.id);
-      expect(after).toEqual(before);
-    } else {
-      // The rebuild wrote something — assert it never minted a NEW MANUAL override on either
-      // line beyond what was already there. If this branch is what actually happens, it is
-      // the signal that sourceLineId-based comparison (SA-124f item 1) is needed after all.
-      const after = await itemsOf(order.id);
-      const manualLines = after.filter((i) => i.priceType === "MANUAL");
-      // At most the one line that was ALREADY MANUAL pre-edit may still be MANUAL.
-      expect(manualLines.length).toBeLessThanOrEqual(1);
-    }
+    await tenantCtx.run(tenantId, () =>
+      svc.updateOrderItems(
+        order.id,
+        { replaceAll: true, items: foldResult.items } as never,
+        operatorPayload as never,
+      ),
+    );
+
+    const after = await itemsOf(order.id);
+    expect(after).toHaveLength(2);
+    // The MANUAL line is untouched by the scan (not the bucket it folded into) — its price,
+    // priceType and reason all survive exactly, via foldMergeItems' MANUAL-survival rule
+    // (REG-B465-MERGE-1) and now also disambiguated by sourceLineId (SA-124i), never confused
+    // with the OTHER same-product line's price the way productId-only lookup would.
+    const manualLines = after.filter((i) => i.priceType === "MANUAL");
+    expect(manualLines).toHaveLength(1);
+    expect(Number(manualLines[0].unitPrice)).toBe(30);
+    expect(manualLines[0].overrideReason).toBe("operator discount");
+    expect(manualLines[0].boxes).toBe(2);
+    // The STANDARD line grew (1 box + the 1 scanned box) and RE-DERIVES its price from the
+    // catalog at the merged quantity (R0's own rule) — which lands back at the same $36 list
+    // price here, never minted MANUAL just because the fold ran.
+    const standardLines = after.filter((i) => i.priceType === "STANDARD");
+    expect(standardLines).toHaveLength(1);
+    expect(Number(standardLines[0].unitPrice)).toBe(36);
+    expect(standardLines[0].boxes).toBe(2);
   });
 
   it("(g) same-pack duplicates at the SAME price plus a same-pack scan — the first grows, the second is byte-identical, nothing refused", async () => {
@@ -486,25 +527,79 @@ describeDb("B776 R1 chain (SA-124g/h gate) — real Postgres", () => {
     const productId = await seedProduct("prod-g", 12, 3);
     const order = await seedPendingOrder(customerId, [
       { productId, qty: 12, boxes: 1, pieces: 0, unitsPerBox: 12, unitPrice: 36 },
-      { productId, qty: 24, boxes: 2, pieces: 0, unitsPerBox: 12, unitPrice: 36 },
+      { productId, qty: 36, boxes: 3, pieces: 0, unitsPerBox: 12, unitPrice: 36 },
+    ]);
+
+    const foldResult = foldMergeItems(order.lineItems, [
+      { productId, qty: 12, boxes: 1, pieces: 0 },
     ]);
 
     await tenantCtx.run(tenantId, () =>
       svc.updateOrderItems(
         order.id,
-        {
-          replaceAll: true,
-          items: [
-            { productId, qty: 12, boxes: 1, pieces: 0, unitsPerBox: 12, unitPrice: 36 },
-            { productId, qty: 24, boxes: 2, pieces: 0, unitsPerBox: 12, unitPrice: 36 },
-          ],
-        } as never,
+        { replaceAll: true, items: foldResult.items } as never,
         operatorPayload as never,
       ),
     );
 
     const after = await itemsOf(order.id);
     expect(after).toHaveLength(2);
-    expect(after.map((i) => i.boxes).sort()).toEqual([1, 2]);
+    // The first line grew (1 box + the 1 scanned box = 2); the second (3 boxes) is untouched —
+    // distinguishable numbers so a fold-into-the-wrong-bucket bug can't hide behind a
+    // coincidental match.
+    expect(after.map((i) => i.boxes).sort()).toEqual([2, 3]);
+  });
+
+  it("(h) a MANUAL 2x12 line, product since made fully UNBOXED — a staff create-merge scan REFUSES (409), never bills the stale box price per piece", async () => {
+    // Opus REQUIRED HIGH #1 (#938, round 5): assertReplaceAllPackMatchesLive's original
+    // `!(livePack > 1)` early-return let a snapshot pack survive unchecked once the product
+    // was made unboxed. foldMergeItems itself has no live-pack info at fold time (the
+    // controller calls it with only 2 args, orders.controller.ts:225) — it carries the
+    // MANUAL line's $36 BOX price and its 12-pack snapshot straight through. Without this
+    // guard, a 3-piece scan would normalize to 2 boxes + 3 loose pieces = qty 27, and
+    // updateOrderItems would bill 27 x $36 = $972 against a product that is no longer boxed
+    // at all — the correct bill (a per-unit re-price at $3/unit) would be $81. This pin
+    // proves it refuses instead.
+    const customerId = await seedCustomer("h");
+    const productId = await seedProduct("prod-h", null, 3); // LIVE: fully unboxed now
+    const order = await seedPendingOrder(customerId, [
+      {
+        productId,
+        qty: 24,
+        boxes: 2,
+        pieces: 0,
+        unitsPerBox: 12, // the STALE snapshot from before the product was unboxed
+        unitPrice: 36,
+        priceType: "MANUAL",
+        overrideReason: "operator discount",
+      },
+    ]);
+    const before = await itemsOf(order.id);
+
+    // A staff create-merge: fold a bare 3-piece scan (no box data of its own — the incoming
+    // side never claims a pack; only the EXISTING line's stale snapshot does).
+    const foldResult = foldMergeItems(order.lineItems, [{ productId, qty: 3 }]);
+
+    const err = await tenantCtx
+      .run(tenantId, () =>
+        svc.updateOrderItems(
+          order.id,
+          { replaceAll: true, items: foldResult.items } as never,
+          operatorPayload as never,
+          { isCreateMerge: true },
+        ),
+      )
+      .catch((e: any) => e);
+
+    expect(err).toBeInstanceOf(Error);
+    expect(err.response ?? err).toMatchObject(
+      expect.objectContaining({
+        code: "MERGE_PACK_MISMATCH",
+        existingPacks: [12],
+        incomingPack: 0,
+      }),
+    );
+    const after = await itemsOf(order.id);
+    expect(after).toEqual(before); // nothing written — the whole transaction rolled back
   });
 });

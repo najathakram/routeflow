@@ -48,10 +48,27 @@ describe("assertReplaceAllPackMatchesLive — SA-124g/h R1's ONE guard", () => {
     ).not.toThrow();
   });
 
-  it("does not refuse when the live pack itself is unresolvable (a plain product)", () => {
+  it("refuses when the product has since been made UNBOXED (live pack unresolvable) but the item's own pack is known (Opus round-5 REQUIRED — was silently billing the stale box price per piece)", () => {
     expect(() =>
       assertReplaceAllPackMatchesLive(
         { productId: "p1", boxes: 1, pieces: 0, qty: 12, unitsPerBox: 12 },
+        0,
+      ),
+    ).toThrow(
+      expect.objectContaining({
+        response: expect.objectContaining({
+          code: "MERGE_PACK_MISMATCH",
+          existingPacks: [12],
+          incomingPack: 0,
+        }),
+      }),
+    );
+  });
+
+  it("still does not refuse when the item itself carries no resolvable pack, even against an unboxed live product", () => {
+    expect(() =>
+      assertReplaceAllPackMatchesLive(
+        { productId: "p1", boxes: null, pieces: null, qty: 3, unitsPerBox: null },
         0,
       ),
     ).not.toThrow();

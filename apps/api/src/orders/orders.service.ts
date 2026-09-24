@@ -103,7 +103,11 @@ import {
 } from "./buyer-merge-pricing";
 import { buildMergeLineWrites, type MergeLine, type MergeWarning } from "./merge-line-writes";
 import { assertReplaceAllPackMatchesLive } from "./replace-all-pack-resolution";
-import { buildReplaceAllLineData, type ReplaceAllLineBuildCtx } from "./replace-all-line-build";
+import {
+  buildExistingLineMaps,
+  buildReplaceAllLineData,
+  type ReplaceAllLineBuildCtx,
+} from "./replace-all-line-build";
 import {
   assertCreditAtEnforcementPoint,
   assertWithinCreditLimit,
@@ -3597,37 +3601,23 @@ export class OrdersService implements OnApplicationBootstrap {
               }
             }
 
-            // B465 fix round 3 (Opus BLOCK item 2): the SAME unambiguous-pairing
-            // rule as bogoCounterparts, generalized to every line (not gated on
-            // promoFreeUnits) — the reason-required guard below must compare a
-            // repriced SPECIAL line against what it ALREADY billed, never treat
-            // every price on the wire as a fresh reprice attempt. An ambiguous
-            // pairing (0 or 2+ pre-edit/incoming lines for the product) has no
-            // sound "existing price" to compare against, so it falls through to
-            // requiring a reason like a brand-new line would.
-            const existingLineByProduct = new Map<
-              string,
-              { unitPrice: number; overrideReason: string | null }
-            >();
-            for (const li of order.lineItems ?? []) {
-              if (
-                li.productId &&
-                li.status !== "CANCELLED" &&
-                preEditLinesByProduct.get(li.productId) === 1 &&
-                incomingLinesByProduct.get(li.productId) === 1 &&
-                !existingLineByProduct.has(li.productId)
-              ) {
-                existingLineByProduct.set(li.productId, {
-                  unitPrice: Number(li.unitPrice),
-                  overrideReason: (li as any).overrideReason ?? null,
-                });
-              }
-            }
+            // B465 fix round 3 (Opus BLOCK item 2) / SA-124i (option i, #938): both existingLine*
+            // maps updateOrderItems' replaceAll rebuild needs — existingLineByProduct keeps the
+            // original unambiguous-pairing gate (exactly one pre-edit AND one incoming line for
+            // that product); existingLineById (keyed by the line's own id, never ambiguous) is
+            // what a folded payload's `sourceLineId` resolves against instead. Extracted to
+            // replace-all-line-build.ts (round 5) to keep the size ratchet's ceiling.
+            const { existingLineByProduct, existingLineById } = buildExistingLineMaps(
+              order.lineItems ?? [],
+              preEditLinesByProduct,
+              incomingLinesByProduct,
+            );
 
             const itemCtx: ReplaceAllLineBuildCtx = {
               bogoCounterparts,
               bogoPromos,
               existingLineByProduct,
+              existingLineById,
               isStaffEdit,
               operatorCpMap,
               operatorDefaultTier,
@@ -3636,6 +3626,18 @@ export class OrdersService implements OnApplicationBootstrap {
               userId: user?.sub ?? null,
               operatorReplaceCategoryMap,
             };
+
+            // SA-124i (non-blocking): validate every item's own pack against the live product
+            // for ALL items BEFORE deleteMany runs, rather than interleaved with it per-item —
+            // a mid-loop refusal was already rolled back by the surrounding transaction either
+            // way, but this keeps the delete from ever starting on a payload that's going to
+            // refuse.
+            for (const item of dto.items) {
+              if (!item.productId) continue;
+              const product = productMap.get(item.productId);
+              if (!product) throw new BadRequestException(`Product ${item.productId} not found`);
+              assertReplaceAllPackMatchesLive(item, Number(product.unitsPerBox ?? 0));
+            }
 
             await tx.orderItem.deleteMany({ where: { orderId } });
             // R2: full replace — stamp position from the client's array order.
@@ -3666,11 +3668,6 @@ export class OrdersService implements OnApplicationBootstrap {
               }
               const product = productMap.get(item.productId);
               if (!product) throw new BadRequestException(`Product ${item.productId} not found`);
-              // SA-124g/h R1: the ONE guard on top of the otherwise-reverted-to-master rebuild
-              // below — a payload item whose OWN resolved pack disagrees with the live product
-              // pack refuses (rolled back with the rest of this transaction) rather than being
-              // silently re-split at the live pack's size (SA-124e's original bug).
-              assertReplaceAllPackMatchesLive(item, Number(product.unitsPerBox ?? 0));
               const unitRow = unitRows.get(item);
               if (unitRow && unitLines.isUnitAware(unitRow)) {
                 await unitEdit.createUnitLine(uctx, orderId, product, unitRow, item, pos++);

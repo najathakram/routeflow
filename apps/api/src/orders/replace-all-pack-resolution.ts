@@ -36,9 +36,14 @@ function ownPackOf(item: {
 
 /**
  * Throws `ConflictException` (`MERGE_PACK_MISMATCH`, matching `foldMergeItems`'s own refusal
- * shape) when the item's own resolved pack is KNOWN (> 1) and the live product pack is ALSO
- * KNOWN (> 1) and they disagree. Every other case — no own pack, no live pack, or the two
- * agree — passes through untouched; the rebuild's pre-existing live-pack split is unchanged.
+ * shape) whenever the item's own resolved pack is KNOWN (> 1) and disagrees with the live
+ * product pack — INCLUDING when the live pack is no longer boxed at all (0/1/null): a snapshot
+ * carried forward at a stale box size must never be billed against a piece count denominated
+ * under a DIFFERENT (or now absent) pack, whatever that live pack currently is. Opus REQUIRED
+ * (round 5, #938): the original `!(livePack > 1)` early-return let exactly that through — a
+ * MANUAL 2x12 line, once the product was made unboxed, silently re-billed a 3-piece staff
+ * create-merge as 27 x the OLD $36 BOX price ($972) instead of refusing. Only a genuinely
+ * unresolvable OWN pack (no own pack at all) still passes through untouched.
  */
 export function assertReplaceAllPackMatchesLive(
   item: {
@@ -51,7 +56,7 @@ export function assertReplaceAllPackMatchesLive(
   livePack: number,
 ): void {
   const ownPack = ownPackOf(item);
-  if (ownPack == null || !(ownPack > 1) || !(livePack > 1) || ownPack === livePack) return;
+  if (ownPack == null || !(ownPack > 1) || ownPack === livePack) return;
   throw new ConflictException({
     code: "MERGE_PACK_MISMATCH",
     message: `Product ${item.productId} is priced at a ${ownPack}-pack, but the live product pack is now ${livePack} — resolve the mismatch before saving.`,

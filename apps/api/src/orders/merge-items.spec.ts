@@ -632,4 +632,63 @@ describe("merge-items — SA-124a: existing lines keyed by productId + resolved 
     const untouched = items.find((i) => i.qty === 3);
     expect(untouched).toMatchObject({ productId: "prod-plain", qty: 3 });
   });
+
+  const boxedBucket: MergeLineSnapshot = {
+    productId: "prod-mixed",
+    boxes: 1,
+    pieces: 0,
+    qty: 12,
+    unitsPerBox: 12,
+    unitPrice: 36,
+  };
+  const plainBucket: MergeLineSnapshot = {
+    productId: "prod-mixed",
+    qty: 3,
+    boxes: null,
+    pieces: null,
+    unitsPerBox: null,
+    unitPrice: 2,
+  };
+  const sixPackIncoming: MergeIncomingItem[] = [
+    { productId: "prod-mixed", qty: 6, boxes: 1, pieces: 0 },
+  ];
+
+  it("SA-124i (mixed-bucket fix): [12-pack, plain] + a mismatched 6-pack scan REFUSES — ONE known pack among the buckets is still a genuine disagreement", () => {
+    expect(() => foldMergeItems([boxedBucket, plainBucket], sixPackIncoming)).toThrow(
+      expect.objectContaining({
+        response: expect.objectContaining({
+          code: "MERGE_PACK_MISMATCH",
+          productId: "prod-mixed",
+          existingPacks: [12],
+          incomingPack: 6,
+        }),
+      }),
+    );
+  });
+
+  it("SA-124i (mixed-bucket fix): [plain, 12-pack] + a mismatched 6-pack scan REFUSES — same as above, bucket order reversed", () => {
+    expect(() => foldMergeItems([plainBucket, boxedBucket], sixPackIncoming)).toThrow(
+      expect.objectContaining({
+        response: expect.objectContaining({
+          code: "MERGE_PACK_MISMATCH",
+          existingPacks: [12],
+          incomingPack: 6,
+        }),
+      }),
+    );
+  });
+
+  it("SA-124i (mixed-bucket fix): [plain, plain] + a KNOWN-pack 6-pack scan still folds — no bucket has any known pack to disagree with", () => {
+    const secondPlain: MergeLineSnapshot = { ...plainBucket, qty: 5 };
+    const { items } = foldMergeItems([plainBucket, secondPlain], sixPackIncoming);
+
+    expect(items).toHaveLength(2);
+    // The first bucket (plain, qty 3) adopts the incoming's pack (6, since its own was
+    // unresolved — foldInto's normal "fill in an unresolved pack" behavior, not a
+    // disagreement) and normalizes: 1 box of 6 + the 3 pre-existing loose pieces = qty 9.
+    const grown = items.find((i) => i.qty === 9);
+    expect(grown).toMatchObject({ productId: "prod-mixed", boxes: 1, pieces: 3, qty: 9 });
+    const untouched = items.find((i) => i.qty === 5);
+    expect(untouched).toMatchObject({ productId: "prod-mixed", qty: 5 });
+  });
 });

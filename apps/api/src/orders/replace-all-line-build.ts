@@ -22,6 +22,62 @@ import { PriceType } from "@prisma/client";
 import { isSpecialTier, rescaleBogoFreeUnits, resolveBuyerLinePrice } from "./buyer-merge-pricing";
 import type { UpdateOrderItemsDto } from "./dto/update-order-items.dto";
 
+interface ExistingLineForReplaceAll {
+  unitPrice: number;
+  priceType: PriceType;
+  originalPrice: number | null;
+  overrideReason: string | null;
+  overriddenBy: string | null;
+}
+
+/**
+ * Both existingLine* maps updateOrderItems' replaceAll rebuild needs, built in one pass —
+ * moved out of orders.service.ts (round 5) to keep the size ratchet's ceiling. `existingLineById`
+ * covers every non-cancelled pre-edit line unconditionally (an id is never ambiguous);
+ * `existingLineByProduct` keeps the original unambiguous-pairing gate (exactly one pre-edit AND
+ * one incoming line for that product) as the fallback for a caller with no sourceLineId.
+ */
+export function buildExistingLineMaps(
+  lineItems: Array<{
+    id?: string | null;
+    productId?: string | null;
+    status?: string | null;
+    unitPrice: unknown;
+    priceType: PriceType;
+    originalPrice: unknown;
+    overrideReason?: string | null;
+    overriddenBy?: string | null;
+  }>,
+  preEditLinesByProduct: Map<string, number>,
+  incomingLinesByProduct: Map<string, number>,
+): {
+  existingLineByProduct: Map<string, ExistingLineForReplaceAll>;
+  existingLineById: Map<string, ExistingLineForReplaceAll>;
+} {
+  const existingLineByProduct = new Map<string, ExistingLineForReplaceAll>();
+  const existingLineById = new Map<string, ExistingLineForReplaceAll>();
+  for (const li of lineItems ?? []) {
+    if (!li.id || li.status === "CANCELLED") continue;
+    const entry: ExistingLineForReplaceAll = {
+      unitPrice: Number(li.unitPrice),
+      priceType: li.priceType,
+      originalPrice: li.originalPrice != null ? Number(li.originalPrice) : null,
+      overrideReason: li.overrideReason ?? null,
+      overriddenBy: li.overriddenBy ?? null,
+    };
+    existingLineById.set(li.id, entry);
+    if (
+      li.productId &&
+      preEditLinesByProduct.get(li.productId) === 1 &&
+      incomingLinesByProduct.get(li.productId) === 1 &&
+      !existingLineByProduct.has(li.productId)
+    ) {
+      existingLineByProduct.set(li.productId, entry);
+    }
+  }
+  return { existingLineByProduct, existingLineById };
+}
+
 export interface ReplaceAllLineBuildCtx {
   bogoCounterparts: Map<
     string,
@@ -37,7 +93,14 @@ export interface ReplaceAllLineBuildCtx {
     }
   >;
   bogoPromos: PromotionRule[];
-  existingLineByProduct: Map<string, { unitPrice: number; overrideReason: string | null }>;
+  existingLineByProduct: Map<string, ExistingLineForReplaceAll>;
+  // SA-124i (option i, #938): keyed by the SPECIFIC line's own id — foldMergeItems (merge-
+  // items.ts) already emits `sourceLineId` on every bucket seeded from an existing line, so a
+  // folded payload item can be compared against THAT exact line instead of guessed by product
+  // (existingLineByProduct's own two-pack shape treats 2+ pre-edit lines of one product as
+  // ambiguous and skips both). No DTO field: sourceLineId only ever travels on the internal
+  // fold -> updateOrderItems call, never through the public DTO (which still rejects it).
+  existingLineById: Map<string, ExistingLineForReplaceAll>;
   isStaffEdit: boolean;
   operatorCpMap: Map<string, number | null>;
   operatorDefaultTier: number;
@@ -109,7 +172,13 @@ export function buildReplaceAllLineData(
   // reason forward as `item.overrideReason`; when the payload omits
   // one anyway, fall back to the existing line's own stored reason
   // before refusing (mirrors the UPDATE branch's same fallback).
-  const replaceAllExisting = ctx.existingLineByProduct.get(productId);
+  // SA-124f item 1 / SA-124i (option i): a folded payload item carries `sourceLineId` when
+  // foldMergeItems seeded its bucket from an existing line — not a DTO field (see the ctx
+  // interface's comment), read loosely since UpdateOrderItemsDto has no such property.
+  const sourceLineId = (item as { sourceLineId?: string }).sourceLineId;
+  const replaceAllExisting = sourceLineId
+    ? ctx.existingLineById.get(sourceLineId)
+    : ctx.existingLineByProduct.get(productId);
   const replaceAllPriceUnchanged =
     replaceAllExisting != null &&
     (overridePrice === null || Math.abs(overridePrice - replaceAllExisting.unitPrice) <= 0.005);

@@ -166,4 +166,64 @@ describe("OrdersService.updateOrderItems replaceAll — SA-124g/h R1's ONE guard
     expect(created).toBeDefined();
     expect(created![0].data.unitsPerBox).toBe(6); // live pack, master's original behavior
   });
+
+  it("SA-124i (option i): sourceLineId disambiguates two same-product lines with different overrideReasons — each payload item's fallback reason resolves to ITS OWN line, never confused by productId alone", async () => {
+    h.prisma.product.findMany.mockResolvedValue([
+      {
+        id: "prod-dup",
+        name: "Widget",
+        unitsPerBox: null,
+        pricePerUnit: 5,
+        trackedCategoryId: null,
+      },
+    ]);
+    const lineA = line({
+      id: "li-a",
+      qty: 10,
+      boxes: null,
+      pieces: null,
+      unitsPerBox: null,
+      unitPrice: 40,
+      priceType: "MANUAL",
+      overrideReason: "reason A",
+    });
+    const lineB = line({
+      id: "li-b",
+      qty: 7,
+      boxes: null,
+      pieces: null,
+      unitsPerBox: null,
+      unitPrice: 60,
+      priceType: "MANUAL",
+      overrideReason: "reason B",
+    });
+    h.prisma.order.findUnique.mockResolvedValue({
+      ...MOCK_ORDER,
+      lineItems: [lineA, lineB],
+    });
+
+    // Both echoed at their OWN unchanged price, WITHOUT an explicit overrideReason on the
+    // payload — the fallback must pick each line's own stored reason. Without sourceLineId,
+    // existingLineByProduct treats 2 pre-edit lines of one product as ambiguous and resolves
+    // NEITHER, so both would fall back to null.
+    await h.service.updateOrderItems(
+      "ord-1",
+      {
+        replaceAll: true,
+        items: [
+          { productId: "prod-dup", sourceLineId: "li-a", qty: 10, unitPrice: 40 },
+          { productId: "prod-dup", sourceLineId: "li-b", qty: 7, unitPrice: 60 },
+        ],
+      } as never,
+      operatorPayload as never,
+    );
+
+    const calls = h.prisma.orderItem.create.mock.calls.filter(
+      (c: any) => c[0]?.data?.productId === "prod-dup",
+    );
+    const created40 = calls.find((c: any) => c[0].data.unitPrice === 40);
+    const created60 = calls.find((c: any) => c[0].data.unitPrice === 60);
+    expect(created40![0].data.overrideReason).toBe("reason A");
+    expect(created60![0].data.overrideReason).toBe("reason B");
+  });
 });

@@ -258,17 +258,19 @@ export function foldMergeItems(
       continue;
     }
 
-    // SA-124g/h R1: 2+ existing buckets for this product (either a durable split from an
+    // SA-124g/h/i R1: 2+ existing buckets for this product (either a durable split from an
     // earlier pack-mismatch sweep, or a genuine same-pack/plain-product duplicate). A scan
     // whose own pack matches one of them folds into the FIRST such bucket in display order
     // (`.find`'s own semantics), the other(s) untouched byte-identical — never summed across
-    // duplicates. The refusal below fires ONLY for a genuine, confident disagreement: 2+
-    // DISTINCT KNOWN packs (> 1) among the buckets, and the incoming item's OWN pack is ALSO
-    // known and matches none of them. Every other case — an unresolvable incoming pack (bare
-    // qty or a degenerate split), or fewer than 2 known packs among the buckets (plain-product
-    // duplicates, all ≤ 1) — folds into the FIRST bucket instead; guessing wrong there costs a
-    // display-order surprise, refusing wrongly costs a broken auto-merge/cart-submit for the
-    // overwhelming majority of products, which are not boxed at all (Opus's HIGH finding).
+    // duplicates. Otherwise: if ANY bucket carries a known pack (> 1), the incoming item's own
+    // known pack matches none of them — refuse (SA-124i: a SINGLE known-pack bucket beside a
+    // plain one is still a genuine disagreement, not the "all buckets plain" shape below; the
+    // original R1 cut required 2+ DISTINCT known packs, which silently let a boxed bucket's
+    // pack lose to a mismatched scan whenever only ONE bucket was boxed). Folding into the
+    // FIRST bucket instead is reserved for the case NO bucket has any known pack at all
+    // (plain-product duplicates) — refusing wrongly there costs a broken auto-merge/cart-submit
+    // for the overwhelming majority of products, which are not boxed at all (Opus's HIGH
+    // finding, R1's original scope).
     if (incomingUnitsPerBox > 1) {
       const acc = buckets.find((b) => b.unitsPerBox === incomingUnitsPerBox);
       if (acc) {
@@ -278,7 +280,7 @@ export function foldMergeItems(
       const knownPacks = [...new Set(buckets.map((b) => b.unitsPerBox).filter((p) => p > 1))].sort(
         (a, b) => a - b,
       );
-      if (knownPacks.length >= 2) {
+      if (knownPacks.length >= 1) {
         throw new ConflictException({
           code: "MERGE_PACK_MISMATCH",
           message: `Product ${item.productId} is on this order at packs [${knownPacks.join(", ")}] and the scanned item is a ${incomingUnitsPerBox}-pack — resolve the mismatch before merging.`,
