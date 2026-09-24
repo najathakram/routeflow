@@ -1975,16 +1975,9 @@ describe("OrdersService", () => {
         (service as any).systemConfig.get.mockResolvedValue("0");
       });
 
-      /**
-       * B116 (REG-B116 / R15) replaced create()'s per-line `tx.product.update`
-       * with ONE aggregated raw `UPDATE … FROM (VALUES …)`, so the qty BASIS
-       * this describe() pins is now read off that statement's bindings. Same
-       * oracle (27 pieces / 2 selling units), new call site — the returned
-       * reader hands back the `[productId, qty]` pairs in VALUES-list order.
-       */
+      // B116: ONE aggregated `UPDATE … FROM (VALUES …)` (B562: `$queryRaw … RETURNING`, one spy with the
+      // lock); the reader returns its `[productId, qty]` bindings — the qty BASIS (27 pieces / 2 units).
       function captureStockDecrement() {
-        // B562 PR-2: the aggregated decrement is a `$queryRaw … RETURNING`, the lock an `$executeRaw`;
-        // one spy serves both so the oracle below sees the decrement wherever it is issued.
         const txExecuteRaw: jest.Mock = jest.fn().mockResolvedValue([]);
         prisma.tenantTransaction.mockImplementation((fn: any) =>
           fn({
@@ -3157,8 +3150,7 @@ describe("OrdersService", () => {
     }
 
     function mockTenantTransactionWithRawSpy(): jest.Mock {
-      // B562 PR-2: one spy for the lock (`$executeRaw`) and the `$queryRaw … RETURNING` decrement.
-      const txExecuteRaw = jest.fn().mockResolvedValue([]);
+      const txExecuteRaw = jest.fn().mockResolvedValue([]); // B562: + the $queryRaw decrement
       prisma.tenantTransaction.mockImplementation((fn: any) =>
         fn({
           ...(prisma as unknown as Record<string, any>),
@@ -3365,8 +3357,7 @@ describe("OrdersService", () => {
         { id: "ord-1", status: "PENDING" },
         expect.arrayContaining([expect.objectContaining({ productId: "prod-box12", qty: 27 })]),
         [],
-        // B562 PR-2: the acting user and the event the SALE rows record.
-        operatorPayload,
+        operatorPayload, // B562 PR-2: the acting user and the event the SALE rows record
         { notes: "DEMOTE" },
       );
 
@@ -8216,8 +8207,7 @@ describe("OrdersService", () => {
         $executeRaw: jest.fn().mockResolvedValue(0),
         product: {
           findMany: jest.fn().mockResolvedValue([]),
-          // B562 PR-2: update() returns the written row; the SALE movement reads its counter.
-          update: jest.fn().mockResolvedValue({ currentStock: 0 }),
+          update: jest.fn().mockResolvedValue({ currentStock: 0 }), // B562: the written row
           findFirst: jest.fn().mockResolvedValue(null),
         },
         stockMovement: { create: jest.fn().mockResolvedValue({ id: "mv" }), findFirst: jest.fn() },
