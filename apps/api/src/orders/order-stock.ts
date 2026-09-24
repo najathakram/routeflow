@@ -29,6 +29,9 @@ export interface OrderStockEvent {
 
 export const orderStockReference = (orderId: string) => `ORDER:${orderId}`;
 
+/** A stock helper's parameters after `deps`: what OrdersService's thin delegators take. */
+export type StockArgs<F> = F extends (deps: OrderStockDeps, ...rest: infer R) => any ? R : never;
+
 /**
  * B703 (SA-136b): the unit fields `linePieceQty` reads off a line. `currentStock` is counted in
  * PIECES, but a line's `qty` is in its own stored unit — pieces for a box-split or Units line, BOXES
@@ -49,6 +52,14 @@ export const STOCK_LINE_UNIT_SELECT = {
   pieces: true,
   unitsPerBox: true,
   unitLabel: true,
+} as const;
+/** The held-line select a cancel/demote settle reads: the line, its delivery, and its unit fields. */
+export const STOCK_SETTLE_SELECT = {
+  productId: true,
+  qty: true,
+  deliveredQty: true,
+  status: true,
+  ...STOCK_LINE_UNIT_SELECT,
 } as const;
 
 /** A box-unaware line with no own snapshot: only the product's live pack can size it. */

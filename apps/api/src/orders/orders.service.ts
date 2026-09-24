@@ -98,7 +98,8 @@ import {
   decrementStockForSale,
   settleStockForEdit,
   STOCK_LINE_UNIT_SELECT,
-  type OrderStockEvent,
+  STOCK_SETTLE_SELECT,
+  type StockArgs,
   type StockLine,
   type StockLineUnits,
 } from "./order-stock";
@@ -2676,22 +2677,10 @@ export class OrdersService implements OnApplicationBootstrap {
             }
             const activeItems = await tx.orderItem.findMany({
               where: { orderId: id, status: { not: "CANCELLED" } },
-              select: {
-                productId: true,
-                qty: true,
-                deliveredQty: true,
-                status: true,
-                ...STOCK_LINE_UNIT_SELECT,
-              },
+              select: STOCK_SETTLE_SELECT,
             });
-            await this.settleStockForEdit(
-              tx,
-              { id, status: OrderStatus.PENDING },
-              activeItems,
-              [],
-              user,
-              { notes: "DEMOTE" },
-            );
+            const demoted = { id, status: OrderStatus.PENDING };
+            await this.settleStockForEdit(tx, demoted, activeItems, [], user, { notes: "DEMOTE" });
             return tx.order.findUniqueOrThrow({ where: { id } });
           },
           { isolationLevel: "Serializable", timeout: 15_000 },
@@ -2811,13 +2800,7 @@ export class OrdersService implements OnApplicationBootstrap {
           if (cancelReturnsStock) {
             const activeItems = await tx.orderItem.findMany({
               where: { orderId: id, status: { not: "CANCELLED" } },
-              select: {
-                productId: true,
-                qty: true,
-                deliveredQty: true,
-                status: true,
-                ...STOCK_LINE_UNIT_SELECT,
-              },
+              select: STOCK_SETTLE_SELECT,
             });
             // Return the creation-time decrement, clamped to the undelivered
             // remainder (settleStockForEdit with an empty final set). `order` here
@@ -4778,32 +4761,12 @@ export class OrdersService implements OnApplicationBootstrap {
     return { logger: this.logger, tenantId: this.prisma.getTenantId() };
   }
 
-  private decrementStockForSale(
-    tx: any,
-    stockLines: StockLine[],
-    isStaffRole: boolean,
-    event: OrderStockEvent,
-  ): Promise<void> {
-    return decrementStockForSale(this.stockDeps(), tx, stockLines, isStaffRole, event);
+  private decrementStockForSale(...args: StockArgs<typeof decrementStockForSale>) {
+    return decrementStockForSale(this.stockDeps(), ...args);
   }
 
-  private settleStockForEdit(
-    db: any,
-    order: { id: string; status: string },
-    heldItems: Parameters<typeof settleStockForEdit>[3],
-    finalActiveItems: Parameters<typeof settleStockForEdit>[4],
-    user?: JwtPayload,
-    event?: { notes: string; performedById?: string | null },
-  ): Promise<void> {
-    return settleStockForEdit(
-      this.stockDeps(),
-      db,
-      order,
-      heldItems,
-      finalActiveItems,
-      user,
-      event,
-    );
+  private settleStockForEdit(...args: StockArgs<typeof settleStockForEdit>) {
+    return settleStockForEdit(this.stockDeps(), ...args);
   }
 
   /**
