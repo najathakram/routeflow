@@ -557,7 +557,7 @@ describe("RoutesService — F11 run-terminal release (REG-B129 / REG-B211)", () 
       );
     });
 
-    it("T7b — REG-B211: findOneRun does not backfill a COMPLETED run's stops either — a run completed with every stop skipped has released its orders the same way", async () => {
+    it("T7b — REG-B211 / SA-131: a COMPLETED run's stops never fall back to a customer lookup — SKIPPED and ALL-COMPLETED shapes both resolve from DeliveryMutation evidence instead", async () => {
       // A driver may complete a route by skipping every stop (the COMPLETED
       // gate accepts all-SKIPPED), and that completion releases every one of
       // those stops' orders — the same "no stop has linked orders" shape as a
@@ -581,18 +581,21 @@ describe("RoutesService — F11 run-terminal release (REG-B129 / REG-B211)", () 
         ],
       });
       prisma.customerAddress.findMany.mockResolvedValue([]);
+      prisma.deliveryMutation.findMany.mockResolvedValue([]);
 
       const result: any = await service.findOneRun("run-1");
 
       expect(prisma.order.findMany).not.toHaveBeenCalled();
       expect(result.stops[0].orders).toEqual([]);
 
-      // Control — a COMPLETED run whose stops are ALL COMPLETED was never
-      // released by F11 (the helper only ever sees non-COMPLETED stop ids), so
-      // its empty `orders` arrays are the genuine legacy/seeded shape this
-      // fallback exists for (demo-seed writes exactly that) and the backfill
-      // must still run.
+      // SA-131: a COMPLETED run whose stops are ALL COMPLETED (the demo-seed
+      // legacy/seeded shape this fallback used to backfill from the customer's
+      // live order history) now resolves the SAME way — DeliveryMutation
+      // evidence, never a customer lookup. With no evidence rows, it shows no
+      // orders (a demo-seed follow-up if past-run demo data needs to display
+      // anything, not this query's job).
       (prisma.order.findMany as jest.Mock).mockClear();
+      (prisma.deliveryMutation.findMany as jest.Mock).mockClear();
       prisma.routeRun.findUnique.mockResolvedValue({
         ...RUN_FIXTURE,
         status: "COMPLETED",
@@ -611,13 +614,15 @@ describe("RoutesService — F11 run-terminal release (REG-B129 / REG-B211)", () 
           },
         ],
       });
-      prisma.order.findMany.mockResolvedValue([]);
+      prisma.deliveryMutation.findMany.mockResolvedValue([]);
 
-      await service.findOneRun("run-1");
+      const secondResult: any = await service.findOneRun("run-1");
 
-      expect(prisma.order.findMany).toHaveBeenCalledWith(
-        expect.objectContaining({ where: expect.objectContaining({ customerId: { in: ["c2"] } }) }),
+      expect(prisma.order.findMany).not.toHaveBeenCalled();
+      expect(prisma.deliveryMutation.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { routeRunStopId: { in: ["s2"] } } }),
       );
+      expect(secondResult.stops[0].orders).toEqual([]);
     });
   });
 
