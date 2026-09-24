@@ -63,6 +63,28 @@ export function decideResumeLine<P>(fetched: ResumeLineFetch<P>): ResumeLineDeci
   return { product: null, failed: fetched.status !== 404 };
 }
 
+/**
+ * B747 REQUIRED fix (Opus @267fb9f0, disagreeing with SA-153's PASS): whether NewOrderScreen's
+ * resume-hydration effect may start. "waiting": customerDetail or the customer-prices query hasn't
+ * SETTLED yet (fetched OR errored — a plan-gated/failed query never resolves `data`, so gating on
+ * data alone hung the spinner forever). "failed": prices settled with an error that ISN'T the
+ * pricing_tiers plan gate (403) — proceeding would silently resume every line at the customer's
+ * default tier even when real per-product overrides exist, so abort exactly like a failed
+ * product/units fetch (decideResumeLine's own rule; matches R1). "start": safe to hydrate — a 403
+ * genuinely has no overrides (cpMap stays empty, its own `?? []` fallback already handles that).
+ * Pure/no-fetch so it can be pinned directly, never scraped from the effect's source text (L-205).
+ */
+export function decideResumeHydrationStart(
+  hasCustomerDetail: boolean,
+  pricesFetched: boolean,
+  pricesErrored: boolean,
+  pricesErrorStatus: number | null | undefined,
+): "waiting" | "start" | "failed" {
+  if (!hasCustomerDetail || !(pricesFetched || pricesErrored)) return "waiting";
+  if (pricesErrored && pricesErrorStatus !== 403) return "failed";
+  return "start";
+}
+
 /** The parked line's own fields `decideResumeUnitPrice` needs — a structural slice of
  *  `DraftCatalogLine`, kept local so this file stays free of a drafts-payload.ts import. */
 export interface ResumeUnitLineInput {

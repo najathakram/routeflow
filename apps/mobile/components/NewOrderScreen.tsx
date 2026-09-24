@@ -105,6 +105,7 @@ import {
   orderSubmitGate,
   resolveResumeLinePricing,
   resolveResumeLineBoxes,
+  decideResumeHydrationStart,
 } from "../lib/order-draft-logic";
 import { hydrateParkedLine } from "../lib/resume-draft-hydration";
 import { getOrderSubmitKey, resetOrderSubmitKey } from "../lib/order-submit-key";
@@ -542,9 +543,11 @@ function ProductPickView({
   const { data: customerDetail } = useCustomer(customerId);
   const {
     data: customerPrices,
-    isFetched: customerPricesFetched,
-    isError: customerPricesErrored,
+    isFetched: pricesFetched,
+    isError: pricesErrored,
+    error: pricesError,
   } = useCustomerPrices(customerId);
+  const pricesSettled = pricesFetched || pricesErrored;
   // Tenant margin config for the live cost/margin hint in the cart rows.
   const { data: marginConfig } = useMarginConfig();
   // Lines the operator explicitly acked as "sell anyway" below the margin
@@ -719,11 +722,23 @@ function ProductPickView({
     setHydrateAttempt((n) => n + 1);
   }, []);
   const hydrationStartedRef = useRef(false);
+  const failHydration = useCallback(() => {
+    hydrationStartedRef.current = false;
+    setHydrateFailed(true);
+    chooseAction(
+      "Couldn't restore your order",
+      "Some items couldn't be loaded. Check your connection and try again.",
+      [
+        { label: "Go back", style: "cancel", onPress: onBack },
+        { label: "Retry", onPress: retryHydrate },
+      ],
+    );
+  }, [onBack, retryHydrate]);
   useEffect(() => {
     if (!hydrating || hydrationStartedRef.current) return;
-    // R2/SA-136b: wait for customerDetail + the prices query to SETTLE (not just for data —
-    // a plan-gated/errored prices query never resolves data, which used to hang forever).
-    if (!customerDetail || !(customerPricesFetched || customerPricesErrored)) return;
+    const status = (pricesError as { response?: { status?: number } })?.response?.status;
+    const gate = decideResumeHydrationStart(!!customerDetail, pricesFetched, pricesErrored, status);
+    if (gate !== "start") return gate === "failed" ? failHydration() : undefined;
     hydrationStartedRef.current = true;
     const parkedLines: DraftCatalogLine[] = draftSeed?.items ?? [];
     let cancelled = false;
@@ -733,22 +748,8 @@ function ProductPickView({
       // lib/resume-draft-hydration.ts for the fetch/drop/abort rules.
       const results = await Promise.all(parkedLines.map((li) => hydrateParkedLine(li)));
       if (cancelled) return;
-      if (results.some((r) => r.failed)) {
-        // Abort the whole hydration: `hydrating` stays true, so the builder
-        // keeps its spinner and — money-critical — autosave stays disabled and
-        // the server draft is left exactly as parked.
-        hydrationStartedRef.current = false;
-        setHydrateFailed(true);
-        chooseAction(
-          "Couldn't restore your order",
-          "Some items couldn't be loaded. Check your connection and try again.",
-          [
-            { label: "Go back", style: "cancel", onPress: onBack },
-            { label: "Retry", onPress: retryHydrate },
-          ],
-        );
-        return;
-      }
+      // Money-critical: `hydrating` stays true, so autosave stays disabled until resolved.
+      if (results.some((r) => r.failed)) return failHydration();
       const nextItems: Record<string, LineState> = {};
       const nextScanned: Record<string, Product> = {};
       const droppedNames: string[] = [];
@@ -804,7 +805,7 @@ function ProductPickView({
       hydrationStartedRef.current = false;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [hydrating, hydrateAttempt, customerDetail, customerPrices]);
+  }, [hydrating, hydrateAttempt, customerDetail, customerPrices, pricesSettled]);
 
   /**
    * Debounced, server-filtered, 50-rows-at-a-time. This used to be a single

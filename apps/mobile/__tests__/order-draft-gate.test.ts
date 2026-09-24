@@ -7,6 +7,7 @@ import { join } from "path";
 import type { ProductUnitLevel } from "@routeflow/types";
 import { buildUnitOptions } from "../lib/unit-options";
 import {
+  decideResumeHydrationStart,
   decideResumeLine,
   decideResumeUnitPrice,
   orderSubmitGate,
@@ -72,6 +73,42 @@ describe("decideResumeLine", () => {
       product: null,
       failed: true,
     });
+  });
+});
+
+/**
+ * B747 REQUIRED fix (Opus @267fb9f0, disagreeing with SA-153's PASS): NewOrderScreen's
+ * resume-hydration effect used to gate on `customerPricesFetched || customerPricesErrored`
+ * directly in an inline `if`, but the effect's OWN dep array never included either flag — only
+ * `customerPrices` (the data). A late-settling 403 (behind the pricing_tiers plan gate, LITE/
+ * STARTER) flips `isError` without ever populating `data`, so the dep array never changed and the
+ * effect never re-ran: every resumed draft sat on the spinner forever. These pin the DECISION
+ * (never a regex scrape of the effect's source, L-205 — a purely additive refactor of the effect
+ * must not break this).
+ */
+describe("decideResumeHydrationStart (B747 REQUIRED)", () => {
+  it("waits when customerDetail hasn't loaded, even if prices already settled", () => {
+    expect(decideResumeHydrationStart(false, true, false, undefined)).toBe("waiting");
+  });
+
+  it("waits while the prices query is still in flight (neither fetched nor errored)", () => {
+    expect(decideResumeHydrationStart(true, false, false, undefined)).toBe("waiting");
+  });
+
+  it("starts once prices fetch successfully", () => {
+    expect(decideResumeHydrationStart(true, true, false, undefined)).toBe("start");
+  });
+
+  it("starts on a 403 — the pricing_tiers plan gate means genuinely no overrides, not a failure", () => {
+    expect(decideResumeHydrationStart(true, false, true, 403)).toBe("start");
+  });
+
+  it("fails on any other error status — a 5xx must never silently resume at the default tier", () => {
+    expect(decideResumeHydrationStart(true, false, true, 500)).toBe("failed");
+  });
+
+  it("fails on a network error / timeout with no response status at all", () => {
+    expect(decideResumeHydrationStart(true, false, true, undefined)).toBe("failed");
   });
 });
 
@@ -330,14 +367,14 @@ describe("NewOrderScreen resume prices off the PER-PRODUCT tier (R2, B747)", () 
     );
   });
 
-  it("the hydration effect waits for customerDetail AND the prices query to SETTLE (not just for data) before running", () => {
-    expect(hydrationEffectSrc).toMatch(
-      /if\s*\(\s*!customerDetail\s*\|\|\s*!\(\s*customerPricesFetched\s*\|\|\s*customerPricesErrored\s*\)\s*\)\s*return;/,
-    );
+  it("the hydration effect delegates its start/wait/fail decision to decideResumeHydrationStart, never re-inlines the gate", () => {
+    expect(hydrationEffectSrc).toMatch(/decideResumeHydrationStart\(/);
   });
 
-  it("the effect re-runs once customerDetail/customerPrices load — both are in its dependency array", () => {
-    expect(screenSrc).toMatch(/\[hydrating, hydrateAttempt, customerDetail, customerPrices\]/);
+  it("the effect re-runs once customerDetail/customerPrices/pricesSettled change — all three are in its dependency array", () => {
+    expect(screenSrc).toMatch(
+      /\[hydrating, hydrateAttempt, customerDetail, customerPrices, pricesSettled\]/,
+    );
   });
 });
 
@@ -359,21 +396,23 @@ describe("NewOrderScreen resume prices off the PER-PRODUCT tier (R2, B747)", () 
 describe("NewOrderScreen resume never hangs on a plan-gated prices query (SA-136b/SA-153, B747)", () => {
   const screenSrc = readFileSync(join(__dirname, "..", "components", "NewOrderScreen.tsx"), "utf8");
 
-  it("destructures isFetched/isError from useCustomerPrices, not just data", () => {
+  it("destructures isFetched/isError/error from useCustomerPrices, not just data", () => {
     expect(screenSrc).toMatch(
-      /const\s*\{\s*data:\s*customerPrices,\s*isFetched:\s*customerPricesFetched,\s*isError:\s*customerPricesErrored,?\s*\}\s*=\s*useCustomerPrices/,
+      /const\s*\{\s*data:\s*customerPrices,\s*isFetched:\s*pricesFetched,\s*isError:\s*pricesErrored,\s*error:\s*pricesError,?\s*\}\s*=\s*useCustomerPrices/,
     );
   });
 
-  it("a 403/network error on the prices query is a SETTLED state, not a permanent block", () => {
-    expect(screenSrc).toMatch(/customerPricesFetched\s*\|\|\s*customerPricesErrored/);
+  it("pricesSettled (fetched OR errored, never just isFetched alone) is a real dependency, not read inline-only", () => {
+    expect(screenSrc).toMatch(/const pricesSettled = pricesFetched \|\| pricesErrored;/);
     expect(screenSrc).not.toMatch(/!customerDetail\s*\|\|\s*customerPrices\s*===\s*undefined/);
   });
 
   it("the cleanup resets hydrationStartedRef — a dep-cancelled run can always be re-run, never stranded", () => {
     const cleanupSrc = screenSrc.slice(
       screenSrc.indexOf("return () => {\n      cancelled = true;"),
-      screenSrc.indexOf("[hydrating, hydrateAttempt, customerDetail, customerPrices]"),
+      screenSrc.indexOf(
+        "[hydrating, hydrateAttempt, customerDetail, customerPrices, pricesSettled]",
+      ),
     );
     expect(cleanupSrc).toMatch(/hydrationStartedRef\.current\s*=\s*false;/);
   });
