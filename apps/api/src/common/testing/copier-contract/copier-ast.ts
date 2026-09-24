@@ -8,7 +8,8 @@ export type Anchor =
   | { via: "prop"; name: string } //     a property `<name>: …` holding the line literals (`items: { create: … }`, `items: xs.map(…)`)
   | { via: "delegate"; model: string } // `<x>.<model>.create | createMany({ data: … })`
   | { via: "push"; name: string } //     `<name>.push({ … })` into a local array later handed to a create
-  | { via: "return" }; //                 a builder that returns the line object
+  | { via: "return"; nested?: boolean }; // a builder that returns the line object; `nested`: only
+//                                          returns INSIDE a callback count (the builder wraps its lines)
 
 export type FnRef = { name: string; anchor: Anchor };
 
@@ -149,6 +150,13 @@ function helperImports(src: string): Set<string> {
   return names;
 }
 
+/** The nearest function-like node around `n`. */
+function enclosingFn(n: ts.Node): ts.Node | undefined {
+  let p = n.parent;
+  while (p && !ts.isFunctionLike(p)) p = p.parent;
+  return p;
+}
+
 /** Top-level keys of the line-write literals inside function `ref.name`, or null when it is not found. */
 export function writtenKeys(src: string, ref: FnRef): Set<string> | null {
   const fns = findFunctions(src, ref.name);
@@ -176,7 +184,12 @@ export function writtenKeys(src: string, ref: FnRef): Set<string> | null {
         n.arguments[0]
       )
         lits.push(...lineLiterals(n.arguments[0], fn));
-      else if (a.via === "return" && ts.isReturnStatement(n) && n.expression)
+      else if (
+        a.via === "return" &&
+        ts.isReturnStatement(n) &&
+        n.expression &&
+        (!a.nested || enclosingFn(n) !== fn)
+      )
         lits.push(...outermostLiterals(n.expression, fn));
       ts.forEachChild(n, visit);
     };

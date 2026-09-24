@@ -102,7 +102,8 @@ export const COPIERS: Copier[] = [
     file: "invoices/manual-invoice-lines.ts",
     fn: "buildManualInvoiceLines",
     target: "InvoiceItem",
-    anchor: { via: "return" },
+    // `nested`: the builder's own `return { itemsData, subtotal }` must not count as a written line.
+    anchor: { via: "return", nested: true },
     carried: "description productId qty unitPrice subtotal boxes pieces unitsPerBox",
     // B659: the category tax is priced at CONVERT time from the live category (never a quote-date
     // rate), and the B297 trio is stamped beside it (`...categorySnapshot`, an opaque spread).

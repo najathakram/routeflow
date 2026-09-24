@@ -327,6 +327,31 @@ describe("copier contract mutation proofs (each must turn the spec red)", () => 
       .replace("data: {", "where: { unitsPerBox: 1 }, select: { unitsPerBox: true }, data: {");
     expect(evaluate(world({}, noisy))).toEqual([]);
   });
+  describe('a builder that wraps its lines ({ via: "return", nested: true })', () => {
+    const bx = `function b(items) { let subtotal = 0; const itemsData = items.map((i) => { const s = i.q * 2; subtotal += s; return { productId: i.p, qty: i.q, subtotal: s }; }); return { itemsData, subtotal }; }`;
+    const bEntry: Copier = {
+      id: "F2",
+      file: "fx.ts",
+      fn: "b",
+      target: "EstimateItem",
+      anchor: { via: "return", nested: true },
+      carried: "productId qty subtotal",
+    };
+    const bWorld = (src: string, c: Copier = bEntry) =>
+      world({ columns: () => ["productId", "qty", "subtotal"], sites: () => [] }, src, c);
+    it("baseline: the per-line literal is read -> green", () =>
+      expect(evaluate(bWorld(bx))).toEqual([]));
+    it("(c) the LINE stops writing subtotal -> red, even though the wrapper returns `subtotal`", () =>
+      expect(evaluate(bWorld(bx.replace(", subtotal: s }", " }"))).join()).toMatch(
+        /"subtotal" is classified carried but is no longer written/,
+      ));
+    it("without nested, the wrapper's `subtotal` would hide that (why C5 uses nested)", () =>
+      expect(
+        evaluate(
+          bWorld(bx.replace(", subtotal: s }", " }"), { ...bEntry, anchor: { via: "return" } }),
+        ),
+      ).toEqual([]));
+  });
   it("a stale NOT_A_COPIER entry and a reasonless one -> red", () =>
     expect(
       evaluate(world({ notACopier: { "fx.ts::gone": "", "fx.ts::copy": "x" } })).join(),
