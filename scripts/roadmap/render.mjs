@@ -559,7 +559,9 @@ function parseArgs(argv) {
 function main() {
   const args = parseArgs(process.argv.slice(2));
   if (args.help) {
-    process.stdout.write(`${USAGE}\n`);
+    process.stdout.write(
+      `${USAGE}\n--status exits 0 always — a session start must never block on it.\n`,
+    );
     process.exitCode = 0;
     return;
   }

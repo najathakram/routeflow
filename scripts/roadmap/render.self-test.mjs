@@ -18,7 +18,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 
@@ -756,7 +756,7 @@ async function t9() {
     };
     const child = spawn(
       process.execPath,
-      ["--import", stubPath, SCRIPT_PATH, "--status", "--out", outDir],
+      ["--import", pathToFileURL(stubPath).href, SCRIPT_PATH, "--status", "--out", outDir],
       {
         env: childEnv,
         stdio: ["ignore", "pipe", "pipe"],
