@@ -47,6 +47,7 @@ import {
   activeOrderSubtotal,
   orderAmountDue,
   reconciledAmountDue,
+  reconciledDoorDue,
   shortPickCategoryTax,
 } from "../../../../../lib/run-money";
 import {
@@ -56,6 +57,8 @@ import {
 import {
   buildStopDeliveries,
   fallbackShortPickLines,
+  normalizeDeliveryPlan,
+  planPendingButLinesNotLoaded,
   reconciledTotal,
   shortPickLinesFromOrder,
   type ShortPickLine,
@@ -139,12 +142,30 @@ export default function PaymentScreen() {
   // hasn't landed (or that has nothing left to adjust). `deliveredQtyById`
   // is shared/flat across every order (keyed by orderItemId, which is
   // globally unique), so it's safe to hand the SAME map to every order's
-  // own reconciliation without partitioning it.
+  // own reconciliation without partitioning it. B648/SA-094: each order's
+  // lines already carry unitLabel/unitsPerBox/boxes (shortPickLinesFromOrder
+  // threads them through), so a Case line reconciles correctly no matter
+  // which order on the stop it belongs to.
   const richShortPickLinesByOrder: Record<string, ShortPickLine[]> = useMemo(() => {
     const map: Record<string, ShortPickLine[]> = {};
     for (const id of stopOrderIds) map[id] = shortPickLinesFromOrder(ordersById[id]);
     return map;
   }, [stopOrderIds, ordersById]);
+
+  // SA-094b (B762 adaptation item 3): the ONE normalized plan every reader
+  // of deliveredQtyById must use, computed over EVERY order's lines — a raw
+  // entry for a unit-aware line can be any leftover piece count; only this
+  // snapped map is safe to feed the category-tax half (which has no
+  // unit-awareness of its own) so it agrees with reconciledTotal's own
+  // (already-snapped) subtotal, for whichever order the line belongs to.
+  const allShortPickLines = useMemo(
+    () => stopOrderIds.flatMap((id) => richShortPickLinesByOrder[id] ?? []),
+    [stopOrderIds, richShortPickLinesByOrder],
+  );
+  const normalizedPlan = useMemo(
+    () => normalizeDeliveryPlan(allShortPickLines, deliveredQtyById),
+    [allShortPickLines, deliveredQtyById],
+  );
 
   // Charge across EVERY order on the stop (B762: generalized from order[0]
   // only — the short-pick review now reconciles ANY order at the stop, not
@@ -171,33 +192,49 @@ export default function PaymentScreen() {
           // `o.lineItems` to the category-tax half, or a cancelled/already-
           // delivered regulated line leaks its full category tax into the quote
           // while contributing zero subtotal (see run-money.ts#shortPickCategoryTax).
-          reconciledAmountDue({
-            drafts: o.invoices ?? [],
-            order: {
-              subtotal: o.subtotal,
-              tax: o.tax,
-              // B305 round 5: the no-draft fallback basis (this order's own
-              // discount/fee) when o.invoices is empty — the DEFAULT state
-              // pre-completion.
-              discountAmount: o.discountAmount,
-              shippingFee: o.shippingFee,
-            },
-            // SA-092b: the FULL active-line subtotal (ALL of o.lineItems,
-            // never the delivered-basis shortPickLines below) — gives the
-            // discount its own SEEDING share, distinct from the delivered
-            // share applied to regular tax. See run-money.ts's
-            // ReconciledAmountDueInput.activeSubtotal docstring.
-            activeSubtotal: activeOrderSubtotal({ lineItems: o.lineItems ?? [] }),
-            deliveredSubtotal: reconciledTotal(shortPickLines, deliveredQtyById),
-            deliveredCategoryTax: shortPickCategoryTax(
-              o.lineItems ?? [],
-              shortPickLines,
-              deliveredQtyById,
-            ),
-            // B305 round 3: an exempt customer's server-side reconcile zeroes
-            // BOTH tax terms — mirror that here (RUN_STOP_INCLUDE.customer
-            // projects the column; RouteRunStop.customer.isTaxExempt above).
-            isTaxExempt: stop?.customer?.isTaxExempt === true,
+          // B810/SA-130a: reconciledDoorDue is the ONE decision point for
+          // what to add to this visit's reconciledAmountDue estimate — an
+          // open draft's leftover payables, a deposit mirror restated and
+          // netted against what it already collected, or (a plain,
+          // already-finalized payable) nothing at all, since re-adding the
+          // estimate on top of it double-counts (see reconciledDoorDue's own
+          // docstring for the full three-way rule and the exact bug this
+          // fixes: a SENT $100 invoice, short-picked, used to quote ~$190).
+          reconciledDoorDue({
+            hasOpenDraft: (o.invoices?.length ?? 0) > 0,
+            reconciledEstimate: reconciledAmountDue({
+              drafts: o.invoices ?? [],
+              order: {
+                subtotal: o.subtotal,
+                tax: o.tax,
+                // B305 round 5: the no-draft fallback basis (this order's own
+                // discount/fee) when o.invoices is empty — the DEFAULT state
+                // pre-completion.
+                discountAmount: o.discountAmount,
+                shippingFee: o.shippingFee,
+              },
+              // SA-092b: the FULL active-line subtotal (ALL of o.lineItems,
+              // never the delivered-basis shortPickLines below) — gives the
+              // discount its own SEEDING share, distinct from the delivered
+              // share applied to regular tax. See run-money.ts's
+              // ReconciledAmountDueInput.activeSubtotal docstring.
+              activeSubtotal: activeOrderSubtotal({ lineItems: o.lineItems ?? [] }),
+              // B648/SA-094b: normalizedPlan (not the raw deliveredQtyById) —
+              // a unit-aware line's raw entry can be any leftover piece count;
+              // only the snapped map keeps this agreeing with reconciledTotal's
+              // own (already-snapped) subtotal.
+              deliveredSubtotal: reconciledTotal(shortPickLines, normalizedPlan),
+              deliveredCategoryTax: shortPickCategoryTax(
+                o.lineItems ?? [],
+                shortPickLines,
+                normalizedPlan,
+              ),
+              // B305 round 3: an exempt customer's server-side reconcile zeroes
+              // BOTH tax terms — mirror that here (RUN_STOP_INCLUDE.customer
+              // projects the column; RouteRunStop.customer.isTaxExempt above).
+              isTaxExempt: stop?.customer?.isTaxExempt === true,
+            }),
+            payableInvoices: o.payableInvoices ?? [],
           })
         : fullOrderTotal(o, stop?.customer?.isTaxExempt === true))
     );
@@ -303,6 +340,22 @@ export default function PaymentScreen() {
     }
     setAmountError(null);
 
+    // SA-094a review (5), per-order (B762 adaptation item 4): see
+    // lib/short-pick.ts#planPendingButLinesNotLoaded -- refuse to close
+    // rather than silently discard a driver's recorded short-pick choice
+    // for ANY order at the stop whose richer data is still loading.
+    const anyPlanPendingButNotLoaded = (stop.orders ?? []).some((o) =>
+      planPendingButLinesNotLoaded(
+        deliveredQtyById,
+        (o.lineItems ?? []).map((li) => li.id),
+        !!ordersById[o.id],
+      ),
+    );
+    if (anyPlanPendingButNotLoaded) {
+      setAmountError("Delivery details are still loading — wait a moment and try again.");
+      return;
+    }
+
     // RF-005: use the atomic complete-with-payment endpoint so both writes
     // succeed or fail together (no orphaned completed stop without payment).
     // P10-POS-7/B762: when the short-pick review screen recorded per-line
@@ -311,7 +364,11 @@ export default function PaymentScreen() {
     // order on the stop must appear with EXPLICIT per-line entries — an
     // order missing from this array entirely reads as fully UNDELIVERED
     // server-side — and `type` always goes through `deliveryTypeForQty`
-    // (via buildDeliveries), never a hardcoded literal.
+    // (via buildDeliveries), never a hardcoded literal. B648/SA-094b: the
+    // GLOBAL normalizedPlan (snapped across every order) is what
+    // buildStopDeliveries reads through richShortPickLinesByOrder — a
+    // unit-aware line's delivered qty is already snapped to a whole Case
+    // before this ever runs.
     //
     // SA-115 required (2): the fallback triggers ONLY when the order's
     // fetch has NOT LANDED (`ordersById[o.id]` undefined) — never merely
@@ -328,7 +385,7 @@ export default function PaymentScreen() {
         lines: ordersById[o.id]
           ? (richShortPickLinesByOrder[o.id] ?? [])
           : fallbackShortPickLines(o),
-        deliveredQtyById,
+        deliveredQtyById: normalizedPlan,
       })),
     );
 

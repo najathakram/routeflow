@@ -85,8 +85,10 @@ import {
   RUN_LINE_ITEMS_SELECT,
   RUN_STOP_INCLUDE,
 } from "./routes.constants";
-import { withDeliveredSoFar, withDeliveredSoFarForRunsPage } from "./run-delivered-so-far";
+import { withDeliveredSoFar } from "./run-delivered-so-far";
 import { deliveredQtyRecompute } from "./delivered-so-far";
+import { withPayableInvoicesFlat } from "./run-projections";
+import { withRunStopProjections, withRunStopProjectionsForRunsPage } from "./run-projections";
 export {
   NON_ROUTABLE_ORDER_STATUSES,
   RELEASED_CHANGE_REQUEST_REASON,
@@ -1138,14 +1140,13 @@ export class RoutesService {
     // data so address-dependent UI (Maps button, "no location" badge) works.
     const normalisedRuns = data.map((run: any) => ({
       ...run,
-      stops: run.stops.map((s: any) => ({
+      stops: run.stops.map((s) => ({
         ...s,
         customer: s.customer ?? s.routeStop?.customer ?? null,
         customerAddress: s.customerAddress ?? s.routeStop?.customerAddress ?? null,
       })),
     }));
-    // B785/SA-116: batched per PAGE, never per-run — same shape as B810's withPayableInvoices.
-    const normalisedData = await withDeliveredSoFarForRunsPage(
+    const normalisedData = await withRunStopProjectionsForRunsPage(
       this.prisma.forTenant(),
       normalisedRuns,
     );
@@ -1301,8 +1302,9 @@ export class RoutesService {
           // is the one extra field this fallback needs to group by.
           select: { ...RUN_STOP_INCLUDE.orders.select, customerId: true },
         });
-        const byCustomer: Record<string, any[]> = {};
-        for (const o of orders) {
+        const ordersWithBalances = await withPayableInvoicesFlat(this.prisma.forTenant(), orders);
+        const byCustomer: Record<string, typeof ordersWithBalances> = {};
+        for (const o of ordersWithBalances) {
           (byCustomer[o.customerId] ??= []).push(o);
         }
         const fallbackStops = normalisedStops.map((s: any) => ({
@@ -1320,7 +1322,7 @@ export class RoutesService {
 
     return {
       ...run,
-      stops: await withDeliveredSoFar(this.prisma.forTenant(), normalisedStops),
+      stops: await withRunStopProjections(this.prisma.forTenant(), normalisedStops),
       collectedPayments,
     };
   }
@@ -2905,14 +2907,13 @@ export class RoutesService {
 
     const normalisedRuns = data.map((run: any) => ({
       ...run,
-      stops: run.stops.map((s: any) => ({
+      stops: run.stops.map((s) => ({
         ...s,
         customer: s.customer ?? s.routeStop?.customer ?? null,
         customerAddress: s.customerAddress ?? s.routeStop?.customerAddress ?? null,
       })),
     }));
-    // B785/SA-116: same batched-per-page shape as findAllRuns.
-    const normalisedData = await withDeliveredSoFarForRunsPage(
+    const normalisedData = await withRunStopProjectionsForRunsPage(
       this.prisma.forTenant(),
       normalisedRuns,
     );

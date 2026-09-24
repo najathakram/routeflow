@@ -30,6 +30,8 @@ import {
   useSaveProductMapping,
   getUnlinkedItemsError,
   type UnlinkedItemsError,
+  getPackSizeUnknownError,
+  type PackSizeUnknownError,
   type VendorBill,
   type VendorBillItem,
   type VendorBillStatus,
@@ -42,6 +44,7 @@ import { SupplierSelect } from "@/components/SupplierSelect";
 import { InlineCreateProductModal } from "@/components/InlineCreateProductModal";
 import { SearchableProductPicker } from "@/components/SearchableProductPicker";
 import { VariantSplitModal } from "@/components/VariantSplitModal";
+import { PackSizeUnknownModal } from "@/components/PackSizeUnknownModal";
 import { useProduct } from "@/lib/api/products";
 import { roundMoney } from "@routeflow/pricing";
 import { fmt, fmtCalendarDate, fmtDate } from "@/lib/formatting";
@@ -744,6 +747,10 @@ export default function VendorBillDetailPage() {
   const [variantSplitPool, setVariantSplitPool] = React.useState(0);
   const { data: variantSplitProduct } = useProduct(variantSplitProductId ?? "");
   const [unlinkedConfirm, setUnlinkedConfirm] = React.useState<UnlinkedItemsError | null>(null);
+  // B743: the PACK_SIZE_UNKNOWN refusal, and whether the attempt it refused had already
+  // acknowledged unlinked lines (the loose-pieces retry must keep that acknowledgement).
+  const [packSizeConfirm, setPackSizeConfirm] = React.useState<PackSizeUnknownError | null>(null);
+  const [lastAckUnlinked, setLastAckUnlinked] = React.useState(false);
   // The per-line quantities chosen in the receive modal — kept so the
   // UNLINKED_ITEMS confirm retry re-sends the same partial plan.
   const [pendingReceiveItems, setPendingReceiveItems] = React.useState<
@@ -831,12 +838,18 @@ export default function VendorBillDetailPage() {
 
   // ── Action handlers ──────────────────────────────────────────────────────────
 
-  const handleReceive = (acknowledgeUnlinked = false, items?: ReceiveVendorBillLine[]) => {
+  const handleReceive = (
+    acknowledgeUnlinked = false,
+    items?: ReceiveVendorBillLine[],
+    acknowledgePackSizeUnknown = false,
+  ) => {
+    setLastAckUnlinked(acknowledgeUnlinked);
     receiveBill.mutate(
-      { id: bill.id, acknowledgeUnlinked, items },
+      { id: bill.id, acknowledgeUnlinked, acknowledgePackSizeUnknown, items },
       {
         onSuccess: (updated) => {
           setUnlinkedConfirm(null);
+          setPackSizeConfirm(null);
           setIsReceiveOpen(false);
           setPendingReceiveItems(undefined);
           const partial = updated?.status === "PARTIAL";
@@ -879,6 +892,13 @@ export default function VendorBillDetailPage() {
           }
         },
         onError: (err: any) => {
+          // B743: lines of a case-sold product with no units per case → an explicit choice.
+          const packUnknown = getPackSizeUnknownError(err);
+          if (packUnknown) {
+            setUnlinkedConfirm(null);
+            setPackSizeConfirm(packUnknown);
+            return;
+          }
           // Unmapped lines → show the confirm dialog listing what gets skipped
           const unlinked = getUnlinkedItemsError(err);
           if (unlinked) {
@@ -1587,6 +1607,22 @@ export default function VendorBillDetailPage() {
         payload={unlinkedConfirm}
         onClose={() => setUnlinkedConfirm(null)}
         onConfirm={() => handleReceive(true, pendingReceiveItems)}
+        isPending={receiveBill.isPending}
+      />
+
+      <PackSizeUnknownModal
+        payload={packSizeConfirm}
+        onClose={() => setPackSizeConfirm(null)}
+        onFixCaseSizes={
+          status === "DRAFT"
+            ? () => {
+                setPackSizeConfirm(null);
+                setIsReceiveOpen(false);
+                startEditing();
+              }
+            : null
+        }
+        onReceiveLoose={() => handleReceive(lastAckUnlinked, pendingReceiveItems, true)}
         isPending={receiveBill.isPending}
       />
 

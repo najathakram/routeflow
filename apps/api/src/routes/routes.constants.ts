@@ -31,6 +31,11 @@ export const RUN_LINE_ITEMS_SELECT = {
   // short-picked stop's estimate. NOTE: `OrderItem` has no `taxRate` column
   // (only `categoryTaxAmount`) — see routes.run-stop-select.spec.ts.
   categoryTaxAmount: true,
+  // B648: units_v1 — the unit this line is sold by ("Case"…), null on a
+  // plain piece/pack line. Without it, this driver read surface can't tell a
+  // Case line from a pack line — lib/short-pick.ts#isUnitAwareLine gates the
+  // stepper (and every money function) on it.
+  unitLabel: true,
 } as const;
 
 // Shared per-stop include used by both list (`findAllRuns`) and detail
@@ -89,6 +94,13 @@ export const RUN_STOP_INCLUDE = {
           total: true,
         },
       },
+      // B810/SA-130a: `payableInvoices` (SA-125's SEPARATE, non-DRAFT-only list,
+      // mirroring recordDeliveryPaymentInTx's own PAYABLE query) is deliberately
+      // NOT selected here — `Order` has no such relation, only `invoices` above.
+      // It is fetched as its own batched `invoice.findMany` and attached
+      // afterward (see run-invoice-balance.ts and this file's 4 call sites in
+      // routes.service.ts) — nesting it under this `select` throws `Unknown
+      // field 'payableInvoices'` against the real Prisma client.
       lineItems: { select: RUN_LINE_ITEMS_SELECT },
     },
   },
