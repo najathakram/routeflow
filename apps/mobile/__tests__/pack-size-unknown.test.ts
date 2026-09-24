@@ -33,6 +33,10 @@ describe("B743 — mobile PACK_SIZE_UNKNOWN prompt (REG-B743-mobile)", () => {
     expect(p.confirmText).toBe("Receive as loose pieces");
     expect(p.message).toContain(`Receiving as loose pieces: ${LOOSE_PIECES_CONSEQUENCE}`);
     expect(p.message).toContain("• Sample Cola (usually a case of 12)");
+    // SA-146a: mobile has no bill-line editor, so the way out points at the web dashboard.
+    expect(p.message).toContain(
+      "cancel and set the case sizes on the bill's lines in the web dashboard.",
+    );
   });
 
   it("caps the list at 5 lines and counts the rest", () => {

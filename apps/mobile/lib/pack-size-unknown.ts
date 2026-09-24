@@ -49,7 +49,7 @@ export function packSizeUnknownPrompt(err: PackSizeUnknownError): {
     message:
       `${err.message}\n\n${shown}${more}\n\n` +
       `Receiving as loose pieces: ${LOOSE_PIECES_CONSEQUENCE}\n` +
-      "To fix the case sizes instead, cancel and edit the bill's lines.",
+      "To fix the case sizes instead, cancel and set the case sizes on the bill's lines in the web dashboard.",
     confirmText: "Receive as loose pieces",
   };
 }
