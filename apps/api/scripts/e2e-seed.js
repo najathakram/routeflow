@@ -209,6 +209,19 @@ const FIXTURE_INVOICE_NUMBER = "E2E-FIX-INV-001";
 // "ORD-<digits>" is also the shape 06 CP-06 finds the row by.
 const FIXTURE_ORDER_KEY = "e2e-fixture-order";
 
+// One order + one invoice for the BUYER's own customer ("E2E Buyer Portal
+// Cafe"), separate from the operator-facing fixtures above. Pre-merge review
+// on #1288 found spec 54's order-detail/invoice-detail overflow checks
+// (apps/web/e2e/54-buyer-portal-mobile-overflow.spec.ts) only ran when a
+// human had separately run a local-only, uncommitted seed script — so they
+// silently skipped in CI every time. Non-numeric order-number suffix, same
+// reasoning as FIXTURE_ORDER_KEY's own comment above: "ORD-BUYER-SEED-1"
+// never matches order-number.ts's `/^ORD-([0-9]{1,9})$/` numeric-max regex,
+// so it can never skew the tenant's real order sequence.
+const BUYER_FIXTURE_ORDER_KEY = "e2e-buyer-fixture-order";
+const BUYER_FIXTURE_ORDER_NUMBER = "ORD-BUYER-SEED-1";
+const BUYER_FIXTURE_INVOICE_NUMBER = "E2E-BUYER-FIX-INV-001";
+
 // The API's customer soft-delete (customers.service.ts, REG-B159) RELEASES the User's identity:
 // username -> "<username>~removed~<id8>", email -> "removed+<id>@placeholder.local", deletedAt set.
 // So a fixture user that was soft-deleted no longer matches its exact username — match the
@@ -450,6 +463,74 @@ async function ensureBuyerFixture(tenantId) {
     console.log(`  ✓ Buyer approved-linked to "${BUYER_CUSTOMER.businessName}"`);
   } else {
     console.log(`  ✓ Buyer link to "${BUYER_CUSTOMER.businessName}" exists (ACTIVE)`);
+  }
+
+  // One PENDING order + one SENT invoice for THIS customer specifically —
+  // see BUYER_FIXTURE_ORDER_KEY's comment above for why. ensureCommerceFixtures
+  // (called before this function in both call sites of main()) has already
+  // created the E2E-FIX-001 widget product by the time this runs.
+  const widget = await prisma.product.findFirst({ where: { tenantId, sku: "E2E-FIX-001" } });
+  if (widget) {
+    await prisma.order.upsert({
+      where: { tenantId_idempotencyKey: { tenantId, idempotencyKey: BUYER_FIXTURE_ORDER_KEY } },
+      create: {
+        tenantId,
+        customerId: customer.id,
+        orderNumber: BUYER_FIXTURE_ORDER_NUMBER,
+        idempotencyKey: BUYER_FIXTURE_ORDER_KEY,
+        skipAutoMerge: true,
+        status: "PENDING",
+        subtotal: cents(ORDER_QTY * WIDGET_A_CENTS),
+        total: cents(ORDER_QTY * WIDGET_A_CENTS),
+        lineItems: {
+          create: [
+            {
+              tenantId,
+              productId: widget.id,
+              status: "PENDING",
+              qty: ORDER_QTY,
+              unitPrice: cents(WIDGET_A_CENTS),
+              subtotal: cents(ORDER_QTY * WIDGET_A_CENTS),
+            },
+          ],
+        },
+      },
+      update: {
+        status: "PENDING",
+        skipAutoMerge: true,
+        lineItems: { updateMany: { where: {}, data: { status: "PENDING" } } },
+      },
+    });
+
+    await prisma.invoice.upsert({
+      where: {
+        tenantId_invoiceNumber: { tenantId, invoiceNumber: BUYER_FIXTURE_INVOICE_NUMBER },
+      },
+      create: {
+        tenantId,
+        customerId: customer.id,
+        invoiceNumber: BUYER_FIXTURE_INVOICE_NUMBER,
+        status: "SENT",
+        sentAt: new Date(),
+        subtotal: cents(ORDER_QTY * WIDGET_A_CENTS),
+        total: cents(ORDER_QTY * WIDGET_A_CENTS),
+        items: {
+          create: [
+            {
+              tenantId,
+              description: widget.name,
+              qty: ORDER_QTY,
+              unitPrice: cents(WIDGET_A_CENTS),
+              subtotal: cents(ORDER_QTY * WIDGET_A_CENTS),
+            },
+          ],
+        },
+      },
+      update: {},
+    });
+    console.log(`  ✓ Buyer commerce fixture present: 1 order, 1 invoice`);
+  } else {
+    console.log("  - buyer commerce fixture skipped (E2E-FIX-001 product not found)");
   }
 }
 

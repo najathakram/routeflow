@@ -27,19 +27,17 @@
  * `grid-cols-2 sm:grid-cols-4` on the summary, mirroring
  * orders/[id]/page.tsx's own pattern) closes, and this test locks in.
  *
- * The order-detail and invoice-detail checks are each gated by a plain `if
- * (await locator.count())` — not test.skip(), which mid-test would abort
- * everything after it in the same test function, including the unrelated
- * invoices-list check. Each skip logs why, explicitly.
- * apps/api/scripts/e2e-seed.js never gives the buyer's linked customer
- * ("E2E Buyer Portal Cafe") an order or invoice on its own (confirmed
- * directly against the DB, not guessed — different from the locator bugs
- * earlier fixed on this branch, which were an unverified "no data"
- * assumption that was actually wrong). local-assets/scripts/seed-buyer-order-invoice.mjs
- * (gitignored, one-off, run manually against a local stack) fills that gap
- * through the real `/orders/sell` API so these two checks actually execute
- * instead of just logging why they didn't — the `if` stays regardless, since
- * a fresh DB or CI run won't have that script's output.
+ * The order-detail and invoice-detail checks assert their fixture exists
+ * (mirroring spec 53's own order-detail check) rather than silently skipping
+ * — pre-merge review's finding: the earlier `if (await locator.count())`
+ * guard meant CI ran these checks against nothing every time, since
+ * apps/api/scripts/e2e-seed.js gave the buyer's linked customer ("E2E Buyer
+ * Portal Cafe") no order or invoice of its own (confirmed directly against
+ * the DB at the time, not guessed). e2e-seed.js's `ensureBuyerFixture` now
+ * seeds one BUYER_FIXTURE_ORDER_KEY order and one BUYER_FIXTURE_INVOICE_NUMBER
+ * invoice for exactly this customer, so both checks always have something
+ * real to open — a regression in that fixture now fails loudly here instead
+ * of silently skipping.
  *
  * Uses the seeded, ACTIVE-linked buyer credential from helpers/constants.ts
  * (already has a seller selected, so no register→invite→accept dance is
@@ -132,44 +130,34 @@ for (const vp of VIEWPORTS) {
       // viewport's locator bug by reintroducing the mirror-image bug at the
       // other viewport. Branch on vp.width.
       //
-      // A non-fatal if, not test.skip(): test.skip() mid-test aborts
-      // everything after it in this same test function — including the
-      // invoices checks below, which don't depend on this one at all. Skip
-      // ONLY this block, and say so in the log, rather than losing unrelated
-      // coverage to an upstream gap.
-      //
-      // Confirmed directly against the local DB that CREDENTIALS.buyer's
-      // linked customer ("E2E Buyer Portal Cafe") has zero seeded orders,
-      // and apps/api/scripts/e2e-seed.js never creates one for it — a real,
-      // permanent fixture gap, not a locator bug hiding behind a guess. That
-      // verification is what makes this conditional safe: the earlier
-      // locator bugs on this branch were UNVERIFIED assumptions of "no data"
-      // that were actually wrong; this one is checked.
+      // Hard expect, not a conditional skip — mirroring spec 53's own order-
+      // detail check. e2e-seed.js's ensureBuyerFixture (see BUYER_FIXTURE_
+      // ORDER_KEY) now guarantees this customer has exactly one order, so a
+      // 0-count here is a real regression (the fixture broke), not an
+      // expected gap to log around.
       const orderLink =
         vp.width < 640
           ? page.getByTestId("buyer-orders-cards").locator("a").first()
           : page.getByTestId("buyer-orders-table").locator("tbody tr").first();
-      if (await orderLink.count()) {
-        await orderLink.click();
-        // 30s, not 15s: found running this for real — under `next dev`, the
-        // FIRST hit on an order-detail route pays a one-time on-demand
-        // compile that can exceed 15s, timing out `waitForURL`'s "load"
-        // wait even though the click and navigation both genuinely
-        // succeeded (confirmed via the failure's own page snapshot: the
-        // link showed `[active]` and the real target URL). Not a locator
-        // bug — a dev-server-only cold-compile cost a production build
-        // doesn't have.
-        await page.waitForURL(new RegExp(`/buyer/portal/${sellerSlug}/orders/[^/]+$`), {
-          timeout: 30_000,
-        });
-        await waitForDataLoaded(page);
-        await assertNoOverflow(page, "buyer orders/[id]");
-        expect(await documentLevelOverflowPx(page)).toBeLessThanOrEqual(0);
-      } else {
-        console.log(
-          "[overflow probe] buyer orders/[id] — skipped: no order seeded for the buyer's linked customer (E2E Buyer Portal Cafe) on this run. e2e-seed.js doesn't create one; local-assets/scripts/seed-buyer-order-invoice.mjs (gitignored, one-off) does, via the real /orders/sell API — run it once against a fresh DB to exercise this check.",
-        );
-      }
+      await expect(
+        orderLink,
+        "no seeded order for the buyer's linked customer (E2E Buyer Portal Cafe) — check e2e-seed.js's ensureBuyerFixture",
+      ).toBeVisible({ timeout: 15_000 });
+      await orderLink.click();
+      // 30s, not 15s: found running this for real — under `next dev`, the
+      // FIRST hit on an order-detail route pays a one-time on-demand
+      // compile that can exceed 15s, timing out `waitForURL`'s "load"
+      // wait even though the click and navigation both genuinely
+      // succeeded (confirmed via the failure's own page snapshot: the
+      // link showed `[active]` and the real target URL). Not a locator
+      // bug — a dev-server-only cold-compile cost a production build
+      // doesn't have.
+      await page.waitForURL(new RegExp(`/buyer/portal/${sellerSlug}/orders/[^/]+$`), {
+        timeout: 30_000,
+      });
+      await waitForDataLoaded(page);
+      await assertNoOverflow(page, "buyer orders/[id]");
+      expect(await documentLevelOverflowPx(page)).toBeLessThanOrEqual(0);
 
       // ── Invoices ─────────────────────────────────────────────────────────
       await page.goto(`/buyer/portal/${sellerSlug}/invoices`);
@@ -187,24 +175,23 @@ for (const vp of VIEWPORTS) {
       // overflow-auto let a user scroll to reach the buttons; the fix makes
       // them wrap instead — see the page's own comments at those two spots).
       //
-      // Same non-fatal-if reasoning as orders above, and same fixture-gap
-      // dependency — see local-assets/scripts/seed-buyer-order-invoice.mjs.
+      // Same hard-expect reasoning as orders above — e2e-seed.js's
+      // ensureBuyerFixture also guarantees exactly one invoice for this
+      // customer (BUYER_FIXTURE_INVOICE_NUMBER).
       const invoiceRow = page.locator("tbody tr").first();
-      if (await invoiceRow.count()) {
-        await invoiceRow.click();
-        // 30s — same first-compile-under-next-dev reasoning as the order
-        // detail wait above.
-        await page.waitForURL(new RegExp(`/buyer/portal/${sellerSlug}/invoices/[^/]+$`), {
-          timeout: 30_000,
-        });
-        await waitForDataLoaded(page);
-        await assertNoOverflow(page, "buyer invoices/[id]");
-        expect(await documentLevelOverflowPx(page)).toBeLessThanOrEqual(0);
-      } else {
-        console.log(
-          "[overflow probe] buyer invoices/[id] — skipped: no invoice seeded for the buyer's linked customer (E2E Buyer Portal Cafe) on this run.",
-        );
-      }
+      await expect(
+        invoiceRow,
+        "no seeded invoice for the buyer's linked customer (E2E Buyer Portal Cafe) — check e2e-seed.js's ensureBuyerFixture",
+      ).toBeVisible({ timeout: 15_000 });
+      await invoiceRow.click();
+      // 30s — same first-compile-under-next-dev reasoning as the order
+      // detail wait above.
+      await page.waitForURL(new RegExp(`/buyer/portal/${sellerSlug}/invoices/[^/]+$`), {
+        timeout: 30_000,
+      });
+      await waitForDataLoaded(page);
+      await assertNoOverflow(page, "buyer invoices/[id]");
+      expect(await documentLevelOverflowPx(page)).toBeLessThanOrEqual(0);
     });
   });
 }
