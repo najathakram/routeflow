@@ -78,11 +78,19 @@ const isB749Toolbar = (o: Offender) => o.text.includes("New Customer");
 // action buttons/icons NESTED INSIDE an overflowing cell, matched via
 // `el.closest("table")` since they're descendants of one; a plain tag
 // allowlist would miss them even though their ancestor TD/TR tags matched.
-// "div:has(> table)" catches the clip-pass's offender instead — that pass
+// The second selector catches the clip-pass's offender instead — that pass
 // flags the WRAPPER div itself (its own overflow-hidden class + scrollWidth
 // > clientWidth), which is an ANCESTOR of the table, not a descendant, so
-// `closest("table")` alone never matches it.
-const B750_TABLE_CONTAINER = ["table", "div:has(> table)"];
+// `closest("table")` alone never matches it. Narrowed per review: a bare
+// "div:has(> table)" would match ANY div directly wrapping ANY table on the
+// page, silently swallowing an unrelated future table bug here too. Pinned
+// to this wrapper's own exact class combination (invoices/page.tsx:696) —
+// still structural (`:has(> table)`, not a specific table's content), just
+// scoped to the one wrapper this defect actually lives in.
+const B750_TABLE_CONTAINER = [
+  "table",
+  ".overflow-hidden.rounded-lg.border.border-surface-border.bg-white:has(> table)",
+];
 
 // Third instance of the SAME toolbar-overflow shape as B749 (a no-wrap
 // `flex items-center gap-2` action row), found on the invoices list while
@@ -96,11 +104,13 @@ const B750_TABLE_CONTAINER = ["table", "div:has(> table)"];
 const isInvoicesToolbar = (o: Offender) =>
   o.text.includes("ExportPayments") || o.text === "New Invoice";
 
-// Found by pre-merge review, not by this branch's own exploration: the
-// dashboard's order-pipeline strip ((dashboard)/dashboard/page.tsx:788-789)
+// B829: found by pre-merge review, not by this branch's own exploration —
+// the dashboard's order-pipeline strip ((dashboard)/dashboard/page.tsx:788-789)
 // hard-clips "Cancelled" to "Cancelle" inside an overflow-hidden wrapper — a
 // class of miss the escape-based probe alone can never catch (see
-// helpers/overflow.ts's module header for the two-pass explanation).
+// helpers/overflow.ts's module header for the two-pass explanation). Not
+// fixed here — pre-existing, unrelated to this PR's shell-drift fix; queued
+// as its own follow-up PR. Drop this ignore when B829 is fixed.
 //
 // Container-matched, not text-matched — found running this for real: the
 // second pass's `scrollWidth > clientWidth` check fires on the OUTER wrapper
@@ -192,6 +202,14 @@ for (const vp of VIEWPORTS) {
       await expect(page.getByRole("link", { name: /pending/i })).toBeVisible({
         timeout: 15_000,
       });
+      // Found by review: a font-load race with the "Cancelled" clip check —
+      // the pipeline strip's scrollWidth/clientWidth measurement (the second
+      // pass in helpers/overflow.ts) can read different values before vs.
+      // after the real webfont swaps in for the fallback, since glyph widths
+      // differ between them. Waiting for the fonts the browser has already
+      // started loading to finish (a no-op if they were already ready)
+      // removes that race without adding an arbitrary sleep.
+      await page.evaluate(() => document.fonts.ready);
       await assertNoOverflow(
         page,
         "dashboard",
@@ -230,7 +248,11 @@ for (const vp of VIEWPORTS) {
       // the wrong element or a navigation that silently no-ops could still
       // leave *some* matching text on screen; the URL is the one thing that
       // can't lie about whether we actually reached the detail page.
-      await page.waitForURL(/\/orders\/[^/]+$/, { timeout: 15_000 });
+      // 30s, not 15s — matches spec 54's own bump: found flaking for real
+      // under `next dev`'s one-time on-demand compile on this route's first
+      // hit in a run, not a locator bug (the click and navigation both
+      // genuinely succeed, just slower than 15s the first time).
+      await page.waitForURL(/\/orders\/[^/]+$/, { timeout: 30_000 });
       // getByText(/line items/i) is ambiguous on this page — it also matches
       // the summary panel's <dt>Line items</dt> term, not just this heading.
       // Only surfaced once real navigation actually happened for the first
