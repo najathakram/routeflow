@@ -64,7 +64,13 @@ for (const vp of VIEWPORTS) {
     test(`no element exceeds the viewport across the buyer's own pages (${vp.label}px)`, async ({
       page,
     }) => {
-      test.setTimeout(120_000);
+      // 180s, matching spec 53 — found flaking for real at 120s: order-
+      // detail and invoice-detail are now hard-required checks (item 1, this
+      // review round) instead of a conditional skip, so this test does
+      // genuinely more real navigation work than before, and the same
+      // dev-server cold-compile allowance elsewhere in this file needs a
+      // bigger overall budget to fit inside on a first-run browser context.
+      test.setTimeout(180_000);
 
       await loginAsBuyer(page, CREDENTIALS.buyer.email, CREDENTIALS.buyer.password);
 
