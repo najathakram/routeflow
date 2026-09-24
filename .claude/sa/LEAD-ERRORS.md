@@ -106,6 +106,8 @@ A 7 · B 5 · C 1 · D 4 (lead) · SA own: A 11 · B 14 | needless asks ("you di
 
 - SA-E58 · 2026-09-24 · B · SA-144e passed the create site's `unitLabel: item.unitLabel ?? null` without asking whether that label was the REQUEST's or the RESOLUTION's; a request naming the pack's own level resolves to a pack line while the request string stays set, so the helper's unit branch fired on a pack line. Found by the Opus pass. Rule (check 10): when a call passes a line attribute into a money helper, name which OBJECT it comes from — request, resolution, or stored row — and check that the helper's branch on it is meant for that object.
 
+- SA-E59 · 2026-09-24 · A · SA-124j was phrased "PASS, lands on F2's chain at this sha" while F2's chain had been RED at the same code since 207dfeb5 (a deterministic (f) failure on a fixture convention); the verdict was conditional in substance but read as done. Rule: a read of a PR whose gate is an execution result the seat has not seen is a HOLD-pending-proof, named as such — never a PASS with a condition in the tail; and ask for the DB lane's latest result before reading a money PR (the lead now sends it).
+
 ## Prediction (update weekly)
 
 - 2026-09-20 · A dominates (5 of 11) → the fix is mechanical: re-derive at the moment of decision and name the sha. Next likely instance: a "ready to land", "N behind" or ratchet figure relayed from a lane across a merge window. D is the expensive class: watch every "the flag is off" and every merge list that is mostly one lane.
