@@ -19,6 +19,14 @@
   scripts/work/run.mjs for what happens each run. No npm install is ever
   performed here or by run.mjs; both are dependency-free Node ESM.
 
+  -Ref, -Plane and -Triage are all re-runnable: running this script again
+  (with the worktree already in place) does NOT skip the wrapper or the
+  scheduled task -- it always rewrites run.cmd with the flags given this
+  time and unregisters+re-registers the scheduled task, so e.g. adding
+  -Triage to an existing install is just running the same command again
+  with that switch added. Only the runner worktree itself and its marker
+  file are created once and then left alone on later runs.
+
 .PARAMETER Ref
   The git ref the runner worktree re-checks-out to on every run (passed
   through as WORK_RUNNER_REF). Default: origin/master.
@@ -27,6 +35,14 @@
   Switch. When present, sets WORK_PLANE=1 so run.mjs also invokes
   scripts/work/plane-release-sync.mjs --apply, if that script exists.
   plane-release-sync.mjs is responsible for its own throttling.
+
+.PARAMETER Triage
+  Switch. When present, sets WORK_TRIAGE=1 so run.mjs also considers
+  spawning a headless `claude -p ...` auto-triage run over the needs-triage
+  backlog after each reconcile -- see run.mjs's "AUTO-TRIAGE" header
+  section for the full trigger contract (fresh-work/backlog-age gate,
+  60-minute minimum interval, 8-runs/day cap, and an in-flight guard).
+  Off by default.
 
 .PARAMETER Uninstall
   Removes the scheduled task and the wrapper launcher files. Leaves the
@@ -39,12 +55,15 @@
 .EXAMPLE
   powershell -File scripts\work\install-scheduler.ps1 -Ref origin/master -Plane
 .EXAMPLE
+  powershell -File scripts\work\install-scheduler.ps1 -Plane -Triage
+.EXAMPLE
   powershell -File scripts\work\install-scheduler.ps1 -Uninstall
 #>
 [CmdletBinding()]
 param(
   [string]$Ref = "origin/master",
   [switch]$Plane,
+  [switch]$Triage,
   [switch]$Uninstall
 )
 
@@ -123,12 +142,14 @@ else {
 # reconcile.mjs are dependency-free Node ESM, and node must already be on
 # PATH for the interactive user account the task runs as.
 $planeFlag = if ($Plane) { "1" } else { "0" }
+$triageFlag = if ($Triage) { "1" } else { "0" }
 $cmdContent = @"
 @echo off
 setlocal
 set WORK_RUNNER=1
 set WORK_RUNNER_REF=$Ref
 set WORK_PLANE=$planeFlag
+set WORK_TRIAGE=$triageFlag
 cd /d "$RunnerWorktree"
 node scripts\work\run.mjs
 endlocal
@@ -173,5 +194,5 @@ Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger $trigger `
 | Out-Null
 
 Write-Host ""
-Write-Host "Installed scheduled task '$TaskName' -- every 5 min, ref $Ref, plane=$planeFlag."
+Write-Host "Installed scheduled task '$TaskName' -- every 5 min, ref $Ref, plane=$planeFlag, triage=$triageFlag."
 Write-Host "Uninstall with: powershell -File $($MyInvocation.MyCommand.Path) -Uninstall"
