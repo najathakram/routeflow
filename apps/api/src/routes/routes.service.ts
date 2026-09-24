@@ -1170,44 +1170,19 @@ export class RoutesService {
           },
         },
         driver: { select: { id: true, contactName: true, user: { select: { username: true } } } },
+        // B305 round 5: this used to hand-roll its own shape here instead of
+        // RUN_STOP_INCLUDE (the "single shared include" G7 was meant to
+        // guarantee) — missing subtotal/tax/total/discountAmount/shippingFee/
+        // invoices on every order and isTaxExempt on the customer, so every
+        // B305-round fix to run-money.ts's money math was silently inert on
+        // the ONE endpoint (GET /route-runs/:id) the driver's stop and
+        // payment screens actually call. `findAllRuns` (:1119) and
+        // `findMyRuns` (:2885) always used RUN_STOP_INCLUDE correctly — only
+        // this detail read had drifted. `deliveryMutations` is the one field
+        // this detail read needs beyond the shared shape (list views don't).
         stops: {
           include: {
-            customer: {
-              select: {
-                id: true,
-                businessName: true,
-                contactName: true,
-                phone: true,
-                deliveryWindowStart: true,
-                deliveryWindowEnd: true,
-              },
-            },
-            customerAddress: true,
-            orders: {
-              select: {
-                id: true,
-                orderNumber: true,
-                status: true,
-                urgent: true,
-                notes: true,
-                lineItems: { select: RUN_LINE_ITEMS_SELECT },
-              },
-            },
-            routeStop: {
-              include: {
-                customer: {
-                  select: {
-                    id: true,
-                    businessName: true,
-                    contactName: true,
-                    phone: true,
-                    deliveryWindowStart: true,
-                    deliveryWindowEnd: true,
-                  },
-                },
-                customerAddress: true,
-              },
-            },
+            ...RUN_STOP_INCLUDE,
             deliveryMutations: {
               select: {
                 id: true,
@@ -1312,15 +1287,12 @@ export class RoutesService {
             // quoted to the driver as if it were still open on this delivery.
             status: { notIn: [OrderStatus.CANCELLED, OrderStatus.DELIVERED] },
           },
-          select: {
-            id: true,
-            orderNumber: true,
-            status: true,
-            urgent: true,
-            notes: true,
-            customerId: true,
-            lineItems: { select: RUN_LINE_ITEMS_SELECT },
-          },
+          // B305 round 5: same drift as the main stops query above — this
+          // legacy fallback had its own hand-rolled select, missing the same
+          // money fields. `RUN_STOP_INCLUDE.orders.select` already carries
+          // exactly what an order needs here (incl. lineItems); `customerId`
+          // is the one extra field this fallback needs to group by.
+          select: { ...RUN_STOP_INCLUDE.orders.select, customerId: true },
         });
         const byCustomer: Record<string, any[]> = {};
         for (const o of orders) {

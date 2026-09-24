@@ -102,9 +102,11 @@ export const RUN_STOP_INCLUDE = {
           phone: true,
           deliveryWindowStart: true,
           deliveryWindowEnd: true,
-          // #1272 review follow-up (b305a-exempt-pin): round 3 fixed this same gap
-          // for the DIRECT stop.customer path (above) but missed the
-          // routeStop-fallback customer path a seeded/legacy stop resolves through.
+          // B305 round 5 (#1272) / b305a-exempt-pin follow-up: findOneRun falls back
+          // to THIS customer (`s.customer ?? s.routeStop?.customer`) for a
+          // legacy/seeded run with no direct stop-customer link — without
+          // isTaxExempt here too, that fallback path silently over-collects tax
+          // from an exempt customer exactly as round 3 fixed for the direct link.
           isTaxExempt: true,
         },
       },
