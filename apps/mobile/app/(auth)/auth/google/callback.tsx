@@ -9,10 +9,13 @@ import { OP_KEYS, DRIVER_KEYS, BUYER_KEYS, CURRENT_ROLE_KEY } from "../../../../
 /**
  * Web Google OAuth callback (F8-001 one-time-code exchange).
  *
- * The mobile-web build (which phones are proxied to at www.routeflow.info) can't
- * use the native routeflow:// deep-link flow, so lib/auth.ts's loginWithGoogle
- * does a full-page redirect on web. The API lands the browser back here
- * (WEB_URL/auth/google/callback?code=…); we trade the code for tokens via
+ * This Expo mobile-web build (reached directly, e.g. via the driver-app link
+ * on www's /login or dashboard — B825/mobile-web-proxy-redesign; phones are
+ * no longer auto-proxied here) can't use the native routeflow:// deep-link
+ * flow, so lib/auth.ts's loginWithGoogle does a full-page redirect on web,
+ * passing THIS ORIGIN as `return_origin` (B825) so the API's callback lands
+ * the browser back HERE (this build's own /auth/google/callback?code=…)
+ * instead of always on the Next web app — we trade the code for tokens via
  * /auth/google/exchange, persist them under the role-namespaced keys, then do a
  * hard reload so RootLayout.initialize() re-reads them cleanly and routes by role
  * (a soft setState would race the initialize() that runs on this fresh page load).

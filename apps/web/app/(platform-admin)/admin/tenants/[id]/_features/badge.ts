@@ -37,6 +37,6 @@ export const BADGE_COLORS: Record<FeatureBadge, string> = {
   removed: "bg-red-900/40 text-red-300 ring-red-600/30",
   grandfathered: "bg-purple-900/40 text-purple-300 ring-purple-600/30",
   purchased: "bg-blue-900/40 text-blue-300 ring-blue-600/30",
-  off: "bg-slate-800 text-slate-500 ring-slate-700",
+  off: "bg-slate-800 text-slate-400 ring-slate-700",
   unknown: "bg-amber-900/40 text-amber-300 ring-amber-600/30",
 };
