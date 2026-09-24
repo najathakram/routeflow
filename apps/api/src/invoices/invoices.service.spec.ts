@@ -395,6 +395,8 @@ describe("InvoicesService", () => {
         customer: { findFirst: jest.fn().mockResolvedValue({ isTaxExempt: false }) },
         trackedCategory: { findMany: jest.fn().mockResolvedValue([]) },
         orderItem: { update: jest.fn().mockResolvedValue({}) },
+        // B760: no mutations = undelivered behaviour, byte-identical to this fixture's old qty.
+        deliveryMutation: { findMany: jest.fn().mockResolvedValue([]) },
         $executeRaw: jest.fn().mockResolvedValue(0),
         $queryRaw: jest.fn().mockResolvedValue([]),
       };
@@ -5529,6 +5531,73 @@ describe("InvoicesService", () => {
       for (const line of createdLines) {
         expect(line.taxRate).toBeCloseTo(0.1, 4);
       }
+    });
+  });
+
+  // B760/SA-113(ii): remaining caps at the delivered basis, via #1274/B667's shared helper.
+  describe("createPartialFromOrder / createInvoiceFromOrder — B760 delivered-basis cap", () => {
+    const oiB760 = {
+      id: "oi-b760",
+      productId: "p-1",
+      qty: 10,
+      invoicedQty: 0,
+      boxes: null,
+      pieces: null,
+      unitsPerBox: null,
+      unitPrice: 10,
+      subtotal: 100,
+      product: { name: "Widget", unitsPerBox: null },
+    };
+    const orderB760 = {
+      id: "ord-b760",
+      customerId: "cust-1",
+      orderNumber: "ORD-B760",
+      subtotal: 100,
+      tax: 0,
+      shippingFee: 0,
+      lineItems: [oiB760],
+    };
+
+    beforeEach(() => {
+      prisma.customer.findFirst.mockResolvedValue({ isTaxExempt: false } as any);
+      prisma.invoice.create.mockImplementation((args: any) =>
+        Promise.resolve({ ...args.data, items: [], payments: [], customer: {} }),
+      );
+      prisma.orderItem.update.mockResolvedValue({} as any);
+      prisma.invoice.aggregate.mockResolvedValue({ _sum: { shippingFee: 0 } });
+      prisma.invoice.findMany.mockResolvedValue([]);
+      prisma.order.findUnique.mockResolvedValue(orderB760);
+    });
+
+    const partial6of10 = [{ orderItemId: "oi-b760", type: "PARTIAL", quantityDelivered: 6 }];
+
+    it("createPartialFromOrder caps at a short-delivered line's basis: refuses beyond it, allows exactly it (ordered 10, delivered 6)", async () => {
+      prisma.deliveryMutation.findMany.mockResolvedValue(partial6of10);
+      await expect(
+        service.createPartialFromOrder("ord-b760", {
+          items: [{ orderItemId: "oi-b760", qty: 10 }],
+        } as any),
+      ).rejects.toThrow(/exceeds remaining 6/);
+      const invoice = (await service.createPartialFromOrder("ord-b760", {
+        items: [{ orderItemId: "oi-b760", qty: 6 }],
+      } as any)) as any;
+      expect(Number(invoice.subtotal)).toBe(60);
+    });
+
+    it("createInvoiceFromOrder bills only the delivered basis, not the full ordered qty", async () => {
+      prisma.deliveryMutation.findMany.mockResolvedValue(partial6of10);
+      await service.createInvoiceFromOrder("ord-b760");
+      const createdLines = prisma.invoice.create.mock.calls[0][0].data.items.create;
+      expect(createdLines).toHaveLength(1);
+      expect(Number(createdLines[0].qty)).toBe(6);
+    });
+
+    it("no DeliveryMutation rows at all keeps the OLD qty - invoicedQty behaviour, unconstrained", async () => {
+      prisma.deliveryMutation.findMany.mockResolvedValue([]);
+      const invoice = (await service.createPartialFromOrder("ord-b760", {
+        items: [{ orderItemId: "oi-b760", qty: 10 }],
+      } as any)) as any;
+      expect(Number(invoice.subtotal)).toBe(100);
     });
   });
 
