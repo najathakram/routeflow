@@ -1,5 +1,7 @@
 # How work flows (the work board)
 
+**Links:** [Work board](https://github.com/users/najathakram/projects/3) · [Now: P0 and P1](https://github.com/users/najathakram/projects/3/views/3) · [In flight](https://github.com/users/najathakram/projects/3/views/4) · [Triage inbox](https://github.com/users/najathakram/projects/3/views/5) · [Releases](https://github.com/najathakram/routeflow/milestones) · live status: the open issue labelled `work-status` · triage rules: [TRIAGE.md](TRIAGE.md)
+
 Every piece of RouteFlow work, whether a bug, feature, customer customization or chore, is a
 **GitHub issue in this repo**, tracked on the RouteFlow work board (a GitHub Project). The issue is
 the unit of work and its memory: anyone, person or agent, on any account or machine, can pick it up
