@@ -104,6 +104,8 @@ A 7 · B 5 · C 1 · D 4 (lead) · SA own: A 11 · B 14 | needless asks ("you di
 
 - SA-E57 · 2026-09-24 · B · SA-090b credited the resolver's narrowed try ("an addLineItem throw can no longer queue a second add") without sweeping the SECOND catch site: the retry loop's own catch mapped every throw to offline and re-queued. Found by the Opus delta. Rule (check 5): when a fix changes an error's CLASSIFICATION at one boundary, list every catch/handler on every path that consumes that error and check each one's policy — a policy fixed at one site and inverted at another is the hole.
 
+- SA-E58 · 2026-09-24 · B · SA-144e passed the create site's `unitLabel: item.unitLabel ?? null` without asking whether that label was the REQUEST's or the RESOLUTION's; a request naming the pack's own level resolves to a pack line while the request string stays set, so the helper's unit branch fired on a pack line. Found by the Opus pass. Rule (check 10): when a call passes a line attribute into a money helper, name which OBJECT it comes from — request, resolution, or stored row — and check that the helper's branch on it is meant for that object.
+
 ## Prediction (update weekly)
 
 - 2026-09-20 · A dominates (5 of 11) → the fix is mechanical: re-derive at the moment of decision and name the sha. Next likely instance: a "ready to land", "N behind" or ratchet figure relayed from a lane across a merge window. D is the expensive class: watch every "the flag is off" and every merge list that is mostly one lane.
