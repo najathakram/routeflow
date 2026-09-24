@@ -25,6 +25,10 @@ import { InvoicesService } from "../invoices/invoices.service";
 import { buildManualInvoiceLines } from "../invoices/manual-invoice-lines";
 import { foldCategoryTax } from "../invoices/manual-invoice-context";
 import { createMockPrisma } from "../testing/prisma-mock";
+import { plainToInstance } from "class-transformer";
+import { validate } from "class-validator";
+import { roundMoney } from "@routeflow/pricing";
+import { CreateInvoiceDto } from "../invoices/dto/create-invoice.dto";
 
 const LIVE_PRODUCTS = [
   { id: "p-12", unitsPerBox: 12, isActive: true },
@@ -163,6 +167,52 @@ describe("RecurringInvoicesService generation — boxed template lines (B646)", 
     // ...while the money on the invoice was already right: the fix changes what is STORED, not the bill.
     expect(itemsData[0].subtotal).toBe(240);
     expect(itemsData[0].categoryTaxAmount).toBe(36);
+  });
+
+  // SA-135a: the billed money is IDENTICAL with and without the split, for every qty, including a qty with
+  // a non-whole leftover (no split: qty stays in the pieces column), so the two branches can never disagree.
+  // What the fix changes is STORAGE (qty in pieces, boxes/pieces, the pack snapshot), never the bill.
+  it.each([6, 1.5, 2.5, 72, 1.3])(
+    "qty %p boxes at $40: subtotal and levy are identical before (no split) and after the fix",
+    async (qty) => {
+      const after = build(await generatedItems([tmplLine({ qty })])).itemsData[0];
+      const before = build([
+        { description: "Case", productId: "p-12", qty, unitPrice: 40, discount: 0, taxRate: 0 },
+      ]).itemsData[0];
+      expect(after.subtotal).toBe(before.subtotal);
+      expect(after.categoryTaxAmount).toBe(before.categoryTaxAmount);
+      // ...and both are the boxed figure: qty BOXES x the per-box price.
+      expect(after.subtotal).toBe(roundMoney(qty * 40));
+    },
+  );
+
+  // SA-135 (2): ONE read. The pack the generator split with rides along as packSnapshot, so a repack
+  // between the generator's read and create()'s own product read cannot store a pack-A split under pack B.
+  it("2.5 boxes split with a 12-pack is stored at 12 even if create() re-reads a repack to 6", async () => {
+    const items = await generatedItems([tmplLine({ qty: 2.5 })]);
+    expect(items[0]).toMatchObject({ boxes: 2, pieces: 6, packSnapshot: 12 });
+    const repacked = buildManualInvoiceLines(items, {
+      productMap: new Map([["p-12", { id: "p-12", unitsPerBox: 6, isActive: true }]]),
+      categoryMap: new Map(),
+      tenantId: "t-1",
+      clampFreeUnits: () => 0,
+    });
+    expect(repacked.itemsData[0]).toMatchObject({
+      qty: 30,
+      boxes: 2,
+      pieces: 6,
+      unitsPerBox: 12,
+      subtotal: 100,
+    });
+  });
+
+  it("the HTTP CreateInvoiceDto still REJECTS packSnapshot (forbidNonWhitelisted -> 400)", async () => {
+    const dto = plainToInstance(CreateInvoiceDto, {
+      customerId: "4a0d0f1e-7c58-4a5c-9a4b-0c3d2b1a0f9e",
+      items: [{ description: "Case", productId: null, qty: 1, unitPrice: 1, packSnapshot: 12 }],
+    });
+    const errors = await validate(dto, { whitelist: true, forbidNonWhitelisted: true });
+    expect(JSON.stringify(errors)).toMatch(/packSnapshot/);
   });
 
   it("a non-boxed control is generated exactly as before (no split keys)", async () => {

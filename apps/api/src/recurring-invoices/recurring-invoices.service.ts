@@ -224,6 +224,7 @@ export class RecurringInvoicesService {
   /** B646: the boxed split of a template line; warns (findable later) when a boxed line's qty is not a whole number of pieces. */
   private boxedSplitOrWarn(ri: any, item: any, livePack: number | null | undefined) {
     const split = recurringLineSplit(item, livePack);
+    if (split) return { ...split, packSnapshot: Math.trunc(Number(livePack)) };
     if (
       !split &&
       item.productId &&
@@ -309,7 +310,8 @@ export class RecurringInvoicesService {
           unitPrice: Number(item.unitPrice),
           discount: Number(item.discount),
           taxRate: Number(item.taxRate),
-          // B646: a boxed pack count carries its split, so qty is stored in PIECES (boxes x pack).
+          // B646: a boxed pack count carries its split, so qty is stored in PIECES (boxes x pack), and
+          // SA-135: the pack it was split with rides along as packSnapshot (ONE read, never re-read).
           ...this.boxedSplitOrWarn(ri, item, packByProduct.get(item.productId)),
         })),
       });
