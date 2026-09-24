@@ -102,6 +102,8 @@ A 7 · B 5 · C 1 · D 4 (lead) · SA own: A 11 · B 14 | needless asks ("you di
 
 - SA-E56 · 2026-09-24 · A · SA-144 triaged B740 as BLOCKS-FLIP from the registry row's title; the row was filed from a sweep snapshot older than #1147, which had already fixed it. Caught by the fleet lead with a master grep. Rule: a BLOCKS-FLIP (or any gating) call on a registry row is only as current as the row — verify the claimed gap against current master before listing it, or mark it "per record, unverified"; check 1 applies to registry rows, not only to code.
 
+- SA-E57 · 2026-09-24 · B · SA-090b credited the resolver's narrowed try ("an addLineItem throw can no longer queue a second add") without sweeping the SECOND catch site: the retry loop's own catch mapped every throw to offline and re-queued. Found by the Opus delta. Rule (check 5): when a fix changes an error's CLASSIFICATION at one boundary, list every catch/handler on every path that consumes that error and check each one's policy — a policy fixed at one site and inverted at another is the hole.
+
 ## Prediction (update weekly)
 
 - 2026-09-20 · A dominates (5 of 11) → the fix is mechanical: re-derive at the moment of decision and name the sha. Next likely instance: a "ready to land", "N behind" or ratchet figure relayed from a lane across a merge window. D is the expensive class: watch every "the flag is off" and every merge list that is mostly one lane.
