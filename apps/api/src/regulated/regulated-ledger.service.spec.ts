@@ -2745,7 +2745,11 @@ describe("RegulatedLedgerService", () => {
     });
 
     const corrections = () => createdRows.filter((r) => r.correctsEntryId != null);
-    const reversals = () => createdRows.filter((r) => r.entryType === "REVERSAL");
+    // A REAL, newly-booked reversal, never a REVERSAL-typed correction row (SA-089a(b) restates
+    // an earlier box-axis reversal with its OWN correction, also entryType REVERSAL but
+    // correctsEntryId-tagged — see `corrections()` above for those).
+    const reversals = () =>
+      createdRows.filter((r) => r.entryType === "REVERSAL" && r.correctsEntryId == null);
 
     it("legacy row + pack 12: appends ONE correction row (+11*qty basis), then books the REVERSAL of min(returned, remaining)", async () => {
       // The line sold 5 selling-units at pack 12 = 60 TRUE pieces (post-correction). Returning
@@ -2782,7 +2786,9 @@ describe("RegulatedLedgerService", () => {
         categoryTax: -10,
       });
       expect(result.outcome).toBe("booked");
-      expect(result.verdictAfter).toBe("legacy");
+      // Opus LOW: verdictAfter is the POST-correction verdict — this row was legacy before the
+      // fix landed, but reads piece-axis now that it has (proves the restatement actually took).
+      expect(result.verdictAfter).toBe("piece-axis");
       expect(result.correctionEntryId).toBe(corrections()[0].id);
       expect(result.resolvedEntryId).toBe(reversals()[0].id);
     });
@@ -2847,13 +2853,17 @@ describe("RegulatedLedgerService", () => {
       expect(result.bookedPieces).not.toBe(20);
     });
 
-    it("fully reversed already: CLOSES — resolvedEntryId null, bookedPieces 0, no REVERSAL row written (never a zero row)", async () => {
+    it("SA-089a(a) / SA error E50 fix: fully voided BEFORE any correction — CLOSES with NOTHING written, not even the SALE correction", async () => {
+      // The prior fixture here (unitBasisQty: -60 against a still-legacy qty:5 sale) was
+      // IMPOSSIBLE: a reversal booked LINE_UNIT against a sale that was never yet corrected can
+      // only be box-denominated (|unitBasisQty| == |qty|), never already piece-denominated. The
+      // real box-axis reversal for "all 5 boxes already returned" is qty:-5/unitBasisQty:-5.
       priorReversals = [
         {
           invoiceItemId: "ii-1",
           orderItemId: "oi-1",
           qty: -5,
-          unitBasisQty: -60,
+          unitBasisQty: -5,
           netSales: -50,
           categoryTax: -10,
         },
@@ -2864,10 +2874,62 @@ describe("RegulatedLedgerService", () => {
       expect(result.resolvedEntryId).toBeNull();
       expect(result.bookedPieces).toBe(0);
       expect(reversals()).toHaveLength(0);
-      // The correction row is STILL written even when the line closes with nothing left to
-      // book — SA-089: "the zero is decided by the LEDGER's remaining, never by the operator's
-      // pack", but the SALE's basis is still fixed for every later reader.
-      expect(corrections()).toHaveLength(1);
+      // E50: the old code decided "closed" only AFTER unconditionally writing the SALE's
+      // +qty*(pack-1) correction, manufacturing Σr*(pack-1) phantom units on an
+      // already-fully-reversed line (a voided 5-box line at pack 12 read +50 instead of 0).
+      // SA-089a(a): closed is decided on the box axis FIRST, so a truly voided line writes
+      // NOTHING — no SALE correction, no reversal correction, no REVERSAL row.
+      expect(corrections()).toHaveLength(0);
+      expect(result.verdictAfter).toBe("legacy"); // unchanged: nothing was corrected
+    });
+
+    it("SA-089a(b) worked example (ii): restates BOTH the SALE and an earlier box-axis reversal — SALE +55, reversal correction −22, remaining 36, booked −24, line ends at 12", async () => {
+      // 2 of the 5 boxes already returned LINE_UNIT against the still-legacy sale — box-axis
+      // (|unitBasisQty| == |qty| == 2), same worked example the shared cross-lane fixture
+      // (parked-reversal-correction.fixture.ts's buildCorrectionCase) uses.
+      priorReversals = [
+        {
+          id: "r-prior-1",
+          tenantId: "t1",
+          trackedCategoryId: "cat-A",
+          trackedSubcategoryId: null,
+          orderId: "ord-1",
+          invoiceId: "inv-1",
+          invoiceItemId: "ii-1",
+          orderItemId: "oi-1",
+          correctsEntryId: null,
+          qty: -2,
+          unitBasisQty: -2,
+          netSales: -20,
+          categoryTax: -4,
+          soldAt: new Date("2026-08-01T00:00:00Z"),
+        },
+      ];
+      const result = await service.resolveParkedReversal(
+        prisma,
+        parked({ returnedPieces: 24 }),
+        12,
+      );
+
+      expect(corrections()).toHaveLength(2);
+      const saleCorrection = corrections().find((c) => c.entryType === "SALE");
+      const reversalCorrection = corrections().find((c) => c.entryType === "REVERSAL");
+      expect(saleCorrection).toMatchObject({ correctsEntryId: "s-1", unitBasisQty: 55 });
+      // The reversal correction points at the PRIOR reversal's own id, never at the sale.
+      expect(reversalCorrection).toMatchObject({
+        correctsEntryId: "r-prior-1",
+        unitBasisQty: -22,
+      });
+      // E50's bug would have left remaining at qty*pack - Σr = 58 and booked -24 against that —
+      // the fix's remaining is (qty-Σr)*pack = 36.
+      expect(result.outcome).toBe("booked");
+      expect(result.bookedPieces).toBe(24);
+      expect(reversals()).toHaveLength(1);
+      expect(reversals()[0]).toMatchObject({ unitBasisQty: -24 });
+      // Line ends at 12 (36 remaining - 24 booked) — not directly asserted here (that's the
+      // NEXT call's remaining, proven by the shared cross-lane fixture's real-Postgres spec),
+      // but 36 - 24 = 12 is exactly SA-089a(ii)'s own worked figure.
+      expect(result.verdictAfter).toBe("piece-axis");
     });
 
     it("SA-070 hazard 2: after the correction row lands, the SAME sale row re-classifies as piece-axis — a second resolution attempt on it would never re-park", async () => {
@@ -2899,7 +2961,8 @@ describe("RegulatedLedgerService", () => {
       // label — so the classify proceeds exactly as a box-unaware line would, not an immediate
       // "unknown: no line to read a shape from" refusal.
       expect(result.outcome).toBe("booked");
-      expect(result.verdictAfter).toBe("legacy");
+      // Opus LOW: verdictAfter is the POST-correction verdict — piece-axis once restated.
+      expect(result.verdictAfter).toBe("piece-axis");
     });
 
     it("a pack of 1 resolves a line that was never really boxed: piece-axis directly, no correction", async () => {

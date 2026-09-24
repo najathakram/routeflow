@@ -93,12 +93,18 @@ describe("ParkedReversalResolutionService", () => {
     service = mod.get(ParkedReversalResolutionService);
   });
 
-  it("stamps resolvedAt / resolvedById / unitsPerBoxSupplied on a CONDITIONAL claim, then the resolvedEntryId", async () => {
+  it("stamps resolvedAt / resolvedById / unitsPerBoxSupplied / resolvedReason on a CONDITIONAL claim, then the resolvedEntryId", async () => {
     const res = await service.resolve("pr-1", 12, "confirmed the case size on the invoice", actor);
     const model: any = (prisma as any).regulatedLedgerParkedReversal;
     expect(model.updateMany.mock.calls[0][0]).toMatchObject({
       where: { id: "pr-1", resolvedAt: null },
-      data: { resolvedById: "u-op", unitsPerBoxSupplied: 12 },
+      data: {
+        resolvedById: "u-op",
+        unitsPerBoxSupplied: 12,
+        // Opus review: the operator's own reason persists on the ROW itself, not only in the
+        // audit log's operatorReason meta field.
+        resolvedReason: "confirmed the case size on the invoice",
+      },
     });
     expect(table[0].resolvedAt).toBeInstanceOf(Date);
     expect(model.updateMany.mock.calls[1][0]).toMatchObject({
@@ -107,6 +113,44 @@ describe("ParkedReversalResolutionService", () => {
     });
     expect(table[0].resolvedEntryId).toBe("rev-1");
     expect(res).toEqual({ alreadyResolved: false, outcome: "booked", resolvedEntryId: "rev-1" });
+  });
+
+  it("SA-089b: locks the Order row (FOR UPDATE) AFTER the claim and BEFORE reading the sale/corrections/remaining, inside the SAME transaction", async () => {
+    let capturedExecuteRaw: jest.Mock | undefined;
+    (prisma.tenantTransaction as jest.Mock).mockImplementationOnce((fn: any) => {
+      const tx: any = { ...(prisma as any), $executeRaw: jest.fn().mockResolvedValue(0) };
+      capturedExecuteRaw = tx.$executeRaw;
+      return fn(tx);
+    });
+
+    await service.resolve("pr-1", 12, "confirmed the case size on the invoice", actor);
+
+    expect(capturedExecuteRaw).toHaveBeenCalledTimes(1);
+    const sql = (capturedExecuteRaw!.mock.calls[0][0] as TemplateStringsArray).join("?");
+    expect(sql).toContain('"Order"');
+    expect(sql).toContain("FOR UPDATE");
+    const model: any = (prisma as any).regulatedLedgerParkedReversal;
+    // AFTER the claim (the first updateMany), BEFORE resolveParkedReversal is ever called (which
+    // is where the sale/corrections/remaining are read).
+    expect(capturedExecuteRaw!.mock.invocationCallOrder[0]).toBeGreaterThan(
+      model.updateMany.mock.invocationCallOrder[0],
+    );
+    expect(capturedExecuteRaw!.mock.invocationCallOrder[0]).toBeLessThan(
+      (ledger.resolveParkedReversal as jest.Mock).mock.invocationCallOrder[0],
+    );
+  });
+
+  it("never locks the Order row on an already-resolved / lost-claim no-op", async () => {
+    table[0].resolvedAt = new Date();
+    let capturedExecuteRaw: jest.Mock | undefined;
+    (prisma.tenantTransaction as jest.Mock).mockImplementationOnce((fn: any) => {
+      const tx: any = { ...(prisma as any), $executeRaw: jest.fn().mockResolvedValue(0) };
+      capturedExecuteRaw = tx.$executeRaw;
+      return fn(tx);
+    });
+
+    await service.resolve("pr-1", 12, "confirmed the case size on the invoice", actor);
+    expect(capturedExecuteRaw).not.toHaveBeenCalled();
   });
 
   it("passes the parked row's own fields and the supplied pack into RegulatedLedgerService.resolveParkedReversal", async () => {
@@ -160,7 +204,7 @@ describe("ParkedReversalResolutionService", () => {
     expect(audit.log).not.toHaveBeenCalled();
   });
 
-  it("makes the CANCELLED check INSIDE the transaction and AFTER the claim, so the claim's row lock serialises against cancel()", async () => {
+  it("makes the CANCELLED check INSIDE the transaction, AFTER the claim and the Order lock, so it serialises against cancel()", async () => {
     const order: string[] = [];
     const model: any = (prisma as any).regulatedLedgerParkedReversal;
     const claim = model.updateMany;

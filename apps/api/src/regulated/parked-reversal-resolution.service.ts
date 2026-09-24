@@ -4,13 +4,13 @@ import { AuditService } from "../audit/audit.service";
 import { RegulatedLedgerService } from "./regulated-ledger.service";
 
 /**
- * SA-089 — B660 PR B: the OPERATOR resolution of a parked regulated-ledger reversal
- * (B681/SA-067(3) parked one because the sold line's box/piece axis could not be classified —
- * `regulated-ledger.service.ts`'s `parkReturnReversal`/`bookReversalChunk`). The claim-first
- * transaction shape mirrors `ParkedRestockResolutionService` exactly; the actual money math
- * (classify → correct → book) lives on `RegulatedLedgerService.resolveParkedReversal` — both
- * `buildLineRemainingBalances` and `bookReversalChunk` are PRIVATE to that class (SA-090), so
- * the resolution logic lives there rather than duplicating either.
+ * SA-089/SA-089a/SA-089b — B660 PR B: the OPERATOR resolution of a parked regulated-ledger
+ * reversal (B681/SA-067(3) parked one because the sold line's box/piece axis could not be
+ * classified — `regulated-ledger.service.ts`'s `parkReturnReversal`/`bookReversalChunk`). The
+ * claim-first transaction shape mirrors `ParkedRestockResolutionService` exactly; the actual
+ * money math (classify → correct → book) lives on `RegulatedLedgerService.resolveParkedReversal`
+ * — both `buildLineRemainingBalances` and `bookReversalChunk` are PRIVATE to that class
+ * (SA-090), so the resolution logic lives there rather than duplicating either.
  */
 @Injectable()
 export class ParkedReversalResolutionService {
@@ -30,17 +30,30 @@ export class ParkedReversalResolutionService {
   }
 
   /**
-   * ONE transaction: the conditional claim (`resolvedAt IS NULL` — the idempotency guard),
-   * the CANCELLED-return refusal, `RegulatedLedgerService.resolveParkedReversal`'s
+   * ONE transaction: the conditional claim (`resolvedAt IS NULL` — the idempotency guard), the
+   * Order row lock, the CANCELLED-return refusal, `RegulatedLedgerService.resolveParkedReversal`'s
    * classify/correct/book, and the `resolvedAt`/`resolvedById`/`unitsPerBoxSupplied`/
-   * `resolvedEntryId` stamp. An already-resolved row is a no-op (`alreadyResolved`), another
-   * tenant's row is a 404, and a CANCELLED return is a 404 — same ORDER as the restock
-   * service (claim FIRST, so a racing `cancel()` and this resolve contend for the same row
-   * lock exactly like `cancel()`/`ParkedRestockResolutionService.resolve()` do): `cancel()`
-   * deletes this return's UNRESOLVED parked rows (`unreverseReturnEntries`), so if cancel
-   * commits first the claim matches 0 rows (nothing booked); if the claim wins, cancel's
-   * delete waits on this transaction and the CANCELLED-return check below still catches a
-   * cancel that does NOT delete the row on some other path.
+   * `resolvedReason`/`resolvedEntryId` stamp. An already-resolved row is a no-op
+   * (`alreadyResolved`), another tenant's row is a 404, and a CANCELLED return is a 404 — same
+   * ORDER as the restock service (claim FIRST, so a racing `cancel()` and this resolve contend
+   * for the same row lock exactly like `cancel()`/`ParkedRestockResolutionService.resolve()`
+   * do): `cancel()` deletes this return's UNRESOLVED parked rows (`unreverseReturnEntries`), so
+   * if cancel commits first the claim matches 0 rows (nothing booked); if the claim wins,
+   * cancel's delete waits on this transaction and the CANCELLED-return check below still
+   * catches a cancel that does NOT delete the row on some other path.
+   *
+   * SA-089a(c)/SA-089b: `SELECT id FROM "Order" WHERE id = $orderId FOR UPDATE`, taken AFTER
+   * the claim, inside this SAME transaction — the SAME lock the live create/cancel paths take
+   * around their own read-then-book (`inline-returns.service.ts`'s `capture()`/`cancel()`, both
+   * `Order FOR UPDATE` before touching the regulated ledger). Not an advisory lock: an advisory
+   * lock (a SEPARATE session-level lock on its own dedicated connection) does not exclude a
+   * `FOR UPDATE` row lock (a transactional lock on the same connection as the writes) — an
+   * earlier version of this method took `withAdvisoryLock("order-merge", orderId)`, which would
+   * have looked correct while providing NO real serialization against the live paths' own row
+   * lock (caught in review before merge). `buildLineRemainingBalances`'s remaining is a SUM
+   * over every SALE/REVERSAL row of one order line, not a single row, so this must be the whole
+   * ORDER, never a `FOR UPDATE` on the sale row alone. Lock order stays acyclic: this method
+   * locks Order only; `cancel()` locks Return then Order — never the reverse in either path.
    *
    * An `unresolvable` verdict (classifier still says legacy/unknown after the supplied pack)
    * throws a 409 `PARKED_REVERSAL_UNRESOLVABLE` — the throw rolls back the claim, leaving the
@@ -55,7 +68,12 @@ export class ParkedReversalResolutionService {
 
       const claim = await tx.regulatedLedgerParkedReversal.updateMany({
         where: { id, resolvedAt: null },
-        data: { resolvedAt: new Date(), resolvedById: actor.id, unitsPerBoxSupplied: pack },
+        data: {
+          resolvedAt: new Date(),
+          resolvedById: actor.id,
+          unitsPerBoxSupplied: pack,
+          resolvedReason: reason,
+        },
       });
       if (claim.count === 0) {
         return {
@@ -63,6 +81,9 @@ export class ParkedReversalResolutionService {
           row: await tx.regulatedLedgerParkedReversal.findFirst({ where: { id } }),
         };
       }
+
+      // SA-089b: the Order row lock, taken AFTER the claim — see the method doc above.
+      await tx.$executeRaw`SELECT id FROM "Order" WHERE id = ${row.orderId} FOR UPDATE`;
 
       // The claim is held; now refuse a CANCELLED return — its goods were never kept, so a
       // reversal against it would misstate the filing, and cancel() would not undo it (it

@@ -20,6 +20,33 @@ const round3 = (n: number) => Math.round(n * 1000) / 1000;
  * qty — it becomes the ledger row's `qty`, which reconciles to the invoice line — and is no
  * longer read as an input to the row's `unitBasisQty`.
  */
+/**
+ * The fields `resolveParkedReversal` (SA-089a) supplies to `regulatedSalesLedger.create` for a
+ * correction row (SALE-typed, restating a sale's basis, or REVERSAL-typed, restating an earlier
+ * box-axis reversal) or a freshly-booked REVERSAL row from `bookReversalChunk`. Narrower than
+ * the full Prisma input type (this method never sets every column), but enough to keep `rows`
+ * and each correction object out of `any`.
+ */
+interface RegulatedCorrectionRowInput {
+  tenantId: string;
+  trackedCategoryId: string | null;
+  trackedSubcategoryId: string | null;
+  entryType: "SALE" | "REVERSAL";
+  orderId: string | null;
+  orderItemId: string | null;
+  invoiceId: string | null;
+  invoiceItemId: string | null;
+  correctsEntryId: string;
+  originalSoldAt: Date;
+  soldAt: Date;
+  qty: number;
+  unitBasisQty: number;
+  netSales: number;
+  categoryTax: number;
+  periodBucket: string;
+  returnId?: string;
+}
+
 export interface SaleLedgerLine {
   invoiceItemId: string;
   orderItemId: string | null;
@@ -809,49 +836,84 @@ export class RegulatedLedgerService {
    */
   async unreverseReturnEntries(params: { returnId: string; db: any }): Promise<void> {
     const { returnId, db } = params;
+    // Opus review (B660 PR B, #1324) caught this comment describing the WRONG thing: this
+    // delete is unconditional on `entryType: "REVERSAL"` for the returnId, with no
+    // `resolvedAt` filter — so it DOES undo a REVERSAL that SA-089's resolveParkedReversal
+    // booked against this exact return (that booked row carries this `returnId`, same as any
+    // other reversal). Cancelling a return after its parked reversal was resolved therefore:
+    // (1) deletes the booked REVERSAL row itself — correct, the return is undone, so nothing
+    // should remain reversed against it; (2) leaves the `RegulatedLedgerParkedReversal` row
+    // itself alone (its own delete below is `resolvedAt: null`-scoped, so an already-resolved
+    // row survives) — but that row's `resolvedEntryId` now DANGLES, pointing at a row that no
+    // longer exists; nothing currently reads `resolvedEntryId` back out expecting it to
+    // resolve, so this is a known, accepted gap rather than a live bug. (3) leaves both kinds
+    // of restatement correction rows the resolution wrote (the SALE's basis fix and each
+    // earlier box-axis reversal's own correction) untouched — they deliberately carry no
+    // `returnId` (they restate historical fact, not this-return-specific fact), so neither
+    // delete below can touch them, and the SALE stays correctly classified piece-axis forever
+    // after regardless of what happens to this one return.
     await db.regulatedSalesLedger.deleteMany({ where: { returnId, entryType: "REVERSAL" } });
     // B681/SA-067(4): a return this guard parked (because its sale row's box/piece axis
     // couldn't be classified) leaves a RegulatedLedgerParkedReversal row blocking its period's
     // filing. Without this, cancelling that return before the park is ever resolved leaves the
     // row behind forever — deleted here, not resolved, because the return itself is undone, so
     // there is nothing left to resolve it against. Only this return's UNRESOLVED rows: a row
-    // already resolved (resolvedAt set) recorded a real filing decision and must survive.
+    // already resolved (resolvedAt set) recorded a real filing decision (see above) and must
+    // survive as a record, even though its resolvedEntryId now dangles.
     await db.regulatedLedgerParkedReversal.deleteMany({ where: { returnId, resolvedAt: null } });
   }
 
   /**
-   * SA-089 — B660: the operator resolution of ONE parked reversal row. Lives here (not a
-   * separate injectable) because both `buildLineRemainingBalances` and `bookReversalChunk`
-   * are private to this class — SA-090's own note. `ParkedReversalResolutionService`
-   * (returns module) is the thin claim-first/audit wrapper that calls this; this method does
-   * no claiming and no auditing, only the classify/correct/book money math, so it can be
-   * called from inside the wrapper's own `tenantTransaction`.
+   * SA-089a (amends SA-089, recorded as the SA's error E50) — B660: the operator resolution of
+   * ONE parked reversal row. Lives here (not a separate injectable) because both
+   * `buildLineRemainingBalances` and `bookReversalChunk` are private to this class — SA-090's
+   * own note. `ParkedReversalResolutionService` (returns module) is the thin claim-first/audit
+   * wrapper that calls this, wrapped in the order-keyed advisory lock; this method does no
+   * claiming, no locking and no auditing, only the classify/correct/book money math, so it can
+   * be called from inside the wrapper's own locked `tenantTransaction`.
    *
-   * WHICH PACK (SA-089 §1): re-runs `classifySaleAxis` with the sale row's OWN line shape,
-   * `unitsPerBox` REPLACED by the operator-supplied pack (never the line's own stale/absent
-   * snapshot, never the live product) — a line with none resolved at all (deleted invoice
-   * item, orphaned order item) uses the supplied pack as the WHOLE shape. `piece-axis` books
-   * directly. `legacy` (box axis — the defect) appends ONE correction row first (SALE-typed,
-   * `correctsEntryId` the sale row, `unitBasisQty` delta `+qty*(pack-1)`) so the SALE's basis
-   * is fixed for every later reader and the classifier answers piece-axis from then on
-   * (never re-parks — SA-070 hazard 2). `unknown` after the pack refuses outright — nothing
-   * is written, the row stays parked.
+   * WHICH PACK (SA-089 §1, unchanged): re-runs `classifySaleAxis` with the sale row's OWN line
+   * shape, `unitsPerBox` REPLACED by the operator-supplied pack (never the line's own
+   * stale/absent snapshot, never the live product) — a line with none resolved at all (deleted
+   * invoice item, orphaned order item) uses the supplied pack as the WHOLE shape. `unknown`
+   * after the pack refuses outright — nothing is written, the row stays parked.
    *
-   * REMAINING CHANGED SINCE PARKING (SA-089 §2): `buildLineRemainingBalances` is called
-   * FRESH here, never the parked row's own stale `returnedPieces` denominator — later
-   * returns/credits/corrections are folded in automatically. `bookReversalChunk` (the SAME
-   * booker the live reversal path uses, called with a single-row candidate set) caps the
-   * booking at the line's current remaining and reports whatever it actually booked; a
-   * capped booking is not an error.
+   * CLOSED IS DECIDED FIRST (SA-089a(a)): before any write, the line's remaining qty AND net —
+   * on the ORIGINAL, UNCORRECTED axis — decide whether there is anything left to correct. Both
+   * ≤ EPS means the line was already fully reversed before this operator ever touched it:
+   * resolve and close with NOTHING written, not even the SALE correction. Deciding this AFTER
+   * writing the SALE's restatement (E50's mistake) manufactures a correction for a line that
+   * needed none.
    *
-   * FULLY REVERSED NOW (SA-089 §3): `bookReversalChunk` itself pushes nothing to `rows` when
-   * the line's remaining is already exhausted — that IS the close case, detected here as
-   * `rows.length === 0`. No zero REVERSAL row is ever written for it.
+   * TWO-PART RESTATEMENT (SA-089a(b)) — legacy verdict only: E50 was restating only the SALE
+   * (`+qty*(pack-1)`) while leaving every earlier BOX-axis reversal at its stored `-r` (box
+   * units), so the line's remaining read as `qty*pack - Σr` instead of `(qty-Σr)*pack` —
+   * `Σr*(pack-1)` phantom units on the filing (a fully-voided 5-box line resolved at 12 read
+   * +50 instead of 0). The fix restates BOTH: the SALE gets the full `+qty*(pack-1)` (so the
+   * classifier reads piece-axis forever after — SA-070 hazard 2), AND every earlier BOX-axis
+   * reversal `r` against this line (`|unitBasisQty| == |qty|`, a signature a reversal only has
+   * when it was booked LINE_UNIT against a still-legacy sale; a fractional credit-note ratio
+   * gives a fractional `r`) gets its OWN REVERSAL-typed correction (`correctsEntryId` that
+   * reversal, `originalSoldAt` its own `soldAt`, `qty: 0`, `unitBasisQty: -|r|*(pack-1)`, `net:
+   * 0`, `tax: 0`). After both, every row on the line reads on ONE axis and remaining sums to
+   * exactly `(qty-Σr)*pack`. Correcting only the SALE's un-reversed boxes (`(qty-Σr)*(pack-1)`)
+   * is REJECTED — it leaves the SALE's basis at neither `qty` nor `qty*pack`, the classifier
+   * reads unknown, and the next return parks again (hazard 2 reopened).
    *
-   * ONE-WAY (SA-089 §4): this method makes no resolved/claim state of its own — the wrapper
-   * stamps `resolvedAt`/`unitsPerBoxSupplied` under the SAME transaction as the DB writes
-   * this method makes, so a caller that rolls back the transaction rolls back the correction
-   * row and the REVERSAL row together with the claim.
+   * REMAINING CHANGED SINCE PARKING (SA-089 §2, unchanged): `buildLineRemainingBalances` is
+   * called FRESH, never the parked row's own stale `returnedPieces` denominator — later
+   * returns/credits/corrections (including the two just written) are folded in automatically.
+   * `bookReversalChunk` (the SAME booker the live reversal path uses) caps the booking at the
+   * line's current remaining; a capped booking is not an error.
+   *
+   * VERDICT AFTER (Opus LOW): `verdictAfter` on a `booked`/`closed` outcome is the verdict
+   * AFTER any correction was written, not the pre-correction one — a legacy row reads
+   * `piece-axis` here once restated, proving the restatement actually took.
+   *
+   * ONE-WAY (SA-089 §4, unchanged): this method makes no resolved/claim state of its own — the
+   * wrapper stamps `resolvedAt`/`unitsPerBoxSupplied` under the SAME transaction as the DB
+   * writes this method makes, so a caller that rolls back the transaction rolls back every
+   * correction row and the REVERSAL row together with the claim.
    */
   async resolveParkedReversal(
     db: any,
@@ -874,6 +936,7 @@ export class RegulatedLedgerService {
     verdictAfter: SaleAxisState | null;
     unresolvableReason: string | null;
   }> {
+    const EPS = 0.0005; // matches this file's own reverseInvoiceEntries / @routeflow/pricing's legacy-box-axis EPS
     const unresolvable = (reason: string, correctionEntryId: string | null = null) => ({
       outcome: "unresolvable" as const,
       correctionEntryId,
@@ -900,38 +963,106 @@ export class RegulatedLedgerService {
       : { boxes: null, pieces: null, unitLabel: null, unitsPerBox: pack };
 
     let correctionsBySaleId = await this.loadCorrectionsBySaleId(db, [saleRow.id]);
-    const verdict = classifySaleAxis(
-      { entryType: saleRow.entryType, qty: saleRow.qty, unitBasisQty: saleRow.unitBasisQty },
-      lineWithSuppliedPack,
-      correctionsBySaleId.get(saleRow.id) ?? [],
-      pack,
-    );
+    const classify = () =>
+      classifySaleAxis(
+        { entryType: saleRow.entryType, qty: saleRow.qty, unitBasisQty: saleRow.unitBasisQty },
+        lineWithSuppliedPack,
+        correctionsBySaleId.get(saleRow.id) ?? [],
+        pack,
+      );
+    const verdict = classify();
     if (verdict.state === "unknown") return unresolvable(verdict.reason);
+
+    // SA-089a(a): decide CLOSED from the line's remaining on the ORIGINAL, uncorrected axis —
+    // before any correction is written. A line already fully reversed before this operator
+    // touched it gets NOTHING written, not even the SALE restatement.
+    const builtBefore = await this.buildLineRemainingBalances(db, parked.orderId);
+    if (!builtBefore) return unresolvable("no SALE rows remain on this order");
+    const lineKey = builtBefore.lineKeyOfSale(saleRow);
+    const remQtyBefore = builtBefore.remQtyByLine.get(lineKey) ?? 0;
+    const remNetBefore = builtBefore.remNetByLine.get(lineKey) ?? 0;
+    if (Math.abs(remQtyBefore) <= EPS && Math.abs(remNetBefore) <= EPS) {
+      return {
+        outcome: "closed",
+        correctionEntryId: null,
+        resolvedEntryId: null,
+        bookedPieces: 0,
+        bookedQty: 0,
+        bookedNet: 0,
+        bookedTax: 0,
+        verdictAfter: verdict.state,
+        unresolvableReason: null,
+      };
+    }
 
     let correctionEntryId: string | null = null;
     if (verdict.state === "legacy") {
       const qty = Number(saleRow.qty);
-      const correction = await db.regulatedSalesLedger.create({
-        data: {
-          tenantId: saleRow.tenantId,
-          trackedCategoryId: saleRow.trackedCategoryId,
-          trackedSubcategoryId: saleRow.trackedSubcategoryId ?? null,
-          entryType: "SALE",
-          orderId: saleRow.orderId ?? parked.orderId,
-          orderItemId: saleRow.orderItemId,
-          invoiceId: saleRow.invoiceId,
-          invoiceItemId: saleRow.invoiceItemId,
-          correctsEntryId: saleRow.id,
-          originalSoldAt: saleRow.soldAt,
-          soldAt: new Date(),
-          qty: 0,
-          unitBasisQty: qty * (pack - 1),
-          netSales: 0,
-          categoryTax: 0,
-          periodBucket: periodBucketOf(new Date()),
-        },
-      });
-      correctionEntryId = correction.id;
+      // SA-134 (amends SA-089a, SA error E51): every correction row's periodBucket is derived
+      // from ITS OWN soldAt (never copied from the row it corrects, never a filed period) — one
+      // `now` shared by the SALE correction and every reversal correction below so soldAt and
+      // periodBucket can never disagree with each other or with each other's row.
+      const now = new Date();
+      const bucketNow = periodBucketOf(now);
+      const correction: RegulatedCorrectionRowInput = {
+        tenantId: saleRow.tenantId,
+        trackedCategoryId: saleRow.trackedCategoryId,
+        trackedSubcategoryId: saleRow.trackedSubcategoryId ?? null,
+        entryType: "SALE",
+        orderId: saleRow.orderId ?? parked.orderId,
+        orderItemId: saleRow.orderItemId,
+        invoiceId: saleRow.invoiceId,
+        invoiceItemId: saleRow.invoiceItemId,
+        correctsEntryId: saleRow.id,
+        originalSoldAt: saleRow.soldAt,
+        soldAt: now,
+        qty: 0,
+        unitBasisQty: qty * (pack - 1),
+        netSales: 0,
+        categoryTax: 0,
+        periodBucket: bucketNow,
+      };
+      const created = await db.regulatedSalesLedger.create({ data: correction });
+      correctionEntryId = created.id;
+
+      // SA-089a(b): every earlier BOX-axis reversal against this same line also gets restated,
+      // never left at its stale box-denominated figure. A reversal only has |unitBasisQty| ==
+      // |qty| when it was booked LINE_UNIT against a still-legacy sale (a genuine piece-axis
+      // reversal's unitBasisQty diverges from its qty by construction) — never re-corrected if
+      // it already carries a correction of its own (defensive; the one-way design means this
+      // should not happen in practice).
+      if (saleRow.invoiceItemId) {
+        const candidateReversals = await db.regulatedSalesLedger.findMany({
+          where: { invoiceItemId: { in: [saleRow.invoiceItemId] }, entryType: "REVERSAL" },
+        });
+        for (const r of candidateReversals) {
+          if (r.correctsEntryId != null) continue;
+          const rQty = Number(r.qty);
+          const rUnitBasis = Number(r.unitBasisQty);
+          if (rQty === 0) continue;
+          if (Math.abs(Math.abs(rUnitBasis) - Math.abs(rQty)) > EPS) continue;
+          const reversalCorrection: RegulatedCorrectionRowInput = {
+            tenantId: r.tenantId,
+            trackedCategoryId: r.trackedCategoryId,
+            trackedSubcategoryId: r.trackedSubcategoryId ?? null,
+            entryType: "REVERSAL",
+            orderId: r.orderId,
+            orderItemId: r.orderItemId,
+            invoiceId: r.invoiceId,
+            invoiceItemId: r.invoiceItemId,
+            correctsEntryId: r.id,
+            originalSoldAt: r.soldAt,
+            soldAt: now,
+            qty: 0,
+            unitBasisQty: -Math.abs(rQty) * (pack - 1),
+            netSales: 0,
+            categoryTax: 0,
+            periodBucket: bucketNow,
+          };
+          await db.regulatedSalesLedger.create({ data: reversalCorrection });
+        }
+      }
+
       // Refresh so bookReversalChunk's OWN classify call below folds the new row in and
       // answers piece-axis — it must never re-park what was just corrected.
       correctionsBySaleId = await this.loadCorrectionsBySaleId(db, [saleRow.id]);
@@ -943,7 +1074,7 @@ export class RegulatedLedgerService {
 
     const now = new Date();
     const bucket = periodBucketOf(now);
-    const rows: any[] = [];
+    const rows: RegulatedCorrectionRowInput[] = [];
     const chunk = await this.bookReversalChunk({
       db,
       s: saleRow,
@@ -968,11 +1099,16 @@ export class RegulatedLedgerService {
     });
 
     // Defensive: our own pre-classify above already ruled out "unknown", so
-    // bookReversalChunk's internal re-classify (same data, now with the correction folded
-    // in when one was written) should never disagree and park again — if it somehow does,
-    // treat it as unresolvable rather than silently reporting success.
+    // bookReversalChunk's internal re-classify (same data, now with both corrections folded
+    // in) should never disagree and park again — if it somehow does, treat it as unresolvable
+    // rather than silently reporting success.
     if (chunk.parked)
       return unresolvable("classification disagreed after correction", correctionEntryId);
+
+    // Opus LOW: verdictAfter is the verdict AFTER any correction was written, not the
+    // pre-correction one — proves the restatement actually took (a legacy row reads
+    // piece-axis here).
+    const verdictAfter = classify().state;
 
     if (rows.length === 0) {
       return {
@@ -983,7 +1119,7 @@ export class RegulatedLedgerService {
         bookedQty: 0,
         bookedNet: 0,
         bookedTax: 0,
-        verdictAfter: verdict.state,
+        verdictAfter,
         unresolvableReason: null,
       };
     }
@@ -997,7 +1133,7 @@ export class RegulatedLedgerService {
       bookedQty: -Number(created.qty),
       bookedNet: -Number(created.netSales),
       bookedTax: -Number(created.categoryTax),
-      verdictAfter: verdict.state,
+      verdictAfter,
       unresolvableReason: null,
     };
   }
