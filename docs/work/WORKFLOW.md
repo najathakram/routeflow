@@ -1,6 +1,6 @@
 # How work flows (the work board)
 
-**Links:** [Work board](https://github.com/users/najathakram/projects/3) · [Now: P0 and P1](https://github.com/users/najathakram/projects/3/views/3) · [In flight](https://github.com/users/najathakram/projects/3/views/4) · [Triage inbox](https://github.com/users/najathakram/projects/3/views/5) · [Releases](https://github.com/najathakram/routeflow/milestones) · live status: the open issue labelled `work-status` · triage rules: [TRIAGE.md](TRIAGE.md)
+**Links:** [Work board](https://github.com/users/najathakram/projects/3) · [Now: P0 and P1](https://github.com/users/najathakram/projects/3/views/3) · [In flight](https://github.com/users/najathakram/projects/3/views/4) · [Triage inbox](https://github.com/users/najathakram/projects/3/views/5) · [Releases and epics](https://github.com/users/najathakram/projects/3/views/8) · [Owner actions](https://github.com/users/najathakram/projects/3/views/9) · [Roadmap timeline](https://github.com/users/najathakram/projects/3/views/10) · [Releases](https://github.com/najathakram/routeflow/milestones) · live status: the open issue labelled `work-status` · triage rules: [TRIAGE.md](TRIAGE.md)
 
 Every piece of RouteFlow work, whether a bug, feature, customer customization or chore, is a
 **GitHub issue in this repo**, tracked on the RouteFlow work board (a GitHub Project). The issue is
@@ -16,13 +16,24 @@ cold from the issue alone. Sessions forget; issues don't.
 
 1. **No ticket, no work.** Anything you're asked to do becomes an issue first. Every branch and PR
    names its issue number.
-2. **One issue, one PR.** A feature too big for one PR gets child issues (a task list in the parent).
+2. **One issue, one PR.** A feature too big for one PR is a parent (label `epic`) with one
+   sub-issue per PR; the parent shows a progress bar.
 3. **Status is derived, never typed.** The reconciler sets it from what's actually on GitHub.
 4. **One in-progress item per lane.** The `lane:*` label is a file-area lock. If a lane is busy, pick
    work from another lane or wait.
 5. **Finish before you start.** Clear your In review and Blocked items before claiming new work.
 6. **Verdicts live on the PR.** Post SA, Opus and prover results on the PR at the exact sha. #938 is
    only the fleet feed.
+
+## How the board is organized
+
+- **Releases** are milestones (R1, R1.1, R2, R3). Work with no milestone is backlog.
+- **Features and epics** carry the `epic` label and are parents. Their **sub-issues** are the work:
+  remaining pieces, deferrals (`D-nn`), SA-spec build steps and in-flight PRs.
+- **Bugs** carry `kind:bug`, `sev:*` and a `lane:*`. A bug that gates a feature is also its sub-issue.
+- **Owner actions** carry `owner-action`: decisions, production runs and sign-offs only the owner
+  can do.
+- Quick wins, the repo cleanup and the gap backlogs are epics too, so nothing lives in a side file.
 
 ## Statuses (derived)
 
@@ -91,7 +102,17 @@ progress bar is the release's progress.
 
 ## Stale claims and drift
 
-The reconciler runs every 30 minutes and posts a digest:
+## What keeps it current (no one edits the board by hand)
+
+- **Every 5 minutes**, a scheduled task on the owner's PC runs `scripts/work/run.mjs`: the reconciler
+  (`npm run work:reconcile`) derives every item's fields, adds new issues and PRs, closes issues
+  whose PR merged, and rewrites the pinned `work-status` digest issue. Once a day, or when the
+  overall state changes, it also posts an on-track / at-risk update on the board.
+- **Instantly**, `npm run work:claim` (claim or release) triggers a refresh.
+- **Plane** gets release progress from `npm run work:plane-release`: at most 3 times a day and only
+  when a release moved; a closed milestone always syncs. Plane is otherwise read-only.
+
+The reconciler also checks for drift:
 
 - no push for 24 h: the worker is flagged;
 - no push for 72 h: the issue goes back to Ready, and the branch is kept;
