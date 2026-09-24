@@ -448,6 +448,16 @@ describe("ci-freshness-guard.mjs contract", () => {
     },
   );
 
+  it("#1134 · a FAILED redeploy over an earlier success is not successor-failed -> exit 3", () => {
+    const { res, outFile } = superseded({
+      deployments: [dep(NEW)],
+      runs: [runs({ status: "completed", conclusion: "cancelled" })],
+      statuses: [history("failure", "success")],
+    });
+    expect(readOutputs(outFile)).toMatchObject({ run: "false", reason: "unconfirmed" });
+    expect(res.status).toBe(3);
+  });
+
   it("#1134 · a FAILED statuses read fails closed (exit 3), never the fallback", () => {
     const { res, outFile } = superseded({
       deployments: [dep(NEW)],

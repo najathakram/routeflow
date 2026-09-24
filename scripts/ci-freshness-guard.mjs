@@ -183,7 +183,9 @@ function pollSuccessor(repo, deploySha) {
   const history = st.ok && Array.isArray(st.json) ? st.json : null;
   const state = history && history[0] ? String(history[0].state) : null;
   const everLive = history ? history.some((h) => h && h.state === "success") : null;
-  if (state === "failure" || state === "error") return { kind: "failed", sha: top.sha, state };
+  // A failed REDEPLOY over an earlier success leaves that first build serving: not "never gets a run".
+  if ((state === "failure" || state === "error") && everLive === false)
+    return { kind: "failed", sha: top.sha, state };
   // Opus fad6aa19 finding 2: every deployed sha carries one completed/`skipped` run (the
   // deployment_status `in_progress` echo, all jobs gated off). It is not an E2E attempt, so it never
   // counts as "the successor has runs"; only a real attempt (queued, cancelled, ...) does.
