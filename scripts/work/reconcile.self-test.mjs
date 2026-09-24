@@ -22,6 +22,12 @@ import {
   toDateValue,
   staleClaimAction,
   shouldAutoCloseIssue,
+  isExcludedFromBoard,
+  shouldSkipClose,
+  shouldSkipUnassign,
+  attemptGhAction,
+  isReconcileLockStale,
+  RECONCILE_LOCK_STALE_MS,
   findLaneConflicts,
   milestoneStats,
   overallProjectStatus,
@@ -31,11 +37,14 @@ import {
   digestBodyChanged,
   renderDigestBody,
   renderStatusUpdateBody,
+  postStatusUpdateIfDue,
   shouldHaltWrites,
   buildFieldUpdateMutation,
   buildAddItemsMutation,
+  buildDeleteItemsMutation,
   chunk,
   planWrites,
+  ISSUE_FIELDS,
 } from "./reconcile.mjs";
 
 let failures = 0;
@@ -458,6 +467,128 @@ const pr = (overrides = {}) => ({
   );
 }
 
+// ── worker attribution comment window (fix 3) ────────────────────────────
+{
+  check(
+    "ISSUE_FIELDS: fetches the last 100 comments, not 30, so deriveWorkerForIssue's scan for the newest 'Claimed by' reaches far enough back",
+    ISSUE_FIELDS.includes("comments(last: 100)"),
+    true,
+  );
+}
+
+// ── #938 / work-status exclusion (fix 1) ─────────────────────────────────
+{
+  check(
+    "isExcludedFromBoard: issue #938 (FLEET_LOG_ISSUE) -> excluded",
+    isExcludedFromBoard(issue({ number: 938 })),
+    true,
+  );
+  check(
+    "isExcludedFromBoard: issue carrying the work-status label -> excluded",
+    isExcludedFromBoard(issue({ number: 555, labels: [label("work-status")] })),
+    true,
+  );
+  check(
+    "isExcludedFromBoard: an ordinary issue -> not excluded",
+    isExcludedFromBoard(issue({ number: 100 })),
+    false,
+  );
+  check(
+    "isExcludedFromBoard: #938 with unrelated labels is still excluded (number check alone is enough)",
+    isExcludedFromBoard(issue({ number: 938, labels: [label("prio:P0")] })),
+    true,
+  );
+}
+
+// ── idempotent close/unassign (fix 2b) ───────────────────────────────────
+{
+  check(
+    "shouldSkipClose: live state already CLOSED -> skip",
+    shouldSkipClose({ state: "CLOSED", assignees: [] }),
+    true,
+  );
+  check(
+    "shouldSkipClose: live state still OPEN -> do not skip",
+    shouldSkipClose({ state: "OPEN", assignees: [] }),
+    false,
+  );
+  check(
+    "shouldSkipClose: live read failed (null) -> never skip (go ahead)",
+    shouldSkipClose(null),
+    false,
+  );
+
+  check(
+    "shouldSkipUnassign: live assignees already empty -> skip",
+    shouldSkipUnassign({ state: "OPEN", assignees: [] }),
+    true,
+  );
+  check(
+    "shouldSkipUnassign: live assignees still present -> do not skip",
+    shouldSkipUnassign({ state: "OPEN", assignees: [{ login: "alice" }] }),
+    false,
+  );
+  check(
+    "shouldSkipUnassign: live read failed (null) -> never skip (go ahead)",
+    shouldSkipUnassign(null),
+    false,
+  );
+
+  const okResult = attemptGhAction(() => {});
+  check("attemptGhAction: mutation succeeds -> acted: true", okResult, { acted: true });
+
+  const failResult = attemptGhAction(() => {
+    throw new Error("gh: rate limited");
+  });
+  check(
+    "attemptGhAction: mutation throws -> acted: false with the reason, never propagates",
+    { acted: failResult.acted, reasonHasMessage: failResult.reason?.includes("gh: rate limited") },
+    { acted: false, reasonHasMessage: true },
+  );
+}
+
+// ── reconcile's own overlap lock (fix 2a) ────────────────────────────────
+{
+  const NOW = new Date("2026-09-24T12:00:00Z");
+  const isoMinutesAgo = (m) => new Date(NOW.getTime() - m * 60_000).toISOString();
+
+  check("isReconcileLockStale: no lock -> stale", isReconcileLockStale(null, NOW), true);
+  check(
+    "isReconcileLockStale: undefined lock -> stale",
+    isReconcileLockStale(undefined, NOW),
+    true,
+  );
+  check(
+    "isReconcileLockStale: lock missing startedAt -> stale (corrupt)",
+    isReconcileLockStale({ pid: 1 }, NOW),
+    true,
+  );
+  check(
+    "isReconcileLockStale: fresh lock (started now) -> not stale",
+    isReconcileLockStale({ pid: 1, startedAt: NOW.toISOString() }, NOW),
+    false,
+  );
+  check(
+    "isReconcileLockStale: 9 minutes old -> not stale",
+    isReconcileLockStale({ pid: 1, startedAt: isoMinutesAgo(9) }, NOW),
+    false,
+  );
+  check(
+    "isReconcileLockStale: exactly 10 minutes -> stale (boundary inclusive)",
+    isReconcileLockStale(
+      { pid: 1, startedAt: new Date(NOW.getTime() - RECONCILE_LOCK_STALE_MS).toISOString() },
+      NOW,
+    ),
+    true,
+  );
+  check(
+    "isReconcileLockStale: 30 minutes old -> stale (an abandoned/crashed run)",
+    isReconcileLockStale({ pid: 1, startedAt: isoMinutesAgo(30) }, NOW),
+    true,
+  );
+  check("RECONCILE_LOCK_STALE_MS is 10 minutes", RECONCILE_LOCK_STALE_MS, 10 * 60 * 1000);
+}
+
 // ── lane-conflict detection (section 7) ─────────────────────────────────
 {
   const rows = [
@@ -771,6 +902,87 @@ const pr = (overrides = {}) => ({
   );
 }
 
+// ── status-update persistence ordering (fix 5) ───────────────────────────
+{
+  const NOW = new Date("2026-09-24T12:00:00Z");
+  const baseState = { lastDigestUpdatedAt: "2026-09-23T00:00:00Z" };
+
+  {
+    const calls = [];
+    const result = postStatusUpdateIfDue({
+      shouldPostStatus: true,
+      halted: false,
+      dryRun: false,
+      now: NOW,
+      state: baseState,
+      overallStatus: "AT_RISK",
+      statusBody: "body",
+      post: (body) => calls.push(`post:${body}`),
+      save: (s) => calls.push(`save:${s.lastStatusValue}`),
+    });
+    check(
+      "postStatusUpdateIfDue: due -> posts, THEN immediately saves (before any other step)",
+      calls,
+      ["post:body", "save:AT_RISK"],
+    );
+    check(
+      "postStatusUpdateIfDue: returned state carries the new lastStatusPostedAt/lastStatusValue",
+      { posted: result.posted, lastStatusValue: result.state.lastStatusValue },
+      { posted: true, lastStatusValue: "AT_RISK" },
+    );
+  }
+
+  {
+    const calls = [];
+    postStatusUpdateIfDue({
+      shouldPostStatus: false,
+      halted: false,
+      dryRun: false,
+      now: NOW,
+      state: baseState,
+      overallStatus: "ON_TRACK",
+      statusBody: "body",
+      post: (body) => calls.push(`post:${body}`),
+      save: (s) => calls.push(`save:${s.lastStatusValue}`),
+    });
+    check("postStatusUpdateIfDue: not due -> neither posts nor saves", calls, []);
+  }
+
+  {
+    const calls = [];
+    postStatusUpdateIfDue({
+      shouldPostStatus: true,
+      halted: true,
+      dryRun: false,
+      now: NOW,
+      state: baseState,
+      overallStatus: "OFF_TRACK",
+      statusBody: "body",
+      post: (body) => calls.push(`post:${body}`),
+      save: (s) => calls.push(`save:${s.lastStatusValue}`),
+    });
+    check("postStatusUpdateIfDue: rate-limit halted -> neither posts nor saves", calls, []);
+  }
+
+  {
+    const calls = [];
+    postStatusUpdateIfDue({
+      shouldPostStatus: true,
+      halted: false,
+      dryRun: true,
+      now: NOW,
+      state: baseState,
+      overallStatus: "AT_RISK",
+      statusBody: "body",
+      post: (body) => calls.push(`post:${body}`),
+      save: (s) => calls.push(`save:${s.lastStatusValue}`),
+    });
+    check("postStatusUpdateIfDue: dry-run -> posts (dry-run-aware) but never saves", calls, [
+      "post:body",
+    ]);
+  }
+}
+
 // ── rate limit circuit breaker ───────────────────────────────────────────
 {
   check("shouldHaltWrites: below floor -> halt", shouldHaltWrites(199), true);
@@ -809,6 +1021,20 @@ const pr = (overrides = {}) => ({
   check(
     "buildAddItemsMutation: aliases a0, a1",
     addM.includes("a0: addProjectV2ItemById") && addM.includes("a1: addProjectV2ItemById"),
+    true,
+  );
+
+  const delM = buildDeleteItemsMutation("P1", ["I1", "I2"]);
+  check(
+    "buildDeleteItemsMutation: aliases d0, d1",
+    delM.includes("d0: deleteProjectV2Item") && delM.includes("d1: deleteProjectV2Item"),
+    true,
+  );
+  check(
+    "buildDeleteItemsMutation: carries the project + item ids",
+    delM.includes('projectId: "P1"') &&
+      delM.includes('itemId: "I1"') &&
+      delM.includes('itemId: "I2"'),
     true,
   );
 

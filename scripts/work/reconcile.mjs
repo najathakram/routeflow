@@ -25,8 +25,19 @@
 //
 // Every exported function above the "── IO" marker is pure (no gh/fs/Date.now
 // calls) and is what scripts/work/reconcile.self-test.mjs exercises directly.
+// One exception: postStatusUpdateIfDue takes its gh/fs side effects
+// (post/save) as injected callbacks rather than calling them directly, so
+// its own body still has no gh/fs/Date.now call, and the self-test can
+// assert call order with fakes instead of a live gh/GraphQL call.
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, writeFileSync, appendFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  writeFileSync,
+  appendFileSync,
+  unlinkSync,
+} from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
@@ -57,6 +68,7 @@ const MUTATION_CHUNK = 20;
 const WORK_DIR = join(ROOT, "local-assets", "work");
 const STATE_FILE = join(WORK_DIR, "reconcile-state.json");
 const LOG_FILE = join(WORK_DIR, "reconcile.log");
+const RECONCILE_LOCK_FILE = join(WORK_DIR, "reconcile.lock");
 
 // ════════════════════════════════════════════════════════════════════════
 // PURE — label parsing
@@ -76,6 +88,16 @@ export function parseLabels(labels = []) {
     else out.flags.add(name);
   }
   return out;
+}
+
+/** #938 (FLEET_LOG_ISSUE, the fleet-wide activity log) and any issue that
+ * itself carries the `work-status` label (the board's own auto-generated
+ * digest issue) are excluded from ALL board processing, not merely from
+ * auto-add — field derivation, auto-close, stale-unassign, and every digest
+ * count must never see them. If either is already a board item (added
+ * before this rule existed, or added by hand), the caller removes it. */
+export function isExcludedFromBoard(issue) {
+  return issue.number === FLEET_LOG_ISSUE || labelNames(issue.labels).includes(WORK_STATUS_LABEL);
 }
 
 // ════════════════════════════════════════════════════════════════════════
@@ -246,6 +268,38 @@ export function shouldAutoCloseIssue(issue, linkedPRs = []) {
     if (!githubClosedIt) return pr;
   }
   return null;
+}
+
+// ════════════════════════════════════════════════════════════════════════
+// PURE — idempotent close/unassign (overlapping-reconcile dedupe, fix 2b)
+// ════════════════════════════════════════════════════════════════════════
+
+/** `live` is a freshly re-read { state, assignees } (or null when the gh
+ * read itself failed). true = a close is no longer needed — some other,
+ * overlapping reconcile already closed this issue. A failed read (null)
+ * never skips the action; we'd rather attempt a close gh can safely no-op
+ * on than silently drop one that's still needed. */
+export function shouldSkipClose(live) {
+  return !!live && live.state === "CLOSED";
+}
+
+/** Same shape as shouldSkipClose: true = already unassigned (zero live
+ * assignees), so the unassign-with-comment is no longer needed. */
+export function shouldSkipUnassign(live) {
+  return !!live && (live.assignees ?? []).length === 0;
+}
+
+/** Runs `attempt()` (the actual gh mutation). A gh failure on a close/
+ * unassign path must not abort the whole reconcile run — it's converted to
+ * a skip-with-reason the caller logs and moves past, instead of letting the
+ * exception propagate out of main()'s per-issue loop. */
+export function attemptGhAction(attempt) {
+  try {
+    attempt();
+    return { acted: true };
+  } catch (e) {
+    return { acted: false, reason: `gh failed: ${e?.message ?? e}` };
+  }
 }
 
 // ════════════════════════════════════════════════════════════════════════
@@ -502,6 +556,27 @@ export function shouldHaltWrites(remaining) {
 }
 
 // ════════════════════════════════════════════════════════════════════════
+// PURE — reconcile's own overlap lock (fix 2a)
+// ════════════════════════════════════════════════════════════════════════
+
+export const RECONCILE_LOCK_STALE_MS = 10 * 60 * 1000; // 10 minutes
+
+/**
+ * lock: { pid, startedAt } or null/undefined. now: Date. Mirrors run.mjs's
+ * own isLockStale — true = no lock, or one old enough (>= 10 min) to be
+ * considered abandoned (a crashed run never releases it) and safe to
+ * reclaim. Gives reconcile.mjs its own lock file independent of run.mjs's
+ * run.lock, so a trigger.mjs-spawned reconcile (which never takes
+ * run.lock) and a run.mjs-spawned reconcile can never run concurrently and
+ * post duplicate comments.
+ */
+export function isReconcileLockStale(lock, now = new Date()) {
+  if (!lock || !lock.startedAt) return true;
+  const age = now.getTime() - new Date(lock.startedAt).getTime();
+  return !(age < RECONCILE_LOCK_STALE_MS);
+}
+
+// ════════════════════════════════════════════════════════════════════════
 // PURE — GraphQL mutation builders (string-building only, no network)
 // ════════════════════════════════════════════════════════════════════════
 
@@ -540,6 +615,17 @@ export function buildAddItemsMutation(projectId, contentIds) {
   const parts = contentIds.map(
     (id, i) =>
       `a${i}: addProjectV2ItemById(input: { projectId: ${gqlStr(projectId)}, contentId: ${gqlStr(id)} }) { item { id } }`,
+  );
+  return `mutation {\n${parts.join("\n")}\n}`;
+}
+
+/** Removes board items outright (fix 1: #938 / work-status issues that were
+ * already on the board before the exclusion rule fired). itemIds are
+ * ProjectV2Item ids, not content ids. */
+export function buildDeleteItemsMutation(projectId, itemIds) {
+  const parts = itemIds.map(
+    (id, i) =>
+      `d${i}: deleteProjectV2Item(input: { projectId: ${gqlStr(projectId)}, itemId: ${gqlStr(id)} }) { deletedItemId }`,
   );
   return `mutation {\n${parts.join("\n")}\n}`;
 }
@@ -584,6 +670,41 @@ export function planWrites({ projectId, itemId, current, desired, fieldsByName }
     writes.push({ projectId, itemId, fieldId: def.id, clear: true });
   }
   return { writes, skipped };
+}
+
+// ════════════════════════════════════════════════════════════════════════
+// PURE (dependency-injected) — status-update persistence ordering (fix 5)
+// ════════════════════════════════════════════════════════════════════════
+
+/**
+ * Decides whether to post the project status update and, when it does,
+ * saves the state file IMMEDIATELY after a successful post — before any
+ * other step — so a later failure elsewhere in the run can never cause the
+ * same status to be re-posted on a subsequent run. `post`/`save` are
+ * injected (rather than calling postProjectStatusUpdate/saveState
+ * directly) so this ordering is exercised by the self-test without a live
+ * gh/GraphQL call.
+ */
+export function postStatusUpdateIfDue({
+  shouldPostStatus,
+  halted,
+  dryRun,
+  now,
+  state,
+  overallStatus,
+  statusBody,
+  post,
+  save,
+}) {
+  if (!shouldPostStatus || halted) return { posted: false, state };
+  post(statusBody);
+  const nextState = {
+    ...state,
+    lastStatusPostedAt: now.toISOString(),
+    lastStatusValue: overallStatus,
+  };
+  if (!dryRun) save(nextState);
+  return { posted: true, state: nextState };
 }
 
 // ════════════════════════════════════════════════════════════════════════
@@ -660,13 +781,17 @@ function resolveProjectFields() {
 // PullRequest { }` inline fragments only where `content` is the ProjectV2Item
 // union (spreading a PullRequest fragment inside a concrete Issue selection
 // set is a GraphQL error, not merely redundant).
-const ISSUE_FIELDS = `
+// fix 3: 100 (not 30) so deriveWorkerForIssue's "newest Claimed by" scan
+// reaches far enough back on an issue with a long comment history. Exported
+// (string constant, no gh/fs call of its own) so the self-test can assert
+// the fetch width directly instead of only exercising it indirectly.
+export const ISSUE_FIELDS = `
 id number title state
 labels(first: 20) { nodes { name } }
 assignees(first: 10) { nodes { login } }
 milestone { title dueOn }
 createdAt updatedAt closedAt
-comments(last: 30) { nodes { body createdAt } }`;
+comments(last: 100) { nodes { body createdAt } }`;
 
 const PR_FIELDS = `
 id number title state isDraft merged mergedAt headRefName body createdAt updatedAt
@@ -803,6 +928,13 @@ function addItemsToProject(projectId, contentIds) {
   return idByContentId;
 }
 
+/** fix 1: removes already-on-the-board #938 / work-status items outright. */
+function removeItemsFromProject(projectId, itemIds) {
+  for (const group of chunk(itemIds, MUTATION_CHUNK)) {
+    graphql(buildDeleteItemsMutation(projectId, group));
+  }
+}
+
 function applyFieldWrites(writes) {
   for (const group of chunk(writes, MUTATION_CHUNK)) {
     graphql(buildFieldUpdateMutation(group));
@@ -830,6 +962,33 @@ function saveState(state) {
 function appendLog(line) {
   mkdirSync(WORK_DIR, { recursive: true });
   appendFileSync(LOG_FILE, `${JSON.stringify(line)}\n`, "utf8");
+}
+
+// fix 2a: reconcile.mjs's own overlap lock, independent of run.mjs's
+// run.lock — see isReconcileLockStale() above.
+function loadReconcileLock() {
+  if (!existsSync(RECONCILE_LOCK_FILE)) return null;
+  try {
+    return JSON.parse(readFileSync(RECONCILE_LOCK_FILE, "utf8"));
+  } catch {
+    return null; // corrupt lock file -> treated as absent
+  }
+}
+
+function writeReconcileLock(lock) {
+  mkdirSync(WORK_DIR, { recursive: true });
+  writeFileSync(RECONCILE_LOCK_FILE, JSON.stringify(lock, null, 2) + "\n", "utf8");
+}
+
+function releaseReconcileLockIfOwned(pid) {
+  const lock = loadReconcileLock();
+  if (lock && lock.pid === pid) {
+    try {
+      unlinkSync(RECONCILE_LOCK_FILE);
+    } catch {
+      // already gone — fine.
+    }
+  }
 }
 
 function ensureWorkStatusIssue(dryRun) {
@@ -879,20 +1038,53 @@ function updateWorkStatusIssueBody(number, body, dryRun) {
   gh(["issue", "edit", String(number), "--repo", REPO, "--body-file", tmpFile]);
 }
 
+/** Re-reads an issue's live state right before a close/unassign mutation —
+ * fix 2b's idempotency check, guarding against an overlapping reconcile
+ * having already acted on the same issue. `allowFail` -> null on any gh
+ * error, which shouldSkipClose/shouldSkipUnassign both treat as "not
+ * confirmed done, go ahead". */
+function fetchLiveIssueState(number) {
+  return ghJson(["issue", "view", String(number), "--repo", REPO, "--json", "state,assignees"], {
+    allowFail: true,
+  });
+}
+
 function closeIssueWithComment(number, prNumber, dryRun) {
   const comment = `Closed by #${prNumber} (merged).`;
-  if (dryRun) return comment;
-  gh(["issue", "close", String(number), "--repo", REPO, "--comment", comment]);
-  return comment;
+  if (dryRun) return { comment, acted: true };
+  if (shouldSkipClose(fetchLiveIssueState(number))) {
+    return { comment, acted: false, reason: "already closed" };
+  }
+  return {
+    comment,
+    ...attemptGhAction(() =>
+      gh(["issue", "close", String(number), "--repo", REPO, "--comment", comment]),
+    ),
+  };
 }
 
 function unassignWithComment(number, logins, dryRun) {
   const comment = "Returned to Ready: no activity for 72 h. Branch kept.";
-  if (dryRun) return comment;
-  if (logins.length)
-    gh(["issue", "edit", String(number), "--repo", REPO, "--remove-assignee", logins.join(",")]);
-  gh(["issue", "comment", String(number), "--repo", REPO, "--body", comment]);
-  return comment;
+  if (dryRun) return { comment, acted: true };
+  if (shouldSkipUnassign(fetchLiveIssueState(number))) {
+    return { comment, acted: false, reason: "already unassigned" };
+  }
+  return {
+    comment,
+    ...attemptGhAction(() => {
+      if (logins.length)
+        gh([
+          "issue",
+          "edit",
+          String(number),
+          "--repo",
+          REPO,
+          "--remove-assignee",
+          logins.join(","),
+        ]);
+      gh(["issue", "comment", String(number), "--repo", REPO, "--body", comment]);
+    }),
+  };
 }
 
 const STATUS_UPDATE_MUTATION = `
@@ -924,6 +1116,22 @@ async function main() {
   const now = new Date();
   const started = Date.now();
   let exitCode = 0;
+
+  // fix 2a: reconcile's own overlap lock — a trigger.mjs-spawned reconcile
+  // and a run.mjs-spawned reconcile never take run.mjs's run.lock (trigger
+  // deliberately doesn't), so without this, the two can run concurrently
+  // and double-post comments. Held & fresh -> skip this run entirely,
+  // without writing anything.
+  const existingLock = loadReconcileLock();
+  if (existingLock && !isReconcileLockStale(existingLock, now)) {
+    console.log(
+      `work reconcile: lock held (pid ${existingLock.pid}, started ${existingLock.startedAt}) — skipping this run.`,
+    );
+    process.exitCode = 0;
+    return;
+  }
+  writeReconcileLock({ pid: process.pid, startedAt: now.toISOString() });
+
   const summary = {
     addedIssues: 0,
     addedPRs: 0,
@@ -933,6 +1141,7 @@ async function main() {
     closed: 0,
     unassigned: 0,
     flagged: 0,
+    excludedRemoved: 0,
   };
 
   try {
@@ -972,7 +1181,7 @@ async function main() {
     summary.addedPRs = missingPRs.length;
 
     // Unified board content: existing items + newly (would-be) added ones.
-    const issueRows = boardItems.filter((i) => i.type === "Issue");
+    let issueRows = boardItems.filter((i) => i.type === "Issue");
     const prRows = boardItems.filter((i) => i.type === "PullRequest");
     for (const n of missingIssues) {
       issueRows.push({
@@ -991,6 +1200,19 @@ async function main() {
       });
     }
 
+    // fix 1: #938 / work-status issues are excluded from ALL processing
+    // below, not merely from auto-add above — filter them out of
+    // issueRows right here so no downstream derivation, auto-close,
+    // stale-unassign, or digest count ever sees them. If either was
+    // already a board item, remove it from the project outright.
+    const excludedRows = issueRows.filter((r) => isExcludedFromBoard(r.content));
+    issueRows = issueRows.filter((r) => !isExcludedFromBoard(r.content));
+    const excludedItemIdsToRemove = excludedRows.map((r) => r.itemId).filter((id) => id != null);
+    if (!args.dryRun && excludedItemIdsToRemove.length && !shouldHaltWrites(rateRemaining)) {
+      removeItemsFromProject(projectId, excludedItemIdsToRemove);
+    }
+    summary.excludedRemoved = excludedItemIdsToRemove.length;
+
     const allPRContents = prRows.map((r) => r.content);
     const issuePRIndex = buildIssuePRIndex(allPRContents);
 
@@ -1005,15 +1227,24 @@ async function main() {
       if (!action) continue;
       if (action.action === "unassign") {
         const logins = (issue.assignees ?? []).map((a) => a.login);
-        const comment = unassignWithComment(issue.number, logins, args.dryRun);
-        issue.assignees = [];
-        summary.unassigned++;
+        const result = unassignWithComment(issue.number, logins, args.dryRun);
+        // Either we just unassigned it, or the live re-read already found it
+        // unassigned — both leave zero assignees. A gh failure leaves the
+        // live (still-assigned) state alone so the rest of THIS run's
+        // derivation stays accurate.
+        if (result.acted || result.reason === "already unassigned") issue.assignees = [];
+        if (result.acted) summary.unassigned++;
+        else
+          console.log(
+            `work reconcile: issue #${issue.number} — unassign skipped (${result.reason})`,
+          );
         staleClaims.push({
           number: issue.number,
           worker: deriveWorkerForIssue(issue, linkedPRs),
           hours: action.hours,
           reason: action.reason,
-          comment,
+          comment: result.comment,
+          ...(result.acted ? {} : { skipped: result.reason }),
         });
       } else {
         summary.flagged++;
@@ -1033,10 +1264,16 @@ async function main() {
       const linkedPRs = issuePRIndex.get(issue.number) ?? [];
       const prToCite = shouldAutoCloseIssue(issue, linkedPRs);
       if (!prToCite) continue;
-      const comment = closeIssueWithComment(issue.number, prToCite.number, args.dryRun);
-      issue.state = "CLOSED";
-      summary.closed++;
-      closedNotices.push({ number: issue.number, pr: prToCite.number, comment });
+      const result = closeIssueWithComment(issue.number, prToCite.number, args.dryRun);
+      if (result.acted || result.reason === "already closed") issue.state = "CLOSED";
+      if (result.acted) summary.closed++;
+      else console.log(`work reconcile: issue #${issue.number} — close skipped (${result.reason})`);
+      closedNotices.push({
+        number: issue.number,
+        pr: prToCite.number,
+        comment: result.comment,
+        ...(result.acted ? {} : { skipped: result.reason }),
+      });
     }
 
     // Derive desired fields + plan writes for every board item.
@@ -1195,7 +1432,7 @@ async function main() {
 
     const workStatusIssue = ensureWorkStatusIssue(args.dryRun);
     const bodyChanged = digestBodyChanged(workStatusIssue.body, digestBody);
-    const state = loadState();
+    let state = loadState();
     const hoursSinceDigest = state.lastDigestUpdatedAt
       ? (now.getTime() - new Date(state.lastDigestUpdatedAt).getTime()) / 3_600_000
       : Infinity;
@@ -1210,15 +1447,25 @@ async function main() {
     const today = now.toISOString().slice(0, 10);
     const statusChanged = state.lastStatusValue !== overallStatus;
     const shouldPostStatus = statusChanged || lastPostedDay !== today;
-    if (shouldPostStatus && !shouldHaltWrites(rateRemaining)) {
-      const statusBody = renderStatusUpdateBody(overallStatus, {
+    // fix 5: postStatusUpdateIfDue saves the state file IMMEDIATELY after a
+    // successful post (before anything else below runs), so a later
+    // failure in this run can never cause the same status to be re-posted
+    // next time.
+    const statusResult = postStatusUpdateIfDue({
+      shouldPostStatus,
+      halted: shouldHaltWrites(rateRemaining),
+      dryRun: args.dryRun,
+      now,
+      state,
+      overallStatus,
+      statusBody: renderStatusUpdateBody(overallStatus, {
         ...digestData,
         digestIssueUrl: `https://github.com/${REPO}/issues/${workStatusIssue.number ?? "?"}`,
-      });
-      postProjectStatusUpdate(projectId, overallStatus, statusBody, args.dryRun);
-      state.lastStatusPostedAt = now.toISOString();
-      state.lastStatusValue = overallStatus;
-    }
+      }),
+      post: (body) => postProjectStatusUpdate(projectId, overallStatus, body, args.dryRun),
+      save: saveState,
+    });
+    state = statusResult.state;
     if (!args.dryRun) saveState(state);
 
     const output = {
@@ -1252,6 +1499,11 @@ async function main() {
         `  claims: ${summary.flagged} flagged, ${summary.unassigned} unassigned (72h, no open PR)`,
       );
       console.log(`  closed by merge: ${summary.closed}`);
+      if (summary.excludedRemoved) {
+        console.log(
+          `  excluded from board (#938 / work-status) removed: ${summary.excludedRemoved}`,
+        );
+      }
       console.log(
         `  drift: ${laneConflicts.length} lane conflict(s), ${orphanPRs.length} orphan PR(s), ${reviewStalePRs.length} stuck-in-review, ${inboxStale.length} stale-inbox`,
       );
@@ -1286,6 +1538,8 @@ async function main() {
       error: String(err?.message ?? err),
       durationMs: Date.now() - started,
     });
+  } finally {
+    releaseReconcileLockIfOwned(process.pid);
   }
   process.exitCode = exitCode;
 }

@@ -9,10 +9,14 @@
 //   2. When WORK_RUNNER=1 (this process is running inside the dedicated
 //      runner worktree the installer creates), fetches origin and detach-
 //      checks-out WORK_RUNNER_REF (default origin/master) IN THAT WORKTREE
-//      ONLY — this file never touches any other checkout. If that checkout
-//      changed run.mjs's own on-disk code (already loaded into this live
-//      process), it re-execs the fresh version exactly once so the rest of
-//      the run uses current logic.
+//      ONLY — this file never touches any other checkout. It refuses to do
+//      even that unless local-assets/work/.runner exists (the marker
+//      install-scheduler.ps1 writes for the runner worktree it
+//      creates/uses) — proof WORK_RUNNER=1 wasn't set by accident in some
+//      other checkout, where a fetch + detach-checkout would be actively
+//      destructive. If that checkout changed run.mjs's own on-disk code
+//      (already loaded into this live process), it re-execs the fresh
+//      version exactly once so the rest of the run uses current logic.
 //   3. Runs `node reconcile.mjs --quiet`.
 //   4. Runs `node plane-release-sync.mjs --apply`, but only if that script
 //      exists and WORK_PLANE=1 (it throttles itself; this is just the gate
@@ -58,6 +62,7 @@ const PLANE_SYNC_PATH = join(ROOT, "scripts", "work", "plane-release-sync.mjs");
 const WORK_DIR = join(ROOT, "local-assets", "work");
 const LOCK_FILE = join(WORK_DIR, "run.lock");
 const LOG_FILE = join(WORK_DIR, "run.log");
+const RUNNER_MARKER_FILE = join(WORK_DIR, ".runner");
 
 // ════════════════════════════════════════════════════════════════════════
 // PURE
@@ -91,6 +96,18 @@ export function resolveRunnerRef(env = {}) {
 /** Gate for the optional plane-release-sync step: needs both the flag and the file. */
 export function shouldRunPlaneSync(env = {}, planeSyncExists = false) {
   return env.WORK_PLANE === "1" && !!planeSyncExists;
+}
+
+/**
+ * Runner mode (WORK_RUNNER=1) may only fetch + detach-checkout when this
+ * worktree carries the marker install-scheduler.ps1 writes for the
+ * dedicated runner worktree it creates/uses — proof this really is that
+ * worktree, not some other checkout where the env var got set by accident
+ * (a fetch + detach-checkout there would be actively destructive). true =
+ * refuse the sync.
+ */
+export function shouldRefuseRunnerSync(env = {}, markerExists = false) {
+  return isRunnerMode(env) && !markerExists;
 }
 
 /** true when the checkout swapped run.mjs's own on-disk bytes out from under
@@ -228,6 +245,15 @@ function main() {
   writeLock({ pid: process.pid, startedAt: now.toISOString() });
   try {
     if (isRunnerMode(process.env)) {
+      if (shouldRefuseRunnerSync(process.env, existsSync(RUNNER_MARKER_FILE))) {
+        appendLog({
+          ts: now.toISOString(),
+          runnerMode: true,
+          skipped: true,
+          reason: "runner-marker-missing",
+        });
+        return;
+      }
       const ref = resolveRunnerRef(process.env);
       const beforeHash = hashFile(SELF_PATH);
       try {

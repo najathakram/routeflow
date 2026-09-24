@@ -4,10 +4,12 @@
   polls the GitHub work board every 5 minutes via scripts/work/run.mjs.
 
 .DESCRIPTION
-  This script only WRITES three things: a dedicated runner worktree at
-  C:/ClaudeCode/rf-work-runner, a wrapper launcher inside that worktree's
-  local-assets/work/, and a per-user Windows Scheduled Task. It never
-  touches C:/ClaudeCode/routeflow or any other checkout, and it is NOT run
+  This script only WRITES four things: a dedicated runner worktree at
+  C:/ClaudeCode/rf-work-runner, a marker file (local-assets/work/.runner)
+  inside it that run.mjs requires before it will fetch/checkout that
+  worktree, a wrapper launcher inside that worktree's local-assets/work/,
+  and a per-user Windows Scheduled Task. It never touches
+  C:/ClaudeCode/routeflow or any other checkout, and it is NOT run
   automatically by anything in this repo -- an operator runs it once, by
   hand, to install the poller (or with -Uninstall to remove it).
 
@@ -54,6 +56,7 @@ $RunnerWorktree = "C:/ClaudeCode/rf-work-runner"
 $RunnerWorkDir = Join-Path $RunnerWorktree "local-assets\work"
 $RunCmdPath = Join-Path $RunnerWorkDir "run.cmd"
 $RunVbsPath = Join-Path $RunnerWorkDir "run-hidden.vbs"
+$RunnerMarkerPath = Join-Path $RunnerWorkDir ".runner"
 
 function Uninstall-WorkScheduler {
   if (Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue) {
@@ -100,6 +103,20 @@ else {
 }
 
 New-Item -ItemType Directory -Force -Path $RunnerWorkDir | Out-Null
+
+# ---- 1b. Runner marker -----------------------------------------------------
+# run.mjs (WORK_RUNNER=1) refuses to fetch/checkout unless this file exists
+# -- proof this worktree really is the dedicated runner one this installer
+# creates/uses, not some other checkout with WORK_RUNNER=1 set by accident.
+# Written (idempotently) whether the worktree above was just created or
+# already existed.
+if (-not (Test-Path $RunnerMarkerPath)) {
+  Set-Content -Path $RunnerMarkerPath -Value "Created by install-scheduler.ps1 on $(Get-Date -Format o)" -Encoding ASCII
+  Write-Host "Wrote runner marker: $RunnerMarkerPath"
+}
+else {
+  Write-Host "Runner marker already present: $RunnerMarkerPath"
+}
 
 # ---- 2. Wrapper .cmd -------------------------------------------------------
 # Sets the env run.mjs needs and runs it. No npm install: run.mjs and

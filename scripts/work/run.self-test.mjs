@@ -11,6 +11,7 @@ import {
   isRunnerMode,
   resolveRunnerRef,
   shouldRunPlaneSync,
+  shouldRefuseRunnerSync,
   hasScriptChanged,
   LOCK_STALE_MS,
   DEFAULT_RUNNER_REF,
@@ -106,6 +107,30 @@ const isoMinutesAgo = (m) => new Date(NOW.getTime() - m * 60_000).toISOString();
     "resolveRunnerRef: override is trimmed",
     resolveRunnerRef({ WORK_RUNNER_REF: "  origin/master  " }),
     "origin/master",
+  );
+}
+
+// ── runner-marker guard (fix 4) ──────────────────────────────────────────
+{
+  check(
+    "shouldRefuseRunnerSync: runner mode, marker missing -> refuse",
+    shouldRefuseRunnerSync({ WORK_RUNNER: "1" }, false),
+    true,
+  );
+  check(
+    "shouldRefuseRunnerSync: runner mode, marker present -> allow",
+    shouldRefuseRunnerSync({ WORK_RUNNER: "1" }, true),
+    false,
+  );
+  check(
+    "shouldRefuseRunnerSync: not runner mode, marker missing -> allow (nothing to refuse)",
+    shouldRefuseRunnerSync({}, false),
+    false,
+  );
+  check(
+    "shouldRefuseRunnerSync: not runner mode, marker present -> allow",
+    shouldRefuseRunnerSync({}, true),
+    false,
   );
 }
 
