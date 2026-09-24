@@ -168,6 +168,33 @@ const UUID_RE = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i;
 const PARTIAL_UUID_RE = /[0-9a-f]{8}-[0-9a-f]{4}-/i;
 
 async function main() {
+  // ── T402 — a free-tier workspace answers 402 on work-item-types/. Only a create
+  // that names a `type` needs types, so a comment still applies and a typed create
+  // fails with a clear message instead of every op failing validation.
+  {
+    const server = await startFakePlane({
+      workItemTypes402: true,
+      workItems: { OPS: [{ name: "Ops item", sequence_id: 23, state: "state-backlog" }] },
+    });
+    const stateDir = makeTmpDir();
+    const commentOps = writeOpsFile([{ op: "comment", ref: "OPS-23", html: "<p>free tier</p>" }]);
+    const before = server.requests.length;
+    const ok = await runCli([commentOps], { baseUrl: server.url, stateDir });
+    check("T402: a comment applies when types 402", ok.code, 0);
+    check("T402: exactly one write", writesSince(server, before).length, 1);
+    const typedOps = writeOpsFile([
+      { op: "create", project: "OPS", name: "Typed task", state: "Backlog", type: "Epic" },
+    ]);
+    const typed = await runCli([typedOps], { baseUrl: server.url, stateDir });
+    check("T402: a typed create fails", typed.code !== 0, true);
+    check(
+      "T402: the failure names the unavailable types",
+      /work-item types unavailable/.test(typed.stdout + typed.stderr),
+      true,
+    );
+    await server.close();
+  }
+
   // ── T9 (5 phases) + T9b — shared fixture ──────────────────────────────────
   // ROAD-15 (In progress, group started — also T9b's archive target),
   // ROAD-68 (Backlog — the `create` op's `parent`), OPS-23 (Backlog),
