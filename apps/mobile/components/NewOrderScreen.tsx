@@ -540,7 +540,11 @@ function ProductPickView({
   // Prices shown/summed/submitted use getTierPrice(product, effectiveTier), not
   // the raw list price — so a tier-N customer sees the price the server bills.
   const { data: customerDetail } = useCustomer(customerId);
-  const { data: customerPrices } = useCustomerPrices(customerId);
+  const {
+    data: customerPrices,
+    isFetched: customerPricesFetched,
+    isError: customerPricesErrored,
+  } = useCustomerPrices(customerId);
   // Tenant margin config for the live cost/margin hint in the cart rows.
   const { data: marginConfig } = useMarginConfig();
   // Lines the operator explicitly acked as "sell anyway" below the margin
@@ -717,9 +721,9 @@ function ProductPickView({
   const hydrationStartedRef = useRef(false);
   useEffect(() => {
     if (!hydrating || hydrationStartedRef.current) return;
-    // R2: wait for customerDetail/customerPrices — the resume price commits ONCE, so
-    // running early silently bakes in tier 1 forever (see effectiveTierFor below).
-    if (!customerDetail || customerPrices === undefined) return;
+    // R2/SA-136b: wait for customerDetail + the prices query to SETTLE (not just for data —
+    // a plan-gated/errored prices query never resolves data, which used to hang forever).
+    if (!customerDetail || !(customerPricesFetched || customerPricesErrored)) return;
     hydrationStartedRef.current = true;
     const parkedLines: DraftCatalogLine[] = draftSeed?.items ?? [];
     let cancelled = false;
@@ -795,6 +799,9 @@ function ProductPickView({
     })();
     return () => {
       cancelled = true;
+      // SA-136b: a dep-triggered re-run (customerDetail/customerPrices below) must be able to
+      // start fresh, or the top guard's hydrationStartedRef strands `hydrating` at true forever.
+      hydrationStartedRef.current = false;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [hydrating, hydrateAttempt, customerDetail, customerPrices]);

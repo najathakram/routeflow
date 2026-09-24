@@ -330,14 +330,52 @@ describe("NewOrderScreen resume prices off the PER-PRODUCT tier (R2, B747)", () 
     );
   });
 
-  it("the hydration effect waits for customerDetail AND customerPrices before running — never commits a tier-1 price early", () => {
+  it("the hydration effect waits for customerDetail AND the prices query to SETTLE (not just for data) before running", () => {
     expect(hydrationEffectSrc).toMatch(
-      /if\s*\(\s*!customerDetail\s*\|\|\s*customerPrices\s*===\s*undefined\s*\)\s*return;/,
+      /if\s*\(\s*!customerDetail\s*\|\|\s*!\(\s*customerPricesFetched\s*\|\|\s*customerPricesErrored\s*\)\s*\)\s*return;/,
     );
   });
 
   it("the effect re-runs once customerDetail/customerPrices load — both are in its dependency array", () => {
     expect(screenSrc).toMatch(/\[hydrating, hydrateAttempt, customerDetail, customerPrices\]/);
+  });
+});
+
+/**
+ * SA-136b/SA-153 (Opus REQUIRED, B747): GET /customers/:id/prices is plan-gated
+ * (flag.pricing_tiers) — on LITE/STARTER, or any network error, useCustomerPrices' `data` stays
+ * undefined FOREVER (TanStack Query never resolves an errored query's data), so gating the
+ * hydration effect on `customerPrices === undefined` (R2's own original fix) left it stuck behind
+ * an infinite spinner with no Retry for exactly those tenants. Gating on the query having SETTLED
+ * (isFetched || isError) instead lets hydration proceed with an empty per-product override map —
+ * completing at the customer's own default tier, never blocked.
+ *
+ * Second bug this uncovered: customerDetail/customerPrices sit in the effect's OWN dependency
+ * array, so a background refetch mid-hydration re-runs the effect — but the cleanup never reset
+ * hydrationStartedRef, so the re-run's own top guard (`hydrationStartedRef.current`) silently
+ * refused to start, permanently stranding `hydrating` at true with the cancelled run's results
+ * discarded and nothing to replace them.
+ */
+describe("NewOrderScreen resume never hangs on a plan-gated prices query (SA-136b/SA-153, B747)", () => {
+  const screenSrc = readFileSync(join(__dirname, "..", "components", "NewOrderScreen.tsx"), "utf8");
+
+  it("destructures isFetched/isError from useCustomerPrices, not just data", () => {
+    expect(screenSrc).toMatch(
+      /const\s*\{\s*data:\s*customerPrices,\s*isFetched:\s*customerPricesFetched,\s*isError:\s*customerPricesErrored,?\s*\}\s*=\s*useCustomerPrices/,
+    );
+  });
+
+  it("a 403/network error on the prices query is a SETTLED state, not a permanent block", () => {
+    expect(screenSrc).toMatch(/customerPricesFetched\s*\|\|\s*customerPricesErrored/);
+    expect(screenSrc).not.toMatch(/!customerDetail\s*\|\|\s*customerPrices\s*===\s*undefined/);
+  });
+
+  it("the cleanup resets hydrationStartedRef — a dep-cancelled run can always be re-run, never stranded", () => {
+    const cleanupSrc = screenSrc.slice(
+      screenSrc.indexOf("return () => {\n      cancelled = true;"),
+      screenSrc.indexOf("[hydrating, hydrateAttempt, customerDetail, customerPrices]"),
+    );
+    expect(cleanupSrc).toMatch(/hydrationStartedRef\.current\s*=\s*false;/);
   });
 });
 
