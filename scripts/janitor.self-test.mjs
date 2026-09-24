@@ -865,14 +865,17 @@ t(
   () => {
     const src = readFileSync(fileURLToPath(new URL("./janitor.mjs", import.meta.url)), "utf8");
     assert.doesNotMatch(src, /shell\s*:\s*true/);
+    // No aliased or extra child_process import can dodge the call scan below.
+    const cpImports = src.match(/^import[^;]*["']node:child_process["'];?$/gm) ?? [];
+    assert.deepEqual(cpImports, ['import { execFileSync } from "node:child_process";']);
     const callRe =
-      /(function\s+)?\b(execFileSync|execSync|spawnSync|spawn|exec|trySh|sh|run)\(\s*([^,)]+),?\s*(\S*)/g;
+      /(function\s+)?\b(execFileSync|execFile|execSync|spawnSync|spawn|exec|trySh|sh|run)\(\s*([^,)]+),?\s*(\S*)/g;
     const calls = [...src.matchAll(callRe)].filter((m) => !m[1]); // not the sh/trySh definitions
     const exes = new Set(["git", "gh", "powershell", "df", "cmd", "docker", "npm"]);
     let passThroughs = 0;
     let cmdCalls = 0;
     for (const [text, , fn, first, next] of calls) {
-      assert.ok(!["execSync", "spawnSync", "spawn", "exec"].includes(fn), text);
+      assert.ok(!["execFile", "execSync", "spawnSync", "spawn", "exec"].includes(fn), text);
       const lit = /^"([^"]+)"$/.exec(first.trim());
       if (!lit) {
         assert.equal(first.trim(), "cmd", `a non-literal executable: ${text}`);

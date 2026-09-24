@@ -412,6 +412,8 @@ export function cmdRmdirArgs(p, { recursive = false } = {}) {
     refuseCmd("a path with a dot segment or a trailing dot or space", p);
   }
   const abs = win32.resolve(p);
+  // A backstop: with the checks above it cannot fire today. It only guards against
+  // path.win32.resolve changing behaviour, so keep it even though no test reaches it alone.
   const sameRootKind = drive ? /^[A-Za-z]:\\/.test(abs) : /^\\\\[^\\?.]/.test(abs);
   if (
     abs.includes("/") ||
