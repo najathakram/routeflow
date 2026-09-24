@@ -18,7 +18,12 @@ import { SystemConfigService } from "../system-config/system-config.service";
 import { CreateOrderTemplateDto } from "./dto/create-order-template.dto";
 import { UpdateOrderTemplateDto } from "./dto/update-order-template.dto";
 import { AddTemplateItemDto } from "./dto/add-template-item.dto";
-import { computeCategoryTax, computeLineSubtotal, roundMoney } from "@routeflow/pricing";
+import {
+  categoryTaxSnapshotOf,
+  computeCategoryTax,
+  computeLineSubtotal,
+  roundMoney,
+} from "@routeflow/pricing";
 import type { CategoryTaxType } from "@routeflow/pricing";
 import { taxRateFractionFrom } from "../common/tax-rate";
 import { decrementStockForSale } from "../orders/order-stock";
@@ -508,6 +513,16 @@ export class OrderTemplatesService {
             priceIncludesTax: category.priceIncludesTax,
           })
         : 0;
+      // B297 (SA-088): freeze the trio categoryTaxAmount above was computed from.
+      const categorySnapshot = categoryTaxSnapshotOf(
+        category
+          ? {
+              taxType: category.taxType as CategoryTaxType,
+              rate: category.rate,
+              priceIncludesTax: category.priceIncludesTax,
+            }
+          : null,
+      );
       return {
         productId: item.productId,
         qty: item.qty,
@@ -520,6 +535,7 @@ export class OrderTemplatesService {
         // W4/W6b: snapshot the product's regulated category at sale time (unchanged).
         trackedCategoryId: product.trackedCategoryId ?? null,
         categoryTaxAmount,
+        ...categorySnapshot,
         tenantId, // nested creates bypass forTenant() extension
       };
     });

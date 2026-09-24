@@ -1,5 +1,6 @@
 import { BadRequestException } from "@nestjs/common";
 import {
+  categoryTaxSnapshotOf,
   computeCategoryTax,
   computeLineSubtotal,
   roundMoney,
@@ -81,6 +82,16 @@ export function buildInvoiceUnitLine(input: {
           priceIncludesTax: category.priceIncludesTax,
         })
       : 0,
+    // B297 (SA-088): the rate trio categoryTaxAmount above was computed from.
+    ...categoryTaxSnapshotOf(
+      category
+        ? {
+            taxType: category.taxType as CategoryTaxType,
+            rate: category.rate as number | string,
+            priceIncludesTax: category.priceIncludesTax,
+          }
+        : null,
+    ),
     notes: item.notes ?? null,
     // MSRP snapshot — set by applyMsrpSnapshots (null when flag.msrp is off).
     msrp: null as number | null,

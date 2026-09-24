@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import { useQueries } from "@tanstack/react-query";
 import {
   ActivityIndicator,
   Pressable,
@@ -14,17 +15,26 @@ import { ios } from "@routeflow/ui/tokens";
 import { NavBackButton, NavBar } from "@routeflow/ui/mobile/ios";
 import { useActiveRouteRun, useRouteRun } from "../../../../../lib/api/routes";
 import { useDriverPayments } from "../../../../../lib/api/addons";
-import { useOrder, type OrderItem } from "../../../../../lib/api/orders";
+import { orderQueryOptions, type Order, type OrderItem } from "../../../../../lib/api/orders";
 import { useDeliveryPlanStore } from "../../../../../store/delivery-plan-store";
 import {
-  freeUnitSizeFor,
   reconciledTotal,
   deliveryTypeForQty,
   isUnitAwareLine,
   normalizeDeliveryPlan,
+  shortPickLinesFromOrder,
   type ShortPickLine,
 } from "../../../../../lib/short-pick";
 import { sanitizeIntInput, parseIntQty } from "../../../../../lib/qty";
+
+/** Same "adjustable" predicate `shortPickLinesFromOrder` applies for the
+ *  money-math half — kept alongside it here since rendering needs the
+ *  RICHER `OrderItem` (product name), not the pure `ShortPickLine`. */
+function adjustableLines(order: Order | undefined): OrderItem[] {
+  return (order?.lineItems ?? []).filter(
+    (li) => li.status !== "CANCELLED" && Number(li.deliveredQty ?? 0) === 0,
+  );
+}
 
 /**
  * Per-line "how much did you actually deliver" review, interposed between the
@@ -45,46 +55,46 @@ export default function ShortPickScreen() {
   const runId = params.runId ?? activeData?.data?.[0]?.id;
   const { data: run, isLoading: runLoading } = useRouteRun(runId ?? "");
   const stop = useMemo(() => run?.stops?.find((s) => s.id === stopId), [run, stopId]);
-  const orderId = stop?.orders?.[0]?.id;
-  const { data: order, isLoading: orderLoading } = useOrder(orderId ?? "");
 
-  // Same adjustability gate as adjust.tsx: not cancelled, nothing already
-  // delivered (a reopened, partially-completed stop shouldn't re-offer
-  // already-settled lines).
-  const lines: OrderItem[] = useMemo(
-    () =>
-      (order?.lineItems ?? []).filter(
-        (li) => li.status !== "CANCELLED" && Number(li.deliveredQty ?? 0) === 0,
+  // B762: review EVERY order at the stop, not just orders[0] — a multi-order
+  // stop must let the driver short-pick/refuse each order independently, or
+  // the others silently complete as fully delivered no matter what actually
+  // happened at the door. Same shared query definition useOrder uses
+  // (orderQueryOptions), so this lands on the SAME cache entry as any other
+  // screen reading one of these orders — never a second, divergent fetch
+  // (mirrors return/index.tsx's existing fan-out).
+  const stopOrderIds = useMemo(() => (stop?.orders ?? []).map((o) => o.id), [stop]);
+  const { ordersById, ordersLoading } = useQueries({
+    queries: stopOrderIds.map((id) => orderQueryOptions(id)),
+    combine: (results) => ({
+      ordersById: Object.fromEntries(
+        stopOrderIds
+          .map((id, i) => [id, results[i]?.data] as const)
+          .filter((entry): entry is [string, Order] => !!entry[1]),
       ),
-    [order],
-  );
+      ordersLoading: results.some((r) => r.isLoading),
+    }),
+  });
 
+  // Per-order RICH lines for rendering (product name) — same adjustability
+  // gate as adjust.tsx: not cancelled, nothing already delivered (a
+  // reopened, partially-completed stop shouldn't re-offer already-settled
+  // lines). Money math is derived SEPARATELY via shortPickLinesFromOrder
+  // (the shared, screen-agnostic mapping payment.tsx also uses) since the
+  // pure `ShortPickLine` doesn't carry a display name.
+  const linesByOrder = useMemo(() => {
+    const map: Record<string, OrderItem[]> = {};
+    for (const id of stopOrderIds) map[id] = adjustableLines(ordersById[id]);
+    return map;
+  }, [stopOrderIds, ordersById]);
+
+  // B648/B762 merge: shortPickLinesFromOrder now carries unitLabel/
+  // unitsPerBox/boxes through (see lib/short-pick.ts), so this flattened,
+  // multi-order form is both the B762 fan-out AND B648's whole-Case data —
+  // no separate inline mapping needed.
   const shortPickLines: ShortPickLine[] = useMemo(
-    () =>
-      lines.map((li) => ({
-        orderItemId: li.id,
-        productId: li.productId,
-        orderedQty: Number(li.qty),
-        subtotal: li.subtotal ?? null,
-        // Must stay byte-identical to payment.tsx's mapping: both screens feed
-        // the SAME reconciledTotal, and omitting freeUnits here would silently
-        // fall back to the plain linear proration (freeUnits ?? 0) — so this
-        // review screen would quote one number and the very next screen would
-        // collect another for the same delivery plan (REG-B50).
-        freeUnits: li.promoFreeUnits ?? 0,
-        // `promoFreeUnits` counts whole SELLING units (BOXES on a box-split
-        // line) while `orderedQty` and the qty steppers below are in PIECES —
-        // the server oracle's `freeUnitSize` bridges the two axes.
-        freeUnitSize: freeUnitSizeFor(li),
-        // B648/SA-094: a units_v1 line whose unitsPerBox > 1 gets the
-        // whole-Case stepper — see lib/short-pick.ts#isUnitAwareLine. Must
-        // also stay byte-identical to payment.tsx's mapping for the same
-        // REG-B50 reason as freeUnits.
-        unitLabel: li.unitLabel ?? null,
-        unitsPerBox: li.unitsPerBox ?? null,
-        boxes: li.boxes ?? null,
-      })),
-    [lines],
+    () => stopOrderIds.flatMap((id) => shortPickLinesFromOrder(ordersById[id])),
+    [stopOrderIds, ordersById],
   );
 
   // Seed from any override this stop already has in the plan store (e.g. an
@@ -123,7 +133,7 @@ export default function ShortPickScreen() {
     router.push(`/route/stop/${stopId}/payment` as any);
   }
 
-  if (activeLoading || runLoading || orderLoading) {
+  if (activeLoading || runLoading || ordersLoading) {
     return (
       <SafeAreaView style={styles.safe} edges={["top", "left", "right"]}>
         <NavBar
@@ -151,14 +161,31 @@ export default function ShortPickScreen() {
           Everything defaults to fully delivered. Only adjust a line if you're short or the customer
           refused it.
         </Text>
-        {lines.map((li) => (
-          <ShortPickRow
-            key={li.id}
-            li={li}
-            qty={normalizedPlan[li.id] ?? li.qty}
-            onChangeQty={(q) => setQtyById((m) => ({ ...m, [li.id]: q }))}
-          />
-        ))}
+        {(stop?.orders ?? []).map((o) => {
+          const lines = linesByOrder[o.id] ?? [];
+          if (lines.length === 0) return null;
+          return (
+            <View key={o.id}>
+              {/* Only label sections on an actual multi-order stop — a single
+                  order needs no header, matching the pre-B762 screen exactly. */}
+              {stopOrderIds.length > 1 ? (
+                <Text style={styles.orderHeader}>ORDER {o.orderNumber}</Text>
+              ) : null}
+              {lines.map((li) => (
+                <ShortPickRow
+                  key={li.id}
+                  li={li}
+                  // B648/SA-094b: normalizedPlan is the stop-WIDE snapped map
+                  // (item 3 of the B762 adaptation) — every order's rows read
+                  // the SAME snapped number the total/badge use, never the
+                  // raw qtyById entry.
+                  qty={normalizedPlan[li.id] ?? li.qty}
+                  onChangeQty={(q) => setQtyById((m) => ({ ...m, [li.id]: q }))}
+                />
+              ))}
+            </View>
+          );
+        })}
 
         <View style={styles.totalBlock}>
           <Text style={styles.totalLabel}>
@@ -314,6 +341,14 @@ const styles = StyleSheet.create({
     marginHorizontal: 16,
     marginTop: 12,
     lineHeight: 18,
+  },
+  orderHeader: {
+    fontSize: 12,
+    fontFamily: "Inter_700Bold",
+    color: ios.label2,
+    letterSpacing: 0.6,
+    marginHorizontal: 16,
+    marginTop: 18,
   },
   card: {
     marginHorizontal: 16,
