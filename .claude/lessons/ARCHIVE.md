@@ -2808,3 +2808,19 @@ citations, closed-out with its own post-init assertion guard).
   outside the register, and the guard is a permanent code fix plus a standing regression spec
   pinning the exact shape at both call sites, rather than a rule a session needs to recall by
   reading this prose.)
+
+## Archived 2026-09-24 — headroom for L-216 (note --section silent loss, B840)
+
+### L-178 · 2026-09-16 · security · demo-booking PR-2 (raw error message leak)
+
+- **Symptom:** a public-facing catch handler rendered a caught error's `.message` verbatim, so
+  an unauthenticated route could show NestJS's own raw 404 body instead of a curated message.
+- **Root cause:** the load path assumed every reachable error was one of its own curated
+  exceptions; it never accounted for a transport-level failure with no safe message behind it.
+- **Lesson:** **A public unauthenticated page's catch handler must show a FIXED, generic message
+  for any path that can receive a transport-level failure, never `error.message` — a curated
+  message is safe to show only when every source feeding that catch is known and typed.**
+- **Guard:** `demo-scheduler.test.tsx` pins a raw framework 404, a bare network failure, and a
+  raw 500 all rendering the SAME fixed message, never the response body.
+  (Archived 2026-09-24 to make room at cap: zero citations outside the register, and the guard is a
+  standing regression test, demo-scheduler.test.tsx, pinning the fixed message for all three failure shapes.)
