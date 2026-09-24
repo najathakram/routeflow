@@ -14,6 +14,7 @@ import { PlatformConfigService } from "../platform-admin/platform-config.service
 import { Prisma, MovementType, PaymentMethod } from "@prisma/client";
 import { costDecimal, nextAverageCost, reverseAverageCost } from "../inventory/costing";
 import { assertBillWithinPo, type BillLinePieces } from "./po-bill-match";
+import { assertPackSizeKnownOrLog } from "./pack-size-gate";
 import { roundMoney } from "@routeflow/pricing";
 import { assertMoneyInvariantsOrThrow } from "../common/money-invariants.util";
 import Anthropic from "@anthropic-ai/sdk";
@@ -320,6 +321,37 @@ export class VendorBillsService {
           "Map every line to a product before raising a purchase order from this bill.",
         );
       }
+      // B743: the raised PO's qtyOrdered/unitCost are taken DIRECTLY from
+      // billLineToPieces's output and become the authoritative stock-mover
+      // for this bill (receive() skips a PO-linked bill entirely) — so an
+      // ambiguous pack here must be caught before the PO is ever raised,
+      // not later at some unrelated PO receive screen.
+      const products = await this.prisma.forTenant().product.findMany({
+        where: { id: { in: [...new Set(lines.map((i) => i.productId))] } },
+        select: {
+          id: true,
+          name: true,
+          unitsPerBox: true,
+          units: { select: { factorToBase: true } },
+        },
+      });
+      const productsById = new Map(products.map((p) => [p.id, p]));
+      assertPackSizeKnownOrLog(
+        this.logger,
+        this.prisma.getTenantId(),
+        lines.map((item, lineIndex) => ({
+          id: null,
+          lineIndex,
+          description: item.description || item.name || "",
+          productId: item.productId,
+          packSize: item.packSize,
+          qty: Number(item.qty ?? 1),
+          unitCost: Number(item.unitCost ?? item.unitPrice ?? 0),
+          product: productsById.get(item.productId),
+        })),
+        !!dto.acknowledgePackSizeUnknown,
+        { path: "raise-po", billId: null, billNumber: null },
+      );
     }
 
     if (dto.purchaseOrderId && !supplierId) {
@@ -922,7 +954,9 @@ export class VendorBillsService {
     const bill = await this.prisma.forTenant().vendorBill.findUnique({
       where: { id },
       include: {
-        items: { include: { product: true } },
+        // `units` (B743): the units_v1 selling ladder is a second signal (alongside
+        // `unitsPerBox`) that a product is known to be boxed — see pack-size-gate.ts.
+        items: { include: { product: { include: { units: { select: { factorToBase: true } } } } } },
         supplier: { select: { id: true, name: true } },
       },
     });
@@ -1007,6 +1041,41 @@ export class VendorBillsService {
       plan = linked
         .map((item) => ({ item, receiveQty: remainingOf(item) }))
         .filter((p) => p.receiveQty.gt(0));
+    }
+
+    // B743: a bill line billed in the supplier's own denomination (cases when
+    // packSize > 1) but with no pack stated silently posts as pieces at the
+    // case price once it moves stock below — refuse (once enforced) or log
+    // (while dark). Guard (e) already means a PO-linked bill posts no stock
+    // here at all, so this only applies to bills receiving directly. First
+    // receipt only per line — a partial top-up keeps the basis it was
+    // already posted at, never re-asking.
+    if (bill.purchaseOrderId == null) {
+      assertPackSizeKnownOrLog(
+        this.logger,
+        this.prisma.getTenantId(),
+        plan
+          .filter(({ item }) => item.productId && this.lineReceivedQty(bill, item).lte(0))
+          .map(({ item }) => ({
+            id: item.id,
+            // Opus review (B743 PR A, finding 3): this array is FILTERED
+            // (see .filter above) — indexing it directly gave the position
+            // in the filtered plan, not the line's real position on the
+            // bill. Every line here already carries a real `item.id`
+            // (unlike create()'s raise-PO path, where lineIndex is the only
+            // identifier for a not-yet-persisted line) — findIndex against
+            // the bill's own full item list is the line's true position.
+            lineIndex: bill.items.findIndex((i) => i.id === item.id),
+            description: item.description,
+            productId: item.productId!,
+            packSize: item.packSize,
+            qty: Number(item.qty),
+            unitCost: Number(item.unitCost),
+            product: item.product,
+          })),
+        !!dto?.acknowledgePackSizeUnknown,
+        { path: "receive", billId: bill.id, billNumber: bill.billNumber },
+      );
     }
 
     // Fully received once every linked line's cumulative receipt covers its

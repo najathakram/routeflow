@@ -33,6 +33,93 @@ export interface ShortPickLine {
    * axis, which is every selling-unit line.
    */
   freeUnitSize?: number;
+  /**
+   * B648: the units_v1 selling unit ("Case", "Pallet"…) this line is sold by;
+   * null/undefined for a plain piece/pack line. `orderedQty` on such a line
+   * is base PIECES (count × the line's own `unitsPerBox` snapshot).
+   */
+  unitLabel?: string | null;
+  /**
+   * SA-094: the line's own selling-unit-per-base-pack factor snapshot
+   * (`OrderItem.unitsPerBox`). `isUnitAwareLine` requires this to be > 1 —
+   * `unit-line-build.ts` stores a FACTOR-1 unit line ("Piece") with
+   * `boxes: null`, `unitsPerBox: 1`, and its pieces ARE individually
+   * countable, so it keeps the ordinary piece stepper (a units_v1 line whose
+   * "unit" already IS a piece has no whole-case granularity to protect).
+   */
+  unitsPerBox?: number | null;
+  /**
+   * SA-094a: the STORED count of the selling unit on this line
+   * (`unit-line-build.ts` stores `boxes = count` for a factor>1 unit line —
+   * "stored like a box-split line whose 'box' is the unit"). The whole-Case
+   * stepper's upper bound; never derived from the live product.
+   */
+  boxes?: number | null;
+}
+
+/**
+ * B648/SA-094: true when a line is sold by a units_v1 unit whose OWN pack
+ * snapshot is > 1 base piece per unit — the case a piece-counting stepper
+ * cannot represent one-for-one, so it gets the whole-Case stepper instead
+ * (see `effectiveDeliveredQty`). A factor-1 unit line (`unitsPerBox` 1 or
+ * absent, e.g. "Piece") is EXCLUDED here even though `unitLabel` is set — its
+ * pieces are individually countable, so it keeps the ordinary piece stepper
+ * and clamp. Exported so the review screen can pick which control to render.
+ */
+export function isUnitAwareLine(li: Pick<ShortPickLine, "unitLabel" | "unitsPerBox">): boolean {
+  return (li.unitLabel ?? "").trim() !== "" && Number(li.unitsPerBox ?? 0) > 1;
+}
+
+/**
+ * B648/SA-094a: the delivered qty this module ever uses for a line. For a
+ * unit-aware line (`isUnitAwareLine`, factor > 1), `deliveredQtyById`'s raw
+ * entry SNAPS DOWN to the nearest whole multiple of the line's own
+ * `unitsPerBox` — `clamp(floor(raw / unitsPerBox) * unitsPerBox, 0,
+ * orderedQty)` — so a stray/leftover piece count (e.g. 300 on a 288-piece
+ * Case) can never leak a fractional Case into the money math (300 -> 288,
+ * one whole Case, never 300 pieces of "partial"). n=0 -> REFUSED, n=count ->
+ * DELIVERED, anything between -> PARTIAL at that many WHOLE cases. No entry
+ * at all is the universal "untouched" default every other line already
+ * uses: fully delivered. Every function below reads through this ONE place —
+ * `normalizeDeliveryPlan` exports the same snapping for every caller that
+ * needs a full plan map, not just one line's value (SA-094b's normalizer
+ * requirement: the category-tax half and the review row's own badge must
+ * read the SAME snapped number reconciledTotal/buildDeliveries already do).
+ */
+function effectiveDeliveredQty(
+  li: Pick<ShortPickLine, "orderItemId" | "orderedQty" | "unitLabel" | "unitsPerBox">,
+  deliveredQtyById: Record<string, number>,
+): number {
+  const raw = deliveredQtyById[li.orderItemId];
+  if (isUnitAwareLine(li)) {
+    if (raw == null) return li.orderedQty;
+    const upb = Number(li.unitsPerBox);
+    const snapped = Math.floor(Math.max(0, raw) / upb) * upb;
+    return Math.max(0, Math.min(snapped, li.orderedQty));
+  }
+  return Math.max(0, Math.min(raw ?? li.orderedQty, li.orderedQty));
+}
+
+/**
+ * SA-094b: the SAME `effectiveDeliveredQty` snap, for every line in one
+ * call — the map every caller must pass to BOTH money halves
+ * (`deliveredCategoryTax`/`shortPickCategoryTax`, which have no
+ * unit-awareness of their own) AND the review row's displayed qty/badge.
+ * Reading the raw `deliveredQtyById` in only one of those places is exactly
+ * how a stray 288-of-864 entry used to bill the full subtotal (via
+ * `reconciledTotal`, already normalized) while charging only a third of the
+ * category tax (via the un-normalized `deliveredCategoryTax`) and showing a
+ * "Short" badge next to a "Delivered" total.
+ */
+export function normalizeDeliveryPlan(
+  lines: ShortPickLine[],
+  deliveredQtyById: Record<string, number>,
+): Record<string, number> {
+  const out: Record<string, number> = {};
+  for (const li of lines) {
+    out[li.orderItemId] = effectiveDeliveredQty(li, deliveredQtyById);
+  }
+  return out;
 }
 
 /**
@@ -57,6 +144,116 @@ export function freeUnitSizeFor(li: {
   if (li.boxes == null) return 1;
   const upb = Math.trunc(Number(li.unitsPerBox ?? li.product?.unitsPerBox ?? 0));
   return upb > 0 ? upb : 1;
+}
+
+/** The shape `shortPickLinesFromOrder` reads off an order's own line items. */
+export interface ShortPickSourceLine {
+  id: string;
+  productId: string | null;
+  status?: string | null;
+  deliveredQty?: number | string | null;
+  qty: number | string;
+  subtotal?: number | null;
+  promoFreeUnits?: number | null;
+  boxes?: number | null;
+  unitsPerBox?: number | null;
+  /** B648/SA-094: the units_v1 selling unit ("Case"…) — see ShortPickLine. */
+  unitLabel?: string | null;
+  product?: { unitsPerBox?: number | null } | null;
+}
+
+/**
+ * An order's lines -> `ShortPickLine[]` (B762): the SAME mapping
+ * short-pick.tsx and payment.tsx each used to inline separately, byte-
+ * identical between them by convention — both screens feed the same
+ * `reconciledTotal`/`buildDeliveries`/`buildStopDeliveries`, so a single
+ * shared derivation is what keeps that convention enforced rather than
+ * merely documented. Excludes CANCELLED lines (not adjustable) and lines
+ * already delivered (a reopened, partially-completed stop shouldn't
+ * re-offer an already-settled line).
+ */
+export function shortPickLinesFromOrder(
+  order: { lineItems?: readonly ShortPickSourceLine[] | null } | null | undefined,
+): ShortPickLine[] {
+  return (order?.lineItems ?? [])
+    .filter((li) => li.status !== "CANCELLED" && Number(li.deliveredQty ?? 0) === 0)
+    .map((li) => ({
+      orderItemId: li.id,
+      productId: li.productId,
+      orderedQty: Number(li.qty),
+      subtotal: li.subtotal ?? null,
+      freeUnits: li.promoFreeUnits ?? 0,
+      freeUnitSize: freeUnitSizeFor(li),
+      // B648/SA-094 (carried through the B762 merge): without these,
+      // isUnitAwareLine reads every multi-order line as a plain pack line —
+      // a Case line loses its whole-Case stepper and normalizeDeliveryPlan's
+      // snap the moment it's reviewed through the multi-order fan-out.
+      unitLabel: li.unitLabel ?? null,
+      unitsPerBox: li.unitsPerBox ?? null,
+      boxes: li.boxes ?? null,
+    }));
+}
+
+/** The shape `fallbackShortPickLines` reads off the STOP's own embedded snapshot. */
+export interface StopSnapshotLine {
+  id: string;
+  productId: string | null;
+  status?: string | null;
+  qty: number | string;
+  subtotal?: number | string | null;
+  /** B648/SA-094: without these, a Case line falling back to this snapshot
+   *  (its richer per-order fetch hasn't landed) reads as a plain pack line
+   *  and normalizeDeliveryPlan never snaps its qty to a whole Case. */
+  boxes?: number | null;
+  unitsPerBox?: number | null;
+  unitLabel?: string | null;
+}
+
+/**
+ * SA-115: the delivery-payload lines for an order whose richer per-order
+ * fetch has NOT LANDED — built from the STOP's own embedded snapshot
+ * (already available with no extra fetch), so `closeStop` (payment.tsx)
+ * still covers the order rather than blocking on every order's fetch
+ * (which would cost only a spinner, but also break an offline close). The
+ * CALLER is responsible for using this ONLY when the order's fetch truly
+ * hasn't landed — never merely because `shortPickLinesFromOrder` came back
+ * empty for a LANDED order (that's a real "nothing adjustable" state, not
+ * missing data, and must send zero entries, not re-claim full delivery).
+ *
+ * CANCELLED lines are filtered (SA-115 required (1), reasoning corrected in
+ * SA-115a): `status` rides this snapshot on the wire, and an office cancel
+ * leaves `qty` untouched, so an unfiltered map would send a CANCELLED line
+ * as DELIVERED at full qty. Billing it isn't live on master today, but the
+ * server would still stamp `deliveredQty` on the cancelled line and write
+ * a DELIVERED mutation row for it — false evidence every later reader of
+ * those rows (audit, reports, a future billing path) trusts as real.
+ *
+ * No BOGO netting (`freeUnits: 0`/`freeUnitSize: 1`): a `deliveredQtyById`
+ * override can't realistically exist for an order whose review screen
+ * never loaded to record one, so every surviving line resolves to
+ * `deliveryTypeForQty`'s DELIVERED-at-full-qty case regardless.
+ *
+ * SA-115 residual (accepted, filed separately, not B762): this snapshot
+ * carries no `deliveredQty`, so a re-delivery stop for an order that never
+ * loaded here would re-claim full delivery rather than "the remaining N".
+ */
+export function fallbackShortPickLines(
+  order: { lineItems?: readonly StopSnapshotLine[] | null } | null | undefined,
+): ShortPickLine[] {
+  return (order?.lineItems ?? [])
+    .filter((li) => li.status !== "CANCELLED")
+    .map((li) => ({
+      orderItemId: li.id,
+      productId: li.productId,
+      orderedQty: Number(li.qty ?? 0),
+      subtotal: li.subtotal != null ? Number(li.subtotal) : null,
+      freeUnits: 0,
+      freeUnitSize: 1,
+      // B648/SA-094 (carried through the B762 merge) — see StopSnapshotLine.
+      unitLabel: li.unitLabel ?? null,
+      unitsPerBox: li.unitsPerBox ?? null,
+      boxes: li.boxes ?? null,
+    }));
 }
 
 /** DELIVERED at the full ordered qty, REFUSED at 0, else PARTIAL. */
@@ -94,8 +291,7 @@ export function buildDeliveries(
 ): PlannedDelivery[] {
   const out: PlannedDelivery[] = [];
   for (const li of lines) {
-    const raw = deliveredQtyById[li.orderItemId] ?? li.orderedQty;
-    const clamped = Math.max(0, Math.min(raw, li.orderedQty));
+    const clamped = effectiveDeliveredQty(li, deliveredQtyById);
     out.push({
       orderItemId: li.orderItemId,
       productId: li.productId,
@@ -121,8 +317,7 @@ export function reconciledTotal(
 ): number {
   let sum = 0;
   for (const li of lines) {
-    const raw = deliveredQtyById[li.orderItemId] ?? li.orderedQty;
-    const clamped = Math.max(0, Math.min(raw, li.orderedQty));
+    const clamped = effectiveDeliveredQty(li, deliveredQtyById);
     sum += prorateLineSubtotal(
       li.subtotal,
       clamped,
@@ -139,5 +334,72 @@ export function isFullyDelivered(
   lines: ShortPickLine[],
   deliveredQtyById: Record<string, number>,
 ): boolean {
-  return lines.every((li) => (deliveredQtyById[li.orderItemId] ?? li.orderedQty) >= li.orderedQty);
+  return lines.every((li) => effectiveDeliveredQty(li, deliveredQtyById) >= li.orderedQty);
+}
+
+/**
+ * SA-094a review (5), made a PER-ORDER check for the B762 multi-order stop
+ * (B648/B762 merge adaptation item 4): true when the driver already
+ * recorded a short-pick choice for one of THIS order's own lines (an entry
+ * in `deliveredQtyById` — shared/flat across every order at the stop,
+ * keyed by orderItemId, matched against `orderItemIds` from the STOP's own
+ * embedded snapshot, always available even pre-fetch) but this SPECIFIC
+ * order's richer per-order fetch hasn't landed yet (`landed` false) —
+ * closing the stop right now would silently DISCARD that choice for this
+ * order: `fallbackShortPickLines`'s un-landed path carries no
+ * `deliveredQty`, so it would deliver this order in full instead of what
+ * the driver actually recorded. The caller must refuse to close (not
+ * silently drop the plan) until this order's data loads. `landed` is true
+ * once ANY line loaded is irrelevant — pass whether the order's OWN fetch
+ * (e.g. `!!ordersById[orderId]`) has resolved.
+ */
+export function planPendingButLinesNotLoaded(
+  deliveredQtyById: Record<string, number>,
+  orderItemIds: readonly string[],
+  landed: boolean,
+): boolean {
+  if (landed) return false;
+  return orderItemIds.some((id) => id in deliveredQtyById);
+}
+
+/** One order's worth of `buildDeliveries` inputs, for a multi-order stop. */
+export interface StopOrderDeliveryPlan {
+  orderId: string;
+  lines: ShortPickLine[];
+  /** Missing lines default to their full ordered qty (buildDeliveries) — an
+   *  order the driver never touched still contributes explicit DELIVERED
+   *  entries, never zero entries. To mark a whole order refused, every one
+   *  of its lines must be present here at 0 — omission is never "refused". */
+  deliveredQtyById: Record<string, number>;
+}
+
+export interface StopDeliveryEntry {
+  orderItemId: string;
+  productId: string | null;
+  type: DeliveryType;
+  quantityDelivered: number;
+}
+
+/**
+ * The `deliveries` array for `useCompleteWithPayment`, across EVERY order at
+ * a multi-order stop (B762/SA-109/SA-109a). Full coverage per order, never
+ * omission: `buildDeliveries` already defaults an order's untouched lines to
+ * their full ordered qty/DELIVERED, so an order this array includes with an
+ * EMPTY `deliveredQtyById` still emits one explicit entry per line — the
+ * server reads a wholly OMITTED order (missing from this array entirely) as
+ * fully UNDELIVERED, so every order at the stop the driver actually handled
+ * must appear here, never be left out. `type` is always
+ * `deliveryTypeForQty(qty, orderedQty)`, matching `quantityDelivered`
+ * exactly — the server 400s a type/qty mismatch (SA-109a): REFUSED only at
+ * qty 0, DELIVERED only at the full ordered qty, PARTIAL otherwise.
+ */
+export function buildStopDeliveries(orders: StopOrderDeliveryPlan[]): StopDeliveryEntry[] {
+  return orders.flatMap((o) =>
+    buildDeliveries(o.lines, o.deliveredQtyById).map((d) => ({
+      orderItemId: d.orderItemId,
+      productId: d.productId,
+      type: d.type,
+      quantityDelivered: d.qty,
+    })),
+  );
 }
