@@ -46,7 +46,9 @@ const MERGE = {
   target: "OrderItem" as const,
   anchor: { via: "delegate", model: "orderItem" } as Anchor,
   carried:
-    "productId name qty unitPrice subtotal priceType originalPrice promoFreeUnits boxes pieces notes overrideReason overriddenBy status trackedCategoryId",
+    "productId name qty unitPrice subtotal priceType originalPrice promoFreeUnits boxes pieces notes overrideReason overriddenBy status trackedCategoryId " +
+    // B297: the loser line's trio, via `...copyCategoryTaxSnapshot(meta)` (SPREAD_HELPER_KEYS).
+    "categoryTaxType categoryTaxRate categoryPriceIncludesTax",
   rederived: "categoryTaxAmount", // recomputeLineCategoryTaxes after the fold
   na: "deliveredQty invoicedQty",
   gaps: {
@@ -65,7 +67,8 @@ export const COPIERS: Copier[] = [
     target: "InvoiceItem",
     anchor: { via: "return" },
     carried:
-      "productId qty unitPrice subtotal boxes pieces unitsPerBox unitLabel promoFreeUnits originalPrice priceType notes categoryTaxAmount orderItemId trackedCategoryId trackedSubcategoryId",
+      "productId qty unitPrice subtotal boxes pieces unitsPerBox unitLabel promoFreeUnits originalPrice priceType notes categoryTaxAmount orderItemId trackedCategoryId trackedSubcategoryId " +
+      "categoryTaxType categoryTaxRate categoryPriceIncludesTax", // B297: the order line's own trio, verbatim
     rederived: "description msrp taxRate",
     reset: "discount",
   },
@@ -76,7 +79,8 @@ export const COPIERS: Copier[] = [
     target: "InvoiceItem",
     anchor: { via: "prop", name: "items" },
     carried:
-      "description productId qty unitPrice discount taxRate boxes pieces promoFreeUnits msrp subtotal trackedCategoryId trackedSubcategoryId categoryTaxAmount unitsPerBox originalPrice priceType notes",
+      "description productId qty unitPrice discount taxRate boxes pieces promoFreeUnits msrp subtotal trackedCategoryId trackedSubcategoryId categoryTaxAmount unitsPerBox originalPrice priceType notes " +
+      "categoryTaxType categoryTaxRate categoryPriceIncludesTax", // B297: the source line's trio, verbatim
     na: "unitLabel orderItemId", // unit lines are refused (409); order-linked invoices are refused (RF-011)
   },
   {
@@ -94,19 +98,8 @@ export const COPIERS: Copier[] = [
     file: "estimates/estimates.service.ts",
     fn: "convertToInvoice",
     target: "InvoiceItem",
-    anchor: { via: "prop", name: "items" },
-    carried: "description productId qty unitPrice subtotal boxes pieces unitsPerBox",
-    rederived: "taxRate msrp",
-    reset: "discount",
-    na: "promoFreeUnits notes orderItemId", // the estimate line has no such column / no order link
-    gaps: {
-      priceType: "unfiled",
-      originalPrice: "unfiled",
-      unitLabel: "unfiled",
-      trackedCategoryId: "B659",
-      trackedSubcategoryId: "B659",
-      categoryTaxAmount: "B659",
-    },
+    coverage: "registry-only",
+    why: "since B659 (#1279) the rows are `items: { create: itemsData }` from buildManualInvoiceLines (invoices/manual-invoice-lines.ts, the builder InvoicesService.create uses): no local literal to read",
   },
   {
     id: "C6",
@@ -115,7 +108,9 @@ export const COPIERS: Copier[] = [
     target: "InvoiceItem",
     anchor: { via: "prop", name: "items" },
     carried: "description productId qty unitPrice discount taxRate",
-    rederived: "subtotal msrp categoryTaxAmount",
+    // InvoicesService.create prices the category tax and stamps the B297 trio from the LIVE category.
+    rederived:
+      "subtotal msrp categoryTaxAmount categoryTaxType categoryTaxRate categoryPriceIncludesTax",
     na: "originalPrice priceType promoFreeUnits notes orderItemId", // RecurringInvoiceItem has none of these columns
     gaps: {
       boxes: "B646",
@@ -133,8 +128,10 @@ export const COPIERS: Copier[] = [
     target: "OrderItem",
     anchor: { via: "prop", name: "lineItems" },
     carried: "productId qty notes",
-    rederived: "unitPrice subtotal priceType originalPrice promoFreeUnits trackedCategoryId",
-    reset: "categoryTaxAmount", // hard 0 = B658 (a wrong VALUE: not detectable by key presence)
+    // B658: categoryTaxAmount is now priced from the live category (it was a hard 0), and B297 stamps
+    // the trio beside it (`...categorySnapshot`, an opaque spread: presence is not checked).
+    rederived:
+      "unitPrice subtotal priceType originalPrice promoFreeUnits trackedCategoryId categoryTaxAmount categoryTaxType categoryTaxRate categoryPriceIncludesTax",
     na: ORDER_FRESH,
     gaps: {
       boxes: "B647",
@@ -153,8 +150,9 @@ export const COPIERS: Copier[] = [
     target: "OrderItem",
     anchor: { via: "prop", name: "items" },
     carried: "productId qty boxes pieces",
+    // The new line is written by OrdersService.create, which stamps the B297 trio from the live category.
     rederived:
-      "name unitPrice subtotal priceType originalPrice promoFreeUnits trackedCategoryId trackedSubcategoryId categoryTaxAmount position",
+      "name unitPrice subtotal priceType originalPrice promoFreeUnits trackedCategoryId trackedSubcategoryId categoryTaxAmount position categoryTaxType categoryTaxRate categoryPriceIncludesTax",
     na: ORDER_FRESH,
     gaps: {
       // B655 (#1174) now writes boxes/pieces; the new line still carries no unitsPerBox snapshot.
@@ -209,7 +207,7 @@ export const COPIERS: Copier[] = [
     anchor: { via: "push", name: "itemsData" },
     carried: "description productId qty unitPrice subtotal discount",
     reset: "taxRate", // forced 0
-    na: "originalPrice msrp priceType boxes pieces unitsPerBox promoFreeUnits notes orderItemId trackedCategoryId trackedSubcategoryId categoryTaxAmount unitLabel",
+    na: "originalPrice msrp priceType boxes pieces unitsPerBox promoFreeUnits notes orderItemId trackedCategoryId trackedSubcategoryId categoryTaxAmount unitLabel categoryTaxType categoryTaxRate categoryPriceIncludesTax",
   }, // CSV: per-piece by construction
   // C17 (not in R-ui's first table: the discovery pass found it; R-ui then verified it, invoices.service.ts
   // 2273-2420, callers 3540/3601/6342 = invoice edit and status flows). It UPDATES an existing order line, and
@@ -236,6 +234,10 @@ export const COPIERS: Copier[] = [
       notes: "unfiled",
       unitLabel: "unfiled",
       position: "unfiled",
+      // B297: CREATE carries the invoice lines' categoryTaxAmount but not the trio it was priced at.
+      categoryTaxType: "unfiled",
+      categoryTaxRate: "unfiled",
+      categoryPriceIncludesTax: "unfiled",
     },
   },
   // Client copiers: NOT column-checked (the spec is API-side; a request body is not a Prisma model).
@@ -279,6 +281,8 @@ export const NOT_A_COPIER: Record<string, string> = {
   "order-templates/order-templates.service.ts::update": "template lines from the request",
   "orders/orders.service.ts::create": "primary create from request lines",
   "orders/orders.service.ts::updateOrderItems": "order edit from the request",
+  "orders/unit-line-edit.ts::createUnitLine":
+    "units_v1 line create inside updateOrderItems' order edit, from the request (not a copy)",
   "orders/orders.service.ts::approveChangeRequestAtStop":
     "at-door line from the change-request payload",
   "recurring-invoices/recurring-invoices.service.ts::create": "template lines from the request",

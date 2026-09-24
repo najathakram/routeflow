@@ -107,6 +107,16 @@ function lineLiterals(v: ts.Node, fn: ts.Node): ts.ObjectLiteralExpression[] {
 
 const QUERY_ONLY = /^(select|include|where|orderBy|take|skip)$/;
 
+/**
+ * Helpers whose return is a FIXED key set on every path (a typed snapshot, never a partial), so
+ * `...helper(x)` inside an anchored literal writes exactly these keys. Only list a helper whose
+ * type makes every key mandatory: an optional-key helper would be a false green.
+ */
+export const SPREAD_HELPER_KEYS: Record<string, string[]> = {
+  // @routeflow/pricing, B297: returns CategoryTaxSnapshot (all three keys, null when absent).
+  copyCategoryTaxSnapshot: ["categoryTaxType", "categoryTaxRate", "categoryPriceIncludesTax"],
+};
+
 /** Top-level keys of the line-write literals inside function `ref.name`, or null when it is not found. */
 export function writtenKeys(src: string, ref: FnRef): Set<string> | null {
   const fns = findFunctions(src, ref.name);
@@ -142,8 +152,16 @@ export function writtenKeys(src: string, ref: FnRef): Set<string> | null {
       const ks = o.properties.map(keyName).filter((k): k is string => !!k);
       if (ks.length && ks.every((k) => QUERY_ONLY.test(k))) return; // a select/include/where, not a line
       o.properties.forEach((p) => {
-        // `...(cond ? { productId } : {})` contributes its literal keys; any other spread is opaque.
-        if (ts.isSpreadAssignment(p) && !ts.isIdentifier(p.expression))
+        // `...(cond ? { productId } : {})` contributes its literal keys, and `...helper(x)` the keys
+        // SPREAD_HELPER_KEYS pins for that helper; any other spread is opaque.
+        const helper =
+          ts.isSpreadAssignment(p) &&
+          ts.isCallExpression(p.expression) &&
+          ts.isIdentifier(p.expression.expression)
+            ? SPREAD_HELPER_KEYS[p.expression.expression.text]
+            : undefined;
+        if (helper) helper.forEach((k) => keys.add(k));
+        else if (ts.isSpreadAssignment(p) && !ts.isIdentifier(p.expression))
           outermostLiterals(p.expression, fn).forEach(addKeys);
         else if (keyName(p)) keys.add(keyName(p)!);
       });

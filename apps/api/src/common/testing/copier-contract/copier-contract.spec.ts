@@ -18,7 +18,9 @@
  * WHAT THIS CANNOT SEE (stated limits):
  *   1. A same-named key used for a read shape inside an anchored literal counts as "written" (false green).
  *   2. Copiers that spread another object (`...i`) or build the row in a helper are covered only through the
- *      anchored literal; C10 is registry-only for that reason. Raw-SQL writes are not detected at all.
+ *      anchored literal; C10 and C5 (B659: buildManualInvoiceLines builds its rows) are registry-only for that
+ *      reason. The one exception: `...helper(x)` for a helper in SPREAD_HELPER_KEYS (copier-ast.ts), whose
+ *      return is a fixed, fully-typed key set, counts as writing those keys. Raw-SQL writes are not detected.
  *   3. A wrong VALUE for a present key is invisible (B658: `categoryTaxAmount: 0` is a present key).
  *   4. CLIENT copiers (C15, C16a/b) are `coverage: "registry-only"`: they are NOT column-checked (a request
  *      body is not a Prisma model; the spec lives in apps/api). C3 (web Duplicate) was retired by B644 (#1159: the
@@ -43,7 +45,7 @@ import { writeSites, writtenKeys, findFunctions } from "./copier-ast";
 import { COPIERS, Copier, INFRA, Model, NOT_A_COPIER, NOT_SALES_FILES } from "./copier-registry";
 
 /** Pinned on purpose: adding a registry-only copier must be a visible diff HERE, not just in the registry. */
-const REGISTRY_ONLY_PINNED = ["C10", "C15", "C16a", "C16b"];
+const REGISTRY_ONLY_PINNED = ["C10", "C15", "C16a", "C16b", "C5"];
 const SRC = path.resolve(__dirname, "../../..");
 const ROOT = path.resolve(SRC, "../../..");
 const words = (s?: string) => (s ?? "").split(/\s+/).filter(Boolean);
@@ -259,6 +261,25 @@ describe("copier contract mutation proofs (each must turn the spec red)", () => 
     expect(evaluate(world({}, fx.replace(", boxes: i.boxes", ""))).join()).toMatch(
       /"boxes" is classified carried but is no longer written/,
     ));
+  describe("a known fixed-shape helper spread (SPREAD_HELPER_KEYS)", () => {
+    const trio = "categoryTaxType categoryTaxRate categoryPriceIncludesTax";
+    const cols = () => ["productId", "qty", "boxes", "unitsPerBox", ...trio.split(" ")];
+    const withSpread = (helper: string) =>
+      fx.replace("boxes: i.boxes", `boxes: i.boxes, ...${helper}(i)`);
+    const trioEntry: Copier = { ...entry, carried: `productId qty boxes ${trio}` };
+    it("...copyCategoryTaxSnapshot(x) writes the trio -> carried is green", () =>
+      expect(
+        evaluate(world({ columns: cols }, withSpread("copyCategoryTaxSnapshot"), trioEntry)),
+      ).toEqual([]));
+    it("(c) removing that spread -> the trio is a regression", () =>
+      expect(evaluate(world({ columns: cols }, fx, trioEntry)).join()).toMatch(
+        /"categoryTaxType" is classified carried but is no longer written/,
+      ));
+    it("an UNKNOWN helper spread stays opaque -> carried is red", () =>
+      expect(
+        evaluate(world({ columns: cols }, withSpread("someOtherHelper"), trioEntry)).join(),
+      ).toMatch(/"categoryTaxRate" is classified carried but is no longer written/));
+  });
   it("keys in where/select/include or the parent literal never count as written", () => {
     const noisy = fx
       .replace("create(", "create(")
