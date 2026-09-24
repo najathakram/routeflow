@@ -620,7 +620,9 @@ describe("RoutesService — F11 run-terminal release (REG-B129 / REG-B211)", () 
 
       expect(prisma.order.findMany).not.toHaveBeenCalled();
       expect(prisma.deliveryMutation.findMany).toHaveBeenCalledWith(
-        expect.objectContaining({ where: { routeRunStopId: { in: ["s2"] } } }),
+        expect.objectContaining({
+          where: expect.objectContaining({ routeRunStopId: { in: ["s2"] } }),
+        }),
       );
       expect(secondResult.stops[0].orders).toEqual([]);
     });

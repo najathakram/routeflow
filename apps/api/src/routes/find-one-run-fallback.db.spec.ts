@@ -173,12 +173,14 @@ describeDb("B756/SA-131 findOneRun legacy fallback — real Postgres round-trip"
       | "PARTIALLY_DELIVERED"
       | "DELIVERED"
       | "CANCELLED",
-  ): Promise<{ id: string }> {
+    over: { total?: number } = {},
+  ): Promise<{ id: string; total: unknown }> {
     return prisma.order.create({
       data: {
         customerId,
         status,
         orderNumber: `B756-${status}-${randomUUID().slice(0, 6)}`,
+        total: over.total ?? 0,
         tenantId,
       },
     });
@@ -225,6 +227,32 @@ describeDb("B756/SA-131 findOneRun legacy fallback — real Postgres round-trip"
           shippingFee: expect.anything(),
         }),
       );
+    },
+    30_000,
+  );
+
+  it(
+    "(e) the door quote: an OPEN run's fallback result sums to exactly the PENDING order's own " +
+      "total — stopAmountDue (mobile run-money.ts:234) sums stop.orders UNFILTERED, so it is " +
+      "this API's own status filter, not any client-side filtering, that keeps DRAFT/DELIVERED/" +
+      "CANCELLED out of the door quote",
+    async () => {
+      const tenant = await seedTenant();
+      const customer = await seedCustomer(tenant.id);
+      await seedOrder(tenant.id, customer.id, "DRAFT", { total: 40 });
+      const pending = await seedOrder(tenant.id, customer.id, "PENDING", { total: 25 });
+      await seedOrder(tenant.id, customer.id, "DELIVERED", { total: 60 });
+      await seedOrder(tenant.id, customer.id, "CANCELLED", { total: 15 });
+      const { runId } = await seedUnlinkedRun(tenant.id, "IN_PROGRESS", [customer.id]);
+
+      const result: any = await tenantCtx.run(tenant.id, () => routesService.findOneRun(runId));
+
+      const stop = result.stops[0];
+      expect(stop.orders.map((o: any) => o.id)).toEqual([pending.id]);
+      // A naive unfiltered sum over stop.orders (exactly what stopAmountDue does) now equals
+      // the PENDING order's own total alone — not 140 (all four orders summed).
+      const naiveSum = stop.orders.reduce((sum: number, o: any) => sum + Number(o.total), 0);
+      expect(naiveSum).toEqual(Number(pending.total));
     },
     30_000,
   );
@@ -286,6 +314,149 @@ describeDb("B756/SA-131 findOneRun legacy fallback — real Postgres round-trip"
     // Exact set equality: the evidence rows, and ONLY the evidence rows — never the
     // customer's un-evidenced PENDING order, regardless of status.
     expect(orderIds).toEqual([cancelled.id, delivered.id].sort());
+
+    // Money fields + customerId (B305 round 5) are projected on the closed branch too, not
+    // just id/orderNumber/status.
+    const deliveredRow = result.stops[0].orders.find((o: any) => o.id === delivered.id);
+    expect(deliveredRow).toEqual(
+      expect.objectContaining({
+        customerId: customer.id,
+        subtotal: expect.anything(),
+        tax: expect.anything(),
+        total: expect.anything(),
+        discountAmount: expect.anything(),
+        shippingFee: expect.anything(),
+      }),
+    );
+  }, 30_000);
+
+  it("the closed-run branch fires for CANCELLED runs too, not only COMPLETED — same DeliveryMutation evidence lookup", async () => {
+    const tenant = await seedTenant();
+    const customer = await seedCustomer(tenant.id);
+    const delivered = await seedOrder(tenant.id, customer.id, "DELIVERED");
+    const noEvidence = await seedOrder(tenant.id, customer.id, "PENDING");
+    void noEvidence;
+    const { runId, stopIds } = await seedUnlinkedRun(tenant.id, "CANCELLED", [customer.id]);
+
+    await prisma.deliveryMutation.create({
+      data: {
+        orderId: delivered.id,
+        routeRunStopId: stopIds[0],
+        type: "DELIVERED",
+        quantityDelivered: 1,
+        tenantId: tenant.id,
+      },
+    });
+
+    const result: any = await tenantCtx.run(tenant.id, () => routesService.findOneRun(runId));
+
+    expect(result.stops[0].orders.map((o: any) => o.id)).toEqual([delivered.id]);
+  }, 30_000);
+
+  it("closed-branch cross-tenant isolation: a mis-tenanted DeliveryMutation row on this tenant's own stop id is ignored", async () => {
+    const tenant = await seedTenant();
+    const otherTenant = await seedTenant();
+    const customer = await seedCustomer(tenant.id);
+    const delivered = await seedOrder(tenant.id, customer.id, "DELIVERED");
+    const { runId, stopIds } = await seedUnlinkedRun(tenant.id, "COMPLETED", [customer.id]);
+
+    // A real evidence row for tenant's own order.
+    await prisma.deliveryMutation.create({
+      data: {
+        orderId: delivered.id,
+        routeRunStopId: stopIds[0],
+        type: "DELIVERED",
+        quantityDelivered: 1,
+        tenantId: tenant.id,
+      },
+    });
+    // A mis-tenanted row: tenantId=otherTenant, but routeRunStopId points at tenant's own
+    // stop — proves forTenant()'s scoping on the DeliveryMutation lookup itself, not just an
+    // accidental id mismatch.
+    const strayOrder = await seedOrder(otherTenant.id, customer.id, "DELIVERED");
+    await prisma.deliveryMutation.create({
+      data: {
+        orderId: strayOrder.id,
+        routeRunStopId: stopIds[0],
+        type: "DELIVERED",
+        quantityDelivered: 1,
+        tenantId: otherTenant.id,
+      },
+    });
+
+    const result: any = await tenantCtx.run(tenant.id, () => routesService.findOneRun(runId));
+
+    expect(result.stops[0].orders.map((o: any) => o.id)).toEqual([delivered.id]);
+  }, 30_000);
+
+  it(
+    "SA-131a: an ADD_ON row alone is never evidence (no order surfaces); a REFUSED row with " +
+      "quantityDelivered 0 surfaces its order; DELIVERED still surfaces",
+    async () => {
+      const tenant = await seedTenant();
+      const customer = await seedCustomer(tenant.id);
+      const addOnOnly = await seedOrder(tenant.id, customer.id, "PENDING");
+      const refused = await seedOrder(tenant.id, customer.id, "CANCELLED");
+      const delivered = await seedOrder(tenant.id, customer.id, "DELIVERED");
+      const { runId, stopIds } = await seedUnlinkedRun(tenant.id, "COMPLETED", [customer.id]);
+
+      // An at-stop change-request addition — never proof the order's own delivery resolved.
+      await prisma.deliveryMutation.create({
+        data: {
+          orderId: addOnOnly.id,
+          routeRunStopId: stopIds[0],
+          type: "ADD_ON",
+          quantityDelivered: 1,
+          tenantId: tenant.id,
+        },
+      });
+      // A real refusal (quantityDelivered 0, not null) — DOES count.
+      await prisma.deliveryMutation.create({
+        data: {
+          orderId: refused.id,
+          routeRunStopId: stopIds[0],
+          type: "REFUSED",
+          quantityDelivered: 0,
+          tenantId: tenant.id,
+        },
+      });
+      await prisma.deliveryMutation.create({
+        data: {
+          orderId: delivered.id,
+          routeRunStopId: stopIds[0],
+          type: "DELIVERED",
+          quantityDelivered: 1,
+          tenantId: tenant.id,
+        },
+      });
+
+      const result: any = await tenantCtx.run(tenant.id, () => routesService.findOneRun(runId));
+
+      const orderIds = result.stops[0].orders.map((o: any) => o.id).sort();
+      expect(orderIds).toEqual([delivered.id, refused.id].sort());
+    },
+    30_000,
+  );
+
+  it("SA-131a: a REFUSED-for-remove row with quantityDelivered null is never evidence", async () => {
+    const tenant = await seedTenant();
+    const customer = await seedCustomer(tenant.id);
+    const removedViaChangeRequest = await seedOrder(tenant.id, customer.id, "CANCELLED");
+    const { runId, stopIds } = await seedUnlinkedRun(tenant.id, "COMPLETED", [customer.id]);
+
+    await prisma.deliveryMutation.create({
+      data: {
+        orderId: removedViaChangeRequest.id,
+        routeRunStopId: stopIds[0],
+        type: "REFUSED",
+        quantityDelivered: null,
+        tenantId: tenant.id,
+      },
+    });
+
+    const result: any = await tenantCtx.run(tenant.id, () => routesService.findOneRun(runId));
+
+    expect(result.stops[0].orders).toEqual([]);
   }, 30_000);
 
   it("(d) a CLOSED run's stop with no recorded DeliveryMutation evidence shows no orders", async () => {

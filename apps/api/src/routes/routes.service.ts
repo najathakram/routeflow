@@ -45,6 +45,7 @@ import { RouteFlowGateway } from "../gateways/routeflow.gateway";
 import { NotificationsService } from "../notifications/notifications.service";
 import { MessagingService } from "../messaging/messaging.service";
 import { InvoicesService } from "../invoices/invoices.service";
+import { DELIVERY_EVIDENCE_WHERE } from "../invoices/delivery-evidence";
 import { formatDate, formatMoney } from "../messaging/messaging.helpers";
 import { CompleteStopDto } from "./dto/complete-stop.dto";
 import { CompleteWithPaymentDto } from "./dto/complete-with-payment.dto";
@@ -1258,16 +1259,20 @@ export class RoutesService {
 
       if (isTerminalRun) {
         // SA-131: a CLOSED run's unlinked stops show exactly the orders this run actually
-        // recorded delivery evidence for (a DeliveryMutation row keyed by routeRunStopId), at
-        // ANY status — never the customer's live/current order history, which the open-run
-        // branch below reads and could include orders created long after this run closed
-        // (demo-seed's `past-1`/`past-2` runs are exactly this legacy/seeded shape: every stop
-        // COMPLETED, no `Order.routeRunStopId` ever written). A stop with no recorded mutation
-        // rows shows NO orders, never the customer's DELIVERED history — if a demo run needs
-        // evidence rows to display anything, that is a demo-seed follow-up, not this query's job.
+        // recorded delivery evidence for (a DeliveryMutation row keyed by routeRunStopId) —
+        // never the customer's live/current order history, which the open-run branch below
+        // reads and could include orders created long after this run closed (demo-seed's
+        // `past-1`/`past-2` runs are exactly this legacy/seeded shape: every stop COMPLETED,
+        // no `Order.routeRunStopId` ever written). A stop with no recorded evidence rows shows
+        // NO orders, never the customer's DELIVERED history — if a demo run needs evidence rows
+        // to display anything, that is a demo-seed follow-up, not this query's job.
+        //
+        // SA-131a: restricted to genuine evidence rows (DELIVERY_EVIDENCE_WHERE) — an at-stop
+        // ADD_ON row, or a REFUSED-for-remove row with a null quantityDelivered, is never proof
+        // the order's own delivery was resolved and must not surface it.
         const stopIds = normalisedStops.map((s: any) => s.id);
         const mutations = await this.prisma.forTenant().deliveryMutation.findMany({
-          where: { routeRunStopId: { in: stopIds } },
+          where: { routeRunStopId: { in: stopIds }, ...DELIVERY_EVIDENCE_WHERE },
           select: { routeRunStopId: true, orderId: true },
         });
         const orderIdsByStop = new Map<string, Set<string>>();
@@ -1282,7 +1287,10 @@ export class RoutesService {
           orderIds.length > 0
             ? await this.prisma.forTenant().order.findMany({
                 where: { id: { in: orderIds } },
-                select: RUN_STOP_INCLUDE.orders.select,
+                // customerId isn't needed to resolve THIS branch's own orders (they're already
+                // grouped by stop via the mutation rows), but every order row leaving findOneRun
+                // carries the same shape regardless of which branch resolved it.
+                select: { ...RUN_STOP_INCLUDE.orders.select, customerId: true },
               })
             : [];
         const orderById = new Map(orders.map((o) => [o.id, o]));

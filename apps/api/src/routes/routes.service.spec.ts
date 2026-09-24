@@ -2434,7 +2434,9 @@ describe("RoutesService", () => {
       const result: any = await service.findOneRun("run-1");
 
       expect(prisma.deliveryMutation.findMany).toHaveBeenCalledWith(
-        expect.objectContaining({ where: { routeRunStopId: { in: ["stop-1"] } } }),
+        expect.objectContaining({
+          where: expect.objectContaining({ routeRunStopId: { in: ["stop-1"] } }),
+        }),
       );
       expect(prisma.order.findMany).toHaveBeenCalledWith(
         expect.objectContaining({ where: { id: { in: ["ord-evidence"] } } }),
