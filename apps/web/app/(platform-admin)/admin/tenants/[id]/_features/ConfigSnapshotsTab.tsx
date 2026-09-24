@@ -207,6 +207,7 @@ export function ConfigSnapshotsTab({ tenantId }: { tenantId: string }) {
             <button
               onClick={confirmRestore}
               disabled={!preview || nothingToRestore || restoring}
+              aria-describedby={nothingToRestore ? "restore-nothing-hint" : undefined}
               className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-500 disabled:opacity-50"
             >
               {restoring ? "Restoring…" : "Restore now"}
@@ -228,7 +229,7 @@ export function ConfigSnapshotsTab({ tenantId }: { tenantId: string }) {
             </p>
             <PreviewSection title={`Will be restored (${preview.willRestore.length})`}>
               {preview.willRestore.length === 0 ? (
-                <li className="text-slate-400">
+                <li id="restore-nothing-hint" className="text-slate-400">
                   Nothing to restore — everything is already in place or skipped.
                 </li>
               ) : (
