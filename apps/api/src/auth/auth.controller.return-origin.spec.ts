@@ -12,11 +12,15 @@ describe("AuthController — B825 resolveReturnOrigin allow-list", () => {
   const WEB_URL = "https://app.routeflow.test";
   const MOBILE_WEB_URL = "https://routeflowmobile-production.up.railway.app";
 
-  function buildController(googleOAuthOverrides: Record<string, any> = {}) {
-    const configValues: Record<string, string> = {
+  function buildController(
+    googleOAuthOverrides: Record<string, any> = {},
+    configOverrides: Record<string, string | undefined> = {},
+  ) {
+    const configValues: Record<string, string | undefined> = {
       WEB_URL,
       MOBILE_WEB_URL,
       NODE_ENV: "test",
+      ...configOverrides,
     };
     const configService = {
       get: (key: string) => configValues[key],
@@ -54,9 +58,106 @@ describe("AuthController — B825 resolveReturnOrigin allow-list", () => {
         `${MOBILE_WEB_URL}.evil.example`,
         WEB_URL,
       ],
+      // SA-132/Opus round: exact `===` is never relaxed for the candidate,
+      // even though `normalizeOrigin` now canonicalizes the CONFIGURED side.
+      [
+        "a userinfo trick (the real host is after the @, not before)",
+        `${MOBILE_WEB_URL}@evil.example`,
+        WEB_URL,
+      ],
+      [
+        "an http: downgrade of the mobile-web origin",
+        "http://routeflowmobile-production.up.railway.app",
+        WEB_URL,
+      ],
+      ["a trailing slash on the mobile-web origin", `${MOBILE_WEB_URL}/`, WEB_URL],
+      ["an uppercased mobile-web origin", MOBILE_WEB_URL.toUpperCase(), WEB_URL],
+      ["an empty string", "", WEB_URL],
     ])("%s resolves to the expected origin", (_label, candidate, expected) => {
       const { controller } = buildController();
       expect((controller as any).resolveReturnOrigin(candidate)).toBe(expected);
+    });
+
+    it("REG-SA132: a repeated query param (bound as an array, not a string) is rejected, not coerced", () => {
+      const { controller } = buildController();
+      // NestJS binds `?return_origin=a&return_origin=b` as string[] at runtime
+      // regardless of the controller's declared `string | undefined` type.
+      expect((controller as any).resolveReturnOrigin([MOBILE_WEB_URL, MOBILE_WEB_URL])).toBe(
+        WEB_URL,
+      );
+    });
+
+    it("REG-SA132: logs only the parsed origin of a rejected candidate, never the raw string", () => {
+      const warnSpy = jest.spyOn(console, "warn").mockImplementation(() => {});
+      const { controller } = buildController();
+      (controller as any).resolveReturnOrigin(`${MOBILE_WEB_URL}@evil.example/some/path?leak=1`);
+      expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("https://evil.example"));
+      expect(warnSpy).not.toHaveBeenCalledWith(expect.stringContaining("leak=1"));
+      warnSpy.mockRestore();
+    });
+
+    it("does not warn at all when there is no candidate (the Next web client's ordinary flow)", () => {
+      const warnSpy = jest.spyOn(console, "warn").mockImplementation(() => {});
+      const { controller } = buildController();
+      warnSpy.mockClear(); // drop the constructor's own boot-time warnings, if any
+      (controller as any).resolveReturnOrigin(undefined);
+      expect(warnSpy).not.toHaveBeenCalled();
+      warnSpy.mockRestore();
+    });
+  });
+
+  describe("REG-SA132: MOBILE_WEB_URL fails closed when unset or blank", () => {
+    it.each([
+      ["unset", undefined],
+      ["blank", ""],
+    ])(
+      "%s MOBILE_WEB_URL: the allow-list accepts WEB_URL only, even the real prod origin is rejected",
+      (_label, mobileWebUrlValue) => {
+        const { controller } = buildController({}, { MOBILE_WEB_URL: mobileWebUrlValue });
+        expect((controller as any).resolveReturnOrigin(MOBILE_WEB_URL)).toBe(WEB_URL);
+        expect((controller as any).resolveReturnOrigin(undefined)).toBe(WEB_URL);
+      },
+    );
+
+    it("warns exactly once at boot when MOBILE_WEB_URL is unset", () => {
+      const warnSpy = jest.spyOn(console, "warn").mockImplementation(() => {});
+      buildController({}, { MOBILE_WEB_URL: undefined });
+      const mobileWarnCalls = warnSpy.mock.calls.filter((args) =>
+        String(args[0]).includes("MOBILE_WEB_URL is not set"),
+      );
+      expect(mobileWarnCalls).toHaveLength(1);
+      warnSpy.mockRestore();
+    });
+
+    it("warns exactly once at boot when MOBILE_WEB_URL is blank", () => {
+      const warnSpy = jest.spyOn(console, "warn").mockImplementation(() => {});
+      buildController({}, { MOBILE_WEB_URL: "" });
+      const mobileWarnCalls = warnSpy.mock.calls.filter((args) =>
+        String(args[0]).includes("MOBILE_WEB_URL is not set"),
+      );
+      expect(mobileWarnCalls).toHaveLength(1);
+      warnSpy.mockRestore();
+    });
+
+    it("does NOT warn about MOBILE_WEB_URL when it's configured", () => {
+      const warnSpy = jest.spyOn(console, "warn").mockImplementation(() => {});
+      buildController();
+      const mobileWarnCalls = warnSpy.mock.calls.filter((args) =>
+        String(args[0]).includes("MOBILE_WEB_URL is not set"),
+      );
+      expect(mobileWarnCalls).toHaveLength(0);
+      warnSpy.mockRestore();
+    });
+  });
+
+  describe("REG-SA132: normalizeOrigin canonicalizes only the CONFIGURED side", () => {
+    it("a trailing slash on the configured MOBILE_WEB_URL still matches the canonical candidate", () => {
+      const { controller } = buildController({}, { MOBILE_WEB_URL: `${MOBILE_WEB_URL}/` });
+      expect((controller as any).resolveReturnOrigin(MOBILE_WEB_URL)).toBe(MOBILE_WEB_URL);
+    });
+
+    it("an unparseable configured MOBILE_WEB_URL falls back to the raw value rather than crashing boot", () => {
+      expect(() => buildController({}, { MOBILE_WEB_URL: "not a url" })).not.toThrow();
     });
   });
 

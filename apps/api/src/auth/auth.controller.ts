@@ -44,10 +44,14 @@ const REFRESH_COOKIE_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000; // 30d fallback (mat
 @Controller("auth")
 export class AuthController {
   private readonly webUrl: string;
-  /** B825: the Expo mobile-web build's own origin — one of the two allowed
-   *  `returnOrigin` values a browser Google flow may ask the callback to
-   *  redirect back to (see `resolveReturnOrigin`). */
-  private readonly mobileWebUrl: string;
+  /** B825/SA-132: the Expo mobile-web build's own origin — the second allowed
+   *  `returnOrigin` value a browser Google flow may ask the callback to
+   *  redirect back to (see `resolveReturnOrigin`). `undefined` when
+   *  MOBILE_WEB_URL is unset or blank — there is deliberately NO hardcoded
+   *  production fallback here (unlike `configuration.ts`'s `urls.mobileWeb`,
+   *  used for password-reset links): a misconfigured/missing env var must
+   *  fail CLOSED to WEB_URL-only, never silently trust a guessed prod origin. */
+  private readonly mobileWebUrl: string | undefined;
 
   constructor(
     private readonly authService: AuthService,
@@ -55,15 +59,46 @@ export class AuthController {
     private readonly tenantGoogleOAuth: TenantGoogleOAuthService,
     private readonly googleOAuth: GoogleOAuthService,
   ) {
-    this.webUrl = configService.get<string>("WEB_URL") ?? "http://localhost:3001";
-    this.mobileWebUrl =
-      configService.get<string>("MOBILE_WEB_URL") ??
-      "https://routeflowmobile-production.up.railway.app";
+    this.webUrl = AuthController.normalizeOrigin(
+      configService.get<string>("WEB_URL") || "http://localhost:3001",
+    );
+    // SA-132: `||` (not `??`) so a blank MOBILE_WEB_URL="" (the .env.example
+    // default) is treated the same as unset, not as a configured empty origin.
+    const rawMobileWebUrl = configService.get<string>("MOBILE_WEB_URL") || undefined;
+    this.mobileWebUrl = rawMobileWebUrl
+      ? AuthController.normalizeOrigin(rawMobileWebUrl)
+      : undefined;
 
     if (this.webUrl.includes("localhost") && configService.get("NODE_ENV") !== "development") {
       console.warn(
         "[GoogleAuth] WEB_URL is not set — OAuth callbacks will redirect to localhost, which will fail in production.",
       );
+    }
+    if (!this.mobileWebUrl) {
+      console.warn(
+        "[GoogleAuth] MOBILE_WEB_URL is not set — the return_origin allow-list accepts WEB_URL only, " +
+          "so a mobile-web (Expo) Google sign-in will land on the Next web app instead of returning to " +
+          "itself. Set MOBILE_WEB_URL on the api service in Railway to fix this.",
+      );
+    }
+  }
+
+  /**
+   * B825/SA-132: canonicalize a CONFIGURED trust-boundary value (WEB_URL /
+   * MOBILE_WEB_URL) via the URL parser's own `.origin` so an operator-set
+   * trailing slash or explicit default port (`:443`) doesn't silently make
+   * every candidate comparison fail. Never applied to the untrusted
+   * `return_origin` candidate itself — `resolveReturnOrigin` keeps an exact
+   * `===` there, so a candidate with a trailing slash, different case, or a
+   * userinfo/downgrade trick is still rejected rather than leniently matched.
+   * Falls back to the raw value if it isn't a parseable absolute URL, so a
+   * malformed env var can never crash boot.
+   */
+  private static normalizeOrigin(url: string): string {
+    try {
+      return new URL(url).origin;
+    } catch {
+      return url;
     }
   }
 
@@ -421,17 +456,51 @@ export class AuthController {
   }
 
   /**
-   * B825: validate a candidate return origin against the EXACT allow-list
-   * (`webUrl`, `mobileWebUrl`) — no prefix or substring matching, so
-   * `https://routeflowmobile-production.up.railway.app.evil.example` is
-   * rejected even though it starts with an allowed origin. Anything not an
-   * exact match falls back to `webUrl`, which is also what a request with no
-   * candidate at all resolves to — the Next web client's own flow is
+   * B825/SA-132: validate a candidate return origin against the EXACT
+   * allow-list (`webUrl`, `mobileWebUrl` — the latter `undefined`, hence
+   * never matchable, whenever MOBILE_WEB_URL isn't configured) — no prefix
+   * or substring matching, so `https://routeflowmobile-production.up.railway
+   * .app.evil.example` is rejected even though it starts with an allowed
+   * origin. `candidate` is typed `unknown` because NestJS binds a repeated
+   * query param (`?return_origin=a&return_origin=b`) as an array regardless
+   * of the controller's declared `string | undefined` type — the `typeof`
+   * guard below rejects that (and any other non-string) outright rather than
+   * relying on `===` against a string to happen to be false. Anything not an
+   * exact string match falls back to `webUrl`, which is also what a request
+   * with no candidate at all resolves to — the Next web client's own flow is
    * byte-identical to before this existed.
    */
-  private resolveReturnOrigin(candidate: string | undefined): string {
-    if (candidate === this.webUrl || candidate === this.mobileWebUrl) return candidate;
+  private resolveReturnOrigin(candidate: unknown): string {
+    if (
+      typeof candidate === "string" &&
+      (candidate === this.webUrl || candidate === this.mobileWebUrl)
+    ) {
+      return candidate;
+    }
+    if (candidate !== undefined) {
+      // Only the parsed origin is logged, never the raw candidate — a
+      // return_origin is attacker-controlled input we haven't verified yet.
+      const rejectedOrigin = AuthController.safeOriginForLogging(candidate);
+      console.warn(
+        `[GoogleAuth] rejected return_origin${rejectedOrigin ? ` (${rejectedOrigin})` : ""} — not on the allow-list, falling back to WEB_URL.`,
+      );
+    }
     return this.webUrl;
+  }
+
+  /**
+   * Best-effort extraction of just the `origin` of an untrusted candidate,
+   * for logging only — never the full string (which may carry a path/query,
+   * control characters, or not be a string at all). Returns undefined when
+   * the candidate isn't a parseable absolute URL string.
+   */
+  private static safeOriginForLogging(candidate: unknown): string | undefined {
+    if (typeof candidate !== "string") return undefined;
+    try {
+      return new URL(candidate).origin;
+    } catch {
+      return undefined;
+    }
   }
 
   /**
