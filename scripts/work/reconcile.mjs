@@ -41,6 +41,9 @@ const FLEET_LOG_ISSUE = 938;
 const WORK_STATUS_LABEL = "work-status";
 const WORK_STATUS_TITLE = "Work board status (auto-updated)";
 
+// PRs opened before the board went live predate the Closes-#N convention; never flag them as orphans.
+const BOARD_EPOCH = "2026-09-25T00:00:00Z";
+
 const STALE_FLAG_H = 24;
 const STALE_UNASSIGN_H = 72;
 const REVIEW_STALE_H = 48;
@@ -666,7 +669,7 @@ createdAt updatedAt closedAt
 comments(last: 30) { nodes { body createdAt } }`;
 
 const PR_FIELDS = `
-id number title state isDraft merged mergedAt headRefName body updatedAt
+id number title state isDraft merged mergedAt headRefName body createdAt updatedAt
 commits(last: 1) { nodes { commit { committedDate statusCheckRollup { state } } } }
 mergeable
 closingIssuesReferences(first: 10) { nodes { number } }`;
@@ -947,7 +950,10 @@ async function main() {
     );
 
     const missingIssues = openIssueNodes.filter(
-      (n) => n.number !== FLEET_LOG_ISSUE && !boardIssueNums.has(n.number),
+      (n) =>
+        n.number !== FLEET_LOG_ISSUE &&
+        !labelNames(n.labels).includes(WORK_STATUS_LABEL) &&
+        !boardIssueNums.has(n.number),
     );
     const missingPRs = openPRNodes.filter((n) => !boardPRNums.has(n.number));
 
@@ -1098,7 +1104,10 @@ async function main() {
     );
     const orphanPRs = prRows
       .filter(
-        (r) => r.content.state === "OPEN" && resolveLinkedIssueNumbers(r.content).length === 0,
+        (r) =>
+          r.content.state === "OPEN" &&
+          !(r.content.createdAt && r.content.createdAt < BOARD_EPOCH) &&
+          resolveLinkedIssueNumbers(r.content).length === 0,
       )
       .map((r) => r.content.number)
       .sort((a, b) => a - b);
