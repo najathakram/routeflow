@@ -56,7 +56,11 @@ describe("RoutesService — delivery lines must belong to this stop and fit the 
   >;
   let notifications: jest.Mocked<Pick<NotificationsService, "sendToDriver">>;
   let messaging: { notify: jest.Mock; notifyEvent: jest.Mock };
-  let invoicesService: { recordDeliveryPaymentInTx: jest.Mock; reverseRunAdvancesInTx: jest.Mock };
+  let invoicesService: {
+    recordDeliveryPaymentInTx: jest.Mock;
+    reconcileDeliveredOrdersInTx: jest.Mock;
+    reverseRunAdvancesInTx: jest.Mock;
+  };
   let storage: { upload: jest.Mock; presignedUrl: jest.Mock; delete: jest.Mock };
 
   beforeEach(async () => {
@@ -66,6 +70,7 @@ describe("RoutesService — delivery lines must belong to this stop and fit the 
       recordDeliveryPaymentInTx: jest
         .fn()
         .mockResolvedValue({ applied: 0, invoiceIds: [], paymentIds: [] }),
+      reconcileDeliveredOrdersInTx: jest.fn().mockResolvedValue(undefined),
       reverseRunAdvancesInTx: jest.fn().mockResolvedValue(0),
     };
 

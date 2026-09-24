@@ -73,6 +73,10 @@ import {
 import { FeatureConfigService } from "../billing/feature-config.service";
 import { ROUTES_DISPATCH_KEY, assertRouteKindDispatchAllowed } from "./route-dispatch-mode";
 import { observeRunCredit } from "./run-credit-observation";
+import {
+  reconcileDeliveredStopOrders,
+  resolvePostReconcileOrderTotals,
+} from "./complete-payment-reconcile";
 
 // The run/stop select shapes and status constants live in routes.constants.ts (size-ratchet
 // prefactor, verbatim move); re-exported here so every existing import path keeps working.
@@ -2587,9 +2591,9 @@ export class RoutesService {
               quantityDelivered: d.quantityDelivered,
             },
           });
-          // Record the delivered qty so a payment-path invoice bills what was
-          // actually delivered (short/refused lines don't over-bill). Consumed by
-          // recordDeliveryPaymentInTx → reconcileOrderDraftInvoice(basis:"delivered").
+          // Record the delivered qty so the invoice reconcile below (step 4) bills
+          // what was actually delivered (short/refused lines don't over-bill).
+          // Consumed by reconcileDeliveredOrdersInTx (delivered-reconcile.ts).
           await tx.orderItem.update({
             where: { id: d.orderItemId },
             data: { deliveredQty: (d.type as any) === "REFUSED" ? 0 : d.quantityDelivered },
@@ -2609,24 +2613,28 @@ export class RoutesService {
         });
       }
 
-      // 4. Record payment (atomic with stop completion — RF-005). The invoice is
+      // 4. B663: reconcile every delivered order's invoice onto the DELIVERED
+      // quantities, UNCONDITIONALLY — see complete-payment-reconcile.ts for the
+      // full rationale (why this must not live behind the payment step below).
+      const deliveredOrderIds = await reconcileDeliveredStopOrders(
+        this.invoicesService,
+        tx,
+        stop.orders,
+        deliveredOrderIdSet,
+      );
+
+      // 5. Record payment (atomic with stop completion — RF-005). The invoice is
       // resolved SERVER-side from the delivered orders — the mobile client cannot
       // supply an invoiceId (Order has no invoiceId scalar), so the old
-      // client-invoiceId path silently recorded nothing. This ensures a finalized
-      // invoice exists and records the payment the canonical way (InvoicePayment
-      // + recomputeStatus over non-VOID sums).
+      // client-invoiceId path silently recorded nothing. This records the payment
+      // the canonical way (InvoicePayment + recomputeStatus over non-VOID sums)
+      // against the invoice(s) step 4 just reconciled.
       if (dto.payment && dto.payment.amount > 0) {
-        const deliveredOrderIds = stop.orders
-          // DELIVERED stays in (the office may have marked it already; it keeps its invoice), but a
-          // DRAFT is not a commitment yet: never invoiced or paid at the door.
-          .filter((o) => o.status !== OrderStatus.CANCELLED && o.status !== OrderStatus.DRAFT)
-          .map((o) => o.id);
         const recorded = await this.invoicesService.recordDeliveryPaymentInTx(
           tx,
           deliveredOrderIds,
           dto.payment.amount,
           dto.payment.method,
-          Array.from(deliveredOrderIdSet),
           { runId, stopId },
         );
         paymentIds = recorded.paymentIds;
@@ -2644,7 +2652,7 @@ export class RoutesService {
         }
       }
 
-      // 5. RF-016: Auto-complete run when last stop is done
+      // 6. RF-016: Auto-complete run when last stop is done
       const allStops = await tx.routeRunStop.findMany({
         where: { routeRunId: runId },
         select: { id: true, status: true },
@@ -2697,15 +2705,29 @@ export class RoutesService {
 
     // P6-5: DELIVERED per order this completion flipped (driver bypasses
     // changeStatus). AFTER the tx, fire-and-forget; skip DRAFT/CANCELLED/DELIVERED.
+    //
+    // B663/I2: see complete-payment-reconcile.ts — orderTotal must read the
+    // reconciled invoice(s) post-tx, never the stale pre-reconcile Order.total.
+    const routableOrderIds = stop.orders
+      .filter((o) => !NON_ROUTABLE_ORDER_STATUSES.includes(o.status))
+      .map((o) => o.id);
+    const postReconcileTotalByOrder = await resolvePostReconcileOrderTotals(
+      this.prisma.forTenant(),
+      routableOrderIds,
+      this.logger,
+    );
     for (const o of stop.orders) {
       if (NON_ROUTABLE_ORDER_STATUSES.includes(o.status)) continue;
+      // No non-void invoice at all (shouldn't happen for a routed order, but never
+      // silently notify a wrong amount) falls back to the pre-tx order total.
+      const total = postReconcileTotalByOrder.get(o.id) ?? Number(o.total);
       this.messaging
         .notifyEvent(NotificationEvent.DELIVERED, {
           customerId: o.customerId,
           senderId: user.sub || null,
           vars: {
             orderNumber: o.orderNumber ?? "",
-            orderTotal: formatMoney(o.total),
+            orderTotal: formatMoney(total),
             deliveredAt: formatDate(new Date()),
           },
         })

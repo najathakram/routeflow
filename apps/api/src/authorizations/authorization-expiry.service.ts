@@ -8,6 +8,7 @@ import { EmailService } from "../email/email.service";
 import { AuditService } from "../audit/audit.service";
 import { MessagingService } from "../messaging/messaging.service";
 import { formatDate } from "../messaging/messaging.helpers";
+import { escapeHtml } from "../common/html-escape";
 
 type WarnBucket = 30 | 7 | 1;
 
@@ -235,7 +236,11 @@ export class AuthorizationExpiryService {
       await this.notifications.sendToUser(op.id, { title: subject, body: opBody }).catch(() => {});
       if (op.email && !op.email.startsWith("no-email+")) {
         await this.email
-          .send({ to: op.email, subject: `${who} — ${subject}`, html: `<p>${opBody}</p>` })
+          .send({
+            to: op.email,
+            subject: `${who} — ${subject}`,
+            html: `<p>${escapeHtml(opBody)}</p>`,
+          })
           .catch(() => {});
       }
     }

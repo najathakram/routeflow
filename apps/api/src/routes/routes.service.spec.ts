@@ -94,7 +94,11 @@ describe("RoutesService", () => {
   >;
   let notifications: jest.Mocked<Pick<NotificationsService, "sendToDriver">>;
   let messaging: { notify: jest.Mock; notifyEvent: jest.Mock };
-  let invoicesService: { recordDeliveryPaymentInTx: jest.Mock; reverseRunAdvancesInTx: jest.Mock };
+  let invoicesService: {
+    recordDeliveryPaymentInTx: jest.Mock;
+    reconcileDeliveredOrdersInTx: jest.Mock;
+    reverseRunAdvancesInTx: jest.Mock;
+  };
   let storage: { upload: jest.Mock; presignedUrl: jest.Mock; delete: jest.Mock };
 
   beforeEach(async () => {
@@ -103,6 +107,7 @@ describe("RoutesService", () => {
       recordDeliveryPaymentInTx: jest
         .fn()
         .mockResolvedValue({ applied: 0, invoiceIds: [], paymentIds: [] }),
+      reconcileDeliveredOrdersInTx: jest.fn().mockResolvedValue(undefined),
       reverseRunAdvancesInTx: jest.fn().mockResolvedValue(1),
     };
 
@@ -1969,17 +1974,25 @@ describe("RoutesService", () => {
         operatorPayload,
       );
 
-      // 5th arg = the orders delivered in THIS completion (empty here — no
-      // deliveries were sent — so nothing is reconciled to the delivered basis).
-      // 6th arg = the run/stop context B83 turns into the AdvancePayment
+      // B663: the reconcile-to-delivered-basis step is reconcileDeliveredOrdersInTx's
+      // job now, called unconditionally before this regardless of payment — see the
+      // "passes only the orders delivered in THIS completion" test below for that.
+      // 5th arg here = the run/stop context B83 turns into the AdvancePayment
       // `reference` token — load-bearing for the settlement cash lookup.
       expect(invoicesService.recordDeliveryPaymentInTx).toHaveBeenCalledWith(
         txMock,
         ["ord-1"],
         50,
         "CASH",
-        [],
         { runId: "run-1", stopId: "stop-1" },
+      );
+      // B663: reconciled unconditionally too, even though a payment was ALSO
+      // collected here — no deliveries were sent in this payload, so nothing is
+      // reconciled to the delivered basis (empty subset).
+      expect(invoicesService.reconcileDeliveredOrdersInTx).toHaveBeenCalledWith(
+        txMock,
+        ["ord-1"],
+        [],
       );
       // Additive field: the driver app attaches a best-effort payment photo to
       // paymentIds[0] after the stop completes — must be surfaced on the response.
@@ -2042,16 +2055,81 @@ describe("RoutesService", () => {
         operatorPayload,
       );
 
-      // Bill/collect across BOTH non-cancelled orders, but reconcile-to-delivered
-      // ONLY ord-1 — ord-2 (not delivered here) must keep its invoice, not be zeroed.
+      // Bill/collect across BOTH non-cancelled orders (recordDeliveryPaymentInTx no
+      // longer takes a reconcile subset at all — B663 moved that decision to
+      // reconcileDeliveredOrdersInTx, asserted separately below).
       expect(invoicesService.recordDeliveryPaymentInTx).toHaveBeenCalledWith(
         txMock,
         ["ord-1", "ord-2"],
         50,
         "CASH",
-        ["ord-1"],
         { runId: "run-1", stopId: "stop-1" },
       );
+      // reconcile-to-delivered ONLY ord-1 — ord-2 (not delivered here) must keep its
+      // invoice, not be zeroed.
+      expect(invoicesService.reconcileDeliveredOrdersInTx).toHaveBeenCalledWith(
+        txMock,
+        ["ord-1", "ord-2"],
+        ["ord-1"],
+      );
+    });
+
+    // Opus review of #1292: this shape (no `payment` at all — the ordinary case for
+    // most tenants) had no coverage in the CI-run unit lane, and the DB lane's path
+    // filter doesn't cover routes/**, so a regression that moved the reconcile call
+    // back behind `if (dto.payment...)` — B663's ENTIRE bug — would pass CI unnoticed.
+    it("B663: an on-account completion (no payment) still reconciles to the delivered basis, and never calls recordDeliveryPaymentInTx", async () => {
+      prisma.routeRun.findUnique.mockResolvedValue(IN_PROGRESS_RUN);
+      prisma.routeRunStop.findFirst.mockResolvedValue({
+        id: "stop-1",
+        routeRunId: "run-1",
+        status: "PENDING",
+        signatureUrl: null,
+        orders: [
+          { id: "ord-1", status: "PENDING", customerId: "cust-1", orderNumber: "SO-1", total: 50 },
+        ],
+      });
+      prisma.driver.findFirst.mockResolvedValue(null);
+      const txMock = {
+        ...prisma,
+        routeRunStop: {
+          ...prisma.routeRunStop,
+          findMany: jest.fn().mockResolvedValue([{ id: "stop-1", status: "PENDING" }]),
+          update: jest.fn().mockResolvedValue({}),
+        },
+        routeRun: { ...prisma.routeRun, update: jest.fn().mockResolvedValue({}) },
+        order: { ...prisma.order, updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
+        orderItem: {
+          ...prisma.orderItem,
+          findFirst: jest.fn().mockResolvedValue({ orderId: "ord-1" }),
+          findMany: jest.fn().mockResolvedValue([{ id: "oi-1", orderId: "ord-1", qty: 10 }]),
+          update: jest.fn().mockResolvedValue({}),
+        },
+        deliveryMutation: { ...prisma.deliveryMutation, create: jest.fn() },
+        $executeRaw: jest.fn().mockResolvedValue(0),
+      };
+      (prisma.tenantTransaction as jest.Mock).mockImplementation((fn: any) => fn(txMock));
+      prisma.routeRunStop.findUniqueOrThrow.mockResolvedValue({
+        id: "stop-1",
+        status: "COMPLETED",
+      });
+
+      await service.completeWithPayment(
+        "run-1",
+        "stop-1",
+        {
+          deliveries: [{ orderItemId: "oi-1", type: "SHORT", quantityDelivered: 7 }],
+          // No `payment` at all — on-account, the ordinary case for most tenants.
+        },
+        operatorPayload,
+      );
+
+      expect(invoicesService.reconcileDeliveredOrdersInTx).toHaveBeenCalledWith(
+        txMock,
+        ["ord-1"],
+        ["ord-1"],
+      );
+      expect(invoicesService.recordDeliveryPaymentInTx).not.toHaveBeenCalled();
     });
 
     it("should throw BadRequestException for CASH payment with amount=0 (RF-006)", async () => {

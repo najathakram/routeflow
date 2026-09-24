@@ -19,6 +19,7 @@ import { UpdateGoogleOAuthConfigDto } from "./dto/update-google-oauth-config.dto
 import { UpdateBrandingDto } from "./dto/update-branding.dto";
 import { compressImage } from "../storage/compress.util";
 import { TRIAL_LENGTH_DAYS, planKeyFromEnum } from "../billing/plan-catalog.constants";
+import { escapeHtml } from "../common/html-escape";
 
 const RESERVED_SLUGS = new Set([
   "api",
@@ -180,12 +181,12 @@ export class TenantsService {
       const sendResult = await this.email.send({
         to: result.user.email,
         subject: "Verify your email to activate RouteFlow",
-        html: `<p>Hi ${result.user.username},</p>
-<p>Thanks for signing up for <strong>RouteFlow</strong>! Click the button below to verify your email and activate your 14-day free trial for <strong>${businessName}</strong>.</p>
+        html: `<p>Hi ${escapeHtml(result.user.username)},</p>
+<p>Thanks for signing up for <strong>RouteFlow</strong>! Click the button below to verify your email and activate your 14-day free trial for <strong>${escapeHtml(businessName)}</strong>.</p>
 <p style="margin:24px 0;">
-  <a href="${verifyUrl}" style="display:inline-block;padding:12px 24px;background:#2563eb;color:#fff;border-radius:8px;text-decoration:none;font-weight:600;font-size:15px;">Verify My Email</a>
+  <a href="${escapeHtml(verifyUrl)}" style="display:inline-block;padding:12px 24px;background:#2563eb;color:#fff;border-radius:8px;text-decoration:none;font-weight:600;font-size:15px;">Verify My Email</a>
 </p>
-<p>Or paste this link into your browser:<br/><a href="${verifyUrl}">${verifyUrl}</a></p>
+<p>Or paste this link into your browser:<br/><a href="${escapeHtml(verifyUrl)}">${escapeHtml(verifyUrl)}</a></p>
 <p><em>This link expires in 24 hours. If you didn't sign up, you can safely ignore this email.</em></p>
 <p>The RouteFlow Team</p>`,
         // email-connect-google PR-3: platform sender only — never a tenant mailbox/SMTP.
@@ -275,10 +276,10 @@ export class TenantsService {
       const sendResult = await this.email.send({
         to: user.email,
         subject: "Verify your email to activate RouteFlow",
-        html: `<p>Hi ${user.username},</p>
-<p>Here's a new verification link for your RouteFlow account (<strong>${user.tenant.name}</strong>):</p>
+        html: `<p>Hi ${escapeHtml(user.username)},</p>
+<p>Here's a new verification link for your RouteFlow account (<strong>${escapeHtml(user.tenant.name)}</strong>):</p>
 <p style="margin:24px 0;">
-  <a href="${verifyUrl}" style="display:inline-block;padding:12px 24px;background:#2563eb;color:#fff;border-radius:8px;text-decoration:none;font-weight:600;font-size:15px;">Verify My Email</a>
+  <a href="${escapeHtml(verifyUrl)}" style="display:inline-block;padding:12px 24px;background:#2563eb;color:#fff;border-radius:8px;text-decoration:none;font-weight:600;font-size:15px;">Verify My Email</a>
 </p>
 <p><em>This link expires in 24 hours.</em></p>
 <p>The RouteFlow Team</p>`,
