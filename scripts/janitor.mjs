@@ -172,6 +172,18 @@ export function meetsThreshold(freeGb, thresholdGb) {
 }
 
 /** listedPaths: worktree paths from `git worktree list`; dirNames: readdir() of .claude/worktrees/. */
+/** May an orphan dir under .claude/worktrees be deleted? */
+export function orphanEligible({
+  hasGitEntry,
+  newestMtimeMs,
+  nowMs,
+  hours = RECENT_ACTIVITY_HOURS,
+}) {
+  // B820: an orphan (a dir git no longer lists) may still be someone's checkout or scratch work.
+  if (hasGitEntry) return false; // a .git file/dir: a repo or worktree git merely lost track of
+  return !isRecentlyActive(newestMtimeMs, nowMs, hours); // touched lately, or unreadable: keep
+}
+
 export function findOrphanWorktreeDirs(listedPaths, dirNames, worktreesRoot) {
   const listed = new Set(listedPaths.map((p) => resolve(p)));
   return dirNames.filter((name) => !listed.has(resolve(join(worktreesRoot, name))));
@@ -234,20 +246,28 @@ function getFreeSpaceGb() {
 }
 
 /** Read-only detection of Windows directory junctions under `dir` — never deletes anything. */
+/** A PowerShell single-quoted literal for `s`. */
+export function psLiteral(s) {
+  // A single-quoted PS literal doubles its quotes, and PowerShell also treats U+2018-U+201B as
+  // single quotes, so those are doubled too.
+  return `'${String(s).replace(/['\u2018\u2019\u201A\u201B]/g, (q) => q + q)}'`;
+}
+
 function findJunctions(dir) {
   if (!isWindows() || !existsSync(dir)) return [];
   const out = trySh("powershell", [
     "-NoProfile",
     "-NonInteractive",
     "-Command",
-    `Get-ChildItem -LiteralPath '${dir}' -Recurse -Force -ErrorAction SilentlyContinue | Where-Object { $_.LinkType } | Select-Object -ExpandProperty FullName`,
+    // B818: -ErrorVariable + exit 3, so an access-denied subtree (which could hide a junction)
+    // fails the scan instead of being silently skipped.
+    `Get-ChildItem -LiteralPath ${psLiteral(dir)} -Recurse -Force -ErrorAction SilentlyContinue -ErrorVariable scanErr | Where-Object { $_.LinkType } | Select-Object -ExpandProperty FullName; if ($scanErr) { exit 3 }`,
   ]);
+  if (out == null) return null; // PowerShell failed: we do NOT know there are no junctions
   return out
-    ? out
-        .split(/\r?\n/)
-        .map((s) => s.trim())
-        .filter(Boolean)
-    : [];
+    .split(/\r?\n/)
+    .map((s) => s.trim())
+    .filter(Boolean);
 }
 
 /** The real path of `p` with symlinks in its PARENT folders resolved (the last component kept). */
@@ -318,12 +338,36 @@ export function safeRemoveTree(dir) {
     posixRemoveTree(dir);
     return;
   }
-  for (const junction of findJunctions(dir)) {
-    trySh("cmd", ["/c", "rmdir", junction]);
+  windowsRemoveTree(dir, {
+    findJunctions,
+    unlinkJunction: (j) => trySh("cmd", ["/c", "rmdir", j]),
+    exists: existsSync,
+    rmdirS: (d) => execFileSync("cmd", ["/c", "rmdir", "/s", "/q", d]),
+  });
+}
+
+/** The Windows removal sequence, with its OS calls injected (so it is testable anywhere). */
+/**
+ * B818: unlink every junction under `dir` and PROVE it: a failed scan refuses, each unlink is
+ * verified, and a re-scan must come back empty. Shared by windowsRemoveTree and unlinkLinksWithin.
+ */
+export function unlinkJunctionsVerified(dir, { findJunctions: find, unlinkJunction, exists }) {
+  const junctions = find(dir);
+  if (junctions == null) throw new Error(`junction scan failed for ${dir}: refusing to delete it`);
+  for (const junction of junctions) {
+    unlinkJunction(junction);
+    if (exists(junction)) throw new Error(`junction ${junction} survived its unlink: refusing`);
   }
-  if (existsSync(dir)) {
-    execFileSync("cmd", ["/c", "rmdir", "/s", "/q", dir]);
+  const again = find(dir);
+  if (again == null || again.length > 0) {
+    throw new Error(`junctions remain under ${dir} after unlinking: refusing to delete it`);
   }
+}
+
+export function windowsRemoveTree(dir, deps) {
+  // `rmdir /s` follows a junction, so it only ever runs on a tree PROVEN junction-free.
+  unlinkJunctionsVerified(dir, deps);
+  if (deps.exists(dir)) deps.rmdirS(dir);
 }
 
 /**
@@ -394,6 +438,19 @@ function ghPrMergedAtTip(repoRoot, branch, tip) {
 }
 
 /** The evidence isMergedEvidence() judges. `ghLookup` is injectable so the self-test is hermetic. */
+/** The commit a local branch points at (LOW: never a same-named tag). */
+export function branchTip(repoRoot, branch) {
+  // refs/heads/ explicitly: a bare name resolves a same-named TAG first.
+  return trySh("git", [
+    "-C",
+    repoRoot,
+    "rev-parse",
+    "--verify",
+    "--quiet",
+    `refs/heads/${branch}^{commit}`,
+  ]);
+}
+
 export function mergeEvidence(
   repoRoot,
   branch,
@@ -401,7 +458,7 @@ export function mergeEvidence(
 ) {
   const none = { tipIsAncestor: false, tipOnMainline: false, prMergedAtTip: false };
   if (!branch) return none; // detached HEAD — cannot prove merged
-  const tip = trySh("git", ["-C", repoRoot, "rev-parse", branch]);
+  const tip = branchTip(repoRoot, branch);
   if (!tip) return none;
   let tipIsAncestor = false;
   try {
@@ -435,9 +492,67 @@ export function lastActivityMs(worktreePath) {
   return existsSync(log) ? statSync(log).mtimeMs : null;
 }
 
+// B819: ignored paths that are build output and safe to lose; any OTHER ignored path (a .env, a
+// local-assets folder, a scratch note) is someone's data and makes the worktree "dirty".
+const REGENERABLE_IGNORED = [
+  /(^|\/)node_modules\/?$/,
+  /(^|\/)dist\/?$/,
+  /(^|\/)build\/?$/,
+  /(^|\/)coverage\/?$/,
+  /(^|\/)\.next\/?$/,
+  /(^|\/)\.turbo\/?$/,
+  /(^|\/)\.expo\/?$/,
+  /(^|\/)test-output\/?$/,
+  /\.tsbuildinfo$/,
+  /(^|\/)\.DS_Store$/,
+  /^\.campaign\/?$/, // regenerable per its own .gitignore comment
+  /(^|\/)next-env\.d\.ts$/, // Next regenerates it
+  /^\.husky\/_(\/.*)?$/, // husky regenerates it (git lists its files one by one)
+  /^\.claude\/settings\.local\.json$/, // per-machine settings copy of a worktree being removed
+];
+
+/** Is this worktree dirty, from its `git status --porcelain` (and `--ignored`) output? */
+export function dirtyFromStatus(statusOut, ignoredOut) {
+  // B819: unknown is unsafe — a failed `git status` (null) is dirty, never clean.
+  if (statusOut == null || ignoredOut == null) return true;
+  if (statusOut.trim().length > 0) return true;
+  return ignoredOut
+    .split("\n")
+    .filter((l) => l.startsWith("!! "))
+    .map((l) => l.slice(3).trim())
+    .some((path) => !REGENERABLE_IGNORED.some((re) => re.test(path)));
+}
+
+/** What orphanEligible needs, read without following links: a .git entry, the newest mtime. */
+function orphanFacts(dir) {
+  try {
+    const top = lstatSync(dir);
+    if (!top.isDirectory()) return { hasGitEntry: false, newestMtimeMs: top.mtimeMs };
+    let newest = top.mtimeMs;
+    let hasGitEntry = false;
+    const stack = [[dir, 0]];
+    while (stack.length) {
+      const [d, depth] = stack.pop();
+      for (const name of readdirSync(d)) {
+        const p = join(d, name);
+        const st = lstatSync(p);
+        if (name === ".git") hasGitEntry = true;
+        newest = Math.max(newest, st.mtimeMs);
+        if (st.isDirectory() && !st.isSymbolicLink() && depth < 3 && name !== "node_modules") {
+          stack.push([p, depth + 1]);
+        }
+      }
+    }
+    return { hasGitEntry, newestMtimeMs: newest };
+  } catch {
+    return { hasGitEntry: false, newestMtimeMs: null }; // unreadable: orphanEligible keeps it
+  }
+}
+
 function isDirty(worktreePath) {
   const out = trySh("git", ["-C", worktreePath, "status", "--porcelain"]);
-  return !!(out && out.length > 0);
+  const ignored = trySh("git", ["-C", worktreePath, "status", "--porcelain", "--ignored=matching"]);
+  return dirtyFromStatus(out, ignored);
 }
 
 function hasUnpushedCommits(worktreePath, branch) {
@@ -507,7 +622,19 @@ function buildPlan(repoRoot, mainCheckoutPath, worktreesRoot) {
     const listedPaths = worktrees.map((w) => w.path);
     const dirNames = readdirSync(worktreesRoot);
     for (const orphan of findOrphanWorktreeDirs(listedPaths, dirNames, worktreesRoot)) {
-      actions.push({ step: 3, kind: "orphan-dir", target: join(worktreesRoot, orphan) });
+      const target = join(worktreesRoot, orphan);
+      const facts = orphanFacts(target);
+      if (orphanEligible({ ...facts, nowMs })) {
+        actions.push({ step: 3, kind: "orphan-dir", target });
+      } else {
+        skipped.push({
+          worktree: orphan,
+          branch: null,
+          reason: facts.hasGitEntry
+            ? "orphan dir holds a .git entry — never touched"
+            : `orphan dir touched in the last ${RECENT_ACTIVITY_HOURS}h (or unreadable) — never touched`,
+        });
+      }
     }
   }
 
@@ -549,38 +676,87 @@ function describeAction(a) {
   }
 }
 
-function execute(a) {
-  // B815: every delete passes the containment guard first; a refusal skips the action, loudly.
-  if (["node_modules", "orphan-dir", "stale-proof-dir", "worktree"].includes(a.kind)) {
-    const why = refuseDelete(a.target, resolveRepoContext(), {
-      kind: a.kind,
-      worktreePath: a.worktreePath,
+/** The real OS/git calls execute() uses; the self-test injects fakes instead. */
+const EXECUTE_DEPS = {
+  refuseDelete: (target, opts) => refuseDelete(target, resolveRepoContext(), opts),
+  removeTree: (t) => safeRemoveTree(t),
+  removeWorktree: (t) => {
+    const { repoRoot } = resolveRepoContext();
+    removeWorktreeSafely(t, {
+      git: (...args) => trySh("git", ["-C", repoRoot, ...args]),
+      unlinkLinksWithin,
+      exists: existsSync,
+      removeTree: safeRemoveTree,
     });
+  },
+  run: (cmd, args) => trySh(cmd, args),
+  log: (m) => console.log(m),
+};
+
+/**
+ * Carry out one planned action. Every delete passes the B815 containment guard first; a refusal
+ * skips the action, loudly. A whole worktree goes through removeWorktreeSafely (B817: links first).
+ */
+export function execute(a, deps = EXECUTE_DEPS) {
+  if (["node_modules", "orphan-dir", "stale-proof-dir", "worktree"].includes(a.kind)) {
+    const why = deps.refuseDelete(a.target, { kind: a.kind, worktreePath: a.worktreePath });
     if (why) {
-      console.log(`   REFUSED, skipped: ${a.target} (${why})`);
-      return;
+      deps.log(`   REFUSED, skipped: ${a.target} (${why})`);
+      return "refused";
     }
   }
   switch (a.kind) {
     case "node_modules":
     case "orphan-dir":
     case "stale-proof-dir":
-      safeRemoveTree(a.target);
-      return;
-    case "worktree": {
-      const { repoRoot } = resolveRepoContext();
-      trySh("git", ["-C", repoRoot, "worktree", "remove", "--force", a.target]);
-      if (existsSync(a.target)) safeRemoveTree(a.target); // Windows file-lock leftover
-      trySh("git", ["-C", repoRoot, "worktree", "prune"]);
-      return;
-    }
+      deps.removeTree(a.target);
+      return "done";
+    case "worktree":
+      deps.removeWorktree(a.target);
+      return "done";
     case "docker-build-cache":
-      trySh("docker", ["builder", "prune", "-a", "-f"]);
-      return;
+      deps.run("docker", ["builder", "prune", "-a", "-f"]);
+      return "done";
     case "npm-cache":
-      trySh("npm", ["cache", "clean", "--force"]);
-      return;
+      deps.run("npm", ["cache", "clean", "--force"]);
+      return "done";
+    default:
+      throw new Error(`unknown janitor action kind: ${a.kind}`);
   }
+}
+
+/** Remove a whole worktree, with its OS/git calls injected (testable anywhere). */
+export function removeWorktreeSafely(
+  target,
+  { git, unlinkLinksWithin: unlinkLinks, exists, removeTree },
+) {
+  // B817: git's own recursive delete (Git for Windows) can follow a junction into its target, so
+  // every link inside the worktree is unlinked FIRST; git then only ever sees plain files.
+  unlinkLinks(target);
+  git("worktree", "remove", "--force", target);
+  if (exists(target)) removeTree(target); // Windows file-lock leftover
+  git("worktree", "prune");
+}
+
+/** B817: unlink every symlink/junction inside `dir`, following none. Throws when unsure. */
+export function unlinkLinksWithin(dir) {
+  if (isWindows()) {
+    unlinkJunctionsVerified(dir, {
+      findJunctions,
+      unlinkJunction: (j) => trySh("cmd", ["/c", "rmdir", j]),
+      exists: existsSync,
+    });
+    return;
+  }
+  const walk = (d) => {
+    for (const name of readdirSync(d)) {
+      const p = join(d, name);
+      const st = lstatSync(p);
+      if (st.isSymbolicLink()) unlinkSync(p);
+      else if (st.isDirectory()) walk(p);
+    }
+  };
+  if (existsSync(dir)) walk(dir);
 }
 
 // ---------------------------------------------------------------------------
@@ -665,13 +841,19 @@ function main() {
       break;
     }
     console.log(`→ ${describeAction(a)}`);
-    execute(a);
+    try {
+      execute(a);
+    } catch (err) {
+      // A fail-closed refusal (B817/B818) or an OS error skips THIS action only.
+      console.log(`   REFUSED, skipped: ${a.target ?? a.kind} (${err.message})`);
+    }
   }
 
   const after = getFreeSpaceGb();
   console.log(`\nfree space after: ${after.toFixed(1)} GB (was ${before.toFixed(1)} GB)`);
 }
 
-if (import.meta.url === pathToFileURL(process.argv[1]).href) {
+// Guarded: when imported from an inline script there is no argv[1] to compare against.
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   main();
 }

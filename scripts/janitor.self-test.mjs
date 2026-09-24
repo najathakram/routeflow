@@ -15,6 +15,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
+import { fileURLToPath } from "node:url";
 import { join } from "node:path";
 import {
   isProtectedWorktreeName,
@@ -31,6 +32,14 @@ import {
   resolveRepoContext,
   deleteRefusal,
   refuseDelete,
+  removeWorktreeSafely,
+  windowsRemoveTree,
+  psLiteral,
+  dirtyFromStatus,
+  orphanEligible,
+  branchTip,
+  execute,
+  unlinkLinksWithin,
 } from "./janitor.mjs";
 
 // Run inside a git hook, GIT_DIR / GIT_INDEX_FILE / GIT_WORK_TREE would point every `git -C <tmp>`
@@ -464,6 +473,270 @@ if (process.platform !== "win32") {
     });
   } finally {
     rmSync(root, { recursive: true, force: true });
+  }
+}
+
+// B817 — whole-worktree removal: every link inside is unlinked BEFORE git's recursive delete.
+t(
+  "REG-B817: links inside a worktree are unlinked before `git worktree remove --force` runs",
+  () => {
+    const calls = [];
+    removeWorktreeSafely("/w/lane", {
+      git: (...a) => calls.push(`git ${a.join(" ")}`),
+      unlinkLinksWithin: (d) => calls.push(`unlinkLinks ${d}`),
+      exists: () => false,
+      removeTree: (d) => calls.push(`removeTree ${d}`),
+    });
+    const unlinkAt = calls.indexOf("unlinkLinks /w/lane");
+    const removeAt = calls.findIndex((c) => c.startsWith("git worktree remove --force"));
+    assert.ok(unlinkAt >= 0, `links were never unlinked: ${JSON.stringify(calls)}`);
+    assert.ok(unlinkAt < removeAt, `git remove ran first: ${JSON.stringify(calls)}`);
+  },
+);
+
+// B818 — the Windows junction sequence fails CLOSED.
+{
+  const fakeFs = () => {
+    const present = new Set(["C:/w/nm", "C:/w/nm/j1"]);
+    const log = [];
+    return {
+      log,
+      deps: (find) => ({
+        findJunctions: find,
+        unlinkJunction: (j) => (log.push(`unlink ${j}`), present.delete(j)),
+        exists: (p) => present.has(p),
+        rmdirS: (d) => log.push(`rmdirS ${d}`),
+      }),
+      present,
+    };
+  };
+  t(
+    "REG-B818: a junction scan that FAILS (null) refuses the delete instead of reading 'no junctions'",
+    () => {
+      const f = fakeFs();
+      assert.throws(() =>
+        windowsRemoveTree(
+          "C:/w/nm",
+          f.deps(() => null),
+        ),
+      );
+      assert.ok(!f.log.some((l) => l.startsWith("rmdirS")), JSON.stringify(f.log));
+    },
+  );
+  t("REG-B818: a junction that survives its unlink refuses the recursive delete", () => {
+    const f = fakeFs();
+    const deps = f.deps(() => ["C:/w/nm/j1"]);
+    deps.unlinkJunction = (j) => f.log.push(`unlink ${j}`); // does not actually go away
+    assert.throws(() => windowsRemoveTree("C:/w/nm", deps));
+    assert.ok(!f.log.some((l) => l.startsWith("rmdirS")), JSON.stringify(f.log));
+  });
+  t(
+    "REG-B818: the tree is re-scanned after unlinking; a junction found then refuses the delete",
+    () => {
+      const f = fakeFs();
+      let n = 0;
+      assert.throws(() =>
+        windowsRemoveTree(
+          "C:/w/nm",
+          f.deps(() => (n++ === 0 ? ["C:/w/nm/j1"] : ["C:/w/nm/j2"])),
+        ),
+      );
+      assert.ok(!f.log.some((l) => l.startsWith("rmdirS")), JSON.stringify(f.log));
+    },
+  );
+  t("B818: the normal case still unlinks every junction, then removes the tree", () => {
+    const f = fakeFs();
+    let n = 0;
+    windowsRemoveTree(
+      "C:/w/nm",
+      f.deps(() => (n++ === 0 ? ["C:/w/nm/j1"] : [])),
+    );
+    assert.deepEqual(f.log, ["unlink C:/w/nm/j1", "rmdirS C:/w/nm"]);
+  });
+  t("REG-B818: a path with a quote stays ONE PowerShell literal", () => {
+    assert.equal(psLiteral("C:\\Users\\o'brien\\wt"), "'C:\\Users\\o''brien\\wt'");
+  });
+}
+
+// B819 — "dirty" fails closed and counts precious ignored files.
+t("REG-B819: a FAILED git status is dirty, never clean", () => {
+  assert.equal(dirtyFromStatus(null, ""), true);
+});
+t("REG-B819: an unreadable ignored list is dirty", () => {
+  assert.equal(dirtyFromStatus("", null), true);
+});
+t(
+  "REG-B819: an ignored .env or local-assets entry is precious (dirty); build output is not",
+  () => {
+    assert.equal(dirtyFromStatus("", "!! apps/api/.env\n"), true);
+    assert.equal(dirtyFromStatus("", "!! local-assets/proofs/x.png\n"), true);
+    assert.equal(
+      dirtyFromStatus("", "!! node_modules/\n!! apps/web/.next/\n!! packages/pricing/dist/\n"),
+      false,
+    );
+    assert.equal(dirtyFromStatus("", ""), false);
+    assert.equal(dirtyFromStatus(" M a.ts\n", ""), true);
+  },
+);
+
+// B820 — orphan dirs get the same "is someone still using this" guard.
+t("REG-B820: an orphan dir with a .git entry is never deleted", () => {
+  const now = Date.parse("2026-09-24T02:00:00Z");
+  assert.equal(
+    orphanEligible({ hasGitEntry: true, newestMtimeMs: now - 10 * 86400e3, nowMs: now }),
+    false,
+  );
+});
+t("REG-B820: an orphan dir touched in the last 24h (or unreadable) is never deleted", () => {
+  const now = Date.parse("2026-09-24T02:00:00Z");
+  assert.equal(
+    orphanEligible({ hasGitEntry: false, newestMtimeMs: now - 3600e3, nowMs: now }),
+    false,
+  );
+  assert.equal(orphanEligible({ hasGitEntry: false, newestMtimeMs: null, nowMs: now }), false);
+  assert.equal(
+    orphanEligible({ hasGitEntry: false, newestMtimeMs: now - 3 * 86400e3, nowMs: now }),
+    true,
+  );
+});
+
+// LOW — a branch tip is read as refs/heads/<name>, never a same-named tag.
+{
+  const dir = mkdtempSync(join(tmpdir(), "janitor-tip-"));
+  const g = (...args) =>
+    execFileSync("git", ["-C", dir, ...args], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    }).trim();
+  try {
+    g("init", "-q", "-b", "master");
+    writeFileSync(join(dir, "a"), "1");
+    g("add", "a");
+    g("-c", "user.name=t", "-c", "user.email=t@example.com", "commit", "-q", "-m", "c1");
+    const first = g("rev-parse", "HEAD");
+    g("branch", "lane");
+    writeFileSync(join(dir, "a"), "2");
+    g("-c", "user.name=t", "-c", "user.email=t@example.com", "commit", "-q", "-am", "c2");
+    g("tag", "lane"); // a TAG with the branch's name, on a different commit
+    t("REG-LOW: branchTip reads the branch, not a same-named tag", () => {
+      assert.equal(branchTip(dir, "lane"), first);
+    });
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+// The dispatcher itself: every action kind is wired, and every delete passes the guard first.
+{
+  const run = (a, refusal = null) => {
+    const calls = [];
+    const out = execute(a, {
+      refuseDelete: (t, o) => (calls.push(`guard ${t} ${o.kind}`), refusal),
+      removeTree: (t) => calls.push(`removeTree ${t}`),
+      removeWorktree: (t) => calls.push(`removeWorktree ${t}`),
+      run: (c, args) => calls.push(`run ${c} ${args.join(" ")}`),
+      log: () => {},
+    });
+    return { out, calls };
+  };
+  t("execute: node_modules / orphan / stale-proof deletes pass the guard, then removeTree", () => {
+    for (const kind of ["node_modules", "orphan-dir", "stale-proof-dir"]) {
+      const r = run({ kind, target: "/w/x" });
+      assert.deepEqual(r.calls, [`guard /w/x ${kind}`, "removeTree /w/x"]);
+      assert.equal(r.out, "done");
+    }
+  });
+  t("execute (B817 wiring): a whole worktree passes the guard, then removeWorktreeSafely", () => {
+    const r = run({ kind: "worktree", target: "/w/lane" });
+    assert.deepEqual(r.calls, ["guard /w/lane worktree", "removeWorktree /w/lane"]);
+  });
+  t("execute: a guard refusal deletes nothing", () => {
+    const r = run({ kind: "worktree", target: "/w/main" }, "target is the main checkout");
+    assert.equal(r.out, "refused");
+    assert.deepEqual(r.calls, ["guard /w/main worktree"]);
+  });
+  t("execute: docker/npm steps run their one command; an unknown kind throws", () => {
+    assert.deepEqual(run({ kind: "docker-build-cache" }).calls, ["run docker builder prune -a -f"]);
+    assert.deepEqual(run({ kind: "npm-cache" }).calls, ["run npm cache clean --force"]);
+    assert.throws(() => run({ kind: "rm-rf-everything", target: "/" }));
+  });
+}
+
+// B817 on POSIX: unlinkLinksWithin unlinks every link inside and follows none.
+if (process.platform !== "win32") {
+  const root = mkdtempSync(join(tmpdir(), "janitor-b817-"));
+  try {
+    const outside = join(root, "outside");
+    mkdirSync(outside);
+    writeFileSync(join(outside, "SENTINEL"), "keep");
+    const wt = join(root, "wt");
+    mkdirSync(join(wt, "apps", "api"), { recursive: true });
+    writeFileSync(join(wt, "apps", "api", "keep.ts"), "x");
+    symlinkSync(outside, join(wt, "apps", "api", "node_modules"));
+    symlinkSync(join(outside, "SENTINEL"), join(wt, "link-to-file"));
+    t(
+      "B817 (POSIX): every symlink inside the worktree is unlinked; targets and real files survive",
+      () => {
+        unlinkLinksWithin(wt);
+        assert.equal(existsSync(join(wt, "apps", "api", "node_modules")), false);
+        assert.equal(existsSync(join(wt, "link-to-file")), false);
+        assert.equal(existsSync(join(wt, "apps", "api", "keep.ts")), true);
+        assert.equal(existsSync(join(outside, "SENTINEL")), true);
+      },
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+}
+
+t("B818: PowerShell's typographic single quotes are doubled too", () => {
+  assert.equal(psLiteral("C:\\a\u2019b"), "'C:\\a\u2019\u2019b'");
+  assert.equal(
+    psLiteral("C:\\a\u2018b\u201Ac\u201Bd"),
+    "'C:\\a\u2018\u2018b\u201A\u201Ac\u201B\u201Bd'",
+  );
+});
+
+t(
+  "B819: regenerable tool output does not make a worktree dirty (else the janitor never acts)",
+  () => {
+    assert.equal(
+      dirtyFromStatus(
+        "",
+        // Real `git status --porcelain --ignored=matching` lines: husky's folder is listed file by file.
+        "!! .campaign/\n!! apps/web/next-env.d.ts\n!! .husky/_/.gitignore\n!! .husky/_/pre-commit\n!! .husky/_/husky.sh\n!! .claude/settings.local.json\n",
+      ),
+      false,
+    );
+    assert.equal(dirtyFromStatus("", "!! local-assets/repair-f03-x.jsonl\n"), true);
+  },
+);
+
+// Smoke: the real CLI runs its report-only path end to end inside a throwaway repo (never --apply).
+{
+  const dir = mkdtempSync(join(tmpdir(), "janitor-smoke-"));
+  const g = (...args) =>
+    execFileSync("git", ["-C", dir, ...args], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    }).trim();
+  try {
+    g("init", "-q", "-b", "master");
+    writeFileSync(join(dir, "a"), "1");
+    g("add", "a");
+    g("-c", "user.name=t", "-c", "user.email=t@example.com", "commit", "-q", "-m", "c1");
+    t("the CLI's report-only run completes (no missing function on the plan path)", () => {
+      const cli = join(fileURLToPath(new URL(".", import.meta.url)), "janitor.mjs");
+      const out = execFileSync(process.execPath, [cli], {
+        cwd: dir,
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+      assert.match(out, /Report-only run/);
+      assert.match(out, /main checkout/);
+    });
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
   }
 }
 

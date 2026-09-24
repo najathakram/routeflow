@@ -23,11 +23,12 @@ shortfall never triggers the more aggressive later steps.
 1. **`node_modules`** in worktrees whose branch is **merged** (below), that have no uncommitted
    changes and whose HEAD has not moved in the last 24 hours — the checkout itself is kept
    (reinstall with `npm ci` when you're back on that branch).
-2. **Whole worktrees** that meet step 1's conditions AND have no unpushed commits —
-   `git worktree remove --force`, then a fallback recursive delete if Windows left files behind
+2. **Whole worktrees** that meet step 1's conditions AND have no unpushed commits — first every
+   symlink/junction inside is unlinked (B817), then `git worktree remove --force`, then a fallback recursive delete if Windows left files behind
    (file locks are common), then `git worktree prune`.
 3. **Orphan directories** under `.claude/worktrees/` that `git worktree list` no longer
-   recognizes (left behind by a worktree removed outside this tool).
+   recognizes (left behind by a worktree removed outside this tool) — only when they hold no `.git`
+   entry and nothing in them changed in the last 24 hours (B820).
 4. **Docker BUILD CACHE only** — `docker builder prune -a -f`.
 5. **npm cache** — `npm cache clean --force`.
 6. **Proof/audit folders** under `local-assets/proofs/` and `local-assets/handoff/` older than
@@ -60,7 +61,12 @@ squash-only since 2026-07-30 and lanes branch from the mainline, and the uncommi
   branch with no commits of its own, a fast-forwarded one, and a squash-merged one when `gh` is
   unavailable. Verify those by hand.
 - Any worktree with **uncommitted changes**, or whose **HEAD moved in the last 24 hours** (or whose
-  activity cannot be read) — neither its `node_modules` nor the worktree is touched.
+  activity cannot be read) — neither its `node_modules` nor the worktree is touched. "Uncommitted"
+  (B819) also means: `git status` could not be read, or an **ignored** path other than build output
+  exists (a `.env`, `local-assets/`, a scratch file). The only ignored paths treated as disposable are `node_modules`, `dist`, `build`,
+  `coverage`, `.next`, `.turbo`, `.expo`, `test-output`, `*.tsbuildinfo`, `.DS_Store`,
+  `.campaign/`, `next-env.d.ts`, everything under `.husky/_/` and `.claude/settings.local.json`.
+- An orphan dir under `.claude/worktrees/` that holds a `.git` entry or changed in the last 24 hours.
 - Any merged, clean, idle worktree with unpushed commits — its `node_modules` may be cleared, but
   the worktree itself is kept.
 - **Docker volumes** and `docker system prune` — never run. Only `docker builder prune -a -f`.
@@ -76,7 +82,10 @@ tool never uses PowerShell's `Remove-Item -Recurse` or Node's `fs.rmSync(..., {r
 for anything that might contain a junction. Before any recursive delete, it enumerates junctions
 under the target (read-only `Get-ChildItem`) and unlinks each one individually with a **bare**
 `cmd /c rmdir "<path>"` (no `/s`, which is the flag that can follow a reparse point) before running
-`cmd /c rmdir /s /q` on what remains.
+`cmd /c rmdir /s /q` on what remains. Every step fails **closed** (B818): if the junction scan itself
+fails, the delete is refused (never read as "no junctions"); each unlink is verified; and the tree is
+re-scanned, and must be junction-free, before `rmdir /s` runs. The scan itself fails (exit 3) when any subtree could not be read, since an unreadable folder could hide a junction. One failed or refused action is reported as `REFUSED` and skipped; the run continues with the next one. Paths are passed to PowerShell as
+properly quoted literals, so a `'` in a path can no longer break the scan.
 
 On macOS and Linux (B815) the same rule applies to symlinks: the tool walks the tree itself and
 `lstat`s every entry. A symlink, whether to a file or a directory, is **unlinked, never followed**;
