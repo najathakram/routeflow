@@ -38,6 +38,11 @@ export class OrderItemDto {
   @StripHtml()
   name?: string;
   @IsInt() @Min(1) @Max(100_000) qty: number;
+  /**
+   * units_v1: sell by this unit of the product's ladder (Case, Pallet, Piece …). STAFF ONLY, behind
+   * flag.units_v1; `qty` then counts the unit and boxes/pieces must be omitted. Blank = the pack.
+   */
+  @IsOptional() @IsString() @MaxLength(64) unitLabel?: string | null;
   @IsOptional() @IsInt() @Min(0) @Max(100_000) boxes?: number;
   @IsOptional() @IsInt() @Min(0) @Max(100_000) pieces?: number;
   /** One-time discount price override — operator-supplied, not stored in CustomerPrice */

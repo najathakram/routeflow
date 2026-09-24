@@ -102,6 +102,9 @@ export function PreviewDrawer({
           <button
             onClick={onConfirm}
             disabled={confirming || (groups.total === 0 && !allowEmptyConfirm)}
+            aria-describedby={
+              groups.total === 0 && !allowEmptyConfirm ? "preview-empty-reason" : undefined
+            }
             className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-500 disabled:opacity-50"
           >
             {confirming ? "Applying..." : "Confirm"}
@@ -119,7 +122,7 @@ export function PreviewDrawer({
         </div>
       )}
       {groups.total === 0 ? (
-        <p className="text-sm text-slate-400" data-testid="preview-empty">
+        <p id="preview-empty-reason" className="text-sm text-slate-400" data-testid="preview-empty">
           {emptyMessage ?? "This change makes no difference for this tenant."}
         </p>
       ) : (
@@ -157,7 +160,7 @@ export function PreviewDrawer({
                 >
                   <span aria-hidden className={`h-2 w-2 rounded-full ${tone.dot}`} />
                   {panel.title} ({rows.length})
-                  <span className="text-xs font-normal text-slate-500">{panel.hint}</span>
+                  <span className="text-xs font-normal text-slate-400">{panel.hint}</span>
                 </h4>
                 <ul className="mt-2 flex flex-col gap-2">
                   {rows.map((row) => (
@@ -169,7 +172,7 @@ export function PreviewDrawer({
           })}
         </div>
       )}
-      {note && <p className="mt-3 text-xs text-slate-500">{note}</p>}
+      {note && <p className="mt-3 text-xs text-slate-400">{note}</p>}
     </AdminModal>
   );
 }
@@ -191,7 +194,7 @@ function DiffRow({ row }: { row: PreviewRow }) {
           </span>
         )}
         {after?.mode && before?.mode && after.mode.effective !== before.mode.effective && (
-          <span className="text-slate-500">
+          <span className="text-slate-400">
             mode: {before.mode.effective} → {after.mode.effective}
           </span>
         )}
@@ -205,5 +208,5 @@ function DiffRow({ row }: { row: PreviewRow }) {
 
 function StateChip({ on }: { on?: boolean }) {
   // Text, not colour alone — "On"/"Off" are the accessible names.
-  return <span className={on ? "text-emerald-400" : "text-slate-500"}>{on ? "On" : "Off"}</span>;
+  return <span className={on ? "text-emerald-400" : "text-slate-400"}>{on ? "On" : "Off"}</span>;
 }

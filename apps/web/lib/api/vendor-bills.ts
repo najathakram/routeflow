@@ -181,6 +181,8 @@ export interface CreateVendorBillItem {
 export interface CreateVendorBillDto {
   supplierId: string;
   purchaseOrderId?: string;
+  /** Scan flow: raise a draft PO from the bill's own lines and link it (never together with purchaseOrderId). */
+  createPurchaseOrder?: boolean;
   billDate: string;
   dueDate: string;
   /** Net-terms label as entered on the bill, prefillable from Supplier.defaultTerms.

@@ -1,9 +1,16 @@
+import { Logger } from "@nestjs/common";
 import { FEATURE_REGISTRY } from "./feature-registry";
 import { PLAN_KEYS } from "./plan-catalog.constants";
-import { PlanTransitionConfigService } from "./plan-transition-config.service";
+import { RestoreBudgetExceededError } from "./tenant-config-snapshot.service";
+import {
+  HOOK_TX_OPTIONS,
+  PlanTransitionConfigService,
+  SnapshotFailedError,
+} from "./plan-transition-config.service";
 
 // Keys and plans come from the live registry/catalog (L-206), never re-typed here.
 const LOW = PLAN_KEYS[0];
+const MSG = "raw row fragment (secret)";
 const HIGH = PLAN_KEYS[PLAN_KEYS.length - 1];
 const planFlagKeys = FEATURE_REGISTRY.filter(
   (f) => f.gate.via === "RequirePlanFlag" && !f.defaultGranted,
@@ -42,8 +49,20 @@ function build(enabled: boolean) {
     }),
   };
   const flag = { isEnabled: jest.fn().mockResolvedValue(enabled) };
-  const svc = new PlanTransitionConfigService(flag as never, snapshots as never, catalog as never);
-  return { svc, snapshots, catalog, flag };
+  const caches = {
+    authority: { invalidate: jest.fn() },
+    overrides: { invalidate: jest.fn() },
+    configStore: { invalidateTenant: jest.fn() },
+  };
+  const svc = new PlanTransitionConfigService(
+    flag as never,
+    snapshots as never,
+    catalog as never,
+    caches.authority as never,
+    caches.overrides as never,
+    caches.configStore as never,
+  );
+  return { svc, snapshots, catalog, flag, caches };
 }
 
 /** The real call order at a site: prepare() BEFORE the transaction, onPlanChange(tx, ...) inside it. */
@@ -213,7 +232,7 @@ describe("PlanTransitionConfigService (A2 step b)", () => {
 
     it("a restore that THROWS is rolled back to the savepoint and the upgrade carries on (no throw)", async () => {
       const { svc, snapshots } = build(true);
-      snapshots.restoreLatest.mockRejectedValueOnce(new Error("deadlock detected"));
+      snapshots.restoreLatest.mockRejectedValueOnce(new Error(`deadlock detected ${MSG}`));
 
       const out = await runTransition(svc, up);
 
@@ -221,16 +240,24 @@ describe("PlanTransitionConfigService (A2 step b)", () => {
       expect(sqlOf()).toEqual([
         "SAVEPOINT config_snapshot_restore",
         "ROLLBACK TO SAVEPOINT config_snapshot_restore",
+        "SAVEPOINT config_snapshot_alarm",
+        "RELEASE SAVEPOINT config_snapshot_alarm",
       ]);
+      // ... and a failure is FINDABLE: an audit row (name/code only, never the raw message).
+      const data = auditCreate.mock.calls.at(-1)![0].data;
+      expect(data).toMatchObject({
+        tenantId: "t1",
+        action: "CONFIG_SNAPSHOT_RESTORE_FAILED",
+        meta: { automatic: true, toPlanKey: HIGH },
+      });
+      expect(JSON.stringify(data.meta)).not.toContain(MSG);
     });
 
-    it("a SAVEPOINT that cannot even be opened skips the restore instead of failing the upgrade", async () => {
+    it("a SAVEPOINT that cannot be opened means the tx is already aborted: it throws (alarm), never a silent skip", async () => {
       const { svc, snapshots } = build(true);
       raw.mockRejectedValueOnce(new Error("savepoint rejected"));
 
-      const out = await runTransition(svc, up);
-
-      expect(out).toEqual({ action: "restore", restore: null });
+      await expect(runTransition(svc, up)).rejects.toThrow("savepoint rejected");
       expect(snapshots.restoreLatest).not.toHaveBeenCalled();
     });
 
@@ -240,6 +267,48 @@ describe("PlanTransitionConfigService (A2 step b)", () => {
       raw.mockResolvedValueOnce(1).mockRejectedValueOnce(new Error("rollback failed"));
 
       await expect(runTransition(svc, up)).resolves.toEqual({ action: "restore", restore: null });
+    });
+
+    it("a restore abandoned for exceeding its budget is rolled back to the savepoint and the upgrade carries on", async () => {
+      const { svc, snapshots } = build(true);
+      snapshots.restoreLatest.mockRejectedValueOnce(new RestoreBudgetExceededError("4 s"));
+
+      const out = await runTransition(svc, up);
+
+      expect(out).toEqual({ action: "restore", restore: null });
+      expect(sqlOf()).toEqual([
+        "SAVEPOINT config_snapshot_restore",
+        "ROLLBACK TO SAVEPOINT config_snapshot_restore",
+        "SAVEPOINT config_snapshot_alarm",
+        "RELEASE SAVEPOINT config_snapshot_alarm",
+      ]);
+      // ... and a failure is FINDABLE: an audit row (name/code only, never the raw message).
+      const data = auditCreate.mock.calls.at(-1)![0].data;
+      expect(data).toMatchObject({
+        tenantId: "t1",
+        action: "CONFIG_SNAPSHOT_RESTORE_FAILED",
+        meta: { automatic: true, toPlanKey: HIGH },
+      });
+      expect(JSON.stringify(data.meta)).not.toContain(MSG);
+    });
+
+    it("an abandoned (over-budget) restore is flagged budgetExceeded in its alarm row", async () => {
+      const { svc, snapshots } = build(true);
+      snapshots.restoreLatest.mockRejectedValueOnce(new RestoreBudgetExceededError("3 s"));
+
+      await runTransition(svc, up);
+
+      expect(auditCreate.mock.calls.at(-1)![0].data.meta).toMatchObject({ budgetExceeded: true });
+    });
+
+    it("the alarm write cannot poison the upgrade: it runs in its own savepoint and a failure is swallowed", async () => {
+      const { svc, snapshots } = build(true);
+      snapshots.restoreLatest.mockRejectedValueOnce(new Error("boom"));
+      auditCreate.mockRejectedValueOnce(new Error("audit down"));
+
+      await expect(runTransition(svc, up)).resolves.toEqual({ action: "restore", restore: null });
+
+      expect(sqlOf()).toContain("ROLLBACK TO SAVEPOINT config_snapshot_alarm");
     });
 
     it("a FAILED AUDIT write is non-fatal too — and rolls the restore back with it (no audit row, no restore)", async () => {
@@ -265,6 +334,113 @@ describe("PlanTransitionConfigService (A2 step b)", () => {
         }),
       ).rejects.toThrow("db down");
       expect(sqlOf()).toEqual([]);
+    });
+  });
+
+  it("a failed downgrade snapshot throws a typed SnapshotFailedError carrying the tenant and the cause", async () => {
+    const { svc, snapshots } = build(true);
+    snapshots.snapshot.mockRejectedValueOnce(new Error("db down"));
+
+    const err = await runTransition(svc, {
+      tenantId: "t9",
+      fromPlanKey: HIGH,
+      toPlanKey: LOW,
+      toPlanVersionId: null,
+    }).catch((e) => e);
+
+    expect(err).toBeInstanceOf(SnapshotFailedError);
+    expect(err.tenantId).toBe("t9");
+    expect(err.message).toContain("db down");
+  });
+
+  describe("invalidateCaches — an automatic restore is visible immediately, not after the 30 s TTL", () => {
+    it("drops the resolver, override and config-mode caches of THAT tenant when the hook was active", async () => {
+      const { svc, caches } = build(true);
+      const prepared = await svc.prepare({
+        tenantId: "t7",
+        fromPlanKey: LOW,
+        toPlanKey: HIGH,
+        toPlanVersionId: null,
+      });
+
+      svc.invalidateCaches("t7", prepared);
+
+      expect(caches.authority.invalidate).toHaveBeenCalledWith("t7");
+      expect(caches.overrides.invalidate).toHaveBeenCalledWith("t7");
+      expect(caches.configStore.invalidateTenant).toHaveBeenCalledWith("t7");
+    });
+
+    it("never throws (the cron's per-tenant catch rethrows) and one failing cache does not leave the others stale", async () => {
+      const { svc, caches } = build(true);
+      const prepared = await svc.prepare({
+        tenantId: "t7",
+        fromPlanKey: LOW,
+        toPlanKey: HIGH,
+        toPlanVersionId: null,
+      });
+      caches.authority.invalidate.mockImplementation(() => {
+        throw new Error("boom");
+      });
+      // The swallow must stay LOUD (the only operator signal is this log line): a refactor that
+      // makes it silent has to fail here.
+      const errorSpy = jest.spyOn(Logger.prototype, "error").mockImplementation(() => undefined);
+
+      try {
+        expect(() => svc.invalidateCaches("t7", prepared)).not.toThrow();
+        expect(errorSpy).toHaveBeenCalledWith(
+          expect.stringContaining("resolver cache for tenant t7"),
+        );
+      } finally {
+        errorSpy.mockRestore();
+      }
+
+      expect(caches.overrides.invalidate).toHaveBeenCalledWith("t7");
+      expect(caches.configStore.invalidateTenant).toHaveBeenCalledWith("t7");
+    });
+
+    it("touches NOTHING when the flag is off (or there was no transition) — flag-off behaviour is unchanged", async () => {
+      const { svc, caches } = build(false);
+      const prepared = await svc.prepare({
+        tenantId: "t7",
+        fromPlanKey: LOW,
+        toPlanKey: HIGH,
+        toPlanVersionId: null,
+      });
+
+      svc.invalidateCaches("t7", prepared);
+      svc.invalidateCaches("t7", null);
+      svc.invalidateCaches("t7", undefined);
+
+      expect(caches.authority.invalidate).not.toHaveBeenCalled();
+      expect(caches.overrides.invalidate).not.toHaveBeenCalled();
+      expect(caches.configStore.invalidateTenant).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("transactionOptions — a longer transaction budget ONLY while the flag is on", () => {
+    it("returns the raised budget for an enabled transition", async () => {
+      const { svc } = build(true);
+      const prepared = await svc.prepare({
+        tenantId: "t1",
+        fromPlanKey: LOW,
+        toPlanKey: HIGH,
+        toPlanVersionId: null,
+      });
+      expect(svc.transactionOptions(prepared)).toBe(HOOK_TX_OPTIONS);
+      expect(HOOK_TX_OPTIONS.timeout).toBeGreaterThan(5_000); // Prisma's default is 5 s
+    });
+
+    it("returns undefined when the flag is off, or there is no transition — the site's tx is untouched", async () => {
+      const { svc } = build(false);
+      const prepared = await svc.prepare({
+        tenantId: "t1",
+        fromPlanKey: LOW,
+        toPlanKey: HIGH,
+        toPlanVersionId: null,
+      });
+      expect(svc.transactionOptions(prepared)).toBeUndefined();
+      expect(svc.transactionOptions(null)).toBeUndefined();
+      expect(svc.transactionOptions(undefined)).toBeUndefined();
     });
   });
 

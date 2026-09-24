@@ -327,4 +327,130 @@ describe("buildOrderItemDiff", () => {
     });
     expect(out).toEqual([]);
   });
+
+  // ── B707: a unit-aware line's UPDATE wire shape diverges from a pack line's ──
+
+  it("B707: a unit-aware line's UPDATE sends {id, qty: <unit count>, unitLabel, productId}, never boxFields or the piece-expanded qty", () => {
+    const out = run({
+      catalog: [
+        cat({
+          lineId: "L1",
+          qty: 1152, // piece-expanded total (4 cases * 288) — must NOT reach the wire
+          boxes: 4,
+          pieces: 0,
+          unitPrice: 20,
+          basePrice: 20,
+          unitLabel: "Case",
+        }),
+      ],
+      originals: [origLine({ id: "L1", qty: 864, unitPrice: 20 })], // was 3 cases
+    });
+    // productId rides along with unitLabel (mobile unit picker): prepareUnitEditContext only
+    // preloads the product/ladder for this item when the item itself carries productId or the
+    // STORED line already has a unitLabel — a filed, unfixed server gap this closes for the
+    // client's own payload regardless of which case applies.
+    expect(out).toEqual([
+      { id: "L1", action: "UPDATE", qty: 4, unitLabel: "Case", productId: "P1" },
+    ]);
+    expect(out[0]).not.toHaveProperty("boxes");
+    expect(out[0]).not.toHaveProperty("pieces");
+  });
+
+  it("B707: an untouched unit-aware line emits NOTHING (unitsPerBox already correct upstream keeps the piece-total comparison stable)", () => {
+    const out = run({
+      catalog: [
+        cat({
+          lineId: "L1",
+          qty: 864,
+          boxes: 3,
+          pieces: 0,
+          unitPrice: 20,
+          basePrice: 20,
+          unitLabel: "Case",
+        }),
+      ],
+      originals: [origLine({ id: "L1", qty: 864, unitPrice: 20 })],
+    });
+    expect(out).toEqual([]);
+  });
+
+  it("B707: a factor-1 unit line (no box split, count IS qty) sends {id, qty: <count>, unitLabel} on a price-only edit", () => {
+    const out = run({
+      catalog: [
+        cat({
+          lineId: "L1",
+          qty: 5, // 5 Pieces, no boxes/pieces split stored (factor 1)
+          unitPrice: 9,
+          basePrice: 9,
+          unitLabel: "Piece",
+        }),
+      ],
+      originals: [origLine({ id: "L1", qty: 5, unitPrice: 8 })],
+    });
+    // overrideReason "" rides along per the pre-existing B465 rule (reason
+    // travels WITH any price change) — unrelated to units, unchanged by this fix.
+    expect(out).toEqual([
+      {
+        id: "L1",
+        action: "UPDATE",
+        qty: 5,
+        unitLabel: "Piece",
+        productId: "P1",
+        unitPrice: 9,
+        overrideReason: "",
+      },
+    ]);
+  });
+
+  it("B707: a pack line (no unitLabel) is completely unaffected — still sends boxFields, never unitLabel", () => {
+    const out = run({
+      catalog: [cat({ lineId: "L1", qty: 24, boxes: 2, pieces: 0, unitPrice: 5 })],
+      originals: [origLine({ id: "L1", qty: 12, unitPrice: 5 })],
+    });
+    expect(out).toEqual([{ id: "L1", action: "UPDATE", qty: 24, boxes: 2, pieces: 0 }]);
+    expect(out[0]).not.toHaveProperty("unitLabel");
+  });
+
+  // ── units_v1 (mobile unit picker): originating a brand-new unit-sold line ──
+
+  it("a NEW catalog line sold by a unit sends {productId, qty: <count>, unitLabel}, never boxFields", () => {
+    const out = run({
+      catalog: [
+        cat({
+          productId: "P9",
+          qty: 3, // the unit COUNT — never expanded to base pieces
+          unitPrice: 220,
+          basePrice: 220, // the unit's OWN resolved price — untouched, so no override
+          unitLabel: "Case",
+        }),
+      ],
+    });
+    expect(out).toEqual([{ productId: "P9", qty: 3, unitLabel: "Case" }]);
+    expect(out[0]).not.toHaveProperty("boxes");
+    expect(out[0]).not.toHaveProperty("pieces");
+  });
+
+  it("a NEW unit-sold line with a genuine operator override still sends unitPrice", () => {
+    const out = run({
+      catalog: [
+        cat({
+          productId: "P9",
+          qty: 3,
+          unitPrice: 200, // typed below the unit's own resolved price (basePrice)
+          basePrice: 220,
+          unitLabel: "Case",
+          overrideReason: "Bulk discount",
+        }),
+      ],
+    });
+    expect(out).toEqual([
+      {
+        productId: "P9",
+        qty: 3,
+        unitLabel: "Case",
+        unitPrice: 200,
+        overrideReason: "Bulk discount",
+      },
+    ]);
+  });
 });

@@ -7,6 +7,7 @@ import {
   NotFoundException,
 } from "@nestjs/common";
 import * as unitAware from "./unit-aware-guard";
+import { normalizeBoxesPieces } from "@routeflow/pricing";
 import { PrismaService } from "../prisma/prisma.service";
 import { JwtPayload } from "../auth/jwt-payload.interface";
 import { OrdersService } from "./orders.service";
@@ -27,6 +28,80 @@ import {
   ChangeRequestResolveAction,
   ResolveChangeRequestDto,
 } from "./dto/resolve-change-request.dto";
+
+const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
+
+/**
+ * B673: reconcile a next-delivery ADD_ITEM's FILED box split against the product's LIVE pack.
+ *
+ * A driver's door add is filed as `{ qty: total pieces, boxes, pieces }`. The pack at filing is not
+ * stored, but it is fixed by the payload itself: `(qty - pieces) / boxes`. The split is handed to
+ * create() unchanged when that pack still matches the live one; otherwise the approval is REFUSED,
+ * naming both packs, so the operator can re-quote. Re-splitting against a changed pack would change
+ * either the price or the quantity the customer agreed to, and falling back to the bare `qty` is
+ * the 12x overcharge itself (create() reads a bare qty on a boxed product as a BOX count).
+ * An inconsistent split is refused as INVALID_LINE_SPLIT — never reinterpreted.
+ *
+ * Every refusal is thrown before any write, so the change request stays PENDING. The message
+ * points the operator at DECLINE + a fresh add on the next order — never at approve-at-stop: the
+ * item was not on the truck, approve-at-stop fails once the stop is done, and on an order holding
+ * an old box-unaware line its merge re-prices at 12x (B753(a): $520 for $80). Revisit once B753
+ * is fixed.
+ */
+export function reconcileFiledAddSplit(args: {
+  qty: number;
+  boxes: unknown;
+  pieces: unknown;
+  liveUnitsPerBox: number;
+  productName: string;
+}): { boxes: number; pieces: number } {
+  const { qty, liveUnitsPerBox: liveUpb, productName } = args;
+  const b = args.boxes ?? 0;
+  const p = args.pieces ?? 0;
+  const invalid = (message: string) =>
+    new BadRequestException({ code: "INVALID_LINE_SPLIT", message });
+
+  if (
+    typeof b !== "number" ||
+    typeof p !== "number" ||
+    !Number.isInteger(b) ||
+    !Number.isInteger(p) ||
+    b < 0 ||
+    p < 0
+  ) {
+    throw invalid("boxes and pieces must be non-negative whole numbers");
+  }
+  if (b === 0 && p === 0) throw invalid("a split of 0 boxes and 0 pieces adds nothing");
+  if (!Number.isFinite(qty) || p > qty) {
+    throw invalid(`${plural(p, "loose piece", "loose pieces")} exceed the request's qty (${qty})`);
+  }
+
+  const filed = `${plural(b, "box", "boxes")} + ${plural(p, "piece", "pieces")}`;
+  const refuse = (reason: string) =>
+    new BadRequestException({
+      code: "CHANGE_REQUEST_PACK_CHANGED",
+      message: `Change request filed as ${filed}${reason}. Decline it and re-add the item to the next order.`,
+    });
+
+  if (b === 0) {
+    // Loose pieces only: no filed pack to compare, but the qty must be exactly those pieces.
+    if (qty !== p) throw invalid(`qty (${qty}) does not match ${plural(p, "piece", "pieces")}`);
+    if (liveUpb <= 1) throw refuse(`, but ${productName} is no longer sold by the box`);
+    return { boxes: 0, pieces: p };
+  }
+
+  const filedUpb = (qty - p) / b;
+  if (!Number.isInteger(filedUpb) || filedUpb <= 1) {
+    throw invalid(`qty (${qty}) is not ${filed} of any whole pack size`);
+  }
+  if (liveUpb <= 1) {
+    throw refuse(` at ${filedUpb} per box, but ${productName} is no longer sold by the box`);
+  }
+  if (filedUpb !== liveUpb) {
+    throw refuse(` at ${filedUpb} per box, but ${productName} now sells at ${liveUpb} per box`);
+  }
+  return { boxes: b, pieces: p };
+}
 
 /**
  * P5-09: post-dispatch change-request lifecycle (G6/G7).
@@ -298,9 +373,20 @@ export class ChangeRequestsService {
     const payload = cr.payload as any;
     let productId: string;
     let qty: number;
+    // B655: set only for a CHANGE_QTY delta on a BOX-AWARE line (li.boxes != null), where the
+    // delta is in PIECES and needs the pack size to split. Left null otherwise.
+    let boxes: number | null = null;
+    let pieces: number | null = null;
+    // B673: an ADD_ITEM filed WITH a box split (a driver's door add: qty = total pieces, plus
+    // boxes/pieces) is reconciled against the LIVE pack below. A bare qty (the buyer portal's
+    // selling-unit count, stored with boxes/pieces null) is passed to create() untouched.
+    let filedSplit: { boxes: unknown; pieces: unknown } | null = null;
     if (cr.type === ChangeRequestType.ADD_ITEM) {
       productId = cr.productId ?? payload.productId;
       qty = Number(payload.qty);
+      if (payload.boxes != null || payload.pieces != null) {
+        filedSplit = { boxes: payload.boxes, pieces: payload.pieces };
+      }
     } else if (cr.type === ChangeRequestType.CHANGE_QTY) {
       const li = await this.prisma
         .forTenant()
@@ -317,7 +403,49 @@ export class ChangeRequestsService {
         });
       }
       productId = li.productId;
-      qty = delta;
+
+      // B655: an EXISTING line's rewrite never re-derives its factor from the LIVE product (SA
+      // ruling) — only the line's own stored shape decides how the delta is read.
+      //
+      // Box-AWARE line (li.boxes != null): OrderItem.qty is TOTAL PIECES (create()'s split sets
+      // it that way), so `delta` is a pieces delta. Split it with the line's own unitsPerBox
+      // snapshot; if that snapshot predates the column, derive the pack EXACTLY from the line's
+      // own stored split — (qty - pieces) / boxes — accepted only when it comes out to a whole
+      // number > 1. Anything else (no derivable pack) refuses rather than guessing.
+      //
+      // Box-UNAWARE line (li.boxes == null — the template/buyer bare-qty convention): OrderItem.qty
+      // IS ALREADY the line's own selling-unit count (a box count for a boxed product with no
+      // split stored, a piece count otherwise — see the "box-unaware boxed line's qty IS the box
+      // count" comment in orders.service.ts). So `delta` is already in that unit, and today's bare
+      // `{ productId, qty }` — which create() reads as selling units — is CORRECT for this shape.
+      // Splitting it against any pack (live or snapshot) would misread a boxes delta as pieces and
+      // under-charge (a 3-box delta split against upb 24 becomes 0 boxes + 3 pieces).
+      if (li.boxes != null) {
+        // A snapshot of <= 1 is not a real pack (it's the "not case-packed" value) — treat it as
+        // absent and fall through to deriving one, same as a null snapshot, rather than letting
+        // it reach normalizeBoxesPieces' non-boxed branch, which posts the pieces delta as a bare
+        // qty (the exact B655 shape this whole fix exists to close).
+        const snapshotUpb = li.unitsPerBox != null ? Number(li.unitsPerBox) : null;
+        let upb = snapshotUpb != null && snapshotUpb > 1 ? snapshotUpb : null;
+        if (upb == null) {
+          const boxesNum = Number(li.boxes);
+          const piecesNum = Number(li.pieces ?? 0);
+          const derived = boxesNum > 0 ? (Number(li.qty) - piecesNum) / boxesNum : NaN;
+          upb = Number.isInteger(derived) && derived > 1 ? derived : null;
+        }
+        if (upb == null) {
+          throw new BadRequestException({
+            code: "LINE_PACK_UNDERIVABLE",
+            message: `Order line ${li.id} has no derivable pack size — it can't be rolled to the next delivery.`,
+          });
+        }
+        const split = normalizeBoxesPieces({ qty: delta, unitsPerBox: upb });
+        qty = split.qty;
+        boxes = split.boxes;
+        pieces = split.pieces;
+      } else {
+        qty = delta;
+      }
     } else {
       throw new BadRequestException({
         code: "INVALID_RESOLUTION_FOR_TYPE",
@@ -330,6 +458,22 @@ export class ChangeRequestsService {
       select: { id: true, trackedCategoryId: true },
     });
     if (!product) throw new BadRequestException("Product no longer exists");
+    if (filedSplit) {
+      // The live pack is read ONLY for an ADD_ITEM that carries a filed split — a new draft line's
+      // correct contract. CHANGE_QTY never reads it (B655's SA ruling: an existing line's rewrite
+      // uses only what the line itself stored), so the shared product read above stays as it was.
+      const liveProduct = await this.prisma.forTenant().product.findFirst({
+        where: { id: productId },
+        select: { unitsPerBox: true, name: true },
+      });
+      ({ boxes, pieces } = reconcileFiledAddSplit({
+        qty,
+        boxes: filedSplit.boxes,
+        pieces: filedSplit.pieces,
+        liveUnitsPerBox: Number(liveProduct?.unitsPerBox ?? 0),
+        productName: liveProduct?.name ?? payload.productName ?? "this product",
+      }));
+    }
     // Regulated license guard re-runs on approval (G6).
     await this.authGuard.assertAuthorizedOrThrow({
       customerId: order.customerId,
@@ -352,9 +496,14 @@ export class ChangeRequestsService {
       type: "BUYER",
     } as JwtPayload;
 
+    // This split is handed to create() for a NEW draft line — create() re-splits it against the
+    // LIVE product's pack (its own, correct, contract for a new sale line: unlike the rewrite
+    // above, a new line has no existing snapshot to preserve). If the pack changed since the
+    // original line was sold, the boxes/pieces intent survives but the raw piece count can shift
+    // with it — inherent to that contract, not something this rollover can or should override.
     const draft = await this.ordersService.create(
       {
-        items: [{ productId, qty }],
+        items: [{ productId, qty, ...(boxes != null ? { boxes, pieces } : {}) }],
         status: "DRAFT",
         notes: `From change request on order #${order.orderNumber ?? order.id} (not on truck)`,
       } as any,

@@ -785,6 +785,8 @@ describe("CustomersService", () => {
   describe("updateAddress", () => {
     beforeEach(() => {
       prisma.customer.findUnique.mockResolvedValue(MOCK_CUSTOMER);
+      // the stored address (updateAddress 404s a missing one and reads its state columns)
+      prisma.customerAddress.findFirst.mockResolvedValue({ state: "Texas", stateCode: "TX" });
     });
 
     it("passes addressType through to the update data (no field-picking omits it)", async () => {
@@ -1612,6 +1614,25 @@ describe("CustomersService", () => {
       expect(prisma.invoice.update).toHaveBeenCalledWith(
         expect.objectContaining({ data: expect.objectContaining({ status: "PAID" }) }),
       );
+    });
+
+    // B310, DRAFT half (#719 fixed the concurrency half). DRAFT joins this check directly,
+    // not CREDIT_NOT_APPLICABLE — :1835's exposure reads need DRAFT to stay out of that set.
+    it("REG-B310 an advance cannot be applied to a DRAFT invoice — it has not been sent yet", async () => {
+      prisma.advancePayment.findUnique.mockResolvedValue({ id: "ap-1", balance: 100 });
+      prisma.invoice.findUnique.mockResolvedValue({
+        id: "inv-draft",
+        total: 100,
+        status: "DRAFT",
+        dueDate: null,
+        payments: [],
+      });
+      await expect(
+        service.applyAdvancePaymentToInvoice("ap-1", { invoiceId: "inv-draft" }),
+      ).rejects.toThrow("Cannot apply advance payment to invoice with status DRAFT");
+      expect(prisma.invoicePayment.create).not.toHaveBeenCalled();
+      expect(prisma.invoice.update).not.toHaveBeenCalled();
+      expect(prisma.advancePayment.update).not.toHaveBeenCalled();
     });
 
     it("REG-B310 two concurrent applies of the SAME advance never drive its balance negative", async () => {

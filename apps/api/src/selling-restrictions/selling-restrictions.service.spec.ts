@@ -1,9 +1,15 @@
+import * as fs from "fs";
+import * as path from "path";
 import { ConflictException, InternalServerErrorException, Logger } from "@nestjs/common";
 import { Test } from "@nestjs/testing";
 import { PrismaService } from "../prisma/prisma.service";
 import { ProductLabelsService } from "../product-labels/product-labels.service";
 import { createMockPrisma } from "../testing/prisma-mock";
-import { activeRuleWhere, restrictionChannelForPrincipal } from "./selling-restrictions.core";
+import {
+  activeRuleWhere,
+  restrictedSummary,
+  restrictionChannelForPrincipal,
+} from "./selling-restrictions.core";
 import {
   ENABLE_READINESS_MAX_PAGES,
   ENABLE_READINESS_PAGE_SIZE,
@@ -999,8 +1005,11 @@ describe("SellingRestrictionsService.evaluate", () => {
       expect(err.getStatus()).toBe(409);
       expect(err.getResponse()).toEqual({
         code: "SELLING_RESTRICTED",
+        message: restrictedSummary(evaluation.reasons),
         blockedLines: evaluation.reasons,
       });
+      // a client with no blocked-lines panel toasts `message`: it must be a real sentence
+      expect((err.getResponse() as { message: string }).message).toMatch(/can't be sold/);
       expect((err.getResponse() as any).blockedLines[0]).toMatchObject({
         productId: "p1",
         reason: "FEDERAL_BAN",
@@ -1033,6 +1042,181 @@ describe("SellingRestrictionsService.evaluate", () => {
       expect((err.getResponse() as any).code).toBe("SELLING_RESTRICTED");
       expect((err.getResponse() as any).blockedLines[0]).toMatchObject({
         reason: "INDETERMINATE_ADDRESS",
+      });
+    });
+
+    // ── B612: the 409 BODY is redacted by audience ───────────────────────────────────────────────
+    // Everything below asserts on the exception's RESPONSE BODY (`getResponse()`), never on what a
+    // component renders: the bug was the gap between what the UI shows and what the API sends.
+    describe("B612 — the 409 body carries rule detail to STAFF only", () => {
+      const ADMIN_REASON = "SECRET-ADMIN-REASON";
+      const bodyOf = async (over: Record<string, unknown>, lines = [line("p1")]) => {
+        const err: ConflictException = await service.assertLinesSellable(args(lines, over)).then(
+          () => {
+            throw new Error("expected a rejection");
+          },
+          (e) => e,
+        );
+        expect(err).toBeInstanceOf(ConflictException);
+        expect(err.getStatus()).toBe(409);
+        return err.getResponse() as {
+          code: string;
+          message: string;
+          blockedLines: Array<Record<string, unknown>>;
+        };
+      };
+      // every fragment of internal rule detail the fixtures below can put in a body
+      const LEAKS = [
+        /\br1\b/, // ruleId
+        /FEDERAL_BAN|STATE_BAN|BUYER_PORTAL_ONLY|INDETERMINATE_ADDRESS|UNKNOWN_PRODUCT/, // reason
+        /\bTX\b/, // state
+        /\bTHC\b/, // categoryName
+        new RegExp(ADMIN_REASON), // rule text inside a line's own message
+        /"ruleId"|"reason"|"state"|"categoryName"/, // the keys themselves
+      ];
+      const expectRedacted = (body: unknown) => {
+        const json = JSON.stringify(body);
+        for (const leak of LEAKS) expect(json).not.toMatch(leak);
+      };
+      const banFederally = () => {
+        enable(true);
+        withProduct();
+        prisma.sellingRestriction.findMany.mockResolvedValue([
+          dbRule({ jurisdiction: "FEDERAL", states: [], reason: ADMIN_REASON }),
+        ]);
+      };
+
+      it("STAFF keeps the full detail: ruleId, reason, categoryName and the rule text in message", async () => {
+        banFederally();
+        const body = await bodyOf({ channel: "STAFF" });
+        expect(body.blockedLines[0]).toMatchObject({
+          productId: "p1",
+          productName: "Gummies",
+          ruleId: "r1",
+          reason: "FEDERAL_BAN",
+          categoryName: "THC",
+        });
+        expect(body.message).toContain(ADMIN_REASON);
+      });
+
+      it("STAFF keeps the state on a state ban", async () => {
+        enable(true);
+        withProduct();
+        inState("TX");
+        prisma.sellingRestriction.findMany.mockResolvedValue([dbRule()]);
+        const body = await bodyOf({ channel: "STAFF" });
+        expect(body.blockedLines[0]).toMatchObject({ reason: "STATE_BAN", state: "TX" });
+      });
+
+      it("a BUYER gets ONLY {productId, productName} per line and a sentence built from the name — one blocked line", async () => {
+        banFederally();
+        const body = await bodyOf({ channel: "BUYER_PORTAL" });
+        expect(body).toEqual({
+          code: "SELLING_RESTRICTED",
+          message: `"Gummies" can't be ordered right now.`,
+          blockedLines: [{ productId: "p1", productName: "Gummies" }],
+        });
+        expect(Object.keys(body.blockedLines[0]).sort()).toEqual(["productId", "productName"]);
+        expectRedacted(body);
+      });
+
+      it("a BUYER's STATE ban is redacted too (no state, no reason, no category)", async () => {
+        enable(true);
+        withProduct();
+        inState("TX");
+        prisma.sellingRestriction.findMany.mockResolvedValue([dbRule({ reason: ADMIN_REASON })]);
+        expectRedacted(await bodyOf({ channel: "BUYER_PORTAL" }));
+      });
+
+      it("a BUYER's INDETERMINATE (unresolvable address) is redacted — the address problem is not disclosed", async () => {
+        enable(true);
+        withProduct();
+        prisma.sellingRestriction.findMany.mockResolvedValue([dbRule({ reason: ADMIN_REASON })]);
+        withAddresses([]);
+        expectRedacted(await bodyOf({ channel: "BUYER_PORTAL" }));
+      });
+
+      it("MULTI-line: a buyer's message counts and names products only, never a line's message", async () => {
+        enable(true);
+        prisma.product.findMany.mockResolvedValue([
+          {
+            id: "p1",
+            name: "Gummies",
+            parentProductId: null,
+            categoryLabels: [{ categoryId: "cat-thc", mode: "INCLUDE" }],
+          },
+          {
+            id: "p2",
+            name: "Chews",
+            parentProductId: null,
+            categoryLabels: [{ categoryId: "cat-thc", mode: "INCLUDE" }],
+          },
+        ]);
+        prisma.sellingRestriction.findMany.mockResolvedValue([
+          dbRule({ jurisdiction: "FEDERAL", states: [], reason: ADMIN_REASON }),
+        ]);
+        const many = [line("p1"), line("p2")];
+
+        const buyer = await bodyOf({ channel: "BUYER_PORTAL" }, many);
+        expect(buyer.message).toBe(
+          `2 items on this order can't be ordered right now: "Gummies", "Chews".`,
+        );
+        expect(buyer.blockedLines).toEqual([
+          { productId: "p1", productName: "Gummies" },
+          { productId: "p2", productName: "Chews" },
+        ]);
+        expectRedacted(buyer);
+
+        const staff = await bodyOf({ channel: "STAFF" }, many);
+        expect(staff.blockedLines).toHaveLength(2);
+        expect(staff.blockedLines[0]).toMatchObject({ ruleId: "r1", reason: "FEDERAL_BAN" });
+      });
+
+      it("FAILS CLOSED: an omitted, unknown or lower-case channel is redacted like a buyer", async () => {
+        banFederally();
+        for (const channel of [undefined, null, "", "staff", "OPERATOR", "BUYER_PORTAL"]) {
+          const body = await bodyOf({ channel });
+          expect(body.blockedLines).toEqual([{ productId: "p1", productName: "Gummies" }]);
+          expectRedacted(body);
+        }
+      });
+
+      it("the same product can never appear twice in a buyer body (rule count is not disclosed)", async () => {
+        const reason = (ruleId: string) => ({
+          productId: "p1",
+          productName: "Gummies",
+          ruleId,
+          reason: "FEDERAL_BAN" as const,
+          message: ADMIN_REASON,
+        });
+        jest
+          .spyOn(service, "checkLinesSellable")
+          .mockResolvedValue({ outcome: "BLOCK", reasons: [reason("r1"), reason("r2")] });
+        const body = await bodyOf({ channel: "BUYER_PORTAL" });
+        expect(body.blockedLines).toEqual([{ productId: "p1", productName: "Gummies" }]);
+        expect(body.message).toBe(`"Gummies" can't be ordered right now.`);
+      });
+
+      it("NO other source file builds a SELLING_RESTRICTED body: the redaction lives at the one throw", () => {
+        // A second construction site (a controller, a filter, a caller that catches and re-throws)
+        // would be one refactor away from bypassing the redaction. Scan every non-spec API source.
+        const root = path.join(__dirname, "..");
+        const offenders: string[] = [];
+        const walk = (dir: string) => {
+          for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+            const full = path.join(dir, e.name);
+            if (e.isDirectory()) {
+              if (e.name !== "node_modules") walk(full);
+            } else if (/\.ts$/.test(e.name) && !/\.(spec|test)\.ts$/.test(e.name)) {
+              if (/code:\s*["']SELLING_RESTRICTED["']/.test(fs.readFileSync(full, "utf8"))) {
+                offenders.push(path.relative(root, full).split(path.sep).join("/"));
+              }
+            }
+          }
+        };
+        walk(root);
+        // two construction sites, both inside assertLinesSellable (staff branch, buyer branch)
+        expect(offenders).toEqual(["selling-restrictions/selling-restrictions.service.ts"]);
       });
     });
 

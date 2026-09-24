@@ -1,6 +1,6 @@
 import * as React from "react";
 import userEvent from "@testing-library/user-event";
-import { renderWithProviders, screen, waitFor, act, fireEvent } from "@/test-utils/render";
+import { renderWithProviders, screen, waitFor, act, fireEvent, within } from "@/test-utils/render";
 import { CreateOrderModal } from "./CreateOrderModal";
 
 // JSDOM has no scrollIntoView implementation at all (not a stub — genuinely absent), and
@@ -22,6 +22,8 @@ window.HTMLElement.prototype.scrollIntoView = jest.fn();
  */
 
 const createOrderMutate = jest.fn();
+// Mutable so a test can put the mutation in its error state (the modal's inline API-error banner).
+let mockCreateOrderError: unknown = null;
 // Mutable so a test can put a customer in the picker / give them per-product tier prices.
 let mockCustomers: Array<Record<string, unknown>> = [];
 let mockCustomerPrices: Array<Record<string, unknown>> = [];
@@ -40,7 +42,7 @@ jest.mock("@/lib/api/orders", () => ({
   useCreateOrder: () => ({
     mutate: createOrderMutate,
     isPending: false,
-    error: null,
+    error: mockCreateOrderError,
     reset: jest.fn(),
   }),
   useActiveOrderForCustomer: () => ({ data: undefined }),
@@ -114,6 +116,7 @@ let mockScanV2 = false;
 jest.mock("@/lib/api/addons", () => ({
   ...jest.requireActual("@/lib/api/addons"),
   useScanV2: () => mockScanV2,
+  useOrderUiV2: () => ({ enabled: false, resolved: true }), // order_ui_v2 has its own file (add-line)
 }));
 let cameraDetect: ((code: string) => void) | undefined;
 let cameraEnabled: boolean | undefined;
@@ -140,6 +143,16 @@ jest.mock("./scan/useContinuousScanCamera", () => ({
 jest.mock("@/lib/scan-cue", () => ({ playScanCue: jest.fn(), unlockScanCue: jest.fn() }));
 
 const mockResolveProductByCode = jest.fn();
+
+// units_v1: the flag and the product's ladder, mutable per test (default: flag OFF = today's modal).
+let mockUnitsEnabled = false;
+let mockProductUnits: unknown[] = [];
+jest.mock("@/lib/api/product-units", () => ({
+  useUnitsEnabled: () => mockUnitsEnabled,
+  useProductUnits: (_id: string, enabled: boolean) => ({
+    data: enabled ? mockProductUnits : undefined,
+  }),
+}));
 jest.mock("@/lib/barcode-resolve", () => ({
   resolveProductByCode: (code: string) => mockResolveProductByCode(code),
 }));
@@ -162,6 +175,8 @@ describe("CreateOrderModal", () => {
     cameraDetect = undefined;
     cameraEnabled = undefined;
     mockScanV2 = false;
+    mockUnitsEnabled = false;
+    mockProductUnits = [];
   });
 
   it("blocks submit with 'Please select a customer' and never calls the create mutation", async () => {
@@ -434,6 +449,66 @@ describe("CreateOrderModal", () => {
       expect(screen.getByText("Case Soda")).toBeInTheDocument();
     });
 
+    describe("price editor (step 6)", () => {
+      const openEditor = async () => {
+        mockResolveProductByCode.mockResolvedValue(widget);
+        await openScreen();
+        await scanCode("012345678905");
+        await screen.findByText("Widget");
+        fireEvent.click(screen.getByText("$9.99 / each"));
+        return screen.findByRole("dialog", { name: "Edit Widget" });
+      };
+
+      it("tapping a scanned row's price opens the sheet for that line", async () => {
+        const editor = await openEditor();
+        expect(editor).toBeInTheDocument();
+      });
+
+      it("setting a one-time price re-prices the line and the pinned total, through the row's own handler", async () => {
+        await openEditor();
+
+        fireEvent.change(screen.getByLabelText("Price"), { target: { value: "8.50" } });
+
+        await waitFor(() => expect(screen.getByText("1 item · $8.50")).toBeInTheDocument());
+      });
+
+      it("stepping the quantity from the sheet updates the same line", async () => {
+        await openEditor();
+
+        fireEvent.click(screen.getByLabelText("One more"));
+
+        await waitFor(() => expect(screen.getByText("1 item · $19.98")).toBeInTheDocument());
+      });
+
+      it("Escape closes the sheet but leaves the scan screen (and the order) open", async () => {
+        await openEditor();
+
+        fireEvent.keyDown(document.body, { key: "Escape" });
+
+        await waitFor(() =>
+          expect(screen.queryByRole("dialog", { name: "Edit Widget" })).not.toBeInTheDocument(),
+        );
+        expect(screen.getByRole("dialog", { name: "Scan items" })).toBeInTheDocument();
+        expect(screen.getByText("Widget")).toBeInTheDocument();
+      });
+
+      it("Done in the sheet returns to the scan screen with the edit applied", async () => {
+        await openEditor();
+        fireEvent.change(screen.getByLabelText("Price"), { target: { value: "8.50" } });
+
+        fireEvent.click(
+          within(screen.getByRole("dialog", { name: "Edit Widget" })).getByRole("button", {
+            name: "Done",
+          }),
+        );
+
+        await waitFor(() =>
+          expect(screen.queryByRole("dialog", { name: "Edit Widget" })).not.toBeInTheDocument(),
+        );
+        expect(screen.getByText("1 item · $8.50")).toBeInTheDocument();
+      });
+    });
+
     it("an UNKNOWN code opens create-product with the code as SKU and pauses the screen beneath it", async () => {
       mockResolveProductByCode.mockResolvedValue({ notFound: true, archived: false });
       await openScreen();
@@ -608,6 +683,182 @@ describe("CreateOrderModal", () => {
 
         expect(await screen.findByText("$8.00 / each")).toBeInTheDocument();
       });
+    });
+
+    describe("selling restrictions - the API's SELLING_RESTRICTED 409 is shown as a blocked-items dialog", () => {
+      const restricted409 = {
+        response: {
+          status: 409,
+          data: {
+            code: "SELLING_RESTRICTED",
+            blockedLines: [
+              {
+                productId: "p1",
+                productName: "Hemp Gummies",
+                categoryName: "Hemp",
+                ruleId: "r1",
+                reason: "STATE_BAN",
+                state: "TX",
+                message: "m",
+              },
+            ],
+          },
+        },
+      };
+
+      afterEach(() => {
+        mockCreateOrderError = null;
+      });
+
+      // NOTE: a real *draft* is not blocked by the API (only non-draft sales are checked; the block
+      // lands at promotion), so the 409 is injected into the shared onError here. That handler is
+      // the one every create/promote path goes through; the real-server behaviour is F2's proof.
+      it("a blocked save opens the dialog with the item and a plain cause, and raises NO page-level toast", async () => {
+        mockCustomers = [acme];
+        renderWithProviders(<CreateOrderModal isOpen onClose={jest.fn()} />);
+        await pickCustomer("Acme Foods");
+        fireEvent.click(screen.getByRole("button", { name: /save as draft/i }));
+        expect(createOrderMutate).toHaveBeenCalledTimes(1);
+
+        createOrderMutate.mock.calls[0][1].onError(restricted409);
+
+        const dialog = await screen.findByRole("dialog", {
+          name: /can't be sold to this customer/i,
+        });
+        expect(within(dialog).getByText("Hemp Gummies")).toBeInTheDocument();
+        expect(within(dialog).getByText("Restricted in TX")).toBeInTheDocument();
+        expect(within(dialog).queryByText("p1")).toBeNull(); // never a raw id
+        expect(mockToast).not.toHaveBeenCalled();
+      });
+
+      it("shows no inline red banner for it (the dialog is the one message; the rule reason stays out)", async () => {
+        mockCustomers = [acme];
+        mockCreateOrderError = {
+          ...restricted409,
+          message: "Request failed",
+          response: {
+            ...restricted409.response,
+            data: { ...restricted409.response.data, message: "Restricted: internal rule reason" },
+          },
+        };
+        renderWithProviders(<CreateOrderModal isOpen onClose={jest.fn()} />);
+        await pickCustomer("Acme Foods");
+        expect(screen.queryByText(/internal rule reason/)).toBeNull();
+        expect(screen.queryByText(/Request failed/)).toBeNull();
+      });
+
+      it("any other API error still shows the inline banner", async () => {
+        mockCustomers = [acme];
+        mockCreateOrderError = { response: { status: 500, data: { message: "Boom happened" } } };
+        renderWithProviders(<CreateOrderModal isOpen onClose={jest.fn()} />);
+        await pickCustomer("Acme Foods");
+        expect(screen.getByText("Boom happened")).toBeInTheDocument();
+      });
+
+      // CREDIT_LIMIT_EXCEEDED is in providers.tsx's HANDLED_CODES (the order detail opens a guard
+      // dialog), which silences the global toast — so the create modal's inline banner is the ONLY
+      // place its message can show. This pins that a credit refusal on create is never silent.
+      it("a credit-limit refusal on create still shows the server's message in the banner", async () => {
+        mockCustomers = [acme];
+        mockCreateOrderError = {
+          response: {
+            status: 409,
+            data: { code: "CREDIT_LIMIT_EXCEEDED", message: "Over their credit limit of 100.00." },
+          },
+        };
+        renderWithProviders(<CreateOrderModal isOpen onClose={jest.fn()} />);
+        await pickCustomer("Acme Foods");
+        expect(screen.getByText("Over their credit limit of 100.00.")).toBeInTheDocument();
+      });
+    });
+  });
+  describe("units_v1 - selling an order line by a unit", () => {
+    const caseLevel = {
+      id: "u1",
+      label: "Case",
+      factorToBase: 288,
+      price: "480.00",
+      priceTier2: null,
+      priceTier3: null,
+      priceTier4: null,
+      priceTier5: null,
+      isDefaultSelling: false,
+      sortOrder: 0,
+    };
+    const boxed = {
+      notFound: false,
+      archived: false,
+      product: { id: "prod-1", name: "Widget", pricePerUnit: "42", unit: "Box", unitsPerBox: 24 },
+    };
+    const cust = { id: "c1", businessName: "Acme Foods", pricingTier: 1 };
+
+    const setup = async () => {
+      mockUnitsEnabled = true;
+      mockProductUnits = [caseLevel];
+      mockCustomers = [cust];
+      mockResolveProductByCode.mockResolvedValue(boxed);
+      renderWithProviders(<CreateOrderModal isOpen onClose={jest.fn()} />);
+      fireEvent.change(screen.getByPlaceholderText("Search by business name…"), {
+        target: { value: "Acm" },
+      });
+      fireEvent.click(await screen.findByText("Acme Foods"));
+      capturedOnScan!("111");
+      return screen.findByLabelText("Sell Widget by");
+    };
+    const saveDraft = () => {
+      fireEvent.click(screen.getByRole("button", { name: /save as draft/i }));
+      expect(createOrderMutate).toHaveBeenCalledTimes(1);
+      return createOrderMutate.mock.calls[0][0].items;
+    };
+
+    it("a line sold by the Case is sent as { productId, qty: count, unitLabel } — no boxes, pieces or price", async () => {
+      fireEvent.change(await setup(), { target: { value: "Case" } });
+      expect(await screen.findByText("$480.00 / Case")).toBeInTheDocument();
+      expect(saveDraft()).toEqual([{ productId: "prod-1", qty: 1, unitLabel: "Case" }]);
+    });
+
+    it("choosing the pack again restores the case-packed line exactly (no unitLabel)", async () => {
+      const select = await setup();
+      fireEvent.change(select, { target: { value: "Case" } });
+      fireEvent.change(await screen.findByLabelText("Sell Widget by"), { target: { value: "" } });
+      expect(saveDraft()).toEqual([{ productId: "prod-1", qty: 24, boxes: 1, pieces: 0 }]);
+    });
+
+    it("re-key: product + unit is the line's identity — a scan after switching to Case adds a PACK line, not +1 Case", async () => {
+      fireEvent.change(await setup(), { target: { value: "Case" } });
+      await screen.findByText("$480.00 / Case");
+      capturedOnScan!("111");
+      await waitFor(() => expect(screen.getAllByLabelText("Sell Widget by")).toHaveLength(2));
+      expect(saveDraft()).toEqual([
+        { productId: "prod-1", qty: 1, unitLabel: "Case" },
+        { productId: "prod-1", qty: 24, boxes: 1, pieces: 0 },
+      ]);
+    });
+
+    it("re-key: switching the pack line to a Case that already exists folds the two into one line", async () => {
+      fireEvent.change(await setup(), { target: { value: "Case" } });
+      await screen.findByText("$480.00 / Case");
+      capturedOnScan!("111");
+      await waitFor(() => expect(screen.getAllByLabelText("Sell Widget by")).toHaveLength(2));
+      fireEvent.change(screen.getAllByLabelText("Sell Widget by")[1], {
+        target: { value: "Case" },
+      });
+      await waitFor(() => expect(screen.getAllByLabelText("Sell Widget by")).toHaveLength(1));
+      expect(saveDraft()).toEqual([{ productId: "prod-1", qty: 2, unitLabel: "Case" }]);
+    });
+
+    it("without flag.units_v1 there is no picker and no unitLabel — today's modal", async () => {
+      mockCustomers = [cust];
+      mockResolveProductByCode.mockResolvedValue(boxed);
+      renderWithProviders(<CreateOrderModal isOpen onClose={jest.fn()} />);
+      fireEvent.change(screen.getByPlaceholderText("Search by business name…"), {
+        target: { value: "Acm" },
+      });
+      fireEvent.click(await screen.findByText("Acme Foods"));
+      capturedOnScan!("111");
+      await screen.findByText(/24 pcs total/);
+      expect(screen.queryByLabelText("Sell Widget by")).toBeNull();
+      expect(saveDraft()).toEqual([{ productId: "prod-1", qty: 24, boxes: 1, pieces: 0 }]);
     });
   });
 });

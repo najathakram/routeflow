@@ -40,7 +40,13 @@ describe("PlatformAdminService — audit provenance", () => {
   let billingEventService: { emit: jest.Mock };
   let meterService: { readAll: jest.Mock };
   let featureOverrides: { allActive: jest.Mock };
-  let planTransition: { isEnabled: jest.Mock; prepare: jest.Mock; onPlanChange: jest.Mock };
+  let planTransition: {
+    isEnabled: jest.Mock;
+    prepare: jest.Mock;
+    onPlanChange: jest.Mock;
+    transactionOptions: jest.Mock;
+    invalidateCaches: jest.Mock;
+  };
   let platformPricingService: { resolveTenantPricing: jest.Mock };
   let mrrService: {
     computeOverview: jest.Mock;
@@ -104,6 +110,8 @@ describe("PlatformAdminService — audit provenance", () => {
       isEnabled: jest.fn().mockResolvedValue(true),
       prepare: jest.fn().mockResolvedValue({ enabled: true, planAllows: null }),
       onPlanChange: jest.fn().mockResolvedValue({ action: "none" }),
+      transactionOptions: jest.fn().mockReturnValue(undefined),
+      invalidateCaches: jest.fn(),
     };
     platformPricingService = { resolveTenantPricing: jest.fn() };
     // Default: zeroed overview — the getStats-enrichment describe block below overrides
@@ -1971,6 +1979,8 @@ describe("PlatformAdminService — audit provenance", () => {
       await service.updatePlan(TENANT_ID, { plan: "PROFESSIONAL" } as any, ADMIN_ID);
 
       expect(order).toEqual(["prepare", "onPlanChange", "plan-write"]);
+      // After the tx committed: the restored config is visible immediately, not after the TTL.
+      expect(planTransition.invalidateCaches).toHaveBeenCalledWith(TENANT_ID, { planAllows: null });
       expect(planTransition.onPlanChange.mock.calls[0][1]).toMatchObject({
         tenantId: TENANT_ID,
         fromPlanKey: "STARTER",
@@ -2094,6 +2104,7 @@ describe("PlatformAdminService — audit provenance", () => {
       );
 
       expect(planTransition.onPlanChange).toHaveBeenCalledTimes(1);
+      expect(planTransition.invalidateCaches).toHaveBeenCalledWith(TENANT_ID, expect.anything());
       expect(planTransition.onPlanChange.mock.calls[0][1]).toMatchObject({
         tenantId: TENANT_ID,
         fromPlanKey: "SCALE", // Tenant.plan PROFESSIONAL -> planKeyFromEnum

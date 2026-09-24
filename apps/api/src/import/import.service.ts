@@ -11,6 +11,7 @@ import { parse } from "csv-parse/sync";
 import { ImportEntityType, InvoiceStatus, MovementType, UserRole } from "@prisma/client";
 import * as bcrypt from "bcrypt";
 import * as crypto from "crypto";
+import { addressStateFields } from "../customers/address-state";
 
 /**
  * F9-008: hard row-count cap on any CSV import. The byte-size caps on the upload
@@ -351,6 +352,7 @@ export class ImportService {
                 line1: billingLine1 || billingCity || "Unknown",
                 city: billingCity || "Unknown",
                 state: billingState || "Unknown",
+                ...addressStateFields(billingState, billingZip),
                 zip: billingZip || "00000",
                 lat: billingLat,
                 lng: billingLng,
@@ -370,6 +372,7 @@ export class ImportService {
                 line1: shippingLine1 || shippingCity || "Unknown",
                 city: shippingCity || "Unknown",
                 state: shippingState || "Unknown",
+                ...addressStateFields(shippingState, shippingZip),
                 zip: shippingZip || "00000",
                 lat: shippingLat,
                 lng: shippingLng,
@@ -462,6 +465,7 @@ export class ImportService {
                 line1: billingLine1 || billingCity || "Unknown",
                 city: billingCity || "Unknown",
                 state: billingState || "Unknown",
+                ...addressStateFields(billingState, billingZip),
                 zip: billingZip || "00000",
                 lat: billingLat,
                 lng: billingLng,
@@ -480,6 +484,7 @@ export class ImportService {
                 line1: shippingLine1 || shippingCity || "Unknown",
                 city: shippingCity || "Unknown",
                 state: shippingState || "Unknown",
+                ...addressStateFields(shippingState, shippingZip),
                 zip: shippingZip || "00000",
                 lat: shippingLat,
                 lng: shippingLng,
@@ -650,6 +655,7 @@ export class ImportService {
                   line1: street || city || "Unknown",
                   city: city || "Unknown",
                   state: state || "Unknown",
+                  ...addressStateFields(state, zip),
                   zip: zip || "00000",
                   isDefault: true,
                 },
@@ -774,6 +780,7 @@ export class ImportService {
           taxRate: 0,
           subtotal: sub,
           ...(productId ? { productId } : {}),
+          tenantId: this.prisma.getTenantId(), // nested creates bypass forTenant() extension
         });
       }
 
@@ -785,6 +792,7 @@ export class ImportService {
           discount: 0,
           taxRate: 0,
           subtotal: total,
+          tenantId: this.prisma.getTenantId(), // nested creates bypass forTenant() extension
         });
       }
 
@@ -905,8 +913,11 @@ export class ImportService {
                   .forTenant()
                   .invoicePayment.findFirst({ where: { invoiceId: prior.id } });
                 if (!existingPayment) {
+                  // B779: total/balanceDue are individually rounded (parseImportMoney), but
+                  // their subtraction can still land off-cent in float (24.30 - 10.10 =
+                  // 14.200000000000001) — round every monetary write.
                   const paidAmount = !isNaN(balanceDue)
-                    ? total - balanceDue
+                    ? roundMoney(total - balanceDue)
                     : status === InvoiceStatus.PAID
                       ? total
                       : 0;
@@ -983,8 +994,9 @@ export class ImportService {
         // For PAID/PARTIAL invoices, create a synthetic payment record so
         // balance-due calculations are correct without a separate payments import
         if (status === InvoiceStatus.PAID || status === InvoiceStatus.PARTIAL) {
+          // B779: round every monetary write — see the sibling branch's comment above.
           const paidAmount = !isNaN(balanceDue)
-            ? total - balanceDue
+            ? roundMoney(total - balanceDue)
             : status === InvoiceStatus.PAID
               ? total
               : 0;

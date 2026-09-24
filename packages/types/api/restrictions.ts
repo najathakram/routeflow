@@ -48,7 +48,22 @@ export interface BlockedLine {
 /** Thrown as a 409 by `assertLinesSellable` — mirrors `REGULATED_AUTH_REQUIRED`'s shape. */
 export interface SellingRestrictedError {
   code: "SELLING_RESTRICTED";
+  /** One human sentence (a client with no blocked-lines panel toasts it); the detail is `blockedLines`. */
+  message: string;
   blockedLines: BlockedLine[];
+}
+
+/**
+ * What a BUYER-channel caller gets in `blockedLines` (B612): the product only — no rule id, reason,
+ * state, category or rule text. Staff still get the full {@link BlockedLine}.
+ */
+export type BuyerBlockedLine = Pick<BlockedLine, "productId" | "productName">;
+
+/** The 409 body for a BUYER-channel caller: the same code, a generic sentence, names only. */
+export interface BuyerSellingRestrictedError {
+  code: "SELLING_RESTRICTED";
+  message: string;
+  blockedLines: BuyerBlockedLine[];
 }
 
 export type RestrictionJurisdiction = "FEDERAL" | "STATE";

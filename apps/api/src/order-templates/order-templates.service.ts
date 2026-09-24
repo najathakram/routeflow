@@ -18,8 +18,16 @@ import { SystemConfigService } from "../system-config/system-config.service";
 import { CreateOrderTemplateDto } from "./dto/create-order-template.dto";
 import { UpdateOrderTemplateDto } from "./dto/update-order-template.dto";
 import { AddTemplateItemDto } from "./dto/add-template-item.dto";
-import { computeLineSubtotal, roundMoney } from "@routeflow/pricing";
+import {
+  categoryTaxSnapshotOf,
+  computeCategoryTax,
+  computeLineSubtotal,
+  roundMoney,
+} from "@routeflow/pricing";
+import type { CategoryTaxType } from "@routeflow/pricing";
 import { taxRateFractionFrom } from "../common/tax-rate";
+import { decrementStockForSale } from "../orders/order-stock";
+import { assertMoneyInvariantsOrThrow } from "../common/money-invariants.util";
 
 function startOfDay(date: Date): Date {
   const d = new Date(date);
@@ -253,14 +261,17 @@ export class OrderTemplatesService {
 
   // ─── Order generation ─────────────────────────────────────────────────────────
 
-  async generateOrder(templateId: string) {
+  // #1208 review LOW-MED: `isStaffRole` defaults true so the cron path (which never
+  // passes it) and any other internal caller keep the pre-existing warn-and-oversell
+  // posture — only generateOrderForUser overrides it, per the caller's own JWT role.
+  async generateOrder(templateId: string, isStaffRole = true) {
     const template = await this.prisma.forTenant().orderTemplate.findUnique({
       where: { id: templateId },
       include: { items: true },
     });
     if (!template) throw new NotFoundException("Order template not found");
     if (!template.isActive) throw new BadRequestException("Template is not active");
-    const order = await this.createOrderFromTemplate(template);
+    const order = await this.createOrderFromTemplate(template, isStaffRole);
     // Null = every line was a license-gated category the customer isn't verified
     // for, so nothing was ordered. Surface it (the cron path tolerates null; a
     // manual reorder should tell the caller why the order is empty).
@@ -292,7 +303,12 @@ export class OrderTemplatesService {
 
   async generateOrderForUser(templateId: string, user: JwtPayload) {
     await this.findOneForUser(templateId, user);
-    return this.generateOrder(templateId);
+    // #1208 review LOW-MED: POST :id/generate is open to CUSTOMER (controller), and a
+    // hardcoded isStaffRole=true let a buyer's own "Reorder" silently oversell where
+    // their own checkout (orders.service.ts create()) returns 409 INSUFFICIENT_STOCK —
+    // same isStaffRole predicate orders.service.ts uses (:1647, :2661).
+    const isStaffRole = user.role === UserRole.OPERATOR || user.role === UserRole.TENANT_ADMIN;
+    return this.generateOrder(templateId, isStaffRole);
   }
 
   @LeaderCron("0 6 * * *", "order-templates.generateDailyOrders")
@@ -355,7 +371,8 @@ export class OrderTemplatesService {
           }
 
           try {
-            const order = await this.createOrderFromTemplate(template);
+            // Unattended cron run — same warn-and-oversell posture as an operator.
+            const order = await this.createOrderFromTemplate(template, true);
             // null = all lines were license-gated + skipped → nothing created.
             if (order) totalCreated++;
             else totalSkipped++;
@@ -374,17 +391,35 @@ export class OrderTemplatesService {
     );
   }
 
-  private async createOrderFromTemplate(template: {
-    id: string;
-    customerId: string;
-    name: string;
-    items: Array<{ productId: string; qty: number; notes?: string | null }>;
-  }) {
+  private async createOrderFromTemplate(
+    template: {
+      id: string;
+      customerId: string;
+      name: string;
+      items: Array<{ productId: string; qty: number; notes?: string | null }>;
+    },
+    isStaffRole: boolean,
+  ) {
     const productIds = template.items.map((i) => i.productId);
     const products = await this.prisma.forTenant().product.findMany({
       where: { id: { in: productIds } },
     });
     const productMap = new Map(products.map((p) => [p.id, p]));
+
+    // B658: the SAME regulated per-category levy the interactive create path computes
+    // (orders.service.ts's own categoryMap) — a standing order never went through
+    // OrdersService.create() at all, so categoryTaxAmount was hardcoded 0 below.
+    const templateCatIds = [
+      ...new Set(products.map((p) => p.trackedCategoryId).filter(Boolean)),
+    ] as string[];
+    const categoryMap = new Map<string, any>(
+      (templateCatIds.length > 0
+        ? await this.prisma.forTenant().trackedCategory.findMany({
+            where: { id: { in: templateCatIds } },
+          })
+        : []
+      ).map((c: any) => [c.id, c]),
+    );
 
     // W6: regulated license guard. A standing order must never sell a
     // license-required line to a customer without a VERIFIED authorization (or an
@@ -444,6 +479,8 @@ export class OrderTemplatesService {
       // context sees the true piece count so QTY_BREAK thresholds are measured in pieces.
       const upb = Number(product.unitsPerBox ?? 0);
       const qtyUnits = item.qty;
+      // B661-sweep: a line-tax (not ledger) box-unaware multiply — follow-up PR converts this to
+      // @routeflow/pricing's regulatedUnitBasis; see no-second-legacy-line-pieces.spec.ts's allowlist.
       const qtyPieces = upb > 1 ? item.qty * upb : item.qty;
       const resolved = this.ordersService.resolveBuyerLinePrice(
         product,
@@ -462,6 +499,30 @@ export class OrderTemplatesService {
         freeUnits: resolved.freeUnits,
       });
       subtotal = roundMoney(subtotal + itemSubtotal);
+      // B658: same formula orders.service.ts's create() folds per line — EXCISE/DEPOSIT/
+      // PER_VOLUME levies are basis-qty (true pieces), PERCENT_OF_SALE uses the subtotal.
+      const category = product.trackedCategoryId
+        ? categoryMap.get(product.trackedCategoryId)
+        : null;
+      const categoryTaxAmount = category
+        ? computeCategoryTax({
+            taxType: category.taxType as CategoryTaxType,
+            rate: Number(category.rate),
+            unitBasisQty: qtyPieces,
+            lineSubtotal: itemSubtotal,
+            priceIncludesTax: category.priceIncludesTax,
+          })
+        : 0;
+      // B297 (SA-088): freeze the trio categoryTaxAmount above was computed from.
+      const categorySnapshot = categoryTaxSnapshotOf(
+        category
+          ? {
+              taxType: category.taxType as CategoryTaxType,
+              rate: category.rate,
+              priceIncludesTax: category.priceIncludesTax,
+            }
+          : null,
+      );
       return {
         productId: item.productId,
         qty: item.qty,
@@ -473,7 +534,8 @@ export class OrderTemplatesService {
         notes: item.notes ?? undefined,
         // W4/W6b: snapshot the product's regulated category at sale time (unchanged).
         trackedCategoryId: product.trackedCategoryId ?? null,
-        categoryTaxAmount: 0,
+        categoryTaxAmount,
+        ...categorySnapshot,
         tenantId, // nested creates bypass forTenant() extension
       };
     });
@@ -485,30 +547,65 @@ export class OrderTemplatesService {
     const storedTaxRate = await this.systemConfig.get("settings.taxRate");
     const taxRate = taxRateFractionFrom(storedTaxRate);
     const tax = roundMoney(subtotal * taxRate);
-    const total = roundMoney(subtotal + tax);
+    // B658: fold Σ per-line categoryTaxAmount into the total, same as orders.service.ts's
+    // create() — the `tax` column stays REGULAR tax only, category tax is reconstructable
+    // from the line snapshots.
+    const categoryTax = roundMoney(
+      lineItemsData.reduce((s, li) => s + Number(li.categoryTaxAmount ?? 0), 0),
+    );
+    const total = roundMoney(subtotal + tax + categoryTax);
+
+    // #1208 review LOW: guard the generated total the same way create() does
+    // (orders.service.ts :2164-2170) — before the stock transaction opens, never after.
+    assertMoneyInvariantsOrThrow({
+      subtotal,
+      tax: tax + categoryTax,
+      total,
+    });
+
     const orderNumber = `ORD-${Date.now()}`;
     const today = new Date();
     const skipNote =
       skippedCount > 0 ? ` (${skippedCount} regulated line(s) skipped — license not verified)` : "";
 
-    const created = await this.prisma.forTenant().order.create({
-      data: {
-        customerId: template.customerId,
-        templateId: template.id,
-        orderNumber,
-        subtotal,
-        tax,
-        total,
-        notes: `Auto-generated from standing order: ${template.name}${skipNote}`,
-        requestedDeliveryDate: today,
-        // Denormalized flag — true when any (allowed) line is regulated.
-        hasRegulated: lineItemsData.some((li) => li.trackedCategoryId != null),
-        lineItems: { create: lineItemsData },
-      },
-      include: {
-        lineItems: { include: { product: { select: { id: true, name: true, unit: true } } } },
-        customer: { select: { id: true, businessName: true } },
-      },
+    // B647: a standing order is a real (non-draft) sale the moment it's placed — it must
+    // decrement stock through the SAME locked, aggregated helper OrdersService.create()
+    // uses (decrementStockForSale), inside the SAME transaction as the order write, never
+    // a second implementation. Un-fixed, the order posted with zero stock references at
+    // all, while a later cancel still credited stock back — inflating currentStock on
+    // every cancelled standing order.
+    const created = await this.prisma.tenantTransaction(async (tx) => {
+      const order = await tx.order.create({
+        data: {
+          customerId: template.customerId,
+          templateId: template.id,
+          orderNumber,
+          subtotal,
+          tax,
+          total,
+          notes: `Auto-generated from standing order: ${template.name}${skipNote}`,
+          requestedDeliveryDate: today,
+          // Denormalized flag — true when any (allowed) line is regulated.
+          hasRegulated: lineItemsData.some((li) => li.trackedCategoryId != null),
+          lineItems: { create: lineItemsData },
+        },
+        include: {
+          lineItems: { include: { product: { select: { id: true, name: true, unit: true } } } },
+          customer: { select: { id: true, businessName: true } },
+        },
+      });
+      const stockLines = lineItemsData.map((li) => ({ productId: li.productId, qty: li.qty }));
+      // #1208 review LOW-MED: the cron run and an operator's "Generate now" keep the
+      // warn-and-oversell posture (isStaffRole=true, unconditionally, above); a buyer's
+      // own "Reorder" now carries the SAME hard block their checkout would have given
+      // them, via the caller-supplied isStaffRole (generateOrderForUser → generateOrder).
+      await decrementStockForSale(
+        { logger: this.logger, tenantId: this.prisma.getTenantId() },
+        tx,
+        stockLines,
+        isStaffRole,
+      );
+      return order;
     });
 
     // If the customer already had PENDING orders, fold the newly-created one

@@ -6,6 +6,7 @@ import {
   parseSnapshotPayload,
   planRestore,
   summarizeRestore,
+  type RestorePlan,
   type RestoreReport,
 } from "./tenant-config-snapshot";
 
@@ -24,6 +25,34 @@ const toJson = (v: unknown): Prisma.InputJsonValue | typeof Prisma.DbNull =>
  */
 export const AUTO_RESTORE_MAX_AGE_DAYS = 90;
 const DAY_MS = 86_400_000;
+
+/**
+ * The AUTOMATIC restore runs inside a paid upgrade/checkout transaction, one round trip per config
+ * row. It is therefore bounded: at most this many rows written, within this wall-clock budget. A
+ * restore that would exceed either is abandoned (the caller's savepoint rolls it back, the plan
+ * change proceeds, the snapshot stays un-restored and visible) and an admin restores it explicitly
+ * with "Restore now", which is not bounded by these. A tenant has at most one config row per
+ * registry feature plus its active overrides, so real snapshots sit far below the row cap; the cap
+ * is the guard against a malformed or hostile payload holding the transaction open.
+ */
+export const AUTO_RESTORE_MAX_ROWS = 200;
+// Sits inside the checkout hook's 6 s transaction (BillingService CHECKOUT_TX_OPTIONS) next to the
+// Stripe/catalog work and the commit, so it is deliberately well under it.
+export const AUTO_RESTORE_TIME_BUDGET_MS = 3_000;
+
+export class RestoreBudgetExceededError extends Error {
+  constructor(detail: string) {
+    super(`automatic restore abandoned: ${detail}`);
+    this.name = "RestoreBudgetExceededError";
+  }
+}
+
+export interface RestoreBudget {
+  maxRows: number;
+  timeBudgetMs: number;
+  /** Injectable clock (ms) so the time budget is testable without sleeping. */
+  clock?: () => number;
+}
 
 /** Whole days since the snapshot was taken (floor; never negative). */
 export const snapshotAgeDays = (takenAt: Date, now: Date): number =>
@@ -45,6 +74,34 @@ export interface RestoreResult {
   report: RestoreReport;
   /** Older un-restored snapshots this restore superseded. */
   supersededSnapshots: number;
+}
+
+/** One row of the admin "Configuration snapshots" list. */
+export interface SnapshotListItem {
+  id: string;
+  takenAt: Date;
+  planKey: string;
+  reason: "DOWNGRADE" | "MANUAL";
+  restoredAt: Date | null;
+  /** The plan it was restored to, or "SUPERSEDED" when a newer snapshot replaced it. */
+  restoredToPlanKey: string | null;
+  createdByName: string | null;
+  /** Whole days since it was taken (the admin list/confirm dialog shows this). */
+  ageDays: number;
+  /** Entry counts, or null when the payload is not a readable version-1 document. */
+  entries: { configs: number; overrides: number } | null;
+}
+
+export interface SnapshotPreview {
+  snapshotId: string;
+  takenAt: Date;
+  planKey: string;
+  restoredAt: Date | null;
+  ageDays: number;
+  /** Older than the automatic-restore horizon: only an explicit admin restore applies it. */
+  beyondAutoRestoreHorizon: boolean;
+  /** What a restore WOULD do right now; null when the payload is unreadable. Never written. */
+  plan: RestorePlan | null;
 }
 
 /**
@@ -107,7 +164,18 @@ export class TenantConfigSnapshotService {
     newPlanKey: string,
     now: Date = new Date(),
     planAllows?: (featureKey: string) => boolean,
+    budget: RestoreBudget = {
+      maxRows: AUTO_RESTORE_MAX_ROWS,
+      timeBudgetMs: AUTO_RESTORE_TIME_BUDGET_MS,
+    },
   ): Promise<RestoreResult | null> {
+    const clock = budget.clock ?? Date.now;
+    const deadline = clock() + budget.timeBudgetMs;
+    const withinBudget = (): void => {
+      if (clock() > deadline) {
+        throw new RestoreBudgetExceededError(`over the ${budget.timeBudgetMs} ms time budget`);
+      }
+    };
     const newRank = planRank(newPlanKey);
     if (newRank < 0) return null;
 
@@ -123,6 +191,107 @@ export class TenantConfigSnapshotService {
     });
     if (!snapshot) return null;
 
+    // ONLY the automatic path is bounded (see AUTO_RESTORE_MAX_ROWS): the admin's explicit
+    // "Restore now" (restoreSnapshot) passes no bounds.
+    return this.applySnapshot(tx, tenantId, snapshot, newPlanKey, now, planAllows, {
+      maxRows: budget.maxRows,
+      withinBudget,
+    });
+  }
+
+  /**
+   * Admin surface (A2 step c): the tenant's snapshots, newest first. Read-only — no side effects.
+   */
+  async list(tx: Prisma.TransactionClient, tenantId: string): Promise<SnapshotListItem[]> {
+    const rows = await tx.tenantFeatureConfigSnapshot.findMany({
+      where: { tenantId },
+      orderBy: { takenAt: "desc" },
+    });
+    return rows.map((r) => {
+      const payload = parseSnapshotPayload(r.payload);
+      return {
+        id: r.id,
+        takenAt: r.takenAt,
+        planKey: r.planKey,
+        reason: r.reason,
+        restoredAt: r.restoredAt,
+        restoredToPlanKey: r.restoredToPlanKey,
+        createdByName: r.createdByName,
+        ageDays: snapshotAgeDays(r.takenAt, new Date()),
+        entries: payload
+          ? { configs: payload.configs.length, overrides: payload.overrides.length }
+          : null,
+      };
+    });
+  }
+
+  /**
+   * What "Restore now" WOULD do for one snapshot right now — the same `planRestore` a real restore
+   * runs, so the dialog's preview equals the apply by construction. Never writes. null = no such
+   * snapshot for this tenant.
+   */
+  async previewRestore(
+    tx: Prisma.TransactionClient,
+    tenantId: string,
+    snapshotId: string,
+    now: Date = new Date(),
+    planAllows?: (featureKey: string) => boolean,
+  ): Promise<SnapshotPreview | null> {
+    const snapshot = await tx.tenantFeatureConfigSnapshot.findFirst({
+      where: { id: snapshotId, tenantId },
+    });
+    if (!snapshot) return null;
+    const payload = parseSnapshotPayload(snapshot.payload);
+    const [configs, overrides] = await Promise.all([
+      tx.tenantFeatureConfig.findMany({ where: { tenantId } }),
+      tx.tenantFeatureOverride.findMany({ where: { tenantId } }),
+    ]);
+    return {
+      snapshotId: snapshot.id,
+      takenAt: snapshot.takenAt,
+      planKey: snapshot.planKey,
+      restoredAt: snapshot.restoredAt,
+      ageDays: snapshotAgeDays(snapshot.takenAt, now),
+      beyondAutoRestoreHorizon: beyondAutoRestoreHorizon(snapshot.takenAt, now),
+      plan: payload
+        ? planRestore(payload, { configs, overrides }, snapshot.takenAt, now, planAllows)
+        : null,
+    };
+  }
+
+  /**
+   * "Restore now" for ONE chosen snapshot, applied to the tenant's CURRENT plan (`currentPlanKey`
+   * is only stamped and fed to `planAllows`; unlike `restoreLatest` there is no rank check — the
+   * admin chose it and saw the preview, entries the plan does not allow are skipped and
+   * reported). Returns null when the snapshot does not exist, is already restored/superseded, or
+   * its payload is unreadable.
+   */
+  async restoreSnapshot(
+    tx: Prisma.TransactionClient,
+    tenantId: string,
+    snapshotId: string,
+    currentPlanKey: string,
+    now: Date = new Date(),
+    planAllows?: (featureKey: string) => boolean,
+  ): Promise<RestoreResult | null> {
+    const snapshot = await tx.tenantFeatureConfigSnapshot.findFirst({
+      where: { id: snapshotId, tenantId, restoredAt: null },
+    });
+    if (!snapshot) return null;
+    return this.applySnapshot(tx, tenantId, snapshot, currentPlanKey, now, planAllows);
+  }
+
+  /** The shared apply step: restore one snapshot's payload as-was, stamp it, supersede older ones. */
+  private async applySnapshot(
+    tx: Prisma.TransactionClient,
+    tenantId: string,
+    snapshot: { id: string; planKey: string; takenAt: Date; payload: Prisma.JsonValue },
+    stampPlanKey: string,
+    now: Date,
+    planAllows?: (featureKey: string) => boolean,
+    /** Present only for the automatic restore; absent = unbounded (the admin path). */
+    bounds?: { maxRows: number; withinBudget: () => void },
+  ): Promise<RestoreResult | null> {
     const [configs, overrides] = await Promise.all([
       tx.tenantFeatureConfig.findMany({ where: { tenantId } }),
       tx.tenantFeatureOverride.findMany({ where: { tenantId } }),
@@ -133,8 +302,27 @@ export class TenantConfigSnapshotService {
     const payload = parseSnapshotPayload(snapshot.payload);
     if (!payload) return null;
     const plan = planRestore(payload, { configs, overrides }, snapshot.takenAt, now, planAllows);
+    const rows =
+      plan.configs.create.length + plan.configs.update.length + plan.overrides.create.length;
+    if (bounds && rows > bounds.maxRows) {
+      throw new RestoreBudgetExceededError(`${rows} rows to write, over the ${bounds.maxRows} cap`);
+    }
+
+    // CLAIM the snapshot before applying anything: a conditional stamp (`restoredAt IS NULL`).
+    // Two concurrent restores — a Stripe webhook redelivery, an admin double-click, an upgrade
+    // racing a manual restore — both read the snapshot as un-restored under READ COMMITTED; the
+    // second UPDATE waits on the first's row lock, re-checks the predicate after it commits, matches
+    // 0 rows, and returns null instead of restoring twice (and double-writing the audit row). If
+    // the writes below throw, the caller's transaction rolls the claim back with them.
+    bounds?.withinBudget(); // a budget already spent must not even take the claim
+    const claimed = await tx.tenantFeatureConfigSnapshot.updateMany({
+      where: { id: snapshot.id, tenantId, restoredAt: null },
+      data: { restoredAt: now, restoredToPlanKey: stampPlanKey },
+    });
+    if (claimed.count === 0) return null;
 
     for (const entry of plan.configs.create) {
+      bounds?.withinBudget();
       // upsert on the (tenantId, featureKey) unique key: a concurrent writer that created the row
       // between our read and this write must not turn the restore into a P2002 that aborts the
       // caller's whole plan change.
@@ -152,6 +340,7 @@ export class TenantConfigSnapshotService {
       });
     }
     for (const { id, entry } of plan.configs.update) {
+      bounds?.withinBudget();
       // updateMany so tenantId scopes the write (the house pattern — see FeatureOverrideService).
       await tx.tenantFeatureConfig.updateMany({
         where: { id, tenantId },
@@ -188,10 +377,6 @@ export class TenantConfigSnapshotService {
       conflictedOverrides = plan.overrides.create.length - inserted.count;
     }
 
-    await tx.tenantFeatureConfigSnapshot.update({
-      where: { id: snapshot.id },
-      data: { restoredAt: now, restoredToPlanKey: newPlanKey },
-    });
     const superseded = await tx.tenantFeatureConfigSnapshot.updateMany({
       // Only older DOWNGRADE archives are superseded: a MANUAL save-point is never auto-consumed.
       where: { tenantId, restoredAt: null, reason: "DOWNGRADE", takenAt: { lt: snapshot.takenAt } },

@@ -175,6 +175,7 @@ describe("OrdersService — units_v1 fail-closed guard on rewrite paths", () => 
           useValue: {
             assertLinesSellable: jest.fn().mockResolvedValue(undefined),
             checkLinesSellable: jest.fn().mockResolvedValue({ outcome: "OFF", reasons: [] }),
+            getPolicy: jest.fn().mockResolvedValue({ enabled: false }),
           },
         },
         {
@@ -254,14 +255,22 @@ describe("OrdersService — units_v1 fail-closed guard on rewrite paths", () => 
   });
 
   describe("updateOrderItems refuses an order holding a unit-aware line (409 UNIT_AWARE_LINE)", () => {
+    // units_v1 (A1): staff is CONVERTED, not blanket-guarded, for every shape EXCEPT
+    // `replaceAll: true` — a full replace re-denominates every line by productId alone (the
+    // replace-all branch has no per-line id to preserve a unit through), which would silently
+    // collapse a Case line to the pack's price. So "staff replace-all" is BACK in this table
+    // (hardening round, coordinator-reviewed): refused the same as CUSTOMER/DRIVER, now via the
+    // guard's own replaceAll check rather than the old blanket rule. "staff diff qty edit" is
+    // refused for the money-seam reason instead — it names an EXISTING unit-aware line by id with
+    // no unitLabel, via assertUnitLabelNamed, not this guard.
     const payloads = [
       [
-        "staff replace-all",
+        "staff replace-all (re-denomination refusal — the guard's own replaceAll check)",
         operatorPayload,
         { replaceAll: true, items: [{ productId: "prod-box", qty: 2 }] },
       ],
       [
-        "staff diff qty edit",
+        "staff diff qty edit (no unitLabel named — the money seam, not this guard)",
         operatorPayload,
         { replaceAll: false, items: [{ id: "li-case", qty: 3 }] },
       ],
@@ -314,7 +323,7 @@ describe("OrdersService — units_v1 fail-closed guard on rewrite paths", () => 
       expect(err?.getResponse?.()?.code).not.toBe("UNIT_AWARE_LINE");
     });
 
-    it("but a mixed diff (cancel + qty edit) IS refused", async () => {
+    it("but a mixed diff (cancel of one line + a qty edit naming no unitLabel on the unit-aware line) IS refused — units_v1 (A1): via assertUnitLabelNamed now, same code/message", async () => {
       prisma.order.findUnique.mockResolvedValue(unitAwareOrder());
       const err = await service
         .updateOrderItems(
@@ -322,8 +331,8 @@ describe("OrdersService — units_v1 fail-closed guard on rewrite paths", () => 
           {
             replaceAll: false,
             items: [
-              { id: "li-case", action: "CANCEL" },
-              { id: "li-other", qty: 3 },
+              { id: "li-other", action: "CANCEL" },
+              { id: "li-case", qty: 3 },
             ],
           } as never,
           operatorPayload as never,

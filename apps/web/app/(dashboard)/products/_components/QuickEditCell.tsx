@@ -147,6 +147,11 @@ export const QuickEditCell = React.forwardRef<HTMLInputElement, QuickEditCellPro
                 setHighlightedIndex(-1);
               }}
               onKeyDown={(e) => {
+                // B672 audit: the SKU field pairs this input with a BarcodeScannerButton
+                // (products/page.tsx, via the forwarded ref); its Enter already called
+                // preventDefault() and saved the scan itself — this handler must not also
+                // commit() the same Enter, or a real scan double-saves.
+                if (e.defaultPrevented) return;
                 if (showDropdown) {
                   if (e.key === "ArrowDown") {
                     e.preventDefault();

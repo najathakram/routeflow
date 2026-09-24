@@ -86,10 +86,15 @@ export class FeatureConfigStore implements FeatureModeProvider {
     return { value: this.registryDefault(key), source: "REGISTRY_DEFAULT" };
   }
 
-  /** Test/ops escape hatch — mirrors EntitlementsService's cache shape; no invalidate() call
-   * site exists yet outside specs (FeatureConfigService.set/clear write straight through Prisma
-   * and simply let the 30s TTL expire, same tradeoff EntitlementsService documents for itself). */
+  /** Test/ops escape hatch — mirrors EntitlementsService's cache shape. Production callers use
+   * `invalidateTenant` (snapshot restore); FeatureConfigService.set/clear write straight through
+   * Prisma and simply let the 30s TTL expire, same tradeoff EntitlementsService documents. */
   invalidate(tenantId: string, key: string): void {
     this.cache.delete(`${tenantId}:${key}`);
+  }
+
+  /** Drops every cached mode of one tenant — for a bulk write whose touched keys are not tracked. */
+  invalidateTenant(tenantId: string): void {
+    for (const k of this.cache.keys()) if (k.startsWith(`${tenantId}:`)) this.cache.delete(k);
   }
 }

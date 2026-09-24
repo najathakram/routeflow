@@ -43,6 +43,7 @@ jest.mock("../notifications/notifications.service", () => ({
 import { Reflector } from "@nestjs/core";
 import { computeLineSubtotal } from "@routeflow/pricing";
 import { OrdersService } from "./orders.service";
+import { linePieceQty } from "./line-piece-qty";
 import { OrdersController } from "./orders.controller";
 import { ChangeRequestsService } from "./change-requests.service";
 import { ROLES_KEY } from "../auth/decorators/roles.decorator";
@@ -227,6 +228,7 @@ describe("OrdersService", () => {
           useValue: {
             assertLinesSellable: jest.fn().mockResolvedValue(undefined),
             checkLinesSellable: jest.fn().mockResolvedValue({ outcome: "OFF", reasons: [] }),
+            getPolicy: jest.fn().mockResolvedValue({ enabled: false }),
           },
         },
         {
@@ -9404,7 +9406,7 @@ describe("OrdersService", () => {
   });
 
   describe("RF-4 linePieceQty — per-unit tax basis survives an edit (recompute drift)", () => {
-    const pieceQty = (li: any, fallback?: number) => (service as any).linePieceQty(li, fallback);
+    const pieceQty = (li: any, fallback?: number) => linePieceQty(li, fallback);
 
     it("a box-split line (boxes != null) is already in pieces — returns qty as-is", () => {
       expect(pieceQty({ qty: 27, boxes: 2, unitsPerBox: 12 })).toBe(27);

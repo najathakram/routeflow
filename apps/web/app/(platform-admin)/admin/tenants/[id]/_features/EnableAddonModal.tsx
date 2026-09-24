@@ -176,7 +176,7 @@ export function EnableAddonModal({
         <p className="text-sm text-slate-300">
           This will enable <strong>{addonLabel}</strong> for tenant <strong>{tenantLabel}</strong>.
         </p>
-        <p className="text-xs text-slate-500">
+        <p className="text-xs text-slate-400">
           {effectiveChoice === "stripe"
             ? `A Stripe subscription item will be created (price ${priceId.trim()}).`
             : "No Stripe subscription item will be created — this is a free grant."}

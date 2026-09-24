@@ -8,8 +8,8 @@ import * as ts from "typescript";
  * the selling-restrictions choke point BEFORE their first line write. Same AST technique as
  * `orders/unit-line-writers.ast.spec.ts` (no regex over source; a comment or a string never counts).
  *
- *   GUARDED — calls `assertLinesSellable` / `checkLinesSellable` on a live branch, before its first
- *             line write (the AST proof below, positively controlled on inline source).
+ *   GUARDED — calls `assertLinesSellable` / `checkLinesSellable` on a live branch (not in a try whose
+ *             catch swallows the refusal), before its first line write (the AST proof below, positively controlled on inline source).
  *   PENDING — can add sellable goods and is NOT yet guarded: the enforcement points still to wire.
  *             A ratchet: `PENDING_BASELINE` may only go DOWN — flipping a row to GUARDED in the PR
  *             that wires it forces the constant down, so the list can never quietly grow or stall.
@@ -42,10 +42,10 @@ const rec = (m: string) =>
 
 const TABLE: Record<string, Row> = {
   // ── orders: the nine enforcement points (each call-site PR flips its row) ──────────────────
-  [ord("create")]: P("2a: create"),
-  [ord("updateOrderItems")]: P("2a: update (merge + replace-all)"),
-  [ord("approveChangeRequestAtStop")]: P("2a: change request at the door"),
-  [ord("changeStatus")]: P("2a: DRAFT -> PENDING promotion (the draft escape)"),
+  [ord("create")]: G,
+  [ord("updateOrderItems")]: G,
+  [ord("approveChangeRequestAtStop")]: G,
+  [ord("changeStatus")]: G,
   [ord("reopenOrder")]: P("2a: reopen (revives cancelled lines)"),
   [ord("mergeAllPendingForCustomer")]: P("2a: merge (channel from buyerInitiated)"),
   [ord("forceConsolidateCustomer")]: P("2a: consolidate (staff)"),
@@ -102,7 +102,7 @@ const TABLE: Record<string, Row> = {
 };
 
 /** The RATCHET: how many rows are still PENDING. Lower it in the PR that flips a row to GUARDED. */
-const PENDING_BASELINE = 16;
+const PENDING_BASELINE = 12;
 /** GUARDED + PENDING: reclassifying a PENDING row to EXEMPT (an escape, not progress) must change THIS. */
 const ENFORCEMENT_POINTS = 16;
 const CHOKE_POINT = ["assertLinesSellable", "checkLinesSellable"];
@@ -192,6 +192,41 @@ function onDeadOrRecoveryBranch(n: ts.Node, stop: ts.Node): boolean {
   return false;
 }
 
+/** True when EVERY path through `stmts` ends in a throw: a `return`, a bare `if (x) throw e;` or falling off the end does not. */
+function alwaysThrows(stmts: readonly ts.Statement[]): boolean {
+  const branch = (n: ts.Statement) => alwaysThrows(ts.isBlock(n) ? n.statements : [n]);
+  /** A `return` anywhere under `n` (not inside a nested function) is a path that swallows. */
+  const returns = (n: ts.Node): boolean =>
+    ts.isReturnStatement(n) || (!ts.isFunctionLike(n) && ts.forEachChild(n, returns) === true);
+  for (const st of stmts) {
+    if (ts.isThrowStatement(st)) return true;
+    if (returns(st)) return false;
+    if (ts.isBlock(st) && alwaysThrows(st.statements)) return true;
+    if (
+      ts.isIfStatement(st) &&
+      st.elseStatement &&
+      branch(st.thenStatement) &&
+      branch(st.elseStatement)
+    )
+      return true;
+  }
+  return false;
+}
+
+/**
+ * A call inside `try { … } catch { … }` whose catch does not ALWAYS rethrow is a refusal that can be SWALLOWED:
+ * the write goes ahead anyway, so it is not a guard. (Deliberately NOT part of `onDeadOrRecoveryBranch`:
+ * the stale-row scan must still see such a call, so its method has to be classified GUARDED, and
+ * then this proof rejects it.)
+ */
+function swallowedByTry(n: ts.Node, stop: ts.Node): boolean {
+  for (let c: ts.Node | undefined = n.parent; c && c !== stop; c = c.parent) {
+    if (!ts.isTryStatement(c) || !c.catchClause || !isWithin(n, c.tryBlock)) continue;
+    if (!alwaysThrows(c.catchClause.block.statements)) return true;
+  }
+  return false;
+}
+
 /** Positions of every REAL call to any of `names` under `node`, on live branches. */
 function callPositions(node: ts.Node, names: string[]): number[] {
   const at: number[] = [];
@@ -230,6 +265,7 @@ function guardCallPositions(node: ts.Node): number[] {
       if (
         CHOKE_POINT.includes(name) &&
         !onDeadOrRecoveryBranch(n, node) &&
+        !swallowedByTry(n, node) &&
         isAwaited(n, node) &&
         !inDeadClosure(n, node)
       )
@@ -313,6 +349,11 @@ describe("the scanner and the proof themselves (so a silent no-match cannot pass
       inTx() { await this.tx(async (tx) => { await this.r.assertLinesSellable({}); tx.orderItem.create({}); }); }
       dead() { if (false) { await this.r.assertLinesSellable({}); } this.prisma.orderItem.create({}); }
       recovery() { try { w(); } catch (e) { await this.r.assertLinesSellable({}); } this.prisma.orderItem.create({}); }
+      swallowed() { try { await this.r.assertLinesSellable({}); } catch (e) { log(e); } this.prisma.orderItem.create({}); }
+      rethrown() { try { await this.r.assertLinesSellable({}); } catch (e) { log(e); throw e; } this.prisma.orderItem.create({}); }
+      earlyReturn() { try { await this.r.assertLinesSellable({}); } catch (e) { if (x) return; throw e; } this.prisma.orderItem.create({}); }
+      condRethrown() { try { await this.r.assertLinesSellable({}); } catch (e) { if (x) throw e; } this.prisma.orderItem.create({}); }
+      bothRethrown() { try { await this.r.assertLinesSellable({}); } catch (e) { if (x) throw e; else throw new Error("y"); } this.prisma.orderItem.create({}); }
       nested() { return this.prisma.order.update({ data: { lineItems: c ? { create: [] } : undefined } }); }
       other() { return this.prisma.order.update({ data: { notes: "x" } }); }
     }`,
@@ -325,15 +366,20 @@ describe("the scanner and the proof themselves (so a silent no-match cannot pass
     expect(lineWritePositions(m.get("A.other")!, sf)).toHaveLength(0);
   });
 
-  it("the guard proof accepts a real early call and rejects none / late / commented / dead / recovery", () => {
+  it("the guard proof accepts a real early call and rejects none / late / commented / dead / recovery / swallowed / conditionally rethrown", () => {
     expect(guardProblem(m.get("A.good")!, sf)).toBeNull();
     expect(guardProblem(m.get("A.inTx")!, sf)).toBeNull(); // awaited inside a transaction callback
+    expect(guardProblem(m.get("A.rethrown")!, sf)).toBeNull(); // a catch that rethrows still refuses
+    expect(guardProblem(m.get("A.bothRethrown")!, sf)).toBeNull(); // every branch throws: still a refusal
     expect(guardProblem(m.get("A.late")!, sf)).toMatch(/AFTER/);
     for (const name of [
       "A.none",
       "A.commented",
       "A.dead",
       "A.recovery",
+      "A.swallowed",
+      "A.condRethrown", // `if (x) throw e;` swallows every other error
+      "A.earlyReturn", // a path that returns swallows too
       "A.voided",
       "A.floating",
       "A.neverRun",

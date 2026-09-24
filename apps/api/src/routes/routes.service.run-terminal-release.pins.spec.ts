@@ -67,7 +67,11 @@ describe("RoutesService — F11 run cancel/skip pins (no REG- token; excluded fr
   >;
   let notifications: jest.Mocked<Pick<NotificationsService, "sendToDriver">>;
   let messaging: { notify: jest.Mock; notifyEvent: jest.Mock };
-  let invoicesService: { recordDeliveryPaymentInTx: jest.Mock; reverseRunAdvancesInTx: jest.Mock };
+  let invoicesService: {
+    recordDeliveryPaymentInTx: jest.Mock;
+    reconcileDeliveredOrdersInTx: jest.Mock;
+    reverseRunAdvancesInTx: jest.Mock;
+  };
   let storage: { upload: jest.Mock; presignedUrl: jest.Mock; delete: jest.Mock };
 
   beforeEach(async () => {
@@ -77,6 +81,7 @@ describe("RoutesService — F11 run cancel/skip pins (no REG- token; excluded fr
       recordDeliveryPaymentInTx: jest
         .fn()
         .mockResolvedValue({ applied: 0, invoiceIds: [], paymentIds: [] }),
+      reconcileDeliveredOrdersInTx: jest.fn().mockResolvedValue(undefined),
       reverseRunAdvancesInTx: jest.fn().mockResolvedValue(0),
     };
 
@@ -183,7 +188,6 @@ describe("RoutesService — F11 run cancel/skip pins (no REG- token; excluded fr
       expect.any(Array),
       50,
       "CASH",
-      expect.any(Array),
       expect.objectContaining({ runId: "run-1", stopId: "stop-1" }),
     );
   });
@@ -214,7 +218,7 @@ describe("RoutesService — F11 run cancel/skip pins (no REG- token; excluded fr
     const sweepArgs = (prisma.order.updateMany as jest.Mock).mock.calls[0][0];
     expect(sweepArgs.where).toEqual({
       customerId: "c1",
-      status: { notIn: [OrderStatus.DELIVERED, OrderStatus.CANCELLED] },
+      status: { notIn: [OrderStatus.DRAFT, OrderStatus.DELIVERED, OrderStatus.CANCELLED] },
       routeRunStopId: null,
       fulfillPath: FulfillPath.ROUTE,
     });

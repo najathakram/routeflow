@@ -317,6 +317,8 @@ function make(opts: Opts = {}) {
   const planTransition = {
     prepare: jest.fn().mockResolvedValue({ planAllows: null }),
     onPlanChange: jest.fn().mockResolvedValue({ action: "none" }),
+    transactionOptions: jest.fn().mockReturnValue(undefined),
+    invalidateCaches: jest.fn(),
   } as any;
   const svc = new SubscriptionMutationService(
     prisma,
@@ -549,6 +551,66 @@ describe("SubscriptionMutationService.upgrade", () => {
 
     await expect(svc.upgrade("t1", "BUSINESS", "admin")).rejects.toThrow("snapshot failed");
     expect(emitted(events)).not.toContain(BILLING_EVENTS.PLAN_CHANGED);
+  });
+
+  it("A2b: the hook runs BEFORE the optimistic guard — same lock order as subscribe()/updatePlan()", async () => {
+    const { svc, tx, planTransition } = make({
+      sub: { planKey: "STARTER", cycle: "MONTHLY", periodStart: null, periodEnd: null },
+    });
+    const order: string[] = [];
+    planTransition.onPlanChange.mockImplementation(async () => {
+      order.push("onPlanChange");
+      return { action: "none" };
+    });
+    const realUpdateMany = tx.tenantSubscription.updateMany.getMockImplementation();
+    tx.tenantSubscription.updateMany.mockImplementation(async (...a: any[]) => {
+      order.push("guard");
+      return realUpdateMany ? realUpdateMany(...a) : { count: 1 };
+    });
+
+    await svc.upgrade("t1", "BUSINESS", "admin");
+
+    expect(order).toEqual(["onPlanChange", "guard"]);
+  });
+
+  it("A2b: after the transaction COMMITS the hook's caches are invalidated (subscribe and upgrade), never before", async () => {
+    const { svc, prisma, planTransition } = make({
+      sub: { planKey: "STARTER", cycle: "MONTHLY", periodStart: null, periodEnd: null },
+    });
+    const order: string[] = [];
+    const realTx = prisma.$transaction.getMockImplementation();
+    prisma.$transaction.mockImplementation(async (fn: any, ...rest: any[]) => {
+      const out = await realTx!(fn, ...rest);
+      order.push("tx-committed");
+      return out;
+    });
+    planTransition.invalidateCaches.mockImplementation(() => order.push("invalidate"));
+
+    await svc.upgrade("t1", "BUSINESS", "admin");
+    await svc.subscribe("t1", { planKey: "BUSINESS", cycle: "MONTHLY", addons: [] }, "admin");
+
+    expect(order).toEqual(["tx-committed", "invalidate", "tx-committed", "invalidate"]);
+    expect(planTransition.invalidateCaches).toHaveBeenCalledWith("t1", { planAllows: null });
+  });
+
+  it("A2b: a lost optimistic-guard race still rejects (the hook's writes roll back with the tx)", async () => {
+    const { svc, tx, planTransition } = make({ sub: { planKey: "STARTER", cycle: "MONTHLY" } });
+    tx.tenantSubscription.updateMany.mockResolvedValue({ count: 0 });
+    await expect(svc.upgrade("t1", "BUSINESS")).rejects.toBeInstanceOf(BadRequestException);
+    expect(planTransition.onPlanChange).toHaveBeenCalledTimes(1);
+  });
+
+  it("A2b: subscribe() and upgrade() pass the hook's transaction options", async () => {
+    const { svc, prisma, planTransition } = make({
+      sub: { planKey: "STARTER", cycle: "MONTHLY", periodStart: null, periodEnd: null },
+    });
+    const opts = { timeout: 20_000, maxWait: 10_000 };
+    planTransition.transactionOptions.mockReturnValue(opts);
+
+    await svc.upgrade("t1", "BUSINESS", "admin");
+    expect(prisma.$transaction.mock.calls.at(-1)[1]).toBe(opts);
+    await svc.subscribe("t1", { planKey: "BUSINESS", cycle: "MONTHLY", addons: [] }, "admin");
+    expect(prisma.$transaction.mock.calls.at(-1)[1]).toBe(opts);
   });
 
   it("rejects a concurrent double-upgrade (updateMany matched 0 rows)", async () => {

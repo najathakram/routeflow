@@ -97,11 +97,16 @@ enum LedgerEntryType {
   REVERSAL
 }
 
-/// A regulated filing is either successfully GENERATED (artifacts stored) or a
-/// FAILED attempt (recorded so the tenant still sees it in their filing list).
+/// A regulated filing is either successfully GENERATED (artifacts stored), a
+/// FAILED attempt (recorded so the tenant still sees it in their filing list), or
+/// LOCKED (B297/SA-088): an explicit tenant-admin action that closes the
+/// (tenant, category, periodKey) triple — `prepareFiling` never regenerates a
+/// LOCKED filing, and edits to a line whose sale falls in a locked period are
+/// refused. Locking is one-way in this work; there is no unlock endpoint yet.
 enum RegulatedFilingStatus {
   GENERATED
   FAILED
+  LOCKED
 }
 
 /// A tenant-defined class of items handled separately for sales/tax/reporting
@@ -284,6 +289,12 @@ model RegulatedSalesLedger {
   netSales             Decimal         @default(0) @db.Decimal(12, 2)
   categoryTax          Decimal         @default(0) @db.Decimal(12, 2)
   soldAt               DateTime
+  // B660/B662 (fleet lead 2026-09-21): a ledger CORRECTION is a new append-only row, never an edit.
+  // correctsEntryId points at the SALE row it corrects (denormalized scalar, indexed, no FK — like the
+  // other pointers here); originalSoldAt keeps the sale date the corrected row was booked under. Both
+  // NULL on every existing row and on every ordinary SALE/REVERSAL: no backfill.
+  originalSoldAt       DateTime?
+  correctsEntryId      String?
   periodBucket         String // "YYYY-MM" denormalized bucket for fast monthly aggregation
   createdAt            DateTime        @default(now())
 
@@ -302,6 +313,60 @@ model RegulatedSalesLedger {
   @@index([orderItemId])
   @@index([creditNoteId])
   @@index([returnId])
+  @@index([correctsEntryId])
+}
+
+/// B660 (fleet lead + Senior Architect ruling 2026-09-21): a return REVERSAL the ledger could not book
+/// because the sold line's pack (pieces per box) is UNKNOWN. Only the ledger's units figure waits: the
+/// return, the restock by TRUE pieces and the stored-subtotal credit are unaffected. It stores the true
+/// returned pieces and the SALE row it will reverse, so once an operator supplies the split the reversal
+/// books itself from what is stored; nobody retypes a quantity. PARKED ⇔ resolvedAt IS NULL (there is no
+/// status column to drift); the period report lists parked rows first and a period cannot be marked filed
+/// while one exists. Pointers are scalars with no FK, like the ledger's own.
+model RegulatedLedgerParkedReversal {
+  id                  String    @id @default(uuid())
+  tenantId            String
+  returnId            String
+  orderId             String
+  orderItemId         String?
+  saleEntryId         String // the SALE RegulatedSalesLedger row this reversal will reverse
+  returnedPieces      Decimal   @db.Decimal(10, 3) // same type as ReturnItem.qty
+  reason              String // the classifier's `unknown` reason
+  periodBucket        String // "YYYY-MM" of the return
+  createdAt           DateTime  @default(now())
+  resolvedAt          DateTime?
+  resolvedById        String?
+  unitsPerBoxSupplied Int? // the split the operator supplied (Int, like Product.unitsPerBox)
+  resolvedEntryId     String? // the REVERSAL row the resolution booked
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@unique([returnId, saleEntryId])
+  @@index([tenantId, resolvedAt])
+}
+
+/// A STANDARD return's restock that could not be converted to pieces because the sold line's pack is unknown
+/// (B665, same rule as RegulatedLedgerParkedReversal): the typed qty (in the line's own unit) waits here and no
+/// stock movement is booked until an operator supplies the split. Parked while `resolvedAt IS NULL` (no status
+/// column). UNIQUE(returnItemId) makes a retried receive park it once. Pointers are scalars with no FK.
+model ReturnParkedRestock {
+  id                  String    @id @default(uuid())
+  tenantId            String
+  returnId            String
+  returnItemId        String
+  productId           String
+  returnedQty         Decimal   @db.Decimal(10, 3) // as typed, same type as ReturnItem.qty
+  reason              String // the classifier's `unknown` reason
+  createdAt           DateTime  @default(now())
+  resolvedAt          DateTime?
+  resolvedById        String?
+  unitsPerBoxSupplied Int? // the split the operator supplied (Int, like Product.unitsPerBox)
+  resolvedMovementId  String? // the StockMovement the resolution booked
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@unique([returnItemId])
+  @@index([tenantId, resolvedAt])
 }
 
 /// A prepared regulatory filing for one category + period (the generic superset
@@ -332,6 +397,12 @@ model RegulatedFiling {
   errorMessage      String?
   createdAt         DateTime              @default(now())
   updatedAt         DateTime              @updatedAt
+  // B297 (SA-088) LOCKED filing (D4): set together, only by the lock endpoint, only
+  // once (no unlock in this work). A filing may be locked only when GENERATED, its
+  // periodEnd <= now (a running period never locks), and it has no parked reversals.
+  lockedAt          DateTime?
+  lockedById        String?
+  lockReason        String?
 
   tenant          Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   trackedCategory TrackedCategory @relation(fields: [trackedCategoryId], references: [id], onDelete: Restrict)
@@ -345,7 +416,8 @@ model RegulatedFiling {
 // ─── Selling restrictions (2026-09-19) ─────────────────────────────────────────
 // See local-assets/handoff/2026-09-18/PLAN-categories-jurisdiction-bans.md §1.4
 // + §2. Deny-only jurisdiction rules keyed to a label OR a product. Rows are
-// NEVER deleted — lifting sets effectiveTo/lifted*; point-in-time + audit come
+// NEVER deleted — lifting sets liftedAt/liftedById/liftedByName/liftReason and leaves
+// effectiveTo as authored (status LIFTED = liftedAt <= now); point-in-time + audit come
 // from this table alone plus AuditLog rows on create/lift.
 enum RestrictionJurisdiction {
   FEDERAL

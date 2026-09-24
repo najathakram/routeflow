@@ -35,6 +35,7 @@ import {
   type BadgeVariant,
 } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
+import { scheduleScannerRefocus } from "@/lib/refocus-scanner";
 import { useUrlSearch } from "@/lib/hooks/useUrlSearch";
 import { useUrlPage, useClampPage } from "@/lib/hooks/useUrlPage";
 import {
@@ -48,6 +49,8 @@ import {
   type DuplicateVendorBillInfo,
 } from "@/lib/api/vendor-bills";
 import { useSuppliers as useInventorySuppliers, usePurchaseOrders } from "@/lib/api/inventory";
+import { getPoBillRefusal, type PoBillRefusal } from "@/lib/po-bill-refusal";
+import { poTotal, type PORow } from "./po-ledger-total";
 import { useProducts } from "@/lib/api/products";
 import {
   useExpenses,
@@ -506,7 +509,7 @@ function CreateBillModal({ isOpen, onClose }: { isOpen: boolean; onClose: () => 
       if (!product) {
         toast({ title: `Item not found: ${code.trim()}`, variant: "error" });
         setScanInput("");
-        setTimeout(() => scanInputRef.current?.focus(), 50);
+        scheduleScannerRefocus(scanInputRef, 50);
         return;
       }
       const existing = lineItemsRef.current.findIndex((li) => li.productId === product!.id);
@@ -531,7 +534,7 @@ function CreateBillModal({ isOpen, onClose }: { isOpen: boolean; onClose: () => 
         });
       }
       setScanInput("");
-      setTimeout(() => scanInputRef.current?.focus(), 50);
+      scheduleScannerRefocus(scanInputRef, 50);
     },
     [toast],
   );
@@ -539,6 +542,7 @@ function CreateBillModal({ isOpen, onClose }: { isOpen: boolean; onClose: () => 
   const { data: posData } = usePurchaseOrders(supplierId ? { supplierId } : undefined);
   const purchaseOrders: Array<{ id: string; poNumber: string }> = (posData as any)?.data ?? [];
   const [purchaseOrderId, setPurchaseOrderId] = React.useState("");
+  const [poRefusal, setPoRefusal] = React.useState<PoBillRefusal | null>(null);
 
   React.useEffect(() => {
     if (isOpen) {
@@ -553,6 +557,7 @@ function CreateBillModal({ isOpen, onClose }: { isOpen: boolean; onClose: () => 
       setLineItems([emptyLineItem()]);
       setErrors({});
       setDuplicate(null);
+      setPoRefusal(null);
       if (prefs?.["bill.lastSupplierId"]) setSupplierId(prefs["bill.lastSupplierId"]);
     }
   }, [isOpen]);
@@ -560,6 +565,11 @@ function CreateBillModal({ isOpen, onClose }: { isOpen: boolean; onClose: () => 
   React.useEffect(() => {
     setPurchaseOrderId("");
   }, [supplierId]);
+
+  // The refusal describes the lines as sent — once the operator edits them or re-points the PO it is stale.
+  React.useEffect(() => {
+    setPoRefusal(null);
+  }, [purchaseOrderId, lineItems]);
 
   // Prefill Terms (and the Due Date it drives) from the selected supplier's
   // defaultTerms — once per supplier pick, and never over a term the operator
@@ -661,6 +671,12 @@ function CreateBillModal({ isOpen, onClose }: { isOpen: boolean; onClose: () => 
             setDuplicate(dup.duplicate);
             return;
           }
+          // Over-billing a linked PO is a refusal to fix in the form, not a passing toast.
+          const refusal = getPoBillRefusal(err);
+          if (refusal) {
+            setPoRefusal(refusal);
+            return;
+          }
           const data = (
             err as { response?: { data?: { code?: string; message?: string | string[] } } }
           )?.response?.data;
@@ -724,6 +740,22 @@ function CreateBillModal({ isOpen, onClose }: { isOpen: boolean; onClose: () => 
               disabled={createBill.isPending}
               onCreateAnyway={() => postBill(true)}
             />
+          )}
+          {poRefusal && (
+            <div
+              role="alert"
+              className="rounded-lg border border-danger/40 bg-danger/5 px-3 py-2.5 text-sm text-navy"
+            >
+              <p className="font-medium text-danger">
+                This bill is more than {poRefusal.poNumber} authorised
+              </p>
+              <ul className="mt-1 list-disc space-y-0.5 pl-5 text-navy/80">
+                {poRefusal.lines.map((l) => (
+                  <li key={l}>{l}</li>
+                ))}
+              </ul>
+              <p className="mt-1.5 text-navy/70">{poRefusal.advice}</p>
+            </div>
           )}
           {/* ── Barcode scan strip ── */}
           <div className="flex items-center gap-2 rounded-lg border border-dashed border-brand-300 bg-brand-50 px-3 py-2">
@@ -1592,17 +1624,6 @@ function InventoryPurchasesTab() {
 
 // ─── Purchase Orders Tab ──────────────────────────────────────────────────────
 
-interface PORow {
-  id: string;
-  poNumber: string;
-  status: string;
-  supplier?: { id: string; name: string };
-  expectedDate?: string;
-  createdAt?: string;
-  totalAmount?: number;
-  items?: Array<{ qtyOrdered: number; unitCost: number }>;
-}
-
 const PO_STATUS_FILTERS = [
   { value: "", label: "All" },
   { value: "DRAFT", label: "Draft" },
@@ -1611,14 +1632,6 @@ const PO_STATUS_FILTERS = [
   { value: "RECEIVED", label: "Received" },
   { value: "CLOSED", label: "Closed" },
 ];
-
-function poTotal(po: PORow): number {
-  if (po.totalAmount != null) return Number(po.totalAmount);
-  return (po.items ?? []).reduce(
-    (sum, i) => sum + Number(i.qtyOrdered ?? 0) * Number(i.unitCost ?? 0),
-    0,
-  );
-}
 
 function PurchaseOrdersTab() {
   const [statusFilter, setStatusFilter] = React.useState("");

@@ -259,6 +259,8 @@ const MODEL_DOMAIN = {
   CustomerAuthorization: "compliance",
   AuthorizationOverride: "compliance",
   RegulatedSalesLedger: "compliance",
+  RegulatedLedgerParkedReversal: "compliance",
+  ReturnParkedRestock: "compliance",
   RegulatedFiling: "compliance",
   SellingRestriction: "compliance",
 };

@@ -28,7 +28,7 @@ jest.mock("../notifications/notifications.service", () => ({
 }));
 
 import { Test, TestingModule } from "@nestjs/testing";
-import { ForbiddenException } from "@nestjs/common";
+import { ForbiddenException, Logger } from "@nestjs/common";
 import { getQueueToken } from "@nestjs/bull";
 import { ConfigService } from "@nestjs/config";
 
@@ -341,5 +341,91 @@ describe("OrdersService.create — B587 order-number generation", () => {
       customerPayload as never,
     );
     expect(created()).toEqual(["ORD-00006", "ORD-00007"]);
+  });
+
+  // B585 — the credit check at create sits BEFORE the stock tx, behind the OFF/DARK/ENFORCED switch.
+  describe("B585 — credit-limit check for a new order", () => {
+    const CAPPED = { id: "cust-1", pricingTier: 1, creditLimit: 5 }; // the order below totals 10
+    const arrangeOver = (switchValue: string | null = null) => {
+      arrange(jest.fn().mockResolvedValue([{ max: null }]));
+      prisma.customer.findFirst.mockResolvedValue(CAPPED);
+      prisma.invoice.findMany.mockResolvedValue([]);
+      prisma.order.findMany.mockResolvedValue([]);
+      prisma.systemConfig.findFirst.mockResolvedValue(
+        switchValue === null ? null : { value: switchValue },
+      );
+    };
+    const items = { items: [{ productId: "prod-1", qty: 1 }] };
+    let warn: jest.SpyInstance;
+    beforeEach(() => {
+      warn = jest.spyOn(Logger.prototype, "warn").mockImplementation(() => undefined);
+    });
+    afterEach(() => warn.mockRestore());
+
+    it("OFF (default, switch absent): the order is created and NO exposure is even computed", async () => {
+      arrangeOver();
+      await service.create(items as never, customerPayload as never);
+
+      expect(created()).toEqual(["ORD-00001"]);
+      expect(prisma.invoice.findMany).not.toHaveBeenCalled();
+      expect(warn.mock.calls.map((c) => String(c[0])).some((m) => m.includes("would DENY"))).toBe(
+        false,
+      );
+    });
+
+    it("DARK ('dark'): an over-limit order is still created and one would-deny line is logged", async () => {
+      arrangeOver("dark");
+      await service.create(items as never, customerPayload as never);
+
+      expect(created()).toEqual(["ORD-00001"]);
+      const line = warn.mock.calls.map((c) => String(c[0])).find((m) => m.includes("would DENY"));
+      expect(line).toContain("exposure=10");
+      expect(line).toContain("limit=5");
+    });
+
+    it("ENFORCED ('true'), a BUYER: refused 409 with the code and NO figures, before anything is created", async () => {
+      arrangeOver("true");
+      const err = await service
+        .create(items as never, customerPayload as never)
+        .catch((e: { getResponse(): unknown }) => e);
+
+      expect(err.getResponse()).toEqual({
+        code: "CREDIT_LIMIT_EXCEEDED",
+        message: expect.stringContaining("can't be placed right now"),
+      });
+      expect(prisma.order.create).not.toHaveBeenCalled();
+      expect(prisma.tenantTransaction).not.toHaveBeenCalled(); // refused before the stock transaction
+    });
+
+    it("ENFORCED ('true'), STAFF creating for the customer: the same refusal names the figures", async () => {
+      arrangeOver("true");
+      prisma.customer.findUnique.mockResolvedValue({
+        ...CAPPED,
+        user: { status: "ACTIVE" },
+        deletedAt: null,
+      });
+      await expect(
+        service.create({ customerId: "cust-1", ...items } as never, operatorPayload as never),
+      ).rejects.toMatchObject({
+        response: { code: "CREDIT_LIMIT_EXCEEDED", limit: 5, exposure: 10 },
+      });
+    });
+
+    it("a DRAFT is not a sale: never checked, even ENFORCED", async () => {
+      arrangeOver("true");
+      // an operator names the customer (a customer caller resolves their own via findFirst)
+      prisma.customer.findUnique.mockResolvedValue({
+        ...CAPPED,
+        user: { status: "ACTIVE" },
+        deletedAt: null,
+      });
+      await service.create(
+        { customerId: "cust-1", status: "DRAFT", ...items } as never,
+        operatorPayload as never,
+      );
+
+      expect(created()).toEqual(["ORD-00001"]);
+      expect(prisma.systemConfig.findFirst).not.toHaveBeenCalled();
+    });
   });
 });

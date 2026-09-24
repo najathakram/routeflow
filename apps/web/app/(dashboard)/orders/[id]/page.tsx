@@ -40,6 +40,7 @@ import {
 } from "@routeflow/ui/web";
 import { orderLineName } from "@/lib/product-display";
 import { usePageTitle } from "@/lib/page-title-context";
+import { scheduleScannerRefocus } from "@/lib/refocus-scanner";
 import {
   useOrder,
   useUpdateOrderStatus,
@@ -55,10 +56,12 @@ import {
   type OrderItem,
   type ItemUpdate,
   type CustomerPriceHistory,
+  type PriceType,
 } from "@/lib/api/orders";
 import { useAuth } from "@/lib/auth-context";
 import { useHasAddon } from "@/lib/api/tobacco";
 import { SALES_AGENTS_ADDON, useOrderUiV2 } from "@/lib/api/addons";
+import { RecordReturnAction } from "../../returns/_components/RecordReturnAction";
 import { describeCancelImpact } from "@/lib/cancel-impact";
 import { fmtCalendarDate, isInternalEmail } from "@/lib/formatting";
 import { formatMoney, formatQty } from "@/lib/format";
@@ -74,6 +77,11 @@ import { OrderLineItemsTable } from "./_components/OrderLineItemsTable";
 import { OrderLineItemCards } from "./_components/OrderLineItemCards";
 import { ActionTier } from "./_components/ActionTier";
 import { parseRegulatedAuthError, type BlockedCategory } from "@/lib/api/authorizations";
+import { parseSellingRestricted } from "@/lib/api/selling-restricted";
+import { BlockedLinesDialog } from "@/components/BlockedLinesDialog";
+import type { BlockedLine } from "@routeflow/types";
+import { CreditLimitGuardDialog } from "@/components/CreditLimitGuardDialog";
+import { parseCreditLimitError, type CreditLimitInfo } from "@/lib/api/credit-limit";
 import { useProducts } from "@/lib/api/products";
 import {
   computeLineSubtotal,
@@ -95,6 +103,8 @@ import { apiClient } from "@/lib/api-client";
 import { printPdfBlob } from "@/lib/print-pdf-blob";
 import { fetchPdfBlob } from "@/lib/fetch-pdf-blob";
 import { CreditNotePicker, type CreditSelection } from "../_components/CreditNotePicker";
+import { OrderLineUnitPicker } from "@/components/OrderLineUnitPicker";
+import type { UnitOption } from "@/lib/unit-options";
 
 // ─── Send Invoice Modal ────────────────────────────────────────────────────────
 
@@ -379,7 +389,7 @@ type ApiOrderStatus =
   | "PARTIALLY_DELIVERED"
   | "CANCELLED";
 
-interface EditItemState {
+export interface EditItemState {
   id: string; // real DB id for existing items; temp "new-{uuid}" for new items
   isNew?: boolean;
   /** True for a free-text, non-catalog line (no productId; { name, qty, unitPrice }). */
@@ -431,6 +441,17 @@ interface EditItemState {
    *  price and disagrees with both the stored subtotal and the server on save. */
   promoFreeUnits?: number | null;
   promoBaseUnits?: number | null;
+  /** units_v1: the product's PACK unit label (e.g. "Box") — the `OrderLineUnitPicker`'s
+   *  fallback pack-option label. Unrelated to `unitLabel` below. */
+  unit?: string;
+  /** units_v1, STAFF ONLY: set when this line sells by a named unit (Case, Pallet,
+   *  Piece…) — `qty` is then the COUNT of that unit (never expanded pieces) and
+   *  `boxSplit` is forced false (a unit line is a plain qty*unitPrice line, since
+   *  unitPrice is already per-unit). Undefined = the pack, today's behavior. */
+  unitLabel?: string;
+  /** Needed only by `OrderLineUnitPicker` (auto-refresh-on-tier-change effect) —
+   *  mirrors the server's stored `priceType`, not otherwise read on this page. */
+  priceType?: PriceType;
 }
 
 // ─── Boxed proration helpers ──────────────────────────────────────────────────
@@ -550,6 +571,144 @@ function restoredPrice(it: EditItemState): Partial<EditItemState> {
     // stored price, exactly as if the substitution never happened.
     reasonBaselinePrice: undefined,
   };
+}
+
+/**
+ * Build one edit-state row from a loaded order line — shared by the DRAFT auto-enter effect and
+ * `enterEditMode` so the two seeding sites can never drift (A3-2).
+ *
+ * units_v1: a unit-aware line's COUNT lives in the server's `boxes` field (unit-line-build.ts
+ * stores `boxes: count, qty: count * unitsPerBox` — `boxes` is never a physical box for these
+ * lines). `qty` here is seeded to that COUNT, never the stored base-piece total, and `boxSplit`
+ * is forced false so `boxedDtoFields`/`editLineSubtotal` treat it as a plain qty*unitPrice line —
+ * correct, since `unitPrice` on a unit line is already PER UNIT (mirrors the existing "a boxed
+ * line added without a split keeps qty in selling units" convention just above).
+ */
+export function buildEditItemFromLine(li: OrderItem): EditItemState {
+  const isUnlisted = !li.productId;
+  const label = orderLineName(li) ?? li.productId ?? "Custom item";
+  const isUnitLine = li.unitLabel != null;
+  const count = isUnitLine ? Math.round(Number(li.boxes ?? li.qty)) : Math.round(Number(li.qty));
+  return {
+    id: li.id,
+    isUnlisted,
+    originalProductId: li.productId ?? "",
+    originalProductName: label,
+    originalQty: count,
+    productId: li.productId ?? "",
+    productName: label,
+    qty: count,
+    unitPrice: Number(li.unitPrice),
+    basePrice: Number(li.originalPrice ?? li.unitPrice),
+    originalUnitPrice: Number(li.unitPrice),
+    originalBasePrice: Number(li.originalPrice ?? li.unitPrice),
+    originalOverrideReason: li.overrideReason ?? undefined,
+    cancelled: false,
+    notes: li.notes,
+    overrideReason: li.overrideReason ?? undefined,
+    unitCost: li.product?.averageCost != null ? Number(li.product.averageCost) : null,
+    // Prefer the line's sale-time box-size snapshot over the live product.
+    unitsPerBox: li.unitsPerBox ?? li.product?.unitsPerBox ?? null,
+    originalUnitsPerBox: li.unitsPerBox ?? li.product?.unitsPerBox ?? null,
+    category: li.product?.category ?? null,
+    boxSplit: isUnitLine ? false : li.boxes != null || li.pieces != null,
+    originalBoxSplit: isUnitLine ? false : li.boxes != null || li.pieces != null,
+    // BUY_N_GET_M snapshot + the whole-unit count it was earned at.
+    promoFreeUnits: li.promoFreeUnits ?? null,
+    promoBaseUnits: li.promoFreeUnits
+      ? Math.trunc(Number(li.boxes != null ? li.boxes : li.qty) || 0)
+      : null,
+    unit: li.product?.unit ?? "",
+    unitLabel: li.unitLabel ?? undefined,
+    priceType: li.priceType,
+  };
+}
+
+/**
+ * The line-item diff for the edit builder — the ONE payload builder both save paths use ("Save
+ * Draft"/"Save Changes" and "Save & Publish"), so publishing can never bill differently from
+ * saving. Deletes are added by the caller. `original` is the order's own stored lines (money-
+ * critical: never re-derive this from `items`, which is this SESSION's edited copy).
+ *
+ * units_v1 (A3-2): a unit line's `qty` is seeded (buildEditItemFromLine) and edited as the COUNT
+ * of the named unit, never expanded pieces — so its UPDATE payload sends `{ id, qty, unitLabel }`
+ * with `boxes`/`pieces` omitted (boxedDtoFields already returns {} once boxSplit is false) and
+ * `productId` alongside `unitLabel` so the server preloads the product/ladder for the edit (a
+ * bare `{id, qty, unitLabel}` against a line the server doesn't already know is unit-aware would
+ * otherwise silently discard the label — filed separately, not fixed here). `qtyChanged` compares
+ * against the STORED line's own count (`orig.boxes`) for a unit line, never its base-piece `qty`.
+ */
+export function buildItemUpdates(items: EditItemState[], original: OrderItem[]): ItemUpdate[] {
+  const updates: ItemUpdate[] = [];
+
+  for (const edited of items) {
+    // A line is overridden when its net unit price diverges from the list/base
+    // price in EITHER direction (discount or upsell) — see isPriceOverridden.
+    const overridden = isPriceOverridden(edited);
+    const newNote = edited.notes?.trim() ? { notes: edited.notes.trim() } : {};
+    if (edited.isNew) {
+      if (edited.isUnlisted) {
+        // New unlisted (ad-hoc) line: no id, no productId — { name, qty, unitPrice }.
+        updates.push({
+          name: edited.productName.trim(),
+          qty: edited.qty,
+          unitPrice: edited.unitPrice,
+          ...newNote,
+        });
+      } else {
+        // New catalog item: no id — API will create it. Carry the override when present.
+        updates.push({
+          productId: edited.productId,
+          qty: edited.qty,
+          ...boxedDtoFields(edited),
+          ...(edited.unitLabel ? { unitLabel: edited.unitLabel } : {}),
+          ...(overridden
+            ? { unitPrice: edited.unitPrice, overrideReason: edited.overrideReason }
+            : {}),
+          ...newNote,
+        });
+      }
+      continue;
+    }
+    const orig = original.find((li) => li.id === edited.id);
+    if (!orig) continue;
+
+    const origQty = orig.unitLabel != null ? Number(orig.boxes ?? orig.qty) : Number(orig.qty);
+    const qtyChanged = Math.abs(edited.qty - origQty) > 0.0001;
+    const priceChanged = Math.abs(edited.unitPrice - Number(orig.unitPrice)) > 0.0001;
+    const nameChanged = edited.isUnlisted && edited.productName.trim() !== (orig.name ?? "").trim();
+    // "" clears an existing note (the API only applies notes when defined).
+    const noteChanged = (edited.notes ?? "").trim() !== ((orig.notes as string) ?? "").trim();
+    const notePatch = noteChanged ? { notes: (edited.notes ?? "").trim() } : {};
+
+    if (edited.cancelled) {
+      updates.push({ id: edited.id, action: "CANCEL" });
+    } else if (edited.substituteProductId) {
+      updates.push(substituteDtoUpdate(edited));
+    } else if (edited.isUnlisted && (qtyChanged || priceChanged || nameChanged || noteChanged)) {
+      // Rename / reprice an existing unlisted line: { id, name?, qty, unitPrice? }.
+      updates.push({
+        id: edited.id,
+        qty: edited.qty,
+        ...(nameChanged ? { name: edited.productName.trim() } : {}),
+        ...(priceChanged ? { unitPrice: edited.unitPrice } : {}),
+        ...notePatch,
+      });
+    } else if (qtyChanged || priceChanged || noteChanged) {
+      updates.push({
+        id: edited.id,
+        action: "UPDATE",
+        qty: edited.qty,
+        ...boxedDtoFields(edited),
+        ...(edited.unitLabel ? { unitLabel: edited.unitLabel, productId: edited.productId } : {}),
+        ...(priceChanged
+          ? { unitPrice: edited.unitPrice, overrideReason: edited.overrideReason }
+          : {}),
+        ...notePatch,
+      });
+    }
+  }
+  return updates;
 }
 
 /**
@@ -1000,7 +1159,7 @@ function PriceEditRow({
   );
 }
 
-function EditableLineItems({
+export function EditableLineItems({
   items,
   onChange,
   onAdd,
@@ -1009,6 +1168,7 @@ function EditableLineItems({
   priceHistory,
   tierPriceFor,
   isSpecialTierFor,
+  tierForProductId,
   pricingReady,
 }: {
   items: EditItemState[];
@@ -1027,6 +1187,9 @@ function EditableLineItems({
   /** True when this customer's effective tier for the product is not tier 1 — a
    *  contracted price a stale remembered price must never outrank. */
   isSpecialTierFor: (product: SubstituteOption) => boolean;
+  /** units_v1: the EFFECTIVE numeric tier (1-5) for a product — `OrderLineUnitPicker` resolves
+   *  the ladder price at this tier, same source as `isSpecialTierFor`. */
+  tierForProductId: (productId: string) => number;
   /** B62 (REG-B62): false while customer/customer-price queries are in flight —
    *  gates the add-product control and the Substitute trigger so neither can
    *  bake a list price before the customer's contracted tier is known. */
@@ -1137,14 +1300,17 @@ function EditableLineItems({
         unitsPerBox: p.unitsPerBox == null ? null : Number(p.unitsPerBox),
         originalUnitsPerBox: p.unitsPerBox == null ? null : Number(p.unitsPerBox),
         cancelled: false,
+        // units_v1: OrderLineUnitPicker's required fields (pack unit label + price type).
+        unit: p.unit ?? "",
+        priceType: isSpecialTierFor(p) ? "SPECIAL" : "STANDARD",
       });
       setScrollToId(newId);
     }
     setAddSearch("");
     setAddOpen(false);
-    // Refocus for next scan — use two timeouts: first after state settles, second as fallback
-    setTimeout(() => addInputRef.current?.focus(), 80);
-    setTimeout(() => addInputRef.current?.focus(), 200);
+    // Refocus for next scan — two tries: first after state settles, second as fallback. Each
+    // is guarded on its own (B744): never taken from a note or qty field the operator is in.
+    scheduleScannerRefocus(addInputRef, [80, 200]);
   }
 
   async function handleScanEnter() {
@@ -1164,7 +1330,7 @@ function EditableLineItems({
           variant: "error",
           title: `${result.product?.name || "Item"} is archived — reactivate to sell`,
         });
-        setTimeout(() => addInputRef.current?.select(), 50);
+        scheduleScannerRefocus(addInputRef, 50, { select: true });
         return;
       }
       if (!result.notFound && result.product) {
@@ -1174,7 +1340,7 @@ function EditableLineItems({
           // next wedge scan (which types) overwrites it instead of appending:
           // the operator can pick a row OR just scan the next label.
           setAddOpen(true);
-          setTimeout(() => addInputRef.current?.select(), 50);
+          scheduleScannerRefocus(addInputRef, 50, { select: true });
           return;
         }
         addProduct(result.product);
@@ -1186,7 +1352,7 @@ function EditableLineItems({
     } catch {
       // Network / 5xx: keep the code selected for an easy rescan; don't treat
       // a transient failure as "product doesn't exist".
-      setTimeout(() => addInputRef.current?.select(), 50);
+      scheduleScannerRefocus(addInputRef, 50, { select: true });
     } finally {
       setAddLoading(false);
     }
@@ -1194,6 +1360,38 @@ function EditableLineItems({
 
   function update(id: string, patch: Partial<EditItemState>) {
     onChange(items.map((it) => (it.id === id ? { ...it, ...patch } : it)));
+  }
+
+  /**
+   * units_v1 (A3-2): apply a `OrderLineUnitPicker` choice. `qty` becomes the COUNT of the chosen
+   * unit (never expanded pieces — buildItemUpdates sends it straight through as `qty`), `boxSplit`
+   * is forced false (a unit line is a plain qty*unitPrice line), and any pack-line override is
+   * cleared (a fresh unit assignment starts at the ladder's own price, matching CreateOrderModal's
+   * `applyLineUnit`). "Back to pack" (`option.kind === "pack"`) is a deliberate no-op here: this
+   * row was loaded from the server with no pack-price snapshot to restore (no client pricing math
+   * — reconstructing one would need the product's own ladder here, not just this line's state).
+   *
+   * `reasonBaselinePrice` is set to the NEW unit's own resolved price — same B465 pattern
+   * substitution already uses (see `restoredPrice`/`needsSpecialTierReason`): a unit switch jumps
+   * `unitPrice` from the pack's price to a differently-priced unit's, which is not an operator
+   * override and must never demand a reason on its own; only a manual price typed ON TOP of this
+   * new baseline (via `PriceEditRow`) should.
+   */
+  function setLineUnit(id: string, option: UnitOption, refresh: boolean) {
+    if (option.kind === "pack") return;
+    const current = items.find((it) => it.id === id);
+    if (!current) return;
+    update(id, {
+      unitLabel: option.value,
+      unit: option.label,
+      unitsPerBox: option.factorToBase,
+      boxSplit: false,
+      qty: refresh && current.unitLabel === option.value ? current.qty : 1,
+      unitPrice: option.price,
+      basePrice: option.listPrice,
+      overrideReason: undefined,
+      reasonBaselinePrice: option.price,
+    });
   }
 
   function addCustom() {
@@ -1316,6 +1514,34 @@ function EditableLineItems({
                   }}
                 />
               </label>
+            )}
+
+            {/* units_v1 (A3-2): renders nothing unless flag.units_v1 is on AND this product has
+                levels (OrderLineUnitPicker/UnitPicker self-gate) — every other tenant/product sees
+                today's row byte for byte. Excluded for a substitution in progress (re-denominates
+                against the SUBSTITUTE's case size instead — a separate, untouched concern). */}
+            {!item.cancelled && !item.isUnlisted && !item.substituteProductId && (
+              <OrderLineUnitPicker
+                line={{
+                  productId: item.productId,
+                  productName: item.productName,
+                  unit: item.unit ?? "",
+                  unitsPerBox: item.unitsPerBox ?? undefined,
+                  listPrice: item.basePrice,
+                  unitPrice: item.unitPrice,
+                  // PROMO (server-only, never client-set) has no picker-relevant meaning —
+                  // the picker only branches on DISCOUNTED/MANUAL to skip its tier-refresh.
+                  priceType:
+                    item.priceType === "SPECIAL" ||
+                    item.priceType === "DISCOUNTED" ||
+                    item.priceType === "MANUAL"
+                      ? item.priceType
+                      : "STANDARD",
+                  unitLabel: item.unitLabel,
+                }}
+                tier={tierForProductId(item.productId)}
+                onChange={(option, refresh) => setLineUnit(item.id, option, refresh)}
+              />
             )}
 
             {/* BUY_N_GET_M: name the units the live total below nets off. */}
@@ -1443,13 +1669,13 @@ function EditableLineItems({
           {/* Per-line note — carried onto the invoice line (buyer-visible). */}
           {!item.cancelled && (
             <div className="ml-11 mt-1">
-              <input
-                type="text"
-                maxLength={500}
+              <textarea
+                rows={2}
+                maxLength={2000}
                 value={item.notes ?? ""}
                 onChange={(e) => update(item.id, { notes: e.target.value })}
                 placeholder="Note for this line (prints on invoice)"
-                className="w-full rounded border border-surface-border bg-white px-2 py-1 text-xs text-navy placeholder:text-navy/40 focus:outline-none focus:ring-1 focus:ring-brand-500"
+                className="w-full resize-y rounded border border-surface-border bg-white px-2 py-1 text-xs text-navy placeholder:text-navy/40 focus:outline-none focus:ring-1 focus:ring-brand-500"
               />
             </div>
           )}
@@ -1764,6 +1990,12 @@ export default function OrderDetailPage() {
     (productId: string) => (cpMap.get(productId) ?? customerTier ?? 1) !== 1,
     [cpMap, customerTier],
   );
+  // units_v1: the EFFECTIVE numeric tier `OrderLineUnitPicker` needs (it resolves the ladder
+  // price at this tier, same source as isSpecialTierForProductId above).
+  const tierForProductId = React.useCallback(
+    (productId: string) => cpMap.get(productId) ?? customerTier ?? 1,
+    [cpMap, customerTier],
+  );
   const router = useRouter();
   const updateStatus = useUpdateOrderStatus();
   const updateItems = useUpdateOrderItems();
@@ -1791,14 +2023,27 @@ export default function OrderDetailPage() {
   // License guard (W6b): the edit/promote guard can 409 REGULATED_AUTH_REQUIRED.
   const [licenseBlock, setLicenseBlock] = React.useState<BlockedCategory[] | null>(null);
   const licenseRetryRef = React.useRef<(() => void) | null>(null);
+  // Selling restrictions: lines the API refused for this customer (a dialog, not a raw toast).
+  const [restrictedBlock, setRestrictedBlock] = React.useState<BlockedLine[] | null>(null);
+  // Credit limit: the server's numbers + a "collect a payment" exit (no override exists).
+  const [creditBlock, setCreditBlock] = React.useState<CreditLimitInfo | null>(null);
   // Opens the guard modal on a REGULATED_AUTH_REQUIRED 409; other errors fall
   // through to the global mutation toast.
   const guardError = (retry: () => void) => (err: unknown) => {
+    const restricted = parseSellingRestricted(err);
+    if (restricted) {
+      setRestrictedBlock(restricted);
+      return;
+    }
     const blocked = parseRegulatedAuthError(err);
     if (blocked && blocked.length > 0) {
       licenseRetryRef.current = retry;
       setLicenseBlock(blocked);
+      return;
     }
+    // A credit-limit 409 gets its own dialog (real numbers + a way out), not a bare toast.
+    const credit = parseCreditLimitError(err);
+    if (credit) setCreditBlock(credit);
   };
 
   // Status tracking — use actual API status directly
@@ -1849,42 +2094,7 @@ export default function OrderDetailPage() {
       if (order.status === "DRAFT" && !draftAutoEntered) {
         setDraftAutoEntered(true);
         setEditItems(
-          order.lineItems
-            .filter((li) => li.status !== "CANCELLED")
-            .map((li) => {
-              const isUnlisted = !li.productId;
-              const label = orderLineName(li) ?? li.productId ?? "Custom item";
-              return {
-                id: li.id,
-                isUnlisted,
-                originalProductId: li.productId ?? "",
-                originalProductName: label,
-                originalQty: Math.round(Number(li.qty)),
-                productId: li.productId ?? "",
-                productName: label,
-                qty: Math.round(Number(li.qty)),
-                unitPrice: Number(li.unitPrice),
-                basePrice: Number(li.originalPrice ?? li.unitPrice),
-                originalUnitPrice: Number(li.unitPrice),
-                originalBasePrice: Number(li.originalPrice ?? li.unitPrice),
-                originalOverrideReason: li.overrideReason ?? undefined,
-                cancelled: false,
-                notes: li.notes,
-                overrideReason: li.overrideReason ?? undefined,
-                unitCost: li.product?.averageCost != null ? Number(li.product.averageCost) : null,
-                // Prefer the line's sale-time box-size snapshot over the live product.
-                unitsPerBox: li.unitsPerBox ?? li.product?.unitsPerBox ?? null,
-                originalUnitsPerBox: li.unitsPerBox ?? li.product?.unitsPerBox ?? null,
-                category: li.product?.category ?? null,
-                boxSplit: li.boxes != null || li.pieces != null,
-                originalBoxSplit: li.boxes != null || li.pieces != null,
-                // BUY_N_GET_M snapshot + the whole-unit count it was earned at.
-                promoFreeUnits: li.promoFreeUnits ?? null,
-                promoBaseUnits: li.promoFreeUnits
-                  ? Math.trunc(Number(li.boxes != null ? li.boxes : li.qty) || 0)
-                  : null,
-              };
-            }),
+          order.lineItems.filter((li) => li.status !== "CANCELLED").map(buildEditItemFromLine),
         );
         setPendingDeletes([]);
         setEditShippingFee(Number(order.shippingFee ?? 0));
@@ -1941,8 +2151,8 @@ export default function OrderDetailPage() {
    * lost race: toast what happened and let the hook's onSettled invalidation
    * refetch the winning state. REGULATED_AUTH_REQUIRED routes into the
    * existing license-guard modal with a retry, like every other guarded 409
-   * on this page. INSUFFICIENT_STOCK / CREDIT_LIMIT_EXCEEDED carry a server
-   * message and surface via the global mutation toast — no handling needed.
+   * on this page. CREDIT_LIMIT_EXCEEDED opens the credit guard dialog via guardError;
+   * INSUFFICIENT_STOCK carries a server message and surfaces via the global mutation toast.
    */
   function handleResolve(cr: ChangeRequest, action: ChangeRequestResolveAction, reason?: string) {
     const run = () =>
@@ -2004,42 +2214,7 @@ export default function OrderDetailPage() {
 
   function enterEditMode() {
     setEditItems(
-      order!.lineItems
-        .filter((li) => li.status !== "CANCELLED")
-        .map((li) => {
-          const isUnlisted = !li.productId;
-          const label = orderLineName(li) ?? li.productId ?? "Custom item";
-          return {
-            id: li.id,
-            isUnlisted,
-            originalProductId: li.productId ?? "",
-            originalProductName: label,
-            originalQty: Math.round(Number(li.qty)),
-            productId: li.productId ?? "",
-            productName: label,
-            qty: Math.round(Number(li.qty)),
-            unitPrice: Number(li.unitPrice),
-            basePrice: Number(li.originalPrice ?? li.unitPrice),
-            originalUnitPrice: Number(li.unitPrice),
-            originalBasePrice: Number(li.originalPrice ?? li.unitPrice),
-            originalOverrideReason: li.overrideReason ?? undefined,
-            cancelled: false,
-            notes: li.notes,
-            overrideReason: li.overrideReason ?? undefined,
-            // unitsPerBox + boxSplit drive boxed proration on save (money fix).
-            // Prefer the line's sale-time snapshot over the live product so a later
-            // packaging change can't re-price an existing line.
-            unitsPerBox: li.unitsPerBox ?? li.product?.unitsPerBox ?? null,
-            originalUnitsPerBox: li.unitsPerBox ?? li.product?.unitsPerBox ?? null,
-            boxSplit: li.boxes != null || li.pieces != null,
-            originalBoxSplit: li.boxes != null || li.pieces != null,
-            // BUY_N_GET_M snapshot + the whole-unit count it was earned at.
-            promoFreeUnits: li.promoFreeUnits ?? null,
-            promoBaseUnits: li.promoFreeUnits
-              ? Math.trunc(Number(li.boxes != null ? li.boxes : li.qty) || 0)
-              : null,
-          };
-        }),
+      order!.lineItems.filter((li) => li.status !== "CANCELLED").map(buildEditItemFromLine),
     );
     setPendingDeletes([]);
     setEditShippingFee(Number(order!.shippingFee ?? 0));
@@ -2067,83 +2242,6 @@ export default function OrderDetailPage() {
     }
   }
 
-  /**
-   * The line-item diff for the edit builder — the ONE payload builder both save
-   * paths use ("Save Draft"/"Save Changes" and "Save & Publish"), so publishing
-   * can never bill differently from saving. Deletes are added by the caller.
-   */
-  function buildItemUpdates(): ItemUpdate[] {
-    const original = order!.lineItems;
-    const updates: ItemUpdate[] = [];
-
-    for (const edited of editItems) {
-      // A line is overridden when its net unit price diverges from the list/base
-      // price in EITHER direction (discount or upsell) — see isPriceOverridden.
-      const overridden = isPriceOverridden(edited);
-      const newNote = edited.notes?.trim() ? { notes: edited.notes.trim() } : {};
-      if (edited.isNew) {
-        if (edited.isUnlisted) {
-          // New unlisted (ad-hoc) line: no id, no productId — { name, qty, unitPrice }.
-          updates.push({
-            name: edited.productName.trim(),
-            qty: edited.qty,
-            unitPrice: edited.unitPrice,
-            ...newNote,
-          });
-        } else {
-          // New catalog item: no id — API will create it. Carry the override when present.
-          updates.push({
-            productId: edited.productId,
-            qty: edited.qty,
-            ...boxedDtoFields(edited),
-            ...(overridden
-              ? { unitPrice: edited.unitPrice, overrideReason: edited.overrideReason }
-              : {}),
-            ...newNote,
-          });
-        }
-        continue;
-      }
-      const orig = original.find((li) => li.id === edited.id);
-      if (!orig) continue;
-
-      const qtyChanged = Math.abs(edited.qty - Number(orig.qty)) > 0.0001;
-      const priceChanged = Math.abs(edited.unitPrice - Number(orig.unitPrice)) > 0.0001;
-      const nameChanged =
-        edited.isUnlisted && edited.productName.trim() !== (orig.name ?? "").trim();
-      // "" clears an existing note (the API only applies notes when defined).
-      const noteChanged = (edited.notes ?? "").trim() !== ((orig.notes as string) ?? "").trim();
-      const notePatch = noteChanged ? { notes: (edited.notes ?? "").trim() } : {};
-
-      if (edited.cancelled) {
-        updates.push({ id: edited.id, action: "CANCEL" });
-      } else if (edited.substituteProductId) {
-        updates.push(substituteDtoUpdate(edited));
-      } else if (edited.isUnlisted && (qtyChanged || priceChanged || nameChanged || noteChanged)) {
-        // Rename / reprice an existing unlisted line: { id, name?, qty, unitPrice? }.
-        updates.push({
-          id: edited.id,
-          qty: edited.qty,
-          ...(nameChanged ? { name: edited.productName.trim() } : {}),
-          ...(priceChanged ? { unitPrice: edited.unitPrice } : {}),
-          ...notePatch,
-        });
-      } else if (qtyChanged || priceChanged || noteChanged) {
-        updates.push({
-          id: edited.id,
-          action: "UPDATE",
-          qty: edited.qty,
-          ...boxedDtoFields(edited),
-          ...(priceChanged
-            ? { unitPrice: edited.unitPrice, overrideReason: edited.overrideReason }
-            : {}),
-          ...notePatch,
-        });
-      }
-    }
-    return updates;
-  }
-
   function handleSaveItems() {
     // B465: refuse client-side before the server has to — a SPECIAL-tier line
     // whose price was overridden with no reason would otherwise round-trip a
@@ -2166,7 +2264,7 @@ export default function OrderDetailPage() {
     // Hard-delete (or CANCEL fallback) for lines the user removed with the trash button.
     const updates: ItemUpdate[] = [
       ...pendingDeletes.map((id): ItemUpdate => ({ id, action: "DELETE" })),
-      ...buildItemUpdates(),
+      ...buildItemUpdates(editItems, order!.lineItems),
     ];
 
     // Only send shippingFee when it actually changed — avoids no-op churn (and
@@ -2263,6 +2361,8 @@ export default function OrderDetailPage() {
     updateStatus.mutate(
       { id: order.id, status: "DELIVERED" },
       {
+        // Delivery can be refused for credit (B585 gate): open the guard, not a bare toast.
+        onError: guardError(() => handleDeliver()),
         onSuccess: () => {
           setLocalStatus("DELIVERED");
           // Create the invoice (idempotent — returns existing if already there)
@@ -2475,6 +2575,18 @@ export default function OrderDetailPage() {
               >
                 Edit Items
               </Button>
+            </ActionTier>
+          )}
+
+          {/* Record return (Returns Inside Order Creation, PR 1 — office web capture).
+              Any order, no cap — never gated on order status, unlike the buttons below. */}
+          {!isEditing && (
+            <ActionTier tier="secondary">
+              <RecordReturnAction
+                customerId={order.customerId}
+                customerName={order.customer?.businessName}
+                orderId={order.id}
+              />
             </ActionTier>
           )}
 
@@ -2870,6 +2982,7 @@ export default function OrderDetailPage() {
                   priceHistory={priceHistory}
                   tierPriceFor={tierPriceFor}
                   isSpecialTierFor={isSpecialTierFor}
+                  tierForProductId={tierForProductId}
                   pricingReady={pricingReady}
                 />
 
@@ -2941,7 +3054,7 @@ export default function OrderDetailPage() {
                           // publishing straight from edit mode can't bill differently.
                           const updates: ItemUpdate[] = [
                             ...pendingDeletes.map((id): ItemUpdate => ({ id, action: "DELETE" })),
-                            ...buildItemUpdates(),
+                            ...buildItemUpdates(editItems, order!.lineItems),
                           ];
                           const doPublish = () =>
                             updateStatus.mutate(
@@ -3568,6 +3681,7 @@ export default function OrderDetailPage() {
 
       {/* License guard (W6b): an edit/promote hit a 409 REGULATED_AUTH_REQUIRED.
           Lines are removed via the edit UI here, so the remove exit is omitted. */}
+      <BlockedLinesDialog lines={restrictedBlock} onClose={() => setRestrictedBlock(null)} />
       {licenseBlock && order && (
         <LicenseGuardModal
           open
@@ -3582,6 +3696,11 @@ export default function OrderDetailPage() {
           onClose={() => setLicenseBlock(null)}
         />
       )}
+      <CreditLimitGuardDialog
+        info={creditBlock}
+        customerId={order?.customerId}
+        onClose={() => setCreditBlock(null)}
+      />
     </div>
   );
 }

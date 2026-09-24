@@ -1,3 +1,4 @@
+import { Logger } from "@nestjs/common";
 import {
   escapeHtml,
   trialEndingTemplate,
@@ -6,6 +7,7 @@ import {
   upgradeConfirmedTemplate,
   cancelledTemplate,
   suspendedTemplate,
+  checkoutPlanNotAppliedTemplate,
   billingSettingsUrl,
 } from "./billing-notification.templates";
 
@@ -63,6 +65,21 @@ describe("billing-notification.templates", () => {
       process.env = { ...ORIGINAL_ENV, WEB_URL: undefined, FRONTEND_URL: undefined };
       expect(billingSettingsUrl()).toBe("https://www.routeflow.info/settings/billing");
       expect(billingSettingsUrl()).not.toContain("localhost");
+    });
+
+    it("B809: a non-http(s) base URL never becomes the CTA's href; the email still renders (REG-B809)", () => {
+      const errorSpy = jest.spyOn(Logger.prototype, "error").mockImplementation(() => undefined);
+      process.env = { ...ORIGINAL_ENV, WEB_URL: "javascript:alert(1)//" };
+      const t = trialEndingTemplate({
+        businessName: "Acme Retail",
+        adminName: "Jamie",
+        milestone: "TRIAL_ENDING_7D",
+        trialEndsAt: "2026-09-23",
+      });
+      expect(t.html).not.toContain('href="javascript:');
+      expect(t.html).toMatch(/<span [^>]*>Choose a plan<\/span>/);
+      expect(errorSpy).toHaveBeenCalledWith(expect.stringMatching(/^ctaButtonHtml: refused/));
+      errorSpy.mockRestore();
     });
   });
 
@@ -198,6 +215,20 @@ describe("billing-notification.templates", () => {
       });
       expect(t.html).not.toContain("<b>hacked</b>");
       expect(t.html).toContain("&lt;b&gt;hacked&lt;/b&gt;");
+    });
+  });
+
+  describe("checkoutPlanNotAppliedTemplate", () => {
+    it("says money was received but the plan did NOT change, and escapes hostile input", () => {
+      const t = checkoutPlanNotAppliedTemplate({
+        businessName: "Acme Retail",
+        adminName: "Jamie",
+        requestedPlanKey: "<b>SCALE</b>",
+      });
+      expect(t.subject).toContain("plan not changed");
+      expect(t.text).toContain("NOT changed");
+      expect(t.html).toContain("/settings/billing");
+      expect(t.html).not.toContain("<b>SCALE</b>");
     });
   });
 });

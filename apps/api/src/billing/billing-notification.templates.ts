@@ -1,3 +1,5 @@
+import { escapeHtml, safeLinkHref } from "../common/html-escape";
+export { escapeHtml };
 // N3 (2026-09-16): billing-lifecycle email templates to the tenant admin — trial ending,
 // downgrade scheduled/applied, upgrade confirmed, cancelled, suspended.
 //
@@ -17,15 +19,6 @@ const PLATFORM_BRAND = "RouteFlow";
 
 const fmtMoney = (n: number): string =>
   new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(n);
-
-export function escapeHtml(value: string): string {
-  return String(value)
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#39;");
-}
 
 function baseLayout(params: { tagline: string; bodyHtml: string }): string {
   const brand = escapeHtml(PLATFORM_BRAND);
@@ -62,8 +55,15 @@ function baseLayout(params: { tagline: string; bodyHtml: string }): string {
 }
 
 function ctaButtonHtml(url: string, label: string): string {
+  // B809: a non-http(s) URL renders the button WITHOUT an href (logged and counted).
+  const href = safeLinkHref(url, "ctaButtonHtml");
+  const style =
+    "display:inline-block;padding:12px 24px;font-size:14px;font-weight:600;color:#ffffff;text-decoration:none;";
+  const button = href
+    ? `<a href="${escapeHtml(href)}" style="${style}">${escapeHtml(label)}</a>`
+    : `<span style="${style}">${escapeHtml(label)}</span>`;
   return `<table cellpadding="0" cellspacing="0" style="margin:24px 0;"><tr><td style="border-radius:6px;background:#1a2033;">
-    <a href="${escapeHtml(url)}" style="display:inline-block;padding:12px 24px;font-size:14px;font-weight:600;color:#ffffff;text-decoration:none;">${escapeHtml(label)}</a>
+    ${button}
   </td></tr></table>`;
 }
 
@@ -256,6 +256,33 @@ export function suspendedTemplate(params: {
   const text = `Hi ${params.adminName},\n\nYour RouteFlow account for ${params.businessName} has been suspended (${params.reason}). Please update your payment details to restore access.\n\nUpdate payment details: ${manageUrl}`;
   return {
     subject: `Account suspended — ${params.businessName}`,
+    html,
+    text,
+  };
+}
+
+export function checkoutPlanNotAppliedTemplate(params: {
+  businessName: string;
+  adminName: string;
+  requestedPlanKey: string;
+}): BillingEmailTemplate {
+  const manageUrl = billingSettingsUrl();
+  const html = baseLayout({
+    tagline: "Payment received, plan not changed",
+    bodyHtml: `
+      <p style="margin:0 0 8px;font-size:15px;color:#6b7280;">Hi ${escapeHtml(params.adminName)},</p>
+      <p style="margin:0 0 16px;font-size:15px;color:#374151;">
+        We received your payment for <strong>${escapeHtml(params.requestedPlanKey)}</strong> on
+        <strong>${escapeHtml(params.businessName)}</strong>, but your plan was NOT changed: it was
+        downgraded after you started that checkout, and we never override a newer plan choice.
+        Please review your plan below or contact support and we will sort it out.
+      </p>
+      ${ctaButtonHtml(manageUrl, "Review your plan")}
+    `,
+  });
+  const text = `Hi ${params.adminName},\n\nWe received your payment for ${params.requestedPlanKey} on ${params.businessName}, but your plan was NOT changed: it was downgraded after you started that checkout, and we never override a newer plan choice. Please review your plan or contact support.\n\nReview your plan: ${manageUrl}`;
+  return {
+    subject: `Payment received, plan not changed — ${params.businessName}`,
     html,
     text,
   };

@@ -30,7 +30,18 @@ import {
   decideScope,
   loadWorkspaces,
   shortName,
+  staleWorkspaces,
+  withStale,
 } from "./lib/verify-scope.mjs";
+// Pure builders only — never `main`, which is side-effecting. Safe to import: verify-turbo.mjs's
+// direct-execution guard means importing it does NOT spawn turbo or call process.exit.
+import {
+  buildArgv,
+  buildTurboFlags,
+  chooseVerifyDefaults,
+  jestPassthrough,
+  LOW_MEM_THRESHOLD_BYTES,
+} from "./verify-turbo.mjs";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const workspaces = loadWorkspaces(ROOT);
@@ -239,7 +250,7 @@ for (const b of ["master", "main", "HEAD"]) {
     "full",
   );
 }
-const dflt = decideScope(gitRoot, {}, { branch: "feat/x", files: someFiles });
+const dflt = decideScope(gitRoot, {}, { branch: "feat/x", files: someFiles, stale: [] });
 check(
   "S6d a feature branch with no env at all is SCOPED (the default)",
   [dflt.mode, dflt.workspaces?.map(shortName)],
@@ -252,8 +263,63 @@ check(
 );
 check(
   "S6f a legacy VERIFY_SCOPE variable changes nothing (there is no ambient switch)",
-  decideScope(gitRoot, { VERIFY_SCOPE: "full" }, { branch: "feat/x", files: someFiles }).mode,
+  decideScope(gitRoot, { VERIFY_SCOPE: "full" }, { branch: "feat/x", files: someFiles, stale: [] })
+    .mode,
   "scoped",
+);
+
+// ---- SP: stale campaign reports pull their workspace into an AFFECTED-scope run ----------------
+// campaign-check refuses a missing/partial/stale report; a scoped push that never touched (say)
+// apps/api would be refused for an api.json it had no reason to regenerate. The workspace is added
+// so its tests run and rewrite the report — enforcement itself is untouched.
+const webOnly = ["apps/web/lib/a.ts"];
+const spStale = decideScope(
+  gitRoot,
+  {},
+  { branch: "feat/x", files: webOnly, stale: ["@routeflow/api"] },
+);
+check(
+  "SP1 a STALE api report is pulled into a web-only scoped run",
+  [spStale.mode, spStale.workspaces.map(shortName), spStale.stale],
+  ["scoped", ["api", "pricing", "web"], ["@routeflow/api"]],
+);
+const spFresh = decideScope(gitRoot, {}, { branch: "feat/x", files: webOnly, stale: [] });
+check(
+  "SP2 a FRESH api report is NOT pulled in (same diff, nothing stale)",
+  [spFresh.workspaces.map(shortName), spFresh.stale],
+  [["pricing", "web"], []],
+);
+const spInScope = decideScope(
+  gitRoot,
+  {},
+  { branch: "feat/x", files: ["apps/api/src/a.ts"], stale: ["@routeflow/api"] },
+);
+check(
+  "SP3 a stale workspace the diff already reaches is not duplicated or reported as pulled in",
+  [spInScope.workspaces.map(shortName), spInScope.stale],
+  [["api", "pricing"], []],
+);
+check(
+  "SP4 stale reports never change a FULL decision",
+  decideScope(
+    gitRoot,
+    { FULL_VERIFY: "1" },
+    { branch: "feat/x", files: webOnly, stale: ["@routeflow/api"] },
+  ),
+  { mode: "full", reason: "FULL_VERIFY=1" },
+);
+check(
+  "SP5 staleWorkspaces FAILS OPEN when campaign-check cannot answer (no script -> [])",
+  staleWorkspaces(join(ROOT, "apps"), workspaces),
+  [],
+);
+check(
+  "SP6 withStale ignores a non-scoped decision and an empty/garbage list",
+  [
+    withStale({ mode: "full", reason: "x" }, ["@routeflow/api"]).mode,
+    withStale({ mode: "scoped", workspaces: ["a"], changed: [] }, [null, ""]).stale,
+  ],
+  ["full", []],
 );
 
 const hook = readFileSync(join(ROOT, ".husky", "pre-push"), "utf8");
@@ -273,6 +339,205 @@ check(
   "S7d verify no longer calls turbo directly for the test step",
   pkg.scripts.verify.includes("turbo run check-types lint test"),
   false,
+);
+
+// SP7/SP8: the two pins the stale-report addition depends on.
+// SP7: `--print-stale` prints turbo PACKAGE names and decideScope keeps only names the workspace
+// graph knows — a drift to short names ("api") would silently no-op the whole feature.
+check(
+  "SP7 the workspace graph carries the exact package names campaign-check --print-stale prints",
+  ["@routeflow/api", "@routeflow/mobile", "@routeflow/pricing", "@routeflow/web"].every((n) =>
+    workspaces.some((w) => w.name === n),
+  ),
+  true,
+);
+// SP8: adding a stale workspace to the filter regenerates its report only on a turbo cache MISS —
+// on a HIT turbo replays without running jest. The `--freshness-only` pre-step forces a real run on
+// a HIT, so it MUST come before verify-turbo in the verify chain; nothing else enforces the order.
+{
+  const chain = JSON.parse(readFileSync(join(ROOT, "package.json"), "utf8")).scripts.verify;
+  const fresh = chain.indexOf("--freshness-only");
+  const scoped = chain.indexOf("verify-turbo.mjs");
+  check(
+    "SP8 verify runs campaign-check --freshness-only BEFORE verify-turbo (forces a real run on a cache HIT)",
+    fresh !== -1 && scoped !== -1 && fresh < scoped,
+    true,
+  );
+}
+
+// ---- WC: the JEST_MAX_WORKERS / VERIFY_CONCURRENCY worker/concurrency caps (2026-09-22 incident:
+// an unbounded verify hit the Mac mini's memory kill line; `JEST_MAX_WORKERS` was told to lanes
+// as the fix tonight before anything actually read it). Imports the pure builders — never `main`,
+// which is side-effecting (spawns real processes, calls process.exit); the direct-execution guard
+// at the bottom of verify-turbo.mjs is what makes this import safe at all. ------------------------
+check(
+  "WC1 buildTurboFlags(unset) is BYTE-IDENTICAL to the original hardcoded default",
+  buildTurboFlags(""),
+  ["--concurrency=2", "--continue=dependencies-successful"],
+);
+check(
+  "WC2 buildTurboFlags narrows --concurrency when VERIFY_CONCURRENCY is set",
+  buildTurboFlags("1"),
+  ["--concurrency=1", "--continue=dependencies-successful"],
+);
+check(
+  "WC3-SP-CONTINUE --continue=dependencies-successful is present at every concurrency value " +
+    "(the property the full-tree-kill recovery note in verify-turbo.mjs's header depends on — " +
+    "see that comment for why a live kill-mid-run respawn test was rejected in favour of this " +
+    "static pin)",
+  ["", "1", "2", "8"].every((c) =>
+    buildTurboFlags(c).includes("--continue=dependencies-successful"),
+  ),
+  true,
+);
+check("WC4 jestPassthrough(unset) is [] — no passthrough at all", jestPassthrough(""), []);
+check("WC5 jestPassthrough(set) forwards --maxWorkers, `--` first", jestPassthrough("4"), [
+  "--",
+  "--maxWorkers=4",
+]);
+check(
+  "WC6 buildArgv with no passthrough (the default path) never emits a bare trailing '--'",
+  buildArgv(["test"], buildTurboFlags("")),
+  ["turbo", "run", "test", "--concurrency=2", "--continue=dependencies-successful"],
+);
+check(
+  "WC7 buildArgv with a passthrough puts '--' + the jest flag AFTER every turbo flag",
+  buildArgv(["test", "--filter=@routeflow/api"], buildTurboFlags("3"), jestPassthrough("4")),
+  [
+    "turbo",
+    "run",
+    "test",
+    "--filter=@routeflow/api",
+    "--concurrency=3",
+    "--continue=dependencies-successful",
+    "--",
+    "--maxWorkers=4",
+  ],
+);
+check(
+  "WC8 the default (both env vars unset) end-to-end argv is IDENTICAL to the pre-fix hardcoded " +
+    "invocation — this is the 'CI is bit-for-bit unchanged' claim, checked, not stated",
+  buildArgv(["check-types", "lint", "test"], buildTurboFlags(""), jestPassthrough("")),
+  [
+    "turbo",
+    "run",
+    "check-types",
+    "lint",
+    "test",
+    "--concurrency=2",
+    "--continue=dependencies-successful",
+  ],
+);
+
+// ---- WC9-15: chooseVerifyDefaults (B772) — a bare `git push` on the 16 GB Mac mini couldn't
+// reach the 2026-09-22 memory-pressure incident line without the inline VERIFY_CONCURRENCY=1
+// JEST_MAX_WORKERS=2 throttle, which lanes forgot twice in one night. Below 24 GB, default both
+// when unset; an explicit env value always wins per variable independently; a >=24 GB host
+// (CI, the PC) is byte-identical to today (both "", no message) when unset. --------------------
+const GB = 1024 ** 3;
+const MINI_MEM = 16 * GB;
+const PC_MEM = 32 * GB;
+
+check(
+  "WC9 below 24 GB with no env set: both default, and the explanatory message names the host size",
+  chooseVerifyDefaults({ totalMemBytes: MINI_MEM, env: {} }),
+  {
+    verifyConcurrency: "1",
+    jestMaxWorkers: "2",
+    message: "verify: low-memory host (16 GB) → concurrency 1, jest workers 2",
+  },
+);
+check(
+  "WC10 below 24 GB with VERIFY_CONCURRENCY explicitly set: it wins, jest workers still defaults",
+  chooseVerifyDefaults({ totalMemBytes: MINI_MEM, env: { VERIFY_CONCURRENCY: "3" } }),
+  {
+    verifyConcurrency: "3",
+    jestMaxWorkers: "2",
+    message: "verify: low-memory host (16 GB) → concurrency 3, jest workers 2",
+  },
+);
+check(
+  "WC11 below 24 GB with JEST_MAX_WORKERS explicitly set: it wins, concurrency still defaults",
+  chooseVerifyDefaults({ totalMemBytes: MINI_MEM, env: { JEST_MAX_WORKERS: "4" } }),
+  {
+    verifyConcurrency: "1",
+    jestMaxWorkers: "4",
+    message: "verify: low-memory host (16 GB) → concurrency 1, jest workers 4",
+  },
+);
+check(
+  "WC12 below 24 GB with BOTH explicitly set: nothing defaulted, no message printed",
+  chooseVerifyDefaults({
+    totalMemBytes: MINI_MEM,
+    env: { VERIFY_CONCURRENCY: "3", JEST_MAX_WORKERS: "4" },
+  }),
+  { verifyConcurrency: "3", jestMaxWorkers: "4", message: null },
+);
+check(
+  "WC12b a SET-BUT-EMPTY VERIFY_CONCURRENCY is an explicit opt-out (checked by presence, " +
+    '`"X" in env`, never truthiness) — stays empty, never silently defaulted; the unset ' +
+    "JEST_MAX_WORKERS still defaults",
+  chooseVerifyDefaults({ totalMemBytes: MINI_MEM, env: { VERIFY_CONCURRENCY: "" } }),
+  {
+    verifyConcurrency: "",
+    jestMaxWorkers: "2",
+    message: "verify: low-memory host (16 GB) → concurrency , jest workers 2",
+  },
+);
+check(
+  "WC13 at/above 24 GB with no env set: both stay unset, byte-identical to today, no message",
+  chooseVerifyDefaults({ totalMemBytes: PC_MEM, env: {} }),
+  { verifyConcurrency: "", jestMaxWorkers: "", message: null },
+);
+check(
+  "WC13b exactly the 24 GB threshold is treated as high-memory (< not <=)",
+  chooseVerifyDefaults({ totalMemBytes: LOW_MEM_THRESHOLD_BYTES, env: {} }),
+  { verifyConcurrency: "", jestMaxWorkers: "", message: null },
+);
+check(
+  "WC13c CI is EXCLUDED from the low-memory default regardless of its own host memory — " +
+    "GitHub's ubuntu-latest is ~16 GB public / ~7 GB private, both under the threshold, so " +
+    "without this CI would silently get concurrency 1 / --maxWorkers=2 and break the " +
+    "'bit-for-bit unchanged' promise",
+  chooseVerifyDefaults({ totalMemBytes: MINI_MEM, env: { CI: "true" } }),
+  { verifyConcurrency: "", jestMaxWorkers: "", message: null },
+);
+check(
+  "WC13d CI does not block an explicit override — a CI job that DOES set the vars is still honoured",
+  chooseVerifyDefaults({
+    totalMemBytes: MINI_MEM,
+    env: { CI: "true", VERIFY_CONCURRENCY: "2", JEST_MAX_WORKERS: "3" },
+  }),
+  { verifyConcurrency: "2", jestMaxWorkers: "3", message: null },
+);
+check(
+  "WC14 at/above 24 GB with env explicitly set: explicit values pass through untouched, no message",
+  chooseVerifyDefaults({
+    totalMemBytes: PC_MEM,
+    env: { VERIFY_CONCURRENCY: "8", JEST_MAX_WORKERS: "8" },
+  }),
+  { verifyConcurrency: "8", jestMaxWorkers: "8", message: null },
+);
+check(
+  "WC15 end-to-end: the low-mem defaults feed buildTurboFlags/jestPassthrough exactly like an " +
+    "explicit inline throttle would — buildTurboFlags/jestPassthrough themselves take no new " +
+    "branch for this",
+  (() => {
+    const { verifyConcurrency, jestMaxWorkers } = chooseVerifyDefaults({
+      totalMemBytes: MINI_MEM,
+      env: {},
+    });
+    return buildArgv(["test"], buildTurboFlags(verifyConcurrency), jestPassthrough(jestMaxWorkers));
+  })(),
+  [
+    "turbo",
+    "run",
+    "test",
+    "--concurrency=1",
+    "--continue=dependencies-successful",
+    "--",
+    "--maxWorkers=2",
+  ],
 );
 
 // S10: portable containment — the POSIX-only startsWith(`${root}/`) threw on every Windows push.

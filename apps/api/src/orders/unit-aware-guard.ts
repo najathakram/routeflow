@@ -15,7 +15,8 @@ import { ConflictException, ForbiddenException } from "@nestjs/common";
  * fails the build if any listed rewrite path stops calling this. Converting a path means deleting
  * its guard call in the same PR that makes it unit-aware and updating that spec.
  *
- * Nothing can create a unit-aware line yet (no DTO accepts `unitLabel`), so this is inert today.
+ * Order create (4b-2b) and manual-invoice create (4c-1) now mint unit-aware lines (behind flag.units_v1);
+ * every REWRITE path stays fenced here until it is converted.
  */
 export const UNIT_AWARE_LINE = "UNIT_AWARE_LINE";
 
@@ -55,12 +56,22 @@ interface EditDto {
 }
 
 /**
- * `updateOrderItems` entry guard. Every branch (buyer/driver/staff replace-all, diff add,
- * substitute, qty/price edit) re-derives the factor + price from the LIVE product, so an order with
- * a unit-aware line is refused — EXCEPT a diff of ONLY CANCEL/DELETE entries, which just strikes
- * lines off (no factor, no price) and is the operator's only way to remove a mistaken Case line.
- * A buyer's ownership is settled FIRST (`findOwner`): the refusal names a unit on THIS order,
- * which a non-owner must never learn.
+ * `updateOrderItems` entry guard. CUSTOMER/DRIVER branches still re-derive the factor + price from
+ * the LIVE product, so an order with a unit-aware line refuses them — EXCEPT a diff of ONLY
+ * CANCEL/DELETE entries, which just strikes lines off (no factor, no price) and is the only way a
+ * non-staff caller can remove a mistaken Case line. A buyer's ownership is settled FIRST
+ * (`findOwner`): the refusal names a unit on THIS order, which a non-owner must never learn.
+ *
+ * units_v1 (A1): a STAFF principal (OPERATOR/TENANT_ADMIN) is CONVERTED, not guarded, for every
+ * shape EXCEPT `replaceAll: true`: a full replace re-denominates every existing line by matching
+ * `productId` alone (see `updateOrderItems`'s replace-all branch), which would silently collapse a
+ * Case line to the pack's price the moment the client's replace payload carries no line ids (the
+ * B606 shape — a Case at $480 becomes a pack at $42, unnoticed). So a staff replaceAll is refused,
+ * same as CUSTOMER/DRIVER, whenever the order already holds a unit-aware line — regardless of
+ * whether `flag.units_v1` is still on for this tenant (a line already sold by a unit must never be
+ * silently downgraded, flag or no flag). Every OTHER staff shape (diff add/update/substitute) stays
+ * fully converted — those sites resolve each line's own factor via `resolveLineUnits`, never the
+ * live product (see `unit-line-edit.ts`).
  */
 export async function assertOrderEditAllowed(
   order: { customerId: string; lineItems: ReadonlyArray<LineLike> },
@@ -68,6 +79,10 @@ export async function assertOrderEditAllowed(
   user: { role?: string } | undefined,
   findOwner: () => Promise<{ id: string } | null>,
 ): Promise<void> {
+  if (user?.role === "OPERATOR" || user?.role === "TENANT_ADMIN") {
+    if (dto.replaceAll === true) assertNoUnitAwareLines(order.lineItems, "replaced wholesale");
+    return;
+  }
   const items = dto.items ?? [];
   const strikeOffOnly =
     dto.replaceAll === false &&

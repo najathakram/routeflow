@@ -58,7 +58,7 @@
 # and nothing else. If CI is failing on something the local gate should have
 # caught, fix the local gate.
 #
-# Triggers stay narrow: PRs into master (minus paths-ignore) drive correctness, and
+# Triggers stay narrow: PRs into ANY base branch (minus paths-ignore) drive correctness, and
 # a SUCCESSFUL Railway deploy — not the master push — drives E2E.
 #
 # ⚠️ THERE IS NO `push:` TRIGGER, AND ITS ABSENCE IS DELIBERATE (2026-08-30).
@@ -77,7 +77,15 @@ name: CI
 
 on:
   pull_request:
-    branches: [master]
+    # NO `branches:` filter, deliberately. It used to read `branches: [master]`, which is a filter on
+    # the PR's BASE — so a stacked PR (base = another feature branch) got no check at all: not a
+    # failure, not a skip, nothing, and a check-less PR page reads as "nothing to report" rather
+    # than "never ran". Nothing below depends on the base being master (the scoped-verify diff
+    # falls back to a full run when origin/master is unresolvable in a shallow clone). A stacked
+    # PR's run tests head + base, so it can be noisy; that beats no signal. GitHub reads this file
+    # from the PR's merge ref, so a stacked PR only starts running once ITS head carries this change
+    # (rebase/cherry-pick onto a master that has it) — landing it on master does not retro-start
+    # existing stacked PRs.
     # Explicit, because the default set omits ready_for_review and `verify`
     # skips drafts — without this a draft marked ready would produce NO run at
     # all, and with no branch protection on a Free private repo the PR could
@@ -767,3 +775,37 @@ jobs:
           name: playwright-report-ci-${{ github.run_number }}
           path: apps/web/playwright-report/
           retention-days: 7
+
+      # ─── Release-health gate (scripts/release-health.mjs) ────────────────────
+      # There is no OTHER automatic post-deploy check in this workflow to hook after —
+      # scripts/post-deploy-check.mjs is wired only into nightly.yml (scheduled) and
+      # post-deploy.yml (manual workflow_dispatch), never here — so this runs right after the
+      # Playwright suite, the closest thing this job has to one: the deploy is confirmed fresh
+      # (the readiness gate above) and Playwright's ~5-8 minutes of real traffic against the new
+      # deploy doubles as most of the soak window "for free." See
+      # docs/runbooks/release-health.md for the full loop (what a regression looks like, who
+      # reverts, how to read a new-issue spike).
+      #
+      # FAIL LOUD vs FAIL OPEN, same rule as scripts/ci-audit-critical.mjs /
+      # scripts/ci-freshness-guard.mjs: the script itself exits 1 only on a real regression
+      # signal (new "critical"+ issue groups over the threshold) and exits 0 with a
+      # `::warning::` on stderr for anything that means the check couldn't run cleanly —
+      # missing SENTRY_ORG/SENTRY_AUTH_TOKEN/SENTRY_PROJECT secrets included. That means this
+      # step is safe to merge and run before those secrets are ever provisioned; it simply
+      # warns and stays green until then.
+      #
+      # Only runs when the deploy was fresh (not a superseded/stale event) — same gate every
+      # other step in this job past the freshness check uses.
+      - name: Release health check (Sentry regression gate)
+        if: steps.freshness.outputs.run == 'true'
+        env:
+          SENTRY_ORG: ${{ secrets.SENTRY_ORG }}
+          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+          SENTRY_PROJECT: ${{ secrets.SENTRY_PROJECT }}
+          # Short and explicit, not a separate billed sleep-only step: real traffic (Playwright,
+          # just above) is most of the soak; this only tops it up before comparing.
+          RELEASE_HEALTH_SOAK_SECONDS: "60"
+        run: |
+          echo "Soaking ${RELEASE_HEALTH_SOAK_SECONDS}s for recent errors to reach Sentry..."
+          sleep "$RELEASE_HEALTH_SOAK_SECONDS"
+          node scripts/release-health.mjs current previous --min-severity critical --threshold 0

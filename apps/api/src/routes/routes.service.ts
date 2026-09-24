@@ -8,6 +8,7 @@ import {
 } from "@nestjs/common";
 import { createHash, randomUUID } from "crypto";
 import { ConfigService } from "@nestjs/config";
+import { assertDeliveriesFitStop } from "./delivery-lines.util";
 import { PrismaService } from "../prisma/prisma.service";
 import { JwtPayload } from "../auth/jwt-payload.interface";
 import {
@@ -71,115 +72,25 @@ import {
 import { FeatureConfigService } from "../billing/feature-config.service";
 import { ROUTES_DISPATCH_KEY, assertRouteKindDispatchAllowed } from "./route-dispatch-mode";
 import { observeRunCredit } from "./run-credit-observation";
+import {
+  reconcileDeliveredStopOrders,
+  resolvePostReconcileOrderTotals,
+} from "./complete-payment-reconcile";
 
-// F11 (B129 / B211): the `resolutionReason` stamped on a ChangeRequest that a
-// run-terminal release declined. Exported so a UI/report can recognise a
-// system decline without string-matching a literal in two places.
-export const RELEASED_CHANGE_REQUEST_REASON = "Run cancelled — order released to dispatch";
-
-// G7: single shared `lineItems` select for the ENTIRE run read path —
-// RUN_STOP_INCLUDE below, findOneRun's main query, and findOneRun's
-// unlinked-orders fallback all reference this SAME object (never re-literal
-// it) so the three can never drift out of sync again. Carries the
-// box-aware money fields (subtotal/boxes/pieces/unitsPerBox) the old
-// six-field literal lacked — consumed by mobile's `run-money.ts` and,
-// once they land, F10/F11/F12/F22 (route money summaries, driver payout
-// reconciliation, per-stop invoicing).
-export const RUN_LINE_ITEMS_SELECT = {
-  id: true,
-  productId: true,
-  product: { select: { id: true, name: true, unit: true } },
-  qty: true,
-  unitPrice: true,
-  status: true,
-  subtotal: true,
-  boxes: true,
-  pieces: true,
-  unitsPerBox: true,
-  // B305 round 2 (RULING 1/3): the per-line regulated-category tax snapshot
-  // (sales.prisma OrderItem.categoryTaxAmount) — mobile's run-money.ts
-  // #deliveredCategoryTax scales this by delivered/ordered qty to reproduce
-  // invoices.service.ts#buildInvoiceItemData's own per-unit proration for a
-  // short-picked stop's estimate. NOTE: `OrderItem` has no `taxRate` column
-  // (only `categoryTaxAmount`) — see routes.run-stop-select.spec.ts.
-  categoryTaxAmount: true,
-} as const;
-
-// Shared per-stop include used by both list (`findAllRuns`) and detail
-// (`findOneRun`) so the two endpoints stay in lockstep. Driver list views need
-// `customer`, `customerAddress`, and `orders` to render addresses/totals and to
-// build Google Maps waypoints — selecting a slim shape here previously caused
-// scheduled-run cards to render "no location" for every stop.
-export const RUN_STOP_INCLUDE = {
-  customer: {
-    select: {
-      id: true,
-      businessName: true,
-      contactName: true,
-      phone: true,
-      deliveryWindowStart: true,
-      deliveryWindowEnd: true,
-      // B305 round 3: the driver's short-pick estimate must zero tax for an
-      // exempt customer exactly as reconcileOrderDraftInvoice does.
-      isTaxExempt: true,
-    },
-  },
-  customerAddress: true,
-  orders: {
-    select: {
-      id: true,
-      orderNumber: true,
-      status: true,
-      urgent: true,
-      notes: true,
-      // B305: the driver's at-door amount due needs the tax-inclusive total —
-      // these are Order Decimal columns (sales.prisma:559-561), arrive as
-      // strings on the wire, no conversion here.
-      subtotal: true,
-      tax: true,
-      total: true,
-      discountAmount: true,
-      shippingFee: true,
-      // B305 round 2 (RULING 1): ALL open drafts, not just the oldest one — a
-      // regulated SEPARATE_INVOICE order's `reconcileSplitOrderDrafts` can leave
-      // it with SEVERAL open DRAFT + deliveryBatchId:null invoices (base + `-R#`
-      // siblings), and every one of them is money the invoice actually bills.
-      // `take: 1` silently dropped every sibling but the oldest and
-      // under-charged the driver. `orderBy: createdAt asc` mirrors
-      // `findOpenOrderDraft`/`reconcileSplitOrderDrafts` (invoices.service.ts)
-      // so the payload lists them in the same order the server reasons about
-      // them — never re-sort client-side.
-      invoices: {
-        where: { status: InvoiceStatus.DRAFT, deliveryBatchId: null },
-        orderBy: { createdAt: "asc" },
-        select: {
-          id: true,
-          subtotal: true,
-          taxAmount: true,
-          discount: true,
-          shippingFee: true,
-          total: true,
-        },
-      },
-      lineItems: { select: RUN_LINE_ITEMS_SELECT },
-    },
-  },
-  routeStop: {
-    include: {
-      customer: {
-        select: {
-          id: true,
-          businessName: true,
-          contactName: true,
-          phone: true,
-          deliveryWindowStart: true,
-          deliveryWindowEnd: true,
-        },
-      },
-      customerAddress: true,
-    },
-  },
-} as const;
+// The run/stop select shapes and status constants live in routes.constants.ts (size-ratchet
+// prefactor, verbatim move); re-exported here so every existing import path keeps working.
+import {
+  NON_ROUTABLE_ORDER_STATUSES,
+  RELEASED_CHANGE_REQUEST_REASON,
+  RUN_LINE_ITEMS_SELECT,
+  RUN_STOP_INCLUDE,
+} from "./routes.constants";
+export {
+  NON_ROUTABLE_ORDER_STATUSES,
+  RELEASED_CHANGE_REQUEST_REASON,
+  RUN_LINE_ITEMS_SELECT,
+  RUN_STOP_INCLUDE,
+};
 
 @Injectable()
 export class RoutesService {
@@ -1058,7 +969,7 @@ export class RoutesService {
           this.prisma.forTenant().order.updateMany({
             where: {
               customerId: s.customerId!,
-              status: { notIn: [OrderStatus.DELIVERED, OrderStatus.CANCELLED] },
+              status: { notIn: NON_ROUTABLE_ORDER_STATUSES },
               routeRunStopId: null,
               // SHIP orders go out via a carrier, so they must never attach to a
               // run stop — a driver would otherwise see them on the route and
@@ -1263,44 +1174,19 @@ export class RoutesService {
           },
         },
         driver: { select: { id: true, contactName: true, user: { select: { username: true } } } },
+        // B305 round 5: this used to hand-roll its own shape here instead of
+        // RUN_STOP_INCLUDE (the "single shared include" G7 was meant to
+        // guarantee) — missing subtotal/tax/total/discountAmount/shippingFee/
+        // invoices on every order and isTaxExempt on the customer, so every
+        // B305-round fix to run-money.ts's money math was silently inert on
+        // the ONE endpoint (GET /route-runs/:id) the driver's stop and
+        // payment screens actually call. `findAllRuns` (:1119) and
+        // `findMyRuns` (:2885) always used RUN_STOP_INCLUDE correctly — only
+        // this detail read had drifted. `deliveryMutations` is the one field
+        // this detail read needs beyond the shared shape (list views don't).
         stops: {
           include: {
-            customer: {
-              select: {
-                id: true,
-                businessName: true,
-                contactName: true,
-                phone: true,
-                deliveryWindowStart: true,
-                deliveryWindowEnd: true,
-              },
-            },
-            customerAddress: true,
-            orders: {
-              select: {
-                id: true,
-                orderNumber: true,
-                status: true,
-                urgent: true,
-                notes: true,
-                lineItems: { select: RUN_LINE_ITEMS_SELECT },
-              },
-            },
-            routeStop: {
-              include: {
-                customer: {
-                  select: {
-                    id: true,
-                    businessName: true,
-                    contactName: true,
-                    phone: true,
-                    deliveryWindowStart: true,
-                    deliveryWindowEnd: true,
-                  },
-                },
-                customerAddress: true,
-              },
-            },
+            ...RUN_STOP_INCLUDE,
             deliveryMutations: {
               select: {
                 id: true,
@@ -1401,15 +1287,12 @@ export class RoutesService {
             customerId: { in: customerIds },
             status: { notIn: [OrderStatus.CANCELLED] },
           },
-          select: {
-            id: true,
-            orderNumber: true,
-            status: true,
-            urgent: true,
-            notes: true,
-            customerId: true,
-            lineItems: { select: RUN_LINE_ITEMS_SELECT },
-          },
+          // B305 round 5: same drift as the main stops query above — this
+          // legacy fallback had its own hand-rolled select, missing the same
+          // money fields. `RUN_STOP_INCLUDE.orders.select` already carries
+          // exactly what an order needs here (incl. lineItems); `customerId`
+          // is the one extra field this fallback needs to group by.
+          select: { ...RUN_STOP_INCLUDE.orders.select, customerId: true },
         });
         const byCustomer: Record<string, any[]> = {};
         for (const o of orders) {
@@ -2369,6 +2252,7 @@ export class RoutesService {
 
     let autoCompleted = false;
     await this.prisma.tenantTransaction(async (tx) => {
+      await assertDeliveriesFitStop(tx, stop.orders, dto.deliveries);
       // Phase 4 (W7b): regulated-delivery POD gate. Re-derive the age/ID
       // requirement from the stop's current orders (authoritative — orders can be
       // linked after dispatch), then block a regulated completion that lacks the
@@ -2436,7 +2320,7 @@ export class RoutesService {
         await tx.order.updateMany({
           where: {
             id: { in: orderIds },
-            status: { notIn: [OrderStatus.CANCELLED, OrderStatus.DELIVERED] },
+            status: { notIn: NON_ROUTABLE_ORDER_STATUSES },
           },
           data: { status: OrderStatus.DELIVERED },
         });
@@ -2496,9 +2380,9 @@ export class RoutesService {
     });
 
     // P6-5: DELIVERED per order this completion flipped (driver bypasses
-    // changeStatus). AFTER the tx, fire-and-forget; skip already CANCELLED/DELIVERED.
+    // changeStatus). AFTER the tx, fire-and-forget; skip DRAFT/CANCELLED/DELIVERED.
     for (const o of stop.orders) {
-      if (o.status === OrderStatus.CANCELLED || o.status === OrderStatus.DELIVERED) continue;
+      if (NON_ROUTABLE_ORDER_STATUSES.includes(o.status)) continue;
       this.messaging
         .notifyEvent(NotificationEvent.DELIVERED, {
           customerId: o.customerId,
@@ -2612,6 +2496,7 @@ export class RoutesService {
     let excess: number | undefined;
     let advancePaymentId: string | null | undefined;
     await this.prisma.tenantTransaction(async (tx) => {
+      await assertDeliveriesFitStop(tx, stop.orders, dto.deliveries);
       // Phase 4 (W7b): regulated-delivery POD gate (same as completeStop).
       const db = tx as unknown as RegulatedDeliveryDb;
       const sets = await loadAgeIdCategorySets(db);
@@ -2667,9 +2552,9 @@ export class RoutesService {
               quantityDelivered: d.quantityDelivered,
             },
           });
-          // Record the delivered qty so a payment-path invoice bills what was
-          // actually delivered (short/refused lines don't over-bill). Consumed by
-          // recordDeliveryPaymentInTx → reconcileOrderDraftInvoice(basis:"delivered").
+          // Record the delivered qty so the invoice reconcile below (step 4) bills
+          // what was actually delivered (short/refused lines don't over-bill).
+          // Consumed by reconcileDeliveredOrdersInTx (delivered-reconcile.ts).
           await tx.orderItem.update({
             where: { id: d.orderItemId },
             data: { deliveredQty: (d.type as any) === "REFUSED" ? 0 : d.quantityDelivered },
@@ -2683,28 +2568,34 @@ export class RoutesService {
         await tx.order.updateMany({
           where: {
             id: { in: orderIds },
-            status: { notIn: [OrderStatus.CANCELLED, OrderStatus.DELIVERED] },
+            status: { notIn: NON_ROUTABLE_ORDER_STATUSES },
           },
           data: { status: OrderStatus.DELIVERED },
         });
       }
 
-      // 4. Record payment (atomic with stop completion — RF-005). The invoice is
+      // 4. B663: reconcile every delivered order's invoice onto the DELIVERED
+      // quantities, UNCONDITIONALLY — see complete-payment-reconcile.ts for the
+      // full rationale (why this must not live behind the payment step below).
+      const deliveredOrderIds = await reconcileDeliveredStopOrders(
+        this.invoicesService,
+        tx,
+        stop.orders,
+        deliveredOrderIdSet,
+      );
+
+      // 5. Record payment (atomic with stop completion — RF-005). The invoice is
       // resolved SERVER-side from the delivered orders — the mobile client cannot
       // supply an invoiceId (Order has no invoiceId scalar), so the old
-      // client-invoiceId path silently recorded nothing. This ensures a finalized
-      // invoice exists and records the payment the canonical way (InvoicePayment
-      // + recomputeStatus over non-VOID sums).
+      // client-invoiceId path silently recorded nothing. This records the payment
+      // the canonical way (InvoicePayment + recomputeStatus over non-VOID sums)
+      // against the invoice(s) step 4 just reconciled.
       if (dto.payment && dto.payment.amount > 0) {
-        const deliveredOrderIds = stop.orders
-          .filter((o) => o.status !== OrderStatus.CANCELLED)
-          .map((o) => o.id);
         const recorded = await this.invoicesService.recordDeliveryPaymentInTx(
           tx,
           deliveredOrderIds,
           dto.payment.amount,
           dto.payment.method,
-          Array.from(deliveredOrderIdSet),
           { runId, stopId },
         );
         paymentIds = recorded.paymentIds;
@@ -2722,7 +2613,7 @@ export class RoutesService {
         }
       }
 
-      // 5. RF-016: Auto-complete run when last stop is done
+      // 6. RF-016: Auto-complete run when last stop is done
       const allStops = await tx.routeRunStop.findMany({
         where: { routeRunId: runId },
         select: { id: true, status: true },
@@ -2774,16 +2665,30 @@ export class RoutesService {
     });
 
     // P6-5: DELIVERED per order this completion flipped (driver bypasses
-    // changeStatus). AFTER the tx, fire-and-forget; skip already CANCELLED/DELIVERED.
+    // changeStatus). AFTER the tx, fire-and-forget; skip DRAFT/CANCELLED/DELIVERED.
+    //
+    // B663/I2: see complete-payment-reconcile.ts — orderTotal must read the
+    // reconciled invoice(s) post-tx, never the stale pre-reconcile Order.total.
+    const routableOrderIds = stop.orders
+      .filter((o) => !NON_ROUTABLE_ORDER_STATUSES.includes(o.status))
+      .map((o) => o.id);
+    const postReconcileTotalByOrder = await resolvePostReconcileOrderTotals(
+      this.prisma.forTenant(),
+      routableOrderIds,
+      this.logger,
+    );
     for (const o of stop.orders) {
-      if (o.status === OrderStatus.CANCELLED || o.status === OrderStatus.DELIVERED) continue;
+      if (NON_ROUTABLE_ORDER_STATUSES.includes(o.status)) continue;
+      // No non-void invoice at all (shouldn't happen for a routed order, but never
+      // silently notify a wrong amount) falls back to the pre-tx order total.
+      const total = postReconcileTotalByOrder.get(o.id) ?? Number(o.total);
       this.messaging
         .notifyEvent(NotificationEvent.DELIVERED, {
           customerId: o.customerId,
           senderId: user.sub || null,
           vars: {
             orderNumber: o.orderNumber ?? "",
-            orderTotal: formatMoney(o.total),
+            orderTotal: formatMoney(total),
             deliveredAt: formatDate(new Date()),
           },
         })
@@ -3169,7 +3074,8 @@ export class RoutesService {
       // orders reverses exactly this stop's delivery and nothing else.
       for (const order of stop.orders) {
         await tx.orderItem.updateMany({
-          where: { orderId: order.id },
+          // A cancelled line stays cancelled: reopening a stop undoes a DELIVERY, never a cancel.
+          where: { orderId: order.id, status: { not: "CANCELLED" } },
           data: { status: "PENDING", deliveredQty: 0 },
         });
         if (order.status === "DELIVERED" || order.status === "OUT_FOR_DELIVERY") {

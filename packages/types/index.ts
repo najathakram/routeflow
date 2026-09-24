@@ -148,6 +148,7 @@ export * from "./api/customers";
 export * from "./api/products";
 export * from "./api/finance";
 export * from "./api/returns";
+export * from "./api/inline-returns";
 export * from "./api/regulated";
 export * from "./api/routes";
 export * from "./api/buyer";
@@ -161,6 +162,7 @@ export * from "./api/restrictions-settings";
 export * from "./api/product-labels";
 export * from "./api/restrictions-admin";
 export * from "./api/us-states";
+export * from "./api/config-snapshots";
 
 // ─── Developer mode (hidden dispatch/driver/route addon) ──────────────────────
 

@@ -13,6 +13,7 @@ import {
   HttpStatus,
   ConflictException,
   NotFoundException,
+  ParseUUIDPipe,
 } from "@nestjs/common";
 import { ApiTags, ApiOperation, ApiBearerAuth, ApiQuery } from "@nestjs/swagger";
 import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
@@ -36,12 +37,15 @@ import { UpdateTenantClassDto } from "./dto/update-tenant-class.dto";
 import { EnableAddonDto, DisableAddonDto } from "../billing/dto/manage-addon.dto";
 import { CreateFeatureOverrideDto } from "./dto/manage-feature-override.dto";
 import { SetEntitlementsModeDto } from "./dto/set-entitlements-mode.dto";
+import { SetConfigSnapshotFlagDto } from "./dto/set-config-snapshot-flag.dto";
 import { ExplainFeatureDiffDto } from "./dto/explain-feature-diff.dto";
 import { FEATURE_REGISTRY } from "../billing/feature-registry";
 import { EntitlementsModeService } from "../billing/entitlements-mode.service";
+import { ConfigSnapshotFlagService } from "../billing/config-snapshot-flag.service";
 import { FeatureDiffService } from "../billing/feature-diff.service";
 import { EntitlementAuthority } from "../billing/entitlement-authority.service";
 import { FeaturePreviewService } from "../billing/feature-preview.service";
+import { TenantConfigSnapshotAdminService } from "../billing/tenant-config-snapshot-admin.service";
 import { toEffectiveFeature } from "../billing/feature-resolver.service";
 import type { FeaturePreviewRequest } from "@routeflow/types";
 import { AdminAuditAction } from "./audit-actions.constant";
@@ -59,9 +63,11 @@ export class PlatformAdminController {
     private readonly addonService: AddonService,
     private readonly featureOverrides: FeatureOverrideService,
     private readonly entitlementsMode: EntitlementsModeService,
+    private readonly configSnapshotFlag: ConfigSnapshotFlagService,
     private readonly featureDiffs: FeatureDiffService,
     private readonly authority: EntitlementAuthority,
     private readonly featurePreview: FeaturePreviewService,
+    private readonly snapshotAdmin: TenantConfigSnapshotAdminService,
   ) {}
 
   @Get("stats")
@@ -464,6 +470,44 @@ export class PlatformAdminController {
     return { mode: dto.mode };
   }
 
+  // ─── Config snapshot flag (Lane B A2c) ────────────────────────────────────
+  // One of the four production flags an agent never flips — read-only for anyone but the owner,
+  // who calls PUT directly. GET never mutates. Every PUT is audited with the actor and reason,
+  // regardless of the resulting value.
+
+  @Get("entitlements/config-snapshot")
+  @ApiOperation({
+    summary:
+      "Whether automatic config snapshot/restore on plan changes is switched on (default OFF)",
+  })
+  async getConfigSnapshotFlag() {
+    return { enabled: await this.configSnapshotFlag.isEnabled() };
+  }
+
+  @Put("entitlements/config-snapshot")
+  @ApiOperation({
+    summary:
+      "Switch automatic config snapshot/restore on plan changes on/off — live, no redeploy, effective across replicas within ~5 s. Audited with the reason and the actor.",
+  })
+  async setConfigSnapshotFlag(
+    @Body() dto: SetConfigSnapshotFlagDto,
+    @CurrentUser() admin: JwtPayload,
+  ) {
+    // The cache can be up to ~5 s stale — force a real database read before recording the
+    // flip, so the audit row's `previous` is the flag's actual last-committed value, not a
+    // possibly-stale cached one from before another replica's write.
+    this.configSnapshotFlag.invalidate();
+    const previous = await this.configSnapshotFlag.isEnabled();
+    await this.configSnapshotFlag.setEnabled(dto.enabled);
+    await this.svc.recordAdminAction(
+      null,
+      admin.sub,
+      AdminAuditAction.CONFIG_SNAPSHOT_FLAG_CHANGED,
+      { previous, enabled: dto.enabled, reason: dto.reason },
+    );
+    return { enabled: dto.enabled };
+  }
+
   @Get("features/diffs")
   @ApiOperation({ summary: "Shadow-mode disagreements between the old path and the resolver" })
   @ApiQuery({ name: "tenantId", required: false })
@@ -634,6 +678,40 @@ export class PlatformAdminController {
       overrideId,
     });
     return result;
+  }
+
+  // ─── Configuration snapshots (Lane B A2 step c) ───────────────────────────
+  // Every route here inherits the class-level SuperAdminGuard.
+
+  @Get("tenants/:id/config-snapshots")
+  @ApiOperation({
+    summary: "A tenant's archived feature-config snapshots (taken on downgrade), newest first",
+  })
+  listConfigSnapshots(@Param("id", ParseUUIDPipe) id: string) {
+    return this.snapshotAdmin.list(id);
+  }
+
+  @Get("tenants/:id/config-snapshots/:snapshotId/preview")
+  @ApiOperation({
+    summary: "What restoring this snapshot would restore / keep / skip right now — writes nothing",
+  })
+  previewConfigSnapshotRestore(
+    @Param("id", ParseUUIDPipe) id: string,
+    @Param("snapshotId", ParseUUIDPipe) snapshotId: string,
+  ) {
+    return this.snapshotAdmin.preview(id, snapshotId);
+  }
+
+  @Post("tenants/:id/config-snapshots/:snapshotId/restore")
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: "Restore Now — apply one snapshot as-was to the tenant's current plan" })
+  async restoreConfigSnapshot(
+    @Param("id", ParseUUIDPipe) id: string,
+    @Param("snapshotId", ParseUUIDPipe) snapshotId: string,
+    @CurrentUser() admin: JwtPayload,
+  ) {
+    // The audit row (with the report) is written by the service INSIDE the restore transaction.
+    return this.snapshotAdmin.restoreNow(id, snapshotId, admin.sub);
   }
 
   // ─── Platform AI Configuration ────────────────────────────────────────────

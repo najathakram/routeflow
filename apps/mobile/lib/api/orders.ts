@@ -1,7 +1,12 @@
 import { useQuery, useMutation, useQueryClient, type QueryClient } from "@tanstack/react-query";
 import { apiClient } from "../api-client";
 import type { ChangeRequest } from "./change-requests";
-import type { ActiveOrderSummary, CancelImpact, CustomerPriceHistory } from "@routeflow/types";
+import type {
+  ActiveOrderSummary,
+  CancelImpact,
+  CustomerPriceHistory,
+  UnitAwareLineInput,
+} from "@routeflow/types";
 export type { ActiveOrderSummary, CancelImpact, CustomerPriceHistory } from "@routeflow/types";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -17,8 +22,22 @@ export interface OrderItem {
     name: string;
     unit: string;
     unitsPerBox?: number | null; // NEW — boxed-line steppers (at-door adjust, P10-POS-3)
+    pricePerUnit?: number | string;
+    /** units_v1 (SA-085f): the pack's tier-price columns — the unit picker's ladder ties to
+     *  the SAME product record `resolveUnitPrice` prices with server-side. */
+    priceTier2?: number | string | null;
+    priceTier3?: number | string | null;
+    priceTier4?: number | string | null;
+    priceTier5?: number | string | null;
     averageCost?: number | string | null; // NEW
     category?: string | null; // NEW
+    /** Row anatomy (order-ui T1/T8): SKU line + read-time variant-name composition — the order
+     *  detail read (`GET /orders/:id`) selects these. */
+    sku?: string | null;
+    unitSku?: string | null;
+    variantName?: string | null;
+    parentProductId?: string | null;
+    parent?: { name: string } | null;
   };
   qty: number;
   unitPrice: number;
@@ -55,6 +74,15 @@ export interface OrderItem {
   /** Cumulative qty already delivered — gates at-door adjustability (server: LINE_ALREADY_DELIVERED). */
   deliveredQty?: number; // NEW
   status: string;
+  /**
+   * B648: units_v1 — the unit this line is sold by ("Case"…); null on a plain
+   * piece/pack line. The server already returns it on `GET /orders/:id`
+   * (findOne's `lineItems` uses a plain `include`, so every OrderItem scalar
+   * column comes through) — only this client type didn't declare it, so the
+   * driver's short-pick screen had no way to know a line was unit-aware
+   * (`lib/short-pick.ts#ShortPickLine.unitLabel`/`isUnitAwareLine`).
+   */
+  unitLabel?: string | null;
 }
 
 export type OrderStatus =
@@ -139,7 +167,7 @@ export interface CreateOrderDto {
  * unitPrice REQUIRED, never boxed). Mirrors the API contract.
  */
 export type CreateOrderItemInput =
-  | {
+  | (UnitAwareLineInput & {
       productId: string;
       qty: number;
       boxes?: number;
@@ -148,7 +176,7 @@ export type CreateOrderItemInput =
       unitPrice?: number;
       /** Optional per-line note — carried onto the invoice line (buyer-visible). */
       notes?: string;
-    }
+    })
   | {
       /** Free-text label for an unlisted (non-catalog) line. */
       name: string;
@@ -449,8 +477,15 @@ export function useCancelOrder() {
  * unlisted line (`name`…). Only DTO-whitelisted keys — never spread a draft.
  * `notes` = per-line note carried onto the invoice line (buyer-visible).
  */
-export interface UpdateOrderItemInput {
+export interface UpdateOrderItemInput extends UnitAwareLineInput {
   id?: string;
+  /**
+   * units_v1: present ONLY alongside `unitLabel` on an UPDATE — an id-only edit of a line the
+   * server doesn't already know is unit-aware silently discards the label otherwise
+   * (`prepareUnitEditContext` only preloads the product when the STORED line already carries a
+   * unitLabel or the dto item itself names a productId; a filed, unfixed server gap). Also the
+   * ordinary "for new catalog items" field for every other branch.
+   */
   productId?: string;
   name?: string;
   action?: "CANCEL" | "DELETE" | "UPDATE";

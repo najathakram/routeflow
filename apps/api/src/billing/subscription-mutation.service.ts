@@ -427,8 +427,9 @@ export class SubscriptionMutationService {
           );
         }
       }
-    });
+    }, this.planTransition.transactionOptions(preparedTransition));
 
+    this.planTransition.invalidateCaches(tenantId, preparedTransition);
     this.entitlements.invalidate(tenantId);
     this.tenantStatus.invalidate(tenantId);
     return { quote, subscription: await this.subscription.getSubscription(tenantId) };
@@ -708,6 +709,11 @@ export class SubscriptionMutationService {
     const preparedTransition = await this.planTransition.prepare(transition);
 
     await this.prisma.$transaction(async (tx) => {
+      // The hook FIRST, exactly like subscribe()/updatePlan()/the cron: every site takes the
+      // snapshot/config row locks before the subscription/tenant rows, so two concurrent plan
+      // changes for one tenant can never wait on each other in opposite orders (deadlock). If the
+      // guard below then loses a race, the throw rolls the hook's writes back with it.
+      await this.planTransition.onPlanChange(tx, transition, preparedTransition);
       // Optimistic guard: only apply if still on the expected plan (blocks a concurrent
       // double-upgrade from re-emitting the delta). Matches the STORED key (null matches
       // IS NULL), never the resolved one.
@@ -731,7 +737,6 @@ export class SubscriptionMutationService {
       if (applied.count === 0) {
         throw new BadRequestException("Plan changed concurrently — please retry.");
       }
-      await this.planTransition.onPlanChange(tx, transition, preparedTransition);
       await tx.tenant.update({
         where: { id: tenantId },
         data: { plan: planKeyToEnum(planKey), planVersionId: version.id },
@@ -742,8 +747,9 @@ export class SubscriptionMutationService {
         { fromPlan: fromKey, toPlan: planKey, instant: true, prorated: proratedNow },
         { amountDelta, actorId, tx },
       );
-    });
+    }, this.planTransition.transactionOptions(preparedTransition));
 
+    this.planTransition.invalidateCaches(tenantId, preparedTransition);
     this.entitlements.invalidate(tenantId);
 
     // N3: best-effort admin notification, never blocks the upgrade above. `proratedNow` is

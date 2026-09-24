@@ -52,6 +52,17 @@ export function useDeveloperMode(): { enabled: boolean; isLoading: boolean; reso
   return { enabled, isLoading, resolved: query.isSuccess };
 }
 
+// ─── Order UI v2 (card-list order detail — LANE-S / order-ui-redesign, T8) ─────
+//
+// Mirror of web's `useOrderUiV2` (`apps/web/lib/api/addons.ts`): dark until granted, one
+// indirection over the in-development-surface flag so promoting it to a real per-tenant flag is a
+// one-line change here. Read through this hook only — never `useDeveloperMode()` at an order-UI
+// call site.
+export function useOrderUiV2(): { enabled: boolean; resolved: boolean } {
+  const dev = useDeveloperMode();
+  return { enabled: dev.enabled, resolved: dev.resolved };
+}
+
 // ─── scan_v2 (mirrors web; no mobile consumer yet) ──────────────────────────
 //
 // Fleet ruling 2026-09-19: no new plan flags while the feature registry is frozen, so the new scan
