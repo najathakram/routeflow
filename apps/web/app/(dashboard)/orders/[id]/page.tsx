@@ -40,6 +40,7 @@ import {
 } from "@routeflow/ui/web";
 import { orderLineName } from "@/lib/product-display";
 import { usePageTitle } from "@/lib/page-title-context";
+import { scheduleScannerRefocus } from "@/lib/refocus-scanner";
 import {
   useOrder,
   useUpdateOrderStatus,
@@ -1307,9 +1308,9 @@ export function EditableLineItems({
     }
     setAddSearch("");
     setAddOpen(false);
-    // Refocus for next scan — use two timeouts: first after state settles, second as fallback
-    setTimeout(() => addInputRef.current?.focus(), 80);
-    setTimeout(() => addInputRef.current?.focus(), 200);
+    // Refocus for next scan — two tries: first after state settles, second as fallback. Each
+    // is guarded on its own (B744): never taken from a note or qty field the operator is in.
+    scheduleScannerRefocus(addInputRef, [80, 200]);
   }
 
   async function handleScanEnter() {
@@ -1329,7 +1330,7 @@ export function EditableLineItems({
           variant: "error",
           title: `${result.product?.name || "Item"} is archived — reactivate to sell`,
         });
-        setTimeout(() => addInputRef.current?.select(), 50);
+        scheduleScannerRefocus(addInputRef, 50, { select: true });
         return;
       }
       if (!result.notFound && result.product) {
@@ -1339,7 +1340,7 @@ export function EditableLineItems({
           // next wedge scan (which types) overwrites it instead of appending:
           // the operator can pick a row OR just scan the next label.
           setAddOpen(true);
-          setTimeout(() => addInputRef.current?.select(), 50);
+          scheduleScannerRefocus(addInputRef, 50, { select: true });
           return;
         }
         addProduct(result.product);
@@ -1351,7 +1352,7 @@ export function EditableLineItems({
     } catch {
       // Network / 5xx: keep the code selected for an easy rescan; don't treat
       // a transient failure as "product doesn't exist".
-      setTimeout(() => addInputRef.current?.select(), 50);
+      scheduleScannerRefocus(addInputRef, 50, { select: true });
     } finally {
       setAddLoading(false);
     }

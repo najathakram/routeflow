@@ -18,6 +18,17 @@ import { useNavigation, useRouter } from "expo-router";
 import { ios } from "@routeflow/ui/tokens";
 import { FilterChipRow, NavBackButton, NavBar, SearchBar } from "@routeflow/ui/mobile/ios";
 import { apiClient } from "../lib/api-client";
+import { unitPriceBase, type UnitOption } from "../lib/unit-options";
+import { toNumber, type LineState, type Product } from "../lib/cart-line-state";
+import {
+  computeOrderTotal,
+  lineUnitFor,
+  priceEditorPrefill,
+  priceEditorSaveOverride,
+  type UnlistedTotalLine,
+} from "../lib/cart-order-total";
+import { CartRow } from "./CartRow";
+import { CartStepperRow } from "./CartStepperRow";
 import { useAdminCustomers } from "../lib/api/admin";
 import { useProductCategories } from "../lib/api/products";
 import { useProductSearch } from "../lib/use-product-search";
@@ -42,18 +53,13 @@ import { createScanAcceptGuard } from "../lib/scan-accept-guard";
 // Compose "<Parent> - <Variant>" so scanned variants don't show as "Strawberry" alone.
 import { displayProductName as displayName } from "../lib/product-display";
 import {
-  classifyMargin,
   computeLineSubtotal,
-  computeMarginFraction,
-  costPerSellingUnit,
   effectiveQty,
   getTierPrice,
   normalizeBoxesPieces,
-  priceForMarginFloor,
   roundMoney,
 } from "@routeflow/pricing";
 import { useMarginConfig, floorForCategory } from "../lib/api/margin";
-import { CostHistorySheet } from "./CostHistorySheet";
 import { useTrackedCategories } from "../lib/api/tracked-categories";
 import {
   groupLinesForInvoiceSplit,
@@ -64,28 +70,27 @@ import {
 import { MoneyTextInput } from "./MoneyTextInput";
 import { InlineCreateProductSheet } from "./InlineCreateProductSheet";
 import { ProductPickerSheet } from "./ProductPickerSheet";
-import { SellByToggle } from "./SellByToggle";
 import { BoxedQtyBand } from "./BoxedQtyBand";
 import { QtyStepper } from "./QtyStepper";
 import type { CreatedProduct } from "../lib/api/products";
 import { sanitizeIntInput } from "../lib/qty";
-import { MONEY_INPUT_MAX_WIDTH, QTY_INPUT_WIDTH } from "../lib/row-layout";
+import { MONEY_INPUT_MAX_WIDTH } from "../lib/row-layout";
 import { useAuthStore } from "../lib/auth-store";
 // chooseAction + alertInfo render the same dialogs cross-platform — RN's
 // Alert.alert silently no-ops 3-button alerts on Expo Web (the user's
 // "Confirm button frozen" report), so use these everywhere instead.
-import { alertInfo, chooseAction } from "../lib/confirm";
+import { alertInfo, chooseAction, confirm } from "../lib/confirm";
 import { InlineToast, useInlineToast } from "./InlineToast";
 import { ProductRow } from "./ProductRow";
 import { ScanOrderSheet } from "./ScanOrderSheet";
 import {
-  decrementLine,
-  incrementLine,
   incrementLinePiece,
+  isUnitLine,
   setLineBoxes,
   setLinePieces,
   setLineQty,
   setLineUnits,
+  stepLineQty,
 } from "../lib/sale-line";
 import { LicenseGuardModal } from "./LicenseGuardModal";
 import { BlockedLinesModal } from "./BlockedLinesModal";
@@ -156,66 +161,6 @@ export interface NewOrderScreenProps {
   resumeDraftId?: string;
 }
 
-type Product = {
-  id: string;
-  name: string;
-  sku?: string | null;
-  /** Retail-unit code — scannable, so the local scan fast path must see it. */
-  unitSku?: string | null;
-  barcode?: string | null;
-  unit?: string;
-  pricePerUnit: number | string;
-  // Tier price columns (Decimal, serialised as strings; 0 ⇒ inherit list). The
-  // /products payload already carries these — getTierPrice coerces + guards.
-  priceTier2?: number | string | null;
-  priceTier3?: number | string | null;
-  priceTier4?: number | string | null;
-  priceTier5?: number | string | null;
-  category?: string | null;
-  /** Regulated category this product belongs to (drives the license-guard remove-line exit). */
-  trackedCategoryId?: string | null;
-  /** Per-piece average cost — drives the live margin hint + the cost eye (web uses
-   *  averageCost, not standardCost). Operator/driver endpoints return it; buyers
-   *  never get this screen and their endpoints strip cost fields. */
-  averageCost?: number | string | null;
-  standardCost?: number | string | null;
-  unitsPerBox?: number | null;
-  parentProductId?: string | null;
-  parent?: { id: string; name: string } | null;
-  /**
-   * `GET /products/:id` (draft-resume hydration) and the barcode ladder both
-   * return an archived product, unlike the catalog list. Such a line is KEPT
-   * on resume — it is still orderable server-side — and the cart row flags it
-   * as Archived rather than deleting the operator's scanned work (R5/B195).
-   */
-  isActive?: boolean | null;
-};
-
-/**
- * Per-line cart state. `qty` is total pieces and stays the source of truth for
- * non-boxed products. When `boxes`/`pieces` are set, the server recomputes qty
- * from them on submit (see apps/api/src/orders/orders.service.ts:594) and the
- * line subtotal uses the BOX price × box-equivalent formula.
- */
-type LineState = {
-  qty: number;
-  boxes?: number;
-  pieces?: number;
-  /**
-   * Optional one-time price override (the "discounted price"). When unset the
-   * catalog price is used. For boxed products this is the BOX price, matching
-   * the catalog price unit; computeLineSubtotal prorates loose pieces.
-   */
-  unitPrice?: number;
-  /** Optional per-line note — carried onto the invoice line (buyer-visible). */
-  note?: string;
-  /** Note input expanded for this row (note text survives collapse). */
-  noteOpen?: boolean;
-  /** UI-only qty entry mode for a case-packed line. NEVER submitted — the
-   *  payload always carries {qty, boxes, pieces} and the per-case unitPrice. */
-  sellBy?: "case" | "unit";
-};
-
 /**
  * An ad-hoc, non-catalog ("unlisted") line. Has a free-text name + a required
  * per-piece price; never boxed. Serialised as `{ name, qty, unitPrice }` on
@@ -233,21 +178,6 @@ type UnlistedLine = {
 
 function newLocalId(): string {
   return `${Date.now()}-${Math.random().toString(36).slice(2)}`;
-}
-
-function toNumber(v: number | string | null | undefined): number {
-  if (typeof v === "number") return v;
-  if (typeof v === "string") {
-    const n = Number(v);
-    return Number.isFinite(n) ? n : 0;
-  }
-  return 0;
-}
-
-/** The effective per-unit price for a line: the override, else the resolved base
- *  (tier) price. Callers pass the customer's effective tier price as `basePrice`. */
-function effectiveUnitPrice(line: LineState | undefined, basePrice: number): number {
-  return line?.unitPrice != null ? line.unitPrice : basePrice;
 }
 
 const productKey = (p: CatalogRow<Product>) => (isCatalogHeader(p) ? `hdr-${p.__header}` : p.id);
@@ -645,9 +575,6 @@ function ProductPickView({
   const tierPriceFor = (p: Product) => getTierPrice(p, effectiveTierFor(p.id));
   /** SPECIAL (tier≠1) lines are the customer's permanent price — never overridable. */
   const isSpecialFor = (p: Product) => effectiveTierFor(p.id) !== 1;
-  /** What this line actually charges: overrides count only on non-SPECIAL lines (web parity). */
-  const lineUnitFor = (line: LineState | undefined, p: Product) =>
-    isSpecialFor(p) ? tierPriceFor(p) : effectiveUnitPrice(line, tierPriceFor(p));
   const [scanOpen, setScanOpen] = useState(false);
   /** Tray line (catalog id or unlisted local id) whose price is being edited. */
   const [priceEditId, setPriceEditId] = useState<string | null>(null);
@@ -960,10 +887,13 @@ function ProductPickView({
       const prev: LineState = m[id] ?? { qty: 0 };
       // Spread prev inside incrementLine so a repeat scan / +1 keeps the operator's
       // unitPrice override + note (previously wiped on every increment).
+      // A unit-sold line (re-scanned or "+1"-ed) always steps its COUNT via
+      // stepLineQty, regardless of scan kind — "piece" only means something for a
+      // PACK's own barcode split (SA-085f BLOCKER: box math on a unit line).
       const line =
-        kind === "piece"
+        kind === "piece" && !isUnitLine(prev)
           ? incrementLinePiece(prev, isBoxed, upb)
-          : incrementLine(prev, isBoxed, upb);
+          : stepLineQty(prev, 1, isBoxed, upb)!;
       if (isNew && prefill != null) line.unitPrice = prefill;
       return { ...m, [id]: line };
     });
@@ -990,7 +920,7 @@ function ProductPickView({
     setItems((m) => {
       const prev = m[id];
       if (!prev) return m;
-      const line = decrementLine(prev, isBoxed, upb);
+      const line = stepLineQty(prev, -1, isBoxed, upb);
       if (!line) {
         const next = { ...m };
         delete next[id];
@@ -1047,6 +977,35 @@ function ProductPickView({
 
   const setSellBy = (id: string, sellBy: "case" | "unit") =>
     setItems((m) => (m[id] ? { ...m, [id]: { ...m[id], sellBy } } : m));
+
+  /**
+   * units_v1: apply a `UnitPickerRow` choice. `qty` resets to 1 (a fresh unit assignment, never
+   * expanded pieces), boxes/pieces are cleared (a unit line is a plain qty*unitPrice line).
+   * `unitPrice` is left UNSET (not the option's price) so `effectiveUnitPrice`/`isOverridden`
+   * fall back to `unitBasePrice` exactly like a pack line falls back to `catalogPrice` — the
+   * option's own resolved price is a lookup, not an operator override, and must not be tagged as
+   * one. "" (the pack option) clears both `unitLabel` and `unitBasePrice`, restoring the plain
+   * pack behaviour byte for byte.
+   */
+  const setUnitLabel = (id: string, option: UnitOption) =>
+    setItems((m) => {
+      const prev = m[id];
+      if (!prev) return m;
+      const isPack = option.value === "";
+      return {
+        ...m,
+        [id]: {
+          ...prev,
+          unitLabel: isPack ? undefined : option.value,
+          unitBasePrice: isPack ? undefined : option.price,
+          unitFactor: isPack ? undefined : option.factorToBase,
+          qty: 1,
+          boxes: undefined,
+          pieces: undefined,
+          unitPrice: undefined,
+        },
+      };
+    });
 
   const setQty = (id: string, qty: number) =>
     setItems((m) => {
@@ -1143,10 +1102,7 @@ function ProductPickView({
   };
   const scanGuardRef = useRef(createScanAcceptGuard<Product>());
 
-  const acceptScannedProduct = (
-    product: Product,
-    unitKind: "case" | "piece" = "case",
-  ): ScanOutcome => {
+  const finishAccept = (product: Product, unitKind: "case" | "piece"): ScanOutcome => {
     addOne(product.id, product, unitKind);
     bumpScanned(product.id);
     clearSearch();
@@ -1155,11 +1111,26 @@ function ProductPickView({
         ? `Added 1 loose · ${displayName(product)}`
         : `Added ${displayName(product)}`;
     if (scanOpen) return; // the tray row is the confirmation
-    // Only reachable from a non-sheet caller. Web's equivalent scrolls the new
-    // line into view with `block: "nearest"` — a no-op when it is already
-    // visible — so mirror that rather than always animating.
+    // Only reachable from a non-sheet caller — mirrors web's scrollIntoView({block:"nearest"}).
     setPendingScroll((s) => requestScroll(s, product.id));
     return { feedback: { kind: "added", text: label } };
+  };
+
+  // units_v1 (SA-085h LOW): a PIECE-barcode hit on an already unit-sold line would add a
+  // whole unit, not one loose piece — confirm rather than silently adding a large jump.
+  const acceptScannedProduct = (
+    product: Product,
+    unitKind: "case" | "piece" = "case",
+  ): ScanOutcome => {
+    const label = items[product.id]?.unitLabel;
+    if (unitKind !== "piece" || !label) return finishAccept(product, unitKind);
+    const onYes = () => {
+      const o = finishAccept(product, unitKind);
+      if (o?.feedback?.kind === "added") showInline(o.feedback.text);
+    };
+    confirm(`Add 1 ${label}?`, `${displayName(product)} is sold by ${label}.`, onYes, {
+      confirmText: `Add 1 ${label}`,
+    });
   };
 
   // Continuous-scan handler: the scan sheet stays open between items; only the
@@ -1317,36 +1288,15 @@ function ProductPickView({
     listRef.current?.scrollToIndex({ index: scrollIndex, viewPosition: 0.12, animated: true });
   }, [pendingScroll, filtered]);
 
-  // Total + count, computed from items + the unified product map so scanned
-  // items that aren't in the local list still contribute. Subtotal uses the
-  // shared box/piece-aware formula so the footer agrees with what the server
-  // will compute on submit.
-  const { total, totalItems } = useMemo(() => {
-    let total = 0;
-    let totalItems = 0;
-    for (const [id, line] of Object.entries(items)) {
-      const p = productById.get(id);
-      if (!p) continue;
-      const qty = effectiveQty(line, p.unitsPerBox);
-      if (qty <= 0) continue;
-      totalItems += qty;
-      total += computeLineSubtotal({
-        unitPrice: lineUnitFor(line, p),
-        qty,
-        boxes: line.boxes ?? null,
-        pieces: line.pieces ?? null,
-        unitsPerBox: p.unitsPerBox ?? null,
-      });
-    }
-    // Unlisted lines: never boxed, simple unitPrice × qty.
-    for (const u of unlisted) {
-      if (u.qty <= 0) continue;
-      totalItems += u.qty;
-      total += computeLineSubtotal({ unitPrice: u.unitPrice, qty: u.qty });
-    }
-    return { total: roundMoney(total), totalItems };
+  // Total + count — thin wrapper over the pure, unit-tested `computeOrderTotal`
+  // (lib/cart-order-total.ts). Computed from items + the unified product map so scanned
+  // items that aren't in the local list still contribute. Subtotal uses the shared
+  // box/piece-aware formula so the footer agrees with what the server will compute on submit.
+  const { total, totalItems } = useMemo(
+    () => computeOrderTotal(items, productById, unlisted as UnlistedTotalLine[], effectiveTierFor),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [items, productById, unlisted, cpMap, customerTier]);
+    [items, productById, unlisted, cpMap, customerTier],
+  );
 
   // REG-4: live, DISPLAY-ONLY preview of how this cart will split into invoices.
   // Same iteration/inputs as the total memo above (by design — it can never
@@ -1363,7 +1313,7 @@ function ProductPickView({
       if (qty <= 0) continue;
       splitLines.push({
         trackedCategoryId: p.trackedCategoryId ?? null,
-        unitPrice: lineUnitFor(line, p),
+        unitPrice: lineUnitFor(line, p, effectiveTierFor(p.id)),
         qty,
         boxes: line.boxes ?? null,
         pieces: line.pieces ?? null,
@@ -1387,9 +1337,10 @@ function ProductPickView({
         unlisted,
         scanOrder,
         lookup: (id) => productById.get(id),
+        // units_v1 (SA-085i(b)): lib's lineUnitFor directly, never the pack's tier price.
         priceFor: (p) => {
           const full = productById.get(p.id);
-          return full ? tierPriceFor(full) : 0;
+          return full ? lineUnitFor(items[p.id], full, effectiveTierFor(p.id)) : 0;
         },
         overridable: (p) => {
           const full = productById.get(p.id);
@@ -1427,6 +1378,9 @@ function ProductPickView({
     updateUnlistedQty,
     removeUnlisted,
     unitsPerBox: (id: string) => Number(productById.get(id)?.unitsPerBox ?? 0),
+    // units_v1 (SA-085f): a unit-sold line's qty is a COUNT — the tray must send it
+    // through setQty, never setUnits (which treats the typed number as total PACK pieces).
+    isUnitLine: (id: string) => isUnitLine(items[id] ?? {}),
     // Owner ask: after CHOOSING the searched item, the field clears. Only on
     // the row's first Add (not stepper increments — the settled list must not
     // swap mid-repeat-tap); the added row survives the swap back to the
@@ -1470,7 +1424,7 @@ function ProductPickView({
   const onTrayChangeQty = useCallback((id: string, qty: number) => {
     const a = actionsRef.current;
     if (a.isUnlisted(id)) a.updateUnlistedQty(id, qty);
-    else if (a.unitsPerBox(id) > 1) a.setUnits(id, qty);
+    else if (!a.isUnitLine(id) && a.unitsPerBox(id) > 1) a.setUnits(id, qty);
     else a.setQty(id, qty);
   }, []);
   const onTrayIncrement = useCallback((id: string) => {
@@ -1516,8 +1470,8 @@ function ProductPickView({
     return {
       id: priceEditId,
       name: displayName(p, products),
-      // The override if one is set, else what this customer is billed today.
-      unitPrice: items[priceEditId]?.unitPrice ?? tierPriceFor(p),
+      // SA-085i(b): the override if set, else what's billed today — never the pack's price.
+      unitPrice: priceEditorPrefill(items[priceEditId], p, effectiveTierFor(p.id)),
       unlisted: false,
     };
   })();
@@ -1551,14 +1505,15 @@ function ProductPickView({
       if (isCatalogHeader(p)) return <CatalogSectionLabel label={p.label} />;
       const line = items[p.id];
       const qty = line ? effectiveQty(line, p.unitsPerBox) : 0;
-      const price = tierPriceFor(p);
+      // SA-085i: never the pack's tier price for a unit-sold line ("/Case", not "/each").
+      const price = line ? lineUnitFor(line, p, effectiveTierFor(p.id)) : tierPriceFor(p);
       const band =
-        line && qty > 0 && Number(p.unitsPerBox ?? 0) > 1 ? (
+        line && qty > 0 && Number(p.unitsPerBox ?? 0) > 1 && !line.unitLabel ? (
           <BoxedQtyBand
             line={line}
             unitsPerBox={Number(p.unitsPerBox)}
             unit={p.unit}
-            unitPrice={lineUnitFor(line, p)}
+            unitPrice={price}
             productName={displayName(p)}
             onChangeBoxes={(n) => onRowChangeBoxes(p.id, n)}
             onChangePieces={(n) => onRowChangePieces(p.id, n)}
@@ -1580,6 +1535,7 @@ function ProductPickView({
           onChangeQty={onRowChangeQty}
           onIncrement={onRowIncrement}
           onDecrement={onRowDecrement}
+          unitLabel={line?.unitLabel}
         >
           {band}
         </ProductRow>
@@ -1921,7 +1877,9 @@ function ProductPickView({
         // differs from the customer's TIER price — a one-time discount (below)
         // or upsell (above). A line sitting at the tier price sends nothing so
         // the server applies the SPECIAL/tier price authoritatively.
-        const catalog = p ? tierPriceFor(p) : 0;
+        // units_v1: see lib/unit-options.ts#unitPriceBase — the comparison base is the ACTIVE
+        // unit's own resolved price, never the pack's `tierPriceFor`.
+        const catalog = unitPriceBase(line, p ? tierPriceFor(p) : 0);
         // SPECIAL lines drop any lingering override (e.g. from an old draft) —
         // web can't produce one there, and the server owns the tier price.
         const override =
@@ -1929,7 +1887,11 @@ function ProductPickView({
             ? { unitPrice: line.unitPrice }
             : {};
         const note = line.note?.trim() ? { notes: line.note.trim() } : {};
-        const base = { productId, qty, ...override, ...note };
+        const unitLabel = line.unitLabel?.trim() || undefined;
+        const base = { productId, qty, ...(unitLabel ? { unitLabel } : {}), ...override, ...note };
+        // units_v1: a unit-sold line never carries boxes/pieces (setUnitLabel clears them) — qty
+        // above is already the unit COUNT, so skip the box-split branch below entirely for it.
+        if (unitLabel) return base;
         // Include boxes/pieces when set so the server uses the BOX-price math
         // for proration and stores the split alongside the order line.
         if (line.boxes != null || line.pieces != null) {
@@ -2583,12 +2545,15 @@ function ProductPickView({
           const target = priceEditTarget;
           setPriceEditId(null);
           if (!target) return;
-          // Money discipline: round every monetary write. The line TOTAL is
-          // never written here — the tray and the footer both re-derive it
-          // through computeLineSubtotal from this unit price.
+          // Money discipline: round every monetary write. The line TOTAL is never written
+          // here — the tray/footer re-derive it through computeLineSubtotal from this price.
           const price = value == null ? null : roundMoney(value);
-          if (target.unlisted) updateUnlistedPrice(target.id, price);
-          else setLinePrice(target.id, price);
+          if (target.unlisted) return updateUnlistedPrice(target.id, price);
+          // SA-085i(b): write an override ONLY when it diverges from the base (same comparison
+          // submit/park make) — saving the pre-fill UNTOUCHED must never store one.
+          const p = productById.get(target.id);
+          const base = p ? unitPriceBase(items[target.id] ?? {}, tierPriceFor(p)) : null;
+          setLinePrice(target.id, base != null ? priceEditorSaveOverride(price, base) : price);
         }}
       />
 
@@ -2599,6 +2564,7 @@ function ProductPickView({
         priceHistory={priceHistory}
         tierPriceFor={tierPriceFor}
         isSpecialFor={isSpecialFor}
+        tierForProductId={effectiveTierFor}
         marginFloorFor={(p) => floorForCategory(marginConfig, p.category)}
         unlisted={unlisted}
         total={total}
@@ -2610,6 +2576,7 @@ function ProductPickView({
         onChangePieces={setPieces}
         onChangeUnits={setUnits}
         onChangeSellBy={setSellBy}
+        onChangeUnit={setUnitLabel}
         onChangeQty={setQty}
         onChangePrice={setLinePrice}
         onChangeNote={setLineNote}
@@ -2948,6 +2915,7 @@ function CartModal({
   priceHistory,
   tierPriceFor,
   isSpecialFor,
+  tierForProductId,
   marginFloorFor,
   unlisted,
   total,
@@ -2959,6 +2927,7 @@ function CartModal({
   onChangePieces,
   onChangeUnits,
   onChangeSellBy,
+  onChangeUnit,
   onChangeQty,
   onChangePrice,
   onChangeNote,
@@ -2987,6 +2956,9 @@ function CartModal({
   tierPriceFor: (p: Product) => number;
   /** SPECIAL (tier≠1) lines lock the price input — it's the customer's permanent price. */
   isSpecialFor: (p: Product) => boolean;
+  /** units_v1: the EFFECTIVE numeric tier (1-5) for a product — `UnitPickerRow` resolves the
+   *  ladder price at this tier, same source as `isSpecialFor`/`tierPriceFor`. */
+  tierForProductId: (productId: string) => number;
   /** The customer's effective margin floor (fraction) for a product's category. */
   marginFloorFor: (p: Product) => number;
   unlisted: UnlistedLine[];
@@ -3000,6 +2972,8 @@ function CartModal({
   /** Unit mode: total unit count, routed through setLineUnits. */
   onChangeUnits: (id: string, n: number) => void;
   onChangeSellBy: (id: string, sellBy: "case" | "unit") => void;
+  /** units_v1: a `UnitPickerRow` choice, routed through setUnitLabel. */
+  onChangeUnit: (id: string, option: UnitOption) => void;
   onChangeQty: (id: string, n: number) => void;
   onChangePrice: (id: string, value: number | null) => void;
   onChangeNote: (id: string, text: string) => void;
@@ -3072,12 +3046,14 @@ function CartModal({
                     line={line}
                     catalogPrice={tierPriceFor(product)}
                     isSpecial={isSpecialFor(product)}
+                    tier={tierForProductId(product.id)}
                     marginFloor={marginFloorFor(product)}
                     historyPrice={priceHistory?.[id]?.lastPrice}
                     onChangeBoxes={(n) => onChangeBoxes(id, n)}
                     onChangePieces={(n) => onChangePieces(id, n)}
                     onChangeUnits={(n) => onChangeUnits(id, n)}
                     onChangeSellBy={(v) => onChangeSellBy(id, v)}
+                    onChangeUnit={(opt) => onChangeUnit(id, opt)}
                     onChangeQty={(n) => onChangeQty(id, n)}
                     onChangePrice={(raw) => onChangePrice(id, raw)}
                     onChangeNote={(t) => onChangeNote(id, t)}
@@ -3178,379 +3154,6 @@ function CartModal({
         </View>
       </View>
     </Modal>
-  );
-}
-
-function CartRow({
-  product,
-  line,
-  catalogPrice,
-  isSpecial,
-  marginFloor,
-  historyPrice,
-  onChangeBoxes,
-  onChangePieces,
-  onChangeUnits,
-  onChangeSellBy,
-  onChangeQty,
-  onChangePrice,
-  onChangeNote,
-  onToggleNote,
-  showCostEye,
-  acked,
-  onSellAnyway,
-  onIncrement,
-  onDecrement,
-  onRemove,
-}: {
-  product: Product;
-  line: LineState;
-  /** The customer's effective tier price for this product (the base to compare
-   *  an override against and to fall back to when no override is set). */
-  catalogPrice: number;
-  /** SPECIAL (tier≠1) price: the input is locked and overrides are ignored. */
-  isSpecial: boolean;
-  /** Category margin floor (fraction) for the live cost/margin hint. */
-  marginFloor: number;
-  historyPrice?: number;
-  onChangeBoxes: (n: number) => void;
-  onChangePieces: (n: number) => void;
-  /** Unit mode: total unit count, routed through setLineUnits. */
-  onChangeUnits: (n: number) => void;
-  onChangeSellBy: (sellBy: "case" | "unit") => void;
-  onChangeQty: (n: number) => void;
-  onChangePrice: (value: number | null) => void;
-  onChangeNote: (text: string) => void;
-  onToggleNote: () => void;
-  showCostEye: boolean;
-  /** Whether this line was already acked as "sell anyway" below the floor. */
-  acked: boolean;
-  onSellAnyway: () => void;
-  onIncrement: () => void;
-  onDecrement: () => void;
-  onRemove: () => void;
-}) {
-  const upb = Number(product.unitsPerBox ?? 0);
-  const isBoxed = upb > 1;
-  const sellBy = line.sellBy ?? "case";
-  const effUnit = isSpecial ? catalogPrice : effectiveUnitPrice(line, catalogPrice);
-  const isOverridden = !isSpecial && line.unitPrice != null && line.unitPrice !== catalogPrice;
-  const qty = effectiveQty(line, product.unitsPerBox);
-  const lineTotal = computeLineSubtotal({
-    unitPrice: effUnit,
-    qty,
-    boxes: line.boxes ?? null,
-    pieces: line.pieces ?? null,
-    unitsPerBox: product.unitsPerBox ?? null,
-  });
-
-  // Cost eye + live margin hint (mirror web): both read one per-piece cost —
-  // averageCost, else standardCost. Cost eye is hidden by default (session-local);
-  // the margin pill (classifyMargin vs the category floor) hides when no cost.
-  const [costVisible, setCostVisible] = useState(false);
-  const pieceCost =
-    product.averageCost != null
-      ? toNumber(product.averageCost)
-      : product.standardCost != null
-        ? toNumber(product.standardCost)
-        : null;
-  // 0 is a real cost; only null hides the eye/hint entirely.
-  const hasCost = pieceCost != null && Number.isFinite(pieceCost);
-  const sellingUnitCost = hasCost ? costPerSellingUnit(pieceCost!, product.unitsPerBox) : null;
-  const marginFrac = hasCost
-    ? computeMarginFraction(effUnit, pieceCost, product.unitsPerBox)
-    : null;
-  const marginClass = classifyMargin(marginFrac, marginFloor);
-  // Negotiation floor (pos-cost-roles-spec §1): the one-tap fix price + the
-  // below-floor/below-cost gate. `historyOpen` opens the cost-tap sheet.
-  const [historyOpen, setHistoryOpen] = useState(false);
-  const floorPrice =
-    hasCost && marginClass != null
-      ? priceForMarginFloor(pieceCost!, marginFloor, product.unitsPerBox)
-      : null;
-  const below = marginClass === "belowCost" || marginClass === "belowFloor";
-
-  return (
-    <View style={styles.cartRow}>
-      <View style={styles.cartRowHeader}>
-        <View style={{ flex: 1, minWidth: 0 }}>
-          <Text style={styles.cartRowName} numberOfLines={2}>
-            {displayName(product)}
-          </Text>
-          <Text style={styles.cartRowMeta} numberOfLines={1}>
-            {isBoxed ? `case of ${upb}` : product.unit ? `per ${product.unit}` : ""}
-            {product.sku ? `${isBoxed || product.unit ? " · " : ""}${product.sku}` : ""}
-          </Text>
-          {/* R5/B195: an archived product is kept on the order (it is still
-              orderable) — flagged, never silently deleted on draft-resume. */}
-          {product.isActive === false ? (
-            <Text style={styles.cartRowArchived} numberOfLines={1}>
-              Archived — no longer in the catalog
-            </Text>
-          ) : null}
-        </View>
-        <Pressable onPress={onRemove} hitSlop={8} style={styles.cartRowRemove}>
-          <Ionicons name="trash-outline" size={18} color={ios.system.redInk} />
-        </Pressable>
-      </View>
-
-      {/* Editable price — the "discounted price". Defaults to the catalog price;
-          typing a lower value records a one-time override sent as the line's
-          unitPrice. SPECIAL (tier≠1) lines lock it (web parity: the input is
-          hidden there — a tier price is the customer's permanent price). */}
-      <View style={styles.cartPriceRow}>
-        <Text style={styles.cartPriceLabel}>Price{isBoxed ? " / case" : ""}</Text>
-        <View style={styles.cartPriceInputWrap}>
-          <Text style={styles.cartPriceCurrency}>$</Text>
-          {isSpecial ? (
-            <>
-              <Text style={styles.cartPriceFixed}>{catalogPrice.toFixed(2)}</Text>
-              <Text style={styles.cartPriceLockNote} numberOfLines={1}>
-                Customer price
-              </Text>
-            </>
-          ) : (
-            <>
-              <MoneyTextInput
-                style={[styles.cartPriceInput, isOverridden && styles.cartPriceInputActive]}
-                value={line.unitPrice ?? null}
-                onChangeValue={onChangePrice}
-                placeholder={catalogPrice.toFixed(2)}
-                returnKeyType="done"
-              />
-              {isOverridden && line.unitPrice != null && line.unitPrice > catalogPrice ? (
-                <Text
-                  style={{ color: ios.system.greenInk, fontSize: 11, fontWeight: "600" }}
-                  numberOfLines={1}
-                >
-                  Upsell
-                </Text>
-              ) : isOverridden ? (
-                <Text style={styles.cartPriceWas} numberOfLines={1}>
-                  Current: ${catalogPrice.toFixed(2)}
-                </Text>
-              ) : historyPrice != null && historyPrice !== catalogPrice ? (
-                <Text style={styles.cartPriceWas} numberOfLines={1}>
-                  Last: ${historyPrice.toFixed(2)}
-                </Text>
-              ) : null}
-            </>
-          )}
-        </View>
-      </View>
-
-      {/* Live margin hint — margin on the effective price vs the product's cost. */}
-      {marginFrac != null ? (
-        <Text
-          style={[
-            styles.marginHint,
-            marginClass === "belowCost" || marginClass === "belowFloor"
-              ? { color: ios.system.red }
-              : marginClass === "warn"
-                ? { color: ios.system.orange }
-                : { color: ios.label2 },
-          ]}
-        >
-          {marginClass === "belowCost"
-            ? `Below cost (${Math.round(marginFrac * 100)}%)`
-            : marginClass === "belowFloor"
-              ? `Below floor · ${Math.round(marginFrac * 100)}% margin`
-              : `${Math.round(marginFrac * 100)}% margin`}
-        </Text>
-      ) : null}
-
-      {/* Below-floor one-tap fix + ack, mirrors web MarginHint. */}
-      {below && !acked && floorPrice != null ? (
-        <View style={{ flexDirection: "row", gap: 10, marginTop: 2 }}>
-          <Pressable onPress={() => onChangePrice(floorPrice!)} style={styles.floorFixBtn}>
-            <Text style={styles.floorFixBtnText}>Set to floor ${floorPrice.toFixed(2)}</Text>
-          </Pressable>
-          <Pressable onPress={onSellAnyway} hitSlop={6}>
-            <Text style={styles.sellAnywayText}>Sell anyway</Text>
-          </Pressable>
-        </View>
-      ) : null}
-
-      {isBoxed ? (
-        <>
-          <View style={{ marginBottom: 2 }}>
-            <SellByToggle value={sellBy} onChange={onChangeSellBy} />
-          </View>
-          {sellBy === "unit" ? (
-            <CartStepperRow
-              label={`Total ${product.unit ? `${product.unit}s` : "units"}`}
-              value={qty}
-              onChange={onChangeUnits}
-              hint={`${upb} per case`}
-            />
-          ) : (
-            <>
-              <CartStepperRow label="Cases" value={line.boxes ?? 0} onChange={onChangeBoxes} />
-              <CartStepperRow
-                label={`Loose ${product.unit ?? "units"}`}
-                value={line.pieces ?? 0}
-                onChange={onChangePieces}
-                max={upb - 1}
-                hint={`${upb} per case`}
-              />
-            </>
-          )}
-        </>
-      ) : (
-        <CartStepperRow
-          label={`Qty${product.unit ? ` (${product.unit})` : ""}`}
-          value={line.qty ?? 0}
-          onChange={onChangeQty}
-          onIncrement={onIncrement}
-          onDecrement={onDecrement}
-        />
-      )}
-
-      {/* Cost eye — OFF by default; reveals the selling-unit cost + margin.
-          Once visible, the cost text itself is tappable → cost history sheet. */}
-      {showCostEye && hasCost ? (
-        <View style={styles.cartNoteAdd}>
-          <Pressable
-            onPress={() => setCostVisible((v) => !v)}
-            hitSlop={6}
-            style={{ flexDirection: "row", alignItems: "center", gap: 4 }}
-          >
-            <Ionicons
-              name={costVisible ? "eye-off-outline" : "eye-outline"}
-              size={14}
-              color={costVisible ? ios.label2 : ios.brand}
-            />
-            {!costVisible ? <Text style={styles.cartNoteAddText}>Cost</Text> : null}
-          </Pressable>
-          {costVisible ? (
-            <Pressable onPress={() => setHistoryOpen(true)} hitSlop={6}>
-              <Text style={styles.cartCostText}>
-                Cost ${sellingUnitCost!.toFixed(2)}
-                {isBoxed ? " / box" : ""}
-                {marginFrac != null ? ` · ${(marginFrac * 100).toFixed(1)}%` : ""}
-              </Text>
-            </Pressable>
-          ) : null}
-        </View>
-      ) : null}
-
-      {/* Per-line note — carried onto the invoice line (buyer-visible). */}
-      {line.noteOpen || line.note?.trim() ? (
-        <TextInput
-          value={line.note ?? ""}
-          onChangeText={onChangeNote}
-          placeholder="Flavor or note for this item (prints on invoice)"
-          placeholderTextColor={ios.label3}
-          maxLength={2000}
-          multiline
-          style={styles.cartNoteInput}
-        />
-      ) : (
-        <Pressable onPress={onToggleNote} hitSlop={6} style={styles.cartNoteAdd}>
-          <Ionicons name="create-outline" size={14} color={ios.brand} />
-          <Text style={styles.cartNoteAddText}>Add flavor / note</Text>
-        </Pressable>
-      )}
-
-      <View style={styles.cartRowFooter}>
-        <Text style={styles.cartRowFooterLabel}>Line total</Text>
-        <Text style={styles.cartRowFooterValue}>${lineTotal.toFixed(2)}</Text>
-      </View>
-
-      <CostHistorySheet
-        visible={historyOpen}
-        productId={product.id}
-        onClose={() => setHistoryOpen(false)}
-      />
-    </View>
-  );
-}
-
-function CartStepperRow({
-  label,
-  value,
-  onChange,
-  onIncrement,
-  onDecrement,
-  max,
-  hint,
-}: {
-  label: string;
-  value: number;
-  onChange: (n: number) => void;
-  onIncrement?: () => void;
-  onDecrement?: () => void;
-  max?: number;
-  hint?: string;
-}) {
-  // Local string state so the user can clear the input mid-edit without it
-  // snapping back to "0". Synced to `value` whenever the parent updates it
-  // (e.g. via the stepper buttons or another row affecting the line state).
-  const [draft, setDraft] = useState(String(value));
-  useEffect(() => {
-    setDraft(String(value));
-  }, [value]);
-
-  const dec = () => {
-    if (onDecrement) onDecrement();
-    else onChange(Math.max(0, value - 1));
-  };
-  const inc = () => {
-    if (onIncrement) onIncrement();
-    else {
-      const next = max != null ? Math.min(max, value + 1) : value + 1;
-      onChange(next);
-    }
-  };
-
-  return (
-    <View style={styles.cartStepperRow}>
-      <View style={{ flex: 1 }}>
-        {/* Clamped: unclamped, a squeezed column renders "Qty (Jar)" one
-            letter per line on react-native-web. See lib/row-layout.ts. */}
-        <Text style={styles.cartStepperLabel} numberOfLines={1}>
-          {label}
-        </Text>
-        {hint ? (
-          <Text style={styles.cartStepperHint} numberOfLines={1}>
-            {hint}
-          </Text>
-        ) : null}
-      </View>
-      <View style={styles.stepper}>
-        <Pressable style={styles.stepBtn} onPress={dec} hitSlop={6}>
-          <Text style={styles.stepBtnText}>−</Text>
-        </Pressable>
-        <TextInput
-          style={styles.cartStepperInput}
-          value={draft}
-          onChangeText={(txt) => {
-            // Integer-only: strip non-digits + leading zeros live (no "05", no
-            // decimals even when Android shows a decimal key); allow empty mid-edit.
-            const clean = sanitizeIntInput(txt);
-            setDraft(clean);
-            if (clean === "") return;
-            const n = parseInt(clean, 10);
-            if (Number.isFinite(n)) {
-              const clamped = max != null ? Math.min(max, n) : n;
-              onChange(clamped);
-            }
-          }}
-          onBlur={() => {
-            // Empty input → commit 0 (which removes the line if both fields are 0)
-            if (draft === "") onChange(0);
-            setDraft(String(value));
-          }}
-          keyboardType="number-pad"
-          returnKeyType="done"
-          maxLength={5}
-          selectTextOnFocus
-        />
-        <Pressable style={styles.stepBtn} onPress={inc} hitSlop={6}>
-          <Text style={styles.stepBtnText}>+</Text>
-        </Pressable>
-      </View>
-    </View>
   );
 }
 
@@ -4088,17 +3691,6 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontFamily: "Inter_400Regular",
   },
-  stepper: {
-    flexDirection: "row",
-    alignItems: "center",
-    backgroundColor: ios.bgElev,
-    borderRadius: 10,
-    padding: 3,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: ios.separator,
-  },
-  stepBtn: { width: 30, height: 30, alignItems: "center", justifyContent: "center" },
-  stepBtnText: { color: ios.brand, fontSize: 18 },
   footer: {
     paddingHorizontal: 16,
     paddingTop: 10,
@@ -4250,19 +3842,6 @@ const styles = StyleSheet.create({
     color: ios.label,
     letterSpacing: -0.2,
   },
-  cartRowMeta: {
-    fontSize: 12,
-    fontFamily: "Inter_400Regular",
-    color: ios.label2,
-    marginTop: 2,
-    fontVariant: ["tabular-nums"],
-  },
-  cartRowArchived: {
-    fontSize: 12,
-    fontFamily: "Inter_600SemiBold",
-    color: ios.system.orangeInk,
-    marginTop: 2,
-  },
   cartRowRemove: {
     width: 32,
     height: 32,
@@ -4311,92 +3890,6 @@ const styles = StyleSheet.create({
     fontVariant: ["tabular-nums"],
   },
   cartPriceInputActive: { borderColor: ios.brand, color: ios.brand },
-  // SPECIAL-line locked price: same weight as the input's text, no field chrome.
-  cartPriceFixed: {
-    fontSize: 15,
-    fontFamily: "Inter_600SemiBold",
-    color: ios.label,
-    fontVariant: ["tabular-nums"],
-  },
-  cartPriceLockNote: {
-    fontSize: 11,
-    fontFamily: "Inter_400Regular",
-    color: ios.label2,
-    flexShrink: 1,
-  },
-  marginHint: {
-    fontSize: 11,
-    fontFamily: "Inter_500Medium",
-    marginTop: -4,
-    marginBottom: 2,
-    textAlign: "right",
-  },
-  cartPriceWas: {
-    fontSize: 11,
-    fontFamily: "Inter_400Regular",
-    color: ios.label2,
-    textDecorationLine: "line-through",
-    flexShrink: 1,
-  },
-  floorFixBtn: {
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: ios.system.red,
-    borderRadius: 6,
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-  },
-  floorFixBtnText: {
-    fontSize: 11,
-    fontFamily: "Inter_600SemiBold",
-    color: ios.system.redInk,
-  },
-  sellAnywayText: {
-    fontSize: 11,
-    fontFamily: "Inter_500Medium",
-    color: ios.label2,
-    textDecorationLine: "underline",
-  },
-  cartStepperRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 12,
-  },
-  cartStepperLabel: {
-    fontSize: 14,
-    fontFamily: "Inter_500Medium",
-    color: ios.label,
-  },
-  cartStepperHint: {
-    fontSize: 11,
-    fontFamily: "Inter_400Regular",
-    color: ios.label3,
-    marginTop: 1,
-  },
-  cartStepperInput: {
-    // Definite width, not minWidth — see lib/row-layout.ts for why.
-    width: QTY_INPUT_WIDTH.cart,
-    flexShrink: 0,
-    paddingHorizontal: 6,
-    paddingVertical: 4,
-    textAlign: "center",
-    fontSize: 16,
-    fontFamily: "Inter_700Bold",
-    color: ios.label,
-    fontVariant: ["tabular-nums"],
-  },
-  cartNoteAdd: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 4,
-    paddingVertical: 4,
-  },
-  cartNoteAddText: { fontSize: 12, fontFamily: "Inter_500Medium", color: ios.brand },
-  cartCostText: {
-    fontSize: 12,
-    fontFamily: "Inter_500Medium",
-    color: ios.label2,
-    fontVariant: ["tabular-nums"],
-  },
   cartNoteInput: {
     backgroundColor: ios.fill3,
     borderRadius: 8,
@@ -4426,6 +3919,13 @@ const styles = StyleSheet.create({
     color: ios.label,
     fontVariant: ["tabular-nums"],
   },
+  cartNoteAdd: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    paddingVertical: 4,
+  },
+  cartNoteAddText: { fontSize: 12, fontFamily: "Inter_500Medium", color: ios.brand },
   splitBanner: {
     marginTop: 4,
     marginBottom: 4,
