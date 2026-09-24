@@ -42,15 +42,17 @@ export class ParkedReversalResolutionService {
    * cancel's delete waits on this transaction and the CANCELLED-return check below still
    * catches a cancel that does NOT delete the row on some other path.
    *
-   * SA-089a(c)/SA-167(2): `SELECT id FROM "Order" WHERE id = $orderId FOR UPDATE` is taken FIRST,
-   * before the claim, inside this SAME transaction — the SAME lock the live create/cancel paths take
-   * around their own read-then-book (`inline-returns.service.ts`'s `capture()`/`cancel()`, both
-   * `Order FOR UPDATE` before touching the regulated ledger). It is a row lock, not an advisory lock
-   * (an advisory lock does not exclude a `FOR UPDATE` row lock), and it covers the WHOLE order:
-   * `buildLineRemainingBalances`'s remaining is a SUM over every SALE/REVERSAL row of an order line.
-   * Lock order is Order -> parked row here; `cancel()` is Return -> Order -> parked-row delete, so the
-   * two never wait on each other in a cycle (claim-then-Order would). A row `cancel()` deleted while
-   * this waited for the Order is a 404, never `alreadyResolved`.
+   * SA-089a(c)/SA-167(2)/SA-170: the locks are `Return` FOR UPDATE, then `Order` FOR UPDATE (the source
+   * order this row belongs to), then the conditional claim — all inside this SAME transaction. That is
+   * the order `cancel()` takes (it claims the Return row, locks the CARRYING order, then deletes parked
+   * rows), so the two never wait on each other in a cycle; the Return lock is what excludes a concurrent
+   * cancel() (whose carrying order may differ from the source order), and the Order lock excludes the
+   * live create/capture paths' own `Order FOR UPDATE` around their read-then-book. Row locks, not an
+   * advisory lock (an advisory lock does not exclude a `FOR UPDATE` row lock); the Order lock covers the
+   * WHOLE order because `buildLineRemainingBalances`'s remaining is a SUM over every SALE/REVERSAL row of
+   * an order line. With the Return locked, a CANCELLED return, or a row cancel() deleted meanwhile, is a
+   * 404 — never `alreadyResolved`, and never a resolution booked against a return whose REVERSAL rows
+   * cancel() already removed.
    *
    * An `unresolvable` verdict (classifier still says legacy/unknown after the supplied pack)
    * throws a 409 `PARKED_REVERSAL_UNRESOLVABLE` — the throw rolls back the claim, leaving the
@@ -62,14 +64,29 @@ export class ParkedReversalResolutionService {
       const peek = await tx.regulatedLedgerParkedReversal.findFirst({ where: { id } });
       if (!peek) throw new NotFoundException("Parked reversal not found");
 
-      // SA-167(2), amends SA-089b: the Order row lock FIRST, then the conditional claim.
-      // `cancel()` takes Return -> Order -> deleteMany(parked), so claim-then-Order here would
-      // deadlock against it. A row cancel deleted while we waited for the lock is a 404, never
+      // SA-167(2)/SA-170, amends SA-089b: lock order is Return -> Order -> parked row, the SAME
+      // order `cancel()` takes (it claims the Return row, then locks the CARRYING order — which may
+      // be a different order from the source order this row belongs to — then deletes parked rows).
+      // The Return lock is what excludes a concurrent cancel(); the Order lock (the source order)
+      // excludes the live create/capture paths. A row cancel() deleted meanwhile is a 404, never
       // "already resolved".
+      await tx.$executeRaw`SELECT id FROM "Return" WHERE id = ${peek.returnId} FOR UPDATE`;
       await tx.$executeRaw`SELECT id FROM "Order" WHERE id = ${peek.orderId} FOR UPDATE`;
       const row = await tx.regulatedLedgerParkedReversal.findFirst({ where: { id } });
       if (!row) throw new NotFoundException("Parked reversal not found");
       if (row.resolvedAt) return { alreadyResolved: true as const, row };
+
+      // With the Return locked, a CANCELLED return is final: its goods were never kept, so a
+      // reversal against it would misstate the filing (and cancel() has already deleted its
+      // REVERSAL rows and unresolved parked rows — resolving now would resurrect both). Tenant-scoped
+      // read, so another tenant's return is a 404 here too.
+      const ret = await tx.return.findFirst({
+        where: { id: row.returnId },
+        select: { status: true },
+      });
+      if (!ret || ret.status === "CANCELLED") {
+        throw new NotFoundException("Parked reversal not found");
+      }
 
       const claim = await tx.regulatedLedgerParkedReversal.updateMany({
         where: { id, resolvedAt: null },
@@ -84,18 +101,6 @@ export class ParkedReversalResolutionService {
         const again = await tx.regulatedLedgerParkedReversal.findFirst({ where: { id } });
         if (!again) throw new NotFoundException("Parked reversal not found");
         return { alreadyResolved: true as const, row: again };
-      }
-
-      // The claim is held; now refuse a CANCELLED return — its goods were never kept, so a
-      // reversal against it would misstate the filing, and cancel() would not undo it (it
-      // only deletes an UNRESOLVED parked row, and this one is now resolved). Tenant-scoped
-      // read, so another tenant's return is a 404 here too.
-      const ret = await tx.return.findFirst({
-        where: { id: row.returnId },
-        select: { status: true },
-      });
-      if (!ret || ret.status === "CANCELLED") {
-        throw new NotFoundException("Parked reversal not found");
       }
 
       const resolution = await this.ledger.resolveParkedReversal(

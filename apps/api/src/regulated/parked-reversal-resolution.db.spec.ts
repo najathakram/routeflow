@@ -246,6 +246,62 @@ describeDb(
       return tenantCtx.run(tenantId, () => svc.resolve(parkedRowId, pack, reason, { id: userId }));
     }
 
+    /**
+     * A SECOND live sale row of the SAME product on the SAME order as an already-seeded legacy line —
+     * its own order line, invoice item and SALE row. `legacy: false` stores it piece-axis
+     * (`unitBasisQty` = qty * pack), so it is classifiable without a resolution of its own.
+     */
+    async function addSecondRow(
+      f: SeedResult,
+      opts: { qty: number; netSales: number; categoryTax: number; legacy: boolean; pack?: number },
+    ) {
+      const orderItem = await raw.orderItem.create({
+        data: {
+          orderId: f.orderId,
+          productId: f.productId,
+          status: "DELIVERED",
+          qty: opts.qty,
+          unitPrice: String(opts.netSales / opts.qty),
+          subtotal: String(opts.netSales),
+          categoryTaxAmount: String(opts.categoryTax),
+          trackedCategoryId: categoryId,
+          tenantId,
+        },
+      });
+      const invoiceItem = await raw.invoiceItem.create({
+        data: {
+          invoiceId: f.invoiceId,
+          description: "second row",
+          productId: f.productId,
+          orderItemId: orderItem.id,
+          qty: opts.qty,
+          unitPrice: String(opts.netSales / opts.qty),
+          subtotal: String(opts.netSales),
+          categoryTaxAmount: String(opts.categoryTax),
+          trackedCategoryId: categoryId,
+          tenantId,
+        },
+      });
+      const sale = await raw.regulatedSalesLedger.create({
+        data: {
+          tenantId,
+          trackedCategoryId: categoryId,
+          entryType: "SALE",
+          orderId: f.orderId,
+          orderItemId: orderItem.id,
+          invoiceId: f.invoiceId,
+          invoiceItemId: invoiceItem.id,
+          qty: opts.qty,
+          unitBasisQty: opts.legacy ? opts.qty : opts.qty * (opts.pack ?? 12),
+          netSales: opts.netSales,
+          categoryTax: opts.categoryTax,
+          soldAt: new Date("2026-07-02T00:00:00Z"),
+          periodBucket: "2026-07",
+        },
+      });
+      return { orderItemId: orderItem.id, saleId: sale.id };
+    }
+
     beforeAll(async () => {
       pool = new Pool({ connectionString: requireLocalDatabaseUrl() });
       raw = new PrismaClient({ adapter: new PrismaPg(pool) });
@@ -536,6 +592,100 @@ describeDb(
       // consistent regardless, but a real serialization failure would show as this row
       // being invisible to a resolution that started concurrently and read too early).
       expect(rows.some((r) => r.orderId === f.orderId && Number(r.qty) === 1)).toBe(true);
+    }, 30_000);
+
+    it("SA-167 (a): two legacy rows (2 and 3 boxes at 12), 60 pieces parked on row 1: resolving row 1 books 24 and parks 36 on row 2; resolving that books 36; every piece is reversed", async () => {
+      const f = await seedLegacyLine("walk-a", {
+        qty: 2,
+        netSales: 20,
+        categoryTax: 4,
+        returnedPieces: 60,
+      });
+      const second = await addSecondRow(f, { qty: 3, netSales: 30, categoryTax: 6, legacy: true });
+
+      const first = await resolveAs(f.parkedRowId, 12);
+      expect(first.outcome).toBe("partial");
+      expect(first.bookedPieces).toBe(24);
+      expect(first.parkedPieces).toBe(36);
+      expect(first.unbookedPieces).toBe(0);
+      expect(first.parkedRowIds).toHaveLength(1);
+
+      const newParked = await raw.regulatedLedgerParkedReversal.findMany({
+        where: { returnId: f.returnId, saleEntryId: second.saleId },
+      });
+      expect(newParked).toHaveLength(1);
+      expect(Number(newParked[0].returnedPieces)).toBe(36);
+      expect(newParked[0].resolvedAt).toBeNull();
+
+      const next = await resolveAs(newParked[0].id, 12);
+      expect(next.outcome).toBe("booked");
+      expect(next.bookedPieces).toBe(36);
+      expect(next.parkedPieces).toBe(0);
+
+      const rows = await raw.regulatedSalesLedger.findMany({ where: { orderId: f.orderId } });
+      const sum = (
+        pred: (r: (typeof rows)[number]) => boolean,
+        field: "unitBasisQty" | "netSales",
+      ) => rows.filter(pred).reduce((acc, r) => acc + Number(r[field]), 0);
+      expect(
+        sum((r) => r.entryType === "REVERSAL" && r.correctsEntryId == null, "unitBasisQty"),
+      ).toBe(-60);
+      // The whole order nets to zero in pieces and in money.
+      expect(sum(() => true, "unitBasisQty")).toBe(0);
+      expect(sum(() => true, "netSales")).toBeCloseTo(0, 2);
+    }, 30_000);
+
+    it("SA-169 (d): the first row's line already fully reversed: nothing on row 1, the 36 pieces are booked on row 2, outcome booked", async () => {
+      const f = await seedLegacyLine("walk-d", {
+        qty: 2,
+        netSales: 20,
+        categoryTax: 4,
+        priorReversalBoxes: 2,
+        priorReversalNet: 20,
+        priorReversalTax: 4,
+        returnedPieces: 36,
+      });
+      const second = await addSecondRow(f, {
+        qty: 3,
+        netSales: 30,
+        categoryTax: 6,
+        legacy: false,
+        pack: 12,
+      });
+
+      const res = await resolveAs(f.parkedRowId, 12);
+      expect(res.outcome).toBe("booked");
+      expect(res.correctionEntryId).toBeNull();
+      expect(res.bookedPieces).toBe(36);
+
+      const onRow1 = await raw.regulatedSalesLedger.findMany({
+        where: { orderItemId: f.orderItemId, correctsEntryId: { not: null } },
+      });
+      expect(onRow1).toHaveLength(0); // no correction, no reversal on the already-closed row
+      const onRow2 = await raw.regulatedSalesLedger.findMany({
+        where: { orderItemId: second.orderItemId, entryType: "REVERSAL" },
+      });
+      expect(onRow2).toHaveLength(1);
+      expect(Number(onRow2[0].unitBasisQty)).toBe(-36);
+    }, 30_000);
+
+    it("SA-170: a CANCELLED return cannot be resolved (404) and nothing is claimed or booked", async () => {
+      const f = await seedLegacyLine("walk-cancelled", {
+        qty: 5,
+        netSales: 50,
+        categoryTax: 10,
+        returnedPieces: 60,
+        returnStatus: "CANCELLED",
+      });
+      await expect(resolveAs(f.parkedRowId, 12)).rejects.toThrow(/not found/i);
+      const row = await raw.regulatedLedgerParkedReversal.findFirst({
+        where: { id: f.parkedRowId },
+      });
+      expect(row!.resolvedAt).toBeNull();
+      const booked = await raw.regulatedSalesLedger.findMany({
+        where: { orderId: f.orderId, entryType: "REVERSAL", returnId: f.returnId },
+      });
+      expect(booked).toHaveLength(0);
     }, 30_000);
 
     it("cancel-after-resolve: the booked REVERSAL is gone, the parked row stays resolved (resolvedEntryId dangles), the corrections survive", async () => {

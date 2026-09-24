@@ -254,4 +254,19 @@ describe("resolveParkedReversal — resume the live walk (SA-167)", () => {
     expect(res.outcome).toBe("closed");
     expect(ledger).toHaveLength(2); // nothing written
   });
+
+  it("SA-170 W/N: the resumed walk visits EVERY other row, including rows before the parked one", async () => {
+    // Row 1 is piece-axis with 24 pieces still unreversed; the park sits on row 2 (legacy, 3 boxes).
+    ledger = [sale(1, 2, { unitBasisQty: 24 }), sale(2, 3)];
+    invoiceItems = [ii(1), ii(2)];
+
+    const res = await service.resolveParkedReversal(prisma, parked(2, 40), 12);
+    expect(res.outcome).toBe("booked");
+    expect(res.bookedPieces).toBe(40);
+    expect(res.unbookedPieces).toBe(0);
+    const bookedByLine = Object.fromEntries(
+      reversals().map((r) => [r.orderItemId, Number(r.unitBasisQty)]),
+    );
+    expect(bookedByLine).toEqual({ "oi-2": -36, "oi-1": -4 });
+  });
 });

@@ -616,8 +616,11 @@ export class RegulatedLedgerService {
     remTaxByLine: Map<string, number>;
   } | null> {
     // The order's SALE rows are the snapshot we reverse against.
+    // Deterministic row order (SA-170 W/N): both the live FIFO walk and the resumed one iterate
+    // these rows, so an unordered read could hand two runs different walks.
     const sales = await db.regulatedSalesLedger.findMany({
       where: { orderId, entryType: "SALE" },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     });
     if (sales.length === 0) return null;
 
@@ -1167,8 +1170,9 @@ export class RegulatedLedgerService {
         (s: any) =>
           s.correctsEntryId == null && built.productByItem.get(s.invoiceItemId) === productId,
       );
-      const at = ordered.findIndex((s: any) => s.id === saleRow.id);
-      const rest = at >= 0 ? ordered.slice(at + 1) : [];
+      // EVERY other live row of the product, in the live path's own order (a fully reversed row
+      // skips itself inside the chunk booker) — not only rows after the parked one.
+      const rest = ordered.filter((s: any) => s.id !== saleRow.id);
       if (rest.length > 0) {
         const restShapes = await this.loadSaleLineShapes(db, rest);
         const restCorrections = await this.loadCorrectionsBySaleId(

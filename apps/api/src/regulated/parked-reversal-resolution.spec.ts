@@ -141,14 +141,18 @@ describe("ParkedReversalResolutionService", () => {
 
     await service.resolve("pr-1", 12, "confirmed the case size on the invoice", actor);
 
-    expect(capturedExecuteRaw).toHaveBeenCalledTimes(1);
-    const sql = (capturedExecuteRaw!.mock.calls[0][0] as TemplateStringsArray).join("?");
-    expect(sql).toContain('"Order"');
-    expect(sql).toContain("FOR UPDATE");
+    expect(capturedExecuteRaw).toHaveBeenCalledTimes(2);
+    const sqls = capturedExecuteRaw!.mock.calls.map((c) =>
+      (c[0] as TemplateStringsArray).join("?"),
+    );
+    // Return first, then Order (cancel() is Return -> Order -> parked delete).
+    expect(sqls[0]).toContain('"Return"');
+    expect(sqls[1]).toContain('"Order"');
+    expect(sqls.every((q) => q.includes("FOR UPDATE"))).toBe(true);
     const model: any = (prisma as any).regulatedLedgerParkedReversal;
     // BEFORE the claim (the first updateMany) — claim-then-Order deadlocks against cancel() — and
     // BEFORE resolveParkedReversal is ever called (where the sale/corrections/remaining are read).
-    expect(capturedExecuteRaw!.mock.invocationCallOrder[0]).toBeLessThan(
+    expect(capturedExecuteRaw!.mock.invocationCallOrder[1]).toBeLessThan(
       model.updateMany.mock.invocationCallOrder[0],
     );
     expect(capturedExecuteRaw!.mock.invocationCallOrder[0]).toBeLessThan(
@@ -166,7 +170,7 @@ describe("ParkedReversalResolutionService", () => {
     });
 
     const res = await service.resolve("pr-1", 12, "confirmed the case size on the invoice", actor);
-    expect(capturedExecuteRaw).toHaveBeenCalledTimes(1);
+    expect(capturedExecuteRaw).toHaveBeenCalledTimes(2);
     expect(res.alreadyResolved).toBe(true);
     expect(ledger.resolveParkedReversal).not.toHaveBeenCalled();
   });
@@ -258,16 +262,19 @@ describe("ParkedReversalResolutionService", () => {
     expect(audit.log).not.toHaveBeenCalled();
   });
 
-  it("refuses a CANCELLED return and calls the ledger for nothing, rolling the claim back so the row stays parked", async () => {
+  it("refuses a CANCELLED return BEFORE the claim (nothing is claimed) and calls the ledger for nothing", async () => {
     prisma.return.findFirst.mockResolvedValue({ status: "CANCELLED" } as any);
     await expect(service.resolve("pr-1", 12, "reason text", actor)).rejects.toBeInstanceOf(
       NotFoundException,
     );
+    expect(
+      (prisma as any).regulatedLedgerParkedReversal.updateMany as jest.Mock,
+    ).not.toHaveBeenCalled();
     expect(ledger.resolveParkedReversal).not.toHaveBeenCalled();
     expect(audit.log).not.toHaveBeenCalled();
   });
 
-  it("makes the CANCELLED check INSIDE the transaction, AFTER the claim and the Order lock, so it serialises against cancel()", async () => {
+  it("SA-170: reads the return's status INSIDE the transaction, AFTER the Return and Order locks and BEFORE the claim, so it serialises against cancel()", async () => {
     const order: string[] = [];
     const model: any = (prisma as any).regulatedLedgerParkedReversal;
     const claim = model.updateMany;
@@ -284,7 +291,7 @@ describe("ParkedReversalResolutionService", () => {
       return BOOKED_RESOLUTION;
     });
     await service.resolve("pr-1", 12, "reason text", actor);
-    expect(order).toEqual(["claim", "status-read", "book"]);
+    expect(order).toEqual(["status-read", "claim", "book"]);
   });
 
   it("an unresolvable verdict refuses with a 409 PARKED_REVERSAL_UNRESOLVABLE, naming the reason — no audit", async () => {
