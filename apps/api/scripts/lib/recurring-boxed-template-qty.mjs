@@ -4,8 +4,8 @@
  * A recurring template line for a BOXED product (unitsPerBox > 1, no selling-unit label) is BILLED as
  * `qty x unitPrice`. Until the B646 fix the generated invoice line RECORDED that same qty as the units
  * sold (the pieces column); after the fix it records `qty x unitsPerBox` (qty read as BOXES). The bill
- * itself never changes. Invoice creation writes no stock movement, but the recorded units feed usage,
- * COGS / invoiced-sales analytics and regulated (tobacco) reporting.
+ * itself never changes (subtotal AND levy, pinned). Ledger units and COGS basis change: invoice creation
+ * writes no stock movement, but the recorded units feed the regulated ledger, usage and COGS analytics.
  *
  * Two template shapes need the owner BEFORE the fix's first cycle:
  *   - BOX-priced but qty looks like PIECES (qty > unitsPerBox at about the box price): possibly

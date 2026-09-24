@@ -85,13 +85,13 @@ async function main() {
   );
   for (const t of summary) {
     console.log(
-      `\ntenant ${t.tenantId}: ${t.lines} line(s), ${t.flagged} flagged; units recorded per cycle +${t.unitsRecordedDeltaPerCycle}; possible over-bill per cycle $${t.possibleOverbillPerCycle}`,
+      `\ntenant ${t.tenantId}: ${t.lines} line(s), ${t.flagged} flagged; ledger units delta per cycle +${t.unitsRecordedDeltaPerCycle} (invoice money unchanged); possible over-bill per cycle $${t.possibleOverbillPerCycle}`,
     );
     for (const r of t.rows) {
       console.log(
         `  ${r.flagged ? "FLAG" : "ok  "} template ${r.templateId} item ${r.itemId}: qty ${r.qty} of a ${r.unitsPerBox}-pack @ $${r.unitPrice} (${r.priceBasis}-priced)` +
           ` | billed/cycle $${r.billedPerCycle} (pieces-intent $${r.billedIfPiecesIntent})` +
-          ` | units recorded/cycle ${r.currentUnitsRecorded} -> ${r.postFixUnitsRecorded}` +
+          ` | ledger units/cycle ${r.currentUnitsRecorded} -> ${r.postFixUnitsRecorded}` +
           (r.reasons.length ? ` [${r.reasons.join(", ")}]` : ""),
       );
     }
