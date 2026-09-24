@@ -127,7 +127,7 @@ describe("returnedPiecesByProduct (B4 shared reader, kind-aware)", () => {
       standardReturns: [{ items: [{ productId: "p1", qty: 6 }] }],
     });
     const result = await returnedPiecesByProduct(tx as any, "ord-1");
-    expect(result).toEqual({ p1: 6 });
+    expect(result).toEqual({ p1: { pieces: 6 } });
     expect(tx.return.findMany).toHaveBeenCalledWith({
       where: { orderId: "ord-1", kind: "STANDARD", status: { notIn: ["REJECTED", "CANCELLED"] } },
       include: { items: { select: { productId: true, qty: true } } },
@@ -150,7 +150,7 @@ describe("returnedPiecesByProduct (B4 shared reader, kind-aware)", () => {
     // Revert probe: dropping the returnItem query (reverting to STANDARD-only) would
     // read 6 here instead of 10 — silently under-counting a customer's returns once an
     // INLINE capture exists on the same source order.
-    expect(result).toEqual({ p1: 10 });
+    expect(result).toEqual({ p1: { pieces: 10 } });
   });
 
   it("INLINE-after-STANDARD: order of seeding does not matter — both kinds always combine", async () => {
@@ -159,7 +159,7 @@ describe("returnedPiecesByProduct (B4 shared reader, kind-aware)", () => {
       inlineItems: [{ productId: "p1", qty: 4 }],
     });
     const result = await returnedPiecesByProduct(tx as any, "ord-1");
-    expect(result).toEqual({ p1: 10 });
+    expect(result).toEqual({ p1: { pieces: 10 } });
   });
 
   it("combines across different products independently", async () => {
@@ -168,6 +168,6 @@ describe("returnedPiecesByProduct (B4 shared reader, kind-aware)", () => {
       inlineItems: [{ productId: "p2", qty: 3 }],
     });
     const result = await returnedPiecesByProduct(tx as any, "ord-1");
-    expect(result).toEqual({ p1: 6, p2: 3 });
+    expect(result).toEqual({ p1: { pieces: 6 }, p2: { pieces: 3 } });
   });
 });

@@ -164,10 +164,10 @@ describe("returnedPiecesByProduct — one axis (B671, SA-158)", () => {
       orderItem: { findMany: jest.fn().mockResolvedValue([boxLine]) },
       invoiceItem: { findMany: jest.fn().mockResolvedValue(boxInvoice) },
     };
-    expect(await returnedPiecesByProduct(tx, "ord-1")).toEqual({ p1: 17 });
+    expect(await returnedPiecesByProduct(tx, "ord-1")).toEqual({ p1: { pieces: 17 } });
   });
 
-  it("refuses (409) a prior STANDARD return whose product basis is now unknown", async () => {
+  it("SA-159: an unclassifiable prior is reported PER PRODUCT and never throws", async () => {
     const tx: any = {
       return: {
         findMany: jest.fn().mockResolvedValue([{ items: [{ productId: "p1", qty: 1 }] }]),
@@ -176,6 +176,38 @@ describe("returnedPiecesByProduct — one axis (B671, SA-158)", () => {
       orderItem: { findMany: jest.fn().mockResolvedValue([boxLine]) },
       invoiceItem: { findMany: jest.fn().mockResolvedValue([]) },
     };
-    await expect(returnedPiecesByProduct(tx, "ord-1")).rejects.toBeInstanceOf(ConflictException);
+    const res = await returnedPiecesByProduct(tx, "ord-1");
+    expect(res.p1).toMatchObject({ unknown: true });
+  });
+});
+
+describe("SA-159: one product's unknown prior does not block another product", () => {
+  const cleanB = line({
+    id: "l3",
+    productId: "p2",
+    qty: 10,
+    boxes: 0,
+    pieces: 10,
+    unitsPerBox: 12,
+  });
+  // p1 = unknown basis (stored pack, no invoice split) with a prior STANDARD return; p2 = clean split line.
+  const twoProducts = { lineItems: [boxLine, cleanB], invoiceItems: [] as any[] };
+  const priorA = [{ items: [{ productId: "p1", qty: 1 }] }];
+
+  it("a STANDARD return of B succeeds; a return of A is refused 409; nothing written on the refusal", async () => {
+    const okB = await harness({ ...twoProducts, priorStandard: priorA });
+    await expect(
+      okB.service.create(
+        { orderId: "ord-1", reason: "DAMAGED", items: [{ productId: "p2", qty: 4 }] } as any,
+        "user-1",
+      ),
+    ).resolves.toBeDefined();
+    expect(okB.txReturn.create).toHaveBeenCalledTimes(1);
+
+    const refusedA = await harness({ ...twoProducts, priorStandard: priorA });
+    await expect(refusedA.service.create(dto(1) as any, "user-1")).rejects.toBeInstanceOf(
+      ConflictException,
+    );
+    expect(refusedA.txReturn.create).not.toHaveBeenCalled();
   });
 });

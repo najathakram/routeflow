@@ -129,24 +129,39 @@ export async function standardPackBases(
   return out;
 }
 
-/**
- * The factor (pieces per line unit) for a product, or a 409. Unknown is never factor 1 (that
- * fallthrough is the B650 bug), and mixed factors cannot attribute a product-level typed qty to a line:
- * the operator returns it inline, per line. The messages carry a product id and factors only.
- */
-export function requirePackFactor(bases: Map<string, ProductPackBasis>, productId: string): number {
+/** A product's factor, or the reason it has none. Never factor 1 for unknown (the B650 bug). */
+export function packFactorOrReason(
+  bases: Map<string, ProductPackBasis>,
+  productId: string,
+): { factor: number } | { unknown: true; reason: string } {
   const basis = bases.get(productId);
   if (!basis || "noLines" in basis)
-    throw new ConflictException(
-      `Quantity basis unknown for product ${productId}: no live order line`,
-    );
+    return {
+      unknown: true,
+      reason: `Quantity basis unknown for product ${productId}: no live order line`,
+    };
   if ("unknown" in basis)
-    throw new ConflictException(`Quantity basis unknown for product ${productId}: ${basis.reason}`);
+    return {
+      unknown: true,
+      reason: `Quantity basis unknown for product ${productId}: ${basis.reason}`,
+    };
   if ("mixed" in basis)
-    throw new ConflictException(
-      `Product ${productId} is on order lines with different pack sizes (${basis.factors.join(" and ")} pieces per unit), so a returned quantity cannot be attributed to one; return it inline, per line.`,
-    );
-  return basis.factor;
+    return {
+      unknown: true,
+      reason: `Product ${productId} is on order lines with different pack sizes (${basis.factors.join(" and ")} pieces per unit), so a returned quantity cannot be attributed to one; return it inline, per line.`,
+    };
+  return { factor: basis.factor };
+}
+
+/**
+ * The factor (pieces per line unit) for a product, or a 409. Mixed factors cannot attribute a
+ * product-level typed qty to a line: the operator returns it inline, per line. The messages carry a
+ * product id and factors only.
+ */
+export function requirePackFactor(bases: Map<string, ProductPackBasis>, productId: string): number {
+  const res = packFactorOrReason(bases, productId);
+  if ("unknown" in res) throw new ConflictException(res.reason);
+  return res.factor;
 }
 
 /**
@@ -162,6 +177,9 @@ export function standardReturnPieces(
   const factor = requirePackFactor(bases, productId);
   return { pieces: qty * factor, toLineUnit: (pieces: number) => pieces / factor };
 }
+
+/** Prior-returned for one product: pieces, or why it cannot be classified (SA-159). */
+export type PriorReturned = { pieces: number } | { unknown: true; reason: string };
 
 /** Minimal shape `returnedPiecesByProduct` needs from a transaction/prisma client. */
 export interface ReturnsPiecesTx {
@@ -191,7 +209,7 @@ export async function returnedPiecesByProduct(
   tx: ReturnsPiecesTx,
   orderId: string,
   bases?: Map<string, ProductPackBasis>,
-): Promise<Record<string, number>> {
+): Promise<Record<string, PriorReturned>> {
   const [standardReturns, inlineItems] = await Promise.all([
     tx.return.findMany({
       where: { orderId, kind: "STANDARD", status: { notIn: ["REJECTED", "CANCELLED"] } },
@@ -206,9 +224,17 @@ export async function returnedPiecesByProduct(
     }),
   ]);
 
-  const result: Record<string, number> = {};
   // B671: a STANDARD item's qty is in its line's own unit and an INLINE item's is in pieces — put them
   // on ONE axis (pieces) before adding. The pack basis is only loaded when a STANDARD item exists.
+  // SA-159: the result is PER PRODUCT and never throws — a product whose STANDARD prior cannot be
+  // classified is `unknown` (sticky), so a return or quote of a DIFFERENT product on the same order
+  // still proceeds; only the unclassifiable product's own consumer refuses.
+  const result: Record<string, PriorReturned> = {};
+  const add = (productId: string, pieces: number) => {
+    const cur = result[productId];
+    if (cur && "unknown" in cur) return;
+    result[productId] = { pieces: (cur?.pieces ?? 0) + pieces };
+  };
   const standardItems = standardReturns.flatMap((ret) => ret.items ?? []);
   let basisMap = bases;
   if (standardItems.length && !basisMap) {
@@ -219,12 +245,13 @@ export async function returnedPiecesByProduct(
     basisMap = await standardPackBases(tx, orderId, lines);
   }
   for (const item of standardItems) {
-    const { pieces } = standardReturnPieces(basisMap!, item.productId, Number(item.qty));
-    result[item.productId] = (result[item.productId] ?? 0) + pieces;
+    const f = packFactorOrReason(basisMap!, item.productId);
+    if ("unknown" in f) result[item.productId] = f;
+    else add(item.productId, Number(item.qty) * f.factor);
   }
   for (const item of inlineItems) {
     if (!item.productId) continue;
-    result[item.productId] = (result[item.productId] ?? 0) + Number(item.qty);
+    add(item.productId, Number(item.qty));
   }
   return result;
 }

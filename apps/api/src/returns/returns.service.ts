@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ConflictException,
   ForbiddenException,
   Injectable,
   Logger,
@@ -251,7 +252,9 @@ export class ReturnsService {
           Number(item.qty),
         );
         const orderedQty = soldLineUnits * requirePackFactor(packBases, item.productId);
-        const previouslyReturned = alreadyReturned[item.productId] ?? 0;
+        const prior = alreadyReturned[item.productId];
+        if (prior && "unknown" in prior) throw new ConflictException(prior.reason);
+        const previouslyReturned = prior?.pieces ?? 0;
         const remaining = orderedQty - previouslyReturned;
         if (returnPieces > remaining)
           throw new BadRequestException(
@@ -261,7 +264,7 @@ export class ReturnsService {
         // lists the same productId twice previously validated every line against
         // the same pre-request snapshot, so 2 × qty 10 against 10 ordered both
         // passed and over-returned with no concurrency involved at all.
-        alreadyReturned[item.productId] = previouslyReturned + returnPieces;
+        alreadyReturned[item.productId] = { pieces: previouslyReturned + returnPieces };
       }
 
       const returnNumber = await this.generateReturnNumber(tx);
