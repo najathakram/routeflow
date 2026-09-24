@@ -576,81 +576,90 @@ export default function BuyerDetailPage() {
             </div>
           ) : (
             <div className="rounded-xl bg-slate-800 ring-1 ring-white/5 overflow-hidden">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="border-b border-slate-700 text-xs uppercase tracking-wider text-slate-400">
-                    <th className="px-4 py-3 text-left">Seller (Tenant)</th>
-                    <th className="px-4 py-3 text-left">Customer Record</th>
-                    <th className="px-4 py-3 text-left">Status</th>
-                    <th className="px-4 py-3 text-left">Linked</th>
-                    <th className="px-4 py-3 text-left">Actions</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-700/50">
-                  {buyer.customerLinks.map((link) => (
-                    <tr key={link.id} className="hover:bg-slate-700/20 transition-colors">
-                      <td className="px-4 py-3">
-                        <div className="font-medium text-white">{link.tenant.name}</div>
-                        <div className="font-mono text-xs text-slate-400">{link.tenant.slug}</div>
-                      </td>
-                      <td className="px-4 py-3 text-slate-300">
-                        {link.customer.businessName ?? <span className="text-slate-400">—</span>}
-                      </td>
-                      <td className="px-4 py-3">
-                        <AdminBadge>{link.status}</AdminBadge>
-                      </td>
-                      <td className="px-4 py-3 text-slate-400">
-                        {link.linkedAt ? (
-                          new Date(link.linkedAt).toLocaleDateString()
-                        ) : (
-                          <span className="text-slate-400">—</span>
-                        )}
-                      </td>
-                      <td className="px-4 py-3">
-                        {link.status === "ACTIVE" && (
-                          <button
-                            disabled={removingLink === link.id}
-                            onClick={() => handleRemoveLink(link)}
-                            className="flex items-center gap-1 rounded px-2 py-1 text-xs font-medium text-red-400 hover:bg-red-900/30 disabled:opacity-50"
-                          >
-                            <Unlink className="h-3.5 w-3.5" />
-                            {removingLink === link.id ? "Removing..." : "Disconnect"}
-                          </button>
-                        )}
-                        {link.status !== "ACTIVE" && (
-                          <button
-                            disabled={addLinkLoading}
-                            onClick={async () => {
-                              setAddLinkLoading(true);
-                              try {
-                                await superAdminClient.post(
-                                  `/platform-admin/buyer-accounts/${id}/links`,
-                                  {
-                                    tenantId: link.tenant.id,
-                                    customerId: link.customer.id,
-                                  },
-                                );
-                                fetchBuyer();
-                              } catch (err: unknown) {
-                                alert(
-                                  (err as { response?: { data?: { message?: string } } })?.response
-                                    ?.data?.message ?? "Failed",
-                                );
-                              } finally {
-                                setAddLinkLoading(false);
-                              }
-                            }}
-                            className="flex items-center gap-1 rounded px-2 py-1 text-xs font-medium text-green-400 hover:bg-green-900/30 disabled:opacity-50"
-                          >
-                            <Link2 className="h-3.5 w-3.5" />
-                            Reconnect
-                          </button>
-                        )}
-                      </td>
+              {/* Found on #1288's platform-admin overflow spec: at 390 this
+                  5-column table ran 153px past the viewport with the outer
+                  overflow-hidden clipping the Actions column with no way to
+                  reach it. overflow-x-auto on the table's own wrapper (the
+                  outer card keeps overflow-hidden for its rounded corners),
+                  min-w so it scrolls cleanly instead of squeezing columns —
+                  same pattern as B750's invoices-table fix. */}
+              <div className="overflow-x-auto">
+                <table className="w-full min-w-[560px] text-sm">
+                  <thead>
+                    <tr className="border-b border-slate-700 text-xs uppercase tracking-wider text-slate-400">
+                      <th className="px-4 py-3 text-left">Seller (Tenant)</th>
+                      <th className="px-4 py-3 text-left">Customer Record</th>
+                      <th className="px-4 py-3 text-left">Status</th>
+                      <th className="px-4 py-3 text-left">Linked</th>
+                      <th className="px-4 py-3 text-left">Actions</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
+                  </thead>
+                  <tbody className="divide-y divide-slate-700/50">
+                    {buyer.customerLinks.map((link) => (
+                      <tr key={link.id} className="hover:bg-slate-700/20 transition-colors">
+                        <td className="px-4 py-3">
+                          <div className="font-medium text-white">{link.tenant.name}</div>
+                          <div className="font-mono text-xs text-slate-400">{link.tenant.slug}</div>
+                        </td>
+                        <td className="px-4 py-3 text-slate-300">
+                          {link.customer.businessName ?? <span className="text-slate-400">—</span>}
+                        </td>
+                        <td className="px-4 py-3">
+                          <AdminBadge>{link.status}</AdminBadge>
+                        </td>
+                        <td className="px-4 py-3 text-slate-400">
+                          {link.linkedAt ? (
+                            new Date(link.linkedAt).toLocaleDateString()
+                          ) : (
+                            <span className="text-slate-400">—</span>
+                          )}
+                        </td>
+                        <td className="px-4 py-3">
+                          {link.status === "ACTIVE" && (
+                            <button
+                              disabled={removingLink === link.id}
+                              onClick={() => handleRemoveLink(link)}
+                              className="flex items-center gap-1 rounded px-2 py-1 text-xs font-medium text-red-400 hover:bg-red-900/30 disabled:opacity-50"
+                            >
+                              <Unlink className="h-3.5 w-3.5" />
+                              {removingLink === link.id ? "Removing..." : "Disconnect"}
+                            </button>
+                          )}
+                          {link.status !== "ACTIVE" && (
+                            <button
+                              disabled={addLinkLoading}
+                              onClick={async () => {
+                                setAddLinkLoading(true);
+                                try {
+                                  await superAdminClient.post(
+                                    `/platform-admin/buyer-accounts/${id}/links`,
+                                    {
+                                      tenantId: link.tenant.id,
+                                      customerId: link.customer.id,
+                                    },
+                                  );
+                                  fetchBuyer();
+                                } catch (err: unknown) {
+                                  alert(
+                                    (err as { response?: { data?: { message?: string } } })
+                                      ?.response?.data?.message ?? "Failed",
+                                  );
+                                } finally {
+                                  setAddLinkLoading(false);
+                                }
+                              }}
+                              className="flex items-center gap-1 rounded px-2 py-1 text-xs font-medium text-green-400 hover:bg-green-900/30 disabled:opacity-50"
+                            >
+                              <Link2 className="h-3.5 w-3.5" />
+                              Reconnect
+                            </button>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             </div>
           )}
         </div>

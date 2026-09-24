@@ -53,7 +53,30 @@ import path from "path";
 import { HAS_SUPER_ADMIN_CREDS, TENANT_SLUG } from "./helpers/constants";
 import { assertNoOverflow, documentLevelOverflowPx } from "./helpers/overflow";
 
-test.skip(!HAS_SUPER_ADMIN_CREDS, "PLAYWRIGHT_SA_USERNAME / PLAYWRIGHT_SA_PASSWORD not set");
+// B836: HAS_SUPER_ADMIN_CREDS alone only checks the PLAYWRIGHT_SA_USERNAME/
+// PASSWORD env vars — a lane holding an already-authenticated, still-valid
+// super-admin.json (from a prior owner-credentialed run in the same window)
+// had no way to re-run this spec without asking the owner to type the
+// password again. Scoped to this spec only, not HAS_SUPER_ADMIN_CREDS itself
+// (that constant gates 7 other specs, several of which need a LIVE login to
+// exercise, not just a saved session — auth.setup.ts among them). A stub
+// with no cookies (the placeholder Playwright writes when the setup project
+// skips itself) must still count as "no session" — checked, not assumed.
+function hasSavedSuperAdminSession(): boolean {
+  const storageStatePath = path.join(__dirname, "setup", ".auth", "super-admin.json");
+  if (!fs.existsSync(storageStatePath)) return false;
+  try {
+    const state = JSON.parse(fs.readFileSync(storageStatePath, "utf8"));
+    return Array.isArray(state.cookies) && state.cookies.length > 0;
+  } catch {
+    return false;
+  }
+}
+
+test.skip(
+  !HAS_SUPER_ADMIN_CREDS && !hasSavedSuperAdminSession(),
+  "PLAYWRIGHT_SA_USERNAME / PLAYWRIGHT_SA_PASSWORD not set, and no saved super-admin session found",
+);
 
 const VIEWPORTS = [
   { width: 390, height: 844, label: "390" },
