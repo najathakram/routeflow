@@ -33,11 +33,20 @@ import {
   sumConfirmed,
 } from "./payment-predicates";
 import { PAYABLE, KPI_SUMMARY_EXCLUDED } from "./invoice-status-sets";
+import { reconcileDeliveredOrdersInTx as reconcileDeliveredOrdersInTxImpl } from "./delivered-reconcile";
 import { packAtSaleByProduct, priorUnitsPerBoxMap, toSaleLedgerLines } from "./pack-at-sale";
 import { clampLimit } from "../common/pagination";
 import { isInternalEmail } from "../common/internal-email";
 import { loadMsrpMap } from "../common/msrp";
 import { effectiveTaxRateFromTotals } from "../common/tax-rate";
+import {
+  checkOrderCoverage,
+  finalizeOrderRecompute,
+  resolveProductMatches,
+  withOrderRecomputeLock,
+} from "./finalize-order-recompute";
+import { deliveredBasisByLine } from "./delivered-basis-by-line";
+import { assertOrderItemIdsBelongToOrder, logSkippedMatches } from "./order-item-provenance";
 import { EntitlementsService } from "../billing/entitlements.service";
 import {
   CheckStatus,
@@ -64,6 +73,7 @@ import { JwtPayload } from "../auth/jwt-payload.interface";
 import { RouteFlowGateway } from "../gateways/routeflow.gateway";
 import { EmailService } from "../email/email.service";
 import { InvoicePdfService } from "./invoice-pdf.service";
+import { invoiceItemQtyFields } from "./invoice-pdf-item";
 import { buildInvoiceEmailAttachment, InvoiceEmailAttachment } from "./invoice-attachment";
 import { SystemConfigService } from "../system-config/system-config.service";
 import { RegulatedLedgerService } from "../regulated/regulated-ledger.service";
@@ -2205,16 +2215,21 @@ export class InvoicesService {
    * order's line items + totals from the SUM of ALL its non-void invoices, so
    * editing an invoice keeps the order in step with what was actually billed.
    *
-   * Aggregates billed qty + subtotal per SOURCE ORDER LINE (via the invoice item's
-   * `orderItemId` provenance; falls back to productId for legacy invoice rows),
-   * copies the billed subtotal verbatim, and PRESERVES each order line's stored
-   * box/piece denomination + unitsPerBox snapshot — it never re-splits against the
-   * live product (which used to turn selling-unit lines into phantom box splits).
-   * Cancels order lines no invoice bills; preserves the order's effective tax rate.
-   * No-op when the order has no surviving (non-void) invoices.
+   * Aggregates billed qty + subtotal per SOURCE ORDER LINE (via the invoice item's `orderItemId`
+   * provenance; falls back to productId for legacy invoice rows), copies the billed subtotal
+   * verbatim, and PRESERVES each order line's stored box/piece denomination + unitsPerBox
+   * snapshot — it never re-splits against the live product (which used to turn selling-unit
+   * lines into phantom box splits). Cancels order lines no invoice bills; preserves the order's
+   * effective tax rate. No-op when the order has no surviving (non-void) invoices.
    */
   async recomputeOrderFromInvoices(orderId: string, tx?: any) {
-    const db = tx ?? this.prisma.forTenant();
+    // SA-093 (#1185 round 5, item B) -- see withOrderRecomputeLock's own doc for the deadlock analysis.
+    if (!tx) {
+      return withOrderRecomputeLock(this.prisma, orderId, (innerTx) =>
+        this.recomputeOrderFromInvoices(orderId, innerTx),
+      );
+    }
+    const db = tx;
     const order = await db.order.findUnique({
       where: { id: orderId },
       include: { lineItems: true },
@@ -2229,11 +2244,9 @@ export class InvoicesService {
 
     const tenantId = this.prisma.getTenantId();
     const existingById = new Map<string, any>();
-    const existingByProduct = new Map<string, any>();
-    for (const li of order.lineItems as any[]) {
-      existingById.set(li.id, li);
-      if (li.productId) existingByProduct.set(li.productId, li);
-    }
+    for (const li of order.lineItems as any[]) existingById.set(li.id, li);
+    // #1185 round 5, item 2 -- see resolveProductMatches' own doc.
+    const { existingByProduct, ambiguousLineIds } = resolveProductMatches(order.lineItems);
 
     // Aggregate billed qty + subtotal, resolving each invoice line to its source
     // order line: prefer the stored orderItemId; else first-match by productId
@@ -2251,13 +2264,17 @@ export class InvoicesService {
       sample: any; // an invoice item, for the box/piece + upb snapshot
     };
     const byTarget = new Map<string, Agg>();
+    const freeformSkipped: string[] = []; // SA-093a rd6: no orderItemId, no productId -- warn, never silent
     for (const inv of invoices) {
       for (const it of inv.items as any[]) {
         const line =
           (it.orderItemId && existingById.get(it.orderItemId)) ||
           (it.productId && existingByProduct.get(it.productId)) ||
           null;
-        if (!line && !it.productId) continue; // freeform — nothing to sync
+        if (!line && !it.productId) {
+          freeformSkipped.push(it.id);
+          continue;
+        }
         const key = line ? `line:${line.id}` : `product:${it.productId}`;
         const prev = byTarget.get(key) ?? {
           line,
@@ -2278,6 +2295,20 @@ export class InvoicesService {
         byTarget.set(key, prev);
       }
     }
+
+    const deliveredBasis = await deliveredBasisByLine(db, orderId); // SA-093a rd6
+    // B667: coverage decided BEFORE any line is rewritten — see checkOrderCoverage's doc.
+    const coverage = await checkOrderCoverage({
+      db,
+      orderId,
+      order,
+      byTarget,
+      invoices,
+      deliveredBasis,
+      ambiguousLineIds,
+    });
+    logSkippedMatches(this.logger, orderId, freeformSkipped, coverage);
+    if (!coverage.fullyCovered) return coverage.totals;
 
     let subtotal = 0;
     let categoryTaxSum = 0;
@@ -2342,44 +2373,18 @@ export class InvoicesService {
       }
     }
 
-    // Order lines billed by no invoice → cancel (they weren't actually sold).
-    for (const orphan of existingById.values()) {
-      await db.orderItem.update({
-        where: { id: orphan.id },
-        data: {
-          status: "CANCELLED",
-          qty: 0,
-          subtotal: 0,
-          boxes: null,
-          pieces: null,
-          invoicedQty: 0,
-        },
-      });
-    }
-
-    // Preserve the order's effective tax rate (avoids depending on global config
-    // drift); mirror updateOrderItems' total = subtotal + regular tax + category tax.
-    subtotal = roundMoney(subtotal);
-    const prevSubtotal = Number(order.subtotal) || 0;
-    // B294 round 2: same semantics as the inline `prevSubtotal > 0 ? tax/prevSubtotal : 0`
-    // this replaced — the shared helper's zero-subtotal guard lands on the same 0.
-    const effectiveTaxRate = effectiveTaxRateFromTotals(order.tax, prevSubtotal, false);
-    const tax = roundMoney(subtotal * effectiveTaxRate);
-    // RF-4: fold the billed category tax (Σ per line) back into the order total, so
-    // the order stays in step with what the invoices actually charged.
-    const categoryTax = roundMoney(categoryTaxSum);
-    // Shipping back-sync: the order's fee is DEFINED as Σ(non-void invoice fees) —
-    // an invoice-side fee edit lands here and updates the order, which is what
-    // lets the order-driven reconciles treat the order as source of truth.
-    const shippingFeeSum = roundMoney(
-      invoices.reduce((s: number, inv: any) => s + Number(inv.shippingFee ?? 0), 0),
-    );
-    const total = roundMoney(subtotal + tax + categoryTax + shippingFeeSum);
-    await db.order.update({
-      where: { id: orderId },
-      data: { subtotal, tax, total, shippingFee: shippingFeeSum },
+    // B667: cancelling an orphan and rewriting the order's totals — coverage was already
+    // confirmed above, before this loop ran.
+    return finalizeOrderRecompute({
+      db,
+      orderId,
+      order,
+      deliveredBasis,
+      unbilled: existingById,
+      subtotal,
+      categoryTaxSum,
+      invoices,
     });
-    return { orderId, subtotal, tax, total, shippingFee: shippingFeeSum };
   }
 
   /**
@@ -3312,6 +3317,7 @@ export class InvoicesService {
     }
 
     if (dto.items) {
+      await assertOrderItemIdsBelongToOrder(this.prisma.forTenant(), inv.orderId, dto.items); // SA-093a rd6
       // Pre-fetch products for boxes/pieces resolution AND the regulated-category
       // snapshot (so an edited DRAFT re-attributes its regulated lines).
       const productIds = [
@@ -3404,6 +3410,7 @@ export class InvoicesService {
         return {
           description: item.description,
           productId: item.productId,
+          orderItemId: item.orderItemId ?? null, // SA-093a rd6: root fix for findings 2/3
           qty,
           unitPrice: item.unitPrice,
           discount: item.discount ?? 0,
@@ -3911,13 +3918,11 @@ export class InvoicesService {
         unitPrice: Number(it.unitPrice),
         subtotal: Number(it.subtotal),
         msrp: it.msrp != null ? Number(it.msrp) : null,
-        // F03/R9: the strikethrough + "N free" note buildInvoiceEmail renders are
-        // dead without these three scalars — the renderer can only show what this
-        // caller passes, and a BOGO line's reduced subtotal reads as a pricing
-        // error otherwise. Mirrors the PDF item payload and the web detail renderer.
+        // F03/R9: without these, buildInvoiceEmail's strike/"N free" note and a BOGO line's reduced subtotal read as a pricing error.
         originalPrice: it.originalPrice != null ? Number(it.originalPrice) : null,
         priceType: it.priceType ?? null,
         promoFreeUnits: it.promoFreeUnits != null ? Number(it.promoFreeUnits) : null,
+        ...invoiceItemQtyFields(it),
       })),
       pdfUrl,
       attachment,
@@ -4137,6 +4142,7 @@ export class InvoicesService {
         originalPrice: it.originalPrice != null ? Number(it.originalPrice) : null,
         priceType: it.priceType ?? null,
         promoFreeUnits: it.promoFreeUnits != null ? Number(it.promoFreeUnits) : null,
+        ...invoiceItemQtyFields(it),
       })),
       pdfUrl,
       attachment,
@@ -4353,7 +4359,7 @@ export class InvoicesService {
 
     const orderItems = await tx.orderItem.findMany({
       where: { orderId },
-      select: { id: true, productId: true, qty: true, invoicedQty: true },
+      select: { id: true, productId: true, status: true, qty: true, invoicedQty: true },
     });
     const adjust = async (oi: any, qtyDelta: number) => {
       // Clamp into [0, line qty]: never negative, never claim more than the line has.
@@ -4369,7 +4375,10 @@ export class InvoicesService {
       if (target) await adjust(target, qty);
     }
     for (const [productId, qty] of byProduct) {
-      const target = orderItems.find((oi: any) => oi.productId === productId);
+      // #1185 round 5, item 3: never pick a CANCELLED line as the fallback target.
+      const target = orderItems.find(
+        (oi: any) => oi.productId === productId && oi.status !== "CANCELLED",
+      );
       if (target) await adjust(target, qty);
     }
   }
@@ -5009,26 +5018,48 @@ export class InvoicesService {
   }
 
   /**
+   * B663: per delivered order, ensure a finalized invoice exists — reconcile an open
+   * DRAFT "pending mirror" onto the DELIVERED quantities, or a SENT deposit mirror,
+   * else create a fresh DRAFT from the order. Body lives in `delivered-reconcile.ts`
+   * (size-ratchet: this file has no headroom for it) — see that file for the full
+   * rationale and the `reconcileOrderIds` param.
+   */
+  async reconcileDeliveredOrdersInTx(
+    tx: any,
+    orderIds: string[],
+    reconcileOrderIds?: string[],
+  ): Promise<void> {
+    return reconcileDeliveredOrdersInTxImpl(
+      {
+        findOpenOrderDraft: this.findOpenOrderDraft.bind(this),
+        createInvoiceFromOrder: this.createInvoiceFromOrder.bind(this),
+        rebuildIssuedDepositMirrorOnDelivery: this.rebuildIssuedDepositMirrorOnDelivery.bind(this),
+        reconcileOrderDeliveredInvoices: this.reconcileOrderDeliveredInvoices.bind(this),
+      },
+      tx,
+      orderIds,
+      reconcileOrderIds,
+    );
+  }
+
+  /**
    * Record a driver-collected payment at stop completion, resolving the target
    * invoice(s) SERVER-side from the delivered orders. The mobile client cannot
    * supply an invoiceId (Order has no invoiceId scalar and the run/stop payload
    * never carries one), which is why every at-door payment silently vanished.
    * Runs INSIDE the caller's transaction so it is atomic with stop completion.
    *
-   * Per delivered order: ensure a finalized invoice exists — reconcile an open
-   * DRAFT "pending mirror" (full-order basis, as changeStatus→DELIVERED does),
-   * else create one from the order. Then apply the lump-sum across the orders'
-   * non-VOID invoices OLDEST-first (base invoice before any regulated `-R#`
-   * split siblings), capped at each invoice's remaining. Each application
-   * finalizes a DRAFT→SENT (recomputeStatus treats DRAFT as terminal, so a
-   * payment on a still-DRAFT invoice would never move it off DRAFT) and is
-   * recorded the canonical way — an InvoicePayment row + recomputeStatus over
-   * the non-VOID payment sum, NEVER the (non-existent) `balance` scalar the old
-   * completeWithPayment code tried to decrement.
+   * B663: this no longer reconciles the delivered orders' invoices itself — see
+   * `reconcileDeliveredOrdersInTx`, which the caller (`completeWithPayment`) runs
+   * unconditionally before this, whether or not there is a payment to record. This
+   * function applies the lump-sum across the orders' non-VOID invoices OLDEST-first
+   * (base invoice before any regulated `-R#` split siblings), capped at each
+   * invoice's remaining. Each application finalizes a DRAFT→SENT (recomputeStatus
+   * treats DRAFT as terminal, so a payment on a still-DRAFT invoice would never move
+   * it off DRAFT) and is recorded the canonical way — an InvoicePayment row +
+   * recomputeStatus over the non-VOID payment sum, NEVER the (non-existent) `balance`
+   * scalar the old completeWithPayment code tried to decrement.
    *
-   * @param reconcileOrderIds the subset of `orderIds` actually delivered in this
-   *          completion — only these have their DRAFT rebuilt on the delivered
-   *          quantity (and only when single-invoice). Defaults to all `orderIds`.
    * @param context optional `{ runId, stopId }` used only to tag a booked
    *          over-collection advance's `reference` (`RUN:<runId>:STOP:<stopId>`).
    * @returns `applied` (< amount only when the orders' invoices were already
@@ -5043,7 +5074,6 @@ export class InvoicesService {
     orderIds: string[],
     amount: number,
     method: string,
-    reconcileOrderIds?: string[],
     context?: { runId?: string; stopId?: string },
   ): Promise<{
     applied: number;
@@ -5064,53 +5094,6 @@ export class InvoicesService {
     // must not swallow the cash (recomputeStatus can't advance it), which would also
     // starve a live sibling since we apply oldest-first.
     // (shared with credit-notes.service.ts via invoice-status-sets.ts, F09/R3a)
-
-    // Only orders actually delivered in THIS completion may be rebuilt on the
-    // delivered basis. Default to all orderIds for callers that don't distinguish
-    // (there are none today) — but the driver path passes the real subset so an
-    // order merely linked to the stop yet not delivered here (deliveredQty 0) is
-    // never zeroed.
-    const reconcileSet = new Set(reconcileOrderIds ?? orderIds);
-
-    // 1. Ensure each delivered order has a DRAFT invoice, then reconcile it to the
-    //    DELIVERED quantities so short/refused lines bill what was delivered, not
-    //    the full order. createInvoiceFromOrder makes a DRAFT when the order has no
-    //    live invoice yet; reconcileOrderDraftInvoice(basis:"delivered") rebuilds it
-    //    on OrderItem.deliveredQty and telescopes invoicedQty (idempotent with the
-    //    office from-order flow — a later re-delivery bills only the remainder).
-    for (const orderId of orderIds) {
-      let draft = await this.findOpenOrderDraft(orderId, tx);
-      if (!draft) {
-        const existing = await tx.invoice.findFirst({
-          where: { orderId, status: { in: PAYABLE } },
-          select: { id: true },
-        });
-        // Create a fresh DRAFT only when the order has no live invoice at all; if a
-        // non-DRAFT invoice already exists (e.g. the office already sent one), leave
-        // it and just pay it below.
-        if (!existing) {
-          await this.createInvoiceFromOrder(orderId, tx);
-          draft = await this.findOpenOrderDraft(orderId, tx);
-        }
-      }
-      if (!draft && reconcileSet.has(orderId)) {
-        // B2 / WP-D1: no open DRAFT, but the order may carry a deposit mirror that was
-        // ISSUED (SENT) at placement — it has no draft to find, yet it is still the
-        // order's live bill and MUST be restated to what was actually delivered before
-        // the cash below lands on it. Otherwise a short/refused delivery collects
-        // against the full pre-delivery total. No-op for every other shape.
-        await this.rebuildIssuedDepositMirrorOnDelivery(orderId, tx);
-      } else if (draft && reconcileSet.has(orderId)) {
-        // Rebuild the order's open DRAFT(s) on the delivered qty, SIBLING-AWARE: a
-        // regulated SEPARATE_INVOICE order (base + -R#) has each draft rebuilt from
-        // ONLY its own lines, so a short/refused line bills its delivered qty on its
-        // own sibling and is never folded onto the base (no double-bill). A
-        // single-group order is byte-identical to the group-unaware delivered
-        // reconcile. (Replaces the old invoiceCount<=1 skip that left split orders
-        // billing the full ordered qty.)
-        await this.reconcileOrderDeliveredInvoices(orderId, tx);
-      }
-    }
 
     // 2. The orders' payable invoices, oldest-first.
     const invoices = await tx.invoice.findMany({

@@ -11,6 +11,7 @@ import { RedisIoAdapter } from "./gateways/redis-io.adapter";
 import { ThrottlerExceptionFilter } from "./common/throttler-exception.filter";
 import { SentryExceptionFilter } from "./common/sentry-exception.filter";
 import { MulterExceptionFilter } from "./common/multer-exception.filter";
+import { schemelessLinkBaseVars } from "./common/html-escape";
 
 const DEFAULT_CORS_ORIGINS = [
   "http://localhost:3001", // web dashboard
@@ -66,6 +67,13 @@ function assertSecrets() {
 
 async function bootstrap() {
   assertSecrets();
+  // B809: every email link is built from these. Without a scheme, each link renders as plain
+  // text (see safeLinkHref), so say so loudly at boot rather than per email.
+  for (const name of schemelessLinkBaseVars()) {
+    console.error(
+      `\n⚠️  ${name} does not start with http:// or https:// — email links built from it render without a link\n`,
+    );
+  }
   const app = await NestFactory.create<NestExpressApplication>(AppModule, {
     // rawBody: true preserves req.rawBody for Stripe webhook signature verification
     rawBody: true,
