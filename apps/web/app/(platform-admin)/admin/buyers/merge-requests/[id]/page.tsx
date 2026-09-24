@@ -4,6 +4,8 @@ import * as React from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { superAdminClient } from "@/lib/admin-api";
+import { DisabledHint } from "../../../../_components/DisabledHint";
+import { useConfirmFocus } from "../../../../_components/useConfirmFocus";
 import {
   ArrowLeft,
   Loader2,
@@ -106,6 +108,8 @@ export default function MergeRequestDetailPage() {
   const [actionLoading, setActionLoading] = React.useState<"execute" | "reject" | null>(null);
   const [adminNotes, setAdminNotes] = React.useState("");
   const [confirmExecute, setConfirmExecute] = React.useState(false);
+  // Clicking "Execute Merge" swaps that button for the confirm strip; keep focus in it (A3 F9).
+  const { triggerRef, confirmRef } = useConfirmFocus(confirmExecute);
   const [resultMsg, setResultMsg] = React.useState<{
     type: "success" | "error";
     text: string;
@@ -323,14 +327,21 @@ export default function MergeRequestDetailPage() {
           onChange={(e) => setAdminNotes(e.target.value)}
           rows={2}
           disabled={!canAct}
+          aria-describedby={!canAct ? "mr-notes-hint" : undefined}
           placeholder="Internal notes (optional)..."
           className="w-full rounded-lg border border-slate-600 bg-slate-700 px-3 py-2 text-sm text-white placeholder-slate-500 focus:border-indigo-500 focus:outline-none disabled:opacity-50"
         />
+
+        <DisabledHint id="mr-notes-hint" show={!canAct} className="mt-2 text-xs text-slate-400">
+          Read-only: this request is {req.status.toLowerCase().replace(/_/g, " ")}, so notes can no
+          longer be edited.
+        </DisabledHint>
 
         {canAct && (
           <div className="mt-4 flex flex-wrap gap-3">
             {!confirmExecute ? (
               <button
+                ref={triggerRef}
                 onClick={() => setConfirmExecute(true)}
                 className="rounded-lg bg-indigo-600 px-5 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-indigo-500"
               >
@@ -342,6 +353,7 @@ export default function MergeRequestDetailPage() {
                   Confirm merge? This cannot be undone.
                 </span>
                 <button
+                  ref={confirmRef}
                   disabled={actionLoading === "execute"}
                   onClick={handleExecute}
                   className="flex items-center gap-1 rounded px-3 py-1 text-xs font-bold text-indigo-300 hover:bg-indigo-800 disabled:opacity-50"

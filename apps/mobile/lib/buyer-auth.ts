@@ -308,15 +308,21 @@ const GOOGLE_REDIRECT_URI = "routeflow://auth/callback";
  * Returns the buyer profile and how many sellers they are linked to.
  */
 export async function buyerLoginWithGoogle(): Promise<{ buyer: BuyerUser; sellerCount: number }> {
-  // Web (the mobile-web build) cannot use the native routeflow:// deep link — a
-  // browser can't open a custom URL scheme, so openAuthSessionAsync never resolves
-  // and sign-in silently hangs. Use the same full-page-redirect + one-time-code
-  // exchange the operator web login (lib/auth.ts) uses: omit mobile=1 so the API
-  // redirects to ${WEB_URL}/auth/google/callback?code=…, handled by
-  // app/(auth)/auth/google/callback.tsx (which persists BUYER tokens by type).
+  // Web (this Expo mobile-web build) cannot use the native routeflow:// deep
+  // link — a browser can't open a custom URL scheme, so openAuthSessionAsync
+  // never resolves and sign-in silently hangs. Use the same full-page-redirect
+  // + one-time-code exchange the operator web login (lib/auth.ts) uses: omit
+  // mobile=1 so it's the browser exchange-code flow, and pass OUR OWN origin
+  // as `return_origin` (B825) so the API's callback redirects back HERE
+  // instead of always landing on the Next web app — validated server-side
+  // against an exact allow-list (WEB_URL/MOBILE_WEB_URL), never trusted as-is.
+  // Handled by app/(auth)/auth/google/callback.tsx (persists BUYER tokens by type).
   if (Platform.OS === "web") {
     const { data: web } = await axios.get<{ url: string }>(`${BASE_URL}/api/v1/auth/google`, {
-      params: { context: "buyer-standalone" }, // no mobile=1 → web exchange-code flow
+      params: {
+        context: "buyer-standalone", // no mobile=1 → web exchange-code flow
+        return_origin: typeof window !== "undefined" ? window.location.origin : undefined,
+      },
     });
     if (!web?.url) throw new Error("google_unavailable");
     if (typeof window !== "undefined") window.location.assign(web.url);

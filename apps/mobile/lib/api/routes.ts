@@ -35,6 +35,12 @@ export interface RouteRunOrderItem {
   // `RUN_LINE_ITEMS_SELECT`. Feeds lib/run-money.ts#deliveredCategoryTax's
   // per-unit proration for the short-pick payment estimate.
   categoryTaxAmount?: number | string | null;
+  /**
+   * B648: units_v1 — the unit this line is sold by ("Case"…), straight off
+   * `RUN_LINE_ITEMS_SELECT`; null on a plain piece/pack line. Feeds
+   * lib/short-pick.ts#isUnitAwareLine.
+   */
+  unitLabel?: string | null;
 }
 
 export interface RouteRunOrder {

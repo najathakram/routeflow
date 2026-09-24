@@ -70,7 +70,7 @@ export function scanHtmlInterpolations(code: string): HtmlHit[] {
   const hit = (e: ts.Node, prefix = "") => {
     const key = `${enclosingFnName(e)} :: ${prefix}${text(e)}`;
     const line = src.getLineAndCharacterOfPosition(e.getStart(src)).line + 1;
-    hits.set(`${key}@${line}`, { key, line });
+    hits.set(`${key}@${e.getStart(src)}`, { key, line });
   };
 
   // Every function in the file by the name it is called by, and every call by callee name.
@@ -148,7 +148,12 @@ export function scanHtmlInterpolations(code: string): HtmlHit[] {
     return undefined;
   };
 
-  /** True when a `let`/`var` binding is assigned again (`x = …`, `x += …`) anywhere it is visible. */
+  /**
+   * True when a `let`/`var` binding can hold something other than its initializer: it is the
+   * target of an assignment (`x = …`, `x += …`, `(x) = …`, `({ x } = o)`, `[x] = a`), of
+   * `++`/`--`, or of a `for (x of …)` / `for (x in …)` loop, or a `var` is declared again in the
+   * same function (B821: every form Opus found getting past the first version).
+   */
   const isReassigned = (decl: ts.VariableDeclaration): boolean => {
     if (!ts.isIdentifier(decl.name)) return false;
     const list = decl.parent;
@@ -156,23 +161,118 @@ export function scanHtmlInterpolations(code: string): HtmlHit[] {
       return false;
     }
     const name = decl.name.text;
+    const isVar = (list.flags & (ts.NodeFlags.Let | ts.NodeFlags.Const)) === 0;
+    /** Does this assignment target write `name` (bound to `decl`)? */
+    const writes = (t: ts.Node): boolean => {
+      if (ts.isParenthesizedExpression(t)) return writes(t.expression);
+      if (ts.isIdentifier(t)) return t.text === name && declOf(t) === decl;
+      if (ts.isShorthandPropertyAssignment(t)) return writes(t.name);
+      if (ts.isPropertyAssignment(t)) return writes(t.initializer);
+      if (ts.isSpreadAssignment(t) || ts.isSpreadElement(t)) return writes(t.expression);
+      if (ts.isObjectLiteralExpression(t)) return t.properties.some(writes);
+      if (ts.isArrayLiteralExpression(t)) return t.elements.some(writes);
+      // A destructuring default (`[x = 1] = a`) needs no case here: its inner `x = 1` is itself
+      // an assignment, which the walk below reaches on its own (a mutant of a separate branch
+      // for it survived every test, so it was dead code).
+      return false;
+    };
+    const scope = (() => {
+      for (let p: ts.Node | undefined = decl.parent; p; p = p.parent) {
+        if (isFnLike(p) || ts.isSourceFile(p)) return p;
+      }
+      return src;
+    })();
     let found = false;
     const look = (n: ts.Node) => {
       if (found) return;
-      if (
-        ts.isBinaryExpression(n) &&
-        n.operatorToken.kind >= ts.SyntaxKind.FirstAssignment &&
-        n.operatorToken.kind <= ts.SyntaxKind.LastAssignment &&
-        ts.isIdentifier(n.left) &&
-        n.left.text === name &&
-        declOf(n.left) === decl
-      ) {
-        found = true;
-      }
+      const assigns =
+        (ts.isBinaryExpression(n) &&
+          n.operatorToken.kind >= ts.SyntaxKind.FirstAssignment &&
+          n.operatorToken.kind <= ts.SyntaxKind.LastAssignment &&
+          writes(n.left)) ||
+        ((ts.isPrefixUnaryExpression(n) || ts.isPostfixUnaryExpression(n)) &&
+          (n.operator === ts.SyntaxKind.PlusPlusToken ||
+            n.operator === ts.SyntaxKind.MinusMinusToken) &&
+          writes(n.operand)) ||
+        ((ts.isForOfStatement(n) || ts.isForInStatement(n)) &&
+          !ts.isVariableDeclarationList(n.initializer) &&
+          writes(n.initializer)) ||
+        (isVar &&
+          n !== decl &&
+          ts.isVariableDeclaration(n) &&
+          ts.isIdentifier(n.name) &&
+          n.name.text === name &&
+          ts.isVariableDeclarationList(n.parent) &&
+          (n.parent.flags & (ts.NodeFlags.Let | ts.NodeFlags.Const)) === 0 &&
+          (() => {
+            for (let p: ts.Node | undefined = n.parent; p; p = p.parent) {
+              if (isFnLike(p) || ts.isSourceFile(p)) return p === scope;
+            }
+            return false;
+          })());
+      if (assigns) found = true;
       ts.forEachChild(n, look);
     };
     look(src);
     return found;
+  };
+
+  /** Stands for text that cannot be known statically; it never matches HREF_OPEN. */
+  const UNKNOWN = "\u0000";
+  /**
+   * The href-opening test: the text just before a value ends inside `href="` (any quoting), after
+   * any whitespace, raw or entity-encoded (`&#32;`, `&#x20;`, `&Tab;`, `&NewLine;`; B821 round 2).
+   */
+  const HREF_OPEN =
+    /href\s*=\s*["']?(?:\s|&(?:#0*(?:9|1[03]|32)|#x0*(?:9|a|d|20)|Tab|NewLine);)*$/i;
+
+  /** Every value a `let`/`var` is given by a plain `x = value` assignment after its declaration. */
+  const assignedValues = (decl: ts.VariableDeclaration): ts.Expression[] => {
+    if (!ts.isIdentifier(decl.name)) return [];
+    const name = decl.name.text;
+    const out: ts.Expression[] = [];
+    const look = (n: ts.Node) => {
+      if (ts.isBinaryExpression(n) && n.operatorToken.kind === ts.SyntaxKind.EqualsToken) {
+        let left: ts.Expression = n.left;
+        while (ts.isParenthesizedExpression(left)) left = left.expression;
+        if (ts.isIdentifier(left) && left.text === name && declOf(left) === decl) out.push(n.right);
+      }
+      ts.forEachChild(n, look);
+    };
+    look(src);
+    return out;
+  };
+
+  /**
+   * B821: the literal text a value ends with, through `+` chains, templates and `const` prefixes,
+   * so `'<a href="' + x` and `${open}${x}` (with `const open = '<a href="'`) are seen as hrefs.
+   * A value whose text cannot be known contributes UNKNOWN, so the literal AFTER it (the `">` in
+   * `'<a href="' + x + '">'`) is never mistaken for the href's value.
+   */
+  const trailingText = (e: ts.Expression, depth = 0): string => {
+    if (depth > 8) return UNKNOWN;
+    if (ts.isParenthesizedExpression(e)) return trailingText(e.expression, depth + 1);
+    if (ts.isStringLiteral(e) || ts.isNoSubstitutionTemplateLiteral(e)) return e.text;
+    if (ts.isTemplateExpression(e)) {
+      const last = e.templateSpans[e.templateSpans.length - 1];
+      return trailingText(last.expression, depth + 1) + last.literal.text;
+    }
+    if (ts.isBinaryExpression(e) && e.operatorToken.kind === ts.SyntaxKind.PlusToken) {
+      return trailingText(e.left, depth + 1) + trailingText(e.right, depth + 1);
+    }
+    if (ts.isIdentifier(e)) {
+      const decl = declOf(e);
+      if (decl && ts.isVariableDeclaration(decl) && decl.initializer) {
+        if (!isReassigned(decl)) return trailingText(decl.initializer, depth + 1);
+        // B821 round 2: a reassigned binding can end with ANY value it is ever given, so it
+        // opens an href when any one of them does (never just its initializer).
+        const opening = [decl.initializer, ...assignedValues(decl)]
+          .map((v) => trailingText(v, depth + 1))
+          .find((t) => HREF_OPEN.test(t));
+        return opening ?? UNKNOWN;
+      }
+    }
+    return UNKNOWN;
   };
 
   /**
@@ -323,6 +423,8 @@ export function scanHtmlInterpolations(code: string): HtmlHit[] {
     if (ts.isBinaryExpression(e) && e.operatorToken.kind === ts.SyntaxKind.PlusToken) {
       sink(e.left);
       sink(e.right);
+      // B821: `'<a href="' + x` — the href rule holds for concatenation too.
+      if (HREF_OPEN.test(trailingText(e.left)) && !fromSafeLinkHref(e.right)) hit(e.right, "href ");
       return;
     }
     if (ts.isConditionalExpression(e)) {
@@ -385,8 +487,9 @@ export function scanHtmlInterpolations(code: string): HtmlHit[] {
     t.templateSpans.forEach((span, i) => {
       sink(span.expression);
       // SA-127: the text just before this value opens an href attribute.
-      const before = i === 0 ? t.head.text : t.templateSpans[i - 1].literal.text;
-      if (/href\s*=\s*["']?$/i.test(before) && !fromSafeLinkHref(span.expression)) {
+      const prev = t.templateSpans[i - 1];
+      const before = i === 0 ? t.head.text : trailingText(prev.expression) + prev.literal.text;
+      if (HREF_OPEN.test(before) && !fromSafeLinkHref(span.expression)) {
         hit(span.expression, "href ");
       }
     });
@@ -394,6 +497,16 @@ export function scanHtmlInterpolations(code: string): HtmlHit[] {
 
   const visit = (n: ts.Node) => {
     if (ts.isTemplateExpression(n) && TAG.test(n.getText(src))) scanTemplate(n);
+    // B821 round 2: a concat href held in a const, or returned from a function, is never a sink
+    // itself, so every `+` in the file is checked (hits are position-keyed: no double count).
+    if (
+      ts.isBinaryExpression(n) &&
+      n.operatorToken.kind === ts.SyntaxKind.PlusToken &&
+      HREF_OPEN.test(trailingText(n.left)) &&
+      !fromSafeLinkHref(n.right)
+    ) {
+      hit(n.right, "href ");
+    }
     if (ts.isPropertyAssignment(n) && HTML_PROP.test(n.name.getText(src))) sink(n.initializer);
     if (ts.isShorthandPropertyAssignment(n) && HTML_PROP.test(n.name.text)) sink(n.name);
     ts.forEachChild(n, visit);

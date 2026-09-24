@@ -31,6 +31,11 @@ export const RUN_LINE_ITEMS_SELECT = {
   // short-picked stop's estimate. NOTE: `OrderItem` has no `taxRate` column
   // (only `categoryTaxAmount`) — see routes.run-stop-select.spec.ts.
   categoryTaxAmount: true,
+  // B648: units_v1 — the unit this line is sold by ("Case"…), null on a
+  // plain piece/pack line. Without it, this driver read surface can't tell a
+  // Case line from a pack line — lib/short-pick.ts#isUnitAwareLine gates the
+  // stepper (and every money function) on it.
+  unitLabel: true,
 } as const;
 
 // Shared per-stop include used by both list (`findAllRuns`) and detail
