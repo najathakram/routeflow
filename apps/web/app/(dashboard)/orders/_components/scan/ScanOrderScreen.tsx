@@ -316,8 +316,14 @@ export function ScanOrderScreen<T extends SummaryLine & { tempId: string }>({
         try {
           res = await resolveCodeRef.current(item.code, { quiet: true, background: true });
         } catch {
-          // An unexpected throw is treated as transient; the attempt cap bounds it.
-          res = { kind: "error", message: "lookup failed", offline: true };
+          // SA-090f (#1271): connectivity is decided ONLY inside resolveCodeRef's own lookup try
+          // (useScanCodeHandler's isConnectivityError check) — a genuine network failure there
+          // resolves normally as `{ kind: "error", offline: true }` and never reaches this catch at
+          // all. Anything that DOES land here is, by construction, not a lookup failure — it threw
+          // from somewhere AFTER addLineItem's flushSync commit (a toast, mergedLineMessage). The
+          // line is already added; `offline: false` always, so it is reported once and never
+          // re-queued into a second resolver call that would add it again.
+          res = { kind: "error", message: "lookup failed", offline: false };
         }
         if (res.kind === "error" && res.offline) {
           // The item is no longer in the live queue to look up by id (claimed above) — recompute

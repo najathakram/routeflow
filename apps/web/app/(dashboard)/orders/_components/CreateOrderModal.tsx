@@ -625,6 +625,9 @@ export function CreateOrderModal({
     // levels of the same product (a case line and a piece line), a scan/add must merge only into
     // the line with the matching unit, never both — and only the FIRST such match, never every
     // one `.map()` would find, so a duplicate (however it arose) is never double-merged into.
+    // Cleared first so a skipped updater (it should never be) is caught explicitly below
+    // instead of silently reusing a PREVIOUS call's stale result.
+    lastAddResultRef.current = null;
     flushSync(() => {
       setLineItems((prev) => {
         const idx = prev.findIndex((li) => sameProductUnit(li, { productId: product.id }));
@@ -639,30 +642,45 @@ export function CreateOrderModal({
         return next;
       });
     });
-    const result = lastAddResultRef.current!;
-
-    if (!result.created) {
-      // The scan screen shows its own running rows (a toast per repeat scan would bury them).
-      if (orderUiV2 && !scanScreenActive) {
-        toast({
-          title: "Added to existing line",
-          description: mergedLineMessage(result.mergedInto!.productName, result.mergedInto!),
-          variant: "info",
-        });
-      }
-      setScrollToId(result.mergedInto!.tempId);
-      setProductSearch("");
-      setDebouncedProductSearch("");
-      scheduleScannerRefocus(productSearchRef, 50);
-      return { created: false };
+    if (lastAddResultRef.current === null) {
+      throw new Error(
+        "addLineItem: lastAddResultRef was never set — the setLineItems updater did not run " +
+          "inside flushSync as expected",
+      );
     }
-    setScrollToId(newTempId);
-    setProductSearch("");
-    setDebouncedProductSearch("");
-    setLineItemsError("");
-    // Re-focus the product search so the scanner is ready for the next item
-    scheduleScannerRefocus(productSearchRef, 50);
-    return { created: true };
+    const result = lastAddResultRef.current;
+
+    // SA-090f (#1271): the commit above already landed — nothing in this tail (a toast, building
+    // the merged-line message, the search-field reset/refocus) may ever throw back to the caller,
+    // or a retry that treats the throw as "resolveCode failed" would re-run this whole method and
+    // add the line a SECOND time. Logged, not silently swallowed; the commit's own outcome is
+    // returned either way.
+    try {
+      if (!result.created) {
+        // The scan screen shows its own running rows (a toast per repeat scan would bury them).
+        if (orderUiV2 && !scanScreenActive) {
+          toast({
+            title: "Added to existing line",
+            description: mergedLineMessage(result.mergedInto!.productName, result.mergedInto!),
+            variant: "info",
+          });
+        }
+        setScrollToId(result.mergedInto!.tempId);
+        setProductSearch("");
+        setDebouncedProductSearch("");
+        scheduleScannerRefocus(productSearchRef, 50);
+      } else {
+        setScrollToId(newTempId);
+        setProductSearch("");
+        setDebouncedProductSearch("");
+        setLineItemsError("");
+        // Re-focus the product search so the scanner is ready for the next item
+        scheduleScannerRefocus(productSearchRef, 50);
+      }
+    } catch (err) {
+      console.error("addLineItem: post-commit step failed (line was still added)", err);
+    }
+    return { created: result.created };
   };
 
   /** A pick from the search dropdown: applies the typed Qty, then clears it. */

@@ -577,6 +577,64 @@ describe("ScanOrderScreen", () => {
       expect(screen.queryByLabelText("Waiting for signal")).not.toBeInTheDocument();
     });
 
+    it("Opus review (#1271): a post-commit throw on retry is reported ONCE, never re-queued (never adds the line a second time)", async () => {
+      // The real resolveCode ADDS the line as a side effect (flushSync, before returning) and only
+      // THEN does post-commit work (a toast, mergedLineMessage) that could itself throw. Before this
+      // fix, ScanOrderScreen's retryOne treated ANY throw here as a connectivity failure and
+      // re-queued the code — the next retry called the resolver again and added the line a SECOND
+      // time. A throw with no connectivity signal (no `err.response`, no ERR_NETWORK/timeout, browser
+      // reports online) must be reported once and left alone, not retried.
+      const resolve = jest
+        .fn<Promise<ScanResolution>, [string, { quiet?: boolean; background?: boolean }?]>()
+        .mockResolvedValueOnce(offline()) // the original lookup queues it
+        .mockRejectedValueOnce(new Error("boom")); // the retry: resolver committed, then threw
+      setup({}, resolve);
+      await scan("111");
+      expect(resolve).toHaveBeenCalledTimes(1);
+
+      await advance(RETRY_WINDOW);
+
+      // Exactly one retry attempt — never a second (which would be the double-add).
+      expect(resolve).toHaveBeenCalledTimes(2);
+      // Reported once, not silently dropped and not re-queued.
+      expect(screen.getByText("Couldn't look up that code")).toBeInTheDocument();
+      expect(screen.queryByLabelText("Waiting for signal")).not.toBeInTheDocument();
+
+      // Nothing else retries it — advancing well past every retry window leaves the call count flat.
+      await advance(60_000);
+      expect(resolve).toHaveBeenCalledTimes(2);
+    });
+
+    it("SA-090f (red pin b): a post-commit throw on a LIVE (non-retry) scan gives an error cue and is never queued", async () => {
+      setup({}, async () => {
+        throw new Error("boom");
+      });
+      await scan("111");
+
+      expect(screen.getByText("Couldn't look up that code")).toBeInTheDocument();
+      expect(playScanCue).toHaveBeenLastCalledWith("rejected");
+      expect(screen.queryByLabelText("Waiting for signal")).not.toBeInTheDocument();
+    });
+
+    it("SA-090f (red pin c): a genuine ERR_NETWORK on a RETRY's own lookup still re-queues (not the SA-090f fix's job to stop)", async () => {
+      const resolve = jest
+        .fn<Promise<ScanResolution>, [string]>()
+        .mockResolvedValueOnce(offline()) // the original lookup queues it
+        .mockResolvedValueOnce(offline()); // the retry's own lookup ALSO fails for lack of signal
+      setup({}, resolve);
+      await scan("111");
+      expect(screen.getByLabelText("Waiting for signal")).toHaveTextContent("(1)");
+
+      await advance(RETRY_WINDOW);
+
+      // Still queued — a real connectivity failure on the retry itself must re-queue exactly like
+      // the original lookup did, unaffected by SA-090f's "never re-queue an unexpected throw" fix
+      // (this path never throws; useScanCodeHandler resolves it normally with offline: true).
+      expect(resolve).toHaveBeenCalledTimes(2);
+      expect(screen.getByLabelText("Waiting for signal")).toHaveTextContent("(1)");
+      expect(screen.getByLabelText("Waiting for signal")).toHaveTextContent("111");
+    });
+
     it("retries are quiet: the resolver is always asked not to toast", async () => {
       const resolve = jest
         .fn<Promise<ScanResolution>, [string, { quiet?: boolean }?]>()

@@ -163,6 +163,15 @@ jest.mock("@routeflow/ui/web", () => ({
   useToast: () => ({ toast: mockToast }),
 }));
 
+// SA-090f (#1271) pin: scheduleScannerRefocus runs in EVERY addLineItem post-commit tail
+// (unlike the toast, which is skipped on the scan screen) — the one call a test can force to
+// throw there without needing a real DOM focus target.
+const mockScheduleScannerRefocus = jest.fn();
+jest.mock("@/lib/refocus-scanner", () => ({
+  scheduleScannerRefocus: (...args: unknown[]) => mockScheduleScannerRefocus(...args),
+  isTextEntryActive: () => false,
+}));
+
 describe("CreateOrderModal", () => {
   beforeEach(() => {
     jest.clearAllMocks();
@@ -535,6 +544,41 @@ describe("CreateOrderModal", () => {
         });
         expect(screen.getAllByText("Widget")).toHaveLength(1);
         expect(screen.getByDisplayValue("Extra cold, please")).toBeInTheDocument();
+      });
+
+      // SA-090f (#1271, red pin a): addLineItem's post-commit tail must never let a throw escape
+      // back to the caller — that throw used to be caught by ScanOrderScreen's retryOne as
+      // "offline" and re-queued, and the RETRY of the resolver added the line again. The toast
+      // itself is skipped on the scan screen (its own running rows would be buried by one per
+      // repeat scan), so scheduleScannerRefocus — the one tail call that fires unconditionally —
+      // is what this pins throwing.
+      it("SA-090f: a post-commit throw on a retry's merge still lands exactly one row, never re-queued", async () => {
+        mockResolveProductByCode.mockResolvedValueOnce(widget); // "111" live scan creates the line
+        mockResolveProductByCode.mockRejectedValueOnce(networkError()); // "222" (same product) queues
+        mockResolveProductByCode.mockResolvedValueOnce(widget); // "222"'s retry — merges
+        mockScheduleScannerRefocus.mockImplementationOnce(() => {
+          throw new Error("refocus boom");
+        });
+        await openScreen();
+        await scanCode("111");
+        await screen.findByText("Widget");
+
+        await scanCode("222");
+        expect(await screen.findByLabelText("Waiting for signal")).toHaveTextContent("(1)");
+
+        await act(async () => {
+          window.dispatchEvent(new Event("online"));
+        });
+
+        // The merge landed (qty 2) despite the post-commit throw, and nothing re-queued it.
+        await waitFor(() => expect(screen.getByText("1 item · $19.98")).toBeInTheDocument(), {
+          timeout: 4000,
+        });
+        expect(screen.getAllByText("Widget")).toHaveLength(1);
+        expect(screen.queryByLabelText("Waiting for signal")).not.toBeInTheDocument();
+        // Exactly TWO lookups for "222" — the original (queued) live attempt plus ONE retry —
+        // never a THIRD, which would be the double-add this pin closes.
+        expect(mockResolveProductByCode.mock.calls.filter((c) => c[0] === "222")).toHaveLength(2);
       });
 
       it("SA-090/Opus item 1 REG: a LIVE scan racing an in-flight retry of the SAME product lands ONE row at qty 2, never two", async () => {
