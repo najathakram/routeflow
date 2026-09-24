@@ -171,8 +171,14 @@ const CUSTOMER_NAV: NavEntry[] = [
   { kind: "leaf", label: "Settings", href: "/settings", icon: Settings },
 ];
 
-/** Driver nav — routes and settings only */
+/**
+ * Driver nav — routes and settings only. PHASE 1a (web driver mode): "Today's
+ * route" is the landing item, pointing at the DRIVER-only my-runs view — see
+ * getNavForRole's filter below, which drops it (and "My Routes") together
+ * when neither routes addon is enabled.
+ */
 const DRIVER_NAV: NavEntry[] = [
+  { kind: "leaf", label: "Today's route", href: "/routes/my-runs", icon: Truck },
   { kind: "leaf", label: "Dashboard", href: "/dashboard", icon: LayoutDashboard },
   { kind: "leaf", label: "My Routes", href: "/routes", icon: MapPin },
   { kind: "leaf", label: "Settings", href: "/settings", icon: Settings },
@@ -187,9 +193,13 @@ function getNavForRole(
   if (role === "CUSTOMER") return CUSTOMER_NAV;
   if (role === "DRIVER") {
     // Drivers run both recurring routes and ad-hoc delivery trips, so "My
-    // Routes" needs either surface unlocked — not just recurring routes.
+    // Routes"/"Today's route" need either surface unlocked — not just
+    // recurring routes. GET /route-runs/my-runs is gated the same way
+    // server-side (RouteRunsController's own @RequireAddon).
     if (!(routesAccess || deliveryAccess))
-      return DRIVER_NAV.filter((e) => e.kind !== "leaf" || e.href !== "/routes");
+      return DRIVER_NAV.filter(
+        (e) => e.kind !== "leaf" || (e.href !== "/routes" && e.href !== "/routes/my-runs"),
+      );
     return DRIVER_NAV;
   }
 
