@@ -1017,25 +1017,13 @@ export class RegulatedLedgerService {
     const lineKey = builtBefore.lineKeyOfSale(saleRow);
     const remQtyBefore = builtBefore.remQtyByLine.get(lineKey) ?? 0;
     const remNetBefore = builtBefore.remNetByLine.get(lineKey) ?? 0;
-    if (Math.abs(remQtyBefore) <= EPS && Math.abs(remNetBefore) <= EPS) {
-      return {
-        outcome: "closed",
-        correctionEntryId: null,
-        resolvedEntryId: null,
-        bookedPieces: 0,
-        bookedQty: 0,
-        bookedNet: 0,
-        bookedTax: 0,
-        parkedPieces: 0,
-        parkedRowIds: [] as string[],
-        unbookedPieces: 0,
-        verdictAfter: verdict.state,
-        unresolvableReason: null,
-      };
-    }
+    // SA-169: "closed" is a property of THIS row's line — nothing to correct or reverse on it —
+    // but the parked pieces belong to the PRODUCT's return, so the walk below still carries them to
+    // the order's other live rows (the SA-167 hole through a second door).
+    const rowClosed = Math.abs(remQtyBefore) <= EPS && Math.abs(remNetBefore) <= EPS;
 
     let correctionEntryId: string | null = null;
-    if (verdict.state === "legacy") {
+    if (!rowClosed && verdict.state === "legacy") {
       const qty = Number(saleRow.qty);
       // SA-134 (amends SA-089a, SA error E51): every correction row's periodBucket is derived
       // from ITS OWN soldAt (never copied from the row it corrects, never a filed period) — one
@@ -1140,16 +1128,18 @@ export class RegulatedLedgerService {
       rows,
     };
     // The parked row first, on the operator's pack; then RESUME the live walk (SA-167).
-    const chunk = await this.bookReversalChunk({
-      ...walkBase,
-      s: saleRow,
-      remaining: parked.returnedPieces,
-      lineShapeBySaleId: new Map([
-        [saleRow.id, { line: lineWithSuppliedPack, productId: shape.productId }],
-      ]),
-      correctionsBySaleId,
-      packNowByProduct: new Map(shape.productId ? [[shape.productId, pack]] : []),
-    });
+    const chunk = rowClosed
+      ? { remaining: parked.returnedPieces, parked: false }
+      : await this.bookReversalChunk({
+          ...walkBase,
+          s: saleRow,
+          remaining: parked.returnedPieces,
+          lineShapeBySaleId: new Map([
+            [saleRow.id, { line: lineWithSuppliedPack, productId: shape.productId }],
+          ]),
+          correctionsBySaleId,
+          packNowByProduct: new Map(shape.productId ? [[shape.productId, pack]] : []),
+        });
 
     // Defensive: our own pre-classify above already ruled out "unknown", so
     // bookReversalChunk's internal re-classify (same data, now with both corrections folded
@@ -1211,7 +1201,8 @@ export class RegulatedLedgerService {
 
     if (rows.length === 0) {
       return {
-        outcome: parkedPieces > 0 || unbookedPieces > 0 ? "partial" : "closed",
+        // "closed" only when the walk booked AND parked nothing (SA-169); leftover is still reported.
+        outcome: parkedPieces > 0 ? "partial" : "closed",
         correctionEntryId,
         resolvedEntryId: null,
         bookedPieces: 0,
