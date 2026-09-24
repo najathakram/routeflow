@@ -156,4 +156,42 @@ describe("RouteRunsController.completeStop — delegator pin (B783/SA-111)", () 
       warnSpy.mockRestore();
     },
   );
+
+  it(
+    "passes the retired route's own scope (completeStop:<runId>:<stopId>) as the " +
+      "legacy idempotency scope",
+    async () => {
+      prisma.routeRun.findUnique.mockResolvedValue({
+        id: "run-1",
+        driverId: null,
+        status: "IN_PROGRESS",
+      });
+      prisma.routeRunStop.findFirst.mockResolvedValue({
+        id: "stop-1",
+        routeRunId: "run-1",
+        status: "PENDING",
+        signatureUrl: null,
+        orders: [],
+      });
+      prisma.driver.findFirst.mockResolvedValue(null);
+      const service = (controller as any).routesService as RoutesService;
+      const completeWithPaymentSpy = jest
+        .spyOn(service, "completeWithPayment")
+        .mockResolvedValue({ id: "stop-1", status: "COMPLETED" } as any);
+      const warnSpy = jest.spyOn(Logger.prototype, "warn").mockImplementation(() => undefined);
+
+      await controller.completeStop("run-1", "stop-1", {} as any, "idem-key-1", operatorPayload);
+
+      expect(completeWithPaymentSpy).toHaveBeenCalledWith(
+        "run-1",
+        "stop-1",
+        expect.objectContaining({ idempotencyKey: "idem-key-1" }),
+        operatorPayload,
+        "completeStop:run-1:stop-1",
+      );
+
+      completeWithPaymentSpy.mockRestore();
+      warnSpy.mockRestore();
+    },
+  );
 });

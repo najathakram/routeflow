@@ -2201,25 +2201,22 @@ export class RoutesService {
   }
 
   /**
-   * B783/SA-111: RETIRED — was the bare stop-completion path (POST
-   * .../stops/:stopId/complete), superseded by completeWithPayment (which
-   * reconciles to the delivered basis on EVERY completion, not just a paid
-   * one — see B663). No web or mobile caller ever called it; its own
-   * production controller route is now a thin delegator to
-   * completeWithPayment (routes.controller.ts) for one release, logging a
-   * warn per call as the owner's gauge before the next release deletes the
-   * route entirely.
-   *
    * RF-005: Atomic complete + payment endpoint.
    * POST /route-runs/:runId/stops/:stopId/complete-with-payment
    * Both the stop completion and invoice payment land in one transaction so
    * neither can succeed without the other.
+   *
+   * B783/SA-111: also the target of the retired bare-completion route's
+   * delegator (routes.controller.ts) — see that route's own doc comment for
+   * the retirement story. `legacyIdempotencyScope` exists only for that
+   * delegator; a direct complete-with-payment caller never passes it.
    */
   async completeWithPayment(
     runId: string,
     stopId: string,
     dto: CompleteWithPaymentDto & { idempotencyKey?: string },
     user: JwtPayload,
+    legacyIdempotencyScope?: string,
   ) {
     const run = await this.prisma.forTenant().routeRun.findUnique({ where: { id: runId } });
     if (!run) throw new NotFoundException("Route run not found");
@@ -2266,6 +2263,17 @@ export class RoutesService {
       const scope = `completeWithPayment:${runId}:${stopId}`;
       const cached = await this.checkIdempotencyKey(dto.idempotencyKey, scope);
       if (cached) return cached;
+      // B783: a request replaying the SAME key it used against the now-retired bare
+      // route (cached there under "completeStop:...", pre-delegator) gets that cached
+      // response too — the delegator's upgrade to this method must not turn one client
+      // retry into a second completion/payment.
+      if (legacyIdempotencyScope) {
+        const legacyCached = await this.checkIdempotencyKey(
+          dto.idempotencyKey,
+          legacyIdempotencyScope,
+        );
+        if (legacyCached) return legacyCached;
+      }
     }
 
     // Durable POD: rewrite data-URL artifacts to storage keys before the tx
@@ -2326,13 +2334,18 @@ export class RoutesService {
             data: {
               orderId: item.orderId,
               orderItemId: d.orderItemId,
-              // B148/R3: from the tenant-scoped order item, never verbatim from
-              // the body — see the completeStop create site for why.
+              // B148/R3: from the tenant-scoped order item, never verbatim from the
+              // body — a client-supplied productId could name a product that isn't
+              // even on the order, corrupting the delivery-mutation audit trail.
               productId: item.productId ?? null,
               routeRunStopId: stopId,
               ...(driver ? { driverId: driver.id } : {}),
               type: (d.type as any) ?? "DELIVERED",
               quantityDelivered: d.quantityDelivered,
+              // B783 review: a pre-#273 mobile build (last shipped calling the bare
+              // route) still sends a per-line note; pass it through rather than
+              // silently dropping it now that that build's traffic lands here too.
+              ...(d.note ? { note: d.note } : {}),
             },
           });
           // Record the delivered qty so the invoice reconcile below (step 4) bills

@@ -2211,6 +2211,68 @@ describe("RoutesService", () => {
         expect.objectContaining({ data: expect.objectContaining({ productId: "prod-1" }) }),
       );
     });
+
+    // B783 review: a pre-#273 mobile build's per-line note (the last shipped build that
+    // called the bare route did send one) must not be silently dropped now that its
+    // traffic lands on completeWithPayment via the delegator.
+    it("B783 review: deliveryMutation.create passes through a per-line note when one is sent", async () => {
+      prisma.routeRun.findUnique.mockResolvedValue(IN_PROGRESS_RUN);
+      prisma.routeRunStop.findFirst.mockResolvedValue({
+        id: "stop-1",
+        routeRunId: "run-1",
+        status: "PENDING",
+        signatureUrl: null,
+        orders: [
+          { id: "ord-1", status: "PENDING", customerId: "cust-1", orderNumber: "SO-1", total: 50 },
+        ],
+      });
+      prisma.driver.findFirst.mockResolvedValue(null);
+      const txMock = {
+        ...prisma,
+        routeRunStop: {
+          ...prisma.routeRunStop,
+          findMany: jest.fn().mockResolvedValue([{ id: "stop-1", status: "PENDING" }]),
+          update: jest.fn().mockResolvedValue({}),
+        },
+        routeRun: { ...prisma.routeRun, update: jest.fn().mockResolvedValue({}) },
+        order: { ...prisma.order, updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
+        orderItem: {
+          ...prisma.orderItem,
+          findFirst: jest.fn().mockResolvedValue({ orderId: "ord-1", productId: "prod-1" }),
+          findMany: jest.fn().mockResolvedValue([{ id: "oi-1", orderId: "ord-1", qty: 10 }]),
+          update: jest.fn().mockResolvedValue({}),
+        },
+        deliveryMutation: { ...prisma.deliveryMutation, create: jest.fn() },
+        $executeRaw: jest.fn().mockResolvedValue(0),
+      };
+      (prisma.tenantTransaction as jest.Mock).mockImplementation((fn: any) => fn(txMock));
+      prisma.routeRunStop.findUniqueOrThrow.mockResolvedValue({
+        id: "stop-1",
+        status: "COMPLETED",
+      });
+
+      await service.completeWithPayment(
+        "run-1",
+        "stop-1",
+        {
+          deliveries: [
+            {
+              orderItemId: "oi-1",
+              type: "DELIVERED",
+              quantityDelivered: 3,
+              note: "left with the store manager",
+            },
+          ],
+        } as any,
+        operatorPayload,
+      );
+
+      expect(txMock.deliveryMutation.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ note: "left with the store manager" }),
+        }),
+      );
+    });
   });
 
   // ─── RF-019: Idempotency key deduplication ───────────────────────────────
@@ -2245,6 +2307,38 @@ describe("RoutesService", () => {
       // Should return the cached response, not call tenantTransaction
       expect(result).toEqual(cachedStop);
       expect(prisma.tenantTransaction).not.toHaveBeenCalled();
+    });
+
+    // B783 review: the delegator (routes.controller.ts) passes a 5th arg naming the
+    // retired bare route's own idempotency scope — a miss on this method's own scope
+    // must still fall back to it before running the completion again.
+    it("falls back to a legacy idempotency scope when the current scope misses", async () => {
+      const cachedStop = { id: "stop-1", status: "COMPLETED" };
+      prisma.routeRun.findUnique.mockResolvedValue(IN_PROGRESS_RUN);
+      prisma.routeRunStop.findFirst.mockResolvedValue({
+        id: "stop-1",
+        routeRunId: "run-1",
+        status: "PENDING",
+        orders: [],
+      });
+
+      // First $queryRaw call is the "completeWithPayment:..." scope (miss); second is
+      // the caller-supplied legacy scope (hit).
+      (prisma.$queryRaw as jest.Mock)
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([{ response: JSON.stringify(cachedStop) }]);
+
+      const result = await service.completeWithPayment(
+        "run-1",
+        "stop-1",
+        { idempotencyKey: "test-key-123" },
+        operatorPayload,
+        "completeStop:run-1:stop-1",
+      );
+
+      expect(result).toEqual(cachedStop);
+      expect(prisma.tenantTransaction).not.toHaveBeenCalled();
+      expect(prisma.$queryRaw).toHaveBeenCalledTimes(2);
     });
   });
 

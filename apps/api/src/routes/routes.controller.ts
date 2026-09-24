@@ -186,13 +186,15 @@ export class RouteRunsController {
     return this.routesService.findOneRun(id, user);
   }
 
-  // B783/SA-111: RETIRED for one release. The bare completion path had no web or mobile
-  // caller — every real completion (including $0 on-account) already goes through
-  // complete-with-payment for its delivered-basis reconcile (see the comment below). This
-  // route now just delegates there with no payment (CompleteStopDto has no payment field, and
-  // the DTO whitelist rejects one if a stray caller sent it, so nothing bypasses
-  // DriverPaymentsGuard). The warn log is the owner's gauge for any external caller still
-  // hitting this URL before the next release deletes it outright.
+  // B783/SA-111: RETIRED for one release. Mobile called this bare completion path until
+  // #273 (2026-07-16), when it switched to complete-with-payment for the delivered-basis
+  // reconcile (see the comment below); no web or mobile build in this repo calls it since.
+  // This route now just delegates there with no payment (CompleteStopDto has no payment
+  // field, and the DTO whitelist rejects one if a stray caller sent it, so nothing bypasses
+  // DriverPaymentsGuard) — and checks the OLD idempotency scope this route used to write to,
+  // so a client still retrying with the same key it used pre-deploy gets its original
+  // cached response instead of a second completion. The warn log is the owner's gauge for
+  // any external caller still hitting this URL before the next release deletes it outright.
   @Post(":id/stops/:stopId/complete")
   @UseGuards(RolesGuard)
   @Roles(UserRole.OPERATOR, UserRole.DRIVER)
@@ -207,7 +209,13 @@ export class RouteRunsController {
       `completeStop: bare completion route called (retired, delegating to ` +
         `complete-with-payment) — tenant ${user.tenantId} run ${runId} stop ${stopId}`,
     );
-    return this.routesService.completeWithPayment(runId, stopId, { ...body, idempotencyKey }, user);
+    return this.routesService.completeWithPayment(
+      runId,
+      stopId,
+      { ...body, idempotencyKey },
+      user,
+      `completeStop:${runId}:${stopId}`,
+    );
   }
 
   // RF-005: Atomic complete + payment

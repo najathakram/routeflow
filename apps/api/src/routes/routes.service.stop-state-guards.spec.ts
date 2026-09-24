@@ -565,10 +565,11 @@ describe("RoutesService — F10 stop-state guards (REG-B54/B55/B71/B72/B120/B121
       });
     });
 
-    // B783: T13 (the same guard on completeStop) retired along with completeStop itself —
-    // T14 below is the only completion path left, and it already proves this guard.
+    // B783: T13 (the same guard on completeStop, including its storage.upload assertion)
+    // retired along with completeStop itself — folded into T14 below, the only
+    // completion path left.
 
-    it("T14 — REG-B72: completeWithPayment refuses an unassigned driver before the transaction", async () => {
+    it("T14 — REG-B72: completeWithPayment refuses an unassigned driver before the transaction, before any POD ingest", async () => {
       prisma.routeRun.findUnique.mockResolvedValue({
         ...RUN_FIXTURE,
         status: "IN_PROGRESS",
@@ -594,12 +595,16 @@ describe("RoutesService — F10 stop-state guards (REG-B54/B55/B71/B72/B120/B121
         service.completeWithPayment(
           "run-1",
           "stop-1",
-          { payment: { amount: 50, method: "CASH" } },
+          { payment: { amount: 50, method: "CASH" }, signatureUrl: SIG_DATA_URL },
           driverPayload,
         ),
       ).rejects.toThrow(ForbiddenException);
       expect(prisma.tenantTransaction).not.toHaveBeenCalled();
       expect(invoicesService.recordDeliveryPaymentInTx).not.toHaveBeenCalled();
+      // B783 review (was T13, completeStop-only): the B72 guard runs before POD ingest
+      // too, not just before the transaction — a hijacker's captured signature is never
+      // even uploaded to storage.
+      expect(storage.upload).not.toHaveBeenCalled();
     });
   });
 
