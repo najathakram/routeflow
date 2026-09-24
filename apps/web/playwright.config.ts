@@ -781,6 +781,18 @@ export default defineConfig({
       },
     },
 
+    // B743 PR B (spec 61): the PACK_SIZE_UNKNOWN dialog at 390/768/1440, with the 409 mocked by
+    // page.route (the server gate is dark). Operator storageState, like spec 51.
+    {
+      name: "vendor-bill-pack-size-unknown",
+      testMatch: /61-vendor-bill-pack-size-unknown\.spec\.ts/,
+      dependencies: ["setup"],
+      use: {
+        ...devices["Desktop Chrome"],
+        storageState: path.join(AUTH_DIR, "operator.json"),
+      },
+    },
+
     // Platform-admin mobile overflow (B559, spec 52) — proves no element on any
     // platform-admin screen exceeds the 390/768/1440 viewport width, across every
     // tab (tabs are React state, not distinct URLs, so a URL-only sweep never
