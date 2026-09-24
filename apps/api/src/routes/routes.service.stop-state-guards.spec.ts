@@ -300,15 +300,25 @@ describe("RoutesService — F10 stop-state guards (REG-B54/B55/B71/B72/B120/B121
     // units nobody delivered. Note the coupling: it is precisely the
     // no-confirmed-money case that B54 permits, so B54's own fix is what opens
     // the path to this one.
-    it("T21 — REG-B55: the reversal zeroes OrderItem.deliveredQty, so a re-delivery cannot bill the undone delivery", async () => {
+    it("T21 — REG-B55/SA-133: the reversal RECOMPUTES OrderItem.deliveredQty from the (now-deleted) evidence, so a re-delivery cannot bill the undone delivery", async () => {
+      // B785/SA-133: reopen no longer zeroes deliveredQty unconditionally — it recomputes
+      // from the evidence basis, AFTER step 1 deletes this stop's own rows. This fixture's
+      // deliveryMutation.findMany row carries no orderItemId, so it contributes to no
+      // line's basis (deleted-or-never-evidence, same observable outcome for li-1: 0).
+      prisma.orderItem.findMany.mockResolvedValue([{ id: "li-1" }]);
+
       await service.reopenStop("run-1", "stop-1", operatorPayload);
 
       expect(prisma.orderItem.updateMany).toHaveBeenCalledWith(
         expect.objectContaining({
           where: { orderId: "order-1", status: { not: "CANCELLED" } },
-          data: expect.objectContaining({ status: "PENDING", deliveredQty: 0 }),
+          data: expect.objectContaining({ status: "PENDING" }),
         }),
       );
+      expect(prisma.orderItem.update).toHaveBeenCalledWith({
+        where: { id: "li-1" },
+        data: { deliveredQty: 0 },
+      });
     });
   });
 
@@ -663,8 +673,15 @@ describe("RoutesService — F10 stop-state guards (REG-B54/B55/B71/B72/B120/B121
 
       const txMock = {
         auditLog: { create: jest.fn().mockResolvedValue({}) },
-        deliveryMutation: { deleteMany: jest.fn().mockResolvedValue({ count: 0 }) },
-        orderItem: { updateMany: jest.fn().mockResolvedValue({ count: 0 }) },
+        deliveryMutation: {
+          deleteMany: jest.fn().mockResolvedValue({ count: 0 }),
+          findMany: jest.fn().mockResolvedValue([]),
+        },
+        orderItem: {
+          updateMany: jest.fn().mockResolvedValue({ count: 0 }),
+          findMany: jest.fn().mockResolvedValue([]),
+          update: jest.fn().mockResolvedValue({}),
+        },
         order: { update: jest.fn().mockResolvedValue({}) },
         transaction: { deleteMany: jest.fn().mockResolvedValue({ count: 0 }) },
         routeRunStop: { update: jest.fn().mockResolvedValue({}) },
@@ -733,8 +750,15 @@ describe("RoutesService — F10 stop-state guards (REG-B54/B55/B71/B72/B120/B121
 
       const txMock = {
         auditLog: { create: jest.fn().mockResolvedValue({}) },
-        deliveryMutation: { deleteMany: jest.fn().mockResolvedValue({ count: 0 }) },
-        orderItem: { updateMany: jest.fn().mockResolvedValue({ count: 0 }) },
+        deliveryMutation: {
+          deleteMany: jest.fn().mockResolvedValue({ count: 0 }),
+          findMany: jest.fn().mockResolvedValue([]),
+        },
+        orderItem: {
+          updateMany: jest.fn().mockResolvedValue({ count: 0 }),
+          findMany: jest.fn().mockResolvedValue([]),
+          update: jest.fn().mockResolvedValue({}),
+        },
         order: { update: jest.fn().mockResolvedValue({}) },
         transaction: { deleteMany: jest.fn().mockResolvedValue({ count: 0 }) },
         routeRunStop: { update: jest.fn().mockResolvedValue({}) },

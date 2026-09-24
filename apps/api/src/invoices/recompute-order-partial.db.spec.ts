@@ -1800,6 +1800,332 @@ describeDb(
       });
     });
 
+    describe("B785/SA-113a: the at-door reconcile (basis:delivered) reads the evidence basis, real Postgres", () => {
+      it("(1) a line with no evidence row bills at the ordered qty (reconcileOrderDraftInvoice)", async () => {
+        const { tenant, customer } = await seedTenantAndCustomer("b785-1");
+        const productA = await prisma.product.create({
+          data: { name: `A ${tenant.slug}`, unit: "ea", pricePerUnit: 10, tenantId: tenant.id },
+        });
+        const order = await prisma.order.create({
+          data: {
+            customerId: customer.id,
+            status: "PARTIALLY_DELIVERED",
+            subtotal: 100,
+            total: 100,
+            tenantId: tenant.id,
+          },
+        });
+        const lineA = await prisma.orderItem.create({
+          data: {
+            orderId: order.id,
+            productId: productA.id,
+            status: "PENDING",
+            qty: 10,
+            unitPrice: 10,
+            subtotal: 100,
+            tenantId: tenant.id,
+          },
+        });
+        await tenantCtx.run(tenant.id, () => invoicesService.createInvoiceFromOrder(order.id));
+
+        await tenantCtx.run(tenant.id, () =>
+          invoicesService.reconcileOrderDraftInvoice(order.id, { basis: "delivered" }),
+        );
+
+        const draft = await prisma.invoice.findFirstOrThrow({
+          where: { orderId: order.id },
+          include: { items: true },
+        });
+        expect(draft.items).toHaveLength(1);
+        expect(Number(draft.items[0]!.qty)).toBe(10);
+        expect(Number(draft.subtotal)).toBe(100);
+        const refreshedA = await prisma.orderItem.findUniqueOrThrow({ where: { id: lineA.id } });
+        expect(Number(refreshedA.invoicedQty)).toBe(10);
+      });
+
+      it("(2) a REFUSED evidence row bills 0 (reconcileOrderDraftInvoice)", async () => {
+        const { tenant, customer } = await seedTenantAndCustomer("b785-2");
+        const productA = await prisma.product.create({
+          data: { name: `A ${tenant.slug}`, unit: "ea", pricePerUnit: 10, tenantId: tenant.id },
+        });
+        const order = await prisma.order.create({
+          data: {
+            customerId: customer.id,
+            status: "PARTIALLY_DELIVERED",
+            subtotal: 100,
+            total: 100,
+            tenantId: tenant.id,
+          },
+        });
+        const lineA = await prisma.orderItem.create({
+          data: {
+            orderId: order.id,
+            productId: productA.id,
+            status: "PENDING",
+            qty: 10,
+            unitPrice: 10,
+            subtotal: 100,
+            tenantId: tenant.id,
+          },
+        });
+        await prisma.deliveryMutation.create({
+          data: {
+            orderId: order.id,
+            orderItemId: lineA.id,
+            productId: productA.id,
+            type: "REFUSED",
+            quantityDelivered: 0,
+            tenantId: tenant.id,
+          },
+        });
+        await tenantCtx.run(tenant.id, () => invoicesService.createInvoiceFromOrder(order.id));
+
+        await tenantCtx.run(tenant.id, () =>
+          invoicesService.reconcileOrderDraftInvoice(order.id, { basis: "delivered" }),
+        );
+
+        const draft = await prisma.invoice.findFirstOrThrow({
+          where: { orderId: order.id },
+          include: { items: true },
+        });
+        expect(draft.items).toHaveLength(0); // billQty 0 -- filtered out entirely
+        expect(Number(draft.subtotal)).toBe(0);
+      });
+
+      it("(3) a stale OrderItem.deliveredQty that disagrees with the evidence never wins — the evidence does (reconcileOrderDraftInvoice)", async () => {
+        const { tenant, customer } = await seedTenantAndCustomer("b785-3");
+        const productA = await prisma.product.create({
+          data: { name: `A ${tenant.slug}`, unit: "ea", pricePerUnit: 10, tenantId: tenant.id },
+        });
+        const order = await prisma.order.create({
+          data: {
+            customerId: customer.id,
+            status: "PARTIALLY_DELIVERED",
+            subtotal: 100,
+            total: 100,
+            tenantId: tenant.id,
+          },
+        });
+        const lineA = await prisma.orderItem.create({
+          data: {
+            orderId: order.id,
+            productId: productA.id,
+            status: "PENDING",
+            qty: 10,
+            // Deliberately stale/disagreeing column: a stock-settle or a stray earlier
+            // write left this at 3, but the real evidence row below says 7.
+            deliveredQty: 3,
+            unitPrice: 10,
+            subtotal: 100,
+            tenantId: tenant.id,
+          },
+        });
+        await prisma.deliveryMutation.create({
+          data: {
+            orderId: order.id,
+            orderItemId: lineA.id,
+            productId: productA.id,
+            type: "DELIVERED",
+            quantityDelivered: 7,
+            tenantId: tenant.id,
+          },
+        });
+        await tenantCtx.run(tenant.id, () => invoicesService.createInvoiceFromOrder(order.id));
+
+        await tenantCtx.run(tenant.id, () =>
+          invoicesService.reconcileOrderDraftInvoice(order.id, { basis: "delivered" }),
+        );
+
+        const draft = await prisma.invoice.findFirstOrThrow({
+          where: { orderId: order.id },
+          include: { items: true },
+        });
+        expect(Number(draft.items[0]!.qty)).toBe(7); // the evidence row, never the stale column
+        expect(Number(draft.subtotal)).toBe(70);
+      });
+
+      it("(4) SA-115a: a CANCELLED line is excluded, even with its own evidence row (reconcileOrderDraftInvoice)", async () => {
+        const { tenant, customer } = await seedTenantAndCustomer("b785-4");
+        const productA = await prisma.product.create({
+          data: { name: `A ${tenant.slug}`, unit: "ea", pricePerUnit: 10, tenantId: tenant.id },
+        });
+        const productB = await prisma.product.create({
+          data: { name: `B ${tenant.slug}`, unit: "ea", pricePerUnit: 10, tenantId: tenant.id },
+        });
+        const order = await prisma.order.create({
+          data: {
+            customerId: customer.id,
+            status: "PARTIALLY_DELIVERED",
+            subtotal: 160,
+            total: 160,
+            tenantId: tenant.id,
+          },
+        });
+        const lineA = await prisma.orderItem.create({
+          data: {
+            orderId: order.id,
+            productId: productA.id,
+            status: "PENDING",
+            qty: 10,
+            unitPrice: 10,
+            subtotal: 100,
+            tenantId: tenant.id,
+          },
+        });
+        const lineB = await prisma.orderItem.create({
+          data: {
+            orderId: order.id,
+            productId: productB.id,
+            status: "CANCELLED",
+            qty: 6,
+            unitPrice: 10,
+            subtotal: 60,
+            tenantId: tenant.id,
+          },
+        });
+        await prisma.deliveryMutation.create({
+          data: {
+            orderId: order.id,
+            orderItemId: lineA.id,
+            productId: productA.id,
+            type: "DELIVERED",
+            quantityDelivered: 10,
+            tenantId: tenant.id,
+          },
+        });
+        // A CANCELLED line with its own real evidence row -- must never bill.
+        await prisma.deliveryMutation.create({
+          data: {
+            orderId: order.id,
+            orderItemId: lineB.id,
+            productId: productB.id,
+            type: "DELIVERED",
+            quantityDelivered: 6,
+            tenantId: tenant.id,
+          },
+        });
+        await tenantCtx.run(tenant.id, () => invoicesService.createInvoiceFromOrder(order.id));
+
+        await tenantCtx.run(tenant.id, () =>
+          invoicesService.reconcileOrderDraftInvoice(order.id, { basis: "delivered" }),
+        );
+
+        const draft = await prisma.invoice.findFirstOrThrow({
+          where: { orderId: order.id },
+          include: { items: true },
+        });
+        expect(draft.items).toHaveLength(1);
+        expect(draft.items[0]!.orderItemId).toBe(lineA.id);
+        expect(Number(draft.subtotal)).toBe(100);
+      });
+
+      it("(5) reconcileOrderDeliveredInvoices (the sibling-aware path) is byte-identical to reconcileOrderDraftInvoice for a single-group order", async () => {
+        const { tenant, customer } = await seedTenantAndCustomer("b785-5");
+        const productA = await prisma.product.create({
+          data: { name: `A ${tenant.slug}`, unit: "ea", pricePerUnit: 10, tenantId: tenant.id },
+        });
+        const order = await prisma.order.create({
+          data: {
+            customerId: customer.id,
+            status: "PARTIALLY_DELIVERED",
+            subtotal: 100,
+            total: 100,
+            tenantId: tenant.id,
+          },
+        });
+        const lineA = await prisma.orderItem.create({
+          data: {
+            orderId: order.id,
+            productId: productA.id,
+            status: "PENDING",
+            qty: 10,
+            unitPrice: 10,
+            subtotal: 100,
+            tenantId: tenant.id,
+          },
+        });
+        await prisma.deliveryMutation.create({
+          data: {
+            orderId: order.id,
+            orderItemId: lineA.id,
+            productId: productA.id,
+            type: "DELIVERED",
+            quantityDelivered: 7,
+            tenantId: tenant.id,
+          },
+        });
+        await tenantCtx.run(tenant.id, () => invoicesService.createInvoiceFromOrder(order.id));
+
+        // The clean-provenance sibling path (called via reconcileDeliveredOrdersInTx in
+        // production) must land on the SAME numbers as the plain draft path above.
+        await tenantCtx.run(tenant.id, () =>
+          invoicesService.reconcileOrderDeliveredInvoices(order.id),
+        );
+
+        const draft = await prisma.invoice.findFirstOrThrow({
+          where: { orderId: order.id },
+          include: { items: true },
+        });
+        expect(Number(draft.items[0]!.qty)).toBe(7);
+        expect(Number(draft.subtotal)).toBe(70);
+        const refreshedA = await prisma.orderItem.findUniqueOrThrow({ where: { id: lineA.id } });
+        expect(Number(refreshedA.invoicedQty)).toBe(7);
+      });
+
+      it("(6) SA-133: an order whose ONLY rows are ADD_ON/null-quantity change-request rows still bills the ordered qty — hasMutations can't regress to 'any row'", async () => {
+        const { tenant, customer } = await seedTenantAndCustomer("b785-6");
+        const productA = await prisma.product.create({
+          data: { name: `A ${tenant.slug}`, unit: "ea", pricePerUnit: 10, tenantId: tenant.id },
+        });
+        const order = await prisma.order.create({
+          data: {
+            customerId: customer.id,
+            status: "PARTIALLY_DELIVERED",
+            subtotal: 100,
+            total: 100,
+            tenantId: tenant.id,
+          },
+        });
+        const lineA = await prisma.orderItem.create({
+          data: {
+            orderId: order.id,
+            productId: productA.id,
+            status: "PENDING",
+            qty: 10,
+            unitPrice: 10,
+            subtotal: 100,
+            tenantId: tenant.id,
+          },
+        });
+        // A door-cut change request: ADD_ON-shaped, signed delta qty, NO quantityDelivered.
+        // Never evidence — must not flip hasMutations or shrink the line's billable qty.
+        await prisma.deliveryMutation.create({
+          data: {
+            orderId: order.id,
+            orderItemId: lineA.id,
+            productId: productA.id,
+            type: "ADD_ON",
+            qty: -3,
+            quantityDelivered: null,
+            tenantId: tenant.id,
+          },
+        });
+        await tenantCtx.run(tenant.id, () => invoicesService.createInvoiceFromOrder(order.id));
+
+        await tenantCtx.run(tenant.id, () =>
+          invoicesService.reconcileOrderDraftInvoice(order.id, { basis: "delivered" }),
+        );
+
+        const draft = await prisma.invoice.findFirstOrThrow({
+          where: { orderId: order.id },
+          include: { items: true },
+        });
+        expect(draft.items).toHaveLength(1);
+        expect(Number(draft.items[0]!.qty)).toBe(10); // unconstrained -- no real evidence exists
+        expect(Number(draft.subtotal)).toBe(100);
+      });
+    });
+
     describe("SA-093 (B): concurrency, real Postgres", () => {
       // Round 6: the ORIGINAL version of this test fired two concurrent update() calls and
       // asserted only the final state -- it could never actually fail, because Postgres's own

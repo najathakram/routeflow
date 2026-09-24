@@ -175,7 +175,12 @@ describe("RoutesService — reopenStop never revives a cancelled line (bug id pe
     await service.reopenStop("run-1", "stop-1", operatorPayload);
 
     const call = tx.orderItem.updateMany.mock.calls[0][0];
-    expect(call.data).toMatchObject({ status: "PENDING", deliveredQty: 0 });
+    expect(call.data).toMatchObject({ status: "PENDING" });
     expect(call.where).toMatchObject({ orderId: "ord-1", status: { not: "CANCELLED" } });
+    // B785/SA-133: deliveredQty is now a separate RECOMPUTE write, not part of updateMany's data.
+    expect(tx.orderItem.update).toHaveBeenCalledWith({
+      where: { id: "oi-1" },
+      data: { deliveredQty: 0 },
+    });
   });
 });

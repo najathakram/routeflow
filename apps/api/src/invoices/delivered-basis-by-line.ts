@@ -1,4 +1,5 @@
 import { Prisma } from "@prisma/client";
+import { DELIVERY_EVIDENCE_TYPES } from "./delivery-evidence";
 
 /**
  * SA-093a/SA-113b (rounds 6-7, #1185): the delivered basis for coverage/billing is
@@ -52,11 +53,10 @@ export interface DeliveredBasis {
   byLineId: Map<string, number>;
 }
 
-/** Round 7 / SA-113b: the only types whose row can be delivery evidence. ADD_ON is deliberately
- *  absent — see this module's own doc. */
-const DELIVERY_EVIDENCE_TYPES = new Set(["DELIVERED", "PARTIAL", "SUBSTITUTED", "REFUSED"]);
-
 /**
+ * SA-131a/B785: the evidence-type list is shared with the at-door reconcile
+ * (delivery-evidence.ts) — one evidence definition, not two.
+ *
  * SA-113b: an evidence row needs BOTH a qualifying type AND a non-null `quantityDelivered` --
  * the close paths (completeStop/completeWithPayment) always set it; the at-door change-request
  * path never does, even for its REFUSED-typed REMOVE_ITEM rows (qty carries the signed delta,
@@ -64,7 +64,9 @@ const DELIVERY_EVIDENCE_TYPES = new Set(["DELIVERED", "PARTIAL", "SUBSTITUTED", 
  * is always forced to 0 for it) -- its non-null PRESENCE is only the qualification signal.
  */
 function isEvidenceRow(m: { type: string; quantityDelivered: unknown }): boolean {
-  return m.quantityDelivered != null && DELIVERY_EVIDENCE_TYPES.has(m.type);
+  return (
+    m.quantityDelivered != null && (DELIVERY_EVIDENCE_TYPES as readonly string[]).includes(m.type)
+  );
 }
 
 export async function deliveredBasisByLine(
