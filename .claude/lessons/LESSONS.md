@@ -386,6 +386,19 @@
 - **Guard:** `file <path>` (must say "text") or `grep -cP '\x00' <path>` (must be 0) before
   trusting the write; a pre-commit NUL-byte check on text sources is the durable fix.
 
+### L-216 · 2026-09-24 · tooling · bugs.mjs note --section silently replaced record analysis (B840)
+
+- **Symptom:** two registry reconciles and ~32 earlier notes wiped Summary/Root cause/Fix text in
+  ~150 bug records; noticed only because a "notes-only" commit showed insertions == deletions.
+- **Root cause:** `bugs.mjs note --section` REPLACES the section body; a verb named "note" reads
+  as append, so every caller assumed it was additive. The first repair then matched sections with a
+  multiline-flag regex whose `$` ended at the first line, restoring only first lines.
+- **Lesson:** **A CLI verb named like an append ("note", "add", "log") that actually replaces is a
+  silent-loss class: before any bulk run, check the verb on one record and read the diff. A bulk
+  "additive" run must be pure insertions. Repair from history as the union of every version, and
+  prove zero loss with a checker that does not share the repair's parser.**
+- **Guard:** B840: `note` appends, overwrite needs `--replace`, pinned in the bugs self-test.
+
 ## testing
 
 ### L-205 · 2026-09-18 · testing · regression tests pinned literal source text, not behavior
@@ -718,18 +731,6 @@
   or a POST body for a server-side one.**
 - **Guard:** none yet — propose a lint/review checklist item flagging `token`/`code`/`secret`-
   named query params on any new route.
-
-### L-178 · 2026-09-16 · security · demo-booking PR-2 (raw error message leak)
-
-- **Symptom:** a public-facing catch handler rendered a caught error's `.message` verbatim, so
-  an unauthenticated route could show NestJS's own raw 404 body instead of a curated message.
-- **Root cause:** the load path assumed every reachable error was one of its own curated
-  exceptions; it never accounted for a transport-level failure with no safe message behind it.
-- **Lesson:** **A public unauthenticated page's catch handler must show a FIXED, generic message
-  for any path that can receive a transport-level failure, never `error.message` — a curated
-  message is safe to show only when every source feeding that catch is known and typed.**
-- **Guard:** `demo-scheduler.test.tsx` pins a raw framework 404, a bare network failure, and a
-  raw 500 all rendering the SAME fixed message, never the response body.
 
 ## deploy
 
