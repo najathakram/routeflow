@@ -407,6 +407,11 @@ export interface AdminInvoice {
     boxes?: number | null;
     pieces?: number | null;
     unitsPerBox?: number | null;
+    /** units_v1: the line's own selling unit ("Case"…) when sold by a non-pack
+     *  unit rather than loose pieces; null on a plain/pack line. B653 names it in
+     *  `invoice-line-display.ts`'s qty text; B784 names it in the unit-aware-edit
+     *  guard's refusal message. */
+    unitLabel?: string | null;
     unitPrice: number;
     /** Catalog base for an override line; unitPrice > originalPrice = upsell. */
     originalPrice?: number | null;
@@ -425,9 +430,6 @@ export interface AdminInvoice {
     promoFreeUnits?: number | null;
     /** Product this line was cut from — needed to round-trip an items PATCH. */
     productId?: string | null;
-    /** units_v1: the unit this line is sold by ("Case"…); null on a plain/pack line.
-     *  B784: names the unit-aware-edit guard's refusal message. */
-    unitLabel?: string | null;
   }>;
 }
 
