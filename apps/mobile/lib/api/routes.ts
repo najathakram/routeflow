@@ -41,6 +41,11 @@ export interface RouteRunOrderItem {
    * lib/short-pick.ts#isUnitAwareLine.
    */
   unitLabel?: string | null;
+  /**
+   * B785/SA-116: pieces delivered at every OTHER visit (any run/stop), projected per stop by the
+   * run read from evidence rows. Feeds lib/short-pick.ts (remaining = qty − deliveredSoFar).
+   */
+  deliveredSoFar?: number | null;
 }
 
 export interface RouteRunOrder {

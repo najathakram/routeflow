@@ -56,6 +56,7 @@ import {
 } from "../../../../../lib/offline-errors";
 import {
   buildStopDeliveries,
+  deliveredSoFarByLine,
   fallbackShortPickLines,
   normalizeDeliveryPlan,
   planPendingButLinesNotLoaded,
@@ -146,11 +147,14 @@ export default function PaymentScreen() {
   // lines already carry unitLabel/unitsPerBox/boxes (shortPickLinesFromOrder
   // threads them through), so a Case line reconciles correctly no matter
   // which order on the stop it belongs to.
+  // B785/SA-116: per-line pieces delivered at OTHER visits, off the stop's own run snapshot — a
+  // second visit reconciles (and sends explicit entries for) the REMAINING, never the full order.
+  const soFarById = useMemo(() => deliveredSoFarByLine(stop?.orders), [stop]);
   const richShortPickLinesByOrder: Record<string, ShortPickLine[]> = useMemo(() => {
     const map: Record<string, ShortPickLine[]> = {};
-    for (const id of stopOrderIds) map[id] = shortPickLinesFromOrder(ordersById[id]);
+    for (const id of stopOrderIds) map[id] = shortPickLinesFromOrder(ordersById[id], soFarById);
     return map;
-  }, [stopOrderIds, ordersById]);
+  }, [stopOrderIds, ordersById, soFarById]);
 
   // SA-094b (B762 adaptation item 3): the ONE normalized plan every reader
   // of deliveredQtyById must use, computed over EVERY order's lines — a raw

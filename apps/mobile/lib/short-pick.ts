@@ -162,6 +162,77 @@ export interface ShortPickSourceLine {
   product?: { unitsPerBox?: number | null } | null;
 }
 
+/** orderItemId -> pieces already delivered at OTHER visits (the run read's per-stop
+ *  `deliveredSoFar` projection, B785/SA-116). Absent/0 = a first visit. */
+export type DeliveredSoFarById = Readonly<Record<string, number>>;
+
+/** Flattens the run read's stop snapshot (`stop.orders[].lineItems[].deliveredSoFar`) to a map. */
+export function deliveredSoFarByLine(
+  stopOrders:
+    | readonly {
+        lineItems?: readonly { id: string; deliveredSoFar?: number | string | null }[] | null;
+      }[]
+    | null
+    | undefined,
+): Record<string, number> {
+  const out: Record<string, number> = {};
+  for (const o of stopOrders ?? []) {
+    for (const li of o.lineItems ?? []) {
+      const n = Number(li.deliveredSoFar ?? 0);
+      if (n > 0) out[li.id] = n;
+    }
+  }
+  return out;
+}
+
+/**
+ * B785/SA-116: whether the review screen offers a line at all. A line delivered on ANOTHER visit
+ * (`soFar > 0`) is offered while some of it remains; otherwise the pre-B785 rule holds (nothing
+ * delivered yet — a line whose only delivery is THIS stop's own is settled, never re-offered).
+ */
+export function isLineAdjustable(
+  li: { status?: string | null; qty: number | string; deliveredQty?: number | string | null },
+  soFar = 0,
+): boolean {
+  if (li.status === "CANCELLED") return false;
+  if (soFar > 0) return Number(li.qty) - soFar > 0;
+  return Number(li.deliveredQty ?? 0) === 0;
+}
+
+/**
+ * B785/SA-116: the PER-VISIT view of a line — what THIS visit can still deliver. On a second visit
+ * the ordered qty is the REMAINING (`qty − soFar`), the money is the agreed price of that remaining
+ * portion (a display estimate; the server bills from evidence), and a unit-aware line's Case count
+ * is `count − casesDeliveredSoFar` — so the stepper bound, the DELIVERED/PARTIAL type and the
+ * default explicit entry all read remaining, never the full order. A first visit (`soFar` 0) is
+ * returned untouched.
+ */
+function visitView(li: ShortPickSourceLine, soFar: number) {
+  const qty = Number(li.qty);
+  const freeUnitSize = freeUnitSizeFor(li);
+  if (!(soFar > 0)) {
+    return {
+      orderedQty: qty,
+      subtotal: li.subtotal ?? null,
+      freeUnits: li.promoFreeUnits ?? 0,
+      freeUnitSize,
+      boxes: li.boxes ?? null,
+    };
+  }
+  const remaining = Math.max(0, qty - soFar);
+  const upb = Number(li.unitsPerBox ?? 0);
+  return {
+    orderedQty: remaining,
+    subtotal:
+      li.subtotal == null
+        ? null
+        : prorateLineSubtotal(li.subtotal, remaining, qty, li.promoFreeUnits ?? 0, freeUnitSize),
+    freeUnits: 0, // already netted out of the prorated subtotal above
+    freeUnitSize: 1,
+    boxes: li.boxes != null && upb > 0 ? Math.round(remaining / upb) : (li.boxes ?? null),
+  };
+}
+
 /**
  * An order's lines -> `ShortPickLine[]` (B762): the SAME mapping
  * short-pick.tsx and payment.tsx each used to inline separately, byte-
@@ -170,27 +241,25 @@ export interface ShortPickSourceLine {
  * shared derivation is what keeps that convention enforced rather than
  * merely documented. Excludes CANCELLED lines (not adjustable) and lines
  * already delivered (a reopened, partially-completed stop shouldn't
- * re-offer an already-settled line).
+ * re-offer an already-settled line). B785: a line partly delivered at an
+ * EARLIER visit (`soFarById`) is re-offered at its remaining qty.
  */
 export function shortPickLinesFromOrder(
   order: { lineItems?: readonly ShortPickSourceLine[] | null } | null | undefined,
+  soFarById: DeliveredSoFarById = {},
 ): ShortPickLine[] {
   return (order?.lineItems ?? [])
-    .filter((li) => li.status !== "CANCELLED" && Number(li.deliveredQty ?? 0) === 0)
+    .filter((li) => isLineAdjustable(li, soFarById[li.id] ?? 0))
     .map((li) => ({
       orderItemId: li.id,
       productId: li.productId,
-      orderedQty: Number(li.qty),
-      subtotal: li.subtotal ?? null,
-      freeUnits: li.promoFreeUnits ?? 0,
-      freeUnitSize: freeUnitSizeFor(li),
+      ...visitView(li, soFarById[li.id] ?? 0),
       // B648/SA-094 (carried through the B762 merge): without these,
       // isUnitAwareLine reads every multi-order line as a plain pack line —
       // a Case line loses its whole-Case stepper and normalizeDeliveryPlan's
       // snap the moment it's reviewed through the multi-order fan-out.
       unitLabel: li.unitLabel ?? null,
       unitsPerBox: li.unitsPerBox ?? null,
-      boxes: li.boxes ?? null,
     }));
 }
 
@@ -207,6 +276,8 @@ export interface StopSnapshotLine {
   boxes?: number | null;
   unitsPerBox?: number | null;
   unitLabel?: string | null;
+  /** B785/SA-116: pieces delivered at OTHER visits (run read projection). */
+  deliveredSoFar?: number | string | null;
 }
 
 /**
@@ -240,20 +311,46 @@ export interface StopSnapshotLine {
 export function fallbackShortPickLines(
   order: { lineItems?: readonly StopSnapshotLine[] | null } | null | undefined,
 ): ShortPickLine[] {
-  return (order?.lineItems ?? [])
-    .filter((li) => li.status !== "CANCELLED")
-    .map((li) => ({
-      orderItemId: li.id,
-      productId: li.productId,
-      orderedQty: Number(li.qty ?? 0),
-      subtotal: li.subtotal != null ? Number(li.subtotal) : null,
-      freeUnits: 0,
-      freeUnitSize: 1,
-      // B648/SA-094 (carried through the B762 merge) — see StopSnapshotLine.
-      unitLabel: li.unitLabel ?? null,
-      unitsPerBox: li.unitsPerBox ?? null,
-      boxes: li.boxes ?? null,
-    }));
+  return (
+    (order?.lineItems ?? [])
+      // B785/SA-116: the snapshot carries `deliveredSoFar`, so a later visit's fallback entry is
+      // the REMAINING, never a re-claim of the full order (closes the SA-115 residual below); a
+      // line with nothing remaining is dropped rather than re-sent.
+      .filter(
+        (li) =>
+          li.status !== "CANCELLED" &&
+          !(
+            Number(li.deliveredSoFar ?? 0) > 0 &&
+            Number(li.qty ?? 0) - Number(li.deliveredSoFar) <= 0
+          ),
+      )
+      .map((li) => {
+        const soFar = Number(li.deliveredSoFar ?? 0);
+        const qty = Number(li.qty ?? 0);
+        const remaining = soFar > 0 ? Math.max(0, qty - soFar) : qty;
+        const upb = Number(li.unitsPerBox ?? 0);
+        return {
+          orderItemId: li.id,
+          productId: li.productId,
+          orderedQty: remaining,
+          subtotal:
+            li.subtotal == null
+              ? null
+              : soFar > 0
+                ? prorateLineSubtotal(Number(li.subtotal), remaining, qty, 0, 1)
+                : Number(li.subtotal),
+          freeUnits: 0,
+          freeUnitSize: 1,
+          // B648/SA-094 (carried through the B762 merge) — see StopSnapshotLine.
+          unitLabel: li.unitLabel ?? null,
+          unitsPerBox: li.unitsPerBox ?? null,
+          boxes:
+            soFar > 0 && li.boxes != null && upb > 0
+              ? Math.round(remaining / upb)
+              : (li.boxes ?? null),
+        };
+      })
+  );
 }
 
 /** DELIVERED at the full ordered qty, REFUSED at 0, else PARTIAL. */

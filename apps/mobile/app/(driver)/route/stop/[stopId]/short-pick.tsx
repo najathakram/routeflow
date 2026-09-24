@@ -20,6 +20,8 @@ import { useDeliveryPlanStore } from "../../../../../store/delivery-plan-store";
 import {
   reconciledTotal,
   deliveryTypeForQty,
+  deliveredSoFarByLine,
+  isLineAdjustable,
   isUnitAwareLine,
   normalizeDeliveryPlan,
   shortPickLinesFromOrder,
@@ -30,10 +32,8 @@ import { sanitizeIntInput, parseIntQty } from "../../../../../lib/qty";
 /** Same "adjustable" predicate `shortPickLinesFromOrder` applies for the
  *  money-math half — kept alongside it here since rendering needs the
  *  RICHER `OrderItem` (product name), not the pure `ShortPickLine`. */
-function adjustableLines(order: Order | undefined): OrderItem[] {
-  return (order?.lineItems ?? []).filter(
-    (li) => li.status !== "CANCELLED" && Number(li.deliveredQty ?? 0) === 0,
-  );
+function adjustableLines(order: Order | undefined, soFarById: Record<string, number>): OrderItem[] {
+  return (order?.lineItems ?? []).filter((li) => isLineAdjustable(li, soFarById[li.id] ?? 0));
 }
 
 /**
@@ -82,19 +82,26 @@ export default function ShortPickScreen() {
   // lines). Money math is derived SEPARATELY via shortPickLinesFromOrder
   // (the shared, screen-agnostic mapping payment.tsx also uses) since the
   // pure `ShortPickLine` doesn't carry a display name.
+  // B785/SA-116: pieces delivered at OTHER visits, off the stop's run snapshot — a second visit
+  // is offered (and bounded by) the REMAINING, never the full order.
+  const soFarById = useMemo(() => deliveredSoFarByLine(stop?.orders), [stop]);
   const linesByOrder = useMemo(() => {
     const map: Record<string, OrderItem[]> = {};
-    for (const id of stopOrderIds) map[id] = adjustableLines(ordersById[id]);
+    for (const id of stopOrderIds) map[id] = adjustableLines(ordersById[id], soFarById);
     return map;
-  }, [stopOrderIds, ordersById]);
+  }, [stopOrderIds, ordersById, soFarById]);
 
   // B648/B762 merge: shortPickLinesFromOrder now carries unitLabel/
   // unitsPerBox/boxes through (see lib/short-pick.ts), so this flattened,
   // multi-order form is both the B762 fan-out AND B648's whole-Case data —
   // no separate inline mapping needed.
   const shortPickLines: ShortPickLine[] = useMemo(
-    () => stopOrderIds.flatMap((id) => shortPickLinesFromOrder(ordersById[id])),
-    [stopOrderIds, ordersById],
+    () => stopOrderIds.flatMap((id) => shortPickLinesFromOrder(ordersById[id], soFarById)),
+    [stopOrderIds, ordersById, soFarById],
+  );
+  const visitLineById = useMemo(
+    () => Object.fromEntries(shortPickLines.map((l) => [l.orderItemId, l])),
+    [shortPickLines],
   );
 
   // Seed from any override this stop already has in the plan store (e.g. an
@@ -175,6 +182,8 @@ export default function ShortPickScreen() {
                 <ShortPickRow
                   key={li.id}
                   li={li}
+                  visit={visitLineById[li.id]}
+                  soFar={soFarById[li.id] ?? 0}
                   // B648/SA-094b: normalizedPlan is the stop-WIDE snapped map
                   // (item 3 of the B762 adaptation) — every order's rows read
                   // the SAME snapped number the total/badge use, never the
@@ -208,14 +217,22 @@ export default function ShortPickScreen() {
 
 function ShortPickRow({
   li,
+  visit,
+  soFar,
   qty,
   onChangeQty,
 }: {
   li: OrderItem;
+  /** This visit's view of the line (B785): ordered = remaining, boxes = Cases remaining. */
+  visit?: ShortPickLine;
+  /** Pieces already delivered at other visits. */
+  soFar: number;
   qty: number;
   onChangeQty: (qty: number) => void;
 }) {
-  const ordered = Number(li.qty);
+  // B785/SA-116: the stepper bound is what THIS visit can still deliver (count − cases delivered
+  // so far), read off the per-visit line — identical to the full order on a first visit.
+  const ordered = visit?.orderedQty ?? Number(li.qty);
   const type = deliveryTypeForQty(qty, ordered);
   const [draft, setDraft] = useState(String(qty));
   // SA-094/SA-094a: a units_v1 line whose OWN unitsPerBox > 1 gets a
@@ -229,7 +246,8 @@ function ShortPickRow({
   // The STORED count (never derived from the live product) — unit-line-build.ts
   // stores `boxes = count` for a factor>1 unit line. Falls back to
   // ordered/unitsPerBox only for a malformed/legacy row missing `boxes`.
-  const caseCount = li.boxes ?? (unitsPerBox > 0 ? Math.round(ordered / unitsPerBox) : 0);
+  const caseCount =
+    visit?.boxes ?? li.boxes ?? (unitsPerBox > 0 ? Math.round(ordered / unitsPerBox) : 0);
   const casesDelivered = unitAware && unitsPerBox > 0 ? Math.round(qty / unitsPerBox) : 0;
 
   return (
@@ -241,7 +259,10 @@ function ShortPickRow({
           </Text>
           <Text style={styles.cardMeta}>
             Ordered{" "}
-            {hasUnitLabel ? `${li.boxes ?? Number(li.qty)} ${li.unitLabel}`.trim() : ordered}
+            {hasUnitLabel ? `${li.boxes ?? Number(li.qty)} ${li.unitLabel}`.trim() : Number(li.qty)}
+            {soFar > 0
+              ? ` · ${hasUnitLabel ? `${caseCount} ${li.unitLabel}` : ordered} still to deliver`
+              : ""}
           </Text>
         </View>
         {type !== "DELIVERED" ? (
