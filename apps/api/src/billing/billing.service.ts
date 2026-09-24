@@ -31,6 +31,7 @@ import {
   STRIPE_CHECKOUT_REFUSED_ACTION,
   STRIPE_CHECKOUT_STALE_ACTION,
 } from "./config-snapshot-audit.constants";
+import { escapeHtml } from "../common/html-escape";
 
 /** Grace period (in days) after a payment failure before suspending the tenant. */
 const PAYMENT_GRACE_DAYS = 3;
@@ -1065,8 +1066,8 @@ export class BillingService {
         await this.email.send({
           to: adminUser.email,
           subject: `Payment failed — ${sub.tenant.name ?? sub.tenant.slug}`,
-          html: `<p>Hello ${adminUser.username},</p>
-<p>We were unable to process your subscription payment for <strong>${sub.tenant.name ?? sub.tenant.slug}</strong>.</p>
+          html: `<p>Hello ${escapeHtml(adminUser.username)},</p>
+<p>We were unable to process your subscription payment for <strong>${escapeHtml(sub.tenant.name ?? sub.tenant.slug)}</strong>.</p>
 <p>Please update your payment method within <strong>${PAYMENT_GRACE_DAYS} days</strong> to avoid service interruption.</p>
 <p>You can update your payment details by contacting support or visiting your billing portal.</p>
 <p>RouteFlow Platform</p>`,

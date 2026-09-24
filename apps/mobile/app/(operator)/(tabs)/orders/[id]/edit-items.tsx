@@ -20,6 +20,8 @@ import { useLocalSearchParams, useNavigation, useRouter } from "expo-router";
 import { ios } from "@routeflow/ui/tokens";
 import { NavBackButton, NavBar, SearchBar } from "@routeflow/ui/mobile/ios";
 import { useAdminOrder } from "../../../../../lib/api/admin";
+import { UnitPickerRow } from "../../../../../components/UnitPickerRow";
+import { unitPriceBase, type UnitOption } from "../../../../../lib/unit-options";
 import {
   useCreditNotes,
   useCreateCreditNote,
@@ -41,7 +43,7 @@ import {
   roundMoney,
 } from "@routeflow/pricing";
 import { freeUnitsLabel } from "../../../../../lib/buyer-cart-logic";
-import { incrementLine, incrementLinePiece, setLineUnits } from "../../../../../lib/sale-line";
+import { isUnitLine, setLineUnits } from "../../../../../lib/sale-line";
 import { buildSubstituteLine } from "../../../../../lib/substitute-line";
 import { findExactScanMatch, looksLikeScanCode, scanUnitKind } from "../../../../../lib/wedge-scan";
 import type { ScanOutcome } from "../../../../../lib/scan-loop";
@@ -49,15 +51,21 @@ import { useMarginConfig, floorForCategory } from "../../../../../lib/api/margin
 import {
   draftFreeUnits,
   draftTrayRows,
+  applyBoxEdit,
+  applyPieceEdit,
+  applyUnitPick,
+  buildPackLadder,
   deserializeEditItemsSnapshot,
   editItemsSnapshotKey,
   hasUnsavedWork,
   hydrateFromOrder,
   isSnapshotStale,
+  ladderProductFor,
   makeEditItemsSnapshot,
   newLocalId,
   orderOriginals,
   pickerTrayExpandedHeight,
+  resolvePickTarget,
   serializeEditItemsSnapshot,
   shouldRehydrateFromOrder,
   snapshotBaseline,
@@ -189,12 +197,19 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
   // Tenant margin config for the live cost/margin hint (P10-POS-1).
   const { data: marginConfig } = useMarginConfig();
   // Lines explicitly acked as "sell anyway" below the margin floor —
-  // session-local, keyed by lineId ?? productId.
+  // session-local, keyed by the SAME draft key as `draft` itself (SA-108).
   const [floorAcked, setFloorAcked] = useState<Set<string>>(new Set());
 
+  // SA-108: keyed by the line's own identity, never productId (hydrateFromOrder).
   const [draft, setDraft] = useState<Record<string, DraftItem>>({});
+  // SA-108d (E44 correction of SA-108a): a manually-kept-fresh mirror of
+  // `draft` for React's eager-dispatch gap — see resolvePickTarget/
+  // applyPickToDraft's doc comment (lib/edit-items-draft.ts) for the full
+  // synchronization contract this ref exists to satisfy.
+  const draftRef = useRef<Record<string, DraftItem>>({});
+  draftRef.current = draft;
   // New + existing ad-hoc lines (productId null). Kept separate from `draft`
-  // (which is keyed by productId) and diffed on save so they aren't dropped.
+  // and diffed on save so they aren't dropped.
   const [unlisted, setUnlisted] = useState<UnlistedDraft[]>([]);
   // Existing line ids removed with the trash button → emitted as DELETE actions
   // in the incremental diff (the server hard-deletes only uninvoiced/undelivered
@@ -215,7 +230,8 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
   const [scanOrder, setScanOrder] = useState<string[]>([]);
   const [trayFlash, setTrayFlash] = useState<ScanFlash | null>(null);
   const [substituteFor, setSubstituteFor] = useState<string | null>(null);
-  const [priceEditItem, setPriceEditItem] = useState<DraftItem | null>(null);
+  // SA-108: carries its draft key alongside it — a new row has no lineId.
+  const [priceEditItem, setPriceEditItem] = useState<{ key: string; item: DraftItem } | null>(null);
   const [licenseBlock, setLicenseBlock] = useState<BlockedCategory[] | null>(null);
   const [restrictedBlock, setRestrictedBlock] = useState<BlockedLine[] | null>(null);
   const [creditBlock, setCreditBlock] = useState<CreditLimitExceededInfo | null>(null);
@@ -573,32 +589,23 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
       return next;
     });
 
+  // units_v1 (SA-085i(c)): applyBoxEdit/applyPieceEdit refuse a unit split AND match master's
+  // OLD non-unit math byte-for-byte — see their doc comment.
+  const commitLine = (d: Record<string, DraftItem>, id: string, line: DraftItem) => {
+    if (line.qty > 0) return { ...d, [id]: line };
+    const next = { ...d };
+    delete next[id];
+    return next;
+  };
   const setBoxes = (id: string, boxes: number) =>
     setDraft((d) => {
       const cur = d[id];
-      if (!cur) return d;
-      const upb = Number(cur.unitsPerBox ?? 0);
-      const b = Math.max(0, Math.floor(boxes));
-      const pcs = cur.pieces ?? 0;
-      const qty = b * upb + pcs;
-      const next = { ...d };
-      if (qty === 0) delete next[id];
-      else next[id] = { ...cur, boxes: b, pieces: pcs, qty, boxSplit: true };
-      return next;
+      return cur ? commitLine(d, id, applyBoxEdit(cur, boxes, Number(cur.unitsPerBox ?? 0))) : d;
     });
-
   const setPieces = (id: string, pieces: number) =>
     setDraft((d) => {
       const cur = d[id];
-      if (!cur) return d;
-      const upb = Number(cur.unitsPerBox ?? 0);
-      const pcs = Math.max(0, Math.floor(pieces));
-      const b = cur.boxes ?? 0;
-      const qty = b * upb + pcs;
-      const next = { ...d };
-      if (qty === 0) delete next[id];
-      else next[id] = { ...cur, boxes: b, pieces: pcs, qty, boxSplit: true };
-      return next;
+      return cur ? commitLine(d, id, applyPieceEdit(cur, pieces, Number(cur.unitsPerBox ?? 0))) : d;
     });
 
   /** Unit mode: the operator types a TOTAL unit count; normalize it back into
@@ -611,12 +618,24 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
       const line = setLineUnits(cur, units, upb);
       const next = { ...d };
       if (!line) delete next[id];
-      else next[id] = { ...line, boxSplit: true };
+      else next[id] = { ...line, boxSplit: isUnitLine(cur) ? false : true };
       return next;
     });
 
   const setSellBy = (id: string, sellBy: "case" | "unit") =>
     setDraft((d) => (d[id] ? { ...d, [id]: { ...d[id], sellBy } } : d));
+
+  // units_v1: apply a `UnitPickerRow` choice — see lib/edit-items-draft.ts#applyUnitPick
+  // (pack-restore tier price, the current-selling-unit-factor convention; size-ratchet extraction).
+  const setUnitLabel = (id: string, option: UnitOption) =>
+    setDraft((d) => {
+      const cur = d[id];
+      if (!cur) return d;
+      const packTierPrice = cur.packLadder
+        ? tierPriceFor({ id: cur.productId, ...cur.packLadder })
+        : cur.catalogPrice;
+      return { ...d, [id]: applyUnitPick(cur, option, packTierPrice) };
+    });
 
   // "Set to floor" one-tap fix (P10-POS-1) — same price-write path as the
   // price-override modal, minus the reason (the ack itself is the record).
@@ -630,19 +649,22 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
   const setLineNote = (id: string, notes: string) =>
     setDraft((d) => (d[id] ? { ...d, [id]: { ...d[id], notes } } : d));
 
+  // units_v1 (SA-085i(c)): a unit line steps its COUNT via setQty; a non-unit line delegates
+  // to setBoxes/setQty exactly like master did.
   const incQty = (id: string) => {
     const cur = draft[id];
     if (!cur) return;
+    if (cur.unitLabel) return setQty(id, (cur.qty ?? 0) + 1);
     const upb = Number(cur.unitsPerBox ?? 0);
     if (upb > 1) setBoxes(id, (cur.boxes ?? 0) + 1);
     else setQty(id, (cur.qty ?? 0) + 1);
   };
 
   /**
-   * Add a picked/scanned product to the draft. `kind === "piece"` is a
-   * PIECE-barcode (unitSku) hit: one LOOSE piece instead of a box, rolling
-   * into a box at unitsPerBox — the same semantics as the sale builders.
-   * Shared by tap-pick (closes the picker) and add-and-stay (scans/wedge).
+   * Add a picked/scanned product to the draft (shared by tap-pick and
+   * add-and-stay). `kind === "piece"` rolls one loose unitSku piece into a
+   * box. Returns the draft KEY (B775: never `p.id`) for callers tracking
+   * "the last thing added" (the picker's price-edit affordance).
    */
   const addPickedToDraft = (
     p: {
@@ -657,55 +679,48 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
       unitsPerBox?: number | null;
     },
     kind: "case" | "piece" = "case",
-  ) => {
+  ): string => {
     const catalogPrice = tierPriceFor(p);
     const listPrice = toNumber(p.pricePerUnit);
     const isSpecial = (cpMap.get(p.id) ?? customerTier ?? 1) !== 1;
     const upbRaw = p.unitsPerBox;
     const unitsPerBox = upbRaw == null ? null : Number(upbRaw);
-    setDraft((d) => {
-      const existing = d[p.id];
-      const upb = Number(existing?.unitsPerBox ?? unitsPerBox ?? 0);
-      const boxed = upb > 1;
-      if (existing) {
-        if (boxed) {
-          const line =
-            kind === "piece"
-              ? incrementLinePiece(existing, true, upb)
-              : incrementLine(existing, true, upb);
-          return { ...d, [p.id]: { ...line, boxSplit: true } };
-        }
-        return { ...d, [p.id]: { ...existing, qty: (existing.qty ?? 0) + 1 } };
-      }
-      // Fresh add: conditionally pre-fill the remembered price — only a
-      // genuine discount (below tier) or upsell (above list), never over
-      // a SPECIAL tier price. Else start at the tier price.
-      const hist = priceHistory?.[p.id];
-      const startPrice =
-        !isSpecial && hist != null && (hist.lastPrice < catalogPrice || hist.lastPrice > listPrice)
-          ? hist.lastPrice
-          : catalogPrice;
-      const base = {
-        productId: p.id,
-        unitsPerBox,
-        unitPrice: startPrice,
-        catalogPrice,
-        name: p.name,
-        unit: p.unit,
-      };
-      if (boxed) {
-        // 1 box for a case scan/tap; 1 LOOSE piece for a piece-code scan.
-        return kind === "piece"
-          ? { ...d, [p.id]: { ...base, qty: 1, boxes: 0, pieces: 1, boxSplit: true } }
-          : { ...d, [p.id]: { ...base, qty: upb, boxes: 1, pieces: 0, boxSplit: true } };
-      }
-      return { ...d, [p.id]: { ...base, qty: 1 } };
+    // Fresh-add starting price — only a genuine discount (below tier) or
+    // upsell (above list), never over a SPECIAL tier price. Else the tier price.
+    const hist = priceHistory?.[p.id];
+    const startPrice =
+      !isSpecial && hist != null && (hist.lastPrice < catalogPrice || hist.lastPrice > listPrice)
+        ? hist.lastPrice
+        : catalogPrice;
+    // Key resolution + the pure `apply(d)` updater: resolvePickTarget (lib/edit-items-draft.ts).
+    const { key, existingLabel, apply } = resolvePickTarget(draftRef.current, {
+      productId: p.id,
+      name: p.name,
+      unit: p.unit,
+      unitsPerBox,
+      kind,
+      startPrice,
+      catalogPrice,
+      packLadder: buildPackLadder({ ...p, unitsPerBox }),
     });
+    const commit = () => {
+      draftRef.current = apply(draftRef.current);
+      setDraft(apply);
+    };
+    if (kind === "piece" && existingLabel) {
+      confirm(`Add 1 ${existingLabel}?`, `${p.name} is sold by ${existingLabel}.`, commit, {
+        confirmText: `Add 1 ${existingLabel}`,
+      });
+      return key;
+    }
+    commit();
+    return key;
   };
 
   const decQty = (id: string) => {
     const cur = draft[id];
     if (!cur) return;
+    if (cur.unitLabel) return setQty(id, Math.max(0, (cur.qty ?? 0) - 1));
     const upb = Number(cur.unitsPerBox ?? 0);
     if (upb > 1) setBoxes(id, Math.max(0, (cur.boxes ?? 0) - 1));
     else setQty(id, Math.max(0, (cur.qty ?? 0) - 1));
@@ -735,8 +750,10 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
   // so these four have to be referentially stable — a "latest deps" ref keeps
   // them stable while still dispatching against the current draft.
   const trayDepsRef = useRef({
+    draft,
     unlisted,
     setUnits,
+    setQty,
     incQty,
     decQty,
     removeLine,
@@ -744,8 +761,10 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
     removeUnlisted,
   });
   trayDepsRef.current = {
+    draft,
     unlisted,
     setUnits,
+    setQty,
     incQty,
     decQty,
     removeLine,
@@ -754,10 +773,12 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
   };
   const unlistedRow = (id: string) => trayDepsRef.current.unlisted.find((u) => u.id === id);
   // ScanTray hands a TOTAL UNIT count (ScanTray.tsx), which is exactly what
-  // `setUnits` normalises back into cases + loose.
+  // `setUnits` normalises back into cases + loose — except a unit-sold line (units_v1,
+  // SA-085f), whose total IS the count already, so it goes through `setQty` instead.
   const onTrayChangeQty = useCallback((id: string, units: number) => {
     const d = trayDepsRef.current;
     if (unlistedRow(id)) d.setUnlistedQty(id, units);
+    else if (isUnitLine(d.draft[id] ?? {})) d.setQty(id, units);
     else d.setUnits(id, units);
   }, []);
   const onTrayIncrement = useCallback((id: string) => {
@@ -953,19 +974,22 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
 
       {priceEditItem ? (
         <PriceOverrideModal
-          item={priceEditItem}
-          isSpecial={isSpecialFor(priceEditItem.productId)}
+          item={priceEditItem.item}
+          isSpecial={isSpecialFor(priceEditItem.item.productId)}
           onSave={(price, reason) => {
             // B263 D2: rounding + lineTotal recompute now live in the shared
             // helper (money discipline) — never write the raw typed price.
-            const updated = applyPriceOverride(priceEditItem, {
+            const updated = applyPriceOverride(priceEditItem.item, {
               unitPrice: price,
               reason: reason || undefined,
             });
+            // SA-108: write back to priceEditItem's OWN stored key — a new
+            // row has no lineId, so re-deriving one would double-CREATE it.
+            const key = priceEditItem.key;
             setDraft((d) => ({
               ...d,
-              [priceEditItem.productId]: {
-                ...priceEditItem,
+              [key]: {
+                ...priceEditItem.item,
                 unitPrice: updated.unitPrice,
                 overrideReason: updated.overrideReason,
               },
@@ -1049,10 +1073,11 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
             substituteFor
               ? undefined
               : (p, kind) => {
-                  addPickedToDraft(p, kind);
-                  setLastScannedId(p.id);
-                  setScanOrder((o) => bumpScanOrder(o, p.id));
-                  setTrayFlash((f) => nextFlash(f, p.id));
+                  // B775: track the draft KEY (addPickedToDraft's return), not p.id.
+                  const key = addPickedToDraft(p, kind);
+                  setLastScannedId(key);
+                  setScanOrder((o) => bumpScanOrder(o, key));
+                  setTrayFlash((f) => nextFlash(f, key));
                 }
           }
           trayRows={trayRows}
@@ -1075,23 +1100,25 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
                 )
               : null
           }
-          lastAddedAcked={
-            lastAddedLine ? floorAcked.has(lastAddedLine.lineId ?? lastAddedLine.productId) : false
-          }
+          lastAddedAcked={lastScannedId ? floorAcked.has(lastScannedId) : false}
           // Finding B263-H: the same floor-FRACTION call the list row's own
           // `marginFloor` prop uses (`:983`) — lets the strip classify
           // `lastAdded` with the row's exact derivation, not a hand-rolled one.
           marginFloor={floorForCategory(marginConfig, lastAddedLine?.category)}
-          // The list row's Set-to-floor writer, verbatim (`setLinePrice`) —
-          // one price-write path for both surfaces.
-          onSetToFloor={(item, price) => setLinePrice(item.productId, price)}
-          onEditPrice={(item, price, reason) => {
+          // The list row's Set-to-floor writer, verbatim — SA-108:
+          // `lastScannedId` IS the draft key (addPickedToDraft's return).
+          onSetToFloor={(_item, price) => {
+            if (lastScannedId) setLinePrice(lastScannedId, price);
+          }}
+          onEditPrice={(_item, price, reason) => {
+            const key = lastScannedId;
+            if (!key) return;
             setDraft((d) => {
-              const cur = d[item.productId];
+              const cur = d[key];
               if (!cur) return d;
               return {
                 ...d,
-                [item.productId]: { ...cur, unitPrice: price, overrideReason: reason },
+                [key]: { ...cur, unitPrice: price, overrideReason: reason },
               };
             });
           }}
@@ -1108,12 +1135,13 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
               setDraft((d) => {
                 const next = { ...d };
                 const old = next[substituteFor];
-                delete next[substituteFor];
                 // Re-denominates the inherited piece count against the
                 // SUBSTITUTE's box size and keeps its LIST price as the line's
                 // base, so the box split and the customer's tier price both
                 // reach the server (lib/substitute-line.ts).
-                next[p.id] = buildSubstituteLine({
+                // B775: reuse `substituteFor` itself as the key — never the
+                // substitute PRODUCT's id, which could collide with another line.
+                next[substituteFor] = buildSubstituteLine({
                   previous: old,
                   product: { id: p.id, name: p.name, unit: p.unit, unitsPerBox: p.unitsPerBox },
                   tierPrice,
@@ -1123,9 +1151,10 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
               });
               setSubstituteFor(null);
             } else {
-              addPickedToDraft(p, kind);
-              setScanOrder((o) => bumpScanOrder(o, p.id));
-              setTrayFlash((f) => nextFlash(f, p.id));
+              // B775: track the draft KEY, not p.id — see the onPickAndStay note above.
+              const key = addPickedToDraft(p, kind);
+              setScanOrder((o) => bumpScanOrder(o, key));
+              setTrayFlash((f) => nextFlash(f, key));
             }
             setShowPicker(false);
             setPickerScanIntent(false);
@@ -1266,40 +1295,50 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
               {Object.values(draft).length === 0 && unlisted.length === 0 ? (
                 <Text style={styles.empty}>No items. Add one below.</Text>
               ) : (
-                Object.values(draft).map((it) => (
-                  <DraftItemCard
-                    key={it.productId}
-                    item={it}
-                    canSplitBoxes={canSplitBoxes}
-                    canEditPrice={canEditPriceFor(it.productId)}
-                    pricingReady={pricingReady}
-                    marginFloor={floorForCategory(marginConfig, it.category)}
-                    acked={floorAcked.has(it.lineId ?? it.productId)}
-                    onSetToFloor={(price) => setLinePrice(it.productId, price)}
-                    onSellAnyway={() =>
-                      setFloorAcked((prev) => new Set(prev).add(it.lineId ?? it.productId))
-                    }
-                    onIncQty={() => incQty(it.productId)}
-                    onDecQty={() => decQty(it.productId)}
-                    onSetQty={(n) => setQty(it.productId, n)}
-                    onSetBoxes={(n) => setBoxes(it.productId, n)}
-                    onSetPieces={(n) => setPieces(it.productId, n)}
-                    onSetUnits={(n) => setUnits(it.productId, n)}
-                    onSetSellBy={(v) => setSellBy(it.productId, v)}
-                    onSetNote={(notes) => setLineNote(it.productId, notes)}
-                    onPressPrice={() => setPriceEditItem(it)}
-                    onPressSubstitute={() => {
-                      setSubstituteFor(it.productId);
-                      setShowPicker(true);
-                    }}
-                    onRemove={() =>
-                      confirm("Remove item?", it.name, () => removeLine(it.productId), {
-                        confirmText: "Remove",
-                        destructive: true,
-                      })
-                    }
-                  />
-                ))
+                // SA-108 review of B775: the draft record's KEY is a line's
+                // ONLY identity and is NEVER re-derived from its own fields
+                // (`it.lineId ?? it.productId` reads `undefined` for a
+                // not-yet-saved row — only hydrateFromOrder stamps lineId —
+                // so every writer below would silently target the wrong,
+                // nonexistent key, and a brand-new line could never again be
+                // stepped, priced, noted, substituted or removed). Object.entries
+                // hands back the TRUE key straight from iteration; no formula.
+                Object.entries(draft).map(([key, it]) => {
+                  return (
+                    <DraftItemCard
+                      key={key}
+                      item={it}
+                      canSplitBoxes={canSplitBoxes}
+                      canEditPrice={canEditPriceFor(it.productId)}
+                      pricingReady={pricingReady}
+                      tier={effectiveTierFor(it.productId)}
+                      marginFloor={floorForCategory(marginConfig, it.category)}
+                      acked={floorAcked.has(key)}
+                      onSetToFloor={(price) => setLinePrice(key, price)}
+                      onSellAnyway={() => setFloorAcked((prev) => new Set(prev).add(key))}
+                      onIncQty={() => incQty(key)}
+                      onDecQty={() => decQty(key)}
+                      onSetQty={(n) => setQty(key, n)}
+                      onSetBoxes={(n) => setBoxes(key, n)}
+                      onSetPieces={(n) => setPieces(key, n)}
+                      onSetUnits={(n) => setUnits(key, n)}
+                      onSetSellBy={(v) => setSellBy(key, v)}
+                      onSetUnit={(opt) => setUnitLabel(key, opt)}
+                      onSetNote={(notes) => setLineNote(key, notes)}
+                      onPressPrice={() => setPriceEditItem({ key, item: it })}
+                      onPressSubstitute={() => {
+                        setSubstituteFor(key);
+                        setShowPicker(true);
+                      }}
+                      onRemove={() =>
+                        confirm("Remove item?", it.name, () => removeLine(key), {
+                          confirmText: "Remove",
+                          destructive: true,
+                        })
+                      }
+                    />
+                  );
+                })
               )}
               {unlisted.map((u) => (
                 <UnlistedDraftCard
@@ -1426,6 +1465,7 @@ function DraftItemCard({
   canSplitBoxes,
   canEditPrice,
   pricingReady,
+  tier,
   marginFloor,
   acked,
   onSetToFloor,
@@ -1437,6 +1477,7 @@ function DraftItemCard({
   onSetPieces,
   onSetUnits,
   onSetSellBy,
+  onSetUnit,
   onSetNote,
   onPressPrice,
   onPressSubstitute,
@@ -1446,6 +1487,8 @@ function DraftItemCard({
   canSplitBoxes: boolean;
   /** Price / discount editing is offered while the order is editable (DRAFT/PENDING/CONFIRMED). */
   canEditPrice: boolean;
+  /** units_v1: the EFFECTIVE numeric tier for `UnitPickerRow` to resolve the ladder price at. */
+  tier: number;
   /** B62 (REG-B62): false while the customer/customer-price queries are in
    *  flight — gates Substitute, which prices (and SENDS) the replacement line
    *  off the tier that isn't known yet. */
@@ -1464,18 +1507,26 @@ function DraftItemCard({
   /** Unit mode: total unit count, routed through setLineUnits. */
   onSetUnits: (n: number) => void;
   onSetSellBy: (sellBy: "case" | "unit") => void;
+  /** units_v1: a `UnitPickerRow` choice, routed through setUnitLabel. */
+  onSetUnit: (option: UnitOption) => void;
   onSetNote: (notes: string) => void;
   onPressPrice: () => void;
   onPressSubstitute: () => void;
   onRemove: () => void;
 }) {
   const [noteOpen, setNoteOpen] = useState(Boolean(item.notes?.trim()));
-  const isOverridden = item.unitPrice !== item.catalogPrice;
-  const isUpsell = item.unitPrice > item.catalogPrice;
+  // units_v1: while a unit is active, `unitBasePrice` (that unit's own resolved tier price,
+  // set alongside `unitPrice` by setUnitLabel) is the correct override-comparison base —
+  // `catalogPrice` is the PACK's price, which a Case's price always differs from regardless of
+  // any operator override — see lib/unit-options.ts#unitPriceBase.
+  const priceBase = unitPriceBase(item, item.catalogPrice);
+  const isOverridden = item.unitPrice !== priceBase;
+  const isUpsell = item.unitPrice > priceBase;
   // Green for an upsell (sold above catalog), orange for a discount.
   const overrideColor = isUpsell ? ios.system.greenInk : ios.system.orangeInk;
   const upb = Number(item.unitsPerBox ?? 0);
-  const isBoxed = upb > 1 && canSplitBoxes;
+  // units_v1: a unit-sold line is never boxed UI — see CartRow's identical gate.
+  const isBoxed = upb > 1 && canSplitBoxes && !item.unitLabel;
   const sellBy = item.sellBy ?? "case";
   const qty = effectiveQty(item, item.unitsPerBox);
   const freeUnits = draftFreeUnits(item);
@@ -1519,14 +1570,20 @@ function DraftItemCard({
             {canEditPrice ? (
               <Pressable onPress={onPressPrice} style={styles.priceTap} hitSlop={6}>
                 {isOverridden && !isUpsell ? (
-                  <Text style={styles.priceStrike}>${item.catalogPrice.toFixed(2)}</Text>
+                  <Text style={styles.priceStrike}>${priceBase.toFixed(2)}</Text>
                 ) : null}
                 <Text
                   style={[styles.cardMeta, isOverridden && { color: overrideColor }]}
                   numberOfLines={2}
                 >
                   ${item.unitPrice.toFixed(2)}
-                  {isBoxed ? ` / box of ${upb}` : item.unit ? ` / ${item.unit}` : ""}
+                  {isBoxed
+                    ? ` / box of ${upb}`
+                    : item.unitLabel
+                      ? ` / ${item.unitLabel}`
+                      : item.unit
+                        ? ` / ${item.unit}`
+                        : ""}
                   {perUnitHint != null ? ` · ≈ $${perUnitHint.toFixed(2)}/unit` : ""}
                 </Text>
                 {isUpsell ? (
@@ -1543,14 +1600,20 @@ function DraftItemCard({
             ) : (
               <View style={styles.priceTap}>
                 {isOverridden && !isUpsell ? (
-                  <Text style={styles.priceStrike}>${item.catalogPrice.toFixed(2)}</Text>
+                  <Text style={styles.priceStrike}>${priceBase.toFixed(2)}</Text>
                 ) : null}
                 <Text
                   style={[styles.cardMeta, isOverridden && { color: overrideColor }]}
                   numberOfLines={2}
                 >
                   ${item.unitPrice.toFixed(2)}
-                  {isBoxed ? ` / box of ${upb}` : item.unit ? ` / ${item.unit}` : ""}
+                  {isBoxed
+                    ? ` / box of ${upb}`
+                    : item.unitLabel
+                      ? ` / ${item.unitLabel}`
+                      : item.unit
+                        ? ` / ${item.unit}`
+                        : ""}
                   {perUnitHint != null ? ` · ≈ $${perUnitHint.toFixed(2)}/unit` : ""}
                 </Text>
                 {isUpsell ? (
@@ -1604,6 +1667,18 @@ function DraftItemCard({
       {/* Editor — a Cases/Units segmented control switches entry mode. Cases
           mode dials Boxes and Loose units independently; Units mode is a
           single uncapped total-unit stepper routed through setLineUnits. */}
+      <UnitPickerRow
+        line={{
+          productId: item.productId,
+          unitPrice: item.unitPrice,
+          unitLabel: item.unitLabel,
+        }}
+        product={ladderProductFor(item)}
+        tier={tier}
+        onChange={onSetUnit}
+        style={{ marginBottom: isBoxed ? 2 : 8 }}
+      />
+
       {isBoxed ? (
         <View style={{ gap: 8 }}>
           <SellByToggle value={sellBy} onChange={onSetSellBy} />
@@ -1629,7 +1704,7 @@ function DraftItemCard({
         </View>
       ) : (
         <StepperRow
-          label={`Qty${item.unit ? ` (${item.unit})` : ""}`}
+          label={`Qty${item.unitLabel ? ` (${item.unitLabel})` : item.unit ? ` (${item.unit})` : ""}`}
           value={item.qty}
           onChange={onSetQty}
           onIncrement={onIncQty}
@@ -1796,12 +1871,12 @@ function PriceOverrideModal({
    *  it, mirroring the server's own refusal and the web reference. */
   isSpecial?: boolean;
 }) {
+  // units_v1: see lib/unit-options.ts#unitPriceBase — same reasoning as the card's own priceBase.
+  const priceBase = unitPriceBase(item, item.catalogPrice);
   const [priceText, setPriceText] = useState(item.unitPrice.toFixed(2));
-  // "$ off / unit" is a lens over (catalogPrice - newPrice); the two inputs stay in sync.
+  // "$ off / unit" is a lens over (priceBase - newPrice); the two inputs stay in sync.
   const [offText, setOffText] = useState(
-    item.unitPrice < item.catalogPrice
-      ? roundMoney(item.catalogPrice - item.unitPrice).toFixed(2)
-      : "",
+    item.unitPrice < priceBase ? roundMoney(priceBase - item.unitPrice).toFixed(2) : "",
   );
   const [reason, setReason] = useState(item.overrideReason ?? "");
   const newPrice = toNumber(priceText);
@@ -1815,17 +1890,17 @@ function PriceOverrideModal({
       setOffText("");
       return;
     }
-    setOffText(parsed < item.catalogPrice ? roundMoney(item.catalogPrice - parsed).toFixed(2) : "");
+    setOffText(parsed < priceBase ? roundMoney(priceBase - parsed).toFixed(2) : "");
   };
 
   const onChangeOff = (raw: string) => {
     setOffText(raw);
     const off = parseFloat(raw);
     if (raw.trim() === "" || isNaN(off) || off <= 0) {
-      setPriceText(item.catalogPrice.toFixed(2));
+      setPriceText(priceBase.toFixed(2));
       return;
     }
-    setPriceText(roundMoney(Math.max(0, item.catalogPrice - off)).toFixed(2));
+    setPriceText(roundMoney(Math.max(0, priceBase - off)).toFixed(2));
   };
 
   return (
@@ -1834,7 +1909,7 @@ function PriceOverrideModal({
         <Pressable style={styles.modalCard} onPress={(e) => e.stopPropagation()}>
           <Text style={styles.modalTitle}>Override price</Text>
           <Text style={styles.modalSub}>{item.name}</Text>
-          <Text style={styles.modalLabel}>List price: ${item.catalogPrice.toFixed(2)}</Text>
+          <Text style={styles.modalLabel}>List price: ${priceBase.toFixed(2)}</Text>
 
           <Text style={styles.modalFieldLabel}>New unit price</Text>
           <TextInput
