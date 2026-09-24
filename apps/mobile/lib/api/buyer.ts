@@ -141,6 +141,8 @@ export interface BuyerOrder {
     promoFreeUnits?: number | null;
     /** Per-line note, buyer-visible. */
     notes?: string | null;
+    /** units_v1: sold by a non-pack unit (Case, Pallet, Piece…) — null/absent = the pack. */
+    unitLabel?: string | null;
     product?: { id: string; name: string; unit?: string };
   }>;
   /** P5-09: post-dispatch change requests, newest first. */
