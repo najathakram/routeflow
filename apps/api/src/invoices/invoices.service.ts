@@ -21,6 +21,7 @@ import {
   isBlockingPayment,
   remainingCapacity,
   packFromOwnSplit,
+  regulatedUnitBasis,
   type CategoryTaxType,
   inferredFlatRate,
 } from "@routeflow/pricing";
@@ -3397,9 +3398,12 @@ export class InvoicesService {
           ? categoryMap.get(product.trackedCategoryId)
           : null;
         const upbForPieces = Number(livePack ?? 0);
-        // B661-sweep: a line-tax (not ledger) box-unaware multiply — follow-up PR converts this to
-        // @routeflow/pricing's regulatedUnitBasis; see no-second-legacy-line-pieces.spec.ts's allowlist.
-        const pieceQty = boxes != null ? qty : upbForPieces > 1 ? qty * upbForPieces : qty;
+        // B679: the ONE conversion this design allows — never an inline copy of it. `item`
+        // is never a unit-labeled line here: update() refuses dto.items.some(requestsUnit) above.
+        const pieceQty = regulatedUnitBasis(
+          { qty, boxes, pieces, unitLabel: item.unitLabel ?? null },
+          upbForPieces,
+        ).unitBasisQty;
         const categoryTaxAmount = category
           ? computeCategoryTax({
               taxType: category.taxType as CategoryTaxType,
@@ -6189,21 +6193,17 @@ export class InvoicesService {
             ).map((pr: any) => [pr.id, Number(pr.unitsPerBox ?? 0)])
           : [],
       );
-      // Mirrors orders.service's linePieceQty: a box-split line stores qty already in
-      // pieces; a boxed selling-unit line expands by its snapshotted unitsPerBox,
-      // falling back to the product's. Unused by PERCENT_OF_SALE (unitBasisQty is
-      // ignored there) but correct for an EXCISE_PER_UNIT / PER_VOLUME /
-      // DEPOSIT_PER_CONTAINER line.
-      // B661-sweep: a line-tax (not ledger) box-unaware multiply — follow-up PR converts this to
-      // @routeflow/pricing's regulatedUnitBasis; see no-second-legacy-line-pieces.spec.ts's allowlist.
-      const linePieceQty = (li: any): number => {
-        const qty = Number(li.qty) || 0;
-        if (li.boxes != null) return qty;
-        const upb = Number(
+      // B679: mirrors orders.service.recomputeLineCategoryTaxes — a box-split line stores qty
+      // already in pieces; a boxed selling-unit line expands by its snapshotted unitsPerBox,
+      // falling back to the product's. Unused by PERCENT_OF_SALE (unitBasisQty is ignored
+      // there) but correct for an EXCISE_PER_UNIT / PER_VOLUME / DEPOSIT_PER_CONTAINER line.
+      // Delegates to regulatedUnitBasis (@routeflow/pricing) — the ONE place this conversion
+      // happens — instead of an independent copy of its box-unaware fallback branch.
+      const linePieceQty = (li: any): number =>
+        regulatedUnitBasis(
+          { qty: Number(li.qty) || 0, boxes: li.boxes, pieces: li.pieces, unitLabel: li.unitLabel },
           li.unitsPerBox ?? (li.productId ? unitsPerBoxByProduct.get(li.productId) : null) ?? 0,
-        );
-        return upb > 1 ? qty * upb : qty;
-      };
+        ).unitBasisQty;
 
       // B294 (SA-141): a legacy order/estimate-derived invoice (every line taxRate 0, a real
       // regular tax) keeps its tax — stamp the inferred flat rate onto its lines first.
