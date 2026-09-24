@@ -3616,6 +3616,26 @@ export class OrdersService implements OnApplicationBootstrap {
                 });
               }
             }
+            // SA-124f: keyed by LINE id, never ambiguous under the two-pack shape the way
+            // existingLineByProduct is (its "exactly one pre-edit/incoming line" guard EXCLUDES
+            // a genuine two-pack product entirely, so a fold-output item for either pack falls
+            // through to being treated as an unqualified price change). `foldMergeItems` carries
+            // each output item's own SOURCE line id (`sourceLineId`) — when present, this is the
+            // authoritative, unambiguous comparison target; the product-keyed map above is the
+            // fallback for a payload item with no id (a direct manual replaceAll edit that never
+            // went through the fold).
+            const existingLineById = new Map<
+              string,
+              { unitPrice: number; priceType: string | null; overrideReason: string | null }
+            >();
+            for (const li of order.lineItems ?? []) {
+              if (!li.id || li.status === "CANCELLED") continue;
+              existingLineById.set(li.id, {
+                unitPrice: Number(li.unitPrice),
+                priceType: li.priceType ?? null,
+                overrideReason: (li as any).overrideReason ?? null,
+              });
+            }
 
             // SA-124e: the pack each product's pre-edit lines carried, read BEFORE the delete
             // below erases them — the ONE input `resolveReplaceAllLinePack`'s step (b) needs.
@@ -3717,7 +3737,13 @@ export class OrdersService implements OnApplicationBootstrap {
               // reason forward as `item.overrideReason`; when the payload omits
               // one anyway, fall back to the existing line's own stored reason
               // before refusing (mirrors the UPDATE branch's same fallback).
-              const replaceAllExisting = existingLineByProduct.get(item.productId);
+              // SA-124f: prefer the fold's own sourceLineId (unambiguous even under the
+              // two-pack shape) — the product-keyed map is the fallback for a payload item
+              // with no id (a direct manual replaceAll edit that never went through the fold).
+              const sourceLineId = (item as { sourceLineId?: string }).sourceLineId;
+              const replaceAllExisting = sourceLineId
+                ? existingLineById.get(sourceLineId)
+                : existingLineByProduct.get(item.productId);
               const replaceAllPriceUnchanged =
                 replaceAllExisting != null &&
                 (overridePrice === null ||

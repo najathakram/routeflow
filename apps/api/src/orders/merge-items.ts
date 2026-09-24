@@ -2,6 +2,11 @@ import { ConflictException } from "@nestjs/common";
 import { normalizeBoxesPieces } from "@routeflow/pricing";
 
 export interface MergeLineSnapshot {
+  // SA-124f: the row's own id — carried through to the fold's output as `sourceLineId`, so a
+  // caller comparing "is this line's price actually changing" can key by the SPECIFIC line
+  // instead of by productId (which the SA-124a/SA-124c two-pack shape makes ambiguous: two
+  // existing lines of one product at two different prices, one bucket per line).
+  id?: string | null;
   productId?: string | null;
   name?: string | null;
   // Prisma Decimal on the real OrderItem row (coerced via Number() below) —
@@ -108,6 +113,10 @@ type FoldAcc = {
   hadExisting: boolean;
   /** …and that line was itself box-split. */
   existingBoxAware: boolean;
+  /** SA-124f: the SPECIFIC existing line that seeded this bucket, if any — a bucket now
+   * corresponds to at most ONE existing line (SA-124e MED-5's per-line buckets), so this is
+   * never ambiguous the way a productId-keyed lookup is under the two-pack shape. */
+  sourceLineId?: string;
   unitPrice?: number;
   existingPriceType?: string | null;
   notes?: string | null;
@@ -166,6 +175,7 @@ export function foldMergeItems(
       boxAware: hasBoxData,
       hadExisting: true,
       existingBoxAware: hasBoxData,
+      sourceLineId: li.id ?? undefined,
       unitPrice: li.unitPrice != null ? Number(li.unitPrice) : undefined,
       existingPriceType: li.priceType ?? null,
       notes: li.notes ?? null,
@@ -330,6 +340,9 @@ export function foldMergeItems(
         // SA-124e(1): the bucket's own resolved pack rides along so a replace-all rebuild can
         // recreate this line at the pack it was ACTUALLY priced at, never the live product row.
         ...(acc.unitsPerBox > 1 ? { unitsPerBox: acc.unitsPerBox } : {}),
+        // SA-124f: the specific existing line this bucket came from (none for a brand-new
+        // line) — the rebuild compares/preserves price by THIS id, never by productId alone.
+        ...(acc.sourceLineId ? { sourceLineId: acc.sourceLineId } : {}),
         ...(acc.unitPrice != null && priceSurvives ? { unitPrice: acc.unitPrice } : {}),
         // B465: the reason travels with the price it justifies — never survives
         // when the price itself doesn't (a re-derived line has nothing to
