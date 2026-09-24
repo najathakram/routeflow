@@ -107,9 +107,12 @@ describe("no second legacyLinePieces reimplementation in apps/api/src", () => {
  * design still allows it — inside `writeSaleEntries`, at write time, against a snapshot pack.
  * ANY new match fails the build. An ALLOWLIST below names every site that already did this before
  * B661 (Senior Architect ruling 2026-09-21). B679 (SA-144b, 2026-09-24) converted the four sites
- * that fed a LINE's own categoryTaxAmount snapshot — orders.service.ts's create(), both
- * invoices.service.ts sites, and the shared linePieceQty helper — leaving only sites that feed
- * something other than category tax (a promo threshold, not this ratchet's concern). Each
+ * CONFIRMED to feed a LINE's own categoryTaxAmount snapshot — orders.service.ts's create(), both
+ * invoices.service.ts sites, and the shared linePieceQty helper. Of what's left, only
+ * orders.service.ts's three updateOrderItems() sites are confirmed NOT category tax (traced to
+ * resolveBuyerLinePrice's promo threshold instead). manual-invoice-lines.ts and
+ * order-templates.service.ts were NOT traced by B679 — they may still derive a tax (or other
+ * money) basis inline, the same bug class, just not yet investigated. Each
  * allowlisted file carries a `B661-sweep` comment tag at every site (for a human to find) AND an
  * exact match-COUNT pin below (the actual enforcement) — so the allowlist can only ever SHRINK: a
  * stale count (converted a site but forgot to lower its number here) fails exactly like a NEW,
@@ -128,13 +131,15 @@ describe("no second box-unaware qty*pack multiplication in apps/api/src (B661)",
     return (strippedText.match(re) ?? []).length;
   }
 
-  // B661 sweep, follow-up. B679 converted the four sites that actually fed
+  // B661 sweep, follow-up. B679 converted the four sites CONFIRMED to feed
   // computeCategoryTax's unitBasisQty (orders.service.ts's create(), both
   // invoices.service.ts sites, and the shared linePieceQty helper) to regulatedUnitBasis —
   // see line-piece-qty.ts, orders.service.ts's create(), and invoices.service.ts's update()/
   // applyPriceAdjustment(). orders.service.ts's remaining three updateOrderItems() sites are
-  // NOT category tax: they feed resolveBuyerLinePrice's QTY_BREAK/BUY_N_GET_M promo threshold
-  // for pack lines (B789's stamping-rule scope, not this one).
+  // CONFIRMED NOT category tax: they feed resolveBuyerLinePrice's QTY_BREAK/BUY_N_GET_M promo
+  // threshold for pack lines (B789's stamping-rule scope, not this one). manual-invoice-lines.ts
+  // and order-templates.service.ts below were NOT traced by B679 — still an open question
+  // whether either feeds a tax/money basis the same way; a candidate follow-up, not this PR.
   const ALLOWLIST: { file: string; count: number }[] = [
     { file: "orders/orders.service.ts", count: 3 }, // updateOrderItems() ×3 (promo threshold, B789)
     { file: "invoices/manual-invoice-lines.ts", count: 1 }, // buildManualInvoiceLines()
