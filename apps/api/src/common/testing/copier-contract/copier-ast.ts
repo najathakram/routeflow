@@ -157,6 +157,14 @@ function enclosingFn(n: ts.Node): ts.Node | undefined {
   return p;
 }
 
+/**
+ * The function-like node whose OWN body `fn` is: findFunctions returns the VariableDeclaration for
+ * `const f = () => {}` / `const f = function () {}`, and a return's enclosing function is then the
+ * initializer, never the declaration (without this, `nested` silently did nothing for those forms).
+ */
+const ownBody = (fn: ts.Node): ts.Node =>
+  ts.isVariableDeclaration(fn) && fn.initializer ? fn.initializer : fn;
+
 /** Top-level keys of the line-write literals inside function `ref.name`, or null when it is not found. */
 export function writtenKeys(src: string, ref: FnRef): Set<string> | null {
   const fns = findFunctions(src, ref.name);
@@ -188,7 +196,10 @@ export function writtenKeys(src: string, ref: FnRef): Set<string> | null {
         a.via === "return" &&
         ts.isReturnStatement(n) &&
         n.expression &&
-        (!a.nested || enclosingFn(n) !== fn)
+        // `nested` counts only returns inside an inner function (the line callback). Stated limits:
+        // a return in ANY inner function counts (a helper arrow, an IIFE), and a concise-body
+        // callback `i => ({ … })` has no ReturnStatement, so it reads nothing: a false RED, never green.
+        (!a.nested || enclosingFn(n) !== ownBody(fn))
       )
         lits.push(...outermostLiterals(n.expression, fn));
       ts.forEachChild(n, visit);

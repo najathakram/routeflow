@@ -351,6 +351,21 @@ describe("copier contract mutation proofs (each must turn the spec red)", () => 
           bWorld(bx.replace(", subtotal: s }", " }"), { ...bEntry, anchor: { via: "return" } }),
         ),
       ).toEqual([]));
+    // The same builder written `const b = (items) => { … }` (or a function expression): nested must
+    // still exclude the builder's OWN return, or a pure syntax refactor brings the false green back.
+    const arrow = bx.replace("function b(items) {", "const b = (items) => {");
+    const fnExpr = bx.replace("function b(items) {", "const b = function (items) {");
+    for (const [label, src] of [
+      ["an arrow", arrow],
+      ["a function-expression", fnExpr],
+    ] as const) {
+      it(`${label} builder: baseline green, and a dropped line subtotal -> red`, () => {
+        expect(evaluate(bWorld(src))).toEqual([]);
+        expect(evaluate(bWorld(src.replace(", subtotal: s }", " }"))).join()).toMatch(
+          /"subtotal" is classified carried but is no longer written/,
+        );
+      });
+    }
   });
   it("a stale NOT_A_COPIER entry and a reasonless one -> red", () =>
     expect(
