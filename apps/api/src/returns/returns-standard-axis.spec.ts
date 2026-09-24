@@ -135,11 +135,45 @@ describe("ReturnsService.create — STANDARD return axis (B650/B754, SA-158)", (
     expect(txReturn.create).not.toHaveBeenCalled();
   });
 
-  it("(v) a legacy line with no split, a stored pack and no invoice split: 409 unknown, never booked as pieces", async () => {
+  // SA-161: the legacy box-unaware shape (stored pack, no split, no invoice split) is UNKNOWN to the
+  // resolver, but the cap needs no pack: typed and sold share the line's own unit (master's arithmetic).
+  it("(vii) legacy unknown line, no prior: a return of 2 succeeds, cap is 2 line units, qty stays in line units", async () => {
     const { service, txReturn } = await harness({ lineItems: [boxLine], invoiceItems: [] });
-    await expect(service.create(dto(1) as any, "user-1")).rejects.toThrow(
-      /quantity basis unknown for product p1/i,
+    await service.create(dto(2) as any, "user-1");
+    expect(txReturn.create.mock.calls[0][0].data.items.create[0].qty).toBe(2);
+    const over = await harness({ lineItems: [boxLine], invoiceItems: [] });
+    await expect(over.service.create(dto(3) as any, "user-1")).rejects.toThrow(
+      /Return qty \(3\) exceeds remaining returnable qty \(2\)/,
     );
+  });
+
+  it("(viii) with a prior STANDARD return of 1 of 2: remaining 1, a return of 2 refuses, of 1 succeeds", async () => {
+    const prior = [{ items: [{ productId: "p1", qty: 1 }] }];
+    const refuse = await harness({ lineItems: [boxLine], invoiceItems: [], priorStandard: prior });
+    await expect(refuse.service.create(dto(2) as any, "user-1")).rejects.toBeInstanceOf(
+      BadRequestException,
+    );
+    expect(refuse.txReturn.create).not.toHaveBeenCalled();
+    const ok = await harness({ lineItems: [boxLine], invoiceItems: [], priorStandard: prior });
+    await expect(ok.service.create(dto(1) as any, "user-1")).resolves.toBeDefined();
+  });
+
+  it("(ix) a prior INLINE return (pieces) on a legacy unknown line: 409 cannot reconcile, nothing written", async () => {
+    const { service, txReturn } = await harness({
+      lineItems: [boxLine],
+      invoiceItems: [],
+      priorInline: [{ productId: "p1", qty: 12 }],
+    });
+    await expect(service.create(dto(1) as any, "user-1")).rejects.toThrow(
+      /cannot reconcile a piece-based return with this line's unit/,
+    );
+    expect(txReturn.create).not.toHaveBeenCalled();
+  });
+
+  it("(x) a resolvable line of the same product beside an unresolvable one is NOT a coherent line-unit sum: 409", async () => {
+    const split = line({ id: "l2", qty: 6, boxes: 0, pieces: 6, unitsPerBox: 12 });
+    const { service, txReturn } = await harness({ lineItems: [boxLine, split], invoiceItems: [] });
+    await expect(service.create(dto(1) as any, "user-1")).rejects.toBeInstanceOf(ConflictException);
     expect(txReturn.create).not.toHaveBeenCalled();
   });
 
@@ -194,7 +228,7 @@ describe("SA-159: one product's unknown prior does not block another product", (
   const twoProducts = { lineItems: [boxLine, cleanB], invoiceItems: [] as any[] };
   const priorA = [{ items: [{ productId: "p1", qty: 1 }] }];
 
-  it("a STANDARD return of B succeeds; a return of A is refused 409; nothing written on the refusal", async () => {
+  it("a STANDARD return of B succeeds; a return of A over its line-unit remainder is refused; nothing written on the refusal", async () => {
     const okB = await harness({ ...twoProducts, priorStandard: priorA });
     await expect(
       okB.service.create(
@@ -205,8 +239,8 @@ describe("SA-159: one product's unknown prior does not block another product", (
     expect(okB.txReturn.create).toHaveBeenCalledTimes(1);
 
     const refusedA = await harness({ ...twoProducts, priorStandard: priorA });
-    await expect(refusedA.service.create(dto(1) as any, "user-1")).rejects.toBeInstanceOf(
-      ConflictException,
+    await expect(refusedA.service.create(dto(2) as any, "user-1")).rejects.toBeInstanceOf(
+      BadRequestException,
     );
     expect(refusedA.txReturn.create).not.toHaveBeenCalled();
   });

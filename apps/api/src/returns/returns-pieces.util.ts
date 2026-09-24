@@ -6,8 +6,8 @@
  * CORRECTED (live production regression, B661/B671 fix round 2): `OrderItem.qty` is stored in
  * the LINE's OWN unit — boxes for a box-unaware boxed line, not pieces; `regulatedUnitBasis`
  * (`packages/pricing`) is what expands it to pieces, at write time, for the regulated ledger
- * only. `ReturnItem.qty` for a STANDARD return mirrors `OrderItem.qty` (same unit, via the
- * identity conversion `standardReturnPieces` below), so it is ALSO the line's own unit, not
+ * only. `ReturnItem.qty` for a STANDARD return mirrors `OrderItem.qty` (same unit; `standardReturnPieces`
+ * below converts a typed qty to pieces only for the CAP, never on disk), so it is ALSO the line's own unit, not
  * pieces — the prior version of this comment claimed the opposite, and
  * `RegulatedLedgerService.reverseReturnEntries` trusted it, comparing a box count against a
  * piece-denominated remaining balance and reversing ~8% of a fully-returned box-unaware sale.
@@ -85,10 +85,9 @@ export function soldQtyForProduct(order: OrderForPieces, productId: string): num
 
 /**
  * The product's first non-CANCELLED line in `position` order (nulls last) —
- * the same line `create()`'s original `lineItems.find` selected, kept as the
- * axis a future box/piece-aware conversion would key off. Unused by the
- * identity conversion today; exported so a caller can still name "the line
- * this return is against" the same way `create()` always has.
+ * the same line `create()`'s original `lineItems.find` selected, kept so a caller
+ * can still name "the line this return is against" the same way `create()` always
+ * has. Not used by the pack conversion, which resolves per PRODUCT (`productPackBasis`).
  */
 export function firstNonCancelledLine(
   order: OrderForPieces,
@@ -165,6 +164,22 @@ export function requirePackFactor(bases: Map<string, ProductPackBasis>, productI
 }
 
 /**
+ * SA-161: how a STANDARD return's cap runs for a product. `pieces` when the factor is known;
+ * `lineUnit` when EVERY live line is unresolvable (the legacy box-unaware shape): typed and sold share
+ * the line's own unit, so the cap is exact with no pack (master's arithmetic) — no pack is guessed or
+ * written. Anything else that cannot be classified (mixed factors, no line, an unresolvable line beside a
+ * resolvable one) is a 409.
+ */
+export function capBasis(
+  bases: Map<string, ProductPackBasis>,
+  productId: string,
+): { mode: "pieces"; factor: number } | { mode: "lineUnit" } {
+  const basis = bases.get(productId);
+  if (basis && "unknown" in basis && basis.singleUnit) return { mode: "lineUnit" };
+  return { mode: "pieces", factor: requirePackFactor(bases, productId) };
+}
+
+/**
  * Converts a STANDARD return DTO's typed `qty` (the LINE's own unit) to PIECES with the product's pack
  * factor, and returns a converter back to the line unit for refusal messages. Throws 409 for an unknown
  * or mixed basis (`requirePackFactor`). `create()` and the shared prior-returned reader both call this.
@@ -175,11 +190,23 @@ export function standardReturnPieces(
   qty: number,
 ): { pieces: number; toLineUnit: (pieces: number) => number } {
   const factor = requirePackFactor(bases, productId);
-  return { pieces: qty * factor, toLineUnit: (pieces: number) => pieces / factor };
+  return {
+    pieces: qty * factor,
+    toLineUnit: (pieces: number) => Math.round((pieces / factor) * 100) / 100,
+  };
 }
 
-/** Prior-returned for one product: pieces, or why it cannot be classified (SA-159). */
-export type PriorReturned = { pieces: number } | { unknown: true; reason: string };
+/** Prior-returned for one product: pieces, or why it cannot be classified (SA-159/SA-161). */
+export type PriorReturned =
+  | { pieces: number }
+  | {
+      unknown: true;
+      reason: string;
+      /** SA-161: prior STANDARD qty in the line's own unit — the legacy-shape cap nets in these. */
+      lineUnits: number;
+      /** Prior INLINE qty in pieces: cannot be netted against line units without a factor. */
+      inlinePieces: number;
+    };
 
 /** Minimal shape `returnedPiecesByProduct` needs from a transaction/prisma client. */
 export interface ReturnsPiecesTx {
@@ -232,8 +259,13 @@ export async function returnedPiecesByProduct(
   const result: Record<string, PriorReturned> = {};
   const add = (productId: string, pieces: number) => {
     const cur = result[productId];
-    if (cur && "unknown" in cur) return;
-    result[productId] = { pieces: (cur?.pieces ?? 0) + pieces };
+    if (cur && "unknown" in cur) cur.inlinePieces += pieces;
+    else result[productId] = { pieces: (cur?.pieces ?? 0) + pieces };
+  };
+  const addUnknown = (productId: string, reason: string, lineUnits: number) => {
+    const cur = result[productId];
+    if (cur && "unknown" in cur) cur.lineUnits += lineUnits;
+    else result[productId] = { unknown: true, reason, lineUnits, inlinePieces: cur?.pieces ?? 0 };
   };
   const standardItems = standardReturns.flatMap((ret) => ret.items ?? []);
   let basisMap = bases;
@@ -246,7 +278,7 @@ export async function returnedPiecesByProduct(
   }
   for (const item of standardItems) {
     const f = packFactorOrReason(basisMap!, item.productId);
-    if ("unknown" in f) result[item.productId] = f;
+    if ("unknown" in f) addUnknown(item.productId, f.reason, Number(item.qty));
     else add(item.productId, Number(item.qty) * f.factor);
   }
   for (const item of inlineItems) {

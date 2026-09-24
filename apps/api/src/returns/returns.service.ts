@@ -37,7 +37,7 @@ import { IdempotencyService } from "../common/idempotency.service";
 import { NumberingService } from "../import/numbering.service";
 import {
   PACK_LINE_SELECT,
-  requirePackFactor,
+  capBasis,
   returnedPiecesByProduct,
   soldQtyForProduct,
   standardPackBases,
@@ -246,14 +246,38 @@ export class ReturnsService {
         const soldLineUnits = soldQtyForProduct(order as any, item.productId);
         if (soldLineUnits <= 0)
           throw new BadRequestException(`Product ${item.productId} was not in the original order`);
+        const cap = capBasis(packBases, item.productId); // 409: mixed / no line / half-resolvable
+        const prior = alreadyReturned[item.productId];
+        if (cap.mode === "lineUnit") {
+          // SA-161: a legacy line whose pack cannot be resolved. Typed and sold share the line's own unit,
+          // so the cap is exact with no pack (master's arithmetic); nothing is guessed or written. The one
+          // honest refusal: a prior INLINE return (pieces) cannot be netted against line units.
+          const inlinePieces = prior ? ("unknown" in prior ? prior.inlinePieces : prior.pieces) : 0;
+          if (inlinePieces > 0)
+            throw new ConflictException(
+              `Product ${item.productId}: cannot reconcile a piece-based return with this line's unit; return it inline instead.`,
+            );
+          const returnedUnits = prior && "unknown" in prior ? prior.lineUnits : 0;
+          const remainingUnits = soldLineUnits - returnedUnits;
+          if (Number(item.qty) > remainingUnits)
+            throw new BadRequestException(
+              `Return qty (${Number(item.qty)}) exceeds remaining returnable qty (${remainingUnits}) for product ${item.productId}. Already returned: ${returnedUnits} of ${soldLineUnits}.`,
+            );
+          alreadyReturned[item.productId] = {
+            unknown: true,
+            reason: prior && "unknown" in prior ? prior.reason : "legacy line unit",
+            lineUnits: returnedUnits + Number(item.qty),
+            inlinePieces: 0,
+          };
+          continue;
+        }
+        if (prior && "unknown" in prior) throw new ConflictException(prior.reason);
         const { pieces: returnPieces, toLineUnit } = standardReturnPieces(
           packBases,
           item.productId,
           Number(item.qty),
         );
-        const orderedQty = soldLineUnits * requirePackFactor(packBases, item.productId);
-        const prior = alreadyReturned[item.productId];
-        if (prior && "unknown" in prior) throw new ConflictException(prior.reason);
+        const orderedQty = soldLineUnits * cap.factor;
         const previouslyReturned = prior?.pieces ?? 0;
         const remaining = orderedQty - previouslyReturned;
         if (returnPieces > remaining)
@@ -519,8 +543,8 @@ export class ReturnsService {
         returnId: ret.id,
         orderId: ret.orderId,
         returnedByProduct,
-        // The STANDARD path's ReturnItem.qty mirrors OrderItem.qty (the identity conversion
-        // returns-pieces.util.ts's standardReturnPieces documents) — the line's OWN unit,
+        // The STANDARD path's ReturnItem.qty mirrors OrderItem.qty (returns-pieces.util.ts
+        // converts to pieces only for the cap, never on disk) — the line's OWN unit,
         // never pieces (live production regression, B661/B671 fix round 2).
         returnedUnit: "LINE_UNIT",
         db: tx,

@@ -26,7 +26,7 @@ export const liveInvoiceItemsByLine =
 
 export type ProductPackBasis =
   | { factor: number }
-  | { unknown: true; reason: string }
+  | { unknown: true; reason: string; singleUnit: boolean }
   | { mixed: true; factors: number[] }
   | { noLines: true };
 
@@ -47,12 +47,21 @@ export function productPackBasis(
   const mine = lines.filter((l) => l.productId === productId);
   if (mine.length === 0) return { noLines: true };
   const factors = new Set<number>();
+  let firstUnknown: string | null = null;
+  let unknownLines = 0;
   for (const line of mine) {
     const p = line.id == null ? undefined : packs.get(line.id);
     if (!p) factors.add(1);
-    else if ("unknown" in p) return { unknown: true, reason: p.reason };
-    else factors.add(p.factor);
+    else if ("unknown" in p) {
+      firstUnknown ??= p.reason;
+      unknownLines += 1;
+    } else factors.add(p.factor);
   }
+  // `singleUnit`: EVERY live line of the product is unresolvable (the legacy box-unaware shape), so all
+  // of them are in the line's own unit and a line-unit sum is coherent. One resolvable line beside an
+  // unresolvable one is not.
+  if (firstUnknown != null)
+    return { unknown: true, reason: firstUnknown, singleUnit: unknownLines === mine.length };
   if (factors.size > 1) return { mixed: true, factors: [...factors].sort((x, y) => x - y) };
   return { factor: [...factors][0] };
 }

@@ -96,6 +96,11 @@ describe("standardReturnPieces (SA-158 conversion)", () => {
     expect(toLineUnit(36)).toBe(3);
   });
 
+  it("toLineUnit rounds for messages: 31 pieces on a 12-pack reads 2.58, never 2.5833333333333335", () => {
+    const { toLineUnit } = standardReturnPieces(new Map([["p1", { factor: 12 }]]), "p1", 1);
+    expect(toLineUnit(31)).toBe(2.58);
+  });
+
   it("refuses (409) an unknown basis, a mixed basis and a product with no basis", () => {
     const bases = new Map<string, any>([
       ["u", { unknown: true, reason: "no source" }],

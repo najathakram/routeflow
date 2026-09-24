@@ -248,7 +248,7 @@ export class InlineReturnsQuoteService {
         if (prior && "unknown" in prior) {
           throw new ConflictException({
             code: "INLINE_RETURN_PRIOR_BASIS_UNKNOWN",
-            message: `${productName}: an earlier return on this customer's order cannot be counted (${prior.reason}) — return it from the order page's standard return instead.`,
+            message: `${productName}: an earlier return on this customer's order cannot be counted (${prior.reason}) — credit it with a credit note or ask support; the standard return cannot classify it either.`,
           });
         }
       }
