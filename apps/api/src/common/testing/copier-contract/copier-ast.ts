@@ -64,6 +64,19 @@ function outermostLiterals(
       else rets.push(n.body);
       return rets.forEach(visit);
     }
+    if (ts.isCallExpression(n)) {
+      // `.map((i) => ({ … }))`: a CALLBACK's returns are lines. Any other argument (`build({ … })`, a
+      // local literal passed to a helper) is that helper's INPUT, not a written row, so it is opaque.
+      visit(n.expression);
+      for (const arg of n.arguments) {
+        if (ts.isArrowFunction(arg) || ts.isFunctionExpression(arg)) visit(arg);
+        else if (ts.isIdentifier(arg)) {
+          const init = findLocal(fn, arg.text)?.initializer;
+          if (init && (ts.isArrowFunction(init) || ts.isFunctionExpression(init))) visit(arg);
+        }
+      }
+      return;
+    }
     if (ts.isIdentifier(n) && !seen.has(n.text)) {
       // `create: itemsData` — follow a local `const itemsData = …` inside the same function.
       seen.add(n.text);
@@ -113,15 +126,35 @@ const QUERY_ONLY = /^(select|include|where|orderBy|take|skip)$/;
  * type makes every key mandatory: an optional-key helper would be a false green.
  */
 export const SPREAD_HELPER_KEYS: Record<string, string[]> = {
-  // @routeflow/pricing, B297: returns CategoryTaxSnapshot (all three keys, null when absent).
+  // B297: returns CategoryTaxSnapshot (all three keys, null when absent). The spec pins this list
+  // against the real helper's output on both of its paths.
   copyCategoryTaxSnapshot: ["categoryTaxType", "categoryTaxRate", "categoryPriceIncludesTax"],
 };
+/** A SPREAD_HELPER_KEYS name counts only when the file imports it from here (never a same-named local). */
+const SPREAD_HELPER_MODULE = "@routeflow/pricing";
+
+/** Names `src` imports (unaliased) from SPREAD_HELPER_MODULE. */
+function helperImports(src: string): Set<string> {
+  const names = new Set<string>();
+  for (const st of parse(src).statements)
+    if (
+      ts.isImportDeclaration(st) &&
+      ts.isStringLiteral(st.moduleSpecifier) &&
+      st.moduleSpecifier.text === SPREAD_HELPER_MODULE &&
+      st.importClause?.namedBindings &&
+      ts.isNamedImports(st.importClause.namedBindings)
+    )
+      for (const el of st.importClause.namedBindings.elements)
+        if (!el.propertyName) names.add(el.name.text);
+  return names;
+}
 
 /** Top-level keys of the line-write literals inside function `ref.name`, or null when it is not found. */
 export function writtenKeys(src: string, ref: FnRef): Set<string> | null {
   const fns = findFunctions(src, ref.name);
   if (!fns.length) return null;
   const keys = new Set<string>();
+  const imported = helperImports(src);
   for (const fn of fns) {
     const lits: ts.ObjectLiteralExpression[] = [];
     const visit = (n: ts.Node) => {
@@ -154,12 +187,13 @@ export function writtenKeys(src: string, ref: FnRef): Set<string> | null {
       o.properties.forEach((p) => {
         // `...(cond ? { productId } : {})` contributes its literal keys, and `...helper(x)` the keys
         // SPREAD_HELPER_KEYS pins for that helper; any other spread is opaque.
-        const helper =
+        const callee =
           ts.isSpreadAssignment(p) &&
           ts.isCallExpression(p.expression) &&
           ts.isIdentifier(p.expression.expression)
-            ? SPREAD_HELPER_KEYS[p.expression.expression.text]
+            ? p.expression.expression.text
             : undefined;
+        const helper = callee && imported.has(callee) ? SPREAD_HELPER_KEYS[callee] : undefined;
         if (helper) helper.forEach((k) => keys.add(k));
         else if (ts.isSpreadAssignment(p) && !ts.isIdentifier(p.expression))
           outermostLiterals(p.expression, fn).forEach(addKeys);

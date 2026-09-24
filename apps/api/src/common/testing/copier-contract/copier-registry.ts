@@ -93,13 +93,25 @@ export const COPIERS: Copier[] = [
       "description productId qty unitPrice subtotal priceType originalPrice boxes pieces unitsPerBox",
     gaps: { unitLabel: "unfiled" },
   },
+  // C5 (estimate -> invoice). Since B659 (#1279) convertToInvoice writes `items: { create: itemsData }`
+  // from the SHARED builder, so the entry anchors on the builder and classifies it FROM THE ESTIMATE
+  // PATH (estimateConvertLineItems feeds it). InvoicesService.create also uses this builder for request
+  // lines; that caller is NOT_A_COPIER ("primary create from request lines").
   {
     id: "C5",
-    file: "estimates/estimates.service.ts",
-    fn: "convertToInvoice",
+    file: "invoices/manual-invoice-lines.ts",
+    fn: "buildManualInvoiceLines",
     target: "InvoiceItem",
-    coverage: "registry-only",
-    why: "since B659 (#1279) the rows are `items: { create: itemsData }` from buildManualInvoiceLines (invoices/manual-invoice-lines.ts, the builder InvoicesService.create uses): no local literal to read",
+    anchor: { via: "return" },
+    carried: "description productId qty unitPrice subtotal boxes pieces unitsPerBox",
+    // B659: the category tax is priced at CONVERT time from the live category (never a quote-date
+    // rate), and the B297 trio is stamped beside it (`...categorySnapshot`, an opaque spread).
+    rederived:
+      "taxRate msrp trackedCategoryId trackedSubcategoryId categoryTaxAmount categoryTaxType categoryTaxRate categoryPriceIncludesTax",
+    reset: "discount",
+    // The estimate line has no such column / no order link; unit-aware lines are refused (409 UNIT_AWARE_LINE).
+    na: "promoFreeUnits notes orderItemId unitLabel",
+    gaps: { priceType: "unfiled", originalPrice: "unfiled" },
   },
   {
     id: "C6",
@@ -227,17 +239,18 @@ export const COPIERS: Copier[] = [
     carried:
       "productId qty unitPrice subtotal boxes pieces unitsPerBox categoryTaxAmount promoFreeUnits",
     reset: "priceType status invoicedQty",
-    rederived: "name trackedCategoryId trackedSubcategoryId",
+    rederived: "name trackedSubcategoryId",
     na: "deliveredQty overrideReason overriddenBy",
     gaps: {
+      trackedCategoryId: "B767", // CREATE carries categoryTaxAmount without its category attribution
       originalPrice: "unfiled",
       notes: "unfiled",
       unitLabel: "unfiled",
       position: "unfiled",
       // B297: CREATE carries the invoice lines' categoryTaxAmount but not the trio it was priced at.
-      categoryTaxType: "unfiled",
-      categoryTaxRate: "unfiled",
-      categoryPriceIncludesTax: "unfiled",
+      categoryTaxType: "B835",
+      categoryTaxRate: "B835",
+      categoryPriceIncludesTax: "B835",
     },
   },
   // Client copiers: NOT column-checked (the spec is API-side; a request body is not a Prisma model).
@@ -274,6 +287,8 @@ export const NOT_A_COPIER: Record<string, string> = {
   "invoices/invoices.service.ts::update":
     "replace-all from the edit request (the client side is C16)",
   "invoices/invoices.service.ts::runCreation": "consumes C1's output",
+  "estimates/estimates.service.ts::convertToInvoice":
+    "consumes C5's builder (buildManualInvoiceLines)",
   "invoices/invoices.service.ts::reconcileOrderDraftInvoice": "consumes C1's output",
   "invoices/invoices.service.ts::rebuildSiblingDrafts": "consumes C1's output",
   "invoices/invoices.service.ts::setCheckStatus": "synthesises the NSF fee line, not a copy",

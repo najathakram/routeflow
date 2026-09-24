@@ -18,9 +18,10 @@
  * WHAT THIS CANNOT SEE (stated limits):
  *   1. A same-named key used for a read shape inside an anchored literal counts as "written" (false green).
  *   2. Copiers that spread another object (`...i`) or build the row in a helper are covered only through the
- *      anchored literal; C10 and C5 (B659: buildManualInvoiceLines builds its rows) are registry-only for that
- *      reason. The one exception: `...helper(x)` for a helper in SPREAD_HELPER_KEYS (copier-ast.ts), whose
- *      return is a fixed, fully-typed key set, counts as writing those keys. Raw-SQL writes are not detected.
+ *      anchored literal; C10 is registry-only for that reason (C5 instead anchors on its shared builder). A literal
+ *      passed as a call ARGUMENT is that helper's input, never a written row. The one exception is
+ *      `...helper(x)` for a helper in SPREAD_HELPER_KEYS (copier-ast.ts) imported from @routeflow/pricing, whose
+ *      return is a fixed key set (pinned against the real helper below). Raw-SQL writes are not detected.
  *   3. A wrong VALUE for a present key is invisible (B658: `categoryTaxAmount: 0` is a present key).
  *   4. CLIENT copiers (C15, C16a/b) are `coverage: "registry-only"`: they are NOT column-checked (a request
  *      body is not a Prisma model; the spec lives in apps/api). C3 (web Duplicate) was retired by B644 (#1159: the
@@ -41,11 +42,12 @@
 import * as fs from "fs";
 import * as path from "path";
 import { Prisma } from "@prisma/client";
-import { writeSites, writtenKeys, findFunctions } from "./copier-ast";
+import { copyCategoryTaxSnapshot } from "@routeflow/pricing";
+import { SPREAD_HELPER_KEYS, writeSites, writtenKeys, findFunctions } from "./copier-ast";
 import { COPIERS, Copier, INFRA, Model, NOT_A_COPIER, NOT_SALES_FILES } from "./copier-registry";
 
 /** Pinned on purpose: adding a registry-only copier must be a visible diff HERE, not just in the registry. */
-const REGISTRY_ONLY_PINNED = ["C10", "C15", "C16a", "C16b", "C5"];
+const REGISTRY_ONLY_PINNED = ["C10", "C15", "C16a", "C16b"];
 const SRC = path.resolve(__dirname, "../../..");
 const ROOT = path.resolve(SRC, "../../..");
 const words = (s?: string) => (s ?? "").split(/\s+/).filter(Boolean);
@@ -246,8 +248,8 @@ describe("copier contract mutation proofs (each must turn the spec red)", () => 
       /fx\.ts::sneaky/,
     ));
   it("(b) dropping a real copier entry -> its function is an unregistered write site", () =>
-    expect(evaluate(realWorld(COPIERS.filter((c) => c.id !== "C5"))).join()).toMatch(
-      /estimates\.service\.ts::convertToInvoice: writes a sales-line model/,
+    expect(evaluate(realWorld(COPIERS.filter((c) => c.id !== "C4"))).join()).toMatch(
+      /estimates\.service\.ts::create: writes a sales-line model/,
     ));
   it("(b) a renamed function -> red", () =>
     expect(evaluate(world({}, fx.replace("copy", "copy2"))).join()).toMatch(/copier not found/));
@@ -264,22 +266,61 @@ describe("copier contract mutation proofs (each must turn the spec red)", () => 
   describe("a known fixed-shape helper spread (SPREAD_HELPER_KEYS)", () => {
     const trio = "categoryTaxType categoryTaxRate categoryPriceIncludesTax";
     const cols = () => ["productId", "qty", "boxes", "unitsPerBox", ...trio.split(" ")];
-    const withSpread = (helper: string) =>
-      fx.replace("boxes: i.boxes", `boxes: i.boxes, ...${helper}(i)`);
+    const IMPORT = `import { copyCategoryTaxSnapshot } from "@routeflow/pricing";\n`;
+    const withSpread = (helper: string, arg = "i", imp = IMPORT) =>
+      imp + fx.replace("boxes: i.boxes", `boxes: i.boxes, ...${helper}(${arg})`);
     const trioEntry: Copier = { ...entry, carried: `productId qty boxes ${trio}` };
+    const trioLiteral = "{ categoryTaxType: 1, categoryTaxRate: 1, categoryPriceIncludesTax: 1 }";
     it("...copyCategoryTaxSnapshot(x) writes the trio -> carried is green", () =>
       expect(
         evaluate(world({ columns: cols }, withSpread("copyCategoryTaxSnapshot"), trioEntry)),
       ).toEqual([]));
     it("(c) removing that spread -> the trio is a regression", () =>
-      expect(evaluate(world({ columns: cols }, fx, trioEntry)).join()).toMatch(
+      expect(evaluate(world({ columns: cols }, IMPORT + fx, trioEntry)).join()).toMatch(
         /"categoryTaxType" is classified carried but is no longer written/,
       ));
     it("an UNKNOWN helper spread stays opaque -> carried is red", () =>
       expect(
         evaluate(world({ columns: cols }, withSpread("someOtherHelper"), trioEntry)).join(),
       ).toMatch(/"categoryTaxRate" is classified carried but is no longer written/));
+    it("an unknown helper's LITERAL ARGUMENT is not written keys -> carried is red", () =>
+      expect(
+        evaluate(
+          world({ columns: cols }, withSpread("someOtherHelper", trioLiteral), trioEntry),
+        ).join(),
+      ).toMatch(/"categoryPriceIncludesTax" is classified carried but is no longer written/));
+    it("a same-named helper NOT imported from @routeflow/pricing stays opaque -> red", () =>
+      expect(
+        evaluate(
+          world({ columns: cols }, withSpread("copyCategoryTaxSnapshot", "i", ""), trioEntry),
+        ).join(),
+      ).toMatch(/"categoryTaxType" is classified carried but is no longer written/));
+    it("the pinned key list is exactly what the real helper returns, on both paths", () => {
+      const pinned = [...SPREAD_HELPER_KEYS.copyCategoryTaxSnapshot].sort();
+      expect(Object.keys(copyCategoryTaxSnapshot(null)).sort()).toEqual(pinned);
+      expect(
+        Object.keys(
+          copyCategoryTaxSnapshot({
+            categoryTaxType: null,
+            categoryTaxRate: 1,
+            categoryPriceIncludesTax: true,
+          }),
+        ).sort(),
+      ).toEqual(pinned);
+    });
   });
+  it("a builder call's literal ARGUMENT inside a callback is not the written line -> red", () =>
+    expect(
+      evaluate(
+        world(
+          {},
+          fx.replace(
+            "x.items.map((i) => ({ productId: i.productId, qty: i.qty, boxes: i.boxes }))",
+            "x.items.map((i) => build({ productId: i.productId, qty: i.qty, boxes: i.boxes }))",
+          ),
+        ),
+      ).join(),
+    ).toMatch(/the anchored line-write literal was not found/));
   it("keys in where/select/include or the parent literal never count as written", () => {
     const noisy = fx
       .replace("create(", "create(")
