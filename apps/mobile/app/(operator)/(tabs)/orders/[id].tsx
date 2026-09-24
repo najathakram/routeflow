@@ -51,7 +51,8 @@ import {
 import { parseSellingRestricted } from "../../../../lib/selling-restricted";
 import type { BlockedLine } from "@routeflow/types";
 import { alertInfo, confirm } from "../../../../lib/confirm";
-import { formatQtySplit } from "@routeflow/pricing";
+import { invoiceLineQtyText } from "@routeflow/pricing";
+import { usesUnitDisplay } from "../../../../lib/invoice-line-display";
 import { freeUnitsLabel } from "../../../../lib/buyer-cart-logic";
 import { OrderLineCard } from "../../../../components/OrderLineCard";
 import { orderLineCardModel } from "../../../../lib/order-line-display";
@@ -680,10 +681,11 @@ export default function OrderDetailScreen() {
                 // Show "1 box + 2 pcs · $30 / box of 12" when split, otherwise the
                 // existing "8 ea · $5.00" form. Shared formatter — reads the
                 // same on web order/invoice detail and the PDF.
-                const qtyLine =
-                  li.boxes != null || li.pieces != null
-                    ? formatQtySplit({ qty: li.qty, boxes: li.boxes, pieces: li.pieces })
-                    : `${li.qty} ${li.product?.unit ?? "ea"}`;
+                const qtyLine = usesUnitDisplay(li)
+                  ? // B757: a units_v1 named unit (Case, Pallet, a factor-1 "5 Piece") shows ITS
+                    // label via the ONE shared formatter; a pack line is unchanged.
+                    invoiceLineQtyText(li)
+                  : `${li.qty} ${li.product?.unit ?? "ea"}`;
                 return (
                   <View
                     key={li.id}

@@ -163,6 +163,11 @@ export interface BuyerInvoiceItem {
   unitPrice: number;
   discount?: number;
   subtotal: number;
+  boxes?: number | null;
+  pieces?: number | null;
+  /** units_v1: set when this line sells by a named unit (Case, Pallet, Piece…) — `boxes` is
+   *  then the COUNT of that unit (never a physical box). Null = the pack (B758). */
+  unitLabel?: string | null;
   /** BUY_N_GET_M: whole free SELLING units on this line — names the reduced
    *  `subtotal` so it doesn't read as a pricing error. */
   promoFreeUnits?: number | null;
