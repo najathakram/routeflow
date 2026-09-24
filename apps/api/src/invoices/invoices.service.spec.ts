@@ -630,6 +630,61 @@ describe("InvoicesService", () => {
       expect(created.pieces).toBeNull();
     });
 
+    // SA-144: a unit-aware line (sold by a named unit, e.g. "Case") has no legacy boxes/pieces
+    // pack to re-derive — update()'s replace path must refuse rather than silently reinterpret
+    // it. The client rarely resends `unitLabel` on an edit it isn't touching, so this is checked
+    // against the invoice's OWN surviving stored row, not just the incoming payload.
+    it("SA-144: refuses to edit an invoice that already has a unit-aware line for a touched product, even when the payload itself carries no unitLabel", async () => {
+      prisma.invoice.findUnique.mockResolvedValue(draftInvoice);
+      prisma.product.findMany.mockResolvedValue([{ id: "prod-case", unitsPerBox: 12 }]);
+      prisma.customer.findUnique.mockResolvedValue({ isTaxExempt: false });
+      // The invoice's OWN stored line for this product already sells by a named unit.
+      prisma.invoiceItem.findMany.mockResolvedValue([
+        { productId: "prod-case", unitsPerBox: 288, unitLabel: "Case" },
+      ]);
+
+      await expect(
+        service.update("inv-box", {
+          items: [
+            {
+              productId: "prod-case",
+              description: "Case of chips",
+              qty: 2,
+              unitPrice: 11,
+              boxes: 2,
+            },
+          ],
+        }),
+      ).rejects.toThrow("Selling by a unit can't be edited on an invoice yet.");
+
+      expect(prisma.invoice.update).not.toHaveBeenCalled();
+    });
+
+    it("SA-144: an ordinary boxed line's own stored row (no unitLabel) does not trip the unit-aware fence", async () => {
+      prisma.invoice.findUnique.mockResolvedValue(draftInvoice);
+      prisma.product.findMany.mockResolvedValue([{ id: "prod-box", unitsPerBox: 12 }]);
+      prisma.customer.findUnique.mockResolvedValue({ isTaxExempt: false });
+      prisma.invoice.update.mockResolvedValue(draftInvoice);
+      prisma.invoiceItem.findMany.mockResolvedValue([
+        { productId: "prod-box", unitsPerBox: 12, unitLabel: null },
+      ]);
+
+      await service.update("inv-box", {
+        items: [
+          {
+            productId: "prod-box",
+            description: "Boxed chips",
+            qty: 27,
+            unitPrice: 28.35,
+            boxes: 2,
+            pieces: 3,
+          },
+        ],
+      });
+
+      expect(prisma.invoice.update).toHaveBeenCalled();
+    });
+
     // ─── BUY_N_GET_M: the free-unit snapshot is MONEY and must survive the edit ──
     // The edit path delete-and-recreates every line from the payload, so a plain
     // re-save of an order-derived BOGO invoice used to re-price it at full price
