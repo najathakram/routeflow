@@ -1143,11 +1143,7 @@ export class RoutesService {
         customerAddress: s.customerAddress ?? s.routeStop?.customerAddress ?? null,
       })),
     }));
-    // B810/SA-130a: ONE batched invoice.findMany across every order on this
-    // whole PAGE of runs (never per-run, via withPayableInvoicesForRuns —
-    // call site 1 of 4). `payableInvoices` is NOT a Prisma relation on Order
-    // — see run-invoice-balance.ts's module doc for why this can never move
-    // back into RUN_STOP_INCLUDE's `select`.
+    // B810/SA-130a call site 1 of 4 — see run-invoice-balance.ts's module doc.
     const normalisedData = await withPayableInvoicesForRuns(
       this.prisma.forTenant(),
       normalisedRuns,
@@ -1304,11 +1300,7 @@ export class RoutesService {
           // is the one extra field this fallback needs to group by.
           select: { ...RUN_STOP_INCLUDE.orders.select, customerId: true },
         });
-        // B810/SA-130a: this fallback's `orders` is a flat array (not stops-
-        // wrapped) and, since it no longer comes through RUN_STOP_INCLUDE's
-        // select at all, needs its OWN batched invoice.findMany — same as the
-        // other 3 call sites (call site 2 of 4). withPayableInvoices takes a
-        // stops shape, so wrap/unwrap a single pseudo-stop.
+        // B810/SA-130a call site 2 of 4 — flat orders, wrap/unwrap a pseudo-stop.
         const [{ orders: ordersWithBalances }] = await withPayableInvoices(
           this.prisma.forTenant(),
           [{ orders }],
