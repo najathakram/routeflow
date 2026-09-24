@@ -135,13 +135,18 @@ describe("no second box-unaware qty*pack multiplication in apps/api/src (B661)",
   // computeCategoryTax's unitBasisQty (orders.service.ts's create(), both
   // invoices.service.ts sites, and the shared linePieceQty helper) to regulatedUnitBasis —
   // see line-piece-qty.ts, orders.service.ts's create(), and invoices.service.ts's update()/
-  // applyPriceAdjustment(). orders.service.ts's remaining three updateOrderItems() sites are
-  // CONFIRMED NOT category tax: they feed resolveBuyerLinePrice's QTY_BREAK/BUY_N_GET_M promo
-  // threshold for pack lines (B789's stamping-rule scope, not this one). manual-invoice-lines.ts
-  // and order-templates.service.ts below were NOT traced by B679 — still an open question
-  // whether either feeds a tax/money basis the same way; a candidate follow-up, not this PR.
+  // applyPriceAdjustment(). The remaining updateOrderItems() sites are CONFIRMED NOT category tax:
+  // they feed resolveBuyerLinePrice's QTY_BREAK/BUY_N_GET_M promo threshold for pack lines
+  // (B789's stamping-rule scope, not this one). manual-invoice-lines.ts and
+  // order-templates.service.ts below were NOT traced by B679 — still an open question whether
+  // either feeds a tax/money basis the same way; a candidate follow-up, not this PR.
+  //
+  // B776 round-4 prefactor (SA-124h): updateOrderItems' replaceAll per-item build moved verbatim
+  // to orders/replace-all-line-build.ts — same multiplication, same B661-sweep tag, only
+  // relocated. orders.service.ts's three updateOrderItems() sites -> 2.
   const ALLOWLIST: { file: string; count: number }[] = [
-    { file: "orders/orders.service.ts", count: 3 }, // updateOrderItems() ×3 (promo threshold, B789)
+    { file: "orders/orders.service.ts", count: 2 }, // updateOrderItems() ×2 (promo threshold, B789)
+    { file: "orders/replace-all-line-build.ts", count: 1 }, // updateOrderItems' replaceAll rebuild
     { file: "invoices/manual-invoice-lines.ts", count: 1 }, // buildManualInvoiceLines()
     { file: "order-templates/order-templates.service.ts", count: 1 }, // createOrderFromTemplate()
     { file: "returns/inline-returns-quote.service.ts", count: 1 }, // fetchMatchingSet()

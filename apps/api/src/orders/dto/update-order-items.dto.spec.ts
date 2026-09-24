@@ -35,3 +35,25 @@ describe("UpdateOrderItemsDto — items[].notes is bounded (was unbounded)", () 
     expect(itemErrors.find((e) => e.property === "notes")).toBeUndefined();
   });
 });
+
+/**
+ * SA-124i (option i, #938): `sourceLineId` (the fold -> updateOrderItems disambiguator,
+ * ./replace-all-line-build.ts) is deliberately NOT a DTO field — "no column, no DTO field, no
+ * migration" — it only ever travels on the INTERNAL call the controller makes after running
+ * `foldMergeItems` (orders.controller.ts:225, buyer.controller.ts:617), never through the
+ * public HTTP body. main.ts's global ValidationPipe runs with `whitelist: true,
+ * forbidNonWhitelisted: true` (src/main.ts:145-148) — this pins that a CLIENT attempting to
+ * smuggle one in over HTTP still gets refused (400), not silently stripped or accepted.
+ */
+describe("UpdateOrderItemsDto — sourceLineId is not a client-facing field (SA-124i)", () => {
+  it("a client-supplied items[].sourceLineId is refused under the app's actual whitelist/forbidNonWhitelisted config", async () => {
+    const dto = plainToInstance(UpdateOrderItemsDto, {
+      replaceAll: true,
+      items: [{ productId: "prod-1", qty: 1, sourceLineId: "li-someone-elses" }],
+    });
+    const errors = await validate(dto, { whitelist: true, forbidNonWhitelisted: true });
+    const itemErrors = errors[0]?.children?.[0]?.children ?? [];
+    const sourceLineIdError = itemErrors.find((e) => e.property === "sourceLineId");
+    expect(sourceLineIdError?.constraints).toHaveProperty("whitelistValidation");
+  });
+});

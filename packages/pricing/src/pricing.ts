@@ -533,11 +533,19 @@ export interface CategoryTaxSnapshot {
  * full Prisma model, just the fields `categoryTaxSnapshotOf`/`computeCategoryTax` actually
  * read. A `loadCategoryMapForProducts`-shaped loader's `Map<string, TrackedCategoryRow>` is
  * the ONE place callers should type this against, instead of each hand-rolling its own `any`.
+ *
+ * `rate` accepts a Decimal-shaped value (this package stays framework-agnostic — never
+ * `@prisma/client`'s own `Decimal` type — but the real `TrackedCategory.rate` column IS one;
+ * a bare `number | string` here was never actually checked against it, since every real caller
+ * passes an untyped `tx`). `priceIncludesTax` is non-optional: `TrackedCategory`'s own column
+ * is `NOT NULL` — unlike the snapshot trio this function PRODUCES (all three nullable on
+ * OrderItem/InvoiceItem, for a non-regulated line), the LIVE category row always has a real
+ * boolean here.
  */
 export interface TrackedCategoryRow {
   taxType: CategoryTaxType;
-  rate: number | string;
-  priceIncludesTax?: boolean | null;
+  rate: number | string | { toNumber(): number };
+  priceIncludesTax: boolean;
 }
 
 /**
