@@ -503,20 +503,6 @@
 - **Guard:** none yet — propose a regression test with a fixture where the two diverge (nonzero
   tax), asserting both formulas independently.
 
-### L-181 · 2026-09-16 · domain · B451 (dto `any` vs real callers)
-
-- **Symptom:** replacing `estimates.controller.ts`'s `@Body() dto: any` with a real
-  `CreateEstimateDto` made a line-item's `description` required — but `scripts/feature-smoke.mjs`
-  S6 and several `qa-run.js` tests send a bare `{productId, qty}`, relying on the service's own
-  fallback. Caught only by independent review, not the author.
-- **Root cause:** the DTO's field set was derived from the primary web UI form alone;
-  scripted/feature-smoke callers were never grepped.
-- **Lesson:** **Before typing a `dto: any` endpoint (or tightening any field's optionality), grep
-  every caller — web form, mobile, feature-smoke, qa-run, e2e — not just the UI form that
-  motivated the change.**
-- **Guard:** `create-estimate.dto.spec.ts` pins the bare `{productId, qty}` shape passing the
-  real `ValidationPipe` unchanged.
-
 ### L-167 · 2026-09-16 · domain · #781 (B156/B158/B170)
 
 - **Symptom:** three separately-reported bugs all traced to the same root cause — a
@@ -544,21 +530,6 @@
   `layout.plan-gate-boundary.test.tsx` pins children absent from the tree while
   resolving/locked, not just visually hidden.
 
-### L-169 · 2026-09-16 · domain · B421 / PR-1a shared-helper precondition no-op (two call sites)
-
-- **Symptom:** two surfaces hit the same shape: a shared helper re-checked `.status` generically,
-  but the callers' own `select` never fetched it, so it silently read `undefined`. Both tests
-  passed anyway because their mocks supplied the field directly.
-- **Root cause:** a shared helper that re-derives a precondition has no knowledge of a caller's
-  query shape — it assumes the field is present, and a caller whose `select` never needed it
-  before silently hands the helper `undefined`, which the check absorbs as real.
-- **Lesson:** **Before wiring a caller into a shared helper that re-derives a precondition
-  generically, check the caller's `select` actually fetches the field — a mock supplying it
-  directly proves nothing. A type-check alone won't catch a field silently resolving to
-  `undefined`.**
-- **Guard:** both selects now fetch `status`; `returns-lineitems-select.spec.ts` pins the real
-  shape at every call site.
-
 ### L-170 · 2026-09-16 · domain · #743 fix round F3 (roundMoney before comparison)
 
 - **Symptom:** a fully-settled invoice rendered a red "Balance Due $0.00" badge instead of the
@@ -572,20 +543,6 @@
 - **Guard:** `invoices.service.ts`'s two `balanceDue` sites and the PDF template now wrap in
   `roundMoney()` before the comparison. Also fixed at `customers.service.ts`'s
   `applyAdvancePaymentToInvoiceLocked` (#814), same class.
-
-### L-171 · 2026-09-16 · domain · PR-1a F1 (pooled cap vs single-line price basis mismatch)
-
-- **Symptom:** an over-return cap was correctly widened from "one matched line" to "pooled across
-  every live line for that product" — but the sibling pricing branch, reading the SAME key,
-  still priced off one matched line's rate against the newly-pooled quantity, over-crediting a
-  product split across two differently-priced lines.
-- **Root cause:** the cap and the price are two different readers of one key. Widening one
-  reader's basis fixed that reader alone — nothing re-examined the sibling reading the same key.
-- **Lesson:** **When a guard/cap computation for a key is widened to pool across rows, grep
-  every OTHER reader of that key — a cap and a price computed from different bases silently
-  mismatch, and the mismatch is a MONEY bug.**
-- **Guard:** the pricing branch now pools qty/subtotal the same way the cap does, with a
-  `min(returned, sold)` backstop; `returns-refund.spec.ts`'s F1 cases prove the pooled pricing.
 
 ### L-072 · 2026-09-03 · domain · wave E `imp-10b`
 
@@ -857,17 +814,9 @@
   paired row into the same column, and widen every "nothing left to do" guard to test EVERY axis it
   guards. A guard that checks a subset of dimensions does not merely miss the bug — it makes the bug
   permanent, because it convinces the healing path there is nothing to heal.**
-- **Same fix, second lesson (pro-rata source):** the replacement first took its pieces-per-unit
-  ratio from an AGGREGATE over every SALE row of the order line, which silently averages rows
-  written under different snapshots — a product repacked 12 -> 10 between the original write and a
-  delivered-basis reconcile gave 11, so a 2-box partial credit booked -22 where the truth was -20.
-  **A pro-rata ratio must be derived from the specific stored row being reversed, never from a sum
-  across the parent entity's rows.** This class is near-invisible in testing because the CLOSING
-  operation books the exact remaining and absorbs the difference, so the TOTAL always reconciles —
-  the error only surfaces as period attribution, and only when a partial straddles a period
-  boundary, which is the one moment anyone looks. Where a sibling path already pro-rates correctly
-  (`reverseReturnEntries` off the live row's own ratio), match it rather than inventing a second
-  derivation (cf. L-167).
+- **Same fix, second lesson (pro-rata source):** see [[L-218]] — a pro-rata ratio must be derived
+  from the specific stored row being reversed, never a sum across the parent entity's rows (minted
+  as its own entry 2026-09-24; folded here only while the register was at cap).
 - **Guard:** `regulated-ledger.service.spec.ts` pins the piece axis on the credit path (full credit
   closes to exactly 0 pieces, a partial pro-rates off the SALE row's own ratio, the second half
   leaves no residue) and pins that a line square on money but carrying a piece residue is NOT
@@ -878,3 +827,60 @@
   on is the defect's own signature": here qty netting to zero while pieces do not IS reachable (it
   is the legacy residue), so the old assertion was asserting the bug, and removing it RAISED
   coverage. A mixed-pack reconcile case pins the ratio source.
+
+### L-218 · 2026-09-22 · domain · a pro-rata ratio must come from the specific row, never a sum (B661)
+
+- **Symptom:** unfolded from L-214 (same B661 fix, same PR, same review) — the pro-rata ratio used
+  to reverse a regulated line's pieces was first taken from an AGGREGATE over every SALE row of
+  the order line. A product repacked 12 -> 10 between the original write and a delivered-basis
+  reconcile gave a ratio of 11 (the average), so a 2-box partial credit booked -22 pieces where the
+  truth, from that specific row's own 10-pack snapshot, was -20.
+- **Root cause:** the fix reached for whatever quantity was conveniently in scope (a sum across the
+  parent's rows) instead of the one row actually being reversed. Summing erases which pack snapshot
+  applied to which piece.
+- **Lesson:** **A pro-rata ratio must be derived from the specific stored row being reversed,
+  never a sum across the parent entity's rows.** Near-invisible in testing: the CLOSING operation
+  books the exact remaining and absorbs the difference, so the TOTAL always reconciles — the error
+  only surfaces as filing-PERIOD attribution, and only when a partial straddles a boundary. Where a
+  sibling path already pro-rates correctly (`reverseReturnEntries` off the live row's own ratio),
+  match it rather than inventing a second derivation (cf. [[L-167]]).
+- **Guard:** `regulated-ledger.service.spec.ts`'s mixed-pack reconcile case pins the ratio source.
+  Related: [[L-214]].
+
+### L-219 · 2026-09-22 · process · a verification framed as "is my work safe" answers itself by construction
+
+- **Symptom:** on the #1219/#1221 merge rehearsal, the forward probe (revert only #1221's own fix,
+  confirm its own cases fail) passed and looked complete. The reverse probe (revert the OTHER
+  side's fix, confirm THEIR cases fail) found #1221's fix had no guard in the DEFAULT Jest lane —
+  reverting it left all 395 unit tests green.
+- **Root cause:** "is my work safe" is answered the moment your own side passes, so it stops there
+  by construction — it never asks whether the merge weakened anything ELSE.
+- **Lesson:** **Frame a merge verification as "did this change weaken anything", symmetric: revert
+  YOUR change on the merged tree and confirm your cases still fail, then revert THEIRS and confirm
+  theirs still fail.** A missing guard is silent in the direction that matters — green suite, more
+  test files, every signal points the right way. Structural fix, not "review harder": a fix guarded
+  only by a DB-lane spec must ALSO carry a default-lane pin — the DB spec proves it against real
+  transactions, the unit pin proves it still exists after a merge that doesn't re-trigger the DB
+  lane (it fires on ADDING a `.db.spec.ts`, not on changing the logic it protects).
+- **Guard:** #1221's added default-lane pin; the default-lane-pin requirement for any
+  DB-lane-guarded fix going forward.
+
+### L-220 · 2026-09-22 · process · a register claim needs the check that would disprove it, not just the belief
+
+- **Symptom:** this incident's own write-up first carried a false claim — "no CI workflow runs the
+  DB lane" — relayed from a colleague and written as though first-hand. False:
+  `db-migrations.yml` runs `npm run test:db -w apps/api`, path-gated on `*.db.spec.ts`, exactly why
+  it fired for #1221 (that PR added one). Separately, a stated clock time was already stale by the
+  time it was "corrected": 09:00Z when it was 08:34Z, then 09:05Z when it was 09:35Z.
+- **Root cause:** a claim someone VERIFIED and a claim someone RELAYED look identical once written
+  down — the register records what is believed, not how it came to be believed. A stated
+  elapsed/clock time is a proxy by construction and is stale the instant it's read.
+- **Lesson:** **A register claim must carry how it was established** — the command, the file:line,
+  or who checked it — so a later reader can disprove it in under a minute if it's wrong; an
+  unfalsifiable claim is not a fact yet. **A CLOCK-time claim carries `date -u`'s output, not an
+  estimate; an ELAPSED-time claim shouldn't be asserted at all, only the command that measures it.**
+  For a docs PR mid-edit: QUEUE IT OR EDIT IT, NOT BOTH — freeze and publish a final sha only once
+  inside a merge window; a quoted sha mid-edit is stale on arrival.
+- **Guard:** none automated yet — propose a lint on register entries requiring a cited command or
+  file:line beside any factual claim, and a landing-procedure reminder to run `date -u` before
+  quoting a time. Related: [[L-213]].

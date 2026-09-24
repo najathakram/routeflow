@@ -2788,3 +2788,49 @@ citations, closed-out with its own post-init assertion guard).
   cap — zero cross-references elsewhere in LESSONS.md/CLAUDE.md, and the guard is a standing,
   automated test isolation mechanism rather than a rule a session needs to recall by reading
   this prose.)
+
+## Archived 2026-09-24 — headroom for D-24/D-26 lesson mints (B661 pro-rata + verification-asymmetry)
+
+### L-181 · 2026-09-16 · domain · B451 (dto `any` vs real callers)
+
+- **Symptom:** replacing `estimates.controller.ts`'s `@Body() dto: any` with a real
+  `CreateEstimateDto` made a line-item's `description` required — but `scripts/feature-smoke.mjs`
+  S6 and several `qa-run.js` tests send a bare `{productId, qty}`, relying on the service's own
+  fallback. Caught only by independent review, not the author.
+- **Root cause:** the DTO's field set was derived from the primary web UI form alone;
+  scripted/feature-smoke callers were never grepped.
+- **Lesson:** **Before typing a `dto: any` endpoint (or tightening any field's optionality), grep
+  every caller — web form, mobile, feature-smoke, qa-run, e2e — not just the UI form that
+  motivated the change.**
+- **Guard:** `create-estimate.dto.spec.ts` pins the bare `{productId, qty}` shape passing the
+  real `ValidationPipe` unchanged. (Archived 2026-09-24 to make room at cap — cited only in LESSONS-DIGEST.md (auto-generated, not a cross-reference from another active lesson), and its guard (`create-estimate.dto.spec.ts`) is a standing regression pin, not a rule a session needs to recall by reading this prose.)
+
+### L-169 · 2026-09-16 · domain · B421 / PR-1a shared-helper precondition no-op (two call sites)
+
+- **Symptom:** two surfaces hit the same shape: a shared helper re-checked `.status` generically,
+  but the callers' own `select` never fetched it, so it silently read `undefined`. Both tests
+  passed anyway because their mocks supplied the field directly.
+- **Root cause:** a shared helper that re-derives a precondition has no knowledge of a caller's
+  query shape — it assumes the field is present, and a caller whose `select` never needed it
+  before silently hands the helper `undefined`, which the check absorbs as real.
+- **Lesson:** **Before wiring a caller into a shared helper that re-derives a precondition
+  generically, check the caller's `select` actually fetches the field — a mock supplying it
+  directly proves nothing. A type-check alone won't catch a field silently resolving to
+  `undefined`.**
+- **Guard:** both selects now fetch `status`; `returns-lineitems-select.spec.ts` pins the real
+  shape at every call site. (Archived 2026-09-24 to make room at cap — cited only in LESSONS-DIGEST.md, and its guard (`returns-lineitems-select.spec.ts`) is a standing regression pin at every call site.)
+
+### L-171 · 2026-09-16 · domain · PR-1a F1 (pooled cap vs single-line price basis mismatch)
+
+- **Symptom:** an over-return cap was correctly widened from "one matched line" to "pooled across
+  every live line for that product" — but the sibling pricing branch, reading the SAME key,
+  still priced off one matched line's rate against the newly-pooled quantity, over-crediting a
+  product split across two differently-priced lines.
+- **Root cause:** the cap and the price are two different readers of one key. Widening one
+  reader's basis fixed that reader alone — nothing re-examined the sibling reading the same key.
+- **Lesson:** **When a guard/cap computation for a key is widened to pool across rows, grep
+  every OTHER reader of that key — a cap and a price computed from different bases silently
+  mismatch, and the mismatch is a MONEY bug.**
+- **Guard:** the pricing branch now pools qty/subtotal the same way the cap does, with a
+  `min(returned, sold)` backstop; `returns-refund.spec.ts`'s F1 cases prove the pooled pricing. (Archived 2026-09-24 to make room at cap — cited only in LESSONS-DIGEST.md, and its guard (`returns-refund.spec.ts`'s F1 cases) is a standing regression pin proving the pooled pricing.)
+
