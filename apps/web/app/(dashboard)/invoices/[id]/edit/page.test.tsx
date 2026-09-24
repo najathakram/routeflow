@@ -1,4 +1,5 @@
 import * as React from "react";
+import userEvent from "@testing-library/user-event";
 import { renderWithProviders, screen } from "@/test-utils/render";
 import EditInvoicePage from "./page";
 
@@ -122,5 +123,54 @@ describe("invoice edit page — FLAG-OFF characterization: a pack-only draft edi
     ]);
     renderWithProviders(<EditInvoicePage />);
     expect(screen.getByRole("button", { name: /save changes/i })).toBeInTheDocument();
+  });
+});
+
+/**
+ * B788: a class-validator 400 carries `message` as a `string[]` when more than
+ * one constraint fails at once. Handing that array straight to the toast's
+ * `description` (typed `string`) renders every entry run together with no
+ * separator, instead of one readable message.
+ */
+describe("invoice edit page — save-error toast (B788)", () => {
+  it("joins an array validation message into one readable sentence", async () => {
+    mockInvoice = draft([packLine]);
+    updateMutate.mockImplementation(
+      (_dto: unknown, handlers: { onError: (e: unknown) => void }) => {
+        handlers.onError({
+          response: { data: { message: ["Description is required", "Qty must be positive"] } },
+        });
+      },
+    );
+    renderWithProviders(<EditInvoicePage />);
+    await userEvent.click(screen.getByRole("button", { name: /save changes/i }));
+
+    expect(screen.getByText("Description is required; Qty must be positive")).toBeInTheDocument();
+  });
+
+  it("shows a plain string message unchanged", async () => {
+    mockInvoice = draft([packLine]);
+    updateMutate.mockImplementation(
+      (_dto: unknown, handlers: { onError: (e: unknown) => void }) => {
+        handlers.onError({ response: { data: { message: "Invoice number already in use." } } });
+      },
+    );
+    renderWithProviders(<EditInvoicePage />);
+    await userEvent.click(screen.getByRole("button", { name: /save changes/i }));
+
+    expect(screen.getByText("Invoice number already in use.")).toBeInTheDocument();
+  });
+
+  it("falls back to the generic message when the server sends none", async () => {
+    mockInvoice = draft([packLine]);
+    updateMutate.mockImplementation(
+      (_dto: unknown, handlers: { onError: (e: unknown) => void }) => {
+        handlers.onError({ response: { data: {} } });
+      },
+    );
+    renderWithProviders(<EditInvoicePage />);
+    await userEvent.click(screen.getByRole("button", { name: /save changes/i }));
+
+    expect(screen.getByText("Please try again.")).toBeInTheDocument();
   });
 });
