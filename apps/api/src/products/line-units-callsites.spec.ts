@@ -22,8 +22,15 @@ import { join, relative, sep } from "path";
 const BASELINE: Record<string, number> = {
   // SA-124g/h R1: the replaceAll rebuild is reverted to master byte-for-byte (SA-124e's HIGH 2
   // resolver — which had retired 4 of these 20 reads — is R2 scope now), restoring the original
-  // 20 reads, plus ONE new read feeding `assertReplaceAllPackMatchesLive`'s live-pack guard.
-  "orders/orders.service.ts": 21,
+  // 20 reads, plus ONE new read feeding `assertReplaceAllPackMatchesLive`'s live-pack guard (21).
+  // Round-4 prefactor (SA-124h, absorbing origin/master's unrelated growth under the size
+  // ratchet): the per-item price/data builder moved verbatim to replace-all-line-build.ts,
+  // taking 5 of these reads with it — 21 -> 16.
+  "orders/orders.service.ts": 16,
+  // Round-4 prefactor (SA-124h): buildReplaceAllLineData, moved verbatim out of
+  // orders.service.ts's replaceAll rebuild (see that file's own comment above) — same 5 reads,
+  // same behavior, only relocated.
+  "orders/replace-all-line-build.ts": 5,
   // Three reads today (B717/SA-077 lowered this from 6; SA-068b's earlier note predicted 5, which
   // the hoist overtook — four reads in update()'s mapper became one). Do not read that history as
   // a forecast; what is left, and what retires each:
