@@ -827,12 +827,20 @@ try {
 }
 
 const elapsedTotal = performance.now() - t0;
-const budgetTotal = Number(process.env.ROADMAP_SELF_TEST_BUDGET_MS) || 3000;
-checkTrue(
-  `T36 wall-clock under budget (${elapsedTotal.toFixed(1)}ms < ${budgetTotal}ms)`,
-  elapsedTotal < budgetTotal,
-  `elapsed=${elapsedTotal}`,
-);
+if (process.env.ROADMAP_SELF_TEST_BUDGET_MS) {
+  const budgetTotal = Number(process.env.ROADMAP_SELF_TEST_BUDGET_MS);
+  checkTrue(
+    `T36 wall-clock under budget (${elapsedTotal.toFixed(1)}ms < ${budgetTotal}ms)`,
+    elapsedTotal < budgetTotal,
+    `elapsed=${elapsedTotal}`,
+  );
+} else {
+  // Opt-in only (fleet lead ruling 2026-09-24): a wall-clock assertion in a self-test that
+  // `verify` runs will flake on every loaded host. Unset -> advisory line, never a failure.
+  console.log(
+    `  info  T36 wall-clock ${elapsedTotal.toFixed(1)}ms (no ROADMAP_SELF_TEST_BUDGET_MS set — advisory only)`,
+  );
+}
 
 console.log(
   failures
