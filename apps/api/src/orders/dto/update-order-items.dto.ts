@@ -26,6 +26,14 @@ class UpdateOrderItemDto {
   productId?: string;
 
   /**
+   * units_v1 (A1): sell by this unit of the product's ladder (Case, Pallet, Piece …). STAFF ONLY,
+   * behind flag.units_v1; `qty` then counts the unit and boxes/pieces must be omitted. Absent on
+   * an existing unit-aware line's edit is REFUSED (never interpreted), not "keep the old unit" —
+   * see unit-line-edit.ts assertUnitLabelNamed.
+   */
+  @IsOptional() @IsString() @MaxLength(64) unitLabel?: string | null;
+
+  /**
    * Free-text label for an unlisted (non-catalog) line. Present on a new
    * id-less item when `productId` is omitted, or to rename an existing
    * unlisted line. Catalog items leave this unset.
@@ -76,6 +84,7 @@ class UpdateOrderItemDto {
 
   @IsOptional()
   @IsString()
+  @MaxLength(2000)
   notes?: string;
 
   @IsOptional()

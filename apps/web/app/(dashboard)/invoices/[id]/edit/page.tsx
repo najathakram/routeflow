@@ -7,6 +7,7 @@ import { ArrowLeft, Plus, Trash2, Search, Loader2 } from "lucide-react";
 import { Button, Card, useToast, cn } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
 import { useInvoice, useUpdateInvoice, type CreateInvoiceItem } from "@/lib/api/invoices";
+import { hasUnitLine, unitLabelsOf } from "@/lib/invoice-line-unit";
 import {
   useCustomers,
   useCustomer,
@@ -546,9 +547,14 @@ export default function EditInvoicePage() {
         router.push(`/invoices/${id}`);
       },
       onError: (err: any) => {
+        // A class-validator 400 carries `message` as a string[] when more than
+        // one constraint fails at once — join it into one readable sentence
+        // instead of handing the array straight to the toast (B788).
+        const message = err?.response?.data?.message;
         toast({
           title: "Failed to update invoice",
-          description: err?.response?.data?.message ?? "Please try again.",
+          description:
+            (Array.isArray(message) ? message.join("; ") : message) || "Please try again.",
           variant: "error",
         });
       },
@@ -580,6 +586,27 @@ export default function EditInvoicePage() {
     return (
       <div className="flex flex-col items-center gap-4 p-12 text-center">
         <p className="text-base font-medium text-navy">Only DRAFT invoices can be edited.</p>
+        <Button variant="secondary" href={`/invoices/${id}`}>
+          Back to Invoice
+        </Button>
+      </div>
+    );
+  }
+
+  // units_v1, FAIL CLOSED (B641): update() refuses a unit line (4c-2 is not built) and this form holds no
+  // unit state, so re-saving would silently store the line as a PACK line — 3 Cases (864 pieces) become
+  // 72 pieces while the money still reads $1,440. Refuse visibly instead of converting.
+  if (hasUnitLine(invoice.items)) {
+    return (
+      <div className="mx-auto flex max-w-xl flex-col items-center gap-4 p-12 text-center">
+        <p className="text-base font-medium text-navy">
+          This invoice has a line sold by the {unitLabelsOf(invoice.items).join(" / ")} and
+          can&apos;t be edited here yet.
+        </p>
+        <p className="text-sm text-navy/70">
+          Saving from this form would turn that line into a pack line and change its quantity. Open
+          the invoice to review it, or delete this draft and create it again.
+        </p>
         <Button variant="secondary" href={`/invoices/${id}`}>
           Back to Invoice
         </Button>

@@ -42,7 +42,7 @@ import { spawnSync } from "child_process";
 import { randomUUID } from "crypto";
 import path from "path";
 import { Client } from "pg";
-import { describeDb, requireLocalDatabaseUrl } from "./testing/db-spec";
+import { describeDb, relaxTenantIdGuards, requireLocalDatabaseUrl } from "./testing/db-spec";
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const { assertTestTenant } = require("../../../../scripts/lib/test-tenants.cjs");
@@ -214,10 +214,14 @@ describeDb("backfill-legacy-tenant-ids.mjs — real Postgres (report / dry-run /
     );
   }
 
+  // T6: this spec plants legacy NULL-tenant rows on purpose, so it lifts the tenantId guard on these tables.
+  let restoreTenantIdGuards: (() => Promise<void>) | undefined;
+
   beforeAll(async () => {
     databaseUrl = requireLocalDatabaseUrl();
     db = new Client({ connectionString: databaseUrl });
     await db.connect();
+    restoreTenantIdGuards = await relaxTenantIdGuards(db, ["RouteRun", "RouteRunStop"]);
 
     // Ancestors all carry the tenant — that is what makes the NULL child's tenant derivable.
     await db.query(
@@ -244,6 +248,9 @@ describeDb("backfill-legacy-tenant-ids.mjs — real Postgres (report / dry-run /
 
   afterAll(async () => {
     if (!db) return;
+    // First, and NOT VALID (no scan): restoring the guard cannot fail on the NULL rows still there,
+    // and a throwing delete below can no longer leave the shared DB without its guard.
+    await restoreTenantIdGuards?.();
     // FK order, and never anything outside this run's own id prefix.
     await db.query('DELETE FROM "User" WHERE "id" LIKE $1', [`${ID_PREFIX}%`]);
     await db.query('DELETE FROM "RouteRunStop" WHERE "id" LIKE $1', [`${ID_PREFIX}%`]);

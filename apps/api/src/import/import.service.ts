@@ -780,6 +780,7 @@ export class ImportService {
           taxRate: 0,
           subtotal: sub,
           ...(productId ? { productId } : {}),
+          tenantId: this.prisma.getTenantId(), // nested creates bypass forTenant() extension
         });
       }
 
@@ -791,6 +792,7 @@ export class ImportService {
           discount: 0,
           taxRate: 0,
           subtotal: total,
+          tenantId: this.prisma.getTenantId(), // nested creates bypass forTenant() extension
         });
       }
 
@@ -911,8 +913,11 @@ export class ImportService {
                   .forTenant()
                   .invoicePayment.findFirst({ where: { invoiceId: prior.id } });
                 if (!existingPayment) {
+                  // B779: total/balanceDue are individually rounded (parseImportMoney), but
+                  // their subtraction can still land off-cent in float (24.30 - 10.10 =
+                  // 14.200000000000001) — round every monetary write.
                   const paidAmount = !isNaN(balanceDue)
-                    ? total - balanceDue
+                    ? roundMoney(total - balanceDue)
                     : status === InvoiceStatus.PAID
                       ? total
                       : 0;
@@ -989,8 +994,9 @@ export class ImportService {
         // For PAID/PARTIAL invoices, create a synthetic payment record so
         // balance-due calculations are correct without a separate payments import
         if (status === InvoiceStatus.PAID || status === InvoiceStatus.PARTIAL) {
+          // B779: round every monetary write — see the sibling branch's comment above.
           const paidAmount = !isNaN(balanceDue)
-            ? total - balanceDue
+            ? roundMoney(total - balanceDue)
             : status === InvoiceStatus.PAID
               ? total
               : 0;

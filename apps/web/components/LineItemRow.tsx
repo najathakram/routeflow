@@ -1,11 +1,12 @@
 "use client";
 
 import * as React from "react";
-import { X, StickyNote } from "lucide-react";
+import { X, StickyNote, Pencil } from "lucide-react";
 import { cn, type BadgeStatus } from "@routeflow/ui/web";
 import { computeLineSubtotal, perUnitPrice } from "@routeflow/pricing";
 import { MarginHint } from "@/components/MarginHint";
 import { MoneyInput } from "@/components/MoneyInput";
+import type { PackBase } from "@/lib/order-line-unit";
 import type { TrackedCategory } from "@/lib/api/tracked-categories";
 
 /**
@@ -43,6 +44,11 @@ export interface LineItemRowItem {
   /** UI-only qty entry mode for case-packed lines. NEVER submitted — the payload always
    *  carries {qty, boxes, pieces} and the per-case unitPrice. */
   sellBy?: "case" | "unit";
+  /** units_v1: the non-pack unit this line sells by (`undefined` = the pack). `qty` then counts that
+   *  unit and `unitPrice` is per unit — no boxes/pieces. Sent as `unitLabel`. */
+  unitLabel?: string;
+  /** UI-only: the pack fields a unit switch overwrote, so choosing the pack restores them. */
+  packBase?: PackBase;
 }
 
 export interface LineItemRowProps {
@@ -81,6 +87,8 @@ export interface LineItemRowProps {
    *  inline-editable exactly as it is today — this prop only adds a click target
    *  around the existing price display, it never removes the inline input. */
   onTapPrice?: () => void;
+  /** Optional control rendered under the price block (the order modal's "Sell by" unit picker). */
+  unitSlot?: React.ReactNode;
 
   /** Registers/unregisters this row's root `<li>` with the caller (e.g.
    *  `CreateOrderModal`'s `rowRefs` map, used to scroll a just-scanned/just-added
@@ -133,6 +141,7 @@ export function LineItemRow({
   onUpdateUnlistedName,
   onUpdateUnlistedPrice,
   onRemove,
+  unitSlot,
   onTapPrice,
   rowRef,
 }: LineItemRowProps) {
@@ -177,13 +186,13 @@ export function LineItemRow({
             <span className="text-[10px] text-navy/70">/ {li.unit}</span>
           </div>
           {(li.noteOpen || li.note?.trim()) && (
-            <input
-              type="text"
-              maxLength={500}
+            <textarea
+              rows={2}
+              maxLength={2000}
               value={li.note ?? ""}
               onChange={(e) => onSetNote(e.target.value)}
               placeholder="Flavor or note for this item (prints on invoice)"
-              className="mt-1 w-full rounded border border-surface-border bg-white px-2 py-1 text-xs text-navy placeholder:text-navy/40 focus:outline-none focus:ring-1 focus:ring-brand-500"
+              className="mt-1 w-full resize-y rounded border border-surface-border bg-white px-2 py-1 text-xs text-navy placeholder:text-navy/40 focus:outline-none focus:ring-1 focus:ring-brand-500"
             />
           )}
         </div>
@@ -240,6 +249,12 @@ export function LineItemRow({
                 ${li.unitPrice.toFixed(2)} / {li.unit}
               </span>
             )}
+            {onTapPrice && (
+              <>
+                <Pencil aria-label="Change price" className="h-3 w-3 text-navy/50" />
+                <span className="text-[10px] text-navy/50 underline sm:hidden">Tap to change</span>
+              </>
+            )}
           </div>
           {/* Price per piece (when product has box packaging) */}
           {li.unitsPerBox && li.unitsPerBox > 1 && (
@@ -247,6 +262,7 @@ export function LineItemRow({
               ${perUnitPrice(li.unitPrice, li.unitsPerBox)?.toFixed(2)} / piece
             </div>
           )}
+          {unitSlot && <div className="mt-1">{unitSlot}</div>}
           {/* Regulated tag (regulated-items-spec: "{Category} · regulated"). */}
           {category && (
             <span className="mt-1 inline-flex items-center rounded-full bg-amber-50 px-1.5 py-0.5 text-[10px] font-medium text-amber-700 ring-1 ring-amber-200">
@@ -290,13 +306,13 @@ export function LineItemRow({
             />
           </div>
           {(li.noteOpen || li.note?.trim()) && (
-            <input
-              type="text"
-              maxLength={500}
+            <textarea
+              rows={2}
+              maxLength={2000}
               value={li.note ?? ""}
               onChange={(e) => onSetNote(e.target.value)}
               placeholder="Flavor or note for this item (prints on invoice)"
-              className="mt-1 w-full rounded border border-surface-border bg-white px-2 py-1 text-xs text-navy placeholder:text-navy/40 focus:outline-none focus:ring-1 focus:ring-brand-500"
+              className="mt-1 w-full resize-y rounded border border-surface-border bg-white px-2 py-1 text-xs text-navy placeholder:text-navy/40 focus:outline-none focus:ring-1 focus:ring-brand-500"
             />
           )}
         </div>
@@ -402,7 +418,10 @@ export function LineItemRow({
         </div>
       )}
       {/* Line total */}
-      <span className="col-start-2 row-start-2 self-center text-right text-sm font-semibold text-navy sm:w-16 sm:self-auto">
+      <span
+        data-testid="line-total"
+        className="col-start-2 row-start-2 self-center text-right text-sm font-semibold text-navy sm:w-16 sm:self-auto"
+      >
         $
         {computeLineSubtotal({
           unitPrice: li.unitPrice,

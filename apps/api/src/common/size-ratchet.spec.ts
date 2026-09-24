@@ -29,8 +29,8 @@ const HEADROOM = 25;
 
 /** Repo-relative path → baseline line count (measured 2026-09-19 at 91d323de). */
 const BASELINE: Record<string, number> = {
-  "apps/api/src/orders/orders.service.ts": 5880, // R-2a-8: getOrderTracking -> order-tracking.ts (was 5929)
-  "apps/api/src/invoices/invoices.service.ts": 6412,
+  "apps/api/src/orders/orders.service.ts": 5751, // SA-065 extraction: appendOrderRevision -> order-revisions.ts (was 5780; U1 before that: class tail -> order-lifecycle.ts, 5880)
+  "apps/api/src/invoices/invoices.service.ts": 6358, // B659 prefactor: create() context/fold steps -> manual-invoice-context.ts (was 6389; verified by wc -l). The ledger-write extraction B659 originally also proposed was rejected on rebase (manual-invoice-context.ts's header comment) — but that rejection also silently dropped this file's OWN `hasRegulated` local (the extracted helper computed its own copy internally), a real ReferenceError caught only by running invoices.service.spec.ts in full; re-added 2 lines after itemsData, 6356 -> 6358.
   "apps/api/src/orders/orders.service.spec.ts": 9511,
   "apps/api/src/customers/customers.service.ts": 3307,
   "apps/api/src/invoices/invoices.service.spec.ts": 9351,
@@ -40,7 +40,7 @@ const BASELINE: Record<string, number> = {
   "apps/api/src/routes/routes.service.ts": 3189, // prefactor: run/stop select shapes + status constants live in routes/routes.constants.ts (was 3270)
   "apps/web/app/(dashboard)/products/[id]/page.tsx": 2942,
   "apps/mobile/app/(operator)/(tabs)/orders/[id]/edit-items.tsx": 3315,
-  "apps/mobile/components/NewOrderScreen.tsx": 4556,
+  "apps/mobile/components/NewOrderScreen.tsx": 4056, // SA-085: lineUnitFor + the total/totalItems memo -> lib/cart-order-total.ts (executable pin for the order-total fix) (was 4078)
   "apps/web/app/(dashboard)/inventory/page.tsx": 3303,
   "apps/web/app/(marketing)/marketing.css": 9941,
   "apps/web/components/ScanInvoiceModal.tsx": 3134,

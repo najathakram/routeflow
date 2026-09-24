@@ -40,6 +40,7 @@ function make(opts: { assertFeatureRequiresMet?: jest.Mock } = {}) {
     stub() as any, // addonService
     featureOverrides as any,
     stub() as any, // entitlementsMode
+    stub() as any, // configSnapshotFlag
     stub() as any, // featureDiffs
     authority as any,
     stub() as any, // featurePreview

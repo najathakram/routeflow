@@ -2722,3 +2722,69 @@ citations, closed-out with its own post-init assertion guard).
   through `| tail`; it discards the real exit code.**
 - **Guard:** none yet — propose `-p routeflow` in `local:up`/`local:down`/`local:reset`, or a
   top-level `name: routeflow`.
+
+### L-081 · 2026-09-06 · domain · F09
+
+- **Symptom:** wallet credit kept being consumed by WRITTEN_OFF (forgiven) invoices after the
+  settle query had excluded VOID — a fix at that query would still have missed the auto-apply
+  path (`send()`/`sendEmail()`), and a test whose mock injects the query result couldn't even
+  see a `where`-only fix.
+- **Root cause:** the guard lived at one call site's query instead of at the money write; four
+  hand-rolled status lists (manual apply, settle, delivery payments, advance wallet) had drifted
+  apart, and PAID had to stay in the settle set because the same loop shrinks excess credit.
+- **Lesson:** **Gate a money write inside the primitive that performs it, on the row it just read
+  (an exclude-list, so a fixture without the field still writes) — sibling primitives and
+  result-injecting mocks bypass a where-only fix; keep every status set in one named module with
+  the reason each differs written beside it.**
+- **Guard:** REG-B67/REG-B66 T1–T11 (incl. the auto-apply door) in
+  `credit-notes.wallet-integrity.spec.ts`; `apps/api/src/invoices/invoice-status-sets.ts` is the
+  one home.
+
+### L-192 · 2026-09-17 · tooling · jsdom offsetParent is always null (focus-trap RTL false negative)
+
+- **Symptom:** a focus trap's `getFocusable()` filtered candidates with
+  `el.offsetParent !== null`; three RTL tests failed as if the trap never moved focus, while the
+  handler's own logic was correct.
+- **Root cause:** jsdom has no layout engine, so `offsetParent` (like
+  `offsetWidth`/`offsetHeight`) is always `null` regardless of real visibility — the filter
+  discarded every candidate, turning the handler into a silent no-op under test.
+- **Lesson:** **Never gate a DOM-query result on a layout-dependent property (`offsetParent`,
+  `offsetWidth`/`offsetHeight`, `getBoundingClientRect`) in code exercised by RTL/jsdom — use
+  `getComputedStyle` for a visibility check jsdom actually computes, or say in a comment the
+  check is real-browser-only.**
+- **Guard:** `ResponsiveSidebar.tsx`'s `getFocusable()` carries no visibility filter, with a
+  comment stating why (everything rendered while the drawer is open is meant to be reachable).
+
+### L-145 · 2026-09-14 · domain · mobile scan-to-order, staged-edit persistence
+
+- **Symptom:** a new per-order "staged edits" snapshot was flagged as a likely violation of R1
+  (local persistence must go through the user-scoped zustand `persist` store, never a raw
+  AsyncStorage key, to prevent one user's work surfacing under the next login).
+- **Root cause:** R1 was written against a single-blob-per-user shape. This snapshot is
+  one-per-ORDER — a single zustand store can't hold a dynamic per-order keyspace, so the code
+  used a `<userId>:<orderId>` AsyncStorage keyspace instead, with a teardown routine enumerating
+  and wiping every key under a user's prefix on logout.
+- **Lesson:** **A binding rule written for one shape does not automatically bind a different
+  shape the same way. Check what invariant the rule actually protects — here, no cross-user
+  data leak — and whether the deviation still satisfies THAT, not just whether it uses the
+  literal mechanism. Verify the substitute mechanism is real (grep the teardown/hydrate wiring),
+  don't take a code comment's claim on faith.**
+- **Guard:** `session-teardown.ts` imports and calls the snapshot's own prefix-clear helper —
+  grep for it before trusting this reasoning again on the same file.
+
+### L-116 · 2026-09-12 · tooling · plane self-test machine-root invariants
+
+- **Symptom:** a lead's pre-push verify failed at a plane self-test's "shared runs.jsonl
+  byte-unchanged" check — ANOTHER session's own hooks had legitimately appended to it mid-run.
+- **Root cause:** every "byte-identical before/after" invariant in the plane self-tests binds on
+  `machineRoot()`'s shared dir (see [[L-114]]) — the SAME dir every worktree resolves to — so it
+  races any other session, not just a concurrent run of the same suite.
+- **Lesson:** **A self-test invariant must never bind to a shared machine-local file — assert
+  only on fixtures the run owns. A file another session can write at any moment needs a
+  throwaway stand-in, never the real shared path.**
+- **Guard:** `PLANE_MACHINE_ROOT` (gated behind `PLANE_SYNC_SELF_TEST=1`) lets every plane
+  self-test point `machineRoot()` at its own temp root; `T-concurrent-writer` proves isolation
+  under a genuine concurrent writer. Related [[L-114]]. (Archived 2026-09-22 to make room at
+  cap — zero cross-references elsewhere in LESSONS.md/CLAUDE.md, and the guard is a standing,
+  automated test isolation mechanism rather than a rule a session needs to recall by reading
+  this prose.)

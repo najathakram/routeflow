@@ -247,6 +247,52 @@ describe("BatchImportService", () => {
       expect(res.posted).toBe(1);
     });
 
+    // B666: the scanned packSize must reach vendorBills.create, whose lineInventoryDelta converts a case
+    // line (pack > 1) to pieces + a per-piece cost before the stock and averageCost write.
+    describe("packSize (B666)", () => {
+      const post = async (line: Record<string, unknown>) => {
+        prisma.importQueueItem.findMany.mockResolvedValue([
+          {
+            id: "i1",
+            batchId: "b1",
+            supplierMatchId: "s1",
+            invoiceNumber: "VB-1",
+            total: "240.00",
+            extractedPayload: {
+              items: [{ matchedProductId: "p1", extractedName: "Cola 12x330ml", ...line }],
+            },
+          },
+        ]);
+        await service.postBatch("b1", "user-1");
+        return vendorBills.create.mock.calls[0][0].items[0];
+      };
+
+      it("carries a printed pack size onto the bill line (12-pack, 5 cases at $48)", async () => {
+        expect(await post({ qty: 5, unitCost: 48, packSize: 12 })).toMatchObject({
+          productId: "p1",
+          qty: 5,
+          unitCost: 48,
+          packSize: 12,
+        });
+      });
+
+      it("the bill line then converts to +60 pieces at $4/pc (the real lineInventoryDelta)", async () => {
+        const line = await post({ qty: 5, unitCost: 48, packSize: 12 });
+        const delta = (VendorBillsService.prototype as any).lineInventoryDelta.call({}, line);
+        expect(Number(delta.qty)).toBe(60);
+        expect(Number(delta.unitCost)).toBe(4);
+      });
+
+      it("a line with no pack, a pack of 1 or a fractional pack keeps today's path (no packSize key)", async () => {
+        for (const packSize of [undefined, null, 0, 1, 12.5, "abc"]) {
+          vendorBills.create.mockClear();
+          const line = await post({ qty: 2, unitCost: 5, packSize });
+          expect(line).not.toHaveProperty("packSize");
+          expect(line).toMatchObject({ qty: 2, unitCost: 5 });
+        }
+      });
+    });
+
     it("passes the supplier invoice number so the bill carries the dedup key", async () => {
       prisma.importQueueItem.findMany.mockResolvedValue([
         {

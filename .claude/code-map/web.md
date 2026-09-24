@@ -21,3 +21,4 @@ Next.js 14 App Router operator/buyer dashboard with multi-tenant Radix + Tailwin
 | [web/e2e-tests.md](web/e2e-tests.md)                 | E2E tests (`apps/web/e2e/`)                                                                            |
 | [web/components-shared.md](web/components-shared.md) | Components & shared                                                                                    |
 | [web/api-hooks.md](web/api-hooks.md)                 | API hooks (`lib/api/`)                                                                                 |
+| [web/catchup-2026-09-21.md](web/catchup-2026-09-21.md) | Catch-up 2026-09-21: restrictions UI, product labels, PO tab, scan-to-order, credit-limit guard, config snapshots tab |

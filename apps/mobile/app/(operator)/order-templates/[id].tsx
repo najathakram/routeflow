@@ -181,7 +181,7 @@ export default function OrderTemplateDetailScreen() {
                       {it.product?.name ?? it.productId}
                     </Text>
                     {it.notes ? (
-                      <Text style={styles.itemNote} numberOfLines={1}>
+                      <Text style={styles.itemNote} numberOfLines={2}>
                         {it.notes}
                       </Text>
                     ) : null}

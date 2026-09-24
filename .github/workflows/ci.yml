@@ -58,7 +58,7 @@
 # and nothing else. If CI is failing on something the local gate should have
 # caught, fix the local gate.
 #
-# Triggers stay narrow: PRs into master (minus paths-ignore) drive correctness, and
+# Triggers stay narrow: PRs into ANY base branch (minus paths-ignore) drive correctness, and
 # a SUCCESSFUL Railway deploy — not the master push — drives E2E.
 #
 # ⚠️ THERE IS NO `push:` TRIGGER, AND ITS ABSENCE IS DELIBERATE (2026-08-30).
@@ -77,7 +77,15 @@ name: CI
 
 on:
   pull_request:
-    branches: [master]
+    # NO `branches:` filter, deliberately. It used to read `branches: [master]`, which is a filter on
+    # the PR's BASE — so a stacked PR (base = another feature branch) got no check at all: not a
+    # failure, not a skip, nothing, and a check-less PR page reads as "nothing to report" rather
+    # than "never ran". Nothing below depends on the base being master (the scoped-verify diff
+    # falls back to a full run when origin/master is unresolvable in a shallow clone). A stacked
+    # PR's run tests head + base, so it can be noisy; that beats no signal. GitHub reads this file
+    # from the PR's merge ref, so a stacked PR only starts running once ITS head carries this change
+    # (rebase/cherry-pick onto a master that has it) — landing it on master does not retro-start
+    # existing stacked PRs.
     # Explicit, because the default set omits ready_for_review and `verify`
     # skips drafts — without this a draft marked ready would produce NO run at
     # all, and with no branch protection on a Free private repo the PR could

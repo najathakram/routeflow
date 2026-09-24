@@ -1,5 +1,6 @@
 import { computeLineSubtotal } from "@routeflow/pricing";
 import type { SaleDraft } from "@/lib/api/drafts";
+import type { PackBase } from "@/lib/order-line-unit";
 
 /**
  * Minimize & resume drafts (pos-cost-roles-spec §2). The order builder serializes
@@ -26,6 +27,11 @@ export interface DraftLineItem {
   unitCost?: number;
   category?: string;
   isUnlisted?: boolean;
+  /** units_v1: the non-pack unit this line sells by (`undefined` = the pack). Web only for now:
+   *  mobile's parked-draft mapper does not read it yet (see the flag-grant blocker on #938). */
+  unitLabel?: string;
+  /** UI-only: the pack fields a unit switch overwrote. Web only. */
+  packBase?: PackBase;
   /**
    * Per-line note. Round-tripped only by mobile's parked drafts
    * (`apps/mobile/lib/drafts-payload.ts`); web keeps the field so the shapes stay

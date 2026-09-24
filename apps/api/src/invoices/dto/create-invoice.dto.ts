@@ -23,10 +23,19 @@ import { StripHtml } from "../../common/transforms/strip-html.transform";
 export class CreateInvoiceItemDto {
   @IsString() description: string;
   @IsOptional() @IsUUID() productId?: string;
+  /** SA-093a round 6: this line's source order line, server-validated against the invoice's own
+   *  order. Round-trip it on every edit — omitting it drops the line to product-match fallback. */
+  @IsOptional() @IsUUID() orderItemId?: string;
   @IsNumber() @Min(0.001) qty: number;
   @IsNumber() @Min(0) unitPrice: number;
   @IsOptional() @IsNumber() @Min(0) discount?: number;
   @IsOptional() @IsNumber() @Min(0) taxRate?: number;
+  /**
+   * units_v1: sell this line by a unit of the product's ladder (Case, Pallet, Piece …); `qty` then
+   * counts the unit (a whole number) and boxes/pieces/promoFreeUnits must be omitted. Behind
+   * flag.units_v1; blank = the pack.
+   */
+  @IsOptional() @IsString() @MaxLength(64) unitLabel?: string | null;
   @IsOptional() @IsInt() @Min(0) boxes?: number;
   @IsOptional() @IsInt() @Min(0) pieces?: number;
   /**

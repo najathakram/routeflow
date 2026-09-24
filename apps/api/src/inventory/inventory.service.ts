@@ -10,6 +10,7 @@ import { CostingMethod, MovementType, Prisma } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import { normalizeBoxesPieces, roundMoney } from "@routeflow/pricing";
 import { fetchInvoicedSaleLines, roundQty } from "../common/invoiced-sales";
+import { poLineFromInput } from "./po-line-input";
 import { costDecimal, nextAverageCost, planLotConsumption, reverseAverageCost } from "./costing";
 import { RecordPurchaseDto } from "./dto/record-purchase.dto";
 import { RecordAdjustmentDto } from "./dto/record-adjustment.dto";
@@ -1052,6 +1053,12 @@ export class InventoryService {
         productId: string;
         qtyOrdered: Prisma.Decimal;
         unitCost: Prisma.Decimal;
+        /**
+         * INTERNAL CALLERS ONLY, never a DTO field (a client must never name a stored total).
+         * The bill line's EXACT total (invoice denomination): a bill entered per case must not be re-derived as
+         * pieces x the 4 dp per-piece cost (the same drift as a case-entered PO). Falls back to the product.
+         */
+        totalCost?: number;
         sku?: string | null;
         packSize?: number | null;
       }[];
@@ -1089,7 +1096,10 @@ export class InventoryService {
       qtyOrdered: l.qtyOrdered,
       qtyReceived: 0,
       unitCost: l.unitCost,
-      totalCost: roundMoney(Number(l.qtyOrdered) * Number(l.unitCost)),
+      totalCost:
+        l.totalCost !== undefined
+          ? roundMoney(l.totalCost)
+          : roundMoney(Number(l.qtyOrdered) * Number(l.unitCost)),
       sku: l.sku ?? null,
       packSize: l.packSize ?? null,
     }));
@@ -1122,17 +1132,19 @@ export class InventoryService {
     const itemsData = dto.items.map((item: any) => {
       const prod = productMap.get(item.productId);
       if (!prod) throw new NotFoundException(`Product ${item.productId} not found`);
-      const qtyOrdered = item.qty ?? item.qtyOrdered;
-      if (!qtyOrdered || qtyOrdered <= 0)
-        throw new BadRequestException("Item quantity must be positive");
-      const totalCost = qtyOrdered * item.unitCost;
-      totalAmount += totalCost;
+      // Server-side line money through the one pricing builder: a line entered per case (caseCost) totals
+      // roundMoney(caseCost x cases) from the ENTERED figures; a per-piece line totals roundMoney(qty x unitCost).
+      const line = poLineFromInput(item);
+      if (!(line.qtyOrdered > 0)) throw new BadRequestException("Item quantity must be positive");
+      totalAmount = roundMoney(totalAmount + line.totalCost);
       return {
         productId: item.productId,
-        qtyOrdered,
+        qtyOrdered: line.qtyOrdered,
         qtyReceived: 0,
-        unitCost: item.unitCost,
-        totalCost,
+        unitCost: line.unitCost,
+        totalCost: line.totalCost,
+        // packSize is the denomination: stored only when the cost was entered per case
+        ...(line.packSize !== null ? { packSize: line.packSize } : {}),
       };
     });
     return this.prisma.forTenant().purchaseOrder.create({
@@ -1357,6 +1369,13 @@ export class InventoryService {
      * Defaults to now (a fresh receive).
      */
     lotPurchaseDate?: Date,
+    /**
+     * Explicit timestamp for the movement. A re-apply passes strictly increasing ones
+     * (compensation, then re-post) because the cost replay orders by createdAt and then
+     * by a RANDOM id — two rows of one transaction share `now()`, so without this their
+     * replay order (and the average it yields) would be a coin flip.
+     */
+    movementAt?: Date,
   ) {
     const qtyReceived = new Prisma.Decimal(qty);
     // The PO line's cost basis is a property of the STORED row, never of the
@@ -1388,6 +1407,7 @@ export class InventoryService {
         supplierId: po.supplierId,
         reference: po.poNumber,
         performedById: userId,
+        ...(movementAt ? { createdAt: movementAt } : {}),
       },
     });
 
@@ -1448,6 +1468,16 @@ export class InventoryService {
    * restated average is approximate and stock may pass through a lower value inside
    * the transaction — exactly what a bill's revertToDraft does today.
    *
+   * LEGACY LOTS (POs re-applied under #966, before B583) are NOT special-cased. That
+   * release surrendered a partly-consumed lot by zeroing it and writing "(PO edited; N
+   * already consumed)" into its free-text `notes`; a later version parsed that text to
+   * credit N back. It was removed (B608): `receiveStock` writes BOTH `reference` and
+   * `notes` from operator input onto a StockLot, and this method finds lots by
+   * `reference`, so anyone able to receive stock could mint a lot naming a real PO with
+   * that text and have N credited as free stock once it drained. A PO from that window
+   * now refuses re-apply like any other partly-consumed lot (409 PO_LOT_PARTIALLY_CONSUMED)
+   * and stays document-only editable; there is no migration.
+   *
    * Returns the original purchase date of each product's lot, so the re-posted lot
    * keeps its place in FIFO/LIFO order.
    */
@@ -1458,7 +1488,9 @@ export class InventoryService {
       items: { productId: string; qtyReceived: Prisma.Decimal }[];
     },
     userId: string,
-  ): Promise<Map<string, Date>> {
+    /** Strictly increasing timestamps for the compensating movements (see postPoReceipt). */
+    nextAt: () => Date,
+  ): Promise<{ lotDates: Map<string, Date> }> {
     const productIds = [...new Set(po.items.map((i) => i.productId))];
 
     // ── Refuse first: nothing below runs unless every check passes ──
@@ -1573,6 +1605,7 @@ export class InventoryService {
             reference: po.poNumber,
             notes: `${prefix}${m.id}`,
             performedById: userId,
+            createdAt: nextAt(),
           },
         });
       }
@@ -1599,7 +1632,7 @@ export class InventoryService {
       const seen = lotDates.get(l.productId);
       if (!seen || l.purchaseDate < seen) lotDates.set(l.productId, l.purchaseDate);
     }
-    return lotDates;
+    return { lotDates };
   }
 
   /**
@@ -1703,7 +1736,24 @@ export class InventoryService {
       }
 
       // ── Resolve the edited line set ──
-      const items = dto.items!;
+      // Every line through the one pricing builder: a case line (caseCost) totals from the ENTERED figures and
+      // stores its pack; a per-piece line keeps qtyOrdered/unitCost (and whatever packSize it sent, as before).
+      const items = dto.items!.map((l) => {
+        const amounts = poLineFromInput(l);
+        // A case line's `cases` may be 0 (@Min(0)) with no loose pieces, so the DTO's per-piece @Min(0.001) no
+        // longer covers it: the same positive-quantity gate createPurchaseOrder has.
+        if (!(amounts.qtyOrdered > 0))
+          throw new BadRequestException("Item quantity must be positive");
+        return {
+          id: l.id,
+          productId: l.productId,
+          sku: l.sku,
+          qtyOrdered: amounts.qtyOrdered,
+          unitCost: amounts.unitCost,
+          totalCost: amounts.totalCost,
+          packSize: amounts.packSize !== null ? amounts.packSize : l.packSize,
+        };
+      });
       const existingById = new Map<string, (typeof po.items)[number]>(
         po.items.map((i) => [i.id, i] as const),
       );
@@ -1761,12 +1811,16 @@ export class InventoryService {
 
       // ── Reverse (re-apply only) ──
       let lotDates = new Map<string, Date>();
+      // Strictly increasing movement timestamps: compensation(s) first, then the re-post.
+      const clockBase = Date.now();
+      let tick = 0;
+      const nextAt = () => new Date(clockBase + tick++);
       if (reapply) {
         await this.lockProducts(tx, [
           ...po.items.map((i) => i.productId),
           ...items.map((l) => l.productId),
         ]);
-        lotDates = await this.reversePoReceipts(tx, po, userId);
+        ({ lotDates } = await this.reversePoReceipts(tx, po, userId, nextAt));
       }
       const tenantId = this.prisma.getTenantId();
 
@@ -1781,10 +1835,9 @@ export class InventoryService {
       };
 
       const lineData = items.map((line) => {
-        const totalCost = roundMoney(line.qtyOrdered * line.unitCost);
         return {
           line,
-          totalCost,
+          totalCost: line.totalCost,
           qtyReceived: targetReceived(line),
         };
       });
@@ -1851,6 +1904,7 @@ export class InventoryService {
             l.qtyReceived,
             userId,
             lotDates.get(l.line.productId),
+            nextAt(),
           );
           restockedProductIds.push(l.line.productId);
         }

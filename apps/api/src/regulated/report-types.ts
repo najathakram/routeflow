@@ -20,7 +20,8 @@ export type ReportWarningCode =
   | "FRACTIONAL_QTY"
   | "UNLINKED_LEDGER_ROWS"
   | "UNMATCHED_LEDGER_LINE"
-  | "UNLISTED_PRODUCT_LINE";
+  | "UNLISTED_PRODUCT_LINE"
+  | "PARKED_REVERSALS";
 
 export interface ReportWarning {
   code: ReportWarningCode;
@@ -43,6 +44,10 @@ export interface ReportColumn {
  * file therefore cannot drift.
  */
 export interface RegulatedReport {
+  /** Unresolved parked return reversals of the range (listed FIRST; not in the figures). Absent = none. */
+  parked?: import("./parked-reversals").ParkedReversalRow[];
+  /** A stock note: return restocks parked for the same reason. Never blocks. */
+  parkedRestockNote?: string | null;
   template: string;
   title: string;
   categoryId: string;
