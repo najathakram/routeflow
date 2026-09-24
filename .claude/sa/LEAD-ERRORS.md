@@ -94,6 +94,8 @@ A 7 · B 5 · C 1 · D 4 (lead) · SA own: A 11 · B 14 | needless asks ("you di
 
 - SA-E52 · 2026-09-24 · B · Filed B837 HIGH from ONE condition (delivered-reconcile.ts's `existing` PAYABLE check) without reading the callee it guards — `createInvoiceFromOrder`'s own invoicedQty gate makes the whole-order re-invoice impossible on the common path. Rule: a filing is a claim about a PATH; before minting a severity, read every callee on that path to the write, or file it as "verify" with the exact unread call named.
 
+- SA-E53 · 2026-09-24 · B · SA-135 (3) asserted a future 12× over-bill from a storage change without reading how the template price is denominated (per box) or how create() derives the subtotal (boxed proration — identical for any qty). Same shape as E38: a money harm named without tracing it to the write. Rule: before naming a money consequence, compute it on the actual formula with one concrete number; a storage change is not a money change until the subtotal path says so.
+
 ## Prediction (update weekly)
 
 - 2026-09-20 · A dominates (5 of 11) → the fix is mechanical: re-derive at the moment of decision and name the sha. Next likely instance: a "ready to land", "N behind" or ratchet figure relayed from a lane across a merge window. D is the expensive class: watch every "the flag is off" and every merge list that is mostly one lane.
