@@ -1066,6 +1066,32 @@ const pr = (overrides = {}) => ({
   check("classifyAddResults: any other error is fatal", r.fatal, ["Could not resolve to a node"]);
 }
 
+// ── a PR inherits its worker from the claimed linked issue ───────────────
+{
+  const issue = {
+    number: 7,
+    labels: [],
+    comments: [{ body: "Claimed by Ana · PC · Lane F", createdAt: "2026-09-24T10:00:00Z" }],
+  };
+  const pr = {
+    number: 70,
+    state: "OPEN",
+    isDraft: false,
+    body: "Closes #7",
+    commits: { nodes: [] },
+  };
+  check(
+    "derivePRFields: worker falls back to the linked issue claim",
+    derivePRFields(pr, issue).Worker,
+    "Ana · PC · Lane F",
+  );
+  check(
+    "derivePRFields: the PR's own Worker: line wins",
+    derivePRFields({ ...pr, body: "Closes #7\n\nWorker: Bo · Mac · Lane B" }, issue).Worker,
+    "Bo · Mac · Lane B",
+  );
+}
+
 // ── result ────────────────────────────────────────────────────────────────
 console.log(
   failures === 0

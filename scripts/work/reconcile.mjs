@@ -413,7 +413,8 @@ export function derivePRFields(pr, linkedIssue) {
     Priority: fromIssue.priority,
     Lane: fromIssue.lane,
     Kind: fromIssue.kind,
-    Worker: deriveWorkerForPR(pr),
+    // A PR without its own Worker: line is worked by whoever claimed its linked issue.
+    Worker: deriveWorkerForPR(pr) ?? (linkedIssue ? deriveWorkerForIssue(linkedIssue, []) : null),
     "Last activity": toDateValue(lastActivityInstantForPR(pr)),
   };
 }
@@ -463,7 +464,7 @@ export function renderDigestBody(d) {
   for (const r of d.releases) {
     const status = r.offTrack ? "OFF TRACK" : r.atRisk ? "AT RISK" : "on track";
     lines.push(
-      `| ${r.title} | ${r.percentDone}% (${r.closed}/${r.total}, ${r.open} open) | ${r.dueOn ?? "—"} | ${status} |`,
+      `| ${r.title} | ${r.percentDone}% (${r.closed}/${r.total}, ${r.open} open) | ${r.dueOn ? r.dueOn.slice(0, 10) : "—"} | ${status} |`,
     );
   }
   lines.push("");
@@ -534,7 +535,7 @@ export function renderStatusUpdateBody(status, d) {
   const atRiskReleases = d.releases.filter((r) => r.atRisk || r.offTrack);
   if (atRiskReleases.length) {
     lines.push(
-      `Releases needing attention: ${atRiskReleases.map((r) => `${r.title} (${r.percentDone}% done, due ${r.dueOn ?? "—"})`).join("; ")}.`,
+      `Releases needing attention: ${atRiskReleases.map((r) => `${r.title} (${r.percentDone}% done, due ${r.dueOn ? r.dueOn.slice(0, 10) : "—"})`).join("; ")}.`,
     );
   } else {
     lines.push("All tracked releases are on track.");
