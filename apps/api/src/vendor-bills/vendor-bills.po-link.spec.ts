@@ -226,6 +226,19 @@ describe("VendorBillsService — PO-linked bills (units/PO step 7)", () => {
   // ─── create: raise a draft PO from the bill's lines ────────────────────────
 
   describe("create — raise a draft purchase order from the bill's lines", () => {
+    it("B677: a bill line of 1,000 cases of 12 at $11.00 hands the PO its exact $11,000.00, not pieces x 0.9167", async () => {
+      await service.create({
+        supplierId: "sup-1",
+        createPurchaseOrder: true,
+        items: [billLine({ qty: 1000, unitCost: 11, packSize: 12, sku: undefined })],
+      });
+      const input = inventory.createDraftPurchaseOrderInTx.mock.calls[0][1];
+      expect(input.lines[0].qtyOrdered.toString()).toBe("12000");
+      expect(input.lines[0].unitCost.toString()).toBe("0.9167"); // costing only
+      expect(input.lines[0].totalCost).toBe(11000);
+      expect(12000 * 0.9167).toBeCloseTo(11000.4, 6); // what the per-piece derivation stored
+    });
+
     it("creates the PO in the bill's own transaction from the same lines (pieces, per-piece cost, sku, pack) and links it", async () => {
       await service.create({
         supplierId: "sup-1",
@@ -254,6 +267,7 @@ describe("VendorBillsService — PO-linked bills (units/PO step 7)", () => {
       expect(input.lines[0].unitCost.toString()).toBe("1.25"); // $30 ÷ 24
       expect(input.lines[0].sku).toBe("W-24");
       expect(input.lines[0].packSize).toBe(24);
+      expect(input.lines[0].totalCost).toBe(30); // the bill line's own exact total
       expect(input.lines[1].qtyOrdered.toString()).toBe("10");
       expect(input.lines[1].packSize).toBeNull();
       // the bill links to the PO that was just raised

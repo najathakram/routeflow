@@ -23,8 +23,10 @@ const item = (o: Partial<POItem> = {}): POItem => ({
 const upb = (map: Record<string, number>) => (id: string) => map[id] ?? 0;
 
 describe("toEditLine", () => {
-  it("passes a non-boxed line through, carrying id / received / sku / packSize", () => {
-    const l = toEditLine(item({ qtyReceived: "4", sku: "W-1", packSize: 12 }), 0);
+  // B699: a stored packSize > 1 means the line is PER CASE (update-purchase-order.dto.ts), so a per-piece
+  // line is one with no stored pack; the stored-pack case is pinned in purchase-orders-stored-pack-b699.test.ts.
+  it("passes a per-piece line (no stored pack) through, carrying id / received / sku / packSize", () => {
+    const l = toEditLine(item({ qtyReceived: "4", sku: "W-1", packSize: null }), 0);
     expect(l).toMatchObject({
       id: "i1",
       productId: "p1",
@@ -34,7 +36,7 @@ describe("toEditLine", () => {
       pieces: "",
       received: 4,
       sku: "W-1",
-      packSize: 12,
+      packSize: null,
     });
   });
 
@@ -55,8 +57,19 @@ describe("round trip: an unedited line is not an edit", () => {
     const po = { items: [it] };
     const built = buildUpdateItems([toEditLine(it, perBox)], () => perBox);
     expect(linesChanged(po, built)).toBe(false);
-    expect(built[0].qtyOrdered).toBeCloseTo(Number(it.qtyOrdered), 6);
-    expect(built[0].unitCost).toBeCloseTo(Number(it.unitCost), 4);
+    if (perBox > 1) {
+      // a boxed line goes as the ENTERED case figures; the server derives pieces and per-piece cost
+      expect((built[0].cases ?? 0) * perBox + (built[0].loosePieces ?? 0)).toBe(
+        Number(it.qtyOrdered),
+      );
+      expect(built[0].packSize).toBe(perBox);
+      expect(built[0].caseCost).toBeCloseTo(Number(it.unitCost) * perBox, 4);
+      expect(built[0]).not.toHaveProperty("qtyOrdered");
+      expect(built[0]).not.toHaveProperty("unitCost");
+    } else {
+      expect(built[0].qtyOrdered).toBeCloseTo(Number(it.qtyOrdered), 6);
+      expect(built[0].unitCost).toBeCloseTo(Number(it.unitCost), 4);
+    }
   });
 });
 
@@ -112,13 +125,67 @@ describe("buildUpdateItems", () => {
   const p = upb({ p1: 0, p2: 12 });
 
   it("keeps id / sku / packSize on existing lines, none on new ones, and drops blank rows", () => {
-    const existing = toEditLine(item({ sku: "W-1", packSize: 12 }), 0);
+    const existing = toEditLine(item({ sku: "W-1", packSize: null }), 0);
     const fresh = { ...emptyEditLine(), productId: "p2", boxes: "2", pieces: "3", unitCost: "24" };
     const out = buildUpdateItems([existing, fresh, emptyEditLine()], p);
     expect(out).toEqual([
-      { id: "i1", productId: "p1", qtyOrdered: 10, unitCost: 3, sku: "W-1", packSize: 12 },
-      { productId: "p2", qtyOrdered: 27, unitCost: 2 },
+      { id: "i1", productId: "p1", qtyOrdered: 10, unitCost: 3, sku: "W-1", packSize: null },
+      // a boxed line: the ENTERED case figures (the server computes pieces, per-piece cost and the total)
+      { productId: "p2", packSize: 12, caseCost: 24, cases: 2, loosePieces: 3 },
     ]);
+  });
+});
+
+// PO line money: 1,000 boxes of 12 entered at $11.00 a box total exactly $11,000.00. The old per-piece route
+// stored 0.9167 a piece and totalled $11,000.40; the edit form read 11.0004 back.
+describe("exact case cost (PO line money)", () => {
+  const p = upb({ p1: 0, p2: 12 });
+  const stored = item({
+    id: "i1",
+    productId: "p2",
+    qtyOrdered: "12000",
+    qtyReceived: "0",
+    unitCost: "0.9167",
+    totalCost: "11000.40",
+  });
+
+  it("shows a STORED row's honest derived case cost, unmasked: 0.9167 x 12 = 11.0004", () => {
+    expect(toEditLine(stored, 12)).toMatchObject({
+      boxes: "1000",
+      pieces: "0",
+      unitCost: "11.0004",
+    });
+  });
+
+  it("a NEW exact row (1,000 cases stored at $11,000.00) reads back 11, and saving it unchanged is not an edit", () => {
+    const exact = item({ ...stored, totalCost: "11000.00" });
+    const line = toEditLine(exact, 12);
+    expect(line).toMatchObject({ boxes: "1000", pieces: "0", unitCost: "11" });
+    expect(linesChanged({ items: [exact] }, buildUpdateItems([line], p))).toBe(false);
+  });
+
+  it("an unchanged stored row is NOT an edit (rows are read as stored, never rewritten)", () => {
+    const built = buildUpdateItems([toEditLine(stored, 12)], p);
+    expect(linesChanged({ items: [stored] }, built)).toBe(false);
+  });
+
+  it("re-entering the case cost as 11.00 IS an edit: the quantity and 4 dp cost match but the total moves 11,000.40 -> 11,000.00", () => {
+    const built = buildUpdateItems([{ ...toEditLine(stored, 12), unitCost: "11" }], p);
+    expect(built[0]).toEqual({
+      id: "i1",
+      productId: "p2",
+      packSize: 12,
+      caseCost: 11,
+      cases: 1000,
+      loosePieces: 0,
+      sku: null,
+    });
+    expect(linesChanged({ items: [stored] }, built)).toBe(true);
+  });
+
+  it("the save payload carries no client total or per-piece figure for a boxed line", () => {
+    const built = buildUpdateItems([{ ...toEditLine(stored, 12), unitCost: "11" }], p);
+    for (const k of ["qtyOrdered", "unitCost", "totalCost"]) expect(built[0]).not.toHaveProperty(k);
   });
 });
 

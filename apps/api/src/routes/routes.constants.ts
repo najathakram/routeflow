@@ -31,6 +31,11 @@ export const RUN_LINE_ITEMS_SELECT = {
   // short-picked stop's estimate. NOTE: `OrderItem` has no `taxRate` column
   // (only `categoryTaxAmount`) — see routes.run-stop-select.spec.ts.
   categoryTaxAmount: true,
+  // B648: units_v1 — the unit this line is sold by ("Case"…), null on a
+  // plain piece/pack line. Without it, this driver read surface can't tell a
+  // Case line from a pack line — lib/short-pick.ts#isUnitAwareLine gates the
+  // stepper (and every money function) on it.
+  unitLabel: true,
 } as const;
 
 // Shared per-stop include used by both list (`findAllRuns`) and detail
@@ -102,6 +107,12 @@ export const RUN_STOP_INCLUDE = {
           phone: true,
           deliveryWindowStart: true,
           deliveryWindowEnd: true,
+          // B305 round 5: findOneRun falls back to THIS customer
+          // (`s.customer ?? s.routeStop?.customer`) for a legacy/seeded run
+          // with no direct stop-customer link — without isTaxExempt here too,
+          // that fallback path silently over-collects tax from an exempt
+          // customer exactly as round 3 fixed for the direct link.
+          isTaxExempt: true,
         },
       },
       customerAddress: true,

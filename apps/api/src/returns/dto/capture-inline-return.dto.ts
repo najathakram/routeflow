@@ -11,6 +11,7 @@ import {
   Min,
   ValidateNested,
 } from "class-validator";
+import { RequireBoxesOrPiecesPositive } from "./require-boxes-or-pieces.validator";
 
 /** Byte-identical to `ReturnsService`'s `VALID_RETURN_REASONS` (returns.service.ts) —
  * class-validator decorators need a literal array, so this can't just import the const, but
@@ -23,26 +24,29 @@ const CAPTURE_REASONS = [
   "EXCESS_ORDER",
 ] as const;
 
-/** Mirrors `QuoteInlineReturnItemDto`'s qty/boxes/pieces axis convention (design.md §3.1) —
- * see that file's doc comment for the "bare qty on a boxed product means one BOX" rule. */
+/** Same shape as `QuoteInlineReturnItemDto` (SA-128/B814) — see that file's doc comment for
+ * why `boxes`/`pieces` are required and bare `qty` is retired. Quote and capture must never
+ * diverge here: the same pricing engine (`priceInlineReturn`) reads both. */
 export class CaptureInlineReturnItemDto {
   @IsString()
   @IsNotEmpty()
   productId!: string;
 
+  /** Still accepted (existing callers send `qty: 1`) but IGNORED — see
+   * `QuoteInlineReturnItemDto.qty`. */
+  @IsOptional()
   @IsInt()
   @Min(1)
-  qty!: number;
+  qty?: number;
 
-  @IsOptional()
   @IsInt()
   @Min(0)
-  boxes?: number;
+  @RequireBoxesOrPiecesPositive()
+  boxes!: number;
 
-  @IsOptional()
   @IsInt()
   @Min(0)
-  pieces?: number;
+  pieces!: number;
 
   /** Per-item reason override; falls back to the capture's own `reason` when omitted. */
   @IsOptional()

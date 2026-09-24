@@ -134,6 +134,26 @@ describe("OrderTemplatesService — regulated license guard on reorder", () => {
     expect(notifications.sendToCustomer).not.toHaveBeenCalled();
   });
 
+  it("B297 (SA-088): a standing order's regulated line stamps the rate-snapshot trio, alongside categoryTaxAmount", async () => {
+    authGuard.checkAuthorized.mockResolvedValue({ blocked: [] });
+    prisma.trackedCategory.findMany.mockResolvedValue([
+      { id: "cat-tob", taxType: "EXCISE_PER_UNIT", rate: 2, priceIncludesTax: false },
+    ]);
+
+    await service.generateOrder("t1");
+
+    const createdLines = prisma.order.create.mock.calls[0][0].data.lineItems.create;
+    const tob = createdLines.find((l: any) => l.productId === "p-tob");
+    const std = createdLines.find((l: any) => l.productId === "p-std");
+    expect(tob.categoryTaxType).toBe("EXCISE_PER_UNIT");
+    expect(tob.categoryTaxRate).toBe(2);
+    expect(tob.categoryPriceIncludesTax).toBe(false);
+    // The non-regulated line gets an all-null snapshot, never a stamped trio.
+    expect(std.categoryTaxType).toBeNull();
+    expect(std.categoryTaxRate).toBeNull();
+    expect(std.categoryPriceIncludesTax).toBeNull();
+  });
+
   it("creates nothing and throws when EVERY line is a license-gated category", async () => {
     prisma.orderTemplate.findUnique.mockResolvedValue({
       ...template,

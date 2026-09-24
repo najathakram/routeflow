@@ -99,7 +99,10 @@ export default function AdminCreateTenantPage() {
   return (
     <div className="p-6">
       <div className="mb-6 flex items-center gap-4">
-        <Link href="/admin/tenants" className="text-sm text-slate-400 hover:text-slate-300">
+        <Link
+          href="/admin/tenants"
+          className="admin-tap-text text-sm text-slate-400 hover:text-slate-300"
+        >
           ← Back to Tenants
         </Link>
         <h1 className="text-2xl font-bold text-white">Create New Tenant</h1>
@@ -148,7 +151,7 @@ export default function AdminCreateTenantPage() {
                   href={success.checkoutUrl}
                   target="_blank"
                   rel="noreferrer"
-                  className="font-mono text-indigo-300 underline hover:text-indigo-200"
+                  className="admin-inline font-mono text-indigo-300 underline hover:text-indigo-200"
                 >
                   {success.checkoutUrl}
                 </a>
@@ -157,13 +160,13 @@ export default function AdminCreateTenantPage() {
             <div className="mt-3 flex gap-3">
               <Link
                 href={`/admin/tenants/${success.id}`}
-                className="rounded-lg bg-indigo-600 px-3 py-1.5 text-sm font-semibold text-white hover:bg-indigo-500"
+                className="admin-tap rounded-lg bg-indigo-600 px-3 py-1.5 text-sm font-semibold text-white hover:bg-indigo-500"
               >
                 View tenant
               </Link>
               <Link
                 href="/admin/tenants"
-                className="rounded-lg px-3 py-1.5 text-sm text-slate-300 hover:bg-slate-700"
+                className="admin-tap rounded-lg px-3 py-1.5 text-sm text-slate-300 hover:bg-slate-700"
               >
                 Back to list
               </Link>

@@ -1228,7 +1228,12 @@ describe("ReturnsService.processRefund → dispute creates a store credit (P5-13
           updateMany: jest.fn().mockResolvedValue({ count: 1 }),
         },
         product: { update: jest.fn() },
-        stockMovement: { deleteMany: jest.fn() },
+        // B665: cancel undoes exactly the RET-<id> movements receive() booked (in pieces)
+        stockMovement: {
+          findMany: jest.fn().mockResolvedValue([{ productId: "p1", quantity: 2 }]),
+          deleteMany: jest.fn(),
+        },
+        returnParkedRestock: { deleteMany: jest.fn() },
         $executeRaw: jest.fn().mockResolvedValue(0),
       };
       prisma.tenantTransaction.mockImplementation((fn: any) => fn(tx));
@@ -1272,7 +1277,8 @@ describe("ReturnsService.processRefund → dispute creates a store credit (P5-13
           updateMany: jest.fn().mockResolvedValue({ count: 1 }),
         },
         product: { update: jest.fn() },
-        stockMovement: { deleteMany: jest.fn() },
+        stockMovement: { findMany: jest.fn().mockResolvedValue([]), deleteMany: jest.fn() },
+        returnParkedRestock: { deleteMany: jest.fn() },
         $executeRaw: jest.fn().mockResolvedValue(0),
       };
       prisma.tenantTransaction.mockImplementation((fn: any) => fn(tx));

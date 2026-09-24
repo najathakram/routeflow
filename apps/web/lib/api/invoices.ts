@@ -72,6 +72,9 @@ export interface InvoiceItem {
   pieces?: number | null;
   /** Sale-time box-size snapshot. Recompute this line with THIS, never the live product. */
   unitsPerBox?: number | null;
+  /** units_v1: the non-pack unit this line was sold by ("Case"); null/absent = the pack. When set,
+   *  `boxes` counts THAT unit (not boxes) and `unitsPerBox` is the unit's pieces. */
+  unitLabel?: string | null;
   /** BUY_N_GET_M snapshot: whole free selling units on this line (boxes for a
    *  boxed line). MUST be round-tripped by the edit form — the PATCH items path
    *  replaces every line, and dropping it re-prices the line to full. */
@@ -334,6 +337,21 @@ export function useCreateInvoice() {
   const qc = useQueryClient();
   return useMutation<Invoice, Error, CreateInvoiceDto>({
     mutationFn: (dto) => apiClient.post("/invoices", dto).then((r) => r.data),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["invoices"] }),
+  });
+}
+
+/**
+ * Duplicate an invoice ON THE SERVER (POST /invoices/:id/duplicate). The server copies every line's
+ * stored boxes / pieces / subtotal verbatim into a DRAFT and refuses an order-linked invoice and a unit
+ * line. The web must never rebuild a line from `{ qty, unitPrice }` (B644): a stored qty is in BASE pieces
+ * while a boxed line's unitPrice is per BOX, so that rebuild priced 6 boxes of 12 at $40 ($240) as
+ * 72 x $40 = $2,880.
+ */
+export function useDuplicateInvoice() {
+  const qc = useQueryClient();
+  return useMutation<Invoice, Error, string>({
+    mutationFn: (id) => apiClient.post(`/invoices/${id}/duplicate`).then((r) => r.data),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["invoices"] }),
   });
 }

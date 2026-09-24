@@ -215,3 +215,20 @@ describe("LoginPage — tenant logo in the auth card (R9)", () => {
     expect(container.querySelector(".rf-auth-card img")).toBeNull();
   });
 });
+
+// Owner ruling (mobile-web-proxy-redesign): /login no longer proxies phone UAs
+// to the installed driver app, so it needs its own explicit link there.
+describe("LoginPage — driver app link (mobile-web-proxy-redesign)", () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    window.localStorage.clear();
+    window.history.replaceState(null, "", "/login");
+  });
+
+  it("links to the driver app's own login screen", () => {
+    renderWithProviders(<LoginPage />);
+
+    const link = screen.getByRole("link", { name: /open the driver app/i });
+    expect(link).toHaveAttribute("href", "https://routeflowmobile-production.up.railway.app/login");
+  });
+});

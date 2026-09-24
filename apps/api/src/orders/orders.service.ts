@@ -15,8 +15,14 @@ import type { Queue } from "bull";
 import { PrismaService } from "../prisma/prisma.service";
 import { JwtPayload } from "../auth/jwt-payload.interface";
 import {
+  appendOrderRevision as appendOrderRevisionImpl,
+  AppendOrderRevisionArgs,
+} from "./order-revisions";
+import {
+  categoryTaxSnapshotOf,
   computeCategoryTax,
   computeLineSubtotal,
+  copyCategoryTaxSnapshot,
   getTierPrice,
   normalizeBoxesPieces,
   roundMoney,
@@ -25,6 +31,7 @@ import {
 } from "@routeflow/pricing";
 import { lockRowsNoWait, withAdvisoryLock, type LockMode } from "../common/db-locks";
 import { assertMoneyInvariantsOrThrow } from "../common/money-invariants.util";
+import { atStopConflict } from "./at-stop-conflicts";
 import {
   LOCK_UNAVAILABLE,
   LOCK_UNAVAILABLE_MESSAGE,
@@ -56,6 +63,16 @@ import {
 } from "./merge-idempotency";
 import { BUYER_EDIT_CLOSED_STATUSES, computeEditWindow } from "./edit-window";
 import { cancelImpact } from "./order-cancel-impact";
+import { classifyEditPayload } from "./order-edit-payload";
+import {
+  applyBuyerMergeHeaderImpl,
+  bulkDeleteOrdersImpl,
+  findOneOrThrowImpl,
+  setCommissionRateImpl,
+  toggleUrgentImpl,
+  updateFulfillPathImpl,
+  updateShipmentImpl,
+} from "./order-lifecycle";
 import {
   EXISTING_LINE_SELECT,
   orderEditMode,
@@ -96,6 +113,9 @@ import { InventoryService } from "../inventory/inventory.service";
 import { AuthorizationGuardService } from "../authorizations/authorization-guard.service";
 import { resolveLineUnits } from "../products/line-units";
 import * as unitLines from "./unit-line-build";
+import * as unitEdit from "./unit-line-edit";
+import { loadCategoryMapForProducts } from "./category-map";
+import { collectMergeLines } from "./merge-line-collect";
 import { assertBuyerCartPricesCurrent } from "./buyer-cart-price-check";
 import { restrictionChannelForPrincipal } from "../selling-restrictions/selling-restrictions.core";
 import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
@@ -127,11 +147,14 @@ export class OrdersService implements OnApplicationBootstrap {
   private readonly logger = new Logger(OrdersService.name);
 
   constructor(
-    private readonly prisma: PrismaService,
+    // Not `private`: order-lifecycle.ts's verbatim-extracted methods AND unit-line-edit.ts (units_v1
+    // A1) read this off an explicit `self: OrdersService` from outside the class — TS `private` is
+    // compile-time only, so this is byte-identical at runtime.
+    readonly prisma: PrismaService,
     @InjectQueue("invoices") private readonly invoiceQueue: Queue,
     private readonly gateway: RouteFlowGateway,
     private readonly notifications: NotificationsService,
-    private readonly invoicesService: InvoicesService,
+    readonly invoicesService: InvoicesService,
     private readonly systemConfig: SystemConfigService,
     private readonly inventoryService: InventoryService,
     private readonly authGuard: AuthorizationGuardService,
@@ -140,13 +163,13 @@ export class OrdersService implements OnApplicationBootstrap {
     private readonly sellingRestrictions: SellingRestrictionsService,
     private readonly promotionsService: PromotionsService,
     private readonly messaging: MessagingService,
-    private readonly creditNotes: CreditNotesService,
-    private readonly commissionEngine: CommissionEngineService,
-    private readonly entitlements: EntitlementsService,
+    readonly creditNotes: CreditNotesService,
+    readonly commissionEngine: CommissionEngineService,
+    readonly entitlements: EntitlementsService,
     // B65 (REG-B65): reverses regulated-ledger entries in deleteOrder's
     // per-invoice teardown — the two sibling paths (voidInvoiceInTx,
     // deleteInvoice) already do this.
-    private readonly ledger: RegulatedLedgerService,
+    readonly ledger: RegulatedLedgerService,
     // B323: the hourly/boot-time pending-order sweep has no HTTP request, so ALS is
     // empty — sweepAllPendingOrders() re-enters each customer's own tenant scope
     // via tenantCtx.run() (the RF-008 pattern already used by recurring-invoices,
@@ -369,6 +392,12 @@ export class OrdersService implements OnApplicationBootstrap {
                 unit: true,
                 unitsPerBox: true,
                 pricePerUnit: true,
+                // units_v1 (SA-085f #2): pack tier prices for the picker's ladder, OPERATOR-ONLY
+                // — a buyer (this same findOne, buyer.controller.ts) must never see another
+                // customer's pricing tier; redactUpsellForCustomer never touched these columns.
+                ...(user.role !== UserRole.CUSTOMER
+                  ? { priceTier2: true, priceTier3: true, priceTier4: true, priceTier5: true }
+                  : {}),
                 averageCost: true,
                 category: true,
                 // Read-site name composition + SKU line (order-ui-redesign-spec §2/§4): a catalog
@@ -638,84 +667,10 @@ export class OrdersService implements OnApplicationBootstrap {
           // can be re-prorated by piece count (see mergeBoxedContributions), not a
           // naive qty sum. Iteration is updatedAt DESC so the first occurrence wins on
           // price/metadata.
-          const loserContribsByProduct = new Map<
-            string,
-            Array<{
-              qty: unknown;
-              boxes: number | null;
-              pieces: number | null;
-              // BUY_N_GET_M snapshot so the merged line re-derives its free units.
-              promoFreeUnits: number | null;
-              // Whether the contribution is buyer-priced — gates earning NEW free units.
-              priceType: PriceType;
-              overriddenBy: string | null;
-            }>
-          >();
-          const newItemMetaByProduct = new Map<
-            string,
-            {
-              unitPrice: number;
-              priceType: PriceType;
-              originalPrice: number | null;
-              overrideReason: string | null;
-              overriddenBy: string | null;
-              notes: string | null;
-              trackedCategoryId: string | null;
-            }
-          >();
-          // Unlisted (catalog-free) loser lines can't be keyed by product — each is
-          // appended to the winner as its own new line (never boxed).
-          const unlistedNewItems: Array<{
-            name: string | null;
-            qty: number;
-            unitPrice: number;
-            priceType: PriceType;
-            originalPrice: number | null;
-            overrideReason: string | null;
-            overriddenBy: string | null;
-            notes: string | null;
-          }> = [];
-
-          for (const loser of losers) {
-            for (const li of loser.lineItems) {
-              if (!li.productId) {
-                unlistedNewItems.push({
-                  name: li.name,
-                  qty: Number(li.qty),
-                  unitPrice: Number(li.unitPrice),
-                  priceType: li.priceType,
-                  originalPrice: li.originalPrice !== null ? Number(li.originalPrice) : null,
-                  overrideReason: li.overrideReason,
-                  overriddenBy: li.overriddenBy,
-                  notes: li.notes,
-                });
-                continue;
-              }
-              const contribs = loserContribsByProduct.get(li.productId) ?? [];
-              contribs.push({
-                qty: li.qty,
-                boxes: li.boxes,
-                pieces: li.pieces,
-                promoFreeUnits: (li as any).promoFreeUnits ?? null,
-                priceType: li.priceType,
-                overriddenBy: li.overriddenBy,
-              });
-              loserContribsByProduct.set(li.productId, contribs);
-              if (!winnerProductIds.has(li.productId) && !newItemMetaByProduct.has(li.productId)) {
-                newItemMetaByProduct.set(li.productId, {
-                  unitPrice: Number(li.unitPrice),
-                  priceType: li.priceType,
-                  originalPrice: li.originalPrice !== null ? Number(li.originalPrice) : null,
-                  overrideReason: li.overrideReason,
-                  overriddenBy: li.overriddenBy,
-                  notes: li.notes,
-                  // Carry the loser line's sale-time regulated-category snapshot so the
-                  // new winner line keeps it (invoice split + ledger depend on it).
-                  trackedCategoryId: li.trackedCategoryId ?? null,
-                });
-              }
-            }
-          }
+          // B297: collectMergeLines carries the trio (copyCategoryTaxSnapshot — a merge is
+          // not a new sale) through newItemMetaByProduct, verbatim from the losing line.
+          const { loserContribsByProduct, newItemMetaByProduct, unlistedNewItems } =
+            collectMergeLines(losers, winnerProductIds);
 
           // unitsPerBox for every product involved so boxed lines prorate by the box.
           const contributingLines = [...winner.lineItems, ...losers.flatMap((l) => l.lineItems)];
@@ -836,9 +791,10 @@ export class OrdersService implements OnApplicationBootstrap {
                   overrideReason: meta.overrideReason,
                   overriddenBy: meta.overriddenBy,
                   notes: meta.notes,
-                  // Preserve the regulated-category snapshot through the merge (was
-                  // dropped, so a merged regulated line invoiced as standard).
+                  // Preserve the regulated-category snapshot + rate trio through the merge
+                  // (was dropped, so a merged regulated line invoiced as standard/re-priced).
                   trackedCategoryId: meta.trackedCategoryId,
+                  ...copyCategoryTaxSnapshot(meta),
                 },
               });
             }
@@ -980,78 +936,10 @@ export class OrdersService implements OnApplicationBootstrap {
             winner.routeRunId == null ? (losers.find((o) => o.routeRunId != null) ?? null) : null;
 
           const winnerProductIds = new Set(winner.lineItems.map((li) => li.productId));
-          const loserContribsByProduct = new Map<
-            string,
-            Array<{
-              qty: unknown;
-              boxes: number | null;
-              pieces: number | null;
-              // BUY_N_GET_M snapshot so the merged line re-derives its free units.
-              promoFreeUnits: number | null;
-            }>
-          >();
-          const newItemMetaByProduct = new Map<
-            string,
-            {
-              unitPrice: number;
-              priceType: PriceType;
-              originalPrice: number | null;
-              overrideReason: string | null;
-              overriddenBy: string | null;
-              notes: string | null;
-              trackedCategoryId: string | null;
-            }
-          >();
-          // Unlisted (catalog-free) loser lines are appended as their own winner lines.
-          const unlistedNewItems: Array<{
-            name: string | null;
-            qty: number;
-            unitPrice: number;
-            priceType: PriceType;
-            originalPrice: number | null;
-            overrideReason: string | null;
-            overriddenBy: string | null;
-            notes: string | null;
-          }> = [];
-
-          for (const loser of losers) {
-            for (const li of loser.lineItems) {
-              if (!li.productId) {
-                unlistedNewItems.push({
-                  name: li.name,
-                  qty: Number(li.qty),
-                  unitPrice: Number(li.unitPrice),
-                  priceType: li.priceType,
-                  originalPrice: li.originalPrice !== null ? Number(li.originalPrice) : null,
-                  overrideReason: li.overrideReason,
-                  overriddenBy: li.overriddenBy,
-                  notes: li.notes,
-                });
-                continue;
-              }
-              const contribs = loserContribsByProduct.get(li.productId) ?? [];
-              contribs.push({
-                qty: li.qty,
-                boxes: li.boxes,
-                pieces: li.pieces,
-                promoFreeUnits: (li as any).promoFreeUnits ?? null,
-              });
-              loserContribsByProduct.set(li.productId, contribs);
-              if (!winnerProductIds.has(li.productId) && !newItemMetaByProduct.has(li.productId)) {
-                newItemMetaByProduct.set(li.productId, {
-                  unitPrice: Number(li.unitPrice),
-                  priceType: li.priceType,
-                  originalPrice: li.originalPrice !== null ? Number(li.originalPrice) : null,
-                  overrideReason: li.overrideReason,
-                  overriddenBy: li.overriddenBy,
-                  notes: li.notes,
-                  // Carry the loser line's sale-time regulated-category snapshot so the
-                  // new winner line keeps it (invoice split + ledger depend on it).
-                  trackedCategoryId: li.trackedCategoryId ?? null,
-                });
-              }
-            }
-          }
+          // B297: collectMergeLines carries the trio (copyCategoryTaxSnapshot — a merge is
+          // not a new sale) through newItemMetaByProduct, verbatim from the losing line.
+          const { loserContribsByProduct, newItemMetaByProduct, unlistedNewItems } =
+            collectMergeLines(losers, winnerProductIds);
 
           // unitsPerBox for every product involved so boxed lines prorate by the box.
           const involvedProductIds = [
@@ -1162,9 +1050,10 @@ export class OrdersService implements OnApplicationBootstrap {
                   overrideReason: meta.overrideReason,
                   overriddenBy: meta.overriddenBy,
                   notes: meta.notes,
-                  // Preserve the regulated-category snapshot through the merge (was
-                  // dropped, so a merged regulated line invoiced as standard).
+                  // Preserve the regulated-category snapshot + rate trio through the merge
+                  // (was dropped, so a merged regulated line invoiced as standard/re-priced).
                   trackedCategoryId: meta.trackedCategoryId,
+                  ...copyCategoryTaxSnapshot(meta),
                 },
               });
             }
@@ -2019,6 +1908,7 @@ export class OrdersService implements OnApplicationBootstrap {
       // in pieces already; a box-UNAWARE boxed line (boxes==null) stores qty as a
       // SELLING-UNIT (box) count, so expand it — mirrors the merge path so the same
       // buyer line prices identically at create vs edit.
+      // B661-sweep: box-unaware multiply, converts to regulatedUnitBasis in a follow-up PR.
       const qtyPieces = boxes != null ? qty : upb > 1 ? qty * upb : qty;
       // BUY_N_GET_M threshold is measured in whole SELLING units — a box for a
       // boxed line, a piece otherwise. `boxes` already holds the whole-box count
@@ -2097,6 +1987,8 @@ export class OrdersService implements OnApplicationBootstrap {
             priceIncludesTax: category.priceIncludesTax,
           })
         : 0;
+      // B297 (SA-088): the trio this line was priced under — a later rate edit must never re-price it.
+      const categorySnapshot = categoryTaxSnapshotOf(category ?? null);
 
       return {
         productId: item.productId as string | null,
@@ -2123,6 +2015,8 @@ export class OrdersService implements OnApplicationBootstrap {
         trackedSubcategoryId: (product.trackedSubcategoryId ?? null) as string | null,
         // RF-4: per-line regulated category tax, snapshotted (folded into the order total).
         categoryTaxAmount,
+        // B297 (SA-088): the rate trio — recompute (PR3) reads THESE, never the live category.
+        ...categorySnapshot,
         // R2: preserve scan/insertion order (array index) for read-back.
         position: index,
         tenantId: this.prisma.getTenantId(), // nested creates bypass forTenant() extension
@@ -3104,6 +2998,23 @@ export class OrdersService implements OnApplicationBootstrap {
       this.prisma.forTenant().customer.findFirst({ where: { userId: user?.sub, deletedAt: null } }),
     );
 
+    // units_v1 (A1): resolve every dto item's unit-awareness ONCE, up front — see unit-line-edit.ts.
+    // Hoisted here, BEFORE the restriction plan and the un-tx'd revertLinkedInvoicesForOrderEdit
+    // below (which commits on its own connection): a refused unit edit must never let that revert
+    // commit and then throw, stranding a SENT invoice's pending mirror in DRAFT with nothing left
+    // to re-sync it. Re-verified under the row lock inside the transaction (see heldItems below) —
+    // this pre-lock pass is only what a REFUSAL must see before any commit happens.
+    const unitCtx = await unitEdit.prepareUnitEditContext(this, order, dto, user);
+    const unitRows = new Map<object, ReturnType<typeof resolveLineUnits>>();
+    for (const item of dto.items ?? []) {
+      const li = item.id ? unitCtx.existingById.get(item.id) : undefined;
+      unitEdit.assertUnitLabelNamed(li, item);
+      const pid = item.substituteProductId ?? item.productId ?? li?.productId;
+      const product = pid ? unitCtx.products.get(pid) : undefined;
+      if (product)
+        unitRows.set(item, resolveLineUnits(product, unitCtx.ladders.get(pid!) ?? [], item, li));
+    }
+
     // B63 (REG-B63): buyers self-edit only pre-dispatch orders — the post-dispatch
     // relaxation in the comment above is operator + driver only. Thrown BEFORE any
     // side effect (invoice revert, line writes, revision, status event); buyers use
@@ -3125,48 +3036,7 @@ export class OrdersService implements OnApplicationBootstrap {
       );
     }
 
-    // A4: the mobile item editor is SHARED between the operator and driver screens
-    // and always sends an incremental diff — {id, action} entries with
-    // replaceAll:false — while the CUSTOMER/DRIVER branch below is a full replace
-    // (deleteMany, then re-create only productId-carrying entries). A diff routed
-    // through the replace branch therefore deleted every untouched line on the
-    // order. Diff-shaped DRIVER payloads go through the operator merge branch
-    // instead (price fields stripped just below), and a diff-shaped CUSTOMER
-    // payload is rejected outright: no buyer client sends one (web+mobile buyer
-    // portals send full {productId, qty} lists), and failing loudly beats
-    // silently destroying the order's lines.
-    const isDiffPayload =
-      dto.replaceAll === false ||
-      (dto.items ?? []).some(
-        (i) => i.id != null || i.action != null || i.substituteProductId != null,
-      );
-    if (user?.role === UserRole.CUSTOMER && isDiffPayload) {
-      throw new BadRequestException(
-        "Buyer edits must send the full item list as {productId, qty} entries; incremental item diffs are not supported on this path",
-      );
-    }
-    const driverDiffEdit = user?.role === UserRole.DRIVER && isDiffPayload;
-    if (driverDiffEdit) {
-      // B13: non-staff never set prices. The merge branch honors per-line
-      // unitPrice overrides for operators, so strip price fields from every
-      // catalog-linked driver entry before it gets there — a fresh add prices
-      // from the catalog and a qty edit keeps the line's stored price (which
-      // may be an operator's override; a driver edit must not disturb it).
-      // Unlisted (catalog-free) lines keep their client price: they have no
-      // catalog price to fall back to, matching the replace branch's
-      // long-standing unlisted handling.
-      const unlistedLineIds = new Set(
-        (order.lineItems ?? []).filter((li) => !li.productId).map((li) => li.id),
-      );
-      dto.items = (dto.items ?? []).map((i) => {
-        const isUnlistedLine = i.id
-          ? unlistedLineIds.has(i.id)
-          : !i.productId && (i.name ?? "").trim() !== "";
-        if (isUnlistedLine) return i;
-        const { unitPrice: _unitPrice, overrideReason: _overrideReason, ...rest } = i;
-        return rest;
-      });
-    }
+    const isDiffPayload = classifyEditPayload(order, dto, user); // A4/B13: see order-edit-payload.ts
 
     // Lane R: a banned product added by this edit refuses (409 SELLING_RESTRICTED) BEFORE the invoice
     // revert and any write. Non-draft only (a draft is judged at its promotion). OFF = one policy read
@@ -3277,9 +3147,41 @@ export class OrdersService implements OnApplicationBootstrap {
         await tx.$executeRaw`SELECT id FROM "Order" WHERE id = ${orderId} FOR UPDATE`;
         const heldItems = await tx.orderItem.findMany({
           where: { orderId },
-          select: { ...EXISTING_LINE_SELECT, deliveredQty: true },
+          // B709: plus every column the diff branch reads off an existing line (see heldOrSnapshot).
+          select: {
+            ...EXISTING_LINE_SELECT,
+            deliveredQty: true,
+            invoicedQty: true,
+            unitPrice: true,
+            promoFreeUnits: true,
+            overrideReason: true,
+          },
         });
         restrictionPlan?.assertHeld(heldItems);
+
+        // units_v1 (A1, #1102 precedent): the pre-lock resolution above can go stale under a
+        // concurrent edit of the SAME line — re-run it against the just-locked, authoritative
+        // heldItems (never the pre-tx `order.lineItems`) before any write. `unitRows.set` keys
+        // by the same `item` object reference, so this simply overwrites each entry in place.
+        const heldById = new Map<string, any>(heldItems.map((h: any) => [h.id, h]));
+        // B709: the diff branch reads every existing line from the LOCKED rows, never from the
+        // pre-tx `order.lineItems` snapshot another writer may have replaced while this tx waited
+        // on the lock. The `?? snapshot` arm is the B135 interim (`liveLine ?? li`): a row the held
+        // read lacks was hard-deleted under the lock, and its write then fails loudly on P2025. The
+        // items[].expectedQty follow-up turns that arm into a CONCURRENT_UPDATE 409.
+        const heldOrSnapshot = (id: string): any =>
+          heldById.get(id) ?? order.lineItems.find((l) => l.id === id);
+        for (const item of dto.items ?? []) {
+          const li = item.id ? heldById.get(item.id) : undefined;
+          unitEdit.assertUnitLabelNamed(li, item);
+          const pid = item.substituteProductId ?? item.productId ?? li?.productId;
+          const product = pid ? unitCtx.products.get(pid) : undefined;
+          if (product)
+            unitRows.set(
+              item,
+              resolveLineUnits(product, unitCtx.ladders.get(pid!) ?? [], item, li),
+            );
+        }
 
         // Customer/Driver path: replace items by productId. A4: a DRIVER diff
         // payload skips this branch entirely — it merges below like an operator
@@ -3301,6 +3203,9 @@ export class OrdersService implements OnApplicationBootstrap {
           const productIds = dto.items.map((i) => i.productId).filter(Boolean) as string[];
           const products = await tx.product.findMany({ where: { id: { in: productIds } } });
           const productMap = new Map<string, any>(products.map((p: any) => [p.id, p]));
+          // B297 (SA-098a): this pack-line create() is disconnected from `uctx.categoryMap`
+          // (which only covers unit-aware `unitCtx.products`) — its own scoped load.
+          const buyerCategoryMap = await loadCategoryMapForProducts(tx, productMap);
 
           // P5-04: buyer pricing context (tier + per-product override + active promos).
           // Loaded only for the buyer (CUSTOMER) merge path; DRIVER edits keep the
@@ -3416,6 +3321,7 @@ export class OrdersService implements OnApplicationBootstrap {
             // QTY_BREAK threshold is measured in PIECES: split.qty when re-split, else
             // box-count × unitsPerBox for boxed selling-unit lines, else the piece qty.
             // DRIVER edits keep the legacy list price (unchanged).
+            // B661-sweep: box-unaware multiply, converts to regulatedUnitBasis in a follow-up PR.
             const qtyPieces = split ? split.qty : upb > 1 ? item.qty * upb : item.qty;
             // BUY_N_GET_M threshold: whole SELLING units (boxes for a boxed line,
             // pieces otherwise) — mirrors create()'s qtyUnits derivation.
@@ -3466,6 +3372,14 @@ export class OrdersService implements OnApplicationBootstrap {
                 trackedCategoryId: product.trackedCategoryId ?? null,
                 // RF-3: reporting-only subcategory snapshot (mirrors trackedCategoryId).
                 trackedSubcategoryId: product.trackedSubcategoryId ?? null,
+                // B297 (SA-098a): a fresh/re-created line is a new sale — stamp the rate
+                // trio from the live category, never leave it null (recompute only ever
+                // fixes the amount, never the trio).
+                ...categoryTaxSnapshotOf(
+                  product.trackedCategoryId
+                    ? (buyerCategoryMap.get(product.trackedCategoryId) ?? null)
+                    : null,
+                ),
                 // R2: preserve the client's line order on full replace.
                 position: pos++,
               },
@@ -3519,7 +3433,7 @@ export class OrdersService implements OnApplicationBootstrap {
           // gets fetched and the line silently falls back to the customer's DEFAULT
           // tier instead of a genuinely SPECIAL per-product row (or vice versa).
           const existingLineProductIds = dto.items
-            .map((i) => (i.id ? order.lineItems.find((li) => li.id === i.id)?.productId : null))
+            .map((i) => (i.id ? heldOrSnapshot(i.id)?.productId : null)) // B709: locked row
             .filter((id): id is string => !!id);
           // B466: a substitution's NEW product id must resolve tier pricing too — it
           // was missing from this collection entirely (neither a fresh add's productId
@@ -3551,6 +3465,13 @@ export class OrdersService implements OnApplicationBootstrap {
           const operatorCpMap = new Map<string, number | null>(
             operatorCustomerPrices.map((cp: any) => [cp.productId, cp.pricingTier]),
           );
+          const uctx: unitEdit.UnitWriteContext = {
+            tx,
+            ladders: unitCtx.ladders,
+            tenantId: this.prisma.getTenantId(),
+            tier: (pid) => (isStaffEdit ? (operatorCpMap.get(pid) ?? operatorDefaultTier) : 1),
+            categoryMap: await loadCategoryMapForProducts(tx, unitCtx.products), // B297
+          };
 
           if (replaceAll) {
             // Replace-all: client sends the full item list. Delete existing items then
@@ -3559,6 +3480,9 @@ export class OrdersService implements OnApplicationBootstrap {
             const productIds = dto.items.map((i) => i.productId).filter(Boolean) as string[];
             const products = await tx.product.findMany({ where: { id: { in: productIds } } });
             const productMap = new Map<string, any>(products.map((p: any) => [p.id, p]));
+            // B297 (SA-098a): a superset of `uctx.categoryMap` (unit-aware products only) —
+            // this pack-line create() below needs every product this replaceAll touches.
+            const operatorReplaceCategoryMap = await loadCategoryMapForProducts(tx, productMap);
 
             // B60 (REG-B60): a staff replaceAll at an unchanged/echoed price must
             // land exactly where a qty edit of the same line lands — reuse the
@@ -3686,6 +3610,11 @@ export class OrdersService implements OnApplicationBootstrap {
               }
               const product = productMap.get(item.productId);
               if (!product) throw new BadRequestException(`Product ${item.productId} not found`);
+              const unitRow = unitRows.get(item);
+              if (unitRow && unitLines.isUnitAware(unitRow)) {
+                await unitEdit.createUnitLine(uctx, orderId, product, unitRow, item, pos++);
+                continue;
+              }
 
               // Recompute qty from boxes/pieces when the operator split a boxed
               // product (matches createOrder's authority). Normalize to integers and
@@ -3790,6 +3719,7 @@ export class OrdersService implements OnApplicationBootstrap {
               const isManualOverride =
                 !bogoPriceUnchanged && overridePrice !== null && overridePrice !== catalogPrice;
               const upb = Number(product.unitsPerBox ?? 0);
+              // B661-sweep: box-unaware multiply, converts to regulatedUnitBasis in a follow-up PR.
               const qtyPieces = boxes != null ? qty : upb > 1 ? qty * upb : qty;
               const qtyUnits = boxes != null ? boxes : qty;
               const priced: {
@@ -3892,6 +3822,13 @@ export class OrdersService implements OnApplicationBootstrap {
                   trackedCategoryId: product.trackedCategoryId ?? null,
                   // RF-3: reporting-only subcategory snapshot (mirrors trackedCategoryId).
                   trackedSubcategoryId: product.trackedSubcategoryId ?? null,
+                  // B297 (SA-098a): stamp the trio from the live category — a re-created
+                  // line on a staff replaceAll is a new sale, never a deferred placeholder.
+                  ...categoryTaxSnapshotOf(
+                    product.trackedCategoryId
+                      ? (operatorReplaceCategoryMap.get(product.trackedCategoryId) ?? null)
+                      : null,
+                  ),
                   // R2: preserve the client's line order on full replace.
                   position: pos++,
                 },
@@ -3934,6 +3871,9 @@ export class OrdersService implements OnApplicationBootstrap {
                 ? await tx.product.findMany({ where: { id: { in: addProductIds } } })
                 : [];
             const addProductMap = new Map<string, any>(addProducts.map((p: any) => [p.id, p]));
+            // B297 (SA-098a): `uctx.categoryMap` only covers unit-aware `unitCtx.products` —
+            // a diff-add's own pack-line create() below needs its own scoped load.
+            const addCategoryMap = await loadCategoryMapForProducts(tx, addProductMap);
             const unresolvedAddIds = addProductIds.filter((id) => !addProductMap.has(id));
             if (unresolvedAddIds.length > 0) {
               throw new BadRequestException(
@@ -3988,6 +3928,11 @@ export class OrdersService implements OnApplicationBootstrap {
                 // a belt-and-braces invariant — never silently drop a line.
                 const product = addProductMap.get(item.productId);
                 if (!product) throw new BadRequestException(`Product ${item.productId} not found`);
+                const unitRow = unitRows.get(item);
+                if (unitRow && unitLines.isUnitAware(unitRow)) {
+                  await unitEdit.createUnitLine(uctx, orderId, product, unitRow, item, nextPos++);
+                  continue;
+                }
                 // Recompute qty from boxes/pieces when present.
                 let qty = item.qty ?? 0;
                 if (hasBoxSplit) {
@@ -4098,6 +4043,12 @@ export class OrdersService implements OnApplicationBootstrap {
                     trackedCategoryId: product.trackedCategoryId ?? null,
                     // RF-3: reporting-only subcategory snapshot (mirrors trackedCategoryId).
                     trackedSubcategoryId: product.trackedSubcategoryId ?? null,
+                    // B297 (SA-098a): a diff-added line is a new sale — stamp the trio.
+                    ...categoryTaxSnapshotOf(
+                      product.trackedCategoryId
+                        ? (addCategoryMap.get(product.trackedCategoryId) ?? null)
+                        : null,
+                    ),
                     // R2: append this newly-added line after the existing lines.
                     position: nextPos++,
                   },
@@ -4108,7 +4059,7 @@ export class OrdersService implements OnApplicationBootstrap {
                 // Hard-remove a line added by mistake. Only safe when nothing
                 // downstream references it — a billed or delivered line is struck
                 // off instead so invoice/delivery history stays intact.
-                const li = order.lineItems.find((l) => l.id === item.id);
+                const li = heldOrSnapshot(item.id);
                 const hasDeliveries = await tx.deliveryMutation.count({
                   where: { orderItemId: item.id },
                 });
@@ -4145,7 +4096,16 @@ export class OrdersService implements OnApplicationBootstrap {
                 const product = await tx.product.findUniqueOrThrow({
                   where: { id: item.substituteProductId },
                 });
-                const existingQty = order.lineItems.find((li) => li.id === item.id)?.qty ?? 1;
+                const unitRow = unitRows.get(item);
+                if (unitRow && unitLines.isUnitAware(unitRow)) {
+                  // updateUnitLine re-stamps from uctx.categoryMap itself (isSubstitute flag) —
+                  // this branch never needs its own category load.
+                  await unitEdit.updateUnitLine(uctx, item.id!, product, unitRow, item, true);
+                  continue;
+                }
+                // B297 (SA-098a): the pack-line substitute path only — its own scoped load.
+                const substituteCategoryMap = await loadCategoryMapForProducts(tx, [product]);
+                const existingQty = heldOrSnapshot(item.id!)?.qty ?? 1;
                 // Substitution may also carry a box/piece split when the substitute
                 // is itself a boxed product. Honor it the same way as a fresh add —
                 // but only when the SUBSTITUTE is case-packed: the incoming split is
@@ -4258,6 +4218,14 @@ export class OrdersService implements OnApplicationBootstrap {
                     trackedCategoryId: product.trackedCategoryId ?? null,
                     // RF-3: re-snapshot the reporting subcategory alongside the category.
                     trackedSubcategoryId: product.trackedSubcategoryId ?? null,
+                    // B297 (SA-098a): the product changed — re-stamp the trio from the
+                    // NEW product's live category, same substance as updateUnitLine's
+                    // isSubstitute:true arm.
+                    ...categoryTaxSnapshotOf(
+                      product.trackedCategoryId
+                        ? (substituteCategoryMap.get(product.trackedCategoryId) ?? null)
+                        : null,
+                    ),
                   },
                 });
               } else if (
@@ -4272,7 +4240,7 @@ export class OrdersService implements OnApplicationBootstrap {
                 item.overrideReason !== undefined ||
                 item.notes !== undefined
               ) {
-                const li = order.lineItems.find((li) => li.id === item.id);
+                const li = item.id ? heldOrSnapshot(item.id) : undefined;
                 if (!li) continue;
 
                 // N4 (independent review round 2, PR-2): a payload carrying ONLY
@@ -4308,6 +4276,13 @@ export class OrdersService implements OnApplicationBootstrap {
                         : {}),
                     },
                   });
+                  continue;
+                }
+                const unitRow = unitRows.get(item);
+                if (unitRow && unitLines.isUnitAware(unitRow)) {
+                  const p = unitCtx.products.get(li.productId!)!;
+                  // B297: same product, not a substitute — updateUnitLine must PRESERVE the trio.
+                  await unitEdit.updateUnitLine(uctx, item.id!, p, unitRow, item, false);
                   continue;
                 }
                 // A zero boxes+pieces payload is "not using box entry", not "zero
@@ -4901,67 +4876,9 @@ export class OrdersService implements OnApplicationBootstrap {
     });
   }
 
-  /**
-   * P5-08: append one immutable OrderRevision row capturing the order's line set +
-   * money totals AFTER an edit. The snapshot COPIES stored, already-rounded values
-   * verbatim — it never re-prices (no `qty*unitPrice`, no re-derived discounts). The
-   * per-order `revisionNumber` (max+1) is computed inside a tenant transaction so
-   * rapid autosaves can't collide on the `@@unique([orderId, revisionNumber])`.
-   */
-  private async appendOrderRevision(
-    orderId: string,
-    user: JwtPayload | undefined,
-    totals: { subtotal: number; tax: number; total: number; shippingFee?: number },
-    source: string,
-    reason?: string | null,
-  ) {
-    const tenantId = this.prisma.getTenantId();
-    const lines = await this.prisma.forTenant().orderItem.findMany({
-      where: { orderId, status: { not: "CANCELLED" } },
-      include: { product: { select: { name: true } } },
-      orderBy: { createdAt: "asc" },
-    });
-    const snapshot = {
-      subtotal: totals.subtotal,
-      tax: totals.tax,
-      total: totals.total,
-      shippingFee: totals.shippingFee ?? 0,
-      lineItems: lines.map((li) => ({
-        productId: li.productId,
-        name: li.name ?? li.product?.name ?? null,
-        qty: Number(li.qty),
-        unitPrice: Number(li.unitPrice),
-        subtotal: Number(li.subtotal),
-        originalPrice: li.originalPrice != null ? Number(li.originalPrice) : null,
-        priceType: li.priceType,
-        boxes: li.boxes,
-        pieces: li.pieces,
-        unitsPerBox: li.unitsPerBox,
-        trackedCategoryId: li.trackedCategoryId,
-        trackedSubcategoryId: li.trackedSubcategoryId,
-        notes: li.notes,
-        status: li.status,
-      })),
-    };
-    await this.prisma.tenantTransaction(async (tx) => {
-      const max = await tx.orderRevision.aggregate({
-        where: { orderId },
-        _max: { revisionNumber: true },
-      });
-      await tx.orderRevision.create({
-        data: {
-          tenantId,
-          orderId,
-          revisionNumber: (max._max.revisionNumber ?? 0) + 1,
-          editedById: user?.sub ?? null,
-          editedByName: user?.username ?? null,
-          editedByRole: user?.role ?? null,
-          source,
-          reason: reason ?? null,
-          snapshot,
-        },
-      });
-    });
+  /** P5-08: extracted verbatim to `order-revisions.ts` (SA-065 prefactor); thin delegator, same name. */
+  private appendOrderRevision(...args: AppendOrderRevisionArgs) {
+    return appendOrderRevisionImpl(this.prisma, ...args);
   }
 
   /** B283 / stock: extracted verbatim to `order-stock.ts` (B585 prefactor); thin delegators, same names. */
@@ -5065,17 +4982,16 @@ export class OrdersService implements OnApplicationBootstrap {
     });
     if (!order) throw new NotFoundException("Order not found");
     if (!["PENDING", "CONFIRMED", "OUT_FOR_DELIVERY"].includes(order.status)) {
-      throw new ConflictException({ code: "CHANGE_WINDOW_CLOSED", reason: "ORDER_STATUS" });
+      throw atStopConflict("CHANGE_WINDOW_CLOSED:ORDER_STATUS");
     }
     if (order.routeRun == null || order.routeRun.status !== "IN_PROGRESS") {
-      throw new ConflictException({ code: "CHANGE_WINDOW_CLOSED", reason: "RUN_NOT_ACTIVE" });
+      throw atStopConflict("CHANGE_WINDOW_CLOSED:RUN_NOT_ACTIVE");
     }
     if (
       order.routeRunStop != null &&
       ["COMPLETED", "SKIPPED"].includes(order.routeRunStop.status)
     ) {
-      // The at-door authority window is over — resolve as next-delivery instead.
-      throw new ConflictException({ code: "STOP_ALREADY_COMPLETED" });
+      throw atStopConflict("STOP_ALREADY_COMPLETED");
     }
 
     // NOTE-type requests carry no money delta: claim + return, nothing else.
@@ -5196,16 +5112,16 @@ export class OrdersService implements OnApplicationBootstrap {
         });
         if (!live) throw new NotFoundException("Order not found");
         if (!["PENDING", "CONFIRMED", "OUT_FOR_DELIVERY"].includes(live.status)) {
-          throw new ConflictException({ code: "CHANGE_WINDOW_CLOSED", reason: "ORDER_STATUS" });
+          throw atStopConflict("CHANGE_WINDOW_CLOSED:ORDER_STATUS");
         }
         if (live.routeRun == null || live.routeRun.status !== "IN_PROGRESS") {
-          throw new ConflictException({ code: "CHANGE_WINDOW_CLOSED", reason: "RUN_NOT_ACTIVE" });
+          throw atStopConflict("CHANGE_WINDOW_CLOSED:RUN_NOT_ACTIVE");
         }
         if (
           live.routeRunStop != null &&
           ["COMPLETED", "SKIPPED"].includes(live.routeRunStop.status)
         ) {
-          throw new ConflictException({ code: "STOP_ALREADY_COMPLETED" });
+          throw atStopConflict("STOP_ALREADY_COMPLETED");
         }
 
         // B134 (REG-B134): auto-revert a SENT pending-mirror invoice to DRAFT INSIDE the merge tx
@@ -5377,6 +5293,9 @@ export class OrdersService implements OnApplicationBootstrap {
             where: { id: (cr.productId ?? payload.productId) as string },
           });
           if (!product) throw new BadRequestException("Product no longer exists");
+          // B297 (SA-098a): only reached below when this is a genuinely NEW line —
+          // an existing-line quantity bump preserves its stored trio untouched.
+          const addItemCategoryMap = await loadCategoryMapForProducts(tx, [product]);
           const upb = Number(product.unitsPerBox ?? 0);
           const addQty = Number(payload.qty);
           if (!(addQty > 0)) throw new BadRequestException("qty must be > 0");
@@ -5509,6 +5428,12 @@ export class OrdersService implements OnApplicationBootstrap {
                 trackedCategoryId: product.trackedCategoryId ?? null,
                 // RF-3: reporting-only subcategory snapshot (mirrors trackedCategoryId).
                 trackedSubcategoryId: product.trackedSubcategoryId ?? null,
+                // B297 (SA-098a): a fresh at-door line is a new sale — stamp the trio.
+                ...categoryTaxSnapshotOf(
+                  product.trackedCategoryId
+                    ? (addItemCategoryMap.get(product.trackedCategoryId) ?? null)
+                    : null,
+                ),
               },
             });
             mutationRow = {
@@ -5605,142 +5530,28 @@ export class OrdersService implements OnApplicationBootstrap {
    * tracking number also clears `shippedAt`. The values are mirrored onto the
    * order's non-void invoices so the shipment shows on the customer's invoice.
    */
+  /** Extracted verbatim to `order-lifecycle.ts` (size-ratchet headroom move); thin delegator. */
   async updateShipment(orderId: string, dto: UpdateShipmentDto, _user?: JwtPayload) {
-    const order = await this.prisma
-      .forTenant()
-      .order.findFirst({ where: { id: orderId }, select: { id: true, shippedAt: true } });
-    if (!order) throw new NotFoundException("Order not found");
-
-    const carrier = dto.shippingCarrier?.trim() || null;
-    const tracking = dto.shippingTrackingNumber?.trim() || null;
-    // Stamp shippedAt the first time a tracking number is set; clear it when the
-    // tracking number is removed; otherwise keep the original ship date.
-    const shippedAt = tracking ? (order.shippedAt ?? new Date()) : null;
-
-    const updated = await this.prisma.forTenant().order.update({
-      where: { id: orderId },
-      data: { shippingCarrier: carrier, shippingTrackingNumber: tracking, shippedAt },
-    });
-
-    // Mirror onto every non-void invoice generated from this order.
-    await this.prisma.forTenant().invoice.updateMany({
-      where: { orderId, status: { not: "VOID" } },
-      data: { shippingCarrier: carrier, shippingTrackingNumber: tracking, shippedAt },
-    });
-
-    return updated;
+    return updateShipmentImpl(this, orderId, dto, _user);
   }
 
-  /**
-   * Ad-hoc trips + fulfillment mode: change an order's fulfillment path
-   * (ROUTE ↔ SHIP) while it's still open. Locked once the order has left the
-   * "open" states — a shipped/delivered/cancelled order's fulfillment history
-   * shouldn't move out from under its trip/shipment records after the fact —
-   * and locked toward SHIP while the order sits on a live run.
-   */
+  /** Extracted verbatim to `order-lifecycle.ts` (size-ratchet headroom move); thin delegator. */
   async updateFulfillPath(orderId: string, dto: UpdateFulfillPathDto, _user?: JwtPayload) {
-    // `findFirst`, NOT `findUnique`: forTenant()'s findUnique can only POST-filter
-    // on the returned row's `tenantId`, and an exclusive `select` that omits it
-    // silently disables that check — which would leak another tenant's order
-    // status and driver name through the 400 messages below. findFirst gets
-    // `tenantId` injected into the `where`, so a foreign id simply 404s here.
-    const order = await this.prisma.forTenant().order.findFirst({
-      where: { id: orderId },
-      select: {
-        id: true,
-        status: true,
-        routeRunStopId: true,
-        routeRunStop: {
-          select: {
-            routeRun: { select: { status: true, driver: { select: { contactName: true } } } },
-          },
-        },
-      },
-    });
-    if (!order) throw new NotFoundException("Order not found");
-    if (
-      order.status === OrderStatus.OUT_FOR_DELIVERY ||
-      order.status === OrderStatus.DELIVERED ||
-      order.status === OrderStatus.CANCELLED
-    ) {
-      throw new BadRequestException("Fulfillment path can only be changed while the order is open");
-    }
-    // Status alone isn't enough: the dispatch sweep attaches orders to a run
-    // while they're still CONFIRMED, so a freshly dispatched order would flip
-    // to SHIP and render as "Shipped" while still standing as a stop on the
-    // driver's live run. Stale attachments are harmless, so only ACTIVE runs
-    // block, mirroring TripsService.checkEligibility's ON_ACTIVE_RUN predicate.
-    // Since F11 a run going terminal RELEASES the orders of every stop that
-    // recorded no work, so a stale attachment now only survives on a COMPLETED
-    // stop — or on a row stranded before that deploy, until the D4 repair runs.
-    const run = order.routeRunStop?.routeRun ?? null;
-    const onActiveRun =
-      order.routeRunStopId != null &&
-      run != null &&
-      (run.status === RouteRunStatus.SCHEDULED || run.status === RouteRunStatus.IN_PROGRESS);
-    if (dto.fulfillPath === FulfillPath.SHIP && onActiveRun) {
-      throw new BadRequestException(
-        `This order is out on an active delivery run${
-          run?.driver?.contactName ? ` with ${run.driver.contactName}` : ""
-        }. Remove it from the run before switching it to shipping.`,
-      );
-    }
-    return this.prisma.forTenant().order.update({
-      where: { id: orderId },
-      data: { fulfillPath: dto.fulfillPath },
-    });
+    return updateFulfillPathImpl(this, orderId, dto, _user);
   }
 
+  /** Extracted verbatim to `order-lifecycle.ts` (size-ratchet headroom move); thin delegator. */
   async toggleUrgent(id: string, user: JwtPayload, urgent?: boolean) {
-    const order = await this.findOneOrThrow(id);
-    if (user.role === UserRole.CUSTOMER) {
-      // REG-B131: `deletedAt: null` here — a removal deactivates the user but an access token
-      // minted just before it stays valid for up to 15 minutes, so a removed customer's own
-      // in-flight session must fall into the existing refusal below.
-      const customer = await this.prisma
-        .forTenant()
-        .customer.findFirst({ where: { userId: user.sub, deletedAt: null } });
-      if (!customer || customer.id !== order.customerId) throw new ForbiddenException();
-    }
-    // If caller provides an explicit value, SET it; otherwise toggle (legacy web clients)
-    const newValue = urgent !== undefined ? urgent : !order.urgent;
-    return this.prisma.forTenant().order.update({ where: { id }, data: { urgent: newValue } });
+    return toggleUrgentImpl(this, id, user, urgent);
   }
 
-  /**
-   * REG-B78: header fields a buyer's cart merge must carry onto the EXISTING
-   * order — merge semantics, not create semantics: notes APPEND (never clobber),
-   * urgent only ever SETS true (a non-urgent add never clears an urgent order),
-   * requestedDeliveryDate sets when provided and never clears.
-   */
+  /** Extracted verbatim to `order-lifecycle.ts` (size-ratchet headroom move); thin delegator. */
   async applyBuyerMergeHeader(
     orderId: string,
     header: { notes?: string; urgent?: boolean; requestedDeliveryDate?: string },
     user: JwtPayload,
   ): Promise<void> {
-    const order = await this.prisma.forTenant().order.findFirst({ where: { id: orderId } });
-    if (!order) throw new NotFoundException("Order not found");
-    if (user.role === UserRole.CUSTOMER) {
-      // REG-B131: `deletedAt: null` here — a removal deactivates the user but an access token
-      // minted just before it stays valid for up to 15 minutes, so a removed customer's own
-      // in-flight session must fall into the existing refusal below.
-      const customer = await this.prisma
-        .forTenant()
-        .customer.findFirst({ where: { userId: user.sub, deletedAt: null } });
-      if (!customer || order.customerId !== customer.id) throw new ForbiddenException();
-    }
-    const data: Record<string, unknown> = {};
-    const notes = (header.notes ?? "").trim();
-    if (notes) data.notes = order.notes ? `${order.notes}\n${notes}` : notes;
-    if (header.urgent === true) data.urgent = true;
-    if (header.requestedDeliveryDate) {
-      // Mirrors create()'s exact parse (:2107-2109) so merge and create agree
-      // on timezone handling.
-      data.requestedDeliveryDate = new Date(header.requestedDeliveryDate);
-    }
-    if (Object.keys(data).length) {
-      await this.prisma.forTenant().order.update({ where: { id: orderId }, data });
-    }
+    return applyBuyerMergeHeaderImpl(this, orderId, header, user);
   }
 
   /** The order-tracking card (route / driver / stop / delivery window) — see `order-tracking.ts`. */
@@ -5753,6 +5564,12 @@ export class OrdersService implements OnApplicationBootstrap {
    * DELIVERED included — behind the client's explicit warning. Money, not
    * status, is the gate now. `user` is optional so internal callers keep
    * working (change-requests' abandoned-draft cleanup passes none).
+   *
+   * NOT extracted to `order-lifecycle.ts` with its siblings below — it is the one
+   * method in that region with a direct `orderItem`/`invoiceItem` write, which
+   * `unit-line-writers.ast.spec.ts`'s AST scanner only tracks inside a CLASS
+   * method (`ts.isClassDeclaration`); a top-level function in a sibling file is
+   * invisible to it. Kept here so the guard's coverage stays intact.
    */
   async deleteOrder(id: string, user?: JwtPayload) {
     const order = await this.prisma.forTenant().order.findUnique({
@@ -5858,48 +5675,19 @@ export class OrdersService implements OnApplicationBootstrap {
     return { success: true };
   }
 
-  /**
-   * Sales agents & commissions: staff-set (or clear, via `null`) per-order
-   * commission-rate override. `0` is a valid value ("exempt"). Update + engine
-   * resync run in ONE transaction so a resolved-rate change is atomic with the
-   * order write. Does NOT touch updateOrderItems / item money — the existing
-   * rebuildSiblingDrafts hook already covers item-edit money changes.
-   */
+  /** Extracted verbatim to `order-lifecycle.ts` (size-ratchet headroom move); thin delegator. */
   async setCommissionRate(orderId: string, ratePct: number | null, user: JwtPayload) {
-    if (user.role !== UserRole.OPERATOR && user.role !== UserRole.TENANT_ADMIN) {
-      throw new ForbiddenException("Only staff can set a commission rate");
-    }
-    if (
-      ratePct !== null &&
-      (typeof ratePct !== "number" || Number.isNaN(ratePct) || ratePct < 0 || ratePct > 100)
-    ) {
-      throw new BadRequestException(
-        "commissionRatePct must be between 0 and 100, or null to clear",
-      );
-    }
-    await this.findOneOrThrow(orderId);
-    return this.prisma.tenantTransaction(async (tx) => {
-      const order = await tx.order.update({
-        where: { id: orderId },
-        data: { commissionRatePct: ratePct },
-      });
-      await this.commissionEngine.syncOrderInvoices(orderId, tx);
-      return order;
-    });
+    return setCommissionRateImpl(this, orderId, ratePct, user);
   }
 
+  /** Extracted verbatim to `order-lifecycle.ts` (size-ratchet headroom move); thin delegator. */
   async bulkDeleteOrders(ids: string[], user?: JwtPayload) {
-    const results = await Promise.allSettled(ids.map((id) => this.deleteOrder(id, user)));
-    const deleted = results.filter((r) => r.status === "fulfilled").length;
-    const errors = results
-      .map((r, i) => (r.status === "rejected" ? `${ids[i]}: ${r.reason?.message}` : null))
-      .filter(Boolean) as string[];
-    return { deleted, errors };
+    return bulkDeleteOrdersImpl(this, ids, user);
   }
 
-  private async findOneOrThrow(id: string) {
-    const order = await this.prisma.forTenant().order.findUnique({ where: { id } });
-    if (!order) throw new NotFoundException("Order not found");
-    return order;
+  /** Extracted verbatim to `order-lifecycle.ts` (size-ratchet headroom move); thin delegator. Not
+   * `private`: called from sibling extracted functions (toggleUrgent/setCommissionRate) there. */
+  async findOneOrThrow(id: string) {
+    return findOneOrThrowImpl(this, id);
   }
 }

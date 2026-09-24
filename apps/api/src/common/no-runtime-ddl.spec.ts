@@ -27,6 +27,8 @@
  *   - `apply-rls.js` — applies row-level-security POLICIES, which the Prisma
  *     datamodel cannot express and `migrate diff` never sees; it is a manual,
  *     documented step in `apps/api/docs/production-setup.md`.
+ *   - the owner-run T6 ops scripts (see `SCRIPT_EXCLUSIONS`, one reason each).
+ *   - any file under a `testing/` directory of `src` (see `TESTING_SEGMENT`).
  * (`schema-drift.mjs`, `prod-migrate.mjs`, and `lib/railway-db-url.mjs` were
  * once listed here too, but none of them ever contains a DDL keyword — the
  * exclusion was dead, so it was removed rather than carried forward.)
@@ -48,7 +50,36 @@ import { basename, join, relative, sep } from "path";
 const SRC_ROOT = join(__dirname, "..");
 const SCRIPTS_ROOT = join(__dirname, "..", "..", "scripts");
 
-const SCRIPT_EXCLUSIONS = new Set(["apply-rls.js"]);
+// Every entry needs its own `reason:` line, and the last test in this file fails if an entry stops
+// resolving to a file on disk (a stale exemption after a rename silently guards nothing).
+const SCRIPT_EXCLUSIONS = new Set([
+  // reason: applies row-level-security POLICIES, which the Prisma datamodel cannot express and
+  // `migrate diff` never sees; a manual, documented step (apps/api/docs/production-setup.md).
+  "apply-rls.js",
+  // reason: T6 owner-run rollback — drops the 56 `<table>_tenantId_nn` CHECK constraints in one
+  // transaction, and only with --yes-drop-t6-guards. Hand-run via `railway run`; apps/api/scripts/**
+  // is outside tsconfig.build.json, so it never enters the API image.
+  "t6-drop-guards.mjs",
+  // reason: T6 owner-run READ-ONLY census; it contains DDL text only inside a regex that PARSES the
+  // T6 migration (to list the guarded tables) and runs SELECT count(*) in a READ ONLY transaction.
+  // Hand-run via `railway run`; never enters the API image (outside tsconfig.build.json).
+  "t6-null-census.mjs",
+  // reason: T6 owner-run READ-ONLY forensic report; like the census it holds DDL text only inside a
+  // regex that PARSES the T6 migration (to list the guarded tables) and runs SELECTs in a READ ONLY
+  // transaction. Hand-run via `railway run`; never enters the API image. (The sibling stamp script
+  // t6-stamp-null-rows.mjs contains no DDL keyword, so it needs no exemption and gets none.)
+  "t6-null-rows-report.mjs",
+]);
+
+/**
+ * Directory class exempt from the `src` walk: any path with a `testing/` segment. Same shape as
+ * `TESTING_SEGMENT` in `no-test-code-in-prod.spec.ts`, which enforces on the IMPORT EDGE (static,
+ * re-export, dynamic `import()` and `require`) that no non-spec file outside a `testing/` directory
+ * imports one. That is strictly stronger than a name list: it proves this DDL (e.g. the T6
+ * `relaxTenantIdGuards` test helper) is unreachable from the running API, which is what T1 exists to
+ * guarantee.
+ */
+const TESTING_SEGMENT = /(^|\/)testing(\/|$)/;
 
 const EXEC_RAW_PATTERN = /(\$(execute|query)Raw(Unsafe)?\s*[(`]|\b[A-Za-z_$][\w$]*\.query\s*[(`])/i;
 const DDL_PATTERN =
@@ -121,6 +152,7 @@ const rel = (root: string, file: string) => relative(root, file).split(sep).join
 function collectSourceFiles(): string[] {
   return walk(SRC_ROOT).filter((file) => {
     const entry = basename(file);
+    if (TESTING_SEGMENT.test(rel(SRC_ROOT, file))) return false;
     return entry.endsWith(".ts") && !entry.endsWith(".d.ts") && !entry.endsWith(".spec.ts");
   });
 }
@@ -176,6 +208,24 @@ describe("API runtime DDL (T1)", () => {
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
+  });
+
+  it("every SCRIPT_EXCLUSIONS entry resolves to a file on disk (no stale exemption)", () => {
+    for (const entry of SCRIPT_EXCLUSIONS) {
+      expect(existsSync(join(SCRIPTS_ROOT, entry))).toBe(true);
+    }
+  });
+
+  it("uses the SAME `testing/` segment regex as no-test-code-in-prod.spec.ts (the two guards cannot drift)", () => {
+    const other = readFileSync(join(__dirname, "no-test-code-in-prod.spec.ts"), "utf8");
+    expect(other).toContain(`const TESTING_SEGMENT = ${TESTING_SEGMENT.toString()};`);
+  });
+
+  it("does not exempt a `testing`-lookalike directory (only an exact `testing/` segment)", () => {
+    expect(TESTING_SEGMENT.test("common/testing/db-spec.ts")).toBe(true);
+    expect(TESTING_SEGMENT.test("testing/x.ts")).toBe(true);
+    expect(TESTING_SEGMENT.test("common/testing-utils/x.ts")).toBe(false);
+    expect(TESTING_SEGMENT.test("common/mytesting/x.ts")).toBe(false);
   });
 
   it("scans the scripts directory, not just src", () => {

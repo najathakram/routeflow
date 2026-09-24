@@ -232,3 +232,92 @@ describe("BarcodeScannerButton", () => {
     });
   });
 });
+
+// B672 — the USB/wedge-scan detector's keydown listener is torn down and rebuilt whenever the
+// PARENT re-renders (its `useEffect` depends on the `onScan` prop, which a real caller always
+// passes as a fresh inline closure). Every consumer's search input is a controlled field that
+// re-renders its parent on EVERY keystroke, so before this fix the accumulated sequence was
+// wiped mid-scan and the detector could never reach 6+ chars — a real wedge scanner never
+// tripped it, at any typing speed.
+describe("USB / physical scanner survives a parent that re-renders on every keystroke (B672)", () => {
+  /** A parent that behaves like every real caller: a controlled input whose onChange re-renders
+   *  it, so `onScan` (and every other inline prop) is a fresh closure on each keystroke — exactly
+   *  what CreateOrderModal, invoices/new, vendor-bills etc. all do. */
+  function ParentWithControlledInput({ onScan }: { onScan: (code: string) => void }) {
+    const inputRef = React.useRef<HTMLInputElement>(null);
+    const [value, setValue] = React.useState("");
+    return (
+      <>
+        <input
+          ref={inputRef}
+          value={value}
+          onChange={(e) => setValue(e.target.value)}
+          aria-label="search"
+        />
+        {/* Inline arrow, defined IN the JSX — a fresh closure every render of THIS component,
+            exactly like every real caller (CreateOrderModal etc: `onScan={(code) => ...}`).
+            Passing `onScan` straight through as a stable prop reference would NOT reproduce the
+            bug — the parent must actually recreate the closure on each of its own re-renders. */}
+        <BarcodeScannerButton
+          inputRef={inputRef}
+          onScan={(code) => onScan(code)}
+          title="Scan barcode"
+        />
+      </>
+    );
+  }
+
+  let dateNowSpy: jest.SpyInstance<number, []>;
+  beforeEach(() => {
+    let t = 1_700_000_000_000;
+    dateNowSpy = jest.spyOn(Date, "now").mockImplementation(() => (t += 10));
+  });
+  afterEach(() => {
+    dateNowSpy.mockRestore();
+  });
+
+  it("delivers a 6+ char wedge sequence to onScan exactly once, even though every keystroke re-renders the parent", () => {
+    const onScan = jest.fn();
+    render(<ParentWithControlledInput onScan={onScan} />);
+    const input = screen.getByLabelText("search");
+
+    const code = "100200300";
+    for (const ch of code) {
+      fireEvent.keyDown(input, { key: ch });
+      // A real controlled input updates its value (and re-renders the parent) on every
+      // keystroke — this is what tears the pre-fix listener down mid-sequence.
+      fireEvent.change(input, { target: { value: (input as HTMLInputElement).value + ch } });
+    }
+    fireEvent.keyDown(input, { key: "Enter" });
+
+    expect(onScan).toHaveBeenCalledTimes(1);
+    expect(onScan).toHaveBeenCalledWith(code);
+  });
+
+  it("a short (<6 char) sequence is still ignored — the fix must not loosen the length gate", () => {
+    const onScan = jest.fn();
+    render(<ParentWithControlledInput onScan={onScan} />);
+    const input = screen.getByLabelText("search");
+    for (const ch of "12345") {
+      fireEvent.keyDown(input, { key: ch });
+      fireEvent.change(input, { target: { value: (input as HTMLInputElement).value + ch } });
+    }
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(onScan).not.toHaveBeenCalled();
+  });
+
+  it("normal (slow) typing is never mistaken for a scan, even across the re-render (>200ms gaps)", () => {
+    const onScan = jest.fn();
+    render(<ParentWithControlledInput onScan={onScan} />);
+    const input = screen.getByLabelText("search");
+    dateNowSpy.mockRestore();
+    let t = 1_700_000_000_000;
+    dateNowSpy = jest.spyOn(Date, "now").mockImplementation(() => (t += 250)); // > the 200ms gap reset
+    for (const ch of "abcdef") {
+      fireEvent.keyDown(input, { key: ch });
+      fireEvent.change(input, { target: { value: (input as HTMLInputElement).value + ch } });
+    }
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(onScan).not.toHaveBeenCalled();
+  });
+});

@@ -187,6 +187,8 @@ model Tenant {
   customerAuthorizations   CustomerAuthorization[]
   authorizationOverrides   AuthorizationOverride[]
   regulatedSalesLedger     RegulatedSalesLedger[]
+  parkedLedgerReversals    RegulatedLedgerParkedReversal[]
+  parkedReturnRestocks     ReturnParkedRestock[]
   regulatedFilings         RegulatedFiling[]
   promotions               Promotion[]
   orderRevisions           OrderRevision[]

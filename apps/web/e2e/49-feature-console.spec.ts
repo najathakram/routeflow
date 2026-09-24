@@ -264,6 +264,11 @@ async function mockTenantShell(page: Page, opts: { registryStatus?: number } = {
   await page.route(new RegExp(`/platform-admin/tenants/${TENANT_ID}$`), (route) =>
     fulfillJson(route, tenantFixture()),
   );
+  // The tenant page's `fetchAdmin` (B627): unmocked, a real API 401s this spec's fake token, which
+  // wipes the tokens and redirects to /admin-login.
+  await page.route(new RegExp(`/platform-admin/tenants/${TENANT_ID}/admin(\\?.*)?$`), (route) =>
+    fulfillJson(route, { admin: null }),
+  );
   await page.route(new RegExp(`/platform-admin/tenants/${TENANT_ID}/addons(\\?.*)?$`), (route) =>
     fulfillJson(route, []),
   );

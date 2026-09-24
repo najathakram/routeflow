@@ -70,4 +70,12 @@ describe("REG-B305 driver run/stop order projection", () => {
   it("REG-B305 round 3: the stop's customer select carries the tax-exemption column", () => {
     expect(RUN_STOP_INCLUDE.customer.select.isTaxExempt).toBe(true);
   });
+
+  // B648: without this, the driver's short-pick screen has no way to tell a
+  // units_v1 line ("Case"…) from a plain piece/pack line — lib/short-pick.ts
+  // treats every line as piece-adjustable, so a Case line's stepper silently
+  // mis-counts pieces as cases.
+  it("B648: the line items select carries the units_v1 selling-unit label", () => {
+    expect(RUN_LINE_ITEMS_SELECT.unitLabel).toBe(true);
+  });
 });

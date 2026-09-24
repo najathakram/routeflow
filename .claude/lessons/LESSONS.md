@@ -264,22 +264,34 @@
   sufficient gate for tooling-timing changes, only for correctness.**
 - **Guard:** the merge session re-measures self-test wall-clock during its scoped review.
 
-### L-180 · 2026-09-16 · tooling · npm/dir junctions across worktrees are unsafe near git worktree ops
+### L-180 · 2026-09-16/22 · tooling · npm/dir junctions across worktrees are unsafe near git worktree ops (recurred: 2026-09-22)
 
 - **Symptom:** (a) after `git worktree move`, invalid-hook-call errors and mangled Jest paths;
   (b) a scratch worktree junctioned to a SIBLING's `node_modules` (to dodge `npm install` under
   disk pressure), then `git worktree remove --force` on the scratch tree cascaded a recursive
   delete through the junction, wiping the sibling's `node_modules` and ~2,388 tracked files.
+  RECURRED 2026-09-22: a PC reviewer agent's own worktree-cleanup `git worktree remove --force`
+  followed the SAME shape into the main checkout's `node_modules/@routeflow/*` links (which
+  point back into `apps/` and `packages/`), deleting 2,814 tracked files there — the "none yet"
+  guard below was never built between the two incidents.
 - **Root cause:** Windows npm junctions are absolute-path reparse points, invisible to git and
   not junction-aware to a naive recursive delete — `worktree move` leaves one pointing at the OLD
   path forever; `worktree remove --force`/`rm -rf` walks THROUGH one into its real target.
 - **Lesson:** **Never let a junction outlive the git worktree op around it. After
   `git worktree move`, treat `node_modules` as stale — `npm ci` (+ `prisma generate` for
-  apps/api) at the final path. Before removing/recursively deleting ANY worktree, `rmdir`
-  (never `rm -rf`) every junction inside it first. Best: never junction `node_modules` between
-  two DIFFERENT live worktrees — the disk saved isn't worth the blast radius.**
-- **Guard:** none yet — propose a pre-remove check refusing `git worktree remove` while a
-  junction exists under the tree, plus a post-move check comparing a junction's target to cwd.
+  apps/api) at the final path. Before removing/recursively deleting ANY worktree, prove no
+  junction remains (`dir /AL` or check `LinkType`), then unlink each one individually with
+  `cmd /c rmdir <link>` (no `/s`, which recurses through it) — never a bare `rm -rf`/
+  `--force` on a tree that might still hold one. Best: never junction `node_modules` between two
+  DIFFERENT live worktrees — the disk saved isn't worth the blast radius, and reviewer/audit
+  agents (whose job is to read, not build) should run read-only against the target checkout with
+  no worktree of their own at all, removing the temptation entirely.**
+- **Guard:** still none automated after two incidents — the proposed pre-remove check (refusing
+  `git worktree remove` while a junction exists under the tree, or a post-move check comparing a
+  junction's target to cwd) has not been built either time. Interim guard until it is: reviewer
+  agent prompts/instructions carry the read-only, no-worktree rule explicitly. Recovery from a
+  hit: `git ls-files --deleted -z -- <dirs> | xargs -0 git restore --`, then confirm
+  `git ls-files --deleted` is empty and diff clean before resuming any work in that checkout.
 
 ### L-179 · 2026-09-16 · tooling · campaign-check freshness ritual
 
@@ -306,16 +318,27 @@
   before landing.**
 - **Guard:** none yet — propose `--stamp` refusing a sha that isn't reachable from master.
 
-### L-176 · 2026-09-16 · tooling · worktree without its own node_modules resolves to the main checkout
+### L-176 · 2026-09-16/22 · tooling · worktree without its own node_modules resolves to the main checkout (recurred twice: 2026-09-22)
 
 - **Symptom:** a worktree with no `node_modules` of its own resolved workspace deps up to the
   MAIN checkout's — a stale compiled `@routeflow/pricing` dist threw a missing-function error.
+  RECURRED 2026-09-22, twice: after a `@routeflow/pricing` change landed on master, other
+  worktrees' `packages/pricing/dist` stayed stale, so api/web tests there imported the OLD money
+  math and silently produced wrong zeros or drift instead of an error this time — the same root
+  cause as the original incident, but a quieter failure shape (wrong numbers, not a thrown
+  missing-function error) — twice in one session, still with the "none yet" guard below never
+  built.
 - **Root cause:** npm workspace symlinks/junctions in a worktree missing its own `npm ci` fall
   back to whatever the main checkout last had installed/built — never a guarantee of freshness.
 - **Lesson:** **A worktree needs its OWN `npm ci` before running web/api tests. After any
-  `packages/*` change lands on master, rebuild the shared dist in the main checkout too.**
-- **Guard:** none yet — propose a pre-test check comparing `packages/*/dist` mtimes against
-  source.
+  `packages/*` change lands on master, rebuild the shared dist in EVERY worktree that will test
+  against it (`npx turbo run build --filter=@routeflow/pricing --force` after fetching master),
+  not just the main checkout — a stale `packages/pricing/dist` can fail quietly (wrong money
+  values) as easily as it fails loudly (a missing-function throw), so don't wait for the loud
+  failure to remember this.**
+- **Guard:** still none automated after two recurrences — propose a pre-test check comparing
+  `packages/*/dist` mtimes against `src`, or a verify-chain step that refuses to run tests when
+  `dist` is older than `src` for any workspace package.
 
 ### L-175 · 2026-09-16 · tooling · shared dev host disk budget
 
@@ -408,7 +431,7 @@
 
 ## domain
 
-### L-204 · 2026-09-18 · domain · B524 fix round — a new write path didn't inherit a sibling's cache-invalidation fix
+### L-204 · 2026-09-18/22 · domain · B524 fix round — a new write path didn't inherit a sibling's cache-invalidation fix (recurred on the READ side: 2026-09-22, B698)
 
 - **Symptom:** granting a prerequisite via `FeatureOverrideService.create()`/`.revoke()` then
   acting on the new requires check could read a stale snapshot and false-400 for up to 30s —
@@ -419,9 +442,21 @@
   propagate to a sibling by analogy, only by someone applying it there too.
 - **Lesson:** **When a new check reads a cache another writer is allowed to leave briefly
   stale, audit EVERY writer of that value for whether it already invalidates the SAME cache.**
+- **Recurred on the READ side (B698, 2026-09-22):** B677 (#1199) made a boxed purchase-order
+  line's stored `totalCost` exact (case cost x cases, one rounding) and stopped the FORM from
+  re-multiplying pieces by the 4 dp per-piece cost. THREE readers kept doing exactly that (web `PODetailRow`,
+  the mobile PO detail row+header, and the mobile LIST row's fallback), so 1,000 cases of 12 at
+  $11.00 stored as $11,000.00 still displayed $11,000.40 one screen over. The fix swept the writers
+  and the form; nobody grepped the readers — and the third site surfaced only because the mobile fix
+  looked for an existing sibling helper to reuse instead of adding its own. **A stored exact figure is READ, never rebuilt from its rounded
+  components: when a fix makes a stored value exact, grep every site that derives the same value
+  (`qty * unitCost`-shaped expressions across web AND mobile) and point each at the stored field,
+  with the derivation only as a fallback for rows that have none.**
 - **Guard:** `createFeatureOverride`/`revokeFeatureOverride` now call
   `EntitlementAuthority.invalidate(tenantId)`, mirroring B509;
-  `platform-admin.controller.override-requires.spec.ts` pins both calls directly.
+  `platform-admin.controller.override-requires.spec.ts` pins both calls directly. B698:
+  `resolveStoredPOLineAmounts` in web `purchase-orders-shared.ts` (stored total wins) and a
+  rendered `PurchaseOrdersTab.test.tsx` case at the drift value, verified red on the old row.
 - Attribution: candidate from Lane D (PR #913), originally filed as "L-199" from a stale local
   view of the register (already taken here); renumbered on fold-in.
 
@@ -564,20 +599,6 @@
 - **Guard:** `apps/api/src/common/enum-parity.spec.ts` — a generic table (40 enums) against
   `packages/types/api/enums.ts`, plus a regression layer pinning the drifted files and the
   mobile jest stub that can't `require` the shared package directly.
-
-### L-116 · 2026-09-12 · tooling · plane self-test machine-root invariants
-
-- **Symptom:** a lead's pre-push verify failed at a plane self-test's "shared runs.jsonl
-  byte-unchanged" check — ANOTHER session's own hooks had legitimately appended to it mid-run.
-- **Root cause:** every "byte-identical before/after" invariant in the plane self-tests binds on
-  `machineRoot()`'s shared dir (see [[L-114]]) — the SAME dir every worktree resolves to — so it
-  races any other session, not just a concurrent run of the same suite.
-- **Lesson:** **A self-test invariant must never bind to a shared machine-local file — assert
-  only on fixtures the run owns. A file another session can write at any moment needs a
-  throwaway stand-in, never the real shared path.**
-- **Guard:** `PLANE_MACHINE_ROOT` (gated behind `PLANE_SYNC_SELF_TEST=1`) lets every plane
-  self-test point `machineRoot()` at its own temp root; `T-concurrent-writer` proves isolation
-  under a genuine concurrent writer. Related [[L-114]].
 
 ### L-119 · 2026-09-13 · process · F38 round 4
 
@@ -818,3 +839,42 @@
   N times.**
 - **Guard:** the landing procedure re-reads the coordination issue (#938) immediately before each
   merge; no unattended batch merge loops.
+
+### L-214 · 2026-09-22 · domain · a second quantity axis needs every writer AND every "already done" guard
+
+- **Symptom:** a FULL credit note against a box-unaware regulated line reversed 5 of the 60 pieces
+  it sold, leaving 55 phantom pieces on the tax filing per credited line. Net, qty and tax were all
+  correct — only the piece axis was wrong — and a later invoice void never cleared the residue, so
+  the rows stayed wrong permanently.
+- **Root cause:** B661 moved the SALE row's `unitBasisQty` onto a PIECE axis while `qty` stayed in
+  the line's own unit (boxes for a box-unaware line). `reverseCreditNoteEntries` kept booking the
+  line-unit value into the piece column, so the two sides no longer cancelled. Compounding it, the
+  "this line is already fully reversed, skip it" guard in `reverseInvoiceEntries` tested `qty`,
+  `netSales` and `categoryTax` but NOT `unitBasisQty` — so the one operation that could have healed
+  the residue was the operation that proved it invisible.
+- **Lesson:** **When a row carries two quantity axes that mean different things, moving ONE reader
+  or writer onto the new axis is never the whole change: sweep every OTHER writer that books a
+  paired row into the same column, and widen every "nothing left to do" guard to test EVERY axis it
+  guards. A guard that checks a subset of dimensions does not merely miss the bug — it makes the bug
+  permanent, because it convinces the healing path there is nothing to heal.**
+- **Same fix, second lesson (pro-rata source):** the replacement first took its pieces-per-unit
+  ratio from an AGGREGATE over every SALE row of the order line, which silently averages rows
+  written under different snapshots — a product repacked 12 -> 10 between the original write and a
+  delivered-basis reconcile gave 11, so a 2-box partial credit booked -22 where the truth was -20.
+  **A pro-rata ratio must be derived from the specific stored row being reversed, never from a sum
+  across the parent entity's rows.** This class is near-invisible in testing because the CLOSING
+  operation books the exact remaining and absorbs the difference, so the TOTAL always reconciles —
+  the error only surfaces as period attribution, and only when a partial straddles a period
+  boundary, which is the one moment anyone looks. Where a sibling path already pro-rates correctly
+  (`reverseReturnEntries` off the live row's own ratio), match it rather than inventing a second
+  derivation (cf. L-167).
+- **Guard:** `regulated-ledger.service.spec.ts` pins the piece axis on the credit path (full credit
+  closes to exactly 0 pieces, a partial pro-rates off the SALE row's own ratio, the second half
+  leaves no residue) and pins that a line square on money but carrying a piece residue is NOT
+  skipped by a void. When a fix makes existing fixtures fail, check case by case that each modelled
+  a shape a real writer can produce before changing it — four here defaulted the two axes
+  independently and modelled rows no writer emits, which is why changing them was correct. The test
+  that justifies such a change is not "the pair is unreachable" but "the AGGREGATE the case asserts
+  on is the defect's own signature": here qty netting to zero while pieces do not IS reachable (it
+  is the legacy residue), so the old assertion was asserting the bug, and removing it RAISED
+  coverage. A mixed-pack reconcile case pins the ratio source.

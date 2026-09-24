@@ -215,7 +215,9 @@ export function LineItemRowReadOnly({
             {progressText(delivered)} of {progressText(qty)} delivered
           </p>
         )}
-        {note?.trim() && <p className="mt-1 text-xs italic text-navy/70">{note.trim()}</p>}
+        {note?.trim() && (
+          <p className="mt-1 whitespace-pre-line text-xs italic text-navy/70">{note.trim()}</p>
+        )}
         {lineStatus && (
           <div className="mt-1.5">
             <Badge status={lineStatus} />
