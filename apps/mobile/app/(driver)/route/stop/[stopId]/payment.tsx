@@ -356,8 +356,9 @@ export default function PaymentScreen() {
     // SA-115 required (2): the fallback triggers ONLY when the order's
     // fetch has NOT LANDED (`ordersById[o.id]` undefined) — never merely
     // because its rich lines came back empty. A LANDED order with nothing
-    // adjustable (every line already delivered on an earlier visit, or all
-    // cancelled) sends its rich (empty) lines as-is — zero entries for
+    // adjustable (every line already FULLY delivered on an earlier visit —
+    // SA-094c: a partial stays adjustable — or all cancelled) sends its
+    // rich (empty) lines as-is — zero entries for
     // THIS close, which the server reads as no new delivery action for it,
     // not a downgrade of an order that's already DELIVERED. Falling back to
     // the raw snapshot for that case would have re-claimed full delivery on

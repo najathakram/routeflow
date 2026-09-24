@@ -29,10 +29,12 @@ import { sanitizeIntInput, parseIntQty } from "../../../../../lib/qty";
 
 /** Same "adjustable" predicate `shortPickLinesFromOrder` applies for the
  *  money-math half — kept alongside it here since rendering needs the
- *  RICHER `OrderItem` (product name), not the pure `ShortPickLine`. */
+ *  RICHER `OrderItem` (product name), not the pure `ShortPickLine`. SA-094c:
+ *  excludes only FULLY delivered lines — a partial from a prior visit stays
+ *  adjustable for its remainder. */
 function adjustableLines(order: Order | undefined): OrderItem[] {
   return (order?.lineItems ?? []).filter(
-    (li) => li.status !== "CANCELLED" && Number(li.deliveredQty ?? 0) === 0,
+    (li) => li.status !== "CANCELLED" && Number(li.deliveredQty ?? 0) < Number(li.qty),
   );
 }
 
@@ -77,9 +79,9 @@ export default function ShortPickScreen() {
   });
 
   // Per-order RICH lines for rendering (product name) — same adjustability
-  // gate as adjust.tsx: not cancelled, nothing already delivered (a
-  // reopened, partially-completed stop shouldn't re-offer already-settled
-  // lines). Money math is derived SEPARATELY via shortPickLinesFromOrder
+  // gate as adjust.tsx: not cancelled, not FULLY delivered (SA-094c: a
+  // partial from a prior visit stays adjustable for its remainder; only an
+  // already-settled line is excluded). Money math is derived SEPARATELY via shortPickLinesFromOrder
   // (the shared, screen-agnostic mapping payment.tsx also uses) since the
   // pure `ShortPickLine` doesn't carry a display name.
   const linesByOrder = useMemo(() => {
@@ -216,7 +218,14 @@ function ShortPickRow({
   onChangeQty: (qty: number) => void;
 }) {
   const ordered = Number(li.qty);
-  const type = deliveryTypeForQty(qty, ordered);
+  // SA-094c: `deliveredQty` is CUMULATIVE across every prior stop
+  // (SA-133/B785 recompute) — on a second visit this line's stepper can
+  // only reach what's still owed, not the full original ordered qty. `qty`
+  // (normalizedPlan, via effectiveDeliveredQty) already defaults/clamps to
+  // this remainder.
+  const alreadyDelivered = Number(li.deliveredQty ?? 0);
+  const remaining = Math.max(0, ordered - alreadyDelivered);
+  const type = deliveryTypeForQty(qty, remaining);
   const [draft, setDraft] = useState(String(qty));
   // SA-094/SA-094a: a units_v1 line whose OWN unitsPerBox > 1 gets a
   // whole-Case stepper — its ordered qty is base pieces, and a partial
@@ -230,6 +239,12 @@ function ShortPickRow({
   // stores `boxes = count` for a factor>1 unit line. Falls back to
   // ordered/unitsPerBox only for a malformed/legacy row missing `boxes`.
   const caseCount = li.boxes ?? (unitsPerBox > 0 ? Math.round(ordered / unitsPerBox) : 0);
+  // SA-094c: cases already delivered at a PRIOR stop don't count against
+  // THIS stepper's reach — its ceiling is what's still owed (count −
+  // casesDeliveredSoFar), never the order's full case count.
+  const casesAlreadyDelivered =
+    unitAware && unitsPerBox > 0 ? Math.round(alreadyDelivered / unitsPerBox) : 0;
+  const remainingCases = Math.max(0, caseCount - casesAlreadyDelivered);
   const casesDelivered = unitAware && unitsPerBox > 0 ? Math.round(qty / unitsPerBox) : 0;
 
   return (
@@ -242,6 +257,9 @@ function ShortPickRow({
           <Text style={styles.cardMeta}>
             Ordered{" "}
             {hasUnitLabel ? `${li.boxes ?? Number(li.qty)} ${li.unitLabel}`.trim() : ordered}
+            {alreadyDelivered > 0
+              ? ` · ${hasUnitLabel ? `${casesAlreadyDelivered} ${li.unitLabel}` : alreadyDelivered} already delivered`
+              : ""}
           </Text>
         </View>
         {type !== "DELIVERED" ? (
@@ -255,7 +273,7 @@ function ShortPickRow({
       {unitAware ? (
         <View style={styles.stepperRow}>
           <Text style={styles.stepperLabel}>
-            Cases delivered: {casesDelivered} of {caseCount}
+            Cases delivered: {casesDelivered} of {remainingCases}
           </Text>
           <View style={styles.stepper}>
             <Pressable
@@ -272,12 +290,14 @@ function ShortPickRow({
             <Text style={styles.qtyInput}>{casesDelivered}</Text>
             <Pressable
               style={styles.stepBtn}
-              onPress={() => onChangeQty(Math.min(caseCount, casesDelivered + 1) * unitsPerBox)}
+              onPress={() =>
+                onChangeQty(Math.min(remainingCases, casesDelivered + 1) * unitsPerBox)
+              }
               hitSlop={6}
-              disabled={casesDelivered >= caseCount}
+              disabled={casesDelivered >= remainingCases}
               accessibilityRole="button"
               accessibilityLabel={`One more ${li.unitLabel} delivered`}
-              accessibilityState={{ disabled: casesDelivered >= caseCount }}
+              accessibilityState={{ disabled: casesDelivered >= remainingCases }}
             >
               <Text style={styles.stepText}>+</Text>
             </Pressable>
@@ -305,7 +325,7 @@ function ShortPickRow({
                 const clean = sanitizeIntInput(txt);
                 setDraft(clean);
                 if (clean === "") return;
-                onChangeQty(Math.min(ordered, parseIntQty(clean, qty)));
+                onChangeQty(Math.min(remaining, parseIntQty(clean, qty)));
               }}
               onBlur={() => setDraft(String(qty))}
               keyboardType="number-pad"
@@ -316,7 +336,7 @@ function ShortPickRow({
             <Pressable
               style={styles.stepBtn}
               onPress={() => {
-                const n = Math.min(ordered, qty + 1);
+                const n = Math.min(remaining, qty + 1);
                 onChangeQty(n);
                 setDraft(String(n));
               }}

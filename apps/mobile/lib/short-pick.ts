@@ -55,6 +55,26 @@ export interface ShortPickLine {
    * stepper's upper bound; never derived from the live product.
    */
   boxes?: number | null;
+  /**
+   * SA-094c: everything already delivered for this line at a PRIOR stop —
+   * `OrderItem.deliveredQty` as fetched before THIS stop's own completion,
+   * which is CUMULATIVE across every prior visit (SA-133/B785 recompute).
+   * Undefined/0 for a line's first visit. `remainingQtyFor` is the single
+   * place every stepper/clamp/default below reads this through.
+   */
+  deliveredSoFar?: number;
+}
+
+/**
+ * SA-094c: pieces still owed on a line — `orderedQty` minus everything
+ * already delivered at a PRIOR stop. A second-visit line's stepper/clamp/
+ * default operate on THIS, never the full ordered qty, or the driver could
+ * "redeliver" past what's actually left (and a redelivery elsewhere, SA-133
+ * (5), would double-bill on reopen). Exported so the review screen's Case
+ * stepper can compute its own remaining-cases ceiling the same way.
+ */
+export function remainingQtyFor(li: Pick<ShortPickLine, "orderedQty" | "deliveredSoFar">): number {
+  return Math.max(0, li.orderedQty - (li.deliveredSoFar ?? 0));
 }
 
 /**
@@ -87,17 +107,21 @@ export function isUnitAwareLine(li: Pick<ShortPickLine, "unitLabel" | "unitsPerB
  * read the SAME snapped number reconciledTotal/buildDeliveries already do).
  */
 function effectiveDeliveredQty(
-  li: Pick<ShortPickLine, "orderItemId" | "orderedQty" | "unitLabel" | "unitsPerBox">,
+  li: Pick<
+    ShortPickLine,
+    "orderItemId" | "orderedQty" | "unitLabel" | "unitsPerBox" | "deliveredSoFar"
+  >,
   deliveredQtyById: Record<string, number>,
 ): number {
+  const remaining = remainingQtyFor(li);
   const raw = deliveredQtyById[li.orderItemId];
   if (isUnitAwareLine(li)) {
-    if (raw == null) return li.orderedQty;
+    if (raw == null) return remaining;
     const upb = Number(li.unitsPerBox);
     const snapped = Math.floor(Math.max(0, raw) / upb) * upb;
-    return Math.max(0, Math.min(snapped, li.orderedQty));
+    return Math.max(0, Math.min(snapped, remaining));
   }
-  return Math.max(0, Math.min(raw ?? li.orderedQty, li.orderedQty));
+  return Math.max(0, Math.min(raw ?? remaining, remaining));
 }
 
 /**
@@ -168,15 +192,17 @@ export interface ShortPickSourceLine {
  * identical between them by convention — both screens feed the same
  * `reconciledTotal`/`buildDeliveries`/`buildStopDeliveries`, so a single
  * shared derivation is what keeps that convention enforced rather than
- * merely documented. Excludes CANCELLED lines (not adjustable) and lines
- * already delivered (a reopened, partially-completed stop shouldn't
- * re-offer an already-settled line).
+ * merely documented. Excludes CANCELLED lines (not adjustable) and FULLY
+ * delivered lines (already settled — nothing left to offer). SA-094c: a
+ * PARTIALLY delivered line (a prior visit left some remaining) stays
+ * adjustable, carrying `deliveredSoFar` so every stepper/clamp/default
+ * downstream bounds itself to what's actually still owed.
  */
 export function shortPickLinesFromOrder(
   order: { lineItems?: readonly ShortPickSourceLine[] | null } | null | undefined,
 ): ShortPickLine[] {
   return (order?.lineItems ?? [])
-    .filter((li) => li.status !== "CANCELLED" && Number(li.deliveredQty ?? 0) === 0)
+    .filter((li) => li.status !== "CANCELLED" && Number(li.deliveredQty ?? 0) < Number(li.qty))
     .map((li) => ({
       orderItemId: li.id,
       productId: li.productId,
@@ -191,6 +217,8 @@ export function shortPickLinesFromOrder(
       unitLabel: li.unitLabel ?? null,
       unitsPerBox: li.unitsPerBox ?? null,
       boxes: li.boxes ?? null,
+      // SA-094c.
+      deliveredSoFar: Number(li.deliveredQty ?? 0) || 0,
     }));
 }
 
@@ -233,9 +261,10 @@ export interface StopSnapshotLine {
  * never loaded to record one, so every surviving line resolves to
  * `deliveryTypeForQty`'s DELIVERED-at-full-qty case regardless.
  *
- * SA-115 residual (accepted, filed separately, not B762): this snapshot
- * carries no `deliveredQty`, so a re-delivery stop for an order that never
- * loaded here would re-claim full delivery rather than "the remaining N".
+ * SA-115 residual (accepted, filed separately, not B762; still open under
+ * SA-094c): this snapshot carries no `deliveredQty`, so a re-delivery stop
+ * for an order that never loaded here would re-claim full delivery rather
+ * than "the remaining N" — `deliveredSoFar` stays unset on every line below.
  */
 export function fallbackShortPickLines(
   order: { lineItems?: readonly StopSnapshotLine[] | null } | null | undefined,
@@ -274,7 +303,8 @@ export interface PlannedDelivery {
 /**
  * Build the `deliveries` array for useCompleteWithPayment.
  * `deliveredQtyById` holds only the lines the driver actually changed from
- * the default (full ordered qty) — matches the diff-only convention the rest
+ * the default (full ordered qty, or SA-094c's remaining qty on a
+ * second-visit line) — matches the diff-only convention the rest
  * of the app uses (buildOrderItemDiff, buildAtDoorChangeRequests). Unlisted
  * ad-hoc lines (productId null, `name` set) are INCLUDED: the server keys
  * every delivery on orderItemId and derives productId from the DB row itself
@@ -295,7 +325,9 @@ export function buildDeliveries(
     out.push({
       orderItemId: li.orderItemId,
       productId: li.productId,
-      type: deliveryTypeForQty(clamped, li.orderedQty),
+      // SA-094c: DELIVERED means "delivered everything still owed", not
+      // necessarily the line's full original ordered qty.
+      type: deliveryTypeForQty(clamped, remainingQtyFor(li)),
       qty: clamped,
     });
   }
@@ -310,6 +342,13 @@ export function buildDeliveries(
  * telescope, not a plain linear ratio). REFUSED lines contribute $0. Display
  * estimate only; the server computes the real invoice total independently
  * via the identical formula.
+ *
+ * SA-094c: for a line with `deliveredSoFar` (a prior visit already
+ * delivered/billed some of it), `prorateLineSubtotal` takes a CUMULATIVE
+ * delivered qty — so THIS visit's own charge is the telescoped delta,
+ * cumulative-through-now minus cumulative-through-before, never the plain
+ * proration of `clamped` alone (which would re-bill the whole line's share
+ * from zero on every visit).
  */
 export function reconciledTotal(
   lines: ShortPickLine[],
@@ -318,23 +357,27 @@ export function reconciledTotal(
   let sum = 0;
   for (const li of lines) {
     const clamped = effectiveDeliveredQty(li, deliveredQtyById);
-    sum += prorateLineSubtotal(
-      li.subtotal,
-      clamped,
-      li.orderedQty,
-      li.freeUnits ?? 0,
-      li.freeUnitSize ?? 1,
-    );
+    const soFar = li.deliveredSoFar ?? 0;
+    const through = (cumQty: number) =>
+      prorateLineSubtotal(
+        li.subtotal,
+        cumQty,
+        li.orderedQty,
+        li.freeUnits ?? 0,
+        li.freeUnitSize ?? 1,
+      );
+    sum += soFar > 0 ? through(soFar + clamped) - through(soFar) : through(clamped);
   }
   return roundMoney(sum);
 }
 
-/** True when every line is still at its default (fully delivered) qty. */
+/** True when every line is still at its default (fully delivered — SA-094c:
+ *  everything REMAINING, for a line with a prior partial visit) qty. */
 export function isFullyDelivered(
   lines: ShortPickLine[],
   deliveredQtyById: Record<string, number>,
 ): boolean {
-  return lines.every((li) => effectiveDeliveredQty(li, deliveredQtyById) >= li.orderedQty);
+  return lines.every((li) => effectiveDeliveredQty(li, deliveredQtyById) >= remainingQtyFor(li));
 }
 
 /**

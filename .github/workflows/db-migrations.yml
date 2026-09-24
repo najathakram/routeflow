@@ -67,6 +67,12 @@ on:
       # spec — a PR touching this file must run this lane even when it doesn't
       # touch the .db.spec.ts itself.
       - "apps/api/src/regulated/regulated-ledger.service.ts"
+      # B785/SA-133: deliveredQty's per-visit RECOMPUTE (delivered-so-far.ts) and its two write
+      # sites in routes.service.ts (completeWithPayment/reopenStop) are proven only by
+      # delivered-qty-recompute.db.spec.ts's real-Postgres pins -- a solo edit to either must
+      # still run this lane.
+      - "apps/api/src/routes/delivered-so-far.ts"
+      - "apps/api/src/routes/routes.service.ts"
       - "apps/api/.squawk.toml"
       - "scripts/lint-migrations.mjs"
       - ".github/workflows/db-migrations.yml"

@@ -9,6 +9,7 @@ import {
   buildStopDeliveries,
   shortPickLinesFromOrder,
   fallbackShortPickLines,
+  remainingQtyFor,
 } from "../lib/short-pick";
 
 const lines = [
@@ -224,6 +225,85 @@ describe("B648/SA-094a: a unit-aware line (unitsPerBox > 1) gets a whole-Case st
   });
 });
 
+// SA-094c: a line that already had SOME quantity delivered at a PRIOR stop
+// (`deliveredQty`, CUMULATIVE per SA-133/B785 — fetched fresh before THIS
+// stop's own completion) stays adjustable, but every stepper/clamp/default
+// bounds itself to what's still REMAINING (orderedQty - deliveredSoFar),
+// never the line's full original ordered qty. The server has no "an
+// omitted line means as ordered" rule (B762/SA-093a contract), so the
+// client must still send an EXPLICIT entry for a line it completes here —
+// buildDeliveries already guarantees that for every line it's given.
+describe("SA-094c: a second-visit line bounds itself to what's REMAINING, not the full ordered qty", () => {
+  it("remainingQtyFor: orderedQty minus deliveredSoFar, floored at 0", () => {
+    expect(remainingQtyFor({ orderedQty: 10, deliveredSoFar: 4 })).toBe(6);
+    expect(remainingQtyFor({ orderedQty: 10, deliveredSoFar: 0 })).toBe(10);
+    expect(remainingQtyFor({ orderedQty: 10 })).toBe(10);
+    // A stray deliveredSoFar over ordered (shouldn't happen, but must never go negative).
+    expect(remainingQtyFor({ orderedQty: 10, deliveredSoFar: 999 })).toBe(0);
+  });
+
+  const partial = {
+    orderItemId: "li-1",
+    productId: "p-1",
+    orderedQty: 10,
+    subtotal: 100, // $10/unit
+    deliveredSoFar: 4,
+  };
+
+  it("untouched (no entry) defaults to the REMAINING qty (6), DELIVERED — not the full 10", () => {
+    expect(buildDeliveries([partial], {})).toEqual([
+      { orderItemId: "li-1", productId: "p-1", type: "DELIVERED", qty: 6 },
+    ]);
+    expect(isFullyDelivered([partial], {})).toBe(true);
+  });
+
+  it("an out-of-range override clamps to the REMAINING qty (6), never the full ordered qty (10)", () => {
+    const out = buildDeliveries([partial], { "li-1": 999 });
+    expect(out[0]).toEqual({ orderItemId: "li-1", productId: "p-1", type: "DELIVERED", qty: 6 });
+  });
+
+  it("delivering only part of what's remaining is PARTIAL, not compared against the original 10", () => {
+    const out = buildDeliveries([partial], { "li-1": 3 });
+    expect(out[0]).toEqual({ orderItemId: "li-1", productId: "p-1", type: "PARTIAL", qty: 3 });
+    expect(isFullyDelivered([partial], { "li-1": 3 })).toBe(false);
+  });
+
+  it("reconciledTotal telescopes: THIS visit's charge is cumulative-through-now minus cumulative-through-before, never the plain proration of the delta alone", () => {
+    // Untouched: delivers the remaining 6 of 10. Charge = through(10) - through(4) = 100 - 40 = 60.
+    expect(reconciledTotal([partial], {})).toBe(60);
+    // Only 3 of the 6 remaining this visit. Charge = through(7) - through(4) = 70 - 40 = 30.
+    expect(reconciledTotal([partial], { "li-1": 3 })).toBe(30);
+    // Refuses the remainder entirely this visit: $0 additional charge.
+    expect(reconciledTotal([partial], { "li-1": 0 })).toBe(0);
+  });
+
+  it("a unit-aware (Case) line's stepper ceiling is the REMAINING case count, not the stored total", () => {
+    const caseLine = {
+      orderItemId: "li-case",
+      productId: "p-case",
+      orderedQty: 864, // 3 Cases of 288
+      subtotal: 300,
+      unitLabel: "Case",
+      unitsPerBox: 288,
+      boxes: 3,
+      deliveredSoFar: 288, // 1 Case already delivered at a prior stop
+    };
+    // Untouched: defaults to the 2 remaining Cases (576), DELIVERED.
+    expect(buildDeliveries([caseLine], {})).toEqual([
+      { orderItemId: "li-case", productId: "p-case", type: "DELIVERED", qty: 576 },
+    ]);
+    // An override at the OLD full-order ceiling (864) still clamps to what's
+    // remaining (576) — the stored `boxes` total is never the bound again.
+    expect(buildDeliveries([caseLine], { "li-case": 864 })).toEqual([
+      { orderItemId: "li-case", productId: "p-case", type: "DELIVERED", qty: 576 },
+    ]);
+    // One of the 2 remaining Cases (288) is PARTIAL against what's remaining.
+    expect(buildDeliveries([caseLine], { "li-case": 288 })).toEqual([
+      { orderItemId: "li-case", productId: "p-case", type: "PARTIAL", qty: 288 },
+    ]);
+  });
+});
+
 // SA-094a review (5): payment.tsx must refuse to close a stop rather than
 // silently discard a driver's already-recorded short-pick plan while the
 // order's richer data (shortPickLines) hasn't loaded yet.
@@ -272,6 +352,7 @@ describe("shortPickLinesFromOrder (B762: the shared derivation both driver scree
         unitLabel: null,
         unitsPerBox: 5,
         boxes: 1,
+        deliveredSoFar: 0,
       },
     ]);
   });
@@ -286,7 +367,7 @@ describe("shortPickLinesFromOrder (B762: the shared derivation both driver scree
     expect(shortPickLinesFromOrder(order).map((l) => l.orderItemId)).toEqual(["li-2"]);
   });
 
-  it("excludes a line already delivered (a reopened, partially-completed stop doesn't re-offer a settled line)", () => {
+  it("excludes a FULLY delivered line (a reopened, partially-completed stop doesn't re-offer a settled line)", () => {
     const order = {
       lineItems: [
         {
@@ -301,6 +382,24 @@ describe("shortPickLinesFromOrder (B762: the shared derivation both driver scree
       ],
     };
     expect(shortPickLinesFromOrder(order).map((l) => l.orderItemId)).toEqual(["li-2"]);
+  });
+
+  it("SA-094c: a PARTIALLY delivered line stays adjustable, carrying deliveredSoFar", () => {
+    const order = {
+      lineItems: [
+        {
+          id: "li-1",
+          productId: "p-1",
+          status: "PENDING",
+          deliveredQty: 4,
+          qty: 10,
+          subtotal: 100,
+        },
+      ],
+    };
+    const out = shortPickLinesFromOrder(order);
+    expect(out).toHaveLength(1);
+    expect(out[0]).toMatchObject({ orderItemId: "li-1", deliveredSoFar: 4 });
   });
 
   it("null/undefined order or missing lineItems -> empty array, never throws", () => {

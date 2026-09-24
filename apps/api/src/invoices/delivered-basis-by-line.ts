@@ -41,10 +41,10 @@ import { DELIVERY_EVIDENCE_TYPES } from "./delivery-evidence";
  *  - `OrderItem.deliveredQty` is NEVER read for coverage. It may still be written (legacy,
  *    `completeWithPayment`) but this module never consults it.
  *
- * ONE core, never two derivations: `checkOrderCoverage`, `finalizeOrderRecompute` AND (once
- * B760/B785 resume) the invoice "remaining to bill" calculations and the at-door payment
- * reconcile all call `billableQtyFromBasis` against the SAME `DeliveredBasis` a caller computes
- * once via `deliveredBasisByLine`.
+ * ONE core, never two derivations: `checkOrderCoverage`, `finalizeOrderRecompute`, and (as of
+ * B785, SA-113a) the at-door payment reconcile all call `billableQtyFromBasis` against the SAME
+ * `DeliveredBasis` a caller computes once via `deliveredBasisByLine` — the invoice "remaining to
+ * bill" calculations (B760) still await the same move.
  */
 export interface DeliveredBasis {
   /** True iff the order has at least one QUALIFYING DeliveryMutation row (see below), any line. */

@@ -1558,9 +1558,10 @@ export class InvoicesService {
    * order), this rebuilds EACH of the order's open DRAFT invoices from ONLY its own
    * order lines: the partition createSplitInvoices established, read back via each
    * InvoiceItem.orderItemId provenance. So a regulated SEPARATE_INVOICE order (base +
-   * -R# siblings) bills every line on exactly ONE invoice at its delivered qty — no
-   * line folds onto the base while a sibling still bills it (no double-bill), and a
-   * refused line (deliveredQty 0) bills 0.
+   * -R# siblings) bills every line on exactly ONE invoice at its evidence-basis qty
+   * (SA-113a — never OrderItem.deliveredQty) — no line folds onto the base while a
+   * sibling still bills it (no double-bill), and a refused line (an evidence row of 0)
+   * bills 0.
    *
    * SAFE only when the open DRAFTs are a CLEAN per-line partition (createSplitInvoices
    * siblings / a lone pending-mirror). It BAILS (returns null, leaving the invoices as
