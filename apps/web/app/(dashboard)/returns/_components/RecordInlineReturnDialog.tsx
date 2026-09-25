@@ -62,6 +62,21 @@ function money(n: number): string {
   return n.toLocaleString("en-US", { style: "currency", currency: "USD" });
 }
 
+/**
+ * The capture response's `refundAmount` is a Prisma Decimal, which JSON carries as a STRING
+ * ("22.5000"); the shared type says `number`. A `typeof === "number"` check therefore never held and
+ * the credit amount never showed (#2097). Accept both, and return null for anything that is not a
+ * finite amount so the row is hidden rather than rendered as $NaN.
+ */
+function refundAmountOf(value: unknown): number | null {
+  if (typeof value === "number") return Number.isFinite(value) ? value : null;
+  if (typeof value === "string" && value.trim() !== "") {
+    const n = Number(value);
+    return Number.isFinite(n) ? n : null;
+  }
+  return null;
+}
+
 export interface RecordInlineReturnDialogProps {
   open: boolean;
   onClose: () => void;
@@ -190,6 +205,11 @@ export function RecordInlineReturnDialog({
       onSuccess: (data) => {
         if (!returnKeyRef.current) returnKeyRef.current = mintReturnKey();
         setQuote(data);
+        // A new quote from Step 1 credits its excess at current price by default. Without this a
+        // "return only what was bought" pick from an earlier quote stayed highlighted while the
+        // new quote credited the excess (#2097). Only THIS path resets: the re-quote that picking
+        // option 3 itself triggers (handleExcessOptionChange) must keep the pick.
+        setExcessOption(DEFAULT_EXCESS_OPTION);
         setStep("quote");
       },
       onError: (err) => {
@@ -558,10 +578,10 @@ export function RecordInlineReturnDialog({
                 </dd>
               </div>
             )}
-            {typeof result.refundAmount === "number" && (
+            {refundAmountOf(result.refundAmount) !== null && (
               <div className="flex justify-between">
                 <dt className="text-navy/70">Amount</dt>
-                <dd>{money(result.refundAmount)}</dd>
+                <dd>{money(refundAmountOf(result.refundAmount) as number)}</dd>
               </div>
             )}
             <div className="flex justify-between">

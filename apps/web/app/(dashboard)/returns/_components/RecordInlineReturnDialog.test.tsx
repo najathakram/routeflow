@@ -512,3 +512,115 @@ describe("RecordInlineReturnDialog — office capture never sends routeRunStopId
     expect(screen.queryByText(/approve/i)).not.toBeInTheDocument();
   });
 });
+
+// ─── #2097 — the result's credit amount, and the excess option across a re-quote ───────────
+
+const captureResult = (over: Record<string, unknown> = {}) => ({
+  id: "ret-1",
+  returnNumber: "R-1",
+  orderId: "order-1",
+  customerId: "cust-1",
+  creditNoteId: "cn-1",
+  status: "REFUNDED",
+  items: [],
+  ...over,
+});
+
+async function captureWith(result: unknown) {
+  await openToStep1();
+  await enterQtyAndGetQuote("10");
+  resolveNextQuote(quoteResponse([chunk()]));
+  await screen.findByText(/issue credit note and receive goods/i);
+  fireEvent.change(screen.getByLabelText(/^reason$/i), { target: { value: "DAMAGED" } });
+  fireEvent.click(screen.getByRole("button", { name: /issue credit note and receive goods/i }));
+  await waitFor(() => expect(captureMutate).toHaveBeenCalledTimes(1));
+  resolveNextCapture(result);
+  await screen.findByText(/return recorded/i);
+}
+
+describe("RecordInlineReturnDialog — the credit amount on the result (#2097)", () => {
+  it("shows the credit amount when refundAmount arrives as a Decimal STRING (what the API sends)", async () => {
+    await captureWith(captureResult({ refundAmount: "22.5000" }));
+    expect(screen.getByText("Amount")).toBeInTheDocument();
+    expect(screen.getByText("$22.50")).toBeInTheDocument();
+  });
+
+  it("still shows a numeric refundAmount", async () => {
+    await captureWith(captureResult({ refundAmount: 22 }));
+    expect(screen.getByText("$22.00")).toBeInTheDocument();
+  });
+
+  it.each([[null], [undefined], [""], ["not-a-number"]])(
+    "shows no Amount row for an absent or unparseable refundAmount (%p)",
+    async (refundAmount) => {
+      await captureWith(captureResult({ refundAmount }));
+      expect(screen.queryByText("Amount")).not.toBeInTheDocument();
+      expect(screen.queryByText("$NaN")).not.toBeInTheDocument();
+    },
+  );
+});
+
+describe("RecordInlineReturnDialog — the excess option resets on every re-quote (#2097)", () => {
+  it("after option 3, going Back and quoting again starts on 'credit at current price'", async () => {
+    await openToStep1();
+    await enterQtyAndGetQuote("16");
+    const covered = chunk({ sourceOrderId: "order-newest", pieces: 10 });
+    const excess = chunk({
+      sourceOrderId: null,
+      sourceInvoiceItemId: null,
+      pieces: 6,
+      subtotal: 15,
+    });
+    resolveNextQuote(quoteResponse([covered, excess]));
+    await screen.findByText(/not on any invoice/i);
+
+    fireEvent.click(screen.getByRole("radio", { name: /return only what was bought/i }));
+    await waitFor(() => expect(quoteMutate).toHaveBeenCalledTimes(2));
+    resolveNextQuote(quoteResponse([covered]));
+    await waitFor(() => expect(screen.queryByText(/not on any invoice/i)).not.toBeInTheDocument());
+
+    // Back to the items, raise the quantity, quote again: the new quote credits the excess.
+    fireEvent.click(screen.getByRole("button", { name: /^back$/i }));
+    await screen.findByText(/what came back/i);
+    fireEvent.change(screen.getByLabelText(/qty \(pieces\)/i), { target: { value: "20" } });
+    fireEvent.click(screen.getByRole("button", { name: /get quote/i }));
+    await waitFor(() => expect(quoteMutate).toHaveBeenCalledTimes(3));
+    resolveNextQuote(
+      quoteResponse([
+        covered,
+        chunk({ sourceOrderId: null, sourceInvoiceItemId: null, pieces: 10, subtotal: 25 }),
+      ]),
+    );
+    await screen.findByText(/not on any invoice/i);
+
+    // The highlighted option must match what the quote does: it credits the excess.
+    expect(screen.getByRole("radio", { name: /credit at current price/i })).toBeChecked();
+    expect(screen.getByRole("radio", { name: /return only what was bought/i })).not.toBeChecked();
+  });
+
+  it("picking option 3 still sticks on the re-quote that option itself triggers", async () => {
+    await openToStep1();
+    await enterQtyAndGetQuote("16");
+    const covered = chunk({ sourceOrderId: "order-newest", pieces: 10 });
+    const excess = chunk({
+      sourceOrderId: null,
+      sourceInvoiceItemId: null,
+      pieces: 6,
+      subtotal: 15,
+    });
+    resolveNextQuote(quoteResponse([covered, excess]));
+    await screen.findByText(/not on any invoice/i);
+
+    fireEvent.click(screen.getByRole("radio", { name: /return only what was bought/i }));
+    await waitFor(() => expect(quoteMutate).toHaveBeenCalledTimes(2));
+    // The excess is dropped, so the radios are gone; the choice must not have been reset away
+    // before the capture reads the reduced lines.
+    resolveNextQuote(quoteResponse([covered]));
+    fireEvent.change(screen.getByLabelText(/^reason$/i), { target: { value: "DAMAGED" } });
+    fireEvent.click(screen.getByRole("button", { name: /issue credit note and receive goods/i }));
+    await waitFor(() => expect(captureMutate).toHaveBeenCalledTimes(1));
+    expect(captureMutate.mock.calls[0][0].items).toEqual([
+      expect.objectContaining({ productId: "prod-1", pieces: 10 }),
+    ]);
+  });
+});
