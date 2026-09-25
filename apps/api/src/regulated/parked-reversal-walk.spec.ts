@@ -511,4 +511,26 @@ describe("resolveParkedReversal — resume the live walk (SA-167)", () => {
       expect(last).toMatchObject({ periodBucket: currentBucket, originalSoldAt: parkedAt });
     });
   });
+
+  it("SA-196: the filed check is conservative across categories — a product re-categorised between two sales counts as filed if ANY touched category has a filing for the bucket", async () => {
+    const parkedAt = new Date("2026-08-15T12:00:00.000Z");
+    ledger = [sale(1, 2), sale(2, 3, { trackedCategoryId: "cat-B" })];
+    invoiceItems = [ii(1), ii(2)];
+    const findFirst = jest.fn().mockResolvedValue({ periodKey: "2026-08", status: "LOCKED" });
+    (prisma as any).regulatedFiling.findFirst = findFirst;
+    const res = await service.resolveParkedReversal(
+      prisma,
+      { ...parked(1, 24), periodBucket: "2026-08", parkedAt },
+      12,
+    );
+    // both categories were asked about, in ONE lookup
+    const where = findFirst.mock.calls[0][0].where;
+    expect([...where.trackedCategoryId.in].sort()).toEqual(["cat-A", "cat-B"]);
+    // filed in (any of) them: the whole resolution books in the CURRENT period with originalSoldAt
+    expect(res.amendedPeriod).toEqual({ periodKey: "2026-08", status: "LOCKED" });
+    expect(reversals()[0]).toMatchObject({
+      periodBucket: new Date().toISOString().slice(0, 7),
+      originalSoldAt: parkedAt,
+    });
+  });
 });

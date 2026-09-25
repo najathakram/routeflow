@@ -1174,9 +1174,27 @@ export class RegulatedLedgerService {
     let filedPeriod: { periodKey: string; status: string } | null = null;
     if (returnDate && parkBucket !== currentBucket) {
       const bucketStart = new Date(`${parkBucket}-01T00:00:00.000Z`);
+      // SA-196: conservative across categories. A product re-categorised between two sales has rows in
+      // different categories, each with its own filing; the period counts as filed if ANY category this
+      // resolution touches (the parked row's plus every row the walk will visit) has a filing for it.
+      const walkProductId = built.productByItem.get(saleRow.invoiceItemId) ?? shape.productId;
+      const touchedCategoryIds = [
+        ...new Set(
+          [
+            saleRow,
+            ...built.sales.filter(
+              (x: any) =>
+                x.correctsEntryId == null &&
+                built.productByItem.get(x.invoiceItemId) === walkProductId,
+            ),
+          ]
+            .map((x: any) => x.trackedCategoryId)
+            .filter(Boolean),
+        ),
+      ];
       const filing = await db.regulatedFiling.findFirst({
         where: {
-          trackedCategoryId: saleRow.trackedCategoryId,
+          trackedCategoryId: { in: touchedCategoryIds },
           periodStart: { lte: bucketStart },
           periodEnd: { gt: bucketStart },
           status: { in: ["GENERATED", "LOCKED"] },
