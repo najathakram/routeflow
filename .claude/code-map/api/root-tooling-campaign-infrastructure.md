@@ -54,9 +54,18 @@
   (`docker builder prune -a -f` — never `docker system prune`, never volumes), (5) npm cache, (6)
   `local-assets/proofs/`+`local-assets/handoff/` folders older than 7 days. Never touches the main
   checkout, `PROTECTED_WORKTREE_NAMES` (`rf-migrate`, `rf-crm-cloud`), or a worktree with
-  uncommitted/unpushed work or a branch it can't prove merged — plain ancestry
-  (`git merge-base --is-ancestor`), so a squash-merged branch is a known, safe-direction blind
-  spot (won't be reclaimed, verify by hand). `--preflight <gb>` exits non-zero below the
+  uncommitted/unpushed work or a branch it can't prove merged. Merge proof is four fail-closed
+  signals in `isMergedEvidence({tipIsAncestor, tipOnMainline, prMergedAtTip, squashPatchId})`:
+  plain ancestry (`git merge-base --is-ancestor`), mainline position, a `gh`-resolved merged PR at
+  the tip, and — **B748 (2026-09-25)** — `squashMergedByPatchId()`, which closes the squash-merge
+  blind spot without `gh`. It patch-ids the branch's own *combined* change (`merge-base..tip`,
+  `git patch-id --stable`) and scans first-parent commits on `origin/master` since that base for a
+  match; per-commit matching (`git cherry`) misses it, because a multi-commit branch squashes into
+  one commit whose patch-id equals the combined diff and no individual commit's. It runs only when
+  no cheaper signal already proved the merge, and returns `false` on unreadable history, an empty
+  diff (B800: a branch carrying no work of its own is never merged), or a range over `maxScan`
+  (1000) — a false negative only wastes disk, a false positive deletes work.
+  `--preflight <gb>` exits non-zero below the
   threshold, for gating an `npm ci`; `--stale-branches` reports (never deletes) merged branches
   still on origin. **Junction safety (L-180/L-193):** before any recursive delete, a read-only
   `Get-ChildItem` enumerates Windows junctions under the target and each is unlinked with a bare
