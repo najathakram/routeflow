@@ -25,7 +25,7 @@ export interface ColumnDef {
   aliases: string[];
   parse: CellParser;
   /** Entitlement gate key this field is guarded by (checked by ImportService, not here). */
-  gate?: "msrp" | "tobacco";
+  gate?: "msrp" | "tobacco" | "forecasting";
 }
 
 /**
@@ -281,9 +281,11 @@ export const PRODUCT_COLUMNS: ColumnDef[] = [
     case "isTobacco":
       return { field, canonical, aliases, parse: boolParser, gate: "tobacco" };
     case "unitsPerBox":
+      return { field, canonical, aliases, parse: intParser(0, MAX_INT) };
     case "reorderPoint":
     case "reorderQty":
-      return { field, canonical, aliases, parse: intParser(0, MAX_INT) };
+      // Reorder settings are a flag.forecasting feature (their HTTP writer is gated on it).
+      return { field, canonical, aliases, parse: intParser(0, MAX_INT), gate: "forecasting" };
     default:
       throw new Error(`import-columns: unhandled PRODUCT_COLUMNS field "${field}"`);
   }

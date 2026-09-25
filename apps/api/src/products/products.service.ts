@@ -14,6 +14,7 @@ import { compressImage } from "../storage/compress.util";
 import { AddonService } from "../billing/addon.service";
 import { SystemConfigService } from "../system-config/system-config.service";
 import { EntitlementsService } from "../billing/entitlements.service";
+import { EntitlementAuthority } from "../billing/entitlement-authority.service";
 import { PlanCatalogService } from "../billing/plan-catalog.service";
 import { RouteFlowGateway } from "../gateways/routeflow.gateway";
 import { buildPlanGateBody } from "../billing/plan-gate";
@@ -82,6 +83,7 @@ export class ProductsService {
     private readonly entitlements: EntitlementsService,
     private readonly planCatalog: PlanCatalogService,
     private readonly gateway: RouteFlowGateway,
+    private readonly authority: EntitlementAuthority,
   ) {}
 
   /**
@@ -126,6 +128,27 @@ export class ProductsService {
       addonMonthlyPrice: null,
     }));
     throw new ForbiddenException(buildPlanGateBody("flag.msrp", upgrade));
+  }
+
+  /**
+   * Reorder Point / Reorder Qty are a flag.forecasting feature: their original writer,
+   * PATCH /inventory/products/:id/reorder-settings, is @RequirePlanFlag("flag.forecasting").
+   * Every other writer (create, update, the bulk import, the CSV importer's file gate) asks
+   * THIS, which makes the same decision PlanFlagGuard makes for that route — the
+   * EntitlementAuthority verdict, overrides and the DARK_PLAN_FLAGS courtesy allow included — so
+   * no writer is an ungated side door. Called only when the payload carries either field.
+   */
+  async assertReorderAllowed(): Promise<void> {
+    const tenantId = this.prisma.getTenantId();
+    if (!tenantId) return; // no tenant context (e.g. SUPER_ADMIN) — nothing to gate
+    if (await this.authority.can(tenantId, "flag.forecasting")) return;
+    const upgrade = await this.planCatalog.upgradeTargetForFlag("flag.forecasting").catch(() => ({
+      planKey: null,
+      planMonthlyPrice: null,
+      addonSku: null,
+      addonMonthlyPrice: null,
+    }));
+    throw new ForbiddenException(buildPlanGateBody("flag.forecasting", upgrade));
   }
 
   /**
@@ -580,6 +603,9 @@ export class ProductsService {
   async create(dto: CreateProductDto, options?: { suppressEmit?: boolean }) {
     await this.assertCanFlagTobacco(dto.isTobacco);
     if (dto.msrp !== undefined) await this.assertMsrpAllowed();
+    if (dto.reorderPoint !== undefined || dto.reorderQty !== undefined) {
+      await this.assertReorderAllowed();
+    }
     // Name (scoped by parent) and sku/barcode/unitSku collisions — see assertIdentityAvailable.
     await this.assertIdentityAvailable({
       name: dto.name,
@@ -753,6 +779,9 @@ export class ProductsService {
   async update(id: string, dto: UpdateProductDto, options?: { suppressEmit?: boolean }) {
     await this.assertCanFlagTobacco(dto.isTobacco);
     if (dto.msrp !== undefined) await this.assertMsrpAllowed();
+    if (dto.reorderPoint !== undefined || dto.reorderQty !== undefined) {
+      await this.assertReorderAllowed();
+    }
     const existing = await this.findOne(id);
     // The product's effective parent is the dto value if provided (could be null to promote a
     // variant to standalone), otherwise the existing one — so reparenting + renaming in one
@@ -1345,6 +1374,10 @@ export class ProductsService {
     skipped: number;
     errors: Array<{ row: number; name: string; reason: string }>;
   }> {
+    // Same flag.forecasting gate as every other reorder writer — the whole batch is refused
+    // before any write when one item carries a reorder point.
+    if (dto.items.some((item) => item.reorderPoint != null)) await this.assertReorderAllowed();
+
     let created = 0;
     let skipped = 0;
     const errors: Array<{ row: number; name: string; reason: string }> = [];

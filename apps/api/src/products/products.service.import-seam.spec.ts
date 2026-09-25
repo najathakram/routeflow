@@ -5,9 +5,11 @@
  *   W3: assertIdentityAvailable() is the read-only half of create()/update() — the importer's
  *       preview calls it — and throws exactly what those writes throw.
  */
-import { BadRequestException, ConflictException } from "@nestjs/common";
+import { BadRequestException, ConflictException, ForbiddenException } from "@nestjs/common";
+import { buildPlanGateBody } from "../billing/plan-gate";
 import { Test, TestingModule } from "@nestjs/testing";
 import { ProductsService } from "./products.service";
+import { EntitlementAuthority } from "../billing/entitlement-authority.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { StorageService } from "../storage/storage.service";
 import { AddonService } from "../billing/addon.service";
@@ -17,21 +19,38 @@ import { PlanCatalogService } from "../billing/plan-catalog.service";
 import { RouteFlowGateway } from "../gateways/routeflow.gateway";
 import { createMockPrisma } from "../testing/prisma-mock";
 
+const UPGRADE = {
+  planKey: "PRO",
+  planMonthlyPrice: 99,
+  addonSku: null,
+  addonMonthlyPrice: null,
+};
+
+/** The 403 PlanFlagGuard throws for PATCH /inventory/products/:id/reorder-settings. */
+const inventoryRouteDenial = () =>
+  new ForbiddenException(buildPlanGateBody("flag.forecasting", UPGRADE)).getResponse();
+
 describe("ProductsService — importer seam (B858)", () => {
   let service: ProductsService;
   let prisma: ReturnType<typeof createMockPrisma>;
+  let authority: { can: jest.Mock };
+  let planCatalog: { upgradeTargetForFlag: jest.Mock };
 
   beforeEach(async () => {
     prisma = createMockPrisma();
+    authority = { can: jest.fn().mockResolvedValue(true) };
+    planCatalog = { upgradeTargetForFlag: jest.fn().mockResolvedValue(UPGRADE) };
     const mod: TestingModule = await Test.createTestingModule({
       providers: [
         ProductsService,
+        // flag.forecasting gate for reorder writes (assertReorderAllowed) — permitted here.
+        { provide: EntitlementAuthority, useValue: authority },
         { provide: PrismaService, useValue: prisma },
         { provide: StorageService, useValue: { presignedUrls: jest.fn().mockResolvedValue([]) } },
         { provide: AddonService, useValue: { hasAddon: jest.fn().mockResolvedValue(false) } },
         { provide: SystemConfigService, useValue: { get: jest.fn().mockResolvedValue(null) } },
         { provide: EntitlementsService, useValue: { hasFlag: jest.fn().mockResolvedValue(true) } },
-        { provide: PlanCatalogService, useValue: { upgradeTargetForFlag: jest.fn() } },
+        { provide: PlanCatalogService, useValue: planCatalog },
         { provide: RouteFlowGateway, useValue: { emitProductUpdated: jest.fn() } },
       ],
     }).compile();
@@ -126,5 +145,74 @@ describe("ProductsService — importer seam (B858)", () => {
 
     const writes = prisma.product.update.mock.calls.map((c: any) => c[0].data);
     expect(writes).toContainEqual(expect.objectContaining({ reorderPoint: 4, reorderQty: 48 }));
+  });
+
+  // ── SA-322: reorder settings are a flag.forecasting feature on EVERY writer ──────────────────
+  describe("SA-322 reorder gate", () => {
+    const EXISTING = {
+      id: "prod-1",
+      name: "Widget",
+      sku: "W-1",
+      parentProductId: null,
+      trackedCategoryId: null,
+      trackedSubcategoryId: null,
+      imageKeys: [],
+    };
+
+    it("PATCH (update) with reorderPoint alone asks flag.forecasting", async () => {
+      prisma.product.findUnique.mockResolvedValue(EXISTING);
+      prisma.product.update.mockResolvedValue({ id: "prod-1" });
+
+      await service.update("prod-1", { reorderPoint: 4 });
+
+      expect(authority.can).toHaveBeenCalledWith("test-tenant", "flag.forecasting");
+    });
+
+    it("a flagless tenant gets the inventory endpoint's 403 on update, and nothing is written", async () => {
+      authority.can.mockResolvedValue(false);
+      prisma.product.findUnique.mockResolvedValue(EXISTING);
+
+      const err = await service.update("prod-1", { reorderQty: 48 }).catch((e: unknown) => e);
+
+      expect(err).toBeInstanceOf(ForbiddenException);
+      expect((err as ForbiddenException).getResponse()).toEqual(inventoryRouteDenial());
+      expect(prisma.product.update).not.toHaveBeenCalled();
+    });
+
+    it("a flagless tenant gets the same 403 on create, and nothing is written", async () => {
+      authority.can.mockResolvedValue(false);
+
+      const err = await service
+        .create({ name: "Widget", sku: "W-1", unit: "case", pricePerUnit: "10", reorderPoint: 4 })
+        .catch((e: unknown) => e);
+
+      expect((err as ForbiddenException).getResponse()).toEqual(inventoryRouteDenial());
+      expect(prisma.product.create).not.toHaveBeenCalled();
+    });
+
+    it("an ordinary edit without reorder fields never asks the gate", async () => {
+      prisma.product.findUnique.mockResolvedValue(EXISTING);
+      prisma.product.update.mockResolvedValue({ id: "prod-1" });
+
+      await service.update("prod-1", { description: "x" });
+      await service.create({ name: "Other", sku: "O-1", unit: "case", pricePerUnit: "1" });
+
+      expect(authority.can).not.toHaveBeenCalled();
+    });
+
+    it("the bulk product import refuses a batch carrying a reorder point before any write", async () => {
+      authority.can.mockResolvedValue(false);
+
+      await expect(
+        service.importFromZoho({
+          items: [
+            { name: "Widget", unit: "case", pricePerUnit: "10" },
+            { name: "Gadget", unit: "case", pricePerUnit: "10", reorderPoint: 5 },
+          ],
+        } as any),
+      ).rejects.toThrow(ForbiddenException);
+      expect(prisma.product.create).not.toHaveBeenCalled();
+      expect(prisma.tenantTransaction).not.toHaveBeenCalled();
+    });
   });
 });

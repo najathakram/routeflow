@@ -91,6 +91,7 @@ describeDb("B268 import-fallback numbering — real Postgres (T3: live-invoice s
             assertMsrpAllowed: jest.fn(),
             assertCanFlagTobacco: jest.fn(),
             assertIdentityAvailable: jest.fn(),
+            assertReorderAllowed: jest.fn(),
             create: jest.fn(),
             update: jest.fn(),
             emitCatalogBulkChanged: jest.fn(),

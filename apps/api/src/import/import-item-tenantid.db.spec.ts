@@ -66,6 +66,7 @@ describeDb("T6 importer InvoiceItem tenantId — real Postgres", () => {
             assertMsrpAllowed: jest.fn(),
             assertCanFlagTobacco: jest.fn(),
             assertIdentityAvailable: jest.fn(),
+            assertReorderAllowed: jest.fn(),
             create: jest.fn(),
             update: jest.fn(),
             emitCatalogBulkChanged: jest.fn(),

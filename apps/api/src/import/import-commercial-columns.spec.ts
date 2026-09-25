@@ -47,6 +47,7 @@ describe("ImportService — commercial columns (B858/B859)", () => {
     assertCanFlagTobacco: jest.Mock;
     assertMsrpAllowed: jest.Mock;
     assertIdentityAvailable: jest.Mock;
+    assertReorderAllowed: jest.Mock;
   };
   let auditService: { log: jest.Mock };
   let customers: {
@@ -65,6 +66,7 @@ describe("ImportService — commercial columns (B858/B859)", () => {
       assertCanFlagTobacco: jest.fn().mockResolvedValue(undefined),
       assertMsrpAllowed: jest.fn().mockResolvedValue(undefined),
       assertIdentityAvailable: jest.fn().mockResolvedValue(undefined),
+      assertReorderAllowed: jest.fn().mockResolvedValue(undefined),
     };
     auditService = { log: jest.fn().mockResolvedValue(undefined) };
     customers = {
@@ -463,6 +465,28 @@ describe("ImportService — commercial columns (B858/B859)", () => {
       expect(plan(real)).toEqual(plan(preview));
       expect(real.created + real.updated + real.unchanged + real.skipped).toBe(2);
       expect(real.skipped).toBe(1); // the second row always resolves to the first row's product
+    });
+
+    it.each([
+      ["same SKU on two new rows", "Cola,SUP-1,,10\nLemonade,SUP-1,,11\n"],
+      ["same barcode on two new rows", "Cola,SUP-1,B-9,10\nLemonade,SUP-2,B-9,11\n"],
+    ])("SA-322 LOW: %s — row 2 is a duplicate of row 1 in preview and run", async (_t, body) => {
+      const csv = "Item Name,SKU,Barcode,Rate\n" + body;
+      statefulCatalog([]);
+      const preview = await service.importProducts(Buffer.from(csv), "user-1", { dryRun: true });
+      statefulCatalog([]);
+      const real = await service.importProducts(Buffer.from(csv), "user-1");
+
+      for (const r of [preview, real]) {
+        expect(r.rows[0]).toMatchObject({ row: 1, action: "create" });
+        expect(r.rows[1]).toEqual({
+          row: 2,
+          label: "Lemonade",
+          action: "skip",
+          reason: "duplicate of row 1",
+        });
+      }
+      expect(productsService.create).toHaveBeenCalledTimes(1);
     });
 
     function statefulCustomers(initial: any[]) {
@@ -915,6 +939,34 @@ describe("ImportService — commercial columns (B858/B859)", () => {
       });
       expect(preview.updated).toBe(0);
       expect(productsService.update).not.toHaveBeenCalled();
+    });
+
+    it.each(["Reorder Point", "Reorder Qty"])(
+      "SA-322: a %s column without flag.forecasting refuses the WHOLE file, before any query (preview and run)",
+      async (header) => {
+        productsService.assertReorderAllowed.mockRejectedValue(new ForbiddenException("denied"));
+        const csv = `Item Name,SKU,Rate,${header}\nWidget,SKU-1,10,4\n`;
+
+        for (const dryRun of [true, false]) {
+          await expect(
+            service.importProducts(Buffer.from(csv), "user-1", { dryRun }),
+          ).rejects.toThrow(
+            `Column "${header}" needs the forecasting plan flag; remove the column or enable it`,
+          );
+        }
+        expect(prisma.product.findFirst).not.toHaveBeenCalled();
+        expect(prisma.product.findMany).not.toHaveBeenCalled();
+        expect(productsService.create).not.toHaveBeenCalled();
+        expect(productsService.update).not.toHaveBeenCalled();
+      },
+    );
+
+    it("SA-322: a file without reorder columns never asks the forecasting gate", async () => {
+      const csv = "Item Name,SKU,Rate\nWidget,SKU-1,10\n";
+
+      await service.importProducts(Buffer.from(csv), "user-1");
+
+      expect(productsService.assertReorderAllowed).not.toHaveBeenCalled();
     });
 
     it("W5: a Customer ID that belongs to a soft-deleted customer skips in preview and run", async () => {

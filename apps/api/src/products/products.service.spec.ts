@@ -6,6 +6,7 @@ import {
   ForbiddenException,
 } from "@nestjs/common";
 import { ProductsService } from "./products.service";
+import { EntitlementAuthority } from "../billing/entitlement-authority.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { StorageService } from "../storage/storage.service";
 import { AddonService } from "../billing/addon.service";
@@ -41,6 +42,8 @@ describe("ProductsService", () => {
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         ProductsService,
+        // flag.forecasting gate for reorder writes (assertReorderAllowed) — permitted here.
+        { provide: EntitlementAuthority, useValue: { can: jest.fn().mockResolvedValue(true) } },
         { provide: PrismaService, useValue: prisma },
         {
           provide: StorageService,
@@ -2237,6 +2240,8 @@ async function buildBulkDeleteProductsService(prisma: unknown): Promise<Products
   const module: TestingModule = await Test.createTestingModule({
     providers: [
       ProductsService,
+      // flag.forecasting gate for reorder writes (assertReorderAllowed) — permitted here.
+      { provide: EntitlementAuthority, useValue: { can: jest.fn().mockResolvedValue(true) } },
       { provide: PrismaService, useValue: prisma },
       {
         provide: StorageService,

@@ -2141,6 +2141,16 @@ export class ImportService {
         );
       }
     }
+    const reorderColumn = resolved.byField.reorderPoint ?? resolved.byField.reorderQty;
+    if (reorderColumn) {
+      try {
+        await this.productsService.assertReorderAllowed();
+      } catch {
+        throw new ForbiddenException(
+          `Column "${reorderColumn}" needs the forecasting plan flag; remove the column or enable it`,
+        );
+      }
+    }
 
     let created = 0,
       updated = 0,

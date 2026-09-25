@@ -81,6 +81,7 @@ describeDb("B268 import-fallback numbering — green regression pins (T3b)", () 
             assertMsrpAllowed: jest.fn(),
             assertCanFlagTobacco: jest.fn(),
             assertIdentityAvailable: jest.fn(),
+            assertReorderAllowed: jest.fn(),
             create: jest.fn(),
             update: jest.fn(),
             emitCatalogBulkChanged: jest.fn(),
