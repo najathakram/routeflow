@@ -1,11 +1,11 @@
 import { Injectable, Logger, NotFoundException } from "@nestjs/common";
-import { CronExpression } from "@nestjs/schedule";
 import { LeaderCron } from "../common/cron-lock";
 import { PrismaService } from "../prisma/prisma.service";
 import { TenantContextService } from "../tenant/tenant-context.service";
 import { InvoicesService } from "../invoices/invoices.service";
 import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
 import { requireRestrictionTenantId } from "../selling-restrictions/restriction-tenant";
+import { CronExpression } from "@nestjs/schedule";
 import { blockedTemplateLines } from "./recurring-invoice-restrictions";
 import { calcNextRunAt } from "./recurring-schedule";
 import { NotificationsService } from "../notifications/notifications.service";
@@ -187,7 +187,7 @@ export class RecurringInvoicesService {
           ...(clearNotice ? { lastRunStatus: null, lastError: null } : {}),
         },
       });
-      if (count === 0) return ri;
+      if (count === 0) return tx.recurringInvoice.findUnique({ where: { id } }); // a fresh read, never the stale row
       // F-05: a reactivation is an explicit, audited act (it may follow a selling-restriction suspension)
       await this.auditInTx(
         tx,

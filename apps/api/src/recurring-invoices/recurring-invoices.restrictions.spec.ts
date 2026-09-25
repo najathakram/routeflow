@@ -207,6 +207,8 @@ describe("RecurringInvoicesService — selling restrictions (F-05)", () => {
         isActive: false,
       });
       expect(prisma.auditLog.create).not.toHaveBeenCalled();
+      // a lost race returns a FRESH read (findOne + the re-read), never the stale row
+      expect(prisma.recurringInvoice.findUnique).toHaveBeenCalledTimes(2);
     });
 
     it("an admin-paused template's own lastError is left alone (only the suspension notice is cleared)", async () => {
