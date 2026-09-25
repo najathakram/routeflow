@@ -1,4 +1,4 @@
-import { backSyncTargetKey, orderLineShape, orderLineUnchanged } from "./order-backsync-lines";
+import { orderLineShape, orderLineUnchanged } from "./order-backsync-lines";
 
 describe("orderLineShape (SA-203c)", () => {
   const legacySample = { boxes: 0, pieces: 5, unitsPerBox: null, unitLabel: null };
@@ -192,6 +192,19 @@ describe("orderLineShape (SA-203c)", () => {
       expect(shape).toMatchObject({ unitsPerBox: 12, unitLabel: "Case" });
     });
 
+    it("the unit label follows the verbatim rule: written from a single billed line that HAS one, otherwise the order line's is kept", () => {
+      const withLabel = orderLineShape(
+        { boxes: 1, pieces: 0, unitsPerBox: 12, unitLabel: null },
+        { qty: 12, sample: { boxes: 1, pieces: 0, unitsPerBox: 12, unitLabel: "Case" }, n: 1 },
+      );
+      expect(withLabel.unitLabel).toBe("Case");
+      const without = orderLineShape(
+        { boxes: 1, pieces: 0, unitsPerBox: 12, unitLabel: "Case" },
+        { qty: 12, sample: { boxes: 1, pieces: 0, unitsPerBox: 12, unitLabel: null }, n: 1 },
+      );
+      expect(without.unitLabel).toBeUndefined(); // not written: the order line keeps "Case"
+    });
+
     it("n === 1 WITHOUT a split keeps the ORDER line's own split and pack (SA-227), never blanking it", () => {
       const shape = orderLineShape(
         { boxes: 2, pieces: 0, unitsPerBox: 12 },
@@ -215,20 +228,6 @@ describe("orderLineShape (SA-203c)", () => {
     expect(
       orderLineShape({ boxes: null, unitsPerBox: null }, { qty: 7, sample: {} }),
     ).toMatchObject({ qty: 7, boxes: null, pieces: null, unitsPerBox: null });
-  });
-});
-
-describe("backSyncTargetKey", () => {
-  const byId = new Map([["oi-1", { id: "oi-1" }]]);
-  const byProduct = new Map([["p-2", { id: "oi-2" }]]);
-
-  it("prefers the stored order-line link, then the product, then a new product line", () => {
-    expect(backSyncTargetKey({ orderItemId: "oi-1", productId: "p-2" }, byId, byProduct)).toBe(
-      "line:oi-1",
-    );
-    expect(backSyncTargetKey({ productId: "p-2" }, byId, byProduct)).toBe("line:oi-2");
-    expect(backSyncTargetKey({ productId: "p-9" }, byId, byProduct)).toBe("product:p-9");
-    expect(backSyncTargetKey({}, byId, byProduct)).toBeNull();
   });
 });
 

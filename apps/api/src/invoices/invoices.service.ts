@@ -25,7 +25,7 @@ import {
   type CategoryTaxType,
   inferredFlatRate,
 } from "@routeflow/pricing";
-import { backSyncTargetKey, orderLineShape, orderLineUnchanged } from "./order-backsync-lines";
+import { orderLineShape, orderLineUnchanged } from "./order-backsync-lines";
 import {
   buildEditedLines,
   editInvoiceTotals,
@@ -2234,11 +2234,11 @@ export class InvoicesService {
    * lines into phantom box splits). Cancels order lines no invoice bills; preserves the order's
    * effective tax rate. No-op when the order has no surviving (non-void) invoices.
    */
-  async recomputeOrderFromInvoices(orderId: string, tx?: any, changed?: any[]) {
+  async recomputeOrderFromInvoices(orderId: string, tx?: any) {
     // SA-093 (#1185 round 5, item B) -- see withOrderRecomputeLock's own doc for the deadlock analysis.
     if (!tx) {
       return withOrderRecomputeLock(this.prisma, orderId, (innerTx) =>
-        this.recomputeOrderFromInvoices(orderId, innerTx, changed),
+        this.recomputeOrderFromInvoices(orderId, innerTx),
       );
     }
     const db = tx;
@@ -2259,11 +2259,6 @@ export class InvoicesService {
     for (const li of order.lineItems as any[]) existingById.set(li.id, li);
     // #1185 round 5, item 2 -- see resolveProductMatches' own doc.
     const { existingByProduct, ambiguousLineIds } = resolveProductMatches(order.lineItems);
-    // SA-203: an items save passes the CHANGED invoice lines; only their order lines are written.
-    const only = changed
-      ? new Set(changed.map((c) => backSyncTargetKey(c, existingById, existingByProduct)))
-      : null;
-
     // Aggregate billed qty + subtotal, resolving each invoice line to its source
     // order line: prefer the stored orderItemId; else first-match by productId
     // (legacy rows). An invoice line with a product but no matching order line
@@ -2343,11 +2338,6 @@ export class InvoicesService {
       const lineFreeUnits = Math.max(0, Math.trunc(agg.freeUnits) || 0);
       subtotal += lineSubtotal;
       categoryTaxSum += lineCategoryTax;
-      // Untouched invoice line: its order line is not written at all (SA-203).
-      if (only && !only.has(key)) {
-        if (existing) existingById.delete(existing.id); // covers CREATE targets too: nothing new for an untouched line
-        continue;
-      }
       const shape = orderLineShape(existing, agg);
       if (existing) {
         // An order line that would be rewritten to exactly what it holds is not written at all.
@@ -3458,8 +3448,8 @@ export class InvoicesService {
         return { updated: u, syncLines };
       });
       // Backward sync: keep the linked order in step with the edited invoice.
-      if (inv.orderId && syncLines)
-        await this.recomputeOrderFromInvoices(inv.orderId, undefined, syncLines);
+      // SA-233: the FULL coverage recompute (never a changed-set); identical rows are skipped inside it.
+      if (inv.orderId && syncLines) await this.recomputeOrderFromInvoices(inv.orderId);
       return updated;
     }
 

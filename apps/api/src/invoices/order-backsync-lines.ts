@@ -29,7 +29,8 @@ export function orderLineShape(
       boxes: sample?.boxes ?? null,
       pieces: sample?.pieces ?? null,
       unitsPerBox: sample?.unitsPerBox ?? null,
-      unitLabel: sample?.unitLabel ?? null,
+      // the label is written from a single billed line that HAS one, otherwise the order line's is kept
+      ...(sample?.unitLabel != null ? { unitLabel: sample.unitLabel } : {}),
     };
   }
   // Several invoice lines feed this order line: the old re-split applies only when EVERY one of them shares a
@@ -64,19 +65,6 @@ export function orderLineShape(
     ? normalizeBoxesPieces({ qty: agg.qty, unitsPerBox: upb })
     : { qty: agg.qty, boxes: null as number | null, pieces: null as number | null };
   return { ...split, unitsPerBox: upb > 0 ? upb : null };
-}
-
-/** Which back-sync target (`line:<orderItemId>` or `product:<id>`) an invoice line feeds. */
-export function backSyncTargetKey(
-  it: { orderItemId?: string | null; productId?: string | null },
-  byId: ReadonlyMap<string, any>,
-  byProduct: ReadonlyMap<string, any>,
-): string | null {
-  const line =
-    (it.orderItemId && byId.get(it.orderItemId)) ||
-    (it.productId && byProduct.get(it.productId)) ||
-    null;
-  return line ? `line:${line.id}` : it.productId ? `product:${it.productId}` : null;
 }
 
 const sameValue = (a: unknown, b: unknown): boolean =>

@@ -1095,5 +1095,65 @@ describeDb(
       expect(after!.updatedAt).toEqual(before!.updatedAt);
       expect([after!.boxes, after!.pieces, after!.unitsPerBox]).toEqual([2, 0, 12]);
     });
+
+    it("SA-203-Q4 an attested single-line re-pack (order line at pack 24, the one billed invoice line at 12) writes the billed split verbatim on a full recompute", async () => {
+      const t = await seedTenant("q4");
+      const customer = await seedCustomer(t.id, "q4");
+      const product = await mkProduct(t.id, `q4 ${t.slug}`, 12);
+      const order = await prisma.order.create({
+        data: {
+          tenantId: t.id,
+          customerId: customer.id,
+          status: "DELIVERED",
+          subtotal: 360,
+          total: 360,
+        },
+      });
+      const oi = await prisma.orderItem.create({
+        data: {
+          tenantId: t.id,
+          orderId: order.id,
+          productId: product.id,
+          qty: 36,
+          boxes: 1,
+          pieces: 12,
+          unitsPerBox: 24,
+          unitPrice: 10,
+          subtotal: 360,
+          invoicedQty: 36,
+        },
+      });
+      const inv = await prisma.invoice.create({
+        data: {
+          tenantId: t.id,
+          customerId: customer.id,
+          orderId: order.id,
+          invoiceNumber: `INV-Q4-${RUN_SUFFIX}`,
+          status: "DRAFT",
+          subtotal: 360,
+          total: 360,
+        },
+      });
+      await prisma.invoiceItem.create({
+        data: {
+          tenantId: t.id,
+          invoiceId: inv.id,
+          productId: product.id,
+          orderItemId: oi.id,
+          description: "q4",
+          qty: 36,
+          boxes: 3,
+          pieces: 0,
+          unitsPerBox: 12,
+          unitPrice: 10,
+          subtotal: 360,
+        },
+      });
+      await tenantCtx.run(t.id, () => invoicesService.recomputeOrderFromInvoices(order.id));
+      const after = await prisma.orderItem.findUnique({ where: { id: oi.id } });
+      expect([Number(after!.qty), after!.boxes, after!.pieces, after!.unitsPerBox]).toEqual([
+        36, 3, 0, 12,
+      ]);
+    });
   },
 );

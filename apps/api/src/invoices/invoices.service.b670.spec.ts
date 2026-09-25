@@ -352,7 +352,7 @@ describe("InvoicesService — update() line preservation", () => {
         expect(resync).not.toHaveBeenCalled();
       });
 
-      it("an order-linked qty edit re-syncs ONLY from the changed line", async () => {
+      it("an order-linked qty edit runs the FULL coverage recompute exactly once (SA-233: no changed-set)", async () => {
         const sibling = line({ id: "b", orderItemId: "oi-b", productId: "prod-b" });
         arrange([line({ orderItemId: "oi-a" }), sibling]);
         linked();
@@ -363,9 +363,7 @@ describe("InvoicesService — update() line preservation", () => {
           ],
         } as any);
         expect(resync).toHaveBeenCalledTimes(1);
-        const changed = resync.mock.calls[0][2];
-        expect(changed.map((c: any) => c.orderItemId)).toContain("oi-a");
-        expect(changed.map((c: any) => c.orderItemId)).not.toContain("oi-b");
+        expect(resync.mock.calls[0]).toEqual(["ord-1"]);
       });
 
       it("1b: a discount/shipping-only save on an order-linked invoice still runs the full coverage recompute (short-delivered lines shrink, refused lines cancel); identical rows are skipped inside it", async () => {
@@ -462,8 +460,6 @@ describe("InvoicesService — update() line preservation", () => {
           data: { orderItemId: "oi-new" },
         });
         expect(resync).toHaveBeenCalledTimes(1);
-        const ids = resync.mock.calls[0][2].map((c: any) => c.orderItemId);
-        expect(ids).toEqual(expect.arrayContaining(["oi-old", "oi-new"]));
         expect(resyncLedger).toHaveBeenCalledTimes(1);
       });
 
