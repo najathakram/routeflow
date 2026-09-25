@@ -157,7 +157,11 @@ describeDb(
         prisma,
         gateway: { emitCreditNoteCreated: jest.fn() },
         ledger,
-        commissionEngine: {},
+        commissionEngine: {
+          syncInvoiceCommissionSafe: async () => undefined,
+          syncOrderInvoices: async () => undefined,
+          removeInvoiceCommission: async () => undefined,
+        },
         numbering,
         logger: new Logger(CreditNotesService.name),
       });
@@ -193,7 +197,11 @@ describeDb(
         gateway: { emitOrderStatusChanged: jest.fn(), emitOrderCreated: jest.fn() },
         systemConfig,
         entitlements: { hasFlag: async () => true },
-        sellingRestrictions: { assertLinesSellable: async () => undefined },
+        sellingRestrictions: {
+          assertLinesSellable: async () => undefined,
+          // the edit path reads the policy first; OFF = no restriction planning (planOrderEditRestrictions)
+          getPolicy: async () => ({ enabled: false, addressPrecedence: "BILLING_FIRST" }),
+        },
         authGuard: { assertAuthorizedOrThrow: async () => undefined },
         promotionsService: { activeForCatalog: async () => [] },
         creditNotes,
@@ -226,6 +234,8 @@ describeDb(
       await raw.returnItem.deleteMany({ where: { return: { orderId: { in: orderIds } } } });
       await raw.return.deleteMany({ where: { orderId: { in: orderIds } } });
       await raw.creditNote.deleteMany({ where: { tenantId } });
+      // applying an inline-return credit note to the linked invoice writes InvoicePayment rows
+      await raw.invoicePayment.deleteMany({ where: { invoiceId: { in: invoiceIds } } });
       await raw.invoiceItem.deleteMany({ where: { invoiceId: { in: invoiceIds } } });
       await raw.invoice.deleteMany({ where: { id: { in: invoiceIds } } });
       await raw.orderRevision?.deleteMany?.({ where: { orderId: { in: orderIds } } });
