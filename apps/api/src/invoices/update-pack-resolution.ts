@@ -46,26 +46,6 @@ import { computeLineSubtotal, roundMoney, splitWithoutPack } from "@routeflow/pr
 export interface PriorPackRow {
   productId: string | null;
   unitsPerBox: unknown;
-  unitLabel?: string | null;
-}
-
-/**
- * SA-144: true when a row already sells by a named unit — `unitLabel` set AND `unitsPerBox > 1`,
- * the same `isUnitAwareLine` test units_v1 uses everywhere else (mobile short-pick, order lines).
- * `update()`'s replace path has no concept of a named unit — it only recovers a legacy pack from
- * a boxes/pieces split — so a unit-aware line reaching that path would be silently reinterpreted
- * as a plain boxed pack (or lose its unit if the split doesn't happen to agree). Unit lines are
- * fenced out of `update()` entirely rather than risk that.
- */
-export function isUnitAwarePackRow(row: PriorPackRow): boolean {
-  return (row.unitLabel ?? "").trim() !== "" && Number(row.unitsPerBox ?? 0) > 1;
-}
-
-export interface PriorPacks {
-  /** The pack each product's own stored lines carry — see `buildPriorPackMap`. */
-  packs: Map<string, number>;
-  /** True when ANY surviving row for these products already sells by a named unit (SA-144). */
-  hasUnitAwareLine: boolean;
 }
 
 /**
@@ -75,22 +55,19 @@ export interface PriorPacks {
  * disagreement nothing is carried and the caller falls through to the live pack with a warn,
  * rather than picking one arbitrarily. A line with no pack counts as disagreement when a sibling
  * has one, because "no pack" is not evidence for a pack. A pack of 1 or 0 never enters the map.
- *
- * SA-144: also reports whether any of those SAME rows is unit-aware, from the ONE query — a
- * second query just for that would duplicate this one. `update()` checks it before touching any
- * of these products at all.
  */
 export async function loadPriorPacks(
   invoiceItem: { findMany: (args: unknown) => Promise<PriorPackRow[]> },
   invoiceId: string,
   productIds: string[],
-): Promise<PriorPacks> {
-  if (productIds.length === 0) return { packs: new Map(), hasUnitAwareLine: false };
-  const rows = await invoiceItem.findMany({
-    where: { invoiceId, productId: { in: productIds } },
-    select: { productId: true, unitsPerBox: true, unitLabel: true },
-  });
-  return { packs: buildPriorPackMap(rows), hasUnitAwareLine: rows.some(isUnitAwarePackRow) };
+): Promise<Map<string, number>> {
+  if (productIds.length === 0) return new Map();
+  return buildPriorPackMap(
+    await invoiceItem.findMany({
+      where: { invoiceId, productId: { in: productIds } },
+      select: { productId: true, unitsPerBox: true },
+    }),
+  );
 }
 
 export function buildPriorPackMap(rows: PriorPackRow[]): Map<string, number> {

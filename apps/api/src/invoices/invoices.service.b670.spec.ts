@@ -1,5 +1,5 @@
 /**
- * B670/B701/B674 (SA-144) — invoice update() refuses to edit an invoice that holds a unit-aware line.
+ * B670 (SA-180) — update()'s regulated-levy basis reads the SAME resolved pack the money uses.
  *
  * Split out of invoices.service.spec.ts (not merged into it) per the repo's size ratchet
  * (`common/size-ratchet.spec.ts` — that file is one of the 15 tracked giants and may not grow).
@@ -36,7 +36,7 @@ import { EntitlementsService } from "../billing/entitlements.service";
 import { CommissionEngineService } from "../sales-agents/commission-engine.service";
 import { InvoiceStatus } from "@prisma/client";
 
-describe("InvoicesService — B670/B701/B674 update() unit fence", () => {
+describe("InvoicesService — B670 update() levy-basis pack", () => {
   let service: InvoicesService;
   let prisma: ReturnType<typeof createMockPrisma>;
 
@@ -113,7 +113,7 @@ describe("InvoicesService — B670/B701/B674 update() unit fence", () => {
     service = module.get<InvoicesService>(InvoicesService);
   });
 
-  describe("update() — unit-aware fence (SA-144)", () => {
+  describe("update() — the levy basis uses the resolved pack, not the live product alone", () => {
     const draftInvoice = {
       id: "inv-box",
       orderId: null,
@@ -131,51 +131,47 @@ describe("InvoicesService — B670/B701/B674 update() unit fence", () => {
       dueDate: null,
       issueDate: new Date(),
     };
-
-    // SA-144: a unit-aware line (sold by a named unit, e.g. "Case") has no legacy boxes/pieces
-    // pack to re-derive — update()'s replace path must refuse rather than silently reinterpret
-    // it. The client rarely resends `unitLabel` on an edit it isn't touching, so this is checked
-    // against the invoice's OWN surviving stored row, not just the incoming payload.
-    it("SA-144: refuses to edit an invoice that already has a unit-aware line for a touched product, even when the payload itself carries no unitLabel", async () => {
+    const arrange = (storedPack: number | null) => {
       prisma.invoice.findUnique.mockResolvedValue(draftInvoice);
-      prisma.product.findMany.mockResolvedValue([{ id: "prod-case", unitsPerBox: 12 }]);
-      prisma.customer.findUnique.mockResolvedValue({ isTaxExempt: false });
-      // The invoice's OWN stored line for this product already sells by a named unit.
-      prisma.invoiceItem.findMany.mockResolvedValue([
-        { productId: "prod-case", unitsPerBox: 288, unitLabel: "Case" },
+      // the product's pack has since changed to 6; the invoice's own stored line still says 12
+      prisma.product.findMany.mockResolvedValue([
+        { id: "prod-box", unitsPerBox: 6, trackedCategoryId: "cat-1" },
       ]);
-
-      await expect(
-        service.update("inv-box", {
-          items: [
-            {
-              productId: "prod-case",
-              description: "Case of chips",
-              qty: 2,
-              unitPrice: 11,
-              boxes: 2,
-            },
-          ],
-        }),
-      ).rejects.toThrow("Selling by a unit can't be edited on an invoice yet.");
-
-      expect(prisma.invoice.update).not.toHaveBeenCalled();
-    });
-
-    it("SA-144: an ordinary boxed line's own stored row (no unitLabel) does not trip the unit-aware fence", async () => {
-      prisma.invoice.findUnique.mockResolvedValue(draftInvoice);
-      prisma.product.findMany.mockResolvedValue([{ id: "prod-box", unitsPerBox: 12 }]);
+      prisma.trackedCategory.findMany.mockResolvedValue([
+        { id: "cat-1", taxType: "EXCISE_PER_UNIT", rate: 0.1, priceIncludesTax: false },
+      ]);
+      prisma.invoiceItem.findMany.mockResolvedValue(
+        storedPack == null ? [] : [{ productId: "prod-box", unitsPerBox: storedPack }],
+      );
       prisma.customer.findUnique.mockResolvedValue({ isTaxExempt: false });
       prisma.invoice.update.mockResolvedValue(draftInvoice);
-      prisma.invoiceItem.findMany.mockResolvedValue([
-        { productId: "prod-box", unitsPerBox: 12, unitLabel: null },
-      ]);
+    };
+    const saved = () => prisma.invoice.update.mock.calls[0][0].data.items.create[0];
 
+    it("stored pack 12, live pack 6, a no-change save of a box-unaware line: basis = qty x 12 (levy 6.00, not 3.00)", async () => {
+      arrange(12);
+      await service.update("inv-box", {
+        items: [{ productId: "prod-box", description: "Chips", qty: 5, unitPrice: 10 }],
+      });
+      // 5 selling units x stored pack 12 = 60 pieces x $0.10 = $6.00 (was 5 x 6 x 0.10 = $3.00)
+      expect(saved().categoryTaxAmount).toBe(6);
+    });
+
+    it("no stored pack: falls back to the live pack 6 (levy 3.00), unchanged behaviour", async () => {
+      arrange(null);
+      await service.update("inv-box", {
+        items: [{ productId: "prod-box", description: "Chips", qty: 5, unitPrice: 10 }],
+      });
+      expect(saved().categoryTaxAmount).toBe(3);
+    });
+
+    it("a split line (2 boxes + 3 pieces, qty 27) already counts pieces: levy 2.70 whatever the packs say", async () => {
+      arrange(12);
       await service.update("inv-box", {
         items: [
           {
             productId: "prod-box",
-            description: "Boxed chips",
+            description: "Chips",
             qty: 27,
             unitPrice: 28.35,
             boxes: 2,
@@ -183,8 +179,8 @@ describe("InvoicesService — B670/B701/B674 update() unit fence", () => {
           },
         ],
       });
-
-      expect(prisma.invoice.update).toHaveBeenCalled();
+      expect(saved().categoryTaxAmount).toBe(2.7);
+      expect(saved().unitsPerBox).toBe(12); // money + snapshot still from the line's own split
     });
   });
 });

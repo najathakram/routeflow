@@ -3354,19 +3354,7 @@ export class InvoicesService {
 
       // B717/SA-077: this replace path recreates every line, so a pack it carries is lost
       // unless read first. Rule + reasoning: update-pack-resolution.ts.
-      const { packs: priorPacks, hasUnitAwareLine } = await loadPriorPacks(
-        this.prisma.forTenant().invoiceItem,
-        id,
-        productIds,
-      );
-      // SA-144: fence unit-aware lines out of update() entirely — checked against the invoice's
-      // OWN surviving rows for these products, not just the incoming payload (dto.items rarely
-      // carries unitLabel back; the edit clients don't round-trip it), so an existing unit-aware
-      // line simply carried through an unrelated edit (a notes change, a different line's price)
-      // is still caught, not just a NEW unit request (the requestsUnit() check above).
-      if (hasUnitAwareLine) {
-        throw new BadRequestException("Selling by a unit can't be edited on an invoice yet.");
-      }
+      const priorPacks = await loadPriorPacks(this.prisma.forTenant().invoiceItem, id, productIds);
 
       let subtotal = 0;
       const itemsData = dto.items.map((item) => {
@@ -3409,7 +3397,11 @@ export class InvoicesService {
         const category = product?.trackedCategoryId
           ? categoryMap.get(product.trackedCategoryId)
           : null;
-        const upbForPieces = Number(livePack ?? 0);
+        // B670: the levy basis reads the SAME resolved pack the money uses (own split -> the
+        // invoice's stored lines -> live), never the live product alone.
+        const upbForPieces = Number(
+          unitsPerBox ?? resolveUpdateLinePack(null, item, livePack, priorPacks).pack ?? 0,
+        );
         // B679: the ONE conversion this design allows — never an inline copy of it. `item`
         // is never a unit-labeled line here: update() refuses dto.items.some(requestsUnit) above.
         const pieceQty = regulatedUnitBasis(
