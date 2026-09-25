@@ -1,5 +1,5 @@
 /**
- * D-20 (#1808, SA-304) — the copier C8 gap, EXECUTED on real Postgres: `approveNextDelivery` re-creates a
+ * D-20 (#1808, SA-304 / SA-330) — the copier C8 gap, EXECUTED on real Postgres: `approveNextDelivery` re-creates a
  * rolled-over CHANGE_QTY delta as a next-delivery draft line through `OrdersService.create`. After the product's pack
  * changes (12 -> live 6) the copy must keep the SOURCE line's pack (12): the stored line carries that
  * `unitsPerBox` snapshot, and its money equals `computeLineSubtotal` at THAT pack — not a re-split, re-priced line at
@@ -186,8 +186,11 @@ describeDb("D-20 next-delivery pack (C8) — real Postgres", () => {
     const orders = await raw.order.findMany({ where: { tenantId }, select: { id: true } });
     const ids = orders.map((o) => o.id);
     if (ids.length) await raw.changeRequest.deleteMany({ where: { orderId: { in: ids } } });
+    if (ids.length) await raw.deliveryMutation.deleteMany({ where: { orderId: { in: ids } } });
     if (ids.length) await raw.orderItem.deleteMany({ where: { orderId: { in: ids } } });
     if (ids.length) await raw.order.deleteMany({ where: { id: { in: ids } } });
+    await raw.routeRun.deleteMany({ where: { tenantId } });
+    await raw.route.deleteMany({ where: { tenantId } });
     await raw.customer.deleteMany({ where: { tenantId } });
     await raw.product.deleteMany({ where: { tenantId } });
     await raw.user.deleteMany({ where: { tenantId } });
@@ -197,25 +200,39 @@ describeDb("D-20 next-delivery pack (C8) — real Postgres", () => {
     await pool?.end();
   }, 120_000);
 
-  it("approve NEXT DELIVERY after the product was repacked 12 -> 6: the copy keeps the source pack 12 and its money is computeLineSubtotal at 12", async () => {
+  /** A CONFIRMED order with ONE boxed line sold at pack 12 / $36 per box, and a CHANGE_QTY 24 -> 42 request. */
+  async function scenario(tag: string, opts: { onRun: boolean }) {
     const user = await raw.user.create({
-      data: { email: `c-${run}@example.test`, username: `c-${run}`, role: "CUSTOMER", tenantId },
+      data: {
+        email: `${tag}-${run}@example.test`,
+        username: `${tag}-${run}`,
+        role: "CUSTOMER",
+        tenantId,
+      },
     });
     const customer = await raw.customer.create({
-      data: { userId: user.id, businessName: "Next delivery co", contactName: "T", tenantId },
+      data: { userId: user.id, businessName: `${tag} co`, contactName: "T", tenantId },
     });
     const product = await raw.product.create({
       data: {
         tenantId,
-        name: `p-${run}`,
-        sku: `p-${run}`,
+        name: `${tag}-${run}`,
+        sku: `${tag}-${run}`,
         unit: "unit",
         pricePerUnit: "36", // per BOX
         unitsPerBox: 12,
         currentStock: 1000,
       },
     });
-    // the SOURCE line: 2 boxes of 12 = 24 pieces, sold at pack 12
+    let runId: string | undefined;
+    if (opts.onRun) {
+      const route = await raw.route.create({ data: { tenantId, name: `route-${tag}-${run}` } });
+      runId = (
+        await raw.routeRun.create({
+          data: { tenantId, routeId: route.id, status: "IN_PROGRESS", scheduledDate: new Date() },
+        })
+      ).id;
+    }
     const order = await raw.order.create({
       data: {
         tenantId,
@@ -223,6 +240,8 @@ describeDb("D-20 next-delivery pack (C8) — real Postgres", () => {
         status: "CONFIRMED",
         source: "APP",
         total: "72",
+        subtotal: "72",
+        routeRunId: runId,
         lineItems: {
           create: [
             {
@@ -244,7 +263,6 @@ describeDb("D-20 next-delivery pack (C8) — real Postgres", () => {
       include: { lineItems: true },
     });
     const line = order.lineItems[0];
-    // the buyer asked for 18 more pieces (24 -> 42) and it did not fit on the truck
     const cr = await raw.changeRequest.create({
       data: {
         tenantId,
@@ -252,32 +270,37 @@ describeDb("D-20 next-delivery pack (C8) — real Postgres", () => {
         orderItemId: line.id,
         productId: product.id,
         type: "CHANGE_QTY",
-        payload: { orderItemId: line.id, newQty: 42 },
+        payload: { orderItemId: line.id, newQty: 42 }, // 18 more pieces
       },
     });
-    // the product is REPACKED after the sale: live pack 12 -> 6
-    await raw.product.update({ where: { id: product.id }, data: { unitsPerBox: 6 } });
+    return { order, line, product, cr };
+  }
 
-    await tenantCtx.run(tenantId, () =>
-      crSvc.resolve(
-        order.id,
-        cr.id,
-        { action: ChangeRequestResolveAction.APPROVE_NEXT_DELIVERY },
-        operatorPayload as never,
-      ),
+  const resolve = (orderId: string, crId: string, action: ChangeRequestResolveAction) =>
+    tenantCtx.run(tenantId, () =>
+      crSvc.resolve(orderId, crId, { action }, operatorPayload as never),
     );
 
+  it("NEXT DELIVERY after a repack 12 -> 6 AND a price change $36 -> $18: the copy keeps the source pack AND price; money is computeLineSubtotal at the source pack and price", async () => {
+    const { order, product, cr } = await scenario("nd", { onRun: false });
+    // AFTER the sale the product is repacked AND repriced: live pack 12 -> 6, live price $36 -> $18 per box
+    await raw.product.update({
+      where: { id: product.id },
+      data: { unitsPerBox: 6, pricePerUnit: "18" },
+    });
+
+    await resolve(order.id, cr.id, ChangeRequestResolveAction.APPROVE_NEXT_DELIVERY);
+
     const resolved = await raw.changeRequest.findUnique({ where: { id: cr.id } });
-    expect(resolved?.nextOrderId).toBeTruthy();
-    const drafts = await raw.orderItem.findMany({ where: { orderId: resolved!.nextOrderId! } });
-    expect(drafts).toHaveLength(1);
-    const copy = drafts[0];
-    // 18 pieces at the SOURCE pack 12 = 1 box + 6 pieces
-    expect(copy.unitsPerBox).toBe(12); // the source pack, NOT the live 6
+    const copy = (await raw.orderItem.findMany({ where: { orderId: resolved!.nextOrderId! } }))[0];
+    // 18 pieces at the SOURCE pack 12 = 1 box + 6 pieces, at the SOURCE's $36 per box
+    expect(copy.unitsPerBox).toBe(12); // NOT the live 6
+    expect(Number(copy.unitPrice)).toBe(36); // NOT the live $18
+    expect(copy.priceType).toBe("STANDARD"); // the source's type, never relabelled
     expect(Number(copy.qty)).toBe(18);
     expect(copy.boxes).toBe(1);
     expect(copy.pieces).toBe(6);
-    // and its money is the shared helper at THAT pack: 1 box ($36) + 6/12 of a box ($18)
+    expect(copy.promoFreeUnits).toBeNull(); // a rollover earns no promo units
     const expected = computeLineSubtotal({
       unitPrice: 36,
       qty: 18,
@@ -287,5 +310,28 @@ describeDb("D-20 next-delivery pack (C8) — real Postgres", () => {
     });
     expect(expected).toBe(54);
     expect(Number(copy.subtotal)).toBe(expected);
+  });
+
+  it("PARITY: the same CR resolved AT_STOP and NEXT_DELIVERY adds the same money ($54)", async () => {
+    const a = await scenario("par-next", { onRun: false });
+    const b = await scenario("par-stop", { onRun: true });
+    for (const s of [a, b]) {
+      await raw.product.update({
+        where: { id: s.product.id },
+        data: { unitsPerBox: 6, pricePerUnit: "18" },
+      });
+    }
+    await resolve(a.order.id, a.cr.id, ChangeRequestResolveAction.APPROVE_NEXT_DELIVERY);
+    const nextId = (await raw.changeRequest.findUnique({ where: { id: a.cr.id } }))!.nextOrderId!;
+    const nextMoney = Number(
+      (await raw.orderItem.findMany({ where: { orderId: nextId } }))[0].subtotal,
+    );
+
+    await resolve(b.order.id, b.cr.id, ChangeRequestResolveAction.APPROVE_AT_STOP);
+    const after = await raw.order.findUnique({ where: { id: b.order.id } });
+    const atStopMoney = Number(after!.subtotal) - 72; // what the at-stop approval ADDED to the order
+
+    expect(nextMoney).toBe(54);
+    expect(atStopMoney).toBe(nextMoney);
   });
 });

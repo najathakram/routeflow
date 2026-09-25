@@ -26,6 +26,8 @@ export interface Copier {
   carried?: string; //  copied from the source line (or the source line's own snapshot)
   reset?: string; //    deliberately set to a default (a wrong VALUE here is not detectable by key presence)
   rederived?: string; // recomputed from the live product / tier / promo / tax rules
+  /** carried from the SOURCE line through create()'s internal `options.sourceLines` (invisible to the anchored literal): checked structurally, each key must appear in the copier's `sourceLines` literal */
+  viaOptions?: string;
   na?: string; //       cannot apply (source has no such field, or the target fills it later by design)
   gaps?: Record<string, GapRef>; // should be carried but is not: the debt this contract pins
 }
@@ -166,11 +168,13 @@ export const COPIERS: Copier[] = [
     anchor: { via: "prop", name: "items" },
     carried: "productId qty boxes pieces",
     // The new line is written by OrdersService.create, which stamps the B297 trio from the live category.
-    // unitsPerBox (D-20 / #1808): re-derived by create() from the SOURCE line's pack, passed as the INTERNAL
-    // `options.packSnapshots` (orders/pack-snapshot.ts) — never the live product pack. The anchored literal
-    // cannot see an options argument, so `orders/pack-snapshot.spec.ts` pins this hand-off structurally.
+    // D-20 / #1808 (SA-330): unitsPerBox, unitPrice, priceType and originalPrice are the SOURCE line's, passed as
+    // create()'s INTERNAL `options.sourceLines` (orders/source-line.ts), never the live pack or today's price;
+    // the contract checks each key is in approveNextDelivery's `sourceLines` literal. The subtotal is re-derived
+    // by computeLineSubtotal at that carried pack and price; promoFreeUnits is 0 for a rollover line.
+    viaOptions: "unitsPerBox unitPrice priceType originalPrice",
     rederived:
-      "unitsPerBox name unitPrice subtotal priceType originalPrice promoFreeUnits trackedCategoryId trackedSubcategoryId categoryTaxAmount position categoryTaxType categoryTaxRate categoryPriceIncludesTax",
+      "name subtotal promoFreeUnits trackedCategoryId trackedSubcategoryId categoryTaxAmount position categoryTaxType categoryTaxRate categoryPriceIncludesTax",
     na: ORDER_FRESH,
     gaps: {
       unitLabel: "unfiled",

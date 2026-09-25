@@ -20,6 +20,7 @@ import {
   ChangeRequestType,
   NotificationEvent,
   Prisma,
+  type PriceType,
   UserRole,
   UserStatus,
 } from "@prisma/client";
@@ -377,9 +378,12 @@ export class ChangeRequestsService {
     // delta is in PIECES and needs the pack size to split. Left null otherwise.
     let boxes: number | null = null;
     let pieces: number | null = null;
-    // D-20 (#1808): the SOURCE line's pack for a box-aware CHANGE_QTY, carried onto the draft line (C8's
-    // unitsPerBox snapshot) so a pack change since the sale cannot re-split or re-price the copy.
-    let sourcePack: number | null = null;
+    // D-20 (#1808, SA-330): the SOURCE line's denomination for a CHANGE_QTY rollover — its price ALWAYS, its pack
+    // only when box-aware — carried onto the draft line so a repack or a price change since the sale cannot re-split
+    // or re-quote the copy (see orders/source-line.ts). ADD_ITEM has no source line: a new sale at today's price.
+    let sourceItem: { unitPrice: unknown; priceType: PriceType; originalPrice: unknown } | null =
+      null;
+    let sourceUpb: number | null = null;
     // B673: an ADD_ITEM filed WITH a box split (a driver's door add: qty = total pieces, plus
     // boxes/pieces) is reconciled against the LIVE pack below. A bare qty (the buyer portal's
     // selling-unit count, stored with boxes/pieces null) is passed to create() untouched.
@@ -406,6 +410,7 @@ export class ChangeRequestsService {
         });
       }
       productId = li.productId;
+      sourceItem = li; // the price is carried ALWAYS; the pack (sourceUpb) only when the line is box-aware
 
       // B655: an EXISTING line's rewrite never re-derives its factor from the LIVE product (SA
       // ruling) — only the line's own stored shape decides how the delta is read.
@@ -442,7 +447,7 @@ export class ChangeRequestsService {
             message: `Order line ${li.id} has no derivable pack size — it can't be rolled to the next delivery.`,
           });
         }
-        sourcePack = upb;
+        sourceUpb = upb;
         const split = normalizeBoxesPieces({ qty: delta, unitsPerBox: upb });
         qty = split.qty;
         boxes = split.boxes;
@@ -500,11 +505,11 @@ export class ChangeRequestsService {
       type: "BUYER",
     } as JwtPayload;
 
-    // This split is handed to create() for a NEW draft line — create() re-splits it against the
-    // LIVE product's pack (its own, correct, contract for a new sale line: unlike the rewrite
-    // above, a new line has no existing snapshot to preserve). If the pack changed since the
-    // original line was sold, the boxes/pieces intent survives but the raw piece count can shift
-    // with it — inherent to that contract, not something this rollover can or should override.
+    // This split is handed to create() for a NEW draft line. For a CHANGE_QTY rollover the SOURCE line's price
+    // (always) and pack (when box-aware) ride along as `options.sourceLines` (orders/source-line.ts), so create()
+    // splits at the SOURCE pack and bills at the SOURCE's agreed price instead of re-splitting at the live pack
+    // and re-quoting; the subtotal is derived from that pack and price by computeLineSubtotal. An ADD_ITEM has no
+    // source line: create() re-splits its filed split against the LIVE pack and prices it today (a new sale).
     const draft = await this.ordersService.create(
       {
         items: [{ productId, qty, ...(boxes != null ? { boxes, pieces } : {}) }],
@@ -518,7 +523,19 @@ export class ChangeRequestsService {
       {
         skipAutoMerge: false,
         allowArchived: true,
-        ...(sourcePack ? { packSnapshots: { [productId]: sourcePack } } : {}),
+        ...(sourceItem
+          ? {
+              sourceLines: {
+                [productId]: {
+                  unitsPerBox: sourceUpb,
+                  unitPrice: Number(sourceItem.unitPrice),
+                  priceType: sourceItem.priceType,
+                  originalPrice:
+                    sourceItem.originalPrice != null ? Number(sourceItem.originalPrice) : null,
+                },
+              },
+            }
+          : {}),
       },
     );
 

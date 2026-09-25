@@ -32,7 +32,7 @@ import {
 import { lockRowsNoWait, withAdvisoryLock, type LockMode } from "../common/db-locks";
 import { assertMoneyInvariantsOrThrow } from "../common/money-invariants.util";
 import { atStopConflict } from "./at-stop-conflicts";
-import { packForCreateLine, type PackSnapshots } from "./pack-snapshot";
+import { sourceLineFor, type SourceLines } from "./source-line";
 import {
   LOCK_UNAVAILABLE,
   LOCK_UNAVAILABLE_MESSAGE,
@@ -1539,12 +1539,8 @@ export class OrdersService implements OnApplicationBootstrap {
   async create(
     dto: CreateOrderDto,
     user: JwtPayload,
-    // `packSnapshots`: INTERNAL only (never a DTO field) — see pack-snapshot.ts.
-    options: {
-      skipAutoMerge?: boolean;
-      allowArchived?: boolean;
-      packSnapshots?: PackSnapshots;
-    } = {},
+    // `sourceLines`: INTERNAL only, never a DTO field (source-line.ts).
+    options: { skipAutoMerge?: boolean; allowArchived?: boolean; sourceLines?: SourceLines } = {},
   ) {
     // F30/R8: Idempotency-Key replay. `idempotencyKey` isn't on CreateOrderDto
     // (the controller threads it in from the `Idempotency-Key` header, never
@@ -1905,12 +1901,8 @@ export class OrdersService implements OnApplicationBootstrap {
 
       // Recompute qty from boxes/pieces when provided (backend is authoritative).
       // Normalize to integers and roll loose pieces >= unitsPerBox into boxes.
-      const upb = packForCreateLine(
-        item.productId,
-        Number(product.unitsPerBox ?? 0),
-        options.packSnapshots,
-        items.map((i) => i.productId),
-      );
+      const source = sourceLineFor(item.productId, options.sourceLines, items);
+      const upb = source?.unitsPerBox ?? Number(product.unitsPerBox ?? 0);
       let qty = item.qty;
       let boxes: number | null = null;
       let pieces: number | null = null;
@@ -2023,6 +2015,13 @@ export class OrdersService implements OnApplicationBootstrap {
         priceType = resolved.priceType;
         originalPrice = resolved.originalPrice;
         freeUnits = resolved.freeUnits;
+      }
+
+      // D-20 (SA-330): a rolled-over line keeps its SOURCE line's agreed price, type and original price (never
+      // relabelled) and earns no promo units; the subtotal is still derived below at the carried pack and price.
+      if (source) {
+        ({ unitPrice, priceType, originalPrice } = source);
+        freeUnits = 0;
       }
 
       // For boxed products `unitPrice` is the BOX price; loose pieces are
