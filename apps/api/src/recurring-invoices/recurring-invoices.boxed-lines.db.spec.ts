@@ -45,6 +45,7 @@ import { EntitlementsService } from "../billing/entitlements.service";
 import { CommissionEngineService } from "../sales-agents/commission-engine.service";
 import { EstimatesService } from "../estimates/estimates.service";
 import { NumberingService } from "../import/numbering.service";
+import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
 import { describeDb, requireLocalDatabaseUrl } from "../common/testing/db-spec";
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
@@ -76,6 +77,12 @@ describeDb("B646 — a boxed recurring template line is stored in pieces, real P
         RecurringInvoicesService,
         EstimatesService,
         NumberingService,
+        // InvoicesService now depends on the selling-restrictions choke point; this spec is about
+        // boxed template quantities, so it allows every line.
+        {
+          provide: SellingRestrictionsService,
+          useValue: { assertLinesSellable: jest.fn().mockResolvedValue(undefined) },
+        },
         { provide: PrismaService, useValue: prisma },
         { provide: TenantContextService, useValue: tenantCtx },
         {
