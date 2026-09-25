@@ -17,6 +17,7 @@ import { EntitlementsService } from "./entitlements.service";
 import { BillingEventService } from "./billing-event.service";
 import { StripeService } from "./stripe.service";
 import { isStripeResourceMissing } from "./addon.service";
+import { emitAddonDelta } from "./addon-ledger";
 import { withAdvisoryLock, LockTimeoutError, LockUnavailableError } from "../common/db-locks";
 import {
   BILLING_EVENTS,
@@ -1257,12 +1258,14 @@ export class SubscriptionMutationService {
               update: { sku, quantity: qty, active: true, priceSnapshot: skuDef.monthlyPrice },
             });
             if (deltaQty !== 0) {
-              await this.events.emit(
+              await emitAddonDelta(tx, this.events, {
                 tenantId,
-                BILLING_EVENTS.ADDON_ENABLED,
-                { sku, quantity: qty, prorated: preview.proratedToday },
-                { amountDelta: roundMoney(Number(skuDef.monthlyPrice) * deltaQty), actorId, tx },
-              );
+                sku,
+                priceSnapshot: skuDef.monthlyPrice,
+                deltaQty,
+                actorId,
+                payload: { quantity: qty, prorated: preview.proratedToday },
+              });
               if (sku === "SEAT_EXTRA" && priorQty === 0) {
                 await this.events.emit(
                   tenantId,
@@ -1314,18 +1317,16 @@ export class SubscriptionMutationService {
     // Symmetric with enableAddon: an admin-granted ("ships dark") add-on is revocable only by
     // platform-admin — self-disabling one is a dead end, since re-enabling it is a 403.
     if (!isSelfServiceAddon(code)) throw new ForbiddenException(ADMIN_ONLY_ADDON_MESSAGE);
-    const version = await this.catalog.getPublishedCatalog();
-    const skuDef = version.addonSkus.find((s) => s.sku === code);
-    const monthly = skuDef ? roundMoney(Number(skuDef.monthlyPrice) * addon.quantity) : 0;
 
     await this.prisma.$transaction(async (tx) => {
       await tx.tenantAddon.update({ where: { id: addon.id }, data: { active: false } });
-      await this.events.emit(
+      await emitAddonDelta(tx, this.events, {
         tenantId,
-        BILLING_EVENTS.ADDON_DISABLED,
-        { sku: code },
-        { amountDelta: -monthly, actorId, tx },
-      );
+        sku: code,
+        priceSnapshot: addon.priceSnapshot,
+        deltaQty: -addon.quantity,
+        actorId,
+      });
       if (code === "SEAT_EXTRA") {
         await this.events.emit(
           tenantId,
