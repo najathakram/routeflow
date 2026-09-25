@@ -240,13 +240,30 @@ function make(opts: Opts = {}) {
       upsert: jest.fn().mockResolvedValue({}),
       update: jest.fn().mockResolvedValue({}),
       updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+      // F1 (pre-merge review): `subscribe()`'s locked re-read — defaults to MIRROR the pre-tx
+      // `prisma.tenantSubscription.findUnique` fixture (opts.sub), so every existing test's
+      // wasPaying/oldPlanMonthly/fromKey come out identical to the pre-fix pre-tx read. A race
+      // test overrides this to diverge from `opts.sub` (a concurrent commit).
+      findUnique: jest.fn().mockResolvedValue(opts.sub ?? null),
     },
     tenant: {
       update: jest.fn().mockResolvedValue({}),
       // TRIAL-1: cancel()'s TRIAL branch is a compare-and-swap (updateMany) with a
       // re-read (findUnique) only when the CAS is lost — default to a clean win/no-race.
       updateMany: jest.fn().mockResolvedValue({ count: 1 }),
-      findUnique: jest.fn().mockResolvedValue({ status: "ACTIVE" }),
+      // F1 (pre-merge review): `subscribe()`'s own locked re-read (tenant/sub/add-ons, taken
+      // right after `lockTenantForLedger`) also calls `tx.tenant.findUnique` — defaults to
+      // MIRROR the pre-tx `prisma.tenant.findUnique` fixture below (no concurrent write), so
+      // every existing subscribe() test computes the SAME wasPaying/oldPlanMonthly it did
+      // before the fix. A race test overrides this directly (`tx.tenant.findUnique
+      // .mockResolvedValueOnce(...)`) to simulate a concurrent commit between the pre-tx read
+      // and the lock.
+      findUnique: jest.fn().mockResolvedValue({
+        status: opts.tenantStatus ?? "TRIAL",
+        plan: opts.tenantPlan ?? null,
+        class: "PRODUCTION",
+        deletedAt: null,
+      }),
       // B865 / SA-277 (D2 lock shape): the add-on ledger helper's paying-set read, under the
       // tx lock. This tx-scoped default is ACTIVE (paying) even though the non-tx
       // `prisma.tenant.findUnique` below still defaults to TRIAL (the `subscribe` tests rely
@@ -269,6 +286,10 @@ function make(opts: Opts = {}) {
       // .findFirst` handed out pre-tx, so the existing disableAddon fixtures still see an
       // active row and proceed.
       findUnique: jest.fn().mockImplementation(() => Promise.resolve(opts.addonRow ?? null)),
+      // F1 (pre-merge review): `subscribe()`'s locked re-read of the tenant's ACTIVE add-ons —
+      // defaults to MIRROR the pre-tx `prisma.tenantAddon.findMany` fixture (opts.priorAddons).
+      // A race test overrides this to diverge from `opts.priorAddons` (a concurrent commit).
+      findMany: jest.fn().mockResolvedValue(opts.priorAddons ?? []),
     },
     $queryRaw: jest.fn().mockResolvedValue([]),
   };
@@ -499,6 +520,54 @@ describe("SubscriptionMutationService.subscribe (MRR = signed change)", () => {
       currentPlan: "TEAM",
     });
     expect(tx.tenant.update.mock.calls[0][0].data).toMatchObject({ plan: "TEAM" });
+  });
+
+  /**
+   * F1 (pre-merge review, 2026-09-25): `wasPaying`/`oldPlanMonthly`/the prior add-on snapshots
+   * used to come from a PRE-tx read, taken before `lockTenantForLedger`. A concurrent tx that
+   * commits in that window (e.g. platform-admin `activateManualSubscription`, which books the
+   * base plan AND an admin-only add-on) was invisible to that stale read — subscribe() would
+   * then re-book the base price in full (never netted) AND double-book the add-on. The fix
+   * re-reads the tenant/subscription/add-on rows UNDER the lock, inside the tx, so this
+   * committed write is visible before anything is priced.
+   */
+  it("F1: a concurrent activateManualSubscription commits between the pre-tx read and the lock — subscribe() must NOT double-book the base or the add-on", async () => {
+    const { svc, tx, events } = make({
+      // Pre-tx snapshot: still TRIAL, no subscription row yet — the state BEFORE the
+      // concurrent activation committed.
+      tenantStatus: "TRIAL",
+      sub: null,
+    });
+    // Locked re-read (tx, taken AFTER lockTenantForLedger): the concurrent
+    // activateManualSubscription already committed — tenant is ACTIVE/PRODUCTION on TEAM
+    // (149), with an admin-granted REGULATED_ITEMS add-on (snapshot 39) already active.
+    tx.tenant.findUnique.mockResolvedValue({
+      status: "ACTIVE",
+      plan: "TEAM",
+      class: "PRODUCTION",
+      deletedAt: null,
+    });
+    tx.tenantSubscription.findUnique.mockResolvedValue({ planKey: "TEAM" });
+    tx.tenantAddon.findMany.mockResolvedValue([
+      {
+        id: "a1",
+        addonKey: "REGULATED_ITEMS",
+        sku: "REGULATED_ITEMS",
+        quantity: 1,
+        active: true,
+        priceSnapshot: 39,
+      },
+    ]);
+
+    await svc.subscribe("t1", { planKey: "BUSINESS", cycle: "MONTHLY" }, "admin");
+
+    // Nets against the locked TEAM (149), not the stale pre-tx TRIAL/no-plan baseline (which
+    // would book the full 349).
+    expect(deltaOf(events, BILLING_EVENTS.PLAN_CHANGED)).toBe(200); // 349 − 149
+    // REGULATED_ITEMS was already paying under the locked state, so the crossing helper nets
+    // it to a NO-OP — never a second +39 on top of what activateManualSubscription booked.
+    expect(emitted(events)).not.toContain(BILLING_EVENTS.ADDON_ENABLED);
+    expect(deltaOf(events, BILLING_EVENTS.ADDON_ENABLED)).toBeUndefined();
   });
 });
 

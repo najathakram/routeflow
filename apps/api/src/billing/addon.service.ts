@@ -271,6 +271,39 @@ export class AddonService {
             // TenantAddon read or write, so this and every other add-on-ledger $transaction
             // always take the SAME order and can never deadlock against each other.
             await lockTenantForLedger(tx, tenantId);
+
+            // F2 (pre-merge review): `existing?.active` above was checked OUTSIDE this tx,
+            // before the Stripe item (if any) was even created — a concurrent subscribe()
+            // (subscription-mutation.service.ts, which holds no advisory lock against this
+            // admin path) can activate the SAME row at some quantity in the window between
+            // that check and here, in which case this call's {0,0}→{priceSnapshot,1} booking
+            // below would double the already-booked contribution. Re-check under the lock: if
+            // the row is now active, this call lost the race — refuse it exactly like the
+            // pre-check does, and best-effort delete the orphan Stripe item THIS call already
+            // created (mirroring disableAddon's own Stripe-cleanup handling) rather than leave
+            // a live item nothing points to.
+            const current = await tx.tenantAddon.findUnique({
+              where: { tenantId_addonKey: { tenantId, addonKey } },
+            });
+            if (current?.active) {
+              if (stripeItemId) {
+                try {
+                  await this.stripe.client.subscriptionItems.del(stripeItemId);
+                } catch (err) {
+                  if (!isStripeResourceMissing(err)) {
+                    this.logger.error(
+                      `Add-on "${addonKey}" lost the activation race for tenant ${tenant.slug} ` +
+                        `and could not clean up the orphan Stripe item ${stripeItemId}: ` +
+                        `${(err as Error).message}`,
+                    );
+                  }
+                }
+              }
+              throw new ConflictException(
+                `Add-on "${addonKey}" is already active for tenant ${tenant.slug}`,
+              );
+            }
+
             const row = await tx.tenantAddon.upsert({
               where: { tenantId_addonKey: { tenantId, addonKey } },
               create: {

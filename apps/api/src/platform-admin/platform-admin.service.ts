@@ -4,6 +4,7 @@ import {
   NotFoundException,
   ConflictException,
   BadRequestException,
+  InternalServerErrorException,
 } from "@nestjs/common";
 import { JwtService } from "@nestjs/jwt";
 import { ConfigService } from "@nestjs/config";
@@ -1044,6 +1045,19 @@ ${
             tx,
           },
         );
+        // Latent-case guard (pre-merge review): `bookAddonsOnCrossing`'s `wasPaying` flag only
+        // knows how to book a tenant CROSSING INTO the paying set (booking each add-on's full
+        // contribution) — it has no "debit" branch for a tenant that left it. Unreachable
+        // today: this method forces `status: "ACTIVE"` unconditionally above and never touches
+        // `class`/`deletedAt`, so `isPaying` can only be `false` here if `wasPaying` already
+        // was (isPayingRow needs status=ACTIVE too) — i.e. wasPaying implies isPaying. Kept as
+        // a fail-loud guard in case that invariant ever changes, rather than silently booking
+        // the wrong direction.
+        if (wasPaying && !isPaying) {
+          throw new InternalServerErrorException(
+            "activation left the paying set — add-on debit not implemented",
+          );
+        }
         // SA-277b: add-ons book through the SAME crossing helper `subscribe()` uses —
         // `wasPaying` gates whether each add-on's contribution was already on the ledger.
         await bookAddonsOnCrossing(

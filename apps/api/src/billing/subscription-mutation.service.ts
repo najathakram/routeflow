@@ -212,8 +212,14 @@ export class SubscriptionMutationService {
       addons: input.addons,
     });
 
-    // Prior state — MRR is accounted as the CHANGE from this baseline.
-    const [tenant, priorSub, priorAddons] = await Promise.all([
+    // Pre-tx state — used ONLY for validation (the B58 guard below) and transition planning
+    // (fromKey feeds `preparedTransition`). F1 (pre-merge review, SA-277/277b): NEVER a source
+    // for a ledger amount — wasPaying / oldPlanMonthly / the prior add-on snapshots are re-read
+    // UNDER the tenant lock inside the transaction below, because a concurrent committed write
+    // (e.g. platform-admin's `activateManualSubscription`) between this read and the tx could
+    // otherwise book against a stale baseline (double-booking the base price and any add-on
+    // that write already priced).
+    const [tenant, priorSub] = await Promise.all([
       this.prisma.tenant.findUnique({
         where: { id: tenantId },
         select: { status: true, plan: true, class: true, deletedAt: true },
@@ -222,15 +228,8 @@ export class SubscriptionMutationService {
         where: { tenantId },
         select: { planKey: true, cycle: true, periodEnd: true },
       }),
-      this.prisma.tenantAddon.findMany({ where: { tenantId, active: true } }),
     ]);
     if (!tenant) throw new NotFoundException("Tenant not found");
-
-    // B865 / SA-277 FIX-4: the SAME paying-set basis `oldPlanMonthly` below reads (pre-tx
-    // status + prior planKey), but through `isPayingRow` so class/deletedAt gate it too — this
-    // decides which add-on bookings below start from {0,0} (never-paying-yet) vs. the add-on's
-    // own stored state (already paying, no crossing to price).
-    const wasPaying = isPayingRow(tenant, priorSub?.planKey ?? null);
 
     // The plan we are changing FROM — resolved through the legacy enum, so a subscription
     // predating plans-as-data (planKey NULL) is ranked instead of read as "no plan".
@@ -286,28 +285,6 @@ export class SubscriptionMutationService {
       if (!isSelfServiceAddon(a.sku)) throw new ForbiddenException(ADMIN_ONLY_ADDON_MESSAGE);
       desired.set(a.sku, Math.max(1, Math.trunc(a.quantity ?? 1)));
     }
-    const priorByCode = new Map<string, { id: string; qty: number; snapshot: unknown }>();
-    for (const row of priorAddons) {
-      const code = addonSkuCode(row);
-      if (code)
-        priorByCode.set(code, { id: row.id, qty: row.quantity, snapshot: row.priceSnapshot });
-    }
-    // Only self-service add-ons are the tenant's to drop: an admin-granted SKU the payload
-    // is not even allowed to name must not be revoked by omitting it.
-    const toDisable = [...priorByCode.keys()].filter(
-      (c) => !desired.has(c) && isSelfServiceAddon(c),
-    );
-
-    // Coming from a NON-paying status (READ_ONLY / SUSPENDED / CANCELLED / TRIAL) the tenant
-    // still carries its old planKey but contributes 0 to the run-rate — so re-entry is a full
-    // +base delta, mirroring the negative delta emitted when access ended (billing-cron
-    // applyScheduledCancellations). Only an already-ACTIVE tenant nets against its old plan.
-    // A row with a NULL planKey is excluded from `MrrService`'s snapshot the same way
-    // (`planKey: { not: null }`) — e.g. a manual platform-admin activation — so it too
-    // contributes 0 and writing a planKey onto it books the full base, even though `fromKey`
-    // resolves through the legacy enum for ranking.
-    const oldPlanMonthly =
-      tenant.status === "ACTIVE" && priorSub?.planKey ? this.planMonthly(version, fromKey) : 0;
 
     const transition = {
       tenantId,
@@ -323,6 +300,51 @@ export class SubscriptionMutationService {
       // B865 / SA-277 FIX-2 (house lock order): tenant row lock FIRST, before any
       // subscription/add-on read or write in this tx.
       await lockTenantForLedger(tx, tenantId);
+
+      // F1 (pre-merge review, SA-277/277b): re-read the paying-set inputs AND the before-state
+      // for every ledger booking below UNDER this lock — never from the pre-tx snapshot above.
+      // A concurrent tx (e.g. platform-admin `activateManualSubscription`) that commits between
+      // the pre-tx read and this lock is now fully visible here, so it can never be double-booked.
+      const [lockedTenant, lockedSub, lockedAddons] = await Promise.all([
+        tx.tenant.findUnique({
+          where: { id: tenantId },
+          select: { status: true, plan: true, class: true, deletedAt: true },
+        }),
+        tx.tenantSubscription.findUnique({
+          where: { tenantId },
+          select: { planKey: true },
+        }),
+        tx.tenantAddon.findMany({ where: { tenantId, active: true } }),
+      ]);
+      if (!lockedTenant) throw new NotFoundException("Tenant not found");
+      const lockedFromKey = this.resolveFromPlanKey(lockedSub?.planKey, lockedTenant.plan);
+      // Same paying-set basis as before (isPayingRow — class/deletedAt gate it too), now read
+      // from the LOCKED row instead of the pre-tx one.
+      const wasPaying = isPayingRow(lockedTenant, lockedSub?.planKey ?? null);
+      // Coming from a NON-paying status (READ_ONLY / SUSPENDED / CANCELLED / TRIAL) the tenant
+      // still carries its old planKey but contributes 0 to the run-rate — so re-entry is a full
+      // +base delta, mirroring the negative delta emitted when access ended (billing-cron
+      // applyScheduledCancellations). Only an already-ACTIVE tenant nets against its old plan.
+      // A row with a NULL planKey is excluded from `MrrService`'s snapshot the same way
+      // (`planKey: { not: null }`) — e.g. a manual platform-admin activation — so it too
+      // contributes 0 and writing a planKey onto it books the full base, even though
+      // `lockedFromKey` resolves through the legacy enum for ranking.
+      const oldPlanMonthly =
+        lockedTenant.status === "ACTIVE" && lockedSub?.planKey
+          ? this.planMonthly(version, lockedFromKey)
+          : 0;
+      const priorByCode = new Map<string, { id: string; qty: number; snapshot: unknown }>();
+      for (const row of lockedAddons) {
+        const code = addonSkuCode(row);
+        if (code)
+          priorByCode.set(code, { id: row.id, qty: row.quantity, snapshot: row.priceSnapshot });
+      }
+      // Only self-service add-ons are the tenant's to drop: an admin-granted SKU the payload
+      // is not even allowed to name must not be revoked by omitting it.
+      const toDisable = [...priorByCode.keys()].filter(
+        (c) => !desired.has(c) && isSelfServiceAddon(c),
+      );
+
       await this.planTransition.onPlanChange(tx, transition, preparedTransition);
       await tx.tenantSubscription.upsert({
         where: { tenantId },
@@ -396,7 +418,7 @@ export class SubscriptionMutationService {
       await this.events.emit(
         tenantId,
         BILLING_EVENTS.PLAN_CHANGED,
-        { fromPlan: priorSub?.planKey ?? null, toPlan: input.planKey, cycle: input.cycle },
+        { fromPlan: lockedSub?.planKey ?? null, toPlan: input.planKey, cycle: input.cycle },
         { amountDelta: roundMoney(Number(def.monthlyPrice ?? 0) - oldPlanMonthly), actorId, tx },
       );
       // B865 / SA-277 FIX-4: every add-on booking here routes through the ONE ledger helper —
@@ -454,7 +476,7 @@ export class SubscriptionMutationService {
       // SAME crossing helper `activateManualSubscription` uses: booked once, in full, only if
       // this subscribe() is what moves the tenant into the paying set (`!wasPaying`); if the
       // tenant was already paying, its contribution is already on the ledger and nothing changes.
-      const kept = priorAddons.filter((row) => {
+      const kept = lockedAddons.filter((row) => {
         const code = addonSkuCode(row);
         return code != null && !desired.has(code) && !toDisable.includes(code);
       });

@@ -475,6 +475,46 @@ describe("AddonService.enableAddon — B342 concurrency lock", () => {
   });
 });
 
+/**
+ * F2 (pre-merge review, 2026-09-25): the pre-check `existing?.active` (line ~179) runs OUTSIDE
+ * the tx, before the Stripe item is even created — `SubscriptionMutationService.enableAddon`
+ * (the tenant self-serve path, `subscription-mutation.service.ts`) holds NO advisory lock
+ * against this admin path (its own lock is keyed per its own call, not shared), so it can
+ * activate the SAME row between this admin's pre-check and its tx. Before the fix, the tx
+ * always booked `before: {0,0}` unconditionally — double-booking the add-on's contribution on
+ * top of whatever the concurrent subscribe() already booked. The fix re-checks under the lock,
+ * INSIDE the tx, and refuses (+ best-effort deletes the now-orphaned Stripe item) instead.
+ */
+describe("AddonService.enableAddon — F2 activation race with the tenant self-serve path", () => {
+  it("F2: the row is already active by the time the lock is held — refuses instead of double-booking, and cleans up the orphan Stripe item", async () => {
+    const del = jest.fn().mockResolvedValue({});
+    const create = jest.fn().mockResolvedValue({ id: "si_orphan" });
+    const { svc, prisma, events } = make({
+      publishedSkus: ["MSRP"],
+      stripe: { isConfigured: true, client: { subscriptionItems: { create, del } } },
+      subscription: { stripeSubId: "sub_1" },
+    });
+    // Pre-check (outside the tx): not active yet — passes. Locked re-read (inside the tx,
+    // after `lockTenantForLedger`): a concurrent subscribe() already activated it at qty 2.
+    prisma.tenantAddon.findUnique.mockResolvedValueOnce(null).mockResolvedValueOnce({
+      id: "addon1",
+      active: true,
+      quantity: 2,
+      priceSnapshot: 10,
+    });
+
+    await expect(svc.enableAddon("t1", "msrp", "price_1")).rejects.toBeInstanceOf(
+      ConflictException,
+    );
+
+    // The orphan Stripe item THIS call created is cleaned up best-effort.
+    expect(del).toHaveBeenCalledWith("si_orphan");
+    // No double-booked ledger event, and no row write from the losing call.
+    expect(events.emit).not.toHaveBeenCalled();
+    expect(prisma.tenantAddon.upsert).not.toHaveBeenCalled();
+  });
+});
+
 describe("AddonService.enableAddon — B524 requires enforcement (delegates to EntitlementAuthority)", () => {
   // The requires LOGIC (allOf/anyOf, fail-open, the ack short-circuit) is tested once, directly
   // on `EntitlementAuthority.assertFeatureRequiresMet` (`entitlement-authority.requires.spec.ts`
