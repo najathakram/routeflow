@@ -167,6 +167,8 @@ describe("TenantConfigSnapshotAdminService (A2 step c)", () => {
     ["a NaN count", { restored: Number.NaN, skipped: 0, keptNewer: 0, unchanged: 0 }],
     ["an Infinity count", { restored: 1, skipped: Infinity, keptNewer: 0, unchanged: 0 }],
     ["a numeric string", { restored: "2", skipped: 0, keptNewer: 0, unchanged: 0 }],
+    ["a negative count", { restored: -1, skipped: 0, keptNewer: 0, unchanged: 0 }],
+    ["a fractional count", { restored: 1, skipped: 1.5, keptNewer: 0, unchanged: 0 }],
     ["a non-object report", "abc"],
   ])("list() reports null, never made-up counts, for %s", async (_label, report) => {
     const { svc, snapshots, prisma } = build();

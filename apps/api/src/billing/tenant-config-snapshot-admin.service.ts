@@ -67,6 +67,9 @@ export interface RestoreNowResult extends RestoreResult {
  */
 export const ADMIN_RESTORE_TX_OPTIONS = { timeout: 30_000, maxWait: 5_000 } as const;
 
+/** A restore-report count is a whole number of rows: anything else makes the report unreadable. */
+const isCount = (v: unknown): v is number => Number.isInteger(v) && (v as number) >= 0;
+
 /**
  * Admin surface for the tenant "Configuration snapshots" tab (Lane B A2 step c): list, preview and
  * "Restore now". A thin orchestration over `TenantConfigSnapshotService` — it only adds what the
@@ -119,14 +122,14 @@ export class TenantConfigSnapshotAdminService {
       // Newest-first order + set-once: an id can appear twice only via a bug (idempotency guards
       // both restore paths against a duplicate), so the first (newest) row wins if it ever did.
       if (!snapshotId || reportBySnapshotId.has(snapshotId)) continue;
-      // Only a report whose four counts are all finite numbers is shown; anything else ({},
+      // Only a report whose four counts are all non-negative integers is shown; anything else ({},
       // "abc", a missing count) is unreadable and reports null, never a made-up 0 or NaN.
       const report = meta?.report as Record<string, unknown> | undefined;
       const restored = report?.restored;
       const skipped = report?.skipped;
       const keptNewer = report?.keptNewer;
       const unchanged = report?.unchanged;
-      if (![restored, skipped, keptNewer, unchanged].every(Number.isFinite)) continue;
+      if (![restored, skipped, keptNewer, unchanged].every(isCount)) continue;
       reportBySnapshotId.set(snapshotId, {
         automatic: meta?.automatic === true,
         restored: restored as number,
