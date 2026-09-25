@@ -760,33 +760,6 @@ describe("CustomersService", () => {
         "defaultDepositPercent",
       );
     });
-
-    // B858/B859 harness note (bug-test-plan.md): FIX3 adds a third `options.compliance` param to
-    // `update()` for the importer's tobacco-licence fields. `update()` has never touched
-    // addresses, so it must never geocode regardless of that new param — pinned here so a future
-    // change that starts threading address data through `options` cannot silently reintroduce a
-    // geocode call. `update` has no third parameter today, hence the `as any` cast (same pattern
-    // as this describe block's other calls).
-    it("update(id, {}, { compliance }) writes only compliance fields and never geocodes", async () => {
-      prisma.customer.findUnique.mockResolvedValue(MOCK_CUSTOMER);
-      prisma.customer.update.mockResolvedValue(MOCK_CUSTOMER);
-      const geocodeSpy = jest.spyOn(service as any, "geocodeIfPossible");
-
-      await (service.update as any)(
-        "cust-1",
-        {},
-        { compliance: { tobaccoLicenseNo: "TL-1", smsConsent: true } },
-      );
-
-      expect(geocodeSpy).not.toHaveBeenCalled();
-      const data = prisma.customer.update.mock.calls[0][0].data;
-      expect(data).toMatchObject({ tobaccoLicenseNo: "TL-1" });
-      expect(data).not.toHaveProperty("addresses");
-      // SA-305 (2): update() is never a consent writer — consent without its evidence row is
-      // exactly the gap setCustomerConsent closes, so a stray consent key is dropped here.
-      expect(data).not.toHaveProperty("smsConsent");
-      expect(data).not.toHaveProperty("consentUpdatedAt");
-    });
   });
 
   // ─── addAddress ───────────────────────────────────────────────────────────

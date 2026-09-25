@@ -213,4 +213,26 @@ describe("CustomersService.setCustomerConsent (SA-305 (2))", () => {
     const channels = prisma.auditLog.create.mock.calls.map((c: any) => c[0]?.data?.meta?.channel);
     expect(channels.sort()).toEqual(["sms", "wa"]);
   });
+
+  // B858/B859: update()'s `options.compliance` (importer-only, never HTTP) writes the tobacco
+  // licence fields and nothing else — never an address (so never a geocode) and never consent,
+  // which only setCustomerConsent writes, with its evidence row. Moved here from
+  // customers.service.spec.ts, which sits at its size-ratchet ceiling.
+  it("update(id, {}, { compliance }) writes only licence fields, never consent, never geocodes", async () => {
+    prisma.customer.findUnique.mockResolvedValue({ id: "cust-1", deletedAt: null });
+    prisma.customer.update.mockResolvedValue({ id: "cust-1" });
+    const geocodeSpy = jest.spyOn(service as any, "geocodeIfPossible");
+
+    await (service.update as any)(
+      "cust-1",
+      {},
+      { compliance: { tobaccoLicenseNo: "TL-1", smsConsent: true } },
+    );
+
+    expect(geocodeSpy).not.toHaveBeenCalled();
+    const data = prisma.customer.update.mock.calls[0][0].data;
+    expect(data).toEqual({ tobaccoLicenseNo: "TL-1" });
+    expect(prisma.tenantTransaction).not.toHaveBeenCalled();
+    expect(prisma.auditLog.create).not.toHaveBeenCalled();
+  });
 });

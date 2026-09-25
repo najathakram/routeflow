@@ -9,7 +9,7 @@ import {
   UnprocessableEntityException,
 } from "@nestjs/common";
 import * as crypto from "crypto";
-import { BuyerMergeRequestStatus, MergeInitiator, Prisma } from "@prisma/client";
+import { BuyerMergeRequestStatus, MergeInitiator } from "@prisma/client";
 import { ConfigService } from "@nestjs/config";
 import * as bcrypt from "bcrypt";
 import { PrismaService } from "../prisma/prisma.service";
@@ -54,7 +54,7 @@ import { EntitlementsService } from "../billing/entitlements.service";
 import { buildPlanGateBody, PlanGateUpgrade } from "../billing/plan-gate";
 import { EmailService } from "../email/email.service";
 import { addressStateFields } from "./address-state";
-import { CustomerComplianceInput } from "./customer-compliance-input";
+import * as compliance from "./customer-compliance-input";
 // Same grace window BillingCronService.expireGrace() clears hourly — the create()
 // gate applies it synchronously rather than waiting for the cron to run.
 import { GRACE_DAYS } from "../billing/plan-catalog.constants";
@@ -765,11 +765,7 @@ export class CustomersService {
     }
   }
 
-  async update(
-    id: string,
-    dto: UpdateCustomerDto,
-    options?: { compliance?: CustomerComplianceInput },
-  ) {
+  async update(id: string, dto: UpdateCustomerDto, options?: compliance.CustomerUpdateOptions) {
     const existing = await this.findCustomerOrThrow(id);
     // REG-B170: a removed customer's page still rendered its edit controls; refuse the write
     // rather than silently editing a customer nobody can see in the list.
@@ -778,7 +774,7 @@ export class CustomersService {
     }
     return this.prisma.forTenant().customer.update({
       where: { id },
-      data: {
+      data: compliance.withCompliance(options, {
         ...(dto.businessName && { businessName: dto.businessName }),
         ...(dto.contactName && { contactName: dto.contactName }),
         ...(dto.phone !== undefined && { phone: dto.phone }),
@@ -813,75 +809,13 @@ export class CustomersService {
         ...(dto.orderStatusEmails !== undefined && {
           orderStatusEmails: dto.orderStatusEmails,
         }),
-        ...(options?.compliance?.tobaccoLicenseNo !== undefined && {
-          tobaccoLicenseNo: options.compliance.tobaccoLicenseNo,
-        }),
-        ...(options?.compliance?.tobaccoLicenseExpiry !== undefined && {
-          tobaccoLicenseExpiry: options.compliance.tobaccoLicenseExpiry,
-        }),
-        // Consent is never written here — only setCustomerConsent writes it, with its evidence.
-      },
+      }),
     });
   }
 
-  /**
-   * SA-305 (2): the ONLY writer of SMS/WhatsApp consent. Self-opening: one tenantTransaction
-   * updates the consent column(s) AND inserts one evidence row per channel via
-   * `tx.auditLog.create` (never `AuditService.log`, which swallows errors), so a failing evidence
-   * insert rolls the flag back and a failing flag update leaves no evidence row. Used by the CSV
-   * importer (`ImportService.applyCustomerCommercialFields`); no UI consent capture exists yet.
-   */
-  /** Never call from inside another open tenantTransaction (pinned: consent-caller-no-nesting.spec.ts). */
-  async setCustomerConsent(
-    customerId: string,
-    consent: { smsConsent?: boolean; waConsent?: boolean },
-    evidence: { userId: string; source: string; fileName?: string; row?: number },
-  ): Promise<void> {
-    if (consent.smsConsent === undefined && consent.waConsent === undefined) return;
-    await this.prisma.tenantTransaction(async (tx: Prisma.TransactionClient) => {
-      const existing = await tx.customer.findFirst({ where: { id: customerId } });
-      if (!existing || existing.deletedAt) {
-        throw new ConflictException("Restore the customer first");
-      }
-
-      const now = new Date();
-      await tx.customer.update({
-        where: { id: customerId },
-        data: {
-          ...(consent.smsConsent !== undefined && { smsConsent: consent.smsConsent }),
-          ...(consent.waConsent !== undefined && { waConsent: consent.waConsent }),
-          consentUpdatedAt: now,
-        },
-      });
-
-      const channels: { field: "smsConsent" | "waConsent"; channel: "sms" | "wa" }[] = [
-        { field: "smsConsent", channel: "sms" },
-        { field: "waConsent", channel: "wa" },
-      ];
-      for (const { field, channel } of channels) {
-        const value = consent[field];
-        if (value === undefined) continue;
-        await tx.auditLog.create({
-          data: {
-            tenantId: this.prisma.getTenantId(),
-            userId: evidence.userId,
-            action: `customer.consent.${evidence.source}`,
-            entityType: "Customer",
-            entityId: customerId,
-            meta: {
-              source: evidence.source,
-              userId: evidence.userId,
-              fileName: evidence.fileName ?? null,
-              row: evidence.row ?? null,
-              channel,
-              value,
-              timestamp: now.toISOString(),
-            },
-          },
-        });
-      }
-    });
-  }
+  /** SA-305 (2): sole consent writer, self-opening tx; never call inside a tenantTransaction. */
+  readonly setCustomerConsent = (...args: compliance.ConsentArgs) =>
+    compliance.writeConsentWithEvidence(this.prisma, ...args);
 
   async changeStatus(id: string, dto: ChangeCustomerStatusDto) {
     const customer = await this.findCustomerOrThrow(id);

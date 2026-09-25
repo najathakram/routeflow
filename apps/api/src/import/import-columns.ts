@@ -1,4 +1,4 @@
-import { PRODUCT_IMPORT_COLUMNS, CUSTOMER_IMPORT_COLUMNS } from "@routeflow/types";
+import { PRODUCT_IMPORT_COLUMNS, CUSTOMER_IMPORT_COLUMNS } from "./import-column-aliases";
 import { parseImportMoney, parseImportNumber } from "./parse-import-number";
 
 /**
@@ -220,7 +220,9 @@ const MAX_INT = 2_147_483_647;
 function aliasesFor(columns: { field: string; aliases: string[] }[], field: string): string[] {
   const entry = columns.find((c) => c.field === field);
   if (!entry) {
-    throw new Error(`import-columns: no alias entry for field "${field}" in @routeflow/types`);
+    throw new Error(
+      `import-columns: no alias entry for field "${field}" in import-column-aliases.ts`,
+    );
   }
   return entry.aliases;
 }
@@ -228,7 +230,9 @@ function aliasesFor(columns: { field: string; aliases: string[] }[], field: stri
 function canonicalFor(columns: { field: string; canonical: string }[], field: string): string {
   const entry = columns.find((c) => c.field === field);
   if (!entry) {
-    throw new Error(`import-columns: no alias entry for field "${field}" in @routeflow/types`);
+    throw new Error(
+      `import-columns: no alias entry for field "${field}" in import-column-aliases.ts`,
+    );
   }
   return entry.canonical;
 }

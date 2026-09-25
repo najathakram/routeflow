@@ -2,9 +2,9 @@
 //
 // Single source of truth for the CANONICAL display header + alias list per importable field,
 // shared between `apps/api/src/import/import-columns.ts` (which attaches parsers/gates to each
-// entry) and the web help text that documents accepted column headers. Never redeclare an alias
-// list a second time — apps/api imports these constants rather than hand-typing its own aliases,
-// so the two surfaces cannot drift apart.
+// entry) and the web help text that documents accepted column headers. apps/api may not
+// value-import this package at runtime, so it keeps a mirror (import-column-aliases.ts) pinned
+// deep-equal to these lists by import-column-aliases.spec.ts — the two surfaces cannot drift.
 //
 // No `averageCost` entry — the ledger seeds it (SA-136); an "Average Cost" column header must
 // resolve to nothing (see PRODUCT_IMPORT_COLUMNS below and import-columns.spec.ts P4/P5).
