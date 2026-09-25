@@ -9,6 +9,7 @@ jest.mock("./invoice-pdf.service", () => ({ InvoicePdfService: class InvoicePdfS
 jest.mock("../storage/compress.util", () => ({ compressDocument: jest.fn() }));
 jest.mock("../common/msrp", () => ({ loadMsrpMap: jest.fn().mockResolvedValue(new Map()) }));
 
+import { ConflictException } from "@nestjs/common";
 import { Test } from "@nestjs/testing";
 import { InvoiceStatus } from "@prisma/client";
 import { InvoicesService } from "./invoices.service";
@@ -151,9 +152,9 @@ describe("InvoicesService.applyPriceAdjustment — regulated ledger sync (B662)"
     const tx = {
       $executeRaw: jest.fn().mockResolvedValue(1),
       invoiceItem: { update: jest.fn().mockResolvedValue({}), findMany: jest.fn() },
-      invoice: { update: jest.fn().mockResolvedValue({}), findFirst: jest.fn() },
+      invoice: { update: jest.fn().mockResolvedValue({}), findUnique: jest.fn() },
     };
-    tx.invoice.findFirst.mockResolvedValue(null);
+    tx.invoice.findUnique.mockResolvedValue(null);
     tx.invoiceItem.findMany.mockResolvedValue([
       { ...regulated("li-1"), unitPrice: 5, subtotal: 50, categoryTaxAmount: 3.5 },
     ]);
@@ -192,9 +193,13 @@ describe("InvoicesService.applyPriceAdjustment — regulated ledger sync (B662)"
       invoice: {
         update: jest.fn().mockResolvedValue({}),
         // a payment landed after the pre-tx read: the fresh copy under the lock carries it
-        findFirst: jest.fn(async () => {
+        findUnique: jest.fn(async () => {
           order.push("reread invoice");
-          return { payments: [{ status: "PAID", amount: 999 }] };
+          return {
+            status: InvoiceStatus.SENT,
+            items: [regulated("li-1")],
+            payments: [{ status: "PAID", amount: 999 }],
+          };
         }),
       },
     };
@@ -202,6 +207,57 @@ describe("InvoicesService.applyPriceAdjustment — regulated ledger sync (B662)"
     await adjust(["li-1"]);
     expect(order.slice(0, 3)).toEqual(["lock invoice", "reread invoice", "write item"]);
     expect(tx.invoice.update.mock.calls[0][0].data.status).toBe(InvoiceStatus.PAID);
+  });
+
+  describe("N-1 / N-2: everything is re-read UNDER the Invoice lock", () => {
+    const txWith = (live: any) => {
+      const tx = {
+        $executeRaw: jest.fn().mockResolvedValue(1),
+        invoiceItem: {
+          update: jest.fn().mockResolvedValue({}),
+          updateMany: jest.fn().mockResolvedValue({}),
+          findMany: jest.fn().mockResolvedValue([]),
+        },
+        invoice: {
+          update: jest.fn().mockResolvedValue({}),
+          findUnique: jest.fn().mockResolvedValue(live),
+        },
+      };
+      prisma.tenantTransaction.mockImplementationOnce(async (fn: any) => fn(tx));
+      return tx;
+    };
+
+    it("N-1: a payment or write-off that landed after the pre-lock read (now PAID) is a 409 and nothing is written", async () => {
+      arrange(InvoiceStatus.SENT, [regulated("li-1")]);
+      const tx = txWith({ status: InvoiceStatus.PAID, items: [regulated("li-1")], payments: [] });
+      await expect(adjust(["li-1"])).rejects.toThrow(ConflictException);
+      expect(tx.invoiceItem.update).not.toHaveBeenCalled();
+      expect(tx.invoice.update).not.toHaveBeenCalled();
+      expect(ledger.correctSaleForPriceChange).not.toHaveBeenCalled();
+    });
+
+    it("N-2: a line added or removed since the pre-lock read is a 409, not a stale re-price", async () => {
+      arrange(InvoiceStatus.SENT, [regulated("li-1")]);
+      const tx = txWith({
+        status: InvoiceStatus.SENT,
+        items: [regulated("li-1"), regulated("li-2")],
+        payments: [],
+      });
+      await expect(adjust(["li-1"])).rejects.toThrow(ConflictException);
+      expect(tx.invoiceItem.update).not.toHaveBeenCalled();
+    });
+
+    it("N-2: the writes are built from the lines re-read under the lock (their live quantity, not the pre-lock copy)", async () => {
+      arrange(InvoiceStatus.SENT, [regulated("li-1")]); // pre-lock qty 10, subtotal 100
+      const tx = txWith({
+        status: InvoiceStatus.SENT,
+        items: [regulated("li-1", { qty: 20, subtotal: 200 })], // edited to 20 meanwhile
+        payments: [],
+      });
+      await adjust(["li-1"]);
+      const data = tx.invoiceItem.update.mock.calls[0][0].data;
+      expect(Number(data.subtotal)).toBe(100); // 20 x the new $5, not 10 x $5
+    });
   });
 
   it("ATOMIC: a failing ledger write fails the adjustment (the transaction rolls both back) and nothing after it runs", async () => {

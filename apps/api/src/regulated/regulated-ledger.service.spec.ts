@@ -729,6 +729,33 @@ describe("RegulatedLedgerService", () => {
       });
     });
 
+    it("R-1: a STANDARD (LINE_UNIT) return after a price correction reverses its share of the CORRECTED net and tax (no correction map needed)", async () => {
+      const base = saleRow({ qty: 72, unitBasisQty: 72, netSales: 240, categoryTax: 48 });
+      const correction = saleRow({
+        correctsEntryId: base.id,
+        qty: 0,
+        unitBasisQty: 0,
+        netSales: 60,
+        categoryTax: 12,
+      });
+      arrange({ sales: [base, correction], items: [{ id: "ii-1", productId: "p1" }] });
+      await service.reverseReturnEntries({
+        returnId: "ret-1",
+        orderId: "ord-1",
+        returnedByProduct: new Map([["p1", 12]]),
+        returnedUnit: "LINE_UNIT",
+        db: prisma,
+      });
+      expect(written()).toHaveLength(1);
+      expect(written()[0]).toMatchObject({
+        entryType: "REVERSAL",
+        qty: -12,
+        unitBasisQty: -12,
+        netSales: -50, // 12/72 of $300, not of the base $240 (-40)
+        categoryTax: -10, // 12/72 of $60, not of the base $48 (-8)
+      });
+    });
+
     // B661/B671 rd2 (live production regression) — the regression pin CI actually runs. The
     // DB-lane spec (return-reversal-unit-axis.db.spec.ts) proves this through the real caller,
     // but nothing in CI invokes `npm run local:test:db`; this mock-level case is what a future
@@ -1221,7 +1248,9 @@ describe("RegulatedLedgerService", () => {
         returnedUnit: "PIECES", // B671 rd2: this fixture is piece-denominated, matching the INLINE caller
         db: prisma,
       });
-      expect(written()[0]).toMatchObject({ qty: -7.7, unitBasisQty: -7.7, netSales: -76 });
+      // B662: a non-closing chunk books its share of what the line STILL HOLDS: $76 x 7.7/8 = $73.15
+      // (it can no longer exceed the remaining, so the clamp below it is defense in depth only).
+      expect(written()[0]).toMatchObject({ qty: -7.7, unitBasisQty: -7.7, netSales: -73.15 });
     });
 
     it("a non-closing partial return can NEVER drive the line net below 0 (reprice-to-zero)", async () => {
@@ -1335,8 +1364,8 @@ describe("RegulatedLedgerService", () => {
       expect(written()[0]).toMatchObject({
         qty: -7.7,
         unitBasisQty: -7.7,
-        netSales: -76,
-        categoryTax: -15.2,
+        netSales: -73.15,
+        categoryTax: -14.63,
       });
     });
 

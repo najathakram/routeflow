@@ -6213,17 +6213,19 @@ export class InvoicesService {
       // B294 (SA-141): a legacy order/estimate-derived invoice (every line taxRate 0, a real
       // regular tax) keeps its tax — the inferred flat rate is stamped onto its lines first, in the
       // SAME transaction as the re-price below (B662: item writes, totals and ledger commit together).
-      const inferred = inferredFlatRate({ ...inv, lines: inv.items });
-      const itemUpdates = buildPriceAdjustmentUpdates({
-        items: inv.items,
-        localPriceMap,
-        categoriesById,
-        unitsPerBoxByProduct,
-        isTaxExempt,
-      });
+      // B662 (N-1/N-2): the status guard, the lines and the payments are all re-read UNDER the Invoice
+      // lock (lockInvoiceForPriceAdjustment), and the writes are built from THOSE lines.
       // B662: item writes, invoice totals and the regulated-ledger sync commit or fail TOGETHER.
       await this.prisma.tenantTransaction(async (tx: any) => {
         const live = await lockInvoiceForPriceAdjustment(tx, inv); // Invoice FIRST, then its rows
+        const inferred = inferredFlatRate({ ...live, lines: live.items });
+        const itemUpdates = buildPriceAdjustmentUpdates({
+          items: live.items,
+          localPriceMap,
+          categoriesById,
+          unitsPerBoxByProduct,
+          isTaxExempt,
+        });
         if (inferred?.verified) {
           await tx.invoiceItem.updateMany({
             where: { invoiceId: inv.id, taxRate: 0 },

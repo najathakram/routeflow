@@ -1,3 +1,4 @@
+import { ConflictException } from "@nestjs/common";
 import { InvoiceStatus } from "@prisma/client";
 import {
   computeCategoryTax,
@@ -110,14 +111,40 @@ export function buildPriceAdjustmentUpdates(args: {
 /**
  * The adjustment tx's FIRST statement (N-3): the Invoice row lock, BEFORE any InvoiceItem row is
  * written. The order-edit path takes the Invoice first and its rows after (orders.service
- * resync), so locking the items first here could deadlock against it. Status, payments, discount,
- * shipping and the due date are then re-read UNDER the lock, so the recomputed status and total
- * never use a copy that a concurrent payment or edit has already made stale.
+ * resync), so locking the items first here could deadlock against it. Everything the adjustment
+ * decides on is then re-read UNDER the lock (N-1/N-2): the status guard is re-checked (a payment or
+ * write-off that landed after the pre-lock read is a 409, never an adjustment of a settled invoice),
+ * the payments feed the recomputed status, and the returned `items` are the lines the caller builds
+ * its writes from. A line added or removed since the pre-lock read is a 409 too: the reference data
+ * loaded for the pre-lock lines (categories, pack sizes) would not cover it.
  */
 export async function lockInvoiceForPriceAdjustment(tx: any, inv: any): Promise<any> {
   await tx.$executeRaw`SELECT id FROM "Invoice" WHERE id = ${inv.id} FOR UPDATE`;
-  const live = await tx.invoice.findFirst({ where: { id: inv.id }, include: { payments: true } });
-  return live ? { ...inv, ...live } : inv;
+  const live = await tx.invoice.findUnique({
+    where: { id: inv.id },
+    include: { items: true, payments: true },
+  });
+  if (!live) return inv;
+  if (
+    live.status === InvoiceStatus.PAID ||
+    live.status === InvoiceStatus.WRITTEN_OFF ||
+    live.status === InvoiceStatus.VOID
+  ) {
+    throw new ConflictException(
+      `The invoice became ${live.status} while the price was being adjusted. Issue a credit note instead.`,
+    );
+  }
+  const ids = (rows: any[]) =>
+    rows
+      .map((r) => r.id)
+      .sort()
+      .join("|");
+  if (ids(live.items ?? []) !== ids(inv.items ?? [])) {
+    throw new ConflictException(
+      "The invoice's lines changed while the price was being adjusted. Retry.",
+    );
+  }
+  return { ...inv, ...live };
 }
 
 /**

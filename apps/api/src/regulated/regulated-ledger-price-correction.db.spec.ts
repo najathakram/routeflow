@@ -291,12 +291,16 @@ describeDb("B662 ledger price correction — real Postgres", () => {
         ],
         db: prisma,
       });
-    const returnPieces = (returnId: string, pieces: number) =>
+    const returnPieces = (
+      returnId: string,
+      pieces: number,
+      returnedUnit: "PIECES" | "LINE_UNIT" = "PIECES",
+    ) =>
       ledger.reverseReturnEntries({
         returnId,
         orderId,
         returnedByProduct: new Map([[product.id, pieces]]),
-        returnedUnit: "PIECES",
+        returnedUnit,
         db: prisma,
       });
     const reversalOf = (returnId: string) =>
@@ -327,5 +331,59 @@ describeDb("B662 ledger price correction — real Postgres", () => {
       -roundMoney(25.01 - 10.0 - 7.5),
     ); // tax closes the same way: 25.01 - 10.00 - 7.50 = 7.51
     expect(await f.drivenSums()).toEqual({ net: 0, tax: 0, qty: 0 });
+  }, 60_000);
+
+  // The ledger must equal the invoice pro-rate at EVERY step: invoice amount x pieces still held / sold.
+  const expectHeld = async (
+    f: Awaited<ReturnType<typeof seedDriven>>,
+    invoiceNet: number,
+    invoiceTax: number,
+    sold: number,
+  ) => {
+    const held = await f.drivenSums();
+    expect(held.net).toBe(roundMoney((invoiceNet * held.qty) / sold));
+    expect(held.tax).toBe(roundMoney((invoiceTax * held.qty) / sold));
+    return held;
+  };
+
+  it("R-2: return -> adjust -> return: the second return books exactly its share of the CORRECTED amount (-50, not -48.33)", async () => {
+    const f = await seedDriven("r2-order1", 240, 48, 72);
+    await f.returnPieces("ret-o1-1", 12);
+    expect(Number((await f.reversalOf("ret-o1-1")).netSales)).toBe(-40); // 12/72 of $240
+    await expectHeld(f, 240, 48, 72);
+    expect(await f.correctTo(300, 60)).toBe(1); // over the 60 pieces still held: +$50 / +$12
+    await expectHeld(f, 300, 60, 72);
+    await f.returnPieces("ret-o1-2", 12);
+    const rev = await f.reversalOf("ret-o1-2");
+    expect(Number(rev.netSales)).toBe(-50); // 12/60 of the $250 still held
+    expect(Number(rev.categoryTax)).toBe(-10);
+    await expectHeld(f, 300, 60, 72);
+  }, 60_000);
+
+  it("R-1: a STANDARD (LINE_UNIT) return after a correction reverses its share of the corrected amount: -50 / -10, not -40 / -8", async () => {
+    const f = await seedDriven("r1-lineunit", 240, 48, 72);
+    expect(await f.correctTo(300, 60)).toBe(1);
+    await f.returnPieces("ret-lu-1", 12, "LINE_UNIT");
+    const rev = await f.reversalOf("ret-lu-1");
+    expect(Number(rev.netSales)).toBe(-50);
+    expect(Number(rev.categoryTax)).toBe(-10);
+    await expectHeld(f, 300, 60, 72);
+    // ... and return -> adjust -> return on the LINE_UNIT axis too
+    await f.returnPieces("ret-lu-2", 12, "LINE_UNIT");
+    expect(await f.correctTo(360, 72)).toBe(1);
+    await f.returnPieces("ret-lu-3", 12, "LINE_UNIT");
+    await expectHeld(f, 360, 72, 72);
+  }, 60_000);
+
+  it("R-2: adjust -> return -> adjust -> return on the PIECES axis keeps the ledger on the invoice pro-rate at every step, net AND tax", async () => {
+    const f = await seedDriven("r2-order2", 240, 48, 72);
+    await f.correctTo(300, 60);
+    await expectHeld(f, 300, 60, 72);
+    await f.returnPieces("ret-o2-1", 12);
+    await expectHeld(f, 300, 60, 72);
+    await f.correctTo(330, 66);
+    await expectHeld(f, 330, 66, 72);
+    await f.returnPieces("ret-o2-2", 12);
+    await expectHeld(f, 330, 66, 72);
   }, 60_000);
 });
