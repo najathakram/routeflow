@@ -269,4 +269,13 @@ describe("resolveParkedReversal — resume the live walk (SA-167)", () => {
     );
     expect(bookedByLine).toEqual({ "oi-2": -36, "oi-1": -4 });
   });
+
+  it("pin: a live product with NO pack makes a legacy-shaped later row non-boxed-now (piece-axis) in the shared classifier, so the walk books its qty as pieces (the DB fixture must give the product a live pack for row 2 to park)", async () => {
+    ledger = [sale(1, 2), sale(2, 3)];
+    invoiceItems = [ii(1), ii(2)];
+    prisma.product.findMany.mockResolvedValue([{ id: "p1", unitsPerBox: null }]);
+    const res = await service.resolveParkedReversal(prisma, parked(1, 60), 12);
+    expect(res.bookedPieces).toBe(27); // 24 on row 1 + row 2's 3 read as pieces
+    expect(res.parkedPieces).toBe(0);
+  });
 });

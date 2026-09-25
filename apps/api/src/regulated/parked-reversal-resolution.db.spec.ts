@@ -102,6 +102,10 @@ describeDb(
         priorReversalTax?: number;
         returnedPieces: number;
         returnStatus?: "RECEIVED" | "CANCELLED";
+        /** The live product's box size. Default null (the single-row cases resolve on the operator's
+         *  pack); a multi-row case needs a live pack so the OTHER rows classify legacy (not
+         *  non-boxed-now) and park instead of booking their box count as pieces. */
+        livePack?: number;
       },
     ): Promise<SeedResult> {
       const product = await raw.product.create({
@@ -109,7 +113,7 @@ describeDb(
           name: `${tag} product`,
           unit: "box",
           pricePerUnit: "10.00",
-          unitsPerBox: null, // legacy: no live pack snapshot either — exactly why it parked
+          unitsPerBox: opts.livePack ?? null, // legacy: no live pack snapshot either — exactly why it parked
           trackedCategoryId: categoryId,
           tenantId,
         },
@@ -600,6 +604,7 @@ describeDb(
         netSales: 20,
         categoryTax: 4,
         returnedPieces: 60,
+        livePack: 12,
       });
       const second = await addSecondRow(f, { qty: 3, netSales: 30, categoryTax: 6, legacy: true });
 
