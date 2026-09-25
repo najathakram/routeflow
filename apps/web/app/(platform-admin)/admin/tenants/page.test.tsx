@@ -1,0 +1,94 @@
+import * as React from "react";
+import { render, screen, waitFor, fireEvent } from "@testing-library/react";
+import AdminTenantsPage from "./page";
+
+jest.mock("next/link", () => ({
+  __esModule: true,
+  default: ({ children, href }: { children: React.ReactNode; href: string }) => (
+    <a href={href}>{children}</a>
+  ),
+}));
+
+const mockPatch = jest.fn();
+
+jest.mock("@/lib/admin-api", () => ({
+  superAdminClient: {
+    get: jest.fn(() =>
+      Promise.resolve({
+        data: {
+          data: [
+            {
+              id: "t-1",
+              slug: "acme",
+              name: "Acme",
+              status: "TRIAL",
+              plan: "STARTER",
+              planKey: "STARTER",
+              trialEndsAt: null,
+              businessName: "Acme",
+              counts: { users: 1, customers: 0, orders: 0 },
+              createdAt: "2026-01-01T00:00:00.000Z",
+            },
+          ],
+          meta: { total: 1, page: 1, limit: 50, pages: 1, deletedCount: 0 },
+        },
+      }),
+    ),
+    patch: (...args: unknown[]) => mockPatch(...args),
+  },
+}));
+
+jest.mock("@/lib/impersonation", () => ({ setImpersonation: jest.fn() }));
+jest.mock("@/lib/tenant-cookie", () => ({ setTenantCookie: jest.fn() }));
+
+const mockFetchPlanCatalog = jest.fn();
+jest.mock("@/lib/api/platform-pricing", () => ({
+  fetchPlanCatalog: () => mockFetchPlanCatalog(),
+}));
+
+function entry(planKey: string, sortOrder: number) {
+  return {
+    planKey,
+    name: planKey,
+    monthlyPrice: "0",
+    annualPrice: null,
+    isCustom: false,
+    sortOrder,
+  };
+}
+
+beforeEach(() => {
+  jest.clearAllMocks();
+  mockPatch.mockResolvedValue({ data: {} });
+  mockFetchPlanCatalog.mockResolvedValue({
+    version: 11,
+    effectiveAt: null,
+    plans: [entry("GROWTH", 1), entry("STARTER", 0), entry("ENTERPRISE", 3), entry("SCALE", 2)],
+  });
+});
+
+describe("REG-B857: tenants list bulk Change Plan", () => {
+  it("REG-B857 T4: the bulk 'New plan' select offers the catalog plans and applies GROWTH", async () => {
+    render(<AdminTenantsPage />);
+    fireEvent.click(await screen.findByRole("checkbox", { name: "Select acme" }));
+    fireEvent.click(screen.getByRole("button", { name: "Change Plan" }));
+
+    const select = (await screen.findByRole("combobox", { name: "New plan" })) as HTMLSelectElement;
+    await waitFor(() =>
+      expect(Array.from(select.options).map((o) => o.value)).toEqual([
+        "STARTER",
+        "GROWTH",
+        "SCALE",
+        "ENTERPRISE",
+      ]),
+    );
+
+    fireEvent.change(select, { target: { value: "GROWTH" } });
+    fireEvent.click(screen.getByRole("button", { name: "Confirm" }));
+    await waitFor(() =>
+      expect(mockPatch).toHaveBeenCalledWith("/platform-admin/tenants/t-1/plan", {
+        plan: "GROWTH",
+      }),
+    );
+  });
+});
