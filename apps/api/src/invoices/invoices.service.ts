@@ -98,6 +98,7 @@ import { lockRowsNoWait } from "../common/db-locks";
 import { NumberingService } from "../import/numbering.service";
 import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
 import { requireRestrictionTenantId } from "../selling-restrictions/restriction-tenant";
+import { addedRestrictionLines, catalogRestrictionLines } from "./invoice-restriction-lines";
 import { buildManualInvoiceLines } from "./manual-invoice-lines";
 import { foldCategoryTax, loadManualLineContext } from "./manual-invoice-context";
 import { resolveLineUnits } from "../products/line-units";
@@ -3249,6 +3250,13 @@ export class InvoicesService {
     }
 
     if (dto.items) {
+      // F-05: only products this edit ADDS are asked about (a line the DRAFT already carries is not re-refused).
+      await this.sellingRestrictions.assertLinesSellable({
+        tenantId: requireRestrictionTenantId(this.prisma.getTenantId()),
+        customerId: inv.customerId,
+        lines: await addedRestrictionLines(this.prisma.forTenant(), id, dto.items),
+        channel: "STAFF",
+      });
       await assertOrderItemIdsBelongToOrder(this.prisma.forTenant(), inv.orderId, dto.items); // SA-093a rd6
       // Pre-fetch products for boxes/pieces resolution AND the regulated-category
       // snapshot (so an edited DRAFT re-attributes its regulated lines).
@@ -4509,6 +4517,13 @@ export class InvoicesService {
       );
     }
     unitAware.assertNoUnitAwareLines(inv.items, "duplicated"); // the copy drops the unit
+    // F-05: a copy is a new sale of every catalog line it carries.
+    await this.sellingRestrictions.assertLinesSellable({
+      tenantId: requireRestrictionTenantId(this.prisma.getTenantId()),
+      customerId: inv.customerId,
+      lines: catalogRestrictionLines(inv.items),
+      channel: "STAFF",
+    });
 
     const customer = await this.prisma
       .forTenant()

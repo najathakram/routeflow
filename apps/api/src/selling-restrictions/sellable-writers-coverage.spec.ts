@@ -58,8 +58,8 @@ const TABLE: Record<string, Row> = {
   [rt("reopenStop")]: P("2a: reopen stop (revives cancelled lines, like reopenOrder)"),
   // ── invoices / estimates / import (step 2b remainder) ──────────────────────────────────────
   [inv("create")]: G,
-  [inv("update")]: P("2b: invoice update"),
-  [inv("duplicate")]: P("2b: invoice duplicate"),
+  [inv("update")]: G,
+  [inv("duplicate")]: G,
   [inv("createSplitInvoices")]: P("2b: split invoices"),
   "estimates/estimates.service.ts::EstimatesService.convertToInvoice": G,
   "import/import.service.ts::ImportService.importInvoices": P(
@@ -102,7 +102,7 @@ const TABLE: Record<string, Row> = {
 };
 
 /** The RATCHET: how many rows are still PENDING. Lower it in the PR that flips a row to GUARDED. */
-const PENDING_BASELINE = 10;
+const PENDING_BASELINE = 8;
 /** GUARDED + PENDING: reclassifying a PENDING row to EXEMPT (an escape, not progress) must change THIS. */
 const ENFORCEMENT_POINTS = 16;
 const CHOKE_POINT = ["assertLinesSellable", "checkLinesSellable"];
