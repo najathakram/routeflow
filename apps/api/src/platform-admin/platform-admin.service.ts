@@ -911,6 +911,8 @@ ${
 
     const now = new Date();
     const periodEnd = new Date(now.getTime() + dto.billingPeriodDays * 24 * 60 * 60 * 1000);
+    // B863 / SA-277: 365-day prepaid = ANNUAL, shorter = MONTHLY; external rows roll length-preserving (rollCycles).
+    const cycle: "MONTHLY" | "ANNUAL" = dto.billingPeriodDays >= 365 ? "ANNUAL" : "MONTHLY";
 
     // Lane B A2b: the plan being LEFT, read before the transaction so the catalog read in
     // `prepare()` also happens outside it. A tenant with no subscription row falls back to
@@ -969,6 +971,7 @@ ${
             planVersionId: version.id,
             periodStart: now,
             periodEnd,
+            cycle,
             externalPayment: true,
             externalPaymentMethod: dto.paymentMethod,
             externalPaymentRef: dto.paymentRef ?? null,
@@ -980,6 +983,7 @@ ${
             planVersionId: version.id,
             periodStart: now,
             periodEnd,
+            cycle,
             // Rolling the period forward disarms every pending transition. A downgrade left
             // armed now points at the OLD (already past) period end, so the very next 02:00
             // sweep would fire it against the subscription this admin just activated.
