@@ -16,6 +16,12 @@ import type { PriceType } from "@prisma/client";
  * or DISCOUNTED). The line earns no promo units: `promoFreeUnits` is 0 for a rollover line. The subtotal stays
  * re-derived, by `computeLineSubtotal` at the carried pack and price.
  *
+ * The audit trail of a carried MANUAL/DISCOUNTED price (`overrideReason`, `overriddenBy`) rides with it, so a
+ * carried override never becomes an unexplained price.
+ *
+ * Tax: the copy stamps the LIVE category tax rate (B297 snapshot taken at the copy, a later sale), whereas an at-stop
+ * line keeps its sale-time snapshot. Tax is not part of the carried denomination.
+ *
  * INTERNAL ONLY: this lives on `create()`'s `options` argument (a service-to-service parameter), never on a DTO or a
  * controller path (pinned in `source-line.spec.ts`), so no HTTP caller can choose a line's pack or price. A CUSTOMER
  * pseudo-user's `item.unitPrice` stays ignored.
@@ -29,6 +35,9 @@ export interface SourceLine {
   unitPrice: number;
   priceType: PriceType;
   originalPrice: number | null;
+  /** The audit trail of a carried MANUAL/DISCOUNTED price: why, and by whom (both null for a standard line). */
+  overrideReason: string | null;
+  overriddenBy: string | null;
 }
 export type SourceLines = Readonly<Record<string, SourceLine>>;
 

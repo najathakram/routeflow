@@ -172,10 +172,10 @@ export const COPIERS: Copier[] = [
     // create()'s INTERNAL `options.sourceLines` (orders/source-line.ts), never the live pack or today's price;
     // the contract checks each key is in approveNextDelivery's `sourceLines` literal. The subtotal is re-derived
     // by computeLineSubtotal at that carried pack and price; promoFreeUnits is 0 for a rollover line.
-    viaOptions: "unitsPerBox unitPrice priceType originalPrice",
+    viaOptions: "unitsPerBox unitPrice priceType originalPrice overrideReason overriddenBy",
     rederived:
       "name subtotal promoFreeUnits trackedCategoryId trackedSubcategoryId categoryTaxAmount position categoryTaxType categoryTaxRate categoryPriceIncludesTax",
-    na: ORDER_FRESH,
+    na: "deliveredQty invoicedQty status", // overrideReason/overriddenBy ride viaOptions (D-20)
     gaps: {
       unitLabel: "unfiled",
       notes: "unverified",

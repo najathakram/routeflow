@@ -381,8 +381,13 @@ export class ChangeRequestsService {
     // D-20 (#1808, SA-330): the SOURCE line's denomination for a CHANGE_QTY rollover — its price ALWAYS, its pack
     // only when box-aware — carried onto the draft line so a repack or a price change since the sale cannot re-split
     // or re-quote the copy (see orders/source-line.ts). ADD_ITEM has no source line: a new sale at today's price.
-    let sourceItem: { unitPrice: unknown; priceType: PriceType; originalPrice: unknown } | null =
-      null;
+    let sourceItem: {
+      unitPrice: unknown;
+      priceType: PriceType;
+      originalPrice: unknown;
+      overrideReason: string | null;
+      overriddenBy: string | null;
+    } | null = null;
     let sourceUpb: number | null = null;
     // B673: an ADD_ITEM filed WITH a box split (a driver's door add: qty = total pieces, plus
     // boxes/pieces) is reconciled against the LIVE pack below. A bare qty (the buyer portal's
@@ -532,6 +537,8 @@ export class ChangeRequestsService {
                   priceType: sourceItem.priceType,
                   originalPrice:
                     sourceItem.originalPrice != null ? Number(sourceItem.originalPrice) : null,
+                  overrideReason: sourceItem.overrideReason ?? null,
+                  overriddenBy: sourceItem.overriddenBy ?? null,
                 },
               },
             }

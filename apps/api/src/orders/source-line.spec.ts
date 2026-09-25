@@ -16,6 +16,8 @@ describe("sourceLineFor", () => {
     unitPrice: 36,
     priceType: PriceType.STANDARD,
     originalPrice: null,
+    overrideReason: null,
+    overriddenBy: null,
     ...over,
   });
 
@@ -96,7 +98,14 @@ describe("the hand-off is INTERNAL and structurally intact (contract pin for C8)
   it("approveNextDelivery fills the source line from the CHANGE_QTY line (price ALWAYS, pack only when box-aware) and create() consumes it", () => {
     const cr = read("orders/change-requests.service.ts");
     const keys = optionsPassedKeys(cr, "approveNextDelivery", "sourceLines");
-    for (const k of ["unitsPerBox", "unitPrice", "priceType", "originalPrice"])
+    for (const k of [
+      "unitsPerBox",
+      "unitPrice",
+      "priceType",
+      "originalPrice",
+      "overrideReason",
+      "overriddenBy",
+    ])
       expect(keys.has(k)).toBe(true);
     const method = cr.slice(cr.indexOf("private async approveNextDelivery("));
     expect(method).toContain("sourceItem = li");

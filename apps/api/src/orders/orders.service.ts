@@ -2023,6 +2023,10 @@ export class OrdersService implements OnApplicationBootstrap {
         unitPrice,
         priceType,
         originalPrice,
+        // D-20: a carried override keeps its audit trail (source-line.ts).
+        ...(source
+          ? { overrideReason: source.overrideReason, overriddenBy: source.overriddenBy }
+          : {}),
         // BUY_N_GET_M sale-time snapshot; null for every other line (unaffected).
         promoFreeUnits: freeUnits > 0 ? freeUnits : null,
         subtotal: itemSubtotal,

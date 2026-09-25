@@ -254,7 +254,12 @@ describeDb("D-20 next-delivery pack (C8) — real Postgres", () => {
               unitPrice: "36",
               subtotal: "72",
               status: "PENDING",
-              priceType: "STANDARD",
+              // an agreed DISCOUNTED price ($40 list, sold at $36) with its audit trail: live re-pricing would give
+              // STANDARD, no originalPrice and no override reason, so each assertion below can go red
+              priceType: "DISCOUNTED",
+              originalPrice: "40",
+              overrideReason: "Loyalty deal",
+              overriddenBy: user.id,
               position: 0,
             },
           ],
@@ -273,7 +278,7 @@ describeDb("D-20 next-delivery pack (C8) — real Postgres", () => {
         payload: { orderItemId: line.id, newQty: 42 }, // 18 more pieces
       },
     });
-    return { order, line, product, cr };
+    return { order, line, product, cr, user };
   }
 
   const resolve = (orderId: string, crId: string, action: ChangeRequestResolveAction) =>
@@ -282,7 +287,7 @@ describeDb("D-20 next-delivery pack (C8) — real Postgres", () => {
     );
 
   it("NEXT DELIVERY after a repack 12 -> 6 AND a price change $36 -> $18: the copy keeps the source pack AND price; money is computeLineSubtotal at the source pack and price", async () => {
-    const { order, product, cr } = await scenario("nd", { onRun: false });
+    const { order, product, cr, user } = await scenario("nd", { onRun: false });
     // AFTER the sale the product is repacked AND repriced: live pack 12 -> 6, live price $36 -> $18 per box
     await raw.product.update({
       where: { id: product.id },
@@ -296,7 +301,10 @@ describeDb("D-20 next-delivery pack (C8) — real Postgres", () => {
     // 18 pieces at the SOURCE pack 12 = 1 box + 6 pieces, at the SOURCE's $36 per box
     expect(copy.unitsPerBox).toBe(12); // NOT the live 6
     expect(Number(copy.unitPrice)).toBe(36); // NOT the live $18
-    expect(copy.priceType).toBe("STANDARD"); // the source's type, never relabelled
+    expect(copy.priceType).toBe("DISCOUNTED"); // the source's type, never relabelled STANDARD
+    expect(Number(copy.originalPrice)).toBe(40); // and its original price, not null
+    expect(copy.overrideReason).toBe("Loyalty deal"); // the audit trail rides with the carried price
+    expect(copy.overriddenBy).toBe(user.id);
     expect(Number(copy.qty)).toBe(18);
     expect(copy.boxes).toBe(1);
     expect(copy.pieces).toBe(6);
