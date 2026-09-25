@@ -7,8 +7,14 @@
  * - `scan-engine`: sequences gate then buffer per camera frame / manual entry / settle.
  * - `scan-feedback`: `cueForOutcome` — which accept/reject cue an outcome earns. The sound and
  *   vibration themselves are per-platform side effects and stay in each app's `scan-cue`.
+ * - `aim-box`: DEFAULT-ON center-aim-box containment check, ahead of the gate above.
+ * - `steady-read`: DEFAULT-ON same-value-N-frames debounce, ahead of the gate above.
+ * - `scan-mode`: OPTIONAL per-device Continuous/Hold-to-scan decode gate, ahead of both.
  */
 export * from "./scan-loop";
 export * from "./scan-pending-buffer";
 export * from "./scan-engine";
 export * from "./scan-feedback";
+export * from "./aim-box";
+export * from "./steady-read";
+export * from "./scan-mode";

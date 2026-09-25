@@ -8,6 +8,14 @@ import {
   pushScan,
   type PendingBufferState,
 } from "../lib/scan-pending-buffer";
+import {
+  createSteadyReadState,
+  isWithinAimBox,
+  trackSteadyRead,
+  type AimBoxRect,
+  type BarcodeBoundsLike,
+  type SteadyReadState,
+} from "@routeflow/scanning";
 
 export interface ScanCameraProps {
   /**
@@ -26,6 +34,17 @@ export interface ScanCameraProps {
   active?: boolean;
   /** Keep decoding after a scan. Single-shot latches after the first code. */
   continuous?: boolean;
+  /**
+   * Owner ruling 2026-09-24 (`project_scan_aimbox_hold_to_scan_2026-09-24`): DEFAULT ON in
+   * continuous mode — only a barcode decoded inside this rect counts as a candidate scan,
+   * same coordinate space as expo-camera's own `BarcodeScanningResult.bounds` (view-relative
+   * pixels, NOT normalized). Defaults to a centered box sized off this component's own
+   * measured layout when omitted, matching `BarcodeScanner.tsx`'s decorative viewfinder
+   * square in the common (full-screen) case. A host that draws its OWN differently-shaped
+   * viewfinder (e.g. a split-view sheet's smaller camera area) should pass its exact rect
+   * here so the enforced filter and the visible box are provably the same one.
+   */
+  aimBox?: AimBoxRect;
   style?: StyleProp<ViewStyle>;
   /** Web-only: rendered in the manual-entry fallback card. Ignored here. */
   footer?: React.ReactNode;
@@ -33,6 +52,17 @@ export interface ScanCameraProps {
   hint?: boolean;
   /** Web-only: camera ⇄ manual-entry fallback. Ignored here. */
   onModeChange?: (mode: "camera" | "manual") => void;
+}
+
+/**
+ * A centered square, 70% of the measured layout's width — the same proportion
+ * `BarcodeScanner.tsx`'s own decorative viewfinder (`WINDOW_SIZE = SCREEN_WIDTH * 0.7`)
+ * already draws, so a caller that doesn't pass an explicit `aimBox` still gets a filter
+ * that lines up with what's visually on screen in the common (full-screen) case.
+ */
+function defaultAimBox(layout: { width: number; height: number }): AimBoxRect {
+  const size = layout.width * 0.7;
+  return { x: (layout.width - size) / 2, y: (layout.height - size) / 2, width: size, height: size };
 }
 
 /**
@@ -71,6 +101,7 @@ export function ScanCamera({
   onResolvingChange,
   active = true,
   continuous = false,
+  aimBox,
   style,
 }: ScanCameraProps) {
   const firedRef = React.useRef(false);
@@ -79,6 +110,12 @@ export function ScanCamera({
   // bounded, deduped queue behind the one code currently resolving, so a
   // detection that arrives mid-resolve is buffered instead of silently lost.
   const bufferRef = React.useRef<PendingBufferState>(createPendingBuffer());
+  // Aim box + steady-read (owner ruling 2026-09-24): both run AHEAD of the gate above and
+  // reject silently on their own — a code outside the box, or not yet held steady, never
+  // touches the gate's per-code cooldown/absence clocks at all, because it was never a
+  // candidate scan in the first place.
+  const steadyRef = React.useRef<SteadyReadState>(createSteadyReadState());
+  const layoutRef = React.useRef({ width: 0, height: 0 });
   const [torchOn, setTorchOn] = React.useState(false);
   // Parents recreate these callbacks every render; route them through refs so
   // the handler identity never restarts the camera.
@@ -112,17 +149,26 @@ export function ScanCamera({
     }
   }, []);
 
-  const handleBarcodeScanned = ({ data }: { data: string }) => {
+  const handleBarcodeScanned = ({ data, bounds }: { data: string; bounds?: BarcodeBoundsLike }) => {
     if (!continuous) {
       if (firedRef.current) return;
       firedRef.current = true;
       onScannedRef.current(data);
       return;
     }
-    // Every frame reaches the gate now — nothing is skipped while a previous
-    // scan resolves, so the gate's own cooldown/absence-gap clocks (scan-loop.ts)
-    // stay live throughout and need no post-hoc re-anchoring.
-    const gated = gateScan(data, gateRef.current, Date.now());
+
+    const now = Date.now();
+    const box = aimBox ?? defaultAimBox(layoutRef.current);
+    if (!isWithinAimBox(bounds, box)) return;
+
+    const { steady, next } = trackSteadyRead(steadyRef.current, data, now);
+    steadyRef.current = next;
+    if (!steady) return;
+
+    // Every frame that clears the two checks above reaches the gate now — nothing is
+    // skipped while a previous scan resolves, so the gate's own cooldown/absence-gap
+    // clocks (scan-loop.ts) stay live throughout and need no post-hoc re-anchoring.
+    const gated = gateScan(data, gateRef.current, now);
     gateRef.current = gated.state;
     if (!gated.accept) return;
 
@@ -134,7 +180,15 @@ export function ScanCamera({
   };
 
   return (
-    <View style={[styles.root, style]}>
+    <View
+      style={[styles.root, style]}
+      onLayout={(e) => {
+        layoutRef.current = {
+          width: e.nativeEvent.layout.width,
+          height: e.nativeEvent.layout.height,
+        };
+      }}
+    >
       <CameraView
         style={StyleSheet.absoluteFill}
         // itf14 is the standard outer-case barcode for a distributor and was
