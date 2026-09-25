@@ -424,6 +424,33 @@ describe("ParkedReversalResolutionService", () => {
     expect(open.amendedPeriod).toBeNull();
   });
 
+  it("#2108 source pin: findFiledPeriod is the ONLY regulatedFiling lookup on the resolve and list() paths (no second inline query survives)", () => {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const fs = require("fs");
+    const wrapper: string = fs.readFileSync(
+      require.resolve("./parked-reversal-resolution.service"),
+      "utf8",
+    );
+    const ledgerSrc: string = fs.readFileSync(
+      require.resolve("./regulated-ledger.service"),
+      "utf8",
+    );
+    // the wrapper (resolve + list) never touches the filing table itself
+    expect(wrapper).not.toMatch(/regulatedFiling/);
+    // in the ledger service exactly one query reads it, and it is findFiledPeriod's
+    const uses = ledgerSrc.match(/regulatedFiling\.(findFirst|findMany|findUnique)/g) ?? [];
+    const finder = ledgerSrc.slice(
+      ledgerSrc.indexOf("async findFiledPeriod("),
+      ledgerSrc.indexOf("async filedPeriodForParked("),
+    );
+    expect(uses.length).toBeGreaterThanOrEqual(1);
+    expect(finder).toMatch(/regulatedFiling\.findFirst/);
+    const outside =
+      ledgerSrc.replace(finder, "").match(/regulatedFiling\.(findFirst|findMany|findUnique)/g) ??
+      [];
+    expect(outside).toEqual([]);
+  });
+
   it("#2108: a REJECTING in-transaction audit create makes resolve() reject — the audit is inside the transaction, never a post-commit best-effort write", async () => {
     (prisma as any).auditLog.create = jest.fn().mockRejectedValue(new Error("audit store down"));
     await expect(service.resolve("pr-1", 12, "reason text", actor)).rejects.toThrow(
