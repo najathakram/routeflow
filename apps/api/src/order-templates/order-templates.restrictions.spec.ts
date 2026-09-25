@@ -29,6 +29,7 @@ import { AuthorizationGuardService } from "../authorizations/authorization-guard
 import { NotificationsService } from "../notifications/notifications.service";
 import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
 import { AuditService } from "../audit/audit.service";
+import * as orderStock from "../orders/order-stock";
 import { createMockPrisma } from "../testing/prisma-mock";
 
 describe("OrderTemplatesService — selling restrictions (F-05)", () => {
@@ -275,6 +276,19 @@ describe("OrderTemplatesService — selling restrictions (F-05)", () => {
       const text = String(notifications.sendToCustomer.mock.calls[0][2]);
       expect(text).toContain("not sent this time");
       expect(text).not.toContain("went ahead");
+    });
+
+    it("an in-tx write AFTER order.create rejects (stock decrement): the tx rolls back, nothing was placed, so 'not sent this time' (moving `placed` inside the tx would go red)", async () => {
+      restrictions.checkLinesSellable.mockResolvedValue(block);
+      const spy = jest
+        .spyOn(orderStock, "decrementStockForSale")
+        .mockRejectedValue(new Error("stock write failed"));
+      await run(template()); // the cron logs the failure and moves on
+      expect(prisma.order.create).toHaveBeenCalledTimes(1); // the create call ran INSIDE the tx that then failed
+      const text = String(notifications.sendToCustomer.mock.calls[0][2]);
+      expect(text).toContain("not sent this time");
+      expect(text).not.toContain("went ahead");
+      spy.mockRestore();
     });
 
     it("the order tx COMMITS and the post-commit merge THROWS: the notice says 'went ahead' (a duplicate re-order is not invited)", async () => {
