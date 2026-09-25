@@ -217,8 +217,12 @@ function ItemRow({ item, isFirst }: { item: POItem; isFirst: boolean }) {
   // reading the live product alone shows no split once a boxed product is edited to non-boxed,
   // and re-denominates an already-received line's split the moment the product is repacked.
   const upb = linePack(item, Number(item.product?.unitsPerBox ?? 0));
-  const unit = item.product?.unit;
-  const qtyLabel = (qty: number | string) => unitsLabel(qty, upb, unit);
+  const isBoxed = upb > 1;
+  // Non-boxed: the bare number, exactly like web's PurchaseOrdersTab (isBoxed ? unitsLabel(...) :
+  // ordered) — never append the live product's `unit` here. A legacy line on a product later
+  // un-boxed can still carry a stale box noun ("case") on the live product; appending it to a
+  // bare piece count ("1,240 case") reads as 1,240 CASES, not 1,240 pieces (#2066 review round).
+  const qtyLabel = (qty: number | string) => (isBoxed ? unitsLabel(qty, upb) : qty);
 
   return (
     <View
