@@ -24,6 +24,7 @@ import {
   DEFAULT_EXCESS_OPTION,
   dropExcessAndRequote,
   extractRefusalMessage,
+  RETURNS_NOT_ENABLED_MESSAGE,
   groupQuoteChunks,
   isBoxedProduct,
   sumChunkTotals,
@@ -32,12 +33,14 @@ import {
 } from "@routeflow/returns";
 import type { ReturnReason } from "@routeflow/types";
 import { useAdminProducts } from "../../../lib/api/admin";
+import { useInlineReturnsAddon } from "../../../lib/api/addons";
 import { useCaptureInlineReturn, useInlineReturnQuote } from "../../../lib/api/inline-returns";
 import { inlineReturnNonceKey } from "../../../lib/inline-return-submit-key";
 import {
   canConfirmInlineReturn,
   canGetInlineReturnQuote,
   initialInlineReturnScreen,
+  inlineReturnsGate,
   inlineReturnScreenReducer,
   screenReturnKey,
 } from "../../../lib/inline-return-screen";
@@ -64,6 +67,7 @@ export default function InlineReturnScreen() {
   const customerId = params.customerId ?? "";
   const orderId = params.orderId ?? "";
 
+  const gate = inlineReturnsGate(useInlineReturnsAddon());
   const [screen, dispatch] = useReducer(inlineReturnScreenReducer, initialInlineReturnScreen);
   const [lines, setLines] = useState<InlineReturnLineDraft[]>([]);
   const [reason, setReason] = useState<ReturnReason | "">("");
@@ -108,7 +112,7 @@ export default function InlineReturnScreen() {
         customerId,
         orderId,
         lines,
-        returnKey: screenReturnKey(customerId, orderId, lines, nonce),
+        returnKey: screenReturnKey(customerId, orderId, nonce),
         reason: reason as ReturnReason,
       }),
       {
@@ -139,7 +143,10 @@ export default function InlineReturnScreen() {
       <ScrollView contentContainerStyle={{ padding: 16, gap: 14 }}>
         {params.customerName ? <Text style={styles.hint}>{params.customerName}</Text> : null}
 
-        {screen.step === "lines" && (
+        {gate === "loading" && <ActivityIndicator color={ios.brand} />}
+        {gate === "blocked" && <Text style={styles.error}>{RETURNS_NOT_ENABLED_MESSAGE}</Text>}
+
+        {gate === "allowed" && screen.step === "lines" && (
           <>
             <Text style={styles.section}>What came back</Text>
             <SearchBar
@@ -209,7 +216,7 @@ export default function InlineReturnScreen() {
           </>
         )}
 
-        {screen.step === "quote" && (
+        {gate === "allowed" && screen.step === "quote" && (
           <QuoteView
             quote={screen.quote}
             excessOption={excessOption}
@@ -221,7 +228,7 @@ export default function InlineReturnScreen() {
           />
         )}
 
-        {screen.step === "success" && (
+        {gate === "allowed" && screen.step === "success" && (
           <View style={styles.card}>
             <Text style={styles.name}>
               {screen.result.returnNumber
@@ -241,7 +248,7 @@ export default function InlineReturnScreen() {
           </View>
         )}
 
-        {screen.step === "refused" && (
+        {gate === "allowed" && screen.step === "refused" && (
           <View style={styles.card}>
             <Text style={styles.error}>{screen.message}</Text>
             <PrimaryButton label="Back" onPress={() => dispatch({ type: "edit" })} />
