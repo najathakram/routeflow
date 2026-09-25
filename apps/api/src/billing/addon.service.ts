@@ -10,13 +10,13 @@ import { PrismaService } from "../prisma/prisma.service";
 import { StripeService } from "./stripe.service";
 import { EntitlementsService } from "./entitlements.service";
 import { FeatureResolverService } from "./feature-resolver.service";
-import { PlanCatalogService } from "./plan-catalog.service";
-import { LEGACY_ADDON_KEY_TO_SKU } from "./plan-catalog.constants";
+import { PlanCatalogService, PlanVersionWithCatalog } from "./plan-catalog.service";
+import { LEGACY_ADDON_KEY_TO_SKU, addonSkuCode } from "./plan-catalog.constants";
 import { withAdvisoryLock, LockTimeoutError, LockUnavailableError } from "../common/db-locks";
 import { ADDON_KEY_TO_REGISTRY_KEY } from "./feature-registry";
 import { EntitlementAuthority } from "./entitlement-authority.service";
 import { BillingEventService } from "./billing-event.service";
-import { emitAddonDelta } from "./addon-ledger";
+import { emitAddonDelta, lockTenantForLedger } from "./addon-ledger";
 
 /**
  * A Stripe `resource_missing` / 404 error means the item we tried to act on is
@@ -190,10 +190,10 @@ export class AddonService {
           const isBridged = LEGACY_ADDON_KEY_TO_SKU[addonKey] !== undefined;
 
           // Only fetch catalog if bridged (must validate SKU exists) or if billing (must validate SKU is priceable)
-          let skuDef: any = null;
+          let skuDef: PlanVersionWithCatalog["addonSkus"][number] | null = null;
           if (isBridged || stripePriceId) {
             const published = await this.catalog.getPublishedCatalog();
-            skuDef = published.addonSkus.find((s) => s.sku === sku);
+            skuDef = published.addonSkus.find((s) => s.sku === sku) ?? null;
 
             // Bridged keys must exist in catalog — otherwise EntitlementsService.compute() can never
             // turn it into a flag, which is how the sales-agents "not available on your plan" outage happened.
@@ -210,9 +210,6 @@ export class AddonService {
               );
             }
           }
-
-          // D1 (SA-277a): only a Stripe-billed enable carries revenue; a free grant is priced EXPLICITLY at 0 and books nothing.
-          const priceSnapshot = stripePriceId && skuDef ? Number(skuDef.monthlyPrice) : 0;
 
           // FIX-865B finding #1: only write `sku` when it actually resolved to a catalog SKU
           // (bridged legacy key, or an unbridged key whose SKU we looked up above). An
@@ -263,8 +260,17 @@ export class AddonService {
             }
           }
 
+          // B865 / SA-277 FIX-5: a catalog price is only booked when a Stripe item was
+          // ACTUALLY created — Stripe not configured (or no stripePriceId) means the add-on
+          // is unbilled, so it is priced EXPLICITLY at 0 and books nothing (D1).
+          const priceSnapshot = stripeItemId && skuDef ? Number(skuDef.monthlyPrice) : 0;
+
           // Upsert the add-on record and emit ledger delta in a transaction
           const addon = await this.prisma.$transaction(async (tx) => {
+            // B865 / SA-277 FIX-2 (house lock order): tenant row lock FIRST, before any
+            // TenantAddon read or write, so this and every other add-on-ledger $transaction
+            // always take the SAME order and can never deadlock against each other.
+            await lockTenantForLedger(tx, tenantId);
             const row = await tx.tenantAddon.upsert({
               where: { tenantId_addonKey: { tenantId, addonKey } },
               create: {
@@ -274,6 +280,9 @@ export class AddonService {
                 stripePriceId: stripePriceId ?? null,
                 stripeItemId,
                 active: true,
+                // The Stripe item (when one exists) is always quantity 1 — mirror it here so a
+                // stale quantity from a prior admin-only grant never survives a re-enable.
+                quantity: 1,
                 priceSnapshot,
               },
               update: {
@@ -289,18 +298,20 @@ export class AddonService {
                 sku: skuToStore ?? undefined,
                 stripePriceId: stripePriceId ?? undefined,
                 stripeItemId: stripeItemId ?? undefined,
+                // B865 / SA-277: the Stripe item is always quantity 1 — a stale quantity from an
+                // earlier grant must not survive a re-enable.
+                quantity: 1,
                 priceSnapshot,
               },
             });
-            // D1: only emit if the add-on has a non-zero price (free grants book nothing)
-            if (priceSnapshot > 0) {
-              await emitAddonDelta(tx, this.events, {
-                tenantId,
-                sku,
-                priceSnapshot,
-                deltaQty: row.quantity ?? 1,
-              });
-            }
+            // B865 / SA-277 FIX-1: the new before/after contract — a fresh grant always moves
+            // from {0,0} to {priceSnapshot, 1}; `emitAddonDelta` itself no-ops a zero delta.
+            await emitAddonDelta(tx, this.events, {
+              tenantId,
+              sku,
+              before: { priceSnapshot: 0, quantity: 0 },
+              after: { priceSnapshot, quantity: 1 },
+            });
             return row;
           });
 
@@ -388,6 +399,9 @@ export class AddonService {
     // second transaction blocks on the row lock until the first commits, then sees
     // active=false already and no-ops instead of emitting a second delta.
     const updated = await this.prisma.$transaction(async (tx) => {
+      // B865 / SA-277 FIX-2 (house lock order): tenant row lock FIRST, before the TenantAddon
+      // row lock below.
+      await lockTenantForLedger(tx, tenantId);
       await tx.$queryRaw`SELECT id FROM "TenantAddon" WHERE id = ${addon.id} FOR UPDATE`;
       const current = await tx.tenantAddon.findUnique({
         where: { tenantId_addonKey: { tenantId, addonKey } },
@@ -400,15 +414,15 @@ export class AddonService {
         where: { tenantId_addonKey: { tenantId, addonKey } },
         data: { active: false, stripeItemId: null },
       });
-      // Only emit if the add-on was active and has a non-zero price
-      if (current.priceSnapshot != null && Number(current.priceSnapshot) > 0) {
-        await emitAddonDelta(tx, this.events, {
-          tenantId,
-          sku: LEGACY_ADDON_KEY_TO_SKU[addonKey] ?? addonKey,
-          priceSnapshot: current.priceSnapshot,
-          deltaQty: -current.quantity,
-        });
-      }
+      // B865 / SA-277 FIX-6: the event's sku is the CANONICAL code (bridges a legacy addonKey
+      // the same way subscription-mutation.service.ts's self-serve disable does), falling back
+      // to the legacy map / raw key when the row never resolved a catalog sku.
+      await emitAddonDelta(tx, this.events, {
+        tenantId,
+        sku: addonSkuCode(current) ?? LEGACY_ADDON_KEY_TO_SKU[addonKey] ?? addonKey,
+        before: { priceSnapshot: current.priceSnapshot, quantity: current.quantity },
+        after: { priceSnapshot: 0, quantity: 0 },
+      });
       return row;
     });
 
