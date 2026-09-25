@@ -30,9 +30,15 @@ export async function assertDeliveriesFitStop(
   deliveries: readonly { orderItemId: string; quantityDelivered: number }[] | undefined,
 ): Promise<void> {
   if (!deliveries || deliveries.length === 0) return;
-  const items: { id: string; orderId: string; qty: unknown }[] = await tx.orderItem.findMany({
+  const items: {
+    id: string;
+    orderId: string;
+    qty: unknown;
+    name: string | null;
+    product: { name: string } | null;
+  }[] = await tx.orderItem.findMany({
     where: { id: { in: deliveries.map((d) => d.orderItemId) } },
-    select: { id: true, orderId: true, qty: true },
+    select: { id: true, orderId: true, qty: true, name: true, product: { select: { name: true } } },
   });
   const byId = new Map(items.map((i) => [i.id, i]));
   const onStop = new Set(stopOrders.map((o) => o.id));
@@ -51,11 +57,17 @@ export async function assertDeliveriesFitStop(
       throw new BadRequestException(`Order item ${d.orderItemId} does not belong to this stop`);
     }
     const deliveredSoFar = sumDeliveredSoFar(evidenceByLine[item.orderId]?.[item.id], stopId);
-    const remaining = Number(item.qty) - deliveredSoFar;
+    // SA-151 review: clamp at 0 — a data anomaly (deliveredSoFar > qty, e.g. a manual DB fix)
+    // must never surface as a negative "remaining", which would make the bound below nonsensical.
+    const remaining = Math.max(0, Number(item.qty) - deliveredSoFar);
     const q = Number(d.quantityDelivered);
     if (!Number.isFinite(q) || q < 0 || q > remaining + 0.0005) {
+      // SA-151 review: driver-readable, not a bare orderItemId UUID (payment.tsx surfaces this
+      // verbatim in a toast) — the product name, what's actually left, and what already
+      // happened elsewhere, with the one actionable next step.
+      const label = item.product?.name ?? item.name ?? "This item";
       throw new BadRequestException(
-        `Delivery quantity for order item ${d.orderItemId} must be between 0 and the remaining undelivered quantity`,
+        `${label}: ${remaining} left, ${deliveredSoFar} delivered earlier — refresh the stop`,
       );
     }
   }
