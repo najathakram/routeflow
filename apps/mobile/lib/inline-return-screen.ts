@@ -102,6 +102,13 @@ export function canLeaveInlineReturn(state: InlineReturnScreenState): boolean {
   return state.step !== "capturing";
 }
 
+/** A removal blocked mid-capture is either a USER back press (GO_BACK / POP: simply dropped — the
+ *  result must stay visible) or a FORCED redirect (reset / replace / navigate, e.g. the
+ *  session-expired handler): those are deferred and re-dispatched once the capture settles. */
+export function isDeferrableRemoval(action: { type: string }): boolean {
+  return action.type !== "GO_BACK" && action.type !== "POP";
+}
+
 /** Statuses answered BEFORE the capture handler runs (auth, permission, the validation pipe): a
  *  DEFINITE non-write — nothing was recorded — even though the nonce is kept for a later retry. */
 const DEFINITE_NON_WRITE_STATUSES = new Set([400, 401, 403]);
@@ -115,10 +122,12 @@ export function captureFailureMessage(error: unknown): string {
   if (outcome.kind === "error" && outcome.refused) return extractRefusalMessage(error);
   const status = (error as { response?: { status?: number } })?.response?.status;
   if (status === 401) {
-    return "Your session expired, so nothing was recorded. Sign in again and retry.";
+    return "Your session expired, so this attempt wasn't recorded. Sign in again and retry.";
   }
   if (status !== undefined && DEFINITE_NON_WRITE_STATUSES.has(status)) {
-    return `${extractRefusalMessage(error)} Nothing was recorded.`;
+    // "this ATTEMPT": an earlier uncertain attempt with the same key may still have landed.
+    const msg = extractRefusalMessage(error);
+    return `${msg}${/[.!?]$/.test(msg) ? "" : "."} This attempt wasn't recorded.`;
   }
   return "We couldn't confirm this return went through. Trying again sends the same request, so it won't be recorded twice.";
 }

@@ -32,6 +32,7 @@ import {
 
 let screenState: InlineReturnScreenState = initialInlineReturnScreen;
 let preventedRoutes: Record<string, { preventRemove: boolean }> = {};
+let parentPrevented: Record<string, { preventRemove: boolean }> = {};
 let setScreenState: (s: InlineReturnScreenState) => void = () => undefined;
 
 function InlineScreen() {
@@ -42,6 +43,9 @@ function InlineScreen() {
   return null;
 }
 function Home() {
+  return null;
+}
+function ReturnsIndex() {
   return null;
 }
 
@@ -57,6 +61,19 @@ function TestNavigator(props: any) {
 }
 const Stack = createNavigatorFactory(TestNavigator)();
 
+// The real app shape: the inline screen lives in the returns stack, which is itself a screen of a
+// PARENT stack. `ReturnsStack` reads the PARENT navigator's prevent-remove context — what the
+// parent's native-stack view turns into preventNativeDismiss for the iOS parent swipe.
+function ReturnsStack() {
+  parentPrevented = usePreventRemoveContext().preventedRoutes as typeof parentPrevented;
+  return React.createElement(
+    Stack.Navigator,
+    null,
+    React.createElement(Stack.Screen, { name: "ReturnsIndex", component: ReturnsIndex }),
+    React.createElement(Stack.Screen, { name: "Inline", component: InlineScreen }),
+  );
+}
+
 const ref = createNavigationContainerRef<any>();
 
 function mount() {
@@ -70,10 +87,13 @@ function mount() {
           Stack.Navigator,
           null,
           React.createElement(Stack.Screen, { name: "Home", component: Home }),
-          React.createElement(Stack.Screen, { name: "Inline", component: InlineScreen }),
+          React.createElement(Stack.Screen, { name: "ReturnsStack", component: ReturnsStack }),
         ),
       ),
     );
+  });
+  act(() => {
+    ref.navigate("ReturnsStack");
   });
   act(() => {
     ref.navigate("Inline");
@@ -83,56 +103,89 @@ function mount() {
 
 const rootRoutes = (): Array<{ name: string; key: string }> => (ref.getRootState() as any).routes;
 const routeNames = () => rootRoutes().map((r) => r.name);
-const inlineKey = () => rootRoutes().find((r) => r.name === "Inline")!.key;
+const returnsStackKey = () => rootRoutes().find((r) => r.name === "ReturnsStack")!.key;
+const nestedNames = () =>
+  ((rootRoutes().find((r) => r.name === "ReturnsStack") as any).state?.routes ?? []).map(
+    (r: { name: string }) => r.name,
+  );
 
-describe("useInlineReturnRemoveGuard — driven through real navigation", () => {
+const capturingState = () =>
+  [{ type: "quoted", quote: {} as any, lines: [] }, { type: "captureStarted" }].reduce(
+    inlineReturnScreenReducer as any,
+    initialInlineReturnScreen,
+  ) as InlineReturnScreenState;
+
+describe("useInlineReturnRemoveGuard — driven through real (nested) navigation", () => {
   beforeEach(() => {
     screenState = initialInlineReturnScreen;
   });
 
-  it("hardware back / goBack is BLOCKED while a capture is in flight, and works again once it settles", () => {
+  it("goBack (hardware back) inside the returns stack is BLOCKED mid-capture and works again once it settles", () => {
     const r = mount();
-    expect(routeNames()).toEqual(["Home", "Inline"]);
-
-    const capturing = [
-      { type: "quoted", quote: {} as any, lines: [] },
-      { type: "captureStarted" },
-    ].reduce(
-      inlineReturnScreenReducer as any,
-      initialInlineReturnScreen,
-    ) as InlineReturnScreenState;
-    act(() => setScreenState(capturing));
-
+    expect(nestedNames()).toEqual(["ReturnsIndex", "Inline"]);
+    act(() => setScreenState(capturingState()));
     act(() => {
       ref.dispatch(CommonActions.goBack());
     });
-    expect(routeNames()).toEqual(["Home", "Inline"]); // the screen survived the back press
-
+    expect(nestedNames()).toEqual(["ReturnsIndex", "Inline"]);
     act(() =>
       setScreenState(
-        inlineReturnScreenReducer(capturing, { type: "captured", result: { id: "r1" } as any }),
+        inlineReturnScreenReducer(capturingState(), {
+          type: "captured",
+          result: { id: "r1" } as any,
+        }),
       ),
     );
     act(() => {
       ref.dispatch(CommonActions.goBack());
     });
-    expect(routeNames()).toEqual(["Home"]);
+    expect(nestedNames()).toEqual(["ReturnsIndex"]);
     act(() => r.unmount());
   });
 
-  it("registers as remove-prevented in the prevent-remove context (what native-stack turns into preventNativeDismiss for the iOS parent swipe)", () => {
+  it("the PARENT navigator's prevent-remove context marks the returns-stack route (the iOS parent swipe), and clears when settled", () => {
     const r = mount();
-    const capturing = [
-      { type: "quoted", quote: {} as any, lines: [] },
-      { type: "captureStarted" },
-    ].reduce(
-      inlineReturnScreenReducer as any,
-      initialInlineReturnScreen,
-    ) as InlineReturnScreenState;
-    act(() => setScreenState(capturing));
-    expect(preventedRoutes[inlineKey()]?.preventRemove).toBe(true);
+    act(() => setScreenState(capturingState()));
+    expect(parentPrevented[returnsStackKey()]?.preventRemove).toBe(true);
     act(() => setScreenState(initialInlineReturnScreen));
-    expect(preventedRoutes[inlineKey()]?.preventRemove).toBeFalsy();
+    expect(parentPrevented[returnsStackKey()]?.preventRemove).toBeFalsy();
+    act(() => r.unmount());
+  });
+
+  it("a PROGRAMMATIC reset mid-capture (session-expired redirect) is DEFERRED, not dropped: it fires once the capture settles", () => {
+    const r = mount();
+    act(() => setScreenState(capturingState()));
+    act(() => {
+      ref.dispatch(CommonActions.reset({ index: 0, routes: [{ name: "Home" }] }));
+    });
+    expect(routeNames()).toEqual(["Home", "ReturnsStack"]); // blocked while in flight
+    act(() =>
+      setScreenState(
+        inlineReturnScreenReducer(capturingState(), {
+          type: "captured",
+          result: { id: "r1" } as any,
+        }),
+      ),
+    );
+    expect(routeNames()).toEqual(["Home"]); // ...and delivered afterwards
+    act(() => r.unmount());
+  });
+
+  it("a blocked user back press is NOT replayed after the capture settles", () => {
+    const r = mount();
+    act(() => setScreenState(capturingState()));
+    act(() => {
+      ref.dispatch(CommonActions.goBack());
+    });
+    act(() =>
+      setScreenState(
+        inlineReturnScreenReducer(capturingState(), {
+          type: "captured",
+          result: { id: "r1" } as any,
+        }),
+      ),
+    );
+    expect(nestedNames()).toEqual(["ReturnsIndex", "Inline"]); // the result stays visible
     act(() => r.unmount());
   });
 });
