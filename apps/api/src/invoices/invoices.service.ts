@@ -92,7 +92,7 @@ import { lockRowsNoWait } from "../common/db-locks";
 import { NumberingService } from "../import/numbering.service";
 import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
 import { requireRestrictionTenantId } from "../selling-restrictions/restriction-tenant";
-import { buildManualInvoiceLines } from "./manual-invoice-lines";
+import { buildManualInvoiceLines, type ManualLineItem } from "./manual-invoice-lines";
 import { foldCategoryTax, loadManualLineContext } from "./manual-invoice-context";
 import { resolveLineUnits } from "../products/line-units";
 import { prepareUnitLadders, requestsUnit } from "../orders/unit-line-build";
@@ -374,7 +374,8 @@ export class InvoicesService {
    * invoice number and one crashed with Prisma P2002 → HTTP 500. Now catches
    * P2002 and returns 409 Conflict instead.
    */
-  async create(dto: CreateInvoiceDto) {
+  /** SA-135: an internal caller's line may carry `packSnapshot` (ManualLineItem); the HTTP DTO never can. */
+  async create(dto: Omit<CreateInvoiceDto, "items"> & { items: ManualLineItem[] }) {
     const customer = await this.prisma
       .forTenant()
       .customer.findUnique({ where: { id: dto.customerId } });

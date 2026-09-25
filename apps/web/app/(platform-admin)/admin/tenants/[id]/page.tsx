@@ -10,6 +10,7 @@ import { setTenantCookie } from "@/lib/tenant-cookie";
 import { setImpersonation } from "@/lib/impersonation";
 import { AdminTabs } from "../../../_components/AdminTabs";
 import { AdminBadge, planLabel } from "../../../_components/AdminBadge";
+import { usePlanOptions, withCurrentPlan } from "../../../_components/usePlanOptions";
 import { AdminCard } from "../../../_components/AdminCard";
 import { AdminModal } from "../../../_components/AdminModal";
 import { DisabledHint } from "../../../_components/DisabledHint";
@@ -94,8 +95,6 @@ interface AuditLogEntry {
   actionLabel?: string | null;
   actor?: AuditActor | null;
 }
-
-const PLANS = ["STARTER", "PROFESSIONAL", "ENTERPRISE"] as const;
 
 const TABS = [
   { key: "overview", label: "Overview", icon: <LayoutDashboard className="h-4 w-4" /> },
@@ -341,6 +340,10 @@ function OverviewTab({
 }) {
   const [showDeleteConfirm, setShowDeleteConfirm] = React.useState(false);
   const [showResetConfirm, setShowResetConfirm] = React.useState(false);
+  // B857: the resolved planKey, never the raw legacy `plan` enum (TEAM/BUSINESS/…), which is
+  // not among the options and left the select showing a plan the tenant isn't on.
+  const currentPlan = tenant.planKey ?? tenant.plan;
+  const planOptions = usePlanOptions();
   const [resetResult, setResetResult] = React.useState<{
     username: string;
     tempPassword: string;
@@ -517,8 +520,8 @@ function OverviewTab({
 
           <TierChangeControl
             tenantId={tenant.id}
-            currentPlan={tenant.plan}
-            plans={PLANS}
+            currentPlan={currentPlan}
+            plans={withCurrentPlan(planOptions.planKeys, currentPlan)}
             planLabel={planLabel}
             disabled={actionLoading === "change-plan"}
             onChangePlan={(plan) => onAction("change-plan", { plan })}
@@ -758,8 +761,9 @@ function BillingTab({
 
   // Manual activation form state
   const [activating, setActivating] = React.useState(false);
+  const planOptions = usePlanOptions();
   const [manualForm, setManualForm] = React.useState({
-    plan: tenant.plan as string,
+    plan: (tenant.planKey ?? tenant.plan) as string,
     paymentMethod: "ZELLE" as string,
     paymentRef: "",
     billingPeriodDays: 30,
@@ -938,12 +942,17 @@ function BillingTab({
               onChange={(e) => setManualForm((f) => ({ ...f, plan: e.target.value }))}
               className="h-9 w-full rounded-lg border border-slate-600 bg-slate-700 px-3 text-sm text-white focus:border-indigo-500 focus:outline-none"
             >
-              {PLANS.map((p) => (
+              {withCurrentPlan(planOptions.planKeys, manualForm.plan).map((p) => (
                 <option key={p} value={p}>
                   {planLabel(p)}
                 </option>
               ))}
             </select>
+            {planOptions.unavailable && (
+              <p className="mt-1 text-xs text-amber-400">
+                Plan catalog unavailable — showing all plans without live pricing.
+              </p>
+            )}
           </div>
 
           {/* Payment method */}
