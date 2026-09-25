@@ -243,7 +243,7 @@ describeDb("#2562 run-stop reorder vs a concurrent run start — real Postgres",
         tenantId,
       },
     });
-    return { tenantId, run, stop1, stop2 };
+    return { tenantId, run, stop1, stop2, route, rs1, rs2, customer };
   }
 
   /**
@@ -491,6 +491,119 @@ describeDb("#2562 run-stop reorder vs a concurrent run start — real Postgres",
       // eslint-disable-next-line no-await-in-loop
       const [cErr, rErr] = await Promise.all([completion, reorder]);
       for (const e of [cErr, rErr]) if (e) errors.push(e);
+    }
+    expect({
+      deadlocks: errors.filter((e) => /deadlock|40P01|P2034/i.test(e)).length,
+      otherErrors: errors.filter((e) => !/deadlock|40P01|P2034/i.test(e)),
+    }).toEqual({ deadlocks: 0, otherErrors: [] });
+  }, 120_000);
+
+  // #2151 (route TEMPLATE reorder, `routes.reorderStops`): the same family, a different table. The
+  // route optimizer's batch locks the route's STOP rows then the Route row (route-optimization.service
+  // .ts); the template reorder takes the same order (stops by id, then Route), and retries a residual
+  // lock conflict. These cases run the REAL service on real Postgres.
+  it("#2151 control: a template reorder renumbers the route's stops and clears the stored polyline", async () => {
+    const s = await seedRunWithTwoStops("tpl-control");
+    await prisma.route.update({ where: { id: s.route.id }, data: { plannedPolyline: "abc" } });
+    await tenantCtx.run(s.tenantId, () =>
+      routesService.reorderStops(s.route.id, [
+        { id: s.rs1.id, stopNumber: 2 },
+        { id: s.rs2.id, stopNumber: 1 },
+      ]),
+    );
+    const stops = await prisma.routeStop.findMany({
+      where: { routeId: s.route.id },
+      select: { id: true, stopNumber: true },
+    });
+    const route = await prisma.route.findUnique({ where: { id: s.route.id } });
+    const numberOf = (id: string) => stops.find((x) => x.id === id)?.stopNumber;
+    expect({
+      rs1: numberOf(s.rs1.id),
+      rs2: numberOf(s.rs2.id),
+      polyline: route?.plannedPolyline ?? null,
+    }).toEqual({ rs1: 2, rs2: 1, polyline: null });
+  });
+
+  it("#2151 scoping: another route's stop id in the body is a 400 and NEITHER route's numbers change", async () => {
+    const a = await seedRunWithTwoStops("tpl-scope-a");
+    const b = await seedRunWithTwoStops("tpl-scope-b");
+    // Route B's reorder with ONE of route A's stop ids (another route, another tenant) in the body.
+    await expect(
+      tenantCtx.run(b.tenantId, () =>
+        routesService.reorderStops(b.route.id, [
+          { id: b.rs1.id, stopNumber: 1 },
+          { id: b.rs2.id, stopNumber: 2 },
+          { id: a.rs1.id, stopNumber: 3 }, // another route (and tenant): refused
+        ]),
+      ),
+    ).rejects.toThrow(/must list every stop of this route exactly once/);
+    const numbers = async (routeId: string) =>
+      (
+        await prisma.routeStop.findMany({
+          where: { routeId },
+          orderBy: { id: "asc" },
+          select: { id: true, stopNumber: true },
+        })
+      ).map((x) => [x.id, x.stopNumber]);
+    expect({
+      a: Object.fromEntries(await numbers(a.route.id)),
+      b: Object.fromEntries(await numbers(b.route.id)),
+    }).toEqual({
+      a: { [a.rs1.id]: 1, [a.rs2.id]: 2 },
+      b: { [b.rs1.id]: 1, [b.rs2.id]: 2 },
+    });
+  });
+
+  // The optimizer's lock order replayed in raw SQL (it is a $transaction batch; a hand reorder racing
+  // it is the deadlock the reviewer found): T0 holds a stop row, the reorder starts and blocks, T0
+  // then takes the Route row and commits. Stop-first reorder never forms a cycle; the old
+  // route-first order does (40P01, and T0 has no retry).
+  it("#2151 (optimizer lock-order replay: stop row then Route): a template reorder never deadlocks (N rounds)", async () => {
+    const ROUNDS = 5;
+    const errors: string[] = [];
+    for (let round = 0; round < ROUNDS; round++) {
+      // eslint-disable-next-line no-await-in-loop
+      const s = await seedRunWithTwoStops(`tpl-dl${round}`);
+      let takeRoute!: () => void;
+      const mayTakeRoute = new Promise<void>((r) => (takeRoute = r));
+      let holdsStop!: () => void;
+      const stopHeld = new Promise<void>((r) => (holdsStop = r));
+      const optimizer = prisma
+        .$transaction(
+          async (tx: any) => {
+            await tx.$executeRaw`UPDATE "RouteStop" SET "updatedAt" = now() WHERE id = ${s.rs2.id}`;
+            holdsStop();
+            await mayTakeRoute;
+            await tx.$executeRaw`UPDATE "Route" SET "updatedAt" = now() WHERE id = ${s.route.id}`;
+          },
+          { timeout: 60_000 },
+        )
+        .then(
+          () => null,
+          (e: unknown) => String((e as Error)?.message ?? e),
+        );
+      // eslint-disable-next-line no-await-in-loop
+      await stopHeld;
+      const reorder = tenantCtx
+        .run(s.tenantId, () =>
+          routesService.reorderStops(s.route.id, [
+            { id: s.rs1.id, stopNumber: 2 },
+            { id: s.rs2.id, stopNumber: 1 },
+          ]),
+        )
+        .then(
+          () => null,
+          (e: unknown) => String((e as Error)?.message ?? e),
+        );
+      try {
+        // eslint-disable-next-line no-await-in-loop
+        await observeBlocked(reorder);
+      } finally {
+        takeRoute();
+      }
+      // eslint-disable-next-line no-await-in-loop
+      const [oErr, rErr] = await Promise.all([optimizer, reorder]);
+      for (const e of [oErr, rErr]) if (e) errors.push(e);
     }
     expect({
       deadlocks: errors.filter((e) => /deadlock|40P01|P2034/i.test(e)).length,
