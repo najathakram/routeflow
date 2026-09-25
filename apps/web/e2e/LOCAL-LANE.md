@@ -38,7 +38,10 @@ Both scripts run through `node scripts/local-env.mjs --e2e -- "..."` (the `--e2e
 sets `PLAYWRIGHT_BASE_URL=http://localhost:3001`, `SMOKE_BASE_URL=http://localhost:3000`,
 `PLAYWRIGHT_TENANT_SLUG=e2e-routeflow`, `E2E_SEED_DATABASE_URL=<the compose Postgres URL>`,
 `PLAYWRIGHT_JSON_OUTPUT_FILE=<repo-root>/.campaign/runs/web-e2e-local.json` (an absolute path),
-and unsets `CI`. To run a subset by hand, use the same wrapper directly:
+and unsets `CI`. The seed creates the `e2e_driver` (DRIVER role) fixture only when
+`E2E_DRIVER_PASSWORD` is set in your shell (a local throwaway of your choosing; never commit a
+value) - unset, that one user is skipped and the rest of the seed runs. To run a subset by hand,
+use the same wrapper directly:
 
 ```bash
 node scripts/local-env.mjs --e2e -- "npm --prefix apps/web run test:e2e -- --project=setup --project=critical-paths"

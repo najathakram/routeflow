@@ -104,7 +104,11 @@ const SESSIONS_OP_PASSWORD = "Sessions1!";
 // creates). Linked to its own Driver row (userId) — routes.service.ts's
 // findMyRuns resolves the authenticated driver by that link, not by role alone.
 const DRIVER_USERNAME = "e2e_driver";
-const DRIVER_PASSWORD = "Driver1!";
+// Never hardcoded (this repo goes public for CI and the seed can target the prod e2e tenant):
+// read from E2E_DRIVER_PASSWORD. Unset -> the driver fixture is skipped, the rest still seeds.
+const DRIVER_PASSWORD = process.env.E2E_DRIVER_PASSWORD || "";
+const DRIVER_SKIP_NOTE =
+  "  ! E2E_DRIVER_PASSWORD is not set - skipping the e2e_driver fixture (set it to seed the driver)";
 // Approved-buyer fixture (buyer-facing compliance proofs need a BUYER that can reach the order
 // call, and a fresh self-registered buyer has no seller link). Linked to a DEDICATED customer:
 // CustomerLink.customerId is @unique, so one customer holds one buyer - never harbor_cafe or the
@@ -566,40 +570,44 @@ async function main() {
     }
 
     // ── DRIVER fixture (PHASE 1a Playwright proof precondition) ────────────────
-    let dr = await prisma.user.findFirst({
-      where: { tenantId: existing.id, username: DRIVER_USERNAME },
-    });
-    if (!dr) {
-      const hash = await bcrypt.hash(DRIVER_PASSWORD, 10);
-      dr = await prisma.user.create({
-        data: {
-          email: "e2e_driver@e2e-routeflow.test",
-          username: DRIVER_USERNAME,
-          password: hash,
-          role: "DRIVER",
-          status: "ACTIVE",
-          forcePasswordChange: false,
-          tenantId: existing.id,
-        },
-      });
-      console.log(`  ✓ Created missing driver: ${DRIVER_USERNAME}`);
+    if (!DRIVER_PASSWORD) {
+      console.log(DRIVER_SKIP_NOTE);
     } else {
-      console.log(`  ✓ Driver "${DRIVER_USERNAME}" exists`);
-    }
-    const drRecord = await prisma.driver.findFirst({ where: { userId: dr.id } });
-    if (!drRecord) {
-      await prisma.driver.create({
-        data: {
-          tenantId: existing.id,
-          userId: dr.id,
-          contactName: "E2E Driver",
-          phone: "(512) 555-0199",
-          status: "ACTIVE",
-        },
+      let dr = await prisma.user.findFirst({
+        where: { tenantId: existing.id, username: DRIVER_USERNAME },
       });
-      console.log("  ✓ Created missing Driver record for e2e_driver");
-    } else {
-      console.log("  ✓ Driver record for e2e_driver exists");
+      if (!dr) {
+        const hash = await bcrypt.hash(DRIVER_PASSWORD, 10);
+        dr = await prisma.user.create({
+          data: {
+            email: "e2e_driver@e2e-routeflow.test",
+            username: DRIVER_USERNAME,
+            password: hash,
+            role: "DRIVER",
+            status: "ACTIVE",
+            forcePasswordChange: false,
+            tenantId: existing.id,
+          },
+        });
+        console.log(`  ✓ Created missing driver: ${DRIVER_USERNAME}`);
+      } else {
+        console.log(`  ✓ Driver "${DRIVER_USERNAME}" exists`);
+      }
+      const drRecord = await prisma.driver.findFirst({ where: { userId: dr.id } });
+      if (!drRecord) {
+        await prisma.driver.create({
+          data: {
+            tenantId: existing.id,
+            userId: dr.id,
+            contactName: "E2E Driver",
+            phone: "(512) 555-0199",
+            status: "ACTIVE",
+          },
+        });
+        console.log("  ✓ Created missing Driver record for e2e_driver");
+      } else {
+        console.log("  ✓ Driver record for e2e_driver exists");
+      }
     }
 
     // ── Feature addons (developer_mode + recurring_routes + order_delivery) ─────
@@ -731,27 +739,31 @@ async function main() {
   );
 
   // ── DRIVER fixture (PHASE 1a Playwright proof precondition) ─────────────────
-  const driverUser = await prisma.user.create({
-    data: {
-      email: "e2e_driver@e2e-routeflow.test",
-      username: DRIVER_USERNAME,
-      password: await bcrypt.hash(DRIVER_PASSWORD, 10),
-      role: "DRIVER",
-      status: "ACTIVE",
-      forcePasswordChange: false,
-      tenantId: tenant.id,
-    },
-  });
-  await prisma.driver.create({
-    data: {
-      tenantId: tenant.id,
-      userId: driverUser.id,
-      contactName: "E2E Driver",
-      phone: "(512) 555-0199",
-      status: "ACTIVE",
-    },
-  });
-  console.log(`  ✓ Driver created: ${DRIVER_USERNAME} / ${DRIVER_PASSWORD}`);
+  if (!DRIVER_PASSWORD) {
+    console.log(DRIVER_SKIP_NOTE);
+  } else {
+    const driverUser = await prisma.user.create({
+      data: {
+        email: "e2e_driver@e2e-routeflow.test",
+        username: DRIVER_USERNAME,
+        password: await bcrypt.hash(DRIVER_PASSWORD, 10),
+        role: "DRIVER",
+        status: "ACTIVE",
+        forcePasswordChange: false,
+        tenantId: tenant.id,
+      },
+    });
+    await prisma.driver.create({
+      data: {
+        tenantId: tenant.id,
+        userId: driverUser.id,
+        contactName: "E2E Driver",
+        phone: "(512) 555-0199",
+        status: "ACTIVE",
+      },
+    });
+    console.log(`  ✓ Driver created: ${DRIVER_USERNAME}`);
+  }
 
   // ── Feature addons (developer_mode + recurring_routes + order_delivery) ───────
   await ensureAddon(tenant.id, DEVELOPER_MODE_ADDON);
