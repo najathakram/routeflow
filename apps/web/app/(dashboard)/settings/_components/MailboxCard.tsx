@@ -3,13 +3,48 @@
 import * as React from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "@/lib/api-client";
-import { Card, Button, Badge, useToast } from "@routeflow/ui/web";
+import { Card, Button, Badge, Modal, useToast } from "@routeflow/ui/web";
 import { Mail, Trash2, AlertTriangle } from "lucide-react";
 import type { MailboxConnectionStatus, MailboxProvider } from "@routeflow/types";
 import { useHasAddon } from "@/lib/api/tobacco";
 
 /** email.connected_mailbox — registered `dark` in addon-gate-registry.ts (feature-registry.ts). */
 export const EMAIL_CONNECTED_MAILBOX_ADDON = "email.connected_mailbox";
+
+/**
+ * The one-time connect secret `/start` hands the tab that starts a connect (#2115, SA-215). Only
+ * this tab's sessionStorage holds it (the server keeps a hash), and preview/confirm require it, so
+ * a `mailbox_confirm` link opened in any other tab or browser can't bind anything, even with the
+ * same admin signed in. It travels in a request header, never in a URL.
+ */
+export const CONNECT_SECRET_STORAGE_KEY = "rf:mailbox:connect-secret";
+const CONNECT_SECRET_HEADER = "X-Mailbox-Connect-Secret";
+
+function readConnectSecret(): string | null {
+  try {
+    return window.sessionStorage.getItem(CONNECT_SECRET_STORAGE_KEY);
+  } catch {
+    return null;
+  }
+}
+
+/** False when this tab can't keep the secret (storage blocked): the connect must not start. */
+function storeConnectSecret(secret: string): boolean {
+  try {
+    window.sessionStorage.setItem(CONNECT_SECRET_STORAGE_KEY, secret);
+    return window.sessionStorage.getItem(CONNECT_SECRET_STORAGE_KEY) === secret;
+  } catch {
+    return false;
+  }
+}
+
+function clearConnectSecret() {
+  try {
+    window.sessionStorage.removeItem(CONNECT_SECRET_STORAGE_KEY);
+  } catch {
+    // Nothing stored, nothing to clear.
+  }
+}
 
 type MailboxStatus = {
   configured: boolean;
@@ -24,7 +59,24 @@ type MailboxStatus = {
   lastSentAt?: string | null;
 };
 
+/** What the confirm dialog is told about a pending grant: which account, nothing else. */
+type ConnectPreview = { provider: MailboxProvider; accountEmail: string };
+type PendingConfirm = ConnectPreview & { token: string; secret: string };
+
 const KEY = ["settings", "email-mailbox"] as const;
+
+const mailboxLabel = (provider: MailboxProvider | undefined) =>
+  provider === "MICROSOFT" ? "Outlook" : "Gmail";
+
+/** Why a returning `mailbox_confirm` can't be confirmed here. Nothing was ever bound. */
+const REFUSED_COPY = {
+  "other-tab":
+    "This connection can only be confirmed in the browser tab where it was started. Nothing " +
+    "was connected. Connect again from this page.",
+  expired:
+    "This connection request expired or was already used. Nothing was connected. Connect again.",
+  unavailable: "We couldn't check this connection request. Nothing was connected. Connect again.",
+} as const;
 
 function formatDate(iso: string | null | undefined): string {
   if (!iso) return "";
@@ -45,15 +97,22 @@ function formatDate(iso: string | null | undefined): string {
  * unless the `email.connected_mailbox` add-on is granted (dark rollout) — independent of
  * `googleConfigured`/`microsoftConfigured`, which each require that provider's mailbox OAuth
  * client env vars to be set (the buttons render independently per provider, design §4).
+ *
+ * Connecting never binds anything on return from the provider (#2115): the card previews the
+ * pending grant with this tab's connect secret and asks "Connect <account> to this workspace?".
+ * Only Confirm binds it; Cancel, dismissing the dialog, or any refusal burns it.
  */
 export function MailboxCard() {
   const { toast } = useToast();
   const qc = useQueryClient();
   const hasAddon = useHasAddon(EMAIL_CONNECTED_MAILBOX_ADDON);
-  // Guards against React re-running the confirm effect twice (StrictMode double-invoke, a
-  // re-render before the URL is cleaned up) — the confirm token is single-use server-side
-  // anyway, but this avoids a spurious second "couldn't confirm" toast.
+  // Guards against React re-running the return-flag effect twice (StrictMode double-invoke, a
+  // re-render before the URL is cleaned up): the flags are handled exactly once per page load.
   const confirmedRef = React.useRef(false);
+  const [pendingConfirm, setPendingConfirm] = React.useState<PendingConfirm | null>(null);
+  // What the dialog shows. Set on open and never cleared, so its text stays put while the close
+  // animation runs after `pendingConfirm` is cleared.
+  const [dialogContent, setDialogContent] = React.useState<ConnectPreview | null>(null);
 
   const { data, isLoading } = useQuery<MailboxStatus>({
     queryKey: KEY,
@@ -121,8 +180,25 @@ export function MailboxCard() {
             : "/settings/email/mailbox/google/start",
         )
         .then((r) => r.data),
-    onSuccess: (d: { url?: string }) => {
-      if (d?.url) window.location.href = d.url;
+    onSuccess: (d: { url?: string; connectSecret?: string }, provider) => {
+      const title = `Couldn't start ${provider === "MICROSOFT" ? "Microsoft" : "Google"} connect`;
+      if (!d?.url || !d.connectSecret) {
+        toast({ title, description: "Something went wrong. Try again.", variant: "error" });
+        return;
+      }
+      // The secret must be in this tab BEFORE it leaves for the provider: without it, the
+      // grant that comes back can never be confirmed.
+      if (!storeConnectSecret(d.connectSecret)) {
+        toast({
+          title,
+          description:
+            "This browser is blocking the site storage RouteFlow needs to finish connecting " +
+            "securely. Allow site data for RouteFlow (or leave private browsing), then try again.",
+          variant: "error",
+        });
+        return;
+      }
+      window.location.href = d.url;
     },
     onError: (e: any, provider) =>
       toast({
@@ -132,33 +208,101 @@ export function MailboxCard() {
       }),
   });
 
-  // Confirm-on-return step (security review fix round, HIGH): the OAuth callback never binds
-  // the connection itself — it redirects here with a one-time `mailbox_confirm` token that
-  // this authenticated tab must POST back to /confirm before anything is actually connected.
+  /** Burn a pending grant nobody will confirm. Best effort: if this call fails, the grant still
+   *  expires on its own within 10 minutes, and it stays bound to this tab's secret meanwhile. */
+  function discardPendingGrant(token: string) {
+    return apiClient
+      .post("/settings/email/mailbox/confirm/cancel", { state: token })
+      .catch(() => undefined);
+  }
+
+  function refuseConfirm(token: string, reason: keyof typeof REFUSED_COPY) {
+    clearConnectSecret();
+    void discardPendingGrant(token);
+    toast({ title: "Mailbox not connected", description: REFUSED_COPY[reason], variant: "error" });
+  }
+
+  // The return from the provider: preview the pending grant (non-consuming) with THIS tab's
+  // connect secret, then ask. No secret here means the link was opened somewhere other than
+  // the tab that started the connect, so it is refused without ever asking the server about it.
+  async function openConfirm(token: string) {
+    const secret = readConnectSecret();
+    if (!secret) {
+      refuseConfirm(token, "other-tab");
+      return;
+    }
+    try {
+      const { data: preview } = await apiClient.get<ConnectPreview>(
+        `/settings/email/mailbox/confirm/${encodeURIComponent(token)}/preview`,
+        { headers: { [CONNECT_SECRET_HEADER]: secret } },
+      );
+      const shown = { provider: preview.provider, accountEmail: preview.accountEmail };
+      setDialogContent(shown);
+      setPendingConfirm({ ...shown, token, secret });
+    } catch (e: any) {
+      const status = e?.response?.status;
+      refuseConfirm(
+        token,
+        status === 403 ? "other-tab" : status === 400 ? "expired" : "unavailable",
+      );
+    }
+  }
+
+  // The ONLY place a connection is bound, and only on an explicit Confirm in the dialog.
   const confirm = useMutation({
-    mutationFn: (state: string) =>
-      apiClient.post("/settings/email/mailbox/confirm", { state }).then((r) => r.data),
+    mutationFn: (p: PendingConfirm) =>
+      apiClient
+        .post(
+          "/settings/email/mailbox/confirm",
+          { state: p.token },
+          { headers: { [CONNECT_SECRET_HEADER]: p.secret } },
+        )
+        .then((r) => r.data),
     onSuccess: async (d: MailboxStatus) => {
-      // The card's own status GET fires on the same page load as this confirm. If it read the
-      // row before the confirm committed and answers after it, it would overwrite the connected
-      // state with "not connected" (a stale fetch's result is never dropped by setQueryData).
+      // A status GET that was already in flight read the row before the confirm committed. If it
+      // answered after the write below, it would put "not connected" back (TanStack Query never
+      // drops an in-flight fetch's result on setQueryData), so cancel it first.
       await qc.cancelQueries({ queryKey: KEY });
       qc.setQueryData(KEY, d);
-      toast({
-        title: `${d.provider === "MICROSOFT" ? "Outlook" : "Gmail"} mailbox connected`,
-        variant: "success",
-      });
+      toast({ title: `${mailboxLabel(d.provider)} mailbox connected`, variant: "success" });
     },
-    onError: (e: any) =>
+    onError: (e: any) => {
+      const status = e?.response?.status;
       toast({
         title: "Couldn't finish connecting the mailbox",
         description:
-          e?.response?.status === 403
-            ? "That connect attempt didn't match your account — try connecting again."
-            : e?.response?.data?.message || e.message,
+          status === 403
+            ? REFUSED_COPY["other-tab"]
+            : status === 400
+              ? REFUSED_COPY.expired
+              : e?.response?.data?.message || e.message,
         variant: "error",
-      }),
+      });
+    },
+    // The grant is single-use server-side: whatever the outcome, it is spent now.
+    onSettled: () => {
+      clearConnectSecret();
+      setPendingConfirm(null);
+    },
   });
+
+  function confirmPending() {
+    if (pendingConfirm && !confirm.isPending) confirm.mutate(pendingConfirm);
+  }
+
+  // Cancel, Escape, the close button and a click outside all land here: the grant is burned.
+  function cancelPending() {
+    if (!pendingConfirm || confirm.isPending) return;
+    const { token, provider } = pendingConfirm;
+    setPendingConfirm(null);
+    clearConnectSecret();
+    void discardPendingGrant(token);
+    toast({
+      title: `${mailboxLabel(provider)} not connected`,
+      description: "You cancelled. Nothing was changed.",
+      variant: "info",
+    });
+  }
 
   React.useEffect(() => {
     if (confirmedRef.current) return;
@@ -183,8 +327,13 @@ export function MailboxCard() {
     const query = params.toString();
     window.history.replaceState({}, "", `${window.location.pathname}${query ? `?${query}` : ""}`);
 
-    if (confirmToken) confirm.mutate(confirmToken);
-    else if (adminConsentRequired) {
+    if (confirmToken) {
+      void openConfirm(confirmToken);
+      return;
+    }
+    // Any other return ends the connect this tab started: its secret has nothing left to bind.
+    clearConnectSecret();
+    if (adminConsentRequired) {
       toast({
         title: "Your organisation requires admin approval",
         description:
@@ -212,8 +361,46 @@ export function MailboxCard() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  if (!hasAddon || isLoading) return null;
-  if (!data?.configured) return null; // Neither provider's mailbox client env vars are set yet.
+  // Rendered whether or not the card itself is showing: a returning admin must always get the
+  // explicit choice, even while the card's own status is still loading.
+  const confirmDialog = (
+    <Modal
+      open={pendingConfirm !== null}
+      onClose={cancelPending}
+      title={dialogContent ? `Connect ${dialogContent.accountEmail} to this workspace?` : undefined}
+      description={
+        `RouteFlow will send your customer emails, like invoices and reminders, from this ` +
+        `${mailboxLabel(dialogContent?.provider)} account.`
+      }
+      className="break-words"
+      footer={
+        <>
+          <Button variant="secondary" onClick={cancelPending} disabled={confirm.isPending}>
+            Cancel
+          </Button>
+          <Button onClick={confirmPending} loading={confirm.isPending}>
+            Confirm
+          </Button>
+        </>
+      }
+    >
+      <p>
+        Only confirm if you just signed in to this account yourself. If you don&apos;t recognise it,
+        cancel and nothing will be connected.
+      </p>
+    </Modal>
+  );
+
+  // One tree shape whether or not the card itself shows, so the dialog always keeps its place:
+  // the card finishing loading (or hiding) behind an open dialog never remounts that dialog.
+  const withConfirmDialog = (card: React.ReactNode) => (
+    <>
+      {card}
+      {confirmDialog}
+    </>
+  );
+
+  if (!hasAddon || isLoading || !data?.configured) return withConfirmDialog(null);
 
   const status = data.status ?? null;
   const isMicrosoft = data.provider === "MICROSOFT";
@@ -229,7 +416,7 @@ export function MailboxCard() {
       <Badge variant="danger">Reconnect needed</Badge>
     ) : null;
 
-  return (
+  const card = (
     <Card className="flex flex-col gap-4" data-testid="mailbox-card">
       <div className="flex items-center gap-2">
         <Mail className="h-5 w-5 text-brand-600" />
@@ -325,4 +512,6 @@ export function MailboxCard() {
       )}
     </Card>
   );
+
+  return withConfirmDialog(card);
 }

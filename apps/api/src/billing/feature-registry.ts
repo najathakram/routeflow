@@ -279,7 +279,9 @@ export const FEATURE_REGISTRY: readonly FeatureDef[] = [
         "GET /settings/email/mailbox",
         "GET /settings/email/mailbox/google/start",
         "GET /settings/email/mailbox/microsoft/start",
+        "GET /settings/email/mailbox/confirm/:token/preview",
         "POST /settings/email/mailbox/confirm",
+        "POST /settings/email/mailbox/confirm/cancel",
         "DELETE /settings/email/mailbox",
       ],
       grantPath:

@@ -2,7 +2,9 @@
  * F-10b (#2078): Settings → Email → "Connect your email" (MailboxCard) in a real browser, on the
  * real web build, signed in as the seeded operator. THE PROVIDER IS ALWAYS STUBBED:
  *   - every mailbox endpoint (`/settings/email/mailbox`, `…/google/start`, `…/microsoft/start`,
- *     `…/confirm`) is answered by `page.route`, so no mailbox call ever reaches the API;
+ *     `…/confirm/:token/preview`, `…/confirm`, `…/confirm/cancel`) is answered by `page.route`,
+ *     so no mailbox call ever reaches the API. The stubs hold the server's #2115 rules: preview
+ *     and confirm are refused (403) unless they carry the connect secret `/start` issued;
  *   - the "consent screen" the start stub hands back lives on `oauth-provider.invalid` (RFC 2606:
  *     `.invalid` can never resolve), which is route-stubbed too, answered 204 so the browser
  *     records the navigation and stays on the page;
@@ -13,8 +15,10 @@
  *
  * Covers test-plan §4 (local-assets/handoff/2026-09-22/email-test-plan.md): every card state at
  * 1440/768/390 with a screenshot each, Connect Gmail/Outlook (pending state + the exact redirect
- * target), the mailbox_confirm return (POST body, success toast, connected state, flag stripped),
- * the mailbox_error / admin-consent / Google-cancel returns, and Disconnect three ways.
+ * target), the mailbox_error / admin-consent / Google-cancel returns, and Disconnect three ways.
+ * #2115: the mailbox_confirm return opens an explicit "Connect <account> to this workspace?"
+ * dialog (captured at 1440/768/390) that binds only on Confirm; Cancel burns the grant; the same
+ * link opened in ANOTHER tab (no connect secret there) is refused without ever being previewed.
  *
  * Role: OPERATOR (pre-authenticated storageState). Tenant: the approved e2e-routeflow seed.
  * Needs the full stack for the signed-in shell, so it runs where a compose slot exists or
@@ -30,6 +34,12 @@ const ADDON = "email.connected_mailbox";
 const SETTINGS_EMAIL = "/settings?tab=email";
 const FAKE_PROVIDER = "https://oauth-provider.invalid";
 const STUB_STATE = "e2e-stub-state";
+const CONFIRM_TOKEN = "e2e-fake-confirm-token";
+/** What the start stubs hand the tab, per provider: the tab must present it again (#2115). */
+const CONNECT_SECRETS = {
+  google: "e2e-connect-secret-google",
+  microsoft: "e2e-connect-secret-microsoft",
+} as const;
 
 const VIEWPORTS = [
   { name: "1440", width: 1440, height: 900 },
@@ -88,15 +98,22 @@ interface Harness {
   addonHeld: boolean;
   /** What GET /settings/email/mailbox answers right now. */
   status: MailboxStatus;
+  /** GET confirm/:token/preview's answer when the right secret comes with it; unset = 400. */
+  previewAnswer?: { provider: MailboxProvider; accountEmail: string };
   /** POST /confirm's answer (it also becomes the status from then on); unset = abort. */
   confirmAnswer?: MailboxStatus;
   /** DELETE's answer, plus the status the server holds afterwards; unset = abort. */
   disconnectAnswer?: { body: { deleted: boolean; message?: string }; after: MailboxStatus };
+  /** The connect secret the last start stub handed out: preview and confirm need it back. */
+  issuedSecret: string | null;
   addonsAnswered: number;
   statusGets: number;
   deletes: number;
   starts: string[];
+  previews: Array<{ token: string; secret: string | undefined }>;
   confirmBodies: unknown[];
+  confirmSecrets: Array<string | undefined>;
+  cancels: unknown[];
   providerNavigations: string[];
   realProviderHits: string[];
   /** The start stubs answer only once this resolves (tests hold it to see the pending state). */
@@ -107,11 +124,15 @@ function newHarness(): Harness {
   return {
     addonHeld: true,
     status: NOT_CONNECTED,
+    issuedSecret: null,
     addonsAnswered: 0,
     statusGets: 0,
     deletes: 0,
     starts: [],
+    previews: [],
     confirmBodies: [],
+    confirmSecrets: [],
+    cancels: [],
     providerNavigations: [],
     realProviderHits: [],
     startGate: Promise.resolve(),
@@ -125,14 +146,18 @@ function corsHeaders(route: Route): Record<string, string> {
     : {};
 }
 
-async function fulfillJson(route: Route, body: unknown) {
+async function fulfillJson(route: Route, body: unknown, status = 200) {
   await route.fulfill({
-    status: 200,
+    status,
     contentType: "application/json",
     headers: corsHeaders(route),
     body: JSON.stringify(body),
   });
 }
+
+/** The connect secret a stubbed preview/confirm request carries (a header, never the URL). */
+const secretOf = (route: Route): string | undefined =>
+  route.request().headers()["x-mailbox-connect-secret"];
 
 /** A CORS preflight for a stubbed route, answered here so it never reaches the API. */
 async function answerPreflight(route: Route) {
@@ -191,19 +216,52 @@ async function installStubs(page: Page, h: Harness) {
       if (route.request().method() === "OPTIONS") return answerPreflight(route);
       h.starts.push(provider);
       await h.startGate;
+      h.issuedSecret = CONNECT_SECRETS[provider];
       await fulfillJson(route, {
         url: `${FAKE_PROVIDER}/${provider}/authorize?state=${STUB_STATE}`,
+        connectSecret: CONNECT_SECRETS[provider],
       });
     });
   }
 
+  await page.route("**/api/v1/settings/email/mailbox/confirm/*/preview", async (route) => {
+    if (route.request().method() === "OPTIONS") return answerPreflight(route);
+    const token = decodeURIComponent(new URL(route.request().url()).pathname.split("/").at(-2)!);
+    const secret = secretOf(route);
+    h.previews.push({ token, secret });
+    if (!h.previewAnswer) return fulfillJson(route, { message: "state_invalid" }, 400);
+    if (!secret || secret !== h.issuedSecret) {
+      return fulfillJson(route, { message: "mailbox_connect_secret_mismatch" }, 403);
+    }
+    await fulfillJson(route, h.previewAnswer);
+  });
+
   await page.route("**/api/v1/settings/email/mailbox/confirm", async (route) => {
     if (route.request().method() === "OPTIONS") return answerPreflight(route);
     h.confirmBodies.push(route.request().postDataJSON());
+    const secret = secretOf(route);
+    h.confirmSecrets.push(secret);
+    if (!secret || secret !== h.issuedSecret) {
+      return fulfillJson(route, { message: "mailbox_connect_secret_mismatch" }, 403);
+    }
     if (!h.confirmAnswer) return route.abort("failed");
     h.status = h.confirmAnswer;
     await fulfillJson(route, h.confirmAnswer);
   });
+
+  await page.route("**/api/v1/settings/email/mailbox/confirm/cancel", async (route) => {
+    if (route.request().method() === "OPTIONS") return answerPreflight(route);
+    h.cancels.push(route.request().postDataJSON());
+    await route.fulfill({ status: 204, headers: corsHeaders(route) });
+  });
+}
+
+/** This tab starts a Gmail connect: /start hands it the connect secret, and it "leaves" for the
+ *  stubbed consent screen, which answers 204, so the tab stays on the settings page. */
+async function startGmailConnectInThisTab(page: Page) {
+  await page.goto(SETTINGS_EMAIL);
+  await card(page).getByRole("button", { name: "Connect Gmail" }).click();
+  await expect.poll(() => h.providerNavigations).toHaveLength(1);
 }
 
 /** The toast viewport (Radix "Notifications" region): only real toasts, never the
@@ -355,19 +413,80 @@ test.describe("Mailbox connect card (F-10b), provider always stubbed", () => {
     });
   }
 
-  test("mailbox_confirm return: POSTs the one-time token once, toasts success, shows the connection, strips the flag", async ({
+  for (const vp of VIEWPORTS) {
+    test(`Connect Gmail, then back with mailbox_confirm @${vp.name}: the dialog names the account, and only Confirm binds it`, async ({
+      page,
+    }, testInfo) => {
+      await page.setViewportSize({ width: vp.width, height: vp.height });
+      h.status = NOT_CONNECTED;
+      h.previewAnswer = { provider: "GOOGLE", accountEmail: "gmail-owner@acme.test" };
+      h.confirmAnswer = CONNECTED_GOOGLE;
+      await startGmailConnectInThisTab(page);
+
+      // The provider redirects the SAME tab back with a confirm token.
+      await page.goto(`${SETTINGS_EMAIL}&mailbox_confirm=${CONFIRM_TOKEN}`);
+
+      const dialog = page.getByRole("dialog", {
+        name: "Connect gmail-owner@acme.test to this workspace?",
+      });
+      await expect(dialog).toBeVisible();
+      await expect(page).toHaveURL(/\/settings\?tab=email$/);
+      expect(h.previews).toEqual([{ token: CONFIRM_TOKEN, secret: CONNECT_SECRETS.google }]);
+      expect(h.confirmBodies).toEqual([]);
+      await page.screenshot({ path: testInfo.outputPath(`mailbox-confirm-dialog-${vp.name}.png`) });
+
+      await dialog.getByRole("button", { name: "Confirm" }).click();
+
+      await expect(toasts(page).getByText("Gmail mailbox connected")).toBeVisible();
+      await expect(dialog).toBeHidden();
+      await expect(card(page).getByText("gmail-owner@acme.test")).toBeVisible();
+      await expect(card(page).getByText("Connected", { exact: true })).toBeVisible();
+      expect(h.confirmBodies).toEqual([{ state: CONFIRM_TOKEN }]);
+      expect(h.confirmSecrets).toEqual([CONNECT_SECRETS.google]);
+      expect(h.cancels).toEqual([]);
+    });
+  }
+
+  test("Cancel in the confirm dialog burns the grant and binds nothing", async ({ page }) => {
+    h.status = NOT_CONNECTED;
+    h.previewAnswer = { provider: "GOOGLE", accountEmail: "gmail-owner@acme.test" };
+    await startGmailConnectInThisTab(page);
+    await page.goto(`${SETTINGS_EMAIL}&mailbox_confirm=${CONFIRM_TOKEN}`);
+
+    const dialog = page.getByRole("dialog", { name: /to this workspace\?$/ });
+    await dialog.getByRole("button", { name: "Cancel" }).click();
+
+    await expect(dialog).toBeHidden();
+    await expect(toasts(page).getByText("Gmail not connected")).toBeVisible();
+    await expect.poll(() => h.cancels).toEqual([{ state: CONFIRM_TOKEN }]);
+    expect(h.confirmBodies).toEqual([]);
+    await expect(card(page).getByRole("button", { name: "Connect Gmail" })).toBeVisible();
+  });
+
+  test("the confirm link opened in ANOTHER tab (no connect secret there): never previewed, burned, nothing binds", async ({
     page,
+    context,
   }) => {
     h.status = NOT_CONNECTED;
+    h.previewAnswer = { provider: "GOOGLE", accountEmail: "gmail-owner@acme.test" };
     h.confirmAnswer = CONNECTED_GOOGLE;
+    // This tab starts the connect and holds the secret...
+    await startGmailConnectInThisTab(page);
 
-    await page.goto(`${SETTINGS_EMAIL}&mailbox_confirm=e2e-fake-confirm-token`);
+    // ...but the confirm link is opened in a different tab: same admin, same JWT, no secret.
+    const otherTab = await context.newPage();
+    await installStubs(otherTab, h);
+    await otherTab.goto(`${SETTINGS_EMAIL}&mailbox_confirm=${CONFIRM_TOKEN}`);
 
-    await expect(toasts(page).getByText("Gmail mailbox connected")).toBeVisible();
-    await expect(card(page).getByText("gmail-owner@acme.test")).toBeVisible();
-    await expect(card(page).getByText("Connected", { exact: true })).toBeVisible();
-    expect(h.confirmBodies).toEqual([{ state: "e2e-fake-confirm-token" }]);
-    await expect(page).toHaveURL(/\/settings\?tab=email$/);
+    await expect(toasts(otherTab).getByText("Mailbox not connected")).toBeVisible();
+    await expect(
+      toasts(otherTab).getByText(/only be confirmed in the browser tab where it was started/),
+    ).toBeVisible();
+    await expect.poll(() => h.cancels).toEqual([{ state: CONFIRM_TOKEN }]);
+    await expect(otherTab.getByRole("dialog")).toHaveCount(0);
+    expect(h.previews).toEqual([]);
+    expect(h.confirmBodies).toEqual([]);
+    await otherTab.close();
   });
 
   test("mailbox_error return: the generic couldn't-connect toast, nothing confirmed, flag stripped", async ({
