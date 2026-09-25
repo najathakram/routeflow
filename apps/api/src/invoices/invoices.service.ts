@@ -37,6 +37,7 @@ import {
 import { PAYABLE, KPI_SUMMARY_EXCLUDED } from "./invoice-status-sets";
 import { reconcileDeliveredOrdersInTx as reconcileDeliveredOrdersInTxImpl } from "./delivered-reconcile";
 import { packAtSaleByProduct, priorUnitsPerBoxMap, toSaleLedgerLines } from "./pack-at-sale";
+import { assertWholeUnitQty } from "./unit-line-bill-guard";
 import { clampLimit } from "../common/pagination";
 import { isInternalEmail } from "../common/internal-email";
 import { loadMsrpMap } from "../common/msrp";
@@ -824,6 +825,7 @@ export class InvoicesService {
     const unitPrice = Number(li.unitPrice);
     const unitsPerBox = Number(opts?.priorPack ?? li.unitsPerBox ?? li.product?.unitsPerBox ?? 0);
     const isBoxSplit = li.boxes != null; // stored WITH a box/piece split
+    assertWholeUnitQty(li, billQty, opts?.priorPack); // B652/SA-176: a unit line bills whole units only
 
     // Box/piece split for DISPLAY only (money is the stored subtotal). Selling-unit
     // and non-boxed lines keep boxes/pieces null so `qty` stays in whatever unit the
