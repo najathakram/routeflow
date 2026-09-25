@@ -97,3 +97,23 @@ describe("REG-B106 lastRunOutcome", () => {
     ).toEqual({ variant: "green", label: "Last run succeeded" });
   });
 });
+
+// B646 / SA-135: a boxed product's template qty counts BOXES at the per-box price. The mobile form
+// carries the same hint as the web form (the web label is covered by a Playwright capture).
+describe("RECURRING_QTY_BOXES_HINT (B646)", () => {
+  it("says Qty counts boxes and the price is per box", () => {
+    expect(logic.RECURRING_QTY_BOXES_HINT).toMatch(/Qty counts boxes/);
+    expect(logic.RECURRING_QTY_BOXES_HINT).toMatch(/per box/);
+  });
+  it("is rendered by the new-template screen", () => {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const fs = require("fs") as typeof import("fs");
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const path = require("path") as typeof import("path");
+    const src = fs.readFileSync(
+      path.join(__dirname, "..", "app", "(operator)", "recurring-invoices", "new.tsx"),
+      "utf8",
+    );
+    expect(src).toMatch(/\{RECURRING_QTY_BOXES_HINT\}/);
+  });
+});
