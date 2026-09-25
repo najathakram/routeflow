@@ -10,7 +10,7 @@ import { normalizeBoxesPieces } from "@routeflow/pricing";
  */
 export function orderLineShape(
   existing: any,
-  agg: { qty: number; sample: any; n?: number },
+  agg: { qty: number; sample: any; n?: number; packs?: ReadonlySet<number> },
   verbatim: boolean,
 ): {
   qty: number;
@@ -29,7 +29,16 @@ export function orderLineShape(
       unitLabel: sample?.unitLabel ?? null,
     };
   }
-  const upb = Number(existing?.unitsPerBox ?? sample?.unitsPerBox ?? 0);
+  // Several invoice lines feed this order line: the old re-split applies only when EVERY one of them shares a
+  // known pack > 1, and it is THAT pack (an attested re-pack is not written back at the order line's old pack).
+  // Otherwise the pack is unknown and the stored split is kept, as for a legacy line.
+  const multi = (agg.n ?? 1) > 1;
+  const shared = agg.packs?.size === 1 ? [...agg.packs][0] : 0;
+  const upb = multi
+    ? shared > 1
+      ? shared
+      : 0
+    : Number(existing?.unitsPerBox ?? sample?.unitsPerBox ?? 0);
   const isBoxSplit = (existing ?? sample)?.boxes != null;
   // A box-split line whose pack is unknown (a legacy 0-box + 5-piece line) cannot be re-split from qty:
   // normalizing at pack <= 1 would turn its stored 0 into null and flip it to box-unaware. Keep the stored
@@ -44,7 +53,7 @@ export function orderLineShape(
       qty: agg.qty,
       boxes,
       pieces: boxes === 0 ? agg.qty : (src?.pieces ?? null),
-      unitsPerBox: upb > 0 ? upb : null,
+      unitsPerBox: upb > 0 ? upb : multi ? (existing?.unitsPerBox ?? null) : null,
     };
   }
   const split = isBoxSplit

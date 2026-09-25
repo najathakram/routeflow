@@ -2278,6 +2278,7 @@ export class InvoicesService {
       freeUnits: number; // BUY_N_GET_M: Σ billed free selling units for this source line
       unitPrice: number;
       n: number; // contributing invoice lines
+      packs: Set<number>; // their packs (0 = none), for the shared-pack re-split rule
       sample: any; // an invoice item, for the box/piece + upb snapshot
     };
     const byTarget = new Map<string, Agg>();
@@ -2302,9 +2303,11 @@ export class InvoicesService {
           freeUnits: 0,
           unitPrice: Number(it.unitPrice),
           n: 0,
+          packs: new Set<number>(),
           sample: it,
         };
         prev.n += 1;
+        prev.packs.add(Number(it.unitsPerBox ?? 0));
         prev.qty += Number(it.qty);
         prev.subtotal += Number(it.subtotal);
         prev.categoryTax += Number(it.categoryTaxAmount ?? 0);
@@ -3515,7 +3518,9 @@ export class InvoicesService {
       },
     });
     // Backward sync: discount/shipping changes alter the order total too.
-    if (inv.orderId && needsRecalc) await this.recomputeOrderFromInvoices(inv.orderId);
+    // No line changed, so no order line is written; only the order totals follow (SA-203).
+    if (inv.orderId && needsRecalc)
+      await this.recomputeOrderFromInvoices(inv.orderId, undefined, []);
     return updated;
   }
 

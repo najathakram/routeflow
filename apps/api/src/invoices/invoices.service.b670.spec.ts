@@ -368,6 +368,55 @@ describe("InvoicesService — update() line preservation", () => {
         expect(changed.map((c: any) => c.orderItemId)).not.toContain("oi-b");
       });
 
+      it("1b: a discount/shipping-only save on an order-linked invoice passes an EMPTY changed-set (totals only, no line back-sync)", async () => {
+        arrange([line()]);
+        linked();
+        await service.update("inv-box", { discount: 5 } as any);
+        expect(resync).toHaveBeenCalledTimes(1);
+        expect(resync.mock.calls[0][2]).toEqual([]);
+      });
+
+      it("3: an explicit pack stored on a box-UNAWARE line is audited as an attestation too", async () => {
+        arrange([line({ boxes: null, pieces: null, unitsPerBox: null, qty: 24, subtotal: 240 })]);
+        await service.update("inv-box", {
+          items: [
+            payload({ id: "a", qty: 30, boxes: undefined, pieces: undefined, unitsPerBox: 12 }),
+          ],
+        } as any);
+        expect(prisma.invoiceItem.update).toHaveBeenCalledWith({
+          where: { id: "a" },
+          data: expect.objectContaining({ unitsPerBox: 12 }),
+        });
+        expect(prisma.auditLog.create).toHaveBeenCalledWith({
+          data: expect.objectContaining({
+            action: "INVOICE_LINE_PACK_ATTESTED",
+            meta: { attested: [{ rowId: "a", unitsPerBox: 12 }] },
+          }),
+        });
+      });
+
+      it("5: an orderItemId-only relink of an untouched line counts as a change: the order and the ledger resync", async () => {
+        arrange([line({ orderItemId: "oi-old" })]);
+        linked();
+        prisma.orderItem.findMany.mockResolvedValue([
+          { id: "oi-new", productId: "prod-box", status: "PENDING" },
+        ]);
+        const resyncLedger = jest
+          .spyOn(service as any, "resyncInvoiceLedger")
+          .mockResolvedValue(undefined);
+        await service.update("inv-box", {
+          items: [payload({ id: "a", qty: 24, boxes: 2, pieces: 0, orderItemId: "oi-new" })],
+        } as any);
+        expect(prisma.invoiceItem.update).toHaveBeenCalledWith({
+          where: { id: "a" },
+          data: { orderItemId: "oi-new" },
+        });
+        expect(resync).toHaveBeenCalledTimes(1);
+        const ids = resync.mock.calls[0][2].map((c: any) => c.orderItemId);
+        expect(ids).toEqual(expect.arrayContaining(["oi-old", "oi-new"]));
+        expect(resyncLedger).toHaveBeenCalledTimes(1);
+      });
+
       it("locks the ORDER row before the invoice row when the invoice is order-linked", async () => {
         arrange([line()]);
         linked();

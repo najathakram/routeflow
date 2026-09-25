@@ -619,13 +619,16 @@ describeDb(
       expect(Number(inv!.total)).toBe(sum);
     });
 
-    it("SA-203-L a tax % edit is written to the row and reflected in the invoice tax", async () => {
-      const s = await seed("l");
-      await run(s, s.payload({ l2: { taxRate: 0.1 } }));
-      const l2 = await prisma.invoiceItem.findUnique({ where: { id: s.l2.id } });
-      expect(Number(l2!.taxRate)).toBe(0.1);
+    it("SA-203-L a tax % edit on an ORDER-LINKED invoice is written to the row, reflected in the invoice tax, and leaves the untouched legacy order line byte-equal", async () => {
+      const s = await seedLinked("l");
+      const [legacyBefore] = (await s.orderLines()).map(orderShape);
+      await run(s, s.payload({ S: { taxRate: 0.1 } }));
+      const sib = await prisma.invoiceItem.findUnique({ where: { id: s.iS.id } });
+      expect(Number(sib!.taxRate)).toBe(0.1);
       const inv = await prisma.invoice.findUnique({ where: { id: s.inv.id } });
-      expect(Number(inv!.taxAmount)).toBe(3.6);
+      expect(Number(inv!.taxAmount)).toBe(2.2);
+      const [legacyAfter] = (await s.orderLines()).map(orderShape);
+      expect(legacyAfter).toEqual(legacyBefore);
     });
   },
 );

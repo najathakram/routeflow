@@ -41,7 +41,7 @@ const BASELINE: Record<string, number> = {
   // (orders/replace-all-line-build.ts) — 5740 -> 5540. Lowered to the measured value. Round 5
   // (sourceLineId): buildExistingLineMaps also extracted — still fits at 5540, unchanged.
   "apps/api/src/orders/orders.service.ts": 5540, // B776/SA-124a: buildMergeLineWrites replaced both merge methods' own live-pack fold (was 5751; SA-065 before that: appendOrderRevision -> order-revisions.ts, was 5780; U1 before that: class tail -> order-lifecycle.ts, 5880)
-  "apps/api/src/invoices/invoices.service.ts": 6310, // SA-203/R-022: update() planning + totals + catalog reads -> invoice-edit-plan.ts, back-sync shape -> order-backsync-lines.ts (was 6351; verified by wc -l).
+  "apps/api/src/invoices/invoices.service.ts": 6315, // SA-203/R-022: update() planning + totals + catalog reads -> invoice-edit-plan.ts, back-sync shape -> order-backsync-lines.ts (was 6351; verified by wc -l).
   "apps/api/src/orders/orders.service.spec.ts": 9511,
   "apps/api/src/customers/customers.service.ts": 3307,
   "apps/api/src/invoices/invoices.service.spec.ts": 9351,

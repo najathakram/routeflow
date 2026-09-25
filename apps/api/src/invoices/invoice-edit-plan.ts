@@ -208,7 +208,7 @@ function recoverChangedPack(
     return { pack, boxes, pieces, attested: explicit != null };
   }
   // A box-unaware line keeps its snapshot but stays loose (money = unitPrice x qty).
-  if (!wasBoxed) return { pack, boxes: null, pieces: null };
+  if (!wasBoxed) return { pack, boxes: null, pieces: null, attested: explicit != null };
   // A stored box line edited without a split: re-split its qty at its OWN pack.
   const split = normalizeBoxesPieces({ qty: item.qty, unitsPerBox: pack });
   return { pack, boxes: split.boxes, pieces: split.pieces, attested: explicit != null };
@@ -382,8 +382,10 @@ export function orderSyncLines(
   for (const l of lines) {
     const row = l.rowId ? stored.find((r) => r.id === l.rowId) : undefined;
     const levy = row != null && !same(l.data.categoryTaxAmount ?? 0, row.categoryTaxAmount ?? 0);
-    if (row && (!l.untouched || levy)) changed.push(row);
-    if (!row || !l.untouched) changed.push(l.data);
+    // An orderItemId-only relink of an untouched line moves it to another order line: both ends resync.
+    const relink = row != null && (l.data.orderItemId ?? null) !== (row.orderItemId ?? null);
+    if (row && (!l.untouched || levy || relink)) changed.push(row);
+    if (!row || !l.untouched || relink) changed.push(l.data);
   }
   const totalsMoved = !same(discount, cur.discount ?? 0) || !same(shipping, cur.shippingFee ?? 0);
   return changed.length > 0 || totalsMoved ? changed : null;

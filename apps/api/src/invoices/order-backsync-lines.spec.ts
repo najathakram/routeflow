@@ -99,6 +99,45 @@ describe("orderLineShape (SA-203c)", () => {
     });
   });
 
+  describe("n > 1: the old re-split needs a pack SHARED by every contributing line (second Opus pass)", () => {
+    it("an attested re-pack (both lines at 12) is written at 12, not back at the order line's old 24", () => {
+      const shape = orderLineShape(
+        { boxes: 3, pieces: 0, unitsPerBox: 24 },
+        { qty: 36, sample: { boxes: 3, pieces: 0, unitsPerBox: 12 }, n: 2, packs: new Set([12]) },
+        false,
+      );
+      expect(shape).toMatchObject({ qty: 36, boxes: 3, pieces: 0, unitsPerBox: 12 });
+    });
+
+    it("a no-pack legacy line mixed with a pack-12 line: the pack is unknown, so the order line keeps its split and its own (null) pack, not the box split", () => {
+      const shape = orderLineShape(
+        { boxes: 0, pieces: 5, unitsPerBox: null },
+        {
+          qty: 17,
+          sample: { boxes: 1, pieces: 0, unitsPerBox: 12 },
+          n: 2,
+          packs: new Set([0, 12]),
+        },
+        false,
+      );
+      expect(shape).toMatchObject({ qty: 17, boxes: 0, pieces: 17, unitsPerBox: null });
+    });
+
+    it("differing known packs (12 and 24) are not a shared pack: the stored split is kept", () => {
+      const shape = orderLineShape(
+        { boxes: 0, pieces: 5, unitsPerBox: null },
+        {
+          qty: 12,
+          sample: { boxes: 1, pieces: 0, unitsPerBox: 24 },
+          n: 2,
+          packs: new Set([12, 24]),
+        },
+        false,
+      );
+      expect(shape).toMatchObject({ boxes: 0, pieces: 12, unitsPerBox: null });
+    });
+  });
+
   it("a selling-unit order line stays unsplit", () => {
     expect(
       orderLineShape({ boxes: null, unitsPerBox: null }, { qty: 7, sample: {} }, false),
