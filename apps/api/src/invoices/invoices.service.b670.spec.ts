@@ -180,12 +180,26 @@ describe("InvoicesService — update() line preservation", () => {
       prisma.invoiceItem.update.mockResolvedValue({});
     };
     const saved = () => prisma.invoice.update.mock.calls[0][0].data;
+    /** SA-184: an invoice edit never writes back to the order it came from. */
+    const expectNoOrderSync = () => {
+      for (const m of [
+        prisma.order.update,
+        prisma.order.updateMany,
+        prisma.orderItem.update,
+        prisma.orderItem.updateMany,
+        prisma.orderItem.create,
+        prisma.orderItem.deleteMany,
+      ]) {
+        expect(m).not.toHaveBeenCalled();
+      }
+    };
 
     it("a notes-only save of a legacy 0-box + 5-piece line ($4.58, pack unknown) leaves the money and split exactly as stored", async () => {
       arrange([legacy()]);
       await service.update("inv-box", { notes: "call ahead", items: [payload()] } as any);
       expect(saved().items.create).toEqual([]); // kept in place, not recreated
       expect(saved().subtotal).toBe(4.58);
+      expectNoOrderSync();
       expect(prisma.invoiceItem.update).not.toHaveBeenCalled();
       expect(prisma.invoiceItem.deleteMany).toHaveBeenCalledWith({
         where: { invoiceId: "inv-box", id: { notIn: ["item-legacy"] } },
@@ -293,6 +307,7 @@ describe("InvoicesService — update() line preservation", () => {
         where: { id: "a" },
         data: expect.objectContaining({ boxes: 3, unitsPerBox: 12, subtotal: 33 }),
       });
+      expectNoOrderSync();
     });
 
     it("an unknown line id is a 400 'unknown line id' and nothing is written", async () => {

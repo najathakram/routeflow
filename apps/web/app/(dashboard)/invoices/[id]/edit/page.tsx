@@ -6,7 +6,7 @@ import { useParams, useRouter } from "next/navigation";
 import { ArrowLeft, Plus, Trash2, Search, Loader2 } from "lucide-react";
 import { Button, Card, useToast, cn } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
-import { useInvoice, useUpdateInvoice, type CreateInvoiceItem } from "@/lib/api/invoices";
+import { useInvoice, useUpdateInvoice, type UpdateInvoiceItem } from "@/lib/api/invoices";
 import { hasUnitLine, unitLabelsOf } from "@/lib/invoice-line-unit";
 import {
   useCustomers,
@@ -245,6 +245,17 @@ function ProductSearchInput({
 
 interface LineItemState {
   key: string;
+  /** Stored row id (SA-186). Sent back so the server matches THIS row, never by
+   *  position or product. Absent on lines added in this session. */
+  id?: string;
+  /** SA-184/189: a stored box line whose pack cannot be recovered (no snapshot,
+   *  split not derivable). Shown read-only until the operator sets the pack. */
+  locked?: boolean;
+  /** The stored figures of a locked line, re-sent verbatim so it stays untouched. */
+  storedBoxes?: number;
+  storedPieces?: number;
+  /** Operator-attested pack (integer >= 2) set by unlocking; sent as `unitsPerBox`. */
+  attestedPack?: number;
   productId?: string;
   description: string;
   qty: number;
@@ -429,8 +440,13 @@ export default function EditInvoicePage() {
                   packFromOwnSplit({ qty: it.qty, boxes: it.boxes, pieces: it.pieces }) ??
                   0,
               );
+              const locked = isBoxSplit && !(upb > 1);
               return {
                 key: it.id,
+                id: it.id,
+                locked: locked || undefined,
+                storedBoxes: locked ? Number(it.boxes ?? 0) : undefined,
+                storedPieces: locked ? Number(it.pieces ?? 0) : undefined,
                 productId: it.productId,
                 description: it.description,
                 qty: Number(it.qty),
@@ -524,12 +540,13 @@ export default function EditInvoicePage() {
       paymentTermsLabel,
       referenceNumber: referenceNumber.trim(),
       subject: subject.trim(),
-      items: items.map((it): CreateInvoiceItem => {
+      items: items.map((it): UpdateInvoiceItem => {
         // Send the boxed split so the server prorates (unitPrice is the BOX price).
         // Without boxes/pieces the server falls back to unitPrice*qty and over-charges.
         const { boxes, pieces } = lineSplit(it);
         const freeUnits = lineFreeUnits(it);
         return {
+          ...(it.id ? { id: it.id } : {}),
           productId: it.productId,
           description: it.description,
           qty: Number(it.qty),
@@ -537,7 +554,13 @@ export default function EditInvoicePage() {
           taxRate: it.taxRate != null ? Number(it.taxRate) : undefined,
           discount:
             it.discount != null && Number(it.discount) !== 0 ? Number(it.discount) : undefined,
-          ...(it.unitsPerBox && it.productId ? { boxes: boxes ?? 0, pieces: pieces ?? 0 } : {}),
+          ...(it.locked
+            ? { boxes: it.storedBoxes ?? 0, pieces: it.storedPieces ?? 0 }
+            : it.unitsPerBox && it.productId
+              ? { boxes: boxes ?? 0, pieces: pieces ?? 0 }
+              : {}),
+          // SA-189: only an operator-attested pack is ever sent.
+          ...(it.attestedPack ? { unitsPerBox: it.attestedPack } : {}),
           // Round-trip the BUY_N_GET_M snapshot — the server replaces every line.
           ...(freeUnits > 0 ? { promoFreeUnits: freeUnits } : {}),
           // Round-trip the per-line note — the server recreates all items on update.
@@ -739,25 +762,57 @@ export default function EditInvoicePage() {
                   {/* Editable while typing — commit numbers live, format on blur only
                       (the old parseFloat(...) || 0 bindings collapsed "2." and turned
                       a cleared field into 0). */}
-                  <DecimalInput
-                    decimals={3}
-                    min={0}
-                    value={item.qty}
-                    onChange={(v) => updateItem(item.key, { qty: v ?? 0 })}
-                    className="h-9 rounded border border-surface-border bg-white px-2 text-right text-sm text-navy focus:border-transparent focus:outline-none focus:ring-1 focus:ring-brand-500"
-                  />
-                  <MoneyInput
-                    min={0}
-                    value={item.unitPrice}
-                    onChange={(v) => updateItem(item.key, { unitPrice: v ?? 0 })}
-                    className="h-9 rounded border border-surface-border bg-white px-2 text-right text-sm text-navy focus:border-transparent focus:outline-none focus:ring-1 focus:ring-brand-500"
-                  />
-                  <MoneyInput
-                    min={0}
-                    value={item.discount}
-                    onChange={(v) => updateItem(item.key, { discount: v ?? 0 })}
-                    className="h-9 rounded border border-surface-border bg-white px-2 text-right text-sm text-navy focus:border-transparent focus:outline-none focus:ring-1 focus:ring-brand-500"
-                  />
+                  {item.locked ? (
+                    <div
+                      data-testid="locked-line"
+                      className="col-span-3 flex items-center justify-between gap-2 text-xs text-navy/60"
+                    >
+                      <span>
+                        {item.storedBoxes} box · {item.storedPieces} pcs · $
+                        {Number(item.unitPrice).toFixed(2)} — set the box and piece count for this
+                        line to edit it.
+                      </span>
+                      <DecimalInput
+                        decimals={0}
+                        min={2}
+                        value={null}
+                        placeholder="Pcs / box"
+                        onChange={(v) => {
+                          if (v != null && Number.isInteger(v) && v >= 2) {
+                            updateItem(item.key, {
+                              locked: false,
+                              unitsPerBox: v,
+                              attestedPack: v,
+                              qty: item.storedBoxes! * v + item.storedPieces!,
+                            });
+                          }
+                        }}
+                        className="h-8 w-24 rounded border border-surface-border bg-white px-2 text-right text-sm text-navy"
+                      />
+                    </div>
+                  ) : (
+                    <>
+                      <DecimalInput
+                        decimals={3}
+                        min={0}
+                        value={item.qty}
+                        onChange={(v) => updateItem(item.key, { qty: v ?? 0 })}
+                        className="h-9 rounded border border-surface-border bg-white px-2 text-right text-sm text-navy focus:border-transparent focus:outline-none focus:ring-1 focus:ring-brand-500"
+                      />
+                      <MoneyInput
+                        min={0}
+                        value={item.unitPrice}
+                        onChange={(v) => updateItem(item.key, { unitPrice: v ?? 0 })}
+                        className="h-9 rounded border border-surface-border bg-white px-2 text-right text-sm text-navy focus:border-transparent focus:outline-none focus:ring-1 focus:ring-brand-500"
+                      />
+                      <MoneyInput
+                        min={0}
+                        value={item.discount}
+                        onChange={(v) => updateItem(item.key, { discount: v ?? 0 })}
+                        className="h-9 rounded border border-surface-border bg-white px-2 text-right text-sm text-navy focus:border-transparent focus:outline-none focus:ring-1 focus:ring-brand-500"
+                      />
+                    </>
+                  )}
                   <DecimalInput
                     decimals={4}
                     min={0}
