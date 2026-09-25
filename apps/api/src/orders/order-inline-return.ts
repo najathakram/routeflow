@@ -232,7 +232,8 @@ export async function preflightInlineReturn(
  * (SA-261/292): the preflight total is a gate, the in-tx price is authoritative, and in the stale-price
  * race (dry-run 0, in-tx > 0) an unreserved edit would take the counter ON the tx under the held Order
  * row, the lock edge SA-263/264 removed. The number is burned if the return prices to $0. (Create keeps
- * the $0 skip: `reserveInlineReturnNumber`, where no Order row is locked yet.)
+ * the $0 skip: `reserveInlineReturnNumber`, where the number is used in the NEW order's own tx, so
+ * no existing Order row is held.)
  */
 export async function reserveEditReturnNumber(p: PreparedInlineReturn | null): Promise<void> {
   if (p && p.preflightTotal !== null) p.creditNoteNumber = await p.svc.reserveCreditNoteNumber();

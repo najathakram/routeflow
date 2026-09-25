@@ -309,7 +309,7 @@ describe("assertReplayCarriesReturnKey / edit reserve / retry (#2094 A2)", () =>
     }
   });
 
-  it("the edit tx never reserves a counter: the number reserved ahead is what the in-tx capture is handed, even when the preflight priced $0", async () => {
+  it("the edit tx never reserves a CN counter (the RETURN counter still reserves in-tx): the number reserved ahead is what the in-tx capture is handed, even when the preflight priced $0", async () => {
     const svc = svcStub();
     const p = await prepareInlineReturn(svc as any, LINES, STAFF);
     p!.preflightTotal = 0; // the stale-price race: dry-run 0, in-tx > 0

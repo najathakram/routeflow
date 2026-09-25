@@ -456,7 +456,7 @@ export class InlineReturnsService {
       user,
       db,
     );
-    return priced.total; // the dry-run total: the caller reserves a credit-note number only above $0
+    return priced.total; // the dry-run total: a gate only; the edit path reserves ahead regardless (SA-292)
   }
 
   /**
