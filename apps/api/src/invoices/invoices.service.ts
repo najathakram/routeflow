@@ -83,6 +83,7 @@ import { RegulatedLedgerService } from "../regulated/regulated-ledger.service";
 import {
   buildPriceAdjustmentUpdates,
   commitPriceAdjustment,
+  loadPriceAdjustmentReference,
   lockInvoiceForPriceAdjustment,
 } from "./price-adjustment-ledger";
 import { AuthorizationGuardService } from "../authorizations/authorization-guard.service";
@@ -6169,47 +6170,6 @@ export class InvoicesService {
     const applyToInvoice = async (inv: typeof invoice, localPriceMap: Map<string, number>) => {
       const auditLine = `[${new Date().toLocaleDateString()} — Price adjusted by operator]`;
 
-      // F03/R3/T-B57: batch-fetch the tracked-category tax config for every
-      // REGULATED line being re-priced, so a PERCENT_OF_SALE (or other
-      // category-taxed) line's categoryTaxAmount can be re-derived from its NEW
-      // subtotal below — mirrors orders.service's recomputeLineCategoryTaxes
-      // (:233-275). Before this, the item loop wrote only unitPrice/subtotal, so a
-      // regulated line kept its PRE-adjustment excise amount even though the
-      // taxable subtotal changed.
-      const regulatedItems = inv.items.filter(
-        (item: any) => localPriceMap.get(item.id) != null && item.trackedCategoryId,
-      );
-      const regulatedCatIds = [
-        ...new Set(regulatedItems.map((item: any) => item.trackedCategoryId as string)),
-      ];
-      const categoriesById = new Map<string, any>(
-        regulatedCatIds.length
-          ? (
-              await this.prisma
-                .forTenant()
-                .trackedCategory.findMany({ where: { id: { in: regulatedCatIds } } })
-            ).map((c: any) => [c.id, c])
-          : [],
-      );
-      // Each re-priced regulated line's PRODUCT unitsPerBox, so linePieceQty can
-      // expand a boxed line ordered in SELLING UNITS: create only snapshots
-      // unitsPerBox on box-split lines while it computed the ORIGINAL levy from the
-      // product's box size, so without this fallback a per-unit levy collapses by a
-      // factor of unitsPerBox on the first re-price. The same fetch
-      // orders.service.recomputeLineCategoryTaxes carries, for the same reason.
-      const regulatedProductIds = [
-        ...new Set(regulatedItems.map((item: any) => item.productId).filter(Boolean)),
-      ] as string[];
-      const unitsPerBoxByProduct = new Map<string, number>(
-        regulatedProductIds.length
-          ? (
-              await this.prisma.forTenant().product.findMany({
-                where: { id: { in: regulatedProductIds } },
-                select: { id: true, unitsPerBox: true },
-              })
-            ).map((pr: any) => [pr.id, Number(pr.unitsPerBox ?? 0)])
-          : [],
-      );
       // B294 (SA-141): a legacy order/estimate-derived invoice (every line taxRate 0, a real
       // regular tax) keeps its tax — the inferred flat rate is stamped onto its lines first, in the
       // SAME transaction as the re-price below (B662: item writes, totals and ledger commit together).
@@ -6219,6 +6179,11 @@ export class InvoicesService {
       await this.prisma.tenantTransaction(async (tx: any) => {
         const live = await lockInvoiceForPriceAdjustment(tx, inv); // Invoice FIRST, then its rows
         const inferred = inferredFlatRate({ ...live, lines: live.items });
+        const { categoriesById, unitsPerBoxByProduct } = await loadPriceAdjustmentReference(
+          tx,
+          live.items,
+          localPriceMap,
+        );
         const itemUpdates = buildPriceAdjustmentUpdates({
           items: live.items,
           localPriceMap,

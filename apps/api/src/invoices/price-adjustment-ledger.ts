@@ -109,6 +109,46 @@ export function buildPriceAdjustmentUpdates(args: {
 }
 
 /**
+ * The tax reference data for the lines being re-priced, read on the adjustment's own tx from the lines
+ * re-read UNDER the Invoice lock (so a line whose category or product changed under the same id is
+ * priced against ITS current category and pack, not the pre-lock one).
+ *
+ * F03/R3/T-B57: the tracked-category tax config for every REGULATED line being re-priced, so a
+ * PERCENT_OF_SALE (or other category-taxed) line's categoryTaxAmount is re-derived from its NEW
+ * subtotal. Each such line's PRODUCT unitsPerBox too, so linePieceQty can expand a boxed line ordered
+ * in SELLING UNITS: create only snapshots unitsPerBox on box-split lines while it computed the ORIGINAL
+ * levy from the product's box size, so without this fallback a per-unit levy collapses by a factor of
+ * unitsPerBox on the first re-price (the same fetch orders.service.recomputeLineCategoryTaxes carries).
+ */
+export async function loadPriceAdjustmentReference(
+  tx: any,
+  items: any[],
+  localPriceMap: Map<string, number>,
+): Promise<{
+  categoriesById: Map<string, any>;
+  unitsPerBoxByProduct: Map<string, number>;
+}> {
+  const regulated = items.filter((i) => localPriceMap.get(i.id) != null && i.trackedCategoryId);
+  const catIds = [...new Set(regulated.map((i) => i.trackedCategoryId as string))];
+  const productIds = [...new Set(regulated.map((i) => i.productId).filter(Boolean))] as string[];
+  const cats = catIds.length
+    ? await tx.trackedCategory.findMany({ where: { id: { in: catIds } } })
+    : [];
+  const products = productIds.length
+    ? await tx.product.findMany({
+        where: { id: { in: productIds } },
+        select: { id: true, unitsPerBox: true },
+      })
+    : [];
+  return {
+    categoriesById: new Map<string, any>(cats.map((c: any) => [c.id, c])),
+    unitsPerBoxByProduct: new Map<string, number>(
+      products.map((pr: any) => [pr.id, Number(pr.unitsPerBox ?? 0)]),
+    ),
+  };
+}
+
+/**
  * The adjustment tx's FIRST statement (N-3): the Invoice row lock, BEFORE any InvoiceItem row is
  * written. The order-edit path takes the Invoice first and its rows after (orders.service
  * resync), so locking the items first here could deadlock against it. Everything the adjustment

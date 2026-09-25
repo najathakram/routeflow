@@ -151,6 +151,15 @@ describe("InvoicesService.applyPriceAdjustment — regulated ledger sync (B662)"
     arrange(InvoiceStatus.SENT, [regulated("li-1")]);
     const tx = {
       $executeRaw: jest.fn().mockResolvedValue(1),
+      trackedCategory: {
+        findMany: jest
+          .fn()
+          .mockResolvedValue([
+            { id: "cat-1", taxType: "PERCENT_OF_SALE", rate: 0.07, priceIncludesTax: false },
+          ]),
+      },
+      product: { findMany: jest.fn().mockResolvedValue([]) },
+
       invoiceItem: { update: jest.fn().mockResolvedValue({}), findMany: jest.fn() },
       invoice: { update: jest.fn().mockResolvedValue({}), findUnique: jest.fn() },
     };
@@ -175,6 +184,14 @@ describe("InvoicesService.applyPriceAdjustment — regulated ledger sync (B662)"
     arrange(InvoiceStatus.SENT, [regulated("li-1")]);
     const order: string[] = [];
     const tx = {
+      trackedCategory: {
+        findMany: jest
+          .fn()
+          .mockResolvedValue([
+            { id: "cat-1", taxType: "PERCENT_OF_SALE", rate: 0.07, priceIncludesTax: false },
+          ]),
+      },
+      product: { findMany: jest.fn().mockResolvedValue([]) },
       $executeRaw: jest.fn(async () => {
         order.push("lock invoice");
         return 1;
@@ -213,6 +230,15 @@ describe("InvoicesService.applyPriceAdjustment — regulated ledger sync (B662)"
     const txWith = (live: any) => {
       const tx = {
         $executeRaw: jest.fn().mockResolvedValue(1),
+        trackedCategory: {
+          findMany: jest
+            .fn()
+            .mockResolvedValue([
+              { id: "cat-1", taxType: "PERCENT_OF_SALE", rate: 0.07, priceIncludesTax: false },
+            ]),
+        },
+        product: { findMany: jest.fn().mockResolvedValue([]) },
+
         invoiceItem: {
           update: jest.fn().mockResolvedValue({}),
           updateMany: jest.fn().mockResolvedValue({}),
@@ -245,6 +271,23 @@ describe("InvoicesService.applyPriceAdjustment — regulated ledger sync (B662)"
       });
       await expect(adjust(["li-1"])).rejects.toThrow(ConflictException);
       expect(tx.invoiceItem.update).not.toHaveBeenCalled();
+    });
+
+    it("N-2: the category and pack reference data come from the LOCKED read (a line whose category changed under the same id)", async () => {
+      arrange(InvoiceStatus.SENT, [regulated("li-1")]); // pre-lock: cat-1
+      const tx = txWith({
+        status: InvoiceStatus.SENT,
+        items: [regulated("li-1", { trackedCategoryId: "cat-2", productId: "p-other" })],
+        payments: [],
+      });
+      await adjust(["li-1"]);
+      expect(tx.trackedCategory.findMany).toHaveBeenCalledWith({
+        where: { id: { in: ["cat-2"] } },
+      });
+      expect(tx.product.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { id: { in: ["p-other"] } } }),
+      );
+      expect(prisma.trackedCategory.findMany).not.toHaveBeenCalled(); // nothing read pre-lock
     });
 
     it("N-2: the writes are built from the lines re-read under the lock (their live quantity, not the pre-lock copy)", async () => {

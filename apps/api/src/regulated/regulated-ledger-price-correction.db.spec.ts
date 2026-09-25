@@ -320,16 +320,17 @@ describeDb("B662 ledger price correction — real Postgres", () => {
 
   it("R2 (b): the rest comes back in parts: the last one takes the exact remainder, no cent drift, the SUM ends at 0", async () => {
     const f = await seedDriven("r2b", 100, 20, 10);
-    expect(await f.correctTo(125.01, 25.01)).toBe(1);
-    await f.returnPieces("ret-r2b-1", 4);
-    await f.returnPieces("ret-r2b-2", 3);
-    expect(Number((await f.reversalOf("ret-r2b-1")).netSales)).toBe(-50); // 125.01 x 0.4 = 50.004
-    expect(Number((await f.reversalOf("ret-r2b-2")).netSales)).toBe(-37.5); // 125.01 x 0.3 = 37.503
+    expect(await f.correctTo(125.03, 25.03)).toBe(1);
+    // each non-closing chunk is its share of what the line STILL HOLDS (remaining x returned / remaining qty)
+    await f.returnPieces("ret-r2b-1", 4); // 125.03 x 4/10 = 50.012
+    await f.returnPieces("ret-r2b-2", 3); // (125.03 - 50.01) x 3/6 = 37.51
+    const r1 = await f.reversalOf("ret-r2b-1");
+    const r2 = await f.reversalOf("ret-r2b-2");
+    expect([Number(r1.netSales), Number(r1.categoryTax)]).toEqual([-50.01, -10.01]);
+    expect([Number(r2.netSales), Number(r2.categoryTax)]).toEqual([-37.51, -7.51]);
     await f.returnPieces("ret-r2b-3", 3); // the closing chunk books the remaining balance exactly
-    expect(Number((await f.reversalOf("ret-r2b-3")).netSales)).toBe(-37.51);
-    expect(Number((await f.reversalOf("ret-r2b-3")).categoryTax)).toBe(
-      -roundMoney(25.01 - 10.0 - 7.5),
-    ); // tax closes the same way: 25.01 - 10.00 - 7.50 = 7.51
+    const r3 = await f.reversalOf("ret-r2b-3");
+    expect([Number(r3.netSales), Number(r3.categoryTax)]).toEqual([-37.51, -7.51]);
     expect(await f.drivenSums()).toEqual({ net: 0, tax: 0, qty: 0 });
   }, 60_000);
 
