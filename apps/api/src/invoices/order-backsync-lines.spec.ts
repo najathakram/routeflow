@@ -123,6 +123,45 @@ describe("orderLineShape (SA-203c)", () => {
       expect(shape).toMatchObject({ qty: 17, boxes: 0, pieces: 17, unitsPerBox: null });
     });
 
+    it("n > 1 with NO shared pack still re-splits at the ORDER line's own known pack: 2 boxes x 24 + 12 more pieces is 2 boxes + 12 pcs (qty 60), never 2 + 0 at pack 24 (a shape that prices as 48)", () => {
+      const shape = orderLineShape(
+        { boxes: 2, pieces: 0, unitsPerBox: 24 },
+        {
+          qty: 60,
+          sample: { boxes: null, pieces: null, unitsPerBox: null },
+          n: 2,
+          packs: new Set([0]),
+        },
+      );
+      expect(shape).toMatchObject({ qty: 60, boxes: 2, pieces: 12, unitsPerBox: 24 });
+    });
+
+    it("n > 1 with mixed invoice packs (12 and 24) keeps the order line's pack 24 and re-splits at it", () => {
+      const shape = orderLineShape(
+        { boxes: 1, pieces: 0, unitsPerBox: 24 },
+        {
+          qty: 30,
+          sample: { boxes: 1, pieces: 0, unitsPerBox: 12 },
+          n: 2,
+          packs: new Set([12, 24]),
+        },
+      );
+      expect(shape).toMatchObject({ qty: 30, boxes: 1, pieces: 6, unitsPerBox: 24 });
+    });
+
+    it("a LOOSE order line fed by n > 1 lines at pack 1 keeps its own pack (the levy must not fall back to the live pack)", () => {
+      const shape = orderLineShape(
+        { boxes: null, pieces: null, unitsPerBox: 12 },
+        {
+          qty: 7,
+          sample: { boxes: null, pieces: null, unitsPerBox: 1 },
+          n: 2,
+          packs: new Set([1]),
+        },
+      );
+      expect(shape).toMatchObject({ qty: 7, boxes: null, pieces: null, unitsPerBox: 12 });
+    });
+
     it("differing known packs (12 and 24) are not a shared pack: the stored split is kept", () => {
       const shape = orderLineShape(
         { boxes: 0, pieces: 5, unitsPerBox: null },

@@ -723,5 +723,241 @@ describeDb(
       expect(after!.boxes).toBe(3);
       expect(after!.pieces).toBe(0);
     });
+
+    // ── Opus REQUIRED on 9ee750cb: three back-sync scenarios the earlier pins did not reach ─────────
+    const mkProduct = (tenantId: string, name: string, upb: number | null = null) =>
+      prisma.product.create({
+        data: { tenantId, name, unit: "each", pricePerUnit: 10, unitsPerBox: upb },
+      });
+    const orderLinesOf = (orderId: string) =>
+      prisma.orderItem.findMany({ where: { orderId }, orderBy: { createdAt: "asc" } });
+
+    it("SA-203-Q1 the web's REAL payload ({items unchanged, discount 0 -> 5}) still runs the full coverage recompute: a short-delivered line shrinks to its billed qty, a refused line cancels, and the order's rows add up", async () => {
+      const t = await seedTenant("q1");
+      const customer = await seedCustomer(t.id, "q1");
+      const pA = await mkProduct(t.id, `A ${t.slug}`);
+      const pB = await mkProduct(t.id, `B ${t.slug}`);
+      const order = await prisma.order.create({
+        data: {
+          tenantId: t.id,
+          customerId: customer.id,
+          status: "DELIVERED",
+          subtotal: 160,
+          total: 160,
+        },
+      });
+      const lineA = await prisma.orderItem.create({
+        data: {
+          tenantId: t.id,
+          orderId: order.id,
+          productId: pA.id,
+          qty: 10,
+          unitPrice: 10,
+          subtotal: 100,
+        },
+      });
+      const lineB = await prisma.orderItem.create({
+        data: {
+          tenantId: t.id,
+          orderId: order.id,
+          productId: pB.id,
+          qty: 6,
+          unitPrice: 10,
+          subtotal: 60,
+        },
+      });
+      await prisma.deliveryMutation.create({
+        data: {
+          tenantId: t.id,
+          orderId: order.id,
+          orderItemId: lineA.id,
+          productId: pA.id,
+          type: "DELIVERED",
+          quantityDelivered: 6,
+        },
+      });
+      await prisma.deliveryMutation.create({
+        data: {
+          tenantId: t.id,
+          orderId: order.id,
+          orderItemId: lineB.id,
+          productId: pB.id,
+          type: "REFUSED",
+          quantityDelivered: 0,
+        },
+      });
+      const invoice: any = await tenantCtx.run(t.id, () =>
+        invoicesService.createPartialFromOrder(order.id, {
+          items: [{ orderItemId: lineA.id, qty: 6 }],
+        } as any),
+      );
+      const item = invoice.items[0];
+      await tenantCtx.run(t.id, () =>
+        invoicesService.update(invoice.id, {
+          discount: 5,
+          items: [
+            { id: item.id, productId: pA.id, description: item.description, qty: 6, unitPrice: 10 },
+          ],
+        } as any),
+      );
+      const [a, b] = await orderLinesOf(order.id);
+      expect(Number(a.qty)).toBe(6);
+      expect(Number(a.subtotal)).toBe(60);
+      expect(b.status).toBe("CANCELLED");
+      const o = await prisma.order.findUnique({ where: { id: order.id } });
+      const live = (await orderLinesOf(order.id)).filter((r) => r.status !== "CANCELLED");
+      expect(Number(o!.subtotal)).toBe(live.reduce((s, r) => s + Number(r.subtotal), 0));
+    });
+
+    it("SA-203-Q2 n > 1 with NO shared pack: an order line at pack 24 fed by two pack-less invoice lines (48 + 12) is re-split at ITS pack (2 boxes + 12 pcs), not left 2 + 0", async () => {
+      const t = await seedTenant("q2");
+      const customer = await seedCustomer(t.id, "q2");
+      const product = await mkProduct(t.id, `q2 ${t.slug}`, 12);
+      const order = await prisma.order.create({
+        data: {
+          tenantId: t.id,
+          customerId: customer.id,
+          status: "DELIVERED",
+          subtotal: 600,
+          total: 600,
+        },
+      });
+      const oi = await prisma.orderItem.create({
+        data: {
+          tenantId: t.id,
+          orderId: order.id,
+          productId: product.id,
+          qty: 60,
+          boxes: 2,
+          pieces: 0,
+          unitsPerBox: 24,
+          unitPrice: 10,
+          subtotal: 600,
+          invoicedQty: 60,
+        },
+      });
+      for (const [n, qty] of [
+        [1, 48],
+        [2, 12],
+      ] as const) {
+        const inv = await prisma.invoice.create({
+          data: {
+            tenantId: t.id,
+            customerId: customer.id,
+            orderId: order.id,
+            invoiceNumber: `INV-Q2${n}-${RUN_SUFFIX}`,
+            status: "DRAFT",
+            subtotal: qty * 10,
+            total: qty * 10,
+          },
+        });
+        await prisma.invoiceItem.create({
+          data: {
+            tenantId: t.id,
+            invoiceId: inv.id,
+            productId: product.id,
+            orderItemId: oi.id,
+            description: "q2",
+            qty,
+            unitPrice: 10,
+            subtotal: qty * 10,
+          },
+        });
+      }
+      await tenantCtx.run(t.id, () => invoicesService.recomputeOrderFromInvoices(order.id));
+      const after = await prisma.orderItem.findUnique({ where: { id: oi.id } });
+      expect([Number(after!.qty), after!.boxes, after!.pieces, after!.unitsPerBox]).toEqual([
+        60, 2, 12, 24,
+      ]);
+    });
+
+    it("SA-203-Q3 an items save that touches only ANOTHER line still creates the order line for an invoice line whose money is already in the subtotal", async () => {
+      const t = await seedTenant("q3");
+      const customer = await seedCustomer(t.id, "q3");
+      const p1 = await mkProduct(t.id, `p1 ${t.slug}`);
+      const p3 = await mkProduct(t.id, `p3 ${t.slug}`);
+      const order = await prisma.order.create({
+        data: {
+          tenantId: t.id,
+          customerId: customer.id,
+          status: "DELIVERED",
+          subtotal: 100,
+          total: 100,
+        },
+      });
+      const o1 = await prisma.orderItem.create({
+        data: {
+          tenantId: t.id,
+          orderId: order.id,
+          productId: p1.id,
+          qty: 10,
+          unitPrice: 10,
+          subtotal: 100,
+          invoicedQty: 9,
+        },
+      });
+      const mkInv = (n: string) =>
+        prisma.invoice.create({
+          data: {
+            tenantId: t.id,
+            customerId: customer.id,
+            orderId: order.id,
+            invoiceNumber: `INV-Q3${n}-${RUN_SUFFIX}`,
+            status: "DRAFT",
+            subtotal: 0,
+            total: 0,
+          },
+        });
+      const invA = await mkInv("A");
+      const invB = await mkInv("B");
+      // A bills 6 of the order line AND carries an extra P3 line added on the invoice (no order line yet)
+      await prisma.invoiceItem.create({
+        data: {
+          tenantId: t.id,
+          invoiceId: invA.id,
+          productId: p1.id,
+          orderItemId: o1.id,
+          description: "A p1",
+          qty: 6,
+          unitPrice: 10,
+          subtotal: 60,
+        },
+      });
+      await prisma.invoiceItem.create({
+        data: {
+          tenantId: t.id,
+          invoiceId: invA.id,
+          productId: p3.id,
+          description: "A p3",
+          qty: 5,
+          unitPrice: 10,
+          subtotal: 50,
+        },
+      });
+      const iB = await prisma.invoiceItem.create({
+        data: {
+          tenantId: t.id,
+          invoiceId: invB.id,
+          productId: p1.id,
+          orderItemId: o1.id,
+          description: "B p1",
+          qty: 3,
+          unitPrice: 10,
+          subtotal: 30,
+        },
+      });
+      // editing ONLY B's line (3 -> 4) makes the order fully covered (6 + 4 = 10)
+      await tenantCtx.run(t.id, () =>
+        invoicesService.update(invB.id, {
+          items: [{ id: iB.id, productId: p1.id, description: "B p1", qty: 4, unitPrice: 10 }],
+        } as any),
+      );
+      const lines = await orderLinesOf(order.id);
+      expect(lines.some((r) => r.productId === p3.id)).toBe(true);
+      const o = await prisma.order.findUnique({ where: { id: order.id } });
+      expect(Number(o!.subtotal)).toBe(
+        lines.filter((r) => r.status !== "CANCELLED").reduce((s, r) => s + Number(r.subtotal), 0),
+      );
+    });
   },
 );

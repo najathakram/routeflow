@@ -34,10 +34,11 @@ export function orderLineShape(
   // Otherwise the pack is unknown and the stored split is kept, as for a legacy line.
   const multi = (agg.n ?? 1) > 1;
   const shared = agg.packs?.size === 1 ? [...agg.packs][0] : 0;
+  // With no shared pack the ORDER line's own known pack still stands (never a sibling's, never the live product's).
   const upb = multi
     ? shared > 1
       ? shared
-      : 0
+      : Number(existing?.unitsPerBox ?? 0)
     : Number(existing?.unitsPerBox ?? sample?.unitsPerBox ?? 0);
   const isBoxSplit = (existing ?? sample)?.boxes != null;
   // A box-split line whose pack is unknown (a legacy 0-box + 5-piece line) cannot be re-split from qty:
