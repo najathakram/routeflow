@@ -610,9 +610,12 @@ export function RecordInlineReturnDialog({
             >
               <p className="text-sm font-medium text-navy">Ledger reversal parked</p>
               <p className="text-xs text-navy/70">
-                {result.parkedReversals.pieces} piece(s) across {result.parkedReversals.count}{" "}
-                line(s) could not be booked to the regulated ledger. It stays on the regulated
-                report until resolved.
+                The credit note and refund are recorded, but {result.parkedReversals.pieces}{" "}
+                piece(s) across {result.parkedReversals.count} line(s) were not taken off the
+                regulated sales ledger. The original sale&apos;s pack size is unknown, so the
+                system could not work out the reversal safely. The period cannot be filed until
+                this is resolved. Next step: open the regulated report, supply the pack size for
+                the parked line(s), and resolve them.
               </p>
             </div>
           )}

@@ -195,8 +195,8 @@ export interface InlineReturnRecord {
   holdReason?: string | null;
   heldAmount?: number | null;
   /** B735: non-null iff this return has an unresolved regulated-ledger park (the B681 park
-   *  guard could not safely reverse a legacy/unknown box-axis SALE row). Always present as
-   *  `null` when clean — never `undefined` — so the dialog can render off its plain presence. */
+   *  guard could not safely reverse a legacy/unknown box-axis SALE row). `null` = checked and clean; ABSENT =
+   *  not checked (the post-commit read failed, or no tenant context) — never assume clean. */
   parkedReversals?: InlineReturnParkedReversals | null;
   creditSubtotal?: number | null;
   creditTax?: number | null;
