@@ -1,3 +1,5 @@
+import type { DraftLinePriceSource } from "@routeflow/types";
+
 /**
  * Shared by NewOrderScreen.tsx and its CartRow — split out so CartRow can move to its own
  * file (`components/CartRow.tsx`) without a circular import back to NewOrderScreen.tsx.
@@ -76,6 +78,14 @@ export type LineState = {
    * spanning several packs is not `unitsPerBox` at all). Unset while `unitLabel` is unset.
    */
   unitFactor?: number;
+  /**
+   * B755: where `unitPrice` came from — a remembered price-history pre-fill (`addOne`), or a
+   * genuine operator override (`setLinePrice`). Draft-only: never read by `submitOrder`, and
+   * only meaningful alongside a MANUAL `priceType` on the parked line — a "history" price is
+   * never pinned across a resume, an "operator" one always is. Undefined on a line with no
+   * override at all (nothing to distinguish), and on any line predating this field.
+   */
+  priceSource?: DraftLinePriceSource;
 };
 
 export function toNumber(v: number | string | null | undefined): number {
