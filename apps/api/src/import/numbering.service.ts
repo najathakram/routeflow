@@ -142,13 +142,14 @@ export class NumberingService {
   }
 
   /**
-   * Upsert a tenant's sequence config (import numbering card / migration
-   * setup). Runs inside one short `tenantTransaction` (D7: never nested) so
-   * the guard reads below share the mint path's clients/RLS. Two guards
-   * (SA-274 Q2/Q3), checked before any write:
-   *   - `dto.expectedNextNumber`, when given, must equal the stored
-   *     `nextNumber` (the version token the card loaded) or the save 409s —
-   *     the numbering moved since the card was opened, reload and retry.
+   * Save a tenant's sequence config (the import numbering card). Runs inside
+   * one short `tenantTransaction` (D7: never nested) so the guard reads below
+   * share the mint path's clients/RLS. Guards (SA-274 Q2/Q3, SA-287b), checked
+   * before any write:
+   *   - `dto.expectedNextNumber` is REQUIRED (400, "reload the settings") and
+   *     must equal the stored `nextNumber` — 1 for an unsaved row — (the
+   *     version token the card loaded) or the save 409s: the numbering moved
+   *     since the card was opened, reload and retry.
    *   - `dto.nextNumber`, when given for a year-scoped docType, must be ABOVE
    *     the tenant's true numeric max for the effective prefix or the save
    *     400s naming the exact document number it collides with — lowering
@@ -156,11 +157,11 @@ export class NumberingService {
    *     at or below it never silently truncates history. The mint-time
    *     max-first GREATEST (`mintConfigured`) stays the net for an import
    *     that lands after this save.
-   * The write itself: no `expectedNextNumber` → today's unconditional upsert
-   * (a migration seed has no version to compare against); with it → a
-   * compare-and-set (`updateMany` gated on the stored `nextNumber`, 0 rows
-   * matched → 409) against an existing row, or a plain `create` when none
-   * exists yet (a concurrent first save racing to the same row → P2002 → 409).
+   * The write itself: a compare-and-set (`updateMany` gated on the stored
+   * `nextNumber`, 0 rows matched → 409) against an existing row, or a plain
+   * `create` when none exists yet (a concurrent first save racing to the same
+   * row → P2002 → 409). A card save and a configured mint serialize on this
+   * row (the mint locks it first, `mintConfigured`).
    * The version token is `nextNumber` ONLY (SA-274 Q3, SA-287 LOW, accepted):
    * a prefix/padding edit saved from another tab, or a next number raised and
    * lowered back to the same value, leaves it unchanged, so a stale save can
@@ -177,13 +178,16 @@ export class NumberingService {
     const staleMessage = `${docTypeLabel(docType)} numbering changed since you opened it — reload and try again.`;
 
     return this.prisma.tenantTransaction(async (tx: Prisma.TransactionClient) => {
+      // SA-287b: the version token is REQUIRED — a token-less write could lower a live counter
+      // under an in-flight mint. An unsaved row's token is the card's loaded default, 1.
+      if (dto.expectedNextNumber === undefined) {
+        throw new BadRequestException(
+          `These ${docTypeLabel(docType)} numbering settings are out of date — reload the settings and try again.`,
+        );
+      }
       const existing = await tx.numberingSequence.findUnique({ where: key });
-
-      if (dto.expectedNextNumber !== undefined) {
-        const currentNext = existing?.nextNumber ?? 1;
-        if (currentNext !== dto.expectedNextNumber) {
-          throw new ConflictException(staleMessage);
-        }
+      if ((existing?.nextNumber ?? 1) !== dto.expectedNextNumber) {
+        throw new ConflictException(staleMessage);
       }
 
       if (dto.nextNumber !== undefined && isYearScoped(docType)) {
@@ -206,19 +210,7 @@ export class NumberingService {
       };
 
       let row: { docType: DocumentNumberType; prefix: string; nextNumber: number; padding: number };
-      if (dto.expectedNextNumber === undefined) {
-        row = await tx.numberingSequence.upsert({
-          where: key,
-          create: {
-            tenantId,
-            docType,
-            prefix: dto.prefix ?? d.prefix,
-            nextNumber: dto.nextNumber ?? 1,
-            padding: dto.padding ?? d.padding,
-          },
-          update: data,
-        });
-      } else if (existing) {
+      if (existing) {
         const result = await tx.numberingSequence.updateMany({
           // A WhereInput takes plain columns, never the compound-unique `key`.
           where: { tenantId, docType, year: 0, nextNumber: dto.expectedNextNumber },
@@ -265,27 +257,6 @@ export class NumberingService {
         preview,
         configured: true,
       };
-    });
-  }
-
-  /**
-   * Seed a sequence from a migration source's last-issued number:
-   * seedFromSource("INVOICE", "INV-08841") ⇒ next mints "INV-08842". Continuity
-   * only — the parsed prefix/padding are adopted so RouteFlow numbers look like
-   * the source's.
-   */
-  async seedFromSource(
-    docType: DocumentNumberType,
-    lastNumber: string,
-  ): Promise<NumberingSettingRow> {
-    const parsed = this.parseDocumentNumber(lastNumber);
-    if (!parsed) {
-      throw new BadRequestException(`Could not read a number to continue from "${lastNumber}".`);
-    }
-    return this.updateSettings(docType, {
-      prefix: parsed.prefix,
-      nextNumber: parsed.number + 1,
-      padding: parsed.padding,
     });
   }
 
@@ -424,7 +395,7 @@ export class NumberingService {
     const configuredKey = { tenantId_docType_year: { tenantId, docType, year: 0 } };
     const saved = await db.numberingSequence.findUnique({ where: configuredKey });
     if (saved) {
-      return this.mintConfigured(db, docType, tenantId, saved);
+      return this.mintConfigured(db, docType, tenantId);
     }
     if (year > 0) {
       const key = { tenantId_docType_year: { tenantId, docType, year } };
@@ -448,11 +419,29 @@ export class NumberingService {
     db: Prisma.TransactionClient,
     docType: YearScopedDocType,
     tenantId: string,
-    saved: { prefix: string; nextNumber: number; padding: number },
   ): Promise<string> {
     const MINT_MAX_ATTEMPTS = 5;
-    let prefix = saved.prefix;
-    let priorNext = saved.nextNumber;
+    // SA-287b: lock the saved row FIRST. A card save writes the same row, so it now waits for
+    // this mint (or this mint waits for it) instead of changing the prefix between the max
+    // scan and the reservation — which could issue a number at or below an existing document
+    // under the new prefix. Standalone callers hold the lock for their own short transaction;
+    // the delivery path's `opts.tx` holds it until its commit, as the per-year UPDATE already does.
+    const locked = await db.$queryRaw<
+      Array<{ nextNumber: number; prefix: string; padding: number }>
+    >`
+      SELECT "nextNumber", "prefix", "padding" FROM "NumberingSequence"
+      WHERE "tenantId" = ${tenantId}
+        AND "docType" = ${docType}::"DocumentNumberType"
+        AND "year" = 0
+      FOR UPDATE
+    `;
+    if (!locked[0]) {
+      throw new ConflictException(
+        `The saved ${docTypeLabel(docType)} numbering changed while minting — try again.`,
+      );
+    }
+    const prefix = locked[0].prefix;
+    let priorNext = locked[0].nextNumber;
     let skipped = 0;
 
     for (let attempt = 0; attempt < MINT_MAX_ATTEMPTS; attempt++) {
@@ -469,7 +458,8 @@ export class NumberingService {
       `;
       const row = rows[0];
       const reserved = row.nextNumber - 1;
-      prefix = row.prefix;
+      // The row is locked, so RETURNING carries the prefix this attempt scanned; format with the
+      // scanned one regardless, never with a prefix the max scan did not cover.
       const padding = row.padding;
 
       if (reserved > priorNext) skipped += reserved - priorNext;

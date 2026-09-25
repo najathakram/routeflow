@@ -1,6 +1,6 @@
 import { IsInt, IsOptional, IsString, Max, MaxLength, Min } from "class-validator";
 
-/** Body for `PUT /import/numbering/:docType` — all fields optional (partial edit). */
+/** Body for `PUT /import/numbering/:docType` — a partial edit plus the required version token. */
 export class UpdateNumberingDto {
   @IsOptional()
   @IsString()
@@ -23,10 +23,12 @@ export class UpdateNumberingDto {
 
   /**
    * Optimistic-concurrency token (SA-274 Q3): the stored `nextNumber` the web
-   * card loaded before editing. When present, the server compare-and-sets
-   * against it and 409s (numbering changed since the card was opened) instead
-   * of silently overwriting a save that landed in between. Omit it to keep
-   * today's unconditional upsert (seeding from a migration source).
+   * card loaded before editing (1 for an unsaved row). The server
+   * compare-and-sets against it and 409s (numbering changed since the card was
+   * opened) instead of silently overwriting a save that landed in between.
+   * REQUIRED by the service (SA-287b): a save without it is a 400 asking the
+   * user to reload; it stays `@IsOptional` here only so that 400 carries that
+   * wording rather than the validation pipe's generic one.
    */
   @IsOptional()
   @IsInt()
