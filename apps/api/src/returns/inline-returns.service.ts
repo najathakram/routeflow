@@ -137,6 +137,222 @@ export class InlineReturnsService {
   }
 
   /**
+   * #2094 (SA-194): the gate every in-order caller runs FIRST, before any read: a buyer never
+   * captures a return at order entry, and the add-on is re-checked by the service regardless of
+   * the registry's rollout state.
+   */
+  async assertInlineReturnAllowed(user: JwtPayload): Promise<void> {
+    if (user.role === UserRole.CUSTOMER) {
+      throw new ForbiddenException("Buyers cannot capture returns at order entry");
+    }
+    await this.assertGranted(this.prisma.getTenantId());
+  }
+
+  /** Post-commit only, like every credit-note event here. */
+  emitCreditIssued(tenantId: string | null, minted: any): void {
+    this.emitCreditNoteCreated(tenantId, minted);
+  }
+
+  /**
+   * capture()'s transaction body, VERBATIM, minus the customer advisory lock: the CALLER holds it
+   * (`standalone capture` takes it first thing in its own tx; the order create/edit paths take it as
+   * their first statement, before any row lock: house order advisory -> Return -> Order -> Invoice ->
+   * rows, SA-214). Never opens a transaction, never takes a lock of its own on the customer, and
+   * never calls anything that does (source-pinned in inline-returns-source-pins.spec.ts).
+   *
+   * `opts.orderRouteRunId`: a NEW order links its run after its own transaction, so a DRIVER's
+   * ownership check would otherwise see `routeRunId: null`; the create path passes the run it
+   * already validated.
+   */
+  async captureInTx(
+    tx: any,
+    dto: CaptureInlineReturnDto,
+    user: JwtPayload,
+    opts: { orderRouteRunId?: string | null } = {},
+  ): Promise<{ replayed: boolean; ret: any; overCap: boolean }> {
+    const tenantId = this.prisma.getTenantId();
+    await tx.$executeRaw`SELECT id FROM "Order" WHERE id = ${dto.orderId} FOR UPDATE`;
+    const order = await tx.order.findFirst({
+      where: { id: dto.orderId },
+      select: { id: true, customerId: true, total: true, status: true, routeRunId: true },
+    });
+    if (!order) throw new NotFoundException("Order not found");
+    if (order.customerId !== dto.customerId) {
+      throw new BadRequestException("Order does not belong to this customer");
+    }
+    if (order.status === "CANCELLED") {
+      throw new BadRequestException("Cannot capture a return against a cancelled order");
+    }
+    if (user.role === UserRole.DRIVER) {
+      await this.assertDriverOwnsOrder(tx, dto, {
+        routeRunId: order.routeRunId ?? opts.orderRouteRunId ?? null,
+      });
+    }
+
+    // Re-check the replay key INSIDE the lock — a racer that lost the acquire above may
+    // have committed a matching row while this call waited for it. MED-7 (re-review):
+    // only trusted as a replay when it matches THIS (customerId, orderId) — the same
+    // rule the pre-tx check and the post-catch P2002 recovery both apply. A returnKey
+    // collision against a DIFFERENT customer/order here is a genuine conflict, never a
+    // silent replay of someone else's return.
+    if (dto.returnKey) {
+      const raced = await tx.return.findFirst({
+        where: { returnKey: dto.returnKey, kind: "INLINE" },
+        include: { items: true },
+      });
+      if (raced) {
+        if (raced.customerId !== dto.customerId || raced.orderId !== dto.orderId) {
+          throw new ConflictException("A different return already used this capture key");
+        }
+        return {
+          replayed: true as const,
+          ret: raced,
+          overCap: raced.holdReason === "DRIVER_CAP",
+        };
+      }
+    }
+
+    // Same pricing engine the quote endpoint uses, run on THIS transaction's client so
+    // it reads the matching-set/prior-returned snapshot under the lock just taken.
+    const priced = await this.quoteService.priceInlineReturn(
+      { customerId: dto.customerId, items: dto.items, routeRunStopId: dto.routeRunStopId },
+      user,
+      tx,
+    );
+
+    // §4 N-5: Σ (committed credit of non-cancelled inline returns already on this
+    // order), read under the carrying-order lock just taken — the driver cap compares
+    // Σ+this return's total against the order's gross (config driverCreditCap = 0 =
+    // gross, PR-1..3's fixed default; no config reader yet).
+    const priorCredit = await sumInlineReturnCredit(tx, dto.orderId);
+    const cap = roundMoney(Number(order.total ?? 0));
+    const wouldBe = roundMoney(priorCredit + priced.total);
+    const isDriver = user.role === UserRole.DRIVER;
+    // Re-review LOW-MED: a zero-total return has nothing to hold — a $0.00 "credit
+    // awaiting approval" is never a real DRIVER_CAP case, so it's excluded even when
+    // Σ is already at/over the order's gross.
+    const overCap = isDriver && priced.total > 0.001 && wouldBe > cap + 0.001;
+
+    const year = new Date().getFullYear();
+    const returnNumber = await this.numbering.reserveNext("RETURN", {
+      year,
+      tenantId: tenantId ?? undefined,
+      tx,
+    });
+
+    const itemsData = priced.chunks.map((c) => {
+      const dtoItem = dto.items.find((i) => i.productId === c.productId);
+      const reason = dtoItem?.reason ?? dto.reason ?? "EXCESS_ORDER";
+      return {
+        productId: c.productId,
+        qty: c.pieces,
+        reason,
+        condition: dtoItem?.condition,
+        restock: dtoItem?.restock ?? this.restockDefault(reason),
+        sourceOrderId: c.sourceOrderId,
+        sourceInvoiceItemId: c.sourceInvoiceItemId,
+        sourceOrderItemId: c.sourceOrderItemId,
+        unitPrice: c.unitPrice,
+        subtotal: c.subtotal,
+        taxAmount: c.taxAmount,
+        categoryTax: c.categoryTax,
+        priceSource: c.priceSource,
+        originalPrice: c.originalPrice ?? null,
+        overrideReason: c.overrideReason ?? null,
+        overriddenBy: c.overriddenBy ?? null,
+        tenantId, // nested creates bypass the tx proxy's auto-injection
+      };
+    });
+
+    // MED-7: NO try/catch around this insert — a P2002 here aborts the transaction
+    // (25P02); any further query on `tx` would itself fail on the aborted connection.
+    // Let it propagate to the OUTER catch below, which re-checks on a fresh connection.
+    const created = await tx.return.create({
+      data: {
+        returnNumber,
+        orderId: dto.orderId,
+        customerId: dto.customerId,
+        reason: dto.reason ?? "EXCESS_ORDER",
+        notes: dto.notes,
+        photoUrls: dto.photoUrls ?? [],
+        status: "RECEIVED",
+        kind: "INLINE",
+        returnKey: dto.returnKey,
+        capturedById: user.sub,
+        capturedRole: user.role,
+        routeRunStopId: dto.routeRunStopId,
+        creditSubtotal: priced.subtotal,
+        creditTax: priced.taxAmount,
+        creditCategoryTax: priced.categoryTax,
+        ...(overCap ? { holdReason: "DRIVER_CAP", heldAmount: priced.total } : {}),
+        items: { create: itemsData },
+      },
+      include: { items: true },
+    });
+
+    if (!overCap) {
+      // HIGH-4: restock/ledger reversal happens NOW only for a return that is NOT
+      // held — a DRIVER_CAP hold defers both to approve() (design §5), so goods aren't
+      // released from inventory until an operator actually approves the credit.
+      await restockReturnItems(tx, created, user.sub);
+      await this.reverseLedgerForReturn(tx, created);
+    } else {
+      // §4: in-tx audit row — the socket/push alert + tenant-grouped alert sweep
+      // (`RETURN_QTY_MISMATCH`) are PR-1d; this row is what 1d's sweep will read.
+      await tx.auditLog.create({
+        data: {
+          userId: user.sub,
+          action: "inline_return.driver_cap_hold",
+          entityType: "Return",
+          entityId: created.id,
+          meta: {
+            orderId: dto.orderId,
+            customerId: dto.customerId,
+            capturedById: user.sub,
+            capturedRole: user.role,
+            heldAmount: priced.total,
+            priorCredit,
+            orderGross: cap,
+            reason: "DRIVER_CAP",
+          },
+        },
+      });
+    }
+
+    return { replayed: false as const, ret: created, overCap };
+  }
+
+  /**
+   * captureInTx + the credit issue in the SAME transaction (#2094, SA-194/SA-221): mint the credit
+   * note (at `opts.creditNoteNumber` when the caller reserved one before its retry loop, else a
+   * number reserved on this tx), link it, record the system-owned orderCreditNote intent capped at
+   * the order's remaining balance under the Order lock the caller holds, and settle. A replay (the
+   * credit already exists) and a DRIVER_CAP hold issue nothing. `minted` is null in those cases and
+   * for a zero-total return; the caller emits the CN event after ITS commit.
+   */
+  async captureAndIssueInTx(
+    tx: any,
+    dto: CaptureInlineReturnDto,
+    user: JwtPayload,
+    opts: { creditNoteNumber?: string; orderRouteRunId?: string | null } = {},
+  ): Promise<{ replayed: boolean; ret: any; overCap: boolean; minted: any | null }> {
+    const captured = await this.captureInTx(tx, dto, user, {
+      orderRouteRunId: opts.orderRouteRunId,
+    });
+    if (captured.replayed || captured.overCap) return { ...captured, minted: null };
+    const ret = captured.ret;
+    const amount = roundMoney(
+      Number(ret.creditSubtotal ?? 0) +
+        Number(ret.creditTax ?? 0) +
+        Number(ret.creditCategoryTax ?? 0),
+    );
+    const minted = await this.issueCreditInTx(tx, ret, amount, this.prisma.getTenantId(), {
+      creditNoteNumber: opts.creditNoteNumber,
+    });
+    return { ...captured, minted };
+  }
+
+  /**
    * Captures an inline return against an existing carrying order: prices it (the same
    * engine the quote endpoint uses), and either restocks + reverses the regulated ledger +
    * issues a standalone credit note immediately, or (above the driver cap) holds the whole
@@ -182,159 +398,14 @@ export class InlineReturnsService {
       try {
         result = await this.prisma.tenantTransaction(async (tx: any) => {
           // §5: the SAME customer-scoped lock returns.service.ts's create() takes — inline and
-          // standard return creation for one customer serialize against each other here.
+          // standard return creation for one customer serialize against each other here. The
+          // order create/edit paths (#2094) take this same lock themselves, as their FIRST
+          // statement, and then call `captureInTx`.
           await this.idempotency.acquireLock(
             this.idempotency.hashFor(dto.customerId, tenantId, "returns.customer"),
             tx,
           );
-
-          await tx.$executeRaw`SELECT id FROM "Order" WHERE id = ${dto.orderId} FOR UPDATE`;
-          const order = await tx.order.findFirst({
-            where: { id: dto.orderId },
-            select: { id: true, customerId: true, total: true, status: true, routeRunId: true },
-          });
-          if (!order) throw new NotFoundException("Order not found");
-          if (order.customerId !== dto.customerId) {
-            throw new BadRequestException("Order does not belong to this customer");
-          }
-          if (order.status === "CANCELLED") {
-            throw new BadRequestException("Cannot capture a return against a cancelled order");
-          }
-          if (user.role === UserRole.DRIVER) {
-            await this.assertDriverOwnsOrder(tx, dto, order);
-          }
-
-          // Re-check the replay key INSIDE the lock — a racer that lost the acquire above may
-          // have committed a matching row while this call waited for it. MED-7 (re-review):
-          // only trusted as a replay when it matches THIS (customerId, orderId) — the same
-          // rule the pre-tx check and the post-catch P2002 recovery both apply. A returnKey
-          // collision against a DIFFERENT customer/order here is a genuine conflict, never a
-          // silent replay of someone else's return.
-          if (dto.returnKey) {
-            const raced = await tx.return.findFirst({
-              where: { returnKey: dto.returnKey, kind: "INLINE" },
-              include: { items: true },
-            });
-            if (raced) {
-              if (raced.customerId !== dto.customerId || raced.orderId !== dto.orderId) {
-                throw new ConflictException("A different return already used this capture key");
-              }
-              return {
-                replayed: true as const,
-                ret: raced,
-                overCap: raced.holdReason === "DRIVER_CAP",
-              };
-            }
-          }
-
-          // Same pricing engine the quote endpoint uses, run on THIS transaction's client so
-          // it reads the matching-set/prior-returned snapshot under the lock just taken.
-          const priced = await this.quoteService.priceInlineReturn(
-            { customerId: dto.customerId, items: dto.items, routeRunStopId: dto.routeRunStopId },
-            user,
-            tx,
-          );
-
-          // §4 N-5: Σ (committed credit of non-cancelled inline returns already on this
-          // order), read under the carrying-order lock just taken — the driver cap compares
-          // Σ+this return's total against the order's gross (config driverCreditCap = 0 =
-          // gross, PR-1..3's fixed default; no config reader yet).
-          const priorCredit = await sumInlineReturnCredit(tx, dto.orderId);
-          const cap = roundMoney(Number(order.total ?? 0));
-          const wouldBe = roundMoney(priorCredit + priced.total);
-          const isDriver = user.role === UserRole.DRIVER;
-          // Re-review LOW-MED: a zero-total return has nothing to hold — a $0.00 "credit
-          // awaiting approval" is never a real DRIVER_CAP case, so it's excluded even when
-          // Σ is already at/over the order's gross.
-          const overCap = isDriver && priced.total > 0.001 && wouldBe > cap + 0.001;
-
-          const year = new Date().getFullYear();
-          const returnNumber = await this.numbering.reserveNext("RETURN", {
-            year,
-            tenantId: tenantId ?? undefined,
-            tx,
-          });
-
-          const itemsData = priced.chunks.map((c) => {
-            const dtoItem = dto.items.find((i) => i.productId === c.productId);
-            const reason = dtoItem?.reason ?? dto.reason ?? "EXCESS_ORDER";
-            return {
-              productId: c.productId,
-              qty: c.pieces,
-              reason,
-              condition: dtoItem?.condition,
-              restock: dtoItem?.restock ?? this.restockDefault(reason),
-              sourceOrderId: c.sourceOrderId,
-              sourceInvoiceItemId: c.sourceInvoiceItemId,
-              sourceOrderItemId: c.sourceOrderItemId,
-              unitPrice: c.unitPrice,
-              subtotal: c.subtotal,
-              taxAmount: c.taxAmount,
-              categoryTax: c.categoryTax,
-              priceSource: c.priceSource,
-              originalPrice: c.originalPrice ?? null,
-              overrideReason: c.overrideReason ?? null,
-              overriddenBy: c.overriddenBy ?? null,
-              tenantId, // nested creates bypass the tx proxy's auto-injection
-            };
-          });
-
-          // MED-7: NO try/catch around this insert — a P2002 here aborts the transaction
-          // (25P02); any further query on `tx` would itself fail on the aborted connection.
-          // Let it propagate to the OUTER catch below, which re-checks on a fresh connection.
-          const created = await tx.return.create({
-            data: {
-              returnNumber,
-              orderId: dto.orderId,
-              customerId: dto.customerId,
-              reason: dto.reason ?? "EXCESS_ORDER",
-              notes: dto.notes,
-              photoUrls: dto.photoUrls ?? [],
-              status: "RECEIVED",
-              kind: "INLINE",
-              returnKey: dto.returnKey,
-              capturedById: user.sub,
-              capturedRole: user.role,
-              routeRunStopId: dto.routeRunStopId,
-              creditSubtotal: priced.subtotal,
-              creditTax: priced.taxAmount,
-              creditCategoryTax: priced.categoryTax,
-              ...(overCap ? { holdReason: "DRIVER_CAP", heldAmount: priced.total } : {}),
-              items: { create: itemsData },
-            },
-            include: { items: true },
-          });
-
-          if (!overCap) {
-            // HIGH-4: restock/ledger reversal happens NOW only for a return that is NOT
-            // held — a DRIVER_CAP hold defers both to approve() (design §5), so goods aren't
-            // released from inventory until an operator actually approves the credit.
-            await restockReturnItems(tx, created, user.sub);
-            await this.reverseLedgerForReturn(tx, created);
-          } else {
-            // §4: in-tx audit row — the socket/push alert + tenant-grouped alert sweep
-            // (`RETURN_QTY_MISMATCH`) are PR-1d; this row is what 1d's sweep will read.
-            await tx.auditLog.create({
-              data: {
-                userId: user.sub,
-                action: "inline_return.driver_cap_hold",
-                entityType: "Return",
-                entityId: created.id,
-                meta: {
-                  orderId: dto.orderId,
-                  customerId: dto.customerId,
-                  capturedById: user.sub,
-                  capturedRole: user.role,
-                  heldAmount: priced.total,
-                  priorCredit,
-                  orderGross: cap,
-                  reason: "DRIVER_CAP",
-                },
-              },
-            });
-          }
-
-          return { replayed: false as const, ret: created, overCap };
+          return this.captureInTx(tx, dto, user);
         });
       } catch (err: any) {
         if (this.isReturnKeyConflict(err) && dto.returnKey) {
@@ -378,16 +449,20 @@ export class InlineReturnsService {
     fresh: { id: string; customerId: string; orderId: string; returnNumber: string | null },
     amount: number,
     tenantId: string | null,
-    extra?: { approvedById?: string },
+    extra?: { approvedById?: string; creditNoteNumber?: string },
   ): Promise<any> {
     if (!(amount > 0.001)) return null;
 
     const year = new Date().getFullYear();
-    const creditNoteNumber = await this.numbering.reserveNext("CREDIT_NOTE", {
-      year,
-      tenantId: tenantId ?? undefined,
-      tx,
-    });
+    // #2094: an order create reserves the number ONCE before its P2002 retry loop and reuses it
+    // across attempts; every other caller reserves here, on its own tx.
+    const creditNoteNumber =
+      extra?.creditNoteNumber ??
+      (await this.numbering.reserveNext("CREDIT_NOTE", {
+        year,
+        tenantId: tenantId ?? undefined,
+        tx,
+      }));
 
     const minted = await this.creditNotes.mintStandaloneInTx(
       tx,
