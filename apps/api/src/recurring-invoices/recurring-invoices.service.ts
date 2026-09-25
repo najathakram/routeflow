@@ -23,6 +23,8 @@ export const RUN_INTERRUPTED_ERROR = "Generation was interrupted before the invo
  * the schedule is never given back and operator surfaces must not offer a re-run — the web
  * card keys its "use Run Now to retry" hint off this exact text.
  */
+/** F-05: the `lastError` prefix that marks a suspension by a selling restriction (activate() keys off it). */
+export const SUSPENDED_ERROR_PREFIX = "Suspended:";
 export const RUN_UNFINALIZED_ERROR = "The invoice was created but the run could not be finalized";
 
 @Injectable()
@@ -194,11 +196,35 @@ export class RecurringInvoicesService {
   /** Resume a paused template. Counterpart to deactivate() — the only path that
    *  sets isActive back to true (update() intentionally never maps isActive). */
   async activate(id: string, actorUserId: string | null = null) {
-    await this.findOne(id);
+    const ri = await this.findOne(id);
+    // F-05 (SA-247(b)): a template SUSPENDED by a selling restriction never bills the cycles inside the
+    // suspension. Its nextRunAt was moved forward at suspend time, but if that date has since passed, the
+    // midnight run would issue a make-up invoice for it — so reactivation moves it to the next occurrence
+    // after NOW, in the same transaction, and records the skipped cycle(s) in the audit row.
+    const suspendedByRestriction = String(ri.lastError ?? "").startsWith(SUSPENDED_ERROR_PREFIX);
+    const now = new Date();
+    const stale =
+      suspendedByRestriction && ri.nextRunAt != null && ri.nextRunAt.getTime() <= now.getTime();
     return this.prisma.tenantTransaction(async (tx: any) => {
-      const updated = await tx.recurringInvoice.update({ where: { id }, data: { isActive: true } });
+      const updated = await tx.recurringInvoice.update({
+        where: { id },
+        data: {
+          isActive: true,
+          ...(stale
+            ? { nextRunAt: this.calcNextRunAt(ri.frequency, ri.dayOfWeek, ri.dayOfMonth, now) }
+            : {}),
+        },
+      });
       // F-05: a reactivation is an explicit, audited act (it may follow a selling-restriction suspension)
-      await this.auditInTx(tx, "recurring-invoice.reactivated", id, actorUserId, {});
+      await this.auditInTx(
+        tx,
+        "recurring-invoice.reactivated",
+        id,
+        actorUserId,
+        stale
+          ? { skippedCycleDueAt: ri.nextRunAt!.toISOString(), resumedAt: updated.nextRunAt }
+          : {},
+      );
       return updated;
     });
   }
@@ -267,7 +293,7 @@ export class RecurringInvoicesService {
           isActive: false,
           nextRunAt,
           lastRunStatus: RUN_STATUS_FAILED,
-          lastError: `Suspended: a line is under a selling restriction${names ? ` (${names})` : ""}. Fix the template and reactivate it; the skipped cycle is not billed.`,
+          lastError: `${SUSPENDED_ERROR_PREFIX} a line is under a selling restriction${names ? ` (${names})` : ""}. Fix the template and reactivate it; the skipped cycle is not billed.`,
         },
       });
       await this.auditInTx(tx, "recurring-invoice.suspended", ri.id, null, {

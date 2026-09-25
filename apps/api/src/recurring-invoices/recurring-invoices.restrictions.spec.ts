@@ -134,13 +134,51 @@ describe("RecurringInvoicesService — selling restrictions (F-05)", () => {
     restrictions.checkLinesSellable.mockResolvedValue({ outcome: "ALLOW", reasons: [] });
     prisma.recurringInvoice.updateMany.mockResolvedValue({ count: 1 });
     invoices.create.mockResolvedValue({ id: "inv-1" });
-    await (service as any)
-      .generateInvoiceFromTemplate({ ...ri, nextRunAt: data.nextRunAt })
-      .catch(() => undefined);
+    await (service as any).generateInvoiceFromTemplate({ ...ri, nextRunAt: data.nextRunAt });
     expect(prisma.recurringInvoice.updateMany).toHaveBeenCalledTimes(1);
     expect(prisma.recurringInvoice.updateMany.mock.calls[0][0].where.nextRunAt).toEqual(
       data.nextRunAt,
     );
     expect(invoices.create).toHaveBeenCalledTimes(1);
+  });
+
+  describe("reactivation never bills a cycle inside the suspension (SA-247(b), Opus #2129)", () => {
+    const suspended = (
+      nextRunAt: Date,
+      lastError = "Suspended: a line is under a selling restriction (X).",
+    ) => ({
+      ...ri,
+      nextRunAt,
+      lastError,
+    });
+    const activate = async (row: object) => {
+      prisma.recurringInvoice.findUnique.mockResolvedValue(row);
+      prisma.recurringInvoice.update.mockResolvedValue({ id: "ri1", isActive: true });
+      await service.activate("ri1", "u9");
+      return prisma.recurringInvoice.update.mock.calls[0][0].data;
+    };
+
+    it("the clock is past nextRunAt: it moves to the next occurrence AFTER NOW and the audit records the skipped cycle", async () => {
+      const past = new Date(Date.now() - 3 * 24 * 3600 * 1000);
+      const data = await activate(suspended(past));
+      expect(data.isActive).toBe(true);
+      expect(data.nextRunAt.getTime()).toBeGreaterThan(Date.now());
+      expect(prisma.auditLog.create.mock.calls[0][0].data).toMatchObject({
+        action: "recurring-invoice.reactivated",
+        meta: { skippedCycleDueAt: past.toISOString() },
+      });
+    });
+
+    it("nextRunAt still in the future: left alone", async () => {
+      const future = new Date(Date.now() + 5 * 24 * 3600 * 1000);
+      const data = await activate(suspended(future));
+      expect(data).toEqual({ isActive: true });
+    });
+
+    it("a template an admin paused themselves (no restriction suspension) keeps its date", async () => {
+      const past = new Date(Date.now() - 3 * 24 * 3600 * 1000);
+      const data = await activate(suspended(past, "boom"));
+      expect(data).toEqual({ isActive: true });
+    });
   });
 });
