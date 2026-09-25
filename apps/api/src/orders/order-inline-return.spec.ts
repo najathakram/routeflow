@@ -1,6 +1,9 @@
 import { ForbiddenException, ServiceUnavailableException } from "@nestjs/common";
+import { ConflictException } from "@nestjs/common";
 import {
   applyInlineReturnInTx,
+  assertReplayCarriesReturn,
+  isRetryableTxError,
   emitInlineReturnCredit,
   lockInlineReturnCustomer,
   prepareInlineReturn,
@@ -131,4 +134,59 @@ describe("emitInlineReturnCredit", () => {
     emitInlineReturnCredit(null, "t1", { id: "cn-1" });
     expect(svc.emitCreditIssued).toHaveBeenCalledTimes(1);
   });
+});
+
+describe("reserveInlineReturnNumber for a DRIVER (#2094 nit)", () => {
+  it("does not reserve ahead of the tx: a held driver return would burn the number", async () => {
+    const svc = svcStub();
+    const p = await prepareInlineReturn(svc as any, LINES, { ...STAFF, role: "DRIVER" });
+    await reserveInlineReturnNumber(p);
+    expect(svc.reserveCreditNoteNumber).not.toHaveBeenCalled();
+    expect(p!.creditNoteNumber).toBeUndefined();
+  });
+});
+
+describe("assertReplayCarriesReturn (#2094 R1)", () => {
+  const db = (found: boolean) => ({
+    return: { findFirst: jest.fn().mockResolvedValue(found ? { id: "ret-1" } : null) },
+  });
+
+  it("no inline return on the request: nothing is queried (a plain replay is unchanged)", async () => {
+    const d = db(false);
+    await expect(assertReplayCarriesReturn(d, null, "ord-1")).resolves.toBeUndefined();
+    expect(d.return.findFirst).not.toHaveBeenCalled();
+  });
+
+  it("the replayed order carries THIS returnKey: a true replay, allowed", async () => {
+    const svc = svcStub();
+    const p = await prepareInlineReturn(svc as any, LINES, STAFF);
+    const d = db(true);
+    await expect(assertReplayCarriesReturn(d, p, "ord-1")).resolves.toBeUndefined();
+    expect(d.return.findFirst).toHaveBeenCalledWith({
+      where: { returnKey: "k1", orderId: "ord-1", kind: "INLINE" },
+      select: { id: true },
+    });
+  });
+
+  it("the replayed order does NOT carry it (the return was edited, new nonce): 409, never a silent 201", async () => {
+    const svc = svcStub();
+    const p = await prepareInlineReturn(svc as any, { ...LINES, returnKey: "k2" }, STAFF);
+    await expect(assertReplayCarriesReturn(db(false), p, "ord-1")).rejects.toThrow(
+      ConflictException,
+    );
+  });
+});
+
+describe("isRetryableTxError (#2094 W1)", () => {
+  it.each([
+    [{ code: "P2034" }],
+    [{ code: "40P01" }],
+    [{ meta: { code: "40P01" } }],
+    [{ message: "ERROR: deadlock detected" }],
+  ])("retries %j", (e) => expect(isRetryableTxError(e)).toBe(true));
+
+  it.each([[{ code: "P2002" }], [new Error("boom")], [undefined], [{ code: "P2025" }]])(
+    "does not retry %j",
+    (e) => expect(isRetryableTxError(e)).toBe(false),
+  );
 });

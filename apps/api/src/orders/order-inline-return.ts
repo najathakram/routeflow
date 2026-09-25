@@ -1,4 +1,4 @@
-import { ForbiddenException, ServiceUnavailableException } from "@nestjs/common";
+import { ConflictException, ForbiddenException, ServiceUnavailableException } from "@nestjs/common";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
 import type { InlineReturnLinesDto } from "../returns/dto/capture-inline-return.dto";
 import type { InlineReturnsService } from "../returns/inline-returns.service";
@@ -16,6 +16,8 @@ import type { InlineReturnsService } from "../returns/inline-returns.service";
 export interface PreparedInlineReturn {
   svc: InlineReturnsService;
   lines: InlineReturnLinesDto;
+  /** The caller's role: a DRIVER's return can be held above the cap, which issues no credit note. */
+  role: string;
   /** Reserved once, before an order create's P2002 retry loop (SA-221 change 1). */
   creditNoteNumber?: string;
 }
@@ -34,12 +36,51 @@ export async function prepareInlineReturn(
   if (!user) throw new ForbiddenException("Inline returns need an authenticated staff caller");
   if (!svc) throw new ServiceUnavailableException("Inline returns are not available");
   await svc.assertInlineReturnAllowed(user);
-  return { svc, lines };
+  return { svc, lines, role: user.role };
 }
 
 /** Create only: reserve the credit-note number once, after validation and before the retry loop. */
 export async function reserveInlineReturnNumber(p: PreparedInlineReturn | null): Promise<void> {
-  if (p) p.creditNoteNumber = await p.svc.reserveCreditNoteNumber();
+  // A DRIVER's return may be held above the cap (no credit note), which would burn the number: a
+  // driver create reserves inside the tx instead (captureAndIssueInTx), only when it issues.
+  if (p && p.role !== "DRIVER") p.creditNoteNumber = await p.svc.reserveCreditNoteNumber();
+}
+
+/**
+ * #2094 (Opus R1): an Idempotency-Key replay (the pre-check, or the P2002 winner) compares only the
+ * cart. A replay that carries an inline return must find THAT returnKey on the order it hands back:
+ * otherwise a client that edited its return (new nonce) after a timed-out-but-committed submit gets
+ * the original order with a 201 and the new return is silently never captured. 409, never silence.
+ */
+export async function assertReplayCarriesReturn(
+  db: any,
+  p: PreparedInlineReturn | null,
+  replayedOrderId: string,
+): Promise<void> {
+  if (!p) return;
+  const row = await db.return.findFirst({
+    where: { returnKey: p.lines.returnKey, orderId: replayedOrderId, kind: "INLINE" },
+    select: { id: true },
+  });
+  if (!row) {
+    throw new ConflictException(
+      "Idempotency-Key reused with a different return: submit the edited return as a new order (new key), or retry the original unchanged",
+    );
+  }
+}
+
+/**
+ * A deadlock (40P01) or serialization failure (P2034) in the order tx is retried, with the SAME reserved
+ * credit-note number, exactly like an order-number collision (#2094 W1: the return adds a lock edge
+ * Product (sale) -> Return counter -> Product (restock)).
+ */
+export function isRetryableTxError(e: any): boolean {
+  return (
+    e?.code === "P2034" ||
+    e?.code === "40P01" ||
+    e?.meta?.code === "40P01" ||
+    /deadlock detected/i.test(String(e?.message ?? ""))
+  );
 }
 
 /** The tx's FIRST statement (before any row lock). No-op without an inline return. */

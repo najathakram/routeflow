@@ -58,6 +58,15 @@ describe.each([
     expect(flat(await errorsOf(cls, build({ inlineReturn: bad })))).toContain("inlineReturn.items");
   });
 
+  it("caps the per-attempt nonce at 128 characters", async () => {
+    const bad = { ...lines(), returnKey: "k".repeat(129) };
+    expect(flat(await errorsOf(cls, build({ inlineReturn: bad })))).toContain(
+      "inlineReturn.returnKey",
+    );
+    const ok = { ...lines(), returnKey: "k".repeat(128) };
+    expect(await errorsOf(cls, build({ inlineReturn: ok }))).toHaveLength(0);
+  });
+
   it.each(["customerId", "orderId", "tenantId"])(
     "refuses a client-supplied %s inside inlineReturn (derived from the document)",
     async (field) => {

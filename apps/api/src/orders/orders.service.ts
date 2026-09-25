@@ -1636,6 +1636,11 @@ export class OrdersService implements OnApplicationBootstrap {
             );
           }
         }
+        await inlineReturn.assertReplayCarriesReturn(
+          this.prisma.forTenant(),
+          inlineRet,
+          existing.id,
+        );
         return existing;
       }
     }
@@ -2175,13 +2180,22 @@ export class OrdersService implements OnApplicationBootstrap {
             if (existing && existing.customerId !== customerId) {
               throw new ConflictException("Idempotency-Key already used for a different order");
             }
-            if (existing) return existing;
+            if (existing) {
+              await inlineReturn.assertReplayCarriesReturn(
+                this.prisma.forTenant(),
+                inlineRet,
+                existing.id,
+              );
+              return existing;
+            }
           }
           // Retry only on orderNumber unique-constraint violations (RF-014);
           // propagate all other errors immediately (including ConflictException
           // for OOS items from RF-017).
           if (attempt < MAX_RETRIES - 1) continue;
         }
+        // #2094: a deadlock/serialization failure on a create that carries a return retries too.
+        if (inlineRet && inlineReturn.isRetryableTxError(e) && attempt < MAX_RETRIES - 1) continue;
         throw e;
       }
     }

@@ -37,3 +37,21 @@ describe("the customer advisory lock is only ever the xact lock on the caller's 
     expect(body).not.toContain("acquireLock");
   });
 });
+
+describe("lockCustomerInTx is the transaction-scoped xact lock on the caller's own tx (#2094)", () => {
+  const code = read("returns/inline-returns.service.ts");
+  const start = code.indexOf("async lockCustomerInTx(");
+  const body = code.slice(start, code.indexOf("reserveCreditNoteNumber()", start));
+
+  it("takes the xact lock through IdempotencyService.acquireLock on the caller's tx", () => {
+    expect(start).toBeGreaterThan(-1);
+    expect(body).toContain("this.idempotency.acquireLock(");
+    expect(body).toContain('"returns.customer"');
+  });
+
+  it("never opens a session lock or a transaction of its own", () => {
+    for (const forbidden of ["withAdvisoryLock", "tenantTransaction", "$transaction"]) {
+      expect(body).not.toContain(forbidden);
+    }
+  });
+});
