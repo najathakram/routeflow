@@ -97,6 +97,7 @@ import { foldCategoryTax, loadManualLineContext } from "./manual-invoice-context
 import { resolveLineUnits } from "../products/line-units";
 import { prepareUnitLadders, requestsUnit } from "../orders/unit-line-build";
 import { standaloneAllocationTotals } from "./standalone-payment-totals";
+import { calendarDayOf } from "./settled-date-filter";
 
 const TERM_DAYS: Record<string, number> = {
   "Due on Receipt": 0,
@@ -115,25 +116,6 @@ export function addCalendarDays(date: Date, days: number): Date {
   const out = new Date(date);
   out.setUTCDate(out.getUTCDate() + days);
   return out;
-}
-
-/**
- * Normalise a date query param to the `YYYY-MM-DD` calendar day it names,
- * BEFORE it is concatenated into a literal instant (`${day}T23:59:59.999Z`).
- * The list DTOs accept `@IsDateString()`/`@IsString()`, so a full ISO-8601
- * datetime is a valid input — concatenating one raw would yield an
- * `Invalid Date` bound that silently reaches Prisma. An unparsable value is
- * rejected here with a 400 instead of becoming a broken filter.
- */
-function calendarDayOf(raw: string, field: string): string {
-  const day = raw.slice(0, 10);
-  if (
-    !/^\d{4}-\d{2}-\d{2}$/.test(day) ||
-    Number.isNaN(new Date(`${day}T00:00:00.000Z`).getTime())
-  ) {
-    throw new BadRequestException(`${field} must be a calendar date (YYYY-MM-DD)`);
-  }
-  return day;
 }
 
 // P5-12 / post-dated check payments PR-1: `CHECK_TRANSITIONS` (legal FORWARD transitions for
