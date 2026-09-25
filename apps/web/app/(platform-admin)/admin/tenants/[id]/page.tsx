@@ -12,6 +12,7 @@ import { AdminTabs } from "../../../_components/AdminTabs";
 import { AdminBadge, planLabel } from "../../../_components/AdminBadge";
 import { AdminCard } from "../../../_components/AdminCard";
 import { AdminModal } from "../../../_components/AdminModal";
+import { DisabledHint } from "../../../_components/DisabledHint";
 import { TenantPricingCard } from "./_components/TenantPricingCard";
 import { LayoutDashboard, CreditCard, Puzzle, Settings, ScrollText, Archive } from "lucide-react";
 import { FeatureConsole } from "./_features/FeatureConsole";
@@ -36,6 +37,9 @@ interface TenantDetail {
   name: string;
   status: string;
   plan: string;
+  // SA-140/B556: display-resolved — falls back to `plan` only when no subscription.planKey is
+  // set (a drifted tenant). `plan` itself is unchanged.
+  planKey: string;
   trialEndsAt: string | null;
   createdAt: string;
   deletedAt: string | null;
@@ -366,7 +370,9 @@ function OverviewTab({
         <div className="rounded-xl bg-slate-800 p-5 ring-1 ring-white/5">
           <p className="text-xs font-medium uppercase tracking-wider text-slate-400">Est. MRR</p>
           <p className="mt-2 text-2xl font-bold text-white">{usd(tenant.estMrrUsd ?? 0)}</p>
-          <p className="mt-1 text-xs text-slate-400">{planLabel(tenant.plan)} · stopgap estimate</p>
+          <p className="mt-1 text-xs text-slate-400">
+            {planLabel(tenant.planKey ?? tenant.plan)} · stopgap estimate
+          </p>
         </div>
         <div className="rounded-xl bg-slate-800 p-5 ring-1 ring-white/5">
           <p className="text-xs font-medium uppercase tracking-wider text-slate-400">Orders, 30d</p>
@@ -405,7 +411,7 @@ function OverviewTab({
             [
               "Plan",
               <AdminBadge key="plan" variant="plan">
-                {tenant.plan}
+                {tenant.planKey ?? tenant.plan}
               </AdminBadge>,
             ],
             ["Status", <AdminBadge key="status">{tenant.status}</AdminBadge>],
@@ -658,7 +664,7 @@ function OverviewTab({
         actions={
           <Link
             href={`/admin/audit-logs?tenantId=${tenant.id}`}
-            className="text-xs text-indigo-400 hover:text-indigo-300"
+            className="admin-tap-text text-xs text-indigo-400 hover:text-indigo-300"
           >
             View all
           </Link>
@@ -821,7 +827,7 @@ function BillingTab({
       {/* Current Plan */}
       <AdminCard title="Current Plan">
         <div className="flex items-center gap-4 mb-4">
-          <AdminBadge variant="plan">{tenant.plan}</AdminBadge>
+          <AdminBadge variant="plan">{tenant.planKey ?? tenant.plan}</AdminBadge>
           <AdminBadge>{tenant.status}</AdminBadge>
         </div>
         {daysLeft !== null && (
@@ -1406,6 +1412,9 @@ export const FeatureOverridesSection = React.forwardRef<
               type="submit"
               form="feature-override-form"
               disabled={previewing || !form.featureKey || !form.reason}
+              aria-describedby={
+                !form.featureKey || !form.reason ? "feature-override-hint" : undefined
+              }
               className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-500 disabled:opacity-50"
             >
               {previewing ? "Loading preview..." : "Preview Override"}
@@ -1513,6 +1522,9 @@ export const FeatureOverridesSection = React.forwardRef<
           {previewError && !previewResponse && (
             <p className="text-xs text-red-400">{previewError}</p>
           )}
+          <DisabledHint id="feature-override-hint" show={!form.featureKey || !form.reason}>
+            Choose a feature and enter a reason to enable Preview Override.
+          </DisabledHint>
         </form>
       </AdminModal>
 
@@ -1849,12 +1861,15 @@ export default function AdminTenantDetailPage() {
   if (error || !tenant) {
     return (
       <div className="p-6">
-        <div className="rounded-lg bg-red-900/40 px-4 py-3 text-sm text-red-400 ring-1 ring-red-700">
+        <div
+          role="alert"
+          className="rounded-lg bg-red-900/40 px-4 py-3 text-sm text-red-400 ring-1 ring-red-700"
+        >
           {error ?? "Tenant not found"}
         </div>
         <Link
           href="/admin/tenants"
-          className="mt-4 inline-block text-sm text-indigo-400 hover:underline"
+          className="admin-tap-text mt-4 inline-block text-sm text-indigo-400 hover:underline"
         >
           Back to Tenants
         </Link>
@@ -1866,13 +1881,16 @@ export default function AdminTenantDetailPage() {
     <div className="p-6">
       {/* Header */}
       <div className="mb-1 flex items-center gap-4">
-        <Link href="/admin/tenants" className="text-sm text-slate-400 hover:text-slate-300">
+        <Link
+          href="/admin/tenants"
+          className="admin-tap-text text-sm text-slate-400 hover:text-slate-300"
+        >
           Tenants
         </Link>
         <span className="text-slate-400">/</span>
         <h1 className="text-xl font-bold text-white">{tenant.businessName ?? tenant.name}</h1>
         <AdminBadge>{tenant.status}</AdminBadge>
-        <AdminBadge variant="plan">{tenant.plan}</AdminBadge>
+        <AdminBadge variant="plan">{tenant.planKey ?? tenant.plan}</AdminBadge>
       </div>
       <p className="mb-4 text-sm text-slate-400">
         <span className="font-mono">{tenant.slug}</span>.routeflow.info · created{" "}

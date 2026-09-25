@@ -11,16 +11,20 @@ import {
   Max,
   MaxLength,
   Min,
+  ValidateIf,
   ValidateNested,
 } from "class-validator";
 import { Type } from "class-transformer";
 
 /**
- * One line of an edited purchase order. `qtyOrdered` is base units (pieces) and
- * `unitCost` is per PIECE — the same denomination `createPurchaseOrder` stores
- * (the web forms convert a boxed entry before posting). `id` names an existing
- * line to keep; a line without `id` is new, and an existing line missing from
- * the payload is removed.
+ * One line of an edited purchase order, in ONE of two forms (the server computes the money either way):
+ *  - PER CASE (`caseCost` present): `packSize` (pieces per case, > 1), `caseCost` (per case, as entered),
+ *    `cases` and optional `loosePieces`. The server derives the quantity, the per-piece cost (4 dp, for costing
+ *    only) and the exact total roundMoney(caseCost x (cases + loosePieces / packSize)), stores `packSize` as the
+ *    denomination, and IGNORES any `qtyOrdered` / `unitCost` sent alongside.
+ *  - PER PIECE (no `caseCost`): `qtyOrdered` is base units (pieces) and `unitCost` is per PIECE, as before.
+ * `id` names an existing line to keep; a line without `id` is new, and an existing line missing from the payload
+ * is removed.
  */
 export class UpdatePurchaseOrderItemDto {
   @IsOptional() @IsUUID() id?: string;
@@ -29,12 +33,33 @@ export class UpdatePurchaseOrderItemDto {
    * Decimal-unit lines are real (kg, litre) — 3dp, matching Decimal(10,3); the
    * ceiling keeps an out-of-range value a 400 rather than a database overflow.
    */
-  @IsNumber({ maxDecimalPlaces: 3 }) @Min(0.001) @Max(9_999_999) qtyOrdered: number;
+  @ValidateIf((o: UpdatePurchaseOrderItemDto) => o.caseCost === undefined)
+  @IsNumber({ maxDecimalPlaces: 3 })
+  @Min(0.001)
+  @Max(9_999_999)
+  qtyOrdered?: number;
   /** Cost per PIECE, 4dp — matching Decimal(10,4). */
-  @IsNumber({ maxDecimalPlaces: 4 }) @Min(0) @Max(999_999) unitCost: number;
+  @ValidateIf((o: UpdatePurchaseOrderItemDto) => o.caseCost === undefined)
+  @IsNumber({ maxDecimalPlaces: 4 })
+  @Min(0)
+  @Max(999_999)
+  unitCost?: number;
+  /** PER CASE: the cost of one case as entered (4dp: a stored row's honest derivation is 11.0004). */
+  @IsOptional() @IsNumber({ maxDecimalPlaces: 4 }) @Min(0) @Max(999_999) caseCost?: number;
+  /** PER CASE: whole cases ordered. */
+  @ValidateIf((o: UpdatePurchaseOrderItemDto) => o.caseCost !== undefined)
+  @IsInt()
+  @Min(0)
+  @Max(9_999_999)
+  cases?: number;
+  /** PER CASE: loose pieces beyond whole cases. */
+  @IsOptional() @IsInt() @Min(0) @Max(9_999_999) loosePieces?: number;
   /** Supplier's own SKU for the line (null clears it). */
   @IsOptional() @IsString() @MaxLength(100) sku?: string | null;
-  /** Pieces per supplier unit (null clears it). */
+  /**
+   * The denomination: non-null means the cost was entered PER CASE of this many pieces, null means per piece
+   * (null clears it). Required (and > 1) with `caseCost`.
+   */
   @IsOptional() @IsInt() @Min(1) @Max(1_000_000) packSize?: number | null;
 }
 

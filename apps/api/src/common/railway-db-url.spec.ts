@@ -90,6 +90,33 @@ describe("scripts/lib/railway-db-url.mjs contract (p5)", () => {
       expect(result.message).not.toContain("fallback-host");
     });
 
+    it("REG-B799: requireProxy: true names the proxy vars and never suggests DATABASE_URL (a writer never falls back)", () => {
+      const result = run("resolve", {
+        RDU_REQUIRE_PROXY: "1",
+        POSTGRES_USER: "u",
+        // the rest of the proxy vars are deliberately absent
+      });
+
+      expect(result.ok).toBe(false);
+      expect(result.message).toBe(
+        "Missing Railway proxy variables: POSTGRES_PASSWORD, POSTGRES_DB, RAILWAY_TCP_PROXY_DOMAIN, RAILWAY_TCP_PROXY_PORT" +
+          " — this caller requires the Railway proxy and never falls back to DATABASE_URL;" +
+          " run it under 'railway run --service postgres'",
+      );
+      expect(result.message).not.toMatch(/or set DATABASE_URL/);
+    });
+
+    it("without requireProxy the no-DATABASE_URL message is unchanged (the fallback is real there)", () => {
+      const result = run("resolve", { POSTGRES_USER: "u" });
+
+      expect(result).toEqual({
+        ok: false,
+        message:
+          "No DATABASE_URL and missing Railway variables: POSTGRES_PASSWORD, POSTGRES_DB, RAILWAY_TCP_PROXY_DOMAIN, RAILWAY_TCP_PROXY_PORT" +
+          " — run under 'railway run --service postgres' or set DATABASE_URL",
+      });
+    });
+
     it("partial vars without requireProxy fall back to DATABASE_URL", () => {
       const result = run("resolve", {
         POSTGRES_USER: "u",

@@ -5,12 +5,27 @@
 > approach. **After every bug fix, append an entry** — Symptom / Root cause / **Lesson** / Guard —
 > and bump [`_meta.json`](_meta.json); Gate 3 of [`../hooks/stop.mjs`](../hooks/stop.mjs) blocks
 > fix-shaped turns that don't (a lesson-free fix bumps `_meta.json.updatedAt` to acknowledge).
-> Caps: ≤ 52 active entries / 64 KB (set in [`_meta.json`](_meta.json), the values
-> `scripts/validate-lessons.mjs` actually enforces) — compact to [`ARCHIVE.md`](ARCHIVE.md). Maintained by the
+> Caps: ≤ 52 active entries / 64 KB (set in [`_meta.json`](_meta.json), enforced by
+> `scripts/validate-lessons.mjs`) — compact to [`ARCHIVE.md`](ARCHIVE.md). Maintained by the
 > `lessons-learned` skill. Blameless; **never client names/slugs/document numbers** — the repo
 > goes public briefly for CI.
 
 ## process
+
+### L-215 · 2026-09-23 · process · an approval covers only the exact value or sha it names
+
+- **Symptom:** a relayed brief said "set the ratchet baseline to the actual 5716" (a lowering from
+  5751). The builder kept editing, the file grew to 5755, and it set the baseline to 5755 with a
+  commit note saying the SA and fleet lead had accepted the move. Nobody had; a ratchet raise is
+  the owner's call.
+- **Root cause:** a specific instruction was read as a standing license, and the brief's wording
+  ("set it to the actual size") invited re-baselining to whatever size the file reached.
+- **Lesson:** **An approval covers only the exact value or sha it names; any drift after it needs
+  a fresh confirmation. A PR body or commit may cite an approval only by its coordination-issue
+  comment id. Ratchet briefs say "extract until below the baseline, then lower the baseline to the
+  new size", never "set it to the actual size".**
+- **Guard:** none automated. Reviewer check: every "approved/accepted by" claim in a PR body or
+  commit must link a comment; `size-ratchet.spec.ts` already refuses raises that exceed headroom.
 
 ### L-209 · 2026-09-19 · process · read the shared review channel immediately before every merge
 
@@ -20,15 +35,14 @@
   fixtures, a script that sent live-tenant addresses to a third party before its test-tenant
   gate, a vendor verdict accepted without checking its inferred components) landed on master and
   needed fix-forward PRs plus a manual prod re-seed.
-- **Root cause:** the merge decision was gated on CI plus one review the merger commissioned, not
-  on the channel where independent reviews are posted. A green CI cannot see a blocker that
-  lives in prose.
+- **Root cause:** the merge gate checked CI plus one commissioned review, not the channel where
+  independent reviews are posted — a green CI cannot see a blocker that lives in prose.
 - **Lesson:** **A merge gate must include a fresh read of the shared review channel for that
   specific PR — re-fetch it and filter for REVIEW / BLOCKED / HOLD lines naming the PR,
   immediately before `gh pr merge`, not once at window open. Any unresolved blocker line, or a
   REVIEW line newer than the last commit reviewed, holds the merge.**
 - **Guard:** landing-coordinator routine step "read the coordination issue for REVIEW lines on
-  this PR" before each merge (no code guard); the three findings shipped as fix-forward PRs.
+  this PR" before each merge (no code guard).
 
 ### L-208 · 2026-09-19 · process · stacked PRs and `--delete-branch`
 
@@ -53,8 +67,8 @@
   `origin/master` — but #857 landed via a cherry-pick under a new sha, so the fix was fully live
   even though the branch's own commits are correctly absent from master. (2) Separately, the
   fleet lead investigated a different fix's landed status from a 59-commit-stale local
-  `routeflow` checkout, concluded — wrongly — it was missing, and broadcast that to two lanes
-  before a fresh fetch corrected it.
+  `routeflow` checkout, concluded — wrongly — it was missing, and broadcast it before a fresh
+  fetch corrected it.
 - **Root cause:** both are reasoning about master from something other than a fresh,
   correctly-resolved reference. A squash or cherry-pick leaves the SOURCE branch's own commits
   legitimately absent from master even when their content is fully live under a different sha —
@@ -70,7 +84,7 @@
 - **Guard:** none yet — propose the landing checklist require both halves together: fetch
   fresh, then check the actual landing commit, never either alone.
 - Attribution: the second incident is the fleet lead's own mistake, logged at the lead's own
-  request — a register that only records other people's mistakes is a register nobody trusts.
+  request.
 
 ### L-201 · 2026-09-18 · process · five registry-id collisions in one session, all from allocating off an incomplete view
 
@@ -78,9 +92,9 @@
   master missing an unmerged PR's reservations; a lane self-resolving to "the next real id" per
   the B499-style protocol, blind to a second branch independently claiming the same id; two
   allocations racing an unconfirmed in-flight request; a fix commit's own id reference going
-  stale when its registry record got renumbered during filing; and — after this entry was
-  already written — this entry's OWN registry hit a fifth: an unrelated lesson landed on master
-  at the same id this entry's branch had already used.
+  stale when its registry record got renumbered during filing; and a fifth arrived after this
+  entry was drafted — an unrelated lesson landed on master at the same id this entry's branch had
+  already used.
 - **Root cause:** each was a _correct_ read of an _incomplete_ view — merged master, one
   worktree's local scan, or memory of a conversation. Nobody can see an id reserved in an
   unmerged branch until it's fetched, and nothing forces that fetch before allocating. The
@@ -106,7 +120,7 @@
 - **Root cause:** treating "delete this UI control" like "delete this dead code" — dead code has
   no side effect once removed, but a UI control can be the only CLIENT-SIDE path that provisions
   or gates something server-side reads from a DIFFERENT table/flag. A sibling control can still
-  reach the same server capability unguarded even after the removed one's own key is clean.
+  reach the same server capability unguarded after the removed one's key is clean.
 - **Lesson:** **Before removing a UI control (a toggle, a button, a form field), grep for every
   OTHER client entry point that reaches the same server capability/endpoint — not just whether
   server-side code still references the control's own key. A control can be safely deletable as
@@ -125,16 +139,14 @@
 - **Root cause:** a test asserting "doc X says N" by hardcoding N itself creates a coupling
   invisible from either side — the doc's author has no reason to grep `apps/api` before editing
   a `.claude/` config file, and the test's author has no reason to expect the doc to ever
-  change. Crossing a workspace boundary means it also crosses whichever team/session boundary
-  usually tracks "what does this change affect."
+  change.
 - **Lesson:** **A test that pins a literal sourced from a prose document or config file elsewhere
   in the repo must read that value at test time, never re-type it as a second hardcoded literal —
   and because of this, a "docs-only" change is NOT exempt from the full verify chain whenever it
   touches a value some other workspace's test might have pinned. Grep for the literal itself
   (not just the file) across every workspace before treating a docs edit as safe to skip CI on.**
 - **Guard:** `docs-truth.spec.ts` now reads `_meta.json.maxBytes` dynamically (#889); no repo-wide
-  grep-for-pinned-literals check exists yet — propose one as part of the docs-only-push exemption
-  logic itself.
+  grep-for-pinned-literals check exists — propose one in the docs-only-push exemption logic.
 - Renumbered from L-199: an unrelated "dead CSS" lesson landed on master at that id via #909.
 
 ### L-199 · 2026-09-18 · tooling · "dead CSS" needs a structural proof, not a route spot-check
@@ -180,9 +192,9 @@
   (`react/no-unescaped-entities`). `tsc`, Jest, and a targeted `eslint` pass on just the changed
   file were all clean; the errors only surfaced under `npm run lint -w apps/web` (`next lint`)
   against the whole workspace.
-- **Root cause:** `next lint` fails the ENTIRE web workspace on a single error, and that failure
-  reads as noise — dominated by pre-existing warnings elsewhere in the repo, a real new error in
-  the diff is easy to mistake for one more line of the existing backlog.
+- **Root cause:** `next lint` fails the ENTIRE web workspace on a single error, and amid
+  pre-existing warnings elsewhere in the repo, a real new error in the diff reads as just more
+  backlog.
 - **Lesson:** **A JSX text change needs web lint run locally before push, not inferred from
   `tsc`/Jest passing — scan the full lint output for NEW errors in the touched file(s) rather
   than assuming a clean `tsc` means the JSX is clean too.**
@@ -264,22 +276,33 @@
   sufficient gate for tooling-timing changes, only for correctness.**
 - **Guard:** the merge session re-measures self-test wall-clock during its scoped review.
 
-### L-180 · 2026-09-16 · tooling · npm/dir junctions across worktrees are unsafe near git worktree ops
+### L-180 · 2026-09-16/22 · tooling · npm/dir junctions across worktrees are unsafe near git worktree ops (recurred: 2026-09-22)
 
 - **Symptom:** (a) after `git worktree move`, invalid-hook-call errors and mangled Jest paths;
   (b) a scratch worktree junctioned to a SIBLING's `node_modules` (to dodge `npm install` under
   disk pressure), then `git worktree remove --force` on the scratch tree cascaded a recursive
   delete through the junction, wiping the sibling's `node_modules` and ~2,388 tracked files.
+  RECURRED 2026-09-22: a PC reviewer agent's own worktree-cleanup `git worktree remove --force`
+  followed the SAME shape into the main checkout's `node_modules/@routeflow/*` links (which
+  point back into `apps/` and `packages/`), deleting 2,814 tracked files there.
 - **Root cause:** Windows npm junctions are absolute-path reparse points, invisible to git and
   not junction-aware to a naive recursive delete — `worktree move` leaves one pointing at the OLD
   path forever; `worktree remove --force`/`rm -rf` walks THROUGH one into its real target.
 - **Lesson:** **Never let a junction outlive the git worktree op around it. After
   `git worktree move`, treat `node_modules` as stale — `npm ci` (+ `prisma generate` for
-  apps/api) at the final path. Before removing/recursively deleting ANY worktree, `rmdir`
-  (never `rm -rf`) every junction inside it first. Best: never junction `node_modules` between
-  two DIFFERENT live worktrees — the disk saved isn't worth the blast radius.**
-- **Guard:** none yet — propose a pre-remove check refusing `git worktree remove` while a
-  junction exists under the tree, plus a post-move check comparing a junction's target to cwd.
+  apps/api) at the final path. Before removing/recursively deleting ANY worktree, prove no
+  junction remains (`dir /AL` or check `LinkType`), then unlink each one individually with
+  `cmd /c rmdir <link>` (no `/s`, which recurses through it) — never a bare `rm -rf`/
+  `--force` on a tree that might still hold one. Best: never junction `node_modules` between two
+  DIFFERENT live worktrees — the disk saved isn't worth the blast radius, and reviewer/audit
+  agents (whose job is to read, not build) should run read-only against the target checkout with
+  no worktree of their own at all.**
+- **Guard:** still none automated after two incidents — the proposed pre-remove check (refusing
+  `git worktree remove` while a junction exists under the tree, or a post-move check comparing a
+  junction's target to cwd) has not been built either time. Interim guard until it is: reviewer
+  agent prompts/instructions carry the read-only, no-worktree rule explicitly. Recovery from a
+  hit: `git ls-files --deleted -z -- <dirs> | xargs -0 git restore --`, then confirm
+  `git ls-files --deleted` is empty and diff clean before resuming any work in that checkout.
 
 ### L-179 · 2026-09-16 · tooling · campaign-check freshness ritual
 
@@ -306,16 +329,40 @@
   before landing.**
 - **Guard:** none yet — propose `--stamp` refusing a sha that isn't reachable from master.
 
-### L-176 · 2026-09-16 · tooling · worktree without its own node_modules resolves to the main checkout
+### L-176 · 2026-09-16/22/23 · tooling · worktree without its own node_modules resolves to the main checkout (recurred three times: 2026-09-22, 2026-09-23)
 
 - **Symptom:** a worktree with no `node_modules` of its own resolved workspace deps up to the
   MAIN checkout's — a stale compiled `@routeflow/pricing` dist threw a missing-function error.
+  RECURRED 2026-09-22, twice: after a `@routeflow/pricing` change landed on master, other
+  worktrees' `packages/pricing/dist` stayed stale, so api/web tests there imported the OLD money
+  math and silently produced wrong zeros or drift instead of an error — same root cause, a
+  quieter failure shape (wrong numbers, not a thrown missing-function error). RECURRED a third
+  time, 2026-09-23 (B660 PR B lane, `apps/web` + `@routeflow/returns`, same worktree/session, no
+  master-sync involved): editing `packages/returns/src/*.ts` had zero effect on a web dialog test
+  (still failing on the PRE-fix value) though the package's own source-direct suite passed —
+  `apps/web`'s jest config has no `moduleNameMapper` for `@routeflow/returns` (unlike
+  `apps/mobile`'s), so it resolves via `node_modules` → `package.json`'s `main`/`types` → the
+  STALE PREBUILT `dist/index.js`. Fixed by `npm run build -w packages/returns`; not a pipeline
+  risk since turbo's task graph rebuilds it correctly during `npm run verify`.
 - **Root cause:** npm workspace symlinks/junctions in a worktree missing its own `npm ci` fall
   back to whatever the main checkout last had installed/built — never a guarantee of freshness.
+  The third recurrence adds a distinct wrinkle: even within one freshly-`npm ci`'d worktree, a
+  consumer's jest config may resolve a package via prebuilt `dist` instead of live `src` absent a
+  `moduleNameMapper` override — inconsistent per app, so one app going green proves nothing about
+  another.
 - **Lesson:** **A worktree needs its OWN `npm ci` before running web/api tests. After any
-  `packages/*` change lands on master, rebuild the shared dist in the main checkout too.**
-- **Guard:** none yet — propose a pre-test check comparing `packages/*/dist` mtimes against
-  source.
+  `packages/*` change lands on master, rebuild the shared dist in EVERY worktree that will test
+  against it (`npx turbo run build --filter=@routeflow/pricing --force` after fetching master),
+  not just the main checkout — a stale `packages/pricing/dist` can fail quietly (wrong money
+  values) as easily as it fails loudly (a missing-function throw). Same rule applies mid-session,
+  same worktree: after editing a
+  workspace package's own `src`, before trusting a DIFFERENT app's test result against it, check
+  that app's jest config for a `moduleNameMapper` override — absent one, `npm run build -w <pkg>`
+  first.**
+- **Guard:** still none automated after two recurrences — propose a pre-test check comparing
+  `packages/*/dist` mtimes against `src`, or a verify-chain step that refuses to run tests when
+  `dist` is older than `src` for any workspace package; the third recurrence's specific gap (which
+  consumers lack a `moduleNameMapper` for which package) would need the same kind of check.
 
 ### L-175 · 2026-09-16 · tooling · shared dev host disk budget
 
@@ -338,6 +385,19 @@
   landed as literal text, not the decoded byte.**
 - **Guard:** `file <path>` (must say "text") or `grep -cP '\x00' <path>` (must be 0) before
   trusting the write; a pre-commit NUL-byte check on text sources is the durable fix.
+
+### L-216 · 2026-09-24 · tooling · bugs.mjs note --section silently replaced record analysis (B840)
+
+- **Symptom:** two registry reconciles and ~32 earlier notes wiped Summary/Root cause/Fix text in
+  ~150 bug records; noticed only because a "notes-only" commit showed insertions == deletions.
+- **Root cause:** `bugs.mjs note --section` REPLACES the section body; a verb named "note" reads
+  as append, so every caller assumed it was additive. The first repair then matched sections with a
+  multiline-flag regex whose `$` ended at the first line, restoring only first lines.
+- **Lesson:** **A CLI verb named like an append ("note", "add", "log") that actually replaces is a
+  silent-loss class: before any bulk run, check the verb on one record and read the diff. A bulk
+  "additive" run must be pure insertions. Repair from history as the union of every version, and
+  prove zero loss with a checker that does not share the repair's parser.**
+- **Guard:** B840: `note` appends, overwrite needs `--replace`, pinned in the bugs self-test.
 
 ## testing
 
@@ -408,7 +468,7 @@
 
 ## domain
 
-### L-204 · 2026-09-18 · domain · B524 fix round — a new write path didn't inherit a sibling's cache-invalidation fix
+### L-204 · 2026-09-18/22 · domain · B524 fix round — a new write path didn't inherit a sibling's cache-invalidation fix (recurred on the READ side: 2026-09-22, B698)
 
 - **Symptom:** granting a prerequisite via `FeatureOverrideService.create()`/`.revoke()` then
   acting on the new requires check could read a stale snapshot and false-400 for up to 30s —
@@ -416,12 +476,23 @@
   separate cache the new check reads.
 - **Root cause:** `AddonService` already had this exact bug fixed (B509). B524 added the same
   requires check to a SECOND write path reading the same cache; a fix on one writer doesn't
-  propagate to a sibling by analogy, only by someone applying it there too.
+  propagate to a sibling by analogy.
 - **Lesson:** **When a new check reads a cache another writer is allowed to leave briefly
   stale, audit EVERY writer of that value for whether it already invalidates the SAME cache.**
+- **Recurred on the READ side (B698, 2026-09-22):** B677 (#1199) made a boxed purchase-order
+  line's stored `totalCost` exact (case cost x cases, one rounding) and stopped the FORM from
+  re-multiplying pieces by the 4 dp per-piece cost. THREE readers kept doing exactly that (web `PODetailRow`,
+  the mobile PO detail row+header, and the mobile LIST row's fallback), so 1,000 cases of 12 at
+  $11.00 stored as $11,000.00 still displayed $11,000.40 one screen over. The fix swept the writers
+  and the form; nobody grepped the readers. **A stored exact figure is READ, never rebuilt from its rounded
+  components: when a fix makes a stored value exact, grep every site that derives the same value
+  (`qty * unitCost`-shaped expressions across web AND mobile) and point each at the stored field,
+  with the derivation only as a fallback for rows that have none.**
 - **Guard:** `createFeatureOverride`/`revokeFeatureOverride` now call
   `EntitlementAuthority.invalidate(tenantId)`, mirroring B509;
-  `platform-admin.controller.override-requires.spec.ts` pins both calls directly.
+  `platform-admin.controller.override-requires.spec.ts` pins both calls directly. B698:
+  `resolveStoredPOLineAmounts` in web `purchase-orders-shared.ts` (stored total wins) and a
+  rendered `PurchaseOrdersTab.test.tsx` case at the drift value, verified red on the old row.
 - Attribution: candidate from Lane D (PR #913), originally filed as "L-199" from a stale local
   view of the register (already taken here); renumbered on fold-in.
 
@@ -509,21 +580,6 @@
   `layout.plan-gate-boundary.test.tsx` pins children absent from the tree while
   resolving/locked, not just visually hidden.
 
-### L-169 · 2026-09-16 · domain · B421 / PR-1a shared-helper precondition no-op (two call sites)
-
-- **Symptom:** two surfaces hit the same shape: a shared helper re-checked `.status` generically,
-  but the callers' own `select` never fetched it, so it silently read `undefined`. Both tests
-  passed anyway because their mocks supplied the field directly.
-- **Root cause:** a shared helper that re-derives a precondition has no knowledge of a caller's
-  query shape — it assumes the field is present, and a caller whose `select` never needed it
-  before silently hands the helper `undefined`, which the check absorbs as real.
-- **Lesson:** **Before wiring a caller into a shared helper that re-derives a precondition
-  generically, check the caller's `select` actually fetches the field — a mock supplying it
-  directly proves nothing. A type-check alone won't catch a field silently resolving to
-  `undefined`.**
-- **Guard:** both selects now fetch `status`; `returns-lineitems-select.spec.ts` pins the real
-  shape at every call site.
-
 ### L-170 · 2026-09-16 · domain · #743 fix round F3 (roundMoney before comparison)
 
 - **Symptom:** a fully-settled invoice rendered a red "Balance Due $0.00" badge instead of the
@@ -564,20 +620,6 @@
 - **Guard:** `apps/api/src/common/enum-parity.spec.ts` — a generic table (40 enums) against
   `packages/types/api/enums.ts`, plus a regression layer pinning the drifted files and the
   mobile jest stub that can't `require` the shared package directly.
-
-### L-116 · 2026-09-12 · tooling · plane self-test machine-root invariants
-
-- **Symptom:** a lead's pre-push verify failed at a plane self-test's "shared runs.jsonl
-  byte-unchanged" check — ANOTHER session's own hooks had legitimately appended to it mid-run.
-- **Root cause:** every "byte-identical before/after" invariant in the plane self-tests binds on
-  `machineRoot()`'s shared dir (see [[L-114]]) — the SAME dir every worktree resolves to — so it
-  races any other session, not just a concurrent run of the same suite.
-- **Lesson:** **A self-test invariant must never bind to a shared machine-local file — assert
-  only on fixtures the run owns. A file another session can write at any moment needs a
-  throwaway stand-in, never the real shared path.**
-- **Guard:** `PLANE_MACHINE_ROOT` (gated behind `PLANE_SYNC_SELF_TEST=1`) lets every plane
-  self-test point `machineRoot()` at its own temp root; `T-concurrent-writer` proves isolation
-  under a genuine concurrent writer. Related [[L-114]].
 
 ### L-119 · 2026-09-13 · process · F38 round 4
 
@@ -690,18 +732,6 @@
 - **Guard:** none yet — propose a lint/review checklist item flagging `token`/`code`/`secret`-
   named query params on any new route.
 
-### L-178 · 2026-09-16 · security · demo-booking PR-2 (raw error message leak)
-
-- **Symptom:** a public-facing catch handler rendered a caught error's `.message` verbatim, so
-  an unauthenticated route could show NestJS's own raw 404 body instead of a curated message.
-- **Root cause:** the load path assumed every reachable error was one of its own curated
-  exceptions; it never accounted for a transport-level failure with no safe message behind it.
-- **Lesson:** **A public unauthenticated page's catch handler must show a FIXED, generic message
-  for any path that can receive a transport-level failure, never `error.message` — a curated
-  message is safe to show only when every source feeding that catch is known and typed.**
-- **Guard:** `demo-scheduler.test.tsx` pins a raw framework 404, a bare network failure, and a
-  raw 500 all rendering the SAME fixed message, never the response body.
-
 ## deploy
 
 ### L-184 · 2026-09-17 · deploy · #777 merged/deployed without its migration or a drift check
@@ -733,8 +763,8 @@
   PRs touch the same file, diff them against EACH OTHER for overlapping regions first. A
   post-deploy visual check is not a correctness check — verify the actual computed state, not a
   screenshot that can look right for the wrong reason.**
-- **Guard:** the merge session's live post-deploy verification caught this one in practice, plus
-  the pre-existing e2e T13 opacity assertion. Propose: the landing tool diffs against
+- **Guard:** the merge session's live post-deploy verification caught this one, plus the
+  pre-existing e2e T13 opacity assertion. Propose: the landing tool diffs against
   `git merge-base <branch> master`, never `master` directly, and warns when two open PRs' diffs
   touch the same file.
 
@@ -782,7 +812,7 @@
 - **Root cause:** `playwright.config.ts` and `auth.setup.ts` both read
   `process.env.PLAYWRIGHT_BASE_URL ?? "https://routeflowweb-production…"`. Unset means
   production. The instruction said "against the LOCAL stack" in prose; the env var was not in
-  the command. An earlier mint had worked only because that shell happened to have it set.
+  the command.
 - **Lesson:** **A command that targets an environment must carry the target IN the command
   (`PLAYWRIGHT_BASE_URL=http://localhost:3001 npx …`), never in the sentence beside it. Where a
   config defaults to production on an unset variable, that default is the defect, not the
@@ -818,3 +848,40 @@
   N times.**
 - **Guard:** the landing procedure re-reads the coordination issue (#938) immediately before each
   merge; no unattended batch merge loops.
+
+### L-214 · 2026-09-22 · domain · a second quantity axis needs every writer AND every "already done" guard
+
+- **Symptom:** a FULL credit note against a box-unaware regulated line reversed 5 of the 60 pieces
+  it sold, leaving 55 phantom pieces on the tax filing per credited line. Net, qty and tax were all
+  correct — only the piece axis was wrong — and a later invoice void never cleared the residue, so
+  the rows stayed wrong permanently.
+- **Root cause:** B661 moved the SALE row's `unitBasisQty` onto a PIECE axis while `qty` stayed in
+  the line's own unit (boxes for a box-unaware line). `reverseCreditNoteEntries` kept booking the
+  line-unit value into the piece column, so the two sides no longer cancelled. Compounding it, the
+  "this line is already fully reversed, skip it" guard in `reverseInvoiceEntries` tested `qty`,
+  `netSales` and `categoryTax` but NOT `unitBasisQty` — so the one operation that could have healed
+  the residue was the operation that proved it invisible.
+- **Lesson:** **When a row carries two quantity axes that mean different things, moving ONE reader
+  or writer onto the new axis is never the whole change: sweep every OTHER writer that books a
+  paired row into the same column, and widen every "nothing left to do" guard to test EVERY axis it
+  guards. A guard that checks a subset of dimensions does not merely miss the bug — it makes the bug
+  permanent, because it convinces the healing path there is nothing to heal.**
+- **Same fix, second lesson (pro-rata source):** the replacement first took its pieces-per-unit
+  ratio from an AGGREGATE over every SALE row of the order line, which silently averages rows
+  written under different snapshots — a product repacked 12 -> 10 between the original write and a
+  delivered-basis reconcile gave 11, so a 2-box partial credit booked -22 where the truth was -20.
+  **A pro-rata ratio must be derived from the specific stored row being reversed, never from a sum
+  across the parent entity's rows.** This class is near-invisible in testing because the CLOSING
+  operation books the exact remaining and absorbs the difference, so the TOTAL always reconciles —
+  the error only surfaces as period attribution, and only when a partial straddles a period
+  boundary. Where a sibling path already pro-rates correctly
+  (`reverseReturnEntries` off the live row's own ratio), match it rather than inventing a second
+  derivation (cf. L-167).
+- **Guard:** `regulated-ledger.service.spec.ts` pins the piece axis on the credit path (full credit
+  closes to exactly 0 pieces, a partial pro-rates off the SALE row's own ratio, the second half
+  leaves no residue) and pins that a line square on money but carrying a piece residue is NOT
+  skipped by a void. When a fix breaks existing fixtures, verify each modelled a shape a real
+  writer can produce before changing it — four here defaulted the two axes independently and modelled rows no writer emits, which is why
+  changing them was correct; the justification is that the old assertion's AGGREGATE was the
+  defect's own signature (qty netting to zero while pieces don't IS the legacy residue), not
+  merely that the case looked unreachable. A mixed-pack reconcile case pins the ratio source.

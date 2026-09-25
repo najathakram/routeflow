@@ -11,8 +11,20 @@ import { computeLineSubtotal, getTierPrice, roundMoney } from "@routeflow/pricin
 import { loadMsrpMap } from "../common/msrp";
 import { effectiveTaxRateFromTotals } from "../common/tax-rate";
 import { EntitlementsService } from "../billing/entitlements.service";
+import { RegulatedLedgerService } from "../regulated/regulated-ledger.service";
+import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
+import { requireRestrictionTenantId } from "../selling-restrictions/restriction-tenant";
+import { buildManualInvoiceLines } from "../invoices/manual-invoice-lines";
+import { foldCategoryTax, loadManualLineContext } from "../invoices/manual-invoice-context";
+import { packAtSaleByProduct, toSaleLedgerLines } from "../invoices/pack-at-sale";
+import { resolveLineUnits } from "../products/line-units";
+import { estimateConvertLineItems } from "./estimate-convert-lines";
 import { NumberingService } from "../import/numbering.service";
-import { assertMoneyInvariantsOrThrow } from "../common/money-invariants.util";
+import {
+  assertMoneyInvariantsOrThrow,
+  assertNoNegativeLineSubtotal,
+} from "../common/money-invariants.util";
+import { assertNoUnitAwareLines } from "../orders/unit-aware-guard";
 import { CreateEstimateDto } from "./dto/create-estimate.dto";
 
 // B70: terminal status set — CONVERTED is terminal and cannot be re-transitioned; voided
@@ -28,6 +40,8 @@ export class EstimatesService {
     private readonly prisma: PrismaService,
     private readonly entitlements: EntitlementsService,
     private readonly numbering: NumberingService,
+    private readonly ledger: RegulatedLedgerService,
+    private readonly sellingRestrictions: SellingRestrictionsService,
   ) {}
 
   private readonly logger = new Logger(EstimatesService.name);
@@ -139,11 +153,17 @@ export class EstimatesService {
     let subtotal = 0;
     const itemsData = items.map((i: any) => {
       const product = i.productId ? productMap.get(i.productId) : null;
+      // B645 / line-units-callsites ratchet: read this ONCE and reuse it below
+      // (qty resolution, computeLineSubtotal, and the B645 snapshot on the
+      // returned item) rather than re-reading `product.unitsPerBox` at each
+      // site — keeps this file's direct-read count at the ratchet's baseline
+      // instead of adding a third counted read for the same value.
+      const productUnitsPerBox = product?.unitsPerBox ?? null;
 
       // Resolve qty from boxes/pieces when provided
       let qty = Number(i.qty);
       if (product && (i.boxes != null || i.pieces != null)) {
-        const unitsPerBox = Number(product.unitsPerBox ?? 0);
+        const unitsPerBox = Number(productUnitsPerBox ?? 0);
         qty = (i.boxes ?? 0) * unitsPerBox + (i.pieces ?? 0);
       }
 
@@ -180,7 +200,7 @@ export class EstimatesService {
         qty,
         boxes: i.boxes ?? null,
         pieces: i.pieces ?? null,
-        unitsPerBox: product?.unitsPerBox ?? null,
+        unitsPerBox: productUnitsPerBox,
       });
       subtotal += sub;
       return {
@@ -193,6 +213,13 @@ export class EstimatesService {
         originalPrice,
         boxes: i.boxes ?? null,
         pieces: i.pieces ?? null,
+        // B645: snapshot the SAME factor just used above for qty/subtotal — the
+        // live product's unitsPerBox at creation time — rather than letting it be
+        // computed, spent, and discarded. Without this, a future repack of the
+        // product silently changes what this estimate line means on any later
+        // recompute (edit, convert, re-price). Null exactly when the line isn't
+        // boxed, matching InvoiceItem's twin column.
+        unitsPerBox: productUnitsPerBox,
         tenantId,
       };
     });
@@ -348,13 +375,64 @@ export class EstimatesService {
     // is advisory only: the authoritative check stays the atomic claim inside the
     // transaction, so a race LOSER still burns a number (accepted, rare) while the
     // common rejection now costs nothing.
-    const existing = await this.prisma
-      .forTenant()
-      .estimate.findUnique({ where: { id }, select: { id: true, status: true } });
+    const existing = await this.prisma.forTenant().estimate.findUnique({
+      where: { id },
+      select: {
+        id: true,
+        status: true,
+        customerId: true,
+        subtotal: true,
+        discount: true,
+        taxAmount: true,
+        total: true,
+        items: {
+          orderBy: { id: "asc" }, // B659 finding 4: pins "line N" to the SAME line the tx builds
+          select: {
+            description: true,
+            productId: true,
+            qty: true,
+            unitPrice: true,
+            subtotal: true,
+            boxes: true,
+            pieces: true,
+            unitLabel: true,
+            unitsPerBox: true,
+          },
+        },
+      },
+    });
     if (!existing) throw new NotFoundException("Estimate not found");
     if (existing.status !== "ACCEPTED") {
       throw new BadRequestException("Only ACCEPTED estimates can be converted");
     }
+    // units_v1: no DTO can write a unit-aware estimate line today, but refuse it here — BEFORE a
+    // number is reserved — with the same fence every other line rewrite/copy path uses. There is no
+    // estimate-update path, so a hit here has no remedy short of voiding the estimate.
+    assertNoUnitAwareLines(existing.items ?? [], "converted to an invoice");
+    // B659 finding 5: the SAME guards InvoicesService.create() runs on a manual invoice — a
+    // negative line subtotal, an invoice-level discount over subtotal, a negative total — run here
+    // from the ESTIMATE'S OWN stored totals, before a number is reserved. The tx below recomputes
+    // its own totals from the resolved lines, but a corrupt estimate must never burn a number first.
+    assertNoNegativeLineSubtotal(existing.items ?? []);
+    assertMoneyInvariantsOrThrow({
+      subtotal: Number(existing.subtotal),
+      discount: Number(existing.discount ?? 0),
+      tax: Number(existing.taxAmount ?? 0),
+      total: Number(existing.total),
+    });
+    // B659: a box-split line whose quoted pack cannot be established refuses here, BEFORE a number is
+    // reserved (a deterministic rejection must not burn one per click).
+    estimateConvertLineItems(existing.items ?? [], 0);
+    // F-05 (#2093): an estimate becoming an invoice SELLS its goods — a banned product refuses (409) BEFORE a
+    // number is reserved. Judged now, at the sale, by the tenant's rules (owner rulings 2026-09-25).
+    await this.sellingRestrictions.assertLinesSellable({
+      tenantId: requireRestrictionTenantId(this.prisma.getTenantId()),
+      customerId: existing.customerId,
+      lines: (existing.items ?? []).flatMap((i) =>
+        i.productId ? [{ productId: i.productId }] : [],
+      ),
+      channel: "STAFF",
+    });
 
     // B100/F16b: reserved BEFORE the transaction below opens (fix-round-2.md D1).
     // reserveNext commits its own short transaction, so this one never holds the
@@ -377,7 +455,10 @@ export class EstimatesService {
 
       const est = await tx.estimate.findUnique({
         where: { id },
-        include: { items: true, customer: { select: { isTaxExempt: true } } },
+        include: {
+          items: { orderBy: { id: "asc" } }, // B659 finding 4: same order as the pre-flight read
+          customer: { select: { isTaxExempt: true } },
+        },
       });
       if (!est) throw new NotFoundException("Estimate not found");
 
@@ -406,35 +487,81 @@ export class EstimatesService {
         !!est.customer?.isTaxExempt,
       );
 
+      // B659: the invoice is built through the SAME line path as an interactive invoice: the quoted PRICE
+      // is honoured, but the regulated category (and its levy) is read from the product NOW and computed
+      // through computeCategoryTax, and the SALE ledger rows are booked below, so a conversion can never
+      // file a quote-date rate or skip the ledger. Pack = the estimate line's own (estimate-convert-lines.ts).
+      const lines = estimateConvertLineItems(est.items, lineTaxRate);
+      const { productMap, categoryMap, unitsByProduct } = await loadManualLineContext(lines, {
+        prisma: { getTenantId: () => tenantId, forTenant: () => tx }, // read on THIS transaction's connection
+        entitlements: this.entitlements,
+      });
+      const resolved = lines.map((it) =>
+        resolveLineUnits(
+          productMap.get(it.productId ?? "") ?? {},
+          unitsByProduct.get(it.productId ?? "") ?? [],
+          it,
+        ),
+      );
+      const { itemsData, subtotal: linesSubtotal } = buildManualInvoiceLines(lines, {
+        productMap,
+        categoryMap,
+        tenantId,
+        clampFreeUnits: () => 0,
+        resolved,
+      });
+      itemsData.forEach((it, idx) => {
+        const pid = lines[idx].productId;
+        it.msrp = pid ? (msrpMap.get(pid) ?? null) : null;
+      });
+      const subtotal = roundMoney(linesSubtotal);
+      const isTaxExempt = !!est.customer?.isTaxExempt;
+      // B294 (L-159): regular tax and levy both come from THIS call. est.taxAmount holds the quote's REGULAR
+      // tax only (never the display levy of a later stage), so lineTaxRate above is a one-source recovery.
+      const regularTax = isTaxExempt
+        ? 0
+        : roundMoney(itemsData.reduce((sum, it) => sum + it.subtotal * (it.taxRate ?? 0), 0));
+      const taxTotal = roundMoney(regularTax + foldCategoryTax(itemsData, isTaxExempt));
+      const discount = Number(est.discount ?? 0);
+      const total = roundMoney(subtotal - discount + taxTotal);
+
       try {
         const inv = await tx.invoice.create({
           data: {
             invoiceNumber,
             customerId: est.customerId,
             status: "DRAFT",
-            subtotal: est.subtotal,
-            taxAmount: est.taxAmount,
-            discount: est.discount,
+            subtotal,
+            taxAmount: taxTotal,
+            discount,
             shippingFee: 0,
-            total: est.total,
+            total,
             notes: est.notes,
             terms: est.terms,
-            items: {
-              create: est.items.map((i) => ({
-                description: i.description,
-                productId: i.productId,
-                qty: i.qty,
-                unitPrice: i.unitPrice,
-                discount: 0,
-                taxRate: lineTaxRate,
-                subtotal: i.subtotal,
-                msrp: i.productId ? (msrpMap.get(i.productId) ?? null) : null,
-                tenantId: this.prisma.getTenantId(), // nested creates bypass forTenant() extension
-              })),
-            },
+            // B659 (rebased onto #1177/B645): the shared invoice line-builder path below
+            // (estimateConvertLineItems -> buildManualInvoiceLines) supersedes #1177's direct
+            // boxes/pieces/unitsPerBox carry-through — itemsData already carries the same
+            // triplet (via packSnapshot / estimateLinePack, never the live product) PLUS the
+            // regulated levy, unit resolution and MSRP snapshot #1177's mapper never had.
+            items: { create: itemsData },
           },
           include: { customer: { select: { id: true, businessName: true } }, items: true },
         });
+        // Same pattern invoices.service.ts's own create() uses (pack-at-sale.ts): the FULL
+        // boxes/pieces/unitsPerBox/packAtSale shape, never a thinner ledger-line mapping that
+        // would re-derive the pack from the live product for a converted estimate line.
+        const invItems: any[] = Array.isArray(inv.items) ? inv.items : [];
+        if (invItems.some((it: any) => it.trackedCategoryId != null)) {
+          const packMap = await packAtSaleByProduct(tx, invItems);
+          await this.ledger.writeSaleEntries({
+            tenantId,
+            orderId: null,
+            invoiceId: inv.id,
+            soldAt: inv.issueDate ?? new Date(),
+            lines: toSaleLedgerLines(invItems, packMap),
+            db: tx,
+          });
+        }
 
         // B17: link the estimate to the invoice it minted, inside the same transaction
         // as the claim above — a mismatch here (another write raced this same estimate

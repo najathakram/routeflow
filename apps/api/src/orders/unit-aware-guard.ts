@@ -37,16 +37,23 @@ export const ORDER_HAS_NO_UNIT_AWARE_LINE = {
   lineItems: { none: { unitLabel: { not: null }, status: { not: "CANCELLED" } } },
 } as const;
 
-/** Throws 409 `UNIT_AWARE_LINE` if any of `lines` is a live unit-aware line. */
+/**
+ * Throws 409 `UNIT_AWARE_LINE` if any of `lines` is a live unit-aware line. `remedy` is the
+ * sentence the message ends on — defaults to the EDIT-path remedy ("Edit it from the web order
+ * screen."), which fits every REWRITE call site below. SA-142: a CREATE-path call site (nothing
+ * exists yet to "edit") must pass its own remedy instead — see orders.controller.ts's merge
+ * branch, which points at "Create as a separate order" rather than the web order screen.
+ */
 export function assertNoUnitAwareLines(
   lines: ReadonlyArray<LineLike> | null | undefined,
   action = "edited this way",
+  remedy = "Edit it from the web order screen.",
 ): void {
   const hit = (lines ?? []).find(isUnitAwareLine);
   if (!hit) return;
   throw new ConflictException({
     code: UNIT_AWARE_LINE,
-    message: `A line on this order is sold by the ${hit.unitLabel}, so it can't be ${action} yet. Edit it from the web order screen.`,
+    message: `A line on this order is sold by the ${hit.unitLabel}, so it can't be ${action} yet. ${remedy}`,
   });
 }
 
@@ -56,12 +63,22 @@ interface EditDto {
 }
 
 /**
- * `updateOrderItems` entry guard. Every branch (buyer/driver/staff replace-all, diff add,
- * substitute, qty/price edit) re-derives the factor + price from the LIVE product, so an order with
- * a unit-aware line is refused — EXCEPT a diff of ONLY CANCEL/DELETE entries, which just strikes
- * lines off (no factor, no price) and is the operator's only way to remove a mistaken Case line.
- * A buyer's ownership is settled FIRST (`findOwner`): the refusal names a unit on THIS order,
- * which a non-owner must never learn.
+ * `updateOrderItems` entry guard. CUSTOMER/DRIVER branches still re-derive the factor + price from
+ * the LIVE product, so an order with a unit-aware line refuses them — EXCEPT a diff of ONLY
+ * CANCEL/DELETE entries, which just strikes lines off (no factor, no price) and is the only way a
+ * non-staff caller can remove a mistaken Case line. A buyer's ownership is settled FIRST
+ * (`findOwner`): the refusal names a unit on THIS order, which a non-owner must never learn.
+ *
+ * units_v1 (A1): a STAFF principal (OPERATOR/TENANT_ADMIN) is CONVERTED, not guarded, for every
+ * shape EXCEPT `replaceAll: true`: a full replace re-denominates every existing line by matching
+ * `productId` alone (see `updateOrderItems`'s replace-all branch), which would silently collapse a
+ * Case line to the pack's price the moment the client's replace payload carries no line ids (the
+ * B606 shape — a Case at $480 becomes a pack at $42, unnoticed). So a staff replaceAll is refused,
+ * same as CUSTOMER/DRIVER, whenever the order already holds a unit-aware line — regardless of
+ * whether `flag.units_v1` is still on for this tenant (a line already sold by a unit must never be
+ * silently downgraded, flag or no flag). Every OTHER staff shape (diff add/update/substitute) stays
+ * fully converted — those sites resolve each line's own factor via `resolveLineUnits`, never the
+ * live product (see `unit-line-edit.ts`).
  */
 export async function assertOrderEditAllowed(
   order: { customerId: string; lineItems: ReadonlyArray<LineLike> },
@@ -69,6 +86,10 @@ export async function assertOrderEditAllowed(
   user: { role?: string } | undefined,
   findOwner: () => Promise<{ id: string } | null>,
 ): Promise<void> {
+  if (user?.role === "OPERATOR" || user?.role === "TENANT_ADMIN") {
+    if (dto.replaceAll === true) assertNoUnitAwareLines(order.lineItems, "replaced wholesale");
+    return;
+  }
   const items = dto.items ?? [];
   const strikeOffOnly =
     dto.replaceAll === false &&

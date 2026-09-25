@@ -81,6 +81,18 @@ describe("buildInvoiceUnitLine — a manual invoice line sold by a non-pack unit
     expect(build({}, "Case", category).categoryTaxAmount).toBe(432);
   });
 
+  it("B297 (SA-088): stamps the rate-snapshot trio alongside categoryTaxAmount, and an all-null snapshot with no category", () => {
+    const withCat = build({}, "Case", category);
+    expect(withCat.categoryTaxType).toBe("EXCISE_PER_UNIT");
+    expect(withCat.categoryTaxRate).toBe(0.5);
+    expect(withCat.categoryPriceIncludesTax).toBe(false);
+
+    const noCat = build({}, "Case", null);
+    expect(noCat.categoryTaxType).toBeNull();
+    expect(noCat.categoryTaxRate).toBeNull();
+    expect(noCat.categoryPriceIncludesTax).toBeNull();
+  });
+
   it("refuses boxes, pieces and promotions beside a unit, a fractional or zero count, and an oversize line", () => {
     for (const bad of [
       { boxes: 1 },
@@ -93,6 +105,19 @@ describe("buildInvoiceUnitLine — a manual invoice line sold by a non-pack unit
     }
     expect(() => build({ qty: Math.floor(MAX_LINE_QTY / 288) + 1 })).toThrow(/over the/);
     expect(() => build({ qty: 99_999, unitPrice: 999_999 }, "Each")).toThrow(/total is over/);
+  });
+
+  // B682/SA-145: the count/split/pricing math is now buildLine's unit axis —
+  // AmbiguousLineError must map to this endpoint's OWN pre-existing wording,
+  // not buildLine's own generic message, for both the non-integer and the
+  // non-positive count shape.
+  it("B682: a fractional or zero count keeps this endpoint's own wording after the buildLine migration", () => {
+    expect(() => build({ qty: 2.5 })).toThrow(
+      "A line sold by the Case needs a whole number of Case.",
+    );
+    expect(() => build({ qty: 0 })).toThrow(
+      "A line sold by the Case needs a whole number of Case.",
+    );
   });
 
   it("only a unit-aware resolution is accepted (the pack stays on the caller's pack branch)", () => {

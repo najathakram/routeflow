@@ -10,6 +10,7 @@ import { CostingMethod, MovementType, Prisma } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import { normalizeBoxesPieces, roundMoney } from "@routeflow/pricing";
 import { fetchInvoicedSaleLines, roundQty } from "../common/invoiced-sales";
+import { poLineFromInput } from "./po-line-input";
 import { costDecimal, nextAverageCost, planLotConsumption, reverseAverageCost } from "./costing";
 import { RecordPurchaseDto } from "./dto/record-purchase.dto";
 import { RecordAdjustmentDto } from "./dto/record-adjustment.dto";
@@ -143,13 +144,15 @@ export class InventoryService {
     const where: Prisma.StockMovementWhereInput = {};
     if (query.productId) where.productId = query.productId;
     if (query.type) where.type = query.type;
+    // B562: the date filter and order are on effectiveAt (the accounting date a backdated
+    // movement carries); createdAt is write-once insertion time.
     if (query.from || query.to) {
-      where.createdAt = {};
-      if (query.from) where.createdAt.gte = new Date(query.from);
+      where.effectiveAt = {};
+      if (query.from) where.effectiveAt.gte = new Date(query.from);
       if (query.to) {
         const toDate = new Date(query.to);
         toDate.setUTCHours(23, 59, 59, 999);
-        where.createdAt.lte = toDate;
+        where.effectiveAt.lte = toDate;
       }
     }
 
@@ -158,7 +161,7 @@ export class InventoryService {
         where,
         skip,
         take: limit,
-        orderBy: { createdAt: "desc" },
+        orderBy: [{ effectiveAt: "desc" }, { createdAt: "desc" }, { id: "desc" }],
         include: {
           product: { select: { id: true, name: true, sku: true, unit: true } },
           supplier: { select: { id: true, name: true } },
@@ -245,7 +248,8 @@ export class InventoryService {
           reference: dto.reference,
           notes: dto.notes,
           performedById,
-          createdAt: effectiveDate,
+          // B562: the effective date is the accounting date; createdAt stays write-once.
+          effectiveAt: effectiveDate,
         },
       });
 
@@ -265,7 +269,7 @@ export class InventoryService {
       // A backdated purchase invalidates the snapshots (and possibly the
       // average) of every later movement — replay the product to repair them.
       const newer = await tx.stockMovement.count({
-        where: { productId: dto.productId, createdAt: { gt: effectiveDate } },
+        where: { productId: dto.productId, effectiveAt: { gt: effectiveDate } },
       });
       if (newer > 0) await this.recomputeProductInTx(tx, dto.productId);
 
@@ -297,7 +301,8 @@ export class InventoryService {
           reference: dto.reference,
           notes: dto.notes,
           performedById,
-          createdAt: effectiveDate,
+          // B562: the effective date is the accounting date; createdAt stays write-once.
+          effectiveAt: effectiveDate,
         },
       });
 
@@ -323,7 +328,7 @@ export class InventoryService {
 
       // Backdated adjustment: repair later snapshots
       const newer = await tx.stockMovement.count({
-        where: { productId: dto.productId, createdAt: { gt: effectiveDate } },
+        where: { productId: dto.productId, effectiveAt: { gt: effectiveDate } },
       });
       if (newer > 0) await this.recomputeProductInTx(tx, dto.productId);
 
@@ -885,7 +890,8 @@ export class InventoryService {
           reference,
           notes: itemNotes,
           performedById,
-          createdAt: effectiveDate,
+          // B562: the count's effective date is the accounting date; createdAt stays write-once.
+          effectiveAt: effectiveDate,
         },
       });
       movementIds.push(movement.id);
@@ -962,12 +968,13 @@ export class InventoryService {
       // (pos-cost-roles-spec §1: "most recent bill's unit cost"). Read the typed
       // PURCHASE movement, NOT the latest StockLot: positive adjustments and
       // stock-counts create lots stamped at the AVERAGE cost, which would poison
-      // the last-cost source. Order by createdAt (true record time) + id so the
-      // pick is deterministic when same-day bills share a date. Falls back to the
+      // the last-cost source. Order by effectiveAt (the bill/purchase date — B562:
+      // what createdAt carried before it became write-once), then createdAt + id so
+      // the pick is deterministic when same-day bills share a date. Falls back to the
       // average cost when the product has no purchases yet. Not lot-consuming.
       const lastPurchase = await tx.stockMovement.findFirst({
         where: { productId, type: MovementType.PURCHASE },
-        orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+        orderBy: [{ effectiveAt: "desc" }, { createdAt: "desc" }, { id: "desc" }],
         select: { unitCost: true },
       });
       unitCost = costDecimal(lastPurchase?.unitCost ?? avgCost ?? 0);
@@ -1052,6 +1059,12 @@ export class InventoryService {
         productId: string;
         qtyOrdered: Prisma.Decimal;
         unitCost: Prisma.Decimal;
+        /**
+         * INTERNAL CALLERS ONLY, never a DTO field (a client must never name a stored total).
+         * The bill line's EXACT total (invoice denomination): a bill entered per case must not be re-derived as
+         * pieces x the 4 dp per-piece cost (the same drift as a case-entered PO). Falls back to the product.
+         */
+        totalCost?: number;
         sku?: string | null;
         packSize?: number | null;
       }[];
@@ -1089,7 +1102,10 @@ export class InventoryService {
       qtyOrdered: l.qtyOrdered,
       qtyReceived: 0,
       unitCost: l.unitCost,
-      totalCost: roundMoney(Number(l.qtyOrdered) * Number(l.unitCost)),
+      totalCost:
+        l.totalCost !== undefined
+          ? roundMoney(l.totalCost)
+          : roundMoney(Number(l.qtyOrdered) * Number(l.unitCost)),
       sku: l.sku ?? null,
       packSize: l.packSize ?? null,
     }));
@@ -1122,17 +1138,19 @@ export class InventoryService {
     const itemsData = dto.items.map((item: any) => {
       const prod = productMap.get(item.productId);
       if (!prod) throw new NotFoundException(`Product ${item.productId} not found`);
-      const qtyOrdered = item.qty ?? item.qtyOrdered;
-      if (!qtyOrdered || qtyOrdered <= 0)
-        throw new BadRequestException("Item quantity must be positive");
-      const totalCost = qtyOrdered * item.unitCost;
-      totalAmount += totalCost;
+      // Server-side line money through the one pricing builder: a line entered per case (caseCost) totals
+      // roundMoney(caseCost x cases) from the ENTERED figures; a per-piece line totals roundMoney(qty x unitCost).
+      const line = poLineFromInput(item);
+      if (!(line.qtyOrdered > 0)) throw new BadRequestException("Item quantity must be positive");
+      totalAmount = roundMoney(totalAmount + line.totalCost);
       return {
         productId: item.productId,
-        qtyOrdered,
+        qtyOrdered: line.qtyOrdered,
         qtyReceived: 0,
-        unitCost: item.unitCost,
-        totalCost,
+        unitCost: line.unitCost,
+        totalCost: line.totalCost,
+        // packSize is the denomination: stored only when the cost was entered per case
+        ...(line.packSize !== null ? { packSize: line.packSize } : {}),
       };
     });
     return this.prisma.forTenant().purchaseOrder.create({
@@ -1359,9 +1377,10 @@ export class InventoryService {
     lotPurchaseDate?: Date,
     /**
      * Explicit timestamp for the movement. A re-apply passes strictly increasing ones
-     * (compensation, then re-post) because the cost replay orders by createdAt and then
-     * by a RANDOM id — two rows of one transaction share `now()`, so without this their
-     * replay order (and the average it yields) would be a coin flip.
+     * (compensation, then re-post) because the cost replay orders by effectiveAt, then
+     * createdAt, then a RANDOM id — two rows of one transaction share `now()`, so without
+     * this their replay order (and the average it yields) would be a coin flip. B562: it
+     * stamps BOTH columns (it is today's date, not a backdate).
      */
     movementAt?: Date,
   ) {
@@ -1395,7 +1414,7 @@ export class InventoryService {
         supplierId: po.supplierId,
         reference: po.poNumber,
         performedById: userId,
-        ...(movementAt ? { createdAt: movementAt } : {}),
+        ...(movementAt ? { createdAt: movementAt, effectiveAt: movementAt } : {}),
       },
     });
 
@@ -1516,8 +1535,8 @@ export class InventoryService {
       },
       // id as the tiebreak: two movements of one receive share a transaction-time
       // createdAt, and reverseAverageCost's empties-stock short-circuit is
-      // order-sensitive.
-      orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+      // order-sensitive. B562: accounting order first (effectiveAt).
+      orderBy: [{ effectiveAt: "desc" }, { createdAt: "desc" }, { id: "desc" }],
     });
     const prefix = InventoryService.PO_REVERSAL_NOTE;
     const reversedIds = new Set<string>();
@@ -1581,6 +1600,7 @@ export class InventoryService {
         }
         stock = stock.sub(m.quantity);
         totalQty = totalQty.add(m.quantity);
+        const at = nextAt();
         await tx.stockMovement.create({
           data: {
             productId,
@@ -1593,7 +1613,9 @@ export class InventoryService {
             reference: po.poNumber,
             notes: `${prefix}${m.id}`,
             performedById: userId,
-            createdAt: nextAt(),
+            // B562: one stamp for both columns — the replay orders by effectiveAt first.
+            createdAt: at,
+            effectiveAt: at,
           },
         });
       }
@@ -1724,7 +1746,24 @@ export class InventoryService {
       }
 
       // ── Resolve the edited line set ──
-      const items = dto.items!;
+      // Every line through the one pricing builder: a case line (caseCost) totals from the ENTERED figures and
+      // stores its pack; a per-piece line keeps qtyOrdered/unitCost (and whatever packSize it sent, as before).
+      const items = dto.items!.map((l) => {
+        const amounts = poLineFromInput(l);
+        // A case line's `cases` may be 0 (@Min(0)) with no loose pieces, so the DTO's per-piece @Min(0.001) no
+        // longer covers it: the same positive-quantity gate createPurchaseOrder has.
+        if (!(amounts.qtyOrdered > 0))
+          throw new BadRequestException("Item quantity must be positive");
+        return {
+          id: l.id,
+          productId: l.productId,
+          sku: l.sku,
+          qtyOrdered: amounts.qtyOrdered,
+          unitCost: amounts.unitCost,
+          totalCost: amounts.totalCost,
+          packSize: amounts.packSize !== null ? amounts.packSize : l.packSize,
+        };
+      });
       const existingById = new Map<string, (typeof po.items)[number]>(
         po.items.map((i) => [i.id, i] as const),
       );
@@ -1806,10 +1845,9 @@ export class InventoryService {
       };
 
       const lineData = items.map((line) => {
-        const totalCost = roundMoney(line.qtyOrdered * line.unitCost);
         return {
           line,
-          totalCost,
+          totalCost: line.totalCost,
           qtyReceived: targetReceived(line),
         };
       });
@@ -2653,9 +2691,10 @@ export class InventoryService {
     opts: { throwOnGap?: boolean } = {},
   ) {
     const client = tx ?? this.prisma.forTenant();
+    // B562 (SA-136 §3): accounting order — effectiveAt, then insertion time, then id.
     const movements = await client.stockMovement.findMany({
       where: { productId: product.id },
-      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+      orderBy: [{ effectiveAt: "asc" }, { createdAt: "asc" }, { id: "asc" }],
       select: { id: true, type: true, quantity: true, unitCost: true },
     });
 

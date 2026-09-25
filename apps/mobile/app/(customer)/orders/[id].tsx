@@ -312,7 +312,7 @@ export default function CustomerOrderDetailScreen() {
                       {item.product?.unit ? ` / ${item.product.unit}` : ""}
                     </Text>
                     {item.notes?.trim() ? (
-                      <Text style={styles.itemNote} numberOfLines={2}>
+                      <Text style={styles.itemNote} numberOfLines={4}>
                         {item.notes}
                       </Text>
                     ) : null}

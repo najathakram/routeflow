@@ -9,10 +9,20 @@
  *
  * Rules match the web golden reference:
  * - untouched line → nothing;
- * - new catalog line → `{ productId, qty, [boxes,pieces], [unitPrice,overrideReason] }`;
+ * - new catalog line → `{ productId, qty, [boxes,pieces], [unitPrice,overrideReason] }`, or
+ *   `{ productId, qty:<unit count>, unitLabel, [unitPrice,overrideReason] }` when the operator
+ *   picked a unit on it (units_v1 — `UnitPickerRow`/`CartRow`; no boxes/pieces on that shape);
  * - new unlisted line → `{ name, qty, unitPrice }`;
  * - existing UPDATE → `{ id, action:"UPDATE", qty, [boxes,pieces], [unitPrice,overrideReason] }`
- *   (qty always sent; price only when it changed vs the original);
+ *   (qty always sent; price only when it changed vs the original) — UNLESS the line
+ *   carries a units_v1 `unitLabel` (Case, Pallet…, set/changed this session via
+ *   `UnitPickerRow`/`DraftItemCard`, or simply carried forward unchanged from a
+ *   previously-saved unit line), in which case it's
+ *   `{ id, action:"UPDATE", qty:<unit count>, unitLabel, productId, [unitPrice,overrideReason] }`
+ *   instead: the server's unit-aware branch reads `qty` as a COUNT OF THE UNIT and refuses
+ *   boxes/pieces outright, needs `unitLabel` resent or it refuses the whole edit (B707), and
+ *   needs `productId` alongside it so the server preloads the product/ladder for a line it
+ *   doesn't already know is unit-aware (filed separately, not fixed here — see the PR body);
  * - substitute → `{ id, substituteProductId, qty, [boxes,pieces], [unitPrice,overrideReason] }`
  *   (same box-split + override rules as a fresh add — the SUBSTITUTE's own LIST
  *   price, carried in `basePrice`, is what "diverges" is measured against: it is
@@ -60,6 +70,12 @@ export interface DiffCatalogLine {
   substituteProductId?: string;
   /** Per-line note (buyer-visible), carried onto the invoice line. */
   notes?: string;
+  /**
+   * units_v1: the unit this line is sold by ("Case"…), carried unchanged
+   * from the stored line. When set, an UPDATE's wire shape diverges from a
+   * pack line's — see the UPDATE branch below (B707).
+   */
+  unitLabel?: string | null;
 }
 
 export interface DiffUnlistedLine {
@@ -121,11 +137,18 @@ export function buildOrderItemDiff(args: {
 
     if (!line.lineId) {
       // New catalog line — send the price only when it diverges from the tier base.
+      // units_v1: a fresh unit-sold line has no boxes/pieces (boxFields is already {} since the
+      // picker never sets them) — qty is the unit COUNT, and unitLabel names it. This branch
+      // already sends productId unconditionally (a new line always names its product), so the
+      // server's product/ladder preload always covers it — unlike the id-only UPDATE branch
+      // below, which must add productId explicitly for the same reason.
       const overridden = Math.abs(line.unitPrice - line.basePrice) > EPS;
+      const unitLabel = line.unitLabel?.trim() || undefined;
       out.push({
         productId: line.productId,
         qty: line.qty,
         ...boxFields,
+        ...(unitLabel ? { unitLabel } : {}),
         ...(overridden
           ? {
               unitPrice: line.unitPrice,
@@ -173,11 +196,35 @@ export function buildOrderItemDiff(args: {
     // A note-only edit is still a change (send the new value; empty clears it).
     const notesChanged = noteVal !== (orig.notes ?? "").trim();
     if (qtyChanged || priceChanged || reasonChanged || notesChanged) {
+      // units_v1 (B707): a line sold by a named unit stores qty/boxes/pieces
+      // in PACK PIECES (so qtyChanged above stays on the same basis as every
+      // other line), but the server's unit-aware UPDATE branch (buildUnitLine)
+      // takes `qty` as a COUNT OF THE UNIT and refuses boxes/pieces outright —
+      // sending the piece-expanded qty here billed a 3-case edit as 864
+      // "cases". `unitLabel` may now be set/changed THIS session too (the
+      // mobile unit picker) as well as ride along unchanged from a
+      // previously-saved unit line — either way it must go on the wire, or
+      // the server's assertUnitLabelNamed mistakes the save for a plain
+      // pieces edit and refuses it (UNIT_AWARE_LINE). `productId` rides
+      // along with it: prepareUnitEditContext only preloads the product/
+      // ladder for THIS item when the item itself carries productId (an
+      // already-unit-aware STORED line is covered without it, but a line
+      // being assigned a unit for the first time this session is not — a
+      // filed, unfixed server gap; sending productId unconditionally here
+      // is free and closes it for every case, not just the new one).
+      const unitLabel = line.unitLabel?.trim() || undefined;
+      // B718: `line.boxes` here means "the unit COUNT" (a 3-Case line stores boxes:3), never a
+      // real pack box count — but `?? ` alone only catches null/undefined, not a MEANINGLESS
+      // boxes:0 (the shape a fresh piece-code scan leaves — lib/edit-items-draft.ts's
+      // applyPickToDraft — on a line that had no unitLabel at the time). `line.qty <= 0` is
+      // already refused above, so falling through to it here can never itself introduce a
+      // zero; only a genuinely positive `boxes` should ever be preferred over it.
+      const unitQty = unitLabel && line.boxes != null && line.boxes > 0 ? line.boxes : line.qty;
       out.push({
         id: line.lineId,
         action: "UPDATE",
-        qty: line.qty, // server's UPDATE branch requires qty present
-        ...boxFields,
+        qty: unitLabel ? unitQty : line.qty, // server's UPDATE branch requires qty present
+        ...(unitLabel ? { unitLabel, productId: line.productId } : boxFields),
         // unitPrice is gated on priceChanged ALONE (R9): the server's edit
         // branch derives isManualOverride from whether the sent price differs
         // from the stored one, so echoing it back on a reason-only edit would

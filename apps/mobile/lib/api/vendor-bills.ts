@@ -204,10 +204,22 @@ export function useCheckVendorBillDuplicate() {
 
 export function useReceiveVendorBill() {
   const qc = useQueryClient();
-  return useMutation<VendorBill, Error, { id: string; acknowledgeUnlinked?: boolean }>({
-    mutationFn: ({ id, acknowledgeUnlinked }) =>
+  return useMutation<
+    VendorBill,
+    Error,
+    {
+      id: string;
+      acknowledgeUnlinked?: boolean;
+      /** B743: sent ONLY after the operator explicitly chose "Receive as loose pieces". */
+      acknowledgePackSizeUnknown?: boolean;
+    }
+  >({
+    mutationFn: ({ id, acknowledgeUnlinked, acknowledgePackSizeUnknown }) =>
       apiClient
-        .post(`/vendor-bills/${id}/receive`, acknowledgeUnlinked ? { acknowledgeUnlinked } : {})
+        .post(`/vendor-bills/${id}/receive`, {
+          ...(acknowledgeUnlinked ? { acknowledgeUnlinked } : {}),
+          ...(acknowledgePackSizeUnknown ? { acknowledgePackSizeUnknown } : {}),
+        })
         .then((r) => r.data),
     onSuccess: (_, { id }) => {
       qc.invalidateQueries({ queryKey: ["vendor-bills"] });

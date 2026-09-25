@@ -1,5 +1,10 @@
 import { InvoiceStatus } from "@prisma/client";
-import { computeCategoryTax, roundMoney, type CategoryTaxType } from "@routeflow/pricing";
+import {
+  computeCategoryTax,
+  regulatedUnitBasis,
+  roundMoney,
+  type CategoryTaxType,
+} from "@routeflow/pricing";
 import type { RegulatedLedgerService } from "../regulated/regulated-ledger.service";
 import { sumConfirmed } from "./payment-predicates";
 
@@ -61,18 +66,17 @@ export function buildPriceAdjustmentUpdates(args: {
   isTaxExempt: boolean;
 }): Array<{ id: string; data: Record<string, any> }> {
   const { items, localPriceMap, categoriesById, unitsPerBoxByProduct, isTaxExempt } = args;
-  // Mirrors orders.service's linePieceQty: a box-split line stores qty already in pieces; a boxed
-  // selling-unit line expands by its snapshotted unitsPerBox, falling back to the product's. Unused by
-  // PERCENT_OF_SALE (unitBasisQty is ignored there) but correct for an EXCISE_PER_UNIT / PER_VOLUME /
-  // DEPOSIT_PER_CONTAINER line.
-  const linePieceQty = (li: any): number => {
-    const qty = Number(li.qty) || 0;
-    if (li.boxes != null) return qty;
-    const upb = Number(
+  // B679: mirrors orders.service.recomputeLineCategoryTaxes — a box-split line stores qty already in
+  // pieces; a boxed selling-unit line expands by its snapshotted unitsPerBox, falling back to the
+  // product's. Unused by PERCENT_OF_SALE (unitBasisQty is ignored there) but correct for an
+  // EXCISE_PER_UNIT / PER_VOLUME / DEPOSIT_PER_CONTAINER line. Delegates to regulatedUnitBasis
+  // (@routeflow/pricing) — the ONE place this conversion happens — instead of an independent copy of
+  // its box-unaware fallback branch.
+  const linePieceQty = (li: any): number =>
+    regulatedUnitBasis(
+      { qty: Number(li.qty) || 0, boxes: li.boxes, pieces: li.pieces, unitLabel: li.unitLabel },
       li.unitsPerBox ?? (li.productId ? unitsPerBoxByProduct.get(li.productId) : null) ?? 0,
-    );
-    return upb > 1 ? qty * upb : qty;
-  };
+    ).unitBasisQty;
   const updates: Array<{ id: string; data: Record<string, any> }> = [];
   for (const item of items) {
     const newPrice = localPriceMap.get(item.id);

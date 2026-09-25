@@ -135,6 +135,27 @@ file's directory, so `local-env.mjs` computes an **absolute** path
 happens to run from. `scripts/campaign-check.mjs` carries a one-line pointer to this file for
 exactly that reason.
 
+## The dev-preview trap (a Claude Code worktree, not this e2e lane, but the same family)
+
+Two ways to capture a screenshot of a new local dev route and end up looking at the wrong app
+without any error saying so — found while proving B715's tap-to-edit affordance at 390px.
+
+**The wrong-checkout trap.** The Claude Code Browser pane's `preview_start({name: "web"})` reads
+`.claude/launch.json` relative to the session's own primary working directory, not the worktree
+you're actually editing in — on this machine that's a separate checkout of the same repo
+(`/Users/maznahamanullah/code/routeflow`, not `routeflow-clean`). A brand-new route added in your
+worktree 404s there because the file genuinely doesn't exist in that other checkout, while every
+pre-existing page renders fine (it's a real, working Next.js server — just the wrong tree).
+Workaround: run `next dev` manually inside your own worktree on an explicit port
+(`npx next dev -H 127.0.0.1 -p <port>`), then attach the pane with `preview_start({url:
+"http://localhost:<port>"})` instead of `{name}`.
+
+**The mobile-UA proxy trap — REMOVED.** `middleware.ts` used to rewrite any phone-UA request to
+a separate Expo mobile-web deployment, which made the pane's mobile viewport emulation (any
+width under 768, including 390) proxy every dev-only route to a build that had never heard of
+it. Owner ruling: phones now get the same redesigned Next web site as desktop, so the proxy —
+and this trap — no longer exist; the middleware doesn't branch on user-agent at all.
+
 ## Shared auth state audit (item 6a)
 
 Sweep of every `logout`/`password` hit in specs 01, 02, 03, 04, 05, 07 (the ones flagged by the

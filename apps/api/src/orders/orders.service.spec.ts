@@ -2677,6 +2677,7 @@ describe("OrdersService", () => {
   });
 
   describe("sweepAllPendingOrders — tenant scoping (B323)", () => {
+    const noMismatches = { packMismatches: 0, livePackFallbacks: 0 }; // SA-124: neither below
     it("REG-B323 sweepAllPendingOrders runs each customer group inside its own tenant context and skips null-tenant groups", async () => {
       const mergeSpy = jest
         .spyOn(service, "mergeAllPendingForCustomer")
@@ -2699,16 +2700,16 @@ describe("OrdersService", () => {
 
       const result = await service.sweepAllPendingOrders();
 
-      // each group's merge ran inside ITS OWN tenant's context — never the other
-      // group's, and never ambient/unscoped.
+      // each group's merge ran inside ITS OWN tenant's context — never the other group's.
       expect(tenantCtx.run).toHaveBeenCalledTimes(2);
       expect(tenantCtx.run).toHaveBeenNthCalledWith(1, "tenant-a", expect.any(Function));
       expect(tenantCtx.run).toHaveBeenNthCalledWith(2, "tenant-b", expect.any(Function));
-      expect(mergeSpy).toHaveBeenCalledWith("cust-a");
-      expect(mergeSpy).toHaveBeenCalledWith("cust-b");
+      const sweepOpts = expect.objectContaining({ onPackMismatch: expect.any(Function) });
+      expect(mergeSpy).toHaveBeenCalledWith("cust-a", {}, sweepOpts);
+      expect(mergeSpy).toHaveBeenCalledWith("cust-b", {}, sweepOpts);
       expect(warnSpy).not.toHaveBeenCalled();
 
-      expect(result).toEqual({ customers: 2, merged: 2, skipped: 0 });
+      expect(result).toEqual({ customers: 2, merged: 2, skipped: 0, ...noMismatches });
     });
 
     it("REG-B323 a customer with one tenant-scoped pending order and one legacy null-tenant order is counted and warned, never dropped silently", async () => {
@@ -2731,12 +2732,8 @@ describe("OrdersService", () => {
 
       expect(tenantCtx.run).not.toHaveBeenCalled();
       expect(mergeSpy).not.toHaveBeenCalled();
-      expect(warnSpy).toHaveBeenCalledWith(
-        expect.stringContaining(
-          "sweepAllPendingOrders: customer cust-a has 1 pending order(s) without tenantId — not merged (B323)",
-        ),
-      );
-      expect(result).toEqual({ customers: 0, merged: 0, skipped: 1 });
+      expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("not merged (B323)"));
+      expect(result).toEqual({ customers: 0, merged: 0, skipped: 1, ...noMismatches });
     });
   });
 

@@ -277,7 +277,10 @@ export function FeatureConsole({
 
   if (loadError) {
     return (
-      <div className="rounded-lg bg-red-900/40 px-4 py-3 text-sm text-red-400 ring-1 ring-red-700">
+      <div
+        role="alert"
+        className="rounded-lg bg-red-900/40 px-4 py-3 text-sm text-red-400 ring-1 ring-red-700"
+      >
         {loadError}
       </div>
     );

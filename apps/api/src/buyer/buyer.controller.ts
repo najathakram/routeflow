@@ -614,10 +614,19 @@ export class BuyerController {
             // register entry rather than fixed here: the fix belongs in the CUSTOMER
             // branch (honour a STORED override, still never a client-supplied one),
             // which is F07's file region.
-            const mergedItems = foldMergeItems(
+            const foldResult = foldMergeItems(
               normalizeBoxUnawareSnapshots(lineItems, upbForStoredSnapshots),
               normalizeBareIncomingSellingUnits(incomingItems, lineItems, upbByProduct),
-            ).filter((i) => i.productId);
+              // SA-124e(3): the price basis follows the RESOLVED pack, not the live one —
+              // already built above for the denomination normalizers.
+              upbByProduct,
+            );
+            if (foldResult.livePackFallbackProductIds.length > 0) {
+              this.logger.warn(
+                `foldMergeItems: order ${activeOrder.id} product(s) [${foldResult.livePackFallbackProductIds.join(", ")}] had box data but no resolvable pack of their own — deferred to the live product pack in updateOrderItems (B776/SA-124)`,
+              );
+            }
+            const mergedItems = foldResult.items.filter((i) => i.productId);
             await this.ordersService.updateOrderItems(
               activeOrder.id,
               { items: mergedItems, replaceAll: true } as UpdateOrderItemsDto,
@@ -962,7 +971,12 @@ export class BuyerController {
     if (template.customerId !== ctx.customerId) {
       throw new ForbiddenException("This template does not belong to your account");
     }
-    return this.templatesService.generateOrder(id);
+    // #1208 review LOW-MED: this buyer-portal path bypasses generateOrderForUser (there
+    // is no JwtPayload here — ownership is already verified above against ctx.customerId),
+    // so it must pass isStaffRole=false itself, or it silently keeps the old hardcoded-true
+    // oversell posture. A buyer's "Reorder" gets the SAME hard block their own checkout
+    // (orders.service.ts create()) gives them — never the operator/cron warn-and-oversell.
+    return this.templatesService.generateOrder(id, false);
   }
 
   @Patch("templates/:id")

@@ -7,7 +7,12 @@
  * then hands everything to the pure `inline-returns-pricing.ts` engine. Read-only:
  * nothing here writes a Return/ReturnItem row (that's PR-1c/1d's capture path).
  */
-import { ForbiddenException, Injectable, NotFoundException } from "@nestjs/common";
+import {
+  ConflictException,
+  ForbiddenException,
+  Injectable,
+  NotFoundException,
+} from "@nestjs/common";
 import {
   InvoiceStatus,
   OrderStatus,
@@ -20,12 +25,13 @@ import { SystemConfigService } from "../system-config/system-config.service";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
 import { REAL_INVOICE_STATUSES } from "../common/invoiced-sales";
 import { currentTaxRate } from "../common/tax-rate";
-import { getTierPrice } from "@routeflow/pricing";
+import { getTierPrice, packFromOwnSplit } from "@routeflow/pricing";
 import { returnedPiecesByProduct } from "./returns-pieces.util";
 import {
   allocateReturnedPieces,
   priceMatchedChunk,
   priceUnreferencedChunk,
+  resolveReturnPackFactor,
   returnRequestPieces,
   totalChunks,
   type CandidateInvoiceLine,
@@ -143,6 +149,7 @@ export class InlineReturnsQuoteService {
         where: { id: { in: productIds } },
         select: {
           id: true,
+          name: true,
           pricePerUnit: true,
           priceTier2: true,
           priceTier3: true,
@@ -192,7 +199,9 @@ export class InlineReturnsQuoteService {
     const remainingByKey: RemainingSupply[] = [];
     for (const [key, sold] of soldByOrderProduct) {
       const [sourceOrderId, productId] = key.split("::");
-      const priorReturned = priorReturnedMap.get(sourceOrderId)?.[productId] ?? 0;
+      const prior = priorReturnedMap.get(sourceOrderId)?.[productId];
+      // An unclassifiable prior refuses THIS product's line below; the supply entry is inert.
+      const priorReturned = prior && "pieces" in prior ? prior.pieces : 0;
       remainingByKey.push({
         sourceOrderId,
         productId,
@@ -213,20 +222,69 @@ export class InlineReturnsQuoteService {
     for (const item of dto.items) {
       const product = productMap.get(item.productId);
 
+      // SA-101(2)/B3/B765 interim guard, precision round SA-107/SA-108: resolve the pack
+      // size from EVERY candidate line for this product, not just the newest
+      // (`matchingSet.find(...)` picked the first — i.e. newest-invoice — match, silently
+      // applying ITS pack size even when an older line, the one the operator was actually
+      // shown, used a different one). A product whose candidate lines DISAGREE on a pack
+      // size > 1 refuses outright rather than guess. This refusal set is a SUPERSET of the
+      // pricing set below (it includes lines already exhausted or at 0 remaining pieces),
+      // so the interim can over-refuse a line that pricing itself would never have touched
+      // — the safe direction, accepted for this interim guard.
+      const candidatePacksForProduct = matchingSet
+        .filter((l) => l.productId === item.productId)
+        .map((l) => l.unitsPerBox);
+      const { factor: resolvedUnitsPerBox, conflictingPacks } = resolveReturnPackFactor(
+        candidatePacksForProduct,
+        product?.unitsPerBox ?? null,
+      );
+      const productName = product?.name ?? "This product";
+      // SA-159: a prior STANDARD return of THIS product whose basis cannot be classified refuses only
+      // this product's line; other products on the same source order still quote.
+      for (const orderId of new Set(
+        matchingSet.filter((l) => l.productId === item.productId).map((l) => l.sourceOrderId),
+      )) {
+        const prior = priorReturnedMap.get(orderId)?.[item.productId];
+        if (prior && "unknown" in prior) {
+          throw new ConflictException({
+            code: "INLINE_RETURN_PRIOR_BASIS_UNKNOWN",
+            message: `${productName}: an earlier return on this customer's order cannot be counted (${prior.reason}) — credit it with a credit note or ask support; the standard return cannot classify it either.`,
+          });
+        }
+      }
+      if (conflictingPacks) {
+        throw new ConflictException({
+          code: "INLINE_RETURN_PACK_CONFLICT",
+          message:
+            `${productName} is packed at more than one size in this customer's recent ` +
+            `history (${conflictingPacks.join(", ")}) — return these lines from the order ` +
+            `page's standard return instead.`,
+        });
+      }
+      // A return typed as an explicit BOX count needs a real factor to convert to pieces —
+      // an unknown factor must never silently multiply boxes by 0 and credit $0 for real
+      // returned goods (the returnRequestPieces boxes*upb branch does exactly that when
+      // unitsPerBox is null). `buildQuoteRequest`/`buildCaptureRequest` always send `boxes`
+      // explicitly (0 for a non-boxed product), so gating on "boxes was PROVIDED" rather
+      // than "boxes is a real, positive count" refused every loose-product return outright
+      // — a pieces-only entry (boxes: 0) never needs a pack at all.
+      if (
+        Number(item.boxes ?? 0) > 0 &&
+        (resolvedUnitsPerBox == null || resolvedUnitsPerBox <= 0)
+      ) {
+        throw new ConflictException({
+          code: "INLINE_RETURN_PACK_UNKNOWN",
+          message:
+            `${productName}'s pack size is unknown — return these lines from the order ` +
+            `page's standard return instead.`,
+        });
+      }
+
       const requestedPieces = returnRequestPieces({
-        qty: item.qty,
+        qty: item.qty ?? 0,
         boxes: item.boxes ?? null,
         pieces: item.pieces ?? null,
-        // The caller's own product-level box size — returnRequestPieces uses it both to
-        // scale a bare `qty` (no boxes/pieces split) into pieces AND to scale an explicit
-        // `boxes` count into pieces. Prefer a matching-set line's own snapshot, but a
-        // fully unreferenced item (no matching line at all) still needs the product's
-        // own unitsPerBox so a bare `qty: 1` on a boxed product is read as one box, not
-        // one loose piece.
-        unitsPerBox:
-          matchingSet.find((l) => l.productId === item.productId)?.unitsPerBox ??
-          product?.unitsPerBox ??
-          null,
+        unitsPerBox: resolvedUnitsPerBox,
       });
 
       const allocated = allocateReturnedPieces(
@@ -336,11 +394,20 @@ export class InlineReturnsQuoteService {
         // must be multiplied by unitsPerBox. Pooling/capping uses ONLY piecesQty; qty stays
         // the line's own axis for proration inside priceMatchedChunk. A DRAFT invoice's
         // `update()` (invoices.service.ts:3500) can store a boxed line with unitsPerBox:
-        // null, so fall back to the product's own unitsPerBox — same convention as the
-        // orders' category-tax fallback at invoices.service.ts:427-428. Resolved ONCE here
-        // and stored on the line itself so priceMatchedChunk sees the same value.
-        const upb = item.unitsPerBox ?? productUpbMap.get(item.productId) ?? null;
+        // null, so first try recovering the pack from THIS line's own boxes/pieces/qty split
+        // (SA-101(a)/SA-107 — a null-snapshot line still names its own pack via the split it
+        // was actually stored with) before falling back to the product's CURRENT unitsPerBox
+        // — same convention as the orders' category-tax fallback at
+        // invoices.service.ts:427-428. Resolved ONCE here and stored on the line itself so
+        // priceMatchedChunk and resolveReturnPackFactor's refusal set both see the same value.
+        const upb =
+          item.unitsPerBox ??
+          packFromOwnSplit({ qty, boxes: item.boxes, pieces: item.pieces }) ??
+          productUpbMap.get(item.productId) ??
+          null;
         const upbNum = Number(upb) || 0;
+        // B661-sweep: a box-unaware multiply — follow-up PR converts this to
+        // @routeflow/pricing's regulatedUnitBasis; see no-second-legacy-line-pieces.spec.ts's allowlist.
         const piecesQty = item.boxes != null ? qty : upbNum > 1 ? qty * upbNum : qty;
         lines.push({
           sourceOrderId: inv.orderId,

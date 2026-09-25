@@ -224,7 +224,8 @@ export default function MovementsPage() {
                 return (
                   <tr key={m.id} className="transition-colors hover:bg-surface-raised/50">
                     <td className="px-4 py-3 text-navy/70 whitespace-nowrap">
-                      {formatDate(m.createdAt)}
+                      {/* B562: the movement's accounting date (a backdated receipt shows its own date). */}
+                      {formatDate(m.effectiveAt ?? m.createdAt)}
                     </td>
                     <td className="px-4 py-3">
                       {m.product?.id ? (

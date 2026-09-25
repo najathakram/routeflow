@@ -69,8 +69,9 @@ import { useUnapplyCreditNote } from "@/lib/api/credit-notes";
 import { useCustomerAdvancePayments } from "@/lib/api/customers";
 import { fmt, fmtCalendarDate, fmtDate, isInternalEmail, todayIso } from "@/lib/formatting";
 import { getDaysForTerms, addDaysIso } from "@/lib/invoice-terms";
-import { formatQtySplit, remainingCapacity, resolveConfirmedAmounts } from "@routeflow/pricing";
+import { remainingCapacity, resolveConfirmedAmounts } from "@routeflow/pricing";
 import { useDuplicateInvoiceAction } from "@/lib/use-duplicate-invoice-action";
+import { invoiceLineQtyText } from "@/lib/invoice-line-unit";
 import { CHECK_TRANSITIONS } from "@routeflow/types";
 import { InvoiceTotalsSummary } from "./InvoiceTotalsSummary";
 import {
@@ -2514,7 +2515,7 @@ export default function InvoiceDetailPage() {
                         <td className="px-8 py-3 font-medium text-navy">
                           {item.description}
                           {item.notes && (
-                            <p className="mt-0.5 text-xs font-normal italic text-navy/60">
+                            <p className="mt-0.5 whitespace-pre-line text-xs font-normal italic text-navy/60">
                               {item.notes}
                             </p>
                           )}
@@ -2528,11 +2529,7 @@ export default function InvoiceDetailPage() {
                                 : undefined
                             }
                           >
-                            {formatQtySplit({
-                              qty: item.qty,
-                              boxes: item.boxes,
-                              pieces: item.pieces,
-                            })}
+                            {invoiceLineQtyText(item)}
                           </span>
                           {/* BUY_N_GET_M: name the free units, or the reduced
                               subtotal reads as a pricing error. */}

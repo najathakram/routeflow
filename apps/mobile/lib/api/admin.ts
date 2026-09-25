@@ -178,6 +178,12 @@ export interface AdminOrder {
      *  line MUST subtract them too or it shows the line at full price. */
     promoFreeUnits?: number | null;
     status: string;
+    /** Cumulative qty actually delivered (route completeStop flow) — 0, not null, until then. */
+    deliveredQty?: number | null;
+    /** Sale-time box-size snapshot; the live `product.unitsPerBox` is only a fallback. */
+    unitsPerBox?: number | null;
+    /** units_v1: the unit this line is sold by ("Case"…); null on a plain piece/pack line. */
+    unitLabel?: string | null;
     overrideReason?: string | null;
     /** Per-line note — carried onto the invoice line (buyer-visible). */
     notes?: string | null;
@@ -189,7 +195,13 @@ export interface AdminOrder {
       pricePerUnit?: number | string;
       averageCost?: number | string | null;
       category?: string | null;
-    };
+      /** SKU line + read-time variant-name composition on the order-detail card (`GET /orders/:id`
+       *  selects these; see `apps/api/src/orders/orders.service.ts` findOne). */
+      sku?: string | null;
+      variantName?: string | null;
+      parentProductId?: string | null;
+      parent?: { name: string } | null;
+    } | null;
   }>;
   /**
    * Invoices linked to this order (present on non-DRAFT orders — the API returns
@@ -395,6 +407,11 @@ export interface AdminInvoice {
     boxes?: number | null;
     pieces?: number | null;
     unitsPerBox?: number | null;
+    /** units_v1: the line's own selling unit ("Case"…) when sold by a non-pack
+     *  unit rather than loose pieces; null on a plain/pack line. B653 names it in
+     *  `invoice-line-display.ts`'s qty text; B784 names it in the unit-aware-edit
+     *  guard's refusal message. */
+    unitLabel?: string | null;
     unitPrice: number;
     /** Catalog base for an override line; unitPrice > originalPrice = upsell. */
     originalPrice?: number | null;
