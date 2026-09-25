@@ -67,7 +67,6 @@ export class ParkedReversalResolutionService {
    * row parked and unresolved, exactly like the restock service's cancelled-return refusal.
    */
   async resolve(id: string, pack: number, reason: string, actor: { id: string }) {
-    const tenantId = this.prisma.getTenantId();
     const result = await this.prisma.tenantTransaction(async (tx: any) => {
       const peek = await tx.regulatedLedgerParkedReversal.findFirst({ where: { id } });
       if (!peek) throw new NotFoundException("Parked reversal not found");
@@ -144,7 +143,8 @@ export class ParkedReversalResolutionService {
       await tx.auditLog.create({
         data: {
           // explicit tenantId (SA-197 LOW): the tx extension also injects it, this makes the row's scope obvious
-          tenantId,
+          // the ROW's tenant, not the caller context's: a tenant-less SUPER_ADMIN has no context tenant
+          tenantId: row.tenantId,
           userId: actor.id,
           action: "regulated_ledger.parked_reversal_resolved",
           entityType: "RegulatedLedgerParkedReversal",

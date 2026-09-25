@@ -939,6 +939,19 @@ export class RegulatedLedgerService {
    * parked-reversal list both call this, so what the operator is told before resolving is what the
    * resolution then does.
    */
+  /**
+   * #2108: the ONE product-id definition for a parked sale row: its live invoice item's product,
+   * else the product of the order/invoice line shape (`loadSaleLineShapes`), which survives an
+   * InvoiceItem rotation. list() (`filedPeriodForParked`) and `resolveParkedReversal` both call it.
+   */
+  static productIdOfParkedRow(
+    saleRow: any,
+    productByItem: Map<string, string>,
+    shapeProductId: string | null | undefined,
+  ): string | null {
+    return productByItem.get(saleRow.invoiceItemId) ?? shapeProductId ?? null;
+  }
+
   static touchedCategoryIds(
     saleRow: any,
     sales: any[],
@@ -1017,13 +1030,14 @@ export class RegulatedLedgerService {
           })) ?? [])
         : [];
     const productByItem = new Map<string, string>(items.map((i: any) => [i.id, i.productId]));
+    const shape = (await this.loadSaleLineShapes(db, [saleRow])).get(saleRow.id);
     return this.findFiledPeriod(
       db,
       RegulatedLedgerService.touchedCategoryIds(
         saleRow,
         sales,
         productByItem,
-        productByItem.get(saleRow.invoiceItemId),
+        RegulatedLedgerService.productIdOfParkedRow(saleRow, productByItem, shape?.productId),
       ),
       bucket,
     );
@@ -1282,7 +1296,11 @@ export class RegulatedLedgerService {
     let filedPeriod: FiledPeriod | null = null;
     if (returnDate && parkBucket !== currentBucket) {
       // SA-196: conservative across categories, through the ONE shared fold (list() uses the same one).
-      const walkProductId = built.productByItem.get(saleRow.invoiceItemId) ?? shape.productId;
+      const walkProductId = RegulatedLedgerService.productIdOfParkedRow(
+        saleRow,
+        built.productByItem,
+        shape.productId,
+      );
       filedPeriod = await this.findFiledPeriod(
         db,
         RegulatedLedgerService.touchedCategoryIds(
@@ -1353,7 +1371,11 @@ export class RegulatedLedgerService {
     const parkedRowIds: string[] = [];
     const grownParks: { id: string; added: number }[] = [];
     if (leftover > 0) {
-      const productId = built.productByItem.get(saleRow.invoiceItemId) ?? shape.productId;
+      const productId = RegulatedLedgerService.productIdOfParkedRow(
+        saleRow,
+        built.productByItem,
+        shape.productId,
+      );
       const ordered = built.sales.filter(
         (s: any) =>
           s.correctsEntryId == null && built.productByItem.get(s.invoiceItemId) === productId,
