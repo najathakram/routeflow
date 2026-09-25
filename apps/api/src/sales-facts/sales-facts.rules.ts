@@ -1,0 +1,226 @@
+import { roundMoney } from "@routeflow/pricing";
+
+/**
+ * #2118 — the pure rules of the sales-facts layer (plan A3/A6/A7). Every reader in
+ * `apps/api/src/sales-facts/` calls these; none restates them (L-167). No I/O here.
+ */
+
+// ─── Selling unit (plan A6) ──────────────────────────────────────────────────
+
+/** The stored shape of a sold line this module reads. */
+export interface SaleLineShape {
+  boxes?: number | null;
+  pieces?: number | null;
+  /** The line's own sale-time pack snapshot. */
+  unitsPerBox?: number | null;
+}
+
+/**
+ * The line's selling unit in pieces (its sale-time pack), or null when it cannot be known.
+ * Pieces (`InvoiceItem.qty`) are canonical; this only decides whether a line can also be
+ * expressed in selling units. Never multiplies or guesses from today's pack:
+ *
+ * - A split line (`boxes`/`pieces` given) sells by its snapshot pack when that is > 1; a split
+ *   without a usable snapshot is a pre-snapshot row — unknown.
+ * - No split and snapshot 1: a factor-1 unit line — sells by the piece.
+ * - No split and snapshot > 1: the ambiguous boxed shape (qty may count boxes, B644) — unknown.
+ * - No split, no snapshot: writers store a null snapshot for a never-boxed product, so the
+ *   CURRENT pack is consulted as a GATE only (as `legacyLinePieces` does): not boxed today →
+ *   sells by the piece; boxed today, or the product was not supplied (`undefined`) → unknown.
+ */
+export function salePackOf(
+  line: SaleLineShape,
+  productPackNow: number | null | undefined,
+): number | null {
+  const snapshot = line.unitsPerBox == null ? null : Number(line.unitsPerBox);
+  const hasSplit = line.boxes != null || line.pieces != null;
+  if (hasSplit) return snapshot != null && snapshot > 1 ? snapshot : null;
+  if (snapshot != null) return snapshot === 1 ? 1 : null;
+  if (productPackNow === undefined) return null;
+  return productPackNow == null || Number(productPackNow) <= 1 ? 1 : null;
+}
+
+/** Effective price per piece (subtotal ÷ pieces), in cents; null for a zero/negative qty. */
+export function perPieceOf(subtotal: number, qtyPieces: number): number | null {
+  return qtyPieces > 0 ? roundMoney(subtotal / qtyPieces) : null;
+}
+
+/**
+ * A purchase event: one per order however many invoices billed it (partial invoicing), one per
+ * invoice raised without an order.
+ */
+export function purchaseEventKey(orderId: string | null | undefined, invoiceId: string): string {
+  return orderId ? `o:${orderId}` : `i:${invoiceId}`;
+}
+
+// ─── Credit attribution (plan A3: stored line facts only) ────────────────────
+
+export interface CreditAttribution {
+  /** productId → credited amount (cents). */
+  byProduct: Map<string, number>;
+  /** The rest of the credit (cents): no stored line fact ties it to a product. */
+  unattributed: number;
+}
+
+function sumByProduct(parts: { productId: string | null | undefined; amount: number }[]) {
+  const raw = new Map<string, number>();
+  for (const p of parts) {
+    if (!p.productId) continue;
+    raw.set(p.productId, (raw.get(p.productId) ?? 0) + p.amount);
+  }
+  const byProduct = new Map<string, number>();
+  let attributed = 0;
+  for (const [productId, amount] of raw) {
+    const rounded = roundMoney(amount);
+    byProduct.set(productId, rounded);
+    attributed += rounded;
+  }
+  return { byProduct, attributed };
+}
+
+/**
+ * Splits one credit note by its stored `CreditNoteItem` rows: an item whose `invoiceItemId`
+ * maps (through `lineProduct`, built from the source invoice's lines) to a listed product is
+ * attributed to it; everything else — a header-only note, an item on an unlisted line, an item
+ * whose line id no longer exists (a delivered-basis reconcile rotates line ids) — is
+ * unattributed. The parts always sum to the note's amount. Never prorates at read time.
+ */
+export function attributeCreditNote(
+  cn: { amount: number; items: { invoiceItemId: string | null; amount: number }[] },
+  lineProduct: Map<string, string | null>,
+): CreditAttribution {
+  const { byProduct, attributed } = sumByProduct(
+    cn.items.map((it) => ({
+      productId: it.invoiceItemId ? lineProduct.get(it.invoiceItemId) : null,
+      amount: Number(it.amount),
+    })),
+  );
+  return { byProduct, unattributed: roundMoney(Number(cn.amount) - attributed) };
+}
+
+/**
+ * Splits one EXTERNAL_REFUND return. An INLINE return prices each line (`ReturnItem.subtotal`,
+ * pre-tax), so those are attributed and the remainder (tax, rounding) is not. A STANDARD
+ * return stores one lump `refundAmount` — wholly unattributed.
+ */
+export function attributeExternalRefund(ret: {
+  kind: string;
+  refundAmount: number;
+  items: { productId: string | null; subtotal: number | null }[];
+}): CreditAttribution {
+  if (ret.kind !== "INLINE") {
+    return { byProduct: new Map(), unattributed: roundMoney(Number(ret.refundAmount)) };
+  }
+  const { byProduct, attributed } = sumByProduct(
+    ret.items
+      .filter((it) => it.subtotal != null)
+      .map((it) => ({ productId: it.productId, amount: Number(it.subtotal) })),
+  );
+  return { byProduct, unattributed: roundMoney(Number(ret.refundAmount) - attributed) };
+}
+
+/**
+ * The instant a return's QUANTITY nets — the same event its money nets on (B440): an external
+ * refund on `refundedAt` (the Return term); any other resolution through its credit note's
+ * `createdAt` (the CreditNote term), only while that note is not VOID. No netting event → null
+ * (a RECEIVED return, or a resolution whose credit note never landed).
+ */
+export function returnNettingDate(
+  ret: { refundMethod: string | null; refundedAt: Date | null; creditNoteId: string | null },
+  creditNotes: Map<string, { status: string; createdAt: Date }>,
+): Date | null {
+  if (ret.refundMethod === "EXTERNAL_REFUND") return ret.refundedAt ?? null;
+  if (!ret.creditNoteId) return null;
+  const cn = creditNotes.get(ret.creditNoteId);
+  return cn && cn.status !== "VOID" ? cn.createdAt : null;
+}
+
+// ─── Line cursor (plan §B: page by LINE, never by invoice) ───────────────────
+
+/** Sort key of one sold line, newest first: issue date, invoice entry, then line entry. */
+export interface LineKey {
+  issueDate: Date;
+  invoiceCreatedAt: Date;
+  invoiceId: string;
+  lineCreatedAt: Date;
+  lineId: string;
+}
+
+export class InvalidLineCursorError extends Error {
+  constructor() {
+    super("cursor is not a cursor this endpoint issued");
+    this.name = "InvalidLineCursorError";
+  }
+}
+
+export function encodeLineCursor(key: LineKey): string {
+  return Buffer.from(
+    JSON.stringify([
+      key.issueDate.toISOString(),
+      key.invoiceCreatedAt.toISOString(),
+      key.invoiceId,
+      key.lineCreatedAt.toISOString(),
+      key.lineId,
+    ]),
+    "utf8",
+  ).toString("base64url");
+}
+
+export function decodeLineCursor(cursor: string): LineKey {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(Buffer.from(cursor, "base64url").toString("utf8"));
+  } catch {
+    throw new InvalidLineCursorError();
+  }
+  if (
+    !Array.isArray(parsed) ||
+    parsed.length !== 5 ||
+    !parsed.every((v) => typeof v === "string" && v.length > 0 && v.length <= 64)
+  ) {
+    throw new InvalidLineCursorError();
+  }
+  const [issueDate, invoiceCreatedAt, invoiceId, lineCreatedAt, lineId] = parsed as string[];
+  return {
+    issueDate: exactInstant(issueDate),
+    invoiceCreatedAt: exactInstant(invoiceCreatedAt),
+    invoiceId,
+    lineCreatedAt: exactInstant(lineCreatedAt),
+    lineId,
+  };
+}
+
+/** An ISO instant exactly as `encodeLineCursor` wrote it — anything else is a forged cursor. */
+function exactInstant(iso: string): Date {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime()) || d.toISOString() !== iso) throw new InvalidLineCursorError();
+  return d;
+}
+
+const time = (d: Date | null | undefined) => (d ? d.getTime() : 0);
+const cmpDesc = (a: number | string, b: number | string) => (a > b ? -1 : a < b ? 1 : 0);
+
+/** Comparator for newest-first order; negative when `a` is newer than `b`. */
+export function compareLineKeysDesc(a: LineKey, b: LineKey): number {
+  return (
+    cmpDesc(time(a.issueDate), time(b.issueDate)) ||
+    cmpDesc(time(a.invoiceCreatedAt), time(b.invoiceCreatedAt)) ||
+    cmpDesc(a.invoiceId ?? "", b.invoiceId ?? "") ||
+    cmpDesc(time(a.lineCreatedAt), time(b.lineCreatedAt)) ||
+    cmpDesc(a.lineId ?? "", b.lineId ?? "")
+  );
+}
+
+// ─── CSV ──────────────────────────────────────────────────────────────────────
+
+/**
+ * One CSV cell. Text that a spreadsheet would run as a formula (`=`, `+`, `-`, `@`, tab, CR)
+ * is prefixed with `'` (OWASP CSV injection) — customer and product names are user-typed.
+ * Numbers are written as-is, so a negative amount stays numeric.
+ */
+export function csvCell(value: string | number | boolean | null | undefined): string {
+  if (value == null) return "";
+  if (typeof value !== "string") return String(value);
+  const safe = /^[=+\-@\t\r]/.test(value) ? `'${value}` : value;
+  return /[",\n\r]/.test(safe) ? `"${safe.replace(/"/g, '""')}"` : safe;
+}
