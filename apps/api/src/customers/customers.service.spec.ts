@@ -760,6 +760,29 @@ describe("CustomersService", () => {
         "defaultDepositPercent",
       );
     });
+
+    // B858/B859 harness note (bug-test-plan.md): FIX3 adds a third `options.compliance` param to
+    // `update()` for the importer's tobacco-licence/consent fields. `update()` has never touched
+    // addresses, so it must never geocode regardless of that new param — pinned here so a future
+    // change that starts threading address data through `options` cannot silently reintroduce a
+    // geocode call. `update` has no third parameter today, hence the `as any` cast (same pattern
+    // as this describe block's other calls).
+    it("update(id, {}, { compliance }) writes only compliance fields and never geocodes", async () => {
+      prisma.customer.findUnique.mockResolvedValue(MOCK_CUSTOMER);
+      prisma.customer.update.mockResolvedValue(MOCK_CUSTOMER);
+      const geocodeSpy = jest.spyOn(service as any, "geocodeIfPossible");
+
+      await (service.update as any)(
+        "cust-1",
+        {},
+        { compliance: { smsConsent: true, consentUpdatedAt: new Date("2026-09-25") } },
+      );
+
+      expect(geocodeSpy).not.toHaveBeenCalled();
+      const data = prisma.customer.update.mock.calls[0][0].data;
+      expect(data).toMatchObject({ smsConsent: true });
+      expect(data).not.toHaveProperty("addresses");
+    });
   });
 
   // ─── addAddress ───────────────────────────────────────────────────────────
