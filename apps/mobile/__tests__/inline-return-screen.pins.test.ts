@@ -29,6 +29,15 @@ describe("inline-return screen wiring pins", () => {
     expect(screen).toMatch(/gestureEnabled:\s*canLeave/);
   });
 
+  it("the screen registers the beforeRemove guard (Android system back + parent-stack swipe), not just the inner swipe", () => {
+    expect(screen).toMatch(/addListener\("beforeRemove",/);
+    expect(screen).toMatch(/guardInlineReturnRemove\(screen,\s*e\)/);
+  });
+
+  it("a failed capture is worded via captureFailureMessage, never as a bare refusal", () => {
+    expect(screen).toMatch(/captureFailureMessage\(e\)/);
+  });
+
   it("an offline-queued capture becomes the pending-success `queued` step, not a refusal (REG-B308)", () => {
     expect(screen).toMatch(/captureOutcomeFromError\(e\)\.kind === "queued"/);
     expect(screen).toMatch(/dispatch\(\{ type: "queued" \}\)/);
