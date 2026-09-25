@@ -546,8 +546,14 @@ export class MailboxConnectionService {
           where: { tenantId: pending.tenantId },
         });
         const isReconnect = !!existing;
-        const externalSubjectChanged =
-          !!existing && existing.externalSubject !== pending.externalSubject;
+        // A mailbox is identified by (provider, externalSubject). A Google `sub` and a Microsoft
+        // object id come from different namespaces, so the subject alone can't say two grants
+        // are for the same mailbox. This is the ONE predicate behind both the audit action and
+        // the lastSentAt reset below.
+        const mailboxChanged =
+          !!existing &&
+          (existing.provider !== pending.provider ||
+            existing.externalSubject !== pending.externalSubject);
 
         const data = {
           provider: pending.provider,
@@ -564,6 +570,13 @@ export class MailboxConnectionService {
           lastError: null,
           lastErrorAt: null,
           connectedByUserId: pending.userId,
+          // Every field above belongs to the GRANT and is rewritten on every confirm.
+          // `lastSentAt` belongs to the MAILBOX: re-granting the same mailbox keeps its history,
+          // but a different mailbox (the other provider, or another account) has never sent
+          // anything through RouteFlow. Carrying the old value over would report a send the
+          // new account never made. When the mailbox is unchanged the key is left OUT of the
+          // update rather than written back, so a send that finishes in between keeps its value.
+          ...(mailboxChanged ? { lastSentAt: null } : {}),
         };
 
         const row = await this.prisma.mailboxConnection.upsert({
@@ -572,20 +585,20 @@ export class MailboxConnectionService {
           update: data,
         });
 
-        return { row, isReconnect, externalSubjectChanged };
+        return { row, isReconnect, mailboxChanged };
       },
     );
 
     if (!lockResult.acquired) {
       throw new ServiceUnavailableException("Couldn't complete the connection — try again.");
     }
-    const { row, isReconnect, externalSubjectChanged } = lockResult.value;
+    const { row, isReconnect, mailboxChanged } = lockResult.value;
 
     await this.audit.log({
       tenantId: pending.tenantId,
       userId: pending.userId,
       action: isReconnect
-        ? externalSubjectChanged
+        ? mailboxChanged
           ? "mailbox.reconnected_different_account"
           : "mailbox.reconnected"
         : "mailbox.connected",

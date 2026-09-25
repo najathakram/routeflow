@@ -1,4 +1,4 @@
-import { BadRequestException, INestApplication } from "@nestjs/common";
+import { BadRequestException, INestApplication, Logger } from "@nestjs/common";
 import { Test } from "@nestjs/testing";
 import { JwtModule } from "@nestjs/jwt";
 import { PassportModule } from "@nestjs/passport";
@@ -127,6 +127,51 @@ describe("MailboxController — GET microsoft/callback", () => {
       .expect(302);
 
     expect(res.headers.location).toBe("http://localhost:3001/settings?tab=email&mailbox_error=1");
+  });
+
+  describe("attacker-controllable query values (the route is unauthenticated)", () => {
+    let warn: jest.SpyInstance;
+    beforeEach(() => {
+      warn = jest.spyOn(Logger.prototype, "warn").mockImplementation(() => undefined);
+    });
+    afterEach(() => warn.mockRestore());
+    const warnLines = () => warn.mock.calls.map((args) => String(args[0]));
+
+    it("logs the error code and the bare AADSTS code only, never the free-text description", async () => {
+      await request(app.getHttpServer())
+        .get("/settings/email/mailbox/microsoft/callback")
+        .query({
+          error: "access_denied",
+          error_description: "AADSTS65001: Jane Doe of Acme Corp has not consented.",
+        })
+        .expect(302);
+
+      expect(warnLines()).toEqual([
+        "Mailbox Microsoft callback denied: access_denied (AADSTS65001)",
+      ]);
+    });
+
+    it("a forged error carrying CR/LF is logged as a fixed placeholder, never raw", async () => {
+      const res = await request(app.getHttpServer())
+        .get("/settings/email/mailbox/microsoft/callback")
+        .query({ error: "access_denied\r\n[Nest] 1 - ERROR forged line" })
+        .expect(302);
+
+      expect(res.headers.location).toBe("http://localhost:3001/settings?tab=email&mailbox_error=1");
+      expect(warnLines()).toEqual(["Mailbox Microsoft callback denied: <malformed error>"]);
+      expect(mailboxConnection.handleMicrosoftCallback).not.toHaveBeenCalled();
+    });
+
+    it("a repeated error_description (Express hands it over as an array) still redirects, never 500s", async () => {
+      const res = await request(app.getHttpServer())
+        .get(
+          "/settings/email/mailbox/microsoft/callback?error=access_denied&error_description=a&error_description=b",
+        )
+        .expect(302);
+
+      expect(res.headers.location).toBe("http://localhost:3001/settings?tab=email&mailbox_error=1");
+      expect(mailboxConnection.handleMicrosoftCallback).not.toHaveBeenCalled();
+    });
   });
 
   it("a failed exchange with microsoft_admin_consent_required redirects to mailbox_admin_consent_required=1", async () => {

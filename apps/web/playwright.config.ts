@@ -793,6 +793,24 @@ export default defineConfig({
       },
     },
 
+    // ── Connected mailbox card (F-10b, #2078) ─────────────────────────────────
+    // Settings → Email → MailboxCard: every card state at 1440/768/390, Connect Gmail/Outlook,
+    // the confirm / error / admin-consent / Google-cancel returns, and Disconnect three ways.
+    // The provider is ALWAYS stubbed (page.route; a `.invalid` consent origin; a guard that
+    // fails the test on any real Google/Microsoft OAuth, Gmail or Graph request), and nothing
+    // is written server-side: the only real call is the read-only GET /tenants/me/addons.
+    // In LOCAL-LANE.md's allow-list. WITHOUT THIS ENTRY THE SPEC NEVER RUNS — see
+    // 08-create-order-escape's header for the precedent.
+    {
+      name: "mailbox-connect",
+      testMatch: /mailbox-connect\.spec\.ts/,
+      dependencies: ["setup"],
+      use: {
+        ...devices["Desktop Chrome"],
+        storageState: path.join(AUTH_DIR, "operator.json"),
+      },
+    },
+
     // Platform-admin mobile overflow (B559, spec 52) — proves no element on any
     // platform-admin screen exceeds the 390/768/1440 viewport width, across every
     // tab (tabs are React state, not distinct URLs, so a URL-only sweep never

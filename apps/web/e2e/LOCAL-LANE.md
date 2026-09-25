@@ -70,6 +70,7 @@ around.
 | `destructive-guards`    | `21-destructive-guards.spec.ts`    | Bulk-delete confirm/guard dialogs (REG-B24/B130/B154) — safety-critical, self-contained throwaway fixtures.                                                                                                                                                              |
 | `cancelled-edit-banner` | `27-cancelled-edit-banner.spec.ts` | Edit-window UX truth (REG-B10) — this spec is its only proof, no jest half.                                                                                                                                                                                              |
 | `lite-locked-route-ux`  | `48-lite-locked-route-ux.spec.ts`  | Locked-route UX truth (B449) — a LITE tenant never mounts a gated page and gets exactly one correctly-worded notice. Fixture (`qa-lite`) is standing infra seeded by `e2e-seed.js`, so — unlike `lite-plan-gate` (spec 47) — this project does NOT self-skip. Read-only. |
+| `mailbox-connect`       | `mailbox-connect.spec.ts`          | Connected-mailbox card (F-10b), its only browser proof: every state at 1440/768/390, the OAuth return flags, Disconnect. Provider always stubbed; any real Google/Microsoft request fails the test. Writes nothing.                                                      |
 
 Projects needing `PLAYWRIGHT_SA_*` (`super-admin`, `impersonation-signout`) are excluded from
 the allow-list — those secrets are not expected to be present on every contributor's machine.

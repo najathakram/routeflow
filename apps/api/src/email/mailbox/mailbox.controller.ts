@@ -29,6 +29,35 @@ import { MailboxConnectionService } from "./mailbox-connection.service";
 import { ConfirmMailboxDto } from "./dto/confirm-mailbox.dto";
 
 /**
+ * The `error` codes RFC 6749 §4.1.2.1 defines (`access_denied`, `server_error`, ...) are short
+ * ASCII tokens. Both OAuth callbacks are unauthenticated, so anyone can put anything in these
+ * query params: a CR/LF-bearing string that would forge log lines, or a repeated param that
+ * Express hands over as an array. Only a value of the token shape is ever logged.
+ */
+const OAUTH_ERROR_CODE_SHAPE = /^[A-Za-z0-9_.-]{1,64}$/;
+
+/** Microsoft puts a machine-readable `AADSTS<digits>` code inside its free-text
+ *  `error_description`. That code is the ONLY thing ever read out of a description. */
+function aadstsCodeOf(errorDescription: unknown): string | undefined {
+  return typeof errorDescription === "string"
+    ? errorDescription.match(/AADSTS\d+/)?.[0]
+    : undefined;
+}
+
+/**
+ * The log-safe form of a provider's `error` redirect, shared by both callbacks. A provider's
+ * `error_description` is free text (Microsoft's can carry the org/tenant name) and is never
+ * logged raw: only a diagnostic code is taken from it. That is Microsoft's AADSTS code; Google
+ * sends no such code, so for Google only the `error` code itself is logged.
+ */
+function oauthDenialForLog(error: unknown, errorDescription: unknown): string {
+  const code =
+    typeof error === "string" && OAUTH_ERROR_CODE_SHAPE.test(error) ? error : "<malformed error>";
+  const aadsts = aadstsCodeOf(errorDescription);
+  return aadsts ? `${code} (${aadsts})` : code;
+}
+
+/**
  * Connect/disconnect a tenant Google OR Microsoft mailbox for sending (email-connect-google
  * PR-2, email-connect-microsoft PR-4 — one row per tenant, either provider). Every route except
  * the two OAuth callbacks is TENANT_ADMIN-only and gated behind the `email.connected_mailbox`
@@ -84,13 +113,27 @@ export class MailboxController {
   }
 
   // No guards — see class doc. This step never binds a MailboxConnection row; it only mints a
-  // one-time confirm token for the authenticated POST /confirm step below to redeem.
+  // one-time confirm token for the authenticated POST /confirm step below to redeem. Like
+  // microsoftCallback, Google can redirect here with `error` (RFC 6749 §4.1.2.1) instead of a
+  // `code`. That is handled before any exchange is attempted. `access_denied` means the user
+  // backed out on Google's consent screen ("Cancel", or "Back to safety" on the unverified-app
+  // warning), and the web gets its own `mailbox_cancelled=google` flag, because a cancel is
+  // not a failure and nothing was changed. Every other Google error keeps the generic flag.
   @Get("google/callback")
   async googleCallback(
     @Query("code") code: string,
     @Query("state") state: string,
+    @Query("error") error: string | undefined,
+    @Query("error_description") errorDescription: string | undefined,
     @Res() res: Response,
   ) {
+    if (error) {
+      this.logger.warn(
+        `Mailbox Google callback denied: ${oauthDenialForLog(error, errorDescription)}`,
+      );
+      const flag = error === "access_denied" ? "mailbox_cancelled=google" : "mailbox_error=1";
+      return res.redirect(`${this.webUrl}/settings?tab=email&${flag}`);
+    }
     try {
       const { confirmToken } = await this.mailboxConnection.handleCallback(code, state);
       return res.redirect(
@@ -129,10 +172,11 @@ export class MailboxController {
     if (error) {
       // `error_description` is Microsoft/attacker-controlled free text — potentially carrying
       // the org/tenant name or other identifying detail — so only the bare AADSTS code (if any)
-      // is logged, never the raw description (Opus review, LOW).
-      const aadstsCode = (errorDescription ?? "").match(/AADSTS\d+/)?.[0];
+      // is logged, never the raw description (Opus review, LOW). `error` itself is just as
+      // attacker-controlled, so it goes through the same log-safe formatter as Google's.
+      const aadstsCode = aadstsCodeOf(errorDescription);
       this.logger.warn(
-        `Mailbox Microsoft callback denied: ${error}${aadstsCode ? ` (${aadstsCode})` : ""}`,
+        `Mailbox Microsoft callback denied: ${oauthDenialForLog(error, errorDescription)}`,
       );
       const flag =
         aadstsCode === "AADSTS65001" ? "mailbox_admin_consent_required" : "mailbox_error";
