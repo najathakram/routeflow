@@ -15,6 +15,7 @@ import { confirm } from "../../../lib/confirm";
 import { fmtCalendarDate } from "../../../lib/format-date";
 import { poLineSubtotal } from "../../../lib/po-line-subtotal";
 import { poDisplayTotal } from "../../../lib/po-list-logic";
+import { poItemQtyLabel } from "../../../lib/po-item-qty-label";
 
 function statusPill(status: POStatus): {
   variant: "brand" | "green" | "orange" | "red" | "gray";
@@ -208,6 +209,12 @@ function ItemRow({ item, isFirst }: { item: POItem; isFirst: boolean }) {
   // B698: the stored exact line total; the multiply is only the fallback for a row without one.
   const subtotal = poLineSubtotal(item);
   const remaining = Number(item.qtyOrdered) - Number(item.qtyReceived);
+  // LANE-U step 8: the PO detail response includes product.unitsPerBox/unit on every item
+  // (the LIST endpoint does not, so this label is detail-screen only) — a boxed line shows its
+  // boxes+pieces split, mirroring web's PurchaseOrdersTab.
+  const upb = item.product?.unitsPerBox;
+  const unit = item.product?.unit;
+  const qtyLabel = (qty: number | string) => poItemQtyLabel(qty, upb, unit);
 
   return (
     <View
@@ -224,8 +231,8 @@ function ItemRow({ item, isFirst }: { item: POItem; isFirst: boolean }) {
           {productName}
         </Text>
         <Text style={styles.itemSub}>
-          Ordered: {item.qtyOrdered} · Received: {item.qtyReceived}
-          {remaining > 0 ? ` · Remaining: ${remaining}` : ""}
+          Ordered: {qtyLabel(item.qtyOrdered)} · Received: {qtyLabel(item.qtyReceived)}
+          {remaining > 0 ? ` · Remaining: ${qtyLabel(remaining)}` : ""}
         </Text>
         <Text style={styles.itemSub}>{fmtCurrency(item.unitCost)} / unit</Text>
       </View>
