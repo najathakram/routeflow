@@ -187,8 +187,7 @@ export class OrdersService implements OnApplicationBootstrap {
     // and regulated-filing-cron) so every forTenant() call inside the merge resolves
     // that tenant's own config/data, never another tenant's.
     private readonly tenantCtx: TenantContextService,
-    // #2094: a return taken inside an order create/edit. Optional only so unrelated specs can build
-    // the service; a request carrying `inlineReturn` without it fails closed (prepareInlineReturn).
+    // #2094: optional so unrelated specs build; `inlineReturn` without it fails closed.
     @Optional() private readonly inlineReturns?: InlineReturnsService,
   ) {}
 
@@ -2206,7 +2205,6 @@ export class OrdersService implements OnApplicationBootstrap {
           // for OOS items from RF-017).
           if (attempt < MAX_RETRIES - 1) continue;
         }
-        // #2094: a deadlock/serialization failure on a create that carries a return retries too.
         if (inlineRet && inlineReturn.isRetryableTxError(e) && attempt < MAX_RETRIES - 1) continue;
         throw e;
       }
