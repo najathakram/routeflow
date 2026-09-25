@@ -9,9 +9,10 @@
  * menu-button chrome — forced `padding: 0 0.5em` and, for any non-pixel
  * width, `box-sizing: content-box` — so `w-full` renders at `100% + ~16px`
  * (up to +26px on newer iOS) of the actual available space, at EVERY
- * viewport width. Fix: `app/globals.css` gains a global rule for
+ * viewport width. Fix: `app/globals.css` gains a `:where()`-scoped rule for
  * `input[type=date|time|datetime-local|month|week]` — `appearance: none`,
- * `box-sizing: border-box`, `min-width: 0`.
+ * `box-sizing: border-box`, plus a width floor (not `min-width: 0`, and a
+ * `min-height` on `::-webkit-date-and-time-value` — see that file for why).
  *
  * `#1288`'s shared element-level overflow walk (`findViewportOverflow`) does
  * NOT catch this class of bug: its first pass only flags a box escaping the
@@ -32,13 +33,21 @@
  *
  * Reproduces the iOS-only date-input quirk in plain Chromium (no simulator
  * access from this session) by injecting the exact UA-stylesheet override
- * iOS Safari applies, as a page `<style>` tag, before measuring. Without the
- * injection this spec cannot fail even on pre-fix code — plain Chromium's
- * own date-input box model was never broken — so the injection is what
- * makes this a genuine red-first proof rather than a test that can never
- * fail. NOT independently run from this session: no Docker/Playwright
- * access here — this needs to be run against both `origin/master` (expected
- * FAIL) and this branch (expected PASS) before landing.
+ * iOS Safari applies, as a page `<style>` tag — AFTER navigation (an
+ * `addStyleTag` call before `page.goto` is discarded by the navigation, not
+ * carried into the new document) and CONDITIONALLY: only when a date input's
+ * OWN computed `appearance` is not already `none`, mirroring the real
+ * cascade this bug depends on (iOS applies its forced chrome only where the
+ * page hasn't already opted out of it) — on `origin/master` nothing sets
+ * `appearance` on a date input, so the check is true and the quirk applies;
+ * on this branch, `globals.css`'s own `appearance: none` already won, so the
+ * check is false and the injected override is correctly inert. Without this
+ * conditional the spec could either never fail (unconditional skip) or fail
+ * even after the fix (unconditional inject with `!important`/higher
+ * specificity) — Opus measured this exact form discriminating master (12px
+ * overflow, fails) from this branch (0px, passes). NOT independently run
+ * from this session: no Docker/Playwright access here — needs a live
+ * red-on-`origin/master` / green-on-this-branch confirmation before landing.
  *
  * Seeds a cart approximating the owner's reported shape (`e2e-seed.js`
  * fixtures): the one boxed product (Case/Unit toggle + Case price input,
@@ -62,9 +71,11 @@ const VIEWPORTS = [
  * iOS Safari's own UA stylesheet for `type="date"` (and siblings): forced
  * horizontal padding via its menu-button appearance, and content-box sizing
  * for any non-pixel width (the actual mechanism `w-full` — a percentage —
- * trips). Injected as an authored `<style>` so it applies in plain Chromium
- * too; the app's own `appearance-none` rule (globals.css) must override this
- * exact declaration for the fix to hold.
+ * trips). No `!important` and no elevated specificity: on this branch the
+ * app's own `globals.css` rule must be able to keep winning the cascade —
+ * the CONDITIONAL injection below (only when nothing already opted out) is
+ * what actually discriminates master from the fix, not this rule's own
+ * strength.
  */
 const IOS_DATE_INPUT_QUIRK_CSS = `
   input[type="date"] {
@@ -75,6 +86,26 @@ const IOS_DATE_INPUT_QUIRK_CSS = `
 `;
 
 const DIALOG_BODY_SELECTOR = 'form[class*="overflow-y-auto"]';
+
+/**
+ * Simulates iOS Safari's UA-stylesheet override for date inputs, but only
+ * when nothing on the page has already opted a date input out of it (i.e.
+ * its own computed `appearance` isn't already `none`) — see the module
+ * header for why this conditional, not the override's own CSS strength, is
+ * what makes this spec discriminate master from the fix.
+ */
+async function maybeSimulateIosDateInputChrome(page: Page) {
+  const needsSimulation = await page.evaluate(() => {
+    const input = document.querySelector('input[type="date"]');
+    if (!input) return false;
+    const computed = getComputedStyle(input).appearance;
+    return computed !== "none";
+  });
+  if (needsSimulation) {
+    await page.addStyleTag({ content: IOS_DATE_INPUT_QUIRK_CSS });
+  }
+  return needsSimulation;
+}
 
 async function openBuilderWithRealisticCart(page: Page) {
   await page.goto("/orders");
@@ -130,14 +161,17 @@ for (const vp of VIEWPORTS) {
     test(`dialog body has no scrollWidth/clientWidth overflow with the iOS date-input quirk simulated (${vp.label}px)`, async ({
       page,
     }) => {
-      // Injected BEFORE navigation so it's present the instant the date inputs
-      // mount — matches iOS Safari's own UA stylesheet, which is never "added
-      // late" either.
-      await page.addStyleTag({ content: IOS_DATE_INPUT_QUIRK_CSS });
-
       await openBuilderWithRealisticCart(page);
       await expect(page.locator("#delivery-date")).toBeVisible();
       await expect(page.locator("#order-date")).toBeVisible();
+
+      // AFTER navigation, and only when applicable — see module header.
+      const simulated = await maybeSimulateIosDateInputChrome(page);
+      expect(
+        simulated,
+        "the iOS chrome simulation never applied (a date input's computed appearance was " +
+          "already 'none') — this run proves nothing about the bug it targets",
+      ).toBe(true);
 
       // The DIRECT measurement — not the shared element-walk, which cannot
       // see this class of overflow (see module header).
@@ -167,6 +201,17 @@ for (const vp of VIEWPORTS) {
  * so it never caused the owner's report; it's its own, real, 320px-only
  * clip inside that list. Fix: `min-w-0 sm:min-w-[190px]` on that column
  * (`LineItemRow.tsx`) — shrinks below `sm`, unchanged at/above it.
+ *
+ * Located via `data-testid`s (`line-qty-controls`, `line-actions-column`),
+ * not a text-content filter — the row's own product-info column also
+ * contains "cases" text (the "1 case = N units" caption), so a `hasText`
+ * filter without a testid finds the WRONG column (219 of 292px, never the
+ * qty-controls one) and pins nothing (L-212: a selector that silently
+ * matches the wrong element is worse than one that matches zero). Measures
+ * against the grid track's own right boundary — `line-actions-column`'s
+ * (column 2, same row) left edge minus the row's `gap-x-2` (8px) — not the
+ * row's own right edge, which the qty column can't reach regardless (column
+ * 2 sits between it and the row's edge).
  */
 test.describe("create-order dialog — boxed line qty column at 320px", () => {
   test.use({ viewport: { width: 320, height: 690 } });
@@ -176,19 +221,22 @@ test.describe("create-order dialog — boxed line qty column at 320px", () => {
   }) => {
     await openBuilderWithRealisticCart(page);
 
-    const qtyColumn = page.locator("li").filter({ hasText: "cases" }).locator("div").first();
-    const box = await qtyColumn.boundingBox();
-    expect(box, "boxed qty-controls column not found").not.toBeNull();
+    const qtyColumn = page.getByTestId("line-qty-controls").first();
+    const actionsColumn = page.getByTestId("line-actions-column").first();
 
-    const listItem = page.locator("li").filter({ hasText: "cases" }).first();
-    const listBox = await listItem.boundingBox();
-    expect(listBox, "cart row not found").not.toBeNull();
+    const qtyBox = await qtyColumn.boundingBox();
+    const actionsBox = await actionsColumn.boundingBox();
+    expect(qtyBox, "line-qty-controls not found").not.toBeNull();
+    expect(actionsBox, "line-actions-column not found").not.toBeNull();
 
-    if (box && listBox) {
+    if (qtyBox && actionsBox) {
+      const GAP_X_PX = 8; // Tailwind's gap-x-2
+      const trackRightBoundary = actionsBox.x - GAP_X_PX;
       expect(
-        box.x + box.width,
-        `qty-controls column's right edge (${box.x + box.width}) escapes its row (right edge ${listBox.x + listBox.width}) at 320px`,
-      ).toBeLessThanOrEqual(listBox.x + listBox.width + 1);
+        qtyBox.x + qtyBox.width,
+        `qty-controls column's right edge (${qtyBox.x + qtyBox.width}) escapes its grid ` +
+          `track's right boundary (${trackRightBoundary}) at 320px`,
+      ).toBeLessThanOrEqual(trackRightBoundary + 1);
     }
   });
 });

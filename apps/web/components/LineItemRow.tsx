@@ -324,7 +324,10 @@ export function LineItemRow({
         // this item's own `min-w-[190px]` floor overrides the track's shrink intent (an item's
         // explicit min-width always wins), running 8px past the track. `min-w-0` below `sm`
         // lets it actually shrink there; `sm:min-w-[190px]` keeps desktop unchanged.
-        <div className="col-start-1 row-start-2 flex min-w-0 flex-col gap-0.5 sm:min-w-[190px]">
+        <div
+          data-testid="line-qty-controls"
+          className="col-start-1 row-start-2 flex min-w-0 flex-col gap-0.5 sm:min-w-[190px]"
+        >
           {/* Case | Unit sell-by toggle — UI-only; the payload always
               carries {qty, boxes, pieces} regardless of the mode. */}
           <div className="inline-flex self-start overflow-hidden rounded border border-surface-border text-[10px] font-medium">
@@ -436,7 +439,10 @@ export function LineItemRow({
           unitsPerBox: li.unitsPerBox ?? null,
         }).toFixed(2)}
       </span>
-      <div className="col-start-2 row-start-1 flex shrink-0 items-start gap-2 sm:gap-3">
+      <div
+        data-testid="line-actions-column"
+        className="col-start-2 row-start-1 flex shrink-0 items-start gap-2 sm:gap-3"
+      >
         <button
           type="button"
           onClick={onToggleNoteOpen}

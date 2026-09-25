@@ -813,10 +813,12 @@ export default defineConfig({
       },
     },
 
-    // Create-order dialog mobile pan (#2080, P0) — proves the boxed-line
-    // qty-controls column in CreateOrderModal never escapes the viewport at
-    // 320/375/390/430, so a vertical swipe can't pan the dialog sideways.
-    // Same setup/operator shape as "create-order-escape" (08). WITHOUT THIS
+    // Create-order dialog mobile pan (#2080, P0) — proves the dialog body's
+    // own scrollWidth/clientWidth stays 0 at 320/375/390/430 with iOS
+    // Safari's date-input chrome simulated (the real cause; see the spec's
+    // own header), plus a separate, narrower 320px-only pin on
+    // LineItemRow's boxed qty-controls column (not #2080). Same
+    // setup/operator shape as "create-order-escape" (08). WITHOUT THIS
     // ENTRY THE SPEC NEVER RUNS — see 08-create-order-escape's header.
     {
       name: "create-order-dialog-mobile-pan",

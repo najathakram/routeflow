@@ -2789,3 +2789,38 @@ citations, closed-out with its own post-init assertion guard).
   automated test isolation mechanism rather than a rule a session needs to recall by reading
   this prose.)
 
+## Archived 2026-09-23 — headroom for L-176's third recurrence (B660 PR B bookkeeping)
+
+### L-169 · 2026-09-16 · domain · B421 / PR-1a shared-helper precondition no-op (two call sites)
+
+- **Symptom:** two surfaces hit the same shape: a shared helper re-checked `.status` generically,
+  but the callers' own `select` never fetched it, so it silently read `undefined`. Both tests
+  passed anyway because their mocks supplied the field directly.
+- **Root cause:** a shared helper that re-derives a precondition has no knowledge of a caller's
+  query shape — it assumes the field is present, and a caller whose `select` never needed it
+  before silently hands the helper `undefined`, which the check absorbs as real.
+- **Lesson:** **Before wiring a caller into a shared helper that re-derives a precondition
+  generically, check the caller's `select` actually fetches the field — a mock supplying it
+  directly proves nothing. A type-check alone won't catch a field silently resolving to
+  `undefined`.**
+- **Guard:** both selects now fetch `status`; `returns-lineitems-select.spec.ts` pins the real
+  shape at every call site. (Archived 2026-09-23 to make room at cap — zero citations anywhere
+  outside the register, and the guard is a permanent code fix plus a standing regression spec
+  pinning the exact shape at both call sites, rather than a rule a session needs to recall by
+  reading this prose.)
+
+## Archived 2026-09-24 — headroom for L-216 (note --section silent loss, B840)
+
+### L-178 · 2026-09-16 · security · demo-booking PR-2 (raw error message leak)
+
+- **Symptom:** a public-facing catch handler rendered a caught error's `.message` verbatim, so
+  an unauthenticated route could show NestJS's own raw 404 body instead of a curated message.
+- **Root cause:** the load path assumed every reachable error was one of its own curated
+  exceptions; it never accounted for a transport-level failure with no safe message behind it.
+- **Lesson:** **A public unauthenticated page's catch handler must show a FIXED, generic message
+  for any path that can receive a transport-level failure, never `error.message` — a curated
+  message is safe to show only when every source feeding that catch is known and typed.**
+- **Guard:** `demo-scheduler.test.tsx` pins a raw framework 404, a bare network failure, and a
+  raw 500 all rendering the SAME fixed message, never the response body.
+  (Archived 2026-09-24 to make room at cap: zero citations outside the register, and the guard is a
+  standing regression test, demo-scheduler.test.tsx, pinning the fixed message for all three failure shapes.)

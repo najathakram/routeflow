@@ -248,18 +248,43 @@ body {
    Root fix, not a per-input patch: `appearance: none` opts every date/time
    input in the app back into standard CSS box-model sizing (`box-sizing:
    border-box` makes that explicit regardless of Tailwind's global reset load
-   order), and `min-width: 0` lets one still shrink inside a flex/grid parent
-   that expects it to. Verified to leave the calendar/clock picker icon
-   visible and no controls clipped, at 390px and 1440px, in both the emulated
-   and un-emulated measurement. Global, not scoped to CreateOrderModal: the
-   app has 94 `type="date"` inputs total, and any one of them inside a scroll
-   container can pan the same way — this is likely part of #2011's class too. */
-input[type="date"],
-input[type="time"],
-input[type="datetime-local"],
-input[type="month"],
-input[type="week"] {
+   order). Global, not scoped to CreateOrderModal: the app has 94 `type="date"`
+   inputs total, and any one of them inside a scroll container can pan the
+   same way — this is likely part of #2011's class too.
+   `:where(...)` keeps this at 0 specificity so any Tailwind utility class on
+   a specific input (a `w-*`, a design-system override) still wins outright.
+   Two side effects of `appearance: none`, both from removing WebKit's native
+   sizing hints along with its chrome, fixed alongside the root cause:
+   - WebKit bug 198959: an EMPTY date/time input with no explicit height
+     class loses its native minimum height once `appearance: none` is set —
+     the visible date/time TEXT lives in the `::-webkit-date-and-time-value`
+     pseudo-element, which needs its own min-height once the parent's native
+     sizing no longer supplies one.
+   - A date input with no explicit width class (`orders/page.tsx`'s delivery
+     filter, `ReportToolbar.tsx`'s from/to range — neither sets a `w-*`, both
+     relied on the platform's own default date-input width) can shrink to a
+     sliver once `min-width: 0` (this rule's first draft) removes that
+     default too. A width FLOOR — generous enough for "MM/DD/YYYY" plus the
+     picker icon — replaces `min-width: 0`; any input with its own `w-*`
+     class still wins (specificity), so `CreateOrderModal`'s `w-full` inputs
+     are unaffected. */
+:where(
+  input[type="date"],
+  input[type="time"],
+  input[type="datetime-local"],
+  input[type="month"],
+  input[type="week"]
+) {
   appearance: none;
   box-sizing: border-box;
-  min-width: 0;
+  min-width: 140px;
+}
+:where(
+  input[type="date"],
+  input[type="time"],
+  input[type="datetime-local"],
+  input[type="month"],
+  input[type="week"]
+)::-webkit-date-and-time-value {
+  min-height: 1.2em;
 }

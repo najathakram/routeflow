@@ -312,7 +312,7 @@ describe("marketing.css is delivered from the root layout — R-MKT T6", () => {
 // legitimate unrelated dashboard change — this pin exists to catch the
 // marketing port leaking into shared files, not to freeze globals.css
 // forever; see B511 above for the same precedent).
-const GLOBALS_CSS_SHA256 = "0bd5a3684cdc736cdb337e5a3a1a687770159e32348e0e95df9f6860da520df0";
+const GLOBALS_CSS_SHA256 = "c3966d42dcb9d1c5f5029c1bdaab38f6a6b771a2ea1bb7d25fc88a2b376f49be";
 const TAILWIND_CONFIG_SHA256 = "5b62085fee3f38bba484393c94238b8651806d8c7e0e47efc9a91cce68ff9754";
 
 function sha256OfFile(filePath: string): string {

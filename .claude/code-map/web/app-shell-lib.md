@@ -22,19 +22,27 @@
   report (`CreateOrderModal.tsx`'s two date inputs, `:1856`/`:1869`) — not reproducible in plain
   Chromium, which measures 0 overflow here, so it went unreproduced locally at first (an earlier
   LineItemRow.tsx fix was investigated and reverted — see `components-shared.md`'s `LineItemRow`
-  entry). Fix: `appearance: none` + `box-sizing: border-box` + `min-width: 0`, global (94
-  `type="date"` inputs app-wide, any one inside a scroll container can pan the same way — likely
-  part of #2011's class too), not scoped to one dialog. `marketing-port.static.test.ts`'s T7
-  `GLOBALS_CSS_SHA256` re-pinned to the new hash (same precedent as B511). Red-first:
-  `e2e/56-create-order-dialog-mobile-pan.spec.ts` injects iOS's own UA-stylesheet override as a
-  test `<style>` tag (the only way to reproduce an iOS-only quirk in plain Chromium) — #1288's
-  shared element-level overflow walk cannot catch this class of bug (a sub-padding overflow with
-  no `overflow-hidden`/escaped box to detect), so this spec asserts DIRECTLY on the dialog body's
-  own `scrollWidth` vs `clientWidth` instead, seeded with a cart approximating the owner's report
-  (boxed product, per-line note, order discount + shipping). Same file also pins the separate,
-  real 320px-only `LineItemRow.tsx` glitch — see `components-shared.md`'s `LineItemRow` entry.
-  NOT independently run from any session yet (no Docker/Playwright access when authored) — needs
-  a red-on-master / green-on-fix confirmation before landing.
+  entry). Fix, `:where()`-scoped so a specific input's own Tailwind class still wins: `appearance:
+  none` + `box-sizing: border-box` + a width FLOOR (140px, not `min-width: 0` — a date input with
+  no `w-*` class of its own, `orders/page.tsx`'s delivery filter and `ReportToolbar.tsx`'s
+  from/to range, would otherwise shrink to a sliver once `appearance: none` removes the
+  platform's own default width) + `min-height` on `::-webkit-date-and-time-value` (WebKit bug
+  198959: an empty date input with no explicit height class loses its native minimum height once
+  `appearance: none` is set). Global (94 `type="date"` inputs app-wide, any one inside a scroll
+  container can pan the same way — likely part of #2011's class too), not scoped to one dialog.
+  `marketing-port.static.test.ts`'s T7 `GLOBALS_CSS_SHA256` re-pinned to the new hash (same
+  precedent as B511). Proof, designed to fail on `origin/master` and pass on this fix (not yet
+  independently run — no Docker/Playwright access from any session that authored it):
+  `e2e/56-create-order-dialog-mobile-pan.spec.ts` simulates iOS's own UA-stylesheet override AFTER
+  navigation and ONLY when a date input's own computed `appearance` isn't already `none` (mirrors
+  the real cascade — the conditional, not the injected rule's CSS strength, is what discriminates
+  master from the fix) — #1288's shared element-level overflow walk cannot catch this class of
+  bug (a sub-padding overflow with no `overflow-hidden`/escaped box to detect), so this spec
+  asserts DIRECTLY on the dialog body's own `scrollWidth` vs `clientWidth` instead, seeded with a
+  cart approximating the owner's report (boxed product, per-line note, order discount + shipping).
+  Same file also pins the separate, real 320px-only `LineItemRow.tsx` glitch via
+  `data-testid="line-qty-controls"`/`"line-actions-column"` (a text-content filter found the WRONG
+  column — L-212) — see `components-shared.md`'s `LineItemRow` entry.
 - **Phase 1d behavioral UX standards.** `lib/undo.ts` — `useUndo()` (reversible act + 8s Undo toast;
   Toast now returns an id + `dismiss()` and has an `action` slot). `lib/session-expiry.ts` +
   `components/ReAuthProvider.tsx` — in-place re-auth sheet (password unlock + **Continue with Google**
