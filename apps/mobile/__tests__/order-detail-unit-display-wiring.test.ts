@@ -24,3 +24,44 @@ describe.each([
     expect(src).toMatch(/invoiceLineQtyText\(/);
   });
 });
+
+// #2046 REQUIRED (Opus, round 2 on the customer invoice screen): the qty text was fixed
+// but the trailing "/ <unit>" price suffix still fell through to item.product?.unit
+// unconditionally, so a Case line read "3 Cases x $73.33 / ea" and a factor-1 Piece line
+// could read "/ box" — the noun a units_v1 line's own price is PER never matched the noun
+// its qty was just named with. Source-pinned the same way as the rest of this file.
+describe("customer invoice detail (B758 follow-up): the price-suffix noun tracks the line's own unit", () => {
+  const src = readFileSync(join(__dirname, "..", "app/(customer)/invoices/[id].tsx"), "utf8");
+
+  it("imports invoiceLineUnitNoun from the local invoice-line-display module", () => {
+    expect(src).toMatch(
+      /import\s*\{[^}]*invoiceLineUnitNoun[^}]*\}\s*from\s*"\.\.\/\.\.\/\.\.\/lib\/invoice-line-display"/,
+    );
+  });
+
+  it("gates the price-suffix noun on item.unitLabel, falling back to product.unit only when blank", () => {
+    const at = src.indexOf("invoiceLineUnitNoun(item)");
+    expect(at).toBeGreaterThan(-1);
+    // The nearest preceding ternary condition must test item.unitLabel, not a bare
+    // usesUnitDisplay(item) or unconditional call — that was the exact defect: a
+    // Case/Piece line's PRICE suffix used the live product.unit unconditionally.
+    const conditionStart = src.lastIndexOf("\n", src.lastIndexOf("\n", at) - 1);
+    const condition = src.slice(conditionStart, at);
+    expect(condition).toMatch(/item\.unitLabel\?\.trim\(\)/);
+  });
+});
+
+// #1208-style regression pin for B757 (operator order detail): fails red on 0aded88e, the
+// sha the review was reading — the hardcoded `/ box of ${upb}` suffix, sourced off the LIVE
+// product, is gone, replaced by the line's own noun via invoiceLineUnitNoun.
+describe("operator order detail (B757): no hardcoded '/ box of' suffix survives", () => {
+  const src = readFileSync(join(__dirname, "..", "app/(operator)/(tabs)/orders/[id].tsx"), "utf8");
+
+  it("never hardcodes the word 'box' into the price suffix off a live-product upb", () => {
+    expect(src).not.toMatch(/\/ box of \$\{upb\}/);
+  });
+
+  it("names the suffix through invoiceLineUnitNoun(li) instead", () => {
+    expect(src).toMatch(/invoiceLineUnitNoun\(li\)/);
+  });
+});
