@@ -2865,7 +2865,7 @@ describe("RegulatedLedgerService", () => {
       expect(result.bookedPieces).not.toBe(20);
     });
 
-    it("SA-089a(a) / SA error E50 fix: fully voided BEFORE any correction — CLOSES with NOTHING written, not even the SALE correction", async () => {
+    it("SA-089a(a) / SA error E50 fix: fully voided BEFORE any correction — nothing written on that row (not even the SALE correction); leftover pieces are reported as partial", async () => {
       // The prior fixture here (unitBasisQty: -60 against a still-legacy qty:5 sale) was
       // IMPOSSIBLE: a reversal booked LINE_UNIT against a sale that was never yet corrected can
       // only be box-denominated (|unitBasisQty| == |qty|), never already piece-denominated. The
