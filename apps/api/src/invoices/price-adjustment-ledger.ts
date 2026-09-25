@@ -108,6 +108,19 @@ export function buildPriceAdjustmentUpdates(args: {
 }
 
 /**
+ * The adjustment tx's FIRST statement (N-3): the Invoice row lock, BEFORE any InvoiceItem row is
+ * written. The order-edit path takes the Invoice first and its rows after (orders.service
+ * resync), so locking the items first here could deadlock against it. Status, payments, discount,
+ * shipping and the due date are then re-read UNDER the lock, so the recomputed status and total
+ * never use a copy that a concurrent payment or edit has already made stale.
+ */
+export async function lockInvoiceForPriceAdjustment(tx: any, inv: any): Promise<any> {
+  await tx.$executeRaw`SELECT id FROM "Invoice" WHERE id = ${inv.id} FOR UPDATE`;
+  const live = await tx.invoice.findFirst({ where: { id: inv.id }, include: { payments: true } });
+  return live ? { ...inv, ...live } : inv;
+}
+
+/**
  * The transaction body of `applyPriceAdjustment` (B662), AFTER the line writes (those stay in the service so the
  * order/invoice line-writer coverage scanners still see this writer): recompute the invoice totals from the fresh
  * lines, persist them with the status recomputed from CONFIRMED payments against the NEW total

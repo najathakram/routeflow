@@ -149,9 +149,11 @@ describe("InvoicesService.applyPriceAdjustment — regulated ledger sync (B662)"
   it("ATOMIC: the invoice write and the ledger write share ONE tenantTransaction and the same tx", async () => {
     arrange(InvoiceStatus.SENT, [regulated("li-1")]);
     const tx = {
+      $executeRaw: jest.fn().mockResolvedValue(1),
       invoiceItem: { update: jest.fn().mockResolvedValue({}), findMany: jest.fn() },
-      invoice: { update: jest.fn().mockResolvedValue({}) },
+      invoice: { update: jest.fn().mockResolvedValue({}), findFirst: jest.fn() },
     };
+    tx.invoice.findFirst.mockResolvedValue(null);
     tx.invoiceItem.findMany.mockResolvedValue([
       { ...regulated("li-1"), unitPrice: 5, subtotal: 50, categoryTaxAmount: 3.5 },
     ]);
@@ -166,6 +168,40 @@ describe("InvoicesService.applyPriceAdjustment — regulated ledger sync (B662)"
     // nothing was written outside the transaction
     expect(prisma.invoiceItem.update).not.toHaveBeenCalled();
     expect(prisma.invoice.update).not.toHaveBeenCalled();
+  });
+
+  it("N-3: the Invoice row is locked FIRST, before any InvoiceItem write, and status/payments are re-read under the lock", async () => {
+    arrange(InvoiceStatus.SENT, [regulated("li-1")]);
+    const order: string[] = [];
+    const tx = {
+      $executeRaw: jest.fn(async () => {
+        order.push("lock invoice");
+        return 1;
+      }),
+      invoiceItem: {
+        update: jest.fn(async () => {
+          order.push("write item");
+          return {};
+        }),
+        findMany: jest
+          .fn()
+          .mockResolvedValue([
+            { ...regulated("li-1"), unitPrice: 5, subtotal: 50, categoryTaxAmount: 3.5 },
+          ]),
+      },
+      invoice: {
+        update: jest.fn().mockResolvedValue({}),
+        // a payment landed after the pre-tx read: the fresh copy under the lock carries it
+        findFirst: jest.fn(async () => {
+          order.push("reread invoice");
+          return { payments: [{ status: "PAID", amount: 999 }] };
+        }),
+      },
+    };
+    prisma.tenantTransaction.mockImplementationOnce(async (fn: any) => fn(tx));
+    await adjust(["li-1"]);
+    expect(order.slice(0, 3)).toEqual(["lock invoice", "reread invoice", "write item"]);
+    expect(tx.invoice.update.mock.calls[0][0].data.status).toBe(InvoiceStatus.PAID);
   });
 
   it("ATOMIC: a failing ledger write fails the adjustment (the transaction rolls both back) and nothing after it runs", async () => {

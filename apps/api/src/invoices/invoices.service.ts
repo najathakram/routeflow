@@ -80,7 +80,11 @@ import { invoiceItemQtyFields } from "./invoice-pdf-item";
 import { buildInvoiceEmailAttachment, InvoiceEmailAttachment } from "./invoice-attachment";
 import { SystemConfigService } from "../system-config/system-config.service";
 import { RegulatedLedgerService } from "../regulated/regulated-ledger.service";
-import { buildPriceAdjustmentUpdates, commitPriceAdjustment } from "./price-adjustment-ledger";
+import {
+  buildPriceAdjustmentUpdates,
+  commitPriceAdjustment,
+  lockInvoiceForPriceAdjustment,
+} from "./price-adjustment-ledger";
 import { AuthorizationGuardService } from "../authorizations/authorization-guard.service";
 import { CreditNotesService } from "../credit-notes/credit-notes.service";
 import { assertNoUnspentSourcedCredits } from "../credit-notes/sourced-credit-guard";
@@ -6219,6 +6223,7 @@ export class InvoicesService {
       });
       // B662: item writes, invoice totals and the regulated-ledger sync commit or fail TOGETHER.
       await this.prisma.tenantTransaction(async (tx: any) => {
+        const live = await lockInvoiceForPriceAdjustment(tx, inv); // Invoice FIRST, then its rows
         if (inferred?.verified) {
           await tx.invoiceItem.updateMany({
             where: { invoiceId: inv.id, taxRate: 0 },
@@ -6228,7 +6233,7 @@ export class InvoicesService {
         for (const u of itemUpdates)
           await tx.invoiceItem.update({ where: { id: u.id }, data: u.data });
         await commitPriceAdjustment({
-          inv,
+          inv: live,
           itemUpdates,
           auditLine,
           tx,
