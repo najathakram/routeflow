@@ -510,28 +510,84 @@ export class ProductsService {
     return pickBestScanMatch(matches, candidates);
   }
 
+  /**
+   * Read-only identity checks shared by create() and update(), public so a preview (the CSV
+   * import dry run) can ask the same questions without writing. Name uniqueness is scoped by
+   * parent, matching the partial unique indexes (variant_name_per_parent): a standalone product
+   * is unique among standalone products, a variant among its siblings. A case sku / barcode must
+   * not collide with another product's sku|barcode (resp.) or unit code — a sku equal to another
+   * product's barcode stays allowed (pre-existing; findByBarcode ranks barcode > sku). A unit code
+   * must not collide with ANY product's sku/barcode/unitSku. `excludeId` is the product being
+   * updated. Throws exactly what create()/update() always threw.
+   */
+  async assertIdentityAvailable(
+    p: {
+      name?: string;
+      parentProductId?: string | null;
+      sku?: string;
+      barcode?: string;
+      unitSku?: string | null;
+    },
+    excludeId?: string,
+  ): Promise<void> {
+    const db = this.prisma.forTenant().product;
+    const notSelf = excludeId ? { id: { not: excludeId } } : {};
+    if (p.name !== undefined) {
+      const nameTaken = await db.findFirst({
+        where: {
+          name: { equals: p.name, mode: "insensitive" },
+          ...notSelf,
+          parentProductId: p.parentProductId ?? null,
+        },
+        select: { id: true },
+      });
+      if (nameTaken) {
+        throw new ConflictException(
+          p.parentProductId
+            ? `A variant named "${p.name}" already exists for this product`
+            : `A product named "${p.name}" already exists`,
+        );
+      }
+    }
+    if (p.sku) {
+      const clash = await db.findFirst({
+        where: { OR: [{ sku: p.sku }, { unitSku: p.sku }], ...notSelf },
+      });
+      if (clash) throw new BadRequestException("SKU already exists");
+    }
+    if (p.barcode) {
+      const clash = await db.findFirst({
+        where: { OR: [{ barcode: p.barcode }, { unitSku: p.barcode }], ...notSelf },
+      });
+      if (clash) throw new BadRequestException("Barcode already exists");
+    }
+    if (p.unitSku) {
+      const clash = await db.findFirst({
+        where: {
+          OR: [{ unitSku: p.unitSku }, { sku: p.unitSku }, { barcode: p.unitSku }],
+          ...notSelf,
+        },
+        select: { id: true },
+      });
+      if (clash) {
+        throw new BadRequestException(
+          "Unit code already used by another product's SKU, barcode, or unit code",
+        );
+      }
+    }
+  }
+
   async create(dto: CreateProductDto, options?: { suppressEmit?: boolean }) {
     await this.assertCanFlagTobacco(dto.isTobacco);
     if (dto.msrp !== undefined) await this.assertMsrpAllowed();
-    // Name uniqueness is scoped by parent, matching the partial unique
-    // indexes in the DB (see prisma/migrations/.../variant_name_per_parent).
-    //   - Standalone product → unique among other STANDALONE products.
-    //   - Variant            → unique among siblings of the same parent.
-    // Two flavors named "Strawberry" under different parents are allowed.
-    const parentScope = dto.parentProductId
-      ? { parentProductId: dto.parentProductId }
-      : { parentProductId: null };
-    const nameTaken = await this.prisma.forTenant().product.findFirst({
-      where: { name: { equals: dto.name, mode: "insensitive" }, ...parentScope },
-      select: { id: true },
+    // Name (scoped by parent) and sku/barcode/unitSku collisions — see assertIdentityAvailable.
+    await this.assertIdentityAvailable({
+      name: dto.name,
+      parentProductId: dto.parentProductId ?? null,
+      sku: dto.sku,
+      barcode: dto.barcode,
+      unitSku: dto.unitSku,
     });
-    if (nameTaken) {
-      throw new ConflictException(
-        dto.parentProductId
-          ? `A variant named "${dto.name}" already exists for this product`
-          : `A product named "${dto.name}" already exists`,
-      );
-    }
     // Auto-generate a SKU if none supplied: first 3 alpha chars of name + 4 hex digits
     if (!dto.sku) {
       const prefix = dto.name
@@ -544,40 +600,6 @@ export class ProductsService {
         .toUpperCase()
         .padStart(4, "0");
       dto.sku = `${prefix}-${suffix}`;
-    } else {
-      // A case sku must not collide with another product's sku or unit code
-      // (the unit code is what the customer invoice prints, so a sku equal to it
-      // would resolve a scan to the wrong product). unitSku is a new all-null
-      // column, so this widening can't retroactively reject existing catalogs.
-      // We deliberately do NOT reject a sku that equals another product's barcode:
-      // that was always allowed, findByBarcode ranks barcode > sku so it still
-      // resolves deterministically, and blocking it would 400 edits on existing data.
-      const existing = await this.prisma.forTenant().product.findFirst({
-        where: { OR: [{ sku: dto.sku }, { unitSku: dto.sku }] },
-      });
-      if (existing) throw new BadRequestException("SKU already exists");
-    }
-    if (dto.barcode) {
-      // Symmetric to the sku check: reject a barcode colliding with another
-      // product's barcode or unit code, but not its case sku (pre-existing behavior).
-      const existing = await this.prisma.forTenant().product.findFirst({
-        where: { OR: [{ barcode: dto.barcode }, { unitSku: dto.barcode }] },
-      });
-      if (existing) throw new BadRequestException("Barcode already exists");
-    }
-    // A unit code must not collide with ANY product's sku/barcode/unitSku — it's a
-    // scannable identity in the same namespace, so an ambiguous match would resolve
-    // to the wrong product.
-    if (dto.unitSku) {
-      const clash = await this.prisma.forTenant().product.findFirst({
-        where: { OR: [{ unitSku: dto.unitSku }, { sku: dto.unitSku }, { barcode: dto.unitSku }] },
-        select: { id: true },
-      });
-      if (clash) {
-        throw new BadRequestException(
-          "Unit code already used by another product's SKU, barcode, or unit code",
-        );
-      }
     }
     // Variant creation inherits the parent family's defaults for every field the
     // DTO left unset — price tiers, category, case size, costing method, standard
@@ -711,6 +733,9 @@ export class ProductsService {
         // 0/negative are normalized to null (never rendered as $0.00).
         msrp: normalizeMsrpForWrite(dto.msrp),
         unitsPerBox: dto.unitsPerBox ?? parent?.unitsPerBox ?? undefined,
+        // B858: part of the one create write — never a follow-up update (atomic).
+        reorderPoint: dto.reorderPoint,
+        reorderQty: dto.reorderQty,
         parentProductId: dto.parentProductId ?? null,
         variantName: dto.variantName ?? null,
         trackedCategoryId: regulated.trackedCategoryId,
@@ -729,69 +754,21 @@ export class ProductsService {
     await this.assertCanFlagTobacco(dto.isTobacco);
     if (dto.msrp !== undefined) await this.assertMsrpAllowed();
     const existing = await this.findOne(id);
-    if (dto.name || dto.parentProductId !== undefined) {
-      // The product's effective parent is the dto value if provided (could be
-      // null to promote a variant to standalone), otherwise the existing one.
-      // The check has to use this effective parent, otherwise reparenting +
-      // renaming in one PATCH would check the WRONG scope.
-      const effectiveParentId =
-        dto.parentProductId !== undefined ? dto.parentProductId : existing.parentProductId;
-      const effectiveName = dto.name ?? existing.name;
-      const parentScope = effectiveParentId
-        ? { parentProductId: effectiveParentId }
-        : { parentProductId: null };
-      const nameTaken = await this.prisma.forTenant().product.findFirst({
-        where: {
-          name: { equals: effectiveName, mode: "insensitive" },
-          id: { not: id },
-          ...parentScope,
-        },
-        select: { id: true },
-      });
-      if (nameTaken) {
-        throw new ConflictException(
-          effectiveParentId
-            ? `A variant named "${effectiveName}" already exists for this product`
-            : `A product named "${effectiveName}" already exists`,
-        );
-      }
-    }
-    if (dto.sku) {
-      // Reject a case sku colliding with another product's sku or unit code (see
-      // create() — unitSku widening is safe on the new column; sku↔barcode is left
-      // as-is to avoid retroactively breaking existing catalogs).
-      const existing = await this.prisma.forTenant().product.findFirst({
-        where: {
-          OR: [{ sku: dto.sku }, { unitSku: dto.sku }],
-          id: { not: id },
-        },
-      });
-      if (existing) throw new BadRequestException("SKU already exists");
-    }
-    if (dto.barcode) {
-      const existing = await this.prisma.forTenant().product.findFirst({
-        where: {
-          OR: [{ barcode: dto.barcode }, { unitSku: dto.barcode }],
-          id: { not: id },
-        },
-      });
-      if (existing) throw new BadRequestException("Barcode already exists");
-    }
-    // Same cross-namespace collision check as create() — a unit code must not
-    // collide with any OTHER product's sku/barcode/unitSku.
-    if (dto.unitSku) {
-      const clash = await this.prisma.forTenant().product.findFirst({
-        where: {
-          OR: [{ unitSku: dto.unitSku }, { sku: dto.unitSku }, { barcode: dto.unitSku }],
-          id: { not: id },
-        },
-      });
-      if (clash) {
-        throw new BadRequestException(
-          "Unit code already used by another product's SKU, barcode, or unit code",
-        );
-      }
-    }
+    // The product's effective parent is the dto value if provided (could be null to promote a
+    // variant to standalone), otherwise the existing one — so reparenting + renaming in one
+    // PATCH checks the RIGHT scope. The name is only re-checked when it or the parent moves.
+    const renamedOrReparented = !!dto.name || dto.parentProductId !== undefined;
+    await this.assertIdentityAvailable(
+      {
+        name: renamedOrReparented ? (dto.name ?? existing.name) : undefined,
+        parentProductId:
+          dto.parentProductId !== undefined ? dto.parentProductId : existing.parentProductId,
+        sku: dto.sku,
+        barcode: dto.barcode,
+        unitSku: dto.unitSku,
+      },
+      id,
+    );
     // ── Compliance-pack sync: an isTobacco-only PATCH (the mobile quick-toggle)
     // is sugar for a Tobacco-type assign/unassign. When the request also carries
     // an explicit trackedCategoryId, the category wins and the mirror derivation

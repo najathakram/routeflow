@@ -10,6 +10,10 @@
  *   4. SA-305 (2): consent and its evidence roll back TOGETHER in one real transaction — a failing
  *      evidence insert leaves the flag unchanged; a failing flag update leaves no evidence row
  *
+ * R1 (Opus round 2): Reorder Point / Reorder Qty must land on the FIRST create (ProductsService
+ * .create writes them in its one create) — run 1 asserts 4 / 48 on the row, and run 2 must then
+ * plan no reorder change (`updated` 0, `update` never called).
+ *
  * The fixtures carry EVERY registry column (SA-284 pin: "an all-columns fixture run twice; the
  * second run shows no diffs"). Tobacco is "No" so the run never seeds the tenant's Tobacco type.
  *

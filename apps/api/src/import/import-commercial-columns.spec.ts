@@ -25,7 +25,7 @@
  * real dependencies (RC1 confirms the read/write sites; no DI change happens in this task).
  */
 import { Test } from "@nestjs/testing";
-import { ForbiddenException } from "@nestjs/common";
+import { BadRequestException, ConflictException, ForbiddenException } from "@nestjs/common";
 import { ImportService } from "./import.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { VendorBillsService } from "../vendor-bills/vendor-bills.service";
@@ -46,6 +46,7 @@ describe("ImportService — commercial columns (B858/B859)", () => {
     emitCatalogBulkChanged: jest.Mock;
     assertCanFlagTobacco: jest.Mock;
     assertMsrpAllowed: jest.Mock;
+    assertIdentityAvailable: jest.Mock;
   };
   let auditService: { log: jest.Mock };
   let customers: {
@@ -63,6 +64,7 @@ describe("ImportService — commercial columns (B858/B859)", () => {
       emitCatalogBulkChanged: jest.fn(),
       assertCanFlagTobacco: jest.fn().mockResolvedValue(undefined),
       assertMsrpAllowed: jest.fn().mockResolvedValue(undefined),
+      assertIdentityAvailable: jest.fn().mockResolvedValue(undefined),
     };
     auditService = { log: jest.fn().mockResolvedValue(undefined) };
     customers = {
@@ -761,6 +763,184 @@ describe("ImportService — commercial columns (B858/B859)", () => {
         );
       },
     );
+  });
+
+  // ── Opus round 2 (W1/W2/W3/W5) ───────────────────────────────────────────────────────────────
+  describe("Opus round 2", () => {
+    it("W1: a barcode match whose SKU differs from the row's SKU skips — never an identity rewrite", async () => {
+      prisma.product.findFirst.mockImplementation(async (args: any) =>
+        args?.where?.barcode === "BC-1"
+          ? { id: "prod-1", name: "Cola", sku: "C-1", barcode: "BC-1", pricePerUnit: 9 }
+          : null,
+      );
+      const csv = "Item Name,SKU,Barcode,Rate\nCola,SUP-7,BC-1,10\n";
+
+      for (const dryRun of [true, false]) {
+        productsService.update.mockClear();
+        const result = await service.importProducts(Buffer.from(csv), "user-1", { dryRun });
+
+        expect(result.rows).toEqual([
+          {
+            row: 1,
+            label: "Cola",
+            action: "skip",
+            reason:
+              "SKU differs from the product matched by barcode; change SKUs in the product editor",
+          },
+        ]);
+        expect(productsService.update).not.toHaveBeenCalled();
+      }
+    });
+
+    it("W1: a barcode match with no SKU on the product may still fill it", async () => {
+      prisma.product.findFirst.mockImplementation(async (args: any) =>
+        args?.where?.barcode === "BC-1"
+          ? { id: "prod-1", name: "Cola", sku: null, barcode: "BC-1", pricePerUnit: 9 }
+          : null,
+      );
+      const csv = "Item Name,SKU,Barcode,Rate\nCola,SUP-7,BC-1,9\n";
+
+      await service.importProducts(Buffer.from(csv), "user-1");
+
+      expect(productsService.update.mock.calls[0]?.[1]).toEqual({ sku: "SUP-7" });
+    });
+
+    it("W2: a regulated product's category is never planned — a row warning instead, and no update", async () => {
+      prisma.product.findFirst.mockResolvedValue({
+        id: "prod-1",
+        name: "Pouch",
+        sku: "P-1",
+        category: "Zyn",
+        trackedSubcategoryId: "sub-1",
+        pricePerUnit: 9,
+      });
+      const csv = "Item Name,SKU,Category,Rate\nPouch,P-1,Nicotine,9\n";
+
+      const preview = await service.importProducts(Buffer.from(csv), "user-1", { dryRun: true });
+      const real = await service.importProducts(Buffer.from(csv), "user-1");
+
+      for (const r of [preview, real]) {
+        expect(r.rows[0]).toEqual({
+          row: 1,
+          label: "Pouch",
+          action: "update",
+          changes: {},
+          warnings: ["category is set by its regulated subcategory"],
+        });
+        expect(r.updated).toBe(0);
+        expect(r.unchanged).toBe(1);
+        expect(r.warnings).toEqual(["Row 1 (Pouch): category is set by its regulated subcategory"]);
+      }
+      expect(productsService.update).not.toHaveBeenCalled();
+    });
+
+    it("W2: other changes on a regulated product still apply, without the category", async () => {
+      prisma.product.findFirst.mockResolvedValue({
+        id: "prod-1",
+        name: "Pouch",
+        sku: "P-1",
+        category: "Zyn",
+        trackedSubcategoryId: "sub-1",
+        pricePerUnit: 9,
+      });
+      const csv = "Item Name,SKU,Category,Rate\nPouch,P-1,Nicotine,11\n";
+
+      const result = await service.importProducts(Buffer.from(csv), "user-1");
+
+      expect(productsService.update.mock.calls[0]?.[1]).toEqual({ pricePerUnit: 11 });
+      expect(result.updated).toBe(1);
+      expect(result.rows[0].warnings).toEqual(["category is set by its regulated subcategory"]);
+    });
+
+    it("W2: an unregulated product's category change is still planned and written", async () => {
+      prisma.product.findFirst.mockResolvedValue({
+        id: "prod-1",
+        name: "Cup",
+        sku: "C-1",
+        category: "Old",
+        trackedSubcategoryId: null,
+        pricePerUnit: 9,
+      });
+      const csv = "Item Name,SKU,Category\nCup,C-1,New\n";
+
+      await service.importProducts(Buffer.from(csv), "user-1");
+
+      expect(productsService.update.mock.calls[0]?.[1]).toEqual({ category: "New" });
+    });
+
+    it("W3: the preview asks the service's identity check, and its refusal is the row's skip reason in both modes", async () => {
+      prisma.product.findFirst.mockResolvedValue(null);
+      const clash = new BadRequestException("SKU already exists");
+      productsService.assertIdentityAvailable.mockRejectedValue(clash);
+      productsService.create.mockRejectedValue(clash);
+      const csv = "Item Name,SKU,Rate\nWidget,UNIT-CODE-1,10\n";
+
+      const preview = await service.importProducts(Buffer.from(csv), "user-1", { dryRun: true });
+      const real = await service.importProducts(Buffer.from(csv), "user-1");
+
+      expect(productsService.assertIdentityAvailable).toHaveBeenCalledWith({
+        name: "Widget",
+        parentProductId: null,
+        sku: "UNIT-CODE-1",
+        barcode: undefined,
+      });
+      const expected = [{ row: 1, label: "Widget", action: "skip", reason: "SKU already exists" }];
+      expect(preview.rows).toEqual(expected);
+      expect(real.rows).toEqual(expected);
+      expect(preview.created).toBe(0);
+    });
+
+    it("W3: a preview rename onto a taken name skips with update()'s own conflict", async () => {
+      prisma.product.findFirst.mockResolvedValue({
+        id: "prod-1",
+        name: "Old Name",
+        sku: "S-1",
+        parentProductId: null,
+        pricePerUnit: 9,
+      });
+      productsService.assertIdentityAvailable.mockRejectedValue(
+        new ConflictException('A product named "Taken" already exists'),
+      );
+      const csv = "Item Name,SKU,Rate\nTaken,S-1,9\n";
+
+      const preview = await service.importProducts(Buffer.from(csv), "user-1", { dryRun: true });
+
+      expect(productsService.assertIdentityAvailable).toHaveBeenCalledWith(
+        { name: "Taken", parentProductId: null, sku: undefined, barcode: undefined },
+        "prod-1",
+      );
+      expect(preview.rows[0]).toMatchObject({
+        action: "skip",
+        reason: 'A product named "Taken" already exists',
+      });
+      expect(preview.updated).toBe(0);
+      expect(productsService.update).not.toHaveBeenCalled();
+    });
+
+    it("W5: a Customer ID that belongs to a soft-deleted customer skips in preview and run", async () => {
+      prisma.customer.findFirst.mockImplementation(async (args: any) =>
+        args?.where?.deletedAt?.not === null ? { id: "cust-deleted" } : null,
+      );
+      prisma.customer.findMany.mockResolvedValue([]);
+      const csv = "Customer Name,Customer ID,Credit Limit\nAcme,ZC-9,500\n";
+
+      for (const dryRun of [true, false]) {
+        const result = await service.importContacts(Buffer.from(csv), "user-1", { dryRun });
+
+        expect(result.rows).toEqual([
+          {
+            row: 1,
+            label: "Acme",
+            action: "skip",
+            reason: "matches a deleted customer; restore it first",
+          },
+        ]);
+      }
+      expect(prisma.customer.findMany).not.toHaveBeenCalled(); // never falls through to a name match
+      expect(prisma.customer.create).not.toHaveBeenCalled();
+      expect(prisma.customer.update).not.toHaveBeenCalled();
+      expect(customers.update).not.toHaveBeenCalled();
+    });
   });
 
   // ── Pins (SA-284 / rulings-s4-s5.md S4) — not in the red gate ───────────────

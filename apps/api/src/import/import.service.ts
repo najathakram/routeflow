@@ -551,6 +551,18 @@ export class ImportService {
             include: { addresses: true, contactPersons: true },
           })
         : null;
+      if (!existing && zohoContactId) {
+        // W5: a Customer ID that belongs to a SOFT-DELETED customer is that customer — never a
+        // reason to fall through to a name match or to create a second one. Same in both modes.
+        const deleted = await this.prisma.forTenant().customer.findFirst({
+          where: { zohoContactId, deletedAt: { not: null } },
+          select: { id: true },
+        });
+        if (deleted) {
+          skipContact("matches a deleted customer; restore it first");
+          continue;
+        }
+      }
       if (!existing) {
         // A name an earlier row of THIS file already claimed decides the row before the DB is
         // asked — identical in dryRun (nothing written yet) and a real run.
@@ -2180,6 +2192,19 @@ export class ImportService {
         errors.push(`${label}: ${reason}`);
         rowPlans.push({ row: rowNumber, label, action: "skip", reason });
       };
+      // I4/W3: a write (real run) or the service's own read-only identity check (preview) that
+      // throws turns this row's already-pushed plan into a skip with the service's reason —
+      // identical wording in both modes.
+      const failPlan = (plan: ImportRowPlan, e: unknown) => {
+        const reason = e instanceof HttpException ? e.message : "import failed";
+        if (e instanceof HttpException) errors.push(`${label}: ${reason}`);
+        else this.pushRowError(errors, label, e);
+        skipped++;
+        skippedRows.push({ row: rowNumber, label, reason });
+        plan.action = "skip";
+        plan.reason = reason;
+        delete plan.changes;
+      };
 
       if (parsed.badCells.length > 0) {
         const first = parsed.badCells[0];
@@ -2216,6 +2241,14 @@ export class ImportService {
       }
       if (!existing && barcode) {
         existing = await this.prisma.forTenant().product.findFirst({ where: { barcode } });
+        // W1 (mirrors I1): the row's SKU missed, and the product its barcode found carries a
+        // DIFFERENT SKU — rewriting it would be an identity change, never an import update.
+        if (existing && sku && existing.sku && existing.sku !== sku) {
+          skipRow(
+            "SKU differs from the product matched by barcode; change SKUs in the product editor",
+          );
+          continue;
+        }
       }
       if (!existing && name) {
         const claimedName = claimedNames.get(normalizeNameKey(name));
@@ -2268,6 +2301,7 @@ export class ImportService {
         }
         // ── Update: diff only fields with a DEFINED, DIFFERING parsed value ──────────────────
         const changes: Record<string, unknown> = {};
+        const rowWarnings: string[] = [];
         let packSkipReason: string | null = null;
         for (const field of Object.keys(parsed.values)) {
           const newVal = parsed.values[field];
@@ -2296,6 +2330,15 @@ export class ImportService {
             if (msrpDiffers) changes.msrp = normalizedNew;
             continue;
           }
+          if (field === "category" && existing.trackedSubcategoryId != null) {
+            // W2: update() forces a regulated product's category back to its subcategory's
+            // name, so never PLAN a change it would override — warn on the cell instead.
+            const current = typeof existing.category === "string" ? existing.category.trim() : "";
+            if (current !== (newVal as string).trim()) {
+              rowWarnings.push("category is set by its regulated subcategory");
+            }
+            continue;
+          }
           const existingVal = (existing as any)[field];
           let differs: boolean;
           if (field === "standardCost") {
@@ -2322,9 +2365,12 @@ export class ImportService {
           continue;
         }
 
+        for (const w of rowWarnings) warnings.push(`Row ${rowNumber} (${label}): ${w}`);
+        const withWarnings = rowWarnings.length > 0 ? { warnings: rowWarnings } : {};
+
         if (Object.keys(changes).length === 0) {
           unchanged++;
-          rowPlans.push({ row: rowNumber, label, action: "update", changes: {} });
+          rowPlans.push({ row: rowNumber, label, action: "update", changes: {}, ...withWarnings });
           continue;
         }
 
@@ -2337,28 +2383,30 @@ export class ImportService {
           label,
           action: "update",
           changes: plannedChanges,
+          ...withWarnings,
         };
         rowPlans.push(updatePlan);
-        if (!dryRun) {
-          try {
+        try {
+          if (dryRun) {
+            // W3: the preview asks update()'s own read-only identity questions (name under the
+            // parent, sku/barcode vs other products' codes), so a collision the real run would
+            // report is a skip in the preview too.
+            await this.productsService.assertIdentityAvailable(
+              {
+                name: changes.name as string | undefined,
+                parentProductId: existing.parentProductId ?? null,
+                sku: changes.sku as string | undefined,
+                barcode: changes.barcode as string | undefined,
+              },
+              existing.id,
+            );
+          } else {
             await this.productsService.update(existing.id, changes as any, { suppressEmit: true });
-            updated++;
             anyWrite = true;
-          } catch (e: any) {
-            // I4: a real-run write failure replaces this row's plan entry with "skip" + reason —
-            // never leaves a stale "update" badge with the real reason reachable only via
-            // `skippedRows`/`errors`.
-            const reason = e instanceof HttpException ? e.message : "import failed";
-            if (!(e instanceof HttpException)) this.pushRowError(errors, label, e);
-            else errors.push(`${label}: ${reason}`);
-            skipped++;
-            skippedRows.push({ row: rowNumber, label, reason });
-            updatePlan.action = "skip";
-            updatePlan.reason = reason;
-            delete updatePlan.changes;
           }
-        } else {
           updated++;
+        } catch (e: unknown) {
+          failPlan(updatePlan, e);
         }
         continue;
       }
@@ -2399,24 +2447,22 @@ export class ImportService {
         changes: createdPlan,
       };
       rowPlans.push(createPlan);
-      if (!dryRun) {
-        try {
+      try {
+        if (dryRun) {
+          // W3: create()'s own read-only identity checks, asked without writing.
+          await this.productsService.assertIdentityAvailable({
+            name,
+            parentProductId: null,
+            sku: sku || undefined,
+            barcode: barcode || undefined,
+          });
+        } else {
           await this.productsService.create(dto as any, { suppressEmit: true });
-          created++;
           anyWrite = true;
-        } catch (e: any) {
-          // I4: same rule as the update path — a real-run failure replaces "create" with "skip".
-          const reason = e instanceof HttpException ? e.message : "import failed";
-          if (!(e instanceof HttpException)) this.pushRowError(errors, label, e);
-          else errors.push(`${label}: ${reason}`);
-          skipped++;
-          skippedRows.push({ row: rowNumber, label, reason });
-          createPlan.action = "skip";
-          createPlan.reason = reason;
-          delete createPlan.changes;
         }
-      } else {
         created++;
+      } catch (e: unknown) {
+        failPlan(createPlan, e);
       }
     }
 
