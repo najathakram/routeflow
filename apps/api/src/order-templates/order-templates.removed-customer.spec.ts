@@ -18,6 +18,8 @@ import { SystemConfigService } from "../system-config/system-config.service";
 import { OrdersService } from "../orders/orders.service";
 import { AuthorizationGuardService } from "../authorizations/authorization-guard.service";
 import { NotificationsService } from "../notifications/notifications.service";
+import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
+import { AuditService } from "../audit/audit.service";
 import { createMockPrisma } from "../testing/prisma-mock";
 
 // Honest stand-in for Postgres: applies the `where` the service actually sends, so a where-only fix is
@@ -98,6 +100,22 @@ describe("OrderTemplatesService.generateDailyOrders — removed customer (B131)"
         { provide: OrdersService, useValue: {} },
         { provide: AuthorizationGuardService, useValue: {} },
         { provide: NotificationsService, useValue: {} },
+        { provide: AuditService, useValue: { log: jest.fn().mockResolvedValue(undefined) } },
+        {
+          provide: SellingRestrictionsService,
+          useValue: {
+            assertLinesSellable: jest.fn().mockResolvedValue(undefined),
+            checkLinesSellable: jest.fn().mockResolvedValue({ outcome: "ALLOW", reasons: [] }),
+          },
+        },
+        { provide: AuditService, useValue: { log: jest.fn().mockResolvedValue(undefined) } },
+        {
+          provide: SellingRestrictionsService,
+          useValue: {
+            assertLinesSellable: jest.fn().mockResolvedValue(undefined),
+            checkLinesSellable: jest.fn().mockResolvedValue({ outcome: "ALLOW", reasons: [] }),
+          },
+        },
       ],
     }).compile();
     service = mod.get(OrderTemplatesService);
@@ -191,6 +209,14 @@ describe("OrderTemplatesService.create — removed customer (B131)", () => {
         { provide: OrdersService, useValue: {} },
         { provide: AuthorizationGuardService, useValue: {} },
         { provide: NotificationsService, useValue: {} },
+        { provide: AuditService, useValue: { log: jest.fn().mockResolvedValue(undefined) } },
+        {
+          provide: SellingRestrictionsService,
+          useValue: {
+            assertLinesSellable: jest.fn().mockResolvedValue(undefined),
+            checkLinesSellable: jest.fn().mockResolvedValue({ outcome: "ALLOW", reasons: [] }),
+          },
+        },
       ],
     }).compile();
     service = mod.get(OrderTemplatesService);

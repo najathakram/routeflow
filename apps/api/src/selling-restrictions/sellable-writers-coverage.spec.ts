@@ -49,7 +49,7 @@ const TABLE: Record<string, Row> = {
   [ord("reopenOrder")]: P("2a: reopen (revives cancelled lines)"),
   [ord("mergeAllPendingForCustomer")]: P("2a: merge (channel from buyerInitiated)"),
   [ord("forceConsolidateCustomer")]: P("2a: consolidate (staff)"),
-  [tpl("createOrderFromTemplate")]: P("2b: standing orders (buyer-owned = BUYER_PORTAL)"),
+  [tpl("createOrderFromTemplate")]: G,
   [ord("recomputeLineCategoryTaxes")]: X("categoryTaxAmount only"),
   [ord("deleteOrder")]: X("removes lines"),
   [rt("completeWithPayment")]: P(
@@ -102,7 +102,7 @@ const TABLE: Record<string, Row> = {
 };
 
 /** The RATCHET: how many rows are still PENDING. Lower it in the PR that flips a row to GUARDED. */
-const PENDING_BASELINE = 10;
+const PENDING_BASELINE = 9;
 /** GUARDED + PENDING: reclassifying a PENDING row to EXEMPT (an escape, not progress) must change THIS. */
 const ENFORCEMENT_POINTS = 16;
 const CHOKE_POINT = ["assertLinesSellable", "checkLinesSellable"];
