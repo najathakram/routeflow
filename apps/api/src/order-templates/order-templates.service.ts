@@ -17,7 +17,6 @@ import { NotificationsService } from "../notifications/notifications.service";
 import { SystemConfigService } from "../system-config/system-config.service";
 import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
 import { restrictionChannelForPrincipal } from "../selling-restrictions/selling-restrictions.core";
-import { AuditService } from "../audit/audit.service";
 import { requireRestrictionTenantId } from "../selling-restrictions/restriction-tenant";
 import { CreateOrderTemplateDto } from "./dto/create-order-template.dto";
 import { UpdateOrderTemplateDto } from "./dto/update-order-template.dto";
@@ -63,7 +62,6 @@ export class OrderTemplatesService {
     private readonly notifications: NotificationsService,
     private readonly systemConfig: SystemConfigService,
     private readonly sellingRestrictions: SellingRestrictionsService,
-    private readonly audit: AuditService,
   ) {}
 
   // ─── CRUD ────────────────────────────────────────────────────────────────────
@@ -572,11 +570,33 @@ export class OrderTemplatesService {
       if (template.items.length === 0) {
         // nothing left to order: deactivate (once — the cron no longer selects it) and say so once
         await this.deactivateForRestriction(template);
-        await this.notifyBanSkipped(template, banNote, false);
+        await this.notifyBanSkipped(template, banNote, "deactivated");
         return null;
       }
     }
     if (!unattended) template = { ...template, items: live };
+    // The ban notice goes out AFTER the attempt, whatever its outcome: the suspension already committed, so a
+    // throw past that point must not lose the one notice for good.
+    let ordered = false;
+    try {
+      const order = await this.placeTemplateOrder(template, isStaffRole);
+      ordered = order != null;
+      return order;
+    } finally {
+      if (banNote) await this.notifyBanSkipped(template, banNote, ordered ? "ordered" : "held");
+    }
+  }
+
+  /** Prices and writes the order for the (already filtered) template lines; null = nothing was ordered. */
+  private async placeTemplateOrder(
+    template: {
+      id: string;
+      customerId: string;
+      name: string;
+      items: Array<{ productId: string; qty: number; notes?: string | null }>;
+    },
+    isStaffRole: boolean,
+  ) {
     const productIds = template.items.map((i) => i.productId);
     const products = await this.prisma.forTenant().product.findMany({
       where: { id: { in: productIds } },
@@ -622,10 +642,7 @@ export class OrderTemplatesService {
     }
     // Every line was a license-gated category the customer isn't verified for —
     // there is nothing to order. Callers treat null as "skipped".
-    if (allowedItems.length === 0) {
-      await this.notifyBanSkipped(template, banNote, false); // nothing is ordered
-      return null;
-    }
+    if (allowedItems.length === 0) return null; // nothing is ordered
 
     // REG-B48: a standing order is the CUSTOMER's order whoever triggers it (06:00 cron,
     // operator "Generate now", buyer "Reorder"), so every line is priced exactly as the
@@ -815,30 +832,40 @@ export class OrderTemplatesService {
         `post-commit consolidation deferred (merge in progress) tenant=${tenantId} customer=${template.customerId}`,
       );
     }
-    await this.notifyBanSkipped(template, banNote, true);
     return merged ?? created;
   }
 
-  /** Spec §8: when a standing order skips license-gated lines, notify the buyer
-   *  (push) and the seller's operators (push). Best-effort per recipient. */
-  /** F-05: the ONE notice a banning run sends, worded after the filtering (was anything actually ordered?). */
+  /**
+   * F-05: the ONE notice a banning run sends, worded after the filtering — what actually happened:
+   * "ordered" (the rest went ahead), "held" (banned lines suspended but nothing was ordered, e.g. the rest is
+   * license-gated: the template stays active), "deactivated" (nothing left to order, the template was switched off).
+   * Never claims a deactivation that did not happen. Best-effort: a failure here never fails the run.
+   */
   private async notifyBanSkipped(
     template: { customerId: string; name: string },
     note: { count: number; names: string } | null,
-    ordered: boolean,
+    mode: "ordered" | "held" | "deactivated",
   ): Promise<void> {
     const what = note?.names ? ` (${note.names})` : "";
-    const cust = ordered
-      ? `"${template.name}" went ahead without ${note?.count ?? 0} item(s) that can't be sold right now${what}. Contact your supplier.`
-      : `"${template.name}" was not sent: nothing on it can be sold right now${what}. Contact your supplier.`;
-    const ops = ordered
-      ? `"${template.name}": ${note?.count ?? 0} line(s) are under a selling restriction${what} and are suspended until the line is edited or lifted.`
-      : `"${template.name}" was not generated and is deactivated: every line is under a selling restriction or suspended${what}.`;
-    if (note || !ordered) {
+    const n = note?.count ?? 0;
+    const cust = {
+      ordered: `"${template.name}" went ahead without ${n} item(s) that can't be sold right now${what}. Contact your supplier.`,
+      held: `"${template.name}" was not sent this time: ${n} item(s) can't be sold right now${what} and the rest could not be ordered. Contact your supplier.`,
+      deactivated: `"${template.name}" was not sent: nothing on it can be sold right now${what}. Contact your supplier.`,
+    }[mode];
+    const ops = {
+      ordered: `"${template.name}": ${n} line(s) are under a selling restriction${what} and are suspended until the line is edited or lifted.`,
+      held: `"${template.name}" produced no order: ${n} line(s) are under a selling restriction${what} and suspended, and the remaining lines could not be ordered (for example a license). The template is still active.`,
+      deactivated: `"${template.name}" was not generated and is deactivated: every line is under a selling restriction or suspended${what}.`,
+    }[mode];
+    if (!note && mode !== "deactivated") return;
+    try {
       await this.notifications
         .sendToCustomer(template.customerId, "Standing order", cust)
         .catch(() => {});
       await this.notifyOperators(ops);
+    } catch {
+      /* best-effort */
     }
   }
 

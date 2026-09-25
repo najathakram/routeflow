@@ -28,6 +28,7 @@ describe("OrderTemplatesService — selling restrictions (F-05)", () => {
   const restrictions = { assertLinesSellable: jest.fn(), checkLinesSellable: jest.fn() };
   const notifications = { sendToCustomer: jest.fn(), sendToUser: jest.fn() };
   const audit = { log: jest.fn() };
+  const authGuard = { checkAuthorized: jest.fn() };
   const ordersService = {
     mergeAllPendingForCustomer: jest.fn().mockResolvedValue(null),
     loadActivePromotions: jest.fn(),
@@ -66,6 +67,7 @@ describe("OrderTemplatesService — selling restrictions (F-05)", () => {
     notifications.sendToCustomer.mockResolvedValue(1);
     notifications.sendToUser.mockResolvedValue(1);
     audit.log.mockResolvedValue(undefined);
+    authGuard.checkAuthorized.mockResolvedValue({ blocked: [] });
     ordersService.loadActivePromotions.mockResolvedValue([]);
     ordersService.getCustomerPriceHistory.mockResolvedValue({});
     const mod = await Test.createTestingModule({
@@ -75,10 +77,7 @@ describe("OrderTemplatesService — selling restrictions (F-05)", () => {
         { provide: TenantContextService, useValue: { run: jest.fn((_i, fn) => fn()) } },
         { provide: SystemConfigService, useValue: { get: jest.fn().mockResolvedValue("10") } },
         { provide: OrdersService, useValue: ordersService },
-        {
-          provide: AuthorizationGuardService,
-          useValue: { checkAuthorized: jest.fn().mockResolvedValue({ blocked: [] }) },
-        },
+        { provide: AuthorizationGuardService, useValue: authGuard },
         { provide: NotificationsService, useValue: notifications },
         { provide: SellingRestrictionsService, useValue: restrictions },
         { provide: AuditService, useValue: audit },
@@ -207,6 +206,53 @@ describe("OrderTemplatesService — selling restrictions (F-05)", () => {
       await run(template());
       expect(notifications.sendToCustomer).toHaveBeenCalledTimes(1);
       expect(notifications.sendToCustomer.mock.calls[0][2]).toContain("went ahead");
+    });
+  });
+
+  describe("license-gated lines are NOT a ban (Opus #2125)", () => {
+    const licenseBlocked = { blocked: [{ trackedCategoryId: "cat-tob", categoryName: "Tobacco" }] };
+    const withCategory = () =>
+      prisma.product.findMany.mockResolvedValue([
+        { id: "p-banned", pricePerUnit: 10, trackedCategoryId: "cat-tob" },
+        { id: "p-ok", pricePerUnit: 5, trackedCategoryId: "cat-tob" },
+      ]);
+
+    it("a template whose EVERY line is license-gated returns null with NO ban notice, on the cron and a manual run", async () => {
+      withCategory();
+      authGuard.checkAuthorized.mockResolvedValue(licenseBlocked);
+      expect(await run(template())).toBeNull(); // cron
+      await expect(service.generateOrder("t1")).rejects.toBeDefined(); // manual: "needs a license" 400
+      const banTexts = [
+        ...notifications.sendToCustomer.mock.calls.map((c) => String(c[2])),
+        ...notifications.sendToUser.mock.calls.map((c) => String(c[1].body)),
+      ].filter((t) => /nothing on it can be sold|is deactivated|suspended/.test(t));
+      expect(banTexts).toEqual([]);
+      expect(prisma.orderTemplate.update).not.toHaveBeenCalled();
+    });
+
+    it("banned + license-gated: 'not sent this time', never a false 'deactivated', and the template stays active", async () => {
+      withCategory();
+      // p-banned is banned; the license guard then blocks the rest
+      restrictions.checkLinesSellable.mockResolvedValue(block);
+      authGuard.checkAuthorized.mockResolvedValue(licenseBlocked);
+      expect(await run(template())).toBeNull();
+      const all = [
+        ...notifications.sendToCustomer.mock.calls.map((c) => String(c[2])),
+        ...notifications.sendToUser.mock.calls.map((c) => String(c[1].body)),
+      ].join(" | ");
+      expect(all).toContain("not sent this time");
+      expect(all).not.toContain("deactivated");
+      expect(prisma.orderTemplate.update).not.toHaveBeenCalledWith(
+        expect.objectContaining({ data: { isActive: false } }),
+      );
+    });
+
+    it("a throw AFTER the suspension committed still sends the ban notice (it is not lost for good)", async () => {
+      restrictions.checkLinesSellable.mockResolvedValue(block);
+      prisma.order.create.mockRejectedValue(new Error("db hiccup"));
+      await expect(run(template())).rejects.toThrow("db hiccup");
+      expect(prisma.orderTemplateItem.updateMany).toHaveBeenCalledTimes(1);
+      expect(notifications.sendToCustomer).toHaveBeenCalledTimes(1);
     });
   });
 
