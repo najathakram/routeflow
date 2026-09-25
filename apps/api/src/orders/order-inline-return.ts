@@ -68,9 +68,10 @@ export async function reserveInlineReturnNumber(
   p: PreparedInlineReturn | null,
   customerId: string,
   user: JwtPayload | undefined,
-  replay?: {
-    db: any;
-    find: () => Promise<{ id: string; customerId: string } | null | undefined>;
+  idempotencyKey?: string,
+  host?: {
+    prisma: any;
+    findReplayCandidateByKey(key: string, customerId: string): Promise<any>;
   },
 ): Promise<any> {
   if (!p) return null;
@@ -79,9 +80,12 @@ export async function reserveInlineReturnNumber(
     total = await p.svc.preflightNewOrderReturn(p.lines, customerId, user as JwtPayload);
   } catch (e) {
     const code = e instanceof ConflictException ? (e.getResponse() as any)?.code : undefined;
-    const twin = code === INLINE_RETURN_KEY_TAKEN && replay ? await replay.find() : null;
+    const twin =
+      code === INLINE_RETURN_KEY_TAKEN && idempotencyKey && host
+        ? await host.findReplayCandidateByKey(idempotencyKey, customerId)
+        : null;
     if (!twin || twin.customerId !== customerId) throw e;
-    await assertReplayCarriesReturn(replay!.db, p, twin.id);
+    await assertReplayCarriesReturn(host!.prisma.forTenant(), p, twin.id);
     return twin;
   }
   if (total > 0.001) p.creditNoteNumber = await p.svc.reserveCreditNoteNumber();

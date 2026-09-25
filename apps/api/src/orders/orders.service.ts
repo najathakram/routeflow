@@ -14,6 +14,7 @@ import { LeaderCron } from "../common/cron-lock";
 import { InlineReturnsService } from "../returns/inline-returns.service";
 import * as inlineReturn from "./order-inline-return";
 import { prepareInlineReturn, replayAfterCheck } from "./order-inline-return";
+import { reserveInlineReturnNumber as reserveReturnNo } from "./order-inline-return";
 import { InjectQueue } from "@nestjs/bull";
 import type { Queue } from "bull";
 import { PrismaService } from "../prisma/prisma.service";
@@ -1371,7 +1372,7 @@ export class OrdersService implements OnApplicationBootstrap {
    * whose own column-stamped order was sitting right there (the same D3 ordering bug already
    * fixed in `findOrderIdByIdempotencyKey`).
    */
-  private async findReplayCandidateByKey(idempotencyKey: string, customerId: string) {
+  async findReplayCandidateByKey(idempotencyKey: string, customerId: string) {
     const include = {
       customer: { select: { id: true, businessName: true } },
       lineItems: { include: { product: { select: { id: true, name: true, unit: true } } } },
@@ -2063,18 +2064,7 @@ export class OrdersService implements OnApplicationBootstrap {
     const unitOrder = lineItemsData.some((li) => "unitLabel" in li); // units_v1: never auto-merged
     let order: any;
     let inlineMinted: any = null;
-    // #2094: once, before the P2002 retry loop; a concurrent twin of this key gets its order back.
-    const twin = await inlineReturn.reserveInlineReturnNumber(
-      inlineRet,
-      customerId,
-      user,
-      idempotencyKey
-        ? {
-            db: this.prisma.forTenant(),
-            find: () => this.findReplayCandidateByKey(idempotencyKey, customerId),
-          }
-        : undefined,
-    );
+    const twin = await reserveReturnNo(inlineRet, customerId, user, idempotencyKey, this as any);
     if (twin) return twin;
     for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
       try {
@@ -3081,7 +3071,6 @@ export class OrdersService implements OnApplicationBootstrap {
     // a paid one throws cleanly before any mutation so money never detaches from a sent
     // document. No-op when there's no such invoice.
     const postDeliveryEdit = POST_DELIVERY_EDIT_STATUSES.includes(order.status);
-    // #2094: refuse a bad return BEFORE the un-tx'd revert commits; the CN number reserves later.
     await inlineReturn.preflightInlineReturn(inlineRet, order, user);
     if (!postDeliveryEdit) {
       await this.invoicesService.revertLinkedInvoicesForOrderEdit(orderId);

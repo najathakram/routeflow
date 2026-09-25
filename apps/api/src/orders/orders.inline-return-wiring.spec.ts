@@ -38,10 +38,10 @@ describe("OrdersService.create(): inline-return call order (#2094)", () => {
   });
 
   it("the credit-note number is reserved ONCE, before the P2002 retry loop, never inside it", () => {
-    const reserve = at("reserveInlineReturnNumber(");
+    const reserve = at("reserveReturnNo(");
     const loop = at("for (let attempt");
     expect(reserve).toBeLessThan(loop);
-    expect(body.split("reserveInlineReturnNumber(").length - 1).toBe(1);
+    expect(body.split("reserveReturnNo(").length - 1).toBe(1);
   });
 
   it("the customer advisory lock is the FIRST statement of the order tx: before the order number, the stock rows and the order write", () => {

@@ -96,6 +96,10 @@ describe("reserveInlineReturnNumber / lockInlineReturnCustomer", () => {
   describe("a returnKey already taken (Opus R1: a concurrent twin is a replay, not a false 409)", () => {
     const taken = () =>
       new ConflictException({ code: INLINE_RETURN_KEY_TAKEN, message: "key already used" });
+    const host = (db: any, order: any) => ({
+      prisma: { forTenant: () => db },
+      findReplayCandidateByKey: jest.fn().mockResolvedValue(order),
+    });
     const setup = async () => {
       const svc = svcStub();
       svc.preflightNewOrderReturn.mockRejectedValue(taken());
@@ -107,10 +111,7 @@ describe("reserveInlineReturnNumber / lockInlineReturnCustomer", () => {
       const { svc, p } = await setup();
       const twin = { id: "ord-A", customerId: "c1" };
       const db = { return: { findFirst: jest.fn().mockResolvedValue({ id: "ret-A" }) } };
-      const out = await reserveInlineReturnNumber(p, "c1", STAFF, {
-        db,
-        find: async () => twin,
-      });
+      const out = await reserveInlineReturnNumber(p, "c1", STAFF, "idem-1", host(db, twin));
       expect(out).toBe(twin);
       expect(db.return.findFirst).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -124,21 +125,25 @@ describe("reserveInlineReturnNumber / lockInlineReturnCustomer", () => {
       const { p } = await setup();
       const db = { return: { findFirst: jest.fn().mockResolvedValue(null) } };
       await expect(
-        reserveInlineReturnNumber(p, "c1", STAFF, {
-          db,
-          find: async () => ({ id: "ord-A", customerId: "c1" }),
-        }),
+        reserveInlineReturnNumber(
+          p,
+          "c1",
+          STAFF,
+          "idem-1",
+          host(db, { id: "ord-A", customerId: "c1" }),
+        ),
       ).rejects.toThrow(ConflictException);
     });
 
     it("no Idempotency-Key, no order for it, or another customer's order: the 409 stands", async () => {
-      for (const replay of [
-        undefined,
-        { db: {}, find: async () => null },
-        { db: {}, find: async () => ({ id: "o", customerId: "OTHER" }) },
-      ]) {
+      for (const [key, h] of [
+        [undefined, host({}, { id: "o", customerId: "c1" })], // no Idempotency-Key
+        ["idem-1", host({}, null)], // no order for it
+        ["idem-1", host({}, { id: "o", customerId: "OTHER" })], // another customer's order
+        ["idem-1", undefined],
+      ] as const) {
         const { p } = await setup();
-        await expect(reserveInlineReturnNumber(p, "c1", STAFF, replay as any)).rejects.toThrow(
+        await expect(reserveInlineReturnNumber(p, "c1", STAFF, key, h as any)).rejects.toThrow(
           ConflictException,
         );
       }
@@ -148,11 +153,11 @@ describe("reserveInlineReturnNumber / lockInlineReturnCustomer", () => {
       const svc = svcStub();
       svc.preflightNewOrderReturn.mockRejectedValue(new ConflictException("stale quote"));
       const p = await prepareInlineReturn(svc as any, LINES, STAFF);
-      const find = jest.fn();
-      await expect(reserveInlineReturnNumber(p, "c1", STAFF, { db: {}, find })).rejects.toThrow(
+      const h = host({}, { id: "o", customerId: "c1" });
+      await expect(reserveInlineReturnNumber(p, "c1", STAFF, "idem-1", h)).rejects.toThrow(
         ConflictException,
       );
-      expect(find).not.toHaveBeenCalled();
+      expect(h.findReplayCandidateByKey).not.toHaveBeenCalled();
     });
   });
 
