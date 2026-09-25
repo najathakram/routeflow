@@ -271,14 +271,85 @@ export function settleDirectCapture(
   );
 }
 
+/** Deterministic id of a direct attempt's failed-action record — one record per returnKey. */
+export function directFailureActionId(returnKey: string): string {
+  return `direct-inline-return:${returnKey}`;
+}
+
+/**
+ * A DIRECT capture whose outcome KEEPS the nonce (5xx, a timeout, 408, 429, the retry-409) is in
+ * neither the offline queue (api-client only queues no-response errors that are not timeouts)
+ * nor `failedActions`. Sign-out empties the nonce store and sign-in rebuilds it only from those
+ * two lists, so such an attempt would lose its nonce and the next attempt would mint a NEW key —
+ * a second Return if the 5xx actually committed (SA-198). This builds the failed-action record
+ * that makes it visible to the sign-in seed (and to the existing failed-action retry surface).
+ * Null for a definite refusal (terminal) and for an offline-queued outcome (the queue owns it).
+ * `userId` is left to the queue store to stamp.
+ */
+export function directFailureRecord(
+  variables: { customerId: string; orderId: string; returnKey: string },
+  error: unknown,
+  now: number,
+): {
+  action: {
+    id: string;
+    endpoint: string;
+    method: "POST";
+    body: unknown;
+    timestamp: number;
+    retries: number;
+  };
+  reason: string;
+  failedAt: number;
+} | null {
+  const outcome = captureOutcomeFromError(error);
+  if (outcome.kind !== "error" || outcome.refused) return null;
+  const response = (error as { response?: { status?: number; data?: { message?: unknown } } })
+    ?.response;
+  const reason =
+    response?.status !== undefined
+      ? `HTTP ${response.status}: ${typeof response.data?.message === "string" ? response.data.message : ""}`
+      : `No response: ${(error as { message?: string })?.message ?? "unknown"}`;
+  return {
+    action: {
+      id: directFailureActionId(variables.returnKey),
+      endpoint: "/returns/inline/capture",
+      method: "POST",
+      body: variables,
+      timestamp: now,
+      retries: 0,
+    },
+    reason,
+    failedAt: now,
+  };
+}
+
 /** `useCaptureInlineReturn`'s settle callbacks, built over a `settle(variables, outcome)`
- *  function (the store's `settleCapture`). Kept here so the wiring is a tested unit. */
+ *  function (the store's `settleCapture`) and, optionally, the failed-actions list: a
+ *  nonce-keeping direct outcome is recorded there, and a settle (success / definite refusal)
+ *  removes it. Kept here so the wiring is a tested unit. */
 export function captureSettleHandlers<
   V extends { customerId: string; orderId: string; returnKey: string },
->(settle: (variables: V, outcome: InlineReturnCaptureOutcome | { kind: "queued" }) => void) {
+>(
+  settle: (variables: V, outcome: InlineReturnCaptureOutcome | { kind: "queued" }) => void,
+  failed?: {
+    add: (record: NonNullable<ReturnType<typeof directFailureRecord>>) => void;
+    clear: (actionId: string) => void;
+  },
+) {
   return {
-    onSuccess: (_data: unknown, variables: V) => settle(variables, { kind: "success" }),
-    onError: (error: unknown, variables: V) => settle(variables, captureOutcomeFromError(error)),
+    onSuccess: (_data: unknown, variables: V) => {
+      settle(variables, { kind: "success" });
+      failed?.clear(directFailureActionId(variables.returnKey));
+    },
+    onError: (error: unknown, variables: V) => {
+      const outcome = captureOutcomeFromError(error);
+      settle(variables, outcome);
+      if (!failed || outcome.kind === "queued") return;
+      const record = directFailureRecord(variables, error, Date.now());
+      if (record) failed.add(record);
+      else failed.clear(directFailureActionId(variables.returnKey));
+    },
   };
 }
 

@@ -17,6 +17,8 @@ import {
 } from "@tanstack/react-query";
 import { apiClient } from "../api-client";
 import { captureSettleHandlers } from "../inline-return-submit-key";
+import { useOfflineQueue, type QueuedAction } from "../../store/offlineQueue";
+import type { FailedActionRecord } from "../queue-drain";
 import { useInlineReturnSubmissionStore } from "../../store/inlineReturnSubmissionStore";
 import type {
   CaptureInlineReturnRequest,
@@ -60,8 +62,9 @@ type CaptureVars = CaptureInlineReturnRequest;
 export function buildCaptureMutationOptions(
   qc: Pick<QueryClient, "invalidateQueries">,
   settleCapture: Parameters<typeof captureSettleHandlers<CaptureVars>>[0],
+  failed?: Parameters<typeof captureSettleHandlers<CaptureVars>>[1],
 ): UseMutationOptions<InlineReturnRecord, Error, CaptureVars> {
-  const settle = captureSettleHandlers<CaptureVars>(settleCapture);
+  const settle = captureSettleHandlers<CaptureVars>(settleCapture, failed);
   return {
     mutationFn: (dto) => apiClient.post("/returns/inline/capture", dto).then((r) => r.data),
     onSuccess: (data, variables) => {
@@ -101,7 +104,16 @@ export function buildCaptureMutationOptions(
 export function useCaptureInlineReturn() {
   const qc = useQueryClient();
   const settleCapture = useInlineReturnSubmissionStore((s) => s.settleCapture);
+  // SA-198: a direct capture that keeps its nonce is recorded in failedActions so sign-out /
+  // sign-in can rebuild it; a settle removes the record.
   return useMutation<InlineReturnRecord, Error, CaptureVars>(
-    buildCaptureMutationOptions(qc, settleCapture),
+    buildCaptureMutationOptions(qc, settleCapture, {
+      add: (record) => {
+        const q = useOfflineQueue.getState();
+        q.clearFailedAction(record.action.id);
+        q.addFailedAction(record as unknown as FailedActionRecord & { action: QueuedAction });
+      },
+      clear: (id) => useOfflineQueue.getState().clearFailedAction(id),
+    }),
   );
 }

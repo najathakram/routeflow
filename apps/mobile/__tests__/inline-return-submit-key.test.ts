@@ -13,6 +13,8 @@ import {
   settleDirectCapture,
   clearNonceIf,
   captureSettleHandlers,
+  directFailureActionId,
+  directFailureRecord,
   shouldSettleInlineReturnNonce,
   type NonceMap,
 } from "../lib/inline-return-submit-key";
@@ -552,5 +554,70 @@ describe("noncesFromQueues — rebuild the signed-in user's nonces from THEIR OW
     expect(noncesFromQueues([cap("nQ")], [failed(cap("nF"), "HTTP 500: x")], "u1")).toEqual({
       "c:o": "nQ",
     });
+  });
+});
+
+describe("directFailureRecord — an uncertain DIRECT capture must survive sign-out (SA-198)", () => {
+  const req = {
+    customerId: "c",
+    orderId: "o",
+    returnKey: "inl:c:o:n1",
+    reason: "DAMAGED",
+    items: [{ productId: "p1", qty: 1, boxes: 0, pieces: 3 }],
+  } as any;
+  const now = 1_700_000_000_000;
+
+  it.each([
+    [{ response: { status: 503, data: { message: "down" } } }, "HTTP 503: down"],
+    [{ response: { status: 408, data: {} } }, "HTTP 408: "],
+    [{ response: { status: 429, data: { message: "slow" } } }, "HTTP 429: slow"],
+    [
+      { response: { status: 409, data: { message: RETURN_STATE_RACE_RETRY_MESSAGE } } },
+      `HTTP 409: ${RETURN_STATE_RACE_RETRY_MESSAGE}`,
+    ],
+    [{ code: "ECONNABORTED", message: "timeout" }, "No response: timeout"],
+  ])("a nonce-keeping outcome %j is persisted as a failed action (%s)", (err, reason) => {
+    const rec = directFailureRecord(req, err, now)!;
+    expect(rec.reason).toBe(reason);
+    expect(rec.action).toMatchObject({
+      endpoint: "/returns/inline/capture",
+      method: "POST",
+      body: req,
+      id: directFailureActionId(req.returnKey),
+    });
+    // ...and the sign-in seed reads exactly that record back into the SAME nonce.
+    expect(noncesFromQueues([], [rec], "u1")).toEqual({ "c:o": "n1" });
+  });
+
+  it.each([
+    [{ response: { status: 403, data: {} } }],
+    [{ response: { status: 400, data: { message: "bad" } } }],
+    [{ isOfflineQueued: true }],
+  ])("a definite refusal / an offline-queued capture (%j) is NOT persisted here", (err) => {
+    expect(directFailureRecord(req, err, now)).toBeNull();
+  });
+});
+
+describe("captureSettleHandlers — failed-action persistence follows the settle", () => {
+  const vars = { customerId: "c", orderId: "o", returnKey: "inl:c:o:n1" } as any;
+  const mk = () => {
+    const failed = { add: jest.fn(), clear: jest.fn() };
+    const h = captureSettleHandlers(jest.fn(), failed);
+    return { failed, h };
+  };
+  it("a kept-nonce error records the attempt; success and a definite refusal clear it", () => {
+    const { failed, h } = mk();
+    h.onError({ response: { status: 503, data: {} } }, vars);
+    expect(failed.add).toHaveBeenCalledTimes(1);
+    h.onSuccess(undefined, vars);
+    expect(failed.clear).toHaveBeenLastCalledWith(directFailureActionId(vars.returnKey));
+    h.onError({ response: { status: 403, data: {} } }, vars);
+    expect(failed.clear).toHaveBeenCalledTimes(2);
+  });
+  it("a queued outcome touches neither (the offline queue owns it)", () => {
+    const { failed, h } = mk();
+    h.onError({ isOfflineQueued: true }, vars);
+    expect(failed.add).not.toHaveBeenCalled();
+    expect(failed.clear).not.toHaveBeenCalled();
   });
 });
