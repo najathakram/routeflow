@@ -18,7 +18,6 @@ import {
   Plus,
   Power,
   ShieldCheck,
-  BarChart3,
 } from "lucide-react";
 import {
   LineChart,
@@ -69,6 +68,7 @@ import { MSRP_ADDON } from "@/lib/api/addons";
 import { CropModal } from "./CropModal";
 import { DemandCard } from "./DemandCard";
 import { SalesHistoryCard } from "./SalesHistoryCard";
+import { FullInsightsLink } from "./FullInsightsLink";
 import { ProductLabelsCard } from "./ProductLabelsCard";
 import { ProductUnitsCard } from "./ProductUnitsCard";
 import { ImageLightbox } from "./ImageLightbox";
@@ -2398,16 +2398,7 @@ export default function ProductDetailPage() {
             <ProductLabelsCard productId={product.id} />
             <ProductUnitsCard product={product} />
 
-            {/* #2119 / plan §A10: this page keeps its own demand/sales cards;
-                "Full insights" links to the dedicated finder-rooted page for
-                the trend/buyers/CSV view once #2105-a's API ships. */}
-            <Link
-              href={`/insights/products/${product.id}`}
-              className="inline-flex items-center gap-1.5 self-start text-sm font-medium text-brand-600 hover:text-brand-700"
-            >
-              <BarChart3 size={15} />
-              Full insights
-            </Link>
+            <FullInsightsLink productId={product.id} />
 
             {/* Sales demand — real data from invoiced sales. In its own file (unlike
                 CostHistoryCard below) because it owns range/metric state and five
