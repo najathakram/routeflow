@@ -482,12 +482,12 @@ export class OrderTemplatesService {
 
           // F-05: the ban notice is sent AFTER the attempt, whatever its outcome (the suspension already
           // committed, so a throw past it must not lose the one notice for good).
-          const ctx: { ban: { count: number; names: string } | null } = { ban: null };
-          let generated = false;
+          const ctx: { ban: { count: number; names: string } | null; placed?: boolean } = {
+            ban: null,
+          };
           try {
             // Unattended cron run — same warn-and-oversell posture as an operator.
             const order = await this.createOrderFromTemplate(template, true, true, ctx);
-            generated = order != null;
             // null = all lines were license-gated + skipped → nothing created.
             if (order) totalCreated++;
             else totalSkipped++;
@@ -498,7 +498,7 @@ export class OrderTemplatesService {
             );
           } finally {
             if (ctx.ban)
-              await this.notifyBanSkipped(template, ctx.ban, generated ? "ordered" : "held");
+              await this.notifyBanSkipped(template, ctx.ban, ctx.placed ? "ordered" : "held");
           }
         }
       });
@@ -528,7 +528,7 @@ export class OrderTemplatesService {
     isStaffRole: boolean,
     unattended = false,
     /** Unattended runs: filled with the ban note, so the CALLER can notify after the attempt (finally). */
-    ctx?: { ban: { count: number; names: string } | null },
+    ctx?: { ban: { count: number; names: string } | null; placed?: boolean },
   ) {
     // F-05: a banned product refuses a manual run (409 — the operator decides). The unattended cron run
     // instead SKIPS the banned line(s), still orders the rest, notifies once and marks each banned template
@@ -794,6 +794,8 @@ export class OrderTemplatesService {
       );
       return order;
     });
+
+    if (ctx) ctx.placed = true; // the order tx committed: whatever happens next, the order EXISTS
 
     // If the customer already had PENDING orders, fold the newly-created one
     // (and any pre-existing duplicates) into a single winner. The newest order

@@ -85,6 +85,7 @@ describe("OrderTemplatesService — selling restrictions (F-05)", () => {
     notifications.sendToUser.mockResolvedValue(1);
     audit.log.mockResolvedValue(undefined);
     authGuard.checkAuthorized.mockResolvedValue({ blocked: [] });
+    ordersService.mergeAllPendingForCustomer.mockResolvedValue(null);
     ordersService.loadActivePromotions.mockResolvedValue([]);
     ordersService.getCustomerPriceHistory.mockResolvedValue({});
     const mod = await Test.createTestingModule({
@@ -270,6 +271,20 @@ describe("OrderTemplatesService — selling restrictions (F-05)", () => {
       await run(template()); // the cron logs the failure and moves on
       expect(prisma.orderTemplateItem.updateMany).toHaveBeenCalledTimes(1);
       expect(notifications.sendToCustomer).toHaveBeenCalledTimes(1);
+      // nothing was placed (the write threw), so it must not claim the order went ahead
+      const text = String(notifications.sendToCustomer.mock.calls[0][2]);
+      expect(text).toContain("not sent this time");
+      expect(text).not.toContain("went ahead");
+    });
+
+    it("the order tx COMMITS and the post-commit merge THROWS: the notice says 'went ahead' (a duplicate re-order is not invited)", async () => {
+      restrictions.checkLinesSellable.mockResolvedValue(block);
+      ordersService.mergeAllPendingForCustomer.mockRejectedValue(new Error("merge blew up"));
+      await run(template()); // the cron logs the failure and moves on
+      expect(prisma.order.create).toHaveBeenCalledTimes(1);
+      const text = String(notifications.sendToCustomer.mock.calls[0][2]);
+      expect(text).toContain("went ahead");
+      expect(text).not.toContain("not sent this time");
     });
   });
 
