@@ -109,4 +109,22 @@ describe("ProductsService — importer seam (B858)", () => {
     ).rejects.toThrow(ConflictException);
     expect(prisma.product.create).not.toHaveBeenCalled();
   });
+
+  it("R1: update() writes reorderPoint and reorderQty from its DTO", async () => {
+    prisma.product.findUnique.mockResolvedValue({
+      id: "prod-1",
+      name: "Widget",
+      sku: "W-1",
+      parentProductId: null,
+      trackedCategoryId: null,
+      trackedSubcategoryId: null,
+      imageKeys: [],
+    });
+    prisma.product.update.mockResolvedValue({ id: "prod-1" });
+
+    await service.update("prod-1", { reorderPoint: 4, reorderQty: 48 }, { suppressEmit: true });
+
+    const writes = prisma.product.update.mock.calls.map((c: any) => c[0].data);
+    expect(writes).toContainEqual(expect.objectContaining({ reorderPoint: 4, reorderQty: 48 }));
+  });
 });
