@@ -15,7 +15,7 @@ import { confirm } from "../../../lib/confirm";
 import { fmtCalendarDate } from "../../../lib/format-date";
 import { poLineSubtotal } from "../../../lib/po-line-subtotal";
 import { poDisplayTotal } from "../../../lib/po-list-logic";
-import { poItemQtyLabel } from "../../../lib/po-item-qty-label";
+import { linePack, unitsLabel } from "@routeflow/pricing";
 
 function statusPill(status: POStatus): {
   variant: "brand" | "green" | "orange" | "red" | "gray";
@@ -209,12 +209,16 @@ function ItemRow({ item, isFirst }: { item: POItem; isFirst: boolean }) {
   // B698: the stored exact line total; the multiply is only the fallback for a row without one.
   const subtotal = poLineSubtotal(item);
   const remaining = Number(item.qtyOrdered) - Number(item.qtyReceived);
-  // LANE-U step 8: the PO detail response includes product.unitsPerBox/unit on every item
-  // (the LIST endpoint does not, so this label is detail-screen only) — a boxed line shows its
-  // boxes+pieces split, mirroring web's PurchaseOrdersTab.
-  const upb = item.product?.unitsPerBox;
+  // LANE-U step 8 (#2066 review round): the PO detail response includes product.unitsPerBox/unit
+  // on every item (the LIST endpoint does not, so this label is detail-screen only) — a boxed
+  // line shows its boxes+pieces split, mirroring web's PurchaseOrdersTab. The SPLIT is at the
+  // line's own stored `packSize`, never the live product's `unitsPerBox` directly (B699/B722's
+  // `linePack`, the same stored-wins rule B707/#1171 already enforces for invoice/order lines):
+  // reading the live product alone shows no split once a boxed product is edited to non-boxed,
+  // and re-denominates an already-received line's split the moment the product is repacked.
+  const upb = linePack(item, Number(item.product?.unitsPerBox ?? 0));
   const unit = item.product?.unit;
-  const qtyLabel = (qty: number | string) => poItemQtyLabel(qty, upb, unit);
+  const qtyLabel = (qty: number | string) => unitsLabel(qty, upb, unit);
 
   return (
     <View
