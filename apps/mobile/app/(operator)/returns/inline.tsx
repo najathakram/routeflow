@@ -51,6 +51,7 @@ import {
   linesFromOrder,
   type PrefilledReturnLine,
 } from "../../../lib/inline-return-screen";
+import { useAuthStore } from "../../../lib/auth-store";
 import { useInlineReturnRemoveGuard } from "../../../lib/use-inline-return-remove-guard";
 import { useInlineReturnSubmissionStore } from "../../../store/inlineReturnSubmissionStore";
 import { sanitizeIntInput } from "../../../lib/qty";
@@ -104,7 +105,11 @@ export default function InlineReturnScreen() {
 
   // Lock EVERY removal path while a capture is in flight (Android back, this stack's swipe, a
   // parent-stack swipe): usePreventRemove, not a raw beforeRemove (see the hook).
-  useInlineReturnRemoveGuard(screen);
+  const signedOut = useAuthStore((s) => !s.user);
+  useInlineReturnRemoveGuard(screen, {
+    signedOut,
+    onSignedOutRedirect: () => router.replace("/(auth)/login" as any),
+  });
 
   const setLine = (productId: string, patch: Partial<InlineReturnLineDraft>) =>
     setLines((prev) => prev.map((l) => (l.productId === productId ? { ...l, ...patch } : l)));
