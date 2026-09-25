@@ -32,15 +32,19 @@ export function orderLineShape(
   const upb = Number(existing?.unitsPerBox ?? sample?.unitsPerBox ?? 0);
   const isBoxSplit = (existing ?? sample)?.boxes != null;
   // A box-split line whose pack is unknown (a legacy 0-box + 5-piece line) cannot be re-split from qty:
-  // normalizing at pack 0 would turn its stored 0 into null and flip it to box-unaware. Keep the stored
-  // split (the single billed invoice line's when there is one), 0 stays 0.
+  // normalizing at pack <= 1 would turn its stored 0 into null and flip it to box-unaware. Keep the stored
+  // split: the single billed invoice line's, but ONLY when that line has a split of its own (a line with
+  // none must not blank the order line's); otherwise the order line's own. With 0 boxes the pieces ARE
+  // the qty, so a qty change stays consistent (0 boxes + 6 pieces, never 0 + 5 for qty 6). A stored pack
+  // of exactly 1 is kept as 1, as before; only 0/unknown becomes null.
   if (isBoxSplit && !(upb > 1)) {
-    const src = agg.n === 1 ? sample : (existing ?? sample);
+    const src = agg.n === 1 && sample?.boxes != null ? sample : (existing ?? sample);
+    const boxes = src?.boxes ?? null;
     return {
       qty: agg.qty,
-      boxes: src?.boxes ?? null,
-      pieces: src?.pieces ?? null,
-      unitsPerBox: null,
+      boxes,
+      pieces: boxes === 0 ? agg.qty : (src?.pieces ?? null),
+      unitsPerBox: upb > 0 ? upb : null,
     };
   }
   const split = isBoxSplit

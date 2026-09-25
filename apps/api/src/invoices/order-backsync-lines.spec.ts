@@ -49,6 +49,56 @@ describe("orderLineShape (SA-203c)", () => {
     ).toMatchObject({ boxes: null, pieces: null });
   });
 
+  describe("Opus delta on the 0-vs-null fix: which line, n > 1, pack = 1", () => {
+    const stored05 = { boxes: 0, pieces: 5, unitsPerBox: null };
+
+    it("(a) a stored pack of exactly 1 stays 1 (only 0/unknown becomes null): the live product's pack is never consulted", () => {
+      const shape = orderLineShape(
+        { boxes: 0, pieces: 5, unitsPerBox: 1 },
+        { qty: 5, sample: { boxes: 0, pieces: 5, unitsPerBox: 1 }, n: 1 },
+        false,
+      );
+      expect(shape.unitsPerBox).toBe(1);
+      expect(shape).toMatchObject({ boxes: 0, pieces: 5 });
+    });
+
+    it("(b) WHICH line: a single invoice line with NO split does not blank the order line's stored split", () => {
+      const shape = orderLineShape(
+        stored05,
+        { qty: 5, sample: { boxes: null, pieces: null, unitsPerBox: null }, n: 1 },
+        false,
+      );
+      expect(shape).toMatchObject({ boxes: 0, pieces: 5 });
+    });
+
+    it("(b) WHICH line: a single invoice line WITH a split wins over the order line's", () => {
+      const shape = orderLineShape(
+        { boxes: 0, pieces: 5, unitsPerBox: null },
+        { qty: 3, sample: { boxes: 0, pieces: 3, unitsPerBox: null }, n: 1 },
+        false,
+      );
+      expect(shape).toMatchObject({ boxes: 0, pieces: 3 });
+    });
+
+    it("(c) n > 1 with a qty change: 0 boxes means pieces == qty (6 -> 0 boxes + 6 pieces, never 0 + 5)", () => {
+      const shape = orderLineShape(
+        stored05,
+        { qty: 6, sample: { boxes: 0, pieces: 2, unitsPerBox: null }, n: 2 },
+        false,
+      );
+      expect(shape).toMatchObject({ qty: 6, boxes: 0, pieces: 6, unitsPerBox: null });
+    });
+
+    it("n > 1 uses the ORDER line's own split, not the last invoice line's", () => {
+      const shape = orderLineShape(
+        { boxes: 0, pieces: 5, unitsPerBox: null },
+        { qty: 9, sample: { boxes: 3, pieces: 1, unitsPerBox: null }, n: 2 },
+        false,
+      );
+      expect(shape).toMatchObject({ boxes: 0, pieces: 9 });
+    });
+  });
+
   it("a selling-unit order line stays unsplit", () => {
     expect(
       orderLineShape({ boxes: null, unitsPerBox: null }, { qty: 7, sample: {} }, false),
