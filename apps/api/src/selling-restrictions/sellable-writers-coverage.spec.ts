@@ -56,12 +56,12 @@ const TABLE: Record<string, Row> = {
   // ordered quantity; any increase, added line or substitution is blocked. That ceiling is
   // `assertDeliveriesFitStop` (pinned in routes/delivery-lines.util.spec.ts), so the path cannot sell more.
   [rt("completeWithPayment")]: X(
-    "owner ruling 2026-09-25: deliver up to the ordered qty; the ceiling is assertDeliveriesFitStop (pinned)",
+    "owner ruling 2026-09-25 (#2093): deliver up to the ordered qty, 0 for a cancelled line/order; the ceiling is assertDeliveriesFitStop (pinned)",
   ),
   // reopenStop resets delivery state on lines the order already carried; a cancelled line stays cancelled
   // (pinned in routes.reopen-cancelled-lines.spec.ts), so it adds no sellable quantity of any product.
   [rt("reopenStop")]: X(
-    "undoes a delivery, never a cancel: no line or qty is added (routes.reopen-cancelled-lines.spec.ts)",
+    "owner ruling 2026-09-25 (#2093) companion: nothing not ordered is sold; reopen undoes a delivery, never a cancel (routes.reopen-cancelled-lines.spec.ts)",
   ),
   // ── invoices / estimates / import (step 2b remainder) ──────────────────────────────────────
   [inv("create")]: G,

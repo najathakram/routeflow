@@ -10,6 +10,10 @@ import { BadRequestException, NotFoundException } from "@nestjs/common";
  * read is tenant-scoped, so a foreign tenant's item looks exactly like a missing one — is a 404.
  * Every refusal names the offending item.
  *
+ * F-05 (#2093, owner ruling 2026-09-25): at-door delivery may never sell what was not ordered, and a line
+ * that was CANCELLED — or on a CANCELLED / DRAFT order still riding a stop — was not ordered any more:
+ * its ceiling is 0, so a driver cannot deliver (and bill) units of it. Delivering 0 is still allowed.
+ *
  * `tx` is the tenant-scoped transaction client (tenantTransaction), so the item read can never
  * see another tenant's rows.
  */
@@ -19,9 +23,21 @@ export async function assertDeliveriesFitStop(
   deliveries: readonly { orderItemId: string; quantityDelivered: number }[] | undefined,
 ): Promise<void> {
   if (!deliveries || deliveries.length === 0) return;
-  const items: { id: string; orderId: string; qty: unknown }[] = await tx.orderItem.findMany({
+  const items: {
+    id: string;
+    orderId: string;
+    qty: unknown;
+    status?: string;
+    order?: { status?: string } | null;
+  }[] = await tx.orderItem.findMany({
     where: { id: { in: deliveries.map((d) => d.orderItemId) } },
-    select: { id: true, orderId: true, qty: true },
+    select: {
+      id: true,
+      orderId: true,
+      qty: true,
+      status: true,
+      order: { select: { status: true } },
+    },
   });
   const byId = new Map(items.map((i) => [i.id, i]));
   const onStop = new Set(stopOrders.map((o) => o.id));
@@ -39,9 +55,15 @@ export async function assertDeliveriesFitStop(
       throw new BadRequestException(`Order item ${d.orderItemId} does not belong to this stop`);
     }
     const q = Number(d.quantityDelivered);
-    if (!Number.isFinite(q) || q < 0 || q > Number(item.qty) + 0.0005) {
+    const notOrdered =
+      item.status === "CANCELLED" ||
+      item.order?.status === "CANCELLED" ||
+      item.order?.status === "DRAFT";
+    if (!Number.isFinite(q) || q < 0 || q > (notOrdered ? 0 : Number(item.qty)) + 0.0005) {
       throw new BadRequestException(
-        `Delivery quantity for order item ${d.orderItemId} must be between 0 and the ordered quantity`,
+        notOrdered
+          ? `Order item ${d.orderItemId} was cancelled — nothing can be delivered against it`
+          : `Delivery quantity for order item ${d.orderItemId} must be between 0 and the ordered quantity`,
       );
     }
   }

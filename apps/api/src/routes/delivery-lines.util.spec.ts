@@ -6,6 +6,7 @@
  * line of an order already on the stop. These pins are what the exemption stands on.
  */
 import * as fs from "fs";
+import * as ts from "typescript";
 import * as path from "path";
 import { BadRequestException, NotFoundException } from "@nestjs/common";
 import { assertDeliveriesFitStop } from "./delivery-lines.util";
@@ -55,12 +56,60 @@ describe("assertDeliveriesFitStop — the at-door ceiling", () => {
     ).rejects.toThrow(/more than one delivery line/);
   });
 
-  it("completeWithPayment runs the ceiling BEFORE its first delivery write", () => {
-    const src = fs.readFileSync(path.join(__dirname, "routes.service.ts"), "utf8");
-    const body = src.slice(src.indexOf("async completeWithPayment("));
-    const guard = body.indexOf("assertDeliveriesFitStop(tx, stop.orders, dto.deliveries)");
-    const firstWrite = body.indexOf("tx.orderItem.update(");
-    expect(guard).toBeGreaterThan(-1);
-    expect(firstWrite).toBeGreaterThan(guard);
+  it("caps a CANCELLED line, and a line of a CANCELLED or DRAFT order still on the stop, at 0", async () => {
+    const cases = [
+      { ...item, status: "CANCELLED", order: { status: "CONFIRMED" } },
+      { ...item, status: "PENDING", order: { status: "CANCELLED" } },
+      { ...item, status: "PENDING", order: { status: "DRAFT" } },
+    ];
+    for (const c of cases) {
+      const p = assertDeliveriesFitStop(tx([c]), stopOrders, [
+        { orderItemId: "i1", quantityDelivered: 10 },
+      ]);
+      await expect(p).rejects.toBeInstanceOf(BadRequestException);
+      await expect(p).rejects.toThrow(/was cancelled/);
+      // delivering nothing against it stays legal (a driver can close the stop)
+      await expect(
+        assertDeliveriesFitStop(tx([c]), stopOrders, [{ orderItemId: "i1", quantityDelivered: 0 }]),
+      ).resolves.toBeUndefined();
+    }
+  });
+
+  describe("structure: both stop-completion paths run the ceiling before any delivery write", () => {
+    const src = ts.createSourceFile(
+      "routes.service.ts",
+      fs.readFileSync(path.join(__dirname, "routes.service.ts"), "utf8"),
+      ts.ScriptTarget.Latest,
+      true,
+    );
+    const method = (name: string) => {
+      let found: ts.MethodDeclaration | undefined;
+      const walk = (n: ts.Node) => {
+        if (ts.isMethodDeclaration(n) && n.name.getText(src) === name) found = n;
+        ts.forEachChild(n, walk);
+      };
+      walk(src);
+      return found!;
+    };
+    /** Start offsets of every call `x.y(...)` whose callee text ends with `suffix`, inside the method body. */
+    const calls = (m: ts.MethodDeclaration, suffix: string) => {
+      const at: number[] = [];
+      const walk = (n: ts.Node) => {
+        if (ts.isCallExpression(n) && n.expression.getText(src).endsWith(suffix))
+          at.push(n.getStart(src));
+        ts.forEachChild(n, walk);
+      };
+      walk(m.body!);
+      return at.sort((a, b) => a - b);
+    };
+
+    it.each(["completeWithPayment", "completeStop"])("%s", (name) => {
+      const m = method(name);
+      const guard = calls(m, "assertDeliveriesFitStop");
+      const writes = [...calls(m, "orderItem.update"), ...calls(m, "deliveryMutation.create")];
+      expect(guard.length).toBeGreaterThan(0);
+      expect(writes.length).toBeGreaterThan(0);
+      expect(guard[0]).toBeLessThan(Math.min(...writes));
+    });
   });
 });
