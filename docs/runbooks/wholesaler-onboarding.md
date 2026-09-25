@@ -162,14 +162,17 @@ badges and older docs use different names for some tiers.
      land on the sign-in page with no confirmation message; that's normal. The link is missing
      if Stripe can't price the plan (e.g. Enterprise without a custom fee). In that case, set
      the fee under **Billing & Subscription → Custom fee override**, then use **Create checkout
-     session** there and send them the link.
+     session** there and send them the link. Setting that fee on a trial workspace books it into
+     the revenue ledger early, and the payment books it again (B864). MRR stays right, so tell
+     finance.
    - **Bank transfer / Zelle / check:** when the money arrives, **Back office → tenant →
      Billing & Subscription → Manual Activation**. Enter the plan, payment method, billing
      period, the transaction reference and, in Notes, `incl. one-time setup fee $X`. Click
      **Activate Subscription**.
 
      ⚠️ This form can't select **Growth** (B857). For a Growth customer paying by bank, ask the
-     owner before promising bank payment, or offer card.
+     owner before promising bank payment, or offer card. An **Annual (365 days)** period is
+     stored as a monthly cycle (B863), so keep the §7 renewal reminder even for annual payers.
 4. [ ] **Setup fee:**
    - Card payers: send a separate Stripe payment link or invoice for the fee (owner, in
      Stripe). Record the Stripe receipt number in the checklist.
@@ -902,6 +905,8 @@ Payment: card / bank · Target go-live: {date}
 | Numbering card doesn't continue the old sequence for live invoices                                   | Tell them new invoices start at `INV-<year>-0001`; imported invoices keep their numbers | B861              |
 | Invoice prefix / payment-due days in Settings → Invoicing don't save                                 | Don't use them; set terms per customer                                                  | B852              |
 | Drivers get no invite email                                                                          | Create driver logins during the driver session                                          | B854              |
+| A 365-day manual payment is stored as a monthly cycle                                                | Keep the §7 renewal reminder for annual bank payers                                     | B863              |
+| A custom fee set on a trial workspace is booked into the ledger early, then again at payment         | Expect the Enterprise ledger to run ahead of MRR; tell finance                          | B864              |
 | "Add User" ignores its Role box and always makes an office login                                     | Create drivers only from Drivers → New Driver                                           | B862              |
 | SMS/WhatsApp consent can't be recorded, so those messages never send                                 | Don't promise text or WhatsApp messages; email works                                    | B183              |
 | Tax-exempt certificates upload as photos only                                                        | Photograph or convert PDF certificates to images                                        | —                 |
