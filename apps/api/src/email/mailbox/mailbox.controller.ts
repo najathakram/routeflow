@@ -4,6 +4,7 @@ import {
   Delete,
   ForbiddenException,
   Get,
+  Header,
   Headers,
   HttpCode,
   HttpStatus,
@@ -122,6 +123,8 @@ export class MailboxController {
   @UseGuards(JwtAuthGuard, RolesGuard, AddonGuard)
   @Roles(UserRole.TENANT_ADMIN)
   @RequireAddon("email.connected_mailbox")
+  // The body carries the connect secret: no browser, proxy or CDN may keep a copy of it.
+  @Header("Cache-Control", "no-store")
   async startGoogle(@CurrentUser() user: JwtPayload) {
     if (!user.tenantId) throw new ForbiddenException("A tenant context is required.");
     // `{ url, connectSecret }`: the tab keeps the secret for preview/confirm (#2115).
@@ -172,6 +175,8 @@ export class MailboxController {
   @UseGuards(JwtAuthGuard, RolesGuard, AddonGuard)
   @Roles(UserRole.TENANT_ADMIN)
   @RequireAddon("email.connected_mailbox")
+  // Carries the connect secret, like google/start: never cached.
+  @Header("Cache-Control", "no-store")
   async startMicrosoft(@CurrentUser() user: JwtPayload) {
     if (!user.tenantId) throw new ForbiddenException("A tenant context is required.");
     // `{ url, connectSecret }`: the tab keeps the secret for preview/confirm (#2115).

@@ -543,10 +543,50 @@ describe("MailboxCard — returning with a confirm token: an explicit confirm, o
   const previewAnswers = (token: string, provider: string, accountEmail: string) => ({
     [previewUrl(token)]: () => Promise.resolve({ data: { provider, accountEmail } }),
   });
-  const httpError = (status: number) =>
-    Promise.reject(
-      Object.assign(new Error(`status ${status}`), { response: { status, data: {} } }),
-    );
+  const httpError = (status: number, data: unknown = {}) =>
+    Promise.reject(Object.assign(new Error(`status ${status}`), { response: { status, data } }));
+
+  /**
+   * The bodies of the four distinct 403s preview and confirm can answer, exactly as the API
+   * sends them: the two grant-holder checks (MailboxConnectionService.assertGrantHolder, a bare
+   * ForbiddenException), AddonGuard's add-on denial, and RolesGuard's default Nest refusal.
+   */
+  const FORBIDDEN = {
+    secretMismatch: {
+      statusCode: 403,
+      error: "Forbidden",
+      message: "mailbox_connect_secret_mismatch",
+    },
+    identityMismatch: {
+      statusCode: 403,
+      error: "Forbidden",
+      message: "mailbox_confirm_identity_mismatch",
+    },
+    addonGate: {
+      statusCode: 403,
+      error: "Forbidden",
+      code: "ADDON_GATE",
+      addonKeys: [EMAIL_CONNECTED_MAILBOX_ADDON],
+      message: `This feature requires the "${EMAIL_CONNECTED_MAILBOX_ADDON}" add-on.`,
+    },
+    notAnAdmin: { statusCode: 403, error: "Forbidden", message: "Forbidden resource" },
+  };
+  const OTHER_TAB = /only be confirmed in the browser tab where it was started/;
+  /** Each 403 cause, the copy it must get, and whether that copy may blame the tab. */
+  const FORBIDDEN_CASES: Array<[string, unknown, RegExp]> = [
+    ["the secret of another tab", FORBIDDEN.secretMismatch, OTHER_TAB],
+    [
+      "a different admin",
+      FORBIDDEN.identityMismatch,
+      /started by a different user or in a different workspace/,
+    ],
+    ["the add-on not held", FORBIDDEN.addonGate, /Connected mailboxes aren't enabled/],
+    [
+      "a non-admin (RolesGuard)",
+      FORBIDDEN.notAnAdmin,
+      /can't connect a mailbox for this workspace/,
+    ],
+  ];
   const dialog = () => screen.findByRole("dialog", { name: /to this workspace\?$/ });
   const confirmPosts = () => post.mock.calls.filter(([url]) => url === CONFIRM_URL);
 
@@ -649,7 +689,6 @@ describe("MailboxCard — returning with a confirm token: an explicit confirm, o
   });
 
   it.each([
-    [403, /only be confirmed in the browser tab where it was started/],
     [400, /expired or was already used/],
     [500, /couldn't check this connection request/],
   ])(
@@ -669,6 +708,51 @@ describe("MailboxCard — returning with a confirm token: an explicit confirm, o
       });
       expect(confirmPosts()).toEqual([]);
       expect(screen.queryByRole("dialog")).toBeNull();
+      expect(storedSecret()).toBeNull();
+    },
+  );
+
+  it.each(FORBIDDEN_CASES)(
+    "a preview refused with 403 for %s: its own copy, and only a secret mismatch blames the tab",
+    async (_cause, body, why) => {
+      setUrl("/settings?tab=email&mailbox_confirm=tok-403");
+      inTheStartingTab();
+      routeGet({ [previewUrl("tok-403")]: () => httpError(403, body) });
+      routePost({ [CANCEL_URL]: () => Promise.resolve({ data: undefined }) });
+      renderCard();
+
+      await waitFor(() => expect(post).toHaveBeenCalledWith(CANCEL_URL, { state: "tok-403" }));
+      expect(toast).toHaveBeenCalledTimes(1);
+      const [{ title, description, variant }] = toast.mock.calls[0];
+      expect({ title, variant }).toEqual({ title: "Mailbox not connected", variant: "error" });
+      expect(description).toMatch(why);
+      if (why !== OTHER_TAB) expect(description).not.toMatch(OTHER_TAB);
+      expect(confirmPosts()).toEqual([]);
+      expect(screen.queryByRole("dialog")).toBeNull();
+      expect(storedSecret()).toBeNull();
+    },
+  );
+
+  it.each(FORBIDDEN_CASES)(
+    "a Confirm refused with 403 for %s: its own copy, and only a secret mismatch blames the tab",
+    async (_cause, body, why) => {
+      setUrl("/settings?tab=email&mailbox_confirm=tok-403c");
+      inTheStartingTab();
+      routeGet(previewAnswers("tok-403c", "GOOGLE", "gmail-owner@acme.test"));
+      routePost({ [CONFIRM_URL]: () => httpError(403, body) });
+      renderCard();
+
+      fireEvent.click(within(await dialog()).getByRole("button", { name: "Confirm" }));
+
+      await waitFor(() => expect(toast).toHaveBeenCalledTimes(1));
+      const [{ title, description, variant }] = toast.mock.calls[0];
+      expect({ title, variant }).toEqual({
+        title: "Couldn't finish connecting the mailbox",
+        variant: "error",
+      });
+      expect(description).toMatch(why);
+      if (why !== OTHER_TAB) expect(description).not.toMatch(OTHER_TAB);
+      await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
       expect(storedSecret()).toBeNull();
     },
   );

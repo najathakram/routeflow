@@ -73,10 +73,39 @@ const REFUSED_COPY = {
   "other-tab":
     "This connection can only be confirmed in the browser tab where it was started. Nothing " +
     "was connected. Connect again from this page.",
+  "other-admin":
+    "This connection was started by a different user or in a different workspace. Only the " +
+    "admin who started it can confirm it. Nothing was connected.",
+  "no-addon":
+    "Connected mailboxes aren't enabled for this workspace, so nothing was connected. Contact " +
+    "RouteFlow support to turn them on.",
+  forbidden: "Your account can't connect a mailbox for this workspace. Nothing was connected.",
   expired:
     "This connection request expired or was already used. Nothing was connected. Connect again.",
   unavailable: "We couldn't check this connection request. Nothing was connected. Connect again.",
 } as const;
+type Refusal = keyof typeof REFUSED_COPY;
+
+/**
+ * The server's distinct 403 causes on preview/confirm, by the exact value each one sends: the
+ * two grant-holder checks in `MailboxConnectionService.assertGrantHolder` (the `message` of a
+ * bare ForbiddenException) and AddonGuard's `code` (`ADDON_GATE_CODE`). Any other 403 (RolesGuard,
+ * no tenant context) is a permission refusal, never the "other tab" one.
+ */
+const CONNECT_SECRET_MISMATCH = "mailbox_connect_secret_mismatch";
+const CONFIRM_IDENTITY_MISMATCH = "mailbox_confirm_identity_mismatch";
+const ADDON_GATE_CODE = "ADDON_GATE";
+
+function refusalOf(e: any): Refusal {
+  const status = e?.response?.status;
+  if (status === 400) return "expired";
+  if (status !== 403) return "unavailable";
+  const body = e?.response?.data;
+  if (body?.message === CONNECT_SECRET_MISMATCH) return "other-tab";
+  if (body?.message === CONFIRM_IDENTITY_MISMATCH) return "other-admin";
+  if (body?.code === ADDON_GATE_CODE) return "no-addon";
+  return "forbidden";
+}
 
 function formatDate(iso: string | null | undefined): string {
   if (!iso) return "";
@@ -216,7 +245,7 @@ export function MailboxCard() {
       .catch(() => undefined);
   }
 
-  function refuseConfirm(token: string, reason: keyof typeof REFUSED_COPY) {
+  function refuseConfirm(token: string, reason: Refusal) {
     clearConnectSecret();
     void discardPendingGrant(token);
     toast({ title: "Mailbox not connected", description: REFUSED_COPY[reason], variant: "error" });
@@ -240,11 +269,7 @@ export function MailboxCard() {
       setDialogContent(shown);
       setPendingConfirm({ ...shown, token, secret });
     } catch (e: any) {
-      const status = e?.response?.status;
-      refuseConfirm(
-        token,
-        status === 403 ? "other-tab" : status === 400 ? "expired" : "unavailable",
-      );
+      refuseConfirm(token, refusalOf(e));
     }
   }
 
@@ -271,11 +296,9 @@ export function MailboxCard() {
       toast({
         title: "Couldn't finish connecting the mailbox",
         description:
-          status === 403
-            ? REFUSED_COPY["other-tab"]
-            : status === 400
-              ? REFUSED_COPY.expired
-              : e?.response?.data?.message || e.message,
+          status === 403 || status === 400
+            ? REFUSED_COPY[refusalOf(e)]
+            : e?.response?.data?.message || e.message,
         variant: "error",
       });
     },

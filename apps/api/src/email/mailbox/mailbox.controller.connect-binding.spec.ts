@@ -274,6 +274,19 @@ describe("MailboxController: the connect is bound to the tab that started it and
     expect([...redisStore.values()].join("\n")).not.toContain(secret);
   });
 
+  it.each(["google", "microsoft"] as const)(
+    "%s/start answers Cache-Control: no-store, so no browser or proxy keeps the connect secret",
+    async (provider) => {
+      const res = await http()
+        .get(`${BASE}/${provider}/start`)
+        .set("Authorization", bearer("admin-1"));
+
+      expect(res.status).toBe(200);
+      expect(res.body.connectSecret).toEqual(expect.any(String));
+      expect(res.headers["cache-control"]).toBe("no-store");
+    },
+  );
+
   it("from the tab that started it: preview names the account (provider and email only), consumes nothing, and only Confirm binds it", async () => {
     const { connectSecret, token } = await connectUpToTheRedirect();
 
