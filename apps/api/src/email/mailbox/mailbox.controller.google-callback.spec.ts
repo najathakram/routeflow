@@ -30,11 +30,11 @@ const SETTINGS = "http://localhost:3001/settings?tab=email";
  */
 describe("MailboxController — GET google/callback", () => {
   let app: INestApplication;
-  let mailboxConnection: { handleCallback: jest.Mock };
+  let mailboxConnection: { handleCallback: jest.Mock; discardState: jest.Mock };
   let warn: jest.SpyInstance;
 
   beforeAll(async () => {
-    mailboxConnection = { handleCallback: jest.fn() };
+    mailboxConnection = { handleCallback: jest.fn(), discardState: jest.fn() };
 
     // The callback route itself is unguarded, but Nest still resolves every provider the
     // CONTROLLER'S OTHER routes reference via @UseGuards (JwtAuthGuard/RolesGuard/AddonGuard) —
@@ -84,6 +84,7 @@ describe("MailboxController — GET google/callback", () => {
     // Reset, not just clear: a resolved/rejected value set by one test must never answer
     // another test's (wrongly made) exchange call and hide it.
     mailboxConnection.handleCallback.mockReset();
+    mailboxConnection.discardState.mockReset().mockResolvedValue(undefined);
     warn = jest.spyOn(Logger.prototype, "warn").mockImplementation(() => undefined);
   });
 
@@ -102,6 +103,8 @@ describe("MailboxController — GET google/callback", () => {
 
     expect(res.headers.location).toBe(`${SETTINGS}&mailbox_confirm=tok-123`);
     expect(mailboxConnection.handleCallback).toHaveBeenCalledWith("code-1", "state-1");
+    // The exchange consumed the state itself (handleCallback GETDELs it first).
+    expect(mailboxConnection.discardState).not.toHaveBeenCalled();
   });
 
   it("the user cancelling on Google's consent screen (error=access_denied) redirects to mailbox_cancelled=google WITHOUT calling the service", async () => {
@@ -113,6 +116,8 @@ describe("MailboxController — GET google/callback", () => {
 
     expect(res.headers.location).toBe(`${SETTINGS}&mailbox_cancelled=google`);
     expect(mailboxConnection.handleCallback).not.toHaveBeenCalled();
+    // The cancelled state is burned, so it can never be redeemed with a code later (#2115).
+    expect(mailboxConnection.discardState).toHaveBeenCalledWith("state-1");
   });
 
   it("error= wins over a code riding along on the same URL: no exchange is attempted", async () => {
@@ -135,6 +140,7 @@ describe("MailboxController — GET google/callback", () => {
 
       expect(res.headers.location).toBe(`${SETTINGS}&mailbox_error=1`);
       expect(mailboxConnection.handleCallback).not.toHaveBeenCalled();
+      expect(mailboxConnection.discardState).toHaveBeenCalledWith("state-1");
     },
   );
 
@@ -183,6 +189,8 @@ describe("MailboxController — GET google/callback", () => {
       .expect(302);
 
     expect(res.headers.location).toBe(`${SETTINGS}&mailbox_error=1`);
+    // A failed exchange burns the state too, whatever handleCallback got to before failing.
+    expect(mailboxConnection.discardState).toHaveBeenCalledWith("bad-state");
   });
 
   it("a failed exchange for a Google-side reason (google_scope_missing) also redirects to mailbox_error=1: the admin-consent flag is Microsoft-only", async () => {

@@ -119,6 +119,8 @@ export class MailboxController {
   // backed out on Google's consent screen ("Cancel", or "Back to safety" on the unverified-app
   // warning), and the web gets its own `mailbox_cancelled=google` flag, because a cancel is
   // not a failure and nothing was changed. Every other Google error keeps the generic flag.
+  // Every non-success exit burns the state FIRST (discardState, the same atomic GETDEL as the
+  // success path), so a cancelled or failed state can never be replayed with a code (#2115).
   @Get("google/callback")
   async googleCallback(
     @Query("code") code: string,
@@ -128,6 +130,7 @@ export class MailboxController {
     @Res() res: Response,
   ) {
     if (error) {
+      await this.mailboxConnection.discardState(state);
       this.logger.warn(
         `Mailbox Google callback denied: ${oauthDenialForLog(error, errorDescription)}`,
       );
@@ -140,6 +143,9 @@ export class MailboxController {
         `${this.webUrl}/settings?tab=email&mailbox_confirm=${encodeURIComponent(confirmToken)}`,
       );
     } catch (err: any) {
+      // handleCallback consumes the state itself once it gets that far. This also covers the
+      // exits before its GETDEL (a callback naming a state but carrying no code).
+      await this.mailboxConnection.discardState(state);
       this.logger.warn(`Mailbox Google callback failed: ${err?.message ?? err}`);
       return res.redirect(`${this.webUrl}/settings?tab=email&mailbox_error=1`);
     }
@@ -160,7 +166,8 @@ export class MailboxController {
   // here with `error`/`error_description` instead of a `code` — e.g. the user cancelled, or
   // their org's risk-based step-up consent blocked it (AADSTS65001, design §1) — surfaced to
   // the web as a distinct query flag so it can point the admin at the admin-consent URL instead
-  // of a bare "couldn't connect" message.
+  // of a bare "couldn't connect" message. As in googleCallback, every non-success exit burns the
+  // state first (#2115).
   @Get("microsoft/callback")
   async microsoftCallback(
     @Query("code") code: string,
@@ -170,6 +177,7 @@ export class MailboxController {
     @Res() res: Response,
   ) {
     if (error) {
+      await this.mailboxConnection.discardState(state);
       // `error_description` is Microsoft/attacker-controlled free text — potentially carrying
       // the org/tenant name or other identifying detail — so only the bare AADSTS code (if any)
       // is logged, never the raw description (Opus review, LOW). `error` itself is just as
@@ -188,6 +196,7 @@ export class MailboxController {
         `${this.webUrl}/settings?tab=email&mailbox_confirm=${encodeURIComponent(confirmToken)}`,
       );
     } catch (err: any) {
+      await this.mailboxConnection.discardState(state);
       this.logger.warn(`Mailbox Microsoft callback failed: ${err?.message ?? err}`);
       const flag =
         err?.message === "microsoft_admin_consent_required"

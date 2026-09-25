@@ -17,8 +17,9 @@
  * the mailbox_error / admin-consent / Google-cancel returns, and Disconnect three ways.
  *
  * Role: OPERATOR (pre-authenticated storageState). Tenant: the approved e2e-routeflow seed.
- * Needs the full stack for the signed-in shell, so it runs where a compose slot exists (the
- * local lane, LOCAL-LANE.md) or against a deployed target, never on a host without one.
+ * Needs the full stack for the signed-in shell, so it runs where a compose slot exists or
+ * against a deployed target, never on a host without one. Not in the local:e2e gate yet
+ * (LOCAL-LANE.md): it joins after its first green run on a compose slot.
  */
 import { test, expect, type Locator, type Page, type Route } from "@playwright/test";
 import type { MailboxConnectionStatus, MailboxProvider } from "@routeflow/types";

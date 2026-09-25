@@ -799,7 +799,9 @@ export default defineConfig({
     // The provider is ALWAYS stubbed (page.route; a `.invalid` consent origin; a guard that
     // fails the test on any real Google/Microsoft OAuth, Gmail or Graph request), and nothing
     // is written server-side: the only real call is the read-only GET /tenants/me/addons.
-    // In LOCAL-LANE.md's allow-list. WITHOUT THIS ENTRY THE SPEC NEVER RUNS — see
+    // NOT in the local:e2e gate (LOCAL-LANE.md) yet: it was authored on a host with no container
+    // runtime and has never run. F2 runs it once against a compose slot, and a follow-up adds it
+    // to the gate after its first green run. WITHOUT THIS ENTRY THE SPEC NEVER RUNS — see
     // 08-create-order-escape's header for the precedent.
     {
       name: "mailbox-connect",

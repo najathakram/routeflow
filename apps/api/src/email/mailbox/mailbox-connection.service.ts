@@ -263,6 +263,26 @@ export class MailboxConnectionService {
   }
 
   /**
+   * Burn a connect `state` nonce without exchanging anything. Both OAuth callbacks call this on
+   * every outcome that isn't a successful exchange: the provider's own error/cancel redirect,
+   * and a failed exchange. Same atomic GETDEL as `handleCallback`, so a state is consumed on
+   * EVERY terminal outcome. Before this, a cancel left the state alive for its whole 600 s TTL:
+   * anyone holding the provider sign-in URL could still finish that flow with THEIR OWN
+   * account, and the grant would be minted for the (tenant, user) who started it (#2115,
+   * SA-215). Provider-agnostic on purpose: a state that shows up in any error redirect is
+   * burned. Never throws. A missing/unknown/expired state is simply nothing to burn, and the
+   * caller's redirect must still happen.
+   */
+  async discardState(state: unknown): Promise<void> {
+    if (typeof state !== "string" || !state) return;
+    try {
+      await this.getdel(`${OAUTH_NONCE_PREFIX}${state}`);
+    } catch (err: any) {
+      this.logger.warn(`Mailbox connect state discard failed: ${err?.message ?? err}`);
+    }
+  }
+
+  /**
    * Exchange the callback's `code` for tokens and stash a `PendingGrant` under a FRESH
    * single-use confirm token — never binds a `MailboxConnection` row (see class doc). Rejects a
    * tampered/expired/reused `state` with a 400 BEFORE any code exchange is attempted — the
