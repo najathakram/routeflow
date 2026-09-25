@@ -42,3 +42,16 @@ export const UNIT_LABEL_PIECE = "Piece" as const;
 export interface UnitAwareLineInput {
   unitLabel?: string | null;
 }
+
+// ─── Draft/park line price provenance (B755) ────────────────────────────────────
+// Draft-only — never sent on the actual order-create/update payload. Distinct name
+// from `ReturnPriceSource` (inline-returns.ts) on purpose: a different feature's
+// "where did this price come from," and reusing the name would blur the two.
+
+/**
+ * Where a parked draft line's `unitPrice` came from: a remembered price-history
+ * pre-fill, or an operator-typed override. A MISSING value on a legacy draft means
+ * "operator" (today's behaviour, unchanged) — only an explicit "history" tag is
+ * ever treated as non-authoritative on resume.
+ */
+export type DraftLinePriceSource = "history" | "operator";
