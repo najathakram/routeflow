@@ -356,7 +356,7 @@ describe("InlineReturnsService in-transaction core (#2094)", () => {
       prisma.return.findFirst.mockResolvedValueOnce({ customerId: "cust-1", orderId: "ord-new" });
       await expect(
         (service as any).preflightCapture(INPUT, OPERATOR, { routeRunId: null }),
-      ).resolves.toBeUndefined();
+      ).resolves.toBeNull(); // null = replay: the caller reserves no credit-note number
       expect(quote.priceInlineReturn).not.toHaveBeenCalled();
     });
 
@@ -391,7 +391,14 @@ describe("InlineReturnsService in-transaction core (#2094)", () => {
         (service as any).preflightCapture({ ...INPUT, routeRunStopId: "stop-1" }, DRIVER, {
           routeRunId: "run-1",
         }),
-      ).resolves.toBeUndefined();
+      ).resolves.not.toBeNull();
+    });
+
+    it("returns the dry-run total so the caller reserves a number only for a return above $0", async () => {
+      quote.priceInlineReturn.mockResolvedValue({ total: 42 });
+      await expect(
+        (service as any).preflightCapture(INPUT, OPERATOR, { routeRunId: null }),
+      ).resolves.toBe(42);
     });
   });
 

@@ -109,6 +109,12 @@ describe("the staff merge branch carries the inlineReturn to updateOrderItems (#
     expect(controller.slice(fold, fold + 900)).toContain("inlineReturn: dto.inlineReturn");
   });
 
+  it("a merge replay checks the return on EVERY key hit, verified or not (Opus R)", () => {
+    const call = controller.indexOf("findOrderIdByIdempotencyKey(");
+    expect(call).toBeGreaterThan(-1);
+    expect(controller.slice(call, call + 300)).toContain("dto.inlineReturn?.returnKey");
+  });
+
   it("never refuses a merge for carrying one any more", () => {
     expect(controller).not.toContain("if (dto.inlineReturn)");
   });
@@ -138,14 +144,22 @@ describe("OrdersService.updateOrderItems(): inline-return call order (#2094)", (
     expect(apply).toBeLessThan(at("return { subtotal, tax, total, shouldRevert, shippingFee }"));
   });
 
-  it("the return is validated BEFORE the un-tx'd linked-invoice revert commits (B215 class), and the CN number is reserved before the tx", () => {
+  it("the return is validated BEFORE the un-tx'd linked-invoice revert commits (B215 class); the CN number is reserved after the license guard and before the tx", () => {
     const pre = at("preflightInlineReturn(");
     const revert = at("revertLinkedInvoicesForOrderEdit(orderId)");
     expect(pre).toBeLessThan(revert);
-    const reserve = at("reserveInlineReturnNumber(");
-    expect(reserve).toBeLessThan(revert);
+    const reserve = at("reserveEditReturnNumber(");
+    expect(reserve).toBeGreaterThan(at("authGuard.assertAuthorizedOrThrow("));
+    expect(reserve).toBeGreaterThan(revert);
     expect(reserve).toBeLessThan(at("lockInlineReturnCustomer("));
-    expect(body.split("reserveInlineReturnNumber(").length - 1).toBe(1);
+    expect(body.split("reserveEditReturnNumber(").length - 1).toBe(1);
+  });
+
+  it("the edit tx retries a deadlock / serialization failure with the SAME reserved number (W2)", () => {
+    const retry = at("retryTxOnDeadlock(");
+    expect(retry).toBeGreaterThan(at("reserveEditReturnNumber("));
+    expect(retry).toBeLessThan(at("lockInlineReturnCustomer("));
+    expect(retry).toBeLessThan(at("tenantTransaction("));
   });
 
   it("the credit gate is re-read after the credit is applied, in the same tx", () => {

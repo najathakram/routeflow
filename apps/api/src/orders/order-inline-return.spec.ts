@@ -3,6 +3,9 @@ import { ConflictException } from "@nestjs/common";
 import {
   applyInlineReturnInTx,
   assertReplayCarriesReturn,
+  assertReplayCarriesReturnKey,
+  reserveEditReturnNumber,
+  retryTxOnDeadlock,
   isRetryableTxError,
   preflightInlineReturn,
   emitInlineReturnCredit,
@@ -203,6 +206,59 @@ describe("assertReplayCarriesReturn (#2094 R1)", () => {
     await expect(assertReplayCarriesReturn(db(false), p, "ord-1")).rejects.toThrow(
       ConflictException,
     );
+  });
+});
+
+describe("assertReplayCarriesReturnKey / edit reserve / retry (#2094 A2)", () => {
+  const db = (found: boolean) => ({
+    return: { findFirst: jest.fn().mockResolvedValue(found ? { id: "r" } : null) },
+  });
+
+  it("no returnKey: never queried (a plain merge replay onto an order with earlier returns is fine)", async () => {
+    const d = db(true);
+    await expect(assertReplayCarriesReturnKey(d, undefined, "o1")).resolves.toBeUndefined();
+    expect(d.return.findFirst).not.toHaveBeenCalled();
+  });
+
+  it("a returnKey the replayed order does not carry: 409", async () => {
+    await expect(assertReplayCarriesReturnKey(db(false), "k9", "o1")).rejects.toThrow(
+      ConflictException,
+    );
+  });
+
+  it("reserveEditReturnNumber skips a replay (null) and a $0 return, reserves above $0", async () => {
+    for (const [total, expected] of [
+      [null, 0],
+      [0, 0],
+      [25, 1],
+    ] as const) {
+      const svc = svcStub();
+      const p = await prepareInlineReturn(svc as any, LINES, STAFF);
+      p!.preflightTotal = total;
+      await reserveEditReturnNumber(p);
+      expect(svc.reserveCreditNoteNumber).toHaveBeenCalledTimes(expected);
+    }
+  });
+
+  it("retryTxOnDeadlock: retries a deadlock twice then succeeds; gives up after 3 attempts; never retries without a return or on another error", async () => {
+    const svc = svcStub();
+    const p = await prepareInlineReturn(svc as any, LINES, STAFF);
+    const dead = Object.assign(new Error("deadlock detected"), { code: "40P01" });
+    const flaky = jest
+      .fn()
+      .mockRejectedValueOnce(dead)
+      .mockRejectedValueOnce(dead)
+      .mockResolvedValue("ok");
+    await expect(retryTxOnDeadlock(p, flaky)).resolves.toBe("ok");
+    const always = jest.fn().mockRejectedValue(dead);
+    await expect(retryTxOnDeadlock(p, always)).rejects.toBe(dead);
+    expect(always).toHaveBeenCalledTimes(3);
+    const none = jest.fn().mockRejectedValue(dead);
+    await expect(retryTxOnDeadlock(null, none)).rejects.toBe(dead);
+    expect(none).toHaveBeenCalledTimes(1);
+    const other = jest.fn().mockRejectedValue(new Error("boom"));
+    await expect(retryTxOnDeadlock(p, other)).rejects.toThrow("boom");
+    expect(other).toHaveBeenCalledTimes(1);
   });
 });
 

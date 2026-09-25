@@ -389,7 +389,7 @@ export class InlineReturnsService {
     dto: CaptureInlineReturnDto,
     user: JwtPayload,
     order: { routeRunId: string | null },
-  ): Promise<void> {
+  ): Promise<number | null> {
     const db = this.prisma.forTenant();
     if (dto.returnKey) {
       const pre = await db.return.findFirst({
@@ -400,15 +400,16 @@ export class InlineReturnsService {
         if (pre.customerId !== dto.customerId || pre.orderId !== dto.orderId) {
           throw new ConflictException("A different return already used this capture key");
         }
-        return; // a replay of THIS return: the in-tx check returns the existing row
+        return null; // a replay of THIS return: nothing to price or reserve; the in-tx check returns the row
       }
     }
     if (user.role === UserRole.DRIVER) await this.assertDriverOwnsOrder(db, dto, order);
-    await this.quoteService.priceInlineReturn(
+    const priced = await this.quoteService.priceInlineReturn(
       { customerId: dto.customerId, items: dto.items, routeRunStopId: dto.routeRunStopId },
       user,
       db,
     );
+    return priced.total; // the dry-run total: the caller reserves a credit-note number only above $0
   }
 
   /**

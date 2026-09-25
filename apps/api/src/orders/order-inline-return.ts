@@ -20,6 +20,8 @@ export interface PreparedInlineReturn {
   role: string;
   /** Reserved once, before an order create's P2002 retry loop (SA-221 change 1). */
   creditNoteNumber?: string;
+  /** Edit path: the preflight's dry-run total (null = a replay of this return). */
+  preflightTotal?: number | null;
 }
 
 /**
@@ -72,23 +74,37 @@ export async function assertReplayCarriesReturn(
   p: PreparedInlineReturn | null,
   replayedOrderId: string,
 ): Promise<void> {
+  if (p) return assertReplayCarriesReturnKey(db, p.lines.returnKey, replayedOrderId);
   // Both directions (Opus W): a replay WITHOUT a return of an order created WITH one is refused too,
   // or an operator who removes the return after a timeout and re-enters it on another order credits
   // the customer twice, and gets a silent 201 for it.
   const row = await db.return.findFirst({
-    where: {
-      orderId: replayedOrderId,
-      kind: "INLINE",
-      ...(p ? { returnKey: p.lines.returnKey } : {}),
-    },
+    where: { orderId: replayedOrderId, kind: "INLINE" },
     select: { id: true },
   });
-  if (!p && row) {
+  if (row) {
     throw new ConflictException(
       "Idempotency-Key reused without the return this order was created with: retry the original unchanged, or submit as a new order (new key)",
     );
   }
-  if (p && !row) {
+}
+
+/**
+ * The forward direction alone: the replayed order must carry THIS returnKey. Also what a merge replay
+ * runs on EVERY key hit (verified or not, Opus R): a merge target legitimately holds earlier returns,
+ * so only a request that carries a return is checked.
+ */
+export async function assertReplayCarriesReturnKey(
+  db: any,
+  returnKey: string | undefined,
+  replayedOrderId: string,
+): Promise<void> {
+  if (!returnKey) return;
+  const row = await db.return.findFirst({
+    where: { returnKey, orderId: replayedOrderId, kind: "INLINE" },
+    select: { id: true },
+  });
+  if (!row) {
     throw new ConflictException(
       "Idempotency-Key reused with a different return: submit the edited return as a new order (new key), or retry the original unchanged",
     );
@@ -155,7 +171,8 @@ export function emitInlineReturnCredit(
 
 /**
  * Edit path: validate the return BEFORE anything commits outside the edit's tx (the linked-invoice
- * revert). No-op without an inline return. See InlineReturnsService.preflightCapture.
+ * revert). No-op without an inline return. See InlineReturnsService.preflightCapture. Records the
+ * dry-run total on the handle for `reserveEditReturnNumber`.
  */
 export async function preflightInlineReturn(
   p: PreparedInlineReturn | null,
@@ -163,9 +180,37 @@ export async function preflightInlineReturn(
   user: JwtPayload | undefined,
 ): Promise<void> {
   if (!p) return;
-  await p.svc.preflightCapture(
+  p.preflightTotal = await p.svc.preflightCapture(
     { ...p.lines, customerId: order.customerId, orderId: order.id },
     user as JwtPayload,
     { routeRunId: order.routeRunId },
   );
+}
+
+/**
+ * Edit path: reserve the credit-note number AFTER the preflight and the license guard, so a refused
+ * request burns none; skipped for a same-return replay (null) and a $0 return (Opus N).
+ */
+export async function reserveEditReturnNumber(p: PreparedInlineReturn | null): Promise<void> {
+  if (p && p.preflightTotal != null && p.preflightTotal > 0.001) {
+    p.creditNoteNumber = await p.svc.reserveCreditNoteNumber();
+  }
+}
+
+/**
+ * Runs an order transaction, retrying a deadlock (40P01) / serialization failure (P2034) up to 3
+ * attempts when the request carries a return, with the SAME reserved number (the edit's revert is
+ * idempotent). The Product -> Return counter -> Product edge can deadlock two returns (Opus W2).
+ */
+export async function retryTxOnDeadlock<T>(
+  p: PreparedInlineReturn | null,
+  run: () => Promise<T>,
+): Promise<T> {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await run();
+    } catch (e) {
+      if (!p || !isRetryableTxError(e) || attempt >= 2) throw e;
+    }
+  }
 }
