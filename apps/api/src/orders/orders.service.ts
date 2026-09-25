@@ -128,6 +128,10 @@ import { CommissionEngineService } from "../sales-agents/commission-engine.servi
 import { EntitlementsService } from "../billing/entitlements.service";
 import { RegulatedLedgerService } from "../regulated/regulated-ledger.service";
 import { sumInlineReturnCredit } from "../returns/inline-return-credit.util";
+import {
+  applyOfficePartialDeliveryEvidence,
+  writeOfficeMarkedDeliveredEvidence,
+} from "./office-mark-delivery";
 
 /**
  * B215: the statuses whose linked invoice(s) are re-synced IN PLACE after an item edit
@@ -2609,6 +2613,19 @@ export class OrdersService implements OnApplicationBootstrap {
           },
           { isolationLevel: "Serializable", timeout: 15_000 },
         );
+      }
+      // SA-151 (B692): a manual DELIVERED/PARTIALLY_DELIVERED from HERE (never a route stop's own
+      // completion, which writes evidence through routes.service.ts instead) must create the SAME
+      // delivery evidence a stop completion does — see office-mark-delivery.ts's module doc.
+      if (dto.status === OrderStatus.DELIVERED || dto.status === OrderStatus.PARTIALLY_DELIVERED) {
+        return this.prisma.tenantTransaction(async (tx) => {
+          if (dto.status === OrderStatus.DELIVERED) {
+            await writeOfficeMarkedDeliveredEvidence(tx as any, id);
+          } else {
+            await applyOfficePartialDeliveryEvidence(tx as any, id, dto.deliveries);
+          }
+          return tx.order.update({ where: { id }, data: statusUpdateData });
+        });
       }
       return this.prisma.forTenant().order.update({ where: { id }, data: statusUpdateData });
     })();
