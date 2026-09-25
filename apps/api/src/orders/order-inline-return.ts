@@ -199,12 +199,14 @@ export async function preflightInlineReturn(
 
 /**
  * Edit path: reserve the credit-note number AFTER the preflight and the license guard, so a refused
- * request burns none; skipped for a same-return replay (null) and a $0 return (Opus N).
+ * request burns none; skipped ONLY for a same-return replay (null). A $0 preflight still reserves
+ * (SA-261/292): the preflight total is a gate, the in-tx price is authoritative, and in the stale-price
+ * race (dry-run 0, in-tx > 0) an unreserved edit would take the counter ON the tx under the held Order
+ * row, the lock edge SA-263/264 removed. The number is burned if the return prices to $0. (Create keeps
+ * the $0 skip: `reserveInlineReturnNumber`, where no Order row is locked yet.)
  */
 export async function reserveEditReturnNumber(p: PreparedInlineReturn | null): Promise<void> {
-  if (p && p.preflightTotal != null && p.preflightTotal > 0.001) {
-    p.creditNoteNumber = await p.svc.reserveCreditNoteNumber();
-  }
+  if (p && p.preflightTotal !== null) p.creditNoteNumber = await p.svc.reserveCreditNoteNumber();
 }
 
 /**

@@ -226,10 +226,10 @@ describe("assertReplayCarriesReturnKey / edit reserve / retry (#2094 A2)", () =>
     );
   });
 
-  it("reserveEditReturnNumber skips a replay (null) and a $0 return, reserves above $0", async () => {
+  it("reserveEditReturnNumber skips ONLY a same-return replay (null): a $0 preflight still reserves (SA-292)", async () => {
     for (const [total, expected] of [
       [null, 0],
-      [0, 0],
+      [0, 1],
       [25, 1],
     ] as const) {
       const svc = svcStub();
@@ -238,6 +238,21 @@ describe("assertReplayCarriesReturnKey / edit reserve / retry (#2094 A2)", () =>
       await reserveEditReturnNumber(p);
       expect(svc.reserveCreditNoteNumber).toHaveBeenCalledTimes(expected);
     }
+  });
+
+  it("the edit tx never reserves a counter: the number reserved ahead is what the in-tx capture is handed, even when the preflight priced $0", async () => {
+    const svc = svcStub();
+    const p = await prepareInlineReturn(svc as any, LINES, STAFF);
+    p!.preflightTotal = 0; // the stale-price race: dry-run 0, in-tx > 0
+    await reserveEditReturnNumber(p);
+    await applyInlineReturnInTx({}, p, { customerId: "c1", orderId: "o1", user: STAFF });
+    expect(svc.reserveCreditNoteNumber).toHaveBeenCalledTimes(1); // once, ahead of the tx
+    expect(svc.captureAndIssueInTx).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      STAFF,
+      expect.objectContaining({ creditNoteNumber: "CN-2026-0001" }),
+    );
   });
 
   it("retryTxOnDeadlock: retries a deadlock twice then succeeds; gives up after 3 attempts; never retries without a return or on another error", async () => {

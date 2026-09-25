@@ -384,6 +384,10 @@ export class InlineReturnsService {
    * like capture()'s (a key on ANOTHER customer/order is a 409; the same pair is a replay, nothing to
    * price), the driver's stop/run checks, and a DRY-RUN of the pricing engine (a stale quote or an
    * unmatchable line refuses here). The in-tx checks stay as the backstop under the locks.
+   *
+   * The returned total is ONLY a gate (and a replay signal: null). The in-tx price, read under the
+   * locks, is authoritative and may differ (a stale price race), so the caller never uses this figure
+   * to decide whether an in-tx counter reservation is needed: it reserves ahead regardless (SA-292).
    */
   async preflightCapture(
     dto: CaptureInlineReturnDto,
