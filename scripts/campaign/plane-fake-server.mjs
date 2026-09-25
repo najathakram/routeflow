@@ -23,6 +23,7 @@
 //   GET/POST projects/<id>/work-items/<itemId>/links/
 //   POST projects/<id>/work-items/<itemId>/relations/
 //   GET  projects/<id>/intake-issues/               (404 when seed.intake404)
+//   GET/POST projects/<id>/pages/, PATCH projects/<id>/pages/<pageId>/  (wiki, #2030; PATCH 400s on locked/archived)
 // Anything else is a 404 naming the method+path, so a wrong URL fails loudly
 // instead of silently 200-ing.
 //
@@ -160,6 +161,8 @@ export function startFakePlane(seed = {}) {
   const types = {};
   const workItems = {};
   const intake = {};
+  const pages = {}; // wiki pages, #2030 (seed.pages[identifier])
+  let pageSeq = 1000;
   let labelSeq = 1;
   let typeSeq = 1;
   for (const p of projects) {
@@ -183,6 +186,10 @@ export function startFakePlane(seed = {}) {
     }));
     workItems[p.identifier] = (seed.workItems?.[p.identifier] ?? []).map((it) => ({ ...it }));
     intake[p.identifier] = (seed.intake?.[p.identifier] ?? []).map((r) => ({ ...r }));
+    pages[p.identifier] = (seed.pages?.[p.identifier] ?? []).map((pg, i) => ({
+      id: `page-${p.identifier}-${i + 1}`,
+      ...pg,
+    }));
   }
   let memberSeq = 1;
   const members = (seed.members ?? []).map((m) => {
@@ -309,6 +316,26 @@ export function startFakePlane(seed = {}) {
         if (req.method !== "GET") return notFound();
         if (intake404) return send(404, { error: "intake-issues not enabled for this project" });
         return send(200, listPayload(intake[identifier], query));
+      }
+      if (rest[0] === "pages") {
+        const list = pages[identifier];
+        if (req.method === "GET" && rest.length === 1) return send(200, listPayload(list, query));
+        if (req.method === "POST" && rest.length === 1) {
+          const created = { id: `page-new-${pageSeq++}`, ...body };
+          list.push(created);
+          return send(201, created);
+        }
+        if (req.method === "PATCH" && rest.length === 2) {
+          const page = list.find((x) => x.id === rest[1]);
+          if (!page) return notFound();
+          // The real API refuses writes to a locked or archived page.
+          if (page.is_locked || page.archived_at) {
+            return send(400, { error: "page is locked or archived" });
+          }
+          Object.assign(page, body); // update REPLACES the body fields it is sent
+          return send(200, page);
+        }
+        return notFound();
       }
       if (rest[0] !== "work-items") return notFound();
 

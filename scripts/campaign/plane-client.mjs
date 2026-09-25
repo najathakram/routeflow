@@ -686,8 +686,77 @@ export function createClient({
     return match.member ?? match.id;
   }
 
+  // ── Pages (wiki) — #2030. Page writes go through the same write() gate as every
+  // other write (denylist, budget, ledger), so plane:apply/plane:sync stay the only
+  // callers. NOTE: the exact path `projects/{id}/pages/` and the `description_html` /
+  // `external_source` / `external_id` / `is_locked` / `archived_at` field names were
+  // probed read-only (list/retrieve/create/update available; update REPLACES the whole
+  // body; locked/archived pages refuse writes) but are unconfirmed against a live write
+  // — same discipline as build-plan.md Landmine 14. Dry-run first: `dryRun: true`
+  // reads, plans, and never writes.
+  const pagesPath = (projectId) => `projects/${projectId}/pages/`;
+
+  async function listPages(projectId) {
+    return listAll(pagesPath(projectId));
+  }
+
+  // The page this registry owns for `externalId`, or undefined. Only pages stamped
+  // with EXTERNAL_SOURCE match: a hand-made page with the same id is never touched.
+  async function resolvePage(projectId, externalId) {
+    const pages = await listPages(projectId);
+    return pages.find((p) => p.external_source === EXTERNAL_SOURCE && p.external_id === externalId);
+  }
+
+  // Idempotent create-or-replace keyed on external_id. Returns
+  // {action: "create"|"update"|"noop"|"skip-locked"|"skip-archived", page?, dryRun?}.
+  // An unchanged body is a "noop" (no write). A locked or archived page is skipped,
+  // never forced. PATCH sends the WHOLE body because Plane replaces it.
+  async function upsertPage(
+    projectId,
+    { externalId, name, descriptionHtml },
+    { dryRun = false, ref, reason } = {},
+  ) {
+    if (!externalId) throw new Error("upsertPage: externalId is required");
+    const existing = await resolvePage(projectId, externalId);
+    if (!existing) {
+      if (dryRun) return { action: "create", dryRun: true };
+      const created = await write(
+        "POST",
+        pagesPath(projectId),
+        {
+          name,
+          description_html: descriptionHtml,
+          external_source: EXTERNAL_SOURCE,
+          external_id: externalId,
+        },
+        { ref, reason },
+      );
+      return created?.forbidden || created?.deferred
+        ? { action: "create", ...created }
+        : { action: "create", page: created };
+    }
+    if (existing.archived_at) return { action: "skip-archived", page: existing };
+    if (existing.is_locked) return { action: "skip-locked", page: existing };
+    if (existing.name === name && existing.description_html === descriptionHtml) {
+      return { action: "noop", page: existing };
+    }
+    if (dryRun) return { action: "update", dryRun: true, page: existing };
+    const updated = await write(
+      "PATCH",
+      `${pagesPath(projectId)}${existing.id}/`,
+      { name, description_html: descriptionHtml },
+      { ref, reason },
+    );
+    return updated?.forbidden || updated?.deferred
+      ? { action: "update", ...updated, page: existing }
+      : { action: "update", page: updated };
+  }
+
   return {
     get,
+    listPages,
+    resolvePage,
+    upsertPage,
     post: (path, body, opts) => write("POST", path, body, opts),
     patch: (path, body, opts) => write("PATCH", path, body, opts),
     del: (path, opts) => write("DELETE", path, undefined, opts),
