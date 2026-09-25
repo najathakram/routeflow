@@ -15,7 +15,11 @@ import { PrismaService } from "../prisma/prisma.service";
 import { EntitlementsService } from "../billing/entitlements.service";
 import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
 import { createMockPrisma } from "../testing/prisma-mock";
-import { catalogRestrictionLines, netEditRestrictionLines } from "./invoice-restriction-lines";
+import {
+  assertEditStillJudged,
+  catalogRestrictionLines,
+  netEditRestrictionLines,
+} from "./invoice-restriction-lines";
 
 const autoMock = () =>
   new Proxy({} as Record<string | symbol, jest.Mock>, {
@@ -63,6 +67,7 @@ describe("invoice edit / copy — selling restrictions (F-05)", () => {
       prisma.invoice.findUnique.mockResolvedValue(draft);
       prisma.invoice.findFirst.mockResolvedValue({ items: [] }); // no unit-labelled lines
       prisma.invoiceItem.findMany.mockResolvedValue([held]);
+      prisma.product.findMany.mockResolvedValue([]);
     });
 
     it("asks only for the NET increase (5 -> 50 asks for 45) and for products it adds, as STAFF", async () => {
@@ -129,24 +134,77 @@ describe("invoice edit / copy — selling restrictions (F-05)", () => {
     });
   });
 
-  describe("line pickers", () => {
-    it("netEditRestrictionLines: nets per product, sums split lines, omits the delta for a product not held", () => {
+  describe("pieces through the line's pack (SA-228 / SA-247)", () => {
+    // P is 24/box: the draft holds 2 boxes, stored qty 48 with the split.
+    const held = [{ productId: "p", qty: 48, boxes: 2, pieces: 0, unitsPerBox: 24 }];
+    const live = new Map<string, number | null>([
+      ["p", 24],
+      ["q", null],
+    ]);
+
+    it("qty 40 with no split bills 40 BOXES (960 pieces): asks for 912, not -8", () => {
+      expect(netEditRestrictionLines(held, [{ productId: "p", qty: 40 }], live)).toEqual([
+        { productId: "p", qtyDelta: 912 },
+      ]);
+    });
+
+    it("{boxes: 40, qty: 1} counts as its 960 billed pieces", () => {
+      expect(netEditRestrictionLines(held, [{ productId: "p", qty: 1, boxes: 40 }], live)).toEqual([
+        { productId: "p", qtyDelta: 912 },
+      ]);
+    });
+
+    it("an unchanged boxed line and a decrease (2 -> 1 box) ask about nothing", () => {
+      expect(
+        netEditRestrictionLines(held, [{ productId: "p", qty: 48, boxes: 2, pieces: 0 }], live),
+      ).toEqual([]);
+      expect(
+        netEditRestrictionLines(held, [{ productId: "p", qty: 24, boxes: 1, pieces: 0 }], live),
+      ).toEqual([]);
+    });
+
+    it("a plain unboxed line nets numerically (5 -> 50 asks for 45) and split lines sum", () => {
+      expect(
+        netEditRestrictionLines([{ productId: "q", qty: 5 }], [{ productId: "q", qty: 50 }], live),
+      ).toEqual([{ productId: "q", qtyDelta: 45 }]);
       expect(
         netEditRestrictionLines(
           [
-            { productId: "a", qty: 2 },
-            { productId: "a", qty: 3 },
-            { productId: "d", qty: 9 },
+            { productId: "q", qty: 2 },
+            { productId: "q", qty: 3 },
           ],
-          [
-            { productId: "a", qty: 8 },
-            { productId: "b", qty: 1 },
-            { productId: "d", qty: 9 },
-            { qty: 4 },
-          ],
+          [{ productId: "q", qty: 8 }],
+          live,
         ),
-      ).toEqual([{ productId: "a", qtyDelta: 3 }, { productId: "b" }]);
+      ).toEqual([{ productId: "q", qtyDelta: 3 }]);
     });
+  });
+
+  describe("re-check under the Invoice row lock", () => {
+    const tx = (rows: object[]) => ({
+      $executeRaw: jest.fn().mockResolvedValue(1),
+      invoiceItem: { findMany: jest.fn().mockResolvedValue(rows) },
+      product: { findMany: jest.fn().mockResolvedValue([]) },
+    });
+
+    it("refuses a retryable 409 when a concurrent edit changed what needs a check", async () => {
+      // judged pre-lock: nothing needed (the invoice then held 50 of q); at the lock only 5 is held
+      const t = tx([{ productId: "q", qty: 5 }]);
+      await expect(
+        assertEditStillJudged(t, "inv-1", [{ productId: "q", qty: 50 }], []),
+      ).rejects.toMatchObject({ response: { code: "INVOICE_CHANGED_DURING_EDIT" } });
+      expect(t.$executeRaw).toHaveBeenCalled();
+    });
+
+    it("passes when the lock-time plan needs nothing the pre-lock judgment missed", async () => {
+      const t = tx([{ productId: "q", qty: 5 }]);
+      await expect(
+        assertEditStillJudged(t, "inv-1", [{ productId: "q", qty: 5 }], []),
+      ).resolves.toBeUndefined();
+    });
+  });
+
+  describe("line pickers", () => {
     it("catalogRestrictionLines: every distinct catalog product", () => {
       expect(catalogRestrictionLines([{ productId: "a" }, { productId: null }])).toEqual([
         { productId: "a" },

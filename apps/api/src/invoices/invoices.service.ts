@@ -98,7 +98,11 @@ import { lockRowsNoWait } from "../common/db-locks";
 import { NumberingService } from "../import/numbering.service";
 import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
 import { requireRestrictionTenantId } from "../selling-restrictions/restriction-tenant";
-import { addedRestrictionLines, catalogRestrictionLines } from "./invoice-restriction-lines";
+import {
+  addedRestrictionLines,
+  assertEditStillJudged,
+  catalogRestrictionLines,
+} from "./invoice-restriction-lines";
 import { buildManualInvoiceLines } from "./manual-invoice-lines";
 import { foldCategoryTax, loadManualLineContext } from "./manual-invoice-context";
 import { resolveLineUnits } from "../products/line-units";
@@ -2862,22 +2866,7 @@ export class InvoicesService {
   }
 
   async findAll(query: ListInvoicesDto, user?: JwtPayload) {
-    const {
-      status,
-      statuses,
-      isOverdue,
-      customerId,
-      search,
-      dateFrom,
-      dateTo,
-      dueFrom,
-      dueTo,
-      sortBy,
-      sortOrder,
-      shipped,
-      page = 1,
-      limit = 20,
-    } = query;
+    const { customerId, sortBy, sortOrder, page = 1, limit = 20 } = query;
     const skip = (page - 1) * limit;
     const where: any = {};
     applyInvoiceStatusFilters(where, query);
@@ -3249,12 +3238,14 @@ export class InvoicesService {
       await unitAware.assertInvoiceRewriteAllowed(this.prisma.forTenant(), inv);
     }
 
+    let editLines: { productId: string; qtyDelta?: number }[] = [];
     if (dto.items) {
-      // F-05: only products this edit ADDS are asked about (a line the DRAFT already carries is not re-refused).
+      // F-05: netted per product (qtyDelta = requested - held); re-checked under the row lock in the tx below.
+      editLines = await addedRestrictionLines(this.prisma.forTenant(), id, dto.items);
       await this.sellingRestrictions.assertLinesSellable({
         tenantId: requireRestrictionTenantId(this.prisma.getTenantId()),
         customerId: inv.customerId,
-        lines: await addedRestrictionLines(this.prisma.forTenant(), id, dto.items),
+        lines: editLines,
         channel: "STAFF",
       });
       await assertOrderItemIdsBelongToOrder(this.prisma.forTenant(), inv.orderId, dto.items); // SA-093a rd6
@@ -3403,6 +3394,7 @@ export class InvoicesService {
       // so the invoice's prior SALE rows must be reversed and re-written from the new
       // items (a no-op when neither the old nor new invoice carries a regulated line).
       const updated = await this.prisma.tenantTransaction(async (tx: any) => {
+        await assertEditStillJudged(tx, id, dto.items, editLines); // F-05: under the Invoice row lock
         await tx.invoiceItem.deleteMany({ where: { invoiceId: id } });
         const u = await tx.invoice.update({
           where: { id },

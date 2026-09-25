@@ -52,7 +52,7 @@ function freshTenantSlug(label: string): string {
   tenantSeq += 1;
   return assertTestTenant(
     `qa-f2ban-${RUN_SUFFIX}-${tenantSeq}-${label}`,
-    "invoice-delete-credit.db.spec.ts",
+    "invoices.sell-ban.db.spec.ts",
   );
 }
 
