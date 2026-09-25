@@ -1,0 +1,22 @@
+{
+  "task": {
+    "id": "RC-866",
+    "title": "confirm B866 cause",
+    "type": "root-cause",
+    "files": [],
+    "tests": [],
+    "dependsOn": [],
+    "risk": "HIGH",
+    "briefPath": "/Users/maznahamanullah/code/routeflow/.claude/worktrees/zealous-franklin-2c1741/.claude/pipeline/2026-09-25-f51-billing-mrr-ledger/tasks/RC-866/brief.md",
+    "rootCause": {
+      "reproduced": true,
+      "causeConfirmed": true,
+      "wrongValueObserved": "{\"baseMrr\":408,\"discountTotal\":10,\"mrr\":398,\"byPlan\":[{\"planKey\":\"BUSINESS\",\"tenants\":1,\"baseMrr\":339},{\"planKey\":\"STARTER\",\"tenants\":1,\"baseMrr\":59}],\"sumByPlanBaseMrr\":398}",
+      "note": "I reproduced the bug on the current tree. I wrote a scratch jest spec in the session scratchpad, ran it with `--roots <scratch> --roots <rootDir>` from apps/api, and deleted it afterwards. It fed MrrService.computeOverview two subscription rows: STARTER at base 59 with no discount, and BUSINESS at base 349 with a discount of 10. It had no add-ons. The output shows top-level baseMrr = 408, which is gross (349 + 59). BUSINESS in byPlan shows baseMrr = 339, which is net (349 - 10). The byPlan rows add up to 398. The gap between 408 and 398 is exactly the 10 discount.\n\nThis matches the cause the brief names. In apps/api/src/billing/mrr.service.ts, line 242 has `baseMrr += base;` and never subtracts the discount. Line 249, in the same loop, has `row.baseMrr = roundMoney(row.baseMrr + base - discount);`. Both lines read the same `base` and `discount` values from lines 235-236. No other term makes up the difference.\n\nThe existing tests in apps/api/src/billing/mrr.service.spec.ts still pass on this tree: \"computes MRR = ...\" expects baseMrr 408 and \"breaks MRR down by plan\" expects BUSINESS 339. The run shows 2 passed and 12 skipped. Together they lock in the inconsistency this bug describes.\n\nTwo things I did not do. A first attempt to run the probe with ts-node failed because `@routeflow/pricing/dist` is not built in this worktree, so I switched to jest, which has the moduleNameMapper. I also did not revert line 249 to test the cause by mutation. I tied the gap to that line by arithmetic only: 408 - 398 = 10, the only discount in the fixture. The repo has no changes from me. The git status is the same as the pre-existing snapshot."
+    },
+    "status": "complete",
+    "rounds": 0,
+    "clean": true
+  },
+  "progressLine": "Task RC-866: complete (review clean)"
+}

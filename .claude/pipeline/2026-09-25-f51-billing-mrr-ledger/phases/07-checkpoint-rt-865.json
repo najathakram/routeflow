@@ -1,0 +1,89 @@
+{
+  "task": {
+    "id": "RT-865",
+    "title": "repro tests T8-T14, P5-P7",
+    "type": "repro-test",
+    "files": [],
+    "tests": [
+      "apps/api/src/billing/addon.service.spec.ts",
+      "apps/api/src/billing/subscription-mutation.service.spec.ts",
+      "apps/api/src/billing/addon-ledger.spec.ts"
+    ],
+    "dependsOn": ["RC-865"],
+    "risk": "HIGH",
+    "briefPath": "/Users/maznahamanullah/code/routeflow/.claude/worktrees/zealous-franklin-2c1741/.claude/pipeline/2026-09-25-f51-billing-mrr-ledger/tasks/RT-865/brief.md",
+    "redRun": {
+      "cwd": "/Users/maznahamanullah/code/routeflow/.claude/worktrees/zealous-franklin-2c1741",
+      "ran": true,
+      "results": [
+        {
+          "command": "cd apps/api && npx jest src/billing/addon.service.spec.ts src/billing/subscription-mutation.service.spec.ts src/billing/addon-ledger.spec.ts --maxWorkers=2",
+          "exitCode": 1,
+          "output": "Test Suites: 3 failed, 3 total\nTests: 7 failed, 153 passed, 160 total\n\n7 assertions fail on the bug's own wrong value (T8 undefined priceSnapshot, T9 undefined priceSnapshot, T10 [] vs [-20], T11 resolved vs rejected, P5 missing priceSnapshot:0, T12 [24] vs [], T13 -24 vs -18) exactly as recorded in the existing tests-report.md.\n\naddon-ledger.spec.ts fails to load: 'Cannot find module ./addon-ledger from billing/addon-ledger.spec.ts' — this IS the correct RED state for T14, not a structural defect to fix."
+        }
+      ]
+    },
+    "redAudit": {
+      "structurallyRed": false,
+      "tests": [
+        {
+          "test": "addon.service.spec.ts T8: REG-B865-ADMIN priced enable writes priceSnapshot and books +10",
+          "outcome": "assertion-failure",
+          "note": "Missing priceSnapshot field in create/update; expected 10"
+        },
+        {
+          "test": "addon.service.spec.ts T9: REG-B865-ADMIN priced enable on TRIAL tenant writes snapshot",
+          "outcome": "assertion-failure",
+          "note": "Missing priceSnapshot field in create; expected 10"
+        },
+        {
+          "test": "addon.service.spec.ts T10: REG-B865-ADMIN disable books −priceSnapshot×qty",
+          "outcome": "assertion-failure",
+          "note": "Wrong delta array; expected [-20], received []"
+        },
+        {
+          "test": "addon.service.spec.ts T11: REG-B865-ADMIN stripePriceId with no catalog SKU is 400 before Stripe",
+          "outcome": "assertion-failure",
+          "note": "Expected rejection with BadRequestException; promise resolved instead"
+        },
+        {
+          "test": "addon.service.spec.ts P5: PIN free grant writes priceSnapshot 0 explicitly",
+          "outcome": "assertion-failure",
+          "note": "Missing priceSnapshot field in create/update; expected 0"
+        },
+        {
+          "test": "subscription-mutation.service.spec.ts T12: REG-B865-SELF TRIAL enabling CUSTOMER_PACK_100 books nothing",
+          "outcome": "assertion-failure",
+          "note": "Wrong delta array; expected [], received [24]"
+        },
+        {
+          "test": "subscription-mutation.service.spec.ts T13: REG-B865-SELF disable books −stored snapshot not −catalog",
+          "outcome": "assertion-failure",
+          "note": "Wrong delta value; expected -18, received -24"
+        },
+        {
+          "test": "addon-ledger.spec.ts T14: emitAddonDelta import and ledger tests",
+          "outcome": "error",
+          "note": "Module not found: './addon-ledger' — expected RED state per test file comment (implementation not yet created)"
+        }
+      ],
+      "blockers": [
+        "addon-ledger.ts module does not exist; addon-ledger.spec.ts cannot load until FIX-865A creates the implementation"
+      ],
+      "remediation": "The test files are structurally correct. The addon-ledger.spec.ts module-load error (T14) is the expected RED state and requires the addon-ledger.ts implementation to be created by FIX-865A; no test changes needed. All seven assertion failures in addon.service.spec.ts and subscription-mutation.service.spec.ts correctly catch the bug's wrong values (missing priceSnapshot fields and incorrect deltas) and will pass once the implementation writes the priceSnapshot field and emitAddonDelta routes enable/disable calls appropriately."
+    },
+    "redAttempts": 2,
+    "behaviorallyRed": false,
+    "blocked": true,
+    "blockerFindings": [
+      {
+        "file": "(red-gate)",
+        "severity": "blocker",
+        "phase": "Red gate",
+        "summary": "Task RT-865's tests never proved they can fail on an assertion containing the bug's own wrong value, after one remediation attempt.",
+        "detail": "[\"addon-ledger.ts module does not exist; addon-ledger.spec.ts cannot load until FIX-865A creates the implementation\"]"
+      }
+    ]
+  },
+  "progressLine": "Task RT-865: blocked (1 blocker(s))"
+}

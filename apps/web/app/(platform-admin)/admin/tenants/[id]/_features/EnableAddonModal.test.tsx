@@ -114,6 +114,26 @@ describe("EnableAddonModal — Stripe configured", () => {
     expect(await screen.findByText("Add-on already active")).toBeInTheDocument();
     expect(screen.getByText(/No Stripe subscription item will be created/)).toBeInTheDocument();
   });
+
+  it("SA-277a: a no-catalog-SKU 400 renders that exact message, keeps the modal open, and re-enables Confirm", async () => {
+    renderModal();
+    await screen.findByText(/Choose how/);
+    fireEvent.click(screen.getByRole("radio", { name: "Grant without billing" }));
+    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+    await screen.findByText(/No Stripe subscription item will be created/);
+
+    const noCatalogSkuMessage =
+      'Add-on "X" has no catalog SKU to price — publish a catalog version defining "X" before billing it';
+    mockEnableAddon.mockRejectedValueOnce({
+      response: { data: { message: noCatalogSkuMessage } },
+    });
+    const confirmButton = screen.getByRole("button", { name: "Confirm" });
+    fireEvent.click(confirmButton);
+
+    expect(await screen.findByText(noCatalogSkuMessage)).toBeInTheDocument();
+    expect(screen.getByText(/No Stripe subscription item will be created/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Confirm" })).not.toBeDisabled();
+  });
 });
 
 describe("EnableAddonModal — Stripe NOT configured", () => {
