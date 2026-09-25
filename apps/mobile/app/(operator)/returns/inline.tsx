@@ -15,7 +15,7 @@ import {
   View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { Stack, useLocalSearchParams, useRouter } from "expo-router";
+import { Stack, useLocalSearchParams, useNavigation, useRouter } from "expo-router";
 import { ios } from "@routeflow/ui/tokens";
 import { NavBackButton, NavBar, SearchBar } from "@routeflow/ui/mobile/ios";
 import {
@@ -43,6 +43,8 @@ import {
   canConfirmInlineReturn,
   canGetInlineReturnQuote,
   canLeaveInlineReturn,
+  captureFailureMessage,
+  guardInlineReturnRemove,
   formatRefundAmount,
   initialInlineReturnScreen,
   inlineReturnScreenReducer,
@@ -100,6 +102,22 @@ export default function InlineReturnScreen() {
 
   const canLeave = canLeaveInlineReturn(screen);
 
+  // Lock EVERY removal path while a capture is in flight: `beforeRemove` covers Android system
+  // back, this stack's swipe AND a parent-stack swipe/dismiss (Stack `gestureEnabled` below only
+  // covers the inner iOS swipe).
+  const navigation = useNavigation();
+  useEffect(() => {
+    const nav = navigation as unknown as {
+      addListener: (
+        event: "beforeRemove",
+        cb: (e: { preventDefault: () => void }) => void,
+      ) => () => void;
+    };
+    return nav.addListener("beforeRemove", (e) => {
+      guardInlineReturnRemove(screen, e);
+    });
+  }, [navigation, screen]);
+
   const setLine = (productId: string, patch: Partial<InlineReturnLineDraft>) =>
     setLines((prev) => prev.map((l) => (l.productId === productId ? { ...l, ...patch } : l)));
 
@@ -147,7 +165,7 @@ export default function InlineReturnScreen() {
         // REG-B308: an offline-queued capture is a pending success, not a failure.
         captureOutcomeFromError(e).kind === "queued"
           ? dispatch({ type: "queued" })
-          : dispatch({ type: "refused", message: extractRefusalMessage(e) }),
+          : dispatch({ type: "refused", message: captureFailureMessage(e) }),
     });
   };
 
