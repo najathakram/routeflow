@@ -143,12 +143,35 @@ describe("OrdersService merge paths — merge and warn (F-05)", () => {
     expect(mockEvents.indexOf("push")).toBeGreaterThan(mockEvents.indexOf("unlock"));
   });
 
-  it("a merge whose transaction THROWS writes no audit row and sends no push", async () => {
+  it("a merge whose transaction THROWS writes no audit row and sends no push (both merge paths)", async () => {
     h.prisma.tenantTransaction.mockRejectedValue(new Error("tx failed"));
     await expect(
       h.service.mergeAllPendingForCustomer("cust-1", { buyerInitiated: true }),
-    ).rejects.toBeDefined();
+    ).rejects.toThrow("tx failed");
+    // proves the throw came from the merge transaction itself, not an earlier step
+    expect(h.prisma.tenantTransaction).toHaveBeenCalled();
+    await expect(
+      h.service.forceConsolidateCustomer("cust-1", { actor: { type: "BUYER" } }),
+    ).rejects.toThrow("tx failed");
     expect(h.prisma.auditLog.create).not.toHaveBeenCalled();
     expect(h.sideEffects.notifications.sendToUser).not.toHaveBeenCalled();
+  });
+
+  describe("forceConsolidateCustomer uses the same pattern", () => {
+    it("the winner row's tenant wins over the ambient one", async () => {
+      await h.service.forceConsolidateCustomer("cust-1", { actor: { role: "OPERATOR" } });
+      expect(h.restrictions.checkLinesSellable).toHaveBeenCalledWith(
+        expect.objectContaining({ tenantId: "t-row" }),
+      );
+      expect(h.prisma.auditLog.create.mock.calls[0][0].data.tenantId).toBe("t-row");
+    });
+
+    it("the push runs AFTER the advisory lock is released, never inside it", async () => {
+      // a non-STAFF actor (buyer) so the push is sent at all
+      await h.service.forceConsolidateCustomer("cust-1", { actor: { type: "BUYER" } });
+      expect(mockEvents[0]).toBe("lock");
+      expect(mockEvents.indexOf("unlock")).toBeGreaterThan(-1);
+      expect(mockEvents.indexOf("push")).toBeGreaterThan(mockEvents.indexOf("unlock"));
+    });
   });
 });
