@@ -54,6 +54,12 @@ deploy is still running is the CORRECT outcome, not a failure — a GitHub Actio
 repo just fails on billing (see below); rerun it once the window reopens. The watchdog's later
 flip is harmless if the routine's own step 4 already flipped private first.
 
+One watchdog at a time (#2076). A second start finds the lock (`local-assets/visibility-watchdog.lock`),
+prints the running pid and its deadline, and exits 3 without doing anything; pass `--replace` to stop
+the old one and take over (the older watchdog's earlier deadline would otherwise flip the repo private
+inside the new window). An unknown flag exits 2 and `--help` exits 0, both before any side effect:
+never probe the script with a bare invocation, since a bare run arms a real 45-minute watchdog.
+
 **Failure marker — `local-assets/visibility-watchdog.FAILED` in the MAIN checkout.** The watchdog
 resolves `local-assets/` against the main checkout (via `git rev-parse --git-common-dir`), never
 the worktree it was armed from, and reports the resolved directory as `root=` on its `start`

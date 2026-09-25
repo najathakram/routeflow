@@ -528,3 +528,194 @@ describe("visibility-watchdog.mjs contract", () => {
     expect(capturedChild!.exitCode).not.toBeNull();
   }, 35_000);
 });
+
+// #2076 — argument validation and the single-instance lock. A stray `--help` probe once started a
+// REAL 45-minute watchdog (the old parser ignored flags it did not know) that flipped the repo
+// private mid-window. Every case here uses a fake `gh` and scratch log/lock paths; the "no side
+// effect" cases use a recording `gh` so a call is provable, not assumed.
+describe("visibility-watchdog.mjs: argument validation and single instance (#2076)", () => {
+  const lockPathFor = (logFile: string) => logFile.replace(/\.log$/, ".lock");
+  let recordingGh: string;
+  let callsFile: string;
+
+  beforeAll(() => {
+    callsFile = path.join(dir, "gh-calls.txt");
+    recordingGh = path.join(dir, "recording-gh.mjs");
+    fs.writeFileSync(
+      recordingGh,
+      [
+        "import fs from 'node:fs';",
+        `fs.appendFileSync(${JSON.stringify(callsFile)}, process.argv.slice(2).join(' ') + '\\n');`,
+        "process.stdout.write(JSON.stringify({ visibility: 'PRIVATE' }));",
+      ].join("\n"),
+    );
+  });
+  beforeEach(() => fs.rmSync(callsFile, { force: true }));
+
+  const recordingEnv = (logFile: string): NodeJS.ProcessEnv => ({
+    ...fakeEnv("success", logFile),
+    VISIBILITY_WATCHDOG_GH_CMD: JSON.stringify([process.execPath, recordingGh]),
+  });
+
+  const expectNoSideEffect = (logFile: string) => {
+    expect(fs.existsSync(logFile)).toBe(false); // no log line
+    expect(fs.existsSync(lockPathFor(logFile))).toBe(false); // no lock
+    expect(fs.existsSync(callsFile)).toBe(false); // no gh call at all
+  };
+
+  it.each([["--bogus"], ["stray-positional"], ["--minutes", "abc"], ["--minutes"], ["--repo"]])(
+    "rejects %j with a usage message and exit 2, before any side effect",
+    (...args) => {
+      const logFile = newLogPath(`bad-args-${args.join("_").replace(/\W/g, "")}`);
+      const res = run(args, recordingEnv(logFile));
+      expect(res.status).toBe(2);
+      expect(res.stderr).toContain("usage: node scripts/visibility-watchdog.mjs");
+      expectNoSideEffect(logFile);
+    },
+  );
+
+  it("names the offending flag", () => {
+    const res = run(["--bogus"], recordingEnv(newLogPath("names-flag")));
+    expect(res.stderr).toContain("unknown argument: --bogus");
+  });
+
+  it.each([["--help"], ["-h"]])("%s prints usage and exits 0 with no side effect", (flag) => {
+    const logFile = newLogPath(`help-${flag.replace(/\W/g, "")}`);
+    const res = run([flag], recordingEnv(logFile));
+    expect(res.status).toBe(0);
+    expect(res.stdout).toContain("usage: node scripts/visibility-watchdog.mjs");
+    expect(res.stdout).toContain("--replace");
+    expectNoSideEffect(logFile);
+  });
+
+  it("--help wins even next to a real --minutes (a probe never arms a watchdog)", () => {
+    const logFile = newLogPath("help-with-minutes");
+    const res = run(["--minutes", "45", "--help"], recordingEnv(logFile));
+    expect(res.status).toBe(0);
+    expectNoSideEffect(logFile);
+  });
+
+  it("a normal run takes the lock and removes it on exit", () => {
+    const logFile = newLogPath("lock-released");
+    const res = run(["--minutes", "0.01", "--repo", "acme/test"], fakeEnv("success", logFile));
+    expect(res.status).toBe(0);
+    expect(fs.existsSync(lockPathFor(logFile))).toBe(false);
+  });
+
+  /** Start a long-lived watchdog and wait until it holds the lock. */
+  async function startHolder(logFile: string) {
+    const child = spawn(process.execPath, [SCRIPT, "--minutes", "5", "--repo", "acme/test"], {
+      env: fakeEnv("success", logFile),
+      stdio: ["ignore", "ignore", "ignore"],
+    });
+    const lock = lockPathFor(logFile);
+    for (
+      let i = 0;
+      i < 300 && !(fs.existsSync(lock) && readLog(logFile).includes(" start "));
+      i++
+    ) {
+      await new Promise((r) => setTimeout(r, 50));
+    }
+    if (!fs.existsSync(lock)) {
+      child.kill("SIGKILL");
+      throw new Error("holder never took the lock");
+    }
+    return child;
+  }
+  const exited = (child: ReturnType<typeof spawn>) =>
+    new Promise<void>((resolve) => {
+      if (child.exitCode !== null || child.signalCode !== null) return resolve();
+      child.once("exit", () => resolve());
+    });
+
+  it("a second start reports the running pid and deadline, refuses with exit 3, and does nothing", async () => {
+    const logFile = newLogPath("second-start");
+    const holder = await startHolder(logFile);
+    try {
+      const startLines = readLog(logFile)
+        .split("\n")
+        .filter((l) => l.includes(" start ")).length;
+      const held = JSON.parse(fs.readFileSync(lockPathFor(logFile), "utf8"));
+      const res = run(["--minutes", "0.01", "--repo", "acme/test"], fakeEnv("success", logFile));
+      expect(res.status).toBe(3);
+      expect(res.stderr).toContain(`already running: pid ${holder.pid}`);
+      expect(res.stderr).toContain(`deadline ${held.deadline}`);
+      expect(res.stderr).toContain("--replace");
+      // The refused start wrote no log line and left the holder's lock alone.
+      expect(
+        readLog(logFile)
+          .split("\n")
+          .filter((l) => l.includes(" start ")).length,
+      ).toBe(startLines);
+      expect(JSON.parse(fs.readFileSync(lockPathFor(logFile), "utf8")).pid).toBe(holder.pid);
+      expect(holder.exitCode).toBeNull();
+    } finally {
+      holder.kill("SIGKILL");
+      await exited(holder);
+    }
+  }, 30_000);
+
+  it("--replace stops the running watchdog and takes over the lock", async () => {
+    const logFile = newLogPath("replace");
+    const holder = await startHolder(logFile);
+    try {
+      // Async on purpose: the holder is OUR child, and a blocked parent (spawnSync) can never reap
+      // it, so the replacer would see a zombie as "still alive". Production holders are never the
+      // replacer's child.
+      const replacer = spawn(
+        process.execPath,
+        [SCRIPT, "--replace", "--minutes", "0.01", "--repo", "acme/test"],
+        { env: fakeEnv("success", logFile), stdio: "ignore" },
+      );
+      const code = await new Promise<number | null>((resolve) => replacer.once("exit", resolve));
+      expect(code).toBe(0);
+      await exited(holder);
+      expect(holder.signalCode ?? holder.exitCode).toBeTruthy(); // the old one was stopped
+      expect(readLog(logFile)).toContain("verified");
+      expect(fs.existsSync(lockPathFor(logFile))).toBe(false); // the new one released it on exit
+    } finally {
+      holder.kill("SIGKILL");
+    }
+  }, 30_000);
+
+  it("a lock left by a dead pid is stale: the new start just takes it", async () => {
+    const logFile = newLogPath("stale-lock");
+    const dead = spawn(process.execPath, ["-e", "0"], { stdio: "ignore" });
+    await exited(dead);
+    fs.writeFileSync(
+      lockPathFor(logFile),
+      JSON.stringify({ pid: dead.pid, repo: "acme/test", deadline: "2020-01-01T00:00:00Z" }),
+    );
+    const res = run(["--minutes", "0.01", "--repo", "acme/test"], fakeEnv("success", logFile));
+    expect(res.status).toBe(0);
+    expect(fs.existsSync(lockPathFor(logFile))).toBe(false);
+  });
+
+  (process.platform === "win32" ? it.skip : it)(
+    "--replace never kills a live process that is not a visibility-watchdog (recycled pid)",
+    async () => {
+      const logFile = newLogPath("not-a-watchdog");
+      const other = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], {
+        stdio: "ignore",
+      });
+      try {
+        fs.writeFileSync(
+          lockPathFor(logFile),
+          JSON.stringify({ pid: other.pid, repo: "acme/test", deadline: "2099-01-01T00:00:00Z" }),
+        );
+        const res = run(
+          ["--replace", "--minutes", "0.01", "--repo", "acme/test"],
+          fakeEnv("success", logFile),
+        );
+        expect(res.status).toBe(3);
+        expect(res.stderr).toContain("not a visibility-watchdog");
+        expect(other.exitCode).toBeNull();
+        expect(other.signalCode).toBeNull();
+      } finally {
+        other.kill("SIGKILL");
+        await exited(other);
+      }
+    },
+    30_000,
+  );
+});
