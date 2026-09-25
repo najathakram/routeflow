@@ -44,6 +44,8 @@ const EXPECTED_LEGACY_REGISTRY = {
       "POST /regulated/filings/prepare",
       "GET /regulated/filings/:id/csv",
       "GET /regulated/filings/:id/pdf",
+      "GET /regulated/parked-reversals",
+      "POST /regulated/parked-reversals/:id/resolve",
       "ALL /tobacco/* (class-level)",
     ],
     grantPath: 'Platform Admin → Tenants → [tenant] → add-ons (addonKey "tobacco_dealer")',

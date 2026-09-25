@@ -120,6 +120,21 @@ describe("B807 — each tenant/buyer field is HTML-escaped in its email (REG-B80
     await svc.sendTestEmail("owner@example.com");
     expectEscaped(htmls[0]);
   });
+
+  it("mailbox revoked notice (F-10a): the connected mailbox address and the admin's username", async () => {
+    const svc = makeService();
+    const htmls = captureHtml(svc);
+    await svc.sendMailboxRevokedNotice({
+      to: "owner@example.com",
+      username: XSS,
+      accountEmail: XSS,
+      provider: "GOOGLE",
+      hasFallback: true,
+    });
+    expectEscaped(htmls[0]);
+    // 4 escaped copies: the greeting + the three paragraphs that name the mailbox.
+    expect(htmls[0].split(ESCAPED)).toHaveLength(5);
+  });
 });
 
 /** sendSetPasswordEmail sends through sendPlatform, not send: capture that path. */

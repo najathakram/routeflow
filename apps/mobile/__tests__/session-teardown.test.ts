@@ -5,9 +5,9 @@
  * ONE teardown function (`lib/session-teardown.ts#teardownUserSession`)
  * BEFORE `apiLogout()` (tokens still valid): stop background GPS for BOTH
  * realms, mark the offline queue's owner, `queryClient.cancelQueries()` then
- * `.clear()`, and reset the 9 user-scoped stores (driver-durability lane
- * added `stopCartStore`/`returnSubmissionStore` to the original 7) — the
- * tenant store is never touched (Q2, shared-tablet branded login).
+ * `.clear()`, and reset the 10 user-scoped stores (driver-durability lane added
+ * `stopCartStore`/`returnSubmissionStore`, PR 3 added `inlineReturnSubmissionStore`, to the
+ * original 7) — the tenant store is never touched (Q2, shared-tablet branded login).
  *
  * Mobile Jest is pure-logic only (jest.config.js testMatch) — this drives the
  * REAL `useAuthStore.logout()` with every native/store dependency mocked, the
@@ -23,8 +23,9 @@ jest.mock("react-native", () => ({ Platform: { OS: "ios" } }));
 
 // api-client pulls in the offline queue (AsyncStorage — native only); stub it
 // exactly as session-expired-wiring.test.ts does.
+const mockQueueState: { queue: Array<Record<string, unknown>> } = { queue: [] };
 jest.mock("../store/offlineQueue", () => ({
-  useOfflineQueue: { getState: () => ({ enqueue: jest.fn() }) },
+  useOfflineQueue: { getState: () => ({ enqueue: jest.fn(), queue: mockQueueState.queue }) },
 }));
 
 // auth-store imports ./auth, which drags in expo-notifications / expo-web-browser.
@@ -134,6 +135,13 @@ jest.mock("../store/returnSubmissionStore", () => ({
   RETURN_SUBMISSION_STORE_NAME: "routeflow-return-submissions",
   useReturnSubmissionStore: { getState: () => ({ reset: returnSubmissionStoreReset }) },
 }));
+const inlineReturnSubmissionStoreReset = jest.fn();
+jest.mock("../store/inlineReturnSubmissionStore", () => ({
+  INLINE_RETURN_SUBMISSION_STORE_NAME: "routeflow-inline-return-submissions",
+  useInlineReturnSubmissionStore: {
+    getState: () => ({ reset: inlineReturnSubmissionStoreReset }),
+  },
+}));
 
 // The Q2 pin — "sign-out teardown NEVER clears the tenant store" — is green
 // before AND after the fix, so it does not belong in this red-gate file: it
@@ -165,6 +173,7 @@ const USER_SCOPED_RESETS: Array<[string, jest.Mock]> = [
   ["productPickerStore", productPickerStoreReset],
   ["stopCartStore", stopCartStoreReset],
   ["returnSubmissionStore", returnSubmissionStoreReset],
+  ["inlineReturnSubmissionStore", inlineReturnSubmissionStoreReset],
 ];
 
 describe("useAuthStore.logout() teardown (T1, REG-B150 / REG-B140)", () => {
@@ -474,9 +483,9 @@ describe("REG-B136-F: identity is resolved before anything can delete the tokens
     expect(identityAt).toBeLessThan(stopAt);
   });
 
-  it("session-teardown clears all FOUR persisted stores after the resets", () => {
+  it("session-teardown clears all FIVE persisted stores after the resets", () => {
     const clears = teardownSrc.match(/clearUserScopedStorage\s*\(/g) ?? [];
-    expect(clears).toHaveLength(4);
+    expect(clears).toHaveLength(5);
     const lastResetAt = teardownSrc.lastIndexOf("resetIfPresent(use");
     expect(lastResetAt).toBeGreaterThan(-1);
     expect(teardownSrc.search(/clearUserScopedStorage\s*\(/)).toBeGreaterThan(lastResetAt);
@@ -512,14 +521,14 @@ describe("REG-B136-F: identity is resolved before anything can delete the tokens
  * REG-B140-D — cross-tab logout (web build). Before this fix,
  * `installCrossTabLogoutListener`'s "storage" handler only dropped the
  * in-memory user; it never ran the shared teardown, so tab B kept the prior
- * user's GPS tracking, query cache, and the 9 user-scoped stores alive after
+ * user's GPS tracking, query cache, and the 10 user-scoped stores alive after
  * tab A signed out elsewhere. This describe gets its own fresh module graph
  * (`jest.resetModules()` + a dynamic import) because `installCrossTabLogoutListener`
  * is a module-level, install-once singleton gated on `Platform.OS === "web"`
  * and a real `window` — neither of which the rest of this file (OS "ios", no
  * window) exercises. `react-native` is re-mocked to "web" via `jest.doMock`
  * for just this block; every other static mock in this file (session-teardown,
- * the 9 stores, api-client, auth, etc.) survives `resetModules()` unchanged.
+ * the 10 stores, api-client, auth, etc.) survives `resetModules()` unchanged.
  */
 describe("REG-B140-D: cross-tab logout tears down (web build)", () => {
   let storageHandler: ((e: { key: string | null; newValue: string | null }) => void) | null = null;
@@ -588,4 +597,37 @@ describe("REG-B140-D: cross-tab logout tears down (web build)", () => {
 
     expect(apiLogoutMock).not.toHaveBeenCalled();
   });
+});
+
+describe("sign-out ALWAYS empties the inline-return nonces (Opus review of #1270: cross-user leak)", () => {
+  const queuedCapture = {
+    id: "q1",
+    endpoint: "/returns/inline/capture",
+    body: { customerId: "c", orderId: "o", returnKey: "inl:c:o:n1" },
+  };
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    apiLogoutMock.mockResolvedValue(undefined);
+    teardownSpy.mockImplementation((options?: TeardownOptions) => realTeardownUserSession(options));
+    useAuthStore.setState({ user: OPERATOR as any, isAuthenticated: true, activeRole: "operator" });
+    mockQueueState.queue = [];
+  });
+  afterEach(() => {
+    mockQueueState.queue = [];
+  });
+
+  it.each([
+    ["nothing queued", [] as Array<Record<string, unknown>>],
+    ["a capture still queued", [queuedCapture]],
+  ])(
+    "%s: memory is reset and the blob cleared — user B can never inherit user A's nonces",
+    async (_n, queue) => {
+      mockQueueState.queue = queue;
+      await useAuthStore.getState().logout();
+      expect(inlineReturnSubmissionStoreReset).toHaveBeenCalledTimes(1);
+      const removed = removeItemMock.mock.calls.map((c) => String(c[0]));
+      expect(removed.some((k) => k.includes("routeflow-inline-return-submissions"))).toBe(true);
+    },
+  );
 });
