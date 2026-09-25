@@ -896,7 +896,7 @@ export class RegulatedLedgerService {
    * ONE parked reversal row. Lives here (not a separate injectable) because both
    * `buildLineRemainingBalances` and `bookReversalChunk` are private to this class — SA-090's
    * own note. `ParkedReversalResolutionService` (returns module) is the thin claim-first/audit
-   * wrapper that calls this, wrapped in the order-keyed advisory lock; this method does no
+   * wrapper that calls this inside its own transaction, under the Return then Order row locks (no advisory lock); this method does no
    * claiming, no locking and no auditing, only the classify/correct/book money math, so it can
    * be called from inside the wrapper's own locked `tenantTransaction`.
    *
@@ -1187,7 +1187,11 @@ export class RegulatedLedgerService {
         // uses). Otherwise a product un-boxed after the sale would read a later legacy-shaped row as
         // non-boxed-now and book its box count as pieces inside a resolution. It is NOT applied as the
         // rows' own pack: they stay legacy and PARK, so the audit shows one attestation per row.
-        if (productId) restPackNow.set(productId, pack);
+        // Only a pack > 1 is an attestation that the product IS boxed. A pack of 1 (allowed, "this line
+        // was never really boxed") says nothing about the SIBLING rows, and applying it as the boxed test
+        // would flip a legacy-shaped sibling on a product that is boxed today from PARK to BOOK-as-pieces
+        // (its box count reversed as pieces: full net and tax on 3 "pieces"). Then the live read stands.
+        if (productId && pack > 1) restPackNow.set(productId, pack);
         const walked = await this.walkSaleRows({
           ...walkBase,
           sales: rest,

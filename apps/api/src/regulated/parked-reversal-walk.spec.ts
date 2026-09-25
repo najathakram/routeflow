@@ -281,4 +281,19 @@ describe("resolveParkedReversal — resume the live walk (SA-167)", () => {
     expect(parkedStore).toHaveLength(1);
     expect(parkedStore[0]).toMatchObject({ saleEntryId: "s-2", returnedPieces: 36 });
   });
+
+  it("Opus REQUIRED (#1324): a pack of 1 attests nothing about SIBLING rows: on a product boxed today (live pack 12) row 2 stays legacy and PARKS, never booked as 3 'pieces' at full net and tax", async () => {
+    ledger = [sale(1, 2), sale(2, 3)];
+    invoiceItems = [ii(1), ii(2)];
+    prisma.product.findMany.mockResolvedValue([{ id: "p1", unitsPerBox: 12 }]);
+    const res = await service.resolveParkedReversal(prisma, parked(1, 60), 1);
+    expect(res.outcome).toBe("partial");
+    expect(res.bookedPieces).toBe(2); // row 1 on the operator's pack of 1: its 2 units
+    expect(res.parkedPieces).toBe(58);
+    expect(parkedStore).toHaveLength(1);
+    expect(parkedStore[0]).toMatchObject({ saleEntryId: "s-2", returnedPieces: 58 });
+    // Nothing was booked against row 2: no reversal on oi-2, so its $30 net / $6 tax stay.
+    expect(reversals().filter((r) => r.orderItemId === "oi-2")).toHaveLength(0);
+    expect(reversals().reduce((a, r) => a + Number(r.netSales), 0)).toBeCloseTo(-20, 2);
+  });
 });

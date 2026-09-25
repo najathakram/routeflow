@@ -705,6 +705,78 @@ describeDb(
       expect(booked).toHaveLength(0);
     }, 30_000);
 
+    it("Opus (#1324): the claim stamps resolvedReason / unitsPerBoxSupplied / resolvedById / resolvedAt / resolvedEntryId on the ROW itself, read back from Postgres", async () => {
+      const f = await seedLegacyLine("stamp", {
+        qty: 5,
+        netSales: 50,
+        categoryTax: 10,
+        returnedPieces: 60,
+      });
+      const result = await resolveAs(f.parkedRowId, 12, "confirmed the case size on the invoice");
+      expect(result.outcome).toBe("booked");
+      const row = await raw.regulatedLedgerParkedReversal.findFirst({
+        where: { id: f.parkedRowId },
+      });
+      expect(row!.resolvedReason).toBe("confirmed the case size on the invoice");
+      expect(row!.unitsPerBoxSupplied).toBe(12);
+      expect(row!.resolvedById).toBe(userId);
+      expect(row!.resolvedAt).not.toBeNull();
+      expect(row!.resolvedEntryId).toBe(result.resolvedEntryId);
+    }, 30_000);
+
+    it("Opus (#1324): an UNRESOLVABLE verdict throws 409 and ROLLS BACK the claim — the row stays unresolved with no reason stamped and nothing written", async () => {
+      const f = await seedLegacyLine("rollback", {
+        qty: 5,
+        netSales: 50,
+        categoryTax: 10,
+        returnedPieces: 60,
+      });
+      // unitBasisQty below qty: even after the supplied pack the classifier reads it malformed.
+      await raw.regulatedSalesLedger.update({ where: { id: f.saleId }, data: { unitBasisQty: 3 } });
+
+      await expect(resolveAs(f.parkedRowId, 12, "trying a pack")).rejects.toMatchObject({
+        response: { code: "PARKED_REVERSAL_UNRESOLVABLE" },
+      });
+
+      const row = await raw.regulatedLedgerParkedReversal.findFirst({
+        where: { id: f.parkedRowId },
+      });
+      expect(row!.resolvedAt).toBeNull();
+      expect(row!.resolvedReason).toBeNull();
+      expect(row!.unitsPerBoxSupplied).toBeNull();
+      const written = await raw.regulatedSalesLedger.findMany({
+        where: {
+          orderId: f.orderId,
+          OR: [{ entryType: "REVERSAL" }, { correctsEntryId: { not: null } }],
+        },
+      });
+      expect(
+        written.filter((r) => r.returnId === f.returnId || r.correctsEntryId != null),
+      ).toHaveLength(0);
+    }, 30_000);
+
+    it("Opus (#1324): list() returns the tenant's UNRESOLVED parked reversals, oldest first, and drops a resolved one", async () => {
+      const open = await seedLegacyLine("list-open", {
+        qty: 5,
+        netSales: 50,
+        categoryTax: 10,
+        returnedPieces: 60,
+      });
+      const done = await seedLegacyLine("list-done", {
+        qty: 5,
+        netSales: 50,
+        categoryTax: 10,
+        returnedPieces: 60,
+      });
+      await resolveAs(done.parkedRowId, 12);
+      const listed = await tenantCtx.run(tenantId, () => svc.list());
+      const ids = (listed as any[]).map((r) => r.id);
+      expect(ids).toContain(open.parkedRowId);
+      expect(ids).not.toContain(done.parkedRowId);
+      const created = (listed as any[]).map((r) => new Date(r.createdAt).getTime());
+      expect(created).toEqual([...created].sort((a, b) => a - b));
+    }, 30_000);
+
     it("cancel-after-resolve: the booked REVERSAL is gone, the parked row stays resolved (resolvedEntryId dangles), the corrections survive", async () => {
       const f = await seedLegacyLine("cancel-after", {
         qty: 5,

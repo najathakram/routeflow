@@ -30,17 +30,14 @@ export class ParkedReversalResolutionService {
   }
 
   /**
-   * ONE transaction: the conditional claim (`resolvedAt IS NULL` — the idempotency guard), the
-   * Order row lock, the CANCELLED-return refusal, `RegulatedLedgerService.resolveParkedReversal`'s
+   * ONE transaction: the Return and Order row locks, the CANCELLED-return refusal, the conditional
+   * claim (`resolvedAt IS NULL` — the idempotency guard), `RegulatedLedgerService.resolveParkedReversal`'s
    * classify/correct/book, and the `resolvedAt`/`resolvedById`/`unitsPerBoxSupplied`/
-   * `resolvedReason`/`resolvedEntryId` stamp. An already-resolved row is a no-op
-   * (`alreadyResolved`), another tenant's row is a 404, and a CANCELLED return is a 404 — same
-   * ORDER as the restock service (claim FIRST, so a racing `cancel()` and this resolve contend
-   * for the same row lock exactly like `cancel()`/`ParkedRestockResolutionService.resolve()`
-   * do): `cancel()` deletes this return's UNRESOLVED parked rows (`unreverseReturnEntries`), so
-   * if cancel commits first the claim matches 0 rows (nothing booked); if the claim wins,
-   * cancel's delete waits on this transaction and the CANCELLED-return check below still
-   * catches a cancel that does NOT delete the row on some other path.
+   * `resolvedReason`/`resolvedEntryId` stamp. An already-resolved row is a no-op (`alreadyResolved`),
+   * another tenant's row is a 404, and a CANCELLED return is a 404. The locks come FIRST, so a racing
+   * `cancel()` (which deletes this return's UNRESOLVED parked rows via `unreverseReturnEntries`) and this
+   * resolve serialise on the Return row: if cancel commits first this sees a CANCELLED return or a missing
+   * row (404, nothing booked); if this wins, cancel waits for this transaction.
    *
    * SA-089a(c)/SA-167(2)/SA-170: the locks are `Return` FOR UPDATE, then `Order` FOR UPDATE (the source
    * order this row belongs to), then the conditional claim — all inside this SAME transaction. That is
