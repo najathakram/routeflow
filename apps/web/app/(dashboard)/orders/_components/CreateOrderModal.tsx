@@ -1361,12 +1361,7 @@ export function CreateOrderModal({
             e.preventDefault();
           }
         }}
-        // #2080: overflow-y set alone computes overflow-x to auto too (CSS Overflow spec
-        // axis-pairing — same shell-level quirk #1288/B559 fixed elsewhere), so ANY child a
-        // few px too wide turned a vertical swipe into a sideways pan inside the dialog.
-        // overflow-x-hidden pairs the axes explicitly — a BACKSTOP only; the real fix is the
-        // over-wide children below (min-w-0 + flex-wrap on the boxed qty controls).
-        className="max-h-[65vh] overflow-x-hidden overflow-y-auto pr-1"
+        className="max-h-[65vh] overflow-y-auto pr-1"
       >
         <div className="space-y-5">
           {/* Resume hydration state */}

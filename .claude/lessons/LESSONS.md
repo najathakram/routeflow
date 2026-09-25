@@ -865,24 +865,23 @@
   is the legacy residue), so the old assertion was asserting the bug, and removing it RAISED
   coverage. A mixed-pack reconcile case pins the ratio source.
 
-### L-217 · 2026-09-25 · domain · a grid/flex item's own `min-w-[Npx]` overrides its track's `minmax(0,...)` shrink-to-fit (#2080, P0)
+### L-217 · 2026-09-25 · domain · `w-full` date inputs overflow on iOS only, invisible in Chromium (#2080, P0)
 
-- **Symptom:** the owner reported the staff order dialog panning sideways on an iPhone during a
-  vertical swipe — section labels lost their first letters, cards and totals clipped on the left.
-  Only reproducible with a boxed (Case/Unit) line in the cart.
-- **Root cause:** `LineItemRow.tsx`'s boxed qty-controls column sat in a grid track declared
-  `minmax(0,1fr)` (free to shrink to nothing) but the grid ITEM placed in it carried its own
-  `min-w-[190px]` — an item's explicit minimum always wins over the track's `minmax(0,...)`
-  floor, so the column could never shrink below 190px regardless of room. Compounding it, the
-  two inner case/pieces input rows had no `flex-wrap`, so even 190px wasn't enough — together a
-  few px past the viewport, enough for the dialog's `overflow-y-auto` scroll body (overflow-x
-  computing to `auto` too, per CSS Overflow's axis-pairing rule — [[L-116]]'s sibling shell-level
-  cases) to turn a vertical swipe into a sideways pan.
-- **Lesson:** **A `minmax(0, Nfr)` grid track does NOT make a child shrinkable if that child
-  carries its own explicit `min-w-[Npx]` — an item's own minimum always overrides the track's
-  intent to shrink. A narrow-viewport-safe column needs the min-width on a RESPONSIVE utility
-  (`min-w-0 sm:min-w-[Npx]`), never a bare one, and every un-wrapped inner flex row inside it
-  still needs its own `flex-wrap` — shrinkable-but-non-wrapping children still overflow.**
-- **Guard:** `e2e/56-create-order-dialog-mobile-pan.spec.ts` (320/375/390/430, both sellBy
-  branches) via the shared element-level overflow walk (`e2e/helpers/overflow.ts`, copied from
-  #1288 rather than stacked on its unmerged branch).
+- **Symptom:** owner reported the order dialog panning sideways on an iPhone during a vertical
+  swipe. The first hypothesis (a boxed cart line's qty-controls column) was plausible, shipped,
+  and WRONG — it sits inside `ul.overflow-hidden`, unable to widen the dialog body. Only
+  real-device/emulated iOS measurement found the actual cause; plain Chromium measured 0.
+- **Root cause:** iOS Safari gives `type="date"`/`time`/`datetime-local`/`month`/`week` inputs
+  their own menu-button chrome — forced `padding: 0 0.5em` and, for any NON-PIXEL width (a
+  Tailwind `w-full`), `box-sizing: content-box`. `w-full` rendered `100% + ~16px` at every
+  viewport width, the entire time a date input was on screen.
+- **Lesson:** **A platform UA-stylesheet override can make an otherwise-correct utility class
+  overflow invisibly in a same-engine desktop browser — 0 overflow there is not evidence the bug
+  is elsewhere. When a mobile-only visual bug resists local reproduction, suspect PLATFORM CSS
+  (native form chrome, safe-area insets, viewport units) before re-auditing app layout again —
+  and with no device/simulator, inject the platform's known UA override as a test `<style>` tag
+  rather than shipping an unmeasured fix for a plausible alternate cause.**
+- **Guard:** `app/globals.css`'s `input[type=date]` rule (`appearance: none; box-sizing:
+  border-box; min-width: 0`), global (94 such inputs app-wide).
+  `e2e/56-create-order-dialog-mobile-pan.spec.ts` injects iOS's UA override as a test stylesheet
+  before asserting via the shared overflow walk (`e2e/helpers/overflow.ts`, copied from #1288).

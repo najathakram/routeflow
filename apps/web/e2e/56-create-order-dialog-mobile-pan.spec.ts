@@ -1,31 +1,40 @@
 /**
  * #2080 (P0, owner-reported production bug, iPhone). The staff order dialog's
- * own scroll body (`CreateOrderModal.tsx`, `max-h-[65vh] overflow-y-auto pr-1`)
- * sets only the y axis, so overflow-x computes to `auto` too (CSS Overflow
- * spec axis-pairing — the same shell-level quirk #1288/B559 fixed at the page
- * level, never touching this dialog). A boxed line's qty-controls column
- * (`LineItemRow.tsx`) carried a hard `min-w-[190px]` floor plus two un-wrapped
- * inner flex rows (the case/pieces inputs) — together wide enough at 390px
- * that the dialog body was a few px wider than the viewport, and a vertical
- * swipe on iOS Safari panned it sideways: section labels lost their first
- * letters ("USTOMER", "RODUCTS"), cards and totals clipped on the left.
+ * own scroll body (`CreateOrderModal.tsx`, `max-h-[65vh] overflow-y-auto`)
+ * panned sideways on a vertical swipe. Root cause, per real device/emulated
+ * measurement (NOT reproducible in plain Chromium, which is why it went
+ * unreproduced locally for as long as it did): the "Requested Delivery Date"
+ * / "Order date" `<input type="date">`s (`:1856`, `:1869`) are styled with
+ * Tailwind's `w-full`. iOS Safari gives a date input its own menu-button
+ * chrome — forced `padding: 0 0.5em` and, for any non-pixel width,
+ * `box-sizing: content-box` — so `w-full` renders at `100% + ~16px`
+ * (measured up to +26px on newer iOS) of the actual available space, at
+ * EVERY viewport width. That's the owner's exact symptom (section labels
+ * losing their first letters, cards/totals clipping left): the dialog body
+ * was a few px wider than the viewport the whole time a date input was on
+ * screen, which is always, once a customer is picked.
  *
- * Fix: `min-w-0 sm:min-w-[190px]` (the column can shrink below `sm`, keeping
- * desktop unchanged) + `flex-wrap` on both inner input rows (root cause), plus
- * `overflow-x-hidden` paired onto the scroll body (backstop only, matching
- * #1288's established pattern — never the fix by itself).
+ * `LineItemRow.tsx`'s boxed qty-controls column was investigated first (an
+ * earlier commit on this branch, reverted) — it sits inside `ul.overflow-hidden`
+ * and can't widen the dialog body regardless of its own width, so it was
+ * never the cause. `overflow-x-hidden` on the scroll body was also
+ * considered and dropped: it would have masked the real 12px+ overflow by
+ * clipping the date inputs themselves, rather than fixing them.
  *
- * Reuses #1288's shared element-level overflow walk
- * (`e2e/helpers/overflow.ts`, copied byte-identical from that unmerged branch
- * per the issue's own note — this file is NOT edited here) rather than the
- * legacy `documentElement.scrollWidth` check, which is structurally blind to
- * overflow absorbed by an inner `overflow-y:auto` container (see that
- * helper's own header) — exactly this dialog's shape.
+ * Fix (globals.css, not scoped to this one dialog — apps/web has 94
+ * `type="date"` inputs total): `appearance: none` opts every date/time input
+ * back into standard box-model sizing, `box-sizing: border-box` makes that
+ * explicit, `min-width: 0` lets one still shrink inside a flex/grid parent.
  *
- * Targets the one seeded boxed product (`e2e-seed.js` FIXTURE_PRODUCTS,
- * `unitsPerBox: 12`) so BOTH of LineItemRow's case/unit input rows render —
- * the exact branch this fix touches. Read-only up to the point of adding one
- * line; the order is never submitted (no fixture cleanup needed).
+ * This spec reproduces the iOS-only quirk in plain Chromium (no iOS
+ * simulator access from this session) by INJECTING the exact UA-stylesheet
+ * override iOS Safari applies to date/time inputs as a page style tag,
+ * before asserting via #1288's shared element-level overflow walk
+ * (`e2e/helpers/overflow.ts`, copied byte-identical from that unmerged
+ * branch). Without the injected override this spec cannot fail even on
+ * pre-fix code — plain Chromium's own date-input box model was never broken
+ * — so the override is the thing that makes this a genuine red-first proof
+ * rather than a false-negative test that always passes.
  */
 import { test, expect, type Page } from "@playwright/test";
 import { findViewportOverflow } from "./helpers/overflow";
@@ -37,7 +46,23 @@ const VIEWPORTS = [
   { width: 430, height: 932, label: "430" },
 ] as const;
 
-async function openBuilderWithBoxedLine(page: Page) {
+/**
+ * iOS Safari's own UA stylesheet for `type="date"` (and siblings): forced
+ * horizontal padding via its menu-button appearance, and content-box sizing
+ * for any non-pixel width (the actual mechanism `w-full` — a percentage —
+ * trips). Injected as an authored `<style>` so it applies in plain Chromium
+ * too; the app's own `appearance-none` rule (globals.css) must override this
+ * exact declaration for the fix to hold.
+ */
+const IOS_DATE_INPUT_QUIRK_CSS = `
+  input[type="date"] {
+    -webkit-appearance: menulist-button;
+    padding: 0 0.5em;
+    box-sizing: content-box;
+  }
+`;
+
+async function openBuilderWithCustomer(page: Page) {
   await page.goto("/orders");
   await page
     .getByRole("button", { name: /new order/i })
@@ -53,15 +78,6 @@ async function openBuilderWithBoxedLine(page: Page) {
     .first()
     .click({ timeout: 10_000 });
 
-  // The one seeded boxed product — carries unitsPerBox, so LineItemRow
-  // renders the Case/Unit toggle + case+pieces inputs this fix targets.
-  const productSearch = page.getByPlaceholder("Search by name, SKU or scan barcode…");
-  await productSearch.fill("E2E Fixture Boxed Case");
-  await page
-    .locator('input[placeholder="Search by name, SKU or scan barcode…"] ~ ul li button')
-    .first()
-    .click({ timeout: 10_000 });
-
   return title;
 }
 
@@ -69,25 +85,22 @@ for (const vp of VIEWPORTS) {
   test.describe(`create-order dialog — ${vp.label}px`, () => {
     test.use({ viewport: { width: vp.width, height: vp.height } });
 
-    test(`no element escapes the viewport with a boxed line in the cart (${vp.label}px)`, async ({
+    test(`no element escapes the viewport with the iOS date-input quirk simulated (${vp.label}px)`, async ({
       page,
     }) => {
-      await openBuilderWithBoxedLine(page);
+      // Injected BEFORE navigation so it's present the instant the date inputs
+      // mount — matches iOS Safari's own UA stylesheet, which is never "added
+      // late" either.
+      await page.addStyleTag({ content: IOS_DATE_INPUT_QUIRK_CSS });
 
-      // Exercise BOTH sellBy branches (case+pieces, then unit) — either can
-      // independently overflow before the fix, since both inner rows lacked
-      // flex-wrap.
-      const { offenders: caseOffenders } = await findViewportOverflow(page);
-      expect(
-        caseOffenders,
-        `viewport overflow (Case mode) at ${vp.label}px — ${JSON.stringify(caseOffenders.slice(0, 5))}`,
-      ).toHaveLength(0);
+      await openBuilderWithCustomer(page);
+      await expect(page.locator("#delivery-date")).toBeVisible();
+      await expect(page.locator("#order-date")).toBeVisible();
 
-      await page.getByRole("button", { name: "Unit", exact: true }).click();
-      const { offenders: unitOffenders } = await findViewportOverflow(page);
+      const { offenders } = await findViewportOverflow(page);
       expect(
-        unitOffenders,
-        `viewport overflow (Unit mode) at ${vp.label}px — ${JSON.stringify(unitOffenders.slice(0, 5))}`,
+        offenders,
+        `viewport overflow (iOS date-input quirk simulated) at ${vp.label}px — ${offenders.length} offender(s), worst: ${JSON.stringify(offenders.slice(0, 5))}`,
       ).toHaveLength(0);
     });
   });

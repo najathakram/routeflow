@@ -308,10 +308,11 @@ describe("marketing.css is delivered from the root layout — R-MKT T6", () => {
 
 // Hashes computed from this repo at branch base 5ddec78e (`git diff 5ddec78e
 // -- <path>` is empty for both at plan time — see the test-plan's T7 row).
-// globals.css re-pinned by B511 (touch-reveal media query, a legitimate
-// unrelated dashboard change — this pin exists to catch the marketing port
-// leaking into shared files, not to freeze globals.css forever).
-const GLOBALS_CSS_SHA256 = "01b57813d6654b2407573517d22b9e12a0587551f731aaebb3b8696ce1fd6461";
+// globals.css re-pinned by #2080 (input[type=date] appearance-none rule, a
+// legitimate unrelated dashboard change — this pin exists to catch the
+// marketing port leaking into shared files, not to freeze globals.css
+// forever; see B511 above for the same precedent).
+const GLOBALS_CSS_SHA256 = "0bd5a3684cdc736cdb337e5a3a1a687770159e32348e0e95df9f6860da520df0";
 const TAILWIND_CONFIG_SHA256 = "5b62085fee3f38bba484393c94238b8651806d8c7e0e47efc9a91cce68ff9754";
 
 function sha256OfFile(filePath: string): string {

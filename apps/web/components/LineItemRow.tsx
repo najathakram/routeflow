@@ -319,13 +319,7 @@ export function LineItemRow({
       )}
       {/* Qty controls */}
       {li.unitsPerBox ? (
-        // #2080: min-w-[190px] here is a hard floor grid/flex respects even when the row has
-        // no room — at 390px minus the row's own px-3 padding and the total/icon column, this
-        // alone was enough to make the whole scroll body wider than the viewport (a vertical
-        // swipe then panned sideways to it). min-w-0 below `sm` lets the column actually
-        // shrink; the flex-wrap on each inputs row (below) absorbs what shrinking can't fit.
-        // Desktop (`sm:`) keeps the original 190px floor — no layout change there.
-        <div className="col-start-1 row-start-2 flex min-w-0 flex-col gap-0.5 sm:min-w-[190px]">
+        <div className="col-start-1 row-start-2 flex min-w-[190px] flex-col gap-0.5">
           {/* Case | Unit sell-by toggle — UI-only; the payload always
               carries {qty, boxes, pieces} regardless of the mode. */}
           <div className="inline-flex self-start overflow-hidden rounded border border-surface-border text-[10px] font-medium">
@@ -355,7 +349,7 @@ export function LineItemRow({
             </button>
           </div>
           {li.sellBy === "unit" ? (
-            <div className="flex flex-wrap items-center gap-1.5">
+            <div className="flex items-center gap-1.5">
               <input
                 type="number"
                 min={0}
@@ -368,7 +362,7 @@ export function LineItemRow({
               <span className="text-xs text-navy/70">units</span>
             </div>
           ) : (
-            <div className="flex flex-wrap items-center gap-1.5">
+            <div className="flex items-center gap-1.5">
               <input
                 type="number"
                 min={0}

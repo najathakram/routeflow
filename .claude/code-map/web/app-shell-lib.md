@@ -14,6 +14,21 @@
   **Bills & Purchasing** added under Warehouse → `/vendor-bills`). Buyer portal + platform-admin
   layouts carry the `.surface-buyer`/`.surface-admin` class. Plan + tracker:
   `docs/design-package/IMPLEMENTATION-PLAN.md`; open questions: `/QUESTIONS.md`.
+- **`input[type=date|time|datetime-local|month|week]` global fix (#2080, P0, 2026-09-25).** iOS
+  Safari gives these inputs its own menu-button chrome (forced `padding: 0 0.5em`) and switches
+  any non-pixel width (Tailwind's `w-full`) to `box-sizing: content-box` — so `w-full` rendered at
+  `100% + ~16px` (up to +26px on newer iOS) of the available space, at EVERY viewport width. This
+  was the real cause of the owner's production "order dialog pans sideways on a vertical swipe"
+  report (`CreateOrderModal.tsx`'s two date inputs, `:1856`/`:1869`) — not reproducible in plain
+  Chromium, which measures 0 overflow here, so it went unreproduced locally at first (an earlier
+  LineItemRow.tsx fix was investigated and reverted — see `components-shared.md`'s `LineItemRow`
+  entry). Fix: `appearance: none` + `box-sizing: border-box` + `min-width: 0`, global (94
+  `type="date"` inputs app-wide, any one inside a scroll container can pan the same way — likely
+  part of #2011's class too), not scoped to one dialog. `marketing-port.static.test.ts`'s T7
+  `GLOBALS_CSS_SHA256` re-pinned to the new hash (same precedent as B511). Red-first:
+  `e2e/56-create-order-dialog-mobile-pan.spec.ts` injects iOS's own UA-stylesheet override as a
+  test `<style>` tag (the only way to reproduce an iOS-only quirk in plain Chromium), then asserts
+  via #1288's shared overflow walk.
 - **Phase 1d behavioral UX standards.** `lib/undo.ts` — `useUndo()` (reversible act + 8s Undo toast;
   Toast now returns an id + `dismiss()` and has an `action` slot). `lib/session-expiry.ts` +
   `components/ReAuthProvider.tsx` — in-place re-auth sheet (password unlock + **Continue with Google**

@@ -234,3 +234,32 @@ body {
     overflow: visible !important;
   }
 }
+
+/* #2080 (P0, owner-reported production, iOS Safari): a `type="date"` (and its
+   siblings) styled with Tailwind's `w-full` reads that as its CONTENT width on
+   iOS Safari, not its border-box width — the platform gives these inputs its
+   own menu-button chrome (forced ~0.5em horizontal padding) and switches them
+   to content-box sizing for any non-pixel width. So `w-full` renders at
+   100% + ~16px (measured up to +26px on newer iOS versions) of the actual
+   available space, at EVERY viewport width — the real cause of the owner's
+   report (labels losing their first letters, cards clipping left). Chromium
+   without iOS device emulation measures 0 overflow here, which is why this
+   went unreproduced locally for as long as it did.
+   Root fix, not a per-input patch: `appearance: none` opts every date/time
+   input in the app back into standard CSS box-model sizing (`box-sizing:
+   border-box` makes that explicit regardless of Tailwind's global reset load
+   order), and `min-width: 0` lets one still shrink inside a flex/grid parent
+   that expects it to. Verified to leave the calendar/clock picker icon
+   visible and no controls clipped, at 390px and 1440px, in both the emulated
+   and un-emulated measurement. Global, not scoped to CreateOrderModal: the
+   app has 94 `type="date"` inputs total, and any one of them inside a scroll
+   container can pan the same way — this is likely part of #2011's class too. */
+input[type="date"],
+input[type="time"],
+input[type="datetime-local"],
+input[type="month"],
+input[type="week"] {
+  appearance: none;
+  box-sizing: border-box;
+  min-width: 0;
+}
