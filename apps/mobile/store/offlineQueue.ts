@@ -25,6 +25,7 @@ export interface QueuedAction {
 
 /** Upper bound on the persisted failure list (see addFailedAction). */
 export const MAX_FAILED_ACTIONS = 50;
+export const MAX_SETTLED_INLINE_RETURN_KEYS = 200;
 
 interface OfflineQueueState {
   queue: QueuedAction[];
@@ -45,6 +46,14 @@ interface OfflineQueueState {
   addFailedAction: (record: FailedActionRecord) => void;
   clearFailedAction: (actionId: string) => void;
   clearFailedActions: () => void;
+  /** Returnkeys of inline-return captures that reached a TERMINAL outcome (landed / definitely
+   *  refused). The sign-in nonce rebuild skips these, so a stale failed-action record can never
+   *  resurrect a settled key (Opus re-review of #1270). Bounded; persisted; survives sign-out
+   *  (a returnKey is unique per attempt, so it can never suppress a later capture). */
+  settledInlineReturnKeys: string[];
+  /** A capture attempt (its `returnKey`) reached a terminal outcome: tombstone the key AND drop
+   *  EVERY failed-action record carrying it (direct- and drain-origin alike) in ONE update. */
+  settleInlineReturnKey: (returnKey: string) => void;
 }
 
 export const useOfflineQueue = create<OfflineQueueState>()(
@@ -118,11 +127,31 @@ export const useOfflineQueue = create<OfflineQueueState>()(
         })),
 
       clearFailedActions: () => set({ failedActions: [] }),
+
+      settledInlineReturnKeys: [],
+      settleInlineReturnKey: (returnKey) =>
+        set((state) => ({
+          settledInlineReturnKeys: [
+            ...state.settledInlineReturnKeys.filter((k) => k !== returnKey),
+            returnKey,
+          ].slice(-MAX_SETTLED_INLINE_RETURN_KEYS),
+          failedActions: state.failedActions.filter(
+            (f) =>
+              !(
+                f.action.endpoint === "/returns/inline/capture" &&
+                (f.action.body as { returnKey?: string } | undefined)?.returnKey === returnKey
+              ),
+          ),
+        })),
     }),
     {
       name: "routeflow-offline-queue",
       storage: createJSONStorage(() => AsyncStorage),
-      partialize: (state) => ({ queue: state.queue, failedActions: state.failedActions }),
+      partialize: (state) => ({
+        queue: state.queue,
+        failedActions: state.failedActions,
+        settledInlineReturnKeys: state.settledInlineReturnKeys,
+      }),
     },
   ),
 );

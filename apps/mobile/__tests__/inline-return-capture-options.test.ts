@@ -29,12 +29,30 @@ it("onSuccess settles with success for THIS attempt's variables and invalidates 
     undefined as any,
   );
   expect(settle).toHaveBeenCalledWith(vars, { kind: "success" });
-  expect(qc.invalidateQueries).toHaveBeenCalledWith({ queryKey: ["returns"] });
-  expect(qc.invalidateQueries).toHaveBeenCalledWith({ queryKey: ["credit-notes"] });
+  // Mobile's OWN query keys (lib/api/admin.ts, returns.ts, credit-notes.ts) — web's bare
+  // ["orders"]/["customers"] keys are not used by any mobile screen, so refreshing them left the
+  // order and returns screens stale.
+  const keys = qc.invalidateQueries.mock.calls.map((c) => JSON.stringify(c[0].queryKey));
+  expect(keys).toEqual(
+    expect.arrayContaining([
+      JSON.stringify(["admin", "orders", "o"]),
+      JSON.stringify(["admin", "orders"]),
+      JSON.stringify(["admin", "customers", "c"]),
+      JSON.stringify(["admin", "returns"]),
+      JSON.stringify(["returns"]),
+      JSON.stringify(["credit-notes"]),
+    ]),
+  );
+  expect(keys).not.toContain(JSON.stringify(["orders"]));
+  expect(keys).not.toContain(JSON.stringify(["customers", "c"]));
 });
 
 it.each([
-  [{ response: { status: 403, data: {} } }, { kind: "error", refused: true }],
+  [
+    { response: { status: 400, data: { code: "INLINE_RETURN_ORDER_CANCELLED" } } },
+    { kind: "error", refused: true },
+  ],
+  [{ response: { status: 403, data: {} } }, { kind: "error", refused: false }],
   [{ response: { status: 429, data: {} } }, { kind: "error", refused: false }],
   [{ response: { status: 503, data: {} } }, { kind: "error", refused: false }],
   [{ isOfflineQueued: true }, { kind: "queued" }],

@@ -1,11 +1,14 @@
 import { create } from "zustand";
 import { persist, createJSONStorage } from "zustand/middleware";
 import { userScopedStorage } from "../lib/user-scoped-storage";
+import { useOfflineQueue } from "./offlineQueue";
 import {
   getOrCreateNonce as getOrCreateNonceIn,
   noncesFromQueues,
   settleAfterDrain as settleAfterDrainIn,
   settleDirectCapture,
+  inlineReturnSubmitKey,
+  shouldSettleInlineReturnNonce,
   type InlineReturnCaptureOutcome,
   type NonceMap,
 } from "../lib/inline-return-submit-key";
@@ -91,16 +94,44 @@ export const useInlineReturnSubmissionStore = create<InlineReturnSubmissionState
         if (nonces !== get().nonces) set({ nonces });
         return nonce;
       },
-      settleCapture: (variables, outcome) =>
+      settleCapture: (variables, outcome) => {
+        // A TERMINAL outcome (landed / definitely refused) also tombstones the key and drops
+        // EVERY failed-action record carrying it — so a stale record can never resurrect the key
+        // at the next sign-in / launch (which would replay the OLD Return for the next capture).
+        if (outcome.kind !== "queued" && shouldSettleInlineReturnNonce(outcome)) {
+          useOfflineQueue.getState().settleInlineReturnKey(variables.returnKey);
+        }
         set((s) => {
           const nonces = settleDirectCapture(s.nonces, variables, outcome);
           return nonces === s.nonces ? s : { nonces };
-        }),
-      settleAfterDrain: (records) =>
-        set((s) => ({ nonces: settleAfterDrainIn(records, s.nonces) })),
+        });
+      },
+      settleAfterDrain: (records) => {
+        for (const r of records) {
+          useOfflineQueue
+            .getState()
+            .settleInlineReturnKey(
+              inlineReturnSubmitKey(
+                { customerId: r.customerId, orderId: r.orderId },
+                r.nonceSuffix,
+              ),
+            );
+        }
+        set((s) => ({ nonces: settleAfterDrainIn(records, s.nonces) }));
+      },
       reset: () => set({ nonces: {} }),
       seedFromQueues: (queue, failed, userId) =>
-        set((s) => ({ nonces: { ...noncesFromQueues(queue, failed, userId), ...s.nonces } })),
+        set((s) => ({
+          nonces: {
+            ...noncesFromQueues(
+              queue,
+              failed,
+              userId,
+              useOfflineQueue.getState().settledInlineReturnKeys,
+            ),
+            ...s.nonces,
+          },
+        })),
     }),
     {
       name: INLINE_RETURN_SUBMISSION_STORE_NAME,

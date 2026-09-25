@@ -126,22 +126,35 @@ export function shouldSettleInlineReturnNonce(outcome: InlineReturnCaptureOutcom
 export const RETURN_STATE_RACE_RETRY_MESSAGE = "Return changed state during credit issue — retry";
 
 /**
- * The one place that decides "refused" for this endpoint — shared by the direct error path
- * (`captureOutcomeFromError`) and the offline-queue drain path (`settleAfterDrain`'s caller), so
- * the two can never classify the same 409 differently. A definite refusal is 400-499 EXCLUDING
- * the retry-signal 409 above: that status is technically in the 4xx range but means "the server
- * raced, retry with the SAME key to finish the stuck row" — the opposite of "never retry this."
+ * The capture service's own refusal codes (apps/api `INLINE_RETURN_ERROR_CODES`, pinned set-equal
+ * by inline-returns.service.spec.ts, which reads this file). A 4xx is a DEFINITE refusal ONLY
+ * when its body carries one of these — a post-lookup business refusal is terminal.
+ */
+export const INLINE_RETURN_REFUSAL_CODES: readonly string[] = [
+  "INLINE_RETURN_ORDER_NOT_FOUND",
+  "INLINE_RETURN_ORDER_CUSTOMER_MISMATCH",
+  "INLINE_RETURN_ORDER_CANCELLED",
+  "INLINE_RETURN_KEY_CONFLICT",
+];
+
+/**
+ * The one place that decides "refused" for this endpoint (SA-204) — shared by the direct error
+ * path (`captureOutcomeFromError`), the offline-queue drain path and the sign-in rebuild, so they
+ * can never classify the same error differently. SUCCESS settles; a 4xx settles ONLY when its
+ * body carries the capture service's own error `code`, EXCEPT the retry-409. Everything else
+ * KEEPS the nonce: 401 / 403 (answered before the key lookup — permission may be restored and the
+ * retry must resend the SAME key), 408, 429, a code-less 400 (the validation pipe), any 5xx, and
+ * no response at all.
  */
 export function isDefiniteInlineReturnRefusal(
   status: number | undefined,
-  message: string | undefined,
+  code: string | undefined,
+  message?: string,
 ): boolean {
   if (status === undefined || status < 400 || status >= 500) return false;
-  // 408 (request timeout) and 429 (the GLOBAL throttler) answer BEFORE the returnKey lookup:
-  // nothing was decided about the capture, so a retry must resend the SAME key.
-  if (status === 408 || status === 429) return false;
+  if (status === 401 || status === 403 || status === 408 || status === 429) return false;
   if (status === 409 && message?.endsWith("retry")) return false;
-  return true;
+  return code !== undefined && INLINE_RETURN_REFUSAL_CODES.includes(code);
 }
 
 /**
@@ -158,11 +171,15 @@ export function captureOutcomeFromError(
   if (err && typeof err === "object" && "isOfflineQueued" in err && (err as any).isOfflineQueued) {
     return { kind: "queued" };
   }
-  const response = (err as { response?: { status?: number; data?: { message?: unknown } } })
-    ?.response;
+  const response = (
+    err as {
+      response?: { status?: number; data?: { message?: unknown; code?: unknown } };
+    }
+  )?.response;
   const status = response?.status;
   const message = typeof response?.data?.message === "string" ? response.data.message : undefined;
-  return { kind: "error", refused: isDefiniteInlineReturnRefusal(status, message) };
+  const code = typeof response?.data?.code === "string" ? response.data.code : undefined;
+  return { kind: "error", refused: isDefiniteInlineReturnRefusal(status, code, message) };
 }
 
 /** The nonce is always the FINAL `:`-delimited token in a returnKey (see
@@ -217,7 +234,7 @@ export interface InlineReturnDrainAction {
  */
 export function inlineReturnDrainSettleRecords(params: {
   delivered: ReadonlyArray<string>;
-  failedActions: ReadonlyArray<{ action: InlineReturnDrainAction; reason: string }>;
+  failedActions: ReadonlyArray<{ action: InlineReturnDrainAction; reason: string; code?: string }>;
   attempted: ReadonlyArray<InlineReturnDrainAction>;
 }): Array<{ customerId: string; orderId: string; nonceSuffix: string }> {
   const CAPTURE_ENDPOINT = "/returns/inline/capture";
@@ -241,14 +258,14 @@ export function inlineReturnDrainSettleRecords(params: {
     if (record) records.push(record);
   }
 
-  for (const { action, reason } of params.failedActions) {
+  for (const { action, reason, code } of params.failedActions) {
     if (action.endpoint !== CAPTURE_ENDPOINT) continue;
     // `reason` is formatted "HTTP <status>: <message>" (lib/queue-drain.ts) — parse both back
     // out, the same classification core as captureOutcomeFromError.
     const match = /^HTTP (\d+): (.*)$/.exec(reason);
     const status = match ? Number(match[1]) : undefined;
     const message = match ? match[2] : undefined;
-    if (!isDefiniteInlineReturnRefusal(status, message)) continue;
+    if (!isDefiniteInlineReturnRefusal(status, code, message)) continue;
     const record = toRecord(action);
     if (record) records.push(record);
   }
@@ -325,22 +342,20 @@ export function directFailureRecord(
 }
 
 /** `useCaptureInlineReturn`'s settle callbacks, built over a `settle(variables, outcome)`
- *  function (the store's `settleCapture`) and, optionally, the failed-actions list: a
- *  nonce-keeping direct outcome is recorded there, and a settle (success / definite refusal)
- *  removes it. Kept here so the wiring is a tested unit. */
+ *  function (the store's `settleCapture`, which also drops every failed-action record for a
+ *  settled key) and, optionally, the failed-actions list: a nonce-keeping direct outcome is
+ *  recorded there. Kept here so the wiring is a tested unit. */
 export function captureSettleHandlers<
   V extends { customerId: string; orderId: string; returnKey: string },
 >(
   settle: (variables: V, outcome: InlineReturnCaptureOutcome | { kind: "queued" }) => void,
   failed?: {
     add: (record: NonNullable<ReturnType<typeof directFailureRecord>>) => void;
-    clear: (actionId: string) => void;
   },
 ) {
   return {
     onSuccess: (_data: unknown, variables: V) => {
       settle(variables, { kind: "success" });
-      failed?.clear(directFailureActionId(variables.returnKey));
     },
     onError: (error: unknown, variables: V) => {
       const outcome = captureOutcomeFromError(error);
@@ -348,7 +363,6 @@ export function captureSettleHandlers<
       if (!failed || outcome.kind === "queued") return;
       const record = directFailureRecord(variables, error, Date.now());
       if (record) failed.add(record);
-      else failed.clear(directFailureActionId(variables.returnKey));
     },
   };
 }
@@ -368,20 +382,26 @@ export function noncesFromQueues(
   failed: ReadonlyArray<{
     action: { endpoint: string; body?: unknown; userId?: string };
     reason: string;
+    code?: string;
   }>,
   userId: string,
+  /** Returnkeys with a recorded terminal outcome — never restored (stale-record guard). */
+  settledReturnKeys: ReadonlyArray<string> = [],
 ): NonceMap {
+  const settled = new Set(settledReturnKeys);
   const out: Record<string, string> = {};
   const take = (a: { endpoint: string; body?: unknown; userId?: string }) => {
     if (a.endpoint !== "/returns/inline/capture") return;
     if (a.userId !== undefined && a.userId !== userId) return;
     const b = a.body as { customerId?: string; orderId?: string; returnKey?: string } | undefined;
     if (!b?.customerId || !b.orderId || !b.returnKey) return;
+    if (settled.has(b.returnKey)) return;
     out[inlineReturnNonceKey(b.customerId, b.orderId)] = nonceSuffixFromReturnKey(b.returnKey);
   };
   for (const f of failed) {
     const m = /^HTTP (\d+): (.*)$/.exec(f.reason);
-    if (isDefiniteInlineReturnRefusal(m ? Number(m[1]) : undefined, m ? m[2] : undefined)) continue;
+    if (isDefiniteInlineReturnRefusal(m ? Number(m[1]) : undefined, f.code, m ? m[2] : undefined))
+      continue;
     take(f.action);
   }
   for (const q of queue) take(q);

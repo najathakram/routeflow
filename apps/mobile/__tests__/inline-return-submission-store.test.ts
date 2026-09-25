@@ -23,6 +23,7 @@ jest.mock("../lib/user-scoped-storage", () => ({
 import { useInlineReturnSubmissionStore } from "../store/inlineReturnSubmissionStore";
 import {
   captureSettleHandlers,
+  RETURN_STATE_RACE_RETRY_MESSAGE,
   inlineReturnNonceKey,
   inlineReturnSubmitKey,
 } from "../lib/inline-return-submit-key";
@@ -53,12 +54,17 @@ describe("useCaptureInlineReturn settle wiring against the real store", () => {
     expect(store().getOrCreateNonce(KEY)).toBe(n1);
   });
 
-  it("a 403 refusal settles; an offline-queued error does not", () => {
+  it("a coded business refusal settles; a 403 and an offline-queued error do not", () => {
     const n1 = store().getOrCreateNonce(KEY);
     const h = captureSettleHandlers(store().settleCapture);
     h.onError({ isOfflineQueued: true }, vars(n1));
     expect(store().nonces[KEY]).toBe(n1);
     h.onError({ response: { status: 403, data: {} } }, vars(n1));
+    expect(store().nonces[KEY]).toBe(n1);
+    h.onError(
+      { response: { status: 400, data: { code: "INLINE_RETURN_ORDER_CANCELLED", message: "x" } } },
+      vars(n1),
+    );
     expect(store().nonces[KEY]).toBeUndefined();
   });
 
@@ -88,8 +94,8 @@ describe("useCaptureInlineReturn settle wiring against the real store", () => {
   });
 });
 
-// ── SA-198: direct capture -> sign-out -> sign-in, against the REAL nonce + offline-queue stores ──
-describe("a direct capture's nonce across sign-out / sign-in (SA-198)", () => {
+// ── SA-198 + Opus re-review: direct capture -> sign-out -> sign-in, REAL nonce + offline-queue stores ──
+describe("a direct capture's nonce across sign-out / sign-in / relaunch", () => {
   const { useOfflineQueue } = jest.requireActual(
     "../store/offlineQueue",
   ) as typeof import("../store/offlineQueue");
@@ -99,11 +105,11 @@ describe("a direct capture's nonce across sign-out / sign-in (SA-198)", () => {
         useOfflineQueue.getState().clearFailedAction(rec.action.id);
         useOfflineQueue.getState().addFailedAction(rec);
       },
-      clear: (id) => useOfflineQueue.getState().clearFailedAction(id),
     });
+  // sign-out empties memory; sign-in (and a cold start) rebuild from the user's own queue + failed list
   const signOutThenIn = () => {
-    store().reset(); // teardown: memory always emptied
-    const { queue, failedActions } = useOfflineQueue.getState(); // the queue survives sign-out
+    store().reset();
+    const { queue, failedActions } = useOfflineQueue.getState();
     store().seedFromQueues(queue, failedActions, "u1");
   };
   const request = (nonce: string) => ({ ...vars(nonce), reason: "DAMAGED", items: [] }) as any;
@@ -112,35 +118,107 @@ describe("a direct capture's nonce across sign-out / sign-in (SA-198)", () => {
     useOfflineQueue.setState({ queue: [], failedActions: [] });
   });
 
-  it("a direct 5xx keeps the SAME nonce after sign-out + sign-in", () => {
+  it.each([
+    ["503", { response: { status: 503, data: {} } }],
+    ["408", { response: { status: 408, data: {} } }],
+    ["429", { response: { status: 429, data: {} } }],
+    [
+      "retry-409",
+      { response: { status: 409, data: { message: RETURN_STATE_RACE_RETRY_MESSAGE } } },
+    ],
+    ["timeout, no response", { code: "ECONNABORTED", message: "timeout" }],
+    ["network error, no response", { message: "Network Error" }],
+  ])("a direct %s keeps the SAME nonce after sign-out + sign-in", (_n, err) => {
     const n1 = store().getOrCreateNonce(KEY);
-    handlers().onError({ response: { status: 503, data: {} } }, request(n1));
+    handlers().onError(err, request(n1));
     signOutThenIn();
     expect(store().getOrCreateNonce(KEY)).toBe(n1);
   });
 
-  it("a timeout with no response keeps it too", () => {
+  it.each([
+    ["403", { response: { status: 403, data: {} } }],
+    ["401", { response: { status: 401, data: {} } }],
+    ["code-less 400", { response: { status: 400, data: { message: "validation" } } }],
+  ])("SA-204: a first-attempt %s KEEPS the nonce, also across sign-out + sign-in", (_n, err) => {
+    const n1 = store().getOrCreateNonce(KEY);
+    handlers().onError(err, request(n1));
+    expect(store().getOrCreateNonce(KEY)).toBe(n1);
+    signOutThenIn();
+    expect(store().getOrCreateNonce(KEY)).toBe(n1);
+  });
+
+  it("SA-204: a 403 after a timeout keeps the same nonce; the retry once permission is restored resends the SAME key", () => {
     const n1 = store().getOrCreateNonce(KEY);
     handlers().onError({ code: "ECONNABORTED", message: "timeout" }, request(n1));
+    handlers().onError({ response: { status: 403, data: {} } }, request(n1));
     signOutThenIn();
     expect(store().getOrCreateNonce(KEY)).toBe(n1);
   });
 
-  it("a direct 403 does NOT survive: the next attempt mints fresh", () => {
+  it("a coded business refusal settles: the next attempt mints fresh", () => {
     const n1 = store().getOrCreateNonce(KEY);
-    handlers().onError({ response: { status: 403, data: {} } }, request(n1));
+    handlers().onError(
+      { response: { status: 400, data: { code: "INLINE_RETURN_ORDER_CANCELLED", message: "x" } } },
+      request(n1),
+    );
     signOutThenIn();
     expect(store().getOrCreateNonce(KEY)).not.toBe(n1);
   });
 
-  it("a later success settles the attempt and removes its failed-action record", () => {
+  it("PIN (settled keys are never restored): fail -> re-enter -> land -> relaunch -> a NEW capture gets a FRESH key", () => {
     const n1 = store().getOrCreateNonce(KEY);
-    const h = handlers();
-    h.onError({ response: { status: 503, data: {} } }, request(n1));
-    expect(useOfflineQueue.getState().failedActions).toHaveLength(1);
-    h.onSuccess(undefined, request(n1));
+    handlers().onError({ response: { status: 503, data: {} } }, request(n1));
+    signOutThenIn(); // re-enter: the nonce is rebuilt from the failed record
+    expect(store().getOrCreateNonce(KEY)).toBe(n1);
+    handlers().onSuccess(undefined, request(n1)); // the retry lands with the SAME key
+    expect(useOfflineQueue.getState().failedActions).toHaveLength(0);
+    signOutThenIn(); // relaunch
+    expect(store().getOrCreateNonce(KEY)).not.toBe(n1);
+  });
+
+  it("a settle clears EVERY record carrying that returnKey, including queue-drain-origin ones", () => {
+    const n1 = store().getOrCreateNonce(KEY);
+    const req = request(n1);
+    useOfflineQueue.getState().addFailedAction({
+      action: {
+        id: "drain-1",
+        endpoint: "/returns/inline/capture",
+        method: "POST",
+        body: req,
+        timestamp: 1,
+        retries: 3,
+      },
+      reason: "Retries exhausted after 3 attempts",
+      failedAt: 1,
+    });
+    handlers().onError({ response: { status: 503, data: {} } }, req);
+    expect(useOfflineQueue.getState().failedActions.length).toBe(2);
+    handlers().onSuccess(undefined, req);
+    expect(useOfflineQueue.getState().failedActions).toHaveLength(0);
+  });
+
+  it("a definite refusal also clears the records; the rebuild skips a key with a recorded terminal outcome even if a stale record reappears", () => {
+    const n1 = store().getOrCreateNonce(KEY);
+    const req = request(n1);
+    handlers().onError({ response: { status: 503, data: {} } }, req);
+    const stale = useOfflineQueue.getState().failedActions[0]!;
+    handlers().onError(
+      { response: { status: 409, data: { code: "INLINE_RETURN_KEY_CONFLICT", message: "x" } } },
+      req,
+    );
+    expect(useOfflineQueue.getState().failedActions).toHaveLength(0);
+    useOfflineQueue.getState().addFailedAction(stale); // a stale record resurfaces
+    signOutThenIn();
+    expect(store().nonces[KEY]).toBeUndefined();
+  });
+
+  it("the offline-queue drain settle also clears matching failed records and tombstones the key", () => {
+    const n1 = store().getOrCreateNonce(KEY);
+    const req = request(n1);
+    handlers().onError({ response: { status: 503, data: {} } }, req);
+    store().settleAfterDrain([{ customerId: "c", orderId: "o", nonceSuffix: n1 }]);
     expect(useOfflineQueue.getState().failedActions).toHaveLength(0);
     signOutThenIn();
-    expect(store().getOrCreateNonce(KEY)).not.toBe(n1);
+    expect(store().nonces[KEY]).toBeUndefined();
   });
 });

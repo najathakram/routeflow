@@ -169,27 +169,58 @@ describe("shouldSettleInlineReturnNonce — B742-sibling, SA-091/SA-091a", () =>
   // The REAL classifier (captureOutcomeFromError over an axios-shaped error) decides refused —
   // the test never derives "refused" itself.
   it.each([
-    [400, "Bad request", true],
-    [403, "Forbidden", true],
-    [409, "Return already exists", true],
-    [422, "Unprocessable", true],
-    [409, RETURN_STATE_RACE_RETRY_MESSAGE, false],
-    [500, "boom", false],
-  ])("end-to-end: a real %i (%s) -> fresh nonce next attempt is %s", (status, message, fresh) => {
-    const key = inlineReturnNonceKey("cust-1", "order-1");
+    [400, "Bad request", undefined, false], // code-less 400 (the validation pipe) KEEPS
+    [401, "Unauthorized", undefined, false],
+    [403, "Forbidden", undefined, false], // SA-204: a 403 KEEPS (permission may be restored)
+    [408, "Timeout", undefined, false],
+    [429, "Too many", undefined, false],
+    [409, RETURN_STATE_RACE_RETRY_MESSAGE, undefined, false],
+    [500, "boom", undefined, false],
+    [
+      400,
+      "Cannot capture a return against a cancelled order",
+      "INLINE_RETURN_ORDER_CANCELLED",
+      true,
+    ],
+    [409, "A different return already used this capture key", "INLINE_RETURN_KEY_CONFLICT", true],
+    [404, "Order not found", "INLINE_RETURN_ORDER_NOT_FOUND", true],
+    [403, "This feature requires the add-on", "ADDON_GATE", false], // another guard's code: KEEPS
+  ])(
+    "end-to-end: a real %i (%s, code %s) -> fresh nonce next attempt is %s",
+    (status, message, code, fresh) => {
+      const key = inlineReturnNonceKey("cust-1", "order-1");
+      const nonces0 = getOrCreateNonce({}, key, () => "nonce-a").nonces;
+      const err = { response: { status, data: { message, code } } };
+      const after = settleDirectCapture(
+        nonces0,
+        {
+          customerId: "cust-1",
+          orderId: "order-1",
+          returnKey: inlineReturnSubmitKey({ customerId: "cust-1", orderId: "order-1" }, "nonce-a"),
+        },
+        captureOutcomeFromError(err),
+      );
+      const attempt2 = getOrCreateNonce(after, key, () => "nonce-b");
+      expect(attempt2.nonce).toBe(fresh ? "nonce-b" : "nonce-a");
+    },
+  );
+
+  it("a 403 AFTER an uncertain timeout keeps the same nonce, and the retry after permission is restored resends the SAME key", () => {
+    const key = inlineReturnNonceKey("c", "o");
     const nonces0 = getOrCreateNonce({}, key, () => "nonce-a").nonces;
-    const err = { response: { status, data: { message } } };
-    const after = settleDirectCapture(
-      nonces0,
-      {
-        customerId: "cust-1",
-        orderId: "order-1",
-        returnKey: inlineReturnSubmitKey({ customerId: "cust-1", orderId: "order-1" }, "nonce-a"),
-      },
-      captureOutcomeFromError(err),
+    const v = {
+      customerId: "c",
+      orderId: "o",
+      returnKey: inlineReturnSubmitKey({ customerId: "c", orderId: "o" }, "nonce-a"),
+    };
+    let nonces = settleDirectCapture(nonces0, v, captureOutcomeFromError({ code: "ECONNABORTED" }));
+    nonces = settleDirectCapture(
+      nonces,
+      v,
+      captureOutcomeFromError({ response: { status: 403, data: {} } }),
     );
-    const attempt2 = getOrCreateNonce(after, key, () => "nonce-b");
-    expect(attempt2.nonce).toBe(fresh ? "nonce-b" : "nonce-a");
+    const retry = getOrCreateNonce(nonces, key, () => "REGENERATED-IS-A-BUG");
+    expect(inlineReturnSubmitKey({ customerId: "c", orderId: "o" }, retry.nonce)).toBe(v.returnKey);
   });
 
   it("end-to-end: success mints fresh; a connectivity error (no response) keeps the same one", () => {
@@ -214,36 +245,50 @@ describe("shouldSettleInlineReturnNonce — B742-sibling, SA-091/SA-091a", () =>
   });
 });
 
-describe("isDefiniteInlineReturnRefusal — SA-091b precision", () => {
-  it("a 400/422 is a definite refusal", () => {
-    expect(isDefiniteInlineReturnRefusal(400, "Bad request")).toBe(true);
-    expect(isDefiniteInlineReturnRefusal(422, "Unprocessable")).toBe(true);
+describe("isDefiniteInlineReturnRefusal — SA-204: a 4xx settles ONLY with the capture service's own code", () => {
+  it.each([
+    "INLINE_RETURN_ORDER_NOT_FOUND",
+    "INLINE_RETURN_ORDER_CUSTOMER_MISMATCH",
+    "INLINE_RETURN_ORDER_CANCELLED",
+    "INLINE_RETURN_KEY_CONFLICT",
+  ])("a 4xx carrying %s is a definite refusal", (code) => {
+    expect(isDefiniteInlineReturnRefusal(400, code)).toBe(true);
+    expect(isDefiniteInlineReturnRefusal(409, code)).toBe(true);
   });
 
-  it("a 500/503 is NOT a definite refusal — the outcome is unknown", () => {
-    expect(isDefiniteInlineReturnRefusal(500, "Internal error")).toBe(false);
-    expect(isDefiniteInlineReturnRefusal(503, "Service unavailable")).toBe(false);
+  it.each([400, 401, 403, 404, 408, 409, 422, 429])("a code-less %i KEEPS", (status) => {
+    expect(isDefiniteInlineReturnRefusal(status, undefined)).toBe(false);
   });
 
-  it("no status at all is NOT a definite refusal", () => {
+  it("another component's code (guards, throttler) is not the capture service's own: KEEPS", () => {
+    expect(isDefiniteInlineReturnRefusal(403, "ADDON_GATE")).toBe(false);
+    expect(isDefiniteInlineReturnRefusal(400, "VALIDATION")).toBe(false);
+  });
+
+  it("a 5xx or no status never settles, even with a code", () => {
+    expect(isDefiniteInlineReturnRefusal(500, "INLINE_RETURN_ORDER_CANCELLED")).toBe(false);
     expect(isDefiniteInlineReturnRefusal(undefined, undefined)).toBe(false);
   });
 
-  it(`a 409 whose message ends in "retry" (the stuck-row race signal) is NOT a definite refusal`, () => {
-    expect(isDefiniteInlineReturnRefusal(409, RETURN_STATE_RACE_RETRY_MESSAGE)).toBe(false);
-  });
-
-  it("an ORDINARY 409 (no retry suffix) IS a definite refusal", () => {
+  it("the retry-409 keeps even if it ever carried a code", () => {
     expect(
-      isDefiniteInlineReturnRefusal(409, "A different return already used this capture key"),
-    ).toBe(true);
+      isDefiniteInlineReturnRefusal(
+        409,
+        "INLINE_RETURN_KEY_CONFLICT",
+        RETURN_STATE_RACE_RETRY_MESSAGE,
+      ),
+    ).toBe(false);
   });
 });
 
 describe("captureOutcomeFromError — axios-shaped fixtures", () => {
-  it("a 400 response classifies as a definite refusal", () => {
-    const err = { response: { status: 400, data: { message: "Bad request" } } };
-    expect(captureOutcomeFromError(err)).toEqual({ kind: "error", refused: true });
+  it("a coded 400 response classifies as a definite refusal; a code-less 400 does not", () => {
+    const coded = {
+      response: { status: 400, data: { message: "x", code: "INLINE_RETURN_ORDER_CANCELLED" } },
+    };
+    expect(captureOutcomeFromError(coded)).toEqual({ kind: "error", refused: true });
+    const plain = { response: { status: 400, data: { message: "Bad request" } } };
+    expect(captureOutcomeFromError(plain)).toEqual({ kind: "error", refused: false });
   });
 
   it("a 503 response classifies as NOT a definite refusal", () => {
@@ -357,7 +402,13 @@ describe("inlineReturnDrainSettleRecords — bridges useNetworkSync's raw drain 
     const attempted = [captureAction("a2", "inl:cust-1:order-1:p1x3:nonce-B")];
     const result = inlineReturnDrainSettleRecords({
       delivered: [],
-      failedActions: [{ action: attempted[0], reason: "HTTP 400: Bad request" }],
+      failedActions: [
+        {
+          action: attempted[0],
+          reason: "HTTP 400: Bad request",
+          code: "INLINE_RETURN_ORDER_CANCELLED",
+        },
+      ],
       attempted,
     });
     expect(result).toEqual([{ customerId: "cust-1", orderId: "order-1", nonceSuffix: "nonce-B" }]);
@@ -423,7 +474,9 @@ describe("inlineReturnDrainSettleRecords — bridges useNetworkSync's raw drain 
     ];
     const result = inlineReturnDrainSettleRecords({
       delivered: ["c1"],
-      failedActions: [{ action: attempted[1], reason: "HTTP 422: Unprocessable" }],
+      failedActions: [
+        { action: attempted[1], reason: "HTTP 409: dup", code: "INLINE_RETURN_KEY_CONFLICT" },
+      ],
       attempted,
     });
     expect(result).toEqual([
@@ -470,7 +523,7 @@ describe("settleDirectCapture / captureSettleHandlers — behavioural wiring", (
     h.onError({ isOfflineQueued: true }, vars("n1"));
     expect(calls.map(([, o]) => o)).toEqual([
       { kind: "success" },
-      { kind: "error", refused: true },
+      { kind: "error", refused: false }, // a 403 KEEPS (SA-204)
       { kind: "error", refused: false },
       { kind: "queued" },
     ]);
@@ -483,7 +536,7 @@ describe("429 and 408 are NOT final refusals — the nonce is kept (Opus review 
   // so nothing was written and nothing about the capture is settled: a retry must resend the
   // SAME key.
   it.each([429, 408])("a %i is not a definite refusal", (status) => {
-    expect(isDefiniteInlineReturnRefusal(status, "slow down")).toBe(false);
+    expect(isDefiniteInlineReturnRefusal(status, "INLINE_RETURN_ORDER_CANCELLED")).toBe(false);
     expect(captureOutcomeFromError({ response: { status, data: { message: "x" } } })).toEqual({
       kind: "error",
       refused: false,
@@ -534,7 +587,19 @@ describe("noncesFromQueues — rebuild the signed-in user's nonces from THEIR OW
     ).toEqual({ "c:o": "n4" });
   });
   it("drops a failed capture that was a DEFINITE refusal (terminal) and 429/408 are kept", () => {
-    expect(noncesFromQueues([], [failed(cap("n5"), "HTTP 400: bad")], "u1")).toEqual({});
+    expect(
+      noncesFromQueues(
+        [],
+        [{ ...failed(cap("n5"), "HTTP 400: bad"), code: "INLINE_RETURN_ORDER_CANCELLED" }],
+        "u1",
+      ),
+    ).toEqual({});
+    expect(noncesFromQueues([], [failed(cap("n5b"), "HTTP 400: bad")], "u1")).toEqual({
+      "c:o": "n5b",
+    }); // a code-less 400 (validation pipe) KEEPS
+    expect(noncesFromQueues([], [failed(cap("n5c"), "HTTP 403: Forbidden")], "u1")).toEqual({
+      "c:o": "n5c",
+    });
     expect(noncesFromQueues([], [failed(cap("n6"), "HTTP 429: slow")], "u1")).toEqual({
       "c:o": "n6",
     });
@@ -569,6 +634,9 @@ describe("directFailureRecord — an uncertain DIRECT capture must survive sign-
 
   it.each([
     [{ response: { status: 503, data: { message: "down" } } }, "HTTP 503: down"],
+    [{ response: { status: 403, data: { message: "no access" } } }, "HTTP 403: no access"],
+    [{ response: { status: 400, data: { message: "validation" } } }, "HTTP 400: validation"],
+    [{ response: { status: 401, data: {} } }, "HTTP 401: "],
     [{ response: { status: 408, data: {} } }, "HTTP 408: "],
     [{ response: { status: 429, data: { message: "slow" } } }, "HTTP 429: slow"],
     [
@@ -590,34 +658,33 @@ describe("directFailureRecord — an uncertain DIRECT capture must survive sign-
   });
 
   it.each([
-    [{ response: { status: 403, data: {} } }],
-    [{ response: { status: 400, data: { message: "bad" } } }],
+    [{ response: { status: 400, data: { message: "x", code: "INLINE_RETURN_ORDER_CANCELLED" } } }],
+    [{ response: { status: 409, data: { message: "x", code: "INLINE_RETURN_KEY_CONFLICT" } } }],
     [{ isOfflineQueued: true }],
-  ])("a definite refusal / an offline-queued capture (%j) is NOT persisted here", (err) => {
+  ])("a coded business refusal / an offline-queued capture (%j) is NOT persisted here", (err) => {
     expect(directFailureRecord(req, err, now)).toBeNull();
   });
 });
 
-describe("captureSettleHandlers — failed-action persistence follows the settle", () => {
+describe("captureSettleHandlers — failed-action persistence", () => {
   const vars = { customerId: "c", orderId: "o", returnKey: "inl:c:o:n1" } as any;
   const mk = () => {
-    const failed = { add: jest.fn(), clear: jest.fn() };
+    const failed = { add: jest.fn() };
     const h = captureSettleHandlers(jest.fn(), failed);
     return { failed, h };
   };
-  it("a kept-nonce error records the attempt; success and a definite refusal clear it", () => {
+  it("a kept-nonce error records the attempt (503, timeout, plain network error with no response)", () => {
     const { failed, h } = mk();
     h.onError({ response: { status: 503, data: {} } }, vars);
-    expect(failed.add).toHaveBeenCalledTimes(1);
-    h.onSuccess(undefined, vars);
-    expect(failed.clear).toHaveBeenLastCalledWith(directFailureActionId(vars.returnKey));
-    h.onError({ response: { status: 403, data: {} } }, vars);
-    expect(failed.clear).toHaveBeenCalledTimes(2);
+    h.onError({ code: "ECONNABORTED", message: "timeout" }, vars);
+    h.onError({ message: "Network Error" }, vars);
+    expect(failed.add).toHaveBeenCalledTimes(3);
   });
-  it("a queued outcome touches neither (the offline queue owns it)", () => {
+  it("success, a definite refusal and a queued outcome record nothing (the store's settle removes records)", () => {
     const { failed, h } = mk();
+    h.onSuccess(undefined, vars);
+    h.onError({ response: { status: 400, data: { code: "INLINE_RETURN_ORDER_CANCELLED" } } }, vars);
     h.onError({ isOfflineQueued: true }, vars);
     expect(failed.add).not.toHaveBeenCalled();
-    expect(failed.clear).not.toHaveBeenCalled();
   });
 });

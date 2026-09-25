@@ -68,9 +68,12 @@ export function buildCaptureMutationOptions(
   return {
     mutationFn: (dto) => apiClient.post("/returns/inline/capture", dto).then((r) => r.data),
     onSuccess: (data, variables) => {
-      qc.invalidateQueries({ queryKey: ["orders", data.orderId] });
-      qc.invalidateQueries({ queryKey: ["orders"] });
-      qc.invalidateQueries({ queryKey: ["customers", data.customerId] });
+      // Mobile's OWN query keys (lib/api/admin.ts, returns.ts, credit-notes.ts) — web's bare
+      // ["orders"]/["customers"] keys are used by no mobile screen and left them stale.
+      qc.invalidateQueries({ queryKey: ["admin", "orders", data.orderId] });
+      qc.invalidateQueries({ queryKey: ["admin", "orders"] });
+      qc.invalidateQueries({ queryKey: ["admin", "customers", data.customerId] });
+      qc.invalidateQueries({ queryKey: ["admin", "returns"] });
       qc.invalidateQueries({ queryKey: ["credit-notes"] });
       qc.invalidateQueries({ queryKey: ["returns"] });
       // SA-091 (B742 sibling): settle only THIS attempt's own nonce, so the NEXT genuine capture
@@ -113,7 +116,6 @@ export function useCaptureInlineReturn() {
         q.clearFailedAction(record.action.id);
         q.addFailedAction(record as unknown as FailedActionRecord & { action: QueuedAction });
       },
-      clear: (id) => useOfflineQueue.getState().clearFailedAction(id),
     }),
   );
 }
