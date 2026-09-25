@@ -1,3 +1,12 @@
+jest.mock("../common/db-locks", () => ({
+  withAdvisoryLock: async (_opts: unknown, fn: () => Promise<unknown>) => ({
+    acquired: true,
+    value: await fn(),
+  }),
+  LockTimeoutError: class extends Error {},
+  LockUnavailableError: class extends Error {},
+}));
+
 /**
  * F-05 (#2093, owner rulings 2026-09-25, SA-205/SA-210) — a standing order SELLS its lines.
  *  - a MANUAL run (Generate now / Reorder) is refused with the 409 (the operator decides);
@@ -56,7 +65,15 @@ describe("OrderTemplatesService — selling restrictions (F-05)", () => {
     outcome: "BLOCK",
     reasons: [{ productId: "p-banned", productName: "Banned Cola", ruleId: "rule-1" }],
   };
-  const run = (t: object) => (service as any).createOrderFromTemplate(t, true, true);
+  /** The unattended 06:00 run, through the real cron entry (its caller sends the ban notice). */
+  const run = async (t: object) => {
+    prisma.tenant.findMany.mockResolvedValue([{ id: "tn-1" }]);
+    prisma.orderTemplate.findMany.mockResolvedValue([t]);
+    prisma.orderTemplate.count.mockResolvedValue(0);
+    prisma.order.findFirst.mockResolvedValue(null);
+    await service.generateDailyOrders();
+    return prisma.order.create.mock.calls.length > 0 ? { ordered: true } : null;
+  };
 
   beforeEach(async () => {
     jest.clearAllMocks();
@@ -250,7 +267,7 @@ describe("OrderTemplatesService — selling restrictions (F-05)", () => {
     it("a throw AFTER the suspension committed still sends the ban notice (it is not lost for good)", async () => {
       restrictions.checkLinesSellable.mockResolvedValue(block);
       prisma.order.create.mockRejectedValue(new Error("db hiccup"));
-      await expect(run(template())).rejects.toThrow("db hiccup");
+      await run(template()); // the cron logs the failure and moves on
       expect(prisma.orderTemplateItem.updateMany).toHaveBeenCalledTimes(1);
       expect(notifications.sendToCustomer).toHaveBeenCalledTimes(1);
     });

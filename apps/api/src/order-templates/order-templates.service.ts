@@ -480,9 +480,14 @@ export class OrderTemplatesService {
             continue;
           }
 
+          // F-05: the ban notice is sent AFTER the attempt, whatever its outcome (the suspension already
+          // committed, so a throw past it must not lose the one notice for good).
+          const ctx: { ban: { count: number; names: string } | null } = { ban: null };
+          let generated = false;
           try {
             // Unattended cron run — same warn-and-oversell posture as an operator.
-            const order = await this.createOrderFromTemplate(template, true, true);
+            const order = await this.createOrderFromTemplate(template, true, true, ctx);
+            generated = order != null;
             // null = all lines were license-gated + skipped → nothing created.
             if (order) totalCreated++;
             else totalSkipped++;
@@ -491,6 +496,9 @@ export class OrderTemplatesService {
               `[tenant:${tenant.id}] Failed to generate order for template ${template.id} (${template.name})`,
               err instanceof Error ? err.stack : String(err),
             );
+          } finally {
+            if (ctx.ban)
+              await this.notifyBanSkipped(template, ctx.ban, generated ? "ordered" : "held");
           }
         }
       });
@@ -519,6 +527,8 @@ export class OrderTemplatesService {
     },
     isStaffRole: boolean,
     unattended = false,
+    /** Unattended runs: filled with the ban note, so the CALLER can notify after the attempt (finally). */
+    ctx?: { ban: { count: number; names: string } | null },
   ) {
     // F-05: a banned product refuses a manual run (409 — the operator decides). The unattended cron run
     // instead SKIPS the banned line(s), still orders the rest, notifies once and marks each banned template
@@ -565,38 +575,18 @@ export class OrderTemplatesService {
           count: banned.size,
           names: [...new Set(verdict.reasons.map((r) => r.productName).filter(Boolean))].join(", "),
         };
+        if (ctx) ctx.ban = banNote;
       }
       template = { ...template, items: live.filter((i) => !banned.has(i.productId)) };
       if (template.items.length === 0) {
         // nothing left to order: deactivate (once — the cron no longer selects it) and say so once
         await this.deactivateForRestriction(template);
         await this.notifyBanSkipped(template, banNote, "deactivated");
+        if (ctx) ctx.ban = null; // already told: the caller must not notify again
         return null;
       }
     }
     if (!unattended) template = { ...template, items: live };
-    // The ban notice goes out AFTER the attempt, whatever its outcome: the suspension already committed, so a
-    // throw past that point must not lose the one notice for good.
-    let ordered = false;
-    try {
-      const order = await this.placeTemplateOrder(template, isStaffRole);
-      ordered = order != null;
-      return order;
-    } finally {
-      if (banNote) await this.notifyBanSkipped(template, banNote, ordered ? "ordered" : "held");
-    }
-  }
-
-  /** Prices and writes the order for the (already filtered) template lines; null = nothing was ordered. */
-  private async placeTemplateOrder(
-    template: {
-      id: string;
-      customerId: string;
-      name: string;
-      items: Array<{ productId: string; qty: number; notes?: string | null }>;
-    },
-    isStaffRole: boolean,
-  ) {
     const productIds = template.items.map((i) => i.productId);
     const products = await this.prisma.forTenant().product.findMany({
       where: { id: { in: productIds } },
