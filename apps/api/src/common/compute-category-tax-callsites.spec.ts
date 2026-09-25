@@ -50,13 +50,12 @@ const ALLOWLIST: { file: string; count: number; role: Role }[] = [
   { file: "invoices/manual-invoice-lines.ts", count: 1, role: "writer" }, // buildManualInvoiceLines
   { file: "order-templates/order-templates.service.ts", count: 1, role: "writer" }, // standing-order line gen
   { file: "orders/unit-line-build.ts", count: 1, role: "writer" }, // categoryTaxForLine
+  { file: "invoices/invoice-edit-plan.ts", count: 1, role: "writer" }, // update()'s fresh snapshot
+  { file: "invoices/invoices.service.ts", count: 1, role: "recompute" }, // applyPriceAdjustment
 ];
 const TWO_ROLE_FILES = [
   // orders.service.ts: create() is "writer"; recomputeLineCategoryTaxes is "recompute" (PR3 fixes).
   "orders/orders.service.ts",
-  // invoices.service.ts: update() rebuilds lines from the live category ("writer" — a fresh
-  // snapshot moment, D6); applyPriceAdjustment is "recompute" (PR3 fixes).
-  "invoices/invoices.service.ts",
 ];
 
 describe("computeCategoryTax callsites — writer vs recompute (B297-SPEC.md §1/§2)", () => {
@@ -70,8 +69,8 @@ describe("computeCategoryTax callsites — writer vs recompute (B297-SPEC.md §1
     expect(callCount("/* computeCategoryTax({ */")).toBe(0);
   });
 
-  it("orders.service.ts and invoices.service.ts each carry exactly one writer + one recompute call (2 total)", () => {
-    const twoCallFiles = ["orders/orders.service.ts", "invoices/invoices.service.ts"];
+  it("orders.service.ts carries exactly one writer + one recompute call (2 total)", () => {
+    const twoCallFiles = ["orders/orders.service.ts"];
     for (const file of twoCallFiles) {
       const text = fs.readFileSync(path.join(SRC_ROOT, file), "utf8");
       expect({ file, count: callCount(text) }).toEqual({ file, count: 2 });
