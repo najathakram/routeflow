@@ -1,4 +1,9 @@
-import { ConflictException, Injectable, NotFoundException } from "@nestjs/common";
+import {
+  BadRequestException,
+  ConflictException,
+  Injectable,
+  NotFoundException,
+} from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { RegulatedLedgerService } from "./regulated-ledger.service";
 import { periodBucketOf } from "./period";
@@ -23,54 +28,23 @@ export class ParkedReversalResolutionService {
   /** The tenant's unresolved parked reversals, oldest first — same shape as the parked
    *  restocks list, listed on the same "resolve this before filing" surface. */
   async list() {
+    if (!this.prisma.getTenantId())
+      throw new BadRequestException("Parked reversals are tenant-scoped");
     const db = this.prisma.forTenant();
     const rows: any[] = await db.regulatedLedgerParkedReversal.findMany({
       where: { resolvedAt: null },
       orderBy: { createdAt: "asc" },
     });
-    // SA-193 (5): tell the operator BEFORE resolving whether the park's own period is already filed —
-    // resolving then books in the CURRENT period with the park's date as originalSoldAt, and an
-    // amended return may be required for `amendedPeriod.periodKey` (the same rule the resolution
-    // itself applies, evaluated read-only).
-    if (rows.length === 0) return rows;
-    const sales: any[] =
-      (await db.regulatedSalesLedger.findMany({
-        where: { id: { in: rows.map((r) => r.saleEntryId) } },
-        select: { id: true, trackedCategoryId: true },
-      })) ?? [];
-    const categoryBySale = new Map<string, string>(sales.map((x) => [x.id, x.trackedCategoryId]));
-    const categoryIds = [...new Set(sales.map((x) => x.trackedCategoryId).filter(Boolean))];
-    const filings: any[] =
-      categoryIds.length > 0
-        ? ((await db.regulatedFiling.findMany({
-            where: {
-              trackedCategoryId: { in: categoryIds },
-              status: { in: ["GENERATED", "LOCKED"] },
-            },
-            select: {
-              trackedCategoryId: true,
-              periodKey: true,
-              periodStart: true,
-              periodEnd: true,
-              status: true,
-            },
-          })) ?? [])
-        : [];
-    const currentBucket = periodBucketOf(new Date());
-    return rows.map((r) => {
-      const bucket = periodBucketOf(new Date(r.createdAt));
-      const start = new Date(`${bucket}-01T00:00:00.000Z`);
-      const hit =
-        bucket !== currentBucket
-          ? filings.find(
-              (f) =>
-                f.trackedCategoryId === categoryBySale.get(r.saleEntryId) &&
-                new Date(f.periodStart) <= start &&
-                new Date(f.periodEnd) > start,
-            )
-          : undefined;
-      return { ...r, amendedPeriod: hit ? { periodKey: hit.periodKey, status: hit.status } : null };
-    });
+    // SA-193 (5) / #2108: tell the operator BEFORE resolving whether the park's own period is already
+    // filed. Resolving then books in the CURRENT period with the park's date as originalSoldAt, and an
+    // amended return may be required for `amendedPeriod.periodKey`. It is the SAME fold and the SAME
+    // lookup as the resolution (the parked row's category plus every live row of the product), through
+    // the ledger service's one helper.
+    const out: any[] = [];
+    for (const r of rows) {
+      out.push({ ...r, amendedPeriod: (await this.ledger.filedPeriodForParked(db, r)) ?? null });
+    }
+    return out;
   }
 
   /**
@@ -100,6 +74,8 @@ export class ParkedReversalResolutionService {
    * row parked and unresolved, exactly like the restock service's cancelled-return refusal.
    */
   async resolve(id: string, pack: number, reason: string, actor: { id: string }) {
+    if (!this.prisma.getTenantId())
+      throw new BadRequestException("Parked reversals are tenant-scoped");
     const result = await this.prisma.tenantTransaction(async (tx: any) => {
       const peek = await tx.regulatedLedgerParkedReversal.findFirst({ where: { id } });
       if (!peek) throw new NotFoundException("Parked reversal not found");
@@ -175,6 +151,9 @@ export class ParkedReversalResolutionService {
       // unbooked, is accounted for in this row, never silent). The tenant scope is injected by the tx.
       await tx.auditLog.create({
         data: {
+          // explicit tenantId (SA-197 LOW): the ROW's own tenant, not the caller context's (the tx
+          // extension also injects it); a tenant-less caller is refused above, so the two agree
+          tenantId: row.tenantId,
           userId: actor.id,
           action: "regulated_ledger.parked_reversal_resolved",
           entityType: "RegulatedLedgerParkedReversal",

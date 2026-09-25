@@ -12,3 +12,9 @@
 {"id":"B179","batch":"F29","tier":"T2","state":"queued","pr":null,"proof":null,"evidence":null,"roundSha":"0b2c3a0a"}
 {"id":"B184","batch":"F29","tier":"T1","state":"queued","pr":null,"proof":null,"evidence":null,"roundSha":"0b2c3a0a"}
 {"id":"B187","batch":"F29","tier":"T2","state":"queued","pr":null,"proof":null,"evidence":null,"roundSha":"0b2c3a0a"}
+{"id":"B852","batch":"F29","tier":"T1","state":"queued","pr":null,"proof":null,"evidence":null}
+{"id":"B853","batch":"F29","tier":"T1","state":"queued","pr":null,"proof":null,"evidence":null}
+{"id":"B854","batch":"F29","tier":"T1","state":"queued","pr":null,"proof":null,"evidence":null}
+{"id":"B860","batch":"F29","tier":"T1","state":"queued","pr":null,"proof":null,"evidence":null}
+{"id":"B861","batch":"F29","tier":"T1","state":"queued","pr":null,"proof":null,"evidence":null}
+{"id":"B862","batch":"F29","tier":"T1","state":"queued","pr":null,"proof":null,"evidence":null}

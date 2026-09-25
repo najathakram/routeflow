@@ -25,6 +25,8 @@ import {
   useUpdateNumbering,
   formatDocumentNumber,
   type DocumentNumberType,
+  type NumberingSetting,
+  type UpdateNumberingInput,
 } from "@/lib/api/numbering";
 import {
   useIncompleteProducts,
@@ -438,13 +440,18 @@ const DOC_TYPE_LABELS: Record<DocumentNumberType, string> = {
   INVOICE: "Invoices",
   ESTIMATE: "Estimates",
   CREDIT_NOTE: "Credit notes",
-  PAYMENT: "Payments",
 };
 
 interface NumberingDraft {
   prefix: string;
   nextNumber: number;
   padding: number;
+}
+
+/** A draft in progress plus the row values it was seeded from (the server row at seed time). */
+interface NumberingDraftEntry {
+  draft: NumberingDraft;
+  loaded: NumberingDraft;
 }
 
 function NumberingRow({
@@ -481,11 +488,11 @@ function NumberingRow({
         aria-label={`${DOC_TYPE_LABELS[docType]} next number`}
         type="number"
         min={1}
-        max={2_000_000_000}
+        max={999_999_999}
         value={Number.isFinite(draft.nextNumber) ? draft.nextNumber : ""}
         onChange={(e) => {
           const v = parseInt(e.target.value, 10);
-          onChange({ nextNumber: Number.isNaN(v) ? NaN : Math.min(2_000_000_000, v) });
+          onChange({ nextNumber: Number.isNaN(v) ? NaN : Math.min(999_999_999, v) });
         }}
         className="rounded-lg border border-surface-border px-2.5 py-1.5 text-sm font-mono text-right text-navy focus:border-brand-400 focus:outline-none"
       />
@@ -519,56 +526,80 @@ function NumberingCard() {
   const { toast } = useToast();
   const { data: settings, isLoading } = useNumberingSettings();
   const updateNumbering = useUpdateNumbering();
-  const [drafts, setDrafts] = React.useState<Record<string, NumberingDraft>>({});
+  const [drafts, setDrafts] = React.useState<Record<string, NumberingDraftEntry>>({});
   const [savingType, setSavingType] = React.useState<DocumentNumberType | null>(null);
 
-  // Seed a draft per doc type from the server once; keep local edits afterwards.
+  // Seed a draft (+ the loaded values it started from) per doc type from the
+  // server once; keep local edits afterwards. Seeding only fills in missing
+  // types, so a 409 that drops an entry re-seeds it from the next render.
   React.useEffect(() => {
     if (!settings) return;
     setDrafts((prev) => {
       const next = { ...prev };
       for (const s of settings) {
         if (!next[s.docType]) {
-          next[s.docType] = { prefix: s.prefix, nextNumber: s.nextNumber, padding: s.padding };
+          const seeded = { prefix: s.prefix, nextNumber: s.nextNumber, padding: s.padding };
+          next[s.docType] = { draft: seeded, loaded: seeded };
         }
       }
       return next;
     });
   }, [settings]);
 
-  const save = (docType: DocumentNumberType) => {
-    const d = drafts[docType];
-    if (!d) return;
-    if (!Number.isFinite(d.nextNumber) || d.nextNumber < 1) {
+  // Falls back to the server row (draft === loaded) when there is no local entry yet —
+  // covers the initial render and the render right after a 409 drops the entry.
+  const getEntry = (s: NumberingSetting): NumberingDraftEntry => {
+    const existing = drafts[s.docType];
+    if (existing) return existing;
+    const seeded = { prefix: s.prefix, nextNumber: s.nextNumber, padding: s.padding };
+    return { draft: seeded, loaded: seeded };
+  };
+
+  const save = (s: NumberingSetting) => {
+    const { draft, loaded } = getEntry(s);
+    const nextNumberChanged = draft.nextNumber !== loaded.nextNumber;
+    if (nextNumberChanged && (!Number.isFinite(draft.nextNumber) || draft.nextNumber < 1)) {
       toast({ title: "Enter a next number of 1 or more", variant: "error" });
       return;
     }
-    setSavingType(docType);
+    const data: UpdateNumberingInput = { expectedNextNumber: loaded.nextNumber };
+    if (draft.prefix !== loaded.prefix) data.prefix = draft.prefix;
+    if (nextNumberChanged) data.nextNumber = draft.nextNumber;
+    if (draft.padding !== loaded.padding) {
+      data.padding = Number.isFinite(draft.padding) ? draft.padding : 0;
+    }
+    setSavingType(s.docType);
     updateNumbering.mutate(
-      {
-        docType,
-        data: {
-          prefix: d.prefix,
-          nextNumber: d.nextNumber,
-          padding: Number.isFinite(d.padding) ? d.padding : 0,
-        },
-      },
+      { docType: s.docType, data },
       {
         onSuccess: (row) => {
-          // Reconcile the draft to the server-normalized row so the dirty flag
+          // Reconcile draft AND loaded to the server-normalized row so the dirty flag
           // clears after every save (covers NaN/clamped inputs that would
           // otherwise never round-trip to equality).
-          setDrafts((prev) => ({
-            ...prev,
-            [docType]: { prefix: row.prefix, nextNumber: row.nextNumber, padding: row.padding },
-          }));
+          const seeded = { prefix: row.prefix, nextNumber: row.nextNumber, padding: row.padding };
+          setDrafts((prev) => ({ ...prev, [s.docType]: { draft: seeded, loaded: seeded } }));
           toast({
-            title: `${DOC_TYPE_LABELS[docType]} numbering saved`,
-            description: `Next ${DOC_TYPE_LABELS[docType].toLowerCase()} will be ${row.preview}`,
+            title: `${DOC_TYPE_LABELS[s.docType]} numbering saved`,
+            description: `Next ${DOC_TYPE_LABELS[s.docType].toLowerCase()} will be ${row.preview}`,
             variant: "success",
           });
         },
         onError: (e: any) => {
+          if (e?.response?.status === 409) {
+            // The row moved since we loaded it — drop the draft so it re-seeds
+            // from the server row (SA-274 Q3) instead of keeping a stale edit.
+            setDrafts((prev) => {
+              const next = { ...prev };
+              delete next[s.docType];
+              return next;
+            });
+            toast({
+              title: "Numbering changed since you opened this page",
+              description: e?.response?.data?.message ?? e.message,
+              variant: "error",
+            });
+            return;
+          }
           toast({
             title: "Could not save numbering",
             description: e?.response?.data?.message ?? e.message,
@@ -589,11 +620,13 @@ function NumberingCard() {
         <div className="flex-1">
           <p className="font-semibold text-navy">Document numbering</p>
           <p className="text-xs text-navy/70 mt-0.5 leading-relaxed">
-            Continue where your old system left off — set the next number for each document type
-            (e.g. last invoice <span className="font-mono">INV-08841</span> → next{" "}
-            <span className="font-mono">INV-08842</span>). Imported documents keep their original
-            numbers; if a number already exists we skip to the next free one and note it on the
-            document.
+            Continue where your old system left off. Set the prefix and next number for each
+            document type (last invoice <span className="font-mono">INV-08841</span> → next{" "}
+            <span className="font-mono">INV-08842</span>) and save. Until you save a row, that type
+            keeps the yearly series (<span className="font-mono">INV-2026-0001</span>,{" "}
+            <span className="font-mono">INV-2026-0002</span>…). New numbers always continue after
+            the highest one already on file, so imported documents keep their numbers and nothing is
+            issued twice.
           </p>
         </div>
       </div>
@@ -611,25 +644,26 @@ function NumberingCard() {
             <span />
           </div>
           {(settings ?? []).map((s) => {
-            const d = drafts[s.docType] ?? {
-              prefix: s.prefix,
-              nextNumber: s.nextNumber,
-              padding: s.padding,
-            };
+            const { draft, loaded } = getEntry(s);
             const dirty =
-              d.prefix !== s.prefix || d.nextNumber !== s.nextNumber || d.padding !== s.padding;
+              draft.prefix !== loaded.prefix ||
+              draft.nextNumber !== loaded.nextNumber ||
+              draft.padding !== loaded.padding;
             return (
               <NumberingRow
                 key={s.docType}
                 docType={s.docType}
-                draft={d}
+                draft={draft}
                 serverPreview={s.preview}
                 dirty={dirty}
                 saving={savingType === s.docType}
                 onChange={(patch) =>
-                  setDrafts((prev) => ({ ...prev, [s.docType]: { ...d, ...patch } }))
+                  setDrafts((prev) => ({
+                    ...prev,
+                    [s.docType]: { draft: { ...draft, ...patch }, loaded },
+                  }))
                 }
-                onSave={() => save(s.docType)}
+                onSave={() => save(s)}
               />
             );
           })}
