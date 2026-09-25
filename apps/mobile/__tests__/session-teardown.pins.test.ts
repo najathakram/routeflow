@@ -95,6 +95,10 @@ jest.mock("../store/returnSubmissionStore", () => ({
   RETURN_SUBMISSION_STORE_NAME: "routeflow-return-submissions",
   useReturnSubmissionStore: { getState: () => ({ reset: jest.fn() }) },
 }));
+jest.mock("../store/inlineReturnSubmissionStore", () => ({
+  INLINE_RETURN_SUBMISSION_STORE_NAME: "routeflow-inline-return-submissions",
+  useInlineReturnSubmissionStore: { getState: () => ({ reset: jest.fn() }) },
+}));
 
 // Pin: the tenant store must NEVER be touched by sign-out teardown (Q2).
 const tenantClearMock = jest.fn();

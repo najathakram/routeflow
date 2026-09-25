@@ -38,6 +38,7 @@ import { EntitlementsService } from "../billing/entitlements.service";
 import { CommissionEngineService } from "../sales-agents/commission-engine.service";
 import { CheckStatus, InvoiceStatus, NotificationEvent, UserRole } from "@prisma/client";
 import { computeLineSubtotal, roundMoney } from "@routeflow/pricing";
+import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
 
 const mockCompressDocument = compressDocument as jest.Mock;
 
@@ -143,6 +144,10 @@ describe("InvoicesService", () => {
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         InvoicesService,
+        {
+          provide: SellingRestrictionsService,
+          useValue: { assertLinesSellable: jest.fn().mockResolvedValue(undefined) },
+        },
         { provide: PrismaService, useValue: prisma },
         { provide: RouteFlowGateway, useValue: mockGateway },
         { provide: EmailService, useValue: mockEmailService },

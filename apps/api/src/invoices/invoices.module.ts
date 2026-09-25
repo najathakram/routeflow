@@ -1,4 +1,5 @@
 import { Module } from "@nestjs/common";
+import { SellingRestrictionsModule } from "../selling-restrictions/selling-restrictions.module";
 import { InvoicesController } from "./invoices.controller";
 import { InvoicesService } from "./invoices.service";
 import { InvoicePdfService } from "./invoice-pdf.service";
@@ -17,6 +18,8 @@ import { NumberingModule } from "../import/numbering.module";
 
 @Module({
   imports: [
+    // F-05 (#2093): the choke point every line-writing service calls before it writes.
+    SellingRestrictionsModule,
     PrismaModule,
     GatewaysModule,
     StorageModule,
