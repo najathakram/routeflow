@@ -9,6 +9,7 @@ import {
   IsOptional,
   IsString,
   Min,
+  MaxLength,
   ValidateNested,
 } from "class-validator";
 import { RequireBoxesOrPiecesPositive } from "./require-boxes-or-pieces.validator";
@@ -89,6 +90,7 @@ export class InlineReturnLinesDto {
    * rather than opting in later. */
   @IsString()
   @IsNotEmpty()
+  @MaxLength(128)
   returnKey!: string;
 
   @IsOptional()

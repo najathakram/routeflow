@@ -61,6 +61,23 @@ describe("OrdersService.create(): inline-return call order (#2094)", () => {
     expect(at("emitInlineReturnCredit(")).toBeGreaterThan(commit());
   });
 
+  it("an Idempotency-Key replay must find THIS returnKey on the order: both the pre-check and the P2002 winner path assert it before returning", () => {
+    const calls = body.split("assertReplayCarriesReturn(").length - 1;
+    expect(calls).toBe(2);
+    const first = at("assertReplayCarriesReturn(");
+    expect(first).toBeLessThan(at("for (let attempt")); // the pre-check
+    expect(body.indexOf("assertReplayCarriesReturn(", first + 1)).toBeGreaterThan(
+      at("for (let attempt"),
+    ); // the winner path
+  });
+
+  it("a deadlock or serialization failure on a create carrying a return retries, inside the same loop (the reserved number is reused)", () => {
+    const retry = at("isRetryableTxError(");
+    expect(retry).toBeGreaterThan(at("for (let attempt"));
+    expect(retry).toBeGreaterThan(at("catch (e"));
+    expect(body.slice(retry, retry + 200)).toContain("continue");
+  });
+
   it("an order that carries a return is never a candidate for the auto-merge sweep", () => {
     expect(body).toMatch(/skipAutoMerge:[^,]*!!inlineRet/);
   });
