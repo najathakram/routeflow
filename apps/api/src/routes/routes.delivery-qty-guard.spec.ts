@@ -131,7 +131,7 @@ describe("RoutesService — delivery lines must belong to this stop and fit the 
       ...prisma,
       routeRunStop: {
         ...prisma.routeRunStop,
-        update: jest.fn().mockResolvedValue({}),
+        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
         findMany: jest.fn().mockResolvedValue([{ id: "stop-1", status: "PENDING" }]),
       },
       routeRun: { ...prisma.routeRun, update: jest.fn().mockResolvedValue({}) },
@@ -265,7 +265,7 @@ describe("RoutesService — delivery lines must belong to this stop and fit the 
         operatorPayload,
       ),
     ).rejects.toThrow(BadRequestException);
-    expect(tx.routeRunStop.update).not.toHaveBeenCalled(); // refused before the FIRST write
+    expect(tx.routeRunStop.updateMany).not.toHaveBeenCalled(); // refused before the FIRST write
     expect(tx.deliveryMutation.create).not.toHaveBeenCalled();
   });
 
@@ -335,7 +335,7 @@ describe("RoutesService — delivery lines must belong to this stop and fit the 
     it("the foreign-stop and over-qty refusals name the offending item", async () => {
       arrange([
         { id: "oi-a", orderId: "ord-OTHER", qty: 5 },
-        { id: "oi-b", orderId: "ord-1", qty: 2 },
+        { id: "oi-b", orderId: "ord-1", qty: 2, product: { name: "Widget" } },
       ]);
       const foreign: any = await service
         .completeWithPayment(
@@ -347,6 +347,8 @@ describe("RoutesService — delivery lines must belong to this stop and fit the 
         .catch((e) => e);
       expect(foreign.message).toContain("oi-a");
 
+      // SA-151: the over-qty refusal is driver-readable now — it names the
+      // product, not the raw orderItemId (payment.tsx surfaces this verbatim).
       const over: any = await service
         .completeWithPayment(
           "run-1",
@@ -355,7 +357,8 @@ describe("RoutesService — delivery lines must belong to this stop and fit the 
           operatorPayload,
         )
         .catch((e) => e);
-      expect(over.message).toContain("oi-b");
+      expect(over.message).toContain("Widget");
+      expect(over.message).toContain("2 left");
     });
   });
 });
