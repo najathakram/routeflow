@@ -1182,6 +1182,12 @@ export class RegulatedLedgerService {
         const restPackNow = await this.loadProductPackNow(db, [
           ...new Set([...restShapes.values()].map((v) => v.productId).filter(Boolean)),
         ] as string[]);
+        // SA-173: for the parked row's product the operator has just ATTESTED the pack on this
+        // order, so it overrides the live product read for the resumed walk too (the same entry row 1
+        // uses). Otherwise a product un-boxed after the sale would read a later legacy-shaped row as
+        // non-boxed-now and book its box count as pieces inside a resolution. It is NOT applied as the
+        // rows' own pack: they stay legacy and PARK, so the audit shows one attestation per row.
+        if (productId) restPackNow.set(productId, pack);
         const walked = await this.walkSaleRows({
           ...walkBase,
           sales: rest,

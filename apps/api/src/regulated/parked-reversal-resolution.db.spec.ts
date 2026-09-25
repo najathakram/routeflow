@@ -598,47 +598,59 @@ describeDb(
       expect(rows.some((r) => r.orderId === f.orderId && Number(r.qty) === 1)).toBe(true);
     }, 30_000);
 
-    it("SA-167 (a): two legacy rows (2 and 3 boxes at 12), 60 pieces parked on row 1: resolving row 1 books 24 and parks 36 on row 2; resolving that books 36; every piece is reversed", async () => {
-      const f = await seedLegacyLine("walk-a", {
-        qty: 2,
-        netSales: 20,
-        categoryTax: 4,
-        returnedPieces: 60,
-        livePack: 12,
-      });
-      const second = await addSecondRow(f, { qty: 3, netSales: 30, categoryTax: 6, legacy: true });
+    it.each([
+      ["a live pack of 12", 12],
+      ["NO live pack (product un-boxed after the sale)", undefined],
+    ])(
+      "SA-167 (a)/SA-173: two legacy rows (2 and 3 boxes at 12), 60 pieces parked on row 1, product with %s: resolving row 1 books 24 and parks 36 on row 2; resolving that books 36; every piece is reversed",
+      async (_label, livePack) => {
+        const f = await seedLegacyLine(`walk-a-${livePack ?? "null"}`, {
+          qty: 2,
+          netSales: 20,
+          categoryTax: 4,
+          returnedPieces: 60,
+          livePack,
+        });
+        const second = await addSecondRow(f, {
+          qty: 3,
+          netSales: 30,
+          categoryTax: 6,
+          legacy: true,
+        });
 
-      const first = await resolveAs(f.parkedRowId, 12);
-      expect(first.outcome).toBe("partial");
-      expect(first.bookedPieces).toBe(24);
-      expect(first.parkedPieces).toBe(36);
-      expect(first.unbookedPieces).toBe(0);
-      expect(first.parkedRowIds).toHaveLength(1);
+        const first = await resolveAs(f.parkedRowId, 12);
+        expect(first.outcome).toBe("partial");
+        expect(first.bookedPieces).toBe(24);
+        expect(first.parkedPieces).toBe(36);
+        expect(first.unbookedPieces).toBe(0);
+        expect(first.parkedRowIds).toHaveLength(1);
 
-      const newParked = await raw.regulatedLedgerParkedReversal.findMany({
-        where: { returnId: f.returnId, saleEntryId: second.saleId },
-      });
-      expect(newParked).toHaveLength(1);
-      expect(Number(newParked[0].returnedPieces)).toBe(36);
-      expect(newParked[0].resolvedAt).toBeNull();
+        const newParked = await raw.regulatedLedgerParkedReversal.findMany({
+          where: { returnId: f.returnId, saleEntryId: second.saleId },
+        });
+        expect(newParked).toHaveLength(1);
+        expect(Number(newParked[0].returnedPieces)).toBe(36);
+        expect(newParked[0].resolvedAt).toBeNull();
 
-      const next = await resolveAs(newParked[0].id, 12);
-      expect(next.outcome).toBe("booked");
-      expect(next.bookedPieces).toBe(36);
-      expect(next.parkedPieces).toBe(0);
+        const next = await resolveAs(newParked[0].id, 12);
+        expect(next.outcome).toBe("booked");
+        expect(next.bookedPieces).toBe(36);
+        expect(next.parkedPieces).toBe(0);
 
-      const rows = await raw.regulatedSalesLedger.findMany({ where: { orderId: f.orderId } });
-      const sum = (
-        pred: (r: (typeof rows)[number]) => boolean,
-        field: "unitBasisQty" | "netSales",
-      ) => rows.filter(pred).reduce((acc, r) => acc + Number(r[field]), 0);
-      expect(
-        sum((r) => r.entryType === "REVERSAL" && r.correctsEntryId == null, "unitBasisQty"),
-      ).toBe(-60);
-      // The whole order nets to zero in pieces and in money.
-      expect(sum(() => true, "unitBasisQty")).toBe(0);
-      expect(sum(() => true, "netSales")).toBeCloseTo(0, 2);
-    }, 30_000);
+        const rows = await raw.regulatedSalesLedger.findMany({ where: { orderId: f.orderId } });
+        const sum = (
+          pred: (r: (typeof rows)[number]) => boolean,
+          field: "unitBasisQty" | "netSales",
+        ) => rows.filter(pred).reduce((acc, r) => acc + Number(r[field]), 0);
+        expect(
+          sum((r) => r.entryType === "REVERSAL" && r.correctsEntryId == null, "unitBasisQty"),
+        ).toBe(-60);
+        // The whole order nets to zero in pieces and in money.
+        expect(sum(() => true, "unitBasisQty")).toBe(0);
+        expect(sum(() => true, "netSales")).toBeCloseTo(0, 2);
+      },
+      30_000,
+    );
 
     it("SA-169 (d): the first row's line already fully reversed: nothing on row 1, the 36 pieces are booked on row 2, outcome booked", async () => {
       const f = await seedLegacyLine("walk-d", {
