@@ -15,7 +15,6 @@ import {
 import { Type } from "class-transformer";
 import { StripHtml } from "../../common/transforms/strip-html.transform";
 import { AppliedCreditNoteDto } from "./create-order.dto";
-import { InlineReturnLinesDto } from "../../returns/dto/capture-inline-return.dto";
 
 class UpdateOrderItemDto {
   @IsOptional()
@@ -143,14 +142,4 @@ export class UpdateOrderItemsDto {
   @ValidateNested({ each: true })
   @Type(() => AppliedCreditNoteDto)
   appliedCreditNotes?: AppliedCreditNoteDto[];
-
-  /**
-   * #2094 (SA-194): a return taken inside this order's own transaction. Customer and order are
-   * DERIVED from the document, never supplied; `returnKey` is the per-attempt nonce (replay -> one
-   * credit). Staff and driver only: a buyer carrying it is refused before any read (OrdersService).
-   */
-  @IsOptional()
-  @ValidateNested()
-  @Type(() => InlineReturnLinesDto)
-  inlineReturn?: InlineReturnLinesDto;
 }

@@ -82,3 +82,14 @@ describe("OrdersService.create(): inline-return call order (#2094)", () => {
     }
   });
 });
+
+describe("the staff merge branch never drops an inlineReturn silently (#2094)", () => {
+  const controller = strip(fs.readFileSync(path.join(__dirname, "orders.controller.ts"), "utf8"));
+
+  it("refuses a merge that carries an inlineReturn, before any fold work", () => {
+    const refuse = controller.indexOf("if (dto.inlineReturn)");
+    expect(refuse).toBeGreaterThan(-1);
+    expect(refuse).toBeLessThan(controller.indexOf("foldMergeItems("));
+    expect(controller.slice(refuse, refuse + 300)).toContain("BadRequestException");
+  });
+});

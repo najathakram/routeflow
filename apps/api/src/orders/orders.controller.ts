@@ -130,6 +130,13 @@ export class OrdersController {
           });
         }
         if (choice === "merge") {
+          // #2094: the merge path is updateOrderItems, which does not take an inlineReturn yet. Refuse
+          // rather than drop it: the operator would believe a return was recorded.
+          if (dto.inlineReturn) {
+            throw new BadRequestException(
+              "A return can't be taken on a merge yet. Create a separate order instead.",
+            );
+          }
           // The merge writes items onto the existing order, whose own business date
           // stays authoritative — OrdersService.create (the only place orderDate is
           // parsed and stored) does not run on the merge path, so accepting a date here
