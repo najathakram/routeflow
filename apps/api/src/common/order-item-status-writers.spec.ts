@@ -18,7 +18,19 @@ import * as ts from "typescript";
 
 const SRC_ROOT = path.resolve(__dirname, "..");
 const FORBIDDEN = new Set(["CONFIRMED", "PARTIAL", "DELIVERED"]);
-const WRITES = new Set(["create", "createMany", "update", "updateMany", "upsert"]);
+const WRITES = new Set([
+  "create",
+  "createMany",
+  "createManyAndReturn",
+  "update",
+  "updateMany",
+  "updateManyAndReturn",
+  "upsert",
+]);
+/** Keys of a nested `lineItems: { <key>: ... }` that WRITE (a `some`/`every`/`none` there is a read filter). */
+const NESTED_WRITES = new Set([...WRITES, "connectOrCreate", "set"]);
+/** Subtrees that are read positions, never writes. */
+const READ_KEYS = new Set(["where", "select", "include", "orderBy", "cursor", "omit"]);
 
 function walk(dir: string, out: string[] = []): string[] {
   for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
@@ -29,37 +41,65 @@ function walk(dir: string, out: string[] = []): string[] {
   return out;
 }
 
-const statusValue = (n: ts.Expression): string | null => {
-  if (ts.isStringLiteralLike(n)) return n.text;
-  if (ts.isPropertyAccessExpression(n) && n.expression.getText() === "ItemStatus")
-    return n.name.text;
-  return null;
+/** Every forbidden status an initializer can evaluate to: unwraps (), `as`, `satisfies`, `!`, ternaries and `??`/`||`, `{ set: X }`. */
+function forbiddenIn(n: ts.Node): string[] {
+  if (
+    ts.isParenthesizedExpression(n) ||
+    ts.isAsExpression(n) ||
+    ts.isSatisfiesExpression(n) ||
+    ts.isNonNullExpression(n)
+  )
+    return forbiddenIn(n.expression);
+  if (ts.isConditionalExpression(n))
+    return [...forbiddenIn(n.whenTrue), ...forbiddenIn(n.whenFalse)];
+  if (ts.isBinaryExpression(n)) return [...forbiddenIn(n.left), ...forbiddenIn(n.right)];
+  if (ts.isStringLiteralLike(n)) return FORBIDDEN.has(n.text) ? [n.text] : [];
+  if (ts.isPropertyAccessExpression(n)) return FORBIDDEN.has(n.name.text) ? [n.name.text] : []; // ItemStatus.X, OrderStatus.X, Prisma.ItemStatus.X
+  if (ts.isObjectLiteralExpression(n))
+    return n.properties.flatMap((pr) =>
+      ts.isPropertyAssignment(pr) && pr.name.getText() === "set" ? forbiddenIn(pr.initializer) : [],
+    );
+  return [];
+}
+
+const unwrapCallee = (n: ts.Expression): ts.Expression =>
+  ts.isNonNullExpression(n) || ts.isParenthesizedExpression(n) ? unwrapCallee(n.expression) : n;
+
+const isOrderItemWrite = (n: ts.Node): boolean => {
+  if (!ts.isCallExpression(n)) return false;
+  const callee = unwrapCallee(n.expression);
+  if (!ts.isPropertyAccessExpression(callee) || !WRITES.has(callee.name.text)) return false;
+  const target = unwrapCallee(callee.expression);
+  return ts.isPropertyAccessExpression(target) && target.name.text === "orderItem";
 };
 
-const isOrderItemWrite = (n: ts.Node): boolean =>
-  ts.isCallExpression(n) &&
-  ts.isPropertyAccessExpression(n.expression) &&
-  WRITES.has(n.expression.name.text) &&
-  ts.isPropertyAccessExpression(n.expression.expression) &&
-  n.expression.expression.name.text === "orderItem";
+const propName = (n: ts.Node): string | null => {
+  if (!ts.isPropertyAssignment(n) && !ts.isShorthandPropertyAssignment(n)) return null;
+  const t = n.name.getText().replace(/^["']|["']$/g, "");
+  return t;
+};
 
-const isLineItemsProp = (n: ts.Node): boolean =>
-  ts.isPropertyAssignment(n) && n.name.getText() === "lineItems";
-
-/** Offending `status: <forbidden>` sites in one file's text. */
+/** Offending `status:` sites in one file's text. */
 export function findOrderItemStatusOffenders(text: string): string[] {
   const sf = ts.createSourceFile("x.ts", text, ts.ScriptTarget.Latest, true);
   const bad: string[] = [];
-  const visit = (n: ts.Node, inWrite: boolean) => {
-    const here = inWrite || isOrderItemWrite(n) || isLineItemsProp(n);
-    if (here && ts.isPropertyAssignment(n) && n.name.getText() === "status") {
-      const v = statusValue(n.initializer);
-      if (v && FORBIDDEN.has(v))
+  // ctx.write: inside an orderItem write call's arguments; ctx.lineItems: inside `lineItems:`; ctx.nestedWrite:
+  // ...and past a write key (create/update/...), so `lineItems: { some: { status } }` is not flagged.
+  const visit = (n: ts.Node, ctx: { write: boolean; lineItems: boolean; nestedWrite: boolean }) => {
+    const name = propName(n);
+    if (name && READ_KEYS.has(name)) return; // a read position
+    const next = { ...ctx };
+    if (isOrderItemWrite(n)) next.write = true;
+    if (name === "lineItems") next.lineItems = true;
+    if (ctx.lineItems && name && NESTED_WRITES.has(name)) next.nestedWrite = true;
+    const writing = next.write || (next.lineItems && next.nestedWrite);
+    if (writing && ts.isPropertyAssignment(n) && name === "status") {
+      for (const v of forbiddenIn(n.initializer))
         bad.push(`${v} @ line ${sf.getLineAndCharacterOfPosition(n.getStart()).line + 1}`);
     }
-    ts.forEachChild(n, (c) => visit(c, here));
+    ts.forEachChild(n, (c) => visit(c, next));
   };
-  visit(sf, false);
+  visit(sf, { write: false, lineItems: false, nestedWrite: false });
   return bad;
 }
 
@@ -73,30 +113,73 @@ describe("OrderItem.status is only ever written PENDING or CANCELLED (SA-248)", 
     expect(offenders).toEqual([]);
   });
 
-  it("the scan itself sees a writer (it is not vacuous) and does not flag Order.status", () => {
+  const offenders = (code: string) => findOrderItemStatusOffenders(code).length;
+
+  it("the scan itself sees each writer shape (it is not vacuous)", () => {
     expect(
-      findOrderItemStatusOffenders(
-        `await tx.orderItem.update({ where: { id }, data: { status: "DELIVERED" } });`,
-      ),
-    ).toHaveLength(1);
+      offenders(`await tx.orderItem.update({ where: { id }, data: { status: "DELIVERED" } });`),
+    ).toBe(1);
     expect(
-      findOrderItemStatusOffenders(
-        `await db.orderItem.updateMany({ data: { status: ItemStatus.PARTIAL } });`,
-      ),
-    ).toHaveLength(1);
+      offenders(`await db.orderItem.updateMany({ data: { status: ItemStatus.PARTIAL } });`),
+    ).toBe(1);
     expect(
-      findOrderItemStatusOffenders(
+      offenders(
         `await tx.order.create({ data: { lineItems: { create: [{ status: "CONFIRMED" }] } } });`,
       ),
-    ).toHaveLength(1);
+    ).toBe(1);
+    // wrapped / conditional / cast values
     expect(
-      findOrderItemStatusOffenders(`await tx.order.update({ data: { status: "CONFIRMED" } });`),
-    ).toHaveLength(0);
+      offenders(`await tx.orderItem.update({ data: { status: full ? "DELIVERED" : "PARTIAL" } });`),
+    ).toBe(2);
     expect(
-      findOrderItemStatusOffenders(
+      offenders(`await tx.orderItem.update({ data: { status: "DELIVERED" as ItemStatus } });`),
+    ).toBe(1);
+    expect(
+      offenders(`await tx.orderItem.update({ data: { status: (ItemStatus.DELIVERED) } });`),
+    ).toBe(1);
+    expect(
+      offenders(`await tx.orderItem.update({ data: { status: OrderStatus.DELIVERED } });`),
+    ).toBe(1);
+    expect(offenders(`await tx.orderItem.update({ data: { status: { set: "PARTIAL" } } });`)).toBe(
+      1,
+    );
+    // other write methods and a non-null callee
+    expect(
+      offenders(`await tx.orderItem.createManyAndReturn({ data: [{ status: "CONFIRMED" }] });`),
+    ).toBe(1);
+    expect(
+      offenders(`await tx.orderItem.updateManyAndReturn({ data: { status: "DELIVERED" } });`),
+    ).toBe(1);
+    expect(offenders(`await tx.orderItem!.update({ data: { status: "DELIVERED" } });`)).toBe(1);
+    expect(
+      offenders(
+        `await tx.order.update({ data: { lineItems: { updateMany: { where: {}, data: { status: "DELIVERED" } } } } });`,
+      ),
+    ).toBe(1);
+  });
+
+  it("...and does not flag Order.status, PENDING/CANCELLED, or read filters", () => {
+    expect(offenders(`await tx.order.update({ data: { status: "CONFIRMED" } });`)).toBe(0);
+    expect(
+      offenders(
         `await tx.orderItem.update({ data: { status: "PENDING" } }); await tx.orderItem.update({ data: { status: ItemStatus.CANCELLED } });`,
       ),
-    ).toHaveLength(0);
+    ).toBe(0);
+    expect(
+      offenders(
+        `await tx.orderItem.updateMany({ where: { status: "DELIVERED" }, data: { status: "CANCELLED" } });`,
+      ),
+    ).toBe(0);
+    expect(
+      offenders(
+        `await tx.order.findMany({ where: { lineItems: { some: { status: "DELIVERED" } } } });`,
+      ),
+    ).toBe(0);
+    expect(
+      offenders(
+        `await tx.order.update({ where: {}, data: { lineItems: { deleteMany: { status: "DELIVERED" } } } });`,
+      ),
+    ).toBe(0);
   });
 
   it("the file set is non-trivial (guards against an empty walk reporting green)", () => {

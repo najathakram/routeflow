@@ -1439,5 +1439,117 @@ describeDb(
       expect(after!.status).toBe("PENDING");
       expect(Number(after!.qty)).toBe(5);
     });
+
+    it("SA-257-T1 (corner 1) a legacy order line 1 box + 14 pcs (qty 26) with NO saved pack, billed by ONE no-split invoice line at pack 24: recompute writes 1 + 2 at pack 24 (26 pcs), not 1 + 14 at 24 (38)", async () => {
+      const t = await seedTenant("t1");
+      const customer = await seedCustomer(t.id, "t1");
+      const product = await mkProduct(t.id, `t1 ${t.slug}`, 24);
+      const order = await prisma.order.create({
+        data: {
+          tenantId: t.id,
+          customerId: customer.id,
+          status: "DELIVERED",
+          subtotal: 260,
+          total: 260,
+        },
+      });
+      const oi = await prisma.orderItem.create({
+        data: {
+          tenantId: t.id,
+          orderId: order.id,
+          productId: product.id,
+          qty: 26,
+          boxes: 1,
+          pieces: 14,
+          unitPrice: 10,
+          subtotal: 260,
+          invoicedQty: 26,
+        },
+      });
+      const inv = await prisma.invoice.create({
+        data: {
+          tenantId: t.id,
+          customerId: customer.id,
+          orderId: order.id,
+          invoiceNumber: `INV-T1-${RUN_SUFFIX}`,
+          status: "DRAFT",
+          subtotal: 260,
+          total: 260,
+        },
+      });
+      await prisma.invoiceItem.create({
+        data: {
+          tenantId: t.id,
+          invoiceId: inv.id,
+          productId: product.id,
+          orderItemId: oi.id,
+          description: "t1",
+          qty: 26,
+          unitsPerBox: 24,
+          unitPrice: 10,
+          subtotal: 260,
+        },
+      });
+      await tenantCtx.run(t.id, () => invoicesService.recomputeOrderFromInvoices(order.id));
+      const a = await prisma.orderItem.findUnique({ where: { id: oi.id } });
+      expect([Number(a!.qty), a!.boxes, a!.pieces, a!.unitsPerBox]).toEqual([26, 1, 2, 24]);
+    });
+
+    it("SA-257-T2 (corner 2) a legacy invoice line 1 + 0 with NO pack (qty 24) over an order line at pack 12: recompute writes 2 + 0 at pack 12, not 1 + 0 (12 pcs)", async () => {
+      const t = await seedTenant("t2");
+      const customer = await seedCustomer(t.id, "t2");
+      const product = await mkProduct(t.id, `t2 ${t.slug}`, 12);
+      const order = await prisma.order.create({
+        data: {
+          tenantId: t.id,
+          customerId: customer.id,
+          status: "DELIVERED",
+          subtotal: 240,
+          total: 240,
+        },
+      });
+      const oi = await prisma.orderItem.create({
+        data: {
+          tenantId: t.id,
+          orderId: order.id,
+          productId: product.id,
+          qty: 24,
+          boxes: 2,
+          pieces: 0,
+          unitsPerBox: 12,
+          unitPrice: 10,
+          subtotal: 240,
+          invoicedQty: 24,
+        },
+      });
+      const inv = await prisma.invoice.create({
+        data: {
+          tenantId: t.id,
+          customerId: customer.id,
+          orderId: order.id,
+          invoiceNumber: `INV-T2-${RUN_SUFFIX}`,
+          status: "DRAFT",
+          subtotal: 240,
+          total: 240,
+        },
+      });
+      await prisma.invoiceItem.create({
+        data: {
+          tenantId: t.id,
+          invoiceId: inv.id,
+          productId: product.id,
+          orderItemId: oi.id,
+          description: "t2",
+          qty: 24,
+          boxes: 1,
+          pieces: 0,
+          unitPrice: 10,
+          subtotal: 240,
+        },
+      });
+      await tenantCtx.run(t.id, () => invoicesService.recomputeOrderFromInvoices(order.id));
+      const a = await prisma.orderItem.findUnique({ where: { id: oi.id } });
+      expect([Number(a!.qty), a!.boxes, a!.pieces, a!.unitsPerBox]).toEqual([24, 2, 0, 12]);
+    });
   },
 );

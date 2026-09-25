@@ -229,6 +229,59 @@ describe("orderLineShape (SA-203c)", () => {
       expect(shape).toMatchObject({ qty: 30, boxes: 2, pieces: 6, unitsPerBox: 12 });
     });
 
+    describe("invariant: any split the back-sync writes satisfies boxes x pack + pieces === qty (SA-257)", () => {
+      const consistent = (s: any) => (s.boxes ?? 0) * (s.unitsPerBox ?? 0) + (s.pieces ?? 0);
+
+      it("corner 1: a legacy order line 1 box + 14 pcs (qty 26) with NO saved pack, billed by one no-split line at pack 24, is re-split at 24 (1 + 2), never written 1 + 14 at pack 24 (38 pcs)", () => {
+        const shape = orderLineShape(
+          { boxes: 1, pieces: 14, unitsPerBox: null, qty: 26 },
+          { qty: 26, sample: { boxes: null, pieces: null, unitsPerBox: 24 }, n: 1 },
+        );
+        expect(shape).toMatchObject({ qty: 26, boxes: 1, pieces: 2, unitsPerBox: 24 });
+        expect(consistent(shape)).toBe(26);
+      });
+
+      it("corner 2: a legacy billed line 1 + 0 with NO pack (qty 24) over an order line at pack 12 is written 2 + 0 at pack 12, never 1 + 0 at pack 12 (12 pcs)", () => {
+        const shape = orderLineShape(
+          { boxes: 2, pieces: 0, unitsPerBox: 12, qty: 24 },
+          { qty: 24, sample: { boxes: 1, pieces: 0, unitsPerBox: null }, n: 1 },
+        );
+        expect(shape).toMatchObject({ qty: 24, boxes: 2, pieces: 0, unitsPerBox: 12 });
+        expect(consistent(shape)).toBe(24);
+      });
+
+      it("a CONSISTENT non-normalized split is still kept (1 box + 14 pcs at its own pack 12 = 26)", () => {
+        const shape = orderLineShape(
+          { boxes: 1, pieces: 14, unitsPerBox: 12, qty: 26 },
+          { qty: 26, sample: { boxes: null, pieces: null, unitsPerBox: null }, n: 1 },
+        );
+        expect(shape).toMatchObject({ boxes: 1, pieces: 14, unitsPerBox: 12 });
+      });
+
+      it("no known pack anywhere: 0 boxes => pieces = qty; a box split is kept as stored (nothing to re-split against)", () => {
+        expect(
+          orderLineShape(
+            { boxes: 0, pieces: 5, unitsPerBox: null, qty: 5 },
+            { qty: 7, sample: { boxes: null }, n: 1 },
+          ),
+        ).toMatchObject({ boxes: 0, pieces: 7, unitsPerBox: null });
+        expect(
+          orderLineShape(
+            { boxes: 2, pieces: 3, unitsPerBox: null, qty: 27 },
+            { qty: 27, sample: { boxes: null }, n: 1 },
+          ),
+        ).toMatchObject({ boxes: 2, pieces: 3, unitsPerBox: null });
+      });
+    });
+
+    it("a no-split invoice line billing a no-split order line leaves it box-unaware and keeps the order line's own pack (matches master; documented in the header)", () => {
+      const shape = orderLineShape(
+        { boxes: null, pieces: null, unitsPerBox: 12, qty: 5 },
+        { qty: 5, sample: { boxes: null, pieces: null, unitsPerBox: null }, n: 1 },
+      );
+      expect(shape).toMatchObject({ qty: 5, boxes: null, pieces: null, unitsPerBox: 12 });
+    });
+
     it("n === 1 WITHOUT a split keeps the ORDER line's own split and pack (SA-227), never blanking it", () => {
       const shape = orderLineShape(
         { boxes: 2, pieces: 0, unitsPerBox: 12 },

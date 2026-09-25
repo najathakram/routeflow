@@ -8,10 +8,22 @@ import { normalizeBoxesPieces, roundMoney } from "@routeflow/pricing";
  *    a legacy line with no pack does not blank the order line's own pack.
  *  - ONE billed line WITHOUT a split over a split order line (SA-227): the order line's own split and pack are
  *    KEPT (never re-normalized, so 1 box + 14 pieces stays 1 + 14); only a moved qty re-splits, at its own pack.
+ *  - A line whose figures do not change is never re-derived; a no-split invoice line billing a no-split order line
+ *    leaves it box-unaware and keeps the order line's own pack (as master did).
+ *  - INVARIANT (SA-257): any split written satisfies boxes x pack + pieces === qty. A copied or kept split that
+ *    would not (a legacy 1 + 0 line with no pack over an order line at pack 12; a stored 1 + 14 re-billed at a
+ *    different pack) is re-split at the resolved pack; with no known pack, 0 boxes => pieces = qty.
  *  - SEVERAL billed lines (n > 1): the old re-split, at the pack they all share (SA-233), else the order line's
  *    own known pack; a pack that is unknown keeps the stored split (0 boxes => pieces = qty).
  */
 export function orderLineShape(
+  existing: any,
+  agg: { qty: number; sample: any; n?: number; packs?: ReadonlySet<number> },
+): ReturnType<typeof rawShape> {
+  return consistentSplit(rawShape(existing, agg), agg.qty);
+}
+
+function rawShape(
   existing: any,
   agg: { qty: number; sample: any; n?: number; packs?: ReadonlySet<number> },
 ): {
@@ -114,3 +126,18 @@ export function orderLineUnchanged(
 /** Does `row` already hold every `[column, value]` pair? Then writing them again would change nothing. */
 export const holdsValues = (row: any, want: ReadonlyArray<readonly [string, unknown]>): boolean =>
   want.every(([k, v]) => sameValue(row?.[k], v));
+
+/** The invariant (SA-257): boxes x pack + pieces === qty for any split written; else re-split at the pack. */
+function consistentSplit<
+  T extends {
+    qty: number;
+    boxes: number | null;
+    pieces: number | null;
+    unitsPerBox: number | null;
+  },
+>(shape: T, qty: number): T {
+  const upb = Number(shape.unitsPerBox ?? 0);
+  if (shape.boxes == null || !(upb > 1)) return shape;
+  if (shape.boxes * upb + (shape.pieces ?? 0) === qty) return shape;
+  return { ...shape, ...normalizeBoxesPieces({ qty, unitsPerBox: upb }), unitsPerBox: upb };
+}
