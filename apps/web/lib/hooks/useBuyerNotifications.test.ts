@@ -7,6 +7,7 @@
  *   (this portal's) only takes events for the seller on screen; caches refresh either way.
  * - Every reconnect presents the current token (a getter, not a captured string).
  * - Leaving the portal closes the socket.
+ * - #2142 N2: the bell persists per buyer account, never in one slot every buyer shares.
  * Fixtures are placeholders.
  */
 import * as React from "react";
@@ -170,5 +171,81 @@ describe("useBuyerNotifications — the socket's lifetime", () => {
     unmount();
     expect(mockDisconnect).toHaveBeenCalledTimes(1);
     expect(fakeSocket.hasListener("order.statusChanged")).toBe(false);
+  });
+});
+
+// ─── #2142 N2: one bell per buyer account ───────────────────────────────────────
+
+/** A buyer access token as the client reads it (payload only; no signature check). */
+function buyerJwt(sub: string) {
+  const part = (o: object) => btoa(JSON.stringify(o));
+  return [
+    part({ alg: "HS256", typ: "JWT" }),
+    part({ sub, email: `${sub}@example.test`, name: sub, type: "BUYER", exp: 4102444800 }),
+    "sig",
+  ].join(".");
+}
+
+const stored = (key: string) => JSON.parse(localStorage.getItem(key) ?? "null");
+const bellKeys = () =>
+  Object.keys(localStorage).filter((k) => k.startsWith("rf_buyer_notifications"));
+const oldNotice = {
+  id: "n-old",
+  type: "invoice",
+  title: "Invoice updated",
+  description: "Invoice INV-OLD has been updated",
+  timestamp: 1,
+  read: false,
+};
+
+describe("useBuyerNotifications — the bell belongs to one buyer (#2142 N2)", () => {
+  it("#2142 N2: persists under the signed-in buyer's own key, never the shared one", async () => {
+    localStorage.setItem(BUYER_KEYS.accessToken, buyerJwt("buyer-a"));
+    await mounted();
+    act(() => {
+      fakeSocket.emit("order.statusChanged", {
+        orderId: "ord-9",
+        customerId: "c-mine",
+        orderNumber: "ORD-9",
+        status: "DELIVERED",
+      });
+    });
+    expect(stored("rf_buyer_notifications:buyer-a")).toEqual([
+      expect.objectContaining({ type: "order", title: "Order Delivered" }),
+    ]);
+    expect(bellKeys()).toEqual(["rf_buyer_notifications:buyer-a"]);
+  });
+
+  it("#2142 N2: the next buyer on the same browser starts with an empty bell", async () => {
+    localStorage.setItem("rf_buyer_notifications:buyer-a", JSON.stringify([oldNotice]));
+    // The pre-#2142 shared slot: it may be anyone's, so it is never read.
+    localStorage.setItem("rf_buyer_notifications", JSON.stringify([oldNotice]));
+    localStorage.setItem(BUYER_KEYS.accessToken, buyerJwt("buyer-b"));
+
+    const { result } = await mounted();
+    expect(result.current.notifications).toEqual([]);
+  });
+
+  it("a returning buyer gets its own bell back", async () => {
+    localStorage.setItem("rf_buyer_notifications:buyer-a", JSON.stringify([oldNotice]));
+    localStorage.setItem(BUYER_KEYS.accessToken, buyerJwt("buyer-a"));
+
+    const { result } = await mounted();
+    await waitFor(() => expect(result.current.notifications).toEqual([oldNotice]));
+  });
+
+  it("with no identifiable buyer the bell works in memory and persists nothing", async () => {
+    // beforeEach's "tok-1" is not a JWT: no buyer id can be read from it.
+    const { result } = await mounted();
+    act(() => {
+      fakeSocket.emit("order.statusChanged", {
+        orderId: "ord-9",
+        customerId: "c-mine",
+        orderNumber: "ORD-9",
+        status: "DELIVERED",
+      });
+    });
+    expect(result.current.notifications).toHaveLength(1);
+    expect(bellKeys()).toEqual([]);
   });
 });

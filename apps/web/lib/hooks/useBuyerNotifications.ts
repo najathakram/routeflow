@@ -3,7 +3,12 @@
 import * as React from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { connectSocket, disconnectSocket } from "../socket";
-import { getBuyerAccessToken, getStoredActiveSeller } from "../buyer-auth";
+import {
+  buyerNotificationsKey,
+  getBuyerAccessToken,
+  getStoredActiveSeller,
+  getStoredBuyerId,
+} from "../buyer-auth";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -20,22 +25,25 @@ export interface BuyerNotification {
 
 // ─── LocalStorage persistence ─────────────────────────────────────────────────
 
-const STORAGE_KEY = "rf_buyer_notifications";
+// #2142 N2: one slot per buyer account (`buyerNotificationsKey`), so the next buyer on this
+// browser never inherits the last one's notices; buyerLogout clears them. With no identifiable
+// buyer nothing is read or written (the old unkeyed slot is never read: it may be anyone's).
 const MAX_NOTIFICATIONS = 50;
 
-function loadFromStorage(): BuyerNotification[] {
-  if (typeof window === "undefined") return [];
+function loadFromStorage(buyerId: string | null): BuyerNotification[] {
+  if (typeof window === "undefined" || !buyerId) return [];
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
+    const raw = localStorage.getItem(buyerNotificationsKey(buyerId));
     return raw ? (JSON.parse(raw) as BuyerNotification[]) : [];
   } catch {
     return [];
   }
 }
 
-function saveToStorage(notifications: BuyerNotification[]) {
+function saveToStorage(buyerId: string | null, notifications: BuyerNotification[]) {
+  if (!buyerId) return;
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(notifications));
+    localStorage.setItem(buyerNotificationsKey(buyerId), JSON.stringify(notifications));
   } catch {
     // ignore
   }
@@ -46,9 +54,12 @@ function saveToStorage(notifications: BuyerNotification[]) {
 export function useBuyerNotifications() {
   const [notifications, setNotifications] = React.useState<BuyerNotification[]>([]);
   const qc = useQueryClient();
+  // The buyer this portal session belongs to, read once on mount (the token's sub).
+  const buyerIdRef = React.useRef<string | null>(null);
 
   React.useEffect(() => {
-    setNotifications(loadFromStorage());
+    buyerIdRef.current = getStoredBuyerId();
+    setNotifications(loadFromStorage(buyerIdRef.current));
   }, []);
 
   const push = React.useCallback((n: Omit<BuyerNotification, "id" | "timestamp" | "read">) => {
@@ -62,7 +73,7 @@ export function useBuyerNotifications() {
         },
         ...prev,
       ].slice(0, MAX_NOTIFICATIONS);
-      saveToStorage(next);
+      saveToStorage(buyerIdRef.current, next);
       return next;
     });
   }, []);
@@ -165,14 +176,14 @@ export function useBuyerNotifications() {
   const markAllRead = React.useCallback(() => {
     setNotifications((prev) => {
       const next = prev.map((n) => ({ ...n, read: true }));
-      saveToStorage(next);
+      saveToStorage(buyerIdRef.current, next);
       return next;
     });
   }, []);
 
   const clearAll = React.useCallback(() => {
     setNotifications([]);
-    saveToStorage([]);
+    saveToStorage(buyerIdRef.current, []);
   }, []);
 
   return { notifications, unreadCount, markAllRead, clearAll, push };
