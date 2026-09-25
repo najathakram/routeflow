@@ -7,7 +7,7 @@ import { setImpersonation } from "@/lib/impersonation";
 import { setTenantCookie } from "@/lib/tenant-cookie";
 import { AdminBadge, planLabel } from "../../_components/AdminBadge";
 import { AdminModal } from "../../_components/AdminModal";
-import { usePlanOptions } from "../../_components/usePlanOptions";
+import { usePlanOptions, withCurrentPlan } from "../../_components/usePlanOptions";
 import { ChevronUp, ChevronDown, X } from "lucide-react";
 
 interface Tenant {
@@ -495,7 +495,9 @@ export default function AdminTenantsPage() {
               onChange={(e) => setBulkPlan(e.target.value)}
               className="h-9 w-full rounded-lg border border-slate-600 bg-slate-700 px-3 text-sm text-white"
             >
-              {planOptions.planKeys.map((p) => (
+              {/* Always includes bulkPlan, so the select never submits a plan it isn't showing
+                  (e.g. while the catalog is still loading). */}
+              {withCurrentPlan(planOptions.planKeys, bulkPlan).map((p) => (
                 <option key={p} value={p}>
                   {planLabel(p)}
                 </option>

@@ -91,4 +91,14 @@ describe("REG-B857: tenants list bulk Change Plan", () => {
       }),
     );
   });
+  it("REG-B857 T5: while the catalog is loading, the bulk select shows the plan it will submit", async () => {
+    mockFetchPlanCatalog.mockReturnValue(new Promise(() => {}));
+    render(<AdminTenantsPage />);
+    fireEvent.click(await screen.findByRole("checkbox", { name: "Select acme" }));
+    fireEvent.click(screen.getByRole("button", { name: "Change Plan" }));
+
+    const select = (await screen.findByRole("combobox", { name: "New plan" })) as HTMLSelectElement;
+    expect(Array.from(select.options).map((o) => o.value)).toEqual(["STARTER"]);
+    expect(select.value).toBe("STARTER");
+  });
 });
