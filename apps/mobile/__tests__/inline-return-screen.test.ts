@@ -3,7 +3,9 @@ import {
   canConfirmInlineReturn,
   canGetInlineReturnQuote,
   canLeaveInlineReturn,
+  captureFailureMessage,
   formatRefundAmount,
+  guardInlineReturnRemove,
   initialInlineReturnScreen,
   inlineReturnScreenReducer as reduce,
   inlineReturnsAddonState,
@@ -236,5 +238,69 @@ describe("inlineReturnsGate", () => {
     expect(inlineReturnsGate({ enabled: false, resolved: false })).toBe("loading");
     expect(inlineReturnsGate({ enabled: false, resolved: true })).toBe("blocked");
     expect(inlineReturnsGate({ enabled: true, resolved: true })).toBe("allowed");
+  });
+});
+
+describe("guardInlineReturnRemove — Android hardware back and the parent-stack swipe (Opus #2103)", () => {
+  // Wired to react-navigation's `beforeRemove` event, which fires for EVERY way the screen can be
+  // removed (Android system back, iOS swipe of this stack, a parent-stack swipe/dismiss).
+  const ev = () => ({ preventDefault: jest.fn() });
+
+  it("prevents removal while a capture is in flight", () => {
+    const e = ev();
+    const capturing = run([quoted(), { type: "captureStarted" }]);
+    expect(guardInlineReturnRemove(capturing, e)).toBe(true);
+    expect(e.preventDefault).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    ["lines", initialInlineReturnScreen],
+    ["quote", run([quoted()])],
+    ["success", run([quoted(), { type: "captured", result: record }])],
+    ["queued", run([{ type: "queued" }])],
+    ["refused", run([{ type: "refused", message: "x" }])],
+  ])("lets the operator leave from %s", (_n, state) => {
+    const e = ev();
+    expect(guardInlineReturnRemove(state as InlineReturnScreenState, e)).toBe(false);
+    expect(e.preventDefault).not.toHaveBeenCalled();
+  });
+});
+
+describe("captureFailureMessage — an uncertain failure is NOT a refusal", () => {
+  it("a 5xx / timeout / 403 reads as unconfirmed, and says a retry sends the same request", () => {
+    for (const err of [
+      { response: { status: 503, data: { message: "down" } } },
+      { code: "ECONNABORTED", message: "timeout" },
+      { response: { status: 403, data: {} } },
+    ]) {
+      const msg = captureFailureMessage(err);
+      expect(msg).toMatch(/couldn't confirm/i);
+      expect(msg).toMatch(/same request/i);
+    }
+  });
+  it("a coded business refusal shows the server's own message", () => {
+    expect(
+      captureFailureMessage({
+        response: {
+          status: 400,
+          data: {
+            code: "INLINE_RETURN_ORDER_CANCELLED",
+            message: "Cannot capture a return against a cancelled order",
+          },
+        },
+      }),
+    ).toBe("Cannot capture a return against a cancelled order");
+  });
+});
+
+describe("linesFromOrder — cancelled lines are excluded", () => {
+  it("a CANCELLED order line is never offered for return", () => {
+    const li = (id: string, productId: string, status: string) =>
+      ({ id, productId, qty: 1, status, product: { name: id, unit: "pcs" } }) as any;
+    expect(
+      linesFromOrder([li("a", "p1", "CANCELLED"), li("b", "p2", "CONFIRMED")]).map(
+        (l) => l.productId,
+      ),
+    ).toEqual(["p2"]);
   });
 });

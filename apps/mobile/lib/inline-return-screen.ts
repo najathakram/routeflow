@@ -5,6 +5,7 @@
 import {
   buildCaptureRequest,
   DEFAULT_EXCESS_OPTION,
+  extractRefusalMessage,
   hasAnyQtyEntered,
   type ExcessOption,
   type InlineReturnLineDraft,
@@ -16,7 +17,7 @@ import type {
   InlineReturnRecord,
   ReturnReason,
 } from "@routeflow/types";
-import { inlineReturnSubmitKey } from "./inline-return-submit-key";
+import { captureOutcomeFromError, inlineReturnSubmitKey } from "./inline-return-submit-key";
 
 export const ORDERS_INLINE_RETURNS_ADDON = "orders_inline_returns";
 
@@ -101,6 +102,31 @@ export function canLeaveInlineReturn(state: InlineReturnScreenState): boolean {
   return state.step !== "capturing";
 }
 
+/**
+ * Wired to react-navigation's `beforeRemove`, which fires for EVERY way this screen can be
+ * removed — Android system back, the iOS swipe of this stack, a parent-stack swipe or dismiss.
+ * While a capture is in flight, removing the screen would drop a capture that may already have
+ * landed, and the next confirm would mint a NEW key (a second Return and credit). Returns whether
+ * it blocked the removal.
+ */
+export function guardInlineReturnRemove(
+  state: InlineReturnScreenState,
+  event: { preventDefault: () => void },
+): boolean {
+  if (canLeaveInlineReturn(state)) return false;
+  event.preventDefault();
+  return true;
+}
+
+/** The copy for a failed capture. A definite (coded) business refusal shows the server's own
+ *  message; anything else is UNCERTAIN — the capture may have landed — so it must not read as a
+ *  refusal: retrying resends the SAME request (same key), which the server collapses. */
+export function captureFailureMessage(error: unknown): string {
+  const outcome = captureOutcomeFromError(error);
+  if (outcome.kind === "error" && outcome.refused) return extractRefusalMessage(error);
+  return "We couldn't confirm this return went through. Trying again sends the same request, so it won't be recorded twice.";
+}
+
 /** "Get quote" enables with a carrying order and any boxes/pieces entered. */
 export function canGetInlineReturnQuote(lines: InlineReturnLineDraft[], orderId: string): boolean {
   return !!orderId && hasAnyQtyEntered(lines);
@@ -145,6 +171,7 @@ export type PrefilledReturnLine = InlineReturnLineDraft & { soldLabel: string; b
 
 interface OrderLineLike {
   productId: string | null;
+  status?: string;
   name?: string | null;
   qty: number;
   boxes?: number | null;
@@ -161,7 +188,8 @@ export function linesFromOrder(lineItems: ReadonlyArray<OrderLineLike>): Prefill
   const seen = new Set<string>();
   const out: PrefilledReturnLine[] = [];
   for (const li of lineItems) {
-    if (!li.productId || seen.has(li.productId)) continue;
+    // A cancelled line was never delivered — nothing to return against it.
+    if (!li.productId || li.status === "CANCELLED" || seen.has(li.productId)) continue;
     seen.add(li.productId);
     const unitLabel = li.unitLabel?.trim() || undefined;
     out.push({
