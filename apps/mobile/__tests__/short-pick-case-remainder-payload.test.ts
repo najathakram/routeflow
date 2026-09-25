@@ -48,15 +48,17 @@ describe("an UNTOUCHED second-visit line sends the FULL remaining, never a floor
     expect(plan["li-case"]).toBe(30);
     expect(plan["li-case"]).not.toBe(24);
 
+    // Screens feed the NORMALIZED plan forward (payment.tsx:392's deliveredQtyById:
+    // normalizedPlan), never the raw untouched qtyById — that's the step the old bug broke.
     const deliveries = buildStopDeliveries([
-      { orderId: "o1", lines: [line!], deliveredQtyById: {} },
+      { orderId: "o1", lines: [line!], deliveredQtyById: plan },
     ]);
     expect(deliveries).toEqual([
       { orderItemId: "li-case", productId: "p-1", type: "DELIVERED", quantityDelivered: 30 },
     ]);
 
-    expect(reconciledTotal([line!], {})).toBe(60);
-    expect(reconciledTotal([line!], {})).not.toBe(48);
+    expect(reconciledTotal([line!], plan)).toBe(60);
+    expect(reconciledTotal([line!], plan)).not.toBe(48);
   });
 
   it("5 left of 12: untouched sends 5 (DELIVERED), never 0 (REFUSED)", () => {
@@ -67,7 +69,7 @@ describe("an UNTOUCHED second-visit line sends the FULL remaining, never a floor
     expect(plan["li-case"]).not.toBe(0);
 
     const deliveries = buildStopDeliveries([
-      { orderId: "o1", lines: [line!], deliveredQtyById: {} },
+      { orderId: "o1", lines: [line!], deliveredQtyById: plan },
     ]);
     expect(deliveries).toEqual([
       { orderItemId: "li-case", productId: "p-1", type: "DELIVERED", quantityDelivered: 5 },

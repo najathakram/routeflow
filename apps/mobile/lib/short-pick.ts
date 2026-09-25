@@ -162,20 +162,23 @@ export function formatCaseStepperSplit(
 }
 
 /**
- * B648/SA-094a: the delivered qty this module ever uses for a line. For a
- * unit-aware line (`isUnitAwareLine`, factor > 1), `deliveredQtyById`'s raw
- * entry SNAPS DOWN to the nearest whole multiple of the line's own
- * `unitsPerBox` — `clamp(floor(raw / unitsPerBox) * unitsPerBox, 0,
- * orderedQty)` — so a stray/leftover piece count (e.g. 300 on a 288-piece
- * Case) can never leak a fractional Case into the money math (300 -> 288,
- * one whole Case, never 300 pieces of "partial"). n=0 -> REFUSED, n=count ->
- * DELIVERED, anything between -> PARTIAL at that many WHOLE cases. No entry
- * at all is the universal "untouched" default every other line already
- * uses: fully delivered. Every function below reads through this ONE place —
- * `normalizeDeliveryPlan` exports the same snapping for every caller that
- * needs a full plan map, not just one line's value (SA-094b's normalizer
- * requirement: the category-tax half and the review row's own badge must
- * read the SAME snapped number reconciledTotal/buildDeliveries already do).
+ * B648/SA-094a (SA-175 review, FLOOR-OR-PASS-THROUGH): the delivered qty this module ever uses
+ * for a line. For a unit-aware line (`isUnitAwareLine`, factor > 1): a raw entry that already
+ * reaches or exceeds `orderedQty` (the REMAINING qty on a second visit, per B785/SA-116 — not
+ * always an exact multiple of `unitsPerBox`) passes through AS `orderedQty`, never floored —
+ * that top value is the stepper's own genuine partial-Case step (`caseStepperIncrement`), and
+ * flooring it silently dropped the remainder (30 left of a 12-Case floored to 24, stranding the
+ * driver at a PARTIAL $48 instead of the true $60 due). Any value strictly BELOW `orderedQty`
+ * still SNAPS DOWN to the nearest whole multiple of `unitsPerBox` —
+ * `clamp(floor(raw / unitsPerBox) * unitsPerBox, 0, orderedQty)` — so a stray/leftover piece
+ * count there (e.g. 300 on a 288-piece Case) can never leak a fractional Case into the money math.
+ * n=0 -> REFUSED, n=orderedQty -> DELIVERED, anything between -> PARTIAL at that many WHOLE
+ * cases (or the exact remainder at the top). No entry at all is the universal "untouched" default
+ * every other line already uses: fully delivered. Every function below reads through this ONE
+ * place — `normalizeDeliveryPlan` exports the same resolution for every caller that needs a full
+ * plan map, not just one line's value (SA-094b's normalizer requirement: the category-tax half
+ * and the review row's own badge must read the SAME resolved number reconciledTotal/
+ * buildDeliveries already do).
  */
 function effectiveDeliveredQty(
   li: Pick<ShortPickLine, "orderItemId" | "orderedQty" | "unitLabel" | "unitsPerBox">,
