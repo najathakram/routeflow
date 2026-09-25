@@ -110,6 +110,12 @@ A 7 · B 5 · C 1 · D 4 (lead) · SA own: A 11 · B 14 | needless asks ("you di
 
 - SA-E60 · 2026-09-24 · B · SA-144f extended the create()-site finding to invoices update() ("same bug class, same fix") from the argument's shape alone, without reading update()'s own entry — which refuses any request unitLabel up front, making the site unreachable. Caught by the lane. Rule (check 5/9): a sibling site is a finding only after its own guards are read; "same shape" is a hypothesis, and the sweep must say per site whether the path is reachable.
 
+- SA-E9 · 2026-09-24 · B · SA-158(2) ruled "box-unaware line → the line's STORED unitsPerBox" → the snapshot was written by two eras (qty = boxes, and qty = pieces after a split-dropping copy), so it cannot fix the axis; the resolver's unknown is right and the builder's case (v) pinned it. Same shape as SA-E7: a stored figure asserted as evidence without tracing who wrote it (check 8, producer). Also inherited unexamined from SA-069b (check 6/OP-4: rule on the row, not the era).
+
+- SA-E10 · 2026-09-25 · B · SA-155 passed #1324's resolution as booking "through the shared booker as now" → the live walk parks the product's whole remaining on the first legacy row, so one capped chunk drops the rest; Opus caught it. Check 10 (read the loop the call sits in) and check 5 (sweep the caller of the shared core) were listed as run and were not run on the walk.
+
+- SA-E11 · 2026-09-25 · B · SA-176 ruled "refuse a non-whole-Case quantity at billing" and SA-177 passed it → delivery evidence legitimately carries partial Cases (delivery-lines.util.ts :41, #1353 fit check), so delivered-basis reconcile and stop completion would 400; a unit change (120→12) under an open draft reconciled with the old pack. Opus caught both. Check 8 in the reverse direction (the writers of what billing reads FROM) and check 5 (every caller of the shared builder incl. reconcile-after-edit) were listed as run and were not.
+
 ## Prediction (update weekly)
 
 - 2026-09-20 · A dominates (5 of 11) → the fix is mechanical: re-derive at the moment of decision and name the sha. Next likely instance: a "ready to land", "N behind" or ratchet figure relayed from a lane across a merge window. D is the expensive class: watch every "the flag is off" and every merge list that is mostly one lane.
