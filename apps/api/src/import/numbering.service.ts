@@ -180,7 +180,8 @@ export class NumberingService {
     return this.prisma.tenantTransaction(async (tx: Prisma.TransactionClient) => {
       // SA-287b: the version token is REQUIRED — a token-less write could lower a live counter
       // under an in-flight mint. An unsaved row's token is the card's loaded default, 1.
-      if (dto.expectedNextNumber === undefined) {
+      // `== null`: JSON null passes the DTO's @IsOptional, and must be the same 400 (SA-306).
+      if (dto.expectedNextNumber == null) {
         throw new BadRequestException(
           `These ${docTypeLabel(docType)} numbering settings are out of date — reload the settings and try again.`,
         );
