@@ -2991,6 +2991,12 @@ export class OrdersService implements OnApplicationBootstrap {
     if (order.status === "CANCELLED") {
       throw new BadRequestException("Items can't be edited on a cancelled order");
     }
+    const inlineRet = await inlineReturn.prepareInlineReturn(
+      this.inlineReturns,
+      dto.inlineReturn,
+      user,
+    );
+    let inlineMinted: any = null; // #2094: emitted after the commit
     // units_v1: every branch below re-derives factor + price from the LIVE product (see the guard).
     await unitAware.assertOrderEditAllowed(order, dto, user, () =>
       this.prisma.forTenant().customer.findFirst({ where: { userId: user?.sub, deletedAt: null } }),
@@ -3142,6 +3148,7 @@ export class OrdersService implements OnApplicationBootstrap {
         // inventory error, not just a lost update. The row lock makes the
         // second writer wait; heldItems is then read post-lock and BEFORE any
         // orderItem write below, so it is the true pre-edit state.
+        await inlineReturn.lockInlineReturnCustomer(tx, inlineRet, order.customerId); // advisory FIRST
         await tx.$executeRaw`SELECT id FROM "Order" WHERE id = ${orderId} FOR UPDATE`;
         const heldItems = await tx.orderItem.findMany({
           where: { orderId },
@@ -4375,25 +4382,28 @@ export class OrdersService implements OnApplicationBootstrap {
         // OUT_FOR_DELIVERY orders too (R1 allows editing them) — a qty
         // increase there means more goods physically went out, symmetric with
         // create()'s decrement at order time.
+        let creditGate: (() => Promise<void>) | null = null; // re-run after an inline return (SA-221)
         if (order.status !== "DRAFT") {
           await this.settleStockForEdit(tx, order, heldItems, activeItems, user);
-          await assertWithinCreditLimit(
-            tx,
-            order.customerId,
-            orderId,
-            // The exact total the order.update below writes — Σ of stored
-            // computeLineSubtotal results + regular tax + category tax, cents-
-            // rounded. Note: mirrors the existing edit recompute, which
-            // (pre-existing) does not subtract Order.discountAmount.
-            total,
-            creditCheckEnabled,
-            // B577: do the issued invoices survive this edit? Only a delivered, partially invoiced
-            // order (re-sync skipped) is SURE to; pre-delivery a deposit mirror is rewritten.
-            {
-              invoicesSurviveEdit:
-                postDeliveryEdit && shouldSkipInPlaceResync(order.lineItems ?? []),
-            },
-          );
+          creditGate = () =>
+            assertWithinCreditLimit(
+              tx,
+              order.customerId,
+              orderId,
+              // The exact total the order.update below writes — Σ of stored
+              // computeLineSubtotal results + regular tax + category tax, cents-
+              // rounded. Note: mirrors the existing edit recompute, which
+              // (pre-existing) does not subtract Order.discountAmount.
+              total,
+              creditCheckEnabled,
+              // B577: do the issued invoices survive this edit? Only a delivered, partially invoiced
+              // order (re-sync skipped) is SURE to; pre-delivery a deposit mirror is rewritten.
+              {
+                invoicesSurviveEdit:
+                  postDeliveryEdit && shouldSkipInPlaceResync(order.lineItems ?? []),
+              },
+            );
+          await creditGate();
         }
 
         // Revert a CONFIRMED order back to PENDING when items are edited so the office
@@ -4432,12 +4442,21 @@ export class OrdersService implements OnApplicationBootstrap {
         if (opts?.idempotency) {
           await this.recordMergeIdempotencyKey(tx, orderId, opts.idempotency);
         }
+        // #2094: the return lands in THIS tx, after the order's new total is written, under the Order
+        // lock; then the credit gate re-reads exposure after the credit is applied (SA-221 change 3).
+        inlineMinted = await inlineReturn.applyInlineReturnInTx(tx, inlineRet, {
+          customerId: order.customerId,
+          orderId,
+          user,
+        });
+        if (inlineRet && creditGate) await creditGate();
         return { subtotal, tax, total, shouldRevert, shippingFee };
       },
       // Headroom over Prisma's 5s default: the merge branch issues per-line
       // queries inside the transaction (same shape as create()'s in-tx per-line work).
       { timeout: 15_000 },
     );
+    inlineReturn.emitInlineReturnCredit(inlineRet, this.prisma.getTenantId(), inlineMinted);
 
     // R1b SAFETY (two adversarial-review catches): a PARTIALLY-invoiced order must NOT
     // be auto-resynced — rebuilding its finalized/paid invoice at the full order qty

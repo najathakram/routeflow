@@ -83,13 +83,63 @@ describe("OrdersService.create(): inline-return call order (#2094)", () => {
   });
 });
 
-describe("the staff merge branch never drops an inlineReturn silently (#2094)", () => {
+describe("the staff merge branch carries the inlineReturn to updateOrderItems (#2094)", () => {
   const controller = strip(fs.readFileSync(path.join(__dirname, "orders.controller.ts"), "utf8"));
 
-  it("refuses a merge that carries an inlineReturn, before any fold work", () => {
-    const refuse = controller.indexOf("if (dto.inlineReturn)");
-    expect(refuse).toBeGreaterThan(-1);
-    expect(refuse).toBeLessThan(controller.indexOf("foldMergeItems("));
-    expect(controller.slice(refuse, refuse + 300)).toContain("BadRequestException");
+  it("threads dto.inlineReturn into the merge's foldDto, so it lands on the winner in the same tx", () => {
+    const fold = controller.indexOf("const foldDto = {");
+    expect(fold).toBeGreaterThan(-1);
+    expect(controller.slice(fold, fold + 900)).toContain("inlineReturn: dto.inlineReturn");
+  });
+
+  it("never refuses a merge for carrying one any more", () => {
+    expect(controller).not.toContain("if (dto.inlineReturn)");
+  });
+});
+
+describe("OrdersService.updateOrderItems(): inline-return call order (#2094)", () => {
+  const body = methodBody("updateOrderItems");
+  const at = (needle: string, from = 0) => {
+    const i = body.indexOf(needle, from);
+    expect(i).toBeGreaterThan(-1);
+    return i;
+  };
+
+  it("the guard runs before any further read: before the unit-aware edit fence", () => {
+    expect(at("prepareInlineReturn(")).toBeLessThan(at("assertOrderEditAllowed("));
+  });
+
+  it("the customer advisory lock is the tx's FIRST statement: before the Order FOR UPDATE and every write", () => {
+    const lock = at("lockInlineReturnCustomer(");
+    expect(lock).toBeLessThan(at('FROM "Order" WHERE id = ${orderId} FOR UPDATE'));
+    expect(lock).toBeLessThan(at("tx.orderItem.findMany("));
+  });
+
+  it("the return is applied AFTER the order's new total is written and BEFORE the tx returns", () => {
+    const apply = at("applyInlineReturnInTx(");
+    expect(apply).toBeGreaterThan(at("tx.order.update("));
+    expect(apply).toBeLessThan(at("return { subtotal, tax, total, shouldRevert, shippingFee }"));
+  });
+
+  it("the credit gate is re-read after the credit is applied, in the same tx", () => {
+    const apply = at("applyInlineReturnInTx(");
+    expect(body.slice(apply, apply + 800)).toContain("await creditGate()");
+  });
+
+  it("the credit event is emitted after the commit and before the post-commit reconcile", () => {
+    const emit = at("emitInlineReturnCredit(");
+    expect(emit).toBeGreaterThan(at("applyInlineReturnInTx("));
+    expect(emit).toBeLessThan(at("this.reconcileOrderAfterEdit("));
+  });
+
+  it("nothing between the customer lock and the commit takes another advisory lock or a tx-less recompute", () => {
+    const window = body.slice(at("lockInlineReturnCustomer("), at("emitInlineReturnCredit("));
+    for (const forbidden of [
+      "withAdvisoryLock",
+      "withOrderRecomputeLock",
+      "recomputeOrderFromInvoices",
+    ]) {
+      expect(window).not.toContain(forbidden);
+    }
   });
 });

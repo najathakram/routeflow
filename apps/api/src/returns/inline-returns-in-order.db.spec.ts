@@ -295,6 +295,25 @@ describeDb("#2094 — inline return inside the order transaction, real Postgres"
     expect(Number(cn!.amount)).toBeCloseTo(70, 2);
   }, 30_000);
 
+  it("edit shape: a second return on an existing order caps the TOTAL intents at the order total (the balance shrinks as credits are applied)", async () => {
+    const f = await seedCustomer("edit2");
+    const order = await inOrderTx(f.customerId, (tx) => newOrder(tx, f.customerId, 100));
+    const ret = (qty: number, key: string) =>
+      inOrderTx(f.customerId, (tx) =>
+        svc.captureAndIssueInTx(
+          tx,
+          { ...lines(f.productId, qty, key), customerId: f.customerId, orderId: order.id },
+          staff(),
+          {},
+        ),
+      );
+    await ret(7, `k-edit2-a-${run}`); // $70 -> intent 70
+    await ret(7, `k-edit2-b-${run}`); // $70 -> intent capped at the remaining $30
+    const intents = await raw.orderCreditNote.findMany({ where: { orderId: order.id } });
+    expect(intents.reduce((sum, i) => sum + Number(i.amount), 0)).toBeCloseTo(100, 2);
+    expect(await raw.creditNote.count({ where: { customerId: f.customerId } })).toBe(2); // both minted in full
+  }, 30_000);
+
   it("the customer advisory lock serializes two PARALLEL in-order captures for one customer: exactly one credit each, never interleaved", async () => {
     const f = await seedCustomer("lock");
     const order = await inOrderTx(f.customerId, (tx) => newOrder(tx, f.customerId, 500));

@@ -130,13 +130,6 @@ export class OrdersController {
           });
         }
         if (choice === "merge") {
-          // #2094: the merge path is updateOrderItems, which does not take an inlineReturn yet. Refuse
-          // rather than drop it: the operator would believe a return was recorded.
-          if (dto.inlineReturn) {
-            throw new BadRequestException(
-              "A return can't be taken on a merge yet. Create a separate order instead.",
-            );
-          }
           // The merge writes items onto the existing order, whose own business date
           // stays authoritative — OrdersService.create (the only place orderDate is
           // parsed and stored) does not run on the merge path, so accepting a date here
@@ -265,6 +258,8 @@ export class OrdersController {
                   ...(dto.appliedCreditNotes !== undefined
                     ? { appliedCreditNotes: dto.appliedCreditNotes }
                     : {}),
+                  // #2094: a return taken on a merge lands on the winner in the same tx (updateOrderItems).
+                  ...(dto.inlineReturn ? { inlineReturn: dto.inlineReturn } : {}),
                 } as any;
                 // B215: the idempotency key (when present) rides INTO updateOrderItems and
                 // commits inside the fold's own transaction — a crash or a later throw can no
