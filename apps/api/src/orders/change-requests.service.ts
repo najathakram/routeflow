@@ -377,6 +377,9 @@ export class ChangeRequestsService {
     // delta is in PIECES and needs the pack size to split. Left null otherwise.
     let boxes: number | null = null;
     let pieces: number | null = null;
+    // D-20 (#1808): the SOURCE line's pack for a box-aware CHANGE_QTY, carried onto the draft line (C8's
+    // unitsPerBox snapshot) so a pack change since the sale cannot re-split or re-price the copy.
+    let sourcePack: number | null = null;
     // B673: an ADD_ITEM filed WITH a box split (a driver's door add: qty = total pieces, plus
     // boxes/pieces) is reconciled against the LIVE pack below. A bare qty (the buyer portal's
     // selling-unit count, stored with boxes/pieces null) is passed to create() untouched.
@@ -439,6 +442,7 @@ export class ChangeRequestsService {
             message: `Order line ${li.id} has no derivable pack size — it can't be rolled to the next delivery.`,
           });
         }
+        sourcePack = upb;
         const split = normalizeBoxesPieces({ qty: delta, unitsPerBox: upb });
         qty = split.qty;
         boxes = split.boxes;
@@ -511,7 +515,11 @@ export class ChangeRequestsService {
       // B142/REG-B142-G: this draft moves an existing (possibly since
       // archived) line to the customer's next delivery — the archived-line
       // guard is for NEW interactive lines, not this internal draft path.
-      { skipAutoMerge: false, allowArchived: true },
+      {
+        skipAutoMerge: false,
+        allowArchived: true,
+        ...(sourcePack ? { packSnapshots: { [productId]: sourcePack } } : {}),
+      },
     );
 
     try {

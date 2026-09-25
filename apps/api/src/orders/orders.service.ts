@@ -32,6 +32,7 @@ import {
 import { lockRowsNoWait, withAdvisoryLock, type LockMode } from "../common/db-locks";
 import { assertMoneyInvariantsOrThrow } from "../common/money-invariants.util";
 import { atStopConflict } from "./at-stop-conflicts";
+import { packForCreateLine, type PackSnapshots } from "./pack-snapshot";
 import {
   LOCK_UNAVAILABLE,
   LOCK_UNAVAILABLE_MESSAGE,
@@ -1538,7 +1539,12 @@ export class OrdersService implements OnApplicationBootstrap {
   async create(
     dto: CreateOrderDto,
     user: JwtPayload,
-    options: { skipAutoMerge?: boolean; allowArchived?: boolean } = {},
+    // `packSnapshots`: INTERNAL only (never a DTO field) — see pack-snapshot.ts.
+    options: {
+      skipAutoMerge?: boolean;
+      allowArchived?: boolean;
+      packSnapshots?: PackSnapshots;
+    } = {},
   ) {
     // F30/R8: Idempotency-Key replay. `idempotencyKey` isn't on CreateOrderDto
     // (the controller threads it in from the `Idempotency-Key` header, never
@@ -1899,7 +1905,12 @@ export class OrdersService implements OnApplicationBootstrap {
 
       // Recompute qty from boxes/pieces when provided (backend is authoritative).
       // Normalize to integers and roll loose pieces >= unitsPerBox into boxes.
-      const upb = Number(product.unitsPerBox ?? 0);
+      const upb = packForCreateLine(
+        item.productId,
+        Number(product.unitsPerBox ?? 0),
+        options.packSnapshots,
+        items.map((i) => i.productId),
+      );
       let qty = item.qty;
       let boxes: number | null = null;
       let pieces: number | null = null;

@@ -166,12 +166,13 @@ export const COPIERS: Copier[] = [
     anchor: { via: "prop", name: "items" },
     carried: "productId qty boxes pieces",
     // The new line is written by OrdersService.create, which stamps the B297 trio from the live category.
+    // unitsPerBox (D-20 / #1808): re-derived by create() from the SOURCE line's pack, passed as the INTERNAL
+    // `options.packSnapshots` (orders/pack-snapshot.ts) — never the live product pack. The anchored literal
+    // cannot see an options argument, so `orders/pack-snapshot.spec.ts` pins this hand-off structurally.
     rederived:
-      "name unitPrice subtotal priceType originalPrice promoFreeUnits trackedCategoryId trackedSubcategoryId categoryTaxAmount position categoryTaxType categoryTaxRate categoryPriceIncludesTax",
+      "unitsPerBox name unitPrice subtotal priceType originalPrice promoFreeUnits trackedCategoryId trackedSubcategoryId categoryTaxAmount position categoryTaxType categoryTaxRate categoryPriceIncludesTax",
     na: ORDER_FRESH,
     gaps: {
-      // B655 (#1174) now writes boxes/pieces; the new line still carries no unitsPerBox snapshot.
-      unitsPerBox: "B655",
       unitLabel: "unfiled",
       notes: "unverified",
     },
