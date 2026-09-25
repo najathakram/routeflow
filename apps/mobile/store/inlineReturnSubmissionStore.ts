@@ -2,8 +2,14 @@ import { create } from "zustand";
 import { persist, createJSONStorage } from "zustand/middleware";
 import { userScopedStorage } from "../lib/user-scoped-storage";
 import { useOfflineQueue } from "./offlineQueue";
+import { resolveQueueIdentity } from "../lib/queue-identity";
+
+/** The signed-in user's settled returnKeys (tombstones are per user). */
+const settledKeysFor = (userId: string | undefined): string[] =>
+  (useOfflineQueue.getState().settledInlineReturnKeys[userId ?? "anon"] ?? []).map((t) => t.key);
 import {
   getOrCreateNonce as getOrCreateNonceIn,
+  dropSettledNonces,
   noncesFromQueues,
   settleAfterDrain as settleAfterDrainIn,
   settleDirectCapture,
@@ -90,6 +96,13 @@ export const useInlineReturnSubmissionStore = create<InlineReturnSubmissionState
     (set, get) => ({
       nonces: {},
       getOrCreateNonce: (key) => {
+        // A stored nonce whose returnKey already reached a terminal outcome must never be reused
+        // (a drain that settled BEFORE rehydrate can leave the stale blob in memory): filter first.
+        const live = dropSettledNonces(
+          get().nonces,
+          settledKeysFor(resolveQueueIdentity()?.userId),
+        );
+        if (live !== get().nonces) set({ nonces: live });
         const { nonce, nonces } = getOrCreateNonceIn(get().nonces, key, mintNonce);
         if (nonces !== get().nonces) set({ nonces });
         return nonce;
@@ -122,17 +135,13 @@ export const useInlineReturnSubmissionStore = create<InlineReturnSubmissionState
       reset: () => set({ nonces: {} }),
       seedFromQueues: (queue, failed, userId) => {
         // Bound the persisted tombstones first (age 90d + count cap), then trust the survivors.
-        useOfflineQueue.getState().pruneSettledInlineReturnKeys();
+        useOfflineQueue.getState().pruneSettledInlineReturnKeys(userId);
+        const settled = settledKeysFor(userId);
         set((s) => ({
-          nonces: {
-            ...noncesFromQueues(
-              queue,
-              failed,
-              userId,
-              useOfflineQueue.getState().settledInlineReturnKeys.map((t) => t.key),
-            ),
-            ...s.nonces,
-          },
+          nonces: dropSettledNonces(
+            { ...noncesFromQueues(queue, failed, userId, settled), ...s.nonces },
+            settled,
+          ),
         }));
       },
     }),

@@ -975,13 +975,17 @@ describe("InlineReturnsService — refusal codes (SA-204)", () => {
     });
   });
 
-  it("the mobile client's refusal-code set is exactly the server's", () => {
+  it("the mobile client's refusal-code set is exactly the server's (compared as SETS, both ways)", () => {
     const mobile = readFileSync(
       join(__dirname, "..", "..", "..", "mobile", "lib", "inline-return-submit-key.ts"),
       "utf8",
     );
-    for (const code of Object.values(INLINE_RETURN_ERROR_CODES)) {
-      expect(mobile).toContain(`"${code}"`);
-    }
+    const decl = /INLINE_RETURN_REFUSAL_CODES[^=]*=\s*\[([\s\S]*?)\]/.exec(mobile);
+    expect(decl).not.toBeNull();
+    const mobileSet = new Set([...decl![1]!.matchAll(/"([^"]+)"/g)].map((m) => m[1]!));
+    const serverSet = new Set<string>(Object.values(INLINE_RETURN_ERROR_CODES));
+    expect(mobileSet.size).toBeGreaterThan(0);
+    for (const c of serverSet) expect(mobileSet).toContain(c); // nothing the server sends is missing on the client
+    for (const c of mobileSet) expect(serverSet).toContain(c); // nothing the client trusts is unknown to the server
   });
 });

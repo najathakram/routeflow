@@ -9,8 +9,9 @@ jest.mock("@react-native-async-storage/async-storage", () => ({
     removeItem: jest.fn(async () => undefined),
   },
 }));
+let mockUserId = "u1";
 jest.mock("../lib/queue-identity", () => ({
-  resolveQueueIdentity: () => ({ userId: "u1", tenantId: "t1" }),
+  resolveQueueIdentity: () => ({ userId: mockUserId, tenantId: "t1" }),
 }));
 jest.mock("../lib/user-scoped-storage", () => ({
   userScopedStorage: {
@@ -115,7 +116,8 @@ describe("a direct capture's nonce across sign-out / sign-in / relaunch", () => 
   const request = (nonce: string) => ({ ...vars(nonce), reason: "DAMAGED", items: [] }) as any;
 
   beforeEach(() => {
-    useOfflineQueue.setState({ queue: [], failedActions: [], settledInlineReturnKeys: [] });
+    mockUserId = "u1";
+    useOfflineQueue.setState({ queue: [], failedActions: [], settledInlineReturnKeys: {} });
   });
 
   it.each([
@@ -225,13 +227,17 @@ describe("a direct capture's nonce across sign-out / sign-in / relaunch", () => 
   it("SA-206: seeding prunes tombstones older than 90 days (never unbounded growth)", () => {
     const DAY = 86_400_000;
     useOfflineQueue.setState({
-      settledInlineReturnKeys: [
-        { key: "stale", at: Date.now() - 100 * DAY },
-        { key: "fresh", at: Date.now() - DAY },
-      ],
+      settledInlineReturnKeys: {
+        u1: [
+          { key: "stale", at: Date.now() - 100 * DAY },
+          { key: "fresh", at: Date.now() - DAY },
+        ],
+      },
     });
     signOutThenIn();
-    expect(useOfflineQueue.getState().settledInlineReturnKeys.map((t) => t.key)).toEqual(["fresh"]);
+    expect(useOfflineQueue.getState().settledInlineReturnKeys.u1!.map((t) => t.key)).toEqual([
+      "fresh",
+    ]);
   });
 
   it("the offline-queue drain settle also clears matching failed records and tombstones the key", () => {
@@ -242,5 +248,37 @@ describe("a direct capture's nonce across sign-out / sign-in / relaunch", () => 
     expect(useOfflineQueue.getState().failedActions).toHaveLength(0);
     signOutThenIn();
     expect(store().nonces[KEY]).toBeUndefined();
+  });
+
+  it("Opus (3) RACE: a queue drain that settles BEFORE rehydrate cannot bring the settled key back (getOrCreateNonce + seed both filter tombstones)", () => {
+    const n1 = store().getOrCreateNonce(KEY);
+    store().settleAfterDrain([{ customerId: "c", orderId: "o", nonceSuffix: n1 }]); // drain settles first
+    // ...then rehydrate restores the OLD persisted blob over memory:
+    useInlineReturnSubmissionStore.setState({ nonces: { [KEY]: n1 } });
+    expect(store().getOrCreateNonce(KEY)).not.toBe(n1);
+    // and the seed path filters the stored map too
+    useInlineReturnSubmissionStore.setState({ nonces: { [KEY]: n1 } });
+    store().seedFromQueues([], [], "u1");
+    expect(store().nonces[KEY]).toBeUndefined();
+  });
+
+  it("Opus (2): tombstones are per USER — A's tombstones never suppress B, and each user has their own cap", () => {
+    const nA = store().getOrCreateNonce(KEY);
+    handlers().onSuccess(undefined, request(nA)); // A settles
+    expect(Object.keys(useOfflineQueue.getState().settledInlineReturnKeys)).toEqual(["u1"]);
+    mockUserId = "u2"; // B signs in on the same device and (same customer/order, same nonce value by construction) meets the key
+    useInlineReturnSubmissionStore.setState({ nonces: { [KEY]: nA } });
+    expect(store().getOrCreateNonce(KEY)).toBe(nA); // NOT filtered: the tombstone belongs to A
+    // per-user cap: 205 tombstones for A never evict B's
+    mockUserId = "u2";
+    useOfflineQueue.getState().settleInlineReturnKey("inl:b:only:1");
+    mockUserId = "u1";
+    for (let i = 0; i < 205; i++)
+      useOfflineQueue.getState().settleInlineReturnKey(`inl:a:${i}:x`, "u1");
+    expect(useOfflineQueue.getState().settledInlineReturnKeys.u2!.map((t) => t.key)).toEqual([
+      "inl:b:only:1",
+    ]);
+    useOfflineQueue.getState().pruneSettledInlineReturnKeys("u1");
+    expect(useOfflineQueue.getState().settledInlineReturnKeys.u1!.length).toBeLessThanOrEqual(200);
   });
 });

@@ -431,3 +431,24 @@ export function pruneSettledKeys(
   const capped = fresh.length > SETTLED_KEY_CAP ? fresh.slice(-SETTLED_KEY_CAP) : fresh;
   return capped.length === list.length ? list : capped;
 }
+
+/** The wire returnKey a stored nonce-map entry (`customerId:orderId` -> nonce) corresponds to. */
+export function returnKeyForNonceEntry(nonceKey: string, nonce: string): string {
+  return safeToken(`inl:${nonceKey}:${nonce}`);
+}
+
+/** Drops every nonce-map entry whose returnKey has a recorded terminal outcome (tombstone). */
+export function dropSettledNonces(
+  nonces: NonceMap,
+  settledReturnKeys: ReadonlyArray<string>,
+): NonceMap {
+  if (settledReturnKeys.length === 0) return nonces;
+  const settled = new Set(settledReturnKeys);
+  const kept: Record<string, string> = {};
+  let changed = false;
+  for (const [k, n] of Object.entries(nonces)) {
+    if (settled.has(returnKeyForNonceEntry(k, n))) changed = true;
+    else kept[k] = n;
+  }
+  return changed ? kept : nonces;
+}
