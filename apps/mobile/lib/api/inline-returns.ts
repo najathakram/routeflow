@@ -46,7 +46,11 @@ export type {
  */
 export function useInlineReturnQuote() {
   return useMutation<InlineReturnQuoteResponse, Error, QuoteInlineReturnRequest>({
-    mutationFn: (dto) => apiClient.post("/returns/inline/quote", dto).then((r) => r.data),
+    mutationFn: (dto) =>
+      apiClient
+        // Read-only: a quote must never be offline-queued (see api-client `_skipOfflineQueue`).
+        .post("/returns/inline/quote", dto, { _skipOfflineQueue: true } as object)
+        .then((r) => r.data),
   });
 }
 

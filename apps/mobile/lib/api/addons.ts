@@ -8,6 +8,7 @@ import {
 import { apiClient } from "../api-client";
 import { useAuthStore } from "../auth-store";
 import { useTenantStore } from "../tenant-store";
+import { inlineReturnsAddonState } from "../inline-return-screen";
 
 // ─── Developer mode (hidden dispatch/driver/route addon) ──────────────────────
 //
@@ -170,9 +171,7 @@ export function useRoutesAccess(): { enabled: boolean; resolved: boolean } {
 //
 // Mirror of web's `useHasAddon(ORDERS_INLINE_RETURNS_ADDON)` gate on RecordReturnAction. UX gate
 // only — every /returns/inline/* route independently 403s via AddonGuard. Same query/cache as
-// the other addon hooks; `resolved` distinguishes "not granted" from "not read yet".
-export const ORDERS_INLINE_RETURNS_ADDON = "orders_inline_returns";
-
+// the other addon hooks; `resolved` is keyed off the DATA (see `inlineReturnsAddonState`).
 export function useInlineReturnsAddon(): { enabled: boolean; resolved: boolean } {
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
   const tenantSlug = useTenantStore((s) => s.slug);
@@ -183,8 +182,5 @@ export function useInlineReturnsAddon(): { enabled: boolean; resolved: boolean }
     retry: 2,
     enabled: isAuthenticated,
   });
-  return {
-    enabled: query.data?.addons?.includes(ORDERS_INLINE_RETURNS_ADDON) ?? false,
-    resolved: query.isSuccess,
-  };
+  return inlineReturnsAddonState(query.data);
 }
