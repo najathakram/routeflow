@@ -2788,3 +2788,20 @@ citations, closed-out with its own post-init assertion guard).
   cap — zero cross-references elsewhere in LESSONS.md/CLAUDE.md, and the guard is a standing,
   automated test isolation mechanism rather than a rule a session needs to recall by reading
   this prose.)
+
+### L-173 · 2026-09-16 · domain · B449 (Lite lane, plan-gate boundary)
+
+- **Symptom:** a plan-gated page kept firing its own effects/queries while a locked/blurred
+  overlay showed over it — its 403 toasts and query errors leaked to a user who should never
+  have triggered that behavior.
+- **Root cause:** the gate ghosted the real page behind blur/opacity by rendering it as
+  `children` inside the locked view's own slot — that hides the DOM, it doesn't unmount it.
+- **Lesson:** **A route guard choosing between locked and unlocked must render exactly ONE of
+  two subtrees, never wrap the real page inside the locked view's ghost slot — a component
+  hidden behind blur/opacity is still mounted, and its effects/queries still fire.**
+- **Guard:** a route boundary needs a real "still resolving" state distinct from both outcomes;
+  `layout.plan-gate-boundary.test.tsx` pins children absent from the tree while
+  resolving/locked, not just visually hidden. (Archived 2026-09-25 to make room at cap — zero
+  cross-references elsewhere in LESSONS.md/CLAUDE.md, and the guard is a standing regression
+  test pinning children absent from the tree, not a rule a session needs to recall by reading
+  this prose.)

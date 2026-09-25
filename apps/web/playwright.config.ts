@@ -812,5 +812,20 @@ export default defineConfig({
         navigationTimeout: 60_000,
       },
     },
+
+    // Create-order dialog mobile pan (#2080, P0) — proves the boxed-line
+    // qty-controls column in CreateOrderModal never escapes the viewport at
+    // 320/375/390/430, so a vertical swipe can't pan the dialog sideways.
+    // Same setup/operator shape as "create-order-escape" (08). WITHOUT THIS
+    // ENTRY THE SPEC NEVER RUNS — see 08-create-order-escape's header.
+    {
+      name: "create-order-dialog-mobile-pan",
+      testMatch: /56-create-order-dialog-mobile-pan\.spec\.ts/,
+      dependencies: ["setup"],
+      use: {
+        ...devices["Desktop Chrome"],
+        storageState: path.join(AUTH_DIR, "operator.json"),
+      },
+    },
   ],
 });

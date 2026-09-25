@@ -530,20 +530,6 @@
   guards; a test asserting every consumer calls the _same_ function reference (not just a
   matching result) is flagged, not yet added.
 
-### L-173 · 2026-09-16 · domain · B449 (Lite lane, plan-gate boundary)
-
-- **Symptom:** a plan-gated page kept firing its own effects/queries while a locked/blurred
-  overlay showed over it — its 403 toasts and query errors leaked to a user who should never
-  have triggered that behavior.
-- **Root cause:** the gate ghosted the real page behind blur/opacity by rendering it as
-  `children` inside the locked view's own slot — that hides the DOM, it doesn't unmount it.
-- **Lesson:** **A route guard choosing between locked and unlocked must render exactly ONE of
-  two subtrees, never wrap the real page inside the locked view's ghost slot — a component
-  hidden behind blur/opacity is still mounted, and its effects/queries still fire.**
-- **Guard:** a route boundary needs a real "still resolving" state distinct from both outcomes;
-  `layout.plan-gate-boundary.test.tsx` pins children absent from the tree while
-  resolving/locked, not just visually hidden.
-
 ### L-169 · 2026-09-16 · domain · B421 / PR-1a shared-helper precondition no-op (two call sites)
 
 - **Symptom:** two surfaces hit the same shape: a shared helper re-checked `.status` generically,
@@ -878,3 +864,25 @@
   on is the defect's own signature": here qty netting to zero while pieces do not IS reachable (it
   is the legacy residue), so the old assertion was asserting the bug, and removing it RAISED
   coverage. A mixed-pack reconcile case pins the ratio source.
+
+### L-217 · 2026-09-25 · domain · a grid/flex item's own `min-w-[Npx]` overrides its track's `minmax(0,...)` shrink-to-fit (#2080, P0)
+
+- **Symptom:** the owner reported the staff order dialog panning sideways on an iPhone during a
+  vertical swipe — section labels lost their first letters, cards and totals clipped on the left.
+  Only reproducible with a boxed (Case/Unit) line in the cart.
+- **Root cause:** `LineItemRow.tsx`'s boxed qty-controls column sat in a grid track declared
+  `minmax(0,1fr)` (free to shrink to nothing) but the grid ITEM placed in it carried its own
+  `min-w-[190px]` — an item's explicit minimum always wins over the track's `minmax(0,...)`
+  floor, so the column could never shrink below 190px regardless of room. Compounding it, the
+  two inner case/pieces input rows had no `flex-wrap`, so even 190px wasn't enough — together a
+  few px past the viewport, enough for the dialog's `overflow-y-auto` scroll body (overflow-x
+  computing to `auto` too, per CSS Overflow's axis-pairing rule — [[L-116]]'s sibling shell-level
+  cases) to turn a vertical swipe into a sideways pan.
+- **Lesson:** **A `minmax(0, Nfr)` grid track does NOT make a child shrinkable if that child
+  carries its own explicit `min-w-[Npx]` — an item's own minimum always overrides the track's
+  intent to shrink. A narrow-viewport-safe column needs the min-width on a RESPONSIVE utility
+  (`min-w-0 sm:min-w-[Npx]`), never a bare one, and every un-wrapped inner flex row inside it
+  still needs its own `flex-wrap` — shrinkable-but-non-wrapping children still overflow.**
+- **Guard:** `e2e/56-create-order-dialog-mobile-pan.spec.ts` (320/375/390/430, both sellBy
+  branches) via the shared element-level overflow walk (`e2e/helpers/overflow.ts`, copied from
+  #1288 rather than stacked on its unmerged branch).
