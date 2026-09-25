@@ -29,9 +29,10 @@ beforeEach(() => {
 describe("buyerLogout — clears the bell (#2142 N2)", () => {
   it("#2142 N2: removes every bell slot, and nothing that is not the buyer's", async () => {
     localStorage.setItem(BUYER_KEYS.accessToken, buyerJwt({ sub: "buyer-a", type: "BUYER" }));
-    localStorage.setItem(buyerNotificationsKey("buyer-a"), "[]");
-    localStorage.setItem(buyerNotificationsKey("buyer-b"), "[]");
+    localStorage.setItem(buyerNotificationsKey("buyer-a", "t-1"), "[]");
+    localStorage.setItem(buyerNotificationsKey("buyer-b", "t-1"), "[]");
     localStorage.setItem("rf_buyer_notifications", "[]"); // the pre-#2142 shared slot
+    localStorage.setItem("rf_buyer_notifications:buyer-a", "[]"); // the per-buyer-only slot
     localStorage.setItem("rf:op:accessToken", "staff-token"); // another portal's session
 
     await buyerLogout();
@@ -46,11 +47,11 @@ describe("buyerLogout — clears the bell (#2142 N2)", () => {
   it("clears the bell even when the server logout call fails", async () => {
     mockedPost.mockRejectedValueOnce(new Error("offline"));
     localStorage.setItem(BUYER_KEYS.accessToken, buyerJwt({ sub: "buyer-a", type: "BUYER" }));
-    localStorage.setItem(buyerNotificationsKey("buyer-a"), "[]");
+    localStorage.setItem(buyerNotificationsKey("buyer-a", "t-1"), "[]");
 
     await buyerLogout();
 
-    expect(localStorage.getItem(buyerNotificationsKey("buyer-a"))).toBeNull();
+    expect(localStorage.getItem(buyerNotificationsKey("buyer-a", "t-1"))).toBeNull();
   });
 });
 

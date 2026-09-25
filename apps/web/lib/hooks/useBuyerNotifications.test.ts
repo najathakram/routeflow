@@ -7,7 +7,7 @@
  *   (this portal's) only takes events for the seller on screen; caches refresh either way.
  * - Every reconnect presents the current token (a getter, not a captured string).
  * - Leaving the portal closes the socket.
- * - #2142 N2: the bell persists per buyer account, never in one slot every buyer shares.
+ * - #2142 N2/W2: the bell persists per buyer account and seller, never in a shared slot.
  * Fixtures are placeholders.
  */
 import * as React from "react";
@@ -53,15 +53,15 @@ function Wrapper({ children }: { children: React.ReactNode }) {
   return React.createElement(QueryClientProvider, { client }, children);
 }
 
-function activeSeller(customerId: string) {
+function activeSeller(customerId: string, tenantId = "t-1") {
   localStorage.setItem(
     BUYER_KEYS.activeSeller,
     JSON.stringify({
       linkId: "l-1",
       linkStatus: "ACTIVE",
       tenant: {
-        id: "t-1",
-        slug: "acme",
+        id: tenantId,
+        slug: tenantId === "t-1" ? "acme" : "globex",
         name: "Acme Wholesale",
         logoKey: null,
         primaryColor: null,
@@ -210,14 +210,14 @@ describe("useBuyerNotifications — the bell belongs to one buyer (#2142 N2)", (
         status: "DELIVERED",
       });
     });
-    expect(stored("rf_buyer_notifications:buyer-a")).toEqual([
+    expect(stored("rf_buyer_notifications:buyer-a:t-1")).toEqual([
       expect.objectContaining({ type: "order", title: "Order Delivered" }),
     ]);
-    expect(bellKeys()).toEqual(["rf_buyer_notifications:buyer-a"]);
+    expect(bellKeys()).toEqual(["rf_buyer_notifications:buyer-a:t-1"]);
   });
 
   it("#2142 N2: the next buyer on the same browser starts with an empty bell", async () => {
-    localStorage.setItem("rf_buyer_notifications:buyer-a", JSON.stringify([oldNotice]));
+    localStorage.setItem("rf_buyer_notifications:buyer-a:t-1", JSON.stringify([oldNotice]));
     // The pre-#2142 shared slot: it may be anyone's, so it is never read.
     localStorage.setItem("rf_buyer_notifications", JSON.stringify([oldNotice]));
     localStorage.setItem(BUYER_KEYS.accessToken, buyerJwt("buyer-b"));
@@ -227,7 +227,7 @@ describe("useBuyerNotifications — the bell belongs to one buyer (#2142 N2)", (
   });
 
   it("a returning buyer gets its own bell back", async () => {
-    localStorage.setItem("rf_buyer_notifications:buyer-a", JSON.stringify([oldNotice]));
+    localStorage.setItem("rf_buyer_notifications:buyer-a:t-1", JSON.stringify([oldNotice]));
     localStorage.setItem(BUYER_KEYS.accessToken, buyerJwt("buyer-a"));
 
     const { result } = await mounted();
@@ -247,5 +247,55 @@ describe("useBuyerNotifications — the bell belongs to one buyer (#2142 N2)", (
     });
     expect(result.current.notifications).toHaveLength(1);
     expect(bellKeys()).toEqual([]);
+  });
+});
+
+describe("useBuyerNotifications — the bell belongs to one seller too (#2142 W2)", () => {
+  function mountAt(tenantId: string) {
+    return renderHook(({ t }: { t: string }) => useBuyerNotifications(t), {
+      wrapper: Wrapper,
+      initialProps: { t: tenantId },
+    });
+  }
+
+  it("#2142 W2: switching from seller A to seller B shows B's bell, never A's notices", async () => {
+    localStorage.setItem(BUYER_KEYS.accessToken, buyerJwt("buyer-a"));
+    localStorage.setItem("rf_buyer_notifications:buyer-a:t-1", JSON.stringify([oldNotice]));
+
+    const hook = mountAt("t-1");
+    await waitFor(() => expect(hook.result.current.notifications).toEqual([oldNotice]));
+
+    // The buyer switches to seller B (or lands there after A revoked the link).
+    activeSeller("c-mine-at-b", "t-2");
+    hook.rerender({ t: "t-2" });
+    await waitFor(() => expect(hook.result.current.notifications).toEqual([]));
+
+    await waitFor(() => expect(fakeSocket.hasListener("order.statusChanged")).toBe(true));
+    act(() => {
+      fakeSocket.emit("order.statusChanged", {
+        orderId: "ord-b",
+        customerId: "c-mine-at-b",
+        orderNumber: "ORD-B",
+        status: "DELIVERED",
+      });
+    });
+    // B's notice lands in B's slot; A's slot is untouched.
+    expect(stored("rf_buyer_notifications:buyer-a:t-2")).toEqual([
+      expect.objectContaining({ description: "Order #ORD-B status changed to Delivered" }),
+    ]);
+    expect(stored("rf_buyer_notifications:buyer-a:t-1")).toEqual([oldNotice]);
+
+    // And back to A: A's own list again, without B's notice.
+    activeSeller("c-mine", "t-1");
+    hook.rerender({ t: "t-1" });
+    await waitFor(() => expect(hook.result.current.notifications).toEqual([oldNotice]));
+  });
+
+  it("with no active seller the bell persists nothing", async () => {
+    localStorage.setItem(BUYER_KEYS.accessToken, buyerJwt("buyer-a"));
+    localStorage.setItem("rf_buyer_notifications:buyer-a:t-1", JSON.stringify([oldNotice]));
+    const hook = renderHook(() => useBuyerNotifications(null), { wrapper: Wrapper });
+    await waitFor(() => expect(fakeSocket.hasListener("order.statusChanged")).toBe(true));
+    expect(hook.result.current.notifications).toEqual([]);
   });
 });

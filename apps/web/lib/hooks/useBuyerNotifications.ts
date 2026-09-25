@@ -25,25 +25,26 @@ export interface BuyerNotification {
 
 // ─── LocalStorage persistence ─────────────────────────────────────────────────
 
-// #2142 N2: one slot per buyer account (`buyerNotificationsKey`), so the next buyer on this
-// browser never inherits the last one's notices; buyerLogout clears them. With no identifiable
-// buyer nothing is read or written (the old unkeyed slot is never read: it may be anyone's).
+// #2142 N2/W2: one slot per buyer account and seller (`buyerNotificationsKey`), so the next
+// buyer on this browser never inherits the last one's notices, and seller A's notices never show
+// in seller B's portal; buyerLogout clears them all. With no identifiable buyer or no active
+// seller nothing is read or written (the old unkeyed slots are never read: they may be anyone's).
 const MAX_NOTIFICATIONS = 50;
 
-function loadFromStorage(buyerId: string | null): BuyerNotification[] {
-  if (typeof window === "undefined" || !buyerId) return [];
+function loadFromStorage(key: string | null): BuyerNotification[] {
+  if (typeof window === "undefined" || !key) return [];
   try {
-    const raw = localStorage.getItem(buyerNotificationsKey(buyerId));
+    const raw = localStorage.getItem(key);
     return raw ? (JSON.parse(raw) as BuyerNotification[]) : [];
   } catch {
     return [];
   }
 }
 
-function saveToStorage(buyerId: string | null, notifications: BuyerNotification[]) {
-  if (!buyerId) return;
+function saveToStorage(key: string | null, notifications: BuyerNotification[]) {
+  if (!key) return;
   try {
-    localStorage.setItem(buyerNotificationsKey(buyerId), JSON.stringify(notifications));
+    localStorage.setItem(key, JSON.stringify(notifications));
   } catch {
     // ignore
   }
@@ -51,16 +52,24 @@ function saveToStorage(buyerId: string | null, notifications: BuyerNotification[
 
 // ─── Hook ─────────────────────────────────────────────────────────────────────
 
-export function useBuyerNotifications() {
+/**
+ * @param sellerTenantId the active seller's `tenant.id` (the portal layout passes its
+ *   `activeSeller`); omitted, the stored active seller is read. Switching seller reloads that
+ *   seller's own list.
+ */
+export function useBuyerNotifications(sellerTenantId?: string | null) {
   const [notifications, setNotifications] = React.useState<BuyerNotification[]>([]);
   const qc = useQueryClient();
-  // The buyer this portal session belongs to, read once on mount (the token's sub).
-  const buyerIdRef = React.useRef<string | null>(null);
+  const tenantId =
+    sellerTenantId === undefined ? (getStoredActiveSeller()?.tenant?.id ?? null) : sellerTenantId;
+  // This buyer's slot at this seller (null: persist nothing), re-derived when the seller changes.
+  const storageKeyRef = React.useRef<string | null>(null);
 
   React.useEffect(() => {
-    buyerIdRef.current = getStoredBuyerId();
-    setNotifications(loadFromStorage(buyerIdRef.current));
-  }, []);
+    const buyerId = getStoredBuyerId();
+    storageKeyRef.current = buyerId && tenantId ? buyerNotificationsKey(buyerId, tenantId) : null;
+    setNotifications(loadFromStorage(storageKeyRef.current));
+  }, [tenantId]);
 
   const push = React.useCallback((n: Omit<BuyerNotification, "id" | "timestamp" | "read">) => {
     setNotifications((prev) => {
@@ -73,7 +82,7 @@ export function useBuyerNotifications() {
         },
         ...prev,
       ].slice(0, MAX_NOTIFICATIONS);
-      saveToStorage(buyerIdRef.current, next);
+      saveToStorage(storageKeyRef.current, next);
       return next;
     });
   }, []);
@@ -176,14 +185,14 @@ export function useBuyerNotifications() {
   const markAllRead = React.useCallback(() => {
     setNotifications((prev) => {
       const next = prev.map((n) => ({ ...n, read: true }));
-      saveToStorage(buyerIdRef.current, next);
+      saveToStorage(storageKeyRef.current, next);
       return next;
     });
   }, []);
 
   const clearAll = React.useCallback(() => {
     setNotifications([]);
-    saveToStorage(buyerIdRef.current, []);
+    saveToStorage(storageKeyRef.current, []);
   }, []);
 
   return { notifications, unreadCount, markAllRead, clearAll, push };
