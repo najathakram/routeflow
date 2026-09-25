@@ -3,14 +3,14 @@ import { apiClient } from "../api-client";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-export type DocumentNumberType = "INVOICE" | "ESTIMATE" | "CREDIT_NOTE" | "PAYMENT";
+export type DocumentNumberType = "INVOICE" | "ESTIMATE" | "CREDIT_NOTE";
 
 export interface NumberingSetting {
   docType: DocumentNumberType;
   prefix: string;
   nextNumber: number;
   padding: number;
-  /** Formatted next number (what will be minted next), from the server. */
+  /** The true next live number, from the server: yearly series until a row is saved. */
   preview: string;
   /** false when this is still a default the tenant has not saved. */
   configured: boolean;
@@ -20,6 +20,11 @@ export interface UpdateNumberingInput {
   prefix?: string;
   nextNumber?: number;
   padding?: number;
+  /**
+   * The nextNumber the card loaded — the server 409s if the row moved
+   * (SA-274 Q3).
+   */
+  expectedNextNumber?: number;
 }
 
 /** Client-side mirror of the server's `format()` for live previews while editing. */
@@ -50,6 +55,7 @@ export function useUpdateNumbering() {
   >({
     mutationFn: ({ docType, data }) =>
       apiClient.put(`/import/numbering/${docType}`, data).then((r) => r.data),
-    onSuccess: () => qc.invalidateQueries({ queryKey: KEY }),
+    // Invalidate on settle (success OR error) so a 409 refetches the row that moved.
+    onSettled: () => qc.invalidateQueries({ queryKey: KEY }),
   });
 }
