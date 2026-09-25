@@ -76,6 +76,22 @@ describe("StopSheet (PHASE 1a)", () => {
     });
   });
 
+  it("REG-1a: while a status call is in flight BOTH Start and Skip are disabled (no double PATCH)", async () => {
+    let resolvePatch: (v: unknown) => void = () => {};
+    patch.mockImplementationOnce(() => new Promise((res) => (resolvePatch = res)));
+    const user = userEvent.setup();
+    renderWithProviders(<StopSheet stop={STOP()} runId="run-1" onClose={jest.fn()} />);
+
+    await user.click(screen.getByRole("button", { name: "Start stop" }));
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: /Start stop/ })).toBeDisabled();
+      expect(screen.getByRole("button", { name: /Skip/ })).toBeDisabled();
+    });
+    expect(patch).toHaveBeenCalledTimes(1);
+    resolvePatch({ data: {} });
+  });
+
   it("REG-1a: Skip is a no-op when the confirm dialog is declined", async () => {
     (window.confirm as jest.Mock).mockReturnValue(false);
     const user = userEvent.setup();

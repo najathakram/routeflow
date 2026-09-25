@@ -1,5 +1,6 @@
 "use client";
 
+import { driverNavItemVisible } from "@/lib/portal-routing";
 import * as React from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
@@ -196,11 +197,7 @@ function getNavForRole(
     // Routes"/"Today's route" need either surface unlocked — not just
     // recurring routes. GET /route-runs/my-runs is gated the same way
     // server-side (RouteRunsController's own @RequireAddon).
-    if (!(routesAccess || deliveryAccess))
-      return DRIVER_NAV.filter(
-        (e) => e.kind !== "leaf" || (e.href !== "/routes" && e.href !== "/routes/my-runs"),
-      );
-    return DRIVER_NAV;
+    return DRIVER_NAV.filter((e) => e.kind !== "leaf" || driverNavItemVisible(e.href, access));
   }
 
   // Tenants without either addon never see the Dispatch group — it's gated

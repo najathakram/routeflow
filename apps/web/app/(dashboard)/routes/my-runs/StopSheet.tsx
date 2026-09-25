@@ -96,7 +96,7 @@ export function StopSheet({ stop, runId, onClose }: StopSheetProps) {
               variant="primary"
               onClick={handleStart}
               loading={updateStatus.isPending && updateStatus.variables?.status === "IN_PROGRESS"}
-              disabled={stop?.status !== "PENDING"}
+              disabled={stop?.status !== "PENDING" || updateStatus.isPending}
             >
               Start stop
             </Button>
@@ -104,7 +104,9 @@ export function StopSheet({ stop, runId, onClose }: StopSheetProps) {
               variant="danger"
               onClick={handleSkip}
               loading={updateStatus.isPending && updateStatus.variables?.status === "SKIPPED"}
-              disabled={stop?.status === "COMPLETED" || stop?.status === "SKIPPED"}
+              disabled={
+                stop?.status === "COMPLETED" || stop?.status === "SKIPPED" || updateStatus.isPending
+              }
             >
               Skip
             </Button>

@@ -131,3 +131,15 @@ export function portalSwitchTarget(
     ? { href: "/dashboard", variant: "switch" }
     : { href: "/login", variant: "signIn" };
 }
+
+/**
+ * A DRIVER's "My Routes" and "Today's route" nav items need the routes OR the
+ * delivery add-on (GET /route-runs/my-runs is gated the same way server-side).
+ */
+export function driverNavItemVisible(
+  href: string,
+  access: { routesAccess: boolean; deliveryAccess: boolean },
+): boolean {
+  if (href !== "/routes" && href !== DRIVER_LANDING) return true;
+  return access.routesAccess || access.deliveryAccess;
+}

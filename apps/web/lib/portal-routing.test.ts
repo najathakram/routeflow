@@ -194,3 +194,27 @@ describe("landingForRole (PHASE 1a — driver-mode 1a)", () => {
     ).toBe("/routes/my-runs");
   });
 });
+
+describe("driverNavItemVisible (PHASE 1a nav filter)", () => {
+  const none = { routesAccess: false, deliveryAccess: false };
+
+  it.each([["/routes"], ["/routes/my-runs"]])(
+    "%s is hidden for a driver with neither add-on",
+    (href) => {
+      expect(routing.driverNavItemVisible?.(href, none)).toBe(false);
+    },
+  );
+
+  it.each([
+    [{ routesAccess: true, deliveryAccess: false }],
+    [{ routesAccess: false, deliveryAccess: true }],
+  ])("Today's route and My Routes show with either add-on (%p)", (access) => {
+    expect(routing.driverNavItemVisible?.("/routes/my-runs", access)).toBe(true);
+    expect(routing.driverNavItemVisible?.("/routes", access)).toBe(true);
+  });
+
+  it("Dashboard and Settings are never gated", () => {
+    expect(routing.driverNavItemVisible?.("/dashboard", none)).toBe(true);
+    expect(routing.driverNavItemVisible?.("/settings", none)).toBe(true);
+  });
+});
