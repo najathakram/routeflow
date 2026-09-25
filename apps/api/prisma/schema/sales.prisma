@@ -928,6 +928,10 @@ model OrderTemplate {
   isActive   Boolean  @default(true)
   daysOfWeek Int[]
   notes      String?
+  // F-05 (SA-210): provenance, snapshotted at creation. The unattended run's sell channel is derived from
+  // it through the live path's own predicate; NULL = unknown = the STRICTER BUYER_PORTAL channel.
+  createdByRole   UserRole?
+  createdByUserId String?
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
   tenantId   String?
@@ -951,6 +955,10 @@ model OrderTemplateItem {
   // U1 (A0): the selling unit chosen for this line (OrderItem.unitLabel's twin). Null = the pack,
   // exactly as every existing row is today.
   unitLabel  String?
+  // F-05: a line the unattended run skipped because a selling restriction bans it (NULL = active). Cleared by
+  // an edit of THIS line's product or qty, or by an explicit audited lift; every suspend and lift is an AuditLog row.
+  suspendedAt     DateTime?
+  suspendedReason String?
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
   tenantId   String?
