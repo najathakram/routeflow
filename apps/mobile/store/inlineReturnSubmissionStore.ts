@@ -110,6 +110,11 @@ export const useInlineReturnSubmissionStore = create<InlineReturnSubmissionState
         if (outcome.kind !== "queued" && shouldSettleInlineReturnNonce(outcome)) {
           useOfflineQueue.getState().settleInlineReturnKey(variables.returnKey);
         }
+        // zustand-persist writes on EVERY `set`, even before hydration: a pre-hydration write
+        // would replace the user's persisted blob with the (empty) in-memory map. The tombstone
+        // above already guards the key (getOrCreateNonce / seed filter it), so skip the nonce
+        // write until hydrated.
+        if (!useInlineReturnSubmissionStore.persist.hasHydrated()) return;
         set((s) => {
           const nonces = settleDirectCapture(s.nonces, variables, outcome);
           return nonces === s.nonces ? s : { nonces };
@@ -126,6 +131,11 @@ export const useInlineReturnSubmissionStore = create<InlineReturnSubmissionState
               ),
             );
         }
+        // Nothing to settle -> no write at all; and never write pre-hydration (see settleCapture:
+        // login() sets the user before awaiting rehydrate, so a drain can run first and would
+        // overwrite the persisted blob with {nonces:{}}). Tombstones above cover the key.
+        if (records.length === 0) return;
+        if (!useInlineReturnSubmissionStore.persist.hasHydrated()) return;
         set((s) => ({ nonces: settleAfterDrainIn(records, s.nonces) }));
       },
       reset: () => set({ nonces: {} }),

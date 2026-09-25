@@ -37,7 +37,12 @@ const vars = (nonce: string) => ({
   returnKey: inlineReturnSubmitKey({ customerId: "c", orderId: "o" }, nonce),
 });
 
-beforeEach(() => store().reset());
+beforeEach(async () => {
+  // The store hydrates explicitly at sign-in (skipHydration); the settle paths only write once
+  // hydrated (see the "drain before rehydrate" pins), so the fixture hydrates it.
+  await useInlineReturnSubmissionStore.persist.rehydrate();
+  store().reset();
+});
 
 describe("useCaptureInlineReturn settle wiring against the real store", () => {
   it("success settles only the attempt's own nonce; the next attempt mints fresh", () => {
@@ -322,9 +327,65 @@ describe("a direct capture's nonce across sign-out / sign-in / relaunch", () => 
       { response: { status: 409, data: { code: "INLINE_RETURN_KEY_CONFLICT", message: "x" } } },
       request(n1),
     );
+    // SA-220 (i) deletion-sensitive: the settled attempt's record RESURFACES (e.g. user B drains
+    // A's legacy entry while A still holds it) — u1 must NOT get n1 back, or A replays the OLD Return.
+    useOfflineQueue.setState({
+      failedActions: [{ ...rec, action: { ...rec.action, userId: "u1" } }],
+    });
     store().reset();
     mockUserId = "u1";
-    store().seedFromQueues([], [], "u1");
+    store().seedFromQueues(
+      useOfflineQueue.getState().queue,
+      useOfflineQueue.getState().failedActions,
+      "u1",
+    );
+    expect(store().nonces[KEY]).toBeUndefined();
     expect(store().getOrCreateNonce(KEY)).not.toBe(n1);
+  });
+});
+
+// ── Opus: a drain that runs BEFORE rehydrate must not overwrite the user's persisted blob ──
+describe("drain before rehydrate (persist writes on every set, even pre-hydration)", () => {
+  const load = () => {
+    let mod: typeof import("../store/inlineReturnSubmissionStore");
+    let storage: { setItem: jest.Mock };
+    jest.isolateModules(() => {
+      storage = (require("../lib/user-scoped-storage") as any).userScopedStorage;
+      storage.setItem.mockClear();
+      mod = require("../store/inlineReturnSubmissionStore");
+    });
+    return { store: mod!.useInlineReturnSubmissionStore, storage: storage! };
+  };
+
+  it("settleAfterDrain does NOT set (so nothing is persisted) until the store has hydrated", () => {
+    const { store: st, storage } = load();
+    expect(st.persist.hasHydrated()).toBe(false);
+    st.getState().settleAfterDrain([{ customerId: "c", orderId: "o", nonceSuffix: "n1" }]);
+    expect(storage.setItem).not.toHaveBeenCalled(); // the user's blob is never overwritten with {nonces:{}}
+  });
+
+  it("settleCapture is guarded the same way pre-hydration", () => {
+    const { store: st, storage } = load();
+    st.getState().settleCapture(
+      { customerId: "c", orderId: "o", returnKey: "inl:c:o:n1" },
+      { kind: "success" },
+    );
+    expect(storage.setItem).not.toHaveBeenCalled();
+  });
+
+  it("an empty drain never sets, even when hydrated", async () => {
+    const { store: st, storage } = load();
+    await st.persist.rehydrate();
+    storage.setItem.mockClear();
+    st.getState().settleAfterDrain([]);
+    expect(storage.setItem).not.toHaveBeenCalled();
+  });
+
+  it("once hydrated, a non-empty drain settles the nonce as before", async () => {
+    const { store: st } = load();
+    await st.persist.rehydrate();
+    const n = st.getState().getOrCreateNonce("c:o");
+    st.getState().settleAfterDrain([{ customerId: "c", orderId: "o", nonceSuffix: n }]);
+    expect(st.getState().nonces["c:o"]).toBeUndefined();
   });
 });
