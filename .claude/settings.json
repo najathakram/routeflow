@@ -37,6 +37,10 @@
       {
         "matcher": "Write|Edit|MultiEdit",
         "hooks": [{ "type": "command", "command": "node .claude/hooks/post_tool_use.mjs" }]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [{ "type": "command", "command": "node scripts/work/claude-hook.mjs" }]
       }
     ],
     "Stop": [

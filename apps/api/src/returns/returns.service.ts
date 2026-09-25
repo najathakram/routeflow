@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ConflictException,
   ForbiddenException,
   Injectable,
   Logger,
@@ -35,8 +36,11 @@ import { CREDIT_SOURCE_EXCLUDED } from "../invoices/invoice-status-sets";
 import { IdempotencyService } from "../common/idempotency.service";
 import { NumberingService } from "../import/numbering.service";
 import {
+  PACK_LINE_SELECT,
+  capBasis,
   returnedPiecesByProduct,
   soldQtyForProduct,
+  standardPackBases,
   standardReturnPieces,
 } from "./returns-pieces.util";
 import { restockReturnItems } from "./returns-restock.util";
@@ -171,12 +175,9 @@ export class ReturnsService {
           // real query never selected).
           lineItems: {
             select: {
-              productId: true,
-              qty: true,
+              ...PACK_LINE_SELECT, // id + the pack evidence the piece-axis cap reads (SA-158)
               unitPrice: true,
               subtotal: true,
-              status: true,
-              position: true,
             },
           },
           invoices: { select: { id: true } },
@@ -219,7 +220,11 @@ export class ReturnsService {
       // B4/m-6: prior-returned pieces per product, shared with the (PR-1c/1d) INLINE
       // capture flow — sums STANDARD Return rows AND (once they exist) INLINE
       // ReturnItem rows sourced from this order. See returns-pieces.util.ts.
-      const alreadyReturned = await returnedPiecesByProduct(tx, dto.orderId);
+      // SA-158: cap, prior-returned and remaining are all in PIECES; the pack basis is resolved once
+      // per order (only ambiguous lines query) and shared, so a mixed or unknown basis refuses (409)
+      // before anything is written.
+      const packBases = await standardPackBases(tx, dto.orderId, order.lineItems as any);
+      const alreadyReturned = await returnedPiecesByProduct(tx, dto.orderId, packBases);
 
       // Validate return qty does not exceed ordered qty per item (cumulative)
       for (const item of dto.items) {
@@ -238,15 +243,42 @@ export class ReturnsService {
         // order (not just the first one `.find()` happened to match) — see
         // returns-pieces.util.ts. A product absent from every live line still 400s,
         // matching the pre-fix "not in the original order" behaviour.
-        const orderedQty = soldQtyForProduct(order as any, item.productId);
-        if (orderedQty <= 0)
+        const soldLineUnits = soldQtyForProduct(order as any, item.productId);
+        if (soldLineUnits <= 0)
           throw new BadRequestException(`Product ${item.productId} was not in the original order`);
+        const cap = capBasis(packBases, item.productId); // 409: mixed / no line / half-resolvable
+        const prior = alreadyReturned[item.productId];
+        if (cap.mode === "lineUnit") {
+          // SA-161: a legacy line whose pack cannot be resolved. Typed and sold share the line's own unit,
+          // so the cap is exact with no pack (master's arithmetic); nothing is guessed or written. The one
+          // honest refusal: a prior INLINE return (pieces) cannot be netted against line units.
+          const inlinePieces = prior ? ("unknown" in prior ? prior.inlinePieces : prior.pieces) : 0;
+          if (inlinePieces > 0)
+            throw new ConflictException(
+              `Product ${item.productId}: cannot reconcile a piece-based return with this line's unit; return it inline instead.`,
+            );
+          const returnedUnits = prior && "unknown" in prior ? prior.lineUnits : 0;
+          const remainingUnits = soldLineUnits - returnedUnits;
+          if (Number(item.qty) > remainingUnits)
+            throw new BadRequestException(
+              `Return qty (${Number(item.qty)}) exceeds remaining returnable qty (${remainingUnits}) for product ${item.productId}. Already returned: ${returnedUnits} of ${soldLineUnits}.`,
+            );
+          alreadyReturned[item.productId] = {
+            unknown: true,
+            reason: prior && "unknown" in prior ? prior.reason : "legacy line unit",
+            lineUnits: returnedUnits + Number(item.qty),
+            inlinePieces: 0,
+          };
+          continue;
+        }
+        if (prior && "unknown" in prior) throw new ConflictException(prior.reason);
         const { pieces: returnPieces, toLineUnit } = standardReturnPieces(
-          order as any,
+          packBases,
           item.productId,
           Number(item.qty),
         );
-        const previouslyReturned = alreadyReturned[item.productId] ?? 0;
+        const orderedQty = soldLineUnits * cap.factor;
+        const previouslyReturned = prior?.pieces ?? 0;
         const remaining = orderedQty - previouslyReturned;
         if (returnPieces > remaining)
           throw new BadRequestException(
@@ -256,7 +288,7 @@ export class ReturnsService {
         // lists the same productId twice previously validated every line against
         // the same pre-request snapshot, so 2 × qty 10 against 10 ordered both
         // passed and over-returned with no concurrency involved at all.
-        alreadyReturned[item.productId] = previouslyReturned + returnPieces;
+        alreadyReturned[item.productId] = { pieces: previouslyReturned + returnPieces };
       }
 
       const returnNumber = await this.generateReturnNumber(tx);
@@ -511,8 +543,8 @@ export class ReturnsService {
         returnId: ret.id,
         orderId: ret.orderId,
         returnedByProduct,
-        // The STANDARD path's ReturnItem.qty mirrors OrderItem.qty (the identity conversion
-        // returns-pieces.util.ts's standardReturnPieces documents) — the line's OWN unit,
+        // The STANDARD path's ReturnItem.qty mirrors OrderItem.qty (returns-pieces.util.ts
+        // converts to pieces only for the cap, never on disk) — the line's OWN unit,
         // never pieces (live production regression, B661/B671 fix round 2).
         returnedUnit: "LINE_UNIT",
         db: tx,

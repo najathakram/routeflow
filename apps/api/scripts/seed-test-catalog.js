@@ -754,6 +754,8 @@ async function main() {
             reference: "SEED-OPENING",
             notes: "Opening stock (seed)",
             performedById: operatorId,
+            // B562: effectiveAt is the accounting date every replay/cost reader keys on.
+            effectiveAt: openingDate,
             createdAt: openingDate,
           },
         });

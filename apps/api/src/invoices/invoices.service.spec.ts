@@ -38,6 +38,7 @@ import { EntitlementsService } from "../billing/entitlements.service";
 import { CommissionEngineService } from "../sales-agents/commission-engine.service";
 import { CheckStatus, InvoiceStatus, NotificationEvent, UserRole } from "@prisma/client";
 import { computeLineSubtotal, roundMoney } from "@routeflow/pricing";
+import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
 
 const mockCompressDocument = compressDocument as jest.Mock;
 
@@ -143,6 +144,10 @@ describe("InvoicesService", () => {
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         InvoicesService,
+        {
+          provide: SellingRestrictionsService,
+          useValue: { assertLinesSellable: jest.fn().mockResolvedValue(undefined) },
+        },
         { provide: PrismaService, useValue: prisma },
         { provide: RouteFlowGateway, useValue: mockGateway },
         { provide: EmailService, useValue: mockEmailService },
@@ -628,6 +633,55 @@ describe("InvoicesService", () => {
       expect(created.subtotal).toBeCloseTo(17.5, 2); // 3.5 * 5
       expect(created.boxes).toBeNull();
       expect(created.pieces).toBeNull();
+    });
+
+    it("SA-144f/item-3 (correction, B679): a pieces-only line (boxes null, pieces set) taxes on qty as-is, not qty*unitsPerBox", async () => {
+      // Old inline code checked `boxes != null` only, so a pieces-only line (boxes absent,
+      // pieces sent) fell through to the box-unaware branch and was OVER-taxed by
+      // unitsPerBox. regulatedUnitBasis checks boxes-OR-pieces, matching pricing.ts's
+      // effectiveQty, which already treats either one as "qty is already pieces."
+      prisma.invoice.findUnique.mockResolvedValue(draftInvoice);
+      prisma.product.findMany.mockResolvedValue([
+        { id: "prod-box", unitsPerBox: 12, trackedCategoryId: "cat-1" },
+      ]);
+      prisma.trackedCategory.findMany.mockResolvedValue([
+        {
+          id: "cat-1",
+          taxType: "EXCISE_PER_UNIT",
+          rate: 0.1,
+          unitBasis: "pack",
+          priceIncludesTax: false,
+        },
+      ]);
+      prisma.customer.findUnique.mockResolvedValue({ isTaxExempt: false });
+      prisma.invoice.update.mockResolvedValue(draftInvoice);
+
+      await service.update("inv-box", {
+        items: [
+          { productId: "prod-box", description: "Loose pieces", qty: 5, pieces: 5, unitPrice: 10 },
+        ],
+      });
+
+      const created = prisma.invoice.update.mock.calls[0][0].data.items.create[0];
+      expect(created.boxes).toBeNull();
+      expect(created.pieces).toBe(5);
+      expect(created.categoryTaxAmount).toBe(0.5); // 0.1 x 5, never 0.1 x (5*12)=6
+    });
+
+    it("SA-144g: refuses ANY non-blank requested unitLabel up front — this is why the tax derivation below never sees one", async () => {
+      // update()'s pieceQty/categoryTaxAmount derivation (:3401) reads item.unitLabel with no
+      // resolveLineUnits call of its own; its safety rests entirely on this refusal running
+      // BEFORE the item loop, for every item, on ANY non-blank label — including one that
+      // would resolve to the pack itself (e.g. "Case" naming a product's own base unit).
+      prisma.invoice.findUnique.mockResolvedValue(draftInvoice);
+
+      await expect(
+        service.update("inv-box", {
+          items: [{ productId: "prod-box", qty: 3, unitLabel: "Case", unitPrice: 10 }],
+        }),
+      ).rejects.toThrow("Selling by a unit can't be set on an invoice edit yet.");
+
+      expect(prisma.invoice.update).not.toHaveBeenCalled();
     });
 
     // ─── BUY_N_GET_M: the free-unit snapshot is MONEY and must survive the edit ──
@@ -7033,6 +7087,51 @@ describe("InvoicesService", () => {
       // foldCategoryTax zeroed this line at creation; the recompute must preserve
       // that, not re-derive $100 of excise onto an exempt customer's invoice.
       expect(itemUpdateData().categoryTaxAmount).toBe(0);
+    });
+
+    it("SA-144f/item-3 (correction, B679): a pieces-only stored line taxes on qty as-is, not qty*unitsPerBox", async () => {
+      // Old inline code checked `li.boxes != null` only, so a pieces-only stored line
+      // (boxes null, pieces set) fell into the same product-fallback branch as a
+      // box-unaware selling-units line and was OVER-taxed by unitsPerBox.
+      seedExciseLine();
+      const pieceItem = {
+        id: "li-b57e",
+        invoiceId: "inv-b57e",
+        productId: "prod-reg",
+        trackedCategoryId: "cat-2",
+        unitPrice: 10,
+        discount: 0,
+        subtotal: 100,
+        qty: 10,
+        pieces: 10,
+        boxes: null,
+        unitsPerBox: null,
+        taxRate: 0,
+        categoryTaxAmount: 100,
+      };
+      prisma.invoice.findUnique.mockResolvedValue({
+        id: "inv-b57e",
+        customerId: "cust-2",
+        orderId: null,
+        status: InvoiceStatus.SENT,
+        discount: 0,
+        shippingFee: 0,
+        internalNotes: null,
+        dueDate: null,
+        items: [pieceItem],
+        payments: [],
+      });
+      prisma.invoiceItem.findMany.mockResolvedValue([
+        { ...pieceItem, unitPrice: 5, subtotal: 50, categoryTaxAmount: 0 },
+      ]);
+
+      await service.applyPriceAdjustment("inv-b57e", {
+        items: [{ itemId: "li-b57e", newUnitPrice: 5 }],
+        scope: "SINGLE",
+      });
+
+      // 0.50 x 10 pieces, never 0.50 x (10*20)=200 pieces.
+      expect(itemUpdateData().categoryTaxAmount).toBe(5);
     });
   });
 

@@ -6,6 +6,7 @@
  * rows and, once they exist, INLINE `ReturnItem` rows) regardless of which was
  * written first.
  */
+import { ConflictException } from "@nestjs/common";
 import {
   firstNonCancelledLine,
   returnedPiecesByProduct,
@@ -81,17 +82,33 @@ describe("firstNonCancelledLine", () => {
   });
 });
 
-describe("standardReturnPieces (m-6 conversion seam)", () => {
-  it("is an identity conversion today — ReturnItem.qty is already pieces, like OrderItem.qty", () => {
-    const order = {
-      lineItems: [
-        { productId: "p1", qty: 30, boxes: 2, pieces: 6, unitsPerBox: 12, status: "PENDING" },
-      ],
-    };
-    const { pieces, toLineUnit } = standardReturnPieces(order, "p1", 12);
+describe("standardReturnPieces (SA-158 conversion)", () => {
+  it("a split line (factor 1): pieces = typed qty, round trip is the identity", () => {
+    const bases = new Map([["p1", { factor: 1 }]]);
+    const { pieces, toLineUnit } = standardReturnPieces(bases, "p1", 12);
     expect(pieces).toBe(12);
-    expect(toLineUnit(12)).toBe(12);
     expect(toLineUnit(30)).toBe(30);
+  });
+
+  it("a box-unaware 12-pack line: 3 boxes = 36 pieces and back", () => {
+    const { pieces, toLineUnit } = standardReturnPieces(new Map([["p1", { factor: 12 }]]), "p1", 3);
+    expect(pieces).toBe(36);
+    expect(toLineUnit(36)).toBe(3);
+  });
+
+  it("toLineUnit rounds for messages: 31 pieces on a 12-pack reads 2.58, never 2.5833333333333335", () => {
+    const { toLineUnit } = standardReturnPieces(new Map([["p1", { factor: 12 }]]), "p1", 1);
+    expect(toLineUnit(31)).toBe(2.58);
+  });
+
+  it("refuses (409) an unknown basis, a mixed basis and a product with no basis", () => {
+    const bases = new Map<string, any>([
+      ["u", { unknown: true, reason: "no source" }],
+      ["m", { mixed: true, factors: [1, 12] }],
+    ]);
+    expect(() => standardReturnPieces(bases, "u", 1)).toThrow(/basis unknown for product u/i);
+    expect(() => standardReturnPieces(bases, "m", 1)).toThrow(/1 and 12 pieces per unit/);
+    expect(() => standardReturnPieces(bases, "zz", 1)).toThrow(ConflictException);
   });
 });
 
@@ -99,6 +116,15 @@ describe("returnedPiecesByProduct (B4 shared reader, kind-aware)", () => {
   const fakeTx = (opts: { standardReturns?: any[]; inlineItems?: any[] }) => ({
     return: { findMany: jest.fn().mockResolvedValue(opts.standardReturns ?? []) },
     returnItem: { findMany: jest.fn().mockResolvedValue(opts.inlineItems ?? []) },
+    // SA-158: STANDARD items convert through the order's pack basis; these lines are all factor 1.
+    orderItem: {
+      findMany: jest
+        .fn()
+        .mockResolvedValue(
+          ["p1", "p2"].map((productId) => ({ id: `l-${productId}`, productId, qty: 10 })),
+        ),
+    },
+    invoiceItem: { findMany: jest.fn().mockResolvedValue([]) },
   });
 
   it("sums STANDARD Return rows alone when no INLINE rows exist (today's only case)", async () => {
@@ -106,7 +132,7 @@ describe("returnedPiecesByProduct (B4 shared reader, kind-aware)", () => {
       standardReturns: [{ items: [{ productId: "p1", qty: 6 }] }],
     });
     const result = await returnedPiecesByProduct(tx as any, "ord-1");
-    expect(result).toEqual({ p1: 6 });
+    expect(result).toEqual({ p1: { pieces: 6 } });
     expect(tx.return.findMany).toHaveBeenCalledWith({
       where: { orderId: "ord-1", kind: "STANDARD", status: { notIn: ["REJECTED", "CANCELLED"] } },
       include: { items: { select: { productId: true, qty: true } } },
@@ -129,7 +155,7 @@ describe("returnedPiecesByProduct (B4 shared reader, kind-aware)", () => {
     // Revert probe: dropping the returnItem query (reverting to STANDARD-only) would
     // read 6 here instead of 10 — silently under-counting a customer's returns once an
     // INLINE capture exists on the same source order.
-    expect(result).toEqual({ p1: 10 });
+    expect(result).toEqual({ p1: { pieces: 10 } });
   });
 
   it("INLINE-after-STANDARD: order of seeding does not matter — both kinds always combine", async () => {
@@ -138,7 +164,7 @@ describe("returnedPiecesByProduct (B4 shared reader, kind-aware)", () => {
       inlineItems: [{ productId: "p1", qty: 4 }],
     });
     const result = await returnedPiecesByProduct(tx as any, "ord-1");
-    expect(result).toEqual({ p1: 10 });
+    expect(result).toEqual({ p1: { pieces: 10 } });
   });
 
   it("combines across different products independently", async () => {
@@ -147,6 +173,6 @@ describe("returnedPiecesByProduct (B4 shared reader, kind-aware)", () => {
       inlineItems: [{ productId: "p2", qty: 3 }],
     });
     const result = await returnedPiecesByProduct(tx as any, "ord-1");
-    expect(result).toEqual({ p1: 6, p2: 3 });
+    expect(result).toEqual({ p1: { pieces: 6 }, p2: { pieces: 3 } });
   });
 });

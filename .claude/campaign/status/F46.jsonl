@@ -1,4 +1,4 @@
-{"id":"B343","batch":"F46","tier":"T2","state":"queued","pr":null,"proof":null,"evidence":null}
+{"id":"B343","batch":"F46","tier":"T2","state":"already-fixed","pr":898,"proof":null,"evidence":"Verified fixed on master bc7b0ad9 by acbc1037 (#898); lead reconcile 2026-09-23 (Opus 5.5 verifier read current code)."}
 {"id":"B344","batch":"F46","tier":"T2","state":"queued","pr":null,"proof":null,"evidence":null}
 {"id":"B345","batch":"F46","tier":"T1","state":"queued","pr":null,"proof":null,"evidence":null}
 {"id":"B346","batch":"F46","tier":"T1","state":"queued","pr":null,"proof":null,"evidence":null}

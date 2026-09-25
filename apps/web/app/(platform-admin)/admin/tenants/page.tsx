@@ -15,6 +15,10 @@ interface Tenant {
   name: string;
   status: string;
   plan: string;
+  // SA-140/B556: resolved through the tenant's subscription first, falling back to `plan` only
+  // when no subscription.planKey is set — the display fix for a tenant whose legacy plan enum
+  // and real billing plan have drifted. `plan` itself is unchanged (API compatibility).
+  planKey: string;
   trialEndsAt: string | null;
   businessName: string | null;
   counts: { users: number; customers: number; orders: number } | null;
@@ -662,7 +666,7 @@ export default function AdminTenantsPage() {
                         </div>
                       </td>
                       <td className="px-4 py-3">
-                        <AdminBadge variant="plan">{t.plan}</AdminBadge>
+                        <AdminBadge variant="plan">{t.planKey ?? t.plan}</AdminBadge>
                       </td>
                       <td className="px-4 py-3 text-right text-slate-400">
                         {t.counts?.users ?? 0}

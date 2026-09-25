@@ -489,14 +489,16 @@ export class VendorBillsService {
           include: billInclude,
         });
 
+        // B710: the scan is claimed in THIS transaction, so a second post of one scan is refused
+        // (409) and rolls back its bill, PO and credit draws instead of writing a second restock.
+        if (dto.scanId) await this.claimScanInTx(tx, dto.scanId, created.id);
+
         if (!supplierId) return created;
         return this.applySupplierCreditToBill(tx, created, billInclude);
       })
       .catch((e: unknown) => {
         throw this.translateLinkRace(e, wantsPurchaseOrder || !!dto.purchaseOrderId);
       });
-
-    await this.markScanPosted(dto.scanId, bill.id);
 
     return bill;
   }
@@ -720,20 +722,48 @@ export class VendorBillsService {
   }
 
   /**
-   * Close the loop from bill back to the document it came from. A bad or
-   * foreign scanId must not fail a bill that is already written — `updateMany`
-   * stays tenant-scoped and simply matches nothing.
+   * B710: close the loop from bill back to the scan it came from, inside the bill's own
+   * transaction, as a guarded claim. A scan backs at most one live bill: it is claimable while
+   * not yet POSTED, or once the bill it posted was deleted (the link is nulled) or VOIDed, since
+   * voiding is how an operator undoes a bad post. Each claim is a conditional `updateMany`, so two
+   * concurrent posts serialize on the row and the loser matches nothing: a 409 that rolls its
+   * whole transaction back. A bad or foreign scanId still never fails a bill: the tenant-scoped
+   * lookup finds nothing and the bill is kept, unlinked.
    */
-  private async markScanPosted(scanId: string | undefined, vendorBillId: string): Promise<void> {
-    if (!scanId) return;
-    try {
-      await this.prisma.forTenant().invoiceScan.updateMany({
-        where: { id: scanId },
-        data: { status: "POSTED", vendorBillId },
+  private async claimScanInTx(
+    tx: Prisma.TransactionClient,
+    scanId: string,
+    vendorBillId: string,
+  ): Promise<void> {
+    const data = { status: "POSTED" as const, vendorBillId };
+    const fresh = await tx.invoiceScan.updateMany({
+      where: { id: scanId, OR: [{ status: { not: "POSTED" } }, { vendorBillId: null }] },
+      data,
+    });
+    if (fresh.count > 0) return;
+
+    const scan = await tx.invoiceScan.findFirst({
+      where: { id: scanId },
+      select: { vendorBillId: true, vendorBill: { select: { billNumber: true, status: true } } },
+    });
+    if (!scan) return;
+    if (scan.vendorBill?.status === "VOID") {
+      // Compare-and-swap on the void bill's id: a concurrent re-post that won first moved it on.
+      const repost = await tx.invoiceScan.updateMany({
+        where: { id: scanId, status: "POSTED", vendorBillId: scan.vendorBillId },
+        data,
       });
-    } catch (e) {
-      this.logger.error(`create: failed to mark scan ${scanId} POSTED: ${(e as Error).message}`);
+      if (repost.count > 0) return;
     }
+    const billNumber = scan.vendorBill?.billNumber ?? null;
+    throw new ConflictException({
+      code: "SCAN_ALREADY_POSTED",
+      message: billNumber
+        ? `This scan was already posted as bill ${billNumber}. Void that bill to post the scan again.`
+        : "This scan was already posted. Refresh and check its bill before posting again.",
+      vendorBillId: scan.vendorBillId ?? null,
+      billNumber,
+    });
   }
 
   /**
@@ -1160,8 +1190,9 @@ export class VendorBillsService {
             performedById: performedById ?? null,
             // Stamp the movement at the BILL date, matching the lot — a
             // backdated bill's cost snapshot must sit at the right point in
-            // the ledger (the lot and the movement used to disagree).
-            createdAt: effectiveDate,
+            // the ledger (the lot and the movement used to disagree). B562:
+            // on effectiveAt (the accounting date); createdAt stays write-once.
+            effectiveAt: effectiveDate,
           },
         });
 
@@ -1178,7 +1209,7 @@ export class VendorBillsService {
         // `throwOnGap: false` — a gap here must flag this ONE line, never
         // abort the whole bill (see the comment above the loop).
         const newer = await tx.stockMovement.count({
-          where: { productId: item.productId, createdAt: { gt: effectiveDate } },
+          where: { productId: item.productId, effectiveAt: { gt: effectiveDate } },
         });
         if (newer > 0) {
           const replay = await this.inventory.recomputeProductInTx(tx, item.productId, {

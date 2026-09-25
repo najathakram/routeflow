@@ -27,6 +27,7 @@ import {
   invoiceLineQtyText,
   type PromotionRule,
   type PromoScopeProduct,
+  type TrackedCategoryRow,
 } from "./pricing";
 
 /**
@@ -672,7 +673,11 @@ describe("categoryTaxSnapshotOf — B297 sale-time trio (SA-088 D1)", () => {
   });
 
   it("coerces a numeric-string rate to a number and a missing priceIncludesTax to false", () => {
-    expect(categoryTaxSnapshotOf({ taxType: "PERCENT_OF_SALE", rate: "0.0525" })).toEqual({
+    // TrackedCategoryRow.priceIncludesTax is non-optional (the live column is NOT NULL) — this
+    // cast simulates a malformed/legacy row reaching the runtime coercion (`!!category.priceIncludesTax`)
+    // despite the type, which is exactly the defensive path this test exists to cover.
+    const malformedRow = { taxType: "PERCENT_OF_SALE", rate: "0.0525" } as unknown as TrackedCategoryRow;
+    expect(categoryTaxSnapshotOf(malformedRow)).toEqual({
       categoryTaxType: "PERCENT_OF_SALE",
       categoryTaxRate: 0.0525,
       categoryPriceIncludesTax: false,

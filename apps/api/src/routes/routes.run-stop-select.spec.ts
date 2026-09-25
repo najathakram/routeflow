@@ -71,6 +71,32 @@ describe("REG-B305 driver run/stop order projection", () => {
     expect(RUN_STOP_INCLUDE.customer.select.isTaxExempt).toBe(true);
   });
 
+  // B810/SA-130a: `payableInvoices` is NOT a Prisma relation on Order (only
+  // `invoices` is) — nesting it here would throw `Unknown field
+  // 'payableInvoices'` against the real client. It must never be reintroduced
+  // into this select; it's fetched as its own batched `invoice.findMany` (see
+  // run-invoice-balance.ts) and attached after the read.
+  it("B810/SA-130a: RUN_STOP_INCLUDE.orders.select never re-introduces a payableInvoices relation", () => {
+    expect(
+      Object.prototype.hasOwnProperty.call(RUN_STOP_INCLUDE.orders.select, "payableInvoices"),
+    ).toBe(false);
+  });
+
+  it("B810: the DRAFT-only invoices list stays byte-identical to before — never widened", () => {
+    expect(RUN_STOP_INCLUDE.orders.select.invoices).toEqual({
+      where: { status: InvoiceStatus.DRAFT, deliveryBatchId: null },
+      select: {
+        id: true,
+        subtotal: true,
+        taxAmount: true,
+        discount: true,
+        shippingFee: true,
+        total: true,
+      },
+      orderBy: { createdAt: "asc" },
+    });
+  });
+
   // B648: without this, the driver's short-pick screen has no way to tell a
   // units_v1 line ("Case"…) from a plain piece/pack line — lib/short-pick.ts
   // treats every line as piece-adjustable, so a Case line's stepper silently
