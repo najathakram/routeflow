@@ -30,6 +30,7 @@ import {
   type PromotionRule,
 } from "@routeflow/pricing";
 import { lockRowsNoWait, withAdvisoryLock, type LockMode } from "../common/db-locks";
+import { retryOnTxConflict } from "../common/tx-retry";
 import { assertMoneyInvariantsOrThrow } from "../common/money-invariants.util";
 import { atStopConflict } from "./at-stop-conflicts";
 import {
@@ -4619,29 +4620,32 @@ export class OrdersService implements OnApplicationBootstrap {
     // Credit-note intents: sync operator selection changes, then settle (shrink or
     // top-up) against the order's current invoices. Runs even when line-resync was
     // skipped for partial billing — the credits are payment-level, not line-level.
-    await this.prisma.tenantTransaction(
-      async (tx) => {
-        // SA-218 (house lock order: advisory → Return → Order → Invoice): the Order row FIRST, before
-        // the sync/settle below write any Invoice, so the sync's OrderCreditNote insert (an FK KEY
-        // SHARE on this Order) is a no-wait on a row this tx holds, never an Invoice → Order edge.
-        // No caller still holds the Order when this opens (updateOrderItems' fold tx has committed;
-        // replayMergeReconcile has none — SA-093 trap (i)). A tenant-less (SUPER_ADMIN) session is
-        // unscoped anyway, so it locks by id rather than silently locking nothing.
-        const tenantId = this.prisma.getTenantId();
-        await tx.$queryRaw`SELECT id FROM "Order" WHERE id = ${orderId} AND (${tenantId}::text IS NULL OR "tenantId" = ${tenantId}) FOR UPDATE`;
-        // EXPLICIT skip: `undefined` means "never touch the stored selection" (see the doc
-        // comment) — an unverified replay lands here and must not re-point this order's credits.
-        if (appliedCreditNotes !== undefined) {
-          await this.creditNotes.syncOrderCreditSelections(
-            tx,
-            orderId,
-            customerId,
-            appliedCreditNotes,
-          );
-        }
-        await this.creditNotes.settleOrderCreditsInTx(tx, orderId);
-      },
-      { isolationLevel: "Serializable" },
+    // SA-269: the WHOLE tx re-runs on a 40001/40P01 conflict (bounded); every step is idempotent.
+    await retryOnTxConflict(`credit sync order=${orderId}`, () =>
+      this.prisma.tenantTransaction(
+        async (tx) => {
+          // SA-218 (house lock order: advisory → Return → Order → Invoice): the Order row FIRST,
+          // before the sync/settle below write any Invoice, so the sync's OrderCreditNote insert (an
+          // FK KEY SHARE on this Order) is a no-wait on a row this tx holds, never Invoice → Order.
+          // No caller still holds the Order when this opens (updateOrderItems' fold tx committed;
+          // replayMergeReconcile has none — SA-093 trap (i)). A tenant-less (SUPER_ADMIN) session
+          // is unscoped anyway, so it locks by id rather than silently locking nothing.
+          const tenantId = this.prisma.getTenantId();
+          await tx.$queryRaw`SELECT id FROM "Order" WHERE id = ${orderId} AND (${tenantId}::text IS NULL OR "tenantId" = ${tenantId}) FOR UPDATE`;
+          // EXPLICIT skip: `undefined` means "never touch the stored selection" (see the doc
+          // comment) — an unverified replay lands here and must not re-point this order's credits.
+          if (appliedCreditNotes !== undefined) {
+            await this.creditNotes.syncOrderCreditSelections(
+              tx,
+              orderId,
+              customerId,
+              appliedCreditNotes,
+            );
+          }
+          await this.creditNotes.settleOrderCreditsInTx(tx, orderId);
+        },
+        { isolationLevel: "Serializable" },
+      ),
     );
   }
 

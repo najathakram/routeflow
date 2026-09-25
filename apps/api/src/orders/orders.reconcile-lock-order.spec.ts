@@ -16,6 +16,8 @@
  * three members this method reads — prisma, invoicesService, creditNotes — instead of the class's
  * sixteen constructor dependencies.
  */
+import { BadRequestException } from "@nestjs/common";
+import { Prisma } from "@prisma/client";
 import { OrdersService } from "./orders.service";
 import { CreditNotesService } from "../credit-notes/credit-notes.service";
 import { createOpLogTx } from "../testing/op-log-tx";
@@ -163,5 +165,81 @@ describe("reconcileOrderAfterEdit — the credit-sync tx takes Order FOR UPDATE 
 
     expectOrderLockFirst(log);
     expect(log[0].sql).toMatch(/\?::text IS NULL OR "tenantId" = \?/);
+  });
+});
+
+// SA-269: the credit tx is Serializable, and with SA-218's Order lock a concurrent Order → Invoice
+// writer surfaces as a conflict at commit AFTER the edit itself committed. A bare failure would
+// leave the order edited with its credits un-synced, so the whole (idempotent) tx is retried.
+const conflict = (
+  code: string,
+  message = "Transaction failed due to a write conflict or a deadlock",
+) =>
+  new Prisma.PrismaClientKnownRequestError(message, {
+    code,
+    clientVersion: Prisma.prismaVersion.client,
+  });
+
+describe("reconcileOrderAfterEdit — a write conflict retries the credit tx (SA-269, #2116)", () => {
+  it.each([
+    ["Prisma P2034", () => conflict("P2034")],
+    [
+      "an unwrapped adapter conflict (40001)",
+      () =>
+        Object.assign(new Error("TransactionWriteConflict"), {
+          name: "DriverAdapterError",
+          cause: { kind: "TransactionWriteConflict", originalCode: "40001" },
+        }),
+    ],
+    [
+      "a raw 40P01 deadlock",
+      () => Object.assign(new Error("deadlock detected"), { code: "40P01" }),
+    ],
+  ])("REG-SA269-1: %s at commit re-runs the whole tx, which converges", async (_label, make) => {
+    const { log, prisma, reconcile } = build("tenant-1");
+    const runTx = prisma.tenantTransaction.getMockImplementation()!;
+    const starts: number[] = [];
+    prisma.tenantTransaction.mockImplementation(async (fn) => {
+      starts.push(log.length);
+      const result = await runTx(fn);
+      if (starts.length === 1) throw make(); // the first attempt's commit loses the race
+      return result;
+    });
+
+    await expect(reconcile([{ creditNoteId: CN_NEW.id }])).resolves.toBeUndefined();
+
+    expect(prisma.tenantTransaction).toHaveBeenCalledTimes(2);
+    // Each attempt is a whole tx: it re-takes the Order lock FIRST, then re-runs the sync.
+    expect(starts.map((s) => log[s]?.op)).toEqual(["$queryRaw", "$queryRaw"]);
+    expect(log.filter((e) => e.op === "orderCreditNote.create")).toHaveLength(2);
+  });
+
+  it.each([
+    // Its text quotes a conflict code: an HttpException is never retried whatever it says.
+    [
+      "a 400 (an invalid selection)",
+      () => new BadRequestException("Credit note CN-9 (ref 40001) has expired"),
+    ],
+    ["a non-conflict Prisma error", () => conflict("P2002", "Unique constraint failed")],
+  ])("REG-SA269-2: %s propagates once, never retried", async (_label, make) => {
+    const { prisma, reconcile } = build("tenant-1");
+    const failure = make();
+    prisma.tenantTransaction.mockImplementation(async () => {
+      throw failure;
+    });
+
+    await expect(reconcile([{ creditNoteId: CN_NEW.id }])).rejects.toBe(failure);
+    expect(prisma.tenantTransaction).toHaveBeenCalledTimes(1);
+  });
+
+  it("REG-SA269-3: a conflict on every attempt gives up after 3 and propagates the last one", async () => {
+    const { prisma, reconcile } = build("tenant-1");
+    const conflicts = [1, 2, 3].map((n) => conflict("P2034", `write conflict ${n}`));
+    prisma.tenantTransaction.mockImplementation(async () => {
+      throw conflicts[prisma.tenantTransaction.mock.calls.length - 1];
+    });
+
+    await expect(reconcile(undefined)).rejects.toBe(conflicts[2]);
+    expect(prisma.tenantTransaction).toHaveBeenCalledTimes(3);
   });
 });
