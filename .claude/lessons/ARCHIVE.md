@@ -2788,3 +2788,20 @@ citations, closed-out with its own post-init assertion guard).
   cap — zero cross-references elsewhere in LESSONS.md/CLAUDE.md, and the guard is a standing,
   automated test isolation mechanism rather than a rule a session needs to recall by reading
   this prose.)
+
+### L-181 · 2026-09-16 · domain · B451 (dto `any` vs real callers)
+
+- **Symptom:** replacing `estimates.controller.ts`'s `@Body() dto: any` with a real
+  `CreateEstimateDto` made a line-item's `description` required — but `scripts/feature-smoke.mjs`
+  S6 and several `qa-run.js` tests send a bare `{productId, qty}`, relying on the service's own
+  fallback. Caught only by independent review, not the author.
+- **Root cause:** the DTO's field set was derived from the primary web UI form alone;
+  scripted/feature-smoke callers were never grepped.
+- **Lesson:** **Before typing a `dto: any` endpoint (or tightening any field's optionality), grep
+  every caller — web form, mobile, feature-smoke, qa-run, e2e — not just the UI form that
+  motivated the change.**
+- **Guard:** `create-estimate.dto.spec.ts` pins the bare `{productId, qty}` shape passing the
+  real `ValidationPipe` unchanged. (Archived 2026-09-25 to make room at cap — zero
+  cross-references elsewhere in LESSONS.md/CLAUDE.md, and the guard is a standing regression
+  spec pinning the exact bare-payload shape, not a rule a session needs to recall by reading
+  this prose.)

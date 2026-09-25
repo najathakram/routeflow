@@ -452,7 +452,9 @@ export default function OrdersPage() {
         title="Orders"
         subtitle={headerSubtitle}
         action={
-          <div className="flex items-center gap-2">
+          // PageHeader (packages/ui): shrink-0 now pairs with max-w-full, so this row
+          // actually gets a narrow-enough box to wrap into at 390px.
+          <div className="flex flex-wrap items-center justify-end gap-2">
             <Button
               variant="secondary"
               size="sm"

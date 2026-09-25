@@ -503,20 +503,6 @@
 - **Guard:** none yet — propose a regression test with a fixture where the two diverge (nonzero
   tax), asserting both formulas independently.
 
-### L-181 · 2026-09-16 · domain · B451 (dto `any` vs real callers)
-
-- **Symptom:** replacing `estimates.controller.ts`'s `@Body() dto: any` with a real
-  `CreateEstimateDto` made a line-item's `description` required — but `scripts/feature-smoke.mjs`
-  S6 and several `qa-run.js` tests send a bare `{productId, qty}`, relying on the service's own
-  fallback. Caught only by independent review, not the author.
-- **Root cause:** the DTO's field set was derived from the primary web UI form alone;
-  scripted/feature-smoke callers were never grepped.
-- **Lesson:** **Before typing a `dto: any` endpoint (or tightening any field's optionality), grep
-  every caller — web form, mobile, feature-smoke, qa-run, e2e — not just the UI form that
-  motivated the change.**
-- **Guard:** `create-estimate.dto.spec.ts` pins the bare `{productId, qty}` shape passing the
-  real `ValidationPipe` unchanged.
-
 ### L-167 · 2026-09-16 · domain · #781 (B156/B158/B170)
 
 - **Symptom:** three separately-reported bugs all traced to the same root cause — a
@@ -878,3 +864,24 @@
   on is the defect's own signature": here qty netting to zero while pieces do not IS reachable (it
   is the legacy residue), so the old assertion was asserting the bug, and removing it RAISED
   coverage. A mixed-pack reconcile case pins the ratio source.
+
+### L-218 · 2026-09-25 · domain · `shrink-0` with no `max-w-full` defeats a child's own `flex-wrap` (B749/B770, corrects L-215)
+
+- **Symptom:** two independent per-page fixes (B749's customers toolbar, B770's invoices
+  toolbar) each added `flex-wrap` to their own action row and each shipped a passing RTL
+  class-presence test — but an independent Opus review measured the real layout and found
+  BOTH still overflowed at 390px: one row, 413–428px, identical to before either fix.
+- **Root cause:** both toolbars render inside `PageHeader`'s shared `action` slot, wrapped in
+  `<div className="shrink-0">` with no `max-w-full`. `shrink-0` only stops that wrapper shrinking
+  below its own natural content width — it doesn't CAP that width, so the wrapper never became
+  narrow enough to need to wrap. A child's `flex-wrap` only triggers once its container is
+  actually constrained; an unconstrained `shrink-0` ancestor defeats it silently — no error, and
+  a passing class-presence test, since jsdom never lays anything out.
+- **Lesson:** **`flex-wrap` on a row only helps if something upstream actually constrains its
+  width — check every ancestor for a `shrink-0`/fixed-width with no matching `max-w-*`/`min-w-0`.
+  A shared layout primitive is exactly where this hides: two "independent" page bugs shared one
+  cause neither page-level fix touched. A class-presence RTL assertion can never catch this —
+  jsdom has no layout engine, so proving the fix needs real bounding boxes (Playwright).**
+- **Guard:** `PageHeader.tsx`'s action wrapper gained `max-w-full`;
+  `e2e/57-pageheader-action-wrap.spec.ts` proves every affected page via real bounding boxes at
+  390px. Supersedes L-215 (named the wrong cause), removed from its PR.

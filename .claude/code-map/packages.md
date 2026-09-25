@@ -317,7 +317,14 @@ Cross-platform components. Entry `index.tsx`; subpaths `./web`, `./mobile`, `./t
   `bg-accent-strong`), `Input`, `PasswordInput`, `Textarea`, `Select`, `Modal` (optional
   `onEscapeKeyDown` forwarded to `Dialog.Content` — the only place a consumer can `preventDefault` to
   scope Escape to an inner sub-flow), `Table`, `Avatar`,
-  `Card`, `Badge` (uppercase 11px pill; BadgeStatus covers 30+ statuses), `PageHeader`, `EmptyState`
+  `Card`, `Badge` (uppercase 11px pill; BadgeStatus covers 30+ statuses), `PageHeader` (**B749/B770
+  shared root cause, 2026-09-25:** its `action` wrapper was `shrink-0` with no `max-w-full` — the
+  wrapper never actually shrank below the action content's own natural width, so a CALLER's own
+  `flex-wrap` on that content never got a narrow-enough box to wrap into; every page-level
+  `action={<div className="flex ... gap-N">...}` toolbar was affected regardless of whether that
+  div itself had `flex-wrap`. Now `max-w-full shrink-0`. Every caller with a multi-child action
+  swept and given/confirmed its own `flex-wrap justify-end` too — both levels are needed together.
+  See `web/routes-1.md`'s per-page entries for which pages), `EmptyState`
   (Instrument-Serif title), `Toast` (ToastProvider; `useToast()` → `{toast→id, dismiss(id)}`; white
   card + colored icon tile; optional `action` slot — drives web `useUndo()` 8s Undo),
   `StatCard` (accent icon tile, tabular value), `Skeleton` +`SkeletonRows` (`.skeleton` shimmer), `Tabs`; utils `cn()`, `mergeRefs()`, **`TAP_TARGET` (B535, #910, 2026-09-19)** — `"min-h-[44px] min-w-[44px] inline-flex items-center justify-center"`, the WCAG 2.5.5/iOS-HIG 44×44 CSS-px minimum hit area for icon-only controls; compose via `cn(TAP_TARGET, "h-5 w-5 ...")` so the icon's own size is unaffected, grown via padding instead. Applied across dashboard icon-only buttons (`orders/[id]`, `vendor-bills/[id]` `EditLineItems`, others) via mobile-sweep call sites, not exhaustively re-listed per file here; illustration set.
