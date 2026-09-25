@@ -575,7 +575,8 @@ export class AnalyticsService {
     const recentMovements = await this.prisma.forTenant().stockMovement.findMany({
       where: {
         productId: { in: productIds },
-        createdAt: windowEnd ? { gte: windowStart, lte: windowEnd } : { gte: windowStart },
+        // B562: the movement's accounting date (effectiveAt), not its insertion time.
+        effectiveAt: windowEnd ? { gte: windowStart, lte: windowEnd } : { gte: windowStart },
       },
       select: { productId: true },
       distinct: ["productId"],
@@ -591,12 +592,12 @@ export class AnalyticsService {
     // replaces the old per-product findFirst over EVERY stocked product.
     const movementRows = await this.prisma.forTenant().stockMovement.findMany({
       where: { productId: { in: deadCandidates.map((p) => p.id) } },
-      orderBy: { createdAt: "desc" },
-      select: { productId: true, createdAt: true },
+      orderBy: [{ effectiveAt: "desc" }, { createdAt: "desc" }, { id: "desc" }],
+      select: { productId: true, effectiveAt: true },
     });
     const lastMovementAt = new Map<string, Date>();
     for (const m of movementRows) {
-      if (!lastMovementAt.has(m.productId)) lastMovementAt.set(m.productId, m.createdAt);
+      if (!lastMovementAt.has(m.productId)) lastMovementAt.set(m.productId, m.effectiveAt);
     }
 
     return deadCandidates.map((p) => {
@@ -679,11 +680,12 @@ export class AnalyticsService {
   async getCostHistory(productId: string) {
     const movements = await this.prisma.forTenant().stockMovement.findMany({
       where: { productId, type: { in: ["PURCHASE", "COST_BASIS"] } },
-      orderBy: { createdAt: "asc" },
+      // B562: accounting order (effectiveAt), insertion time and id break ties.
+      orderBy: [{ effectiveAt: "asc" }, { createdAt: "asc" }, { id: "asc" }],
       take: 100,
     });
     return movements.map((m) => ({
-      date: m.createdAt,
+      date: m.effectiveAt,
       unitCost: Number(m.unitCost ?? 0),
       avgCostAfter: m.avgCostAfter != null ? Number(m.avgCostAfter) : null,
       type: m.type,

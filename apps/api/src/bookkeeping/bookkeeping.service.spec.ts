@@ -1181,7 +1181,7 @@ describe("BookkeepingService", () => {
         },
       ]);
       prisma.stockMovement.findMany.mockResolvedValue([
-        { productId: "p1", createdAt: new Date("2026-06-01"), avgCostAfter: D(2) },
+        { productId: "p1", effectiveAt: new Date("2026-06-01"), avgCostAfter: D(2) },
       ]);
       prisma.expense.findMany.mockResolvedValue([{ amount: 100, category: { name: "Rent" } }]);
 
@@ -1251,8 +1251,8 @@ describe("BookkeepingService", () => {
       ]);
       // Average cost was 2.00 in May, 3.00 from June 1 — the sale costs at 2.00.
       prisma.stockMovement.findMany.mockResolvedValue([
-        { productId: "p1", createdAt: new Date("2026-05-01"), avgCostAfter: D(2) },
-        { productId: "p1", createdAt: new Date("2026-06-01"), avgCostAfter: D(3) },
+        { productId: "p1", effectiveAt: new Date("2026-05-01"), avgCostAfter: D(2) },
+        { productId: "p1", effectiveAt: new Date("2026-06-01"), avgCostAfter: D(3) },
       ]);
 
       const result = await service.getProfitAndLoss("2026-06-01", "2026-06-30");
@@ -1277,7 +1277,7 @@ describe("BookkeepingService", () => {
         },
       ]);
       prisma.stockMovement.findMany.mockResolvedValue([
-        { productId: "p1", createdAt: new Date("2026-06-01"), avgCostAfter: D(0.335) },
+        { productId: "p1", effectiveAt: new Date("2026-06-01"), avgCostAfter: D(0.335) },
       ]);
 
       const result = await service.getProfitAndLoss("2026-06-01", "2026-06-30");

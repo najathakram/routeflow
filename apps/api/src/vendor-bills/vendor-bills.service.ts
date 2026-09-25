@@ -1190,8 +1190,9 @@ export class VendorBillsService {
             performedById: performedById ?? null,
             // Stamp the movement at the BILL date, matching the lot — a
             // backdated bill's cost snapshot must sit at the right point in
-            // the ledger (the lot and the movement used to disagree).
-            createdAt: effectiveDate,
+            // the ledger (the lot and the movement used to disagree). B562:
+            // on effectiveAt (the accounting date); createdAt stays write-once.
+            effectiveAt: effectiveDate,
           },
         });
 
@@ -1208,7 +1209,7 @@ export class VendorBillsService {
         // `throwOnGap: false` — a gap here must flag this ONE line, never
         // abort the whole bill (see the comment above the loop).
         const newer = await tx.stockMovement.count({
-          where: { productId: item.productId, createdAt: { gt: effectiveDate } },
+          where: { productId: item.productId, effectiveAt: { gt: effectiveDate } },
         });
         if (newer > 0) {
           const replay = await this.inventory.recomputeProductInTx(tx, item.productId, {
