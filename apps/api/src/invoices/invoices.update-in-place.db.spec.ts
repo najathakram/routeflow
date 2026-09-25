@@ -1385,5 +1385,59 @@ describeDb(
       const orderAfter = await prisma.order.findUnique({ where: { id: order.id } });
       expect(orderAfter!.updatedAt).toEqual(orderBefore!.updatedAt);
     });
+
+    it("SA-248-S1 a CANCELLED order line that an invoice bills is revived to PENDING (existing behaviour, explicit)", async () => {
+      const t = await seedTenant("s1");
+      const customer = await seedCustomer(t.id, "s1");
+      const product = await mkProduct(t.id, `s1 ${t.slug}`);
+      const order = await prisma.order.create({
+        data: {
+          tenantId: t.id,
+          customerId: customer.id,
+          status: "DELIVERED",
+          subtotal: 50,
+          total: 50,
+        },
+      });
+      const oi = await prisma.orderItem.create({
+        data: {
+          tenantId: t.id,
+          orderId: order.id,
+          productId: product.id,
+          status: "CANCELLED",
+          qty: 5,
+          unitPrice: 10,
+          subtotal: 50,
+          invoicedQty: 0,
+        },
+      });
+      const inv = await prisma.invoice.create({
+        data: {
+          tenantId: t.id,
+          customerId: customer.id,
+          orderId: order.id,
+          invoiceNumber: `INV-S1-${RUN_SUFFIX}`,
+          status: "DRAFT",
+          subtotal: 50,
+          total: 50,
+        },
+      });
+      await prisma.invoiceItem.create({
+        data: {
+          tenantId: t.id,
+          invoiceId: inv.id,
+          productId: product.id,
+          orderItemId: oi.id,
+          description: "s1",
+          qty: 5,
+          unitPrice: 10,
+          subtotal: 50,
+        },
+      });
+      await tenantCtx.run(t.id, () => invoicesService.recomputeOrderFromInvoices(order.id));
+      const after = await prisma.orderItem.findUnique({ where: { id: oi.id } });
+      expect(after!.status).toBe("PENDING");
+      expect(Number(after!.qty)).toBe(5);
+    });
   },
 );

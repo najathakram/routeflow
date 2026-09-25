@@ -283,6 +283,12 @@ describe("orderLineUnchanged (1b: a discount/shipping-only save must not rewrite
     ).toBe(true);
   });
 
+  it("SA-248: a CANCELLED order line that an invoice bills is REVIVED to PENDING (existing behaviour, explicit): CANCELLED is a change, so it is written", () => {
+    expect(orderLineUnchanged({ ...held, status: "CANCELLED" }, shape, agg)).toBe(false);
+    // and a PENDING line is what an identical re-save leaves alone
+    expect(orderLineUnchanged({ ...held, status: "PENDING" }, shape, agg)).toBe(true);
+  });
+
   it("a short-delivered line that must shrink to its billed qty IS a change", () => {
     expect(orderLineUnchanged({ ...held, qty: "10.000" }, shape, agg)).toBe(false);
   });
