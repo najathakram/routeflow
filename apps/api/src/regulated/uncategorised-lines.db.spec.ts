@@ -9,6 +9,7 @@ import { randomUUID } from "crypto";
 import { PrismaService } from "../prisma/prisma.service";
 import { TenantContextService } from "../tenant/tenant-context.service";
 import { describeDb, requireLocalDatabaseUrl } from "../common/testing/db-spec";
+import { NSF_FEE_DESCRIPTION_PREFIX } from "../sales-agents/commission-math";
 import { uncategorisedLineWarnings } from "./uncategorised-lines";
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
@@ -23,7 +24,14 @@ describeDb("F05 uncategorised-lines report row — real Postgres", () => {
     from: new Date("2026-09-01T00:00:00Z"),
     toExclusive: new Date("2026-10-01T00:00:00Z"),
   };
-  const ids: { ca?: string; ny?: string; caDraft?: string; caCatalog?: string } = {};
+  const ids: {
+    ca?: string;
+    ny?: string;
+    caDraft?: string;
+    caCatalog?: string;
+    caNsf?: string;
+    caMixed?: string;
+  } = {};
 
   async function customerIn(state: string, tag: string) {
     const user = await prisma.user.create({
@@ -58,6 +66,7 @@ describeDb("F05 uncategorised-lines report row — real Postgres", () => {
     tag: string,
     status: string,
     productId: string | null,
+    description = "line",
   ) {
     const inv = await prisma.invoice.create({
       data: {
@@ -70,9 +79,7 @@ describeDb("F05 uncategorised-lines report row — real Postgres", () => {
         subtotal: 10,
         total: 10,
         items: {
-          create: [
-            { tenantId, description: "line", qty: 1, unitPrice: 10, subtotal: 10, productId },
-          ],
+          create: [{ tenantId, description, qty: 1, unitPrice: 10, subtotal: 10, productId }],
         },
       },
     });
@@ -108,6 +115,28 @@ describeDb("F05 uncategorised-lines report row — real Postgres", () => {
     ids.ny = await invoice(ny, "ny", "SENT", null);
     ids.caDraft = await invoice(ca, "cadraft", "DRAFT", null);
     ids.caCatalog = await invoice(ca, "cacat", "SENT", product.id);
+    // the system NSF fee line (productless, prefix match) is NOT a custom line to review
+    ids.caNsf = await invoice(ca, "cansf", "SENT", null, `${NSF_FEE_DESCRIPTION_PREFIX} PAY-1`);
+    // a REAL product line carrying the NSF description is never excluded from anything: this invoice also has
+    // a genuine custom line, so it is still listed
+    ids.caMixed = await invoice(
+      ca,
+      "camixed",
+      "SENT",
+      product.id,
+      `${NSF_FEE_DESCRIPTION_PREFIX} PAY-2`,
+    );
+    await prisma.invoiceItem.create({
+      data: {
+        tenantId,
+        invoiceId: ids.caMixed,
+        description: "Custom freight",
+        qty: 1,
+        unitPrice: 5,
+        subtotal: 5,
+        productId: null,
+      },
+    });
   });
 
   afterAll(async () => {
@@ -130,11 +159,11 @@ describeDb("F05 uncategorised-lines report row — real Postgres", () => {
 
   const on = { enabled: true, addressPrecedence: "BILLING_FIRST" as const };
 
-  it("lists only the CA customer's productless line on an ISSUED invoice", async () => {
+  it("lists only the CA customer's custom (productless, non-NSF) lines on ISSUED invoices", async () => {
     const warnings = await tenantCtx.run(tenantId, () =>
       uncategorisedLineWarnings(prisma.forTenant() as never, on, range),
     );
-    expect(warnings.map((w) => w.invoiceId)).toEqual([ids.ca]);
+    expect(warnings.map((w) => w.invoiceId).sort()).toEqual([ids.ca, ids.caMixed].sort());
     expect(warnings[0]).toMatchObject({
       code: "UNCATEGORISED_LINE_IN_RULE_STATE",
       customerName: "Cust ca",
@@ -157,7 +186,7 @@ describeDb("F05 uncategorised-lines report row — real Postgres", () => {
     const after = await tenantCtx.run(tenantId, () =>
       uncategorisedLineWarnings(prisma.forTenant() as never, on, range),
     );
-    expect(after.map((w) => w.invoiceId)).toEqual([ids.ca]);
+    expect(after.map((w) => w.invoiceId).sort()).toEqual([ids.ca, ids.caMixed].sort());
     await prisma.sellingRestriction.update({
       where: { id: rule!.id },
       data: { liftedAt: new Date("2026-09-10T00:00:00Z") },

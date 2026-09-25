@@ -1,3 +1,4 @@
+import { NSF_FEE_DESCRIPTION_PREFIX } from "../sales-agents/commission-math";
 import { uncategorisedLineWarnings } from "./uncategorised-lines";
 
 /**
@@ -62,7 +63,9 @@ describe("uncategorisedLineWarnings", () => {
     expect(db.invoice.findMany.mock.calls[0][0].where).toEqual({
       status: { notIn: ["DRAFT", "VOID"] },
       issueDate: { gte: range.from, lt: range.toExclusive },
-      items: { some: { productId: null } },
+      items: {
+        some: { productId: null, NOT: { description: { startsWith: NSF_FEE_DESCRIPTION_PREFIX } } },
+      },
     });
     const where = db.sellingRestriction.findMany.mock.calls[0][0].where;
     expect(where.effectiveFrom).toEqual({ lt: range.toExclusive });

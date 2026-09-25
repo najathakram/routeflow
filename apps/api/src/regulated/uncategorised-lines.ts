@@ -4,6 +4,7 @@ import {
   ruleStates,
 } from "../selling-restrictions/selling-restrictions.core";
 import { ADDRESS_SELECT } from "../selling-restrictions/selling-restrictions.service";
+import { NSF_FEE_DESCRIPTION_PREFIX } from "../sales-agents/commission-math";
 import type { ReportWarning } from "./report-types";
 
 /**
@@ -63,7 +64,12 @@ export async function uncategorisedLineWarnings(
     where: {
       status: { notIn: ["DRAFT", "VOID"] },
       issueDate: { gte: range.from, lt: range.toExclusive },
-      items: { some: { productId: null } },
+      // productless AND not the system NSF fee line (the exported prefix the commission engine keys on; there
+      // is no fee marker column yet, #2169). A REAL product line with the same description is never excluded:
+      // this only ever narrows the productless lines.
+      items: {
+        some: { productId: null, NOT: { description: { startsWith: NSF_FEE_DESCRIPTION_PREFIX } } },
+      },
     },
     select: {
       id: true,
