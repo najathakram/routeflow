@@ -11,6 +11,13 @@ import {
 } from "@routeflow/pricing";
 import { periodBucketOf } from "./period";
 
+/**
+ * A correction row as the reversal walk reads it: the units deltas `classifySaleAxis` folds, plus the
+ * money deltas a price correction (B662) restated, so a partial return pro-rates the sale's CURRENT
+ * held net/tax, not the base sale alone.
+ */
+type LedgerCorrection = SaleAxisCorrection & { netSales?: unknown; categoryTax?: unknown };
+
 /** Round a quantity to 3 decimals (matches the Decimal(12,3) ledger columns). */
 const round3 = (n: number) => Math.round(n * 1000) / 1000;
 
@@ -398,17 +405,28 @@ export class RegulatedLedgerService {
   private async loadCorrectionsBySaleId(
     db: any,
     saleIds: string[],
-  ): Promise<Map<string, SaleAxisCorrection[]>> {
+  ): Promise<Map<string, LedgerCorrection[]>> {
     if (saleIds.length === 0) return new Map();
     const corrections = await db.regulatedSalesLedger.findMany({
       where: { correctsEntryId: { in: saleIds } },
-      select: { correctsEntryId: true, qty: true, unitBasisQty: true },
+      select: {
+        correctsEntryId: true,
+        qty: true,
+        unitBasisQty: true,
+        netSales: true,
+        categoryTax: true,
+      },
     });
-    const out = new Map<string, SaleAxisCorrection[]>();
+    const out = new Map<string, LedgerCorrection[]>();
     for (const c of corrections) {
       const key = c.correctsEntryId as string;
       const list = out.get(key) ?? [];
-      list.push({ qty: c.qty, unitBasisQty: c.unitBasisQty });
+      list.push({
+        qty: c.qty,
+        unitBasisQty: c.unitBasisQty,
+        netSales: c.netSales,
+        categoryTax: c.categoryTax,
+      });
       out.set(key, list);
     }
     return out;
@@ -487,7 +505,7 @@ export class RegulatedLedgerService {
     remNetByLine: Map<string, number>;
     remTaxByLine: Map<string, number>;
     lineShapeBySaleId: Map<string, { line: SaleAxisLine | null; productId: string | null }>;
-    correctionsBySaleId: Map<string, SaleAxisCorrection[]>;
+    correctionsBySaleId: Map<string, LedgerCorrection[]>;
     packNowByProduct: Map<string, number | null>;
     rows: any[];
     /** SA-182 (resolution only): the return's date, stamped on a row this call parks. */
@@ -613,8 +631,19 @@ export class RegulatedLedgerService {
     // reconcile RE-PRICED the line (old rows folded in at a different price), and a
     // fractional partial just under the full remaining qty could otherwise
     // over-reverse the net/tax dimensions past 0.
-    let bookedNet = closesRow ? roundMoney(-netRem) : roundMoney(-Number(s.netSales) * frac);
-    let bookedTax = closesRow ? roundMoney(-taxRem) : roundMoney(-Number(s.categoryTax) * frac);
+    // B662: the pro-rate basis is the sale's CURRENT held money (its stored figure PLUS every price
+    // correction pointing at it), not the base row alone: a partial return after a correction would
+    // otherwise under-reverse (a $240 sale corrected to $300, 12 of 72 pieces back = -$50, not -$40).
+    const heldNet = ownCorrections.reduce(
+      (a, c) => a + (Number(c.netSales) || 0),
+      Number(s.netSales),
+    );
+    const heldTax = ownCorrections.reduce(
+      (a, c) => a + (Number(c.categoryTax) || 0),
+      Number(s.categoryTax),
+    );
+    let bookedNet = closesRow ? roundMoney(-netRem) : roundMoney(-heldNet * frac);
+    let bookedTax = closesRow ? roundMoney(-taxRem) : roundMoney(-heldTax * frac);
     if (bookedNet < -netRem) bookedNet = roundMoney(-netRem);
     if (bookedTax < -taxRem) bookedTax = roundMoney(-taxRem);
     // The NATIVE axis is exactly rNative (never re-derived through frac — that would
@@ -876,7 +905,7 @@ export class RegulatedLedgerService {
             db,
             candidateSales.map((s) => s.id),
           )
-        : new Map<string, SaleAxisCorrection[]>();
+        : new Map<string, LedgerCorrection[]>();
     const packNowByProduct =
       returnedUnit === "PIECES"
         ? await this.loadProductPackNow(db, [

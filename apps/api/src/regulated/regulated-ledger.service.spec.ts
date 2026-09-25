@@ -689,6 +689,46 @@ describe("RegulatedLedgerService", () => {
       });
     });
 
+    // B662 (Opus R2): a price correction restates the held money on the SALE (a SALE-typed row with
+    // correctsEntryId). A partial return pro-rates the sale's CURRENT held net/tax: the base row alone
+    // under-reversed (a $240 sale corrected to $300, 12 of 72 pieces back booked -$40, not -$50), leaving
+    // $260 held against a $250 invoice share. Driven through reverseReturnEntries, not a hand-written -50.
+    it("B662: a partial return after a price correction reverses its share of the CORRECTED net and tax", async () => {
+      const base = saleRow({ qty: 72, unitBasisQty: 72, netSales: 240, categoryTax: 48 });
+      const correction = saleRow({
+        correctsEntryId: base.id,
+        qty: 0,
+        unitBasisQty: 0,
+        netSales: 60,
+        categoryTax: 12,
+      });
+      arrange({ sales: [base, correction], items: [{ id: "ii-1", productId: "p1" }] });
+      prisma.regulatedSalesLedger.findMany.mockResolvedValueOnce([
+        {
+          correctsEntryId: base.id,
+          qty: 0,
+          unitBasisQty: 0,
+          netSales: 60,
+          categoryTax: 12,
+        },
+      ]);
+      await service.reverseReturnEntries({
+        returnId: "ret-1",
+        orderId: "ord-1",
+        returnedByProduct: new Map([["p1", 12]]),
+        returnedUnit: "PIECES",
+        db: prisma,
+      });
+      expect(written()).toHaveLength(1);
+      expect(written()[0]).toMatchObject({
+        entryType: "REVERSAL",
+        qty: -12,
+        unitBasisQty: -12,
+        netSales: -50, // 12/72 of $300, not of the base $240 (-40)
+        categoryTax: -10, // 12/72 of $60, not of the base $48 (-8)
+      });
+    });
+
     // B661/B671 rd2 (live production regression) — the regression pin CI actually runs. The
     // DB-lane spec (return-reversal-unit-axis.db.spec.ts) proves this through the real caller,
     // but nothing in CI invokes `npm run local:test:db`; this mock-level case is what a future
