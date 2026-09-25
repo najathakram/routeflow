@@ -10,11 +10,11 @@
  *      each customer ends with exactly ONE Return and ONE credit note, and the credit-note numbers
  *      are exactly the numbers reserved BEFORE the retry loop (a retry reuses, never re-reserves).
  *   4. the lock (R2c): one create() and one STANDALONE capture for one customer over ONE sold line, made
- *      to overlap by a barrier held just AFTER the in-transaction pricing (the first caller to price
- *      waits, with a timeout, until a second has priced): the pieces matched to the sold invoice line
- *      never exceed what was sold, and together match all of it. The order lines use another product,
- *      so the product row lock cannot serialize them first. Reverting the customer advisory lock must
- *      turn this red (F2 runs that probe).
+ *      to overlap deterministically: the first caller to price inside its tx waits until pg_locks shows
+ *      the second queued on the customer advisory lock (or, lock absent, until it prices too, which the
+ *      pin then fails on): the pieces matched to the sold invoice line never exceed what was sold, and
+ *      together match all of it. The order lines use another product, so the product row lock cannot
+ *      serialize them first. Reverting the customer advisory lock turns this red (F2 runs that probe).
  *   5. DRIVER_CAP through create(): a driver's over-cap return on a new order is HELD: the order
  *      commits, the Return is RECEIVED/DRIVER_CAP, no credit note, no intent, the reserved number is burned (SA-261).
  *
@@ -369,10 +369,11 @@ describeDb("#2094 — a return inside POST /orders through create(), real Postgr
     });
     orderIds.push(carrier.id);
     // Barrier, held where the race is: just AFTER the in-transaction pricing (the read of what was
-    // already returned and matched). The first caller to finish pricing inside its tx waits there
-    // (with a timeout) until a second caller has priced too. With the customer advisory lock the second
-    // cannot price until the first has committed, so the first simply waits out the timeout and the
-    // second then sees its matches; without the lock both price the same snapshot and over-match.
+    // already returned and matched). The first caller to finish pricing inside its tx waits there until
+    // EITHER pg_locks shows a backend WAITING on this customer's advisory lock (the lock works: the
+    // second caller is queued behind the first) OR the second caller has priced in its own tx (the lock
+    // is not serializing them: both priced one snapshot). It fails loudly if neither happens within 30 s.
+    // The outcome is asserted: only "blocked" proves the second caller was serialized behind the first.
     const quote = inlineSvc.quoteService;
     const realPrice = quote.priceInlineReturn.bind(quote);
     const realTx = prisma.tenantTransaction.bind(prisma);
@@ -382,18 +383,27 @@ describeDb("#2094 — a return inside POST /orders through create(), real Postgr
         txs.add(tx);
         return fn(tx);
       }, o)) as any);
+    const lockHash = inlineSvc.idempotency.hashFor(f.customerId, tenantId, "returns.customer");
     let pricedInTx = 0;
-    let release: () => void = () => undefined;
-    const gate = new Promise<void>((r) => {
-      release = r;
-      setTimeout(r, 4_000); // the first caller's hold when the second is (correctly) blocked
-    });
+    let outcome: "blocked" | "both-priced" | "" = "";
+    const waitForSecondCaller = async () => {
+      for (const deadline = Date.now() + 30_000; Date.now() < deadline;) {
+        if (pricedInTx >= 2) return "both-priced" as const;
+        const rows: Array<{ n: number }> = await raw.$queryRaw`
+          SELECT count(*)::int AS n FROM pg_locks
+          WHERE locktype = 'advisory' AND NOT granted
+            AND classid = (hashtext('idempotency')::bigint & 4294967295)::oid
+            AND objid = (hashtext(${lockHash})::bigint & 4294967295)::oid`;
+        if (rows[0]?.n > 0) return "blocked" as const;
+        await new Promise((r) => setTimeout(r, 50));
+      }
+      throw new Error("lock barrier: the second caller neither queued on the lock nor priced");
+    };
     quote.priceInlineReturn = async (...a: any[]) => {
       const out = await realPrice(...a);
       if (txs.has(a[2])) {
         pricedInTx += 1;
-        if (pricedInTx === 1) await gate;
-        else release();
+        if (pricedInTx === 1) outcome = await waitForSecondCaller();
       }
       return out;
     };
@@ -420,7 +430,8 @@ describeDb("#2094 — a return inside POST /orders through create(), real Postgr
       quote.priceInlineReturn = realPrice;
       txSpy.mockRestore();
     }
-    expect(pricedInTx).toBe(2); // both callers priced inside their transactions
+    expect(outcome).toBe("blocked"); // the second caller was queued behind the first, never priced alongside
+    expect(pricedInTx).toBe(2); // and both did price inside their transactions in the end
     orderIds.push(o1.id);
     const matched = await raw.returnItem.aggregate({
       where: { sourceInvoiceItemId: line.id, return: { customerId: f.customerId, kind: "INLINE" } },
