@@ -24,6 +24,7 @@ const svcStub = () => ({
   lockCustomerInTx: jest.fn().mockResolvedValue(undefined),
   captureAndIssueInTx: jest.fn().mockResolvedValue({ minted: { id: "cn-1" } }),
   emitCreditIssued: jest.fn(),
+  preflightNewOrderReturn: jest.fn().mockResolvedValue(30),
 });
 
 describe("prepareInlineReturn", () => {
@@ -65,13 +66,31 @@ describe("reserveInlineReturnNumber / lockInlineReturnCustomer", () => {
   it("reserves the credit-note number once and stores it on the handle", async () => {
     const svc = svcStub();
     const p = await prepareInlineReturn(svc as any, LINES, STAFF);
-    await reserveInlineReturnNumber(p);
+    await reserveInlineReturnNumber(p, "c1", STAFF);
     expect(p!.creditNoteNumber).toBe("CN-2026-0001");
     expect(svc.reserveCreditNoteNumber).toHaveBeenCalledTimes(1);
   });
 
+  it("validates BEFORE it reserves: a refused return burns no number (N1)", async () => {
+    const svc = svcStub();
+    svc.preflightNewOrderReturn.mockRejectedValue(new ConflictException("stale quote"));
+    const p = await prepareInlineReturn(svc as any, LINES, STAFF);
+    await expect(reserveInlineReturnNumber(p, "c1", STAFF)).rejects.toThrow(ConflictException);
+    expect(svc.reserveCreditNoteNumber).not.toHaveBeenCalled();
+    expect(svc.preflightNewOrderReturn).toHaveBeenCalledWith(LINES, "c1", STAFF);
+  });
+
+  it("a return that dry-runs to $0 reserves no number", async () => {
+    const svc = svcStub();
+    svc.preflightNewOrderReturn.mockResolvedValue(0);
+    const p = await prepareInlineReturn(svc as any, LINES, STAFF);
+    await reserveInlineReturnNumber(p, "c1", STAFF);
+    expect(svc.reserveCreditNoteNumber).not.toHaveBeenCalled();
+    expect(p!.creditNoteNumber).toBeUndefined();
+  });
+
   it("both are no-ops without an inline return", async () => {
-    await expect(reserveInlineReturnNumber(null)).resolves.toBeUndefined();
+    await expect(reserveInlineReturnNumber(null, "c1", STAFF)).resolves.toBeUndefined();
     await expect(lockInlineReturnCustomer({}, null, "c1")).resolves.toBeUndefined();
   });
 
@@ -88,7 +107,7 @@ describe("applyInlineReturnInTx", () => {
   it("derives customer and order from the document and passes the reserved number and driver run", async () => {
     const svc = svcStub();
     const p = await prepareInlineReturn(svc as any, LINES, STAFF);
-    await reserveInlineReturnNumber(p);
+    await reserveInlineReturnNumber(p, "c1", STAFF);
     const tx = {};
     const minted = await applyInlineReturnInTx(tx, p, {
       customerId: "cust-1",
@@ -137,13 +156,13 @@ describe("emitInlineReturnCredit", () => {
   });
 });
 
-describe("reserveInlineReturnNumber for a DRIVER (#2094 nit)", () => {
-  it("does not reserve ahead of the tx: a held driver return would burn the number", async () => {
+describe("reserveInlineReturnNumber for a DRIVER (SA-261)", () => {
+  it("reserves ahead like every role: a DRIVER_CAP hold mints no credit note and burns the number", async () => {
     const svc = svcStub();
     const p = await prepareInlineReturn(svc as any, LINES, { ...STAFF, role: "DRIVER" });
-    await reserveInlineReturnNumber(p);
-    expect(svc.reserveCreditNoteNumber).not.toHaveBeenCalled();
-    expect(p!.creditNoteNumber).toBeUndefined();
+    await reserveInlineReturnNumber(p, "c1", STAFF);
+    expect(svc.reserveCreditNoteNumber).toHaveBeenCalledTimes(1);
+    expect(p!.creditNoteNumber).toBeDefined();
   });
 });
 
@@ -152,10 +171,19 @@ describe("assertReplayCarriesReturn (#2094 R1)", () => {
     return: { findFirst: jest.fn().mockResolvedValue(found ? { id: "ret-1" } : null) },
   });
 
-  it("no inline return on the request: nothing is queried (a plain replay is unchanged)", async () => {
+  it("no inline return on the request and none on the order: a plain replay is unchanged", async () => {
     const d = db(false);
     await expect(assertReplayCarriesReturn(d, null, "ord-1")).resolves.toBeUndefined();
-    expect(d.return.findFirst).not.toHaveBeenCalled();
+    expect(d.return.findFirst).toHaveBeenCalledWith({
+      where: { orderId: "ord-1", kind: "INLINE" },
+      select: { id: true },
+    });
+  });
+
+  it("a replay WITHOUT a return of an order created WITH one: 409, never a silent 201 (W)", async () => {
+    await expect(assertReplayCarriesReturn(db(true), null, "ord-1")).rejects.toThrow(
+      ConflictException,
+    );
   });
 
   it("the replayed order carries THIS returnKey: a true replay, allowed", async () => {

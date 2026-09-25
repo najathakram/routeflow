@@ -40,19 +40,25 @@ export async function prepareInlineReturn(
 }
 
 /**
- * Create only: reserve the credit-note number once, after validation and before the retry loop.
+ * Create only: validate the return, then reserve the credit-note number once, before the retry loop
+ * (SA-221 change 1). The dry-run (pricing + the returnKey check, `preflightNewOrderReturn`) runs FIRST,
+ * so a refused request burns no number (Opus N1), and a return that prices to $0 mints no credit note
+ * so it reserves none.
  *
- * KNOWN, ACCEPTED (SA-261): a create whose return prices to $0 mints no credit note, so the number
- * reserved here is burned (the total is not known before the tx, and a dry-run pricing pass ahead of it
- * was ruled not worth its second pricing pass and stale-price race). The credit-note sequence is not
- * gapless today either: an order create that fails for good burns its reserved number, exactly as a
- * burned order number does, and our tenants have no gapless credit-note requirement. Pinned: a
- * zero-total create mints no credit note and writes no intent (the unit and DB pins).
+ * KNOWN, ACCEPTED (SA-261/263): every role reserves ahead; a DRIVER's over-cap return is HELD (no
+ * credit note), which burns the number, and so does a return that priced above $0 in the dry-run but
+ * $0 in the tx. The credit-note sequence is not gapless today either (a failed create burns its
+ * reserved number, like a burned order number) and our tenants have no gapless requirement. Pinned:
+ * a DRIVER_CAP hold and a zero-total create mint no credit note and write no intent.
  */
-export async function reserveInlineReturnNumber(p: PreparedInlineReturn | null): Promise<void> {
-  // A DRIVER's return may be held above the cap (no credit note), which would burn the number: a
-  // driver create reserves inside the tx instead (captureAndIssueInTx), only when it issues.
-  if (p && p.role !== "DRIVER") p.creditNoteNumber = await p.svc.reserveCreditNoteNumber();
+export async function reserveInlineReturnNumber(
+  p: PreparedInlineReturn | null,
+  customerId: string,
+  user: JwtPayload | undefined,
+): Promise<void> {
+  if (!p) return;
+  const total = await p.svc.preflightNewOrderReturn(p.lines, customerId, user as JwtPayload);
+  if (total > 0.001) p.creditNoteNumber = await p.svc.reserveCreditNoteNumber();
 }
 
 /**
@@ -66,12 +72,23 @@ export async function assertReplayCarriesReturn(
   p: PreparedInlineReturn | null,
   replayedOrderId: string,
 ): Promise<void> {
-  if (!p) return;
+  // Both directions (Opus W): a replay WITHOUT a return of an order created WITH one is refused too,
+  // or an operator who removes the return after a timeout and re-enters it on another order credits
+  // the customer twice, and gets a silent 201 for it.
   const row = await db.return.findFirst({
-    where: { returnKey: p.lines.returnKey, orderId: replayedOrderId, kind: "INLINE" },
+    where: {
+      orderId: replayedOrderId,
+      kind: "INLINE",
+      ...(p ? { returnKey: p.lines.returnKey } : {}),
+    },
     select: { id: true },
   });
-  if (!row) {
+  if (!p && row) {
+    throw new ConflictException(
+      "Idempotency-Key reused without the return this order was created with: retry the original unchanged, or submit as a new order (new key)",
+    );
+  }
+  if (p && !row) {
     throw new ConflictException(
       "Idempotency-Key reused with a different return: submit the edited return as a new order (new key), or retry the original unchanged",
     );

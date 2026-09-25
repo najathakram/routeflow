@@ -13,7 +13,7 @@
  *      invoice line never exceed what was sold (the customer advisory lock serializes them; the
  *      single-order case is already serialized by captureInTx's own Order lock).
  *   5. DRIVER_CAP through create(): a driver's over-cap return on a new order is HELD: the order
- *      commits, the Return is RECEIVED/DRIVER_CAP, no credit note, no intent, no number consumed.
+ *      commits, the Return is RECEIVED/DRIVER_CAP, no credit note, no intent, the reserved number is burned (SA-261).
  *
  * Builds a REAL OrdersService via `Object.create` (no Nest DI, like order-idempotency-key.db.spec.ts)
  * with the real InlineReturnsService, CreditNotesService, NumberingService and SystemConfigService; the
@@ -41,6 +41,7 @@ import { PrismaService } from "../prisma/prisma.service";
 import { TenantContextService } from "../tenant/tenant-context.service";
 import { EncryptionService } from "../common/encryption.service";
 import { SystemConfigService } from "../system-config/system-config.service";
+import { loadCreditExposure } from "../invoices/credit-exposure";
 import { NumberingService } from "../import/numbering.service";
 import { IdempotencyService } from "../common/idempotency.service";
 import { RegulatedLedgerService } from "../regulated/regulated-ledger.service";
@@ -83,7 +84,13 @@ describeDb("#2094 — a return inside POST /orders through create(), real Postgr
 
   async function seedCustomer(tag: string, creditLimit?: number) {
     const product = await raw.product.create({
-      data: { name: `${tag} product ${run}`, unit: "each", pricePerUnit: "10.00", tenantId },
+      data: {
+        name: `${tag} product ${run}`,
+        unit: "each",
+        pricePerUnit: "10.00",
+        currentStock: 100,
+        tenantId,
+      },
     });
     productIds.push(product.id);
     const u = await raw.user.create({
@@ -206,6 +213,12 @@ describeDb("#2094 — a return inside POST /orders through create(), real Postgr
     await raw.customer.deleteMany({ where: { id: { in: customerIds } } });
     await raw.stockMovement.deleteMany({ where: { productId: { in: productIds } } });
     await raw.product.deleteMany({ where: { id: { in: productIds } } });
+    await raw.routeRunStop.deleteMany({ where: { tenantId } });
+    await raw.routeRun.deleteMany({ where: { tenantId } });
+    await raw.routeStop.deleteMany({ where: { tenantId } });
+    await raw.route.deleteMany({ where: { tenantId } });
+    await raw.driver.deleteMany({ where: { tenantId } });
+    await raw.systemConfig.deleteMany({ where: { tenantId } });
     await raw.user.deleteMany({ where: { id: { in: userIds } } });
     await raw.tenant.deleteMany({ where: { id: tenantId } });
     await prisma?.$disconnect();
@@ -228,10 +241,14 @@ describeDb("#2094 — a return inside POST /orders through create(), real Postgr
   }, 60_000);
 
   it("exposure: a create refused by the credit-limit gate leaves no order, no Return and no credit note; an accepted one does not net the credit note into exposure", async () => {
+    // The gate is OFF by default: switch it on for THIS spec's tenant only (owner-only key in prod).
+    await raw.systemConfig.create({
+      data: { tenantId, key: "credit_limit.enforce_new_orders", value: "true" },
+    });
     const tight = await seedCustomer("gate-tight", 5); // limit $5, order $10
     await expect(
       create(tight, 1, ret(tight.productId, 3, `k-gate-a-${run}`)),
-    ).rejects.toBeDefined();
+    ).rejects.toMatchObject({ response: { code: "CREDIT_LIMIT_EXCEEDED" } });
     expect(await raw.order.count({ where: { customerId: tight.customerId } })).toBe(0);
     expect(await raw.return.count({ where: { customerId: tight.customerId } })).toBe(0);
     expect(await raw.creditNote.count({ where: { customerId: tight.customerId } })).toBe(0);
@@ -240,7 +257,6 @@ describeDb("#2094 — a return inside POST /orders through create(), real Postgr
     const o = await create(roomy, 1, ret(roomy.productId, 3, `k-gate-b-${run}`)); // order $10, credit $30
     orderIds.push(o.id);
     // SA-194: the unapplied credit note never loosens the gate: exposure still counts the whole order.
-    const { loadCreditExposure } = await import("../invoices/credit-exposure");
     const exposure = await tenantCtx.run(tenantId, () =>
       loadCreditExposure(prisma.forTenant(), roomy.customerId),
     );
@@ -271,8 +287,51 @@ describeDb("#2094 — a return inside POST /orders through create(), real Postgr
     expect(numbers).toEqual([...reserved].sort()); // a retry reuses the reserved number, never re-reserves
   }, 60_000);
 
-  it("the lock: two new orders for one customer over ONE sold line never match more pieces than were sold", async () => {
-    const f = await seedCustomer("lock");
+  it("a FORCED order-number P2002 on attempt 1: the retry reuses the number reserved before the loop (3-attempt loop, one Return, one credit note)", async () => {
+    const f = await seedCustomer("p2002-forced");
+    reserved.length = 0;
+    const real = prisma.tenantTransaction.bind(prisma);
+    let calls = 0;
+    const spy = jest.spyOn(prisma, "tenantTransaction").mockImplementation(((...args: any[]) => {
+      calls++;
+      if (calls === 1) {
+        return Promise.reject(
+          Object.assign(new Error("Unique constraint failed"), {
+            code: "P2002",
+            meta: { target: ["tenantId", "orderNumber"] },
+          }),
+        );
+      }
+      return (real as any)(...args);
+    }) as any);
+    let o: any;
+    try {
+      o = await create(f, 1, ret(f.productId, 3, `k-p2002-forced-${run}`));
+    } finally {
+      spy.mockRestore();
+    }
+    orderIds.push(o.id);
+    expect(calls).toBe(2);
+    expect(reserved.length).toBe(1); // reserved once, before the loop, not per attempt
+    const cns = await raw.creditNote.findMany({ where: { customerId: f.customerId } });
+    expect(cns.map((c) => c.creditNoteNumber)).toEqual(reserved);
+    expect(await raw.return.count({ where: { orderId: o.id } })).toBe(1);
+  }, 60_000);
+
+  it("the lock: a create() and a STANDALONE capture for one customer over ONE sold line never match more pieces than were sold, and together match all of it", async () => {
+    const f = await seedCustomer("lock"); // f.productId: the SOLD product both returns reference
+    // The order lines use a DIFFERENT product: with the same product the product row lock would
+    // serialize the two before the customer advisory lock is ever exercised.
+    const other = await raw.product.create({
+      data: {
+        name: `lock other ${run}`,
+        unit: "each",
+        pricePerUnit: "10.00",
+        currentStock: 100,
+        tenantId,
+      },
+    });
+    productIds.push(other.id);
     const soldOrder = await raw.order.create({
       data: { customerId: f.customerId, tenantId, status: "DELIVERED", total: "100.00" },
     });
@@ -300,19 +359,36 @@ describeDb("#2094 — a return inside POST /orders through create(), real Postgr
         subtotal: "100.00",
       },
     });
-    const [o1, o2] = await Promise.all([
-      create(f, 1, ret(f.productId, 7, `k-lock-1-${run}`)),
-      create(f, 1, ret(f.productId, 7, `k-lock-2-${run}`)),
+    const carrier = await raw.order.create({
+      data: { customerId: f.customerId, tenantId, status: "PENDING", total: "100.00" },
+    });
+    orderIds.push(carrier.id);
+    const [o1] = await Promise.all([
+      create(
+        { customerId: f.customerId, productId: other.id },
+        1,
+        ret(f.productId, 7, `k-lock-1-${run}`),
+      ),
+      tenantCtx.run(tenantId, () =>
+        inlineSvc.capture(
+          {
+            customerId: f.customerId,
+            orderId: carrier.id,
+            ...ret(f.productId, 7, `k-lock-2-${run}`),
+          },
+          staff(),
+        ),
+      ),
     ]);
-    orderIds.push(o1.id, o2.id);
+    orderIds.push(o1.id);
     const matched = await raw.returnItem.aggregate({
       where: { sourceInvoiceItemId: line.id, return: { customerId: f.customerId, kind: "INLINE" } },
       _sum: { qty: true },
     });
-    expect(Number(matched._sum.qty ?? 0)).toBeLessThanOrEqual(10);
+    expect(Number(matched._sum.qty ?? 0)).toBe(10); // 7 + 3: never more than sold, and all of it matched
   }, 60_000);
 
-  it("a create whose return prices to $0 mints no credit note and writes no intent (SA-261: the reserved number is burned, knowingly)", async () => {
+  it("a create whose return prices to $0 mints no credit note, writes no intent and reserves no number (the dry-run skips it)", async () => {
     const f = await seedCustomer("zero");
     // A free product: the unreferenced return prices to $0.00.
     await raw.product.update({ where: { id: f.productId }, data: { pricePerUnit: "0.00" } });
@@ -321,12 +397,12 @@ describeDb("#2094 — a return inside POST /orders through create(), real Postgr
     orderIds.push(o.id);
     expect(await raw.creditNote.count({ where: { customerId: f.customerId } })).toBe(0);
     expect(await raw.orderCreditNote.count({ where: { orderId: o.id } })).toBe(0);
-    expect(reserved.length).toBe(before + 1); // reserved ahead of the tx, unused: the accepted burn
+    expect(reserved.length).toBe(before); // the dry-run total is 0: nothing is reserved, nothing burned
     const r = await raw.return.findFirst({ where: { orderId: o.id } });
     expect(r?.creditNoteId ?? null).toBeNull();
   }, 60_000);
 
-  it("DRIVER_CAP through create(): a driver's over-cap return on a new order is held: the order commits, no credit note, no intent", async () => {
+  it("DRIVER_CAP through create(): a driver's over-cap return on a new order is held: the order commits, no credit note, no intent, and the reserved number is burned", async () => {
     const f = await seedCustomer("drv");
     const drvUser = await raw.user.create({
       data: { email: `drv-${run}@example.test`, username: `drv-${run}`, role: "DRIVER", tenantId },
@@ -376,7 +452,7 @@ describeDb("#2094 — a return inside POST /orders through create(), real Postgr
     expect(r).toMatchObject({ status: "RECEIVED", holdReason: "DRIVER_CAP" });
     expect(await raw.creditNote.count({ where: { customerId: f.customerId } })).toBe(0);
     expect(await raw.orderCreditNote.count({ where: { orderId: o.id } })).toBe(0);
-    expect(reserved.length).toBe(before); // a driver create reserves nothing ahead of the tx
+    expect(reserved.length).toBe(before + 1); // SA-261: reserved ahead like every role; the hold burns it
     await raw.routeRunStop.deleteMany({ where: { tenantId } });
     await raw.routeRun.deleteMany({ where: { tenantId } });
     await raw.routeStop.deleteMany({ where: { tenantId } });
