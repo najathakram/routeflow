@@ -361,7 +361,7 @@ export class InlineReturnsService {
     dto: CaptureInlineReturnDto,
     user: JwtPayload,
     opts: { creditNoteNumber?: string; orderRouteRunId?: string | null } = {},
-  ): Promise<{ replayed: boolean; ret: any; overCap: boolean; minted: any | null }> {
+  ): Promise<{ replayed: boolean; ret: any; overCap: boolean; minted: any }> {
     const captured = await this.captureInTx(tx, dto, user, {
       orderRouteRunId: opts.orderRouteRunId,
     });

@@ -206,7 +206,7 @@ export const COPIERS: Copier[] = [
   {
     id: "C12",
     file: "returns/inline-returns.service.ts",
-    fn: "capture",
+    fn: "captureInTx",
     target: "ReturnItem",
     anchor: { via: "prop", name: "items" },
     carried:

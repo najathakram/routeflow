@@ -66,7 +66,7 @@ export async function applyInlineReturnInTx(
     user: JwtPayload | undefined;
     orderRouteRunId?: string | null;
   },
-): Promise<any | null> {
+): Promise<any> {
   if (!p) return null;
   const out = await p.svc.captureAndIssueInTx(
     tx,
@@ -81,7 +81,7 @@ export async function applyInlineReturnInTx(
 export function emitInlineReturnCredit(
   p: PreparedInlineReturn | null,
   tenantId: string | null,
-  minted: any | null,
+  minted: any,
 ): void {
   if (p && minted) p.svc.emitCreditIssued(tenantId, minted);
 }
