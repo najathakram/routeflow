@@ -103,12 +103,8 @@ function buildNumberingFixture(
       findUnique,
       findUniqueOrThrow,
       update: jest.fn().mockResolvedValue({ nextNumber: 2 }),
-      // The card's write paths, modelling the saved year-0 row: TODAY's unconditional upsert,
-      // and the compare-and-set / first-create pair.
-      upsert: jest.fn(({ create, update }: any) => {
-        saved = saved ? { ...saved, ...update } : { ...create };
-        return Promise.resolve({ docType: create.docType, ...saved });
-      }),
+      // The card's write paths, modelling the saved year-0 row: the compare-and-set /
+      // first-create pair.
       create: jest.fn(({ data }: any) => {
         saved = { prefix: data.prefix, nextNumber: data.nextNumber, padding: data.padding };
         return Promise.resolve({ docType: data.docType, ...saved });

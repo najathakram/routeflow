@@ -335,9 +335,10 @@ export class NumberingService {
    * out-of-band write, not on the ordinary path.
    * Every other case (year-0 series on a non-year-scoped docType, i.e.
    * PAYMENT/RETURN/ORDER) keeps the exact pre-B100 fast path: a single atomic
-   * increment, no collision check — both paths rely on Postgres serializing
-   * concurrent `UPDATE`s of the SAME row rather than a manual `SELECT … FOR
-   * UPDATE`, so no caller can observe a torn read even without one.
+   * increment, no collision check, relying on Postgres serializing concurrent
+   * `UPDATE`s of the SAME row (no explicit lock). `mintConfigured` differs: it
+   * takes a row lock first with `SELECT … FOR UPDATE`, then reserves in one
+   * `UPDATE`, so no caller can observe a torn read on either path.
    */
   async reserveNext(
     docType: DocumentNumberType,
