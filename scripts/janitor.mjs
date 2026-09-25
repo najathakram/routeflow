@@ -86,12 +86,7 @@ export function isProtectedBranch(branch, protectedBranches = PROTECTED_BRANCHES
  * B800: merged only on proof the branch carried work of its own (see the header).
  * evidence: { tipIsAncestor, tipOnMainline, prMergedAtTip }
  */
-export function isMergedEvidence({
-  tipIsAncestor,
-  tipOnMainline,
-  prMergedAtTip,
-  squashPatchId,
-}) {
+export function isMergedEvidence({ tipIsAncestor, tipOnMainline, prMergedAtTip, squashPatchId }) {
   if (prMergedAtTip) return true;
   if (squashPatchId) return true; // B748: squash proof that needs no `gh`
   return !!tipIsAncestor && !tipOnMainline;
