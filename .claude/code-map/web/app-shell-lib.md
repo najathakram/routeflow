@@ -27,8 +27,14 @@
   part of #2011's class too), not scoped to one dialog. `marketing-port.static.test.ts`'s T7
   `GLOBALS_CSS_SHA256` re-pinned to the new hash (same precedent as B511). Red-first:
   `e2e/56-create-order-dialog-mobile-pan.spec.ts` injects iOS's own UA-stylesheet override as a
-  test `<style>` tag (the only way to reproduce an iOS-only quirk in plain Chromium), then asserts
-  via #1288's shared overflow walk.
+  test `<style>` tag (the only way to reproduce an iOS-only quirk in plain Chromium) — #1288's
+  shared element-level overflow walk cannot catch this class of bug (a sub-padding overflow with
+  no `overflow-hidden`/escaped box to detect), so this spec asserts DIRECTLY on the dialog body's
+  own `scrollWidth` vs `clientWidth` instead, seeded with a cart approximating the owner's report
+  (boxed product, per-line note, order discount + shipping). Same file also pins the separate,
+  real 320px-only `LineItemRow.tsx` glitch — see `components-shared.md`'s `LineItemRow` entry.
+  NOT independently run from any session yet (no Docker/Playwright access when authored) — needs
+  a red-on-master / green-on-fix confirmation before landing.
 - **Phase 1d behavioral UX standards.** `lib/undo.ts` — `useUndo()` (reversible act + 8s Undo toast;
   Toast now returns an id + `dismiss()` and has an `action` slot). `lib/session-expiry.ts` +
   `components/ReAuthProvider.tsx` — in-place re-auth sheet (password unlock + **Continue with Google**

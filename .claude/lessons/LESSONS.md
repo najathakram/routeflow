@@ -530,6 +530,20 @@
   guards; a test asserting every consumer calls the _same_ function reference (not just a
   matching result) is flagged, not yet added.
 
+### L-173 · 2026-09-16 · domain · B449 (Lite lane, plan-gate boundary)
+
+- **Symptom:** a plan-gated page kept firing its own effects/queries while a locked/blurred
+  overlay showed over it — its 403 toasts and query errors leaked to a user who should never
+  have triggered that behavior.
+- **Root cause:** the gate ghosted the real page behind blur/opacity by rendering it as
+  `children` inside the locked view's own slot — that hides the DOM, it doesn't unmount it.
+- **Lesson:** **A route guard choosing between locked and unlocked must render exactly ONE of
+  two subtrees, never wrap the real page inside the locked view's ghost slot — a component
+  hidden behind blur/opacity is still mounted, and its effects/queries still fire.**
+- **Guard:** a route boundary needs a real "still resolving" state distinct from both outcomes;
+  `layout.plan-gate-boundary.test.tsx` pins children absent from the tree while
+  resolving/locked, not just visually hidden.
+
 ### L-169 · 2026-09-16 · domain · B421 / PR-1a shared-helper precondition no-op (two call sites)
 
 - **Symptom:** two surfaces hit the same shape: a shared helper re-checked `.status` generically,
@@ -864,24 +878,3 @@
   on is the defect's own signature": here qty netting to zero while pieces do not IS reachable (it
   is the legacy residue), so the old assertion was asserting the bug, and removing it RAISED
   coverage. A mixed-pack reconcile case pins the ratio source.
-
-### L-217 · 2026-09-25 · domain · `w-full` date inputs overflow on iOS only, invisible in Chromium (#2080, P0)
-
-- **Symptom:** owner reported the order dialog panning sideways on an iPhone during a vertical
-  swipe. The first hypothesis (a boxed cart line's qty-controls column) was plausible, shipped,
-  and WRONG — it sits inside `ul.overflow-hidden`, unable to widen the dialog body. Only
-  real-device/emulated iOS measurement found the actual cause; plain Chromium measured 0.
-- **Root cause:** iOS Safari gives `type="date"`/`time`/`datetime-local`/`month`/`week` inputs
-  their own menu-button chrome — forced `padding: 0 0.5em` and, for any NON-PIXEL width (a
-  Tailwind `w-full`), `box-sizing: content-box`. `w-full` rendered `100% + ~16px` at every
-  viewport width, the entire time a date input was on screen.
-- **Lesson:** **A platform UA-stylesheet override can make an otherwise-correct utility class
-  overflow invisibly in a same-engine desktop browser — 0 overflow there is not evidence the bug
-  is elsewhere. When a mobile-only visual bug resists local reproduction, suspect PLATFORM CSS
-  (native form chrome, safe-area insets, viewport units) before re-auditing app layout again —
-  and with no device/simulator, inject the platform's known UA override as a test `<style>` tag
-  rather than shipping an unmeasured fix for a plausible alternate cause.**
-- **Guard:** `app/globals.css`'s `input[type=date]` rule (`appearance: none; box-sizing:
-  border-box; min-width: 0`), global (94 such inputs app-wide).
-  `e2e/56-create-order-dialog-mobile-pan.spec.ts` injects iOS's UA override as a test stylesheet
-  before asserting via the shared overflow walk (`e2e/helpers/overflow.ts`, copied from #1288).

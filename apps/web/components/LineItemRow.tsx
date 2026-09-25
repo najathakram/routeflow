@@ -319,7 +319,12 @@ export function LineItemRow({
       )}
       {/* Qty controls */}
       {li.unitsPerBox ? (
-        <div className="col-start-1 row-start-2 flex min-w-[190px] flex-col gap-0.5">
+        // Measured (not #2080 — a narrower, real 320px-only glitch investigated alongside it):
+        // at 320px the grid's `minmax(0,1fr)` column track resolves to ~182px available, but
+        // this item's own `min-w-[190px]` floor overrides the track's shrink intent (an item's
+        // explicit min-width always wins), running 8px past the track. `min-w-0` below `sm`
+        // lets it actually shrink there; `sm:min-w-[190px]` keeps desktop unchanged.
+        <div className="col-start-1 row-start-2 flex min-w-0 flex-col gap-0.5 sm:min-w-[190px]">
           {/* Case | Unit sell-by toggle — UI-only; the payload always
               carries {qty, boxes, pieces} regardless of the mode. */}
           <div className="inline-flex self-start overflow-hidden rounded border border-surface-border text-[10px] font-medium">
