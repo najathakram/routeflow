@@ -2172,9 +2172,7 @@ export class OrdersService implements OnApplicationBootstrap {
             if (existing && existing.customerId !== customerId) {
               throw new ConflictException("Idempotency-Key already used for a different order");
             }
-            if (existing) {
-              return replayAfterCheck(this.prisma.forTenant(), inlineRet, existing);
-            }
+            if (existing) return replayAfterCheck(this.prisma.forTenant(), inlineRet, existing);
           }
           // Retry only on orderNumber unique-constraint violations (RF-014);
           // propagate all other errors immediately (including ConflictException
