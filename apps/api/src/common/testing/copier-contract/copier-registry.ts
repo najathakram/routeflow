@@ -46,13 +46,15 @@ const MERGE = {
   target: "OrderItem" as const,
   anchor: { via: "delegate", model: "orderItem" } as Anchor,
   carried:
-    "productId name qty unitPrice subtotal priceType originalPrice promoFreeUnits boxes pieces notes overrideReason overriddenBy status trackedCategoryId " +
+    "productId name qty unitPrice subtotal priceType originalPrice promoFreeUnits boxes pieces unitsPerBox notes overrideReason overriddenBy status trackedCategoryId " +
     // B297: the loser line's trio, via `...copyCategoryTaxSnapshot(meta)` (SPREAD_HELPER_KEYS).
     "categoryTaxType categoryTaxRate categoryPriceIncludesTax",
   rederived: "categoryTaxAmount", // recomputeLineCategoryTaxes after the fold
   na: "deliveredQty invoicedQty",
   gaps: {
-    unitsPerBox: "unfiled",
+    // B776/SA-124a (#938): buildMergeLineWrites now carries the contributing line's OWN
+    // snapshot pack through every write (the whole point of the fix — never re-split at the
+    // live product's CURRENT pack) — unitsPerBox moved to carried above, gap closed.
     unitLabel: "unfiled",
     trackedSubcategoryId: "unverified",
     position: "unverified",

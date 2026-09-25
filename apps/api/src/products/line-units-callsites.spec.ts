@@ -20,7 +20,17 @@ import { join, relative, sep } from "path";
  * named variable (`row.unitsPerBox`) is invisible. Code review + the 4b/4c conversion PRs cover it.
  */
 const BASELINE: Record<string, number> = {
-  "orders/orders.service.ts": 20,
+  // SA-124g/h R1: the replaceAll rebuild is reverted to master byte-for-byte (SA-124e's HIGH 2
+  // resolver — which had retired 4 of these 20 reads — is R2 scope now), restoring the original
+  // 20 reads, plus ONE new read feeding `assertReplaceAllPackMatchesLive`'s live-pack guard (21).
+  // Round-4 prefactor (SA-124h, absorbing origin/master's unrelated growth under the size
+  // ratchet): the per-item price/data builder moved verbatim to replace-all-line-build.ts,
+  // taking 5 of these reads with it — 21 -> 16.
+  "orders/orders.service.ts": 16,
+  // Round-4 prefactor (SA-124h): buildReplaceAllLineData, moved verbatim out of
+  // orders.service.ts's replaceAll rebuild (see that file's own comment above) — same 5 reads,
+  // same behavior, only relocated.
+  "orders/replace-all-line-build.ts": 5,
   // Three reads today (B717/SA-077 lowered this from 6; SA-068b's earlier note predicted 5, which
   // the hoist overtook — four reads in update()'s mapper became one). Do not read that history as
   // a forecast; what is left, and what retires each:
@@ -42,6 +52,10 @@ const BASELINE: Record<string, number> = {
   "invoices/manual-invoice-lines.ts": 2,
   "estimates/estimates.service.ts": 1,
   "order-templates/order-templates.service.ts": 1,
+  // B646: generation is a NEW sale, so the recurring generator reads the LIVE pack at generation time (the
+  // Senior Architect buildLine contract) to store a boxed template line in pieces; the split lives in
+  // recurring-invoices/recurring-line-split.ts.
+  "recurring-invoices/recurring-invoices.service.ts": 1,
   "returns/inline-returns-quote.service.ts": 3,
   "buyer/buyer.controller.ts": 1,
   "buyer/replenishment.service.ts": 1,

@@ -239,9 +239,14 @@ export class OrdersController {
                   // operator to edit yet. The actual remedy is to not merge at all.
                   'Choose "Create as a separate order" instead.',
                 );
-                const mergedItems = foldMergeItems(current.lineItems ?? [], dto.items ?? []);
+                const foldResult = foldMergeItems(current.lineItems ?? [], dto.items ?? []);
+                if (foldResult.livePackFallbackProductIds.length > 0) {
+                  this.logger.warn(
+                    `foldMergeItems: order ${current.id} product(s) [${foldResult.livePackFallbackProductIds.join(", ")}] had box data but no resolvable pack of their own — deferred to the live product pack in updateOrderItems (B776/SA-124)`,
+                  );
+                }
                 const foldDto = {
-                  items: mergedItems,
+                  items: foldResult.items,
                   // foldMergeItems returns the order's COMPLETE new line set, so
                   // this is a full replace. R10 made `replaceAll` explicit-only —
                   // without saying so out loud the merged absolute totals would

@@ -21,6 +21,7 @@ import {
   isBlockingPayment,
   remainingCapacity,
   packFromOwnSplit,
+  regulatedUnitBasis,
   type CategoryTaxType,
   inferredFlatRate,
 } from "@routeflow/pricing";
@@ -36,6 +37,7 @@ import {
 import { PAYABLE, KPI_SUMMARY_EXCLUDED } from "./invoice-status-sets";
 import { reconcileDeliveredOrdersInTx as reconcileDeliveredOrdersInTxImpl } from "./delivered-reconcile";
 import { packAtSaleByProduct, priorUnitsPerBoxMap, toSaleLedgerLines } from "./pack-at-sale";
+import { assertIntegerPieces, billPackOf } from "./unit-line-bill-guard";
 import { clampLimit } from "../common/pagination";
 import { isInternalEmail } from "../common/internal-email";
 import { loadMsrpMap } from "../common/msrp";
@@ -88,7 +90,9 @@ import { NSF_FEE_DESCRIPTION_PREFIX } from "../sales-agents/commission-math";
 import { startOfCalendarDay, endOfCalendarDay } from "../common/calendar-date";
 import { lockRowsNoWait } from "../common/db-locks";
 import { NumberingService } from "../import/numbering.service";
-import { buildManualInvoiceLines } from "./manual-invoice-lines";
+import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
+import { requireRestrictionTenantId } from "../selling-restrictions/restriction-tenant";
+import { buildManualInvoiceLines, type ManualLineItem } from "./manual-invoice-lines";
 import { foldCategoryTax, loadManualLineContext } from "./manual-invoice-context";
 import { resolveLineUnits } from "../products/line-units";
 import { prepareUnitLadders, requestsUnit } from "../orders/unit-line-build";
@@ -159,6 +163,7 @@ export class InvoicesService {
     private readonly entitlements: EntitlementsService,
     private readonly commissionEngine: CommissionEngineService,
     private readonly numbering: NumberingService,
+    private readonly sellingRestrictions: SellingRestrictionsService,
   ) {}
 
   /**
@@ -369,13 +374,21 @@ export class InvoicesService {
    * invoice number and one crashed with Prisma P2002 → HTTP 500. Now catches
    * P2002 and returns 409 Conflict instead.
    */
-  async create(dto: CreateInvoiceDto) {
+  /** SA-135: an internal caller's line may carry `packSnapshot` (ManualLineItem); the HTTP DTO never can. */
+  async create(dto: Omit<CreateInvoiceDto, "items"> & { items: ManualLineItem[] }) {
     const customer = await this.prisma
       .forTenant()
       .customer.findUnique({ where: { id: dto.customerId } });
     // REG-B131: a removed (soft-deleted) customer cannot be invoiced; same 404 as a missing one. Checked
     // on the row just read (L-081), so restoreCustomer() re-enables it with no other write.
     if (!customer || customer.deletedAt) throw new NotFoundException("Customer not found");
+    // F-05 (#2093): a manual invoice SELLS its lines — a banned product refuses (409) before anything is read.
+    await this.sellingRestrictions.assertLinesSellable({
+      tenantId: requireRestrictionTenantId(this.prisma.getTenantId()),
+      customerId: dto.customerId,
+      lines: dto.items.flatMap((it) => (it.productId ? [{ productId: it.productId }] : [])),
+      channel: "STAFF",
+    });
 
     // Products (box size + regulated snapshot), the unit ladders and the regulated tax config of every
     // line: see manual-invoice-context.ts (B659: shared with EstimatesService.convertToInvoice).
@@ -821,8 +834,9 @@ export class InvoicesService {
     const orderQty = Number(li.qty) || 0;
     const storedSubtotal = li.subtotal != null ? Number(li.subtotal) : null;
     const unitPrice = Number(li.unitPrice);
-    const unitsPerBox = Number(opts?.priorPack ?? li.unitsPerBox ?? li.product?.unitsPerBox ?? 0);
+    const unitsPerBox = billPackOf(li, opts?.priorPack, li.product?.unitsPerBox); // a unit line's OWN pack wins (SA-178)
     const isBoxSplit = li.boxes != null; // stored WITH a box/piece split
+    assertIntegerPieces(li, billQty, unitsPerBox); // B652: no fractional pieces on a boxed line
 
     // Box/piece split for DISPLAY only (money is the stored subtotal). Selling-unit
     // and non-boxed lines keep boxes/pieces null so `qty` stays in whatever unit the
@@ -3406,9 +3420,12 @@ export class InvoicesService {
           ? categoryMap.get(product.trackedCategoryId)
           : null;
         const upbForPieces = Number(livePack ?? 0);
-        // B661-sweep: a line-tax (not ledger) box-unaware multiply — follow-up PR converts this to
-        // @routeflow/pricing's regulatedUnitBasis; see no-second-legacy-line-pieces.spec.ts's allowlist.
-        const pieceQty = boxes != null ? qty : upbForPieces > 1 ? qty * upbForPieces : qty;
+        // B679: the ONE conversion this design allows — never an inline copy of it. `item`
+        // is never a unit-labeled line here: update() refuses dto.items.some(requestsUnit) above.
+        const pieceQty = regulatedUnitBasis(
+          { qty, boxes, pieces, unitLabel: item.unitLabel ?? null },
+          upbForPieces,
+        ).unitBasisQty;
         const categoryTaxAmount = category
           ? computeCategoryTax({
               taxType: category.taxType as CategoryTaxType,
@@ -6198,21 +6215,17 @@ export class InvoicesService {
             ).map((pr: any) => [pr.id, Number(pr.unitsPerBox ?? 0)])
           : [],
       );
-      // Mirrors orders.service's linePieceQty: a box-split line stores qty already in
-      // pieces; a boxed selling-unit line expands by its snapshotted unitsPerBox,
-      // falling back to the product's. Unused by PERCENT_OF_SALE (unitBasisQty is
-      // ignored there) but correct for an EXCISE_PER_UNIT / PER_VOLUME /
-      // DEPOSIT_PER_CONTAINER line.
-      // B661-sweep: a line-tax (not ledger) box-unaware multiply — follow-up PR converts this to
-      // @routeflow/pricing's regulatedUnitBasis; see no-second-legacy-line-pieces.spec.ts's allowlist.
-      const linePieceQty = (li: any): number => {
-        const qty = Number(li.qty) || 0;
-        if (li.boxes != null) return qty;
-        const upb = Number(
+      // B679: mirrors orders.service.recomputeLineCategoryTaxes — a box-split line stores qty
+      // already in pieces; a boxed selling-unit line expands by its snapshotted unitsPerBox,
+      // falling back to the product's. Unused by PERCENT_OF_SALE (unitBasisQty is ignored
+      // there) but correct for an EXCISE_PER_UNIT / PER_VOLUME / DEPOSIT_PER_CONTAINER line.
+      // Delegates to regulatedUnitBasis (@routeflow/pricing) — the ONE place this conversion
+      // happens — instead of an independent copy of its box-unaware fallback branch.
+      const linePieceQty = (li: any): number =>
+        regulatedUnitBasis(
+          { qty: Number(li.qty) || 0, boxes: li.boxes, pieces: li.pieces, unitLabel: li.unitLabel },
           li.unitsPerBox ?? (li.productId ? unitsPerBoxByProduct.get(li.productId) : null) ?? 0,
-        );
-        return upb > 1 ? qty * upb : qty;
-      };
+        ).unitBasisQty;
 
       // B294 (SA-141): a legacy order/estimate-derived invoice (every line taxRate 0, a real
       // regular tax) keeps its tax — stamp the inferred flat rate onto its lines first.

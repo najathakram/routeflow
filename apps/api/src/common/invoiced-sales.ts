@@ -355,25 +355,26 @@ export function soldProductIds(lines: { productId: string | null }[]): string[] 
 //
 // Invoice lines carry no unit cost, so COGS is an ESTIMATE: each line is
 // costed at the product's point-in-time average cost — the `avgCostAfter`
-// snapshot of the latest StockMovement (any type) at or before the sale's
-// issueDate. This is the exact pattern the schema comment on StockMovement
-// documents ("Point-in-time average cost = avgCostAfter of the latest
-// movement <= T"), and it is stable: a future restock never restates a past
-// period. FIFO/LIFO/LAST_COST cannot be honored retroactively — this is an
+// snapshot of the latest StockMovement (any type) whose `effectiveAt` is at or
+// before the sale's issueDate. This is the exact pattern the schema comment on
+// StockMovement documents ("Point-in-time average cost = avgCostAfter of the
+// latest movement <= T"), and it is stable: a future restock never restates a
+// past period. B562: `effectiveAt` (the accounting date), not `createdAt` (the
+// write-once insertion time) — a backdated receipt sits at its own date. FIFO/LIFO/LAST_COST cannot be honored retroactively — this is an
 // AVCO-style estimate regardless of the product's costing method.
 
-/** productId → ascending `[{ t: epochMs, cost }]` built from avgCostAfter snapshots. */
+/** productId → ascending `[{ t: epochMs, cost }]` built from avgCostAfter snapshots at `effectiveAt`. */
 export type CostIndex = Map<string, { t: number; cost: number }[]>;
 
 /** Pure: group + sort snapshot rows (rows with null avgCostAfter are skipped). */
 export function buildCostIndex(
-  rows: { productId: string; createdAt: Date; avgCostAfter: unknown }[],
+  rows: { productId: string; effectiveAt: Date; avgCostAfter: unknown }[],
 ): CostIndex {
   const index: CostIndex = new Map();
   for (const r of rows) {
     if (r.avgCostAfter == null) continue;
     const arr = index.get(r.productId) ?? [];
-    arr.push({ t: r.createdAt.getTime(), cost: Number(r.avgCostAfter) });
+    arr.push({ t: r.effectiveAt.getTime(), cost: Number(r.avgCostAfter) });
     index.set(r.productId, arr);
   }
   for (const arr of index.values()) arr.sort((a, b) => a.t - b.t);
@@ -465,10 +466,11 @@ export async function fetchCostIndex(
     where: {
       productId: { in: productIds },
       avgCostAfter: { not: null },
-      createdAt: { lte: until },
+      effectiveAt: { lte: until },
     },
-    select: { productId: true, createdAt: true, avgCostAfter: true },
-    orderBy: { createdAt: "asc" },
+    select: { productId: true, effectiveAt: true, avgCostAfter: true },
+    // Ties on effectiveAt keep insertion order (buildCostIndex's sort is stable).
+    orderBy: [{ effectiveAt: "asc" }, { createdAt: "asc" }, { id: "asc" }],
   });
   return buildCostIndex(rows);
 }

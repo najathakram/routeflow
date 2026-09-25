@@ -19,8 +19,9 @@ cold from the issue alone. Sessions forget; issues don't.
 2. **One issue, one PR.** A feature too big for one PR is a parent (label `epic`) with one
    sub-issue per PR; the parent shows a progress bar.
 3. **Status is derived, never typed.** The reconciler sets it from what's actually on GitHub.
-4. **One in-progress item per lane.** The `lane:*` label is a file-area lock. If a lane is busy, pick
-   work from another lane or wait.
+4. **One in-progress item per lane.** The `lane:*` label is a file-area lock that an assigned issue
+   holds only while it's In progress — once its PR is ready for review (In review), the lane frees up
+   — so if it's still busy, pick work from another lane or wait.
 5. **Finish before you start.** Clear your In review and Blocked items before claiming new work.
 6. **Verdicts live on the PR.** Post SA, Opus and prover results on the PR at the exact sha. #938 is
    only the fleet feed.

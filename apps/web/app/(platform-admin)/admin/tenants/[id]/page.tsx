@@ -10,6 +10,7 @@ import { setTenantCookie } from "@/lib/tenant-cookie";
 import { setImpersonation } from "@/lib/impersonation";
 import { AdminTabs } from "../../../_components/AdminTabs";
 import { AdminBadge, planLabel } from "../../../_components/AdminBadge";
+import { usePlanOptions, withCurrentPlan } from "../../../_components/usePlanOptions";
 import { AdminCard } from "../../../_components/AdminCard";
 import { AdminModal } from "../../../_components/AdminModal";
 import { DisabledHint } from "../../../_components/DisabledHint";
@@ -37,6 +38,9 @@ interface TenantDetail {
   name: string;
   status: string;
   plan: string;
+  // SA-140/B556: display-resolved — falls back to `plan` only when no subscription.planKey is
+  // set (a drifted tenant). `plan` itself is unchanged.
+  planKey: string;
   trialEndsAt: string | null;
   createdAt: string;
   deletedAt: string | null;
@@ -91,8 +95,6 @@ interface AuditLogEntry {
   actionLabel?: string | null;
   actor?: AuditActor | null;
 }
-
-const PLANS = ["STARTER", "PROFESSIONAL", "ENTERPRISE"] as const;
 
 const TABS = [
   { key: "overview", label: "Overview", icon: <LayoutDashboard className="h-4 w-4" /> },
@@ -338,6 +340,10 @@ function OverviewTab({
 }) {
   const [showDeleteConfirm, setShowDeleteConfirm] = React.useState(false);
   const [showResetConfirm, setShowResetConfirm] = React.useState(false);
+  // B857: the resolved planKey, never the raw legacy `plan` enum (TEAM/BUSINESS/…), which is
+  // not among the options and left the select showing a plan the tenant isn't on.
+  const currentPlan = tenant.planKey ?? tenant.plan;
+  const planOptions = usePlanOptions();
   const [resetResult, setResetResult] = React.useState<{
     username: string;
     tempPassword: string;
@@ -367,7 +373,9 @@ function OverviewTab({
         <div className="rounded-xl bg-slate-800 p-5 ring-1 ring-white/5">
           <p className="text-xs font-medium uppercase tracking-wider text-slate-400">Est. MRR</p>
           <p className="mt-2 text-2xl font-bold text-white">{usd(tenant.estMrrUsd ?? 0)}</p>
-          <p className="mt-1 text-xs text-slate-400">{planLabel(tenant.plan)} · stopgap estimate</p>
+          <p className="mt-1 text-xs text-slate-400">
+            {planLabel(tenant.planKey ?? tenant.plan)} · stopgap estimate
+          </p>
         </div>
         <div className="rounded-xl bg-slate-800 p-5 ring-1 ring-white/5">
           <p className="text-xs font-medium uppercase tracking-wider text-slate-400">Orders, 30d</p>
@@ -406,7 +414,7 @@ function OverviewTab({
             [
               "Plan",
               <AdminBadge key="plan" variant="plan">
-                {tenant.plan}
+                {tenant.planKey ?? tenant.plan}
               </AdminBadge>,
             ],
             ["Status", <AdminBadge key="status">{tenant.status}</AdminBadge>],
@@ -512,8 +520,8 @@ function OverviewTab({
 
           <TierChangeControl
             tenantId={tenant.id}
-            currentPlan={tenant.plan}
-            plans={PLANS}
+            currentPlan={currentPlan}
+            plans={withCurrentPlan(planOptions.planKeys, currentPlan)}
             planLabel={planLabel}
             disabled={actionLoading === "change-plan"}
             onChangePlan={(plan) => onAction("change-plan", { plan })}
@@ -753,8 +761,9 @@ function BillingTab({
 
   // Manual activation form state
   const [activating, setActivating] = React.useState(false);
+  const planOptions = usePlanOptions();
   const [manualForm, setManualForm] = React.useState({
-    plan: tenant.plan as string,
+    plan: (tenant.planKey ?? tenant.plan) as string,
     paymentMethod: "ZELLE" as string,
     paymentRef: "",
     billingPeriodDays: 30,
@@ -822,7 +831,7 @@ function BillingTab({
       {/* Current Plan */}
       <AdminCard title="Current Plan">
         <div className="flex items-center gap-4 mb-4">
-          <AdminBadge variant="plan">{tenant.plan}</AdminBadge>
+          <AdminBadge variant="plan">{tenant.planKey ?? tenant.plan}</AdminBadge>
           <AdminBadge>{tenant.status}</AdminBadge>
         </div>
         {daysLeft !== null && (
@@ -933,12 +942,17 @@ function BillingTab({
               onChange={(e) => setManualForm((f) => ({ ...f, plan: e.target.value }))}
               className="h-9 w-full rounded-lg border border-slate-600 bg-slate-700 px-3 text-sm text-white focus:border-indigo-500 focus:outline-none"
             >
-              {PLANS.map((p) => (
+              {withCurrentPlan(planOptions.planKeys, manualForm.plan).map((p) => (
                 <option key={p} value={p}>
                   {planLabel(p)}
                 </option>
               ))}
             </select>
+            {planOptions.unavailable && (
+              <p className="mt-1 text-xs text-amber-400">
+                Plan catalog unavailable — showing all plans without live pricing.
+              </p>
+            )}
           </div>
 
           {/* Payment method */}
@@ -1885,7 +1899,7 @@ export default function AdminTenantDetailPage() {
         <span className="text-slate-400">/</span>
         <h1 className="text-xl font-bold text-white">{tenant.businessName ?? tenant.name}</h1>
         <AdminBadge>{tenant.status}</AdminBadge>
-        <AdminBadge variant="plan">{tenant.plan}</AdminBadge>
+        <AdminBadge variant="plan">{tenant.planKey ?? tenant.plan}</AdminBadge>
       </div>
       <p className="mb-4 text-sm text-slate-400">
         <span className="font-mono">{tenant.slug}</span>.routeflow.info · created{" "}

@@ -7,6 +7,7 @@ import { setImpersonation } from "@/lib/impersonation";
 import { setTenantCookie } from "@/lib/tenant-cookie";
 import { AdminBadge, planLabel } from "../../_components/AdminBadge";
 import { AdminModal } from "../../_components/AdminModal";
+import { usePlanOptions, withCurrentPlan } from "../../_components/usePlanOptions";
 import { ChevronUp, ChevronDown, X } from "lucide-react";
 
 interface Tenant {
@@ -15,6 +16,10 @@ interface Tenant {
   name: string;
   status: string;
   plan: string;
+  // SA-140/B556: resolved through the tenant's subscription first, falling back to `plan` only
+  // when no subscription.planKey is set — the display fix for a tenant whose legacy plan enum
+  // and real billing plan have drifted. `plan` itself is unchanged (API compatibility).
+  planKey: string;
   trialEndsAt: string | null;
   businessName: string | null;
   counts: { users: number; customers: number; orders: number } | null;
@@ -55,6 +60,13 @@ export default function AdminTenantsPage() {
   const [selected, setSelected] = React.useState<Set<string>>(new Set());
   const [bulkAction, setBulkAction] = React.useState<string | null>(null);
   const [bulkPlan, setBulkPlan] = React.useState("STARTER");
+  // B857: bulk Change Plan offers the published catalog, not a hand-typed legacy list.
+  const planOptions = usePlanOptions();
+  React.useEffect(() => {
+    if (planOptions.planKeys.length && !planOptions.planKeys.includes(bulkPlan)) {
+      setBulkPlan(planOptions.planKeys[0]!);
+    }
+  }, [planOptions.planKeys, bulkPlan]);
   const headerCheckboxRef = React.useRef<HTMLInputElement>(null);
   // Monotonic request id so a slow earlier fetch can't overwrite a newer one.
   const reqSeqRef = React.useRef(0);
@@ -483,10 +495,19 @@ export default function AdminTenantsPage() {
               onChange={(e) => setBulkPlan(e.target.value)}
               className="h-9 w-full rounded-lg border border-slate-600 bg-slate-700 px-3 text-sm text-white"
             >
-              <option value="STARTER">{planLabel("STARTER")}</option>
-              <option value="PROFESSIONAL">{planLabel("PROFESSIONAL")}</option>
-              <option value="ENTERPRISE">{planLabel("ENTERPRISE")}</option>
+              {/* Always includes bulkPlan, so the select never submits a plan it isn't showing
+                  (e.g. while the catalog is still loading). */}
+              {withCurrentPlan(planOptions.planKeys, bulkPlan).map((p) => (
+                <option key={p} value={p}>
+                  {planLabel(p)}
+                </option>
+              ))}
             </select>
+            {planOptions.unavailable && (
+              <p className="mt-1 text-xs text-amber-400">
+                Plan catalog unavailable — showing all plans without live pricing.
+              </p>
+            )}
           </div>
         )}
         <p className="text-sm text-slate-300">
@@ -662,7 +683,7 @@ export default function AdminTenantsPage() {
                         </div>
                       </td>
                       <td className="px-4 py-3">
-                        <AdminBadge variant="plan">{t.plan}</AdminBadge>
+                        <AdminBadge variant="plan">{t.planKey ?? t.plan}</AdminBadge>
                       </td>
                       <td className="px-4 py-3 text-right text-slate-400">
                         {t.counts?.users ?? 0}

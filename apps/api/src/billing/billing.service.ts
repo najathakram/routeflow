@@ -15,6 +15,7 @@ import { roundMoney } from "@routeflow/pricing";
 import { StripeService } from "./stripe.service";
 import { BillingEventService } from "./billing-event.service";
 import { PlatformPricingService } from "./platform-pricing.service";
+import { isPayingRow } from "./mrr.service";
 import {
   BILLING_EVENTS,
   BillingEventType,
@@ -121,9 +122,14 @@ export class BillingService {
    * (−1) the paying set, so the append-only BillingEvent ledger (and `ledgerMrr`/`momDelta`)
    * tracks the snapshot MRR across legacy-Stripe churn/reactivation.
    *
-   * Mirrors MrrService's paying predicate: NO-OP when `planKey == null` (legacy Stripe-only
-   * tenants never contribute to snapshot MRR, so there is no run-rate to move). Contribution =
-   * `roundMoney(base + Σ active add-ons − discount)`.
+   * SA-140: gates on `deletedAt`/`class`/`planKey` — the 3 STABLE `isPayingRow` conditions never
+   * touched by a Stripe webhook path — via the shared predicate (never re-derived separately).
+   * `status` is deliberately NOT one of them here: it's exactly what's transitioning (`toStatus`,
+   * fetched by `transitionAndEmit`'s caller), and `direction` (+1 entering / −1 leaving) already
+   * encodes which side of the boundary this call is on — re-checking `status === "ACTIVE"` would
+   * wrongly gate out every LEAVING transition (`toStatus` is CANCELLED/SUSPENDED there), so this
+   * calls `isPayingRow` with `status` forced to `"ACTIVE"` to isolate just the other 3
+   * conditions. Contribution = `roundMoney(base + Σ active add-ons − discount)`.
    *
    * Unlike the plans-as-data cron, add-on rows are intentionally NOT toggled: the snapshot
    * includes/excludes add-ons via `tenant.status`, Stripe suspend↔reactivate is reversible, and
@@ -138,12 +144,13 @@ export class BillingService {
       basePriceSnapshot: Prisma.Decimal | null;
       discount: Prisma.Decimal | null;
     },
+    tenant: { deletedAt: Date | null; class: string },
     direction: 1 | -1,
     event: BillingEventType,
     payload: Prisma.InputJsonValue,
     tx: Prisma.TransactionClient,
   ): Promise<void> {
-    if (sub.planKey == null) return; // wasn't in the paying set → no run-rate to move
+    if (!isPayingRow({ ...tenant, status: "ACTIVE" }, sub.planKey)) return;
     const addons = await tx.tenantAddon.findMany({
       where: { tenantId, active: true },
       select: { priceSnapshot: true, quantity: true },
@@ -198,7 +205,13 @@ export class BillingService {
         data: { status: toStatus, ...(toStatus === "ACTIVE" ? { readOnlyReason: null } : {}) },
       });
       if (count !== 1) return false;
-      await this.emitPayingDelta(tenantId, sub, direction, event, payload, tx);
+      // SA-140: emitPayingDelta's gate needs the tenant's deletedAt/class (status/toStatus is
+      // deliberately not part of its gate — see the function's own doc comment).
+      const tenant = await tx.tenant.findUniqueOrThrow({
+        where: { id: tenantId },
+        select: { deletedAt: true, class: true },
+      });
+      await this.emitPayingDelta(tenantId, sub, tenant, direction, event, payload, tx);
       return true;
     });
   }
@@ -481,9 +494,14 @@ export class BillingService {
    * append-only BillingEvent ledger reconciles against Σ `amountDelta`. Without this
    * an admin price change moves the money Stripe collects but neither MRR source.
    *
-   * NO-OP when the tenant isn't in the paying set (`planKey == null` — MrrService's own
-   * predicate) or when the run-rate is unchanged, so the ledger never drifts from the
-   * snapshot total.
+   * NO-OP entirely when there's no subscription row or it has no resolved `planKey`, or when
+   * the run-rate is unchanged. SA-140: the snapshot write below is otherwise UNCONDITIONAL —
+   * it always stays current regardless of `isPayingRow` — but the ledger EMIT is gated on it.
+   * A non-paying tenant (suspended, or non-PRODUCTION) still gets its snapshot updated so a
+   * later re-entry (e.g. reactivation) books the correct price rather than a stale one; booking
+   * a delta HERE for a tenant `mrr` never counted would drift `ledgerMrr` above `mrr` — the
+   * exact gap B557's mrr.service.ts doc comment names (only `planKey != null` was checked
+   * before, never status/deletedAt/class).
    */
   private async reconcilePriceLedger(
     tenantId: string,
@@ -493,7 +511,11 @@ export class BillingService {
   ): Promise<void> {
     const sub = await this.prisma.tenantSubscription.findUnique({
       where: { tenantId },
-      select: { planKey: true, basePriceSnapshot: true },
+      select: {
+        planKey: true,
+        basePriceSnapshot: true,
+        tenant: { select: { status: true, deletedAt: true, class: true } },
+      },
     });
     if (!sub || sub.planKey == null) return;
 
@@ -505,6 +527,9 @@ export class BillingService {
       where: { tenantId },
       data: { basePriceSnapshot: newMonthly },
     });
+
+    if (!isPayingRow(sub.tenant, sub.planKey)) return;
+
     await this.events.emit(
       tenantId,
       BILLING_EVENTS.PLAN_CHANGED,

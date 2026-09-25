@@ -46,7 +46,7 @@ const TABLE: Record<string, Row> = {
   [ord("updateOrderItems")]: G,
   [ord("approveChangeRequestAtStop")]: G,
   [ord("changeStatus")]: G,
-  [ord("reopenOrder")]: P("2a: reopen (revives cancelled lines)"),
+  [ord("reopenOrder")]: G,
   [ord("mergeAllPendingForCustomer")]: P("2a: merge (channel from buyerInitiated)"),
   [ord("forceConsolidateCustomer")]: P("2a: consolidate (staff)"),
   [tpl("createOrderFromTemplate")]: P("2b: standing orders (buyer-owned = BUYER_PORTAL)"),
@@ -57,11 +57,11 @@ const TABLE: Record<string, Row> = {
   ),
   [rt("reopenStop")]: P("2a: reopen stop (revives cancelled lines, like reopenOrder)"),
   // ── invoices / estimates / import (step 2b remainder) ──────────────────────────────────────
-  [inv("create")]: P("2b: invoice create"),
+  [inv("create")]: G,
   [inv("update")]: P("2b: invoice update"),
   [inv("duplicate")]: P("2b: invoice duplicate"),
   [inv("createSplitInvoices")]: P("2b: split invoices"),
-  "estimates/estimates.service.ts::EstimatesService.convertToInvoice": P("2b: estimate -> invoice"),
+  "estimates/estimates.service.ts::EstimatesService.convertToInvoice": G,
   "import/import.service.ts::ImportService.importInvoices": P(
     "ruling: historical invoice import (do bans apply to past sales?)",
   ),
@@ -102,7 +102,7 @@ const TABLE: Record<string, Row> = {
 };
 
 /** The RATCHET: how many rows are still PENDING. Lower it in the PR that flips a row to GUARDED. */
-const PENDING_BASELINE = 12;
+const PENDING_BASELINE = 9;
 /** GUARDED + PENDING: reclassifying a PENDING row to EXEMPT (an escape, not progress) must change THIS. */
 const ENFORCEMENT_POINTS = 16;
 const CHOKE_POINT = ["assertLinesSellable", "checkLinesSellable"];

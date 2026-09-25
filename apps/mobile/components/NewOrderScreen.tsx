@@ -52,13 +52,7 @@ import { createScanAttempt, createWedgeSubmitHandler } from "../lib/wedge-submit
 import { createScanAcceptGuard } from "../lib/scan-accept-guard";
 // Compose "<Parent> - <Variant>" so scanned variants don't show as "Strawberry" alone.
 import { displayProductName as displayName } from "../lib/product-display";
-import {
-  computeLineSubtotal,
-  effectiveQty,
-  getTierPrice,
-  normalizeBoxesPieces,
-  roundMoney,
-} from "@routeflow/pricing";
+import { computeLineSubtotal, effectiveQty, getTierPrice, roundMoney } from "@routeflow/pricing";
 import { useMarginConfig, floorForCategory } from "../lib/api/margin";
 import { useTrackedCategories } from "../lib/api/tracked-categories";
 import {
@@ -107,7 +101,13 @@ import {
 } from "../lib/pending-scroll";
 import { isCatalogHeader, visibleCatalogRows, type CatalogRow } from "../lib/visible-cart";
 import { unlistedAffordancePlacement } from "../lib/unlisted-affordance";
-import { decideResumeLine, orderSubmitGate } from "../lib/order-draft-logic";
+import {
+  orderSubmitGate,
+  resolveResumeLinePricing,
+  resolveResumeLineBoxes,
+  decideResumeHydrationStart,
+} from "../lib/order-draft-logic";
+import { hydrateParkedLine } from "../lib/resume-draft-hydration";
 import { getOrderSubmitKey, resetOrderSubmitKey } from "../lib/order-submit-key";
 import { fmtCalendarDate } from "../lib/format-date";
 // Parked drafts (PR-3): NewOrderScreen resolves ?resumeDraft= and hydrates
@@ -118,7 +118,6 @@ import {
   toOrderDraftPayload,
   fromOrderDraftPayload,
   draftParkable,
-  unitLineRefusal,
   type OrderDraftPayload,
   type DraftBuilderState,
   type DraftCatalogLine,
@@ -542,7 +541,15 @@ function ProductPickView({
   // Prices shown/summed/submitted use getTierPrice(product, effectiveTier), not
   // the raw list price — so a tier-N customer sees the price the server bills.
   const { data: customerDetail } = useCustomer(customerId);
-  const { data: customerPrices } = useCustomerPrices(customerId);
+  const {
+    data: customerPrices,
+    isFetched: fetched,
+    isError: errored,
+    isFetching: fetching,
+    error: pricesError,
+    refetch: refetchPrices,
+  } = useCustomerPrices(customerId);
+  const pricesSettled = (fetched || errored) && !fetching;
   // Tenant margin config for the live cost/margin hint in the cart rows.
   const { data: marginConfig } = useMarginConfig();
   // Lines the operator explicitly acked as "sell anyway" below the margin
@@ -705,100 +712,81 @@ function ProductPickView({
   const [hydrating, setHydrating] = useState<boolean>(
     () => !!draftSeed && draftSeed.items.length > 0,
   );
-  // Bumped by the retry action below to re-run a hydration that failed for a
-  // reason other than "the product is gone" (flaky connection, 5xx).
+  // Bumped by the retry action below to re-run a hydration that failed for a non-404 reason.
   const [hydrateAttempt, setHydrateAttempt] = useState(0);
   // The alert offering that retry is dismissible (backdrop tap on web,
   // `cancelable` on native), and nothing else re-triggers the effect — so the
   // retry ALSO lives in the spinner view itself, never only in the dialog.
   const [hydrateFailed, setHydrateFailed] = useState(false);
-  // A draft this screen can't hold (a line sold by a unit, B638) is refused whole, untouched.
-  const [hydrateRefusal, setHydrateRefusal] = useState<string | null>(null);
   const retryHydrate = useCallback(() => {
     setHydrateFailed(false);
+    void refetchPrices(); // SA-165: hydrateAttempt alone never re-fires the prices query
     setHydrateAttempt((n) => n + 1);
-  }, []);
+  }, [refetchPrices]);
   const hydrationStartedRef = useRef(false);
+  const failHydration = useCallback(() => {
+    hydrationStartedRef.current = false;
+    setHydrateFailed(true);
+    chooseAction(
+      "Couldn't restore your order",
+      "Some items couldn't be loaded. Check your connection and try again.",
+      [
+        { label: "Go back", style: "cancel", onPress: onBack },
+        { label: "Retry", onPress: retryHydrate },
+      ],
+    );
+  }, [onBack, retryHydrate]);
   useEffect(() => {
     if (!hydrating || hydrationStartedRef.current) return;
+    const status = (pricesError as { response?: { status?: number } })?.response?.status;
+    const gate = decideResumeHydrationStart(!!customerDetail, fetched, errored, fetching, status);
+    if (gate !== "start") return gate === "failed" && !hydrateFailed ? failHydration() : undefined;
     hydrationStartedRef.current = true;
     const parkedLines: DraftCatalogLine[] = draftSeed?.items ?? [];
-    const refusal = unitLineRefusal(parkedLines);
-    if (refusal) return setHydrateRefusal(refusal); // `hydrating` stays true: no autosave, draft intact
     let cancelled = false;
     (async () => {
-      const results = await Promise.all(
-        parkedLines.map(async (li) => {
-          try {
-            const { data } = await apiClient.get<Product>(`/products/${li.productId}`);
-            // findOne returns an archived product too (unlike the catalog list,
-            // which filters isActive:true) — and it is KEPT: the ladder resolves
-            // archived products, so dropping one here deleted a line the
-            // operator had just scanned in and parked (REG-B195). The row flags
-            // itself as archived instead. Only a 404 drops a line; a timeout or
-            // 5xx aborts the whole hydration rather than truncating the cart.
-            return { li, ...decideResumeLine<Product>({ ok: true, product: data }) };
-          } catch (err) {
-            const status = (err as { response?: { status?: number } })?.response?.status;
-            return { li, ...decideResumeLine<Product>({ ok: false, status }) };
-          }
-        }),
-      );
+      // Archived products are KEPT (row flags itself instead, REG-B195); only a 404 drops a
+      // line. B747 (SA-085a) also fetches a unit-sold line's live ladder. See
+      // lib/resume-draft-hydration.ts for the fetch/drop/abort rules.
+      const results = await Promise.all(parkedLines.map((li) => hydrateParkedLine(li)));
       if (cancelled) return;
-      if (results.some((r) => r.failed)) {
-        // Abort the whole hydration: `hydrating` stays true, so the builder
-        // keeps its spinner and — money-critical — autosave stays disabled and
-        // the server draft is left exactly as parked.
-        hydrationStartedRef.current = false;
-        setHydrateFailed(true);
-        chooseAction(
-          "Couldn't restore your order",
-          "Some items couldn't be loaded. Check your connection and try again.",
-          [
-            { label: "Go back", style: "cancel", onPress: onBack },
-            { label: "Retry", onPress: retryHydrate },
-          ],
-        );
-        return;
-      }
+      // Money-critical: `hydrating` stays true, so autosave stays disabled until resolved.
+      if (results.some((r) => r.failed)) return failHydration();
       const nextItems: Record<string, LineState> = {};
       const nextScanned: Record<string, Product> = {};
       const droppedNames: string[] = [];
-      for (const { li, product } of results) {
+      for (const { li, product, units } of results) {
         if (!product) {
           droppedNames.push(li.productName || li.productId);
           continue;
         }
         nextScanned[li.productId] = product;
-        const liveUpb = Number(product.unitsPerBox ?? 0);
-        const parkedUpb = Number(li.unitsPerBox ?? 0);
-        let boxes = li.boxes;
-        let pieces = li.pieces;
-        let qty = li.qty;
-        // unitsPerBox changed on the live product: keep the parked PHYSICAL
-        // counts (boxes/pieces) and re-derive qty with the LIVE packaging —
-        // never keep the stale qty, which would silently over/under-charge.
-        // Every direction of the change has to go through the helper, not just
-        // case→case: a line that LOST its packaging must shed boxes/pieces
-        // (otherwise effectiveQty reads `boxes*0 + pieces`), and a plain-qty
-        // line whose product GAINED packaging must gain the split (otherwise
-        // computeLineSubtotal charges the new CASE price per piece).
-        if (liveUpb !== parkedUpb) {
-          const n = normalizeBoxesPieces({ boxes, pieces, qty, unitsPerBox: liveUpb });
-          boxes = n.boxes ?? undefined;
-          pieces = n.pieces ?? undefined;
-          qty = n.qty;
-        }
+        // Pack-changed re-split (W/N: never for a unit-labeled line) — order-draft-logic.ts.
+        const { boxes, pieces, qty } = resolveResumeLineBoxes(li, Number(product.unitsPerBox ?? 0));
         const line: LineState = { qty };
         if (boxes != null) line.boxes = boxes;
         if (pieces != null) line.pieces = pieces;
         if (li.note) line.note = li.note;
-        // Pin the parked price ONLY for a genuine operator override — every
-        // other line re-derives from the LIVE tier price (lineUnitFor below),
-        // matching submitOrder's own override rule; the server owns tier/promo
-        // pricing, so a stale tier/list price is never allowed to stick.
-        if (li.priceType === "MANUAL" && li.unitPrice != null) {
-          line.unitPrice = li.unitPrice;
+        // B747/B755: re-resolve unit/override pricing off LIVE data, never the parked price.
+        // R2: the per-product tier (effectiveTierFor), never the bare header customerTier.
+        const pricing = resolveResumeLinePricing(
+          li,
+          product,
+          units,
+          effectiveTierFor(li.productId),
+        );
+        if (pricing.fallbackWarning) {
+          // eslint-disable-next-line no-console
+          console.warn(pricing.fallbackWarning);
+        } else {
+          if (pricing.unitLabel !== undefined) line.unitLabel = pricing.unitLabel;
+          if (pricing.unitBasePrice !== undefined) line.unitBasePrice = pricing.unitBasePrice;
+          // W/N: restore the piece factor CartRow's marginFactorFor needs (else falls back to 1).
+          if (pricing.unitFactor !== undefined) line.unitFactor = pricing.unitFactor;
+          if (pricing.unitPrice !== undefined) {
+            line.unitPrice = pricing.unitPrice;
+            line.priceSource = "operator";
+          }
         }
         nextItems[li.productId] = line;
       }
@@ -814,9 +802,12 @@ function ProductPickView({
     })();
     return () => {
       cancelled = true;
+      // SA-136b: a dep-triggered re-run (customerDetail/customerPrices below) must be able to
+      // start fresh, or the top guard's hydrationStartedRef strands `hydrating` at true forever.
+      hydrationStartedRef.current = false;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [hydrating, hydrateAttempt]);
+  }, [hydrating, hydrateAttempt, customerDetail, customerPrices, pricesSettled]);
 
   /**
    * Debounced, server-filtered, 50-rows-at-a-time. This used to be a single
@@ -894,7 +885,13 @@ function ProductPickView({
         kind === "piece" && !isUnitLine(prev)
           ? incrementLinePiece(prev, isBoxed, upb)
           : stepLineQty(prev, 1, isBoxed, upb)!;
-      if (isNew && prefill != null) line.unitPrice = prefill;
+      if (isNew && prefill != null) {
+        line.unitPrice = prefill;
+        // B755: tag this as a HISTORY pre-fill, not an operator override — resuming this
+        // parked line under a DIFFERENT customer must re-price to that customer instead of
+        // silently keeping this one's remembered price.
+        line.priceSource = "history";
+      }
       return { ...m, [id]: line };
     });
     // Retain a snapshot for EVERY added line, not just scanned ones.
@@ -1039,10 +1036,12 @@ function ProductPickView({
       const prev = m[id];
       if (!prev) return m;
       if (value == null || value < 0) {
-        const { unitPrice: _drop, ...rest } = prev;
+        const { unitPrice: _drop, priceSource: _dropSource, ...rest } = prev;
         return { ...m, [id]: rest };
       }
-      return { ...m, [id]: { ...prev, unitPrice: value } };
+      // B755: the ONE place an operator types a price on a catalog line — tagged "operator"
+      // so a resume never mistakes it for a history pre-fill (addOne) and re-prices it away.
+      return { ...m, [id]: { ...prev, unitPrice: value, priceSource: "operator" } };
     });
 
   // ── Unlisted (ad-hoc, non-catalog) line helpers ──────────────────────────
@@ -1571,10 +1570,17 @@ function ProductPickView({
       const special = isSpecialFor(p);
       const tierPrice = tierPriceFor(p);
       const listPrice = toNumber(p.pricePerUnit);
+      // B747: a unit-sold line's comparison base is its OWN resolved price, never the pack's
+      // tier price — same fix as lineUnitFor/computeOrderTotal (lib/cart-order-total.ts). Before
+      // this, a parked unit line was written to the wire as a plain STANDARD/pack line (no
+      // unitLabel at all), so this screen's own drafts never actually carried the field the old
+      // whole-draft resume refusal keyed on — that refusal only ever fired for a draft parked by
+      // a different client.
+      const priceBase = unitPriceBase(line, tierPrice);
       // Mobile has no separate "permanent discount" concept — any explicit
       // override the operator set is tagged MANUAL (never DISCOUNTED), which
       // is exactly what the resume-hydration pin rule above checks for.
-      const hasOverride = !special && line.unitPrice != null && line.unitPrice !== tierPrice;
+      const hasOverride = !special && line.unitPrice != null && line.unitPrice !== priceBase;
       lines.push({
         productId,
         productName: displayName(p),
@@ -1582,12 +1588,14 @@ function ProductPickView({
         listPrice,
         ...(special ? { specialPrice: tierPrice } : {}),
         ...(hasOverride ? { discountedPrice: line.unitPrice } : {}),
-        unitPrice: special ? tierPrice : hasOverride ? line.unitPrice! : listPrice,
+        unitPrice: special ? priceBase : hasOverride ? line.unitPrice! : priceBase,
         priceType: special ? "SPECIAL" : hasOverride ? "MANUAL" : "STANDARD",
         qty,
         ...(p.unitsPerBox ? { unitsPerBox: Number(p.unitsPerBox) } : {}),
         ...(line.boxes != null ? { boxes: line.boxes } : {}),
         ...(line.pieces != null ? { pieces: line.pieces } : {}),
+        ...(line.unitLabel ? { unitLabel: line.unitLabel } : {}),
+        ...(hasOverride && line.priceSource ? { priceSource: line.priceSource } : {}),
         ...(p.averageCost != null
           ? { unitCost: toNumber(p.averageCost) }
           : p.standardCost != null
@@ -2167,26 +2175,21 @@ function ProductPickView({
           }
         />
         <View style={styles.hydrateState}>
-          {hydrateFailed || hydrateRefusal ? (
+          {hydrateFailed ? (
             <>
-              <Text style={styles.hydrateFailTitle}>
-                {hydrateRefusal ? "Open this draft on the web" : "Couldn't restore your order"}
-              </Text>
+              <Text style={styles.hydrateFailTitle}>Couldn't restore your order</Text>
               <Text style={styles.hydrateFailText}>
-                {hydrateRefusal ??
-                  "Some items couldn't be loaded. Check your connection and try again."}
+                Some items couldn't be loaded. Check your connection and try again.
               </Text>
-              {!hydrateRefusal && (
-                <Pressable
-                  style={styles.hydrateRetryBtn}
-                  onPress={retryHydrate}
-                  accessibilityRole="button"
-                  accessibilityLabel="Retry restoring your parked order"
-                >
-                  <Ionicons name="refresh" size={16} color={ios.brand} />
-                  <Text style={styles.hydrateRetryText}>Retry</Text>
-                </Pressable>
-              )}
+              <Pressable
+                style={styles.hydrateRetryBtn}
+                onPress={retryHydrate}
+                accessibilityRole="button"
+                accessibilityLabel="Retry restoring your parked order"
+              >
+                <Ionicons name="refresh" size={16} color={ios.brand} />
+                <Text style={styles.hydrateRetryText}>Retry</Text>
+              </Pressable>
             </>
           ) : (
             <>

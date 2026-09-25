@@ -729,6 +729,66 @@ export function postStatusUpdateIfDue({
   return { posted: true, state: nextState };
 }
 
+/**
+ * Decides which single open `work-status` issue ensureWorkStatusIssue()
+ * should use (and which other open ones, if any, to close as duplicates) —
+ * or whether the evidence gathered so far isn't enough to safely create a
+ * new one. Fixes #2043: a `gh issue list --label work-status` call that came
+ * back empty in one run, even though #1507 existed and carried the label,
+ * caused a duplicate to be created. This function never returns "create"
+ * from a single empty label read.
+ *
+ * persisted: the state file's remembered issue number re-verified via
+ *   `gh issue view` this run — { number, state, labels } — or null when
+ *   nothing is persisted yet (or the view call failed, e.g. deleted issue).
+ *   Used as-is only while still OPEN and still carrying the work-status
+ *   label; otherwise treated the same as no persisted issue.
+ * labelRows: the rows from the most recent `--label work-status --state
+ *   open` list call, each { number, title, body }.
+ * labelAttemptsCount: how many label-list attempts have been made so far
+ *   (1, or 2 after the one 5s retry on an empty first attempt).
+ * titleRows: rows from the `in:title` search fallback, each { number,
+ *   title, body } — or null when that search hasn't been run yet (it's
+ *   only run once both label attempts came back empty).
+ *
+ * Returns one of:
+ *   { action: "use", number, closeDuplicates: number[] }
+ *   { action: "create", number: null, closeDuplicates: [] }
+ *   { action: "insufficient-evidence", number: null, closeDuplicates: [] }
+ *     — caller must gather more (retry the label lookup, then the title
+ *     search) before deciding; never create on this.
+ */
+export function decideWorkStatusIssue({
+  persisted = null,
+  labelRows = [],
+  labelAttemptsCount = 0,
+  titleRows = null,
+}) {
+  if (
+    persisted &&
+    persisted.state === "OPEN" &&
+    labelNames(persisted.labels).includes(WORK_STATUS_LABEL)
+  ) {
+    return { action: "use", number: persisted.number, closeDuplicates: [] };
+  }
+
+  const pickLowest = (rows) => {
+    const sorted = [...rows].sort((a, b) => a.number - b.number);
+    return {
+      action: "use",
+      number: sorted[0].number,
+      closeDuplicates: sorted.slice(1).map((r) => r.number),
+    };
+  };
+
+  if (labelRows.length) return pickLowest(labelRows);
+  if (titleRows && titleRows.length) return pickLowest(titleRows);
+  if (labelAttemptsCount >= 2 && titleRows !== null && titleRows.length === 0) {
+    return { action: "create", number: null, closeDuplicates: [] };
+  }
+  return { action: "insufficient-evidence", number: null, closeDuplicates: [] };
+}
+
 // ════════════════════════════════════════════════════════════════════════
 // ── IO ─────────────────────────────────────────────────────────────────
 // Everything below here talks to `gh` or the filesystem/clock.
@@ -1048,8 +1108,22 @@ function releaseReconcileLockIfOwned(pid) {
   }
 }
 
-function ensureWorkStatusIssue(dryRun) {
-  const existing =
+/** Synchronous sleep with no npm dependency — Atomics.wait on the main
+ * thread works fine in Node (unlike browsers). Used only for the one
+ * label-lookup retry in ensureWorkStatusIssue(). */
+function sleepSync(ms) {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+
+function fetchIssueByNumber(number) {
+  return ghJson(
+    ["issue", "view", String(number), "--repo", REPO, "--json", "number,title,body,state,labels"],
+    { allowFail: true },
+  );
+}
+
+function fetchWorkStatusByLabel() {
+  return (
     ghJson([
       "issue",
       "list",
@@ -1063,13 +1137,99 @@ function ensureWorkStatusIssue(dryRun) {
       "number,title,body",
       "--limit",
       "10",
-    ]) ?? [];
-  if (existing.length > 1) {
-    console.error(
-      `work reconcile: warn — ${existing.length} open issues carry label ${WORK_STATUS_LABEL}; using the lowest, never creating another.`,
-    );
+    ]) ?? []
+  );
+}
+
+function fetchWorkStatusByTitle() {
+  return (
+    ghJson([
+      "issue",
+      "list",
+      "--repo",
+      REPO,
+      "--search",
+      `"${WORK_STATUS_TITLE}" in:title`,
+      "--state",
+      "open",
+      "--json",
+      "number,title,body",
+      "--limit",
+      "10",
+    ]) ?? []
+  );
+}
+
+function closeDuplicateWorkStatusIssues(numbers) {
+  for (const n of numbers) {
+    gh([
+      "issue",
+      "comment",
+      String(n),
+      "--repo",
+      REPO,
+      "--body",
+      `Duplicate of the work board status issue — closing. The live digest stays on the other open \`${WORK_STATUS_LABEL}\` issue.`,
+    ]);
+    gh(["issue", "close", String(n), "--repo", REPO, "--reason", "not planned"]);
   }
-  if (existing.length) return existing.sort((a, b) => a.number - b.number)[0];
+}
+
+/**
+ * Finds (or creates) the single open work-status issue, preferring the
+ * number persisted in state from a prior run — see decideWorkStatusIssue()
+ * for the pure decision this wraps. Mutates `state.workStatusIssueNumber`
+ * on every non-dry-run outcome so the next run starts from the persisted
+ * fast path instead of a label lookup.
+ */
+function ensureWorkStatusIssue(dryRun, state) {
+  const persistedNumber = state.workStatusIssueNumber;
+  const persisted = persistedNumber ? fetchIssueByNumber(persistedNumber) : null;
+
+  let labelRows = [];
+  let labelAttemptsCount = 0;
+  let titleRows = null;
+  let decision = decideWorkStatusIssue({ persisted });
+
+  if (decision.action === "insufficient-evidence") {
+    labelRows = fetchWorkStatusByLabel();
+    labelAttemptsCount = 1;
+    decision = decideWorkStatusIssue({ persisted, labelRows, labelAttemptsCount });
+  }
+  if (decision.action === "insufficient-evidence") {
+    // The label-search index can lag a beat behind a just-created issue —
+    // exactly how #2043 got created as a duplicate of #1507. Retry once
+    // before concluding the label really has nothing open.
+    sleepSync(5000);
+    labelRows = fetchWorkStatusByLabel();
+    labelAttemptsCount = 2;
+    decision = decideWorkStatusIssue({ persisted, labelRows, labelAttemptsCount });
+  }
+  if (decision.action === "insufficient-evidence") {
+    titleRows = fetchWorkStatusByTitle();
+    decision = decideWorkStatusIssue({ persisted, labelRows, labelAttemptsCount, titleRows });
+  }
+
+  if (decision.action === "use") {
+    if (decision.closeDuplicates.length) {
+      console.error(
+        `work reconcile: warn — closing ${decision.closeDuplicates.length} duplicate ${WORK_STATUS_LABEL} issue(s) [${decision.closeDuplicates.join(", ")}], keeping #${decision.number}.`,
+      );
+      if (!dryRun) closeDuplicateWorkStatusIssues(decision.closeDuplicates);
+    }
+    const known =
+      (persisted && persisted.number === decision.number ? persisted : null) ??
+      [...labelRows, ...(titleRows ?? [])].find((r) => r.number === decision.number) ??
+      fetchIssueByNumber(decision.number);
+    if (!dryRun) state.workStatusIssueNumber = decision.number;
+    return {
+      number: known.number,
+      title: known.title ?? WORK_STATUS_TITLE,
+      body: known.body ?? "",
+    };
+  }
+
+  // decision.action === "create"
   if (dryRun) return { number: null, title: WORK_STATUS_TITLE, body: "" };
   const url = gh([
     "issue",
@@ -1084,6 +1244,7 @@ function ensureWorkStatusIssue(dryRun) {
     "Updated (pending first run) by the reconciler\n",
   ]);
   const number = Number(url.trim().split("/").pop());
+  state.workStatusIssueNumber = number;
   return { number, title: WORK_STATUS_TITLE, body: "" };
 }
 
@@ -1487,9 +1648,9 @@ async function main() {
     };
     const digestBody = renderDigestBody(digestData);
 
-    const workStatusIssue = ensureWorkStatusIssue(args.dryRun);
-    const bodyChanged = digestBodyChanged(workStatusIssue.body, digestBody);
     let state = loadState();
+    const workStatusIssue = ensureWorkStatusIssue(args.dryRun, state);
+    const bodyChanged = digestBodyChanged(workStatusIssue.body, digestBody);
     const hoursSinceDigest = state.lastDigestUpdatedAt
       ? (now.getTime() - new Date(state.lastDigestUpdatedAt).getTime()) / 3_600_000
       : Infinity;

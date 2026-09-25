@@ -240,6 +240,7 @@ function findLatestSessionFile(transcriptDir) {
 const NAME_TO_PREFIX = [
   { test: (name) => /\bFable\b/.test(name), prefix: "claude-fable-5" },
   { test: (name) => name === "Claude Opus 5", prefix: "claude-opus-5" },
+  { test: (name) => name === "Claude Opus 5.5", prefix: "claude-opus-5-5" },
   { test: (name) => name === "Claude Sonnet 5", prefix: "claude-sonnet-5" },
   { test: (name) => name === "Claude Sonnet 4.6", prefix: "claude-sonnet-4-6" },
   { test: (name) => name === "Claude Haiku 4.5", prefix: "claude-haiku-4-5" },
