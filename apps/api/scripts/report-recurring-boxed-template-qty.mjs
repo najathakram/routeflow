@@ -3,13 +3,16 @@
  *
  * Templates whose qty looks like PIECES on a boxed product; each cycle billed qty x per-box price.
  *
- * Lists every ACTIVE recurring template line for a boxed product (unitsPerBox > 1, no selling-unit
- * label), per tenant id (the TEMPLATE's tenant), with:
+ * Lists every recurring template line for a boxed product (unitsPerBox > 1, no selling-unit
+ * label), ACTIVE and PAUSED alike (a paused template reactivated after the fix lands skips this gate
+ * and would record qty x pack, so it is scanned too and marked PAUSED), per tenant id (the TEMPLATE's
+ * tenant), with:
  *   (i)  possible PAST over-billing: a BOX-priced line whose qty > unitsPerBox was billed qty x the
  *        per-box price every cycle; `possibleOverbillPerCycle` is that figure minus the pieces-intent one;
  *   (ii) the units RECORDED as sold per cycle today (`currentUnitsRecorded`, qty) vs after the fix
- *        (`postFixUnitsRecorded`, qty x unitsPerBox). Invoice creation moves no stock, but the recorded
- *        units feed usage, COGS / invoiced-sales analytics and regulated (tobacco) reporting.
+ *        (`postFixUnitsRecorded`, qty x unitsPerBox). Invoice creation moves no stock. Only
+ *        InvoiceItem.qty (COGS / usage analytics) and the regulated-ledger qty column move; filings do
+ *        not change for post-B661 invoices.
  * A line is FLAGGED when its qty exceeds unitsPerBox, is not an integer, or its price looks PER PIECE
  * (about the product's box price / unitsPerBox) or unclear. A flagged template is corrected to box terms
  * BEFORE the fix's first cycle runs on it. The fix never changes the billed amount (pinned in
@@ -42,7 +45,7 @@ async function main() {
   const items = await prisma.recurringInvoiceItem.findMany({
     where: {
       productId: { not: null },
-      recurringInvoice: { isActive: true, ...(tenantId ? { tenantId } : {}) },
+      recurringInvoice: tenantId ? { tenantId } : {},
     },
     select: {
       id: true,
@@ -52,7 +55,7 @@ async function main() {
       unitLabel: true,
       tenantId: true,
       recurringInvoiceId: true,
-      recurringInvoice: { select: { tenantId: true } },
+      recurringInvoice: { select: { tenantId: true, isActive: true } },
       product: { select: { unitsPerBox: true, pricePerUnit: true } },
     },
   });
@@ -71,6 +74,7 @@ async function main() {
         // The TEMPLATE's tenant (an item's own tenantId is nullable on legacy rows).
         tenantId: it.recurringInvoice?.tenantId ?? it.tenantId,
         templateId: it.recurringInvoiceId,
+        templateActive: it.recurringInvoice?.isActive !== false,
         itemId: it.id,
         ...c,
       });
@@ -85,11 +89,11 @@ async function main() {
   );
   for (const t of summary) {
     console.log(
-      `\ntenant ${t.tenantId}: ${t.lines} line(s), ${t.flagged} flagged; ledger units delta per cycle +${t.unitsRecordedDeltaPerCycle} (invoice money unchanged); possible over-bill per cycle $${t.possibleOverbillPerCycle}`,
+      `\ntenant ${t.tenantId}: ${t.lines} line(s), ${t.flagged} flagged; ledger units delta per cycle +${t.unitsRecordedDeltaPerCycle} (invoice money and filings unchanged); possible over-bill per cycle $${t.possibleOverbillPerCycle}`,
     );
     for (const r of t.rows) {
       console.log(
-        `  ${r.flagged ? "FLAG" : "ok  "} template ${r.templateId} item ${r.itemId}: qty ${r.qty} of a ${r.unitsPerBox}-pack @ $${r.unitPrice} (${r.priceBasis}-priced)` +
+        `  ${r.flagged ? "FLAG" : "ok  "}${r.templateActive ? "" : " PAUSED"} template ${r.templateId} item ${r.itemId}: qty ${r.qty} of a ${r.unitsPerBox}-pack @ $${r.unitPrice} (${r.priceBasis}-priced)` +
           ` | billed/cycle $${r.billedPerCycle} (pieces-intent $${r.billedIfPiecesIntent})` +
           ` | ledger units/cycle ${r.currentUnitsRecorded} -> ${r.postFixUnitsRecorded}` +
           (r.reasons.length ? ` [${r.reasons.join(", ")}]` : ""),

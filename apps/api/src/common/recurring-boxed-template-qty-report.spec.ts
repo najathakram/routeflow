@@ -164,8 +164,15 @@ describe("B646 pre-landing report: classifyTemplateLine", () => {
 
   it("the report groups by the TEMPLATE's tenant (an item's own tenantId is nullable)", () => {
     const src = fs.readFileSync(REPORT, "utf8");
-    expect(src).toMatch(/recurringInvoice: \{ select: \{ tenantId: true \} \}/);
+    expect(src).toMatch(/recurringInvoice: \{ select: \{ tenantId: true, isActive: true \} \}/);
     expect(src).toMatch(/tenantId: it\.recurringInvoice\?\.tenantId/);
+  });
+
+  it("the report scans PAUSED templates too (a reactivated one skips the gate) and marks them", () => {
+    const src = fs.readFileSync(REPORT, "utf8");
+    expect(src).not.toMatch(/recurringInvoice: \{ isActive: true/);
+    expect(src).toMatch(/templateActive: it\.recurringInvoice\?\.isActive !== false/);
+    expect(src).toMatch(/PAUSED/);
   });
 
   it("the report is READ-ONLY and prints ids, never a name, slug, SKU or description", () => {
