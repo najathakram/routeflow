@@ -1,3 +1,6 @@
+import * as fs from "fs";
+import * as path from "path";
+import * as ts from "typescript";
 import { calcNextRunAt, resumeSchedulesOnRestore } from "./recurring-schedule";
 
 /**
@@ -73,5 +76,40 @@ describe("resumeSchedulesOnRestore", () => {
     expect(resumed.getTime()).toBeGreaterThan(missed.getTime());
     // the next occurrence is exactly the schedule's own next date, one cycle, not a backlog
     expect(resumed).toEqual(calcNextRunAt("WEEKLY" as never, 1, 1, now));
+  });
+});
+
+describe("restoreCustomer resumes the schedules INSIDE its own transaction (structure)", () => {
+  it("calls resumeSchedulesOnRestore(tx, …) in the tenantTransaction callback, after the customer is un-deleted", () => {
+    const file = path.join(__dirname, "../customers/customers.service.ts");
+    const src = ts.createSourceFile(
+      file,
+      fs.readFileSync(file, "utf8"),
+      ts.ScriptTarget.Latest,
+      true,
+    );
+    let method: ts.MethodDeclaration | undefined;
+    const find = (n: ts.Node) => {
+      if (ts.isMethodDeclaration(n) && n.name.getText(src) === "restoreCustomer") method = n;
+      ts.forEachChild(n, find);
+    };
+    find(src);
+    const at = (suffix: string) => {
+      const pos: number[] = [];
+      const walk = (n: ts.Node) => {
+        if (ts.isCallExpression(n) && n.expression.getText(src).endsWith(suffix))
+          pos.push(n.getStart(src));
+        ts.forEachChild(n, walk);
+      };
+      walk(method!.body!);
+      return pos;
+    };
+    const tx = at("tenantTransaction");
+    const resume = at("resumeSchedulesOnRestore");
+    const undelete = at("customer.update");
+    expect(tx).toHaveLength(1);
+    expect(resume).toHaveLength(1);
+    expect(resume[0]).toBeGreaterThan(tx[0]); // inside the tx callback (it opens the callback)
+    expect(resume[0]).toBeGreaterThan(undelete[0]); // after the customer is restored
   });
 });
