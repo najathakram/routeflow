@@ -10,10 +10,11 @@
  *      each customer ends with exactly ONE Return and ONE credit note, and the credit-note numbers
  *      are exactly the numbers reserved BEFORE the retry loop (a retry reuses, never re-reserves).
  *   4. the lock (R2c): one create() and one STANDALONE capture for one customer over ONE sold line, made
- *      to overlap by a barrier (the first holder of the customer advisory lock is held inside it until
- *      the second caller is waiting on that lock): the pieces matched to the sold invoice line never
- *      exceed what was sold, and together match all of it. The order lines use another product, so the
- *      product row lock cannot serialize them first.
+ *      to overlap by a barrier held just AFTER the in-transaction pricing (the first caller to price
+ *      waits, with a timeout, until a second has priced): the pieces matched to the sold invoice line
+ *      never exceed what was sold, and together match all of it. The order lines use another product,
+ *      so the product row lock cannot serialize them first. Reverting the customer advisory lock must
+ *      turn this red (F2 runs that probe).
  *   5. DRIVER_CAP through create(): a driver's over-cap return on a new order is HELD: the order
  *      commits, the Return is RECEIVED/DRIVER_CAP, no credit note, no intent, the reserved number is burned (SA-261).
  *
@@ -367,25 +368,34 @@ describeDb("#2094 — a return inside POST /orders through create(), real Postgr
       data: { customerId: f.customerId, tenantId, status: "PENDING", total: "100.00" },
     });
     orderIds.push(carrier.id);
-    // Barrier: the first caller to take the customer advisory lock is held INSIDE it until the second
-    // caller has arrived at the same lock (and is therefore waiting on it). Without the lock the two
-    // would price against the same snapshot and over-match the sold line.
-    const realLock = inlineSvc.lockCustomerInTx.bind(inlineSvc);
-    let arrived = 0;
+    // Barrier, held where the race is: just AFTER the in-transaction pricing (the read of what was
+    // already returned and matched). The first caller to finish pricing inside its tx waits there
+    // (with a timeout) until a second caller has priced too. With the customer advisory lock the second
+    // cannot price until the first has committed, so the first simply waits out the timeout and the
+    // second then sees its matches; without the lock both price the same snapshot and over-match.
+    const quote = inlineSvc.quoteService;
+    const realPrice = quote.priceInlineReturn.bind(quote);
+    const realTx = prisma.tenantTransaction.bind(prisma);
+    const txs = new Set<any>();
+    const txSpy = jest.spyOn(prisma, "tenantTransaction").mockImplementation(((fn: any, o: any) =>
+      (realTx as any)((tx: any) => {
+        txs.add(tx);
+        return fn(tx);
+      }, o)) as any);
+    let pricedInTx = 0;
     let release: () => void = () => undefined;
     const gate = new Promise<void>((r) => {
       release = r;
-      setTimeout(r, 15_000); // never hang the run if the second caller cannot arrive
+      setTimeout(r, 4_000); // the first caller's hold when the second is (correctly) blocked
     });
-    inlineSvc.lockCustomerInTx = async (tx: any, customerId: string) => {
-      arrived += 1;
-      if (arrived === 1) {
-        await realLock(tx, customerId);
-        await gate;
-      } else {
-        release();
-        await realLock(tx, customerId);
+    quote.priceInlineReturn = async (...a: any[]) => {
+      const out = await realPrice(...a);
+      if (txs.has(a[2])) {
+        pricedInTx += 1;
+        if (pricedInTx === 1) await gate;
+        else release();
       }
+      return out;
     };
     let o1: any;
     try {
@@ -407,9 +417,10 @@ describeDb("#2094 — a return inside POST /orders through create(), real Postgr
         ),
       ]);
     } finally {
-      inlineSvc.lockCustomerInTx = realLock;
+      quote.priceInlineReturn = realPrice;
+      txSpy.mockRestore();
     }
-    expect(arrived).toBe(2); // both callers went through the one lock
+    expect(pricedInTx).toBe(2); // both callers priced inside their transactions
     orderIds.push(o1.id);
     const matched = await raw.returnItem.aggregate({
       where: { sourceInvoiceItemId: line.id, return: { customerId: f.customerId, kind: "INLINE" } },
