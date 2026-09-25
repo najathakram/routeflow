@@ -214,6 +214,14 @@ export class AddonService {
           // D1 (SA-277a): only a Stripe-billed enable carries revenue; a free grant is priced EXPLICITLY at 0 and books nothing.
           const priceSnapshot = stripePriceId && skuDef ? Number(skuDef.monthlyPrice) : 0;
 
+          // FIX-865B finding #1: only write `sku` when it actually resolved to a catalog SKU
+          // (bridged legacy key, or an unbridged key whose SKU we looked up above). An
+          // unbridged key with no catalog entry (e.g. "developer_mode") must keep sku null —
+          // writing the raw addonKey there makes `addonSkuCode()` treat it as a real SKU,
+          // which leaks it into EntitlementsService.compute()'s `activeCodes` / `ent.addons`
+          // and the catalog-refetch warning, none of which the spec asked to change.
+          const skuToStore = isBridged || skuDef ? sku : null;
+
           // Add Stripe subscription item if configured. A price means this add-on is
           // billed — the entitlement and the Stripe item must move together, so any
           // failure here refuses the whole call instead of silently granting an
@@ -262,7 +270,7 @@ export class AddonService {
               create: {
                 tenantId,
                 addonKey,
-                sku,
+                sku: skuToStore,
                 stripePriceId: stripePriceId ?? null,
                 stripeItemId,
                 active: true,
@@ -270,7 +278,7 @@ export class AddonService {
               },
               update: {
                 active: true,
-                sku,
+                sku: skuToStore,
                 stripePriceId: stripePriceId ?? undefined,
                 stripeItemId: stripeItemId ?? undefined,
                 priceSnapshot,
@@ -363,18 +371,34 @@ export class AddonService {
       }
     }
 
+    // FIX-865B finding #0: `addon` above was read outside the transaction and before any
+    // lock, so two concurrent disables can both observe active=true and both emit a
+    // −snapshot×qty ledger delta (the Tenant FOR UPDATE lock inside `emitAddonDelta` only
+    // serialises the two transactions — it never re-checks `active`). Lock the row FIRST,
+    // then re-read it INSIDE the transaction and gate the update + emit on THAT read: the
+    // first transaction to acquire the lock sees active=true and proceeds; a concurrent
+    // second transaction blocks on the row lock until the first commits, then sees
+    // active=false already and no-ops instead of emitting a second delta.
     const updated = await this.prisma.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT id FROM "TenantAddon" WHERE id = ${addon.id} FOR UPDATE`;
+      const current = await tx.tenantAddon.findUnique({
+        where: { tenantId_addonKey: { tenantId, addonKey } },
+      });
+      if (!current?.active) {
+        // Already disabled by a concurrent call that won the race — nothing left to do.
+        return current ?? addon;
+      }
       const row = await tx.tenantAddon.update({
         where: { tenantId_addonKey: { tenantId, addonKey } },
         data: { active: false, stripeItemId: null },
       });
       // Only emit if the add-on was active and has a non-zero price
-      if (addon.active && addon.priceSnapshot != null && Number(addon.priceSnapshot) > 0) {
+      if (current.priceSnapshot != null && Number(current.priceSnapshot) > 0) {
         await emitAddonDelta(tx, this.events, {
           tenantId,
           sku: LEGACY_ADDON_KEY_TO_SKU[addonKey] ?? addonKey,
-          priceSnapshot: addon.priceSnapshot,
-          deltaQty: -addon.quantity,
+          priceSnapshot: current.priceSnapshot,
+          deltaQty: -current.quantity,
         });
       }
       return row;
