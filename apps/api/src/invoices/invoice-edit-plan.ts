@@ -187,6 +187,9 @@ function recoverChangedPack(
       `Line "${lineLabel(item)}": the pack ${explicit} disagrees with this line's own pack ${recovered}`,
     );
   }
+  // SA-219: the operator's explicit pack is stored and audited only when the row has NO snapshot of its own to
+  // recover (or it is an attested re-pack). An explicit pack equal to the recovered snapshot is ignored.
+  const attested = explicit != null && (ownPack == null || repack);
   const pack = recovered ?? explicit;
   const wasBoxed = !productChanged && row.boxes != null;
   if (pack == null) {
@@ -205,13 +208,13 @@ function recoverChangedPack(
         `Line "${lineLabel(item)}": qty ${item.qty} is not ${boxes ?? 0} boxes x ${explicit} + ${pieces ?? 0} pieces`,
       );
     }
-    return { pack, boxes, pieces, attested: explicit != null };
+    return { pack, boxes, pieces, attested };
   }
   // A box-unaware line keeps its snapshot but stays loose (money = unitPrice x qty).
-  if (!wasBoxed) return { pack, boxes: null, pieces: null, attested: explicit != null };
+  if (!wasBoxed) return { pack, boxes: null, pieces: null, attested };
   // A stored box line edited without a split: re-split its qty at its OWN pack.
   const split = normalizeBoxesPieces({ qty: item.qty, unitsPerBox: pack });
-  return { pack, boxes: split.boxes, pieces: split.pieces, attested: explicit != null };
+  return { pack, boxes: split.boxes, pieces: split.pieces, attested };
 }
 
 /** A stored box line whose pack cannot be recovered from its own snapshot or split, and which no payload line matched. */

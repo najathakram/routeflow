@@ -395,6 +395,56 @@ describe("InvoicesService — update() line preservation", () => {
         });
       });
 
+      describe("3 / SA-219: the loose (box-unaware) branch follows the same pack rule as the split branch", () => {
+        const loose = (over: any = {}) =>
+          line({ boxes: null, pieces: null, unitsPerBox: 12, qty: 24, subtotal: 240, ...over });
+        const looseEdit = (over: any = {}) =>
+          payload({ id: "a", qty: 30, boxes: undefined, pieces: undefined, ...over });
+
+        it("explicit pack ABSENT: the row's own snapshot is kept, nothing to attest", async () => {
+          arrange([loose()]);
+          await service.update("inv-box", { items: [looseEdit()] } as any);
+          expect(prisma.invoiceItem.update).toHaveBeenCalledWith({
+            where: { id: "a" },
+            data: expect.objectContaining({ unitsPerBox: 12 }),
+          });
+          expect(prisma.auditLog.create).not.toHaveBeenCalled();
+        });
+
+        it("explicit pack EQUAL to the recovered snapshot is ignored: unchanged, no audit row", async () => {
+          arrange([loose()]);
+          await service.update("inv-box", { items: [looseEdit({ unitsPerBox: 12 })] } as any);
+          expect(prisma.invoiceItem.update).toHaveBeenCalledWith({
+            where: { id: "a" },
+            data: expect.objectContaining({ unitsPerBox: 12 }),
+          });
+          expect(prisma.auditLog.create).not.toHaveBeenCalled();
+        });
+
+        it("explicit pack DIFFERENT from a recovered snapshot is a 400 disagreement, nothing written", async () => {
+          arrange([loose()]);
+          await expect(
+            service.update("inv-box", { items: [looseEdit({ unitsPerBox: 6 })] } as any),
+          ).rejects.toThrow("the pack 6 disagrees with this line's own pack 12");
+          expect(prisma.invoiceItem.update).not.toHaveBeenCalled();
+        });
+
+        it("explicit pack with NO recovered snapshot is stored and audited as an attestation", async () => {
+          arrange([loose({ unitsPerBox: null })]);
+          await service.update("inv-box", { items: [looseEdit({ unitsPerBox: 12 })] } as any);
+          expect(prisma.invoiceItem.update).toHaveBeenCalledWith({
+            where: { id: "a" },
+            data: expect.objectContaining({ unitsPerBox: 12 }),
+          });
+          expect(prisma.auditLog.create).toHaveBeenCalledWith({
+            data: expect.objectContaining({
+              action: "INVOICE_LINE_PACK_ATTESTED",
+              meta: { attested: [{ rowId: "a", unitsPerBox: 12 }] },
+            }),
+          });
+        });
+      });
+
       it("5: an orderItemId-only relink of an untouched line counts as a change: the order and the ledger resync", async () => {
         arrange([line({ orderItemId: "oi-old" })]);
         linked();
