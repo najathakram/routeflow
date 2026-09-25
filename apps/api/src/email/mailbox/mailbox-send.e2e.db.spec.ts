@@ -23,6 +23,7 @@ import { randomUUID } from "crypto";
 import { ConfigService } from "@nestjs/config";
 import { MailboxSendService } from "./mailbox-send.service";
 import { EncryptionService } from "../../common/encryption.service";
+import { AuditService } from "../../audit/audit.service";
 import { PrismaService } from "../../prisma/prisma.service";
 import { TenantContextService } from "../../tenant/tenant-context.service";
 import { describeDb, requireLocalDatabaseUrl } from "../../common/testing/db-spec";
@@ -68,7 +69,7 @@ describeDb("D-14: tenant-own-mailbox send — real Postgres round trip", () => {
     prisma = new PrismaService(tenantCtx);
     await prisma.$connect();
     encryption = new EncryptionService(config);
-    service = new MailboxSendService(prisma, encryption, config);
+    service = new MailboxSendService(prisma, encryption, config, new AuditService(prisma));
   });
 
   afterAll(async () => {
@@ -82,6 +83,9 @@ describeDb("D-14: tenant-own-mailbox send — real Postgres round trip", () => {
   });
 
   async function cleanupTenant(tenantId: string): Promise<void> {
+    // F-10a: a state change on one of these tenants writes an audit row — none of the cases
+    // below should, but a regression that did must not leave rows behind.
+    await prisma.auditLog.deleteMany({ where: { tenantId } });
     await prisma.mailboxConnection.deleteMany({ where: { tenantId } });
     await prisma.tenant.delete({ where: { id: tenantId } });
   }

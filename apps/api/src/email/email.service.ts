@@ -5,6 +5,7 @@ import * as nodemailer from "nodemailer";
 import { PrismaService } from "../prisma/prisma.service";
 import { EncryptionService } from "../common/encryption.service";
 import { MailboxSendService } from "./mailbox/mailbox-send.service";
+import { mailboxRevokedCopy } from "./mailbox/mailbox-alert.copy";
 import { escapeHtml, safeLinkHref } from "../common/html-escape";
 // F03/R9: ONE original-price display decision shared with the PDF, so the two
 // customer-facing documents of the same send can never disagree (a pure helper —
@@ -1980,6 +1981,48 @@ export class EmailService {
       subject: "Your RouteFlow role was changed",
       html,
       text,
+    });
+  }
+
+  // ─── F-10a: connected mailbox revoked (platform-sent, tenant-admin-facing) ─────
+
+  /**
+   * Tells a tenant admin that RouteFlow can no longer send from their connected Gmail/Outlook
+   * mailbox (`MailboxAlertService`, once per revocation). ALWAYS the platform sender class: the
+   * mailbox this is about is exactly the one that can't send, and the notice is RouteFlow talking
+   * to its own customer, not tenant-branded mail — so it never reaches the connected mailbox or
+   * the tenant's SMTP, whatever tenant context is active. The words come from
+   * `mailboxRevokedCopy`, the same source as the in-app notification. Never throws (`send()` is
+   * honest-by-result).
+   */
+  async sendMailboxRevokedNotice(params: {
+    to: string;
+    username: string;
+    accountEmail: string;
+    provider: "GOOGLE" | "MICROSOFT";
+    /** Whether a fallback sender exists (`isEmailConfigured()`), so the copy never promises one
+     *  that doesn't. */
+    hasFallback: boolean;
+  }) {
+    const copy = mailboxRevokedCopy(params);
+    // The same destination MailboxController sends the admin back to after (re)connecting.
+    const settingsUrl = `${(this.config.get<string>("WEB_URL") ?? "http://localhost:3001").replace(/\/$/, "")}/settings?tab=email`;
+    const body = `<p style="margin:0 0 16px;font-size:15px;color:#374151;">Hi ${escapeHtml(params.username)},</p>
+    ${copy.paragraphs.map((line) => `<p style="margin:0 0 16px;font-size:15px;color:#374151;">${escapeHtml(line)}</p>`).join("")}
+    ${renderBrandButton(copy.cta, settingsUrl)}`;
+    const { html, text } = renderBrandedEmail({
+      headerHtml: brandHeaderHtml(),
+      heading: copy.heading,
+      bodyHtml: body,
+      bodyText: [`Hi ${params.username},`, ...copy.paragraphs, `${copy.cta}: ${settingsUrl}`],
+      footerNote: "RouteFlow Platform — automated notification.",
+    });
+    return this.send({
+      to: params.to,
+      subject: copy.subject,
+      html,
+      text,
+      senderClass: "platform",
     });
   }
 
