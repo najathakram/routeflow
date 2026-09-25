@@ -156,7 +156,10 @@ test.describe("Orders list — mobile card layout + dock clearance (B823)", () =
     await page.waitForTimeout(100);
 
     const lastCard = cards.last();
-    const pager = page.getByText(/Showing|No orders (found|match)/).first();
+    // #2057 review: the pager now also renders (hidden) inside the desktop table's own
+    // footer, so a bare text match would ambiguously grab whichever comes first in DOM
+    // order regardless of visibility — data-testid pins it to the mobile-only instance.
+    const pager = page.getByTestId("pager-mobile");
     await expect(lastCard).toBeVisible();
     await expect(pager).toBeVisible();
 
@@ -200,5 +203,49 @@ test.describe("Orders list — mobile card layout + dock clearance (B823)", () =
     // tracks the `selected` Set — same state the bulk-action bar's count reads).
     await expect(firstCard.locator('input[type="checkbox"]')).toBeChecked();
     await expect(page.getByText("1 selected")).toBeVisible();
+  });
+
+  // #2057 review: the desktop table's own Delivery Date column was missing from the
+  // card entirely.
+  test("390px: the card shows a Delivery row (the desktop table's own column)", async ({
+    page,
+  }) => {
+    await page.goto("/orders");
+    const firstCard = page.locator("ul.space-y-3.md\\:hidden > li").first();
+    await expect(firstCard).toBeVisible({ timeout: 15_000 });
+    await expect(firstCard.getByText(/^Delivery:/)).toBeVisible();
+  });
+
+  // #2057 review: mobile had no way to sort at all — the desktop sort is column-header
+  // clicks, invisible below md. Pin that the new sort control actually reorders the list,
+  // not just that it renders.
+  test("390px: the sort control changes the card order", async ({ page }) => {
+    await page.goto("/orders");
+    const cards = page.locator("ul.space-y-3.md\\:hidden > li");
+    await expect(cards.first()).toBeVisible({ timeout: 15_000 });
+
+    const before = await cards.evaluateAll((els) =>
+      els.map((el) => el.querySelector("span.font-mono.text-xs.font-semibold")?.textContent),
+    );
+
+    const sortSelect = page.getByRole("combobox", { name: "Sort orders by" });
+    await expect(sortSelect).toBeVisible();
+    // Default is "Created" desc — switch to "Order #", which starts ascending (the sort
+    // control resets direction on a column change, matching the desktop header-click UX).
+    await sortSelect.selectOption({ label: "Order #" });
+
+    await expect
+      .poll(async () =>
+        cards.evaluateAll((els) =>
+          els.map((el) => el.querySelector("span.font-mono.text-xs.font-semibold")?.textContent),
+        ),
+      )
+      .not.toEqual(before);
+
+    const after = await cards.evaluateAll((els) =>
+      els.map((el) => el.querySelector("span.font-mono.text-xs.font-semibold")?.textContent),
+    );
+    const sorted = [...after].sort((a, b) => (a ?? "").localeCompare(b ?? ""));
+    expect(after).toEqual(sorted);
   });
 });

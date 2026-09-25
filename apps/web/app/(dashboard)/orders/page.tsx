@@ -115,6 +115,119 @@ function OrderDateCell({ order }: { order: Order }) {
   );
 }
 
+// ─── Pager (shared by the desktop table-card footer and the mobile-only card) ─────
+
+interface PagerMeta {
+  total: number;
+  totalPages?: number;
+}
+
+/** "Showing X to Y of N" / an empty-result message. */
+function PagerInfo({
+  meta,
+  page,
+  limit,
+  customerSearch,
+}: {
+  meta: PagerMeta;
+  page: number;
+  limit: number;
+  customerSearch: string;
+}) {
+  return (
+    <span>
+      {meta.total > 0 ? (
+        <>
+          Showing{" "}
+          <span className="font-mono tabular-nums text-navy">
+            {(page - 1) * limit + 1} to {Math.min(page * limit, meta.total)}
+          </span>{" "}
+          of <span className="font-mono tabular-nums text-navy">{meta.total}</span>
+          {customerSearch ? " (filtered)" : ""}
+        </>
+      ) : customerSearch ? (
+        "No orders match your search"
+      ) : (
+        "No orders found"
+      )}
+    </span>
+  );
+}
+
+/** Per-page select + prev/page-number/next controls. */
+function PagerControls({
+  meta,
+  page,
+  limit,
+  setLimit,
+  setPage,
+}: {
+  meta: PagerMeta;
+  page: number;
+  limit: number;
+  setLimit: (n: number) => void;
+  setPage: (next: number | ((prev: number) => number)) => void;
+}) {
+  return (
+    <>
+      <div className="flex items-center gap-1.5">
+        <span>Per page</span>
+        <select
+          value={limit}
+          onChange={(e) => {
+            setLimit(Number(e.target.value));
+            setPage(1);
+          }}
+          className="h-7 rounded-ctl border border-surface-border bg-white px-2 font-mono text-xs text-navy focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
+        >
+          {[10, 20, 50, 100].map((n) => (
+            <option key={n} value={n}>
+              {n}
+            </option>
+          ))}
+        </select>
+      </div>
+      {(meta.totalPages ?? 1) > 1 && (
+        <div className="ml-auto flex items-center gap-0.5">
+          <button
+            disabled={page <= 1}
+            onClick={() => setPage((p) => p - 1)}
+            aria-label="Previous page"
+            className="grid h-7 w-7 place-items-center rounded-ctl text-navy/70 hover:bg-surface-raised disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+          >
+            <ChevronLeft className="h-3.5 w-3.5" />
+          </button>
+          {Array.from({ length: Math.min(meta.totalPages ?? 1, 7) }, (_, i) => {
+            const totalPages = meta.totalPages ?? 1;
+            const p = totalPages <= 7 ? i + 1 : page <= 4 ? i + 1 : page + i - 3;
+            if (p < 1 || p > totalPages) return null;
+            return (
+              <button
+                key={p}
+                onClick={() => setPage(p)}
+                className={cn(
+                  "grid h-7 min-w-7 place-items-center rounded-ctl px-2 font-mono text-xs tabular-nums transition-colors",
+                  p === page ? "bg-navy text-white" : "text-navy/70 hover:bg-surface-raised",
+                )}
+              >
+                {p}
+              </button>
+            );
+          })}
+          <button
+            disabled={page >= (meta.totalPages ?? 1)}
+            onClick={() => setPage((p) => p + 1)}
+            aria-label="Next page"
+            className="grid h-7 w-7 place-items-center rounded-ctl text-navy/70 hover:bg-surface-raised disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+          >
+            <ChevronRight className="h-3.5 w-3.5" />
+          </button>
+        </div>
+      )}
+    </>
+  );
+}
+
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function OrdersPage() {
@@ -1101,83 +1214,44 @@ export default function OrdersPage() {
                 </tbody>
               </table>
             </div>
+            {/* #2057 review (Opus): the pager lives INSIDE the table's own card at md+ —
+                pulling it into a separate shadow card (below) added a visible 20px gap and
+                a second card border on desktop too, which the "≥768 unchanged" pass
+                criterion forbids. Mobile keeps the separate always-visible card (below)
+                since the table itself — and this nested footer — is hidden below md. */}
+            {meta && (
+              <div className="hidden flex-wrap items-center gap-x-4 gap-y-2 border-t border-surface-border px-4 py-3 text-[12.5px] text-navy/70 md:flex">
+                <PagerInfo meta={meta} page={page} limit={limit} customerSearch={customerSearch} />
+                <PagerControls
+                  meta={meta}
+                  page={page}
+                  limit={limit}
+                  setLimit={setLimit}
+                  setPage={setPage}
+                />
+              </div>
+            )}
           </div>
         </>
       )}
 
-      {/* Pager — its own card, visible at every width regardless of card list vs. table. */}
+      {/* Pager — mobile-only card (see the nested md+ footer above), visible at every
+          width regardless of card list vs. table state. data-testid disambiguates it
+          from the md+ footer above for e2e — both render the same "Showing X to Y" text,
+          one of them always `hidden` at any given viewport. */}
       {meta && (
-        <div className="flex flex-wrap items-center gap-x-4 gap-y-2 rounded-lg border border-surface-border bg-white px-4 py-3 text-[12.5px] text-navy/70 shadow-card">
-          <span>
-            {meta.total > 0 ? (
-              <>
-                Showing{" "}
-                <span className="font-mono tabular-nums text-navy">
-                  {(page - 1) * limit + 1} to {Math.min(page * limit, meta.total)}
-                </span>{" "}
-                of <span className="font-mono tabular-nums text-navy">{meta.total}</span>
-                {customerSearch ? " (filtered)" : ""}
-              </>
-            ) : customerSearch ? (
-              "No orders match your search"
-            ) : (
-              "No orders found"
-            )}
-          </span>
-          <div className="flex items-center gap-1.5">
-            <span>Per page</span>
-            <select
-              value={limit}
-              onChange={(e) => {
-                setLimit(Number(e.target.value));
-                setPage(1);
-              }}
-              className="h-7 rounded-ctl border border-surface-border bg-white px-2 font-mono text-xs text-navy focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
-            >
-              {[10, 20, 50, 100].map((n) => (
-                <option key={n} value={n}>
-                  {n}
-                </option>
-              ))}
-            </select>
-          </div>
-          {(meta.totalPages ?? 1) > 1 && (
-            <div className="ml-auto flex items-center gap-0.5">
-              <button
-                disabled={page <= 1}
-                onClick={() => setPage((p) => p - 1)}
-                aria-label="Previous page"
-                className="grid h-7 w-7 place-items-center rounded-ctl text-navy/70 hover:bg-surface-raised disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-              >
-                <ChevronLeft className="h-3.5 w-3.5" />
-              </button>
-              {Array.from({ length: Math.min(meta.totalPages ?? 1, 7) }, (_, i) => {
-                const totalPages = meta.totalPages ?? 1;
-                const p = totalPages <= 7 ? i + 1 : page <= 4 ? i + 1 : page + i - 3;
-                if (p < 1 || p > totalPages) return null;
-                return (
-                  <button
-                    key={p}
-                    onClick={() => setPage(p)}
-                    className={cn(
-                      "grid h-7 min-w-7 place-items-center rounded-ctl px-2 font-mono text-xs tabular-nums transition-colors",
-                      p === page ? "bg-navy text-white" : "text-navy/70 hover:bg-surface-raised",
-                    )}
-                  >
-                    {p}
-                  </button>
-                );
-              })}
-              <button
-                disabled={page >= (meta.totalPages ?? 1)}
-                onClick={() => setPage((p) => p + 1)}
-                aria-label="Next page"
-                className="grid h-7 w-7 place-items-center rounded-ctl text-navy/70 hover:bg-surface-raised disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-              >
-                <ChevronRight className="h-3.5 w-3.5" />
-              </button>
-            </div>
-          )}
+        <div
+          data-testid="pager-mobile"
+          className="flex flex-wrap items-center gap-x-4 gap-y-2 rounded-lg border border-surface-border bg-white px-4 py-3 text-[12.5px] text-navy/70 shadow-card md:hidden"
+        >
+          <PagerInfo meta={meta} page={page} limit={limit} customerSearch={customerSearch} />
+          <PagerControls
+            meta={meta}
+            page={page}
+            limit={limit}
+            setLimit={setLimit}
+            setPage={setPage}
+          />
         </div>
       )}
 
