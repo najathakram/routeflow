@@ -14,6 +14,12 @@
 //   <local db url in the ambient env> node apps/api/scripts/backfill-order-template-provenance.mjs --local
 //   node apps/api/scripts/backfill-order-template-provenance.mjs --self-test
 //
+// TENANT EXCLUSION (owner ruling 2026-09-25): `--exclude-tenant <uuid>` (repeatable, UUIDs given at RUN TIME and
+// never committed anywhere) keeps a tenant's rows out of the plan entirely. The excluded ids are part of the
+// hashed plan; the dry run prints how many templates were excluded; the APPLY re-verifies that no planned row
+// belongs to an excluded tenant and also filters its UPDATE on it, so an excluded tenant's NULL-provenance
+// templates stay NULL through the apply.
+//
 // APPLY replays a SAVED plan only (never a live re-query):
 //   node apps/api/scripts/backfill-order-template-provenance.mjs --apply --plan <file> \
 //     --confirm-plan <hash> --guard-sha <sha> --i-have-a-fresh-backup [--local] \
@@ -86,6 +92,38 @@ export function splitSharedAuditRows(apply) {
   };
 }
 
+/** Every `--exclude-tenant <uuid>` on the command line (repeatable), validated as a UUID. Pure. */
+export function excludedTenantsFrom(argv) {
+  const ids = [];
+  for (let i = 0; i < argv.length; i += 1) {
+    if (argv[i] !== "--exclude-tenant") continue;
+    const v = argv[i + 1];
+    if (!v || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(v)) {
+      throw refuse(`--exclude-tenant needs a tenant UUID, got ${JSON.stringify(v)}`);
+    }
+    ids.push(v.toLowerCase());
+  }
+  return [...new Set(ids)].sort();
+}
+
+/** Pure: split templates into kept vs excluded by tenant. */
+export function splitExcluded(templates, excluded) {
+  const ex = new Set(excluded);
+  return {
+    kept: templates.filter((t) => !ex.has(String(t.tenantId).toLowerCase())),
+    excluded: templates.filter((t) => ex.has(String(t.tenantId).toLowerCase())),
+  };
+}
+
+/** Pure: throws (refuses the whole apply) if any planned row belongs to an excluded tenant. */
+export function assertPlanExcludes(plan, excluded) {
+  const ex = new Set(excluded);
+  const hit = plan.apply.filter((a) => ex.has(String(a.tenantId).toLowerCase()));
+  if (hit.length > 0) {
+    throw refuse(`the plan contains ${hit.length} row(s) of an EXCLUDED tenant -- refusing`);
+  }
+}
+
 const TEMPLATES_SQL = `
   SELECT id, "tenantId", "createdAt" FROM "OrderTemplate"
   WHERE "createdByRole" IS NULL AND "tenantId" IS NOT NULL ORDER BY id`;
@@ -122,7 +160,9 @@ async function dryRun() {
     await client.query("BEGIN TRANSACTION READ ONLY");
     await client.query("SET LOCAL statement_timeout = '120s'");
     const fp = await fingerprint(client);
-    const templates = (await client.query(TEMPLATES_SQL)).rows;
+    const excluded = excludedTenantsFrom(process.argv);
+    const all = (await client.query(TEMPLATES_SQL)).rows;
+    const { kept: templates, excluded: excludedRows } = splitExcluded(all, excluded);
     const tenantIds = [...new Set(templates.map((t) => t.tenantId))];
     const audit = tenantIds.length ? (await client.query(AUDIT_SQL, [tenantIds])).rows : [];
     await client.query("ROLLBACK");
@@ -149,7 +189,12 @@ async function dryRun() {
     const split = splitSharedAuditRows(apply);
     apply.splice(0, apply.length, ...split.apply);
     review.push(...split.review);
-    const plan = { generatedAt: new Date().toISOString(), fingerprint: fp, apply };
+    const plan = {
+      generatedAt: new Date().toISOString(),
+      fingerprint: fp,
+      excludedTenantIds: excluded,
+      apply,
+    };
     const hash = sha256(plan);
     const dir = resolve(REPO_ROOT, "local-assets/handoff", new Date().toISOString().slice(0, 10));
     mkdirSync(dir, { recursive: true });
@@ -157,6 +202,9 @@ async function dryRun() {
     writeFileSync(file, JSON.stringify({ ...plan, planHash: hash, review }, null, 2));
 
     console.log(`\n${TAG}: ${templates.length} template(s) with NULL provenance scanned`);
+    console.log(
+      `  EXCLUDED:  ${excludedRows.length} template(s) in ${excluded.length} tenant(s) given with --exclude-tenant (never in the plan)`,
+    );
     console.log(`  APPLY:     ${apply.length}`);
     // Which way each APPLY row goes, BEFORE anything is written. The role is the user's CURRENT role
     // (not a snapshot at creation); an unmatched template stays NULL = the stricter buyer channel.
@@ -216,6 +264,17 @@ async function apply() {
     return 1;
   }
 
+  // The plan's own exclusions plus any given now; NO planned row may belong to any of them.
+  let excluded;
+  try {
+    excluded = [
+      ...new Set([...(plan.excludedTenantIds ?? []), ...excludedTenantsFrom(process.argv)]),
+    ];
+    assertPlanExcludes(plan, excluded);
+  } catch (e) {
+    console.error(`${TAG}: ${e.message}`);
+    return e.refuse ? 1 : 2;
+  }
   const url = await resolveTarget();
   console.log(`${TAG}: target ${redactUrl(url)} APPLY (${plan.apply.length} template(s))`);
   const client = new pg.Client({ connectionString: url });
@@ -250,8 +309,9 @@ async function apply() {
       if (!row || row.createdByRole !== null)
         throw refuse(`template ${a.templateId} has changed since the dry run`);
       const res = await client.query(
-        'UPDATE "OrderTemplate" SET "createdByRole" = $1::"UserRole", "createdByUserId" = $2 WHERE id = $3 AND "createdByRole" IS NULL',
-        [a.role, a.userId, a.templateId],
+        `UPDATE "OrderTemplate" SET "createdByRole" = $1::"UserRole", "createdByUserId" = $2
+         WHERE id = $3 AND "createdByRole" IS NULL AND NOT ("tenantId" = ANY($4::text[]))`,
+        [a.role, a.userId, a.templateId, excluded],
       );
       written += res.rowCount;
     }
@@ -284,6 +344,46 @@ function selfTest() {
     ["no match: unknown role", [row(1, "WIZARD")], null],
   ];
   let failed = 0;
+  const A = "11111111-1111-4111-8111-111111111111";
+  const B = "22222222-2222-4222-8222-222222222222";
+  const okEx = (name, ok) => {
+    if (!ok) failed += 1;
+    console.log(`${ok ? "ok  " : "FAIL"} ${name}`);
+  };
+  okEx(
+    "--exclude-tenant is repeatable, lowercased and de-duplicated",
+    JSON.stringify(
+      excludedTenantsFrom([
+        "--exclude-tenant",
+        B.toUpperCase(),
+        "--x",
+        "--exclude-tenant",
+        A,
+        "--exclude-tenant",
+        B,
+      ]),
+    ) === JSON.stringify([A, B]),
+  );
+  let bad = false;
+  try {
+    excludedTenantsFrom(["--exclude-tenant", "not-a-uuid"]);
+  } catch (e) {
+    bad = e.refuse === true;
+  }
+  okEx("--exclude-tenant refuses a non-UUID (never a slug)", bad);
+  const sp = splitExcluded([{ tenantId: A }, { tenantId: B }, { tenantId: A }], [A]);
+  okEx(
+    "splitExcluded keeps only non-excluded tenants and counts the rest",
+    sp.kept.length === 1 && sp.excluded.length === 2,
+  );
+  let refusedPlan = false;
+  try {
+    assertPlanExcludes({ apply: [{ tenantId: A.toUpperCase() }] }, [A]);
+  } catch (e) {
+    refusedPlan = e.refuse === true;
+  }
+  okEx("a plan containing an excluded tenant's row is refused", refusedPlan);
+  okEx("a plan without them passes", (assertPlanExcludes({ apply: [{ tenantId: B }] }, [A]), true));
   const shared = splitSharedAuditRows([
     { templateId: "a", auditKey: "k1" },
     { templateId: "b", auditKey: "k1" },
