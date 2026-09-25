@@ -25,7 +25,7 @@ import {
   type CategoryTaxType,
   inferredFlatRate,
 } from "@routeflow/pricing";
-import { backSyncTargetKey, orderLineShape } from "./order-backsync-lines";
+import { backSyncTargetKey, orderLineShape, orderLineUnchanged } from "./order-backsync-lines";
 import {
   buildEditedLines,
   editInvoiceTotals,
@@ -2344,29 +2344,31 @@ export class InvoicesService {
       subtotal += lineSubtotal;
       categoryTaxSum += lineCategoryTax;
       // Untouched invoice line: its order line is not written at all (SA-203).
-      if (only && existing && !only.has(key)) {
-        existingById.delete(existing.id);
+      if (only && !only.has(key)) {
+        if (existing) existingById.delete(existing.id); // covers CREATE targets too: nothing new for an untouched line
         continue;
       }
       const shape = orderLineShape(existing, agg, only != null && agg.n === 1);
       if (existing) {
-        await db.orderItem.update({
-          where: { id: existing.id },
-          data: {
-            qty: shape.qty,
-            boxes: shape.boxes,
-            pieces: shape.pieces,
-            unitsPerBox: shape.unitsPerBox,
-            ...(only ? { unitLabel: shape.unitLabel } : {}),
-            unitPrice: agg.unitPrice,
-            subtotal: lineSubtotal,
-            // RF-4: mirror the billed category tax back onto the order line.
-            categoryTaxAmount: lineCategoryTax,
-            promoFreeUnits: lineFreeUnits > 0 ? lineFreeUnits : null,
-            invoicedQty: shape.qty,
-            status: "PENDING",
-          },
-        });
+        // An order line that would be rewritten to exactly what it holds is not written at all.
+        if (!orderLineUnchanged(existing, shape, agg, only != null))
+          await db.orderItem.update({
+            where: { id: existing.id },
+            data: {
+              qty: shape.qty,
+              boxes: shape.boxes,
+              pieces: shape.pieces,
+              unitsPerBox: shape.unitsPerBox,
+              ...(only ? { unitLabel: shape.unitLabel } : {}),
+              unitPrice: agg.unitPrice,
+              subtotal: lineSubtotal,
+              // RF-4: mirror the billed category tax back onto the order line.
+              categoryTaxAmount: lineCategoryTax,
+              promoFreeUnits: lineFreeUnits > 0 ? lineFreeUnits : null,
+              invoicedQty: shape.qty,
+              status: "PENDING",
+            },
+          });
         existingById.delete(existing.id);
       } else {
         await db.orderItem.create({
@@ -3518,9 +3520,7 @@ export class InvoicesService {
       },
     });
     // Backward sync: discount/shipping changes alter the order total too.
-    // No line changed, so no order line is written; only the order totals follow (SA-203).
-    if (inv.orderId && needsRecalc)
-      await this.recomputeOrderFromInvoices(inv.orderId, undefined, []);
+    if (inv.orderId && needsRecalc) await this.recomputeOrderFromInvoices(inv.orderId);
     return updated;
   }
 

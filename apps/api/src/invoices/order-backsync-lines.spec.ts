@@ -1,4 +1,4 @@
-import { backSyncTargetKey, orderLineShape } from "./order-backsync-lines";
+import { backSyncTargetKey, orderLineShape, orderLineUnchanged } from "./order-backsync-lines";
 
 describe("orderLineShape (SA-203c)", () => {
   const legacySample = { boxes: 0, pieces: 5, unitsPerBox: null, unitLabel: null };
@@ -156,5 +156,38 @@ describe("backSyncTargetKey", () => {
     expect(backSyncTargetKey({ productId: "p-2" }, byId, byProduct)).toBe("line:oi-2");
     expect(backSyncTargetKey({ productId: "p-9" }, byId, byProduct)).toBe("product:p-9");
     expect(backSyncTargetKey({}, byId, byProduct)).toBeNull();
+  });
+});
+
+describe("orderLineUnchanged (1b: a discount/shipping-only save must not rewrite identical order lines)", () => {
+  const held = {
+    qty: "5.000",
+    boxes: 0,
+    pieces: 5,
+    unitsPerBox: null,
+    unitPrice: "11.00",
+    subtotal: "4.58",
+    categoryTaxAmount: "0.00",
+    promoFreeUnits: null,
+    invoicedQty: "5.000",
+    status: "PENDING",
+    unitLabel: null,
+  };
+  const shape = { qty: 5, boxes: 0, pieces: 5, unitsPerBox: null };
+  const agg = { unitPrice: 11, subtotal: 4.58, categoryTax: 0, freeUnits: 0 };
+
+  it("identical figures (Decimals as strings) are unchanged: no write", () => {
+    expect(orderLineUnchanged(held, shape, agg, false)).toBe(true);
+    expect(orderLineUnchanged(held, shape, agg, true)).toBe(true);
+  });
+
+  it("a short-delivered line that must shrink to its billed qty IS a change", () => {
+    expect(orderLineUnchanged({ ...held, qty: "10.000" }, shape, agg, false)).toBe(false);
+  });
+
+  it("a status other than PENDING (the recompute resets it) is a change, as is a moved invoicedQty or 0 vs null boxes", () => {
+    expect(orderLineUnchanged({ ...held, status: "DELIVERED" }, shape, agg, false)).toBe(false);
+    expect(orderLineUnchanged({ ...held, invoicedQty: "0.000" }, shape, agg, false)).toBe(false);
+    expect(orderLineUnchanged({ ...held, boxes: null }, shape, agg, false)).toBe(false);
   });
 });

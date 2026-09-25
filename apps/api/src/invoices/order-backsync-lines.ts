@@ -1,4 +1,4 @@
-import { normalizeBoxesPieces } from "@routeflow/pricing";
+import { normalizeBoxesPieces, roundMoney } from "@routeflow/pricing";
 
 /**
  * The denomination an order line is written with by the invoice -> order back-sync.
@@ -73,4 +73,48 @@ export function backSyncTargetKey(
     (it.productId && byProduct.get(it.productId)) ||
     null;
   return line ? `line:${line.id}` : it.productId ? `product:${it.productId}` : null;
+}
+
+const sameValue = (a: unknown, b: unknown): boolean =>
+  a == null || b == null
+    ? a == null && b == null
+    : typeof b === "number"
+      ? Math.abs(Number(a) - b) < 1e-9
+      : a === b;
+
+/**
+ * Would the back-sync write this order line back exactly as it already is? Then the write is skipped: a save
+ * that changes no order line (an edit of the invoice discount or shipping, a re-price that lands on the same
+ * figures) leaves the order's rows, and their updatedAt, untouched (SA-203), while a line that DOES differ
+ * (a short-delivered line shrinking to its billed qty, a refused one being covered) is still written.
+ * Compares exactly the columns the update below writes.
+ */
+export function orderLineUnchanged(
+  existing: any,
+  shape: {
+    qty: number;
+    boxes: number | null;
+    pieces: number | null;
+    unitsPerBox: number | null;
+    unitLabel?: string | null;
+  },
+  agg: { unitPrice: number; subtotal: number; categoryTax: number; freeUnits: number },
+  withLabel: boolean,
+): boolean {
+  const freeUnits = Math.max(0, Math.trunc(agg.freeUnits) || 0);
+  // [column, value] pairs (a comparison, not a write: no object literal keyed by the levy column).
+  const want: Array<[string, unknown]> = [
+    ["qty", shape.qty],
+    ["boxes", shape.boxes],
+    ["pieces", shape.pieces],
+    ["unitsPerBox", shape.unitsPerBox],
+    ["unitPrice", agg.unitPrice],
+    ["subtotal", roundMoney(agg.subtotal)],
+    ["categoryTaxAmount", roundMoney(agg.categoryTax)],
+    ["promoFreeUnits", freeUnits > 0 ? freeUnits : null],
+    ["invoicedQty", shape.qty],
+    ["status", "PENDING"],
+    ...(withLabel ? [["unitLabel", shape.unitLabel ?? null] as [string, unknown]] : []),
+  ];
+  return want.every(([k, v]) => sameValue(existing[k], v));
 }

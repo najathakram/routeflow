@@ -630,5 +630,25 @@ describeDb(
       const [legacyAfter] = (await s.orderLines()).map(orderShape);
       expect(legacyAfter).toEqual(legacyBefore);
     });
+
+    it("SA-203-M a discount-only save on an ORDER-LINKED invoice rewrites no identical order line (updatedAt untouched), but still totals the order", async () => {
+      const s = await seedLinked("m");
+      const before = await s.orderLines();
+      await tenantCtx.run(s.t.id, () => invoicesService.update(s.inv.id, { discount: 0 } as any));
+      const after = await s.orderLines();
+      expect(after.map((r) => r.updatedAt)).toEqual(before.map((r) => r.updatedAt));
+      expect(after.map(orderShape)).toEqual(before.map(orderShape));
+    });
+
+    it("SA-219-N an explicit pack stored on a loose line is audited as INVOICE_LINE_PACK_ATTESTED (real audit row)", async () => {
+      const s = await seed("n");
+      await run(s, s.payload({ l2: { qty: 4, unitsPerBox: 12 } }));
+      const l2 = await prisma.invoiceItem.findUnique({ where: { id: s.l2.id } });
+      expect(Number(l2!.unitsPerBox)).toBe(12);
+      const audits = await prisma.auditLog.findMany({
+        where: { tenantId: s.t.id, action: "INVOICE_LINE_PACK_ATTESTED", entityId: s.inv.id },
+      });
+      expect(audits).toHaveLength(1);
+    });
   },
 );

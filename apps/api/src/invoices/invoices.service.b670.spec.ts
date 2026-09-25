@@ -368,12 +368,12 @@ describe("InvoicesService — update() line preservation", () => {
         expect(changed.map((c: any) => c.orderItemId)).not.toContain("oi-b");
       });
 
-      it("1b: a discount/shipping-only save on an order-linked invoice passes an EMPTY changed-set (totals only, no line back-sync)", async () => {
+      it("1b: a discount/shipping-only save on an order-linked invoice still runs the full coverage recompute (short-delivered lines shrink, refused lines cancel); identical rows are skipped inside it", async () => {
         arrange([line()]);
         linked();
         await service.update("inv-box", { discount: 5 } as any);
         expect(resync).toHaveBeenCalledTimes(1);
-        expect(resync.mock.calls[0][2]).toEqual([]);
+        expect(resync.mock.calls[0][2]).toBeUndefined(); // no changed-set: NOT the items-save mode
       });
 
       it("3: an explicit pack stored on a box-UNAWARE line is audited as an attestation too", async () => {
