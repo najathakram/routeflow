@@ -92,6 +92,10 @@ const NON_WRITERS = new Set([
   // the conversion itself (lineInventoryDelta) still reads packSize from the bill line alone; this
   // module never supplies the missing number, it only decides whether to ask.
   "vendor-bills/bill-line-pack.ts",
+  // #2118: read-only analytics, writes no line. Reads the live pack for the product DTO's
+  // "at the current pack" display and as salePackOf's GATE (is a no-snapshot line on a product
+  // boxed today?) — never a multiplier; selling units come from each line's own snapshot.
+  "sales-facts/product-insights.service.ts",
 ]);
 
 const strip = (s: string) => s.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:])\/\/.*$/gm, "$1");
