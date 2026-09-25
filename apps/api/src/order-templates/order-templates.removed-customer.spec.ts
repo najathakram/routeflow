@@ -108,14 +108,6 @@ describe("OrderTemplatesService.generateDailyOrders — removed customer (B131)"
             checkLinesSellable: jest.fn().mockResolvedValue({ outcome: "ALLOW", reasons: [] }),
           },
         },
-        { provide: AuditService, useValue: { log: jest.fn().mockResolvedValue(undefined) } },
-        {
-          provide: SellingRestrictionsService,
-          useValue: {
-            assertLinesSellable: jest.fn().mockResolvedValue(undefined),
-            checkLinesSellable: jest.fn().mockResolvedValue({ outcome: "ALLOW", reasons: [] }),
-          },
-        },
       ],
     }).compile();
     service = mod.get(OrderTemplatesService);

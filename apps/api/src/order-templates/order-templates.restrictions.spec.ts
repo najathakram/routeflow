@@ -128,19 +128,19 @@ describe("OrderTemplatesService — selling restrictions (F-05)", () => {
         where: { templateId: "t1", productId: { in: ["p-banned"] } },
         data: { suspendedAt: expect.any(Date), suspendedReason: "SELLING_RESTRICTED" },
       });
-      expect(audit.log).toHaveBeenCalledWith(
-        expect.objectContaining({
+      expect(prisma.auditLog.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({
           action: "order-template.line-suspended",
           entityId: "t1",
           meta: expect.objectContaining({ ruleIds: ["rule-1"], reason: "SELLING_RESTRICTED" }),
         }),
-      );
+      });
       expect(notifications.sendToCustomer).toHaveBeenCalledTimes(1);
       expect(notifications.sendToCustomer.mock.calls[0][2]).toContain("Banned Cola");
       expect(notifications.sendToUser).toHaveBeenCalledTimes(1);
     });
 
-    it("an all-banned template orders nothing but still suspends and notifies", async () => {
+    it("an all-banned template orders nothing, says 'not sent' (never 'went ahead'), and deactivates it", async () => {
       restrictions.checkLinesSellable.mockResolvedValue({
         outcome: "BLOCK",
         reasons: [
@@ -151,7 +151,13 @@ describe("OrderTemplatesService — selling restrictions (F-05)", () => {
       expect(await run(template())).toBeNull();
       expect(prisma.order.create).not.toHaveBeenCalled();
       expect(prisma.orderTemplateItem.updateMany).toHaveBeenCalledTimes(1);
+      expect(prisma.orderTemplate.update).toHaveBeenCalledWith({
+        where: { id: "t1" },
+        data: { isActive: false },
+      });
       expect(notifications.sendToCustomer).toHaveBeenCalledTimes(1);
+      expect(notifications.sendToCustomer.mock.calls[0][2]).toContain("was not sent");
+      expect(notifications.sendToCustomer.mock.calls[0][2]).not.toContain("went ahead");
     });
 
     it("an already-suspended line is neither re-checked nor ordered, and is not re-notified", async () => {
@@ -164,24 +170,60 @@ describe("OrderTemplatesService — selling restrictions (F-05)", () => {
       expect(notifications.sendToCustomer).not.toHaveBeenCalled();
     });
 
-    it("an all-suspended template is skipped WITH a notification, never an empty order", async () => {
+    it("an all-suspended template is deactivated and notified ONCE, never an empty order", async () => {
       const t = template({ items: [line("p-banned", { suspendedAt: new Date() })] });
       expect(await run(t)).toBeNull();
       expect(prisma.order.create).not.toHaveBeenCalled();
+      expect(prisma.orderTemplate.update).toHaveBeenCalledWith({
+        where: { id: "t1" },
+        data: { isActive: false },
+      });
       expect(notifications.sendToCustomer).toHaveBeenCalledTimes(1);
       expect(notifications.sendToUser).toHaveBeenCalledTimes(1);
     });
 
     it.each([
-      ["CUSTOMER", "BUYER_PORTAL"],
-      ["OPERATOR", "STAFF"],
-      ["TENANT_ADMIN", "STAFF"],
-      [null, "BUYER_PORTAL"], // unknown provenance is the STRICTER channel, never staff
-    ])("channel: a template created by %s is evaluated as %s", async (createdByRole, channel) => {
-      await run(template({ createdByRole }));
-      expect(restrictions.checkLinesSellable).toHaveBeenCalledWith(
-        expect.objectContaining({ channel }),
+      // [createdByRole, itemsEditedByRole, channel]: STAFF only when BOTH are known staff (SA-247)
+      ["CUSTOMER", "CUSTOMER", "BUYER_PORTAL"],
+      ["OPERATOR", "OPERATOR", "STAFF"],
+      ["TENANT_ADMIN", "OPERATOR", "STAFF"],
+      ["OPERATOR", "CUSTOMER", "BUYER_PORTAL"], // a buyer edited an operator's template
+      ["CUSTOMER", "OPERATOR", "BUYER_PORTAL"],
+      ["OPERATOR", null, "BUYER_PORTAL"], // unknown last editor is the stricter channel, never staff
+      [null, "OPERATOR", "BUYER_PORTAL"],
+      [null, null, "BUYER_PORTAL"],
+    ])(
+      "channel: created by %s, items last edited by %s is evaluated as %s",
+      async (c, e, channel) => {
+        await run(template({ createdByRole: c, itemsEditedByRole: e }));
+        expect(restrictions.checkLinesSellable).toHaveBeenCalledWith(
+          expect.objectContaining({ channel }),
+        );
+      },
+    );
+
+    it("the ban-note reads 'went ahead' only when something was ordered, and once", async () => {
+      restrictions.checkLinesSellable.mockResolvedValue(block);
+      await run(template());
+      expect(notifications.sendToCustomer).toHaveBeenCalledTimes(1);
+      expect(notifications.sendToCustomer.mock.calls[0][2]).toContain("went ahead");
+    });
+  });
+
+  describe("manual run and suspended lines", () => {
+    it("a manual run does not order a suspended line, and refuses when every line is suspended", async () => {
+      prisma.orderTemplate.findUnique.mockResolvedValue(
+        template({ items: [line("p-banned", { suspendedAt: new Date() }), line("p-ok")] }),
       );
+      await service.generateOrder("t1");
+      expect(restrictions.assertLinesSellable).toHaveBeenCalledWith(
+        expect.objectContaining({ lines: [{ productId: "p-ok" }] }),
+      );
+      expect(prisma.order.create.mock.calls[0][0].data.lineItems.create).toHaveLength(1);
+      prisma.orderTemplate.findUnique.mockResolvedValue(
+        template({ items: [line("p-banned", { suspendedAt: new Date() })] }),
+      );
+      await expect(service.generateOrder("t1")).rejects.toBeInstanceOf(BadRequestException);
     });
   });
 
@@ -196,10 +238,12 @@ describe("OrderTemplatesService — selling restrictions (F-05)", () => {
       expect(prisma.orderTemplate.create.mock.calls[0][0].data).toMatchObject({
         createdByRole: "OPERATOR",
         createdByUserId: "u1",
+        itemsEditedByRole: "OPERATOR",
       });
       expect(prisma.orderTemplate.create.mock.calls[1][0].data).toMatchObject({
         createdByRole: null,
         createdByUserId: null,
+        itemsEditedByRole: null,
       });
     });
   });
@@ -223,18 +267,18 @@ describe("OrderTemplatesService — selling restrictions (F-05)", () => {
       ]);
       expect(created.find((c) => c.productId === "p-banned").suspendedAt).toEqual(when);
       expect(created.find((c) => c.productId === "p-ok").suspendedAt).toBeUndefined();
-      expect(audit.log).not.toHaveBeenCalled();
+      expect(prisma.auditLog.create).not.toHaveBeenCalled();
     });
 
     it("clears it when THAT line's qty changes, with an audited lift", async () => {
       const created = await editWith([{ productId: "p-banned", qty: 5 }]);
       expect(created[0].suspendedAt).toBeUndefined();
-      expect(audit.log).toHaveBeenCalledWith(
-        expect.objectContaining({
+      expect(prisma.auditLog.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({
           action: "order-template.line-suspension-lifted",
           meta: { how: "EDITED", productId: "p-banned" },
         }),
-      );
+      });
     });
 
     it("an explicit lift is audited with the actor; a line that is not suspended is a 400", async () => {
@@ -249,9 +293,12 @@ describe("OrderTemplatesService — selling restrictions (F-05)", () => {
         where: { id: "i1" },
         data: { suspendedAt: null, suspendedReason: null },
       });
-      expect(audit.log).toHaveBeenCalledWith(
-        expect.objectContaining({ userId: "u7", meta: { how: "LIFTED", productId: "p-banned" } }),
-      );
+      expect(prisma.auditLog.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          userId: "u7",
+          meta: { how: "LIFTED", productId: "p-banned" },
+        }),
+      });
       prisma.orderTemplateItem.findFirst.mockResolvedValue({ id: "i1", suspendedAt: null });
       await expect(
         service.liftItemSuspension("t1", "i1", { sub: "u7" } as never),

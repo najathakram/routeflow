@@ -60,7 +60,30 @@ export function classifyTemplate(template, candidates, windowMs = WINDOW_MS) {
   if (near.length > 1) {
     return { kind: "REVIEW", reason: `${near.length} audit rows within ${windowMs / 1000}s` };
   }
-  return { kind: "APPLY", role: near[0].role, userId: near[0].userId };
+  return {
+    kind: "APPLY",
+    role: near[0].role,
+    userId: near[0].userId,
+    auditKey: `${near[0].userId}|${new Date(near[0].createdAt).toISOString()}`,
+  };
+}
+
+/**
+ * Pure: one audit row can sit within the window of TWO templates (created back to back) — it proves
+ * neither. Every APPLY row sharing an audit row moves to REVIEW.
+ */
+export function splitSharedAuditRows(apply) {
+  const uses = new Map();
+  for (const a of apply) uses.set(a.auditKey, (uses.get(a.auditKey) ?? 0) + 1);
+  return {
+    apply: apply.filter((a) => uses.get(a.auditKey) === 1),
+    review: apply
+      .filter((a) => uses.get(a.auditKey) > 1)
+      .map((a) => ({
+        templateId: a.templateId,
+        reason: "one audit row matches several templates",
+      })),
+  };
 }
 
 const TEMPLATES_SQL = `
@@ -113,9 +136,19 @@ async function dryRun() {
       const c = classifyTemplate(t, byTenant.get(t.tenantId) ?? []);
       if (!c) unmatched += 1;
       else if (c.kind === "REVIEW") review.push({ templateId: t.id, reason: c.reason });
-      else apply.push({ templateId: t.id, tenantId: t.tenantId, role: c.role, userId: c.userId });
+      else
+        apply.push({
+          templateId: t.id,
+          tenantId: t.tenantId,
+          role: c.role,
+          userId: c.userId,
+          auditKey: c.auditKey,
+        });
     }
 
+    const split = splitSharedAuditRows(apply);
+    apply.splice(0, apply.length, ...split.apply);
+    review.push(...split.review);
     const plan = { generatedAt: new Date().toISOString(), fingerprint: fp, apply };
     const hash = sha256(plan);
     const dir = resolve(REPO_ROOT, "local-assets/handoff", new Date().toISOString().slice(0, 10));
@@ -251,6 +284,15 @@ function selfTest() {
     ["no match: unknown role", [row(1, "WIZARD")], null],
   ];
   let failed = 0;
+  const shared = splitSharedAuditRows([
+    { templateId: "a", auditKey: "k1" },
+    { templateId: "b", auditKey: "k1" },
+    { templateId: "c", auditKey: "k2" },
+  ]);
+  const sharedOk =
+    shared.apply.length === 1 && shared.apply[0].templateId === "c" && shared.review.length === 2;
+  if (!sharedOk) failed += 1;
+  console.log(`${sharedOk ? "ok  " : "FAIL"} one audit row shared by two templates -> both REVIEW`);
   for (const [name, cands, kind, role] of cases) {
     const got = classifyTemplate(t, cands);
     const ok = kind === null ? got === null : got?.kind === kind && (!role || got.role === role);
