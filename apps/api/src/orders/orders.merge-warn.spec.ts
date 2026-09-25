@@ -68,6 +68,12 @@ describe("OrdersService merge paths — merge and warn (F-05)", () => {
     expect(h.prisma.auditLog.create).toHaveBeenCalledTimes(1);
   });
 
+  it("a staff merge path that wires NO onBannedLines (merge-choice create, driver auto-merge) still notifies operators, after the lock", async () => {
+    await h.service.mergeAllPendingForCustomer("cust-1", {}, { actor: { role: "OPERATOR" } });
+    expect(h.sideEffects.notifications.sendToUser).toHaveBeenCalledTimes(1);
+    expect(h.prisma.auditLog.create).toHaveBeenCalledTimes(1);
+  });
+
   it("a buyer-initiated merge is BUYER_PORTAL and notifies operators", async () => {
     await h.service.mergeAllPendingForCustomer("cust-1", { buyerInitiated: true });
     expect(h.restrictions.checkLinesSellable).toHaveBeenCalledWith(

@@ -32,12 +32,7 @@ import {
 import { lockRowsNoWait, withAdvisoryLock, type LockMode } from "../common/db-locks";
 import { assertMoneyInvariantsOrThrow } from "../common/money-invariants.util";
 import { atStopConflict } from "./at-stop-conflicts";
-import {
-  LOCK_UNAVAILABLE,
-  LOCK_UNAVAILABLE_MESSAGE,
-  isMergeContention,
-  mapLockError,
-} from "./merge-contention";
+import { assertMergeLockAcquired, isMergeContention, mapLockError } from "./merge-contention";
 import {
   OrderStatus,
   UserRole,
@@ -644,6 +639,7 @@ export class OrdersService implements OnApplicationBootstrap {
       actor?: ChannelPrincipal | null;
     },
   ) {
+    let after: Awaited<ReturnType<typeof this.warnMergedBanned>>; // F-05: pushes run after the lock is released
     try {
       const result = await withAdvisoryLock(
         {
@@ -868,7 +864,7 @@ export class OrdersService implements OnApplicationBootstrap {
           this.logger.log(
             `Merged ${losers.length} PENDING order(s) into ${winner.id} for customer ${customerId}`,
           );
-          await this.warnMergedBanned(winner, losers, customerId, {
+          after = await this.warnMergedBanned(winner, losers, customerId, {
             ...opts,
             actor: opts?.actor ?? (options.buyerInitiated ? { type: "BUYER" } : null),
           });
@@ -888,12 +884,8 @@ export class OrdersService implements OnApplicationBootstrap {
       // `wait` it is defensive only (that mode either acquires or throws). Either way it carries
       // the same coded body as mapLockError's 503, so `isMergeContention` (the sweep, every
       // post-commit caller) recognises it identically and defers.
-      if (!result.acquired) {
-        throw new ServiceUnavailableException({
-          code: LOCK_UNAVAILABLE,
-          message: LOCK_UNAVAILABLE_MESSAGE,
-        });
-      }
+      assertMergeLockAcquired(result);
+      await after?.();
       return result.value;
     } catch (e) {
       mapLockError(e);
@@ -902,7 +894,11 @@ export class OrdersService implements OnApplicationBootstrap {
 
   /** F-05 (SA-255): merge-and-warn — never blocks, see merge-restriction-warning.ts. */
   private warnMergedBanned(
-    winner: { id: string; lineItems: Array<{ productId: string | null }> },
+    winner: {
+      id: string;
+      tenantId?: string | null;
+      lineItems: Array<{ productId: string | null }>;
+    },
     losers: Array<{ id: string; lineItems: Array<{ productId: string | null }> }>,
     customerId: string,
     o: { onBannedLines?: (l: BannedMergedLine[]) => void; actor?: ChannelPrincipal | null } = {},
@@ -914,7 +910,13 @@ export class OrdersService implements OnApplicationBootstrap {
         notifications: this.notifications,
         warn: (m) => this.logger.warn(m),
       },
-      { tenantId: this.restrictionTenantId(undefined), customerId, winner, losers, ...o },
+      {
+        tenantId: () => this.restrictionTenantId(undefined, winner.tenantId),
+        customerId,
+        winner,
+        losers,
+        ...o,
+      },
     );
   }
 
@@ -922,6 +924,7 @@ export class OrdersService implements OnApplicationBootstrap {
     customerId: string,
     opts?: { onBannedLines?: (l: BannedMergedLine[]) => void; actor?: ChannelPrincipal | null },
   ) {
+    let after: Awaited<ReturnType<typeof this.warnMergedBanned>>;
     try {
       const result = await withAdvisoryLock(
         { family: "order-merge", key: customerId, mode: "wait", waitMs: 20_000 },
@@ -1132,7 +1135,7 @@ export class OrdersService implements OnApplicationBootstrap {
           this.logger.log(
             `forceConsolidateCustomer: merged ${losers.length} order(s) into ${winner.id} for customer ${customerId}, ${mismatchWarnings.length} pack mismatch(es), ${livePackWarnings.length} live-pack fallback(s)`,
           );
-          await this.warnMergedBanned(winner, losers, customerId, opts);
+          after = await this.warnMergedBanned(winner, losers, customerId, opts);
           return this.prisma.forTenant().order.findUnique({
             where: { id: winner.id },
             include: {
@@ -1145,12 +1148,8 @@ export class OrdersService implements OnApplicationBootstrap {
         },
       );
       // Defensive: see mergeAllPendingForCustomer — same coded 503 body.
-      if (!result.acquired) {
-        throw new ServiceUnavailableException({
-          code: LOCK_UNAVAILABLE,
-          message: LOCK_UNAVAILABLE_MESSAGE,
-        });
-      }
+      assertMergeLockAcquired(result);
+      await after?.();
       return result.value;
     } catch (e) {
       mapLockError(e);

@@ -18,11 +18,22 @@ describe("warnBannedMergedLines", () => {
   let warn: jest.Mock;
   let onBannedLines: jest.Mock;
 
-  const run = (actor: object | null | undefined) =>
-    warnBannedMergedLines(
+  /** Runs the merge warning, then the deferred push the caller would run after it releases the lock. */
+  const run = async (actor: object | null | undefined, wireCallback = true) => {
+    const after = await warnBannedMergedLines(
       { restrictions, prisma, notifications, warn } as never,
-      { tenantId: "t1", customerId: "c1", winner, losers, actor, onBannedLines } as never,
+      {
+        tenantId: () => "t1",
+        customerId: "c1",
+        winner,
+        losers,
+        actor,
+        ...(wireCallback ? { onBannedLines } : {}),
+      } as never,
     );
+    expect(notifications.sendToUser).not.toHaveBeenCalled(); // never inside the lock: only via the thunk
+    await after?.();
+  };
 
   beforeEach(() => {
     restrictions = { checkLinesSellable: jest.fn().mockResolvedValue(banned) };
@@ -82,9 +93,35 @@ describe("warnBannedMergedLines", () => {
     expect(prisma.auditLog.create).toHaveBeenCalledTimes(1);
   });
 
-  it("a staff actor sees the result, so NO operator notification", async () => {
+  it("a staff actor who is SHOWN the lines needs no push; a staff path wiring NO callback still notifies (SA-272)", async () => {
     await run({ role: "OPERATOR" });
     expect(notifications.sendToUser).not.toHaveBeenCalled();
+    await run({ role: "OPERATOR" }, false);
+    expect(notifications.sendToUser).toHaveBeenCalledTimes(2);
+  });
+
+  it("onBannedLines is called BEFORE the audit insert, so a failed insert cannot drop it", async () => {
+    prisma.auditLog.create.mockRejectedValue(new Error("audit down"));
+    await run({ role: "OPERATOR" });
+    expect(onBannedLines).toHaveBeenCalledTimes(1);
+  });
+
+  it("a tenant-less caller never fails the merge: the tenant is resolved inside the try", async () => {
+    await expect(
+      warnBannedMergedLines(
+        { restrictions, prisma, notifications, warn } as never,
+        {
+          tenantId: () => {
+            throw new Error("Selling restrictions require a tenant-scoped session");
+          },
+          customerId: "c1",
+          winner,
+          losers,
+          actor: null,
+        } as never,
+      ),
+    ).resolves.toBeUndefined();
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("tenant-scoped"));
   });
 
   it.each([

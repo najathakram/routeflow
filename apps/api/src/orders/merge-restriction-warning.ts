@@ -21,7 +21,9 @@ export interface BannedMergedLine {
  *  - a non-empty set writes ONE AuditLog row (winner, losers, products, rules, channel), an empty set writes
  *    nothing and notifies no one;
  *  - the lines go to `onBannedLines` (beside `onPackMismatch`) so the acting UI can show them;
- *  - ONE operator notification, and only when no staff actor sees the result (buyer or automatic merges).
+ *  - ONE operator notification, and only when no staff actor sees the result: a buyer, an automatic run, or a
+ *    merge path that wires no `onBannedLines` at all (nobody is shown the lines, so operators are told). The
+ *    push is RETURNED as a thunk for the caller to run after it releases the merge lock, never inside it;
  * A standalone function (not a class method) because the merge writes its lines through the pack-group plan;
  * every failure here is swallowed and logged: a warning can never fail a merge that already committed.
  */
@@ -33,7 +35,8 @@ export async function warnBannedMergedLines(
     warn: (message: string) => void;
   },
   p: {
-    tenantId: string;
+    /** Resolved INSIDE the try: a tenant-less caller must never fail a merge that already committed. */
+    tenantId: () => string;
     customerId: string;
     winner: { id: string; lineItems: ReadonlyArray<{ productId: string | null }> };
     losers: ReadonlyArray<{ id: string; lineItems: ReadonlyArray<{ productId: string | null }> }>;
@@ -41,8 +44,9 @@ export async function warnBannedMergedLines(
     actor?: ChannelPrincipal | null;
     onBannedLines?: (lines: BannedMergedLine[]) => void;
   },
-): Promise<void> {
+): Promise<(() => Promise<void>) | undefined> {
   try {
+    const tenantId = p.tenantId();
     const productIds = [
       ...new Set(
         [p.winner, ...p.losers].flatMap((o) =>
@@ -50,26 +54,37 @@ export async function warnBannedMergedLines(
         ),
       ),
     ];
-    if (productIds.length === 0) return;
+    if (productIds.length === 0) return undefined;
     const channel = restrictionChannelForPrincipal(p.actor);
     const verdict = await deps.restrictions.checkLinesSellable({
-      tenantId: p.tenantId,
+      tenantId,
       customerId: p.customerId,
       lines: productIds.map((productId) => ({ productId })),
       channel,
     });
-    if (verdict.outcome !== "BLOCK" && verdict.outcome !== "INDETERMINATE") return;
+    if (verdict.outcome !== "BLOCK" && verdict.outcome !== "INDETERMINATE") return undefined;
     const banned: BannedMergedLine[] = verdict.reasons.map((r) => ({
       productId: r.productId,
       productName: r.productName,
       ruleId: r.ruleId,
       message: r.message,
     }));
-    if (banned.length === 0) return;
+    if (banned.length === 0) return undefined;
+
+    // Rule detail is for staff only (B612): a buyer-side actor gets names, never the rule text.
+    p.onBannedLines?.(
+      channel === "STAFF"
+        ? banned
+        : banned.map((b) => ({
+            ...b,
+            ruleId: null,
+            message: `${b.productName} can't be sold right now`,
+          })),
+    );
 
     await deps.prisma.auditLog.create({
       data: {
-        tenantId: p.tenantId,
+        tenantId,
         userId: null,
         action: "order.merge-banned-lines",
         entityType: "orders",
@@ -83,34 +98,33 @@ export async function warnBannedMergedLines(
         },
       },
     });
-    // Rule detail is for staff only (B612): a buyer-side actor gets names, never the rule text.
-    p.onBannedLines?.(
-      channel === "STAFF"
-        ? banned
-        : banned.map((b) => ({
-            ...b,
-            ruleId: null,
-            message: `${b.productName} can't be sold right now`,
-          })),
-    );
-
-    if (channel === "STAFF") return; // a staff actor sees the result: no operator notification
+    // A staff actor who is shown the lines needs no push. Everyone else does — and the push is deferred.
+    if (channel === "STAFF" && p.onBannedLines) return undefined;
     const names = [...new Set(banned.map((b) => b.productName))].join(", ");
-    const operators = await deps.prisma.user.findMany({
-      where: { tenantId: p.tenantId, role: { in: ["OPERATOR", "TENANT_ADMIN"] }, status: "ACTIVE" },
-      select: { id: true },
-    });
-    for (const op of operators as { id: string }[]) {
-      await deps.notifications
-        .sendToUser(op.id, {
-          title: "Merged order holds restricted items",
-          body: `Order ${p.winner.id} was merged and now includes items under a selling restriction (${names}). Review it before dispatch.`,
-        })
-        .catch(() => {});
-    }
+    return async () => {
+      try {
+        const operators = await deps.prisma.user.findMany({
+          where: { tenantId, role: { in: ["OPERATOR", "TENANT_ADMIN"] }, status: "ACTIVE" },
+          select: { id: true },
+        });
+        for (const op of operators as { id: string }[]) {
+          await deps.notifications
+            .sendToUser(op.id, {
+              title: "Merged order holds restricted items",
+              body: `Order ${p.winner.id} was merged and now includes items under a selling restriction (${names}). Review it before dispatch.`,
+            })
+            .catch(() => {});
+        }
+      } catch (e) {
+        deps.warn(
+          `merge notification failed for order ${p.winner.id}: ${e instanceof Error ? e.message : String(e)}`,
+        );
+      }
+    };
   } catch (e) {
     deps.warn(
       `merge warning failed for order ${p.winner.id}: ${e instanceof Error ? e.message : String(e)}`,
     );
+    return undefined;
   }
 }
