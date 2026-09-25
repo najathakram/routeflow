@@ -17,6 +17,8 @@ import { projectReportColumns } from "./report-projection";
 import { RegulatedReport } from "./report-types";
 import { listParkedReversals, parkedRestockNote, withParkedFirst } from "./parked-reversals";
 import { periodBucketOf } from "./period";
+import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
+import { uncategorisedLineWarnings } from "./uncategorised-lines";
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -45,6 +47,7 @@ export class RegulatedReportService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly regulated: RegulatedService,
+    private readonly sellingRestrictions: SellingRestrictionsService,
   ) {}
 
   /**
@@ -192,6 +195,14 @@ export class RegulatedReportService {
       }),
       parkedRestockNote(db, { trackedCategoryId: category.id, from: fromDate, to: toExclusive }),
     ]);
+    // F-05: custom lines are exempt from the ban check — list the ones sold into a restricted jurisdiction for review.
+    const tenantId = this.prisma.getTenantId();
+    if (tenantId) {
+      const policy = await this.sellingRestrictions.getPolicy(tenantId);
+      report.warnings.push(
+        ...(await uncategorisedLineWarnings(db, policy, { from: fromDate, toExclusive })),
+      );
+    }
     return withParkedFirst(report, parked, restockNote);
   }
 

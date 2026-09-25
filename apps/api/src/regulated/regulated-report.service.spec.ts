@@ -1,5 +1,6 @@
 import { Test } from "@nestjs/testing";
 import { BadRequestException, NotFoundException } from "@nestjs/common";
+import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
 import { RegulatedReportService } from "./regulated-report.service";
 import { RegulatedService } from "./regulated.service";
 import { PrismaService } from "../prisma/prisma.service";
@@ -28,6 +29,14 @@ describe("RegulatedReportService", () => {
     const mod = await Test.createTestingModule({
       providers: [
         RegulatedReportService,
+        {
+          provide: SellingRestrictionsService,
+          useValue: {
+            getPolicy: jest
+              .fn()
+              .mockResolvedValue({ enabled: false, addressPrecedence: "BILLING_FIRST" }),
+          },
+        },
         { provide: PrismaService, useValue: prisma },
         { provide: RegulatedService, useValue: regulated },
       ],
