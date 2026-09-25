@@ -145,6 +145,23 @@ export function caseStepperIncrement(qty: number, ordered: number, unitsPerBox: 
 }
 
 /**
+ * SA-175 review: the Case-stepper's own label, ALWAYS naming the Case count — even 0 — unlike
+ * `@routeflow/pricing`'s `formatQtySplit` (which suppresses a zero box count, correct for its
+ * other, non-stepper callers). "0 of 0" alone reads as "nothing to account for here"; "0 Cases +
+ * 5 pcs" tells the driver there's still a genuine partial-Case remainder to short or refuse.
+ */
+export function formatCaseStepperSplit(
+  boxes: number,
+  pieces: number,
+  boxLabel?: string | null,
+): string {
+  const singular = (boxLabel ?? "").trim() || "box";
+  const plural = singular === "box" ? "boxes" : singular.endsWith("s") ? singular : `${singular}s`;
+  const boxPart = `${boxes} ${boxes === 1 ? singular : plural}`;
+  return pieces > 0 ? `${boxPart} + ${pieces} pcs` : boxPart;
+}
+
+/**
  * B648/SA-094a: the delivered qty this module ever uses for a line. For a
  * unit-aware line (`isUnitAwareLine`, factor > 1), `deliveredQtyById`'s raw
  * entry SNAPS DOWN to the nearest whole multiple of the line's own
@@ -167,8 +184,18 @@ function effectiveDeliveredQty(
   const raw = deliveredQtyById[li.orderItemId];
   if (isUnitAwareLine(li)) {
     if (raw == null) return li.orderedQty;
+    const clampedRaw = Math.max(0, raw);
+    // SA-175 review fix (post-FIX-6): on a second visit `orderedQty` is the REMAINING qty, not
+    // always an exact multiple of `unitsPerBox` — its own top state is a genuine partial Case
+    // (caseStepperIncrement's last step lands exactly on it). Flooring FIRST, before checking
+    // whether `raw` already reaches that top, silently dropped the partial-Case remainder: 30
+    // left of a 12-Case floored to 24 (PARTIAL $48 of $60, never the untouched $60 full amount),
+    // and 5 left of 12 floored to 0 (REFUSED $0, even though the driver never touched the row).
+    // A raw value that already reaches (or exceeds) `orderedQty` must pass through AS the
+    // remaining, never get floored down to the whole-Case boundary below it.
+    if (clampedRaw >= li.orderedQty) return li.orderedQty;
     const upb = Number(li.unitsPerBox);
-    const snapped = Math.floor(Math.max(0, raw) / upb) * upb;
+    const snapped = Math.floor(clampedRaw / upb) * upb;
     return Math.max(0, Math.min(snapped, li.orderedQty));
   }
   return Math.max(0, Math.min(raw ?? li.orderedQty, li.orderedQty));
@@ -311,8 +338,13 @@ function visitView(li: ShortPickSourceLine, soFar: number) {
     subtotal:
       li.subtotal == null
         ? null
-        : prorateLineSubtotal(li.subtotal, qty, qty, li.promoFreeUnits ?? 0, freeUnitSize) -
-          prorateLineSubtotal(li.subtotal, soFar, qty, li.promoFreeUnits ?? 0, freeUnitSize),
+        : // SA-175 review (W/N): both operands are already roundMoney'd inside
+          // prorateLineSubtotal, but their JS-float subtraction can still land a cent off
+          // (e.g. 0.1 − 0.03 → 0.06999999999999999) — round the tail itself too.
+          roundMoney(
+            prorateLineSubtotal(li.subtotal, qty, qty, li.promoFreeUnits ?? 0, freeUnitSize) -
+              prorateLineSubtotal(li.subtotal, soFar, qty, li.promoFreeUnits ?? 0, freeUnitSize),
+          ),
     freeUnits: 0, // already netted out of the prorated subtotal above
     freeUnitSize: 1,
     boxes,

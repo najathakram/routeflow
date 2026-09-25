@@ -1,6 +1,5 @@
 import { useMemo, useState } from "react";
 import { useQueries } from "@tanstack/react-query";
-import { formatQtySplit } from "@routeflow/pricing";
 import {
   ActivityIndicator,
   Pressable,
@@ -24,6 +23,7 @@ import {
   caseStepperDecrement,
   caseStepperIncrement,
   caseStepperRemainderPieces,
+  formatCaseStepperSplit,
   deliveryTypeForQty,
   deliveredSoFarByLine,
   isLineAdjustable,
@@ -262,18 +262,12 @@ function ShortPickRow({
   // includes the partial-Case remainder (i.e. qty === ordered) still shows the right Case count.
   const casesDelivered = unitAware ? caseStepperCasesDelivered(qty, ordered, unitsPerBox) : 0;
   const atFullDelivery = qty >= ordered;
-  const casesDeliveredLabel = formatQtySplit({
-    qty,
-    boxes: casesDelivered,
-    pieces: atFullDelivery ? caseRemainderPieces : 0,
-    boxLabel: li.unitLabel,
-  });
-  const caseCountLabel = formatQtySplit({
-    qty: ordered,
-    boxes: caseCount,
-    pieces: caseRemainderPieces,
-    boxLabel: li.unitLabel,
-  });
+  const casesDeliveredLabel = formatCaseStepperSplit(
+    casesDelivered,
+    atFullDelivery ? caseRemainderPieces : 0,
+    li.unitLabel,
+  );
+  const caseCountLabel = formatCaseStepperSplit(caseCount, caseRemainderPieces, li.unitLabel);
 
   return (
     <View style={styles.card}>
