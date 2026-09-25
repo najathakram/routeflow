@@ -2914,14 +2914,13 @@ export class OrdersService implements OnApplicationBootstrap {
         `Cannot reopen order: invoice ${paidInvoice.invoiceNumber} is ${paidInvoice.status}. Void or credit the invoice before reopening.`,
       );
     }
-    // F-05: reopening REVIVES the item-CANCELLED lines to PENDING — a new sale of each. Staff-only path; no
-    // delta (a revived line is wholly new), so every revived catalog line is checked, before any write.
+    // F-05 (SA-272): reopening moves the ORDER to PENDING, so EVERY line goes live — a new sale of the whole order,
+    // not only of the item-CANCELLED lines (cancelling a DRAFT never marks its lines CANCELLED, and drafts are
+    // written without the check). Staff-only path; no delta, so every catalog line is checked, before any write.
     await this.sellingRestrictions.assertLinesSellable({
       tenantId: this.restrictionTenantId(undefined, order.tenantId),
       customerId: order.customerId,
-      lines: order.lineItems.flatMap((li) =>
-        li.status === ItemStatus.CANCELLED && li.productId ? [{ productId: li.productId }] : [],
-      ),
+      lines: order.lineItems.flatMap((li) => (li.productId ? [{ productId: li.productId }] : [])),
       channel: "STAFF",
     });
     return this.prisma.tenantTransaction(
