@@ -36,6 +36,7 @@ import { EntitlementsService } from "../billing/entitlements.service";
 import { CommissionEngineService } from "../sales-agents/commission-engine.service";
 import { InvoiceStatus } from "@prisma/client";
 import { assertIntegerPieces, billPackOf } from "./unit-line-bill-guard";
+import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
 
 describe("InvoicesService — B652 unit-line partial billing", () => {
   let service: InvoicesService;
@@ -86,6 +87,10 @@ describe("InvoicesService — B652 unit-line partial billing", () => {
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         InvoicesService,
+        {
+          provide: SellingRestrictionsService,
+          useValue: { assertLinesSellable: jest.fn().mockResolvedValue(undefined) },
+        },
         { provide: PrismaService, useValue: prisma },
         { provide: RouteFlowGateway, useValue: mockGateway },
         { provide: EmailService, useValue: mockEmailService },
