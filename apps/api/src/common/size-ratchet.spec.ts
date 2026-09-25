@@ -48,7 +48,7 @@ const BASELINE: Record<string, number> = {
   "apps/web/app/(dashboard)/customers/[id]/page.tsx": 4378,
   "apps/web/app/(dashboard)/orders/[id]/page.tsx": 3728,
   "apps/api/src/customers/customers.service.spec.ts": 3209,
-  "apps/api/src/routes/routes.service.ts": 3189, // prefactor: run/stop select shapes + status constants live in routes/routes.constants.ts (was 3270)
+  "apps/api/src/routes/routes.service.ts": 3183, // prefactor: run/stop select shapes + status constants live in routes/routes.constants.ts (was 3270)
   "apps/web/app/(dashboard)/products/[id]/page.tsx": 2942,
   "apps/mobile/app/(operator)/(tabs)/orders/[id]/edit-items.tsx": 3315,
   "apps/mobile/components/NewOrderScreen.tsx": 4056, // SA-085: lineUnitFor + the total/totalItems memo -> lib/cart-order-total.ts (executable pin for the order-total fix) (was 4078)
