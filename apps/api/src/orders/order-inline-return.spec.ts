@@ -1,5 +1,6 @@
 import { ForbiddenException, ServiceUnavailableException } from "@nestjs/common";
 import { ConflictException } from "@nestjs/common";
+import { INLINE_RETURN_KEY_TAKEN } from "../returns/inline-returns.service";
 import {
   applyInlineReturnInTx,
   assertReplayCarriesReturn,
@@ -92,8 +93,71 @@ describe("reserveInlineReturnNumber / lockInlineReturnCustomer", () => {
     expect(p!.creditNoteNumber).toBeUndefined();
   });
 
+  describe("a returnKey already taken (Opus R1: a concurrent twin is a replay, not a false 409)", () => {
+    const taken = () =>
+      new ConflictException({ code: INLINE_RETURN_KEY_TAKEN, message: "key already used" });
+    const setup = async () => {
+      const svc = svcStub();
+      svc.preflightNewOrderReturn.mockRejectedValue(taken());
+      const p = await prepareInlineReturn(svc as any, LINES, STAFF);
+      return { svc, p };
+    };
+
+    it("the pre-check missed, the preflight hits, this key's order carries the returnKey: the result is that order (the replay), no number reserved", async () => {
+      const { svc, p } = await setup();
+      const twin = { id: "ord-A", customerId: "c1" };
+      const db = { return: { findFirst: jest.fn().mockResolvedValue({ id: "ret-A" }) } };
+      const out = await reserveInlineReturnNumber(p, "c1", STAFF, {
+        db,
+        find: async () => twin,
+      });
+      expect(out).toBe(twin);
+      expect(db.return.findFirst).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({ orderId: "ord-A", returnKey: "k1" }),
+        }),
+      );
+      expect(svc.reserveCreditNoteNumber).not.toHaveBeenCalled();
+    });
+
+    it("the key's order does NOT carry this returnKey: 409 (a different return)", async () => {
+      const { p } = await setup();
+      const db = { return: { findFirst: jest.fn().mockResolvedValue(null) } };
+      await expect(
+        reserveInlineReturnNumber(p, "c1", STAFF, {
+          db,
+          find: async () => ({ id: "ord-A", customerId: "c1" }),
+        }),
+      ).rejects.toThrow(ConflictException);
+    });
+
+    it("no Idempotency-Key, no order for it, or another customer's order: the 409 stands", async () => {
+      for (const replay of [
+        undefined,
+        { db: {}, find: async () => null },
+        { db: {}, find: async () => ({ id: "o", customerId: "OTHER" }) },
+      ]) {
+        const { p } = await setup();
+        await expect(reserveInlineReturnNumber(p, "c1", STAFF, replay as any)).rejects.toThrow(
+          ConflictException,
+        );
+      }
+    });
+
+    it("a stale-quote 409 (no key code) is never mistaken for a replay", async () => {
+      const svc = svcStub();
+      svc.preflightNewOrderReturn.mockRejectedValue(new ConflictException("stale quote"));
+      const p = await prepareInlineReturn(svc as any, LINES, STAFF);
+      const find = jest.fn();
+      await expect(reserveInlineReturnNumber(p, "c1", STAFF, { db: {}, find })).rejects.toThrow(
+        ConflictException,
+      );
+      expect(find).not.toHaveBeenCalled();
+    });
+  });
+
   it("both are no-ops without an inline return", async () => {
-    await expect(reserveInlineReturnNumber(null, "c1", STAFF)).resolves.toBeUndefined();
+    await expect(reserveInlineReturnNumber(null, "c1", STAFF)).resolves.toBeNull();
     await expect(lockInlineReturnCustomer({}, null, "c1")).resolves.toBeUndefined();
   });
 
