@@ -47,8 +47,12 @@ const TABLE: Record<string, Row> = {
   [ord("approveChangeRequestAtStop")]: G,
   [ord("changeStatus")]: G,
   [ord("reopenOrder")]: G,
-  [ord("mergeAllPendingForCustomer")]: P("2a: merge (channel from buyerInitiated)"),
-  [ord("forceConsolidateCustomer")]: P("2a: consolidate (staff)"),
+  [ord("mergeAllPendingForCustomer")]: X(
+    "owner ruling 2026-09-25 (#2093) / SA-255: MERGE AND WARN — folds orders each checked when placed, never blocked; warns via merge-restriction-warning.ts (pinned in orders.merge-warn.spec.ts)",
+  ),
+  [ord("forceConsolidateCustomer")]: X(
+    "owner ruling 2026-09-25 (#2093) / SA-255: MERGE AND WARN — folds orders each checked when placed, never blocked; warns via merge-restriction-warning.ts (pinned in orders.merge-warn.spec.ts)",
+  ),
   [tpl("createOrderFromTemplate")]: P("2b: standing orders (buyer-owned = BUYER_PORTAL)"),
   [ord("recomputeLineCategoryTaxes")]: X("categoryTaxAmount only"),
   [ord("deleteOrder")]: X("removes lines"),
@@ -102,9 +106,9 @@ const TABLE: Record<string, Row> = {
 };
 
 /** The RATCHET: how many rows are still PENDING. Lower it in the PR that flips a row to GUARDED. */
-const PENDING_BASELINE = 9;
+const PENDING_BASELINE = 7;
 /** GUARDED + PENDING: reclassifying a PENDING row to EXEMPT (an escape, not progress) must change THIS. */
-const ENFORCEMENT_POINTS = 16;
+const ENFORCEMENT_POINTS = 14; // -2: merge and consolidate reclassified EXEMPT (merge-and-warn, SA-255)
 const CHOKE_POINT = ["assertLinesSellable", "checkLinesSellable"];
 
 // ─── scanner (same rules as orders/unit-line-writers.ast.spec.ts; exercised on inline source) ──

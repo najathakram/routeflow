@@ -123,8 +123,13 @@ import * as unitLines from "./unit-line-build";
 import * as unitEdit from "./unit-line-edit";
 import { loadCategoryMapForProducts } from "./category-map";
 import { assertBuyerCartPricesCurrent } from "./buyer-cart-price-check";
+import { reportMergePackWarnings } from "./merge-pack-warnings";
+import { warnBannedMergedLines, type BannedMergedLine } from "./merge-restriction-warning";
 import { collectUnlistedLoserItems } from "./merge-unlisted-lines";
-import { restrictionChannelForPrincipal } from "../selling-restrictions/selling-restrictions.core";
+import {
+  restrictionChannelForPrincipal,
+  type ChannelPrincipal,
+} from "../selling-restrictions/selling-restrictions.core";
 import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
 import { PromotionsService } from "../promotions/promotions.service";
 import { MessagingService } from "../messaging/messaging.service";
@@ -633,6 +638,10 @@ export class OrdersService implements OnApplicationBootstrap {
       lockMode?: LockMode;
       onPackMismatch?: (warnings: MergeWarning[]) => void;
       onLivePackFallback?: (warnings: MergeWarning[]) => void;
+      /** F-05 (SA-255): the banned lines of the merged order, for the acting UI (beside onPackMismatch). */
+      onBannedLines?: (lines: BannedMergedLine[]) => void;
+      /** The acting principal; omitted = an automatic run (judged as the stricter buyer channel). */
+      actor?: ChannelPrincipal | null;
     },
   ) {
     try {
@@ -735,24 +744,7 @@ export class OrdersService implements OnApplicationBootstrap {
           // SA-124: split by kind — a genuine disagreement (packMismatch) and a box-unaware
           // contribution with no snapshot resolved via the live product pack (livePackFallback,
           // SA-101(a) branch 4) are independent conditions with their own message and counter.
-          const mismatchWarnings = packWarnings.filter((w) => w.kind === "packMismatch");
-          const livePackWarnings = packWarnings.filter((w) => w.kind === "livePackFallback");
-          if (mismatchWarnings.length > 0) {
-            for (const w of mismatchWarnings) {
-              this.logger.warn(
-                `mergeAllPendingForCustomer: order ${winner.id} product ${w.productId} contributing lines disagree on pack [${w.packs.join(", ")}] — kept as separate lines, never folded (B776)`,
-              );
-            }
-            opts?.onPackMismatch?.(mismatchWarnings);
-          }
-          if (livePackWarnings.length > 0) {
-            for (const w of livePackWarnings) {
-              this.logger.warn(
-                `mergeAllPendingForCustomer: order ${winner.id} product ${w.productId} had no pack snapshot on any contributing line — resolved via the live product pack [${w.packs.join(", ")}] (B776)`,
-              );
-            }
-            opts?.onLivePackFallback?.(livePackWarnings);
-          }
+          reportMergePackWarnings(this.logger, winner.id, packWarnings, opts);
 
           await this.prisma.tenantTransaction(async (tx) => {
             // 1/2. Apply every pack-group write: an UPDATE onto the winner's own existing line
@@ -876,6 +868,10 @@ export class OrdersService implements OnApplicationBootstrap {
           this.logger.log(
             `Merged ${losers.length} PENDING order(s) into ${winner.id} for customer ${customerId}`,
           );
+          await this.warnMergedBanned(winner, losers, customerId, {
+            ...opts,
+            actor: opts?.actor ?? (options.buyerInitiated ? { type: "BUYER" } : null),
+          });
 
           return this.prisma.forTenant().order.findUnique({
             where: { id: winner.id },
@@ -904,7 +900,28 @@ export class OrdersService implements OnApplicationBootstrap {
     }
   }
 
-  async forceConsolidateCustomer(customerId: string) {
+  /** F-05 (SA-255): merge-and-warn — never blocks, see merge-restriction-warning.ts. */
+  private warnMergedBanned(
+    winner: { id: string; lineItems: Array<{ productId: string | null }> },
+    losers: Array<{ id: string; lineItems: Array<{ productId: string | null }> }>,
+    customerId: string,
+    o: { onBannedLines?: (l: BannedMergedLine[]) => void; actor?: ChannelPrincipal | null } = {},
+  ) {
+    return warnBannedMergedLines(
+      {
+        restrictions: this.sellingRestrictions,
+        prisma: this.prisma,
+        notifications: this.notifications,
+        warn: (m) => this.logger.warn(m),
+      },
+      { tenantId: this.restrictionTenantId(undefined), customerId, winner, losers, ...o },
+    );
+  }
+
+  async forceConsolidateCustomer(
+    customerId: string,
+    opts?: { onBannedLines?: (l: BannedMergedLine[]) => void; actor?: ChannelPrincipal | null },
+  ) {
     try {
       const result = await withAdvisoryLock(
         { family: "order-merge", key: customerId, mode: "wait", waitMs: 20_000 },
@@ -1115,6 +1132,7 @@ export class OrdersService implements OnApplicationBootstrap {
           this.logger.log(
             `forceConsolidateCustomer: merged ${losers.length} order(s) into ${winner.id} for customer ${customerId}, ${mismatchWarnings.length} pack mismatch(es), ${livePackWarnings.length} live-pack fallback(s)`,
           );
+          await this.warnMergedBanned(winner, losers, customerId, opts);
           return this.prisma.forTenant().order.findUnique({
             where: { id: winner.id },
             include: {

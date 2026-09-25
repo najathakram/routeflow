@@ -1,0 +1,101 @@
+jest.mock("../common/db-locks", () => ({
+  ...jest.requireActual("../common/db-locks"),
+  withAdvisoryLock: jest.fn(async (_opts: unknown, fn: () => Promise<unknown>) => ({
+    acquired: true,
+    value: await fn(),
+  })),
+}));
+
+import { buildOrdersService } from "./testing/orders-service-harness";
+
+/**
+ * F-05 (#2093, SA-255) — the merge paths call the merge-and-warn helper: a merge is never blocked, the actor
+ * picks the channel (staff = STAFF; buyer / automatic = BUYER_PORTAL), and the banned lines reach the caller.
+ * The helper's own behaviour is pinned in `merge-restriction-warning.spec.ts`.
+ */
+describe("OrdersService merge paths — merge and warn (F-05)", () => {
+  const line = (id: string, productId: string) => ({
+    id,
+    productId,
+    qty: 2,
+    boxes: null,
+    pieces: null,
+    unitsPerBox: null,
+    unitPrice: 5,
+    subtotal: 10,
+    status: "PENDING",
+    priceType: "STANDARD",
+    originalPrice: null,
+    overrideReason: null,
+    overriddenBy: null,
+    notes: null,
+  });
+  const orders = () => [
+    { id: "w1", customerId: "cust-1", status: "PENDING", lineItems: [line("wl", "p-ok")] },
+    { id: "l1", customerId: "cust-1", status: "PENDING", lineItems: [line("ll", "p-banned")] },
+  ];
+  const banned = {
+    outcome: "BLOCK",
+    reasons: [{ productId: "p-banned", productName: "Banned Cola", ruleId: "r1", message: "no" }],
+  };
+
+  let h: Awaited<ReturnType<typeof buildOrdersService>>;
+  beforeEach(async () => {
+    h = await buildOrdersService();
+    h.prisma.getTenantId.mockReturnValue("t1");
+    h.prisma.orderItem.findMany.mockResolvedValue([]);
+    h.prisma.order.findMany.mockResolvedValue(orders());
+    h.prisma.product.findMany.mockResolvedValue([]);
+    h.prisma.user.findMany.mockResolvedValue([{ id: "op1" }]);
+    h.restrictions.checkLinesSellable.mockResolvedValue(banned);
+  });
+
+  it("mergeAllPendingForCustomer: a ban never blocks; a staff actor is STAFF, sees the lines, no notification", async () => {
+    const onBannedLines = jest.fn();
+    await expect(
+      h.service.mergeAllPendingForCustomer(
+        "cust-1",
+        {},
+        { actor: { role: "OPERATOR" }, onBannedLines },
+      ),
+    ).resolves.toBeDefined();
+    expect(h.restrictions.checkLinesSellable).toHaveBeenCalledWith(
+      expect.objectContaining({ channel: "STAFF", customerId: "cust-1", tenantId: "t1" }),
+    );
+    expect(onBannedLines).toHaveBeenCalledWith([
+      expect.objectContaining({ productId: "p-banned" }),
+    ]);
+    expect(h.prisma.auditLog.create).toHaveBeenCalledTimes(1);
+  });
+
+  it("a buyer-initiated merge is BUYER_PORTAL and notifies operators", async () => {
+    await h.service.mergeAllPendingForCustomer("cust-1", { buyerInitiated: true });
+    expect(h.restrictions.checkLinesSellable).toHaveBeenCalledWith(
+      expect.objectContaining({ channel: "BUYER_PORTAL" }),
+    );
+  });
+
+  it("an automatic merge (no actor) is the stricter BUYER_PORTAL", async () => {
+    await h.service.mergeAllPendingForCustomer("cust-1");
+    expect(h.restrictions.checkLinesSellable).toHaveBeenCalledWith(
+      expect.objectContaining({ channel: "BUYER_PORTAL" }),
+    );
+  });
+
+  it("forceConsolidateCustomer warns the same way and never blocks", async () => {
+    const onBannedLines = jest.fn();
+    await expect(
+      h.service.forceConsolidateCustomer("cust-1", { actor: { role: "OPERATOR" }, onBannedLines }),
+    ).resolves.toBeDefined();
+    expect(h.restrictions.checkLinesSellable).toHaveBeenCalledWith(
+      expect.objectContaining({ channel: "STAFF" }),
+    );
+    expect(onBannedLines).toHaveBeenCalledTimes(1);
+  });
+
+  it("nothing banned: the merge writes no warning row", async () => {
+    h.restrictions.checkLinesSellable.mockResolvedValue({ outcome: "ALLOW", reasons: [] });
+    await h.service.mergeAllPendingForCustomer("cust-1");
+    expect(h.prisma.auditLog.create).not.toHaveBeenCalled();
+  });
+});
