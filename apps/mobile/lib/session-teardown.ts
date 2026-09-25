@@ -2,7 +2,6 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import { queryClient } from "./query-client";
 import { stopLocationTracking } from "./location-tracker";
 import { getStoredUser } from "./auth";
-import { useOfflineQueue } from "../store/offlineQueue";
 import { clearUserScopedStorage } from "./user-scoped-storage";
 import { editItemsSnapshotUserPrefix } from "./edit-items-draft";
 import { POD_STORE_NAME, usePodStore } from "../store/podStore";
@@ -95,24 +94,7 @@ export async function teardownUserSession(options: TeardownOptions = {}): Promis
   resetIfPresent(useProductPickerStore.getState());
   resetIfPresent(useStopCartStore.getState());
   resetIfPresent(useReturnSubmissionStore.getState());
-  // Inline-return nonces: the offline queue SURVIVES sign-out (step 2), and a queued capture's
-  // nonce is what lets a later manual retry collapse onto its replay. Clearing it here would
-  // let that retry mint a fresh key and double-book (Opus review of #1270). So while a capture
-  // is still queued, narrow the store to just the queued nonces and leave its blob in place.
-  const queuedCaptures = (useOfflineQueue.getState().queue ?? []).filter(
-    (q) =>
-      q.endpoint === "/returns/inline/capture" && (q.userId === undefined || q.userId === userId),
-  );
-  const keepInlineNonces = queuedCaptures.length > 0;
-  if (keepInlineNonces) {
-    (
-      useInlineReturnSubmissionStore.getState() as {
-        resetKeepingQueued?: (queue: typeof queuedCaptures) => void;
-      }
-    ).resetKeepingQueued?.(queuedCaptures);
-  } else {
-    resetIfPresent(useInlineReturnSubmissionStore.getState());
-  }
+  resetIfPresent(useInlineReturnSubmissionStore.getState());
 
   // (5) Remove the five PERSISTED user-scoped blobs by the id resolved in (0).
   // The `reset()` calls above kick off zustand-persist writes that are
@@ -128,9 +110,7 @@ export async function teardownUserSession(options: TeardownOptions = {}): Promis
     clearUserScopedStorage(RUN_SETTLEMENT_STORE_NAME, userId),
     clearUserScopedStorage(STOP_CART_STORE_NAME, userId),
     clearUserScopedStorage(RETURN_SUBMISSION_STORE_NAME, userId),
-    keepInlineNonces
-      ? Promise.resolve()
-      : clearUserScopedStorage(INLINE_RETURN_SUBMISSION_STORE_NAME, userId),
+    clearUserScopedStorage(INLINE_RETURN_SUBMISSION_STORE_NAME, userId),
   ]);
 
   // (6) Sweep the per-ORDER keyspaces. These are not one key per store but one

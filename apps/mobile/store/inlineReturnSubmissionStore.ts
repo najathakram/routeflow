@@ -3,7 +3,7 @@ import { persist, createJSONStorage } from "zustand/middleware";
 import { userScopedStorage } from "../lib/user-scoped-storage";
 import {
   getOrCreateNonce as getOrCreateNonceIn,
-  retainQueuedNonces,
+  noncesFromQueues,
   settleAfterDrain as settleAfterDrainIn,
   settleDirectCapture,
   type InlineReturnCaptureOutcome,
@@ -71,9 +71,13 @@ interface InlineReturnSubmissionState {
   // this store too, so a kill-then-logout-then-login-as-someone-else can never surface, or
   // block, the prior user's inline-return attempts.
   reset: () => void;
-  /** Sign-out while captures are still queued: keep only the nonces those queued captures were
-   *  sent with (see `retainQueuedNonces`), drop everything else. */
-  resetKeepingQueued: (queue: ReadonlyArray<{ endpoint: string; body?: unknown }>) => void;
+  /** Sign-in: merge in the nonces of THIS user's own queued / failed captures (see
+   *  `noncesFromQueues`). Never overrides a nonce already persisted for the pair. */
+  seedFromQueues: (
+    queue: Parameters<typeof noncesFromQueues>[0],
+    failed: Parameters<typeof noncesFromQueues>[1],
+    userId: string,
+  ) => void;
 }
 
 export const INLINE_RETURN_SUBMISSION_STORE_NAME = "routeflow-inline-return-submissions";
@@ -95,7 +99,8 @@ export const useInlineReturnSubmissionStore = create<InlineReturnSubmissionState
       settleAfterDrain: (records) =>
         set((s) => ({ nonces: settleAfterDrainIn(records, s.nonces) })),
       reset: () => set({ nonces: {} }),
-      resetKeepingQueued: (queue) => set((s) => ({ nonces: retainQueuedNonces(s.nonces, queue) })),
+      seedFromQueues: (queue, failed, userId) =>
+        set((s) => ({ nonces: { ...noncesFromQueues(queue, failed, userId), ...s.nonces } })),
     }),
     {
       name: INLINE_RETURN_SUBMISSION_STORE_NAME,

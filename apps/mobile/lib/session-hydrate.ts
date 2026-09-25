@@ -3,6 +3,8 @@ import { useRunSettlementStore } from "../store/runSettlementStore";
 import { useStopCartStore } from "../store/stopCartStore";
 import { useReturnSubmissionStore } from "../store/returnSubmissionStore";
 import { useInlineReturnSubmissionStore } from "../store/inlineReturnSubmissionStore";
+import { useOfflineQueue } from "../store/offlineQueue";
+import { getStoredUser } from "./auth";
 
 interface MaybePersisted {
   persist?: { rehydrate?: () => void | Promise<void> };
@@ -41,4 +43,26 @@ export async function rehydrateUserScopedStores(): Promise<void> {
   await rehydrateOne(useStopCartStore);
   await rehydrateOne(useReturnSubmissionStore);
   await rehydrateOne(useInlineReturnSubmissionStore);
+  await seedInlineReturnNonces();
+}
+
+/**
+ * Sign-out empties the inline-return nonces (never carried across users); sign-in rebuilds the
+ * signed-in user's from THEIR OWN offline queue + failed-actions list, so a queued or
+ * uncertain-failed capture's key survives a sign-out/sign-in without ever leaking to another
+ * user. Best-effort like every hydration step.
+ */
+async function seedInlineReturnNonces(): Promise<void> {
+  try {
+    const user = await getStoredUser();
+    if (!user?.id) return;
+    const { queue, failedActions } = useOfflineQueue.getState();
+    (
+      useInlineReturnSubmissionStore.getState() as {
+        seedFromQueues?: (q: unknown, f: unknown, u: string) => void;
+      }
+    ).seedFromQueues?.(queue ?? [], failedActions ?? [], user.id);
+  } catch {
+    // best-effort
+  }
 }

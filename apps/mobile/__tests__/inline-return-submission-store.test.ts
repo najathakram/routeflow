@@ -60,11 +60,19 @@ describe("useCaptureInlineReturn settle wiring against the real store", () => {
     expect(store().nonces[KEY]).toBe(n2);
   });
 
-  it("resetKeepingQueued keeps only queued nonces", () => {
+  it("seedFromQueues merges the signed-in user's queued nonce and never overrides an existing one", () => {
     const n1 = store().getOrCreateNonce(KEY);
-    const other = store().getOrCreateNonce(inlineReturnNonceKey("c", "o2"));
-    store().resetKeepingQueued([{ endpoint: "/returns/inline/capture", body: vars(n1) }]);
-    expect(store().nonces).toEqual({ [KEY]: n1 });
-    expect(other).toBeTruthy();
+    store().seedFromQueues(
+      [{ endpoint: "/returns/inline/capture", body: vars("other") }],
+      [
+        {
+          action: { endpoint: "/returns/inline/capture", body: { ...vars("n9"), orderId: "o2" } },
+          reason: "HTTP 500: x",
+        },
+      ],
+      "u1",
+    );
+    expect(store().nonces[KEY]).toBe(n1);
+    expect(store().nonces[inlineReturnNonceKey("c", "o2")]).toBe("n9");
   });
 });

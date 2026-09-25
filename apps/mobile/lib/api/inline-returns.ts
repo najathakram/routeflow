@@ -9,7 +9,12 @@
 // return flow's header-based Idempotency-Key) — apiClient's offline queue replays the POST
 // body verbatim on reconnect, so keeping returnKey stable in the body is exactly what makes a
 // queued replay collapse onto the original capture instead of minting a second one.
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import {
+  useMutation,
+  useQueryClient,
+  type QueryClient,
+  type UseMutationOptions,
+} from "@tanstack/react-query";
 import { apiClient } from "../api-client";
 import { captureSettleHandlers } from "../inline-return-submit-key";
 import { useInlineReturnSubmissionStore } from "../../store/inlineReturnSubmissionStore";
@@ -48,11 +53,16 @@ export function useInlineReturnQuote() {
  * caller via `inlineReturnSubmitKey` + `useInlineReturnSubmissionStore` — never minted inline
  * here, and never a fresh value per call (see this file's header comment).
  */
-export function useCaptureInlineReturn() {
-  const qc = useQueryClient();
-  const settleCapture = useInlineReturnSubmissionStore((s) => s.settleCapture);
-  const settle = captureSettleHandlers<CaptureInlineReturnRequest>(settleCapture);
-  return useMutation<InlineReturnRecord, Error, CaptureInlineReturnRequest>({
+type CaptureVars = CaptureInlineReturnRequest;
+
+/** Mutation options for the capture hook, factored out so the two settle calls are testable
+ *  behaviourally (a deleted or mis-wired settle call turns the test red). */
+export function buildCaptureMutationOptions(
+  qc: Pick<QueryClient, "invalidateQueries">,
+  settleCapture: Parameters<typeof captureSettleHandlers<CaptureVars>>[0],
+): UseMutationOptions<InlineReturnRecord, Error, CaptureVars> {
+  const settle = captureSettleHandlers<CaptureVars>(settleCapture);
+  return {
     mutationFn: (dto) => apiClient.post("/returns/inline/capture", dto).then((r) => r.data),
     onSuccess: (data, variables) => {
       qc.invalidateQueries({ queryKey: ["orders", data.orderId] });
@@ -85,5 +95,13 @@ export function useCaptureInlineReturn() {
       // cleared promptly.
       settle.onError(error, variables);
     },
-  });
+  };
+}
+
+export function useCaptureInlineReturn() {
+  const qc = useQueryClient();
+  const settleCapture = useInlineReturnSubmissionStore((s) => s.settleCapture);
+  return useMutation<InlineReturnRecord, Error, CaptureVars>(
+    buildCaptureMutationOptions(qc, settleCapture),
+  );
 }

@@ -137,6 +137,9 @@ export function isDefiniteInlineReturnRefusal(
   message: string | undefined,
 ): boolean {
   if (status === undefined || status < 400 || status >= 500) return false;
+  // 408 (request timeout) and 429 (the GLOBAL throttler) answer BEFORE the returnKey lookup:
+  // nothing was decided about the capture, so a retry must resend the SAME key.
+  if (status === 408 || status === 429) return false;
   if (status === 409 && message?.endsWith("retry")) return false;
   return true;
 }
@@ -163,9 +166,8 @@ export function captureOutcomeFromError(
 }
 
 /** The nonce is always the FINAL `:`-delimited token in a returnKey (see
- *  `inlineReturnSubmitKey` above) — every earlier component (customerId, orderId, each
- *  productId:boxes:pieces pair) may itself contain colons/commas, but nothing is ever appended
- *  after the nonce, so the last segment is unambiguous regardless of item count. */
+ *  `inlineReturnSubmitKey` above) — the customer and order ids may themselves contain colons,
+ *  but nothing is ever appended after the nonce, so the last segment is unambiguous. */
 export function nonceSuffixFromReturnKey(returnKey: string): string {
   const parts = returnKey.split(":");
   return parts[parts.length - 1] ?? "";
@@ -280,26 +282,37 @@ export function captureSettleHandlers<
   };
 }
 
-/** Sign-out keeps the nonces of captures still sitting in the offline queue (which survives
- *  sign-out): clearing them would let a manual retry mint a fresh key and double-book next to
- *  the queued replay. Everything else is dropped. */
-export function retainQueuedNonces(
-  nonces: NonceMap,
-  queue: ReadonlyArray<{ endpoint: string; body?: unknown }>,
+/**
+ * Rebuilds a signed-in user's nonces from THEIR OWN offline queue + failed-actions list. Sign-out
+ * always empties the in-memory (and persisted) nonce store — carrying it across users leaked A's
+ * customer:order -> nonce to B, who then sent A's returnKey and got A's Return back (Opus review
+ * of #1270). A queued capture's nonce, and a FAILED capture with an uncertain outcome (5xx, the
+ * retry-409, 408/429, retries exhausted), still matter: the next attempt on that pair must reuse
+ * the SAME key or it books a second Return. A definitely-refused failed capture is terminal.
+ * The live queue wins over a failed record for the same pair; unstamped legacy entries are
+ * adopted, another user's entries are ignored.
+ */
+export function noncesFromQueues(
+  queue: ReadonlyArray<{ endpoint: string; body?: unknown; userId?: string }>,
+  failed: ReadonlyArray<{
+    action: { endpoint: string; body?: unknown; userId?: string };
+    reason: string;
+  }>,
+  userId: string,
 ): NonceMap {
-  const live = new Set<string>();
-  for (const q of queue) {
-    if (q.endpoint !== "/returns/inline/capture") continue;
-    const b = q.body as { customerId?: string; orderId?: string; returnKey?: string } | undefined;
-    if (b?.customerId && b.orderId && b.returnKey) {
-      live.add(
-        `${inlineReturnNonceKey(b.customerId, b.orderId)}\u0000${nonceSuffixFromReturnKey(b.returnKey)}`,
-      );
-    }
+  const out: Record<string, string> = {};
+  const take = (a: { endpoint: string; body?: unknown; userId?: string }) => {
+    if (a.endpoint !== "/returns/inline/capture") return;
+    if (a.userId !== undefined && a.userId !== userId) return;
+    const b = a.body as { customerId?: string; orderId?: string; returnKey?: string } | undefined;
+    if (!b?.customerId || !b.orderId || !b.returnKey) return;
+    out[inlineReturnNonceKey(b.customerId, b.orderId)] = nonceSuffixFromReturnKey(b.returnKey);
+  };
+  for (const f of failed) {
+    const m = /^HTTP (\d+): (.*)$/.exec(f.reason);
+    if (isDefiniteInlineReturnRefusal(m ? Number(m[1]) : undefined, m ? m[2] : undefined)) continue;
+    take(f.action);
   }
-  const kept: Record<string, string> = {};
-  for (const [key, nonce] of Object.entries(nonces)) {
-    if (live.has(`${key}\u0000${nonce}`)) kept[key] = nonce;
-  }
-  return kept;
+  for (const q of queue) take(q);
+  return out;
 }

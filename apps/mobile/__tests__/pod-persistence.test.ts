@@ -318,6 +318,10 @@ describe("REG-B136-G: rehydrateUserScopedStores hydrates all five skipHydration 
     },
   }));
 
+  jest.mock("../store/offlineQueue", () => ({
+    useOfflineQueue: { getState: () => ({ queue: [], failedActions: [] }) },
+  }));
+  jest.mock("../lib/auth", () => ({ getStoredUser: async () => null }));
   jest.mock("../store/inlineReturnSubmissionStore", () => ({
     useInlineReturnSubmissionStore: {
       persist: { rehydrate: (...args: unknown[]) => inlineReturnRehydrate(...args) },

@@ -8,7 +8,7 @@ import {
   isDefiniteInlineReturnRefusal,
   nonceSuffixFromReturnKey,
   RETURN_STATE_RACE_RETRY_MESSAGE,
-  retainQueuedNonces,
+  noncesFromQueues,
   settleAfterDrain,
   settleDirectCapture,
   clearNonceIf,
@@ -269,10 +269,7 @@ describe("captureOutcomeFromError — axios-shaped fixtures", () => {
 
 describe("nonceSuffixFromReturnKey", () => {
   it("is the final colon-delimited segment, regardless of how many colon-bearing segments precede it", () => {
-    const key = inlineReturnSubmitKey(
-      { customerId: "cust-1", orderId: "order-1" },
-      "nonce-XYZ",
-    );
+    const key = inlineReturnSubmitKey({ customerId: "cust-1", orderId: "order-1" }, "nonce-XYZ");
     expect(nonceSuffixFromReturnKey(key)).toBe("nonce-XYZ");
   });
 });
@@ -479,23 +476,81 @@ describe("settleDirectCapture / captureSettleHandlers — behavioural wiring", (
   });
 });
 
-describe("retainQueuedNonces — sign-out keeps nonces of captures still queued (Opus review of #1270, point 2)", () => {
-  const queued = (nonce: string, customerId = "c", orderId = "o") => ({
-    endpoint: "/returns/inline/capture",
-    body: { customerId, orderId, returnKey: inlineReturnSubmitKey({ customerId, orderId }, nonce) },
-  });
-  it("keeps a nonce whose capture is still queued, drops the rest", () => {
-    expect(retainQueuedNonces({ "c:o": "n1", "c:x": "n7" }, [queued("n1")])).toEqual({
-      "c:o": "n1",
+describe("429 and 408 are NOT final refusals — the nonce is kept (Opus review of #1270)", () => {
+  // The global throttler (429) and a request timeout (408) answer BEFORE the returnKey lookup,
+  // so nothing was written and nothing about the capture is settled: a retry must resend the
+  // SAME key.
+  it.each([429, 408])("a %i is not a definite refusal", (status) => {
+    expect(isDefiniteInlineReturnRefusal(status, "slow down")).toBe(false);
+    expect(captureOutcomeFromError({ response: { status, data: { message: "x" } } })).toEqual({
+      kind: "error",
+      refused: false,
     });
   });
-  it("drops a nonce when the queued entry carries a different nonce, or is another endpoint", () => {
-    expect(retainQueuedNonces({ "c:o": "n1" }, [queued("n2")])).toEqual({});
+  it("a queued capture that the drain moves to failedActions with HTTP 429 does not settle", () => {
+    const attempted = [
+      {
+        id: "t1",
+        endpoint: "/returns/inline/capture",
+        body: { customerId: "c", orderId: "o", returnKey: "inl:c:o:n1" },
+      },
+    ];
     expect(
-      retainQueuedNonces({ "c:o": "n1" }, [{ ...queued("n1"), endpoint: "/returns" }]),
-    ).toEqual({});
+      inlineReturnDrainSettleRecords({
+        delivered: [],
+        failedActions: [{ action: attempted[0]!, reason: "HTTP 429: Too Many Requests" }],
+        attempted,
+      }),
+    ).toEqual([]);
   });
-  it("empty queue retains nothing", () => {
-    expect(retainQueuedNonces({ "c:o": "n1" }, [])).toEqual({});
+});
+
+describe("noncesFromQueues — rebuild the signed-in user's nonces from THEIR OWN queue + failed list", () => {
+  const cap = (nonce: string, over: Record<string, unknown> = {}) => ({
+    endpoint: "/returns/inline/capture",
+    body: { customerId: "c", orderId: "o", returnKey: `inl:c:o:${nonce}` },
+    ...over,
+  });
+  const failed = (action: ReturnType<typeof cap>, reason: string) => ({ action, reason });
+
+  it("takes the nonce of a still-queued capture", () => {
+    expect(noncesFromQueues([cap("n1")], [], "u1")).toEqual({ "c:o": "n1" });
+  });
+  it("keeps the nonce of a FAILED-ACTIONS capture with an uncertain outcome (5xx / 409-retry / retries exhausted)", () => {
+    expect(noncesFromQueues([], [failed(cap("n2"), "HTTP 503: down")], "u1")).toEqual({
+      "c:o": "n2",
+    });
+    expect(noncesFromQueues([], [failed(cap("n3"), "Retries exhausted")], "u1")).toEqual({
+      "c:o": "n3",
+    });
+    expect(
+      noncesFromQueues(
+        [],
+        [failed(cap("n4"), `HTTP 409: ${RETURN_STATE_RACE_RETRY_MESSAGE}`)],
+        "u1",
+      ),
+    ).toEqual({ "c:o": "n4" });
+  });
+  it("drops a failed capture that was a DEFINITE refusal (terminal) and 429/408 are kept", () => {
+    expect(noncesFromQueues([], [failed(cap("n5"), "HTTP 400: bad")], "u1")).toEqual({});
+    expect(noncesFromQueues([], [failed(cap("n6"), "HTTP 429: slow")], "u1")).toEqual({
+      "c:o": "n6",
+    });
+  });
+  it("only the signed-in user's own entries (other users' and non-capture entries are ignored)", () => {
+    const mine = cap("n7", { userId: "u1" });
+    const theirs = cap("n8", {
+      userId: "u2",
+      body: { customerId: "c", orderId: "o2", returnKey: "inl:c:o2:n8" },
+    });
+    const other = cap("n9", { endpoint: "/returns/submit" });
+    expect(noncesFromQueues([mine, theirs, other], [failed(theirs, "HTTP 500: x")], "u1")).toEqual({
+      "c:o": "n7",
+    });
+  });
+  it("a legacy unstamped entry is adopted; the live queue wins over a failed record for the same pair", () => {
+    expect(noncesFromQueues([cap("nQ")], [failed(cap("nF"), "HTTP 500: x")], "u1")).toEqual({
+      "c:o": "nQ",
+    });
   });
 });

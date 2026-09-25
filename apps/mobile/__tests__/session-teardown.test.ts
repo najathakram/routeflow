@@ -136,14 +136,10 @@ jest.mock("../store/returnSubmissionStore", () => ({
   useReturnSubmissionStore: { getState: () => ({ reset: returnSubmissionStoreReset }) },
 }));
 const inlineReturnSubmissionStoreReset = jest.fn();
-const inlineReturnResetKeepingQueued = jest.fn();
 jest.mock("../store/inlineReturnSubmissionStore", () => ({
   INLINE_RETURN_SUBMISSION_STORE_NAME: "routeflow-inline-return-submissions",
   useInlineReturnSubmissionStore: {
-    getState: () => ({
-      reset: inlineReturnSubmissionStoreReset,
-      resetKeepingQueued: inlineReturnResetKeepingQueued,
-    }),
+    getState: () => ({ reset: inlineReturnSubmissionStoreReset }),
   },
 }));
 
@@ -603,7 +599,7 @@ describe("REG-B140-D: cross-tab logout tears down (web build)", () => {
   });
 });
 
-describe("sign-out keeps nonces of captures still queued (Opus review of #1270, point 2)", () => {
+describe("sign-out ALWAYS empties the inline-return nonces (Opus review of #1270: cross-user leak)", () => {
   const queuedCapture = {
     id: "q1",
     endpoint: "/returns/inline/capture",
@@ -621,21 +617,17 @@ describe("sign-out keeps nonces of captures still queued (Opus review of #1270, 
     mockQueueState.queue = [];
   });
 
-  it("with a capture still queued: the nonce store is NOT reset/cleared, it is narrowed to the queued nonces", async () => {
-    mockQueueState.queue = [queuedCapture];
-    await useAuthStore.getState().logout();
-    expect(inlineReturnSubmissionStoreReset).not.toHaveBeenCalled();
-    expect(inlineReturnResetKeepingQueued).toHaveBeenCalledWith([queuedCapture]);
-    const removed = removeItemMock.mock.calls.map((c) => String(c[0]));
-    expect(removed.some((k) => k.includes("routeflow-inline-return-submissions"))).toBe(false);
-    expect(removed.some((k) => k.includes("routeflow-pod-store"))).toBe(true);
-  });
-
-  it("with no capture queued: reset as before", async () => {
-    await useAuthStore.getState().logout();
-    expect(inlineReturnSubmissionStoreReset).toHaveBeenCalledTimes(1);
-    expect(inlineReturnResetKeepingQueued).not.toHaveBeenCalled();
-    const removed = removeItemMock.mock.calls.map((c) => String(c[0]));
-    expect(removed.some((k) => k.includes("routeflow-inline-return-submissions"))).toBe(true);
-  });
+  it.each([
+    ["nothing queued", [] as Array<Record<string, unknown>>],
+    ["a capture still queued", [queuedCapture]],
+  ])(
+    "%s: memory is reset and the blob cleared — user B can never inherit user A's nonces",
+    async (_n, queue) => {
+      mockQueueState.queue = queue;
+      await useAuthStore.getState().logout();
+      expect(inlineReturnSubmissionStoreReset).toHaveBeenCalledTimes(1);
+      const removed = removeItemMock.mock.calls.map((c) => String(c[0]));
+      expect(removed.some((k) => k.includes("routeflow-inline-return-submissions"))).toBe(true);
+    },
+  );
 });
