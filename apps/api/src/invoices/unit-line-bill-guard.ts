@@ -23,6 +23,7 @@ export function billPackOf(
 
 export function assertIntegerPieces(
   li: {
+    boxes?: unknown;
     unitLabel?: string | null;
     name?: string | null;
     product?: { name?: string | null } | null;
@@ -30,7 +31,10 @@ export function assertIntegerPieces(
   billQty: number,
   pack: number,
 ): void {
-  if (!(pack > 1) || !(billQty > 0.001) || Number.isInteger(billQty)) return;
+  // Only a line stored WITH a box split carries a piece axis. A box-unaware line (boxes null: the
+  // mobile cart, operator add-line) is a count of selling units, so 1.5 boxes is legitimate and is
+  // billed as before; borrowing a pack from a prior draft or the live product here would throw it.
+  if (li.boxes == null || !(pack > 1) || !(billQty > 0) || Number.isInteger(billQty)) return;
   const unit = (li.unitLabel ?? "").trim() || "box";
   throw new BadRequestException(
     `Requested qty ${billQty} of ${li.product?.name ?? li.name ?? "this line"} is not a whole number of pieces (1 ${unit} = ${pack} pieces).`,

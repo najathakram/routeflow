@@ -249,6 +249,27 @@ describe("InvoicesService — B652 unit-line partial billing", () => {
       expect(line.qty).toBe(1.5);
     });
 
+    it("a BOX-UNAWARE line (boxes null, own unitsPerBox null) at 1.5 bills as before, even with a prior/live pack of 12", () => {
+      const li = caseLine({
+        unitLabel: null,
+        boxes: null,
+        pieces: null,
+        unitsPerBox: null,
+        qty: 4,
+        subtotal: 40,
+        unitPrice: 10,
+      });
+      for (const opts of [undefined, { priorPack: 12 }]) {
+        const line = build(li, 1.5, opts);
+        expect(line).toMatchObject({ qty: 1.5, boxes: null, pieces: null });
+        expect(Number(line.subtotal)).toBe(15); // 40 x 1.5/4 prorated, never refused
+      }
+    });
+
+    it("exactly 0.001 of a boxed line is refused (no truncation to a $0.01 '0 Case' line)", () => {
+      expect(() => build(caseLine(), 0.001)).toThrow("not a whole number of pieces");
+    });
+
     it("47.9995 on a boxed line is refused before any math", () => {
       expect(() => build(caseLine(), 47.9995)).toThrow(
         "Requested qty 47.9995 of Widget is not a whole number of pieces (1 Case = 12 pieces).",
@@ -369,14 +390,58 @@ describe("InvoicesService — B652 unit-line partial billing", () => {
     });
   });
 
+  describe("reconcileOrderDeliveredInvoices (completeWithPayment -> rebuildSiblingDrafts) on a unit line", () => {
+    it("a delivery stop on a Case line whose open draft still carries the Pallet pack (120) completes: 50 of 60 = 4 Cases + 2 pcs, no throw", async () => {
+      prisma.invoice.findMany.mockResolvedValue([
+        {
+          id: "d1",
+          status: InvoiceStatus.DRAFT,
+          deliveryBatchId: null,
+          discount: 0,
+          shippingFee: 0,
+          dueDate: null,
+          items: [{ orderItemId: "oi-1", unitsPerBox: 120 }],
+        },
+      ] as any);
+      prisma.order.findUnique.mockResolvedValue({
+        id: "ord-1",
+        customerId: "cust-1",
+        subtotal: 600,
+        tax: 0,
+        lineItems: [caseLine({ qty: 60, deliveredQty: 50, boxes: 5, subtotal: 600 })],
+      } as any);
+      prisma.customer.findUnique.mockResolvedValue({ isTaxExempt: false });
+      prisma.customer.findFirst.mockResolvedValue({ isTaxExempt: false });
+      prisma.invoiceItem.deleteMany.mockResolvedValue({});
+      prisma.invoice.update.mockResolvedValue({ id: "d1", status: InvoiceStatus.DRAFT, items: [] });
+      prisma.orderItem.update.mockResolvedValue({});
+      prisma.orderItem.findMany.mockResolvedValue([{ id: "oi-1" }]);
+
+      await service.reconcileOrderDeliveredInvoices("ord-1", prisma);
+
+      const line = prisma.invoice.update.mock.calls[0][0].data.items.create[0];
+      expect(line).toMatchObject({
+        unitLabel: "Case",
+        qty: 50,
+        boxes: 4,
+        pieces: 2,
+        unitsPerBox: 12,
+      });
+    });
+  });
+
   describe("unit-line-bill-guard helpers", () => {
     it("assertIntegerPieces ignores 0, negatives, NaN and factor <= 1", () => {
-      const li = { unitLabel: "Case", product: { name: "W" } };
+      const li = { boxes: 8, unitLabel: "Case", product: { name: "W" } };
       for (const q of [0, -5, -2.5, Number.NaN])
         expect(() => assertIntegerPieces(li, q, 12)).not.toThrow();
       expect(() => assertIntegerPieces(li, 2.5, 1)).not.toThrow();
       expect(() => assertIntegerPieces(li, 2.5, 0)).not.toThrow();
       expect(() => assertIntegerPieces(li, 2.5, 12)).toThrow("not a whole number of pieces");
+      expect(() => assertIntegerPieces({ ...li, boxes: 2 }, 0.001, 12)).toThrow(
+        "not a whole number of pieces",
+      );
+      expect(() => assertIntegerPieces({ ...li, boxes: null }, 1.5, 12)).not.toThrow();
     });
 
     it("billPackOf: a unit line's own pack wins, a pack line takes prior, then own, then product", () => {
