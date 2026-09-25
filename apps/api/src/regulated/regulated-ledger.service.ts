@@ -48,6 +48,14 @@ interface RegulatedCorrectionRowInput {
   returnId?: string;
 }
 
+/** #2108: a filed (GENERATED or LOCKED) filing period a parked reversal would otherwise book into, and
+ *  the category whose filing matched. */
+export interface FiledPeriod {
+  periodKey: string;
+  status: string;
+  trackedCategoryId: string;
+}
+
 export interface SaleLedgerLine {
   invoiceItemId: string;
   orderItemId: string | null;
@@ -1035,6 +1043,118 @@ export class RegulatedLedgerService {
   }
 
   /**
+   * #2108: the ONE product-id definition for a parked sale row: its live invoice item's product,
+   * else the product of the order/invoice line shape (`loadSaleLineShapes`), which survives an
+   * InvoiceItem rotation. list() (`filedPeriodForParked`) and `resolveParkedReversal` both call it.
+   */
+  static productIdOfParkedRow(
+    saleRow: any,
+    productByItem: Map<string, string>,
+    shapeProductId: string | null | undefined,
+  ): string | null {
+    return productByItem.get(saleRow.invoiceItemId) ?? shapeProductId ?? null;
+  }
+
+  /**
+   * #2108 / SA-196: the ONE definition of which categories a parked-reversal resolution touches: the
+   * parked row's own plus every live sale row of the same product on the order (correction rows
+   * excluded). A product re-categorised between two sales has rows in different categories, each with
+   * its own filing, so the conservative fold looks at all of them. `resolveParkedReversal` and the
+   * parked-reversal list both call this, so what the operator is told before resolving is what the
+   * resolution then does.
+   */
+  static touchedCategoryIds(
+    saleRow: any,
+    sales: any[],
+    productByItem: Map<string, string>,
+    productId: string | null | undefined,
+  ): string[] {
+    return [
+      ...new Set(
+        [
+          saleRow,
+          ...sales.filter(
+            (x: any) =>
+              x.correctsEntryId == null &&
+              productId != null &&
+              productByItem.get(x.invoiceItemId) === productId,
+          ),
+        ]
+          .map((x: any) => x.trackedCategoryId)
+          .filter(Boolean),
+      ),
+    ] as string[];
+  }
+
+  /** The filed period (any of `categoryIds`) that contains `bucket`, or null. Deterministic: with two
+   *  filed categories the lowest category id, then period key, wins (SA-213), and the matched category
+   *  is returned so the response names the right one. */
+  async findFiledPeriod(
+    db: any,
+    categoryIds: string[],
+    bucket: string,
+  ): Promise<FiledPeriod | null> {
+    if (categoryIds.length === 0) return null;
+    const bucketStart = new Date(`${bucket}-01T00:00:00.000Z`);
+    const filing = await db.regulatedFiling.findFirst({
+      where: {
+        trackedCategoryId: { in: categoryIds },
+        periodStart: { lte: bucketStart },
+        periodEnd: { gt: bucketStart },
+        status: { in: ["GENERATED", "LOCKED"] },
+      },
+      orderBy: [{ trackedCategoryId: "asc" }, { periodKey: "asc" }],
+      select: { periodKey: true, status: true, trackedCategoryId: true },
+    });
+    return filing
+      ? {
+          periodKey: filing.periodKey,
+          status: filing.status,
+          trackedCategoryId: filing.trackedCategoryId,
+        }
+      : null;
+  }
+
+  /** Read-only: would resolving this parked row book into an already-filed period? Uses the SAME fold
+   *  and the SAME lookup as `resolveParkedReversal` (the park's date derives the bucket; a park in the
+   *  current month is never "filed"). */
+  async filedPeriodForParked(
+    db: any,
+    parked: { saleEntryId: string; orderId: string; createdAt: Date | string },
+  ): Promise<FiledPeriod | null> {
+    const bucket = periodBucketOf(new Date(parked.createdAt));
+    if (bucket === periodBucketOf(new Date())) return null;
+    const saleRow = await db.regulatedSalesLedger.findFirst({ where: { id: parked.saleEntryId } });
+    if (!saleRow) return null;
+    const sales: any[] =
+      (await db.regulatedSalesLedger.findMany({
+        where: { orderId: parked.orderId, entryType: "SALE" },
+      })) ?? [];
+    const itemIds = [
+      ...new Set(sales.map((x: any) => x.invoiceItemId).filter(Boolean)),
+    ] as string[];
+    const items: any[] =
+      itemIds.length > 0
+        ? ((await db.invoiceItem.findMany({
+            where: { id: { in: itemIds } },
+            select: { id: true, productId: true },
+          })) ?? [])
+        : [];
+    const productByItem = new Map<string, string>(items.map((i: any) => [i.id, i.productId]));
+    const shape = (await this.loadSaleLineShapes(db, [saleRow])).get(saleRow.id);
+    return this.findFiledPeriod(
+      db,
+      RegulatedLedgerService.touchedCategoryIds(
+        saleRow,
+        sales,
+        productByItem,
+        RegulatedLedgerService.productIdOfParkedRow(saleRow, productByItem, shape?.productId),
+      ),
+      bucket,
+    );
+  }
+
+  /**
    * SA-089a (amends SA-089, recorded as the SA's error E50) — B660: the operator resolution of
    * ONE parked reversal row. Lives here (not a separate injectable) because both
    * `buildLineRemainingBalances` and `bookReversalChunk` are private to this class — SA-090's
@@ -1052,8 +1172,10 @@ export class RegulatedLedgerService {
    *
    * CLOSED IS DECIDED FIRST (SA-089a(a)): before any write, the line's remaining qty AND net —
    * on the ORIGINAL, UNCORRECTED axis — decide whether there is anything left to correct. Both
-   * ≤ EPS means the line was already fully reversed before this operator ever touched it:
-   * resolve and close with NOTHING written, not even the SALE correction. Deciding this AFTER
+   * ≤ EPS means the line was already fully reversed before this operator ever touched it: nothing
+   * is written on THAT row, not even the SALE correction (SA-169: the parked pieces still walk on to
+   * the product's other live rows, so the outcome is `closed` only when nothing booked, parked or
+   * was left over, and `partial` otherwise). Deciding this AFTER
    * writing the SALE's restatement (E50's mistake) manufactures a correction for a line that
    * needed none.
    *
@@ -1119,7 +1241,7 @@ export class RegulatedLedgerService {
     unbookedPieces: number;
     /** SA-182: set when the parked period was already filed, so the reversal was booked in the
      *  CURRENT period instead (an amended return may be required for `periodKey`). */
-    amendedPeriod?: { periodKey: string; status: string } | null;
+    amendedPeriod?: FiledPeriod | null;
     /** SA-193: existing UNRESOLVED parks the leftover was added to (never a new key). */
     grownParks?: { id: string; added: number }[];
     verdictAfter: SaleAxisState | null;
@@ -1282,37 +1404,24 @@ export class RegulatedLedgerService {
           `(${parkBucket}); the date wins.`,
       );
     }
-    let filedPeriod: { periodKey: string; status: string } | null = null;
+    let filedPeriod: FiledPeriod | null = null;
     if (returnDate && parkBucket !== currentBucket) {
-      const bucketStart = new Date(`${parkBucket}-01T00:00:00.000Z`);
-      // SA-196: conservative across categories. A product re-categorised between two sales has rows in
-      // different categories, each with its own filing; the period counts as filed if ANY category this
-      // resolution touches (the parked row's plus every row the walk will visit) has a filing for it.
-      const walkProductId = built.productByItem.get(saleRow.invoiceItemId) ?? shape.productId;
-      const touchedCategoryIds = [
-        ...new Set(
-          [
-            saleRow,
-            ...built.sales.filter(
-              (x: any) =>
-                x.correctsEntryId == null &&
-                built.productByItem.get(x.invoiceItemId) === walkProductId,
-            ),
-          ]
-            .map((x: any) => x.trackedCategoryId)
-            .filter(Boolean),
+      // SA-196: conservative across categories, through the ONE shared fold (list() uses the same one).
+      const walkProductId = RegulatedLedgerService.productIdOfParkedRow(
+        saleRow,
+        built.productByItem,
+        shape.productId,
+      );
+      filedPeriod = await this.findFiledPeriod(
+        db,
+        RegulatedLedgerService.touchedCategoryIds(
+          saleRow,
+          built.sales,
+          built.productByItem,
+          walkProductId,
         ),
-      ];
-      const filing = await db.regulatedFiling.findFirst({
-        where: {
-          trackedCategoryId: { in: touchedCategoryIds },
-          periodStart: { lte: bucketStart },
-          periodEnd: { gt: bucketStart },
-          status: { in: ["GENERATED", "LOCKED"] },
-        },
-        select: { periodKey: true, status: true },
-      });
-      if (filing) filedPeriod = { periodKey: filing.periodKey, status: filing.status };
+        parkBucket,
+      );
     }
     const now = returnDate && !filedPeriod ? returnDate : nowActual;
     const bucket = returnDate && !filedPeriod ? parkBucket : currentBucket;
@@ -1373,10 +1482,16 @@ export class RegulatedLedgerService {
     const parkedRowIds: string[] = [];
     const grownParks: { id: string; added: number }[] = [];
     if (leftover > 0) {
-      const productId = built.productByItem.get(saleRow.invoiceItemId) ?? shape.productId;
+      const productId = RegulatedLedgerService.productIdOfParkedRow(
+        saleRow,
+        built.productByItem,
+        shape.productId,
+      );
       const ordered = built.sales.filter(
         (s: any) =>
-          s.correctsEntryId == null && built.productByItem.get(s.invoiceItemId) === productId,
+          s.correctsEntryId == null &&
+          productId != null &&
+          built.productByItem.get(s.invoiceItemId) === productId,
       );
       // EVERY other live row of the product, in the live path's own order (a fully reversed row
       // skips itself inside the chunk booker) — not only rows after the parked one.
