@@ -136,13 +136,13 @@ describe("emitInlineReturnCredit", () => {
   });
 });
 
-describe("reserveInlineReturnNumber for a DRIVER (#2094 nit)", () => {
-  it("does not reserve ahead of the tx: a held driver return would burn the number", async () => {
+describe("reserveInlineReturnNumber for a DRIVER (SA-261)", () => {
+  it("reserves ahead like every role: a DRIVER_CAP hold mints no credit note and burns the number", async () => {
     const svc = svcStub();
     const p = await prepareInlineReturn(svc as any, LINES, { ...STAFF, role: "DRIVER" });
     await reserveInlineReturnNumber(p);
-    expect(svc.reserveCreditNoteNumber).not.toHaveBeenCalled();
-    expect(p!.creditNoteNumber).toBeUndefined();
+    expect(svc.reserveCreditNoteNumber).toHaveBeenCalledTimes(1);
+    expect(p!.creditNoteNumber).toBeDefined();
   });
 });
 

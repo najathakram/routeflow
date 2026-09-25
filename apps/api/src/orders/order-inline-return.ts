@@ -50,9 +50,10 @@ export async function prepareInlineReturn(
  * zero-total create mints no credit note and writes no intent (the unit and DB pins).
  */
 export async function reserveInlineReturnNumber(p: PreparedInlineReturn | null): Promise<void> {
-  // A DRIVER's return may be held above the cap (no credit note), which would burn the number: a
-  // driver create reserves inside the tx instead (captureAndIssueInTx), only when it issues.
-  if (p && p.role !== "DRIVER") p.creditNoteNumber = await p.svc.reserveCreditNoteNumber();
+  // Every role reserves ahead (SA-261, uniform): a DRIVER's over-cap return is held (no credit note),
+  // which burns the number exactly like a zero-total return does. Pinned: a DRIVER_CAP hold mints no
+  // credit note and burns the reserved number.
+  if (p) p.creditNoteNumber = await p.svc.reserveCreditNoteNumber();
 }
 
 /**

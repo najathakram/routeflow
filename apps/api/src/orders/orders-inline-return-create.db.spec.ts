@@ -13,7 +13,7 @@
  *      invoice line never exceed what was sold (the customer advisory lock serializes them; the
  *      single-order case is already serialized by captureInTx's own Order lock).
  *   5. DRIVER_CAP through create(): a driver's over-cap return on a new order is HELD: the order
- *      commits, the Return is RECEIVED/DRIVER_CAP, no credit note, no intent, no number consumed.
+ *      commits, the Return is RECEIVED/DRIVER_CAP, no credit note, no intent, the reserved number is burned (SA-261).
  *
  * Builds a REAL OrdersService via `Object.create` (no Nest DI, like order-idempotency-key.db.spec.ts)
  * with the real InlineReturnsService, CreditNotesService, NumberingService and SystemConfigService; the
@@ -83,7 +83,13 @@ describeDb("#2094 — a return inside POST /orders through create(), real Postgr
 
   async function seedCustomer(tag: string, creditLimit?: number) {
     const product = await raw.product.create({
-      data: { name: `${tag} product ${run}`, unit: "each", pricePerUnit: "10.00", tenantId },
+      data: {
+        name: `${tag} product ${run}`,
+        unit: "each",
+        pricePerUnit: "10.00",
+        currentStock: 100,
+        tenantId,
+      },
     });
     productIds.push(product.id);
     const u = await raw.user.create({
@@ -206,6 +212,8 @@ describeDb("#2094 — a return inside POST /orders through create(), real Postgr
     await raw.customer.deleteMany({ where: { id: { in: customerIds } } });
     await raw.stockMovement.deleteMany({ where: { productId: { in: productIds } } });
     await raw.product.deleteMany({ where: { id: { in: productIds } } });
+    await raw.driver.deleteMany({ where: { tenantId } });
+    await raw.systemConfig.deleteMany({ where: { tenantId } });
     await raw.user.deleteMany({ where: { id: { in: userIds } } });
     await raw.tenant.deleteMany({ where: { id: tenantId } });
     await prisma?.$disconnect();
@@ -228,6 +236,10 @@ describeDb("#2094 — a return inside POST /orders through create(), real Postgr
   }, 60_000);
 
   it("exposure: a create refused by the credit-limit gate leaves no order, no Return and no credit note; an accepted one does not net the credit note into exposure", async () => {
+    // The gate is OFF by default: switch it on for THIS spec's tenant only (owner-only key in prod).
+    await raw.systemConfig.create({
+      data: { tenantId, key: "credit_limit.enforce_new_orders", value: "true" },
+    });
     const tight = await seedCustomer("gate-tight", 5); // limit $5, order $10
     await expect(
       create(tight, 1, ret(tight.productId, 3, `k-gate-a-${run}`)),
@@ -326,7 +338,7 @@ describeDb("#2094 — a return inside POST /orders through create(), real Postgr
     expect(r?.creditNoteId ?? null).toBeNull();
   }, 60_000);
 
-  it("DRIVER_CAP through create(): a driver's over-cap return on a new order is held: the order commits, no credit note, no intent", async () => {
+  it("DRIVER_CAP through create(): a driver's over-cap return on a new order is held: the order commits, no credit note, no intent, and the reserved number is burned", async () => {
     const f = await seedCustomer("drv");
     const drvUser = await raw.user.create({
       data: { email: `drv-${run}@example.test`, username: `drv-${run}`, role: "DRIVER", tenantId },
@@ -376,7 +388,7 @@ describeDb("#2094 — a return inside POST /orders through create(), real Postgr
     expect(r).toMatchObject({ status: "RECEIVED", holdReason: "DRIVER_CAP" });
     expect(await raw.creditNote.count({ where: { customerId: f.customerId } })).toBe(0);
     expect(await raw.orderCreditNote.count({ where: { orderId: o.id } })).toBe(0);
-    expect(reserved.length).toBe(before); // a driver create reserves nothing ahead of the tx
+    expect(reserved.length).toBe(before + 1); // SA-261: reserved ahead like every role; the hold burns it
     await raw.routeRunStop.deleteMany({ where: { tenantId } });
     await raw.routeRun.deleteMany({ where: { tenantId } });
     await raw.routeStop.deleteMany({ where: { tenantId } });
