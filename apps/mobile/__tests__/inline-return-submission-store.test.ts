@@ -117,7 +117,7 @@ describe("a direct capture's nonce across sign-out / sign-in / relaunch", () => 
 
   beforeEach(() => {
     mockUserId = "u1";
-    useOfflineQueue.setState({ queue: [], failedActions: [], settledInlineReturnKeys: {} });
+    useOfflineQueue.setState({ queue: [], failedActions: [], settledInlineReturnKeys: [] });
   });
 
   it.each([
@@ -227,17 +227,13 @@ describe("a direct capture's nonce across sign-out / sign-in / relaunch", () => 
   it("SA-206: seeding prunes tombstones older than 90 days (never unbounded growth)", () => {
     const DAY = 86_400_000;
     useOfflineQueue.setState({
-      settledInlineReturnKeys: {
-        u1: [
-          { key: "stale", at: Date.now() - 100 * DAY },
-          { key: "fresh", at: Date.now() - DAY },
-        ],
-      },
+      settledInlineReturnKeys: [
+        { key: "stale", at: Date.now() - 100 * DAY },
+        { key: "fresh", at: Date.now() - DAY },
+      ],
     });
     signOutThenIn();
-    expect(useOfflineQueue.getState().settledInlineReturnKeys.u1!.map((t) => t.key)).toEqual([
-      "fresh",
-    ]);
+    expect(useOfflineQueue.getState().settledInlineReturnKeys.map((t) => t.key)).toEqual(["fresh"]);
   });
 
   it("the offline-queue drain settle also clears matching failed records and tombstones the key", () => {
@@ -262,23 +258,73 @@ describe("a direct capture's nonce across sign-out / sign-in / relaunch", () => 
     expect(store().nonces[KEY]).toBeUndefined();
   });
 
-  it("Opus (2): tombstones are per USER — A's tombstones never suppress B, and each user has their own cap", () => {
-    const nA = store().getOrCreateNonce(KEY);
-    handlers().onSuccess(undefined, request(nA)); // A settles
-    expect(Object.keys(useOfflineQueue.getState().settledInlineReturnKeys)).toEqual(["u1"]);
-    mockUserId = "u2"; // B signs in on the same device and (same customer/order, same nonce value by construction) meets the key
-    useInlineReturnSubmissionStore.setState({ nonces: { [KEY]: nA } });
-    expect(store().getOrCreateNonce(KEY)).toBe(nA); // NOT filtered: the tombstone belongs to A
-    // per-user cap: 205 tombstones for A never evict B's
-    mockUserId = "u2";
-    useOfflineQueue.getState().settleInlineReturnKey("inl:b:only:1");
+  it("SA-220 (ii): every insert prunes; at the cap the oldest is evicted, but NEVER a key still in the queue / failed list", () => {
+    const protectedKey = "inl:c:o:protected";
+    useOfflineQueue.setState({
+      queue: [
+        {
+          id: "q",
+          endpoint: "/returns/inline/capture",
+          method: "POST",
+          timestamp: 1,
+          retries: 0,
+          body: { customerId: "c", orderId: "o", returnKey: protectedKey },
+        },
+      ],
+      settledInlineReturnKeys: [{ key: protectedKey, at: 1 }], // ancient AND oldest
+    });
+    for (let i = 0; i < 205; i++) useOfflineQueue.getState().settleInlineReturnKey(`inl:x:${i}:n`);
+    const keys = useOfflineQueue.getState().settledInlineReturnKeys.map((t) => t.key);
+    expect(keys.length).toBeLessThanOrEqual(201);
+    expect(keys).toContain(protectedKey);
+    expect(keys).not.toContain("inl:x:0:n"); // oldest unprotected evicted
+    expect(keys).toContain("inl:x:204:n");
+  });
+
+  it("SA-220 (iii): an uncertain-outcome entry keeps ITS nonce across sign-out AND a user switch (two-user hand-off); a legacy entry is adopted with the SAME nonce", () => {
     mockUserId = "u1";
-    for (let i = 0; i < 205; i++)
-      useOfflineQueue.getState().settleInlineReturnKey(`inl:a:${i}:x`, "u1");
-    expect(useOfflineQueue.getState().settledInlineReturnKeys.u2!.map((t) => t.key)).toEqual([
-      "inl:b:only:1",
-    ]);
-    useOfflineQueue.getState().pruneSettledInlineReturnKeys("u1");
-    expect(useOfflineQueue.getState().settledInlineReturnKeys.u1!.length).toBeLessThanOrEqual(200);
+    const n1 = store().getOrCreateNonce(KEY);
+    handlers().onError({ response: { status: 503, data: {} } }, request(n1));
+    const rec = useOfflineQueue.getState().failedActions[0]!;
+    expect(rec.action.userId).toBe("u1");
+    // user A signs out, user B signs in on the same device
+    store().reset();
+    mockUserId = "u2";
+    store().seedFromQueues(
+      useOfflineQueue.getState().queue,
+      useOfflineQueue.getState().failedActions,
+      "u2",
+    );
+    expect(store().nonces[KEY]).toBeUndefined(); // A's stamped entry is not B's; B never mints a nonce FOR it
+    // A signs back in: the SAME nonce (nothing minted a new one for the existing entry)
+    store().reset();
+    mockUserId = "u1";
+    store().seedFromQueues(
+      useOfflineQueue.getState().queue,
+      useOfflineQueue.getState().failedActions,
+      "u1",
+    );
+    expect(store().getOrCreateNonce(KEY)).toBe(n1);
+    // legacy (unstamped) entry: adopted by the next user with ITS nonce, not a new one
+    useOfflineQueue.setState({
+      failedActions: [{ ...rec, action: { ...rec.action, userId: undefined } }],
+    });
+    store().reset();
+    mockUserId = "u2";
+    store().seedFromQueues(
+      useOfflineQueue.getState().queue,
+      useOfflineQueue.getState().failedActions,
+      "u2",
+    );
+    expect(store().getOrCreateNonce(KEY)).toBe(n1);
+    // and once it settles (e.g. RETURN_KEY_CONFLICT on the next drain), it tombstones for everyone
+    handlers().onError(
+      { response: { status: 409, data: { code: "INLINE_RETURN_KEY_CONFLICT", message: "x" } } },
+      request(n1),
+    );
+    store().reset();
+    mockUserId = "u1";
+    store().seedFromQueues([], [], "u1");
+    expect(store().getOrCreateNonce(KEY)).not.toBe(n1);
   });
 });

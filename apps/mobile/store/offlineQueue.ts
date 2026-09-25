@@ -2,7 +2,11 @@ import { create } from "zustand";
 import { persist, createJSONStorage } from "zustand/middleware";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import type { FailedActionRecord } from "../lib/queue-drain";
-import { pruneSettledKeys, type SettledKey } from "../lib/inline-return-submit-key";
+import {
+  pruneSettledKeys,
+  referencedReturnKeys,
+  type SettledKey,
+} from "../lib/inline-return-submit-key";
 import { resolveQueueIdentity, stampQueuedAction, type QueueIdentity } from "../lib/queue-identity";
 
 export interface QueuedAction {
@@ -46,20 +50,20 @@ interface OfflineQueueState {
   addFailedAction: (record: FailedActionRecord) => void;
   clearFailedAction: (actionId: string) => void;
   clearFailedActions: () => void;
-  /** Tombstones, PER USER (a shared device-wide list would let one user's cap evict another's,
-   *  and one user's history colour another's), of inline-return captures that reached a TERMINAL outcome (landed / definitely
+  /** GLOBAL tombstones (SA-220: a user-scoped list would bring back a settled attempt after a
+   *  driver hand-off — legacy queue entries are ADOPTED by the next user, REG-B137) of inline-return captures that reached a TERMINAL outcome (landed / definitely
    *  refused). The sign-in nonce rebuild skips these, so a stale failed-action record can never
    *  resurrect a settled key (Opus re-review of #1270). Persisted with the queue (which sign-out
    *  deliberately leaves alone) so they survive sign-out AND relaunch; a returnKey is unique per
    *  attempt so a tombstone can never suppress a later capture. Pruned by age (90 days) and a
    *  count cap at seed time (`pruneSettledInlineReturnKeys`) — never unbounded (SA-206). */
-  settledInlineReturnKeys: Record<string, SettledKey[]>;
-  /** Prune ONE user's tombstones (age + that user's own count cap). */
-  pruneSettledInlineReturnKeys: (userId: string, now?: number) => void;
-  /** A capture attempt (its `returnKey`) reached a terminal outcome: tombstone the key for
-   *  `userId` (default: the signed-in user) AND drop EVERY failed-action record carrying it
-   *  (direct- and drain-origin alike) in ONE update. */
-  settleInlineReturnKey: (returnKey: string, userId?: string) => void;
+  settledInlineReturnKeys: SettledKey[];
+  /** Age + count prune, never evicting a key the queue / failed-actions list still references. */
+  pruneSettledInlineReturnKeys: (now?: number) => void;
+  /** A capture attempt (its `returnKey`) reached a terminal outcome: tombstone the key AND drop
+   *  EVERY failed-action record carrying it (direct- and drain-origin alike) in ONE update, pruning
+   *  on every insert. */
+  settleInlineReturnKey: (returnKey: string) => void;
 }
 
 export const useOfflineQueue = create<OfflineQueueState>()(
@@ -134,41 +138,38 @@ export const useOfflineQueue = create<OfflineQueueState>()(
 
       clearFailedActions: () => set({ failedActions: [] }),
 
-      settledInlineReturnKeys: {},
-      pruneSettledInlineReturnKeys: (userId, now = Date.now()) =>
+      settledInlineReturnKeys: [],
+      pruneSettledInlineReturnKeys: (now = Date.now()) =>
         set((state) => {
-          const mine = state.settledInlineReturnKeys[userId] ?? [];
-          const pruned = pruneSettledKeys(mine, now);
-          return pruned === mine
-            ? state
-            : {
-                settledInlineReturnKeys: {
-                  ...state.settledInlineReturnKeys,
-                  [userId]: [...pruned],
-                },
-              };
-        }),
-      settleInlineReturnKey: (returnKey, userId) =>
-        set((state) => {
-          const uid = userId ?? resolveQueueIdentity()?.userId ?? "anon";
-          const mine = (state.settledInlineReturnKeys[uid] ?? []).filter(
-            (t) => t.key !== returnKey,
+          const pruned = pruneSettledKeys(
+            state.settledInlineReturnKeys,
+            now,
+            referencedReturnKeys(state.queue, state.failedActions),
           );
+          return pruned === state.settledInlineReturnKeys
+            ? state
+            : { settledInlineReturnKeys: [...pruned] };
+        }),
+      settleInlineReturnKey: (returnKey) =>
+        set((state) => {
+          const failedActions = state.failedActions.filter(
+            (f) =>
+              !(
+                f.action.endpoint === "/returns/inline/capture" &&
+                (f.action.body as { returnKey?: string } | undefined)?.returnKey === returnKey
+              ),
+          );
+          const now = Date.now();
+          const next = [
+            ...state.settledInlineReturnKeys.filter((t) => t.key !== returnKey),
+            { key: returnKey, at: now },
+          ];
           return {
-            settledInlineReturnKeys: {
-              ...state.settledInlineReturnKeys,
-              // cap at write too, per user (the seed-time prune adds the age bound)
-              [uid]: [
-                ...pruneSettledKeys([...mine, { key: returnKey, at: Date.now() }], Date.now()),
-              ],
-            },
-            failedActions: state.failedActions.filter(
-              (f) =>
-                !(
-                  f.action.endpoint === "/returns/inline/capture" &&
-                  (f.action.body as { returnKey?: string } | undefined)?.returnKey === returnKey
-                ),
-            ),
+            failedActions,
+            // prune on EVERY insert (the just-settled key is protected by being newest)
+            settledInlineReturnKeys: [
+              ...pruneSettledKeys(next, now, referencedReturnKeys(state.queue, failedActions)),
+            ],
           };
         }),
     }),

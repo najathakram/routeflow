@@ -692,7 +692,7 @@ describe("captureSettleHandlers — failed-action persistence", () => {
   });
 });
 
-describe("pruneSettledKeys — tombstones are bounded (SA-206)", () => {
+describe("pruneSettledKeys — tombstones are bounded but never evict a still-referenced key (SA-206/SA-220)", () => {
   const DAY = 86_400_000;
   const now = 1_800_000_000_000;
   it("drops tombstones older than 90 days, keeps the rest in order", () => {
@@ -704,15 +704,27 @@ describe("pruneSettledKeys — tombstones are bounded (SA-206)", () => {
     ];
     expect(pruneSettledKeys(list, now).map((t) => t.key)).toEqual(["edge", "new"]);
   });
-  it("caps the count, keeping the NEWEST", () => {
+  it("caps the count, evicting OLDEST first", () => {
     const list = Array.from({ length: SETTLED_KEY_CAP + 25 }, (_, i) => ({
       key: `k${i}`,
       at: now - 1000 + i,
     }));
     const out = pruneSettledKeys(list, now);
     expect(out).toHaveLength(SETTLED_KEY_CAP);
-    expect(out[out.length - 1]!.key).toBe(`k${SETTLED_KEY_CAP + 24}`);
     expect(out[0]!.key).toBe("k25");
+    expect(out[out.length - 1]!.key).toBe(`k${SETTLED_KEY_CAP + 24}`);
+  });
+  it("NEVER evicts a key still referenced by the queue / failed list, even when aged or over the cap", () => {
+    const list = Array.from({ length: SETTLED_KEY_CAP + 5 }, (_, i) => ({
+      key: `k${i}`,
+      at: now - 1000 + i,
+    }));
+    list.unshift({ key: "aged-but-queued", at: now - 200 * DAY });
+    const out = pruneSettledKeys(list, now, new Set(["aged-but-queued", "k0"]));
+    expect(out.map((t) => t.key)).toContain("aged-but-queued");
+    expect(out.map((t) => t.key)).toContain("k0");
+    expect(out).toHaveLength(SETTLED_KEY_CAP);
+    expect(out.map((t) => t.key)).not.toContain("k1"); // oldest UNprotected goes first
   });
   it("returns the SAME array when nothing needs pruning", () => {
     const list = [{ key: "a", at: now }];

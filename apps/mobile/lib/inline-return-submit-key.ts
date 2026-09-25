@@ -418,18 +418,44 @@ export const SETTLED_KEY_MAX_AGE_MS = 90 * 24 * 60 * 60 * 1000;
 export const SETTLED_KEY_CAP = 200;
 
 /**
- * Bounds the tombstone list (SA-206): a returnKey is unique per attempt and never reused, so a
- * tombstone older than 90 days can no longer matter — and the list is persisted, so it must never
- * grow unbounded. Drops aged entries, then keeps the newest `SETTLED_KEY_CAP`. Returns the SAME
- * array when nothing changes (cheap no-op set).
+ * Bounds the tombstone list (SA-206/SA-220): a returnKey is unique per attempt, so an old tombstone
+ * can no longer matter — and the list is persisted, so it must never grow unbounded. Drops aged
+ * entries then evicts oldest-first past `SETTLED_KEY_CAP` — but NEVER a key still referenced by
+ * the offline queue or failed-actions list (`protectedKeys`): such an entry can still be
+ * replayed/retried, and losing its tombstone would let a stale record resurrect a settled key.
+ * Returns the SAME array when nothing changes (cheap no-op set). Called on EVERY insert and at seed.
  */
 export function pruneSettledKeys(
   list: ReadonlyArray<SettledKey>,
   now: number,
+  protectedKeys: ReadonlySet<string> = new Set(),
 ): ReadonlyArray<SettledKey> {
-  const fresh = list.filter((t) => now - t.at <= SETTLED_KEY_MAX_AGE_MS);
-  const capped = fresh.length > SETTLED_KEY_CAP ? fresh.slice(-SETTLED_KEY_CAP) : fresh;
-  return capped.length === list.length ? list : capped;
+  let out = list.filter((t) => protectedKeys.has(t.key) || now - t.at <= SETTLED_KEY_MAX_AGE_MS);
+  let excess = out.length - SETTLED_KEY_CAP;
+  if (excess > 0) {
+    out = out.filter((t) => {
+      if (excess > 0 && !protectedKeys.has(t.key)) {
+        excess--;
+        return false; // oldest-first (the list is insertion-ordered)
+      }
+      return true;
+    });
+  }
+  return out.length === list.length ? list : out;
+}
+
+/** The returnKeys still referenced by the queue or failed-actions list. */
+export function referencedReturnKeys(
+  queue: ReadonlyArray<{ endpoint: string; body?: unknown }>,
+  failed: ReadonlyArray<{ action: { endpoint: string; body?: unknown } }>,
+): Set<string> {
+  const out = new Set<string>();
+  for (const a of [...queue, ...failed.map((f) => f.action)]) {
+    if (a.endpoint !== "/returns/inline/capture") continue;
+    const k = (a.body as { returnKey?: string } | undefined)?.returnKey;
+    if (k) out.add(k);
+  }
+  return out;
 }
 
 /** The wire returnKey a stored nonce-map entry (`customerId:orderId` -> nonce) corresponds to. */
