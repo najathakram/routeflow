@@ -50,6 +50,10 @@ const jwt = new JwtService({ secret: SECRET });
 
 function seed() {
   return {
+    accounts: [
+      { id: "buyer-mine", status: "ACTIVE", deletedAt: null as Date | null },
+      { id: "buyer-other", status: "ACTIVE", deletedAt: null as Date | null },
+    ],
     tenants: [
       { id: "t-1", slug: "acme", status: "ACTIVE" },
       { id: "t-2", slug: "globex", status: "ACTIVE" },
@@ -138,6 +142,17 @@ function makePrisma(store: Store, tenantCtx: TenantContextService) {
           throw new Error(`stand-in: unsupported customer filter ${JSON.stringify(cond)}`);
         }
         if (customerOf(link.customerId).deletedAt !== null) return false;
+      } else if (key === "buyerAccount") {
+        // #2142 R1: the buyer's own account (a to-one relation filter).
+        if (
+          !sameKeys(cond, ["status", "deletedAt"]) ||
+          cond.status !== "ACTIVE" ||
+          cond.deletedAt !== null
+        ) {
+          throw new Error(`stand-in: unsupported buyerAccount filter ${JSON.stringify(cond)}`);
+        }
+        const account = store.accounts.find((a) => a.id === link.buyerAccountId);
+        if (!account || account.status !== "ACTIVE" || account.deletedAt !== null) return false;
       } else {
         throw new Error(`stand-in: unsupported CustomerLink filter "${key}"`);
       }
@@ -361,6 +376,21 @@ describe("GET /buyer/orders/:id/tracking — the seller link gates the request",
 
   it("a suspended seller: 403, and the order is never read", async () => {
     store.tenants.find((t) => t.id === "t-1")!.status = "SUSPENDED";
+    await track("o-mine", "acme").expect(403);
+    expect(orderFindUnique).not.toHaveBeenCalled();
+  });
+
+  it("#2142 R1: a SUSPENDED buyer account, on a still-valid token: 403, and the order is never read", async () => {
+    // setBuyerStatus leaves the links ACTIVE; the token was minted before the suspension.
+    store.accounts.find((a) => a.id === "buyer-mine")!.status = "SUSPENDED";
+    await track("o-mine", "acme").expect(403);
+    expect(orderFindUnique).not.toHaveBeenCalled();
+  });
+
+  it("#2142 R1: a DELETED buyer account, on a still-valid token: 403, and the order is never read", async () => {
+    const account = store.accounts.find((a) => a.id === "buyer-mine")!;
+    account.status = "DELETED";
+    account.deletedAt = new Date("2026-09-25");
     await track("o-mine", "acme").expect(403);
     expect(orderFindUnique).not.toHaveBeenCalled();
   });

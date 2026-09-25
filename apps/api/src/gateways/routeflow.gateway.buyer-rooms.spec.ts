@@ -18,6 +18,11 @@
  * has arrived. Every connection is awaited to the end of `handleConnection` first, so a socket
  * cannot pass a negative check merely because its rooms were not joined yet.
  *
+ * #2142 R1 adds the buyer's own ACCOUNT (suspended / deleted accounts keep ACTIVE links) and the
+ * token's EXPIRY (the socket used to outlive it) to what connect and the resync re-check: either
+ * one failing DISCONNECTS the socket. N1 keeps DRAFT invoice updates out of the customer's room.
+ * Every buyer token here carries a real `exp`.
+ *
  * Fixtures are placeholders (acme-style ids); no live-client data.
  */
 import { INestApplication } from "@nestjs/common";
@@ -34,8 +39,10 @@ const SECRET = "b104-spec-secret";
 
 type TenantStatus = "TRIAL" | "ACTIVE" | "READ_ONLY" | "SUSPENDED" | "CANCELLED";
 type LinkStatus = "INVITED" | "PENDING_SELLER_APPROVAL" | "ACTIVE" | "DISCONNECTED";
+type AccountStatus = "ACTIVE" | "SUSPENDED" | "DELETED";
 
 interface Store {
+  accounts: Array<{ id: string; status: AccountStatus; deletedAt: Date | null }>;
   tenants: Array<{ id: string; status: TenantStatus }>;
   customers: Array<{ id: string; tenantId: string; userId: string; deletedAt: Date | null }>;
   links: Array<{
@@ -48,6 +55,12 @@ interface Store {
 
 function seed(): Store {
   return {
+    accounts: [
+      { id: "buyer-a", status: "ACTIVE", deletedAt: null },
+      { id: "buyer-b", status: "ACTIVE", deletedAt: null },
+      { id: "buyer-c", status: "ACTIVE", deletedAt: null },
+      { id: "buyer-nobody", status: "ACTIVE", deletedAt: null },
+    ],
     tenants: [
       { id: "t-1", status: "ACTIVE" },
       { id: "t-2", status: "TRIAL" },
@@ -106,6 +119,7 @@ function pick<T extends Record<string, unknown>>(row: T, select: Record<string, 
 function makePrisma(store: Store) {
   const tenantOf = (id: string) => store.tenants.find((t) => t.id === id)!;
   const customerOf = (id: string) => store.customers.find((c) => c.id === id)!;
+  const accountOf = (id: string | null) => store.accounts.find((a) => a.id === id) ?? null;
 
   function linkMatches(link: Store["links"][number], where: Record<string, any>): boolean {
     for (const [key, cond] of Object.entries(where)) {
@@ -125,6 +139,17 @@ function makePrisma(store: Store) {
           throw new Error(`stand-in: unsupported customer filter ${JSON.stringify(cond)}`);
         }
         if (customerOf(link.customerId).deletedAt !== null) return false;
+      } else if (key === "buyerAccount") {
+        // #2142 R1: a to-one relation filter; a link with no account (an open invite) fails it.
+        if (
+          !keysAre(cond, ["status", "deletedAt"]) ||
+          cond.status !== "ACTIVE" ||
+          cond.deletedAt !== null
+        ) {
+          throw new Error(`stand-in: unsupported buyerAccount filter ${JSON.stringify(cond)}`);
+        }
+        const account = accountOf(link.buyerAccountId);
+        if (!account || account.status !== "ACTIVE" || account.deletedAt !== null) return false;
       } else if (key === "tenant") {
         if (!keysAre(cond, ["status"]) || !keysAre(cond.status, ["notIn"])) {
           throw new Error(`stand-in: unsupported tenant filter ${JSON.stringify(cond)}`);
@@ -152,7 +177,29 @@ function makePrisma(store: Store) {
     return true;
   }
 
+  function accountMatches(a: Store["accounts"][number], where: Record<string, any>): boolean {
+    // #2142 R1: exactly `{ id: { in }, ...LIVE_BUYER_ACCOUNT_WHERE }`; anything else throws.
+    if (
+      !keysAre(where, ["id", "status", "deletedAt"]) ||
+      !keysAre(where.id, ["in"]) ||
+      !Array.isArray(where.id.in) ||
+      where.status !== "ACTIVE" ||
+      where.deletedAt !== null
+    ) {
+      throw new Error(`stand-in: unsupported BuyerAccount filter ${JSON.stringify(where)}`);
+    }
+    return where.id.in.includes(a.id) && a.status === "ACTIVE" && a.deletedAt === null;
+  }
+
   return {
+    buyerAccount: {
+      findMany: jest.fn(
+        async (args: { where: Record<string, any>; select: Record<string, boolean> }) =>
+          store.accounts
+            .filter((a) => accountMatches(a, args.where))
+            .map((a) => pick(a, args.select)),
+      ),
+    },
     customerLink: {
       findMany: jest.fn(
         async (args: { where: Record<string, any>; select: Record<string, boolean> }) =>
@@ -187,8 +234,60 @@ let connectionSpy: jest.SpyInstance;
 const clients: ClientSocket[] = [];
 const jwt = new JwtService({ secret: SECRET });
 
+/** A buyer access token as the server mints it: 15 minutes (JWT_EXPIRES_IN's default). */
 const buyerToken = (sub: string, extra: Record<string, unknown> = {}) =>
-  jwt.sign({ sub, email: `${sub}@example.test`, name: sub, type: "BUYER", ...extra });
+  jwt.sign(
+    { sub, email: `${sub}@example.test`, name: sub, type: "BUYER", ...extra },
+    { expiresIn: "15m" },
+  );
+
+/** A buyer token that expires at exactly `exp` (seconds since the epoch). */
+const buyerTokenExpiringAt = (sub: string, exp: number) =>
+  jwt.sign({ sub, email: `${sub}@example.test`, name: sub, type: "BUYER", exp });
+
+/** Runs `fn` with the gateway's clock (Date.now) standing at `ms`, then restores it. */
+async function atClock<T>(ms: number, fn: () => Promise<T>): Promise<T> {
+  const clock = jest.spyOn(Date, "now").mockReturnValue(ms);
+  try {
+    return await fn();
+  } finally {
+    clock.mockRestore();
+  }
+}
+
+/** Resolves with the reason the client was disconnected. */
+const disconnected = (client: Client) =>
+  new Promise<string>((resolve) => client.socket.once("disconnect", resolve));
+
+/** Whether the server still holds a socket with this id. */
+async function serverHolds(id: string): Promise<boolean> {
+  return (await gateway.server.in(id).fetchSockets()).length > 0;
+}
+
+/**
+ * Connects, lets `handleConnection` finish, and reports whether the server kept the socket.
+ * Socket.IO acknowledges the connection before the gateway's auth runs, so "connect" always
+ * arrives; a refusal is the server dropping it inside `handleConnection`.
+ */
+async function keptAfterConnect(token: string): Promise<{ kept: boolean; reason: string }> {
+  const socket = io(url, {
+    auth: { token },
+    transports: ["websocket"],
+    reconnection: false,
+    forceNew: true,
+  });
+  clients.push(socket);
+  const gone = new Promise<string>((resolve) => socket.once("disconnect", resolve));
+  // The id is read at "connect": the client forgets it once disconnected.
+  const id = await new Promise<string>((resolve, reject) => {
+    socket.once("connect", () => resolve(socket.id!));
+    socket.once("connect_error", reject);
+  });
+  await settleConnections();
+  const kept = await serverHolds(id);
+  if (kept) return { kept, reason: "" };
+  return { kept, reason: await gone };
+}
 
 const staffToken = (sub: string, role: string, tenantId: string) =>
   jwt.sign({
@@ -424,6 +523,22 @@ describe("RouteFlowGateway on a live Socket.IO server", () => {
       expect(c.events).toEqual([]);
     });
 
+    it("#2142 N1: a DRAFT invoice's update reaches the seller's operators, never the buyer", async () => {
+      const invoice = (invoiceId: string, status: string) => ({
+        invoiceId,
+        invoiceNumber: `INV-${invoiceId}`,
+        customerId: "c-b",
+        status,
+        total: 10,
+      });
+      gateway.emitInvoiceUpdated("t-1", invoice("draft-1", "DRAFT"));
+      gateway.emitInvoiceUpdated("t-1", invoice("sent-1", "SENT"));
+      await flush(b, operator);
+
+      expect(b.events.map((e) => e.payload.invoiceId)).toEqual(["sent-1"]);
+      expect(operator.events.map((e) => e.payload.invoiceId)).toEqual(["draft-1", "sent-1"]);
+    });
+
     it("operator-only events never reach a buyer", async () => {
       gateway.emitOrderCreated("t-1", {
         orderId: "ord-9",
@@ -557,6 +672,164 @@ describe("RouteFlowGateway on a live Socket.IO server", () => {
         "tenant:t-1:customer:c-a1",
         "tenant:t-2:customer:c-a2",
       ]);
+    });
+  });
+
+  // ─── #2142 R1: the account and the token are re-checked too ──────────────────
+
+  describe("#2142 R1 — a buyer socket ends with its own account", () => {
+    const account = (id: string) => store.accounts.find((x) => x.id === id)!;
+
+    it("#2142 R1: a SUSPENDED account's socket is refused at connect", async () => {
+      account("buyer-a").status = "SUSPENDED";
+      expect(await keptAfterConnect(buyerToken("buyer-a"))).toEqual({
+        kept: false,
+        reason: "io server disconnect",
+      });
+    });
+
+    it("#2142 R1: suspending a connected buyer disconnects its socket at the next resync", async () => {
+      const a = await connect(buyerToken("buyer-a"));
+      const b = await connect(buyerToken("buyer-b"));
+      const operator = await connect(staffToken("u-op", "OPERATOR", "t-1"));
+      const aId = a.socket.id!;
+      const aGone = disconnected(a);
+
+      // BuyerAdminService.setBuyerStatus flips the account only; every link stays ACTIVE.
+      account("buyer-a").status = "SUSPENDED";
+      await gateway.resyncBuyerRooms();
+
+      expect(await serverHolds(aId)).toBe(false);
+      expect(await aGone).toBe("io server disconnect");
+      const rooms = (gateway.server as unknown as { adapter: { rooms: Map<string, Set<string>> } })
+        .adapter.rooms;
+      expect([...rooms.values()].some((ids) => ids.has(aId))).toBe(false);
+
+      // Everyone else is untouched.
+      expect(b.socket.connected).toBe(true);
+      expect(await serverRooms(b)).toEqual(["tenant:t-1:customer:c-b"]);
+      gateway.emitOrderStatusChanged("t-1", orderStatus("c-a1"));
+      gateway.emitOrderStatusChanged("t-1", orderStatus("c-b"));
+      await flush(b, operator);
+      expect(a.events).toEqual([]);
+      expect(statusEventsOf(b)).toEqual(["c-b"]);
+      expect(statusEventsOf(operator)).toEqual(["c-a1", "c-b"]);
+    });
+
+    it("#2142 R1: deleting a connected buyer's account disconnects its socket at the next resync", async () => {
+      const a = await connect(buyerToken("buyer-a"));
+      const aId = a.socket.id!;
+      const aGone = disconnected(a);
+      // What setBuyerStatus("DELETED"), a self-delete and a merge's secondary all write.
+      account("buyer-a").status = "DELETED";
+      account("buyer-a").deletedAt = new Date("2026-09-25");
+      await gateway.resyncBuyerRooms();
+
+      expect(await serverHolds(aId)).toBe(false);
+      expect(await aGone).toBe("io server disconnect");
+    });
+
+    it("every tab of a suspended account is disconnected, another account's tab is not", async () => {
+      const tab1 = await connect(buyerToken("buyer-a"));
+      const tab2 = await connect(buyerToken("buyer-a"));
+      const c = await connect(buyerToken("buyer-c"));
+      const [id1, id2] = [tab1.socket.id!, tab2.socket.id!];
+      account("buyer-a").status = "SUSPENDED";
+      await gateway.resyncBuyerRooms();
+      expect(await serverHolds(id1)).toBe(false);
+      expect(await serverHolds(id2)).toBe(false);
+      expect(await serverRooms(c)).toEqual(["tenant:t-2:customer:c-c"]);
+    });
+
+    it("a failed account read keeps the last verified state (nobody is disconnected)", async () => {
+      const a = await connect(buyerToken("buyer-a"));
+      const aId = a.socket.id!;
+      account("buyer-a").status = "SUSPENDED";
+      prisma.buyerAccount.findMany.mockRejectedValueOnce(new Error("db down"));
+      await expect(gateway.resyncBuyerRooms()).resolves.toBeUndefined();
+      expect(await serverHolds(aId)).toBe(true);
+      // The next tick, with the DB back, ends it.
+      await gateway.resyncBuyerRooms();
+      expect(await serverHolds(aId)).toBe(false);
+    });
+
+    it("a reinstated account can connect again and gets its rooms back", async () => {
+      account("buyer-a").status = "SUSPENDED";
+      expect((await keptAfterConnect(buyerToken("buyer-a"))).kept).toBe(false);
+      account("buyer-a").status = "ACTIVE";
+      const a = await connect(buyerToken("buyer-a"));
+      expect(await serverRooms(a)).toEqual([
+        "tenant:t-1:customer:c-a1",
+        "tenant:t-2:customer:c-a2",
+      ]);
+    });
+  });
+
+  describe("#2142 R1 — a buyer socket ends with its token", () => {
+    it("#2142 R1: at the first resync from its token's exp the socket is disconnected; a socket with time left is not", async () => {
+      const exp = Math.floor(Date.now() / 1000) + 30;
+      const a = await connect(buyerTokenExpiringAt("buyer-a", exp));
+      const b = await connect(buyerToken("buyer-b")); // 15 minutes left
+      const aId = a.socket.id!;
+      const aGone = disconnected(a);
+
+      // One second before exp: still valid.
+      await atClock((exp - 1) * 1000, () => gateway.resyncBuyerRooms());
+      expect(await serverHolds(aId)).toBe(true);
+      expect(await serverRooms(a)).toEqual([
+        "tenant:t-1:customer:c-a1",
+        "tenant:t-2:customer:c-a2",
+      ]);
+
+      // At exp: expired (jsonwebtoken's own rule, now >= exp), so the server closes it.
+      await atClock(exp * 1000, () => gateway.resyncBuyerRooms());
+      expect(await serverHolds(aId)).toBe(false);
+      expect(await aGone).toBe("io server disconnect");
+
+      // Nothing addressed to its old rooms can reach it, and the other buyer is untouched.
+      const rooms = (gateway.server as unknown as { adapter: { rooms: Map<string, Set<string>> } })
+        .adapter.rooms;
+      expect([...rooms.values()].some((ids) => ids.has(aId))).toBe(false);
+      expect(b.socket.connected).toBe(true);
+      expect(await serverRooms(b)).toEqual(["tenant:t-1:customer:c-b"]);
+    });
+
+    it("#2142 R1: an expired socket is disconnected even when the link read fails", async () => {
+      const exp = Math.floor(Date.now() / 1000) + 30;
+      const a = await connect(buyerTokenExpiringAt("buyer-a", exp));
+      const aId = a.socket.id!;
+      const aGone = disconnected(a);
+      prisma.customerLink.findMany.mockRejectedValueOnce(new Error("db down"));
+
+      await atClock((exp + 5) * 1000, () => gateway.resyncBuyerRooms());
+
+      expect(await serverHolds(aId)).toBe(false);
+      expect(await aGone).toBe("io server disconnect");
+    });
+
+    it("staff sockets are never ended by the buyer expiry check", async () => {
+      const operator = await connect(staffToken("u-op", "OPERATOR", "t-1"));
+      await atClock(Date.now() + 24 * 60 * 60 * 1000, () => gateway.resyncBuyerRooms());
+      expect(await serverHolds(operator.socket.id!)).toBe(true);
+      expect(await serverRooms(operator)).toEqual(["tenant:t-1:operators"]);
+    });
+
+    it("#2142 R1: a buyer token without an exp is refused at connect", async () => {
+      // The server never mints one; a socket on it could never be ended by the resync.
+      const forever = jwt.sign({ sub: "buyer-a", email: "a@example.test", type: "BUYER" });
+      expect(await keptAfterConnect(forever)).toEqual({
+        kept: false,
+        reason: "io server disconnect",
+      });
+    });
+
+    it("an already-expired token is refused at connect", async () => {
+      const past = buyerTokenExpiringAt("buyer-a", Math.floor(Date.now() / 1000) - 1);
+      expect(await keptAfterConnect(past)).toEqual({ kept: false, reason: "io server disconnect" });
+    });
+
+    it("a token with time left is kept", async () => {
+      expect((await keptAfterConnect(buyerToken("buyer-a"))).kept).toBe(true);
     });
   });
 });

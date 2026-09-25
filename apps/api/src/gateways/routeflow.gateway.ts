@@ -13,14 +13,19 @@ import { Logger, OnModuleDestroy } from "@nestjs/common";
 import { JwtService } from "@nestjs/jwt";
 import { Server, Socket } from "socket.io";
 import { JwtPayload } from "../auth/jwt-payload.interface";
-import { UserRole } from "@prisma/client";
+import { InvoiceStatus, UserRole } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
-import { BLOCKED_SELLER_STATUSES, liveBuyerLinkWhere } from "../buyer/buyer-link-scope";
+import {
+  BLOCKED_SELLER_STATUSES,
+  LIVE_BUYER_ACCOUNT_WHERE,
+  liveBuyerLinkWhere,
+} from "../buyer/buyer-link-scope";
 
 /**
  * B104: how often every connected buyer socket's rooms are re-derived from its links, so a link
  * revoked (or granted) while a portal tab stays open takes effect within this bound. The HTTP
- * guard re-checks on every request; a socket cannot, so this is the socket's equivalent.
+ * guard re-checks on every request; a socket cannot, so this is the socket's equivalent. It is
+ * also the bound on how long a buyer socket outlives its token's `exp` (#2142 R1).
  */
 export const BUYER_ROOM_RESYNC_MS = 60_000;
 
@@ -31,9 +36,14 @@ const BUYER_RESYNC_BATCH = 500;
 interface RoomMember {
   id: string;
   rooms: Set<string>;
-  data: { buyerAccountId?: string };
+  /**
+   * `buyerTokenExp` (#2142 R1) is the verified handshake token's `exp`, in seconds since the
+   * epoch: a socket outlives its token, so the resync ends it once that moment has passed.
+   */
+  data: { buyerAccountId?: string; buyerTokenExp?: number };
   join(room: string): unknown;
   leave(room: string): unknown;
+  disconnect(close?: boolean): unknown;
 }
 
 // ─── Typed event payloads ──────────────────────────────────────────────────────
@@ -256,7 +266,16 @@ export class RouteFlowGateway
         if (typeof payload.sub !== "string" || !payload.sub) {
           throw new WsException("Invalid buyer token");
         }
-        (client.data as RoomMember["data"]).buyerAccountId = payload.sub;
+        // #2142 R1: every buyer access token the server mints carries an `exp` (buyer login,
+        // Google sign-in, admin impersonation), and the resync ends the socket at that moment.
+        // A token without one would keep its socket for ever, so it is refused here.
+        const exp = (payload as { exp?: unknown }).exp;
+        if (typeof exp !== "number" || !Number.isFinite(exp)) {
+          throw new WsException("Buyer token without an expiry");
+        }
+        const data = client.data as RoomMember["data"];
+        data.buyerAccountId = payload.sub;
+        data.buyerTokenExp = exp;
         await this.syncBuyerRooms([client]);
         return;
       }
@@ -298,21 +317,56 @@ export class RouteFlowGateway
    * sockets; with the Redis adapter, `local` keeps the read off the other nodes). A read failure
    * keeps the last verified rooms: nothing can change a link while the DB is unreachable, and the
    * next tick retries.
+   *
+   * #2142 R1: first it disconnects every buyer socket whose token has expired. That needs no DB,
+   * so it runs before the link read and a DB outage cannot skip it.
    */
   async resyncBuyerRooms(): Promise<void> {
     if (!this.server) return;
+    let buyers: RoomMember[];
     try {
       const sockets = (await this.server.local.fetchSockets()) as unknown as RoomMember[];
-      await this.syncBuyerRooms(sockets.filter((s) => !!s.data?.buyerAccountId));
+      buyers = sockets.filter((s) => !!s.data?.buyerAccountId);
+    } catch (err) {
+      this.logger.warn(`[B104] buyer room resync skipped: ${(err as Error)?.message ?? err}`);
+      return;
+    }
+    const live = this.disconnectExpiredBuyers(buyers);
+    try {
+      await this.syncBuyerRooms(live);
     } catch (err) {
       this.logger.warn(`[B104] buyer room resync skipped: ${(err as Error)?.message ?? err}`);
     }
   }
 
   /**
+   * Disconnects each buyer socket whose token `exp` has passed (the same `now >= exp` rule the
+   * JWT check applies at connect) and returns the rest. `disconnect(true)` closes the transport;
+   * socket.io removes a closed socket from every room itself, so no room is left to clean up.
+   */
+  private disconnectExpiredBuyers(sockets: RoomMember[]): RoomMember[] {
+    const nowSec = Math.floor(Date.now() / 1000); // jsonwebtoken's own clock rule
+    const live: RoomMember[] = [];
+    for (const socket of sockets) {
+      const exp = socket.data.buyerTokenExp;
+      if (typeof exp !== "number" || nowSec >= exp) {
+        socket.disconnect(true);
+      } else {
+        live.push(socket);
+      }
+    }
+    return live;
+  }
+
+  /**
    * Puts each buyer socket in exactly the customer rooms its account's live links grant (the
    * portal guard's own rule, `liveBuyerLinkWhere`, at a seller that is not blocked) and takes it
-   * out of every other room. One read per batch of accounts, however many sockets they hold.
+   * out of every other room. One account read and one link read per batch of accounts, however
+   * many sockets they hold.
+   *
+   * #2142 R1: a socket whose account is no longer live (SUSPENDED, DELETED, gone) is disconnected,
+   * at connect as at every resync. Both reads finish before any socket is touched, so a failed
+   * read changes nothing (the caller keeps the last verified state, or refuses a new connection).
    */
   private async syncBuyerRooms(sockets: RoomMember[]): Promise<void> {
     const accountIds = [
@@ -320,11 +374,18 @@ export class RouteFlowGateway
     ];
     if (accountIds.length === 0) return;
 
+    const liveAccounts = new Set<string>();
     const granted = new Map<string, Set<string>>();
     for (let i = 0; i < accountIds.length; i += BUYER_RESYNC_BATCH) {
+      const batch = accountIds.slice(i, i + BUYER_RESYNC_BATCH);
+      const accounts = await this.prisma.buyerAccount.findMany({
+        where: { id: { in: batch }, ...LIVE_BUYER_ACCOUNT_WHERE },
+        select: { id: true },
+      });
+      for (const account of accounts) liveAccounts.add(account.id);
       const links = await this.prisma.customerLink.findMany({
         where: {
-          ...liveBuyerLinkWhere({ in: accountIds.slice(i, i + BUYER_RESYNC_BATCH) }),
+          ...liveBuyerLinkWhere({ in: batch }),
           tenant: { status: { notIn: [...BLOCKED_SELLER_STATUSES] } },
         },
         select: { buyerAccountId: true, tenantId: true, customerId: true },
@@ -340,6 +401,11 @@ export class RouteFlowGateway
     // A socket that disconnected while the links were read is safe to walk: socket.io's cleanup
     // turns its join() into a no-op, so it cannot be put back into a room (pinned by the spec).
     for (const socket of sockets) {
+      if (!liveAccounts.has(socket.data.buyerAccountId ?? "")) {
+        // disconnect(true) closes the transport; socket.io drops a closed socket from every room.
+        socket.disconnect(true);
+        continue;
+      }
       const want = granted.get(socket.data.buyerAccountId ?? "") ?? new Set<string>();
       for (const room of [...socket.rooms]) {
         if (room !== socket.id && !want.has(room)) await socket.leave(room);
@@ -408,6 +474,9 @@ export class RouteFlowGateway
 
   emitInvoiceUpdated(tenantId: string | null, payload: InvoiceUpdatedPayload) {
     this.server.to(this.tenantRoom(tenantId, "operators")).emit("invoice.updated", payload);
+    // #2142 N1: a DRAFT is the seller's unissued working copy. The buyer invoice detail refuses
+    // one (BuyerController.getInvoice), so its number and total never reach the customer's room.
+    if (payload.status === InvoiceStatus.DRAFT) return;
     this.server
       .to(this.customerRoom(tenantId, payload.customerId))
       .emit("invoice.updated", payload);

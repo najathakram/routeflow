@@ -10,6 +10,9 @@
  *   exactly the live links, and the HTTP `BuyerSellerContextGuard` (the same predicate) admits
  *   exactly the same (buyer, seller, customer) pairs: a buyer's socket and its portal agree;
  * - the periodic resync drops a link revoked in the database and joins a new one;
+ * - #2142 R1: `LIVE_BUYER_ACCOUNT_WHERE` (on its own, and as the `buyerAccount` relation filter
+ *   inside that predicate) really refuses a SUSPENDED or DELETED account in SQL: the socket is
+ *   disconnected and the portal guard refuses;
  * - the CUSTOMER-role branch resolves its Customer inside its own tenant;
  * - `getOrderTracking`'s include (other stops reduced to number + status) runs, counts an
  *   IN_PROGRESS stop as before you, minimizes the payload for a buyer, and is tenant-scoped by
@@ -102,8 +105,12 @@ describeDb("B104 / #2095 — buyer rooms and tracking against real Postgres", ()
   const roomsOf = (s: FakeSocket) => [...s.rooms].filter((r) => r !== s.id).sort();
 
   async function connectBuyer(buyerAccountId: string): Promise<FakeSocket> {
+    // #2142 R1: a buyer token carries a real exp, as every server-minted one does.
     const s = socketFor(
-      jwt.sign({ sub: buyerAccountId, email: "b@example.invalid", type: "BUYER" }),
+      jwt.sign(
+        { sub: buyerAccountId, email: "b@example.invalid", type: "BUYER" },
+        { expiresIn: "15m" },
+      ),
     );
     await gateway.handleConnection(s as never);
     return s;
@@ -340,6 +347,51 @@ describeDb("B104 / #2095 — buyer rooms and tracking against real Postgres", ()
         [ids.pending.customer],
       );
     }
+  });
+
+  it("#2142 R1: a SUSPENDED or DELETED account's socket is disconnected, and the portal guard refuses it", async () => {
+    const setAccount = (status: string, deletedAt: Date | null) =>
+      pool.query(
+        `UPDATE "BuyerAccount" SET "status" = $2::"BuyerAccountStatus", "deletedAt" = $3
+         WHERE "id" = $1`,
+        [BUYER_OTHER, status, deletedAt],
+      );
+    const resyncOnly = async (socket: FakeSocket) => {
+      (gateway as unknown as { server: unknown }).server = {
+        local: { fetchSockets: async () => [socket] },
+      };
+      await gateway.resyncBuyerRooms();
+    };
+    try {
+      // What BuyerAdminService.setBuyerStatus writes: the account only; the link stays ACTIVE.
+      const live = await connectBuyer(BUYER_OTHER);
+      expect(roomsOf(live)).toEqual([room(T_A, "other")]);
+      await setAccount("SUSPENDED", null);
+      await resyncOnly(live);
+      expect(live.disconnect).toHaveBeenCalledWith(true);
+      expect(await portalCustomer(BUYER_OTHER, SLUG_A)).toBeNull();
+      // A new connection while suspended is refused outright.
+      expect((await connectBuyer(BUYER_OTHER)).disconnect).toHaveBeenCalledWith(true);
+
+      await setAccount("DELETED", new Date("2026-09-25T00:00:00.000Z"));
+      const beforeDelete = socketFor("unused");
+      beforeDelete.data.buyerAccountId = BUYER_OTHER;
+      beforeDelete.data.buyerTokenExp = Math.floor(Date.now() / 1000) + 900;
+      await resyncOnly(beforeDelete);
+      expect(beforeDelete.disconnect).toHaveBeenCalledWith(true);
+      expect(await portalCustomer(BUYER_OTHER, SLUG_A)).toBeNull();
+
+      // Reinstated: the untouched link opens both again.
+      await setAccount("ACTIVE", null);
+      const back = await connectBuyer(BUYER_OTHER);
+      expect(back.disconnect).not.toHaveBeenCalled();
+      expect(roomsOf(back)).toEqual([room(T_A, "other")]);
+      expect(await portalCustomer(BUYER_OTHER, SLUG_A)).toBe(ids.other.customer);
+    } finally {
+      await setAccount("ACTIVE", null);
+    }
+    // The other buyer at the same seller was never affected.
+    expect(await portalCustomer(BUYER_MINE, SLUG_A)).toBe(ids.mine.customer);
   });
 
   it("REG-B104: a CUSTOMER-role socket joins its own Customer's room, inside its own tenant only", async () => {
