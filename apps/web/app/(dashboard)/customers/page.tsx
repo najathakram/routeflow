@@ -750,7 +750,9 @@ export default function CustomersPage() {
             : "Your current filters are saved in the page link — copy the URL to share this view."
         }
         action={
-          <div className="flex items-center gap-2">
+          // B749: 4 buttons (Import/Export/Select/New Customer) overflow horizontally at 390px
+          // without a wrap — wrap, don't clip (same fix as CreateOrderModal's footer row).
+          <div className="flex flex-wrap items-center justify-end gap-2">
             <Button
               variant="secondary"
               leftIcon={<Upload className="h-4 w-4" />}
