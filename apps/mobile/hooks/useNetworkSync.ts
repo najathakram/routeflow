@@ -6,6 +6,8 @@ import { showToast } from "../lib/toast";
 import { alertInfo } from "../lib/confirm";
 import { drainQueue, buildReplayRequestConfig, describeFailedDrain } from "../lib/queue-drain";
 import { resolveQueueIdentity, settleQueueOwnership } from "../lib/queue-identity";
+import { inlineReturnDrainSettleRecords } from "../lib/inline-return-submit-key";
+import { useInlineReturnSubmissionStore } from "../store/inlineReturnSubmissionStore";
 
 // RF-170: matches /route-runs/{runId}/stops/{stopId}/complete
 const STOP_COMPLETE_RE = /\/route-runs\/([^/]+)\/stops\/[^/]+\/complete/;
@@ -24,6 +26,7 @@ export function useNetworkSync() {
     clearFailedAction,
     clearFailedActions,
   } = useOfflineQueue();
+  const settleInlineReturnDrain = useInlineReturnSubmissionStore((s) => s.settleAfterDrain);
   // R6's badge leg: the drain-time alert is one-shot (dismissable, and it can
   // fire while the app is backgrounded), so the count has to stand on its own
   // until the operator acknowledges it — see components/OfflineBanner.tsx.
@@ -91,6 +94,20 @@ export function useNetworkSync() {
     for (const id of result.delivered) dequeue(id);
     for (const id of result.retriedIds) incrementRetry(id);
     for (const record of result.failedActions) dequeue(record.action.id);
+
+    // SA-091b: a capture that lands (or is definitively refused) FROM THE OFFLINE QUEUE never
+    // ran through useCaptureInlineReturn's onSuccess/onError, so its nonce would otherwise
+    // survive forever and collide with the next genuine attempt on the same customer/order pair
+    // — the same bug SA-091 fixed on the direct-submit path. `remaining` (not `owned` or
+    // `currentQueue`) is deliberately the source for `attempted`: it is exactly the set drainQueue
+    // actually ran against.
+    settleInlineReturnDrain(
+      inlineReturnDrainSettleRecords({
+        delivered: result.delivered,
+        failedActions: result.failedActions,
+        attempted: remaining,
+      }),
+    );
 
     // ONE alert for the whole drain, naming the work that was lost. Alerting
     // per record stacked a modal per stale entry on reconnect, each captioned
