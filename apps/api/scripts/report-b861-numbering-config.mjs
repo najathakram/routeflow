@@ -106,7 +106,7 @@ async function main() {
     const [{ max }] = await q(
       `SELECT COALESCE(MAX((regexp_match("${spec.column}", $2))[1]::int), 0)::int AS max
          FROM "${spec.table}" WHERE "tenantId" = $1`,
-      [row.tenantId, `^${escapeRegex(row.prefix)}(\\d{1,9})(?:-R\\d+)?$`],
+      [row.tenantId, `^${escapeRegex(row.prefix)}0*(\\d{1,9})(?:-R\\d+)?$`],
     );
     if (max >= row.nextNumber) bucket.nextAtOrBelow++;
   }

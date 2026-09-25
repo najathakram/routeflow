@@ -1,9 +1,14 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "../api-client";
+import type { DocumentNumberType as AnyDocumentNumberType } from "@routeflow/types";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-export type DocumentNumberType = "INVOICE" | "ESTIMATE" | "CREDIT_NOTE";
+/** The three types the numbering card configures (SA-274 Q6), narrowed from the shared enum (L-072). */
+export type DocumentNumberType = Extract<
+  AnyDocumentNumberType,
+  "INVOICE" | "ESTIMATE" | "CREDIT_NOTE"
+>;
 
 export interface NumberingSetting {
   docType: DocumentNumberType;

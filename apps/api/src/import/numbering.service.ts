@@ -724,7 +724,14 @@ export class NumberingService {
     year: number,
     prefix: string,
   ): Promise<number> {
-    const pattern = `^${escapeRegex(prefix)}${year > 0 ? `${year}-` : ""}(\\d{1,9})(?:-R\\d+)?$`;
+    // Year 0 (the configured series) skips leading zeros before the 9-digit capture: its
+    // namespace holds migrated numbers of any zero-padding (padding 0–12), and `0090000123`
+    // must count as 90000123, never vanish from the max (pre-merge review of #2170). The
+    // per-year pattern stays byte-identical.
+    const pattern =
+      year > 0
+        ? `^${escapeRegex(prefix)}${year}-(\\d{1,9})(?:-R\\d+)?$`
+        : `^${escapeRegex(prefix)}0*(\\d{1,9})(?:-R\\d+)?$`;
     let rows: Array<{ max: number | null }>;
     switch (docType) {
       case "ESTIMATE":
