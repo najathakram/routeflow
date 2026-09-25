@@ -38,11 +38,13 @@ async function rehydrateOne(store: unknown): Promise<void> {
  * bare `getState`, and a hydration failure must never block sign-in.
  */
 export async function rehydrateUserScopedStores(): Promise<void> {
+  // The inline-return store goes FIRST: a queue drain can run as soon as the user is set, and it
+  // must not write over the incoming user's blob while four other stores hydrate (Opus round 2).
+  await rehydrateOne(useInlineReturnSubmissionStore);
   await rehydrateOne(usePodStore);
   await rehydrateOne(useRunSettlementStore);
   await rehydrateOne(useStopCartStore);
   await rehydrateOne(useReturnSubmissionStore);
-  await rehydrateOne(useInlineReturnSubmissionStore);
   await seedInlineReturnNonces();
 }
 

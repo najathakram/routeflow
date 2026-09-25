@@ -40,8 +40,8 @@ const vars = (nonce: string) => ({
 beforeEach(async () => {
   // The store hydrates explicitly at sign-in (skipHydration); the settle paths only write once
   // hydrated (see the "drain before rehydrate" pins), so the fixture hydrates it.
-  await useInlineReturnSubmissionStore.persist.rehydrate();
-  store().reset();
+  store().reset(); // sign-out: memory emptied AND the store marked un-hydrated
+  await useInlineReturnSubmissionStore.persist.rehydrate(); // the next sign-in's hydration
 });
 
 describe("useCaptureInlineReturn settle wiring against the real store", () => {
@@ -359,7 +359,7 @@ describe("drain before rehydrate (persist writes on every set, even pre-hydratio
 
   it("settleAfterDrain does NOT set (so nothing is persisted) until the store has hydrated", () => {
     const { store: st, storage } = load();
-    expect(st.persist.hasHydrated()).toBe(false);
+    expect(st.getState().hydrated).toBe(false);
     st.getState().settleAfterDrain([{ customerId: "c", orderId: "o", nonceSuffix: "n1" }]);
     expect(storage.setItem).not.toHaveBeenCalled(); // the user's blob is never overwritten with {nonces:{}}
   });
@@ -387,5 +387,20 @@ describe("drain before rehydrate (persist writes on every set, even pre-hydratio
     const n = st.getState().getOrCreateNonce("c:o");
     st.getState().settleAfterDrain([{ customerId: "c", orderId: "o", nonceSuffix: n }]);
     expect(st.getState().nonces["c:o"]).toBeUndefined();
+  });
+});
+
+describe("hydration flag across an in-process sign-out (Opus round 2)", () => {
+  it("reset() (sign-out) marks the store un-hydrated, so a drain on the NEXT login before its rehydrate writes nothing; rehydrate marks it hydrated again", async () => {
+    await useInlineReturnSubmissionStore.persist.rehydrate();
+    expect(store().hydrated).toBe(true);
+    const n = store().getOrCreateNonce(KEY);
+    store().reset(); // sign-out; persist.hasHydrated() would still say true here
+    const { userScopedStorage } = require("../lib/user-scoped-storage");
+    userScopedStorage.setItem.mockClear();
+    store().settleAfterDrain([{ customerId: "c", orderId: "o", nonceSuffix: n }]); // 2nd login: drain before rehydrate
+    expect(userScopedStorage.setItem).not.toHaveBeenCalled();
+    await useInlineReturnSubmissionStore.persist.rehydrate();
+    expect(store().hydrated).toBe(true);
   });
 });
