@@ -5,7 +5,6 @@ import {
   canLeaveInlineReturn,
   captureFailureMessage,
   formatRefundAmount,
-  guardInlineReturnRemove,
   initialInlineReturnScreen,
   inlineReturnScreenReducer as reduce,
   inlineReturnsAddonState,
@@ -241,42 +240,35 @@ describe("inlineReturnsGate", () => {
   });
 });
 
-describe("guardInlineReturnRemove — Android hardware back and the parent-stack swipe (Opus #2103)", () => {
-  // Wired to react-navigation's `beforeRemove` event, which fires for EVERY way the screen can be
-  // removed (Android system back, iOS swipe of this stack, a parent-stack swipe/dismiss).
-  const ev = () => ({ preventDefault: jest.fn() });
-
-  it("prevents removal while a capture is in flight", () => {
-    const e = ev();
-    const capturing = run([quoted(), { type: "captureStarted" }]);
-    expect(guardInlineReturnRemove(capturing, e)).toBe(true);
-    expect(e.preventDefault).toHaveBeenCalledTimes(1);
-  });
-
-  it.each([
-    ["lines", initialInlineReturnScreen],
-    ["quote", run([quoted()])],
-    ["success", run([quoted(), { type: "captured", result: record }])],
-    ["queued", run([{ type: "queued" }])],
-    ["refused", run([{ type: "refused", message: "x" }])],
-  ])("lets the operator leave from %s", (_n, state) => {
-    const e = ev();
-    expect(guardInlineReturnRemove(state as InlineReturnScreenState, e)).toBe(false);
-    expect(e.preventDefault).not.toHaveBeenCalled();
-  });
-});
-
-describe("captureFailureMessage — an uncertain failure is NOT a refusal", () => {
-  it("a 5xx / timeout / 403 reads as unconfirmed, and says a retry sends the same request", () => {
+describe("captureFailureMessage — uncertain vs definite failures (Opus #2111)", () => {
+  it("a 5xx / timeout / 408 / 429 / retry-409 reads as unconfirmed and says a retry sends the same request", () => {
     for (const err of [
       { response: { status: 503, data: { message: "down" } } },
       { code: "ECONNABORTED", message: "timeout" },
-      { response: { status: 403, data: {} } },
+      { response: { status: 408, data: {} } },
+      { response: { status: 429, data: {} } },
+      { message: "Network Error" },
     ]) {
       const msg = captureFailureMessage(err);
       expect(msg).toMatch(/couldn't confirm/i);
       expect(msg).toMatch(/same request/i);
     }
+  });
+  it("401, 403 and a code-less 400 are DEFINITE non-writes: they say nothing was recorded, never 'couldn't confirm'", () => {
+    for (const err of [
+      { response: { status: 401, data: {} } },
+      { response: { status: 403, data: { message: "You do not have access" } } },
+      { response: { status: 400, data: { message: "items must not be empty" } } },
+    ]) {
+      const msg = captureFailureMessage(err);
+      expect(msg).toMatch(/not recorded|nothing was recorded/i);
+      expect(msg).not.toMatch(/couldn't confirm/i);
+    }
+    expect(
+      captureFailureMessage({
+        response: { status: 400, data: { message: "items must not be empty" } },
+      }),
+    ).toContain("items must not be empty");
   });
   it("a coded business refusal shows the server's own message", () => {
     expect(

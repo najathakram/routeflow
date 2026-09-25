@@ -29,9 +29,14 @@ describe("inline-return screen wiring pins", () => {
     expect(screen).toMatch(/gestureEnabled:\s*canLeave/);
   });
 
-  it("the screen registers the beforeRemove guard (Android system back + parent-stack swipe), not just the inner swipe", () => {
-    expect(screen).toMatch(/addListener\("beforeRemove",/);
-    expect(screen).toMatch(/guardInlineReturnRemove\(screen,\s*e\)/);
+  it("the screen locks removal through usePreventRemove (useInlineReturnRemoveGuard), not a raw beforeRemove listener", () => {
+    expect(screen).toMatch(/useInlineReturnRemoveGuard\(screen\)/);
+    expect(screen).not.toMatch(/addListener\("beforeRemove"/);
+    const hook = readFileSync(
+      join(__dirname, "..", "lib", "use-inline-return-remove-guard.ts"),
+      "utf8",
+    );
+    expect(hook).toMatch(/usePreventRemove\(!canLeaveInlineReturn\(state\)/);
   });
 
   it("a failed capture is worded via captureFailureMessage, never as a bare refusal", () => {

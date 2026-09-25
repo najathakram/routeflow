@@ -11,6 +11,14 @@ module.exports = {
   testMatch: ["**/__tests__/**/*.test.ts"],
   // ts-jest config (new flat style, also supported via globals for compat)
   transform: {
+    // react-navigation ships ESM only; the remove-guard test drives its real core/routers.
+    "node_modules/(@react-navigation|use-latest-callback|nanoid)/.+\\.js$": [
+      "ts-jest",
+      {
+        tsconfig: { allowJs: true, esModuleInterop: true, module: "commonjs", target: "es2020" },
+        diagnostics: false,
+      },
+    ],
     "^.+\\.tsx?$": [
       "ts-jest",
       {
@@ -41,5 +49,7 @@ module.exports = {
     "^@routeflow/types$": "<rootDir>/__tests__/__mocks__/@routeflow/types.js",
   },
   // Avoid trying to transform node_modules (except socket.io-client which ships ESM)
-  transformIgnorePatterns: ["node_modules/(?!(socket\\.io-client|engine\\.io-client)/)"],
+  transformIgnorePatterns: [
+    "node_modules/(?!(socket\\.io-client|engine\\.io-client|@react-navigation/core|@react-navigation/routers|use-latest-callback|nanoid)/)",
+  ],
 };

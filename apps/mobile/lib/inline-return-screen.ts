@@ -102,28 +102,24 @@ export function canLeaveInlineReturn(state: InlineReturnScreenState): boolean {
   return state.step !== "capturing";
 }
 
-/**
- * Wired to react-navigation's `beforeRemove`, which fires for EVERY way this screen can be
- * removed — Android system back, the iOS swipe of this stack, a parent-stack swipe or dismiss.
- * While a capture is in flight, removing the screen would drop a capture that may already have
- * landed, and the next confirm would mint a NEW key (a second Return and credit). Returns whether
- * it blocked the removal.
- */
-export function guardInlineReturnRemove(
-  state: InlineReturnScreenState,
-  event: { preventDefault: () => void },
-): boolean {
-  if (canLeaveInlineReturn(state)) return false;
-  event.preventDefault();
-  return true;
-}
+/** Statuses answered BEFORE the capture handler runs (auth, permission, the validation pipe): a
+ *  DEFINITE non-write — nothing was recorded — even though the nonce is kept for a later retry. */
+const DEFINITE_NON_WRITE_STATUSES = new Set([400, 401, 403]);
 
-/** The copy for a failed capture. A definite (coded) business refusal shows the server's own
- *  message; anything else is UNCERTAIN — the capture may have landed — so it must not read as a
- *  refusal: retrying resends the SAME request (same key), which the server collapses. */
+/** The copy for a failed capture. A coded business refusal shows the server's own message; a
+ *  definite non-write (401/403/code-less 400) says nothing was recorded; anything else is
+ *  UNCERTAIN — the capture may have landed — so it must not read as a refusal: retrying resends
+ *  the SAME request (same key), which the server collapses. */
 export function captureFailureMessage(error: unknown): string {
   const outcome = captureOutcomeFromError(error);
   if (outcome.kind === "error" && outcome.refused) return extractRefusalMessage(error);
+  const status = (error as { response?: { status?: number } })?.response?.status;
+  if (status === 401) {
+    return "Your session expired, so nothing was recorded. Sign in again and retry.";
+  }
+  if (status !== undefined && DEFINITE_NON_WRITE_STATUSES.has(status)) {
+    return `${extractRefusalMessage(error)} Nothing was recorded.`;
+  }
   return "We couldn't confirm this return went through. Trying again sends the same request, so it won't be recorded twice.";
 }
 
