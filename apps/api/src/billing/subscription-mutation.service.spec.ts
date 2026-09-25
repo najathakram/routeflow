@@ -238,11 +238,28 @@ function make(opts: Opts = {}) {
       // re-read (findUnique) only when the CAS is lost — default to a clean win/no-race.
       updateMany: jest.fn().mockResolvedValue({ count: 1 }),
       findUnique: jest.fn().mockResolvedValue({ status: "ACTIVE" }),
+      // B865 / SA-277 (D2 lock shape): the add-on ledger helper's paying-set read, under the
+      // tx lock. NOTE: this tx-scoped default is ACTIVE (paying) even though the non-tx
+      // `prisma.tenant.findUnique` below still defaults to TRIAL (the `subscribe` tests rely
+      // on that) — the two reads answer different questions and only share `opts.tenantStatus`
+      // when a test explicitly sets it (e.g. T12 below wants BOTH reads to say TRIAL).
+      findUniqueOrThrow: jest.fn().mockResolvedValue({
+        status: opts.tenantStatus ?? "ACTIVE",
+        class: "PRODUCTION",
+        deletedAt: null,
+        subscription: { planKey: "TEAM" },
+      }),
     },
     tenantAddon: {
       upsert: jest.fn().mockResolvedValue({}),
       update: jest.fn().mockResolvedValue({}),
+      // FIX-864 r2 finding #0: disableAddon's in-tx re-read under the row lock (mirrors
+      // addon.service.ts's admin-path fix) — defaults to the same row `prisma.tenantAddon
+      // .findFirst` handed out pre-tx, so the existing disableAddon fixtures still see an
+      // active row and proceed.
+      findUnique: jest.fn().mockImplementation(() => Promise.resolve(opts.addonRow ?? null)),
     },
+    $queryRaw: jest.fn().mockResolvedValue([]),
   };
   const prisma = {
     tenant: {
@@ -830,6 +847,10 @@ describe("SubscriptionMutationService downgrade / add-ons", () => {
         sku: "CUSTOMER_PACK_100",
         quantity: 2,
         active: true,
+        // B865 / SA-277 (P7 harness note): post-fix, disableAddon books −STORED snapshot, not
+        // −catalog — the fixture now carries its own priceSnapshot so this pin keeps its −24
+        // (12 × 2) regardless of what the catalog says.
+        priceSnapshot: 12,
       },
     });
     await svc.disableAddon("t1", "CUSTOMER_PACK_100");
@@ -838,6 +859,45 @@ describe("SubscriptionMutationService downgrade / add-ons", () => {
       where: { id: "a1" },
       data: { active: false },
     });
+  });
+});
+
+// B865 / SA-277: the self-serve add-on paths emitted for ANY tenant status (a TRIAL tenant's
+// add-on booked immediately, then booked AGAIN at activation) and `disableAddon` credited the
+// LIVE catalog price instead of the row's own stored snapshot. Both sites now route through
+// the ONE add-on ledger helper (`emitAddonDelta`, `addon-ledger.ts`, FIX-865A/C) — see the
+// matching admin-path tests in `addon.service.spec.ts`.
+describe("SubscriptionMutationService.enableAddon/disableAddon — B865 ledger gating (SA-277)", () => {
+  it("REG-B865-SELF TRIAL tenant enabling CUSTOMER_PACK_100 ×2 books nothing (activation books it once)", async () => {
+    const { svc, tx, events } = make({ tenantStatus: "TRIAL" });
+
+    await svc.enableAddon("t1", "CUSTOMER_PACK_100", 2, "admin");
+
+    expect(tx.tenantAddon.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        create: expect.objectContaining({ priceSnapshot: 12 }),
+        update: expect.objectContaining({ priceSnapshot: 12 }),
+      }),
+    );
+    const deltas = events.emit.mock.calls.map((c: any[]) => c[3]?.amountDelta);
+    expect(deltas).toEqual([]);
+  });
+
+  it("REG-B865-SELF disable books −stored snapshot, not −catalog", async () => {
+    const { svc, events } = make({
+      addonRow: {
+        id: "a1",
+        addonKey: "CUSTOMER_PACK_100",
+        sku: "CUSTOMER_PACK_100",
+        quantity: 2,
+        active: true,
+        priceSnapshot: 9, // catalog says 12 — the booked delta must come from THIS, not that.
+      },
+    });
+
+    await svc.disableAddon("t1", "CUSTOMER_PACK_100");
+
+    expect(deltaOf(events, BILLING_EVENTS.ADDON_DISABLED)).toBe(-18); // 9 × 2, not 12 × 2
   });
 });
 
@@ -936,7 +996,23 @@ describe("SubscriptionMutationService.enableAddon — F1 tenant-path concurrency
     };
     const prisma = {
       tenantAddon,
-      $transaction: jest.fn(async (fn: any) => fn({ tenantAddon })),
+      $transaction: jest.fn(async (fn: any) =>
+        fn({
+          tenantAddon,
+          // B865 / SA-277 harness note: the race test builds its own tx — add the same two
+          // ledger-lock members `make()` adds, defaulting to a paying (ACTIVE/PRODUCTION) row
+          // so this test keeps proving the F1 lock, not the (separately-tested) B865 gate.
+          $queryRaw: jest.fn().mockResolvedValue([]),
+          tenant: {
+            findUniqueOrThrow: jest.fn().mockResolvedValue({
+              status: "ACTIVE",
+              class: "PRODUCTION",
+              deletedAt: null,
+              subscription: { planKey: "TEAM" },
+            }),
+          },
+        }),
+      ),
     } as any;
     const cat = { getPublishedCatalog: jest.fn().mockResolvedValue(catalog()) } as any;
     const proration = {

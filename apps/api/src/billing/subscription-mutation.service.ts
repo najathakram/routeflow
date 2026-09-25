@@ -1319,19 +1319,27 @@ export class SubscriptionMutationService {
     if (!isSelfServiceAddon(code)) throw new ForbiddenException(ADMIN_ONLY_ADDON_MESSAGE);
 
     await this.prisma.$transaction(async (tx) => {
+      // FIX-864 r2 finding #0: `addon` above was read outside the transaction and before any
+      // lock — two concurrent self-serve disables could both observe active=true and both emit
+      // a −snapshot×qty ledger delta. Mirror addon.service.ts's admin-path fix (FIX-865B): lock
+      // the row FIRST, re-read it INSIDE the transaction, and gate the update + emit on THAT
+      // read, so a losing concurrent call sees active=false already and no-ops.
+      await tx.$queryRaw`SELECT id FROM "TenantAddon" WHERE id = ${addon.id} FOR UPDATE`;
+      const current = await tx.tenantAddon.findUnique({ where: { id: addon.id } });
+      if (!current?.active) return; // already disabled by a concurrent call that won the race
       await tx.tenantAddon.update({ where: { id: addon.id }, data: { active: false } });
       await emitAddonDelta(tx, this.events, {
         tenantId,
         sku: code,
-        priceSnapshot: addon.priceSnapshot,
-        deltaQty: -addon.quantity,
+        priceSnapshot: current.priceSnapshot,
+        deltaQty: -current.quantity,
         actorId,
       });
       if (code === "SEAT_EXTRA") {
         await this.events.emit(
           tenantId,
           BILLING_EVENTS.SEAT_FREED,
-          { quantity: addon.quantity },
+          { quantity: current.quantity },
           { actorId, tx },
         );
       }
