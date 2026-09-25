@@ -1,34 +1,54 @@
 /**
  * F-05 (#2093): which catalog lines an invoice edit or copy asks the selling-restrictions choke point
- * about. An edit only asks about products the invoice did NOT already carry — saving a note on a DRAFT
- * that holds a since-banned product must not be refused for the line it already had (mirrors the
- * delta-netting the order edit path uses); a copy is a brand-new document, so every catalog line counts.
+ * about. An edit is netted PER PRODUCT like the order edit path: `qtyDelta = requested - held`, so a note
+ * or a decrease on a DRAFT that holds a since-banned product is never refused for the line it already had,
+ * an INCREASE is (5 -> 50 asks for 45), and a product the invoice did not hold has NO delta, which the
+ * choke point reads as "cannot be netted, check it". Quantities are pieces: an invoice edit refuses
+ * unit-labelled lines (`requestsUnit`), so `qty` is already the base-unit count. A copy is a brand-new
+ * document, so every catalog line counts.
  */
-export function newlyAddedRestrictionLines(
-  existingProductIds: ReadonlyArray<string | null>,
-  items: ReadonlyArray<{ productId?: string | null }>,
-): { productId: string }[] {
-  const had = new Set(existingProductIds.filter((p): p is string => !!p));
-  const added = new Set<string>();
-  for (const it of items) if (it.productId && !had.has(it.productId)) added.add(it.productId);
-  return [...added].map((productId) => ({ productId }));
+export function netEditRestrictionLines(
+  held: ReadonlyArray<{ productId: string | null; qty: unknown }>,
+  items: ReadonlyArray<{ productId?: string | null; qty?: unknown }>,
+): { productId: string; qtyDelta?: number }[] {
+  const sum = (rows: ReadonlyArray<{ productId?: string | null; qty?: unknown }>) => {
+    const m = new Map<string, number>();
+    for (const r of rows)
+      if (r.productId) m.set(r.productId, (m.get(r.productId) ?? 0) + Number(r.qty));
+    return m;
+  };
+  const had = sum(held);
+  const out: { productId: string; qtyDelta?: number }[] = [];
+  for (const [productId, want] of sum(items)) {
+    if (!had.has(productId))
+      out.push({ productId }); // not held: no delta, always checked
+    else if (!(want - had.get(productId)! <= 0))
+      out.push({ productId, qtyDelta: want - had.get(productId)! });
+  }
+  return out;
 }
 
 export function catalogRestrictionLines(
   items: ReadonlyArray<{ productId?: string | null }>,
 ): { productId: string }[] {
-  return newlyAddedRestrictionLines([], items);
+  return [...new Set(items.flatMap((it) => (it.productId ? [it.productId] : [])))].map(
+    (productId) => ({ productId }),
+  );
 }
 
-/** `update` with an item replace: the catalog lines the edit ADDS to what the invoice already holds. */
+/** `update` with an item replace: the netted lines for what the edit ADDS to what the invoice holds. */
 export async function addedRestrictionLines(
-  db: { invoiceItem: { findMany(args: any): Promise<{ productId: string | null }[]> } },
+  db: {
+    invoiceItem: {
+      findMany(args: any): Promise<{ productId: string | null; qty: unknown }[]>;
+    };
+  },
   invoiceId: string,
-  items: ReadonlyArray<{ productId?: string | null }>,
-): Promise<{ productId: string }[]> {
-  const held = await db.invoiceItem.findMany({ where: { invoiceId }, select: { productId: true } });
-  return newlyAddedRestrictionLines(
-    held.map((r) => r.productId),
-    items,
-  );
+  items: ReadonlyArray<{ productId?: string | null; qty?: unknown }>,
+): Promise<{ productId: string; qtyDelta?: number }[]> {
+  const held = await db.invoiceItem.findMany({
+    where: { invoiceId },
+    select: { productId: true, qty: true },
+  });
+  return netEditRestrictionLines(held, items);
 }

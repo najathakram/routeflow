@@ -15,7 +15,7 @@ import { PrismaService } from "../prisma/prisma.service";
 import { EntitlementsService } from "../billing/entitlements.service";
 import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
 import { createMockPrisma } from "../testing/prisma-mock";
-import { catalogRestrictionLines, newlyAddedRestrictionLines } from "./invoice-restriction-lines";
+import { catalogRestrictionLines, netEditRestrictionLines } from "./invoice-restriction-lines";
 
 const autoMock = () =>
   new Proxy({} as Record<string | symbol, jest.Mock>, {
@@ -50,38 +50,53 @@ describe("invoice edit / copy — selling restrictions (F-05)", () => {
 
   describe("update", () => {
     const draft = { id: "inv-1", customerId: "cust-1", status: "DRAFT", orderId: null };
-    const edit = () =>
-      service.update("inv-1", {
-        items: [
-          { description: "Held", productId: "p-held", qty: 1, unitPrice: 4 },
-          { description: "New", productId: "p-new", qty: 1, unitPrice: 6 },
-          { description: "Fee", qty: 1, unitPrice: 2 },
-        ],
-      } as never);
+    const edit = (items: object[]) => service.update("inv-1", { items } as never);
+    const held = { productId: "p-held", qty: 5 };
+    const line = (productId: string | null, qty: number) => ({
+      description: "x",
+      productId,
+      qty,
+      unitPrice: 4,
+    });
 
     beforeEach(() => {
       prisma.invoice.findUnique.mockResolvedValue(draft);
       prisma.invoice.findFirst.mockResolvedValue({ items: [] }); // no unit-labelled lines
-      prisma.invoiceItem.findMany.mockResolvedValue([{ productId: "p-held" }]);
+      prisma.invoiceItem.findMany.mockResolvedValue([held]);
     });
 
-    it("asks only about the products the edit adds, as STAFF, for the invoice's customer", async () => {
+    it("asks only for the NET increase (5 -> 50 asks for 45) and for products it adds, as STAFF", async () => {
       restrictions.assertLinesSellable.mockRejectedValue(banned());
-      await expect(edit()).rejects.toMatchObject({ response: { code: "SELLING_RESTRICTED" } });
+      await expect(
+        edit([line("p-held", 50), line("p-new", 1), line(null, 1)]),
+      ).rejects.toMatchObject({ response: { code: "SELLING_RESTRICTED" } });
       expect(restrictions.assertLinesSellable).toHaveBeenCalledWith({
         tenantId: "test-tenant",
         customerId: "cust-1",
-        lines: [{ productId: "p-new" }],
+        lines: [{ productId: "p-held", qtyDelta: 45 }, { productId: "p-new" }],
         channel: "STAFF",
       });
     });
 
-    it("writes nothing when the check refuses", async () => {
+    it("an increase on a banned line already on the draft is REFUSED, writing nothing", async () => {
       restrictions.assertLinesSellable.mockRejectedValue(banned());
-      await expect(edit()).rejects.toBeDefined();
+      await expect(edit([line("p-held", 50)])).rejects.toBeDefined();
       expect(prisma.invoiceItem.deleteMany).not.toHaveBeenCalled();
       expect(prisma.invoice.update).not.toHaveBeenCalled();
     });
+
+    it.each([
+      ["unchanged", 5],
+      ["decreased (5 -> 3)", 3],
+    ])(
+      "a line %s asks about nothing, so a since-banned line does not block the edit",
+      async (_n, qty) => {
+        await edit([line("p-held", qty)]).catch(() => undefined);
+        expect(restrictions.assertLinesSellable).toHaveBeenCalledWith(
+          expect.objectContaining({ lines: [] }),
+        );
+      },
+    );
 
     it("does not ask at all for a header-only edit", async () => {
       await service.update("inv-1", { notes: "hi" } as never).catch(() => undefined);
@@ -115,13 +130,22 @@ describe("invoice edit / copy — selling restrictions (F-05)", () => {
   });
 
   describe("line pickers", () => {
-    it("newlyAddedRestrictionLines: dedupes, drops held and productless lines", () => {
+    it("netEditRestrictionLines: nets per product, sums split lines, omits the delta for a product not held", () => {
       expect(
-        newlyAddedRestrictionLines(
-          ["a", null],
-          [{ productId: "a" }, { productId: "b" }, { productId: "b" }, {}],
+        netEditRestrictionLines(
+          [
+            { productId: "a", qty: 2 },
+            { productId: "a", qty: 3 },
+            { productId: "d", qty: 9 },
+          ],
+          [
+            { productId: "a", qty: 8 },
+            { productId: "b", qty: 1 },
+            { productId: "d", qty: 9 },
+            { qty: 4 },
+          ],
         ),
-      ).toEqual([{ productId: "b" }]);
+      ).toEqual([{ productId: "a", qtyDelta: 3 }, { productId: "b" }]);
     });
     it("catalogRestrictionLines: every distinct catalog product", () => {
       expect(catalogRestrictionLines([{ productId: "a" }, { productId: null }])).toEqual([
