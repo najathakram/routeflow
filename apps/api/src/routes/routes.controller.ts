@@ -246,6 +246,18 @@ export class RouteRunsController {
     return this.routesService.getStopPod(runId, stopId, user);
   }
 
+  // Declared BEFORE ":id/stops/:stopId": Express matches in order, so "reorder" would otherwise be
+  // taken as a :stopId and this handler would never run (#2110).
+  @Patch(":id/stops/reorder")
+  @UseGuards(RolesGuard)
+  @Roles(UserRole.OPERATOR)
+  reorderRunStops(
+    @Param("id") id: string,
+    @Body() body: { order: { id: string; stopNumber: number }[] },
+  ) {
+    return this.routesService.reorderRunStops(id, body.order);
+  }
+
   @Patch(":id/stops/:stopId")
   @UseGuards(RolesGuard)
   @Roles(UserRole.OPERATOR, UserRole.DRIVER)
@@ -256,16 +268,6 @@ export class RouteRunsController {
     @CurrentUser() user: JwtPayload,
   ) {
     return this.routesService.updateStopStatus(id, stopId, body, user);
-  }
-
-  @Patch(":id/stops/reorder")
-  @UseGuards(RolesGuard)
-  @Roles(UserRole.OPERATOR)
-  reorderRunStops(
-    @Param("id") id: string,
-    @Body() body: { order: { id: string; stopNumber: number }[] },
-  ) {
-    return this.routesService.reorderRunStops(id, body.order);
   }
 
   @Patch(":id")
