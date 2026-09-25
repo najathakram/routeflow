@@ -52,7 +52,7 @@ import { parseSellingRestricted } from "../../../../lib/selling-restricted";
 import type { BlockedLine } from "@routeflow/types";
 import { alertInfo, confirm } from "../../../../lib/confirm";
 import { invoiceLineQtyText } from "@routeflow/pricing";
-import { usesUnitDisplay } from "../../../../lib/invoice-line-display";
+import { invoiceLineUnitNoun, usesUnitDisplay } from "../../../../lib/invoice-line-display";
 import { freeUnitsLabel } from "../../../../lib/buyer-cart-logic";
 import { OrderLineCard } from "../../../../components/OrderLineCard";
 import { orderLineCardModel } from "../../../../lib/order-line-display";
@@ -675,9 +675,13 @@ export default function OrderDetailScreen() {
                     />
                   );
                 }
-                const upbRaw = (li as any).product?.unitsPerBox;
+                // #2046 review (B757): the pack size is the LINE's own snapshot first — the
+                // live product is only a fallback for an old line sold before the snapshot
+                // existed — and the suffix shows only for an actual boxes/pieces split, never
+                // for a factor-1 unit line (a Case/Piece line has no "per box" to name).
+                const upbRaw = li.unitsPerBox ?? (li as any).product?.unitsPerBox;
                 const upb = upbRaw == null ? 0 : Number(upbRaw);
-                const isBoxed = upb > 1;
+                const hasSplit = li.boxes != null || li.pieces != null;
                 // Show "1 box + 2 pcs · $30 / box of 12" when split, otherwise the
                 // existing "8 ea · $5.00" form. Shared formatter — reads the
                 // same on web order/invoice detail and the PDF.
@@ -710,7 +714,7 @@ export default function OrderDetailScreen() {
                       </View>
                       <Text style={styles.itemSub}>
                         {qtyLine} · {formatCurrency(li.unitPrice)}
-                        {isBoxed ? ` / box of ${upb}` : ""}
+                        {hasSplit && upb > 1 ? ` / ${invoiceLineUnitNoun(li)} of ${upb}` : ""}
                       </Text>
                       {/* BUY_N_GET_M: name the free units, or the reduced line
                           total reads as a pricing error (web parity). */}
