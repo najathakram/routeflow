@@ -57,6 +57,11 @@ function mintNonce(): string {
 
 interface InlineReturnSubmissionState {
   nonces: NonceMap;
+  /** True once THIS user's blob has been rehydrated; `reset()` (sign-out) clears it, and
+   *  `persist.hasHydrated()` does not (it stays true across an in-process sign-out). Every
+   *  settle path skips its write until true — zustand-persist writes on every set, even
+   *  pre-hydration, and would replace the incoming user's blob with {nonces:{}}. Not persisted. */
+  hydrated: boolean;
   /** Reuses the persisted nonce for `key` (customer+carrying-order) if one exists, else mints
    *  and persists a fresh one. Call this once per capture attempt, before building the request
    *  — never regenerate the nonce yourself between a submit and its retry. */
@@ -94,6 +99,7 @@ export const useInlineReturnSubmissionStore = create<InlineReturnSubmissionState
   persist(
     (set, get) => ({
       nonces: {},
+      hydrated: false,
       getOrCreateNonce: (key) => {
         // A stored nonce whose returnKey already reached a terminal outcome must never be reused
         // (a drain that settled BEFORE rehydrate can leave the stale blob in memory): filter first.
@@ -114,7 +120,7 @@ export const useInlineReturnSubmissionStore = create<InlineReturnSubmissionState
         // would replace the user's persisted blob with the (empty) in-memory map. The tombstone
         // above already guards the key (getOrCreateNonce / seed filter it), so skip the nonce
         // write until hydrated.
-        if (!useInlineReturnSubmissionStore.persist.hasHydrated()) return;
+        if (!get().hydrated) return;
         set((s) => {
           const nonces = settleDirectCapture(s.nonces, variables, outcome);
           return nonces === s.nonces ? s : { nonces };
@@ -135,10 +141,10 @@ export const useInlineReturnSubmissionStore = create<InlineReturnSubmissionState
         // login() sets the user before awaiting rehydrate, so a drain can run first and would
         // overwrite the persisted blob with {nonces:{}}). Tombstones above cover the key.
         if (records.length === 0) return;
-        if (!useInlineReturnSubmissionStore.persist.hasHydrated()) return;
+        if (!get().hydrated) return;
         set((s) => ({ nonces: settleAfterDrainIn(records, s.nonces) }));
       },
-      reset: () => set({ nonces: {} }),
+      reset: () => set({ nonces: {}, hydrated: false }),
       seedFromQueues: (queue, failed, userId) => {
         // Bound the persisted tombstones first (age 90d + count cap), then trust the survivors.
         useOfflineQueue.getState().pruneSettledInlineReturnKeys();
@@ -156,6 +162,10 @@ export const useInlineReturnSubmissionStore = create<InlineReturnSubmissionState
       storage: createJSONStorage(() => userScopedStorage),
       skipHydration: true,
       partialize: (state) => ({ nonces: state.nonces }),
+      // Runs after every (re)hydration — even when nothing was stored — so the flag flips back on.
+      onRehydrateStorage: () => () => {
+        useInlineReturnSubmissionStore.setState({ hydrated: true });
+      },
     },
   ),
 );
