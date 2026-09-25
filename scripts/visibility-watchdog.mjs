@@ -57,8 +57,13 @@
 // recycled pid is never killed) and then takes the lock. A lock is STALE, and simply taken over
 // without killing anything, when its pid is dead, when the pid now belongs to ANOTHER process, or
 // when its deadline plus the ~16 min retry budget has passed: a watchdog killed by Stop-Process or a
-// reboot leaves its lock behind, and refusing then would open the public window with no watchdog. The lock is removed on exit and on
-// SIGINT/SIGTERM. Two watchdogs must never coexist: the OLDER one's earlier deadline would flip the
+// reboot leaves its lock behind, and refusing then would open the public window with no watchdog.
+// The one exception is an "unknown" identity (the `ps` / CIM check itself could not run): that is NOT
+// stale. It is treated as a live watchdog and REFUSES (exit 3, a `refused` log line, `--replace` never
+// kills it) until the deadline plus the retry budget has passed, so the operator investigates instead
+// of the script guessing. Only a positive "other" or "gone" answer, or an overdue lock, is taken over.
+//
+// The lock is removed on exit and on SIGINT/SIGTERM. Two watchdogs must never coexist: the OLDER one's earlier deadline would flip the
 // repo private inside the newer one's public window.
 //
 // FLIP RETRY (2026-09-05)
