@@ -612,23 +612,6 @@
   files that are each individually right.**
 - **Guard:** REG-B305 round 4 + the source pin `short-pick-category-tax.pins.test.ts`.
 
-### L-124 · 2026-09-13 · domain · cron sweep silently dropped null-tenant orders
-
-- **Symptom:** a cron grouped pending orders by `(customerId, tenantId)` and filtered on
-  group-count > 1; a customer with one real-tenant order and one legacy null-tenant order
-  produced two separate one-row groups, both filtered out before the null-tenant branch ever
-  ran — nothing merged, nothing logged.
-- **Root cause:** the null-tenant warn lived only inside the per-group loop, downstream of the
-  count filter, so a lone null-tenant row beside a lone real-tenant row for the same customer
-  was invisible to both the merge and the log.
-- **Lesson:** **A cron or bootstrap entry point has NO ambient tenant: group the work by
-  tenantId first and run each group inside `tenantCtx.run(tenantId)`; `forTenant()` silently
-  returns the unscoped client otherwise. Rows without a tenant must be skipped AND counted,
-  never dropped silently.**
-- **Guard:** `REG-B323` — a dedicated unscoped groupBy on null tenantId runs alongside the main
-  query and counts every null-tenant customer regardless of their real-tenant group's count;
-  the sweep's return shape carries the count as `skipped`.
-
 ### L-125 · 2026-09-14 · domain · W1 billing anchor
 
 - **Symptom:** a fix for billing-period drift was about to derive each tenant's cycle anchor from
@@ -878,3 +861,24 @@
   on is the defect's own signature": here qty netting to zero while pieces do not IS reachable (it
   is the legacy residue), so the old assertion was asserting the bug, and removing it RAISED
   coverage. A mixed-pack reconcile case pins the ratio source.
+
+### L-215 · 2026-09-24 · domain · a PageHeader action row's `gap-2` toolbar has no wrap by default (B749/B770)
+
+- **Symptom:** three separate list pages (`orders`'s `CreateOrderModal` footer, then `customers`
+  and `invoices`) were each filed as their OWN bug once the owner hit a 390px viewport — a row of
+  2-4 `Button`s overflowed the viewport horizontally, on `invoices` pushing the primary "New
+  Invoice" action off-screen and unreachable.
+- **Root cause:** the codebase's own `PageHeader` toolbar convention (`<div className="flex
+  items-center gap-2">` inside the `action` slot) has no `flex-wrap` — every author who wrote a
+  toolbar with more than ~2 buttons independently reproduced the same missing class, because
+  nothing in the pattern or its documentation said to add it.
+- **Lesson:** **A `flex ... gap-N` row of buttons/actions needs `flex-wrap` (and usually
+  `justify-end` so the wrapped row still reads right-aligned) from the FIRST author, not
+  discovered per-page as separate bug reports — the fix is one Tailwind class, but each
+  independent discovery costs a full bug-pipeline cycle.** When fixing one instance, grep sibling
+  `PageHeader action={` toolbars for the same bare `flex items-center gap-N` shape before calling
+  the class of bug closed.
+- **Guard:** `page.overflow-b749.test.tsx` / `page.overflow-b770.test.tsx` assert
+  `toHaveClass("flex-wrap", "justify-end")` on the toolbar container (RTL/jsdom has no layout
+  engine, so this is a class-presence guard, not a pixel measurement — matches the pre-existing
+  `CreateOrderModal.footer.test.tsx` convention for the same fix shape).

@@ -2788,3 +2788,23 @@ citations, closed-out with its own post-init assertion guard).
   cap — zero cross-references elsewhere in LESSONS.md/CLAUDE.md, and the guard is a standing,
   automated test isolation mechanism rather than a rule a session needs to recall by reading
   this prose.)
+
+### L-124 · 2026-09-13 · domain · cron sweep silently dropped null-tenant orders
+
+- **Symptom:** a cron grouped pending orders by `(customerId, tenantId)` and filtered on
+  group-count > 1; a customer with one real-tenant order and one legacy null-tenant order
+  produced two separate one-row groups, both filtered out before the null-tenant branch ever
+  ran — nothing merged, nothing logged.
+- **Root cause:** the null-tenant warn lived only inside the per-group loop, downstream of the
+  count filter, so a lone null-tenant row beside a lone real-tenant row for the same customer
+  was invisible to both the merge and the log.
+- **Lesson:** **A cron or bootstrap entry point has NO ambient tenant: group the work by
+  tenantId first and run each group inside `tenantCtx.run(tenantId)`; `forTenant()` silently
+  returns the unscoped client otherwise. Rows without a tenant must be skipped AND counted,
+  never dropped silently.**
+- **Guard:** `REG-B323` — a dedicated unscoped groupBy on null tenantId runs alongside the main
+  query and counts every null-tenant customer regardless of their real-tenant group's count;
+  the sweep's return shape carries the count as `skipped`. (Archived 2026-09-24 to make room at
+  cap — zero cross-references elsewhere in LESSONS.md/CLAUDE.md, and null-tenant rows are
+  independently reported ZERO as of 2026-09-19 per project memory, so the guard's regression
+  test is now the only thing standing between this class of bug and a repeat, not this prose.)

@@ -563,7 +563,9 @@ export default function InvoicesPage() {
         subtitle="Track receivables — what's outstanding, due soon, and overdue across your customers."
         action={
           !isCustomer ? (
-            <div className="flex items-center gap-2">
+            // B770: 4 buttons (incl. New Invoice) overflow horizontally at 390px without a
+            // wrap, leaving New Invoice off-screen and unreachable — wrap, don't clip.
+            <div className="flex flex-wrap items-center justify-end gap-2">
               <Button
                 variant="secondary"
                 size="sm"
