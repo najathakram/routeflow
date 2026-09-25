@@ -291,6 +291,21 @@ describe("OrderTemplatesService — selling restrictions (F-05)", () => {
       spy.mockRestore();
     });
 
+    it("the tx callback RUNS to its end and then the COMMIT rejects: nothing was placed, so 'not sent this time' (a `placed` set as the callback's last statement would go red)", async () => {
+      restrictions.checkLinesSellable.mockResolvedValue(block);
+      const realTx = prisma.tenantTransaction.getMockImplementation() as (fn: any) => Promise<any>;
+      prisma.tenantTransaction.mockImplementation(async (fn: any) => {
+        const out = await realTx(fn);
+        if (out?.orderNumber) throw new Error("commit failed"); // the order tx only
+        return out;
+      });
+      await run(template()); // the cron logs the failure and moves on
+      expect(prisma.order.create).toHaveBeenCalledTimes(1);
+      const text = String(notifications.sendToCustomer.mock.calls[0][2]);
+      expect(text).toContain("not sent this time");
+      expect(text).not.toContain("went ahead");
+    });
+
     it("the order tx COMMITS and the post-commit merge THROWS: the notice says 'went ahead' (a duplicate re-order is not invited)", async () => {
       restrictions.checkLinesSellable.mockResolvedValue(block);
       ordersService.mergeAllPendingForCustomer.mockRejectedValue(new Error("merge blew up"));
