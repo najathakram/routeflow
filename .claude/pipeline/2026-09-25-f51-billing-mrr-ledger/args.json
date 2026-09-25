@@ -225,9 +225,7 @@
       "id": "UI-865",
       "title": "admin EnableAddonModal shows the no-catalog-SKU 400 (SA-277a)",
       "type": "feature",
-      "files": [
-        "apps/web/app/(platform-admin)/admin/tenants/[id]/_features/EnableAddonModal.test.tsx"
-      ],
+      "files": [],
       "tests": [
         "apps/web/app/(platform-admin)/admin/tenants/[id]/_features/EnableAddonModal.test.tsx"
       ],

@@ -364,7 +364,7 @@ D1 wrong → one-line flip in FIX-865B. Lock-order deadlock → helper locks Ten
     { id: 'RT-866', title: 'repro tests T15, T16, P8', type: 'repro-test', files: [], tests: ['apps/api/src/billing/mrr.service.spec.ts'], dependsOn: ['RC-866'], risk: 'HIGH' },
     { id: 'FIX-866', title: 'byPlan gross', type: 'fix', files: ['apps/api/src/billing/mrr.service.ts'], tests: [], dependsOn: ['RC-866', 'RT-866'], risk: 'HIGH', radius: [5, 10] },
     { id: 'RP-866', title: 'revert probe mrr.service', type: 'revert-probe', file: 'apps/api/src/billing/mrr.service.ts', test: 'cd apps/api && npx jest src/billing/mrr.service.spec.ts -t "REG-B866-BYPLAN" --maxWorkers=2', dependsOn: ['FIX-866'], risk: 'HIGH' },
-    { id: 'UI-865', title: 'admin EnableAddonModal shows the no-catalog-SKU 400 (SA-277a)', type: 'feature', files: ['apps/web/app/(platform-admin)/admin/tenants/[id]/_features/EnableAddonModal.test.tsx'], tests: ['apps/web/app/(platform-admin)/admin/tenants/[id]/_features/EnableAddonModal.test.tsx'], dependsOn: ['FIX-865B'], risk: 'MEDIUM' },
+    { id: 'UI-865', title: 'admin EnableAddonModal shows the no-catalog-SKU 400 (SA-277a)', type: 'feature', files: [], tests: ['apps/web/app/(platform-admin)/admin/tenants/[id]/_features/EnableAddonModal.test.tsx'], dependsOn: ['FIX-865B'], risk: 'MEDIUM' },
     { id: 'DBT-F51', title: 'NEED-DB spec (authored here, run by the F2 prover, never in engine gates)', type: 'feature', files: ['apps/api/src/common/override-activation-ledger.db.spec.ts'], tests: [], dependsOn: ['FIX-864', 'FIX-865B', 'FIX-865C'], risk: 'HIGH' },
   ],
   verifyCommands: {
