@@ -84,13 +84,16 @@ export class RegulatedReportService {
    * category's authorizations). Non-TX templates reuse
    * RegulatedService.getLedger (half-open) and feed buildAggregateReport.
    */
-  async buildReport(params: {
-    category: string;
-    from: string;
-    to: string;
-    template?: string;
-    columns?: string;
-  }): Promise<RegulatedReport> {
+  async buildReport(
+    params: {
+      category: string;
+      from: string;
+      to: string;
+      template?: string;
+      columns?: string;
+    },
+    opts: { reviewRows?: boolean } = {},
+  ): Promise<RegulatedReport> {
     const { fromDate, toExclusive } = this.parseRange(params.from, params.to);
 
     const category = await this.prisma
@@ -197,7 +200,8 @@ export class RegulatedReportService {
     ]);
     // F-05: custom lines are exempt from the ban check — list the ones sold into a restricted jurisdiction for review.
     const tenantId = this.prisma.getTenantId();
-    if (tenantId) {
+    // The review list is for the in-app preview only: the CSV is the filing export, not a review surface.
+    if (tenantId && opts.reviewRows !== false) {
       const policy = await this.sellingRestrictions.getPolicy(tenantId);
       report.warnings.push(
         ...(await uncategorisedLineWarnings(db, policy, { from: fromDate, toExclusive })),
@@ -378,7 +382,7 @@ export class RegulatedReportService {
     template?: string;
     columns?: string;
   }): Promise<{ csv: string; filename: string }> {
-    const report = await this.buildReport(params);
+    const report = await this.buildReport(params, { reviewRows: false });
     const csv = serializeReportCsv(report);
     const filename = `${this.slugify(report.categoryName)}-${this.safeToken(report.template)}${report.custom ? "-custom" : ""}-${params.from}-${params.to}.csv`;
     return { csv, filename };

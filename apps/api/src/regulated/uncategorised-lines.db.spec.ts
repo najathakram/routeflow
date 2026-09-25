@@ -147,4 +147,24 @@ describeDb("F05 uncategorised-lines report row — real Postgres", () => {
     );
     expect(warnings).toEqual([]);
   });
+
+  it("judged as of the invoice's issue date: a rule lifted AFTER the invoice still flags it; lifted BEFORE does not", async () => {
+    const rule = await prisma.sellingRestriction.findFirst({ where: { tenantId } });
+    await prisma.sellingRestriction.update({
+      where: { id: rule!.id },
+      data: { liftedAt: new Date("2026-10-01T00:00:00Z") },
+    });
+    const after = await tenantCtx.run(tenantId, () =>
+      uncategorisedLineWarnings(prisma.forTenant() as never, on, range),
+    );
+    expect(after.map((w) => w.invoiceId)).toEqual([ids.ca]);
+    await prisma.sellingRestriction.update({
+      where: { id: rule!.id },
+      data: { liftedAt: new Date("2026-09-10T00:00:00Z") },
+    });
+    const before = await tenantCtx.run(tenantId, () =>
+      uncategorisedLineWarnings(prisma.forTenant() as never, on, range),
+    );
+    expect(before).toEqual([]); // the CA invoice was issued 2026-09-15, after the lift
+  });
 });

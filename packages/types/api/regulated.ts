@@ -50,7 +50,8 @@ export type RegulatedReportWarningCode =
   | "FRACTIONAL_QTY"
   | "UNLINKED_LEDGER_ROWS"
   | "UNMATCHED_LEDGER_LINE"
-  | "UNLISTED_PRODUCT_LINE";
+  | "UNLISTED_PRODUCT_LINE"
+  | "UNCATEGORISED_LINE_IN_RULE_STATE";
 
 export interface RegulatedReportWarning {
   code: RegulatedReportWarningCode;

@@ -399,4 +399,25 @@ describe("RegulatedReportService", () => {
       expect(filename).not.toMatch(/["\r\n;]/);
     });
   });
+
+  it("F-05: the CSV (filing export) never runs the uncategorised-lines review row; the preview does", async () => {
+    const report = {
+      template: "TX_COMPTROLLER",
+      title: "T",
+      categoryId: "c1",
+      categoryName: "Cat",
+      from: "2026-09-01",
+      to: "2026-09-30",
+      columns: [],
+      rows: [],
+      totalsRow: null,
+      displayTotals: [],
+      warnings: [],
+      csv: { preamble: [], includeHeader: false, includeTotals: false, footer: [] },
+    };
+    const spy = jest.spyOn(service, "buildReport").mockResolvedValue(report as never);
+    await service.buildReportCsv({ category: "c1", from: "2026-09-01", to: "2026-09-30" });
+    expect(spy).toHaveBeenCalledWith(expect.anything(), { reviewRows: false });
+    spy.mockRestore();
+  });
 });
