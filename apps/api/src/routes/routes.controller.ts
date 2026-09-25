@@ -32,6 +32,7 @@ import { CompleteWithPaymentDto } from "./dto/complete-with-payment.dto";
 import { SettleRunDto } from "./dto/settle-run.dto";
 import { AttachPodArtifactDto } from "./dto/attach-pod-artifact.dto";
 import { UpdateStopStatusDto } from "./dto/update-stop-status.dto";
+import { ReorderRunStopsDto } from "./dto/reorder-run-stops.dto";
 import { DriverPaymentsGuard } from "./driver-payments.guard";
 
 @ApiTags("routes")
@@ -252,10 +253,7 @@ export class RouteRunsController {
   @Patch(":id/stops/reorder")
   @UseGuards(RolesGuard)
   @Roles(UserRole.OPERATOR)
-  reorderRunStops(
-    @Param("id") id: string,
-    @Body() body: { order: { id: string; stopNumber: number }[] },
-  ) {
+  reorderRunStops(@Param("id") id: string, @Body() body: ReorderRunStopsDto) {
     return this.routesService.reorderRunStops(id, body.order);
   }
 
