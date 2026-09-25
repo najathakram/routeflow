@@ -43,7 +43,7 @@ import { NO_RESTOCK_REASONS } from "./returns.service";
 import { restockReturnItems } from "./returns-restock.util";
 import { sumInlineReturnCredit } from "./inline-return-credit.util";
 import { InlineReturnsQuoteService } from "./inline-returns-quote.service";
-import type { CaptureInlineReturnDto } from "./dto/capture-inline-return.dto";
+import type { CaptureInlineReturnDto, InlineReturnLinesDto } from "./dto/capture-inline-return.dto";
 import type { ApproveInlineReturnDto } from "./dto/approve-inline-return.dto";
 
 /** design.md §8 — the ONE gate every money-writing method here re-checks itself,
@@ -172,6 +172,34 @@ export class InlineReturnsService {
       year: new Date().getFullYear(),
       tenantId: tenantId ?? undefined,
     });
+  }
+
+  /**
+   * #2094 (Opus N1): validate a NEW order's return BEFORE its credit-note number is reserved, so a
+   * refused request burns none. Unlocked and read-only: any existing INLINE returnKey is a 409 (a true
+   * replay of this order returned earlier, in create()'s idempotency pre-check), then a DRY-RUN of the
+   * pricing engine (a stale quote or an unmatchable line refuses here). Returns the dry-run total so
+   * the caller can skip the reservation for a $0 return. The in-tx checks stay as the backstop.
+   */
+  async preflightNewOrderReturn(
+    lines: InlineReturnLinesDto,
+    customerId: string,
+    user: JwtPayload,
+  ): Promise<number> {
+    const db = this.prisma.forTenant();
+    if (lines.returnKey) {
+      const pre = await db.return.findFirst({
+        where: { returnKey: lines.returnKey, kind: "INLINE" },
+        select: { id: true },
+      });
+      if (pre) throw new ConflictException("A different return already used this capture key");
+    }
+    const priced = await this.quoteService.priceInlineReturn(
+      { customerId, items: lines.items, routeRunStopId: lines.routeRunStopId },
+      user,
+      db,
+    );
+    return priced.total;
   }
 
   /** Post-commit only, like every credit-note event here. */

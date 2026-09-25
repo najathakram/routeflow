@@ -2071,7 +2071,7 @@ export class OrdersService implements OnApplicationBootstrap {
     const unitOrder = lineItemsData.some((li) => "unitLabel" in li); // units_v1: never auto-merged
     let order: any;
     let inlineMinted: any = null;
-    await inlineReturn.reserveInlineReturnNumber(inlineRet); // #2094: once, before the P2002 retry loop
+    await inlineReturn.reserveInlineReturnNumber(inlineRet, customerId, user); // #2094: once, before the P2002 retry loop
     for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
       try {
         order = await this.prisma.tenantTransaction(
