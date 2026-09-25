@@ -10,7 +10,7 @@ import { normalizeBoxesPieces } from "@routeflow/pricing";
  */
 export function orderLineShape(
   existing: any,
-  agg: { qty: number; sample: any },
+  agg: { qty: number; sample: any; n?: number },
   verbatim: boolean,
 ): {
   qty: number;
@@ -31,6 +31,18 @@ export function orderLineShape(
   }
   const upb = Number(existing?.unitsPerBox ?? sample?.unitsPerBox ?? 0);
   const isBoxSplit = (existing ?? sample)?.boxes != null;
+  // A box-split line whose pack is unknown (a legacy 0-box + 5-piece line) cannot be re-split from qty:
+  // normalizing at pack 0 would turn its stored 0 into null and flip it to box-unaware. Keep the stored
+  // split (the single billed invoice line's when there is one), 0 stays 0.
+  if (isBoxSplit && !(upb > 1)) {
+    const src = agg.n === 1 ? sample : (existing ?? sample);
+    return {
+      qty: agg.qty,
+      boxes: src?.boxes ?? null,
+      pieces: src?.pieces ?? null,
+      unitsPerBox: null,
+    };
+  }
   const split = isBoxSplit
     ? normalizeBoxesPieces({ qty: agg.qty, unitsPerBox: upb })
     : { qty: agg.qty, boxes: null as number | null, pieces: null as number | null };

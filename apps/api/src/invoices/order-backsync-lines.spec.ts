@@ -29,6 +29,26 @@ describe("orderLineShape (SA-203c)", () => {
     ).toMatchObject({ qty: 30, boxes: 2, pieces: 6, unitsPerBox: 12 });
   });
 
+  it("0 vs null: a legacy 0-box + 5-piece order line with no pack keeps boxes 0 / pieces 5 on a full re-price", () => {
+    const shape = orderLineShape(
+      { boxes: 0, pieces: 5, unitsPerBox: null },
+      { qty: 5, sample: legacySample, n: 1 },
+      false,
+    );
+    expect(shape).toMatchObject({ qty: 5, boxes: 0, pieces: 5, unitsPerBox: null });
+    expect(shape.boxes).not.toBeNull();
+  });
+
+  it("0 vs null: a line stored WITHOUT a split (boxes null) stays box-unaware", () => {
+    expect(
+      orderLineShape(
+        { boxes: null, pieces: null, unitsPerBox: null },
+        { qty: 5, sample: {}, n: 1 },
+        false,
+      ),
+    ).toMatchObject({ boxes: null, pieces: null });
+  });
+
   it("a selling-unit order line stays unsplit", () => {
     expect(
       orderLineShape({ boxes: null, unitsPerBox: null }, { qty: 7, sample: {} }, false),
