@@ -138,6 +138,16 @@ describe("OrdersService.updateOrderItems(): inline-return call order (#2094)", (
     expect(apply).toBeLessThan(at("return { subtotal, tax, total, shouldRevert, shippingFee }"));
   });
 
+  it("the return is validated BEFORE the un-tx'd linked-invoice revert commits (B215 class), and the CN number is reserved before the tx", () => {
+    const pre = at("preflightInlineReturn(");
+    const revert = at("revertLinkedInvoicesForOrderEdit(orderId)");
+    expect(pre).toBeLessThan(revert);
+    const reserve = at("reserveInlineReturnNumber(");
+    expect(reserve).toBeLessThan(revert);
+    expect(reserve).toBeLessThan(at("lockInlineReturnCustomer("));
+    expect(body.split("reserveInlineReturnNumber(").length - 1).toBe(1);
+  });
+
   it("the credit gate is re-read after the credit is applied, in the same tx", () => {
     const apply = at("applyInlineReturnInTx(");
     expect(body.slice(apply, apply + 800)).toContain("await creditGate()");

@@ -349,6 +349,41 @@ export class InlineReturnsService {
   }
 
   /**
+   * #2094 (Opus R1, B215 class): validate a return BEFORE the caller does anything that commits on its
+   * own connection (updateOrderItems' un-tx'd revertLinkedInvoicesForOrderEdit flips a SENT invoice to
+   * DRAFT). Every refusal captureInTx would throw later, inside the tx, would otherwise roll back the
+   * edit but leave that invoice reverted for good. Unlocked and read-only: an unlocked returnKey read
+   * like capture()'s (a key on ANOTHER customer/order is a 409; the same pair is a replay, nothing to
+   * price), the driver's stop/run checks, and a DRY-RUN of the pricing engine (a stale quote or an
+   * unmatchable line refuses here). The in-tx checks stay as the backstop under the locks.
+   */
+  async preflightCapture(
+    dto: CaptureInlineReturnDto,
+    user: JwtPayload,
+    order: { routeRunId: string | null },
+  ): Promise<void> {
+    const db = this.prisma.forTenant();
+    if (dto.returnKey) {
+      const pre = await db.return.findFirst({
+        where: { returnKey: dto.returnKey, kind: "INLINE" },
+        select: { customerId: true, orderId: true },
+      });
+      if (pre) {
+        if (pre.customerId !== dto.customerId || pre.orderId !== dto.orderId) {
+          throw new ConflictException("A different return already used this capture key");
+        }
+        return; // a replay of THIS return: the in-tx check returns the existing row
+      }
+    }
+    if (user.role === UserRole.DRIVER) await this.assertDriverOwnsOrder(db, dto, order);
+    await this.quoteService.priceInlineReturn(
+      { customerId: dto.customerId, items: dto.items, routeRunStopId: dto.routeRunStopId },
+      user,
+      db,
+    );
+  }
+
+  /**
    * captureInTx + the credit issue in the SAME transaction (#2094, SA-194/SA-221): mint the credit
    * note (at `opts.creditNoteNumber` when the caller reserved one before its retry loop, else a
    * number reserved on this tx), link it, record the system-owned orderCreditNote intent capped at

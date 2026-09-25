@@ -334,6 +334,61 @@ describe("InlineReturnsService in-transaction core (#2094)", () => {
     });
   });
 
+  describe("preflightCapture (Opus R1: refuse BEFORE anything commits outside the tx)", () => {
+    it("a returnKey already used for ANOTHER order is a 409, before any pricing", async () => {
+      prisma.return.findFirst.mockResolvedValueOnce({
+        customerId: "cust-1",
+        orderId: "some-other-order",
+      });
+      await expect(
+        (service as any).preflightCapture(INPUT, OPERATOR, { routeRunId: null }),
+      ).rejects.toThrow(ConflictException);
+      expect(quote.priceInlineReturn).not.toHaveBeenCalled();
+    });
+
+    it("a replay of THIS return returns without pricing (the in-tx check hands back the existing row)", async () => {
+      prisma.return.findFirst.mockResolvedValueOnce({ customerId: "cust-1", orderId: "ord-new" });
+      await expect(
+        (service as any).preflightCapture(INPUT, OPERATOR, { routeRunId: null }),
+      ).resolves.toBeUndefined();
+      expect(quote.priceInlineReturn).not.toHaveBeenCalled();
+    });
+
+    it("dry-runs the SAME pricing engine on the plain client, never a tx, and writes nothing", async () => {
+      await (service as any).preflightCapture(INPUT, OPERATOR, { routeRunId: null });
+      expect(quote.priceInlineReturn).toHaveBeenCalledWith(
+        { customerId: "cust-1", items: INPUT.items, routeRunStopId: undefined },
+        OPERATOR,
+        expect.anything(),
+      );
+      expect(prisma.return.create).not.toHaveBeenCalled();
+      expect(prisma.stockMovement.create).not.toHaveBeenCalled();
+    });
+
+    it("a pricing refusal (a stale quote, an unmatchable line) surfaces now, so the caller never commits its revert", async () => {
+      quote.priceInlineReturn.mockRejectedValue(new ConflictException("stale quote"));
+      await expect(
+        (service as any).preflightCapture(INPUT, OPERATOR, { routeRunId: null }),
+      ).rejects.toThrow(ConflictException);
+    });
+
+    it("a DRIVER without a stop, or whose stop is on another run, is refused before any commit", async () => {
+      await expect(
+        (service as any).preflightCapture(INPUT, DRIVER, { routeRunId: "run-1" }),
+      ).rejects.toThrow(ForbiddenException);
+      await expect(
+        (service as any).preflightCapture({ ...INPUT, routeRunStopId: "stop-1" }, DRIVER, {
+          routeRunId: "run-OTHER",
+        }),
+      ).rejects.toThrow(ForbiddenException);
+      await expect(
+        (service as any).preflightCapture({ ...INPUT, routeRunStopId: "stop-1" }, DRIVER, {
+          routeRunId: "run-1",
+        }),
+      ).resolves.toBeUndefined();
+    });
+  });
+
   describe("the guards run before any read (buyer / add-on)", () => {
     it("assertInlineReturnAllowed refuses a CUSTOMER before any DB read", async () => {
       await expect((service as any).assertInlineReturnAllowed(CUSTOMER)).rejects.toThrow(

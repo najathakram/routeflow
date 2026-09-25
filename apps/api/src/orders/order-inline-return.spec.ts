@@ -4,6 +4,7 @@ import {
   applyInlineReturnInTx,
   assertReplayCarriesReturn,
   isRetryableTxError,
+  preflightInlineReturn,
   emitInlineReturnCredit,
   lockInlineReturnCustomer,
   prepareInlineReturn,
@@ -189,4 +190,27 @@ describe("isRetryableTxError (#2094 W1)", () => {
     "does not retry %j",
     (e) => expect(isRetryableTxError(e)).toBe(false),
   );
+});
+
+describe("preflightInlineReturn (Opus R1)", () => {
+  it("no inline return: nothing is touched", async () => {
+    await expect(
+      preflightInlineReturn(null, { id: "o", customerId: "c", routeRunId: null }, STAFF),
+    ).resolves.toBeUndefined();
+  });
+
+  it("derives customer and order from the order, and hands the run to the driver check", async () => {
+    const svc = { ...svcStub(), preflightCapture: jest.fn().mockResolvedValue(undefined) };
+    const p = await prepareInlineReturn(svc as any, { ...LINES, customerId: "evil" }, STAFF);
+    await preflightInlineReturn(
+      p,
+      { id: "ord-1", customerId: "cust-1", routeRunId: "run-1" },
+      STAFF,
+    );
+    expect(svc.preflightCapture).toHaveBeenCalledWith(
+      { ...LINES, customerId: "cust-1", orderId: "ord-1" },
+      STAFF,
+      { routeRunId: "run-1" },
+    );
+  });
 });

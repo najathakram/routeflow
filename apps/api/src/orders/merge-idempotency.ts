@@ -28,6 +28,8 @@ export function mergeRequestHash(input: {
   customerId: string;
   items?: readonly unknown[] | null;
   appliedCreditNotes?: unknown;
+  /** #2094: a return added or changed on a replay must not be silently dropped. */
+  inlineReturn?: unknown;
 }): string {
   const items = (input.items ?? []).map(stable).sort();
   // Same treatment as `items`: stable-serialize each entry, then sort the serialized strings.
@@ -42,6 +44,8 @@ export function mergeRequestHash(input: {
         customerId: input.customerId,
         items,
         appliedCreditNotes,
+        // A cart with no return fingerprints exactly as before (an absent key is dropped by stable()).
+        inlineReturn: input.inlineReturn ?? undefined,
       }),
     )
     .digest("hex");

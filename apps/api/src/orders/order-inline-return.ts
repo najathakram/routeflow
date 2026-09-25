@@ -126,3 +126,20 @@ export function emitInlineReturnCredit(
 ): void {
   if (p && minted) p.svc.emitCreditIssued(tenantId, minted);
 }
+
+/**
+ * Edit path: validate the return BEFORE anything commits outside the edit's tx (the linked-invoice
+ * revert). No-op without an inline return. See InlineReturnsService.preflightCapture.
+ */
+export async function preflightInlineReturn(
+  p: PreparedInlineReturn | null,
+  order: { id: string; customerId: string; routeRunId: string | null },
+  user: JwtPayload | undefined,
+): Promise<void> {
+  if (!p) return;
+  await p.svc.preflightCapture(
+    { ...p.lines, customerId: order.customerId, orderId: order.id },
+    user as JwtPayload,
+    { routeRunId: order.routeRunId },
+  );
+}

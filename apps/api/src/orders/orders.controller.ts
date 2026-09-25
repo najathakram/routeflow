@@ -154,6 +154,7 @@ export class OrdersController {
                 customerId: dto.customerId!,
                 items: dto.items,
                 appliedCreditNotes: dto.appliedCreditNotes,
+                inlineReturn: dto.inlineReturn,
               })
             : undefined;
           let merged: { kind: "merged"; orderId: string; replayed: boolean } | { kind: "stale" };
