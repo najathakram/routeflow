@@ -195,6 +195,21 @@ describe("TenantConfigSnapshotAdminService (A2 step c)", () => {
     expect(rows[0].restoreReport?.restored).toBe(9);
   });
 
+  it("list() a malformed NEWEST audit row yields null, never an older duplicate's stale report", async () => {
+    const { svc, snapshots, prisma } = build();
+    snapshots.list.mockResolvedValueOnce([{ id: "s1", restoredAt: TAKEN }]);
+    prisma.auditLog.findMany.mockResolvedValueOnce([
+      {
+        meta: { snapshotId: "s1", report: { restored: -1, skipped: 0, keptNewer: 0, unchanged: 0 } },
+      },
+      {
+        meta: { snapshotId: "s1", report: { restored: 3, skipped: 0, keptNewer: 0, unchanged: 0 } },
+      },
+    ]);
+    const rows = await svc.list("t1");
+    expect(rows[0].restoreReport).toBeNull();
+  });
+
   it("list() matches each restored row to its OWN audit entry, never mixing up two snapshots", async () => {
     const { svc, snapshots, prisma } = build();
     snapshots.list.mockResolvedValueOnce([

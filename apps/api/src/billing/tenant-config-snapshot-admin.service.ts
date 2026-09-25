@@ -90,8 +90,8 @@ export class TenantConfigSnapshotAdminService {
   /**
    * The restore report lives in the existing audit trail (no migration — see
    * `config-snapshot-audit.constants.ts`), written by both restore paths inside the SAME
-   * transaction as the restore itself. One extra query, scoped to this tenant (AuditLog is
-   * indexed on tenantId); matched to each restored row by `meta.snapshotId`. A restored row
+   * transaction as the restore itself. One extra query, scoped to this tenant and entity (hits
+   * AuditLog_entityType_entityId_idx); matched to each restored row by `meta.snapshotId`. A restored row
    * whose audit row is missing or unreadable (should not happen; the write is transactional)
    * reports `restoreReport: null` rather than guessing — never a fabricated report.
    */
@@ -116,12 +116,16 @@ export class TenantConfigSnapshotAdminService {
       take: restoredIds.length,
     });
     const reportBySnapshotId = new Map<string, RestoreReportView>();
+    const seen = new Set<string>();
     for (const row of auditRows) {
       const meta = row.meta as Record<string, unknown> | null;
       const snapshotId = typeof meta?.snapshotId === "string" ? meta.snapshotId : null;
       // Newest-first order + set-once: an id can appear twice only via a bug (idempotency guards
       // both restore paths against a duplicate), so the first (newest) row wins if it ever did.
-      if (!snapshotId || reportBySnapshotId.has(snapshotId)) continue;
+      if (!snapshotId || seen.has(snapshotId)) continue;
+      // Mark seen BEFORE validating: a malformed newest row must yield null, not fall through to
+      // an older duplicate's stale report.
+      seen.add(snapshotId);
       // Only a report whose four counts are all non-negative integers is shown; anything else ({},
       // "abc", a missing count) is unreadable and reports null, never a made-up 0 or NaN.
       const report = meta?.report as Record<string, unknown> | undefined;
