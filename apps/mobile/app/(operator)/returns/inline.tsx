@@ -2,8 +2,9 @@
 // RecordInlineReturnDialog (PR #1250): same endpoints/DTOs (@routeflow/types), state logic from
 // @routeflow/returns, decision logic in lib/inline-return-screen.ts. The quote is rendered
 // exactly as the server returned it — no client-side money math. `returnKey` comes from the
-// persisted, offline-queue-safe nonce store, never minted per render.
-import { useReducer, useState } from "react";
+// persisted, offline-queue-safe nonce store, never minted per render, and capture sends the
+// QUOTED snapshot (buildInlineReturnCapture), never the live lines.
+import { useEffect, useReducer, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Pressable,
@@ -14,38 +15,45 @@ import {
   View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { useLocalSearchParams, useRouter } from "expo-router";
+import { Stack, useLocalSearchParams, useRouter } from "expo-router";
 import { ios } from "@routeflow/ui/tokens";
 import { NavBackButton, NavBar, SearchBar } from "@routeflow/ui/mobile/ios";
 import {
   applyCoveredPiecesToLines,
-  buildCaptureRequest,
   buildQuoteRequest,
-  DEFAULT_EXCESS_OPTION,
   dropExcessAndRequote,
   extractRefusalMessage,
-  RETURNS_NOT_ENABLED_MESSAGE,
   groupQuoteChunks,
   isBoxedProduct,
+  RETURNS_NOT_ENABLED_MESSAGE,
   sumChunkTotals,
   type ExcessOption,
   type InlineReturnLineDraft,
 } from "@routeflow/returns";
-import type { ReturnReason } from "@routeflow/types";
-import { useAdminProducts } from "../../../lib/api/admin";
+import type { InlineReturnQuoteResponse, ReturnReason } from "@routeflow/types";
+import { useAdminOrder, useAdminProducts } from "../../../lib/api/admin";
 import { useInlineReturnsAddon } from "../../../lib/api/addons";
 import { useCaptureInlineReturn, useInlineReturnQuote } from "../../../lib/api/inline-returns";
-import { inlineReturnNonceKey } from "../../../lib/inline-return-submit-key";
 import {
+  captureOutcomeFromError,
+  inlineReturnNonceKey,
+} from "../../../lib/inline-return-submit-key";
+import {
+  buildInlineReturnCapture,
   canConfirmInlineReturn,
   canGetInlineReturnQuote,
+  canLeaveInlineReturn,
+  formatRefundAmount,
   initialInlineReturnScreen,
-  inlineReturnsGate,
   inlineReturnScreenReducer,
-  screenReturnKey,
+  inlineReturnsGate,
+  linesFromOrder,
+  type PrefilledReturnLine,
 } from "../../../lib/inline-return-screen";
 import { useInlineReturnSubmissionStore } from "../../../store/inlineReturnSubmissionStore";
 import { sanitizeIntInput } from "../../../lib/qty";
+
+const MIN_TARGET = 44;
 
 const REASONS: { id: ReturnReason; label: string }[] = [
   { id: "DAMAGED", label: "Damaged" },
@@ -69,9 +77,8 @@ export default function InlineReturnScreen() {
 
   const gate = inlineReturnsGate(useInlineReturnsAddon());
   const [screen, dispatch] = useReducer(inlineReturnScreenReducer, initialInlineReturnScreen);
-  const [lines, setLines] = useState<InlineReturnLineDraft[]>([]);
+  const [lines, setLines] = useState<PrefilledReturnLine[]>([]);
   const [reason, setReason] = useState<ReturnReason | "">("");
-  const [excessOption, setExcessOption] = useState<ExcessOption>(DEFAULT_EXCESS_OPTION);
   const [search, setSearch] = useState("");
 
   const quoteMut = useInlineReturnQuote();
@@ -82,73 +89,111 @@ export default function InlineReturnScreen() {
     { enabled: search.trim().length > 1 },
   );
 
+  // Pre-fill the order's own lines once (sold pack + sold quantities as context).
+  const { data: order } = useAdminOrder(orderId);
+  const prefilled = useRef(false);
+  useEffect(() => {
+    if (prefilled.current || !order) return;
+    prefilled.current = true;
+    setLines((prev) => (prev.length > 0 ? prev : linesFromOrder(order.lineItems)));
+  }, [order]);
+
+  const canLeave = canLeaveInlineReturn(screen);
+
   const setLine = (productId: string, patch: Partial<InlineReturnLineDraft>) =>
     setLines((prev) => prev.map((l) => (l.productId === productId ? { ...l, ...patch } : l)));
 
-  const getQuote = () =>
-    quoteMut.mutate(buildQuoteRequest(customerId, lines), {
-      onSuccess: (quote) => dispatch({ type: "quoted", quote }),
+  const requote = (
+    request: ReturnType<typeof buildQuoteRequest>,
+    build: (quote: InlineReturnQuoteResponse) => void,
+  ) =>
+    quoteMut.mutate(request, {
+      onSuccess: build,
       onError: (e) => dispatch({ type: "refused", message: extractRefusalMessage(e) }),
     });
 
+  const getQuote = () =>
+    requote(buildQuoteRequest(customerId, lines), (quote) =>
+      dispatch({ type: "quoted", quote, lines }),
+    );
+
   const changeExcess = (option: ExcessOption) => {
-    setExcessOption(option);
-    if (option !== "RETURN_ONLY_PURCHASED" || screen.step !== "quote") return;
-    quoteMut.mutate(dropExcessAndRequote(customerId, screen.quote), {
-      onSuccess: (quote) => {
-        dispatch({ type: "quoted", quote });
-        // Capture reads quantities from `lines`, so apply the reduced amount there too.
-        setLines((prev) => applyCoveredPiecesToLines(prev, quote));
-      },
-      onError: (e) => dispatch({ type: "refused", message: extractRefusalMessage(e) }),
+    if (screen.step !== "quote") return;
+    if (option !== "RETURN_ONLY_PURCHASED") {
+      dispatch({ ...quotedEvent(screen), excessOption: option });
+      return;
+    }
+    requote(dropExcessAndRequote(customerId, screen.quote), (quote) => {
+      // Capture reads the quoted snapshot, so the reduced amount goes into the snapshot too.
+      const reduced = applyCoveredPiecesToLines(screen.quotedLines, quote);
+      setLines((prev) => applyCoveredPiecesToLines(prev, quote) as PrefilledReturnLine[]);
+      dispatch({ type: "quoted", quote, lines: reduced, excessOption: option });
     });
   };
 
   const confirm = () => {
     if (!canConfirmInlineReturn(reason)) return;
-    const nonce = getOrCreateNonce(inlineReturnNonceKey(customerId, orderId));
-    captureMut.mutate(
-      buildCaptureRequest({
-        customerId,
-        orderId,
-        lines,
-        returnKey: screenReturnKey(customerId, orderId, nonce),
-        reason: reason as ReturnReason,
-      }),
-      {
-        onSuccess: (result) => dispatch({ type: "captured", result }),
-        onError: (e) => dispatch({ type: "refused", message: extractRefusalMessage(e) }),
-      },
-    );
+    const request = buildInlineReturnCapture(screen, {
+      customerId,
+      orderId,
+      nonce: getOrCreateNonce(inlineReturnNonceKey(customerId, orderId)),
+      reason: reason as ReturnReason,
+    });
+    if (!request) return;
+    dispatch({ type: "captureStarted" });
+    captureMut.mutate(request, {
+      onSuccess: (result) => dispatch({ type: "captured", result }),
+      onError: (e) =>
+        // REG-B308: an offline-queued capture is a pending success, not a failure.
+        captureOutcomeFromError(e).kind === "queued"
+          ? dispatch({ type: "queued" })
+          : dispatch({ type: "refused", message: extractRefusalMessage(e) }),
+    });
   };
 
   const title =
-    screen.step === "quote"
+    screen.step === "quote" || screen.step === "capturing"
       ? "Quote"
       : screen.step === "success"
         ? "Return recorded"
-        : "Inline return";
+        : screen.step === "queued"
+          ? "Saved offline"
+          : "Inline return";
+
+  const busy = screen.step === "capturing" || captureMut.isPending;
 
   return (
     <SafeAreaView style={styles.safe} edges={["top", "left", "right"]}>
+      {/* Swipe-back is locked with the back button while a capture is in flight. */}
+      <Stack.Screen options={{ gestureEnabled: canLeave }} />
       <NavBar
         inlineTitle={title}
         leading={
           <NavBackButton
             label={screen.step === "quote" ? "Items" : "Back"}
-            onPress={() => (screen.step === "quote" ? dispatch({ type: "edit" }) : router.back())}
+            onPress={() => {
+              if (!canLeave) return;
+              if (screen.step === "quote") dispatch({ type: "edit" });
+              else router.back();
+            }}
           />
         }
       />
       <ScrollView contentContainerStyle={{ padding: 16, gap: 14 }}>
         {params.customerName ? <Text style={styles.hint}>{params.customerName}</Text> : null}
 
-        {gate === "loading" && <ActivityIndicator color={ios.brand} />}
-        {gate === "blocked" && <Text style={styles.error}>{RETURNS_NOT_ENABLED_MESSAGE}</Text>}
+        {gate === "loading" && screen.step === "lines" && <ActivityIndicator color={ios.brand} />}
+        {gate === "blocked" && screen.step === "lines" && (
+          <Text style={styles.error} accessibilityRole="alert">
+            {RETURNS_NOT_ENABLED_MESSAGE}
+          </Text>
+        )}
 
         {gate === "allowed" && screen.step === "lines" && (
           <>
-            <Text style={styles.section}>What came back</Text>
+            <Text style={styles.section} accessibilityRole="header">
+              What came back
+            </Text>
             <SearchBar
               placeholder="Search products to add…"
               value={search}
@@ -160,6 +205,8 @@ export default function InlineReturnScreen() {
                 <Pressable
                   key={p.id}
                   style={styles.pickRow}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Add ${p.name}`}
                   onPress={() => {
                     setLines((prev) => [
                       ...prev,
@@ -172,6 +219,7 @@ export default function InlineReturnScreen() {
                         pieces: "",
                         reason: "",
                         note: "",
+                        soldLabel: "",
                       },
                     ]);
                     setSearch("");
@@ -183,20 +231,26 @@ export default function InlineReturnScreen() {
             {lines.map((l) => (
               <View key={l.productId} style={styles.card}>
                 <Text style={styles.name}>{l.productName}</Text>
+                {l.soldLabel ? <Text style={styles.hint}>Sold: {l.soldLabel}</Text> : null}
                 <View style={styles.qtyRow}>
                   {isBoxedProduct(l) && (
                     <QtyField
-                      label="Boxes"
+                      label={l.boxLabel ?? "Boxes"}
+                      product={l.productName}
                       value={l.boxes}
                       onChange={(v) => setLine(l.productId, { boxes: v })}
                     />
                   )}
                   <QtyField
                     label={isBoxedProduct(l) ? "Pieces" : (l.unit ?? "Qty")}
+                    product={l.productName}
                     value={l.pieces}
                     onChange={(v) => setLine(l.productId, { pieces: v })}
                   />
                   <Pressable
+                    style={styles.remove}
+                    accessibilityRole="button"
+                    accessibilityLabel={`Remove ${l.productName}`}
                     onPress={() => setLines((p) => p.filter((x) => x.productId !== l.productId))}
                   >
                     <Text style={styles.link}>Remove</Text>
@@ -216,28 +270,31 @@ export default function InlineReturnScreen() {
           </>
         )}
 
-        {gate === "allowed" && screen.step === "quote" && (
+        {(screen.step === "quote" || screen.step === "capturing") && (
           <QuoteView
             quote={screen.quote}
-            excessOption={excessOption}
+            excessOption={screen.excessOption}
             onExcessOption={changeExcess}
             reason={reason}
             onReason={setReason}
-            busy={captureMut.isPending || quoteMut.isPending}
+            busy={busy || quoteMut.isPending}
+            locked={screen.step === "capturing"}
             onConfirm={confirm}
           />
         )}
 
-        {gate === "allowed" && screen.step === "success" && (
-          <View style={styles.card}>
-            <Text style={styles.name}>
+        {screen.step === "success" && (
+          <View style={styles.card} accessibilityLiveRegion="polite">
+            <Text style={styles.name} accessibilityRole="header">
               {screen.result.returnNumber
                 ? `Return #${screen.result.returnNumber}`
                 : "Return recorded"}
             </Text>
-            {typeof screen.result.refundAmount === "number" && (
-              <Text style={styles.hint}>Credit {money(screen.result.refundAmount)}</Text>
-            )}
+            {formatRefundAmount(screen.result.refundAmount) ? (
+              <Text style={styles.hint}>
+                Credit {formatRefundAmount(screen.result.refundAmount)}
+              </Text>
+            ) : null}
             {screen.result.creditNoteId ? (
               <Text style={styles.hint}>Credit note issued</Text>
             ) : null}
@@ -248,15 +305,39 @@ export default function InlineReturnScreen() {
           </View>
         )}
 
-        {gate === "allowed" && screen.step === "refused" && (
+        {screen.step === "queued" && (
+          <View style={styles.card} accessibilityLiveRegion="polite">
+            <Text style={styles.name} accessibilityRole="header">
+              Saved offline
+            </Text>
+            <Text style={styles.hint}>
+              The return will be submitted automatically when you are back online.
+            </Text>
+            <PrimaryButton
+              label="Done"
+              onPress={() => router.replace("/(operator)/returns" as any)}
+            />
+          </View>
+        )}
+
+        {screen.step === "refused" && (
           <View style={styles.card}>
-            <Text style={styles.error}>{screen.message}</Text>
+            <Text style={styles.error} accessibilityRole="alert">
+              {screen.message}
+            </Text>
             <PrimaryButton label="Back" onPress={() => dispatch({ type: "edit" })} />
           </View>
         )}
       </ScrollView>
     </SafeAreaView>
   );
+}
+
+/** Re-dispatches the current quote unchanged (used for the no-requote excess option switch). */
+function quotedEvent(
+  screen: Extract<ReturnType<typeof inlineReturnScreenReducer>, { step: "quote" }>,
+) {
+  return { type: "quoted" as const, quote: screen.quote, lines: screen.quotedLines };
 }
 
 function QuoteView(props: {
@@ -266,6 +347,8 @@ function QuoteView(props: {
   reason: ReturnReason | "";
   onReason: (r: ReturnReason) => void;
   busy: boolean;
+  /** A capture is in flight: every control here is inert. */
+  locked: boolean;
   onConfirm: () => void;
 }) {
   const { quote } = props;
@@ -299,6 +382,13 @@ function QuoteView(props: {
             <Pressable
               key={value}
               style={[styles.chip, props.excessOption === value && styles.chipActive]}
+              disabled={props.locked}
+              accessibilityRole="radio"
+              accessibilityLabel={label}
+              accessibilityState={{
+                selected: props.excessOption === value,
+                disabled: props.locked,
+              }}
               onPress={() => props.onExcessOption(value)}
             >
               <Text
@@ -323,6 +413,10 @@ function QuoteView(props: {
           <Pressable
             key={r.id}
             style={[styles.chip, props.reason === r.id && styles.chipActive]}
+            disabled={props.locked}
+            accessibilityRole="radio"
+            accessibilityLabel={r.label}
+            accessibilityState={{ selected: props.reason === r.id, disabled: props.locked }}
             onPress={() => props.onReason(r.id)}
           >
             <Text style={[styles.chipText, props.reason === r.id && styles.chipTextActive]}>
@@ -341,13 +435,19 @@ function QuoteView(props: {
   );
 }
 
-function QtyField(props: { label: string; value: string; onChange: (v: string) => void }) {
+function QtyField(props: {
+  label: string;
+  product: string;
+  value: string;
+  onChange: (v: string) => void;
+}) {
   return (
     <View>
       <Text style={styles.hint}>{props.label}</Text>
       <TextInput
         style={styles.qty}
         value={props.value}
+        accessibilityLabel={`${props.label} returned, ${props.product}`}
         onChangeText={(v) => props.onChange(sanitizeIntInput(v))}
         placeholder="0"
         placeholderTextColor={ios.label3}
@@ -365,7 +465,14 @@ function PrimaryButton(props: {
 }) {
   const off = props.disabled || props.busy;
   return (
-    <Pressable style={[styles.btn, off && { opacity: 0.5 }]} disabled={off} onPress={props.onPress}>
+    <Pressable
+      style={[styles.btn, off && { opacity: 0.5 }]}
+      disabled={off}
+      accessibilityRole="button"
+      accessibilityLabel={props.label}
+      accessibilityState={{ disabled: !!off, busy: !!props.busy }}
+      onPress={props.onPress}
+    >
       {props.busy ? (
         <ActivityIndicator color="#fff" />
       ) : (
@@ -385,11 +492,18 @@ const styles = StyleSheet.create({
     textTransform: "uppercase",
   },
   card: { backgroundColor: ios.bgElev, borderRadius: 12, padding: 14, gap: 6 },
-  pickRow: { backgroundColor: ios.bgElev, borderRadius: 12, padding: 14 },
+  pickRow: {
+    backgroundColor: ios.bgElev,
+    borderRadius: 12,
+    padding: 14,
+    minHeight: MIN_TARGET,
+    justifyContent: "center",
+  },
   name: { fontSize: 15, fontFamily: "Inter_600SemiBold", color: ios.label },
   qtyRow: { flexDirection: "row", alignItems: "flex-end", gap: 12 },
   qty: {
     width: 72,
+    minHeight: MIN_TARGET,
     backgroundColor: ios.fill3,
     borderRadius: 10,
     padding: 10,
@@ -398,6 +512,7 @@ const styles = StyleSheet.create({
     color: ios.label,
     textAlign: "center",
   },
+  remove: { minHeight: MIN_TARGET, minWidth: MIN_TARGET, justifyContent: "center" },
   link: { fontSize: 13, fontFamily: "Inter_500Medium", color: ios.brand, paddingBottom: 12 },
   chips: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
   chip: {
@@ -410,6 +525,12 @@ const styles = StyleSheet.create({
   chipText: { fontSize: 13, fontFamily: "Inter_500Medium", color: ios.label },
   chipTextActive: { color: "#fff" },
   error: { fontSize: 13, fontFamily: "Inter_500Medium", color: ios.system.red },
-  btn: { backgroundColor: ios.brand, borderRadius: 14, paddingVertical: 16, alignItems: "center" },
+  btn: {
+    backgroundColor: ios.brand,
+    borderRadius: 14,
+    minHeight: 48,
+    justifyContent: "center",
+    alignItems: "center",
+  },
   btnText: { color: "#fff", fontSize: 16, fontFamily: "Inter_600SemiBold" },
 });
