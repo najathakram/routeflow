@@ -125,6 +125,12 @@ async function dryRun() {
 
     console.log(`\n${TAG}: ${templates.length} template(s) with NULL provenance scanned`);
     console.log(`  APPLY:     ${apply.length}`);
+    // Which way each APPLY row goes, BEFORE anything is written. The role is the user's CURRENT role
+    // (not a snapshot at creation); an unmatched template stays NULL = the stricter buyer channel.
+    const byRole = new Map();
+    for (const a of apply) byRole.set(a.role, (byRole.get(a.role) ?? 0) + 1);
+    for (const [role, n] of [...byRole].sort()) console.log(`    -> ${role}: ${n}`);
+    for (const a of apply) console.log(`    ${a.templateId}  ${a.role}  user ${a.userId}`);
     console.log(`  REVIEW:    ${review.length} (in the plan file; nothing is written for them)`);
     console.log(`  UNMATCHED: ${unmatched} (stay NULL = the stricter buyer channel)`);
     console.log(`\nplan: ${file}\nplan hash: ${hash}`);
