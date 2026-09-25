@@ -165,3 +165,26 @@ export function useRoutesAccess(): { enabled: boolean; resolved: boolean } {
   const rr = useRecurringRoutes();
   return { enabled: rr.enabled, resolved: rr.resolved };
 }
+
+// ─── Inline returns (Returns Inside Order Creation) ───────────────────────────
+//
+// Mirror of web's `useHasAddon(ORDERS_INLINE_RETURNS_ADDON)` gate on RecordReturnAction. UX gate
+// only — every /returns/inline/* route independently 403s via AddonGuard. Same query/cache as
+// the other addon hooks; `resolved` distinguishes "not granted" from "not read yet".
+export const ORDERS_INLINE_RETURNS_ADDON = "orders_inline_returns";
+
+export function useInlineReturnsAddon(): { enabled: boolean; resolved: boolean } {
+  const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
+  const tenantSlug = useTenantStore((s) => s.slug);
+  const query = useQuery<{ addons: string[] }>({
+    queryKey: ["tenant", tenantSlug, "addons"],
+    queryFn: () => apiClient.get("/tenants/me/addons").then((r) => r.data),
+    staleTime: 5 * 60_000,
+    retry: 2,
+    enabled: isAuthenticated,
+  });
+  return {
+    enabled: query.data?.addons?.includes(ORDERS_INLINE_RETURNS_ADDON) ?? false,
+    resolved: query.isSuccess,
+  };
+}

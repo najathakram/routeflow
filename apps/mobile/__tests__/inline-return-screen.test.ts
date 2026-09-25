@@ -3,6 +3,7 @@ import {
   canGetInlineReturnQuote,
   initialInlineReturnScreen,
   inlineReturnScreenReducer,
+  inlineReturnsGate,
   screenReturnKey,
 } from "../lib/inline-return-screen";
 import { inlineReturnSubmitKey } from "../lib/inline-return-submit-key";
@@ -39,19 +40,13 @@ describe("canConfirmInlineReturn", () => {
 });
 
 describe("screenReturnKey", () => {
-  it("matches inlineReturnSubmitKey over the parsed boxes/pieces, ignoring empty lines", () => {
-    const lines = [line({ productId: "b", boxes: "2", pieces: "1" }), line({ productId: "a" })];
-    expect(screenReturnKey("c1", "o1", lines, "n1")).toBe(
-      inlineReturnSubmitKey(
-        { customerId: "c1", orderId: "o1", items: [{ productId: "b", boxes: 2, pieces: 1 }] },
-        "n1",
-      ),
-    );
+  it("is the per-attempt key inlineReturnSubmitKey(customer, order, nonce) — independent of the lines (edit/re-quote safe)", () => {
+    const key = inlineReturnSubmitKey({ customerId: "c1", orderId: "o1" }, "n1");
+    expect(screenReturnKey("c1", "o1", "n1")).toBe(key);
   });
   it("is stable for the same nonce and changes with the nonce", () => {
-    const lines = [line({ boxes: "1" })];
-    expect(screenReturnKey("c", "o", lines, "n")).toBe(screenReturnKey("c", "o", lines, "n"));
-    expect(screenReturnKey("c", "o", lines, "n")).not.toBe(screenReturnKey("c", "o", lines, "m"));
+    expect(screenReturnKey("c", "o", "n")).toBe(screenReturnKey("c", "o", "n"));
+    expect(screenReturnKey("c", "o", "n")).not.toBe(screenReturnKey("c", "o", "m"));
   });
 });
 
@@ -81,5 +76,17 @@ describe("inlineReturnScreenReducer", () => {
     expect(
       inlineReturnScreenReducer(initialInlineReturnScreen, { type: "captured", result: record }),
     ).toEqual(initialInlineReturnScreen);
+  });
+});
+
+describe("inlineReturnsGate — mirrors web RecordReturnAction's orders_inline_returns add-on gate", () => {
+  it("is loading until the add-ons fetch resolved", () => {
+    expect(inlineReturnsGate({ enabled: false, resolved: false })).toBe("loading");
+  });
+  it("blocks (fails closed) when the tenant lacks the add-on", () => {
+    expect(inlineReturnsGate({ enabled: false, resolved: true })).toBe("blocked");
+  });
+  it("allows only when resolved AND granted", () => {
+    expect(inlineReturnsGate({ enabled: true, resolved: true })).toBe("allowed");
   });
 });
