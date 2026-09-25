@@ -51,10 +51,13 @@
 //
 // SINGLE INSTANCE (#2076)
 // A lock file beside the log (`local-assets/visibility-watchdog.lock`) records the running watchdog's
-// pid, repo and deadline. A second start finds the live pid, prints it and its deadline, and exits 3
-// without touching anything. `--replace` stops the recorded pid first (SIGTERM; on POSIX only after
-// `ps` confirms it is a visibility-watchdog, so a recycled pid is never killed) and then takes the
-// lock. A lock whose pid is dead is stale and is simply taken. The lock is removed on exit and on
+// pid, repo and deadline. A second start finds the live pid, prints it and its deadline, logs a
+// `refused` line and exits 3. `--replace` stops the recorded pid first (SIGTERM, only after the pid's
+// command line is confirmed to name this script: `ps` on POSIX, Win32_Process on Windows, so a
+// recycled pid is never killed) and then takes the lock. A lock is STALE, and simply taken over
+// without killing anything, when its pid is dead, when the pid now belongs to ANOTHER process, or
+// when its deadline plus the ~16 min retry budget has passed: a watchdog killed by Stop-Process or a
+// reboot leaves its lock behind, and refusing then would open the public window with no watchdog. The lock is removed on exit and on
 // SIGINT/SIGTERM. Two watchdogs must never coexist: the OLDER one's earlier deadline would flip the
 // repo private inside the newer one's public window.
 //
@@ -357,6 +360,7 @@ function lockFile() {
   return log.endsWith(".log") ? `${log.slice(0, -4)}.lock` : `${log}.lock`;
 }
 
+/** The parsed lock, or null when it is absent, empty or unparseable. */
 function readLock() {
   try {
     return JSON.parse(fs.readFileSync(lockFile(), "utf8"));
@@ -374,20 +378,54 @@ function pidAlive(pid) {
   }
 }
 
-/** POSIX: only a process whose command line names this script may be killed by --replace, so a
- *  recycled pid is never terminated. Windows has no `ps`; there the recorded pid is trusted. */
-function looksLikeWatchdog(pid) {
-  if (process.platform === "win32") return true;
+// The longest a watchdog can legitimately outlive its deadline: MAX_ATTEMPTS flip attempts, each two
+// `gh` calls of up to GH_TIMEOUT_MS, plus the backoff sleeps between them (about 16 minutes). A lock
+// whose deadline is older than that belongs to a watchdog that is stuck or gone.
+const RETRY_BUDGET_MS =
+  MAX_ATTEMPTS * 2 * GH_TIMEOUT_MS + DEFAULT_ATTEMPT_DELAYS_MS.reduce((a, b) => a + b, 0);
+
+/**
+ * What the process behind a recorded pid is: "watchdog" (its command line names this script), "other"
+ * (a live process that is NOT ours: the pid was reused), "gone", or "unknown" (the check itself could
+ * not run). POSIX asks `ps`; Windows asks Win32_Process for the command line, since it has no `ps`.
+ * Never trust the pid alone: a watchdog killed by Stop-Process or a reboot leaves its lock behind and
+ * the pid is later handed to some unrelated process.
+ */
+function identify(pid) {
+  if (process.platform === "win32") {
+    const res = spawnSync(
+      "powershell",
+      [
+        "-NoProfile",
+        "-NonInteractive",
+        "-Command",
+        `(Get-CimInstance Win32_Process -Filter "ProcessId=${Number(pid)}").CommandLine`,
+      ],
+      { encoding: "utf8", timeout: GIT_TIMEOUT_MS, killSignal: "SIGKILL" },
+    );
+    if (res.error || res.status !== 0) return "unknown";
+    const cmd = (res.stdout || "").trim();
+    if (!cmd) return "gone";
+    return /visibility-watchdog/.test(cmd) ? "watchdog" : "other";
+  }
   const res = spawnSync("ps", ["-o", "command=", "-p", String(pid)], {
     encoding: "utf8",
     timeout: GIT_TIMEOUT_MS,
     killSignal: "SIGKILL",
   });
-  return !res.error && res.status === 0 && /visibility-watchdog/.test(res.stdout || "");
+  if (res.error) return "unknown";
+  if (res.status !== 0) return "gone"; // ps exits 1 when the pid does not exist (ESRCH)
+  return /visibility-watchdog/.test(res.stdout || "") ? "watchdog" : "other";
 }
 
+/** SIGTERM and wait. A process that is already gone (ESRCH) counts as stopped. */
 async function terminate(pid) {
-  process.kill(pid, "SIGTERM");
+  try {
+    process.kill(pid, "SIGTERM");
+  } catch (err) {
+    if (err.code === "ESRCH") return true;
+    throw err;
+  }
   for (let i = 0; i < 50 && pidAlive(pid); i++) await sleep(100);
   return !pidAlive(pid);
 }
@@ -397,6 +435,21 @@ function releaseLock() {
   if (held && held.pid === process.pid) fs.rmSync(lockFile(), { force: true });
 }
 
+/**
+ * Create the lock atomically WITH its content: write a private temp file, then hard-link it into
+ * place. `link` fails with EEXIST if the lock exists, and a reader can never observe an empty,
+ * half-written lock (a create-then-write would let a second starter read "" and call it stale).
+ */
+function createLock(file, content) {
+  const tmp = `${file}.${process.pid}.tmp`;
+  fs.writeFileSync(tmp, content);
+  try {
+    fs.linkSync(tmp, file);
+  } finally {
+    fs.rmSync(tmp, { force: true });
+  }
+}
+
 /** Take the lock, or report who holds it. {ok:true} | {ok:false, message}. */
 async function acquireLock({ repo, deadline, replace }) {
   const file = lockFile();
@@ -404,33 +457,48 @@ async function acquireLock({ repo, deadline, replace }) {
   const mine =
     JSON.stringify({ pid: process.pid, repo, deadline, startedAt: new Date().toISOString() }) +
     "\n";
-  for (let attempt = 0; attempt < 3; attempt++) {
+  for (let attempt = 0; attempt < 6; attempt++) {
     try {
-      fs.writeFileSync(file, mine, { flag: "wx" }); // atomic: exactly one starter wins
+      createLock(file, mine); // atomic: exactly one starter wins
       return { ok: true };
     } catch (err) {
       if (err.code !== "EEXIST") throw err;
     }
     const held = readLock();
-    if (held && Number.isInteger(held.pid) && held.pid !== process.pid && pidAlive(held.pid)) {
+    if (held === null) {
+      // Absent (released between our attempts), or unparseable: give a writer that is mid-flight a
+      // moment, and only call garbage stale after a few looks.
+      if (fs.existsSync(file) && attempt < 3) await sleep(50);
+      else fs.rmSync(file, { force: true });
+      continue;
+    }
+    if (Number.isInteger(held.pid) && held.pid !== process.pid && pidAlive(held.pid)) {
       const who = `pid ${held.pid} (repo ${held.repo ?? "?"}, deadline ${held.deadline ?? "?"})`;
-      if (!replace) {
-        return {
-          ok: false,
-          message: `already running: ${who}. Pass --replace to stop it and take over.`,
-        };
-      }
-      if (!looksLikeWatchdog(held.pid)) {
-        return {
-          ok: false,
-          message: `lock names ${who} but that process is not a visibility-watchdog; not killing it. Remove ${file} by hand if it is stale.`,
-        };
-      }
-      if (!(await terminate(held.pid))) {
-        return { ok: false, message: `could not stop ${who}.` };
+      const who2 = identify(held.pid);
+      const overdue = Date.parse(held.deadline ?? "") + RETRY_BUDGET_MS < Date.now();
+      // Stale, never live: the pid now belongs to another process, or its deadline plus the retry
+      // budget has passed. Take over WITHOUT killing anything: the alternative (refusing) leaves the
+      // public window open with no watchdog at all.
+      const stale = who2 === "other" || who2 === "gone" || overdue;
+      if (!stale) {
+        if (!replace) {
+          return {
+            ok: false,
+            message: `already running: ${who}. Pass --replace to stop it and take over.`,
+          };
+        }
+        if (who2 !== "watchdog") {
+          return {
+            ok: false,
+            message: `lock names ${who} but this could not be confirmed as a visibility-watchdog; not killing it. Remove ${file} by hand if it is stale.`,
+          };
+        }
+        if (!(await terminate(held.pid))) {
+          return { ok: false, message: `could not stop ${who}.` };
+        }
       }
     }
-    fs.rmSync(file, { force: true }); // dead pid (stale), or just replaced: retake
+    fs.rmSync(file, { force: true }); // dead or reused pid (stale), or just replaced: retake
   }
   return { ok: false, message: `could not acquire ${file}` };
 }
@@ -442,6 +510,9 @@ async function main({ minutes, repo, replace }) {
   // One watchdog at a time, decided BEFORE the first `gh` call or log line.
   const lock = await acquireLock({ repo, deadline, replace });
   if (!lock.ok) {
+    // Written to the log too: the runbook launches discard stderr, so a refusal that only reaches
+    // stderr is silent, and the window would open with no watchdog and no trace of why.
+    log("refused", lock.message);
     console.error(`visibility-watchdog: ${lock.message}`);
     return 3;
   }
