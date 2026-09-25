@@ -2071,7 +2071,19 @@ export class OrdersService implements OnApplicationBootstrap {
     const unitOrder = lineItemsData.some((li) => "unitLabel" in li); // units_v1: never auto-merged
     let order: any;
     let inlineMinted: any = null;
-    await inlineReturn.reserveInlineReturnNumber(inlineRet, customerId, user); // #2094: once, before the P2002 retry loop
+    // #2094: once, before the P2002 retry loop; a concurrent twin of this key gets its order back.
+    const twin = await inlineReturn.reserveInlineReturnNumber(
+      inlineRet,
+      customerId,
+      user,
+      idempotencyKey
+        ? {
+            db: this.prisma.forTenant(),
+            find: () => this.findReplayCandidateByKey(idempotencyKey, customerId),
+          }
+        : undefined,
+    );
+    if (twin) return twin;
     for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
       try {
         order = await this.prisma.tenantTransaction(

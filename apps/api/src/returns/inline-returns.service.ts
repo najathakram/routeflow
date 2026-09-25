@@ -51,6 +51,9 @@ import type { ApproveInlineReturnDto } from "./dto/approve-inline-return.dto";
  * allows a `dark` key; a service-level money write never does). */
 const INLINE_RETURNS_ADDON_KEY = "orders_inline_returns";
 
+/** The 409 code of a returnKey already held (create's preflight: a replay, or a real collision). */
+export const INLINE_RETURN_KEY_TAKEN = "INLINE_RETURN_KEY_TAKEN";
+
 @Injectable()
 export class InlineReturnsService {
   constructor(
@@ -192,7 +195,12 @@ export class InlineReturnsService {
         where: { returnKey: lines.returnKey, kind: "INLINE" },
         select: { id: true },
       });
-      if (pre) throw new ConflictException("A different return already used this capture key");
+      if (pre) {
+        throw new ConflictException({
+          code: INLINE_RETURN_KEY_TAKEN,
+          message: "A different return already used this capture key",
+        });
+      }
     }
     const priced = await this.quoteService.priceInlineReturn(
       { customerId, items: lines.items, routeRunStopId: lines.routeRunStopId },

@@ -9,9 +9,11 @@
  *   3. a forced order-number P2002 collision (two concurrent creates compute the same next number):
  *      each customer ends with exactly ONE Return and ONE credit note, and the credit-note numbers
  *      are exactly the numbers reserved BEFORE the retry loop (a retry reuses, never re-reserves).
- *   4. the lock: TWO new orders for one customer over ONE sold line: the pieces matched to the sold
- *      invoice line never exceed what was sold (the customer advisory lock serializes them; the
- *      single-order case is already serialized by captureInTx's own Order lock).
+ *   4. the lock (R2c): one create() and one STANDALONE capture for one customer over ONE sold line, made
+ *      to overlap by a barrier (the first holder of the customer advisory lock is held inside it until
+ *      the second caller is waiting on that lock): the pieces matched to the sold invoice line never
+ *      exceed what was sold, and together match all of it. The order lines use another product, so the
+ *      product row lock cannot serialize them first.
  *   5. DRIVER_CAP through create(): a driver's over-cap return on a new order is HELD: the order
  *      commits, the Return is RECEIVED/DRIVER_CAP, no credit note, no intent, the reserved number is burned (SA-261).
  *
@@ -365,23 +367,49 @@ describeDb("#2094 — a return inside POST /orders through create(), real Postgr
       data: { customerId: f.customerId, tenantId, status: "PENDING", total: "100.00" },
     });
     orderIds.push(carrier.id);
-    const [o1] = await Promise.all([
-      create(
-        { customerId: f.customerId, productId: other.id },
-        1,
-        ret(f.productId, 7, `k-lock-1-${run}`),
-      ),
-      tenantCtx.run(tenantId, () =>
-        inlineSvc.capture(
-          {
-            customerId: f.customerId,
-            orderId: carrier.id,
-            ...ret(f.productId, 7, `k-lock-2-${run}`),
-          },
-          staff(),
+    // Barrier: the first caller to take the customer advisory lock is held INSIDE it until the second
+    // caller has arrived at the same lock (and is therefore waiting on it). Without the lock the two
+    // would price against the same snapshot and over-match the sold line.
+    const realLock = inlineSvc.lockCustomerInTx.bind(inlineSvc);
+    let arrived = 0;
+    let release: () => void = () => undefined;
+    const gate = new Promise<void>((r) => {
+      release = r;
+      setTimeout(r, 15_000); // never hang the run if the second caller cannot arrive
+    });
+    inlineSvc.lockCustomerInTx = async (tx: any, customerId: string) => {
+      arrived += 1;
+      if (arrived === 1) {
+        await realLock(tx, customerId);
+        await gate;
+      } else {
+        release();
+        await realLock(tx, customerId);
+      }
+    };
+    let o1: any;
+    try {
+      [o1] = await Promise.all([
+        create(
+          { customerId: f.customerId, productId: other.id },
+          1,
+          ret(f.productId, 7, `k-lock-1-${run}`),
         ),
-      ),
-    ]);
+        tenantCtx.run(tenantId, () =>
+          inlineSvc.capture(
+            {
+              customerId: f.customerId,
+              orderId: carrier.id,
+              ...ret(f.productId, 7, `k-lock-2-${run}`),
+            },
+            staff(),
+          ),
+        ),
+      ]);
+    } finally {
+      inlineSvc.lockCustomerInTx = realLock;
+    }
+    expect(arrived).toBe(2); // both callers went through the one lock
     orderIds.push(o1.id);
     const matched = await raw.returnItem.aggregate({
       where: { sourceInvoiceItemId: line.id, return: { customerId: f.customerId, kind: "INLINE" } },

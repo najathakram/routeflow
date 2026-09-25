@@ -1,6 +1,7 @@
 import { ConflictException, ForbiddenException, ServiceUnavailableException } from "@nestjs/common";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
 import type { InlineReturnLinesDto } from "../returns/dto/capture-inline-return.dto";
+import { INLINE_RETURN_KEY_TAKEN } from "../returns/inline-returns.service";
 import type { InlineReturnsService } from "../returns/inline-returns.service";
 
 /**
@@ -45,20 +46,44 @@ export async function prepareInlineReturn(
  * so a refused request burns no number (Opus N1), and a return that prices to $0 mints no credit note
  * so it reserves none.
  *
+ * A returnKey that is already taken is a REPLAY when this request carries an Idempotency-Key whose
+ * order (this customer's) carries that returnKey: a concurrent twin (A committed after B's pre-check
+ * missed) gets that order back (a 201 replay), never a false 409 that makes the operator re-enter the
+ * return (Opus R1, the double-credit path). Otherwise the 409 stands. Returns the replayed order, or
+ * null when the caller should go on to create.
+ *
  * KNOWN, ACCEPTED (SA-261/263): every role reserves ahead; a DRIVER's over-cap return is HELD (no
  * credit note), which burns the number, and so does a return that priced above $0 in the dry-run but
- * $0 in the tx. The credit-note sequence is not gapless today either (a failed create burns its
+ * $0 in the tx, and the LOSER of a double-submit race (its P2002 on the Idempotency-Key burns the
+ * number it reserved). The credit-note sequence is not gapless today either (a failed create burns its
  * reserved number, like a burned order number) and our tenants have no gapless requirement. Pinned:
  * a DRIVER_CAP hold and a zero-total create mint no credit note and write no intent.
+ *
+ * KNOWN, FAILS CLOSED (Opus N1): the reverse-direction replay check (`assertReplayCarriesReturn`)
+ * refuses a plain replay of an order that LATER gained a return by an edit or a standalone capture.
  */
 export async function reserveInlineReturnNumber(
   p: PreparedInlineReturn | null,
   customerId: string,
   user: JwtPayload | undefined,
-): Promise<void> {
-  if (!p) return;
-  const total = await p.svc.preflightNewOrderReturn(p.lines, customerId, user as JwtPayload);
+  replay?: {
+    db: any;
+    find: () => Promise<{ id: string; customerId: string } | null | undefined>;
+  },
+): Promise<any> {
+  if (!p) return null;
+  let total: number;
+  try {
+    total = await p.svc.preflightNewOrderReturn(p.lines, customerId, user as JwtPayload);
+  } catch (e) {
+    const code = e instanceof ConflictException ? (e.getResponse() as any)?.code : undefined;
+    const twin = code === INLINE_RETURN_KEY_TAKEN && replay ? await replay.find() : null;
+    if (!twin || twin.customerId !== customerId) throw e;
+    await assertReplayCarriesReturn(replay!.db, p, twin.id);
+    return twin;
+  }
   if (total > 0.001) p.creditNoteNumber = await p.svc.reserveCreditNoteNumber();
+  return null;
 }
 
 /**
