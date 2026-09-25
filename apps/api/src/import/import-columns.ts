@@ -1,6 +1,5 @@
 import { PRODUCT_IMPORT_COLUMNS, CUSTOMER_IMPORT_COLUMNS } from "@routeflow/types";
-import { parseImportMoney } from "./parse-import-number";
-import { roundMoney } from "@routeflow/pricing";
+import { parseImportMoney, parseImportNumber } from "./parse-import-number";
 
 /**
  * B858 + B859 — pure column-registry module (FIX1, cause-ruling.md §2.A / SA-284).
@@ -15,7 +14,8 @@ import { roundMoney } from "@routeflow/pricing";
  * a present-but-unparseable money cell is ALWAYS a bad cell, never a silent $0.
  */
 
-export type ParseResult = { ok: true; value: unknown } | { ok: false; reason: string };
+export type ParseResult =
+  { ok: true; value: unknown; warning?: string } | { ok: false; reason: string };
 
 export type CellParser = (raw: string) => ParseResult;
 
@@ -51,24 +51,85 @@ function withBlankGuard(parse: CellParser): CellParser {
   };
 }
 
+/** Round `n` to `dp` decimal places, away-from-zero on ties (matches `roundMoney`'s style). */
+function roundTo(n: number, dp: number): number {
+  const sign = n < 0 ? -1 : 1;
+  const factor = 10 ** dp;
+  return (sign * Math.round(Number((Math.abs(n) * factor).toFixed(4)))) / factor;
+}
+
 /**
- * Money cell parser. Reuses `parseImportMoney` for the actual numeric parse/rounding, but first
- * validates that the (currency/comma/space-stripped) cell is ENTIRELY numeric — `parseFloat`
- * (which `parseImportMoney` is built on) happily returns 12 for "12abc", so that leading-numeric
- * leniency is rejected here before ever calling into it. A non-blank, unparseable cell is always
- * a bad cell — never coerced to 0 (the exact fix for the `|| 0` trap, SA-284 (f)).
+ * Largest value a `Decimal(10,2)` column holds — every price/tier/MSRP column AND
+ * `Customer.creditLimit` (I3). `CreateCustomerDto.creditLimit` says `@Max(1_000_000_000)`, but the
+ * column overflows above this, so the importer bounds to the column, the tighter of the two.
  */
-const moneyParser: CellParser = withBlankGuard((raw) => {
+const MAX_MONEY_10_2 = 99_999_999.99;
+/** `standardCost` is `Decimal(10,4)` (6 integer digits) — a distinct, tighter bound (M2). */
+const MAX_STANDARD_COST = 999_999.9999;
+
+/**
+ * Money cell parser factory. Reuses `parseImportMoney`/`parseImportNumber` for the actual numeric
+ * parse, but first validates that the (currency/comma/space-stripped) cell is ENTIRELY numeric —
+ * `parseFloat` happily returns 12 for "12abc", so that leading-numeric leniency is rejected here
+ * before ever calling into it. A non-blank, unparseable cell is always a bad cell — never coerced
+ * to 0 (the exact fix for the `|| 0` trap, SA-284 (f)).
+ *
+ * I3: negative values are always rejected ("must not be negative" — the DTOs never accept a
+ * negative price/cost/creditLimit), and each field carries a max bound matching its DTO/column so
+ * a value that would overflow the Decimal column at write time is caught here as a bad cell
+ * instead of throwing a raw Prisma numeric-overflow error mid-transaction.
+ */
+function boundedMoneyParser(max: number): CellParser {
+  return withBlankGuard((raw) => {
+    const cleaned = raw.replace(/[$,\s]/g, "");
+    if (!/^-?\d+(\.\d+)?$/.test(cleaned)) {
+      return { ok: false, reason: "not a number" };
+    }
+    const n = parseImportMoney(raw);
+    if (!Number.isFinite(n)) {
+      return { ok: false, reason: "not a number" };
+    }
+    if (n < 0) {
+      return { ok: false, reason: "must not be negative" };
+    }
+    if (n > max) {
+      return { ok: false, reason: `must be ${max} or less` };
+    }
+    return { ok: true, value: n };
+  });
+}
+
+const moneyParser: CellParser = boundedMoneyParser(MAX_MONEY_10_2);
+
+/**
+ * M2: `standardCost` is `Decimal(10,4)` — rounding it to cents (like every other money column)
+ * silently drops the 3rd/4th decimal digit, a real cost error on low-price items, and can compare
+ * two genuinely different costs as "unchanged". Parsed and compared at 4dp, never via `roundMoney`
+ * (which is 2dp / cents, for actual money math elsewhere). Still rejects negatives and bounds to
+ * the column's own max (I3).
+ */
+const costParser: CellParser = withBlankGuard((raw) => {
   const cleaned = raw.replace(/[$,\s]/g, "");
   if (!/^-?\d+(\.\d+)?$/.test(cleaned)) {
     return { ok: false, reason: "not a number" };
   }
-  const n = parseImportMoney(raw);
+  const n = parseImportNumber(raw);
   if (!Number.isFinite(n)) {
     return { ok: false, reason: "not a number" };
   }
-  return { ok: true, value: roundMoney(n) };
+  if (n < 0) {
+    return { ok: false, reason: "must not be negative" };
+  }
+  if (n > MAX_STANDARD_COST) {
+    return { ok: false, reason: `must be ${MAX_STANDARD_COST} or less` };
+  }
+  return { ok: true, value: roundTo(n, 4) };
 });
+
+/** Exported so `import.service.ts` can compare `standardCost` at the same 4dp precision (M2). */
+export function roundCost4(n: number): number {
+  return roundTo(n, 4);
+}
 
 function intParser(min: number, max: number): CellParser {
   return withBlankGuard((raw) => {
@@ -94,8 +155,19 @@ const boolParser: CellParser = withBlankGuard((raw) => {
 
 const DUE_ON_RECEIPT_RE = /^(due on receipt|due upon receipt|cod|0)$/i;
 const NET_TERMS_RE = /^(net ?(15|30|45|60)|n(15|30|45|60)|(15|30|45|60))$/i;
+/** SA-305 (1): a Zoho payment-terms integer with no exact label (7, 10, 90, …) — bare digits only. */
+const BARE_INTEGER_RE = /^-?\d+$/;
 
-/** Matches the existing VALID_CUSTOMER_TERMS labels — never invents a new label. */
+/**
+ * Matches the existing VALID_CUSTOMER_TERMS labels — never invents a new label.
+ *
+ * SA-305 (1) — a bounded amendment to SA-284(b), for THIS field only: a bare Zoho integer that
+ * maps exactly (0 → Due on Receipt; 15/30/45/60 → Net n) resolves normally above. A bare integer
+ * with NO exact label (7, 10, 90, …) is never guessed (Net 7 is not Net 15) — the row still
+ * imports, with `defaultPaymentTerms` left unset and a per-row warning naming the unmapped value.
+ * This is the ONE column allowed to drop a cell instead of failing the row; every other field
+ * (money, tier, dates, licence, consent) stays bad-cell ⇒ skip row.
+ */
 const termsParser: CellParser = withBlankGuard((raw) => {
   const v = raw.trim();
   if (DUE_ON_RECEIPT_RE.test(v)) return { ok: true, value: "Due on Receipt" };
@@ -103,6 +175,13 @@ const termsParser: CellParser = withBlankGuard((raw) => {
   if (netMatch) {
     const days = netMatch[2] || netMatch[3] || netMatch[4];
     return { ok: true, value: `Net ${days}` };
+  }
+  if (BARE_INTEGER_RE.test(v)) {
+    return {
+      ok: true,
+      value: undefined,
+      warning: `Payment Terms "${v}" is not a recognized term (0, 15, 30, 45, 60 map to a label) — imported with payment terms left unset`,
+    };
   }
   return { ok: false, reason: "must be a recognized payment term" };
 });
@@ -135,7 +214,8 @@ function strParser(max: number): CellParser {
   });
 }
 
-const MAX_INT = Number.MAX_SAFE_INTEGER;
+/** Postgres `integer` (Prisma `Int`) max — a larger cell would overflow the column at write time. */
+const MAX_INT = 2_147_483_647;
 
 function aliasesFor(columns: { field: string; aliases: string[] }[], field: string): string[] {
   const entry = columns.find((c) => c.field === field);
@@ -188,8 +268,10 @@ export const PRODUCT_COLUMNS: ColumnDef[] = [
     case "priceTier3":
     case "priceTier4":
     case "priceTier5":
-    case "standardCost":
       return { field, canonical, aliases, parse: moneyParser };
+    case "standardCost":
+      // M2: Decimal(10,4) — its own parser (4dp, its own max bound), never the 2dp moneyParser.
+      return { field, canonical, aliases, parse: costParser };
     case "msrp":
       return { field, canonical, aliases, parse: moneyParser, gate: "msrp" };
     case "isTobacco":
@@ -204,28 +286,31 @@ export const PRODUCT_COLUMNS: ColumnDef[] = [
 });
 
 // ── Customer identity/address aliases — read EXACTLY as `importContacts` reads them today ──────
-// (import.service.ts's importContacts, ≈L230-300). Not renamed/changed here; str(200) is a
-// generous bound mirroring existing DTO limits since none of these had a dedicated length cap.
+// (import.service.ts's importContacts). Length bounds equal `CreateCustomerDto`'s @MaxLength
+// where one exists (so an import never lands a value the customer edit form would then refuse
+// to save, and never refuses one the form accepts); address parts, which have no DTO cap, keep
+// a generous bound. An overflow skips the ROW with "<Column>: must be N characters or fewer" —
+// never a truncation (SA-305 (1)).
 const CUSTOMER_IDENTITY_ADDRESS_COLUMNS: ColumnDef[] = [
   {
     field: "displayName",
     canonical: "Display Name",
     aliases: ["Display Name"],
-    parse: strParser(200),
+    parse: strParser(120),
   },
   { field: "salutation", canonical: "Salutation", aliases: ["Salutation"], parse: strParser(20) },
-  { field: "firstName", canonical: "First Name", aliases: ["First Name"], parse: strParser(100) },
-  { field: "lastName", canonical: "Last Name", aliases: ["Last Name"], parse: strParser(100) },
-  { field: "phone", canonical: "Phone", aliases: ["Phone", "Billing Phone"], parse: strParser(30) },
-  { field: "mobile", canonical: "MobilePhone", aliases: ["MobilePhone"], parse: strParser(30) },
-  { field: "email", canonical: "EmailID", aliases: ["EmailID", "Email"], parse: strParser(200) },
+  { field: "firstName", canonical: "First Name", aliases: ["First Name"], parse: strParser(80) },
+  { field: "lastName", canonical: "Last Name", aliases: ["Last Name"], parse: strParser(80) },
+  { field: "phone", canonical: "Phone", aliases: ["Phone", "Billing Phone"], parse: strParser(40) },
+  { field: "mobile", canonical: "MobilePhone", aliases: ["MobilePhone"], parse: strParser(40) },
+  { field: "email", canonical: "EmailID", aliases: ["EmailID", "Email"], parse: strParser(254) },
   {
     field: "currency",
     canonical: "Currency Code",
     aliases: ["Currency Code"],
-    parse: strParser(10),
+    parse: strParser(3),
   },
-  { field: "notes", canonical: "Notes", aliases: ["Notes"], parse: strParser(4000) },
+  { field: "notes", canonical: "Notes", aliases: ["Notes"], parse: strParser(2000) },
   {
     field: "contactType",
     canonical: "Contact Type",
@@ -236,7 +321,7 @@ const CUSTOMER_IDENTITY_ADDRESS_COLUMNS: ColumnDef[] = [
     field: "billingAttention",
     canonical: "Billing Attention",
     aliases: ["Billing Attention"],
-    parse: strParser(200),
+    parse: strParser(120),
   },
   {
     field: "billingAddress",
@@ -351,6 +436,7 @@ export const CUSTOMER_COLUMNS: ColumnDef[] = [
       case "pricingTier":
         return { field, canonical, aliases, parse: tierParser };
       case "creditLimit":
+        // I3: Customer.creditLimit is Decimal(10,2) — the same column bound as every price.
         return { field, canonical, aliases, parse: moneyParser };
       case "isTaxExempt":
       case "smsConsent":
@@ -424,6 +510,8 @@ export function resolveColumns(headers: string[], registry: ColumnDef[]): Resolv
 export interface ParsedRow {
   values: Record<string, unknown>;
   badCells: { column: string; reason: string }[];
+  /** SA-305 (1): a cell that dropped its value (never fails the row) but still needs a signal. */
+  warnings: { column: string; message: string }[];
 }
 
 /**
@@ -438,6 +526,7 @@ export function parseRow(
 ): ParsedRow {
   const values: Record<string, unknown> = {};
   const badCells: { column: string; reason: string }[] = [];
+  const warnings: { column: string; message: string }[] = [];
 
   for (const col of registry) {
     const header = resolved.byField[col.field];
@@ -446,10 +535,11 @@ export function parseRow(
     const result = col.parse(String(raw));
     if (result.ok) {
       if (result.value !== undefined) values[col.field] = result.value;
+      if (result.warning) warnings.push({ column: header, message: result.warning });
     } else {
       badCells.push({ column: header, reason: result.reason });
     }
   }
 
-  return { values, badCells };
+  return { values, badCells, warnings };
 }

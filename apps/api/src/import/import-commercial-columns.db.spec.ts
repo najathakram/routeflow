@@ -7,6 +7,11 @@
  *      not a mocked resolver)
  *   3. consent audit evidence is written exactly once per channel actually changed, never doubled
  *      by a re-upload
+ *   4. SA-305 (2): consent and its evidence roll back TOGETHER in one real transaction — a failing
+ *      evidence insert leaves the flag unchanged; a failing flag update leaves no evidence row
+ *
+ * The fixtures carry EVERY registry column (SA-284 pin: "an all-columns fixture run twice; the
+ * second run shows no diffs"). Tobacco is "No" so the run never seeds the tenant's Tobacco type.
  *
  * NOT part of RT1's engine scope (build-plan.md RT1 / bug-test-plan.md): this file needs a live
  * compose Postgres and is excluded from every engine-run command (red gate, perRound, final). It
@@ -66,6 +71,8 @@ describeDb(
     let prisma: PrismaService;
     let tenantCtx: TenantContextService;
     let importService: ImportService;
+    let productsService: ProductsService;
+    let customersService: CustomersService;
     let tenantId: string;
     const createdProductIds: string[] = [];
     const createdCustomerIds: string[] = [];
@@ -120,7 +127,11 @@ describeDb(
       }).compile();
 
       importService = module.get(ImportService);
+      productsService = module.get(ProductsService);
+      customersService = module.get(CustomersService);
     });
+
+    afterEach(() => jest.restoreAllMocks());
 
     afterAll(async () => {
       // Never delete the shared `test` tenant itself — only the rows this run tagged.
@@ -133,6 +144,12 @@ describeDb(
           .catch(() => {});
       }
       if (createdCustomerIds.length > 0) {
+        await prisma.customerAddress
+          .deleteMany({ where: { customerId: { in: createdCustomerIds } } })
+          .catch(() => {});
+        await prisma.contactPerson
+          .deleteMany({ where: { customerId: { in: createdCustomerIds } } })
+          .catch(() => {});
         await prisma.customer
           .deleteMany({ where: { id: { in: createdCustomerIds } } })
           .catch(() => {});
@@ -145,15 +162,22 @@ describeDb(
 
     function productsCsv(): string {
       return (
-        "Item Name,SKU,Rate,Units Per Box,Price Tier 2,Barcode,Category,Standard Cost\n" +
-        `${RUN_MARKER} Widget,${RUN_MARKER}-SKU,10.5,12,9.5,${RUN_MARKER}-BC,Widgets,5\n`
+        "Item Name,SKU,Barcode,Unit,Rate,Price Tier 2,Price Tier 3,Price Tier 4,Price Tier 5," +
+        "Units Per Box,Category,Description,Cost,MSRP,Tobacco,Reorder Point,Reorder Qty\n" +
+        `${RUN_MARKER} Widget,${RUN_MARKER}-SKU,${RUN_MARKER}-BC,case,10.5,9.5,9.25,9,8.75,` +
+        "12,Widgets,All-columns fixture,5.1234,19.99,No,4,48\n"
       );
     }
 
     function contactsCsv(): string {
+      const future = `${new Date().getUTCFullYear() + 2}-06-30`;
       return (
-        "Customer Name,Customer ID,Payment Terms,Pricing Tier,Credit Limit,Tax Exempt,Tax ID,SMS Consent\n" +
-        `${RUN_MARKER} Customer,${RUN_MARKER}-ZC,Net 30,3,1500,Yes,12-3456789,Yes\n`
+        "Customer Name,Customer ID,Payment Terms,Pricing Tier,Credit Limit,Tax Exempt,Tax ID," +
+        "Tobacco Licence No,Tobacco Licence Expiry,Delivery Window Start,Delivery Window End," +
+        "SMS Consent,WhatsApp Consent,Notes,Phone,Billing Address,Billing City,Billing State," +
+        "Billing Code\n" +
+        `${RUN_MARKER} Customer,${RUN_MARKER}-ZC,30,3,1500,Yes,12-3456789,TL-${RUN_MARKER},` +
+        `${future},08:00,12:00,Yes,Yes,Fixture notes,555-0100,1 Test Way,Testville,CA,90001\n`
       );
     }
 
@@ -172,16 +196,36 @@ describeDb(
       // SA-284 pin: nothing in the import path writes averageCost, on real Postgres — not a
       // mocked resolver's assumption about the column.
       expect((created as any)?.averageCost ?? null).toBeNull();
+      // Every column landed, at its own column precision (cost at 4dp, never cents — M2).
+      expect(created).toMatchObject({
+        barcode: `${RUN_MARKER}-BC`,
+        unit: "case",
+        unitsPerBox: 12,
+        category: "Widgets",
+        description: "All-columns fixture",
+        isTobacco: false,
+        reorderPoint: 4,
+        reorderQty: 48,
+      });
+      expect(Number(created?.pricePerUnit)).toBe(10.5);
+      expect(Number(created?.priceTier5)).toBe(8.75);
+      expect(Number(created?.standardCost)).toBe(5.1234);
+      expect(Number(created?.msrp)).toBe(19.99);
 
-      // Run 2 — same file, same tenant: must be a true no-op (no new product, no diff).
+      // Run 2 — same file, same tenant: must be a true no-op (no new product, no diff, no write).
+      const update = jest.spyOn(productsService, "update");
+      const create = jest.spyOn(productsService, "create");
       const run2Products = await tenantCtx.run(tenantId, () =>
         importService.importProducts(Buffer.from(productsCsv()), "user-1"),
       );
-      expect((run2Products as any).updated ?? 0).toBe(0);
-      const rows2 = (run2Products as any).rows ?? [];
-      for (const row of rows2) {
-        expect(row.changes ?? {}).toEqual({});
-      }
+      expect(run2Products.updated).toBe(0);
+      expect(run2Products.unchanged).toBe(1);
+      expect(run2Products.skippedRows).toEqual([]);
+      expect(run2Products.rows).toEqual([
+        expect.objectContaining({ action: "update", changes: {} }),
+      ]);
+      expect(update).not.toHaveBeenCalled();
+      expect(create).not.toHaveBeenCalled();
 
       const afterBoth = await prisma.product.findMany({
         where: { tenantId, sku: `${RUN_MARKER}-SKU` },
@@ -204,10 +248,34 @@ describeDb(
         createdUserIds.push((customer as any).userId);
       }
 
-      // Run 2 — same file: the SMS consent value hasn't changed, so no second AuditLog row.
-      await tenantCtx.run(tenantId, () =>
+      expect(customer).toMatchObject({
+        defaultPaymentTerms: "Net 30",
+        pricingTier: 3,
+        isTaxExempt: true,
+        taxId: "12-3456789",
+        tobaccoLicenseNo: `TL-${RUN_MARKER}`,
+        deliveryWindowStart: "08:00",
+        deliveryWindowEnd: "12:00",
+        smsConsent: true,
+        waConsent: true,
+      });
+      expect(Number(customer?.creditLimit)).toBe(1500);
+      expect(customer?.consentUpdatedAt).not.toBeNull();
+
+      // Run 2 — same file: nothing commercial differs, so no commercial write and no consent
+      // write (hence no second AuditLog row).
+      const update = jest.spyOn(customersService, "update");
+      const consent = jest.spyOn(customersService, "setCustomerConsent");
+      const run2Contacts = await tenantCtx.run(tenantId, () =>
         importService.importContacts(Buffer.from(contactsCsv()), "user-1"),
       );
+      expect(run2Contacts.skippedRows).toEqual([]);
+      expect(run2Contacts.warnings).toEqual([]);
+      expect(run2Contacts.rows).toEqual([
+        expect.objectContaining({ action: "update", changes: {} }),
+      ]);
+      expect(update).not.toHaveBeenCalled();
+      expect(consent).not.toHaveBeenCalled();
 
       const auditRows = customer
         ? await prisma.auditLog.findMany({
@@ -218,7 +286,101 @@ describeDb(
             },
           })
         : [];
-      expect(auditRows).toHaveLength(1);
+      // One evidence row per channel granted on run 1 (sms + wa), none added by run 2.
+      expect(auditRows).toHaveLength(2);
+      expect(auditRows.map((r) => (r.meta as any)?.channel).sort()).toEqual(["sms", "wa"]);
+      for (const r of auditRows) {
+        expect(r.meta).toMatchObject({ source: "import", userId: "user-1", row: 1, value: true });
+      }
+    }, 30_000);
+
+    /** Runs the NEXT tenantTransaction with one model method replaced by a thrower. */
+    function failInsideNextTransaction(model: "auditLog" | "customer", method: string) {
+      const original = prisma.tenantTransaction.bind(prisma);
+      jest.spyOn(prisma, "tenantTransaction").mockImplementationOnce(((fn: any, opts?: any) =>
+        original(
+          (tx: any) =>
+            fn(
+              new Proxy(tx, {
+                get(target, prop) {
+                  const value = target[prop];
+                  if (prop !== model) return value;
+                  return new Proxy(value, {
+                    get(delegate, m) {
+                      if (m === method) {
+                        return async () => {
+                          throw new Error(`${model}.${method} failed`);
+                        };
+                      }
+                      const fnOrValue = delegate[m];
+                      return typeof fnOrValue === "function" ? fnOrValue.bind(delegate) : fnOrValue;
+                    },
+                  });
+                },
+              }),
+            ),
+          opts,
+        )) as any);
+    }
+
+    it("SA-305 (2): consent and its evidence roll back together on real Postgres (both directions)", async () => {
+      const probeCsv =
+        "Customer Name,Customer ID\n" + `${RUN_MARKER} Consent Probe,${RUN_MARKER}-CP\n`;
+      await tenantCtx.run(tenantId, () =>
+        importService.importContacts(Buffer.from(probeCsv), "user-1"),
+      );
+      const probe = await prisma.customer.findFirst({
+        where: { tenantId, zohoContactId: `${RUN_MARKER}-CP` },
+      });
+      expect(probe).not.toBeNull();
+      if (!probe) return;
+      createdCustomerIds.push(probe.id);
+      createdUserIds.push((probe as any).userId);
+      const evidenceCount = () =>
+        prisma.auditLog.count({ where: { tenantId, entityId: probe.id } });
+      expect(probe.smsConsent).toBe(false);
+      expect(await evidenceCount()).toBe(0);
+
+      // Direction 1: the evidence insert fails -> the consent flag write rolls back with it.
+      failInsideNextTransaction("auditLog", "create");
+      await expect(
+        tenantCtx.run(tenantId, () =>
+          customersService.setCustomerConsent(
+            probe.id,
+            { smsConsent: true },
+            { userId: "user-1", source: "import" },
+          ),
+        ),
+      ).rejects.toThrow("auditLog.create failed");
+      const afterEvidenceFailure = await prisma.customer.findUnique({ where: { id: probe.id } });
+      expect(afterEvidenceFailure?.smsConsent).toBe(false);
+      expect(afterEvidenceFailure?.consentUpdatedAt ?? null).toBeNull();
+      expect(await evidenceCount()).toBe(0);
+
+      // Direction 2: the consent flag update fails -> no evidence row is left behind.
+      failInsideNextTransaction("customer", "update");
+      await expect(
+        tenantCtx.run(tenantId, () =>
+          customersService.setCustomerConsent(
+            probe.id,
+            { smsConsent: true },
+            { userId: "user-1", source: "import" },
+          ),
+        ),
+      ).rejects.toThrow("customer.update failed");
+      expect(await evidenceCount()).toBe(0);
+
+      // Control: with nothing failing, the flag and one evidence row land together.
+      await tenantCtx.run(tenantId, () =>
+        customersService.setCustomerConsent(
+          probe.id,
+          { smsConsent: true },
+          { userId: "user-1", source: "import" },
+        ),
+      );
+      const granted = await prisma.customer.findUnique({ where: { id: probe.id } });
+      expect(granted?.smsConsent).toBe(true);
+      expect(await evidenceCount()).toBe(1);
     }, 30_000);
   },
 );

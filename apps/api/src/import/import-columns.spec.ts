@@ -173,4 +173,133 @@ describe("import-columns (FIX1 pins)", () => {
     expect(normalizeHeader('﻿"Units_Per-Box"  ')).toBe("units per box");
     expect(normalizeHeader("Price Tier 2")).toBe("price tier 2");
   });
+
+  // ── I3: money parsers reject negatives and bound to their DTO/column max ────
+  describe("I3: money bounds", () => {
+    it("pricePerUnit rejects a negative value", () => {
+      const col = PRODUCT_COLUMNS.find((c) => c.field === "pricePerUnit")!;
+      const r = col.parse("-12");
+      expect(r.ok).toBe(false);
+      if (!r.ok) expect(r.reason).toMatch(/must not be negative/);
+    });
+
+    it("pricePerUnit rejects a value above the Decimal(10,2) bound (99,999,999.99)", () => {
+      const col = PRODUCT_COLUMNS.find((c) => c.field === "pricePerUnit")!;
+      const r = col.parse("100000000");
+      expect(r.ok).toBe(false);
+    });
+
+    it("pricePerUnit accepts exactly the Decimal(10,2) bound", () => {
+      const col = PRODUCT_COLUMNS.find((c) => c.field === "pricePerUnit")!;
+      const r = col.parse("99999999.99");
+      expect(r.ok).toBe(true);
+    });
+
+    it("msrp rejects a negative value", () => {
+      const col = PRODUCT_COLUMNS.find((c) => c.field === "msrp")!;
+      const r = col.parse("-1");
+      expect(r.ok).toBe(false);
+    });
+
+    it("creditLimit rejects a negative value and bounds to its Decimal(10,2) column, not the DTO's 1e9", () => {
+      const col = CUSTOMER_COLUMNS.find((c) => c.field === "creditLimit")!;
+      expect(col.parse("-1").ok).toBe(false);
+      expect(col.parse("99999999.99").ok).toBe(true);
+      // 100,000,000 passes CreateCustomerDto's @Max(1e9) but overflows Decimal(10,2) at write time.
+      const over = col.parse("100000000");
+      expect(over.ok).toBe(false);
+      if (!over.ok) expect(over.reason).toMatch(/99999999\.99 or less/);
+    });
+
+    it("an int column bounds to Postgres integer max (a larger cell overflows the Int column)", () => {
+      const col = PRODUCT_COLUMNS.find((c) => c.field === "unitsPerBox")!;
+      expect(col.parse("2147483647").ok).toBe(true);
+      expect(col.parse("2147483648").ok).toBe(false);
+    });
+  });
+
+  // ── M2: standardCost parses/compares at 4dp, its own (tighter) bound ────────
+  describe("M2: standardCost 4dp parser", () => {
+    const col = () => PRODUCT_COLUMNS.find((c) => c.field === "standardCost")!;
+
+    it("keeps 4 decimal places instead of rounding to cents", () => {
+      const r = col().parse("0.0825");
+      expect(r.ok).toBe(true);
+      if (r.ok) expect(r.value).toBeCloseTo(0.0825, 4);
+    });
+
+    it("rejects a negative value", () => {
+      const r = col().parse("-1.5");
+      expect(r.ok).toBe(false);
+      if (!r.ok) expect(r.reason).toMatch(/must not be negative/);
+    });
+
+    it("bounds to Decimal(10,4)'s own max (999,999.9999), not the 99,999,999.99 money bound", () => {
+      expect(col().parse("999999.9999").ok).toBe(true);
+      expect(col().parse("1000000").ok).toBe(false);
+    });
+  });
+
+  // ── SA-305 (1): identity overflow is a bad cell naming the limit — never a truncation ───
+  describe("identity length bounds follow CreateCustomerDto", () => {
+    it.each([
+      ["notes", 2000],
+      ["phone", 40],
+      ["mobile", 40],
+      ["displayName", 120],
+      ["firstName", 80],
+      ["lastName", 80],
+      ["email", 254],
+      ["businessName", 200],
+      ["taxId", 40],
+    ])("%s accepts %i characters and refuses one more, naming the limit", (field, max) => {
+      const col = CUSTOMER_COLUMNS.find((c) => c.field === field)!;
+      const atMax = col.parse("x".repeat(max as number));
+      expect(atMax.ok).toBe(true);
+      if (atMax.ok) expect(atMax.value).toBe("x".repeat(max as number));
+      const over = col.parse("x".repeat((max as number) + 1));
+      expect(over.ok).toBe(false);
+      if (!over.ok) expect(over.reason).toBe(`must be ${max} characters or fewer`);
+    });
+  });
+
+  // ── M4: "Item Description" restored as a description alias ─────────────────
+  it('M4: "Item Description" resolves to the description field', () => {
+    const { byField } = resolveColumns(["Item Description"], PRODUCT_COLUMNS);
+    expect(byField.description).toBe("Item Description");
+  });
+
+  // ── SA-305 (1): Payment Terms integer mapping + the unmapped-integer warning ─
+  describe("SA-305 (1): Payment Terms integer mapping", () => {
+    const col = () => CUSTOMER_COLUMNS.find((c) => c.field === "defaultPaymentTerms")!;
+
+    it.each([
+      ["0", "Due on Receipt"],
+      ["15", "Net 15"],
+      ["30", "Net 30"],
+      ["45", "Net 45"],
+      ["60", "Net 60"],
+    ])('bare integer "%s" maps to "%s"', (raw, expected) => {
+      const r = col().parse(raw);
+      expect(r.ok).toBe(true);
+      if (r.ok) expect(r.value).toBe(expected);
+    });
+
+    it.each(["7", "10", "90"])(
+      'an unmapped bare integer "%s" imports with terms UNSET and a warning naming it',
+      (raw) => {
+        const r = col().parse(raw);
+        expect(r.ok).toBe(true);
+        if (r.ok) {
+          expect(r.value).toBeUndefined();
+          expect(r.warning).toMatch(new RegExp(raw));
+        }
+      },
+    );
+
+    it("a genuinely unrecognized (non-integer) term is still a bad cell", () => {
+      const r = col().parse("whenever works");
+      expect(r.ok).toBe(false);
+    });
+  });
 });

@@ -11,7 +11,6 @@ import { CustomersService } from "../customers/customers.service";
 import { NumberingService } from "./numbering.service";
 import { ExternalRefService } from "./external-ref.service";
 import { ProductsService } from "../products/products.service";
-import { AuditService } from "../audit/audit.service";
 import { roundMoney } from "@routeflow/pricing";
 import { sumConfirmed } from "../invoices/payment-predicates";
 import { parseImportMoney, parseImportNumber } from "./parse-import-number";
@@ -20,7 +19,13 @@ import { ImportEntityType, InvoiceStatus, MovementType, UserRole } from "@prisma
 import * as bcrypt from "bcrypt";
 import * as crypto from "crypto";
 import { addressStateFields } from "../customers/address-state";
-import { PRODUCT_COLUMNS, CUSTOMER_COLUMNS, resolveColumns, parseRow } from "./import-columns";
+import {
+  PRODUCT_COLUMNS,
+  CUSTOMER_COLUMNS,
+  resolveColumns,
+  parseRow,
+  roundCost4,
+} from "./import-columns";
 import type { CustomerComplianceInput } from "../customers/customer-compliance-input";
 
 /** B858/B859: money fields in PRODUCT_COLUMNS that get rounded-value diff comparison. */
@@ -88,7 +93,6 @@ export class ImportService {
     private readonly numbering: NumberingService,
     private readonly externalRefs: ExternalRefService,
     private readonly productsService: ProductsService,
-    private readonly auditService: AuditService,
   ) {}
 
   private parseCsv(buffer: Buffer): any[] {
@@ -312,54 +316,63 @@ export class ImportService {
       }
     }
 
+    // SA-305 (2): consent no longer rides `compliance` into `customersService.update` (that write
+    // and the evidence insert were two independent statements — a DB hiccup between them could
+    // leave consent granted with no evidence row). It goes through `setCustomerConsent`, which
+    // writes the consent column(s) AND the evidence row in ONE tenantTransaction.
     const consentChannels: { field: "smsConsent" | "waConsent"; channel: "sms" | "wa" }[] = [
       { field: "smsConsent", channel: "sms" },
       { field: "waConsent", channel: "wa" },
     ];
-    const consentChanges: { channel: "sms" | "wa"; value: boolean }[] = [];
+    const consentInput: { smsConsent?: boolean; waConsent?: boolean } = {};
+    const consentChanges: { field: "smsConsent" | "waConsent"; value: boolean }[] = [];
     for (const { field, channel } of consentChannels) {
       const newVal = values[field];
       if (newVal === undefined) continue;
       const existingVal = existing[field];
       if (Boolean(existingVal) !== Boolean(newVal)) {
-        compliance[field] = newVal as boolean;
-        consentChanges.push({ channel, value: newVal as boolean });
+        consentInput[field] = newVal as boolean;
+        consentChanges.push({ field, value: newVal as boolean });
       }
-    }
-    if (consentChanges.length > 0) {
-      compliance.consentUpdatedAt = new Date();
+      void channel; // kept for the meta shape read below
     }
 
     const planned: Record<string, { from: unknown; to: unknown }> = {};
     for (const [field, to] of Object.entries({ ...diff, ...compliance })) {
-      if (field === "consentUpdatedAt") continue;
       planned[field] = { from: existing[field] ?? null, to };
+    }
+    for (const { field, value } of consentChanges) {
+      planned[field] = { from: existing[field] ?? null, to: value };
     }
     const hasDiff = Object.keys(diff).length > 0;
     const hasCompliance = Object.keys(compliance).length > 0;
-    if (!hasDiff && !hasCompliance) return planned;
+    const hasConsent = consentChanges.length > 0;
+    if (!hasDiff && !hasCompliance && !hasConsent) return planned;
     if (dryRun) return planned;
 
-    await this.customersService.update(customerId, diff as any, {
-      compliance: hasCompliance ? compliance : undefined,
-    });
+    if (hasDiff || hasCompliance) {
+      await this.customersService.update(customerId, diff as any, {
+        compliance: hasCompliance ? compliance : undefined,
+      });
+    }
 
-    for (const { channel, value } of consentChanges) {
-      await this.auditService.log({
-        tenantId: this.prisma.getTenantId(),
-        userId,
-        action: "customer.consent.import",
-        entityType: "Customer",
-        entityId: customerId,
-        meta: {
+    if (hasConsent) {
+      try {
+        await this.customersService.setCustomerConsent(customerId, consentInput, {
+          userId,
           source: "import",
           fileName,
           row: rowNumber,
-          channel,
-          value,
-          timestamp: new Date().toISOString(),
-        },
-      });
+        });
+      } catch {
+        // SA-305 (2): a failing consent tx skips ONLY that row's consent — the rest of the row
+        // (identity + other commercial fields, already committed above) still stands. Never
+        // report a consent change that was not actually persisted.
+        for (const { field } of consentChanges) delete planned[field];
+        warnings.push(
+          `Row ${rowNumber} (${label}): consent evidence could not be recorded — consent left unchanged`,
+        );
+      }
     }
     return planned;
   }
@@ -402,6 +415,12 @@ export class ImportService {
     const rowPlans: ImportRowPlan[] = [];
     const skippedRows: { row: number; label: string; reason: string }[] = [];
     const warnings: string[] = [];
+    // In-file claims, so a later row that resolves to the same customer is a "duplicate of row N"
+    // in BOTH dryRun and a real run (a real run would otherwise name-match the customer an
+    // earlier row just created, while the preview — which wrote nothing — planned two creates).
+    const claimedZohoIds = new Map<string, number>();
+    const claimedNames = new Map<string, { row: number; zohoContactId: string | null }>();
+    const claimedCustomerIds = new Map<string, number>();
     let rowNumber = 0;
 
     for (const row of rows) {
@@ -422,11 +441,20 @@ export class ImportService {
         rowPlans.push({ row: rowNumber, label: preliminaryLabel, action: "skip", reason });
         continue;
       }
+      // SA-305 (1): a per-row warning for a cell that dropped its value without failing the row
+      // (today, only an unmapped bare "Payment Terms" integer) — surfaced in both dryRun/real.
+      for (const w of parsedCommercial.warnings) {
+        warnings.push(`Row ${rowNumber} (${preliminaryLabel}): ${w.message}`);
+      }
 
-      // Only import customer-type contacts (skip vendors etc.)
+      // Only import customer-type contacts (skip vendors etc.) — I4: record the skip so it's
+      // visible in `rows`/`skippedRows`, not just the summary count.
       const contactType = (row["Contact Type"] || "customer").toLowerCase().trim();
       if (contactType && contactType !== "customer") {
+        const reason = `Contact Type: not a customer (${contactType})`;
         skipped++;
+        skippedRows.push({ row: rowNumber, label: preliminaryLabel, reason });
+        rowPlans.push({ row: rowNumber, label: preliminaryLabel, action: "skip", reason });
         continue;
       }
 
@@ -437,11 +465,24 @@ export class ImportService {
         ""
       ).trim();
       if (!name) {
+        const reason = "Name is required";
         skipped++;
+        skippedRows.push({ row: rowNumber, label: preliminaryLabel, reason });
+        rowPlans.push({ row: rowNumber, label: preliminaryLabel, action: "skip", reason });
         continue;
       }
 
       const zohoContactId = (row["Customer ID"] || "").trim() || null;
+      const skipContact = (reason: string) => {
+        skipped++;
+        skippedRows.push({ row: rowNumber, label: preliminaryLabel, reason });
+        errors.push(`${preliminaryLabel}: ${reason}`);
+        rowPlans.push({ row: rowNumber, label: preliminaryLabel, action: "skip", reason });
+      };
+      if (zohoContactId && claimedZohoIds.has(zohoContactId)) {
+        skipContact(`duplicate of row ${claimedZohoIds.get(zohoContactId)}`);
+        continue;
+      }
 
       // Extract all fields from CSV
       const displayName = (row["Display Name"] || "").trim() || null;
@@ -501,21 +542,80 @@ export class ImportService {
       // Find existing customer: prefer Zoho ID match, then fall back to
       // case-insensitive businessName match for customers imported before
       // zohoContactId tracking was wired up.
+      // I2: both lookups exclude soft-deleted customers — a deleted match would otherwise run
+      // the raw identity/address writes below, THEN throw "Restore the customer first" out of
+      // `applyCustomerCommercialFields`, leaving a partial row (identity written, commercial not).
       let existing = zohoContactId
         ? await this.prisma.forTenant().customer.findFirst({
-            where: { zohoContactId },
+            where: { zohoContactId, deletedAt: null },
             include: { addresses: true, contactPersons: true },
           })
         : null;
       if (!existing) {
-        existing = await this.prisma.forTenant().customer.findFirst({
-          where: { businessName: { equals: name, mode: "insensitive" } },
+        // A name an earlier row of THIS file already claimed decides the row before the DB is
+        // asked — identical in dryRun (nothing written yet) and a real run.
+        const claimedName = claimedNames.get(normalizeNameKey(name));
+        if (claimedName) {
+          if (
+            zohoContactId &&
+            claimedName.zohoContactId &&
+            claimedName.zohoContactId !== zohoContactId
+          ) {
+            skipContact(
+              `Customer ID ${zohoContactId} not found; name matches a customer with Customer ID ${claimedName.zohoContactId}`,
+            );
+          } else {
+            skipContact(`duplicate of row ${claimedName.row}`);
+          }
+          continue;
+        }
+        // I2: ambiguity must be decided BEFORE any write — `findMany(take 2)` + skip, the same
+        // rule and "same normalization" (case-insensitive exact) as the product name match.
+        const byName = await this.prisma.forTenant().customer.findMany({
+          where: { businessName: { equals: name, mode: "insensitive" }, deletedAt: null },
           include: { addresses: true, contactPersons: true },
+          take: 2,
+        });
+        if (byName.length > 1) {
+          skipContact(`ambiguous name (${byName.length} matches)`);
+          continue;
+        }
+        const nameMatch = byName[0] ?? null;
+        // Same rule as products' SKU (I1): the name fallback exists for customers imported
+        // before Customer ID tracking. A name match carrying a DIFFERENT Customer ID is another
+        // Zoho contact — never merge the two.
+        if (
+          nameMatch &&
+          zohoContactId &&
+          nameMatch.zohoContactId &&
+          nameMatch.zohoContactId !== zohoContactId
+        ) {
+          skipContact(
+            `Customer ID ${zohoContactId} not found; name matches a customer with Customer ID ${nameMatch.zohoContactId}`,
+          );
+          continue;
+        }
+        existing = nameMatch;
+      }
+
+      if (existing && claimedCustomerIds.has(existing.id)) {
+        skipContact(`duplicate of row ${claimedCustomerIds.get(existing.id)}`);
+        continue;
+      }
+      const claimZohoId = zohoContactId ?? existing?.zohoContactId ?? null;
+      if (existing) claimedCustomerIds.set(existing.id, rowNumber);
+      if (claimZohoId) claimedZohoIds.set(claimZohoId, rowNumber);
+      claimedNames.set(normalizeNameKey(name), { row: rowNumber, zohoContactId: claimZohoId });
+      if (existing?.businessName) {
+        claimedNames.set(normalizeNameKey(existing.businessName), {
+          row: rowNumber,
+          zohoContactId: claimZohoId,
         });
       }
 
       if (existing) {
         // Update the existing customer with any missing/new fields
+        let contactDetailsWritten = false;
         try {
           if (!dryRun) {
             await this.prisma.forTenant().customer.update({
@@ -537,6 +637,7 @@ export class ImportService {
                     : existing.contactName,
               },
             });
+            contactDetailsWritten = true; // from here on, a throw leaves part of the row written
 
             // Add billing address if not already present
             const existingBilling = existing.addresses.find((a) => a.addressType === "BILLING");
@@ -618,7 +719,32 @@ export class ImportService {
             changes: commercialChanges,
           });
         } catch (e: any) {
-          this.pushRowError(errors, `${name} (update)`, e);
+          // I2b: nothing on this row is silent. Before any write, a throw is a clean skip. After
+          // the (pre-existing, raw) contact-details write, the row is NOT a skip — those details
+          // are saved — so it stays an update and carries the failure as a warning + error;
+          // re-importing the row applies the rest (the importer is idempotent).
+          const reason = e instanceof HttpException ? e.message : "import failed";
+          if (e instanceof HttpException) {
+            errors.push(`${preliminaryLabel}: ${reason}`);
+          } else {
+            this.pushRowError(errors, `${name} (update)`, e);
+          }
+          if (contactDetailsWritten) {
+            const message = `commercial columns not saved (${reason}) — re-import this row to apply them`;
+            updated++;
+            warnings.push(`Row ${rowNumber} (${preliminaryLabel}): ${message}`);
+            rowPlans.push({
+              row: rowNumber,
+              label: preliminaryLabel,
+              action: "update",
+              changes: {},
+              warnings: [message],
+            });
+          } else {
+            skipped++;
+            skippedRows.push({ row: rowNumber, label: preliminaryLabel, reason });
+            rowPlans.push({ row: rowNumber, label: preliminaryLabel, action: "skip", reason });
+          }
         }
         continue;
       }
@@ -642,6 +768,7 @@ export class ImportService {
         userEmail = `${username}@imported.local`;
       }
 
+      let customerCreated = false;
       try {
         let createdChanges: Record<string, { from: unknown; to: unknown }> = {};
         if (!dryRun) {
@@ -732,6 +859,7 @@ export class ImportService {
               });
             }
           });
+          customerCreated = true;
 
           // B858/B859 FIX4: commercial columns for a brand-new row go through the same
           // CustomersService.update path as a matched row (SA-284 a) — never folded into the
@@ -770,15 +898,39 @@ export class ImportService {
           changes: createdChanges,
         });
       } catch (e: any) {
+        if (customerCreated) {
+          // The customer (user, addresses, contact person) committed in its own transaction;
+          // only the commercial columns that follow failed. It is a created row with a visible
+          // failure, never a "skip" (that would claim nothing was written).
+          const reason = e instanceof HttpException ? e.message : "import failed";
+          if (e instanceof HttpException) errors.push(`${preliminaryLabel}: ${reason}`);
+          else this.pushRowError(errors, name, e);
+          const message = `commercial columns not saved (${reason}) — re-import this row to apply them`;
+          created++;
+          warnings.push(`Row ${rowNumber} (${preliminaryLabel}): ${message}`);
+          rowPlans.push({
+            row: rowNumber,
+            label: preliminaryLabel,
+            action: "create",
+            changes: {},
+            warnings: [message],
+          });
+          continue;
+        }
         // P2002 = unique constraint violation — the customer (or their user account)
-        // already exists in the database. Treat as a silent skip rather than an error
-        // so re-importing the same CSV doesn't flood the UI with noise.
+        // already exists in the database. Treat as a skip rather than an error so
+        // re-importing the same CSV doesn't flood the UI with noise.
+        // I4: every skip reason lands in `rows`/`skippedRows` — previously a failed create
+        // never appeared there at all (invisible except for the summary's "skipped" count).
+        skipped++;
+        const reason = e?.code === "P2002" ? "already exists" : "import failed";
         if (e?.code === "P2002") {
-          skipped++;
+          errors.push(`${preliminaryLabel}: ${reason}`);
         } else {
           this.pushRowError(errors, name, e);
-          skipped++;
         }
+        skippedRows.push({ row: rowNumber, label: preliminaryLabel, reason });
+        rowPlans.push({ row: rowNumber, label: preliminaryLabel, action: "skip", reason });
       }
     }
 
@@ -2001,9 +2153,17 @@ export class ImportService {
       nameCounts.set(key, (nameCounts.get(key) ?? 0) + 1);
     }
 
-    // In-file identity-key claims — SKU/barcode only (name collisions are "ambiguous", not
-    // "duplicate", per SA-284 / cause-ruling.md §2.B).
+    // In-file claims (I1), so dryRun — which writes nothing — plans exactly what a real run does:
+    //   claimedKeys:       every SKU/barcode a row carries (a later row repeating one = duplicate)
+    //   claimedNames:      the name each create/update row leaves the product with; consulted
+    //                      BEFORE the DB name lookup, which in a real run would already see the
+    //                      product an earlier row created or renamed
+    //   claimedProductIds: the existing product a row matched (a second row reaching it by another
+    //                      key is a duplicate, never a second independent update)
+    // Name collisions between rows without SKU/barcode are "ambiguous", not "duplicate" (SA-284).
     const claimedKeys = new Map<string, number>();
+    const claimedNames = new Map<string, { row: number; sku: string | null }>();
+    const claimedProductIds = new Map<string, number>();
     let anyWrite = false;
 
     for (let i = 0; i < rawRows.length; i++) {
@@ -2027,14 +2187,13 @@ export class ImportService {
         continue;
       }
 
-      const identityKey = sku
-        ? `sku:${sku.toLowerCase()}`
-        : barcode
-          ? `barcode:${barcode.toLowerCase()}`
-          : null;
-
-      if (identityKey && claimedKeys.has(identityKey)) {
-        skipRow(`duplicate of row ${claimedKeys.get(identityKey)}`);
+      const rowKeys = [
+        ...(sku ? [`sku:${sku.toLowerCase()}`] : []),
+        ...(barcode ? [`barcode:${barcode.toLowerCase()}`] : []),
+      ];
+      const claimedBy = rowKeys.map((k) => claimedKeys.get(k)).find((r) => r !== undefined);
+      if (claimedBy !== undefined) {
+        skipRow(`duplicate of row ${claimedBy}`);
         continue;
       }
 
@@ -2047,7 +2206,7 @@ export class ImportService {
         }
       }
 
-      if (identityKey) claimedKeys.set(identityKey, rowNumber);
+      for (const k of rowKeys) claimedKeys.set(k, rowNumber);
 
       // Matching: exact trimmed SKU → exact barcode → normalized name.
       // SKU and barcode are unique per tenant as stored (case-sensitive), so they match exactly.
@@ -2059,6 +2218,15 @@ export class ImportService {
         existing = await this.prisma.forTenant().product.findFirst({ where: { barcode } });
       }
       if (!existing && name) {
+        const claimedName = claimedNames.get(normalizeNameKey(name));
+        if (claimedName) {
+          if (sku && claimedName.sku && claimedName.sku !== sku) {
+            skipRow(`SKU ${sku} not found; name matches a product with SKU ${claimedName.sku}`);
+          } else {
+            skipRow(`duplicate of row ${claimedName.row}`);
+          }
+          continue;
+        }
         // A name is only a key when exactly one product carries it (variants can share one).
         const byName = await this.prisma.forTenant().product.findMany({
           where: { name: { equals: name, mode: "insensitive" } },
@@ -2068,10 +2236,36 @@ export class ImportService {
           skipRow(`ambiguous name (${byName.length}+ products match)`);
           continue;
         }
-        existing = byName[0] ?? null;
+        const nameMatch = byName[0] ?? null;
+        // I1: a row whose SKU is present but unmatched must NOT silently rewrite a DIFFERENT
+        // product's SKU via a name fallback — that is an identity change, not an update.
+        if (nameMatch && sku && nameMatch.sku && nameMatch.sku !== sku) {
+          skipRow(`SKU ${sku} not found; name matches a product with SKU ${nameMatch.sku}`);
+          continue;
+        }
+        existing = nameMatch;
       }
 
       if (existing) {
+        if (claimedProductIds.has(existing.id)) {
+          skipRow(`duplicate of row ${claimedProductIds.get(existing.id)}`);
+          continue;
+        }
+        claimedProductIds.set(existing.id, rowNumber);
+        for (const [kind, value] of [
+          ["sku", existing.sku],
+          ["barcode", existing.barcode],
+        ] as const) {
+          const key = value ? `${kind}:${String(value).toLowerCase()}` : null;
+          if (key && !claimedKeys.has(key)) claimedKeys.set(key, rowNumber);
+        }
+        const nameAfter = name || existing.name;
+        if (nameAfter) {
+          claimedNames.set(normalizeNameKey(nameAfter), {
+            row: rowNumber,
+            sku: sku || existing.sku || null,
+          });
+        }
         // ── Update: diff only fields with a DEFINED, DIFFERING parsed value ──────────────────
         const changes: Record<string, unknown> = {};
         let packSkipReason: string | null = null;
@@ -2089,9 +2283,28 @@ export class ImportService {
             }
             continue;
           }
+          if (field === "msrp") {
+            // M1: mirror `normalizeMsrpForWrite` (products.service.ts) BEFORE diffing — a ≤0
+            // MSRP is never actually written (it's normalized to null there), so treating it as
+            // "different from null" here would call update() every re-import for no real change.
+            const normalizedNew = Number(newVal) > 0 ? (newVal as number) : undefined;
+            if (normalizedNew === undefined) continue;
+            const existingMsrp = existing.msrp;
+            const msrpDiffers =
+              existingMsrp == null ||
+              roundMoney(Number(existingMsrp)) !== roundMoney(Number(normalizedNew));
+            if (msrpDiffers) changes.msrp = normalizedNew;
+            continue;
+          }
           const existingVal = (existing as any)[field];
           let differs: boolean;
-          if (PRODUCT_MONEY_FIELDS.has(field)) {
+          if (field === "standardCost") {
+            // M2: standardCost is Decimal(10,4) — compare at 4dp, never `roundMoney` (2dp/cents),
+            // which would silently drop the 3rd/4th digit and mask a real cost change.
+            differs =
+              existingVal == null ||
+              roundCost4(Number(existingVal)) !== roundCost4(Number(newVal as number));
+          } else if (PRODUCT_MONEY_FIELDS.has(field)) {
             // a null money column (no MSRP/cost yet) differs from any value, 0 included
             differs =
               existingVal == null ||
@@ -2119,22 +2332,30 @@ export class ImportService {
         for (const [field, to] of Object.entries(changes)) {
           plannedChanges[field] = { from: (existing as any)[field] ?? null, to };
         }
-        rowPlans.push({ row: rowNumber, label, action: "update", changes: plannedChanges });
+        const updatePlan: ImportRowPlan = {
+          row: rowNumber,
+          label,
+          action: "update",
+          changes: plannedChanges,
+        };
+        rowPlans.push(updatePlan);
         if (!dryRun) {
           try {
             await this.productsService.update(existing.id, changes as any, { suppressEmit: true });
             updated++;
             anyWrite = true;
           } catch (e: any) {
-            if (e instanceof HttpException) {
-              skipped++;
-              skippedRows.push({ row: rowNumber, label, reason: e.message });
-              errors.push(`${label}: ${e.message}`);
-            } else {
-              this.pushRowError(errors, label, e);
-              skipped++;
-              skippedRows.push({ row: rowNumber, label, reason: "import failed" });
-            }
+            // I4: a real-run write failure replaces this row's plan entry with "skip" + reason —
+            // never leaves a stale "update" badge with the real reason reachable only via
+            // `skippedRows`/`errors`.
+            const reason = e instanceof HttpException ? e.message : "import failed";
+            if (!(e instanceof HttpException)) this.pushRowError(errors, label, e);
+            else errors.push(`${label}: ${reason}`);
+            skipped++;
+            skippedRows.push({ row: rowNumber, label, reason });
+            updatePlan.action = "skip";
+            updatePlan.reason = reason;
+            delete updatePlan.changes;
           }
         } else {
           updated++;
@@ -2143,6 +2364,13 @@ export class ImportService {
       }
 
       // ── Create ──────────────────────────────────────────────────────────────────────────────
+      // M3: a blank name would otherwise reach `productsService.create({ name: undefined })` —
+      // either a bogus "A product named ... already exists" (nameTaken lookup with
+      // `equals: undefined`) or a raw TypeError off `dto.name.replace`. Check before Rate.
+      if (!name) {
+        skipRow("Name is required");
+        continue;
+      }
       if (parsed.values.pricePerUnit === undefined) {
         skipRow("Rate is required for a new product");
         continue;
@@ -2156,26 +2384,36 @@ export class ImportService {
         dto[k] = v;
       }
 
+      // I1: a later row's name lookup sees this planned create in dryRun too (nothing is in the
+      // DB yet in a preview) — keeps preview and real run identical.
+      claimedNames.set(normalizeNameKey(name), { row: rowNumber, sku: sku || null });
+
       const createdPlan: Record<string, { from: unknown; to: unknown }> = {};
       for (const [field, to] of Object.entries(dto)) {
         if (to !== undefined) createdPlan[field] = { from: null, to };
       }
-      rowPlans.push({ row: rowNumber, label, action: "create", changes: createdPlan });
+      const createPlan: ImportRowPlan = {
+        row: rowNumber,
+        label,
+        action: "create",
+        changes: createdPlan,
+      };
+      rowPlans.push(createPlan);
       if (!dryRun) {
         try {
           await this.productsService.create(dto as any, { suppressEmit: true });
           created++;
           anyWrite = true;
         } catch (e: any) {
-          if (e instanceof HttpException) {
-            skipped++;
-            skippedRows.push({ row: rowNumber, label, reason: e.message });
-            errors.push(`${label}: ${e.message}`);
-          } else {
-            this.pushRowError(errors, label, e);
-            skipped++;
-            skippedRows.push({ row: rowNumber, label, reason: "import failed" });
-          }
+          // I4: same rule as the update path — a real-run failure replaces "create" with "skip".
+          const reason = e instanceof HttpException ? e.message : "import failed";
+          if (!(e instanceof HttpException)) this.pushRowError(errors, label, e);
+          else errors.push(`${label}: ${reason}`);
+          skipped++;
+          skippedRows.push({ row: rowNumber, label, reason });
+          createPlan.action = "skip";
+          createPlan.reason = reason;
+          delete createPlan.changes;
         }
       } else {
         created++;

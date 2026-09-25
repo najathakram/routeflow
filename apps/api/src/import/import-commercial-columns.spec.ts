@@ -35,6 +35,7 @@ import { ExternalRefService } from "./external-ref.service";
 import { ProductsService } from "../products/products.service";
 import { AuditService } from "../audit/audit.service";
 import { createMockPrisma } from "../testing/prisma-mock";
+import { PRODUCT_COLUMNS, CUSTOMER_COLUMNS } from "./import-columns";
 
 describe("ImportService — commercial columns (B858/B859)", () => {
   let service: ImportService;
@@ -51,6 +52,7 @@ describe("ImportService — commercial columns (B858/B859)", () => {
     assertCustomerCapNotExceeded: jest.Mock;
     maybeStartCustomerGrace: jest.Mock;
     update: jest.Mock;
+    setCustomerConsent: jest.Mock;
   };
 
   beforeEach(async () => {
@@ -67,6 +69,9 @@ describe("ImportService — commercial columns (B858/B859)", () => {
       assertCustomerCapNotExceeded: jest.fn().mockResolvedValue(undefined),
       maybeStartCustomerGrace: jest.fn().mockResolvedValue(undefined),
       update: jest.fn().mockResolvedValue({ id: "cust-existing" }),
+      // SA-305 (2): consent + its evidence now go through CustomersService.setCustomerConsent
+      // (ONE tenantTransaction), never through applyCustomerCommercialFields -> auditService.log.
+      setCustomerConsent: jest.fn().mockResolvedValue(undefined),
     };
 
     const mod = await Test.createTestingModule({
@@ -199,7 +204,7 @@ describe("ImportService — commercial columns (B858/B859)", () => {
     });
   });
 
-  it("REG-B859-2: licence+consent write evidence", async () => {
+  it("REG-B859-2 / SA-305(2): licence+consent — consent goes through setCustomerConsent (one tx w/ its evidence)", async () => {
     prisma.customer.findFirst.mockResolvedValue({
       id: "cust-1",
       businessName: "Acme Supply",
@@ -214,10 +219,43 @@ describe("ImportService — commercial columns (B858/B859)", () => {
 
     await service.importContacts(Buffer.from(csv), "user-1");
 
-    expect(auditService.log).toHaveBeenCalledTimes(1);
-    const dto = auditService.log.mock.calls[0]?.[0];
-    expect(dto).toMatchObject({ action: "customer.consent.import" });
-    expect(dto?.meta).toMatchObject({ source: "import", channel: "sms", value: true });
+    // SA-305 (2): consent no longer rides `auditService.log` — it goes through
+    // `CustomersService.setCustomerConsent`, which writes the column AND its evidence in one tx.
+    expect(auditService.log).not.toHaveBeenCalled();
+    expect(customers.setCustomerConsent).toHaveBeenCalledTimes(1);
+    const [custId, consent, evidence] = customers.setCustomerConsent.mock.calls[0] ?? [];
+    expect(custId).toBe("cust-1");
+    expect(consent).toMatchObject({ smsConsent: true });
+    expect(evidence).toMatchObject({ userId: "user-1", source: "import", row: 1 });
+    // Tobacco licence still goes through the ordinary `update` compliance bundle.
+    expect(customers.update).toHaveBeenCalled();
+    const complianceArg = customers.update.mock.calls[0]?.[2]?.compliance ?? {};
+    expect(complianceArg).not.toHaveProperty("smsConsent");
+    expect(complianceArg).toMatchObject({ tobaccoLicenseNo: "TL-999" });
+  });
+
+  it("SA-305 (2): a failing setCustomerConsent skips only the consent, keeps the rest of the row, and warns", async () => {
+    prisma.customer.findFirst.mockResolvedValue({
+      id: "cust-1",
+      businessName: "Acme Supply",
+      zohoContactId: "ZC-1",
+      taxId: null,
+      addresses: [],
+      contactPersons: [],
+    });
+    customers.setCustomerConsent.mockRejectedValueOnce(new Error("db down"));
+    const csv = "Customer Name,Customer ID,Tax ID,SMS Consent\nAcme Supply,ZC-1,12-3456789,Yes\n";
+
+    const result = await service.importContacts(Buffer.from(csv), "user-1");
+
+    expect(customers.update).toHaveBeenCalledTimes(1);
+    expect(customers.update.mock.calls[0]?.[1]).toMatchObject({ taxId: "12-3456789" });
+    expect((result as any).warnings).toEqual(
+      expect.arrayContaining([expect.stringMatching(/consent evidence could not be recorded/)]),
+    );
+    // The row itself is still reported as an update (taxId landed) — not silently dropped.
+    expect(result.rows[0]).toMatchObject({ action: "update" });
+    expect(result.rows[0].changes).not.toHaveProperty("smsConsent");
   });
 
   it("REG-B859-3: bad Pricing Tier skips with a reason", async () => {
@@ -234,6 +272,495 @@ describe("ImportService — commercial columns (B858/B859)", () => {
 
     expect((result as any).skippedRows?.length).toBe(1);
     expect((result as any).skippedRows?.[0]?.reason).toMatch(/Pricing Tier/);
+  });
+
+  // ── I2: customer matching — ambiguity, soft-delete exclusion, decide-before-write ──────────
+  describe("I2: customer matching", () => {
+    it("a name matching 2+ non-deleted customers is skipped ambiguous BEFORE any write", async () => {
+      prisma.customer.findFirst.mockResolvedValue(null); // no zohoContactId in the file
+      prisma.customer.findMany.mockResolvedValue([
+        { id: "cust-1", businessName: "Acme" },
+        { id: "cust-2", businessName: "ACME" },
+      ]);
+      const csv = "Customer Name,Credit Limit\nAcme,500\n";
+
+      const result = await service.importContacts(Buffer.from(csv), "user-1");
+
+      expect(prisma.customer.update).not.toHaveBeenCalled();
+      expect(customers.update).not.toHaveBeenCalled();
+      expect((result as any).skippedRows?.[0]?.reason).toMatch(/ambiguous name \(2 matches\)/);
+    });
+
+    it("the businessName match excludes soft-deleted customers (findMany(deletedAt: null))", async () => {
+      prisma.customer.findFirst.mockResolvedValue(null);
+      prisma.customer.findMany.mockResolvedValue([]);
+      const csv = "Customer Name,Credit Limit\nAcme,500\n";
+
+      await service.importContacts(Buffer.from(csv), "user-1");
+
+      const call = prisma.customer.findMany.mock.calls[0]?.[0];
+      expect(call?.where).toMatchObject({ deletedAt: null });
+    });
+
+    it("the zohoContactId match also excludes soft-deleted customers", async () => {
+      prisma.customer.findFirst.mockResolvedValue(null);
+      prisma.customer.findMany.mockResolvedValue([]);
+      const csv = "Customer Name,Customer ID,Credit Limit\nAcme,ZC-1,500\n";
+
+      await service.importContacts(Buffer.from(csv), "user-1");
+
+      const call = prisma.customer.findFirst.mock.calls[0]?.[0];
+      expect(call?.where).toMatchObject({ zohoContactId: "ZC-1", deletedAt: null });
+    });
+
+    it("I2b: a matched row whose commercial write throws after the contact-details write stays an update with a visible failure", async () => {
+      prisma.customer.findFirst.mockResolvedValue({
+        id: "cust-1",
+        businessName: "Acme Supply",
+        zohoContactId: "ZC-1",
+        addresses: [],
+        contactPersons: [],
+      });
+      customers.update.mockRejectedValueOnce(new Error("db down"));
+      const csv = "Customer Name,Customer ID,Credit Limit\nAcme Supply,ZC-1,500\n";
+
+      const result = await service.importContacts(Buffer.from(csv), "user-1");
+
+      // The raw contact-details write DID land, so this is not a skip (a skip claims nothing
+      // was written); the commercial failure is carried as a warning + error on the row.
+      expect(prisma.customer.update).toHaveBeenCalledTimes(1);
+      expect(result.updated).toBe(1);
+      expect(result.skipped).toBe(0);
+      expect(result.errors).toEqual(["Acme Supply (update): import failed"]);
+      expect(result.rows[0]).toMatchObject({ action: "update" });
+      expect(result.rows[0].warnings?.[0]).toMatch(
+        /commercial columns not saved \(import failed\)/,
+      );
+      expect(result.warnings).toEqual(
+        expect.arrayContaining([
+          expect.stringMatching(/^Row 1 \(Acme Supply\): commercial columns/),
+        ]),
+      );
+    });
+
+    it("I2b: a throw BEFORE any write is a clean skip with its reason", async () => {
+      prisma.customer.findFirst.mockResolvedValue({
+        id: "cust-1",
+        businessName: "Acme Supply",
+        zohoContactId: "ZC-1",
+        addresses: [],
+        contactPersons: [],
+      });
+      prisma.customer.update.mockRejectedValueOnce(new Error("db down"));
+      const csv = "Customer Name,Customer ID,Credit Limit\nAcme Supply,ZC-1,500\n";
+
+      const result = await service.importContacts(Buffer.from(csv), "user-1");
+
+      expect(customers.update).not.toHaveBeenCalled();
+      expect(result.updated).toBe(0);
+      expect(result.skipped).toBe(1);
+      expect(result.skippedRows[0]).toMatchObject({ row: 1, reason: "import failed" });
+      expect(result.rows[0]).toMatchObject({ action: "skip", reason: "import failed" });
+    });
+
+    it("a new customer whose commercial columns fail after its create committed is a create with a visible failure", async () => {
+      prisma.customer.findFirst.mockResolvedValue(null);
+      prisma.customer.findMany.mockResolvedValue([]);
+      prisma.user.create.mockResolvedValue({ id: "user-new" });
+      prisma.customer.create.mockResolvedValue({ id: "cust-new" });
+      customers.update.mockRejectedValueOnce(new Error("db down"));
+      const csv = "Customer Name,Credit Limit\nBrand New Co,500\n";
+
+      const result = await service.importContacts(Buffer.from(csv), "user-1");
+
+      expect(prisma.customer.create).toHaveBeenCalledTimes(1);
+      expect(result.created).toBe(1);
+      expect(result.skipped).toBe(0);
+      expect(result.rows[0]).toMatchObject({ action: "create" });
+      expect(result.rows[0].warnings?.[0]).toMatch(/commercial columns not saved/);
+      expect(customers.maybeStartCustomerGrace).toHaveBeenCalledTimes(1);
+    });
+
+    it("a name match carrying a DIFFERENT Customer ID is another contact — skipped, never merged", async () => {
+      prisma.customer.findFirst.mockResolvedValue(null); // ZC-2 not found
+      prisma.customer.findMany.mockResolvedValue([
+        {
+          id: "cust-1",
+          businessName: "Acme",
+          zohoContactId: "ZC-1",
+          addresses: [],
+          contactPersons: [],
+        },
+      ]);
+      const csv = "Customer Name,Customer ID,Credit Limit\nAcme,ZC-2,500\n";
+
+      const result = await service.importContacts(Buffer.from(csv), "user-1");
+
+      expect(prisma.customer.update).not.toHaveBeenCalled();
+      expect(customers.update).not.toHaveBeenCalled();
+      expect(result.skippedRows[0]?.reason).toBe(
+        "Customer ID ZC-2 not found; name matches a customer with Customer ID ZC-1",
+      );
+    });
+  });
+
+  // ── Preview/real parity: dryRun must plan exactly what a real run then does ─────────────────
+  describe("preview plans exactly what a real run does (in-file claims)", () => {
+    /** An in-memory catalog behind the prisma mock + ProductsService, so a real run's writes are
+     *  visible to its own later rows — the exact thing a dryRun cannot see. */
+    function statefulCatalog(initial: any[]) {
+      const store = initial.map((p) => ({ ...p }));
+      prisma.product.findFirst.mockImplementation(async (args: any) => {
+        const w = args?.where ?? {};
+        if (w.sku !== undefined) return store.find((p) => p.sku === w.sku) ?? null;
+        if (w.barcode !== undefined) return store.find((p) => p.barcode === w.barcode) ?? null;
+        return null;
+      });
+      prisma.product.findMany.mockImplementation(async (args: any) => {
+        const n = args?.where?.name?.equals?.toLowerCase();
+        const hits = store.filter((p) => n !== undefined && p.name?.toLowerCase() === n);
+        return hits.slice(0, args?.take ?? hits.length);
+      });
+      productsService.create.mockImplementation(async (dto: any) => {
+        const p = { id: `prod-${store.length + 1}`, sku: null, barcode: null, ...dto };
+        store.push(p);
+        return p;
+      });
+      productsService.update.mockImplementation(async (id: string, dto: any) => {
+        Object.assign(
+          store.find((p) => p.id === id),
+          dto,
+        );
+        return { id };
+      });
+    }
+
+    const plan = (r: any) => r.rows.map((x: any) => [x.row, x.action, x.reason ?? null]);
+
+    it.each([
+      ["same name, SKU then no SKU", [], "Cola,SUP-1,,10\nCola,,,11\n"],
+      ["same name, no SKU then SKU", [], "Cola,,,10\nCola,SUP-2,,11\n"],
+      ["same name, two different SKUs", [], "Cola,SUP-1,,10\nCola,SUP-2,,11\n"],
+      [
+        "a row renames a product, a later row uses the new name",
+        [{ id: "prod-a", name: "Old Name", sku: "S1", barcode: null, pricePerUnit: 5 }],
+        "New Name,S1,,10\nNew Name,,,12\n",
+      ],
+      [
+        "a row gives a product a barcode, a later row carries that barcode",
+        [{ id: "prod-a", name: "Cola", sku: "S1", barcode: null, pricePerUnit: 5 }],
+        "Cola,S1,B1,10\nOther,S2,B1,11\n",
+      ],
+    ])("%s", async (_title, initial, body) => {
+      const csv = "Item Name,SKU,Barcode,Rate\n" + body;
+      statefulCatalog(initial as any[]);
+      const preview = await service.importProducts(Buffer.from(csv), "user-1", { dryRun: true });
+      statefulCatalog(initial as any[]);
+      const real = await service.importProducts(Buffer.from(csv), "user-1");
+
+      expect(plan(real)).toEqual(plan(preview));
+      expect(real.created + real.updated + real.unchanged + real.skipped).toBe(2);
+      expect(real.skipped).toBe(1); // the second row always resolves to the first row's product
+    });
+
+    function statefulCustomers(initial: any[]) {
+      const store = initial.map((c) => ({ addresses: [], contactPersons: [], ...c }));
+      prisma.customer.findFirst.mockImplementation(async (args: any) => {
+        const z = args?.where?.zohoContactId;
+        return store.find((c) => z !== undefined && c.zohoContactId === z) ?? null;
+      });
+      prisma.customer.findMany.mockImplementation(async (args: any) => {
+        const n = args?.where?.businessName?.equals?.toLowerCase();
+        const hits = store.filter((c) => n !== undefined && c.businessName.toLowerCase() === n);
+        return hits.slice(0, args?.take ?? hits.length);
+      });
+      prisma.user.create.mockResolvedValue({ id: "user-new" });
+      prisma.customer.create.mockImplementation(async (args: any) => {
+        const c = {
+          id: `cust-${store.length + 1}`,
+          addresses: [],
+          contactPersons: [],
+          ...args.data,
+        };
+        store.push(c);
+        return c;
+      });
+    }
+
+    it.each([
+      ["same name twice, no Customer ID", "New Co,,500\nNew Co,,600\n"],
+      ["same Customer ID twice", "New Co,ZC-1,500\nRenamed Co,ZC-1,600\n"],
+      ["same name, two different Customer IDs", "Acme,ZC-1,500\nAcme,ZC-2,600\n"],
+    ])("contacts: %s", async (_title, body) => {
+      const csv = "Customer Name,Customer ID,Credit Limit\n" + body;
+      statefulCustomers([]);
+      const preview = await service.importContacts(Buffer.from(csv), "user-1", { dryRun: true });
+      statefulCustomers([]);
+      const real = await service.importContacts(Buffer.from(csv), "user-1");
+
+      expect(plan(real)).toEqual(plan(preview));
+      expect(real.created).toBe(1);
+      expect(real.skipped).toBe(1);
+    });
+  });
+
+  // ── SA-305 (1) + SA-284 round-2 pins ─────────────────────────────────────────────────────────
+  describe("SA-305 / SA-284 row rules", () => {
+    const matchedCustomer = (extra: Record<string, unknown> = {}) => ({
+      id: "cust-1",
+      businessName: "Acme Supply",
+      zohoContactId: "ZC-1",
+      addresses: [],
+      contactPersons: [],
+      ...extra,
+    });
+
+    it("a Notes cell over the limit skips the row naming the column and the limit — never truncated", async () => {
+      prisma.customer.findFirst.mockResolvedValue(matchedCustomer());
+      const csv = `Customer Name,Customer ID,Notes\nAcme Supply,ZC-1,${"n".repeat(2001)}\n`;
+
+      const result = await service.importContacts(Buffer.from(csv), "user-1");
+
+      expect(result.skippedRows).toEqual([
+        { row: 1, label: "Acme Supply", reason: "Notes: must be 2000 characters or fewer" },
+      ]);
+      expect(prisma.customer.update).not.toHaveBeenCalled();
+      expect(customers.update).not.toHaveBeenCalled();
+    });
+
+    it("an unmapped Payment Terms integer warns in the PREVIEW too, and the planned diff leaves terms unset", async () => {
+      prisma.customer.findFirst.mockResolvedValue(
+        matchedCustomer({ defaultPaymentTerms: "Net 15" }),
+      );
+      const csv = "Customer Name,Customer ID,Payment Terms\nAcme Supply,ZC-1,90\n";
+
+      const preview = await service.importContacts(Buffer.from(csv), "user-1", { dryRun: true });
+
+      expect(preview.skippedRows).toEqual([]);
+      expect(preview.rows[0]).toMatchObject({ action: "update", changes: {} });
+      expect(preview.warnings).toEqual([
+        expect.stringMatching(
+          /^Row 1 \(Acme Supply\): Payment Terms "90" is not a recognized term/,
+        ),
+      ]);
+      expect(customers.update).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ["0", "Due on Receipt"],
+      ["15", "Net 15"],
+      ["60", "Net 60"],
+    ])("Payment Terms %s maps to %s on the written row", async (raw, label) => {
+      prisma.customer.findFirst.mockResolvedValue(matchedCustomer());
+      const csv = `Customer Name,Customer ID,Payment Terms\nAcme Supply,ZC-1,${raw}\n`;
+
+      const result = await service.importContacts(Buffer.from(csv), "user-1");
+
+      expect(result.warnings).toEqual([]);
+      expect(customers.update.mock.calls[0]?.[1]).toEqual({ defaultPaymentTerms: label });
+    });
+
+    it("blank never clears — every product column blank except the key and Rate diffs to Rate alone", async () => {
+      prisma.product.findFirst.mockResolvedValue({
+        id: "prod-1",
+        name: "Widget Pro",
+        sku: "SKU-1",
+        barcode: "BC-1",
+        unit: "case",
+        pricePerUnit: 10,
+        priceTier2: 9,
+        priceTier3: 8,
+        priceTier4: 7,
+        priceTier5: 6,
+        unitsPerBox: 12,
+        category: "Widgets",
+        description: "A widget",
+        standardCost: 4.5,
+        msrp: 19.99,
+        isTobacco: true,
+        reorderPoint: 3,
+        reorderQty: 24,
+      });
+      const headers = PRODUCT_COLUMNS.map((c) => c.canonical);
+      const cells = PRODUCT_COLUMNS.map((c) =>
+        c.field === "sku" ? "SKU-1" : c.field === "pricePerUnit" ? "12" : "",
+      );
+      const csv = `${headers.join(",")}\n${cells.join(",")}\n`;
+
+      await service.importProducts(Buffer.from(csv), "user-1");
+
+      expect(productsService.update).toHaveBeenCalledTimes(1);
+      expect(productsService.update.mock.calls[0]?.[1]).toEqual({ pricePerUnit: 12 });
+    });
+
+    it("blank never clears — every customer column blank except the keys and Tax ID diffs to Tax ID alone", async () => {
+      prisma.customer.findFirst.mockResolvedValue(
+        matchedCustomer({
+          defaultPaymentTerms: "Net 30",
+          pricingTier: 2,
+          creditLimit: 500,
+          isTaxExempt: true,
+          taxId: "old-id",
+          tobaccoLicenseNo: "TL-1",
+          tobaccoLicenseExpiry: new Date("2030-01-01"),
+          deliveryWindowStart: "08:00",
+          deliveryWindowEnd: "12:00",
+          smsConsent: true,
+          waConsent: true,
+        }),
+      );
+      const headers = CUSTOMER_COLUMNS.map((c) => c.canonical);
+      const cells = CUSTOMER_COLUMNS.map((c) =>
+        c.field === "businessName"
+          ? "Acme Supply"
+          : c.field === "zohoContactId"
+            ? "ZC-1"
+            : c.field === "taxId"
+              ? "new-id"
+              : "",
+      );
+      const csv = `${headers.join(",")}\n${cells.join(",")}\n`;
+
+      await service.importContacts(Buffer.from(csv), "user-1");
+
+      expect(customers.update).toHaveBeenCalledTimes(1);
+      expect(customers.update.mock.calls[0]?.[1]).toEqual({ taxId: "new-id" });
+      expect(customers.update.mock.calls[0]?.[2]).toEqual({ compliance: undefined });
+      expect(customers.setCustomerConsent).not.toHaveBeenCalled();
+    });
+
+    it("one write path for contacts: the raw contact-details write never carries a commercial field", async () => {
+      prisma.customer.findFirst.mockResolvedValue(matchedCustomer());
+      const future = new Date(Date.now() + 365 * 86_400_000).toISOString().slice(0, 10);
+      const csv =
+        "Customer Name,Customer ID,Payment Terms,Pricing Tier,Credit Limit,Tax Exempt,Tax ID," +
+        "Tobacco Licence No,Tobacco Licence Expiry,SMS Consent,WhatsApp Consent\n" +
+        `Acme Supply,ZC-1,Net 30,3,1500,Yes,12-3456789,TL-9,${future},Yes,No\n`;
+
+      await service.importContacts(Buffer.from(csv), "user-1");
+
+      const rawData = prisma.customer.update.mock.calls[0]?.[0]?.data ?? {};
+      for (const field of [
+        "defaultPaymentTerms",
+        "pricingTier",
+        "creditLimit",
+        "isTaxExempt",
+        "taxId",
+        "tobaccoLicenseNo",
+        "tobaccoLicenseExpiry",
+        "smsConsent",
+        "waConsent",
+        "consentUpdatedAt",
+      ]) {
+        expect(rawData).not.toHaveProperty(field);
+      }
+      expect(customers.update).toHaveBeenCalledTimes(1);
+      expect(customers.setCustomerConsent).toHaveBeenCalledWith(
+        "cust-1",
+        { smsConsent: true },
+        { userId: "user-1", source: "import", fileName: undefined, row: 1 },
+      );
+    });
+
+    it('an "Average Cost" column is reported unknown and never reaches a create or update', async () => {
+      prisma.product.findFirst.mockImplementation(async (args: any) =>
+        args?.where?.sku === "SKU-1"
+          ? { id: "prod-1", name: "Widget Pro", sku: "SKU-1", pricePerUnit: 10, standardCost: 1 }
+          : null,
+      );
+      const csv =
+        "Item Name,SKU,Rate,Cost,Average Cost\nWidget Pro,SKU-1,10,2,3.5\nNew Widget,SKU-2,5,1,0.75\n";
+
+      const result = await service.importProducts(Buffer.from(csv), "user-1");
+
+      expect(result.unknownColumns).toEqual(["Average Cost"]);
+      expect(productsService.update.mock.calls[0]?.[1]).toEqual({ standardCost: 2 });
+      expect(productsService.create.mock.calls[0]?.[0]).toMatchObject({ standardCost: 1 });
+      expect(productsService.create.mock.calls[0]?.[0]).not.toHaveProperty("averageCost");
+    });
+
+    it("a new product pack is written; an existing null pack is filled; an equal pack is no diff", async () => {
+      prisma.product.findFirst.mockImplementation(async (args: any) =>
+        args?.where?.sku === "NULL-PACK"
+          ? { id: "prod-null", name: "Null Pack", sku: "NULL-PACK", unitsPerBox: null }
+          : args?.where?.sku === "SAME-PACK"
+            ? { id: "prod-same", name: "Same Pack", sku: "SAME-PACK", unitsPerBox: 12 }
+            : null,
+      );
+      const csv =
+        "Item Name,SKU,Rate,Units Per Box\n" +
+        "Brand New,NEW-PACK,5,24\nNull Pack,NULL-PACK,,12\nSame Pack,SAME-PACK,,12\n";
+
+      const result = await service.importProducts(Buffer.from(csv), "user-1");
+
+      expect(productsService.create.mock.calls[0]?.[0]).toMatchObject({ unitsPerBox: 24 });
+      expect(productsService.update).toHaveBeenCalledTimes(1);
+      expect(productsService.update.mock.calls[0]).toEqual([
+        "prod-null",
+        { unitsPerBox: 12 },
+        { suppressEmit: true },
+      ]);
+      expect(result.unchanged).toBe(1);
+    });
+
+    it.each([
+      ["money", "Item Name,SKU,Rate\nWidget,SKU-1,abc\n", "Rate: not a number"],
+      ["negative money", "Item Name,SKU,Rate\nWidget,SKU-1,-3\n", "Rate: must not be negative"],
+      ["int", "Item Name,SKU,Rate,Units Per Box\nWidget,SKU-1,5,1.5\n", "Units Per Box:"],
+      ["bool", "Item Name,SKU,Rate,Tobacco\nWidget,SKU-1,5,maybe\n", "Tobacco:"],
+    ])(
+      "a bad %s cell skips the product row with its reason, never a partial write",
+      async (_k, csv, reason) => {
+        const result = await service.importProducts(Buffer.from(csv), "user-1");
+
+        expect(productsService.create).not.toHaveBeenCalled();
+        expect(productsService.update).not.toHaveBeenCalled();
+        expect(result.skippedRows[0]?.reason.startsWith(reason)).toBe(true);
+      },
+    );
+
+    it.each([
+      ["tier", "Pricing Tier", "7", "Pricing Tier:"],
+      ["date", "Tobacco Licence Expiry", "next week", "Tobacco Licence Expiry:"],
+      ["consent", "SMS Consent", "sure", "SMS Consent:"],
+      ["money", "Credit Limit", "lots", "Credit Limit: not a number"],
+      ["terms word", "Payment Terms", "whenever", "Payment Terms:"],
+    ])("a bad %s cell skips the customer row with its reason", async (_k, header, cell, reason) => {
+      prisma.customer.findFirst.mockResolvedValue(matchedCustomer());
+      const csv = `Customer Name,Customer ID,${header}\nAcme Supply,ZC-1,${cell}\n`;
+
+      const result = await service.importContacts(Buffer.from(csv), "user-1");
+
+      expect(prisma.customer.update).not.toHaveBeenCalled();
+      expect(customers.update).not.toHaveBeenCalled();
+      expect(customers.setCustomerConsent).not.toHaveBeenCalled();
+      expect(result.skippedRows[0]?.reason.startsWith(reason)).toBe(true);
+    });
+
+    it.each([
+      ["yes", true],
+      ["TRUE", true],
+      ["1", true],
+      ["no", false],
+      ["False", false],
+      ["0", false],
+    ])(
+      "consent literal %s sets the flag to %s (through setCustomerConsent)",
+      async (cell, value) => {
+        prisma.customer.findFirst.mockResolvedValue(
+          matchedCustomer({ smsConsent: !value, waConsent: false }),
+        );
+        const csv = `Customer Name,Customer ID,SMS Consent\nAcme Supply,ZC-1,${cell}\n`;
+
+        await service.importContacts(Buffer.from(csv), "user-1", { fileName: "c.csv" });
+
+        expect(customers.setCustomerConsent).toHaveBeenCalledWith(
+          "cust-1",
+          { smsConsent: value },
+          { userId: "user-1", source: "import", fileName: "c.csv", row: 1 },
+        );
+      },
+    );
   });
 
   // ── Pins (SA-284 / rulings-s4-s5.md S4) — not in the red gate ───────────────
@@ -292,7 +819,67 @@ describe("ImportService — commercial columns (B858/B859)", () => {
       expect(skipped.some((r: any) => /duplicate of row/.test(r.reason))).toBe(true);
     });
 
-    it("P10: blank cells never clear an existing value on an update row", async () => {
+    it("I1: two rows matching the SAME existing product (via different keys) — the second is a duplicate, not a second update", async () => {
+      // Both rows name-match the SAME existing product "Cola" (sku C-1); their own SKUs miss.
+      prisma.product.findFirst.mockImplementation(async (args: any) =>
+        args?.where?.sku === "C-1"
+          ? { id: "prod-cola", name: "Cola", sku: "C-1", pricePerUnit: 9 }
+          : null,
+      );
+      prisma.product.findMany.mockResolvedValue([
+        { id: "prod-cola", name: "Cola", sku: "C-1", pricePerUnit: 9 },
+      ]);
+      const csv = "Item Name,SKU,Rate\nCola,SUP-1,10\nCola,SUP-2,11\n";
+
+      const result = await service.importProducts(Buffer.from(csv), "user-1");
+
+      // Neither row silently rewrites C-1's SKU via two independent updates — row 2 is a skip.
+      expect(productsService.update).toHaveBeenCalledTimes(0);
+      const skipped = (result as any).skippedRows ?? [];
+      expect(skipped.length).toBe(2);
+      expect(
+        skipped.every((r: any) =>
+          /SKU \S+ not found; name matches a product with SKU C-1/.test(r.reason),
+        ),
+      ).toBe(true);
+    });
+
+    it("I1: an unmatched SKU never falls back to a name match on a product with a DIFFERENT sku", async () => {
+      prisma.product.findFirst.mockResolvedValue(null); // SKU miss
+      prisma.product.findMany.mockResolvedValue([
+        { id: "prod-cola", name: "Cola", sku: "C-1", pricePerUnit: 9 },
+      ]);
+      const csv = "Item Name,SKU,Rate\nCola,SUP-9,10\n";
+
+      const result = await service.importProducts(Buffer.from(csv), "user-1");
+
+      expect(productsService.update).not.toHaveBeenCalled();
+      expect(productsService.create).not.toHaveBeenCalled();
+      expect((result as any).skippedRows?.[0]?.reason).toBe(
+        "SKU SUP-9 not found; name matches a product with SKU C-1",
+      );
+    });
+
+    it("I1: preview and real run produce the SAME plan for two same-name, no-existing-product creates with differing SKUs", async () => {
+      // Nothing in the DB matches by sku, barcode, or name — a real, sequential run would create
+      // row 1, then see it via a name lookup for row 2 and (correctly) skip row 2 rather than
+      // silently rewriting row 1's SKU. The in-file `virtualCreates` fallback must make dryRun
+      // predict the exact same outcome, since nothing is actually written in a dry run.
+      prisma.product.findFirst.mockResolvedValue(null);
+      prisma.product.findMany.mockResolvedValue([]);
+      const csv = "Item Name,SKU,Rate\nCola,SUP-1,10\nCola,SUP-2,11\n";
+      const importAny = service.importProducts.bind(service) as any;
+
+      const preview = await importAny(Buffer.from(csv), "user-1", { dryRun: true });
+
+      expect(preview.rows[0]).toMatchObject({ action: "create" });
+      expect(preview.rows[1]).toMatchObject({ action: "skip" });
+      expect(preview.rows[1].reason).toMatch(
+        /SKU SUP-2 not found; name matches a product with SKU SUP-1/,
+      );
+    });
+
+    it("P10: a blank cell never clears an existing value on an update row (M9: deterministic — Rate always forces the update)", async () => {
       prisma.product.findFirst.mockResolvedValue({
         id: "prod-1",
         name: "Widget Pro",
@@ -300,17 +887,46 @@ describe("ImportService — commercial columns (B858/B859)", () => {
         barcode: null,
         unitsPerBox: 12,
         category: "Widgets",
+        pricePerUnit: 10,
       });
-      const csv = "Item Name,SKU,Category\nWidget Pro,SKU-1,\n";
+      // Rate differs (10 -> 12), so `update` is unconditionally called; Category is blank so it
+      // must be absent from the diff — no if/else that would pass whether or not update ran.
+      const csv = "Item Name,SKU,Category,Rate\nWidget Pro,SKU-1,,12\n";
 
       await service.importProducts(Buffer.from(csv), "user-1");
 
-      if (productsService.update.mock.calls.length > 0) {
-        const dto = productsService.update.mock.calls[0]?.[1] ?? {};
-        expect(dto).not.toHaveProperty("category");
-      } else {
-        expect(productsService.update).not.toHaveBeenCalled();
-      }
+      expect(productsService.update).toHaveBeenCalledTimes(1);
+      const dto = productsService.update.mock.calls[0]?.[1] ?? {};
+      expect(dto).not.toHaveProperty("category");
+      expect(dto).toMatchObject({ pricePerUnit: 12 });
+    });
+
+    it("P10b: blank-never-clears also holds for a money field, a bool field, and an int field", async () => {
+      prisma.customer.findFirst.mockResolvedValue({
+        id: "cust-1",
+        businessName: "Acme Supply",
+        zohoContactId: "ZC-1",
+        creditLimit: 500,
+        isTaxExempt: true,
+        pricingTier: 2,
+        taxId: "existing-id",
+        addresses: [],
+        contactPersons: [],
+      });
+      // Credit Limit/Tax Exempt/Pricing Tier are all blank; only Tax ID changes, so `update` is
+      // unconditionally called and the blank columns must be absent from the diff.
+      const csv =
+        "Customer Name,Customer ID,Credit Limit,Tax Exempt,Pricing Tier,Tax ID\n" +
+        "Acme Supply,ZC-1,,,,new-id\n";
+
+      await service.importContacts(Buffer.from(csv), "user-1");
+
+      expect(customers.update).toHaveBeenCalledTimes(1);
+      const dto = customers.update.mock.calls[0]?.[1] ?? {};
+      expect(dto).not.toHaveProperty("creditLimit");
+      expect(dto).not.toHaveProperty("isTaxExempt");
+      expect(dto).not.toHaveProperty("pricingTier");
+      expect(dto).toMatchObject({ taxId: "new-id" });
     });
 
     it('P11: pack rule — existing 6 vs row 12 skips "pack changes are made in the product editor"', async () => {
@@ -330,7 +946,89 @@ describe("ImportService — commercial columns (B858/B859)", () => {
       ).toBe(true);
     });
 
-    it("P12: consent audit meta shape is exact; no call when the consent cell is unchanged", async () => {
+    it("M1: an MSRP of 0 against an existing null MSRP is idempotent — no update call, no diff", async () => {
+      prisma.product.findFirst.mockResolvedValue({
+        id: "prod-1",
+        name: "Widget Pro",
+        sku: "SKU-1",
+        msrp: null,
+      });
+      const csv = "Item Name,SKU,MSRP\nWidget Pro,SKU-1,0\n";
+
+      const result = await service.importProducts(Buffer.from(csv), "user-1");
+
+      expect(productsService.update).not.toHaveBeenCalled();
+      expect(result.unchanged).toBe(1);
+    });
+
+    it("M1: a genuine positive MSRP still diffs and writes against an existing null MSRP", async () => {
+      prisma.product.findFirst.mockResolvedValue({
+        id: "prod-1",
+        name: "Widget Pro",
+        sku: "SKU-1",
+        msrp: null,
+      });
+      const csv = "Item Name,SKU,MSRP\nWidget Pro,SKU-1,19.99\n";
+
+      await service.importProducts(Buffer.from(csv), "user-1");
+
+      expect(productsService.update).toHaveBeenCalledWith(
+        "prod-1",
+        expect.objectContaining({ msrp: 19.99 }),
+        expect.anything(),
+      );
+    });
+
+    it("M2: standardCost 1.2345 -> 1.2349 is a real change at 4dp, not dropped as unchanged", async () => {
+      prisma.product.findFirst.mockResolvedValue({
+        id: "prod-1",
+        name: "Widget Pro",
+        sku: "SKU-1",
+        standardCost: 1.2345,
+      });
+      const csv = "Item Name,SKU,Standard Cost\nWidget Pro,SKU-1,1.2349\n";
+
+      const result = await service.importProducts(Buffer.from(csv), "user-1");
+
+      expect(productsService.update).toHaveBeenCalledWith(
+        "prod-1",
+        expect.objectContaining({ standardCost: 1.2349 }),
+        expect.anything(),
+      );
+      expect(result.unchanged).toBe(0);
+    });
+
+    it("M3: a row with no name skips 'Name is required' (checked before Rate)", async () => {
+      prisma.product.findFirst.mockResolvedValue(null);
+      const csv = "Item Name,SKU,Rate\n,SKU-9,10\n";
+
+      const result = await service.importProducts(Buffer.from(csv), "user-1");
+
+      expect(productsService.create).not.toHaveBeenCalled();
+      expect((result as any).skippedRows?.[0]?.reason).toBe("Name is required");
+    });
+
+    it("SA-305 (1): an unmapped Payment Terms integer (7) imports the row with terms unset and a warning naming it", async () => {
+      prisma.customer.findFirst.mockResolvedValue({
+        id: "cust-1",
+        businessName: "Acme Supply",
+        zohoContactId: "ZC-1",
+        addresses: [],
+        contactPersons: [],
+      });
+      const csv = "Customer Name,Customer ID,Payment Terms\nAcme Supply,ZC-1,7\n";
+
+      const result = await service.importContacts(Buffer.from(csv), "user-1");
+
+      expect((result as any).skippedRows ?? []).toHaveLength(0);
+      const dto = customers.update.mock.calls[0]?.[1] ?? {};
+      expect(dto).not.toHaveProperty("defaultPaymentTerms");
+      expect(result.warnings).toEqual(
+        expect.arrayContaining([expect.stringMatching(/Payment Terms "7"/)]),
+      );
+    });
+
+    it("P12: no consent call when the consent cell is unchanged", async () => {
       prisma.customer.findFirst.mockResolvedValue({
         id: "cust-1",
         businessName: "Acme Supply",
@@ -344,6 +1042,34 @@ describe("ImportService — commercial columns (B858/B859)", () => {
       await service.importContacts(Buffer.from(csv), "user-1");
 
       expect(auditService.log).not.toHaveBeenCalled();
+      expect(customers.setCustomerConsent).not.toHaveBeenCalled();
+    });
+
+    it("P12b: setCustomerConsent evidence meta shape is exact (source, userId, fileName, row, channel, value)", async () => {
+      prisma.customer.findFirst.mockResolvedValue({
+        id: "cust-1",
+        businessName: "Acme Supply",
+        zohoContactId: "ZC-1",
+        smsConsent: false,
+        waConsent: false,
+        addresses: [],
+        contactPersons: [],
+      });
+      const csv =
+        "Customer Name,Customer ID,SMS Consent,WhatsApp Consent\nAcme Supply,ZC-1,Yes,Yes\n";
+
+      await service.importContacts(Buffer.from(csv), "user-1", { fileName: "contacts.csv" });
+
+      expect(customers.setCustomerConsent).toHaveBeenCalledTimes(1);
+      const [id, consent, evidence] = customers.setCustomerConsent.mock.calls[0];
+      expect(id).toBe("cust-1");
+      expect(consent).toEqual({ smsConsent: true, waConsent: true });
+      expect(evidence).toEqual({
+        userId: "user-1",
+        source: "import",
+        fileName: "contacts.csv",
+        row: 1,
+      });
     });
 
     it("P13: an expired tobacco licence still imports and warns", async () => {
@@ -385,6 +1111,52 @@ describe("ImportService — commercial columns (B858/B859)", () => {
       await service.importProducts(Buffer.from(csv), "user-1");
 
       expect(productsService.emitCatalogBulkChanged).toHaveBeenCalledTimes(1);
+    });
+
+    it("P15b: zero emitCatalogBulkChanged() calls when nothing actually changed", async () => {
+      prisma.product.findFirst.mockResolvedValue({
+        id: "prod-1",
+        name: "Widget Pro",
+        sku: "SKU-1",
+        pricePerUnit: 10,
+      });
+      const csv = "Item Name,SKU,Rate\nWidget Pro,SKU-1,10\n";
+
+      const result = await service.importProducts(Buffer.from(csv), "user-1");
+
+      expect(result.unchanged).toBe(1);
+      expect(productsService.update).not.toHaveBeenCalled();
+      expect(productsService.emitCatalogBulkChanged).not.toHaveBeenCalled();
+    });
+
+    it("P14b: importContacts dryRun writes nothing (no identity/address writes, no update, no consent, no grace)", async () => {
+      prisma.customer.findFirst.mockResolvedValue(null);
+      const csv = "Customer Name,Credit Limit,SMS Consent\nBrand New Co,500,Yes\n";
+      const importAny = service.importContacts.bind(service) as any;
+
+      await importAny(Buffer.from(csv), "user-1", { dryRun: true });
+
+      expect(prisma.customer.create).not.toHaveBeenCalled();
+      expect(prisma.user.create).not.toHaveBeenCalled();
+      expect(customers.update).not.toHaveBeenCalled();
+      expect(customers.setCustomerConsent).not.toHaveBeenCalled();
+      expect(customers.maybeStartCustomerGrace).not.toHaveBeenCalled();
+    });
+
+    it("source pin (SA-284 a): importProducts NEVER calls raw prisma.product.create/update", async () => {
+      prisma.product.findFirst.mockImplementation(async (args: any) =>
+        args?.where?.sku === "SKU-1"
+          ? { id: "prod-1", name: "Widget Pro", sku: "SKU-1", pricePerUnit: 10 }
+          : null,
+      );
+      const csv = "Item Name,SKU,Rate\nWidget Pro,SKU-1,12\nBrand New Widget,SKU-2,5\n";
+
+      await service.importProducts(Buffer.from(csv), "user-1");
+
+      expect(prisma.product.create).not.toHaveBeenCalled();
+      expect(prisma.product.update).not.toHaveBeenCalled();
+      expect(productsService.update).toHaveBeenCalledTimes(1);
+      expect(productsService.create).toHaveBeenCalledTimes(1);
     });
   });
 });

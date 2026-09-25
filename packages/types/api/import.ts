@@ -54,7 +54,11 @@ export const PRODUCT_IMPORT_COLUMNS: ImportColumnAlias[] = [
     aliases: ["Units Per Box", "Pack Size", "Case Qty", "Units/Box"],
   },
   { field: "category", canonical: "Category", aliases: ["Category", "Item Category"] },
-  { field: "description", canonical: "Description", aliases: ["Description"] },
+  {
+    field: "description",
+    canonical: "Description",
+    aliases: ["Description", "Item Description"],
+  },
   {
     field: "standardCost",
     canonical: "Cost",
