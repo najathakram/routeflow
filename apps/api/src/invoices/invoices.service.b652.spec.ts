@@ -324,6 +324,10 @@ describe("InvoicesService — B652 unit-line partial billing", () => {
 
     it("basis=delivered: 50 of 60 reconciles to 4 Cases + 2 pcs and invoicedQty is set to 50", async () => {
       armReconcile(120);
+      // SA-113a: "delivered" bills the evidence rows, not the OrderItem.deliveredQty column.
+      prisma.deliveryMutation.findMany.mockResolvedValue([
+        { orderItemId: "oi-1", type: "DELIVERED", quantityDelivered: 50 },
+      ]);
       await service.reconcileOrderDraftInvoice("o1", { basis: "delivered" });
       const line = prisma.invoice.update.mock.calls[0][0].data.items.create[0];
       expect(line).toMatchObject({ boxes: 4, pieces: 2, qty: 50, unitLabel: "Case" });
@@ -421,6 +425,10 @@ describe("InvoicesService — B652 unit-line partial billing", () => {
       prisma.invoice.update.mockResolvedValue({ id: "d1", status: InvoiceStatus.DRAFT, items: [] });
       prisma.orderItem.update.mockResolvedValue({});
       prisma.orderItem.findMany.mockResolvedValue([{ id: "oi-1" }]);
+      // SA-113a: the delivered basis is the evidence rows, not the deliveredQty column.
+      prisma.deliveryMutation.findMany.mockResolvedValue([
+        { orderItemId: "oi-1", type: "DELIVERED", quantityDelivered: 50 },
+      ]);
 
       await service.reconcileOrderDeliveredInvoices("ord-1", prisma);
 
