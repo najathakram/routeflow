@@ -3369,7 +3369,7 @@ export class InvoicesService {
         warn: (m) => this.logger.warn(`update(): invoiceId ${id} ${m}`),
       });
       const itemsData = editLines.map((l) => l.data);
-      let subtotal = roundMoney(itemsData.reduce((s, it) => s + Number(it.subtotal), 0));
+      const subtotal = roundMoney(itemsData.reduce((s, it) => s + Number(it.subtotal), 0));
       await this.applyMsrpSnapshots(
         this.prisma.forTenant(),
         inv.customerId,
