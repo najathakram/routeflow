@@ -904,9 +904,10 @@ export class RegulatedLedgerService {
    * ONE parked reversal row. Lives here (not a separate injectable) because both
    * `buildLineRemainingBalances` and `bookReversalChunk` are private to this class — SA-090's
    * own note. `ParkedReversalResolutionService` (returns module) is the thin claim-first/audit
-   * wrapper that calls this inside its own transaction, under the Return then Order row locks (no advisory lock); this method does no
-   * claiming, no locking and no auditing, only the classify/correct/book money math, so it can
-   * be called from inside the wrapper's own locked `tenantTransaction`.
+   * wrapper that calls this inside its own transaction, under the Return then Order row locks (no
+   * advisory lock); this method does no claiming, no locking and no auditing, only the
+   * classify/correct/book money math, so it can be called from inside the wrapper's own locked
+   * `tenantTransaction`.
    *
    * WHICH PACK (SA-089 §1, unchanged): re-runs `classifySaleAxis` with the sale row's OWN line
    * shape, `unitsPerBox` REPLACED by the operator-supplied pack (never the line's own
@@ -1136,7 +1137,7 @@ export class RegulatedLedgerService {
     let filedPeriod: { periodKey: string; status: string } | null = null;
     if (parked.periodBucket && parked.periodBucket !== currentBucket) {
       const bucketStart = new Date(`${parked.periodBucket}-01T00:00:00.000Z`);
-      const filing = await db.regulatedFiling?.findFirst?.({
+      const filing = await db.regulatedFiling.findFirst({
         where: {
           trackedCategoryId: saleRow.trackedCategoryId,
           periodStart: { lte: bucketStart },

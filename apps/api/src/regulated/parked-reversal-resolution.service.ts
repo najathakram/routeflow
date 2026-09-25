@@ -7,7 +7,8 @@ import { RegulatedLedgerService } from "./regulated-ledger.service";
  * SA-089/SA-089a/SA-089b — B660 PR B: the OPERATOR resolution of a parked regulated-ledger
  * reversal (B681/SA-067(3) parked one because the sold line's box/piece axis could not be
  * classified — `regulated-ledger.service.ts`'s `parkReturnReversal`/`bookReversalChunk`). The
- * claim-first transaction shape mirrors `ParkedRestockResolutionService` exactly; the actual
+ * transaction shape (Return then Order row locks, then the conditional claim) follows
+ * `ParkedRestockResolutionService`, with the lock order made explicit; the actual
  * money math (classify → correct → book) lives on `RegulatedLedgerService.resolveParkedReversal`
  * — both `buildLineRemainingBalances` and `bookReversalChunk` are PRIVATE to that class
  * (SA-090), so the resolution logic lives there rather than duplicating either.

@@ -1,11 +1,11 @@
 /**
  * SA-089a (amends SA-089, SA error E50) / SA-134 (SA error E51) — real-Postgres proof of
  * `ParkedReversalResolutionService.resolve()` / `RegulatedLedgerService.resolveParkedReversal`
- * for a legacy (box-axis) line, through the REAL service + REAL advisory lock, not a mocked
- * Prisma client. `regulated-ledger.service.spec.ts`'s mocked suite already pins the same
+ * for a legacy (box-axis) line, through the REAL service + REAL Postgres row locks (Return, then
+ * Order), not a mocked Prisma client. `regulated-ledger.service.spec.ts`'s mocked suite already pins the same
  * formulas at the unit level (`resolveParkedReversal — SA-089` describe block) — this file
- * proves the same money math survives the real DB round-trip AND the real order-keyed
- * `order-merge` advisory lock (SA-089a(c)), which a mock can't exercise.
+ * proves the same money math survives the real DB round-trip AND the real `Return`/`Order`
+ * `FOR UPDATE` row locks (SA-089a(c), SA-170), which a mock can't exercise.
  *
  * Scenarios, per SA-089a's own worked examples:
  *  (i)   legacy fully voided -> CLOSES, zero rows written, filing unaffected.
@@ -20,7 +20,7 @@
  *  (iv)  after (ii), the SALE re-classifies as piece-axis on its own -> a LATER return against
  *        the same line does not park again (SA-070 hazard 2, through the real classifier).
  *  (v)   two concurrent resolve() calls on parked rows sharing ONE order serialize on the
- *        order-keyed advisory lock -> the second's booking sees the first's correction already
+ *        Order row lock -> the second's booking sees the first's correction already
  *        applied, never a lost update.
  * Plus the two SA-089 pins still missing from the branch:
  *  - cancel-after-resolve: the booked REVERSAL is gone, the parked row stays resolved (its
@@ -30,9 +30,9 @@
  *    while parked, passes once resolved — the real-Postgres proof of the existing mocked pin
  *    in `regulated-filing-gate.spec.ts`.
  *
- * WHY THE DB LANE: SA-089a(c)'s lock is a REAL `pg_advisory_lock` on a dedicated connection
- * (`common/db-locks.ts`) — a mocked Prisma client cannot exercise a genuine two-connection race,
- * only real Postgres can. Collected only by `jest.db.config.js` (`.db.spec.ts$`), run via
+ * WHY THE DB LANE: SA-089a(c)/SA-170's locks are REAL `SELECT ... FOR UPDATE` row locks taken
+ * inside the resolution's own transaction — a mocked Prisma client cannot exercise a genuine
+ * two-connection race, only real Postgres can. Collected only by `jest.db.config.js` (`.db.spec.ts$`), run via
  * `npm run local:test:db`.
  *
  * SAFETY: a throwaway `qa-parkres-<run>` tenant (`assertTestTenant`); `afterAll` deletes exactly
@@ -316,7 +316,7 @@ describeDb(
       ledger = new RegulatedLedgerService(prisma);
       // Object.create bypasses Nest DI (mirrors return-reversal-unit-axis.db.spec.ts) — audit
       // logging isn't what this file proves, so it's stubbed; prisma/ledger are the REAL,
-      // connected instances, so resolve() runs its real transaction and its real advisory lock.
+      // connected instances, so resolve() runs its real transaction and its real row locks.
       svc = Object.assign(Object.create(ParkedReversalResolutionService.prototype), {
         prisma,
         audit: { log: async () => undefined },
@@ -775,6 +775,74 @@ describeDb(
       expect(ids).not.toContain(done.parkedRowId);
       const created = (listed as any[]).map((r) => new Date(r.createdAt).getTime());
       expect(created).toEqual([...created].sort((a, b) => a - b));
+    }, 30_000);
+
+    it("SA-182 / #2081 (Opus): a park backdated to month M and resolved in M+1 books the REVERSAL in M (the period the gate held open), the axis corrections in M+1, and M's gate then passes with the reversal included", async () => {
+      const now = new Date();
+      const prev = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 1, 15, 12, 0, 0));
+      const M = prev.toISOString().slice(0, 7);
+      const current = now.toISOString().slice(0, 7);
+      expect(M).not.toBe(current);
+
+      const f = await seedLegacyLine("backdated", {
+        qty: 5,
+        netSales: 50,
+        categoryTax: 10,
+        priorReversalBoxes: 2,
+        priorReversalNet: 20,
+        priorReversalTax: 4,
+        returnedPieces: 36,
+      });
+      // The park happened in M: its own bucket and the return's date.
+      await raw.regulatedLedgerParkedReversal.update({
+        where: { id: f.parkedRowId },
+        data: { periodBucket: M, createdAt: prev },
+      });
+
+      const before = await listParkedReversals(prisma.forTenant(), {
+        trackedCategoryId: categoryId,
+        buckets: [M],
+      });
+      expect(before.filter((p) => p.id === f.parkedRowId)).toHaveLength(1); // M held open
+
+      const result = await resolveAs(f.parkedRowId, 12);
+      expect(result.outcome).toBe("booked");
+      expect(result.amendedPeriod).toBeNull();
+
+      const reversal = await raw.regulatedSalesLedger.findFirst({
+        where: { id: result.resolvedEntryId! },
+      });
+      expect(reversal!.periodBucket).toBe(M);
+      expect(reversal!.soldAt.toISOString()).toBe(prev.toISOString());
+
+      // The axis-restatement rows are booked NOW (SA-134), each pointing back at the original.
+      const corrections = await raw.regulatedSalesLedger.findMany({
+        where: { orderItemId: f.orderItemId, correctsEntryId: { not: null } },
+      });
+      expect(corrections.length).toBeGreaterThan(0);
+      for (const c of corrections) expect(c.periodBucket).toBe(current);
+
+      // M's gate passes once resolved, and the reversal sits in M's rows.
+      const after = await listParkedReversals(prisma.forTenant(), {
+        trackedCategoryId: categoryId,
+        buckets: [M],
+      });
+      expect(after.filter((p) => p.id === f.parkedRowId)).toHaveLength(0);
+      expect(() =>
+        assertNoParkedReversals(
+          after.filter((p) => p.id === f.parkedRowId),
+          { categoryName: "Tobacco", periodKey: M },
+        ),
+      ).not.toThrow();
+      const inM = await raw.regulatedSalesLedger.findMany({
+        where: {
+          orderId: f.orderId,
+          periodBucket: M,
+          entryType: "REVERSAL",
+          correctsEntryId: null,
+        },
+      });
+      expect(inM.map((r) => r.id)).toContain(result.resolvedEntryId);
     }, 30_000);
 
     it("cancel-after-resolve: the booked REVERSAL is gone, the parked row stays resolved (resolvedEntryId dangles), the corrections survive", async () => {
