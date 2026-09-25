@@ -52,10 +52,17 @@ const TABLE: Record<string, Row> = {
   [tpl("createOrderFromTemplate")]: P("2b: standing orders (buyer-owned = BUYER_PORTAL)"),
   [ord("recomputeLineCategoryTaxes")]: X("categoryTaxAmount only"),
   [ord("deleteOrder")]: X("removes lines"),
-  [rt("completeWithPayment")]: P(
-    "ruling: at-door deliveredQty is uncapped against qty and is the billing basis",
+  // Owner ruling 2026-09-25 (#2093): at-door delivery of an order placed before a ban delivers up to the
+  // ordered quantity; any increase, added line or substitution is blocked. That ceiling is
+  // `assertDeliveriesFitStop` (pinned in routes/delivery-lines.util.spec.ts), so the path cannot sell more.
+  [rt("completeWithPayment")]: X(
+    "owner ruling 2026-09-25: deliver up to the ordered qty; the ceiling is assertDeliveriesFitStop (pinned)",
   ),
-  [rt("reopenStop")]: P("2a: reopen stop (revives cancelled lines, like reopenOrder)"),
+  // reopenStop resets delivery state on lines the order already carried; a cancelled line stays cancelled
+  // (pinned in routes.reopen-cancelled-lines.spec.ts), so it adds no sellable quantity of any product.
+  [rt("reopenStop")]: X(
+    "undoes a delivery, never a cancel: no line or qty is added (routes.reopen-cancelled-lines.spec.ts)",
+  ),
   // ── invoices / estimates / import (step 2b remainder) ──────────────────────────────────────
   [inv("create")]: G,
   [inv("update")]: P("2b: invoice update"),
@@ -102,9 +109,9 @@ const TABLE: Record<string, Row> = {
 };
 
 /** The RATCHET: how many rows are still PENDING. Lower it in the PR that flips a row to GUARDED. */
-const PENDING_BASELINE = 10;
+const PENDING_BASELINE = 8;
 /** GUARDED + PENDING: reclassifying a PENDING row to EXEMPT (an escape, not progress) must change THIS. */
-const ENFORCEMENT_POINTS = 16;
+const ENFORCEMENT_POINTS = 14; // -2: completeWithPayment and reopenStop reclassified EXEMPT with written reasons (#2093)
 const CHOKE_POINT = ["assertLinesSellable", "checkLinesSellable"];
 
 // ─── scanner (same rules as orders/unit-line-writers.ast.spec.ts; exercised on inline source) ──
