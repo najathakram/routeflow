@@ -69,6 +69,7 @@ import { EntitlementsService } from "../billing/entitlements.service";
 import { CommissionEngineService } from "../sales-agents/commission-engine.service";
 import { NumberingService } from "../import/numbering.service";
 import { describeDb, requireLocalDatabaseUrl } from "../common/testing/db-spec";
+import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const { assertTestTenant } = require("../../../../scripts/lib/test-tenants.cjs");
@@ -145,6 +146,10 @@ describeDb(
       const module: TestingModule = await Test.createTestingModule({
         providers: [
           InvoicesService,
+          {
+            provide: SellingRestrictionsService,
+            useValue: { assertLinesSellable: jest.fn().mockResolvedValue(undefined) },
+          },
           NumberingService,
           { provide: PrismaService, useValue: prisma },
           { provide: RouteFlowGateway, useValue: mockGateway },
