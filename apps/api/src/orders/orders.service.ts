@@ -4621,6 +4621,14 @@ export class OrdersService implements OnApplicationBootstrap {
     // skipped for partial billing — the credits are payment-level, not line-level.
     await this.prisma.tenantTransaction(
       async (tx) => {
+        // SA-218 (house lock order: advisory → Return → Order → Invoice): the Order row FIRST, before
+        // the sync/settle below write any Invoice, so the sync's OrderCreditNote insert (an FK KEY
+        // SHARE on this Order) is a no-wait on a row this tx holds, never an Invoice → Order edge.
+        // No caller still holds the Order when this opens (updateOrderItems' fold tx has committed;
+        // replayMergeReconcile has none — SA-093 trap (i)). A tenant-less (SUPER_ADMIN) session is
+        // unscoped anyway, so it locks by id rather than silently locking nothing.
+        const tenantId = this.prisma.getTenantId();
+        await tx.$queryRaw`SELECT id FROM "Order" WHERE id = ${orderId} AND (${tenantId}::text IS NULL OR "tenantId" = ${tenantId}) FOR UPDATE`;
         // EXPLICIT skip: `undefined` means "never touch the stored selection" (see the doc
         // comment) — an unverified replay lands here and must not re-point this order's credits.
         if (appliedCreditNotes !== undefined) {
