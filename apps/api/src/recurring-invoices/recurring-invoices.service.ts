@@ -8,7 +8,6 @@ import { SellingRestrictionsService } from "../selling-restrictions/selling-rest
 import { requireRestrictionTenantId } from "../selling-restrictions/restriction-tenant";
 import { blockedTemplateLines } from "./recurring-invoice-restrictions";
 import { NotificationsService } from "../notifications/notifications.service";
-import { AuditService } from "../audit/audit.service";
 import { CreateRecurringInvoiceDto } from "./dto/create-recurring-invoice.dto";
 import { UpdateRecurringInvoiceDto } from "./dto/update-recurring-invoice.dto";
 import { RecurringFrequency } from "@prisma/client";
@@ -36,7 +35,6 @@ export class RecurringInvoicesService {
     private readonly invoicesService: InvoicesService,
     private readonly sellingRestrictions: SellingRestrictionsService,
     private readonly notifications: NotificationsService,
-    private readonly audit: AuditService,
   ) {}
 
   // ─── Next run calculation ──────────────────────────────────────────────────
@@ -195,11 +193,34 @@ export class RecurringInvoicesService {
 
   /** Resume a paused template. Counterpart to deactivate() — the only path that
    *  sets isActive back to true (update() intentionally never maps isActive). */
-  async activate(id: string) {
+  async activate(id: string, actorUserId: string | null = null) {
     await this.findOne(id);
-    return this.prisma
-      .forTenant()
-      .recurringInvoice.update({ where: { id }, data: { isActive: true } });
+    return this.prisma.tenantTransaction(async (tx: any) => {
+      const updated = await tx.recurringInvoice.update({ where: { id }, data: { isActive: true } });
+      // F-05: a reactivation is an explicit, audited act (it may follow a selling-restriction suspension)
+      await this.auditInTx(tx, "recurring-invoice.reactivated", id, actorUserId, {});
+      return updated;
+    });
+  }
+
+  /** F-05: an audit row committed in the SAME transaction as the change it records. */
+  private async auditInTx(
+    tx: any,
+    action: string,
+    entityId: string,
+    userId: string | null,
+    meta: Record<string, unknown>,
+  ): Promise<void> {
+    await tx.auditLog.create({
+      data: {
+        tenantId: this.prisma.getTenantId(),
+        userId,
+        action,
+        entityType: "recurring-invoices",
+        entityId,
+        meta: meta as any,
+      },
+    });
   }
 
   async runNow(id: string) {
@@ -217,28 +238,43 @@ export class RecurringInvoicesService {
    *  archived product — never blocks generation, only makes the gap visible
    *  on the resulting invoice. Returns null when nothing is archived. */
   private async suspendForSellingRestriction(
-    ri: { id: string; customerId: string },
+    ri: {
+      id: string;
+      customerId: string;
+      frequency: RecurringFrequency;
+      dayOfWeek?: number | null;
+      dayOfMonth?: number | null;
+      nextRunAt?: Date | string | null;
+    },
     reasons: Array<{ productName?: string | null; ruleId?: string | null }>,
   ): Promise<void> {
     const names = [...new Set(reasons.map((r) => r.productName).filter(Boolean))].join(", ");
-    await this.prisma.forTenant().recurringInvoice.update({
-      where: { id: ri.id },
-      data: {
-        isActive: false,
-        lastRunStatus: RUN_STATUS_FAILED,
-        lastError: `Suspended: a line is under a selling restriction${names ? ` (${names})` : ""}. Fix the template and reactivate it.`,
-      },
-    });
-    await this.audit.log({
-      tenantId: this.prisma.getTenantId(),
-      userId: null, // the unattended run
-      action: "recurring-invoice.suspended",
-      entityType: "recurring-invoices",
-      entityId: ri.id,
-      meta: {
+    // The skipped cycle is NEVER billed as a make-up: nextRunAt moves to the next occurrence AFTER now in
+    // the SAME update that suspends, so reactivation resumes from the schedule. The flag and its audit row
+    // commit together (AuditService swallows errors, so it cannot be the record of a state change).
+    const now = new Date();
+    const dueAt = ri.nextRunAt ? new Date(ri.nextRunAt) : now;
+    const nextRunAt = this.calcNextRunAt(
+      ri.frequency,
+      ri.dayOfWeek,
+      ri.dayOfMonth,
+      dueAt.getTime() > now.getTime() ? dueAt : now,
+    );
+    await this.prisma.tenantTransaction(async (tx: any) => {
+      await tx.recurringInvoice.update({
+        where: { id: ri.id },
+        data: {
+          isActive: false,
+          nextRunAt,
+          lastRunStatus: RUN_STATUS_FAILED,
+          lastError: `Suspended: a line is under a selling restriction${names ? ` (${names})` : ""}. Fix the template and reactivate it; the skipped cycle is not billed.`,
+        },
+      });
+      await this.auditInTx(tx, "recurring-invoice.suspended", ri.id, null, {
         reason: "SELLING_RESTRICTED",
         ruleIds: [...new Set(reasons.map((r) => r.ruleId).filter(Boolean))],
-      },
+        skippedCycle: (ri.nextRunAt ? new Date(ri.nextRunAt) : now).toISOString(),
+      });
     });
     const operators = await this.prisma.user.findMany({
       where: {
@@ -494,8 +530,8 @@ export class RecurringInvoicesService {
 
         for (const ri of due) {
           try {
-            await this.generateInvoiceFromTemplate(ri);
-            totalSuccess++;
+            // null = skipped (cycle already claimed, or suspended by a selling restriction): not "generated"
+            if (await this.generateInvoiceFromTemplate(ri)) totalSuccess++;
           } catch (err) {
             totalFail++;
             this.logger.error(

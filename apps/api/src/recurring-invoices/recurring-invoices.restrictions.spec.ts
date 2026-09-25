@@ -15,7 +15,6 @@ import { TenantContextService } from "../tenant/tenant-context.service";
 import { InvoicesService } from "../invoices/invoices.service";
 import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
 import { NotificationsService } from "../notifications/notifications.service";
-import { AuditService } from "../audit/audit.service";
 import { createMockPrisma } from "../testing/prisma-mock";
 
 describe("RecurringInvoicesService — selling restrictions (F-05)", () => {
@@ -23,7 +22,6 @@ describe("RecurringInvoicesService — selling restrictions (F-05)", () => {
   let prisma: ReturnType<typeof createMockPrisma>;
   const restrictions = { assertLinesSellable: jest.fn(), checkLinesSellable: jest.fn() };
   const notifications = { sendToUser: jest.fn() };
-  const audit = { log: jest.fn() };
   const invoices = { create: jest.fn() };
   const ri = {
     id: "ri1",
@@ -50,7 +48,6 @@ describe("RecurringInvoicesService — selling restrictions (F-05)", () => {
     restrictions.assertLinesSellable.mockResolvedValue(undefined);
     restrictions.checkLinesSellable.mockResolvedValue(block);
     notifications.sendToUser.mockResolvedValue(1);
-    audit.log.mockResolvedValue(undefined);
     prisma.user.findMany.mockResolvedValue([{ id: "op1" }, { id: "op2" }]);
     const mod = await Test.createTestingModule({
       providers: [
@@ -60,7 +57,6 @@ describe("RecurringInvoicesService — selling restrictions (F-05)", () => {
         { provide: InvoicesService, useValue: invoices },
         { provide: SellingRestrictionsService, useValue: restrictions },
         { provide: NotificationsService, useValue: notifications },
-        { provide: AuditService, useValue: audit },
       ],
     }).compile();
     service = mod.get(RecurringInvoicesService);
@@ -89,13 +85,13 @@ describe("RecurringInvoicesService — selling restrictions (F-05)", () => {
         lastError: expect.stringContaining("Banned Cola"),
       }),
     });
-    expect(audit.log).toHaveBeenCalledWith(
-      expect.objectContaining({
+    expect(prisma.auditLog.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
         action: "recurring-invoice.suspended",
         entityId: "ri1",
         meta: expect.objectContaining({ ruleIds: ["rule-1"] }),
       }),
-    );
+    });
     expect(notifications.sendToUser).toHaveBeenCalledTimes(2);
   });
 
@@ -104,7 +100,7 @@ describe("RecurringInvoicesService — selling restrictions (F-05)", () => {
     prisma.recurringInvoice.updateMany.mockResolvedValue({ count: 0 }); // stop at the claim
     await cron();
     expect(prisma.recurringInvoice.update).not.toHaveBeenCalled();
-    expect(audit.log).not.toHaveBeenCalled();
+    expect(prisma.auditLog.create).not.toHaveBeenCalled();
   });
 
   it("Run now is refused with the 409 and leaves the template alone", async () => {
@@ -120,5 +116,31 @@ describe("RecurringInvoicesService — selling restrictions (F-05)", () => {
     );
     expect(prisma.recurringInvoice.update).not.toHaveBeenCalled();
     expect(prisma.recurringInvoice.updateMany).not.toHaveBeenCalled();
+  });
+
+  it("suspend moves nextRunAt forward IN THE SAME UPDATE; reactivating then bills exactly ONE invoice, for the NEXT cycle", async () => {
+    await cron();
+    const data = prisma.recurringInvoice.update.mock.calls[0][0].data;
+    expect(data.isActive).toBe(false);
+    expect(data.nextRunAt.getTime()).toBeGreaterThan(Date.now()); // the skipped cycle is never a make-up
+    // reactivation is audited...
+    prisma.recurringInvoice.findUnique.mockResolvedValue(ri);
+    prisma.recurringInvoice.update.mockResolvedValue({ id: "ri1", isActive: true });
+    await service.activate("ri1", "u9");
+    expect(prisma.auditLog.create).toHaveBeenLastCalledWith({
+      data: expect.objectContaining({ action: "recurring-invoice.reactivated", userId: "u9" }),
+    });
+    // ...and the next due tick (nextRunAt reached, ban lifted) claims THAT cycle once and issues one invoice
+    restrictions.checkLinesSellable.mockResolvedValue({ outcome: "ALLOW", reasons: [] });
+    prisma.recurringInvoice.updateMany.mockResolvedValue({ count: 1 });
+    invoices.create.mockResolvedValue({ id: "inv-1" });
+    await (service as any)
+      .generateInvoiceFromTemplate({ ...ri, nextRunAt: data.nextRunAt })
+      .catch(() => undefined);
+    expect(prisma.recurringInvoice.updateMany).toHaveBeenCalledTimes(1);
+    expect(prisma.recurringInvoice.updateMany.mock.calls[0][0].where.nextRunAt).toEqual(
+      data.nextRunAt,
+    );
+    expect(invoices.create).toHaveBeenCalledTimes(1);
   });
 });
