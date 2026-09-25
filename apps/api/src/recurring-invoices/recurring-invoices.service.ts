@@ -4,6 +4,11 @@ import { LeaderCron } from "../common/cron-lock";
 import { PrismaService } from "../prisma/prisma.service";
 import { TenantContextService } from "../tenant/tenant-context.service";
 import { InvoicesService } from "../invoices/invoices.service";
+import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
+import { requireRestrictionTenantId } from "../selling-restrictions/restriction-tenant";
+import { blockedTemplateLines } from "./recurring-invoice-restrictions";
+import { NotificationsService } from "../notifications/notifications.service";
+import { AuditService } from "../audit/audit.service";
 import { CreateRecurringInvoiceDto } from "./dto/create-recurring-invoice.dto";
 import { UpdateRecurringInvoiceDto } from "./dto/update-recurring-invoice.dto";
 import { RecurringFrequency } from "@prisma/client";
@@ -29,6 +34,9 @@ export class RecurringInvoicesService {
     private readonly prisma: PrismaService,
     private readonly tenantCtx: TenantContextService,
     private readonly invoicesService: InvoicesService,
+    private readonly sellingRestrictions: SellingRestrictionsService,
+    private readonly notifications: NotificationsService,
+    private readonly audit: AuditService,
   ) {}
 
   // ─── Next run calculation ──────────────────────────────────────────────────
@@ -200,7 +208,7 @@ export class RecurringInvoicesService {
       include: { items: true, customer: true },
     });
     if (!ri) throw new NotFoundException("Recurring invoice not found");
-    return this.generateInvoiceFromTemplate(ri);
+    return this.generateInvoiceFromTemplate(ri, false);
   }
 
   // ─── Core generation logic ────────────────────────────────────────────────
@@ -208,6 +216,48 @@ export class RecurringInvoicesService {
   /** B142: builds a one-line note when the template still references an
    *  archived product — never blocks generation, only makes the gap visible
    *  on the resulting invoice. Returns null when nothing is archived. */
+  private async suspendForSellingRestriction(
+    ri: { id: string; customerId: string },
+    reasons: Array<{ productName?: string | null; ruleId?: string | null }>,
+  ): Promise<void> {
+    const names = [...new Set(reasons.map((r) => r.productName).filter(Boolean))].join(", ");
+    await this.prisma.forTenant().recurringInvoice.update({
+      where: { id: ri.id },
+      data: {
+        isActive: false,
+        lastRunStatus: RUN_STATUS_FAILED,
+        lastError: `Suspended: a line is under a selling restriction${names ? ` (${names})` : ""}. Fix the template and reactivate it.`,
+      },
+    });
+    await this.audit.log({
+      tenantId: this.prisma.getTenantId(),
+      userId: null, // the unattended run
+      action: "recurring-invoice.suspended",
+      entityType: "recurring-invoices",
+      entityId: ri.id,
+      meta: {
+        reason: "SELLING_RESTRICTED",
+        ruleIds: [...new Set(reasons.map((r) => r.ruleId).filter(Boolean))],
+      },
+    });
+    const operators = await this.prisma.user.findMany({
+      where: {
+        tenantId: this.prisma.getTenantId(),
+        role: { in: ["OPERATOR", "TENANT_ADMIN"] },
+        status: "ACTIVE",
+      },
+      select: { id: true },
+    });
+    for (const op of operators) {
+      await this.notifications
+        .sendToUser(op.id, {
+          title: "Recurring invoice suspended",
+          body: `A recurring invoice was not issued and is suspended: a line is under a selling restriction${names ? ` (${names})` : ""}. Fix the template and reactivate it.`,
+        })
+        .catch(() => {});
+    }
+  }
+
   private async buildArchivedItemsNote(productIds: string[]): Promise<string | null> {
     if (productIds.length === 0) return null;
     const products = await this.prisma.forTenant().product.findMany({
@@ -220,7 +270,21 @@ export class RecurringInvoicesService {
     return `Note: ${labels} ${archived.length > 1 ? "are" : "is"} archived; billed as scheduled.`;
   }
 
-  private async generateInvoiceFromTemplate(ri: any) {
+  private async generateInvoiceFromTemplate(ri: any, unattended = true) {
+    // F-05 (SA-205): a banned line refuses the whole document — it is never dropped so the rest issues, since
+    // that would change the invoice's money with nobody deciding. "Run now" is an operator deciding (409, the
+    // template is untouched); the unattended run skips the cycle BEFORE it is claimed, notifies once and
+    // SUSPENDS the template until a tenant admin reactivates it. A tenant-owned template sells as STAFF.
+    const blocked = await blockedTemplateLines(
+      this.sellingRestrictions,
+      requireRestrictionTenantId(this.prisma.getTenantId()),
+      ri,
+      unattended,
+    );
+    if (blocked) {
+      await this.suspendForSellingRestriction(ri, blocked);
+      return null;
+    }
     // Claim the cycle BEFORE creating anything (B9 — see the history in this comment's
     // previous version). REG-B106: the claim also stamps a PROVISIONAL outcome — until
     // the invoice exists this cycle has NOT succeeded, so a process crash between here
