@@ -1,9 +1,17 @@
-import { BadRequestException, Injectable, Logger } from "@nestjs/common";
+import {
+  BadRequestException,
+  ForbiddenException,
+  HttpException,
+  Injectable,
+  Logger,
+} from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { VendorBillsService } from "../vendor-bills/vendor-bills.service";
 import { CustomersService } from "../customers/customers.service";
 import { NumberingService } from "./numbering.service";
 import { ExternalRefService } from "./external-ref.service";
+import { ProductsService } from "../products/products.service";
+import { AuditService } from "../audit/audit.service";
 import { roundMoney } from "@routeflow/pricing";
 import { sumConfirmed } from "../invoices/payment-predicates";
 import { parseImportMoney, parseImportNumber } from "./parse-import-number";
@@ -12,6 +20,33 @@ import { ImportEntityType, InvoiceStatus, MovementType, UserRole } from "@prisma
 import * as bcrypt from "bcrypt";
 import * as crypto from "crypto";
 import { addressStateFields } from "../customers/address-state";
+import { PRODUCT_COLUMNS, CUSTOMER_COLUMNS, resolveColumns, parseRow } from "./import-columns";
+import type { CustomerComplianceInput } from "../customers/customer-compliance-input";
+
+/** B858/B859: money fields in PRODUCT_COLUMNS that get rounded-value diff comparison. */
+const PRODUCT_MONEY_FIELDS = new Set([
+  "pricePerUnit",
+  "priceTier2",
+  "priceTier3",
+  "priceTier4",
+  "priceTier5",
+  "standardCost",
+  "msrp",
+]);
+
+/** Lowercase + collapse whitespace — the "unique within the file" key for name-only matching. */
+function normalizeNameKey(name: string): string {
+  return name.toLowerCase().replace(/\s+/g, " ").trim();
+}
+
+export interface ImportRowPlan {
+  row: number;
+  label: string;
+  action: "create" | "update" | "skip";
+  changes?: Record<string, unknown>;
+  reason?: string;
+  warnings?: string[];
+}
 
 /**
  * F9-008: hard row-count cap on any CSV import. The byte-size caps on the upload
@@ -51,6 +86,8 @@ export class ImportService {
     private readonly customersService: CustomersService,
     private readonly numbering: NumberingService,
     private readonly externalRefs: ExternalRefService,
+    private readonly productsService: ProductsService,
+    private readonly auditService: AuditService,
   ) {}
 
   private parseCsv(buffer: Buffer): any[] {
@@ -211,10 +248,128 @@ export class ImportService {
     return data;
   }
 
+  /**
+   * B858/B859 FIX4: builds the `Partial<UpdateCustomerDto>` + `CustomerComplianceInput` diff for
+   * one contacts row's commercial columns, applies it through `CustomersService.update` (the ONE
+   * write path, SA-284 a), and records consent-change audit evidence. Never touches identity or
+   * address fields — those stay on the pre-existing raw code path (SA-284 binding).
+   */
+  private async applyCustomerCommercialFields(params: {
+    customerId: string;
+    values: Record<string, unknown>;
+    existing: Record<string, unknown>;
+    userId: string;
+    rowNumber: number;
+    fileName?: string;
+    dryRun: boolean;
+    warnings: string[];
+  }): Promise<void> {
+    const { customerId, values, existing, userId, rowNumber, fileName, dryRun, warnings } = params;
+
+    const diff: Record<string, unknown> = {};
+    const DIFF_FIELDS = [
+      "defaultPaymentTerms",
+      "pricingTier",
+      "creditLimit",
+      "isTaxExempt",
+      "taxId",
+      "deliveryWindowStart",
+      "deliveryWindowEnd",
+    ] as const;
+    for (const field of DIFF_FIELDS) {
+      const newVal = values[field];
+      if (newVal === undefined) continue;
+      const existingVal = existing[field];
+      const differs =
+        field === "creditLimit"
+          ? // null means "no limit"; a 0 limit is a real value and must still be written
+            existingVal == null ||
+            roundMoney(Number(existingVal)) !== roundMoney(Number(newVal as number))
+          : typeof newVal === "string"
+            ? (typeof existingVal === "string" ? existingVal.trim() : "") !== newVal.trim()
+            : existingVal !== newVal;
+      if (differs) diff[field] = newVal;
+    }
+
+    const compliance: CustomerComplianceInput = {};
+    if (values.tobaccoLicenseNo !== undefined) {
+      const existingVal = existing.tobaccoLicenseNo as string | null | undefined;
+      const newVal = values.tobaccoLicenseNo as string;
+      if ((existingVal ?? "").trim() !== newVal.trim()) compliance.tobaccoLicenseNo = newVal;
+    }
+    if (values.tobaccoLicenseExpiry !== undefined) {
+      const newDate = values.tobaccoLicenseExpiry as Date;
+      const existingVal = existing.tobaccoLicenseExpiry as Date | null | undefined;
+      const differs = !existingVal || new Date(existingVal).getTime() !== newDate.getTime();
+      if (differs) compliance.tobaccoLicenseExpiry = newDate;
+      if (newDate.getTime() < Date.now()) {
+        warnings.push(`Tobacco licence expired ${newDate.toISOString().slice(0, 10)}`);
+      }
+    }
+
+    const consentChannels: { field: "smsConsent" | "waConsent"; channel: "sms" | "wa" }[] = [
+      { field: "smsConsent", channel: "sms" },
+      { field: "waConsent", channel: "wa" },
+    ];
+    const consentChanges: { channel: "sms" | "wa"; value: boolean }[] = [];
+    for (const { field, channel } of consentChannels) {
+      const newVal = values[field];
+      if (newVal === undefined) continue;
+      const existingVal = existing[field];
+      if (Boolean(existingVal) !== Boolean(newVal)) {
+        compliance[field] = newVal as boolean;
+        consentChanges.push({ channel, value: newVal as boolean });
+      }
+    }
+    if (consentChanges.length > 0) {
+      compliance.consentUpdatedAt = new Date();
+    }
+
+    const hasDiff = Object.keys(diff).length > 0;
+    const hasCompliance = Object.keys(compliance).length > 0;
+    if (!hasDiff && !hasCompliance) return;
+    if (dryRun) return;
+
+    await this.customersService.update(customerId, diff as any, {
+      compliance: hasCompliance ? compliance : undefined,
+    });
+
+    for (const { channel, value } of consentChanges) {
+      await this.auditService.log({
+        tenantId: this.prisma.getTenantId(),
+        userId,
+        action: "customer.consent.import",
+        entityType: "Customer",
+        entityId: customerId,
+        meta: {
+          source: "import",
+          fileName,
+          row: rowNumber,
+          channel,
+          value,
+          timestamp: new Date().toISOString(),
+        },
+      });
+    }
+  }
+
   async importContacts(
     buffer: Buffer,
     userId: string,
-  ): Promise<{ created: number; updated: number; skipped: number; errors: string[] }> {
+    opts?: { dryRun?: boolean; fileName?: string },
+  ): Promise<{
+    created: number;
+    updated: number;
+    skipped: number;
+    errors: string[];
+    unchanged: number;
+    rows: ImportRowPlan[];
+    skippedRows: { row: number; label: string; reason: string }[];
+    warnings: string[];
+    unknownColumns: string[];
+    dryRun: boolean;
+  }> {
+    const dryRun = !!opts?.dryRun;
     // Same CUSTOMERS soft-cap gate as the single-create path: a no-op unless the
     // tenant is over cap AND its grace window already expired. Checked once up
     // front rather than per row — an import is one user action, and the gate
@@ -222,12 +377,41 @@ export class ImportService {
     await this.customersService.assertCustomerCapNotExceeded();
 
     const rows = this.parseCsv(buffer);
+    const headers = rows.length > 0 ? Object.keys(rows[0]) : [];
+    const resolvedColumns = resolveColumns(headers, CUSTOMER_COLUMNS);
+    const unknownColumns = resolvedColumns.unknownColumns;
+
     let created = 0,
       updated = 0,
       skipped = 0;
+    // A matched contact always re-patches its identity fields (pre-existing block, kept raw
+    // this PR per SA-284), so every match counts as `updated`; `unchanged` stays 0 here.
+    const unchanged = 0;
     const errors: string[] = [];
+    const rowPlans: ImportRowPlan[] = [];
+    const skippedRows: { row: number; label: string; reason: string }[] = [];
+    const warnings: string[] = [];
+    let rowNumber = 0;
 
     for (const row of rows) {
+      rowNumber++;
+
+      // B858/B859: any unparseable commercial cell skips the WHOLE row before any write —
+      // never a partial identity write for a row with a bad commercial cell.
+      const parsedCommercial = parseRow(row, resolvedColumns, CUSTOMER_COLUMNS);
+      const preliminaryLabel =
+        (row["Customer Name"] || row["Display Name"] || row["Company Name"] || "").trim() ||
+        `row ${rowNumber}`;
+      if (parsedCommercial.badCells.length > 0) {
+        const first = parsedCommercial.badCells[0];
+        const reason = `${first.column}: ${first.reason}`;
+        skipped++;
+        skippedRows.push({ row: rowNumber, label: preliminaryLabel, reason });
+        errors.push(`${preliminaryLabel}: ${reason}`);
+        rowPlans.push({ row: rowNumber, label: preliminaryLabel, action: "skip", reason });
+        continue;
+      }
+
       // Only import customer-type contacts (skip vendors etc.)
       const contactType = (row["Contact Type"] || "customer").toLowerCase().trim();
       if (contactType && contactType !== "customer") {
@@ -322,83 +506,100 @@ export class ImportService {
       if (existing) {
         // Update the existing customer with any missing/new fields
         try {
-          await this.prisma.forTenant().customer.update({
-            where: { id: existing.id },
-            data: {
-              ...(zohoContactId && !existing.zohoContactId && { zohoContactId }),
-              ...(displayName !== null && { displayName }),
-              ...(salutation !== null && { salutation }),
-              ...(firstName !== null && { firstName }),
-              ...(lastName !== null && { lastName }),
-              ...(phone !== null && !existing.phone && { phone }),
-              ...(mobile !== null && { mobile }),
-              ...(csvEmail !== null && { email: csvEmail }),
-              ...(notes !== null && { notes }),
-              currency,
-              contactName:
-                existing.contactName === existing.businessName
-                  ? contactName || existing.contactName
-                  : existing.contactName,
-            },
+          if (!dryRun) {
+            await this.prisma.forTenant().customer.update({
+              where: { id: existing.id },
+              data: {
+                ...(zohoContactId && !existing.zohoContactId && { zohoContactId }),
+                ...(displayName !== null && { displayName }),
+                ...(salutation !== null && { salutation }),
+                ...(firstName !== null && { firstName }),
+                ...(lastName !== null && { lastName }),
+                ...(phone !== null && !existing.phone && { phone }),
+                ...(mobile !== null && { mobile }),
+                ...(csvEmail !== null && { email: csvEmail }),
+                ...(notes !== null && { notes }),
+                currency,
+                contactName:
+                  existing.contactName === existing.businessName
+                    ? contactName || existing.contactName
+                    : existing.contactName,
+              },
+            });
+
+            // Add billing address if not already present
+            const existingBilling = existing.addresses.find((a) => a.addressType === "BILLING");
+            if (!existingBilling && hasBilling) {
+              await this.prisma.forTenant().customerAddress.create({
+                data: {
+                  customerId: existing.id,
+                  label: "Billing",
+                  line1: billingLine1 || billingCity || "Unknown",
+                  city: billingCity || "Unknown",
+                  state: billingState || "Unknown",
+                  ...addressStateFields(billingState, billingZip),
+                  zip: billingZip || "00000",
+                  lat: billingLat,
+                  lng: billingLng,
+                  addressType: "BILLING",
+                  isDefault: true,
+                },
+              });
+            }
+
+            // Add shipping address if not already present and differs from billing
+            const existingShipping = existing.addresses.find((a) => a.addressType === "SHIPPING");
+            if (!existingShipping && hasShipping) {
+              await this.prisma.forTenant().customerAddress.create({
+                data: {
+                  customerId: existing.id,
+                  label: "Shipping",
+                  line1: shippingLine1 || shippingCity || "Unknown",
+                  city: shippingCity || "Unknown",
+                  state: shippingState || "Unknown",
+                  ...addressStateFields(shippingState, shippingZip),
+                  zip: shippingZip || "00000",
+                  lat: shippingLat,
+                  lng: shippingLng,
+                  addressType: "SHIPPING",
+                  isDefault: false,
+                },
+              });
+            }
+
+            // Add contact person if we have a name and none exists yet
+            if ((firstName || lastName) && existing.contactPersons.length === 0) {
+              await this.prisma.forTenant().contactPerson.create({
+                data: {
+                  customerId: existing.id,
+                  salutation: salutation || null,
+                  firstName: firstName || contactName,
+                  lastName: lastName || null,
+                  email: csvEmail || null,
+                  phone: phone || null,
+                  mobile: mobile || null,
+                  isPrimary: true,
+                },
+              });
+            }
+          }
+
+          // B858/B859 FIX4: commercial columns (payment terms, pricing tier, credit limit, tax,
+          // tobacco licence, consent) go through CustomersService.update for BOTH matched and
+          // created rows — the identity/address code above is unchanged (SA-284 binding).
+          await this.applyCustomerCommercialFields({
+            customerId: existing.id,
+            values: parsedCommercial.values,
+            existing,
+            userId,
+            rowNumber,
+            fileName: opts?.fileName,
+            dryRun,
+            warnings,
           });
 
-          // Add billing address if not already present
-          const existingBilling = existing.addresses.find((a) => a.addressType === "BILLING");
-          if (!existingBilling && hasBilling) {
-            await this.prisma.forTenant().customerAddress.create({
-              data: {
-                customerId: existing.id,
-                label: "Billing",
-                line1: billingLine1 || billingCity || "Unknown",
-                city: billingCity || "Unknown",
-                state: billingState || "Unknown",
-                ...addressStateFields(billingState, billingZip),
-                zip: billingZip || "00000",
-                lat: billingLat,
-                lng: billingLng,
-                addressType: "BILLING",
-                isDefault: true,
-              },
-            });
-          }
-
-          // Add shipping address if not already present and differs from billing
-          const existingShipping = existing.addresses.find((a) => a.addressType === "SHIPPING");
-          if (!existingShipping && hasShipping) {
-            await this.prisma.forTenant().customerAddress.create({
-              data: {
-                customerId: existing.id,
-                label: "Shipping",
-                line1: shippingLine1 || shippingCity || "Unknown",
-                city: shippingCity || "Unknown",
-                state: shippingState || "Unknown",
-                ...addressStateFields(shippingState, shippingZip),
-                zip: shippingZip || "00000",
-                lat: shippingLat,
-                lng: shippingLng,
-                addressType: "SHIPPING",
-                isDefault: false,
-              },
-            });
-          }
-
-          // Add contact person if we have a name and none exists yet
-          if ((firstName || lastName) && existing.contactPersons.length === 0) {
-            await this.prisma.forTenant().contactPerson.create({
-              data: {
-                customerId: existing.id,
-                salutation: salutation || null,
-                firstName: firstName || contactName,
-                lastName: lastName || null,
-                email: csvEmail || null,
-                phone: phone || null,
-                mobile: mobile || null,
-                isPrimary: true,
-              },
-            });
-          }
-
           updated++;
+          rowPlans.push({ row: rowNumber, label: preliminaryLabel, action: "update" });
         } catch (e: any) {
           this.pushRowError(errors, `${name} (update)`, e);
         }
@@ -425,93 +626,112 @@ export class ImportService {
       }
 
       try {
-        const hashedPassword = await bcrypt.hash(this.generateTempPassword(), 10);
+        if (!dryRun) {
+          const hashedPassword = await bcrypt.hash(this.generateTempPassword(), 10);
+          let newCustomerId = "";
 
-        await this.prisma.tenantTransaction(async (tx) => {
-          const user = await tx.user.create({
-            data: {
-              email: userEmail,
-              username,
-              password: hashedPassword,
-              role: UserRole.CUSTOMER,
-              forcePasswordChange: true,
-            },
-          });
-
-          const customer = await tx.customer.create({
-            data: {
-              userId: user.id,
-              businessName: name,
-              contactName: contactName || name,
-              displayName: displayName || null,
-              salutation: salutation || null,
-              firstName: firstName || null,
-              lastName: lastName || null,
-              phone: phone || null,
-              mobile: mobile || null,
-              email: csvEmail || null,
-              currency,
-              notes: notes || null,
-              zohoContactId: zohoContactId || null,
-            },
-          });
-
-          // Billing address
-          if (hasBilling) {
-            await tx.customerAddress.create({
+          await this.prisma.tenantTransaction(async (tx) => {
+            const user = await tx.user.create({
               data: {
-                customerId: customer.id,
-                label: "Billing",
-                line1: billingLine1 || billingCity || "Unknown",
-                city: billingCity || "Unknown",
-                state: billingState || "Unknown",
-                ...addressStateFields(billingState, billingZip),
-                zip: billingZip || "00000",
-                lat: billingLat,
-                lng: billingLng,
-                addressType: "BILLING",
-                isDefault: true,
+                email: userEmail,
+                username,
+                password: hashedPassword,
+                role: UserRole.CUSTOMER,
+                forcePasswordChange: true,
               },
             });
-          }
 
-          // Shipping address (only if different from billing)
-          if (hasShipping) {
-            await tx.customerAddress.create({
+            const customer = await tx.customer.create({
               data: {
-                customerId: customer.id,
-                label: "Shipping",
-                line1: shippingLine1 || shippingCity || "Unknown",
-                city: shippingCity || "Unknown",
-                state: shippingState || "Unknown",
-                ...addressStateFields(shippingState, shippingZip),
-                zip: shippingZip || "00000",
-                lat: shippingLat,
-                lng: shippingLng,
-                addressType: "SHIPPING",
-                isDefault: false,
-              },
-            });
-          }
-
-          // Create contact person entry if we have a name
-          if (firstName || lastName) {
-            await tx.contactPerson.create({
-              data: {
-                customerId: customer.id,
+                userId: user.id,
+                businessName: name,
+                contactName: contactName || name,
+                displayName: displayName || null,
                 salutation: salutation || null,
-                firstName: firstName || contactName,
+                firstName: firstName || null,
                 lastName: lastName || null,
-                email: csvEmail || null,
                 phone: phone || null,
                 mobile: mobile || null,
-                isPrimary: true,
+                email: csvEmail || null,
+                currency,
+                notes: notes || null,
+                zohoContactId: zohoContactId || null,
               },
             });
-          }
-        });
+            newCustomerId = customer.id;
+
+            // Billing address
+            if (hasBilling) {
+              await tx.customerAddress.create({
+                data: {
+                  customerId: customer.id,
+                  label: "Billing",
+                  line1: billingLine1 || billingCity || "Unknown",
+                  city: billingCity || "Unknown",
+                  state: billingState || "Unknown",
+                  ...addressStateFields(billingState, billingZip),
+                  zip: billingZip || "00000",
+                  lat: billingLat,
+                  lng: billingLng,
+                  addressType: "BILLING",
+                  isDefault: true,
+                },
+              });
+            }
+
+            // Shipping address (only if different from billing)
+            if (hasShipping) {
+              await tx.customerAddress.create({
+                data: {
+                  customerId: customer.id,
+                  label: "Shipping",
+                  line1: shippingLine1 || shippingCity || "Unknown",
+                  city: shippingCity || "Unknown",
+                  state: shippingState || "Unknown",
+                  ...addressStateFields(shippingState, shippingZip),
+                  zip: shippingZip || "00000",
+                  lat: shippingLat,
+                  lng: shippingLng,
+                  addressType: "SHIPPING",
+                  isDefault: false,
+                },
+              });
+            }
+
+            // Create contact person entry if we have a name
+            if (firstName || lastName) {
+              await tx.contactPerson.create({
+                data: {
+                  customerId: customer.id,
+                  salutation: salutation || null,
+                  firstName: firstName || contactName,
+                  lastName: lastName || null,
+                  email: csvEmail || null,
+                  phone: phone || null,
+                  mobile: mobile || null,
+                  isPrimary: true,
+                },
+              });
+            }
+          });
+
+          // B858/B859 FIX4: commercial columns for a brand-new row go through the same
+          // CustomersService.update path as a matched row (SA-284 a) — never folded into the
+          // raw tx.customer.create data above.
+          await this.applyCustomerCommercialFields({
+            customerId: newCustomerId,
+            values: parsedCommercial.values,
+            existing: {},
+            userId,
+            rowNumber,
+            fileName: opts?.fileName,
+            dryRun,
+            warnings,
+          });
+        }
 
         created++;
+        rowPlans.push({ row: rowNumber, label: preliminaryLabel, action: "create" });
       } catch (e: any) {
         // P2002 = unique constraint violation — the customer (or their user account)
         // already exists in the database. Treat as a silent skip rather than an error
@@ -526,10 +746,22 @@ export class ImportService {
     }
 
     // The import ALWAYS succeeds — this only opens a grace window when the rows
-    // just written pushed the tenant over cap. Never throws.
-    if (created > 0) await this.customersService.maybeStartCustomerGrace();
+    // just written pushed the tenant over cap. Never throws. dryRun writes nothing,
+    // so it never opens a grace window either.
+    if (!dryRun && created > 0) await this.customersService.maybeStartCustomerGrace();
 
-    return { created, updated, skipped, errors };
+    return {
+      created,
+      updated,
+      skipped,
+      errors,
+      unchanged,
+      rows: rowPlans,
+      skippedRows,
+      warnings,
+      unknownColumns,
+      dryRun,
+    };
   }
 
   async importInvoices(
@@ -1657,56 +1889,267 @@ export class ImportService {
     return { marked: toMark.length, alreadyMarked: 0 };
   }
 
+  /**
+   * B858/B859 FIX4 — plan-then-apply product import (cause-ruling.md §2.B, SA-284).
+   *
+   * Every write goes through `ProductsService.create`/`update` (SA-284 a — no raw
+   * `prisma.product.create`), so the addon/plan-flag guards, sku/barcode/unitSku collision
+   * checks, and `emitProductChanged` always run. A gated column present in the header (Tobacco /
+   * MSRP) refuses the WHOLE file before any write, identically in `dryRun` and real (SA-284 b). A
+   * bad cell skips only that ROW with a reason; blank never clears an existing value.
+   */
   async importProducts(
     buffer: Buffer,
     userId: string,
-  ): Promise<{ imported: number; skipped: number; errors: string[] }> {
-    const rows = this.parseCsv(buffer);
-    let imported = 0,
+    opts?: { dryRun?: boolean; fileName?: string },
+  ): Promise<{
+    imported: number;
+    created: number;
+    updated: number;
+    unchanged: number;
+    skipped: number;
+    errors: string[];
+    rows: ImportRowPlan[];
+    skippedRows: { row: number; label: string; reason: string }[];
+    warnings: string[];
+    unknownColumns: string[];
+    dryRun: boolean;
+  }> {
+    const dryRun = !!opts?.dryRun;
+    const rawRows = this.parseCsv(buffer);
+    const headers = rawRows.length > 0 ? Object.keys(rawRows[0]) : [];
+    const resolved = resolveColumns(headers, PRODUCT_COLUMNS);
+
+    // ── File-level entitlement gate — BEFORE any write-capable query, identical wording and
+    // behavior in dryRun and real (SA-284 b) ──────────────────────────────────────────────────
+    if (resolved.byField.msrp) {
+      try {
+        await this.productsService.assertMsrpAllowed();
+      } catch {
+        throw new ForbiddenException(
+          `Column "${resolved.byField.msrp}" needs the MSRP plan flag; remove the column or enable it`,
+        );
+      }
+    }
+    if (resolved.byField.isTobacco) {
+      try {
+        await this.productsService.assertCanFlagTobacco(true);
+      } catch {
+        throw new ForbiddenException(
+          `Column "${resolved.byField.isTobacco}" needs tobacco_dealer add-on; remove the column or enable it`,
+        );
+      }
+    }
+
+    let created = 0,
+      updated = 0,
+      unchanged = 0,
       skipped = 0;
     const errors: string[] = [];
+    const rowPlans: ImportRowPlan[] = [];
+    const skippedRows: { row: number; label: string; reason: string }[] = [];
+    const warnings: string[] = [];
 
-    for (const row of rows) {
-      const name = (row["Item Name"] || row["Name"] || "").trim();
-      if (!name) {
+    // Parse every row up front so an in-file name-ambiguity pre-scan can run before matching.
+    const parsedRows = rawRows.map((raw) => parseRow(raw, resolved, PRODUCT_COLUMNS));
+    const nameCounts = new Map<string, number>();
+    for (const p of parsedRows) {
+      if (p.badCells.length > 0) continue;
+      const sku = (p.values.sku as string | undefined)?.trim();
+      const barcode = (p.values.barcode as string | undefined)?.trim();
+      if (sku || barcode) continue;
+      const name = (p.values.name as string | undefined)?.trim();
+      if (!name) continue;
+      const key = normalizeNameKey(name);
+      nameCounts.set(key, (nameCounts.get(key) ?? 0) + 1);
+    }
+
+    // In-file identity-key claims — SKU/barcode only (name collisions are "ambiguous", not
+    // "duplicate", per SA-284 / cause-ruling.md §2.B).
+    const claimedKeys = new Map<string, number>();
+    let anyWrite = false;
+
+    for (let i = 0; i < rawRows.length; i++) {
+      const rowNumber = i + 1;
+      const parsed = parsedRows[i];
+      const name = (parsed.values.name as string | undefined)?.trim();
+      const sku = (parsed.values.sku as string | undefined)?.trim();
+      const barcode = (parsed.values.barcode as string | undefined)?.trim();
+      const label = name || sku || `row ${rowNumber}`;
+
+      const skipRow = (reason: string) => {
         skipped++;
+        skippedRows.push({ row: rowNumber, label, reason });
+        errors.push(`${label}: ${reason}`);
+        rowPlans.push({ row: rowNumber, label, action: "skip", reason });
+      };
+
+      if (parsed.badCells.length > 0) {
+        const first = parsed.badCells[0];
+        skipRow(`${first.column}: ${first.reason}`);
         continue;
       }
 
-      const pricePerUnit =
-        parseImportMoney(row["Rate"] || row["Sales Rate"] || row["Price"] || "0") || 0;
-      const description = row["Description"] || row["Item Description"] || null;
-      const unit = (row["Unit"] || row["Usage Unit"] || "unit").trim() || "unit";
-      const sku = row["SKU"] || null;
+      const identityKey = sku
+        ? `sku:${sku.toLowerCase()}`
+        : barcode
+          ? `barcode:${barcode.toLowerCase()}`
+          : null;
 
-      try {
-        // Skip if a product with this name already exists (case-insensitive)
-        const existing = await this.prisma.forTenant().product.findFirst({
+      if (identityKey && claimedKeys.has(identityKey)) {
+        skipRow(`duplicate of row ${claimedKeys.get(identityKey)}`);
+        continue;
+      }
+
+      if (!sku && !barcode && name) {
+        const norm = normalizeNameKey(name);
+        const count = nameCounts.get(norm) ?? 0;
+        if (count >= 2) {
+          skipRow(`ambiguous name (${count} matches)`);
+          continue;
+        }
+      }
+
+      if (identityKey) claimedKeys.set(identityKey, rowNumber);
+
+      // Matching: exact trimmed SKU → exact barcode → normalized name.
+      // SKU and barcode are unique per tenant as stored (case-sensitive), so they match exactly.
+      let existing: any = null;
+      if (sku) {
+        existing = await this.prisma.forTenant().product.findFirst({ where: { sku } });
+      }
+      if (!existing && barcode) {
+        existing = await this.prisma.forTenant().product.findFirst({ where: { barcode } });
+      }
+      if (!existing && name) {
+        // A name is only a key when exactly one product carries it (variants can share one).
+        const byName = await this.prisma.forTenant().product.findMany({
           where: { name: { equals: name, mode: "insensitive" } },
-          select: { id: true },
+          take: 2,
         });
-        if (existing) {
-          skipped++;
+        if (byName.length > 1) {
+          skipRow(`ambiguous name (${byName.length}+ products match)`);
+          continue;
+        }
+        existing = byName[0] ?? null;
+      }
+
+      if (existing) {
+        // ── Update: diff only fields with a DEFINED, DIFFERING parsed value ──────────────────
+        const changes: Record<string, unknown> = {};
+        let packSkipReason: string | null = null;
+        for (const field of Object.keys(parsed.values)) {
+          const newVal = parsed.values[field];
+          if (newVal === undefined) continue;
+          if (field === "unitsPerBox") {
+            const existingVal = existing.unitsPerBox;
+            if (existingVal === null || existingVal === undefined) {
+              changes.unitsPerBox = newVal;
+            } else if (Number(existingVal) !== Number(newVal)) {
+              // SA-284 (d): a differing pack size skips the WHOLE row, never a partial update.
+              packSkipReason = "pack changes are made in the product editor";
+              break;
+            }
+            continue;
+          }
+          const existingVal = (existing as any)[field];
+          let differs: boolean;
+          if (PRODUCT_MONEY_FIELDS.has(field)) {
+            differs = roundMoney(Number(existingVal ?? 0)) !== roundMoney(Number(newVal as number));
+          } else if (typeof newVal === "string") {
+            differs = String(existingVal ?? "").trim() !== newVal.trim();
+          } else {
+            differs = existingVal !== newVal;
+          }
+          if (differs) changes[field] = newVal;
+        }
+
+        if (packSkipReason) {
+          skipRow(packSkipReason);
           continue;
         }
 
-        await this.prisma.forTenant().product.create({
-          data: {
-            name,
-            description: description || null,
-            pricePerUnit,
-            unit,
-            sku: sku || null,
-            isActive: true,
-          },
-        });
-        imported++;
-      } catch (e: any) {
-        this.pushRowError(errors, name, e);
-        skipped++;
+        if (Object.keys(changes).length === 0) {
+          unchanged++;
+          rowPlans.push({ row: rowNumber, label, action: "update", changes: {} });
+          continue;
+        }
+
+        rowPlans.push({ row: rowNumber, label, action: "update", changes });
+        if (!dryRun) {
+          try {
+            await this.productsService.update(existing.id, changes as any, { suppressEmit: true });
+            updated++;
+            anyWrite = true;
+          } catch (e: any) {
+            if (e instanceof HttpException) {
+              skipped++;
+              skippedRows.push({ row: rowNumber, label, reason: e.message });
+              errors.push(`${label}: ${e.message}`);
+            } else {
+              this.pushRowError(errors, label, e);
+              skipped++;
+              skippedRows.push({ row: rowNumber, label, reason: "import failed" });
+            }
+          }
+        } else {
+          updated++;
+        }
+        continue;
+      }
+
+      // ── Create ──────────────────────────────────────────────────────────────────────────────
+      if (parsed.values.pricePerUnit === undefined) {
+        skipRow("Rate is required for a new product");
+        continue;
+      }
+      const dto: Record<string, unknown> = {
+        name,
+        unit: (parsed.values.unit as string | undefined) || "unit",
+      };
+      for (const [k, v] of Object.entries(parsed.values)) {
+        if (k === "name" || k === "unit") continue;
+        dto[k] = v;
+      }
+
+      rowPlans.push({ row: rowNumber, label, action: "create", changes: dto });
+      if (!dryRun) {
+        try {
+          await this.productsService.create(dto as any, { suppressEmit: true });
+          created++;
+          anyWrite = true;
+        } catch (e: any) {
+          if (e instanceof HttpException) {
+            skipped++;
+            skippedRows.push({ row: rowNumber, label, reason: e.message });
+            errors.push(`${label}: ${e.message}`);
+          } else {
+            this.pushRowError(errors, label, e);
+            skipped++;
+            skippedRows.push({ row: rowNumber, label, reason: "import failed" });
+          }
+        }
+      } else {
+        created++;
       }
     }
-    return { imported, skipped, errors };
+
+    // One bulk catalog-changed emission per file, never per row (SA-284 / cause-ruling.md §2.B).
+    if (!dryRun && anyWrite) this.productsService.emitCatalogBulkChanged();
+
+    return {
+      imported: created,
+      created,
+      updated,
+      unchanged,
+      skipped,
+      errors,
+      rows: rowPlans,
+      skippedRows,
+      warnings,
+      unknownColumns: resolved.unknownColumns,
+      dryRun,
+    };
   }
 
   /**

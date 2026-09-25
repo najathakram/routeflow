@@ -103,13 +103,19 @@ export class ProductsService {
     }
   }
 
+  /** Public wrapper so a bulk-write caller (e.g. CSV import) can fire ONE coalesced
+   * catalog-changed event after its own loop, instead of one per row. */
+  emitCatalogBulkChanged(): void {
+    this.emitProductChanged(null, "bulk");
+  }
+
   /**
    * MSRP writes are flag-gated INSIDE the service, not on the whole route —
    * gating the whole create/update PATCH would 403 an ordinary product edit for
    * a tenant that never touches MSRP. Callers only invoke this when the DTO
    * actually carries an `msrp` key.
    */
-  private async assertMsrpAllowed(): Promise<void> {
+  async assertMsrpAllowed(): Promise<void> {
     const tenantId = this.prisma.getTenantId();
     if (!tenantId) return; // no tenant context (e.g. SUPER_ADMIN) — nothing to gate
     if (await this.entitlements.hasFlag(tenantId, "flag.msrp")) return;
@@ -140,7 +146,7 @@ export class ProductsService {
    * addon. Clearing the flag is always allowed so a tenant whose addon was
    * revoked can still un-flag products.
    */
-  private async assertCanFlagTobacco(isTobacco?: boolean) {
+  async assertCanFlagTobacco(isTobacco?: boolean) {
     if (isTobacco !== true) return;
     const tenantId = this.prisma.getTenantId();
     if (!tenantId) return; // SUPER_ADMIN context
@@ -504,7 +510,7 @@ export class ProductsService {
     return pickBestScanMatch(matches, candidates);
   }
 
-  async create(dto: CreateProductDto) {
+  async create(dto: CreateProductDto, options?: { suppressEmit?: boolean }) {
     await this.assertCanFlagTobacco(dto.isTobacco);
     if (dto.msrp !== undefined) await this.assertMsrpAllowed();
     // Name uniqueness is scoped by parent, matching the partial unique
@@ -715,7 +721,7 @@ export class ProductsService {
       },
       include: { variants: true, parent: true },
     });
-    this.emitProductChanged(created.id, "created");
+    if (!options?.suppressEmit) this.emitProductChanged(created.id, "created");
     return created;
   }
 

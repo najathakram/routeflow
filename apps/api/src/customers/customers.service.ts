@@ -54,6 +54,7 @@ import { EntitlementsService } from "../billing/entitlements.service";
 import { buildPlanGateBody, PlanGateUpgrade } from "../billing/plan-gate";
 import { EmailService } from "../email/email.service";
 import { addressStateFields } from "./address-state";
+import { CustomerComplianceInput } from "./customer-compliance-input";
 // Same grace window BillingCronService.expireGrace() clears hourly — the create()
 // gate applies it synchronously rather than waiting for the cron to run.
 import { GRACE_DAYS } from "../billing/plan-catalog.constants";
@@ -764,7 +765,11 @@ export class CustomersService {
     }
   }
 
-  async update(id: string, dto: UpdateCustomerDto) {
+  async update(
+    id: string,
+    dto: UpdateCustomerDto,
+    options?: { compliance?: CustomerComplianceInput },
+  ) {
     const existing = await this.findCustomerOrThrow(id);
     // REG-B170: a removed customer's page still rendered its edit controls; refuse the write
     // rather than silently editing a customer nobody can see in the list.
@@ -807,6 +812,21 @@ export class CustomersService {
         }),
         ...(dto.orderStatusEmails !== undefined && {
           orderStatusEmails: dto.orderStatusEmails,
+        }),
+        ...(options?.compliance?.tobaccoLicenseNo !== undefined && {
+          tobaccoLicenseNo: options.compliance.tobaccoLicenseNo,
+        }),
+        ...(options?.compliance?.tobaccoLicenseExpiry !== undefined && {
+          tobaccoLicenseExpiry: options.compliance.tobaccoLicenseExpiry,
+        }),
+        ...(options?.compliance?.smsConsent !== undefined && {
+          smsConsent: options.compliance.smsConsent,
+        }),
+        ...(options?.compliance?.waConsent !== undefined && {
+          waConsent: options.compliance.waConsent,
+        }),
+        ...(options?.compliance?.consentUpdatedAt !== undefined && {
+          consentUpdatedAt: options.compliance.consentUpdatedAt,
         }),
       },
     });

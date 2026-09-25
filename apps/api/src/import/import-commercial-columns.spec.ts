@@ -123,13 +123,35 @@ describe("ImportService — commercial columns (B858/B859)", () => {
   it("REG-B858-3: SKU match updates priceTier2", async () => {
     // Existing product found by SKU (future fix's matching), but its NAME differs from the CSV
     // row's — today's `findFirst` matches on name only, so this existing row is invisible to it.
-    prisma.product.findFirst.mockResolvedValue(null);
+    // Only a SKU lookup finds it; a name lookup (today's only key) finds nothing.
+    prisma.product.findFirst.mockImplementation(async (args: any) =>
+      args?.where?.sku === "SKU-1"
+        ? { id: "prod-1", name: "Widget Pro", sku: "SKU-1", unitsPerBox: null, priceTier2: 5 }
+        : null,
+    );
     const csv = "Item Name,SKU,Price Tier 2\nWidget Pro (2026 refresh),SKU-1,9.5\n";
 
     await service.importProducts(Buffer.from(csv), "user-1");
 
     expect(productsService.update).toHaveBeenCalledTimes(1);
     expect(productsService.update.mock.calls[0]?.[1]).toMatchObject({ priceTier2: 9.5 });
+  });
+
+  it("a Credit Limit of 0 is written onto a customer with no limit (null), not treated as unchanged", async () => {
+    prisma.customer.findFirst.mockResolvedValue({
+      id: "cust-1",
+      businessName: "Acme Supply",
+      zohoContactId: "ZC-1",
+      creditLimit: null,
+      addresses: [],
+      contactPersons: [],
+    });
+    const csv = "Customer Name,Customer ID,Credit Limit\nAcme Supply,ZC-1,0\n";
+
+    await service.importContacts(Buffer.from(csv), "user-1");
+
+    expect(customers.update).toHaveBeenCalledTimes(1);
+    expect(customers.update.mock.calls[0]?.[1]).toMatchObject({ creditLimit: 0 });
   });
 
   it("REG-B859-1: terms/tier/limit/exempt/taxId reach update", async () => {
