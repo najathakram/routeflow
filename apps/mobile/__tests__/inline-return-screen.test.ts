@@ -4,6 +4,7 @@ import {
   canGetInlineReturnQuote,
   canLeaveInlineReturn,
   captureFailureMessage,
+  isDeferrableRemoval,
   formatRefundAmount,
   initialInlineReturnScreen,
   inlineReturnScreenReducer as reduce,
@@ -261,7 +262,7 @@ describe("captureFailureMessage — uncertain vs definite failures (Opus #2111)"
       { response: { status: 400, data: { message: "items must not be empty" } } },
     ]) {
       const msg = captureFailureMessage(err);
-      expect(msg).toMatch(/not recorded|nothing was recorded/i);
+      expect(msg).toMatch(/this attempt wasn't recorded/i);
       expect(msg).not.toMatch(/couldn't confirm/i);
     }
     expect(
@@ -269,6 +270,14 @@ describe("captureFailureMessage — uncertain vs definite failures (Opus #2111)"
         response: { status: 400, data: { message: "items must not be empty" } },
       }),
     ).toContain("items must not be empty");
+  });
+  it("run-on server messages get a separator before the note (no 'foo bar Nothing...')", () => {
+    expect(
+      captureFailureMessage({ response: { status: 400, data: { message: "No access" } } }),
+    ).toBe("No access. This attempt wasn't recorded.");
+    expect(
+      captureFailureMessage({ response: { status: 400, data: { message: "No access." } } }),
+    ).toBe("No access. This attempt wasn't recorded.");
   });
   it("a coded business refusal shows the server's own message", () => {
     expect(
@@ -294,5 +303,17 @@ describe("linesFromOrder — cancelled lines are excluded", () => {
         (l) => l.productId,
       ),
     ).toEqual(["p2"]);
+  });
+});
+
+describe("isDeferrableRemoval — a forced redirect is deferred, a user back press is not", () => {
+  it.each(["RESET", "REPLACE", "NAVIGATE", "POP_TO_TOP"])(
+    "%s is deferred until the capture settles",
+    (type) => {
+      expect(isDeferrableRemoval({ type } as any)).toBe(true);
+    },
+  );
+  it.each(["GO_BACK", "POP"])("%s (a user back press) is simply dropped", (type) => {
+    expect(isDeferrableRemoval({ type } as any)).toBe(false);
   });
 });

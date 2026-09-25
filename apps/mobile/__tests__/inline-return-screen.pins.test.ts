@@ -36,7 +36,8 @@ describe("inline-return screen wiring pins", () => {
       join(__dirname, "..", "lib", "use-inline-return-remove-guard.ts"),
       "utf8",
     );
-    expect(hook).toMatch(/usePreventRemove\(!canLeaveInlineReturn\(state\)/);
+    expect(hook).toMatch(/const locked = !canLeaveInlineReturn\(state\)/);
+    expect(hook).toMatch(/usePreventRemove\(locked,/);
   });
 
   it("a failed capture is worded via captureFailureMessage, never as a bare refusal", () => {
