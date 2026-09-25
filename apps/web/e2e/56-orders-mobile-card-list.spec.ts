@@ -130,4 +130,75 @@ test.describe("Orders list — mobile card layout + dock clearance (B823)", () =
       `dock chip ${JSON.stringify(dockBox)} overlaps first order card ${JSON.stringify(cardBox)}`,
     ).toBe(true);
   });
+
+  // Opus (#938 5808147410, at 51ad5848): "the top spacer can't clear the absolute
+  // bottom-24 DraftDock. Later cards, the last card and the pager stay under the chip."
+  // The dock is `position: absolute` OUTSIDE <main>'s scroll container, so it stays
+  // pinned to the same screen band regardless of scroll — a top-only spacer helps the
+  // FIRST paint only. This is the actual regression: scroll to the very bottom of the
+  // list and assert the LAST card and the pager both clear the dock's band, which the
+  // bottom spacer (page.tsx, right after the pager) exists to guarantee.
+  test("390px: scrolled to the bottom, the LAST card and the pager clear a live dock", async ({
+    page,
+  }) => {
+    await mockOneParkedDraft(page);
+    await page.goto("/orders");
+
+    const cards = page.locator("ul.space-y-3.md\\:hidden > li");
+    await expect(cards.first()).toBeVisible({ timeout: 15_000 });
+    const dockChip = page.getByRole("button", { name: "Resume" }).first();
+    await expect(dockChip).toBeVisible({ timeout: 10_000 });
+
+    await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
+    // Layout settles a frame after the scroll — the dock's own position is fixed
+    // relative to its non-scrolling ancestor, so no wait-for-scroll-end is needed
+    // beyond letting that frame paint.
+    await page.waitForTimeout(100);
+
+    const lastCard = cards.last();
+    const pager = page.getByText(/Showing|No orders (found|match)/).first();
+    await expect(lastCard).toBeVisible();
+    await expect(pager).toBeVisible();
+
+    const dockBox = await dockChip.boundingBox();
+    expect(dockBox, "draft dock chip has no bounding box").not.toBeNull();
+
+    for (const [label, locator] of [
+      ["last card", lastCard],
+      ["pager", pager],
+    ] as const) {
+      const box = await locator.boundingBox();
+      expect(box, `${label} has no bounding box`).not.toBeNull();
+      const verticallySeparate =
+        box!.y + box!.height <= dockBox!.y || dockBox!.y + dockBox!.height <= box!.y;
+      const horizontallySeparate =
+        box!.x + box!.width <= dockBox!.x || dockBox!.x + dockBox!.width <= box!.x;
+      expect(
+        verticallySeparate || horizontallySeparate,
+        `dock chip ${JSON.stringify(dockBox)} overlaps the ${label} ${JSON.stringify(box)}`,
+      ).toBe(true);
+    }
+  });
+
+  // Opus called click/select parity "sound" by reading the code, not by a live test —
+  // pin it for real: entering select mode at 390 and tapping a card selects it, the
+  // same toggleSelect/checkbox logic the desktop table's row already proved.
+  test("390px: entering select mode and tapping a card selects it (no navigation)", async ({
+    page,
+  }) => {
+    await page.goto("/orders");
+    const cards = page.locator("ul.space-y-3.md\\:hidden > li");
+    await expect(cards.first()).toBeVisible({ timeout: 15_000 });
+
+    await page.getByRole("button", { name: "Select" }).click();
+    const firstCard = cards.first();
+    await firstCard.click();
+
+    // Selecting must not navigate away from /orders.
+    await expect(page).toHaveURL(/\/orders(\?.*)?$/);
+    // The card's own checkbox reflects the selection (selectMode renders it, checked
+    // tracks the `selected` Set — same state the bulk-action bar's count reads).
+    await expect(firstCard.locator('input[type="checkbox"]')).toBeChecked();
+    await expect(page.getByText("1 selected")).toBeVisible();
+  });
 });

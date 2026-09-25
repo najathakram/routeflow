@@ -632,6 +632,40 @@ export default function OrdersPage() {
           onChange={(e) => setCustomerSearch(e.target.value)}
           className="h-10 w-64 rounded-ctl border border-surface-border bg-white px-3 text-sm text-navy placeholder:text-navy/40 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
         />
+        {/* B823 review (Opus): mobile has no way to sort at all — the desktop table's
+            sort is column-header clicks, invisible below md. Same sortCol/sortDir/
+            toggleSort state; a direction button next to it matches SortIcon's own glyph. */}
+        <div className="flex items-center gap-1.5 md:hidden">
+          <div className="w-36">
+            <Select
+              aria-label="Sort orders by"
+              options={[
+                { value: "createdAt", label: "Created" },
+                { value: "deliveryDate", label: "Delivery Date" },
+                { value: "orderNumber", label: "Order #" },
+                { value: "customer", label: "Customer" },
+                { value: "total", label: "Total" },
+                { value: "status", label: "Status" },
+              ]}
+              value={sortCol}
+              onChange={(e) => {
+                const col = e.target.value;
+                if (col === sortCol) return;
+                setSortCol(col);
+                setSortDir(col === "createdAt" || col === "deliveryDate" ? "desc" : "asc");
+              }}
+              className="h-10"
+            />
+          </div>
+          <button
+            type="button"
+            onClick={() => toggleSort(sortCol)}
+            aria-label={sortDir === "asc" ? "Sort ascending" : "Sort descending"}
+            className="grid h-10 w-10 shrink-0 place-items-center rounded-ctl border border-surface-border bg-white text-navy/70 hover:bg-surface-raised"
+          >
+            <SortIcon col={sortCol} />
+          </button>
+        </div>
         <div className="w-48">
           <Select
             options={STATUS_OPTIONS}
@@ -887,6 +921,17 @@ export default function OrdersPage() {
                     </span>
                     <OrderDateCell order={order} />
                   </div>
+                  {/* B823 review (Opus): the desktop table's own Delivery Date column,
+                      missing from the card entirely — same formatDateOnly, same em-dash
+                      fallback. */}
+                  <div className="text-xs text-navy/60">
+                    Delivery:{" "}
+                    {order.requestedDeliveryDate ? (
+                      formatDateOnly(order.requestedDeliveryDate)
+                    ) : (
+                      <span className="text-navy/30">—</span>
+                    )}
+                  </div>
                 </div>
               </li>
             ))}
@@ -1135,6 +1180,13 @@ export default function OrdersPage() {
           )}
         </div>
       )}
+
+      {/* B823 review (Opus): the top-of-list spacer only helps the FIRST paint — the
+          DraftDock sits `absolute` outside <main>'s scroll container, so it stays pinned
+          to the same screen band regardless of scroll position. Scrolled all the way
+          down, the LAST card and this pager land in that exact band. Bottom clearance,
+          matching the top spacer's own size, so the end of the list can clear it too. */}
+      {hasDrafts && <div className="h-40 md:hidden" aria-hidden />}
 
       <CreateOrderModal
         isOpen={isCreateOpen}
