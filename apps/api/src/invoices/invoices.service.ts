@@ -37,7 +37,7 @@ import {
 import { PAYABLE, KPI_SUMMARY_EXCLUDED } from "./invoice-status-sets";
 import { reconcileDeliveredOrdersInTx as reconcileDeliveredOrdersInTxImpl } from "./delivered-reconcile";
 import { packAtSaleByProduct, priorUnitsPerBoxMap, toSaleLedgerLines } from "./pack-at-sale";
-import { assertWholeUnitQty } from "./unit-line-bill-guard";
+import { assertIntegerPieces, billPackOf } from "./unit-line-bill-guard";
 import { clampLimit } from "../common/pagination";
 import { isInternalEmail } from "../common/internal-email";
 import { loadMsrpMap } from "../common/msrp";
@@ -823,9 +823,9 @@ export class InvoicesService {
     const orderQty = Number(li.qty) || 0;
     const storedSubtotal = li.subtotal != null ? Number(li.subtotal) : null;
     const unitPrice = Number(li.unitPrice);
-    const unitsPerBox = Number(opts?.priorPack ?? li.unitsPerBox ?? li.product?.unitsPerBox ?? 0);
+    const unitsPerBox = billPackOf(li, opts?.priorPack, li.product?.unitsPerBox); // a unit line's OWN pack wins (SA-178)
     const isBoxSplit = li.boxes != null; // stored WITH a box/piece split
-    assertWholeUnitQty(li, billQty, opts?.priorPack); // B652/SA-176: a unit line bills whole units only
+    assertIntegerPieces(li, billQty, unitsPerBox); // B652: no fractional pieces on a boxed line
 
     // Box/piece split for DISPLAY only (money is the stored subtotal). Selling-unit
     // and non-boxed lines keep boxes/pieces null so `qty` stays in whatever unit the
