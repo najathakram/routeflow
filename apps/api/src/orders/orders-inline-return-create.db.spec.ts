@@ -41,6 +41,7 @@ import { PrismaService } from "../prisma/prisma.service";
 import { TenantContextService } from "../tenant/tenant-context.service";
 import { EncryptionService } from "../common/encryption.service";
 import { SystemConfigService } from "../system-config/system-config.service";
+import { loadCreditExposure } from "../invoices/credit-exposure";
 import { NumberingService } from "../import/numbering.service";
 import { IdempotencyService } from "../common/idempotency.service";
 import { RegulatedLedgerService } from "../regulated/regulated-ledger.service";
@@ -212,6 +213,10 @@ describeDb("#2094 — a return inside POST /orders through create(), real Postgr
     await raw.customer.deleteMany({ where: { id: { in: customerIds } } });
     await raw.stockMovement.deleteMany({ where: { productId: { in: productIds } } });
     await raw.product.deleteMany({ where: { id: { in: productIds } } });
+    await raw.routeRunStop.deleteMany({ where: { tenantId } });
+    await raw.routeRun.deleteMany({ where: { tenantId } });
+    await raw.routeStop.deleteMany({ where: { tenantId } });
+    await raw.route.deleteMany({ where: { tenantId } });
     await raw.driver.deleteMany({ where: { tenantId } });
     await raw.systemConfig.deleteMany({ where: { tenantId } });
     await raw.user.deleteMany({ where: { id: { in: userIds } } });
@@ -252,7 +257,6 @@ describeDb("#2094 — a return inside POST /orders through create(), real Postgr
     const o = await create(roomy, 1, ret(roomy.productId, 3, `k-gate-b-${run}`)); // order $10, credit $30
     orderIds.push(o.id);
     // SA-194: the unapplied credit note never loosens the gate: exposure still counts the whole order.
-    const { loadCreditExposure } = await import("../invoices/credit-exposure");
     const exposure = await tenantCtx.run(tenantId, () =>
       loadCreditExposure(prisma.forTenant(), roomy.customerId),
     );
