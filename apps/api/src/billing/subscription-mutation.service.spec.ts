@@ -215,6 +215,15 @@ interface Opts {
   priorAddons?: any[];
   existingAddon?: any;
   addonRow?: any;
+  /**
+   * B865 / SA-277: the STATUS `emitAddonDelta`'s tx-scoped `tenant.findUniqueOrThrow` reads —
+   * i.e. what the paying-set gate sees INSIDE the transaction, AFTER any write that tx makes.
+   * Defaults to ACTIVE (paying), which is correct for `subscribe()` (it unconditionally writes
+   * status ACTIVE before booking any add-on) — a test whose OWN method never changes status
+   * (enableAddon/disableAddon on a still-TRIAL tenant) sets this explicitly to keep the tx read
+   * consistent with the pre-tx `tenantStatus`.
+   */
+  txTenantStatus?: string;
   /** ACTIVE TENANT_ADMIN/OPERATOR/DRIVER count, as the DOWNGRADE seat warning reads it. */
   activeTeam?: number;
   /**
@@ -239,12 +248,14 @@ function make(opts: Opts = {}) {
       updateMany: jest.fn().mockResolvedValue({ count: 1 }),
       findUnique: jest.fn().mockResolvedValue({ status: "ACTIVE" }),
       // B865 / SA-277 (D2 lock shape): the add-on ledger helper's paying-set read, under the
-      // tx lock. NOTE: this tx-scoped default is ACTIVE (paying) even though the non-tx
+      // tx lock. This tx-scoped default is ACTIVE (paying) even though the non-tx
       // `prisma.tenant.findUnique` below still defaults to TRIAL (the `subscribe` tests rely
-      // on that) — the two reads answer different questions and only share `opts.tenantStatus`
-      // when a test explicitly sets it (e.g. T12 below wants BOTH reads to say TRIAL).
+      // on that) — `subscribe()` unconditionally writes status ACTIVE before booking any
+      // add-on, so its OWN tx-scoped read must reflect that write, never the pre-tx status.
+      // A test whose method never flips status (enableAddon/disableAddon on a still-TRIAL
+      // tenant) sets `opts.txTenantStatus` explicitly instead of relying on this default.
       findUniqueOrThrow: jest.fn().mockResolvedValue({
-        status: opts.tenantStatus ?? "ACTIVE",
+        status: opts.txTenantStatus ?? "ACTIVE",
         class: "PRODUCTION",
         deletedAt: null,
         subscription: { planKey: "TEAM" },
@@ -263,9 +274,16 @@ function make(opts: Opts = {}) {
   };
   const prisma = {
     tenant: {
-      findUnique: jest
-        .fn()
-        .mockResolvedValue({ status: opts.tenantStatus ?? "TRIAL", plan: opts.tenantPlan ?? null }),
+      // B865 / SA-277 FIX-4: `subscribe()` now also selects `class`/`deletedAt` here to compute
+      // `wasPaying` via `isPayingRow` — default PRODUCTION/not-deleted so every test that only
+      // sets `tenantStatus` still gets the SAME paying-set answer `isPayingRow` would give a
+      // real ACTIVE/PRODUCTION row (opts.tenantStatus is the only thing tests vary here).
+      findUnique: jest.fn().mockResolvedValue({
+        status: opts.tenantStatus ?? "TRIAL",
+        plan: opts.tenantPlan ?? null,
+        class: "PRODUCTION",
+        deletedAt: null,
+      }),
       // TRIAL-1: cancel() on a subscription-less trial/read-only tenant reads + writes the
       // tenant row directly (there is no TenantSubscription row to update).
       update: jest.fn().mockResolvedValue({}),
@@ -405,6 +423,9 @@ describe("SubscriptionMutationService.subscribe (MRR = signed change)", () => {
           sku: "CUSTOMER_PACK_100",
           quantity: 1,
           active: true,
+          // B865 / SA-277: the STORED snapshot the toDisable booking now nets against (never a
+          // fresh catalog read) — without it the fixture would price this add-on at 0.
+          priceSnapshot: 12,
         },
       ],
     });
@@ -834,7 +855,10 @@ describe("SubscriptionMutationService downgrade / add-ons", () => {
     await first.svc.enableAddon("t1", "CUSTOMER_PACK_100", 2, "admin");
     expect(deltaOf(first.events, BILLING_EVENTS.ADDON_ENABLED)).toBe(24); // 12 × 2
 
-    const again = make({ existingAddon: { active: true, quantity: 2 } });
+    // B865 / SA-277: the existing-row read moved INSIDE the tx (FIX-3) — `addonRow` is what
+    // the tx-scoped `tenantAddon.findUnique` now returns, carrying the STORED priceSnapshot the
+    // before/after contract needs to net this re-enable to a true 0.
+    const again = make({ addonRow: { active: true, quantity: 2, priceSnapshot: 12 } });
     await again.svc.enableAddon("t1", "CUSTOMER_PACK_100", 2);
     expect(emitted(again.events)).not.toContain(BILLING_EVENTS.ADDON_ENABLED); // no change → no MRR event
   });
@@ -869,7 +893,9 @@ describe("SubscriptionMutationService downgrade / add-ons", () => {
 // matching admin-path tests in `addon.service.spec.ts`.
 describe("SubscriptionMutationService.enableAddon/disableAddon — B865 ledger gating (SA-277)", () => {
   it("REG-B865-SELF TRIAL tenant enabling CUSTOMER_PACK_100 ×2 books nothing (activation books it once)", async () => {
-    const { svc, tx, events } = make({ tenantStatus: "TRIAL" });
+    // SA-277: enableAddon() never changes tenant status, so the tx-scoped paying-set read
+    // must stay TRIAL here too (never the ACTIVE default `subscribe()`'s tests rely on).
+    const { svc, tx, events } = make({ tenantStatus: "TRIAL", txTenantStatus: "TRIAL" });
 
     await svc.enableAddon("t1", "CUSTOMER_PACK_100", 2, "admin");
 
@@ -973,7 +999,9 @@ describe("SubscriptionMutationService.enableAddon — F1 tenant-path concurrency
     await first.svc.enableAddon("t1", "CUSTOMER_PACK_100", 2, "admin");
     expect(deltaOf(first.events, BILLING_EVENTS.ADDON_ENABLED)).toBe(24); // 12 × 2
 
-    const again = make({ existingAddon: { active: true, quantity: 2 } });
+    // B865 / SA-277: the existing-row read moved INSIDE the tx (FIX-3) — see the matching note
+    // on "enableAddon charges the qty delta only" above.
+    const again = make({ addonRow: { active: true, quantity: 2, priceSnapshot: 12 } });
     await expect(again.svc.enableAddon("t1", "CUSTOMER_PACK_100", 2)).resolves.toBeDefined();
     expect(emitted(again.events)).not.toContain(BILLING_EVENTS.ADDON_ENABLED);
   });
@@ -985,12 +1013,15 @@ describe("SubscriptionMutationService.enableAddon — F1 tenant-path concurrency
     // replicas. Before this fix (no lock at all) both calls read `null` here regardless of
     // order, which is precisely how F1 double-books: both compute deltaQty against a
     // priorQty of 0 and both emit the full delta.
-    let row: { active: boolean; quantity: number } | null = null;
+    let row: { active: boolean; quantity: number; priceSnapshot: unknown } | null = null;
     const tenantAddon = {
       findUnique: jest.fn(async () => (row ? { ...row } : null)),
       upsert: jest.fn(async ({ create, update }: any) => {
         const applied = row ? update : create;
-        row = { active: true, quantity: applied.quantity };
+        // B865 / SA-277: the STORED priceSnapshot must persist across the (serialised) second
+        // call too — without it, the second call's `before` prices at 0 regardless of the
+        // first call's committed row, and double-books the delta instead of netting to 0.
+        row = { active: true, quantity: applied.quantity, priceSnapshot: applied.priceSnapshot };
         return { id: "addon1", ...row };
       }),
     };

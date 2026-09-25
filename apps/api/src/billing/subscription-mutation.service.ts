@@ -17,7 +17,8 @@ import { EntitlementsService } from "./entitlements.service";
 import { BillingEventService } from "./billing-event.service";
 import { StripeService } from "./stripe.service";
 import { isStripeResourceMissing } from "./addon.service";
-import { emitAddonDelta } from "./addon-ledger";
+import { emitAddonDelta, lockTenantForLedger, bookAddonsOnCrossing } from "./addon-ledger";
+import { isPayingRow } from "./mrr.service";
 import { withAdvisoryLock, LockTimeoutError, LockUnavailableError } from "../common/db-locks";
 import {
   BILLING_EVENTS,
@@ -215,7 +216,7 @@ export class SubscriptionMutationService {
     const [tenant, priorSub, priorAddons] = await Promise.all([
       this.prisma.tenant.findUnique({
         where: { id: tenantId },
-        select: { status: true, plan: true },
+        select: { status: true, plan: true, class: true, deletedAt: true },
       }),
       this.prisma.tenantSubscription.findUnique({
         where: { tenantId },
@@ -224,6 +225,12 @@ export class SubscriptionMutationService {
       this.prisma.tenantAddon.findMany({ where: { tenantId, active: true } }),
     ]);
     if (!tenant) throw new NotFoundException("Tenant not found");
+
+    // B865 / SA-277 FIX-4: the SAME paying-set basis `oldPlanMonthly` below reads (pre-tx
+    // status + prior planKey), but through `isPayingRow` so class/deletedAt gate it too — this
+    // decides which add-on bookings below start from {0,0} (never-paying-yet) vs. the add-on's
+    // own stored state (already paying, no crossing to price).
+    const wasPaying = isPayingRow(tenant, priorSub?.planKey ?? null);
 
     // The plan we are changing FROM — resolved through the legacy enum, so a subscription
     // predating plans-as-data (planKey NULL) is ranked instead of read as "no plan".
@@ -269,10 +276,6 @@ export class SubscriptionMutationService {
     const periodEnd = addCycle(now, input.cycle);
 
     const skuByCode = new Map(version.addonSkus.map((s) => [s.sku, s]));
-    const monthlyOf = (code: string) => {
-      const m = skuByCode.get(code);
-      return m ? Number(m.monthlyPrice) : 0;
-    };
 
     // Reconcile desired (from input) against prior-active add-ons. This is the same
     // TENANT_ADMIN self-service surface as enableAddon(), so an admin-only ("ships dark")
@@ -283,10 +286,11 @@ export class SubscriptionMutationService {
       if (!isSelfServiceAddon(a.sku)) throw new ForbiddenException(ADMIN_ONLY_ADDON_MESSAGE);
       desired.set(a.sku, Math.max(1, Math.trunc(a.quantity ?? 1)));
     }
-    const priorByCode = new Map<string, { id: string; qty: number }>();
+    const priorByCode = new Map<string, { id: string; qty: number; snapshot: unknown }>();
     for (const row of priorAddons) {
       const code = addonSkuCode(row);
-      if (code) priorByCode.set(code, { id: row.id, qty: row.quantity });
+      if (code)
+        priorByCode.set(code, { id: row.id, qty: row.quantity, snapshot: row.priceSnapshot });
     }
     // Only self-service add-ons are the tenant's to drop: an admin-granted SKU the payload
     // is not even allowed to name must not be revoked by omitting it.
@@ -316,6 +320,9 @@ export class SubscriptionMutationService {
     const preparedTransition = await this.planTransition.prepare(transition);
 
     await this.prisma.$transaction(async (tx) => {
+      // B865 / SA-277 FIX-2 (house lock order): tenant row lock FIRST, before any
+      // subscription/add-on read or write in this tx.
+      await lockTenantForLedger(tx, tenantId);
       await this.planTransition.onPlanChange(tx, transition, preparedTransition);
       await tx.tenantSubscription.upsert({
         where: { tenantId },
@@ -392,16 +399,26 @@ export class SubscriptionMutationService {
         { fromPlan: priorSub?.planKey ?? null, toPlan: input.planKey, cycle: input.cycle },
         { amountDelta: roundMoney(Number(def.monthlyPrice ?? 0) - oldPlanMonthly), actorId, tx },
       );
+      // B865 / SA-277 FIX-4: every add-on booking here routes through the ONE ledger helper —
+      // `before` is the prior stored state ONLY if the tenant was already paying (a genuinely
+      // already-booked add-on nets its real change); otherwise {0,0}, since a non-paying
+      // tenant's add-on never booked anything to begin with, so the crossing books its FULL
+      // current contribution instead of the (unbooked) prior→new delta.
       for (const [code, qty] of desired) {
+        const meta = skuByCode.get(code)!;
         const prior = priorByCode.get(code);
-        const deltaQty = qty - (prior?.qty ?? 0);
-        if (deltaQty === 0) continue; // already active at this quantity → no MRR change
-        await this.events.emit(
+        const before =
+          wasPaying && prior
+            ? { priceSnapshot: prior.snapshot, quantity: prior.qty }
+            : { priceSnapshot: 0, quantity: 0 };
+        await emitAddonDelta(tx, this.events, {
           tenantId,
-          BILLING_EVENTS.ADDON_ENABLED,
-          { sku: code, quantity: qty },
-          { amountDelta: roundMoney(monthlyOf(code) * deltaQty), actorId, tx },
-        );
+          sku: code,
+          before,
+          after: { priceSnapshot: meta.monthlyPrice, quantity: qty },
+          actorId,
+          payload: { quantity: qty },
+        });
         if (code === "SEAT_EXTRA" && !prior) {
           await this.events.emit(
             tenantId,
@@ -413,12 +430,16 @@ export class SubscriptionMutationService {
       }
       for (const code of toDisable) {
         const prior = priorByCode.get(code)!;
-        await this.events.emit(
+        const before = wasPaying
+          ? { priceSnapshot: prior.snapshot, quantity: prior.qty }
+          : { priceSnapshot: 0, quantity: 0 };
+        await emitAddonDelta(tx, this.events, {
           tenantId,
-          BILLING_EVENTS.ADDON_DISABLED,
-          { sku: code },
-          { amountDelta: roundMoney(-monthlyOf(code) * prior.qty), actorId, tx },
-        );
+          sku: code,
+          before,
+          after: { priceSnapshot: 0, quantity: 0 },
+          actorId,
+        });
         if (code === "SEAT_EXTRA") {
           await this.events.emit(
             tenantId,
@@ -427,6 +448,29 @@ export class SubscriptionMutationService {
             { actorId, tx },
           );
         }
+      }
+      // SA-277b: a prior ACTIVE add-on that is neither picked again (`desired`) nor dropped
+      // (`toDisable`) — an admin-granted add-on kept across the crossing — is priced through the
+      // SAME crossing helper `activateManualSubscription` uses: booked once, in full, only if
+      // this subscribe() is what moves the tenant into the paying set (`!wasPaying`); if the
+      // tenant was already paying, its contribution is already on the ledger and nothing changes.
+      const kept = priorAddons.filter((row) => {
+        const code = addonSkuCode(row);
+        return code != null && !desired.has(code) && !toDisable.includes(code);
+      });
+      if (kept.length > 0) {
+        await bookAddonsOnCrossing(
+          tx,
+          this.events,
+          tenantId,
+          kept.map((row) => ({
+            sku: addonSkuCode(row)!,
+            priceSnapshot: row.priceSnapshot,
+            quantity: row.quantity,
+          })),
+          wasPaying,
+          actorId,
+        );
       }
     }, this.planTransition.transactionOptions(preparedTransition));
 
@@ -1238,13 +1282,19 @@ export class SubscriptionMutationService {
       const result = await withAdvisoryLock(
         { family: "billing", key: lockKey, mode: "wait", waitMs: 10_000 },
         async () => {
-          const existing = await this.prisma.tenantAddon.findUnique({
-            where: { tenantId_addonKey: { tenantId, addonKey: sku } },
-          });
-          const priorQty = existing?.active ? existing.quantity : 0;
-          const deltaQty = qty - priorQty; // MRR change relative to prior active quantity
-
           await this.prisma.$transaction(async (tx) => {
+            // B865 / SA-277 FIX-2/FIX-3 (house lock order): tenant row lock FIRST — and the
+            // existence read moves INSIDE the tx, AFTER the lock, so `existing` (and the
+            // `before` snapshot derived from it) can never observe a stale pre-lock state a
+            // concurrent enable/disable committed in between.
+            await lockTenantForLedger(tx, tenantId);
+            const existing = await tx.tenantAddon.findUnique({
+              where: { tenantId_addonKey: { tenantId, addonKey: sku } },
+            });
+            const before = existing?.active
+              ? { priceSnapshot: existing.priceSnapshot, quantity: existing.quantity }
+              : { priceSnapshot: 0, quantity: 0 };
+
             await tx.tenantAddon.upsert({
               where: { tenantId_addonKey: { tenantId, addonKey: sku } },
               create: {
@@ -1257,23 +1307,21 @@ export class SubscriptionMutationService {
               },
               update: { sku, quantity: qty, active: true, priceSnapshot: skuDef.monthlyPrice },
             });
-            if (deltaQty !== 0) {
-              await emitAddonDelta(tx, this.events, {
+            await emitAddonDelta(tx, this.events, {
+              tenantId,
+              sku,
+              before,
+              after: { priceSnapshot: skuDef.monthlyPrice, quantity: qty },
+              actorId,
+              payload: { quantity: qty, prorated: preview.proratedToday },
+            });
+            if (sku === "SEAT_EXTRA" && !existing?.active) {
+              await this.events.emit(
                 tenantId,
-                sku,
-                priceSnapshot: skuDef.monthlyPrice,
-                deltaQty,
-                actorId,
-                payload: { quantity: qty, prorated: preview.proratedToday },
-              });
-              if (sku === "SEAT_EXTRA" && priorQty === 0) {
-                await this.events.emit(
-                  tenantId,
-                  BILLING_EVENTS.SEAT_ADDED,
-                  { quantity: qty },
-                  { actorId, tx },
-                );
-              }
+                BILLING_EVENTS.SEAT_ADDED,
+                { quantity: qty },
+                { actorId, tx },
+              );
             }
           });
         },
@@ -1324,6 +1372,9 @@ export class SubscriptionMutationService {
       // a −snapshot×qty ledger delta. Mirror addon.service.ts's admin-path fix (FIX-865B): lock
       // the row FIRST, re-read it INSIDE the transaction, and gate the update + emit on THAT
       // read, so a losing concurrent call sees active=false already and no-ops.
+      // B865 / SA-277 FIX-2 (house lock order): tenant row lock FIRST, before the TenantAddon
+      // row lock.
+      await lockTenantForLedger(tx, tenantId);
       await tx.$queryRaw`SELECT id FROM "TenantAddon" WHERE id = ${addon.id} FOR UPDATE`;
       const current = await tx.tenantAddon.findUnique({ where: { id: addon.id } });
       if (!current?.active) return; // already disabled by a concurrent call that won the race
@@ -1331,8 +1382,8 @@ export class SubscriptionMutationService {
       await emitAddonDelta(tx, this.events, {
         tenantId,
         sku: code,
-        priceSnapshot: current.priceSnapshot,
-        deltaQty: -current.quantity,
+        before: { priceSnapshot: current.priceSnapshot, quantity: current.quantity },
+        after: { priceSnapshot: 0, quantity: 0 },
         actorId,
       });
       if (code === "SEAT_EXTRA") {

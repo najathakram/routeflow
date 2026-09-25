@@ -34,7 +34,9 @@ import {
   isInviteOnlyPlanKey,
   INVITE_ONLY_PLAN_TRIAL_DAYS,
   inviteOnlyCheckoutAllowed,
+  addonSkuCode,
 } from "../billing/plan-catalog.constants";
+import { bookAddonsOnCrossing } from "../billing/addon-ledger";
 import { roundMoney } from "@routeflow/pricing";
 import { TenantStatusGuard } from "../tenant/tenant-status.guard";
 import { AppConfig } from "../config/configuration";
@@ -1010,18 +1012,22 @@ ${
       if (wasPaying !== isPaying) {
         const addons = await tx.tenantAddon.findMany({
           where: { tenantId: id, active: true },
-          select: { priceSnapshot: true, quantity: true },
+          select: { priceSnapshot: true, quantity: true, sku: true, addonKey: true },
         });
         // basePriceSnapshot/discount are untouched by this write (external/manual activations
         // are priced outside the catalog run-rate — see the REG-743-N5/F2 note in
         // mrr.service.ts), so the "after" contribution reuses the exact fields the write
         // leaves in place — never a catalog-price guess.
-        const contribution = this.mrrService.priceSubscription(
+        // SA-277b: the PLAN_CHANGED amount here is the BASE (plan) share only — the add-on
+        // share of this same crossing is booked separately, through `bookAddonsOnCrossing`
+        // below (the SAME helper `subscribe()` uses for its own kept/prior add-ons), so nothing
+        // is double-counted between a plan.changed row and the addon.enabled rows it books.
+        const baseContribution = this.mrrService.priceSubscription(
           {
             basePriceSnapshot: before.subscription?.basePriceSnapshot ?? null,
             discount: before.subscription?.discount ?? null,
           },
-          addons,
+          [],
         );
         await this.billingEventService.emit(
           id,
@@ -1033,10 +1039,24 @@ ${
             externalActivation: true,
           },
           {
-            amountDelta: roundMoney(isPaying ? contribution : -contribution),
+            amountDelta: roundMoney(isPaying ? baseContribution : -baseContribution),
             actorId: adminId,
             tx,
           },
+        );
+        // SA-277b: add-ons book through the SAME crossing helper `subscribe()` uses —
+        // `wasPaying` gates whether each add-on's contribution was already on the ledger.
+        await bookAddonsOnCrossing(
+          tx,
+          this.billingEventService,
+          id,
+          addons.map((a) => ({
+            sku: addonSkuCode(a) ?? a.addonKey,
+            priceSnapshot: a.priceSnapshot,
+            quantity: a.quantity,
+          })),
+          wasPaying,
+          adminId,
         );
       }
 
@@ -1443,24 +1463,27 @@ ${
     // same transaction, mirroring updatePlan's PLAN_CHANGED emission. Only the
     // null-snapshot case back-fills — a set snapshot is already-reconciled data
     // (reconcilePriceLedger, called via syncStripeSubscriptionPrice below, rewrites it).
-    const backfillBase =
-      dto.monthly != null && existing?.planKey != null && existing.basePriceSnapshot == null;
     await this.prisma.$transaction(async (tx) => {
       // B864 / SA-277 (SA-163 shape): lock → read paying-set inputs → decide; a racing
       // activation serialises here.
       await tx.$queryRaw`SELECT id FROM "Tenant" WHERE id = ${id} FOR UPDATE`;
-      // Re-read the subscription UNDER the lock: backfillBase must be decided from the
-      // locked row, not from `existing` read before the tx (a racing activation could have
-      // written the snapshot).
+      // FIX-7 / SA-277: re-read the subscription (planKey AND basePriceSnapshot) UNDER the
+      // lock — `backfillBase` must be decided from THIS locked read, never from the pre-tx
+      // `existing` read above, or a racing activation that wrote the snapshot between the
+      // pre-tx read and this lock would be clobbered/double-booked.
       const row = await tx.tenant.findUniqueOrThrow({
         where: { id },
         select: {
           status: true,
           class: true,
           deletedAt: true,
-          subscription: { select: { planKey: true } },
+          subscription: { select: { planKey: true, basePriceSnapshot: true } },
         },
       });
+      const backfillBase =
+        dto.monthly != null &&
+        row.subscription?.planKey != null &&
+        row.subscription.basePriceSnapshot == null;
       await tx.tenantSubscription.upsert({
         where: { tenantId: id },
         update: {
@@ -1480,7 +1503,11 @@ ${
         await this.billingEventService.emit(
           id,
           BILLING_EVENTS.PLAN_CHANGED,
-          { toPlan: existing.planKey, platformAdmin: true, priceOverrideBackfill: true },
+          {
+            toPlan: row.subscription?.planKey ?? null,
+            platformAdmin: true,
+            priceOverrideBackfill: true,
+          },
           { amountDelta: roundMoney(dto.monthly!), actorId: adminId, tx },
         );
       }
