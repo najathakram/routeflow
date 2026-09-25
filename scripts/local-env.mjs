@@ -9,8 +9,8 @@
 //
 // Usage: node scripts/local-env.mjs [--db] [--smoke] [--db-specs] [--smtp-specs] [--e2e] -- "<command string>"
 import { spawnSync } from "node:child_process";
-import fs from "node:fs";
 import path from "node:path";
+import { loadLocalSaEnv } from "./lib/local-sa-env.mjs";
 import { fileURLToPath } from "node:url";
 
 // Repo root, computed from this file's own location — used to build an ABSOLUTE
@@ -138,22 +138,10 @@ if (flags.has("--e2e")) {
   // an ABSOLUTE path computed from REPO_ROOT above rather than a "../../"-relative one.
   env.PLAYWRIGHT_JSON_OUTPUT_FILE = path.join(REPO_ROOT, ".campaign", "runs", "web-e2e-local.json");
   delete env.CI;
-  // D-03 (#1803): the local-only throwaway super-admin minted by `npm run local:sa` (scripts/
-  // local-super-admin.mjs) lives in a gitignored, mode-600 file. Only the two PLAYWRIGHT_SA_* names are ever
-  // taken from it, a value already exported wins, and a file that is not owner-only (a loose mode, a
-  // group/world-readable copy) is ignored. Absent file = super-admin specs skip exactly as before.
-  const saFile = path.join(REPO_ROOT, "local-assets", "local-sa.env");
-  try {
-    // Owner-only on POSIX; on Windows Node reports 666 whatever the ACLs say, so the mode cannot be checked there.
-    if (process.platform === "win32" || (fs.statSync(saFile).mode & 0o077) === 0) {
-      for (const line of fs.readFileSync(saFile, "utf8").split(/\r?\n/)) {
-        const m = /^(PLAYWRIGHT_SA_USERNAME|PLAYWRIGHT_SA_PASSWORD)=(.+)$/.exec(line);
-        if (m && !env[m[1]]) env[m[1]] = m[2];
-      }
-    }
-  } catch {
-    /* no file: nothing to load */
-  }
+  // D-03 (#1803): the local-only throwaway super-admin minted by `npm run local:sa` (scripts/local-super-admin.mjs)
+  // lives in a gitignored, owner-only file and WINS over an exported PLAYWRIGHT_SA_* (with a loud warning when it
+  // overrides one). See scripts/lib/local-sa-env.mjs.
+  loadLocalSaEnv(env, path.join(REPO_ROOT, "local-assets", "local-sa.env"));
 }
 
 const res = spawnSync(command, { shell: true, stdio: "inherit", env });
