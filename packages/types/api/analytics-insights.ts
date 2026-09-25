@@ -65,11 +65,15 @@ export interface ProductInsightsTotals {
   /** Σ pieces on returns whose netting event (external refund, or a non-VOID credit note)
    *  falls in the window. */
   returnedQtyPieces: number;
+  /** Return lines in the window whose unit could not be resolved to pieces: a STANDARD return
+   *  is typed in the order line's own unit (B665) and a box-unaware line's pack is never
+   *  guessed. NOT counted in `returnedQtyPieces`; their money still nets (credits). */
+  unresolvedReturnLines: number;
   /** invoicedQtyPieces − returnedQtyPieces. */
   netQtyPieces: number;
-  /** Σ qty ÷ the line's own sale-time pack, over lines whose pack is known. Lines whose pack
-   *  is unknown count in pieces only (see `legacyLines`). When `mixedPackSizes` is true this
-   *  sums different pack sizes — lead with pieces. */
+  /** Σ qty ÷ the line's own sale-time pack, over lines with pieces > 0 whose pack is known.
+   *  Lines whose pack is unknown count in pieces only (see `legacyLines`). When
+   *  `mixedPackSizes` is true this sums different pack sizes — lead with pieces. */
   sellingUnits: number;
   /** The one sale-time pack size every known-pack line shares (1 = sold by the piece);
    *  null when there are none or when `mixedPackSizes`. */
@@ -190,9 +194,8 @@ export interface ProductInsightsQuery {
 }
 
 /** One row of `GET /analytics/products/:id/sales`: the product-sales line plus its netting
- *  facts. `creditedAmount`/`creditedQty` come from credit-note line items on THIS line
- *  (non-VOID, any date); a credit or return that no line item ties to this line shows only
- *  in the product totals. */
+ *  facts, each tied to THIS line by a stored fact (any date). A credit or return that no
+ *  stored fact ties to a line shows only in the product totals. */
 export interface ProductInsightSaleLine extends ProductSaleLine {
   /** The invoice line id — stable row key. */
   lineId: string;
@@ -201,10 +204,11 @@ export interface ProductInsightSaleLine extends ProductSaleLine {
   unitLabel: string | null;
   /** Effective price per piece (subtotal ÷ pieces); null for a zero-quantity line. */
   perPiece: number | null;
+  /** Σ non-VOID credit-note line items on this line. */
   creditedAmount: number;
-  /** Pieces on the credit-note line items (the allocator prorates it for an amount-only
-   *  credit, so it is not always a physical return). */
-  creditedQty: number;
+  /** Pieces returned against this line with a netting event. Exact for INLINE returns (they
+   *  record their source line); a STANDARD return records none and counts only in totals. */
+  returnedQty: number;
 }
 
 export interface ProductSalesPageQuery {
