@@ -51,6 +51,20 @@ import type { ApproveInlineReturnDto } from "./dto/approve-inline-return.dto";
  * allows a `dark` key; a service-level money write never does). */
 const INLINE_RETURNS_ADDON_KEY = "orders_inline_returns";
 
+/**
+ * The capture service's own refusal codes (SA-204). The mobile capture classifier
+ * (apps/mobile/lib/inline-return-submit-key.ts) settles a 4xx ONLY when the body carries one of
+ * these — a post-lookup business refusal is terminal, everything else (401/403/408/429, a code-
+ * less 400 from the validation pipe, 5xx, no response) keeps the nonce. Pinned set-equal to the
+ * mobile copy by inline-returns.service.spec.ts.
+ */
+export const INLINE_RETURN_ERROR_CODES = {
+  ORDER_NOT_FOUND: "INLINE_RETURN_ORDER_NOT_FOUND",
+  ORDER_CUSTOMER_MISMATCH: "INLINE_RETURN_ORDER_CUSTOMER_MISMATCH",
+  ORDER_CANCELLED: "INLINE_RETURN_ORDER_CANCELLED",
+  RETURN_KEY_CONFLICT: "INLINE_RETURN_KEY_CONFLICT",
+} as const;
+
 @Injectable()
 export class InlineReturnsService {
   constructor(
@@ -193,12 +207,23 @@ export class InlineReturnsService {
             where: { id: dto.orderId },
             select: { id: true, customerId: true, total: true, status: true, routeRunId: true },
           });
-          if (!order) throw new NotFoundException("Order not found");
+          if (!order) {
+            throw new NotFoundException({
+              code: INLINE_RETURN_ERROR_CODES.ORDER_NOT_FOUND,
+              message: "Order not found",
+            });
+          }
           if (order.customerId !== dto.customerId) {
-            throw new BadRequestException("Order does not belong to this customer");
+            throw new BadRequestException({
+              code: INLINE_RETURN_ERROR_CODES.ORDER_CUSTOMER_MISMATCH,
+              message: "Order does not belong to this customer",
+            });
           }
           if (order.status === "CANCELLED") {
-            throw new BadRequestException("Cannot capture a return against a cancelled order");
+            throw new BadRequestException({
+              code: INLINE_RETURN_ERROR_CODES.ORDER_CANCELLED,
+              message: "Cannot capture a return against a cancelled order",
+            });
           }
           if (user.role === UserRole.DRIVER) {
             await this.assertDriverOwnsOrder(tx, dto, order);
@@ -217,7 +242,10 @@ export class InlineReturnsService {
             });
             if (raced) {
               if (raced.customerId !== dto.customerId || raced.orderId !== dto.orderId) {
-                throw new ConflictException("A different return already used this capture key");
+                throw new ConflictException({
+                  code: INLINE_RETURN_ERROR_CODES.RETURN_KEY_CONFLICT,
+                  message: "A different return already used this capture key",
+                });
               }
               return {
                 replayed: true as const,
@@ -345,7 +373,10 @@ export class InlineReturnsService {
           if (raced && raced.customerId === dto.customerId && raced.orderId === dto.orderId) {
             result = { replayed: true, ret: raced, overCap: raced.holdReason === "DRIVER_CAP" };
           } else {
-            throw new ConflictException("A different return already used this capture key");
+            throw new ConflictException({
+              code: INLINE_RETURN_ERROR_CODES.RETURN_KEY_CONFLICT,
+              message: "A different return already used this capture key",
+            });
           }
         } else {
           throw err;
