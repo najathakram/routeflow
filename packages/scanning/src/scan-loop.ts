@@ -81,6 +81,14 @@ export interface ScanGateState {
   slots?: ScanSlot[];
 }
 
+/**
+ * Sentinel `lastAcceptAt` for a slot `touchSeen` created — a code seen but never actually
+ * accepted. `gateScan` treats it exactly like "no slot at all" (bypasses cooldown AND
+ * absence), so a code an ahead-of-gate filter is still deciding about never accrues a
+ * phantom cooldown/absence window before it has ever really been accepted once.
+ */
+export const NEVER_ACCEPTED = -Infinity;
+
 export const SCAN_COOLDOWN_MS = 600;
 /** How long a tracked code must be absent from frame before a repeat counts as a re-present. */
 export const ABSENCE_GAP_MS = 300;
@@ -152,8 +160,15 @@ export function gateScan(
     intersectsCandidates(candidates, slot.code, candidatesOf),
   );
   const slot = matched >= 0 ? slots[matched] : null;
+  // `NEVER_ACCEPTED` (see `touchSeen`) is a slot that exists ONLY so a caller ahead of
+  // this gate can keep `lastSeenAt` fresh for a code it hasn't decided to accept yet —
+  // treat it exactly like `!slot`, bypassing cooldown AND absence, or a code that took a
+  // few frames to satisfy that caller's own filter would need to wait out a cooldown/
+  // absence window that never actually started (#2131 review round 1).
   const accept =
-    !slot || (now - slot.lastAcceptAt >= cooldownMs && now - slot.lastSeenAt >= ABSENCE_GAP_MS);
+    !slot ||
+    slot.lastAcceptAt === NEVER_ACCEPTED ||
+    (now - slot.lastAcceptAt >= cooldownMs && now - slot.lastSeenAt >= ABSENCE_GAP_MS);
 
   // The matched slot moves to the head under the code just decoded, so a label
   // read as EAN-13 this frame and UPC-A the next keeps ONE set of clocks.
@@ -172,6 +187,51 @@ export function gateScan(
       lastSeenAt: now,
       slots: [head, ...rest],
     },
+  };
+}
+
+/**
+ * Marks `code` as SEEN at `now` WITHOUT evaluating or moving a REAL `lastAcceptAt` — for
+ * a caller (`scan-engine.ts`'s `continuousFrameScanned`) that must keep a held code's
+ * `lastSeenAt` fresh, so `ABSENCE_GAP_MS` never fires while a filter ahead of the gate
+ * (steady-read) is still deciding whether a frame is trustworthy enough to accept, while
+ * never letting that "just looking" touch start (or shorten) the code's real cooldown.
+ * A first-ever touch stamps `NEVER_ACCEPTED`, which `gateScan` treats exactly like no
+ * slot at all — a plain `0` here would instead read as a real (if ancient) accept
+ * timestamp, arming a cooldown/absence window for an accept that was never actually
+ * applied and either delaying or, for a continuously-present code, permanently blocking
+ * the real first accept (#2131 review round 1).
+ */
+export function touchSeen(
+  state: ScanGateState | null,
+  code: string,
+  now: number,
+  candidatesOf: ScanCandidates = rawCandidates,
+): ScanGateState {
+  if (!code.trim()) {
+    return state ?? { lastCode: code, lastAcceptAt: now, lastSeenAt: now, slots: [] };
+  }
+  const slots = state ? readSlots(state) : [];
+  const candidates = new Set(candidatesOf(code));
+  const matched = slots.findIndex((slot) =>
+    intersectsCandidates(candidates, slot.code, candidatesOf),
+  );
+  const slot = matched >= 0 ? slots[matched] : null;
+  // No prior slot ⇒ NEVER_ACCEPTED — the eventual real gateScan call for this code then
+  // bypasses cooldown AND absence entirely, exactly as `!slot` would, since this code has
+  // genuinely never been accepted yet. A prior REAL slot's own lastAcceptAt is preserved
+  // untouched either way.
+  const head: ScanSlot = {
+    code,
+    lastAcceptAt: slot?.lastAcceptAt ?? NEVER_ACCEPTED,
+    lastSeenAt: now,
+  };
+  const rest = slots.filter((_, i) => i !== matched).slice(0, SCAN_SLOTS - 1);
+  return {
+    lastCode: code,
+    lastAcceptAt: head.lastAcceptAt,
+    lastSeenAt: now,
+    slots: [head, ...rest],
   };
 }
 

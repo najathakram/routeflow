@@ -141,8 +141,14 @@ describe("scan-pending-buffer (REG-B192)", () => {
 describe("ScanCamera delegates to the pending buffer (REG-B192 wiring)", () => {
   const scanCameraSrc = readFileSync(join(__dirname, "..", "components", "ScanCamera.tsx"), "utf8");
 
-  it("REG-B192: ScanCamera imports the pending buffer instead of owning the mutex", () => {
-    expect(scanCameraSrc).toMatch(/from\s+["']\.\.\/lib\/scan-pending-buffer["']/);
+  it("REG-B192: ScanCamera delegates to the shared pending buffer instead of owning the mutex", () => {
+    // #2131 review round 1 folded the gate + buffer + steady-read sequencing into ONE
+    // composed call (`continuousFrameScanned`/`scanSettled`, @routeflow/scanning) — the
+    // buffer is still the SAME `scan-pending-buffer.ts` implementation (`../lib/scan-
+    // pending-buffer` is a re-export of it, per that file's own header), just reached
+    // through the shared package directly rather than the local re-export path.
+    expect(scanCameraSrc).toMatch(/from\s+["']@routeflow\/scanning["']/);
+    expect(scanCameraSrc).toMatch(/\bscanSettled\(/);
   });
 
   it("REG-B192: the drop-not-queue busyRef early-return is gone from handleBarcodeScanned", () => {

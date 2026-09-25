@@ -6,6 +6,19 @@ import { ScanCamera, useScanCameraPermission } from "./ScanCamera";
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get("window");
 const WINDOW_SIZE = SCREEN_WIDTH * 0.7;
+// The EXACT rect the "Clear scan window" box below renders at — passed to ScanCamera as
+// its enforced aimBox (#2131 review round 1, point 3: the two had drifted apart, since
+// ScanCamera used to compute its OWN default centered box while this one is offset 40dp
+// above center to leave room for the feedback pill/hint text below it. A caller-computed
+// default that doesn't match what's drawn on screen silently rejects a scan the operator
+// can see is correctly aligned — so the drawing math and the enforced rect must be ONE
+// source, not two that happen to agree today.
+const AIM_BOX = {
+  x: (SCREEN_WIDTH - WINDOW_SIZE) / 2,
+  y: (SCREEN_HEIGHT - WINDOW_SIZE) / 2 - 40,
+  width: WINDOW_SIZE,
+  height: WINDOW_SIZE,
+};
 
 interface Props {
   /**
@@ -95,6 +108,7 @@ export function BarcodeScanner({
         onOutcome={handleOutcome}
         continuous={continuous}
         active={active && !paused}
+        aimBox={continuous ? AIM_BOX : undefined}
       />
 
       {/* Dark surround */}
