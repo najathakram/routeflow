@@ -127,6 +127,7 @@ import * as unitLines from "./unit-line-build";
 import * as unitEdit from "./unit-line-edit";
 import { loadCategoryMapForProducts } from "./category-map";
 import { assertBuyerCartPricesCurrent } from "./buyer-cart-price-check";
+import { collectUnlistedLoserItems } from "./merge-unlisted-lines";
 import { restrictionChannelForPrincipal } from "../selling-restrictions/selling-restrictions.core";
 import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
 import { PromotionsService } from "../promotions/promotions.service";
@@ -684,31 +685,7 @@ export class OrdersService implements OnApplicationBootstrap {
           const [winner, ...losers] = pendingOrders;
           // Unlisted (catalog-free) loser lines can't be keyed by product — each is
           // appended to the winner as its own new line (never boxed, unaffected by B776).
-          const unlistedNewItems: Array<{
-            name: string | null;
-            qty: number;
-            unitPrice: number;
-            priceType: PriceType;
-            originalPrice: number | null;
-            overrideReason: string | null;
-            overriddenBy: string | null;
-            notes: string | null;
-          }> = [];
-          for (const loser of losers) {
-            for (const li of loser.lineItems) {
-              if (li.productId) continue;
-              unlistedNewItems.push({
-                name: li.name,
-                qty: Number(li.qty),
-                unitPrice: Number(li.unitPrice),
-                priceType: li.priceType,
-                originalPrice: li.originalPrice !== null ? Number(li.originalPrice) : null,
-                overrideReason: li.overrideReason,
-                overriddenBy: li.overriddenBy,
-                notes: li.notes,
-              });
-            }
-          }
+          const unlistedNewItems = collectUnlistedLoserItems(losers);
 
           // unitsPerBox for every product involved so boxed lines prorate by the box.
           const contributingLines = [...winner.lineItems, ...losers.flatMap((l) => l.lineItems)];
@@ -964,31 +941,7 @@ export class OrdersService implements OnApplicationBootstrap {
 
           // Unlisted (catalog-free) loser lines are appended as their own winner lines
           // (never boxed, unaffected by B776).
-          const unlistedNewItems: Array<{
-            name: string | null;
-            qty: number;
-            unitPrice: number;
-            priceType: PriceType;
-            originalPrice: number | null;
-            overrideReason: string | null;
-            overriddenBy: string | null;
-            notes: string | null;
-          }> = [];
-          for (const loser of losers) {
-            for (const li of loser.lineItems) {
-              if (li.productId) continue;
-              unlistedNewItems.push({
-                name: li.name,
-                qty: Number(li.qty),
-                unitPrice: Number(li.unitPrice),
-                priceType: li.priceType,
-                originalPrice: li.originalPrice !== null ? Number(li.originalPrice) : null,
-                overrideReason: li.overrideReason,
-                overriddenBy: li.overriddenBy,
-                notes: li.notes,
-              });
-            }
-          }
+          const unlistedNewItems = collectUnlistedLoserItems(losers);
 
           // unitsPerBox for every product involved so boxed lines prorate by the box.
           const involvedProductIds = [
@@ -2926,6 +2879,15 @@ export class OrdersService implements OnApplicationBootstrap {
         `Cannot reopen order: invoice ${paidInvoice.invoiceNumber} is ${paidInvoice.status}. Void or credit the invoice before reopening.`,
       );
     }
+    // F-05 (SA-272): reopening moves the ORDER to PENDING, so EVERY line goes live — a new sale of the whole order,
+    // not only of the item-CANCELLED lines (cancelling a DRAFT never marks its lines CANCELLED, and drafts are
+    // written without the check). Staff-only path; no delta, so every catalog line is checked, before any write.
+    await this.sellingRestrictions.assertLinesSellable({
+      tenantId: this.restrictionTenantId(undefined, order.tenantId),
+      customerId: order.customerId,
+      lines: order.lineItems.flatMap((li) => (li.productId ? [{ productId: li.productId }] : [])),
+      channel: "STAFF",
+    });
     return this.prisma.tenantTransaction(
       async (tx) => {
         // B64 (REG-B64): read the item-CANCELLED lines BEFORE they flip below —
