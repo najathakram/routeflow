@@ -1,5 +1,6 @@
 /**
- * B670 (SA-180) — update()'s regulated-levy basis reads the SAME resolved pack the money uses.
+ * B670/B701/B674 (SA-184, SA-186, SA-189) — update() keeps untouched lines verbatim and in place, and
+ * re-prices only changed ones from their OWN pack.
  *
  * Split out of invoices.service.spec.ts (not merged into it) per the repo's size ratchet
  * (`common/size-ratchet.spec.ts` — that file is one of the 15 tracked giants and may not grow).
@@ -36,7 +37,7 @@ import { EntitlementsService } from "../billing/entitlements.service";
 import { CommissionEngineService } from "../sales-agents/commission-engine.service";
 import { InvoiceStatus } from "@prisma/client";
 
-describe("InvoicesService — B670 update() levy-basis pack", () => {
+describe("InvoicesService — update() line preservation", () => {
   let service: InvoicesService;
   let prisma: ReturnType<typeof createMockPrisma>;
 
@@ -113,7 +114,7 @@ describe("InvoicesService — B670 update() levy-basis pack", () => {
     service = module.get<InvoicesService>(InvoicesService);
   });
 
-  describe("update() — the levy basis uses the resolved pack, not the live product alone", () => {
+  describe("update() — untouched lines are preserved, changed lines use their own pack", () => {
     const draftInvoice = {
       id: "inv-box",
       orderId: null,
@@ -131,56 +132,250 @@ describe("InvoicesService — B670 update() levy-basis pack", () => {
       dueDate: null,
       issueDate: new Date(),
     };
-    const arrange = (storedPack: number | null) => {
+    // A legacy line: 0 boxes + 5 pieces at $11/box, never snapshotted a pack, billed $4.58.
+    const legacy = (over: any = {}) => ({
+      id: "item-legacy",
+      productId: "prod-box",
+      description: "Chips",
+      qty: 5,
+      boxes: 0,
+      pieces: 5,
+      unitPrice: 11,
+      discount: 0,
+      taxRate: 0,
+      subtotal: 4.58,
+      unitsPerBox: null,
+      categoryTaxAmount: 0,
+      notes: null,
+      orderItemId: null,
+      ...over,
+    });
+    const payload = (over: any = {}) => ({
+      id: "item-legacy",
+      productId: "prod-box",
+      description: "Chips",
+      qty: 5,
+      unitPrice: 11,
+      boxes: 0,
+      pieces: 5,
+      ...over,
+    });
+    const arrange = (rows: any[], over: { livePack?: number; category?: boolean } = {}) => {
       prisma.invoice.findUnique.mockResolvedValue(draftInvoice);
-      // the product's pack has since changed to 6; the invoice's own stored line still says 12
       prisma.product.findMany.mockResolvedValue([
-        { id: "prod-box", unitsPerBox: 6, trackedCategoryId: "cat-1" },
+        {
+          id: "prod-box",
+          unitsPerBox: over.livePack ?? 6,
+          trackedCategoryId: over.category ? "cat-1" : null,
+        },
       ]);
-      prisma.trackedCategory.findMany.mockResolvedValue([
-        { id: "cat-1", taxType: "EXCISE_PER_UNIT", rate: 0.1, priceIncludesTax: false },
-      ]);
-      prisma.invoiceItem.findMany.mockResolvedValue(
-        storedPack == null ? [] : [{ productId: "prod-box", unitsPerBox: storedPack }],
+      prisma.trackedCategory.findMany.mockResolvedValue(
+        over.category
+          ? [{ id: "cat-1", taxType: "EXCISE_PER_UNIT", rate: 0.1, priceIncludesTax: false }]
+          : [],
       );
+      prisma.invoiceItem.findMany.mockResolvedValue(rows);
       prisma.customer.findUnique.mockResolvedValue({ isTaxExempt: false });
       prisma.invoice.update.mockResolvedValue(draftInvoice);
+      prisma.invoiceItem.update.mockResolvedValue({});
     };
-    const saved = () => prisma.invoice.update.mock.calls[0][0].data.items.create[0];
+    const saved = () => prisma.invoice.update.mock.calls[0][0].data;
 
-    it("stored pack 12, live pack 6, a no-change save of a box-unaware line: basis = qty x 12 (levy 6.00, not 3.00)", async () => {
-      arrange(12);
-      await service.update("inv-box", {
-        items: [{ productId: "prod-box", description: "Chips", qty: 5, unitPrice: 10 }],
+    it("a notes-only save of a legacy 0-box + 5-piece line ($4.58, pack unknown) leaves the money and split exactly as stored", async () => {
+      arrange([legacy()]);
+      await service.update("inv-box", { notes: "call ahead", items: [payload()] } as any);
+      expect(saved().items.create).toEqual([]); // kept in place, not recreated
+      expect(saved().subtotal).toBe(4.58);
+      expect(prisma.invoiceItem.update).not.toHaveBeenCalled();
+      expect(prisma.invoiceItem.deleteMany).toHaveBeenCalledWith({
+        where: { invoiceId: "inv-box", id: { notIn: ["item-legacy"] } },
       });
-      // 5 selling units x stored pack 12 = 60 pieces x $0.10 = $6.00 (was 5 x 6 x 0.10 = $3.00)
-      expect(saved().categoryTaxAmount).toBe(6);
     });
 
-    it("no stored pack: falls back to the live pack 6 (levy 3.00), unchanged behaviour", async () => {
-      arrange(null);
-      await service.update("inv-box", {
-        items: [{ productId: "prod-box", description: "Chips", qty: 5, unitPrice: 10 }],
-      });
-      expect(saved().categoryTaxAmount).toBe(3);
+    it("the same save from an OLD cached client (no id) matches on the full tuple and still preserves the line", async () => {
+      arrange([legacy()]);
+      await service.update("inv-box", { notes: "x", items: [payload({ id: undefined })] } as any);
+      expect(saved().items.create).toEqual([]);
+      expect(saved().subtotal).toBe(4.58);
     });
 
-    it("a split line (2 boxes + 3 pieces, qty 27) already counts pieces: levy 2.70 whatever the packs say", async () => {
-      arrange(12);
+    it("editing its qty without a split is refused, naming the line, and nothing is written", async () => {
+      arrange([legacy()]);
+      await expect(
+        service.update("inv-box", {
+          items: [
+            {
+              id: "item-legacy",
+              productId: "prod-box",
+              description: "Chips",
+              qty: 6,
+              unitPrice: 11,
+            },
+          ],
+        } as any),
+      ).rejects.toThrow("set the box and piece count for Chips to edit it");
+      expect(prisma.invoice.update).not.toHaveBeenCalled();
+      expect(prisma.invoiceItem.update).not.toHaveBeenCalled();
+    });
+
+    it("the id-less edit of that legacy line is refused too (fail-closed for old clients)", async () => {
+      arrange([legacy()]);
+      await expect(
+        service.update("inv-box", {
+          items: [payload({ id: undefined, qty: 6, boxes: undefined, pieces: undefined })],
+        } as any),
+      ).rejects.toThrow("set the box and piece count");
+    });
+
+    it("after the operator sets 0 boxes + 6 pieces at pack 12 the line is prorated at 12 and that pack is stored on THAT row", async () => {
+      arrange([legacy()]);
+      await service.update("inv-box", {
+        items: [payload({ qty: 6, pieces: 6, unitsPerBox: 12 })],
+      } as any);
+      expect(prisma.invoiceItem.update).toHaveBeenCalledWith({
+        where: { id: "item-legacy" },
+        data: expect.objectContaining({
+          qty: 6,
+          boxes: 0,
+          pieces: 6,
+          unitsPerBox: 12,
+          subtotal: 5.5,
+        }),
+      });
+      // SA-189(4): the attested pack is in the audit trail, so it can be told from a recovered one.
+      expect(prisma.auditLog.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          action: "INVOICE_LINE_PACK_ATTESTED",
+          entityType: "invoice",
+          entityId: "inv-box",
+          meta: { attested: [{ rowId: "item-legacy", unitsPerBox: 12 }] },
+        }),
+      });
+    });
+
+    it("an explicit pack on an UNCHANGED line is ignored: a stale client cannot re-pack a preserved row", async () => {
+      arrange([legacy()]);
+      await service.update("inv-box", { items: [payload({ unitsPerBox: 24 })] } as any);
+      expect(prisma.invoiceItem.update).not.toHaveBeenCalled();
+      expect(saved().subtotal).toBe(4.58);
+    });
+
+    it("an explicit pack that disagrees with a recoverable pack is refused, not silently overridden", async () => {
+      arrange([legacy({ qty: 24, boxes: 2, pieces: 0, unitsPerBox: 12, subtotal: 22 })]);
+      await expect(
+        service.update("inv-box", {
+          items: [payload({ qty: 36, boxes: 3, pieces: 0, unitsPerBox: 24 })],
+        } as any),
+      ).rejects.toThrow("disagrees with this line's own pack 12");
+    });
+
+    it("an explicit pack whose split does not add up to qty is refused", async () => {
+      arrange([legacy()]);
+      await expect(
+        service.update("inv-box", {
+          items: [payload({ qty: 7, pieces: 6, unitsPerBox: 12 })],
+        } as any),
+      ).rejects.toThrow("is not 0 boxes x 12 + 6 pieces");
+    });
+
+    it("a sibling line at pack 24 changes nothing; the edited line uses ITS OWN pack 12", async () => {
+      const a = legacy({ id: "a", qty: 24, boxes: 2, pieces: 0, unitsPerBox: 12, subtotal: 22 });
+      const b = legacy({ id: "b", qty: 48, boxes: 2, pieces: 0, unitsPerBox: 24, subtotal: 22 });
+      arrange([a, b]);
       await service.update("inv-box", {
         items: [
+          payload({ id: "a", qty: 36, boxes: 3, pieces: 0 }),
+          payload({ id: "b", qty: 48, boxes: 2, pieces: 0 }),
+        ],
+      } as any);
+      expect(prisma.invoiceItem.update).toHaveBeenCalledTimes(1);
+      expect(prisma.invoiceItem.update).toHaveBeenCalledWith({
+        where: { id: "a" },
+        data: expect.objectContaining({ boxes: 3, unitsPerBox: 12, subtotal: 33 }),
+      });
+    });
+
+    it("an unknown line id is a 400 'unknown line id' and nothing is written", async () => {
+      arrange([legacy()]);
+      await expect(
+        service.update("inv-box", {
+          items: [payload({ id: "11111111-1111-4111-8111-111111111111" })],
+        } as any),
+      ).rejects.toThrow("unknown line id");
+      expect(prisma.invoice.update).not.toHaveBeenCalled();
+    });
+
+    it("an id from ANOTHER invoice is unknown here: the lookup is only ever this invoice's own rows", async () => {
+      arrange([legacy()]); // this invoice's rows only
+      await expect(
+        service.update("inv-box", { items: [payload({ id: "item-of-another-invoice" })] } as any),
+      ).rejects.toThrow("unknown line id");
+      // Only this invoice's rows were read (tenant-scoped client): nothing else was looked up.
+      expect(prisma.invoiceItem.findMany).toHaveBeenCalledTimes(1);
+      expect(prisma.invoiceItem.findMany).toHaveBeenCalledWith({ where: { invoiceId: "inv-box" } });
+    });
+
+    it("a stored row the payload drops is deleted; a brand-new line is created", async () => {
+      arrange([legacy(), legacy({ id: "gone", description: "Old" })]);
+      await service.update("inv-box", {
+        items: [
+          payload(),
           {
             productId: "prod-box",
-            description: "Chips",
-            qty: 27,
-            unitPrice: 28.35,
-            boxes: 2,
-            pieces: 3,
+            description: "New",
+            qty: 12,
+            unitPrice: 11,
+            boxes: 1,
+            pieces: 0,
           },
         ],
+      } as any);
+      expect(prisma.invoiceItem.deleteMany).toHaveBeenCalledWith({
+        where: { invoiceId: "inv-box", id: { notIn: ["item-legacy"] } },
       });
-      expect(saved().categoryTaxAmount).toBe(2.7);
-      expect(saved().unitsPerBox).toBe(12); // money + snapshot still from the line's own split
+      expect(saved().items.create).toHaveLength(1);
+      expect(saved().items.create[0]).toMatchObject({ description: "New", unitsPerBox: 12 });
+    });
+
+    // SA-180 leg: the levy basis is the resolved pack, never the live product alone.
+    it("levy: an untouched box-unaware line (stored pack 12, live 6) keeps its stored $6.00; changing its qty re-prices at its OWN 12", async () => {
+      const row = legacy({
+        qty: 5,
+        boxes: null,
+        pieces: null,
+        unitPrice: 10,
+        subtotal: 50,
+        unitsPerBox: 12,
+        categoryTaxAmount: 6,
+      });
+      arrange([row], { category: true });
+      await service.update("inv-box", {
+        items: [
+          { id: "item-legacy", productId: "prod-box", description: "Chips", qty: 5, unitPrice: 10 },
+        ],
+      } as any);
+      expect(saved().taxAmount).toBe(6); // stored levy, untouched (not 5 x 6 x 0.10 = 3)
+      expect(prisma.invoiceItem.update).not.toHaveBeenCalled();
+
+      prisma.invoice.update.mockClear();
+      await service.update("inv-box", {
+        items: [
+          { id: "item-legacy", productId: "prod-box", description: "Chips", qty: 6, unitPrice: 10 },
+        ],
+      } as any);
+      // 6 units x own pack 12 = 72 pieces x $0.10 = $7.20 (not 6 x 6 x 0.10 = 3.60 at the live pack)
+      expect(prisma.invoiceItem.update).toHaveBeenCalledWith({
+        where: { id: "item-legacy" },
+        data: expect.objectContaining({ qty: 6, categoryTaxAmount: 7.2 }),
+      });
+    });
+
+    it("a NEW line with no stored row still falls back to the live pack (no snapshot exists yet)", async () => {
+      arrange([], { category: true });
+      await service.update("inv-box", {
+        items: [{ productId: "prod-box", description: "Chips", qty: 5, unitPrice: 10 }],
+      } as any);
+      expect(saved().items.create[0].categoryTaxAmount).toBe(3); // 5 x live 6 x 0.10
     });
   });
 });

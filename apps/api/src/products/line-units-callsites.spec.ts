@@ -44,7 +44,8 @@ const BASELINE: Record<string, number> = {
   //   3. `applyPriceAdjustment`'s `unitsPerBoxByProduct` map — a regulated BASIS lookup, never a
   //      line-factor decision. Retired by moving it to a named non-line helper (SA-047 shape).
   // The number may only go DOWN. The target is still zero.
-  "invoices/invoices.service.ts": 3, // 4c-1 prefactor: create()'s line builder moved (3 reads) to:
+  "invoices/invoices.service.ts": 2, // update()'s line mapper (1 read) moved to invoice-edit-plan.ts (SA-184)
+  "invoices/invoice-edit-plan.ts": 1, // the moved read: a NEW line's live-pack last resort (SA-077); a stored line never reads it // 4c-1 prefactor: create()'s line builder moved (3 reads) to:
   // B659: two direct read sites in this file (box-split branch's `item.packSnapshot ??
   // product?.unitsPerBox`, and the no-split branch's `upbForPieces` gaining the same fallback per
   // review finding 2). Verified by running the scanner's own regex directly against the file, not
