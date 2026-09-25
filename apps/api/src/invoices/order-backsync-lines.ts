@@ -1,4 +1,4 @@
-import { normalizeBoxesPieces, roundMoney } from "@routeflow/pricing";
+import { normalizeBoxesPieces, roundMoney, splitMatchesQty } from "@routeflow/pricing";
 
 /**
  * The denomination (qty, boxes, pieces, pack, unit label) an order line is written with by the invoice ->
@@ -57,7 +57,7 @@ function rawShape(
   if (held?.boxes == null)
     return { qty: agg.qty, boxes: null, pieces: null, unitsPerBox: upb > 0 ? upb : null };
   // Unchanged qty over a stored split at a known pack: keep the split exactly as stored (no re-normalizing).
-  if (single && upb > 1 && Number(existing?.qty) === agg.qty) {
+  if (single && Number(existing?.unitsPerBox) > 1 && Number(existing?.qty) === agg.qty) {
     return {
       qty: agg.qty,
       boxes: existing.boxes,
@@ -127,7 +127,11 @@ export function orderLineUnchanged(
 export const holdsValues = (row: any, want: ReadonlyArray<readonly [string, unknown]>): boolean =>
   want.every(([k, v]) => sameValue(row?.[k], v));
 
-/** The invariant (SA-257): boxes x pack + pieces === qty for any split written; else re-split at the pack. */
+/**
+ * The invariant (SA-257): a split carrying a pack > 1 must satisfy `splitMatchesQty` (the ONE definition, shared
+ * with the invoice edit plan); if it does not, it is re-split at THAT pack. A shape with no known pack
+ * (null, 0 or 1) is never given one from elsewhere: it is left as chosen (stored split kept, SA-211).
+ */
 function consistentSplit<
   T extends {
     qty: number;
@@ -138,6 +142,7 @@ function consistentSplit<
 >(shape: T, qty: number): T {
   const upb = Number(shape.unitsPerBox ?? 0);
   if (shape.boxes == null || !(upb > 1)) return shape;
-  if (shape.boxes * upb + (shape.pieces ?? 0) === qty) return shape;
+  if (splitMatchesQty({ qty, boxes: shape.boxes, pieces: shape.pieces, unitsPerBox: upb }))
+    return shape;
   return { ...shape, ...normalizeBoxesPieces({ qty, unitsPerBox: upb }), unitsPerBox: upb };
 }

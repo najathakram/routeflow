@@ -38,6 +38,7 @@ import {
   packFromOwnSplit,
   regulatedUnitBasis,
   roundMoney,
+  splitMatchesQty,
   type CategoryTaxType,
 } from "@routeflow/pricing";
 import { foldCategoryTax } from "./manual-invoice-context";
@@ -203,7 +204,10 @@ function recoverChangedPack(
   if (hasSplit) {
     const boxes = item.boxes ?? null;
     const pieces = item.pieces ?? null;
-    if (explicit != null && Number(item.qty) !== (boxes ?? 0) * explicit + (pieces ?? 0)) {
+    if (
+      explicit != null &&
+      !splitMatchesQty({ qty: Number(item.qty), boxes, pieces, unitsPerBox: explicit })
+    ) {
       throw new BadRequestException(
         `Line "${lineLabel(item)}": qty ${item.qty} is not ${boxes ?? 0} boxes x ${explicit} + ${pieces ?? 0} pieces`,
       );

@@ -1,3 +1,4 @@
+import { splitMatchesQty } from "@routeflow/pricing";
 import { orderLineShape, orderLineUnchanged } from "./order-backsync-lines";
 
 describe("orderLineShape (SA-203c)", () => {
@@ -350,5 +351,95 @@ describe("orderLineUnchanged (1b: a discount/shipping-only save must not rewrite
     expect(orderLineUnchanged({ ...held, status: "DELIVERED" }, shape, agg)).toBe(false);
     expect(orderLineUnchanged({ ...held, invoicedQty: "0.000" }, shape, agg)).toBe(false);
     expect(orderLineUnchanged({ ...held, boxes: null }, shape, agg)).toBe(false);
+  });
+});
+
+describe("orderLineShape: three shape kinds x (consistent, inconsistent, no pack) (SA-257)", () => {
+  type Case = {
+    name: string;
+    existing: any;
+    agg: any;
+    want: { boxes: number | null; pieces: number | null; unitsPerBox: number | null };
+  };
+  const cases: Case[] = [
+    // VERBATIM: n === 1 with a split
+    {
+      name: "verbatim / consistent: 2+2 at 12 (26) copied as billed",
+      existing: { boxes: 1, pieces: 0, unitsPerBox: 12, qty: 12 },
+      agg: { qty: 26, sample: { boxes: 2, pieces: 2, unitsPerBox: 12 }, n: 1 },
+      want: { boxes: 2, pieces: 2, unitsPerBox: 12 },
+    },
+    {
+      name: "verbatim / inconsistent: billed 1+14 at 24 for qty 26 is re-split at 24 (1+2)",
+      existing: { boxes: 1, pieces: 14, unitsPerBox: null, qty: 26 },
+      agg: { qty: 26, sample: { boxes: 1, pieces: 14, unitsPerBox: 24 }, n: 1 },
+      want: { boxes: 1, pieces: 2, unitsPerBox: 24 },
+    },
+    {
+      name: "verbatim / inconsistent via the pack fallback: billed legacy 1+0 (no pack, qty 24) over order pack 12 is re-split 2+0 at 12",
+      existing: { boxes: 2, pieces: 0, unitsPerBox: 12, qty: 24 },
+      agg: { qty: 24, sample: { boxes: 1, pieces: 0, unitsPerBox: null }, n: 1 },
+      want: { boxes: 2, pieces: 0, unitsPerBox: 12 },
+    },
+    {
+      name: "verbatim / no pack anywhere: 0 boxes + 5 pcs is copied as billed, no pack invented",
+      existing: { boxes: 0, pieces: 5, unitsPerBox: null, qty: 5 },
+      agg: { qty: 5, sample: { boxes: 0, pieces: 5, unitsPerBox: null }, n: 1 },
+      want: { boxes: 0, pieces: 5, unitsPerBox: null },
+    },
+    // KEPT: n === 1 without a split over a split order line
+    {
+      name: "kept / consistent: 1+14 at the order line's OWN pack 12 (26) stays 1+14",
+      existing: { boxes: 1, pieces: 14, unitsPerBox: 12, qty: 26 },
+      agg: { qty: 26, sample: { boxes: null, pieces: null, unitsPerBox: null }, n: 1 },
+      want: { boxes: 1, pieces: 14, unitsPerBox: 12 },
+    },
+    {
+      name: "kept / inconsistent: the order line has NO own pack, the billed line says 24: 1+14 is re-split 1+2 at 24, not kept",
+      existing: { boxes: 1, pieces: 14, unitsPerBox: null, qty: 26 },
+      agg: { qty: 26, sample: { boxes: null, pieces: null, unitsPerBox: 24 }, n: 1 },
+      want: { boxes: 1, pieces: 2, unitsPerBox: 24 },
+    },
+    {
+      name: "kept / no pack anywhere: a box split at an unknown pack stays as stored (SA-211), 0 boxes => pieces = qty",
+      existing: { boxes: 2, pieces: 3, unitsPerBox: null, qty: 27 },
+      agg: { qty: 27, sample: { boxes: null, pieces: null, unitsPerBox: null }, n: 1 },
+      want: { boxes: 2, pieces: 3, unitsPerBox: null },
+    },
+    // RE-SPLIT: n > 1
+    {
+      name: "re-split / consistent: two lines sharing pack 12, qty 36 -> 3+0 at 12",
+      existing: { boxes: 3, pieces: 0, unitsPerBox: 24, qty: 72 },
+      agg: {
+        qty: 36,
+        sample: { boxes: 1, pieces: 6, unitsPerBox: 12 },
+        n: 2,
+        packs: new Set([12]),
+      },
+      want: { boxes: 3, pieces: 0, unitsPerBox: 12 },
+    },
+    {
+      name: "re-split / inconsistent stored shape: order 2+0 at 24 with qty 60 becomes 2+12 at 24",
+      existing: { boxes: 2, pieces: 0, unitsPerBox: 24, qty: 48 },
+      agg: { qty: 60, sample: { boxes: null }, n: 2, packs: new Set([0]) },
+      want: { boxes: 2, pieces: 12, unitsPerBox: 24 },
+    },
+    {
+      name: "re-split / no pack anywhere: 0 boxes => pieces = qty",
+      existing: { boxes: 0, pieces: 5, unitsPerBox: null, qty: 5 },
+      agg: { qty: 9, sample: { boxes: null }, n: 2, packs: new Set([0]) },
+      want: { boxes: 0, pieces: 9, unitsPerBox: null },
+    },
+  ];
+
+  it.each(cases)("$name", ({ existing, agg, want }) => {
+    const shape = orderLineShape(existing, agg);
+    expect({ boxes: shape.boxes, pieces: shape.pieces, unitsPerBox: shape.unitsPerBox }).toEqual(
+      want,
+    );
+    // the invariant: any split carrying a pack > 1 adds up to its qty
+    if ((shape.unitsPerBox ?? 0) > 1 && shape.boxes != null) {
+      expect(splitMatchesQty({ ...shape, qty: agg.qty })).toBe(true);
+    }
   });
 });
