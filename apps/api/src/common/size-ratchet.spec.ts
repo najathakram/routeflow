@@ -29,8 +29,19 @@ const HEADROOM = 25;
 
 /** Repo-relative path → baseline line count (measured 2026-09-19 at 91d323de). */
 const BASELINE: Record<string, number> = {
-  "apps/api/src/orders/orders.service.ts": 5780, // U1 extraction: class tail minus deleteOrder (updateShipment, updateFulfillPath, toggleUrgent, applyBuyerMergeHeader, setCommissionRate, bulkDeleteOrders, findOneOrThrow) -> order-lifecycle.ts (was 5880)
-  "apps/api/src/invoices/invoices.service.ts": 6322, // B662: price-adjustment writes -> price-adjustment-ledger.ts (was 6389); 4c-1 prefactor: manual line builder -> manual-invoice-lines.ts
+  // SA-124f/SA-124h: the 5710 -> 5755 raise made after B776's SA-124e round was WRONG — no
+  // approval for a raise exists (ratchets only ever move down; a raise is the owner's call, not
+  // a lane's or the SA's), and the PR body's "the SA/fleet lead accepted this baseline move" note
+  // was never true. R1 (SA-124g/h's fallback scope) reverted updateOrderItems' replaceAll rebuild
+  // to master byte-for-byte, so the growth that prompted the raise is gone; restored to 5710.
+  // Round 4 continued: merging origin/master brought in its own unrelated growth (operator
+  // tier-price select columns, +6) — SA-124h's instruction was to extract until the MERGED file
+  // is comfortably under the old ceiling, not merely within headroom. buildReplaceAllLineData
+  // (the replaceAll rebuild's per-item price/data build) moved verbatim to its own file
+  // (orders/replace-all-line-build.ts) — 5740 -> 5540. Lowered to the measured value. Round 5
+  // (sourceLineId): buildExistingLineMaps also extracted — still fits at 5540, unchanged.
+  "apps/api/src/orders/orders.service.ts": 5540, // B776/SA-124a: buildMergeLineWrites replaced both merge methods' own live-pack fold (was 5751; SA-065 before that: appendOrderRevision -> order-revisions.ts, was 5780; U1 before that: class tail -> order-lifecycle.ts, 5880)
+  "apps/api/src/invoices/invoices.service.ts": 6292, // B662: price-adjustment writes -> price-adjustment-ledger.ts (was 6351); B769/SA-112: totals -> standalone-payment-totals.ts, lowered from 6358 (master was already 6350, unlowered). B659 prefactor: create() context/fold steps -> manual-invoice-context.ts (was 6389; verified by wc -l). The ledger-write extraction B659 originally also proposed was rejected on rebase (manual-invoice-context.ts's header comment) — but that rejection also silently dropped this file's OWN `hasRegulated` local (the extracted helper computed its own copy internally), a real ReferenceError caught only by running invoices.service.spec.ts in full; re-added 2 lines after itemsData, 6356 -> 6358.
   "apps/api/src/orders/orders.service.spec.ts": 9511,
   "apps/api/src/customers/customers.service.ts": 3307,
   "apps/api/src/invoices/invoices.service.spec.ts": 9351,
@@ -40,7 +51,7 @@ const BASELINE: Record<string, number> = {
   "apps/api/src/routes/routes.service.ts": 3189, // prefactor: run/stop select shapes + status constants live in routes/routes.constants.ts (was 3270)
   "apps/web/app/(dashboard)/products/[id]/page.tsx": 2942,
   "apps/mobile/app/(operator)/(tabs)/orders/[id]/edit-items.tsx": 3315,
-  "apps/mobile/components/NewOrderScreen.tsx": 4556,
+  "apps/mobile/components/NewOrderScreen.tsx": 4056, // SA-085: lineUnitFor + the total/totalItems memo -> lib/cart-order-total.ts (executable pin for the order-total fix) (was 4078)
   "apps/web/app/(dashboard)/inventory/page.tsx": 3303,
   "apps/web/app/(marketing)/marketing.css": 9941,
   "apps/web/components/ScanInvoiceModal.tsx": 3134,
