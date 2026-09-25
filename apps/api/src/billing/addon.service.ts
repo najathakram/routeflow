@@ -15,6 +15,8 @@ import { LEGACY_ADDON_KEY_TO_SKU } from "./plan-catalog.constants";
 import { withAdvisoryLock, LockTimeoutError, LockUnavailableError } from "../common/db-locks";
 import { ADDON_KEY_TO_REGISTRY_KEY } from "./feature-registry";
 import { EntitlementAuthority } from "./entitlement-authority.service";
+import { BillingEventService } from "./billing-event.service";
+import { emitAddonDelta } from "./addon-ledger";
 
 /**
  * A Stripe `resource_missing` / 404 error means the item we tried to act on is
@@ -52,6 +54,7 @@ export class AddonService {
     private readonly catalog: PlanCatalogService,
     private readonly featureResolver: FeatureResolverService,
     private readonly authority: EntitlementAuthority,
+    private readonly events: BillingEventService,
   ) {}
 
   // ─── Check access ─────────────────────────────────────────────────────────
@@ -183,23 +186,33 @@ export class AddonService {
             );
           }
 
-          // Bridged legacy keys (tobacco_dealer, msrp, sales_agents, …) must resolve to a SKU
-          // that actually exists in the published catalog — otherwise the row activates but
-          // EntitlementsService.compute() can never turn it into a flag (see the silent-continue
-          // fix there), which is how the sales-agents "not available on your plan" outage
-          // happened. Unbridged legacy keys (e.g. developer_mode) have no SKU to check and are
-          // allowed unchanged — that is the documented client-only pattern.
-          const sku = LEGACY_ADDON_KEY_TO_SKU[addonKey];
-          if (sku) {
+          const sku = LEGACY_ADDON_KEY_TO_SKU[addonKey] ?? addonKey;
+          const isBridged = LEGACY_ADDON_KEY_TO_SKU[addonKey] !== undefined;
+
+          // Only fetch catalog if bridged (must validate SKU exists) or if billing (must validate SKU is priceable)
+          let skuDef: any = null;
+          if (isBridged || stripePriceId) {
             const published = await this.catalog.getPublishedCatalog();
-            const skuIsPublished = published.addonSkus.some((s) => s.sku === sku);
-            if (!skuIsPublished) {
+            skuDef = published.addonSkus.find((s) => s.sku === sku);
+
+            // Bridged keys must exist in catalog — otherwise EntitlementsService.compute() can never
+            // turn it into a flag, which is how the sales-agents "not available on your plan" outage happened.
+            if (isBridged && !skuDef)
               throw new BadRequestException(
                 `Addon '${addonKey}' maps to SKU '${sku}' which is not in the published catalog — ` +
                   `publish the catalog version that defines it first`,
               );
+
+            // B865 / SA-277: a billed add-on must be priceable from the catalog — fail closed BEFORE any Stripe write.
+            if (stripePriceId && !skuDef) {
+              throw new BadRequestException(
+                `Add-on "${addonKey}" has no catalog SKU to price — publish a catalog version defining "${sku}" before billing it`,
+              );
             }
           }
+
+          // D1 (SA-277a): only a Stripe-billed enable carries revenue; a free grant is priced EXPLICITLY at 0 and books nothing.
+          const priceSnapshot = stripePriceId && skuDef ? Number(skuDef.monthlyPrice) : 0;
 
           // Add Stripe subscription item if configured. A price means this add-on is
           // billed — the entitlement and the Stripe item must move together, so any
@@ -242,21 +255,37 @@ export class AddonService {
             }
           }
 
-          // Upsert the add-on record
-          const addon = await this.prisma.tenantAddon.upsert({
-            where: { tenantId_addonKey: { tenantId, addonKey } },
-            create: {
-              tenantId,
-              addonKey,
-              stripePriceId: stripePriceId ?? null,
-              stripeItemId,
-              active: true,
-            },
-            update: {
-              active: true,
-              stripePriceId: stripePriceId ?? undefined,
-              stripeItemId: stripeItemId ?? undefined,
-            },
+          // Upsert the add-on record and emit ledger delta in a transaction
+          const addon = await this.prisma.$transaction(async (tx) => {
+            const row = await tx.tenantAddon.upsert({
+              where: { tenantId_addonKey: { tenantId, addonKey } },
+              create: {
+                tenantId,
+                addonKey,
+                sku,
+                stripePriceId: stripePriceId ?? null,
+                stripeItemId,
+                active: true,
+                priceSnapshot,
+              },
+              update: {
+                active: true,
+                sku,
+                stripePriceId: stripePriceId ?? undefined,
+                stripeItemId: stripeItemId ?? undefined,
+                priceSnapshot,
+              },
+            });
+            // D1: only emit if the add-on has a non-zero price (free grants book nothing)
+            if (priceSnapshot > 0) {
+              await emitAddonDelta(tx, this.events, {
+                tenantId,
+                sku,
+                priceSnapshot,
+                deltaQty: row.quantity ?? 1,
+              });
+            }
+            return row;
           });
 
           this.entitlements.invalidate(tenantId);
@@ -334,9 +363,21 @@ export class AddonService {
       }
     }
 
-    const updated = await this.prisma.tenantAddon.update({
-      where: { tenantId_addonKey: { tenantId, addonKey } },
-      data: { active: false, stripeItemId: null },
+    const updated = await this.prisma.$transaction(async (tx) => {
+      const row = await tx.tenantAddon.update({
+        where: { tenantId_addonKey: { tenantId, addonKey } },
+        data: { active: false, stripeItemId: null },
+      });
+      // Only emit if the add-on was active and has a non-zero price
+      if (addon.active && addon.priceSnapshot != null && Number(addon.priceSnapshot) > 0) {
+        await emitAddonDelta(tx, this.events, {
+          tenantId,
+          sku: LEGACY_ADDON_KEY_TO_SKU[addonKey] ?? addonKey,
+          priceSnapshot: addon.priceSnapshot,
+          deltaQty: -addon.quantity,
+        });
+      }
+      return row;
     });
 
     this.entitlements.invalidate(tenantId);
