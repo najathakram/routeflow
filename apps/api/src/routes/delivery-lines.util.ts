@@ -1,5 +1,27 @@
-import { BadRequestException, NotFoundException } from "@nestjs/common";
+import { BadRequestException, ConflictException, NotFoundException } from "@nestjs/common";
 import { fetchEvidenceByLine, sumDeliveredSoFar } from "./delivered-so-far";
+
+/**
+ * SA-151 review: `stop.status === "COMPLETED"` is checked BEFORE the caller's transaction in
+ * both `completeStop`/`completeWithPayment`, so two overlapping submits (double-tap, a retried
+ * request that actually landed) can both pass it and both reach here — a plain `update` would
+ * let both write evidence (and, on the paid path, collect payment) — up to 2x. Atomically
+ * re-checks against the CURRENT row (same B283/REG-B283 pattern as orders.service.ts's
+ * DRAFT→PENDING claim) and throws 409 for whichever submit loses the race.
+ */
+export async function claimStopCompletion(
+  tx: any,
+  stopId: string,
+  data: Record<string, unknown>,
+): Promise<void> {
+  const claimed = await tx.routeRunStop.updateMany({
+    where: { id: stopId, status: { not: "COMPLETED" } },
+    data,
+  });
+  if (claimed.count === 0) {
+    throw new ConflictException("This stop was already completed by another request.");
+  }
+}
 
 /**
  * Refuse a delivery payload BEFORE any write. Every line must (1) belong to an order carried by

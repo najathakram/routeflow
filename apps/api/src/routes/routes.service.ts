@@ -8,7 +8,7 @@ import {
 } from "@nestjs/common";
 import { createHash, randomUUID } from "crypto";
 import { ConfigService } from "@nestjs/config";
-import { assertDeliveriesFitStop } from "./delivery-lines.util";
+import { assertDeliveriesFitStop, claimStopCompletion } from "./delivery-lines.util";
 import { PrismaService } from "../prisma/prisma.service";
 import { JwtPayload } from "../auth/jwt-payload.interface";
 import {
@@ -2286,18 +2286,15 @@ export class RoutesService {
         existingSignatureUrl: stop.signatureUrl,
       });
 
-      // 1. Mark stop completed
-      await tx.routeRunStop.update({
-        where: { id: stopId },
-        data: {
-          status: "COMPLETED",
-          completedAt: new Date(),
-          ...(dto.driverNote !== undefined ? { driverNote: dto.driverNote } : {}),
-          ...(dto.podPhotoUrls ? { podPhotoUrls: dto.podPhotoUrls } : {}),
-          ...(dto.signatureUrl !== undefined ? { signatureUrl: dto.signatureUrl } : {}),
-          ...(dto.safeDropEnabled !== undefined ? { safeDropEnabled: dto.safeDropEnabled } : {}),
-          ...regulatedPatch,
-        },
+      // 1. Mark stop completed (SA-151, see claimStopCompletion).
+      await claimStopCompletion(tx, stopId, {
+        status: "COMPLETED",
+        completedAt: new Date(),
+        ...(dto.driverNote !== undefined ? { driverNote: dto.driverNote } : {}),
+        ...(dto.podPhotoUrls ? { podPhotoUrls: dto.podPhotoUrls } : {}),
+        ...(dto.signatureUrl !== undefined ? { signatureUrl: dto.signatureUrl } : {}),
+        ...(dto.safeDropEnabled !== undefined ? { safeDropEnabled: dto.safeDropEnabled } : {}),
+        ...regulatedPatch,
       });
 
       // 2. Record delivery mutations if provided
@@ -2526,18 +2523,15 @@ export class RoutesService {
         existingSignatureUrl: stop.signatureUrl,
       });
 
-      // 1. Mark stop completed
-      await tx.routeRunStop.update({
-        where: { id: stopId },
-        data: {
-          status: "COMPLETED",
-          completedAt: new Date(),
-          ...(dto.driverNote !== undefined ? { driverNote: dto.driverNote } : {}),
-          ...(dto.podPhotoUrls ? { podPhotoUrls: dto.podPhotoUrls } : {}),
-          ...(dto.signatureUrl !== undefined ? { signatureUrl: dto.signatureUrl } : {}),
-          ...(dto.safeDropEnabled !== undefined ? { safeDropEnabled: dto.safeDropEnabled } : {}),
-          ...regulatedPatch,
-        },
+      // 1. Mark stop completed — SA-151 review, see claimStopCompletion (delivery-lines.util.ts).
+      await claimStopCompletion(tx, stopId, {
+        status: "COMPLETED",
+        completedAt: new Date(),
+        ...(dto.driverNote !== undefined ? { driverNote: dto.driverNote } : {}),
+        ...(dto.podPhotoUrls ? { podPhotoUrls: dto.podPhotoUrls } : {}),
+        ...(dto.signatureUrl !== undefined ? { signatureUrl: dto.signatureUrl } : {}),
+        ...(dto.safeDropEnabled !== undefined ? { safeDropEnabled: dto.safeDropEnabled } : {}),
+        ...regulatedPatch,
       });
 
       // 2. Record delivery mutations. Track which orders were actually delivered
@@ -3080,37 +3074,43 @@ export class RoutesService {
         reason: "stop reopened",
       });
 
-      // 1. Delete delivery mutations for this stop
+      // 1. Delete delivery mutations for this stop — capture order ids FIRST (SA-151): `stop.orders`
+      // is CURRENT linkage, so an order moved to a DIFFERENT stop since this one completed no
+      // longer appears there, yet its evidence is deleted here too — recompute must cover it.
+      const deletedRows: Array<{ orderId: string }> = await tx.deliveryMutation.findMany({
+        where: { routeRunStopId: stopId },
+        select: { orderId: true },
+      });
+      const staleDeliveredQtyOrderIds = new Set(deletedRows.map((r) => r.orderId));
+      for (const order of stop.orders) staleDeliveredQtyOrderIds.add(order.id);
       await tx.deliveryMutation.deleteMany({ where: { routeRunStopId: stopId } });
 
-      // 2. Reset order items → PENDING, order status → CONFIRMED (safe fallback — it was at
-      // least CONFIRMED before OUT_FOR_DELIVERY), delete UNPAID transactions. deliveredQty is
-      // RECOMPUTED (never zeroed) after step 1 deletes this stop's rows — SA-133/B785: a
-      // redelivery elsewhere (B803) can leave evidence at OTHER stops; zeroing would erase it.
+      // 2. Reset items → PENDING, order → CONFIRMED, delete UNPAID — STILL-linked orders only.
       for (const order of stop.orders) {
         await tx.orderItem.updateMany({
           // A cancelled line stays cancelled: reopening a stop undoes a DELIVERY, never a cancel.
           where: { orderId: order.id, status: { not: "CANCELLED" } },
           data: { status: "PENDING" },
         });
+        if (order.status === "DELIVERED" || order.status === "OUT_FOR_DELIVERY") {
+          await tx.order.update({ where: { id: order.id }, data: { status: "CONFIRMED" } });
+        }
+        await tx.transaction.deleteMany({ where: { orderId: order.id, status: "UNPAID" } });
+      }
+
+      // Recompute for EVERY affected order (broader than `stop.orders`) — never zeroed (B803).
+      for (const orderId of staleDeliveredQtyOrderIds) {
         const lines = await tx.orderItem.findMany({
-          where: { orderId: order.id, status: { not: "CANCELLED" } },
+          where: { orderId, status: { not: "CANCELLED" } },
           select: { id: true },
         });
-        for (const u of await deliveredQtyRecompute(
-          tx,
-          order.id,
-          lines.map((li) => li.id),
-        )) {
+        const itemIds = lines.map((li) => li.id);
+        for (const u of await deliveredQtyRecompute(tx, orderId, itemIds)) {
           await tx.orderItem.update({
             where: { id: u.id },
             data: { deliveredQty: u.deliveredQty },
           });
         }
-        if (order.status === "DELIVERED" || order.status === "OUT_FOR_DELIVERY") {
-          await tx.order.update({ where: { id: order.id }, data: { status: "CONFIRMED" } });
-        }
-        await tx.transaction.deleteMany({ where: { orderId: order.id, status: "UNPAID" } });
       }
 
       // 3. B120: the reset below discards the only pointers to the stored POD
