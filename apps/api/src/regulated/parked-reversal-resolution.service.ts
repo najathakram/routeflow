@@ -1,4 +1,9 @@
-import { ConflictException, Injectable, NotFoundException } from "@nestjs/common";
+import {
+  BadRequestException,
+  ConflictException,
+  Injectable,
+  NotFoundException,
+} from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { RegulatedLedgerService } from "./regulated-ledger.service";
 import { periodBucketOf } from "./period";
@@ -23,6 +28,8 @@ export class ParkedReversalResolutionService {
   /** The tenant's unresolved parked reversals, oldest first — same shape as the parked
    *  restocks list, listed on the same "resolve this before filing" surface. */
   async list() {
+    if (!this.prisma.getTenantId())
+      throw new BadRequestException("Parked reversals are tenant-scoped");
     const db = this.prisma.forTenant();
     const rows: any[] = await db.regulatedLedgerParkedReversal.findMany({
       where: { resolvedAt: null },
@@ -67,6 +74,8 @@ export class ParkedReversalResolutionService {
    * row parked and unresolved, exactly like the restock service's cancelled-return refusal.
    */
   async resolve(id: string, pack: number, reason: string, actor: { id: string }) {
+    if (!this.prisma.getTenantId())
+      throw new BadRequestException("Parked reversals are tenant-scoped");
     const result = await this.prisma.tenantTransaction(async (tx: any) => {
       const peek = await tx.regulatedLedgerParkedReversal.findFirst({ where: { id } });
       if (!peek) throw new NotFoundException("Parked reversal not found");

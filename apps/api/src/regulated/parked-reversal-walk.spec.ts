@@ -628,6 +628,26 @@ describe("resolveParkedReversal — resume the live walk (SA-167)", () => {
       });
     });
 
+    it("#2108: a parked row with NO resolvable product never walks onto a productless line in another category", async () => {
+      // Row 1: invoice item rotated away and order item gone, so its product id is null. Row 2 is a
+      // productless (freeform) line in cat-B. null must never equal null in the resumed walk.
+      ledger = [
+        sale(1, 2, { invoiceItemId: "ii-gone" }),
+        sale(2, 3, { trackedCategoryId: "cat-B" }),
+      ];
+      invoiceItems = [{ ...ii(2), productId: null }];
+      const findFirst = jest.fn().mockResolvedValue(filing("cat-B", "2026-08"));
+      (prisma as any).regulatedFiling.findFirst = findFirst;
+      await service.resolveParkedReversal(
+        prisma,
+        { ...parked(1, 60), periodBucket: "2026-08", parkedAt },
+        12,
+      );
+      expect(reversals().filter((r) => r.trackedCategoryId === "cat-B")).toHaveLength(0);
+      // the fold looked only at the parked row's own category (the mock ignores `where`)
+      expect([...findFirst.mock.calls[0][0].where.trackedCategoryId.in]).toEqual(["cat-A"]);
+    });
+
     it("SA-213 pin: the same inputs give the same amendedPeriod AND the same category fold from resolve and from list()'s helper", async () => {
       ledger = [sale(1, 2), sale(2, 3, { trackedCategoryId: "cat-B" })];
       invoiceItems = [ii(1), ii(2)];
@@ -653,10 +673,20 @@ describe("resolveParkedReversal — resume the live walk (SA-167)", () => {
     it("SA-213 pin: a product reachable ONLY via the order item (InvoiceItem rotated away) folds the same categories in list() and resolve", async () => {
       // Row 1's invoice item was deleted by a reconcile (ii-gone is not in invoiceItems); its product
       // is known only through the order item. Row 2 (cat-B) is the same product on a live invoice item.
-      ledger = [sale(1, 2, { invoiceItemId: "ii-gone" }), sale(2, 3, { trackedCategoryId: "cat-B" })];
+      ledger = [
+        sale(1, 2, { invoiceItemId: "ii-gone" }),
+        sale(2, 3, { trackedCategoryId: "cat-B" }),
+      ];
       invoiceItems = [ii(2)];
       prisma.orderItem.findMany.mockResolvedValue([
-        { id: "oi-1", productId: "p1", boxes: null, pieces: null, unitLabel: null, unitsPerBox: null },
+        {
+          id: "oi-1",
+          productId: "p1",
+          boxes: null,
+          pieces: null,
+          unitLabel: null,
+          unitsPerBox: null,
+        },
       ]);
       const findFirst = jest.fn().mockResolvedValue(filing("cat-B", "2026-08", "LOCKED"));
       (prisma as any).regulatedFiling.findFirst = findFirst;

@@ -363,10 +363,20 @@ describe("ParkedReversalResolutionService", () => {
     );
   });
 
-  it("#2108: the audit row carries the PARKED ROW's tenantId even when the caller has no tenant context (SUPER_ADMIN)", async () => {
-    (prisma as any).getTenantId = jest.fn().mockReturnValue(null);
+  it("#2108: the audit row carries the PARKED ROW's tenantId never the caller context's tenant", async () => {
+    (prisma as any).getTenantId = jest.fn().mockReturnValue("t-ctx");
     await service.resolve("pr-1", 12, "confirmed with the supplier's packing slip", actor);
     expect(audit.log).toHaveBeenCalledWith(expect.objectContaining({ tenantId: "t1" }));
+  });
+
+  it("#2108: a tenant-less caller (SUPER_ADMIN) is refused on resolve and list — no audit, no claim", async () => {
+    (prisma as any).getTenantId = jest.fn().mockReturnValue(null);
+    await expect(service.resolve("pr-1", 12, "confirmed the case size", actor)).rejects.toThrow(
+      "tenant-scoped",
+    );
+    await expect(service.list()).rejects.toThrow("tenant-scoped");
+    expect(audit.log).not.toHaveBeenCalled();
+    expect(ledger.resolveParkedReversal).not.toHaveBeenCalled();
   });
 
   it("a CLOSED outcome (already fully reversed) still stamps resolvedAt and audits, with a null resolvedEntryId", async () => {

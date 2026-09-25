@@ -1378,7 +1378,9 @@ export class RegulatedLedgerService {
       );
       const ordered = built.sales.filter(
         (s: any) =>
-          s.correctsEntryId == null && built.productByItem.get(s.invoiceItemId) === productId,
+          s.correctsEntryId == null &&
+          productId != null &&
+          built.productByItem.get(s.invoiceItemId) === productId,
       );
       // EVERY other live row of the product, in the live path's own order (a fully reversed row
       // skips itself inside the chunk booker) — not only rows after the parked one.
