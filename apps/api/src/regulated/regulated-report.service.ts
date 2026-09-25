@@ -203,13 +203,15 @@ export class RegulatedReportService {
     // The review list is for the in-app preview only: the CSV is the filing export, not a review surface.
     if (tenantId && opts.reviewRows !== false) {
       const policy = await this.sellingRestrictions.getPolicy(tenantId);
-      const tz =
-        (
-          await this.prisma.tenantConfig.findUnique({
-            where: { tenantId },
-            select: { timezone: true },
-          })
-        )?.timezone ?? null;
+      // the tenant timezone is only needed (and only read) when the engine is ON
+      const tz = policy.enabled
+        ? ((
+            await this.prisma.tenantConfig.findUnique({
+              where: { tenantId },
+              select: { timezone: true },
+            })
+          )?.timezone ?? null)
+        : null;
       report.warnings.push(
         ...(await uncategorisedLineWarnings(db, policy, { from: fromDate, toExclusive }, tz)),
       );

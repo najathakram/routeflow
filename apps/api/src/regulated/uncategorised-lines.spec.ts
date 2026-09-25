@@ -38,12 +38,12 @@ describe("uncategorisedLineWarnings", () => {
     liftedAt: null,
     ...over,
   });
-  const run = (rules: object[], invoices: object[], policy = ON) => {
+  const run = (rules: object[], invoices: object[], policy = ON, tz: string | null = null) => {
     const db = {
       sellingRestriction: { findMany: jest.fn().mockResolvedValue(rules) },
       invoice: { findMany: jest.fn().mockResolvedValue(invoices) },
     };
-    return uncategorisedLineWarnings(db, policy, range).then((w) => ({ w, db }));
+    return uncategorisedLineWarnings(db, policy, range, tz).then((w) => ({ w, db }));
   };
 
   it("lists a customer whose governing state a STATE rule names, one row per invoice", async () => {
@@ -103,6 +103,14 @@ describe("uncategorisedLineWarnings", () => {
     // the next day it started is NOT the issue day: an invoice from the day BEFORE is not flagged
     const dayBefore = inv("2", [addr("CA")], "2026-09-09T00:00:00Z");
     expect((await run([midDayRule], [dayBefore])).w).toEqual([]);
+  });
+
+  it("the tenant TIMEZONE is threaded (non-UTC): 03:00Z on D+1 is still day D in America/Chicago, so a rule starting then lists day D's invoice; in UTC it does not", async () => {
+    // invoice issued on Sep 10 (start-of-day stamp); the rule starts Sep 11 03:00Z = Sep 10 22:00 in Chicago (UTC-5)
+    const invoiceD = inv("1", [addr("CA")], "2026-09-10T00:00:00Z");
+    const rule0300 = rule({ effectiveFrom: new Date("2026-09-11T03:00:00Z") });
+    expect((await run([rule0300], [invoiceD], ON, "America/Chicago")).w).toHaveLength(1);
+    expect((await run([rule0300], [invoiceD], ON, null)).w).toEqual([]); // UTC day D ended at 23:59:59.999Z
   });
 
   it("a rule lifted MID-DAY on the issue day still lists that day's invoice; one lifted the day before does not", async () => {
