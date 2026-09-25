@@ -55,6 +55,14 @@ export interface ShortPickLine {
    * stepper's upper bound; never derived from the live product.
    */
   boxes?: number | null;
+  /**
+   * SA-175/FIX 6: pieces left over after `boxes` whole units of `unitsPerBox` — always
+   * `orderedQty - boxes*unitsPerBox`; null when no split is known (`unitsPerBox` missing or
+   * <= 1). A REMAINING view (second visit) is not always an exact multiple of the case size —
+   * some of it may have been delivered piecemeal at another visit — so the stepper needs the
+   * TRUE remainder, never one a `Math.round` rounded away.
+   */
+  pieces?: number | null;
 }
 
 /**
@@ -68,6 +76,72 @@ export interface ShortPickLine {
  */
 export function isUnitAwareLine(li: Pick<ShortPickLine, "unitLabel" | "unitsPerBox">): boolean {
   return (li.unitLabel ?? "").trim() !== "" && Number(li.unitsPerBox ?? 0) > 1;
+}
+
+// ─── Whole-Case stepper math (FIX 6, SA-175) ───────────────────────────────────
+//
+// `ordered` is the line's REMAINING qty (a second visit) or its full qty (a first visit) — not
+// always an exact multiple of `unitsPerBox`. `caseStepperCasesDelivered` FLOORS, never rounds:
+// a rounded-up Case count can bound the stepper's top above what actually remains (30 left of a
+// 12-Case rounds to "3 of 3" = 36, over-delivering — the server's own fit check then refuses the
+// submit). The stepper's true top value is always exactly `ordered` itself (the last, partial
+// step) — never `floor(ordered/unitsPerBox) * unitsPerBox`, which can be LESS than `ordered` and
+// would silently strand a partial Case's worth of pieces as undeliverable.
+//
+// Pulled out of the review row (short-pick.tsx) as pure functions per this project's
+// mobile-tests-are-pure-logic-only convention — the money-relevant part of a stepper widget is
+// exactly the part that must be independently, deterministically testable.
+
+/** Whole Cases `qty` represents — floored and capped at the whole Cases `ordered` allows. The
+ *  shared basis every function below reads, so display and both step directions can never
+ *  disagree on what "N Cases" means for a given qty. */
+export function caseStepperCasesDelivered(
+  qty: number,
+  ordered: number,
+  unitsPerBox: number,
+): number {
+  if (unitsPerBox <= 0) return 0;
+  const caseCount = Math.floor(ordered / unitsPerBox);
+  const clampedQty = Math.max(0, Math.min(qty, ordered));
+  return Math.min(caseCount, Math.floor(clampedQty / unitsPerBox));
+}
+
+/** Pieces left over after the whole Cases `ordered` contains — 0 when `ordered` is an exact
+ *  multiple of `unitsPerBox`. */
+export function caseStepperRemainderPieces(ordered: number, unitsPerBox: number): number {
+  if (unitsPerBox <= 0) return 0;
+  return Math.max(0, ordered - Math.floor(ordered / unitsPerBox) * unitsPerBox);
+}
+
+/**
+ * One step DOWN. The top state (`qty === ordered`, including any partial-Case remainder) steps
+ * down to `casesDelivered` WHOLE Cases first (dropping just the remainder); every step below
+ * that drops one whole Case. Always reaches 0 — the driver can refuse the line even when less
+ * than one whole Case remains (`ordered < unitsPerBox`, `casesDelivered` 0 throughout).
+ */
+export function caseStepperDecrement(qty: number, ordered: number, unitsPerBox: number): number {
+  if (unitsPerBox <= 0) return 0;
+  const casesDelivered = caseStepperCasesDelivered(qty, ordered, unitsPerBox);
+  const remainderPieces = caseStepperRemainderPieces(ordered, unitsPerBox);
+  const atFull = qty >= ordered;
+  const next =
+    atFull && remainderPieces > 0
+      ? casesDelivered * unitsPerBox
+      : Math.max(0, casesDelivered - 1) * unitsPerBox;
+  return Math.max(0, next);
+}
+
+/**
+ * One step UP. Its top value is exactly `ordered` — never `caseCount * unitsPerBox`, which can
+ * be LESS than `ordered` (a partial Case still remains) and is never MORE (`ordered` is already
+ * the true, floored-and-remaindered bound) — so this can never send more than what remains.
+ */
+export function caseStepperIncrement(qty: number, ordered: number, unitsPerBox: number): number {
+  if (unitsPerBox <= 0) return ordered;
+  const caseCount = Math.floor(ordered / unitsPerBox);
+  const casesDelivered = caseStepperCasesDelivered(qty, ordered, unitsPerBox);
+  const next = casesDelivered < caseCount ? (casesDelivered + 1) * unitsPerBox : ordered;
+  return Math.min(ordered, next);
 }
 
 /**
@@ -210,6 +284,8 @@ export function isLineAdjustable(
 function visitView(li: ShortPickSourceLine, soFar: number) {
   const qty = Number(li.qty);
   const freeUnitSize = freeUnitSizeFor(li);
+  const upb = Number(li.unitsPerBox ?? 0);
+  const hasSplit = li.boxes != null && upb > 0;
   if (!(soFar > 0)) {
     return {
       orderedQty: qty,
@@ -217,19 +293,30 @@ function visitView(li: ShortPickSourceLine, soFar: number) {
       freeUnits: li.promoFreeUnits ?? 0,
       freeUnitSize,
       boxes: li.boxes ?? null,
+      pieces: hasSplit ? qty - Number(li.boxes) * upb : null,
     };
   }
   const remaining = Math.max(0, qty - soFar);
-  const upb = Number(li.unitsPerBox ?? 0);
+  // FIX 6 (SA-175): FLOOR, never round — a rounded-up Case count can bound the stepper's top
+  // above what actually remains (30 left of a 12-Case rounds to "3 of 3" = 36, over-delivering).
+  // FIX 7 (SA-175): the remaining money is the CUMULATIVE telescope's tail, not a fresh proration
+  // of the front `remaining` pieces — prorateLineSubtotal's promo/BOGO curve is non-linear, so
+  // "price(qty) − price(soFar)" (the true marginal price of the pieces beyond soFar) can differ
+  // from "price(remaining)" (which silently re-prices the first `remaining` pieces as if THEY
+  // were the ones still owed, wrong the moment a free unit lands on one side of that split and
+  // not the other). This exactly matches the server's own paid-basis formula.
+  const boxes = hasSplit ? Math.floor(remaining / upb) : (li.boxes ?? null);
   return {
     orderedQty: remaining,
     subtotal:
       li.subtotal == null
         ? null
-        : prorateLineSubtotal(li.subtotal, remaining, qty, li.promoFreeUnits ?? 0, freeUnitSize),
+        : prorateLineSubtotal(li.subtotal, qty, qty, li.promoFreeUnits ?? 0, freeUnitSize) -
+          prorateLineSubtotal(li.subtotal, soFar, qty, li.promoFreeUnits ?? 0, freeUnitSize),
     freeUnits: 0, // already netted out of the prorated subtotal above
     freeUnitSize: 1,
-    boxes: li.boxes != null && upb > 0 ? Math.round(remaining / upb) : (li.boxes ?? null),
+    boxes,
+    pieces: hasSplit ? remaining - (boxes as number) * upb : null,
   };
 }
 
@@ -329,6 +416,16 @@ export function fallbackShortPickLines(
         const qty = Number(li.qty ?? 0);
         const remaining = soFar > 0 ? Math.max(0, qty - soFar) : qty;
         const upb = Number(li.unitsPerBox ?? 0);
+        const hasSplit = li.boxes != null && upb > 0;
+        // FIX 6 (SA-175): FLOOR, never round (see visitView's twin comment) — no promo data
+        // rides this snapshot (freeUnits/freeUnitSize stay 0/1 below), so unlike visitView the
+        // linear front-slice proration here is already exact; only the Case-count rounding needs
+        // the same fix.
+        const boxes = hasSplit
+          ? soFar > 0
+            ? Math.floor(remaining / upb)
+            : Number(li.boxes)
+          : null;
         return {
           orderItemId: li.id,
           productId: li.productId,
@@ -344,10 +441,8 @@ export function fallbackShortPickLines(
           // B648/SA-094 (carried through the B762 merge) — see StopSnapshotLine.
           unitLabel: li.unitLabel ?? null,
           unitsPerBox: li.unitsPerBox ?? null,
-          boxes:
-            soFar > 0 && li.boxes != null && upb > 0
-              ? Math.round(remaining / upb)
-              : (li.boxes ?? null),
+          boxes: hasSplit ? boxes : (li.boxes ?? null),
+          pieces: hasSplit ? remaining - (boxes as number) * upb : null,
         };
       })
   );

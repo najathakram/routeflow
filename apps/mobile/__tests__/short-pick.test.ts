@@ -272,6 +272,7 @@ describe("shortPickLinesFromOrder (B762: the shared derivation both driver scree
         unitLabel: null,
         unitsPerBox: 5,
         boxes: 1,
+        pieces: 5, // FIX 6 (SA-175): qty(10) − boxes(1)×unitsPerBox(5)
       },
     ]);
   });
@@ -353,6 +354,7 @@ describe("fallbackShortPickLines (SA-115: the un-landed-order fallback)", () => 
       unitLabel: null,
       unitsPerBox: null,
       boxes: null,
+      pieces: null,
     });
     expect(deliveryTypeForQty(line!.orderedQty, line!.orderedQty)).toBe("DELIVERED");
   });

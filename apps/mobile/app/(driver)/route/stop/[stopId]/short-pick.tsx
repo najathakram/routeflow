@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
 import { useQueries } from "@tanstack/react-query";
+import { formatQtySplit } from "@routeflow/pricing";
 import {
   ActivityIndicator,
   Pressable,
@@ -19,6 +20,10 @@ import { orderQueryOptions, type Order, type OrderItem } from "../../../../../li
 import { useDeliveryPlanStore } from "../../../../../store/delivery-plan-store";
 import {
   reconciledTotal,
+  caseStepperCasesDelivered,
+  caseStepperDecrement,
+  caseStepperIncrement,
+  caseStepperRemainderPieces,
   deliveryTypeForQty,
   deliveredSoFarByLine,
   isLineAdjustable,
@@ -243,12 +248,32 @@ function ShortPickRow({
   const unitAware = isUnitAwareLine(li);
   const hasUnitLabel = (li.unitLabel ?? "").trim() !== "";
   const unitsPerBox = Number(li.unitsPerBox ?? 0);
-  // The STORED count (never derived from the live product) — unit-line-build.ts
-  // stores `boxes = count` for a factor>1 unit line. Falls back to
-  // ordered/unitsPerBox only for a malformed/legacy row missing `boxes`.
+  // FIX 6 (SA-175): the STORED count (never derived from the live product) — unit-line-build.ts
+  // stores `boxes = count` for a factor>1 unit line. `caseCount` is FLOORED, never rounded: on a
+  // second visit `ordered` is the REMAINING qty, which is not always an exact multiple of the
+  // Case size — the stepper's top value must be exactly `ordered` (the last, partial step), never
+  // a rounded-up Case count that lets "+" send more than remains. `caseRemainderPieces` is what's
+  // left over after `caseCount` whole Cases — 0 on a well-formed first visit, but can be nonzero
+  // on a second visit (some of a Case may have been delivered at another stop).
   const caseCount =
-    visit?.boxes ?? li.boxes ?? (unitsPerBox > 0 ? Math.round(ordered / unitsPerBox) : 0);
-  const casesDelivered = unitAware && unitsPerBox > 0 ? Math.round(qty / unitsPerBox) : 0;
+    visit?.boxes ?? li.boxes ?? (unitsPerBox > 0 ? Math.floor(ordered / unitsPerBox) : 0);
+  const caseRemainderPieces = visit?.pieces ?? caseStepperRemainderPieces(ordered, unitsPerBox);
+  // Whole Cases the CURRENT qty represents — floored and capped at caseCount, so a qty that
+  // includes the partial-Case remainder (i.e. qty === ordered) still shows the right Case count.
+  const casesDelivered = unitAware ? caseStepperCasesDelivered(qty, ordered, unitsPerBox) : 0;
+  const atFullDelivery = qty >= ordered;
+  const casesDeliveredLabel = formatQtySplit({
+    qty,
+    boxes: casesDelivered,
+    pieces: atFullDelivery ? caseRemainderPieces : 0,
+    boxLabel: li.unitLabel,
+  });
+  const caseCountLabel = formatQtySplit({
+    qty: ordered,
+    boxes: caseCount,
+    pieces: caseRemainderPieces,
+    boxLabel: li.unitLabel,
+  });
 
   return (
     <View style={styles.card}>
@@ -260,9 +285,7 @@ function ShortPickRow({
           <Text style={styles.cardMeta}>
             Ordered{" "}
             {hasUnitLabel ? `${li.boxes ?? Number(li.qty)} ${li.unitLabel}`.trim() : Number(li.qty)}
-            {soFar > 0
-              ? ` · ${hasUnitLabel ? `${caseCount} ${li.unitLabel}` : ordered} still to deliver`
-              : ""}
+            {soFar > 0 ? ` · ${hasUnitLabel ? caseCountLabel : ordered} still to deliver` : ""}
           </Text>
         </View>
         {type !== "DELIVERED" ? (
@@ -276,29 +299,29 @@ function ShortPickRow({
       {unitAware ? (
         <View style={styles.stepperRow}>
           <Text style={styles.stepperLabel}>
-            Cases delivered: {casesDelivered} of {caseCount}
+            Cases delivered: {casesDeliveredLabel} of {caseCountLabel}
           </Text>
           <View style={styles.stepper}>
             <Pressable
               style={styles.stepBtn}
-              onPress={() => onChangeQty(Math.max(0, casesDelivered - 1) * unitsPerBox)}
+              onPress={() => onChangeQty(caseStepperDecrement(qty, ordered, unitsPerBox))}
               hitSlop={6}
-              disabled={casesDelivered <= 0}
+              disabled={qty <= 0}
               accessibilityRole="button"
               accessibilityLabel={`One fewer ${li.unitLabel} delivered`}
-              accessibilityState={{ disabled: casesDelivered <= 0 }}
+              accessibilityState={{ disabled: qty <= 0 }}
             >
               <Text style={styles.stepText}>−</Text>
             </Pressable>
-            <Text style={styles.qtyInput}>{casesDelivered}</Text>
+            <Text style={styles.qtyInput}>{casesDeliveredLabel}</Text>
             <Pressable
               style={styles.stepBtn}
-              onPress={() => onChangeQty(Math.min(caseCount, casesDelivered + 1) * unitsPerBox)}
+              onPress={() => onChangeQty(caseStepperIncrement(qty, ordered, unitsPerBox))}
               hitSlop={6}
-              disabled={casesDelivered >= caseCount}
+              disabled={qty >= ordered}
               accessibilityRole="button"
               accessibilityLabel={`One more ${li.unitLabel} delivered`}
-              accessibilityState={{ disabled: casesDelivered >= caseCount }}
+              accessibilityState={{ disabled: qty >= ordered }}
             >
               <Text style={styles.stepText}>+</Text>
             </Pressable>
