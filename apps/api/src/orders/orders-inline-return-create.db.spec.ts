@@ -287,14 +287,16 @@ describeDb("#2094 — a return inside POST /orders through create(), real Postgr
     expect(numbers).toEqual([...reserved].sort()); // a retry reuses the reserved number, never re-reserves
   }, 60_000);
 
-  it("a FORCED order-number P2002 on attempt 1: the retry reuses the number reserved before the loop (3-attempt loop, one Return, one credit note)", async () => {
+  it("R2d a FORCED order-number P2002 on attempt 1: the retry reuses the number reserved before the loop (3-attempt loop, one Return, one credit note)", async () => {
     const f = await seedCustomer("p2002-forced");
     reserved.length = 0;
     const real = prisma.tenantTransaction.bind(prisma);
     let calls = 0;
     const spy = jest.spyOn(prisma, "tenantTransaction").mockImplementation(((...args: any[]) => {
       calls++;
-      if (calls === 1) {
+      // call #1 is NumberingService.reserveNext's own short tx (the reservation BEFORE the loop);
+      // call #2 is the order tx's first attempt: that is the one to fail.
+      if (calls === 2) {
         return Promise.reject(
           Object.assign(new Error("Unique constraint failed"), {
             code: "P2002",
@@ -311,14 +313,14 @@ describeDb("#2094 — a return inside POST /orders through create(), real Postgr
       spy.mockRestore();
     }
     orderIds.push(o.id);
-    expect(calls).toBe(2);
+    expect(calls).toBe(3); // reservation, failed attempt 1, successful attempt 2
     expect(reserved.length).toBe(1); // reserved once, before the loop, not per attempt
     const cns = await raw.creditNote.findMany({ where: { customerId: f.customerId } });
     expect(cns.map((c) => c.creditNoteNumber)).toEqual(reserved);
     expect(await raw.return.count({ where: { orderId: o.id } })).toBe(1);
   }, 60_000);
 
-  it("the lock: a create() and a STANDALONE capture for one customer over ONE sold line never match more pieces than were sold, and together match all of it", async () => {
+  it("R2c the lock: a create() and a STANDALONE capture for one customer over ONE sold line never match more pieces than were sold, and together match all of it", async () => {
     const f = await seedCustomer("lock"); // f.productId: the SOLD product both returns reference
     // The order lines use a DIFFERENT product: with the same product the product row lock would
     // serialize the two before the customer advisory lock is ever exercised.
