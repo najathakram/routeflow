@@ -67,7 +67,7 @@ export function orderLineShape(
   return { ...split, unitsPerBox: upb > 0 ? upb : null };
 }
 
-const sameValue = (a: unknown, b: unknown): boolean =>
+export const sameValue = (a: unknown, b: unknown): boolean =>
   a == null || b == null
     ? a == null && b == null
     : typeof b === "number"
@@ -111,3 +111,7 @@ export function orderLineUnchanged(
   ];
   return want.every(([k, v]) => sameValue(existing[k], v));
 }
+
+/** Does `row` already hold every `[column, value]` pair? Then writing them again would change nothing. */
+export const holdsValues = (row: any, want: ReadonlyArray<readonly [string, unknown]>): boolean =>
+  want.every(([k, v]) => sameValue(row?.[k], v));

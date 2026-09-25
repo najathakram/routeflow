@@ -3332,7 +3332,7 @@ export class InvoicesService {
       // Products (pack + regulated snapshot) and section tax config for the edited lines (mirrors create()).
       const { productMap, categoryMap } = await loadEditCatalog(this.prisma.forTenant(), items);
 
-      const { updated, syncLines } = await this.prisma.tenantTransaction(async (tx: any) => {
+      const { updated } = await this.prisma.tenantTransaction(async (tx: any) => {
         // Serialize concurrent saves of this invoice: rows are read AFTER the lock, so a second save
         // sees the first's rows and totals instead of writing over them (no P2025, total = its lines).
         // Lock order (SA-137/203): the ORDER row first, then the invoice, as the invoice-from-order paths do.
@@ -3445,11 +3445,11 @@ export class InvoicesService {
         // A save that changed no line leaves the ledger alone too (no reverse-and-rewrite churn).
         if (syncLines?.length)
           await this.resyncInvoiceLedger(id, inv.orderId ?? null, u.items ?? [], tx);
-        return { updated: u, syncLines };
+        return { updated: u };
       });
       // Backward sync: keep the linked order in step with the edited invoice.
-      // SA-233: the FULL coverage recompute (never a changed-set); identical rows are skipped inside it.
-      if (inv.orderId && syncLines) await this.recomputeOrderFromInvoices(inv.orderId);
+      // SA-233/235: ALWAYS the full coverage recompute (no payload-shape gate); identical rows are skipped inside it.
+      if (inv.orderId) await this.recomputeOrderFromInvoices(inv.orderId);
       return updated;
     }
 

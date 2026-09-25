@@ -342,14 +342,15 @@ describe("InvoicesService — update() line preservation", () => {
         });
       });
 
-      it("an order-linked notes-only save does not touch the order at all", async () => {
+      it("an order-linked notes-only save still runs the full recompute (SA-235: no payload-shape gate); the zero-write is by updatedAt in the DB spec", async () => {
         arrange([line()]);
         linked();
         await service.update("inv-box", {
           notes: "n",
           items: [payload({ id: "a", qty: 24, boxes: 2, pieces: 0, notes: "hello" })],
         } as any);
-        expect(resync).not.toHaveBeenCalled();
+        expect(resync).toHaveBeenCalledTimes(1);
+        expect(resync.mock.calls[0]).toEqual(["ord-1"]);
       });
 
       it("an order-linked qty edit runs the FULL coverage recompute exactly once (SA-233: no changed-set)", async () => {

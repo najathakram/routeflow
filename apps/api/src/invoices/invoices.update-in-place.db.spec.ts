@@ -571,12 +571,14 @@ describeDb(
       unitLabel: r.unitLabel ?? null,
     });
 
-    it("SA-203-H notes-only save on an ORDER-LINKED invoice writes nothing to the order (legacy 0-box + 5-pcs line byte-equal)", async () => {
+    it("SA-203-H a notes-only save (the web's REAL payload: items + discount + shipping unchanged) on an ORDER-LINKED invoice moves no updatedAt on the Order or on ANY order line", async () => {
       const s = await seedLinked("h");
-      const before = (await s.orderLines()).map(orderShape);
+      const linesBefore = await s.orderLines();
       const orderBefore = await prisma.order.findUnique({ where: { id: s.order.id } });
-      await run(s, s.payload());
-      expect((await s.orderLines()).map(orderShape)).toEqual(before);
+      await run(s, { ...s.payload(), discount: 0, shippingFee: 0, notes: "n" });
+      const linesAfter = await s.orderLines();
+      expect(linesAfter.map((r) => r.updatedAt)).toEqual(linesBefore.map((r) => r.updatedAt));
+      expect(linesAfter.map(orderShape)).toEqual(linesBefore.map(orderShape));
       const orderAfter = await prisma.order.findUnique({ where: { id: s.order.id } });
       expect(orderAfter!.updatedAt).toEqual(orderBefore!.updatedAt);
       expect(Number(orderAfter!.total)).toBe(26.58);
@@ -949,6 +951,8 @@ describeDb(
       // editing ONLY B's line (3 -> 4) makes the order fully covered (6 + 4 = 10)
       await tenantCtx.run(t.id, () =>
         invoicesService.update(invB.id, {
+          discount: 0,
+          shippingFee: 0,
           items: [{ id: iB.id, productId: p1.id, description: "B p1", qty: 4, unitPrice: 10 }],
         } as any),
       );
