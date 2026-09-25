@@ -407,3 +407,27 @@ export function noncesFromQueues(
   for (const q of queue) take(q);
   return out;
 }
+
+/** A tombstone: a returnKey whose capture reached a TERMINAL outcome (landed / definitely refused). */
+export interface SettledKey {
+  key: string;
+  at: number;
+}
+
+export const SETTLED_KEY_MAX_AGE_MS = 90 * 24 * 60 * 60 * 1000;
+export const SETTLED_KEY_CAP = 200;
+
+/**
+ * Bounds the tombstone list (SA-206): a returnKey is unique per attempt and never reused, so a
+ * tombstone older than 90 days can no longer matter — and the list is persisted, so it must never
+ * grow unbounded. Drops aged entries, then keeps the newest `SETTLED_KEY_CAP`. Returns the SAME
+ * array when nothing changes (cheap no-op set).
+ */
+export function pruneSettledKeys(
+  list: ReadonlyArray<SettledKey>,
+  now: number,
+): ReadonlyArray<SettledKey> {
+  const fresh = list.filter((t) => now - t.at <= SETTLED_KEY_MAX_AGE_MS);
+  const capped = fresh.length > SETTLED_KEY_CAP ? fresh.slice(-SETTLED_KEY_CAP) : fresh;
+  return capped.length === list.length ? list : capped;
+}

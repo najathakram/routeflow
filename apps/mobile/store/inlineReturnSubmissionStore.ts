@@ -120,18 +120,21 @@ export const useInlineReturnSubmissionStore = create<InlineReturnSubmissionState
         set((s) => ({ nonces: settleAfterDrainIn(records, s.nonces) }));
       },
       reset: () => set({ nonces: {} }),
-      seedFromQueues: (queue, failed, userId) =>
+      seedFromQueues: (queue, failed, userId) => {
+        // Bound the persisted tombstones first (age 90d + count cap), then trust the survivors.
+        useOfflineQueue.getState().pruneSettledInlineReturnKeys();
         set((s) => ({
           nonces: {
             ...noncesFromQueues(
               queue,
               failed,
               userId,
-              useOfflineQueue.getState().settledInlineReturnKeys,
+              useOfflineQueue.getState().settledInlineReturnKeys.map((t) => t.key),
             ),
             ...s.nonces,
           },
-        })),
+        }));
+      },
     }),
     {
       name: INLINE_RETURN_SUBMISSION_STORE_NAME,

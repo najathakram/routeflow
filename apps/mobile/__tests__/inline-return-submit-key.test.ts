@@ -9,6 +9,9 @@ import {
   nonceSuffixFromReturnKey,
   RETURN_STATE_RACE_RETRY_MESSAGE,
   noncesFromQueues,
+  pruneSettledKeys,
+  SETTLED_KEY_MAX_AGE_MS,
+  SETTLED_KEY_CAP,
   settleAfterDrain,
   settleDirectCapture,
   clearNonceIf,
@@ -686,5 +689,33 @@ describe("captureSettleHandlers — failed-action persistence", () => {
     h.onError({ response: { status: 400, data: { code: "INLINE_RETURN_ORDER_CANCELLED" } } }, vars);
     h.onError({ isOfflineQueued: true }, vars);
     expect(failed.add).not.toHaveBeenCalled();
+  });
+});
+
+describe("pruneSettledKeys — tombstones are bounded (SA-206)", () => {
+  const DAY = 86_400_000;
+  const now = 1_800_000_000_000;
+  it("drops tombstones older than 90 days, keeps the rest in order", () => {
+    expect(SETTLED_KEY_MAX_AGE_MS).toBe(90 * DAY);
+    const list = [
+      { key: "old", at: now - 91 * DAY },
+      { key: "edge", at: now - 90 * DAY },
+      { key: "new", at: now - 1 * DAY },
+    ];
+    expect(pruneSettledKeys(list, now).map((t) => t.key)).toEqual(["edge", "new"]);
+  });
+  it("caps the count, keeping the NEWEST", () => {
+    const list = Array.from({ length: SETTLED_KEY_CAP + 25 }, (_, i) => ({
+      key: `k${i}`,
+      at: now - 1000 + i,
+    }));
+    const out = pruneSettledKeys(list, now);
+    expect(out).toHaveLength(SETTLED_KEY_CAP);
+    expect(out[out.length - 1]!.key).toBe(`k${SETTLED_KEY_CAP + 24}`);
+    expect(out[0]!.key).toBe("k25");
+  });
+  it("returns the SAME array when nothing needs pruning", () => {
+    const list = [{ key: "a", at: now }];
+    expect(pruneSettledKeys(list, now)).toBe(list);
   });
 });

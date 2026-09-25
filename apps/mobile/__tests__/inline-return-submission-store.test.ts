@@ -115,7 +115,7 @@ describe("a direct capture's nonce across sign-out / sign-in / relaunch", () => 
   const request = (nonce: string) => ({ ...vars(nonce), reason: "DAMAGED", items: [] }) as any;
 
   beforeEach(() => {
-    useOfflineQueue.setState({ queue: [], failedActions: [] });
+    useOfflineQueue.setState({ queue: [], failedActions: [], settledInlineReturnKeys: [] });
   });
 
   it.each([
@@ -210,6 +210,28 @@ describe("a direct capture's nonce across sign-out / sign-in / relaunch", () => 
     useOfflineQueue.getState().addFailedAction(stale); // a stale record resurfaces
     signOutThenIn();
     expect(store().nonces[KEY]).toBeUndefined();
+  });
+
+  it("SA-206 PIN: fail -> sign-out -> land -> sign-out -> sign-in -> a FRESH key (tombstones survive sign-out)", () => {
+    const n1 = store().getOrCreateNonce(KEY);
+    const req = request(n1);
+    handlers().onError({ response: { status: 503, data: {} } }, req);
+    store().reset(); // sign-out #1: memory emptied, the queue + tombstones survive
+    handlers().onSuccess(undefined, req); // it lands (e.g. the queue drain / a retry), memory has no nonce
+    signOutThenIn(); // sign-out #2 then sign-in
+    expect(store().getOrCreateNonce(KEY)).not.toBe(n1);
+  });
+
+  it("SA-206: seeding prunes tombstones older than 90 days (never unbounded growth)", () => {
+    const DAY = 86_400_000;
+    useOfflineQueue.setState({
+      settledInlineReturnKeys: [
+        { key: "stale", at: Date.now() - 100 * DAY },
+        { key: "fresh", at: Date.now() - DAY },
+      ],
+    });
+    signOutThenIn();
+    expect(useOfflineQueue.getState().settledInlineReturnKeys.map((t) => t.key)).toEqual(["fresh"]);
   });
 
   it("the offline-queue drain settle also clears matching failed records and tombstones the key", () => {

@@ -2,6 +2,7 @@ import { create } from "zustand";
 import { persist, createJSONStorage } from "zustand/middleware";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import type { FailedActionRecord } from "../lib/queue-drain";
+import { pruneSettledKeys, type SettledKey } from "../lib/inline-return-submit-key";
 import { resolveQueueIdentity, stampQueuedAction, type QueueIdentity } from "../lib/queue-identity";
 
 export interface QueuedAction {
@@ -25,7 +26,6 @@ export interface QueuedAction {
 
 /** Upper bound on the persisted failure list (see addFailedAction). */
 export const MAX_FAILED_ACTIONS = 50;
-export const MAX_SETTLED_INLINE_RETURN_KEYS = 200;
 
 interface OfflineQueueState {
   queue: QueuedAction[];
@@ -46,11 +46,14 @@ interface OfflineQueueState {
   addFailedAction: (record: FailedActionRecord) => void;
   clearFailedAction: (actionId: string) => void;
   clearFailedActions: () => void;
-  /** Returnkeys of inline-return captures that reached a TERMINAL outcome (landed / definitely
+  /** Tombstones of inline-return captures that reached a TERMINAL outcome (landed / definitely
    *  refused). The sign-in nonce rebuild skips these, so a stale failed-action record can never
-   *  resurrect a settled key (Opus re-review of #1270). Bounded; persisted; survives sign-out
-   *  (a returnKey is unique per attempt, so it can never suppress a later capture). */
-  settledInlineReturnKeys: string[];
+   *  resurrect a settled key (Opus re-review of #1270). Persisted with the queue (which sign-out
+   *  deliberately leaves alone) so they survive sign-out AND relaunch; a returnKey is unique per
+   *  attempt so a tombstone can never suppress a later capture. Pruned by age (90 days) and a
+   *  count cap at seed time (`pruneSettledInlineReturnKeys`) — never unbounded (SA-206). */
+  settledInlineReturnKeys: SettledKey[];
+  pruneSettledInlineReturnKeys: (now?: number) => void;
   /** A capture attempt (its `returnKey`) reached a terminal outcome: tombstone the key AND drop
    *  EVERY failed-action record carrying it (direct- and drain-origin alike) in ONE update. */
   settleInlineReturnKey: (returnKey: string) => void;
@@ -129,12 +132,19 @@ export const useOfflineQueue = create<OfflineQueueState>()(
       clearFailedActions: () => set({ failedActions: [] }),
 
       settledInlineReturnKeys: [],
+      pruneSettledInlineReturnKeys: (now = Date.now()) =>
+        set((state) => {
+          const pruned = pruneSettledKeys(state.settledInlineReturnKeys, now);
+          return pruned === state.settledInlineReturnKeys
+            ? state
+            : { settledInlineReturnKeys: [...pruned] };
+        }),
       settleInlineReturnKey: (returnKey) =>
         set((state) => ({
           settledInlineReturnKeys: [
-            ...state.settledInlineReturnKeys.filter((k) => k !== returnKey),
-            returnKey,
-          ].slice(-MAX_SETTLED_INLINE_RETURN_KEYS),
+            ...state.settledInlineReturnKeys.filter((t) => t.key !== returnKey),
+            { key: returnKey, at: Date.now() },
+          ],
           failedActions: state.failedActions.filter(
             (f) =>
               !(
