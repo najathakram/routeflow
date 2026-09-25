@@ -33,6 +33,7 @@ import { showToast } from "../../../lib/toast";
 import { confirm, chooseAction } from "../../../lib/confirm";
 import { fmtCalendarDate } from "../../../lib/format-date";
 import { VariantSplitSheet } from "../../../components/VariantSplitSheet";
+import { ProductDemandCard } from "../../../components/ProductDemandCard";
 
 function fmtCurrency(n: number | string | undefined | null): string {
   const v = typeof n === "string" ? Number(n) : (n ?? 0);
@@ -337,6 +338,8 @@ export default function ProductDetailScreen() {
               </>
             ) : null}
           </View>
+
+          <ProductDemandCard productId={product.id} unitsPerBox={product.unitsPerBox} />
 
           <View style={styles.card}>
             <View style={styles.cardHeader}>
