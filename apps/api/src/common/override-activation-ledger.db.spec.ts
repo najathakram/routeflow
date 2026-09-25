@@ -31,9 +31,9 @@
  * `enableAddon`) — never the `addon-ledger.ts` helper directly — so it stays correct whether
  * that helper's internal contract is priceSnapshot/deltaQty or before/after.
  *
- * `dto.plan` activates onto "STARTER" (guaranteed present in any published catalog — every
- * fixture and fallback in this codebase resolves to it) so the test needs no catalog seeding of
- * its own; it relies on the published catalog `npm run local:seed` already publishes.
+ * `dto.plan` activates onto "STARTER" ($59) with the CUSTOMER_PACK_100 add-on. The spec reuses a
+ * PUBLISHED catalog when one exists; on a fresh database it provisions a minimal one and removes
+ * it in afterAll (never touching a pre-existing catalog).
  *
  * Run via `npm run local:test:db` (compose Postgres) — collected only by `jest.db.config.js`.
  */
@@ -73,9 +73,53 @@ describeDb(
       invalidateCaches: () => undefined,
     } as any;
 
-    beforeAll(() => {
+    // Set only when this spec created the catalog itself (no PUBLISHED PlanVersion existed) —
+    // afterAll deletes exactly this version's rows and nothing else.
+    let createdVersionId: string | undefined;
+
+    beforeAll(async () => {
       pool = new Pool({ connectionString: requireLocalDatabaseUrl() });
       prisma = new PrismaClient({ adapter: new PrismaPg(pool) });
+
+      // Self-provision the catalog on a fresh database (same pattern as
+      // backfill-subscription-reconciliation.db.spec.ts): reuse a PUBLISHED PlanVersion when one
+      // exists (compose DB after `local:seed`), otherwise create the minimum this spec needs.
+      const published = await prisma.planVersion.findFirst({ where: { status: "PUBLISHED" } });
+      if (!published) {
+        // int4 column — never derive from Date.now()
+        const version =
+          ((await prisma.planVersion.aggregate({ _max: { version: true } }))._max.version ?? 0) + 1;
+        const created = await prisma.planVersion.create({
+          data: {
+            version,
+            status: "PUBLISHED",
+            publishedAt: new Date(),
+            notes: "qa fixture — created by override-activation-ledger.db.spec.ts",
+            definitions: {
+              create: [
+                {
+                  planKey: "STARTER",
+                  name: "Starter",
+                  monthlyPrice: 59,
+                  isCustom: false,
+                  featureFlags: [],
+                },
+              ],
+            },
+            addonSkus: {
+              create: [
+                {
+                  sku: "CUSTOMER_PACK_100",
+                  name: "Customer pack 100",
+                  monthlyPrice: 25,
+                  grantsFlags: [],
+                },
+              ],
+            },
+          },
+        });
+        createdVersionId = created.id;
+      }
 
       const noop = {} as any;
       const catalog = new PlanCatalogService(prisma as any);
@@ -118,6 +162,11 @@ describeDb(
 
     afterAll(async () => {
       if (tenantIds.length) await prisma.tenant.deleteMany({ where: { id: { in: tenantIds } } });
+      if (createdVersionId) {
+        await prisma.addonSku.deleteMany({ where: { planVersionId: createdVersionId } });
+        await prisma.planDefinition.deleteMany({ where: { planVersionId: createdVersionId } });
+        await prisma.planVersion.delete({ where: { id: createdVersionId } });
+      }
       await prisma.$disconnect();
       await pool.end();
     });
