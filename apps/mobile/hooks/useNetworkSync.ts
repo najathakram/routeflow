@@ -101,12 +101,6 @@ export function useNetworkSync() {
     // — the same bug SA-091 fixed on the direct-submit path. `remaining` (not `owned` or
     // `currentQueue`) is deliberately the source for `attempted`: it is exactly the set drainQueue
     // actually ran against.
-    // SA-091b: a capture that lands (or is definitively refused) FROM THE OFFLINE QUEUE never
-    // ran through useCaptureInlineReturn's onSuccess/onError, so its nonce would otherwise
-    // survive forever and collide with the next genuine attempt on the same customer/order pair
-    // — the same bug SA-091 fixed on the direct-submit path. `remaining` (not `owned` or
-    // `currentQueue`) is deliberately the source for `attempted`: it is exactly the set drainQueue
-    // actually ran against.
     settleInlineReturnDrain(
       inlineReturnDrainSettleRecords({
         delivered: result.delivered,
