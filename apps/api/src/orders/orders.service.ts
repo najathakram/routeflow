@@ -885,6 +885,8 @@ export class OrdersService implements OnApplicationBootstrap {
       // the same coded body as mapLockError's 503, so `isMergeContention` (the sweep, every
       // post-commit caller) recognises it identically and defers.
       assertMergeLockAcquired(result);
+      // The push runs here, after the lock is released. If the winner's post-warn re-read (inside the lock)
+      // throws, `after` is never assigned and the push is lost: the AuditLog row is then the durable trace.
       await after?.();
       return result.value;
     } catch (e) {

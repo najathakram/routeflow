@@ -1,9 +1,15 @@
+// Records the lock's lifecycle so a test can prove WHEN the deferred push runs relative to the unlock.
+const mockEvents: string[] = [];
 jest.mock("../common/db-locks", () => ({
   ...jest.requireActual("../common/db-locks"),
-  withAdvisoryLock: jest.fn(async (_opts: unknown, fn: () => Promise<unknown>) => ({
-    acquired: true,
-    value: await fn(),
-  })),
+  withAdvisoryLock: jest.fn(async (_opts: unknown, fn: () => Promise<unknown>) => {
+    mockEvents.push("lock");
+    try {
+      return { acquired: true, value: await fn() };
+    } finally {
+      mockEvents.push("unlock");
+    }
+  }),
 }));
 
 import { buildOrdersService } from "./testing/orders-service-harness";
@@ -31,8 +37,20 @@ describe("OrdersService merge paths — merge and warn (F-05)", () => {
     notes: null,
   });
   const orders = () => [
-    { id: "w1", customerId: "cust-1", status: "PENDING", lineItems: [line("wl", "p-ok")] },
-    { id: "l1", customerId: "cust-1", status: "PENDING", lineItems: [line("ll", "p-banned")] },
+    {
+      id: "w1",
+      customerId: "cust-1",
+      tenantId: "t-row",
+      status: "PENDING",
+      lineItems: [line("wl", "p-ok")],
+    },
+    {
+      id: "l1",
+      customerId: "cust-1",
+      tenantId: "t-row",
+      status: "PENDING",
+      lineItems: [line("ll", "p-banned")],
+    },
   ];
   const banned = {
     outcome: "BLOCK",
@@ -48,6 +66,11 @@ describe("OrdersService merge paths — merge and warn (F-05)", () => {
     h.prisma.product.findMany.mockResolvedValue([]);
     h.prisma.user.findMany.mockResolvedValue([{ id: "op1" }]);
     h.restrictions.checkLinesSellable.mockResolvedValue(banned);
+    mockEvents.length = 0;
+    h.sideEffects.notifications.sendToUser.mockImplementation(async () => {
+      mockEvents.push("push");
+      return 1;
+    });
   });
 
   it("mergeAllPendingForCustomer: a ban never blocks; a staff actor is STAFF, sees the lines, no notification", async () => {
@@ -60,7 +83,7 @@ describe("OrdersService merge paths — merge and warn (F-05)", () => {
       ),
     ).resolves.toBeDefined();
     expect(h.restrictions.checkLinesSellable).toHaveBeenCalledWith(
-      expect.objectContaining({ channel: "STAFF", customerId: "cust-1", tenantId: "t1" }),
+      expect.objectContaining({ channel: "STAFF", customerId: "cust-1", tenantId: "t-row" }),
     );
     expect(onBannedLines).toHaveBeenCalledWith([
       expect.objectContaining({ productId: "p-banned" }),
@@ -103,5 +126,29 @@ describe("OrdersService merge paths — merge and warn (F-05)", () => {
     h.restrictions.checkLinesSellable.mockResolvedValue({ outcome: "ALLOW", reasons: [] });
     await h.service.mergeAllPendingForCustomer("cust-1");
     expect(h.prisma.auditLog.create).not.toHaveBeenCalled();
+  });
+
+  it("the winner row's tenant wins over the ambient one (fixtures carry t-row, the ambient tenant is t1)", async () => {
+    await h.service.mergeAllPendingForCustomer("cust-1");
+    expect(h.restrictions.checkLinesSellable).toHaveBeenCalledWith(
+      expect.objectContaining({ tenantId: "t-row" }),
+    );
+    expect(h.prisma.auditLog.create.mock.calls[0][0].data.tenantId).toBe("t-row");
+  });
+
+  it("the push runs AFTER the advisory lock is released, never inside it", async () => {
+    await h.service.mergeAllPendingForCustomer("cust-1", { buyerInitiated: true });
+    expect(mockEvents[0]).toBe("lock");
+    expect(mockEvents.indexOf("unlock")).toBeGreaterThan(-1);
+    expect(mockEvents.indexOf("push")).toBeGreaterThan(mockEvents.indexOf("unlock"));
+  });
+
+  it("a merge whose transaction THROWS writes no audit row and sends no push", async () => {
+    h.prisma.tenantTransaction.mockRejectedValue(new Error("tx failed"));
+    await expect(
+      h.service.mergeAllPendingForCustomer("cust-1", { buyerInitiated: true }),
+    ).rejects.toBeDefined();
+    expect(h.prisma.auditLog.create).not.toHaveBeenCalled();
+    expect(h.sideEffects.notifications.sendToUser).not.toHaveBeenCalled();
   });
 });
