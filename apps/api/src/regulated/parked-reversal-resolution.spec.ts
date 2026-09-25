@@ -62,14 +62,17 @@ describe("ParkedReversalResolutionService", () => {
   let service: ParkedReversalResolutionService;
   let prisma: ReturnType<typeof createMockPrisma>;
   let audit: { log: jest.Mock };
-  let ledger: { resolveParkedReversal: jest.Mock };
+  let ledger: { resolveParkedReversal: jest.Mock; filedPeriodForParked: jest.Mock };
   let table: ReturnType<typeof parked>[];
   const actor = { id: "u-op" };
 
   beforeEach(async () => {
     prisma = createMockPrisma();
     audit = { log: jest.fn().mockResolvedValue(undefined) };
-    ledger = { resolveParkedReversal: jest.fn().mockResolvedValue(BOOKED_RESOLUTION) };
+    ledger = {
+      resolveParkedReversal: jest.fn().mockResolvedValue(BOOKED_RESOLUTION),
+      filedPeriodForParked: jest.fn().mockResolvedValue(null),
+    };
     // SA-193 (6): the audit row is written INSIDE the transaction via tx.auditLog.create; `audit.log`
     // records the flat row so the assertions below read it the same way.
     (prisma as any).auditLog.create = jest.fn(async ({ data }: any) => {
@@ -409,39 +412,26 @@ describe("ParkedReversalResolutionService", () => {
     });
   });
 
-  it("SA-193 (5): list() tells the operator when the park's own period is already filed (amendedPeriod), null otherwise", async () => {
-    // A park from a PAST, filed period (2020-01): non-null on any date the suite runs.
-    table[0].createdAt = new Date("2020-01-15T12:00:00Z");
-    (prisma as any).regulatedSalesLedger.findMany.mockResolvedValue([
-      { id: "s-1", trackedCategoryId: "cat-A" },
-    ]);
-    (prisma as any).regulatedFiling.findMany.mockResolvedValue([
-      {
-        trackedCategoryId: "cat-A",
-        periodKey: "2020-01",
-        periodStart: new Date("2020-01-01T00:00:00Z"),
-        periodEnd: new Date("2020-02-01T00:00:00Z"),
-        status: "GENERATED",
-      },
-    ]);
+  it("#2108: list() gets amendedPeriod from the ledger's ONE filed-period helper (the resolution's own fold), per row", async () => {
+    const filed = { periodKey: "2020-01", status: "GENERATED", trackedCategoryId: "cat-A" };
+    ledger.filedPeriodForParked.mockResolvedValueOnce(filed);
     const [row] = (await service.list()) as any[];
-    expect(row.amendedPeriod).toEqual({ periodKey: "2020-01", status: "GENERATED" });
+    expect(row.amendedPeriod).toEqual(filed);
+    expect(ledger.filedPeriodForParked).toHaveBeenCalledWith(expect.anything(), table[0]);
 
-    // No filing for that period, or a filing for another category: null.
-    (prisma as any).regulatedFiling.findMany.mockResolvedValue([]);
+    ledger.filedPeriodForParked.mockResolvedValueOnce(null);
     const [open] = (await service.list()) as any[];
     expect(open.amendedPeriod).toBeNull();
-    (prisma as any).regulatedFiling.findMany.mockResolvedValue([
-      {
-        trackedCategoryId: "cat-OTHER",
-        periodKey: "2020-01",
-        periodStart: new Date("2020-01-01T00:00:00Z"),
-        periodEnd: new Date("2020-02-01T00:00:00Z"),
-        status: "GENERATED",
-      },
-    ]);
-    const [other] = (await service.list()) as any[];
-    expect(other.amendedPeriod).toBeNull();
+  });
+
+  it("#2108: a REJECTING in-transaction audit create makes resolve() reject — the audit is inside the transaction, never a post-commit best-effort write", async () => {
+    (prisma as any).auditLog.create = jest.fn().mockRejectedValue(new Error("audit store down"));
+    await expect(service.resolve("pr-1", 12, "reason text", actor)).rejects.toThrow(
+      "audit store down",
+    );
+    // the audit write happened AFTER the ledger call, in the same tx (so the caller's rollback undoes both)
+    expect(ledger.resolveParkedReversal).toHaveBeenCalledTimes(1);
+    expect((prisma as any).auditLog.create).toHaveBeenCalledTimes(1);
   });
 });
 
