@@ -76,6 +76,8 @@ describeDb(
     // Set only when this spec created the catalog itself (no PUBLISHED PlanVersion existed) —
     // afterAll deletes exactly this version's rows and nothing else.
     let createdVersionId: string | undefined;
+    // STARTER's monthly price in the catalog actually in play (self-provisioned or pre-existing).
+    let starterPrice: number;
 
     beforeAll(async () => {
       pool = new Pool({ connectionString: requireLocalDatabaseUrl() });
@@ -120,6 +122,13 @@ describeDb(
         });
         createdVersionId = created.id;
       }
+
+      const inPlay = await prisma.planVersion.findFirstOrThrow({
+        where: { status: "PUBLISHED" },
+        include: { definitions: { where: { planKey: "STARTER" } } },
+      });
+      starterPrice = Number(inPlay.definitions[0].monthlyPrice);
+      expect(starterPrice).toBeGreaterThan(0);
 
       const noop = {} as any;
       const catalog = new PlanCatalogService(prisma as any);
@@ -266,7 +275,7 @@ describeDb(
       // ledger gate is what's under test here, not the backfill path.
       await prisma.tenantSubscription.update({
         where: { tenantId },
-        data: { basePriceSnapshot: 59 },
+        data: { basePriceSnapshot: starterPrice },
       });
 
       const preview = await subscriptionMutation.enableAddon(tenantId, "CUSTOMER_PACK_100", 1);
@@ -292,7 +301,7 @@ describeDb(
         "admin-1",
       );
 
-      expect(await ledgerSum(tenantId)).toBe(59 + addonPrice);
+      expect(await ledgerSum(tenantId)).toBe(starterPrice + addonPrice);
 
       // SA-277b: base and add-on book as separate rows via the shared crossing helper.
       const plan = await prisma.billingEvent.findMany({
@@ -300,7 +309,7 @@ describeDb(
         select: { amountDelta: true },
       });
       expect(plan).toHaveLength(1);
-      expect(Number(plan[0].amountDelta)).toBe(59);
+      expect(Number(plan[0].amountDelta)).toBe(starterPrice);
       const addonRows = await prisma.billingEvent.findMany({
         where: { tenantId, type: "addon.enabled" },
         select: { amountDelta: true },
