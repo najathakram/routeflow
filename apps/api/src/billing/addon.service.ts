@@ -278,7 +278,15 @@ export class AddonService {
               },
               update: {
                 active: true,
-                sku: skuToStore,
+                // FIX-865B finding #1 (r2): `skuToStore` is null whenever this enable is
+                // unbridged with no resolvable catalog SKU (e.g. a legacy key re-enabled by
+                // an admin with no stripePriceId) — that says nothing about whether the
+                // EXISTING row already has a correct sku from an earlier enable. `sku: null`
+                // here would overwrite that good value and make addonSkuCode() drop the
+                // add-on from entitlements even though the row is active. Fall through to
+                // `undefined` (leave the column untouched) instead of clobbering it; only the
+                // create branch above may legitimately write a fresh row's sku as null.
+                sku: skuToStore ?? undefined,
                 stripePriceId: stripePriceId ?? undefined,
                 stripeItemId: stripeItemId ?? undefined,
                 priceSnapshot,
