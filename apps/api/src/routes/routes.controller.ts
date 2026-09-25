@@ -31,6 +31,7 @@ import { CompleteStopDto } from "./dto/complete-stop.dto";
 import { CompleteWithPaymentDto } from "./dto/complete-with-payment.dto";
 import { SettleRunDto } from "./dto/settle-run.dto";
 import { AttachPodArtifactDto } from "./dto/attach-pod-artifact.dto";
+import { UpdateStopStatusDto } from "./dto/update-stop-status.dto";
 import { DriverPaymentsGuard } from "./driver-payments.guard";
 
 @ApiTags("routes")
@@ -252,7 +253,7 @@ export class RouteRunsController {
   updateStopStatus(
     @Param("id") id: string,
     @Param("stopId") stopId: string,
-    @Body() body: { status: "IN_PROGRESS" | "SKIPPED"; driverNote?: string },
+    @Body() body: UpdateStopStatusDto,
     @CurrentUser() user: JwtPayload,
   ) {
     return this.routesService.updateStopStatus(id, stopId, body, user);
