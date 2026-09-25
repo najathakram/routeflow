@@ -1,0 +1,163 @@
+import * as React from "react";
+import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import { ImportCsvPanel, type ImportCsvResult } from "./ImportCsvPanel";
+
+const post = jest.fn();
+const toast = jest.fn();
+
+jest.mock("@/lib/api-client", () => ({ apiClient: { post: (...a: unknown[]) => post(...a) } }));
+jest.mock("@routeflow/ui/web", () => ({
+  ...jest.requireActual("@routeflow/ui/web"),
+  useToast: () => ({ toast }),
+}));
+
+const columns = [
+  { field: "name", canonical: "Item Name", aliases: ["Item Name", "Name"] },
+  { field: "sku", canonical: "SKU", aliases: ["SKU", "Item Code"] },
+];
+
+const csvFile = () => new File(["Item Name,SKU\nWidget,W-1"], "products.csv", { type: "text/csv" });
+
+function pickFile(prefix: string) {
+  const input = screen.getByTestId(`${prefix}-file-input`) as HTMLInputElement;
+  fireEvent.change(input, { target: { files: [csvFile()] } });
+}
+
+const previewResult: ImportCsvResult = {
+  created: 1,
+  updated: 0,
+  unchanged: 0,
+  skipped: 0,
+  errors: [],
+  rows: [
+    {
+      row: 1,
+      label: "Widget",
+      action: "create",
+      changes: { pricePerUnit: { from: null, to: 9.5 } },
+    },
+  ],
+  skippedRows: [],
+  warnings: [],
+  unknownColumns: [],
+  dryRun: true,
+};
+
+beforeEach(() => {
+  jest.clearAllMocks();
+});
+
+describe("ImportCsvPanel", () => {
+  it("previews with dryRun=true and renders the row plan", async () => {
+    post.mockResolvedValueOnce({ data: previewResult });
+    render(
+      <ImportCsvPanel
+        endpoint="/import/products"
+        title="Products"
+        columns={columns}
+        testIdPrefix="products"
+      />,
+    );
+
+    pickFile("products");
+    fireEvent.click(screen.getByTestId("products-preview-button"));
+
+    await waitFor(() => expect(post).toHaveBeenCalledTimes(1));
+    expect(post.mock.calls[0][0]).toBe("/import/products?dryRun=true");
+
+    expect(await screen.findByTestId("products-results-table")).toBeInTheDocument();
+    expect(screen.getByTestId("products-row-1")).toHaveTextContent("Widget");
+    expect(screen.getByTestId("products-row-1")).toHaveTextContent("create");
+    expect(screen.getByTestId("products-row-1")).toHaveTextContent("pricePerUnit");
+  });
+
+  it("imports with dryRun=false after a preview and shows the final result", async () => {
+    post.mockResolvedValueOnce({ data: previewResult });
+    post.mockResolvedValueOnce({
+      data: { ...previewResult, dryRun: false },
+    });
+    render(
+      <ImportCsvPanel
+        endpoint="/import/products"
+        title="Products"
+        columns={columns}
+        testIdPrefix="products"
+      />,
+    );
+
+    pickFile("products");
+    fireEvent.click(screen.getByTestId("products-preview-button"));
+    await waitFor(() => expect(post).toHaveBeenCalledTimes(1));
+
+    fireEvent.click(screen.getByTestId("products-import-button"));
+    await waitFor(() => expect(post).toHaveBeenCalledTimes(2));
+    expect(post.mock.calls[1][0]).toBe("/import/products?dryRun=false");
+
+    await waitFor(() =>
+      expect(screen.getByTestId("products-summary")).toHaveTextContent("Import complete"),
+    );
+    expect(toast).toHaveBeenCalledWith(expect.objectContaining({ title: "Products imported" }));
+  });
+
+  it("disables Import until a preview has run", () => {
+    render(
+      <ImportCsvPanel
+        endpoint="/import/products"
+        title="Products"
+        columns={columns}
+        testIdPrefix="products"
+      />,
+    );
+    pickFile("products");
+    expect(screen.getByTestId("products-import-button")).toBeDisabled();
+  });
+
+  it("renders a blocking gate error on a 403 and does not show a preview table", async () => {
+    post.mockRejectedValueOnce({
+      response: {
+        status: 403,
+        data: { message: 'Column "MSRP" needs the MSRP plan flag; remove the column or enable it' },
+      },
+    });
+    render(
+      <ImportCsvPanel
+        endpoint="/import/products"
+        title="Products"
+        columns={columns}
+        testIdPrefix="products"
+      />,
+    );
+
+    pickFile("products");
+    fireEvent.click(screen.getByTestId("products-preview-button"));
+
+    const gate = await screen.findByTestId("products-gate-error");
+    expect(gate).toHaveTextContent('Column "MSRP" needs the MSRP plan flag');
+    expect(screen.queryByTestId("products-results-table")).not.toBeInTheDocument();
+    expect(screen.getByTestId("products-import-button")).toBeDisabled();
+  });
+
+  it("renders unknown columns and warnings from the plan", async () => {
+    post.mockResolvedValueOnce({
+      data: {
+        ...previewResult,
+        unknownColumns: ["Average Cost"],
+        warnings: ["Tobacco licence expired 2026-01-01"],
+      },
+    });
+    render(
+      <ImportCsvPanel
+        endpoint="/import/products"
+        title="Products"
+        columns={columns}
+        testIdPrefix="products"
+      />,
+    );
+
+    pickFile("products");
+    fireEvent.click(screen.getByTestId("products-preview-button"));
+
+    expect(await screen.findByTestId("products-unknown-columns")).toHaveTextContent("Average Cost");
+    expect(screen.getByTestId("products-warnings")).toHaveTextContent("Tobacco licence expired");
+  });
+});

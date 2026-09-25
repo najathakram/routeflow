@@ -137,6 +137,25 @@ describe("ImportService — commercial columns (B858/B859)", () => {
     expect(productsService.update.mock.calls[0]?.[1]).toMatchObject({ priceTier2: 9.5 });
   });
 
+  it("a dry-run update row shows each change as { from, to } and writes nothing", async () => {
+    prisma.product.findFirst.mockImplementation(async (args: any) =>
+      args?.where?.sku === "SKU-1"
+        ? { id: "prod-1", name: "Widget Pro", sku: "SKU-1", unitsPerBox: null, priceTier2: 5 }
+        : null,
+    );
+    const csv = "Item Name,SKU,Price Tier 2\nWidget Pro,SKU-1,9.5\n";
+
+    const result: any = await (service.importProducts as any)(Buffer.from(csv), "user-1", {
+      dryRun: true,
+    });
+
+    expect(result.rows[0]).toMatchObject({
+      action: "update",
+      changes: { priceTier2: { from: 5, to: 9.5 } },
+    });
+    expect(productsService.update).not.toHaveBeenCalled();
+  });
+
   it("a Credit Limit of 0 is written onto a customer with no limit (null), not treated as unchanged", async () => {
     prisma.customer.findFirst.mockResolvedValue({
       id: "cust-1",
@@ -343,7 +362,7 @@ describe("ImportService — commercial columns (B858/B859)", () => {
 
       expect(customers.update).toHaveBeenCalled();
       expect((result as any).warnings ?? []).toEqual(
-        expect.arrayContaining([expect.stringMatching(/Tobacco licence expired/)]),
+        expect.arrayContaining([expect.stringMatching(/Row 1 \(.+\): tobacco licence expired/)]),
       );
     });
 

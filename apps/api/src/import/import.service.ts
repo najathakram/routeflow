@@ -43,7 +43,8 @@ export interface ImportRowPlan {
   row: number;
   label: string;
   action: "create" | "update" | "skip";
-  changes?: Record<string, unknown>;
+  /** field -> { from, to }; `from` is null on a create. */
+  changes?: Record<string, { from: unknown; to: unknown }>;
   reason?: string;
   warnings?: string[];
 }
@@ -263,8 +264,10 @@ export class ImportService {
     fileName?: string;
     dryRun: boolean;
     warnings: string[];
-  }): Promise<void> {
-    const { customerId, values, existing, userId, rowNumber, fileName, dryRun, warnings } = params;
+    label: string;
+  }): Promise<Record<string, { from: unknown; to: unknown }>> {
+    const { customerId, values, existing, userId, rowNumber, fileName, dryRun, warnings, label } =
+      params;
 
     const diff: Record<string, unknown> = {};
     const DIFF_FIELDS = [
@@ -303,7 +306,9 @@ export class ImportService {
       const differs = !existingVal || new Date(existingVal).getTime() !== newDate.getTime();
       if (differs) compliance.tobaccoLicenseExpiry = newDate;
       if (newDate.getTime() < Date.now()) {
-        warnings.push(`Tobacco licence expired ${newDate.toISOString().slice(0, 10)}`);
+        warnings.push(
+          `Row ${rowNumber} (${label}): tobacco licence expired ${newDate.toISOString().slice(0, 10)}`,
+        );
       }
     }
 
@@ -325,10 +330,15 @@ export class ImportService {
       compliance.consentUpdatedAt = new Date();
     }
 
+    const planned: Record<string, { from: unknown; to: unknown }> = {};
+    for (const [field, to] of Object.entries({ ...diff, ...compliance })) {
+      if (field === "consentUpdatedAt") continue;
+      planned[field] = { from: existing[field] ?? null, to };
+    }
     const hasDiff = Object.keys(diff).length > 0;
     const hasCompliance = Object.keys(compliance).length > 0;
-    if (!hasDiff && !hasCompliance) return;
-    if (dryRun) return;
+    if (!hasDiff && !hasCompliance) return planned;
+    if (dryRun) return planned;
 
     await this.customersService.update(customerId, diff as any, {
       compliance: hasCompliance ? compliance : undefined,
@@ -351,6 +361,7 @@ export class ImportService {
         },
       });
     }
+    return planned;
   }
 
   async importContacts(
@@ -587,7 +598,7 @@ export class ImportService {
           // B858/B859 FIX4: commercial columns (payment terms, pricing tier, credit limit, tax,
           // tobacco licence, consent) go through CustomersService.update for BOTH matched and
           // created rows — the identity/address code above is unchanged (SA-284 binding).
-          await this.applyCustomerCommercialFields({
+          const commercialChanges = await this.applyCustomerCommercialFields({
             customerId: existing.id,
             values: parsedCommercial.values,
             existing,
@@ -596,10 +607,16 @@ export class ImportService {
             fileName: opts?.fileName,
             dryRun,
             warnings,
+            label: preliminaryLabel,
           });
 
           updated++;
-          rowPlans.push({ row: rowNumber, label: preliminaryLabel, action: "update" });
+          rowPlans.push({
+            row: rowNumber,
+            label: preliminaryLabel,
+            action: "update",
+            changes: commercialChanges,
+          });
         } catch (e: any) {
           this.pushRowError(errors, `${name} (update)`, e);
         }
@@ -626,6 +643,7 @@ export class ImportService {
       }
 
       try {
+        let createdChanges: Record<string, { from: unknown; to: unknown }> = {};
         if (!dryRun) {
           const hashedPassword = await bcrypt.hash(this.generateTempPassword(), 10);
           let newCustomerId = "";
@@ -718,7 +736,7 @@ export class ImportService {
           // B858/B859 FIX4: commercial columns for a brand-new row go through the same
           // CustomersService.update path as a matched row (SA-284 a) — never folded into the
           // raw tx.customer.create data above.
-          await this.applyCustomerCommercialFields({
+          createdChanges = await this.applyCustomerCommercialFields({
             customerId: newCustomerId,
             values: parsedCommercial.values,
             existing: {},
@@ -727,11 +745,30 @@ export class ImportService {
             fileName: opts?.fileName,
             dryRun,
             warnings,
+            label: preliminaryLabel,
+          });
+        } else {
+          // Preview: plan the commercial fields for the would-be customer; nothing is written.
+          createdChanges = await this.applyCustomerCommercialFields({
+            customerId: "",
+            values: parsedCommercial.values,
+            existing: {},
+            userId,
+            rowNumber,
+            fileName: opts?.fileName,
+            dryRun,
+            warnings,
+            label: preliminaryLabel,
           });
         }
 
         created++;
-        rowPlans.push({ row: rowNumber, label: preliminaryLabel, action: "create" });
+        rowPlans.push({
+          row: rowNumber,
+          label: preliminaryLabel,
+          action: "create",
+          changes: createdChanges,
+        });
       } catch (e: any) {
         // P2002 = unique constraint violation — the customer (or their user account)
         // already exists in the database. Treat as a silent skip rather than an error
@@ -2055,9 +2092,12 @@ export class ImportService {
           const existingVal = (existing as any)[field];
           let differs: boolean;
           if (PRODUCT_MONEY_FIELDS.has(field)) {
-            differs = roundMoney(Number(existingVal ?? 0)) !== roundMoney(Number(newVal as number));
+            // a null money column (no MSRP/cost yet) differs from any value, 0 included
+            differs =
+              existingVal == null ||
+              roundMoney(Number(existingVal)) !== roundMoney(Number(newVal as number));
           } else if (typeof newVal === "string") {
-            differs = String(existingVal ?? "").trim() !== newVal.trim();
+            differs = (typeof existingVal === "string" ? existingVal.trim() : "") !== newVal.trim();
           } else {
             differs = existingVal !== newVal;
           }
@@ -2075,7 +2115,11 @@ export class ImportService {
           continue;
         }
 
-        rowPlans.push({ row: rowNumber, label, action: "update", changes });
+        const plannedChanges: Record<string, { from: unknown; to: unknown }> = {};
+        for (const [field, to] of Object.entries(changes)) {
+          plannedChanges[field] = { from: (existing as any)[field] ?? null, to };
+        }
+        rowPlans.push({ row: rowNumber, label, action: "update", changes: plannedChanges });
         if (!dryRun) {
           try {
             await this.productsService.update(existing.id, changes as any, { suppressEmit: true });
@@ -2112,7 +2156,11 @@ export class ImportService {
         dto[k] = v;
       }
 
-      rowPlans.push({ row: rowNumber, label, action: "create", changes: dto });
+      const createdPlan: Record<string, { from: unknown; to: unknown }> = {};
+      for (const [field, to] of Object.entries(dto)) {
+        if (to !== undefined) createdPlan[field] = { from: null, to };
+      }
+      rowPlans.push({ row: rowNumber, label, action: "create", changes: createdPlan });
       if (!dryRun) {
         try {
           await this.productsService.create(dto as any, { suppressEmit: true });
