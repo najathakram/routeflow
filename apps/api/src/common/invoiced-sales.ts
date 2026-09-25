@@ -27,10 +27,14 @@ import { CONFIRMED_PAYMENT } from "../invoices/payment-predicates";
  * - Ad-hoc lines (`productId = null`) are excluded from per-product
  *   aggregates and contribute $0 to COGS.
  *
- * Known limitation: returns / credit notes are not netted out of units or
- * COGS (parity with getProductDemand); VOID / WRITTEN_OFF invoices drop out
- * wholesale via the status filter.
- * net sales: see `fetchAccrualNetSales`.
+ * Known limitation: returns / credit notes are not netted out of the units or
+ * COGS these LINE readers return, and their status filter
+ * (`REAL_INVOICE_STATUSES`) drops DRAFT / VOID / WRITTEN_OFF invoices wholesale.
+ * The revenue side is different since #2118 (plan A2): `fetchAccrualNetSales`
+ * and the product demand / sales reads (`sales-facts/`, which
+ * `getProductDemand` / `getProductSales` delegate to) use
+ * `ACCRUAL_REVENUE_STATUSES`, which keeps WRITTEN_OFF as a sale; only the net
+ * figures (`fetchAccrualNetSales`, the insights endpoints) subtract credits.
  */
 
 /**

@@ -476,6 +476,61 @@ describeDb("sales-facts — real Postgres (#2118, plan §E)", () => {
     expect(page.lines[0]).toMatchObject({ lineId: items[0].id, creditedAmount: 12 });
   });
 
+  it("E1d bounded returns read: a credit-note return whose note is OUTSIDE the window changes no figure; one whose note is inside still nets, whatever its refundedAt says", async () => {
+    const t = await seedTenant("e1d");
+    const c = await seedCustomer(t, "e1d");
+    const p = await seedProduct(t, "e1d");
+    const order = await seedOrder(t, c.id);
+    await seedOrderItem(t, order.id, { productId: p.id, qty: 10, subtotal: 100 });
+    const { invoice } = await seedInvoice(t, c.id, {
+      issueDate: "2026-06-05",
+      orderId: order.id,
+      lines: [{ productId: p.id, qty: 10, subtotal: 100 }],
+    });
+    const june = { from: "2026-06-01", to: "2026-06-30" };
+    const read = () => asTenant(t, () => insights.getProductInsights(p.id, june));
+    const base = await read();
+
+    // OUTSIDE: its note was created in May (a legacy row with no refundedAt).
+    const may = await seedCreditNote(t, c.id, {
+      amount: 7,
+      invoiceId: invoice.id,
+      createdAt: new Date("2026-05-20T15:00:00Z"),
+    });
+    await seedReturn(t, c.id, order.id, {
+      refundMethod: "CREDIT_NOTE",
+      refundAmount: 7,
+      refundedAt: null,
+      creditNoteId: may.id,
+      items: [{ productId: p.id, qty: 4 }],
+    });
+    const afterOutside = await read();
+    expect(afterOutside.totals).toEqual(base.totals);
+    expect(afterOutside.series).toEqual(base.series);
+    expect(afterOutside.buyers).toEqual(base.buyers);
+
+    // INSIDE: its note was created in June — it nets, even with no refundedAt on the return.
+    const standalone = await seedCreditNote(t, c.id, {
+      amount: 9,
+      invoiceId: null, // the inline-return shape: a standalone note
+      createdAt: new Date("2026-06-20T15:00:00Z"),
+    });
+    await seedReturn(t, c.id, order.id, {
+      refundMethod: "CREDIT_NOTE",
+      refundAmount: 9,
+      refundedAt: null,
+      creditNoteId: standalone.id,
+      items: [{ productId: p.id, qty: 2 }],
+    });
+    const afterInside = await read();
+    expect(afterInside.totals).toMatchObject({
+      returnedQtyPieces: base.totals.returnedQtyPieces + 2,
+      netQtyPieces: base.totals.netQtyPieces - 2,
+      unattributedCredits: base.totals.unattributedCredits + 9,
+      lineNet: base.totals.lineNet, // amount-only: beside the net, never subtracted
+    });
+  });
+
   it("E2 reconciliation identities: Σ product gross + unlisted + shipping − header discount = tenant gross; attributed + unattributed = tenant credits", async () => {
     const t = await seedTenant("e2");
     const c = await seedCustomer(t, "e2");

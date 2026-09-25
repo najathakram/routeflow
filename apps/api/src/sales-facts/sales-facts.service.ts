@@ -33,21 +33,12 @@ import type {
   UnattributedCreditEvent,
 } from "./sales-facts.types";
 
-const MS_PER_DAY = 86_400_000;
-
 /**
  * `ACCRUAL_REVENUE_STATUSES` (DRAFT/VOID out, WRITTEN_OFF in — plan A2) as the MUTABLE filter
  * the typed Prisma client accepts: the shared constant is `as const` (its readonly tuple only
  * type-checks against the untyped `AccrualSalesDb` stubs). Derived, never restated (L-167).
  */
 const ACCRUAL_STATUS_FILTER = { notIn: [...ACCRUAL_REVENUE_STATUSES.notIn] };
-
-/**
- * A credit-note-method return's `refundedAt` and its credit note's `createdAt` are written
- * seconds apart (the same request). The return read is widened by this much on each side, then
- * the exact netting instant (the note's `createdAt`) decides — never `refundedAt`.
- */
-const RETURN_PREFILTER_SLACK_MS = 2 * MS_PER_DAY;
 
 /** Line ids per `IN` list — far below Postgres's bind-parameter ceiling. */
 const LINE_ID_CHUNK = 5_000;
@@ -377,8 +368,11 @@ export class SalesFactsService {
    * - unattributed: what no stored line fact attributes — a header-only or partly itemized note
    *   on an invoice carrying the product, a note minted for a return of it, a STANDARD external
    *   refund of it, the tax part of an INLINE one.
-   * Round trips: notes + returns; then the notes those returns point at + the products of the
-   * lines the notes itemize; then (rarely) the lines itemized on those return-linked notes.
+   * Every read is bounded by the window: a return is read only when its external refund
+   * (`refundedAt`) or its credit note (`createdAt`) falls in it — never all-time.
+   * Round trips: notes + the ids of credit-note returns; returns; then the notes those returns
+   * point at + the products of the lines the notes itemize; then (rarely) the lines itemized
+   * on those return-linked notes.
    */
   async productCreditEvents(
     tenantId: string,
@@ -386,11 +380,7 @@ export class SalesFactsService {
     window: InstantWindow,
   ): Promise<ProductCreditEvents> {
     const db = this.db();
-    const widened = {
-      gte: new Date(window.gte.getTime() - RETURN_PREFILTER_SLACK_MS),
-      lt: new Date(window.lt.getTime() + RETURN_PREFILTER_SLACK_MS),
-    };
-    const [notes, returns] = await Promise.all([
+    const [notes, creditNoteReturnIds] = await Promise.all([
       db.creditNote.findMany({
         where: {
           tenantId,
@@ -400,29 +390,32 @@ export class SalesFactsService {
         },
         select: CREDIT_NOTE_ATTRIBUTION_SELECT,
       }),
-      db.return.findMany({
-        where: {
-          tenantId,
-          items: { some: { productId } },
-          OR: [
-            { ...EXTERNAL_REFUND_FILTER, refundedAt: window },
-            { creditNoteId: { not: null }, OR: [{ refundedAt: widened }, { refundedAt: null }] },
-          ],
-        },
-        select: {
-          id: true,
-          kind: true,
-          orderId: true,
-          refundMethod: true,
-          refundAmount: true,
-          refundedAt: true,
-          creditNoteId: true,
-          customerId: true,
-          customer: { select: { businessName: true } },
-          items: { select: { productId: true, qty: true, subtotal: true } },
-        },
-      }),
+      this.creditNoteReturnIds(tenantId, productId, window),
     ]);
+    const returns = await db.return.findMany({
+      where: {
+        tenantId,
+        items: { some: { productId } },
+        OR: [
+          // The Return term: an external refund in the window.
+          { ...EXTERNAL_REFUND_FILTER, refundedAt: window },
+          // The CreditNote term: returns whose credit note was created in the window.
+          ...(creditNoteReturnIds.length ? [{ id: { in: creditNoteReturnIds } }] : []),
+        ],
+      },
+      select: {
+        id: true,
+        kind: true,
+        orderId: true,
+        refundMethod: true,
+        refundAmount: true,
+        refundedAt: true,
+        creditNoteId: true,
+        customerId: true,
+        customer: { select: { businessName: true } },
+        items: { select: { productId: true, qty: true, subtotal: true } },
+      },
+    });
 
     const noteIds = new Set((notes as any[]).map((n) => n.id));
     const missing = [
@@ -559,6 +552,32 @@ export class SalesFactsService {
     await Promise.all(pending);
 
     return { attributed, returned, unattributed };
+  }
+
+  /**
+   * Ids of this product's returns whose credit note was CREATED in the window — the only
+   * credit-note returns whose quantity or money can net in it (`returnNettingDate`). A bounded
+   * join on `CreditNote(tenantId, createdAt)`; raw because `Return.creditNoteId` has no Prisma
+   * relation. It narrows by date ONLY: a VOID note is still dropped in code by
+   * `returnNettingDate` and the note loop, so the status rule stays in one place (L-167).
+   */
+  private async creditNoteReturnIds(
+    tenantId: string,
+    productId: string,
+    window: InstantWindow,
+  ): Promise<string[]> {
+    const rows = await this.prisma.$queryRaw<{ id: string }[]>`
+      SELECT r."id"
+      FROM "Return" r
+      JOIN "CreditNote" cn ON cn."id" = r."creditNoteId"
+      WHERE r."tenantId" = ${tenantId}
+        AND cn."tenantId" = ${tenantId}
+        AND cn."createdAt" >= ${window.gte}
+        AND cn."createdAt" < ${window.lt}
+        AND EXISTS (
+          SELECT 1 FROM "ReturnItem" ri WHERE ri."returnId" = r."id" AND ri."productId" = ${productId}
+        )`;
+    return (rows ?? []).map((r) => r.id);
   }
 
   /**

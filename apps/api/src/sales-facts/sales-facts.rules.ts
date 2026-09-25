@@ -301,13 +301,19 @@ export function compareLineKeysDesc(a: LineKey, b: LineKey): number {
 // ─── CSV ──────────────────────────────────────────────────────────────────────
 
 /**
- * One CSV cell. Text that a spreadsheet would run as a formula (`=`, `+`, `-`, `@`, tab, CR)
- * is prefixed with `'` (OWASP CSV injection) — customer and product names are user-typed.
+ * A leading character a spreadsheet may run as a formula: `=`, `+`, `-`, `@`, tab, CR, LF, and
+ * their full-width forms (＝ ＋ － ＠), which some spreadsheet locales normalize to ASCII.
+ */
+const FORMULA_LEAD = /^[=+\-@\t\r\n\uFF1D\uFF0B\uFF0D\uFF20]/;
+
+/**
+ * One CSV cell. Text that a spreadsheet would run as a formula (`FORMULA_LEAD`) is prefixed
+ * with `'` (OWASP CSV injection) — customer and product names are user-typed.
  * Numbers are written as-is, so a negative amount stays numeric.
  */
 export function csvCell(value: string | number | boolean | null | undefined): string {
   if (value == null) return "";
   if (typeof value !== "string") return String(value);
-  const safe = /^[=+\-@\t\r]/.test(value) ? `'${value}` : value;
+  const safe = FORMULA_LEAD.test(value) ? `'${value}` : value;
   return /[",\n\r]/.test(safe) ? `"${safe.replace(/"/g, '""')}"` : safe;
 }

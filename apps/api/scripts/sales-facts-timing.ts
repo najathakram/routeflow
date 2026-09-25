@@ -446,7 +446,9 @@ async function main() {
       console.log(
         `\n── ${index}: ${usedNatural ? "USED by the planner" : "not chosen at this size (seq scan cheaper)"}; ${usable ? "usable" : "NOT USABLE"}`,
       );
-      console.log((usedNatural ? natural : forced).trim());
+      // The ACTUAL plan the planner chose, then (only when it chose a scan) the forced one.
+      console.log(`natural plan:\n${natural.trim()}`);
+      if (!usedNatural) console.log(`forced plan (enable_seqscan = off):\n${forced.trim()}`);
     }
 
     // ── EXPLAIN: the statements Prisma really sends (SA-289: the keyset page must not scan) ──
@@ -572,7 +574,7 @@ async function explain(
 ): Promise<string> {
   return prisma.$transaction(async (tx: any) => {
     if (forceIndex) await tx.$executeRawUnsafe("SET LOCAL enable_seqscan = off");
-    const rows: any[] = await tx.$queryRawUnsafe(`EXPLAIN (ANALYZE, COSTS OFF) ${sql}`, ...params);
+    const rows: any[] = await tx.$queryRawUnsafe(`EXPLAIN (ANALYZE, BUFFERS) ${sql}`, ...params);
     return rows.map((r) => r["QUERY PLAN"]).join("\n");
   });
 }

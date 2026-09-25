@@ -141,20 +141,28 @@ describe("ProductInsightsService (#2118)", () => {
       });
     });
 
-    it("reads returns of the product: external refunds in the window, or credit-note returns near it", async () => {
+    it("reads returns of the product ONLY through window-bounded terms: an external refund in the window, or a credit note created in it — never all-time", async () => {
+      // The credit-note term's ids come from a join bounded on the note's createdAt.
+      prisma.$queryRaw.mockResolvedValueOnce([{ id: "r-cn" }]);
       await service.getProductInsights("p1", { from: "2026-06-01", to: "2026-08-31" });
+
+      const window = {
+        gte: new Date("2026-06-01T04:00:00.000Z"),
+        lt: new Date("2026-09-01T04:00:00.000Z"),
+      };
+      const raw = prisma.$queryRaw.mock.calls[0];
+      expect(raw.slice(1)).toEqual(["test-tenant", "test-tenant", window.gte, window.lt, "p1"]);
+      expect(raw[0].join("?")).toMatch(/"createdAt" >= \?\s+AND cn\."createdAt" < \?/);
 
       const where = prisma.return.findMany.mock.calls[0][0].where;
       expect(where.tenantId).toBe("test-tenant");
       expect(where.items).toEqual({ some: { productId: "p1" } });
-      expect(where.OR[0]).toEqual({
-        refundMethod: "EXTERNAL_REFUND",
-        refundedAt: {
-          gte: new Date("2026-06-01T04:00:00.000Z"),
-          lt: new Date("2026-09-01T04:00:00.000Z"),
-        },
-      });
-      expect(where.OR[1].creditNoteId).toEqual({ not: null });
+      expect(where.OR).toEqual([
+        { refundMethod: "EXTERNAL_REFUND", refundedAt: window },
+        { id: { in: ["r-cn"] } },
+      ]);
+      // No unbounded branch (the old `refundedAt: null` one re-read every return ever made).
+      expect(JSON.stringify(where)).not.toContain('"refundedAt":null');
     });
 
     it("an unconfigured tenant (no TenantConfig) uses UTC day bounds, never a guessed zone", async () => {

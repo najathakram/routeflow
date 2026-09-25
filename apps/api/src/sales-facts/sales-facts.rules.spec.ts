@@ -299,6 +299,19 @@ describe("sales-facts rules", () => {
       expect(csvCell("-2+3")).toBe("'-2+3");
     });
 
+    it("neutralizes a formula behind a leading line feed (still quoted: it holds a newline)", () => {
+      expect(csvCell("\n=HYPERLINK(1)")).toBe(`"'\n=HYPERLINK(1)"`);
+    });
+
+    it("neutralizes a full-width ＝ (and its ＋ － ＠ siblings) — some locales normalize them to ASCII", () => {
+      expect(csvCell("\uFF1DHYPERLINK(1)")).toBe("'\uFF1DHYPERLINK(1)");
+      expect(csvCell("\uFF0B1")).toBe("'\uFF0B1");
+      expect(csvCell("\uFF0D1")).toBe("'\uFF0D1");
+      expect(csvCell("\uFF20cmd")).toBe("'\uFF20cmd");
+      // A full-width character that is NOT a formula lead is left alone.
+      expect(csvCell("\uFF21cme")).toBe("\uFF21cme");
+    });
+
     it("writes numbers as-is (a negative amount stays a number) and null/undefined as empty", () => {
       expect(csvCell(-12.5)).toBe("-12.5");
       expect(csvCell(0)).toBe("0");
