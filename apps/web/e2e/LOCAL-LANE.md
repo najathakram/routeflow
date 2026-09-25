@@ -76,6 +76,8 @@ the allow-list — those secrets are not expected to be present on every contrib
 `local:e2e:all` runs everything (no `--project` filter) and is a **report**, not a gate: a
 failure in a project outside the allow-list above is recorded in the PR, not fixed by this lane.
 
+**Local super-admin (D-03, #1803).** `npm run local:sa` mints a throwaway `local-sa` SUPER_ADMIN in the **local** compose DB only (it refuses any non-local database; there is no override) with a random per-run password, written to the gitignored, mode-600 `local-assets/local-sa.env`. `npm run local:e2e` then loads `PLAYWRIGHT_SA_USERNAME` / `PLAYWRIGHT_SA_PASSWORD` from it (an owner-only file, and only when not already exported), so the `super-admin` and `impersonation-signout` projects can run locally. Re-running `local:sa` rotates the password. No API path, no fixed credential, nothing prod-capable.
+
 If a future addition pushes `local:e2e` past 10 minutes, trim the allow-list here **and** in
 root `package.json`'s `local:e2e` script, and say in the PR what was dropped and why.
 
