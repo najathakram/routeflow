@@ -10,6 +10,7 @@ import { createHash, randomUUID } from "crypto";
 import { ConfigService } from "@nestjs/config";
 import { assertDeliveriesFitStop } from "./delivery-lines.util";
 import { PrismaService } from "../prisma/prisma.service";
+import { reorderRouteStopsInTx } from "./route-stop-reorder";
 import { JwtPayload } from "../auth/jwt-payload.interface";
 import {
   UserRole,
@@ -494,26 +495,7 @@ export class RoutesService {
   }
 
   async reorderStops(routeId: string, order: { id: string; stopNumber: number }[]) {
-    await this.findRouteOrThrow(routeId);
-    const allStops = await this.prisma
-      .forTenant()
-      .routeStop.findMany({ where: { routeId }, select: { id: true, stopNumber: true } });
-    const offset = allStops.length + order.length + 100;
-    await this.prisma.$transaction([
-      ...allStops.map((s) =>
-        this.prisma.forTenant().routeStop.update({
-          where: { id: s.id },
-          data: { stopNumber: s.stopNumber + offset },
-        }),
-      ),
-      ...order.map(({ id, stopNumber }) =>
-        this.prisma.forTenant().routeStop.update({ where: { id }, data: { stopNumber } }),
-      ),
-      // See clearPlannedPolyline — a hand reorder invalidates the stored path.
-      this.prisma
-        .forTenant()
-        .route.update({ where: { id: routeId }, data: { plannedPolyline: null } }),
-    ]);
+    await this.prisma.tenantTransaction((tx: any) => reorderRouteStopsInTx(tx, routeId, order));
     return { success: true };
   }
 
