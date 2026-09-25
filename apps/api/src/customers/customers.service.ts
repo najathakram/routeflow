@@ -1,3 +1,4 @@
+import { resumeSchedulesOnRestore } from "../recurring-invoices/recurring-schedule";
 import {
   BadRequestException,
   ConflictException,
@@ -2178,6 +2179,8 @@ export class CustomersService {
     try {
       await this.prisma.tenantTransaction(async (tx) => {
         await tx.customer.update({ where: { id }, data: { deletedAt: null } });
+        // F-05 (SA-290): a restore ends a pause — resume its templates from the next occurrence, not a make-up
+        await resumeSchedulesOnRestore(tx, { customerId: id, tenantId: customer.tenantId });
 
         // F6: a live user may have since claimed this customer's real email (a fresh
         // signup, or another restore) while this one was removed. tx is already

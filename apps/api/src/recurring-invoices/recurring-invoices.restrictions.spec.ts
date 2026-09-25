@@ -124,9 +124,10 @@ describe("RecurringInvoicesService — selling restrictions (F-05)", () => {
     expect(data.isActive).toBe(false);
     expect(data.nextRunAt.getTime()).toBeGreaterThan(Date.now()); // the skipped cycle is never a make-up
     // reactivation is audited...
-    prisma.recurringInvoice.findUnique.mockResolvedValue(ri);
-    prisma.recurringInvoice.update.mockResolvedValue({ id: "ri1", isActive: true });
+    prisma.recurringInvoice.findUnique.mockResolvedValue({ ...ri, isActive: false });
+    prisma.recurringInvoice.updateMany.mockResolvedValue({ count: 1 });
     await service.activate("ri1", "u9");
+    prisma.recurringInvoice.updateMany.mockClear(); // only the cron's claim below is counted
     expect(prisma.auditLog.create).toHaveBeenLastCalledWith({
       data: expect.objectContaining({ action: "recurring-invoice.reactivated", userId: "u9" }),
     });
@@ -152,10 +153,10 @@ describe("RecurringInvoicesService — selling restrictions (F-05)", () => {
       lastError,
     });
     const activate = async (row: object) => {
-      prisma.recurringInvoice.findUnique.mockResolvedValue(row);
-      prisma.recurringInvoice.update.mockResolvedValue({ id: "ri1", isActive: true });
+      prisma.recurringInvoice.findUnique.mockResolvedValue({ isActive: false, ...row });
+      prisma.recurringInvoice.updateMany.mockResolvedValue({ count: 1 });
       await service.activate("ri1", "u9");
-      return prisma.recurringInvoice.update.mock.calls[0][0].data;
+      return prisma.recurringInvoice.updateMany.mock.calls[0]?.[0]?.data;
     };
 
     it("the clock is past nextRunAt: it moves to the next occurrence AFTER NOW and the audit records the skipped cycle", async () => {
@@ -172,7 +173,7 @@ describe("RecurringInvoicesService — selling restrictions (F-05)", () => {
     it("nextRunAt still in the future: left alone", async () => {
       const future = new Date(Date.now() + 5 * 24 * 3600 * 1000);
       const data = await activate(suspended(future));
-      expect(data).toEqual({ isActive: true });
+      expect(data).toEqual({ isActive: true, lastRunStatus: null, lastError: null });
     });
 
     it("an admin-paused template (no restriction suspension) is treated the same: a stale date is advanced (SA-268)", async () => {
@@ -182,6 +183,36 @@ describe("RecurringInvoicesService — selling restrictions (F-05)", () => {
       expect(prisma.auditLog.create.mock.calls[0][0].data.meta).toMatchObject({
         skippedCycleDueAt: past.toISOString(),
       });
+    });
+
+    it("activate on an ACTIVE template changes nothing: no update, no audit, the failed cycle is not advanced (money)", async () => {
+      const past = new Date(Date.now() - 3 * 24 * 3600 * 1000);
+      prisma.recurringInvoice.findUnique.mockResolvedValue({
+        ...suspended(past, "boom"),
+        isActive: true,
+      });
+      const res = await service.activate("ri1", "u9");
+      expect(res).toMatchObject({ isActive: true });
+      expect(prisma.recurringInvoice.updateMany).not.toHaveBeenCalled();
+      expect(prisma.auditLog.create).not.toHaveBeenCalled();
+    });
+
+    it("the update is CONDITIONAL on isActive=false, and a lost race (count 0) writes no audit", async () => {
+      const past = new Date(Date.now() - 3 * 24 * 3600 * 1000);
+      prisma.recurringInvoice.findUnique.mockResolvedValue({ ...suspended(past), isActive: false });
+      prisma.recurringInvoice.updateMany.mockResolvedValue({ count: 0 });
+      await service.activate("ri1", "u9");
+      expect(prisma.recurringInvoice.updateMany.mock.calls[0][0].where).toEqual({
+        id: "ri1",
+        isActive: false,
+      });
+      expect(prisma.auditLog.create).not.toHaveBeenCalled();
+    });
+
+    it("an admin-paused template's own lastError is left alone (only the suspension notice is cleared)", async () => {
+      const past = new Date(Date.now() - 3 * 24 * 3600 * 1000);
+      const data = await activate(suspended(past, "boom"));
+      expect(data).not.toHaveProperty("lastError");
     });
   });
 });

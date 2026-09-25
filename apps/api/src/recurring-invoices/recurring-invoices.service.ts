@@ -7,6 +7,7 @@ import { InvoicesService } from "../invoices/invoices.service";
 import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
 import { requireRestrictionTenantId } from "../selling-restrictions/restriction-tenant";
 import { blockedTemplateLines } from "./recurring-invoice-restrictions";
+import { calcNextRunAt } from "./recurring-schedule";
 import { NotificationsService } from "../notifications/notifications.service";
 import { CreateRecurringInvoiceDto } from "./dto/create-recurring-invoice.dto";
 import { UpdateRecurringInvoiceDto } from "./dto/update-recurring-invoice.dto";
@@ -15,6 +16,8 @@ import { RecurringFrequency } from "@prisma/client";
 /** REG-B106: RecurringInvoice.lastRunStatus values (schema comment: "SUCCESS" | "FAILED"). */
 export const RUN_STATUS_SUCCESS = "SUCCESS";
 export const RUN_STATUS_FAILED = "FAILED";
+/** F-05: the `lastError` prefix a selling-restriction suspension records (reactivation clears exactly that notice). */
+export const SUSPENDED_ERROR_PREFIX = "Suspended:";
 /** Provisional lastError stamped at claim time; overwritten by SUCCESS or the real failure. */
 export const RUN_INTERRUPTED_ERROR = "Generation was interrupted before the invoice was created";
 /**
@@ -23,8 +26,6 @@ export const RUN_INTERRUPTED_ERROR = "Generation was interrupted before the invo
  * the schedule is never given back and operator surfaces must not offer a re-run — the web
  * card keys its "use Run Now to retry" hint off this exact text.
  */
-/** F-05: the `lastError` prefix that marks a suspension by a selling restriction (activate() keys off it). */
-export const SUSPENDED_ERROR_PREFIX = "Suspended:";
 export const RUN_UNFINALIZED_ERROR = "The invoice was created but the run could not be finalized";
 
 @Injectable()
@@ -47,43 +48,7 @@ export class RecurringInvoicesService {
     dayOfMonth?: number | null,
     from: Date = new Date(),
   ): Date {
-    if (frequency === RecurringFrequency.MONTHLY) {
-      // REG-B46: the old branch called d.setDate(1) BEFORE testing d.getDate() > dom, so
-      // the test was always `1 > dom` (false) and the month never advanced — the midnight
-      // cron re-selected every MONTHLY template nightly. Decide from `from` itself: the
-      // template's dayOfMonth in the earliest month whose occurrence is STRICTLY after
-      // `from`'s calendar day, re-applied from `dom` each month and clamped to that
-      // month's length (dom 31 → Feb 28 → Mar 31, no drift; Dec → Jan of next year).
-      // Clamp first: `dayOfMonth` is a nullable Int with no DB constraint and the PATCH was
-      // unvalidated until REG-B92, so a stored 0 or negative is reachable — and it would
-      // make the loop below never advance (occurrence(y, m) would land in month m-1 and
-      // come straight back to the same date), hanging the event loop and with it the cron
-      // and the whole API process. A corrupt row degrades to day 1, never to a hang.
-      const dom = Math.min(31, Math.max(1, Math.trunc(Number(dayOfMonth)) || 1));
-      const base = new Date(from);
-      base.setHours(0, 0, 0, 0);
-      const occurrence = (year: number, monthIndex: number): Date => {
-        const lastDay = new Date(year, monthIndex + 1, 0).getDate();
-        return new Date(year, monthIndex, Math.min(dom, lastDay));
-      };
-      let next = occurrence(base.getFullYear(), base.getMonth());
-      while (next.getTime() <= base.getTime()) {
-        next = occurrence(next.getFullYear(), next.getMonth() + 1);
-      }
-      return next;
-    }
-
-    const d = new Date(from);
-    d.setHours(0, 0, 0, 0);
-    d.setDate(d.getDate() + 1); // always at least tomorrow
-
-    // WEEKLY or BIWEEKLY — find next occurrence of dayOfWeek   ← UNCHANGED from here down
-    const dow = dayOfWeek ?? 1; // default Monday
-    const current = d.getDay();
-    const daysUntil = (dow - current + 7) % 7 || 7;
-    d.setDate(d.getDate() + daysUntil);
-    if (frequency === RecurringFrequency.BIWEEKLY) d.setDate(d.getDate() + 7);
-    return d;
+    return calcNextRunAt(frequency, dayOfWeek, dayOfMonth, from);
   }
 
   // ─── CRUD ─────────────────────────────────────────────────────────────────
@@ -197,6 +162,9 @@ export class RecurringInvoicesService {
    *  sets isActive back to true (update() intentionally never maps isActive). */
   async activate(id: string, actorUserId: string | null = null) {
     const ri = await this.findOne(id);
+    // Toggling an ACTIVE template is a no-op (a stale list, a double click): advancing its nextRunAt here would
+    // silently skip a cycle whose run FAILED, which is then never billed.
+    if (ri.isActive) return ri;
     // F-05 (SA-247(b), SA-268): a resumed schedule bills from the NEXT occurrence — a cycle that fell inside ANY
     // pause (a selling-restriction suspension or an admin pause) is billed only by an explicit "Run now". If
     // nextRunAt has passed, the midnight run would otherwise issue a make-up for it, so reactivation moves it to
@@ -204,27 +172,31 @@ export class RecurringInvoicesService {
     // A nextRunAt still in the future is left untouched.
     const now = new Date();
     const stale = ri.nextRunAt != null && ri.nextRunAt.getTime() <= now.getTime();
+    // The suspension notice must not outlive the suspension (the card would show it on an active template).
+    const clearNotice = String(ri.lastError ?? "").startsWith(SUSPENDED_ERROR_PREFIX);
+    const nextRunAt = stale
+      ? this.calcNextRunAt(ri.frequency, ri.dayOfWeek, ri.dayOfMonth, now)
+      : undefined;
     return this.prisma.tenantTransaction(async (tx: any) => {
-      const updated = await tx.recurringInvoice.update({
-        where: { id },
+      // Conditional on the row still being inactive: a concurrent toggle makes this a no-op, never a second advance.
+      const { count } = await tx.recurringInvoice.updateMany({
+        where: { id, isActive: false },
         data: {
           isActive: true,
-          ...(stale
-            ? { nextRunAt: this.calcNextRunAt(ri.frequency, ri.dayOfWeek, ri.dayOfMonth, now) }
-            : {}),
+          ...(nextRunAt ? { nextRunAt } : {}),
+          ...(clearNotice ? { lastRunStatus: null, lastError: null } : {}),
         },
       });
+      if (count === 0) return ri;
       // F-05: a reactivation is an explicit, audited act (it may follow a selling-restriction suspension)
       await this.auditInTx(
         tx,
         "recurring-invoice.reactivated",
         id,
         actorUserId,
-        stale
-          ? { skippedCycleDueAt: ri.nextRunAt!.toISOString(), resumedAt: updated.nextRunAt }
-          : {},
+        stale ? { skippedCycleDueAt: ri.nextRunAt!.toISOString(), resumedAt: nextRunAt } : {},
       );
-      return updated;
+      return tx.recurringInvoice.findUnique({ where: { id } });
     });
   }
 

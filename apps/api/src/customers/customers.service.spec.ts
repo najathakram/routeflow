@@ -1023,6 +1023,33 @@ describe("CustomersService", () => {
       expect(result).toEqual({ success: true, restored: true });
     });
 
+    it("F-05 (SA-290): the restore's OWN tx resumes the customer's past-due active recurring templates, and an empty set is a no-op", async () => {
+      prisma.customer.findUnique.mockResolvedValue({
+        id: "cust-1",
+        userId: "user-1",
+        deletedAt: new Date(),
+        email: "acme@shop.com",
+        user: { status: "ACTIVE", username: "acme" },
+      });
+      const due = new Date(Date.now() - 3 * 24 * 3600 * 1000);
+      prisma.recurringInvoice.findMany.mockResolvedValue([
+        { id: "ri-1", frequency: "WEEKLY", dayOfWeek: 1, dayOfMonth: null, nextRunAt: due },
+      ]);
+      prisma.recurringInvoice.updateMany.mockResolvedValue({ count: 1 });
+      await service.restoreCustomer("cust-1");
+      expect(prisma.recurringInvoice.findMany.mock.calls[0][0].where).toMatchObject({
+        customerId: "cust-1",
+        isActive: true,
+      });
+      expect(
+        prisma.recurringInvoice.updateMany.mock.calls[0][0].data.nextRunAt.getTime(),
+      ).toBeGreaterThan(Date.now());
+      expect(prisma.auditLog.create.mock.calls[0][0].data.meta).toMatchObject({
+        reason: "CUSTOMER_RESTORED",
+        skippedCycleDueAt: due.toISOString(),
+      });
+    });
+
     it("restores the user to the pre-delete status when given (SUSPENDED, not ACTIVE)", async () => {
       prisma.customer.findUnique.mockResolvedValue({
         id: "cust-1",

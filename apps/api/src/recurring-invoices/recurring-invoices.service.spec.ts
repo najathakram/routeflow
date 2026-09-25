@@ -59,10 +59,14 @@ describe("RecurringInvoicesService (pause/resume)", () => {
     );
   });
 
-  it("activate() sets isActive=true", async () => {
+  it("activate() sets isActive=true (conditionally, on a currently inactive template)", async () => {
+    prisma.recurringInvoice.updateMany.mockResolvedValue({ count: 1 });
+    prisma.recurringInvoice.findUnique
+      .mockResolvedValueOnce({ id: "ri-1", isActive: false })
+      .mockResolvedValueOnce({ id: "ri-1", isActive: true });
     const res = await service.activate("ri-1");
-    expect(prisma.recurringInvoice.update).toHaveBeenCalledWith({
-      where: { id: "ri-1" },
+    expect(prisma.recurringInvoice.updateMany).toHaveBeenCalledWith({
+      where: { id: "ri-1", isActive: false },
       data: { isActive: true },
     });
     expect(res.isActive).toBe(true);
