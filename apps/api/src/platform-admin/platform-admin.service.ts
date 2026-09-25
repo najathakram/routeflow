@@ -938,6 +938,9 @@ ${
     const preparedTransition = transition ? await this.planTransition.prepare(transition) : null;
 
     const tenant = await this.prisma.$transaction(async (tx) => {
+      // B864 / SA-277 (D2): same tenant row lock as updateStatus/updateTenantClass/
+      // updateTenantPriceOverride.
+      await tx.$queryRaw`SELECT id FROM "Tenant" WHERE id = ${id} FOR UPDATE`;
       if (transition && preparedTransition) {
         await this.planTransition.onPlanChange(tx, transition, preparedTransition);
       }
@@ -1438,11 +1441,26 @@ ${
     // books this tenant's add-ons with a $0 base. Entering the fee is the moment the
     // base becomes known: back-fill the snapshot and emit the run-rate delta in the
     // same transaction, mirroring updatePlan's PLAN_CHANGED emission. Only the
-    // null-snapshot case back-fills — a set snapshot is grandfathered data and an
-    // override on top of it deliberately does not rewrite it.
+    // null-snapshot case back-fills — a set snapshot is already-reconciled data
+    // (reconcilePriceLedger, called via syncStripeSubscriptionPrice below, rewrites it).
     const backfillBase =
       dto.monthly != null && existing?.planKey != null && existing.basePriceSnapshot == null;
     await this.prisma.$transaction(async (tx) => {
+      // B864 / SA-277 (SA-163 shape): lock → read paying-set inputs → decide; a racing
+      // activation serialises here.
+      await tx.$queryRaw`SELECT id FROM "Tenant" WHERE id = ${id} FOR UPDATE`;
+      // Re-read the subscription UNDER the lock: backfillBase must be decided from the
+      // locked row, not from `existing` read before the tx (a racing activation could have
+      // written the snapshot).
+      const row = await tx.tenant.findUniqueOrThrow({
+        where: { id },
+        select: {
+          status: true,
+          class: true,
+          deletedAt: true,
+          subscription: { select: { planKey: true } },
+        },
+      });
       await tx.tenantSubscription.upsert({
         where: { tenantId: id },
         update: {
@@ -1456,7 +1474,9 @@ ${
           priceOverrideAnnual: dto.annual ?? null,
         },
       });
-      if (backfillBase) {
+      // Snapshot written regardless; ONLY the emit is gated — a non-paying tenant books
+      // once, at activation.
+      if (backfillBase && isPayingRow(row, row.subscription?.planKey ?? null)) {
         await this.billingEventService.emit(
           id,
           BILLING_EVENTS.PLAN_CHANGED,
