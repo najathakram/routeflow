@@ -963,7 +963,7 @@ export class RegulatedLedgerService {
   }
 
   /** The filed period (any of `categoryIds`) that contains `bucket`, or null. Deterministic: with two
-   *  filed categories the earliest period, then key, then category id wins, and the matched category
+   *  filed categories the lowest category id, then period key, wins (SA-213), and the matched category
    *  is returned so the response names the right one. */
   async findFiledPeriod(
     db: any,
@@ -979,7 +979,7 @@ export class RegulatedLedgerService {
         periodEnd: { gt: bucketStart },
         status: { in: ["GENERATED", "LOCKED"] },
       },
-      orderBy: [{ periodStart: "asc" }, { periodKey: "asc" }, { trackedCategoryId: "asc" }],
+      orderBy: [{ trackedCategoryId: "asc" }, { periodKey: "asc" }],
       select: { periodKey: true, status: true, trackedCategoryId: true },
     });
     return filing
