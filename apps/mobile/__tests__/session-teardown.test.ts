@@ -23,8 +23,9 @@ jest.mock("react-native", () => ({ Platform: { OS: "ios" } }));
 
 // api-client pulls in the offline queue (AsyncStorage — native only); stub it
 // exactly as session-expired-wiring.test.ts does.
+const mockQueueState: { queue: Array<Record<string, unknown>> } = { queue: [] };
 jest.mock("../store/offlineQueue", () => ({
-  useOfflineQueue: { getState: () => ({ enqueue: jest.fn() }) },
+  useOfflineQueue: { getState: () => ({ enqueue: jest.fn(), queue: mockQueueState.queue }) },
 }));
 
 // auth-store imports ./auth, which drags in expo-notifications / expo-web-browser.
@@ -135,10 +136,14 @@ jest.mock("../store/returnSubmissionStore", () => ({
   useReturnSubmissionStore: { getState: () => ({ reset: returnSubmissionStoreReset }) },
 }));
 const inlineReturnSubmissionStoreReset = jest.fn();
+const inlineReturnResetKeepingQueued = jest.fn();
 jest.mock("../store/inlineReturnSubmissionStore", () => ({
   INLINE_RETURN_SUBMISSION_STORE_NAME: "routeflow-inline-return-submissions",
   useInlineReturnSubmissionStore: {
-    getState: () => ({ reset: inlineReturnSubmissionStoreReset }),
+    getState: () => ({
+      reset: inlineReturnSubmissionStoreReset,
+      resetKeepingQueued: inlineReturnResetKeepingQueued,
+    }),
   },
 }));
 
@@ -595,5 +600,42 @@ describe("REG-B140-D: cross-tab logout tears down (web build)", () => {
     storageHandler!({ key: opAccessTokenKey, newValue: null });
 
     expect(apiLogoutMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("sign-out keeps nonces of captures still queued (Opus review of #1270, point 2)", () => {
+  const queuedCapture = {
+    id: "q1",
+    endpoint: "/returns/inline/capture",
+    body: { customerId: "c", orderId: "o", returnKey: "inl:c:o:n1" },
+  };
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    apiLogoutMock.mockResolvedValue(undefined);
+    teardownSpy.mockImplementation((options?: TeardownOptions) => realTeardownUserSession(options));
+    useAuthStore.setState({ user: OPERATOR as any, isAuthenticated: true, activeRole: "operator" });
+    mockQueueState.queue = [];
+  });
+  afterEach(() => {
+    mockQueueState.queue = [];
+  });
+
+  it("with a capture still queued: the nonce store is NOT reset/cleared, it is narrowed to the queued nonces", async () => {
+    mockQueueState.queue = [queuedCapture];
+    await useAuthStore.getState().logout();
+    expect(inlineReturnSubmissionStoreReset).not.toHaveBeenCalled();
+    expect(inlineReturnResetKeepingQueued).toHaveBeenCalledWith([queuedCapture]);
+    const removed = removeItemMock.mock.calls.map((c) => String(c[0]));
+    expect(removed.some((k) => k.includes("routeflow-inline-return-submissions"))).toBe(false);
+    expect(removed.some((k) => k.includes("routeflow-pod-store"))).toBe(true);
+  });
+
+  it("with no capture queued: reset as before", async () => {
+    await useAuthStore.getState().logout();
+    expect(inlineReturnSubmissionStoreReset).toHaveBeenCalledTimes(1);
+    expect(inlineReturnResetKeepingQueued).not.toHaveBeenCalled();
+    const removed = removeItemMock.mock.calls.map((c) => String(c[0]));
+    expect(removed.some((k) => k.includes("routeflow-inline-return-submissions"))).toBe(true);
   });
 });

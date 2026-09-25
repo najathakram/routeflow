@@ -11,11 +11,7 @@
 // queued replay collapse onto the original capture instead of minting a second one.
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "../api-client";
-import {
-  captureOutcomeFromError,
-  inlineReturnNonceKey,
-  shouldSettleInlineReturnNonce,
-} from "../inline-return-submit-key";
+import { captureSettleHandlers } from "../inline-return-submit-key";
 import { useInlineReturnSubmissionStore } from "../../store/inlineReturnSubmissionStore";
 import type {
   CaptureInlineReturnRequest,
@@ -54,7 +50,8 @@ export function useInlineReturnQuote() {
  */
 export function useCaptureInlineReturn() {
   const qc = useQueryClient();
-  const markCaptureSettled = useInlineReturnSubmissionStore((s) => s.markCaptureSettled);
+  const settleCapture = useInlineReturnSubmissionStore((s) => s.settleCapture);
+  const settle = captureSettleHandlers<CaptureInlineReturnRequest>(settleCapture);
   return useMutation<InlineReturnRecord, Error, CaptureInlineReturnRequest>({
     mutationFn: (dto) => apiClient.post("/returns/inline/capture", dto).then((r) => r.data),
     onSuccess: (data, variables) => {
@@ -63,12 +60,9 @@ export function useCaptureInlineReturn() {
       qc.invalidateQueries({ queryKey: ["customers", data.customerId] });
       qc.invalidateQueries({ queryKey: ["credit-notes"] });
       qc.invalidateQueries({ queryKey: ["returns"] });
-      // SA-091 (B742 sibling): settle so the NEXT genuine capture on this pair mints a fresh
-      // nonce, rather than colliding with this one's returnKey and silently replaying this
-      // record.
-      if (shouldSettleInlineReturnNonce({ kind: "success" })) {
-        markCaptureSettled(inlineReturnNonceKey(variables.customerId, variables.orderId));
-      }
+      // SA-091 (B742 sibling): settle only THIS attempt's own nonce, so the NEXT genuine capture
+      // on the pair mints fresh (see captureSettleHandlers / settleDirectCapture).
+      settle.onSuccess(data, variables);
     },
     onError: (error, variables) => {
       // SA-091a/SA-091b precision: `captureOutcomeFromError` is the ONE place that classifies
@@ -89,10 +83,7 @@ export function useCaptureInlineReturn() {
       // until the next settle. A later replay of the identical request still resolves correctly
       // (the server's own returnKey uniqueness returns the same record), it is simply not
       // cleared promptly.
-      const outcome = captureOutcomeFromError(error);
-      if (outcome.kind !== "queued" && shouldSettleInlineReturnNonce(outcome)) {
-        markCaptureSettled(inlineReturnNonceKey(variables.customerId, variables.orderId));
-      }
+      settle.onError(error, variables);
     },
   });
 }

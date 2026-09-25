@@ -8,67 +8,50 @@ import {
   isDefiniteInlineReturnRefusal,
   nonceSuffixFromReturnKey,
   RETURN_STATE_RACE_RETRY_MESSAGE,
+  retainQueuedNonces,
   settleAfterDrain,
+  settleDirectCapture,
+  clearNonceIf,
+  captureSettleHandlers,
   shouldSettleInlineReturnNonce,
   type NonceMap,
 } from "../lib/inline-return-submit-key";
 
 describe("inlineReturnSubmitKey", () => {
-  it("is stable regardless of the order items were entered in (sorted internally)", () => {
-    const a = inlineReturnSubmitKey(
-      {
-        customerId: "cust-1",
-        orderId: "order-1",
-        items: [
-          { productId: "p2", boxes: 0, pieces: 3 },
-          { productId: "p1", boxes: 1, pieces: 0 },
-        ],
-      },
-      "nonce-A",
-    );
-    const b = inlineReturnSubmitKey(
-      {
-        customerId: "cust-1",
-        orderId: "order-1",
-        items: [
-          { productId: "p1", boxes: 1, pieces: 0 },
-          { productId: "p2", boxes: 0, pieces: 3 },
-        ],
-      },
-      "nonce-A",
-    );
-    expect(a).toBe(b);
-  });
-
-  it("changes when the quantities change — a re-quote is a NEW attempt, not a replay (SA-071b §8.1a(5))", () => {
+  it("is independent of the quantities — ONE key per capture ATTEMPT, stable across edits and re-quotes (Opus review of #1270, point 1)", () => {
+    // A capture that timed out AFTER the server committed, then edited (12 -> 10) or re-quoted
+    // ("return only what was bought"), must resend the SAME key so the server collapses it onto
+    // the committed Return. A quantity-derived key minted a second Return, credit and restock.
     const base = { customerId: "cust-1", orderId: "order-1" };
     const before = inlineReturnSubmitKey(
-      { ...base, items: [{ productId: "p1", boxes: 0, pieces: 10 }] },
+      { ...base, items: [{ productId: "p1", boxes: 0, pieces: 12 }] } as any,
       "nonce-A",
     );
-    const afterRequote = inlineReturnSubmitKey(
-      { ...base, items: [{ productId: "p1", boxes: 0, pieces: 4 }] },
+    const afterEdit = inlineReturnSubmitKey(
+      { ...base, items: [{ productId: "p1", boxes: 0, pieces: 10 }] } as any,
       "nonce-A",
     );
-    expect(afterRequote).not.toBe(before);
+    const noItems = inlineReturnSubmitKey(base, "nonce-A");
+    expect(afterEdit).toBe(before);
+    expect(noItems).toBe(before);
   });
 
-  it("changes when the nonce changes, even for identical items", () => {
-    const payload = {
-      customerId: "cust-1",
-      orderId: "order-1",
-      items: [{ productId: "p1", boxes: 0, pieces: 3 }],
-    };
+  it("changes when the nonce changes", () => {
+    const payload = { customerId: "cust-1", orderId: "order-1" };
     expect(inlineReturnSubmitKey(payload, "nonce-A")).not.toBe(
       inlineReturnSubmitKey(payload, "nonce-B"),
     );
   });
 
   it("scopes by customer and order — different orders never collide", () => {
-    const items = [{ productId: "p1", boxes: 0, pieces: 3 }];
-    const a = inlineReturnSubmitKey({ customerId: "cust-1", orderId: "order-1", items }, "n");
-    const b = inlineReturnSubmitKey({ customerId: "cust-1", orderId: "order-2", items }, "n");
+    const a = inlineReturnSubmitKey({ customerId: "cust-1", orderId: "order-1" }, "n");
+    const b = inlineReturnSubmitKey({ customerId: "cust-1", orderId: "order-2" }, "n");
     expect(a).not.toBe(b);
+  });
+
+  it("round-trips its nonce through nonceSuffixFromReturnKey", () => {
+    const key = inlineReturnSubmitKey({ customerId: "c", orderId: "o" }, "0a1b-2c3d");
+    expect(nonceSuffixFromReturnKey(key)).toBe("0a1b-2c3d");
   });
 });
 
@@ -89,13 +72,12 @@ describe("idempotency property — the whole reason this file exists", () => {
   it("survives a simulated relaunch: re-reading the SAME (persisted) nonce map returns the identical nonce and returnKey", () => {
     let nonces: NonceMap = {};
     const key = inlineReturnNonceKey("cust-1", "order-1");
-    const items = [{ productId: "p1", boxes: 0, pieces: 3 }];
 
     // Attempt 1 mints a nonce and derives the returnKey sent on the wire.
     const first = getOrCreateNonce(nonces, key, () => "nonce-A");
     nonces = first.nonces;
     const returnKey1 = inlineReturnSubmitKey(
-      { customerId: "cust-1", orderId: "order-1", items },
+      { customerId: "cust-1", orderId: "order-1" },
       first.nonce,
     );
 
@@ -104,7 +86,7 @@ describe("idempotency property — the whole reason this file exists", () => {
     // loudly if the reducer regenerates instead of reusing.
     const afterRelaunch = getOrCreateNonce(nonces, key, () => "REGENERATED-NONCE-IS-A-BUG");
     const returnKey2 = inlineReturnSubmitKey(
-      { customerId: "cust-1", orderId: "order-1", items },
+      { customerId: "cust-1", orderId: "order-1" },
       afterRelaunch.nonce,
     );
 
@@ -182,15 +164,30 @@ describe("shouldSettleInlineReturnNonce — B742-sibling, SA-091/SA-091a", () =>
     expect(attempt2.nonce).toBe(attempt1.nonce);
   });
 
-  it.each([409, 400, 422])("end-to-end: a %i gives a FRESH nonce on the next attempt", (status) => {
+  // The REAL classifier (captureOutcomeFromError over an axios-shaped error) decides refused —
+  // the test never derives "refused" itself.
+  it.each([
+    [400, "Bad request", true],
+    [403, "Forbidden", true],
+    [409, "Return already exists", true],
+    [422, "Unprocessable", true],
+    [409, RETURN_STATE_RACE_RETRY_MESSAGE, false],
+    [500, "boom", false],
+  ])("end-to-end: a real %i (%s) -> fresh nonce next attempt is %s", (status, message, fresh) => {
     const key = inlineReturnNonceKey("cust-1", "order-1");
-    let nonces: NonceMap = {};
-    const attempt1 = getOrCreateNonce(nonces, key, () => `nonce-${status}-a`);
-    nonces = attempt1.nonces;
-    const refused = status >= 400 && status < 500;
-    if (shouldSettleInlineReturnNonce({ kind: "error", refused })) nonces = clearNonce(nonces, key);
-    const attempt2 = getOrCreateNonce(nonces, key, () => `nonce-${status}-b`);
-    expect(attempt2.nonce).not.toBe(attempt1.nonce);
+    const nonces0 = getOrCreateNonce({}, key, () => "nonce-a").nonces;
+    const err = { response: { status, data: { message } } };
+    const after = settleDirectCapture(
+      nonces0,
+      {
+        customerId: "cust-1",
+        orderId: "order-1",
+        returnKey: inlineReturnSubmitKey({ customerId: "cust-1", orderId: "order-1" }, "nonce-a"),
+      },
+      captureOutcomeFromError(err),
+    );
+    const attempt2 = getOrCreateNonce(after, key, () => "nonce-b");
+    expect(attempt2.nonce).toBe(fresh ? "nonce-b" : "nonce-a");
   });
 
   it("end-to-end: success mints fresh; a connectivity error (no response) keeps the same one", () => {
@@ -271,16 +268,9 @@ describe("captureOutcomeFromError — axios-shaped fixtures", () => {
 });
 
 describe("nonceSuffixFromReturnKey", () => {
-  it("is the final colon-delimited segment, regardless of how many colon-bearing item pairs precede it", () => {
+  it("is the final colon-delimited segment, regardless of how many colon-bearing segments precede it", () => {
     const key = inlineReturnSubmitKey(
-      {
-        customerId: "cust-1",
-        orderId: "order-1",
-        items: [
-          { productId: "p1", boxes: 1, pieces: 2 },
-          { productId: "p2", boxes: 0, pieces: 3 },
-        ],
-      },
+      { customerId: "cust-1", orderId: "order-1" },
       "nonce-XYZ",
     );
     expect(nonceSuffixFromReturnKey(key)).toBe("nonce-XYZ");
@@ -374,7 +364,7 @@ describe("inlineReturnDrainSettleRecords — bridges useNetworkSync's raw drain 
     expect(result).toEqual([{ customerId: "cust-1", orderId: "order-1", nonceSuffix: "nonce-B" }]);
   });
 
-  it("a failed entry that is the retry-409 (stuck-row race) is EXCLUDED — still queued/uncertain", () => {
+  it("a failed entry that is the retry-409 (stuck-row race) is EXCLUDED - uncertain, nonce kept (drainQueue drops the 409 into failedActions; it is not still queued)", () => {
     const attempted = [captureAction("a3", "inl:cust-1:order-1:p1x3:nonce-C")];
     const result = inlineReturnDrainSettleRecords({
       delivered: [],
@@ -441,5 +431,71 @@ describe("inlineReturnDrainSettleRecords — bridges useNetworkSync's raw drain 
       { customerId: "cust-1", orderId: "order-1", nonceSuffix: "nonce-F" },
       { customerId: "cust-2", orderId: "order-2", nonceSuffix: "nonce-G" },
     ]);
+  });
+});
+
+describe("clearNonceIf — a settle clears only its OWN nonce (Opus review of #1270, point 2)", () => {
+  it("clears when the stored nonce equals the settling attempt's", () => {
+    expect(clearNonceIf({ "c:o": "n1" }, "c:o", "n1")).toEqual({});
+  });
+  it("leaves a NEWER attempt's nonce (or another key) alone", () => {
+    const m: NonceMap = { "c:o": "n2", "c:o2": "n9" };
+    expect(clearNonceIf(m, "c:o", "n1")).toBe(m);
+  });
+});
+
+describe("settleDirectCapture / captureSettleHandlers — behavioural wiring", () => {
+  const vars = (nonce: string) => ({
+    customerId: "c",
+    orderId: "o",
+    returnKey: inlineReturnSubmitKey({ customerId: "c", orderId: "o" }, nonce),
+  });
+
+  it("a late settle from an OLD attempt never clears a newer attempt's nonce", () => {
+    const after = settleDirectCapture({ "c:o": "n2" }, vars("n1"), { kind: "success" });
+    expect(after).toEqual({ "c:o": "n2" });
+  });
+
+  it("a queued outcome never settles", () => {
+    expect(settleDirectCapture({ "c:o": "n1" }, vars("n1"), { kind: "queued" })).toEqual({
+      "c:o": "n1",
+    });
+  });
+
+  it("handlers: onSuccess settles with success; onError classifies the raw error", () => {
+    const calls: Array<[unknown, unknown]> = [];
+    const h = captureSettleHandlers((v, o) => calls.push([v, o]));
+    h.onSuccess(undefined, vars("n1"));
+    h.onError({ response: { status: 403, data: {} } }, vars("n1"));
+    h.onError({ response: { status: 503, data: {} } }, vars("n1"));
+    h.onError({ isOfflineQueued: true }, vars("n1"));
+    expect(calls.map(([, o]) => o)).toEqual([
+      { kind: "success" },
+      { kind: "error", refused: true },
+      { kind: "error", refused: false },
+      { kind: "queued" },
+    ]);
+    expect(calls[0]![0]).toEqual(vars("n1"));
+  });
+});
+
+describe("retainQueuedNonces — sign-out keeps nonces of captures still queued (Opus review of #1270, point 2)", () => {
+  const queued = (nonce: string, customerId = "c", orderId = "o") => ({
+    endpoint: "/returns/inline/capture",
+    body: { customerId, orderId, returnKey: inlineReturnSubmitKey({ customerId, orderId }, nonce) },
+  });
+  it("keeps a nonce whose capture is still queued, drops the rest", () => {
+    expect(retainQueuedNonces({ "c:o": "n1", "c:x": "n7" }, [queued("n1")])).toEqual({
+      "c:o": "n1",
+    });
+  });
+  it("drops a nonce when the queued entry carries a different nonce, or is another endpoint", () => {
+    expect(retainQueuedNonces({ "c:o": "n1" }, [queued("n2")])).toEqual({});
+    expect(
+      retainQueuedNonces({ "c:o": "n1" }, [{ ...queued("n1"), endpoint: "/returns" }]),
+    ).toEqual({});
+  });
+  it("empty queue retains nothing", () => {
+    expect(retainQueuedNonces({ "c:o": "n1" }, [])).toEqual({});
   });
 });

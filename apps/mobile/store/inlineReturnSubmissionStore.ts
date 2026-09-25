@@ -2,9 +2,11 @@ import { create } from "zustand";
 import { persist, createJSONStorage } from "zustand/middleware";
 import { userScopedStorage } from "../lib/user-scoped-storage";
 import {
-  clearNonce,
   getOrCreateNonce as getOrCreateNonceIn,
+  retainQueuedNonces,
   settleAfterDrain as settleAfterDrainIn,
+  settleDirectCapture,
+  type InlineReturnCaptureOutcome,
   type NonceMap,
 } from "../lib/inline-return-submit-key";
 
@@ -22,7 +24,7 @@ import {
  * `lib/inline-return-submit-key.ts` as pure, dependency-free functions — this file is only the
  * zustand+persist wiring, matching this project's mobile-tests-are-pure-logic-only convention
  * (see that file's tests for the property that actually matters: a nonce survives a simulated
- * relaunch and only changes after `markCaptureSettled`).
+ * relaunch and only changes after `settleCapture`).
  */
 
 /** A v4-shaped UUID from `Math.random` — mirrors `returnSubmissionStore.ts#mintNonce` (same
@@ -51,10 +53,14 @@ interface InlineReturnSubmissionState {
    *  and persists a fresh one. Call this once per capture attempt, before building the request
    *  — never regenerate the nonce yourself between a submit and its retry. */
   getOrCreateNonce: (key: string) => string;
-  /** The attempt for `key` reached a terminal state (landed, or a non-retryable refusal) —
-   *  clears its nonce so the NEXT attempt for the same customer+order mints a fresh one. */
-  markCaptureSettled: (key: string) => void;
-  /** SA-091b: the offline-queue drain's equivalent of `markCaptureSettled`, for a batch of
+  /** A capture attempt (identified by its request's own `returnKey`) reached an outcome.
+   *  Clears the pair's nonce only on a DEFINITE outcome AND only when the stored nonce is this
+   *  attempt's own — a late result from an older attempt never clears a newer one. */
+  settleCapture: (
+    variables: { customerId: string; orderId: string; returnKey: string },
+    outcome: InlineReturnCaptureOutcome | { kind: "queued" },
+  ) => void;
+  /** SA-091b: the offline-queue drain's equivalent of `settleCapture`, for a batch of
    *  customer/order/nonceSuffix records (built by `inlineReturnDrainSettleRecords`) — each one
    *  settles only when the stored nonce still matches, so a newer attempt's nonce is never
    *  cleared out from under it. See `useNetworkSync.ts`'s post-drain step. */
@@ -65,6 +71,9 @@ interface InlineReturnSubmissionState {
   // this store too, so a kill-then-logout-then-login-as-someone-else can never surface, or
   // block, the prior user's inline-return attempts.
   reset: () => void;
+  /** Sign-out while captures are still queued: keep only the nonces those queued captures were
+   *  sent with (see `retainQueuedNonces`), drop everything else. */
+  resetKeepingQueued: (queue: ReadonlyArray<{ endpoint: string; body?: unknown }>) => void;
 }
 
 export const INLINE_RETURN_SUBMISSION_STORE_NAME = "routeflow-inline-return-submissions";
@@ -78,10 +87,15 @@ export const useInlineReturnSubmissionStore = create<InlineReturnSubmissionState
         if (nonces !== get().nonces) set({ nonces });
         return nonce;
       },
-      markCaptureSettled: (key) => set((s) => ({ nonces: clearNonce(s.nonces, key) })),
+      settleCapture: (variables, outcome) =>
+        set((s) => {
+          const nonces = settleDirectCapture(s.nonces, variables, outcome);
+          return nonces === s.nonces ? s : { nonces };
+        }),
       settleAfterDrain: (records) =>
         set((s) => ({ nonces: settleAfterDrainIn(records, s.nonces) })),
       reset: () => set({ nonces: {} }),
+      resetKeepingQueued: (queue) => set((s) => ({ nonces: retainQueuedNonces(s.nonces, queue) })),
     }),
     {
       name: INLINE_RETURN_SUBMISSION_STORE_NAME,

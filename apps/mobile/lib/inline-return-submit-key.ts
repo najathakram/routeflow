@@ -12,9 +12,13 @@
  * duplicate-money defect on the exact endpoint whose entire idempotency story is `returnKey`.
  * Mirroring the CONTRACT (mobile mirrors web) means mirroring this pattern, not the ref.
  *
- * IDENTITY = customerId + orderId (the CARRYING order) + the sorted `productId:boxes:pieces`
- * triples + a per-attempt NONCE (never the reason/note — the same goods going back on the same
- * order are the same capture attempt whether or not the reason chip changed before a retry).
+ * IDENTITY = customerId + orderId (the CARRYING order) + a per-attempt NONCE. Deliberately NOT
+ * the quantities or the reason: like web's RecordInlineReturnDialog, ONE key covers one capture
+ * ATTEMPT, stable across edits, re-quotes and retries. A capture that timed out after the server
+ * committed and is then edited (12 -> 10) or re-quoted must resend the SAME key so the server
+ * collapses it onto the committed Return; a quantity-derived key minted a second Return, credit
+ * and restock (Opus review of #1270). A genuinely NEW capture on the pair gets a fresh nonce
+ * because the previous attempt settled (success or a definite refusal).
  *
  * THE NONCE IS THE WHOLE POINT, AND IT IS SUBTLE: it must be PERSISTED and RE-READ, never
  * reminted on relaunch — a reminted nonce on every replay defeats the pattern entirely (see
@@ -22,13 +26,6 @@
  * pure key derivation + nonce-map reducer logic, tested here without any AsyncStorage/zustand
  * dependency, per this project's mobile-tests-are-pure-logic-only convention — see
  * `returns-logic.ts#submittedReturnKey` for the same split on the standard-return flow).
- *
- * SA-071b §8.1a(5) interaction, worth being explicit about: because `items` is part of the
- * hashed identity, a re-quote that CHANGES the submitted quantities (option 3's re-quote path,
- * synced via `applyCoveredPiecesToState`) produces a DIFFERENT key — correctly, since a
- * different quantity set is a genuinely different capture, not a replay of the same one. An
- * edit-then-resubmit is a NEW attempt, not a replay of the old one; only an identical retry of
- * the SAME quantities collapses onto the prior attempt.
  */
 
 /** Header/body-safe: every real component is a UUID or a small integer, so this never fires in
@@ -37,16 +34,9 @@ function safeToken(value: string): string {
   return value.replace(/[^A-Za-z0-9:,._-]/g, "_");
 }
 
-export interface InlineReturnSubmitKeyItem {
-  productId: string;
-  boxes: number;
-  pieces: number;
-}
-
 export interface InlineReturnSubmitKeyInput {
   customerId: string;
   orderId: string;
-  items: ReadonlyArray<InlineReturnSubmitKeyItem>;
 }
 
 /** The stable lookup key for the nonce map — identifies the (customer, carrying order) pair
@@ -56,13 +46,9 @@ export function inlineReturnNonceKey(customerId: string, orderId: string): strin
   return `${customerId}:${orderId}`;
 }
 
-/** The actual `returnKey` sent on the wire for one attempt at one quantity set. */
+/** The `returnKey` sent on the wire for one attempt — quantity-independent by design. */
 export function inlineReturnSubmitKey(input: InlineReturnSubmitKeyInput, nonce: string): string {
-  const pairs = [...input.items]
-    .map((i) => `${i.productId}:${i.boxes}:${i.pieces}`)
-    .sort()
-    .join(",");
-  return safeToken(`inl:${input.customerId}:${input.orderId}:${pairs}:${nonce}`);
+  return safeToken(`inl:${input.customerId}:${input.orderId}:${nonce}`);
 }
 
 // ─── Pure nonce-map reducer (the part a store just wires up) ────────────────────
@@ -96,6 +82,12 @@ export function clearNonce(nonces: NonceMap, key: string): NonceMap {
   if (!(key in nonces)) return nonces;
   const { [key]: _cleared, ...rest } = nonces;
   return rest;
+}
+
+/** Clears `key` only when its stored nonce is `nonce` — a settle belongs to ONE attempt, so a
+ *  late outcome from an older attempt must never clear a newer attempt's nonce. */
+export function clearNonceIf(nonces: NonceMap, key: string, nonce: string): NonceMap {
+  return nonces[key] === nonce ? clearNonce(nonces, key) : nonces;
 }
 
 /**
@@ -260,4 +252,54 @@ export function inlineReturnDrainSettleRecords(params: {
   }
 
   return records;
+}
+
+/** Settles the direct (non-drain) capture outcome for the attempt identified by the request's
+ *  own `returnKey` — pure, so the hook's wiring is testable behaviourally. */
+export function settleDirectCapture(
+  nonces: NonceMap,
+  variables: { customerId: string; orderId: string; returnKey: string },
+  outcome: InlineReturnCaptureOutcome | { kind: "queued" },
+): NonceMap {
+  if (outcome.kind === "queued" || !shouldSettleInlineReturnNonce(outcome)) return nonces;
+  return clearNonceIf(
+    nonces,
+    inlineReturnNonceKey(variables.customerId, variables.orderId),
+    nonceSuffixFromReturnKey(variables.returnKey),
+  );
+}
+
+/** `useCaptureInlineReturn`'s settle callbacks, built over a `settle(variables, outcome)`
+ *  function (the store's `settleCapture`). Kept here so the wiring is a tested unit. */
+export function captureSettleHandlers<
+  V extends { customerId: string; orderId: string; returnKey: string },
+>(settle: (variables: V, outcome: InlineReturnCaptureOutcome | { kind: "queued" }) => void) {
+  return {
+    onSuccess: (_data: unknown, variables: V) => settle(variables, { kind: "success" }),
+    onError: (error: unknown, variables: V) => settle(variables, captureOutcomeFromError(error)),
+  };
+}
+
+/** Sign-out keeps the nonces of captures still sitting in the offline queue (which survives
+ *  sign-out): clearing them would let a manual retry mint a fresh key and double-book next to
+ *  the queued replay. Everything else is dropped. */
+export function retainQueuedNonces(
+  nonces: NonceMap,
+  queue: ReadonlyArray<{ endpoint: string; body?: unknown }>,
+): NonceMap {
+  const live = new Set<string>();
+  for (const q of queue) {
+    if (q.endpoint !== "/returns/inline/capture") continue;
+    const b = q.body as { customerId?: string; orderId?: string; returnKey?: string } | undefined;
+    if (b?.customerId && b.orderId && b.returnKey) {
+      live.add(
+        `${inlineReturnNonceKey(b.customerId, b.orderId)}\u0000${nonceSuffixFromReturnKey(b.returnKey)}`,
+      );
+    }
+  }
+  const kept: Record<string, string> = {};
+  for (const [key, nonce] of Object.entries(nonces)) {
+    if (live.has(`${key}\u0000${nonce}`)) kept[key] = nonce;
+  }
+  return kept;
 }
