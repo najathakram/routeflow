@@ -650,5 +650,78 @@ describeDb(
       });
       expect(audits).toHaveLength(1);
     });
+
+    it("SA-203-P (n > 1, shared pack) two invoice lines at pack 12 feed ONE order line still stored at the old pack 24: the full recompute writes the shared 12, not the old 24", async () => {
+      const t = await seedTenant("p");
+      const customer = await seedCustomer(t.id, "p");
+      const product = await prisma.product.create({
+        data: {
+          tenantId: t.id,
+          name: `shared ${t.slug}`,
+          unit: "each",
+          pricePerUnit: 11,
+          unitsPerBox: 12,
+        },
+      });
+      const order = await prisma.order.create({
+        data: {
+          tenantId: t.id,
+          customerId: customer.id,
+          orderNumber: `ORD-P-${RUN_SUFFIX}`,
+          status: "DELIVERED",
+          subtotal: 33,
+          total: 33,
+        },
+      });
+      // the order line was written at the OLD pack 24 (1 box + 12 pieces of 36); both invoices bill it at 12
+      const oi = await prisma.orderItem.create({
+        data: {
+          tenantId: t.id,
+          orderId: order.id,
+          productId: product.id,
+          qty: 36,
+          boxes: 1,
+          pieces: 12,
+          unitsPerBox: 24,
+          unitPrice: 11,
+          subtotal: 33,
+          invoicedQty: 36,
+        },
+      });
+      for (const n of [1, 2]) {
+        const inv = await prisma.invoice.create({
+          data: {
+            tenantId: t.id,
+            customerId: customer.id,
+            orderId: order.id,
+            invoiceNumber: `INV-P${n}-${RUN_SUFFIX}`,
+            status: "DRAFT",
+            subtotal: 16.5,
+            total: 16.5,
+          },
+        });
+        await prisma.invoiceItem.create({
+          data: {
+            tenantId: t.id,
+            invoiceId: inv.id,
+            productId: product.id,
+            orderItemId: oi.id,
+            description: "shared",
+            qty: 18,
+            boxes: 1,
+            pieces: 6,
+            unitsPerBox: 12,
+            unitPrice: 11,
+            subtotal: 16.5,
+          },
+        });
+      }
+      await tenantCtx.run(t.id, () => invoicesService.recomputeOrderFromInvoices(order.id));
+      const after = await prisma.orderItem.findUnique({ where: { id: oi.id } });
+      expect(Number(after!.qty)).toBe(36);
+      expect(after!.unitsPerBox).toBe(12);
+      expect(after!.boxes).toBe(3);
+      expect(after!.pieces).toBe(0);
+    });
   },
 );
