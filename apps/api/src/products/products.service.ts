@@ -15,6 +15,8 @@ import { AddonService } from "../billing/addon.service";
 import { SystemConfigService } from "../system-config/system-config.service";
 import { EntitlementsService } from "../billing/entitlements.service";
 import { EntitlementAuthority } from "../billing/entitlement-authority.service";
+import { FeatureOverrideService } from "../billing/feature-override.service";
+import { buildPlanFlagDenial } from "../billing/plan-flag-denial";
 import { PlanCatalogService } from "../billing/plan-catalog.service";
 import { RouteFlowGateway } from "../gateways/routeflow.gateway";
 import { buildPlanGateBody } from "../billing/plan-gate";
@@ -84,6 +86,7 @@ export class ProductsService {
     private readonly planCatalog: PlanCatalogService,
     private readonly gateway: RouteFlowGateway,
     private readonly authority: EntitlementAuthority,
+    private readonly featureOverrides: FeatureOverrideService,
   ) {}
 
   /**
@@ -142,13 +145,18 @@ export class ProductsService {
     const tenantId = this.prisma.getTenantId();
     if (!tenantId) return; // no tenant context (e.g. SUPER_ADMIN) — nothing to gate
     if (await this.authority.can(tenantId, "flag.forecasting")) return;
-    const upgrade = await this.planCatalog.upgradeTargetForFlag("flag.forecasting").catch(() => ({
-      planKey: null,
-      planMonthlyPrice: null,
-      addonSku: null,
-      addonMonthlyPrice: null,
-    }));
-    throw new ForbiddenException(buildPlanGateBody("flag.forecasting", upgrade));
+    // The guard's own deny-body builder (override DENY → no upgrade CTA; unresolvable →
+    // PLAN_GATE_UNAVAILABLE), so this 403 can never drift from the inventory route's.
+    throw await buildPlanFlagDenial(
+      {
+        featureOverrides: this.featureOverrides,
+        entitlements: this.entitlements,
+        catalog: this.planCatalog,
+        logger: this.logger,
+      },
+      tenantId,
+      "flag.forecasting",
+    );
   }
 
   /**

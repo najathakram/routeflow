@@ -15,6 +15,7 @@
 import { Test, TestingModule } from "@nestjs/testing";
 import { ProductsService } from "./products.service";
 import { EntitlementAuthority } from "../billing/entitlement-authority.service";
+import { FeatureOverrideService } from "../billing/feature-override.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { StorageService } from "../storage/storage.service";
 import { AddonService } from "../billing/addon.service";
@@ -49,6 +50,7 @@ describe("ProductsService — product.updated emits (REG-PROD-EMIT)", () => {
         ProductsService,
         // flag.forecasting gate for reorder writes (assertReorderAllowed) — permitted here.
         { provide: EntitlementAuthority, useValue: { can: jest.fn().mockResolvedValue(true) } },
+        { provide: FeatureOverrideService, useValue: { get: jest.fn().mockResolvedValue(null) } },
         { provide: PrismaService, useValue: prisma },
         {
           provide: StorageService,

@@ -14,6 +14,7 @@ import { plainToInstance } from "class-transformer";
 import { validate } from "class-validator";
 import { ProductsService } from "./products.service";
 import { EntitlementAuthority } from "../billing/entitlement-authority.service";
+import { FeatureOverrideService } from "../billing/feature-override.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { StorageService } from "../storage/storage.service";
 import { AddonService } from "../billing/addon.service";
@@ -60,6 +61,7 @@ describe("ProductsService — F8-003 import error disclosure", () => {
         ProductsService,
         // flag.forecasting gate for reorder writes (assertReorderAllowed) — permitted here.
         { provide: EntitlementAuthority, useValue: { can: jest.fn().mockResolvedValue(true) } },
+        { provide: FeatureOverrideService, useValue: { get: jest.fn().mockResolvedValue(null) } },
         { provide: PrismaService, useValue: prisma },
         { provide: StorageService, useValue: {} },
         { provide: AddonService, useValue: { assertWithinLimit: jest.fn() } },
@@ -111,6 +113,7 @@ describe("ProductsService.clearAll — cross-tenant wipe regression", () => {
         ProductsService,
         // flag.forecasting gate for reorder writes (assertReorderAllowed) — permitted here.
         { provide: EntitlementAuthority, useValue: { can: jest.fn().mockResolvedValue(true) } },
+        { provide: FeatureOverrideService, useValue: { get: jest.fn().mockResolvedValue(null) } },
         { provide: PrismaService, useValue: prisma },
         { provide: StorageService, useValue: {} },
         { provide: AddonService, useValue: {} },
@@ -190,6 +193,7 @@ describe("ProductsService.bulkAssignParent — cross-tenant parent id rejected",
         ProductsService,
         // flag.forecasting gate for reorder writes (assertReorderAllowed) — permitted here.
         { provide: EntitlementAuthority, useValue: { can: jest.fn().mockResolvedValue(true) } },
+        { provide: FeatureOverrideService, useValue: { get: jest.fn().mockResolvedValue(null) } },
         { provide: PrismaService, useValue: prisma },
         { provide: StorageService, useValue: {} },
         { provide: AddonService, useValue: {} },

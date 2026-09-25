@@ -52,6 +52,7 @@ import { NumberingService } from "./numbering.service";
 import { ExternalRefService } from "./external-ref.service";
 import { ProductsService } from "../products/products.service";
 import { EntitlementAuthority } from "../billing/entitlement-authority.service";
+import { FeatureOverrideService } from "../billing/feature-override.service";
 import { AuditService } from "../audit/audit.service";
 import { StorageService } from "../storage/storage.service";
 import { AddonService } from "../billing/addon.service";
@@ -108,6 +109,7 @@ describeDb(
           ProductsService,
           // flag.forecasting gate for reorder writes (assertReorderAllowed) — permitted here.
           { provide: EntitlementAuthority, useValue: { can: jest.fn().mockResolvedValue(true) } },
+          { provide: FeatureOverrideService, useValue: { get: jest.fn().mockResolvedValue(null) } },
           CustomersService,
           AuditService,
           { provide: PrismaService, useValue: prisma },

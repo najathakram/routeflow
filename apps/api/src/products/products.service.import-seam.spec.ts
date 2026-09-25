@@ -10,6 +10,7 @@ import { buildPlanGateBody } from "../billing/plan-gate";
 import { Test, TestingModule } from "@nestjs/testing";
 import { ProductsService } from "./products.service";
 import { EntitlementAuthority } from "../billing/entitlement-authority.service";
+import { FeatureOverrideService } from "../billing/feature-override.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { StorageService } from "../storage/storage.service";
 import { AddonService } from "../billing/addon.service";
@@ -34,22 +35,30 @@ describe("ProductsService — importer seam (B858)", () => {
   let service: ProductsService;
   let prisma: ReturnType<typeof createMockPrisma>;
   let authority: { can: jest.Mock };
+  let featureOverrides: { get: jest.Mock };
+  let entitlements: { hasFlag: jest.Mock; resolve: jest.Mock };
   let planCatalog: { upgradeTargetForFlag: jest.Mock };
 
   beforeEach(async () => {
     prisma = createMockPrisma();
     authority = { can: jest.fn().mockResolvedValue(true) };
+    featureOverrides = { get: jest.fn().mockResolvedValue(null) };
+    entitlements = {
+      hasFlag: jest.fn().mockResolvedValue(true),
+      resolve: jest.fn().mockResolvedValue({ planKey: "LITE", flags: [] }),
+    };
     planCatalog = { upgradeTargetForFlag: jest.fn().mockResolvedValue(UPGRADE) };
     const mod: TestingModule = await Test.createTestingModule({
       providers: [
         ProductsService,
         // flag.forecasting gate for reorder writes (assertReorderAllowed) — permitted here.
         { provide: EntitlementAuthority, useValue: authority },
+        { provide: FeatureOverrideService, useValue: featureOverrides },
         { provide: PrismaService, useValue: prisma },
         { provide: StorageService, useValue: { presignedUrls: jest.fn().mockResolvedValue([]) } },
         { provide: AddonService, useValue: { hasAddon: jest.fn().mockResolvedValue(false) } },
         { provide: SystemConfigService, useValue: { get: jest.fn().mockResolvedValue(null) } },
-        { provide: EntitlementsService, useValue: { hasFlag: jest.fn().mockResolvedValue(true) } },
+        { provide: EntitlementsService, useValue: entitlements },
         { provide: PlanCatalogService, useValue: planCatalog },
         { provide: RouteFlowGateway, useValue: { emitProductUpdated: jest.fn() } },
       ],
@@ -213,6 +222,48 @@ describe("ProductsService — importer seam (B858)", () => {
       ).rejects.toThrow(ForbiddenException);
       expect(prisma.product.create).not.toHaveBeenCalled();
       expect(prisma.tenantTransaction).not.toHaveBeenCalled();
+    });
+
+    // SA-329 N1: the denial BODY is the guard's, from the one shared builder.
+    it("an admin override DENY returns PLAN_GATE with NO upgrade target, as the guard does", async () => {
+      authority.can.mockResolvedValue(false);
+      featureOverrides.get.mockResolvedValue("DENY");
+
+      const err = await service.assertReorderAllowed().catch((e: unknown) => e);
+
+      expect((err as ForbiddenException).getResponse()).toEqual(
+        new ForbiddenException(
+          buildPlanGateBody("flag.forecasting", {
+            planKey: null,
+            planMonthlyPrice: null,
+            addonSku: null,
+            addonMonthlyPrice: null,
+          }),
+        ).getResponse(),
+      );
+      expect(planCatalog.upgradeTargetForFlag).not.toHaveBeenCalled();
+    });
+
+    it("unresolvable entitlements after a deny return PLAN_GATE_UNAVAILABLE, as the guard does", async () => {
+      authority.can.mockResolvedValue(false);
+      entitlements.resolve.mockRejectedValue(new Error("db down"));
+
+      const err = await service.assertReorderAllowed().catch((e: unknown) => e);
+
+      expect((err as ForbiddenException).getResponse()).toEqual({
+        code: "PLAN_GATE_UNAVAILABLE",
+        message: "Entitlements are temporarily unavailable. Please retry.",
+      });
+      expect(planCatalog.upgradeTargetForFlag).not.toHaveBeenCalled();
+    });
+
+    it("SA-329 N3: no tenant context (SUPER_ADMIN) is never gated and asks nothing", async () => {
+      prisma.getTenantId.mockReturnValue(null);
+      authority.can.mockResolvedValue(false);
+
+      await expect(service.assertReorderAllowed()).resolves.toBeUndefined();
+      expect(authority.can).not.toHaveBeenCalled();
+      expect(featureOverrides.get).not.toHaveBeenCalled();
     });
   });
 });
