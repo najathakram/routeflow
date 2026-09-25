@@ -2348,10 +2348,10 @@ export class InvoicesService {
         if (existing) existingById.delete(existing.id); // covers CREATE targets too: nothing new for an untouched line
         continue;
       }
-      const shape = orderLineShape(existing, agg, only != null && agg.n === 1);
+      const shape = orderLineShape(existing, agg);
       if (existing) {
         // An order line that would be rewritten to exactly what it holds is not written at all.
-        if (!orderLineUnchanged(existing, shape, agg, only != null))
+        if (!orderLineUnchanged(existing, shape, agg))
           await db.orderItem.update({
             where: { id: existing.id },
             data: {
@@ -2359,7 +2359,7 @@ export class InvoicesService {
               boxes: shape.boxes,
               pieces: shape.pieces,
               unitsPerBox: shape.unitsPerBox,
-              ...(only ? { unitLabel: shape.unitLabel } : {}),
+              ...(shape.unitLabel !== undefined ? { unitLabel: shape.unitLabel } : {}),
               unitPrice: agg.unitPrice,
               subtotal: lineSubtotal,
               // RF-4: mirror the billed category tax back onto the order line.
@@ -2379,7 +2379,7 @@ export class InvoicesService {
             boxes: shape.boxes,
             pieces: shape.pieces,
             unitsPerBox: shape.unitsPerBox,
-            ...(only ? { unitLabel: shape.unitLabel } : {}),
+            ...(shape.unitLabel !== undefined ? { unitLabel: shape.unitLabel } : {}),
             unitPrice: agg.unitPrice,
             subtotal: lineSubtotal,
             // RF-4: mirror the billed category tax back onto the new order line.

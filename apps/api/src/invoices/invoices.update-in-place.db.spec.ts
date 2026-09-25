@@ -959,5 +959,141 @@ describeDb(
         lines.filter((r) => r.status !== "CANCELLED").reduce((s, r) => s + Number(r.subtotal), 0),
       );
     });
+
+    it("SA-203-M2 a discount-only save on a NON-NORMALIZED single-line split (1 box + 14 pcs at pack 12) writes nothing to the order", async () => {
+      const t = await seedTenant("m2");
+      const customer = await seedCustomer(t.id, "m2");
+      const product = await prisma.product.create({
+        data: {
+          tenantId: t.id,
+          name: `m2 ${t.slug}`,
+          unit: "each",
+          pricePerUnit: 11,
+          unitsPerBox: 12,
+        },
+      });
+      const order = await prisma.order.create({
+        data: {
+          tenantId: t.id,
+          customerId: customer.id,
+          orderNumber: `ORD-M2-${RUN_SUFFIX}`,
+          status: "DELIVERED",
+          subtotal: 28.6,
+          total: 28.6,
+        },
+      });
+      const oi = await prisma.orderItem.create({
+        data: {
+          tenantId: t.id,
+          orderId: order.id,
+          productId: product.id,
+          qty: 26,
+          boxes: 1,
+          pieces: 14,
+          unitsPerBox: 12,
+          unitPrice: 11,
+          subtotal: 28.6,
+          invoicedQty: 26,
+        },
+      });
+      const inv = await prisma.invoice.create({
+        data: {
+          tenantId: t.id,
+          customerId: customer.id,
+          orderId: order.id,
+          invoiceNumber: `INV-M2-${RUN_SUFFIX}`,
+          status: "DRAFT",
+          subtotal: 28.6,
+          total: 28.6,
+        },
+      });
+      await prisma.invoiceItem.create({
+        data: {
+          tenantId: t.id,
+          invoiceId: inv.id,
+          productId: product.id,
+          orderItemId: oi.id,
+          description: "m2",
+          qty: 26,
+          boxes: 1,
+          pieces: 14,
+          unitsPerBox: 12,
+          unitPrice: 11,
+          subtotal: 28.6,
+        },
+      });
+      const before = await prisma.orderItem.findUnique({ where: { id: oi.id } });
+      await tenantCtx.run(t.id, () => invoicesService.update(inv.id, { discount: 0 } as any));
+      const after = await prisma.orderItem.findUnique({ where: { id: oi.id } });
+      expect(after!.updatedAt).toEqual(before!.updatedAt);
+      expect([after!.boxes, after!.pieces]).toEqual([1, 14]);
+    });
+
+    it("SA-203-M3 a discount-only save where the single invoice line has NO split over a SPLIT order line (2 boxes at pack 12) keeps the order line's own split and pack, writing nothing", async () => {
+      const t = await seedTenant("m3");
+      const customer = await seedCustomer(t.id, "m3");
+      const product = await prisma.product.create({
+        data: {
+          tenantId: t.id,
+          name: `m3 ${t.slug}`,
+          unit: "each",
+          pricePerUnit: 11,
+          unitsPerBox: 12,
+        },
+      });
+      const order = await prisma.order.create({
+        data: {
+          tenantId: t.id,
+          customerId: customer.id,
+          orderNumber: `ORD-M3-${RUN_SUFFIX}`,
+          status: "DELIVERED",
+          subtotal: 22,
+          total: 22,
+        },
+      });
+      const oi = await prisma.orderItem.create({
+        data: {
+          tenantId: t.id,
+          orderId: order.id,
+          productId: product.id,
+          qty: 24,
+          boxes: 2,
+          pieces: 0,
+          unitsPerBox: 12,
+          unitPrice: 11,
+          subtotal: 22,
+          invoicedQty: 24,
+        },
+      });
+      const inv = await prisma.invoice.create({
+        data: {
+          tenantId: t.id,
+          customerId: customer.id,
+          orderId: order.id,
+          invoiceNumber: `INV-M3-${RUN_SUFFIX}`,
+          status: "DRAFT",
+          subtotal: 22,
+          total: 22,
+        },
+      });
+      // the invoice line carries NO split (boxes/pieces null): it must not blank the order line's
+      await prisma.invoiceItem.create({
+        data: {
+          tenantId: t.id,
+          invoiceId: inv.id,
+          productId: product.id,
+          orderItemId: oi.id,
+          description: "m3",
+          qty: 24,
+          unitPrice: 11,
+          subtotal: 22,
+        },
+      });
+      const before = await prisma.orderItem.findUnique({ where: { id: oi.id } });
+      await tenantCtx.run(t.id, () => invoicesService.update(inv.id, { discount: 0 } as any));
+      const after = await prisma.orderItem.findUnique({ where: { id: oi.id } });
+      expect(after!.updatedAt).toEqual(before!.updatedAt);
+      expect([after!.boxes, after!.pieces, after!.unitsPerBox]).toEqual([2, 0, 12]);
+    });
   },
 );

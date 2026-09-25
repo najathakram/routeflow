@@ -11,7 +11,6 @@ import { normalizeBoxesPieces, roundMoney } from "@routeflow/pricing";
 export function orderLineShape(
   existing: any,
   agg: { qty: number; sample: any; n?: number; packs?: ReadonlySet<number> },
-  verbatim: boolean,
 ): {
   qty: number;
   boxes: number | null;
@@ -20,6 +19,10 @@ export function orderLineShape(
   unitLabel?: string | null;
 } {
   const sample = agg.sample;
+  // SA-225: ONE billed invoice line is copied verbatim (split, pack, label) in every recompute mode, so a
+  // non-normalized split (1 box + 14 pieces) is never re-derived. Only a split-less invoice line over a
+  // split order line falls through (it must not blank the order line's split); n > 1 keeps the shared-pack rule.
+  const verbatim = agg.n === 1 && !(sample?.boxes == null && existing?.boxes != null);
   if (verbatim) {
     return {
       qty: agg.qty,
@@ -100,7 +103,6 @@ export function orderLineUnchanged(
     unitLabel?: string | null;
   },
   agg: { unitPrice: number; subtotal: number; categoryTax: number; freeUnits: number },
-  withLabel: boolean,
 ): boolean {
   const freeUnits = Math.max(0, Math.trunc(agg.freeUnits) || 0);
   // [column, value] pairs (a comparison, not a write: no object literal keyed by the levy column).
@@ -115,7 +117,9 @@ export function orderLineUnchanged(
     ["promoFreeUnits", freeUnits > 0 ? freeUnits : null],
     ["invoicedQty", shape.qty],
     ["status", "PENDING"],
-    ...(withLabel ? [["unitLabel", shape.unitLabel ?? null] as [string, unknown]] : []),
+    ...(shape.unitLabel !== undefined
+      ? [["unitLabel", shape.unitLabel ?? null] as [string, unknown]]
+      : []),
   ];
   return want.every(([k, v]) => sameValue(existing[k], v));
 }

@@ -5,7 +5,7 @@ describe("orderLineShape (SA-203c)", () => {
 
   it("a single changed invoice line is copied VERBATIM: boxes, pieces, pack and unit label, never re-derived", () => {
     const sample = { boxes: 3, pieces: 8, unitsPerBox: 12, unitLabel: "Case" };
-    expect(orderLineShape({ unitsPerBox: 24, boxes: 1 }, { qty: 44, sample }, true)).toEqual({
+    expect(orderLineShape({ unitsPerBox: 24, boxes: 1 }, { qty: 44, sample, n: 1 })).toEqual({
       qty: 44,
       boxes: 3,
       pieces: 8,
@@ -15,7 +15,7 @@ describe("orderLineShape (SA-203c)", () => {
   });
 
   it("a legacy 0-box + 5-piece line keeps its split verbatim (no pack invented from the product or qty)", () => {
-    expect(orderLineShape(null, { qty: 5, sample: legacySample }, true)).toMatchObject({
+    expect(orderLineShape(null, { qty: 5, sample: legacySample, n: 1 })).toMatchObject({
       qty: 5,
       boxes: 0,
       pieces: 5,
@@ -25,7 +25,7 @@ describe("orderLineShape (SA-203c)", () => {
 
   it("the non-verbatim path keeps the long-standing rule: the order line's own pack re-splits the billed qty", () => {
     expect(
-      orderLineShape({ boxes: 1, unitsPerBox: 12 }, { qty: 30, sample: legacySample }, false),
+      orderLineShape({ boxes: 1, unitsPerBox: 12 }, { qty: 30, sample: legacySample }),
     ).toMatchObject({ qty: 30, boxes: 2, pieces: 6, unitsPerBox: 12 });
   });
 
@@ -33,7 +33,6 @@ describe("orderLineShape (SA-203c)", () => {
     const shape = orderLineShape(
       { boxes: 0, pieces: 5, unitsPerBox: null },
       { qty: 5, sample: legacySample, n: 1 },
-      false,
     );
     expect(shape).toMatchObject({ qty: 5, boxes: 0, pieces: 5, unitsPerBox: null });
     expect(shape.boxes).not.toBeNull();
@@ -44,7 +43,6 @@ describe("orderLineShape (SA-203c)", () => {
       orderLineShape(
         { boxes: null, pieces: null, unitsPerBox: null },
         { qty: 5, sample: {}, n: 1 },
-        false,
       ),
     ).toMatchObject({ boxes: null, pieces: null });
   });
@@ -56,18 +54,17 @@ describe("orderLineShape (SA-203c)", () => {
       const shape = orderLineShape(
         { boxes: 0, pieces: 5, unitsPerBox: 1 },
         { qty: 5, sample: { boxes: 0, pieces: 5, unitsPerBox: 1 }, n: 1 },
-        false,
       );
       expect(shape.unitsPerBox).toBe(1);
       expect(shape).toMatchObject({ boxes: 0, pieces: 5 });
     });
 
     it("(b) WHICH line: a single invoice line with NO split does not blank the order line's stored split", () => {
-      const shape = orderLineShape(
-        stored05,
-        { qty: 5, sample: { boxes: null, pieces: null, unitsPerBox: null }, n: 1 },
-        false,
-      );
+      const shape = orderLineShape(stored05, {
+        qty: 5,
+        sample: { boxes: null, pieces: null, unitsPerBox: null },
+        n: 1,
+      });
       expect(shape).toMatchObject({ boxes: 0, pieces: 5 });
     });
 
@@ -75,17 +72,16 @@ describe("orderLineShape (SA-203c)", () => {
       const shape = orderLineShape(
         { boxes: 0, pieces: 5, unitsPerBox: null },
         { qty: 3, sample: { boxes: 0, pieces: 3, unitsPerBox: null }, n: 1 },
-        false,
       );
       expect(shape).toMatchObject({ boxes: 0, pieces: 3 });
     });
 
     it("(c) n > 1 with a qty change: 0 boxes means pieces == qty (6 -> 0 boxes + 6 pieces, never 0 + 5)", () => {
-      const shape = orderLineShape(
-        stored05,
-        { qty: 6, sample: { boxes: 0, pieces: 2, unitsPerBox: null }, n: 2 },
-        false,
-      );
+      const shape = orderLineShape(stored05, {
+        qty: 6,
+        sample: { boxes: 0, pieces: 2, unitsPerBox: null },
+        n: 2,
+      });
       expect(shape).toMatchObject({ qty: 6, boxes: 0, pieces: 6, unitsPerBox: null });
     });
 
@@ -93,7 +89,6 @@ describe("orderLineShape (SA-203c)", () => {
       const shape = orderLineShape(
         { boxes: 0, pieces: 5, unitsPerBox: null },
         { qty: 9, sample: { boxes: 3, pieces: 1, unitsPerBox: null }, n: 2 },
-        false,
       );
       expect(shape).toMatchObject({ boxes: 0, pieces: 9 });
     });
@@ -104,7 +99,6 @@ describe("orderLineShape (SA-203c)", () => {
       const shape = orderLineShape(
         { boxes: 3, pieces: 0, unitsPerBox: 24 },
         { qty: 36, sample: { boxes: 3, pieces: 0, unitsPerBox: 12 }, n: 2, packs: new Set([12]) },
-        false,
       );
       expect(shape).toMatchObject({ qty: 36, boxes: 3, pieces: 0, unitsPerBox: 12 });
     });
@@ -118,7 +112,6 @@ describe("orderLineShape (SA-203c)", () => {
           n: 2,
           packs: new Set([0, 12]),
         },
-        false,
       );
       expect(shape).toMatchObject({ qty: 17, boxes: 0, pieces: 17, unitsPerBox: null });
     });
@@ -171,15 +164,56 @@ describe("orderLineShape (SA-203c)", () => {
           n: 2,
           packs: new Set([12, 24]),
         },
-        false,
       );
       expect(shape).toMatchObject({ boxes: 0, pieces: 12, unitsPerBox: null });
     });
   });
 
+  describe("SA-225: one billed line is copied verbatim in EVERY recompute mode", () => {
+    it("a non-normalized single-line split (1 box + 14 pcs at pack 12) is kept as billed, never re-derived as 2 + 2", () => {
+      const held = { boxes: 1, pieces: 14, unitsPerBox: 12 };
+      expect(orderLineShape(held, { qty: 26, sample: held, n: 1 })).toMatchObject({
+        qty: 26,
+        boxes: 1,
+        pieces: 14,
+        unitsPerBox: 12,
+      });
+    });
+
+    it("the single line's pack and label win over the order line's (a re-pack / relabel is carried)", () => {
+      const shape = orderLineShape(
+        { boxes: 1, pieces: 0, unitsPerBox: 24, unitLabel: null },
+        {
+          qty: 12,
+          sample: { boxes: 1, pieces: 0, unitsPerBox: 12, unitLabel: "Case" },
+          n: 1,
+        },
+      );
+      expect(shape).toMatchObject({ unitsPerBox: 12, unitLabel: "Case" });
+    });
+
+    it("n === 1 WITHOUT a split keeps the ORDER line's own split and pack (SA-227), never blanking it", () => {
+      const shape = orderLineShape(
+        { boxes: 2, pieces: 0, unitsPerBox: 12 },
+        { qty: 24, sample: { boxes: null, pieces: null, unitsPerBox: null }, n: 1 },
+      );
+      expect(shape).toMatchObject({ qty: 24, boxes: 2, pieces: 0, unitsPerBox: 12 });
+      expect(shape.unitLabel).toBeUndefined();
+    });
+
+    it("n > 1 is NOT verbatim: it keeps the shared-pack rule (no unitLabel written)", () => {
+      const shape = orderLineShape(
+        { boxes: 3, pieces: 0, unitsPerBox: 24 },
+        { qty: 36, sample: { boxes: 1, pieces: 14, unitsPerBox: 12 }, n: 2, packs: new Set([12]) },
+      );
+      expect(shape).toMatchObject({ boxes: 3, pieces: 0, unitsPerBox: 12 });
+      expect(shape.unitLabel).toBeUndefined();
+    });
+  });
+
   it("a selling-unit order line stays unsplit", () => {
     expect(
-      orderLineShape({ boxes: null, unitsPerBox: null }, { qty: 7, sample: {} }, false),
+      orderLineShape({ boxes: null, unitsPerBox: null }, { qty: 7, sample: {} }),
     ).toMatchObject({ qty: 7, boxes: null, pieces: null, unitsPerBox: null });
   });
 });
@@ -216,17 +250,17 @@ describe("orderLineUnchanged (1b: a discount/shipping-only save must not rewrite
   const agg = { unitPrice: 11, subtotal: 4.58, categoryTax: 0, freeUnits: 0 };
 
   it("identical figures (Decimals as strings) are unchanged: no write", () => {
-    expect(orderLineUnchanged(held, shape, agg, false)).toBe(true);
-    expect(orderLineUnchanged(held, shape, agg, true)).toBe(true);
+    expect(orderLineUnchanged(held, shape, agg)).toBe(true);
+    expect(orderLineUnchanged(held, shape, agg)).toBe(true);
   });
 
   it("a short-delivered line that must shrink to its billed qty IS a change", () => {
-    expect(orderLineUnchanged({ ...held, qty: "10.000" }, shape, agg, false)).toBe(false);
+    expect(orderLineUnchanged({ ...held, qty: "10.000" }, shape, agg)).toBe(false);
   });
 
   it("a status other than PENDING (the recompute resets it) is a change, as is a moved invoicedQty or 0 vs null boxes", () => {
-    expect(orderLineUnchanged({ ...held, status: "DELIVERED" }, shape, agg, false)).toBe(false);
-    expect(orderLineUnchanged({ ...held, invoicedQty: "0.000" }, shape, agg, false)).toBe(false);
-    expect(orderLineUnchanged({ ...held, boxes: null }, shape, agg, false)).toBe(false);
+    expect(orderLineUnchanged({ ...held, status: "DELIVERED" }, shape, agg)).toBe(false);
+    expect(orderLineUnchanged({ ...held, invoicedQty: "0.000" }, shape, agg)).toBe(false);
+    expect(orderLineUnchanged({ ...held, boxes: null }, shape, agg)).toBe(false);
   });
 });
