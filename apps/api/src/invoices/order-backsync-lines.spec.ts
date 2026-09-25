@@ -142,7 +142,7 @@ describe("orderLineShape (SA-203c)", () => {
       expect(shape).toMatchObject({ qty: 30, boxes: 1, pieces: 6, unitsPerBox: 24 });
     });
 
-    it("a LOOSE order line fed by n > 1 lines at pack 1 keeps its own pack (the levy must not fall back to the live pack)", () => {
+    it("a LOOSE order line fed by n > 1 lines all at pack 1 (no shared pack > 1) keeps its own pack (the levy must not fall back to the live pack)", () => {
       const shape = orderLineShape(
         { boxes: null, pieces: null, unitsPerBox: 12 },
         {
@@ -205,6 +205,30 @@ describe("orderLineShape (SA-203c)", () => {
       expect(without.unitLabel).toBeUndefined(); // not written: the order line keeps "Case"
     });
 
+    it("legacy billed line with NO pack (2+0) over an order line at pack 12 (2+0): the order line's pack stays 12", () => {
+      const shape = orderLineShape(
+        { boxes: 2, pieces: 0, unitsPerBox: 12, qty: 24 },
+        { qty: 24, sample: { boxes: 2, pieces: 0, unitsPerBox: null }, n: 1 },
+      );
+      expect(shape).toMatchObject({ qty: 24, boxes: 2, pieces: 0, unitsPerBox: 12 });
+    });
+
+    it("n === 1 WITHOUT a split keeps a NON-normalized order split as stored: 1 box + 14 pcs at pack 12 stays 1 + 14 (never 2 + 2)", () => {
+      const shape = orderLineShape(
+        { boxes: 1, pieces: 14, unitsPerBox: 12, qty: 26 },
+        { qty: 26, sample: { boxes: null, pieces: null, unitsPerBox: null }, n: 1 },
+      );
+      expect(shape).toMatchObject({ qty: 26, boxes: 1, pieces: 14, unitsPerBox: 12 });
+    });
+
+    it("...but a MOVED qty over that split re-splits at the order line's own pack (26 -> 30 is 2 boxes + 6 pcs)", () => {
+      const shape = orderLineShape(
+        { boxes: 1, pieces: 14, unitsPerBox: 12, qty: 26 },
+        { qty: 30, sample: { boxes: null, pieces: null, unitsPerBox: null }, n: 1 },
+      );
+      expect(shape).toMatchObject({ qty: 30, boxes: 2, pieces: 6, unitsPerBox: 12 });
+    });
+
     it("n === 1 WITHOUT a split keeps the ORDER line's own split and pack (SA-227), never blanking it", () => {
       const shape = orderLineShape(
         { boxes: 2, pieces: 0, unitsPerBox: 12 },
@@ -250,7 +274,13 @@ describe("orderLineUnchanged (1b: a discount/shipping-only save must not rewrite
 
   it("identical figures (Decimals as strings) are unchanged: no write", () => {
     expect(orderLineUnchanged(held, shape, agg)).toBe(true);
-    expect(orderLineUnchanged(held, shape, agg)).toBe(true);
+  });
+
+  it("a label-only difference IS a change (the unit label is compared and written)", () => {
+    expect(orderLineUnchanged(held, { ...shape, unitLabel: "Case" }, agg)).toBe(false);
+    expect(
+      orderLineUnchanged({ ...held, unitLabel: "Case" }, { ...shape, unitLabel: "Case" }, agg),
+    ).toBe(true);
   });
 
   it("a short-delivered line that must shrink to its billed qty IS a change", () => {

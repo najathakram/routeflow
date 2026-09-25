@@ -1159,5 +1159,231 @@ describeDb(
         36, 3, 0, 12,
       ]);
     });
+
+    it("SA-227-M4 a notes-only save where the single billed line has NO split over a NON-NORMALIZED order split (1 box + 14 pcs at pack 12) keeps it 1 + 14 and writes nothing", async () => {
+      const t = await seedTenant("m4");
+      const customer = await seedCustomer(t.id, "m4");
+      const product = await mkProduct(t.id, `m4 ${t.slug}`, 12);
+      const order = await prisma.order.create({
+        data: {
+          tenantId: t.id,
+          customerId: customer.id,
+          status: "DELIVERED",
+          subtotal: 260,
+          total: 260,
+        },
+      });
+      const oi = await prisma.orderItem.create({
+        data: {
+          tenantId: t.id,
+          orderId: order.id,
+          productId: product.id,
+          qty: 26,
+          boxes: 1,
+          pieces: 14,
+          unitsPerBox: 12,
+          unitPrice: 10,
+          subtotal: 260,
+          invoicedQty: 26,
+        },
+      });
+      const inv = await prisma.invoice.create({
+        data: {
+          tenantId: t.id,
+          customerId: customer.id,
+          orderId: order.id,
+          invoiceNumber: `INV-M4-${RUN_SUFFIX}`,
+          status: "DRAFT",
+          subtotal: 260,
+          total: 260,
+        },
+      });
+      const ii = await prisma.invoiceItem.create({
+        data: {
+          tenantId: t.id,
+          invoiceId: inv.id,
+          productId: product.id,
+          orderItemId: oi.id,
+          description: "m4",
+          qty: 26,
+          unitPrice: 10,
+          subtotal: 260,
+        },
+      });
+      const before = await prisma.orderItem.findUnique({ where: { id: oi.id } });
+      await tenantCtx.run(t.id, () =>
+        invoicesService.update(inv.id, {
+          discount: 0,
+          shippingFee: 0,
+          notes: "n",
+          items: [
+            {
+              id: ii.id,
+              productId: product.id,
+              description: "m4",
+              qty: 26,
+              unitPrice: 10,
+              notes: "hello",
+            },
+          ],
+        } as any),
+      );
+      const after = await prisma.orderItem.findUnique({ where: { id: oi.id } });
+      expect(after!.updatedAt).toEqual(before!.updatedAt);
+      expect([after!.boxes, after!.pieces, after!.unitsPerBox]).toEqual([1, 14, 12]);
+    });
+
+    it("SA-227-R1 a notes-only save where the single billed line is a legacy line with NO pack (2+0) leaves the order line's pack 12 (master kept it)", async () => {
+      const t = await seedTenant("r1");
+      const customer = await seedCustomer(t.id, "r1");
+      const product = await mkProduct(t.id, `r1 ${t.slug}`, 12);
+      const order = await prisma.order.create({
+        data: {
+          tenantId: t.id,
+          customerId: customer.id,
+          status: "DELIVERED",
+          subtotal: 240,
+          total: 240,
+        },
+      });
+      const oi = await prisma.orderItem.create({
+        data: {
+          tenantId: t.id,
+          orderId: order.id,
+          productId: product.id,
+          qty: 24,
+          boxes: 2,
+          pieces: 0,
+          unitsPerBox: 12,
+          unitPrice: 10,
+          subtotal: 240,
+          invoicedQty: 24,
+        },
+      });
+      const inv = await prisma.invoice.create({
+        data: {
+          tenantId: t.id,
+          customerId: customer.id,
+          orderId: order.id,
+          invoiceNumber: `INV-R1-${RUN_SUFFIX}`,
+          status: "DRAFT",
+          subtotal: 240,
+          total: 240,
+        },
+      });
+      const ii = await prisma.invoiceItem.create({
+        data: {
+          tenantId: t.id,
+          invoiceId: inv.id,
+          productId: product.id,
+          orderItemId: oi.id,
+          description: "r1",
+          qty: 24,
+          boxes: 2,
+          pieces: 0,
+          unitPrice: 10,
+          subtotal: 240,
+        },
+      });
+      const before = await prisma.orderItem.findUnique({ where: { id: oi.id } });
+      await tenantCtx.run(t.id, () =>
+        invoicesService.update(inv.id, {
+          discount: 0,
+          shippingFee: 0,
+          items: [
+            {
+              id: ii.id,
+              productId: product.id,
+              description: "r1",
+              qty: 24,
+              boxes: 2,
+              pieces: 0,
+              unitPrice: 10,
+              notes: "hello",
+            },
+          ],
+        } as any),
+      );
+      const after = await prisma.orderItem.findUnique({ where: { id: oi.id } });
+      expect(after!.unitsPerBox).toBe(12);
+      expect(after!.updatedAt).toEqual(before!.updatedAt);
+    });
+
+    it("SA-235-H2 a SHORT-DELIVERED line saved twice with the identical real payload: the second save moves no updatedAt on the Order or on any order line", async () => {
+      const t = await seedTenant("h2");
+      const customer = await seedCustomer(t.id, "h2");
+      const pA = await mkProduct(t.id, `A ${t.slug}`);
+      const pB = await mkProduct(t.id, `B ${t.slug}`);
+      const order = await prisma.order.create({
+        data: {
+          tenantId: t.id,
+          customerId: customer.id,
+          status: "DELIVERED",
+          subtotal: 160,
+          total: 160,
+        },
+      });
+      const lineA = await prisma.orderItem.create({
+        data: {
+          tenantId: t.id,
+          orderId: order.id,
+          productId: pA.id,
+          qty: 10,
+          unitPrice: 10,
+          subtotal: 100,
+        },
+      });
+      const lineB = await prisma.orderItem.create({
+        data: {
+          tenantId: t.id,
+          orderId: order.id,
+          productId: pB.id,
+          qty: 6,
+          unitPrice: 10,
+          subtotal: 60,
+        },
+      });
+      await prisma.deliveryMutation.create({
+        data: {
+          tenantId: t.id,
+          orderId: order.id,
+          orderItemId: lineA.id,
+          productId: pA.id,
+          type: "DELIVERED",
+          quantityDelivered: 6,
+        },
+      });
+      await prisma.deliveryMutation.create({
+        data: {
+          tenantId: t.id,
+          orderId: order.id,
+          orderItemId: lineB.id,
+          productId: pB.id,
+          type: "REFUSED",
+          quantityDelivered: 0,
+        },
+      });
+      const invoice: any = await tenantCtx.run(t.id, () =>
+        invoicesService.createPartialFromOrder(order.id, {
+          items: [{ orderItemId: lineA.id, qty: 6 }],
+        } as any),
+      );
+      const item = invoice.items[0];
+      const dto = {
+        discount: 0,
+        shippingFee: 0,
+        items: [
+          { id: item.id, productId: pA.id, description: item.description, qty: 6, unitPrice: 10 },
+        ],
+      } as any;
+      await tenantCtx.run(t.id, () => invoicesService.update(invoice.id, dto)); // first save: shrinks A, cancels B
+      const linesBefore = await orderLinesOf(order.id);
+      const orderBefore = await prisma.order.findUnique({ where: { id: order.id } });
+      await tenantCtx.run(t.id, () => invoicesService.update(invoice.id, dto)); // identical second save
+      const linesAfter = await orderLinesOf(order.id);
+      expect(linesAfter.map((r) => r.updatedAt)).toEqual(linesBefore.map((r) => r.updatedAt));
+      const orderAfter = await prisma.order.findUnique({ where: { id: order.id } });
+      expect(orderAfter!.updatedAt).toEqual(orderBefore!.updatedAt);
+    });
   },
 );
