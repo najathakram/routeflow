@@ -203,8 +203,15 @@ export class RegulatedReportService {
     // The review list is for the in-app preview only: the CSV is the filing export, not a review surface.
     if (tenantId && opts.reviewRows !== false) {
       const policy = await this.sellingRestrictions.getPolicy(tenantId);
+      const tz =
+        (
+          await this.prisma.tenantConfig.findUnique({
+            where: { tenantId },
+            select: { timezone: true },
+          })
+        )?.timezone ?? null;
       report.warnings.push(
-        ...(await uncategorisedLineWarnings(db, policy, { from: fromDate, toExclusive })),
+        ...(await uncategorisedLineWarnings(db, policy, { from: fromDate, toExclusive }, tz)),
       );
     }
     return withParkedFirst(report, parked, restockNote);

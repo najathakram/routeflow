@@ -1,9 +1,9 @@
 import {
   resolveGoverningState,
-  ruleIsActive,
   ruleStates,
 } from "../selling-restrictions/selling-restrictions.core";
 import { ADDRESS_SELECT } from "../selling-restrictions/selling-restrictions.service";
+import { endOfCalendarDay } from "../common/calendar-date";
 import { NSF_FEE_DESCRIPTION_PREFIX } from "../sales-agents/commission-math";
 import type { ReportWarning } from "./report-types";
 
@@ -20,20 +20,29 @@ import type { ReportWarning } from "./report-types";
  * closed), or when their governing state cannot be resolved (unknown is never assumed safe). Read-only; nothing here blocks or changes an invoice. Only runs
  * when the tenant has the engine switched ON.
  */
+const DAY_MS = 24 * 60 * 60 * 1000;
+
 export async function uncategorisedLineWarnings(
   db: { sellingRestriction: any; invoice: any },
   policy: { enabled: boolean; addressPrecedence: "BILLING_FIRST" | "SHIPPING_FIRST" },
   range: { from: Date; toExclusive: Date },
+  timezone: string | null = null,
 ): Promise<ReportWarning[]> {
   if (!policy.enabled) return [];
   // Rules are judged as of each INVOICE'S issue date, not today: a rule lifted on Oct 1 must still flag
-  // September. So read every rule whose window overlaps the range, then filter per invoice below.
+  // September. So read every rule whose window overlaps the range (widened by a day each side, because the
+  // per-invoice test below is at DAY granularity), then filter per invoice.
   const rules: RuleFacts[] = await db.sellingRestriction.findMany({
     where: {
-      effectiveFrom: { lt: range.toExclusive },
+      effectiveFrom: { lt: new Date(range.toExclusive.getTime() + DAY_MS) },
       AND: [
-        { OR: [{ effectiveTo: null }, { effectiveTo: { gt: range.from } }] },
-        { OR: [{ liftedAt: null }, { liftedAt: { gt: range.from } }] },
+        {
+          OR: [
+            { effectiveTo: null },
+            { effectiveTo: { gt: new Date(range.from.getTime() - DAY_MS) } },
+          ],
+        },
+        { OR: [{ liftedAt: null }, { liftedAt: { gt: new Date(range.from.getTime() - DAY_MS) } }] },
       ],
     },
     select: {
@@ -81,15 +90,20 @@ export async function uncategorisedLineWarnings(
 
   const out: ReportWarning[] = [];
   for (const inv of invoices) {
-    const active = rules.filter((r) =>
-      ruleIsActive(
-        {
-          effectiveFrom: new Date(r.effectiveFrom),
-          effectiveTo: r.effectiveTo ? new Date(r.effectiveTo) : null,
-          liftedAt: r.liftedAt ? new Date(r.liftedAt) : null,
-        },
-        new Date(inv.issueDate),
-      ),
+    // An invoice's issueDate is a calendar-DAY stamp (start of day) while a rule's effectiveFrom is a real instant
+    // that defaults to mid-day, so comparing instants leaves a gap on exactly the day a ban starts. Judge at DAY
+    // granularity in the tenant's calendar: a rule counts on the issue day if it began on or before that day ended
+    // and had not ended/lifted before that day began.
+    const issued = new Date(inv.issueDate);
+    const dayEnd = endOfCalendarDay(issued, timezone);
+    const dayStart = new Date(
+      endOfCalendarDay(new Date(issued.getTime() - DAY_MS), timezone).getTime() + 1,
+    );
+    const active = rules.filter(
+      (r) =>
+        new Date(r.effectiveFrom).getTime() <= dayEnd.getTime() &&
+        (!r.effectiveTo || new Date(r.effectiveTo).getTime() > dayStart.getTime()) &&
+        (!r.liftedAt || new Date(r.liftedAt).getTime() > dayStart.getTime()),
     );
     if (active.length === 0) continue;
     const customer = inv.customer;

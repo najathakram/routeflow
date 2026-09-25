@@ -68,8 +68,13 @@ describe("uncategorisedLineWarnings", () => {
       },
     });
     const where = db.sellingRestriction.findMany.mock.calls[0][0].where;
-    expect(where.effectiveFrom).toEqual({ lt: range.toExclusive });
-    expect(JSON.stringify(where)).toContain(range.from.toISOString());
+    // widened by a day each side: the per-invoice test is at DAY granularity
+    expect(where.effectiveFrom).toEqual({
+      lt: new Date(range.toExclusive.getTime() + 24 * 3600 * 1000),
+    });
+    expect(JSON.stringify(where)).toContain(
+      new Date(range.from.getTime() - 24 * 3600 * 1000).toISOString(),
+    );
   });
 
   it("rules are judged as of each invoice's ISSUE DATE: a rule lifted Oct 1 still flags September, a later rule does not", async () => {
@@ -89,6 +94,26 @@ describe("uncategorisedLineWarnings", () => {
     const startsLater = rule({ effectiveFrom: new Date("2026-09-25T00:00:00Z") });
     const notYet = await run([startsLater], [inv("1", [addr("CA")], "2026-09-15T00:00:00Z")]);
     expect(notYet.w).toEqual([]);
+  });
+
+  it("DAY granularity on the day a ban starts (Opus): a rule effective MID-DAY still lists an invoice issued THAT day (its issueDate is start-of-day)", async () => {
+    const invoiceThatDay = inv("1", [addr("CA")], "2026-09-10T00:00:00Z"); // start-of-day stamp
+    const midDayRule = rule({ effectiveFrom: new Date("2026-09-10T14:00:00Z") });
+    expect((await run([midDayRule], [invoiceThatDay])).w).toHaveLength(1);
+    // the next day it started is NOT the issue day: an invoice from the day BEFORE is not flagged
+    const dayBefore = inv("2", [addr("CA")], "2026-09-09T00:00:00Z");
+    expect((await run([midDayRule], [dayBefore])).w).toEqual([]);
+  });
+
+  it("a rule lifted MID-DAY on the issue day still lists that day's invoice; one lifted the day before does not", async () => {
+    const liftedMidDay = rule({ liftedAt: new Date("2026-09-15T16:00:00Z") });
+    expect(
+      (await run([liftedMidDay], [inv("1", [addr("CA")], "2026-09-15T00:00:00Z")])).w,
+    ).toHaveLength(1);
+    const liftedBefore = rule({ liftedAt: new Date("2026-09-14T16:00:00Z") });
+    expect((await run([liftedBefore], [inv("2", [addr("CA")], "2026-09-15T00:00:00Z")])).w).toEqual(
+      [],
+    );
   });
 
   it("a FEDERAL rule, a blank/unreadable STATE rule and an unrecognised jurisdiction each list everyone (fail closed)", async () => {
