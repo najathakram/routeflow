@@ -307,6 +307,24 @@ describe("InlineReturnsService", () => {
       expect((result as any).parkedReversals).toBeNull();
     });
 
+    it("REG-B735-api-capture-read-fails: a failed parked-reversal read after commit does not 500 the capture; the field is ABSENT, not null", async () => {
+      prisma.regulatedLedgerParkedReversal.findMany.mockRejectedValue(new Error("db down"));
+
+      const result = await service.capture(CAPTURE_DTO as any, OPERATOR);
+
+      expect(result).toBeDefined();
+      expect(result).not.toHaveProperty("parkedReversals");
+    });
+
+    it("REG-B735-api-capture-null-tenant: no tenant context (SUPER_ADMIN) omits the field and never queries", async () => {
+      prisma.getTenantId.mockReturnValue(null);
+
+      const result = await service.capture(CAPTURE_DTO as any, OPERATOR);
+
+      expect(result).not.toHaveProperty("parkedReversals");
+      expect(prisma.regulatedLedgerParkedReversal.findMany).not.toHaveBeenCalled();
+    });
+
     it("REG-B735-api-capture-replay-shortcircuit-parked: the pre-tx returnKey replay never calls reverseReturnEntries, but still reports an existing park", async () => {
       const existing = {
         id: "ret-existing",
@@ -836,6 +854,17 @@ describe("InlineReturnsService", () => {
     it("404s a missing return", async () => {
       prisma.return.findFirst.mockResolvedValue(null);
       await expect(service.approve("nope", OPERATOR)).rejects.toThrow(NotFoundException);
+    });
+
+    it("REG-B735-api-approve-read-fails: a failed parked-reversal read does not 500 committed approve work; the field is ABSENT", async () => {
+      prisma.return.findFirst.mockResolvedValue(HELD);
+      prisma.return.updateMany.mockResolvedValue({ count: 1 });
+      prisma.regulatedLedgerParkedReversal.findMany.mockRejectedValue(new Error("db down"));
+
+      const result = await service.approve("ret-held", OPERATOR);
+
+      expect(result).toBeDefined();
+      expect(result).not.toHaveProperty("parkedReversals");
     });
 
     it("B735: 404s when the post-approve read comes back null, never returns a fake record", async () => {

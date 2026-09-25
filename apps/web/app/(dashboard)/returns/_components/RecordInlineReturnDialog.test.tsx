@@ -539,6 +539,10 @@ describe("RecordInlineReturnDialog — B735: a parked ledger reversal must be vi
     const warning = screen.getByTestId("inline-return-parked-warning");
     expect(warning).toHaveTextContent(/parked/i);
     expect(warning).toHaveTextContent("5");
+    // Operator words: what happened, why, the consequence, and the next step.
+    expect(warning).toHaveTextContent(/pack size is unknown/i);
+    expect(warning).toHaveTextContent(/cannot be filed until/i);
+    expect(warning).toHaveTextContent(/next step/i);
     // Still the same heading and shape as any other success — this is additive, not a
     // replacement UI (that distinction is what separates B735 from a DRIVER_CAP hold).
     expect(screen.getByText(/return recorded/i)).toBeInTheDocument();
@@ -557,6 +561,20 @@ describe("RecordInlineReturnDialog — B735: a parked ledger reversal must be vi
 
     expect(screen.queryByTestId("inline-return-parked-warning")).not.toBeInTheDocument();
     expect(screen.queryByText(/parked/i)).not.toBeInTheDocument();
+  });
+
+  it("REG-B735-web-dialog-absent-field-no-claim: an ABSENT parkedReversals (server could not check) renders no warning and no 'clean' claim", async () => {
+    await captureToSuccess({
+      id: "ret-1",
+      returnNumber: "R-1",
+      orderId: "order-1",
+      customerId: "cust-1",
+      status: "RECEIVED",
+      items: [],
+    });
+
+    expect(screen.queryByTestId("inline-return-parked-warning")).not.toBeInTheDocument();
+    expect(screen.queryByText(/ledger|clean|reconciled/i)).not.toBeInTheDocument();
   });
 
   it("PIN-B735-web-dialog-replay-shows-warning-both-times: a retry of a parked capture must not lose the warning on the replay response", async () => {
@@ -579,6 +597,7 @@ describe("RecordInlineReturnDialog — B735: a parked ledger reversal must be vi
     // The retry replays the SAME returnKey — the server's fresh-DB-read design (B735) means
     // the replay response still carries the park, unlike a value threaded only through the
     // original reversal call.
+    expect(captureMutate.mock.calls[1][0].returnKey).toBe(captureMutate.mock.calls[0][0].returnKey);
     resolveNextCapture({
       id: "ret-1",
       returnNumber: "R-1",

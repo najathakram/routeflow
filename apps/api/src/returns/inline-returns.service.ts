@@ -27,6 +27,7 @@ import {
   ConflictException,
   ForbiddenException,
   Injectable,
+  Logger,
   NotFoundException,
 } from "@nestjs/common";
 import { Prisma, UserRole } from "@prisma/client";
@@ -53,6 +54,8 @@ const INLINE_RETURNS_ADDON_KEY = "orders_inline_returns";
 
 @Injectable()
 export class InlineReturnsService {
+  private readonly logger = new Logger(InlineReturnsService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly gateway: RouteFlowGateway,
@@ -150,22 +153,33 @@ export class InlineReturnsService {
    */
   private async withParkedReversals<T extends { id: string }>(
     ret: T,
-  ): Promise<T & { parkedReversals: { count: number; pieces: number } | null }> {
+  ): Promise<T & { parkedReversals?: { count: number; pieces: number } | null }> {
+    // `parkedReversals` semantics: null = CHECKED and clean; ABSENT = not checked. The read
+    // runs after the work committed, so it must never turn committed work into a 500 (a retry
+    // of approve() would then 400 and the operator would never see the response).
     const tenantId = this.prisma.getTenantId();
-    // No tenant context (SUPER_ADMIN) never has a real parked reversal to report — same
-    // null-tenant convention as writeSaleEntries/assertGranted elsewhere in this file.
-    if (!tenantId) return { ...ret, parkedReversals: null };
-    const rows = await this.prisma.forTenant().regulatedLedgerParkedReversal.findMany({
-      where: { returnId: ret.id, tenantId, resolvedAt: null },
-      select: { returnedPieces: true },
-    });
-    const parkedReversals = rows.length
-      ? {
-          count: rows.length,
-          pieces: rows.reduce((sum: number, r: any) => sum + Number(r.returnedPieces), 0),
-        }
-      : null;
-    return { ...ret, parkedReversals };
+    // No tenant context (SUPER_ADMIN): nothing was checked, so the field is omitted.
+    if (!tenantId) return ret;
+    try {
+      const rows = await this.prisma.forTenant().regulatedLedgerParkedReversal.findMany({
+        where: { returnId: ret.id, tenantId, resolvedAt: null },
+        select: { returnedPieces: true },
+      });
+      const parkedReversals = rows.length
+        ? {
+            count: rows.length,
+            pieces: rows.reduce((sum: number, r: any) => sum + Number(r.returnedPieces), 0),
+          }
+        : null;
+      return { ...ret, parkedReversals };
+    } catch (err) {
+      this.logger.warn(
+        `B735: parked-reversal read failed for return ${ret.id}; response omits parkedReversals: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+      return ret;
+    }
   }
 
   /**
