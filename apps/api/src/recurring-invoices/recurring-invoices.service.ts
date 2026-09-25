@@ -197,14 +197,13 @@ export class RecurringInvoicesService {
    *  sets isActive back to true (update() intentionally never maps isActive). */
   async activate(id: string, actorUserId: string | null = null) {
     const ri = await this.findOne(id);
-    // F-05 (SA-247(b)): a template SUSPENDED by a selling restriction never bills the cycles inside the
-    // suspension. Its nextRunAt was moved forward at suspend time, but if that date has since passed, the
-    // midnight run would issue a make-up invoice for it — so reactivation moves it to the next occurrence
-    // after NOW, in the same transaction, and records the skipped cycle(s) in the audit row.
-    const suspendedByRestriction = String(ri.lastError ?? "").startsWith(SUSPENDED_ERROR_PREFIX);
+    // F-05 (SA-247(b), SA-268): a resumed schedule bills from the NEXT occurrence — a cycle that fell inside ANY
+    // pause (a selling-restriction suspension or an admin pause) is billed only by an explicit "Run now". If
+    // nextRunAt has passed, the midnight run would otherwise issue a make-up for it, so reactivation moves it to
+    // the next occurrence after NOW in the same transaction and records the skipped cycle in the audit row.
+    // A nextRunAt still in the future is left untouched.
     const now = new Date();
-    const stale =
-      suspendedByRestriction && ri.nextRunAt != null && ri.nextRunAt.getTime() <= now.getTime();
+    const stale = ri.nextRunAt != null && ri.nextRunAt.getTime() <= now.getTime();
     return this.prisma.tenantTransaction(async (tx: any) => {
       const updated = await tx.recurringInvoice.update({
         where: { id },

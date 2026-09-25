@@ -175,10 +175,13 @@ describe("RecurringInvoicesService — selling restrictions (F-05)", () => {
       expect(data).toEqual({ isActive: true });
     });
 
-    it("a template an admin paused themselves (no restriction suspension) keeps its date", async () => {
+    it("an admin-paused template (no restriction suspension) is treated the same: a stale date is advanced (SA-268)", async () => {
       const past = new Date(Date.now() - 3 * 24 * 3600 * 1000);
       const data = await activate(suspended(past, "boom"));
-      expect(data).toEqual({ isActive: true });
+      expect(data.nextRunAt.getTime()).toBeGreaterThan(Date.now());
+      expect(prisma.auditLog.create.mock.calls[0][0].data.meta).toMatchObject({
+        skippedCycleDueAt: past.toISOString(),
+      });
     });
   });
 });
