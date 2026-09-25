@@ -39,7 +39,16 @@ export async function prepareInlineReturn(
   return { svc, lines, role: user.role };
 }
 
-/** Create only: reserve the credit-note number once, after validation and before the retry loop. */
+/**
+ * Create only: reserve the credit-note number once, after validation and before the retry loop.
+ *
+ * KNOWN, ACCEPTED (SA-261): a create whose return prices to $0 mints no credit note, so the number
+ * reserved here is burned (the total is not known before the tx, and a dry-run pricing pass ahead of it
+ * was ruled not worth its second pricing pass and stale-price race). The credit-note sequence is not
+ * gapless today either: an order create that fails for good burns its reserved number, exactly as a
+ * burned order number does, and our tenants have no gapless credit-note requirement. Pinned: a
+ * zero-total create mints no credit note and writes no intent (the unit and DB pins).
+ */
 export async function reserveInlineReturnNumber(p: PreparedInlineReturn | null): Promise<void> {
   // A DRIVER's return may be held above the cap (no credit note), which would burn the number: a
   // driver create reserves inside the tx instead (captureAndIssueInTx), only when it issues.

@@ -312,6 +312,20 @@ describeDb("#2094 — a return inside POST /orders through create(), real Postgr
     expect(Number(matched._sum.qty ?? 0)).toBeLessThanOrEqual(10);
   }, 60_000);
 
+  it("a create whose return prices to $0 mints no credit note and writes no intent (SA-261: the reserved number is burned, knowingly)", async () => {
+    const f = await seedCustomer("zero");
+    // A free product: the unreferenced return prices to $0.00.
+    await raw.product.update({ where: { id: f.productId }, data: { pricePerUnit: "0.00" } });
+    const before = reserved.length;
+    const o = await create(f, 1, ret(f.productId, 3, `k-zero-${run}`));
+    orderIds.push(o.id);
+    expect(await raw.creditNote.count({ where: { customerId: f.customerId } })).toBe(0);
+    expect(await raw.orderCreditNote.count({ where: { orderId: o.id } })).toBe(0);
+    expect(reserved.length).toBe(before + 1); // reserved ahead of the tx, unused: the accepted burn
+    const r = await raw.return.findFirst({ where: { orderId: o.id } });
+    expect(r?.creditNoteId ?? null).toBeNull();
+  }, 60_000);
+
   it("DRIVER_CAP through create(): a driver's over-cap return on a new order is held: the order commits, no credit note, no intent", async () => {
     const f = await seedCustomer("drv");
     const drvUser = await raw.user.create({

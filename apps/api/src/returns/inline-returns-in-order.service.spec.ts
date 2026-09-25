@@ -326,11 +326,17 @@ describe("InlineReturnsService in-transaction core (#2094)", () => {
       expect(creditNotes.mintStandaloneInTx).not.toHaveBeenCalled();
     });
 
-    it("a zero-total return mints nothing", async () => {
+    it("a zero-total return mints no credit note and writes no intent, even with a reserved number (SA-261: the number is burned, knowingly)", async () => {
       quote.priceInlineReturn.mockResolvedValue(priced(0));
-      const out = await (service as any).captureAndIssueInTx(tx, INPUT, OPERATOR, {});
+      const out = await (service as any).captureAndIssueInTx(tx, INPUT, OPERATOR, {
+        creditNoteNumber: "CN-2026-0042",
+      });
       expect(out.minted).toBeNull();
       expect(creditNotes.mintStandaloneInTx).not.toHaveBeenCalled();
+      expect(prisma.orderCreditNote.create).not.toHaveBeenCalled();
+      expect(creditNotes.settleOrderCreditsInTx).not.toHaveBeenCalled();
+      // The Return itself is still recorded (RECEIVED, nothing to credit): it only never links a CN.
+      expect(prisma.return.updateMany).not.toHaveBeenCalled();
     });
   });
 
