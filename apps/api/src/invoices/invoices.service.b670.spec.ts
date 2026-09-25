@@ -292,6 +292,58 @@ describe("InvoicesService — update() line preservation", () => {
       ).rejects.toThrow("is not 0 boxes x 12 + 6 pieces");
     });
 
+    describe("SA-196: a new split implying a different pack than the row's own snapshot", () => {
+      const packed6 = () =>
+        legacy({ id: "a", qty: 12, boxes: 2, pieces: 0, unitsPerBox: 6, subtotal: 22 });
+      const repackPayload = (over: any = {}) =>
+        payload({ id: "a", qty: 24, boxes: 2, pieces: 0, ...over });
+
+      it("is refused with the implied and current pack named when unitsPerBox is not sent", async () => {
+        arrange([packed6()]);
+        await expect(
+          service.update("inv-box", { items: [repackPayload()] } as any),
+        ).rejects.toThrow(
+          "the split implies pack 12 but this line's pack is 6; set unitsPerBox 12 to re-pack it",
+        );
+        expect(prisma.invoice.update).not.toHaveBeenCalled();
+        expect(prisma.invoiceItem.update).not.toHaveBeenCalled();
+      });
+
+      it("is refused when unitsPerBox is sent but is not the implied pack", async () => {
+        arrange([packed6()]);
+        await expect(
+          service.update("inv-box", { items: [repackPayload({ unitsPerBox: 6 })] } as any),
+        ).rejects.toThrow("the split implies pack 12 but this line's pack is 6");
+      });
+
+      it("is allowed once unitsPerBox equals the implied pack, and is audited as an attestation", async () => {
+        arrange([packed6()]);
+        await service.update("inv-box", { items: [repackPayload({ unitsPerBox: 12 })] } as any);
+        expect(prisma.invoiceItem.update).toHaveBeenCalledWith({
+          where: { id: "a" },
+          data: expect.objectContaining({ boxes: 2, pieces: 0, unitsPerBox: 12 }),
+        });
+        expect(prisma.auditLog.create).toHaveBeenCalledWith({
+          data: expect.objectContaining({
+            action: "INVOICE_LINE_PACK_ATTESTED",
+            meta: { attested: [{ rowId: "a", unitsPerBox: 12 }] },
+          }),
+        });
+      });
+
+      it("a split that implies the SAME pack needs no attestation and writes no audit row", async () => {
+        arrange([packed6()]);
+        await service.update("inv-box", {
+          items: [repackPayload({ qty: 18, boxes: 3, pieces: 0 })],
+        } as any);
+        expect(prisma.invoiceItem.update).toHaveBeenCalledWith({
+          where: { id: "a" },
+          data: expect.objectContaining({ boxes: 3, unitsPerBox: 6 }),
+        });
+        expect(prisma.auditLog.create).not.toHaveBeenCalled();
+      });
+    });
+
     it("a sibling line at pack 24 changes nothing; the edited line uses ITS OWN pack 12", async () => {
       const a = legacy({ id: "a", qty: 24, boxes: 2, pieces: 0, unitsPerBox: 12, subtotal: 22 });
       const b = legacy({ id: "b", qty: 48, boxes: 2, pieces: 0, unitsPerBox: 24, subtotal: 22 });

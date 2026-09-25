@@ -148,16 +148,25 @@ function recoverChangedPack(
 ): { pack: number | null; boxes: number | null; pieces: number | null; attested?: boolean } {
   const hasSplit = item.boxes != null || item.pieces != null;
   const ownPack = !productChanged && Number(row.unitsPerBox) > 1 ? Number(row.unitsPerBox) : null;
-  const recovered =
-    (hasSplit
-      ? packFromOwnSplit({ qty: item.qty, boxes: item.boxes, pieces: item.pieces })
-      : null) ?? ownPack;
+  const splitPack = hasSplit
+    ? packFromOwnSplit({ qty: item.qty, boxes: item.boxes, pieces: item.pieces })
+    : null;
   const explicit = item.unitsPerBox != null && item.unitsPerBox >= 2 ? item.unitsPerBox : null;
   if (item.unitsPerBox != null && explicit == null) {
     throw new BadRequestException(
       `Line "${lineLabel(item)}": unitsPerBox must be a whole number of 2 or more`,
     );
   }
+  // SA-196: a NEW split that implies a different pack than the row's own snapshot never wins
+  // silently — it is a re-pack, so the operator must attest it (unitsPerBox = the implied pack),
+  // which is then audited.
+  const repack = splitPack != null && ownPack != null && splitPack !== ownPack;
+  if (repack && explicit !== splitPack) {
+    throw new BadRequestException(
+      `Line "${lineLabel(item)}": the split implies pack ${splitPack} but this line's pack is ${ownPack}; set unitsPerBox ${splitPack} to re-pack it`,
+    );
+  }
+  const recovered = repack ? null : (splitPack ?? ownPack);
   if (explicit != null && recovered != null && explicit !== recovered) {
     throw new BadRequestException(
       `Line "${lineLabel(item)}": the pack ${explicit} disagrees with this line's own pack ${recovered}`,
