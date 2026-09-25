@@ -15,5 +15,5 @@
     "packages": 0
   },
   "fileCount": 1045,
-  "notes": "**2026-09-19 — refresh 56c01d2b→a3c37bdb: B562 critical inventory sales-blind-replay fix + #931 UI hiding, #933 LineItemRow extraction, B536/B543 platform-admin getStats fixes, B559 platform-admin mobile tab-overflow, B535 TAP_TARGET + B534 grid-cols + B533 buyer-table mobile sweep, B343 credit-note voided event, B525 dead-addon-toggle removal, B519 web unmet-requires warning, B549 booking min-width + A7 nav-CSS guard, #871 marketing copy rewrite, A6 marketing cache-control, B523 campaign-check self-heal, #940 docs-only bug filings, and #936 schema spine (ProductUnit/SupplierProduct/ProductCategoryLabel/SellingRestriction+enums/CustomerAddress.stateCode/VendorBill.purchaseOrderId — schema-only, no API surface yet) mapped once merged.** See CHANGELOG.md for the full landing list."
+  "notes": "**2026-09-24 — Wholesaler onboarding playbook pointer (docs-only).** `INDEX.md` \"Where to find\" gains a row → `docs/runbooks/wholesaler-onboarding.md` (8 gated stages, demo → live); the parked in-app build spec is `docs/superpowers/plans/2026-09-24-wholesaler-onboarding-build.md`. No code changed; no area file touched. See CHANGELOG.md for the full landing list."
 }
