@@ -144,13 +144,15 @@ export class InventoryService {
     const where: Prisma.StockMovementWhereInput = {};
     if (query.productId) where.productId = query.productId;
     if (query.type) where.type = query.type;
+    // B562: the date filter and order are on effectiveAt (the accounting date a backdated
+    // movement carries); createdAt is write-once insertion time.
     if (query.from || query.to) {
-      where.createdAt = {};
-      if (query.from) where.createdAt.gte = new Date(query.from);
+      where.effectiveAt = {};
+      if (query.from) where.effectiveAt.gte = new Date(query.from);
       if (query.to) {
         const toDate = new Date(query.to);
         toDate.setUTCHours(23, 59, 59, 999);
-        where.createdAt.lte = toDate;
+        where.effectiveAt.lte = toDate;
       }
     }
 
@@ -159,7 +161,7 @@ export class InventoryService {
         where,
         skip,
         take: limit,
-        orderBy: { createdAt: "desc" },
+        orderBy: [{ effectiveAt: "desc" }, { createdAt: "desc" }, { id: "desc" }],
         include: {
           product: { select: { id: true, name: true, sku: true, unit: true } },
           supplier: { select: { id: true, name: true } },
@@ -246,7 +248,8 @@ export class InventoryService {
           reference: dto.reference,
           notes: dto.notes,
           performedById,
-          createdAt: effectiveDate,
+          // B562: the effective date is the accounting date; createdAt stays write-once.
+          effectiveAt: effectiveDate,
         },
       });
 
@@ -266,7 +269,7 @@ export class InventoryService {
       // A backdated purchase invalidates the snapshots (and possibly the
       // average) of every later movement — replay the product to repair them.
       const newer = await tx.stockMovement.count({
-        where: { productId: dto.productId, createdAt: { gt: effectiveDate } },
+        where: { productId: dto.productId, effectiveAt: { gt: effectiveDate } },
       });
       if (newer > 0) await this.recomputeProductInTx(tx, dto.productId);
 
@@ -298,7 +301,8 @@ export class InventoryService {
           reference: dto.reference,
           notes: dto.notes,
           performedById,
-          createdAt: effectiveDate,
+          // B562: the effective date is the accounting date; createdAt stays write-once.
+          effectiveAt: effectiveDate,
         },
       });
 
@@ -324,7 +328,7 @@ export class InventoryService {
 
       // Backdated adjustment: repair later snapshots
       const newer = await tx.stockMovement.count({
-        where: { productId: dto.productId, createdAt: { gt: effectiveDate } },
+        where: { productId: dto.productId, effectiveAt: { gt: effectiveDate } },
       });
       if (newer > 0) await this.recomputeProductInTx(tx, dto.productId);
 
@@ -886,7 +890,8 @@ export class InventoryService {
           reference,
           notes: itemNotes,
           performedById,
-          createdAt: effectiveDate,
+          // B562: the count's effective date is the accounting date; createdAt stays write-once.
+          effectiveAt: effectiveDate,
         },
       });
       movementIds.push(movement.id);
@@ -963,12 +968,13 @@ export class InventoryService {
       // (pos-cost-roles-spec §1: "most recent bill's unit cost"). Read the typed
       // PURCHASE movement, NOT the latest StockLot: positive adjustments and
       // stock-counts create lots stamped at the AVERAGE cost, which would poison
-      // the last-cost source. Order by createdAt (true record time) + id so the
-      // pick is deterministic when same-day bills share a date. Falls back to the
+      // the last-cost source. Order by effectiveAt (the bill/purchase date — B562:
+      // what createdAt carried before it became write-once), then createdAt + id so
+      // the pick is deterministic when same-day bills share a date. Falls back to the
       // average cost when the product has no purchases yet. Not lot-consuming.
       const lastPurchase = await tx.stockMovement.findFirst({
         where: { productId, type: MovementType.PURCHASE },
-        orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+        orderBy: [{ effectiveAt: "desc" }, { createdAt: "desc" }, { id: "desc" }],
         select: { unitCost: true },
       });
       unitCost = costDecimal(lastPurchase?.unitCost ?? avgCost ?? 0);
@@ -1371,9 +1377,10 @@ export class InventoryService {
     lotPurchaseDate?: Date,
     /**
      * Explicit timestamp for the movement. A re-apply passes strictly increasing ones
-     * (compensation, then re-post) because the cost replay orders by createdAt and then
-     * by a RANDOM id — two rows of one transaction share `now()`, so without this their
-     * replay order (and the average it yields) would be a coin flip.
+     * (compensation, then re-post) because the cost replay orders by effectiveAt, then
+     * createdAt, then a RANDOM id — two rows of one transaction share `now()`, so without
+     * this their replay order (and the average it yields) would be a coin flip. B562: it
+     * stamps BOTH columns (it is today's date, not a backdate).
      */
     movementAt?: Date,
   ) {
@@ -1407,7 +1414,7 @@ export class InventoryService {
         supplierId: po.supplierId,
         reference: po.poNumber,
         performedById: userId,
-        ...(movementAt ? { createdAt: movementAt } : {}),
+        ...(movementAt ? { createdAt: movementAt, effectiveAt: movementAt } : {}),
       },
     });
 
@@ -1528,8 +1535,8 @@ export class InventoryService {
       },
       // id as the tiebreak: two movements of one receive share a transaction-time
       // createdAt, and reverseAverageCost's empties-stock short-circuit is
-      // order-sensitive.
-      orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+      // order-sensitive. B562: accounting order first (effectiveAt).
+      orderBy: [{ effectiveAt: "desc" }, { createdAt: "desc" }, { id: "desc" }],
     });
     const prefix = InventoryService.PO_REVERSAL_NOTE;
     const reversedIds = new Set<string>();
@@ -1593,6 +1600,7 @@ export class InventoryService {
         }
         stock = stock.sub(m.quantity);
         totalQty = totalQty.add(m.quantity);
+        const at = nextAt();
         await tx.stockMovement.create({
           data: {
             productId,
@@ -1605,7 +1613,9 @@ export class InventoryService {
             reference: po.poNumber,
             notes: `${prefix}${m.id}`,
             performedById: userId,
-            createdAt: nextAt(),
+            // B562: one stamp for both columns — the replay orders by effectiveAt first.
+            createdAt: at,
+            effectiveAt: at,
           },
         });
       }
@@ -2681,9 +2691,10 @@ export class InventoryService {
     opts: { throwOnGap?: boolean } = {},
   ) {
     const client = tx ?? this.prisma.forTenant();
+    // B562 (SA-136 §3): accounting order — effectiveAt, then insertion time, then id.
     const movements = await client.stockMovement.findMany({
       where: { productId: product.id },
-      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+      orderBy: [{ effectiveAt: "asc" }, { createdAt: "asc" }, { id: "asc" }],
       select: { id: true, type: true, quantity: true, unitCost: true },
     });
 

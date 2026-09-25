@@ -35,7 +35,13 @@ import {
 } from "./lib/verify-scope.mjs";
 // Pure builders only — never `main`, which is side-effecting. Safe to import: verify-turbo.mjs's
 // direct-execution guard means importing it does NOT spawn turbo or call process.exit.
-import { buildArgv, buildTurboFlags, jestPassthrough } from "./verify-turbo.mjs";
+import {
+  buildArgv,
+  buildTurboFlags,
+  chooseVerifyDefaults,
+  jestPassthrough,
+  LOW_MEM_THRESHOLD_BYTES,
+} from "./verify-turbo.mjs";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const workspaces = loadWorkspaces(ROOT);
@@ -420,6 +426,117 @@ check(
     "test",
     "--concurrency=2",
     "--continue=dependencies-successful",
+  ],
+);
+
+// ---- WC9-15: chooseVerifyDefaults (B772) — a bare `git push` on the 16 GB Mac mini couldn't
+// reach the 2026-09-22 memory-pressure incident line without the inline VERIFY_CONCURRENCY=1
+// JEST_MAX_WORKERS=2 throttle, which lanes forgot twice in one night. Below 24 GB, default both
+// when unset; an explicit env value always wins per variable independently; a >=24 GB host
+// (CI, the PC) is byte-identical to today (both "", no message) when unset. --------------------
+const GB = 1024 ** 3;
+const MINI_MEM = 16 * GB;
+const PC_MEM = 32 * GB;
+
+check(
+  "WC9 below 24 GB with no env set: both default, and the explanatory message names the host size",
+  chooseVerifyDefaults({ totalMemBytes: MINI_MEM, env: {} }),
+  {
+    verifyConcurrency: "1",
+    jestMaxWorkers: "2",
+    message: "verify: low-memory host (16 GB) → concurrency 1, jest workers 2",
+  },
+);
+check(
+  "WC10 below 24 GB with VERIFY_CONCURRENCY explicitly set: it wins, jest workers still defaults",
+  chooseVerifyDefaults({ totalMemBytes: MINI_MEM, env: { VERIFY_CONCURRENCY: "3" } }),
+  {
+    verifyConcurrency: "3",
+    jestMaxWorkers: "2",
+    message: "verify: low-memory host (16 GB) → concurrency 3, jest workers 2",
+  },
+);
+check(
+  "WC11 below 24 GB with JEST_MAX_WORKERS explicitly set: it wins, concurrency still defaults",
+  chooseVerifyDefaults({ totalMemBytes: MINI_MEM, env: { JEST_MAX_WORKERS: "4" } }),
+  {
+    verifyConcurrency: "1",
+    jestMaxWorkers: "4",
+    message: "verify: low-memory host (16 GB) → concurrency 1, jest workers 4",
+  },
+);
+check(
+  "WC12 below 24 GB with BOTH explicitly set: nothing defaulted, no message printed",
+  chooseVerifyDefaults({
+    totalMemBytes: MINI_MEM,
+    env: { VERIFY_CONCURRENCY: "3", JEST_MAX_WORKERS: "4" },
+  }),
+  { verifyConcurrency: "3", jestMaxWorkers: "4", message: null },
+);
+check(
+  "WC12b a SET-BUT-EMPTY VERIFY_CONCURRENCY is an explicit opt-out (checked by presence, " +
+    '`"X" in env`, never truthiness) — stays empty, never silently defaulted; the unset ' +
+    "JEST_MAX_WORKERS still defaults",
+  chooseVerifyDefaults({ totalMemBytes: MINI_MEM, env: { VERIFY_CONCURRENCY: "" } }),
+  {
+    verifyConcurrency: "",
+    jestMaxWorkers: "2",
+    message: "verify: low-memory host (16 GB) → concurrency , jest workers 2",
+  },
+);
+check(
+  "WC13 at/above 24 GB with no env set: both stay unset, byte-identical to today, no message",
+  chooseVerifyDefaults({ totalMemBytes: PC_MEM, env: {} }),
+  { verifyConcurrency: "", jestMaxWorkers: "", message: null },
+);
+check(
+  "WC13b exactly the 24 GB threshold is treated as high-memory (< not <=)",
+  chooseVerifyDefaults({ totalMemBytes: LOW_MEM_THRESHOLD_BYTES, env: {} }),
+  { verifyConcurrency: "", jestMaxWorkers: "", message: null },
+);
+check(
+  "WC13c CI is EXCLUDED from the low-memory default regardless of its own host memory — " +
+    "GitHub's ubuntu-latest is ~16 GB public / ~7 GB private, both under the threshold, so " +
+    "without this CI would silently get concurrency 1 / --maxWorkers=2 and break the " +
+    "'bit-for-bit unchanged' promise",
+  chooseVerifyDefaults({ totalMemBytes: MINI_MEM, env: { CI: "true" } }),
+  { verifyConcurrency: "", jestMaxWorkers: "", message: null },
+);
+check(
+  "WC13d CI does not block an explicit override — a CI job that DOES set the vars is still honoured",
+  chooseVerifyDefaults({
+    totalMemBytes: MINI_MEM,
+    env: { CI: "true", VERIFY_CONCURRENCY: "2", JEST_MAX_WORKERS: "3" },
+  }),
+  { verifyConcurrency: "2", jestMaxWorkers: "3", message: null },
+);
+check(
+  "WC14 at/above 24 GB with env explicitly set: explicit values pass through untouched, no message",
+  chooseVerifyDefaults({
+    totalMemBytes: PC_MEM,
+    env: { VERIFY_CONCURRENCY: "8", JEST_MAX_WORKERS: "8" },
+  }),
+  { verifyConcurrency: "8", jestMaxWorkers: "8", message: null },
+);
+check(
+  "WC15 end-to-end: the low-mem defaults feed buildTurboFlags/jestPassthrough exactly like an " +
+    "explicit inline throttle would — buildTurboFlags/jestPassthrough themselves take no new " +
+    "branch for this",
+  (() => {
+    const { verifyConcurrency, jestMaxWorkers } = chooseVerifyDefaults({
+      totalMemBytes: MINI_MEM,
+      env: {},
+    });
+    return buildArgv(["test"], buildTurboFlags(verifyConcurrency), jestPassthrough(jestMaxWorkers));
+  })(),
+  [
+    "turbo",
+    "run",
+    "test",
+    "--concurrency=1",
+    "--continue=dependencies-successful",
+    "--",
+    "--maxWorkers=2",
   ],
 );
 

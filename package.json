@@ -16,6 +16,8 @@
     "lessons:digest": "node scripts/validate-lessons.mjs --digest",
     "code-map:stamp": "node scripts/validate-code-map.mjs --stamp",
     "lint:migrations": "node scripts/lint-migrations.mjs",
+    "work:reconcile": "node scripts/work/reconcile.mjs",
+    "work:claim": "node scripts/work/claim.mjs",
     "smoke": "node scripts/smoke.mjs",
     "post-deploy-check": "node scripts/post-deploy-check.mjs",
     "release-health": "node scripts/release-health.mjs",
@@ -62,7 +64,8 @@
     "plane:intake": "node scripts/campaign/plane-intake.mjs",
     "plane:apply": "node scripts/campaign/plane-apply.mjs",
     "plane:doctor": "node scripts/campaign/plane-doctor.mjs",
-    "plane:retro": "node scripts/campaign/plane-retro.mjs"
+    "plane:retro": "node scripts/campaign/plane-retro.mjs",
+    "work:plane-release": "node scripts/work/plane-release-sync.mjs"
   },
   "devDependencies": {
     "@bcoe/v8-coverage": "^0.2.3",

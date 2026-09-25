@@ -5,7 +5,7 @@ description: >-
   derive the design system, plan the TESTS that prove it, then build a task-loop engine that runs each
   task's tests, implementation and one adversarial review in dependsOn-ordered parallel waves. Fable 5.1
   rules only on planning (S1-S5) and the session-side final-pass read — it is never called inside the
-  engine to implement, execute, or review; Opus 5 is a peer tier for HIGH-risk judgment calls — the
+  engine to implement, execute, or review; Opus 5.5 is a peer tier for HIGH-risk judgment calls — the
   reviewer, UI judge, and root-cause call, and the fix designer from round 3 of the fix loop onward;
   Sonnet 5 does every implementer role including HIGH-risk (at higher effort), the test author, the
   routine reviewer, and the fix executor in every round; Haiku 4.5 runs every mechanical step —
@@ -38,7 +38,7 @@ pipeline applies it. The long-form history behind each rule is in [ENGINE-NOTES]
 > `CFG.models.fable` stays defined only for that session-side use. Inside `pipeline.js` the engine
 > routes:
 >
-> - **Opus 5** (`claude-opus-5`) — the HIGH-risk task's reviewer (`review:` and the UI judge, at
+> - **Opus 5.5** (`claude-opus-5-5`) — the HIGH-risk task's reviewer (`review:` and the UI judge, at
 >   `review: high`), the HIGH-risk `root-cause` call, and the fix DESIGNER from round 3 of the fix
 >   loop onward (`fixDesign: high`) — a SEPARATE Sonnet call always executes that design; the old
 >   round-4 `executorIsDesigner` collapse into one Opus call is retired (unreachable since
@@ -46,7 +46,7 @@ pipeline applies it. The long-form history behind each rule is in [ENGINE-NOTES]
 >   read once that phase runs. Every Opus call is wrapped by `withToolCap()` (`CFG.caps.toolCalls`
 >   = 12) — `fableSafe()` covers these Opus calls too, not only Fable's session-side ones. Opus is
 >   a **peer tier** chosen directly for these roles — not "refusal-fallback only". (
->   `CFG.models.fallbackModel`, also `claude-opus-5`, is a leftover refusal-fallback constant for
+>   `CFG.models.fallbackModel`, also `claude-opus-5-5`, is a leftover refusal-fallback constant for
 >   the now-dead `executorIsDesigner` path — that is the one place "fallback" still applies, and it
 >   backs a call that never runs.)
 > - **Sonnet 5** (`claude-sonnet-5`) — every implementer, including HIGH-risk (`implementHigh:
@@ -61,7 +61,7 @@ high` effort), the test author, the routine reviewer (`lean` profile: always), t
 > fix-designer/executor, or sibling-judge role, or says Opus is fallback-only, it is **historical,
 > superseded 2026-09-13/2026-09-14**; trust this callout and `pipeline.js` over it.
 
-**Planning decisions (S1–S5) run ONLY on Fable 5.1. Never Sonnet. Never Haiku. Opus 5 is the fallback solely when
+**Planning decisions (S1–S5) run ONLY on Fable 5.1. Never Sonnet. Never Haiku. Opus 5.5 is the fallback solely when
 Fable is genuinely unavailable — never a peer choice** (owner policy 2026-08-31, effort and drop rules amended
 2026-09-02, gather/transcribe exemption 2026-09-10). Three agents sit inside the planning band without deciding
 anything: the S0.5 context pack (Sonnet, read-only), the S5 transcription expansion (Sonnet, from Fable's ruling)
@@ -83,7 +83,7 @@ cannot recover a spec that framed the wrong problem.
   (12 of 25 agent calls did until 2026-09-02 — a Fable session at `xhigh` ran every lens at `xhigh`). The task-loop
   engine (rebuilt 2026-09-12, `docs/superpowers/plans/2026-09-12-task-loop-rebuild.md`) routes per TASK, not per
   fan-out lens. **Per the 2026-09-13/2026-09-14 owner rulings, Fable 5.1 is not called anywhere inside the
-  engine** — see the MODEL POLICY callout above for the live table. In short: **Opus 5** (`claude-opus-5`) is the
+  engine** — see the MODEL POLICY callout above for the live table. In short: **Opus 5.5** (`claude-opus-5-5`) is the
   HIGH-risk task's reviewer (`high`) and UI judge, the HIGH-risk `root-cause` call, and the fix DESIGNER from
   round 3 of the fix loop onward, plus the final-pass read once that phase runs. **Sonnet 5** (`claude-sonnet-5`)
   does all in/out — the separate test author (`medium`), every implementer including HIGH-risk (`implementHigh`
@@ -93,7 +93,7 @@ cannot recover a spec that framed the wrong problem.
   scripts (`task-brief.mjs`, `review-pack.mjs`, `fix-brief.mjs`), the structural/behavioral RED check, the
   `revert-probe` checksum agents and every checkpoint — all at `low`. Full ids, never aliases; the per-role table
   is `CFG.models`/`CFG.effort` atop [pipeline.js](pipeline.js), the caps `CFG.caps` (token-class ruling 2026-09-10).
-- **Opus 5 (`claude-opus-5`) is the judgment-and-design tier for HIGH-risk work (owner rulings 2026-09-13,
+- **Opus 5.5 (`claude-opus-5-5`) is the judgment-and-design tier for HIGH-risk work (owner rulings 2026-09-13,
   2026-09-14 — supersedes the 2026-09-03 "Fable is the brain, never the hands" framing this bullet used to carry).**
   In the task-loop engine it decides at exactly the HIGH-risk points: the HIGH-risk task's reviewer and UI judge;
   the **fix DESIGNER** from round 3 onward — at round 3+ ONE Opus call designs (over a Haiku-built `fix-brief.mjs`
@@ -103,7 +103,7 @@ cannot recover a spec that framed the wrong problem.
   lands — the final-pass read on a `major` diff with a HIGH-risk file. Every executor implements the design and
   never improvises (a design that does not fit is reported in `notes` rather than silently reinterpreted). Opus is
   a **peer tier chosen directly** for these roles, not a fallback: `CFG.models.fallbackModel` (also
-  `claude-opus-5`) is a leftover refusal-fallback constant that only backs the now-dead `executorIsDesigner` path.
+  `claude-opus-5-5`) is a leftover refusal-fallback constant that only backs the now-dead `executorIsDesigner` path.
   History: [ENGINE-NOTES](references/ENGINE-NOTES.md).
 - **Light loop** (owner ruling 2026-09-03 for bounded work and for finishing runs that lost agents): see [LIGHT-LOOP](references/LIGHT-LOOP.md) — Fable plans and rules, Opus executes HIGH-risk and reviews, Sonnet writes.
 - **Fable decides, Sonnet gathers and transcribes — in planning too (owner ruling 2026-09-10).** Measured: the
@@ -395,7 +395,7 @@ revert-probe outcome, not a five-agent slate.
   migrations/schema, PII, or payments — never merely that the file lives in such a module; config strings,
   allow-lists, labels, docs and code-map edits are LOW even inside a finance/admin module. Unknown or unreadable is
   HIGH. `tasks[].risk` explicit always wins over Baseline's classifier, file by file.
-- **Opus 5** = the HIGH-risk task's reviewer (`high`) and UI judge; the **fix designer** from round 3 of the fix
+- **Opus 5.5** = the HIGH-risk task's reviewer (`high`) and UI judge; the **fix designer** from round 3 of the fix
   loop onward — round 3+ is a design call (over a Haiku-built brief) followed by a SEPARATE Sonnet execute call
   (the old round-4 collapse of designer+executor into one call is retired, unreachable since 2026-09-13 — Opus
   never also executes); the root-cause call on a HIGH-risk bugfix task; the Final-pass read once that phase lands.

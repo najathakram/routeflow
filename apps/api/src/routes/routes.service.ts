@@ -85,6 +85,7 @@ import {
   RUN_LINE_ITEMS_SELECT,
   RUN_STOP_INCLUDE,
 } from "./routes.constants";
+import { withPayableInvoices, withPayableInvoicesForRuns } from "./run-invoice-balance";
 export {
   NON_ROUTABLE_ORDER_STATUSES,
   RELEASED_CHANGE_REQUEST_REASON,
@@ -1134,14 +1135,19 @@ export class RoutesService {
     // Same normalisation as findOneRun: legacy/seeded run stops may lack a
     // direct customer/address link — fall back to the template RouteStop's
     // data so address-dependent UI (Maps button, "no location" badge) works.
-    const normalisedData = data.map((run: any) => ({
+    const normalisedRuns = data.map((run) => ({
       ...run,
-      stops: run.stops.map((s: any) => ({
+      stops: run.stops.map((s) => ({
         ...s,
         customer: s.customer ?? s.routeStop?.customer ?? null,
         customerAddress: s.customerAddress ?? s.routeStop?.customerAddress ?? null,
       })),
     }));
+    // B810/SA-130a call site 1 of 4 — see run-invoice-balance.ts's module doc.
+    const normalisedData = await withPayableInvoicesForRuns(
+      this.prisma.forTenant(),
+      normalisedRuns,
+    );
 
     // F05 / R5: `collectedPayments` only for a driver's own list — operator-wide
     // lists (every run, every driver) skip it; the operator reads cash truth
@@ -1294,8 +1300,13 @@ export class RoutesService {
           // is the one extra field this fallback needs to group by.
           select: { ...RUN_STOP_INCLUDE.orders.select, customerId: true },
         });
-        const byCustomer: Record<string, any[]> = {};
-        for (const o of orders) {
+        // B810/SA-130a call site 2 of 4 — flat orders, wrap/unwrap a pseudo-stop.
+        const [{ orders: ordersWithBalances }] = await withPayableInvoices(
+          this.prisma.forTenant(),
+          [{ orders }],
+        );
+        const byCustomer: Record<string, typeof ordersWithBalances> = {};
+        for (const o of ordersWithBalances) {
           (byCustomer[o.customerId] ??= []).push(o);
         }
         return {
@@ -1309,7 +1320,13 @@ export class RoutesService {
       }
     }
 
-    return { ...run, stops: normalisedStops, collectedPayments };
+    // B810/SA-130a: call site 3 of 4 (findOneRun's normal, non-fallback path)
+    // — ONE batched invoice.findMany over every order on this run's stops.
+    return {
+      ...run,
+      stops: await withPayableInvoices(this.prisma.forTenant(), normalisedStops),
+      collectedPayments,
+    };
   }
 
   async updateRun(
@@ -2883,14 +2900,20 @@ export class RoutesService {
       orderBy: { scheduledDate: "asc" },
     });
 
-    const normalisedData = data.map((run: any) => ({
+    // B810/SA-130a: call site 4 of 4 (findMyRuns) — ONE batched
+    // invoice.findMany across every order on this whole page of runs.
+    const myNormalisedRuns = data.map((run) => ({
       ...run,
-      stops: run.stops.map((s: any) => ({
+      stops: run.stops.map((s) => ({
         ...s,
         customer: s.customer ?? s.routeStop?.customer ?? null,
         customerAddress: s.customerAddress ?? s.routeStop?.customerAddress ?? null,
       })),
     }));
+    const normalisedData = await withPayableInvoicesForRuns(
+      this.prisma.forTenant(),
+      myNormalisedRuns,
+    );
 
     // F05 / R5: this endpoint is always driver-scoped (the authenticated
     // driver's own runs), so it always gets `collectedPayments`.
