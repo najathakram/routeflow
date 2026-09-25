@@ -88,7 +88,7 @@ if (flags.has("--db")) {
   const user = process.env.POSTGRES_USER || "user";
   const password = process.env.POSTGRES_PASSWORD || "pass";
   const database = process.env.POSTGRES_DB || "routeflow_dev";
-  env.DATABASE_URL = `postgresql://${user}:${password}@localhost:5432/${database}`;
+  env.DATABASE_URL = `postgresql://${encodeURIComponent(user)}:${encodeURIComponent(password)}@localhost:5432/${encodeURIComponent(database)}`;
   // POSTGRES_* are kept (the compose defaults above are derived from them), but the proxy
   // pair they pair with is gone, so the proxy branch can no longer trigger.
 }
@@ -125,7 +125,7 @@ if (flags.has("--e2e")) {
   env.PLAYWRIGHT_BASE_URL = "http://localhost:3001";
   env.SMOKE_BASE_URL = "http://localhost:3000";
   env.PLAYWRIGHT_TENANT_SLUG = "e2e-routeflow";
-  env.E2E_SEED_DATABASE_URL = `postgresql://${user}:${password}@localhost:5432/${database}`;
+  env.E2E_SEED_DATABASE_URL = `postgresql://${encodeURIComponent(user)}:${encodeURIComponent(password)}@localhost:5432/${encodeURIComponent(database)}`;
   // playwright.config.ts hardcodes `outputFile: "../../.campaign/runs/web-e2e.json"` (matches
   // master — never read PLAYWRIGHT_JSON_OUTPUT_NAME, that var only feeds the OUTPUT_DIR/
   // OUTPUT_NAME fallback path for a reporter's output *directory*, not its file). The var that
@@ -144,7 +144,8 @@ if (flags.has("--e2e")) {
   // group/world-readable copy) is ignored. Absent file = super-admin specs skip exactly as before.
   const saFile = path.join(REPO_ROOT, "local-assets", "local-sa.env");
   try {
-    if ((fs.statSync(saFile).mode & 0o077) === 0) {
+    // Owner-only on POSIX; on Windows Node reports 666 whatever the ACLs say, so the mode cannot be checked there.
+    if (process.platform === "win32" || (fs.statSync(saFile).mode & 0o077) === 0) {
       for (const line of fs.readFileSync(saFile, "utf8").split(/\r?\n/)) {
         const m = /^(PLAYWRIGHT_SA_USERNAME|PLAYWRIGHT_SA_PASSWORD)=(.+)$/.exec(line);
         if (m && !env[m[1]]) env[m[1]] = m[2];
