@@ -37,6 +37,7 @@ const { Pool } = require("../../../node_modules/pg");
 const bcrypt = require("../../../node_modules/bcrypt");
 const { assertTestTenant } = require("../../../scripts/lib/test-tenants.cjs");
 const { isLocalDbTarget } = require("./lib/local-db-target.cjs");
+const { ensureDriverUser } = require("./lib/driver-fixture.cjs");
 
 const LOCAL_DEFAULT_DB_URL = "postgresql://user:pass@localhost:5432/routeflow_dev";
 
@@ -573,26 +574,19 @@ async function main() {
     if (!DRIVER_PASSWORD) {
       console.log(DRIVER_SKIP_NOTE);
     } else {
-      let dr = await prisma.user.findFirst({
-        where: { tenantId: existing.id, username: DRIVER_USERNAME },
+      const { user: dr, created } = await ensureDriverUser({
+        prisma,
+        hash: (pw) => bcrypt.hash(pw, 10),
+        tenantId: existing.id,
+        username: DRIVER_USERNAME,
+        email: "e2e_driver@e2e-routeflow.test",
+        password: DRIVER_PASSWORD,
       });
-      if (!dr) {
-        const hash = await bcrypt.hash(DRIVER_PASSWORD, 10);
-        dr = await prisma.user.create({
-          data: {
-            email: "e2e_driver@e2e-routeflow.test",
-            username: DRIVER_USERNAME,
-            password: hash,
-            role: "DRIVER",
-            status: "ACTIVE",
-            forcePasswordChange: false,
-            tenantId: existing.id,
-          },
-        });
-        console.log(`  ✓ Created missing driver: ${DRIVER_USERNAME}`);
-      } else {
-        console.log(`  ✓ Driver "${DRIVER_USERNAME}" exists`);
-      }
+      console.log(
+        created
+          ? `  ✓ Created missing driver: ${DRIVER_USERNAME}`
+          : `  ✓ Driver "${DRIVER_USERNAME}" exists (password re-synced from E2E_DRIVER_PASSWORD)`,
+      );
       const drRecord = await prisma.driver.findFirst({ where: { userId: dr.id } });
       if (!drRecord) {
         await prisma.driver.create({

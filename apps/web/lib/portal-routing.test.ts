@@ -213,8 +213,14 @@ describe("driverNavItemVisible (PHASE 1a nav filter)", () => {
     expect(routing.driverNavItemVisible?.("/routes", access)).toBe(true);
   });
 
-  it("Dashboard and Settings are never gated", () => {
+  it("Dashboard shows only without runs access (it redirects to Today's route otherwise)", () => {
     expect(routing.driverNavItemVisible?.("/dashboard", none)).toBe(true);
+    expect(
+      routing.driverNavItemVisible?.("/dashboard", { routesAccess: true, deliveryAccess: false }),
+    ).toBe(false);
+  });
+
+  it("Settings is never gated", () => {
     expect(routing.driverNavItemVisible?.("/settings", none)).toBe(true);
   });
 });

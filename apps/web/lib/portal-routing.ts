@@ -140,6 +140,9 @@ export function driverNavItemVisible(
   href: string,
   access: { routesAccess: boolean; deliveryAccess: boolean },
 ): boolean {
+  const hasRuns = access.routesAccess || access.deliveryAccess;
+  // /dashboard bounces a driver with runs access to DRIVER_LANDING, so the link is dead for them.
+  if (href === "/dashboard") return !hasRuns;
   if (href !== "/routes" && href !== DRIVER_LANDING) return true;
-  return access.routesAccess || access.deliveryAccess;
+  return hasRuns;
 }
