@@ -6,9 +6,10 @@
  * applied (originalSoldAt / correctsEntryId) and its schema PR merged, so it carries B662's merge gate.
  *
  * The ledger's pointers are scalars with no FK, so the seed needs only a tenant and a tracked category. The
- * partial return is booked as the REVERSAL row `reverseReturnEntries` writes (1/6 of the held net and tax,
- * carrying a returnId) rather than driving that method, which would drag in orders, invoices and products
- * this proof does not need; that method has its own specs.
+ * partial return in the first case is booked as the REVERSAL row `reverseReturnEntries` writes (1/6 of the
+ * held net and tax, carrying a returnId). The "Opus R2" cases at the end DRIVE `reverseReturnEntries`
+ * itself (over a real customer, product, invoice and invoice line), so a return after a price correction is
+ * proven to reverse its share of the CORRECTED figures, not a hand-written number.
  *
  * Collected only by `jest.db.config.js` (`.db.spec.ts$`), run via `npm run local:test:db`.
  * SAFETY: one throwaway `qa-b662-<run>-<n>-<label>` tenant per test, approved by `assertTestTenant`;
@@ -31,6 +32,7 @@ describeDb("B662 ledger price correction — real Postgres", () => {
   let prisma: PrismaService;
   let ledger: RegulatedLedgerService;
   const tenantIds: string[] = [];
+  const cleanups: Array<() => Promise<unknown>> = []; // rows the driven-return cases add (run first)
   // Unique per test: the ledger's pointers are not tenant-filtered by the methods under test.
   let ids = { invoiceId: "", itemId: "", returnId: "" };
   const db = () => prisma as any; // the new columns exist only in a client generated after the schema PR
@@ -43,6 +45,7 @@ describeDb("B662 ledger price correction — real Postgres", () => {
   });
 
   afterAll(async () => {
+    for (const fn of cleanups.reverse()) await fn().catch(() => undefined);
     for (const id of tenantIds) {
       await db()
         .regulatedSalesLedger.deleteMany({ where: { tenantId: id } })
@@ -184,4 +187,145 @@ describeDb("B662 ledger price correction — real Postgres", () => {
     expect(rows.map((r: any) => r.entryType)).toEqual(["SALE", "REVERSAL"]);
     expect(await sums(tenantId)).toEqual({ net: 200, tax: 50, qty: 72 });
   });
+
+  // ─── Opus R2: a partial return AFTER a price correction reverses the CORRECTED amount ───
+  //
+  // The reversal walk pro-rated the base SALE row only, so a return after a correction under-reversed
+  // (a $100 line corrected to $125, 40% back: -$40, leaving $85 held against a $75 invoice share).
+  // These drive the real `reverseReturnEntries` over a real invoice line; the pieces are not boxed.
+  async function seedDriven(label: string, net: number, tax: number, qty: number) {
+    tenantSeq += 1;
+    const n = tenantSeq;
+    const slug = assertTestTenant(
+      `qa-b662-${RUN_SUFFIX}-${n}-${label}`,
+      "regulated-ledger-price-correction.db.spec.ts",
+    );
+    const tenant = await prisma.tenant.create({ data: { slug, name: `B662 ${slug}` } });
+    tenantIds.push(tenant.id);
+    const tenantId = tenant.id;
+    const cat = await prisma.trackedCategory.create({ data: { tenantId, name: "B662 category" } });
+    const custUser = await prisma.user.create({
+      data: {
+        email: `b662-${RUN_SUFFIX}-${n}@example.test`,
+        username: `b662-${RUN_SUFFIX}-${n}`,
+        role: "CUSTOMER",
+        tenantId,
+      },
+    });
+    const customer = await prisma.customer.create({
+      data: { userId: custUser.id, businessName: "B662 Co", contactName: "B662 Tester", tenantId },
+    });
+    const product = await prisma.product.create({
+      data: { name: `b662 ${n}`, unit: "each", pricePerUnit: "10.00", tenantId },
+    });
+    const invoice = await prisma.invoice.create({
+      data: {
+        invoiceNumber: `INV-B662-${RUN_SUFFIX}-${n}`,
+        customerId: customer.id,
+        status: "SENT",
+        subtotal: String(net),
+        taxAmount: String(tax),
+        total: String(net + tax),
+        tenantId,
+      },
+    });
+    const item = await prisma.invoiceItem.create({
+      data: {
+        invoiceId: invoice.id,
+        description: "b662 line",
+        productId: product.id,
+        qty,
+        unitPrice: String(net / qty),
+        subtotal: String(net),
+        tenantId,
+      },
+    });
+    cleanups.push(
+      () => prisma.invoiceItem.deleteMany({ where: { invoiceId: invoice.id } }),
+      () => prisma.invoice.deleteMany({ where: { id: invoice.id } }),
+      () => prisma.product.deleteMany({ where: { id: product.id } }),
+      () => prisma.customer.deleteMany({ where: { id: customer.id } }),
+      () => prisma.user.deleteMany({ where: { id: custUser.id } }),
+    );
+    const orderId = `ord-b662-${RUN_SUFFIX}-${n}`;
+    await db().regulatedSalesLedger.create({
+      data: {
+        tenantId,
+        trackedCategoryId: cat.id,
+        entryType: "SALE",
+        orderId,
+        invoiceId: invoice.id,
+        invoiceItemId: item.id,
+        qty,
+        unitBasisQty: qty,
+        netSales: net,
+        categoryTax: tax,
+        soldAt: new Date("2026-08-15T00:00:00Z"),
+        periodBucket: "2026-08",
+      },
+    });
+    const drivenSums = async () => {
+      const a = await db().regulatedSalesLedger.aggregate({
+        where: { tenantId, invoiceItemId: item.id },
+        _sum: { netSales: true, categoryTax: true, qty: true },
+      });
+      return {
+        net: roundMoney(Number(a._sum.netSales)),
+        tax: roundMoney(Number(a._sum.categoryTax)),
+        qty: Number(a._sum.qty),
+      };
+    };
+    const correctTo = (newNet: number, newTax: number) =>
+      ledger.correctSaleForPriceChange({
+        invoiceId: invoice.id,
+        lines: [
+          {
+            invoiceItemId: item.id,
+            qty,
+            netSales: newNet,
+            categoryTax: newTax,
+            boxes: null,
+            unitsPerBox: null,
+            promoFreeUnits: null,
+          },
+        ],
+        db: prisma,
+      });
+    const returnPieces = (returnId: string, pieces: number) =>
+      ledger.reverseReturnEntries({
+        returnId,
+        orderId,
+        returnedByProduct: new Map([[product.id, pieces]]),
+        returnedUnit: "PIECES",
+        db: prisma,
+      });
+    const reversalOf = (returnId: string) =>
+      db().regulatedSalesLedger.findFirst({ where: { tenantId, returnId, entryType: "REVERSAL" } });
+    return { tenantId, drivenSums, correctTo, returnPieces, reversalOf };
+  }
+
+  it("R2 (a): a $100 line corrected to $125, then 40% back: the reversal is exactly $50 and its tax share, not $40", async () => {
+    const f = await seedDriven("r2a", 100, 20, 10);
+    expect(await f.correctTo(125, 25)).toBe(1);
+    await f.returnPieces("ret-r2a", 4);
+    const rev = await f.reversalOf("ret-r2a");
+    expect(Number(rev.netSales)).toBe(-50); // 40% of the CORRECTED $125, not of the base $100 (-40)
+    expect(Number(rev.categoryTax)).toBe(-10); // 40% of the corrected $25 tax, not of $20 (-8)
+    expect(await f.drivenSums()).toEqual({ net: 75, tax: 15, qty: 6 }); // the ledger SUM = 60% held
+  }, 60_000);
+
+  it("R2 (b): the rest comes back in parts: the last one takes the exact remainder, no cent drift, the SUM ends at 0", async () => {
+    const f = await seedDriven("r2b", 100, 20, 10);
+    expect(await f.correctTo(125.01, 25.01)).toBe(1);
+    await f.returnPieces("ret-r2b-1", 4);
+    await f.returnPieces("ret-r2b-2", 3);
+    expect(Number((await f.reversalOf("ret-r2b-1")).netSales)).toBe(-50); // 125.01 x 0.4 = 50.004
+    expect(Number((await f.reversalOf("ret-r2b-2")).netSales)).toBe(-37.5); // 125.01 x 0.3 = 37.503
+    await f.returnPieces("ret-r2b-3", 3); // the closing chunk books the remaining balance exactly
+    expect(Number((await f.reversalOf("ret-r2b-3")).netSales)).toBe(-37.51);
+    expect(Number((await f.reversalOf("ret-r2b-3")).categoryTax)).toBe(
+      -roundMoney(25.01 - 10.0 - 7.5),
+    ); // tax closes the same way: 25.01 - 10.00 - 7.50 = 7.51
+    expect(await f.drivenSums()).toEqual({ net: 0, tax: 0, qty: 0 });
+  }, 60_000);
 });
