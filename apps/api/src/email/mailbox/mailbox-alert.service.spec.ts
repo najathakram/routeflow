@@ -255,20 +255,21 @@ describe("MailboxAlertService — subscription wiring", () => {
       accessTokenCipher: encryption.encrypt("at"),
       accessTokenExpiresAt: new Date(Date.now() + 3600_000),
     };
-    const prisma = {
+    const prisma: any = {
       mailboxConnection: {
         findUnique: jest.fn().mockResolvedValue(conn),
         update: jest.fn().mockResolvedValue({}),
         updateMany: jest.fn().mockResolvedValue({ count: 1 }),
       },
+      auditLog: {
+        create: jest.fn().mockResolvedValue({}),
+        findFirst: jest.fn().mockResolvedValue(null),
+      },
     };
-    const audit = { log: jest.fn().mockResolvedValue(undefined) };
-    const mailboxSend = new MailboxSendService(
-      prisma as any,
-      encryption,
-      { get: () => undefined } as unknown as ConfigService,
-      audit as any,
-    );
+    prisma.$transaction = jest.fn(async (fn: (tx: unknown) => unknown) => fn(prisma));
+    const mailboxSend = new MailboxSendService(prisma, encryption, {
+      get: () => undefined,
+    } as unknown as ConfigService);
     const {
       notifications,
       email,
@@ -304,7 +305,7 @@ describe("MailboxAlertService — subscription wiring", () => {
     await emailed;
 
     expect(res).toEqual({ delivered: false, transport: "mailbox", error: "revoked" });
-    expect(audit.log).toHaveBeenCalledTimes(1);
+    expect(prisma.auditLog.create).toHaveBeenCalledTimes(1);
     expect(notifications.sendToUser).toHaveBeenCalledTimes(1);
     expect(notifications.sendToUser.mock.calls[0][0]).toBe("u-owner");
     expect(email.sendMailboxRevokedNotice).toHaveBeenCalledTimes(1);

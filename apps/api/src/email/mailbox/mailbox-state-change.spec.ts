@@ -81,7 +81,7 @@ function row(provider: Provider, over: Record<string, unknown> = {}) {
 }
 type Row = ReturnType<typeof row>;
 
-/** No usable cached access token — forces `ensureAccessToken` down the refresh path. */
+/** No usable cached access token — forces `prepareSend` down the refresh path. */
 const NEEDS_REFRESH = { accessTokenCipher: null, accessTokenExpiresAt: null };
 
 function httpError(status: number, data: unknown, headers: Record<string, string> = {}) {
@@ -99,7 +99,7 @@ const unexpected = (url: string) => Promise.reject(new Error(`unexpected POST to
  */
 function build(conn: Row, updateManyCounts: number[] = [1]) {
   const counts = [...updateManyCounts];
-  const prisma = {
+  const prisma: any = {
     mailboxConnection: {
       findUnique: jest.fn().mockResolvedValue(conn),
       update: jest.fn().mockResolvedValue({}),
@@ -107,14 +107,23 @@ function build(conn: Row, updateManyCounts: number[] = [1]) {
         count: counts.length > 0 ? counts.shift() : 1,
       })),
     },
+    // The transition's audit row is written in the same transaction as its status change; this
+    // stub's transaction client is the stub itself.
+    auditLog: {
+      create: jest.fn().mockResolvedValue({}),
+      findFirst: jest.fn().mockResolvedValue(null),
+    },
   };
-  const audit = { log: jest.fn().mockResolvedValue(undefined) };
-  const service = new MailboxSendService(prisma as any, encryption, config, audit as any);
+  prisma.$transaction = jest.fn(async (fn: (tx: unknown) => unknown) => fn(prisma));
+  const service = new MailboxSendService(prisma, encryption, config);
   const changes: MailboxStateChange[] = [];
   const unsubscribe = service.onStateChange((c) => {
     changes.push(c);
   });
-  return { service, prisma, audit, changes, unsubscribe };
+  /** Every audit row the service inserted. */
+  const auditRows = (): Record<string, any>[] =>
+    prisma.auditLog.create.mock.calls.map((c: any[]) => c[0].data);
+  return { service, prisma, auditRows, changes, unsubscribe };
 }
 
 const send = (service: MailboxSendService) =>
@@ -263,7 +272,7 @@ const SITES: Site[] = [
     reasonCode: "rate_limited",
     sendError: "throttled",
     lastError: "Rate-limited by Google — falling back to the next sender.",
-    evidence: (c) => ({ externalSubject: c.externalSubject }),
+    evidence: (c) => ({ provider: c.provider, externalSubject: c.externalSubject }),
   },
   {
     name: "Gmail send: 403 rateLimitExceeded",
@@ -277,7 +286,7 @@ const SITES: Site[] = [
     reasonCode: "rate_limited",
     sendError: "throttled",
     lastError: "Rate-limited by Google — falling back to the next sender.",
-    evidence: (c) => ({ externalSubject: c.externalSubject }),
+    evidence: (c) => ({ provider: c.provider, externalSubject: c.externalSubject }),
   },
   {
     name: "Gmail send: 403 dailyLimitExceeded",
@@ -291,7 +300,7 @@ const SITES: Site[] = [
     reasonCode: "rate_limited",
     sendError: "throttled",
     lastError: "Rate-limited by Google — falling back to the next sender.",
-    evidence: (c) => ({ externalSubject: c.externalSubject }),
+    evidence: (c) => ({ provider: c.provider, externalSubject: c.externalSubject }),
   },
   {
     name: "Graph sendMail: 429",
@@ -305,7 +314,7 @@ const SITES: Site[] = [
     reasonCode: "rate_limited",
     sendError: "throttled",
     lastError: "Rate-limited by Microsoft — falling back to the next sender.",
-    evidence: (c) => ({ externalSubject: c.externalSubject }),
+    evidence: (c) => ({ provider: c.provider, externalSubject: c.externalSubject }),
   },
 ];
 
@@ -321,7 +330,7 @@ describe.each(SITES)("F-10a detection site — $name", (site) => {
   it("moves the connection with ONE conditional update, writes ONE audit row, emits ONE state change, and the send still falls through", async () => {
     const conn = row(site.provider, site.rowOverrides);
     (axios.post as jest.Mock).mockImplementation(site.post);
-    const { service, prisma, audit, changes } = build(conn, [1]);
+    const { service, prisma, auditRows, changes } = build(conn, [1]);
 
     const res = await send(service);
 
@@ -338,19 +347,21 @@ describe.each(SITES)("F-10a detection site — $name", (site) => {
     });
     expect(unconditionalStatusWrites(prisma)).toEqual([]);
 
-    expect(audit.log).toHaveBeenCalledTimes(1);
-    expect(audit.log).toHaveBeenCalledWith({
-      tenantId: "tenant-a",
-      userId: null,
-      action: AUDIT_ACTION[site.status],
-      entityType: "mailbox_connection",
-      entityId: "mc-1",
-      meta: {
-        provider: site.provider,
-        accountEmail: "sales@acme.test",
-        reasonCode: site.reasonCode,
+    expect(prisma.$transaction).toHaveBeenCalledTimes(1);
+    expect(auditRows()).toEqual([
+      {
+        tenantId: "tenant-a",
+        userId: null,
+        action: AUDIT_ACTION[site.status],
+        entityType: "mailbox_connection",
+        entityId: "mc-1",
+        meta: {
+          provider: site.provider,
+          accountEmail: "sales@acme.test",
+          reasonCode: site.reasonCode,
+        },
       },
-    });
+    ]);
 
     expect(changes).toEqual([
       {
@@ -368,12 +379,12 @@ describe.each(SITES)("F-10a detection site — $name", (site) => {
   it("a repeat detection — the row is no longer in an allowed previous state (count 0) — writes no audit row and emits nothing", async () => {
     const conn = row(site.provider, site.rowOverrides);
     (axios.post as jest.Mock).mockImplementation(site.post);
-    const { service, audit, changes } = build(conn, [0, 0]);
+    const { service, auditRows, changes } = build(conn, [0, 0]);
 
     const res = await send(service);
 
     expect(res).toEqual({ delivered: false, transport: "mailbox", error: site.sendError });
-    expect(audit.log).not.toHaveBeenCalled();
+    expect(auditRows()).toEqual([]);
     expect(changes).toEqual([]);
   });
 
@@ -382,12 +393,12 @@ describe.each(SITES)("F-10a detection site — $name", (site) => {
     try {
       const conn = row(site.provider, site.rowOverrides);
       (axios.post as jest.Mock).mockImplementation(site.post);
-      const { service, audit, changes } = build(conn, [1]);
+      const { service, auditRows, changes } = build(conn, [1]);
 
       await send(service);
 
-      expect(audit.log).toHaveBeenCalledTimes(1);
-      expect(Object.keys(audit.log.mock.calls[0][0].meta).sort()).toEqual([
+      expect(auditRows()).toHaveLength(1);
+      expect(Object.keys(auditRows()[0].meta).sort()).toEqual([
         "accountEmail",
         "provider",
         "reasonCode",
@@ -404,11 +415,7 @@ describe.each(SITES)("F-10a detection site — $name", (site) => {
       ]);
       // The transition itself logs, so this can never pass on an empty capture.
       expect(logs.lines.length).toBeGreaterThan(0);
-      const everything = [
-        inspect(audit.log.mock.calls, { depth: 6 }),
-        inspect(changes),
-        ...logs.lines,
-      ];
+      const everything = [inspect(auditRows(), { depth: 6 }), inspect(changes), ...logs.lines];
       const secrets = [
         SECRET.refreshToken,
         SECRET.accessToken,
@@ -433,7 +440,7 @@ describe("F-10a — state machine edges", () => {
       throttledUntil: new Date(Date.now() - 1000),
     });
     (axios.post as jest.Mock).mockImplementation(SITES[3].post); // Graph 401
-    const { service, prisma, audit, changes } = build(conn, [1]);
+    const { service, prisma, auditRows, changes } = build(conn, [1]);
 
     await send(service);
 
@@ -443,8 +450,8 @@ describe("F-10a — state machine edges", () => {
         data: expect.objectContaining({ status: "REVOKED" }),
       }),
     );
-    expect(audit.log).toHaveBeenCalledTimes(1);
-    expect(audit.log.mock.calls[0][0].action).toBe("mailbox.revoked_detected");
+    expect(auditRows()).toHaveLength(1);
+    expect(auditRows()[0].action).toBe("mailbox.revoked_detected");
     expect(changes.map((c) => c.status)).toEqual(["REVOKED"]);
   });
 
@@ -454,7 +461,7 @@ describe("F-10a — state machine edges", () => {
       throttledUntil: new Date(Date.now() - 1000),
     });
     (axios.post as jest.Mock).mockImplementation(SITES[5].post); // Gmail 429, Retry-After 120
-    const { service, prisma, audit, changes } = build(conn, [0, 1]);
+    const { service, prisma, auditRows, changes } = build(conn, [0, 1]);
 
     const before = Date.now();
     const res = await send(service);
@@ -462,7 +469,12 @@ describe("F-10a — state machine edges", () => {
     expect(res).toEqual({ delivered: false, transport: "mailbox", error: "throttled" });
     expect(prisma.mailboxConnection.updateMany).toHaveBeenCalledTimes(2);
     expect(prisma.mailboxConnection.updateMany.mock.calls[1][0]).toEqual({
-      where: { externalSubject: "subject-acme-1", id: "mc-1", status: "THROTTLED" },
+      where: {
+        provider: "GOOGLE",
+        externalSubject: "subject-acme-1",
+        id: "mc-1",
+        status: "THROTTLED",
+      },
       data: {
         throttledUntil: expect.any(Date),
         lastError: "Rate-limited by Google — falling back to the next sender.",
@@ -473,28 +485,28 @@ describe("F-10a — state machine edges", () => {
       prisma.mailboxConnection.updateMany.mock.calls[1][0].data.throttledUntil;
     expect(extendedUntil.getTime() - before).toBeGreaterThan(115_000);
     expect(extendedUntil.getTime() - before).toBeLessThan(125_000);
-    expect(audit.log).not.toHaveBeenCalled();
+    expect(auditRows()).toEqual([]);
     expect(changes).toEqual([]);
   });
 
   it("a 429 never demotes a REVOKED mailbox: neither write can match a REVOKED row", async () => {
     const conn = row("GOOGLE");
     (axios.post as jest.Mock).mockImplementation(SITES[5].post); // Gmail 429
-    const { service, prisma, audit, changes } = build(conn, [0, 0]); // a concurrent send revoked it
+    const { service, prisma, auditRows, changes } = build(conn, [0, 0]); // a concurrent send revoked it
 
     await send(service);
 
     const wheres = prisma.mailboxConnection.updateMany.mock.calls.map((c: any[]) => c[0].where);
     expect(wheres).toHaveLength(2);
     for (const where of wheres) expect(JSON.stringify(where.status)).not.toContain("REVOKED");
-    expect(audit.log).not.toHaveBeenCalled();
+    expect(auditRows()).toEqual([]);
     expect(changes).toEqual([]);
   });
 
   it("once REVOKED, later sends reach neither the provider nor the audit log (issue #2077: nothing new)", async () => {
     const conn = row("MICROSOFT");
     (axios.post as jest.Mock).mockImplementation(SITES[3].post); // Graph 401
-    const { service, prisma, audit, changes } = build(conn, [1]);
+    const { service, prisma, auditRows, changes } = build(conn, [1]);
 
     await send(service);
     prisma.mailboxConnection.findUnique.mockResolvedValue({ ...conn, status: "REVOKED" });
@@ -505,7 +517,7 @@ describe("F-10a — state machine edges", () => {
     expect(third).toEqual(second);
     expect(axios.post).toHaveBeenCalledTimes(1);
     expect(prisma.mailboxConnection.updateMany).toHaveBeenCalledTimes(1);
-    expect(audit.log).toHaveBeenCalledTimes(1);
+    expect(auditRows()).toHaveLength(1);
     expect(changes).toHaveLength(1);
   });
 });
@@ -515,14 +527,14 @@ describe("F-10a — trySend never throws", () => {
     (withAdvisoryLock as jest.Mock).mockRejectedValueOnce(
       new LockTimeoutError("mailbox", "tenant-a", 10_000),
     );
-    const { service, audit } = build(row("GOOGLE"));
+    const { service, auditRows } = build(row("GOOGLE"));
 
     await expect(send(service)).resolves.toEqual({
       delivered: false,
       transport: "mailbox",
       error: "mailbox_unavailable",
     });
-    expect(audit.log).not.toHaveBeenCalled();
+    expect(auditRows()).toEqual([]);
   });
 
   it("a database error reading the connection falls through as delivered:false", async () => {
@@ -544,7 +556,7 @@ describe("F-10a — trySend never throws", () => {
     try {
       const conn = row("MICROSOFT");
       (axios.post as jest.Mock).mockImplementation(SITES[3].post); // Graph 401
-      const { service, prisma, audit, changes } = build(conn);
+      const { service, prisma, auditRows, changes } = build(conn);
       // A Prisma error message can echo the query's arguments, including the pinned cipher.
       prisma.mailboxConnection.updateMany.mockRejectedValueOnce(
         Object.assign(
@@ -558,7 +570,7 @@ describe("F-10a — trySend never throws", () => {
       const res = await send(service);
 
       expect(res).toEqual({ delivered: false, transport: "mailbox", error: "revoked" });
-      expect(audit.log).not.toHaveBeenCalled();
+      expect(auditRows()).toEqual([]);
       expect(changes).toEqual([]);
       expect(logs.lines.some((l) => l.includes("REVOKED transition failed"))).toBe(true);
       for (const line of logs.lines) expect(line).not.toContain(conn.accessTokenCipher as string);
@@ -594,12 +606,12 @@ describe("F-10a — trySend never throws", () => {
     try {
       const conn = row("MICROSOFT");
       (axios.post as jest.Mock).mockImplementation(SITES[3].post); // Graph 401
-      const { service, audit, changes, unsubscribe } = build(conn, [1]);
+      const { service, auditRows, changes, unsubscribe } = build(conn, [1]);
       unsubscribe();
 
       await send(service);
 
-      expect(audit.log).toHaveBeenCalledTimes(1);
+      expect(auditRows()).toHaveLength(1);
       expect(changes).toEqual([]);
       expect(logs.lines.some((l) => l.includes("no subscriber"))).toBe(true);
     } finally {

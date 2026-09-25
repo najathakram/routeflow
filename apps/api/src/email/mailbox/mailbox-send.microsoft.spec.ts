@@ -57,9 +57,15 @@ describe("MailboxSendService — Microsoft/Graph", () => {
         updateMany: jest.fn().mockResolvedValue({ count: 1 }),
       },
     };
-    const audit = { log: jest.fn().mockResolvedValue(undefined) };
-    const service = new MailboxSendService(prisma, encryption, config, audit as any);
-    return { service, prisma, encryption, audit };
+    // F-10a: a state change and its audit row are written in one transaction; the stub's
+    // transaction client is the stub itself.
+    prisma.auditLog ??= {
+      create: jest.fn().mockResolvedValue({}),
+      findFirst: jest.fn().mockResolvedValue(null),
+    };
+    prisma.$transaction ??= jest.fn(async (fn: (tx: unknown) => unknown) => fn(prisma));
+    const service = new MailboxSendService(prisma, encryption, config);
+    return { service, prisma, encryption };
   }
 
   function connectedRow(overrides: Record<string, unknown> = {}, encryption?: EncryptionService) {
@@ -165,9 +171,19 @@ describe("MailboxSendService — Microsoft/Graph", () => {
     });
 
     expect(res).toMatchObject({ delivered: true, transport: "mailbox" });
-    // F-10a: conditional on CONNECTED/THROTTLED — never resurrects a concurrently REVOKED row.
+    // F-10a: pinned to the mailbox that sent it, and only CONNECTED or a THROTTLED row whose
+    // window has lapsed — never a concurrently REVOKED one, never an open throttle window.
     expect(prisma.mailboxConnection.updateMany).toHaveBeenCalledWith({
-      where: { id: "mc-1", status: { in: ["CONNECTED", "THROTTLED"] } },
+      where: {
+        provider: "MICROSOFT",
+        externalSubject: "ms-oid-1",
+        id: "mc-1",
+        OR: [
+          { status: "CONNECTED" },
+          { status: "THROTTLED", throttledUntil: null },
+          { status: "THROTTLED", throttledUntil: { lte: expect.any(Date) } },
+        ],
+      },
       data: expect.objectContaining({ status: "CONNECTED", throttledUntil: null }),
     });
     expect(prisma.mailboxConnection.update).not.toHaveBeenCalled();
@@ -253,9 +269,14 @@ describe("MailboxSendService — Microsoft/Graph", () => {
     });
 
     expect(res).toEqual({ delivered: false, transport: "mailbox", error: "throttled" });
-    // F-10a: a conditional transition — only from CONNECTED, pinned to the rate-limited account.
+    // F-10a: a conditional transition — only from CONNECTED, pinned to the rate-limited mailbox.
     expect(prisma.mailboxConnection.updateMany).toHaveBeenCalledWith({
-      where: { externalSubject: "ms-oid-1", id: "mc-1", status: { in: ["CONNECTED"] } },
+      where: {
+        provider: "MICROSOFT",
+        externalSubject: "ms-oid-1",
+        id: "mc-1",
+        status: { in: ["CONNECTED"] },
+      },
       data: expect.objectContaining({ status: "THROTTLED" }),
     });
     const throttledUntil: Date = (prisma.mailboxConnection.updateMany as jest.Mock).mock.calls[0][0]

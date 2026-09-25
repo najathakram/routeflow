@@ -9,11 +9,15 @@
  * them have arrived there, so each send has already read the row as CONNECTED and fetched its
  * token before any of them can write — the detections really are concurrent, not sequential.
  *
- * REAL: Postgres, the `mailbox` advisory lock around the token read, EncryptionService,
- * AuditService (real AuditLog rows), MailboxSendService, and MailboxAlertService including its
- * admin lookup against a real seeded TENANT_ADMIN. STUBBED: the provider HTTP APIs (axios) and
- * the two delivery edges — NotificationsService.sendToUser and
+ * REAL: Postgres, the `mailbox` advisory lock around the token read, the transaction that writes
+ * each status change with its AuditLog row, EncryptionService, MailboxSendService, and
+ * MailboxAlertService including its admin lookup against a real seeded TENANT_ADMIN. STUBBED: the
+ * provider HTTP APIs (axios) and the two delivery edges — NotificationsService.sendToUser and
  * EmailService.sendMailboxRevokedNotice — which are counted, never sent.
+ *
+ * The REG-2112 cases are the real-Postgres twins of mailbox-send.consistency.spec.ts (Opus review
+ * of #2112): a reconnect racing the send, THROTTLED recovery and alert frequency, the audit row's
+ * transaction, and whose lastSentAt a send may stamp.
  *
  * SAFETY: throwaway `qa-f10a-<run>-<n>` tenants approved by `assertTestTenant`; `afterAll`
  * deletes exactly the rows this run created. No real HTTP leaves the process.
@@ -24,9 +28,8 @@ jest.mock("axios");
 import axios from "axios";
 import { randomUUID } from "crypto";
 import { ConfigService } from "@nestjs/config";
-import { AuditService } from "../../audit/audit.service";
 import { EncryptionService } from "../../common/encryption.service";
-import { _resetLockPoolForTests } from "../../common/db-locks";
+import { _resetLockPoolForTests, withAdvisoryLock } from "../../common/db-locks";
 import { describeDb, requireLocalDatabaseUrl } from "../../common/testing/db-spec";
 import { PrismaService } from "../../prisma/prisma.service";
 import { TenantContextService } from "../../tenant/tenant-context.service";
@@ -111,7 +114,7 @@ describeDb("F-10a: mailbox REVOKED / THROTTLED transitions — real Postgres", (
     prisma = new PrismaService(tenantCtx);
     await prisma.$connect();
     encryption = new EncryptionService(config);
-    service = new MailboxSendService(prisma, encryption, config, new AuditService(prisma));
+    service = new MailboxSendService(prisma, encryption, config);
     alerts = new MailboxAlertService(
       service,
       prisma,
@@ -163,7 +166,11 @@ describeDb("F-10a: mailbox REVOKED / THROTTLED transitions — real Postgres", (
   async function seedTenant(
     label: string,
     provider: "GOOGLE" | "MICROSOFT",
-    overrides: { status?: "CONNECTED" | "THROTTLED"; throttledUntil?: Date } = {},
+    overrides: {
+      status?: "CONNECTED" | "THROTTLED";
+      throttledUntil?: Date;
+      lastSentAt?: Date;
+    } = {},
   ) {
     const slug = freshTenantSlug(label);
     const tenant = await prisma.tenant.create({ data: { slug, name: `F-10a ${slug}` } });
@@ -352,5 +359,190 @@ describeDb("F-10a: mailbox REVOKED / THROTTLED transitions — real Postgres", (
     const after = await prisma.mailboxConnection.findUniqueOrThrow({ where: { id: conn.id } });
     expect(after.status).toBe("THROTTLED");
     expect(after.throttledUntil!.getTime() - before).toBeGreaterThan(295_000);
+  });
+
+  // ─── REG-2112: Opus review of #2112 — real-Postgres twins of mailbox-send.consistency.spec ───
+
+  /** What `confirmConnect` writes when an admin reconnects a DIFFERENT mailbox: the same row
+   *  (an upsert on tenantId), a new grant, CONNECTED, errors cleared, lastSentAt reset (#2114). */
+  const rebindToNewMailbox = (connId: string, next: { provider: "GOOGLE" | "MICROSOFT" }) =>
+    prisma.mailboxConnection.update({
+      where: { id: connId },
+      data: {
+        provider: next.provider,
+        accountEmail: `new-${connId}@example.invalid`,
+        externalSubject: `new-sub-${connId}`,
+        scopesGranted: next.provider === "GOOGLE" ? ["gmail.send"] : ["Mail.Send"],
+        refreshTokenCipher: encryption.encrypt("new-refresh-token"),
+        accessTokenCipher: encryption.encrypt("new-access-token"),
+        accessTokenExpiresAt: new Date(Date.now() + 60 * 60_000),
+        status: "CONNECTED",
+        throttledUntil: null,
+        lastError: null,
+        lastErrorAt: null,
+        lastSentAt: null,
+      },
+    });
+
+  /** Resolves once a send is BLOCKED on this tenant's `mailbox` advisory lock — i.e. it has made
+   *  its lock-free read and not yet its read under the lock. Throws (never passes) if it doesn't. */
+  async function untilSendWaitsForLock(tenantId: string): Promise<void> {
+    const deadline = Date.now() + 10_000;
+    while (Date.now() < deadline) {
+      const [{ n }] = await prisma.$queryRaw<{ n: number }[]>`
+        SELECT count(*)::int AS n FROM pg_locks
+         WHERE locktype = 'advisory' AND NOT granted AND objsubid = 2
+           AND classid::bigint = (hashtext('mailbox')::bigint & 4294967295)
+           AND objid::bigint = (hashtext(${tenantId})::bigint & 4294967295)`;
+      if (n > 0) return;
+      // eslint-disable-next-line no-await-in-loop
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+    throw new Error("the send never started waiting for the mailbox lock");
+  }
+
+  it("REG-2112-1: an admin reconnects with the OTHER provider while the send waits for the real advisory lock — it sends through the new provider and never revokes the new connection", async () => {
+    const { tenant, conn } = await seedTenant("switch", "MICROSOFT");
+    const calls: { url: string; authorization: string }[] = [];
+    mockedAxios.post.mockImplementation((async (url: string, _body: unknown, cfg: any) => {
+      calls.push({ url, authorization: cfg?.headers?.Authorization });
+      if (url === "https://gmail.googleapis.com/gmail/v1/users/me/messages/send") {
+        return { data: { id: "gmail-db-1" } };
+      }
+      throw httpError(401, { error: { code: "InvalidAuthenticationToken" } }); // Graph, Google token
+    }) as any);
+
+    let sending!: Promise<Awaited<ReturnType<typeof sendAs>>>;
+    // Hold the same lock confirmConnect holds; rebind the row while the send is blocked on it.
+    await withAdvisoryLock(
+      { family: "mailbox", key: tenant.id, mode: "wait", waitMs: 10_000 },
+      async () => {
+        sending = sendAs(tenant.id);
+        await untilSendWaitsForLock(tenant.id);
+        await rebindToNewMailbox(conn.id, { provider: "GOOGLE" });
+      },
+    );
+    const res = await sending;
+    await Promise.all(deliveries);
+
+    expect(res).toMatchObject({ delivered: true, fromAddress: `new-${conn.id}@example.invalid` });
+    expect(calls).toEqual([
+      {
+        url: "https://gmail.googleapis.com/gmail/v1/users/me/messages/send",
+        authorization: "Bearer new-access-token",
+      },
+    ]);
+    const after = await prisma.mailboxConnection.findUniqueOrThrow({ where: { id: conn.id } });
+    expect(after).toMatchObject({ provider: "GOOGLE", status: "CONNECTED" });
+    expect(await auditRows(tenant.id)).toHaveLength(0);
+    expect(emitted).toHaveLength(0);
+  });
+
+  it("REG-2112-2a: a send that succeeds while a concurrent rate limit's window is still open does not recover the row", async () => {
+    const { tenant, conn } = await seedTenant("inflight", "GOOGLE");
+    const until = new Date(Date.now() + 60_000);
+    mockedAxios.post.mockImplementation((async () => {
+      await prisma.mailboxConnection.update({
+        where: { id: conn.id },
+        data: {
+          status: "THROTTLED",
+          throttledUntil: until,
+          lastError: "Rate-limited by Google — falling back to the next sender.",
+          lastErrorAt: new Date(),
+        },
+      });
+      return { data: { id: "gmail-db-2" } };
+    }) as any);
+
+    const res = await sendAs(tenant.id);
+
+    expect(res).toMatchObject({ delivered: true });
+    const after = await prisma.mailboxConnection.findUniqueOrThrow({ where: { id: conn.id } });
+    expect(after.status).toBe("THROTTLED");
+    expect(after.throttledUntil!.getTime()).toBe(until.getTime());
+    expect(after.lastSentAt).toBeNull();
+  });
+
+  it("REG-2112-2b: a second rate limit within 24h writes its audit row and notifies no one", async () => {
+    const { tenant, conn } = await seedTenant("twice", "GOOGLE");
+    await prisma.auditLog.create({
+      data: {
+        tenantId: tenant.id,
+        userId: null,
+        action: "mailbox.throttled_detected",
+        entityType: "mailbox_connection",
+        entityId: conn.id,
+        meta: { provider: "GOOGLE", accountEmail: conn.accountEmail, reasonCode: "rate_limited" },
+        createdAt: new Date(Date.now() - 60 * 60_000),
+      },
+    });
+    mockedAxios.post.mockImplementation(
+      holdUntilAllArrive(1, () => httpError(429, {}, { "retry-after": "30" })) as any,
+    );
+
+    const res = await sendAs(tenant.id);
+    await Promise.all(deliveries);
+
+    expect(res.error).toBe("throttled");
+    const rows = await auditRows(tenant.id);
+    expect(rows.filter((r) => r.action === "mailbox.throttled_detected")).toHaveLength(2);
+    expect(emitted).toHaveLength(0);
+    expect(notifications.sendToUser).not.toHaveBeenCalled();
+    const after = await prisma.mailboxConnection.findUniqueOrThrow({ where: { id: conn.id } });
+    expect(after.status).toBe("THROTTLED");
+  });
+
+  it("REG-2112-3: when the audit insert fails, the status change rolls back in the same transaction and nothing is sent", async () => {
+    const { tenant, conn } = await seedTenant("rollback", "MICROSOFT");
+    // A real INSERT failure inside the real transaction, scoped to this one connection's rows and
+    // removed in `finally` (RUN_SUFFIX is hex, conn.id a uuid — both safe inside the DDL).
+    const fn = `qa_f10a_refuse_audit_${RUN_SUFFIX}`;
+    await prisma.$executeRawUnsafe(
+      `CREATE OR REPLACE FUNCTION ${fn}() RETURNS trigger AS $$ BEGIN
+         IF NEW."entityId" = '${conn.id}' THEN RAISE EXCEPTION 'F-10a test: audit insert refused'; END IF;
+         RETURN NEW; END $$ LANGUAGE plpgsql`,
+    );
+    await prisma.$executeRawUnsafe(
+      `CREATE TRIGGER ${fn}_trg BEFORE INSERT ON "AuditLog" FOR EACH ROW EXECUTE FUNCTION ${fn}()`,
+    );
+    try {
+      mockedAxios.post.mockImplementation(
+        holdUntilAllArrive(1, () =>
+          httpError(401, { error: { code: "InvalidAuthenticationToken" } }),
+        ) as any,
+      );
+
+      const res = await sendAs(tenant.id);
+      await Promise.all(deliveries);
+
+      expect(res).toEqual({ delivered: false, transport: "mailbox", error: "revoked" });
+      const after = await prisma.mailboxConnection.findUniqueOrThrow({ where: { id: conn.id } });
+      expect(after.status).toBe("CONNECTED"); // the REVOKED write rolled back with the audit row
+      expect(after.lastError).toBeNull();
+      expect(await auditRows(tenant.id)).toHaveLength(0);
+      expect(emitted).toHaveLength(0);
+      expect(notifications.sendToUser).not.toHaveBeenCalled();
+      expect(email.sendMailboxRevokedNotice).not.toHaveBeenCalled();
+    } finally {
+      await prisma.$executeRawUnsafe(`DROP TRIGGER IF EXISTS ${fn}_trg ON "AuditLog"`);
+      await prisma.$executeRawUnsafe(`DROP FUNCTION IF EXISTS ${fn}()`);
+    }
+  });
+
+  it("REG-2112-4: a reconnect to a different mailbox during an in-flight send leaves the new row's lastSentAt null", async () => {
+    const { tenant, conn } = await seedTenant("stamp", "GOOGLE", {
+      lastSentAt: new Date("2026-09-01T00:00:00Z"),
+    });
+    mockedAxios.post.mockImplementation((async () => {
+      await rebindToNewMailbox(conn.id, { provider: "GOOGLE" });
+      return { data: { id: "gmail-db-4" } };
+    }) as any);
+
+    const res = await sendAs(tenant.id);
+
+    expect(res).toMatchObject({ delivered: true, fromAddress: conn.accountEmail });
+    const after = await prisma.mailboxConnection.findUniqueOrThrow({ where: { id: conn.id } });
+    expect(after.accountEmail).toBe(`new-${conn.id}@example.invalid`);
+    expect(after.lastSentAt).toBeNull();
   });
 });

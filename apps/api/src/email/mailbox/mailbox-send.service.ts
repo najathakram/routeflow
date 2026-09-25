@@ -7,7 +7,6 @@ import axios from "axios";
 import MailComposer from "nodemailer/lib/mail-composer";
 import { PrismaService } from "../../prisma/prisma.service";
 import { EncryptionService } from "../../common/encryption.service";
-import { AuditService } from "../../audit/audit.service";
 import { withAdvisoryLock } from "../../common/db-locks";
 
 const GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token";
@@ -28,6 +27,12 @@ const MS_GRAPH_REAUTH_ERROR_CODE_PATTERN =
 /** Refresh a bit before actual expiry so a send never races an access token dying mid-flight. */
 const ACCESS_TOKEN_REFRESH_SKEW_MS = 60_000;
 const DEFAULT_THROTTLE_MS = 60 * 60_000; // 1 hour, mirrors the design's default Retry-After.
+/**
+ * A rate limit alerts the tenant's admins at most once per connection in this window: Graph's
+ * `Retry-After` is often seconds, so a busy mailbox can be throttled many times a day, and each
+ * one must not page every admin. Every transition still writes its audit row.
+ */
+const THROTTLE_ALERT_WINDOW_MS = 24 * 60 * 60_000;
 
 export interface MailboxSendParams {
   to: string;
@@ -72,9 +77,11 @@ export type MailboxStateChangeReason =
   | "rate_limited";
 
 /**
- * One automatic transition into REVOKED or THROTTLED (F-10a). Emitted exactly once per
- * transition — only by the send whose conditional update won it — and never for a repeat
- * detection of a state the connection is already in. Carries no token field.
+ * One automatic transition into REVOKED or THROTTLED (F-10a), emitted after its audit row has
+ * committed, and only by the send whose conditional update won it — never for a repeat detection
+ * of a state the connection is already in. Every REVOKED transition is emitted; a THROTTLED one
+ * only when this connection had no rate limit in the last 24h (`THROTTLE_ALERT_WINDOW_MS`).
+ * Carries no token field.
  */
 export interface MailboxStateChange {
   tenantId: string;
@@ -112,6 +119,42 @@ interface AccessGrant {
   accessTokenCipher: string;
 }
 
+/** Why a send skipped the mailbox without calling the provider. */
+type MailboxSkipReason = "not_connected" | "revoked" | "throttled" | "reauth_required";
+
+/** The connection as read UNDER the advisory lock, with a live token — see `prepareSend`. */
+interface PreparedSend {
+  conn: MailboxConnection;
+  grant: AccessGrant;
+}
+
+/**
+ * A mailbox is identified by (provider, externalSubject) — the same predicate `confirmConnect`
+ * uses to tell a re-grant of the same mailbox from a different one. A Google `sub` and a Microsoft
+ * object id come from different namespaces, so the subject alone is not enough. Writes that record
+ * what THIS mailbox did (a rate limit, a sent message) are pinned to it, so they can never land on
+ * a different mailbox an admin reconnected while the send was in flight (the row id survives a
+ * reconnect: it is an upsert on tenantId).
+ */
+function mailboxIdentity(conn: MailboxConnection): Prisma.MailboxConnectionWhereInput {
+  return { provider: conn.provider, externalSubject: conn.externalSubject };
+}
+
+function isThrottledNow(conn: MailboxConnection): boolean {
+  return (
+    conn.status === "THROTTLED" &&
+    conn.throttledUntil !== null &&
+    conn.throttledUntil.getTime() > Date.now()
+  );
+}
+
+/** Why an existing connection can't be sent through right now, or null when it can. */
+function skipReason(conn: MailboxConnection): "revoked" | "throttled" | null {
+  if (conn.status === "REVOKED") return "revoked";
+  if (isThrottledNow(conn)) return "throttled";
+  return null;
+}
+
 /**
  * An error's class name and Prisma/Node code, never its message: a Prisma error message can echo
  * the query's arguments — including a pinned token cipher — and a provider message is not ours to
@@ -143,11 +186,13 @@ function throttledUntilFrom(err: any): Date {
  * blocking the send.
  *
  * F-10a: when a send finds the mailbox revoked or rate-limited, the connection moves to REVOKED /
- * THROTTLED through ONE conditional update (`transition`). Only the send that wins it writes the
- * `mailbox.revoked_detected` / `mailbox.throttled_detected` audit row and emits a
- * `MailboxStateChange` to its subscribers (`MailboxAlertService` tells the tenant's admins), so
- * concurrent sends detecting the same revocation produce one row and one notification, and a
- * later detection on a connection already in that state produces nothing.
+ * THROTTLED through ONE conditional update (`transition`), committed in the same transaction as
+ * its `mailbox.revoked_detected` / `mailbox.throttled_detected` audit row. Only the send that wins
+ * it emits a `MailboxStateChange` to its subscribers (`MailboxAlertService` tells the tenant's
+ * admins), and only after that commit — so concurrent sends detecting the same revocation produce
+ * one row and one notification, and a later detection on a connection already in that state
+ * produces nothing. Everything after the advisory lock uses the connection read under it
+ * (`prepareSend`), never the lock-free read before it.
  */
 @Injectable()
 export class MailboxSendService {
@@ -158,7 +203,6 @@ export class MailboxSendService {
     private readonly prisma: PrismaService,
     private readonly encryption: EncryptionService,
     private readonly config: ConfigService,
-    private readonly audit: AuditService,
   ) {}
 
   /**
@@ -202,18 +246,25 @@ export class MailboxSendService {
   }
 
   /**
-   * Lazy access-token refresh, serialized per tenant via a Postgres advisory lock (never an
-   * in-process lock — L "Never add a second in-process lock" applies here the same as
-   * order-merge). Returns the live access token with the cipher it came from, or null when the
-   * connection is missing, already revoked, or the refresh itself failed (in which case the
-   * connection's status has already been updated).
+   * Takes the per-tenant advisory lock — the one `confirmConnect` holds while it rebinds the row
+   * — re-reads the connection under it, and returns THAT connection with a live access token
+   * (lazily refreshed, serialized per tenant; never an in-process lock — L "Never add a second
+   * in-process lock" applies here the same as order-merge). Everything the send does afterwards —
+   * the provider, the From address, the audit row, every pinned write — uses this connection,
+   * never the lock-free read before it: an admin can reconnect (even with the other provider) in
+   * between, and a Google token sent to Graph comes back 401, which would revoke the fresh
+   * connection in the old account's name. Returns why not instead when the connection is gone,
+   * REVOKED, still THROTTLED, or its refresh failed (the connection's status is then already
+   * updated).
    */
-  private async ensureAccessToken(tenantId: string): Promise<AccessGrant | null> {
-    const result = await withAdvisoryLock<AccessGrant | null>(
+  private async prepareSend(tenantId: string): Promise<PreparedSend | MailboxSkipReason> {
+    const result = await withAdvisoryLock<PreparedSend | MailboxSkipReason>(
       { family: "mailbox", key: tenantId, mode: "wait", waitMs: 10_000 },
       async () => {
         const conn = await this.prisma.mailboxConnection.findUnique({ where: { tenantId } });
-        if (!conn || conn.status === "REVOKED") return null;
+        if (!conn) return "not_connected";
+        const skip = skipReason(conn);
+        if (skip) return skip;
 
         const now = Date.now();
         if (
@@ -221,19 +272,19 @@ export class MailboxSendService {
           conn.accessTokenExpiresAt &&
           conn.accessTokenExpiresAt.getTime() > now + ACCESS_TOKEN_REFRESH_SKEW_MS
         ) {
-          return {
-            accessToken: this.encryption.decrypt(conn.accessTokenCipher),
-            accessTokenCipher: conn.accessTokenCipher,
-          };
+          const accessToken = this.encryption.decrypt(conn.accessTokenCipher);
+          return { conn, grant: { accessToken, accessTokenCipher: conn.accessTokenCipher } };
         }
 
         const refreshToken = this.decryptRefreshToken(conn.refreshTokenCipher);
-        return conn.provider === "MICROSOFT"
-          ? this.refreshMicrosoftAccessToken(conn, refreshToken, now)
-          : this.refreshGoogleAccessToken(conn, refreshToken, now);
+        const grant =
+          conn.provider === "MICROSOFT"
+            ? await this.refreshMicrosoftAccessToken(conn, refreshToken, now)
+            : await this.refreshGoogleAccessToken(conn, refreshToken, now);
+        return grant ? { conn, grant } : "reauth_required";
       },
     );
-    return result.acquired ? result.value : null;
+    return result.acquired ? result.value : "reauth_required";
   }
 
   private async refreshGoogleAccessToken(
@@ -392,21 +443,19 @@ export class MailboxSendService {
    */
   async trySend(tenantId: string, params: MailboxSendParams): Promise<MailboxSendResult> {
     try {
-      const conn = await this.prisma.mailboxConnection.findUnique({ where: { tenantId } });
-      if (!conn) return { delivered: false, transport: "mailbox", error: "not_connected" };
-      if (conn.status === "REVOKED") {
-        return { delivered: false, transport: "mailbox", error: "revoked" };
-      }
-      if (
-        conn.status === "THROTTLED" &&
-        conn.throttledUntil &&
-        conn.throttledUntil.getTime() > Date.now()
-      ) {
-        return { delivered: false, transport: "mailbox", error: "throttled" };
-      }
+      // Lock-free pre-check: most tenants have no mailbox, and a connected one is rarely REVOKED
+      // or THROTTLED — those skip here without taking a slot of the small `mailbox` lock pool.
+      // Nothing below uses this read: `prepareSend` re-reads the connection under the lock.
+      const unlocked = await this.prisma.mailboxConnection.findUnique({ where: { tenantId } });
+      if (!unlocked) return { delivered: false, transport: "mailbox", error: "not_connected" };
+      const early = skipReason(unlocked);
+      if (early) return { delivered: false, transport: "mailbox", error: early };
 
-      const grant = await this.ensureAccessToken(tenantId);
-      if (!grant) return { delivered: false, transport: "mailbox", error: "reauth_required" };
+      const prepared = await this.prepareSend(tenantId);
+      if (typeof prepared === "string") {
+        return { delivered: false, transport: "mailbox", error: prepared };
+      }
+      const { conn, grant } = prepared;
 
       const fromHeader = params.fromName
         ? `${params.fromName} <${conn.accountEmail}>`
@@ -446,23 +495,36 @@ export class MailboxSendService {
   }
 
   /**
-   * A successful send recovers a THROTTLED connection back to CONNECTED — the throttle window
-   * exists to protect against a rate limit that has now demonstrably cleared. Conditional on the
-   * row still being CONNECTED or THROTTLED: a send that was already in flight must never
-   * resurrect a connection a concurrent send has just marked REVOKED, which would silently undo
-   * an audited, notified revocation (and let the next send detect — and announce — it again).
+   * Records a delivered message on the mailbox that sent it, and recovers a THROTTLED connection
+   * whose window has lapsed back to CONNECTED (the rate limit has demonstrably cleared). The write
+   * matches only when:
+   *   - it is still the SAME mailbox (`mailboxIdentity`): an admin who reconnected a different
+   *     mailbox while this send was in flight must not see it stamped with a send it never made;
+   *   - the row is CONNECTED, or THROTTLED with its window over: a send already in flight when a
+   *     concurrent one hit the rate limit must not undo that throttle, or the very next send hits
+   *     the limit — and alerts — again;
+   *   - it is never REVOKED: that would silently undo an audited, notified revocation.
    * Called only AFTER the provider accepted the message, and never throws: a bookkeeping failure
    * must not turn a delivered message into `delivered:false`, which would make the caller send it
    * a second time through the next sender.
    */
   private async recordSuccessfulSend(conn: MailboxConnection): Promise<void> {
+    const now = new Date();
     try {
       await this.prisma.mailboxConnection.updateMany({
-        where: { id: conn.id, status: { in: ["CONNECTED", "THROTTLED"] } },
+        where: {
+          ...mailboxIdentity(conn),
+          id: conn.id,
+          OR: [
+            { status: "CONNECTED" },
+            { status: "THROTTLED", throttledUntil: null },
+            { status: "THROTTLED", throttledUntil: { lte: now } },
+          ],
+        },
         data: {
           status: "CONNECTED",
           throttledUntil: null,
-          lastSentAt: new Date(),
+          lastSentAt: now,
           lastError: null,
         },
       });
@@ -655,22 +717,22 @@ export class MailboxSendService {
   }
 
   /**
-   * A rate limit belongs to the ACCOUNT that answered with it, so both writes are pinned to that
-   * account (`externalSubject`): an admin who reconnected a different account while this send was
-   * in flight never inherits the throttle.
+   * A rate limit belongs to the MAILBOX that answered with it, so both writes are pinned to it
+   * (`mailboxIdentity`): an admin who reconnected a different mailbox while this send was in
+   * flight never inherits the throttle.
    */
   private async markThrottled(
     conn: MailboxConnection,
     throttledUntil: Date,
     lastError: string,
   ): Promise<void> {
-    const sameAccount = { externalSubject: conn.externalSubject };
+    const sameMailbox = mailboxIdentity(conn);
     const changed = await this.transition(
       conn,
       "THROTTLED",
       "rate_limited",
       { lastError, throttledUntil },
-      sameAccount,
+      sameMailbox,
     );
     if (changed) return;
     // Not a state change: the connection was ALREADY THROTTLED (its window lapsed and this retry
@@ -679,7 +741,7 @@ export class MailboxSendService {
     // THROTTLED, so a revoked row is never touched here.
     await this.prisma.mailboxConnection
       .updateMany({
-        where: { ...sameAccount, id: conn.id, status: "THROTTLED" },
+        where: { ...sameMailbox, id: conn.id, status: "THROTTLED" },
         data: { throttledUntil, lastError, lastErrorAt: new Date() },
       })
       .catch((err: unknown) => {
@@ -690,15 +752,20 @@ export class MailboxSendService {
   }
 
   /**
-   * The ONE place a connection moves into REVOKED or THROTTLED on its own: a single conditional
-   * `updateMany` — this row, only from an allowed previous state (`TRANSITION_FROM`), only while
-   * the evidence (the rejected credential / the rate-limited account) is still the row's. Postgres
-   * re-checks that predicate under the row lock, so of N concurrent sends that detect the same
-   * revocation exactly one gets `count === 1`; only that one writes the audit row and emits the
-   * state change. Every other detection — a race loser, a connection already in that state, one
-   * rebound to a different credential since this send read it — writes nothing. `lastError` /
-   * `lastErrorAt` are written by the winning update, with the same messages as before F-10a.
-   * Returns whether this call made the transition. Never throws.
+   * The ONE place a connection moves into REVOKED or THROTTLED on its own. One transaction holds
+   * two writes that must stand or fall together:
+   *   - a conditional `updateMany` — this row, only from an allowed previous state
+   *     (`TRANSITION_FROM`), only while the evidence (the rejected credential / the rate-limited
+   *     mailbox) is still the row's. Postgres re-checks that predicate under the row lock, so of N
+   *     concurrent sends that detect the same revocation exactly one gets `count === 1`; every
+   *     other detection — a race loser, a connection already in that state, one rebound since
+   *     this send read it — writes nothing;
+   *   - the transition's audit row, through `tx.auditLog.create` rather than `AuditService.log`
+   *     (which swallows its own errors and has no transaction handle): if the audit write fails,
+   *     the status change rolls back, so a connection never changes state without its record.
+   * The state change is emitted only after the commit, so no one is ever told about a change that
+   * didn't happen. `lastError` / `lastErrorAt` are written by the winning update, with the same
+   * messages as before F-10a. Returns whether this call made the transition. Never throws.
    */
   private async transition(
     conn: MailboxConnection,
@@ -708,37 +775,51 @@ export class MailboxSendService {
     evidence: Prisma.MailboxConnectionWhereInput,
   ): Promise<boolean> {
     const throttledUntil = to === "THROTTLED" ? (fields.throttledUntil ?? null) : null;
-    let count: number;
+    let outcome: { changed: boolean; alert: boolean };
     try {
-      ({ count } = await this.prisma.mailboxConnection.updateMany({
-        where: { ...evidence, id: conn.id, status: { in: TRANSITION_FROM[to] } },
-        data: {
-          status: to,
-          lastError: fields.lastError,
-          lastErrorAt: new Date(),
-          ...(to === "THROTTLED" ? { throttledUntil } : {}),
-        },
-      }));
+      outcome = await this.prisma.$transaction(async (tx) => {
+        const { count } = await tx.mailboxConnection.updateMany({
+          where: { ...evidence, id: conn.id, status: { in: TRANSITION_FROM[to] } },
+          data: {
+            status: to,
+            lastError: fields.lastError,
+            lastErrorAt: new Date(),
+            ...(to === "THROTTLED" ? { throttledUntil } : {}),
+          },
+        });
+        if (count !== 1) return { changed: false, alert: false };
+        // Read before this transition's own row exists, so only an EARLIER rate limit mutes it.
+        const alert = to === "REVOKED" || !(await this.throttledRecently(tx, conn.id));
+        // Provider, account and a fixed reason vocabulary — never a token, code or secret.
+        await tx.auditLog.create({
+          data: {
+            tenantId: conn.tenantId,
+            userId: null,
+            action: TRANSITION_AUDIT_ACTION[to],
+            entityType: "mailbox_connection",
+            entityId: conn.id,
+            meta: { provider: conn.provider, accountEmail: conn.accountEmail, reasonCode },
+          },
+        });
+        return { changed: true, alert };
+      });
     } catch (err: unknown) {
       this.logger.error(
-        `Mailbox ${to} transition failed for tenant ${conn.tenantId} (${errorLabel(err)})`,
+        `Mailbox ${to} transition failed for tenant ${conn.tenantId} (${errorLabel(err)}) — rolled back, nothing changed.`,
       );
       return false;
     }
-    if (count !== 1) return false;
+    if (!outcome.changed) return false;
 
     this.logger.warn(
       `Mailbox for tenant ${conn.tenantId} is now ${to} (${conn.provider}, ${reasonCode}) — sends fall back to the next sender.`,
     );
-    // Provider, account and a fixed reason vocabulary — never a token, code or secret (spec §3).
-    await this.audit.log({
-      tenantId: conn.tenantId,
-      userId: null,
-      action: TRANSITION_AUDIT_ACTION[to],
-      entityType: "mailbox_connection",
-      entityId: conn.id,
-      meta: { provider: conn.provider, accountEmail: conn.accountEmail, reasonCode },
-    });
+    if (!outcome.alert) {
+      this.logger.log(
+        `Mailbox THROTTLED for tenant ${conn.tenantId}: it was already rate-limited within 24h, so its admins are not alerted again.`,
+      );
+      return true;
+    }
     this.emitStateChange({
       tenantId: conn.tenantId,
       connectionId: conn.id,
@@ -749,6 +830,27 @@ export class MailboxSendService {
       throttledUntil,
     });
     return true;
+  }
+
+  /**
+   * Whether this connection already had a THROTTLED transition within the alert window — alerted
+   * or not, so a mailbox that keeps hitting its limit alerts once and then stays quiet until it
+   * has gone a whole window without one. Uses the AuditLog (entityType, entityId) index.
+   */
+  private async throttledRecently(
+    tx: Prisma.TransactionClient,
+    connectionId: string,
+  ): Promise<boolean> {
+    const earlier = await tx.auditLog.findFirst({
+      where: {
+        entityType: "mailbox_connection",
+        entityId: connectionId,
+        action: TRANSITION_AUDIT_ACTION.THROTTLED,
+        createdAt: { gte: new Date(Date.now() - THROTTLE_ALERT_WINDOW_MS) },
+      },
+      select: { id: true },
+    });
+    return earlier !== null;
   }
 
   private emitStateChange(change: MailboxStateChange): void {

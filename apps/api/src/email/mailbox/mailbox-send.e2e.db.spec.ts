@@ -6,7 +6,7 @@
  * external boundary (Gmail/Graph's HTTP API — mocked here, since a real send needs live
  * OAuth credentials this suite can't hold and must never touch a real inbox).
  *
- * WHY THE DB LANE: `ensureAccessToken` takes a real Postgres advisory lock
+ * WHY THE DB LANE: `prepareSend` takes a real Postgres advisory lock
  * (`withAdvisoryLock`, db-locks.ts) around its read — a mocked Prisma object was never
  * going to exercise that. `EncryptionService` runs for real (AES-256-GCM), so this also
  * proves a token written through the real encrypt path is legible read back.
@@ -23,7 +23,6 @@ import { randomUUID } from "crypto";
 import { ConfigService } from "@nestjs/config";
 import { MailboxSendService } from "./mailbox-send.service";
 import { EncryptionService } from "../../common/encryption.service";
-import { AuditService } from "../../audit/audit.service";
 import { PrismaService } from "../../prisma/prisma.service";
 import { TenantContextService } from "../../tenant/tenant-context.service";
 import { describeDb, requireLocalDatabaseUrl } from "../../common/testing/db-spec";
@@ -69,7 +68,7 @@ describeDb("D-14: tenant-own-mailbox send — real Postgres round trip", () => {
     prisma = new PrismaService(tenantCtx);
     await prisma.$connect();
     encryption = new EncryptionService(config);
-    service = new MailboxSendService(prisma, encryption, config, new AuditService(prisma));
+    service = new MailboxSendService(prisma, encryption, config);
   });
 
   afterAll(async () => {
@@ -91,7 +90,7 @@ describeDb("D-14: tenant-own-mailbox send — real Postgres round trip", () => {
   }
 
   /** A tenant with a CONNECTED Google mailbox, its access token encrypted for real and
-   *  still valid (so `ensureAccessToken` reads it straight back — no refresh call needed). */
+   *  still valid (so `prepareSend` reads it straight back — no refresh call needed). */
   async function seedConnectedTenant(label: string) {
     const slug = freshTenantSlug(label);
     const tenant = await prisma.tenant.create({ data: { slug, name: `D-14 ${slug}` } });
