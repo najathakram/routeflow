@@ -37,6 +37,7 @@ import {
 import { PAYABLE, KPI_SUMMARY_EXCLUDED } from "./invoice-status-sets";
 import { reconcileDeliveredOrdersInTx as reconcileDeliveredOrdersInTxImpl } from "./delivered-reconcile";
 import { packAtSaleByProduct, priorUnitsPerBoxMap, toSaleLedgerLines } from "./pack-at-sale";
+import { assertIntegerPieces, billPackOf } from "./unit-line-bill-guard";
 import { clampLimit } from "../common/pagination";
 import { isInternalEmail } from "../common/internal-email";
 import { loadMsrpMap } from "../common/msrp";
@@ -89,6 +90,8 @@ import { NSF_FEE_DESCRIPTION_PREFIX } from "../sales-agents/commission-math";
 import { startOfCalendarDay, endOfCalendarDay } from "../common/calendar-date";
 import { lockRowsNoWait } from "../common/db-locks";
 import { NumberingService } from "../import/numbering.service";
+import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
+import { requireRestrictionTenantId } from "../selling-restrictions/restriction-tenant";
 import { buildManualInvoiceLines, type ManualLineItem } from "./manual-invoice-lines";
 import { foldCategoryTax, loadManualLineContext } from "./manual-invoice-context";
 import { resolveLineUnits } from "../products/line-units";
@@ -160,6 +163,7 @@ export class InvoicesService {
     private readonly entitlements: EntitlementsService,
     private readonly commissionEngine: CommissionEngineService,
     private readonly numbering: NumberingService,
+    private readonly sellingRestrictions: SellingRestrictionsService,
   ) {}
 
   /**
@@ -378,6 +382,13 @@ export class InvoicesService {
     // REG-B131: a removed (soft-deleted) customer cannot be invoiced; same 404 as a missing one. Checked
     // on the row just read (L-081), so restoreCustomer() re-enables it with no other write.
     if (!customer || customer.deletedAt) throw new NotFoundException("Customer not found");
+    // F-05 (#2093): a manual invoice SELLS its lines — a banned product refuses (409) before anything is read.
+    await this.sellingRestrictions.assertLinesSellable({
+      tenantId: requireRestrictionTenantId(this.prisma.getTenantId()),
+      customerId: dto.customerId,
+      lines: dto.items.flatMap((it) => (it.productId ? [{ productId: it.productId }] : [])),
+      channel: "STAFF",
+    });
 
     // Products (box size + regulated snapshot), the unit ladders and the regulated tax config of every
     // line: see manual-invoice-context.ts (B659: shared with EstimatesService.convertToInvoice).
@@ -823,8 +834,9 @@ export class InvoicesService {
     const orderQty = Number(li.qty) || 0;
     const storedSubtotal = li.subtotal != null ? Number(li.subtotal) : null;
     const unitPrice = Number(li.unitPrice);
-    const unitsPerBox = Number(opts?.priorPack ?? li.unitsPerBox ?? li.product?.unitsPerBox ?? 0);
+    const unitsPerBox = billPackOf(li, opts?.priorPack, li.product?.unitsPerBox); // a unit line's OWN pack wins (SA-178)
     const isBoxSplit = li.boxes != null; // stored WITH a box/piece split
+    assertIntegerPieces(li, billQty, unitsPerBox); // B652: no fractional pieces on a boxed line
 
     // Box/piece split for DISPLAY only (money is the stored subtotal). Selling-unit
     // and non-boxed lines keep boxes/pieces null so `qty` stays in whatever unit the

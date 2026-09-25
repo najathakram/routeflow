@@ -71,6 +71,7 @@ import { CommissionEngineService } from "../sales-agents/commission-engine.servi
 import { EstimatesService } from "../estimates/estimates.service";
 import { NumberingService } from "../import/numbering.service";
 import { describeDb, requireLocalDatabaseUrl } from "../common/testing/db-spec";
+import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const { assertTestTenant } = require("../../../../scripts/lib/test-tenants.cjs");
@@ -150,6 +151,10 @@ describeDb(
       const module: TestingModule = await Test.createTestingModule({
         providers: [
           InvoicesService,
+          {
+            provide: SellingRestrictionsService,
+            useValue: { assertLinesSellable: jest.fn().mockResolvedValue(undefined) },
+          },
           EstimatesService,
           // REAL NumberingService over the REAL PrismaService above — the whole point
           // of this lane is the genuine per-tenant-year NumberingSequence store.

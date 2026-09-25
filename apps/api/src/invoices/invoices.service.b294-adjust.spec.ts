@@ -23,6 +23,7 @@ import { MessagingService } from "../messaging/messaging.service";
 import { EntitlementsService } from "../billing/entitlements.service";
 import { CommissionEngineService } from "../sales-agents/commission-engine.service";
 import { InvoiceStatus } from "@prisma/client";
+import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
 
 /**
  * B294 (REG-B294, SA-141) — adjusting a LEGACY order-derived invoice (every line taxRate 0, a real
@@ -41,6 +42,10 @@ describe("B294 — applyPriceAdjustment keeps a legacy invoice's sales tax (REG-
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         InvoicesService,
+        {
+          provide: SellingRestrictionsService,
+          useValue: { assertLinesSellable: jest.fn().mockResolvedValue(undefined) },
+        },
         { provide: PrismaService, useValue: prisma },
         { provide: RouteFlowGateway, useValue: { emitInvoiceUpdated: jest.fn() } },
         { provide: EmailService, useValue: { sendInvoice: jest.fn() } },
