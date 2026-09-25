@@ -415,6 +415,8 @@ export class RegulatedLedgerService {
       returnedPieces: number;
       reason: string;
       periodBucket: string;
+      /** Only the resolution's resumed walk sets this (SA-182): a row it parks inherits the return's date. */
+      createdAt?: Date;
     },
   ): Promise<void> {
     await db.regulatedLedgerParkedReversal.createMany({ data: [row], skipDuplicates: true });
@@ -454,6 +456,10 @@ export class RegulatedLedgerService {
     correctionsBySaleId: Map<string, SaleAxisCorrection[]>;
     packNowByProduct: Map<string, number | null>;
     rows: any[];
+    /** SA-182 (resolution only): the return's date, stamped on a row this call parks. */
+    parkDate?: Date;
+    /** SA-182 (resolution only, parked period already filed): the return's date as `originalSoldAt`. */
+    originalSoldAt?: Date;
   }): Promise<{ remaining: number; parked: boolean }> {
     const {
       db,
@@ -507,6 +513,7 @@ export class RegulatedLedgerService {
           returnedPieces: remaining,
           reason: verdict.reason,
           periodBucket: bucket,
+          ...(params.parkDate ? { createdAt: params.parkDate } : {}),
         });
         return { remaining: 0, parked: true };
       }
@@ -589,6 +596,7 @@ export class RegulatedLedgerService {
       categoryTax: bookedTax,
       soldAt: now,
       periodBucket: bucket,
+      ...(params.originalSoldAt ? { originalSoldAt: params.originalSoldAt } : {}),
     });
     return { remaining, parked: false };
   }
@@ -828,7 +836,7 @@ export class RegulatedLedgerService {
     const nativeRemByLine = returnedUnit === "PIECES" ? remUnitBasisByLine : remQtyByLine;
 
     for (const [productId, returnedQtyRaw] of returnedByProduct.entries()) {
-      let remaining = Number(returnedQtyRaw);
+      const remaining = Number(returnedQtyRaw);
       if (!(remaining > 0)) continue;
       await this.walkSaleRows({
         db,
@@ -951,6 +959,10 @@ export class RegulatedLedgerService {
       orderItemId: string | null;
       saleEntryId: string;
       returnedPieces: number;
+      /** SA-182: the parked row's own period and the return's date (the row's createdAt). Optional
+       *  so a caller without them books in the current period, as before. */
+      periodBucket?: string;
+      parkedAt?: Date;
     },
     pack: number,
   ): Promise<{
@@ -969,6 +981,9 @@ export class RegulatedLedgerService {
     parkedRowIds: string[];
     /** Pieces the walk could not book anywhere (an over-return), mirroring the live path. */
     unbookedPieces: number;
+    /** SA-182: set when the parked period was already filed, so the reversal was booked in the
+     *  CURRENT period instead (an amended return may be required for `periodKey`). */
+    amendedPeriod?: { periodKey: string; status: string } | null;
     verdictAfter: SaleAxisState | null;
     unresolvableReason: string | null;
   }> {
@@ -1112,8 +1127,29 @@ export class RegulatedLedgerService {
     if (!built) return unresolvable("no SALE rows remain on this order", correctionEntryId);
     const { lineKeyOfSale, remQtyByLine, remUnitBasisByLine, remNetByLine, remTaxByLine } = built;
 
-    const now = new Date();
-    const bucket = periodBucketOf(now);
+    // SA-182 (#2081): the booked REVERSAL takes the PARKED ROW's period and the return's date, because
+    // that is the period the filing gate held open for it. If that period is already filed (GENERATED or
+    // LOCKED) it books in the CURRENT period with `originalSoldAt` = the return's date, and the result
+    // says so (never silent). The axis-correction rows above keep periodBucketOf(now) (SA-134).
+    const nowActual = new Date();
+    const currentBucket = periodBucketOf(nowActual);
+    let filedPeriod: { periodKey: string; status: string } | null = null;
+    if (parked.periodBucket && parked.periodBucket !== currentBucket) {
+      const bucketStart = new Date(`${parked.periodBucket}-01T00:00:00.000Z`);
+      const filing = await db.regulatedFiling?.findFirst?.({
+        where: {
+          trackedCategoryId: saleRow.trackedCategoryId,
+          periodStart: { lte: bucketStart },
+          periodEnd: { gt: bucketStart },
+          status: { in: ["GENERATED", "LOCKED"] },
+        },
+        select: { periodKey: true, status: true },
+      });
+      if (filing) filedPeriod = { periodKey: filing.periodKey, status: filing.status };
+    }
+    const useParkedPeriod = !!parked.periodBucket && !filedPeriod;
+    const now = useParkedPeriod ? (parked.parkedAt ?? nowActual) : nowActual;
+    const bucket = useParkedPeriod ? (parked.periodBucket as string) : currentBucket;
     const rows: RegulatedCorrectionRowInput[] = [];
     const walkBase = {
       db,
@@ -1129,6 +1165,10 @@ export class RegulatedLedgerService {
       remNetByLine,
       remTaxByLine,
       rows,
+      // Rows the resumed walk parks inherit the return's date; a filed parked period books in the
+      // current one and carries the return's date as originalSoldAt.
+      ...(useParkedPeriod && parked.parkedAt ? { parkDate: parked.parkedAt } : {}),
+      ...(filedPeriod && parked.parkedAt ? { originalSoldAt: parked.parkedAt } : {}),
     };
     // The parked row first, on the operator's pack; then RESUME the live walk (SA-167).
     const chunk = rowClosed
@@ -1226,6 +1266,7 @@ export class RegulatedLedgerService {
         parkedPieces,
         parkedRowIds,
         unbookedPieces,
+        amendedPeriod: filedPeriod,
         verdictAfter,
         unresolvableReason: null,
       };
@@ -1255,6 +1296,7 @@ export class RegulatedLedgerService {
       parkedPieces,
       parkedRowIds,
       unbookedPieces,
+      amendedPeriod: filedPeriod,
       verdictAfter,
       unresolvableReason: null,
     };

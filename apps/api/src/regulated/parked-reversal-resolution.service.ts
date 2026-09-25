@@ -108,6 +108,9 @@ export class ParkedReversalResolutionService {
           orderItemId: row.orderItemId,
           saleEntryId: row.saleEntryId,
           returnedPieces: Number(row.returnedPieces),
+          // SA-182: the row's own period and the return's date (when it parked).
+          periodBucket: row.periodBucket,
+          parkedAt: row.createdAt,
         },
         pack,
       );
@@ -153,6 +156,9 @@ export class ParkedReversalResolutionService {
           parkedPieces: result.resolution.parkedPieces,
           parkedRowIds: result.resolution.parkedRowIds,
           unbookedPieces: result.resolution.unbookedPieces,
+          // SA-182: set when the parked period was already filed and the reversal went to the CURRENT
+          // period instead — an amended return may be required for that period.
+          amendedPeriod: result.resolution.amendedPeriod ?? null,
           resolvedEntryId: result.resolution.resolvedEntryId,
           periodBucket: result.row.periodBucket,
           operatorReason: reason,
@@ -176,6 +182,7 @@ export class ParkedReversalResolutionService {
       parkedPieces: result.alreadyResolved ? null : result.resolution.parkedPieces,
       parkedRowIds: result.alreadyResolved ? [] : result.resolution.parkedRowIds,
       unbookedPieces: result.alreadyResolved ? null : result.resolution.unbookedPieces,
+      amendedPeriod: result.alreadyResolved ? null : (result.resolution.amendedPeriod ?? null),
     };
   }
 }

@@ -296,4 +296,56 @@ describe("resolveParkedReversal — resume the live walk (SA-167)", () => {
     expect(reversals().filter((r) => r.orderItemId === "oi-2")).toHaveLength(0);
     expect(reversals().reduce((a, r) => a + Number(r.netSales), 0)).toBeCloseTo(-20, 2);
   });
+
+  describe("SA-182 / #2081: the reversal lands in the PARKED row's period", () => {
+    const parkedAt = new Date("2026-08-15T12:00:00.000Z");
+    const inAugust = (n: number, pieces: number) => ({
+      ...parked(n, pieces),
+      periodBucket: "2026-08",
+      parkedAt,
+    });
+
+    it("(1) a park from August resolved later books the REVERSAL in 2026-08 with the return's date as soldAt", async () => {
+      ledger = [sale(1, 2)];
+      invoiceItems = [ii(1)];
+      (prisma as any).regulatedFiling.findFirst = jest.fn().mockResolvedValue(null);
+      const res = await service.resolveParkedReversal(prisma, inAugust(1, 24), 12);
+      expect(res.outcome).toBe("booked");
+      expect(res.amendedPeriod).toBeNull();
+      expect(reversals()[0]).toMatchObject({ periodBucket: "2026-08", soldAt: parkedAt });
+      expect(reversals()[0].originalSoldAt).toBeUndefined();
+    });
+
+    it("(2) the parked period already GENERATED: books in the CURRENT period with originalSoldAt = the return date, and says so", async () => {
+      ledger = [sale(1, 2)];
+      invoiceItems = [ii(1)];
+      (prisma as any).regulatedFiling.findFirst = jest
+        .fn()
+        .mockResolvedValue({ periodKey: "2026-08", status: "GENERATED" });
+      const res = await service.resolveParkedReversal(prisma, inAugust(1, 24), 12);
+      expect(res.outcome).toBe("booked");
+      expect(res.amendedPeriod).toEqual({ periodKey: "2026-08", status: "GENERATED" });
+      const currentBucket = new Date().toISOString().slice(0, 7);
+      expect(reversals()[0]).toMatchObject({
+        periodBucket: currentBucket,
+        originalSoldAt: parkedAt,
+      });
+      expect(reversals()[0].periodBucket).not.toBe("2026-08");
+    });
+
+    it("(3) leftover parked on row 2 by the resumed walk carries the same bucket and date", async () => {
+      ledger = [sale(1, 2), sale(2, 3)];
+      invoiceItems = [ii(1), ii(2)];
+      (prisma as any).regulatedFiling.findFirst = jest.fn().mockResolvedValue(null);
+      const res = await service.resolveParkedReversal(prisma, inAugust(1, 60), 12);
+      expect(res.outcome).toBe("partial");
+      expect(parkedStore).toHaveLength(1);
+      expect(parkedStore[0]).toMatchObject({
+        saleEntryId: "s-2",
+        periodBucket: "2026-08",
+        createdAt: parkedAt,
+      });
+      expect(reversals()[0]).toMatchObject({ periodBucket: "2026-08", soldAt: parkedAt });
+    });
+  });
 });

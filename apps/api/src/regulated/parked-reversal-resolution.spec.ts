@@ -128,6 +128,7 @@ describe("ParkedReversalResolutionService", () => {
       parkedPieces: 0,
       parkedRowIds: [],
       unbookedPieces: 0,
+      amendedPeriod: null,
     });
   });
 
@@ -204,6 +205,7 @@ describe("ParkedReversalResolutionService", () => {
       parkedPieces: 36,
       parkedRowIds: ["pr-2"],
       unbookedPieces: 0,
+      amendedPeriod: null,
     });
     const res = await service.resolve("pr-1", 12, "reason text", actor);
     expect(res).toMatchObject({ outcome: "partial", parkedPieces: 36, parkedRowIds: ["pr-2"] });
@@ -230,6 +232,9 @@ describe("ParkedReversalResolutionService", () => {
         orderItemId: "oi-1",
         saleEntryId: "s-1",
         returnedPieces: 5,
+        // SA-182: the row's own period and the return's date travel with it.
+        periodBucket: "2026-07",
+        parkedAt: new Date("2026-09-01T00:00:00Z"),
       },
       12,
     );
@@ -378,6 +383,7 @@ describe("ParkedReversalResolutionService", () => {
       parkedPieces: 0,
       parkedRowIds: [],
       unbookedPieces: 0,
+      amendedPeriod: null,
     });
     expect(table[0].resolvedAt).toBeInstanceOf(Date);
     expect(audit.log).toHaveBeenCalledWith(
