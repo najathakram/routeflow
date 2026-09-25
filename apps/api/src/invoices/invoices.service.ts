@@ -2350,7 +2350,11 @@ export class InvoicesService {
         await db.orderItem.update({
           where: { id: existing.id },
           data: {
-            ...shape,
+            qty: shape.qty,
+            boxes: shape.boxes,
+            pieces: shape.pieces,
+            unitsPerBox: shape.unitsPerBox,
+            ...(only ? { unitLabel: shape.unitLabel } : {}),
             unitPrice: agg.unitPrice,
             subtotal: lineSubtotal,
             // RF-4: mirror the billed category tax back onto the order line.
@@ -2366,7 +2370,11 @@ export class InvoicesService {
           data: {
             orderId,
             productId: agg.productId,
-            ...shape,
+            qty: shape.qty,
+            boxes: shape.boxes,
+            pieces: shape.pieces,
+            unitsPerBox: shape.unitsPerBox,
+            ...(only ? { unitLabel: shape.unitLabel } : {}),
             unitPrice: agg.unitPrice,
             subtotal: lineSubtotal,
             // RF-4: mirror the billed category tax back onto the new order line.
