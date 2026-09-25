@@ -71,6 +71,12 @@ describe("assertDeliveriesFitStop — the at-door ceiling", () => {
       await expect(p).rejects.toThrow(
         c.order.status === "DRAFT" ? /not confirmed yet/ : /was cancelled/,
       );
+      // the ceiling of 0 is EXACT: a sliver of a cancelled line is refused too (no 0.0005 epsilon)
+      await expect(
+        assertDeliveriesFitStop(tx([c]), stopOrders, [
+          { orderItemId: "i1", quantityDelivered: 0.0005 },
+        ]),
+      ).rejects.toBeInstanceOf(BadRequestException);
       // delivering nothing against it stays legal (a driver can close the stop)
       await expect(
         assertDeliveriesFitStop(tx([c]), stopOrders, [{ orderItemId: "i1", quantityDelivered: 0 }]),

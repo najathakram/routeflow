@@ -59,7 +59,9 @@ export async function assertDeliveriesFitStop(
       item.status === "CANCELLED" ||
       item.order?.status === "CANCELLED" ||
       item.order?.status === "DRAFT";
-    if (!Number.isFinite(q) || q < 0 || q > (notOrdered ? 0 : Number(item.qty)) + 0.0005) {
+    // A ceiling of 0 is EXACT (no epsilon): 0.0005 of a cancelled line is still a delivery of nothing ordered.
+    const over = notOrdered ? q !== 0 : q > Number(item.qty) + 0.0005;
+    if (!Number.isFinite(q) || q < 0 || over) {
       throw new BadRequestException(
         notOrdered
           ? item.order?.status === "DRAFT"
