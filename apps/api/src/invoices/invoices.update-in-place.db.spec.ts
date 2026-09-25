@@ -118,10 +118,7 @@ describeDb(
           { provide: EmailService, useValue: mockEmailService },
           { provide: InvoicePdfService, useValue: { getOrGenerate: jest.fn() } },
           { provide: SystemConfigService, useValue: mockSystemConfig },
-          {
-            provide: RegulatedLedgerService,
-            useValue: { writeSaleEntries: jest.fn(), reverseInvoiceEntries: jest.fn() },
-          },
+          RegulatedLedgerService, // the REAL service: the resync runs against Postgres
           {
             provide: AuthorizationGuardService,
             useValue: {
@@ -407,7 +404,14 @@ describeDb(
 
     it("F2-F notes-only save: the regulated-ledger row and the ReturnItem still resolve to the SAME invoice line", async () => {
       const s = await seed("f");
+      const ledgerRowsBefore = await prisma.regulatedSalesLedger.count({
+        where: { tenantId: s.t.id },
+      });
       await run(s, s.payload());
+      // the real ledger service ran the resync path: a notes-only save must not reverse-and-rewrite
+      expect(await prisma.regulatedSalesLedger.count({ where: { tenantId: s.t.id } })).toBe(
+        ledgerRowsBefore,
+      );
       const ledger = await prisma.regulatedSalesLedger.findUnique({ where: { id: s.ledger.id } });
       const ret = await prisma.returnItem.findUnique({ where: { id: s.retItem.id } });
       const ledgerLine = await prisma.invoiceItem.findUnique({
@@ -427,6 +431,9 @@ describeDb(
         run(s, s.payload({ l1: { qty: 24, boxes: 4, pieces: 0 } })),
       ).rejects.toMatchObject({
         status: 400,
+        message: expect.stringContaining(
+          "the split implies pack 6 but this line's pack is 12; set unitsPerBox 6 to re-pack it",
+        ),
       });
       expect((await rows(s)).map(shape)).toEqual(before);
     });

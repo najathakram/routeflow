@@ -24,9 +24,11 @@ describe("SA-186/189: web invoice edit line ids, locked lines, attested pack", (
     expect(src).toMatch(/Number\.isInteger\(v\) && v >= 2/);
   });
 
-  it("swapping a line's product drops its stored id, so it is saved as a NEW line (SA-186)", () => {
+  it("swapping a line's product drops its stored id (a NEW line); re-picking the SAME product keeps the row's pack", () => {
+    expect(src).toMatch(/const swapped = productId !== item\.productId;/);
     expect(src).toMatch(
-      /productId !== item\.productId\s*\? \{ id: undefined, locked: undefined, attestedPack: undefined \}/,
+      /swapped\s*\? \{ id: undefined, locked: undefined, attestedPack: undefined \}/,
     );
+    expect(src).toMatch(/: item\.unitsPerBox,/);
   });
 });

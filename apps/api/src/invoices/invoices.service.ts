@@ -3438,11 +3438,11 @@ export class InvoicesService {
             payments: true,
           },
         });
-        await this.resyncInvoiceLedger(id, inv.orderId ?? null, u.items ?? [], tx);
-        return {
-          updated: u,
-          syncLines: orderSyncLines(editLines, storedRows, cur, invDiscount, shipping),
-        };
+        const syncLines = orderSyncLines(editLines, storedRows, cur, invDiscount, shipping);
+        // A save that changed no line leaves the ledger alone too (no reverse-and-rewrite churn).
+        if (syncLines?.length)
+          await this.resyncInvoiceLedger(id, inv.orderId ?? null, u.items ?? [], tx);
+        return { updated: u, syncLines };
       });
       // Backward sync: keep the linked order in step with the edited invoice.
       if (inv.orderId && syncLines)

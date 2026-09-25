@@ -390,6 +390,67 @@ describe("InvoicesService — update() line preservation", () => {
       });
     });
 
+    describe("SA-196 follow-ups: the row's own pack, not the live product's", () => {
+      const pack6 = () =>
+        legacy({ id: "a", qty: 12, boxes: 2, pieces: 0, unitsPerBox: 6, subtotal: 22 });
+
+      it("row pack 6 vs live product pack 12: a same-pack edit stays at 6 and needs no attestation", async () => {
+        arrange([pack6()], { livePack: 12 });
+        await service.update("inv-box", {
+          items: [payload({ id: "a", qty: 18, boxes: 3, pieces: 0 })],
+        } as any);
+        expect(prisma.invoiceItem.update).toHaveBeenCalledWith({
+          where: { id: "a" },
+          data: expect.objectContaining({ boxes: 3, unitsPerBox: 6, subtotal: 33 }),
+        });
+        expect(prisma.auditLog.create).not.toHaveBeenCalled();
+      });
+
+      it("row pack 6 vs live product pack 12: a split at the LIVE pack is still a re-pack and is refused", async () => {
+        arrange([pack6()], { livePack: 12 });
+        await expect(
+          service.update("inv-box", {
+            items: [payload({ id: "a", qty: 24, boxes: 2, pieces: 0 })],
+          } as any),
+        ).rejects.toThrow("the split implies pack 12 but this line's pack is 6");
+      });
+
+      it("a row with NO saved pack but a readable split (2 x 12) cannot be re-split to 4 x 6 silently", async () => {
+        arrange([
+          legacy({ id: "a", qty: 24, boxes: 2, pieces: 0, unitsPerBox: null, subtotal: 22 }),
+        ]);
+        await expect(
+          service.update("inv-box", {
+            items: [payload({ id: "a", qty: 24, boxes: 4, pieces: 0 })],
+          } as any),
+        ).rejects.toThrow("the split implies pack 6 but this line's pack is 12; set unitsPerBox 6");
+        expect(prisma.invoiceItem.update).not.toHaveBeenCalled();
+      });
+
+      it("...but it can once the operator attests the new pack (audited)", async () => {
+        arrange([
+          legacy({ id: "a", qty: 24, boxes: 2, pieces: 0, unitsPerBox: null, subtotal: 22 }),
+        ]);
+        await service.update("inv-box", {
+          items: [payload({ id: "a", qty: 24, boxes: 4, pieces: 0, unitsPerBox: 6 })],
+        } as any);
+        expect(prisma.auditLog.create).toHaveBeenCalledWith({
+          data: expect.objectContaining({ action: "INVOICE_LINE_PACK_ATTESTED" }),
+        });
+      });
+
+      it("a notes-only save of a regulated invoice does not touch the ledger", async () => {
+        arrange([pack6()]);
+        const resync = jest
+          .spyOn(service as any, "resyncInvoiceLedger")
+          .mockResolvedValue(undefined);
+        await service.update("inv-box", {
+          items: [payload({ id: "a", qty: 12, boxes: 2, pieces: 0, notes: "x" })],
+        } as any);
+        expect(resync).not.toHaveBeenCalled();
+      });
+    });
+
     describe("SA-196: a new split implying a different pack than the row's own snapshot", () => {
       const packed6 = () =>
         legacy({ id: "a", qty: 12, boxes: 2, pieces: 0, unitsPerBox: 6, subtotal: 22 });

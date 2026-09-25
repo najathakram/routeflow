@@ -751,15 +751,21 @@ export default function EditInvoicePage() {
                       setCreateProductOpen(true);
                     }}
                     onChange={(description, productId, unitPrice, unitsPerBox) => {
+                      // Re-picking the SAME product keeps the row's own pack (never the live one); a real swap is a
+                      // NEW line (SA-186): no stored id, and the picker's pack.
+                      const swapped = productId !== item.productId;
                       updateItem(item.key, {
-                        // A different product is a NEW line (SA-186): never edit the old row's id in place.
-                        ...(productId !== item.productId
+                        ...(swapped
                           ? { id: undefined, locked: undefined, attestedPack: undefined }
                           : {}),
                         description,
                         productId,
                         unitPrice: unitPrice !== undefined ? unitPrice : item.unitPrice,
-                        unitsPerBox: unitsPerBox && unitsPerBox > 1 ? unitsPerBox : undefined,
+                        unitsPerBox: swapped
+                          ? unitsPerBox && unitsPerBox > 1
+                            ? unitsPerBox
+                            : undefined
+                          : item.unitsPerBox,
                       });
                     }}
                   />

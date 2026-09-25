@@ -13,14 +13,16 @@
  *     (never by productId). An id that is not one of this invoice's rows (unknown, another invoice,
  *     another tenant: the lookup is tenant-scoped) is a 400 "unknown line id". Old cached clients
  *     send no id: an id-less line that equals a still-unmatched stored row on the FULL tuple
- *     (productId, qty, boxes, pieces, unitPrice, discount) is that row, matched in payload order
+ *     (productId, qty, boxes, pieces, unitPrice, discount, taxRate) is that row, matched in payload order
  *     against stored order. Anything short of the full tuple is a changed/new line. (The fallback is
- *     removed at R1.1.)
- *  2. UNTOUCHED. A matched line whose payload equals the stored row on qty, boxes, pieces, unitPrice
- *     and discount is PRESERVED VERBATIM: stored money, split, pack, levy and snapshots, no
+ *     removed at R1.1: #2096.)
+ *  2. UNTOUCHED. A matched line whose payload equals the stored row on qty, boxes, pieces, unitPrice,
+ *     discount and taxRate is PRESERVED VERBATIM: stored money, split, pack, levy and snapshots, no
  *     re-derivation. Only description/notes/orderItemId are taken from the payload.
- *  3. CHANGED. A changed line is re-priced. Its pack comes from its OWN split, else its OWN stored
- *     snapshot, else the operator's explicit `unitsPerBox` (integer >= 2, checked: qty must equal
+ *  3. CHANGED. A changed line is re-priced. Its pack comes from its OWN stored pack (the saved
+ *     snapshot, else the pack its stored split implies); a NEW split implying a different pack is a
+ *     re-pack and needs the operator's `unitsPerBox` (SA-196); with no stored pack it comes from the
+ *     payload's own split, else the operator's explicit `unitsPerBox` (integer >= 2, checked: qty must equal
  *     boxes x pack + pieces, and it may never disagree with a recoverable pack). Never the live
  *     product, never a sibling's pack. A changed line that was stored with a box split (or is sent
  *     with one) and has no recoverable pack is refused: "set the box and piece count for <line> to
@@ -143,6 +145,16 @@ interface PlanCtx {
 const lineLabel = (item: EditPayloadLine) =>
   item.description?.trim() || item.productId || "this line";
 
+/**
+ * The pack a stored row carries: its own saved `unitsPerBox`, else the pack its own stored split implies
+ * (2 boxes x 12 = 24), never the live product. Null once the product changed or when neither is readable.
+ */
+function rowOwnPack(row: StoredEditRow, productChanged: boolean): number | null {
+  if (productChanged) return null;
+  if (Number(row.unitsPerBox) > 1) return Number(row.unitsPerBox);
+  return packFromOwnSplit({ qty: Number(row.qty), boxes: row.boxes, pieces: row.pieces });
+}
+
 /** The pack a CHANGED, matched line may be re-split at, or a 400. Never the live product. */
 function recoverChangedPack(
   item: EditPayloadLine,
@@ -150,7 +162,7 @@ function recoverChangedPack(
   productChanged: boolean,
 ): { pack: number | null; boxes: number | null; pieces: number | null; attested?: boolean } {
   const hasSplit = item.boxes != null || item.pieces != null;
-  const ownPack = !productChanged && Number(row.unitsPerBox) > 1 ? Number(row.unitsPerBox) : null;
+  const ownPack = rowOwnPack(row, productChanged);
   const splitPack = hasSplit
     ? packFromOwnSplit({ qty: item.qty, boxes: item.boxes, pieces: item.pieces })
     : null;
@@ -253,7 +265,7 @@ export function buildEditedLines(ctx: PlanCtx): EditedLine[] {
       boxes = r.boxes;
       pieces = r.pieces;
       if (r.pack != null) unitsPerBox = r.pack;
-      ownPack = !productChanged && Number(row.unitsPerBox) > 1 ? Number(row.unitsPerBox) : null;
+      ownPack = rowOwnPack(row, productChanged);
     } else if (item.productId && isEditOfUnmatchedLegacyRow(ctx, item)) {
       // An id-less line that is NOT the full tuple of any stored row, while a stored legacy box line of
       // the same product with no recoverable pack went unmatched, is that line being edited by an old
