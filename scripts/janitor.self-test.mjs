@@ -452,6 +452,141 @@ t(
     t("REG-B748 guard: a similar-but-different diff is NOT merged", () => {
       assert.equal(merged("look-alike"), false);
     });
+
+    // --- fix-round guards (Opus review of c8f68f3a) --------------------------------------
+    // Each of these was RED against the first implementation. They exist because the original
+    // five guards all passed against two DELIBERATELY broken versions of the scan, so they were
+    // not actually protecting the dangerous direction.
+
+    // REQUIRED-1, the data-loss case. `patch-id --stable` strips whitespace before hashing, so a
+    // follow-up that only RE-INDENTS a line the branch's own merged work added produces a
+    // combined diff that hashes identically to the squash commit. The branch is NOT merged — it
+    // carries an unpushed commit — and sweeping it destroys that work.
+    git("checkout", "-q", "master");
+    git("checkout", "-q", "-b", "reindent");
+    commit("ws.yml", "a: 1\nb:\n  x: 2\n", "reindent work");
+    git("checkout", "-q", "master");
+    git("merge", "-q", "--squash", "reindent");
+    git(
+      "-c",
+      "user.name=t",
+      "-c",
+      "user.email=t@example.com",
+      "commit",
+      "-q",
+      "-m",
+      "squash reindent",
+    );
+    git("checkout", "-q", "reindent");
+    commit("ws.yml", "a: 1\nb:\n    x: 2\n", "re-indent only — NOT merged");
+    t("REG-B748 guard: a whitespace-only follow-up is NOT merged (patch-id --verbatim)", () => {
+      assert.equal(merged("reindent"), false);
+    });
+
+    // REQUIRED-2. The branch side used porcelain `git diff` (rename detection + user diff config)
+    // while master's side used plumbing `diff-tree`. A squash-merged RENAME therefore never
+    // matched, so its worktree was never reclaimed — the bug this whole feature exists to fix.
+    git("checkout", "-q", "master");
+    commit("ren-old.txt", Array.from({ length: 40 }, (_, i) => `line ${i}`).join("\n"), "ren base");
+    git("checkout", "-q", "-b", "renamer");
+    git("mv", "ren-old.txt", "ren-new.txt");
+    commit(
+      "ren-new.txt",
+      Array.from({ length: 41 }, (_, i) => `line ${i}`).join("\n"),
+      "rename+edit",
+    );
+    git("checkout", "-q", "master");
+    git("merge", "-q", "--squash", "renamer");
+    git(
+      "-c",
+      "user.name=t",
+      "-c",
+      "user.email=t@example.com",
+      "commit",
+      "-q",
+      "-m",
+      "squash renamer",
+    );
+    t("REG-B748: a squash-merged RENAME IS merged (same plumbing on both sides)", () => {
+      assert.equal(merged("renamer"), true);
+    });
+
+    // REQUIRED-3. The original fresh-branch guard branched from master's TIP, where the scan has
+    // nothing to walk — so it passed even against a version that scanned ALL of master. Branch
+    // from BEHIND the tip instead, with a merge commit on master since that base, which is the
+    // shape that read as merged under the broken variant.
+    git("checkout", "-q", "master");
+    const behind = git("rev-parse", "HEAD");
+    git("checkout", "-q", "-b", "side-for-merge", behind);
+    commit("side.txt", "side", "side work");
+    git("checkout", "-q", "master");
+    git(
+      "-c",
+      "user.name=t",
+      "-c",
+      "user.email=t@example.com",
+      "merge",
+      "-q",
+      "--no-ff",
+      "side-for-merge",
+      "-m",
+      "merge side",
+    );
+    git("checkout", "-q", "-b", "fresh-behind", behind);
+    t("REG-B748 guard: a zero-commit branch BEHIND the tip is NOT merged", () => {
+      assert.equal(merged("fresh-behind"), false);
+    });
+
+    // REQUIRED-3, the range guard. A branch whose own diff happens to equal a commit that landed
+    // on master BEFORE the branch's merge base is NOT merged — that old commit is not this
+    // branch's work. Scanning master's WHOLE history instead of `mergeBase..master` reads it as
+    // merged and sweeps live work. The zero-commit guards cannot catch that variant: they return
+    // at `mergeBase === tip` before the range is ever built, which is why this one has its own
+    // branch WITH a commit.
+    git("checkout", "-q", "master");
+    commit("dup.txt", "recycled", "master adds dup.txt (ancient)");
+    rmSync(join(dir, "dup.txt"), { force: true });
+    git("add", "-A");
+    git(
+      "-c",
+      "user.name=t",
+      "-c",
+      "user.email=t@example.com",
+      "commit",
+      "-q",
+      "-m",
+      "master removes dup.txt",
+    );
+    commit("unrelated.txt", "later", "master moves on");
+    git("checkout", "-q", "-b", "recycler");
+    commit("dup.txt", "recycled", "lane re-adds the same file — its OWN unmerged work");
+    t("REG-B748 guard: a diff matching a commit OLDER than the merge base is NOT merged", () => {
+      assert.equal(merged("recycler"), false);
+    });
+
+    // REQUIRED-1, second half. Where `gh` IS available, an OPEN PR at the tip means the branch is
+    // live whatever a patch-id says — a lane can re-land an identical diff while its own PR is
+    // still in review. The veto applies to the patch-id proof only.
+    t("REG-B748 guard: an OPEN PR at the tip vetoes the patch-id proof", () => {
+      const openAtTip = (_r, branch) => branch === "sq-one";
+      assert.equal(
+        isMergedIntoMaster(dir, "sq-one", {
+          masterRef: "master",
+          ghLookup: noGh,
+          ghOpenLookup: openAtTip,
+        }),
+        false,
+      );
+      // ...and with no open PR, the same branch is still proven merged.
+      assert.equal(
+        isMergedIntoMaster(dir, "sq-one", {
+          masterRef: "master",
+          ghLookup: noGh,
+          ghOpenLookup: () => false,
+        }),
+        true,
+      );
+    });
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
