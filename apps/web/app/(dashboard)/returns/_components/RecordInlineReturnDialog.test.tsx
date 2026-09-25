@@ -598,7 +598,7 @@ describe("RecordInlineReturnDialog — the excess option resets on every re-quot
     expect(screen.getByRole("radio", { name: /return only what was bought/i })).not.toBeChecked();
   });
 
-  it("picking option 3 still sticks on the re-quote that option itself triggers", async () => {
+  it("picking option 3 sticks through the re-quote it triggers: still checked when that quote still shows an excess, and capture sends the covered pieces", async () => {
     await openToStep1();
     await enterQtyAndGetQuote("16");
     const covered = chunk({ sourceOrderId: "order-newest", pieces: 10 });
@@ -613,14 +613,66 @@ describe("RecordInlineReturnDialog — the excess option resets on every re-quot
 
     fireEvent.click(screen.getByRole("radio", { name: /return only what was bought/i }));
     await waitFor(() => expect(quoteMutate).toHaveBeenCalledTimes(2));
-    // The excess is dropped, so the radios are gone; the choice must not have been reset away
-    // before the capture reads the reduced lines.
-    resolveNextQuote(quoteResponse([covered]));
+    // The re-quote comes back still carrying a (smaller) excess, so the radios stay on screen: the
+    // pick must not have been reset by the re-quote it triggered.
+    resolveNextQuote(
+      quoteResponse([
+        covered,
+        chunk({ sourceOrderId: null, sourceInvoiceItemId: null, pieces: 2, subtotal: 5 }),
+      ]),
+    );
+    await screen.findByText(/not on any invoice/i);
+    expect(screen.getByRole("radio", { name: /return only what was bought/i })).toBeChecked();
     fireEvent.change(screen.getByLabelText(/^reason$/i), { target: { value: "DAMAGED" } });
     fireEvent.click(screen.getByRole("button", { name: /issue credit note and receive goods/i }));
     await waitFor(() => expect(captureMutate).toHaveBeenCalledTimes(1));
     expect(captureMutate.mock.calls[0][0].items).toEqual([
       expect.objectContaining({ productId: "prod-1", pieces: 10 }),
     ]);
+  });
+
+  it("a FAILED option-3 re-quote puts the pick back: Back shows the old quote with the excess AND 'credit at current price' checked", async () => {
+    await openToStep1();
+    await enterQtyAndGetQuote("16");
+    const covered = chunk({ sourceOrderId: "order-newest", pieces: 10 });
+    const excess = chunk({
+      sourceOrderId: null,
+      sourceInvoiceItemId: null,
+      pieces: 6,
+      subtotal: 15,
+    });
+    resolveNextQuote(quoteResponse([covered, excess]));
+    await screen.findByText(/not on any invoice/i);
+
+    fireEvent.click(screen.getByRole("radio", { name: /return only what was bought/i }));
+    await waitFor(() => expect(quoteMutate).toHaveBeenCalledTimes(2));
+    rejectNextQuote({ response: { status: 500, data: { message: "Quote failed" } } });
+    await screen.findByText("Quote failed");
+
+    fireEvent.click(screen.getByRole("button", { name: /^back$/i }));
+    await screen.findByText(/not on any invoice/i); // the old quote, excess still in
+    expect(screen.getByRole("radio", { name: /credit at current price/i })).toBeChecked();
+    expect(screen.getByRole("radio", { name: /return only what was bought/i })).not.toBeChecked();
+  });
+
+  it("a FAILED Step-1 quote clears the old quote: Back returns to the items, never to a quote that no longer matches them", async () => {
+    await openToStep1();
+    await enterQtyAndGetQuote("10");
+    resolveNextQuote(quoteResponse([chunk()]));
+    await screen.findByText(/issue credit note and receive goods/i);
+
+    fireEvent.click(screen.getByRole("button", { name: /^back$/i }));
+    await screen.findByText(/what came back/i);
+    fireEvent.change(screen.getByLabelText(/qty \(pieces\)/i), { target: { value: "12" } });
+    fireEvent.click(screen.getByRole("button", { name: /get quote/i }));
+    await waitFor(() => expect(quoteMutate).toHaveBeenCalledTimes(2));
+    rejectNextQuote({ response: { status: 500, data: { message: "Quote failed" } } });
+    await screen.findByText("Quote failed");
+
+    fireEvent.click(screen.getByRole("button", { name: /^back$/i }));
+    await screen.findByText(/what came back/i);
+    expect(
+      screen.queryByRole("button", { name: /issue credit note and receive goods/i }),
+    ).not.toBeInTheDocument();
   });
 });

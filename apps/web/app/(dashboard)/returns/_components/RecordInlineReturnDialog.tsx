@@ -213,6 +213,10 @@ export function RecordInlineReturnDialog({
         setStep("quote");
       },
       onError: (err) => {
+        // A failed Step-1 quote must not leave the OLD quote behind: `lines` were edited since it,
+        // so Back from the refusal would show a quote that no longer matches them. With no quote,
+        // Back returns to Step 1.
+        setQuote(null);
         setRefusalMessage(extractRefusalMessage(err));
         setStep("refused");
       },
@@ -220,6 +224,7 @@ export function RecordInlineReturnDialog({
   }
 
   function handleExcessOptionChange(option: ExcessOption) {
+    const previousOption = excessOption;
     setExcessOption(option);
     if (option !== "RETURN_ONLY_PURCHASED" || !quote) return;
     quoteMutation.mutate(dropExcessAndRequote(customerId, quote), {
@@ -233,6 +238,11 @@ export function RecordInlineReturnDialog({
         setLines((prev) => applyCoveredPiecesToLines(prev, data) as DialogLine[]);
       },
       onError: (err) => {
+        // The pick is set BEFORE its re-quote. If the re-quote fails the quote on screen is still
+        // the OLD one with the excess in it, so the pick must go back: leaving option 3 checked
+        // there would let capture credit the excess at current price under a "Return only what was
+        // bought" label.
+        setExcessOption(previousOption);
         setRefusalMessage(extractRefusalMessage(err));
         setStep("refused");
       },
