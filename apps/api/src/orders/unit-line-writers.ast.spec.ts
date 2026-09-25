@@ -278,7 +278,7 @@ const INVENTORY: Record<string, Row> = {
     kind: "NOT_ORDER_INVOICE_LINE",
     why: "RecurringInvoiceItem",
   },
-  "returns/inline-returns.service.ts::InlineReturnsService.capture": {
+  "returns/inline-returns.service.ts::InlineReturnsService.captureInTx": {
     kind: "NOT_ORDER_INVOICE_LINE",
     why: "ReturnItem",
   },

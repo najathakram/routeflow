@@ -95,6 +95,7 @@ describe("InlineReturnsService in-transaction core (#2094)", () => {
     });
     prisma.routeRunStop.findFirst.mockResolvedValue({ routeRunId: "run-1" });
     prisma.return.updateMany.mockResolvedValue({ count: 1 });
+    prisma.orderCreditNote.aggregate.mockResolvedValue({ _sum: { amount: null } });
     prisma.return.findFirst.mockResolvedValue(null);
     prisma.return.findMany.mockResolvedValue([]);
     prisma.return.create.mockImplementation(async ({ data }: any) => ({
@@ -227,6 +228,59 @@ describe("InlineReturnsService in-transaction core (#2094)", () => {
         "CN-2026-0099",
         "test-tenant",
       );
+    });
+
+    it("caps the orderCreditNote intent at the order balance (total minus credits already applied); the CN itself is minted in full, the remainder stays on account", async () => {
+      // Order total 100, $60 already applied to it: balance 40. The return is $70.
+      prisma.orderCreditNote.aggregate.mockResolvedValue({ _sum: { amount: 60 } });
+      const out = await (service as any).captureAndIssueInTx(tx, INPUT, OPERATOR, {
+        creditNoteNumber: "CN-2026-0042",
+      });
+      expect(creditNotes.mintStandaloneInTx).toHaveBeenCalledWith(
+        tx,
+        expect.objectContaining({ amount: 30 }),
+        "CN-2026-0042",
+        "test-tenant",
+      );
+      expect(prisma.orderCreditNote.create).toHaveBeenCalledWith({
+        data: { orderId: "ord-new", creditNoteId: "cn-1", amount: 30 },
+      });
+      expect(out.minted).toMatchObject({ id: "cn-1" });
+      // A bigger return is capped at the balance, never above it.
+      quote.priceInlineReturn.mockResolvedValue(priced(70));
+      prisma.return.updateMany.mockClear();
+      prisma.orderCreditNote.create.mockClear();
+      await (service as any).captureAndIssueInTx(
+        tx,
+        { ...INPUT, returnKey: "attempt-2" },
+        OPERATOR,
+        {
+          creditNoteNumber: "CN-2026-0043",
+        },
+      );
+      expect(prisma.orderCreditNote.create).toHaveBeenCalledWith({
+        data: { orderId: "ord-new", creditNoteId: "cn-1", amount: 40 },
+      });
+    });
+
+    it("writes no orderCreditNote intent when the order has no balance left, but still mints the credit", async () => {
+      prisma.orderCreditNote.aggregate.mockResolvedValue({ _sum: { amount: 100 } });
+      const out = await (service as any).captureAndIssueInTx(tx, INPUT, OPERATOR, {
+        creditNoteNumber: "CN-2026-0042",
+      });
+      expect(out.minted).toMatchObject({ id: "cn-1" });
+      expect(prisma.orderCreditNote.create).not.toHaveBeenCalled();
+      expect(prisma.return.updateMany).toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ creditNoteId: "cn-1" }) }),
+      );
+    });
+
+    it("the standalone path keeps its full-amount intent (unchanged)", async () => {
+      await (service as any).capture(
+        { ...INPUT, items: [{ productId: "prod-1", qty: 6 }] },
+        OPERATOR,
+      );
+      expect(prisma.orderCreditNote.aggregate).not.toHaveBeenCalled();
     });
 
     it("DRIVER_CAP hold: NO credit note, no orderCreditNote, no settle, no restock; the hold is audited", async () => {

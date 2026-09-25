@@ -148,6 +148,32 @@ export class InlineReturnsService {
     await this.assertGranted(this.prisma.getTenantId());
   }
 
+  /**
+   * The customer-scoped advisory lock (transaction-scoped, on the caller's own tx connection): the
+   * ONE definition, shared by the standalone capture and the order create/edit paths. It must be
+   * the tx's FIRST statement, before any row lock: house order advisory -> Return -> Order ->
+   * Invoice -> rows (SA-214). Inline and STANDARD return creation for one customer serialize on it.
+   */
+  async lockCustomerInTx(tx: any, customerId: string): Promise<void> {
+    await this.idempotency.acquireLock(
+      this.idempotency.hashFor(customerId, this.prisma.getTenantId(), "returns.customer"),
+      tx,
+    );
+  }
+
+  /**
+   * #2094 (SA-221): an order create reserves the credit-note number ONCE, before its P2002 retry
+   * loop, and reuses it across attempts (a final failure burns it, as a burned order number does
+   * today). Own short transaction, never inside a caller's tx that holds rows.
+   */
+  reserveCreditNoteNumber(): Promise<string> {
+    const tenantId = this.prisma.getTenantId();
+    return this.numbering.reserveNext("CREDIT_NOTE", {
+      year: new Date().getFullYear(),
+      tenantId: tenantId ?? undefined,
+    });
+  }
+
   /** Post-commit only, like every credit-note event here. */
   emitCreditIssued(tenantId: string | null, minted: any): void {
     this.emitCreditNoteCreated(tenantId, minted);
@@ -348,6 +374,7 @@ export class InlineReturnsService {
     );
     const minted = await this.issueCreditInTx(tx, ret, amount, this.prisma.getTenantId(), {
       creditNoteNumber: opts.creditNoteNumber,
+      capIntentToOrderBalance: true,
     });
     return { ...captured, minted };
   }
@@ -401,10 +428,7 @@ export class InlineReturnsService {
           // standard return creation for one customer serialize against each other here. The
           // order create/edit paths (#2094) take this same lock themselves, as their FIRST
           // statement, and then call `captureInTx`.
-          await this.idempotency.acquireLock(
-            this.idempotency.hashFor(dto.customerId, tenantId, "returns.customer"),
-            tx,
-          );
+          await this.lockCustomerInTx(tx, dto.customerId);
           return this.captureInTx(tx, dto, user);
         });
       } catch (err: any) {
@@ -449,7 +473,12 @@ export class InlineReturnsService {
     fresh: { id: string; customerId: string; orderId: string; returnNumber: string | null },
     amount: number,
     tenantId: string | null,
-    extra?: { approvedById?: string; creditNoteNumber?: string },
+    extra?: {
+      approvedById?: string;
+      creditNoteNumber?: string;
+      /** In-order path (#2094): cap the system-owned intent at the order's remaining balance. */
+      capIntentToOrderBalance?: boolean;
+    },
   ): Promise<any> {
     if (!(amount > 0.001)) return null;
 
@@ -498,9 +527,28 @@ export class InlineReturnsService {
     }
 
     // §2.1/§6.3: the one explicit, SYSTEM-OWNED intent on the carrying order.
-    await tx.orderCreditNote.create({
-      data: { orderId: fresh.orderId, creditNoteId: minted.id, amount },
-    });
+    // #2094 (SA-221 change 3): inside an order create/edit the intent is capped at the order's
+    // balance, read under the Order lock the caller holds = the order total minus the credits
+    // already applied to it. A new order has no invoice yet, so that is the whole balance. The CN is
+    // minted in full either way; whatever the cap leaves out stays on the customer's account.
+    let intent = amount;
+    if (extra?.capIntentToOrderBalance) {
+      const order = await tx.order.findFirst({
+        where: { id: fresh.orderId },
+        select: { total: true },
+      });
+      const applied = await tx.orderCreditNote.aggregate({
+        where: { orderId: fresh.orderId },
+        _sum: { amount: true },
+      });
+      const balance = Number(order?.total ?? 0) - Number(applied._sum.amount ?? 0);
+      intent = roundMoney(Math.min(amount, Math.max(0, balance)));
+    }
+    if (intent > 0.001) {
+      await tx.orderCreditNote.create({
+        data: { orderId: fresh.orderId, creditNoteId: minted.id, amount: intent },
+      });
+    }
     await this.creditNotes.settleOrderCreditsInTx(tx, fresh.orderId, tenantId);
     return minted;
   }

@@ -7,9 +7,12 @@ import {
   Logger,
   NotFoundException,
   OnApplicationBootstrap,
+  Optional,
   ServiceUnavailableException,
 } from "@nestjs/common";
 import { LeaderCron } from "../common/cron-lock";
+import { InlineReturnsService } from "../returns/inline-returns.service";
+import * as inlineReturn from "./order-inline-return";
 import { InjectQueue } from "@nestjs/bull";
 import type { Queue } from "bull";
 import { PrismaService } from "../prisma/prisma.service";
@@ -60,6 +63,7 @@ import {
   IDEMPOTENCY_KEY_CONFLICT,
   IDEMPOTENCY_REPLAY_NEEDS_RECONCILE,
   shouldSkipInPlaceResync,
+  findOrderIdByIdempotencyKey as findOrderIdByKey,
 } from "./merge-idempotency";
 import { BUYER_EDIT_CLOSED_STATUSES, computeEditWindow } from "./edit-window";
 import { cancelImpact } from "./order-cancel-impact";
@@ -183,6 +187,9 @@ export class OrdersService implements OnApplicationBootstrap {
     // and regulated-filing-cron) so every forTenant() call inside the merge resolves
     // that tenant's own config/data, never another tenant's.
     private readonly tenantCtx: TenantContextService,
+    // #2094: a return taken inside an order create/edit. Optional only so unrelated specs can build
+    // the service; a request carrying `inlineReturn` without it fails closed (prepareInlineReturn).
+    @Optional() private readonly inlineReturns?: InlineReturnsService,
   ) {}
 
   /**
@@ -1342,91 +1349,8 @@ export class OrdersService implements OnApplicationBootstrap {
     customerId: string,
     requestHash?: string,
   ): Promise<{ orderId: string; verified: boolean } | null> {
-    // B215: `forTenant()` hands back the UNSCOPED client when the session carries no tenant
-    // (prisma.service.ts `forTenant`), so for such a caller the lookups below would search
-    // every tenant's rows. Refuse up front — before any read and before the controller enters
-    // the fold — mirroring the identical guard in `create()`. `recordMergeIdempotencyKey`
-    // keeps the same check as the fail-closed backstop inside the fold's transaction.
-    if (!this.prisma.getTenantId()) {
-      this.logger.warn(`idempotency key refused: no tenant scope key=${idempotencyKey}`);
-      throw new ForbiddenException("Idempotency-Key requires a tenant-scoped session");
-    }
-    // B215: every staff merge wave records its OWN key in OrderIdempotencyKey (written inside
-    // the fold's transaction by recordMergeIdempotencyKey), so that table is the authoritative
-    // replay store for the merge branch. Scoped to THIS customer through the order relation —
-    // the key is client-chosen, so a bare match could replay onto another customer's order.
-    const keyed = await this.prisma.forTenant().orderIdempotencyKey.findFirst({
-      where: { key: idempotencyKey, order: { customerId } },
-      select: { orderId: true, responseHash: true },
-    });
-    if (keyed) {
-      if (requestHash !== undefined && keyed.responseHash !== requestHash) {
-        this.logger.warn(
-          `idempotency replay refused: cart mismatch tenant=${this.prisma.getTenantId()} ` +
-            `customer=${customerId} order=${keyed.orderId} key=${idempotencyKey}`,
-        );
-        // B215: machine-readable body — the mobile client cannot mint a fresh key without
-        // abandoning the cart, so it needs `orderId` to offer "Open order" instead of wedging
-        // the screen on a bare message.
-        throw new ConflictException({
-          code: IDEMPOTENCY_KEY_CONFLICT,
-          reason: "CART_MISMATCH",
-          orderId: keyed.orderId,
-          message:
-            "Idempotency-Key reused with a different cart — open the existing order to edit it, or retry it unchanged",
-        });
-      }
-      // VERIFIED only when a fingerprint was supplied AND matched: a caller that passes no
-      // `requestHash` (the db-spec's bare two-argument probe, any future keyless caller) has
-      // proven nothing about the body, so it gets the same unverified treatment as a column hit.
-      return { orderId: keyed.orderId, verified: requestHash !== undefined };
-    }
-    // The single Order column: keys stamped by create() and by recordIdempotencyKey. Unchanged.
-    // B215: deliberately NOT compared against `requestHash` — the column stores no fingerprint,
-    // and its main producer is the create -> retry path (the first POST creates the order and
-    // stamps the key; the retry finds it pending and enters the merge branch). Refusing that
-    // replay for want of a hash would re-open the double-write this fix exists to close, so a
-    // column-only hit is replay-eligible. The key TABLE, which does store the hash, is the only
-    // path that refuses on a mismatch. Pinned by P5.
-    //
-    // B215 (lookup ORDER, D3): this customer-scoped column read runs BEFORE the tenant-wide
-    // `heldByAnotherOrder` check below. Both are "the key exists somewhere in this tenant", but
-    // only this one proves it is THIS customer's own order — checking the tenant-wide table
-    // first refused a legitimate replay of the caller's own key with a 409 whenever the key sat
-    // on the Order column here and any other customer happened to hold a key-table row.
-    const existing = await this.prisma.forTenant().order.findFirst({
-      where: { idempotencyKey, customerId },
-      select: { id: true },
-    });
-    // UNVERIFIED by construction: the column stores no fingerprint, so this hit proves only
-    // "this customer's order already used this key", never "with this cart".
-    if (existing) return { orderId: existing.id, verified: false };
-    // B215: the key may already belong to ANOTHER customer's order in this tenant. The in-tx
-    // insert catches that through `@@unique([tenantId, key])`, but only after
-    // `revertLinkedInvoicesForOrderEdit` has committed on its own connection (outside the fold)
-    // and the whole fold has run — so a 409 there leaves a linked invoice flipped SENT -> DRAFT
-    // for an edit that never landed. Refuse here instead: this lookup runs inside the customer
-    // advisory lock, before any write. The P2002 branch of `recordMergeIdempotencyKey` stays as
-    // the backstop for a true race (a customer-keyed lock does not serialize against another
-    // customer's fold).
-    const heldByAnotherOrder = await this.prisma.forTenant().orderIdempotencyKey.findFirst({
-      where: { key: idempotencyKey },
-      select: { orderId: true },
-    });
-    if (heldByAnotherOrder) {
-      this.logger.warn(
-        `idempotency key already held by another order: refused before the fold ` +
-          `tenant=${this.prisma.getTenantId()} customer=${customerId} ` +
-          `order=${heldByAnotherOrder.orderId} key=${idempotencyKey}`,
-      );
-      throw new ConflictException({
-        code: IDEMPOTENCY_KEY_CONFLICT,
-        reason: "HELD_BY_OTHER_ORDER",
-        orderId: heldByAnotherOrder.orderId,
-        message: "Idempotency-Key already used for a different order",
-      });
-    }
-    return null;
+    const deps = { prisma: this.prisma, logger: this.logger };
+    return findOrderIdByKey(deps, idempotencyKey, customerId, requestHash);
   }
 
   /**
@@ -1549,6 +1473,11 @@ export class OrdersService implements OnApplicationBootstrap {
     // customer is known; the P2002 branch further down catches the narrow
     // concurrent-race window that pre-check can't.
     const idempotencyKey = (dto as any).idempotencyKey as string | undefined;
+    const inlineRet = await inlineReturn.prepareInlineReturn(
+      this.inlineReturns,
+      dto.inlineReturn,
+      user,
+    ); // #2094: first, before any read
     // The key is stored under @@unique([tenantId, idempotencyKey]) and every
     // lookup rides forTenant(), which hands back the UNSCOPED client when the
     // caller carries no tenant (SUPER_ADMIN — admitted here by RolesGuard's
@@ -2136,10 +2065,13 @@ export class OrdersService implements OnApplicationBootstrap {
     const MAX_RETRIES = 3;
     const unitOrder = lineItemsData.some((li) => "unitLabel" in li); // units_v1: never auto-merged
     let order: any;
+    let inlineMinted: any = null;
+    await inlineReturn.reserveInlineReturnNumber(inlineRet); // #2094: once, before the P2002 retry loop
     for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
       try {
         order = await this.prisma.tenantTransaction(
           async (tx) => {
+            await inlineReturn.lockInlineReturnCustomer(tx, inlineRet, customerId); // advisory FIRST
             // RF-014: generate the order number inside the transaction so a P2002 on
             // @@unique([tenantId, orderNumber]) is retried with a fresh value. B587: the NUMERIC
             // maximum over conforming `ORD-<digits>` numbers only (see order-number.ts). Minted BEFORE the
@@ -2163,7 +2095,7 @@ export class OrdersService implements OnApplicationBootstrap {
               await this.decrementStockForSale(tx, stockLines, isStaffRole);
             }
 
-            return tx.order.create({
+            const created = await tx.order.create({
               data: {
                 customerId,
                 orderNumber,
@@ -2183,7 +2115,8 @@ export class OrdersService implements OnApplicationBootstrap {
                 // merge set in BOTH directions regardless of what the caller asked for:
                 // as a loser the sweep hard-deletes it (its orderDate and order number
                 // are gone), as a winner it absorbs items that belong to another day.
-                skipAutoMerge: orderDate != null || !!options.skipAutoMerge || unitOrder,
+                skipAutoMerge:
+                  orderDate != null || !!options.skipAutoMerge || unitOrder || !!inlineRet,
                 // Phase 4 (W4): denormalized flag — true when any line is regulated.
                 hasRegulated: lineItemsData.some((li) => li.trackedCategoryId != null),
                 requestedDeliveryDate: dto.requestedDeliveryDate
@@ -2204,6 +2137,13 @@ export class OrdersService implements OnApplicationBootstrap {
                 },
               },
             });
+            inlineMinted = await inlineReturn.applyInlineReturnInTx(tx, inlineRet, {
+              customerId,
+              orderId: created.id,
+              user,
+              orderRouteRunId: resolvedRouteRunId ?? dto.routeRunId,
+            });
+            return created;
           },
           // B116 (REG-B116): bound the stock transaction instead of leaving it
           // uncapped — an unbounded interactive transaction can hold the
@@ -2246,6 +2186,7 @@ export class OrdersService implements OnApplicationBootstrap {
       }
     }
 
+    inlineReturn.emitInlineReturnCredit(inlineRet, this.prisma.getTenantId(), inlineMinted);
     // If driver is creating at a stop, link order to route run and optionally confirm it
     if (dto.routeRunId || dto.routeRunStopId) {
       await this.prisma.forTenant().order.update({

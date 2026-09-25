@@ -1,0 +1,84 @@
+import fs from "node:fs";
+import path from "node:path";
+
+/**
+ * #2094 PR-A / SA-221: source pins on where OrdersService.create() calls the inline-return glue, and
+ * on what must NOT sit inside the order transaction. Behavior is proven in the DB specs; these pins
+ * fail the moment someone reorders the calls (the lock-order and retry-loop rules are order rules).
+ * Comments are stripped so prose that names a call is fine.
+ */
+const strip = (code: string) =>
+  code.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:])\/\/.*$/gm, "$1");
+const service = strip(fs.readFileSync(path.join(__dirname, "orders.service.ts"), "utf8"));
+
+const methodBody = (name: string) => {
+  const start = service.indexOf(`async ${name}(`);
+  expect(start).toBeGreaterThan(-1);
+  const rest = service.slice(start + 1);
+  const next = rest.search(/\n  (private |public |static )?(async )?[A-Za-z_]+\(/);
+  return service.slice(start, next === -1 ? undefined : start + 1 + next);
+};
+
+describe("OrdersService.create(): inline-return call order (#2094)", () => {
+  const body = methodBody("create");
+  const at = (needle: string) => {
+    const i = body.indexOf(needle);
+    expect(i).toBeGreaterThan(-1);
+    return i;
+  };
+  // The loop's `break;` (its trailing comment is stripped): the order tx has committed by here.
+  const commit = () => {
+    const i = body.indexOf("break;", at("for (let attempt"));
+    expect(i).toBeGreaterThan(-1);
+    return i;
+  };
+
+  it("the guard (prepareInlineReturn) is the first thing done, before any read of the customer", () => {
+    expect(at("prepareInlineReturn(")).toBeLessThan(at("customer.findUnique("));
+  });
+
+  it("the credit-note number is reserved ONCE, before the P2002 retry loop, never inside it", () => {
+    const reserve = at("reserveInlineReturnNumber(");
+    const loop = at("for (let attempt");
+    expect(reserve).toBeLessThan(loop);
+    expect(body.split("reserveInlineReturnNumber(").length - 1).toBe(1);
+  });
+
+  it("the customer advisory lock is the FIRST statement of the order tx: before the order number, the stock rows and the order write", () => {
+    const lock = at("lockInlineReturnCustomer(");
+    expect(lock).toBeGreaterThan(at("for (let attempt"));
+    expect(lock).toBeLessThan(at("nextOrderNumberFor("));
+    expect(lock).toBeLessThan(at("decrementStockForSale("));
+    expect(lock).toBeLessThan(at("tx.order.create("));
+  });
+
+  it("the return is applied AFTER the order and its lines exist, inside the same tx callback", () => {
+    expect(at("applyInlineReturnInTx(")).toBeGreaterThan(at("tx.order.create("));
+    expect(at("applyInlineReturnInTx(")).toBeLessThan(commit());
+  });
+
+  it("the credit event is emitted only after the loop (after the commit)", () => {
+    expect(at("emitInlineReturnCredit(")).toBeGreaterThan(commit());
+  });
+
+  it("an order that carries a return is never a candidate for the auto-merge sweep", () => {
+    expect(body).toMatch(/skipAutoMerge:[^,]*!!inlineRet/);
+  });
+
+  it("the existing appliedCreditNotes sync keeps its OWN Serializable tx, outside the order tx (SA-221 change 1)", () => {
+    const sync = at("syncOrderCreditSelections(");
+    expect(sync).toBeGreaterThan(commit());
+    expect(body.slice(sync, sync + 500)).toContain('isolationLevel: "Serializable"');
+  });
+
+  it("nothing between the customer lock and the commit takes another advisory lock or a tx-less recompute", () => {
+    const window = body.slice(at("lockInlineReturnCustomer("), commit());
+    for (const forbidden of [
+      "withAdvisoryLock",
+      "withOrderRecomputeLock",
+      "recomputeOrderFromInvoices",
+    ]) {
+      expect(window).not.toContain(forbidden);
+    }
+  });
+});

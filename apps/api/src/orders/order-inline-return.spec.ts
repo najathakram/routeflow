@@ -1,0 +1,134 @@
+import { ForbiddenException, ServiceUnavailableException } from "@nestjs/common";
+import {
+  applyInlineReturnInTx,
+  emitInlineReturnCredit,
+  lockInlineReturnCustomer,
+  prepareInlineReturn,
+  reserveInlineReturnNumber,
+} from "./order-inline-return";
+
+/**
+ * #2094: the order-side glue. The service behind it is stubbed; what is pinned here is WHEN each
+ * call happens and what the client can and cannot choose (customer/order are derived).
+ */
+const LINES = { returnKey: "k1", items: [{ productId: "p1", boxes: 0, pieces: 2 }] } as any;
+const STAFF = { sub: "u1", role: "OPERATOR", tenantId: "t1" } as any;
+
+const svcStub = () => ({
+  assertInlineReturnAllowed: jest.fn().mockResolvedValue(undefined),
+  reserveCreditNoteNumber: jest.fn().mockResolvedValue("CN-2026-0001"),
+  lockCustomerInTx: jest.fn().mockResolvedValue(undefined),
+  captureAndIssueInTx: jest.fn().mockResolvedValue({ minted: { id: "cn-1" } }),
+  emitCreditIssued: jest.fn(),
+});
+
+describe("prepareInlineReturn", () => {
+  it("no inlineReturn: null, and the service is never touched (every existing caller is unchanged)", async () => {
+    const svc = svcStub();
+    expect(await prepareInlineReturn(svc as any, undefined, STAFF)).toBeNull();
+    expect(svc.assertInlineReturnAllowed).not.toHaveBeenCalled();
+  });
+
+  it("a call without a user is refused", async () => {
+    await expect(prepareInlineReturn(svcStub() as any, LINES, undefined)).rejects.toThrow(
+      ForbiddenException,
+    );
+  });
+
+  it("a missing provider fails closed (503), never a silent skip", async () => {
+    await expect(prepareInlineReturn(undefined, LINES, STAFF)).rejects.toThrow(
+      ServiceUnavailableException,
+    );
+  });
+
+  it("the service's guard runs (buyer / add-on) and its refusal propagates untouched", async () => {
+    const svc = svcStub();
+    svc.assertInlineReturnAllowed.mockRejectedValue(new ForbiddenException("Buyers cannot"));
+    await expect(prepareInlineReturn(svc as any, LINES, STAFF)).rejects.toThrow(ForbiddenException);
+    expect(svc.reserveCreditNoteNumber).not.toHaveBeenCalled();
+  });
+
+  it("a granted staff call returns the prepared handle with no number reserved yet", async () => {
+    const svc = svcStub();
+    const p = await prepareInlineReturn(svc as any, LINES, STAFF);
+    expect(p).toMatchObject({ lines: LINES });
+    expect(p!.creditNoteNumber).toBeUndefined();
+    expect(svc.reserveCreditNoteNumber).not.toHaveBeenCalled();
+  });
+});
+
+describe("reserveInlineReturnNumber / lockInlineReturnCustomer", () => {
+  it("reserves the credit-note number once and stores it on the handle", async () => {
+    const svc = svcStub();
+    const p = await prepareInlineReturn(svc as any, LINES, STAFF);
+    await reserveInlineReturnNumber(p);
+    expect(p!.creditNoteNumber).toBe("CN-2026-0001");
+    expect(svc.reserveCreditNoteNumber).toHaveBeenCalledTimes(1);
+  });
+
+  it("both are no-ops without an inline return", async () => {
+    await expect(reserveInlineReturnNumber(null)).resolves.toBeUndefined();
+    await expect(lockInlineReturnCustomer({}, null, "c1")).resolves.toBeUndefined();
+  });
+
+  it("the lock is taken on the caller's tx for the document's customer", async () => {
+    const svc = svcStub();
+    const p = await prepareInlineReturn(svc as any, LINES, STAFF);
+    const tx = { id: "tx" };
+    await lockInlineReturnCustomer(tx, p, "cust-9");
+    expect(svc.lockCustomerInTx).toHaveBeenCalledWith(tx, "cust-9");
+  });
+});
+
+describe("applyInlineReturnInTx", () => {
+  it("derives customer and order from the document and passes the reserved number and driver run", async () => {
+    const svc = svcStub();
+    const p = await prepareInlineReturn(svc as any, LINES, STAFF);
+    await reserveInlineReturnNumber(p);
+    const tx = {};
+    const minted = await applyInlineReturnInTx(tx, p, {
+      customerId: "cust-1",
+      orderId: "ord-1",
+      user: STAFF,
+      orderRouteRunId: "run-1",
+    });
+    expect(minted).toEqual({ id: "cn-1" });
+    expect(svc.captureAndIssueInTx).toHaveBeenCalledWith(
+      tx,
+      { ...LINES, customerId: "cust-1", orderId: "ord-1" },
+      STAFF,
+      { creditNoteNumber: "CN-2026-0001", orderRouteRunId: "run-1" },
+    );
+  });
+
+  it("a client-supplied customer/order in the lines can never win: the document's own ids overwrite them", async () => {
+    const svc = svcStub();
+    const p = await prepareInlineReturn(
+      svc as any,
+      { ...LINES, customerId: "evil", orderId: "evil" },
+      STAFF,
+    );
+    await applyInlineReturnInTx({}, p, { customerId: "cust-1", orderId: "ord-1", user: STAFF });
+    const passed = svc.captureAndIssueInTx.mock.calls[0][1];
+    expect([passed.customerId, passed.orderId]).toEqual(["cust-1", "ord-1"]);
+  });
+
+  it("null when there is no inline return", async () => {
+    expect(
+      await applyInlineReturnInTx({}, null, { customerId: "c", orderId: "o", user: STAFF }),
+    ).toBeNull();
+  });
+});
+
+describe("emitInlineReturnCredit", () => {
+  it("emits only when a credit note was minted, and only through the after-commit hook", async () => {
+    const svc = svcStub();
+    const p = await prepareInlineReturn(svc as any, LINES, STAFF);
+    emitInlineReturnCredit(p, "t1", null);
+    expect(svc.emitCreditIssued).not.toHaveBeenCalled();
+    emitInlineReturnCredit(p, "t1", { id: "cn-1" });
+    expect(svc.emitCreditIssued).toHaveBeenCalledWith("t1", { id: "cn-1" });
+    emitInlineReturnCredit(null, "t1", { id: "cn-1" });
+    expect(svc.emitCreditIssued).toHaveBeenCalledTimes(1);
+  });
+});
