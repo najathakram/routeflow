@@ -161,6 +161,11 @@ export class NumberingService {
    * compare-and-set (`updateMany` gated on the stored `nextNumber`, 0 rows
    * matched → 409) against an existing row, or a plain `create` when none
    * exists yet (a concurrent first save racing to the same row → P2002 → 409).
+   * The version token is `nextNumber` ONLY (SA-274 Q3, SA-287 LOW, accepted):
+   * a prefix/padding edit saved from another tab, or a next number raised and
+   * lowered back to the same value, leaves it unchanged, so a stale save can
+   * still overwrite that tab's prefix/padding. It cannot rewind the counter
+   * below an existing number — the Q2 guard above still refuses that.
    */
   async updateSettings(
     docType: DocumentNumberType,
