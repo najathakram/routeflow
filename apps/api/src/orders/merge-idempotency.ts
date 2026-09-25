@@ -1,5 +1,6 @@
 import { ConflictException, ForbiddenException } from "@nestjs/common";
 import { createHash } from "crypto";
+import { assertReplayCarriesReturnKey } from "./order-inline-return";
 
 // Canonical JSON: object keys sorted, undefined-valued keys dropped (an absent field and a
 // missing field fingerprint the same), arrays kept in order at this level.
@@ -208,4 +209,21 @@ export async function findOrderIdByIdempotencyKey(
     });
   }
   return null;
+}
+
+/**
+ * #2094 (Opus R): `findOrderIdByIdempotencyKey`, then a request that carries a return checks it on
+ * EVERY key hit, verified or not (a merge target legitimately holds earlier returns, so only a
+ * request with a returnKey is checked).
+ */
+export async function findOrderIdByKeyCheckingReturn(
+  deps: IdempotencyLookupDeps & { prisma: { forTenant(): unknown } },
+  idempotencyKey: string,
+  customerId: string,
+  requestHash?: string,
+  returnKey?: string,
+): Promise<{ orderId: string; verified: boolean } | null> {
+  const hit = await findOrderIdByIdempotencyKey(deps, idempotencyKey, customerId, requestHash);
+  if (hit) await assertReplayCarriesReturnKey(deps.prisma.forTenant(), returnKey, hit.orderId);
+  return hit;
 }

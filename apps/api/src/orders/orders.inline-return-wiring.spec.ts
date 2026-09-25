@@ -62,13 +62,11 @@ describe("OrdersService.create(): inline-return call order (#2094)", () => {
   });
 
   it("an Idempotency-Key replay must find THIS returnKey on the order: both the pre-check and the P2002 winner path assert it before returning", () => {
-    const calls = body.split("assertReplayCarriesReturn(").length - 1;
+    const calls = body.split("replayAfterCheck(").length - 1;
     expect(calls).toBe(2);
-    const first = at("assertReplayCarriesReturn(");
+    const first = at("replayAfterCheck(");
     expect(first).toBeLessThan(at("for (let attempt")); // the pre-check
-    expect(body.indexOf("assertReplayCarriesReturn(", first + 1)).toBeGreaterThan(
-      at("for (let attempt"),
-    ); // the winner path
+    expect(body.indexOf("replayAfterCheck(", first + 1)).toBeGreaterThan(at("for (let attempt")); // the winner path
   });
 
   it("a deadlock or serialization failure on a create carrying a return retries, inside the same loop (the reserved number is reused)", () => {

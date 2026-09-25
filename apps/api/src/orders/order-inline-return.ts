@@ -89,6 +89,16 @@ export async function assertReplayCarriesReturn(
   }
 }
 
+/** `assertReplayCarriesReturn`, then hands the replayed order back (create()'s two replay exits). */
+export async function replayAfterCheck<T extends { id: string }>(
+  db: any,
+  p: PreparedInlineReturn | null,
+  existing: T,
+): Promise<T> {
+  await assertReplayCarriesReturn(db, p, existing.id);
+  return existing;
+}
+
 /**
  * The forward direction alone: the replayed order must carry THIS returnKey. Also what a merge replay
  * runs on EVERY key hit (verified or not, Opus R): a merge target legitimately holds earlier returns,

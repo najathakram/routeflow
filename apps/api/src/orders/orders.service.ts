@@ -13,6 +13,7 @@ import {
 import { LeaderCron } from "../common/cron-lock";
 import { InlineReturnsService } from "../returns/inline-returns.service";
 import * as inlineReturn from "./order-inline-return";
+import { prepareInlineReturn, replayAfterCheck } from "./order-inline-return";
 import { InjectQueue } from "@nestjs/bull";
 import type { Queue } from "bull";
 import { PrismaService } from "../prisma/prisma.service";
@@ -63,7 +64,7 @@ import {
   IDEMPOTENCY_KEY_CONFLICT,
   IDEMPOTENCY_REPLAY_NEEDS_RECONCILE,
   shouldSkipInPlaceResync,
-  findOrderIdByIdempotencyKey as findOrderIdByKey,
+  findOrderIdByKeyCheckingReturn as findOrderIdByKey,
 } from "./merge-idempotency";
 import { BUYER_EDIT_CLOSED_STATUSES, computeEditWindow } from "./edit-window";
 import { cancelImpact } from "./order-cancel-impact";
@@ -187,8 +188,7 @@ export class OrdersService implements OnApplicationBootstrap {
     // and regulated-filing-cron) so every forTenant() call inside the merge resolves
     // that tenant's own config/data, never another tenant's.
     private readonly tenantCtx: TenantContextService,
-    // #2094: a return taken inside an order create/edit. Optional only so unrelated specs can build
-    // the service; a request carrying `inlineReturn` without it fails closed (prepareInlineReturn).
+    // #2094: optional so unrelated specs build; `inlineReturn` without it fails closed.
     @Optional() private readonly inlineReturns?: InlineReturnsService,
   ) {}
 
@@ -1351,15 +1351,7 @@ export class OrdersService implements OnApplicationBootstrap {
     returnKey?: string,
   ): Promise<{ orderId: string; verified: boolean } | null> {
     const deps = { prisma: this.prisma, logger: this.logger };
-    const hit = await findOrderIdByKey(deps, idempotencyKey, customerId, requestHash);
-    // #2094 (Opus R): a request carrying a return checks it on EVERY key hit, verified or not.
-    if (hit)
-      await inlineReturn.assertReplayCarriesReturnKey(
-        this.prisma.forTenant(),
-        returnKey,
-        hit.orderId,
-      );
-    return hit;
+    return findOrderIdByKey(deps, idempotencyKey, customerId, requestHash, returnKey);
   }
 
   /**
@@ -1482,11 +1474,7 @@ export class OrdersService implements OnApplicationBootstrap {
     // customer is known; the P2002 branch further down catches the narrow
     // concurrent-race window that pre-check can't.
     const idempotencyKey = (dto as any).idempotencyKey as string | undefined;
-    const inlineRet = await inlineReturn.prepareInlineReturn(
-      this.inlineReturns,
-      dto.inlineReturn,
-      user,
-    ); // #2094: first, before any read
+    const inlineRet = await prepareInlineReturn(this.inlineReturns, dto.inlineReturn, user);
     // The key is stored under @@unique([tenantId, idempotencyKey]) and every
     // lookup rides forTenant(), which hands back the UNSCOPED client when the
     // caller carries no tenant (SUPER_ADMIN — admitted here by RolesGuard's
@@ -1645,12 +1633,7 @@ export class OrdersService implements OnApplicationBootstrap {
             );
           }
         }
-        await inlineReturn.assertReplayCarriesReturn(
-          this.prisma.forTenant(),
-          inlineRet,
-          existing.id,
-        );
-        return existing;
+        return replayAfterCheck(this.prisma.forTenant(), inlineRet, existing);
       }
     }
 
@@ -2190,12 +2173,7 @@ export class OrdersService implements OnApplicationBootstrap {
               throw new ConflictException("Idempotency-Key already used for a different order");
             }
             if (existing) {
-              await inlineReturn.assertReplayCarriesReturn(
-                this.prisma.forTenant(),
-                inlineRet,
-                existing.id,
-              );
-              return existing;
+              return replayAfterCheck(this.prisma.forTenant(), inlineRet, existing);
             }
           }
           // Retry only on orderNumber unique-constraint violations (RF-014);
@@ -2203,7 +2181,6 @@ export class OrdersService implements OnApplicationBootstrap {
           // for OOS items from RF-017).
           if (attempt < MAX_RETRIES - 1) continue;
         }
-        // #2094: a deadlock/serialization failure on a create that carries a return retries too.
         if (inlineRet && inlineReturn.isRetryableTxError(e) && attempt < MAX_RETRIES - 1) continue;
         throw e;
       }
@@ -3014,11 +2991,7 @@ export class OrdersService implements OnApplicationBootstrap {
     if (order.status === "CANCELLED") {
       throw new BadRequestException("Items can't be edited on a cancelled order");
     }
-    const inlineRet = await inlineReturn.prepareInlineReturn(
-      this.inlineReturns,
-      dto.inlineReturn,
-      user,
-    );
+    const inlineRet = await prepareInlineReturn(this.inlineReturns, dto.inlineReturn, user);
     let inlineMinted: any = null; // #2094: emitted after the commit
     // units_v1: every branch below re-derives factor + price from the LIVE product (see the guard).
     await unitAware.assertOrderEditAllowed(order, dto, user, () =>
@@ -3098,8 +3071,7 @@ export class OrdersService implements OnApplicationBootstrap {
     // a paid one throws cleanly before any mutation so money never detaches from a sent
     // document. No-op when there's no such invoice.
     const postDeliveryEdit = POST_DELIVERY_EDIT_STATUSES.includes(order.status);
-    // #2094: refuse a bad return BEFORE the un-tx'd revert below commits; the credit-note number is
-    // reserved after the license guard, BEFORE the tx (never while holding the Order lock).
+    // #2094: refuse a bad return BEFORE the un-tx'd revert commits; the CN number reserves later.
     await inlineReturn.preflightInlineReturn(inlineRet, order, user);
     if (!postDeliveryEdit) {
       await this.invoicesService.revertLinkedInvoicesForOrderEdit(orderId);
@@ -4496,8 +4468,7 @@ export class OrdersService implements OnApplicationBootstrap {
             if (opts?.idempotency) {
               await this.recordMergeIdempotencyKey(tx, orderId, opts.idempotency);
             }
-            // #2094: the return lands in THIS tx, after the order's new total is written, under the Order
-            // lock; then the credit gate re-reads exposure after the credit is applied (SA-221 change 3).
+            // #2094: the return lands in THIS tx after the new total; the gate re-reads (SA-221 c3).
             inlineMinted = await inlineReturn.applyInlineReturnInTx(tx, inlineRet, {
               customerId: order.customerId,
               orderId,
