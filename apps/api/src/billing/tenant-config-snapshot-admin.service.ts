@@ -99,9 +99,18 @@ export class TenantConfigSnapshotAdminService {
       return items.map((i) => ({ ...i, restoreReport: null }));
     }
     const auditRows = await this.prisma.auditLog.findMany({
-      where: { tenantId, action: CONFIG_SNAPSHOT_RESTORED_ACTION },
+      // Both writers always set entityType "tenant" + entityId tenantId, so this hits
+      // AuditLog_entityType_entityId_idx instead of scanning every audit row the tenant has, and
+      // one row per restored snapshot is all the list can use.
+      where: {
+        tenantId,
+        action: CONFIG_SNAPSHOT_RESTORED_ACTION,
+        entityType: "tenant",
+        entityId: tenantId,
+      },
       select: { meta: true },
       orderBy: { createdAt: "desc" },
+      take: restoredIds.length,
     });
     const reportBySnapshotId = new Map<string, RestoreReportView>();
     for (const row of auditRows) {
@@ -110,14 +119,20 @@ export class TenantConfigSnapshotAdminService {
       // Newest-first order + set-once: an id can appear twice only via a bug (idempotency guards
       // both restore paths against a duplicate), so the first (newest) row wins if it ever did.
       if (!snapshotId || reportBySnapshotId.has(snapshotId)) continue;
+      // Only a report whose four counts are all finite numbers is shown; anything else ({},
+      // "abc", a missing count) is unreadable and reports null, never a made-up 0 or NaN.
       const report = meta?.report as Record<string, unknown> | undefined;
-      if (!report) continue;
+      const restored = report?.restored;
+      const skipped = report?.skipped;
+      const keptNewer = report?.keptNewer;
+      const unchanged = report?.unchanged;
+      if (![restored, skipped, keptNewer, unchanged].every(Number.isFinite)) continue;
       reportBySnapshotId.set(snapshotId, {
         automatic: meta?.automatic === true,
-        restored: Number(report.restored ?? 0),
-        skipped: Number(report.skipped ?? 0),
-        keptNewer: Number(report.keptNewer ?? 0),
-        unchanged: Number(report.unchanged ?? 0),
+        restored: restored as number,
+        skipped: skipped as number,
+        keptNewer: keptNewer as number,
+        unchanged: unchanged as number,
       });
     }
     return items.map((i) => ({ ...i, restoreReport: reportBySnapshotId.get(i.id) ?? null }));

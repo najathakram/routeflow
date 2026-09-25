@@ -98,11 +98,19 @@ describe("TenantConfigSnapshotAdminService (A2 step c)", () => {
 
     const rows = await svc.list("t1");
 
-    expect(prisma.auditLog.findMany).toHaveBeenCalledWith(
-      expect.objectContaining({
-        where: { tenantId: "t1", action: "CONFIG_SNAPSHOT_RESTORED" },
-      }),
-    );
+    // Bounded: the entityType/entityId pair hits AuditLog_entityType_entityId_idx (both writers
+    // always set them), newest first, and one row per restored snapshot at most.
+    expect(prisma.auditLog.findMany).toHaveBeenCalledWith({
+      where: {
+        tenantId: "t1",
+        action: "CONFIG_SNAPSHOT_RESTORED",
+        entityType: "tenant",
+        entityId: "t1",
+      },
+      select: { meta: true },
+      orderBy: { createdAt: "desc" },
+      take: 1,
+    });
     expect(rows[0].restoreReport).toEqual({
       automatic: false,
       restored: 2,
@@ -138,6 +146,51 @@ describe("TenantConfigSnapshotAdminService (A2 step c)", () => {
     const rows = await svc.list("t1");
 
     expect(rows[0].restoreReport).toBeNull();
+  });
+
+  it("list() takes at most one audit row per restored snapshot (take = restored count)", async () => {
+    const { svc, snapshots, prisma } = build();
+    snapshots.list.mockResolvedValueOnce([
+      { id: "s1", restoredAt: TAKEN },
+      { id: "s2", restoredAt: TAKEN },
+      { id: "s3", restoredAt: null },
+    ]);
+    prisma.auditLog.findMany.mockResolvedValueOnce([]);
+    await svc.list("t1");
+    expect(prisma.auditLog.findMany).toHaveBeenCalledWith(expect.objectContaining({ take: 2 }));
+  });
+
+  it.each([
+    ["an empty report object", {}],
+    ["a string count", { restored: "abc", skipped: 0, keptNewer: 0, unchanged: 0 }],
+    ["a missing count", { restored: 1, skipped: 0, keptNewer: 0 }],
+    ["a NaN count", { restored: Number.NaN, skipped: 0, keptNewer: 0, unchanged: 0 }],
+    ["an Infinity count", { restored: 1, skipped: Infinity, keptNewer: 0, unchanged: 0 }],
+    ["a numeric string", { restored: "2", skipped: 0, keptNewer: 0, unchanged: 0 }],
+    ["a non-object report", "abc"],
+  ])("list() reports null, never made-up counts, for %s", async (_label, report) => {
+    const { svc, snapshots, prisma } = build();
+    snapshots.list.mockResolvedValueOnce([{ id: "s1", restoredAt: TAKEN }]);
+    prisma.auditLog.findMany.mockResolvedValueOnce([
+      { meta: { automatic: false, snapshotId: "s1", report } },
+    ]);
+    const rows = await svc.list("t1");
+    expect(rows[0].restoreReport).toBeNull();
+  });
+
+  it("list() newest-wins: when two audit rows carry one snapshotId the first (newest) row is used", async () => {
+    const { svc, snapshots, prisma } = build();
+    snapshots.list.mockResolvedValueOnce([{ id: "s1", restoredAt: TAKEN }]);
+    prisma.auditLog.findMany.mockResolvedValueOnce([
+      {
+        meta: { snapshotId: "s1", report: { restored: 9, skipped: 0, keptNewer: 0, unchanged: 0 } },
+      },
+      {
+        meta: { snapshotId: "s1", report: { restored: 1, skipped: 0, keptNewer: 0, unchanged: 0 } },
+      },
+    ]);
+    const rows = await svc.list("t1");
+    expect(rows[0].restoreReport?.restored).toBe(9);
   });
 
   it("list() matches each restored row to its OWN audit entry, never mixing up two snapshots", async () => {

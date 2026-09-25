@@ -228,6 +228,27 @@ describe("ConfigSnapshotsTab", () => {
     );
   });
 
+  it("two downgrades on the SAME day get different accessible names (the plan key is part of the name)", async () => {
+    await renderTab([
+      snap({ id: "s1", planKey: "GROWTH", takenAt: "2026-09-11T08:00:00.000Z" }),
+      snap({ id: "s2", planKey: "SCALE", takenAt: "2026-09-11T17:00:00.000Z" }),
+    ]);
+    const buttons = await screen.findAllByRole("button", { name: /^Restore now/ });
+    const names = buttons.map((b) => b.getAttribute("aria-label"));
+    expect(new Set(names).size).toBe(2);
+    expect(names[0]).toMatch(/GROWTH/);
+    expect(names[1]).toMatch(/SCALE/);
+  });
+
+  it("the preview says '1 day old', not '1 days old'", async () => {
+    mockPreview.mockResolvedValue({ ...PREVIEW, ageDays: 1 });
+    await renderTab();
+    fireEvent.click(await screen.findByRole("button", { name: /^Restore now/ }));
+    const dialog = await screen.findByRole("dialog");
+    expect(dialog.textContent).toMatch(/\(1 day old,/);
+    expect(dialog.textContent).not.toMatch(/1 days old/);
+  });
+
   it("warns when the snapshot is beyond the automatic-restore horizon — a deliberate override", async () => {
     mockPreview.mockResolvedValue({ ...PREVIEW, ageDays: 120, beyondAutoRestoreHorizon: true });
     await renderTab();

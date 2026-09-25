@@ -178,7 +178,7 @@ export function ConfigSnapshotsTab({ tenantId }: { tenantId: string }) {
                       {!r.restoredAt && r.entries && (
                         <button
                           onClick={() => openRestore(r)}
-                          aria-label={`Restore now — snapshot of ${fmt(r.takenAt)}`}
+                          aria-label={`Restore now — snapshot of ${fmt(r.takenAt)} (${r.planKey})`}
                           className="min-h-[36px] rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-indigo-500"
                         >
                           Restore now
@@ -231,8 +231,9 @@ export function ConfigSnapshotsTab({ tenantId }: { tenantId: string }) {
         {preview && (
           <div className="flex flex-col gap-4 text-xs">
             <p className="text-slate-300">
-              Snapshot of {fmt(preview.takenAt)} ({preview.ageDays} days old, taken leaving{" "}
-              {preview.planKey}), restored as it was onto the tenant&apos;s current plan,{" "}
+              Snapshot of {fmt(preview.takenAt)} ({preview.ageDays}{" "}
+              {preview.ageDays === 1 ? "day" : "days"} old, taken leaving {preview.planKey}),
+              restored as it was onto the tenant&apos;s current plan,{" "}
               <b>{preview.currentPlanKey}</b>.
             </p>
             {preview.beyondAutoRestoreHorizon && (
