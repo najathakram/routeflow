@@ -911,6 +911,15 @@ describe("InlineReturnsService", () => {
       prisma.return.findFirst.mockResolvedValue(null);
       await expect(service.approve("nope", OPERATOR)).rejects.toThrow(NotFoundException);
     });
+
+    it("B735: 404s when the post-approve read comes back null, never returns a fake record", async () => {
+      prisma.return.findFirst.mockResolvedValue(HELD);
+      prisma.return.updateMany.mockResolvedValue({ count: 1 });
+      prisma.return.findUnique.mockResolvedValue(null);
+
+      await expect(service.approve("ret-held", OPERATOR)).rejects.toThrow(NotFoundException);
+      expect(prisma.regulatedLedgerParkedReversal.findMany).not.toHaveBeenCalled();
+    });
   });
 
   describe("reject", () => {
