@@ -11,7 +11,7 @@
 //   REVIEW — two or more audit rows match (nothing is written for these).
 //
 //   railway run --service postgres node apps/api/scripts/backfill-order-template-provenance.mjs
-//   DATABASE_URL=postgresql://…@localhost:5432/<db> node apps/api/scripts/backfill-order-template-provenance.mjs --local
+//   <local db url in the ambient env> node apps/api/scripts/backfill-order-template-provenance.mjs --local
 //   node apps/api/scripts/backfill-order-template-provenance.mjs --self-test
 //
 // APPLY replays a SAVED plan only (never a live re-query):
@@ -73,11 +73,10 @@ const AUDIT_SQL = `
   ORDER BY a."createdAt"`;
 
 async function resolveTarget() {
+  // B768: the shared resolver only — this script never names the connection variable itself. A writer
+  // requires the Railway proxy; `--local` may fall back to the ambient local URL, and refuses a non-local host.
   const local = process.argv.includes("--local");
-  const url = local
-    ? process.env.DATABASE_URL
-    : resolveDatabaseUrl(process.env, { requireProxy: true });
-  if (!url) throw new Error("--local requires DATABASE_URL");
+  const url = resolveDatabaseUrl(process.env, { requireProxy: !local });
   if (local && !isLocalDbTarget(url))
     throw new Error(`--local refuses a non-local host (${redactUrl(url)})`);
   return url;
