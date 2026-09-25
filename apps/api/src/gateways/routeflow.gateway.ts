@@ -472,11 +472,19 @@ export class RouteFlowGateway
     this.server.to(this.tenantRoom(tenantId, "operators")).emit("return.created", payload);
   }
 
-  emitInvoiceUpdated(tenantId: string | null, payload: InvoiceUpdatedPayload) {
+  /**
+   * `customerRoom: false` keeps the event on the operators' feed only, for a caller whose payload
+   * status no longer says the invoice was a DRAFT (#2142 W1: `deleteInvoice` sends "DELETED").
+   */
+  emitInvoiceUpdated(
+    tenantId: string | null,
+    payload: InvoiceUpdatedPayload,
+    opts: { customerRoom?: boolean } = {},
+  ) {
     this.server.to(this.tenantRoom(tenantId, "operators")).emit("invoice.updated", payload);
     // #2142 N1: a DRAFT is the seller's unissued working copy. The buyer invoice detail refuses
     // one (BuyerController.getInvoice), so its number and total never reach the customer's room.
-    if (payload.status === InvoiceStatus.DRAFT) return;
+    if (payload.status === InvoiceStatus.DRAFT || opts.customerRoom === false) return;
     this.server
       .to(this.customerRoom(tenantId, payload.customerId))
       .emit("invoice.updated", payload);

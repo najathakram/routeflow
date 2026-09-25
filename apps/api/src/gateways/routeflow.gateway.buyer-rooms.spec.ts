@@ -31,6 +31,7 @@ import { IoAdapter } from "@nestjs/platform-socket.io";
 import { Test } from "@nestjs/testing";
 import { io, type Socket as ClientSocket } from "socket.io-client";
 import { PrismaService } from "../prisma/prisma.service";
+import { InvoicesService } from "../invoices/invoices.service";
 import { BUYER_ROOM_RESYNC_MS, RouteFlowGateway } from "./routeflow.gateway";
 
 const SECRET = "b104-spec-secret";
@@ -671,6 +672,89 @@ describe("RouteFlowGateway on a live Socket.IO server", () => {
       expect(await serverRooms(a)).toEqual([
         "tenant:t-1:customer:c-a1",
         "tenant:t-2:customer:c-a2",
+      ]);
+    });
+  });
+
+  // ─── #2142 W1: deleting a DRAFT tells the buyer nothing ───────────────────────
+
+  describe("#2142 W1 — InvoicesService.deleteInvoice on the live gateway", () => {
+    /**
+     * The REAL deleteInvoice, emitting through the live gateway. Its transaction is a stand-in
+     * holding one payment-free invoice; the collaborators the delete path calls are no-ops.
+     */
+    function deleteThrough(status: string) {
+      const inv = {
+        id: `inv-${status.toLowerCase()}`,
+        invoiceNumber: `INV-${status}`,
+        customerId: "c-b",
+        orderId: null,
+        status,
+        total: 42,
+        payments: [],
+      };
+      const tx = {
+        invoice: { findUnique: jest.fn(async () => inv), delete: jest.fn(async () => inv) },
+        creditNote: {
+          findMany: jest.fn(async () => []),
+          updateMany: jest.fn(async () => ({ count: 0 })),
+        },
+        invoiceItem: { deleteMany: jest.fn(async () => ({ count: 0 })) },
+      };
+      const db = {
+        tenantTransaction: (fn: (t: typeof tx) => unknown) => fn(tx),
+        getTenantId: () => "t-1",
+      };
+      const none = {} as never;
+      const service = new InvoicesService(
+        db as never,
+        gateway,
+        none, // email
+        none, // pdf
+        none, // system config
+        { reverseInvoiceEntries: jest.fn(async () => undefined) } as never,
+        none, // authorization guard
+        none, // credit notes
+        none, // messaging
+        none, // storage
+        none, // entitlements
+        { removeInvoiceCommission: jest.fn(async () => undefined) } as never,
+        none, // numbering
+      );
+      jest
+        .spyOn(
+          service as unknown as { adjustInvoicedQtyForInvoice: () => Promise<void> },
+          "adjustInvoicedQtyForInvoice",
+        )
+        .mockResolvedValue(undefined);
+      return service.deleteInvoice(inv.id);
+    }
+
+    it("#2142 W1: a deleted DRAFT reaches the seller's operators, never the buyer's room", async () => {
+      const b = await connect(buyerToken("buyer-b"));
+      const operator = await connect(staffToken("u-op", "OPERATOR", "t-1"));
+
+      await deleteThrough("DRAFT");
+      await flush(b, operator);
+
+      expect(b.events).toEqual([]);
+      expect(operator.events).toEqual([
+        {
+          event: "invoice.updated",
+          payload: expect.objectContaining({ invoiceNumber: "INV-DRAFT", status: "DELETED" }),
+        },
+      ]);
+    });
+
+    it("a deleted SENT invoice still reaches the buyer's room", async () => {
+      const b = await connect(buyerToken("buyer-b"));
+      await deleteThrough("SENT");
+      await flush(b);
+      expect(b.events).toEqual([
+        {
+          event: "invoice.updated",
+          payload: expect.objectContaining({ invoiceNumber: "INV-SENT", status: "DELETED" }),
+        },
       ]);
     });
   });

@@ -5587,13 +5587,19 @@ export class InvoicesService {
       // Delete the invoice (also detaches orderId reference)
       await tx.invoice.delete({ where: { id } });
 
-      this.gateway.emitInvoiceUpdated(this.prisma.getTenantId(), {
-        invoiceId: id,
-        invoiceNumber: inv.invoiceNumber,
-        customerId: inv.customerId,
-        status: "DELETED" as any,
-        total: Number(inv.total),
-      });
+      // #2142 W1: a deleted DRAFT was never issued, so its number and total stay on the
+      // operators' feed; the customer's room (the buyer portal) hears only of issued invoices.
+      this.gateway.emitInvoiceUpdated(
+        this.prisma.getTenantId(),
+        {
+          invoiceId: id,
+          invoiceNumber: inv.invoiceNumber,
+          customerId: inv.customerId,
+          status: "DELETED" as any,
+          total: Number(inv.total),
+        },
+        { customerRoom: inv.status !== InvoiceStatus.DRAFT },
+      );
 
       return { id, message: "Invoice deleted successfully" };
     });
