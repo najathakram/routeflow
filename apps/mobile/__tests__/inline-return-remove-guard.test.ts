@@ -11,6 +11,7 @@ const { act } = TestRenderer;
 import {
   BaseNavigationContainer,
   CommonActions,
+  StackActions,
   StackRouter,
   createNavigationContainerRef,
   createNavigatorFactory,
@@ -33,12 +34,14 @@ import {
 let screenState: InlineReturnScreenState = initialInlineReturnScreen;
 let preventedRoutes: Record<string, { preventRemove: boolean }> = {};
 let parentPrevented: Record<string, { preventRemove: boolean }> = {};
+let signedOut = false;
+const redirect = jest.fn();
 let setScreenState: (s: InlineReturnScreenState) => void = () => undefined;
 
 function InlineScreen() {
   const [s, set] = React.useState<InlineReturnScreenState>(screenState);
   setScreenState = set;
-  useInlineReturnRemoveGuard(s);
+  useInlineReturnRemoveGuard(s, { signedOut, onSignedOutRedirect: redirect });
   preventedRoutes = usePreventRemoveContext().preventedRoutes as typeof preventedRoutes;
   return null;
 }
@@ -118,6 +121,8 @@ const capturingState = () =>
 describe("useInlineReturnRemoveGuard — driven through real (nested) navigation", () => {
   beforeEach(() => {
     screenState = initialInlineReturnScreen;
+    signedOut = false;
+    redirect.mockClear();
   });
 
   it("goBack (hardware back) inside the returns stack is BLOCKED mid-capture and works again once it settles", () => {
@@ -152,22 +157,40 @@ describe("useInlineReturnRemoveGuard — driven through real (nested) navigation
     act(() => r.unmount());
   });
 
-  it("a PROGRAMMATIC reset mid-capture (session-expired redirect) is DEFERRED, not dropped: it fires once the capture settles", () => {
+  const settle = () =>
+    setScreenState(
+      inlineReturnScreenReducer(capturingState(), {
+        type: "captured",
+        result: { id: "r1" } as any,
+      }),
+    );
+
+  it("SIGNED OUT mid-capture: a root-targeted REPLACE (expo-router's session-expired redirect) is blocked, and the login redirect is RE-ISSUED once the capture settles", () => {
+    const r = mount();
+    signedOut = true;
+    act(() => setScreenState(capturingState()));
+    const rootKey = (ref.getRootState() as any).key;
+    act(() => {
+      ref.dispatch({ ...StackActions.replace("Home"), target: rootKey } as any);
+    });
+    expect(routeNames()).toEqual(["Home", "ReturnsStack"]); // blocked while in flight
+    expect(redirect).not.toHaveBeenCalled();
+    act(() => settle());
+    expect(redirect).toHaveBeenCalledTimes(1); // re-issued from the container, not replayed through the screen
+    act(() => r.unmount());
+  });
+
+  it("SIGNED IN: a tab tap (untargeted POP_TO '(tabs)') mid-capture is DROPPED, never replayed — the result screen stays and no redirect fires", () => {
     const r = mount();
     act(() => setScreenState(capturingState()));
     act(() => {
-      ref.dispatch(CommonActions.reset({ index: 0, routes: [{ name: "Home" }] }));
+      ref.dispatch(StackActions.popTo("Home") as any);
     });
-    expect(routeNames()).toEqual(["Home", "ReturnsStack"]); // blocked while in flight
-    act(() =>
-      setScreenState(
-        inlineReturnScreenReducer(capturingState(), {
-          type: "captured",
-          result: { id: "r1" } as any,
-        }),
-      ),
-    );
-    expect(routeNames()).toEqual(["Home"]); // ...and delivered afterwards
+    expect(routeNames()).toEqual(["Home", "ReturnsStack"]);
+    act(() => settle());
+    expect(routeNames()).toEqual(["Home", "ReturnsStack"]); // result screen still there
+    expect(nestedNames()).toEqual(["ReturnsIndex", "Inline"]);
+    expect(redirect).not.toHaveBeenCalled();
     act(() => r.unmount());
   });
 
@@ -177,15 +200,9 @@ describe("useInlineReturnRemoveGuard — driven through real (nested) navigation
     act(() => {
       ref.dispatch(CommonActions.goBack());
     });
-    act(() =>
-      setScreenState(
-        inlineReturnScreenReducer(capturingState(), {
-          type: "captured",
-          result: { id: "r1" } as any,
-        }),
-      ),
-    );
+    act(() => settle());
     expect(nestedNames()).toEqual(["ReturnsIndex", "Inline"]); // the result stays visible
+    expect(redirect).not.toHaveBeenCalled();
     act(() => r.unmount());
   });
 });

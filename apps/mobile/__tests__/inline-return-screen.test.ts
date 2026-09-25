@@ -4,7 +4,6 @@ import {
   canGetInlineReturnQuote,
   canLeaveInlineReturn,
   captureFailureMessage,
-  isDeferrableRemoval,
   formatRefundAmount,
   initialInlineReturnScreen,
   inlineReturnScreenReducer as reduce,
@@ -303,17 +302,5 @@ describe("linesFromOrder — cancelled lines are excluded", () => {
         (l) => l.productId,
       ),
     ).toEqual(["p2"]);
-  });
-});
-
-describe("isDeferrableRemoval — a forced redirect is deferred, a user back press is not", () => {
-  it.each(["RESET", "REPLACE", "NAVIGATE", "POP_TO_TOP"])(
-    "%s is deferred until the capture settles",
-    (type) => {
-      expect(isDeferrableRemoval({ type } as any)).toBe(true);
-    },
-  );
-  it.each(["GO_BACK", "POP"])("%s (a user back press) is simply dropped", (type) => {
-    expect(isDeferrableRemoval({ type } as any)).toBe(false);
   });
 });

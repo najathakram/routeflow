@@ -30,7 +30,8 @@ describe("inline-return screen wiring pins", () => {
   });
 
   it("the screen locks removal through usePreventRemove (useInlineReturnRemoveGuard), not a raw beforeRemove listener", () => {
-    expect(screen).toMatch(/useInlineReturnRemoveGuard\(screen\)/);
+    expect(screen).toMatch(/useInlineReturnRemoveGuard\(screen,/);
+    expect(screen).toMatch(/router\.replace\("\/\(auth\)\/login"/);
     expect(screen).not.toMatch(/addListener\("beforeRemove"/);
     const hook = readFileSync(
       join(__dirname, "..", "lib", "use-inline-return-remove-guard.ts"),
