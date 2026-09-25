@@ -1097,6 +1097,8 @@ model Return {
   @@index([status])
   @@index([tenantId])
   @@index([kind])
+  // #2118: the external-refund term is keyed on refundedAt (B455) — tenant-window reads.
+  @@index([tenantId, refundedAt])
 }
 
 model ReturnItem {

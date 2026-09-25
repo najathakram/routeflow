@@ -1,4 +1,13 @@
-import { BadRequestException, Controller, Get, Param, Query, Res, UseGuards } from "@nestjs/common";
+import {
+  BadRequestException,
+  Controller,
+  Get,
+  Logger,
+  Param,
+  Query,
+  Res,
+  UseGuards,
+} from "@nestjs/common";
 import { UserRole } from "@prisma/client";
 import type { Response } from "express";
 import type { ProductInsightsResponse, ProductSalesPage } from "@routeflow/types";
@@ -24,6 +33,19 @@ function asHttp(err: unknown): unknown {
   return err;
 }
 
+/** Resolves when the socket can take more, or when it closed (a `drain` that never comes). */
+function drainedOrClosed(res: Response): Promise<void> {
+  return new Promise((resolve) => {
+    const done = () => {
+      res.off("drain", done);
+      res.off("close", done);
+      resolve();
+    };
+    res.once("drain", done);
+    res.once("close", done);
+  });
+}
+
 /**
  * #2118 (plan §B) — per-product sales facts on the accrual-net basis. Same gate as every other
  * `/analytics/*` route (plan A8): the guard trio, OPERATOR (TENANT_ADMIN satisfies it through
@@ -34,6 +56,8 @@ function asHttp(err: unknown): unknown {
 @Roles(UserRole.OPERATOR)
 @RequirePlanFlag("flag.analytics")
 export class ProductInsightsController {
+  private readonly logger = new Logger(ProductInsightsController.name);
+
   constructor(private readonly insights: ProductInsightsService) {}
 
   /** Totals, price facts, a zero-filled series and the buyers for one window. */
@@ -65,7 +89,8 @@ export class ProductInsightsController {
   /**
    * The window's lines as CSV, streamed (at most `INSIGHT_CSV_MAX_LINES` rows, then a
    * truncation row), followed by the totals footer. Validation and the 404 happen before the
-   * first byte is written, so a refused request is still a JSON error, never a partial file.
+   * first byte, so a refused request is still a JSON error, never a partial file. Once bytes
+   * are out, a failure can only be reported IN the file: it ends with an "incomplete" row.
    */
   @Get(":id/insights.csv")
   async exportCsv(
@@ -84,10 +109,16 @@ export class ProductInsightsController {
     res.setHeader("Content-Type", "text/csv; charset=utf-8");
     res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
     res.setHeader("Cache-Control", "no-store");
-    for await (const chunk of csv) {
-      if (!res.write(chunk)) {
-        await new Promise<void>((resolve) => res.once("drain", resolve));
+    try {
+      for await (const chunk of csv) {
+        if (res.destroyed) return; // the client went away: stop reading the database
+        if (!res.write(chunk)) await drainedOrClosed(res);
       }
+    } catch (err) {
+      this.logger.error(
+        `CSV export of product ${id} failed mid-stream: ${(err as Error)?.message}`,
+      );
+      if (!res.destroyed) res.write("\r\n# export failed: the file is incomplete\r\n");
     }
     res.end();
   }

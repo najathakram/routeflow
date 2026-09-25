@@ -252,6 +252,9 @@ model Invoice {
   // of those filtered tenantId + issueDate on a heap scan. Mirrors RfInvoice's
   // @@index([tenantId, issuedAt]).
   @@index([tenantId, issueDate])
+  // #2118: one customer's invoices on the analytics date (buyer-filtered product line pages,
+  // customer insights).
+  @@index([customerId, issueDate])
 }
 
 model InvoiceItem {
@@ -555,6 +558,8 @@ model CreditNote {
   @@index([customerId])
   @@index([status])
   @@index([tenantId])
+  // #2118: the accrual credit-note term is keyed on createdAt (B440) — tenant-window reads.
+  @@index([tenantId, createdAt])
 }
 
 /// Phase 4 (W5c): per-line breakdown of a credit note, derived from the SOURCE
@@ -578,6 +583,8 @@ model CreditNoteItem {
 
   @@index([tenantId])
   @@index([creditNoteId])
+  // #2118: per-line credited amounts on the product sales page (a page's line ids).
+  @@index([invoiceItemId])
 }
 
 /// Order↔credit-note INTENT: "apply this credit (up to `amount`, or its remaining

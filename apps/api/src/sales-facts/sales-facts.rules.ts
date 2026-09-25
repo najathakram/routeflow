@@ -146,6 +146,23 @@ export interface LineKey {
   lineId: string;
 }
 
+/** A sold line's sort key (the cursor and every newest-first comparison use it). */
+export function lineKeyOf(line: {
+  issueDate: Date;
+  invoiceCreatedAt: Date;
+  invoiceId: string;
+  lineCreatedAt: Date;
+  lineId: string;
+}): LineKey {
+  return {
+    issueDate: line.issueDate,
+    invoiceCreatedAt: line.invoiceCreatedAt,
+    invoiceId: line.invoiceId,
+    lineCreatedAt: line.lineCreatedAt,
+    lineId: line.lineId,
+  };
+}
+
 export class InvalidLineCursorError extends Error {
   constructor() {
     super("cursor is not a cursor this endpoint issued");
