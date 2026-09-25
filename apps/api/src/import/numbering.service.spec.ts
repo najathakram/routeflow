@@ -684,9 +684,20 @@ describe("NumberingService", () => {
         fn(buildNumberingFixture({ savedRow: { prefix: "INV-", nextNumber: 10543, padding: 5 } })),
       );
 
-      await expect(service.updateSettings("INVOICE", { prefix: "ACME-" })).rejects.toThrow(
-        /reload/i,
+      await expect(service.updateSettings("INVOICE", { prefix: "ACME-" })).rejects.toBeInstanceOf(
+        BadRequestException,
       );
+    });
+
+    it("REG-B861-AD a null expectedNextNumber is refused like a missing one (400, reload)", async () => {
+      // SA-306: JSON null passes @IsOptional; today it reaches the compare (1 !== null) and 409s.
+      prisma.tenantTransaction.mockImplementation((fn: any) =>
+        fn(buildNumberingFixture({ savedRow: { prefix: "INV-", nextNumber: 10543, padding: 5 } })),
+      );
+
+      await expect(
+        service.updateSettings("INVOICE", { prefix: "ACME-", expectedNextNumber: null } as any),
+      ).rejects.toBeInstanceOf(BadRequestException); // the 409's text also says "reload"
     });
 
     it("REG-B861-H a stale card save (expectedNextNumber) is refused with 409", async () => {

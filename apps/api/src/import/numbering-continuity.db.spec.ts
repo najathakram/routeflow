@@ -435,7 +435,7 @@ describeDb(
         tenantCtx.run(tenant.id, () =>
           numberingService.updateSettings("INVOICE", { prefix: "ACME-" }),
         ),
-      ).rejects.toThrow(/reload/i);
+      ).rejects.toBeInstanceOf(BadRequestException);
     }, 30_000);
 
     // SA-287b fold 1, the race itself on two connections: a prefix save holds the saved row
@@ -449,28 +449,53 @@ describeDb(
       await saveInvoiceNumbering(tenant.id, { prefix: "INV-", nextNumber: 6, padding: 4 });
       await seedInvoice(tenant.id, cust.id, "ACME-0900");
 
+      // SA-306: a deterministic barrier, not a sleep. The save's connection records its backend
+      // pid and holds the row; the mint is released only after Postgres itself reports a backend
+      // blocked BY that pid (pg_blocking_pids). If the mint never blocks, the test fails loudly
+      // instead of letting the save commit first (which would make the pre-fix code pass too).
       let releaseSave!: () => void;
       const saveMayCommit = new Promise<void>((r) => (releaseSave = r));
-      let saveHoldsRow!: () => void;
-      const rowHeld = new Promise<void>((r) => (saveHoldsRow = r));
+      let saveHoldsRow!: (pid: number) => void;
+      const rowHeld = new Promise<number>((r) => (saveHoldsRow = r));
       const save = prisma.$transaction(
         async (tx) => {
+          const [{ pid }] = await tx.$queryRaw<
+            Array<{ pid: number }>
+          >`SELECT pg_backend_pid() AS pid`;
           await tx.$executeRaw`
             UPDATE "NumberingSequence" SET "prefix" = 'ACME-'
             WHERE "tenantId" = ${tenant.id} AND "docType" = 'INVOICE'::"DocumentNumberType" AND "year" = 0
           `;
-          saveHoldsRow();
+          saveHoldsRow(pid);
           await saveMayCommit;
         },
         { timeout: 20_000 },
       );
-      await rowHeld;
-      const mint = reserveInvoiceNext(tenant.id);
-      await new Promise((r) => setTimeout(r, 500)); // let the mint reach the locked row
-      releaseSave();
-      await save;
+      let mint: Promise<string> | undefined;
+      try {
+        const savePid = await rowHeld;
+        mint = reserveInvoiceNext(tenant.id);
+        mint.catch(() => undefined); // surfaced below; never an unhandled rejection meanwhile
+        let blocked = false;
+        for (let i = 0; i < 100 && !blocked; i++) {
+          const [{ n }] = await prisma.$queryRaw<Array<{ n: number }>>`
+            SELECT count(*)::int AS n FROM pg_stat_activity
+            WHERE ${savePid}::int = ANY(pg_blocking_pids(pid))
+          `;
+          blocked = n > 0;
+          if (!blocked) await new Promise((r) => setTimeout(r, 100));
+        }
+        if (!blocked) {
+          throw new Error(
+            "the mint never blocked on the save's row lock — the race was not reproduced",
+          );
+        }
+      } finally {
+        releaseSave();
+        await save;
+      }
 
-      const issued = await mint;
+      const issued = await mint!;
       expect(issued).toBe("ACME-0901");
     }, 30_000);
 
@@ -648,7 +673,13 @@ describeDb(
       const cust = await seedCustomer(tenant.id, "p6");
       await saveInvoiceNumbering(tenant.id, { prefix: "INV-", nextNumber: 10543, padding: 5 });
       await tenantCtx.run(tenant.id, () =>
-        numberingService.updateSettings("ESTIMATE", { prefix: "EST-", nextNumber: 1, padding: 4 }),
+        // An unsaved row's token is the card's loaded default, 1 (SA-287b makes it required).
+        numberingService.updateSettings("ESTIMATE", {
+          prefix: "EST-",
+          nextNumber: 1,
+          padding: 4,
+          expectedNextNumber: 1,
+        }),
       );
       // Landed AFTER the saves, like an import or prior live volume.
       await seedInvoice(tenant.id, cust.id, `INV-${YEAR}-0001`);
