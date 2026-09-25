@@ -2,6 +2,7 @@ import { ConflictException, Injectable, NotFoundException } from "@nestjs/common
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
 import { RegulatedLedgerService } from "./regulated-ledger.service";
+import { periodBucketOf } from "./period";
 
 /**
  * SA-089/SA-089a/SA-089b — B660 PR B: the OPERATOR resolution of a parked regulated-ledger
@@ -23,10 +24,54 @@ export class ParkedReversalResolutionService {
 
   /** The tenant's unresolved parked reversals, oldest first — same shape as the parked
    *  restocks list, listed on the same "resolve this before filing" surface. */
-  list() {
-    return this.prisma.forTenant().regulatedLedgerParkedReversal.findMany({
+  async list() {
+    const db = this.prisma.forTenant();
+    const rows: any[] = await db.regulatedLedgerParkedReversal.findMany({
       where: { resolvedAt: null },
       orderBy: { createdAt: "asc" },
+    });
+    // SA-193 (5): tell the operator BEFORE resolving whether the park's own period is already filed —
+    // resolving then books in the CURRENT period with the park's date as originalSoldAt, and an
+    // amended return may be required for `amendedPeriod.periodKey` (the same rule the resolution
+    // itself applies, evaluated read-only).
+    if (rows.length === 0) return rows;
+    const sales: any[] =
+      (await db.regulatedSalesLedger.findMany({
+        where: { id: { in: rows.map((r) => r.saleEntryId) } },
+        select: { id: true, trackedCategoryId: true },
+      })) ?? [];
+    const categoryBySale = new Map<string, string>(sales.map((x) => [x.id, x.trackedCategoryId]));
+    const categoryIds = [...new Set(sales.map((x) => x.trackedCategoryId).filter(Boolean))];
+    const filings: any[] =
+      categoryIds.length > 0
+        ? ((await db.regulatedFiling.findMany({
+            where: {
+              trackedCategoryId: { in: categoryIds },
+              status: { in: ["GENERATED", "LOCKED"] },
+            },
+            select: {
+              trackedCategoryId: true,
+              periodKey: true,
+              periodStart: true,
+              periodEnd: true,
+              status: true,
+            },
+          })) ?? [])
+        : [];
+    const currentBucket = periodBucketOf(new Date());
+    return rows.map((r) => {
+      const bucket = periodBucketOf(new Date(r.createdAt));
+      const start = new Date(`${bucket}-01T00:00:00.000Z`);
+      const hit =
+        bucket !== currentBucket
+          ? filings.find(
+              (f) =>
+                f.trackedCategoryId === categoryBySale.get(r.saleEntryId) &&
+                new Date(f.periodStart) <= start &&
+                new Date(f.periodEnd) > start,
+            )
+          : undefined;
+      return { ...r, amendedPeriod: hit ? { periodKey: hit.periodKey, status: hit.status } : null };
     });
   }
 
@@ -160,6 +205,7 @@ export class ParkedReversalResolutionService {
           // SA-182: set when the parked period was already filed and the reversal went to the CURRENT
           // period instead — an amended return may be required for that period.
           amendedPeriod: result.resolution.amendedPeriod ?? null,
+          grownParks: result.resolution.grownParks ?? [],
           resolvedEntryId: result.resolution.resolvedEntryId,
           periodBucket: result.row.periodBucket,
           operatorReason: reason,
@@ -184,6 +230,7 @@ export class ParkedReversalResolutionService {
       parkedRowIds: result.alreadyResolved ? [] : result.resolution.parkedRowIds,
       unbookedPieces: result.alreadyResolved ? null : result.resolution.unbookedPieces,
       amendedPeriod: result.alreadyResolved ? null : (result.resolution.amendedPeriod ?? null),
+      grownParks: result.alreadyResolved ? [] : (result.resolution.grownParks ?? []),
     };
   }
 }

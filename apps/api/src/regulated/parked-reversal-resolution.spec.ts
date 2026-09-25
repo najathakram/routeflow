@@ -129,6 +129,7 @@ describe("ParkedReversalResolutionService", () => {
       parkedRowIds: [],
       unbookedPieces: 0,
       amendedPeriod: null,
+      grownParks: [],
     });
   });
 
@@ -206,6 +207,7 @@ describe("ParkedReversalResolutionService", () => {
       parkedRowIds: ["pr-2"],
       unbookedPieces: 0,
       amendedPeriod: null,
+      grownParks: [],
     });
     const res = await service.resolve("pr-1", 12, "reason text", actor);
     expect(res).toMatchObject({ outcome: "partial", parkedPieces: 36, parkedRowIds: ["pr-2"] });
@@ -384,6 +386,7 @@ describe("ParkedReversalResolutionService", () => {
       parkedRowIds: [],
       unbookedPieces: 0,
       amendedPeriod: null,
+      grownParks: [],
     });
     expect(table[0].resolvedAt).toBeInstanceOf(Date);
     expect(audit.log).toHaveBeenCalledWith(
@@ -400,6 +403,30 @@ describe("ParkedReversalResolutionService", () => {
       where: { resolvedAt: null },
       orderBy: { createdAt: "asc" },
     });
+  });
+
+  it("SA-193 (5): list() tells the operator when the park's own period is already filed (amendedPeriod), null otherwise", async () => {
+    // the parked() fixture's createdAt is 2026-09-01, a past month against the real clock
+    (prisma as any).regulatedSalesLedger.findMany.mockResolvedValue([
+      { id: "s-1", trackedCategoryId: "cat-A" },
+    ]);
+    (prisma as any).regulatedFiling.findMany.mockResolvedValue([
+      {
+        trackedCategoryId: "cat-A",
+        periodKey: "2026-09",
+        periodStart: new Date("2026-09-01T00:00:00Z"),
+        periodEnd: new Date("2026-10-01T00:00:00Z"),
+        status: "GENERATED",
+      },
+    ]);
+    const [row] = (await service.list()) as any[];
+    const currentBucket = new Date().toISOString().slice(0, 7);
+    if (currentBucket === "2026-09") expect(row.amendedPeriod).toBeNull();
+    else expect(row.amendedPeriod).toEqual({ periodKey: "2026-09", status: "GENERATED" });
+
+    (prisma as any).regulatedFiling.findMany.mockResolvedValue([]);
+    const [open] = (await service.list()) as any[];
+    expect(open.amendedPeriod).toBeNull();
   });
 });
 

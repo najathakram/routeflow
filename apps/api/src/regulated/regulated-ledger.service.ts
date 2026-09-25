@@ -458,8 +458,27 @@ export class RegulatedLedgerService {
     rows: any[];
     /** SA-182 (resolution only): the return's date, stamped on a row this call parks. */
     parkDate?: Date;
+    /** SA-193 (resolution only): the period a row this call parks belongs to (always the ORIGINAL
+     *  park's month, even when the reversal itself books in the current period). */
+    parkBucket?: string;
     /** SA-182 (resolution only, parked period already filed): the return's date as `originalSoldAt`. */
     originalSoldAt?: Date;
+    /** SA-193 (resolution only): how to park a leftover. The resumed walk never mints onto an existing
+     *  key (no skipDuplicates): it grows an unresolved park or creates a new one. */
+    parkOverride?: (row: {
+      tenantId: string;
+      returnId: string;
+      orderId: string;
+      orderItemId: string | null;
+      saleEntryId: string;
+      returnedPieces: number;
+      reason: string;
+      periodBucket: string;
+      createdAt?: Date;
+    }) => Promise<void>;
+    /** SA-193 (resolution only): sale rows whose park THIS return already resolved -> the operator's
+     *  attested pack. Such a row is never re-parked (or re-opened): it books against its remaining. */
+    attestedPackBySaleId?: Map<string, number>;
   }): Promise<{ remaining: number; parked: boolean }> {
     const {
       db,
@@ -503,8 +522,11 @@ export class RegulatedLedgerService {
         ownCorrections,
         productPackNow,
       );
-      if (verdict.state === "legacy" || verdict.state === "unknown") {
-        await this.parkReturnReversal(db, {
+      // SA-193: a row whose park this return already RESOLVED carries the operator's attestation as its
+      // axis (pack 1 = piece-axis, pack > 1 = fixed by its corrections): it books, never re-parks.
+      const attested = params.attestedPackBySaleId?.has(s.id) ?? false;
+      if (!attested && (verdict.state === "legacy" || verdict.state === "unknown")) {
+        const parkRow = {
           tenantId: s.tenantId,
           returnId,
           orderId: s.orderId ?? orderId,
@@ -512,9 +534,11 @@ export class RegulatedLedgerService {
           saleEntryId: s.id,
           returnedPieces: remaining,
           reason: verdict.reason,
-          periodBucket: bucket,
+          periodBucket: params.parkBucket ?? bucket,
           ...(params.parkDate ? { createdAt: params.parkDate } : {}),
-        });
+        };
+        if (params.parkOverride) await params.parkOverride(parkRow);
+        else await this.parkReturnReversal(db, parkRow);
         return { remaining: 0, parked: true };
       }
       // SA-070(b) Hazard 1 continued: excluding a correction row from `salesByProduct` stops
@@ -985,6 +1009,8 @@ export class RegulatedLedgerService {
     /** SA-182: set when the parked period was already filed, so the reversal was booked in the
      *  CURRENT period instead (an amended return may be required for `periodKey`). */
     amendedPeriod?: { periodKey: string; status: string } | null;
+    /** SA-193: existing UNRESOLVED parks the leftover was added to (never a new key). */
+    grownParks?: { id: string; added: number }[];
     verdictAfter: SaleAxisState | null;
     unresolvableReason: string | null;
   }> {
@@ -1128,15 +1154,26 @@ export class RegulatedLedgerService {
     if (!built) return unresolvable("no SALE rows remain on this order", correctionEntryId);
     const { lineKeyOfSale, remQtyByLine, remUnitBasisByLine, remNetByLine, remTaxByLine } = built;
 
-    // SA-182 (#2081): the booked REVERSAL takes the PARKED ROW's period and the return's date, because
-    // that is the period the filing gate held open for it. If that period is already filed (GENERATED or
-    // LOCKED) it books in the CURRENT period with `originalSoldAt` = the return's date, and the result
-    // says so (never silent). The axis-correction rows above keep periodBucketOf(now) (SA-134).
+    // SA-193 (amends SA-182): ONE source for the date and the bucket. The booked REVERSAL's soldAt is the
+    // park's date and its periodBucket is DERIVED from that date (never read from the row: a stored
+    // bucket that disagrees is logged and the date wins; no clamping). No park date -> both are now.
+    // If the derived period is already filed (GENERATED or LOCKED) the reversal books in the CURRENT
+    // period with `originalSoldAt` = the park date and the result says so (never silent). Rows the
+    // resumed walk parks carry the ORIGINAL date and the original month (so their own resolution
+    // re-derives the filed branch); the axis-correction rows above keep periodBucketOf(now) (SA-134).
     const nowActual = new Date();
     const currentBucket = periodBucketOf(nowActual);
+    const returnDate: Date | null = parked.parkedAt ?? null;
+    const parkBucket = returnDate ? periodBucketOf(returnDate) : currentBucket;
+    if (returnDate && parked.periodBucket && parked.periodBucket !== parkBucket) {
+      this.logger.warn(
+        `parked reversal ${parked.saleEntryId}: stored periodBucket ${parked.periodBucket} disagrees with its date ` +
+          `(${parkBucket}); the date wins.`,
+      );
+    }
     let filedPeriod: { periodKey: string; status: string } | null = null;
-    if (parked.periodBucket && parked.periodBucket !== currentBucket) {
-      const bucketStart = new Date(`${parked.periodBucket}-01T00:00:00.000Z`);
+    if (returnDate && parkBucket !== currentBucket) {
+      const bucketStart = new Date(`${parkBucket}-01T00:00:00.000Z`);
       const filing = await db.regulatedFiling.findFirst({
         where: {
           trackedCategoryId: saleRow.trackedCategoryId,
@@ -1148,9 +1185,8 @@ export class RegulatedLedgerService {
       });
       if (filing) filedPeriod = { periodKey: filing.periodKey, status: filing.status };
     }
-    const useParkedPeriod = !!parked.periodBucket && !filedPeriod;
-    const now = useParkedPeriod ? (parked.parkedAt ?? nowActual) : nowActual;
-    const bucket = useParkedPeriod ? (parked.periodBucket as string) : currentBucket;
+    const now = returnDate && !filedPeriod ? returnDate : nowActual;
+    const bucket = returnDate && !filedPeriod ? parkBucket : currentBucket;
     const rows: RegulatedCorrectionRowInput[] = [];
     const walkBase = {
       db,
@@ -1166,10 +1202,9 @@ export class RegulatedLedgerService {
       remNetByLine,
       remTaxByLine,
       rows,
-      // Rows the resumed walk parks inherit the return's date; a filed parked period books in the
-      // current one and carries the return's date as originalSoldAt.
-      ...(useParkedPeriod && parked.parkedAt ? { parkDate: parked.parkedAt } : {}),
-      ...(filedPeriod && parked.parkedAt ? { originalSoldAt: parked.parkedAt } : {}),
+      parkBucket,
+      ...(returnDate ? { parkDate: returnDate } : {}),
+      ...(filedPeriod && returnDate ? { originalSoldAt: returnDate } : {}),
     };
     // The parked row first, on the operator's pack; then RESUME the live walk (SA-167).
     const chunk = rowClosed
@@ -1199,12 +1234,15 @@ export class RegulatedLedgerService {
 
     // SA-167 (the Opus REQUIRED silent under-reversal): the park recorded the product's WHOLE
     // leftover on this first legacy row; whatever this row could not absorb continues down the
-    // product's remaining live sale rows through the SAME walk the live path runs. A row that is
-    // still legacy parks the leftover as a NEW parked row (idempotent via the unique) and stops,
-    // exactly as the live path would have; an over-return is reported, never invented.
+    // product's remaining live sale rows through the SAME walk the live path runs. An over-return is
+    // reported, never invented. SA-193: the walk NEVER mints onto an existing key. For each row it
+    // may park on, it first reads the park for (returnId, row): a RESOLVED one is the operator's
+    // attestation (the row books, never re-parks or re-opens); an UNRESOLVED one is grown by the
+    // leftover in this same transaction (reported in `grownParks`); otherwise a park is created.
     let leftover = chunk.remaining;
     let parkedPieces = 0;
     const parkedRowIds: string[] = [];
+    const grownParks: { id: string; added: number }[] = [];
     if (leftover > 0) {
       const productId = built.productByItem.get(saleRow.invoiceItemId) ?? shape.productId;
       const ordered = built.sales.filter(
@@ -1233,6 +1271,35 @@ export class RegulatedLedgerService {
         // would flip a legacy-shaped sibling on a product that is boxed today from PARK to BOOK-as-pieces
         // (its box count reversed as pieces: full net and tax on 3 "pieces"). Then the live read stands.
         if (productId && pack > 1) restPackNow.set(productId, pack);
+
+        const existingParks: any[] =
+          (await db.regulatedLedgerParkedReversal.findMany({
+            where: {
+              returnId: parked.returnId,
+              saleEntryId: { in: rest.map((s: any) => s.id) },
+            },
+          })) ?? [];
+        const attestedPackBySaleId = new Map<string, number>();
+        const unresolvedBySale = new Map<string, any>();
+        for (const p of existingParks) {
+          if (p.resolvedAt != null)
+            attestedPackBySaleId.set(p.saleEntryId, Number(p.unitsPerBoxSupplied ?? 1));
+          else unresolvedBySale.set(p.saleEntryId, p);
+        }
+        const parkOverride = async (row: any) => {
+          const existing = unresolvedBySale.get(row.saleEntryId);
+          if (existing) {
+            await db.regulatedLedgerParkedReversal.update({
+              where: { id: existing.id },
+              data: { returnedPieces: Number(existing.returnedPieces) + row.returnedPieces },
+            });
+            grownParks.push({ id: existing.id, added: row.returnedPieces });
+            parkedRowIds.push(existing.id);
+          } else {
+            const created = await db.regulatedLedgerParkedReversal.create({ data: row });
+            parkedRowIds.push(created.id);
+          }
+        };
         const walked = await this.walkSaleRows({
           ...walkBase,
           sales: rest,
@@ -1240,16 +1307,11 @@ export class RegulatedLedgerService {
           lineShapeBySaleId: restShapes,
           correctionsBySaleId: restCorrections,
           packNowByProduct: restPackNow,
+          attestedPackBySaleId,
+          parkOverride,
         });
         leftover = walked.remaining;
-        if (walked.parkedOn) {
-          parkedPieces = walked.parkedOn.pieces;
-          const newRows = await db.regulatedLedgerParkedReversal.findMany({
-            where: { returnId: parked.returnId, saleEntryId: { in: [walked.parkedOn.row.id] } },
-            select: { id: true },
-          });
-          parkedRowIds.push(...newRows.map((r: any) => r.id));
-        }
+        if (walked.parkedOn) parkedPieces = walked.parkedOn.pieces;
       }
     }
     const unbookedPieces = parkedPieces > 0 ? 0 : Math.max(0, leftover);
@@ -1268,6 +1330,7 @@ export class RegulatedLedgerService {
         parkedRowIds,
         unbookedPieces,
         amendedPeriod: filedPeriod,
+        grownParks,
         verdictAfter,
         unresolvableReason: null,
       };
@@ -1298,6 +1361,7 @@ export class RegulatedLedgerService {
       parkedRowIds,
       unbookedPieces,
       amendedPeriod: filedPeriod,
+      grownParks,
       verdictAfter,
       unresolvableReason: null,
     };

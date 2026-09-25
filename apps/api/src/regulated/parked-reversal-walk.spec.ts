@@ -98,6 +98,16 @@ describe("resolveParkedReversal — resume the live walk (SA-167)", () => {
       }
       return { count: data.length };
     });
+    prisma.regulatedLedgerParkedReversal.create.mockImplementation(async ({ data }: any) => {
+      const row = { id: `parked-${parkedStore.length + 1}`, ...data };
+      parkedStore.push(row);
+      return row;
+    });
+    prisma.regulatedLedgerParkedReversal.update.mockImplementation(async ({ where, data }: any) => {
+      const row = parkedStore.find((p) => p.id === where.id);
+      Object.assign(row, data);
+      return row;
+    });
     prisma.regulatedLedgerParkedReversal.findMany.mockImplementation(async ({ where }: any) =>
       parkedStore.filter(
         (p) => p.returnId === where.returnId && where.saleEntryId.in.includes(p.saleEntryId),
@@ -346,6 +356,148 @@ describe("resolveParkedReversal — resume the live walk (SA-167)", () => {
         createdAt: parkedAt,
       });
       expect(reversals()[0]).toMatchObject({ periodBucket: "2026-08", soldAt: parkedAt });
+    });
+  });
+
+  describe("SA-193: the resumed walk never mints onto an existing park key", () => {
+    const resolvedPark = (n: number, pack: number, pieces: number) => ({
+      id: `parked-r${n}`,
+      returnId: "ret-1",
+      saleEntryId: `s-${n}`,
+      returnedPieces: pieces,
+      resolvedAt: new Date("2026-09-01T00:00:00Z"),
+      unitsPerBoxSupplied: pack,
+    });
+    const reversal = (n: number, qty: number) => ({
+      id: `v-${n}`,
+      tenantId: "t1",
+      trackedCategoryId: "cat-A",
+      trackedSubcategoryId: null,
+      entryType: "REVERSAL",
+      orderId: "ord-1",
+      orderItemId: `oi-${n}`,
+      invoiceId: "inv-1",
+      invoiceItemId: `ii-${n}`,
+      correctsEntryId: null,
+      qty: -qty,
+      unitBasisQty: -qty,
+      netSales: -qty * 10,
+      categoryTax: -qty * 2,
+      soldAt: new Date("2026-08-01T00:00:00Z"),
+    });
+
+    it("r1 resolved at pack 1 and r2 resolved at 12 with 22 left: the 22 BOOK on s-1 as pieces (its attestation), parkedPieces 0, nothing re-parked", async () => {
+      ledger = [sale(1, 22), sale(2, 3)];
+      invoiceItems = [ii(1), ii(2)];
+      parkedStore = [resolvedPark(1, 1, 22)];
+      const res = await service.resolveParkedReversal(prisma, parked(2, 58), 12);
+      expect(res.outcome).toBe("booked");
+      expect(res.bookedPieces).toBe(58); // 36 on row 2 + 22 on row 1
+      expect(res.parkedPieces).toBe(0);
+      expect(res.unbookedPieces).toBe(0);
+      expect(parkedStore).toHaveLength(1); // no new key, r1 untouched
+      expect(parkedStore[0].resolvedAt).not.toBeNull();
+      const onRow1 = reversals().filter((r) => r.orderItemId === "oi-1");
+      expect(onRow1.map((r) => Number(r.unitBasisQty))).toEqual([-22]);
+    });
+
+    it("a CLOSED attested row is skipped and the leftover lands on the next live row (s-3)", async () => {
+      ledger = [sale(1, 2), reversal(1, 2), sale(2, 3), sale(3, 22, { unitBasisQty: 264 })];
+      invoiceItems = [ii(1), ii(2), ii(3)];
+      parkedStore = [resolvedPark(1, 1, 2)];
+      const res = await service.resolveParkedReversal(prisma, parked(2, 58), 12);
+      expect(res.parkedPieces).toBe(0);
+      const onRow3 = reversals().filter((r) => r.orderItemId === "oi-3");
+      expect(onRow3).toHaveLength(1);
+      expect(Number(onRow3[0].unitBasisQty)).toBe(-22);
+    });
+
+    it("an UNRESOLVED live park on s-1: its returnedPieces GROWS by the leftover, no second key, the gate still holds", async () => {
+      ledger = [sale(1, 2), sale(2, 3)];
+      invoiceItems = [ii(1), ii(2)];
+      parkedStore = [
+        {
+          id: "parked-r1",
+          returnId: "ret-1",
+          saleEntryId: "s-1",
+          returnedPieces: 10,
+          resolvedAt: null,
+        },
+      ];
+      const res = await service.resolveParkedReversal(prisma, parked(2, 58), 12);
+      // row 2 books its 36; the 22 left reach s-1 (legacy, not attested) and grow its open park.
+      expect(res.outcome).toBe("partial");
+      expect(res.parkedPieces).toBe(22);
+      expect(res.grownParks).toEqual([{ id: "parked-r1", added: 22 }]);
+      expect(res.parkedRowIds).toEqual(["parked-r1"]);
+      expect(parkedStore).toHaveLength(1);
+      expect(Number(parkedStore[0].returnedPieces)).toBe(32);
+      expect(parkedStore[0].resolvedAt).toBeNull();
+    });
+
+    it("source pin: the resolution path has no skipDuplicates and never calls parkReturnReversal", () => {
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      const src: string = require("fs").readFileSync(
+        require.resolve("./regulated-ledger.service"),
+        "utf8",
+      );
+      const a = src.indexOf("async resolveParkedReversal(");
+      const b = src.indexOf("async reverseCreditNoteEntries(");
+      const body = src.slice(a, b);
+      expect(a).toBeGreaterThan(0);
+      expect(body).not.toContain("skipDuplicates");
+      expect(body).not.toContain("this.parkReturnReversal(");
+    });
+  });
+
+  describe("SA-193 (3)/(4): one source for date and bucket; leftovers carry the original date", () => {
+    const parkedAt = new Date("2026-08-15T12:00:00.000Z");
+
+    it("(3) the DATE derives the bucket: a stored bucket that disagrees loses (2026-07 stored, Aug 15 date -> books in 2026-08)", async () => {
+      ledger = [sale(1, 2)];
+      invoiceItems = [ii(1)];
+      (prisma as any).regulatedFiling.findFirst = jest.fn().mockResolvedValue(null);
+      const res = await service.resolveParkedReversal(
+        prisma,
+        { ...parked(1, 24), periodBucket: "2026-07", parkedAt },
+        12,
+      );
+      expect(res.outcome).toBe("booked");
+      expect(reversals()[0]).toMatchObject({ periodBucket: "2026-08", soldAt: parkedAt });
+    });
+
+    it("(4) a leftover from a FILED-period park keeps the original date and month; resolving it later books in the current period with originalSoldAt and amendedPeriod", async () => {
+      ledger = [sale(1, 2), sale(2, 3)];
+      invoiceItems = [ii(1), ii(2)];
+      const filed = { periodKey: "2026-08", status: "GENERATED" };
+      (prisma as any).regulatedFiling.findFirst = jest.fn().mockResolvedValue(filed);
+      const first = await service.resolveParkedReversal(
+        prisma,
+        { ...parked(1, 60), periodBucket: "2026-08", parkedAt },
+        12,
+      );
+      expect(first.amendedPeriod).toEqual(filed);
+      expect(parkedStore).toHaveLength(1);
+      // the leftover park carries the ORIGINAL date and month, not a flag and not the current month
+      expect(parkedStore[0]).toMatchObject({
+        saleEntryId: "s-2",
+        periodBucket: "2026-08",
+        createdAt: parkedAt,
+      });
+
+      const second = await service.resolveParkedReversal(
+        prisma,
+        {
+          ...parked(2, 36),
+          periodBucket: parkedStore[0].periodBucket,
+          parkedAt: parkedStore[0].createdAt,
+        },
+        12,
+      );
+      const currentBucket = new Date().toISOString().slice(0, 7);
+      expect(second.amendedPeriod).toEqual(filed);
+      const last = reversals()[reversals().length - 1];
+      expect(last).toMatchObject({ periodBucket: currentBucket, originalSoldAt: parkedAt });
     });
   });
 });
