@@ -238,7 +238,7 @@ describe("resolveParkedReversal — resume the live walk (SA-167)", () => {
     expect(res.correctionEntryId).toBeNull();
   });
 
-  it("closed stays closed when the walk books and parks nothing (no other live row)", async () => {
+  it("SA-193: a closed row with no other live row books and parks nothing but is PARTIAL, with the leftover reported", async () => {
     ledger = [
       sale(1, 2),
       {
@@ -261,7 +261,9 @@ describe("resolveParkedReversal — resume the live walk (SA-167)", () => {
     ];
     invoiceItems = [ii(1)];
     const res = await service.resolveParkedReversal(prisma, parked(1, 24), 12);
-    expect(res.outcome).toBe("closed");
+    expect(res.outcome).toBe("partial");
+    expect(res.unbookedPieces).toBe(24);
+    expect(res.bookedPieces).toBe(0);
     expect(ledger).toHaveLength(2); // nothing written
   });
 
@@ -435,18 +437,27 @@ describe("resolveParkedReversal — resume the live walk (SA-167)", () => {
       expect(parkedStore[0].resolvedAt).toBeNull();
     });
 
-    it("source pin: the resolution path has no skipDuplicates and never calls parkReturnReversal", () => {
-      // eslint-disable-next-line @typescript-eslint/no-var-requires
-      const src: string = require("fs").readFileSync(
-        require.resolve("./regulated-ledger.service"),
-        "utf8",
-      );
-      const a = src.indexOf("async resolveParkedReversal(");
-      const b = src.indexOf("async reverseCreditNoteEntries(");
-      const body = src.slice(a, b);
-      expect(a).toBeGreaterThan(0);
-      expect(body).not.toContain("skipDuplicates");
-      expect(body).not.toContain("this.parkReturnReversal(");
+    it("the resolution walk NEVER calls createMany on the parked table (first chunk and resumed walk alike)", async () => {
+      const createMany = (prisma as any).regulatedLedgerParkedReversal.createMany as jest.Mock;
+      // three shapes that park, grow, and attest across the walk
+      ledger = [sale(1, 2), sale(2, 3)];
+      invoiceItems = [ii(1), ii(2)];
+      await service.resolveParkedReversal(prisma, parked(1, 60), 12); // parks the leftover on s-2
+      ledger = [sale(1, 22), sale(2, 3)];
+      parkedStore = [resolvedPark(1, 1, 22)];
+      await service.resolveParkedReversal(prisma, parked(2, 58), 12); // attested row books
+      ledger = [sale(1, 2), sale(2, 3)];
+      parkedStore = [
+        {
+          id: "parked-r1",
+          returnId: "ret-1",
+          saleEntryId: "s-1",
+          returnedPieces: 10,
+          resolvedAt: null,
+        },
+      ];
+      await service.resolveParkedReversal(prisma, parked(2, 58), 12); // grows the open park
+      expect(createMany).not.toHaveBeenCalled();
     });
   });
 

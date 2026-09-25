@@ -845,6 +845,150 @@ describeDb(
       expect(inM.map((r) => r.id)).toContain(result.resolvedEntryId);
     }, 30_000);
 
+    /** A sibling park for the SAME return on a second row of the seeded order. */
+    async function parkSecondRow(
+      f: SeedResult,
+      second: { orderItemId: string; saleId: string },
+      returnedPieces: number,
+    ) {
+      return raw.regulatedLedgerParkedReversal.create({
+        data: {
+          tenantId,
+          returnId: f.returnId,
+          orderId: f.orderId,
+          orderItemId: second.orderItemId,
+          saleEntryId: second.saleId,
+          returnedPieces,
+          reason: "no live pack snapshot",
+          periodBucket,
+        },
+      });
+    }
+
+    it("SA-193 attest-resolved: a leftover reaching a row whose park THIS return already resolved (pack 1) BOOKS there as pieces; nothing re-parked, the resolved row untouched", async () => {
+      const f = await seedLegacyLine("attest", {
+        qty: 22,
+        netSales: 220,
+        categoryTax: 44,
+        returnedPieces: 22,
+        livePack: 12,
+      });
+      const second = await addSecondRow(f, { qty: 3, netSales: 30, categoryTax: 6, legacy: true });
+      const p2 = await parkSecondRow(f, second, 58);
+      await raw.regulatedLedgerParkedReversal.update({
+        where: { id: f.parkedRowId },
+        data: { resolvedAt: new Date(), resolvedById: userId, unitsPerBoxSupplied: 1 },
+      });
+
+      const res = await resolveAs(p2.id, 12);
+      expect(res.outcome).toBe("booked");
+      expect(res.bookedPieces).toBe(58); // 36 on the second row + 22 on the attested first row
+      expect(res.parkedPieces).toBe(0);
+      expect(res.unbookedPieces).toBe(0);
+
+      const onRow1 = await raw.regulatedSalesLedger.findMany({
+        where: {
+          orderItemId: f.orderItemId,
+          entryType: "REVERSAL",
+          correctsEntryId: null,
+          returnId: f.returnId,
+        },
+      });
+      expect(onRow1.map((r) => Number(r.unitBasisQty))).toEqual([-22]);
+      const parks = await raw.regulatedLedgerParkedReversal.findMany({
+        where: { returnId: f.returnId },
+      });
+      expect(parks).toHaveLength(2); // no third key was minted
+      expect(parks.find((p) => p.id === f.parkedRowId)!.resolvedAt).not.toBeNull(); // never re-opened
+    }, 30_000);
+
+    it("SA-193 grow-unresolved: a leftover reaching a row with an UNRESOLVED park adds to that park's returnedPieces (no second key), and the park stays open", async () => {
+      const f = await seedLegacyLine("grow", {
+        qty: 22,
+        netSales: 220,
+        categoryTax: 44,
+        returnedPieces: 10,
+        livePack: 12,
+      });
+      const second = await addSecondRow(f, { qty: 3, netSales: 30, categoryTax: 6, legacy: true });
+      const p2 = await parkSecondRow(f, second, 58);
+
+      const res = await resolveAs(p2.id, 12);
+      expect(res.outcome).toBe("partial");
+      expect(res.parkedPieces).toBe(22);
+      expect(res.grownParks).toEqual([{ id: f.parkedRowId, added: 22 }]);
+
+      const parks = await raw.regulatedLedgerParkedReversal.findMany({
+        where: { returnId: f.returnId },
+      });
+      expect(parks).toHaveLength(2);
+      const grown = parks.find((p) => p.id === f.parkedRowId)!;
+      expect(Number(grown.returnedPieces)).toBe(32);
+      expect(grown.resolvedAt).toBeNull(); // the filing gate still holds
+    }, 30_000);
+
+    it("SA-193 filed leftover: a leftover from a park in an already-FILED period keeps the original date and month; resolved later it books in the CURRENT period with originalSoldAt and amendedPeriod", async () => {
+      const now = new Date();
+      const prev = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 1, 15, 12, 0, 0));
+      const M = prev.toISOString().slice(0, 7);
+      const current = now.toISOString().slice(0, 7);
+      const start = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 1, 1));
+      const end = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
+
+      const f = await seedLegacyLine("filed-leftover", {
+        qty: 2,
+        netSales: 20,
+        categoryTax: 4,
+        returnedPieces: 60,
+        livePack: 12,
+      });
+      const second = await addSecondRow(f, { qty: 3, netSales: 30, categoryTax: 6, legacy: true });
+      await raw.regulatedLedgerParkedReversal.update({
+        where: { id: f.parkedRowId },
+        data: { periodBucket: M, createdAt: prev },
+      });
+      await raw.regulatedFiling.create({
+        data: {
+          tenantId,
+          trackedCategoryId: categoryId,
+          reportTemplate: "generic",
+          periodKey: M,
+          periodStart: start,
+          periodEnd: end,
+          rows: [],
+        },
+      });
+      try {
+        const first = await resolveAs(f.parkedRowId, 12);
+        expect(first.outcome).toBe("partial");
+        expect(first.amendedPeriod).toMatchObject({ periodKey: M });
+        const booked = await raw.regulatedSalesLedger.findFirst({
+          where: { id: first.resolvedEntryId! },
+        });
+        expect(booked!.periodBucket).toBe(current);
+        expect(booked!.originalSoldAt!.toISOString()).toBe(prev.toISOString());
+
+        // the leftover park carries the ORIGINAL date and month, not the current ones
+        const leftover = await raw.regulatedLedgerParkedReversal.findFirst({
+          where: { returnId: f.returnId, saleEntryId: second.saleId },
+        });
+        expect(leftover!.periodBucket).toBe(M);
+        expect(leftover!.createdAt.toISOString()).toBe(prev.toISOString());
+        expect(Number(leftover!.returnedPieces)).toBe(36);
+
+        const next = await resolveAs(leftover!.id, 12);
+        expect(next.outcome).toBe("booked");
+        expect(next.amendedPeriod).toMatchObject({ periodKey: M });
+        const later = await raw.regulatedSalesLedger.findFirst({
+          where: { id: next.resolvedEntryId! },
+        });
+        expect(later!.periodBucket).toBe(current);
+        expect(later!.originalSoldAt!.toISOString()).toBe(prev.toISOString());
+      } finally {
+        await raw.regulatedFiling.deleteMany({ where: { tenantId } });
+      }
+    }, 30_000);
+
     it("cancel-after-resolve: the booked REVERSAL is gone, the parked row stays resolved (resolvedEntryId dangles), the corrections survive", async () => {
       const f = await seedLegacyLine("cancel-after", {
         qty: 5,

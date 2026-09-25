@@ -19,7 +19,6 @@ import { ParkedReversalResolutionService } from "./parked-reversal-resolution.se
 import { RegulatedController } from "./regulated.controller";
 import { ResolveParkedReversalDto } from "./dto/resolve-parked-reversal.dto";
 import { PrismaService } from "../prisma/prisma.service";
-import { AuditService } from "../audit/audit.service";
 import { RegulatedLedgerService } from "./regulated-ledger.service";
 import { RolesGuard } from "../auth/guards/roles.guard";
 import { REQUIRE_ADDON_KEY } from "../billing/require-addon.decorator";
@@ -71,6 +70,12 @@ describe("ParkedReversalResolutionService", () => {
     prisma = createMockPrisma();
     audit = { log: jest.fn().mockResolvedValue(undefined) };
     ledger = { resolveParkedReversal: jest.fn().mockResolvedValue(BOOKED_RESOLUTION) };
+    // SA-193 (6): the audit row is written INSIDE the transaction via tx.auditLog.create; `audit.log`
+    // records the flat row so the assertions below read it the same way.
+    (prisma as any).auditLog.create = jest.fn(async ({ data }: any) => {
+      audit.log(data);
+      return data;
+    });
     table = [parked()];
     const model: any = (prisma as any).regulatedLedgerParkedReversal;
     model.findFirst = jest.fn(
@@ -89,7 +94,6 @@ describe("ParkedReversalResolutionService", () => {
       providers: [
         ParkedReversalResolutionService,
         { provide: PrismaService, useValue: prisma },
-        { provide: AuditService, useValue: audit },
         { provide: RegulatedLedgerService, useValue: ledger },
       ],
     }).compile();
@@ -406,27 +410,38 @@ describe("ParkedReversalResolutionService", () => {
   });
 
   it("SA-193 (5): list() tells the operator when the park's own period is already filed (amendedPeriod), null otherwise", async () => {
-    // the parked() fixture's createdAt is 2026-09-01, a past month against the real clock
+    // A park from a PAST, filed period (2020-01): non-null on any date the suite runs.
+    table[0].createdAt = new Date("2020-01-15T12:00:00Z");
     (prisma as any).regulatedSalesLedger.findMany.mockResolvedValue([
       { id: "s-1", trackedCategoryId: "cat-A" },
     ]);
     (prisma as any).regulatedFiling.findMany.mockResolvedValue([
       {
         trackedCategoryId: "cat-A",
-        periodKey: "2026-09",
-        periodStart: new Date("2026-09-01T00:00:00Z"),
-        periodEnd: new Date("2026-10-01T00:00:00Z"),
+        periodKey: "2020-01",
+        periodStart: new Date("2020-01-01T00:00:00Z"),
+        periodEnd: new Date("2020-02-01T00:00:00Z"),
         status: "GENERATED",
       },
     ]);
     const [row] = (await service.list()) as any[];
-    const currentBucket = new Date().toISOString().slice(0, 7);
-    if (currentBucket === "2026-09") expect(row.amendedPeriod).toBeNull();
-    else expect(row.amendedPeriod).toEqual({ periodKey: "2026-09", status: "GENERATED" });
+    expect(row.amendedPeriod).toEqual({ periodKey: "2020-01", status: "GENERATED" });
 
+    // No filing for that period, or a filing for another category: null.
     (prisma as any).regulatedFiling.findMany.mockResolvedValue([]);
     const [open] = (await service.list()) as any[];
     expect(open.amendedPeriod).toBeNull();
+    (prisma as any).regulatedFiling.findMany.mockResolvedValue([
+      {
+        trackedCategoryId: "cat-OTHER",
+        periodKey: "2020-01",
+        periodStart: new Date("2020-01-01T00:00:00Z"),
+        periodEnd: new Date("2020-02-01T00:00:00Z"),
+        status: "GENERATED",
+      },
+    ]);
+    const [other] = (await service.list()) as any[];
+    expect(other.amendedPeriod).toBeNull();
   });
 });
 

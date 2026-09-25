@@ -2882,7 +2882,10 @@ describe("RegulatedLedgerService", () => {
       ];
       const result = await service.resolveParkedReversal(prisma, parked(), 12);
 
-      expect(result.outcome).toBe("closed");
+      // SA-193: nothing was written, but the returned pieces that no row could take are REPORTED —
+      // a leftover is never hidden behind "closed".
+      expect(result.outcome).toBe("partial");
+      expect(result.unbookedPieces).toBeGreaterThan(0);
       expect(result.resolvedEntryId).toBeNull();
       expect(result.bookedPieces).toBe(0);
       expect(reversals()).toHaveLength(0);

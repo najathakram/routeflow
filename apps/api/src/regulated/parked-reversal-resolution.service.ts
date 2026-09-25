@@ -1,6 +1,5 @@
 import { ConflictException, Injectable, NotFoundException } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
-import { AuditService } from "../audit/audit.service";
 import { RegulatedLedgerService } from "./regulated-ledger.service";
 import { periodBucketOf } from "./period";
 
@@ -18,7 +17,6 @@ import { periodBucketOf } from "./period";
 export class ParkedReversalResolutionService {
   constructor(
     private readonly prisma: PrismaService,
-    private readonly audit: AuditService,
     private readonly ledger: RegulatedLedgerService,
   ) {}
 
@@ -102,7 +100,6 @@ export class ParkedReversalResolutionService {
    * row parked and unresolved, exactly like the restock service's cancelled-return refusal.
    */
   async resolve(id: string, pack: number, reason: string, actor: { id: string }) {
-    const tenantId = this.prisma.getTenantId();
     const result = await this.prisma.tenantTransaction(async (tx: any) => {
       const peek = await tx.regulatedLedgerParkedReversal.findFirst({ where: { id } });
       if (!peek) throw new NotFoundException("Parked reversal not found");
@@ -173,45 +170,48 @@ export class ParkedReversalResolutionService {
         data: { resolvedEntryId: resolution.resolvedEntryId },
       });
 
+      // SA-193 (6): the audit row is written INSIDE the transaction, so a failed audit write rolls the
+      // whole resolution back instead of being logged and swallowed after commit (every piece, parked or
+      // unbooked, is accounted for in this row, never silent). The tenant scope is injected by the tx.
+      await tx.auditLog.create({
+        data: {
+          userId: actor.id,
+          action: "regulated_ledger.parked_reversal_resolved",
+          entityType: "RegulatedLedgerParkedReversal",
+          entityId: id,
+          meta: {
+            returnId: row.returnId,
+            saleEntryId: row.saleEntryId,
+            orderItemId: row.orderItemId,
+            parkReason: row.reason,
+            unitsPerBoxSupplied: pack,
+            verdictAfter: resolution.verdictAfter,
+            correctionEntryId: resolution.correctionEntryId,
+            returnedPieces: Number(row.returnedPieces),
+            bookedPieces: resolution.bookedPieces,
+            bookedQty: resolution.bookedQty,
+            bookedNet: resolution.bookedNet,
+            bookedTax: resolution.bookedTax,
+            // SA-167: every piece is accounted for — "booked" alone is never reported when any
+            // piece was parked on a further row or could not be booked.
+            outcome: resolution.outcome,
+            parkedPieces: resolution.parkedPieces,
+            parkedRowIds: resolution.parkedRowIds,
+            unbookedPieces: resolution.unbookedPieces,
+            // SA-182: set when the parked period was already filed and the reversal went to the CURRENT
+            // period instead — an amended return may be required for that period.
+            amendedPeriod: resolution.amendedPeriod ?? null,
+            grownParks: resolution.grownParks ?? [],
+            resolvedEntryId: resolution.resolvedEntryId,
+            periodBucket: row.periodBucket,
+            operatorReason: reason,
+          },
+        },
+      });
+
       return { alreadyResolved: false as const, row, resolution };
     });
 
-    if (!result.alreadyResolved) {
-      await this.audit.log({
-        tenantId,
-        userId: actor.id,
-        action: "regulated_ledger.parked_reversal_resolved",
-        entityType: "RegulatedLedgerParkedReversal",
-        entityId: id,
-        meta: {
-          returnId: result.row.returnId,
-          saleEntryId: result.row.saleEntryId,
-          orderItemId: result.row.orderItemId,
-          parkReason: result.row.reason,
-          unitsPerBoxSupplied: pack,
-          verdictAfter: result.resolution.verdictAfter,
-          correctionEntryId: result.resolution.correctionEntryId,
-          returnedPieces: Number(result.row.returnedPieces),
-          bookedPieces: result.resolution.bookedPieces,
-          bookedQty: result.resolution.bookedQty,
-          bookedNet: result.resolution.bookedNet,
-          bookedTax: result.resolution.bookedTax,
-          // SA-167: every piece is accounted for — "booked" alone is never reported when any
-          // piece was parked on a further row or could not be booked.
-          outcome: result.resolution.outcome,
-          parkedPieces: result.resolution.parkedPieces,
-          parkedRowIds: result.resolution.parkedRowIds,
-          unbookedPieces: result.resolution.unbookedPieces,
-          // SA-182: set when the parked period was already filed and the reversal went to the CURRENT
-          // period instead — an amended return may be required for that period.
-          amendedPeriod: result.resolution.amendedPeriod ?? null,
-          grownParks: result.resolution.grownParks ?? [],
-          resolvedEntryId: result.resolution.resolvedEntryId,
-          periodBucket: result.row.periodBucket,
-          operatorReason: reason,
-        },
-      });
-    }
     return {
       alreadyResolved: result.alreadyResolved,
       outcome: result.alreadyResolved ? null : result.resolution.outcome,

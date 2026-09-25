@@ -1318,8 +1318,9 @@ export class RegulatedLedgerService {
 
     if (rows.length === 0) {
       return {
-        // "closed" only when the walk booked AND parked nothing (SA-169); leftover is still reported.
-        outcome: parkedPieces > 0 ? "partial" : "closed",
+        // "closed" only when the walk booked, parked AND left nothing unbooked (SA-169, SA-193): a
+        // leftover is never hidden behind "closed".
+        outcome: parkedPieces > 0 || unbookedPieces > 0 ? "partial" : "closed",
         correctionEntryId,
         resolvedEntryId: null,
         bookedPieces: 0,
