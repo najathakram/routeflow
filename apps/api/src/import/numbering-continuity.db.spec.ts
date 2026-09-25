@@ -391,6 +391,32 @@ describeDb(
       );
     }, 30_000);
 
+    // Pre-merge review of #2170: the year-0 max scan captured `(\d{1,9})` with no leading `0*`,
+    // so a zero-padded number longer than 9 characters (padding goes to 12; empty prefix is
+    // allowed for bare migrated numbers) was invisible to both the save guard and max-first.
+    it("REG-B861-Z a zero-padded 10-character bare number is seen by the save guard", async () => {
+      const tenant = await seedTenant("z");
+      const cust = await seedCustomer(tenant.id, "z");
+      await seedInvoice(tenant.id, cust.id, "0090000123");
+
+      await expect(
+        saveInvoiceNumbering(tenant.id, { prefix: "", nextNumber: 1000, padding: 10 }),
+      ).rejects.toThrow(/0090000123/);
+    }, 30_000);
+
+    it("REG-B861-Z2 a pad-10 imported block after the save is jumped, not wedged", async () => {
+      const tenant = await seedTenant("z2");
+      const cust = await seedCustomer(tenant.id, "z2");
+      await saveInvoiceNumbering(tenant.id, { prefix: "", nextNumber: 1, padding: 10 });
+      // Six consecutive padded numbers land after the save (an import): more than the mint's
+      // attempt cap, so only a max scan that SEES them can jump past.
+      for (let i = 1; i <= 6; i++) {
+        await seedInvoice(tenant.id, cust.id, String(i).padStart(10, "0"));
+      }
+
+      await expect(reserveInvoiceNext(tenant.id)).resolves.toBe("0000000007");
+    }, 30_000);
+
     it("REG-B861-U a stale save is a 409 and changes nothing", async () => {
       const tenant = await seedTenant("u");
       await saveInvoiceNumbering(tenant.id, { prefix: "INV-", nextNumber: 10543, padding: 5 });

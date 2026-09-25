@@ -663,6 +663,26 @@ describe("NumberingService", () => {
       );
     });
 
+    it("REG-B861-Z a zero-padded number longer than 9 characters is seen by the save guard", async () => {
+      // Pre-merge review of #2170: the year-0 max scan captured `(\d{1,9})` with no leading
+      // `0*`, so a bare migrated `0090000123` (10 characters, value 90000123) was invisible —
+      // a save of next 1000 passed and the series would mint BELOW an existing number.
+      // The fixture forwards `upsert` so a guard that does NOT refuse resolves (the wrong value
+      // the red run must show) instead of dying on a missing mock.
+      const tx = buildNumberingFixture({ docs: ["0090000123"] });
+      (tx.numberingSequence as any).upsert = jest.fn().mockResolvedValue({
+        docType: "INVOICE",
+        prefix: "",
+        nextNumber: 1000,
+        padding: 10,
+      });
+      prisma.tenantTransaction.mockImplementation((fn: any) => fn(tx));
+
+      await expect(
+        service.updateSettings("INVOICE", { prefix: "", nextNumber: 1000, padding: 10 }),
+      ).rejects.toThrow(/0090000123/);
+    });
+
     it("REG-B861-H a stale card save (expectedNextNumber) is refused with 409", async () => {
       prisma.tenantTransaction.mockImplementation((fn: any) =>
         fn(buildNumberingFixture({ savedRow: { prefix: "INV-", nextNumber: 10560, padding: 4 } })),
