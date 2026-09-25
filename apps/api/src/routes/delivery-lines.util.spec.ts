@@ -67,7 +67,10 @@ describe("assertDeliveriesFitStop — the at-door ceiling", () => {
         { orderItemId: "i1", quantityDelivered: 10 },
       ]);
       await expect(p).rejects.toBeInstanceOf(BadRequestException);
-      await expect(p).rejects.toThrow(/was cancelled/);
+      // a DRAFT order's line is NOT "cancelled": it has its own wording
+      await expect(p).rejects.toThrow(
+        c.order.status === "DRAFT" ? /not confirmed yet/ : /was cancelled/,
+      );
       // delivering nothing against it stays legal (a driver can close the stop)
       await expect(
         assertDeliveriesFitStop(tx([c]), stopOrders, [{ orderItemId: "i1", quantityDelivered: 0 }]),

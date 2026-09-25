@@ -62,7 +62,9 @@ export async function assertDeliveriesFitStop(
     if (!Number.isFinite(q) || q < 0 || q > (notOrdered ? 0 : Number(item.qty)) + 0.0005) {
       throw new BadRequestException(
         notOrdered
-          ? `Order item ${d.orderItemId} was cancelled — nothing can be delivered against it`
+          ? item.order?.status === "DRAFT"
+            ? `Order item ${d.orderItemId} belongs to an order that is not confirmed yet — nothing can be delivered against it`
+            : `Order item ${d.orderItemId} was cancelled — nothing can be delivered against it`
           : `Delivery quantity for order item ${d.orderItemId} must be between 0 and the ordered quantity`,
       );
     }
