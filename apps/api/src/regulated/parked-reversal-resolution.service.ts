@@ -151,8 +151,8 @@ export class ParkedReversalResolutionService {
       // unbooked, is accounted for in this row, never silent). The tenant scope is injected by the tx.
       await tx.auditLog.create({
         data: {
-          // explicit tenantId (SA-197 LOW): the tx extension also injects it, this makes the row's scope obvious
-          // the ROW's tenant, not the caller context's: a tenant-less SUPER_ADMIN has no context tenant
+          // explicit tenantId (SA-197 LOW): the ROW's own tenant, not the caller context's (the tx
+          // extension also injects it); a tenant-less caller is refused above, so the two agree
           tenantId: row.tenantId,
           userId: actor.id,
           action: "regulated_ledger.parked_reversal_resolved",

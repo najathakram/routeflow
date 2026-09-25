@@ -628,24 +628,32 @@ describe("resolveParkedReversal — resume the live walk (SA-167)", () => {
       });
     });
 
-    it("#2108: a parked row with NO resolvable product never walks onto a productless line in another category", async () => {
-      // Row 1: invoice item rotated away and order item gone, so its product id is null. Row 2 is a
-      // productless (freeform) line in cat-B. null must never equal null in the resumed walk.
-      ledger = [
-        sale(1, 2, { invoiceItemId: "ii-gone" }),
-        sale(2, 3, { trackedCategoryId: "cat-B" }),
-      ];
-      invoiceItems = [{ ...ii(2), productId: null }];
-      const findFirst = jest.fn().mockResolvedValue(filing("cat-B", "2026-08"));
-      (prisma as any).regulatedFiling.findFirst = findFirst;
-      await service.resolveParkedReversal(
-        prisma,
-        { ...parked(1, 60), periodBucket: "2026-08", parkedAt },
-        12,
-      );
-      expect(reversals().filter((r) => r.trackedCategoryId === "cat-B")).toHaveLength(0);
-      // the fold looked only at the parked row's own category (the mock ignores `where`)
-      expect([...findFirst.mock.calls[0][0].where.trackedCategoryId.in]).toEqual(["cat-A"]);
+    describe.each([
+      ["no label", {}],
+      ["unitLabel 'each'", { unitLabel: "each" }],
+    ])("#2108: parked row with NO resolvable product, productless line (%s)", (_n, extra) => {
+      it("never walks onto a productless line in another category", async () => {
+        // Row 1: invoice item rotated away and order item gone, so its product id is null. Row 2 is a
+        // productless (freeform) line in cat-B. null must never equal null in the resumed walk.
+        ledger = [
+          sale(1, 2, { invoiceItemId: "ii-gone" }),
+          sale(2, 3, { trackedCategoryId: "cat-B" }),
+        ];
+        invoiceItems = [{ ...ii(2), productId: null, ...extra }];
+        const findFirst = jest.fn().mockResolvedValue(filing("cat-B", "2026-08"));
+        (prisma as any).regulatedFiling.findFirst = findFirst;
+        const res = await service.resolveParkedReversal(
+          prisma,
+          { ...parked(1, 60), periodBucket: "2026-08", parkedAt },
+          12,
+        );
+        expect(reversals().filter((r) => r.trackedCategoryId === "cat-B")).toHaveLength(0);
+        expect(parkedStore).toHaveLength(0);
+        expect(res.parkedPieces).toBe(0);
+        expect(res.unbookedPieces).toBe(36);
+        // the fold looked only at the parked row's own category (the mock ignores `where`)
+        expect([...findFirst.mock.calls[0][0].where.trackedCategoryId.in]).toEqual(["cat-A"]);
+      });
     });
 
     it("SA-213 pin: the same inputs give the same amendedPeriod AND the same category fold from resolve and from list()'s helper", async () => {

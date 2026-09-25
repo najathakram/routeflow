@@ -21,6 +21,8 @@ export class ParkedRestockResolutionService {
 
   /** The tenant's unresolved parked restocks, oldest first. */
   list() {
+    if (!this.prisma.getTenantId())
+      throw new BadRequestException("Parked restocks are tenant-scoped");
     // (the model exists once the ledger migration's schema is generated; `any` until then, like the writer)
     return (this.prisma.forTenant() as any).returnParkedRestock.findMany({
       where: { resolvedAt: null },

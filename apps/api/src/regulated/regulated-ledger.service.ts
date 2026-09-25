@@ -932,14 +932,6 @@ export class RegulatedLedgerService {
   }
 
   /**
-   * #2108 / SA-196: the ONE definition of which categories a parked-reversal resolution touches: the
-   * parked row's own plus every live sale row of the same product on the order (correction rows
-   * excluded). A product re-categorised between two sales has rows in different categories, each with
-   * its own filing, so the conservative fold looks at all of them. `resolveParkedReversal` and the
-   * parked-reversal list both call this, so what the operator is told before resolving is what the
-   * resolution then does.
-   */
-  /**
    * #2108: the ONE product-id definition for a parked sale row: its live invoice item's product,
    * else the product of the order/invoice line shape (`loadSaleLineShapes`), which survives an
    * InvoiceItem rotation. list() (`filedPeriodForParked`) and `resolveParkedReversal` both call it.
@@ -952,6 +944,14 @@ export class RegulatedLedgerService {
     return productByItem.get(saleRow.invoiceItemId) ?? shapeProductId ?? null;
   }
 
+  /**
+   * #2108 / SA-196: the ONE definition of which categories a parked-reversal resolution touches: the
+   * parked row's own plus every live sale row of the same product on the order (correction rows
+   * excluded). A product re-categorised between two sales has rows in different categories, each with
+   * its own filing, so the conservative fold looks at all of them. `resolveParkedReversal` and the
+   * parked-reversal list both call this, so what the operator is told before resolving is what the
+   * resolution then does.
+   */
   static touchedCategoryIds(
     saleRow: any,
     sales: any[],
