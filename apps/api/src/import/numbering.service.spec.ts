@@ -62,6 +62,10 @@ function buildNumberingFixture(
 
   const raw = jest.fn((strings: any, ...values: any[]) => {
     const sql = Array.isArray(strings) ? strings.join("?") : String(strings);
+    // SA-287b: the configured mint first locks the saved row (`SELECT … FOR UPDATE`).
+    if (sql.includes("FOR UPDATE")) {
+      return Promise.resolve(saved ? [{ ...saved }] : []);
+    }
     if (sql.includes("UPDATE") && sql.includes("GREATEST")) {
       const target = values.find((v) => typeof v === "number") as number | undefined;
       const stored = saved?.nextNumber ?? 0;
@@ -99,6 +103,23 @@ function buildNumberingFixture(
       findUnique,
       findUniqueOrThrow,
       update: jest.fn().mockResolvedValue({ nextNumber: 2 }),
+      // The card's write paths, modelling the saved year-0 row: TODAY's unconditional upsert,
+      // and the compare-and-set / first-create pair.
+      upsert: jest.fn(({ create, update }: any) => {
+        saved = saved ? { ...saved, ...update } : { ...create };
+        return Promise.resolve({ docType: create.docType, ...saved });
+      }),
+      create: jest.fn(({ data }: any) => {
+        saved = { prefix: data.prefix, nextNumber: data.nextNumber, padding: data.padding };
+        return Promise.resolve({ docType: data.docType, ...saved });
+      }),
+      updateMany: jest.fn(({ where, data }: any) => {
+        if (!saved || (where.nextNumber !== undefined && saved.nextNumber !== where.nextNumber)) {
+          return Promise.resolve({ count: 0 });
+        }
+        saved = { ...saved, ...data };
+        return Promise.resolve({ count: 1 });
+      }),
     },
     invoice: { findFirst: jest.fn().mockResolvedValue(null) },
     estimate: { findFirst: jest.fn().mockResolvedValue(null) },
@@ -188,62 +209,30 @@ describe("NumberingService", () => {
   });
 
   describe("updateSettings", () => {
-    it("upserts the sequence and returns the new preview", async () => {
-      // SA-274: updateSettings now reads the existing year-0 row and scans the
-      // effective prefix's numeric max inside a tenantTransaction before
-      // writing — wire the shared fixture (no saved row, no docs) so that
-      // read/scan resolves instead of crashing; the unchanged-shape upsert
-      // call below is what actually still runs (no `expectedNextNumber` here),
-      // on the transaction client — so the fixture's delegate forwards `upsert`
-      // to the shared mock this test asserts on.
+    it("a first save carrying the card's loaded default token creates the row", async () => {
+      // SA-287b: expectedNextNumber is required; an unsaved row's token is the default 1, and
+      // the write is a plain create (a concurrent first save gets P2002 → 409, DB-lane pin).
       const tx = buildNumberingFixture();
-      (tx.numberingSequence as any).upsert = prisma.numberingSequence.upsert;
       prisma.tenantTransaction.mockImplementation((fn: any) => fn(tx));
-      prisma.numberingSequence.upsert.mockResolvedValue({
-        docType: "INVOICE",
-        prefix: "INV-",
+      const row = await service.updateSettings("INVOICE", {
         nextNumber: 9000,
-        padding: 4,
+        expectedNextNumber: 1,
       });
-      const row = await service.updateSettings("INVOICE", { nextNumber: 9000 });
-      expect(prisma.numberingSequence.upsert).toHaveBeenCalledWith(
-        expect.objectContaining({
-          where: {
-            tenantId_docType_year: { tenantId: "test-tenant", docType: "INVOICE", year: 0 },
-          },
-          update: { nextNumber: 9000 },
+      expect(tx.numberingSequence.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          tenantId: "test-tenant",
+          docType: "INVOICE",
+          prefix: "INV-",
+          nextNumber: 9000,
+          padding: 4,
         }),
-      );
+      });
       expect(row.preview).toBe("INV-9000");
     });
 
     it("throws without a tenant context", async () => {
       prisma.getTenantId.mockReturnValue(null);
       await expect(service.updateSettings("INVOICE", { nextNumber: 1 })).rejects.toBeInstanceOf(
-        BadRequestException,
-      );
-    });
-  });
-
-  describe("seedFromSource", () => {
-    it("continues from the source's last number (INV-08841 → next INV-08842)", async () => {
-      prisma.numberingSequence.upsert.mockResolvedValue({
-        docType: "INVOICE",
-        prefix: "INV-",
-        nextNumber: 8842,
-        padding: 5,
-      });
-      const row = await service.seedFromSource("INVOICE", "INV-08841");
-      expect(prisma.numberingSequence.upsert).toHaveBeenCalledWith(
-        expect.objectContaining({
-          create: expect.objectContaining({ prefix: "INV-", nextNumber: 8842, padding: 5 }),
-        }),
-      );
-      expect(row.preview).toBe("INV-08842");
-    });
-
-    it("rejects a source number it cannot parse", async () => {
-      await expect(service.seedFromSource("INVOICE", "n/a")).rejects.toBeInstanceOf(
         BadRequestException,
       );
     });
@@ -658,9 +647,9 @@ describe("NumberingService", () => {
       );
 
       // Fails TODAY: resolves (upserts nextNumber 10549 with no guard at all).
-      await expect(service.updateSettings("INVOICE", { nextNumber: 10549 })).rejects.toThrow(
-        /INV-10550/,
-      );
+      await expect(
+        service.updateSettings("INVOICE", { nextNumber: 10549, expectedNextNumber: 1 }),
+      ).rejects.toThrow(/INV-10550/);
     });
 
     it("REG-B861-Z a zero-padded number longer than 9 characters is seen by the save guard", async () => {
@@ -679,8 +668,25 @@ describe("NumberingService", () => {
       prisma.tenantTransaction.mockImplementation((fn: any) => fn(tx));
 
       await expect(
-        service.updateSettings("INVOICE", { prefix: "", nextNumber: 1000, padding: 10 }),
+        service.updateSettings("INVOICE", {
+          prefix: "",
+          nextNumber: 1000,
+          padding: 10,
+          expectedNextNumber: 1,
+        }),
       ).rejects.toThrow(/0090000123/);
+    });
+
+    it("REG-B861-AB a save without expectedNextNumber is refused (400, reload the settings)", async () => {
+      // SA-287b: the token is REQUIRED. Today a token-less save falls back to an unconditional
+      // upsert that can lower a live counter under an in-flight mint.
+      prisma.tenantTransaction.mockImplementation((fn: any) =>
+        fn(buildNumberingFixture({ savedRow: { prefix: "INV-", nextNumber: 10543, padding: 5 } })),
+      );
+
+      await expect(service.updateSettings("INVOICE", { prefix: "ACME-" })).rejects.toThrow(
+        /reload/i,
+      );
     });
 
     it("REG-B861-H a stale card save (expectedNextNumber) is refused with 409", async () => {

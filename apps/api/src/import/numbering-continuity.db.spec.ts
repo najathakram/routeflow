@@ -288,7 +288,16 @@ describeDb(
      * not here, so this helper itself never silently swallows a real type error.
      */
     async function saveInvoiceNumbering(tenantId: string, dto: UpdateNumberingDto) {
-      return tenantCtx.run(tenantId, () => numberingService.updateSettings("INVOICE", dto));
+      // SA-287b: every save carries the version token the card loaded. A test that does not
+      // pass one explicitly gets the CURRENT stored next (1 for an unsaved row), exactly what
+      // a freshly loaded card would send; U/U2 pass a stale one on purpose.
+      const token =
+        (dto as any).expectedNextNumber ??
+        (await numberingSequenceRow(tenantId, "INVOICE", 0))?.nextNumber ??
+        1;
+      return tenantCtx.run(tenantId, () =>
+        numberingService.updateSettings("INVOICE", { ...dto, expectedNextNumber: token } as any),
+      );
     }
 
     /** Mints via the real reserveNext contract every live INVOICE caller uses: year + tenantId. */
@@ -415,6 +424,108 @@ describeDb(
       }
 
       await expect(reserveInvoiceNext(tenant.id)).resolves.toBe("0000000007");
+    }, 30_000);
+
+    it("REG-B861-AB a save without expectedNextNumber is refused (400, reload the settings)", async () => {
+      const tenant = await seedTenant("ab");
+      await saveInvoiceNumbering(tenant.id, { prefix: "INV-", nextNumber: 10543, padding: 5 });
+
+      // Straight to the service (the helper would add the token): a token-less client.
+      await expect(
+        tenantCtx.run(tenant.id, () =>
+          numberingService.updateSettings("INVOICE", { prefix: "ACME-" }),
+        ),
+      ).rejects.toThrow(/reload/i);
+    }, 30_000);
+
+    // SA-287b fold 1, the race itself on two connections: a prefix save holds the saved row
+    // (UPDATE, uncommitted) while a mint starts. The mint must not issue a number at or below
+    // an existing document under the NEW prefix. Before the fix the mint scans the old prefix
+    // (INV-, max 0), its UPDATE then waits on the save and returns the new prefix, and it
+    // issues ACME-0006 although ACME-0900 exists.
+    it("REG-B861-AC a prefix save racing a mint never yields a number at or below an existing one", async () => {
+      const tenant = await seedTenant("ac");
+      const cust = await seedCustomer(tenant.id, "ac");
+      await saveInvoiceNumbering(tenant.id, { prefix: "INV-", nextNumber: 6, padding: 4 });
+      await seedInvoice(tenant.id, cust.id, "ACME-0900");
+
+      let releaseSave!: () => void;
+      const saveMayCommit = new Promise<void>((r) => (releaseSave = r));
+      let saveHoldsRow!: () => void;
+      const rowHeld = new Promise<void>((r) => (saveHoldsRow = r));
+      const save = prisma.$transaction(
+        async (tx) => {
+          await tx.$executeRaw`
+            UPDATE "NumberingSequence" SET "prefix" = 'ACME-'
+            WHERE "tenantId" = ${tenant.id} AND "docType" = 'INVOICE'::"DocumentNumberType" AND "year" = 0
+          `;
+          saveHoldsRow();
+          await saveMayCommit;
+        },
+        { timeout: 20_000 },
+      );
+      await rowHeld;
+      const mint = reserveInvoiceNext(tenant.id);
+      await new Promise((r) => setTimeout(r, 500)); // let the mint reach the locked row
+      releaseSave();
+      await save;
+
+      const issued = await mint;
+      expect(issued).toBe("ACME-0901");
+    }, 30_000);
+
+    // Pin (no REG token — green before and after SA-287b): two cards holding the same token
+    // save different next numbers at once; the compare-and-set lets exactly one through.
+    it("two concurrent saves with the same token: exactly one succeeds, the other is a 409", async () => {
+      const tenant = await seedTenant("cas2");
+      await saveInvoiceNumbering(tenant.id, { prefix: "INV-", nextNumber: 10543, padding: 5 });
+
+      const results = await Promise.allSettled([
+        saveInvoiceNumbering(tenant.id, { nextNumber: 20000, expectedNextNumber: 10543 } as any),
+        saveInvoiceNumbering(tenant.id, { nextNumber: 30000, expectedNextNumber: 10543 } as any),
+      ]);
+
+      const outcome = results
+        .map((r) =>
+          r.status === "fulfilled"
+            ? "ok"
+            : r.reason instanceof ConflictException
+              ? "409"
+              : `other:${r.reason}`,
+        )
+        .sort();
+      expect(outcome).toEqual(["409", "ok"]);
+    }, 30_000);
+
+    // Pin (no REG token): two first saves race to create the row; P2002 maps to 409.
+    it("two concurrent first saves: one creates the row, the other is a 409", async () => {
+      const tenant = await seedTenant("first2");
+
+      const results = await Promise.allSettled([
+        saveInvoiceNumbering(tenant.id, {
+          prefix: "INV-",
+          nextNumber: 500,
+          padding: 4,
+          expectedNextNumber: 1,
+        } as any),
+        saveInvoiceNumbering(tenant.id, {
+          prefix: "ACME-",
+          nextNumber: 700,
+          padding: 4,
+          expectedNextNumber: 1,
+        } as any),
+      ]);
+
+      const outcome = results
+        .map((r) =>
+          r.status === "fulfilled"
+            ? "ok"
+            : r.reason instanceof ConflictException
+              ? "409"
+              : `other:${r.reason}`,
+        )
+        .sort();
+      expect(outcome).toEqual(["409", "ok"]);
     }, 30_000);
 
     it("REG-B861-U a stale save is a 409 and changes nothing", async () => {
