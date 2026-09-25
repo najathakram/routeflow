@@ -17,6 +17,7 @@ import {
   perPieceOf,
   purchaseEventKey,
   salePackOf,
+  salePiecesOf,
 } from "./sales-facts.rules";
 import type { ProductCreditEvents, ProductLifetime, ProductSaleFact } from "./sales-facts.types";
 
@@ -111,6 +112,8 @@ export function aggregateProductInsights(
   const purchasers = new Set<string>();
   const packs = new Set<number>();
   let legacyLines = 0;
+  /** Lines whose piece count the stored line cannot give (pack-snapshot rule) — revenue only. */
+  let unresolvedSaleLines = 0;
   /** Over lines with pieces > 0 and a known sale-time pack (A6). */
   let sellingUnits = 0;
   let sellingGross = 0;
@@ -129,19 +132,27 @@ export function aggregateProductInsights(
     b.events.add(event);
     if (isNewer(f, b.newestLine)) b.newestLine = f;
 
+    // Pieces come from the stored line's own evidence (pack-snapshot rule), never `qty` as-is:
+    // a no-split boxed line's qty may count boxes, so it adds revenue and nothing per piece.
+    const pieces = salePiecesOf(f, productPackNow);
     addTo([total, bucket, b], (a) => {
-      a.qty += f.qty;
       a.gross += f.subtotal;
+      if (pieces != null) a.qty += pieces;
     });
-    if (!(f.qty > 0)) continue; // a zero-quantity fee line counts in revenue only (A6)
+    if (pieces == null) {
+      unresolvedSaleLines += 1;
+      if (salePackOf(f, productPackNow) == null) legacyLines += 1;
+      continue;
+    }
+    if (!(pieces > 0)) continue; // a zero-quantity fee line counts in revenue only (A6)
 
     addTo([total, bucket, b], (a) => {
       a.pricedGross += f.subtotal;
-      a.pricedQty += f.qty;
+      a.pricedQty += pieces;
     });
     if (isNewer(f, b.newestPricedLine)) b.newestPricedLine = f;
     if (isNewer(f, newestPriced)) newestPriced = f;
-    const perPiece = perPieceOf(f.subtotal, f.qty);
+    const perPiece = perPieceOf(f.subtotal, pieces);
     if (perPiece != null) {
       minPerPiece = minPerPiece == null ? perPiece : Math.min(minPerPiece, perPiece);
       maxPerPiece = maxPerPiece == null ? perPiece : Math.max(maxPerPiece, perPiece);
@@ -151,10 +162,15 @@ export function aggregateProductInsights(
       legacyLines += 1;
     } else {
       packs.add(pack);
-      sellingUnits += f.qty / pack;
+      sellingUnits += pieces / pack;
       sellingGross += f.subtotal;
     }
   }
+  /** Per piece on the SAME pieces the totals count (null when the line's pieces are unknown). */
+  const perPieceOfLine = (f: ProductSaleFact) => {
+    const pieces = salePiecesOf(f, productPackNow);
+    return pieces == null ? null : perPieceOf(f.subtotal, pieces);
+  };
 
   for (const c of credits.attributed) {
     const stamp = dayOf(c.at);
@@ -191,6 +207,7 @@ export function aggregateProductInsights(
 
   const totals: ProductInsightsTotals = {
     invoicedQtyPieces: roundQty(total.qty),
+    unresolvedSaleLines,
     returnedQtyPieces: roundQty(total.returned),
     unresolvedReturnLines,
     netQtyPieces: roundQty(total.qty - total.returned),
@@ -214,7 +231,7 @@ export function aggregateProductInsights(
         unitPrice: roundMoney(newestPriced.unitPrice),
         unitLabel: newestPriced.unitLabel,
         unitsPerBox: salePackOf(newestPriced, productPackNow),
-        perPiece: perPieceOf(newestPriced.subtotal, newestPriced.qty) as number,
+        perPiece: perPieceOfLine(newestPriced) as number,
         date: calendarDateFromIso(newestPriced.issueDate),
         customerId: newestPriced.customerId,
         customer: newestPriced.customerName ?? "—",
@@ -253,9 +270,7 @@ export function aggregateProductInsights(
       lineNet: n.net,
       orders: b.events.size,
       lastDate: b.newestLine ? calendarDateFromIso(b.newestLine.issueDate) : null,
-      lastPerPiece: b.newestPricedLine
-        ? perPieceOf(b.newestPricedLine.subtotal, b.newestPricedLine.qty)
-        : null,
+      lastPerPiece: b.newestPricedLine ? perPieceOfLine(b.newestPricedLine) : null,
       avgPerPiece: avgOf(b.pricedGross, b.pricedQty),
       share: totalNet.gross > 0 ? Math.round((n.gross / totalNet.gross) * 10_000) / 10_000 : 0,
     };

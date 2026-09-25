@@ -3,8 +3,10 @@
  *
  * Seeds 100k invoice lines / 5k invoices / 2k credit notes / 300 returns into ONE tenant of a
  * LOCAL database, times the service call behind each product-insights endpoint, prints p50/p95,
- * EXPLAINs the four read paths the new indexes serve, deletes everything it seeded, and exits 1
- * when any JSON endpoint's p95 exceeds 300 ms or an index is not usable.
+ * EXPLAINs the four read paths the new indexes serve AND every SQL statement Prisma actually
+ * sends for the keyset line page (first and cursor page) and one insights read — flagging any
+ * sequential scan of a large table — deletes everything it seeded, and exits 1 when any JSON
+ * endpoint's p95 exceeds 300 ms or an index is not usable.
  *
  * Run from apps/api, against a LOCAL database only (refused otherwise):
  *   DATABASE_URL=postgresql://user:pass@localhost:5432/<db> \
@@ -17,6 +19,7 @@
  */
 import { randomUUID } from "crypto";
 import { performance } from "perf_hooks";
+import { Client as PgClient } from "pg";
 import { PrismaService } from "../src/prisma/prisma.service";
 import { TenantContextService } from "../src/tenant/tenant-context.service";
 import { requireLocalDatabaseUrl } from "../src/common/testing/db-spec";
@@ -446,11 +449,110 @@ async function main() {
       console.log((usedNatural ? natural : forced).trim());
     }
 
+    // ── EXPLAIN: the statements Prisma really sends (SA-289: the keyset page must not scan) ──
+    const url = process.env.DATABASE_URL as string;
+    const realReads: [string, () => Promise<unknown>][] = [
+      ["sales HOT page 1", () => insights.getProductSalesPage(HOT.id, { limit: 100 })],
+      [
+        "sales HOT cursor page",
+        () =>
+          insights.getProductSalesPage(HOT.id, {
+            limit: 100,
+            cursor: firstPage.nextCursor ?? undefined,
+          }),
+      ],
+      ["sales typical page 1", () => insights.getProductSalesPage(typical.id, { limit: 100 })],
+      ["insights typical 12 months", () => insights.getProductInsights(typical.id, {})],
+    ];
+    for (const [name, fn] of realReads) {
+      const statements = await captureSql(() => tenantCtx.run(tenantId, fn));
+      console.log(`\n══ ${name}: ${statements.length} statement(s)`);
+      for (const st of statements) {
+        if (!/^\s*SELECT/i.test(st.text)) continue;
+        const plan = await explainRaw(url, st.text, st.values);
+        const scans = BIG_TABLES.filter((tbl) => plan.includes(`Seq Scan on "${tbl}"`));
+        console.log(`\n-- ${oneLine(st.text).slice(0, 160)}…`);
+        console.log(plan.trim());
+        if (!scans.length) {
+          console.log("ok: no sequential scan of a large table");
+          continue;
+        }
+        // Chosen, or forced? Re-plan with seq scans disabled: if the scans vanish, an index path
+        // exists and the planner merely judged the scan cheaper at this table size; if they stay,
+        // no index serves the statement — that one is a real gap (and fails the run).
+        const forced = await explainRaw(url, st.text, st.values, true);
+        const stuck = BIG_TABLES.filter((tbl) => forced.includes(`Seq Scan on "${tbl}"`));
+        if (stuck.length) failed = true;
+        console.log(
+          stuck.length
+            ? `!! SEQ SCAN on ${stuck.join(", ")} — NO index path exists:\n${forced.trim()}`
+            : `~ seq scan on ${scans.join(", ")} chosen at this size; an index path exists (forced plan below)\n${forced.trim()}`,
+        );
+      }
+    }
+
     console.log(failed ? "\nRESULT: FAIL" : "\nRESULT: PASS");
     process.exitCode = failed ? 1 : 0;
   } finally {
     if (!keep) await cleanup(prisma, tenantId, created);
     await prisma.$disconnect();
+  }
+}
+
+const BIG_TABLES = [
+  "Invoice",
+  "InvoiceItem",
+  "CreditNote",
+  "CreditNoteItem",
+  "Return",
+  "ReturnItem",
+];
+const oneLine = (sql: string) => sql.replace(/\s+/g, " ").trim();
+
+/** Every statement `pg` sends while `fn` runs (Prisma's driver adapter goes through pg). */
+async function captureSql(
+  fn: () => Promise<unknown>,
+): Promise<{ text: string; values: unknown[] }[]> {
+  const seen: { text: string; values: unknown[] }[] = [];
+  const proto = PgClient.prototype as any;
+  const original = proto.query;
+  proto.query = function patched(this: unknown, config: any, values?: any, cb?: any) {
+    if (config && typeof config === "object" && typeof config.text === "string") {
+      seen.push({
+        text: config.text,
+        values: config.values ?? (Array.isArray(values) ? values : []),
+      });
+    } else if (typeof config === "string") {
+      seen.push({ text: config, values: Array.isArray(values) ? values : [] });
+    }
+    return original.call(this, config, values, cb);
+  };
+  try {
+    await fn();
+  } finally {
+    proto.query = original;
+  }
+  return seen;
+}
+
+/** EXPLAIN ANALYZE one captured statement on its own connection (never the patched one). */
+async function explainRaw(
+  url: string,
+  text: string,
+  values: unknown[],
+  noSeqScan = false,
+): Promise<string> {
+  const client = new PgClient({ connectionString: url });
+  await client.connect();
+  try {
+    if (noSeqScan) await client.query("SET enable_seqscan = off");
+    const res = await client.query(
+      `EXPLAIN (ANALYZE, BUFFERS, COSTS OFF) ${text}`,
+      values as any[],
+    );
+    return res.rows.map((r: any) => r["QUERY PLAN"]).join("\n");
+  } finally {
+    await client.end();
   }
 }
 

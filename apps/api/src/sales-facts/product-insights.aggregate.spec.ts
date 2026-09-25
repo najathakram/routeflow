@@ -37,7 +37,8 @@ function line(over: Partial<ProductSaleFact> & Pick<ProductSaleFact, "lineId">):
 // Five lines across June-August (window 2026-06-01..2026-08-31, monthly):
 //  L1 boxed  : 2 boxes of 12 = 24 pcs, $60 (box price 30)        c1, order o1, invoice i1
 //  L2 unit   : 6 pcs, factor-1 unit snapshot, $24                 c2, no order, invoice i2
-//  L3 legacy : 10 pcs, no snapshot, product boxed today, $30      c1, order o1 again (partial), invoice i3
+//  L3 legacy : qty 10, no split, no snapshot, product boxed today — pieces UNKNOWN (10 boxes or
+//              10 pieces?), $30 revenue only                     c1, order o1 again (partial), invoice i3
 //  L4 fee    : 0 pcs, $5 (revenue only)                           c2, no order, invoice i4
 //  L5 w/off  : 1 box of 12 = 12 pcs, $30, WRITTEN_OFF invoice     c3, order o5, invoice i5
 const LINES: ProductSaleFact[] = [
@@ -188,10 +189,11 @@ describe("aggregateProductInsights (#2118)", () => {
 
   it("totals: pieces, gross, credits on their own tenant-local days, net via netOf", () => {
     expect(run().totals).toEqual({
-      invoicedQtyPieces: 52,
+      invoicedQtyPieces: 42, // 24 + 6 + 0 + 12 — L3's pieces are unknown, never its bare qty
+      unresolvedSaleLines: 1, // L3: counted, never guessed into pieces
       returnedQtyPieces: 2, // the May 31 return is outside the window
       unresolvedReturnLines: 1, // counted, never guessed into pieces
-      netQtyPieces: 50,
+      netQtyPieces: 40,
       // 24/12 + 6/1 + 12/12 — the legacy line (unknown pack) is excluded.
       sellingUnits: 9,
       sellingUnitPack: null,
@@ -211,7 +213,7 @@ describe("aggregateProductInsights (#2118)", () => {
 
   it("price facts stay on ONE axis: per piece, from subtotals, fee lines excluded", () => {
     expect(run().price).toEqual({
-      avgPerPiece: 2.77, // 144 / 52
+      avgPerPiece: 2.71, // (60 + 24 + 30) / 42 — L3 (unknown pieces) and the fee line are out
       avgPerSellingUnit: 12.67, // (60 + 24 + 30) / 9 selling units
       last: {
         unitPrice: 30,
@@ -227,6 +229,45 @@ describe("aggregateProductInsights (#2118)", () => {
     });
   });
 
+  it("pack-snapshot rule: a line whose pieces the stored line cannot give adds revenue only", () => {
+    // A no-split line with a BOXED snapshot (B644: qty 3 may be 3 boxes) on a product that is
+    // NOT boxed today: the snapshot, never today's pack, decides — unknown.
+    const b644 = line({ lineId: "b644", qty: 3, unitsPerBox: 12, unitPrice: 30, subtotal: 90 });
+    // A snapshot-1 line on a product boxed today: its own snapshot says pieces.
+    const one = line({ lineId: "one", qty: 4, unitsPerBox: 1, unitPrice: 2, subtotal: 8 });
+    const res = run({
+      lines: [b644, one],
+      productPackNow: null,
+      credits: { attributed: [], returned: [], unattributed: [] },
+    });
+    expect(res.totals).toMatchObject({
+      invoicedQtyPieces: 4,
+      unresolvedSaleLines: 1,
+      lineGross: 98, // revenue keeps the unknown line
+    });
+    expect(res.price).toMatchObject({ avgPerPiece: 2, minPerPiece: 2, maxPerPiece: 2 });
+    expect(res.series.reduce((s, p) => s + p.qtyPieces, 0)).toBe(4);
+    expect(res.buyers[0]).toMatchObject({ qtyPieces: 4, lineGross: 98, avgPerPiece: 2 });
+
+    const boxedToday = run({
+      lines: [one],
+      productPackNow: 12,
+      credits: { attributed: [], returned: [], unattributed: [] },
+    });
+    expect(boxedToday.totals).toMatchObject({ invoicedQtyPieces: 4, unresolvedSaleLines: 0 });
+  });
+
+  it("SA-289: unattributed credits sit BESIDE the product net — never subtracted, never prorated", () => {
+    const res = run();
+    expect(res.totals.unattributedCredits).toBe(3.5);
+    // lineNet = lineGross − attributedCredits exactly; the 3.50 footnote touches neither.
+    expect(res.totals.lineNet).toBe(res.totals.lineGross - res.totals.attributedCredits);
+    const noFootnote = run({ credits: { ...CREDITS, unattributed: [] } });
+    expect(noFootnote.totals.lineNet).toBe(res.totals.lineNet);
+    expect(noFootnote.series).toEqual(res.series);
+    expect(noFootnote.buyers).toEqual(res.buyers);
+  });
+
   it("series: one zero-filled point per bucket, credits in the bucket of their local day", () => {
     expect(run().series).toEqual([
       {
@@ -240,12 +281,12 @@ describe("aggregateProductInsights (#2118)", () => {
       },
       {
         date: "2026-07-01",
-        qtyPieces: 16,
+        qtyPieces: 6, // L2 only — L3's pieces are unknown
         returnedQtyPieces: 2,
-        lineGross: 54,
+        lineGross: 54, // L3's $30 still counts as revenue
         credits: 0,
         lineNet: 54,
-        avgPerPiece: 3.38, // 54 / 16 = 3.375, half away from zero
+        avgPerPiece: 4, // 24 / 6 — L3 has no per-piece price
       },
       {
         date: "2026-08-01",
@@ -276,13 +317,13 @@ describe("aggregateProductInsights (#2118)", () => {
       {
         customerId: "c1",
         name: "Acme Grocers",
-        qtyPieces: 34,
+        qtyPieces: 24, // L1 only — L3's pieces are unknown
         lineGross: 90,
         lineNet: 80,
         orders: 1, // one order billed on two invoices
-        lastDate: "2026-07-20",
-        lastPerPiece: 3,
-        avgPerPiece: 2.65, // 90 / 34
+        lastDate: "2026-07-20", // L3 is still a purchase day
+        lastPerPiece: 2.5, // L1: the newest line with KNOWN pieces
+        avgPerPiece: 2.5, // 60 / 24
         share: 0.604, // 90 / 149 = 0.60402…
       },
       {
@@ -348,11 +389,24 @@ describe("aggregateProductInsights (#2118)", () => {
     expect(res.price.avgPerSellingUnit).toBe(30); // (60 + 30) / 3 boxes
   });
 
-  it("an unknown product pack (live pack not supplied) never turns a no-snapshot line into pieces-per-unit", () => {
+  it("an unknown product pack (live pack not supplied) never turns a no-snapshot line into pieces", () => {
     const res = run({ lines: [LINES[2]], productPackNow: undefined });
-    expect(res.totals).toMatchObject({ legacyLines: 1, sellingUnits: 0, sellingUnitPack: null });
+    expect(res.totals).toMatchObject({
+      legacyLines: 1,
+      sellingUnits: 0,
+      sellingUnitPack: null,
+      invoicedQtyPieces: 0,
+      unresolvedSaleLines: 1,
+      lineGross: 30,
+    });
     expect(res.price.avgPerSellingUnit).toBeNull();
-    expect(res.price.avgPerPiece).toBe(3); // the piece axis still works
+    expect(res.price.avgPerPiece).toBeNull();
+  });
+
+  it("a no-snapshot line on a product that exists and is NOT boxed today counts its qty as pieces", () => {
+    const res = run({ lines: [LINES[2]], productPackNow: null });
+    expect(res.totals).toMatchObject({ invoicedQtyPieces: 10, unresolvedSaleLines: 0 });
+    expect(res.price.avgPerPiece).toBe(3);
   });
 
   it("an empty window: zeros everywhere, nulls for prices, lifetime dates kept (never sold ≠ quiet window)", () => {
@@ -386,6 +440,7 @@ describe("aggregateProductInsights (#2118)", () => {
         line({ lineId: "b", qty: 0.333, subtotal: 0.2 }),
         line({ lineId: "c", qty: 0.333, subtotal: 0.005 }),
       ],
+      productPackNow: null, // never boxed: a bare qty is pieces
       credits: { attributed: [], returned: [], unattributed: [] },
     });
     expect(res.totals.lineGross).toBe(0.31);

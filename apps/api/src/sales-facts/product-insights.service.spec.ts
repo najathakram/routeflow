@@ -236,6 +236,14 @@ describe("ProductInsightsService (#2118)", () => {
         { issueDate: cursor.issueDate, createdAt: { lt: cursor.invoiceCreatedAt } },
         { issueDate: cursor.issueDate, createdAt: cursor.invoiceCreatedAt, id: { lte: "inv-2" } },
       ]);
+      // The same key, restated as an index bound so a deep page starts at the cursor.
+      expect(prisma.invoice.findMany.mock.calls[1][0].where.AND).toEqual([
+        { issueDate: { lte: cursor.issueDate } },
+      ]);
+      // Every page orders by the identical key (SA-289).
+      expect(prisma.invoice.findMany.mock.calls[1][0].orderBy).toEqual(
+        prisma.invoice.findMany.mock.calls[0][0].orderBy,
+      );
     });
 
     it("a page can end mid-invoice and the next one resumes after the served line", async () => {
@@ -314,6 +322,29 @@ describe("ProductInsightsService (#2118)", () => {
       // Boxed line: $30 box of 12 → 2.50 per piece, never the box price.
       expect(byId["inv-1-line-1"]).toMatchObject({ unitPrice: 30, lineTotal: 30, perPiece: 2.5 });
     });
+
+    it("pack-snapshot rule: a boxed line stored without a split has NO per-piece price (its qty may count boxes)", async () => {
+      const b644: any = inv(1);
+      // qty 3, snapshot 12, no split: 3 boxes or 3 pieces? The stored line cannot say.
+      b644.items = [
+        {
+          ...b644.items[0],
+          qty: D(3),
+          subtotal: D(90),
+          unitPrice: D(30),
+          boxes: null,
+          pieces: null,
+        },
+      ];
+      prisma.invoice.findMany.mockResolvedValueOnce([b644]);
+      // Even a product that is NOT boxed today never reinterprets the stored snapshot.
+      prisma.product.findFirst.mockResolvedValue({ ...PRODUCT_ROW, unitsPerBox: null });
+
+      const page = await service.getProductSalesPage("p1", {});
+
+      expect(page.lines).toHaveLength(1);
+      expect(page.lines[0]).toMatchObject({ qty: 3, lineTotal: 90, perPiece: null }); // never 30
+    });
   });
 
   describe("CSV export", () => {
@@ -338,9 +369,45 @@ describe("ProductInsightsService (#2118)", () => {
       expect(rows[0]).toMatch(/^Date,Invoice,Written off,Order,Customer,Qty \(pieces\)/);
       expect(rows[1]).toContain("'=HYPERLINK(1)");
       expect(rows.filter((r) => r.startsWith("2026-07-19,INV-1"))).toHaveLength(2);
-      expect(text).toContain("Rows total,,,,,24,,,,,,60,,,,0,0");
+      expect(rows[0]).toMatch(/,Qty \(pieces\),Qty as stored,Boxes,/);
+      expect(text).toContain("Rows total,,,,,24,,,,,,,60,,,,0,0");
       expect(text).toContain("Line gross,60");
       expect(text).toContain("Line net,60");
+      // SA-289: the unattributed total sits beside the product net, never subtracted.
+      expect(text).toContain("Unattributed credits (not subtracted),0");
+      // SA-289: the export never claims the invoice's printed line order.
+      expect(text).toContain("Not the invoice's printed line order.");
+    });
+
+    it("a line whose pieces are unknown: blank pieces and per-piece cells, stored qty and revenue kept, counted in the footer", async () => {
+      const b644: any = inv(1);
+      b644.items = [
+        {
+          ...b644.items[0],
+          qty: D(3),
+          subtotal: D(90),
+          unitPrice: D(30),
+          boxes: null,
+          pieces: null,
+        },
+        b644.items[1], // 1 box of 12, split: 12 pieces
+      ];
+      prisma.invoice.findMany.mockResolvedValue([b644]);
+      const { csv } = await service.prepareCsvExport("p1", {
+        from: "2026-07-01",
+        to: "2026-07-31",
+      });
+      const text = await collect(csv);
+      const rows = text.split("\r\n");
+
+      // Date,Invoice,Written off,Order,Customer,Qty (pieces),Qty as stored,Boxes,Loose pieces,
+      // Pack at sale,Unit,Unit price,Line total,Per piece,…
+      expect(rows).toContain("2026-07-19,INV-1,,ORD-1,Acme Grocers,,3,,,12,,30,90,,,,0,0");
+      expect(rows).toContain("2026-07-19,INV-1,,ORD-1,Acme Grocers,12,12,1,0,12,,30,30,2.5,,,0,0");
+      expect(text).toContain("Rows total,,,,,12,,,,,,,120,,,,0,0"); // pieces 12, revenue 120
+      expect(text).toContain("Invoiced pieces,12");
+      expect(text).toContain("Sale lines with unknown pieces (revenue only),1");
+      expect(text).toContain("Line gross,120");
     });
 
     it("a buyer-filtered export omits the window totals (they would not reconcile with the rows)", async () => {

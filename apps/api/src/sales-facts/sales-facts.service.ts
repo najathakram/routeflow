@@ -297,7 +297,14 @@ export class SalesFactsService {
         items: { some: { productId } },
         ...(opts.issueWindow ? { issueDate: opts.issueWindow } : {}),
         ...(opts.customerId ? { customerId: opts.customerId } : {}),
-        ...(opts.after ? { OR: atOrAfter(opts.after) } : {}),
+        ...(opts.after
+          ? {
+              OR: atOrAfter(opts.after),
+              // Implied by the OR, stated so Postgres can START the index range at the cursor
+              // (an OR is only a filter): a deep page never re-reads every earlier row.
+              AND: [{ issueDate: { lte: opts.after.issueDate } }],
+            }
+          : {}),
       },
       select: saleFactSelect(productId, {
         orderNumber: opts.orderNumber ?? true,
@@ -450,7 +457,9 @@ export class SalesFactsService {
     const unattributed: UnattributedCreditEvent[] = [];
     const returned: ReturnedQtyEvent[] = [];
 
-    // Every touching note counts ONCE, whichever read found it (the CreditNote term).
+    // Every touching note counts ONCE, whichever read found it (the CreditNote term). Its items
+    // on OTHER products' lines and on unlisted lines are attributed there — only the amount-only
+    // part (and an item whose line id no longer exists) is this product's footnote (SA-289).
     for (const n of notesById.values()) {
       if (n.status === "VOID" || !inWindow(n.createdAt)) continue;
       const split = attributeCreditNote(noteForAttribution(n), lineProduct);
@@ -687,15 +696,16 @@ export class SalesFactsService {
   }
 
   /**
-   * Every credit of a tenant-window split by the attribution rules: per product, and the
-   * unattributed rest. `Σ byProduct + unattributed = creditNotes + externalRefunds` exactly —
-   * each note's and refund's parts sum to its own amount.
+   * Every credit of a tenant-window split by the attribution rules: per product, on unlisted
+   * lines, and the unattributed rest. `Σ byProduct + unlisted + unattributed = creditNotes +
+   * externalRefunds` exactly — each note's and refund's parts sum to its own amount.
    */
   async tenantCreditBreakdown(
     tenantId: string,
     window: InstantWindow,
   ): Promise<{
     byProduct: Map<string, number>;
+    unlisted: number;
     unattributed: number;
     creditNotes: number;
     externalRefunds: number;
@@ -717,6 +727,7 @@ export class SalesFactsService {
     ]);
     const lineProduct = await this.lineProducts(tenantId, referencedLineIds(notes as any[]));
     const raw = new Map<string, number>();
+    let unlisted = 0;
     let unattributed = 0;
     let creditNotes = 0;
     let externalRefunds = 0;
@@ -727,6 +738,7 @@ export class SalesFactsService {
       creditNotes += Number(n.amount);
       const split = attributeCreditNote(noteForAttribution(n), lineProduct);
       add(split.byProduct);
+      unlisted += split.unlisted;
       unattributed += split.unattributed;
     }
     for (const r of refunds as any[]) {
@@ -746,6 +758,7 @@ export class SalesFactsService {
     for (const [k, v] of raw) byProduct.set(k, roundMoney(v));
     return {
       byProduct,
+      unlisted: roundMoney(unlisted),
       unattributed: roundMoney(unattributed),
       creditNotes: roundMoney(creditNotes),
       externalRefunds: roundMoney(externalRefunds),

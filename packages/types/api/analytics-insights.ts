@@ -7,7 +7,11 @@
 // Conventions every field below follows:
 // - Money is rounded to cents server-side (`roundMoney`, @routeflow/pricing). Never
 //   re-derive a line total from qty × unitPrice (a boxed line's unitPrice is a BOX price).
-// - Quantities are PIECES (the base unit, `InvoiceItem.qty` as stored), rounded to 3dp.
+// - Quantities are PIECES (the base unit), rounded to 3dp. A line's pieces come from its OWN
+//   stored evidence (a boxes/pieces split, or its sale-time pack snapshot) — never from the
+//   product's pack today. A line whose pieces cannot be known (a boxed line stored without a
+//   split: its qty may count boxes) adds revenue only and is counted in
+//   `unresolvedSaleLines`, never guessed into pieces or a per-piece price.
 // - Calendar days are "YYYY-MM-DD" strings in the tenant's calendar: an invoice counts on
 //   its `issueDate`; a credit note on the tenant-local day of its `createdAt`; an external
 //   refund on the tenant-local day of its `refundedAt`.
@@ -60,8 +64,12 @@ export interface ProductInsightsProduct {
 }
 
 export interface ProductInsightsTotals {
-  /** Σ pieces on invoiced lines in the window. */
+  /** Σ pieces on invoiced lines in the window whose piece count is known. */
   invoicedQtyPieces: number;
+  /** Invoiced lines in the window whose piece count is unknown (a boxed line stored without a
+   *  boxes/pieces split — its qty may count boxes). Their revenue is in `lineGross`; they are
+   *  NOT in any pieces figure or per-piece price. */
+  unresolvedSaleLines: number;
   /** Σ pieces on returns whose netting event (external refund, or a non-VOID credit note)
    *  falls in the window. */
   returnedQtyPieces: number;
@@ -78,8 +86,9 @@ export interface ProductInsightsTotals {
   /** The one sale-time pack size every known-pack line shares (1 = sold by the piece);
    *  null when there are none or when `mixedPackSizes`. */
   sellingUnitPack: number | null;
-  /** Lines whose sale-time pack is unknown (no snapshot and a boxed product, or a boxed
-   *  snapshot with no boxes/pieces split). Counted in pieces only. */
+  /** Lines whose sale-time pack is unknown (no snapshot and a boxed product, a split with no
+   *  snapshot, or a boxed snapshot with no boxes/pieces split). Never in `sellingUnits`; in
+   *  pieces only when their piece count is known (see `unresolvedSaleLines`). */
   legacyLines: number;
   /** True when known-pack lines were sold in more than one pack size. */
   mixedPackSizes: boolean;
@@ -90,9 +99,12 @@ export interface ProductInsightsTotals {
   attributedCredits: number;
   /** lineGross − attributedCredits. Never clamped. */
   lineNet: number;
-  /** Footnote only, never subtracted: credits in the window on this product's invoices or
-   *  returns that no stored line fact attributes to a product (header-only credit notes,
-   *  standard external refunds, the tax part of a credit). A credit touching several
+  /** Reported beside `lineNet`, never subtracted from it and never prorated: the amount-only
+   *  credits in the window on this product's invoices or returns — a credit note with no line
+   *  items (or the part of one its items do not cover), a note minted for a return of it, a
+   *  STANDARD external refund, the tax part of an INLINE one — plus a line item whose invoice
+   *  line id no longer exists. A line-itemized credit attributes through its items (to this or
+   *  another product, or an unlisted line) and is never here. A credit touching several
    *  products appears on each, so these do NOT sum across products. */
   unattributedCredits: number;
   /** Distinct invoices with a line of this product in the window. */
@@ -123,13 +135,13 @@ export interface ProductInsightsLastSale {
 }
 
 export interface ProductInsightsPrice {
-  /** Σ subtotal ÷ Σ pieces over lines with pieces > 0 (revenue-weighted; includes promo free
-   *  units, so it is the EFFECTIVE price). Null when nothing sold. */
+  /** Σ subtotal ÷ Σ pieces over lines with known pieces > 0 (revenue-weighted; includes promo
+   *  free units, so it is the EFFECTIVE price). Null when nothing sold. */
   avgPerPiece: number | null;
   /** Σ subtotal ÷ Σ selling units over known-pack lines. Null when none. A blend when
    *  `mixedPackSizes` — lead with `avgPerPiece` then. */
   avgPerSellingUnit: number | null;
-  /** Newest line in the window with pieces > 0 (issue date, then entry order). */
+  /** Newest line in the window with known pieces > 0 (the sales-page order). */
   last: ProductInsightsLastSale | null;
   /** Lowest / highest effective per-piece line price in the window — one axis, never a
    *  box price next to a piece price. */
@@ -202,7 +214,8 @@ export interface ProductInsightSaleLine extends ProductSaleLine {
   /** Always present on this endpoint (optional only on the legacy shape). */
   writtenOff: boolean;
   unitLabel: string | null;
-  /** Effective price per piece (subtotal ÷ pieces); null for a zero-quantity line. */
+  /** Effective price per piece (subtotal ÷ pieces); null for a zero-quantity line and for a line
+   *  whose piece count is unknown (see `ProductInsightsTotals.unresolvedSaleLines`). */
   perPiece: number | null;
   /** Σ non-VOID credit-note line items on this line. */
   creditedAmount: number;
@@ -224,6 +237,9 @@ export interface ProductSalesPageQuery {
 export interface ProductSalesPage {
   productId: string;
   window: InsightWindow;
+  /** Newest first by issue date, then invoice (entry time, id), then line (entry time, id) — a
+   *  stable paging order that never overlaps or skips between pages. NOT the invoice's printed
+   *  line order. */
   lines: ProductInsightSaleLine[];
   /** Null on the last page. */
   nextCursor: string | null;

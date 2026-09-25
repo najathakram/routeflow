@@ -164,6 +164,8 @@ describeDb("sales-facts — real Postgres (#2118, plan §E)", () => {
       shippingFee?: number;
       taxAmount?: number;
       createdAt?: Date;
+      /** Every line gets THIS createdAt — the shape of lines written in one statement. */
+      lineCreatedAt?: Date;
     },
   ) {
     invSeq += 1;
@@ -203,8 +205,10 @@ describeDb("sales-facts — real Postgres (#2118, plan §E)", () => {
           pieces: l.pieces ?? null,
           unitsPerBox: l.unitsPerBox ?? null,
           unitLabel: l.unitLabel ?? null,
-          // Distinct, increasing entry times: the line order inside an invoice is by entry.
-          createdAt: new Date((opts.createdAt ?? invoice.createdAt).getTime() + (i + 1) * 1_000),
+          // Distinct, increasing entry times unless the test plants identical ones.
+          createdAt:
+            opts.lineCreatedAt ??
+            new Date((opts.createdAt ?? invoice.createdAt).getTime() + (i + 1) * 1_000),
         },
       });
       items.push(item);
@@ -243,7 +247,12 @@ describeDb("sales-facts — real Postgres (#2118, plan §E)", () => {
       createdAt: Date;
       invoiceId?: string | null;
       status?: "ISSUED" | "VOID";
-      items?: { invoiceItemId: string; amount: number; qty?: number }[];
+      items?: {
+        invoiceItemId: string;
+        amount: number;
+        qty?: number;
+        trackedCategoryId?: string | null;
+      }[];
     },
   ) {
     cnSeq += 1;
@@ -267,6 +276,7 @@ describeDb("sales-facts — real Postgres (#2118, plan §E)", () => {
           invoiceItemId: it.invoiceItemId,
           amount: it.amount,
           qty: it.qty ?? 0,
+          trackedCategoryId: it.trackedCategoryId ?? null,
         },
       });
     }
@@ -421,6 +431,51 @@ describeDb("sales-facts — real Postgres (#2118, plan §E)", () => {
     });
   });
 
+  it("E1c SA-289: every line-itemized credit attributes through its items — an ordinary-product line (trackedCategoryId NULL) exactly like a regulated one", async () => {
+    const t = await seedTenant("e1c");
+    const c = await seedCustomer(t, "e1c");
+    const ordinary = await seedProduct(t, "e1c-ord");
+    const regulated = await seedProduct(t, "e1c-reg");
+    const { invoice, items } = await seedInvoice(t, c.id, {
+      issueDate: "2026-06-05",
+      lines: [
+        { productId: ordinary.id, qty: 10, subtotal: 100 },
+        { productId: regulated.id, qty: 4, subtotal: 80 },
+      ],
+    });
+    await seedCreditNote(t, c.id, {
+      amount: 30,
+      invoiceId: invoice.id,
+      createdAt: new Date("2026-06-10T15:00:00Z"),
+      items: [
+        { invoiceItemId: items[0].id, amount: 12, trackedCategoryId: null },
+        // A plain id: CreditNoteItem.trackedCategoryId carries no relation.
+        { invoiceItemId: items[1].id, amount: 18, trackedCategoryId: `cat-${RUN}` },
+      ],
+    });
+
+    const [ord, reg] = await asTenant(t, () =>
+      Promise.all([
+        insights.getProductInsights(ordinary.id, { from: "2026-06-01", to: "2026-06-30" }),
+        insights.getProductInsights(regulated.id, { from: "2026-06-01", to: "2026-06-30" }),
+      ]),
+    );
+    expect(ord.totals).toMatchObject({
+      attributedCredits: 12,
+      lineNet: 88,
+      unattributedCredits: 0,
+    });
+    expect(reg.totals).toMatchObject({
+      attributedCredits: 18,
+      lineNet: 62,
+      unattributedCredits: 0,
+    });
+    const page = await asTenant(t, () =>
+      insights.getProductSalesPage(ordinary.id, { from: "2026-06-01", to: "2026-06-30" }),
+    );
+    expect(page.lines[0]).toMatchObject({ lineId: items[0].id, creditedAmount: 12 });
+  });
+
   it("E2 reconciliation identities: Σ product gross + unlisted + shipping − header discount = tenant gross; attributed + unattributed = tenant credits", async () => {
     const t = await seedTenant("e2");
     const c = await seedCustomer(t, "e2");
@@ -490,17 +545,26 @@ describeDb("sales-facts — real Postgres (#2118, plan §E)", () => {
     );
     expect(gross.gross).toBe(tenantNet.gross);
 
-    // Credit identity: attributed (per product) + unattributed = the tenant's two credit terms.
+    // Credit identity: attributed (per product) + unlisted lines + unattributed = the tenant's
+    // two credit terms.
     expect(r1.totals.attributedCredits).toBe(4);
     expect(r2.totals.attributedCredits).toBe(5);
     expect(credits.byProduct.get(p1.id)).toBe(4);
     expect(credits.byProduct.get(p2.id)).toBe(5);
-    expect(credits.unattributed).toBe(15.4); // 12 item-less + 3 unlisted line + 0.40 tax
+    expect(credits.unlisted).toBe(3); // an item on the unlisted line: attributed, to no product
+    expect(credits.unattributed).toBe(12.4); // 12 item-less + 0.40 INLINE tax — amount-only
     expect(
       Math.round(
-        (r1.totals.attributedCredits + r2.totals.attributedCredits + credits.unattributed) * 100,
+        (r1.totals.attributedCredits +
+          r2.totals.attributedCredits +
+          credits.unlisted +
+          credits.unattributed) *
+          100,
       ) / 100,
     ).toBe(Math.round((tenantNet.creditNotes + tenantNet.externalRefunds) * 100) / 100);
+    // SA-289: a product's footnote carries only amount-only credits — p2's is the item-less 12,
+    // never the 3 its note put on the unlisted line.
+    expect(r2.totals.unattributedCredits).toBe(12);
   });
 
   it("E3 partial invoices: one order billed on two invoices counts each line once and one purchase event", async () => {
@@ -657,18 +721,61 @@ describeDb("sales-facts — real Postgres (#2118, plan §E)", () => {
       insights.getProductInsights(p.id, { from: "2026-02-01", to: "2026-02-28" }),
     );
     expect(res.totals).toMatchObject({
-      invoicedQtyPieces: 43,
+      invoicedQtyPieces: 33, // 27 + 6 — the legacy line's pieces are unknown (10 boxes or 10 pieces?)
+      unresolvedSaleLines: 1,
       sellingUnits: 8.25, // 27/12 + 6/1 — the legacy line is excluded
       legacyLines: 1,
       mixedPackSizes: true,
       sellingUnitPack: null,
-      lineGross: 110.5,
+      lineGross: 110.5, // its revenue still counts
     });
     expect(res.price).toMatchObject({
-      avgPerPiece: 2.57, // 110.5 / 43
-      minPerPiece: 2.5, // 67.5/27 and 25/10 — never the $30 box price
+      avgPerPiece: 2.59, // (67.5 + 18) / 33 — never the legacy line's bare qty
+      minPerPiece: 2.5, // 67.5/27 — never the $30 box price
       maxPerPiece: 3,
     });
+  });
+
+  it("E6b pack-snapshot rule on real rows: a stored line's own snapshot decides, never today's product pack", async () => {
+    const t = await seedTenant("e6b");
+    const c = await seedCustomer(t, "e6b");
+    // Boxed by 12 when sold; NOT boxed today.
+    const p = await seedProduct(t, "e6b", { unitsPerBox: null });
+    await seedInvoice(t, c.id, {
+      issueDate: "2026-02-02",
+      lines: [
+        // B644 shape: snapshot 12, no split — qty 3 may be 3 boxes. Unknown, whatever today says.
+        { productId: p.id, qty: 3, subtotal: 90, unitPrice: 30, unitsPerBox: 12 },
+        {
+          productId: p.id,
+          qty: 24,
+          subtotal: 60,
+          unitPrice: 30,
+          boxes: 2,
+          pieces: 0,
+          unitsPerBox: 12,
+        },
+      ],
+    });
+
+    const res = await asTenant(t, () =>
+      insights.getProductInsights(p.id, { from: "2026-02-01", to: "2026-02-28" }),
+    );
+    expect(res.totals).toMatchObject({
+      invoicedQtyPieces: 24,
+      unresolvedSaleLines: 1,
+      lineGross: 150,
+    });
+    expect(res.price).toMatchObject({ avgPerPiece: 2.5, minPerPiece: 2.5, maxPerPiece: 2.5 });
+    const page = await asTenant(t, () =>
+      insights.getProductSalesPage(p.id, { from: "2026-02-01", to: "2026-02-28" }),
+    );
+    expect(page.lines.map((l) => [l.qty, l.perPiece])).toEqual(
+      expect.arrayContaining([
+        [3, null],
+        [24, 2.5],
+      ]),
+    );
   });
 
   it("E7 written-off invoices are sales, badged; REAL_INVOICE_STATUSES callers are untouched", async () => {
@@ -787,6 +894,53 @@ describeDb("sales-facts — real Postgres (#2118, plan §E)", () => {
     );
     expect([...a.lines, ...b.lines].map((l) => l.lineId)).toEqual(all.map((l) => l.lineId));
     expect(b.nextCursor).toBeNull();
+  });
+
+  it("E9b SA-289 ordering: lines written in one statement (identical createdAt) on invoices tied on issue day AND entry time — every page size walks every line exactly once, in one fixed order", async () => {
+    const t = await seedTenant("e9b");
+    const c = await seedCustomer(t, "e9b");
+    const p = await seedProduct(t, "e9b");
+    const same = new Date("2026-08-10T12:00:00.000Z");
+    for (let n = 0; n < 3; n += 1) {
+      // eslint-disable-next-line no-await-in-loop
+      await seedInvoice(t, c.id, {
+        issueDate: "2026-08-10",
+        createdAt: same, // invoice-level tie → decided by invoice id
+        lineCreatedAt: same, // line-level tie → decided by line id
+        lines: [1, 2, 3].map((k) => ({ productId: p.id, qty: k, subtotal: k })),
+      });
+    }
+    const q = { from: "2026-08-01", to: "2026-08-31" };
+    const whole = await asTenant(t, () => insights.getProductSalesPage(p.id, { ...q, limit: 500 }));
+    expect(whole.lines).toHaveLength(9);
+    expect(whole.nextCursor).toBeNull();
+    const order = whole.lines.map((l) => l.lineId);
+    expect(new Set(order).size).toBe(9);
+
+    for (const limit of [1, 2, 4, 8]) {
+      const walked: string[] = [];
+      let cursor: string | undefined;
+      for (let guard = 0; guard < 20; guard += 1) {
+        // eslint-disable-next-line no-await-in-loop
+        const page = await asTenant(t, () =>
+          insights.getProductSalesPage(p.id, { ...q, limit, cursor }),
+        );
+        walked.push(...page.lines.map((l) => l.lineId));
+        if (!page.nextCursor) break;
+        cursor = page.nextCursor;
+      }
+      // Never overlaps, never skips, and every page size agrees on ONE order.
+      expect(walked).toEqual(order);
+    }
+
+    // The CSV walks the same key: one row per line, same count.
+    const text = await asTenant(t, async () => {
+      const { csv } = await insights.prepareCsvExport(p.id, q);
+      let out = "";
+      for await (const chunk of csv) out += chunk;
+      return out;
+    });
+    expect(text.split("\r\n").filter((r) => r.startsWith("2026-08-10,"))).toHaveLength(9);
   });
 
   it("legacy delegates keep their shapes on real data: product-sales counts LINES, demand buckets invoiced pieces", async () => {

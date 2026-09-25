@@ -26,6 +26,7 @@ import {
   encodeLineCursor,
   lineKeyOf,
   perPieceOf,
+  salePiecesOf,
 } from "./sales-facts.rules";
 import {
   INSIGHT_CSV_MAX_LINES,
@@ -55,6 +56,7 @@ const CSV_HEADER = [
   "Order",
   "Customer",
   "Qty (pieces)",
+  "Qty as stored",
   "Boxes",
   "Loose pieces",
   "Pack at sale",
@@ -108,12 +110,22 @@ function toLegacySaleLine(f: ProductSaleFact): ProductSaleLine {
   };
 }
 
-function toInsightSaleLine(f: ProductSaleFact, netting?: LineNetting): ProductInsightSaleLine {
+/**
+ * A sales-page / CSV line. `perPiece` divides by the line's PIECES from its own stored evidence
+ * (`salePiecesOf`, the pack-snapshot rule) — null when those are unknown, never subtotal ÷ a qty
+ * that may count boxes. `productPackNow` is only the gate for a snapshot-less line.
+ */
+function toInsightSaleLine(
+  f: ProductSaleFact,
+  productPackNow: number | null,
+  netting?: LineNetting,
+): ProductInsightSaleLine {
+  const pieces = salePiecesOf(f, productPackNow);
   return {
     ...toLegacySaleLine(f),
     lineId: f.lineId,
     unitLabel: f.unitLabel,
-    perPiece: perPieceOf(f.subtotal, f.qty),
+    perPiece: pieces == null ? null : perPieceOf(f.subtotal, pieces),
     creditedAmount: netting?.creditedAmount ?? 0,
     returnedQty: netting?.returnedQty ?? 0,
   };
@@ -201,7 +213,7 @@ export class ProductInsightsService {
     productId: string,
     query: ProductSalesQueryDto,
   ): Promise<ProductSalesPage> {
-    const { tenantId, timezone } = await this.context(productId);
+    const { tenantId, product, timezone } = await this.context(productId);
     const range = resolveInsightRange(
       { from: query.from, to: query.to },
       this.facts.today(timezone),
@@ -225,7 +237,9 @@ export class ProductInsightsService {
     return {
       productId,
       window: this.windowDto(range, timezone),
-      lines: page.map((f) => toInsightSaleLine(f, netting.get(f.lineId))),
+      lines: page.map((f) =>
+        toInsightSaleLine(f, product.unitsPerBox ?? null, netting.get(f.lineId)),
+      ),
       nextCursor: facts.length > limit ? encodeLineCursor(lineKeyOf(page[page.length - 1])) : null,
     };
   }
@@ -252,17 +266,19 @@ export class ProductInsightsService {
     const filename = `product-sales-${fileToken(product.sku || product.id)}-${range.fromDay}-to-${range.toDay}.csv`;
     return {
       filename,
-      csv: this.csvStream(tenantId, product.id, range, customerId, summary),
+      csv: this.csvStream(tenantId, product, range, customerId, summary),
     };
   }
 
   private async *csvStream(
     tenantId: string,
-    productId: string,
+    product: ProductRow,
     range: { fromDay: string; toDay: string; grain: InsightGrain },
     customerId: string | undefined,
     summary: ProductInsightsResponse | null,
   ): AsyncGenerator<string> {
+    const productId = product.id;
+    const packNow = product.unitsPerBox ?? null;
     yield csvRow(CSV_HEADER);
     const issueWindow = this.facts.issueWindow(range.fromDay, range.toDay);
     let after: LineKey | undefined;
@@ -297,8 +313,10 @@ export class ProductInsightsService {
       );
       let chunk = "";
       for (const f of page) {
-        const line = toInsightSaleLine(f, netting.get(f.lineId));
-        sums.qty += line.qty;
+        const line = toInsightSaleLine(f, packNow, netting.get(f.lineId));
+        // Pieces only when the stored line can say; the stored qty is its own column.
+        const pieces = salePiecesOf(f, packNow);
+        sums.qty += pieces ?? 0;
         sums.gross += line.lineTotal;
         sums.credited += line.creditedAmount;
         sums.returned += line.returnedQty;
@@ -308,6 +326,7 @@ export class ProductInsightsService {
           line.writtenOff ? "yes" : "",
           line.orderNumber,
           line.customerName,
+          pieces == null ? null : roundQty(pieces),
           line.qty,
           line.boxes,
           line.pieces,
@@ -346,6 +365,7 @@ export class ProductInsightsService {
       "",
       "",
       "",
+      "",
       roundMoney(sums.gross),
       "",
       "",
@@ -363,13 +383,19 @@ export class ProductInsightsService {
         summary.window.timezone,
       ]);
       footer += csvRow(["Invoiced pieces", t.invoicedQtyPieces]);
+      footer += csvRow(["Sale lines with unknown pieces (revenue only)", t.unresolvedSaleLines]);
       footer += csvRow(["Returned pieces", t.returnedQtyPieces]);
+      footer += csvRow(["Return lines with unknown pieces", t.unresolvedReturnLines]);
       footer += csvRow(["Net pieces", t.netQtyPieces]);
       footer += csvRow(["Line gross", t.lineGross]);
       footer += csvRow(["Attributed credits", t.attributedCredits]);
       footer += csvRow(["Line net", t.lineNet]);
+      // Beside the net, never subtracted from it or prorated (SA-289).
       footer += csvRow(["Unattributed credits (not subtracted)", t.unattributedCredits]);
     }
+    footer += csvRow([
+      "# Row order: newest issue date first, then entry time. Not the invoice's printed line order.",
+    ]);
     yield footer;
   }
 

@@ -1,4 +1,4 @@
-import { roundMoney } from "@routeflow/pricing";
+import { legacyLinePieces, roundMoney } from "@routeflow/pricing";
 
 /**
  * #2118 — the pure rules of the sales-facts layer (plan A3/A6/A7). Every reader in
@@ -13,6 +13,43 @@ export interface SaleLineShape {
   pieces?: number | null;
   /** The line's own sale-time pack snapshot. */
   unitsPerBox?: number | null;
+}
+
+/**
+ * The line's piece count, or null when the stored line cannot say (the pack-snapshot rule: a
+ * stored line's pack is its OWN snapshot; the live product pack never reinterprets it). Every
+ * pieces total and every per-piece figure reads this — never `qty` directly.
+ *
+ * Classified by the ONE sanctioned classifier (`legacyLinePieces`, no source line): a split line
+ * counts its qty as pieces; otherwise the "is it boxed" gate is the line's own snapshot when it
+ * has one, and only a snapshot-less line falls back to the live pack — as a gate, never a
+ * multiplier. So a no-split line with a boxed snapshot (B644: its qty may count boxes) is
+ * unknown, whatever the product's pack is today. A zero qty is zero pieces on any axis.
+ */
+export function salePiecesOf(
+  line: SaleLineShape & { qty: number },
+  productPackNow: number | null | undefined,
+): number | null {
+  const qty = Number(line.qty);
+  if (qty === 0) return 0;
+  const snapshot = line.unitsPerBox == null ? null : Number(line.unitsPerBox);
+  const gate =
+    snapshot != null
+      ? { productPackNow: snapshot }
+      : productPackNow === undefined
+        ? {}
+        : { productPackNow };
+  const res = legacyLinePieces(
+    {
+      qty,
+      boxes: line.boxes ?? null,
+      pieces: line.pieces ?? null,
+      unitsPerBox: snapshot,
+    },
+    null,
+    gate,
+  );
+  return "unknown" in res ? null : res.pieces;
 }
 
 /**
@@ -58,7 +95,13 @@ export function purchaseEventKey(orderId: string | null | undefined, invoiceId: 
 export interface CreditAttribution {
   /** productId → credited amount (cents). */
   byProduct: Map<string, number>;
-  /** The rest of the credit (cents): no stored line fact ties it to a product. */
+  /** Items on an existing UNLISTED (ad-hoc, product-less) line: attributed, to no product. */
+  unlisted: number;
+  /**
+   * The rest of the credit (cents): the amount-only part no stored item row carries (a header-
+   * only note, the tax part of an INLINE refund, a STANDARD refund), plus an item whose line id
+   * no longer exists (a delivered-basis reconcile rotates line ids) — never guessed.
+   */
   unattributed: number;
 }
 
@@ -79,11 +122,13 @@ function sumByProduct(parts: { productId: string | null | undefined; amount: num
 }
 
 /**
- * Splits one credit note by its stored `CreditNoteItem` rows: an item whose `invoiceItemId`
- * maps (through `lineProduct`, built from the source invoice's lines) to a listed product is
- * attributed to it; everything else — a header-only note, an item on an unlisted line, an item
- * whose line id no longer exists (a delivered-basis reconcile rotates line ids) — is
- * unattributed. The parts always sum to the note's amount. Never prorates at read time.
+ * Splits one credit note by its stored `CreditNoteItem` rows (SA-289): EVERY item attributes
+ * through its line, whatever the line's regulated category (`trackedCategoryId` is never read —
+ * an ordinary-product line is a product line). An item whose `invoiceItemId` maps (through
+ * `lineProduct`, built from the source invoice's lines) to a listed product counts for that
+ * product; one on an existing unlisted line is `unlisted`. Only what no item carries (the
+ * amount-only part) and an item whose line id no longer exists are `unattributed`. The three
+ * parts always sum to the note's amount. Never prorates at read time.
  */
 export function attributeCreditNote(
   cn: { amount: number; items: { invoiceItemId: string | null; amount: number }[] },
@@ -95,7 +140,18 @@ export function attributeCreditNote(
       amount: Number(it.amount),
     })),
   );
-  return { byProduct, unattributed: roundMoney(Number(cn.amount) - attributed) };
+  let unlistedRaw = 0;
+  for (const it of cn.items) {
+    if (it.invoiceItemId && lineProduct.has(it.invoiceItemId)) {
+      if (lineProduct.get(it.invoiceItemId) == null) unlistedRaw += Number(it.amount);
+    }
+  }
+  const unlisted = roundMoney(unlistedRaw);
+  return {
+    byProduct,
+    unlisted,
+    unattributed: roundMoney(Number(cn.amount) - attributed - unlisted),
+  };
 }
 
 /**
@@ -109,14 +165,22 @@ export function attributeExternalRefund(ret: {
   items: { productId: string | null; subtotal: number | null }[];
 }): CreditAttribution {
   if (ret.kind !== "INLINE") {
-    return { byProduct: new Map(), unattributed: roundMoney(Number(ret.refundAmount)) };
+    return {
+      byProduct: new Map(),
+      unlisted: 0,
+      unattributed: roundMoney(Number(ret.refundAmount)),
+    };
   }
   const { byProduct, attributed } = sumByProduct(
     ret.items
       .filter((it) => it.subtotal != null)
       .map((it) => ({ productId: it.productId, amount: Number(it.subtotal) })),
   );
-  return { byProduct, unattributed: roundMoney(Number(ret.refundAmount) - attributed) };
+  return {
+    byProduct,
+    unlisted: 0, // a return line always names its product
+    unattributed: roundMoney(Number(ret.refundAmount) - attributed),
+  };
 }
 
 /**
@@ -137,7 +201,13 @@ export function returnNettingDate(
 
 // ─── Line cursor (plan §B: page by LINE, never by invoice) ───────────────────
 
-/** Sort key of one sold line, newest first: issue date, invoice entry, then line entry. */
+/**
+ * Sort key of one sold line, newest first: issue date, then invoice (createdAt, id), then line
+ * (createdAt, id). Every page and every CSV chunk orders by exactly this key, and the cursor
+ * carries all of it, so two pages never overlap or skip (SA-289). It is a stable PAGING order,
+ * not the invoice's printed line order: lines written in one statement share a createdAt and
+ * then fall back to id order.
+ */
 export interface LineKey {
   issueDate: Date;
   invoiceCreatedAt: Date;

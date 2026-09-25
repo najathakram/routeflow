@@ -10,6 +10,7 @@ import {
   purchaseEventKey,
   returnNettingDate,
   salePackOf,
+  salePiecesOf,
 } from "./sales-facts.rules";
 
 /**
@@ -52,6 +53,35 @@ describe("sales-facts rules", () => {
     });
   });
 
+  describe("salePiecesOf — pieces from the stored line's OWN evidence (pack-snapshot rule)", () => {
+    it("a split line's qty is pieces, whatever its snapshot", () => {
+      expect(salePiecesOf({ qty: 27, boxes: 2, pieces: 3, unitsPerBox: 12 }, 24)).toBe(27);
+      expect(salePiecesOf({ qty: 27, boxes: 2, pieces: 3, unitsPerBox: null }, 12)).toBe(27);
+    });
+
+    it("a no-split line with a BOXED snapshot (B644: qty may count boxes) is unknown — never x pack", () => {
+      expect(salePiecesOf({ qty: 3, unitsPerBox: 12 }, 12)).toBeNull();
+      // …and today's pack never rescues it: the product being unboxed now changes nothing.
+      expect(salePiecesOf({ qty: 3, unitsPerBox: 12 }, null)).toBeNull();
+      expect(salePiecesOf({ qty: 3, unitsPerBox: 12 }, 1)).toBeNull();
+    });
+
+    it("a snapshot of 1 is pieces even when the product is boxed today (the snapshot decides)", () => {
+      expect(salePiecesOf({ qty: 6, unitsPerBox: 1 }, 12)).toBe(6);
+    });
+
+    it("no snapshot: today's pack is a GATE only — not boxed → pieces; boxed or unknown → unknown", () => {
+      expect(salePiecesOf({ qty: 10 }, null)).toBe(10);
+      expect(salePiecesOf({ qty: 10 }, 1)).toBe(10);
+      expect(salePiecesOf({ qty: 10 }, 12)).toBeNull();
+      expect(salePiecesOf({ qty: 10 }, undefined)).toBeNull();
+    });
+
+    it("a zero qty is zero pieces on any axis (a fee line)", () => {
+      expect(salePiecesOf({ qty: 0, unitsPerBox: 12 }, 12)).toBe(0);
+    });
+  });
+
   describe("perPieceOf", () => {
     it("is the effective price per piece, rounded to cents", () => {
       // A $43.75 box of 6 → 7.2916… → 7.29.
@@ -90,7 +120,19 @@ describe("sales-facts rules", () => {
         lines,
       );
       expect(Object.fromEntries(out.byProduct)).toEqual({ "prod-a": 30, "prod-b": 20.5 });
+      expect(out.unlisted).toBe(0);
       expect(out.unattributed).toBe(49.5);
+    });
+
+    it("SA-289: an ordinary-product line credit attributes to that product (regulated or not is never read)", () => {
+      // The rule's input has no category at all: a line item on ANY listed line attributes.
+      const out = attributeCreditNote(
+        { amount: 12, items: [{ invoiceItemId: "line-b", amount: 12 }] },
+        lines,
+      );
+      expect(Object.fromEntries(out.byProduct)).toEqual({ "prod-b": 12 });
+      expect(out.unlisted).toBe(0);
+      expect(out.unattributed).toBe(0);
     });
 
     it("a header-only credit note is wholly unattributed", () => {
@@ -99,7 +141,7 @@ describe("sales-facts rules", () => {
       expect(out.unattributed).toBe(80);
     });
 
-    it("an item on an unlisted line, a rotated (dangling) line id, or no line id attributes to no product", () => {
+    it("an item on an unlisted line is attributed (to no product), never unattributed; a rotated (dangling) line id or no line id is unattributed", () => {
       const out = attributeCreditNote(
         {
           amount: 60,
@@ -112,7 +154,8 @@ describe("sales-facts rules", () => {
         lines,
       );
       expect(out.byProduct.size).toBe(0);
-      expect(out.unattributed).toBe(60);
+      expect(out.unlisted).toBe(10);
+      expect(out.unattributed).toBe(50);
     });
 
     it("merges two items on the same product and rounds to cents before the residual (parts stay exact)", () => {
@@ -127,6 +170,7 @@ describe("sales-facts rules", () => {
         lines,
       );
       expect(out.byProduct.get("prod-a")).toBe(0.3);
+      expect(out.unlisted).toBe(0);
       expect(out.unattributed).toBe(0);
     });
   });
