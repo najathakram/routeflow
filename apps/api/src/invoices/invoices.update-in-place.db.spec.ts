@@ -158,6 +158,7 @@ describeDb(
       await prisma.auditLog.deleteMany({ where: { tenantId } });
       await prisma.invoiceItem.deleteMany({ where: { tenantId } });
       await prisma.invoice.deleteMany({ where: { tenantId } });
+      await prisma.orderItem.deleteMany({ where: { tenantId } });
       await prisma.order.deleteMany({ where: { tenantId } });
       await prisma.customer.deleteMany({ where: { tenantId } });
       await prisma.product.deleteMany({ where: { tenantId } });
@@ -428,6 +429,196 @@ describeDb(
         status: 400,
       });
       expect((await rows(s)).map(shape)).toEqual(before);
+    });
+
+    // ── SA-203: the order back-sync, against a REAL linked order ───────────────────────────────
+    // (an order-less invoice proves nothing about it). A DRAFT invoice on a DELIVERED order with a
+    // legacy 0-box + 5-piece line ($4.58, pack unknown) and a boxed sibling.
+    async function seedLinked(label: string) {
+      const t = await seedTenant(label);
+      const customer = await seedCustomer(t.id, label);
+      const mk = (name: string, price: number, upb: number | null) =>
+        prisma.product.create({
+          data: {
+            tenantId: t.id,
+            name: `${name} ${label}`,
+            unit: "each",
+            pricePerUnit: price,
+            unitsPerBox: upb,
+          },
+        });
+      const pL = await mk("legacy", 11, 12);
+      const pS = await mk("sibling", 11, 12);
+      const order = await prisma.order.create({
+        data: {
+          tenantId: t.id,
+          customerId: customer.id,
+          orderNumber: `ORD-SA203-${RUN_SUFFIX}-${label}`,
+          status: "DELIVERED",
+          subtotal: 26.58,
+          total: 26.58,
+        },
+      });
+      const oiL = await prisma.orderItem.create({
+        data: {
+          tenantId: t.id,
+          orderId: order.id,
+          productId: pL.id,
+          qty: 5,
+          boxes: 0,
+          pieces: 5,
+          unitPrice: 11,
+          subtotal: 4.58,
+          invoicedQty: 5,
+        },
+      });
+      const oiS = await prisma.orderItem.create({
+        data: {
+          tenantId: t.id,
+          orderId: order.id,
+          productId: pS.id,
+          qty: 24,
+          boxes: 2,
+          pieces: 0,
+          unitsPerBox: 12,
+          unitPrice: 11,
+          subtotal: 22,
+          invoicedQty: 24,
+        },
+      });
+      const inv = await prisma.invoice.create({
+        data: {
+          tenantId: t.id,
+          customerId: customer.id,
+          orderId: order.id,
+          invoiceNumber: `INV-SA203-${RUN_SUFFIX}-${label}`,
+          status: "DRAFT",
+          subtotal: 26.58,
+          total: 26.58,
+        },
+      });
+      const iL = await prisma.invoiceItem.create({
+        data: {
+          tenantId: t.id,
+          invoiceId: inv.id,
+          productId: pL.id,
+          orderItemId: oiL.id,
+          description: "legacy",
+          qty: 5,
+          boxes: 0,
+          pieces: 5,
+          unitPrice: 11,
+          subtotal: 4.58,
+        },
+      });
+      const iS = await prisma.invoiceItem.create({
+        data: {
+          tenantId: t.id,
+          invoiceId: inv.id,
+          productId: pS.id,
+          orderItemId: oiS.id,
+          description: "sibling",
+          qty: 24,
+          boxes: 2,
+          pieces: 0,
+          unitsPerBox: 12,
+          unitPrice: 11,
+          subtotal: 22,
+        },
+      });
+      const payload = (over: any = {}) => ({
+        items: [
+          {
+            id: iL.id,
+            productId: pL.id,
+            description: "legacy",
+            qty: 5,
+            boxes: 0,
+            pieces: 5,
+            unitPrice: 11,
+            notes: "n-L",
+            ...(over.L ?? {}),
+          },
+          {
+            id: iS.id,
+            productId: pS.id,
+            description: "sibling",
+            qty: 24,
+            boxes: 2,
+            pieces: 0,
+            unitPrice: 11,
+            notes: "n-S",
+            ...(over.S ?? {}),
+          },
+        ],
+      });
+      const orderLines = () =>
+        prisma.orderItem.findMany({ where: { orderId: order.id }, orderBy: { createdAt: "asc" } });
+      return { t, inv, order, oiL, oiS, iL, iS, payload, orderLines };
+    }
+    const orderShape = (r: any) => ({
+      ...shape(r),
+      subtotal: Number(r.subtotal),
+      invoicedQty: Number(r.invoicedQty),
+      status: r.status,
+      unitLabel: r.unitLabel ?? null,
+    });
+
+    it("SA-203-H notes-only save on an ORDER-LINKED invoice writes nothing to the order (legacy 0-box + 5-pcs line byte-equal)", async () => {
+      const s = await seedLinked("h");
+      const before = (await s.orderLines()).map(orderShape);
+      const orderBefore = await prisma.order.findUnique({ where: { id: s.order.id } });
+      await run(s, s.payload());
+      expect((await s.orderLines()).map(orderShape)).toEqual(before);
+      const orderAfter = await prisma.order.findUnique({ where: { id: s.order.id } });
+      expect(orderAfter!.updatedAt).toEqual(orderBefore!.updatedAt);
+      expect(Number(orderAfter!.total)).toBe(26.58);
+    });
+
+    it("SA-203-I a one-line qty edit: the sibling ORDER line is byte-equal; the edited line's order line carries the invoice line's own split and pack", async () => {
+      const s = await seedLinked("i");
+      const [beforeL, beforeS] = (await s.orderLines()).map(orderShape);
+      await run(s, s.payload({ S: { qty: 36, boxes: 3, pieces: 0 } }));
+      const [afterL, afterS] = (await s.orderLines()).map(orderShape);
+      expect(afterL).toEqual(beforeL); // legacy line: not written at all
+      expect(afterS).toMatchObject({ qty: 36, boxes: 3, pieces: 0, unitsPerBox: 12 });
+      expect(afterS.subtotal).not.toBe(beforeS.subtotal);
+    });
+
+    it("SA-203-J after a notes-only save the legacy line still re-prices at $4.58, not $55", async () => {
+      const s = await seedLinked("j");
+      await run(s, s.payload());
+      await invoicesService.recomputeOrderFromInvoices(s.order.id);
+      const legacy = (await s.orderLines()).find((r) => r.id === s.oiL.id)!;
+      expect(Number(legacy.subtotal)).toBe(4.58);
+      expect(legacy.boxes).toBe(0);
+      expect(legacy.pieces).toBe(5);
+    });
+
+    it("SA-203-K two overlapping saves serialize: no P2025, and the invoice total equals the sum of its lines", async () => {
+      const s = await seedLinked("k");
+      const results = await Promise.allSettled([
+        run(s, s.payload({ S: { qty: 36, boxes: 3, pieces: 0 } })),
+        run(s, s.payload({ S: { qty: 48, boxes: 4, pieces: 0 } })),
+      ]);
+      for (const r of results) {
+        if (r.status === "rejected") expect((r.reason as any)?.code).not.toBe("P2025");
+      }
+      expect(results.some((r) => r.status === "fulfilled")).toBe(true);
+      const inv = await prisma.invoice.findUnique({ where: { id: s.inv.id } });
+      const lines = await prisma.invoiceItem.findMany({ where: { invoiceId: s.inv.id } });
+      const sum = Math.round(lines.reduce((a, l) => a + Number(l.subtotal), 0) * 100) / 100;
+      expect(Number(inv!.subtotal)).toBe(sum);
+      expect(Number(inv!.total)).toBe(sum);
+    });
+
+    it("SA-203-L a tax % edit is written to the row and reflected in the invoice tax", async () => {
+      const s = await seed("l");
+      await run(s, s.payload({ l2: { taxRate: 0.1 } }));
+      const l2 = await prisma.invoiceItem.findUnique({ where: { id: s.l2.id } });
+      expect(Number(l2!.taxRate)).toBe(0.1);
+      const inv = await prisma.invoice.findUnique({ where: { id: s.inv.id } });
+      expect(Number(inv!.taxAmount)).toBe(3.6);
     });
   },
 );

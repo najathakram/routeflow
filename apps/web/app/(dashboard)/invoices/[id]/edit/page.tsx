@@ -752,6 +752,10 @@ export default function EditInvoicePage() {
                     }}
                     onChange={(description, productId, unitPrice, unitsPerBox) => {
                       updateItem(item.key, {
+                        // A different product is a NEW line (SA-186): never edit the old row's id in place.
+                        ...(productId !== item.productId
+                          ? { id: undefined, locked: undefined, attestedPack: undefined }
+                          : {}),
                         description,
                         productId,
                         unitPrice: unitPrice !== undefined ? unitPrice : item.unitPrice,

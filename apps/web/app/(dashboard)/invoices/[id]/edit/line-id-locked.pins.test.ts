@@ -23,4 +23,10 @@ describe("SA-186/189: web invoice edit line ids, locked lines, attested pack", (
   it("unlocking requires an integer pack >= 2", () => {
     expect(src).toMatch(/Number\.isInteger\(v\) && v >= 2/);
   });
+
+  it("swapping a line's product drops its stored id, so it is saved as a NEW line (SA-186)", () => {
+    expect(src).toMatch(
+      /productId !== item\.productId\s*\? \{ id: undefined, locked: undefined, attestedPack: undefined \}/,
+    );
+  });
 });

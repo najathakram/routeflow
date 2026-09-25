@@ -292,6 +292,104 @@ describe("InvoicesService — update() line preservation", () => {
       ).rejects.toThrow("is not 0 boxes x 12 + 6 pieces");
     });
 
+    describe("SA-203 review fixes", () => {
+      const line = (over: any = {}) =>
+        legacy({ id: "a", qty: 24, boxes: 2, pieces: 0, unitsPerBox: 12, subtotal: 22, ...over });
+      const linked = () => {
+        prisma.invoice.findUnique.mockResolvedValue({ ...draftInvoice, orderId: "ord-1" });
+        prisma.order.findFirst.mockResolvedValue({
+          status: "DELIVERED",
+          orderNumber: "1",
+          lineItems: [],
+        });
+      };
+      let resync: jest.SpyInstance;
+      beforeEach(() => {
+        resync = jest.spyOn(service, "recomputeOrderFromInvoices").mockResolvedValue(null as any);
+      });
+
+      it("a tax % edit is a change: the row is re-priced in place and the invoice tax follows", async () => {
+        arrange([line({ taxRate: 0.08 })]);
+        await service.update("inv-box", {
+          items: [payload({ id: "a", qty: 24, boxes: 2, pieces: 0, taxRate: 0.1 })],
+        } as any);
+        expect(prisma.invoiceItem.update).toHaveBeenCalledWith({
+          where: { id: "a" },
+          data: expect.objectContaining({ taxRate: 0.1 }),
+        });
+        expect(saved().taxAmount).toBe(2.2);
+      });
+
+      it("an unchanged tax % stays untouched (no row write)", async () => {
+        arrange([line({ taxRate: 0.08 })]);
+        await service.update("inv-box", {
+          items: [payload({ id: "a", qty: 24, boxes: 2, pieces: 0, taxRate: 0.08 })],
+        } as any);
+        expect(prisma.invoiceItem.update).not.toHaveBeenCalled();
+      });
+
+      it("an unlocked line with boxes >= 1 still audits the operator's pack (whatever the split shape)", async () => {
+        // stored 2 boxes / 0 pcs / qty 2: the pack is unrecoverable (qty/boxes = 1), so the editor locked it
+        arrange([line({ qty: 2, unitsPerBox: null, subtotal: 22 })]);
+        await service.update("inv-box", {
+          items: [payload({ id: "a", qty: 24, boxes: 2, pieces: 0, unitsPerBox: 12 })],
+        } as any);
+        expect(prisma.auditLog.create).toHaveBeenCalledWith({
+          data: expect.objectContaining({
+            action: "INVOICE_LINE_PACK_ATTESTED",
+            meta: { attested: [{ rowId: "a", unitsPerBox: 12 }] },
+          }),
+        });
+      });
+
+      it("an order-linked notes-only save does not touch the order at all", async () => {
+        arrange([line()]);
+        linked();
+        await service.update("inv-box", {
+          notes: "n",
+          items: [payload({ id: "a", qty: 24, boxes: 2, pieces: 0, notes: "hello" })],
+        } as any);
+        expect(resync).not.toHaveBeenCalled();
+      });
+
+      it("an order-linked qty edit re-syncs ONLY from the changed line", async () => {
+        const sibling = line({ id: "b", orderItemId: "oi-b", productId: "prod-b" });
+        arrange([line({ orderItemId: "oi-a" }), sibling]);
+        linked();
+        await service.update("inv-box", {
+          items: [
+            payload({ id: "a", qty: 36, boxes: 3, pieces: 0 }),
+            payload({ id: "b", productId: "prod-b", qty: 24, boxes: 2, pieces: 0 }),
+          ],
+        } as any);
+        expect(resync).toHaveBeenCalledTimes(1);
+        const changed = resync.mock.calls[0][2];
+        expect(changed.map((c: any) => c.orderItemId)).toContain("oi-a");
+        expect(changed.map((c: any) => c.orderItemId)).not.toContain("oi-b");
+      });
+
+      it("locks the ORDER row before the invoice row when the invoice is order-linked", async () => {
+        arrange([line()]);
+        linked();
+        const raw = jest.fn().mockResolvedValue(0);
+        prisma.tenantTransaction.mockImplementationOnce((fn: any) =>
+          fn({
+            ...prisma.forTenant(),
+            $executeRaw: raw,
+            $queryRaw: jest.fn().mockResolvedValue([]),
+          }),
+        );
+        await service.update("inv-box", {
+          items: [payload({ id: "a", qty: 24, boxes: 2, pieces: 0 })],
+        } as any);
+        const locks = raw.mock.calls.map((c: any) => c[0].join("?"));
+        const order = locks.findIndex((q: string) => q.includes('"Order"'));
+        const invoice = locks.findIndex((q: string) => q.includes('"Invoice"'));
+        expect(order).toBeGreaterThanOrEqual(0);
+        expect(order).toBeLessThan(invoice);
+      });
+    });
+
     describe("SA-196: a new split implying a different pack than the row's own snapshot", () => {
       const packed6 = () =>
         legacy({ id: "a", qty: 12, boxes: 2, pieces: 0, unitsPerBox: 6, subtotal: 22 });

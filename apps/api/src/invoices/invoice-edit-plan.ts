@@ -35,8 +35,10 @@ import {
   normalizeBoxesPieces,
   packFromOwnSplit,
   regulatedUnitBasis,
+  roundMoney,
   type CategoryTaxType,
 } from "@routeflow/pricing";
+import { foldCategoryTax } from "./manual-invoice-context";
 import { priceReplacedLine, resolveUpdateLinePack } from "./update-pack-resolution";
 
 export interface EditPayloadLine {
@@ -69,13 +71,14 @@ export interface LineMatch {
 const same = (a: unknown, b: unknown): boolean =>
   a == null || b == null ? a == null && b == null : Math.abs(Number(a) - Number(b)) < 1e-9;
 
-/** qty, boxes, pieces, unitPrice, discount — the tuple SA-184 calls "untouched". */
+/** qty, boxes, pieces, unitPrice, discount, taxRate — the tuple SA-184 calls "untouched". */
 const sameMoneyTuple = (item: EditPayloadLine, row: StoredEditRow): boolean =>
   same(item.qty, row.qty) &&
   same(item.boxes, row.boxes) &&
   same(item.pieces, row.pieces) &&
   same(item.unitPrice, row.unitPrice) &&
-  same(item.discount ?? 0, row.discount ?? 0);
+  same(item.discount ?? 0, row.discount ?? 0) &&
+  same(item.taxRate ?? 0, row.taxRate ?? 0);
 
 export function matchEditLines(items: EditPayloadLine[], stored: StoredEditRow[]): LineMatch[] {
   const byId = new Map(stored.map((r) => [r.id, r]));
@@ -190,13 +193,13 @@ function recoverChangedPack(
         `Line "${lineLabel(item)}": qty ${item.qty} is not ${boxes ?? 0} boxes x ${explicit} + ${pieces ?? 0} pieces`,
       );
     }
-    return { pack, boxes, pieces, attested: recovered == null };
+    return { pack, boxes, pieces, attested: explicit != null };
   }
   // A box-unaware line keeps its snapshot but stays loose (money = unitPrice x qty).
   if (!wasBoxed) return { pack, boxes: null, pieces: null };
   // A stored box line edited without a split: re-split its qty at its OWN pack.
   const split = normalizeBoxesPieces({ qty: item.qty, unitsPerBox: pack });
-  return { pack, boxes: split.boxes, pieces: split.pieces, attested: recovered == null };
+  return { pack, boxes: split.boxes, pieces: split.pieces, attested: explicit != null };
 }
 
 /** A stored box line whose pack cannot be recovered from its own snapshot or split, and which no payload line matched. */
@@ -266,7 +269,7 @@ export function buildEditedLines(ctx: PlanCtx): EditedLine[] {
       const explicit = item.unitsPerBox != null && item.unitsPerBox >= 2 ? item.unitsPerBox : null;
       const res = resolveUpdateLinePack(own ?? explicit, item, livePack, new Map());
       if (res.pack != null) unitsPerBox = res.pack;
-      if (own == null && explicit != null && res.pack === explicit) attestedPack = explicit;
+      if (explicit != null && res.pack === explicit) attestedPack = explicit;
       if (res.warn) ctx.warn(res.warn);
     }
     // Reports a payload/live divergence only; the pack above was already chosen without the live one.
@@ -307,7 +310,8 @@ export function buildEditedLines(ctx: PlanCtx): EditedLine[] {
       data: {
         description: item.description,
         productId: item.productId,
-        orderItemId: item.orderItemId ?? null,
+        // An edit that does not name the order line keeps the stored link (the editors never send it).
+        orderItemId: item.orderItemId ?? (productChanged ? null : (row?.orderItemId ?? null)),
         qty,
         unitPrice: item.unitPrice,
         discount: item.discount ?? 0,
@@ -347,4 +351,73 @@ export function inPlacePatch(line: EditedLine, row: StoredEditRow): Record<strin
   if (!same(data.categoryTaxAmount ?? 0, row.categoryTaxAmount ?? 0))
     patch.categoryTaxAmount = data.categoryTaxAmount;
   return Object.keys(patch).length > 0 ? patch : null;
+}
+
+/**
+ * The invoice lines the linked order must be re-synced from (SA-203), or null when nothing money-relevant
+ * changed. A re-priced, added or dropped line, or a levy patch, is "changed"; a notes/description-only save
+ * is not, and leaves every order line unwritten. A discount/shipping change alone yields [] (totals only).
+ */
+export function orderSyncLines(
+  lines: EditedLine[],
+  stored: StoredEditRow[],
+  cur: { discount?: unknown; shippingFee?: unknown },
+  discount: number,
+  shipping: number,
+): Array<Record<string, any>> | null {
+  const kept = new Set(lines.flatMap((l) => (l.rowId ? [l.rowId] : [])));
+  const changed: Array<Record<string, any>> = stored.filter((r) => !kept.has(r.id));
+  for (const l of lines) {
+    const row = l.rowId ? stored.find((r) => r.id === l.rowId) : undefined;
+    const levy = row != null && !same(l.data.categoryTaxAmount ?? 0, row.categoryTaxAmount ?? 0);
+    if (row && (!l.untouched || levy)) changed.push(row);
+    if (!row || !l.untouched) changed.push(l.data);
+  }
+  const totalsMoved = !same(discount, cur.discount ?? 0) || !same(shipping, cur.shippingFee ?? 0);
+  return changed.length > 0 || totalsMoved ? changed : null;
+}
+
+/**
+ * The saved invoice's money from its lines' stored subtotals (same basis as each line): regular tax on the
+ * post-discount subtotal, the regulated category tax folded in (RF-4; exempt -> 0 for both, snapshots zeroed).
+ */
+export function editInvoiceTotals(
+  itemsData: Array<Record<string, any>>,
+  isTaxExempt: boolean,
+  discount: number,
+  shipping: number,
+): { subtotal: number; taxTotal: number; total: number } {
+  const subtotal = roundMoney(itemsData.reduce((s, it) => s + Number(it.subtotal), 0));
+  const regularTax = isTaxExempt
+    ? 0
+    : roundMoney(itemsData.reduce((s, it) => s + it.subtotal * (it.taxRate ?? 0), 0));
+  const taxTotal = roundMoney(regularTax + foldCategoryTax(itemsData, isTaxExempt));
+  return { subtotal, taxTotal, total: roundMoney(subtotal - discount + shipping + taxTotal) };
+}
+
+/** Reads the products (pack + regulated snapshot) and regulated-section tax config the edited lines reference. */
+export async function loadEditCatalog(
+  db: any,
+  items: Array<{ productId?: string | null }>,
+): Promise<{ productMap: Map<string, any>; categoryMap: Map<string, any> }> {
+  const productIds = [...new Set(items.filter((i) => i.productId).map((i) => i.productId!))];
+  const products: any[] =
+    productIds.length > 0
+      ? await db.product.findMany({
+          where: { id: { in: productIds } },
+          select: {
+            id: true,
+            unitsPerBox: true,
+            trackedCategoryId: true,
+            trackedSubcategoryId: true,
+          },
+        })
+      : [];
+  const catIds = [...new Set(products.map((p) => p.trackedCategoryId).filter(Boolean))] as string[];
+  const cats: any[] =
+    catIds.length > 0 ? await db.trackedCategory.findMany({ where: { id: { in: catIds } } }) : [];
+  return {
+    productMap: new Map(products.map((p) => [p.id, p])),
+    categoryMap: new Map(cats.map((c) => [c.id, c])),
+  };
 }

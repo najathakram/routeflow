@@ -25,7 +25,15 @@ import {
   type CategoryTaxType,
   inferredFlatRate,
 } from "@routeflow/pricing";
-import { buildEditedLines, inPlacePatch, matchEditLines } from "./invoice-edit-plan";
+import { backSyncTargetKey, orderLineShape } from "./order-backsync-lines";
+import {
+  buildEditedLines,
+  editInvoiceTotals,
+  loadEditCatalog,
+  orderSyncLines,
+  inPlacePatch,
+  matchEditLines,
+} from "./invoice-edit-plan";
 import { redactUpsellForCustomer } from "../common/upsell-redaction";
 import {
   CONFIRMED_PAYMENT,
@@ -2226,11 +2234,11 @@ export class InvoicesService {
    * lines into phantom box splits). Cancels order lines no invoice bills; preserves the order's
    * effective tax rate. No-op when the order has no surviving (non-void) invoices.
    */
-  async recomputeOrderFromInvoices(orderId: string, tx?: any) {
+  async recomputeOrderFromInvoices(orderId: string, tx?: any, changed?: any[]) {
     // SA-093 (#1185 round 5, item B) -- see withOrderRecomputeLock's own doc for the deadlock analysis.
     if (!tx) {
       return withOrderRecomputeLock(this.prisma, orderId, (innerTx) =>
-        this.recomputeOrderFromInvoices(orderId, innerTx),
+        this.recomputeOrderFromInvoices(orderId, innerTx, changed),
       );
     }
     const db = tx;
@@ -2251,6 +2259,10 @@ export class InvoicesService {
     for (const li of order.lineItems as any[]) existingById.set(li.id, li);
     // #1185 round 5, item 2 -- see resolveProductMatches' own doc.
     const { existingByProduct, ambiguousLineIds } = resolveProductMatches(order.lineItems);
+    // SA-203: an items save passes the CHANGED invoice lines; only their order lines are written.
+    const only = changed
+      ? new Set(changed.map((c) => backSyncTargetKey(c, existingById, existingByProduct)))
+      : null;
 
     // Aggregate billed qty + subtotal, resolving each invoice line to its source
     // order line: prefer the stored orderItemId; else first-match by productId
@@ -2265,6 +2277,7 @@ export class InvoicesService {
       categoryTax: number; // RF-4: Σ billed category tax for this source line
       freeUnits: number; // BUY_N_GET_M: Σ billed free selling units for this source line
       unitPrice: number;
+      n: number; // contributing invoice lines
       sample: any; // an invoice item, for the box/piece + upb snapshot
     };
     const byTarget = new Map<string, Agg>();
@@ -2288,8 +2301,10 @@ export class InvoicesService {
           categoryTax: 0,
           freeUnits: 0,
           unitPrice: Number(it.unitPrice),
+          n: 0,
           sample: it,
         };
+        prev.n += 1;
         prev.qty += Number(it.qty);
         prev.subtotal += Number(it.subtotal);
         prev.categoryTax += Number(it.categoryTaxAmount ?? 0);
@@ -2316,7 +2331,7 @@ export class InvoicesService {
 
     let subtotal = 0;
     let categoryTaxSum = 0;
-    for (const agg of byTarget.values()) {
+    for (const [key, agg] of byTarget) {
       const existing = agg.line;
       const lineSubtotal = roundMoney(agg.subtotal);
       const lineCategoryTax = roundMoney(agg.categoryTax);
@@ -2325,32 +2340,23 @@ export class InvoicesService {
       const lineFreeUnits = Math.max(0, Math.trunc(agg.freeUnits) || 0);
       subtotal += lineSubtotal;
       categoryTaxSum += lineCategoryTax;
-      // Preserve the denomination. For an existing line use ITS stored box/piece
-      // shape + snapshot upb; for a new line use the invoice item's snapshot. Box
-      // splits re-derive their display split from the billed qty; selling-unit and
-      // non-boxed lines keep boxes/pieces null (qty stays in their own unit). The
-      // live product is NEVER consulted — that is what created phantom splits.
-      const denomSource = existing ?? agg.sample;
-      const isBoxSplit = denomSource?.boxes != null;
-      const upb = Number(existing?.unitsPerBox ?? agg.sample?.unitsPerBox ?? 0);
-      const split = isBoxSplit
-        ? normalizeBoxesPieces({ qty: agg.qty, unitsPerBox: upb })
-        : { qty: agg.qty, boxes: null as number | null, pieces: null as number | null };
-      const upbSnapshot = upb > 0 ? upb : null;
+      // Untouched invoice line: its order line is not written at all (SA-203).
+      if (only && existing && !only.has(key)) {
+        existingById.delete(existing.id);
+        continue;
+      }
+      const shape = orderLineShape(existing, agg, only != null && agg.n === 1);
       if (existing) {
         await db.orderItem.update({
           where: { id: existing.id },
           data: {
-            qty: split.qty,
-            boxes: split.boxes,
-            pieces: split.pieces,
-            unitsPerBox: upbSnapshot,
+            ...shape,
             unitPrice: agg.unitPrice,
             subtotal: lineSubtotal,
             // RF-4: mirror the billed category tax back onto the order line.
             categoryTaxAmount: lineCategoryTax,
             promoFreeUnits: lineFreeUnits > 0 ? lineFreeUnits : null,
-            invoicedQty: split.qty,
+            invoicedQty: shape.qty,
             status: "PENDING",
           },
         });
@@ -2360,16 +2366,13 @@ export class InvoicesService {
           data: {
             orderId,
             productId: agg.productId,
-            qty: split.qty,
-            boxes: split.boxes,
-            pieces: split.pieces,
-            unitsPerBox: upbSnapshot,
+            ...shape,
             unitPrice: agg.unitPrice,
             subtotal: lineSubtotal,
             // RF-4: mirror the billed category tax back onto the new order line.
             categoryTaxAmount: lineCategoryTax,
             promoFreeUnits: lineFreeUnits > 0 ? lineFreeUnits : null,
-            invoicedQty: split.qty,
+            invoicedQty: shape.qty,
             status: "PENDING",
             ...(tenantId ? { tenantId } : {}),
           },
@@ -3320,80 +3323,59 @@ export class InvoicesService {
       await unitAware.assertInvoiceRewriteAllowed(this.prisma.forTenant(), inv);
     }
 
-    if (dto.items) {
-      await assertOrderItemIdsBelongToOrder(this.prisma.forTenant(), inv.orderId, dto.items); // SA-093a rd6
-      // Pre-fetch products for boxes/pieces resolution AND the regulated-category
-      // snapshot (so an edited DRAFT re-attributes its regulated lines).
-      const productIds = [
-        ...new Set(dto.items.filter((i) => i.productId).map((i) => i.productId!)),
-      ];
-      const products =
-        productIds.length > 0
-          ? await this.prisma.forTenant().product.findMany({
-              where: { id: { in: productIds } },
-              select: {
-                id: true,
-                unitsPerBox: true,
-                trackedCategoryId: true,
-                trackedSubcategoryId: true,
-              },
-            })
-          : [];
-      const productMap = new Map(products.map((p) => [p.id, p]));
-      // RF-4: regulated section tax config for the edited lines (mirrors create()).
-      const editCatIds = [
-        ...new Set(products.map((p) => p.trackedCategoryId).filter(Boolean)),
-      ] as string[];
-      const categoryMap = new Map<string, any>(
-        (editCatIds.length > 0
-          ? await this.prisma
-              .forTenant()
-              .trackedCategory.findMany({ where: { id: { in: editCatIds } } })
-          : []
-        ).map((c: any) => [c.id, c]),
-      );
+    const items = dto.items;
+    if (items) {
+      await assertOrderItemIdsBelongToOrder(this.prisma.forTenant(), inv.orderId, items); // SA-093a rd6
+      // Products (pack + regulated snapshot) and section tax config for the edited lines (mirrors create()).
+      const { productMap, categoryMap } = await loadEditCatalog(this.prisma.forTenant(), items);
 
-      // SA-184/186: match the payload to THIS invoice's stored rows (by id, tenant-scoped; never by
-      // productId), keep untouched rows verbatim and in place, re-price only changed lines. Rules
-      // and reasoning: invoice-edit-plan.ts.
-      const storedRows = await this.prisma
-        .forTenant()
-        .invoiceItem.findMany({ where: { invoiceId: id } });
-      const editLines = buildEditedLines({
-        items: dto.items,
-        stored: storedRows,
-        matches: matchEditLines(dto.items, storedRows),
-        productMap,
-        categoryMap,
-        clampFreeUnits: (f, b, q) => this.clampLineFreeUnits(f, b, q),
-        warn: (m) => this.logger.warn(`update(): invoiceId ${id} ${m}`),
-      });
-      const itemsData = editLines.map((l) => l.data);
-      const subtotal = roundMoney(itemsData.reduce((s, it) => s + Number(it.subtotal), 0));
-      await this.applyMsrpSnapshots(
-        this.prisma.forTenant(),
-        inv.customerId,
-        editLines.filter((l) => !l.untouched).map((l) => l.data as any),
-      );
-      const customerForTax = await this.prisma
-        .forTenant()
-        .customer.findFirst({ where: { id: inv.customerId }, select: { isTaxExempt: true } });
-      // Tax from each line's stored post-discount subtotal (same basis as the line).
-      const isTaxExempt = !!(customerForTax as any)?.isTaxExempt;
-      const regularTax = isTaxExempt
-        ? 0
-        : roundMoney(itemsData.reduce((s, it) => s + it.subtotal * (it.taxRate ?? 0), 0));
-      // RF-4: fold the regulated category tax (exempt → 0 for both + zeroed snapshots).
-      const categoryTaxTotal = this.foldCategoryTax(itemsData, isTaxExempt);
-      const taxTotal = roundMoney(regularTax + categoryTaxTotal);
-      const invDiscount = dto.discount ?? Number(inv.discount);
-      const shipping = dto.shippingFee ?? Number(inv.shippingFee);
-      const total = roundMoney(subtotal - invDiscount + shipping + taxTotal);
-      // Rebuild the items AND re-sync the W5 ledger atomically: the delete-and-recreate
-      // rotates invoiceItemIds and can change qty/price or add/remove a regulated line,
-      // so the invoice's prior SALE rows must be reversed and re-written from the new
-      // items (a no-op when neither the old nor new invoice carries a regulated line).
-      const updated = await this.prisma.tenantTransaction(async (tx: any) => {
+      const { updated, syncLines } = await this.prisma.tenantTransaction(async (tx: any) => {
+        // Serialize concurrent saves of this invoice: rows are read AFTER the lock, so a second save
+        // sees the first's rows and totals instead of writing over them (no P2025, total = its lines).
+        // Lock order (SA-137/203): the ORDER row first, then the invoice, as the invoice-from-order paths do.
+        if (inv.orderId)
+          await tx.$executeRaw`SELECT id FROM "Order" WHERE id = ${inv.orderId} FOR UPDATE`;
+        await tx.$executeRaw`SELECT id FROM "Invoice" WHERE id = ${id} FOR UPDATE`;
+        // SA-184/186: match the payload to THIS invoice's stored rows (by id, tenant-scoped; never by
+        // productId), keep untouched rows verbatim and in place, re-price only changed lines. Rules
+        // and reasoning: invoice-edit-plan.ts.
+        const storedRows = await tx.invoiceItem.findMany({ where: { invoiceId: id } });
+        const editLines = buildEditedLines({
+          items: items,
+          stored: storedRows,
+          matches: matchEditLines(items, storedRows),
+          productMap,
+          categoryMap,
+          clampFreeUnits: (f, b, q) => this.clampLineFreeUnits(f, b, q),
+          warn: (m) => this.logger.warn(`update(): invoiceId ${id} ${m}`),
+        });
+        const itemsData = editLines.map((l) => l.data);
+        await this.applyMsrpSnapshots(
+          tx,
+          inv.customerId,
+          editLines.filter((l) => !l.untouched).map((l) => l.data as any),
+        );
+        const customerForTax = await tx.customer.findFirst({
+          where: { id: inv.customerId },
+          select: { isTaxExempt: true },
+        });
+        const isTaxExempt = !!(customerForTax as any)?.isTaxExempt;
+        const cur = await tx.invoice.findUnique({
+          where: { id },
+          select: { discount: true, shippingFee: true },
+        });
+        const invDiscount = dto.discount ?? Number(cur.discount);
+        const shipping = dto.shippingFee ?? Number(cur.shippingFee);
+        const { subtotal, taxTotal, total } = editInvoiceTotals(
+          itemsData,
+          isTaxExempt,
+          invDiscount,
+          shipping,
+        );
+        // Rebuild the items AND re-sync the W5 ledger atomically: the delete-and-recreate
+        // rotates invoiceItemIds and can change qty/price or add/remove a regulated line,
+        // so the invoice's prior SALE rows must be reversed and re-written from the new
+        // items (a no-op when neither the old nor new invoice carries a regulated line).
         // Matched rows stay IN PLACE (ledger, credit notes and returns reference their ids); only
         // rows the payload dropped are deleted and only changed rows are written.
         const keptIds = editLines.flatMap((l) => (l.rowId ? [l.rowId] : []));
@@ -3457,10 +3439,14 @@ export class InvoicesService {
           },
         });
         await this.resyncInvoiceLedger(id, inv.orderId ?? null, u.items ?? [], tx);
-        return u;
+        return {
+          updated: u,
+          syncLines: orderSyncLines(editLines, storedRows, cur, invDiscount, shipping),
+        };
       });
       // Backward sync: keep the linked order in step with the edited invoice.
-      if (inv.orderId) await this.recomputeOrderFromInvoices(inv.orderId);
+      if (inv.orderId && syncLines)
+        await this.recomputeOrderFromInvoices(inv.orderId, undefined, syncLines);
       return updated;
     }
 
