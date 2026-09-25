@@ -79,7 +79,16 @@ interface Customer {
 
 // ─── Import Modal ─────────────────────────────────────────────────────────────
 
-function ImportCustomersModal({ onClose, onDone }: { onClose: () => void; onDone: () => void }) {
+function ImportCustomersModal({
+  onClose,
+  onImported,
+}: {
+  onClose: () => void;
+  /** M7: fired once after a successful (non-dry-run) import — refetches the list, does NOT
+   *  close the modal, so the result table (row plan, skip reasons, warnings) stays visible
+   *  until the user closes it themselves. */
+  onImported: () => void;
+}) {
   const [imported, setImported] = React.useState(false);
 
   return (
@@ -115,7 +124,7 @@ function ImportCustomersModal({ onClose, onDone }: { onClose: () => void; onDone
             testIdPrefix="import-customers-modal"
             onImported={() => {
               setImported(true);
-              onDone();
+              onImported();
             }}
           />
         </div>
@@ -1135,10 +1144,7 @@ export default function CustomersPage() {
       {isImportOpen && (
         <ImportCustomersModal
           onClose={() => setIsImportOpen(false)}
-          onDone={() => {
-            setIsImportOpen(false);
-            refetch?.();
-          }}
+          onImported={() => refetch?.()}
         />
       )}
 

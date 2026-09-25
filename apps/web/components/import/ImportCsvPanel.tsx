@@ -410,6 +410,38 @@ export function ImportCsvPanel({
         </div>
       )}
 
+      {/* I4: skipped rows + raw error strings — a dedicated, always-visible surface. `rows`
+          (below) already carries a "skip" badge + reason per row, but skippedRows/errors are
+          rendered directly too so nothing that reached either array is only reachable via the
+          "N skipped" summary count. */}
+      {active && active.skippedRows.length > 0 && (
+        <div
+          data-testid={`${prefix}-skipped-rows`}
+          className="rounded-lg border border-warning/30 bg-warning-bg/50 px-3 py-2 text-xs text-warning"
+        >
+          <p className="font-medium">Skipped rows:</p>
+          <ul className="mt-0.5 space-y-0.5">
+            {active.skippedRows.map((r) => (
+              <li key={r.row}>
+                Row {r.row} ({r.label}): {r.reason}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+      {active && active.errors.length > 0 && (
+        <div
+          data-testid={`${prefix}-errors`}
+          className="rounded-lg border border-danger/30 bg-danger-bg/50 px-3 py-2 text-xs text-danger"
+        >
+          <ul className="space-y-0.5">
+            {active.errors.map((e, i) => (
+              <li key={i}>{e}</li>
+            ))}
+          </ul>
+        </div>
+      )}
+
       {/* Row-level plan table */}
       {active && active.rows.length > 0 && <ResultTable result={active} testIdPrefix={prefix} />}
     </div>

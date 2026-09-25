@@ -160,4 +160,39 @@ describe("ImportCsvPanel", () => {
     expect(await screen.findByTestId("products-unknown-columns")).toHaveTextContent("Average Cost");
     expect(screen.getByTestId("products-warnings")).toHaveTextContent("Tobacco licence expired");
   });
+
+  it("I4: renders skippedRows and errors, and a row the real import failed shows as skip with its reason", async () => {
+    // A real-run failure: the API replaces that row's plan entry with action:"skip" + reason
+    // (never leaves a stale "create"/"update" badge with the reason reachable only via the
+    // summary count) — the panel must surface it from `rows`, plus the dedicated
+    // `skippedRows`/`errors` surfaces.
+    post.mockResolvedValueOnce({
+      data: {
+        ...previewResult,
+        dryRun: false,
+        created: 0,
+        skipped: 1,
+        errors: ["Widget: SKU already exists"],
+        rows: [{ row: 1, label: "Widget", action: "skip", reason: "SKU already exists" }],
+        skippedRows: [{ row: 1, label: "Widget", reason: "SKU already exists" }],
+      },
+    });
+    render(
+      <ImportCsvPanel
+        endpoint="/import/products"
+        title="Products"
+        columns={columns}
+        testIdPrefix="products"
+      />,
+    );
+
+    pickFile("products");
+    fireEvent.click(screen.getByTestId("products-preview-button"));
+
+    await screen.findByTestId("products-results-table");
+    expect(screen.getByTestId("products-row-1")).toHaveTextContent("skip");
+    expect(screen.getByTestId("products-row-1")).toHaveTextContent("SKU already exists");
+    expect(screen.getByTestId("products-skipped-rows")).toHaveTextContent("SKU already exists");
+    expect(screen.getByTestId("products-errors")).toHaveTextContent("SKU already exists");
+  });
 });
