@@ -192,6 +192,42 @@ describe("invoice edit / copy — selling restrictions (F-05)", () => {
       });
     });
 
+    describe("SA-377: an id-matched line is counted at its held row's pack, not the live one", () => {
+      // The product was repacked 24 -> 30 after the draft was billed at 24.
+      const heldRow = { id: "row-1", ...held[0] };
+      const repacked = new Map<string, number | null>([["p", 30]]);
+
+      it("an unchanged re-send WITH its split asks nothing (not a false 12)", () => {
+        expect(
+          netEditRestrictionLines(
+            [heldRow],
+            [{ id: "row-1", productId: "p", qty: 48, boxes: 2, pieces: 0 }],
+            repacked,
+          ),
+        ).toEqual([]);
+      });
+
+      it("2 -> 3 boxes asks for 24 pieces at the row's pack, not 30-per-box", () => {
+        expect(
+          netEditRestrictionLines(
+            [heldRow],
+            [{ id: "row-1", productId: "p", qty: 72, boxes: 3, pieces: 0 }],
+            repacked,
+          ),
+        ).toEqual([{ productId: "p", qtyDelta: 24 }]);
+      });
+
+      it("a same-product line with NO held match is counted at the live pack", () => {
+        expect(
+          netEditRestrictionLines(
+            [heldRow],
+            [{ productId: "p", qty: 90, boxes: 3, pieces: 0 }],
+            repacked,
+          ),
+        ).toEqual([{ productId: "p", qtyDelta: 42 }]);
+      });
+    });
+
     it("a plain unboxed line nets numerically (5 -> 50 asks for 45) and split lines sum", () => {
       expect(
         netEditRestrictionLines([{ productId: "q", qty: 5 }], [{ productId: "q", qty: 50 }], live),

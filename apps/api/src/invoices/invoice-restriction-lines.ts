@@ -50,21 +50,23 @@ export function netEditRestrictionLines(
     const m = new Map<string, number>();
     for (const r of rows) {
       if (!r.productId) continue;
-      const pack = (isHeld ? num(r.unitsPerBox) : null) ?? live.get(r.productId) ?? null;
+      // SA-377: an id-matched same-product line counts at its held row's pack (re-send nets 0).
+      const own = isHeld ? r : heldMatch(r);
+      const pack = (own ? num(own.unitsPerBox) : null) ?? live.get(r.productId) ?? null;
       const count = !isHeld && pieceReSplit(r) ? Number(r.qty) : pieceCount(r, pack);
       m.set(r.productId, (m.get(r.productId) ?? 0) + count);
     }
     return m;
   };
   const heldById = new Map(held.flatMap((r) => (r.id ? [[r.id, r] as const] : [])));
-  const pieceReSplit = (r: EditRow): boolean => {
+  const heldMatch = (r: EditRow): EditRow | undefined => {
     const row = r.id ? heldById.get(r.id) : undefined;
+    return row && (row.productId ?? null) === (r.productId ?? null) ? row : undefined;
+  };
+  const pieceReSplit = (r: EditRow): boolean => {
+    const row = heldMatch(r);
     return (
-      !!row &&
-      (row.productId ?? null) === (r.productId ?? null) &&
-      r.boxes == null &&
-      r.pieces == null &&
-      (row.boxes != null || row.pieces != null)
+      !!row && r.boxes == null && r.pieces == null && (row.boxes != null || row.pieces != null)
     );
   };
   const had = total(held, true);
