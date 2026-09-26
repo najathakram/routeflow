@@ -74,15 +74,19 @@ describe("readOnlyQtyText: a read-only row still SHOWS its quantity (#2316 revie
   });
 });
 
-describe("a unit line cancelled after load never joins the draft (#2316 review)", () => {
-  it("the CANCELLED Case line is skipped; the order is editable and the payload omits it", () => {
-    const lines = [caseLine({ status: "CANCELLED" }), packLine()];
-    const draft = hydrateBuyerDraft(lines);
+describe("a CANCELLED unit line (F2, #2316): never an editable row, never re-sent", () => {
+  const lines = () => [caseLine({ status: "CANCELLED", qty: 24, boxes: 2 }), packLine()];
+
+  it("pin (a): a CANCELLED Case line is never in the draft as an editable row", () => {
+    const draft = hydrateBuyerDraft(lines());
     expect(draft.p1).toBeUndefined();
-    expect(buyerSavePlan(lines, draft)).toEqual({
-      kind: "replace",
-      items: [{ productId: "p2", qty: 3 }],
-    });
+    expect(Object.keys(draft)).toEqual(["p2"]);
+  });
+
+  it("pin (b): a CANCELLED Case line is never in the save payload", () => {
+    const plan = buyerSavePlan(lines(), hydrateBuyerDraft(lines()));
+    expect(plan).toEqual({ kind: "replace", items: [{ productId: "p2", qty: 3 }] });
+    expect(JSON.stringify(plan)).not.toContain("p1");
   });
 });
 
