@@ -168,9 +168,26 @@ describe("unitLineCount — SA-388", () => {
     expect(buildEditItemFromLine(caseLine(40, 0)).countLocked).toBe(true);
   });
 
+  // SA-388b (1): a derived count of 0 is not a valid unit-line count (the server refuses qty ≤ 0),
+  // so {qty 0} is LOCKED, never "0 Cases".
+  it.each([
+    ["{qty 0, boxes 0, factor 12}", caseLine(0, 0)],
+    ["{qty 0, boxes null, factor 12}", caseLine(0, null)],
+  ])("SA-388b: %s ⇒ LOCKED, never 0 Cases", (_label, line) => {
+    expect(unitLineCount(line)).toBeNull();
+    const seeded = buildEditItemFromLine(line);
+    expect(seeded.countLocked).toBe(true);
+    const edited: EditItemState = { ...seeded, unitPrice: 45 };
+    expect(findLockedUnitLineEdit([edited], [line])?.id).toBe("li-case");
+    expect(() => buildItemUpdates([edited], [line])).toThrow(LockedUnitLineError);
+  });
+
   it.each([
     ["price-only", { unitPrice: 45 }],
     ["note-only", { notes: "leave at the side door" }],
+    // SA-388b (2): substituteDtoUpdate carries a count for the line, so a substitution on a
+    // LOCKED line is the same class as a price/note edit — refused, no request.
+    ["substitution", { substituteProductId: "p-other" }],
   ])("LOCKED: a %s edit is refused and builds no request", (_label, patch) => {
     const orig = caseLine(40, 0);
     const edited: EditItemState = { ...buildEditItemFromLine(orig), ...patch };
