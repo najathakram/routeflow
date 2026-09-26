@@ -116,6 +116,10 @@ describeDb("#2230 unit-line split CHECK — real Postgres (SA-388d)", () => {
       'an "Each" line (factor 1, no split)',
       { unitLabel: "Each", unitsPerBox: 1, qty: 4, boxes: null, pieces: null },
     ],
+    [
+      "a REMOVE_ITEM-zeroed unit line (qty 0, split nulled)",
+      { unitLabel: "Case", unitsPerBox: 12, qty: 0, boxes: null, pieces: null },
+    ],
   ];
   const REFUSED: [string, Split][] = [
     [
@@ -163,5 +167,61 @@ describeDb("#2230 unit-line split CHECK — real Postgres (SA-388d)", () => {
     );
     expect(sqlState(err)).toBe("23514");
     expect(String(err?.message ?? err)).toMatch(/InvoiceItem_unitLine_split_chk/);
+  });
+
+  /**
+   * NOT VALID leaves a pre-existing violator in place, but ANY later UPDATE of that row is checked, even
+   * a no-op one. A legacy violator is planted by dropping the constraint, inserting, and re-adding it
+   * from its OWN captured definition (pg_get_constraintdef) as NOT VALID, all in one transaction on
+   * this isolated DB, so the schema is left exactly as the migration made it.
+   */
+  it.each([
+    ["OrderItem", "OrderItem_unitLine_split_chk"],
+    ["InvoiceItem", "InvoiceItem_unitLine_split_chk"],
+  ])("%s: a no-op UPDATE of a legacy all-empty row is refused (23514)", async (table, con) => {
+    const legacyId = randomUUID();
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+      const { rows } = await client.query(
+        `SELECT pg_get_constraintdef(oid) AS def FROM pg_constraint WHERE conname = $1`,
+        [con],
+      );
+      const def: string = rows[0].def;
+      expect(def).toMatch(/NOT VALID$/);
+      await client.query(`ALTER TABLE "${table}" DROP CONSTRAINT "${con}"`);
+      if (table === "OrderItem")
+        await client.query(
+          `INSERT INTO "OrderItem" (id, "orderId", "unitPrice", "tenantId", "unitLabel", "unitsPerBox", qty, boxes, pieces, "updatedAt")
+           VALUES ($1, $2, 40, $3, 'Case', 12, 36, NULL, NULL, now())`,
+          [legacyId, orderId, tenantId],
+        );
+      else
+        await client.query(
+          `INSERT INTO "InvoiceItem" (id, "invoiceId", description, "unitPrice", subtotal, "tenantId", "unitLabel", "unitsPerBox", qty, boxes, pieces, "updatedAt")
+           VALUES ($1, $2, 'B2230 legacy', 40, 0, $3, 'Case', 12, 36, NULL, NULL, now())`,
+          [legacyId, invoiceId, tenantId],
+        );
+      await client.query(`ALTER TABLE "${table}" ADD CONSTRAINT "${con}" ${def}`);
+      await client.query("COMMIT");
+    } catch (e) {
+      await client.query("ROLLBACK").catch(() => undefined);
+      throw e;
+    } finally {
+      client.release();
+    }
+    // The re-added constraint is the migration's, still NOT VALID.
+    const { rows: after } = await pool.query(
+      `SELECT convalidated FROM pg_constraint WHERE conname = $1`,
+      [con],
+    );
+    expect(after).toEqual([{ convalidated: false }]);
+
+    const err = await pool.query(`UPDATE "${table}" SET qty = qty WHERE id = $1`, [legacyId]).then(
+      () => undefined,
+      (e) => e,
+    );
+    expect(err?.code).toBe("23514");
+    expect(String(err?.message)).toContain(con);
   });
 });
