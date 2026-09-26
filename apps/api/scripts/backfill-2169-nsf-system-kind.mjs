@@ -340,12 +340,13 @@ export function liveTenantStampCounts(applyRows, slugById) {
 export function parseConfirmLiveArg(raw) {
   const idx = raw.lastIndexOf(":");
   if (idx <= 0 || idx === raw.length - 1) {
-    throw refuse(`--confirm-live "${raw}" must be "<slug>:<count>"`);
+    // Never echo the operator's value: it carries a live tenant's slug (SA-403 (e)).
+    throw refuse('every --confirm-live value must be "<slug>:<count>"');
   }
   const slug = raw.slice(0, idx);
   const count = Number(raw.slice(idx + 1));
   if (!Number.isInteger(count) || count < 0) {
-    throw refuse(`--confirm-live "${raw}" must end with a non-negative integer count`);
+    throw refuse("every --confirm-live value must end with a non-negative integer count");
   }
   return { slug, count };
 }
@@ -670,6 +671,10 @@ async function apply() {
   }
   try {
     await client.query("BEGIN");
+    // Bounded like the dry run: a stuck lock or a slow statement aborts the apply (and rolls it
+    // back) instead of holding InvoiceItem/InvoicePayment rows indefinitely.
+    await client.query("SET LOCAL statement_timeout = '120s'");
+    await client.query("SET LOCAL lock_timeout = '10s'");
     if (JSON.stringify(await fingerprint(client)) !== JSON.stringify(plan.fingerprint)) {
       throw refuse("DB fingerprint changed since the dry run (database or tenants differ)");
     }
@@ -697,7 +702,8 @@ async function apply() {
     for (const a of stampSet) {
       const row = (
         await client.query(
-          'SELECT "invoiceId", description, "unitPrice", "updatedAt", "systemKind" FROM "InvoiceItem" WHERE id = $1',
+          // FOR UPDATE: the row cannot change between this re-read and the stamp below.
+          'SELECT "invoiceId", description, "unitPrice", "updatedAt", "systemKind" FROM "InvoiceItem" WHERE id = $1 FOR UPDATE',
           [a.lineId],
         )
       ).rows[0];
@@ -715,7 +721,7 @@ async function apply() {
 
       const payment = (
         await client.query(
-          'SELECT status, "checkStatus", "nsfFeeAmount" FROM "InvoicePayment" WHERE id = $1',
+          'SELECT status, "checkStatus", "nsfFeeAmount" FROM "InvoicePayment" WHERE id = $1 FOR UPDATE',
           [a.paymentId],
         )
       ).rows[0];
@@ -1011,6 +1017,22 @@ function selfTest() {
     "parseConfirmLiveArg: a non-integer count throws",
     threw(() => parseConfirmLiveArg("live-fake-1:abc")),
   );
+  {
+    const msgOf = (fn) => {
+      try {
+        fn();
+        return "";
+      } catch (e) {
+        return String(e.message);
+      }
+    };
+    const m1 = msgOf(() => parseConfirmLiveArg("live-fake-9"));
+    const m2 = msgOf(() => parseConfirmLiveArg("live-fake-9:abc"));
+    check(
+      "parseConfirmLiveArg: refusals never echo the operator's value (no live slug in output)",
+      m1 !== "" && m2 !== "" && !m1.includes("live-fake-9") && !m2.includes("live-fake-9"),
+    );
+  }
 
   // The pin itself: nothing above may have printed a fake id or slug — console output is
   // aggregate-only by contract, in --self-test as much as in a real run. Every case name is a
