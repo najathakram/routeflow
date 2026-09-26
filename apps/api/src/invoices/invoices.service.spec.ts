@@ -1095,6 +1095,12 @@ describe("InvoicesService", () => {
       prisma.invoice.update.mockResolvedValue({ id: "d1", status: InvoiceStatus.DRAFT });
       prisma.orderItem.findMany.mockResolvedValue([{ id: "li1" }]);
       prisma.orderItem.update.mockResolvedValue({});
+      // B785/SA-113a: basis "delivered" now reads the evidence basis
+      // (delivered-basis-by-line.ts), never li.deliveredQty — li1's own
+      // evidence row delivers 8 of the ordered 10.
+      prisma.deliveryMutation.findMany.mockResolvedValue([
+        { orderItemId: "li1", type: "DELIVERED", quantityDelivered: 8 },
+      ]);
     }
 
     it("returns null and does nothing when there is no open draft", async () => {
@@ -1649,6 +1655,13 @@ describe("InvoicesService", () => {
           status: InvoiceStatus.DRAFT,
           deliveryBatchId: null,
         })
+        // #2255 / SA-404: the row markSent locks and re-reads as its first statement.
+        .mockResolvedValueOnce({
+          id: "i1",
+          orderId: null,
+          status: InvoiceStatus.DRAFT,
+          payments: [],
+        })
         .mockResolvedValueOnce({
           // fresh read inside the tx, after the DRAFT→SENT flip already committed —
           // a credit applied at order-create time already covers the full total.
@@ -1694,12 +1707,15 @@ describe("InvoicesService", () => {
     });
 
     it("passes the order's explicit-amount intent ids as excludeCreditNoteIds", async () => {
-      prisma.invoice.findUnique.mockResolvedValueOnce({
+      const draft = {
         id: "i2",
         orderId: "ord-2",
         status: InvoiceStatus.DRAFT,
         deliveryBatchId: null,
-      });
+      };
+      prisma.invoice.findUnique
+        .mockResolvedValueOnce(draft) // findOneOrThrow
+        .mockResolvedValueOnce({ ...draft, payments: [] }); // #2255: markSent's locked re-read
       prisma.order.findFirst.mockResolvedValue({ status: "DELIVERED", orderNumber: "O2" });
       prisma.invoice.update.mockResolvedValueOnce({
         id: "i2",
@@ -4691,14 +4707,28 @@ describe("InvoicesService", () => {
       draft({ id: "d-base", items: [{ orderItemId: "oi-std" }] }),
       draft({ id: "d-r1", items: [{ orderItemId: "oi-reg" }] }),
     ];
-    const mockOrder = (lines: any[], over: any = {}) => ({
-      id: "ord-1",
-      customerId: "cust-1",
-      subtotal: 100,
-      tax: 0,
-      lineItems: lines,
-      ...over,
-    });
+    const mockOrder = (lines: any[], over: any = {}) => {
+      // B785/SA-113a: the delivered basis now comes from evidence rows
+      // (deliveredBasisByLine), never li.deliveredQty — synthesize one
+      // evidence row per fixture line, from the SAME deliveredQty these
+      // fixtures already encode, so every existing test's intent survives
+      // unchanged.
+      prisma.deliveryMutation.findMany.mockResolvedValue(
+        lines.map((li) => ({
+          orderItemId: li.id,
+          type: Number(li.deliveredQty ?? 0) > 0 ? "DELIVERED" : "REFUSED",
+          quantityDelivered: Number(li.deliveredQty ?? 0),
+        })),
+      );
+      return {
+        id: "ord-1",
+        customerId: "cust-1",
+        subtotal: 100,
+        tax: 0,
+        lineItems: lines,
+        ...over,
+      };
+    };
     // Pull the invoice.update payload for a given draft id.
     const updOf = (id: string) =>
       prisma.invoice.update.mock.calls.find((c: any) => c[0].where.id === id)?.[0];

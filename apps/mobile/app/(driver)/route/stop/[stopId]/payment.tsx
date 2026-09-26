@@ -57,10 +57,13 @@ import {
 } from "../../../../../lib/offline-errors";
 import {
   buildStopDeliveries,
+  deliveredSoFarByLine,
   fallbackShortPickLines,
+  linesAwaitingEntry,
   normalizeDeliveryPlan,
   planPendingButLinesNotLoaded,
   reconciledTotal,
+  remainingByLine,
   shortPickLinesFromOrder,
   type ShortPickLine,
 } from "../../../../../lib/short-pick";
@@ -175,11 +178,18 @@ export default function PaymentScreen() {
   // lines already carry unitLabel/unitsPerBox/boxes (shortPickLinesFromOrder
   // threads them through), so a Case line reconciles correctly no matter
   // which order on the stop it belongs to.
+  // B785/SA-116: per-line pieces delivered at OTHER visits, off the stop's own run snapshot — a
+  // second visit reconciles (and sends explicit entries for) the REMAINING, never the full order.
+  // SA-367a: quantities come from the server's per-line `remaining`; soFar prices money only.
+  const soFarById = useMemo(() => deliveredSoFarByLine(stop?.orders), [stop]);
+  const remainingById = useMemo(() => remainingByLine(stop?.orders), [stop]);
   const richShortPickLinesByOrder: Record<string, ShortPickLine[]> = useMemo(() => {
     const map: Record<string, ShortPickLine[]> = {};
-    for (const id of stopOrderIds) map[id] = shortPickLinesFromOrder(ordersById[id]);
+    for (const id of stopOrderIds) {
+      map[id] = shortPickLinesFromOrder(ordersById[id], remainingById, soFarById);
+    }
     return map;
-  }, [stopOrderIds, ordersById]);
+  }, [stopOrderIds, ordersById, remainingById, soFarById]);
 
   // SA-094b (B762 adaptation item 3): the ONE normalized plan every reader
   // of deliveredQtyById must use, computed over EVERY order's lines — a raw
@@ -587,15 +597,21 @@ export default function PaymentScreen() {
     // not a downgrade of an order that's already DELIVERED. Falling back to
     // the raw snapshot for that case would have re-claimed full delivery on
     // lines the driver's own loaded data says are already settled.
-    const deliveries = buildStopDeliveries(
-      (stop.orders ?? []).map((o) => ({
-        orderId: o.id,
-        lines: ordersById[o.id]
-          ? (richShortPickLinesByOrder[o.id] ?? [])
-          : fallbackShortPickLines(o),
-        deliveredQtyById: normalizedPlan,
-      })),
-    );
+    const stopPlans = (stop.orders ?? []).map((o) => ({
+      orderId: o.id,
+      lines: ordersById[o.id] ? (richShortPickLinesByOrder[o.id] ?? []) : fallbackShortPickLines(o),
+      deliveredQtyById: normalizedPlan,
+    }));
+    // SA-367a: a line the server served no remaining for has no default — the driver must enter
+    // it on the review screen first (buildStopDeliveries would refuse; say so readably instead).
+    const awaiting = stopPlans.flatMap((p) => linesAwaitingEntry(p.lines, deliveredQtyById));
+    if (awaiting.length > 0) {
+      setAmountError(
+        `Enter how many were delivered for ${awaiting.length === 1 ? "1 line" : `${awaiting.length} lines`} in Review delivery before closing.`,
+      );
+      return;
+    }
+    const deliveries = buildStopDeliveries(stopPlans);
 
     // NEW-m1-3: validate that at least one item is being delivered
     if (deliveries.length === 0) {

@@ -65,6 +65,7 @@ import {
   newLocalId,
   orderOriginals,
   pickerTrayExpandedHeight,
+  repairBlockedLines,
   resolvePickTarget,
   serializeEditItemsSnapshot,
   shouldRehydrateFromOrder,
@@ -813,6 +814,8 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
     // trash-button set. The whole mapping lives in lib/edit-items-draft.ts so
     // the dirty check and this payload are ONE derivation.
     const items = stagedDiffItems({ draft, unlisted, pendingDeletes }, originals);
+    const repair = repairBlockedLines(draft, originals); // #2231: LOCKED unit line, send nothing
+    if (repair.length) return showToast(`${repair.join(", ")} needs repair — not saved.`);
 
     if (items.length === 0 && !creditsTouched) {
       // Nothing changed — mirror web: just leave the editor, don't error.
