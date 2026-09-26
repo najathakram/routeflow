@@ -41,9 +41,18 @@ const SECRET = "b104-spec-secret";
 type TenantStatus = "TRIAL" | "ACTIVE" | "READ_ONLY" | "SUSPENDED" | "CANCELLED";
 type LinkStatus = "INVITED" | "PENDING_SELLER_APPROVAL" | "ACTIVE" | "DISCONNECTED";
 type AccountStatus = "ACTIVE" | "SUSPENDED" | "DELETED";
+type UserStatus = "ACTIVE" | "INACTIVE" | "SUSPENDED";
 
 interface Store {
   accounts: Array<{ id: string; status: AccountStatus; deletedAt: Date | null }>;
+  /** #2164: the CUSTOMER-role users behind the customers below. */
+  users: Array<{
+    id: string;
+    tenantId: string;
+    role: string;
+    status: UserStatus;
+    deletedAt: Date | null;
+  }>;
   tenants: Array<{ id: string; status: TenantStatus }>;
   customers: Array<{ id: string; tenantId: string; userId: string; deletedAt: Date | null }>;
   links: Array<{
@@ -79,6 +88,31 @@ function seed(): Store {
       { id: "c-susp", tenantId: "t-3", userId: "u-susp", deletedAt: null },
       { id: "c-canc", tenantId: "t-4", userId: "u-canc", deletedAt: null },
       { id: "c-new", tenantId: "t-1", userId: "u-new", deletedAt: null },
+      // #2164: CUSTOMER users whose OWN account is not live (their customers are fine).
+      { id: "c-inact", tenantId: "t-1", userId: "u-inactive", deletedAt: null },
+      { id: "c-uspd", tenantId: "t-1", userId: "u-suspended", deletedAt: null },
+      { id: "c-udel", tenantId: "t-1", userId: "u-deleted", deletedAt: null },
+    ],
+    users: [
+      { id: "u-b", tenantId: "t-1", role: "CUSTOMER", status: "ACTIVE", deletedAt: null },
+      { id: "u-c", tenantId: "t-2", role: "CUSTOMER", status: "ACTIVE", deletedAt: null },
+      { id: "u-removed", tenantId: "t-1", role: "CUSTOMER", status: "ACTIVE", deletedAt: null },
+      { id: "u-susp", tenantId: "t-3", role: "CUSTOMER", status: "ACTIVE", deletedAt: null },
+      { id: "u-inactive", tenantId: "t-1", role: "CUSTOMER", status: "INACTIVE", deletedAt: null },
+      {
+        id: "u-suspended",
+        tenantId: "t-1",
+        role: "CUSTOMER",
+        status: "SUSPENDED",
+        deletedAt: null,
+      },
+      {
+        id: "u-deleted",
+        tenantId: "t-1",
+        role: "CUSTOMER",
+        status: "ACTIVE",
+        deletedAt: new Date("2026-09-01"),
+      },
     ],
     links: [
       // Buyer A: a live link at two sellers, plus one of every link that must grant nothing.
@@ -192,7 +226,53 @@ function makePrisma(store: Store) {
     return where.id.in.includes(a.id) && a.status === "ACTIVE" && a.deletedAt === null;
   }
 
+  // #2164: exactly the shapes the CUSTOMER resync sends; anything else throws (L-081).
+  function liveUserMatches(u: Store["users"][number], where: Record<string, any>): boolean {
+    if (
+      !keysAre(where, ["id", "role", "status", "deletedAt"]) ||
+      !keysAre(where.id, ["in"]) ||
+      !Array.isArray(where.id.in) ||
+      where.role !== "CUSTOMER" ||
+      where.status !== "ACTIVE" ||
+      where.deletedAt !== null
+    ) {
+      throw new Error(`stand-in: unsupported User filter ${JSON.stringify(where)}`);
+    }
+    return (
+      where.id.in.includes(u.id) &&
+      u.role === "CUSTOMER" &&
+      u.status === "ACTIVE" &&
+      u.deletedAt === null
+    );
+  }
+
+  function liveCustomerMatches(c: Store["customers"][number], where: Record<string, any>) {
+    if (
+      !keysAre(where, ["userId", "deletedAt", "tenant"]) ||
+      !keysAre(where.userId, ["in"]) ||
+      !Array.isArray(where.userId.in) ||
+      where.deletedAt !== null ||
+      !keysAre(where.tenant, ["status"]) ||
+      !keysAre(where.tenant.status, ["notIn"])
+    ) {
+      throw new Error(`stand-in: unsupported Customer findMany filter ${JSON.stringify(where)}`);
+    }
+    return (
+      where.userId.in.includes(c.userId) &&
+      c.deletedAt === null &&
+      !where.tenant.status.notIn.includes(tenantOf(c.tenantId).status)
+    );
+  }
+
   return {
+    user: {
+      findMany: jest.fn(
+        async (args: { where: Record<string, any>; select: Record<string, boolean> }) =>
+          store.users
+            .filter((u) => liveUserMatches(u, args.where))
+            .map((u) => pick(u, args.select)),
+      ),
+    },
     buyerAccount: {
       findMany: jest.fn(
         async (args: { where: Record<string, any>; select: Record<string, boolean> }) =>
@@ -208,6 +288,12 @@ function makePrisma(store: Store) {
       ),
     },
     customer: {
+      findMany: jest.fn(
+        async (args: { where: Record<string, any>; select: Record<string, boolean> }) =>
+          store.customers
+            .filter((c) => liveCustomerMatches(c, args.where))
+            .map((c) => pick(c, args.select)),
+      ),
       findFirst: jest.fn(
         async (args: { where: Record<string, any>; select?: Record<string, boolean> }) => {
           const row = store.customers.find((c) => customerMatches(c, args.where));
@@ -300,6 +386,22 @@ const staffToken = (sub: string, role: string, tenantId: string) =>
     tenantId,
     tenantSlug: "acme",
   });
+
+/** #2164: a CUSTOMER-role access token as the server mints it — with a real `exp` (15 minutes). */
+const customerToken = (sub: string, tenantId: string, exp?: number) =>
+  jwt.sign(
+    {
+      sub,
+      username: sub,
+      role: "CUSTOMER",
+      status: "ACTIVE",
+      forcePasswordChange: false,
+      tenantId,
+      tenantSlug: "acme",
+      ...(exp !== undefined ? { exp } : {}),
+    },
+    exp !== undefined ? {} : { expiresIn: "15m" },
+  );
 
 /** Every connection handled so far, to completion (joins included). */
 async function settleConnections(): Promise<void> {
@@ -561,7 +663,7 @@ describe("RouteFlowGateway on a live Socket.IO server", () => {
 
   describe("B104 — CUSTOMER-role sockets join the room the emitters address", () => {
     it("REG-B104: a CUSTOMER-role user joins customer:<its Customer.id>, not customer:<User.id>", async () => {
-      const customer = await connect(staffToken("u-b", "CUSTOMER", "t-1"));
+      const customer = await connect(customerToken("u-b", "t-1"));
       expect(await serverRooms(customer)).toEqual(["tenant:t-1:customer:c-b"]);
 
       gateway.emitOrderStatusChanged("t-1", orderStatus("c-b"));
@@ -570,15 +672,129 @@ describe("RouteFlowGateway on a live Socket.IO server", () => {
       expect(statusEventsOf(customer)).toEqual(["c-b"]);
     });
 
-    it("a CUSTOMER-role user whose customer is removed joins nothing", async () => {
-      const removed = await connect(staffToken("u-removed", "CUSTOMER", "t-1"));
-      expect(await serverRooms(removed)).toEqual([]);
+    // #2164: these two used to stay connected in no room; they are now refused outright.
+    it("#2164: a CUSTOMER-role user whose customer is removed is refused at connect", async () => {
+      expect(await keptAfterConnect(customerToken("u-removed", "t-1"))).toEqual({
+        kept: false,
+        reason: "io server disconnect",
+      });
     });
 
-    it("a CUSTOMER-role user is looked up inside its own tenant only", async () => {
+    it("#2164: a CUSTOMER-role user is looked up inside its own tenant only (refused elsewhere)", async () => {
       // u-c's customer lives at t-2; a token claiming t-1 resolves nothing there.
-      const crossed = await connect(staffToken("u-c", "CUSTOMER", "t-1"));
-      expect(await serverRooms(crossed)).toEqual([]);
+      expect((await keptAfterConnect(customerToken("u-c", "t-1"))).kept).toBe(false);
+    });
+  });
+
+  // ─── #2164: CUSTOMER sockets are re-checked like buyer sockets ─────────────────
+
+  describe("#2164 — a CUSTOMER socket is authorized at connect AND at every resync", () => {
+    it.each([
+      ["an INACTIVE user", "u-inactive"],
+      ["a SUSPENDED user", "u-suspended"],
+      ["a deleted user", "u-deleted"],
+    ])("#2164: %s is refused at connect", async (_label, sub) => {
+      expect(await keptAfterConnect(customerToken(sub, "t-1"))).toEqual({
+        kept: false,
+        reason: "io server disconnect",
+      });
+    });
+
+    it("#2164: a user at a SUSPENDED seller is refused at connect", async () => {
+      expect((await keptAfterConnect(customerToken("u-susp", "t-3"))).kept).toBe(false);
+    });
+
+    it("#2164: a CUSTOMER token without an exp is refused; an expired one too", async () => {
+      const forever = jwt.sign({ sub: "u-b", role: "CUSTOMER", tenantId: "t-1" });
+      expect((await keptAfterConnect(forever)).kept).toBe(false);
+      const past = customerToken("u-b", "t-1", Math.floor(Date.now() / 1000) - 1);
+      expect((await keptAfterConnect(past)).kept).toBe(false);
+    });
+
+    it.each([
+      [
+        "the user is deactivated",
+        () => (store.users.find((u) => u.id === "u-b")!.status = "INACTIVE"),
+      ],
+      [
+        "the user is deleted",
+        () => (store.users.find((u) => u.id === "u-b")!.deletedAt = new Date()),
+      ],
+      [
+        "the customer is removed",
+        () => (store.customers.find((c) => c.id === "c-b")!.deletedAt = new Date()),
+      ],
+      [
+        "the seller is suspended",
+        () => (store.tenants.find((t) => t.id === "t-1")!.status = "SUSPENDED"),
+      ],
+    ])(
+      "#2164: when %s, the connected socket is disconnected at the next resync",
+      async (_l, change) => {
+        const customer = await connect(customerToken("u-b", "t-1"));
+        const other = await connect(customerToken("u-c", "t-2")); // untouched by every change
+        const id = customer.socket.id!;
+        const gone = disconnected(customer);
+        await gateway.resyncBuyerRooms();
+        expect(await serverHolds(id)).toBe(true); // nothing changed yet
+
+        change();
+        await gateway.resyncBuyerRooms();
+        expect(await serverHolds(id)).toBe(false);
+        expect(await gone).toBe("io server disconnect");
+        expect(other.socket.connected).toBe(true);
+        expect(await serverRooms(other)).toEqual(["tenant:t-2:customer:c-c"]);
+      },
+    );
+
+    it("#2164: at its token's exp the socket is disconnected, even when the DB read fails", async () => {
+      const exp = Math.floor(Date.now() / 1000) + 30;
+      const customer = await connect(customerToken("u-b", "t-1", exp));
+      const id = customer.socket.id!;
+      await atClock((exp - 1) * 1000, () => gateway.resyncBuyerRooms());
+      expect(await serverHolds(id)).toBe(true);
+
+      prisma.user.findMany.mockRejectedValueOnce(new Error("db down"));
+      await atClock(exp * 1000, () => gateway.resyncBuyerRooms());
+      expect(await serverHolds(id)).toBe(false);
+    });
+
+    it("#2164: a failed read keeps the last verified state (nobody else is disconnected)", async () => {
+      const customer = await connect(customerToken("u-b", "t-1"));
+      store.users.find((u) => u.id === "u-b")!.status = "INACTIVE";
+      prisma.customer.findMany.mockRejectedValueOnce(new Error("db down"));
+      await expect(gateway.resyncBuyerRooms()).resolves.toBeUndefined();
+      expect(await serverHolds(customer.socket.id!)).toBe(true);
+      // The next good read applies the change.
+      await gateway.resyncBuyerRooms();
+      expect(await serverHolds(customer.socket.id!)).toBe(false);
+    });
+
+    it("#2164: the resync reads every connected CUSTOMER user in one query, whatever the socket count", async () => {
+      await connect(customerToken("u-b", "t-1"));
+      await connect(customerToken("u-b", "t-1")); // a second tab
+      await connect(customerToken("u-c", "t-2"));
+      prisma.user.findMany.mockClear();
+      prisma.customer.findMany.mockClear();
+      await gateway.resyncBuyerRooms();
+      expect(prisma.user.findMany).toHaveBeenCalledTimes(1);
+      expect(prisma.customer.findMany).toHaveBeenCalledTimes(1);
+    });
+
+    it("a buyer failure does not stop the CUSTOMER check, and the reverse", async () => {
+      const buyer = await connect(buyerToken("buyer-a"));
+      const customer = await connect(customerToken("u-b", "t-1"));
+      store.users.find((u) => u.id === "u-b")!.status = "INACTIVE";
+      prisma.customerLink.findMany.mockRejectedValueOnce(new Error("links down"));
+      await gateway.resyncBuyerRooms();
+      expect(await serverHolds(customer.socket.id!)).toBe(false);
+      expect(buyer.socket.connected).toBe(true);
+    });
+
+    it("staff sockets are still never ended by either check", async () => {
+      const operator = await connect(staffToken("u-op", "OPERATOR", "t-1"));
+      await atClock(Date.now() + 24 * 60 * 60 * 1000, () => gateway.resyncBuyerRooms());
+      expect(await serverRooms(operator)).toEqual(["tenant:t-1:operators"]);
     });
   });
 
