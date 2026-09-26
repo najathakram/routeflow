@@ -7,6 +7,7 @@ import { InvoicesService } from "../invoices/invoices.service";
 import { CreateRecurringInvoiceDto } from "./dto/create-recurring-invoice.dto";
 import { UpdateRecurringInvoiceDto } from "./dto/update-recurring-invoice.dto";
 import { RecurringFrequency } from "@prisma/client";
+import { recurringLineSplit } from "./recurring-line-split";
 
 /** REG-B106: RecurringInvoice.lastRunStatus values (schema comment: "SUCCESS" | "FAILED"). */
 export const RUN_STATUS_SUCCESS = "SUCCESS";
@@ -220,6 +221,24 @@ export class RecurringInvoicesService {
     return `Note: ${labels} ${archived.length > 1 ? "are" : "is"} archived; billed as scheduled.`;
   }
 
+  /** B646: the boxed split of a template line; warns (findable later) when a boxed line's qty is not a whole number of pieces. */
+  private boxedSplitOrWarn(ri: any, item: any, livePack: number | null | undefined) {
+    const split = recurringLineSplit(item, livePack);
+    if (split) return { ...split, packSnapshot: Math.trunc(Number(livePack)) };
+    if (
+      !split &&
+      item.productId &&
+      !item.unitLabel &&
+      Number(livePack ?? 0) > 1 &&
+      Number(item.qty) > 0
+    ) {
+      this.logger.warn(
+        `Recurring invoice ${ri.id}: template line "${item.description}" (product ${item.productId}) qty ${item.qty} is not a whole number of pieces of a ${livePack}-pack; generated as today (qty stored in the pieces column)`,
+      );
+    }
+    return split;
+  }
+
   private async generateInvoiceFromTemplate(ri: any) {
     // Claim the cycle BEFORE creating anything (B9 — see the history in this comment's
     // previous version). REG-B106: the claim also stamps a PROVISIONAL outcome — until
@@ -266,6 +285,18 @@ export class RecurringInvoicesService {
 
     let invoice: any;
     try {
+      // B646: the LIVE pack at generation time (generation is the sale), to store a boxed line's boxes.
+      // Read INSIDE the try, after the claim: a failed read records FAILED and gives the cycle back.
+      const packRows: any[] =
+        templateProductIds.length > 0
+          ? await this.prisma.forTenant().product.findMany({
+              where: { id: { in: templateProductIds } },
+              select: { id: true, unitsPerBox: true },
+            })
+          : [];
+      const packByProduct = new Map<string, number | null>(
+        (packRows ?? []).map((p: any) => [p.id, p.unitsPerBox ?? null]),
+      );
       invoice = await this.invoicesService.create({
         customerId: ri.customerId,
         discount: Number(ri.discount),
@@ -279,6 +310,9 @@ export class RecurringInvoicesService {
           unitPrice: Number(item.unitPrice),
           discount: Number(item.discount),
           taxRate: Number(item.taxRate),
+          // B646: a boxed pack count carries its split, so qty is stored in PIECES (boxes x pack), and
+          // SA-135: the pack it was split with rides along as packSnapshot (ONE read, never re-read).
+          ...this.boxedSplitOrWarn(ri, item, packByProduct.get(item.productId)),
         })),
       });
     } catch (err) {

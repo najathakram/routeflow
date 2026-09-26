@@ -1,4 +1,5 @@
 import { spawnSync } from "node:child_process";
+import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { NON_LOCAL_DB_URLS } from "./local-db-bypass-urls";
 
@@ -57,6 +58,18 @@ const GUARDS: Guard[] = [
     control: true,
   },
   {
+    name: "backfill-b294-order-line-taxrate (a WRITER under --apply)",
+    cmd: mjs("backfill-b294-order-line-taxrate.mjs", "--local"),
+    refusal: /refuses a non-local host|requires DATABASE_URL/,
+    control: true,
+  },
+  {
+    name: "sa077-split-qty-consistency",
+    cmd: mjs("sa077-split-qty-consistency.mjs", "--local"),
+    refusal: /refuses a non-local host|requires DATABASE_URL/,
+    control: true,
+  },
+  {
     name: "schema-drift",
     cmd: mjs("schema-drift.mjs", "--local"),
     refusal: /not provably local|requires DATABASE_URL/,
@@ -64,7 +77,7 @@ const GUARDS: Guard[] = [
   },
   {
     name: "prisma/seed.ts assertSafeTarget",
-    cmd: ["npx", "tsx", "prisma/seed.ts"],
+    cmd: [process.execPath, "-r", "ts-node/register/transpile-only", "prisma/seed.ts"],
     refusal: /Refusing to seed the non-local database|missing or unparseable/,
     control: false,
   },
@@ -102,6 +115,14 @@ function requireLocalPgConfigVerdicts(): Array<{ url: string; refused: boolean }
   return JSON.parse(r.stdout);
 }
 
+it("e2e-seed.js dials the vetted fields for a provably-local target (a static pin: the script seeds prod too)", () => {
+  const src = readFileSync(resolve(api, "scripts/e2e-seed.js"), "utf8");
+  expect(src).toMatch(
+    /new Pool\(localConnectionConfig\(dbUrl\) \?\? \{ connectionString: dbUrl \}\)/,
+  );
+  expect(src).not.toMatch(/new Pool\(\{ connectionString: dbUrl \}\)/);
+});
+
 describe("every --local / seed guard refuses the helper's bypass list (#2204)", () => {
   it("requireLocalPgConfig (shared by the pg scripts) refuses every URL on the bypass list", () => {
     const verdicts = requireLocalPgConfigVerdicts();
@@ -111,12 +132,14 @@ describe("every --local / seed guard refuses the helper's bypass list (#2204)", 
 
   // ONE bypass URL per guard proves the script really calls the guard BEFORE dialling anything (a `?host=prod`
   // URL used to pass the old hostname allowlist); the local control proves the refusal is the guard's.
-  const BYPASS = "postgresql://u:p@localhost:5432/x?host=prod.example.com";
+  const BYPASS = "postgresql://u:p@localhost:5432/x?host=prod.invalid";
   describe.each(GUARDS)("$name", (g) => {
     it("refuses a ?host= bypass before dialling", () => {
       const { status, out } = run(g, BYPASS);
       expect(status).not.toBe(0);
       expect(out).toMatch(g.refusal);
+      // ORDERING: the guard ran BEFORE anything was resolved or dialled (no target banner, no DNS/connect error)
+      expect(out).not.toMatch(/: target |ENOTFOUND|ECONNREFUSED/);
     }, 70_000);
 
     if (g.control) {
