@@ -95,9 +95,15 @@ if (localOnly) {
   // The prisma CLI dials DATABASE_URL itself, so a hostname allowlist can be walked past with ?host=; require a
   // provably-local target (same parser pg uses) instead (#2204).
   if (!localConnectionConfig(url)) {
+    let named = "";
+    try {
+      named = ` ${new URL(url).hostname}`; // the host only, never the credentials
+    } catch {
+      /* unparseable: nothing to name */
+    }
     console.error(
-      "schema-drift: --local refuses a target that is not provably local (host/hostaddr/service overrides, " +
-        "multi-host and socket targets included)",
+      `schema-drift: --local refuses a target that is not provably local (database host${named}; ` +
+        "host/hostaddr/service overrides, multi-host and socket targets are refused too)",
     );
     process.exit(1);
   }
