@@ -37,6 +37,7 @@ import { MessagingService } from "../messaging/messaging.service";
 import { EntitlementsService } from "../billing/entitlements.service";
 import { CommissionEngineService } from "../sales-agents/commission-engine.service";
 import { NumberingService } from "../import/numbering.service";
+import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
 
 const FOREIGN_INVOICE = { id: "inv-foreign", status: "SENT", shippedAt: null };
 
@@ -49,6 +50,10 @@ describe("InvoicesService — cross-tenant id 404s on scoped reads", () => {
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         InvoicesService,
+        {
+          provide: SellingRestrictionsService,
+          useValue: { assertLinesSellable: jest.fn().mockResolvedValue(undefined) },
+        },
         { provide: PrismaService, useValue: prisma },
         { provide: RouteFlowGateway, useValue: { emitInvoiceUpdated: jest.fn() } },
         { provide: EmailService, useValue: {} },

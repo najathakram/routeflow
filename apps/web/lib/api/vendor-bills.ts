@@ -103,6 +103,30 @@ export function getUnlinkedItemsError(error: unknown): UnlinkedItemsError | null
   return data?.code === "UNLINKED_ITEMS" ? (data as UnlinkedItemsError) : null;
 }
 
+/** One line the API's PACK_SIZE_UNKNOWN gate flagged (B743; mirrors pack-size-gate.ts). */
+export interface PackSizeUnknownLine {
+  id: string | null;
+  lineIndex: number;
+  description: string;
+  productId: string;
+  productName: string;
+  qty: number;
+  unitCost: number;
+  /** The product's own known pack, for display only; 0 = none known. */
+  productPack: number;
+}
+export interface PackSizeUnknownError {
+  code: "PACK_SIZE_UNKNOWN";
+  message: string;
+  packSizeUnknownItems: PackSizeUnknownLine[];
+}
+
+/** B743: extract the PACK_SIZE_UNKNOWN payload from an axios error, if that's what it is. */
+export function getPackSizeUnknownError(error: unknown): PackSizeUnknownError | null {
+  const data = (error as { response?: { data?: { code?: string } } })?.response?.data;
+  return data?.code === "PACK_SIZE_UNKNOWN" ? (data as PackSizeUnknownError) : null;
+}
+
 /** Extract the DUPLICATE_VENDOR_BILL payload from an axios error, if that's what it is. */
 export function getDuplicateVendorBillError(error: unknown): DuplicateVendorBillError | null {
   const data = (error as { response?: { data?: { code?: string } } })?.response?.data;
@@ -270,12 +294,19 @@ export function useReceiveVendorBill() {
   return useMutation<
     VendorBill & { gapsDetected: VendorBillReceiveGap[] },
     Error,
-    { id: string; acknowledgeUnlinked?: boolean; items?: ReceiveVendorBillLine[] }
+    {
+      id: string;
+      acknowledgeUnlinked?: boolean;
+      /** B743: sent ONLY after the operator explicitly chose "Receive as loose pieces". */
+      acknowledgePackSizeUnknown?: boolean;
+      items?: ReceiveVendorBillLine[];
+    }
   >({
-    mutationFn: ({ id, acknowledgeUnlinked, items }) =>
+    mutationFn: ({ id, acknowledgeUnlinked, acknowledgePackSizeUnknown, items }) =>
       apiClient
         .post(`/vendor-bills/${id}/receive`, {
           ...(acknowledgeUnlinked ? { acknowledgeUnlinked } : {}),
+          ...(acknowledgePackSizeUnknown ? { acknowledgePackSizeUnknown } : {}),
           ...(items ? { items } : {}),
         })
         .then((r) => r.data),

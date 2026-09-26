@@ -85,7 +85,7 @@ export type ReturnPriceSource = (typeof RETURN_PRICE_SOURCE_VALUES)[number];
 export const CREDIT_NOTE_STATUS_VALUES = ["ISSUED", "APPLIED", "VOID"] as const;
 export type CreditNoteStatus = (typeof CREDIT_NOTE_STATUS_VALUES)[number];
 
-export const REGULATED_FILING_STATUS_VALUES = ["GENERATED", "FAILED"] as const;
+export const REGULATED_FILING_STATUS_VALUES = ["GENERATED", "FAILED", "LOCKED"] as const;
 export type RegulatedFilingStatus = (typeof REGULATED_FILING_STATUS_VALUES)[number];
 
 export const INVOICE_TREATMENT_VALUES = [
@@ -393,3 +393,36 @@ export type RestrictionAddressPrecedence = (typeof RESTRICTION_ADDRESS_PRECEDENC
 /** Why a TenantFeatureConfigSnapshot was taken (Lane B A2): automatic on a downgrade, or by an admin. */
 export const SNAPSHOT_REASON_VALUES = ["DOWNGRADE", "MANUAL"] as const;
 export type SnapshotReasonValue = (typeof SNAPSHOT_REASON_VALUES)[number];
+
+// Order tracking (#2095): the three statuses the tracking payload (`./order-tracking.ts`) carries,
+// pinned set-equal to the generated Prisma `OrderStatus` / `RouteRunStatus` / `RouteRunStopStatus`
+// enums (see `enum-parity.spec.ts`'s `ENUM_TABLE` rows). The derived types are `…Value`, not the
+// bare names: `../index.ts` still exports hand-written legacy TS enums under `OrderStatus`,
+// `RouteRunStatus` and `RouteRunStopStatus` (its `OrderStatus` lacks DRAFT and
+// PARTIALLY_DELIVERED), and a local export silently shadows a same-named `export *`.
+export const ORDER_STATUS_VALUES = [
+  "DRAFT",
+  "PENDING",
+  "CONFIRMED",
+  "OUT_FOR_DELIVERY",
+  "PARTIALLY_DELIVERED",
+  "DELIVERED",
+  "CANCELLED",
+] as const;
+export type OrderStatusValue = (typeof ORDER_STATUS_VALUES)[number];
+
+export const ROUTE_RUN_STATUS_VALUES = [
+  "SCHEDULED",
+  "IN_PROGRESS",
+  "COMPLETED",
+  "CANCELLED",
+] as const;
+export type RouteRunStatusValue = (typeof ROUTE_RUN_STATUS_VALUES)[number];
+
+export const ROUTE_RUN_STOP_STATUS_VALUES = [
+  "PENDING",
+  "IN_PROGRESS",
+  "COMPLETED",
+  "SKIPPED",
+] as const;
+export type RouteRunStopStatusValue = (typeof ROUTE_RUN_STOP_STATUS_VALUES)[number];

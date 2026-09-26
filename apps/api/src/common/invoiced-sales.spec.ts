@@ -298,10 +298,10 @@ describe("accrual net sales (B440/B455/B456)", () => {
 
 describe("cost index", () => {
   const rows = [
-    { productId: "p1", createdAt: new Date("2026-06-10"), avgCostAfter: D(3) },
-    { productId: "p1", createdAt: new Date("2026-06-01"), avgCostAfter: D(2) }, // out of order
-    { productId: "p2", createdAt: new Date("2026-06-05"), avgCostAfter: D(7) },
-    { productId: "p1", createdAt: new Date("2026-06-20"), avgCostAfter: null }, // skipped
+    { productId: "p1", effectiveAt: new Date("2026-06-10"), avgCostAfter: D(3) },
+    { productId: "p1", effectiveAt: new Date("2026-06-01"), avgCostAfter: D(2) }, // out of order
+    { productId: "p2", effectiveAt: new Date("2026-06-05"), avgCostAfter: D(7) },
+    { productId: "p1", effectiveAt: new Date("2026-06-20"), avgCostAfter: null }, // skipped
   ];
 
   it("buildCostIndex groups by product, sorts, Number()s, and skips null snapshots", () => {
@@ -329,7 +329,7 @@ describe("cost index", () => {
 describe("resolveUnitCost fallback ladder", () => {
   const at = new Date("2026-06-05");
   const index = buildCostIndex([
-    { productId: "p1", createdAt: new Date("2026-06-01"), avgCostAfter: D(2) },
+    { productId: "p1", effectiveAt: new Date("2026-06-01"), avgCostAfter: D(2) },
   ]);
 
   it("a point-in-time snapshot wins even for STANDARD products", () => {
@@ -361,8 +361,8 @@ describe("resolveUnitCost fallback ladder", () => {
 
 describe("estimateCogs", () => {
   const index = buildCostIndex([
-    { productId: "p1", createdAt: new Date("2026-06-01"), avgCostAfter: D(2) },
-    { productId: "p1", createdAt: new Date("2026-06-10"), avgCostAfter: D(3) },
+    { productId: "p1", effectiveAt: new Date("2026-06-01"), avgCostAfter: D(2) },
+    { productId: "p1", effectiveAt: new Date("2026-06-10"), avgCostAfter: D(3) },
   ]);
   const facts = new Map([
     ["p1", { costingMethod: "FIFO", standardCost: null, averageCost: D(99) }],
@@ -404,15 +404,20 @@ describe("fetchers", () => {
   it("fetchCostIndex queries snapshots only — any type, non-null avgCostAfter", async () => {
     const until = new Date("2026-06-30");
     const db = stubDb({
-      movements: [{ productId: "p1", createdAt: new Date("2026-06-01"), avgCostAfter: D(2) }],
+      movements: [{ productId: "p1", effectiveAt: new Date("2026-06-01"), avgCostAfter: D(2) }],
     });
 
     const index = await fetchCostIndex(db, ["p1"], until);
 
+    // B562: keyed on effectiveAt (the accounting date), createdAt + id only break ties.
     expect(db.stockMovement.findMany).toHaveBeenCalledWith({
-      where: { productId: { in: ["p1"] }, avgCostAfter: { not: null }, createdAt: { lte: until } },
-      select: { productId: true, createdAt: true, avgCostAfter: true },
-      orderBy: { createdAt: "asc" },
+      where: {
+        productId: { in: ["p1"] },
+        avgCostAfter: { not: null },
+        effectiveAt: { lte: until },
+      },
+      select: { productId: true, effectiveAt: true, avgCostAfter: true },
+      orderBy: [{ effectiveAt: "asc" }, { createdAt: "asc" }, { id: "asc" }],
     });
     expect(costAt(index, "p1", until)).toBe(2);
   });

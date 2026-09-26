@@ -51,7 +51,11 @@ describe("RoutesService — reopenStop never revives a cancelled line (bug id pe
   >;
   let notifications: jest.Mocked<Pick<NotificationsService, "sendToDriver">>;
   let messaging: { notify: jest.Mock; notifyEvent: jest.Mock };
-  let invoicesService: { recordDeliveryPaymentInTx: jest.Mock; reverseRunAdvancesInTx: jest.Mock };
+  let invoicesService: {
+    recordDeliveryPaymentInTx: jest.Mock;
+    reconcileDeliveredOrdersInTx: jest.Mock;
+    reverseRunAdvancesInTx: jest.Mock;
+  };
   let storage: { upload: jest.Mock; presignedUrl: jest.Mock; delete: jest.Mock };
 
   beforeEach(async () => {
@@ -61,6 +65,7 @@ describe("RoutesService — reopenStop never revives a cancelled line (bug id pe
       recordDeliveryPaymentInTx: jest
         .fn()
         .mockResolvedValue({ applied: 0, invoiceIds: [], paymentIds: [] }),
+      reconcileDeliveredOrdersInTx: jest.fn().mockResolvedValue(undefined),
       reverseRunAdvancesInTx: jest.fn().mockResolvedValue(0),
     };
 
@@ -172,5 +177,10 @@ describe("RoutesService — reopenStop never revives a cancelled line (bug id pe
     const call = tx.orderItem.updateMany.mock.calls[0][0];
     expect(call.data).toMatchObject({ status: "PENDING", deliveredQty: 0 });
     expect(call.where).toMatchObject({ orderId: "ord-1", status: { not: "CANCELLED" } });
+    // F-05 (#2093): this is what carries reopenStop's EXEMPT row — it adds no quantity of any product:
+    // the only line write resets delivery state (never qty) and no line is created.
+    expect(Object.keys(call.data).sort()).toEqual(["deliveredQty", "status"]);
+    expect(tx.orderItem.updateMany).toHaveBeenCalledTimes(1);
+    expect(tx.orderItem.create ?? { mock: { calls: [] } }).toHaveProperty("mock.calls.length", 0);
   });
 });

@@ -73,7 +73,7 @@ than the run.
 > **Task loop (2026-09-12 rebuild):** this ten-phase table describes the pre-rebuild `pipeline.js`. The
 > rebuilt engine runs a per-task chain instead (brief → test-author → RED check → implement → pack →
 > review → fix loop, waved by `dependsOn`); HIGH-risk reviewer/implementer/fix-designer/final-read work
-> now routes to **Fable 5.1**, with **Opus 5 kept only as `CFG.fallbackModel`** for a Fable refusal
+> now routes to **Fable 5.1**, with **Opus 5.5 kept only as `CFG.fallbackModel`** for a Fable refusal
 > (task loop: Fable, Opus fallback) — see `dev-pipeline/SKILL.md`'s task-loop table and
 > `dev-pipeline/references/ENGINE-NOTES.md`'s `## 2026-09-12 — task-loop rebuild`.
 

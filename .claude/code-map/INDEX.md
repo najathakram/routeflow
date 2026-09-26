@@ -55,6 +55,7 @@ Every row here is a pointer, not a description — open the linked file for the 
 | A domain end-to-end (e.g. invoices)                            | api `src/invoices/` → web `app/(dashboard)/invoices/` → mobile `lib/api/invoices.ts`                                 |
 | Money / line totals (round, boxed)                             | [`packages`](packages.md) → `pricing` (`computeLineSubtotal`/`normalizeBoxesPieces`/`roundMoney`)                    |
 | Invoice↔Order sync (both directions)                           | api `invoices.service.ts` `reconcileOrderDraftInvoice` (fwd) + `recomputeOrderFromInvoices` (back)                   |
+| Delivered/billable basis for coverage (evidence, not status)    | `api/catchup-2026-09-21-src.md#invoices` — `invoices/delivered-basis-by-line.ts`                                     |
 | MSRP / suggested retail on invoices                            | in-flight branch, NOT on master — see `api/where-to-find.md`                                                         |
 | Duplicate purchase-invoice detection                           | [`api`](api/feature-modules-6.md) → `import/duplicate-match.service.ts`                                              |
 | Supplier-statement reconciliation (AI)                         | [`api`](api/feature-modules-5.md) → `src/supplier-statements/`                                                       |
@@ -83,6 +84,7 @@ Every row here is a pointer, not a description — open the linked file for the 
 | Deploy / Dockerfile / health                                   | per-app `Dockerfile` + `railway.toml`; `debug-deploy` skill                                                          |
 | Product capability model (problem → P0/P1/P2)                  | [`docs/product/`](../../docs/product/README.md) — 15 domains                                                         |
 | Marketing docs (product doc, strategy, content pack)           | [`docs/marketing/`](../../docs/marketing/README.md)                                                                  |
+| Wholesaler onboarding (demo → live, 8 gated stages)            | [`docs/runbooks/wholesaler-onboarding.md`](../../docs/runbooks/wholesaler-onboarding.md)                             |
 | Selling restrictions (Lane R), units_v1 order lines | [`api`](api/catchup-2026-09-21-src.md) → `selling-restrictions/`, `orders/unit-line-build.ts` → web `settings/restrictions/` |
 | Product labels/categories, credit-limit guard | [`api`](api/catchup-2026-09-21-src.md) → `product-labels/`, `orders/credit-limit-guard.ts` |
 | Tenant config snapshots (restore on re-upgrade) | [`api`](api/catchup-2026-09-21-src.md) → `billing/tenant-config-snapshot*.ts` → web admin `ConfigSnapshotsTab` |

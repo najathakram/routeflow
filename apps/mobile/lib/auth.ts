@@ -190,14 +190,23 @@ const GOOGLE_REDIRECT_URI = "routeflow://auth/callback";
  *   4. Parse the tokens out of the resolved URL, persist them, register push token.
  */
 export async function loginWithGoogle(tenantSlug: string): Promise<AuthResponse> {
-  // Web (the mobile-web build phones are proxied to) cannot use the native
-  // routeflow:// deep-link flow — a browser can't open a custom URL scheme, so the
-  // sign-in silently hangs. Use the same full-page-redirect + one-time-code exchange
-  // the desktop web uses: the API redirects to ${WEB_URL}/auth/google/callback?code=…,
-  // handled by app/(auth)/auth/google/callback.tsx.
+  // Web (this Expo mobile-web build, e.g. opened via the driver-app link on
+  // www's /login or dashboard — B825/mobile-web-proxy-redesign; phones are no
+  // longer proxied here automatically) cannot use the native routeflow://
+  // deep-link flow — a browser can't open a custom URL scheme, so the sign-in
+  // would silently hang. Use the same full-page-redirect + one-time-code
+  // exchange the desktop web uses, but pass OUR OWN origin as `return_origin`
+  // (B825) so the API's callback redirects back HERE instead of always
+  // landing on the Next web app — the API validates it against an exact
+  // allow-list (WEB_URL/MOBILE_WEB_URL) server-side, never trusts it as-is.
+  // Handled by app/(auth)/auth/google/callback.tsx.
   if (Platform.OS === "web") {
     const { data: web } = await apiClient.get<{ url: string }>("/auth/google", {
-      params: { tenant: tenantSlug, context: "staff" }, // no mobile=1 → web exchange-code flow
+      params: {
+        tenant: tenantSlug,
+        context: "staff", // no mobile=1 → web exchange-code flow
+        return_origin: window.location.origin,
+      },
     });
     if (!web?.url) throw new Error("google_unavailable");
     window.location.assign(web.url); // full-page redirect to Google consent

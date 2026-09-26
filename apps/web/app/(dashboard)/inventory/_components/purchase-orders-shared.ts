@@ -130,10 +130,22 @@ export function resolvePOLineAmounts(line: POLineItem, unitsPerBox: number): POL
  * it (or an unusable one) is rebuilt through the one `@routeflow/pricing` builder from the case cost
  * `derivedCaseCost` reads back, which shows an OLD drifted row honestly rather than masking it.
  */
+/**
+ * B699 / B722: the pack a PO line is denominated in. The line's OWN stored packSize wins; the live
+ * catalog pack is only the fallback, for a new line or one that never stored a pack. A bill-raised
+ * line stores the bill's pack even when the catalog product is not boxed, and re-splitting it at the
+ * live pack silently rewrote its exact total (11,000.00 -> 11,000.40) on a notes-only save.
+ */
+export function linePack(line: { packSize?: number | null }, livePack: number): number {
+  const stored = Number(line.packSize ?? 0);
+  return stored > 1 ? stored : livePack;
+}
+
 export function resolveStoredPOLineAmounts(
-  item: Pick<POItem, "qtyOrdered" | "unitCost" | "totalCost">,
-  unitsPerBox: number,
+  item: Pick<POItem, "qtyOrdered" | "unitCost" | "totalCost" | "packSize">,
+  livePack: number,
 ): POLineResolved {
+  const unitsPerBox = linePack(item, livePack);
   const qtyOrdered = Math.max(0, Number(item.qtyOrdered) || 0);
   const unitCost = Math.max(0, Number(item.unitCost) || 0);
   const stored = item.totalCost != null ? Number(item.totalCost) : NaN;

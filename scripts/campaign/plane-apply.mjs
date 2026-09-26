@@ -129,7 +129,12 @@ async function buildPlan(client, ops, overBudgetReason) {
     const [states, labels, types, items] = await Promise.all([
       client.resolveStates(project.id),
       client.resolveLabels(project.id),
-      client.resolveTypes(project.id),
+      // Work-item types are a paid-tier Plane feature: on a free workspace this GET returns 402.
+      // Only a create op that names a `type` needs them, so a failure here must not block
+      // comments, updates or relations — it surfaces only when a type is actually requested.
+      client
+        .resolveTypes(project.id)
+        .catch((err) => ({ unavailable: err?.message ?? String(err) })),
       client.listAll(`projects/${project.id}/work-items/`, { query: { per_page: "100" } }),
     ]);
     const itemsBySeq = new Map(items.map((it) => [it.sequence_id, it]));
@@ -247,9 +252,15 @@ async function buildPlan(client, ops, overBudgetReason) {
       const body = { name: op.name };
       if (op.state !== undefined) body.state = resolveStateId(ctx, op.state, index);
       if (op.priority !== undefined) body.priority = op.priority;
+      if (op.target_date !== undefined) body.target_date = op.target_date;
       if (op.description_html !== undefined) body.description_html = op.description_html;
       if (op.labels !== undefined) body.labels = resolveLabelIds(ctx, op.labels, index);
       if (op.type !== undefined) {
+        if (ctx.types?.unavailable)
+          fail(
+            index,
+            `work-item types unavailable in project ${op.project}: ${ctx.types.unavailable}`,
+          );
         const typeId = ctx.types.get(String(op.type).toLowerCase());
         if (!typeId) fail(index, `no work-item type named "${op.type}" in project ${op.project}`);
         body.type_id = typeId;

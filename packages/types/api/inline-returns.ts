@@ -18,17 +18,19 @@ import type { ReturnPriceSource } from "./enums";
 
 // ─── Request: POST /returns/inline/quote ────────────────────────────────────────
 //
-// Customer-scoped, not order-scoped — no orderId. quote-inline-return.dto.ts's own doc
-// comment (QuoteInlineReturnItemDto): a BARE qty on a boxed product means SELLING UNITS
-// (boxes) — qty: 1 on a 12-pack returns one whole box (12 pieces), never one loose piece.
-// Always send boxes AND pieces explicitly for a boxed product (SA-071a #3).
+// Customer-scoped, not order-scoped — no orderId. SA-128/B814: `boxes`/`pieces` are
+// REQUIRED and at least one must be > 0 — bare `qty` is retired on this endpoint (a
+// product's pack size can be unresolvable, and a bare qty in that state can't be told
+// apart from a genuinely-unpacked product's qty, so guessing is unsafe either way). See
+// quote-inline-return.dto.ts's own doc comment (QuoteInlineReturnItemDto).
 
 export interface QuoteInlineReturnItem {
   productId: string;
-  /** See the file-header note — a bare qty on a boxed product means BOXES, not pieces. */
-  qty: number;
-  boxes?: number;
-  pieces?: number;
+  /** Still accepted (existing callers send `qty: 1`) but IGNORED — see the file-header
+   *  note and `QuoteInlineReturnItemDto.qty`. */
+  qty?: number;
+  boxes: number;
+  pieces: number;
 }
 
 export interface QuoteInlineReturnRequest {
@@ -43,9 +45,11 @@ export interface QuoteInlineReturnRequest {
 
 export interface CaptureInlineReturnItem {
   productId: string;
-  qty: number;
-  boxes?: number;
-  pieces?: number;
+  /** Still accepted (existing callers send `qty: 1`) but IGNORED — see
+   *  `QuoteInlineReturnItem.qty`. */
+  qty?: number;
+  boxes: number;
+  pieces: number;
   /** Falls back to the capture's own top-level `reason` when omitted. Must be one of
    *  `RETURN_REASON_VALUES` (./enums) — never free text as the code. */
   reason?: ReturnReason;

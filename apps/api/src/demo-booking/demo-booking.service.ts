@@ -20,6 +20,7 @@ import {
 } from "./demo-booking.config";
 import { BusyBlock, GoogleCalendarService } from "./google-calendar.service";
 import { isValidTimeZone, zonedDateParts, zonedWallClockToUtc } from "./zoned-time";
+import { escapeHtml } from "../common/html-escape";
 
 export interface AvailabilitySlot {
   /** Slot start as a UTC ISO instant — the only value a client sends back. */
@@ -787,14 +788,6 @@ function plainTextField(value: string): string {
       .replace(/[\x00-\x09\x0b\x0c\x0e-\x1f\x7f]/g, "")
       .trim()
   );
-}
-
-function escapeHtml(value: string): string {
-  return value
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;");
 }
 
 /**
