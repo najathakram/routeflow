@@ -1,6 +1,6 @@
 /**
  * #2230 / SA-388d on REAL Postgres: the NOT VALID CHECKs `OrderItem_unitLine_split_chk` and
- * `InvoiceItem_unitLine_split_chk` (migration 20260926120000_b2230_unit_line_split_check_not_valid)
+ * `InvoiceItem_unitLine_split_chk` (migration 20260926180000_b2230_unit_line_split_check_not_valid)
  * refuse B718's all-empty split on a multi-piece unit line and nothing else.
  *
  *  - a part-Case delivery rebuild (5 pieces of a 12-Case: boxes 0 + pieces 5) is written   (SA-178)

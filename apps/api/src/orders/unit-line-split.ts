@@ -8,7 +8,7 @@
  * its count is underivable, and a reader that falls back to qty-as-boxes bills it 12x.
  *
  * The same predicate is the DB CHECK `OrderItem_unitLine_split_chk` / `InvoiceItem_unitLine_split_chk`
- * (migration 20260926120000_b2230_unit_line_split_check_not_valid); this assertion fails the writer
+ * (migration 20260926180000_b2230_unit_line_split_check_not_valid); this assertion fails the writer
  * with a named error before the database has to.
  */
 export interface UnitLineSplitShape {

@@ -20,7 +20,7 @@
 -- lock_timeout: each ADD CONSTRAINT takes a brief ACCESS EXCLUSIVE lock, and a waiting one blocks the
 -- readers queued behind it. Both statements are metadata-only and instant; if a wait exceeds 5s the
 -- transaction rolls back (nothing half-added) and the migration is recorded FAILED — recover with
--- `prisma migrate resolve --rolled-back 20260926120000_b2230_unit_line_split_check_not_valid` from
+-- `prisma migrate resolve --rolled-back 20260926180000_b2230_unit_line_split_check_not_valid` from
 -- apps/api, then re-run. NEVER `--applied`: that would mark the guard installed when it is not.
 SET lock_timeout = '5s';
 
