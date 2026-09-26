@@ -11,7 +11,14 @@
  * Run from apps/api, against a LOCAL database only (refused otherwise):
  *   DATABASE_URL=postgresql://user:pass@localhost:5432/<db> \
  *     npx ts-node --transpile-only -r tsconfig-paths/register scripts/sales-facts-timing.ts \
- *     [--tenant test] [--iterations 30] [--keep]
+ *     [--tenant test] [--iterations 30] [--keep] \
+ *     [--invoices N --lines-per-invoice N --credit-notes N --returns N --customers N --products N] \
+ *     [--index-build]
+ *
+ * SA-314 (before #2179 lands): pass counts >= production's row counts so the EXPLAIN (ANALYZE,
+ * BUFFERS) plans below are read at that size, and `--index-build` to time a DROP + CREATE of
+ * each of the four indexes the way the migration builds them. Output is counts, timings and
+ * plans only — no identifiers.
  *
  * Tenant: the approved `test` tenant (created, with a TenantConfig, when absent) — or any slug
  * `assertTestTenant` approves. Every seeded row carries this run's marker and is removed at the
@@ -30,12 +37,20 @@ import { ProductInsightsService } from "../src/sales-facts/product-insights.serv
 const { assertTestTenant } = require("../../../scripts/lib/test-tenants.cjs");
 
 const BUDGET_P95_MS = 300;
-const INVOICES = 5_000;
-const LINES_PER_INVOICE = 20; // → 100k lines
-const PRODUCTS = 200;
-const CUSTOMERS = 300;
-const CREDIT_NOTES = 2_000;
-const RETURNS = 300;
+// Seed sizes: the plan-A4 budget shape by default; SA-314 runs pass prod-scale counts
+// (`--invoices`, `--lines-per-invoice`, `--credit-notes`, `--returns`, `--customers`,
+// `--products`) so the EXPLAINs below run at >= production row counts.
+const count = (name: string, fallback: number) => {
+  const n = Number(arg(name, String(fallback)));
+  if (!Number.isInteger(n) || n < 1) throw new Error(`--${name} must be a positive integer`);
+  return n;
+};
+const INVOICES = count("invoices", 5_000);
+const LINES_PER_INVOICE = count("lines-per-invoice", 20); // default → 100k lines
+const PRODUCTS = count("products", 200);
+const CUSTOMERS = count("customers", 300);
+const CREDIT_NOTES = count("credit-notes", 2_000);
+const RETURNS = count("returns", 300);
 const MONTHS = 24;
 const CHUNK = 2_000;
 
@@ -493,6 +508,18 @@ async function main() {
       }
     }
 
+    // ── Row counts (whole tables, counts only — no identifiers) ──────────────
+    console.log(`\nrow counts: ${await tableCounts(prisma)}`);
+
+    // ── SA-314: index build time at this size (--index-build) ────────────────
+    if (arg("index-build") === "true") {
+      for (const idx of INDEX_BUILDS) {
+        // eslint-disable-next-line no-await-in-loop
+        const ms = await timeIndexBuild(prisma, idx);
+        console.log(`index build ${idx.name}: ${ms.toFixed(0)} ms`);
+      }
+    }
+
     console.log(failed ? "\nRESULT: FAIL" : "\nRESULT: PASS");
     process.exitCode = failed ? 1 : 0;
   } finally {
@@ -564,6 +591,58 @@ function isoDaysAgo(n: number): string {
 function isoMonthsAgo(n: number): string {
   const d = new Date();
   return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() - n, 1)).toISOString().slice(0, 10);
+}
+
+const COUNTED_TABLES = [
+  "Invoice",
+  "InvoiceItem",
+  "CreditNote",
+  "CreditNoteItem",
+  "Return",
+  "ReturnItem",
+];
+
+async function tableCounts(prisma: PrismaService): Promise<string> {
+  const parts: string[] = [];
+  for (const t of COUNTED_TABLES) {
+    // eslint-disable-next-line no-await-in-loop
+    const rows: any[] = await prisma.$queryRawUnsafe(`SELECT count(*)::bigint AS n FROM "${t}"`);
+    parts.push(`${t}=${String(rows[0]?.n ?? "?")}`);
+  }
+  return parts.join(" ");
+}
+
+/** The #2118 migration's four indexes, rebuilt exactly as the migration builds them. */
+const INDEX_BUILDS = [
+  { name: "Invoice_customerId_issueDate_idx", table: "Invoice", cols: `"customerId", "issueDate"` },
+  {
+    name: "CreditNote_tenantId_createdAt_idx",
+    table: "CreditNote",
+    cols: `"tenantId", "createdAt"`,
+  },
+  { name: "Return_tenantId_refundedAt_idx", table: "Return", cols: `"tenantId", "refundedAt"` },
+  { name: "CreditNoteItem_invoiceItemId_idx", table: "CreditNoteItem", cols: `"invoiceItemId"` },
+];
+
+/**
+ * Times a DROP + CREATE of one index on this LOCAL database, the migration's way (one
+ * transaction, lock_timeout 5s, plain CREATE INDEX). Both run in one transaction, so a failure
+ * rolls back and leaves the original index in place.
+ */
+async function timeIndexBuild(
+  prisma: PrismaService,
+  idx: { name: string; table: string; cols: string },
+): Promise<number> {
+  return prisma.$transaction(
+    async (tx: any) => {
+      await tx.$executeRawUnsafe(`SET LOCAL lock_timeout = '5s'`);
+      await tx.$executeRawUnsafe(`DROP INDEX IF EXISTS "${idx.name}"`);
+      const t = performance.now();
+      await tx.$executeRawUnsafe(`CREATE INDEX "${idx.name}" ON "${idx.table}"(${idx.cols})`);
+      return performance.now() - t;
+    },
+    { timeout: 600_000 },
+  );
 }
 
 async function explain(

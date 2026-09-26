@@ -428,7 +428,7 @@ export class SalesFactsService {
     const [returnNotes, lineProduct] = await Promise.all([
       missing.length
         ? db.creditNote.findMany({
-            where: { tenantId, id: { in: missing } },
+            where: { tenantId, ...ACCRUAL_CREDIT_NOTE_FILTER, id: { in: missing } },
             select: CREDIT_NOTE_ATTRIBUTION_SELECT,
           })
         : Promise.resolve([]),
@@ -450,11 +450,13 @@ export class SalesFactsService {
     const unattributed: UnattributedCreditEvent[] = [];
     const returned: ReturnedQtyEvent[] = [];
 
-    // Every touching note counts ONCE, whichever read found it (the CreditNote term). Its items
-    // on OTHER products' lines and on unlisted lines are attributed there — only the amount-only
-    // part (and an item whose line id no longer exists) is this product's footnote (SA-289).
+    // Every touching note counts ONCE, whichever read found it (the CreditNote term). Both note
+    // reads apply ACCRUAL_CREDIT_NOTE_FILTER, so a VOID note is never here (L-167: the status
+    // rule lives in that one predicate). Its items on OTHER products' lines and on unlisted
+    // lines are attributed there — only the amount-only part (and an item whose line id no
+    // longer exists) is this product's footnote (SA-289).
     for (const n of notesById.values()) {
-      if (n.status === "VOID" || !inWindow(n.createdAt)) continue;
+      if (!inWindow(n.createdAt)) continue;
       const split = attributeCreditNote(noteForAttribution(n), lineProduct);
       const mine = split.byProduct.get(productId);
       if (mine) {
@@ -470,9 +472,8 @@ export class SalesFactsService {
         unattributed.push({ at: n.createdAt, amount: split.unattributed });
     }
 
-    const noteDates = new Map<string, { status: string; createdAt: Date }>();
-    for (const n of notesById.values())
-      noteDates.set(n.id, { status: n.status, createdAt: n.createdAt });
+    const noteDates = new Map<string, { createdAt: Date }>();
+    for (const n of notesById.values()) noteDates.set(n.id, { createdAt: n.createdAt });
 
     for (const r of returns as any[]) {
       const customerName = r.customer?.businessName ?? null;
@@ -558,8 +559,8 @@ export class SalesFactsService {
    * Ids of this product's returns whose credit note was CREATED in the window — the only
    * credit-note returns whose quantity or money can net in it (`returnNettingDate`). A bounded
    * join on `CreditNote(tenantId, createdAt)`; raw because `Return.creditNoteId` has no Prisma
-   * relation. It narrows by date ONLY: a VOID note is still dropped in code by
-   * `returnNettingDate` and the note loop, so the status rule stays in one place (L-167).
+   * relation. It narrows by date ONLY: a VOID note is dropped by the note reads, which apply
+   * ACCRUAL_CREDIT_NOTE_FILTER, so the status rule stays in one place (L-167).
    */
   private async creditNoteReturnIds(
     tenantId: string,
@@ -622,12 +623,12 @@ export class SalesFactsService {
     ];
     const returnNotes = noteIds.length
       ? await db.creditNote.findMany({
-          where: { tenantId, id: { in: noteIds } },
-          select: { id: true, status: true, createdAt: true },
+          where: { tenantId, ...ACCRUAL_CREDIT_NOTE_FILTER, id: { in: noteIds } },
+          select: { id: true, createdAt: true },
         })
       : [];
-    const noteDates = new Map<string, { status: string; createdAt: Date }>(
-      (returnNotes as any[]).map((n) => [n.id, { status: n.status, createdAt: n.createdAt }]),
+    const noteDates = new Map<string, { createdAt: Date }>(
+      (returnNotes as any[]).map((n) => [n.id, { createdAt: n.createdAt }]),
     );
 
     const credited = new Map<string, number>();

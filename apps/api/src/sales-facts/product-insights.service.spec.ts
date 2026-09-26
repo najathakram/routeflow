@@ -141,6 +141,37 @@ describe("ProductInsightsService (#2118)", () => {
       });
     });
 
+    it("SA-401a: the credit-note read stays amount-only per item — { invoiceItemId, amount }, nothing that could drive a proration", async () => {
+      await service.getProductInsights("p1", { from: "2026-06-01", to: "2026-08-31" });
+      const select = prisma.creditNote.findMany.mock.calls[0][0].select;
+      expect(select.items).toEqual({ select: { invoiceItemId: true, amount: true } });
+    });
+
+    it("N1: the return-linked note read applies the SAME non-VOID predicate — a VOID note is never read, so no code path restates the status rule", async () => {
+      prisma.return.findMany.mockResolvedValueOnce([
+        {
+          id: "r1",
+          kind: "STANDARD",
+          orderId: "o1",
+          refundMethod: "CREDIT_NOTE",
+          refundAmount: D(5),
+          refundedAt: null,
+          creditNoteId: "cn-elsewhere",
+          customerId: "c1",
+          customer: { businessName: "Acme Grocers" },
+          items: [],
+        },
+      ]);
+      await service.getProductInsights("p1", { from: "2026-06-01", to: "2026-08-31" });
+      const second = prisma.creditNote.findMany.mock.calls[1][0];
+      expect(second.where).toEqual({
+        tenantId: "test-tenant",
+        status: { not: "VOID" },
+        id: { in: ["cn-elsewhere"] },
+      });
+      expect(second.select.items).toEqual({ select: { invoiceItemId: true, amount: true } });
+    });
+
     it("reads returns of the product ONLY through window-bounded terms: an external refund in the window, or a credit note created in it — never all-time", async () => {
       // The credit-note term's ids come from a join bounded on the note's createdAt.
       prisma.$queryRaw.mockResolvedValueOnce([{ id: "r-cn" }]);

@@ -186,17 +186,19 @@ export function attributeExternalRefund(ret: {
 /**
  * The instant a return's QUANTITY nets — the same event its money nets on (B440): an external
  * refund on `refundedAt` (the Return term); any other resolution through its credit note's
- * `createdAt` (the CreditNote term), only while that note is not VOID. No netting event → null
+ * `createdAt` (the CreditNote term). `creditNotes` holds only notes that net: the readers build it
+ * from reads that apply ACCRUAL_CREDIT_NOTE_FILTER, so a VOID note is simply absent (L-167 — the
+ * status rule lives in that one predicate, never restated here). No netting event → null
  * (a RECEIVED return, or a resolution whose credit note never landed).
  */
 export function returnNettingDate(
   ret: { refundMethod: string | null; refundedAt: Date | null; creditNoteId: string | null },
-  creditNotes: Map<string, { status: string; createdAt: Date }>,
+  creditNotes: Map<string, { createdAt: Date }>,
 ): Date | null {
   if (ret.refundMethod === "EXTERNAL_REFUND") return ret.refundedAt ?? null;
   if (!ret.creditNoteId) return null;
   const cn = creditNotes.get(ret.creditNoteId);
-  return cn && cn.status !== "VOID" ? cn.createdAt : null;
+  return cn ? cn.createdAt : null;
 }
 
 // ─── Line cursor (plan §B: page by LINE, never by invoice) ───────────────────

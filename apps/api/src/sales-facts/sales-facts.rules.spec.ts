@@ -205,10 +205,8 @@ describe("sales-facts rules", () => {
   describe("returnNettingDate — a return's quantity nets on the SAME event its money does", () => {
     const createdAt = new Date("2026-06-10T15:00:00Z");
     const refundedAt = new Date("2026-06-09T15:00:00Z");
-    const cns = new Map([
-      ["cn-live", { status: "ISSUED", createdAt }],
-      ["cn-void", { status: "VOID", createdAt }],
-    ]);
+    // Only netting notes: the readers' ACCRUAL_CREDIT_NOTE_FILTER keeps a VOID note out.
+    const cns = new Map([["cn-live", { createdAt }]]);
 
     it("an external refund nets on refundedAt (the Return term of B440)", () => {
       expect(
@@ -229,7 +227,7 @@ describe("sales-facts rules", () => {
       ).toBe(createdAt);
     });
 
-    it("a VOID credit note, a missing one, or no resolution at all nets nothing", () => {
+    it("a note absent from the map (VOID — never read — or missing), or no resolution, nets nothing", () => {
       expect(
         returnNettingDate(
           { refundMethod: "CREDIT_NOTE", refundedAt, creditNoteId: "cn-void" },

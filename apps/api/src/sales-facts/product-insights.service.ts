@@ -456,7 +456,10 @@ export class ProductInsightsService {
     for (const f of facts) {
       const idx = bucketIndexOf(win, f.issueDate);
       if (idx < 0) continue; // defensive — the half-open filter already excludes these
-      units[idx] += f.qty; // already pieces — never re-derived from boxes/pieces
+      // The STORED qty as-is — legacy parity with this endpoint's pre-#2118 shape, NOT pieces: a
+      // boxed line stored without a split may count boxes (B644). The insights endpoints count
+      // pieces through `salePiecesOf` instead.
+      units[idx] += f.qty;
       revenue[idx] += f.subtotal; // authoritative — never qty × unitPrice
     }
     const day = (d: Date | null) => (d ? d.toISOString().slice(0, 10) : null);
