@@ -22,6 +22,8 @@ import { recurringLineSplit } from "./recurring-line-split";
 import { PrismaService } from "../prisma/prisma.service";
 import { TenantContextService } from "../tenant/tenant-context.service";
 import { InvoicesService } from "../invoices/invoices.service";
+import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
+import { NotificationsService } from "../notifications/notifications.service";
 import { buildManualInvoiceLines } from "../invoices/manual-invoice-lines";
 import { foldCategoryTax } from "../invoices/manual-invoice-context";
 import { createMockPrisma } from "../testing/prisma-mock";
@@ -98,6 +100,14 @@ describe("RecurringInvoicesService generation — boxed template lines (B646)", 
         { provide: PrismaService, useValue: prisma },
         { provide: TenantContextService, useValue: {} },
         { provide: InvoicesService, useValue: invoices },
+        {
+          provide: SellingRestrictionsService,
+          useValue: {
+            assertLinesSellable: jest.fn().mockResolvedValue(undefined),
+            checkLinesSellable: jest.fn().mockResolvedValue({ outcome: "ALLOW", reasons: [] }),
+          },
+        },
+        { provide: NotificationsService, useValue: { sendToUser: jest.fn().mockResolvedValue(1) } },
       ],
     }).compile();
     service = mod.get(RecurringInvoicesService);

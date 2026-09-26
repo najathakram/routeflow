@@ -485,17 +485,7 @@ export class InvoicesService {
             payments: true,
           },
         });
-        if (hasRegulated) {
-          const packMap = await packAtSaleByProduct(tx, created.items ?? []);
-          await this.ledger.writeSaleEntries({
-            tenantId: this.prisma.getTenantId(),
-            orderId: null,
-            invoiceId: created.id,
-            soldAt: created.issueDate ?? new Date(),
-            lines: toSaleLedgerLines(created.items ?? [], packMap),
-            db: tx,
-          });
-        }
+        if (hasRegulated) await this.writeCreatedInvoiceLedger(tx, created);
         return created;
       });
     } catch (err: any) {
@@ -1758,6 +1748,19 @@ export class InvoicesService {
       db,
       { preserveStatus: true },
     );
+  }
+
+  /** SALE ledger rows for a just-created manual invoice; create() and duplicate() share this one path. */
+  private async writeCreatedInvoiceLedger(tx: any, created: any): Promise<void> {
+    const packMap = await packAtSaleByProduct(tx, created.items ?? []);
+    await this.ledger.writeSaleEntries({
+      tenantId: this.prisma.getTenantId(),
+      orderId: null,
+      invoiceId: created.id,
+      soldAt: created.issueDate ?? new Date(),
+      lines: toSaleLedgerLines(created.items ?? [], packMap),
+      db: tx,
+    });
   }
 
   /**
@@ -4605,8 +4608,8 @@ export class InvoicesService {
       // duplicate() never receives a caller tx; if it ever does, reserve INSIDE it with
       // `generateInvoiceNumber(tenantId, tx)` per fix-round-2b.md D7.
       const invoiceNumber = await this.nextInvoiceNumber();
-      return await this.prisma.tenantTransaction(async (tx: any) =>
-        tx.invoice.create({
+      return await this.prisma.tenantTransaction(async (tx: any) => {
+        const copy = await tx.invoice.create({
           data: {
             invoiceNumber,
             customerId: inv.customerId,
@@ -4634,8 +4637,12 @@ export class InvoicesService {
             items: true,
             payments: true,
           },
-        }),
-      );
+        });
+        // B680: the copy's regulated lines get their own SALE rows, same path as create().
+        if (itemsData.some((it) => it.trackedCategoryId != null))
+          await this.writeCreatedInvoiceLedger(tx, copy);
+        return copy;
+      });
     } catch (err: any) {
       // B100/F16b (REG-B100-E): duplicate() had no P2002 catch — a concurrent
       // duplicate's unique-constraint hit propagated as a raw 500 instead of the

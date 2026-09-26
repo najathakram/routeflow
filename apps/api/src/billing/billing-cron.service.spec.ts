@@ -847,4 +847,96 @@ describe("BillingCronService", () => {
     const data = prisma.tenantSubscription.update.mock.calls[0][0].data;
     expect(data.periodEnd.toISOString()).toBe("2026-04-15T00:00:00.000Z");
   });
+
+  // B863 / SA-277: rollCycles() selects no periodStart/externalPayment and always calls
+  // addCycle(periodEnd, cycle) — a manually-activated external row whose `cycle` field is
+  // mislabeled (or whose real billing period doesn't match the stored cycle enum) rolls by
+  // the wrong span forever. An externally-paid row must instead roll by its OWN observed
+  // period length (periodEnd - periodStart), not by the `cycle` column.
+  it("REG-B863-ROLL 365-day external row rolls +365d (flips REG-ROLL-MANUAL-ANNUAL, SA-277)", async () => {
+    const periodStart = new Date("2025-01-01T00:00:00.000Z");
+    const periodEnd = new Date("2026-01-01T00:00:00.000Z");
+    const { svc, prisma } = make({
+      rollSubs: [
+        {
+          tenantId: "t-manual-annual",
+          cycle: "MONTHLY",
+          externalPayment: true,
+          periodStart,
+          periodEnd,
+        },
+      ],
+    });
+    await svc.rollCycles();
+
+    const data = prisma.tenantSubscription.update.mock.calls[0][0].data;
+    expect(data.periodStart).toEqual(periodEnd);
+    expect(data.periodEnd.toISOString()).toBe("2027-01-01T00:00:00.000Z");
+    expect(prisma.tenantSubscription.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        select: expect.objectContaining({ periodStart: true, externalPayment: true }),
+      }),
+    );
+  });
+
+  it("REG-B863-ROLL 90-day external row rolls +90d", async () => {
+    const periodStart = new Date("2025-10-03T00:00:00.000Z");
+    const periodEnd = new Date("2026-01-01T00:00:00.000Z");
+    const { svc, prisma } = make({
+      rollSubs: [
+        { tenantId: "t1", cycle: "MONTHLY", externalPayment: true, periodStart, periodEnd },
+      ],
+    });
+    await svc.rollCycles();
+    const data = prisma.tenantSubscription.update.mock.calls[0][0].data;
+    expect(data.periodEnd.toISOString()).toBe("2026-04-01T00:00:00.000Z");
+  });
+
+  it("REG-B863-ROLL 180-day external row rolls +180d", async () => {
+    const periodStart = new Date("2025-07-05T00:00:00.000Z");
+    const periodEnd = new Date("2026-01-01T00:00:00.000Z");
+    const { svc, prisma } = make({
+      rollSubs: [
+        { tenantId: "t1", cycle: "MONTHLY", externalPayment: true, periodStart, periodEnd },
+      ],
+    });
+    await svc.rollCycles();
+    const data = prisma.tenantSubscription.update.mock.calls[0][0].data;
+    expect(data.periodEnd.toISOString()).toBe("2026-06-30T00:00:00.000Z");
+  });
+
+  // Pin: a Stripe/catalog-priced row (externalPayment: false) is still rolled by `addCycle`
+  // off its `cycle` column — only externally-paid rows change under B863's fix.
+  it("rollCycles still rolls a Stripe/catalog row (externalPayment: false) by addCycle +1 month", async () => {
+    const periodEnd = new Date("2026-01-01T00:00:00.000Z");
+    const periodStart = new Date("2025-10-03T00:00:00.000Z"); // 90d back
+    const { svc, prisma } = make({
+      rollSubs: [
+        { tenantId: "t1", cycle: "MONTHLY", externalPayment: false, periodStart, periodEnd },
+      ],
+    });
+    await svc.rollCycles();
+    const data = prisma.tenantSubscription.update.mock.calls[0][0].data;
+    expect(data.periodEnd.toISOString()).toBe("2026-02-01T00:00:00.000Z");
+  });
+
+  // Pin: an external row with no periodStart on record can't derive an observed period
+  // length, so it falls back to the old addCycle(periodEnd, cycle) behavior.
+  it("rollCycles falls back to addCycle for an external row with periodStart: null", async () => {
+    const periodEnd = new Date("2026-01-01T00:00:00.000Z");
+    const { svc, prisma } = make({
+      rollSubs: [
+        {
+          tenantId: "t1",
+          cycle: "MONTHLY",
+          externalPayment: true,
+          periodStart: null,
+          periodEnd,
+        },
+      ],
+    });
+    await svc.rollCycles();
+    const data = prisma.tenantSubscription.update.mock.calls[0][0].data;
+    expect(data.periodEnd.toISOString()).toBe("2026-02-01T00:00:00.000Z");
+  });
 });

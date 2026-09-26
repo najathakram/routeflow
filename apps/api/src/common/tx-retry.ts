@@ -13,7 +13,8 @@
 import { HttpException, Logger } from "@nestjs/common";
 
 export const TX_CONFLICT_MAX_ATTEMPTS = 3;
-const BACKOFF_MS = [100, 300];
+/** 100 ms then 300 ms between attempts (exported so a caller with its own loop backs off the same way). */
+export const TX_CONFLICT_BACKOFF_MS = [100, 300];
 const logger = new Logger("tx-retry");
 
 /** The conflict's SQLSTATE (40001 / 40P01) in any shape Prisma 7 or `pg` reports it, else null. */
@@ -44,7 +45,7 @@ export async function retryOnTxConflict<T>(label: string, run: () => Promise<T>)
       logger.warn(
         `${label}: transaction conflict ${state}, retry ${attempt + 1}/${TX_CONFLICT_MAX_ATTEMPTS}`,
       );
-      await new Promise((r) => setTimeout(r, BACKOFF_MS[attempt - 1] ?? 300));
+      await new Promise((r) => setTimeout(r, TX_CONFLICT_BACKOFF_MS[attempt - 1] ?? 300));
     }
   }
 }
