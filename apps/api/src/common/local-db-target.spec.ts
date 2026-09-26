@@ -1,3 +1,5 @@
+import { NON_LOCAL_DB_URLS } from "./local-db-bypass-urls";
+
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const { isLocalDbTarget, localConnectionConfig } =
   require("../../scripts/lib/local-db-target.cjs") as {
@@ -24,32 +26,7 @@ describe("isLocalDbTarget (e2e-seed approved-buyer gate)", () => {
     expect(isLocalDbTarget(url)).toBe(true);
   });
 
-  it.each([
-    ["a Railway TCP proxy URL", "postgresql://u:p@roundhouse.proxy.rlwy.net:12345/railway"],
-    ["a *.railway.internal URL", "postgresql://u:p@postgres.railway.internal:5432/railway"],
-    ["an unknown remote host", "postgresql://u:p@db.example.com:5432/app"],
-    ["a custom proxy host with no railway marker", "postgresql://u:p@pg.internal-proxy.net:5432/x"],
-    ["a lookalike host", "postgresql://u:p@localhost.evil.com:5432/x"],
-    ["localhost only in the userinfo", "postgresql://localhost@evil.com:5432/x"],
-    // Opus on #2162: pg-connection-string lets a query parameter override the authority's host, so these all
-    // LOOK local to `new URL().hostname` while pg would dial elsewhere
-    ["a ?host= override", "postgresql://u:p@localhost:5432/x?host=prod.example.com"],
-    ["a ?hostaddr= override", "postgresql://u:p@localhost:5432/x?hostaddr=203.0.113.9"],
-    ["a ?service= indirection", "postgresql://u:p@localhost:5432/x?service=prod"],
-    ["a ?HOST= in any case", "postgresql://u:p@localhost:5432/x?HOST=prod.example.com"],
-    [
-      "a host param among others",
-      "postgresql://u:p@localhost:5432/x?sslmode=disable&host=evil.com",
-    ],
-    ["a multi-host list", "postgresql://u:p@localhost,evil.com:5432/x"],
-    ["a unix-socket host", "postgresql://u:p@/x?host=%2Fvar%2Frun%2Fpostgresql"],
-    [
-      "a query smuggled in the database name",
-      "postgresql://u:p@localhost:5432/routeflow_dev%3Fhost%3Dprod.example.com",
-    ],
-    ["an empty string", ""],
-    ["an unparseable value", "not a url"],
-  ])("is NOT local: %s", (_label, url) => {
+  it.each(NON_LOCAL_DB_URLS.map((r) => [...r]))("is NOT local: %s", (_label, url) => {
     expect(isLocalDbTarget(url)).toBe(false);
   });
 
