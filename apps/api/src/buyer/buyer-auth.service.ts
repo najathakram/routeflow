@@ -12,6 +12,7 @@ import * as bcrypt from "bcrypt";
 import * as crypto from "crypto";
 import { PrismaService } from "../prisma/prisma.service";
 import { EmailService } from "../email/email.service";
+import { AppleOAuthService } from "../auth/apple-oauth.service";
 import { AppConfig } from "../config/configuration";
 import { BuyerJwtPayload } from "./interfaces/buyer-jwt-payload.interface";
 import { BuyerRegisterDto } from "./dto/buyer-register.dto";
@@ -33,6 +34,7 @@ export class BuyerAuthService {
     private readonly jwtService: JwtService,
     private readonly configService: ConfigService<AppConfig>,
     private readonly emailService: EmailService,
+    private readonly appleOAuth: AppleOAuthService,
   ) {}
 
   // ─── Register ─────────────────────────────────────────────────────────────────
@@ -365,10 +367,31 @@ export class BuyerAuthService {
   // ─── Delete account ───────────────────────────────────────────────────────────
 
   async deleteAccount(buyerAccountId: string) {
-    // Soft delete account
+    // #2309 (SA-418 §4/5.1.1(v)): Apple requires apps offering Sign in with Apple to
+    // revoke the token on account deletion. Runs BEFORE the soft-delete below clears
+    // appleId/appleRefreshTokenEnc. revokeForBuyer already logs-and-swallows its own
+    // failures, but deletion must proceed even if the call itself throws unexpectedly —
+    // the catch here is defense in depth, never load-bearing for the happy path.
+    await this.appleOAuth
+      .revokeForBuyer(buyerAccountId)
+      .catch((e: Error) =>
+        this.logger.warn(`Apple revoke failed for buyer ${buyerAccountId}: ${e.message}`),
+      );
+
+    // Soft delete account. Also clears appleId/googleId (#2309 SA-418 §5, B-id noted
+    // in SA-418: a soft-deleted row previously kept its @unique googleId, so a
+    // re-sign-up after deletion hit P2002 — clearing both here fixes Apple's half and
+    // Google's pre-existing half in the same write) so the stable sub can sign up again.
     await this.prisma.buyerAccount.update({
       where: { id: buyerAccountId },
-      data: { status: "DELETED", deletedAt: new Date() },
+      data: {
+        status: "DELETED",
+        deletedAt: new Date(),
+        appleId: null,
+        googleId: null,
+        // revoked above; never keep a dead credential on a deleted row
+        appleRefreshTokenEnc: null,
+      },
     });
 
     // Disconnect all active/pending links
