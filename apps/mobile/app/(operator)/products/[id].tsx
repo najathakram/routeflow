@@ -24,10 +24,14 @@ import {
   useDeleteProductImage,
 } from "../../../lib/api/products";
 import { productImageFile } from "../../../lib/product-image";
-import { costPerSellingUnit, formatQtySplit } from "@routeflow/pricing";
+import { costPerSellingUnit } from "@routeflow/pricing";
 import { useInventoryMovements } from "../../../lib/api/inventory";
 import { useProductSales, type ProductSaleLine } from "../../../lib/api/product-sales";
-import { productSalesSummaryLine, productSaleRowTarget } from "../../../lib/product-sales-logic";
+import {
+  productSaleQtyLabel,
+  productSalesSummaryLine,
+  productSaleRowTarget,
+} from "../../../lib/product-sales-logic";
 import { useHasAddon, TOBACCO_ADDON } from "../../../lib/api/tobacco";
 import { showToast } from "../../../lib/toast";
 import { confirm, chooseAction } from "../../../lib/confirm";
@@ -364,7 +368,6 @@ export default function ProductDetailScreen() {
                     <SaleRow
                       key={`${line.invoiceId}-${line.customerId}-${i}`}
                       line={line}
-                      unitLabel={product.unit}
                       bordered={i > 0}
                       onPress={() => {
                         const target = productSaleRowTarget(line);
@@ -520,25 +523,18 @@ function Row({ label, value }: { label: string; value: string }) {
  *  else the invoice (`lib/product-sales-logic.ts` `productSaleRowTarget`). */
 function SaleRow({
   line,
-  unitLabel,
   bordered,
   onPress,
 }: {
   line: ProductSaleLine;
-  unitLabel?: string | null;
   bordered?: boolean;
   onPress: () => void;
 }) {
   const date = fmtCalendarDate(line.date, "short");
   // Never re-derive money — qty/unitPrice/lineTotal render exactly as the
   // server sent them; only the boxes+pieces split goes through the shared
-  // formatter (mobile mirror of computeLineSubtotal's proration).
-  const qtyLabel = formatQtySplit({
-    qty: line.qty,
-    boxes: line.boxes,
-    pieces: line.pieces,
-    unitLabel,
-  });
+  // formatter, never the product's selling unit as the piece noun (#2253).
+  const qtyLabel = productSaleQtyLabel(line);
   return (
     <Pressable style={[styles.saleRow, bordered ? styles.saleRowBordered : null]} onPress={onPress}>
       <View style={{ flex: 1, minWidth: 0 }}>
