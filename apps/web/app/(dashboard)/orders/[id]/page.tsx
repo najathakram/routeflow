@@ -76,6 +76,12 @@ import { LicenseGuardModal } from "../_components/LicenseGuardModal";
 import { OrderLineItemsTable } from "./_components/OrderLineItemsTable";
 import { OrderLineItemCards } from "./_components/OrderLineItemCards";
 import { ActionTier } from "./_components/ActionTier";
+import {
+  findLockedUnitLineEdit,
+  LockedUnitLineBadge,
+  LockedUnitLineError,
+  unitLineCount,
+} from "./_components/unit-line-lock";
 import { parseRegulatedAuthError, type BlockedCategory } from "@/lib/api/authorizations";
 import { parseSellingRestricted } from "@/lib/api/selling-restricted";
 import { BlockedLinesDialog } from "@/components/BlockedLinesDialog";
@@ -397,9 +403,7 @@ export interface EditItemState {
   originalProductId: string;
   originalProductName: string;
   originalQty: number;
-  /** SA-388: a stored unit line with no derivable count (unitLineCount → null). Its qty cannot
-   *  be edited and any price/note edit refuses to save; `lockedSubtotal` keeps its stored money
-   *  in the edit preview instead of a qty-0 recompute. */
+  /** SA-388 (unit-line-lock.tsx): no derivable count; lockedSubtotal = its stored money. */
   countLocked?: boolean;
   lockedSubtotal?: number;
   /** The line's own denomination, restored when a substitution is undone (a
@@ -579,63 +583,6 @@ function restoredPrice(it: EditItemState): Partial<EditItemState> {
 }
 
 /**
- * B718 / SA-388 (#938, tier 1): the ONE count function for a web unit line (edit-state seeding,
- * `originalQty`, `promoBaseUnits` and `buildItemUpdates`' comparison all go through it).
- * - `boxes` when it is a positive integer (unit-line-build.ts stores the COUNT there);
- * - else `qty ÷ unitsPerBox` — the line's SNAPSHOT factor — when `qty` (base pieces) is a
- *   positive whole multiple of it;
- * - else `null`: LOCKED. There is no safe count, so the line takes no qty edit and a price/note
- *   edit refuses to save (see findLockedUnitLineEdit). Falling back to raw `qty` read base pieces
- *   as the count — a price-only save re-billed a 3-Case line as 36 Cases (12×).
- */
-export function unitLineCount(li: Pick<OrderItem, "boxes" | "qty" | "unitsPerBox">): number | null {
-  const boxes = li.boxes == null ? null : Number(li.boxes);
-  if (boxes != null && Number.isInteger(boxes) && boxes > 0) return boxes;
-  const factor = li.unitsPerBox == null ? null : Number(li.unitsPerBox);
-  const qty = Number(li.qty);
-  if (
-    factor != null &&
-    Number.isInteger(factor) &&
-    factor >= 1 &&
-    Number.isInteger(qty) &&
-    qty > 0 &&
-    qty % factor === 0
-  ) {
-    return qty / factor;
-  }
-  return null;
-}
-
-/** Thrown by buildItemUpdates if a LOCKED unit line's edit ever reaches it (SA-388 backstop —
- *  the save handlers refuse first via findLockedUnitLineEdit, so no request is ever built). */
-export class LockedUnitLineError extends Error {
-  constructor(readonly lineName: string) {
-    super(`${lineName} needs repair before it can be edited`);
-    this.name = "LockedUnitLineError";
-  }
-}
-
-/**
- * SA-388: the first LOCKED unit line (no derivable count) that this session changed — its price,
- * note, qty or a substitution. Cancelling is still allowed (it sends no qty). Both save paths
- * call this BEFORE building a payload and refuse with a visible message when it returns a line.
- */
-export function findLockedUnitLineEdit(
-  items: EditItemState[],
-  original: OrderItem[],
-): EditItemState | undefined {
-  return items.find((edited) => {
-    if (!edited.countLocked || edited.isNew || edited.cancelled) return false;
-    const orig = original.find((li) => li.id === edited.id);
-    if (!orig) return false;
-    const priceChanged = Math.abs(edited.unitPrice - Number(orig.unitPrice)) > 0.0001;
-    const noteChanged = (edited.notes ?? "").trim() !== ((orig.notes as string) ?? "").trim();
-    const qtyChanged = Math.abs(edited.qty - edited.originalQty) > 0.0001;
-    return priceChanged || noteChanged || qtyChanged || !!edited.substituteProductId;
-  });
-}
-
-/**
  * Build one edit-state row from a loaded order line — shared by the DRAFT auto-enter effect and
  * `enterEditMode` so the two seeding sites can never drift (A3-2).
  *
@@ -650,8 +597,7 @@ export function buildEditItemFromLine(li: OrderItem): EditItemState {
   const isUnlisted = !li.productId;
   const label = orderLineName(li) ?? li.productId ?? "Custom item";
   const isUnitLine = li.unitLabel != null;
-  // SA-388: a unit line's count comes ONLY from unitLineCount; null = LOCKED (seeded at 0, never
-  // sent — findLockedUnitLineEdit / buildItemUpdates refuse any edit that would carry it).
+  // SA-388: count ONLY from unitLineCount; null = LOCKED (seeded 0, never sent — see backstop).
   const unitCount = isUnitLine ? unitLineCount(li) : null;
   const countLocked = isUnitLine && unitCount == null;
   const count = isUnitLine ? (unitCount ?? 0) : Math.round(Number(li.qty));
@@ -682,8 +628,7 @@ export function buildEditItemFromLine(li: OrderItem): EditItemState {
     originalBoxSplit: isUnitLine ? false : li.boxes != null || li.pieces != null,
     // BUY_N_GET_M snapshot + the whole-unit count it was earned at.
     promoFreeUnits: li.promoFreeUnits ?? null,
-    // SA-378/SA-388: a unit line's base count is the same unitLineCount (0 when LOCKED); a PACK
-    // line keeps boxes — a boxes:0 + pieces split legitimately earns at base 0.
+    // SA-378/388: unit line = unitLineCount (0 if LOCKED); PACK keeps boxes (boxes:0+pieces ⇒ 0).
     promoBaseUnits: li.promoFreeUnits
       ? Math.trunc(Number(isUnitLine ? unitCount : li.boxes != null ? li.boxes : li.qty) || 0)
       : null,
@@ -743,8 +688,7 @@ export function buildItemUpdates(items: EditItemState[], original: OrderItem[]):
     const orig = original.find((li) => li.id === edited.id);
     if (!orig) continue;
 
-    // SA-388 backstop: a LOCKED unit line's edit never becomes a request (the save handlers
-    // refuse it visibly first). Cancel is still allowed — it carries no qty.
+    // SA-388 backstop: a LOCKED line's edit never becomes a request (cancel is fine: no qty).
     if (!edited.cancelled && findLockedUnitLineEdit([edited], [orig])) {
       throw new LockedUnitLineError(edited.productName || "This line");
     }
@@ -827,8 +771,7 @@ function editLineSubtotal(it: {
   countLocked?: boolean;
   lockedSubtotal?: number;
 }): number {
-  // SA-388: a LOCKED unit line has no count to price from — preview its stored money unchanged
-  // (it cannot be edited), never a qty-0 recompute that would drop it from the order total.
+  // SA-388: a LOCKED line previews its stored money, never a qty-0 recompute (order total).
   if (it.countLocked) return it.lockedSubtotal ?? 0;
   const { boxes, pieces } = editBoxedSplit(it);
   return computeLineSubtotal({
@@ -1579,17 +1522,8 @@ export function EditableLineItems({
               {item.cancelled && <span className="text-xs text-danger ml-1.5">Not available</span>}
             </div>
 
-            {/* SA-388: a LOCKED unit line (no derivable count) takes no qty edit — say so on the
-                row, and the save handlers refuse any price/note edit to it. */}
-            {!item.cancelled && item.countLocked && (
-              <span
-                role="status"
-                title="This line's stored quantity can't be read as a count. It can be cancelled, but not edited, until it's repaired."
-                className="shrink-0 rounded-full bg-danger-bg px-2 py-0.5 text-[11px] font-medium text-danger ring-1 ring-danger/30"
-              >
-                This line needs repair
-              </span>
-            )}
+            {/* SA-388: a LOCKED unit line takes no qty edit; saves refuse any edit to it. */}
+            {!item.cancelled && item.countLocked && <LockedUnitLineBadge />}
 
             {/* Qty input */}
             {!item.cancelled && !item.countLocked && (
@@ -2338,8 +2272,7 @@ export default function OrderDetailPage() {
     }
   }
 
-  /** SA-388: refuse — visibly, with no request sent — a save that edits a LOCKED unit line.
-   *  Both save paths ("Save Draft"/"Save Changes" and "Save & Publish") call this first. */
+  /** SA-388: refuse visibly, sending nothing, a save editing a LOCKED line (both save paths). */
   function refuseLockedUnitLineEdit(): boolean {
     const locked = findLockedUnitLineEdit(editItems, order!.lineItems);
     if (!locked) return false;

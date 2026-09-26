@@ -16,11 +16,13 @@ import {
   buildEditItemFromLine,
   buildItemUpdates,
   editLineFreeUnits,
+  type EditItemState,
+} from "./page";
+import {
   findLockedUnitLineEdit,
   LockedUnitLineError,
   unitLineCount,
-  type EditItemState,
-} from "./page";
+} from "./_components/unit-line-lock";
 import type { OrderItem, ItemUpdate } from "@/lib/api/orders";
 
 function unitLine(overrides: Partial<OrderItem> = {}): OrderItem {
