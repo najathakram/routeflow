@@ -73,7 +73,7 @@ describe("#2262 import writes payments + the Invoice row in one transaction (SA-
       const id = ++n;
       currentTx = id;
       try {
-        return await fn(prisma.forTenant());
+        return await fn({ ...prisma.forTenant(), $executeRaw: jest.fn().mockResolvedValue(0) });
       } finally {
         currentTx = null;
       }
@@ -160,7 +160,6 @@ describe("#2262 import writes payments + the Invoice row in one transaction (SA-
       dueDate: null,
     };
     prisma.invoice.findFirst.mockResolvedValue(inv);
-    prisma.invoice.findUnique.mockResolvedValue({ ...inv, payments: [] });
     prisma.invoicePayment.findMany.mockResolvedValue([]);
     prisma.invoice.findMany.mockResolvedValue([]);
     prisma.invoicePayment.create.mockRejectedValueOnce(new Error("insert failed"));
