@@ -9,7 +9,7 @@ describe("attachDeliveredSoFar", () => {
     const stops = [
       {
         id: "stop-1",
-        orders: [{ id: "o1", lineItems: [{ id: "li1" }] }],
+        orders: [{ id: "o1", lineItems: [{ id: "li1", qty: 10 }] }],
       },
     ];
     const evidenceByLine = {
@@ -36,17 +36,33 @@ describe("attachDeliveredSoFar", () => {
     const out = attachDeliveredSoFar(stops, evidenceByLine);
 
     // stop-1's OWN row (7) is excluded from stop-1's own view — only the OTHER stop's 3 counts.
-    expect(out[0]!.orders[0]!.lineItems[0]).toEqual({ id: "li1", deliveredSoFar: 3 });
+    expect(out[0]!.orders[0]!.lineItems[0]).toEqual({
+      id: "li1",
+      qty: 10,
+      deliveredSoFar: 3,
+      remaining: 7,
+    });
   });
 
   it("defaults to 0 for a line absent from the group (never delivered anywhere)", () => {
     const stops = [
-      { id: "stop-1", orders: [{ id: "o1", lineItems: [{ id: "li1" }, { id: "li2" }] }] },
+      {
+        id: "stop-1",
+        orders: [
+          {
+            id: "o1",
+            lineItems: [
+              { id: "li1", qty: 10 },
+              { id: "li2", qty: 10 },
+            ],
+          },
+        ],
+      },
     ];
     const out = attachDeliveredSoFar(stops, { o1: { li1: [] } });
     expect(out[0]!.orders[0]!.lineItems).toEqual([
-      { id: "li1", deliveredSoFar: 0 },
-      { id: "li2", deliveredSoFar: 0 },
+      { id: "li1", qty: 10, deliveredSoFar: 0, remaining: 10 },
+      { id: "li2", qty: 10, deliveredSoFar: 0, remaining: 10 },
     ]);
   });
 
@@ -75,8 +91,8 @@ describe("withDeliveredSoFar (batched orchestration)", () => {
     ]);
     const db = { deliveryMutation: { findMany } };
     const stops = [
-      { id: "stop-1", orders: [{ id: "o1", lineItems: [{ id: "li1" }] }] },
-      { id: "stop-2", orders: [{ id: "o2", lineItems: [{ id: "li2" }] }] },
+      { id: "stop-1", orders: [{ id: "o1", lineItems: [{ id: "li1", qty: 10 }] }] },
+      { id: "stop-2", orders: [{ id: "o2", lineItems: [{ id: "li2", qty: 10 }] }] },
     ];
 
     const out = await withDeliveredSoFar(db as any, stops);
@@ -84,8 +100,18 @@ describe("withDeliveredSoFar (batched orchestration)", () => {
     expect(findMany).toHaveBeenCalledTimes(1);
     expect(findMany.mock.calls[0][0].where.orderId).toEqual({ in: ["o1", "o2"] });
     // stop-1's own row is excluded from stop-1's own view of li1.
-    expect(out[0]!.orders[0]!.lineItems[0]).toEqual({ id: "li1", deliveredSoFar: 0 });
-    expect(out[1]!.orders[0]!.lineItems[0]).toEqual({ id: "li2", deliveredSoFar: 0 });
+    expect(out[0]!.orders[0]!.lineItems[0]).toEqual({
+      id: "li1",
+      qty: 10,
+      deliveredSoFar: 0,
+      remaining: 10,
+    });
+    expect(out[1]!.orders[0]!.lineItems[0]).toEqual({
+      id: "li2",
+      qty: 10,
+      deliveredSoFar: 0,
+      remaining: 10,
+    });
   });
 
   it("a DIFFERENT stop viewing the same line sees the other stop's evidence", async () => {
@@ -101,11 +127,16 @@ describe("withDeliveredSoFar (batched orchestration)", () => {
     const db = { deliveryMutation: { findMany } };
     // Same order/line surfaced at a SECOND stop (a redelivery elsewhere) — its own
     // read must see stop-1's evidence, since it isn't stop-1's own row.
-    const stops = [{ id: "stop-2", orders: [{ id: "o1", lineItems: [{ id: "li1" }] }] }];
+    const stops = [{ id: "stop-2", orders: [{ id: "o1", lineItems: [{ id: "li1", qty: 10 }] }] }];
 
     const out = await withDeliveredSoFar(db as any, stops);
 
-    expect(out[0]!.orders[0]!.lineItems[0]).toEqual({ id: "li1", deliveredSoFar: 6 });
+    expect(out[0]!.orders[0]!.lineItems[0]).toEqual({
+      id: "li1",
+      qty: 10,
+      deliveredSoFar: 6,
+      remaining: 4,
+    });
   });
 });
 
@@ -130,11 +161,11 @@ describe("withDeliveredSoFarForRunsPage", () => {
     const runs = [
       {
         id: "run-1",
-        stops: [{ id: "stop-1", orders: [{ id: "o1", lineItems: [{ id: "li1" }] }] }],
+        stops: [{ id: "stop-1", orders: [{ id: "o1", lineItems: [{ id: "li1", qty: 10 }] }] }],
       },
       {
         id: "run-2",
-        stops: [{ id: "stop-2", orders: [{ id: "o2", lineItems: [{ id: "li2" }] }] }],
+        stops: [{ id: "stop-2", orders: [{ id: "o2", lineItems: [{ id: "li2", qty: 10 }] }] }],
       },
     ];
 
@@ -144,8 +175,18 @@ describe("withDeliveredSoFarForRunsPage", () => {
     );
 
     expect(findMany).toHaveBeenCalledTimes(1);
-    expect(out[0]!.stops[0]!.orders[0]!.lineItems[0]).toEqual({ id: "li1", deliveredSoFar: 6 });
-    expect(out[1]!.stops[0]!.orders[0]!.lineItems[0]).toEqual({ id: "li2", deliveredSoFar: 9 });
+    expect(out[0]!.stops[0]!.orders[0]!.lineItems[0]).toEqual({
+      id: "li1",
+      qty: 10,
+      deliveredSoFar: 6,
+      remaining: 4,
+    });
+    expect(out[1]!.stops[0]!.orders[0]!.lineItems[0]).toEqual({
+      id: "li2",
+      qty: 10,
+      deliveredSoFar: 9,
+      remaining: 1,
+    });
     // Each run keeps its own id and stop count — the slice never leaks across runs.
     expect(out[0]!.id).toBe("run-1");
     expect(out[0]!.stops).toHaveLength(1);

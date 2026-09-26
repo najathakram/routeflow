@@ -86,6 +86,34 @@ export function deliveredSoFarForLine(
   return sumDeliveredSoFar(rows, excludeStopId);
 }
 
+/**
+ * F-05 (#2093, owner ruling 2026-09-25): a CANCELLED line — or any line of a CANCELLED / DRAFT order
+ * still riding a stop — is no longer ordered, so nothing may be delivered against it.
+ */
+export function isNotOrdered(
+  lineStatus: string | null | undefined,
+  orderStatus: string | null | undefined,
+): boolean {
+  return lineStatus === "CANCELLED" || orderStatus === "CANCELLED" || orderStatus === "DRAFT";
+}
+
+/**
+ * SA-366: the ONE per-line "what may still be delivered" figure — the value the stop-completion
+ * bound (`assertDeliveriesFitStop`) accepts up to AND the value the run projection serves as
+ * `remaining` for the driver's stepper default, so no client ever re-derives it (SA-070). 0 when
+ * the line is not ordered (F-05's exact 0 ceiling overrides any evidence); otherwise
+ * `max(0, qty − deliveredSoFar)`. No epsilon here — the tolerance lives only in the bound.
+ */
+export function lineRemaining(line: {
+  qty: unknown;
+  lineStatus: string | null | undefined;
+  orderStatus: string | null | undefined;
+  deliveredSoFar: number;
+}): number {
+  if (isNotOrdered(line.lineStatus, line.orderStatus)) return 0;
+  return Math.max(0, Number(line.qty) - line.deliveredSoFar);
+}
+
 /** Structural contract for the one Prisma call this needs — never the whole client. */
 export interface DeliveryMutationFindManyClient {
   deliveryMutation: {

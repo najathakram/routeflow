@@ -18,35 +18,47 @@ import {
   RawEvidenceRowWithStop,
   deliveredSoFarForLine,
   fetchEvidenceByLine,
+  lineRemaining,
 } from "./delivered-so-far";
 
 type EvidenceByLine = Record<string, Record<string, RawEvidenceRowWithStop[]>>;
 
 /**
- * Attaches each line's `deliveredSoFar` onto a stops array — the shape web
- * driver mode (SA-129) reads to compute `quantityDelivered = qty -
- * deliveredSoFar`. Call this exactly once per read, right after the batched
- * fetch, before a RUN_STOP_INCLUDE-derived response leaves the service.
+ * Attaches each line's `deliveredSoFar` AND `remaining` onto a stops array. SA-366: `remaining` is
+ * the server-computed `lineRemaining` — the SAME value `assertDeliveriesFitStop` bounds against,
+ * including F-05's exact 0 for a CANCELLED line or a line of a CANCELLED / DRAFT order — so the
+ * driver's stepper defaults to it and never derives `qty − deliveredSoFar` itself (SA-070).
+ * `deliveredSoFar` stays for display-only money (SA-367b). Call this exactly once per read, right
+ * after the batched fetch, before a RUN_STOP_INCLUDE-derived response leaves the service.
  */
 export function attachDeliveredSoFar<
-  TLine extends { id: string; qty?: unknown; deliveredQty?: unknown },
-  TOrder extends { id: string; lineItems?: TLine[] | null },
+  TLine extends { id: string; qty?: unknown; deliveredQty?: unknown; status?: string | null },
+  TOrder extends { id: string; status?: string | null; lineItems?: TLine[] | null },
   TStop extends { id: string; orders?: TOrder[] | null },
 >(stops: TStop[], evidenceByLine: EvidenceByLine) {
   return stops.map((s) => ({
     ...s,
     orders: (s.orders ?? []).map((o) => ({
       ...o,
-      lineItems: (o.lineItems ?? []).map((li) => ({
-        ...li,
+      lineItems: (o.lineItems ?? []).map((li) => {
         // SA-345a: a line with no row anywhere reads the legacy column (see deliveredSoFarForLine).
-        deliveredSoFar: deliveredSoFarForLine(
+        const deliveredSoFar = deliveredSoFarForLine(
           evidenceByLine[o.id]?.[li.id],
           s.id,
           li.deliveredQty,
           li.qty,
-        ),
-      })),
+        );
+        return {
+          ...li,
+          deliveredSoFar,
+          remaining: lineRemaining({
+            qty: li.qty,
+            lineStatus: li.status,
+            orderStatus: o.status,
+            deliveredSoFar,
+          }),
+        };
+      }),
     })),
   }));
 }
@@ -57,8 +69,8 @@ export function attachDeliveredSoFar<
  * with each stop's own rows excluded from its own lines' sum.
  */
 export async function withDeliveredSoFar<
-  TLine extends { id: string; qty?: unknown; deliveredQty?: unknown },
-  TOrder extends { id: string; lineItems?: TLine[] | null },
+  TLine extends { id: string; qty?: unknown; deliveredQty?: unknown; status?: string | null },
+  TOrder extends { id: string; status?: string | null; lineItems?: TLine[] | null },
   TStop extends { id: string; orders?: TOrder[] | null },
 >(db: DeliveryMutationFindManyClient, stops: TStop[]) {
   const orderIds = Array.from(new Set(stops.flatMap((s) => (s.orders ?? []).map((o) => o.id))));
@@ -72,8 +84,8 @@ export async function withDeliveredSoFar<
  * call sites otherwise duplicate byte-for-byte.
  */
 export async function withDeliveredSoFarForRunsPage<
-  TLine extends { id: string; qty?: unknown; deliveredQty?: unknown },
-  TOrder extends { id: string; lineItems?: TLine[] | null },
+  TLine extends { id: string; qty?: unknown; deliveredQty?: unknown; status?: string | null },
+  TOrder extends { id: string; status?: string | null; lineItems?: TLine[] | null },
   TStop extends { id: string; orders?: TOrder[] | null },
   TRun extends { stops: TStop[] },
 >(db: DeliveryMutationFindManyClient, runs: TRun[]): Promise<TRun[]> {

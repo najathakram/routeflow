@@ -7,6 +7,8 @@ import { SystemConfigService } from "../system-config/system-config.service";
 import { OrdersService } from "../orders/orders.service";
 import { AuthorizationGuardService } from "../authorizations/authorization-guard.service";
 import { NotificationsService } from "../notifications/notifications.service";
+import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
+import { AuditService } from "../audit/audit.service";
 import { createMockPrisma } from "../testing/prisma-mock";
 
 /**
@@ -77,6 +79,14 @@ describe("OrderTemplatesService — regulated license guard on reorder", () => {
         { provide: OrdersService, useValue: ordersService },
         { provide: AuthorizationGuardService, useValue: authGuard },
         { provide: NotificationsService, useValue: notifications },
+        { provide: AuditService, useValue: { log: jest.fn().mockResolvedValue(undefined) } },
+        {
+          provide: SellingRestrictionsService,
+          useValue: {
+            assertLinesSellable: jest.fn().mockResolvedValue(undefined),
+            checkLinesSellable: jest.fn().mockResolvedValue({ outcome: "ALLOW", reasons: [] }),
+          },
+        },
       ],
     }).compile();
     service = mod.get(OrderTemplatesService);
@@ -260,6 +270,14 @@ describe("OrderTemplatesService — template ownership (F2-003)", () => {
           provide: AuthorizationGuardService,
           useValue: { checkAuthorized: jest.fn().mockResolvedValue({ blocked: [] }) },
         },
+        { provide: AuditService, useValue: { log: jest.fn().mockResolvedValue(undefined) } },
+        {
+          provide: SellingRestrictionsService,
+          useValue: {
+            assertLinesSellable: jest.fn().mockResolvedValue(undefined),
+            checkLinesSellable: jest.fn().mockResolvedValue({ outcome: "ALLOW", reasons: [] }),
+          },
+        },
         {
           provide: NotificationsService,
           useValue: { sendToCustomer: jest.fn(), sendToUser: jest.fn() },
@@ -419,6 +437,14 @@ describe("OrderTemplatesService — pricing pin, tier 1 unchanged (T16)", () => 
           provide: AuthorizationGuardService,
           useValue: { checkAuthorized: jest.fn().mockResolvedValue({ blocked: [] }) },
         },
+        { provide: AuditService, useValue: { log: jest.fn().mockResolvedValue(undefined) } },
+        {
+          provide: SellingRestrictionsService,
+          useValue: {
+            assertLinesSellable: jest.fn().mockResolvedValue(undefined),
+            checkLinesSellable: jest.fn().mockResolvedValue({ outcome: "ALLOW", reasons: [] }),
+          },
+        },
         {
           provide: NotificationsService,
           useValue: { sendToCustomer: jest.fn(), sendToUser: jest.fn() },
@@ -473,6 +499,14 @@ describe("OrderTemplatesService — update() with no items key (T27)", () => {
         {
           provide: AuthorizationGuardService,
           useValue: { checkAuthorized: jest.fn().mockResolvedValue({ blocked: [] }) },
+        },
+        { provide: AuditService, useValue: { log: jest.fn().mockResolvedValue(undefined) } },
+        {
+          provide: SellingRestrictionsService,
+          useValue: {
+            assertLinesSellable: jest.fn().mockResolvedValue(undefined),
+            checkLinesSellable: jest.fn().mockResolvedValue({ outcome: "ALLOW", reasons: [] }),
+          },
         },
         {
           provide: NotificationsService,

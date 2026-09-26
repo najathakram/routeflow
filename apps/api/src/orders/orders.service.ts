@@ -33,6 +33,7 @@ import { lockRowsNoWait, withAdvisoryLock, type LockMode } from "../common/db-lo
 import { retryOnTxConflict } from "../common/tx-retry";
 import { assertMoneyInvariantsOrThrow } from "../common/money-invariants.util";
 import { atStopConflict } from "./at-stop-conflicts";
+import { sourceLineFor, type SourceLines } from "./source-line";
 import {
   LOCK_UNAVAILABLE,
   LOCK_UNAVAILABLE_MESSAGE,
@@ -1492,7 +1493,8 @@ export class OrdersService implements OnApplicationBootstrap {
   async create(
     dto: CreateOrderDto,
     user: JwtPayload,
-    options: { skipAutoMerge?: boolean; allowArchived?: boolean } = {},
+    // `sourceLines`: INTERNAL only, never a DTO field (source-line.ts).
+    options: { skipAutoMerge?: boolean; allowArchived?: boolean; sourceLines?: SourceLines } = {},
   ) {
     // F30/R8: Idempotency-Key replay. `idempotencyKey` isn't on CreateOrderDto
     // (the controller threads it in from the `Idempotency-Key` header, never
@@ -1853,7 +1855,8 @@ export class OrdersService implements OnApplicationBootstrap {
 
       // Recompute qty from boxes/pieces when provided (backend is authoritative).
       // Normalize to integers and roll loose pieces >= unitsPerBox into boxes.
-      const upb = Number(product.unitsPerBox ?? 0);
+      const source = sourceLineFor(item.productId, options.sourceLines, items);
+      const upb = source?.unitsPerBox ?? Number(product.unitsPerBox ?? 0);
       let qty = item.qty;
       let boxes: number | null = null;
       let pieces: number | null = null;
@@ -1968,6 +1971,13 @@ export class OrdersService implements OnApplicationBootstrap {
         freeUnits = resolved.freeUnits;
       }
 
+      // D-20 (SA-330): a rolled-over line keeps its SOURCE line's agreed price, type and original price (never
+      // relabelled) and earns no promo units; the subtotal is still derived below at the carried pack and price.
+      if (source) {
+        ({ unitPrice, priceType, originalPrice } = source);
+        freeUnits = 0;
+      }
+
       // For boxed products `unitPrice` is the BOX price; loose pieces are
       // prorated. BUY_N_GET_M's `freeUnits` subtracts whole selling units from the
       // subtotal BEFORE pricing — never a rounded net-unit-price (a $35 line split
@@ -2014,6 +2024,10 @@ export class OrdersService implements OnApplicationBootstrap {
         unitPrice,
         priceType,
         originalPrice,
+        // D-20: a carried override keeps its audit trail (source-line.ts).
+        ...(source
+          ? { overrideReason: source.overrideReason, overriddenBy: source.overriddenBy }
+          : {}),
         // BUY_N_GET_M sale-time snapshot; null for every other line (unaffected).
         promoFreeUnits: freeUnits > 0 ? freeUnits : null,
         subtotal: itemSubtotal,

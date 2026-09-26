@@ -190,10 +190,19 @@ describe("RoutesService — reopenStop never revives a cancelled line (bug id pe
     const call = tx.orderItem.updateMany.mock.calls[0][0];
     expect(call.data).toMatchObject({ status: "PENDING" });
     expect(call.where).toMatchObject({ orderId: "ord-1", status: { not: "CANCELLED" } });
-    // B785/SA-133: deliveredQty is now a separate RECOMPUTE write, not part of updateMany's data.
+    // F-05 (#2093) + SA-365 R6: this is what carries reopenStop's EXEMPT row — it adds no quantity of
+    // any product: the only line writes reset delivery state — status here, deliveredQty via the
+    // SA-346 recompute — never qty, and no line is created.
+    expect(Object.keys(call.data).sort()).toEqual(["status"]);
+    expect(tx.orderItem.updateMany).toHaveBeenCalledTimes(1);
+    expect(tx.orderItem.create ?? { mock: { calls: [] } }).toHaveProperty("mock.calls.length", 0);
+    // B785/SA-133: deliveredQty is a separate RECOMPUTE write, not part of updateMany's data.
     expect(tx.orderItem.update).toHaveBeenCalledWith({
       where: { id: "oi-1" },
       data: { deliveredQty: 0 },
     });
+    for (const [arg] of tx.orderItem.update.mock.calls) {
+      expect(Object.keys(arg.data)).toEqual(["deliveredQty"]);
+    }
   });
 });

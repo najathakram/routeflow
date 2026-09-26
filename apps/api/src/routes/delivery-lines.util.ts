@@ -1,5 +1,10 @@
 import { BadRequestException, ConflictException, NotFoundException } from "@nestjs/common";
-import { deliveredSoFarForLine, fetchEvidenceByLine } from "./delivered-so-far";
+import {
+  deliveredSoFarForLine,
+  fetchEvidenceByLine,
+  isNotOrdered,
+  lineRemaining,
+} from "./delivered-so-far";
 
 /**
  * SA-151 review: `stop.status === "COMPLETED"` is checked BEFORE the caller's transaction in
@@ -42,6 +47,10 @@ export async function claimStopCompletion(
  * stop's own prior attempt. A REFUSED evidence row contributes 0, so a previously-refused line's
  * full ordered qty remains available to a later re-delivery attempt.
  *
+ * F-05 (#2093, owner ruling 2026-09-25): at-door delivery may never sell what was not ordered, and a line
+ * that was CANCELLED — or on a CANCELLED / DRAFT order still riding a stop — was not ordered any more:
+ * its ceiling is 0, so a driver cannot deliver (and bill) units of it. Delivering 0 is still allowed.
+ *
  * `tx` is the tenant-scoped transaction client (tenantTransaction), so the item read can never
  * see another tenant's rows.
  */
@@ -59,6 +68,8 @@ export async function assertDeliveriesFitStop(
     deliveredQty?: unknown;
     name: string | null;
     product: { name: string } | null;
+    status?: string;
+    order?: { status?: string } | null;
   }[] = await tx.orderItem.findMany({
     where: { id: { in: deliveries.map((d) => d.orderItemId) } },
     select: {
@@ -68,6 +79,8 @@ export async function assertDeliveriesFitStop(
       deliveredQty: true,
       name: true,
       product: { select: { name: true } },
+      status: true,
+      order: { select: { status: true } },
     },
   });
   const byId = new Map(items.map((i) => [i.id, i]));
@@ -92,17 +105,31 @@ export async function assertDeliveriesFitStop(
       item.deliveredQty,
       item.qty,
     );
-    // SA-151 review: clamp at 0 — a data anomaly (deliveredSoFar > qty, e.g. a manual DB fix)
-    // must never surface as a negative "remaining", which would make the bound below nonsensical.
-    const remaining = Math.max(0, Number(item.qty) - deliveredSoFar);
+    // SA-366: ONE figure for the bound and the run projection's served `remaining` — clamped at 0
+    // (SA-151: a data anomaly, deliveredSoFar > qty, never surfaces as a negative remaining) and
+    // exactly 0 for a line that is no longer ordered (F-05).
+    const notOrdered = isNotOrdered(item.status, item.order?.status);
+    const remaining = lineRemaining({
+      qty: item.qty,
+      lineStatus: item.status,
+      orderStatus: item.order?.status,
+      deliveredSoFar,
+    });
     const q = Number(d.quantityDelivered);
-    if (!Number.isFinite(q) || q < 0 || q > remaining + 0.0005) {
-      // SA-151 review: driver-readable, not a bare orderItemId UUID (payment.tsx surfaces this
-      // verbatim in a toast) — the product name, what's actually left, and what already
-      // happened elsewhere, with the one actionable next step.
+    // SA-365 R2: the ceilings nest (remaining ≤ qty). A ceiling of 0 is EXACT (no epsilon): 0.0005 of
+    // a cancelled line is still a delivery of nothing ordered.
+    const over = notOrdered ? q !== 0 : q > remaining + 0.0005;
+    if (!Number.isFinite(q) || q < 0 || over) {
+      // SA-151 review / SA-365 R4: driver-readable, not a bare orderItemId UUID (payment.tsx
+      // surfaces this verbatim in a toast) — the product name, what's actually left, and what
+      // already happened elsewhere, with the one actionable next step.
       const label = item.product?.name ?? item.name ?? "This item";
       throw new BadRequestException(
-        `${label}: ${remaining} left, ${deliveredSoFar} delivered earlier — refresh the stop`,
+        notOrdered
+          ? item.order?.status === "DRAFT"
+            ? `${label} belongs to an order that is not confirmed yet — nothing can be delivered against it`
+            : `${label} was cancelled — nothing can be delivered against it`
+          : `${label}: ${remaining} left, ${deliveredSoFar} delivered earlier — refresh the stop`,
       );
     }
   }
