@@ -447,3 +447,35 @@ export async function settleStockForEdit(
     await saleRow(productId, credit, updated);
   }
 }
+
+/**
+ * B64 (REG-B64): reopenOrder's re-decrement, lifted out of `OrdersService` (size ratchet; behaviour
+ * identical). `cancelledLines` are the item-CANCELLED lines read INSIDE the caller's tx before they flip
+ * back to PENDING — exactly the set an F07 cancel credited stock back for. The delivered portion is
+ * modelled as already held, so the settle delta is qty − deliveredQty per product (what the cancel
+ * credited back). Staff-only path → no user → warn-only oversell, matching create()'s staff behaviour.
+ */
+export async function restoreStockForReopen(
+  deps: OrderStockDeps,
+  tx: any,
+  orderId: string,
+  cancelledLines: Array<
+    StockLineUnits & { productId: string | null; qty: any; deliveredQty?: any }
+  >,
+): Promise<void> {
+  if (cancelledLines.length === 0) return;
+  const held = cancelledLines.map((li) => {
+    const delivered = Number(li.deliveredQty ?? 0);
+    return { ...li, qty: delivered, deliveredQty: delivered, status: "PENDING" };
+  });
+  const requested = cancelledLines.map((li) => ({ ...li, qty: Number(li.qty) }));
+  await settleStockForEdit(
+    deps,
+    tx,
+    { id: orderId, status: "PENDING" },
+    held,
+    requested,
+    undefined,
+    { notes: "UNCANCEL" },
+  );
+}

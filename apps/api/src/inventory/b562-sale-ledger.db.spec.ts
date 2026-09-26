@@ -28,7 +28,11 @@ import { PrismaService } from "../prisma/prisma.service";
 import { TenantContextService } from "../tenant/tenant-context.service";
 import { StockAlertService } from "../stock-alerts/stock-alert.service";
 import { describeDb, requireLocalDatabaseUrl } from "../common/testing/db-spec";
-import { decrementStockForSale, settleStockForEdit } from "../orders/order-stock";
+import {
+  decrementStockForSale,
+  restoreStockForReopen,
+  settleStockForEdit,
+} from "../orders/order-stock";
 import { bookRestockMovement } from "../returns/returns-restock.util";
 import { ReturnsService } from "../returns/returns.service";
 
@@ -286,15 +290,9 @@ describeDb("B562 PR-2 sale ledger — real Postgres", () => {
 
     // uncancel: the delivered portion is modelled as already held, so the re-take is exactly the credit.
     await inTx(w, (tx) =>
-      settleStockForEdit(
-        deps(w),
-        tx,
-        { id: w.orderId, status: "PENDING" },
-        [{ productId: w.productId, qty: 4, deliveredQty: 4, status: "PENDING" }],
-        [{ productId: w.productId, qty: 10 }],
-        undefined,
-        { notes: "UNCANCEL", performedById: null },
-      ),
+      restoreStockForReopen(deps(w), tx, w.orderId, [
+        { productId: w.productId, qty: 10, deliveredQty: 4 },
+      ]),
     );
     expect(await counter(w.productId)).toBe(90);
     const last = (await rowsOf(w.productId, "SALE")).at(-1)!;

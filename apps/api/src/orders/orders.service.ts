@@ -98,6 +98,7 @@ import { NotificationsService } from "../notifications/notifications.service";
 import { InvoicesService } from "../invoices/invoices.service";
 import {
   decrementStockForSale,
+  restoreStockForReopen,
   settleStockForEdit,
   STOCK_LINE_UNIT_SELECT,
   STOCK_SETTLE_SELECT,
@@ -2974,25 +2975,8 @@ export class OrdersService implements OnApplicationBootstrap {
           data: { status: ItemStatus.PENDING },
         });
 
-        if (cancelledLines.length > 0) {
-          // Model the delivered portion as already-held so the settle delta is
-          // exactly qty − deliveredQty per product (what the cancel credited
-          // back). Staff-only path → `user` undefined → warn-only oversell,
-          // matching create()'s own staff behavior.
-          await this.settleStockForEdit(
-            tx,
-            { id, status: OrderStatus.PENDING },
-            cancelledLines.map((li) => ({
-              ...li,
-              qty: Number(li.deliveredQty ?? 0),
-              deliveredQty: Number(li.deliveredQty ?? 0),
-              status: "PENDING",
-            })),
-            cancelledLines.map((li) => ({ ...li, qty: Number(li.qty) })),
-            undefined,
-            { notes: "UNCANCEL" },
-          );
-        }
+        // Re-take exactly what the cancel credited back (order-stock.ts).
+        await restoreStockForReopen(this.stockDeps(), tx, id, cancelledLines);
 
         return tx.order.update({
           where: { id },
