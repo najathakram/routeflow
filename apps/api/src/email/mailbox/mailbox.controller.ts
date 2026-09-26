@@ -4,9 +4,12 @@ import {
   Delete,
   ForbiddenException,
   Get,
+  Header,
+  Headers,
   HttpCode,
   HttpStatus,
   Logger,
+  Param,
   Post,
   Query,
   Res,
@@ -27,6 +30,12 @@ import { AddonGuard } from "../../billing/addon.guard";
 import { RequireAddon } from "../../billing/require-addon.decorator";
 import { MailboxConnectionService } from "./mailbox-connection.service";
 import { ConfirmMailboxDto } from "./dto/confirm-mailbox.dto";
+
+/**
+ * The connect secret `/google/start` or `/microsoft/start` handed the initiating browser tab
+ * (#2115). Preview and confirm read it ONLY from this header, never from a URL or the body.
+ */
+const CONNECT_SECRET_HEADER = "x-mailbox-connect-secret";
 
 /**
  * The `error` codes RFC 6749 §4.1.2.1 defines (`access_denied`, `server_error`, ...) are short
@@ -74,6 +83,14 @@ function oauthDenialForLog(error: unknown, errorDescription: unknown): string {
  * matches whoever called `/google/start` or `/microsoft/start`. Without this split, anyone who
  * could observe or guess the callback URL (shared machine, browser history sync, referrer leak)
  * could attach an attacker's mailbox grant to whatever tenant happens to be signed in.
+ *
+ * #2115 (SA-215) closes the rest of that path. `/start` also returns a connect secret the
+ * initiating tab keeps in sessionStorage. Preview and confirm require it in a header, so a
+ * confirm link opened in any other tab or browser is refused, even with the same admin's JWT.
+ * The web never confirms on page load: it previews the grant (`GET confirm/:token/preview`,
+ * non-consuming, provider + account email only) and binds only when the admin clicks Confirm
+ * in a dialog that names the account. Cancel (`POST confirm/cancel`) burns the grant, and the
+ * callbacks burn the state on every non-success exit.
  */
 @ApiTags("settings")
 @Controller(["settings/email/mailbox", "tenant/settings/email/mailbox"])
@@ -106,10 +123,12 @@ export class MailboxController {
   @UseGuards(JwtAuthGuard, RolesGuard, AddonGuard)
   @Roles(UserRole.TENANT_ADMIN)
   @RequireAddon("email.connected_mailbox")
+  // The body carries the connect secret: no browser, proxy or CDN may keep a copy of it.
+  @Header("Cache-Control", "no-store")
   async startGoogle(@CurrentUser() user: JwtPayload) {
     if (!user.tenantId) throw new ForbiddenException("A tenant context is required.");
-    const url = await this.mailboxConnection.startConnect(user.tenantId, user.sub);
-    return { url };
+    // `{ url, connectSecret }`: the tab keeps the secret for preview/confirm (#2115).
+    return this.mailboxConnection.startConnect(user.tenantId, user.sub);
   }
 
   // No guards — see class doc. This step never binds a MailboxConnection row; it only mints a
@@ -156,10 +175,12 @@ export class MailboxController {
   @UseGuards(JwtAuthGuard, RolesGuard, AddonGuard)
   @Roles(UserRole.TENANT_ADMIN)
   @RequireAddon("email.connected_mailbox")
+  // Carries the connect secret, like google/start: never cached.
+  @Header("Cache-Control", "no-store")
   async startMicrosoft(@CurrentUser() user: JwtPayload) {
     if (!user.tenantId) throw new ForbiddenException("A tenant context is required.");
-    const url = await this.mailboxConnection.startConnectMicrosoft(user.tenantId, user.sub);
-    return { url };
+    // `{ url, connectSecret }`: the tab keeps the secret for preview/confirm (#2115).
+    return this.mailboxConnection.startConnectMicrosoft(user.tenantId, user.sub);
   }
 
   // No guards — mirrors google/callback exactly (see class doc). Microsoft can also redirect
@@ -206,7 +227,26 @@ export class MailboxController {
     }
   }
 
+  // What the explicit confirm dialog shows before anything is bound (#2115): the pending
+  // grant's provider and account email only. Authenticated and NON-consuming. Like confirm, it
+  // requires the caller to be the admin who started the connect AND to present the connect
+  // secret of the tab that started it (header only, never a URL).
+  @Get("confirm/:token/preview")
+  @ApiBearerAuth()
+  @UseGuards(JwtAuthGuard, RolesGuard, AddonGuard)
+  @Roles(UserRole.TENANT_ADMIN)
+  @RequireAddon("email.connected_mailbox")
+  async previewConfirm(
+    @CurrentUser() user: JwtPayload,
+    @Param("token") token: string,
+    @Headers(CONNECT_SECRET_HEADER) connectSecret: string | undefined,
+  ) {
+    if (!user.tenantId) throw new ForbiddenException("A tenant context is required.");
+    return this.mailboxConnection.previewConnect(token, connectSecret, user.sub, user.tenantId);
+  }
+
   // The ONLY place a MailboxConnection row is ever bound from an OAuth flow — see class doc.
+  // The web calls it only when the admin clicks Confirm in the dialog (#2115), never on load.
   @Post("confirm")
   @HttpCode(HttpStatus.OK)
   @ApiBearerAuth()
@@ -214,9 +254,30 @@ export class MailboxController {
   @Roles(UserRole.TENANT_ADMIN)
   @RequireAddon("email.connected_mailbox")
   @UsePipes(new ValidationPipe({ whitelist: true, transform: true }))
-  async confirm(@CurrentUser() user: JwtPayload, @Body() dto: ConfirmMailboxDto) {
+  async confirm(
+    @CurrentUser() user: JwtPayload,
+    @Body() dto: ConfirmMailboxDto,
+    @Headers(CONNECT_SECRET_HEADER) connectSecret: string | undefined,
+  ) {
     if (!user.tenantId) throw new ForbiddenException("A tenant context is required.");
-    return this.mailboxConnection.confirmConnect(dto.state, user.sub, user.tenantId);
+    return this.mailboxConnection.confirmConnect(dto.state, connectSecret, user.sub, user.tenantId);
+  }
+
+  // Cancel in the confirm dialog (or the web giving up on a confirm it can't finish): burns the
+  // pending grant so it can never be confirmed (#2115). 204 whether or not it still existed.
+  @Post("confirm/cancel")
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @ApiBearerAuth()
+  @UseGuards(JwtAuthGuard, RolesGuard, AddonGuard)
+  @Roles(UserRole.TENANT_ADMIN)
+  @RequireAddon("email.connected_mailbox")
+  @UsePipes(new ValidationPipe({ whitelist: true, transform: true }))
+  async cancelConfirm(
+    @CurrentUser() user: JwtPayload,
+    @Body() dto: ConfirmMailboxDto,
+  ): Promise<void> {
+    if (!user.tenantId) throw new ForbiddenException("A tenant context is required.");
+    await this.mailboxConnection.discardPendingGrant(dto.state);
   }
 
   @Delete()
