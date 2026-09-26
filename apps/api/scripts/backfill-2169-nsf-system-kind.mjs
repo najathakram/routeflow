@@ -26,24 +26,65 @@
 //   DATABASE_URL=postgresql://…@localhost:5432/<db> node apps/api/scripts/backfill-2169-nsf-system-kind.mjs --local
 //   node apps/api/scripts/backfill-2169-nsf-system-kind.mjs --self-test
 //
+// SA-403 supersedes the earlier #2169 ruling with TWO independent belts, both enforced in both
+// the dry run (planning) and --apply (stamping):
+//
+// BELT 1 — default ALLOW-LIST (SA-403a): without --live-tenant-override, only rows whose tenant
+// passes isTestTenant(slug) (scripts/lib/test-tenants.cjs) are ever planned or stamped. Every
+// other tenant's rows are skipped and folded into one aggregate `live-skipped: <n> line(s) across
+// <k> tenant(s)` line — never named (no tenant slug is ever printed by this script). With
+// --live-tenant-override, a live tenant's rows are included ONLY when --apply also receives a
+// repeatable `--confirm-live "<slug>:<count>"` naming it and its EXACT plan stamp count; ANY live
+// tenant without a matching confirmation aborts the WHOLE apply (nothing written). Slugs are typed
+// by the operator on the command line and never appear in this script's own output.
+//
+// BELT 2 — external EXCLUSION LIST (unchanged from the original #2169 ruling, kept as a second,
+// independent belt): --apply ABORTS (exit 1, nothing connected, nothing written) unless it
+// resolves a non-empty tenant exclusion list, EITHER B2169_EXCLUDE_TENANT_IDS (comma/whitespace
+// separated tenant ids) OR --exclude-file <path> (one id per line, `#` comments allowed) whose
+// resolved real path is OUTSIDE the repository root — checked BEFORE resolving/connecting to any
+// database. Excluded tenants' rows are never stamped even under --live-tenant-override, and are
+// folded into `excluded: <n> line(s) across <k> tenant(s)` — excluded tenant ids are never
+// printed. The dry-run plan records sha256 of the SORTED exclusion set (never the ids
+// themselves); run the dry run with the SAME exclusion list (and the same --live-tenant-override
+// state) you intend to --apply with, or the checks below refuse the apply.
+//
+// The B294-style typed "APPLY <n> LINES" phrase is DROPPED: --confirm-live's exact per-live-tenant
+// count match already is the typed confirmation for the one case it protected (a live tenant in
+// the plan); an allow-list-only apply (the default, no live tenants at all) needs no extra typed
+// phrase beyond --i-have-a-fresh-backup, matching B294's own gate set.
+//
+//   B2169_EXCLUDE_TENANT_IDS="tenant-a,tenant-b" node apps/api/scripts/backfill-2169-nsf-system-kind.mjs
+//   node apps/api/scripts/backfill-2169-nsf-system-kind.mjs --exclude-file /path/outside/repo/exclude.txt
+//
 // APPLY replays a SAVED plan only (never a live re-query):
 //   node apps/api/scripts/backfill-2169-nsf-system-kind.mjs --apply --plan <file> \
-//     --confirm-plan <hash> --guard-sha <sha> --i-have-a-fresh-backup [--local] \
-//     [--live-tenant-override --confirm "APPLY <n> LINES"]
-// Gates, ALL must pass or nothing is written (SA-134 / B294's set):
+//     --confirm-plan <hash> --guard-sha <sha> --i-have-a-fresh-backup \
+//     --exclude-file /path/outside/repo/exclude.txt [--local]
+//   # …and, only if the plan contains live tenants:
+//     [--live-tenant-override --confirm-live "<slug-1>:<count-1>" --confirm-live "<slug-2>:<count-2>"]
+// (B2169_EXCLUDE_TENANT_IDS may be used in place of --exclude-file.)
+// Gates, ALL must pass or nothing is written (SA-134 / B294's set, plus SA-403's two belts):
+//   0. a non-empty tenant exclusion list resolves (env var or an out-of-repo --exclude-file) —
+//      checked first, before anything below, before any database resolution/connection;
 //   1. --confirm-plan equals the plan file's own sha256;
 //   2. --guard-sha is a git ancestor of this checkout's HEAD (the migration that adds the column);
 //   3. the DB fingerprint (database, tenant ids) still matches the dry run;
-//   4. a LIVE (non-test) tenant needs --live-tenant-override plus the literal type-back phrase;
+//   4. the exclusion set's sha256 must equal the dry-run plan's recorded exclusionHash (re-run the
+//      dry run with the same list to change it);
 //   5. --i-have-a-fresh-backup, always;
 //   6. every planned LINE is RE-READ: systemKind still NULL, same invoiceId/description/unitPrice/
 //      updatedAt; AND every planned PAYMENT is RE-READ: still status VOID + checkStatus BOUNCED,
-//      same nsfFeeAmount — any change to either row refuses the WHOLE apply.
+//      same nsfFeeAmount — any change to either row refuses the WHOLE apply;
+//   7. excluded-tenant rows are re-filtered out of the plan at apply time too (defense in depth);
+//   8. a LIVE (non-test) tenant needs --live-tenant-override AND an exact --confirm-live
+//      "<slug>:<count>" match for every live tenant remaining in the plan, or the whole apply
+//      aborts; without --live-tenant-override, live-tenant rows are simply skipped (not an abort).
 // One transaction. Exit: 0 ok · 1 refused (nothing written) · 2 env/connection error.
 import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { dirname, resolve } from "node:path";
+import { mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { dirname, isAbsolute, relative, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import pg from "pg";
 import { roundMoney } from "@routeflow/pricing";
@@ -66,6 +107,15 @@ const SELF = resolve(dirname(fileURLToPath(import.meta.url)), "backfill-2169-nsf
 const argOf = (name) => {
   const i = process.argv.indexOf(name);
   return i >= 0 ? process.argv[i + 1] : undefined;
+};
+/** Every occurrence of a repeatable flag (e.g. `--confirm-live` given more than once). */
+const allArgsOf = (name) => {
+  const out = [];
+  for (let i = 0; i < process.argv.length; i += 1) {
+    if (process.argv[i] === name && process.argv[i + 1] !== undefined)
+      out.push(process.argv[i + 1]);
+  }
+  return out;
 };
 const sha256 = (obj) => createHash("sha256").update(JSON.stringify(obj)).digest("hex");
 const refuse = (msg) => Object.assign(new Error(msg), { refuse: true });
@@ -97,6 +147,196 @@ export function classifyCandidate(lines, payments) {
     };
   }
   return { kind: "APPLY", lineId: line.id, paymentId: match.id, nsfFeeAmount: match.nsfFeeAmount };
+}
+
+// ─── tenant exclusion list (#2169 ruling) ──────────────────────────────────────────────────────
+
+/**
+ * Pure: env-var form ("comma or whitespace separated ids") -> deduped id array (order preserved).
+ */
+export function parseExclusionEnvList(raw) {
+  return [
+    ...new Set(
+      raw
+        .split(/[\s,]+/)
+        .map((s) => s.trim())
+        .filter(Boolean),
+    ),
+  ];
+}
+
+/** Pure: file form (one id per line, `#` starts a comment, blank lines ignored) -> deduped ids. */
+export function parseExclusionFileContents(text) {
+  return [
+    ...new Set(
+      text
+        .split(/\r?\n/)
+        .map((line) => line.replace(/#.*$/, "").trim())
+        .filter(Boolean),
+    ),
+  ];
+}
+
+/**
+ * Resolves the tenant exclusion list from EITHER B2169_EXCLUDE_TENANT_IDS OR --exclude-file
+ * (never both required; --exclude-file wins if both are given). Throws (never returns an empty
+ * list) when: neither source is given, the file resolves inside the repository, or either source
+ * parses to zero ids. No database is touched by this function.
+ */
+export function parseExclusionList({
+  env = process.env,
+  excludeFileArg,
+  repoRoot = REPO_ROOT,
+  readFileText = (p) => readFileSync(p, "utf8"),
+  resolveRealPath = (p) => realpathSync(p),
+} = {}) {
+  if (excludeFileArg) {
+    let real;
+    try {
+      real = resolveRealPath(excludeFileArg);
+    } catch (e) {
+      throw new Error(`--exclude-file ${excludeFileArg} could not be resolved: ${e.message}`);
+    }
+    const realRoot = resolveRealPath(repoRoot);
+    const rel = relative(realRoot, real);
+    const isInsideRepo = rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
+    if (isInsideRepo) {
+      throw new Error(
+        `--exclude-file must resolve OUTSIDE the repository (got ${real}, repo root ${realRoot})`,
+      );
+    }
+    const ids = parseExclusionFileContents(readFileText(real));
+    if (ids.length === 0) {
+      throw new Error(`--exclude-file ${excludeFileArg} is empty — refusing to apply`);
+    }
+    return { ids, source: `--exclude-file ${excludeFileArg}` };
+  }
+  const envRaw = env.B2169_EXCLUDE_TENANT_IDS;
+  if (envRaw == null) {
+    throw new Error(
+      "no tenant exclusion list supplied: set B2169_EXCLUDE_TENANT_IDS or pass --exclude-file <path outside the repo>",
+    );
+  }
+  const ids = parseExclusionEnvList(envRaw);
+  if (ids.length === 0) {
+    throw new Error("B2169_EXCLUDE_TENANT_IDS is empty — refusing to apply");
+  }
+  return { ids, source: "B2169_EXCLUDE_TENANT_IDS" };
+}
+
+/** Pure: sha256 of the SORTED exclusion set — never the ids themselves, order-independent. */
+export function exclusionSetHash(ids) {
+  return createHash("sha256")
+    .update(JSON.stringify([...ids].sort()))
+    .digest("hex");
+}
+
+/** Pure: splits APPLY candidates into non-excluded (kept) and excluded (never stamped). */
+export function partitionApplyByExclusion(applyRows, excludedIds) {
+  const excludedSet = new Set(excludedIds);
+  const kept = [];
+  const excludedTenantIds = new Set();
+  let excludedCount = 0;
+  for (const a of applyRows) {
+    if (excludedSet.has(a.tenantId)) {
+      excludedCount += 1;
+      excludedTenantIds.add(a.tenantId);
+    } else {
+      kept.push(a);
+    }
+  }
+  return { kept, excludedCount, excludedTenantIds };
+}
+
+/** Pure: same split for REVIEW entries (each carries its own lineIds, so a "line" ≠ one entry). */
+export function partitionReviewByExclusion(reviewRows, excludedIds) {
+  const excludedSet = new Set(excludedIds);
+  const kept = [];
+  const excludedTenantIds = new Set();
+  let excludedCount = 0;
+  for (const r of reviewRows) {
+    if (excludedSet.has(r.tenantId)) {
+      excludedCount += r.lineIds ? r.lineIds.length : 1;
+      excludedTenantIds.add(r.tenantId);
+    } else {
+      kept.push(r);
+    }
+  }
+  return { kept, excludedCount, excludedTenantIds };
+}
+
+// ─── SA-403 BELT 1: default test-tenant allow-list ─────────────────────────────────────────────
+
+/** A "line" row (apply-shaped) counts as 1; a REVIEW row carries its own lineIds array. */
+const rowUnitCount = (row) => (Array.isArray(row.lineIds) ? row.lineIds.length : 1);
+
+/**
+ * Pure: without `override`, only rows whose tenant passes isTestTenant(slugById.get(tenantId))
+ * are kept — every other tenant's row is skipped and counted (never named: the caller must never
+ * print a slug). With `override`, every row is kept (the live ones still need a matching
+ * --confirm-live at apply time — see assertLiveTenantConfirmations below).
+ */
+export function partitionByAllowList(rows, slugById, override) {
+  const kept = [];
+  const skippedTenantIds = new Set();
+  let skippedCount = 0;
+  for (const r of rows) {
+    const slug = slugById.get(r.tenantId) ?? null;
+    if (override || isTestTenant(slug)) {
+      kept.push(r);
+    } else {
+      skippedCount += rowUnitCount(r);
+      skippedTenantIds.add(r.tenantId);
+    }
+  }
+  return { kept, skippedCount, skippedTenantIds };
+}
+
+/** Pure: per-slug stamp counts among the NON-test-tenant rows of an (already override-kept) apply list. */
+export function liveTenantStampCounts(applyRows, slugById) {
+  const counts = new Map();
+  for (const a of applyRows) {
+    const slug = slugById.get(a.tenantId) ?? null;
+    if (isTestTenant(slug)) continue;
+    const key = slug ?? `<unresolvable:${a.tenantId}>`;
+    counts.set(key, (counts.get(key) ?? 0) + 1);
+  }
+  return counts;
+}
+
+/** Pure: "<slug>:<count>" -> { slug, count }. Throws on any shape other than exactly that. */
+export function parseConfirmLiveArg(raw) {
+  const idx = raw.lastIndexOf(":");
+  if (idx <= 0 || idx === raw.length - 1) {
+    throw refuse(`--confirm-live "${raw}" must be "<slug>:<count>"`);
+  }
+  const slug = raw.slice(0, idx);
+  const count = Number(raw.slice(idx + 1));
+  if (!Number.isInteger(count) || count < 0) {
+    throw refuse(`--confirm-live "${raw}" must end with a non-negative integer count`);
+  }
+  return { slug, count };
+}
+
+/**
+ * Pure: every live tenant in `liveCounts` (slug -> stamp count) needs an EXACT matching
+ * --confirm-live entry, or the WHOLE apply is refused. Never names the offending slug(s) in the
+ * thrown message — only a count — so a live tenant's slug never reaches this script's own output.
+ */
+export function assertLiveTenantConfirmations(liveCounts, confirmLiveArgs) {
+  const given = new Map(
+    confirmLiveArgs.map((raw) => {
+      const { slug, count } = parseConfirmLiveArg(raw);
+      return [slug, count];
+    }),
+  );
+  const mismatched = [...liveCounts.entries()].filter(([slug, count]) => given.get(slug) !== count);
+  if (mismatched.length > 0) {
+    throw refuse(
+      `${mismatched.length} live tenant(s) have no exactly-matching --confirm-live "<slug>:<count>" -- refusing the whole apply, nothing written`,
+    );
+  }
+  return true;
 }
 
 const CANDIDATE_LINES_SQL = `
@@ -134,11 +374,40 @@ async function fingerprint(client) {
   return { database: db.rows[0].db, tenantIds: tenants.rows.map((t) => t.id) };
 }
 
+/** tenantId -> slug, for exactly the tenant ids given (SA-403's allow-list needs the slug). */
+async function fetchSlugById(client, tenantIds) {
+  if (tenantIds.length === 0) return new Map();
+  const res = await client.query('SELECT id, slug FROM "Tenant" WHERE id = ANY($1::text[])', [
+    tenantIds,
+  ]);
+  return new Map(res.rows.map((t) => [t.id, t.slug]));
+}
+
 async function dryRun() {
-  const url = await resolveTarget();
-  console.log(`${TAG}: target ${redactUrl(url)} DRY-RUN`);
-  const client = new pg.Client(dialConfig(url));
-  await client.connect();
+  // Exclusion list is OPTIONAL for the dry run — but --apply always requires one, and --apply
+  // refuses unless the list it is given hashes the same as the one recorded here. Run the dry run
+  // with the same list you intend to --apply with.
+  let exclusion = null;
+  try {
+    const excludeFileArg = argOf("--exclude-file");
+    if (excludeFileArg || process.env.B2169_EXCLUDE_TENANT_IDS != null) {
+      exclusion = parseExclusionList({ excludeFileArg });
+    }
+  } catch (e) {
+    console.error(`${TAG}: ${e.message}`);
+    return 1;
+  }
+
+  let url, client;
+  try {
+    url = await resolveTarget();
+    console.log(`${TAG}: target ${redactUrl(url)} DRY-RUN`);
+    client = new pg.Client(dialConfig(url));
+    await client.connect();
+  } catch (e) {
+    console.error(`${TAG}: ${e.message}`);
+    return 2;
+  }
   try {
     await client.query("BEGIN TRANSACTION READ ONLY");
     await client.query("SET LOCAL statement_timeout = '120s'");
@@ -148,6 +417,7 @@ async function dryRun() {
     const payments = lines.length
       ? (await client.query(PAYMENTS_SQL, [lines.map((l) => l.invoiceId)])).rows
       : [];
+    const slugById = await fetchSlugById(client, [...new Set(lines.map((l) => l.tenantId))]);
     await client.query("ROLLBACK");
 
     const linesByInvoice = new Map();
@@ -187,38 +457,94 @@ async function dryRun() {
       });
     }
 
-    const plan = { generatedAt: new Date().toISOString(), fingerprint: fp, apply };
+    // BELT 2 (external exclusion list, unchanged from #2169): excluded tenants' rows are never
+    // stamped and never counted per-tenant — folded into one aggregate line. No-op when no list
+    // was supplied to this dry run.
+    const excludedIds = exclusion ? exclusion.ids : [];
+    const applyExclPartition = partitionApplyByExclusion(apply, excludedIds);
+    const reviewExclPartition = partitionReviewByExclusion(review, excludedIds);
+    const excludedLineCount = applyExclPartition.excludedCount + reviewExclPartition.excludedCount;
+    const excludedTenantIds = new Set([
+      ...applyExclPartition.excludedTenantIds,
+      ...reviewExclPartition.excludedTenantIds,
+    ]);
+
+    // BELT 1 (SA-403 default allow-list): of what BELT 2 kept, only test-tenant rows are planned
+    // unless --live-tenant-override says otherwise. Also folded into one aggregate, never named.
+    const liveOverride = process.argv.includes("--live-tenant-override");
+    const applyAllowPartition = partitionByAllowList(
+      applyExclPartition.kept,
+      slugById,
+      liveOverride,
+    );
+    const reviewAllowPartition = partitionByAllowList(
+      reviewExclPartition.kept,
+      slugById,
+      liveOverride,
+    );
+    const finalApply = applyAllowPartition.kept;
+    const finalReview = reviewAllowPartition.kept;
+    const liveSkippedCount = applyAllowPartition.skippedCount + reviewAllowPartition.skippedCount;
+    const liveSkippedTenantIds = new Set([
+      ...applyAllowPartition.skippedTenantIds,
+      ...reviewAllowPartition.skippedTenantIds,
+    ]);
+
+    const plan = {
+      generatedAt: new Date().toISOString(),
+      fingerprint: fp,
+      apply: finalApply,
+      exclusionHash: exclusion ? exclusionSetHash(exclusion.ids) : null,
+    };
     const hash = sha256(plan);
     const dir = resolve(REPO_ROOT, "local-assets/handoff", new Date().toISOString().slice(0, 10));
     mkdirSync(dir, { recursive: true });
     const file = resolve(dir, `2169-plan-${Date.now()}.json`);
-    writeFileSync(file, JSON.stringify({ ...plan, planHash: hash, review }, null, 2));
+    const excludedSummary = exclusion
+      ? { lines: excludedLineCount, tenants: excludedTenantIds.size }
+      : null;
+    writeFileSync(
+      file,
+      JSON.stringify({ ...plan, planHash: hash, review: finalReview, excludedSummary }, null, 2),
+    );
 
-    // Aggregate counts PER TENANT ID only — never an invoice id, line id or tenant slug.
+    // Aggregate counts PER TENANT ID only — never an invoice id, line id or tenant slug. Excluded
+    // tenants never appear here (finalApply/finalReview already omit them).
     const byTenant = new Map();
-    for (const a of apply) {
+    for (const a of finalApply) {
       const t = byTenant.get(a.tenantId) ?? { stamped: 0, review: 0 };
       t.stamped += 1;
       byTenant.set(a.tenantId, t);
     }
-    for (const r of review) {
+    for (const r of finalReview) {
       const t = byTenant.get(r.tenantId) ?? { stamped: 0, review: 0 };
       t.review += 1;
       byTenant.set(r.tenantId, t);
     }
     console.log(`\n${TAG}: ${lines.length} candidate line(s) scanned`);
-    console.log(`  APPLY:  ${apply.length} line(s) total`);
+    console.log(`  APPLY:  ${finalApply.length} line(s) total`);
     console.log(
-      `  REVIEW: ${review.length} invoice(s) total (listed in the plan file; nothing is written for them)`,
+      `  REVIEW: ${finalReview.length} invoice(s) total (listed in the plan file; nothing is written for them)`,
     );
     console.log(`  per tenantId:`);
     for (const [tenantId, counts] of byTenant) {
       console.log(`    ${tenantId}: stamped=${counts.stamped} review=${counts.review}`);
     }
-    console.log(`\nplan: ${file}\nplan hash: ${hash}`);
-    if (apply.length > 0) {
+    if (exclusion) {
       console.log(
-        `\nto apply: node ${SELF.replace(/\\/g, "/")} --apply --plan ${file.replace(/\\/g, "/")} --confirm-plan ${hash} --guard-sha <sha> --i-have-a-fresh-backup`,
+        `  excluded: ${excludedLineCount} line(s) across ${excludedTenantIds.size} tenant(s)`,
+      );
+    }
+    console.log(
+      `  live-skipped: ${liveSkippedCount} line(s) across ${liveSkippedTenantIds.size} tenant(s)${liveOverride ? " (override was on for THIS dry run — re-check --confirm-live at apply time)" : ""}`,
+    );
+    console.log(`\nplan: ${file}\nplan hash: ${hash}`);
+    if (finalApply.length > 0) {
+      console.log(
+        `\nto apply: node ${SELF.replace(/\\/g, "/")} --apply --plan ${file.replace(/\\/g, "/")} --confirm-plan ${hash} --guard-sha <sha> --i-have-a-fresh-backup --exclude-file <same list>` +
+          (liveOverride
+            ? ` --live-tenant-override --confirm-live "<slug>:<count>" [--confirm-live "<slug-2>:<count-2>" ...]`
+            : ""),
       );
     }
     return 0;
@@ -252,8 +578,19 @@ async function apply() {
     );
     return 1;
   }
+
+  // Gate 0 (#2169 ruling): a non-empty tenant exclusion list, resolved and validated BEFORE
+  // anything below touches a database — env var or an out-of-repo --exclude-file.
+  let exclusion;
+  try {
+    exclusion = parseExclusionList({ excludeFileArg: argOf("--exclude-file") });
+  } catch (e) {
+    console.error(`${TAG}: ${e.message}`);
+    return 1;
+  }
+
   const saved = JSON.parse(readFileSync(planFile, "utf8"));
-  const { planHash, review: _review, ...plan } = saved;
+  const { planHash, review: _review, excludedSummary: _excludedSummary, ...plan } = saved;
   if (sha256(plan) !== confirmPlan || planHash !== confirmPlan) {
     console.error(`${TAG}: --confirm-plan does not match the plan file's own hash -- refusing`);
     return 1;
@@ -265,32 +602,66 @@ async function apply() {
     return 1;
   }
 
-  const url = await resolveTarget();
-  console.log(`${TAG}: target ${redactUrl(url)} APPLY (${plan.apply.length} line(s))`);
-  const client = new pg.Client(dialConfig(url));
-  await client.connect();
+  // Gate 7: the exclusion list given now must be the SAME one the dry run recorded (hash of the
+  // sorted set, never the ids themselves).
+  if (plan.exclusionHash !== exclusionSetHash(exclusion.ids)) {
+    console.error(
+      `${TAG}: the exclusion list's hash does not match the dry-run plan's -- re-run the dry run with this same list first`,
+    );
+    return 1;
+  }
+
+  // Defensive re-filter: should be a no-op given the hash match above (the dry run already
+  // excluded these rows before saving the plan), but guarantees an excluded tenant can never be
+  // stamped even if the plan file was hand-edited.
+  const {
+    kept,
+    excludedCount: reFilteredCount,
+    excludedTenantIds: reFilteredTenants,
+  } = partitionApplyByExclusion(plan.apply, exclusion.ids);
+  if (reFilteredCount > 0) {
+    console.error(
+      `${TAG}: the plan still contains ${reFilteredCount} line(s) across ${reFilteredTenants.size} excluded tenant(s) -- refusing (was the plan file hand-edited?)`,
+    );
+    return 1;
+  }
+
+  let url, client;
+  try {
+    url = await resolveTarget();
+    console.log(
+      `${TAG}: target ${redactUrl(url)} APPLY (${kept.length} line(s) proposed, excluding ${exclusion.ids.length} tenant(s))`,
+    );
+    client = new pg.Client(dialConfig(url));
+    await client.connect();
+  } catch (e) {
+    console.error(`${TAG}: ${e.message}`);
+    return 2;
+  }
   try {
     await client.query("BEGIN");
     if (JSON.stringify(await fingerprint(client)) !== JSON.stringify(plan.fingerprint)) {
       throw refuse("DB fingerprint changed since the dry run (database or tenants differ)");
     }
-    const tenantIds = [...new Set(plan.apply.map((a) => a.tenantId))];
-    const slugs = await client.query('SELECT id, slug FROM "Tenant" WHERE id = ANY($1::text[])', [
-      tenantIds,
-    ]);
-    const slugById = new Map(slugs.rows.map((t) => [t.id, t.slug]));
-    const live = tenantIds.filter((id) => !isTestTenant(slugById.get(id)));
-    if (live.length > 0) {
-      const phrase = `APPLY ${plan.apply.length} LINES`;
-      if (!process.argv.includes("--live-tenant-override") || argOf("--confirm") !== phrase) {
-        throw refuse(
-          `${live.length} LIVE tenant(s) in this plan: pass --live-tenant-override --confirm "${phrase}"`,
-        );
+
+    // Gate 8 (SA-403 BELT 1): default allow-list, re-derived fresh (never trusts the dry run's
+    // classification of test vs. live). Without --live-tenant-override, live rows are simply
+    // skipped (not an abort). With it, every live tenant remaining needs an EXACT --confirm-live
+    // "<slug>:<count>" match or the whole apply is refused — nothing written.
+    const tenantIds = [...new Set(kept.map((a) => a.tenantId))];
+    const slugById = await fetchSlugById(client, tenantIds);
+    const liveOverride = process.argv.includes("--live-tenant-override");
+    const allow = partitionByAllowList(kept, slugById, liveOverride);
+    const stampSet = allow.kept;
+    if (liveOverride) {
+      const liveCounts = liveTenantStampCounts(stampSet, slugById);
+      if (liveCounts.size > 0) {
+        assertLiveTenantConfirmations(liveCounts, allArgsOf("--confirm-live"));
       }
     }
 
     let stamped = 0;
-    for (const a of plan.apply) {
+    for (const a of stampSet) {
       const row = (
         await client.query(
           'SELECT "invoiceId", description, "unitPrice", "updatedAt", "systemKind" FROM "InvoiceItem" WHERE id = $1',
@@ -327,6 +698,14 @@ async function apply() {
     }
     await client.query("COMMIT");
     console.log(`${TAG}: committed — ${stamped} line(s) stamped`);
+    if (saved.excludedSummary) {
+      console.log(
+        `excluded: ${saved.excludedSummary.lines} line(s) across ${saved.excludedSummary.tenants} tenant(s)`,
+      );
+    }
+    console.log(
+      `live-skipped: ${allow.skippedCount} line(s) across ${allow.skippedTenantIds.size} tenant(s)`,
+    );
     return 0;
   } catch (e) {
     await client.query("ROLLBACK").catch(() => undefined);
@@ -408,10 +787,176 @@ function selfTest() {
   console.log(
     `${enumPinOk ? "ok  " : "FAIL"} NSF_FEE_SYSTEM_KIND ("${NSF_FEE_SYSTEM_KIND}") is a member of finance.prisma's InvoiceItemSystemKind (${JSON.stringify(schemaMembers)})`,
   );
+
+  // ─── SA-403: exclusion list, default allow-list, live-tenant confirmation (pure, no database) ──
+  // Fake tenant ids / slugs ONLY — never real ones — and the pin at the end re-checks that this
+  // whole block never printed one: every check() call below is captured, not sent straight to
+  // stdout, and only replayed (still id-free — every case name is a fixed, static string) once the
+  // capture confirms no fake id or slug leaked into it.
+  let sa403Failed = 0;
+  let sa403Total = 0;
+  const sa403Lines = [];
+  const check = (name, ok) => {
+    sa403Total += 1;
+    if (!ok) sa403Failed += 1;
+    sa403Lines.push(`${ok ? "ok  " : "FAIL"} ${name}`);
+  };
+  const threw = (fn) => {
+    try {
+      fn();
+      return false;
+    } catch {
+      return true;
+    }
+  };
+
+  check(
+    "parseExclusionEnvList: comma/whitespace separated, deduped",
+    JSON.stringify(parseExclusionEnvList("tenant-excl-1, tenant-excl-2  tenant-excl-1")) ===
+      JSON.stringify(["tenant-excl-1", "tenant-excl-2"]),
+  );
+  check(
+    "parseExclusionFileContents: comments and blank lines ignored",
+    JSON.stringify(
+      parseExclusionFileContents("tenant-excl-1\n# a comment\n\n  tenant-excl-2 # trailing\n"),
+    ) === JSON.stringify(["tenant-excl-1", "tenant-excl-2"]),
+  );
+  check(
+    "parseExclusionList: an all-whitespace env value throws (empty, never an empty list)",
+    threw(() => parseExclusionList({ env: { B2169_EXCLUDE_TENANT_IDS: "  , " } })),
+  );
+  check(
+    "parseExclusionList: neither source given throws",
+    threw(() => parseExclusionList({ env: {} })),
+  );
+  check(
+    "parseExclusionList: --exclude-file resolving inside the repo throws",
+    threw(() =>
+      parseExclusionList({
+        env: {},
+        excludeFileArg: "exclude.txt",
+        repoRoot: "/repo",
+        resolveRealPath: (p) => (p === "/repo" ? "/repo" : "/repo/exclude.txt"),
+        readFileText: () => "tenant-excl-1\n",
+      }),
+    ),
+  );
+  check(
+    "parseExclusionList: an out-of-repo --exclude-file parses",
+    (() => {
+      const r = parseExclusionList({
+        env: {},
+        excludeFileArg: "/outside/exclude.txt",
+        repoRoot: "/repo",
+        resolveRealPath: (p) => (p === "/repo" ? "/repo" : "/outside/exclude.txt"),
+        readFileText: () => "tenant-excl-1\ntenant-excl-2\n",
+      });
+      return JSON.stringify(r.ids) === JSON.stringify(["tenant-excl-1", "tenant-excl-2"]);
+    })(),
+  );
+  check(
+    "exclusionSetHash: stable under reordering (sorted before hashing)",
+    exclusionSetHash(["tenant-excl-2", "tenant-excl-1"]) ===
+      exclusionSetHash(["tenant-excl-1", "tenant-excl-2"]),
+  );
+  check(
+    "exclusionSetHash: a different set hashes differently",
+    exclusionSetHash(["tenant-excl-1"]) !== exclusionSetHash(["tenant-excl-1", "tenant-excl-2"]),
+  );
+
+  {
+    const applyRows = [
+      { lineId: "li-1", tenantId: "tenant-excl-1" },
+      { lineId: "li-2", tenantId: "tenant-keep-1" },
+    ];
+    const p = partitionApplyByExclusion(applyRows, ["tenant-excl-1"]);
+    check(
+      "partitionApplyByExclusion: excluded rows filtered out of the plan and counted",
+      p.kept.length === 1 &&
+        p.kept[0].tenantId === "tenant-keep-1" &&
+        p.excludedCount === 1 &&
+        p.excludedTenantIds.size === 1,
+    );
+  }
+  {
+    const reviewRows = [
+      { invoiceId: "inv-1", tenantId: "tenant-excl-1", lineIds: ["li-1", "li-2"] },
+      { invoiceId: "inv-2", tenantId: "tenant-keep-1", lineIds: ["li-3"] },
+    ];
+    const p = partitionReviewByExclusion(reviewRows, ["tenant-excl-1"]);
+    check(
+      "partitionReviewByExclusion: a REVIEW entry's excluded LINES are counted, not the entry",
+      p.kept.length === 1 && p.excludedCount === 2 && p.excludedTenantIds.size === 1,
+    );
+  }
+
+  {
+    const slugById = new Map([
+      ["tenant-test-1", "test"],
+      ["tenant-live-1", "live-fake-1"],
+    ]);
+    const rows = [
+      { lineId: "li-1", tenantId: "tenant-test-1" },
+      { lineId: "li-2", tenantId: "tenant-live-1" },
+    ];
+    const noOverride = partitionByAllowList(rows, slugById, false);
+    check(
+      "partitionByAllowList: default — a live-shaped tenant's row is skipped and counted",
+      noOverride.kept.length === 1 &&
+        noOverride.kept[0].tenantId === "tenant-test-1" &&
+        noOverride.skippedCount === 1 &&
+        noOverride.skippedTenantIds.size === 1,
+    );
+    const withOverride = partitionByAllowList(rows, slugById, true);
+    check(
+      "partitionByAllowList: --live-tenant-override keeps every row",
+      withOverride.kept.length === 2 && withOverride.skippedCount === 0,
+    );
+    const liveCounts = liveTenantStampCounts(withOverride.kept, slugById);
+    check(
+      "liveTenantStampCounts: counts only the non-test-tenant rows, keyed by slug",
+      liveCounts.size === 1 && liveCounts.get("live-fake-1") === 1,
+    );
+    check(
+      "assertLiveTenantConfirmations: an exact slug:count match passes",
+      !threw(() => assertLiveTenantConfirmations(liveCounts, ["live-fake-1:1"])),
+    );
+    check(
+      "assertLiveTenantConfirmations: a count mismatch throws (refuses the WHOLE apply)",
+      threw(() => assertLiveTenantConfirmations(liveCounts, ["live-fake-1:2"])),
+    );
+    check(
+      "assertLiveTenantConfirmations: a missing confirmation throws",
+      threw(() => assertLiveTenantConfirmations(liveCounts, [])),
+    );
+  }
+  check(
+    "parseConfirmLiveArg: parses '<slug>:<count>'",
+    (() => {
+      const r = parseConfirmLiveArg("live-fake-1:3");
+      return r.slug === "live-fake-1" && r.count === 3;
+    })(),
+  );
+  check(
+    "parseConfirmLiveArg: a non-integer count throws",
+    threw(() => parseConfirmLiveArg("live-fake-1:abc")),
+  );
+
+  // The pin itself: nothing above may have printed a fake id or slug — console output is
+  // aggregate-only by contract, in --self-test as much as in a real run. Every case name is a
+  // fixed, static string, so this should always be true; asserted rather than assumed.
+  const FAKE_NEEDLES = ["tenant-excl-1", "tenant-excl-2", "tenant-keep-1", "live-fake-1"];
+  const noLeaks = !FAKE_NEEDLES.some((needle) => sa403Lines.some((line) => line.includes(needle)));
+  sa403Total += 1;
+  if (!noLeaks) sa403Failed += 1;
+  sa403Lines.push(`${noLeaks ? "ok  " : "FAIL"} --self-test output never names a fake id or slug`);
+  for (const line of sa403Lines) console.log(line);
+  failed += sa403Failed;
+
   console.log(
     failed
       ? `${TAG} self-test: ${failed} FAILED`
-      : `${TAG} self-test: all ${cases.length + 1} passed`,
+      : `${TAG} self-test: all ${cases.length + 1 + sa403Total} passed`,
   );
   return failed ? 1 : 0;
 }
