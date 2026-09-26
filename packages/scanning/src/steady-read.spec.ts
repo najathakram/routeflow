@@ -1,4 +1,5 @@
 import {
+  clearAfterAbsence,
   createSteadyReadState,
   STEADY_READ_MAX_GAP_MS,
   STEADY_READ_MIN_FRAMES,
@@ -121,5 +122,26 @@ describe("trackSteadyRead", () => {
     s = trackSteadyRead(s, "A", STEADY_READ_MAX_GAP_MS + 1).next; // reset to count 1 @ t
     const r = trackSteadyRead(s, "A", STEADY_READ_MAX_GAP_MS + 1 + 100); // 100ms later — continues
     expect(r.next[0].count).toBe(2);
+  });
+});
+
+describe("afterAbsence mark (#2131 @1f8b1ea4 review)", () => {
+  it("is set only when the frame restarts the streak, and carried while it continues", () => {
+    let r = trackSteadyRead(createSteadyReadState(), "A", 0, true);
+    expect(r.afterAbsence).toBe(true);
+    r = trackSteadyRead(r.next, "A", 100, false); // continuing: the flag argument is ignored
+    expect(r.afterAbsence).toBe(true);
+    r = trackSteadyRead(r.next, "A", 100 + STEADY_READ_MAX_GAP_MS + 1, false); // restart, not absent
+    expect(r.afterAbsence).toBe(false);
+  });
+
+  it("clearAfterAbsence drops the mark for that code only, keeping its streak", () => {
+    let s = trackSteadyRead(createSteadyReadState(), "A", 0, true).next;
+    s = trackSteadyRead(s, "B", 10, true).next;
+    s = clearAfterAbsence(s, "A");
+    const a = trackSteadyRead(s, "A", 100);
+    expect(a.afterAbsence).toBe(false);
+    expect(a.next[0].count).toBe(2);
+    expect(trackSteadyRead(s, "B", 110).afterAbsence).toBe(true);
   });
 });

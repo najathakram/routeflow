@@ -71,6 +71,11 @@ export interface SteadyReadSlot {
   lastSeenAt: number;
   /** Consecutive frames (each within the gap tolerance of the last) that read `code`. */
   count: number;
+  /**
+   * The caller's mark, set when this streak (re)started: the code had been absent before it.
+   * Carried for the life of the streak until the caller clears it (`clearAfterAbsence`).
+   */
+  afterAbsence?: boolean;
 }
 
 /** MRU-first, capped at `STEADY_READ_SLOTS` — one entry per recently-seen code. */
@@ -80,6 +85,8 @@ export interface SteadyReadResult {
   /** True once THIS code's streak has reached `STEADY_READ_MIN_FRAMES`, and stays true
    *  for every further frame of the same held code. */
   steady: boolean;
+  /** This code's current streak began after an absence (see `SteadyReadSlot.afterAbsence`). */
+  afterAbsence: boolean;
   next: SteadyReadState;
 }
 
@@ -98,12 +105,29 @@ export function trackSteadyRead(
   state: SteadyReadState,
   code: string,
   now: number,
+  /** Used only if this frame (re)starts the streak: mark it `afterAbsence`. */
+  absentIfRestarted: boolean = false,
 ): SteadyReadResult {
   const idx = state.findIndex((slot) => slot.code === code);
   const prev = idx >= 0 ? state[idx] : null;
   const continuesStreak = !!prev && now - prev.lastSeenAt <= STEADY_READ_MAX_GAP_MS;
   const count = continuesStreak ? prev!.count + 1 : 1;
-  const head: SteadyReadSlot = { code, lastSeenAt: now, count };
+  const afterAbsence = continuesStreak ? !!prev!.afterAbsence : absentIfRestarted;
+  const head: SteadyReadSlot = {
+    code,
+    lastSeenAt: now,
+    count,
+    ...(afterAbsence && { afterAbsence }),
+  };
   const rest = state.filter((_, i) => i !== idx).slice(0, STEADY_READ_SLOTS - 1);
-  return { steady: count >= STEADY_READ_MIN_FRAMES, next: [head, ...rest] };
+  return { steady: count >= STEADY_READ_MIN_FRAMES, afterAbsence, next: [head, ...rest] };
+}
+
+/** Clears `code`'s `afterAbsence` mark once the caller has honoured it (one accept per absence). */
+export function clearAfterAbsence(state: SteadyReadState, code: string): SteadyReadState {
+  return state.map((slot) =>
+    slot.code === code && slot.afterAbsence
+      ? { code, lastSeenAt: slot.lastSeenAt, count: slot.count }
+      : slot,
+  );
 }

@@ -28,7 +28,14 @@
  * thin, and this file's own logic — the only NEW logic REG-B202 adds — unit
  * tests in the plain node Jest env, the same way `scan-ladder.ts` does.
  */
-import { gateScan, touchSeen, type ScanCandidates, type ScanGateState } from "./scan-loop";
+import {
+  gateScan,
+  isAbsentFromGate,
+  isTrackedByGate,
+  touchSeen,
+  type ScanCandidates,
+  type ScanGateState,
+} from "./scan-loop";
 import {
   completeResolve,
   createPendingBuffer,
@@ -36,7 +43,12 @@ import {
   type PendingBufferState,
 } from "./scan-pending-buffer";
 import { isWithinAimBox, type AimBoxRect, type BarcodeBoundsLike } from "./aim-box";
-import { createSteadyReadState, trackSteadyRead, type SteadyReadState } from "./steady-read";
+import {
+  clearAfterAbsence,
+  createSteadyReadState,
+  trackSteadyRead,
+  type SteadyReadState,
+} from "./steady-read";
 
 export interface ScanEngineState {
   gate: ScanGateState | null;
@@ -137,17 +149,21 @@ export interface ContinuousFrameOptions {
  * A continuous-mode camera frame decoded `code` at `now` — composes the aim box,
  * steady-read and dedupe gate filters ahead of the buffer, in that order:
  *
- *  1. Aim box (if given): a frame whose center falls outside it is treated as noise —
- *     not a candidate scan at all. Nothing else below runs; no clock moves.
+ *  1. Aim box (if given): a frame whose center falls outside it is not a candidate scan.
+ *     For a code the gate does not track it is pure noise — nothing moves. For a code the
+ *     gate ALREADY tracks it still `touchSeen`s: the item is in view, just off-centre, so
+ *     drifting out of the box and back is not an absence (#2131 @1f8b1ea4 review, MED).
  *  2. Steady-read: tracks this code's own hold streak. Not yet steady ⇒ this frame is
  *     "seen" (see `touchSeen`) so the gate's `lastSeenAt` clock stays fresh while the
  *     streak fills, but `lastAcceptAt` is left untouched — nothing is accepted yet.
  *  3. Only once steady does the REAL dedupe gate run (`gateScan`) and, on accept, push
  *     to the buffer — a genuinely new item is accepted once, a continuously held one
  *     never re-accepts because its `lastSeenAt` never goes stale (step 2 keeps refreshing
- *     it every frame the code stays in the box), and a deliberate re-present still clears
- *     once the code has ACTUALLY left frame for `ABSENCE_GAP_MS` (no `touchSeen` calls to
- *     paper over the absence).
+ *     it every frame the code stays in view), and a deliberate re-present still clears
+ *     once the code has ACTUALLY left frame for `ABSENCE_GAP_MS`: that absence is read off
+ *     the gate on the frame that restarts the streak — before its own `touchSeen` — and
+ *     marked on the streak, so the ramp-up frames' touches cannot erase it; the steady
+ *     frame honours the mark once (#2131 @1f8b1ea4 review, HIGH).
  *
  * This is the ONE place all three concerns compose — see steady-read.ts's own doc for
  * the two failure modes (a held code's own dedupe clock going stale, a slow decoder's
@@ -160,10 +176,22 @@ export function continuousFrameScanned(
   opts: ContinuousFrameOptions = {},
 ): ScanEngineStep & { next: ContinuousScanState } {
   if (opts.aimBox && !isWithinAimBox(opts.bounds, opts.aimBox)) {
-    return { next: state, startResolving: null, indicator: null };
+    if (!isTrackedByGate(state.gate, code, opts.candidatesOf)) {
+      return { next: state, startResolving: null, indicator: null };
+    }
+    return {
+      next: { ...state, gate: touchSeen(state.gate, code, now, opts.candidatesOf) },
+      startResolving: null,
+      indicator: null,
+    };
   }
 
-  const { steady, next: nextSteady } = trackSteadyRead(state.steady, code, now);
+  const absent = isAbsentFromGate(state.gate, code, now, opts.candidatesOf);
+  const {
+    steady,
+    afterAbsence,
+    next: nextSteady,
+  } = trackSteadyRead(state.steady, code, now, absent);
 
   if (!steady) {
     const nextGate = touchSeen(state.gate, code, now, opts.candidatesOf);
@@ -174,7 +202,7 @@ export function continuousFrameScanned(
     };
   }
 
-  const gated = gateScan(code, state.gate, now, undefined, opts.candidatesOf);
+  const gated = gateScan(code, state.gate, now, undefined, opts.candidatesOf, afterAbsence);
   if (!gated.accept) {
     return {
       next: { ...state, gate: gated.state, steady: nextSteady },
@@ -185,7 +213,7 @@ export function continuousFrameScanned(
   const wasResolving = state.buffer.isResolving;
   const result = pushScan(state.buffer, code);
   return {
-    next: { gate: gated.state, buffer: result.next, steady: nextSteady },
+    next: { gate: gated.state, buffer: result.next, steady: clearAfterAbsence(nextSteady, code) },
     startResolving: result.startResolving,
     indicator: indicatorEdge(wasResolving, result.next.isResolving),
   };

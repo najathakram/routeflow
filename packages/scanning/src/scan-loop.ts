@@ -146,6 +146,12 @@ export function gateScan(
   now: number,
   cooldownMs: number = SCAN_COOLDOWN_MS,
   candidatesOf: ScanCandidates = rawCandidates,
+  /**
+   * The caller already observed this code absent for `ABSENCE_GAP_MS` (see `isAbsentFromGate`)
+   * before frames it had to `touchSeen` while deciding — skip the absence check; the
+   * cooldown still applies (#2131 @1f8b1ea4 review, HIGH).
+   */
+  absenceObserved: boolean = false,
 ): { accept: boolean; state: ScanGateState } {
   if (!code.trim()) {
     return {
@@ -168,7 +174,8 @@ export function gateScan(
   const accept =
     !slot ||
     slot.lastAcceptAt === NEVER_ACCEPTED ||
-    (now - slot.lastAcceptAt >= cooldownMs && now - slot.lastSeenAt >= ABSENCE_GAP_MS);
+    (now - slot.lastAcceptAt >= cooldownMs &&
+      (absenceObserved || now - slot.lastSeenAt >= ABSENCE_GAP_MS));
 
   // The matched slot moves to the head under the code just decoded, so a label
   // read as EAN-13 this frame and UPC-A the next keeps ONE set of clocks.
@@ -269,3 +276,39 @@ export interface ScanFeedback {
  * `feedback.action`.
  */
 export type ScanOutcome = { close?: boolean; feedback?: ScanFeedback } | void;
+
+function findSlot(
+  state: ScanGateState | null,
+  code: string,
+  candidatesOf: ScanCandidates,
+): ScanSlot | null {
+  if (!state || !code.trim()) return null;
+  const candidates = new Set(candidatesOf(code));
+  return (
+    readSlots(state).find((slot) => intersectsCandidates(candidates, slot.code, candidatesOf)) ??
+    null
+  );
+}
+
+/** True when the gate already tracks `code` (same candidate matching as `gateScan`). */
+export function isTrackedByGate(
+  state: ScanGateState | null,
+  code: string,
+  candidatesOf: ScanCandidates = rawCandidates,
+): boolean {
+  return findSlot(state, code, candidatesOf) !== null;
+}
+
+/**
+ * True when `code` has not been seen by the gate for at least `ABSENCE_GAP_MS` as of `now`
+ * (or was never seen). Read it BEFORE a `touchSeen` for the same frame.
+ */
+export function isAbsentFromGate(
+  state: ScanGateState | null,
+  code: string,
+  now: number,
+  candidatesOf: ScanCandidates = rawCandidates,
+): boolean {
+  const slot = findSlot(state, code, candidatesOf);
+  return !slot || now - slot.lastSeenAt >= ABSENCE_GAP_MS;
+}
