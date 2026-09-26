@@ -2505,6 +2505,8 @@ describe("RoutesService", () => {
         productId: true,
         product: { select: { id: true, name: true, unit: true } },
         qty: true,
+        // SA-345a: the legacy delivered column (a line with no DeliveryMutation row reads it).
+        deliveredQty: true,
         unitPrice: true,
         status: true,
         subtotal: true,

@@ -97,3 +97,29 @@ export function billableQtyFromBasis(
   if (delivered === undefined) return qty;
   return Math.min(qty, delivered);
 }
+
+/**
+ * SA-345/345a: the "delivered" READER — what a line has actually been delivered, used by the
+ * delivered-basis invoice rebuilds (reconcileOrderDraftInvoice, rebuildSiblingDrafts and, through
+ * it, the deposit-mirror rebuild) and, via `deliveredSoFarForLine`, by the stepper's remaining.
+ * SAME `DeliveredBasis` object as `billableQtyFromBasis`, a different question: coverage asks
+ * "what may still be billed" (no rows ⇒ the full qty, SA-093a); this asks "what was delivered"
+ * (no rows ⇒ nothing is assumed beyond the legacy column).
+ *
+ * PER LINE: a line WITH its own qualifying rows takes Σrows (rows beat a stale SET column,
+ * SA-113a); a line with NO own row takes `deliveredQty ?? 0` — master's rule, never the full qty
+ * and never 0 just because it is unseen. Orders delivered before evidence rows existed (or whose
+ * rows a pre-B803 reopen deleted) carry the column as their ONLY evidence. The order-level "no
+ * rows at all" case is unreachable from today's close (a reconciled order always got a row in the
+ * same tx, routes.service.ts completeWithPayment) but is exactly a legacy order, and falls out of
+ * the same per-line rule. Capped at qty so a stale column can never bill units nobody ordered.
+ */
+export function deliveredQtyFromBasis(
+  li: { id: string; qty: unknown; deliveredQty?: unknown },
+  basis: DeliveredBasis,
+): number {
+  const qty = Number(li.qty ?? 0);
+  const own = basis.byLineId.get(li.id);
+  const delivered = own !== undefined ? own : Number(li.deliveredQty ?? 0);
+  return Math.max(0, Math.min(qty, delivered));
+}

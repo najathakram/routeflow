@@ -62,6 +62,24 @@ export function sumDeliveredSoFar(
     .reduce((s, r) => s + (r.type === "REFUSED" ? 0 : Number(r.quantityDelivered)), 0);
 }
 
+/**
+ * SA-345a: the PER-LINE delivered-so-far reader — the stepper's remaining (`qty − this`) and the
+ * delivered-basis billable figure are ONE number (`deliveredQtyFromBasis`, delivered-basis-by-
+ * line.ts, is its invoice-side twin). A line WITH its own qualifying rows takes their stop-
+ * relative Σ (rows beat a stale column, SA-113a); a line with NO row anywhere takes the legacy
+ * `deliveredQty ?? 0` — the column IS the evidence for orders delivered before rows existed.
+ * "Has rows" is judged BEFORE excluding stop S: a line whose only rows are S's own reads 0
+ * (they are excluded), never the column those very rows produced.
+ */
+export function deliveredSoFarForLine(
+  rows: RawEvidenceRowWithStop[] | undefined,
+  excludeStopId: string | null | undefined,
+  columnQty: unknown,
+): number {
+  if (!rows || rows.length === 0) return Math.max(0, Number(columnQty ?? 0));
+  return sumDeliveredSoFar(rows, excludeStopId);
+}
+
 /** Structural contract for the one Prisma call this needs — never the whole client. */
 export interface DeliveryMutationFindManyClient {
   deliveryMutation: {
@@ -90,12 +108,22 @@ export async function fetchEvidenceByLine(
  * evidence rows, never incremented or overwritten. READ-ONLY (the caller issues the actual
  * `orderItem.update` writes itself, so the units_v1/selling-restrictions AST writer-classifiers
  * — which only scan class-method bodies — still see every deliveredQty write where it happens).
+ *
+ * SA-345a: a line with NO qualifying row is NOT returned — its `deliveredQty` column is the
+ * legacy evidence (orders delivered before rows existed) and must survive a later visit that
+ * touched a sibling line. The one exception is `deletedRows` (reopenStop): a line whose rows
+ * were just deleted recomputes to its remaining Σ (0 when none is left), because its column
+ * was derived from exactly those rows.
  */
 export async function deliveredQtyRecompute(
   db: { deliveryMutation: { findMany(args: any): Promise<any[]> } },
   orderId: string,
   itemIds: string[],
+  deletedRows: ReadonlyArray<{ orderItemId?: string | null }> = [],
 ): Promise<Array<{ id: string; deliveredQty: number }>> {
   const basis = await deliveredBasisByLine(db as any, orderId);
-  return itemIds.map((id) => ({ id, deliveredQty: basis.byLineId.get(id) ?? 0 }));
+  const lost = new Set(deletedRows.map((r) => r.orderItemId));
+  return itemIds
+    .filter((id) => basis.byLineId.has(id) || lost.has(id))
+    .map((id) => ({ id, deliveredQty: basis.byLineId.get(id) ?? 0 }));
 }

@@ -48,7 +48,7 @@ import {
   resolveProductMatches,
   withOrderRecomputeLock,
 } from "./finalize-order-recompute";
-import { deliveredBasisByLine, billableQtyFromBasis } from "./delivered-basis-by-line";
+import { deliveredBasisByLine, deliveredQtyFromBasis } from "./delivered-basis-by-line";
 import { assertOrderItemIdsBelongToOrder, logSkippedMatches } from "./order-item-provenance";
 import { EntitlementsService } from "../billing/entitlements.service";
 import {
@@ -1354,9 +1354,10 @@ export class InvoicesService {
    * null) when the order has no open draft.
    *  - basis "order"     → mirror the full (non-cancelled) order line items.
    *  - basis "delivered" → bill only the delivered quantity per line, from the
-   *    evidence-keyed basis (SA-113a, delivered-basis-by-line.ts) — never
-   *    OrderItem.deliveredQty — so it's idempotent across batches and excludes
-   *    refused/zero lines.
+   *    evidence-keyed basis (SA-113a, delivered-basis-by-line.ts deliveredQtyFromBasis:
+   *    a line's own rows win; a line with none falls back to the legacy
+   *    OrderItem.deliveredQty column, SA-345a) — so it's idempotent across batches and
+   *    excludes refused/zero lines.
    * Keeps the invoice DRAFT, rebuilds its items, recomputes totals (proportional
    * tax-exempt-aware), and RESETS each OrderItem.invoicedQty to exactly the qty
    * this draft now bills (0 for unbilled lines) — the draft is the order's sole
@@ -1445,14 +1446,14 @@ export class InvoicesService {
     if (!order) return null;
 
     const tenantId = this.prisma.getTenantId();
-    // SA-113a/B785: "delivered" bills the evidence-keyed basis (DeliveryMutation rows),
-    // never the OrderItem.deliveredQty column — see delivered-basis-by-line.ts's own doc.
+    // SA-113a/B785: "delivered" bills the evidence-keyed basis (DeliveryMutation rows); a line
+    // with no row of its own reads the legacy column (SA-345a, deliveredQtyFromBasis's doc).
     const evidenceBasis =
       opts.basis === "delivered" ? await deliveredBasisByLine(db, orderId) : null;
     const billable = order.lineItems
       .map((li: any) => ({
         li,
-        billQty: evidenceBasis ? billableQtyFromBasis(li, evidenceBasis) : Number(li.qty),
+        billQty: evidenceBasis ? deliveredQtyFromBasis(li, evidenceBasis) : Number(li.qty),
       }))
       .filter((x: any) => x.billQty > 0.001);
 
@@ -1810,7 +1811,7 @@ export class InvoicesService {
    * Shared sibling-aware rebuild core for reconcileOrderDeliveredInvoices and
    * reconcileOrderDraftInvoice's split path. Rebuilds each (draft, lines) pair from ONLY
    * its own lines at `billQty` (basis "order" → li.qty, "delivered" → the evidence basis,
-   * SA-113a — never OrderItem.deliveredQty),
+   * SA-113a; a line with no row of its own reads the legacy column, SA-345a),
    * allocates the order's regular tax across the drafts by subtotal (rounding remainder
    * to the largest, mirroring createSplitInvoices → Σ == the single-invoice tax), keeps
    * each DRAFT, and SETs each line's invoicedQty to what its one draft now bills (each
@@ -1832,11 +1833,11 @@ export class InvoicesService {
     const isTaxExempt = !!customer?.isTaxExempt;
     const orderSubtotal = Number(order.subtotal) || 1;
     const orderTax = Number(order.tax) || 0;
-    // SA-113a/B785: same evidence basis as reconcileOrderDraftInvoice — one derivation,
-    // never OrderItem.deliveredQty. Fetched once per order, not per draft/line.
+    // SA-113a/B785: same evidence basis and reader as reconcileOrderDraftInvoice — one
+    // derivation. Fetched once per order, not per draft/line.
     const evidenceBasis = basis === "delivered" ? await deliveredBasisByLine(db, order.id) : null;
     const billQtyOf = (li: any) =>
-      evidenceBasis ? billableQtyFromBasis(li, evidenceBasis) : Number(li.qty);
+      evidenceBasis ? deliveredQtyFromBasis(li, evidenceBasis) : Number(li.qty);
 
     const perDraft = pairs.map(({ draft, lines }) => {
       const priorPackByLine = priorUnitsPerBoxMap(draft.items ?? []);

@@ -16,8 +16,8 @@
 import {
   DeliveryMutationFindManyClient,
   RawEvidenceRowWithStop,
+  deliveredSoFarForLine,
   fetchEvidenceByLine,
-  sumDeliveredSoFar,
 } from "./delivered-so-far";
 
 type EvidenceByLine = Record<string, Record<string, RawEvidenceRowWithStop[]>>;
@@ -29,7 +29,7 @@ type EvidenceByLine = Record<string, Record<string, RawEvidenceRowWithStop[]>>;
  * fetch, before a RUN_STOP_INCLUDE-derived response leaves the service.
  */
 export function attachDeliveredSoFar<
-  TLine extends { id: string },
+  TLine extends { id: string; deliveredQty?: unknown },
   TOrder extends { id: string; lineItems?: TLine[] | null },
   TStop extends { id: string; orders?: TOrder[] | null },
 >(stops: TStop[], evidenceByLine: EvidenceByLine) {
@@ -39,7 +39,8 @@ export function attachDeliveredSoFar<
       ...o,
       lineItems: (o.lineItems ?? []).map((li) => ({
         ...li,
-        deliveredSoFar: sumDeliveredSoFar(evidenceByLine[o.id]?.[li.id], s.id),
+        // SA-345a: a line with no row anywhere reads the legacy column (see deliveredSoFarForLine).
+        deliveredSoFar: deliveredSoFarForLine(evidenceByLine[o.id]?.[li.id], s.id, li.deliveredQty),
       })),
     })),
   }));
@@ -51,7 +52,7 @@ export function attachDeliveredSoFar<
  * with each stop's own rows excluded from its own lines' sum.
  */
 export async function withDeliveredSoFar<
-  TLine extends { id: string },
+  TLine extends { id: string; deliveredQty?: unknown },
   TOrder extends { id: string; lineItems?: TLine[] | null },
   TStop extends { id: string; orders?: TOrder[] | null },
 >(db: DeliveryMutationFindManyClient, stops: TStop[]) {
@@ -66,7 +67,7 @@ export async function withDeliveredSoFar<
  * call sites otherwise duplicate byte-for-byte.
  */
 export async function withDeliveredSoFarForRunsPage<
-  TLine extends { id: string },
+  TLine extends { id: string; deliveredQty?: unknown },
   TOrder extends { id: string; lineItems?: TLine[] | null },
   TStop extends { id: string; orders?: TOrder[] | null },
   TRun extends { stops: TStop[] },

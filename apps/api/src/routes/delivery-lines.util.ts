@@ -1,5 +1,5 @@
 import { BadRequestException, ConflictException, NotFoundException } from "@nestjs/common";
-import { fetchEvidenceByLine, sumDeliveredSoFar } from "./delivered-so-far";
+import { deliveredSoFarForLine, fetchEvidenceByLine } from "./delivered-so-far";
 
 /**
  * SA-151 review: `stop.status === "COMPLETED"` is checked BEFORE the caller's transaction in
@@ -56,11 +56,19 @@ export async function assertDeliveriesFitStop(
     id: string;
     orderId: string;
     qty: unknown;
+    deliveredQty?: unknown;
     name: string | null;
     product: { name: string } | null;
   }[] = await tx.orderItem.findMany({
     where: { id: { in: deliveries.map((d) => d.orderItemId) } },
-    select: { id: true, orderId: true, qty: true, name: true, product: { select: { name: true } } },
+    select: {
+      id: true,
+      orderId: true,
+      qty: true,
+      deliveredQty: true,
+      name: true,
+      product: { select: { name: true } },
+    },
   });
   const byId = new Map(items.map((i) => [i.id, i]));
   const onStop = new Set(stopOrders.map((o) => o.id));
@@ -78,7 +86,11 @@ export async function assertDeliveriesFitStop(
     if (!onStop.has(item.orderId)) {
       throw new BadRequestException(`Order item ${d.orderItemId} does not belong to this stop`);
     }
-    const deliveredSoFar = sumDeliveredSoFar(evidenceByLine[item.orderId]?.[item.id], stopId);
+    const deliveredSoFar = deliveredSoFarForLine(
+      evidenceByLine[item.orderId]?.[item.id],
+      stopId,
+      item.deliveredQty,
+    );
     // SA-151 review: clamp at 0 — a data anomaly (deliveredSoFar > qty, e.g. a manual DB fix)
     // must never surface as a negative "remaining", which would make the bound below nonsensical.
     const remaining = Math.max(0, Number(item.qty) - deliveredSoFar);

@@ -227,6 +227,18 @@ describe("RoutesService — delivery lines must belong to this stop and fit the 
     );
     prisma.driver.findFirst.mockResolvedValue(null);
     const tx = txFor();
+    // SA-345a: the recompute only rewrites a line that HAS rows (a legacy line's column is left
+    // alone), so give it the row a real completion leaves behind — this stop's own, hence
+    // excluded from delivered-so-far at the fit-check and counted by the recompute.
+    tx.deliveryMutation.findMany.mockResolvedValue([
+      {
+        orderId: "ord-1",
+        orderItemId: "oi-1",
+        routeRunStopId: "stop-1",
+        type: "DELIVERED",
+        quantityDelivered: 5,
+      },
+    ]);
     prisma.routeRunStop.findUniqueOrThrow.mockResolvedValue({ id: "stop-1", status: "COMPLETED" });
 
     for (const q of [5, 3]) {

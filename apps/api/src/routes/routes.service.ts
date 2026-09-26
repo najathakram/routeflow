@@ -3074,13 +3074,13 @@ export class RoutesService {
         reason: "stop reopened",
       });
 
-      // 1. Delete delivery mutations for this stop — capture order ids FIRST (SA-151): `stop.orders`
-      // is CURRENT linkage, so an order moved to a DIFFERENT stop since this one completed no
-      // longer appears there, yet its evidence is deleted here too — recompute must cover it.
-      const deletedRows: Array<{ orderId: string }> = await tx.deliveryMutation.findMany({
-        where: { routeRunStopId: stopId },
-        select: { orderId: true },
-      });
+      // 1. Delete this stop's delivery mutations — capture their orders/lines FIRST (SA-151): an
+      // order moved to another stop is no longer in `stop.orders`, yet its evidence goes too.
+      const deletedRows: Array<{ orderId: string; orderItemId: string | null }> =
+        await tx.deliveryMutation.findMany({
+          where: { routeRunStopId: stopId },
+          select: { orderId: true, orderItemId: true },
+        });
       const staleDeliveredQtyOrderIds = new Set(deletedRows.map((r) => r.orderId));
       for (const order of stop.orders) staleDeliveredQtyOrderIds.add(order.id);
       await tx.deliveryMutation.deleteMany({ where: { routeRunStopId: stopId } });
@@ -3105,7 +3105,7 @@ export class RoutesService {
           select: { id: true },
         });
         const itemIds = lines.map((li) => li.id);
-        for (const u of await deliveredQtyRecompute(tx, orderId, itemIds)) {
+        for (const u of await deliveredQtyRecompute(tx, orderId, itemIds, deletedRows)) {
           await tx.orderItem.update({
             where: { id: u.id },
             data: { deliveredQty: u.deliveredQty },
