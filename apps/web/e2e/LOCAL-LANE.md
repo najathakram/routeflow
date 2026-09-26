@@ -76,6 +76,8 @@ the allow-list — those secrets are not expected to be present on every contrib
 `local:e2e:all` runs everything (no `--project` filter) and is a **report**, not a gate: a
 failure in a project outside the allow-list above is recorded in the PR, not fixed by this lane.
 
+**Local super-admin (D-03, #1803).** `npm run local:sa` mints a throwaway `local-sa` SUPER_ADMIN in the **local** compose DB only (it refuses any non-local database; there is no override) with a random per-run password, written to the gitignored, mode-600 `local-assets/local-sa.env`. `npm run local:e2e` then loads `PLAYWRIGHT_SA_USERNAME` / `PLAYWRIGHT_SA_PASSWORD` from it (an owner-only file on POSIX). **It WINS over an exported `PLAYWRIGHT_SA_*`**: the local lane targets only the local stack, and an exported value for some other target used to shadow it silently and fail the setup login with a 401. When it overrides an exported value, `local-env` prints a loud warning naming the variable (never a value); unset the exported one to silence it, so the `super-admin` and `impersonation-signout` projects can run locally. Re-running `local:sa` rotates the password (and clears any lockout on it); re-run it after `npm run local:reset`, which wipes the DB and the user. The target is resolved by the same parser `pg` uses and any `?host=` / `?hostaddr=` / `?service=` query, multi-host list or socket path is refused. **Windows:** POSIX mode bits do not exist there (Node reports 666), so the 0600 is a no-op and the folder's ACLs (your user profile) are what protect `local-assets/local-sa.env`; `local-env` loads it without the mode check. No API path, no fixed credential, nothing prod-capable.
+
 If a future addition pushes `local:e2e` past 10 minutes, trim the allow-list here **and** in
 root `package.json`'s `local:e2e` script, and say in the PR what was dropped and why.
 
@@ -150,14 +152,11 @@ Workaround: run `next dev` manually inside your own worktree on an explicit port
 (`npx next dev -H 127.0.0.1 -p <port>`), then attach the pane with `preview_start({url:
 "http://localhost:<port>"})` instead of `{name}`.
 
-**The mobile-UA proxy trap.** The pane's viewport emulation for any width under 768 (including 390) also sends an Android Chrome user agent. `middleware.ts`'s `isMobileUserAgent(ua)` check
-then proxies any path that isn't explicitly carved out (marketing, `/api/`, web-only paths) to
-the **separate Expo mobile-web deployment** — so a brand-new dev-only route gets silently
-rewritten away to a build that has never heard of it, and you see that build's own "Unmatched
-Route" 404 instead of anything from your own app. Nothing in the response says "proxied" — it
-just looks like your route doesn't exist. Workaround: append `?desktop=1` (the same escape
-hatch the middleware ships for a real user intentionally viewing desktop on a phone) to bypass
-the mobile redirect regardless of viewport width.
+**The mobile-UA proxy trap — REMOVED.** `middleware.ts` used to rewrite any phone-UA request to
+a separate Expo mobile-web deployment, which made the pane's mobile viewport emulation (any
+width under 768, including 390) proxy every dev-only route to a build that had never heard of
+it. Owner ruling: phones now get the same redesigned Next web site as desktop, so the proxy —
+and this trap — no longer exist; the middleware doesn't branch on user-agent at all.
 
 ## Shared auth state audit (item 6a)
 

@@ -338,6 +338,7 @@ model RegulatedLedgerParkedReversal {
   resolvedById        String?
   unitsPerBoxSupplied Int? // the split the operator supplied (Int, like Product.unitsPerBox)
   resolvedEntryId     String? // the REVERSAL row the resolution booked
+  resolvedReason      String? // the operator's own resolve-time reason (distinct from `reason`, the PARK reason)
 
   tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 

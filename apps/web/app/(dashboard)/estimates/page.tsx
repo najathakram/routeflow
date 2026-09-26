@@ -14,6 +14,7 @@ import {
   Badge,
 } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
+import { scheduleScannerRefocus } from "@/lib/refocus-scanner";
 import { useUrlSearch } from "@/lib/hooks/useUrlSearch";
 import { useUrlPage, useClampPage } from "@/lib/hooks/useUrlPage";
 import {
@@ -225,7 +226,7 @@ function CreateEstimateModal({
       );
       setProductSearch("");
       setDebouncedProductSearch("");
-      setTimeout(() => productSearchRef.current?.focus(), 50);
+      scheduleScannerRefocus(productSearchRef, 50);
       return;
     }
     const upb: number | undefined = product.unitsPerBox ? Number(product.unitsPerBox) : undefined;
@@ -258,7 +259,7 @@ function CreateEstimateModal({
       const { items: _, ...rest } = e;
       return rest;
     });
-    setTimeout(() => productSearchRef.current?.focus(), 50);
+    scheduleScannerRefocus(productSearchRef, 50);
   };
 
   // Barcode / Enter handler

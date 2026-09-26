@@ -64,8 +64,8 @@ describe("AnalyticsService — invoiced-sales readers", () => {
       // avgCostAfter snapshots: 2.00 until June 10, then 3.00 — the two
       // invoices straddle the change and must be costed differently.
       prisma.stockMovement.findMany.mockResolvedValue([
-        { productId: "p1", createdAt: new Date("2026-06-01"), avgCostAfter: D(2) },
-        { productId: "p1", createdAt: new Date("2026-06-10"), avgCostAfter: D(3) },
+        { productId: "p1", effectiveAt: new Date("2026-06-01"), avgCostAfter: D(2) },
+        { productId: "p1", effectiveAt: new Date("2026-06-10"), avgCostAfter: D(3) },
       ]);
 
       const result = await service.getGrossMarginTrend();
@@ -147,7 +147,7 @@ describe("AnalyticsService — invoiced-sales readers", () => {
       expect(movementArgs.where).toEqual({
         productId: { in: ["p1"] },
         avgCostAfter: { not: null },
-        createdAt: { lte: expect.any(Date) },
+        effectiveAt: { lte: expect.any(Date) },
       });
     });
   });
@@ -342,7 +342,7 @@ describe("AnalyticsService — invoiced-sales readers", () => {
       ]);
       prisma.stockMovement.findMany
         .mockResolvedValueOnce([]) // nothing since the cutoff
-        .mockResolvedValueOnce([{ productId: "p1", createdAt: daysAgo(40) }]);
+        .mockResolvedValueOnce([{ productId: "p1", effectiveAt: daysAgo(40) }]);
 
       const res = await service.getDeadStock(30);
 
@@ -357,9 +357,9 @@ describe("AnalyticsService — invoiced-sales readers", () => {
 
       await service.getDeadStock(30);
 
-      const { createdAt } = prisma.stockMovement.findMany.mock.calls[0][0].where;
-      expect(createdAt.gte).toEqual(expect.any(Date));
-      expect(createdAt.lte).toBeUndefined();
+      const { effectiveAt } = prisma.stockMovement.findMany.mock.calls[0][0].where;
+      expect(effectiveAt.gte).toEqual(expect.any(Date));
+      expect(effectiveAt.lte).toBeUndefined();
     });
 
     it("a from/to range REPLACES the rolling window — activity outside it doesn't rescue", async () => {
@@ -380,9 +380,9 @@ describe("AnalyticsService — invoiced-sales readers", () => {
       // Display fields stay "most recent activity ever", not range-clipped.
       expect(res[0].lastMovement).toEqual(new Date("2026-06-20"));
       // The movement query is bounded to the same window.
-      const { createdAt } = prisma.stockMovement.findMany.mock.calls[0][0].where;
-      expect(createdAt.gte).toEqual(new Date("2026-05-01"));
-      expect(createdAt.lte.toISOString()).toContain("2026-05-31T23:59:59");
+      const { effectiveAt } = prisma.stockMovement.findMany.mock.calls[0][0].where;
+      expect(effectiveAt.gte).toEqual(new Date("2026-05-01"));
+      expect(effectiveAt.lte.toISOString()).toContain("2026-05-31T23:59:59");
     });
   });
 
@@ -451,8 +451,8 @@ describe("AnalyticsService — invoiced-sales readers", () => {
       systemConfig.get.mockResolvedValue("true");
       prisma.invoice.findMany.mockResolvedValue([tobaccoInvoice]);
       prisma.stockMovement.findMany.mockResolvedValue([
-        { productId: "pt", createdAt: new Date("2026-06-01"), avgCostAfter: D(10) },
-        { productId: "pn", createdAt: new Date("2026-06-01"), avgCostAfter: D(2) },
+        { productId: "pt", effectiveAt: new Date("2026-06-01"), avgCostAfter: D(10) },
+        { productId: "pn", effectiveAt: new Date("2026-06-01"), avgCostAfter: D(2) },
       ]);
 
       const result = await service.getGrossMarginTrend();
@@ -516,13 +516,13 @@ describe("AnalyticsService — invoiced-sales readers", () => {
       const day2 = new Date("2026-06-15");
       prisma.stockMovement.findMany.mockResolvedValue([
         {
-          createdAt: day1,
+          effectiveAt: day1,
           unitCost: D(2),
           avgCostAfter: D(2),
           type: "PURCHASE",
         },
         {
-          createdAt: day2,
+          effectiveAt: day2,
           unitCost: D(3.15),
           avgCostAfter: D(3.15),
           type: "COST_BASIS",

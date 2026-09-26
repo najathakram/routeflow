@@ -114,9 +114,37 @@ export function packFromOwnSplit(input: {
   return Number.isInteger(pack) && pack > 1 ? pack : null;
 }
 
+/**
+ * Does a stored box/piece split add up to its qty? True only when the pack is known and greater than 1 and
+ * `boxes x pack + pieces === qty` (tolerance 1e-6 on qty). A split with no pack (null, 0 or 1) is never
+ * "matching": it cannot be checked. ONE definition, used by the invoice edit plan and the invoice -> order
+ * back-sync (SA-257), so a split one writes is never one the other would refuse.
+ */
+export function splitMatchesQty(input: {
+  qty: number;
+  boxes?: number | null;
+  pieces?: number | null;
+  unitsPerBox?: number | null;
+}): boolean {
+  const pack = Number(input.unitsPerBox ?? 0);
+  if (!(pack > 1)) return false;
+  const boxes = Number(input.boxes ?? 0);
+  const pieces = Number(input.pieces ?? 0);
+  return Math.abs(boxes * pack + pieces - Number(input.qty ?? 0)) < 1e-6;
+}
+
 export interface LineSubtotalInput {
   unitPrice: number;
-  /** Total qty in pieces — kept for backward compat & non-boxed products. */
+  /**
+   * B683: on a NON-boxed product this is genuinely pieces (the selling unit
+   * IS the piece). On a BOXED product (`unitsPerBox > 1`) with no `boxes`/
+   * `pieces` split, this is the legacy/lenient convention instead: `qty` is
+   * the SELLING-UNIT (box) count and `unitPrice` the per-box price — NOT
+   * pieces, despite the name. `computeLineSubtotal` cannot tell the two
+   * conventions apart on its own; it trusts the caller. See
+   * `computeLineSubtotal`'s own fallback-branch comment, and `lineAmbiguity`/
+   * `buildLine`, which refuse this exact ambiguous shape going forward.
+   */
   qty: number;
   /** Number of full boxes (only meaningful when unitsPerBox > 1). */
   boxes?: number | null;
@@ -148,7 +176,17 @@ export function computeLineSubtotal(input: LineSubtotalInput): number {
     return roundMoney(unitPrice * boxEquivalent);
   }
 
-  // Non-boxed product (or caller didn't split): unitPrice is per piece, qty in pieces.
+  // B683: two DIFFERENT shapes reach here, and this line prices them identically
+  // (unitPrice * qty) without being able to tell them apart:
+  //   - a genuinely non-boxed product (unitsPerBox <= 1): qty is pieces,
+  //     unitPrice is per piece — the comment this replaced was accurate here.
+  //   - a BOXED product (unitsPerBox > 1) whose caller sent a bare qty with no
+  //     boxes/pieces split (the legacy/lenient/ambiguous shape `lineAmbiguity`
+  //     and `buildLine` refuse going forward, B644/B682): qty is conventionally
+  //     the SELLING-UNIT (box) count and unitPrice the per-box price — NEVER
+  //     pieces. A caller needing an actual piece count for this shape (e.g. a
+  //     regulated per-unit tax basis) must multiply by unitsPerBox itself; see
+  //     manual-invoice-lines.ts's pieceQty for the pattern.
   return roundMoney(unitPrice * Math.max(0, qty - free));
 }
 
@@ -514,11 +552,19 @@ export interface CategoryTaxSnapshot {
  * full Prisma model, just the fields `categoryTaxSnapshotOf`/`computeCategoryTax` actually
  * read. A `loadCategoryMapForProducts`-shaped loader's `Map<string, TrackedCategoryRow>` is
  * the ONE place callers should type this against, instead of each hand-rolling its own `any`.
+ *
+ * `rate` accepts a Decimal-shaped value (this package stays framework-agnostic — never
+ * `@prisma/client`'s own `Decimal` type — but the real `TrackedCategory.rate` column IS one;
+ * a bare `number | string` here was never actually checked against it, since every real caller
+ * passes an untyped `tx`). `priceIncludesTax` is non-optional: `TrackedCategory`'s own column
+ * is `NOT NULL` — unlike the snapshot trio this function PRODUCES (all three nullable on
+ * OrderItem/InvoiceItem, for a non-regulated line), the LIVE category row always has a real
+ * boolean here.
  */
 export interface TrackedCategoryRow {
   taxType: CategoryTaxType;
-  rate: number | string;
-  priceIncludesTax?: boolean | null;
+  rate: number | string | { toNumber(): number };
+  priceIncludesTax: boolean;
 }
 
 /**
@@ -1018,6 +1064,33 @@ export function formatQtySplit({ qty, boxes, pieces, unitLabel, boxLabel }: QtyS
   if (b > 0) parts.push(`${b} ${b === 1 ? boxSingular : boxPlural}`);
   if (p > 0) parts.push(`${p} ${label}`);
   return parts.length > 0 ? parts.join(" + ") : "0";
+}
+
+export interface UnitLineQtyInput {
+  qty: number | string;
+  boxes?: number | null;
+  pieces?: number | null;
+  /** units_v1 (2026-09-19): the line's own selling unit ("Case") when this line
+   *  was sold by a non-pack unit rather than by loose pieces. Empty/whitespace
+   *  is the pack (every existing call, no `unitLabel`, is unchanged). */
+  unitLabel?: string | null;
+}
+
+/**
+ * The quantity text of a line that may be sold by its own unit (units_v1) — the ONE
+ * formatter for the invoice/order qty cell on web, api (PDF + email) and mobile, so a
+ * units_v1 line reads the same everywhere: "3 Cases" (boxed split), never "3 boxes"
+ * (B653), and "5 Piece" for a factor-1 unit (no split to attach the label to — web
+ * parity, B757 follow-up), never a bare "5". A pack line (no `unitLabel`) is EXACTLY
+ * `formatQtySplit` — byte-identical to before this function existed, so a tenant
+ * without `flag.units_v1` (which can never hold a unit line) sees no change.
+ */
+export function invoiceLineQtyText(item: UnitLineQtyInput): string {
+  const split = { qty: item.qty, boxes: item.boxes, pieces: item.pieces };
+  const label = (item.unitLabel ?? "").trim();
+  if (!label) return formatQtySplit(split);
+  if (item.boxes == null && item.pieces == null) return `${formatQtySplit(split)} ${label}`;
+  return formatQtySplit({ ...split, boxLabel: label });
 }
 
 // ─── Per-unit cost rounding ───────────────────────────────────────────────────

@@ -23,6 +23,7 @@ import type {
   BuyerStockAlerts,
   ExpiringAuthorization,
   LockedCategory,
+  OrderTrackingResponse,
   ReplenishmentEstimate,
   ShelfResponse,
   SubmitBuyerAuthorizationInput,
@@ -141,6 +142,8 @@ export interface BuyerOrder {
     promoFreeUnits?: number | null;
     /** Per-line note, buyer-visible. */
     notes?: string | null;
+    /** units_v1: sold by a non-pack unit (Case, Pallet, Piece…) — null/absent = the pack. */
+    unitLabel?: string | null;
     product?: { id: string; name: string; unit?: string };
   }>;
   /** P5-09: post-dispatch change requests, newest first. */
@@ -549,19 +552,8 @@ export function useBuyerOrder(id: string) {
   });
 }
 
-export interface BuyerOrderTracking {
-  status: string;
-  tracking: {
-    runId: string;
-    routeName: string | null;
-    driverName: string | null;
-    runStatus: string;
-    stopNumber: number;
-    stopStatus: string;
-    stopsAhead: number;
-    estimatedArrivalWindow: { start: string | null; end: string | null };
-  } | null;
-}
+/** GET /buyer/orders/:id/tracking — the shared wire shape (#2095), never redeclared here. */
+export type BuyerOrderTracking = OrderTrackingResponse;
 
 /** Live-ish: polls while the order can still move. There is no per-stop push
  *  to the buyer socket namespace today — only order.statusChanged is wired

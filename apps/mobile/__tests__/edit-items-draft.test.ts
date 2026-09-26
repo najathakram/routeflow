@@ -10,10 +10,13 @@ import { join } from "path";
 import { computeLineSubtotal } from "@routeflow/pricing";
 import { buildOrderItemDiff } from "../lib/order-item-diff";
 import {
+  applyBoxEdit,
+  applyPieceEdit,
   applyPickToDraft,
   deserializeEditItemsSnapshot,
   draftTrayRows,
   editItemsSnapshotKey,
+  EDIT_ITEMS_SNAPSHOT_VERSION,
   hasUnsavedItemEdits,
   hasUnsavedWork,
   hydrateFromOrder,
@@ -29,7 +32,6 @@ import {
   snapshotBaseline,
   stagedDiffItems,
   EDIT_ITEMS_SNAPSHOT_TTL_MS,
-  EDIT_ITEMS_SNAPSHOT_VERSION,
   type BaselineOrderLike,
   type DraftItem,
   type StagedEdit,
@@ -263,6 +265,70 @@ describe("edit-items-draft: the on-device snapshot (REG-EDIT-DRAFT-B)", () => {
     expect(back?.draft.p1.promoBaseUnits).toBe(2);
     expect(back?.draft.p1.substituteProductId).toBe("p9");
     expect(back?.floorAcked).toEqual(["L1"]);
+  });
+
+  it("SA-085h LOW: normalizes a unit line an OLD on-device snapshot saved un-normalized (qty 480, boxes 2 -> count 2)", () => {
+    // A snapshot written by a build from before hydrateFromOrder normalized qty to the
+    // COUNT — exactly the server's own pack-piece storage shape for a 2-Case line.
+    const staleRaw = JSON.stringify({
+      v: EDIT_ITEMS_SNAPSHOT_VERSION,
+      orderId: "o1",
+      savedAt: 1_700_000_000_000,
+      baseline: "b",
+      orderUpdatedAt: null,
+      draft: {
+        p1: {
+          productId: "p1",
+          qty: 480,
+          boxes: 2,
+          pieces: 0,
+          unitsPerBox: 240,
+          unitLabel: "Case",
+          unitPrice: 220,
+          catalogPrice: 24,
+          name: "Case widget",
+          boxSplit: true,
+        },
+      },
+      unlisted: [],
+      pendingDeletes: [],
+      selectedCreditIds: [],
+      creditsTouched: false,
+      floorAcked: [],
+    });
+    const back = deserializeEditItemsSnapshot(staleRaw);
+    expect(back?.draft.p1.qty).toBe(2);
+    expect(back?.draft.p1.boxes).toBeUndefined();
+    expect(back?.draft.p1.pieces).toBeUndefined();
+    expect(back?.draft.p1.boxSplit).toBe(false);
+    expect(back?.draft.p1.unitLabel).toBe("Case");
+  });
+
+  it("SA-085h LOW: an already-normalized unit line (boxes unset) round-trips untouched", () => {
+    const raw = JSON.stringify({
+      v: EDIT_ITEMS_SNAPSHOT_VERSION,
+      orderId: "o1",
+      savedAt: 1_700_000_000_000,
+      baseline: "b",
+      orderUpdatedAt: null,
+      draft: {
+        p1: {
+          productId: "p1",
+          qty: 2,
+          unitsPerBox: 240,
+          unitLabel: "Case",
+          unitPrice: 220,
+          catalogPrice: 24,
+          name: "Case widget",
+        },
+      },
+      unlisted: [],
+      pendingDeletes: [],
+      selectedCreditIds: [],
+      creditsTouched: false,
+      floorAcked: [],
+    });
+    expect(deserializeEditItemsSnapshot(raw)?.draft.p1.qty).toBe(2);
   });
 
   it("REG-EDIT-DRAFT-B: deserializeEditItemsSnapshot never throws on hostile input", () => {
@@ -560,15 +626,15 @@ describe("edit-items-draft: the picker's drawer (REG-EDIT-DRAFT-C)", () => {
  * re-denominated a repacked legacy split line.
  */
 describe("edit-items-draft: hydrateFromOrder reads a line's OWN pack snapshot (B707)", () => {
-  it("B707a: a unit line (boxes 3, snapshot 288, 'Case') hydrates unitsPerBox/unitLabel from ITS OWN line, not the live product's now-12 pack — untouched, no UPDATE", () => {
+  it("B707a / SA-085f #4: a unit line (boxes 3, snapshot 288, 'Case') hydrates unitsPerBox/unitLabel from ITS OWN line, and normalizes qty to the COUNT (boxes/pieces dropped) — untouched, no UPDATE", () => {
     const order: BaselineOrderLike = {
       id: "o1",
       lineItems: [
         {
           id: "L1",
           productId: "p1",
-          qty: 864,
-          boxes: 3,
+          qty: 864, // server's pack-piece storage: 3 cases x 288 = 864
+          boxes: 3, // the COUNT — unit-line-build.ts stores it here for a unit line
           pieces: 0,
           unitsPerBox: 288,
           unitLabel: "Case",
@@ -585,15 +651,22 @@ describe("edit-items-draft: hydrateFromOrder reads a line's OWN pack snapshot (B
     // productId (p1) — a units_v1 two-level order can carry a second line
     // for the SAME product, which a productId key would silently collapse.
     const { draft } = hydrateFromOrder(order);
+    // B775/SA-108: keyed by the line's own id (L1), never productId (p1).
     expect(draft.L1.unitsPerBox).toBe(288);
     expect(draft.L1.unitLabel).toBe("Case");
-    expect(draft.L1.boxes).toBe(3);
+    // SA-085f MEDIUM #4: qty is normalized to the COUNT (3) — never the raw piece-expanded 864 —
+    // and boxes/pieces are dropped, matching what setUnitLabel produces for a freshly-picked
+    // line. The "Qty (Case) N" stepper reads `item.qty` directly; this is what makes it 3, not 480.
+    expect(draft.L1.qty).toBe(3);
+    expect(draft.L1.boxes).toBeUndefined();
+    expect(draft.L1.pieces).toBeUndefined();
+    expect(draft.L1.boxSplit).toBe(false);
 
     const originals = orderOriginals(order);
     expect(stagedDiffItems({ draft, unlisted: [], pendingDeletes: [] }, originals)).toEqual([]);
   });
 
-  it("B707b: editing the same unit line's box count 3 -> 4 sends {id, qty: <count>, unitLabel}, never the piece-expanded 1152", () => {
+  it("B707b: incrementing the same unit line's count 3 -> 4 sends {id, qty:4, unitLabel}, never the piece-expanded 1152", () => {
     const order: BaselineOrderLike = {
       id: "o1",
       lineItems: [
@@ -614,12 +687,39 @@ describe("edit-items-draft: hydrateFromOrder reads a line's OWN pack snapshot (B
       ],
     };
     const { draft } = hydrateFromOrder(order);
-    const edited = { ...draft, L1: { ...draft.L1, boxes: 4 } };
+    // The stepper's own step (stepLineQty's unit branch): +1 on the normalized count.
+    // B775/SA-108: keyed by L1 (the line's own id), never p1 (productId).
+    const edited = { ...draft, L1: { ...draft.L1, qty: draft.L1.qty + 1 } };
     const originals = orderOriginals(order);
 
+    // productId rides along with unitLabel (mobile unit picker, order-item-diff.ts) so the
+    // server's prepareUnitEditContext preloads the product/ladder for this item.
     expect(stagedDiffItems({ draft: edited, unlisted: [], pendingDeletes: [] }, originals)).toEqual(
-      [{ id: "L1", action: "UPDATE", qty: 4, unitLabel: "Case" }],
+      [{ id: "L1", action: "UPDATE", qty: 4, unitLabel: "Case", productId: "p1" }],
     );
+  });
+
+  it("units_v1: a brand-new unit-sold draft line (picker, no lineId) maps basePrice off the unit's OWN price, never the pack's catalogPrice", () => {
+    // Same defect shape as B465 on #1252: without unitPriceBase, stagedDiffItems fed
+    // buildOrderItemDiff a basePrice of 24 (the Box's catalogPrice) against a Case unitPrice of
+    // 220 — an untouched picker selection would misclassify as a $196 manual override and send
+    // an unwanted unitPrice/overrideReason on a line nobody typed a price into.
+    const draft: Record<string, DraftItem> = {
+      p9: {
+        productId: "p9",
+        qty: 3, // the unit COUNT
+        unitsPerBox: null,
+        unitPrice: 220, // set by setUnitLabel to the picked option's own resolved price
+        unitBasePrice: 220, // set alongside it — untouched, so basePrice must equal unitPrice
+        catalogPrice: 24, // the PACK's price — must NOT be used as the comparison base
+        unitLabel: "Case",
+        name: "Case widget",
+        // no lineId: this line was added THIS session via the picker
+      },
+    };
+    expect(stagedDiffItems({ draft, unlisted: [], pendingDeletes: [] }, [])).toEqual([
+      { productId: "p9", qty: 3, unitLabel: "Case" },
+    ]);
   });
 
   it("B707c: a repacked legacy split line (boxes 2, pieces 3, snapshot 12) prices off ITS OWN 12, not the live product's now-24 pack — untouched, no UPDATE", () => {
@@ -742,7 +842,9 @@ describe("edit-items-draft: two same-product lines never collide (B775)", () => 
   it("BOTH lines survive hydration, each keyed by its OWN id — never collapsed to one entry", () => {
     const { draft } = hydrateFromOrder(twoLineOrder());
     expect(Object.keys(draft).sort()).toEqual(["La", "Lb"]);
-    expect(draft.La.qty).toBe(288);
+    // SA-085f MEDIUM #4: La is a unit-labeled (Case) line, so qty is normalized to
+    // the COUNT (1 case) — never the raw piece-expanded 288 (boxes:1 x unitsPerBox:288).
+    expect(draft.La.qty).toBe(1);
     expect(draft.Lb.qty).toBe(3);
   });
 
@@ -961,6 +1063,11 @@ describe("edit-items.tsx source pin: the draft record is never keyed by productI
   const hookSource = stripComments(
     readFileSync(join(__dirname, "../hooks/useEditItemsDraft.ts"), "utf8"),
   );
+  // size-ratchet extraction moved resolveDraftKeyForPick's own call site into
+  // resolvePickTarget (lib/edit-items-draft.ts) — some pins below check there instead.
+  const libSource = stripComments(
+    readFileSync(join(__dirname, "../lib/edit-items-draft.ts"), "utf8"),
+  );
 
   it("no (draft|next|d)[...productId] or (draft|next|d)[p.id] bracket access anywhere in the route file", () => {
     const offenders = source.match(
@@ -982,17 +1089,20 @@ describe("edit-items.tsx source pin: the draft record is never keyed by productI
     expect(source).toMatch(/Object\.entries\(draft\)/);
   });
 
-  it("SA-108d pin 4: resolveDraftKeyForPick's ONLY call form reads draftRef.current, never `draft` and never any updater's own `d`", () => {
-    // All three banned forms: `resolveDraftKeyForPick(draft, ...)` (the
-    // render-time closure — stale across a same-tick burst); `(d, ...)`
-    // (an updater's own param — SA-108a's regression, correct only when
-    // React happens to run THAT updater eagerly, which it does not
-    // reliably for ANY call, first or later, once the alternate fiber
-    // carries stale lanes — SA-108d/E44); and a bare `apply(draftRef...`
-    // typo-shaped call would still need the literal call form below.
-    expect(source).not.toMatch(/resolveDraftKeyForPick\(draft,/);
-    expect(source).not.toMatch(/resolveDraftKeyForPick\(d,/);
-    expect(source).toMatch(/resolveDraftKeyForPick\(draftRef\.current,/);
+  it("SA-108d pin 4: resolvePickTarget's ONLY call form reads draftRef.current, never `draft` and never any updater's own `d`", () => {
+    // All three banned forms: `resolvePickTarget(draft, ...)` (the render-time
+    // closure — stale across a same-tick burst); `(d, ...)` (an updater's own
+    // param — SA-108a's regression, correct only when React happens to run
+    // THAT updater eagerly, which it does not reliably for ANY call, first or
+    // later, once the alternate fiber carries stale lanes — SA-108d/E44); and
+    // a bare `apply(draftRef...` typo-shaped call would still need the
+    // literal call form below. resolvePickTarget itself (lib/edit-items-draft.ts,
+    // size-ratchet extraction) then feeds that same value straight into
+    // resolveDraftKeyForPick as its own `draft` param — never re-closed-over.
+    expect(source).not.toMatch(/resolvePickTarget\(draft,/);
+    expect(source).not.toMatch(/resolvePickTarget\(d,/);
+    expect(source).toMatch(/resolvePickTarget\(draftRef\.current,/);
+    expect(libSource).toMatch(/resolveDraftKeyForPick\(draft,/);
   });
 
   it("SA-108d pin 3: draftRef is assigned in the render body (the per-render mirror) — now inside useEditItemsDraft", () => {
@@ -1123,5 +1233,82 @@ describe("edit-items-draft: applyPickToDraft (SA-108d pin 1 — the transform li
     expect(key2).toBe(key1); // merged into the SAME row, never a second `new:` key
     expect(Object.keys(draftRef)).toEqual([key1]);
     expect(draftRef[key1]).toMatchObject({ qty: 24, boxes: 2, pieces: 0 });
+  });
+});
+
+/**
+ * SA-085i(c): a NON-unit line's Cases/Loose edit must match master's OLD inline rule
+ * byte-for-byte — the typed count REPLACES qty; a legacy line's plain (un-split) qty is
+ * NEVER reinterpreted as loose pieces. The shared sale-line.ts fold (splitFromPrev, correct
+ * for the CREATE screen's own in-session cart accumulation) would read a no-split qty as
+ * pieces, inventing phantom loose units the first time this screen's own steppers touch a
+ * STORED historical line — a real regression the earlier round's setLineBoxes/setLinePieces
+ * routing introduced. Not fixed by that route in THIS PR (a separate, pre-existing fold bug
+ * would need its own fix); applyBoxEdit/applyPieceEdit simply never take it.
+ */
+describe("applyBoxEdit / applyPieceEdit (SA-085i(c))", () => {
+  it("a legacy line (qty 3, boxes null, upb 12) edited via Cases to 4 gives 4 boxes, 0 pieces, qty 48 — NEVER 3 phantom loose pieces", () => {
+    const legacy: DraftItem = {
+      productId: "p1",
+      qty: 3,
+      unitsPerBox: 12,
+      unitPrice: 5,
+      catalogPrice: 5,
+      name: "Legacy widget",
+    };
+    const result = applyBoxEdit(legacy, 4, 12);
+    expect(result.boxes).toBe(4);
+    expect(result.pieces).toBe(0);
+    expect(result.qty).toBe(48);
+    // The shipped-bug reconstruction: the shared fold would read qty:3 as 3 loose pieces
+    // first, giving {boxes:4, pieces:3, qty:51} instead.
+    expect(result.qty).not.toBe(51);
+    expect(result.pieces).not.toBe(3);
+  });
+
+  it("a legacy line's Loose edit is equally unaffected by its own un-split qty", () => {
+    const legacy: DraftItem = {
+      productId: "p1",
+      qty: 3,
+      unitsPerBox: 12,
+      unitPrice: 5,
+      catalogPrice: 5,
+      name: "Legacy widget",
+    };
+    const result = applyPieceEdit(legacy, 5, 12);
+    expect(result.boxes).toBe(0); // cur.boxes ?? 0 — nothing folded in from the plain qty
+    expect(result.pieces).toBe(5);
+    expect(result.qty).toBe(5);
+  });
+
+  it("a unit-sold line refuses the split outright, returning it unchanged", () => {
+    const unitLine: DraftItem = {
+      productId: "p1",
+      qty: 2,
+      unitsPerBox: 240,
+      unitLabel: "Case",
+      unitPrice: 220,
+      catalogPrice: 24,
+      name: "Case widget",
+    };
+    expect(applyBoxEdit(unitLine, 5, 240)).toEqual(unitLine);
+    expect(applyPieceEdit(unitLine, 5, 240)).toEqual(unitLine);
+  });
+
+  it("preserves an ALREADY-split line's other pieces/boxes exactly like master's old rule", () => {
+    const split: DraftItem = {
+      productId: "p1",
+      qty: 27,
+      boxes: 2,
+      pieces: 3,
+      unitsPerBox: 12,
+      unitPrice: 5,
+      catalogPrice: 5,
+      name: "Split widget",
+    };
+    // Setting boxes to 4 keeps the existing 3 loose pieces (master's rule: pcs = cur.pieces).
+    expect(applyBoxEdit(split, 4, 12)).toMatchObject({ boxes: 4, pieces: 3, qty: 51 });
+    // Setting pieces to 5 keeps the existing 2 boxes.
+    expect(applyPieceEdit(split, 5, 12)).toMatchObject({ boxes: 2, pieces: 5, qty: 29 });
   });
 });

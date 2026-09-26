@@ -14,6 +14,7 @@ import { PlatformConfigService } from "../platform-admin/platform-config.service
 import { Prisma, MovementType, PaymentMethod } from "@prisma/client";
 import { costDecimal, nextAverageCost, reverseAverageCost } from "../inventory/costing";
 import { assertBillWithinPo, type BillLinePieces } from "./po-bill-match";
+import { assertPackSizeKnownOrLog } from "./pack-size-gate";
 import { roundMoney } from "@routeflow/pricing";
 import { assertMoneyInvariantsOrThrow } from "../common/money-invariants.util";
 import Anthropic from "@anthropic-ai/sdk";
@@ -320,6 +321,37 @@ export class VendorBillsService {
           "Map every line to a product before raising a purchase order from this bill.",
         );
       }
+      // B743: the raised PO's qtyOrdered/unitCost are taken DIRECTLY from
+      // billLineToPieces's output and become the authoritative stock-mover
+      // for this bill (receive() skips a PO-linked bill entirely) — so an
+      // ambiguous pack here must be caught before the PO is ever raised,
+      // not later at some unrelated PO receive screen.
+      const products = await this.prisma.forTenant().product.findMany({
+        where: { id: { in: [...new Set(lines.map((i) => i.productId))] } },
+        select: {
+          id: true,
+          name: true,
+          unitsPerBox: true,
+          units: { select: { factorToBase: true } },
+        },
+      });
+      const productsById = new Map(products.map((p) => [p.id, p]));
+      assertPackSizeKnownOrLog(
+        this.logger,
+        this.prisma.getTenantId(),
+        lines.map((item, lineIndex) => ({
+          id: null,
+          lineIndex,
+          description: item.description || item.name || "",
+          productId: item.productId,
+          packSize: item.packSize,
+          qty: Number(item.qty ?? 1),
+          unitCost: Number(item.unitCost ?? item.unitPrice ?? 0),
+          product: productsById.get(item.productId),
+        })),
+        !!dto.acknowledgePackSizeUnknown,
+        { path: "raise-po", billId: null, billNumber: null },
+      );
     }
 
     if (dto.purchaseOrderId && !supplierId) {
@@ -457,14 +489,16 @@ export class VendorBillsService {
           include: billInclude,
         });
 
+        // B710: the scan is claimed in THIS transaction, so a second post of one scan is refused
+        // (409) and rolls back its bill, PO and credit draws instead of writing a second restock.
+        if (dto.scanId) await this.claimScanInTx(tx, dto.scanId, created.id);
+
         if (!supplierId) return created;
         return this.applySupplierCreditToBill(tx, created, billInclude);
       })
       .catch((e: unknown) => {
         throw this.translateLinkRace(e, wantsPurchaseOrder || !!dto.purchaseOrderId);
       });
-
-    await this.markScanPosted(dto.scanId, bill.id);
 
     return bill;
   }
@@ -688,20 +722,48 @@ export class VendorBillsService {
   }
 
   /**
-   * Close the loop from bill back to the document it came from. A bad or
-   * foreign scanId must not fail a bill that is already written — `updateMany`
-   * stays tenant-scoped and simply matches nothing.
+   * B710: close the loop from bill back to the scan it came from, inside the bill's own
+   * transaction, as a guarded claim. A scan backs at most one live bill: it is claimable while
+   * not yet POSTED, or once the bill it posted was deleted (the link is nulled) or VOIDed, since
+   * voiding is how an operator undoes a bad post. Each claim is a conditional `updateMany`, so two
+   * concurrent posts serialize on the row and the loser matches nothing: a 409 that rolls its
+   * whole transaction back. A bad or foreign scanId still never fails a bill: the tenant-scoped
+   * lookup finds nothing and the bill is kept, unlinked.
    */
-  private async markScanPosted(scanId: string | undefined, vendorBillId: string): Promise<void> {
-    if (!scanId) return;
-    try {
-      await this.prisma.forTenant().invoiceScan.updateMany({
-        where: { id: scanId },
-        data: { status: "POSTED", vendorBillId },
+  private async claimScanInTx(
+    tx: Prisma.TransactionClient,
+    scanId: string,
+    vendorBillId: string,
+  ): Promise<void> {
+    const data = { status: "POSTED" as const, vendorBillId };
+    const fresh = await tx.invoiceScan.updateMany({
+      where: { id: scanId, OR: [{ status: { not: "POSTED" } }, { vendorBillId: null }] },
+      data,
+    });
+    if (fresh.count > 0) return;
+
+    const scan = await tx.invoiceScan.findFirst({
+      where: { id: scanId },
+      select: { vendorBillId: true, vendorBill: { select: { billNumber: true, status: true } } },
+    });
+    if (!scan) return;
+    if (scan.vendorBill?.status === "VOID") {
+      // Compare-and-swap on the void bill's id: a concurrent re-post that won first moved it on.
+      const repost = await tx.invoiceScan.updateMany({
+        where: { id: scanId, status: "POSTED", vendorBillId: scan.vendorBillId },
+        data,
       });
-    } catch (e) {
-      this.logger.error(`create: failed to mark scan ${scanId} POSTED: ${(e as Error).message}`);
+      if (repost.count > 0) return;
     }
+    const billNumber = scan.vendorBill?.billNumber ?? null;
+    throw new ConflictException({
+      code: "SCAN_ALREADY_POSTED",
+      message: billNumber
+        ? `This scan was already posted as bill ${billNumber}. Void that bill to post the scan again.`
+        : "This scan was already posted. Refresh and check its bill before posting again.",
+      vendorBillId: scan.vendorBillId ?? null,
+      billNumber,
+    });
   }
 
   /**
@@ -922,7 +984,9 @@ export class VendorBillsService {
     const bill = await this.prisma.forTenant().vendorBill.findUnique({
       where: { id },
       include: {
-        items: { include: { product: true } },
+        // `units` (B743): the units_v1 selling ladder is a second signal (alongside
+        // `unitsPerBox`) that a product is known to be boxed — see pack-size-gate.ts.
+        items: { include: { product: { include: { units: { select: { factorToBase: true } } } } } },
         supplier: { select: { id: true, name: true } },
       },
     });
@@ -1009,6 +1073,41 @@ export class VendorBillsService {
         .filter((p) => p.receiveQty.gt(0));
     }
 
+    // B743: a bill line billed in the supplier's own denomination (cases when
+    // packSize > 1) but with no pack stated silently posts as pieces at the
+    // case price once it moves stock below — refuse (once enforced) or log
+    // (while dark). Guard (e) already means a PO-linked bill posts no stock
+    // here at all, so this only applies to bills receiving directly. First
+    // receipt only per line — a partial top-up keeps the basis it was
+    // already posted at, never re-asking.
+    if (bill.purchaseOrderId == null) {
+      assertPackSizeKnownOrLog(
+        this.logger,
+        this.prisma.getTenantId(),
+        plan
+          .filter(({ item }) => item.productId && this.lineReceivedQty(bill, item).lte(0))
+          .map(({ item }) => ({
+            id: item.id,
+            // Opus review (B743 PR A, finding 3): this array is FILTERED
+            // (see .filter above) — indexing it directly gave the position
+            // in the filtered plan, not the line's real position on the
+            // bill. Every line here already carries a real `item.id`
+            // (unlike create()'s raise-PO path, where lineIndex is the only
+            // identifier for a not-yet-persisted line) — findIndex against
+            // the bill's own full item list is the line's true position.
+            lineIndex: bill.items.findIndex((i) => i.id === item.id),
+            description: item.description,
+            productId: item.productId!,
+            packSize: item.packSize,
+            qty: Number(item.qty),
+            unitCost: Number(item.unitCost),
+            product: item.product,
+          })),
+        !!dto?.acknowledgePackSizeUnknown,
+        { path: "receive", billId: bill.id, billNumber: bill.billNumber },
+      );
+    }
+
     // Fully received once every linked line's cumulative receipt covers its
     // qty. Status stays a lossy display blend (recordPayment overwrites it);
     // receipt truth lives in receivedDate + per-line qtyReceived.
@@ -1091,8 +1190,9 @@ export class VendorBillsService {
             performedById: performedById ?? null,
             // Stamp the movement at the BILL date, matching the lot — a
             // backdated bill's cost snapshot must sit at the right point in
-            // the ledger (the lot and the movement used to disagree).
-            createdAt: effectiveDate,
+            // the ledger (the lot and the movement used to disagree). B562:
+            // on effectiveAt (the accounting date); createdAt stays write-once.
+            effectiveAt: effectiveDate,
           },
         });
 
@@ -1109,7 +1209,7 @@ export class VendorBillsService {
         // `throwOnGap: false` — a gap here must flag this ONE line, never
         // abort the whole bill (see the comment above the loop).
         const newer = await tx.stockMovement.count({
-          where: { productId: item.productId, createdAt: { gt: effectiveDate } },
+          where: { productId: item.productId, effectiveAt: { gt: effectiveDate } },
         });
         if (newer > 0) {
           const replay = await this.inventory.recomputeProductInTx(tx, item.productId, {

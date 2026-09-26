@@ -20,6 +20,7 @@ import {
   ChangeRequestType,
   NotificationEvent,
   Prisma,
+  type PriceType,
   UserRole,
   UserStatus,
 } from "@prisma/client";
@@ -28,6 +29,80 @@ import {
   ChangeRequestResolveAction,
   ResolveChangeRequestDto,
 } from "./dto/resolve-change-request.dto";
+
+const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
+
+/**
+ * B673: reconcile a next-delivery ADD_ITEM's FILED box split against the product's LIVE pack.
+ *
+ * A driver's door add is filed as `{ qty: total pieces, boxes, pieces }`. The pack at filing is not
+ * stored, but it is fixed by the payload itself: `(qty - pieces) / boxes`. The split is handed to
+ * create() unchanged when that pack still matches the live one; otherwise the approval is REFUSED,
+ * naming both packs, so the operator can re-quote. Re-splitting against a changed pack would change
+ * either the price or the quantity the customer agreed to, and falling back to the bare `qty` is
+ * the 12x overcharge itself (create() reads a bare qty on a boxed product as a BOX count).
+ * An inconsistent split is refused as INVALID_LINE_SPLIT — never reinterpreted.
+ *
+ * Every refusal is thrown before any write, so the change request stays PENDING. The message
+ * points the operator at DECLINE + a fresh add on the next order — never at approve-at-stop: the
+ * item was not on the truck, approve-at-stop fails once the stop is done, and on an order holding
+ * an old box-unaware line its merge re-prices at 12x (B753(a): $520 for $80). Revisit once B753
+ * is fixed.
+ */
+export function reconcileFiledAddSplit(args: {
+  qty: number;
+  boxes: unknown;
+  pieces: unknown;
+  liveUnitsPerBox: number;
+  productName: string;
+}): { boxes: number; pieces: number } {
+  const { qty, liveUnitsPerBox: liveUpb, productName } = args;
+  const b = args.boxes ?? 0;
+  const p = args.pieces ?? 0;
+  const invalid = (message: string) =>
+    new BadRequestException({ code: "INVALID_LINE_SPLIT", message });
+
+  if (
+    typeof b !== "number" ||
+    typeof p !== "number" ||
+    !Number.isInteger(b) ||
+    !Number.isInteger(p) ||
+    b < 0 ||
+    p < 0
+  ) {
+    throw invalid("boxes and pieces must be non-negative whole numbers");
+  }
+  if (b === 0 && p === 0) throw invalid("a split of 0 boxes and 0 pieces adds nothing");
+  if (!Number.isFinite(qty) || p > qty) {
+    throw invalid(`${plural(p, "loose piece", "loose pieces")} exceed the request's qty (${qty})`);
+  }
+
+  const filed = `${plural(b, "box", "boxes")} + ${plural(p, "piece", "pieces")}`;
+  const refuse = (reason: string) =>
+    new BadRequestException({
+      code: "CHANGE_REQUEST_PACK_CHANGED",
+      message: `Change request filed as ${filed}${reason}. Decline it and re-add the item to the next order.`,
+    });
+
+  if (b === 0) {
+    // Loose pieces only: no filed pack to compare, but the qty must be exactly those pieces.
+    if (qty !== p) throw invalid(`qty (${qty}) does not match ${plural(p, "piece", "pieces")}`);
+    if (liveUpb <= 1) throw refuse(`, but ${productName} is no longer sold by the box`);
+    return { boxes: 0, pieces: p };
+  }
+
+  const filedUpb = (qty - p) / b;
+  if (!Number.isInteger(filedUpb) || filedUpb <= 1) {
+    throw invalid(`qty (${qty}) is not ${filed} of any whole pack size`);
+  }
+  if (liveUpb <= 1) {
+    throw refuse(` at ${filedUpb} per box, but ${productName} is no longer sold by the box`);
+  }
+  if (filedUpb !== liveUpb) {
+    throw refuse(` at ${filedUpb} per box, but ${productName} now sells at ${liveUpb} per box`);
+  }
+  return { boxes: b, pieces: p };
+}
 
 /**
  * P5-09: post-dispatch change-request lifecycle (G6/G7).
@@ -303,9 +378,27 @@ export class ChangeRequestsService {
     // delta is in PIECES and needs the pack size to split. Left null otherwise.
     let boxes: number | null = null;
     let pieces: number | null = null;
+    // D-20 (#1808, SA-330): the SOURCE line's denomination for a CHANGE_QTY rollover — its price ALWAYS, its pack
+    // only when box-aware — carried onto the draft line so a repack or a price change since the sale cannot re-split
+    // or re-quote the copy (see orders/source-line.ts). ADD_ITEM has no source line: a new sale at today's price.
+    let sourceItem: {
+      unitPrice: unknown;
+      priceType: PriceType;
+      originalPrice: unknown;
+      overrideReason: string | null;
+      overriddenBy: string | null;
+    } | null = null;
+    let sourceUpb: number | null = null;
+    // B673: an ADD_ITEM filed WITH a box split (a driver's door add: qty = total pieces, plus
+    // boxes/pieces) is reconciled against the LIVE pack below. A bare qty (the buyer portal's
+    // selling-unit count, stored with boxes/pieces null) is passed to create() untouched.
+    let filedSplit: { boxes: unknown; pieces: unknown } | null = null;
     if (cr.type === ChangeRequestType.ADD_ITEM) {
       productId = cr.productId ?? payload.productId;
       qty = Number(payload.qty);
+      if (payload.boxes != null || payload.pieces != null) {
+        filedSplit = { boxes: payload.boxes, pieces: payload.pieces };
+      }
     } else if (cr.type === ChangeRequestType.CHANGE_QTY) {
       const li = await this.prisma
         .forTenant()
@@ -322,6 +415,7 @@ export class ChangeRequestsService {
         });
       }
       productId = li.productId;
+      sourceItem = li; // the price is carried ALWAYS; the pack (sourceUpb) only when the line is box-aware
 
       // B655: an EXISTING line's rewrite never re-derives its factor from the LIVE product (SA
       // ruling) — only the line's own stored shape decides how the delta is read.
@@ -358,6 +452,7 @@ export class ChangeRequestsService {
             message: `Order line ${li.id} has no derivable pack size — it can't be rolled to the next delivery.`,
           });
         }
+        sourceUpb = upb;
         const split = normalizeBoxesPieces({ qty: delta, unitsPerBox: upb });
         qty = split.qty;
         boxes = split.boxes;
@@ -377,6 +472,22 @@ export class ChangeRequestsService {
       select: { id: true, trackedCategoryId: true },
     });
     if (!product) throw new BadRequestException("Product no longer exists");
+    if (filedSplit) {
+      // The live pack is read ONLY for an ADD_ITEM that carries a filed split — a new draft line's
+      // correct contract. CHANGE_QTY never reads it (B655's SA ruling: an existing line's rewrite
+      // uses only what the line itself stored), so the shared product read above stays as it was.
+      const liveProduct = await this.prisma.forTenant().product.findFirst({
+        where: { id: productId },
+        select: { unitsPerBox: true, name: true },
+      });
+      ({ boxes, pieces } = reconcileFiledAddSplit({
+        qty,
+        boxes: filedSplit.boxes,
+        pieces: filedSplit.pieces,
+        liveUnitsPerBox: Number(liveProduct?.unitsPerBox ?? 0),
+        productName: liveProduct?.name ?? payload.productName ?? "this product",
+      }));
+    }
     // Regulated license guard re-runs on approval (G6).
     await this.authGuard.assertAuthorizedOrThrow({
       customerId: order.customerId,
@@ -399,11 +510,11 @@ export class ChangeRequestsService {
       type: "BUYER",
     } as JwtPayload;
 
-    // This split is handed to create() for a NEW draft line — create() re-splits it against the
-    // LIVE product's pack (its own, correct, contract for a new sale line: unlike the rewrite
-    // above, a new line has no existing snapshot to preserve). If the pack changed since the
-    // original line was sold, the boxes/pieces intent survives but the raw piece count can shift
-    // with it — inherent to that contract, not something this rollover can or should override.
+    // This split is handed to create() for a NEW draft line. For a CHANGE_QTY rollover the SOURCE line's price
+    // (always) and pack (when box-aware) ride along as `options.sourceLines` (orders/source-line.ts), so create()
+    // splits at the SOURCE pack and bills at the SOURCE's agreed price instead of re-splitting at the live pack
+    // and re-quoting; the subtotal is derived from that pack and price by computeLineSubtotal. An ADD_ITEM has no
+    // source line: create() re-splits its filed split against the LIVE pack and prices it today (a new sale).
     const draft = await this.ordersService.create(
       {
         items: [{ productId, qty, ...(boxes != null ? { boxes, pieces } : {}) }],
@@ -414,7 +525,25 @@ export class ChangeRequestsService {
       // B142/REG-B142-G: this draft moves an existing (possibly since
       // archived) line to the customer's next delivery — the archived-line
       // guard is for NEW interactive lines, not this internal draft path.
-      { skipAutoMerge: false, allowArchived: true },
+      {
+        skipAutoMerge: false,
+        allowArchived: true,
+        ...(sourceItem
+          ? {
+              sourceLines: {
+                [productId]: {
+                  unitsPerBox: sourceUpb,
+                  unitPrice: Number(sourceItem.unitPrice),
+                  priceType: sourceItem.priceType,
+                  originalPrice:
+                    sourceItem.originalPrice != null ? Number(sourceItem.originalPrice) : null,
+                  overrideReason: sourceItem.overrideReason ?? null,
+                  overriddenBy: sourceItem.overriddenBy ?? null,
+                },
+              },
+            }
+          : {}),
+      },
     );
 
     try {

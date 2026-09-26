@@ -23,7 +23,7 @@ import type { DraftItem } from "../lib/edit-items-draft";
  *
  * B805: `updateDraft(fn)` is the ONE write path every draft mutator in the
  * screen goes through (setQty, setBoxes, setPieces, setUnits, setSellBy,
- * setLinePrice, setLineNote, removeLine, the price-override modal, the
+ * setUnitLabel, setLinePrice, setLineNote, removeLine, the price-override modal, the
  * last-added strip's price edit, the substitute-apply branch, and
  * addPickedToDraft). `fn` MUST be pure: it may run twice for one logical
  * call — once here, synchronously, to keep `draftRef` an accurate

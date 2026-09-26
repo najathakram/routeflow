@@ -1,0 +1,351 @@
+// B294 (SA-141): stamp the inferred flat sales-tax rate onto legacy order- and estimate-derived
+// invoice lines stored with `taxRate: 0`, so a later recompute (price adjustment, edit) keeps the
+// tax instead of silently dropping it to $0. The rule is @routeflow/pricing's inferredFlatRate,
+// the SAME one applyPriceAdjustment and the mobile edit use: every line at 0, a real regular tax
+// (taxAmount − Σ categoryTaxAmount), a subtotal > 0, and a 4-dp rate that reproduces the tax to
+// the cent. It writes InvoiceItem.taxRate ONLY — never an amount, total or status.
+//
+// DRY-RUN IS THE DEFAULT: a READ ONLY transaction, always rolled back. It classifies every
+// order/estimate-derived, non-VOID invoice created before --before (default: now) and saves a
+// content-hashed plan (local-assets/handoff) that --apply later replays.
+//   APPLY  — inferred and verified, created before the fix (2026-09-13).
+//   REVIEW — inferred but NOT verified, or created on/after 2026-09-13 (#725 should have stamped
+//            it — a match there means something else wrote 0; a human looks, nothing is written).
+//   (skipped) — the rule does not apply (a rated line, no tax, zero subtotal).
+//
+//   railway run --service postgres node apps/api/scripts/backfill-b294-order-line-taxrate.mjs
+//   DATABASE_URL=postgresql://…@localhost:5432/<db> node apps/api/scripts/backfill-b294-order-line-taxrate.mjs --local
+//   node apps/api/scripts/backfill-b294-order-line-taxrate.mjs --self-test
+//
+// APPLY replays a SAVED plan only (never a live re-query):
+//   node apps/api/scripts/backfill-b294-order-line-taxrate.mjs --apply --plan <file> \
+//     --confirm-plan <hash> --guard-sha <sha> --i-have-a-fresh-backup [--local] \
+//     [--live-tenant-override --confirm "APPLY <n> INVOICES"]
+// Gates, ALL must pass or nothing is written (SA-134 / B681's set):
+//   1. --confirm-plan equals the plan file's own sha256;
+//   2. --guard-sha is a git ancestor of this checkout's HEAD (the fix that stops new 0-rate lines);
+//   3. the DB fingerprint (database, tenant ids) still matches the dry run;
+//   4. a LIVE (non-test) tenant needs --live-tenant-override plus the literal type-back phrase;
+//   5. --i-have-a-fresh-backup, always;
+//   6. every planned invoice is RE-READ: subtotal, taxAmount, updatedAt, its line ids, and every
+//      line still at 0 — any change refuses the whole apply.
+// One transaction. Exit: 0 ok · 1 refused (nothing written) · 2 env/connection error.
+import { createHash } from "node:crypto";
+import { execFileSync } from "node:child_process";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
+import pg from "pg";
+import { inferredFlatRate } from "@routeflow/pricing";
+import { isTestTenant } from "../../../scripts/lib/test-tenants.cjs";
+import { isLocalDbTarget } from "./lib/local-db-target.cjs";
+import { requireLocalPgConfig } from "./lib/local-pg-config.mjs";
+import { redactUrl, resolveDatabaseUrl } from "./lib/railway-db-url.mjs";
+
+const TAG = "backfill-b294";
+const FIX_DATE = new Date("2026-09-13T00:00:00Z");
+const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
+const SELF = resolve(
+  dirname(fileURLToPath(import.meta.url)),
+  "backfill-b294-order-line-taxrate.mjs",
+);
+
+const argOf = (name) => {
+  const i = process.argv.indexOf(name);
+  return i >= 0 ? process.argv[i + 1] : undefined;
+};
+const sha256 = (obj) => createHash("sha256").update(JSON.stringify(obj)).digest("hex");
+const refuse = (msg) => Object.assign(new Error(msg), { refuse: true });
+
+/** Pure: one invoice → APPLY / REVIEW / null (skipped). */
+export function classifyInvoice(invoice, lines, fixDate = FIX_DATE) {
+  const inferred = inferredFlatRate({
+    subtotal: invoice.subtotal,
+    taxAmount: invoice.taxAmount,
+    lines,
+  });
+  if (!inferred) return null;
+  if (!inferred.verified) {
+    return {
+      kind: "REVIEW",
+      rate: inferred.rate,
+      reason: "rate does not reproduce the tax to the cent",
+    };
+  }
+  if (new Date(invoice.createdAt) >= fixDate) {
+    return {
+      kind: "REVIEW",
+      rate: inferred.rate,
+      reason: "created after the #725 fix yet all lines are 0",
+    };
+  }
+  return { kind: "APPLY", rate: inferred.rate };
+}
+
+const DERIVED_INVOICES_SQL = `
+  SELECT i.id, i."tenantId", i.subtotal, i."taxAmount", i."createdAt", i."updatedAt"
+  FROM "Invoice" i
+  WHERE i.status <> 'VOID' AND i."createdAt" < $1
+    AND (i."orderId" IS NOT NULL
+         OR EXISTS (SELECT 1 FROM "Estimate" e WHERE e."invoiceId" = i.id))
+  ORDER BY i.id`;
+const LINES_SQL = `
+  SELECT id, "invoiceId", "taxRate", "categoryTaxAmount"
+  FROM "InvoiceItem" WHERE "invoiceId" = ANY($1::text[]) ORDER BY id`;
+
+async function resolveTarget() {
+  const local = process.argv.includes("--local");
+  const url = local
+    ? process.env.DATABASE_URL
+    : resolveDatabaseUrl(process.env, { requireProxy: true });
+  if (!url) throw new Error("--local requires DATABASE_URL");
+  if (local && !isLocalDbTarget(url))
+    throw new Error(`--local refuses a non-local host (${redactUrl(url)})`);
+  return url;
+}
+
+/** What pg dials: under --local the explicit, vetted fields (never the raw string a `?host=` could redirect). */
+const dialConfig = (url) =>
+  process.argv.includes("--local") ? requireLocalPgConfig(url) : { connectionString: url };
+
+async function fingerprint(client) {
+  const [db, tenants] = await Promise.all([
+    client.query("SELECT current_database() AS db"),
+    client.query('SELECT id FROM "Tenant" ORDER BY id'),
+  ]);
+  return { database: db.rows[0].db, tenantIds: tenants.rows.map((t) => t.id) };
+}
+
+async function dryRun() {
+  const url = await resolveTarget();
+  const before = argOf("--before") ? new Date(argOf("--before")) : new Date();
+  console.log(
+    `${TAG}: target ${redactUrl(url)} DRY-RUN (invoices created before ${before.toISOString()})`,
+  );
+  const client = new pg.Client(dialConfig(url));
+  await client.connect();
+  try {
+    await client.query("BEGIN TRANSACTION READ ONLY");
+    await client.query("SET LOCAL statement_timeout = '120s'");
+    const fp = await fingerprint(client);
+    const invoices = (await client.query(DERIVED_INVOICES_SQL, [before])).rows;
+    const lines = invoices.length
+      ? (await client.query(LINES_SQL, [invoices.map((i) => i.id)])).rows
+      : [];
+    await client.query("ROLLBACK");
+
+    const linesBy = new Map();
+    for (const l of lines) linesBy.set(l.invoiceId, [...(linesBy.get(l.invoiceId) ?? []), l]);
+    const apply = [];
+    const review = [];
+    for (const inv of invoices) {
+      const own = linesBy.get(inv.id) ?? [];
+      const c = classifyInvoice(inv, own);
+      if (!c) continue;
+      if (c.kind === "REVIEW") {
+        review.push({ invoiceId: inv.id, rate: c.rate, reason: c.reason });
+        continue;
+      }
+      apply.push({
+        invoiceId: inv.id,
+        tenantId: inv.tenantId,
+        rate: c.rate,
+        expected: {
+          subtotal: String(inv.subtotal),
+          taxAmount: String(inv.taxAmount),
+          updatedAt: new Date(inv.updatedAt).toISOString(),
+          lineIds: own.map((l) => l.id),
+        },
+      });
+    }
+
+    const plan = { generatedAt: new Date().toISOString(), fingerprint: fp, apply };
+    const hash = sha256(plan);
+    const dir = resolve(REPO_ROOT, "local-assets/handoff", new Date().toISOString().slice(0, 10));
+    mkdirSync(dir, { recursive: true });
+    const file = resolve(dir, `b294-plan-${Date.now()}.json`);
+    writeFileSync(file, JSON.stringify({ ...plan, planHash: hash, review }, null, 2));
+
+    console.log(`\n${TAG}: ${invoices.length} derived invoice(s) scanned`);
+    console.log(
+      `  APPLY:  ${apply.length} invoice(s), ${apply.reduce((s, a) => s + a.expected.lineIds.length, 0)} line(s)`,
+    );
+    console.log(
+      `  REVIEW: ${review.length} invoice(s) (listed in the plan file; nothing is written for them)`,
+    );
+    console.log(`\nplan: ${file}\nplan hash: ${hash}`);
+    if (apply.length > 0) {
+      console.log(
+        `\nto apply: node ${SELF.replace(/\\/g, "/")} --apply --plan ${file.replace(/\\/g, "/")} --confirm-plan ${hash} --guard-sha <sha> --i-have-a-fresh-backup`,
+      );
+    }
+    return 0;
+  } catch (e) {
+    await client.query("ROLLBACK").catch(() => undefined);
+    console.error(`${TAG}: ${e.message}`);
+    return 2;
+  } finally {
+    await client.end().catch(() => undefined);
+  }
+}
+
+function verifyGuardSha(guardSha) {
+  const head = execFileSync("git", ["-C", REPO_ROOT, "rev-parse", "HEAD"], {
+    encoding: "utf8",
+  }).trim();
+  try {
+    execFileSync("git", ["-C", REPO_ROOT, "merge-base", "--is-ancestor", guardSha, head]);
+  } catch {
+    throw refuse(`--guard-sha ${guardSha} is not an ancestor of this checkout's HEAD (${head})`);
+  }
+}
+
+async function apply() {
+  const planFile = argOf("--plan");
+  const confirmPlan = argOf("--confirm-plan");
+  const guardSha = argOf("--guard-sha");
+  if (!planFile || !confirmPlan || !guardSha || !process.argv.includes("--i-have-a-fresh-backup")) {
+    console.error(
+      `${TAG}: --apply needs --plan, --confirm-plan, --guard-sha and --i-have-a-fresh-backup`,
+    );
+    return 1;
+  }
+  const saved = JSON.parse(readFileSync(planFile, "utf8"));
+  const { planHash, review: _review, ...plan } = saved;
+  if (sha256(plan) !== confirmPlan || planHash !== confirmPlan) {
+    console.error(`${TAG}: --confirm-plan does not match the plan file's own hash -- refusing`);
+    return 1;
+  }
+  try {
+    verifyGuardSha(guardSha);
+  } catch (e) {
+    console.error(`${TAG}: ${e.message}`);
+    return 1;
+  }
+
+  const url = await resolveTarget();
+  console.log(`${TAG}: target ${redactUrl(url)} APPLY (${plan.apply.length} invoice(s))`);
+  const client = new pg.Client(dialConfig(url));
+  await client.connect();
+  try {
+    await client.query("BEGIN");
+    if (JSON.stringify(await fingerprint(client)) !== JSON.stringify(plan.fingerprint)) {
+      throw refuse("DB fingerprint changed since the dry run (database or tenants differ)");
+    }
+    const tenantIds = [...new Set(plan.apply.map((a) => a.tenantId))];
+    const slugs = await client.query('SELECT id, slug FROM "Tenant" WHERE id = ANY($1::text[])', [
+      tenantIds,
+    ]);
+    const slugById = new Map(slugs.rows.map((t) => [t.id, t.slug]));
+    const live = tenantIds.filter((id) => !isTestTenant(slugById.get(id)));
+    if (live.length > 0) {
+      const phrase = `APPLY ${plan.apply.length} INVOICES`;
+      if (!process.argv.includes("--live-tenant-override") || argOf("--confirm") !== phrase) {
+        throw refuse(
+          `${live.length} LIVE tenant(s) in this plan: pass --live-tenant-override --confirm "${phrase}"`,
+        );
+      }
+    }
+
+    let stamped = 0;
+    for (const a of plan.apply) {
+      const inv = (
+        await client.query(
+          'SELECT subtotal, "taxAmount", "updatedAt" FROM "Invoice" WHERE id = $1',
+          [a.invoiceId],
+        )
+      ).rows[0];
+      const lines = (
+        await client.query(
+          'SELECT id, "taxRate" FROM "InvoiceItem" WHERE "invoiceId" = $1 ORDER BY id',
+          [a.invoiceId],
+        )
+      ).rows;
+      const changed =
+        !inv ||
+        String(inv.subtotal) !== a.expected.subtotal ||
+        String(inv.taxAmount) !== a.expected.taxAmount ||
+        new Date(inv.updatedAt).toISOString() !== a.expected.updatedAt ||
+        JSON.stringify(lines.map((l) => l.id)) !== JSON.stringify(a.expected.lineIds) ||
+        lines.some((l) => Number(l.taxRate) !== 0);
+      if (changed) throw refuse(`invoice ${a.invoiceId} has changed since the dry run`);
+      const res = await client.query(
+        'UPDATE "InvoiceItem" SET "taxRate" = $1 WHERE "invoiceId" = $2 AND "taxRate" = 0',
+        [a.rate, a.invoiceId],
+      );
+      stamped += res.rowCount;
+    }
+    await client.query("COMMIT");
+    console.log(`${TAG}: committed — ${stamped} line(s) across ${plan.apply.length} invoice(s)`);
+    return 0;
+  } catch (e) {
+    await client.query("ROLLBACK").catch(() => undefined);
+    console.error(`${TAG}: ${e.message}${e.refuse ? " -- nothing was written" : ""}`);
+    return e.refuse ? 1 : 2;
+  } finally {
+    await client.end().catch(() => undefined);
+  }
+}
+
+/** --self-test: the pure classifier, no database. */
+function selfTest() {
+  const before = "2026-09-01T00:00:00Z";
+  const after = "2026-09-20T00:00:00Z";
+  const zero = [{ taxRate: 0, categoryTaxAmount: 0 }];
+  const cases = [
+    [
+      "APPLY: $100 at 7.5%, lines at 0, before the fix",
+      { subtotal: 100, taxAmount: 7.5, createdAt: before },
+      zero,
+      "APPLY",
+      0.075,
+    ],
+    [
+      "REVIEW: the same, created after the fix",
+      { subtotal: 100, taxAmount: 7.5, createdAt: after },
+      zero,
+      "REVIEW",
+      0.075,
+    ],
+    [
+      "REVIEW: a rate that cannot reproduce the tax",
+      { subtotal: 100000, taxAmount: 7.33, createdAt: before },
+      zero,
+      "REVIEW",
+      0.0001,
+    ],
+    [
+      "skipped: MIXED — one line at 7.5%, one at 0",
+      { subtotal: 100, taxAmount: 3.75, createdAt: before },
+      [{ taxRate: 0.075 }, { taxRate: 0 }],
+      null,
+    ],
+    ["skipped: no tax", { subtotal: 100, taxAmount: 0, createdAt: before }, zero, null],
+    [
+      "skipped: only category tax",
+      { subtotal: 100, taxAmount: 5, createdAt: before },
+      [{ taxRate: 0, categoryTaxAmount: 5 }],
+      null,
+    ],
+  ];
+  let failed = 0;
+  for (const [name, inv, lines, kind, rate] of cases) {
+    const got = classifyInvoice(inv, lines);
+    const ok = kind === null ? got === null : got?.kind === kind && got?.rate === rate;
+    if (!ok) failed += 1;
+    console.log(`${ok ? "ok  " : "FAIL"} ${name}${ok ? "" : ` (got ${JSON.stringify(got)})`}`);
+  }
+  console.log(
+    failed ? `${TAG} self-test: ${failed} FAILED` : `${TAG} self-test: all ${cases.length} passed`,
+  );
+  return failed ? 1 : 0;
+}
+
+async function main() {
+  if (process.argv.includes("--self-test")) return selfTest();
+  return process.argv.includes("--apply") ? apply() : dryRun();
+}
+
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  process.exitCode = await main();
+}

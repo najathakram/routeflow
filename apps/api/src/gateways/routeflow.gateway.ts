@@ -4,14 +4,47 @@ import {
   SubscribeMessage,
   OnGatewayConnection,
   OnGatewayDisconnect,
+  OnGatewayInit,
   MessageBody,
   ConnectedSocket,
   WsException,
 } from "@nestjs/websockets";
+import { Logger, OnModuleDestroy } from "@nestjs/common";
 import { JwtService } from "@nestjs/jwt";
 import { Server, Socket } from "socket.io";
 import { JwtPayload } from "../auth/jwt-payload.interface";
-import { UserRole } from "@prisma/client";
+import { InvoiceStatus, UserRole } from "@prisma/client";
+import { PrismaService } from "../prisma/prisma.service";
+import {
+  BLOCKED_SELLER_STATUSES,
+  LIVE_BUYER_ACCOUNT_WHERE,
+  liveBuyerLinkWhere,
+} from "../buyer/buyer-link-scope";
+
+/**
+ * B104: how often every connected buyer socket's rooms are re-derived from its links, so a link
+ * revoked (or granted) while a portal tab stays open takes effect within this bound. The HTTP
+ * guard re-checks on every request; a socket cannot, so this is the socket's equivalent. It is
+ * also the bound on how long a buyer socket outlives its token's `exp` (#2142 R1).
+ */
+export const BUYER_ROOM_RESYNC_MS = 60_000;
+
+/** `buyerAccountId: { in }` batch size for the resync read (well under Postgres' bind limit). */
+const BUYER_RESYNC_BATCH = 500;
+
+/** The server-side sockets the buyer-room sync reads and moves (this node's own sockets). */
+interface RoomMember {
+  id: string;
+  rooms: Set<string>;
+  /**
+   * `buyerTokenExp` (#2142 R1) is the verified handshake token's `exp`, in seconds since the
+   * epoch: a socket outlives its token, so the resync ends it once that moment has passed.
+   */
+  data: { buyerAccountId?: string; buyerTokenExp?: number };
+  join(room: string): unknown;
+  leave(room: string): unknown;
+  disconnect(close?: boolean): unknown;
+}
 
 // ─── Typed event payloads ──────────────────────────────────────────────────────
 
@@ -169,16 +202,49 @@ export interface CrmHandoffPayload {
   },
   namespace: "/",
 })
-export class RouteFlowGateway implements OnGatewayConnection, OnGatewayDisconnect {
+export class RouteFlowGateway
+  implements OnGatewayInit, OnGatewayConnection, OnGatewayDisconnect, OnModuleDestroy
+{
+  // Declared as Server, but with the `namespace: "/"` option Nest's IoAdapter hands the gateway
+  // the root Namespace (`server.of("/")`). Use only the API the two share: to/in/local/fetchSockets.
   @WebSocketServer()
   server: Server;
 
-  constructor(private readonly jwtService: JwtService) {}
+  private readonly logger = new Logger(RouteFlowGateway.name);
+  private buyerResyncTimer: NodeJS.Timeout | null = null;
+
+  constructor(
+    private readonly jwtService: JwtService,
+    private readonly prisma: PrismaService,
+  ) {}
+
+  // ─── Lifecycle ────────────────────────────────────────────────────────────────
+
+  afterInit() {
+    if (this.buyerResyncTimer) clearInterval(this.buyerResyncTimer);
+    this.buyerResyncTimer = setInterval(() => void this.resyncBuyerRooms(), BUYER_ROOM_RESYNC_MS);
+    // Never the reason a process stays alive.
+    this.buyerResyncTimer.unref?.();
+  }
+
+  onModuleDestroy() {
+    if (this.buyerResyncTimer) clearInterval(this.buyerResyncTimer);
+    this.buyerResyncTimer = null;
+  }
 
   // ─── Room helpers ─────────────────────────────────────────────────────────────
 
   private tenantRoom(tenantId: string | null, room: string): string {
     return tenantId ? `tenant:${tenantId}:${room}` : room;
+  }
+
+  /**
+   * The ONE name of a customer's room: every customer-scoped emit targets it and every socket
+   * that may read that customer's orders (its buyer accounts, its CUSTOMER-role user) joins it.
+   * Keyed by Customer.id (B104: the CUSTOMER branch used to join by User.id, which no emit hit).
+   */
+  private customerRoom(tenantId: string | null, customerId: string): string {
+    return this.tenantRoom(tenantId, `customer:${customerId}`);
   }
 
   // ─── Connection auth ───────────────────────────────────────────────────────���─
@@ -192,6 +258,28 @@ export class RouteFlowGateway implements OnGatewayConnection, OnGatewayDisconnec
       if (!token) throw new WsException("No token");
 
       const payload = this.jwtService.verify<JwtPayload>(token);
+
+      // B104: a buyer-portal token (sub = BuyerAccount.id) carries no role and no tenantId. Its
+      // rooms come only from the verified sub and the DB, never from the handshake, and the BUYER
+      // type decides before any role check, so a buyer token can never land in a staff room.
+      if (payload.type === "BUYER") {
+        if (typeof payload.sub !== "string" || !payload.sub) {
+          throw new WsException("Invalid buyer token");
+        }
+        // #2142 R1: every buyer access token the server mints carries an `exp` (buyer login,
+        // Google sign-in, admin impersonation), and the resync ends the socket at that moment.
+        // A token without one would keep its socket for ever, so it is refused here.
+        const exp = (payload as { exp?: unknown }).exp;
+        if (typeof exp !== "number" || !Number.isFinite(exp)) {
+          throw new WsException("Buyer token without an expiry");
+        }
+        const data = client.data as RoomMember["data"];
+        data.buyerAccountId = payload.sub;
+        data.buyerTokenExp = exp;
+        await this.syncBuyerRooms([client]);
+        return;
+      }
+
       client.data.user = payload;
 
       const tenantId = payload.tenantId ?? null;
@@ -201,7 +289,15 @@ export class RouteFlowGateway implements OnGatewayConnection, OnGatewayDisconnec
       } else if (payload.role === UserRole.DRIVER) {
         await client.join(this.tenantRoom(tenantId, `driver:${payload.sub}`));
       } else if (payload.role === UserRole.CUSTOMER) {
-        await client.join(this.tenantRoom(tenantId, `customer:${payload.sub}`));
+        // B104: the room the emitters address is keyed by the Customer, resolved from the user
+        // inside the token's own tenant (a removed customer resolves nothing, REG-B131).
+        const customer = tenantId
+          ? await this.prisma.customer.findFirst({
+              where: { userId: payload.sub, tenantId, deletedAt: null },
+              select: { id: true },
+            })
+          : null;
+        if (customer) await client.join(this.customerRoom(tenantId, customer.id));
       } else if (payload.role === UserRole.SUPER_ADMIN) {
         await client.join("super-admin");
       }
@@ -212,6 +308,112 @@ export class RouteFlowGateway implements OnGatewayConnection, OnGatewayDisconnec
 
   handleDisconnect(_client: Socket) {
     // cleanup handled automatically by socket.io
+  }
+
+  // ─── Buyer rooms (B104) ───────────────────────────────────────────────────────
+
+  /**
+   * Re-derives the rooms of every buyer socket connected to THIS node (each node owns its own
+   * sockets; with the Redis adapter, `local` keeps the read off the other nodes). A read failure
+   * keeps the last verified rooms: nothing can change a link while the DB is unreachable, and the
+   * next tick retries.
+   *
+   * #2142 R1: first it disconnects every buyer socket whose token has expired. That needs no DB,
+   * so it runs before the link read and a DB outage cannot skip it.
+   */
+  async resyncBuyerRooms(): Promise<void> {
+    if (!this.server) return;
+    let buyers: RoomMember[];
+    try {
+      const sockets = (await this.server.local.fetchSockets()) as unknown as RoomMember[];
+      buyers = sockets.filter((s) => !!s.data?.buyerAccountId);
+    } catch (err) {
+      this.logger.warn(`[B104] buyer room resync skipped: ${(err as Error)?.message ?? err}`);
+      return;
+    }
+    const live = this.disconnectExpiredBuyers(buyers);
+    try {
+      await this.syncBuyerRooms(live);
+    } catch (err) {
+      this.logger.warn(`[B104] buyer room resync skipped: ${(err as Error)?.message ?? err}`);
+    }
+  }
+
+  /**
+   * Disconnects each buyer socket whose token `exp` has passed (the same `now >= exp` rule the
+   * JWT check applies at connect) and returns the rest. `disconnect(true)` closes the transport;
+   * socket.io removes a closed socket from every room itself, so no room is left to clean up.
+   */
+  private disconnectExpiredBuyers(sockets: RoomMember[]): RoomMember[] {
+    const nowSec = Math.floor(Date.now() / 1000); // jsonwebtoken's own clock rule
+    const live: RoomMember[] = [];
+    for (const socket of sockets) {
+      const exp = socket.data.buyerTokenExp;
+      if (typeof exp !== "number" || nowSec >= exp) {
+        socket.disconnect(true);
+      } else {
+        live.push(socket);
+      }
+    }
+    return live;
+  }
+
+  /**
+   * Puts each buyer socket in exactly the customer rooms its account's live links grant (the
+   * portal guard's own rule, `liveBuyerLinkWhere`, at a seller that is not blocked) and takes it
+   * out of every other room. One account read and one link read per batch of accounts, however
+   * many sockets they hold.
+   *
+   * #2142 R1: a socket whose account is no longer live (SUSPENDED, DELETED, gone) is disconnected,
+   * at connect as at every resync. Both reads finish before any socket is touched, so a failed
+   * read changes nothing (the caller keeps the last verified state, or refuses a new connection).
+   */
+  private async syncBuyerRooms(sockets: RoomMember[]): Promise<void> {
+    const accountIds = [
+      ...new Set(sockets.map((s) => s.data.buyerAccountId).filter((id): id is string => !!id)),
+    ];
+    if (accountIds.length === 0) return;
+
+    const liveAccounts = new Set<string>();
+    const granted = new Map<string, Set<string>>();
+    for (let i = 0; i < accountIds.length; i += BUYER_RESYNC_BATCH) {
+      const batch = accountIds.slice(i, i + BUYER_RESYNC_BATCH);
+      const accounts = await this.prisma.buyerAccount.findMany({
+        where: { id: { in: batch }, ...LIVE_BUYER_ACCOUNT_WHERE },
+        select: { id: true },
+      });
+      for (const account of accounts) liveAccounts.add(account.id);
+      const links = await this.prisma.customerLink.findMany({
+        where: {
+          ...liveBuyerLinkWhere({ in: batch }),
+          tenant: { status: { notIn: [...BLOCKED_SELLER_STATUSES] } },
+        },
+        select: { buyerAccountId: true, tenantId: true, customerId: true },
+      });
+      for (const link of links) {
+        if (!link.buyerAccountId) continue;
+        const rooms = granted.get(link.buyerAccountId) ?? new Set<string>();
+        rooms.add(this.customerRoom(link.tenantId, link.customerId));
+        granted.set(link.buyerAccountId, rooms);
+      }
+    }
+
+    // A socket that disconnected while the links were read is safe to walk: socket.io's cleanup
+    // turns its join() into a no-op, so it cannot be put back into a room (pinned by the spec).
+    for (const socket of sockets) {
+      if (!liveAccounts.has(socket.data.buyerAccountId ?? "")) {
+        // disconnect(true) closes the transport; socket.io drops a closed socket from every room.
+        socket.disconnect(true);
+        continue;
+      }
+      const want = granted.get(socket.data.buyerAccountId ?? "") ?? new Set<string>();
+      for (const room of [...socket.rooms]) {
+        if (room !== socket.id && !want.has(room)) await socket.leave(room);
+      }
+      for (const room of want) {
+        if (!socket.rooms.has(room)) await socket.join(room);
+      }
+    }
   }
 
   // ─── Client → Server events ───────────────────────────────��──────────────────
@@ -262,7 +464,7 @@ export class RouteFlowGateway implements OnGatewayConnection, OnGatewayDisconnec
   emitOrderStatusChanged(tenantId: string | null, payload: OrderStatusChangedPayload) {
     this.server.to(this.tenantRoom(tenantId, "operators")).emit("order.statusChanged", payload);
     this.server
-      .to(this.tenantRoom(tenantId, `customer:${payload.customerId}`))
+      .to(this.customerRoom(tenantId, payload.customerId))
       .emit("order.statusChanged", payload);
   }
 
@@ -270,17 +472,28 @@ export class RouteFlowGateway implements OnGatewayConnection, OnGatewayDisconnec
     this.server.to(this.tenantRoom(tenantId, "operators")).emit("return.created", payload);
   }
 
-  emitInvoiceUpdated(tenantId: string | null, payload: InvoiceUpdatedPayload) {
+  /**
+   * `customerRoom: false` keeps the event on the operators' feed only, for a caller whose payload
+   * status no longer says the invoice was a DRAFT (#2142 W1: `deleteInvoice` sends "DELETED").
+   */
+  emitInvoiceUpdated(
+    tenantId: string | null,
+    payload: InvoiceUpdatedPayload,
+    opts: { customerRoom?: boolean } = {},
+  ) {
     this.server.to(this.tenantRoom(tenantId, "operators")).emit("invoice.updated", payload);
+    // #2142 N1: a DRAFT is the seller's unissued working copy. The buyer invoice detail refuses
+    // one (BuyerController.getInvoice), so its number and total never reach the customer's room.
+    if (payload.status === InvoiceStatus.DRAFT || opts.customerRoom === false) return;
     this.server
-      .to(this.tenantRoom(tenantId, `customer:${payload.customerId}`))
+      .to(this.customerRoom(tenantId, payload.customerId))
       .emit("invoice.updated", payload);
   }
 
   emitCreditNoteCreated(tenantId: string | null, payload: CreditNoteCreatedPayload) {
     this.server.to(this.tenantRoom(tenantId, "operators")).emit("creditNote.created", payload);
     this.server
-      .to(this.tenantRoom(tenantId, `customer:${payload.customerId}`))
+      .to(this.customerRoom(tenantId, payload.customerId))
       .emit("creditNote.created", payload);
   }
 
@@ -288,7 +501,7 @@ export class RouteFlowGateway implements OnGatewayConnection, OnGatewayDisconnec
   emitCreditNoteVoided(tenantId: string | null, payload: CreditNoteVoidedPayload) {
     this.server.to(this.tenantRoom(tenantId, "operators")).emit("creditNote.voided", payload);
     this.server
-      .to(this.tenantRoom(tenantId, `customer:${payload.customerId}`))
+      .to(this.customerRoom(tenantId, payload.customerId))
       .emit("creditNote.voided", payload);
   }
 

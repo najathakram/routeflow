@@ -32,12 +32,13 @@ import {
 } from "../../../../../lib/invoice-totals";
 import { isPendingOrderMirror } from "../../../../../lib/invoices-logic";
 import { hasUnitLine, unitLabelsOf } from "../../../../../lib/invoice-line-unit";
-import { computeLineSubtotal } from "@routeflow/pricing";
+import { computeLineSubtotal, packFromOwnSplit } from "@routeflow/pricing";
 import { showToast } from "../../../../../lib/toast";
 import {
   hasUnsavedInvoiceLineEdits,
   type InvoiceEditSnapshot,
 } from "../../../../../lib/discard-guard";
+import { hydratedLineTax } from "../../../../../lib/invoice-edit-tax";
 
 /**
  * Invoice edit screen — DRAFT-only, mirroring web's invoices/[id]/edit page.
@@ -53,6 +54,15 @@ import {
 
 type EditLine = {
   key: string;
+  /** Stored row id (SA-186) — sent back so the server matches THIS row. Absent on new lines. */
+  id?: string;
+  /** SA-184/189: a stored box line whose pack can't be recovered — read-only until the
+   *  operator sets the pack. `storedBoxes/Pieces` are re-sent verbatim (line stays untouched). */
+  locked?: boolean;
+  storedBoxes?: number;
+  storedPieces?: number;
+  /** Operator-attested pack (integer >= 2) from unlocking; the only `unitsPerBox` ever sent. */
+  attestedPack?: number;
   productId: string | null;
   description: string;
   /** Total pieces (boxes × unitsPerBox + pieces when split). */
@@ -114,18 +124,37 @@ export default function EditInvoiceScreen() {
   useEffect(() => {
     if (!invoice || invoice.status !== "DRAFT" || hydratedFor.current === invoice.id) return;
     hydratedFor.current = invoice.id;
-    const hydratedLines = (invoice.items ?? []).map((it) => ({
+    // B294 (SA-141): a legacy invoice's 0-rate lines load at its verified inferred rate.
+    const lineTax = hydratedLineTax(invoice);
+    const hydratedLines = (invoice.items ?? []).map((it, i) => ({
       key: newKey(),
+      id: it.id,
+      ...(it.boxes != null &&
+      !(
+        Number(
+          it.unitsPerBox ??
+            packFromOwnSplit({ qty: Number(it.qty), boxes: it.boxes, pieces: it.pieces }) ??
+            0,
+        ) > 1
+      )
+        ? { locked: true, storedBoxes: Number(it.boxes), storedPieces: Number(it.pieces ?? 0) }
+        : {}),
       productId: it.productId ?? null,
       description: it.description,
       qty: Number(it.qty),
       boxes: it.boxes ?? null,
       pieces: it.boxes != null ? (it.pieces ?? 0) : null,
-      unitsPerBox: it.unitsPerBox ?? null,
+      // B674/SA-144: a legacy line (boxes stored, unitsPerBox never snapshotted) recovers its
+      // pack from its OWN split via packFromOwnSplit — web's exact fix. Without this, a legacy
+      // line hydrated here with unitsPerBox null failed isSplit's upb > 1 check below, so the
+      // case/piece stepper never rendered and a save re-priced the line as loose pieces.
+      unitsPerBox:
+        it.unitsPerBox ??
+        packFromOwnSplit({ qty: Number(it.qty), boxes: it.boxes, pieces: it.pieces }) ??
+        null,
       unitPrice: Number(it.unitPrice),
       discount: it.discount != null && Number(it.discount) > 0 ? Number(it.discount) : null,
-      taxRate: Number(it.taxRate ?? 0),
-      taxable: Number(it.taxRate ?? 0) > 0,
+      ...lineTax[i],
       note: it.notes ?? "",
       promoFreeUnits: it.promoFreeUnits ?? null,
       promoBaseUnits: it.promoFreeUnits
@@ -352,8 +381,12 @@ export default function EditInvoiceScreen() {
         terms,
         referenceNumber,
         subject,
-        items: lines.map((l) =>
-          invoiceLineDto(
+        items: lines.map((l) => ({
+          ...(l.id ? { id: l.id } : {}),
+          ...(l.locked ? { boxes: l.storedBoxes ?? 0, pieces: l.storedPieces ?? 0 } : {}),
+          // SA-189: only an operator-attested pack is ever sent.
+          ...(l.attestedPack ? { unitsPerBox: l.attestedPack } : {}),
+          ...invoiceLineDto(
             {
               description: l.description.trim(),
               productId: l.productId,
@@ -369,7 +402,8 @@ export default function EditInvoiceScreen() {
             },
             rateFor(l),
           ),
-        ),
+          ...(l.locked ? { boxes: l.storedBoxes ?? 0, pieces: l.storedPieces ?? 0 } : {}),
+        })),
       },
       {
         onSuccess: () => {
@@ -648,54 +682,89 @@ function LineCard({
         ) : null}
       </View>
 
-      <View style={styles.fieldRow}>
-        <Text style={styles.fieldLabel}>Price{isSplit ? " / case" : ""}</Text>
-        <View style={styles.fieldInputWrap}>
-          <Text style={styles.fieldCurrency}>$</Text>
-          <MoneyTextInput
-            style={styles.fieldMoneyInput}
-            value={line.unitPrice}
-            onChangeValue={(v) => onPatch({ unitPrice: v })}
-            placeholder="0.00"
-            returnKeyType="done"
-          />
+      {line.locked ? (
+        <View testID="locked-line">
+          <Text style={styles.fieldHint}>
+            {line.storedBoxes} case · {line.storedPieces} loose · $
+            {Number(line.unitPrice ?? 0).toFixed(2)}
+            {" — set the box and piece count for this line to edit it."}
+          </Text>
+          <View style={styles.fieldRow}>
+            <Text style={styles.fieldLabel}>Units per case</Text>
+            <TextInput
+              keyboardType="number-pad"
+              placeholder="e.g. 12"
+              placeholderTextColor={ios.label3}
+              onChangeText={(t) => {
+                const n = Number(t);
+                if (Number.isInteger(n) && n >= 2) {
+                  onPatch({
+                    locked: false,
+                    unitsPerBox: n,
+                    attestedPack: n,
+                    qty: (line.storedBoxes ?? 0) * n + (line.storedPieces ?? 0),
+                  });
+                }
+              }}
+              style={styles.fieldMoneyInput}
+            />
+          </View>
         </View>
-      </View>
-
-      {isSplit ? (
+      ) : (
         <>
           <View style={styles.fieldRow}>
-            <Text style={styles.fieldLabel}>Cases</Text>
-            <QtyStepper value={line.boxes ?? 0} onChangeQty={onSetBoxes} />
-          </View>
-          <View style={styles.fieldRow}>
-            <View style={{ flex: 1 }}>
-              <Text style={styles.fieldLabel}>Loose units</Text>
-              <Text style={styles.fieldHint}>{upb} per case</Text>
+            <Text style={styles.fieldLabel}>Price{isSplit ? " / case" : ""}</Text>
+            <View style={styles.fieldInputWrap}>
+              <Text style={styles.fieldCurrency}>$</Text>
+              <MoneyTextInput
+                style={styles.fieldMoneyInput}
+                value={line.unitPrice}
+                onChangeValue={(v) => onPatch({ unitPrice: v })}
+                placeholder="0.00"
+                returnKeyType="done"
+              />
             </View>
-            <QtyStepper value={line.pieces ?? 0} onChangeQty={onSetPieces} max={upb - 1} />
+          </View>
+
+          {isSplit ? (
+            <>
+              <View style={styles.fieldRow}>
+                <Text style={styles.fieldLabel}>Cases</Text>
+                <QtyStepper value={line.boxes ?? 0} onChangeQty={onSetBoxes} />
+              </View>
+              <View style={styles.fieldRow}>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.fieldLabel}>Loose units</Text>
+                  <Text style={styles.fieldHint}>{upb} per case</Text>
+                </View>
+                <QtyStepper value={line.pieces ?? 0} onChangeQty={onSetPieces} max={upb - 1} />
+              </View>
+            </>
+          ) : (
+            <View style={styles.fieldRow}>
+              <Text style={styles.fieldLabel}>Qty</Text>
+              <QtyStepper value={line.qty} onChangeQty={onSetQty} />
+            </View>
+          )}
+
+          <View style={styles.fieldRow}>
+            <Text style={styles.fieldLabel}>Discount</Text>
+            <View style={styles.fieldInputWrap}>
+              <Text style={styles.fieldCurrency}>−$</Text>
+              <MoneyTextInput
+                style={[
+                  styles.fieldMoneyInput,
+                  (line.discount ?? 0) > 0 && styles.fieldMoneyActive,
+                ]}
+                value={line.discount}
+                onChangeValue={(v) => onPatch({ discount: v != null && v > 0 ? v : null })}
+                placeholder="0.00"
+                returnKeyType="done"
+              />
+            </View>
           </View>
         </>
-      ) : (
-        <View style={styles.fieldRow}>
-          <Text style={styles.fieldLabel}>Qty</Text>
-          <QtyStepper value={line.qty} onChangeQty={onSetQty} />
-        </View>
       )}
-
-      <View style={styles.fieldRow}>
-        <Text style={styles.fieldLabel}>Discount</Text>
-        <View style={styles.fieldInputWrap}>
-          <Text style={styles.fieldCurrency}>−$</Text>
-          <MoneyTextInput
-            style={[styles.fieldMoneyInput, (line.discount ?? 0) > 0 && styles.fieldMoneyActive]}
-            value={line.discount}
-            onChangeValue={(v) => onPatch({ discount: v != null && v > 0 ? v : null })}
-            placeholder="0.00"
-            returnKeyType="done"
-          />
-        </View>
-      </View>
 
       {showTax && rate > 0 ? (
         <Pressable

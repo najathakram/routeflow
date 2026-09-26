@@ -155,7 +155,8 @@ export class TobaccoReportService {
       this.prisma.forTenant().stockMovement.findMany({
         where: {
           type: "PURCHASE",
-          createdAt: { gte: periodStart, lte: periodEnd },
+          // B562: the accounting date — a backdated bill belongs to its own period.
+          effectiveAt: { gte: periodStart, lte: periodEnd },
           product: { isTobacco: true },
         },
         select: { productId: true, quantity: true, unitCost: true },
@@ -173,7 +174,7 @@ export class TobaccoReportService {
       // Movements AFTER the period: ending stock = currentStock − Σ(after).
       // Works because SALE quantities are stored negative, PURCHASE positive.
       this.prisma.forTenant().stockMovement.findMany({
-        where: { createdAt: { gt: periodEnd }, product: { isTobacco: true } },
+        where: { effectiveAt: { gt: periodEnd }, product: { isTobacco: true } },
         select: { productId: true, quantity: true },
       }),
     ]);

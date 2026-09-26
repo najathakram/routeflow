@@ -12,6 +12,8 @@ import { loadMsrpMap } from "../common/msrp";
 import { effectiveTaxRateFromTotals } from "../common/tax-rate";
 import { EntitlementsService } from "../billing/entitlements.service";
 import { RegulatedLedgerService } from "../regulated/regulated-ledger.service";
+import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
+import { requireRestrictionTenantId } from "../selling-restrictions/restriction-tenant";
 import { buildManualInvoiceLines } from "../invoices/manual-invoice-lines";
 import { foldCategoryTax, loadManualLineContext } from "../invoices/manual-invoice-context";
 import { packAtSaleByProduct, toSaleLedgerLines } from "../invoices/pack-at-sale";
@@ -39,6 +41,7 @@ export class EstimatesService {
     private readonly entitlements: EntitlementsService,
     private readonly numbering: NumberingService,
     private readonly ledger: RegulatedLedgerService,
+    private readonly sellingRestrictions: SellingRestrictionsService,
   ) {}
 
   private readonly logger = new Logger(EstimatesService.name);
@@ -377,6 +380,7 @@ export class EstimatesService {
       select: {
         id: true,
         status: true,
+        customerId: true,
         subtotal: true,
         discount: true,
         taxAmount: true,
@@ -419,6 +423,16 @@ export class EstimatesService {
     // B659: a box-split line whose quoted pack cannot be established refuses here, BEFORE a number is
     // reserved (a deterministic rejection must not burn one per click).
     estimateConvertLineItems(existing.items ?? [], 0);
+    // F-05 (#2093): an estimate becoming an invoice SELLS its goods — a banned product refuses (409) BEFORE a
+    // number is reserved. Judged now, at the sale, by the tenant's rules (owner rulings 2026-09-25).
+    await this.sellingRestrictions.assertLinesSellable({
+      tenantId: requireRestrictionTenantId(this.prisma.getTenantId()),
+      customerId: existing.customerId,
+      lines: (existing.items ?? []).flatMap((i) =>
+        i.productId ? [{ productId: i.productId }] : [],
+      ),
+      channel: "STAFF",
+    });
 
     // B100/F16b: reserved BEFORE the transaction below opens (fix-round-2.md D1).
     // reserveNext commits its own short transaction, so this one never holds the

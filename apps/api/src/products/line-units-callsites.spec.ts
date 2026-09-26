@@ -20,7 +20,17 @@ import { join, relative, sep } from "path";
  * named variable (`row.unitsPerBox`) is invisible. Code review + the 4b/4c conversion PRs cover it.
  */
 const BASELINE: Record<string, number> = {
-  "orders/orders.service.ts": 20,
+  // SA-124g/h R1: the replaceAll rebuild is reverted to master byte-for-byte (SA-124e's HIGH 2
+  // resolver — which had retired 4 of these 20 reads — is R2 scope now), restoring the original
+  // 20 reads, plus ONE new read feeding `assertReplaceAllPackMatchesLive`'s live-pack guard (21).
+  // Round-4 prefactor (SA-124h, absorbing origin/master's unrelated growth under the size
+  // ratchet): the per-item price/data builder moved verbatim to replace-all-line-build.ts,
+  // taking 5 of these reads with it — 21 -> 16.
+  "orders/orders.service.ts": 16,
+  // Round-4 prefactor (SA-124h): buildReplaceAllLineData, moved verbatim out of
+  // orders.service.ts's replaceAll rebuild (see that file's own comment above) — same 5 reads,
+  // same behavior, only relocated.
+  "orders/replace-all-line-build.ts": 5,
   // Three reads today (B717/SA-077 lowered this from 6; SA-068b's earlier note predicted 5, which
   // the hoist overtook — four reads in update()'s mapper became one). Do not read that history as
   // a forecast; what is left, and what retires each:
@@ -34,14 +44,25 @@ const BASELINE: Record<string, number> = {
   //   3. `applyPriceAdjustment`'s `unitsPerBoxByProduct` map — a regulated BASIS lookup, never a
   //      line-factor decision. Retired by moving it to a named non-line helper (SA-047 shape).
   // The number may only go DOWN. The target is still zero.
-  "invoices/invoices.service.ts": 3, // 4c-1 prefactor: create()'s line builder moved (3 reads) to:
+  // Merge of master into #2083: item 2 moved to invoice-edit-plan.ts (SA-184) and item 3 moved to
+  // price-adjustment-ledger.ts (B662), so only item 1 (buildInvoiceItemData) is left here.
+  "invoices/invoices.service.ts": 1,
+  "invoices/invoice-edit-plan.ts": 1, // the moved read: a NEW line's live-pack last resort (SA-077); a stored line never reads it
+  // 4c-1 prefactor: create()'s line builder moved (3 reads) to:
   // B659: two direct read sites in this file (box-split branch's `item.packSnapshot ??
   // product?.unitsPerBox`, and the no-split branch's `upbForPieces` gaining the same fallback per
   // review finding 2). Verified by running the scanner's own regex directly against the file, not
   // carried forward from the stale pre-B717/B681 draft this commit was originally cut against.
   "invoices/manual-invoice-lines.ts": 2,
+  // B662: `applyPriceAdjustment`'s `unitsPerBoxByProduct` lookup (item 3 above) moved here with its
+  // extraction (loadPriceAdjustmentReference): still a regulated BASIS lookup, never a line factor.
+  "invoices/price-adjustment-ledger.ts": 1,
   "estimates/estimates.service.ts": 1,
   "order-templates/order-templates.service.ts": 1,
+  // B646: generation is a NEW sale, so the recurring generator reads the LIVE pack at generation time (the
+  // Senior Architect buildLine contract) to store a boxed template line in pieces; the split lives in
+  // recurring-invoices/recurring-line-split.ts.
+  "recurring-invoices/recurring-invoices.service.ts": 1,
   "returns/inline-returns-quote.service.ts": 3,
   "buyer/buyer.controller.ts": 1,
   "buyer/replenishment.service.ts": 1,
@@ -56,6 +77,13 @@ const BASELINE: Record<string, number> = {
   // goes to 0 when SA-078(c) snapshots unitsPerBox on box-unaware ORDER lines and this fallback
   // becomes unreachable. Never raise this again after that.
   "regulated/regulated-ledger.service.ts": 1,
+  // B673: approveNextDelivery reads the LIVE pack ONLY for an ADD_ITEM that carries a filed
+  // box split (a driver's door add), to compare it with the pack the request was filed at —
+  // (qty - pieces) / boxes. It derives no line factor, quantity or price: a match hands the
+  // filed split to create() unchanged, a mismatch REFUSES naming both packs. CHANGE_QTY never
+  // reaches it (B655's SA ruling). Count-pinned rather than exempted, so a second read here
+  // still fails the build.
+  "orders/change-requests.service.ts": 1,
 };
 
 // Files that legitimately read a product's pack and are not line writers.
@@ -71,6 +99,10 @@ const NON_WRITERS = new Set([
   // B665: the shared pack resolver reads the live pack ONLY to notice that a boxed product's line is
   // ambiguous (no split); the pieces-per-unit itself comes from legacyLinePieces, never from this read.
   "common/line-pack-factors.ts",
+  // B743: reads the live product ONLY to notice that a vendor-bill line's OWN packSize is missing —
+  // the conversion itself (lineInventoryDelta) still reads packSize from the bill line alone; this
+  // module never supplies the missing number, it only decides whether to ask.
+  "vendor-bills/bill-line-pack.ts",
 ]);
 
 const strip = (s: string) => s.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:])\/\/.*$/gm, "$1");
