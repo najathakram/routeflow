@@ -149,26 +149,6 @@
   grep-for-pinned-literals check exists — propose one in the docs-only-push exemption logic.
 - Renumbered from L-199: an unrelated "dead CSS" lesson landed on master at that id via #909.
 
-### L-199 · 2026-09-18 · tooling · "dead CSS" needs a structural proof, not a route spot-check
-
-- **Symptom:** investigating B538 (an unreachable `.glass-page .desktop-nav [aria-current="page"]`
-  rule), live DOM checks on 2 of the marketing site's 11 routes confirmed `.desktop-nav` is never
-  a descendant of `.glass-page` — but that only proves the claim for the routes actually visited.
-- **Root cause:** a live DOM spot-check is inherently per-instance and cannot cover routes never
-  visited. The marketing app has ONE shared `apps/web/app/(marketing)/layout.tsx` for all 11
-  routes, and every `page.tsx` applies `.glass-page` to its own wrapper _inside_ `{children}`
-  while the layout renders `<SiteHeader/>` (containing `.desktop-nav`) as a sibling of
-  `<main>{children}</main>` — so the non-containment is provable for every route at once by
-  reading the layout, not by sampling the DOM.
-- **Lesson:** **When justifying a CSS-dead-code removal, prefer a structural proof from the
-  shared layout/routing code over live DOM spot-checks on a handful of routes — grep every
-  route's wrapper usage (or read the one shared layout) to cover routes you didn't visit,
-  including ones added later.**
-- **Guard:** `apps/web/app/(marketing)/nav-consistency.test.tsx` renders the real
-  `MarketingLayout` with a `.glass-page` child and asserts `.desktop-nav` is never inside it,
-  with non-vacuity checks, so a future layout/page restructure fails a test instead of surfacing
-  only via another spot-check.
-
 ### L-198 · 2026-09-18 · tooling · `gh run rerun` replays the original checkout, not a fresh merge-ref
 
 - **Symptom:** across ~12 PRs in one landing window, the first "fresh" `gh run rerun` after a
@@ -466,6 +446,28 @@
   plainly that it is unverified.**
 - **Guard:** none — judgment. Grep `isWeb`/`Platform.OS` in any file a fix touches.
 
+### L-217 · 2026-09-25 · testing · a CAS/updateMany needs an executed real-DB proof of its SUCCESS path (B861)
+
+- **Symptom:** a compare-and-set `updateMany({ where: { ...compoundUniqueKey, nextNumber } })` passed
+  tsc and every unit mock, yet would have 500'd every second save of a configured row.
+- **Root cause:** a spread compound-unique key escapes TypeScript's excess-property check, mocks accept
+  any `where`, and only a real Prisma client rejects it ("Unknown argument"). The tests covered only
+  the CAS refusal path, so the success path never ran against a real client.
+- **Lesson:** **A CAS/updateMany (or any where/select/include) change needs an executed real-DB proof
+  of its SUCCESS path, not only the refusal path. Build WhereInputs from plain columns, never a spread
+  compound-unique key.**
+- **Guard:** `numbering-continuity.db.spec.ts` "a save carrying the current expectedNextNumber updates
+  the saved row" (cf. [[L-205]] on tests that cannot fail).
+
+### L-218 · 2026-09-25 · testing · a red-proof that matches message TEXT can be vacuous (B861)
+
+- **Symptom:** the red-proofs AB/AD passed on the OLD code, so they proved nothing about the fix.
+- **Root cause:** they matched `/reload/`, which the pre-existing 409's message also contains, so the
+  wrong error satisfied the assertion.
+- **Lesson:** **Assert by error CLASS or code, never by message text another error can share. Run the
+  proof against the old code and confirm it fails for the intended reason.**
+- **Guard:** `REG-B861-AB`/`AD` assert `BadRequestException`.
+
 ## domain
 
 ### L-204 · 2026-09-18/22 · domain · B524 fix round — a new write path didn't inherit a sibling's cache-invalidation fix (recurred on the READ side: 2026-09-22, B698)
@@ -496,36 +498,6 @@
 - Attribution: candidate from Lane D (PR #913), originally filed as "L-199" from a stale local
   view of the register (already taken here); renumbered on fold-in.
 
-### L-187 · 2026-09-17 · domain · demo-booking slot TOCTOU (check-then-insert race)
-
-- **Symptom:** two concurrent bookings for the same slot could both pass an application-level
-  "is this slot free" check before either had written its row, so both inserted.
-- **Root cause:** the availability check and the insert were two separate statements with no
-  atomicity between them — an application-level check can only narrow the race window, never
-  close it.
-- **Lesson:** **A slot/resource booking that must never double-allocate needs the DB to enforce
-  it, not application code — a partial unique index (`WHERE status != 'CANCELLED'`) makes the
-  second concurrent insert fail atomically at the constraint, instead of racing an app-level
-  read.**
-- **Guard:** the `demo_booking_race_guard` migration's partial unique index; a concurrent-insert
-  regression test proves the second request gets a real constraint violation.
-
-### L-189 · 2026-09-17 · domain · B466 (substitute path bypassed the tier-aware pricer)
-
-- **Symptom:** substituting a product on an order item priced the new line at LIST regardless of
-  the customer's SPECIAL-tier contract price, on a code path nobody had ever pointed a tier-3
-  customer at before.
-- **Root cause:** the substitution branch was its own independent price path — it reused neither
-  `resolveBuyerLinePrice`'s tier resolution nor the batched `CustomerPrice` lookup the ADD/UPDATE
-  branches share, so it defaulted to list price with no way to learn a per-product tier existed.
-- **Lesson:** **A new mutation path onto an already-priced entity (substitute, replace, clone)
-  must resolve price through the SAME tier-aware pricer AND read from the SAME batched
-  price-lookup key set every sibling path uses — a fresh reimplementation silently regresses to
-  the simplest case.**
-- **Guard:** `orders.service.spec.ts`'s B466 suite (SPECIAL-tier substitute prices at tier, not
-  list; batched lookup includes `substituteProductId`). Sibling [[L-072]] (reuse vs.
-  reimplement, applied to a pricer instead of an enum).
-
 ### L-185 · 2026-09-17 · domain · B440 (report `total` repurposed, footer stopped matching its own column)
 
 - **Symptom:** a report's `total` field was repurposed from "sum of the displayed column" to a
@@ -538,20 +510,6 @@
   field serve both.**
 - **Guard:** none yet — propose a regression test with a fixture where the two diverge (nonzero
   tax), asserting both formulas independently.
-
-### L-181 · 2026-09-16 · domain · B451 (dto `any` vs real callers)
-
-- **Symptom:** replacing `estimates.controller.ts`'s `@Body() dto: any` with a real
-  `CreateEstimateDto` made a line-item's `description` required — but `scripts/feature-smoke.mjs`
-  S6 and several `qa-run.js` tests send a bare `{productId, qty}`, relying on the service's own
-  fallback. Caught only by independent review, not the author.
-- **Root cause:** the DTO's field set was derived from the primary web UI form alone;
-  scripted/feature-smoke callers were never grepped.
-- **Lesson:** **Before typing a `dto: any` endpoint (or tightening any field's optionality), grep
-  every caller — web form, mobile, feature-smoke, qa-run, e2e — not just the UI form that
-  motivated the change.**
-- **Guard:** `create-estimate.dto.spec.ts` pins the bare `{productId, qty}` shape passing the
-  real `ValidationPipe` unchanged.
 
 ### L-167 · 2026-09-16 · domain · #781 (B156/B158/B170)
 
@@ -566,20 +524,6 @@
   guards; a test asserting every consumer calls the _same_ function reference (not just a
   matching result) is flagged, not yet added.
 
-### L-173 · 2026-09-16 · domain · B449 (Lite lane, plan-gate boundary)
-
-- **Symptom:** a plan-gated page kept firing its own effects/queries while a locked/blurred
-  overlay showed over it — its 403 toasts and query errors leaked to a user who should never
-  have triggered that behavior.
-- **Root cause:** the gate ghosted the real page behind blur/opacity by rendering it as
-  `children` inside the locked view's own slot — that hides the DOM, it doesn't unmount it.
-- **Lesson:** **A route guard choosing between locked and unlocked must render exactly ONE of
-  two subtrees, never wrap the real page inside the locked view's ghost slot — a component
-  hidden behind blur/opacity is still mounted, and its effects/queries still fire.**
-- **Guard:** a route boundary needs a real "still resolving" state distinct from both outcomes;
-  `layout.plan-gate-boundary.test.tsx` pins children absent from the tree while
-  resolving/locked, not just visually hidden.
-
 ### L-170 · 2026-09-16 · domain · #743 fix round F3 (roundMoney before comparison)
 
 - **Symptom:** a fully-settled invoice rendered a red "Balance Due $0.00" badge instead of the
@@ -593,20 +537,6 @@
 - **Guard:** `invoices.service.ts`'s two `balanceDue` sites and the PDF template now wrap in
   `roundMoney()` before the comparison. Also fixed at `customers.service.ts`'s
   `applyAdvancePaymentToInvoiceLocked` (#814), same class.
-
-### L-171 · 2026-09-16 · domain · PR-1a F1 (pooled cap vs single-line price basis mismatch)
-
-- **Symptom:** an over-return cap was correctly widened from "one matched line" to "pooled across
-  every live line for that product" — but the sibling pricing branch, reading the SAME key,
-  still priced off one matched line's rate against the newly-pooled quantity, over-crediting a
-  product split across two differently-priced lines.
-- **Root cause:** the cap and the price are two different readers of one key. Widening one
-  reader's basis fixed that reader alone — nothing re-examined the sibling reading the same key.
-- **Lesson:** **When a guard/cap computation for a key is widened to pool across rows, grep
-  every OTHER reader of that key — a cap and a price computed from different bases silently
-  mismatch, and the mismatch is a MONEY bug.**
-- **Guard:** the pricing branch now pools qty/subtotal the same way the cap does, with a
-  `min(returned, sold)` backstop; `returns-refund.spec.ts`'s F1 cases prove the pooled pricing.
 
 ### L-072 · 2026-09-03 · domain · wave E `imp-10b`
 
@@ -718,6 +648,27 @@
   `apps/api/src/import/import-robustness.spec.ts` (no phantom `unitCost` 0). PR #934; follow-ups
   B567/B568 filed.
 
+### L-220 · 2026-09-26 · domain · a money-ledger change needs every axis, every ordering, and a DB spec that calls the production writer (B662)
+
+- **Symptom:** a ledger pro-rate fix was verified on one axis and one order of operations, and the DB spec booked the reversal by hand, so a LINE_UNIT under-reversal and a return, adjust, return drift survived review.
+- **Root cause:** the proof re-derived the writer's behaviour instead of exercising it, so it could only agree with the author's model (cf. [[L-214]]).
+- **Lesson:** **For a money-ledger change enumerate every axis the writer serves, test the interleaving permutations, and make the DB spec CALL the production writer, never re-book the rows by hand.**
+- **Guard:** `regulated-ledger-price-correction.db.spec.ts` drives `reverseReturnEntries` and `correctSaleForPriceChange`; the master control reproduces the old wrong values.
+
+### L-221 · 2026-09-26 · domain · retry a whole idempotent tx on a conflict through ONE shared predicate (SA-269)
+
+- **Symptom:** none observed in production: a design rule set by SA-269/SA-340 when #2152 added a transaction retry, so callers would not each invent their own conflict test.
+- **Root cause (of the risk):** the conflict shapes differ across Prisma and pg (40001, 40P01 in every Prisma/pg shape, P2034, TransactionWriteConflict), so a per-caller classifier matches a subset or retries a business error.
+- **Lesson:** **Retry the WHOLE transaction (each attempt re-takes its first lock) on a write conflict, classified by one shared predicate (`common/tx-retry` `txConflictState`). An HttpException is never a conflict.**
+- **Guard:** `REG-SA269-1/2/3` in the tx-retry specs.
+
+### L-222 · 2026-09-26 · domain · a line's unitPrice and unitsPerBox are ONE denomination (SA-330)
+
+- **Symptom:** a rolled-over next-delivery line was split and priced at the LIVE product pack, so after a repack it was re-split and re-priced from the source line.
+- **Root cause:** the copy carried the price without its pack, or the pack without its price; a live price converted to an old pack is a second pricing formula.
+- **Lesson:** **When a line is copied, snapshot BOTH unitPrice and unitsPerBox or neither. Carrying the pack with a live price under-bills after a repack; converting a live price to an old pack is refused.**
+- **Guard:** `next-delivery-pack.db.spec.ts` (a repack with a price change, plus an AT_STOP vs NEXT_DELIVERY parity pin).
+
 ## security
 
 ### L-188 · 2026-09-17 · security · demo-booking OAuth/booking tokens in URL query strings
@@ -731,6 +682,13 @@
   or a POST body for a server-side one.**
 - **Guard:** none yet — propose a lint/review checklist item flagging `token`/`code`/`secret`-
   named query params on any new route.
+
+### L-219 · 2026-09-26 · security · judge a DB-target guard by how the DRIVER parses the URL (D-03)
+
+- **Symptom:** a local-only DB guard checked `new URL(url).hostname`, so `…@localhost/x?host=prod` passed the guard while the pg driver dialled prod.
+- **Root cause:** the guard and the driver parsed the same string differently (`?host=`, `hostaddr`, `service`, multi-host lists, sockets, an encoded `?` in the database name).
+- **Lesson:** **A safety guard on a connection string must parse it the way the DRIVER does (pg-connection-string), then dial the vetted explicit fields, never the raw string it just approved.**
+- **Guard:** `scripts/lib/local-db-target.cjs` and its bypass-list spec (`local-db-target.spec.ts`).
 
 ## deploy
 

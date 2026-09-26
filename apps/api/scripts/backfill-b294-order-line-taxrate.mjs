@@ -39,6 +39,7 @@ import pg from "pg";
 import { inferredFlatRate } from "@routeflow/pricing";
 import { isTestTenant } from "../../../scripts/lib/test-tenants.cjs";
 import { isLocalDbTarget } from "./lib/local-db-target.cjs";
+import { requireLocalPgConfig } from "./lib/local-pg-config.mjs";
 import { redactUrl, resolveDatabaseUrl } from "./lib/railway-db-url.mjs";
 
 const TAG = "backfill-b294";
@@ -103,6 +104,10 @@ async function resolveTarget() {
   return url;
 }
 
+/** What pg dials: under --local the explicit, vetted fields (never the raw string a `?host=` could redirect). */
+const dialConfig = (url) =>
+  process.argv.includes("--local") ? requireLocalPgConfig(url) : { connectionString: url };
+
 async function fingerprint(client) {
   const [db, tenants] = await Promise.all([
     client.query("SELECT current_database() AS db"),
@@ -117,7 +122,7 @@ async function dryRun() {
   console.log(
     `${TAG}: target ${redactUrl(url)} DRY-RUN (invoices created before ${before.toISOString()})`,
   );
-  const client = new pg.Client({ connectionString: url });
+  const client = new pg.Client(dialConfig(url));
   await client.connect();
   try {
     await client.query("BEGIN TRANSACTION READ ONLY");
@@ -220,7 +225,7 @@ async function apply() {
 
   const url = await resolveTarget();
   console.log(`${TAG}: target ${redactUrl(url)} APPLY (${plan.apply.length} invoice(s))`);
-  const client = new pg.Client({ connectionString: url });
+  const client = new pg.Client(dialConfig(url));
   await client.connect();
   try {
     await client.query("BEGIN");

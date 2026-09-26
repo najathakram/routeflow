@@ -73,6 +73,32 @@ export function getStoredBuyer(): BuyerUser | null {
   };
 }
 
+/**
+ * The signed-in buyer account's id (the access token's `sub`), whether or not the token has
+ * expired yet: an identity for keying this buyer's local data, never proof of a live session.
+ */
+export function getStoredBuyerId(): string | null {
+  const token = getBuyerAccessToken();
+  if (!token) return null;
+  const payload = parseJwtPayload(token);
+  if (!payload || (payload.type as string) !== "BUYER") return null;
+  return typeof payload.sub === "string" && payload.sub ? payload.sub : null;
+}
+
+/**
+ * #2142 N2/W2: the notification bell persists per buyer account AND per seller, under
+ * `rf_buyer_notifications:<buyerId>:<seller tenant id>`, so a second buyer on the same browser
+ * never sees the first one's notices, and one buyer never sees seller A's notices in seller B's
+ * portal (after a switch, or once A has revoked the link). The seller is the active seller's
+ * `tenant.id` (a stable id, unlike a renameable slug). `buyerLogout` removes every key under the
+ * prefix, including the old unkeyed and per-buyer-only ones.
+ */
+export const BUYER_NOTIFICATIONS_PREFIX = "rf_buyer_notifications";
+
+export function buyerNotificationsKey(buyerId: string, sellerTenantId: string): string {
+  return `${BUYER_NOTIFICATIONS_PREFIX}:${buyerId}:${sellerTenantId}`;
+}
+
 export function getStoredActiveSeller(): BuyerSeller | null {
   if (typeof window === "undefined") return null;
   const raw = localStorage.getItem(BUYER_KEYS.activeSeller);
@@ -138,7 +164,12 @@ export async function buyerLogout(): Promise<void> {
   localStorage.removeItem(BUYER_KEYS.refreshToken);
   localStorage.removeItem(BUYER_KEYS.activeSeller);
   Object.keys(localStorage)
-    .filter((k) => k.startsWith("buyerCart_"))
+    .filter(
+      (k) =>
+        k.startsWith("buyerCart_") ||
+        k === BUYER_NOTIFICATIONS_PREFIX ||
+        k.startsWith(`${BUYER_NOTIFICATIONS_PREFIX}:`),
+    )
     .forEach((k) => localStorage.removeItem(k));
   clearBuyerPresenceCookie();
 }
