@@ -173,9 +173,20 @@ export function unitLineCount(li: {
 }): number | null {
   const boxes = Number(li.boxes);
   if (li.boxes != null && Number.isInteger(boxes) && boxes > 0) return boxes;
+  // Mirrors web's unitLineCount (#2220) exactly: an integer factor >= 1 and a POSITIVE integer
+  // qty that is a whole multiple of it — qty 0, a fractional factor or fractional qty is LOCKED.
   const qty = Number(li.qty);
   const upb = Number(li.unitsPerBox);
-  if (li.unitsPerBox != null && upb >= 1 && Number.isInteger(qty / upb)) return qty / upb;
+  if (
+    li.unitsPerBox != null &&
+    Number.isInteger(upb) &&
+    upb >= 1 &&
+    Number.isInteger(qty) &&
+    qty > 0 &&
+    qty % upb === 0
+  ) {
+    return qty / upb;
+  }
   return null;
 }
 
