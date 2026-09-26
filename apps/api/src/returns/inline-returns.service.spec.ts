@@ -7,6 +7,8 @@
  * m-2/m-5 mechanisms with concrete dollar oracles, plus the Opus review (BLOCK) fix round's
  * HIGH-1/2/4, MED-5/6/7 mechanisms.
  */
+import { readFileSync } from "fs";
+import { join } from "path";
 import { Test, TestingModule } from "@nestjs/testing";
 import {
   BadRequestException,
@@ -15,7 +17,7 @@ import {
   NotFoundException,
 } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
-import { InlineReturnsService } from "./inline-returns.service";
+import { INLINE_RETURN_ERROR_CODES, InlineReturnsService } from "./inline-returns.service";
 import { InlineReturnsQuoteService } from "./inline-returns-quote.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { RouteFlowGateway } from "../gateways/routeflow.gateway";
@@ -90,6 +92,12 @@ const CAPTURE_DTO = {
 };
 
 const DRIVER_CAPTURE_DTO = { ...CAPTURE_DTO, routeRunStopId: "stop-1", returnKey: "nonce-driver" };
+
+const codeOf = async (p: Promise<unknown>) =>
+  p.then(
+    () => null,
+    (e: any) => e?.getResponse?.()?.code ?? null,
+  );
 
 describe("InlineReturnsService", () => {
   let service: InlineReturnsService;
@@ -381,7 +389,9 @@ describe("InlineReturnsService", () => {
         items: [],
       }); // the IN-TX re-check, after the row lock, finds the racer's mismatched row
 
-    await expect(service.capture(CAPTURE_DTO as any, OPERATOR)).rejects.toThrow(ConflictException);
+    const p = service.capture(CAPTURE_DTO as any, OPERATOR);
+    await expect(p).rejects.toThrow(ConflictException);
+    expect(await codeOf(p)).toBe(INLINE_RETURN_ERROR_CODES.RETURN_KEY_CONFLICT);
     expect(prisma.return.create).not.toHaveBeenCalled();
   });
 
@@ -430,9 +440,9 @@ describe("InlineReturnsService", () => {
         items: [],
       });
 
-      await expect(service.capture(CAPTURE_DTO as any, OPERATOR)).rejects.toThrow(
-        ConflictException,
-      );
+      const p = service.capture(CAPTURE_DTO as any, OPERATOR);
+      await expect(p).rejects.toThrow(ConflictException);
+      expect(await codeOf(p)).toBe(INLINE_RETURN_ERROR_CODES.RETURN_KEY_CONFLICT);
     });
 
     it("a P2002 on an UNRELATED constraint is never mistaken for a returnKey replay", async () => {
@@ -580,10 +590,27 @@ describe("InlineReturnsService", () => {
         status: "CANCELLED",
         routeRunId: "run-1",
       });
-      await expect(service.capture(CAPTURE_DTO as any, OPERATOR)).rejects.toThrow(
-        BadRequestException,
-      );
+      const p = service.capture(CAPTURE_DTO as any, OPERATOR);
+      await expect(p).rejects.toThrow(BadRequestException);
+      expect(await codeOf(p)).toBe(INLINE_RETURN_ERROR_CODES.ORDER_CANCELLED);
       expect(prisma.return.create).not.toHaveBeenCalled();
+    });
+
+    it("SA-204: a foreign-customer order and a missing order carry their own refusal codes", async () => {
+      prisma.order.findFirst.mockResolvedValue({
+        id: "ord-carrying",
+        customerId: "cust-OTHER",
+        total: 1000,
+        status: "CONFIRMED",
+        routeRunId: null,
+      });
+      expect(await codeOf(service.capture(CAPTURE_DTO as any, OPERATOR))).toBe(
+        INLINE_RETURN_ERROR_CODES.ORDER_CUSTOMER_MISMATCH,
+      );
+      prisma.order.findFirst.mockResolvedValue(null);
+      expect(await codeOf(service.capture(CAPTURE_DTO as any, OPERATOR))).toBe(
+        INLINE_RETURN_ERROR_CODES.ORDER_NOT_FOUND,
+      );
     });
   });
 
@@ -615,6 +642,53 @@ describe("InlineReturnsService", () => {
         data: expect.objectContaining({ creditNoteId: expect.anything() }),
       }),
     );
+  });
+
+  // ─── the N-1 guarded link's exact refusal literal — pinned cross-boundary (SA-091b) ──
+  //
+  // The mobile client (apps/mobile/lib/inline-return-submit-key.ts's
+  // isDefiniteInlineReturnRefusal) parses THIS EXACT MESSAGE to decide the return-key is still
+  // safe to retry (this is a 409 the server DID answer, but whether the mint that already ran
+  // in this same transaction committed is what the ROLLBACK undoes — the caller must retry with
+  // the SAME returnKey, never mint a fresh one). No structured error code exists yet
+  // (RETURN_STATE_RACE_RETRY is a proposed follow-up); until then this string is the only
+  // contract between the two sides, so a reword here without a matching mobile update would
+  // silently break that retry classification. If this test ever needs to change, update
+  // RETURN_STATE_RACE_RETRY_MESSAGE in apps/mobile/lib/inline-return-submit-key.ts too.
+  it('issueCreditInTx\'s N-1 guarded-link miss throws EXACTLY "Return changed state during credit issue — retry" — pinned for the mobile retry-classification contract', async () => {
+    prisma.return.findFirst
+      .mockResolvedValueOnce(null) // capture()'s own pre-tx replay check
+      .mockResolvedValueOnce(null) // capture()'s in-tx replay check — none found, proceeds to create
+      .mockResolvedValueOnce({
+        id: "ret-1",
+        status: "RECEIVED",
+        creditNoteId: null,
+        holdReason: null,
+        customerId: "cust-1",
+        orderId: "ord-carrying",
+        creditSubtotal: 28,
+        creditTax: 2,
+        creditCategoryTax: 0,
+      }) // issueCredit's own unlocked pre-read (m-2)
+      .mockResolvedValueOnce({
+        id: "ret-1",
+        status: "RECEIVED",
+        creditNoteId: null,
+        holdReason: null,
+        customerId: "cust-1",
+        orderId: "ord-carrying",
+        creditSubtotal: 28,
+        creditTax: 2,
+        creditCategoryTax: 0,
+      }); // issueCredit's in-tx FOR-UPDATE re-read: still RECEIVED, proceeds to mint
+    // A racer's own issueCredit already linked this return's credit note between this call's
+    // FOR-UPDATE re-read and its own updateMany — the guarded link matches 0 rows.
+    prisma.return.updateMany.mockResolvedValue({ count: 0 });
+
+    await expect(service.capture(CAPTURE_DTO as any, OPERATOR)).rejects.toThrow(
+      "Return changed state during credit issue — retry",
+    );
+    expect(creditNotes.mintStandaloneInTx).toHaveBeenCalled();
   });
 
   // ─── approve / reject (N-5, Q-C, HIGH-2, HIGH-4) ─────────────────────────────
@@ -884,5 +958,34 @@ describe("InlineReturnsService", () => {
       prisma.return.updateMany.mockResolvedValue({ count: 0 });
       await expect(service.cancel("ret-x", OPERATOR)).rejects.toThrow(BadRequestException);
     });
+  });
+});
+
+// SA-204: the mobile capture classifier settles a 4xx ONLY when the body carries one of the
+// capture service's own error codes (a post-lookup business refusal); everything else keeps the
+// nonce. These pin the codes the server puts on each such refusal, and that the mobile client's
+// set is exactly this set (read from the mobile source, the enum-parity precedent).
+describe("InlineReturnsService — refusal codes (SA-204)", () => {
+  it("exports the four capture refusal codes", () => {
+    expect(INLINE_RETURN_ERROR_CODES).toEqual({
+      ORDER_NOT_FOUND: "INLINE_RETURN_ORDER_NOT_FOUND",
+      ORDER_CUSTOMER_MISMATCH: "INLINE_RETURN_ORDER_CUSTOMER_MISMATCH",
+      ORDER_CANCELLED: "INLINE_RETURN_ORDER_CANCELLED",
+      RETURN_KEY_CONFLICT: "INLINE_RETURN_KEY_CONFLICT",
+    });
+  });
+
+  it("the mobile client's refusal-code set is exactly the server's (compared as SETS, both ways)", () => {
+    const mobile = readFileSync(
+      join(__dirname, "..", "..", "..", "mobile", "lib", "inline-return-submit-key.ts"),
+      "utf8",
+    );
+    const decl = /INLINE_RETURN_REFUSAL_CODES[^=]*=\s*\[([\s\S]*?)\]/.exec(mobile);
+    expect(decl).not.toBeNull();
+    const mobileSet = new Set([...decl![1]!.matchAll(/"([^"]+)"/g)].map((m) => m[1]!));
+    const serverSet = new Set<string>(Object.values(INLINE_RETURN_ERROR_CODES));
+    expect(mobileSet.size).toBeGreaterThan(0);
+    for (const c of serverSet) expect(mobileSet).toContain(c); // nothing the server sends is missing on the client
+    for (const c of mobileSet) expect(serverSet).toContain(c); // nothing the client trusts is unknown to the server
   });
 });

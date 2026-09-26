@@ -54,6 +54,9 @@ export interface FailedActionRecord {
   action: QueuedAction;
   /** Human-readable reason surfaced to the operator (alertInfo/InlineToast). */
   reason: string;
+  /** The server's own error `code` (`response.data.code`), when it sent one — lets a caller
+   *  tell a capture service's business refusal from a guard/validation 4xx (SA-204). */
+  code?: string;
   failedAt: number;
 }
 
@@ -92,6 +95,11 @@ export interface DrainDeps {
  * operator nothing; Nest sends the useful text in `response.data.message`
  * (a string, or an array of them from class-validator).
  */
+function serverCode(err: unknown): string | undefined {
+  const code = (err as { response?: { data?: { code?: unknown } } })?.response?.data?.code;
+  return typeof code === "string" && code ? code : undefined;
+}
+
 function serverMessage(err: unknown): string | undefined {
   const data = (err as { response?: { data?: unknown } })?.response?.data;
   if (typeof data === "string") return data.trim() || undefined;
@@ -168,6 +176,7 @@ export async function drainQueue(actions: QueuedAction[], deps: DrainDeps): Prom
           action,
           reason: `HTTP ${status}: ${message}`,
           failedAt: Date.now(),
+          ...(serverCode(err) ? { code: serverCode(err) } : {}),
         };
         failedActions.push(record);
         deps.notifyFailed(record);

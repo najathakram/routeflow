@@ -57,6 +57,7 @@ import { CommissionEngineService } from "../sales-agents/commission-engine.servi
 import { EstimatesService } from "../estimates/estimates.service";
 import { NumberingService } from "../import/numbering.service";
 import { describeDb, requireLocalDatabaseUrl } from "../common/testing/db-spec";
+import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const { assertTestTenant } = require("../../../../scripts/lib/test-tenants.cjs");
@@ -126,6 +127,10 @@ describeDb("B663 on-account short/refused completion — real Postgres", () => {
       providers: [
         RoutesService,
         InvoicesService,
+        {
+          provide: SellingRestrictionsService,
+          useValue: { assertLinesSellable: jest.fn().mockResolvedValue(undefined) },
+        },
         EstimatesService,
         NumberingService,
         { provide: PrismaService, useValue: prisma },

@@ -257,3 +257,30 @@ export function writeSites(src: string, models: string[], relationNames: Set<str
   visit(parse(src));
   return [...out];
 }
+
+/**
+ * D-20 (SA-330): the keys a copier passes THROUGH an internal options object (e.g. `create(dto, user, { sourceLines:
+ * { [productId]: { unitsPerBox, unitPrice, ... } } })`), which the anchored line literal cannot see. Every property
+ * name found (deeply) inside the object literal assigned to `<optionName>:` within function `fn`. Empty set = the
+ * hand-off is gone.
+ */
+export function optionsPassedKeys(src: string, fn: string, optionName: string): Set<string> {
+  const keys = new Set<string>();
+  for (const node of findFunctions(src, fn)) {
+    const visit = (n: ts.Node) => {
+      if (ts.isPropertyAssignment(n) && n.name.getText() === optionName) {
+        const collect = (m: ts.Node) => {
+          if (ts.isPropertyAssignment(m) || ts.isShorthandPropertyAssignment(m)) {
+            if (!ts.isComputedPropertyName(m.name))
+              keys.add(m.name.getText().replace(/^['"]|['"]$/g, ""));
+          }
+          ts.forEachChild(m, collect);
+        };
+        collect(n.initializer);
+      }
+      ts.forEachChild(n, visit);
+    };
+    visit(node);
+  }
+  return keys;
+}

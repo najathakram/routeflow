@@ -36,6 +36,7 @@ import { MessagingService } from "../messaging/messaging.service";
 import { StorageService } from "../storage/storage.service";
 import { EntitlementsService } from "../billing/entitlements.service";
 import { CommissionEngineService } from "../sales-agents/commission-engine.service";
+import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
 import { EstimatesService } from "../estimates/estimates.service";
 import { NumberingService } from "../import/numbering.service";
 import { describeDb, requireLocalDatabaseUrl } from "../common/testing/db-spec";
@@ -111,6 +112,10 @@ describeDb(
       const module: TestingModule = await Test.createTestingModule({
         providers: [
           InvoicesService,
+          {
+            provide: SellingRestrictionsService,
+            useValue: { assertLinesSellable: jest.fn().mockResolvedValue(undefined) },
+          },
           EstimatesService,
           NumberingService,
           { provide: PrismaService, useValue: prisma },
