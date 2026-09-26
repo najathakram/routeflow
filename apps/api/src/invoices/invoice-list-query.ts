@@ -1,31 +1,12 @@
-import { BadRequestException } from "@nestjs/common";
 import { InvoiceStatus } from "@prisma/client";
 import type { ListInvoicesDto } from "./dto/list-invoices.dto";
+import { calendarDayOf } from "./settled-date-filter";
 
 /**
  * The invoice LIST query, lifted verbatim out of `InvoicesService.findAll` (size-ratchet prefactor for
  * F-05, #2093): pure filter / sort building, no Prisma call. The buyer scoping between the two filter
  * stages stays in the service (it needs the customer lookup) and still runs in the original order.
  */
-
-/**
- * Normalise a date query param to the `YYYY-MM-DD` calendar day it names,
- * BEFORE it is concatenated into a literal instant (`${day}T23:59:59.999Z`).
- * The list DTOs accept `@IsDateString()`/`@IsString()`, so a full ISO-8601
- * datetime is a valid input — concatenating one raw would yield an
- * `Invalid Date` bound that silently reaches Prisma. An unparsable value is
- * rejected here with a 400 instead of becoming a broken filter.
- */
-export function calendarDayOf(raw: string, field: string): string {
-  const day = raw.slice(0, 10);
-  if (
-    !/^\d{4}-\d{2}-\d{2}$/.test(day) ||
-    Number.isNaN(new Date(`${day}T00:00:00.000Z`).getTime())
-  ) {
-    throw new BadRequestException(`${field} must be a calendar date (YYYY-MM-DD)`);
-  }
-  return day;
-}
 
 /** Status / overdue / shipments filters: the first stage, before the buyer scoping. */
 export function applyInvoiceStatusFilters(where: any, query: ListInvoicesDto): void {
