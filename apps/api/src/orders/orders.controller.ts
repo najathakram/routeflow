@@ -155,6 +155,7 @@ export class OrdersController {
                 customerId: dto.customerId!,
                 items: dto.items,
                 appliedCreditNotes: dto.appliedCreditNotes,
+                inlineReturn: dto.inlineReturn,
               })
             : undefined;
           let merged: { kind: "merged"; orderId: string; replayed: boolean } | { kind: "stale" };
@@ -195,6 +196,7 @@ export class OrdersController {
                     idempotencyKey,
                     dto.customerId!,
                     requestHash,
+                    dto.inlineReturn?.returnKey,
                   );
                   if (replayed) {
                     const replayedOrderId = replayed.orderId;
@@ -259,6 +261,8 @@ export class OrdersController {
                   ...(dto.appliedCreditNotes !== undefined
                     ? { appliedCreditNotes: dto.appliedCreditNotes }
                     : {}),
+                  // #2094: a return taken on a merge lands on the winner in the same tx (updateOrderItems).
+                  ...(dto.inlineReturn ? { inlineReturn: dto.inlineReturn } : {}),
                 } as any;
                 // B215: the idempotency key (when present) rides INTO updateOrderItems and
                 // commits inside the fold's own transaction — a crash or a later throw can no
