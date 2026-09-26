@@ -6,8 +6,7 @@ import {
   assertReplayCarriesReturn,
   assertReplayCarriesReturnKey,
   reserveEditReturnNumber,
-  retryTxOnDeadlock,
-  isRetryableTxError,
+  runWithConflictRetry,
   preflightInlineReturn,
   emitInlineReturnCredit,
   lockInlineReturnCustomer,
@@ -181,12 +180,7 @@ describe("applyInlineReturnInTx", () => {
     const p = await prepareInlineReturn(svc as any, LINES, STAFF);
     await reserveInlineReturnNumber(p, "c1", STAFF);
     const tx = {};
-    const minted = await applyInlineReturnInTx(tx, p, {
-      customerId: "cust-1",
-      orderId: "ord-1",
-      user: STAFF,
-      orderRouteRunId: "run-1",
-    });
+    const minted = await applyInlineReturnInTx(tx, p, "cust-1", "ord-1", STAFF, "run-1");
     expect(minted).toEqual({ id: "cn-1" });
     expect(svc.captureAndIssueInTx).toHaveBeenCalledWith(
       tx,
@@ -203,15 +197,13 @@ describe("applyInlineReturnInTx", () => {
       { ...LINES, customerId: "evil", orderId: "evil" },
       STAFF,
     );
-    await applyInlineReturnInTx({}, p, { customerId: "cust-1", orderId: "ord-1", user: STAFF });
+    await applyInlineReturnInTx({}, p, "cust-1", "ord-1", STAFF);
     const passed = svc.captureAndIssueInTx.mock.calls[0][1];
     expect([passed.customerId, passed.orderId]).toEqual(["cust-1", "ord-1"]);
   });
 
   it("null when there is no inline return", async () => {
-    expect(
-      await applyInlineReturnInTx({}, null, { customerId: "c", orderId: "o", user: STAFF }),
-    ).toBeNull();
+    expect(await applyInlineReturnInTx({}, null, "c", "o", STAFF)).toBeNull();
   });
 });
 
@@ -278,6 +270,44 @@ describe("assertReplayCarriesReturn (#2094 R1)", () => {
   });
 });
 
+describe("runWithConflictRetry (SA-340)", () => {
+  const adapter40001 = () =>
+    Object.assign(new Error("write conflict"), {
+      name: "DriverAdapterError",
+      cause: { kind: "TransactionWriteConflict", originalCode: "40001" },
+    });
+
+  it("an adapter-shaped 40001 retries the whole tx for a request carrying a return, with the number reserved once", async () => {
+    const svc = svcStub();
+    const p = await prepareInlineReturn(svc as any, LINES, STAFF);
+    p!.preflightTotal = 10;
+    await reserveEditReturnNumber(p);
+    const seen: Array<string | undefined> = [];
+    const run = jest.fn(async () => {
+      seen.push(p!.creditNoteNumber);
+      if (seen.length === 1) throw adapter40001();
+      return "ok";
+    });
+    await expect(runWithConflictRetry(p, "test", run)).resolves.toBe("ok");
+    expect(run).toHaveBeenCalledTimes(2);
+    expect(seen).toEqual(["CN-2026-0001", "CN-2026-0001"]); // the SAME number on the retry
+    expect(svc.reserveCreditNoteNumber).toHaveBeenCalledTimes(1);
+  });
+
+  it("a plain edit (no return) is ONE attempt: the conflict escapes", async () => {
+    const run = jest.fn().mockRejectedValue(adapter40001());
+    await expect(runWithConflictRetry(null, "test", run)).rejects.toThrow("write conflict");
+    expect(run).toHaveBeenCalledTimes(1);
+  });
+
+  it("a non-conflict error is never retried", async () => {
+    const p = await prepareInlineReturn(svcStub() as any, LINES, STAFF);
+    const run = jest.fn().mockRejectedValue(new Error("boom"));
+    await expect(runWithConflictRetry(p, "test", run)).rejects.toThrow("boom");
+    expect(run).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe("assertReplayCarriesReturnKey / edit reserve / retry (#2094 A2)", () => {
   const db = (found: boolean) => ({
     return: { findFirst: jest.fn().mockResolvedValue(found ? { id: "r" } : null) },
@@ -314,7 +344,7 @@ describe("assertReplayCarriesReturnKey / edit reserve / retry (#2094 A2)", () =>
     const p = await prepareInlineReturn(svc as any, LINES, STAFF);
     p!.preflightTotal = 0; // the stale-price race: dry-run 0, in-tx > 0
     await reserveEditReturnNumber(p);
-    await applyInlineReturnInTx({}, p, { customerId: "c1", orderId: "o1", user: STAFF });
+    await applyInlineReturnInTx({}, p, "c1", "o1", STAFF);
     expect(svc.reserveCreditNoteNumber).toHaveBeenCalledTimes(1); // once, ahead of the tx
     expect(svc.captureAndIssueInTx).toHaveBeenCalledWith(
       expect.anything(),
@@ -323,41 +353,6 @@ describe("assertReplayCarriesReturnKey / edit reserve / retry (#2094 A2)", () =>
       expect.objectContaining({ creditNoteNumber: "CN-2026-0001" }),
     );
   });
-
-  it("retryTxOnDeadlock: retries a deadlock twice then succeeds; gives up after 3 attempts; never retries without a return or on another error", async () => {
-    const svc = svcStub();
-    const p = await prepareInlineReturn(svc as any, LINES, STAFF);
-    const dead = Object.assign(new Error("deadlock detected"), { code: "40P01" });
-    const flaky = jest
-      .fn()
-      .mockRejectedValueOnce(dead)
-      .mockRejectedValueOnce(dead)
-      .mockResolvedValue("ok");
-    await expect(retryTxOnDeadlock(p, flaky)).resolves.toBe("ok");
-    const always = jest.fn().mockRejectedValue(dead);
-    await expect(retryTxOnDeadlock(p, always)).rejects.toBe(dead);
-    expect(always).toHaveBeenCalledTimes(3);
-    const none = jest.fn().mockRejectedValue(dead);
-    await expect(retryTxOnDeadlock(null, none)).rejects.toBe(dead);
-    expect(none).toHaveBeenCalledTimes(1);
-    const other = jest.fn().mockRejectedValue(new Error("boom"));
-    await expect(retryTxOnDeadlock(p, other)).rejects.toThrow("boom");
-    expect(other).toHaveBeenCalledTimes(1);
-  });
-});
-
-describe("isRetryableTxError (#2094 W1)", () => {
-  it.each([
-    [{ code: "P2034" }],
-    [{ code: "40P01" }],
-    [{ meta: { code: "40P01" } }],
-    [{ message: "ERROR: deadlock detected" }],
-  ])("retries %j", (e) => expect(isRetryableTxError(e)).toBe(true));
-
-  it.each([[{ code: "P2002" }], [new Error("boom")], [undefined], [{ code: "P2025" }]])(
-    "does not retry %j",
-    (e) => expect(isRetryableTxError(e)).toBe(false),
-  );
 });
 
 describe("preflightInlineReturn (Opus R1)", () => {

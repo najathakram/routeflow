@@ -1,4 +1,5 @@
 import { ConflictException, ForbiddenException, ServiceUnavailableException } from "@nestjs/common";
+import { retryOnTxConflict } from "../common/tx-retry";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
 import type { InlineReturnLinesDto } from "../returns/dto/capture-inline-return.dto";
 import { INLINE_RETURN_KEY_TAKEN } from "../returns/inline-returns.service";
@@ -150,20 +151,6 @@ export async function assertReplayCarriesReturnKey(
   }
 }
 
-/**
- * A deadlock (40P01) or serialization failure (P2034) in the order tx is retried, with the SAME reserved
- * credit-note number, exactly like an order-number collision (#2094 W1: the return adds a lock edge
- * Product (sale) -> Return counter -> Product (restock)).
- */
-export function isRetryableTxError(e: any): boolean {
-  return (
-    e?.code === "P2034" ||
-    e?.code === "40P01" ||
-    e?.meta?.code === "40P01" ||
-    /deadlock detected/i.test(String(e?.message ?? ""))
-  );
-}
-
 /** The tx's FIRST statement (before any row lock). No-op without an inline return. */
 export async function lockInlineReturnCustomer(
   tx: any,
@@ -182,19 +169,17 @@ export async function lockInlineReturnCustomer(
 export async function applyInlineReturnInTx(
   tx: any,
   p: PreparedInlineReturn | null,
-  ctx: {
-    customerId: string;
-    orderId: string;
-    user: JwtPayload | undefined;
-    orderRouteRunId?: string | null;
-  },
+  customerId: string,
+  orderId: string,
+  user: JwtPayload | undefined,
+  orderRouteRunId?: string | null,
 ): Promise<any> {
   if (!p) return null;
   const out = await p.svc.captureAndIssueInTx(
     tx,
-    { ...p.lines, customerId: ctx.customerId, orderId: ctx.orderId },
-    ctx.user as JwtPayload,
-    { creditNoteNumber: p.creditNoteNumber, orderRouteRunId: ctx.orderRouteRunId },
+    { ...p.lines, customerId, orderId },
+    user as JwtPayload,
+    { creditNoteNumber: p.creditNoteNumber, orderRouteRunId },
   );
   return out.minted;
 }
@@ -240,19 +225,31 @@ export async function reserveEditReturnNumber(p: PreparedInlineReturn | null): P
 }
 
 /**
- * Runs an order transaction, retrying a deadlock (40P01) / serialization failure (P2034) up to 3
- * attempts when the request carries a return, with the SAME reserved number (the edit's revert is
- * idempotent). The Product -> Return counter -> Product edge can deadlock two returns (Opus W2).
+ * The edit tx: a request carrying a return (`p` non-null) retries a write conflict (40001 / 40P01 /
+ * P2034 / TransactionWriteConflict, house helper common/tx-retry.ts, SA-340) with the SAME reserved
+ * credit-note number (the edit tx is idempotent: its revert and its replay key see to that). A plain
+ * edit keeps its single attempt. The return adds the lock edge Product (sale) -> Return counter ->
+ * Product (restock), the reason the return path can conflict at all.
  */
-export async function retryTxOnDeadlock<T>(
+export function runWithConflictRetry<T>(
   p: PreparedInlineReturn | null,
+  label: string,
   run: () => Promise<T>,
 ): Promise<T> {
-  for (let attempt = 0; ; attempt++) {
-    try {
-      return await run();
-    } catch (e) {
-      if (!p || !isRetryableTxError(e) || attempt >= 2) throw e;
-    }
-  }
+  return p ? retryOnTxConflict(label, run) : run();
+}
+
+/**
+ * The edit tx (`prisma.tenantTransaction(fn, opts)`) under `runWithConflictRetry`: one call site in
+ * orders.service.ts, so the retried callback carries no wrapper of its own.
+ */
+export function runEditTx<T>(
+  p: PreparedInlineReturn | null,
+  prisma: any,
+  fn: (tx: any) => Promise<T>,
+  opts?: any,
+): Promise<T> {
+  return runWithConflictRetry(p, "orders.updateOrderItems", () =>
+    prisma.tenantTransaction(fn, opts),
+  );
 }

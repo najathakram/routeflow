@@ -53,8 +53,8 @@ describe("OrdersService.create(): inline-return call order (#2094)", () => {
   });
 
   it("the return is applied AFTER the order and its lines exist, inside the same tx callback", () => {
-    expect(at("applyInlineReturnInTx(")).toBeGreaterThan(at("tx.order.create("));
-    expect(at("applyInlineReturnInTx(")).toBeLessThan(commit());
+    expect(at("applyReturn(")).toBeGreaterThan(at("tx.order.create("));
+    expect(at("applyReturn(")).toBeLessThan(commit());
   });
 
   it("the credit event is emitted only after the loop (after the commit)", () => {
@@ -70,7 +70,7 @@ describe("OrdersService.create(): inline-return call order (#2094)", () => {
   });
 
   it("a deadlock or serialization failure on a create carrying a return retries, inside the same loop (the reserved number is reused)", () => {
-    const retry = at("isRetryableTxError(");
+    const retry = at("txConflictState(");
     expect(retry).toBeGreaterThan(at("for (let attempt"));
     expect(retry).toBeGreaterThan(at("catch (e"));
     expect(body.slice(retry, retry + 200)).toContain("continue");
@@ -137,7 +137,7 @@ describe("OrdersService.updateOrderItems(): inline-return call order (#2094)", (
   });
 
   it("the return is applied AFTER the order's new total is written and BEFORE the tx returns", () => {
-    const apply = at("applyInlineReturnInTx(");
+    const apply = at("applyReturn(");
     expect(apply).toBeGreaterThan(at("tx.order.update("));
     expect(apply).toBeLessThan(at("return { subtotal, tax, total, shouldRevert, shippingFee }"));
   });
@@ -153,21 +153,21 @@ describe("OrdersService.updateOrderItems(): inline-return call order (#2094)", (
     expect(body.split("reserveEditReturnNumber(").length - 1).toBe(1);
   });
 
-  it("the edit tx retries a deadlock / serialization failure with the SAME reserved number (W2)", () => {
-    const retry = at("retryTxOnDeadlock(");
-    expect(retry).toBeGreaterThan(at("reserveEditReturnNumber("));
-    expect(retry).toBeLessThan(at("lockInlineReturnCustomer("));
-    expect(retry).toBeLessThan(at("tenantTransaction("));
+  it("the edit tx retries a write conflict via the house helper, only when the request carries a return, with the SAME reserved number (SA-340)", () => {
+    const retry = at("runEditTx(");
+    expect(at("reserveEditReturnNumber(")).toBeLessThan(retry); // reserved ONCE, ahead of the retried tx
+    expect(retry).toBeLessThan(at("lockInlineReturnCustomer(")); // the whole tx is inside the retried callback
+    expect(body.slice(retry, retry + 60)).toContain("inlineRet"); // the p gate travels with the call
   });
 
   it("the credit gate is re-read after the credit is applied, in the same tx", () => {
-    const apply = at("applyInlineReturnInTx(");
+    const apply = at("applyReturn(");
     expect(body.slice(apply, apply + 800)).toContain("await creditGate()");
   });
 
   it("the credit event is emitted after the commit and before the post-commit reconcile", () => {
     const emit = at("emitInlineReturnCredit(");
-    expect(emit).toBeGreaterThan(at("applyInlineReturnInTx("));
+    expect(emit).toBeGreaterThan(at("applyReturn("));
     expect(emit).toBeLessThan(at("this.reconcileOrderAfterEdit("));
   });
 

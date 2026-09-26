@@ -290,6 +290,37 @@ describeDb(
       ).toBeGreaterThan(0);
     }, 60_000);
 
+    it("SA-340: an adapter-shaped 40001 on the edit tx retries the WHOLE tx with the SAME reserved number (one Return, one credit note)", async () => {
+      const f = await seed("conflict");
+      const real = prisma.tenantTransaction.bind(prisma);
+      let calls = 0;
+      const spy = jest.spyOn(prisma, "tenantTransaction").mockImplementation(((...args: any[]) => {
+        calls++;
+        // call 1 is NumberingService.reserveNext's own tx (the CN number, reserved ahead); call 2 is the
+        // edit tx's first attempt: fail it the way Prisma 7's pg adapter reports a serialization failure.
+        if (calls === 2) {
+          return Promise.reject(
+            Object.assign(new Error("write conflict"), {
+              name: "DriverAdapterError",
+              cause: { kind: "TransactionWriteConflict", originalCode: "40001" },
+            }),
+          );
+        }
+        return (real as any)(...args);
+      }) as any);
+      try {
+        await edit(f, ret(f.productId, 3, `k-conflict-${run}`));
+      } finally {
+        spy.mockRestore();
+      }
+      expect(calls).toBeGreaterThanOrEqual(3); // reservation, failed attempt, retried attempt
+      expect(reserved).toHaveLength(1); // the number was reserved ONCE, ahead of the tx
+      expect(await raw.return.count({ where: { orderId: f.orderId } })).toBe(1);
+      const cns = await raw.creditNote.findMany({ where: { customerId: f.customerId } });
+      expect(cns).toHaveLength(1);
+      expect(cns[0].creditNoteNumber).toBe(reserved[0]);
+    }, 60_000);
+
     it("replay: the same edit with the same returnKey issues nothing new (one Return, one credit note)", async () => {
       const f = await seed("replay");
       const r = ret(f.productId, 3, `k-replay-${run}`);
