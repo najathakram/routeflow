@@ -302,11 +302,11 @@ describe("RoutesService — F10 stop-state guards (REG-B54/B55/B71/B72/B120/B121
     // the path to this one.
     it("T21 — REG-B55/SA-133: the reversal RECOMPUTES OrderItem.deliveredQty from the (now-deleted) evidence, so a re-delivery cannot bill the undone delivery", async () => {
       // B785/SA-133: reopen no longer zeroes deliveredQty unconditionally — it recomputes
-      // from the evidence basis, AFTER step 1 deletes this stop's own rows. SA-345a: the deleted
-      // row names its line (a real row always does), so li-1 is a line whose rows were just
-      // deleted and recomputes to 0; a legacy line with no row ever is left alone.
-      prisma.deliveryMutation.findMany.mockResolvedValue([
-        { orderId: "order-1", orderItemId: "li-1" },
+      // from the evidence basis, AFTER step 1 deletes this stop's own rows. SA-346: the pre-delete
+      // read returns the row actually deleted (a real one names its line and carries type + qty),
+      // so li-1 is in the force set and recomputes to 0; a legacy line with no row is left alone.
+      prisma.deliveryMutation.findMany.mockResolvedValueOnce([
+        { orderId: "order-1", orderItemId: "li-1", type: "DELIVERED", quantityDelivered: 5 },
       ]);
       prisma.orderItem.findMany.mockResolvedValue([{ id: "li-1" }]);
 

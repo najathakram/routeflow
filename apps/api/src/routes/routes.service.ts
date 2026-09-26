@@ -86,7 +86,7 @@ import {
   RUN_STOP_INCLUDE,
 } from "./routes.constants";
 import { withDeliveredSoFar } from "./run-delivered-so-far";
-import { deliveredQtyRecompute } from "./delivered-so-far";
+import { DeletedEvidenceRow, deliveredQtyRecompute } from "./delivered-so-far";
 import { withPayableInvoicesFlat } from "./run-projections";
 import { withRunStopProjections, withRunStopProjectionsForRunsPage } from "./run-projections";
 export {
@@ -3076,11 +3076,10 @@ export class RoutesService {
 
       // 1. Delete this stop's delivery mutations — capture their orders/lines FIRST (SA-151): an
       // order moved to another stop is no longer in `stop.orders`, yet its evidence goes too.
-      const deletedRows: Array<{ orderId: string; orderItemId: string | null }> =
-        await tx.deliveryMutation.findMany({
-          where: { routeRunStopId: stopId },
-          select: { orderId: true, orderItemId: true },
-        });
+      const deletedRows: DeletedEvidenceRow[] = await tx.deliveryMutation.findMany({
+        where: { routeRunStopId: stopId },
+        select: { orderId: true, orderItemId: true, type: true, quantityDelivered: true },
+      });
       const staleDeliveredQtyOrderIds = new Set(deletedRows.map((r) => r.orderId));
       for (const order of stop.orders) staleDeliveredQtyOrderIds.add(order.id);
       await tx.deliveryMutation.deleteMany({ where: { routeRunStopId: stopId } });

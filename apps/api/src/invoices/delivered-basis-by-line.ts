@@ -63,7 +63,7 @@ export interface DeliveredBasis {
  * not a delivered amount). A REFUSED row's own quantityDelivered value is never read (delivered
  * is always forced to 0 for it) -- its non-null PRESENCE is only the qualification signal.
  */
-function isEvidenceRow(m: { type: string; quantityDelivered: unknown }): boolean {
+export function isEvidenceRow(m: { type: string; quantityDelivered: unknown }): boolean {
   return (
     m.quantityDelivered != null && (DELIVERY_EVIDENCE_TYPES as readonly string[]).includes(m.type)
   );

@@ -170,12 +170,17 @@ describe("RoutesService — reopenStop never revives a cancelled line (bug id pe
     });
     prisma.invoice.findFirst.mockResolvedValue(null);
     prisma.transaction.findMany.mockResolvedValue([]);
-    // SA-345a: the deleted row names its line, so the line recomputes to 0 (a legacy line with no
-    // row ever is not rewritten).
+    // SA-346: the pre-delete read returns the qualifying row actually deleted, so the line is in
+    // the force set and recomputes to 0 (a legacy line with no row is not rewritten).
     const tx = txFor({
       deliveryMutation: {
         ...prisma.deliveryMutation,
-        findMany: jest.fn().mockResolvedValue([{ orderId: "ord-1", orderItemId: "oi-1" }]),
+        findMany: jest
+          .fn()
+          .mockResolvedValueOnce([
+            { orderId: "ord-1", orderItemId: "oi-1", type: "DELIVERED", quantityDelivered: 5 },
+          ])
+          .mockResolvedValue([]),
         create: jest.fn(),
       },
     });

@@ -14,7 +14,7 @@
  * full ordered qty — deliveredSoFar already nets out every OTHER visit's contribution.
  */
 import { DELIVERY_EVIDENCE_WHERE } from "../invoices/delivery-evidence";
-import { deliveredBasisByLine } from "../invoices/delivered-basis-by-line";
+import { deliveredBasisByLine, isEvidenceRow } from "../invoices/delivered-basis-by-line";
 
 export function deliveredSoFarFindManyArgs(orderIds: string[]) {
   return {
@@ -103,27 +103,51 @@ export async function fetchEvidenceByLine(
   return groupEvidenceRowsByLine(rows);
 }
 
+/** A row `reopenStop` just deleted — the shape its pre-delete `findMany` selects. */
+export interface DeletedEvidenceRow {
+  orderId: string;
+  orderItemId: string | null;
+  type: string;
+  quantityDelivered: unknown;
+}
+
 /**
- * SA-133: what each of `itemIds` should be RECOMPUTED to — Σ each line's own qualifying
- * evidence rows, never incremented or overwritten. READ-ONLY (the caller issues the actual
- * `orderItem.update` writes itself, so the units_v1/selling-restrictions AST writer-classifiers
- * — which only scan class-method bodies — still see every deliveredQty write where it happens).
- *
- * SA-345a: a line with NO qualifying row is NOT returned — its `deliveredQty` column is the
- * legacy evidence (orders delivered before rows existed) and must survive a later visit that
- * touched a sibling line. The one exception is `deletedRows` (reopenStop): a line whose rows
- * were just deleted recomputes to its remaining Σ (0 when none is left), because its column
- * was derived from exactly those rows.
+ * SA-133/SA-346: what each of `itemIds` should be RECOMPUTED to. READ-ONLY (the caller issues the
+ * actual `orderItem.update` writes itself, so the units_v1/selling-restrictions AST writer-
+ * classifiers — which only scan class-method bodies — still see every deliveredQty write where
+ * it happens). A line's column is returned ONLY when
+ *  (a) it has ≥1 qualifying row anywhere → Σrows, capped at the line's qty; or
+ *  (b) it is in the FORCE SET — a line whose qualifying rows `deletedRows` (reopenStop's pre-
+ *      delete `findMany` of the rows it ACTUALLY deleted, never the order's line list) just
+ *      removed → Σ of what remains, or 0.
+ * A row-less line outside the force set is untouched: its column IS the legacy evidence (orders
+ * delivered before rows existed), and a deleted NON-qualifying row (change-request provenance)
+ * never fed the column, so it forces nothing.
  */
 export async function deliveredQtyRecompute(
-  db: { deliveryMutation: { findMany(args: any): Promise<any[]> } },
+  db: {
+    deliveryMutation: { findMany(args: any): Promise<any[]> };
+    orderItem: { findMany(args: any): Promise<any[]> };
+  },
   orderId: string,
   itemIds: string[],
-  deletedRows: ReadonlyArray<{ orderItemId?: string | null }> = [],
+  deletedRows: ReadonlyArray<DeletedEvidenceRow> = [],
 ): Promise<Array<{ id: string; deliveredQty: number }>> {
   const basis = await deliveredBasisByLine(db as any, orderId);
-  const lost = new Set(deletedRows.map((r) => r.orderItemId));
-  return itemIds
-    .filter((id) => basis.byLineId.has(id) || lost.has(id))
-    .map((id) => ({ id, deliveredQty: basis.byLineId.get(id) ?? 0 }));
+  const forced = new Set(deletedRows.filter(isEvidenceRow).map((r) => r.orderItemId));
+  const ids = itemIds.filter((id) => basis.byLineId.has(id) || forced.has(id));
+  if (ids.length === 0) return [];
+  const lines = await db.orderItem.findMany({
+    where: { id: { in: ids } },
+    select: { id: true, qty: true },
+  });
+  const qtyById = new Map(lines.map((l: { id: string; qty: unknown }) => [l.id, Number(l.qty)]));
+  return ids.map((id) => {
+    const sum = basis.byLineId.get(id) ?? 0;
+    const qty = qtyById.get(id);
+    return {
+      id,
+      deliveredQty: qty !== undefined && Number.isFinite(qty) ? Math.min(sum, qty) : sum,
+    };
+  });
 }

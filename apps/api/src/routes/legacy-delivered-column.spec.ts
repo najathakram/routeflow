@@ -163,22 +163,95 @@ describe("SA-345a — the projection and the fit-check use the same reader", () 
   });
 });
 
-describe("SA-345a — deliveredQtyRecompute never erases the legacy column", () => {
-  it("a line with rows recomputes to Σrows; a legacy line with none is NOT returned (its column survives)", async () => {
-    const out = await deliveredQtyRecompute(rowsDb([row("a", "DELIVERED", 6)]) as any, "o1", [
-      "a",
-      "legacy",
-    ]);
-    expect(out).toEqual([{ id: "a", deliveredQty: 6 }]);
+describe("SA-346 — deliveredQtyRecompute: rows decide, the force set is the rows ACTUALLY deleted", () => {
+  // The helper reads deliveryMutation (basis) and orderItem (qty cap) from the SAME tx.
+  const dbWith = (rows: Array<Record<string, unknown>>, qtyById: Record<string, number> = {}) => ({
+    deliveryMutation: { findMany: jest.fn().mockResolvedValue(rows) },
+    orderItem: {
+      findMany: jest
+        .fn()
+        .mockResolvedValue(Object.entries(qtyById).map(([id, qty]) => ({ id, qty }))),
+    },
+  });
+  const deleted = (orderItemId: string | null, type = "DELIVERED", quantityDelivered = 6) => ({
+    orderId: "o1",
+    orderItemId,
+    type,
+    quantityDelivered,
   });
 
-  it("reopenStop: a line whose rows were just deleted recomputes to 0, a legacy sibling still untouched", async () => {
+  it("(1) sibling visit: legacy line A (column 50, no rows) stays untouched; line B, closed today with a row, = its row", async () => {
     const out = await deliveredQtyRecompute(
-      rowsDb([]) as any,
+      dbWith([row("B", "DELIVERED", 4)], { B: 10 }) as any,
       "o1",
-      ["gone", "legacy"],
-      [{ orderItemId: "gone" }],
+      ["A", "B"],
     );
-    expect(out).toEqual([{ id: "gone", deliveredQty: 0 }]);
+    expect(out).toEqual([{ id: "B", deliveredQty: 4 }]);
+  });
+
+  it("(2a) reopen of S: a line with rows ONLY at S recomputes to 0", async () => {
+    const out = await deliveredQtyRecompute(
+      dbWith([], { X: 10 }) as any,
+      "o1",
+      ["X"],
+      [deleted("X")],
+    );
+    expect(out).toEqual([{ id: "X", deliveredQty: 0 }]);
+  });
+
+  it("(2b) reopen of S: a line with rows at S AND T recomputes to Σ of T (S's rows are already deleted)", async () => {
+    const out = await deliveredQtyRecompute(
+      dbWith([row("Y", "DELIVERED", 3, "T")], { Y: 10 }) as any,
+      "o1",
+      ["Y"],
+      [deleted("Y", "DELIVERED", 6)],
+    );
+    expect(out).toEqual([{ id: "Y", deliveredQty: 3 }]);
+  });
+
+  it("(2c) reopen of S: a legacy line on the same order with NO row at S keeps its column (not in the force set)", async () => {
+    const out = await deliveredQtyRecompute(
+      dbWith([], { X: 10, L: 10 }) as any,
+      "o1",
+      ["X", "L"],
+      [deleted("X")],
+    );
+    expect(out).toEqual([{ id: "X", deliveredQty: 0 }]); // L is not returned ⇒ never rewritten
+  });
+
+  it("(2d) a deleted NON-qualifying row (change-request provenance, null qty) forces nothing — it never fed the column", async () => {
+    const out = await deliveredQtyRecompute(
+      dbWith([], { L: 10 }) as any,
+      "o1",
+      ["L"],
+      [deleted("L", "ADD_ON", null as any)],
+    );
+    expect(out).toEqual([]);
+  });
+
+  it("(3) a replayed close (same rows) gives the same numbers", async () => {
+    const db = dbWith([row("A", "DELIVERED", 6), row("A", "PARTIAL", 2, "s2")], { A: 20 });
+    const first = await deliveredQtyRecompute(db as any, "o1", ["A"]);
+    const second = await deliveredQtyRecompute(db as any, "o1", ["A"]);
+    expect(first).toEqual([{ id: "A", deliveredQty: 8 }]);
+    expect(second).toEqual(first);
+  });
+
+  it("(4) rows summing above qty are capped at qty", async () => {
+    const out = await deliveredQtyRecompute(
+      dbWith([row("A", "DELIVERED", 8), row("A", "DELIVERED", 7, "s2")], { A: 10 }) as any,
+      "o1",
+      ["A"],
+    );
+    expect(out).toEqual([{ id: "A", deliveredQty: 10 }]);
+  });
+
+  it("a REFUSED row recomputes to 0 (a line WITH a row, so the row decides)", async () => {
+    const out = await deliveredQtyRecompute(
+      dbWith([row("A", "REFUSED", 0)], { A: 10 }) as any,
+      "o1",
+      ["A"],
+    );
+    expect(out).toEqual([{ id: "A", deliveredQty: 0 }]);
   });
 });
