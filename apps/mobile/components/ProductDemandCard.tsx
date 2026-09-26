@@ -6,12 +6,12 @@ import type { DemandRange } from "@routeflow/types";
 import { isDemandForbidden, useProductDemand } from "../lib/api/product-demand";
 import { usePlanFlag } from "../lib/api/billing";
 import { planFlagVisible } from "../lib/plan-flags";
-import { fmtMoney } from "../lib/regulated-format";
 import {
   chartBars,
   DEMAND_RANGE_OPTIONS,
   monthYear,
   rangeNoun,
+  fmtDemandMoney,
   suggestRange,
   type DemandMetric,
 } from "../lib/demand-chart-logic";
@@ -101,7 +101,7 @@ function DemandCardBody({
   const headline = data
     ? `${
         metric === "revenue"
-          ? `${fmtMoney(data.totals.revenue)} invoiced`
+          ? `${fmtDemandMoney(data.totals.revenue)} invoiced`
           : unitsLabel(data.totals.units, unitsPerBox)
       } over the last ${noun}`
     : "";

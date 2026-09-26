@@ -124,3 +124,10 @@ export function suggestRange(
   const fit = DEMAND_RANGE_OPTIONS.find((o) => RANGE_REACH_DAYS[o.value] > ageDays);
   return fit && fit.value !== shownRange ? fit.value : null;
 }
+
+const demandMoney = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" });
+
+/** Revenue headline, web parity (products/[id]/DemandCard.tsx): "$12,345.67". */
+export function fmtDemandMoney(n: number): string {
+  return demandMoney.format(Number.isFinite(n) ? n : 0);
+}

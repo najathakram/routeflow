@@ -1,5 +1,6 @@
 import {
   axisLabel,
+  fmtDemandMoney,
   chartBars,
   DEMAND_RANGE_OPTIONS,
   monthYear,
@@ -102,5 +103,13 @@ describe("ranges", () => {
     expect(suggestRange("2026-01-01", "6m", now)).toBe("1y");
     expect(suggestRange("2023-01-01", "1y", now)).toBe("5y");
     expect(suggestRange(null, "30d", now)).toBeNull();
+  });
+});
+
+describe("fmtDemandMoney — web parity", () => {
+  it("groups thousands like web's DemandCard", () => {
+    expect(fmtDemandMoney(12345.67)).toBe("$12,345.67");
+    expect(fmtDemandMoney(0)).toBe("$0.00");
+    expect(fmtDemandMoney(Number.NaN)).toBe("$0.00");
   });
 });
