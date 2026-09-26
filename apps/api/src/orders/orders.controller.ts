@@ -1,3 +1,4 @@
+import type { BannedMergedLine } from "./merge-restriction-warning";
 import {
   Controller,
   Get,
@@ -331,7 +332,7 @@ export class OrdersController {
                 await this.ordersService.mergeAllPendingForCustomer(
                   dto.customerId,
                   {},
-                  { lockMode: "try" },
+                  { lockMode: "try", actor: user },
                 );
               } catch (e) {
                 if (!isMergeContention(e)) throw e;
@@ -368,7 +369,7 @@ export class OrdersController {
           { buyerInitiated: user.role === UserRole.CUSTOMER },
           // POST-COMMIT: never wait. A held lock means someone else is consolidating this very
           // customer anyway, so `try` defers to them instead of spending this request's budget.
-          { lockMode: "try" },
+          { lockMode: "try", actor: user },
         );
         if (merged) return merged;
       } catch (e) {
@@ -577,8 +578,14 @@ export class OrdersController {
   @Post("force-consolidate/:customerId")
   @UseGuards(RolesGuard)
   @Roles(UserRole.OPERATOR)
-  forceConsolidate(@Param("customerId") customerId: string) {
-    return this.ordersService.forceConsolidateCustomer(customerId);
+  async forceConsolidate(@Param("customerId") customerId: string, @CurrentUser() user: JwtPayload) {
+    // F-05 (SA-255): merge-and-warn — the banned lines of the merged order ride along for the acting UI.
+    let bannedLines: BannedMergedLine[] = [];
+    const merged = await this.ordersService.forceConsolidateCustomer(customerId, {
+      actor: user,
+      onBannedLines: (lines) => (bannedLines = lines),
+    });
+    return merged && bannedLines.length > 0 ? { ...merged, bannedLines } : merged;
   }
 
   // Delete-any: staff (OPERATOR/TENANT_ADMIN) may delete an order in any status;

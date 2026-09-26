@@ -1,3 +1,5 @@
+import { CurrentUser } from "../auth/decorators/current-user.decorator";
+import type { JwtPayload } from "../auth/jwt-payload.interface";
 import {
   Body,
   Controller,
@@ -58,8 +60,8 @@ export class RecurringInvoicesController {
   // — the PATCH path can't carry `isActive` (UpdateRecurringInvoiceDto deliberately
   // omits it, and the whitelist ValidationPipe rejects it as a non-whitelisted key).
   @Post(":id/activate")
-  activate(@Param("id") id: string) {
-    return this.recurringInvoicesService.activate(id);
+  activate(@Param("id") id: string, @CurrentUser() user: JwtPayload) {
+    return this.recurringInvoicesService.activate(id, user.sub);
   }
 
   @Post(":id/run")
