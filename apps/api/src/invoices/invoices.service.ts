@@ -132,11 +132,27 @@ export function addCalendarDays(date: Date, days: number): Date {
   return out;
 }
 
-/** #2197: a client issueDate → the stamp of the literal day it names; 400 when it names none. */
-function issueDateStamp(raw: string): Date {
+/**
+ * #2197/#2256: a client calendar-date field (issueDate, dueDate, depositDueDate) → the stamp of
+ * the literal day it names; 400 when it names none. Never `new Date(raw)` for these fields.
+ */
+function calendarDayStamp(raw: string, field: string): Date {
   const stamp = calendarStampFromInput(raw);
-  if (!stamp) throw new BadRequestException("issueDate must be a calendar date (YYYY-MM-DD)");
+  if (!stamp) throw new BadRequestException(`${field} must be a calendar date (YYYY-MM-DD)`);
   return stamp;
+}
+
+/** #2256: an order-invoice `overrides` object's due dates, as literal-day stamps (or null). */
+function overrideCalendarDays(overrides?: { dueDate?: string; depositDueDate?: string }): {
+  dueDate: Date | null;
+  depositDueDate: Date | null;
+} {
+  return {
+    dueDate: overrides?.dueDate ? calendarDayStamp(overrides.dueDate, "dueDate") : null,
+    depositDueDate: overrides?.depositDueDate
+      ? calendarDayStamp(overrides.depositDueDate, "depositDueDate")
+      : null,
+  };
 }
 
 // P5-12 / post-dated check payments PR-1: `CHECK_TRANSITIONS` (legal FORWARD transitions for
@@ -379,7 +395,12 @@ export class InvoicesService {
    */
   /** SA-135: an internal caller's line may carry `packSnapshot` (ManualLineItem); the HTTP DTO never can. */
   async create(dto: Omit<CreateInvoiceDto, "items"> & { items: ManualLineItem[] }) {
-    const issueDateInput = dto.issueDate ? issueDateStamp(dto.issueDate) : null; // #2197: 400 first
+    // #2197/#2256: every client calendar date is validated first (400 before anything is read).
+    const issueDateInput = dto.issueDate ? calendarDayStamp(dto.issueDate, "issueDate") : null;
+    const dueDateInput = dto.dueDate ? calendarDayStamp(dto.dueDate, "dueDate") : null;
+    const depositDueDateInput = dto.depositDueDate
+      ? calendarDayStamp(dto.depositDueDate, "depositDueDate")
+      : null;
     const customer = await this.prisma
       .forTenant()
       .customer.findUnique({ where: { id: dto.customerId } });
@@ -475,14 +496,14 @@ export class InvoicesService {
             discount: invDiscount,
             shippingFee: shipping,
             total,
-            dueDate: dto.dueDate ? new Date(dto.dueDate) : null,
+            dueDate: dueDateInput,
             // #2197: the literal calendar day the client named, never a raw instant.
             issueDate: issueDateInput ?? startOfCalendarDay(new Date(), tenantDefaults.timezone),
             notes: dto.notes ?? tenantDefaults.notes,
             terms: dto.terms ?? tenantDefaults.terms,
             paymentTermsLabel: dto.paymentTermsLabel ?? null,
             depositPercent: dto.depositPercent ?? null,
-            depositDueDate: dto.depositDueDate ? new Date(dto.depositDueDate) : null,
+            depositDueDate: depositDueDateInput,
             referenceNumber: dto.referenceNumber ?? null,
             subject: dto.subject ?? null,
             shippingCarrier: dto.shippingCarrier?.trim() || null,
@@ -545,6 +566,8 @@ export class InvoicesService {
       depositDueDate?: string;
     },
   ) {
+    // #2256: client calendar dates (orders.service passes a request's dueDate) are validated first.
+    const overrideDue = overrideCalendarDays(overrides);
     const db = txClient ?? this.prisma;
 
     // Fetch order with non-cancelled line items
@@ -610,12 +633,7 @@ export class InvoicesService {
     // A backdated order bills on its business date, and the payment term runs from
     // that date — not from when the invoice happened to be generated.
     const issueDate = order.orderDate ?? startOfCalendarDay(new Date(), tenantDefaults.timezone);
-    let dueDate: Date;
-    if (overrides?.dueDate) {
-      dueDate = new Date(overrides.dueDate);
-    } else {
-      dueDate = addCalendarDays(issueDate, dueDays);
-    }
+    const dueDate: Date = overrideDue.dueDate ?? addCalendarDays(issueDate, dueDays);
     const overrideTerms = overrides?.terms?.trim() || undefined;
     // INVARIANT: whatever string drove the dueDate math above is what gets
     // persisted here — an explicit caller-supplied label when given, else the
@@ -642,9 +660,7 @@ export class InvoicesService {
       overrides?.depositPercent != null
         ? {
             depositPercent: overrides.depositPercent,
-            depositDueDate: overrides.depositDueDate
-              ? new Date(overrides.depositDueDate)
-              : issueDate,
+            depositDueDate: overrideDue.depositDueDate ?? issueDate,
           }
         : effectiveDepositPercent != null
           ? { depositPercent: effectiveDepositPercent, depositDueDate: issueDate }
@@ -2421,6 +2437,8 @@ export class InvoicesService {
       depositDueDate?: string;
     },
   ) {
+    // #2256: client calendar dates are validated before anything is read.
+    const overrideDue = overrideCalendarDays(overrides);
     const order = await this.prisma.order.findFirst({
       where: { id: orderId, ...(tenantId ? { tenantId } : {}) },
       include: {
@@ -2507,12 +2525,7 @@ export class InvoicesService {
     // A backdated order bills on its business date, and the payment term runs from
     // that date — not from when the invoice happened to be generated.
     const issueDate = order.orderDate ?? startOfCalendarDay(new Date(), tenantTimezone);
-    let dueDate: Date;
-    if (overrides?.dueDate) {
-      dueDate = new Date(overrides.dueDate);
-    } else {
-      dueDate = addCalendarDays(issueDate, dueDays);
-    }
+    const dueDate: Date = overrideDue.dueDate ?? addCalendarDays(issueDate, dueDays);
 
     const overrideTerms = overrides?.terms?.trim() || undefined;
     // INVARIANT: see createInvoiceFromOrder — persist whichever string drove the
@@ -2550,9 +2563,7 @@ export class InvoicesService {
       overrides?.depositPercent != null
         ? {
             depositPercent: overrides.depositPercent,
-            depositDueDate: overrides.depositDueDate
-              ? new Date(overrides.depositDueDate)
-              : issueDate,
+            depositDueDate: overrideDue.depositDueDate ?? issueDate,
           }
         : effectiveDepositPercent != null
           ? { depositPercent: effectiveDepositPercent, depositDueDate: issueDate }
@@ -2646,6 +2657,13 @@ export class InvoicesService {
       depositDueDate?: string;
     },
   ) {
+    // #2256: client calendar dates are validated before anything is read.
+    const dueDateRaw = dto.dueDate || overrides?.dueDate;
+    const dueDateInput = dueDateRaw ? calendarDayStamp(dueDateRaw, "dueDate") : null;
+    const depositDueDateRaw = (dto as any)?.depositDueDate ?? overrides?.depositDueDate;
+    const depositDueDateInput = depositDueDateRaw
+      ? calendarDayStamp(depositDueDateRaw, "depositDueDate")
+      : null;
     const order = await this.prisma.forTenant().order.findUnique({
       where: { id: orderId },
       include: {
@@ -2735,14 +2753,7 @@ export class InvoicesService {
     // A backdated order bills on its business date, and the payment term runs from
     // that date — not from when the invoice happened to be generated.
     const issueDate = order.orderDate ?? startOfCalendarDay(new Date(), tenantDefaults.timezone);
-    let dueDate: Date;
-    if (dto.dueDate) {
-      dueDate = new Date(dto.dueDate);
-    } else if (overrides?.dueDate) {
-      dueDate = new Date(overrides.dueDate);
-    } else {
-      dueDate = addCalendarDays(issueDate, dueDays);
-    }
+    const dueDate: Date = dueDateInput ?? addCalendarDays(issueDate, dueDays);
     const overrideTerms = overrides?.terms?.trim() || undefined;
     // INVARIANT: see createInvoiceFromOrder — persist whichever string drove the
     // dueDate math. The split-invoice UI posts the Net-N it picked as
@@ -2760,12 +2771,11 @@ export class InvoicesService {
     // of. No effective deposit leaves these keys out entirely (byte-identical to
     // before). NO issuance here: partials are cut at delivery time, never at placement.
     const explicitDepositPercent = (dto as any)?.depositPercent ?? overrides?.depositPercent;
-    const explicitDepositDueDate = (dto as any)?.depositDueDate ?? overrides?.depositDueDate;
     const depositFields: Record<string, any> =
       explicitDepositPercent != null
         ? {
             depositPercent: explicitDepositPercent,
-            depositDueDate: explicitDepositDueDate ? new Date(explicitDepositDueDate) : issueDate,
+            depositDueDate: depositDueDateInput ?? issueDate,
           }
         : effectiveDepositPercent != null
           ? { depositPercent: effectiveDepositPercent, depositDueDate: issueDate }
@@ -3327,8 +3337,12 @@ export class InvoicesService {
       throw new BadRequestException("Only DRAFT invoices can be edited");
     await this.assertOrderInvoiceUnlocked(inv);
 
-    // #2197: the same literal calendar-day stamp create() writes.
-    const issueDate = dto.issueDate ? issueDateStamp(dto.issueDate) : undefined;
+    // #2197/#2256: the same literal calendar-day stamps create() writes.
+    const issueDate = dto.issueDate ? calendarDayStamp(dto.issueDate, "issueDate") : undefined;
+    const dueDate = dto.dueDate ? calendarDayStamp(dto.dueDate, "dueDate") : undefined;
+    const depositDueDate = dto.depositDueDate
+      ? calendarDayStamp(dto.depositDueDate, "depositDueDate")
+      : null;
 
     // units_v1: BOTH rewrite paths — the item replace (re-split at the LIVE pack) and the
     // discount/shipping recompute, whose order back-sync writes onto the linked order's lines.
@@ -3421,7 +3435,7 @@ export class InvoicesService {
             discount: invDiscount,
             shippingFee: shipping,
             total,
-            dueDate: dto.dueDate ? new Date(dto.dueDate) : undefined,
+            dueDate,
             issueDate,
             notes: dto.notes,
             terms: dto.terms,
@@ -3435,9 +3449,7 @@ export class InvoicesService {
             }),
             ...(dto.subject !== undefined && { subject: dto.subject || null }),
             ...(dto.depositPercent !== undefined && { depositPercent: dto.depositPercent }),
-            ...(dto.depositDueDate !== undefined && {
-              depositDueDate: dto.depositDueDate ? new Date(dto.depositDueDate) : null,
-            }),
+            ...(dto.depositDueDate !== undefined && { depositDueDate }),
             pdfUrl: null,
             items: {
               create: editLines
@@ -3493,7 +3505,7 @@ export class InvoicesService {
     const updated = await this.prisma.forTenant().invoice.update({
       where: { id },
       data: {
-        ...(dto.dueDate && { dueDate: new Date(dto.dueDate) }),
+        ...(dueDate && { dueDate }),
         ...(issueDate && { issueDate }),
         ...(dto.notes !== undefined && { notes: dto.notes }),
         ...(dto.terms !== undefined && { terms: dto.terms }),
@@ -3508,9 +3520,7 @@ export class InvoicesService {
         }),
         ...(dto.subject !== undefined && { subject: dto.subject || null }),
         ...(dto.depositPercent !== undefined && { depositPercent: dto.depositPercent }),
-        ...(dto.depositDueDate !== undefined && {
-          depositDueDate: dto.depositDueDate ? new Date(dto.depositDueDate) : null,
-        }),
+        ...(dto.depositDueDate !== undefined && { depositDueDate }),
         ...recalcData,
       },
       include: {
@@ -3599,7 +3609,8 @@ export class InvoicesService {
       d == null ? null : d instanceof Date ? d : new Date(d as string);
     const oldDueDate = asDate(inv.dueDate);
     const oldDueDateStr = oldDueDate ? oldDueDate.toISOString().slice(0, 10) : "none";
-    const newDueDate = dto.dueDate ? new Date(dto.dueDate) : oldDueDate;
+    // #2256: the literal calendar day, like every other due-date write.
+    const newDueDate = dto.dueDate ? calendarDayStamp(dto.dueDate, "dueDate") : oldDueDate;
     const newDueDateStr = newDueDate ? newDueDate.toISOString().slice(0, 10) : "none";
 
     // F03/R1: CONFIRMED (PAID) payments only — same predicate every other status
