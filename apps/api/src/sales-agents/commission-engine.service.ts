@@ -4,6 +4,7 @@ import { PrismaService } from "../prisma/prisma.service";
 import { EntitlementsService } from "../billing/entitlements.service";
 import { AuditService } from "../audit/audit.service";
 import { roundMoney } from "@routeflow/pricing";
+import { txConflictState } from "../common/tx-retry";
 import {
   COMMISSION_EPS,
   InvoiceMoneyState,
@@ -100,11 +101,19 @@ export class CommissionEngineService {
    * The engine therefore must not provoke foreseeable in-transaction database
    * errors (see the pre-insert check in `createAccrualRow`); this wrapper is
    * the backstop for logic bugs, not a licence to let constraint violations fly.
+   *
+   * #2201: a write conflict (40001/40P01, `txConflictState`) inside the CALLER's
+   * transaction is RETHROWN, never swallowed. Postgres has already aborted that
+   * transaction, so swallowing it either fails the next statement (25P02, not
+   * retryable) or turns the caller's COMMIT into a silent ROLLBACK. Rethrown, the
+   * caller's `retryOnTxConflict` / serialization loop re-runs the whole tx. With no
+   * caller tx there is nothing to abort, so a conflict is swallowed like any error.
    */
   async syncInvoiceCommissionSafe(invoiceId: string, db?: any): Promise<void> {
     try {
       await this.syncInvoiceCommission(invoiceId, db);
     } catch (err) {
+      if (db != null && this.isTransactionClient(db) && txConflictState(err)) throw err;
       this.logger.error(
         `Commission sync failed for invoice ${invoiceId}: ${(err as Error)?.message ?? err}`,
         (err as Error)?.stack,

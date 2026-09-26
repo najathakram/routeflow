@@ -148,6 +148,58 @@ describe("CommissionEngineService", () => {
       db.invoice.findUnique.mockRejectedValue(new Error("boom"));
       await expect(service.syncInvoiceCommissionSafe("inv-1", db)).resolves.toBeUndefined();
     });
+
+    describe("#2201: a write conflict inside the CALLER's tx is rethrown, never swallowed", () => {
+      // The four shapes txConflictState reads (common/tx-retry.ts).
+      const conflicts: Array<[string, () => any]> = [
+        [
+          "40001 via meta.driverAdapterError",
+          () =>
+            Object.assign(new Error("could not serialize access"), {
+              meta: { driverAdapterError: { cause: { originalCode: "40001" } } },
+            }),
+        ],
+        [
+          "40P01 via cause.originalCode",
+          () => Object.assign(new Error("deadlock detected"), { cause: { originalCode: "40P01" } }),
+        ],
+        ["Prisma P2034", () => Object.assign(new Error("write conflict"), { code: "P2034" })],
+        [
+          "DriverAdapterError TransactionWriteConflict",
+          () =>
+            Object.assign(new Error("write conflict"), {
+              name: "DriverAdapterError",
+              cause: { kind: "TransactionWriteConflict" },
+            }),
+        ],
+      ];
+      // A tx client omits $transaction (isTransactionClient); a base client has it.
+      const callerTx = () => ({ $executeRaw: jest.fn() });
+      const baseClient = () => ({ $transaction: jest.fn() });
+
+      it.each(conflicts)("%s inside a caller tx rejects with that same error", async (_n, make) => {
+        const err = make();
+        jest.spyOn(service, "syncInvoiceCommission").mockRejectedValue(err);
+        await expect(service.syncInvoiceCommissionSafe("inv-1", callerTx())).rejects.toBe(err);
+      });
+
+      it.each(conflicts)("%s with no caller tx is still swallowed", async (_n, make) => {
+        jest.spyOn(service, "syncInvoiceCommission").mockRejectedValue(make());
+        await expect(service.syncInvoiceCommissionSafe("inv-1")).resolves.toBeUndefined();
+        await expect(
+          service.syncInvoiceCommissionSafe("inv-1", baseClient()),
+        ).resolves.toBeUndefined();
+      });
+
+      it("a non-conflict error inside a caller tx is still swallowed", async () => {
+        jest
+          .spyOn(service, "syncInvoiceCommission")
+          .mockRejectedValue(Object.assign(new Error("boom"), { code: "P2002" }));
+        await expect(
+          service.syncInvoiceCommissionSafe("inv-1", callerTx()),
+        ).resolves.toBeUndefined();
+      });
+    });
   });
 
   describe("syncInvoiceCommission — creation and idempotency", () => {
