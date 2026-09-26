@@ -45,7 +45,7 @@
  * waits on production writers.
  */
 import { createRequire } from "module";
-import { fileURLToPath } from "url";
+import { fileURLToPath, pathToFileURL } from "url";
 import { dirname, join } from "path";
 import pg from "pg";
 import { resolveReportDbUrl } from "./lib/report-db-url.mjs";
@@ -298,7 +298,10 @@ async function main() {
   }
 }
 
-main().catch((e) => {
-  console.error(e.message ?? e);
-  process.exit(1);
-});
+// House entry guard: importing this module (e.g. to unit-test classify/aggregate) never connects.
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  main().catch((e) => {
+    console.error(e.message ?? e);
+    process.exit(1);
+  });
+}

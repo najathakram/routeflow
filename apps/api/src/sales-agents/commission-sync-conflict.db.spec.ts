@@ -74,16 +74,19 @@ describeDb("commission sync inside a caller tx — real Postgres (#2201, SA-392/
     creditNotes = mod.get(CreditNotesService);
 
     await prisma.$executeRawUnsafe(
-      `CREATE TABLE "${CTL}" (tenant_id text PRIMARY KEY, mode text NOT NULL)`,
+      `CREATE TABLE "${CTL}" (tenant_id text PRIMARY KEY, mode text NOT NULL, fire_at bigint)`,
     );
     await prisma.$executeRawUnsafe(`CREATE SEQUENCE "${SEQ}"`);
     await prisma.$executeRawUnsafe(`
       CREATE FUNCTION "${FN}"() RETURNS trigger AS $$
-      DECLARE m text;
+      DECLARE m text; f bigint;
       BEGIN
-        SELECT mode INTO m FROM "${CTL}" WHERE tenant_id = NEW."tenantId";
-        IF m = 'conflict_once' AND nextval('"${SEQ}"') = 1 THEN
-          RAISE EXCEPTION '#2201 forced serialization failure' USING ERRCODE = '40001';
+        SELECT mode, fire_at INTO m, f FROM "${CTL}" WHERE tenant_id = NEW."tenantId";
+        -- Nested so only a conflict_once tenant's inserts ever consume the sequence.
+        IF m = 'conflict_once' THEN
+          IF nextval('"${SEQ}"') = f THEN
+            RAISE EXCEPTION '#2201 forced serialization failure' USING ERRCODE = '40001';
+          END IF;
         ELSIF m = 'unique' THEN
           RAISE EXCEPTION '#2201 forced unique violation' USING ERRCODE = '23505';
         END IF;
@@ -167,12 +170,30 @@ describeDb("commission sync inside a caller tx — real Postgres (#2201, SA-392/
     return { tenantId, invoice, cn };
   }
 
-  const setMode = (tenantId: string, mode: "conflict_once" | "unique") =>
-    prisma.$executeRawUnsafe(
-      `INSERT INTO "${CTL}" (tenant_id, mode) VALUES ($1, $2)`,
+  /**
+   * Arms the trigger for one tenant. For conflict_once, `fire_at` is the sequence's NEXT value, so
+   * exactly this tenant's next CommissionAccrual insert raises 40001 and the one after passes
+   * (the sequence is non-transactional, so the rolled-back attempt still advanced it). Returns fire_at.
+   */
+  const setMode = async (tenantId: string, mode: "conflict_once" | "unique"): Promise<number> => {
+    const [row] = await prisma.$queryRawUnsafe<{ fire_at: bigint | null }[]>(
+      `INSERT INTO "${CTL}" (tenant_id, mode, fire_at)
+       VALUES ($1, $2, CASE WHEN $2 = 'conflict_once'
+                            THEN (SELECT CASE WHEN is_called THEN last_value + 1 ELSE last_value END
+                                    FROM "${SEQ}")
+                       END)
+       RETURNING fire_at`,
       tenantId,
       mode,
     );
+    return Number(row?.fire_at ?? 0);
+  };
+  const seqLastValue = async () => {
+    const [{ last_value }] = await prisma.$queryRawUnsafe<{ last_value: bigint }[]>(
+      `SELECT last_value FROM "${SEQ}"`,
+    );
+    return Number(last_value);
+  };
   const inTenant = <T>(tenantId: string, fn: () => Promise<T>) => tenantCtx.run(tenantId, fn);
   const counts = async (tenantId: string) => ({
     accruals: await prisma.commissionAccrual.findMany({ where: { tenantId } }),
@@ -222,14 +243,12 @@ describeDb("commission sync inside a caller tx — real Postgres (#2201, SA-392/
 
   it("(b) + SA-392: a real 40001 in the sync makes retryOnTxConflict re-run applyToInvoice; credit and commission land once", async () => {
     const { tenantId, invoice, cn } = await seed("conflict");
-    await setMode(tenantId, "conflict_once");
+    const fireAt = await setMode(tenantId, "conflict_once");
 
     await inTenant(tenantId, () => creditNotes.applyToInvoice(cn.id, invoice.id));
 
-    const [{ last_value }] = await prisma.$queryRawUnsafe<{ last_value: bigint }[]>(
-      `SELECT last_value FROM "${SEQ}"`,
-    );
-    expect(Number(last_value)).toBe(2); // attempt 1 raised, attempt 2 passed: the tx re-ran
+    // attempt 1 raised at fireAt, attempt 2 passed at fireAt + 1: the tx re-ran
+    expect(await seqLastValue()).toBe(fireAt + 1);
     const c = await counts(tenantId);
     expect(c.creditPayments.map((p) => Number(p.amount))).toEqual([40]); // applied once
     expect(c.accruals).toHaveLength(1); // commission synced once
@@ -273,43 +292,30 @@ describeDb("commission sync inside a caller tx — real Postgres (#2201, SA-392/
     logSpy.mockRestore();
   });
 
-  it("mechanism: a real 40001 in a caller's Serializable tx re-runs it under retryOnTxConflict; its write persists once", async () => {
-    const { tenantId } = await seed("mechanism");
-    const slug = `qa-2201-${RUN}-mech-row`;
-    assertTestTenant(slug, "commission-sync-conflict.db.spec.ts");
-    let syncCalls = 0;
-    const spy = jest
-      .spyOn(engine, "syncInvoiceCommission")
-      .mockImplementation(async (_id: string, db: any) => {
-        syncCalls += 1;
-        if (syncCalls === 1) {
-          await db.$executeRawUnsafe(
-            `DO $$ BEGIN RAISE EXCEPTION '#2201 forced' USING ERRCODE = '40001'; END $$`,
-          );
-        }
-      });
+  it("mechanism: a real trigger-raised 40001 in the REAL sync re-runs the caller's Serializable tx under retryOnTxConflict; its write and the accrual persist once", async () => {
+    const { tenantId, invoice } = await seed("mechanism");
+    const marker = `qa-2201-${RUN}-mech-row`;
+    const fireAt = await setMode(tenantId, "conflict_once");
     let attempts = 0;
-    try {
-      await retryOnTxConflict("#2201 pin", () =>
-        inTenant(tenantId, () =>
-          prisma.tenantTransaction(
-            async (tx: any) => {
-              attempts += 1;
-              await tx.auditLog.create({
-                data: { action: "T2201_MECH", entityType: "test", entityId: slug },
-              });
-              // Last statement: where a swallowed conflict turned COMMIT into a silent ROLLBACK.
-              await engine.syncInvoiceCommissionSafe("inv-2201", tx);
-            },
-            { isolationLevel: "Serializable" },
-          ),
+    await retryOnTxConflict("#2201 pin", () =>
+      inTenant(tenantId, () =>
+        prisma.tenantTransaction(
+          async (tx: any) => {
+            attempts += 1;
+            await tx.auditLog.create({
+              data: { action: "T2201_MECH", entityType: "test", entityId: marker },
+            });
+            // Last statement: where a swallowed conflict turned COMMIT into a silent ROLLBACK.
+            // No spy: the production sync runs, and its CommissionAccrual insert hits the trigger.
+            await engine.syncInvoiceCommissionSafe(invoice.id, tx);
+          },
+          { isolationLevel: "Serializable" },
         ),
-      );
-    } finally {
-      spy.mockRestore();
-    }
+      ),
+    );
     expect(attempts).toBe(2);
-    expect(syncCalls).toBe(2);
-    expect(await prisma.auditLog.count({ where: { tenantId, entityId: slug } })).toBe(1);
+    expect(await seqLastValue()).toBe(fireAt + 1);
+    expect(await prisma.auditLog.count({ where: { tenantId, entityId: marker } })).toBe(1);
+    expect(await prisma.commissionAccrual.count({ where: { tenantId } })).toBe(1);
   });
 });
