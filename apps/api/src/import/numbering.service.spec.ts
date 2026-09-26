@@ -312,16 +312,49 @@ describe("NumberingService", () => {
     // and keeps this exact byte-identical fast path both before and after the
     // fix.
     it("P-3: reserveNext(docType) with no year keys year:0 and formats with no year segment for a non-year-scoped type (byte-identical to the pre-B100 series)", async () => {
-      prisma.numberingSequence.upsert.mockResolvedValue({
-        prefix: "RET-",
-        padding: 4,
-        nextNumber: 5,
-      });
-      prisma.numberingSequence.update.mockResolvedValue({ nextNumber: 6 });
+      const tx = {
+        $executeRaw: jest.fn().mockResolvedValue(0),
+        numberingSequence: {
+          upsert: jest.fn(),
+          update: jest.fn().mockResolvedValue({ prefix: "RET-", padding: 4, nextNumber: 6 }),
+        },
+      };
+      prisma.tenantTransaction.mockImplementation((fn: any) => fn(tx));
 
       const result = await service.reserveNext("RETURN");
 
       expect(result).toBe("RET-0005");
+      expect(tx.numberingSequence.update).toHaveBeenCalledWith({
+        where: { tenantId_docType_year: { tenantId: "test-tenant", docType: "RETURN", year: 0 } },
+        data: { nextNumber: { increment: 1 } },
+      });
+    });
+
+    // #2177: the fast-path seed is a conflict-tolerant INSERT, never a Prisma upsert (a
+    // select-then-insert that surfaces P2002 to the loser of a first-mint race and, on a
+    // caller's tx, aborts that whole transaction). The race itself is pinned on real Postgres
+    // in numbering-first-mint-race.db.spec.ts.
+    it("#2177: the fast-path seed is INSERT … ON CONFLICT DO NOTHING on the caller's tx, never upsert", async () => {
+      const tx = {
+        $executeRaw: jest.fn().mockResolvedValue(0),
+        numberingSequence: {
+          upsert: jest.fn(),
+          update: jest.fn().mockResolvedValue({ prefix: "RET-", padding: 4, nextNumber: 2 }),
+        },
+      };
+
+      const result = await service.reserveNext("RETURN", {
+        year: 2026,
+        tenantId: "tenant-1",
+        tx: tx as any,
+      });
+
+      expect(result).toBe("RET-2026-0001");
+      expect(tx.numberingSequence.upsert).not.toHaveBeenCalled();
+      expect(prisma.tenantTransaction).not.toHaveBeenCalled();
+      const sql = (tx.$executeRaw.mock.calls[0][0] as TemplateStringsArray).join("?");
+      expect(sql).toMatch(/INSERT INTO "NumberingSequence"/);
+      expect(sql).toMatch(/ON CONFLICT \("tenantId", "docType", "year"\) DO NOTHING/);
     });
 
     // Helper: drive the year-scoped INVOICE mint through a tx the test controls
