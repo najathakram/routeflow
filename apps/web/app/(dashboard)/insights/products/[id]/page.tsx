@@ -3,19 +3,19 @@
 import * as React from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { ArrowLeft, BarChart3 } from "lucide-react";
+import { ArrowLeft } from "lucide-react";
 import { PageHeader, Card } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
 import { useProduct } from "@/lib/api/products";
 import { displayProductName } from "@/lib/product-display";
 import { ProductFinder } from "@/components/insights/ProductFinder";
+import { ProductInsightsPanel } from "@/components/insights/ProductInsightsPanel";
 
 /**
- * #2119 / plan §B: route shell only. `GET /analytics/products/:id/insights`
- * (#2105-a / #2118) hasn't landed yet, so this renders what needs no new
- * API — the product identity, loading, and unknown-id states — and a
- * placeholder where the KPI tiles / trend / buyers table / CSV land once
- * that DTO layer (`packages/types/api/analytics-insights.ts`) ships.
+ * #2119 / plan §B: one product's sales insights. The product identity, loading and unknown-id
+ * states come from the product read; everything else — KPI tiles, trend, buyers, sold lines,
+ * CSV — is `ProductInsightsPanel` on #2179's accrual-net API
+ * (`GET /analytics/products/:id/insights`, `/sales`, `/insights.csv`).
  */
 export default function ProductInsightsPage() {
   const params = useParams<{ id: string }>();
@@ -51,14 +51,7 @@ export default function ProductInsightsPage() {
           <ProductFinder />
         </Card>
       ) : (
-        <Card className="flex flex-col items-center gap-2 p-10 text-center text-sm text-navy/70">
-          <BarChart3 size={28} className="text-navy/30" />
-          <p className="font-medium text-navy">Insights are on the way</p>
-          <p>
-            Sales history, demand trend and buyer breakdown for this product land once the insights
-            API (#2105-a) ships.
-          </p>
-        </Card>
+        <ProductInsightsPanel productId={id} />
       )}
     </div>
   );

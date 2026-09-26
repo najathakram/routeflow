@@ -4,7 +4,7 @@ import { BarChart3 } from "lucide-react";
 /**
  * #2119 / plan §A10: this page keeps its own demand/sales cards; "Full
  * insights" links to the dedicated finder-rooted page for the trend/buyers/
- * CSV view once #2105-a's API ships. Its own file — like DemandCard /
+ * lines/CSV view. Its own file — like DemandCard /
  * SalesHistoryCard below it — to hold page.tsx under the size ratchet.
  */
 export function FullInsightsLink({ productId }: { productId: string }) {
