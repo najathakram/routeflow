@@ -36,7 +36,7 @@ const { PrismaPg } = require("../../../node_modules/@prisma/adapter-pg");
 const { Pool } = require("../../../node_modules/pg");
 const bcrypt = require("../../../node_modules/bcrypt");
 const { assertTestTenant } = require("../../../scripts/lib/test-tenants.cjs");
-const { isLocalDbTarget } = require("./lib/local-db-target.cjs");
+const { isLocalDbTarget, localConnectionConfig } = require("./lib/local-db-target.cjs");
 const { ensureDriverUser } = require("./lib/driver-fixture.cjs");
 
 const LOCAL_DEFAULT_DB_URL = "postgresql://user:pass@localhost:5432/routeflow_dev";
@@ -74,7 +74,8 @@ async function bootstrap() {
   if (process.argv.includes("--print-target")) {
     process.exit(0);
   }
-  pool = new Pool({ connectionString: dbUrl });
+  // A provably-local target dials the vetted explicit fields (a `?host=` on the raw string could redirect it).
+  pool = new Pool(localConnectionConfig(dbUrl) ?? { connectionString: dbUrl });
   adapter = new PrismaPg(pool);
   prisma = new PrismaClient({ adapter });
 }

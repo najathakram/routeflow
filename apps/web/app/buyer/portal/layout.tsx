@@ -163,7 +163,9 @@ export default function BuyerPortalLayout({ children }: { children: React.ReactN
   // Hooks must be called unconditionally — before any early returns
   const sellerSlug = activeSeller?.tenant.slug;
   const { totalQty: cartItemCount } = useBuyerCart(buyer?.id, sellerSlug);
-  const { notifications, unreadCount, markAllRead, clearAll } = useBuyerNotifications();
+  const { notifications, unreadCount, markAllRead, clearAll } = useBuyerNotifications(
+    activeSeller?.tenant.id ?? null,
+  );
   const { data: expiring = [] } = useBuyerExpiringAuthorizations(!!activeSeller);
   const bellCount = unreadCount + expiring.length;
   const [sellersOpen, setSellersOpen] = React.useState(false);

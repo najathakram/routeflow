@@ -44,14 +44,25 @@ const BASELINE: Record<string, number> = {
   //   3. `applyPriceAdjustment`'s `unitsPerBoxByProduct` map — a regulated BASIS lookup, never a
   //      line-factor decision. Retired by moving it to a named non-line helper (SA-047 shape).
   // The number may only go DOWN. The target is still zero.
-  "invoices/invoices.service.ts": 3, // 4c-1 prefactor: create()'s line builder moved (3 reads) to:
+  // Merge of master into #2083: item 2 moved to invoice-edit-plan.ts (SA-184) and item 3 moved to
+  // price-adjustment-ledger.ts (B662), so only item 1 (buildInvoiceItemData) is left here.
+  "invoices/invoices.service.ts": 1,
+  "invoices/invoice-edit-plan.ts": 1, // the moved read: a NEW line's live-pack last resort (SA-077); a stored line never reads it
+  // 4c-1 prefactor: create()'s line builder moved (3 reads) to:
   // B659: two direct read sites in this file (box-split branch's `item.packSnapshot ??
   // product?.unitsPerBox`, and the no-split branch's `upbForPieces` gaining the same fallback per
   // review finding 2). Verified by running the scanner's own regex directly against the file, not
   // carried forward from the stale pre-B717/B681 draft this commit was originally cut against.
   "invoices/manual-invoice-lines.ts": 2,
+  // B662: `applyPriceAdjustment`'s `unitsPerBoxByProduct` lookup (item 3 above) moved here with its
+  // extraction (loadPriceAdjustmentReference): still a regulated BASIS lookup, never a line factor.
+  "invoices/price-adjustment-ledger.ts": 1,
   "estimates/estimates.service.ts": 1,
   "order-templates/order-templates.service.ts": 1,
+  // B646: generation is a NEW sale, so the recurring generator reads the LIVE pack at generation time (the
+  // Senior Architect buildLine contract) to store a boxed template line in pieces; the split lives in
+  // recurring-invoices/recurring-line-split.ts.
+  "recurring-invoices/recurring-invoices.service.ts": 1,
   "returns/inline-returns-quote.service.ts": 3,
   "buyer/buyer.controller.ts": 1,
   "buyer/replenishment.service.ts": 1,

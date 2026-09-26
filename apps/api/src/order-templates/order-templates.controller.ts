@@ -74,6 +74,17 @@ export class OrderTemplatesController {
     return this.service.addItemForUser(templateId, dto, user);
   }
 
+  @Post(":id/items/:itemId/lift-suspension")
+  @UseGuards(RolesGuard)
+  @Roles(UserRole.OPERATOR)
+  liftItemSuspension(
+    @Param("id") templateId: string,
+    @Param("itemId") itemId: string,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.service.liftItemSuspension(templateId, itemId, user);
+  }
+
   @Delete(":id/items/:itemId")
   @UseGuards(RolesGuard)
   @Roles(UserRole.OPERATOR, UserRole.CUSTOMER)
