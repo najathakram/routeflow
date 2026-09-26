@@ -466,6 +466,28 @@
   plainly that it is unverified.**
 - **Guard:** none — judgment. Grep `isWeb`/`Platform.OS` in any file a fix touches.
 
+### L-217 · 2026-09-25 · testing · a CAS/updateMany needs an executed real-DB proof of its SUCCESS path (B861)
+
+- **Symptom:** a compare-and-set `updateMany({ where: { ...compoundUniqueKey, nextNumber } })` passed
+  tsc and every unit mock, yet would have 500'd every second save of a configured row.
+- **Root cause:** a spread compound-unique key escapes TypeScript's excess-property check, mocks accept
+  any `where`, and only a real Prisma client rejects it ("Unknown argument"). The tests covered only
+  the CAS refusal path, so the success path never ran against a real client.
+- **Lesson:** **A CAS/updateMany (or any where/select/include) change needs an executed real-DB proof
+  of its SUCCESS path, not only the refusal path. Build WhereInputs from plain columns, never a spread
+  compound-unique key.**
+- **Guard:** `numbering-continuity.db.spec.ts` "a save carrying the current expectedNextNumber updates
+  the saved row" (cf. [[L-205]] on tests that cannot fail).
+
+### L-218 · 2026-09-25 · testing · a red-proof that matches message TEXT can be vacuous (B861)
+
+- **Symptom:** the red-proofs AB/AD passed on the OLD code, so they proved nothing about the fix.
+- **Root cause:** they matched `/reload/`, which the pre-existing 409's message also contains, so the
+  wrong error satisfied the assertion.
+- **Lesson:** **Assert by error CLASS or code, never by message text another error can share. Run the
+  proof against the old code and confirm it fails for the intended reason.**
+- **Guard:** `REG-B861-AB`/`AD` assert `BadRequestException`.
+
 ## domain
 
 ### L-204 · 2026-09-18/22 · domain · B524 fix round — a new write path didn't inherit a sibling's cache-invalidation fix (recurred on the READ side: 2026-09-22, B698)
@@ -566,20 +588,6 @@
   guards; a test asserting every consumer calls the _same_ function reference (not just a
   matching result) is flagged, not yet added.
 
-### L-173 · 2026-09-16 · domain · B449 (Lite lane, plan-gate boundary)
-
-- **Symptom:** a plan-gated page kept firing its own effects/queries while a locked/blurred
-  overlay showed over it — its 403 toasts and query errors leaked to a user who should never
-  have triggered that behavior.
-- **Root cause:** the gate ghosted the real page behind blur/opacity by rendering it as
-  `children` inside the locked view's own slot — that hides the DOM, it doesn't unmount it.
-- **Lesson:** **A route guard choosing between locked and unlocked must render exactly ONE of
-  two subtrees, never wrap the real page inside the locked view's ghost slot — a component
-  hidden behind blur/opacity is still mounted, and its effects/queries still fire.**
-- **Guard:** a route boundary needs a real "still resolving" state distinct from both outcomes;
-  `layout.plan-gate-boundary.test.tsx` pins children absent from the tree while
-  resolving/locked, not just visually hidden.
-
 ### L-170 · 2026-09-16 · domain · #743 fix round F3 (roundMoney before comparison)
 
 - **Symptom:** a fully-settled invoice rendered a red "Balance Due $0.00" badge instead of the
@@ -593,20 +601,6 @@
 - **Guard:** `invoices.service.ts`'s two `balanceDue` sites and the PDF template now wrap in
   `roundMoney()` before the comparison. Also fixed at `customers.service.ts`'s
   `applyAdvancePaymentToInvoiceLocked` (#814), same class.
-
-### L-171 · 2026-09-16 · domain · PR-1a F1 (pooled cap vs single-line price basis mismatch)
-
-- **Symptom:** an over-return cap was correctly widened from "one matched line" to "pooled across
-  every live line for that product" — but the sibling pricing branch, reading the SAME key,
-  still priced off one matched line's rate against the newly-pooled quantity, over-crediting a
-  product split across two differently-priced lines.
-- **Root cause:** the cap and the price are two different readers of one key. Widening one
-  reader's basis fixed that reader alone — nothing re-examined the sibling reading the same key.
-- **Lesson:** **When a guard/cap computation for a key is widened to pool across rows, grep
-  every OTHER reader of that key — a cap and a price computed from different bases silently
-  mismatch, and the mismatch is a MONEY bug.**
-- **Guard:** the pricing branch now pools qty/subtotal the same way the cap does, with a
-  `min(returned, sold)` backstop; `returns-refund.spec.ts`'s F1 cases prove the pooled pricing.
 
 ### L-072 · 2026-09-03 · domain · wave E `imp-10b`
 
