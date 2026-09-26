@@ -21,6 +21,18 @@ type Row = { kind: "TOUCHES" } | { kind: "EXEMPT"; why: string };
 const T: Row = { kind: "TOUCHES" };
 const X = (why: string): Row => ({ kind: "EXEMPT", why });
 
+/** SA-404b, verbatim in substance: why the bulk Zoho import may write payments outside the shape. */
+const IMPORT_WHY =
+  "SA-404b: the bulk Zoho import writes historical payments for invoices it is itself creating or " +
+  "re-importing, through the pool with no transaction and no Invoice update, so a void running in the " +
+  "same instant as an import would not see that payment under void's Serializable snapshot. The residual " +
+  "is an operator voiding an invoice while a bulk import inserts a payment for that same invoice; the " +
+  "import derives status from Zoho's Balance Due, not from the payments it writes, so no in-app status is " +
+  "computed from those rows in that window. Follow-up B-id: payments + status write in one tx.";
+
+/** Shrink-only (SA-404b, the sellable/unit-line writers pattern): lower it when an EXEMPT row goes. */
+const EXEMPT_BASELINE = 2;
+
 const TABLE: Record<string, Row> = {
   "bookkeeping/bookkeeping.service.ts::BookkeepingService.recordPayment": T,
   "credit-notes/credit-notes.service.ts::CreditNotesService.applyCreditInTx": T,
@@ -28,14 +40,11 @@ const TABLE: Record<string, Row> = {
   "invoices/invoices.service.ts::InvoicesService.recordDeliveryPaymentInTx": T,
   "invoices/invoices.service.ts::InvoicesService.recordPayment": T,
   "invoices/invoices.service.ts::InvoicesService.recordStandalonePayment": T,
-  // Operator-run bulk Zoho import: payments written through the pool, no transaction, no Invoice
-  // update in the same statement set. The exception is owned by the SA (SA-404a b1 follow-up).
-  "import/import.service.ts::ImportService.importInvoices": X(
-    "SA-404a b1: bulk import writes synthetic payments outside a tx — exception pending an SA ruling",
-  ),
-  "import/import.service.ts::ImportService.importPayments": X(
-    "SA-404a b1: bulk import writes payments outside a tx — exception pending an SA ruling",
-  ),
+  // SA-404b: EXEMPT with a written reason; fixed by a follow-up B-id (each imported invoice's payments
+  // and its status write in ONE transaction that updates the Invoice row — restores the invariant and
+  // makes the import's invoice + payments atomic).
+  "import/import.service.ts::ImportService.importInvoices": X(IMPORT_WHY),
+  "import/import.service.ts::ImportService.importPayments": X(IMPORT_WHY),
 };
 
 const SRC = path.resolve(__dirname, "..");
@@ -101,6 +110,14 @@ describe("InvoicePayment writers update the Invoice row in the same transaction 
 
   it("the inventory equals the table, both ways", () => {
     expect(sites.map((s) => s.key)).toEqual(Object.keys(TABLE).sort());
+  });
+
+  it("EXEMPT rows are count-pinned and shrink-only, each with a written reason", () => {
+    const exempt = Object.values(TABLE).filter(
+      (r): r is { kind: "EXEMPT"; why: string } => r.kind === "EXEMPT",
+    );
+    expect(exempt).toHaveLength(EXEMPT_BASELINE);
+    for (const r of exempt) expect(r.why.length).toBeGreaterThan(40);
   });
 
   it.each(Object.entries(TABLE).filter(([, r]) => r.kind === "TOUCHES"))(
