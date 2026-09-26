@@ -127,7 +127,6 @@ describe("RoutesService — F11 run-terminal release (REG-B129 / REG-B211)", () 
       | "emitStopCompleted"
       | "emitOrderCreated"
       | "emitOrderStatusChanged"
-      | "emitLowStock"
       | "emitToDriver"
       | "emitDriverStatusUpdated"
     >
@@ -190,7 +189,6 @@ describe("RoutesService — F11 run-terminal release (REG-B129 / REG-B211)", () 
       emitStopCompleted: jest.fn(),
       emitOrderCreated: jest.fn(),
       emitOrderStatusChanged: jest.fn(),
-      emitLowStock: jest.fn(),
       emitToDriver: jest.fn(),
       emitDriverStatusUpdated: jest.fn(),
     };

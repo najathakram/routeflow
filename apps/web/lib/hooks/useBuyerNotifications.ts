@@ -136,23 +136,22 @@ export function useBuyerNotifications() {
       });
     };
 
-    const onStopCompleted = (data: { orderId?: string }) =>
-      push({
-        type: "delivery",
-        title: "Delivery update",
-        description: "Items from your order have been delivered",
-      });
+    // #2095: the run carrying a delivery moved (the payload is `{ runId }` only). Refetch every
+    // order detail and its "Track your delivery" card; silent — no bell entry. A buyer's own
+    // delivery arrives as order.statusChanged, so `route.stop.completed` (operators only) is not
+    // subscribed here.
+    const onRouteProgress = () => qc.invalidateQueries({ queryKey: ["buyer", "order"] });
 
     socket.on("order.statusChanged", onOrderStatusChanged);
     socket.on("invoice.updated", onInvoiceUpdated);
     socket.on("creditNote.created", onCreditNoteCreated);
-    socket.on("route.stop.completed", onStopCompleted);
+    socket.on("route.progress", onRouteProgress);
 
     return () => {
       socket.off("order.statusChanged", onOrderStatusChanged);
       socket.off("invoice.updated", onInvoiceUpdated);
       socket.off("creditNote.created", onCreditNoteCreated);
-      socket.off("route.stop.completed", onStopCompleted);
+      socket.off("route.progress", onRouteProgress);
       // The socket is this portal's: leaving it (or logging out) closes it, so a later staff
       // session in the same tab never inherits a buyer-authenticated connection (the shared
       // connectSocket returns any live socket as-is). Mirrors useRealtimeUpdates' cleanup.
