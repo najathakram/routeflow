@@ -21,11 +21,10 @@ const googleMapsApiKey = process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY ?? "";
  * APK profiles are unaffected. The owner sets the key as an EAS environment variable
  * (docs/runbooks/mobile-store-release.md).
  *
- * TODO(#2312, owner ruling pending): two store settings wait on a yes/no, see the runbook's
- * "Pending decisions":
- *   1. iOS background location: expo-location `isIosBackgroundLocationEnabled: true`
- *      (lib/location-tracker.native.ts already starts background updates on iOS).
- *   2. iPad + portrait-only: `ios.infoPlist.UIRequiresFullScreen: true` until #2311 lands.
+ * #2312 decisions (owner, recorded on #2312): app.json sets expo-location
+ * `isIosBackgroundLocationEnabled: true` (match Android: lib/location-tracker.native.ts starts
+ * background updates on iOS too) and `ios.infoPlist.UIRequiresFullScreen: true` (portrait-only on
+ * iPad otherwise fails upload, ITMS-90474; liftable after the iPad layout pass, #2311).
  */
 function assertStoreBuildEnv(env = process.env) {
   if (env.EAS_BUILD_PROFILE === "production" && !env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY) {

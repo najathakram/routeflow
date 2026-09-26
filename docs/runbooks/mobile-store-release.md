@@ -44,21 +44,16 @@ The marketing version (`expo.version`, currently `1.1.1` in `app.json`) is still
 - Bundle id / package: `com.routeflow.mobile` on both platforms (`app.json`).
 - iPad: `ios.supportsTablet: true` (owner decision: iPad in the first release).
 
-## 5. Pending decisions (owner ruling requested, #2312)
+## 5. Store decisions (owner, recorded on #2312)
 
-Until they are answered, neither setting is in `app.json`:
-
-1. **iOS background location.** Recommendation: **yes**. `lib/location-tracker.native.ts` already
-   requests background permission and calls `Location.startLocationUpdatesAsync` through a
-   TaskManager task on every platform, but iOS has no `UIBackgroundModes: location`, so iPhone
-   drivers' live tracking would stop once the app is backgrounded. Change: the expo-location plugin
-   gets `"isIosBackgroundLocationEnabled": true` (the "Always" usage string already exists), plus an
-   App Review note: location is shared with dispatch only while a driver is on an active delivery
-   run.
-2. **iPad + portrait-only.** `app.json` has `"orientation": "portrait"` with
-   `"supportsTablet": true`. App Store Connect rejects that combination (iPad multitasking requires
-   every orientation) unless `ios.infoPlist.UIRequiresFullScreen` is `true`. Recommendation:
-   `UIRequiresFullScreen: true` for the first release; the iPad layout pass (#2311) can lift it.
+1. **iOS background location: yes, match Android.** `lib/location-tracker.native.ts` requests
+   background permission and calls `Location.startLocationUpdatesAsync` through a TaskManager task
+   on every platform, so `app.json`'s expo-location plugin sets `"isIosBackgroundLocationEnabled":
+true` (the existing "Always" usage string is reused). **App Review note:** "Dispatch tracks
+   active delivery runs only." The same note is in #2313's review-notes template.
+2. **iPad + portrait-only: `ios.infoPlist.UIRequiresFullScreen: true`** for the first release.
+   Portrait-only with `supportsTablet: true` otherwise fails the upload (ITMS-90474, iPad
+   multitasking needs every orientation). Recorded on #2311 as liftable after the iPad layout pass.
 
 ## 6. Owner checklist (from epic #2307)
 

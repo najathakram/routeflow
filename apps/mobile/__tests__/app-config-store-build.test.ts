@@ -41,3 +41,23 @@ describe("app.config.js store-build guard (#2312)", () => {
     );
   });
 });
+
+describe("app.json store decisions (#2312, owner)", () => {
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const { expo } = require("../app.json");
+  const location = (expo.plugins as unknown[]).find(
+    (p) => Array.isArray(p) && p[0] === "expo-location",
+  ) as [string, Record<string, unknown>];
+
+  it("iOS background location matches Android, reusing the existing Always usage string", () => {
+    expect(location[1].isIosBackgroundLocationEnabled).toBe(true);
+    expect(location[1].isAndroidBackgroundLocationEnabled).toBe(true);
+    expect(String(location[1].locationAlwaysAndWhenInUsePermission)).toMatch(/background/);
+  });
+
+  it("portrait-only iPad support declares UIRequiresFullScreen (ITMS-90474)", () => {
+    expect(expo.orientation).toBe("portrait");
+    expect(expo.ios.supportsTablet).toBe(true);
+    expect(expo.ios.infoPlist.UIRequiresFullScreen).toBe(true);
+  });
+});
