@@ -67,6 +67,13 @@ on:
       # spec — a PR touching this file must run this lane even when it doesn't
       # touch the .db.spec.ts itself.
       - "apps/api/src/regulated/regulated-ledger.service.ts"
+      # #2095 / #2142: the buyer socket rooms, the shared buyer-link predicate (portal guard and
+      # gateway alike) and the tracking read are proven against real SQL only by
+      # gateways/buyer-rooms.db.spec.ts; an edit to any of them alone must run this lane.
+      - "apps/api/src/gateways/routeflow.gateway.ts"
+      - "apps/api/src/buyer/buyer-link-scope.ts"
+      - "apps/api/src/buyer/guards/buyer-seller-context.guard.ts"
+      - "apps/api/src/orders/order-tracking.ts"
       - "apps/api/.squawk.toml"
       - "scripts/lint-migrations.mjs"
       - ".github/workflows/db-migrations.yml"
