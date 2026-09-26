@@ -1,4 +1,5 @@
 import { normalizeBoxesPieces, roundMoney, splitMatchesQty } from "@routeflow/pricing";
+import { assertUnitLineSplit } from "../orders/unit-line-split";
 
 /**
  * The denomination (qty, boxes, pieces, pack, unit label) an order line is written with by the invoice ->
@@ -20,7 +21,10 @@ export function orderLineShape(
   existing: any,
   agg: { qty: number; sample: any; n?: number; packs?: ReadonlySet<number> },
 ): ReturnType<typeof rawShape> {
-  return consistentSplit(rawShape(existing, agg), agg.qty);
+  const shape = consistentSplit(rawShape(existing, agg), agg.qty);
+  // #2230 / SA-388d: never mirror B718's all-empty split back onto the order line.
+  const unitLabel = shape.unitLabel !== undefined ? shape.unitLabel : (existing?.unitLabel ?? null);
+  return assertUnitLineSplit({ ...shape, unitLabel }, "orderLineShape") && shape;
 }
 
 function rawShape(
