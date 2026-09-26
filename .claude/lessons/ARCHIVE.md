@@ -2788,3 +2788,69 @@ citations, closed-out with its own post-init assertion guard).
   cap — zero cross-references elsewhere in LESSONS.md/CLAUDE.md, and the guard is a standing,
   automated test isolation mechanism rather than a rule a session needs to recall by reading
   this prose.)
+
+## Archived 2026-09-23 — headroom for L-176's third recurrence (B660 PR B bookkeeping)
+
+### L-169 · 2026-09-16 · domain · B421 / PR-1a shared-helper precondition no-op (two call sites)
+
+- **Symptom:** two surfaces hit the same shape: a shared helper re-checked `.status` generically,
+  but the callers' own `select` never fetched it, so it silently read `undefined`. Both tests
+  passed anyway because their mocks supplied the field directly.
+- **Root cause:** a shared helper that re-derives a precondition has no knowledge of a caller's
+  query shape — it assumes the field is present, and a caller whose `select` never needed it
+  before silently hands the helper `undefined`, which the check absorbs as real.
+- **Lesson:** **Before wiring a caller into a shared helper that re-derives a precondition
+  generically, check the caller's `select` actually fetches the field — a mock supplying it
+  directly proves nothing. A type-check alone won't catch a field silently resolving to
+  `undefined`.**
+- **Guard:** both selects now fetch `status`; `returns-lineitems-select.spec.ts` pins the real
+  shape at every call site. (Archived 2026-09-23 to make room at cap — zero citations anywhere
+  outside the register, and the guard is a permanent code fix plus a standing regression spec
+  pinning the exact shape at both call sites, rather than a rule a session needs to recall by
+  reading this prose.)
+
+## Archived 2026-09-24 — headroom for L-216 (note --section silent loss, B840)
+
+### L-171 · 2026-09-16 · domain · PR-1a F1 (pooled cap vs single-line price basis mismatch)
+
+- **Symptom:** an over-return cap was correctly widened from "one matched line" to "pooled across
+  every live line for that product" — but the sibling pricing branch, reading the SAME key,
+  still priced off one matched line's rate against the newly-pooled quantity, over-crediting a
+  product split across two differently-priced lines.
+- **Root cause:** the cap and the price are two different readers of one key. Widening one
+  reader's basis fixed that reader alone — nothing re-examined the sibling reading the same key.
+- **Lesson:** **When a guard/cap computation for a key is widened to pool across rows, grep
+  every OTHER reader of that key — a cap and a price computed from different bases silently
+  mismatch, and the mismatch is a MONEY bug.**
+- **Guard:** the pricing branch now pools qty/subtotal the same way the cap does, with a
+  `min(returned, sold)` backstop; `returns-refund.spec.ts`'s F1 cases prove the pooled pricing.
+  (Archived 2026-09-25 to make room at cap: zero citations outside the register, and the guard is a standing regression spec, returns-refund.spec.ts, pinning the pooled pricing.)
+
+### L-173 · 2026-09-16 · domain · B449 (Lite lane, plan-gate boundary)
+
+- **Symptom:** a plan-gated page kept firing its own effects/queries while a locked/blurred
+  overlay showed over it — its 403 toasts and query errors leaked to a user who should never
+  have triggered that behavior.
+- **Root cause:** the gate ghosted the real page behind blur/opacity by rendering it as
+  `children` inside the locked view's own slot — that hides the DOM, it doesn't unmount it.
+- **Lesson:** **A route guard choosing between locked and unlocked must render exactly ONE of
+  two subtrees, never wrap the real page inside the locked view's ghost slot — a component
+  hidden behind blur/opacity is still mounted, and its effects/queries still fire.**
+- **Guard:** a route boundary needs a real "still resolving" state distinct from both outcomes;
+  `layout.plan-gate-boundary.test.tsx` pins children absent from the tree while
+  resolving/locked, not just visually hidden.
+  (Archived 2026-09-25 to make room at cap: zero citations outside the register, and the guard is a standing regression test, layout.plan-gate-boundary.test.tsx, pinning children absent while the gate resolves.)
+
+### L-178 · 2026-09-16 · security · demo-booking PR-2 (raw error message leak)
+
+- **Symptom:** a public-facing catch handler rendered a caught error's `.message` verbatim, so
+  an unauthenticated route could show NestJS's own raw 404 body instead of a curated message.
+- **Root cause:** the load path assumed every reachable error was one of its own curated
+  exceptions; it never accounted for a transport-level failure with no safe message behind it.
+- **Lesson:** **A public unauthenticated page's catch handler must show a FIXED, generic message
+  for any path that can receive a transport-level failure, never `error.message` — a curated
+  message is safe to show only when every source feeding that catch is known and typed.**
+- **Guard:** `demo-scheduler.test.tsx` pins a raw framework 404, a bare network failure, and a
+  raw 500 all rendering the SAME fixed message, never the response body.
+  (Archived 2026-09-24 to make room at cap: zero citations outside the register, and the guard is a
+  standing regression test, demo-scheduler.test.tsx, pinning the fixed message for all three failure shapes.)

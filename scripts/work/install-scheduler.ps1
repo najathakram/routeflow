@@ -151,7 +151,13 @@ set WORK_RUNNER_REF=$Ref
 set WORK_PLANE=$planeFlag
 set WORK_TRIAGE=$triageFlag
 cd /d "$RunnerWorktree"
-node scripts\work\run.mjs
+rem Bootstrap: a runner created at a commit that predates scripts/work (e.g. installed before the
+rem automation merged) can't sync itself, so fetch and move to the ref first.
+if not exist scripts\work\run.mjs (
+  git fetch -q origin
+  git checkout -q --detach $Ref
+)
+if exist scripts\work\run.mjs node scripts\work\run.mjs
 endlocal
 "@
 Set-Content -Path $RunCmdPath -Value $cmdContent -Encoding ASCII
@@ -176,9 +182,11 @@ Write-Host "Wrote hidden launcher: $RunVbsPath"
 # IgnoreNew is a second, OS-level guard alongside run.mjs's own
 # run.lock file.
 $action = New-ScheduledTaskAction -Execute "wscript.exe" -Argument "`"$RunVbsPath`""
+# [TimeSpan]::MaxValue serializes to P99999999DT23H59M59S, which Register-ScheduledTask rejects
+# (HRESULT 0x80041318) on Windows 10/11. Ten years is "indefinitely" for this purpose.
 $trigger = New-ScheduledTaskTrigger -Once -At (Get-Date) `
   -RepetitionInterval (New-TimeSpan -Minutes 5) `
-  -RepetitionDuration ([TimeSpan]::MaxValue)
+  -RepetitionDuration (New-TimeSpan -Days 3650)
 $principal = New-ScheduledTaskPrincipal -UserId $env:UserName -LogonType Interactive
 $settings = New-ScheduledTaskSettingsSet -Hidden -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries `
   -StartWhenAvailable -MultipleInstances IgnoreNew -ExecutionTimeLimit (New-TimeSpan -Minutes 15)

@@ -15,5 +15,5 @@
     "packages": 0
   },
   "fileCount": 1045,
-  "notes": "**2026-09-19 — refresh 56c01d2b→a3c37bdb: B562 critical inventory sales-blind-replay fix + #931 UI hiding, #933 LineItemRow extraction, B536/B543 platform-admin getStats fixes, B559 platform-admin mobile tab-overflow, B535 TAP_TARGET + B534 grid-cols + B533 buyer-table mobile sweep, B343 credit-note voided event, B525 dead-addon-toggle removal, B519 web unmet-requires warning, B549 booking min-width + A7 nav-CSS guard, #871 marketing copy rewrite, A6 marketing cache-control, B523 campaign-check self-heal, #940 docs-only bug filings, and #936 schema spine (ProductUnit/SupplierProduct/ProductCategoryLabel/SellingRestriction+enums/CustomerAddress.stateCode/VendorBill.purchaseOrderId — schema-only, no API surface yet) mapped once merged.** See CHANGELOG.md for the full landing list."
+  "notes": "**2026-09-25 — B861 numbering continuity landed (#2170, dd33057a; docs-only bookkeeping).** `api/feature-modules-6.md` B861 bullet refreshed to the merged shapes: year-0 `0*` scan, CAS on plain columns with `expectedNextNumber` required, `mintConfigured` `FOR UPDATE` on the year-0 row, DTO `next ≤ 999,999,999`, web `Extract<>` type, `seedFromSource` deleted. Lessons L-217/L-218 minted. No source changed. See CHANGELOG.md for the full landing list."
 }

@@ -86,6 +86,14 @@ describe("ParkedRestockResolutionService", () => {
 
   const movement = () => prisma.stockMovement.create.mock.calls[0]?.[0].data;
 
+  it("#2108: a tenant-less caller (SUPER_ADMIN) is refused before any claim or audit", async () => {
+    (prisma as any).getTenantId = jest.fn().mockReturnValue(null);
+    await expect(service.resolve("pr-1", 12, actor)).rejects.toThrow("tenant-scoped");
+    expect((prisma as any).returnParkedRestock.updateMany).not.toHaveBeenCalled();
+    expect(audit.log).not.toHaveBeenCalled();
+    expect(() => service.list()).toThrow("tenant-scoped");
+  });
+
   it("books EXACTLY the stored qty x the pack: 3 boxes at pack 12 = +36 PIECES, on the RET-<id> reference", async () => {
     const res = await service.resolve("pr-1", 12, actor);
     expect(Number(movement().quantity)).toBe(36);
