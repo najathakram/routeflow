@@ -32,11 +32,14 @@ console.log(JSON.stringify({ cohorts, verdict: verdict(cohorts) }));
   return JSON.parse(res.stdout);
 }
 
-const counts = (hottest: { t: string | null; lines: string; invoices: string }[]) => ({
-  invoices: [
+const counts = (
+  hottest: { t: string | null; lines: string; invoices: string }[],
+  invoices: { t: string | null; n: string }[] = [
     { t: "t1", n: "10" },
     { t: "t2", n: "400" },
   ],
+) => ({
+  invoices,
   lines: [
     { t: "t1", n: "30" },
     { t: "t2", n: "4000" },
@@ -66,29 +69,56 @@ describe("report-2179-insights-scale.mjs (#2179 / SA-400a)", () => {
     expect(out.cohorts.live).toMatchObject({
       tenants: 1,
       invoices: 400,
+      largestTenantInvoices: 400,
       invoiceLines: 4000,
       creditNotes: 7,
       hottestProductLines: 3000,
       hottestProductInvoices: 350,
     });
-    expect(out.verdict).toEqual({ withinBounds: true, withinLines: true, withinInvoices: true });
+    expect(out.verdict).toEqual({
+      withinBounds: true,
+      withinLines: true,
+      withinTenantInvoices: true,
+    });
     const text = JSON.stringify(out);
     expect(text).not.toContain("t2");
     expect(text).not.toContain("acme-foods");
   });
 
-  it("SA-400a bounds: over 10,000 lines or 10,000 invoices on the live cohort's hottest product fails", () => {
+  it("SA-400a: BOTH bounds — the live hottest product's lines AND the largest live tenant's invoices", () => {
+    // Bound 1: the hottest product's lines.
     expect(
       shim({ slugs, counts: counts([{ t: "t2", lines: "10001", invoices: "1" }]) }).verdict,
-    ).toEqual({ withinBounds: false, withinLines: false, withinInvoices: true });
+    ).toEqual({ withinBounds: false, withinLines: false, withinTenantInvoices: true });
+    // Bound 2: one live tenant's TOTAL invoices, whatever its hottest product looks like.
     expect(
-      shim({ slugs, counts: counts([{ t: "t2", lines: "5", invoices: "10001" }]) }).verdict,
-    ).toEqual({ withinBounds: false, withinLines: true, withinInvoices: false });
-    // Exactly at the bound is within it.
+      shim({
+        slugs,
+        counts: counts([{ t: "t2", lines: "5", invoices: "5" }], [{ t: "t2", n: "10001" }]),
+      }).verdict,
+    ).toEqual({ withinBounds: false, withinLines: true, withinTenantInvoices: false });
+    // Exactly at both bounds is within them.
     expect(
-      shim({ slugs, counts: counts([{ t: "t2", lines: "10000", invoices: "10000" }]) }).verdict
-        .withinBounds,
+      shim({
+        slugs,
+        counts: counts([{ t: "t2", lines: "10000", invoices: "10000" }], [{ t: "t2", n: "10000" }]),
+      }).verdict.withinBounds,
     ).toBe(true);
+  });
+
+  it("bound 2 is per tenant: several live tenants over 10k together still pass; the cohort total is still reported", () => {
+    const out = shim({
+      slugs: [...slugs, ["t3", "bayside-market"]],
+      counts: counts(
+        [{ t: "t2", lines: "50", invoices: "50" }],
+        [
+          { t: "t2", n: "9000" },
+          { t: "t3", n: "9000" },
+        ],
+      ),
+    });
+    expect(out.cohorts.live).toMatchObject({ invoices: 18000, largestTenantInvoices: 9000 });
+    expect(out.verdict.withinBounds).toBe(true);
   });
 
   it("a test tenant's hot product never counts against the live bound; an unknown tenant counts live", () => {
@@ -97,6 +127,13 @@ describe("report-2179-insights-scale.mjs (#2179 / SA-400a)", () => {
       counts: counts([{ t: "t1", lines: "99999", invoices: "99999" }]),
     });
     expect(testHot.verdict.withinBounds).toBe(true);
+    // A test tenant's own invoice volume never counts against bound 2 either.
+    const testBig = shim({
+      slugs,
+      counts: counts([{ t: "t2", lines: "1", invoices: "1" }], [{ t: "t1", n: "50000" }]),
+    });
+    expect(testBig.cohorts.test.largestTenantInvoices).toBe(50000);
+    expect(testBig.verdict.withinBounds).toBe(true);
     const unknown = shim({ slugs, counts: counts([{ t: "t9", lines: "20000", invoices: "1" }]) });
     expect(unknown.cohorts.live.hottestProductLines).toBe(20000);
     expect(unknown.verdict.withinBounds).toBe(false);

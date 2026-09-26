@@ -1,14 +1,17 @@
 /**
  * report-2179-insights-scale.mjs — #2179 / SA-400a PRE-LANDING gate. READ-ONLY.
  *
- * #2179's product-insights reads have a slow worst case (a product with very many sold lines).
- * SA-400a lets #2179 land if the LIVE cohort's hottest product is within 10,000 invoice lines and
- * 10,000 invoices. This report gives the owner those numbers without exposing a tenant.
+ * #2179's product-insights reads have a slow worst case (a product sold on every invoice of a very
+ * large tenant). SA-400a lets #2179 land if BOTH hold for the LIVE cohort:
+ *   (1) its hottest product has at most 10,000 invoice lines, and
+ *   (2) its largest tenant has at most 10,000 invoices in total.
+ * This report gives the owner those numbers without exposing a tenant.
  *
  * Output: aggregate COUNTS per cohort only, TEST (approved test tenants, `isTestTenant`) vs LIVE
- * (everything else): tenants, invoices, invoice lines, credit notes, returns, and the hottest
- * product's line count and invoice count. Never an id, slug, name, product or document. The
- * cohort split happens in memory; the SQL groups by tenant id and the ids are discarded.
+ * (everything else): tenants, invoices (cohort total), the largest tenant's invoice count, invoice
+ * lines, credit notes, returns, and the hottest product's line count and invoice count. Never an id,
+ * slug, name, product or document. The cohort split happens in memory; the SQL groups by tenant id
+ * and the ids are discarded.
  *
  * NEVER writes anything: `default_transaction_read_only = on` is set first, then every query runs
  * inside ONE `BEGIN TRANSACTION READ ONLY` snapshot that is rolled back; `statement_timeout` and
@@ -30,9 +33,9 @@ import { pathToFileURL } from "node:url";
 const require = createRequire(import.meta.url);
 const { isTestTenant } = require("../../../scripts/lib/test-tenants.cjs");
 
-/** SA-400a bounds for the LIVE cohort's hottest product. */
+/** SA-400a bounds for the LIVE cohort: the hottest product's lines, the largest tenant's invoices. */
 export const MAX_HOTTEST_LINES = 10_000;
-export const MAX_HOTTEST_INVOICES = 10_000;
+export const MAX_TENANT_INVOICES = 10_000;
 
 /**
  * The read-only SQL, each grouped by tenant id. Lines are counted THROUGH their invoice (a legacy
@@ -68,6 +71,8 @@ export function assertReadOnlySql(sql) {
 const emptyCohort = () => ({
   tenants: 0,
   invoices: 0,
+  /** The largest single tenant's invoice count in this cohort (SA-400a bound 2). */
+  largestTenantInvoices: 0,
   invoiceLines: 0,
   creditNotes: 0,
   returns: 0,
@@ -93,6 +98,11 @@ export function summarize(slugById, counts) {
     for (const r of rows) cohortOf(r.t)[key] += Number(r.n);
   };
   add(counts.invoices, "invoices");
+  // Per tenant, so bound 2 is one tenant's total. A NULL-tenant group counts as one live "tenant".
+  for (const r of counts.invoices) {
+    const c = cohortOf(r.t);
+    c.largestTenantInvoices = Math.max(c.largestTenantInvoices, Number(r.n));
+  }
   add(counts.lines, "invoiceLines");
   add(counts.creditNotes, "creditNotes");
   add(counts.returns, "returns");
@@ -104,12 +114,16 @@ export function summarize(slugById, counts) {
   return cohorts;
 }
 
-/** SA-400a: the LIVE cohort's hottest product within both bounds. */
+/** SA-400a: BOTH bounds on the LIVE cohort — hottest product's lines, largest tenant's invoices. */
 export function verdict(cohorts) {
   const live = cohorts.live;
   const withinLines = live.hottestProductLines <= MAX_HOTTEST_LINES;
-  const withinInvoices = live.hottestProductInvoices <= MAX_HOTTEST_INVOICES;
-  return { withinBounds: withinLines && withinInvoices, withinLines, withinInvoices };
+  const withinTenantInvoices = live.largestTenantInvoices <= MAX_TENANT_INVOICES;
+  return {
+    withinBounds: withinLines && withinTenantInvoices,
+    withinLines,
+    withinTenantInvoices,
+  };
 }
 
 function print(cohorts, json) {
@@ -120,8 +134,9 @@ function print(cohorts, json) {
   }
   console.table({ test: cohorts.test, live: cohorts.live });
   console.log(
-    `SA-400a: live hottest product ${cohorts.live.hottestProductLines} lines (bound ${MAX_HOTTEST_LINES}), ` +
-      `${cohorts.live.hottestProductInvoices} invoices (bound ${MAX_HOTTEST_INVOICES}) → ` +
+    `SA-400a: live hottest product ${cohorts.live.hottestProductLines} lines (bound ${MAX_HOTTEST_LINES}); ` +
+      `largest live tenant ${cohorts.live.largestTenantInvoices} invoices (bound ${MAX_TENANT_INVOICES}); ` +
+      `live cohort ${cohorts.live.invoices} invoices in total → ` +
       (v.withinBounds ? "WITHIN BOUNDS" : "OVER A BOUND"),
   );
 }
@@ -165,7 +180,30 @@ function runSelfTest() {
     "hottest = max per cohort, lines and invoices independently",
     c.live.hottestProductLines === 8000 && c.live.hottestProductInvoices === 900,
   );
+  check(
+    "largest tenant = max single tenant's invoices per cohort",
+    c.live.largestTenantInvoices === 700 && c.test.largestTenantInvoices === 5,
+  );
   check("within bounds", verdict(c).withinBounds === true);
+  const bigTenant = summarize(slugs, {
+    ...counts,
+    invoices: [{ t: "t-live-b", n: "10001" }],
+  });
+  check(
+    "over the tenant-invoice bound",
+    verdict(bigTenant).withinBounds === false && !verdict(bigTenant).withinTenantInvoices,
+  );
+  const manySmall = summarize(slugs, {
+    ...counts,
+    invoices: [
+      { t: "t-live-a", n: "9000" },
+      { t: "t-live-b", n: "9000" },
+    ],
+  });
+  check(
+    "bound 2 is per tenant, not the cohort total",
+    manySmall.live.invoices === 18000 && verdict(manySmall).withinTenantInvoices === true,
+  );
   const over = summarize(slugs, {
     ...counts,
     hottest: [{ t: "t-live-a", lines: "10001", invoices: "1" }],
