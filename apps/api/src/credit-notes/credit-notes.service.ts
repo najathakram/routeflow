@@ -488,14 +488,19 @@ export class CreditNotesService {
             });
             const created = { ...row, customer };
 
-            // Only regulated lines drive a ledger reversal (CreditNoteItem is consumed
-            // solely by reverseCreditNoteEntries, which filters on trackedCategoryId).
-            const regulatedItems = cnItemsData.filter((i) => i.trackedCategoryId);
-            if (regulatedItems.length > 0 && tenantId) {
+            // SA-311 (#2181): EVERY validated line persists its CreditNoteItem, ordinary
+            // and regulated: the line link feeds sales-facts attribution and the
+            // cumulative per-line cap above (priorForLine), which never accumulated for
+            // ordinary lines when only regulated items were written. Only regulated lines
+            // drive a ledger reversal: reverseCreditNoteEntries reads items with
+            // trackedCategoryId not null, so gating the call here keeps it byte-identical.
+            if (cnItemsData.length > 0 && tenantId) {
               await tx.creditNoteItem.createMany({
-                data: regulatedItems.map((i) => ({ ...i, creditNoteId: created.id, tenantId })),
+                data: cnItemsData.map((i) => ({ ...i, creditNoteId: created.id, tenantId })),
               });
-              await this.ledger.reverseCreditNoteEntries({ creditNoteId: created.id, db: tx });
+              if (cnItemsData.some((i) => i.trackedCategoryId)) {
+                await this.ledger.reverseCreditNoteEntries({ creditNoteId: created.id, db: tx });
+              }
             }
             return created;
           },

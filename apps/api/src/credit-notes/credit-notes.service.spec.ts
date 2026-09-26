@@ -100,7 +100,7 @@ describe("CreditNotesService — W5c regulated reversal", () => {
     expect(ledger.reverseCreditNoteEntries).not.toHaveBeenCalled();
   });
 
-  it("crediting only a NON-regulated line never reverses regulated excise (no misattribution)", async () => {
+  it("SA-311: crediting only a NON-regulated line persists its CreditNoteItem but never reverses regulated excise", async () => {
     prisma.invoice.findFirst.mockResolvedValue(
       invoiceWith([
         { id: "ii-reg", subtotal: 50, qty: 5, trackedCategoryId: "cat-A", categoryTaxAmount: 0 },
@@ -114,8 +114,46 @@ describe("CreditNotesService — W5c regulated reversal", () => {
       amount: 50,
       items: [{ invoiceItemId: "ii-std", amount: 50 }], // credit the candy, not the tobacco
     });
-    expect(prisma.creditNoteItem.createMany).not.toHaveBeenCalled();
+    // SA-311 (#2181): the ordinary line keeps its line link (insights attribution + the
+    // cumulative per-line cap read it) ...
+    const itemsData = prisma.creditNoteItem.createMany.mock.calls[0][0].data;
+    expect(itemsData).toEqual([
+      expect.objectContaining({
+        creditNoteId: "cn-1",
+        tenantId: "test-tenant",
+        invoiceItemId: "ii-std",
+        trackedCategoryId: null,
+        amount: 50,
+      }),
+    ]);
+    // ... and the regulated ledger is untouched, exactly as before.
     expect(ledger.reverseCreditNoteEntries).not.toHaveBeenCalled();
+  });
+
+  it("SA-311: a mixed credit persists an item for EVERY referenced line and reverses the ledger once", async () => {
+    prisma.invoice.findFirst.mockResolvedValue(
+      invoiceWith([
+        { id: "ii-reg", subtotal: 50, qty: 5, trackedCategoryId: "cat-A", categoryTaxAmount: 5 },
+        { id: "ii-std", subtotal: 50, qty: 5, trackedCategoryId: null, categoryTaxAmount: 0 },
+      ]),
+    );
+    prisma.creditNote.aggregate.mockResolvedValue({ _sum: { amount: 0 } });
+    await service.create({
+      customerId: "c1",
+      invoiceId: "inv-1",
+      amount: 60,
+      items: [
+        { invoiceItemId: "ii-reg", amount: 20 },
+        { invoiceItemId: "ii-std", amount: 40 },
+      ],
+    });
+    const itemsData = prisma.creditNoteItem.createMany.mock.calls[0][0].data;
+    expect(itemsData.map((i: any) => [i.invoiceItemId, i.trackedCategoryId, i.amount])).toEqual([
+      ["ii-reg", "cat-A", 20],
+      ["ii-std", null, 40],
+    ]);
+    expect(prisma.creditNoteItem.createMany).toHaveBeenCalledTimes(1);
+    expect(ledger.reverseCreditNoteEntries).toHaveBeenCalledTimes(1);
   });
 
   it("rejects line amounts that do not reconcile to the credit-note total", async () => {
