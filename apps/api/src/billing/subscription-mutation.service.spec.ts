@@ -564,7 +564,15 @@ describe("SubscriptionMutationService.subscribe (MRR = signed change)", () => {
     const first = await svc
       .subscribe("t1", { planKey: "BUSINESS", cycle: "MONTHLY" }, "admin")
       .catch((e: any) => e);
-    expect(first.getResponse()).toMatchObject({ code: "PLAN_CHANGED_DURING_SUBSCRIBE" });
+    // SA-389a (a): nothing written — no subscription/tenant write, no BillingEvent, no add-on
+    // ledger row (emitAddonDelta books through events.emit).
+    expect(first.getResponse()).toMatchObject({
+      code: "PLAN_CHANGED_DURING_SUBSCRIBE",
+      retryable: true,
+    });
+    expect(tx.tenantSubscription.upsert).not.toHaveBeenCalled();
+    expect(tx.tenant.update).not.toHaveBeenCalled();
+    expect(tx.tenantAddon.upsert).not.toHaveBeenCalled();
     expect(events.emit).not.toHaveBeenCalled();
 
     // ...and the caller's retry re-reads (the committed activation is now the pre-tx state too)
@@ -577,11 +585,28 @@ describe("SubscriptionMutationService.subscribe (MRR = signed change)", () => {
     });
     prisma.tenantSubscription.findUnique.mockResolvedValue({ planKey: "TEAM" });
     await svc.subscribe("t1", { planKey: "BUSINESS", cycle: "MONTHLY" }, "admin");
+    // SA-389a (b): SA-277b's money assertion, moved to the retry — booked EXACTLY ONCE against
+    // the post-activation state, so the two calls together equal one clean subscribe on an
+    // already-paying row: one PLAN_CHANGED of 349 − 149, no TRIAL_CONVERTED, no add-on booking.
+    expect(emitted(events)).toEqual([BILLING_EVENTS.PLAN_CHANGED]);
     expect(deltaOf(events, BILLING_EVENTS.PLAN_CHANGED)).toBe(200); // 349 − 149
     // REGULATED_ITEMS was already paying under the locked state, so the crossing helper nets
     // it to a NO-OP — never a second +39 on top of what activateManualSubscription booked.
     expect(emitted(events)).not.toContain(BILLING_EVENTS.ADDON_ENABLED);
     expect(deltaOf(events, BILLING_EVENTS.ADDON_ENABLED)).toBeUndefined();
+  });
+
+  it("SA-389a (c) control: no interleaving (pre-read == locked read) ⇒ one write, one PLAN_CHANGED, no 409", async () => {
+    const tenantRow = { status: "ACTIVE", plan: "TEAM", class: "PRODUCTION", deletedAt: null };
+    const sub = { planKey: "TEAM", cycle: "MONTHLY", periodEnd: null };
+    const { svc, prisma, tx, events } = make({ sub });
+    prisma.tenant.findUnique.mockResolvedValue(tenantRow);
+    tx.tenant.findUnique.mockResolvedValue(tenantRow);
+    tx.tenantSubscription.findUnique.mockResolvedValue(sub);
+    await svc.subscribe("t1", { planKey: "BUSINESS", cycle: "MONTHLY" }, "admin");
+    expect(tx.tenantSubscription.upsert).toHaveBeenCalledTimes(1);
+    expect(emitted(events)).toEqual([BILLING_EVENTS.PLAN_CHANGED]);
+    expect(deltaOf(events, BILLING_EVENTS.PLAN_CHANGED)).toBe(200); // 349 − 149
   });
 });
 

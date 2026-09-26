@@ -127,3 +127,23 @@ describe("SettingsBillingController.createCheckout (WP3c, R2.9)", () => {
     expect(billing.createCheckoutSession).not.toHaveBeenCalled();
   });
 });
+
+// #2189 / SA-389a: the controller passes subscribe()'s 409 body through unchanged, so the web can
+// offer "plan changed — retry" off the code (Nest serializes getResponse() as the JSON body).
+describe("SettingsBillingController.subscribe — PLAN_CHANGED_DURING_SUBSCRIBE reaches the response", () => {
+  it("rethrows the 409 with its code, retryable flag and message intact", async () => {
+    const { ConflictException } = jest.requireActual("@nestjs/common");
+    const { controller, mutations } = make();
+    const body = {
+      code: "PLAN_CHANGED_DURING_SUBSCRIBE",
+      retryable: true,
+      message: "Your plan changed while this was being processed — please try again.",
+    };
+    mutations.subscribe = jest.fn().mockRejectedValue(new ConflictException(body));
+    const err = await controller
+      .subscribe({ tenantId: "t1", sub: "u1" } as any, { planKey: "TEAM", cycle: "MONTHLY" } as any)
+      .catch((e: any) => e);
+    expect(err.getStatus()).toBe(409);
+    expect(err.getResponse()).toEqual(body);
+  });
+});
