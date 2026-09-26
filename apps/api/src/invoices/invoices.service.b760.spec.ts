@@ -183,5 +183,62 @@ describe("InvoicesService — B760", () => {
       } as any)) as any;
       expect(Number(invoice.subtotal)).toBe(100);
     });
+
+    // Writer-shaped: completeStop stamps quantityDelivered in the line's own qty unit — pieces for
+    // a boxed line (routes.service.ts deliveryMutation.create, RunDeliveryDto.quantityDelivered).
+    const withLine = (patch: Record<string, unknown>) =>
+      prisma.order.findUnique.mockResolvedValue({
+        ...orderB760,
+        lineItems: [{ ...oiB760, ...patch }],
+      });
+    const delivered = (qty: number) => [
+      { orderItemId: "oi-b760", type: "PARTIAL", quantityDelivered: qty },
+    ];
+    const casePieces = {
+      qty: 24,
+      boxes: 2,
+      pieces: 0,
+      unitsPerBox: 12,
+      unitPrice: 1,
+      subtotal: 24,
+      product: { name: "Widget", unitsPerBox: 12 },
+    };
+
+    it("a line counted in pieces (24 pcs, 12/box, 12 delivered) bills 12 and refuses 24", async () => {
+      withLine(casePieces);
+      prisma.deliveryMutation.findMany.mockResolvedValue(delivered(12));
+      await expect(
+        service.createPartialFromOrder("ord-b760", {
+          items: [{ orderItemId: "oi-b760", qty: 24 }],
+        } as any),
+      ).rejects.toThrow(/exceeds remaining 12 /);
+      await service.createInvoiceFromOrder("ord-b760");
+      const createdLines = prisma.invoice.create.mock.calls[0][0].data.items.create;
+      expect(createdLines).toHaveLength(1);
+      expect(Number(createdLines[0].qty)).toBe(12);
+    });
+
+    it("an already-invoiced line under the cap bills only delivered - invoiced (10 ordered, 6 delivered, 4 invoiced)", async () => {
+      withLine({ invoicedQty: 4 });
+      prisma.deliveryMutation.findMany.mockResolvedValue(delivered(6));
+      await expect(
+        service.createPartialFromOrder("ord-b760", {
+          items: [{ orderItemId: "oi-b760", qty: 3 }],
+        } as any),
+      ).rejects.toThrow(/exceeds remaining 2 /);
+      await service.createInvoiceFromOrder("ord-b760");
+      const createdLines = prisma.invoice.create.mock.calls[0][0].data.items.create;
+      expect(Number(createdLines[0].qty)).toBe(2);
+    });
+
+    it("invoiced past the delivered basis (8 invoiced, 6 delivered) reports remaining 0, never a negative", async () => {
+      withLine({ invoicedQty: 8 });
+      prisma.deliveryMutation.findMany.mockResolvedValue(delivered(6));
+      await expect(
+        service.createPartialFromOrder("ord-b760", {
+          items: [{ orderItemId: "oi-b760", qty: 1 }],
+        } as any),
+      ).rejects.toThrow(/exceeds remaining 0 /);
+    });
   });
 });

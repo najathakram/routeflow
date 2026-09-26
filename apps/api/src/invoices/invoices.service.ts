@@ -551,12 +551,9 @@ export class InvoicesService {
     });
     if (!order) throw new NotFoundException("Order not found");
 
-    // B760/SA-106/SA-113(ii): remaining = min(qty, delivered basis) - invoicedQty, via the
-    // ONE evidence-keyed basis shared with checkOrderCoverage/finalizeOrderRecompute — never
-    // a second derivation of delivered qty. A line with no evidence keeps qty unconstrained
-    // (delivered-basis-by-line.ts's own rule); an order with no mutations at all behaves as
-    // undelivered, matching today's qty - invoicedQty exactly. If all items are fully
-    // invoiced, skip — the order has already been split-invoiced and there's nothing left.
+    // B760/SA-113(ii): remaining = min(qty, delivered basis) - invoicedQty via the ONE shared
+    // evidence-keyed basis; no evidence keeps qty (today's qty - invoicedQty). Nothing left to
+    // bill (fully invoiced) ⇒ return the existing invoice(s).
     const deliveredBasis = await deliveredBasisByLine(db, orderId);
     const remainingItems = order.lineItems
       .map((li: any) => ({
@@ -2694,7 +2691,7 @@ export class InvoicesService {
       const remaining = billableQtyFromBasis(li, deliveredBasis) - Number(li.invoicedQty ?? 0);
       if (req.qty > remaining + 0.001) {
         throw new BadRequestException(
-          `Requested qty ${req.qty} exceeds remaining ${remaining} for ${li.product?.name ?? li.productId}`,
+          `Requested qty ${req.qty} exceeds remaining ${Math.max(0, remaining)} for ${li.product?.name ?? li.productId}`,
         );
       }
       // Reuse the shared builder. It copies the order line's stored money and

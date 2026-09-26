@@ -395,7 +395,6 @@ describe("InvoicesService", () => {
         customer: { findFirst: jest.fn().mockResolvedValue({ isTaxExempt: false }) },
         trackedCategory: { findMany: jest.fn().mockResolvedValue([]) },
         orderItem: { update: jest.fn().mockResolvedValue({}) },
-        // B760: no mutations = undelivered behaviour, byte-identical to this fixture's old qty.
         deliveryMutation: { findMany: jest.fn().mockResolvedValue([]) },
         $executeRaw: jest.fn().mockResolvedValue(0),
         $queryRaw: jest.fn().mockResolvedValue([]),
