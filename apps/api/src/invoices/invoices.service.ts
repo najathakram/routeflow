@@ -13,19 +13,22 @@ import { PrismaService } from "../prisma/prisma.service";
 import { StorageService } from "../storage/storage.service";
 import { compressDocument } from "../storage/compress.util";
 import {
-  categoryTaxSnapshotOf,
   computeLineSubtotal,
-  computeCategoryTax,
   roundMoney,
   normalizeBoxesPieces,
   isBlockingPayment,
   remainingCapacity,
-  packFromOwnSplit,
-  regulatedUnitBasis,
-  type CategoryTaxType,
   inferredFlatRate,
 } from "@routeflow/pricing";
-import { loadPriorPacks, priceReplacedLine, resolveUpdateLinePack } from "./update-pack-resolution";
+import { orderLineShape, orderLineUnchanged } from "./order-backsync-lines";
+import {
+  buildEditedLines,
+  editInvoiceTotals,
+  loadEditCatalog,
+  orderSyncLines,
+  inPlacePatch,
+  matchEditLines,
+} from "./invoice-edit-plan";
 import { redactUpsellForCustomer } from "../common/upsell-redaction";
 import {
   CONFIRMED_PAYMENT,
@@ -70,6 +73,7 @@ import {
   WriteOffDto,
 } from "./dto/create-invoice.dto";
 import { CreatePartialInvoiceDto } from "./dto/create-partial-invoice.dto";
+import type { UpdateInvoiceDto } from "./dto/update-invoice.dto";
 import { ListInvoicesDto } from "./dto/list-invoices.dto";
 import { UpdateShipmentDto } from "../orders/dto/update-shipment.dto";
 import { JwtPayload } from "../auth/jwt-payload.interface";
@@ -80,6 +84,12 @@ import { invoiceItemQtyFields } from "./invoice-pdf-item";
 import { buildInvoiceEmailAttachment, InvoiceEmailAttachment } from "./invoice-attachment";
 import { SystemConfigService } from "../system-config/system-config.service";
 import { RegulatedLedgerService } from "../regulated/regulated-ledger.service";
+import {
+  buildPriceAdjustmentUpdates,
+  commitPriceAdjustment,
+  loadPriceAdjustmentReference,
+  lockInvoiceForPriceAdjustment,
+} from "./price-adjustment-ledger";
 import { AuthorizationGuardService } from "../authorizations/authorization-guard.service";
 import { CreditNotesService } from "../credit-notes/credit-notes.service";
 import { assertNoUnspentSourcedCredits } from "../credit-notes/sourced-credit-guard";
@@ -92,11 +102,12 @@ import { lockRowsNoWait } from "../common/db-locks";
 import { NumberingService } from "../import/numbering.service";
 import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
 import { requireRestrictionTenantId } from "../selling-restrictions/restriction-tenant";
-import { buildManualInvoiceLines } from "./manual-invoice-lines";
+import { buildManualInvoiceLines, type ManualLineItem } from "./manual-invoice-lines";
 import { foldCategoryTax, loadManualLineContext } from "./manual-invoice-context";
 import { resolveLineUnits } from "../products/line-units";
 import { prepareUnitLadders, requestsUnit } from "../orders/unit-line-build";
 import { standaloneAllocationTotals } from "./standalone-payment-totals";
+import { calendarDayOf } from "./settled-date-filter";
 
 const TERM_DAYS: Record<string, number> = {
   "Due on Receipt": 0,
@@ -115,25 +126,6 @@ export function addCalendarDays(date: Date, days: number): Date {
   const out = new Date(date);
   out.setUTCDate(out.getUTCDate() + days);
   return out;
-}
-
-/**
- * Normalise a date query param to the `YYYY-MM-DD` calendar day it names,
- * BEFORE it is concatenated into a literal instant (`${day}T23:59:59.999Z`).
- * The list DTOs accept `@IsDateString()`/`@IsString()`, so a full ISO-8601
- * datetime is a valid input — concatenating one raw would yield an
- * `Invalid Date` bound that silently reaches Prisma. An unparsable value is
- * rejected here with a 400 instead of becoming a broken filter.
- */
-function calendarDayOf(raw: string, field: string): string {
-  const day = raw.slice(0, 10);
-  if (
-    !/^\d{4}-\d{2}-\d{2}$/.test(day) ||
-    Number.isNaN(new Date(`${day}T00:00:00.000Z`).getTime())
-  ) {
-    throw new BadRequestException(`${field} must be a calendar date (YYYY-MM-DD)`);
-  }
-  return day;
 }
 
 // P5-12 / post-dated check payments PR-1: `CHECK_TRANSITIONS` (legal FORWARD transitions for
@@ -374,7 +366,8 @@ export class InvoicesService {
    * invoice number and one crashed with Prisma P2002 → HTTP 500. Now catches
    * P2002 and returns 409 Conflict instead.
    */
-  async create(dto: CreateInvoiceDto) {
+  /** SA-135: an internal caller's line may carry `packSnapshot` (ManualLineItem); the HTTP DTO never can. */
+  async create(dto: Omit<CreateInvoiceDto, "items"> & { items: ManualLineItem[] }) {
     const customer = await this.prisma
       .forTenant()
       .customer.findUnique({ where: { id: dto.customerId } });
@@ -2262,7 +2255,6 @@ export class InvoicesService {
     for (const li of order.lineItems as any[]) existingById.set(li.id, li);
     // #1185 round 5, item 2 -- see resolveProductMatches' own doc.
     const { existingByProduct, ambiguousLineIds } = resolveProductMatches(order.lineItems);
-
     // Aggregate billed qty + subtotal, resolving each invoice line to its source
     // order line: prefer the stored orderItemId; else first-match by productId
     // (legacy rows). An invoice line with a product but no matching order line
@@ -2276,6 +2268,8 @@ export class InvoicesService {
       categoryTax: number; // RF-4: Σ billed category tax for this source line
       freeUnits: number; // BUY_N_GET_M: Σ billed free selling units for this source line
       unitPrice: number;
+      n: number; // contributing invoice lines
+      packs: Set<number>; // their packs (0 = none), for the shared-pack re-split rule
       sample: any; // an invoice item, for the box/piece + upb snapshot
     };
     const byTarget = new Map<string, Agg>();
@@ -2299,8 +2293,12 @@ export class InvoicesService {
           categoryTax: 0,
           freeUnits: 0,
           unitPrice: Number(it.unitPrice),
+          n: 0,
+          packs: new Set<number>(),
           sample: it,
         };
+        prev.n += 1;
+        prev.packs.add(Number(it.unitsPerBox ?? 0));
         prev.qty += Number(it.qty);
         prev.subtotal += Number(it.subtotal);
         prev.categoryTax += Number(it.categoryTaxAmount ?? 0);
@@ -2327,7 +2325,7 @@ export class InvoicesService {
 
     let subtotal = 0;
     let categoryTaxSum = 0;
-    for (const agg of byTarget.values()) {
+    for (const [key, agg] of byTarget) {
       const existing = agg.line;
       const lineSubtotal = roundMoney(agg.subtotal);
       const lineCategoryTax = roundMoney(agg.categoryTax);
@@ -2336,51 +2334,44 @@ export class InvoicesService {
       const lineFreeUnits = Math.max(0, Math.trunc(agg.freeUnits) || 0);
       subtotal += lineSubtotal;
       categoryTaxSum += lineCategoryTax;
-      // Preserve the denomination. For an existing line use ITS stored box/piece
-      // shape + snapshot upb; for a new line use the invoice item's snapshot. Box
-      // splits re-derive their display split from the billed qty; selling-unit and
-      // non-boxed lines keep boxes/pieces null (qty stays in their own unit). The
-      // live product is NEVER consulted — that is what created phantom splits.
-      const denomSource = existing ?? agg.sample;
-      const isBoxSplit = denomSource?.boxes != null;
-      const upb = Number(existing?.unitsPerBox ?? agg.sample?.unitsPerBox ?? 0);
-      const split = isBoxSplit
-        ? normalizeBoxesPieces({ qty: agg.qty, unitsPerBox: upb })
-        : { qty: agg.qty, boxes: null as number | null, pieces: null as number | null };
-      const upbSnapshot = upb > 0 ? upb : null;
+      const shape = orderLineShape(existing, agg);
       if (existing) {
-        await db.orderItem.update({
-          where: { id: existing.id },
-          data: {
-            qty: split.qty,
-            boxes: split.boxes,
-            pieces: split.pieces,
-            unitsPerBox: upbSnapshot,
-            unitPrice: agg.unitPrice,
-            subtotal: lineSubtotal,
-            // RF-4: mirror the billed category tax back onto the order line.
-            categoryTaxAmount: lineCategoryTax,
-            promoFreeUnits: lineFreeUnits > 0 ? lineFreeUnits : null,
-            invoicedQty: split.qty,
-            status: "PENDING",
-          },
-        });
+        // An order line that would be rewritten to exactly what it holds is not written at all.
+        if (!orderLineUnchanged(existing, shape, agg))
+          await db.orderItem.update({
+            where: { id: existing.id },
+            data: {
+              qty: shape.qty,
+              boxes: shape.boxes,
+              pieces: shape.pieces,
+              unitsPerBox: shape.unitsPerBox,
+              ...(shape.unitLabel !== undefined ? { unitLabel: shape.unitLabel } : {}),
+              unitPrice: agg.unitPrice,
+              subtotal: lineSubtotal,
+              // RF-4: mirror the billed category tax back onto the order line.
+              categoryTaxAmount: lineCategoryTax,
+              promoFreeUnits: lineFreeUnits > 0 ? lineFreeUnits : null,
+              invoicedQty: shape.qty,
+              status: "PENDING",
+            },
+          });
         existingById.delete(existing.id);
       } else {
         await db.orderItem.create({
           data: {
             orderId,
             productId: agg.productId,
-            qty: split.qty,
-            boxes: split.boxes,
-            pieces: split.pieces,
-            unitsPerBox: upbSnapshot,
+            qty: shape.qty,
+            boxes: shape.boxes,
+            pieces: shape.pieces,
+            unitsPerBox: shape.unitsPerBox,
+            ...(shape.unitLabel !== undefined ? { unitLabel: shape.unitLabel } : {}),
             unitPrice: agg.unitPrice,
             subtotal: lineSubtotal,
             // RF-4: mirror the billed category tax back onto the new order line.
             categoryTaxAmount: lineCategoryTax,
             promoFreeUnits: lineFreeUnits > 0 ? lineFreeUnits : null,
-            invoicedQty: split.qty,
+            invoicedQty: shape.qty,
             status: "PENDING",
             ...(tenantId ? { tenantId } : {}),
           },
@@ -3314,7 +3305,7 @@ export class InvoicesService {
     };
   }
 
-  async update(id: string, dto: Partial<CreateInvoiceDto>) {
+  async update(id: string, dto: UpdateInvoiceDto) {
     const inv = await this.findOneOrThrow(id); // a missing invoice is a 404 whatever else is wrong
     // units_v1: a line can be CREATED by a unit (create(), 4c-1) but not yet REWRITTEN by one (4c-2);
     // the shared DTO accepts `unitLabel`, and this path would silently store a PACK line for it.
@@ -3331,154 +3322,83 @@ export class InvoicesService {
       await unitAware.assertInvoiceRewriteAllowed(this.prisma.forTenant(), inv);
     }
 
-    if (dto.items) {
-      await assertOrderItemIdsBelongToOrder(this.prisma.forTenant(), inv.orderId, dto.items); // SA-093a rd6
-      // Pre-fetch products for boxes/pieces resolution AND the regulated-category
-      // snapshot (so an edited DRAFT re-attributes its regulated lines).
-      const productIds = [
-        ...new Set(dto.items.filter((i) => i.productId).map((i) => i.productId!)),
-      ];
-      const products =
-        productIds.length > 0
-          ? await this.prisma.forTenant().product.findMany({
-              where: { id: { in: productIds } },
-              select: {
-                id: true,
-                unitsPerBox: true,
-                trackedCategoryId: true,
-                trackedSubcategoryId: true,
-              },
-            })
-          : [];
-      const productMap = new Map(products.map((p) => [p.id, p]));
-      // RF-4: regulated section tax config for the edited lines (mirrors create()).
-      const editCatIds = [
-        ...new Set(products.map((p) => p.trackedCategoryId).filter(Boolean)),
-      ] as string[];
-      const categoryMap = new Map<string, any>(
-        (editCatIds.length > 0
-          ? await this.prisma
-              .forTenant()
-              .trackedCategory.findMany({ where: { id: { in: editCatIds } } })
-          : []
-        ).map((c: any) => [c.id, c]),
-      );
+    const items = dto.items;
+    if (items) {
+      await assertOrderItemIdsBelongToOrder(this.prisma.forTenant(), inv.orderId, items); // SA-093a rd6
+      // Products (pack + regulated snapshot) and section tax config for the edited lines (mirrors create()).
+      const { productMap, categoryMap } = await loadEditCatalog(this.prisma.forTenant(), items);
 
-      // B717/SA-077: this replace path recreates every line, so a pack it carries is lost
-      // unless read first. Rule + reasoning: update-pack-resolution.ts.
-      const priorPacks = await loadPriorPacks(this.prisma.forTenant().invoiceItem, id, productIds);
-
-      let subtotal = 0;
-      const itemsData = dto.items.map((item) => {
-        const product = item.productId ? productMap.get(item.productId) : undefined;
-        const livePack = product?.unitsPerBox ?? null; // B717: ONE read, passed as a parameter
-        const qty = item.qty;
-        let boxes: number | null = null;
-        let pieces: number | null = null;
-        let unitsPerBox: number | undefined;
-        // SA-068: the pack comes from the PAYLOAD's own split, never the live product — the
-        // edit page already sends boxes/pieces/qty consistent with the line's OWN snapshot (or,
-        // for a brand-new line with no snapshot, consistent with the live pack it read at page
-        // load). Re-normalizing here at TODAY's live pack is what silently re-split a stored
-        // 2-box/3-piece (snapshot 12, qty 27) line at a since-changed pack of 24 on a plain
-        // notes-only save — and that corrupted qty back-synced onto the linked order line.
-        // qty/boxes/pieces are stored AS SENT, always; only whether `unitsPerBox` gets a
-        // snapshot (derivable) or stays null (not derivable — no boxes, non-integer, or exactly
-        // 1) differs. Never overwrite qty from boxes * livePack + pieces.
-        if (item.productId && (item.boxes != null || item.pieces != null)) {
-          boxes = item.boxes ?? null;
-          pieces = item.pieces ?? null;
-          const pack = packFromOwnSplit({ qty: item.qty, boxes: item.boxes, pieces: item.pieces });
-          // B717/SA-077: payload split -> the product's stored lines when unanimous -> live.
-          const res = resolveUpdateLinePack(pack, item, livePack, priorPacks);
-          if (res.pack != null) unitsPerBox = res.pack;
-          if (res.warn) this.logger.warn(`update(): invoiceId ${id} ${res.warn}`);
-          // The resolver already chose the pack; this only reports a payload/live divergence.
-          if (pack != null && livePack && livePack !== pack) {
-            this.logger.warn(
-              `update(): invoiceId ${id} productId ${item.productId} — payload's implied pack ` +
-                `${pack} differs from the live product's ${livePack}; using the payload's pack.`,
-            );
-          }
+      const { updated } = await this.prisma.tenantTransaction(async (tx: any) => {
+        // Serialize concurrent saves of this invoice: rows are read AFTER the lock, so a second save
+        // sees the first's rows and totals instead of writing over them (no P2025, total = its lines).
+        // Lock order (SA-137/203): the ORDER row first, then the invoice, as the invoice-from-order paths do.
+        if (inv.orderId)
+          await tx.$executeRaw`SELECT id FROM "Order" WHERE id = ${inv.orderId} FOR UPDATE`;
+        await tx.$executeRaw`SELECT id FROM "Invoice" WHERE id = ${id} FOR UPDATE`;
+        // SA-184/186: match the payload to THIS invoice's stored rows (by id, tenant-scoped; never by
+        // productId), keep untouched rows verbatim and in place, re-price only changed lines. Rules
+        // and reasoning: invoice-edit-plan.ts.
+        const storedRows = await tx.invoiceItem.findMany({ where: { invoiceId: id } });
+        const editLines = buildEditedLines({
+          items: items,
+          stored: storedRows,
+          matches: matchEditLines(items, storedRows),
+          productMap,
+          categoryMap,
+          clampFreeUnits: (f, b, q) => this.clampLineFreeUnits(f, b, q),
+          warn: (m) => this.logger.warn(`update(): invoiceId ${id} ${m}`),
+        });
+        const itemsData = editLines.map((l) => l.data);
+        await this.applyMsrpSnapshots(
+          tx,
+          inv.customerId,
+          editLines.filter((l) => !l.untouched).map((l) => l.data as any),
+        );
+        const customerForTax = await tx.customer.findFirst({
+          where: { id: inv.customerId },
+          select: { isTaxExempt: true },
+        });
+        const isTaxExempt = !!(customerForTax as any)?.isTaxExempt;
+        const cur = await tx.invoice.findUnique({
+          where: { id },
+          select: { discount: true, shippingFee: true },
+        });
+        const invDiscount = dto.discount ?? Number(cur.discount);
+        const shipping = dto.shippingFee ?? Number(cur.shippingFee);
+        const { subtotal, taxTotal, total } = editInvoiceTotals(
+          itemsData,
+          isTaxExempt,
+          invDiscount,
+          shipping,
+        );
+        // Rebuild the items AND re-sync the W5 ledger atomically: the delete-and-recreate
+        // rotates invoiceItemIds and can change qty/price or add/remove a regulated line,
+        // so the invoice's prior SALE rows must be reversed and re-written from the new
+        // items (a no-op when neither the old nor new invoice carries a regulated line).
+        // Matched rows stay IN PLACE (ledger, credit notes and returns reference their ids); only
+        // rows the payload dropped are deleted and only changed rows are written.
+        const keptIds = editLines.flatMap((l) => (l.rowId ? [l.rowId] : []));
+        await tx.invoiceItem.deleteMany({ where: { invoiceId: id, id: { notIn: keptIds } } });
+        for (const l of editLines) {
+          const row = l.rowId && storedRows.find((r: any) => r.id === l.rowId);
+          const patch = row ? inPlacePatch(l, row) : null;
+          if (patch) await tx.invoiceItem.update({ where: { id: l.rowId }, data: patch });
         }
-        // Refusal (SA-077(2)), BUY_N_GET_M and the money all live in priceReplacedLine now.
-        const freeUnits = this.clampLineFreeUnits(item.promoFreeUnits, boxes, qty);
-        const lineSub = priceReplacedLine(item, { qty, boxes, pieces, unitsPerBox, freeUnits });
-        subtotal += lineSub;
-        // RF-4: per-line category tax on the net sale (mirrors create()).
-        const category = product?.trackedCategoryId
-          ? categoryMap.get(product.trackedCategoryId)
-          : null;
-        const upbForPieces = Number(livePack ?? 0);
-        // B679: the ONE conversion this design allows — never an inline copy of it. `item`
-        // is never a unit-labeled line here: update() refuses dto.items.some(requestsUnit) above.
-        const pieceQty = regulatedUnitBasis(
-          { qty, boxes, pieces, unitLabel: item.unitLabel ?? null },
-          upbForPieces,
-        ).unitBasisQty;
-        const categoryTaxAmount = category
-          ? computeCategoryTax({
-              taxType: category.taxType as CategoryTaxType,
-              rate: Number(category.rate),
-              unitBasisQty: pieceQty,
-              lineSubtotal: lineSub,
-              priceIncludesTax: category.priceIncludesTax,
-            })
-          : 0;
-        return {
-          description: item.description,
-          productId: item.productId,
-          orderItemId: item.orderItemId ?? null, // SA-093a rd6: root fix for findings 2/3
-          qty,
-          unitPrice: item.unitPrice,
-          discount: item.discount ?? 0,
-          taxRate: item.taxRate ?? 0,
-          subtotal: lineSub,
-          boxes,
-          pieces,
-          // B717: never CLEAR a pack the line carried. Storage and pricing gate differently ON
-          // PURPOSE — see update-pack-resolution.ts's "STORAGE vs PRICING" note; spec (g) pins it.
-          unitsPerBox:
-            unitsPerBox ?? (item.productId ? priorPacks.get(item.productId) : null) ?? null,
-          // BUY_N_GET_M snapshot — preserved across the delete-and-recreate.
-          promoFreeUnits: freeUnits > 0 ? freeUnits : null,
-          // Re-snapshot the regulated category/subcategory from the (current) product,
-          // consistent with create(); the ledger re-sync below reconciles the change.
-          trackedCategoryId: product?.trackedCategoryId ?? null,
-          trackedSubcategoryId: product?.trackedSubcategoryId ?? null,
-          // RF-4: per-line category tax snapshot (folded into taxTotal below).
-          categoryTaxAmount,
-          ...categoryTaxSnapshotOf(category ?? null), // B297: re-reads the LIVE category above.
-          // Preserve per-line notes across the delete-and-recreate edit — dropping
-          // this silently wipes notes the order carried onto the invoice.
-          notes: item.notes ?? null,
-          // MSRP snapshot — set below by applyMsrpSnapshots (null when flag.msrp is off).
-          msrp: null as number | null,
-          tenantId: this.prisma.getTenantId(), // nested creates bypass forTenant() extension
-        };
-      });
-      subtotal = roundMoney(subtotal);
-      await this.applyMsrpSnapshots(this.prisma.forTenant(), inv.customerId, itemsData);
-      const customerForTax = await this.prisma
-        .forTenant()
-        .customer.findFirst({ where: { id: inv.customerId }, select: { isTaxExempt: true } });
-      // Tax from each line's stored post-discount subtotal (same basis as the line).
-      const isTaxExempt = !!(customerForTax as any)?.isTaxExempt;
-      const regularTax = isTaxExempt
-        ? 0
-        : roundMoney(itemsData.reduce((s, it) => s + it.subtotal * (it.taxRate ?? 0), 0));
-      // RF-4: fold the regulated category tax (exempt → 0 for both + zeroed snapshots).
-      const categoryTaxTotal = this.foldCategoryTax(itemsData, isTaxExempt);
-      const taxTotal = roundMoney(regularTax + categoryTaxTotal);
-      const invDiscount = dto.discount ?? Number(inv.discount);
-      const shipping = dto.shippingFee ?? Number(inv.shippingFee);
-      const total = roundMoney(subtotal - invDiscount + shipping + taxTotal);
-      // Rebuild the items AND re-sync the W5 ledger atomically: the delete-and-recreate
-      // rotates invoiceItemIds and can change qty/price or add/remove a regulated line,
-      // so the invoice's prior SALE rows must be reversed and re-written from the new
-      // items (a no-op when neither the old nor new invoice carries a regulated line).
-      const updated = await this.prisma.tenantTransaction(async (tx: any) => {
-        await tx.invoiceItem.deleteMany({ where: { invoiceId: id } });
+        // SA-189: history must tell an attested pack (the operator's explicit unitsPerBox) from a recovered one.
+        const attested = editLines.flatMap((l) =>
+          l.attestedPack ? [{ rowId: l.rowId, unitsPerBox: l.attestedPack }] : [],
+        );
+        if (attested.length > 0) {
+          await tx.auditLog.create({
+            data: {
+              tenantId: this.prisma.getTenantId(),
+              action: "INVOICE_LINE_PACK_ATTESTED",
+              entityType: "invoice",
+              entityId: id,
+              meta: { attested },
+            },
+          });
+        }
         const u = await tx.invoice.update({
           where: { id },
           data: {
@@ -3505,7 +3425,11 @@ export class InvoicesService {
               depositDueDate: dto.depositDueDate ? new Date(dto.depositDueDate) : null,
             }),
             pdfUrl: null,
-            items: { create: itemsData },
+            items: {
+              create: editLines
+                .filter((l) => !l.rowId)
+                .map((l) => ({ ...l.data, tenantId: this.prisma.getTenantId() })),
+            },
           },
           include: {
             customer: { select: { id: true, businessName: true } },
@@ -3513,10 +3437,14 @@ export class InvoicesService {
             payments: true,
           },
         });
-        await this.resyncInvoiceLedger(id, inv.orderId ?? null, u.items ?? [], tx);
-        return u;
+        const syncLines = orderSyncLines(editLines, storedRows, cur, invDiscount, shipping);
+        // A save that changed no line leaves the ledger alone too (no reverse-and-rewrite churn).
+        if (syncLines?.length)
+          await this.resyncInvoiceLedger(id, inv.orderId ?? null, u.items ?? [], tx);
+        return { updated: u };
       });
       // Backward sync: keep the linked order in step with the edited invoice.
+      // SA-233/235: ALWAYS the full coverage recompute (no payload-shape gate); identical rows are skipped inside it.
       if (inv.orderId) await this.recomputeOrderFromInvoices(inv.orderId);
       return updated;
     }
@@ -5599,13 +5527,19 @@ export class InvoicesService {
       // Delete the invoice (also detaches orderId reference)
       await tx.invoice.delete({ where: { id } });
 
-      this.gateway.emitInvoiceUpdated(this.prisma.getTenantId(), {
-        invoiceId: id,
-        invoiceNumber: inv.invoiceNumber,
-        customerId: inv.customerId,
-        status: "DELETED" as any,
-        total: Number(inv.total),
-      });
+      // #2142 W1: a deleted DRAFT was never issued, so its number and total stay on the
+      // operators' feed; the customer's room (the buyer portal) hears only of issued invoices.
+      this.gateway.emitInvoiceUpdated(
+        this.prisma.getTenantId(),
+        {
+          invoiceId: id,
+          invoiceNumber: inv.invoiceNumber,
+          customerId: inv.customerId,
+          status: "DELETED" as any,
+          total: Number(inv.total),
+        },
+        { customerRoom: inv.status !== InvoiceStatus.DRAFT },
+      );
 
       return { id, message: "Invoice deleted successfully" };
     });
@@ -6164,163 +6098,48 @@ export class InvoicesService {
     const applyToInvoice = async (inv: typeof invoice, localPriceMap: Map<string, number>) => {
       const auditLine = `[${new Date().toLocaleDateString()} — Price adjusted by operator]`;
 
-      // F03/R3/T-B57: batch-fetch the tracked-category tax config for every
-      // REGULATED line being re-priced, so a PERCENT_OF_SALE (or other
-      // category-taxed) line's categoryTaxAmount can be re-derived from its NEW
-      // subtotal below — mirrors orders.service's recomputeLineCategoryTaxes
-      // (:233-275). Before this, the item loop wrote only unitPrice/subtotal, so a
-      // regulated line kept its PRE-adjustment excise amount even though the
-      // taxable subtotal changed.
-      const regulatedItems = inv.items.filter(
-        (item: any) => localPriceMap.get(item.id) != null && item.trackedCategoryId,
-      );
-      const regulatedCatIds = [
-        ...new Set(regulatedItems.map((item: any) => item.trackedCategoryId as string)),
-      ];
-      const categoriesById = new Map<string, any>(
-        regulatedCatIds.length
-          ? (
-              await this.prisma
-                .forTenant()
-                .trackedCategory.findMany({ where: { id: { in: regulatedCatIds } } })
-            ).map((c: any) => [c.id, c])
-          : [],
-      );
-      // Each re-priced regulated line's PRODUCT unitsPerBox, so linePieceQty can
-      // expand a boxed line ordered in SELLING UNITS: create only snapshots
-      // unitsPerBox on box-split lines while it computed the ORIGINAL levy from the
-      // product's box size, so without this fallback a per-unit levy collapses by a
-      // factor of unitsPerBox on the first re-price. The same fetch
-      // orders.service.recomputeLineCategoryTaxes carries, for the same reason.
-      const regulatedProductIds = [
-        ...new Set(regulatedItems.map((item: any) => item.productId).filter(Boolean)),
-      ] as string[];
-      const unitsPerBoxByProduct = new Map<string, number>(
-        regulatedProductIds.length
-          ? (
-              await this.prisma.forTenant().product.findMany({
-                where: { id: { in: regulatedProductIds } },
-                select: { id: true, unitsPerBox: true },
-              })
-            ).map((pr: any) => [pr.id, Number(pr.unitsPerBox ?? 0)])
-          : [],
-      );
-      // B679: mirrors orders.service.recomputeLineCategoryTaxes — a box-split line stores qty
-      // already in pieces; a boxed selling-unit line expands by its snapshotted unitsPerBox,
-      // falling back to the product's. Unused by PERCENT_OF_SALE (unitBasisQty is ignored
-      // there) but correct for an EXCISE_PER_UNIT / PER_VOLUME / DEPOSIT_PER_CONTAINER line.
-      // Delegates to regulatedUnitBasis (@routeflow/pricing) — the ONE place this conversion
-      // happens — instead of an independent copy of its box-unaware fallback branch.
-      const linePieceQty = (li: any): number =>
-        regulatedUnitBasis(
-          { qty: Number(li.qty) || 0, boxes: li.boxes, pieces: li.pieces, unitLabel: li.unitLabel },
-          li.unitsPerBox ?? (li.productId ? unitsPerBoxByProduct.get(li.productId) : null) ?? 0,
-        ).unitBasisQty;
-
       // B294 (SA-141): a legacy order/estimate-derived invoice (every line taxRate 0, a real
-      // regular tax) keeps its tax — stamp the inferred flat rate onto its lines first.
-      const inferred = inferredFlatRate({ ...inv, lines: inv.items });
-      if (inferred?.verified) {
-        await this.prisma.forTenant().invoiceItem.updateMany({
-          where: { invoiceId: inv.id, taxRate: 0 },
-          data: { taxRate: inferred.rate },
+      // regular tax) keeps its tax — the inferred flat rate is stamped onto its lines first, in the
+      // SAME transaction as the re-price below (B662: item writes, totals and ledger commit together).
+      // B662 (N-1/N-2): the status guard, the lines and the payments are all re-read UNDER the Invoice
+      // lock (lockInvoiceForPriceAdjustment), and the writes are built from THOSE lines.
+      // B662: item writes, invoice totals and the regulated-ledger sync commit or fail TOGETHER.
+      await this.prisma.tenantTransaction(async (tx: any) => {
+        const live = await lockInvoiceForPriceAdjustment(tx, inv); // Invoice FIRST, then its rows
+        const inferred = inferredFlatRate({ ...live, lines: live.items });
+        const { categoriesById, unitsPerBoxByProduct } = await loadPriceAdjustmentReference(
+          tx,
+          live.items,
+          localPriceMap,
+        );
+        const itemUpdates = buildPriceAdjustmentUpdates({
+          items: live.items,
+          localPriceMap,
+          categoriesById,
+          unitsPerBoxByProduct,
+          isTaxExempt,
         });
-      }
-      for (const item of inv.items) {
-        const newPrice = localPriceMap.get(item.id);
-        if (newPrice == null) continue;
-        // Recover the line's selling-unit multiplier (box-equivalent for boxed
-        // lines, plain qty otherwise) from the existing line so re-pricing keeps
-        // boxed proration without needing unitsPerBox here:
-        //   beforeDiscount = subtotal + discount = oldUnitPrice * multiplier.
-        const oldUnitPrice = Number(item.unitPrice);
-        const oldDiscount = Number(item.discount ?? 0);
-        const multiplier =
-          oldUnitPrice > 0
-            ? (Number(item.subtotal) + oldDiscount) / oldUnitPrice
-            : Number(item.qty);
-        const newSubtotal = roundMoney(newPrice * multiplier - oldDiscount);
-        const itemData: Record<string, any> = { unitPrice: newPrice, subtotal: newSubtotal };
-        const category = (item as any).trackedCategoryId
-          ? categoriesById.get((item as any).trackedCategoryId)
-          : null;
-        if (category) {
-          // An exempt customer owes $0 of category tax just as they owe $0 of the
-          // regular tax (foldCategoryTax's contract) — re-deriving it here would bill
-          // excise that the creation path correctly zeroed.
-          itemData.categoryTaxAmount = isTaxExempt
-            ? 0
-            : computeCategoryTax({
-                taxType: category.taxType as CategoryTaxType,
-                rate: Number(category.rate),
-                unitBasisQty: linePieceQty(item),
-                lineSubtotal: newSubtotal,
-                priceIncludesTax: category.priceIncludesTax,
-              });
+        if (inferred?.verified) {
+          await tx.invoiceItem.updateMany({
+            where: { invoiceId: inv.id, taxRate: 0 },
+            data: { taxRate: inferred.rate },
+          });
         }
-        await this.prisma.forTenant().invoiceItem.update({
-          where: { id: item.id },
-          data: itemData,
+        for (const u of itemUpdates)
+          await tx.invoiceItem.update({ where: { id: u.id }, data: u.data });
+        await commitPriceAdjustment({
+          inv: live,
+          itemUpdates,
+          auditLine,
+          tx,
+          recomputeStatus: (...a) => this.recomputeStatus(...a),
+          ledger: this.ledger,
+          resync: (...a) => this.resyncInvoiceLedger(...a),
         });
-      }
-
-      // Recalculate invoice totals from fresh item data
-      const updatedItems = await this.prisma
-        .forTenant()
-        .invoiceItem.findMany({ where: { invoiceId: inv.id } });
-      const subtotal = roundMoney(updatedItems.reduce((s, li) => s + Number(li.subtotal), 0));
-      const regularTax = roundMoney(
-        updatedItems.reduce((s, li) => s + Number(li.subtotal) * Number(li.taxRate ?? 0), 0),
-      );
-      // Category (regulated/excise) tax is persisted per line and is NOT part of
-      // taxRate. Every other recompute in this file folds it in; omitting it here
-      // silently under-bills excise and propagates the shortfall to the linked
-      // order via recomputeOrderFromInvoices below. Exemption is honoured in the
-      // per-line write above (an exempt customer's lines are re-written as 0), so this
-      // Σ is exemption-correct by construction.
-      const categoryTaxTotal = roundMoney(
-        updatedItems.reduce((s, li) => s + Number(li.categoryTaxAmount ?? 0), 0),
-      );
-      const taxAmount = roundMoney(regularTax + categoryTaxTotal);
-      const total = roundMoney(
-        subtotal - Number(inv.discount ?? 0) + Number(inv.shippingFee ?? 0) + taxAmount,
-      );
-
-      const existingInternal = (inv as any).internalNotes ?? "";
-      // F03/R4/T-B74: recompute + persist invoice status from CONFIRMED (PAID)
-      // payments against the NEW total. Previously this wrote money without ever
-      // touching status, so a lowered total a payment already covered kept its
-      // stale SENT/PARTIAL status forever — mis-gating write-off/reminder
-      // eligibility, both of which branch on status. An overpayment result needs
-      // no special handling here: recomputeStatus flips to PAID and balanceDue
-      // floors at 0 in findAll/findOne, exactly the "surfaced by the credit-note
-      // workflow, not by this recompute" convention every sibling site follows.
-      const newStatus = this.recomputeStatus(
-        sumConfirmed((inv as any).payments),
-        total,
-        (inv as any).dueDate ?? null,
-        inv.status,
-      );
-      await this.prisma.forTenant().invoice.update({
-        where: { id: inv.id },
-        data: {
-          subtotal,
-          taxAmount,
-          total,
-          status: newStatus,
-          // Every sibling status writer in this file (recordPayment, updatePayment,
-          // deletePayment, voidPayment, setCheckStatus) pairs the status with paidAt.
-          // Without it an invoice this settles to PAID keeps paidAt NULL and vanishes
-          // from every "status: PAID + paidAt" revenue window — bookkeeping's
-          // getSummary totalRevenue, the P&L window and getTimeToGetPaid.
-          paidAt: newStatus === InvoiceStatus.PAID ? new Date() : null,
-          internalNotes: existingInternal ? `${existingInternal}\n${auditLine}` : auditLine,
-        },
       });
-      // Sales agents & commissions: this method is pre-existingly non-atomic
-      // (no surrounding tenantTransaction) — do NOT refactor that here. Pass
-      // no tx; the Safe wrapper opens its own transaction, and the hourly
-      // reconciliation cron heals the gap if the process dies mid-loop.
+      // Sales agents & commissions: still OUTSIDE the transaction above on purpose (B662 wrapped only
+      // the invoice + ledger writes). Pass no tx; the Safe wrapper opens its own transaction, and the
+      // hourly reconciliation cron heals the gap if the process dies mid-loop.
       await this.commissionEngine.syncInvoiceCommissionSafe(inv.id);
       // Backward sync: a re-priced invoice updates its linked order's totals.
       if ((inv as any).orderId) await this.recomputeOrderFromInvoices((inv as any).orderId);

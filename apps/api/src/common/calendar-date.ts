@@ -81,6 +81,41 @@ function localMidnightUtc(year: number, month: number, day: number, timeZone: st
   return new Date(guess - offsetMs);
 }
 
+const CALENDAR_DAY_RE = /^(\d{4})-(\d{2})-(\d{2})$/;
+
+/**
+ * Strict "YYYY-MM-DD" → its parts, or null when the string is malformed OR names a day that
+ * does not exist (2026-02-30) — `new Date()` would silently roll such a day into the next month.
+ */
+export function parseCalendarDay(
+  value: string,
+): { year: number; month: number; day: number } | null {
+  const m = CALENDAR_DAY_RE.exec(value);
+  if (!m) return null;
+  const year = Number(m[1]);
+  const month = Number(m[2]);
+  const day = Number(m[3]);
+  const d = new Date(Date.UTC(year, month - 1, day));
+  if (d.getUTCFullYear() !== year || d.getUTCMonth() !== month - 1 || d.getUTCDate() !== day) {
+    return null;
+  }
+  return { year, month, day };
+}
+
+/**
+ * The REAL UTC instant at which calendar day `day` ("YYYY-MM-DD") begins in `timeZone` — the
+ * lower bound (inclusive) of that day for a real-instant column (`CreditNote.createdAt`,
+ * `Return.refundedAt`); the next day's value is the exclusive upper bound. The inverse of
+ * `startOfCalendarDay` at a day's edges, DST-safe (see `localMidnightUtc`). A null/blank/
+ * unknown zone falls back to UTC, same as every helper here. Throws RangeError on a value that
+ * is not a real calendar day — callers validate input first; this is the last line.
+ */
+export function startOfLocalDay(day: string, timeZone?: string | null): Date {
+  const parts = parseCalendarDay(day);
+  if (!parts) throw new RangeError(`startOfLocalDay: not a calendar day: ${JSON.stringify(day)}`);
+  return localMidnightUtc(parts.year, parts.month, parts.day, timeZone || "UTC");
+}
+
 /** UTC-midnight instant (`iso.slice(0,10)`) → its calendar-date string. `""` for null/invalid. */
 export function calendarDateFromIso(iso: string | Date | null | undefined): string {
   if (!iso) return "";

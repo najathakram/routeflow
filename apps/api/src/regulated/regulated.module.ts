@@ -9,9 +9,10 @@ import { ParkedReversalResolutionService } from "./parked-reversal-resolution.se
 import { StorageModule } from "../storage/storage.module";
 import { AuditModule } from "../audit/audit.module";
 import { BillingModule } from "../billing/billing.module";
+import { SellingRestrictionsModule } from "../selling-restrictions/selling-restrictions.module";
 
 @Module({
-  imports: [StorageModule, AuditModule, BillingModule],
+  imports: [StorageModule, AuditModule, BillingModule, SellingRestrictionsModule],
   controllers: [RegulatedController],
   providers: [
     RegulatedService,

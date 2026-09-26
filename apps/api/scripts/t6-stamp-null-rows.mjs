@@ -20,10 +20,10 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import pg from "pg";
 import { isTestTenant } from "../../../scripts/lib/test-tenants.cjs";
+import { requireLocalPgConfig } from "./lib/local-pg-config.mjs";
 import { redactUrl, resolveDatabaseUrl } from "./lib/railway-db-url.mjs";
 
 const SELF = resolve(dirname(fileURLToPath(import.meta.url)), "t6-stamp-null-rows.mjs");
-const LOCAL_HOSTS = new Set(["localhost", "127.0.0.1", "::1", "postgres", "db"]);
 
 /** Per table: the rows still NULL (optionally pinned to ids) + every tenant their FKs name. */
 const TABLES = {
@@ -75,12 +75,12 @@ async function main() {
   }
   const local = process.argv.includes("--local");
   let url;
+  let localCfg = null; // --local: the vetted explicit fields are the ones dialled
   try {
     url = local ? process.env.DATABASE_URL : resolveDatabaseUrl(process.env);
     if (!url) throw new Error("--local requires DATABASE_URL");
     if (local) {
-      const host = new URL(url).hostname.replace(/^\[|\]$/g, "");
-      if (!LOCAL_HOSTS.has(host)) throw new Error(`--local refuses non-local host ${host}`);
+      localCfg = requireLocalPgConfig(url);
     }
   } catch (e) {
     console.error(`t6-stamp-null-rows: ${e.message}`);
@@ -89,7 +89,7 @@ async function main() {
   console.log(
     `t6-stamp-null-rows: target ${redactUrl(url)} table ${table} ${apply ? "APPLY" : "DRY-RUN"}`,
   );
-  const client = new pg.Client({ connectionString: url });
+  const client = new pg.Client(localCfg ?? { connectionString: url });
   try {
     await client.connect();
     await client.query(apply ? "BEGIN" : "BEGIN READ ONLY");

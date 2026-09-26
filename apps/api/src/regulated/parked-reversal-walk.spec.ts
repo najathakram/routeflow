@@ -533,4 +533,185 @@ describe("resolveParkedReversal — resume the live walk (SA-167)", () => {
       originalSoldAt: parkedAt,
     });
   });
+
+  describe("#2108: the shared filed-period fold and lookup", () => {
+    const parkedAt = new Date("2026-08-15T12:00:00.000Z");
+    const filing = (cat: string, key: string, status = "GENERATED") => ({
+      trackedCategoryId: cat,
+      periodKey: key,
+      status,
+    });
+
+    it("findFiledPeriod is deterministic (orderBy) and names the MATCHED category", async () => {
+      const findFirst = jest.fn().mockResolvedValue(filing("cat-B", "2026-08", "LOCKED"));
+      (prisma as any).regulatedFiling.findFirst = findFirst;
+      const hit = await service.findFiledPeriod(prisma, ["cat-A", "cat-B"], "2026-08");
+      expect(hit).toEqual({ periodKey: "2026-08", status: "LOCKED", trackedCategoryId: "cat-B" });
+      const args = findFirst.mock.calls[0][0];
+      expect(args.orderBy).toEqual([{ trackedCategoryId: "asc" }, { periodKey: "asc" }]);
+      expect(args.select).toMatchObject({ trackedCategoryId: true });
+      // no categories means nothing to look up
+      findFirst.mockClear();
+      expect(await service.findFiledPeriod(prisma, [], "2026-08")).toBeNull();
+      expect(findFirst).not.toHaveBeenCalled();
+    });
+
+    it("resolve returns the matched category in amendedPeriod, through the shared fold", async () => {
+      ledger = [sale(1, 2), sale(2, 3, { trackedCategoryId: "cat-B" })];
+      invoiceItems = [ii(1), ii(2)];
+      (prisma as any).regulatedFiling.findFirst = jest
+        .fn()
+        .mockResolvedValue(filing("cat-B", "2026-08"));
+      const res = await service.resolveParkedReversal(
+        prisma,
+        { ...parked(1, 24), periodBucket: "2026-08", parkedAt },
+        12,
+      );
+      expect(res.amendedPeriod).toEqual({
+        periodKey: "2026-08",
+        status: "GENERATED",
+        trackedCategoryId: "cat-B",
+      });
+    });
+
+    it("filedPeriodForParked (what list() calls) folds the SAME categories as the resolution: the parked row's plus every live row of the product", async () => {
+      ledger = [sale(1, 2), sale(2, 3, { trackedCategoryId: "cat-B" })];
+      invoiceItems = [ii(1), ii(2)];
+      const findFirst = jest.fn().mockResolvedValue(filing("cat-B", "2026-08"));
+      (prisma as any).regulatedFiling.findFirst = findFirst;
+      const hit = await service.filedPeriodForParked(prisma, {
+        saleEntryId: "s-1",
+        orderId: "ord-1",
+        createdAt: parkedAt,
+      });
+      expect(hit).toMatchObject({ periodKey: "2026-08", trackedCategoryId: "cat-B" });
+      expect([...findFirst.mock.calls[0][0].where.trackedCategoryId.in].sort()).toEqual([
+        "cat-A",
+        "cat-B",
+      ]);
+    });
+
+    it("filedPeriodForParked: a park in the CURRENT month is never filed (no lookup)", async () => {
+      ledger = [sale(1, 2)];
+      invoiceItems = [ii(1)];
+      const findFirst = jest.fn();
+      (prisma as any).regulatedFiling.findFirst = findFirst;
+      const hit = await service.filedPeriodForParked(prisma, {
+        saleEntryId: "s-1",
+        orderId: "ord-1",
+        createdAt: new Date(),
+      });
+      expect(hit).toBeNull();
+      expect(findFirst).not.toHaveBeenCalled();
+    });
+
+    it("SA-213 pin: a filing on a SIBLING row the walk never reaches still routes the whole reversal to the CURRENT period", async () => {
+      // 3 rows of one product; the parked row's return quantity is tiny (2 pieces), so the walk would stop
+      // on the parked row itself, yet a filing on the third row's category must still decide the period.
+      ledger = [sale(1, 2), sale(2, 3), sale(3, 4, { trackedCategoryId: "cat-C" })];
+      invoiceItems = [ii(1), ii(2), ii(3)];
+      const findFirst = jest.fn().mockResolvedValue(filing("cat-C", "2026-08"));
+      (prisma as any).regulatedFiling.findFirst = findFirst;
+      const res = await service.resolveParkedReversal(
+        prisma,
+        { ...parked(1, 2), periodBucket: "2026-08", parkedAt },
+        12,
+      );
+      expect([...findFirst.mock.calls[0][0].where.trackedCategoryId.in].sort()).toEqual([
+        "cat-A",
+        "cat-C",
+      ]);
+      expect(res.amendedPeriod).toMatchObject({ periodKey: "2026-08", trackedCategoryId: "cat-C" });
+      expect(reversals()[0]).toMatchObject({
+        periodBucket: new Date().toISOString().slice(0, 7),
+        originalSoldAt: parkedAt,
+      });
+    });
+
+    describe.each([
+      ["no label", {}],
+      ["unitLabel 'each'", { unitLabel: "each" }],
+    ])("#2108: parked row with NO resolvable product, productless line (%s)", (_n, extra) => {
+      it("never walks onto a productless line in another category", async () => {
+        // Row 1: invoice item rotated away and order item gone, so its product id is null. Row 2 is a
+        // productless (freeform) line in cat-B. null must never equal null in the resumed walk.
+        ledger = [
+          sale(1, 2, { invoiceItemId: "ii-gone" }),
+          sale(2, 3, { trackedCategoryId: "cat-B" }),
+        ];
+        invoiceItems = [{ ...ii(2), productId: null, ...extra }];
+        const findFirst = jest.fn().mockResolvedValue(filing("cat-B", "2026-08"));
+        (prisma as any).regulatedFiling.findFirst = findFirst;
+        const res = await service.resolveParkedReversal(
+          prisma,
+          { ...parked(1, 60), periodBucket: "2026-08", parkedAt },
+          12,
+        );
+        expect(reversals().filter((r) => r.trackedCategoryId === "cat-B")).toHaveLength(0);
+        expect(parkedStore).toHaveLength(0);
+        expect(res.parkedPieces).toBe(0);
+        expect(res.unbookedPieces).toBe(36);
+        // the fold looked only at the parked row's own category (the mock ignores `where`)
+        expect([...findFirst.mock.calls[0][0].where.trackedCategoryId.in]).toEqual(["cat-A"]);
+      });
+    });
+
+    it("SA-213 pin: the same inputs give the same amendedPeriod AND the same category fold from resolve and from list()'s helper", async () => {
+      ledger = [sale(1, 2), sale(2, 3, { trackedCategoryId: "cat-B" })];
+      invoiceItems = [ii(1), ii(2)];
+      const findFirst = jest.fn().mockResolvedValue(filing("cat-B", "2026-08", "LOCKED"));
+      (prisma as any).regulatedFiling.findFirst = findFirst;
+      const fromList = await service.filedPeriodForParked(prisma, {
+        saleEntryId: "s-1",
+        orderId: "ord-1",
+        createdAt: parkedAt,
+      });
+      const fromResolve = await service.resolveParkedReversal(
+        prisma,
+        { ...parked(1, 24), periodBucket: "2026-08", parkedAt },
+        12,
+      );
+      expect(fromResolve.amendedPeriod).toEqual(fromList);
+      const sets = findFirst.mock.calls.map((c) => [...c[0].where.trackedCategoryId.in].sort());
+      expect(sets).toHaveLength(2);
+      expect(sets[0]).toEqual(["cat-A", "cat-B"]);
+      expect(sets[1]).toEqual(sets[0]);
+    });
+
+    it("SA-213 pin: a product reachable ONLY via the order item (InvoiceItem rotated away) folds the same categories in list() and resolve", async () => {
+      // Row 1's invoice item was deleted by a reconcile (ii-gone is not in invoiceItems); its product
+      // is known only through the order item. Row 2 (cat-B) is the same product on a live invoice item.
+      ledger = [
+        sale(1, 2, { invoiceItemId: "ii-gone" }),
+        sale(2, 3, { trackedCategoryId: "cat-B" }),
+      ];
+      invoiceItems = [ii(2)];
+      prisma.orderItem.findMany.mockResolvedValue([
+        {
+          id: "oi-1",
+          productId: "p1",
+          boxes: null,
+          pieces: null,
+          unitLabel: null,
+          unitsPerBox: null,
+        },
+      ]);
+      const findFirst = jest.fn().mockResolvedValue(filing("cat-B", "2026-08", "LOCKED"));
+      (prisma as any).regulatedFiling.findFirst = findFirst;
+      const fromList = await service.filedPeriodForParked(prisma, {
+        saleEntryId: "s-1",
+        orderId: "ord-1",
+        createdAt: parkedAt,
+      });
+      const fromResolve = await service.resolveParkedReversal(
+        prisma,
+        { ...parked(1, 24), periodBucket: "2026-08", parkedAt },
+        12,
+      );
+      const sets = findFirst.mock.calls.map((c) => [...c[0].where.trackedCategoryId.in].sort());
+      expect(sets[0]).toEqual(["cat-A", "cat-B"]);
+      expect(sets[1]).toEqual(sets[0]);
+      expect(fromResolve.amendedPeriod).toEqual(fromList);
+    });
+  });
 });
