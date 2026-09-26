@@ -360,6 +360,8 @@ describe("InvoicesService — B652 unit-line partial billing", () => {
         customer: { findFirst: jest.fn().mockResolvedValue({ isTaxExempt: false }) },
         trackedCategory: { findMany: jest.fn().mockResolvedValue([]) },
         orderItem: { update: jest.fn().mockResolvedValue({}) },
+        // B760: no DeliveryMutation evidence — remaining stays qty - invoicedQty.
+        deliveryMutation: { findMany: jest.fn().mockResolvedValue([]) },
         $executeRaw: jest.fn().mockResolvedValue(0),
         $queryRaw: jest.fn().mockResolvedValue([]),
       };
