@@ -915,7 +915,12 @@ export class InvoicesService {
               roundMoney((storedCategoryTax * prior) / orderQty),
           );
 
-    assertUnitLineSplit({ ...split, unitLabel: li.unitLabel, unitsPerBox }, "buildInvoiceItemData"); // #2230
+    // #2230: the fields name the line and its id in the 409 / the Sentry report; the call is unchanged.
+    const named = { id: li.id, orderItemId: li.id, description: li.product?.name ?? li.name };
+    assertUnitLineSplit(
+      { ...split, unitLabel: li.unitLabel, unitsPerBox, productId: li.productId, ...named },
+      "buildInvoiceItemData",
+    );
     return {
       // Catalog lines use the product name; unlisted lines carry a free-text `name`.
       description: li.product?.name ?? li.name ?? `Product`,

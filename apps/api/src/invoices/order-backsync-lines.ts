@@ -24,7 +24,13 @@ export function orderLineShape(
   const shape = consistentSplit(rawShape(existing, agg), agg.qty);
   // #2230 / SA-388d: never mirror B718's all-empty split back onto the order line.
   const unitLabel = shape.unitLabel !== undefined ? shape.unitLabel : (existing?.unitLabel ?? null);
-  return assertUnitLineSplit({ ...shape, unitLabel }, "orderLineShape") && shape;
+  // #2230 / SA-388i: the writer passes what it holds, to name the line and its id in the 409 / Sentry.
+  const named = {
+    id: existing?.id,
+    productId: existing?.productId ?? agg.sample?.productId,
+    description: agg.sample?.description ?? existing?.name,
+  };
+  return assertUnitLineSplit({ ...shape, unitLabel, ...named }, "orderLineShape") && shape;
 }
 
 function rawShape(

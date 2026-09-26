@@ -46,9 +46,10 @@ export const UNIT_LINE_SPLIT_MISSING = "UNIT_LINE_SPLIT_MISSING";
 
 /** The line ids a shape carries (`id`, `orderItemId`, `invoiceItemId`), for the Sentry report only. */
 export function unitLineIds(line: UnitLineSplitShape): string[] {
-  return [line.id, line.orderItemId, line.invoiceItemId].filter(
+  const ids = [line.id, line.orderItemId, line.invoiceItemId].filter(
     (v): v is string => typeof v === "string" && v.length > 0,
   );
+  return [...new Set(ids)];
 }
 
 /**
@@ -63,7 +64,6 @@ export class UnitLineSplitError extends ConflictException {
       message:
         `${what} is sold by the ${line.unitLabel} but its Case/Each split is missing — ask support ` +
         "to repair this line before invoicing",
-      where,
     });
     this.name = "UnitLineSplitError";
   }
