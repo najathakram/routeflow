@@ -1074,6 +1074,24 @@ export function invoiceLineQtyText(item: UnitLineQtyInput): string {
   return formatQtySplit({ ...split, boxLabel: label });
 }
 
+/**
+ * Pluralize a bare unit-label NOUN for count `n` — "Case" → "Cases", "Pallet" → "Pallets",
+ * but a label already ending in "s" ("Chassis") is left alone rather than doubled. `n === 1`
+ * (or `-1`) keeps the singular; every other count (including 0) pluralizes, matching how
+ * `formatQtySplit`'s own custom-`boxLabel` branch already pluralizes ("s" unless the label
+ * already ends in one) — this is that SAME single rule, factored out so a caller that needs
+ * the noun on its own (e.g. a Case-count badge that must still read "0 Cases" at zero, where
+ * `formatQtySplit`/`invoiceLineQtyText` would render a bare "0") doesn't hand-roll a second,
+ * cruder version (`n === 1 ? "" : "s"`, which double-pluralizes an already-plural label).
+ * Placed next to {@link invoiceLineQtyText} so every qty/unit-label pluralization in the
+ * codebase — the box side of `formatQtySplit` and any other caller — has exactly one home.
+ */
+export function pluralizeUnitLabel(label: string, n: number): string {
+  const trimmed = (label ?? "").trim() || "Unit";
+  if (Math.abs(n) === 1) return trimmed;
+  return trimmed.endsWith("s") ? trimmed : `${trimmed}s`;
+}
+
 // ─── Per-unit cost rounding ───────────────────────────────────────────────────
 
 /**
