@@ -123,11 +123,23 @@ export function trackSteadyRead(
   return { steady: count >= STEADY_READ_MIN_FRAMES, afterAbsence, next: [head, ...rest] };
 }
 
-/** Clears `code`'s `afterAbsence` mark once the caller has honoured it (one accept per absence). */
-export function clearAfterAbsence(state: SteadyReadState, code: string): SteadyReadState {
+/**
+ * Clears the `afterAbsence` mark once the caller has honoured it (one accept per absence) — on
+ * `code`'s slot AND on every slot whose raw code is a gate candidate of it (SA-384a): the gate
+ * treats a UPC-A and its EAN-13 form as one item, so a variant slot keeping its own mark could
+ * re-accept that item once the cooldown ends. `candidatesOf` defaults to raw equality.
+ */
+export function clearAfterAbsence(
+  state: SteadyReadState,
+  code: string,
+  candidatesOf: (code: string) => readonly string[] = (c) => [c],
+): SteadyReadState {
+  const accepted = new Set(candidatesOf(code));
+  const sameItem = (other: string) =>
+    other === code || candidatesOf(other).some((c) => accepted.has(c));
   return state.map((slot) =>
-    slot.code === code && slot.afterAbsence
-      ? { code, lastSeenAt: slot.lastSeenAt, count: slot.count }
+    slot.afterAbsence && sameItem(slot.code)
+      ? { code: slot.code, lastSeenAt: slot.lastSeenAt, count: slot.count }
       : slot,
   );
 }

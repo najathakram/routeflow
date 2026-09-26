@@ -92,6 +92,13 @@ export const NEVER_ACCEPTED = -Infinity;
 export const SCAN_COOLDOWN_MS = 600;
 /** How long a tracked code must be absent from frame before a repeat counts as a re-present. */
 export const ABSENCE_GAP_MS = 300;
+/**
+ * The absence gap on the steady-read path ONLY (`continuousFrameScanned`; SA-384a/b). It must
+ * exceed `STEADY_READ_MAX_GAP_MS` (700) so a streak that is still continuing can never read as
+ * absent: a held iOS Code 39 arrives every ~500 ms, which clears the plain 300 ms gap on every
+ * event and re-accepted once per cooldown. The plain gate keeps `ABSENCE_GAP_MS` (B191).
+ */
+export const STEADY_ABSENCE_GAP_MS = 800;
 /** How many recently-seen codes keep their own cooldown (spec R1: at least 4). */
 export const SCAN_SLOTS = 4;
 
@@ -152,6 +159,8 @@ export function gateScan(
    * cooldown still applies (#2131 @1f8b1ea4 review, HIGH).
    */
   absenceObserved: boolean = false,
+  /** The absence gap to apply; the steady-read path passes `STEADY_ABSENCE_GAP_MS`. */
+  absenceGapMs: number = ABSENCE_GAP_MS,
 ): { accept: boolean; state: ScanGateState } {
   if (!code.trim()) {
     return {
@@ -175,7 +184,7 @@ export function gateScan(
     !slot ||
     slot.lastAcceptAt === NEVER_ACCEPTED ||
     (now - slot.lastAcceptAt >= cooldownMs &&
-      (absenceObserved || now - slot.lastSeenAt >= ABSENCE_GAP_MS));
+      (absenceObserved || now - slot.lastSeenAt >= absenceGapMs));
 
   // The matched slot moves to the head under the code just decoded, so a label
   // read as EAN-13 this frame and UPC-A the next keeps ONE set of clocks.
@@ -300,7 +309,7 @@ export function isTrackedByGate(
 }
 
 /**
- * True when `code` has not been seen by the gate for at least `ABSENCE_GAP_MS` as of `now`
+ * True when `code` has not been seen by the gate for at least `absenceGapMs` as of `now`
  * (or was never seen). Read it BEFORE a `touchSeen` for the same frame.
  */
 export function isAbsentFromGate(
@@ -308,7 +317,8 @@ export function isAbsentFromGate(
   code: string,
   now: number,
   candidatesOf: ScanCandidates = rawCandidates,
+  absenceGapMs: number = ABSENCE_GAP_MS,
 ): boolean {
   const slot = findSlot(state, code, candidatesOf);
-  return !slot || now - slot.lastSeenAt >= ABSENCE_GAP_MS;
+  return !slot || now - slot.lastSeenAt >= absenceGapMs;
 }

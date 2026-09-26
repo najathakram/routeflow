@@ -5,6 +5,8 @@ import {
   type ContinuousScanState,
 } from "./scan-engine";
 import type { AimBoxRect, BarcodeBoundsLike } from "./aim-box";
+import { ABSENCE_GAP_MS, STEADY_ABSENCE_GAP_MS } from "./scan-loop";
+import { STEADY_READ_MAX_GAP_MS } from "./steady-read";
 
 const T0 = 1_000_000;
 const IN_BOX: AimBoxRect = { x: 0, y: 0, width: 100, height: 100 };
@@ -266,5 +268,58 @@ describe("continuousFrameScanned — #2131 @1f8b1ea4 review pins (absence across
     });
     expect(step.startResolving).toBeNull();
     expect(step.next.gate?.lastSeenAt).toBe(T0 + 600);
+  });
+});
+
+describe("continuousFrameScanned — SA-384a LOW: a symbology-flickering label after an absence", () => {
+  const stripZeros = (code: string) => [code.replace(/^0+/, "")];
+
+  it("a re-present read as both UPC-A and EAN-13 is accepted exactly once more", () => {
+    const UPC = "036000291452";
+    const EAN = "0036000291452"; // the same label, decoded as EAN-13
+    let s = createContinuousScanState();
+    let accepts = 0;
+    const frames: Array<[string, number]> = [];
+    for (let t = 0; t <= 1000; t += 100) frames.push([UPC, t]); // first present → 1 accept
+    // 1 s away. Back: one EAN-13 read (its streak restarts, marked absent), then 350 ms of
+    // nothing, then UPC-A reads — the gate has not seen the item for >= ABSENCE_GAP_MS, so the
+    // UPC-A streak is marked absent too and accepts at its 3rd read. The EAN-13 streak then
+    // continues (each read <= 0.7 s after the last) and goes steady once the cooldown is over:
+    // it must NOT honour its own stale mark and accept the same item a third time.
+    frames.push([EAN, 2000]);
+    for (let t = 2350; t <= 5000; t += 100) frames.push([UPC, t]);
+    for (const t of [2650, 3200, 3700, 4200, 4700]) frames.push([EAN, t]);
+    frames.sort((a, b) => a[1] - b[1]);
+    for (const [code, t] of frames) {
+      const step = continuousFrameScanned(s, code, T0 + t, {
+        bounds: IN_BOX_BOUNDS,
+        aimBox: IN_BOX,
+        candidatesOf: stripZeros,
+      });
+      s = step.next;
+      if (step.startResolving) {
+        accepts++;
+        s = scanSettled(s).next;
+      }
+    }
+    expect(accepts).toBe(2);
+  });
+});
+
+describe("continuousFrameScanned — SA-384a: a slow held code (iOS Code 39, ~500 ms events)", () => {
+  it("static: a continuing steady streak can never read as absent", () => {
+    expect(STEADY_ABSENCE_GAP_MS).toBeGreaterThan(STEADY_READ_MAX_GAP_MS);
+  });
+
+  it("static: the plain gate keeps B191's short absence (a quick lift-and-return still counts)", () => {
+    expect(ABSENCE_GAP_MS).toBeLessThanOrEqual(350);
+  });
+
+  it("events every 500 ms for 5 s are accepted exactly once; away 1 s, exactly once more", () => {
+    const run = { s: createContinuousScanState(), accepts: 0 };
+    feed(run, "CODE39", 2, 0, 5000); // 2 Hz = one event per 500 ms
+    expect(run.accepts).toBe(1);
+    feed(run, "CODE39", 2, 6000, 11000);
+    expect(run.accepts).toBe(2);
   });
 });

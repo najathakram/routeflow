@@ -32,6 +32,7 @@ import {
   gateScan,
   isAbsentFromGate,
   isTrackedByGate,
+  STEADY_ABSENCE_GAP_MS,
   touchSeen,
   type ScanCandidates,
   type ScanGateState,
@@ -160,7 +161,7 @@ export interface ContinuousFrameOptions {
  *     to the buffer — a genuinely new item is accepted once, a continuously held one
  *     never re-accepts because its `lastSeenAt` never goes stale (step 2 keeps refreshing
  *     it every frame the code stays in view), and a deliberate re-present still clears
- *     once the code has ACTUALLY left frame for `ABSENCE_GAP_MS`: that absence is read off
+ *     once the code has ACTUALLY left frame for `STEADY_ABSENCE_GAP_MS`: that absence is read off
  *     the gate on the frame that restarts the streak — before its own `touchSeen` — and
  *     marked on the streak, so the ramp-up frames' touches cannot erase it; the steady
  *     frame honours the mark once (#2131 @1f8b1ea4 review, HIGH).
@@ -186,7 +187,8 @@ export function continuousFrameScanned(
     };
   }
 
-  const absent = isAbsentFromGate(state.gate, code, now, opts.candidatesOf);
+  // SA-384b: one absence gap for both the mark and its honour, on this path only.
+  const absent = isAbsentFromGate(state.gate, code, now, opts.candidatesOf, STEADY_ABSENCE_GAP_MS);
   const {
     steady,
     afterAbsence,
@@ -202,7 +204,15 @@ export function continuousFrameScanned(
     };
   }
 
-  const gated = gateScan(code, state.gate, now, undefined, opts.candidatesOf, afterAbsence);
+  const gated = gateScan(
+    code,
+    state.gate,
+    now,
+    undefined,
+    opts.candidatesOf,
+    afterAbsence,
+    STEADY_ABSENCE_GAP_MS,
+  );
   if (!gated.accept) {
     return {
       next: { ...state, gate: gated.state, steady: nextSteady },
@@ -213,7 +223,11 @@ export function continuousFrameScanned(
   const wasResolving = state.buffer.isResolving;
   const result = pushScan(state.buffer, code);
   return {
-    next: { gate: gated.state, buffer: result.next, steady: clearAfterAbsence(nextSteady, code) },
+    next: {
+      gate: gated.state,
+      buffer: result.next,
+      steady: clearAfterAbsence(nextSteady, code, opts.candidatesOf),
+    },
     startResolving: result.startResolving,
     indicator: indicatorEdge(wasResolving, result.next.isResolving),
   };

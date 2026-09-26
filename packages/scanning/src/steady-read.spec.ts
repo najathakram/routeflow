@@ -145,3 +145,23 @@ describe("afterAbsence mark (#2131 @1f8b1ea4 review)", () => {
     expect(trackSteadyRead(s, "B", 110).afterAbsence).toBe(true);
   });
 });
+
+describe("clearAfterAbsence across gate candidates (SA-384a LOW)", () => {
+  // Stand-in for mobile's normalizeScanCode: a UPC-A and its 0-prefixed EAN-13 are one item.
+  const stripZeros = (code: string) => [code.replace(/^0+/, "")];
+
+  it("an accept via the UPC-A form clears the EAN-13 slot's mark too", () => {
+    let s = trackSteadyRead(createSteadyReadState(), "0036000291452", 0, true).next; // EAN-13
+    s = trackSteadyRead(s, "036000291452", 10, true).next; // UPC-A
+    s = clearAfterAbsence(s, "036000291452", stripZeros);
+    expect(trackSteadyRead(s, "0036000291452", 100).afterAbsence).toBe(false);
+    expect(trackSteadyRead(s, "036000291452", 100).afterAbsence).toBe(false);
+  });
+
+  it("leaves a genuinely different code's mark alone", () => {
+    let s = trackSteadyRead(createSteadyReadState(), "036000291452", 0, true).next;
+    s = trackSteadyRead(s, "4006381333931", 10, true).next;
+    s = clearAfterAbsence(s, "036000291452", stripZeros);
+    expect(trackSteadyRead(s, "4006381333931", 100).afterAbsence).toBe(true);
+  });
+});
