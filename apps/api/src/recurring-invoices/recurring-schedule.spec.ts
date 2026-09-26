@@ -87,9 +87,26 @@ describe("resumeSchedulesOnRestore", () => {
       userId: "u9",
       action: "recurring-invoice.reactivated",
       entityId: "w",
-      meta: { reason: "CUSTOMER_RESTORED", skippedCycleDueAt: due.toISOString() },
+      meta: {
+        reason: "CUSTOMER_RESTORED",
+        skippedCycleDueAt: due.toISOString(),
+        resumedAt: calcNextRunAt("WEEKLY" as never, 1, 1, now).toISOString(),
+      },
     });
     expect(tx.auditLog.create).toHaveBeenCalledTimes(1);
+  });
+
+  it("an Undo STRADDLING midnight: removed 23:50, restored 00:10 the next day, the 00:00 tick fell inside, so it is advanced", async () => {
+    const restoredAt = at(25, 0, 10);
+    tx.recurringInvoice.findMany.mockResolvedValue([row("w", at(24, 0, 0))]);
+    expect(await resumeSchedulesOnRestore(tx, customer(at(24, 23, 50)), "u9", restoredAt)).toBe(1);
+    expect(tx.recurringInvoice.updateMany.mock.calls[0][0].data.nextRunAt).toEqual(
+      calcNextRunAt("WEEKLY" as never, 1, 1, restoredAt),
+    );
+  });
+
+  it("a removal EXACTLY on a tick (deletedAt = 00:00): that tick counts as inside the removal (inclusive), so it is advanced", async () => {
+    expect(await run([row("w", at(24, 0, 0))], at(25, 0, 0))).toBe(1);
   });
 
   it("(iii) a failed-retry row (due BEFORE the removal): advanced iff a tick fell inside the window", async () => {
