@@ -118,63 +118,108 @@ describe("InvoicesService — #2197 issueDate is the tenant calendar-day stamp",
     service = module.get<InvoicesService>(InvoicesService);
   });
 
-  // ─── #2197 — a client issueDate with a time component is stored as the
-  // TENANT-local calendar day's UTC-midnight stamp, never the raw instant.
-  describe("#2197 — issueDate is normalized to the tenant's calendar-day stamp", () => {
+  // ─── #2197 — a client issueDate is stored as the UTC-midnight stamp of the LITERAL day it
+  // names (its first ten characters). Neither its offset nor the tenant zone may move the day.
+  describe("#2197 — issueDate is the literal calendar day the client named", () => {
     const nyDefaults = { notes: null, terms: null, timezone: "America/New_York" };
+    const day25 = new Date("2026-09-25T00:00:00.000Z");
 
-    it("create(): 23:30 New York on the 25th stores 2026-09-25, not the raw 03:30Z instant", async () => {
+    const createWith = async (issueDate: string) => {
       prisma.customer.findUnique.mockResolvedValue({ id: "cust-1", isTaxExempt: false });
       prisma.product.findMany.mockResolvedValue([]);
       jest.spyOn(service as any, "resolveTenantInvoiceDefaults").mockResolvedValue(nyDefaults);
       prisma.invoice.create.mockResolvedValue({ id: "inv-2197", items: [], payments: [] });
-
       await service.create({
         customerId: "cust-1",
-        issueDate: "2026-09-25T23:30:00-04:00",
+        issueDate,
         items: [{ description: "Widget", qty: 1, unitPrice: 10, taxRate: 0 }],
       } as any);
+      return prisma.invoice.create.mock.calls[0][0].data;
+    };
 
-      const data = prisma.invoice.create.mock.calls[0][0].data;
-      expect(data.issueDate).toEqual(new Date("2026-09-25T00:00:00.000Z"));
+    it("create(): an offset different from the tenant zone keeps the literal day", async () => {
+      // 23:30 at -05:00 is 04:30Z on the 26th, 00:30 on the 26th in New York (EDT).
+      expect((await createWith("2026-09-25T23:30:00-05:00")).issueDate).toEqual(day25);
+    });
+
+    it("create(): an instant at exactly UTC midnight of the next day keeps the literal day", async () => {
+      // 20:00 at -04:00 is 00:00Z on the 26th.
+      expect((await createWith("2026-09-25T20:00:00-04:00")).issueDate).toEqual(day25);
     });
 
     it("create(): a bare calendar date is stored literally in a west-of-UTC tenant", async () => {
-      prisma.customer.findUnique.mockResolvedValue({ id: "cust-1", isTaxExempt: false });
-      prisma.product.findMany.mockResolvedValue([]);
-      jest.spyOn(service as any, "resolveTenantInvoiceDefaults").mockResolvedValue(nyDefaults);
-      prisma.invoice.create.mockResolvedValue({ id: "inv-2197b", items: [], payments: [] });
-
-      await service.create({
-        customerId: "cust-1",
-        issueDate: "2026-09-25",
-        items: [{ description: "Widget", qty: 1, unitPrice: 10, taxRate: 0 }],
-      } as any);
-
-      const data = prisma.invoice.create.mock.calls[0][0].data;
-      expect(data.issueDate).toEqual(new Date("2026-09-25T00:00:00.000Z"));
+      expect((await createWith("2026-09-25")).issueDate).toEqual(day25);
     });
 
-    it("update(): a header-only edit with a time component stores the tenant-local day", async () => {
-      prisma.invoice.findUnique.mockResolvedValue({
-        id: "inv-2197u",
-        orderId: null,
-        customerId: "cust-1",
-        status: InvoiceStatus.DRAFT,
-        subtotal: 10,
-        taxAmount: 0,
+    it("create(): a date that names no real day is a 400 before anything is read", async () => {
+      await expect(
+        service.create({
+          customerId: "cust-1",
+          issueDate: "2026-02-31",
+          items: [{ description: "Widget", qty: 1, unitPrice: 10, taxRate: 0 }],
+        } as any),
+      ).rejects.toThrow("issueDate must be a calendar date (YYYY-MM-DD)");
+      expect(prisma.customer.findUnique).not.toHaveBeenCalled();
+    });
+
+    const draft = {
+      id: "inv-2197u",
+      orderId: null,
+      deliveryBatchId: null,
+      customerId: "cust-1",
+      invoiceNumber: "INV-2026-2197",
+      status: InvoiceStatus.DRAFT,
+      subtotal: 10,
+      taxAmount: 0,
+      discount: 0,
+      shippingFee: 0,
+      total: 10,
+      notes: null,
+      terms: null,
+      dueDate: null,
+      issueDate: new Date("2026-09-01T00:00:00.000Z"),
+    };
+
+    it("update(): a header-only edit keeps the literal day", async () => {
+      prisma.invoice.findUnique.mockResolvedValue(draft);
+      prisma.invoice.update.mockResolvedValue({ id: draft.id });
+
+      await service.update(draft.id, { issueDate: "2026-09-25T23:30:00-05:00" } as any);
+
+      expect(prisma.invoice.update.mock.calls[0][0].data.issueDate).toEqual(day25);
+    });
+
+    it("update() WITH items: the item-rewrite write keeps the literal day too", async () => {
+      const row = {
+        id: "item-1",
+        productId: null,
+        description: "Widget",
+        qty: 1,
+        boxes: null,
+        pieces: null,
+        unitPrice: 10,
         discount: 0,
-        shippingFee: 0,
-        total: 10,
-        issueDate: new Date("2026-09-01T00:00:00.000Z"),
-      });
-      jest.spyOn(service as any, "resolveTenantInvoiceDefaults").mockResolvedValue(nyDefaults);
-      prisma.invoice.update.mockResolvedValue({ id: "inv-2197u" });
+        taxRate: 0,
+        subtotal: 10,
+        unitsPerBox: null,
+        categoryTaxAmount: 0,
+        notes: null,
+        orderItemId: null,
+      };
+      prisma.invoice.findUnique.mockResolvedValue(draft);
+      prisma.product.findMany.mockResolvedValue([]);
+      prisma.trackedCategory.findMany.mockResolvedValue([]);
+      prisma.invoiceItem.findMany.mockResolvedValue([row]);
+      prisma.customer.findUnique.mockResolvedValue({ isTaxExempt: false });
+      prisma.invoice.update.mockResolvedValue(draft);
+      prisma.invoiceItem.update.mockResolvedValue({});
 
-      await service.update("inv-2197u", { issueDate: "2026-09-25T23:30:00-04:00" } as any);
+      await service.update(draft.id, {
+        issueDate: "2026-09-25T20:00:00-04:00",
+        items: [{ id: "item-1", description: "Widget", qty: 1, unitPrice: 10 }],
+      } as any);
 
-      const data = prisma.invoice.update.mock.calls[0][0].data;
-      expect(data.issueDate).toEqual(new Date("2026-09-25T00:00:00.000Z"));
+      expect(prisma.invoice.update.mock.calls[0][0].data.issueDate).toEqual(day25);
     });
   });
 });

@@ -135,23 +135,18 @@ export function startOfCalendarDay(
 
 /**
  * A CLIENT-supplied calendar-date field (e.g. invoice `issueDate`) → the
- * UTC-midnight SYMBOLIC stamp of the day it names (#2197). A bare
- * `YYYY-MM-DD`, or a value already in stamp form (exactly UTC midnight — a
- * round-tripped stored date), names its day literally. Any other datetime is a
- * real instant: its day is read in `timeZone`, so `2026-09-25T23:30:00-04:00`
- * is the 25th in New York, not the 26th. Never re-derive a bare date through
- * `timeZone` — UTC midnight is the previous evening west of UTC.
+ * UTC-midnight SYMBOLIC stamp of the literal day it names (#2197): its first
+ * ten characters, the house `calendarDayOf` rule. The client's offset and the
+ * tenant's zone are both ignored — re-reading a datetime through either shifts
+ * the day (`2026-09-25T20:00:00-04:00` is 00:00Z on the 26th). `null` when the
+ * value does not name a real calendar day (bad shape, or `2026-02-31`).
  */
-export function calendarStampFromInput(raw: string, timeZone?: string | null): Date {
-  if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return new Date(isoFromCalendarDate(raw));
-  const instant = new Date(raw);
-  if (Number.isNaN(instant.getTime())) return instant;
-  const isStamp =
-    instant.getUTCHours() === 0 &&
-    instant.getUTCMinutes() === 0 &&
-    instant.getUTCSeconds() === 0 &&
-    instant.getUTCMilliseconds() === 0;
-  return isStamp ? instant : startOfCalendarDay(instant, timeZone);
+export function calendarStampFromInput(raw: string): Date | null {
+  const day = raw.slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) return null;
+  const stamp = new Date(isoFromCalendarDate(day));
+  // Date rolls an out-of-range day over ("2026-02-31" → Mar 3) instead of failing.
+  return stamp.toISOString().slice(0, 10) === day ? stamp : null;
 }
 
 /**

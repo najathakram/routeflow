@@ -132,6 +132,13 @@ export function addCalendarDays(date: Date, days: number): Date {
   return out;
 }
 
+/** #2197: a client issueDate → the stamp of the literal day it names; 400 when it names none. */
+function issueDateStamp(raw: string): Date {
+  const stamp = calendarStampFromInput(raw);
+  if (!stamp) throw new BadRequestException("issueDate must be a calendar date (YYYY-MM-DD)");
+  return stamp;
+}
+
 // P5-12 / post-dated check payments PR-1: `CHECK_TRANSITIONS` (legal FORWARD transitions for
 // the check lifecycle) now comes from `../common/check-transitions` — an API-local mirror of the
 // ONE canonical copy at `packages/types/api/checks.ts` (`@routeflow/types`), also shared with web
@@ -372,6 +379,7 @@ export class InvoicesService {
    */
   /** SA-135: an internal caller's line may carry `packSnapshot` (ManualLineItem); the HTTP DTO never can. */
   async create(dto: Omit<CreateInvoiceDto, "items"> & { items: ManualLineItem[] }) {
+    const issueDateInput = dto.issueDate ? issueDateStamp(dto.issueDate) : null; // #2197: 400 first
     const customer = await this.prisma
       .forTenant()
       .customer.findUnique({ where: { id: dto.customerId } });
@@ -468,10 +476,8 @@ export class InvoicesService {
             shippingFee: shipping,
             total,
             dueDate: dto.dueDate ? new Date(dto.dueDate) : null,
-            // #2197: a client time component is read in the tenant's timezone.
-            issueDate: dto.issueDate
-              ? calendarStampFromInput(dto.issueDate, tenantDefaults.timezone)
-              : startOfCalendarDay(new Date(), tenantDefaults.timezone),
+            // #2197: the literal calendar day the client named, never a raw instant.
+            issueDate: issueDateInput ?? startOfCalendarDay(new Date(), tenantDefaults.timezone),
             notes: dto.notes ?? tenantDefaults.notes,
             terms: dto.terms ?? tenantDefaults.terms,
             paymentTermsLabel: dto.paymentTermsLabel ?? null,
@@ -3321,10 +3327,8 @@ export class InvoicesService {
       throw new BadRequestException("Only DRAFT invoices can be edited");
     await this.assertOrderInvoiceUnlocked(inv);
 
-    // #2197: the same tenant-local calendar-day stamp create() writes.
-    const issueDate = dto.issueDate
-      ? calendarStampFromInput(dto.issueDate, (await this.resolveTenantInvoiceDefaults()).timezone)
-      : undefined;
+    // #2197: the same literal calendar-day stamp create() writes.
+    const issueDate = dto.issueDate ? issueDateStamp(dto.issueDate) : undefined;
 
     // units_v1: BOTH rewrite paths — the item replace (re-split at the LIVE pack) and the
     // discount/shipping recompute, whose order back-sync writes onto the linked order's lines.
