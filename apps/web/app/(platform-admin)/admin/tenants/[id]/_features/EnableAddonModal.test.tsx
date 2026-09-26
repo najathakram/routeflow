@@ -50,6 +50,13 @@ describe("EnableAddonModal — Stripe configured", () => {
     fireEvent.click(screen.getByRole("radio", { name: "Bill via Stripe" }));
     // Radio picked but no price entered yet — still not a complete, explicit choice.
     expect(screen.getByRole("button", { name: "Continue" })).toBeDisabled();
+    // SA-277b: the MRR consequence of leaving this field empty (or Stripe unconfigured) is
+    // stated right under the field, matching addon.service.ts FIX-5's priceSnapshot 0 behaviour.
+    expect(
+      screen.getByText(
+        /Without a Stripe price \(or with Stripe not configured\) this is a free grant and adds nothing to MRR\./,
+      ),
+    ).toBeInTheDocument();
 
     fireEvent.change(screen.getByLabelText("Stripe price ID"), {
       target: { value: "price_123" },
@@ -113,6 +120,26 @@ describe("EnableAddonModal — Stripe configured", () => {
 
     expect(await screen.findByText("Add-on already active")).toBeInTheDocument();
     expect(screen.getByText(/No Stripe subscription item will be created/)).toBeInTheDocument();
+  });
+
+  it("SA-277a: a no-catalog-SKU 400 renders that exact message, keeps the modal open, and re-enables Confirm", async () => {
+    renderModal();
+    await screen.findByText(/Choose how/);
+    fireEvent.click(screen.getByRole("radio", { name: "Grant without billing" }));
+    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+    await screen.findByText(/No Stripe subscription item will be created/);
+
+    const noCatalogSkuMessage =
+      'Add-on "X" has no catalog SKU to price — publish a catalog version defining "X" before billing it';
+    mockEnableAddon.mockRejectedValueOnce({
+      response: { data: { message: noCatalogSkuMessage } },
+    });
+    const confirmButton = screen.getByRole("button", { name: "Confirm" });
+    fireEvent.click(confirmButton);
+
+    expect(await screen.findByText(noCatalogSkuMessage)).toBeInTheDocument();
+    expect(screen.getByText(/No Stripe subscription item will be created/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Confirm" })).not.toBeDisabled();
   });
 });
 

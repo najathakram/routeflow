@@ -13,19 +13,22 @@ import { PrismaService } from "../prisma/prisma.service";
 import { StorageService } from "../storage/storage.service";
 import { compressDocument } from "../storage/compress.util";
 import {
-  categoryTaxSnapshotOf,
   computeLineSubtotal,
-  computeCategoryTax,
   roundMoney,
   normalizeBoxesPieces,
   isBlockingPayment,
   remainingCapacity,
-  packFromOwnSplit,
-  regulatedUnitBasis,
-  type CategoryTaxType,
   inferredFlatRate,
 } from "@routeflow/pricing";
-import { loadPriorPacks, priceReplacedLine, resolveUpdateLinePack } from "./update-pack-resolution";
+import { orderLineShape, orderLineUnchanged } from "./order-backsync-lines";
+import {
+  buildEditedLines,
+  editInvoiceTotals,
+  loadEditCatalog,
+  orderSyncLines,
+  inPlacePatch,
+  matchEditLines,
+} from "./invoice-edit-plan";
 import { redactUpsellForCustomer } from "../common/upsell-redaction";
 import {
   CONFIRMED_PAYMENT,
@@ -48,7 +51,7 @@ import {
   resolveProductMatches,
   withOrderRecomputeLock,
 } from "./finalize-order-recompute";
-import { deliveredBasisByLine } from "./delivered-basis-by-line";
+import { deliveredBasisByLine, deliveredQtyFromBasis } from "./delivered-basis-by-line";
 import { assertOrderItemIdsBelongToOrder, logSkippedMatches } from "./order-item-provenance";
 import { EntitlementsService } from "../billing/entitlements.service";
 import {
@@ -70,6 +73,7 @@ import {
   WriteOffDto,
 } from "./dto/create-invoice.dto";
 import { CreatePartialInvoiceDto } from "./dto/create-partial-invoice.dto";
+import type { UpdateInvoiceDto } from "./dto/update-invoice.dto";
 import { ListInvoicesDto } from "./dto/list-invoices.dto";
 import { UpdateShipmentDto } from "../orders/dto/update-shipment.dto";
 import { JwtPayload } from "../auth/jwt-payload.interface";
@@ -104,6 +108,8 @@ import { resolveLineUnits } from "../products/line-units";
 import { prepareUnitLadders, requestsUnit } from "../orders/unit-line-build";
 import { standaloneAllocationTotals } from "./standalone-payment-totals";
 import { calendarDayOf } from "./settled-date-filter";
+import { retryOnTxConflict } from "../common/tx-retry";
+import { lockInvoiceRow, nextSentStatus, sendRefusal, voidRefusal } from "./invoice-send-guard";
 
 const TERM_DAYS: Record<string, number> = {
   "Due on Receipt": 0,
@@ -481,17 +487,7 @@ export class InvoicesService {
             payments: true,
           },
         });
-        if (hasRegulated) {
-          const packMap = await packAtSaleByProduct(tx, created.items ?? []);
-          await this.ledger.writeSaleEntries({
-            tenantId: this.prisma.getTenantId(),
-            orderId: null,
-            invoiceId: created.id,
-            soldAt: created.issueDate ?? new Date(),
-            lines: toSaleLedgerLines(created.items ?? [], packMap),
-            db: tx,
-          });
-        }
+        if (hasRegulated) await this.writeCreatedInvoiceLedger(tx, created);
         return created;
       });
     } catch (err: any) {
@@ -1341,9 +1337,11 @@ export class InvoicesService {
    * Re-sync the order's open pending-mirror draft to the order. No-op (returns
    * null) when the order has no open draft.
    *  - basis "order"     → mirror the full (non-cancelled) order line items.
-   *  - basis "delivered" → bill only the delivered quantity per line (uses the
-   *    cumulative OrderItem.deliveredQty, so it's idempotent across batches and
-   *    excludes refused/zero lines).
+   *  - basis "delivered" → bill only the delivered quantity per line, from the
+   *    evidence-keyed basis (SA-113a, delivered-basis-by-line.ts deliveredQtyFromBasis:
+   *    a line's own rows win; a line with none falls back to the legacy
+   *    OrderItem.deliveredQty column, SA-345a) — so it's idempotent across batches and
+   *    excludes refused/zero lines.
    * Keeps the invoice DRAFT, rebuilds its items, recomputes totals (proportional
    * tax-exempt-aware), and RESETS each OrderItem.invoicedQty to exactly the qty
    * this draft now bills (0 for unbilled lines) — the draft is the order's sole
@@ -1432,10 +1430,14 @@ export class InvoicesService {
     if (!order) return null;
 
     const tenantId = this.prisma.getTenantId();
+    // SA-113a/B785: "delivered" bills the evidence-keyed basis (DeliveryMutation rows); a line
+    // with no row of its own reads the legacy column (SA-345a, deliveredQtyFromBasis's doc).
+    const evidenceBasis =
+      opts.basis === "delivered" ? await deliveredBasisByLine(db, orderId) : null;
     const billable = order.lineItems
       .map((li: any) => ({
         li,
-        billQty: opts.basis === "delivered" ? Number(li.deliveredQty ?? 0) : Number(li.qty),
+        billQty: evidenceBasis ? deliveredQtyFromBasis(li, evidenceBasis) : Number(li.qty),
       }))
       .filter((x: any) => x.billQty > 0.001);
 
@@ -1557,7 +1559,7 @@ export class InvoicesService {
    * InvoiceItem.orderItemId provenance. So a regulated SEPARATE_INVOICE order (base +
    * -R# siblings) bills every line on exactly ONE invoice at its delivered qty — no
    * line folds onto the base while a sibling still bills it (no double-bill), and a
-   * refused line (deliveredQty 0) bills 0.
+   * refused line (delivered 0) bills 0.
    *
    * SAFE only when the open DRAFTs are a CLEAN per-line partition (createSplitInvoices
    * siblings / a lone pending-mirror). It BAILS (returns null, leaving the invoices as
@@ -1750,6 +1752,19 @@ export class InvoicesService {
     );
   }
 
+  /** SALE ledger rows for a just-created manual invoice; create() and duplicate() share this one path. */
+  private async writeCreatedInvoiceLedger(tx: any, created: any): Promise<void> {
+    const packMap = await packAtSaleByProduct(tx, created.items ?? []);
+    await this.ledger.writeSaleEntries({
+      tenantId: this.prisma.getTenantId(),
+      orderId: null,
+      invoiceId: created.id,
+      soldAt: created.issueDate ?? new Date(),
+      lines: toSaleLedgerLines(created.items ?? [], packMap),
+      db: tx,
+    });
+  }
+
   /**
    * Re-sync the regulated-sales ledger after a reconcile rebuilt ONE draft's items:
    * REVERSE the invoice's prior SALE rows (nets the old qty to 0, booked in the current
@@ -1792,7 +1807,8 @@ export class InvoicesService {
   /**
    * Shared sibling-aware rebuild core for reconcileOrderDeliveredInvoices and
    * reconcileOrderDraftInvoice's split path. Rebuilds each (draft, lines) pair from ONLY
-   * its own lines at `billQty` (basis "order" → li.qty, "delivered" → li.deliveredQty),
+   * its own lines at `billQty` (basis "order" → li.qty, "delivered" → the evidence basis,
+   * SA-113a; a line with no row of its own reads the legacy column, SA-345a),
    * allocates the order's regular tax across the drafts by subtotal (rounding remainder
    * to the largest, mirroring createSplitInvoices → Σ == the single-invoice tax), keeps
    * each DRAFT, and SETs each line's invoicedQty to what its one draft now bills (each
@@ -1814,8 +1830,11 @@ export class InvoicesService {
     const isTaxExempt = !!customer?.isTaxExempt;
     const orderSubtotal = Number(order.subtotal) || 1;
     const orderTax = Number(order.tax) || 0;
+    // SA-113a/B785: same evidence basis and reader as reconcileOrderDraftInvoice — one
+    // derivation. Fetched once per order, not per draft/line.
+    const evidenceBasis = basis === "delivered" ? await deliveredBasisByLine(db, order.id) : null;
     const billQtyOf = (li: any) =>
-      basis === "delivered" ? Number(li.deliveredQty ?? 0) : Number(li.qty);
+      evidenceBasis ? deliveredQtyFromBasis(li, evidenceBasis) : Number(li.qty);
 
     const perDraft = pairs.map(({ draft, lines }) => {
       const priorPackByLine = priorUnitsPerBoxMap(draft.items ?? []);
@@ -2251,7 +2270,6 @@ export class InvoicesService {
     for (const li of order.lineItems as any[]) existingById.set(li.id, li);
     // #1185 round 5, item 2 -- see resolveProductMatches' own doc.
     const { existingByProduct, ambiguousLineIds } = resolveProductMatches(order.lineItems);
-
     // Aggregate billed qty + subtotal, resolving each invoice line to its source
     // order line: prefer the stored orderItemId; else first-match by productId
     // (legacy rows). An invoice line with a product but no matching order line
@@ -2265,6 +2283,8 @@ export class InvoicesService {
       categoryTax: number; // RF-4: Σ billed category tax for this source line
       freeUnits: number; // BUY_N_GET_M: Σ billed free selling units for this source line
       unitPrice: number;
+      n: number; // contributing invoice lines
+      packs: Set<number>; // their packs (0 = none), for the shared-pack re-split rule
       sample: any; // an invoice item, for the box/piece + upb snapshot
     };
     const byTarget = new Map<string, Agg>();
@@ -2288,8 +2308,12 @@ export class InvoicesService {
           categoryTax: 0,
           freeUnits: 0,
           unitPrice: Number(it.unitPrice),
+          n: 0,
+          packs: new Set<number>(),
           sample: it,
         };
+        prev.n += 1;
+        prev.packs.add(Number(it.unitsPerBox ?? 0));
         prev.qty += Number(it.qty);
         prev.subtotal += Number(it.subtotal);
         prev.categoryTax += Number(it.categoryTaxAmount ?? 0);
@@ -2316,7 +2340,7 @@ export class InvoicesService {
 
     let subtotal = 0;
     let categoryTaxSum = 0;
-    for (const agg of byTarget.values()) {
+    for (const [key, agg] of byTarget) {
       const existing = agg.line;
       const lineSubtotal = roundMoney(agg.subtotal);
       const lineCategoryTax = roundMoney(agg.categoryTax);
@@ -2325,51 +2349,44 @@ export class InvoicesService {
       const lineFreeUnits = Math.max(0, Math.trunc(agg.freeUnits) || 0);
       subtotal += lineSubtotal;
       categoryTaxSum += lineCategoryTax;
-      // Preserve the denomination. For an existing line use ITS stored box/piece
-      // shape + snapshot upb; for a new line use the invoice item's snapshot. Box
-      // splits re-derive their display split from the billed qty; selling-unit and
-      // non-boxed lines keep boxes/pieces null (qty stays in their own unit). The
-      // live product is NEVER consulted — that is what created phantom splits.
-      const denomSource = existing ?? agg.sample;
-      const isBoxSplit = denomSource?.boxes != null;
-      const upb = Number(existing?.unitsPerBox ?? agg.sample?.unitsPerBox ?? 0);
-      const split = isBoxSplit
-        ? normalizeBoxesPieces({ qty: agg.qty, unitsPerBox: upb })
-        : { qty: agg.qty, boxes: null as number | null, pieces: null as number | null };
-      const upbSnapshot = upb > 0 ? upb : null;
+      const shape = orderLineShape(existing, agg);
       if (existing) {
-        await db.orderItem.update({
-          where: { id: existing.id },
-          data: {
-            qty: split.qty,
-            boxes: split.boxes,
-            pieces: split.pieces,
-            unitsPerBox: upbSnapshot,
-            unitPrice: agg.unitPrice,
-            subtotal: lineSubtotal,
-            // RF-4: mirror the billed category tax back onto the order line.
-            categoryTaxAmount: lineCategoryTax,
-            promoFreeUnits: lineFreeUnits > 0 ? lineFreeUnits : null,
-            invoicedQty: split.qty,
-            status: "PENDING",
-          },
-        });
+        // An order line that would be rewritten to exactly what it holds is not written at all.
+        if (!orderLineUnchanged(existing, shape, agg))
+          await db.orderItem.update({
+            where: { id: existing.id },
+            data: {
+              qty: shape.qty,
+              boxes: shape.boxes,
+              pieces: shape.pieces,
+              unitsPerBox: shape.unitsPerBox,
+              ...(shape.unitLabel !== undefined ? { unitLabel: shape.unitLabel } : {}),
+              unitPrice: agg.unitPrice,
+              subtotal: lineSubtotal,
+              // RF-4: mirror the billed category tax back onto the order line.
+              categoryTaxAmount: lineCategoryTax,
+              promoFreeUnits: lineFreeUnits > 0 ? lineFreeUnits : null,
+              invoicedQty: shape.qty,
+              status: "PENDING",
+            },
+          });
         existingById.delete(existing.id);
       } else {
         await db.orderItem.create({
           data: {
             orderId,
             productId: agg.productId,
-            qty: split.qty,
-            boxes: split.boxes,
-            pieces: split.pieces,
-            unitsPerBox: upbSnapshot,
+            qty: shape.qty,
+            boxes: shape.boxes,
+            pieces: shape.pieces,
+            unitsPerBox: shape.unitsPerBox,
+            ...(shape.unitLabel !== undefined ? { unitLabel: shape.unitLabel } : {}),
             unitPrice: agg.unitPrice,
             subtotal: lineSubtotal,
             // RF-4: mirror the billed category tax back onto the new order line.
             categoryTaxAmount: lineCategoryTax,
             promoFreeUnits: lineFreeUnits > 0 ? lineFreeUnits : null,
-            invoicedQty: split.qty,
+            invoicedQty: shape.qty,
             status: "PENDING",
             ...(tenantId ? { tenantId } : {}),
           },
@@ -3303,7 +3320,7 @@ export class InvoicesService {
     };
   }
 
-  async update(id: string, dto: Partial<CreateInvoiceDto>) {
+  async update(id: string, dto: UpdateInvoiceDto) {
     const inv = await this.findOneOrThrow(id); // a missing invoice is a 404 whatever else is wrong
     // units_v1: a line can be CREATED by a unit (create(), 4c-1) but not yet REWRITTEN by one (4c-2);
     // the shared DTO accepts `unitLabel`, and this path would silently store a PACK line for it.
@@ -3320,154 +3337,83 @@ export class InvoicesService {
       await unitAware.assertInvoiceRewriteAllowed(this.prisma.forTenant(), inv);
     }
 
-    if (dto.items) {
-      await assertOrderItemIdsBelongToOrder(this.prisma.forTenant(), inv.orderId, dto.items); // SA-093a rd6
-      // Pre-fetch products for boxes/pieces resolution AND the regulated-category
-      // snapshot (so an edited DRAFT re-attributes its regulated lines).
-      const productIds = [
-        ...new Set(dto.items.filter((i) => i.productId).map((i) => i.productId!)),
-      ];
-      const products =
-        productIds.length > 0
-          ? await this.prisma.forTenant().product.findMany({
-              where: { id: { in: productIds } },
-              select: {
-                id: true,
-                unitsPerBox: true,
-                trackedCategoryId: true,
-                trackedSubcategoryId: true,
-              },
-            })
-          : [];
-      const productMap = new Map(products.map((p) => [p.id, p]));
-      // RF-4: regulated section tax config for the edited lines (mirrors create()).
-      const editCatIds = [
-        ...new Set(products.map((p) => p.trackedCategoryId).filter(Boolean)),
-      ] as string[];
-      const categoryMap = new Map<string, any>(
-        (editCatIds.length > 0
-          ? await this.prisma
-              .forTenant()
-              .trackedCategory.findMany({ where: { id: { in: editCatIds } } })
-          : []
-        ).map((c: any) => [c.id, c]),
-      );
+    const items = dto.items;
+    if (items) {
+      await assertOrderItemIdsBelongToOrder(this.prisma.forTenant(), inv.orderId, items); // SA-093a rd6
+      // Products (pack + regulated snapshot) and section tax config for the edited lines (mirrors create()).
+      const { productMap, categoryMap } = await loadEditCatalog(this.prisma.forTenant(), items);
 
-      // B717/SA-077: this replace path recreates every line, so a pack it carries is lost
-      // unless read first. Rule + reasoning: update-pack-resolution.ts.
-      const priorPacks = await loadPriorPacks(this.prisma.forTenant().invoiceItem, id, productIds);
-
-      let subtotal = 0;
-      const itemsData = dto.items.map((item) => {
-        const product = item.productId ? productMap.get(item.productId) : undefined;
-        const livePack = product?.unitsPerBox ?? null; // B717: ONE read, passed as a parameter
-        const qty = item.qty;
-        let boxes: number | null = null;
-        let pieces: number | null = null;
-        let unitsPerBox: number | undefined;
-        // SA-068: the pack comes from the PAYLOAD's own split, never the live product — the
-        // edit page already sends boxes/pieces/qty consistent with the line's OWN snapshot (or,
-        // for a brand-new line with no snapshot, consistent with the live pack it read at page
-        // load). Re-normalizing here at TODAY's live pack is what silently re-split a stored
-        // 2-box/3-piece (snapshot 12, qty 27) line at a since-changed pack of 24 on a plain
-        // notes-only save — and that corrupted qty back-synced onto the linked order line.
-        // qty/boxes/pieces are stored AS SENT, always; only whether `unitsPerBox` gets a
-        // snapshot (derivable) or stays null (not derivable — no boxes, non-integer, or exactly
-        // 1) differs. Never overwrite qty from boxes * livePack + pieces.
-        if (item.productId && (item.boxes != null || item.pieces != null)) {
-          boxes = item.boxes ?? null;
-          pieces = item.pieces ?? null;
-          const pack = packFromOwnSplit({ qty: item.qty, boxes: item.boxes, pieces: item.pieces });
-          // B717/SA-077: payload split -> the product's stored lines when unanimous -> live.
-          const res = resolveUpdateLinePack(pack, item, livePack, priorPacks);
-          if (res.pack != null) unitsPerBox = res.pack;
-          if (res.warn) this.logger.warn(`update(): invoiceId ${id} ${res.warn}`);
-          // The resolver already chose the pack; this only reports a payload/live divergence.
-          if (pack != null && livePack && livePack !== pack) {
-            this.logger.warn(
-              `update(): invoiceId ${id} productId ${item.productId} — payload's implied pack ` +
-                `${pack} differs from the live product's ${livePack}; using the payload's pack.`,
-            );
-          }
+      const { updated } = await this.prisma.tenantTransaction(async (tx: any) => {
+        // Serialize concurrent saves of this invoice: rows are read AFTER the lock, so a second save
+        // sees the first's rows and totals instead of writing over them (no P2025, total = its lines).
+        // Lock order (SA-137/203): the ORDER row first, then the invoice, as the invoice-from-order paths do.
+        if (inv.orderId)
+          await tx.$executeRaw`SELECT id FROM "Order" WHERE id = ${inv.orderId} FOR UPDATE`;
+        await tx.$executeRaw`SELECT id FROM "Invoice" WHERE id = ${id} FOR UPDATE`;
+        // SA-184/186: match the payload to THIS invoice's stored rows (by id, tenant-scoped; never by
+        // productId), keep untouched rows verbatim and in place, re-price only changed lines. Rules
+        // and reasoning: invoice-edit-plan.ts.
+        const storedRows = await tx.invoiceItem.findMany({ where: { invoiceId: id } });
+        const editLines = buildEditedLines({
+          items: items,
+          stored: storedRows,
+          matches: matchEditLines(items, storedRows),
+          productMap,
+          categoryMap,
+          clampFreeUnits: (f, b, q) => this.clampLineFreeUnits(f, b, q),
+          warn: (m) => this.logger.warn(`update(): invoiceId ${id} ${m}`),
+        });
+        const itemsData = editLines.map((l) => l.data);
+        await this.applyMsrpSnapshots(
+          tx,
+          inv.customerId,
+          editLines.filter((l) => !l.untouched).map((l) => l.data as any),
+        );
+        const customerForTax = await tx.customer.findFirst({
+          where: { id: inv.customerId },
+          select: { isTaxExempt: true },
+        });
+        const isTaxExempt = !!(customerForTax as any)?.isTaxExempt;
+        const cur = await tx.invoice.findUnique({
+          where: { id },
+          select: { discount: true, shippingFee: true },
+        });
+        const invDiscount = dto.discount ?? Number(cur.discount);
+        const shipping = dto.shippingFee ?? Number(cur.shippingFee);
+        const { subtotal, taxTotal, total } = editInvoiceTotals(
+          itemsData,
+          isTaxExempt,
+          invDiscount,
+          shipping,
+        );
+        // Rebuild the items AND re-sync the W5 ledger atomically: the delete-and-recreate
+        // rotates invoiceItemIds and can change qty/price or add/remove a regulated line,
+        // so the invoice's prior SALE rows must be reversed and re-written from the new
+        // items (a no-op when neither the old nor new invoice carries a regulated line).
+        // Matched rows stay IN PLACE (ledger, credit notes and returns reference their ids); only
+        // rows the payload dropped are deleted and only changed rows are written.
+        const keptIds = editLines.flatMap((l) => (l.rowId ? [l.rowId] : []));
+        await tx.invoiceItem.deleteMany({ where: { invoiceId: id, id: { notIn: keptIds } } });
+        for (const l of editLines) {
+          const row = l.rowId && storedRows.find((r: any) => r.id === l.rowId);
+          const patch = row ? inPlacePatch(l, row) : null;
+          if (patch) await tx.invoiceItem.update({ where: { id: l.rowId }, data: patch });
         }
-        // Refusal (SA-077(2)), BUY_N_GET_M and the money all live in priceReplacedLine now.
-        const freeUnits = this.clampLineFreeUnits(item.promoFreeUnits, boxes, qty);
-        const lineSub = priceReplacedLine(item, { qty, boxes, pieces, unitsPerBox, freeUnits });
-        subtotal += lineSub;
-        // RF-4: per-line category tax on the net sale (mirrors create()).
-        const category = product?.trackedCategoryId
-          ? categoryMap.get(product.trackedCategoryId)
-          : null;
-        const upbForPieces = Number(livePack ?? 0);
-        // B679: the ONE conversion this design allows — never an inline copy of it. `item`
-        // is never a unit-labeled line here: update() refuses dto.items.some(requestsUnit) above.
-        const pieceQty = regulatedUnitBasis(
-          { qty, boxes, pieces, unitLabel: item.unitLabel ?? null },
-          upbForPieces,
-        ).unitBasisQty;
-        const categoryTaxAmount = category
-          ? computeCategoryTax({
-              taxType: category.taxType as CategoryTaxType,
-              rate: Number(category.rate),
-              unitBasisQty: pieceQty,
-              lineSubtotal: lineSub,
-              priceIncludesTax: category.priceIncludesTax,
-            })
-          : 0;
-        return {
-          description: item.description,
-          productId: item.productId,
-          orderItemId: item.orderItemId ?? null, // SA-093a rd6: root fix for findings 2/3
-          qty,
-          unitPrice: item.unitPrice,
-          discount: item.discount ?? 0,
-          taxRate: item.taxRate ?? 0,
-          subtotal: lineSub,
-          boxes,
-          pieces,
-          // B717: never CLEAR a pack the line carried. Storage and pricing gate differently ON
-          // PURPOSE — see update-pack-resolution.ts's "STORAGE vs PRICING" note; spec (g) pins it.
-          unitsPerBox:
-            unitsPerBox ?? (item.productId ? priorPacks.get(item.productId) : null) ?? null,
-          // BUY_N_GET_M snapshot — preserved across the delete-and-recreate.
-          promoFreeUnits: freeUnits > 0 ? freeUnits : null,
-          // Re-snapshot the regulated category/subcategory from the (current) product,
-          // consistent with create(); the ledger re-sync below reconciles the change.
-          trackedCategoryId: product?.trackedCategoryId ?? null,
-          trackedSubcategoryId: product?.trackedSubcategoryId ?? null,
-          // RF-4: per-line category tax snapshot (folded into taxTotal below).
-          categoryTaxAmount,
-          ...categoryTaxSnapshotOf(category ?? null), // B297: re-reads the LIVE category above.
-          // Preserve per-line notes across the delete-and-recreate edit — dropping
-          // this silently wipes notes the order carried onto the invoice.
-          notes: item.notes ?? null,
-          // MSRP snapshot — set below by applyMsrpSnapshots (null when flag.msrp is off).
-          msrp: null as number | null,
-          tenantId: this.prisma.getTenantId(), // nested creates bypass forTenant() extension
-        };
-      });
-      subtotal = roundMoney(subtotal);
-      await this.applyMsrpSnapshots(this.prisma.forTenant(), inv.customerId, itemsData);
-      const customerForTax = await this.prisma
-        .forTenant()
-        .customer.findFirst({ where: { id: inv.customerId }, select: { isTaxExempt: true } });
-      // Tax from each line's stored post-discount subtotal (same basis as the line).
-      const isTaxExempt = !!(customerForTax as any)?.isTaxExempt;
-      const regularTax = isTaxExempt
-        ? 0
-        : roundMoney(itemsData.reduce((s, it) => s + it.subtotal * (it.taxRate ?? 0), 0));
-      // RF-4: fold the regulated category tax (exempt → 0 for both + zeroed snapshots).
-      const categoryTaxTotal = this.foldCategoryTax(itemsData, isTaxExempt);
-      const taxTotal = roundMoney(regularTax + categoryTaxTotal);
-      const invDiscount = dto.discount ?? Number(inv.discount);
-      const shipping = dto.shippingFee ?? Number(inv.shippingFee);
-      const total = roundMoney(subtotal - invDiscount + shipping + taxTotal);
-      // Rebuild the items AND re-sync the W5 ledger atomically: the delete-and-recreate
-      // rotates invoiceItemIds and can change qty/price or add/remove a regulated line,
-      // so the invoice's prior SALE rows must be reversed and re-written from the new
-      // items (a no-op when neither the old nor new invoice carries a regulated line).
-      const updated = await this.prisma.tenantTransaction(async (tx: any) => {
-        await tx.invoiceItem.deleteMany({ where: { invoiceId: id } });
+        // SA-189: history must tell an attested pack (the operator's explicit unitsPerBox) from a recovered one.
+        const attested = editLines.flatMap((l) =>
+          l.attestedPack ? [{ rowId: l.rowId, unitsPerBox: l.attestedPack }] : [],
+        );
+        if (attested.length > 0) {
+          await tx.auditLog.create({
+            data: {
+              tenantId: this.prisma.getTenantId(),
+              action: "INVOICE_LINE_PACK_ATTESTED",
+              entityType: "invoice",
+              entityId: id,
+              meta: { attested },
+            },
+          });
+        }
         const u = await tx.invoice.update({
           where: { id },
           data: {
@@ -3494,7 +3440,11 @@ export class InvoicesService {
               depositDueDate: dto.depositDueDate ? new Date(dto.depositDueDate) : null,
             }),
             pdfUrl: null,
-            items: { create: itemsData },
+            items: {
+              create: editLines
+                .filter((l) => !l.rowId)
+                .map((l) => ({ ...l.data, tenantId: this.prisma.getTenantId() })),
+            },
           },
           include: {
             customer: { select: { id: true, businessName: true } },
@@ -3502,10 +3452,14 @@ export class InvoicesService {
             payments: true,
           },
         });
-        await this.resyncInvoiceLedger(id, inv.orderId ?? null, u.items ?? [], tx);
-        return u;
+        const syncLines = orderSyncLines(editLines, storedRows, cur, invDiscount, shipping);
+        // A save that changed no line leaves the ledger alone too (no reverse-and-rewrite churn).
+        if (syncLines?.length)
+          await this.resyncInvoiceLedger(id, inv.orderId ?? null, u.items ?? [], tx);
+        return { updated: u };
       });
       // Backward sync: keep the linked order in step with the edited invoice.
+      // SA-233/235: ALWAYS the full coverage recompute (no payload-shape gate); identical rows are skipped inside it.
       if (inv.orderId) await this.recomputeOrderFromInvoices(inv.orderId);
       return updated;
     }
@@ -3722,70 +3676,12 @@ export class InvoicesService {
 
   async send(id: string, opts?: { allowPreDelivery?: boolean }) {
     const inv = await this.findOneOrThrow(id);
-    if (inv.status === InvoiceStatus.VOID)
-      throw new BadRequestException("Cannot send a voided invoice");
+    const refusal = sendRefusal(inv.status); // #2255: fast pre-tx; markSent re-checks under the lock
+    if (refusal) throw new BadRequestException(refusal);
     await this.assertOrderInvoiceUnlocked(inv, opts);
     // P5-13: SENT flip + oldest-first credit auto-apply are ONE atomic operation.
     // Idempotent on re-send. If the tx throws, the send fails — money first.
-    const { updated, auto } = await this.prisma.tenantTransaction(
-      async (tx) => {
-        // P5-13: only flip DRAFT → SENT. Re-sending an invoice that credit auto-apply
-        // already made PAID/PARTIAL must NOT downgrade it (auto-apply returns early on a
-        // zero balance and won't restore the status), which would leave paidAt stale.
-        const nextStatus = inv.status === InvoiceStatus.DRAFT ? InvoiceStatus.SENT : inv.status;
-        const updated = await tx.invoice.update({
-          where: { id },
-          data: { status: nextStatus, sentAt: new Date() },
-        });
-        // B108: make the "send() catches up" comment above actually true. An
-        // operator's explicit-amount OrderCreditNote intents are settled HERE,
-        // at their recorded amount, before the oldest-first sweep runs.
-        // settleOrderCreditsInTx clamps to the remaining balance, so money can
-        // never move twice even if it already ran (e.g. at order-create time).
-        // The explicitIds exclusion just below is deliberately KEPT — settling
-        // an explicit intent doesn't change that the sweep must still never
-        // override it.
-        if (updated.orderId) {
-          await this.creditNotes.settleOrderCreditsInTx(tx, updated.orderId);
-        }
-        // An operator's EXPLICIT-amount order selection must not be overridden by the
-        // oldest-first sweep; null-amount intents are already settled and clamp to 0.
-        const explicitIds = updated.orderId
-          ? (
-              await tx.orderCreditNote.findMany({
-                where: { orderId: updated.orderId, amount: { not: null } },
-                select: { creditNoteId: true },
-              })
-            ).map((r: any) => r.creditNoteId)
-          : [];
-        const auto = await this.creditNotes.autoApplyOldestCreditsInTx(tx, id, updated.customerId, {
-          excludeCreditNoteIds: explicitIds,
-        });
-        // A credit pre-applied at order time can already cover this invoice. Auto-apply
-        // returns {applied:0, invoiceStatus:null} on a zero balance, which used to leave
-        // a fully-credited invoice stuck SENT — recompute from the payments it has.
-        if (!auto.invoiceStatus) {
-          const fresh = await tx.invoice.findUnique({ where: { id }, include: { payments: true } });
-          if (fresh) {
-            // F03/R1: CONFIRMED (PAID) payments only.
-            const paid = roundMoney(sumConfirmed(fresh.payments));
-            const st = this.recomputeStatus(paid, Number(fresh.total), fresh.dueDate, fresh.status);
-            if (st !== fresh.status) {
-              await tx.invoice.update({
-                where: { id },
-                data: { status: st, paidAt: st === InvoiceStatus.PAID ? new Date() : null },
-              });
-              auto.invoiceStatus = st;
-            }
-          }
-        }
-        // Sales agents & commissions (flag-gated, no-op when off): the invoice
-        // just flipped DRAFT→SENT (or was re-sent) — accrue/re-sync commission.
-        await this.commissionEngine.syncInvoiceCommissionSafe(id, tx);
-        return { updated, auto };
-      },
-      { isolationLevel: "Serializable" },
-    );
+    const { updated, auto } = await this.markSent(id, inv.orderId);
     this.gateway.emitInvoiceUpdated(this.prisma.getTenantId(), {
       invoiceId: updated.id,
       invoiceNumber: updated.invoiceNumber,
@@ -3815,6 +3711,112 @@ export class InvoicesService {
     return updated;
   }
 
+  /**
+   * The SENT flip + credit settle/auto-apply shared by send() and sendEmail() — ONE Serializable
+   * tx, re-run on a write conflict (#2255, SA-269 retryOnTxConflict). Everything it decides comes
+   * from the row it locks and re-reads first (SA-404), so a retry can never write SENT over a
+   * VOID committed since the caller's read.
+   */
+  private markSent(id: string, orderId: string | null, emailSent = false) {
+    return retryOnTxConflict(`invoice mark-sent id=${id}`, () =>
+      this.prisma.tenantTransaction(
+        async (tx) => {
+          // #2255 / SA-404: FIRST statement — lock (Order →) Invoice and re-read, then decide from
+          // the LOCKED row: a retry runs on a fresh snapshot, never on the caller's pre-tx read.
+          const locked = await lockInvoiceRow(tx, id, orderId);
+          if (!locked) throw new NotFoundException("Invoice not found");
+          const refusal = sendRefusal(locked.status, emailSent);
+          if (refusal) throw new BadRequestException(refusal);
+          const nextStatus = nextSentStatus(locked.status);
+          const updated = await tx.invoice.update({
+            where: { id },
+            data: { status: nextStatus, sentAt: new Date() },
+          });
+          // B108: make the "send() catches up" comment above actually true. An
+          // operator's explicit-amount OrderCreditNote intents are settled HERE,
+          // at their recorded amount, before the oldest-first sweep runs.
+          // settleOrderCreditsInTx clamps to the remaining balance, so money can
+          // never move twice even if it already ran (e.g. at order-create time).
+          // The explicitIds exclusion just below is deliberately KEPT — settling
+          // an explicit intent doesn't change that the sweep must still never
+          // override it.
+          if (updated.orderId) {
+            await this.creditNotes.settleOrderCreditsInTx(tx, updated.orderId);
+          }
+          // An operator's EXPLICIT-amount order selection must not be overridden by the
+          // oldest-first sweep; null-amount intents are already settled and clamp to 0.
+          const explicitIds = updated.orderId
+            ? (
+                await tx.orderCreditNote.findMany({
+                  where: { orderId: updated.orderId, amount: { not: null } },
+                  select: { creditNoteId: true },
+                })
+              ).map((r: any) => r.creditNoteId)
+            : [];
+          const auto = await this.creditNotes.autoApplyOldestCreditsInTx(
+            tx,
+            id,
+            updated.customerId,
+            {
+              excludeCreditNoteIds: explicitIds,
+            },
+          );
+          // A credit pre-applied at order time can already cover this invoice. Auto-apply
+          // returns {applied:0, invoiceStatus:null} on a zero balance, which used to leave
+          // a fully-credited invoice stuck SENT — recompute from the payments it has.
+          if (!auto.invoiceStatus) {
+            const fresh = await tx.invoice.findUnique({
+              where: { id },
+              include: { payments: true },
+            });
+            if (fresh) {
+              // F03/R1: CONFIRMED (PAID) payments only.
+              const paid = roundMoney(sumConfirmed(fresh.payments));
+              const st = this.recomputeStatus(
+                paid,
+                Number(fresh.total),
+                fresh.dueDate,
+                fresh.status,
+              );
+              if (st !== fresh.status) {
+                await tx.invoice.update({
+                  where: { id },
+                  data: { status: st, paidAt: st === InvoiceStatus.PAID ? new Date() : null },
+                });
+                auto.invoiceStatus = st;
+              }
+            }
+          }
+          // Sales agents & commissions (flag-gated, no-op when off): the invoice
+          // just flipped DRAFT→SENT (or was re-sent) — accrue/re-sync commission.
+          await this.commissionEngine.syncInvoiceCommissionSafe(id, tx);
+          return { updated, auto };
+        },
+        { isolationLevel: "Serializable" },
+      ),
+    );
+  }
+
+  /**
+   * SA-404a: sendEmail's pre-send check — a short Serializable tx that locks (Order →) Invoice and
+   * runs the send guard, so a VOID committed before the email means NO email and a 400. R5 keeps
+   * the SENT flip after delivery; the residual is only the email I/O window (markSent then refuses
+   * with VOIDED_DURING_EMAIL).
+   */
+  private assertSendableUnderLock(id: string, orderId: string | null) {
+    return retryOnTxConflict(`invoice send pre-check id=${id}`, () =>
+      this.prisma.tenantTransaction(
+        async (tx) => {
+          const locked = await lockInvoiceRow(tx, id, orderId);
+          if (!locked) throw new NotFoundException("Invoice not found");
+          const refusal = sendRefusal(locked.status);
+          if (refusal) throw new BadRequestException(refusal);
+        },
+        { isolationLevel: "Serializable" },
+      ),
+    );
+  }
+
   /** Send the invoice as an actual email and mark as SENT. */
   async sendEmail(id: string, overrideEmail?: string, variant?: "draft" | "final") {
     const inv = await this.prisma.forTenant().invoice.findUnique({
@@ -3832,8 +3834,8 @@ export class InvoicesService {
       },
     });
     if (!inv) throw new NotFoundException("Invoice not found");
-    if (inv.status === InvoiceStatus.VOID)
-      throw new BadRequestException("Cannot send a voided invoice");
+    const refusal = sendRefusal(inv.status); // #2255: fast pre-tx; markSent re-checks under the lock
+    if (refusal) throw new BadRequestException(refusal);
     await this.assertOrderInvoiceUnlocked(inv);
 
     // Import sentinels (`@imported.local` / `@placeholder.local`) are non-routable —
@@ -3940,6 +3942,7 @@ export class InvoicesService {
       depositAmount: this.computeDepositFields(inv as any, 0).depositAmount,
       depositDueDate: inv.depositDueDate ? formatDate(inv.depositDueDate) : null,
     };
+    await this.assertSendableUnderLock(id, inv.orderId); // SA-404a: VOID now ⇒ 400, no email
     const sendResult = await this.emailService.sendInvoice(emailPayload);
 
     // R5: the email server was configured but the actual send did NOT succeed
@@ -3954,66 +3957,8 @@ export class InvoicesService {
     }
 
     // Mark as SENT. P5-13: SENT flip + oldest-first credit auto-apply are ONE atomic
-    // operation. PDF/email I/O above stays OUTSIDE the tx.
-    const { updated, auto } = await this.prisma.tenantTransaction(
-      async (tx) => {
-        // P5-13: only flip DRAFT → SENT. Re-sending an invoice that credit auto-apply
-        // already made PAID/PARTIAL must NOT downgrade it (auto-apply returns early on a
-        // zero balance and won't restore the status), which would leave paidAt stale.
-        const nextStatus = inv.status === InvoiceStatus.DRAFT ? InvoiceStatus.SENT : inv.status;
-        const updated = await tx.invoice.update({
-          where: { id },
-          data: { status: nextStatus, sentAt: new Date() },
-        });
-        // B108: make the "send() catches up" comment above actually true. An
-        // operator's explicit-amount OrderCreditNote intents are settled HERE,
-        // at their recorded amount, before the oldest-first sweep runs.
-        // settleOrderCreditsInTx clamps to the remaining balance, so money can
-        // never move twice even if it already ran (e.g. at order-create time).
-        // The explicitIds exclusion just below is deliberately KEPT — settling
-        // an explicit intent doesn't change that the sweep must still never
-        // override it.
-        if (updated.orderId) {
-          await this.creditNotes.settleOrderCreditsInTx(tx, updated.orderId);
-        }
-        // An operator's EXPLICIT-amount order selection must not be overridden by the
-        // oldest-first sweep; null-amount intents are already settled and clamp to 0.
-        const explicitIds = updated.orderId
-          ? (
-              await tx.orderCreditNote.findMany({
-                where: { orderId: updated.orderId, amount: { not: null } },
-                select: { creditNoteId: true },
-              })
-            ).map((r: any) => r.creditNoteId)
-          : [];
-        const auto = await this.creditNotes.autoApplyOldestCreditsInTx(tx, id, updated.customerId, {
-          excludeCreditNoteIds: explicitIds,
-        });
-        // A credit pre-applied at order time can already cover this invoice. Auto-apply
-        // returns {applied:0, invoiceStatus:null} on a zero balance, which used to leave
-        // a fully-credited invoice stuck SENT — recompute from the payments it has.
-        if (!auto.invoiceStatus) {
-          const fresh = await tx.invoice.findUnique({ where: { id }, include: { payments: true } });
-          if (fresh) {
-            // F03/R1: CONFIRMED (PAID) payments only.
-            const paid = roundMoney(sumConfirmed(fresh.payments));
-            const st = this.recomputeStatus(paid, Number(fresh.total), fresh.dueDate, fresh.status);
-            if (st !== fresh.status) {
-              await tx.invoice.update({
-                where: { id },
-                data: { status: st, paidAt: st === InvoiceStatus.PAID ? new Date() : null },
-              });
-              auto.invoiceStatus = st;
-            }
-          }
-        }
-        // Sales agents & commissions (flag-gated, no-op when off): the invoice
-        // just flipped DRAFT→SENT (or was re-sent) — accrue/re-sync commission.
-        await this.commissionEngine.syncInvoiceCommissionSafe(id, tx);
-        return { updated, auto };
-      },
-      { isolationLevel: "Serializable" },
-    );
+    // operation. PDF/email I/O above stays OUTSIDE the tx (a retry never re-sends the email).
+    const { updated, auto } = await this.markSent(id, inv.orderId, true);
     this.gateway.emitInvoiceUpdated(this.prisma.getTenantId(), {
       invoiceId: updated.id,
       invoiceNumber: updated.invoiceNumber,
@@ -4298,11 +4243,9 @@ export class InvoicesService {
       include: { payments: true },
     });
     if (!inv) throw new NotFoundException("Invoice not found");
-    const external = this.externalPaidOn(inv.payments ?? []);
-    if (external > 0.001)
-      throw new BadRequestException(
-        `Cannot void an invoice with ${formatMoney(external)} in cash/check/card payments. Reverse or refund those payments first.`,
-      );
+    // #2255 / SA-404: fast pre-tx refusal; the tx re-checks it on the locked row.
+    const refusal = voidRefusal(this.externalPaidOn(inv.payments ?? []));
+    if (refusal) throw new BadRequestException(refusal);
 
     // Wrap in a transaction so the void + invoicedQty decrements are atomic.
     // We need to free up the qty on the source order so the operator can
@@ -4310,19 +4253,27 @@ export class InvoicesService {
     // an order, it should be possible to split it into multiple invoices"
     // scenario. The auto-create-on-DELIVERED captured all remaining qty; voiding
     // releases it so a fresh split can run.
-    return this.prisma.tenantTransaction(
-      async (tx) => {
-        // Wallet money first: a credit applied to this invoice goes back to its note
-        // (spendable again) instead of being stranded on a dead invoice.
-        await this.releaseWalletPaymentsInTx(tx, id);
-        return this.voidInvoiceInTx(tx, id, inv.orderId);
-      },
-      // Serializable, matching the orders-side void caller (orders.service.ts ~:2770):
-      // the default READ COMMITTED left a window between the cap's findMany/update pair
-      // (below, in voidInvoiceInTx) where a concurrent applyToInvoice/settleOrderCreditsInTx
-      // on a different invoice could raise a note's amountUsed, so the blind full-column
-      // cap write could land at amount < amountUsed (F09 A5).
-      { isolationLevel: "Serializable", timeout: 15_000 },
+    // #2255: re-run on a write conflict (SA-269); the claim in voidInvoiceInTx keeps it single.
+    return retryOnTxConflict(`invoice void id=${id}`, () =>
+      this.prisma.tenantTransaction(
+        async (tx) => {
+          // SA-404: FIRST statement — lock (Order →) Invoice, re-read payments, re-check the guard.
+          const locked = await lockInvoiceRow(tx, id, inv.orderId);
+          if (!locked) throw new NotFoundException("Invoice not found");
+          const lockedRefusal = voidRefusal(this.externalPaidOn(locked.payments ?? []));
+          if (lockedRefusal) throw new BadRequestException(lockedRefusal);
+          // Wallet money first: a credit applied to this invoice goes back to its note
+          // (spendable again) instead of being stranded on a dead invoice.
+          await this.releaseWalletPaymentsInTx(tx, id);
+          return this.voidInvoiceInTx(tx, id, inv.orderId);
+        },
+        // Serializable, matching the orders-side void caller (orders.service.ts ~:2770):
+        // the default READ COMMITTED left a window between the cap's findMany/update pair
+        // (below, in voidInvoiceInTx) where a concurrent applyToInvoice/settleOrderCreditsInTx
+        // on a different invoice could raise a note's amountUsed, so the blind full-column
+        // cap write could land at amount < amountUsed (F09 A5).
+        { isolationLevel: "Serializable", timeout: 15_000 },
+      ),
     );
   }
 
@@ -4656,8 +4607,8 @@ export class InvoicesService {
       // duplicate() never receives a caller tx; if it ever does, reserve INSIDE it with
       // `generateInvoiceNumber(tenantId, tx)` per fix-round-2b.md D7.
       const invoiceNumber = await this.nextInvoiceNumber();
-      return await this.prisma.tenantTransaction(async (tx: any) =>
-        tx.invoice.create({
+      return await this.prisma.tenantTransaction(async (tx: any) => {
+        const copy = await tx.invoice.create({
           data: {
             invoiceNumber,
             customerId: inv.customerId,
@@ -4685,8 +4636,12 @@ export class InvoicesService {
             items: true,
             payments: true,
           },
-        }),
-      );
+        });
+        // B680: the copy's regulated lines get their own SALE rows, same path as create().
+        if (itemsData.some((it) => it.trackedCategoryId != null))
+          await this.writeCreatedInvoiceLedger(tx, copy);
+        return copy;
+      });
     } catch (err: any) {
       // B100/F16b (REG-B100-E): duplicate() had no P2002 catch — a concurrent
       // duplicate's unique-constraint hit propagated as a raw 500 instead of the
@@ -5702,6 +5657,10 @@ export class InvoicesService {
         });
         payments.push(payment);
 
+        // #2255 / SA-404d R2: EVERY payment updates its Invoice row in this tx, unconditionally — a
+        // PENDING/DRAFT payment is blocking money too, and the real UPDATE takes the row lock, so a
+        // concurrent void conflicts (40001) and its retry re-reads it (the #2258 writer invariant).
+        let invoiceData: Prisma.InvoiceUpdateInput = { updatedAt: new Date() };
         if (status === "PAID") {
           // F03/R1: CONFIRMED (PAID) rows only feed recomputeStatus.
           const allPayments = await tx.invoicePayment.findMany({
@@ -5714,14 +5673,12 @@ export class InvoicesService {
             invoice.dueDate,
             invoice.status,
           );
-          await tx.invoice.update({
-            where: { id: alloc.invoiceId },
-            data: {
-              status: newStatus,
-              paidAt: newStatus === InvoiceStatus.PAID ? new Date() : null,
-            },
-          });
+          invoiceData = {
+            status: newStatus,
+            paidAt: newStatus === InvoiceStatus.PAID ? new Date() : null,
+          };
         }
+        await tx.invoice.update({ where: { id: alloc.invoiceId }, data: invoiceData });
       }
 
       // Commission hook: the payments-modal / buyer-allocation path creates PAID
