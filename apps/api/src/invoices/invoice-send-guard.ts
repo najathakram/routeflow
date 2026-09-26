@@ -10,9 +10,14 @@ import { formatMoney } from "../messaging/messaging.helpers";
  * {@link lockInvoiceRow} as the authoritative one.
  */
 
-/** send()/sendEmail(): the refusal to throw (400), or null. */
-export function sendRefusal(status: InvoiceStatus): string | null {
-  return status === InvoiceStatus.VOID ? "Cannot send a voided invoice" : null;
+/** SA-404a: markSent's refusal AFTER the email went out must say so, so the operator can act. */
+export const VOIDED_DURING_EMAIL =
+  "The invoice was voided while its email was being sent — the customer received the email; nothing was marked sent";
+
+/** send()/sendEmail(): the refusal to throw (400), or null. `emailSent` = the email already went out. */
+export function sendRefusal(status: InvoiceStatus, emailSent = false): string | null {
+  if (status !== InvoiceStatus.VOID) return null;
+  return emailSent ? VOIDED_DURING_EMAIL : "Cannot send a voided invoice";
 }
 
 /** Only flip DRAFT → SENT. Re-sending an invoice that credit auto-apply already made PAID/PARTIAL

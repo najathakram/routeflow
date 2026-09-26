@@ -3698,14 +3698,13 @@ export class InvoicesService {
     return updated;
   }
 
-  /** Send the invoice as an actual email and mark as SENT. */
   /**
    * The SENT flip + credit settle/auto-apply shared by send() and sendEmail() — ONE Serializable
    * tx, re-run on a write conflict (#2255, SA-269 retryOnTxConflict). Everything it decides comes
    * from the row it locks and re-reads first (SA-404), so a retry can never write SENT over a
    * VOID committed since the caller's read.
    */
-  private markSent(id: string, orderId: string | null) {
+  private markSent(id: string, orderId: string | null, emailSent = false) {
     return retryOnTxConflict(`invoice mark-sent id=${id}`, () =>
       this.prisma.tenantTransaction(
         async (tx) => {
@@ -3713,7 +3712,7 @@ export class InvoicesService {
           // the LOCKED row: a retry runs on a fresh snapshot, never on the caller's pre-tx read.
           const locked = await lockInvoiceRow(tx, id, orderId);
           if (!locked) throw new NotFoundException("Invoice not found");
-          const refusal = sendRefusal(locked.status);
+          const refusal = sendRefusal(locked.status, emailSent);
           if (refusal) throw new BadRequestException(refusal);
           const nextStatus = nextSentStatus(locked.status);
           const updated = await tx.invoice.update({
@@ -3785,6 +3784,27 @@ export class InvoicesService {
     );
   }
 
+  /**
+   * SA-404a: sendEmail's pre-send check — a short Serializable tx that locks (Order →) Invoice and
+   * runs the send guard, so a VOID committed before the email means NO email and a 400. R5 keeps
+   * the SENT flip after delivery; the residual is only the email I/O window (markSent then refuses
+   * with VOIDED_DURING_EMAIL).
+   */
+  private assertSendableUnderLock(id: string, orderId: string | null) {
+    return retryOnTxConflict(`invoice send pre-check id=${id}`, () =>
+      this.prisma.tenantTransaction(
+        async (tx) => {
+          const locked = await lockInvoiceRow(tx, id, orderId);
+          if (!locked) throw new NotFoundException("Invoice not found");
+          const refusal = sendRefusal(locked.status);
+          if (refusal) throw new BadRequestException(refusal);
+        },
+        { isolationLevel: "Serializable" },
+      ),
+    );
+  }
+
+  /** Send the invoice as an actual email and mark as SENT. */
   async sendEmail(id: string, overrideEmail?: string, variant?: "draft" | "final") {
     const inv = await this.prisma.forTenant().invoice.findUnique({
       where: { id },
@@ -3909,6 +3929,7 @@ export class InvoicesService {
       depositAmount: this.computeDepositFields(inv as any, 0).depositAmount,
       depositDueDate: inv.depositDueDate ? formatDate(inv.depositDueDate) : null,
     };
+    await this.assertSendableUnderLock(id, inv.orderId); // SA-404a: VOID now ⇒ 400, no email
     const sendResult = await this.emailService.sendInvoice(emailPayload);
 
     // R5: the email server was configured but the actual send did NOT succeed
@@ -3924,7 +3945,7 @@ export class InvoicesService {
 
     // Mark as SENT. P5-13: SENT flip + oldest-first credit auto-apply are ONE atomic
     // operation. PDF/email I/O above stays OUTSIDE the tx (a retry never re-sends the email).
-    const { updated, auto } = await this.markSent(id, inv.orderId);
+    const { updated, auto } = await this.markSent(id, inv.orderId, true);
     this.gateway.emitInvoiceUpdated(this.prisma.getTenantId(), {
       invoiceId: updated.id,
       invoiceNumber: updated.invoiceNumber,

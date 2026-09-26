@@ -1,5 +1,11 @@
 import { InvoiceStatus } from "@prisma/client";
-import { lockInvoiceRow, nextSentStatus, sendRefusal, voidRefusal } from "./invoice-send-guard";
+import {
+  VOIDED_DURING_EMAIL,
+  lockInvoiceRow,
+  nextSentStatus,
+  sendRefusal,
+  voidRefusal,
+} from "./invoice-send-guard";
 
 // #2255 / SA-404: the send/void decisions as pure guards + the lock-then-re-read first statement.
 describe("invoice-send-guard", () => {
@@ -12,6 +18,12 @@ describe("invoice-send-guard", () => {
       InvoiceStatus.PARTIAL,
     ])
       expect(sendRefusal(s)).toBeNull();
+  });
+
+  it("SA-404a: a VOID found AFTER the email went out says the customer received it", () => {
+    expect(sendRefusal(InvoiceStatus.VOID, true)).toBe(VOIDED_DURING_EMAIL);
+    expect(VOIDED_DURING_EMAIL).toMatch(/customer received the email; nothing was marked sent/);
+    expect(sendRefusal(InvoiceStatus.SENT, true)).toBeNull();
   });
 
   it("nextSentStatus flips only DRAFT → SENT and never downgrades PAID/PARTIAL", () => {

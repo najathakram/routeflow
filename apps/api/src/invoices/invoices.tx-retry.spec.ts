@@ -32,6 +32,7 @@ import { createMockPrisma } from "../testing/prisma-mock";
 import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
 
 import { BadRequestException } from "@nestjs/common";
+import { VOIDED_DURING_EMAIL } from "./invoice-send-guard";
 import * as fs from "node:fs";
 import * as path from "node:path";
 
@@ -151,13 +152,53 @@ describe("#2255 Serializable invoice transactions retry on conflict, guards re-r
     expect(prisma.tenantTransaction).toHaveBeenCalledTimes(2);
   });
 
-  it("sendEmail(): a 40001 after delivery is retried — the invoice is marked SENT, the email is NOT re-sent", async () => {
+  // SA-404a: pre-check tx (lock + guard) → email → markSent (authoritative re-check).
+  it("sendEmail(): a 40001 on markSent AFTER delivery is retried — marked SENT, the email NOT re-sent", async () => {
     prisma.invoice.findUnique.mockResolvedValue(invoice(InvoiceStatus.SENT));
     prisma.invoice.update.mockResolvedValue(invoice(InvoiceStatus.SENT));
-    conflictOnce();
+    const real = prisma.tenantTransaction.getMockImplementation()!;
+    prisma.tenantTransaction
+      .mockImplementationOnce(real) // the pre-check tx passes
+      .mockImplementationOnce(() => Promise.reject(conflict())); // markSent attempt 1 conflicts
     await expect(service.sendEmail(INVOICE_ID)).resolves.toMatchObject({ success: true });
-    expect(prisma.tenantTransaction).toHaveBeenCalledTimes(2);
+    expect(prisma.tenantTransaction).toHaveBeenCalledTimes(3);
     expect(email.sendInvoice).toHaveBeenCalledTimes(1);
+  });
+
+  it("sendEmail(): a 40001 in the pre-check tx is retried — one email", async () => {
+    prisma.invoice.findUnique.mockResolvedValue(invoice(InvoiceStatus.SENT));
+    prisma.invoice.update.mockResolvedValue(invoice(InvoiceStatus.SENT));
+    conflictOnce(); // the FIRST tx is the pre-check
+    await expect(service.sendEmail(INVOICE_ID)).resolves.toMatchObject({ success: true });
+    expect(prisma.tenantTransaction).toHaveBeenCalledTimes(3);
+    expect(email.sendInvoice).toHaveBeenCalledTimes(1);
+  });
+
+  it("sendEmail(): VOID committed before the pre-check ⇒ 400, NO email, nothing written", async () => {
+    prisma.invoice.findUnique
+      .mockResolvedValueOnce(invoice(InvoiceStatus.SENT)) // pre-tx read
+      .mockResolvedValue(invoice(InvoiceStatus.VOID)); // the pre-check's locked re-read
+    await expect(service.sendEmail(INVOICE_ID)).rejects.toThrow("Cannot send a voided invoice");
+    expect(email.sendInvoice).not.toHaveBeenCalled();
+    expect(prisma.invoice.update).not.toHaveBeenCalled();
+  });
+
+  it("sendEmail(): VOID committed between the pre-check and markSent ⇒ email once, 400 that SAYS so, status unchanged", async () => {
+    prisma.invoice.findUnique
+      .mockResolvedValueOnce(invoice(InvoiceStatus.SENT)) // pre-tx read
+      .mockResolvedValueOnce(invoice(InvoiceStatus.SENT)) // pre-check: still sendable
+      .mockResolvedValue(invoice(InvoiceStatus.VOID)); // markSent's locked re-read
+    await expect(service.sendEmail(INVOICE_ID)).rejects.toThrow(VOIDED_DURING_EMAIL);
+    expect(email.sendInvoice).toHaveBeenCalledTimes(1);
+    expect(prisma.invoice.update).not.toHaveBeenCalled();
+  });
+
+  it("sendEmail(): control — nothing interleaves ⇒ one email, one SENT write", async () => {
+    prisma.invoice.findUnique.mockResolvedValue(invoice(InvoiceStatus.SENT));
+    prisma.invoice.update.mockResolvedValue(invoice(InvoiceStatus.SENT));
+    await expect(service.sendEmail(INVOICE_ID)).resolves.toMatchObject({ success: true });
+    expect(email.sendInvoice).toHaveBeenCalledTimes(1);
+    expect(prisma.tenantTransaction).toHaveBeenCalledTimes(2); // pre-check + markSent
   });
 
   it("voidInvoice(): a 40001 is retried and the void succeeds", async () => {
@@ -193,14 +234,6 @@ describe("#2255 Serializable invoice transactions retry on conflict, guards re-r
     expect(prisma.invoice.update).not.toHaveBeenCalled();
   });
 
-  it("sendEmail(): the in-tx re-read refuses an invoice voided since the pre-read", async () => {
-    prisma.invoice.findUnique
-      .mockResolvedValueOnce(invoice(InvoiceStatus.SENT))
-      .mockResolvedValue(invoice(InvoiceStatus.VOID));
-    await expect(service.sendEmail(INVOICE_ID)).rejects.toThrow(BadRequestException);
-    expect(prisma.invoice.update).not.toHaveBeenCalled();
-  });
-
   it("voidInvoice(): the in-tx re-read refuses an invoice that took a cash payment since the pre-read", async () => {
     const cash = { method: "CASH", amount: 40, status: "PAID" };
     prisma.invoice.findUnique
@@ -217,7 +250,7 @@ describe("#2255 Serializable invoice transactions retry on conflict, guards re-r
   it("placement: every Serializable site named in #2255 runs inside retryOnTxConflict", () => {
     const read = (rel: string) => fs.readFileSync(path.join(__dirname, "..", rel), "utf8");
     const inv = read("invoices/invoices.service.ts");
-    for (const label of ["invoice mark-sent", "invoice void"]) {
+    for (const label of ["invoice mark-sent", "invoice send pre-check", "invoice void"]) {
       expect(inv).toMatch(new RegExp(`retryOnTxConflict\\(\\s*\\\`${label}`));
     }
     // send() and sendEmail() share the one retried mark-sent transaction.
