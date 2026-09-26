@@ -204,14 +204,16 @@ test.describe("Units v1 — order → edit → invoice lane (#2233 / SA-390)", (
     // qty-text formatter — see the header comment on why this asserts at the page
     // level rather than via a row-shape-specific locator.)
     await page.goto(`/orders/${orderId}`);
-    await expect(page.getByRole("heading", { name: order.orderNumber })).toBeVisible({
+    // The order number renders twice (the top bar's h1 and the page header's h2) — this is only a
+    // load wait, so either is fine.
+    await expect(page.getByRole("heading", { name: order.orderNumber }).first()).toBeVisible({
       timeout: 15_000,
     });
     const mainContent = page.locator("#main-content");
     await expect(mainContent.getByText(UNITS_PRODUCT_NAME, { exact: true }).first()).toBeVisible({
       timeout: 10_000,
     });
-    await expect(mainContent.getByText("3 Cases", { exact: true })).toBeVisible({
+    await expect(mainContent.getByText(/\b3 Cases\b/).first()).toBeVisible({
       timeout: 10_000,
     });
 
@@ -282,13 +284,13 @@ test.describe("Units v1 — order → edit → invoice lane (#2233 / SA-390)", (
     // (apps/web/app/(dashboard)/invoices/[id]/page.tsx:2532, same shared formatter)
     await page.goto(`/invoices/${invoice.id}`);
     await expect(
-      page.locator("#main-content").getByRole("heading", { name: invoice.invoiceNumber }),
+      page.locator("#main-content").getByRole("heading", { name: invoice.invoiceNumber }).first(),
     ).toBeVisible({ timeout: 15_000 });
     const invoiceMain = page.locator("#main-content");
     await expect(invoiceMain.getByText(UNITS_PRODUCT_NAME, { exact: true }).first()).toBeVisible({
       timeout: 10_000,
     });
-    await expect(invoiceMain.getByText("3 Cases", { exact: true })).toBeVisible({
+    await expect(invoiceMain.getByText(/\b3 Cases\b/).first()).toBeVisible({
       timeout: 10_000,
     });
 
