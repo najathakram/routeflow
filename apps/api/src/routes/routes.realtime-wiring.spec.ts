@@ -156,7 +156,8 @@ describe("RoutesService → RouteRealtime wiring (#2095)", () => {
         { id: "stop-1", status: "PENDING" },
         { id: "stop-2", status: "PENDING" },
       ]);
-      prisma.routeRunStop.update.mockResolvedValue({});
+      // SA-151: completion claims the stop atomically (claimStopCompletion → updateMany).
+      prisma.routeRunStop.updateMany.mockResolvedValue({ count: 1 });
       prisma.order.updateMany.mockResolvedValue({ count: 1 });
       prisma.routeRunStop.findUniqueOrThrow.mockResolvedValue({
         id: "stop-1",
@@ -226,7 +227,7 @@ describe("RoutesService → RouteRealtime wiring (#2095)", () => {
       { id: "stop-1", status: "PENDING" },
       { id: "stop-2", status: "PENDING" },
     ]);
-    prisma.routeRunStop.update.mockResolvedValue({});
+    prisma.routeRunStop.updateMany.mockResolvedValue({ count: 1 });
     prisma.order.updateMany.mockResolvedValue({ count: 1 });
     prisma.routeRunStop.findUniqueOrThrow.mockResolvedValue({ id: "stop-1", status: "COMPLETED" });
     commitAfterCallback();
