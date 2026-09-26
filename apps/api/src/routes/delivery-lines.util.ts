@@ -1,14 +1,51 @@
-import { BadRequestException, NotFoundException } from "@nestjs/common";
+import { BadRequestException, ConflictException, NotFoundException } from "@nestjs/common";
+import {
+  deliveredSoFarForLine,
+  fetchEvidenceByLine,
+  isNotOrdered,
+  lineRemaining,
+} from "./delivered-so-far";
+
+/**
+ * SA-151 review: `stop.status === "COMPLETED"` is checked BEFORE the caller's transaction in
+ * both `completeStop`/`completeWithPayment`, so two overlapping submits (double-tap, a retried
+ * request that actually landed) can both pass it and both reach here — a plain `update` would
+ * let both write evidence (and, on the paid path, collect payment) — up to 2x. Atomically
+ * re-checks against the CURRENT row (same B283/REG-B283 pattern as orders.service.ts's
+ * DRAFT→PENDING claim) and throws 409 for whichever submit loses the race.
+ */
+export async function claimStopCompletion(
+  tx: any,
+  stopId: string,
+  data: Record<string, unknown>,
+): Promise<void> {
+  const claimed = await tx.routeRunStop.updateMany({
+    where: { id: stopId, status: { not: "COMPLETED" } },
+    data,
+  });
+  if (claimed.count === 0) {
+    throw new ConflictException("This stop was already completed by another request.");
+  }
+}
 
 /**
  * Refuse a delivery payload BEFORE any write. Every line must (1) belong to an order carried by
  * THIS stop — a driver owns the run, not the tenant's other orders, and each line drives a
  * DeliveryMutation, `deliveredQty` and the delivered-basis invoice reconcile of the order it
- * names — and (2) deliver a finite quantity within [0, ordered qty]: `billQty` is `deliveredQty`
- * unclamped, so an over-delivered line would bill units nobody ordered. An item id may appear
- * once (each duplicate would pass the cap on its own), and an id that resolves to no item — the
- * read is tenant-scoped, so a foreign tenant's item looks exactly like a missing one — is a 404.
- * Every refusal names the offending item.
+ * names — and (2) deliver a finite quantity within [0, REMAINING qty]: `billQty` is
+ * `deliveredQty` unclamped, so an over-delivered line would bill units nobody ordered. An item id
+ * may appear once (each duplicate would pass the cap on its own), and an id that resolves to no
+ * item — the read is tenant-scoped, so a foreign tenant's item looks exactly like a missing one —
+ * is a 404. Every refusal names the offending item.
+ *
+ * B785/SA-116/SA-133: the cap is `ordered qty − deliveredSoFar`, not the full ordered qty — a
+ * second visit (re-delivery, a reopened partial) must never be allowed to deliver more than the
+ * order still has outstanding. `deliveredSoFar` excludes THIS stop's own rows (`delivered-so-far.ts`,
+ * shared with the run/stop read projection) — the ordinary flow calls this before any row of
+ * this completion is written, so there is nothing of this stop's to exclude yet, but the
+ * exclusion still guards an idempotency replay or a defensive re-check from double-counting this
+ * stop's own prior attempt. A REFUSED evidence row contributes 0, so a previously-refused line's
+ * full ordered qty remains available to a later re-delivery attempt.
  *
  * F-05 (#2093, owner ruling 2026-09-25): at-door delivery may never sell what was not ordered, and a line
  * that was CANCELLED — or on a CANCELLED / DRAFT order still riding a stop — was not ordered any more:
@@ -19,6 +56,7 @@ import { BadRequestException, NotFoundException } from "@nestjs/common";
  */
 export async function assertDeliveriesFitStop(
   tx: any,
+  stopId: string,
   stopOrders: readonly { id: string }[],
   deliveries: readonly { orderItemId: string; quantityDelivered: number }[] | undefined,
 ): Promise<void> {
@@ -27,6 +65,9 @@ export async function assertDeliveriesFitStop(
     id: string;
     orderId: string;
     qty: unknown;
+    deliveredQty?: unknown;
+    name: string | null;
+    product: { name: string } | null;
     status?: string;
     order?: { status?: string } | null;
   }[] = await tx.orderItem.findMany({
@@ -35,12 +76,16 @@ export async function assertDeliveriesFitStop(
       id: true,
       orderId: true,
       qty: true,
+      deliveredQty: true,
+      name: true,
+      product: { select: { name: true } },
       status: true,
       order: { select: { status: true } },
     },
   });
   const byId = new Map(items.map((i) => [i.id, i]));
   const onStop = new Set(stopOrders.map((o) => o.id));
+  const evidenceByLine = await fetchEvidenceByLine(tx, [...new Set(items.map((i) => i.orderId))]);
   const seen = new Set<string>();
   for (const d of deliveries) {
     if (seen.has(d.orderItemId)) {
@@ -54,20 +99,37 @@ export async function assertDeliveriesFitStop(
     if (!onStop.has(item.orderId)) {
       throw new BadRequestException(`Order item ${d.orderItemId} does not belong to this stop`);
     }
+    const deliveredSoFar = deliveredSoFarForLine(
+      evidenceByLine[item.orderId]?.[item.id],
+      stopId,
+      item.deliveredQty,
+      item.qty,
+    );
+    // SA-366: ONE figure for the bound and the run projection's served `remaining` — clamped at 0
+    // (SA-151: a data anomaly, deliveredSoFar > qty, never surfaces as a negative remaining) and
+    // exactly 0 for a line that is no longer ordered (F-05).
+    const notOrdered = isNotOrdered(item.status, item.order?.status);
+    const remaining = lineRemaining({
+      qty: item.qty,
+      lineStatus: item.status,
+      orderStatus: item.order?.status,
+      deliveredSoFar,
+    });
     const q = Number(d.quantityDelivered);
-    const notOrdered =
-      item.status === "CANCELLED" ||
-      item.order?.status === "CANCELLED" ||
-      item.order?.status === "DRAFT";
-    // A ceiling of 0 is EXACT (no epsilon): 0.0005 of a cancelled line is still a delivery of nothing ordered.
-    const over = notOrdered ? q !== 0 : q > Number(item.qty) + 0.0005;
+    // SA-365 R2: the ceilings nest (remaining ≤ qty). A ceiling of 0 is EXACT (no epsilon): 0.0005 of
+    // a cancelled line is still a delivery of nothing ordered.
+    const over = notOrdered ? q !== 0 : q > remaining + 0.0005;
     if (!Number.isFinite(q) || q < 0 || over) {
+      // SA-151 review / SA-365 R4: driver-readable, not a bare orderItemId UUID (payment.tsx
+      // surfaces this verbatim in a toast) — the product name, what's actually left, and what
+      // already happened elsewhere, with the one actionable next step.
+      const label = item.product?.name ?? item.name ?? "This item";
       throw new BadRequestException(
         notOrdered
           ? item.order?.status === "DRAFT"
-            ? `Order item ${d.orderItemId} belongs to an order that is not confirmed yet — nothing can be delivered against it`
-            : `Order item ${d.orderItemId} was cancelled — nothing can be delivered against it`
-          : `Delivery quantity for order item ${d.orderItemId} must be between 0 and the ordered quantity`,
+            ? `${label} belongs to an order that is not confirmed yet — nothing can be delivered against it`
+            : `${label} was cancelled — nothing can be delivered against it`
+          : `${label}: ${remaining} left, ${deliveredSoFar} delivered earlier — refresh the stop`,
       );
     }
   }
