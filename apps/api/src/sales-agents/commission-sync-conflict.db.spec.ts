@@ -1,90 +1,315 @@
 /**
- * #2201 — real-Postgres pin: a write conflict raised inside `syncInvoiceCommissionSafe`, when it runs
- * in the CALLER's Serializable transaction (as the credit-sync paths in credit-notes.service.ts call
- * it), makes `retryOnTxConflict` re-run the WHOLE transaction. The transaction's own write persists
- * exactly once, and there is no silent ROLLBACK.
+ * #2201 / SA-392 / SA-393 / SA-394 — real-Postgres pins for the commission sync inside a CALLER
+ * transaction. Runs only under `npm run local:test:db` (jest.db.config.js), serially. Every tenant
+ * is a throwaway `qa-2201-<run>-<n>` slug approved by `assertTestTenant`, deleted in afterAll.
  *
- * The conflict is a genuine SQLSTATE 40001 raised by Postgres on the caller's tx (a DO block with
- * `RAISE ... USING ERRCODE`), so Postgres really aborts the tx and the error arrives in the driver
- * adapter's own shape, never a hand-built stub. The commission algorithm itself is spied out: this
- * pins the wrapper's conflict contract, not the accrual math.
+ * Real providers: PrismaService, CreditNotesService, CommissionEngineService, RegulatedLedgerService
+ * and AuditService are the production classes against Postgres. Only three are stubbed, none of them
+ * under test: the `flag.sales_agents` entitlement (always on here; resolving it needs the global
+ * plan catalog), the socket gateway, and numbering (never reached by applyToInvoice).
  *
- * Before the fix the wrapper swallowed the 40001, so the tx "committed" an aborted transaction:
- * either the COMMIT errored or the write silently vanished. Red either way.
+ * Failures are injected by Postgres itself, not by a JS stub: a per-run BEFORE INSERT trigger on
+ * "CommissionAccrual" (scoped to one tenant through a control table) raises a genuine SQLSTATE,
+ * either 40001 on the first insert only (a sequence survives the rollback, so attempt 2 passes) or
+ * 23505 on every insert. The driver adapter therefore surfaces each error in its own real shape.
  *
- * Runs only under `npm run local:test:db` (jest.db.config.js); the tenant it writes is a throwaway
- * `qa-2201-<run>` slug approved by `assertTestTenant`, deleted in `afterAll`.
+ * Before the fix, the engine's "caller tx?" test looked for a missing `$transaction`. Prisma 7's tx
+ * client HAS one, so the sync ran in its OWN transaction: it never saw the caller's uncommitted
+ * credit (base 100, not 60), and a conflict was never rethrown (no retry).
  */
 
 import { randomUUID } from "crypto";
-import { PrismaService } from "../prisma/prisma.service";
+import { Test } from "@nestjs/testing";
+import { PrismaService, isTxClient } from "../prisma/prisma.service";
 import { TenantContextService } from "../tenant/tenant-context.service";
 import { CommissionEngineService } from "./commission-engine.service";
+import { CreditNotesService } from "../credit-notes/credit-notes.service";
+import { RegulatedLedgerService } from "../regulated/regulated-ledger.service";
+import { AuditService } from "../audit/audit.service";
+import { EntitlementsService } from "../billing/entitlements.service";
+import { RouteFlowGateway } from "../gateways/routeflow.gateway";
+import { NumberingService } from "../import/numbering.service";
 import { retryOnTxConflict } from "../common/tx-retry";
 import { describeDb, requireLocalDatabaseUrl } from "../common/testing/db-spec";
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const { assertTestTenant } = require("../../../../scripts/lib/test-tenants.cjs");
 
-const RUN_SUFFIX = randomUUID().slice(0, 8);
+const RUN = randomUUID().slice(0, 8);
+const CTL = `t2201_ctl_${RUN}`;
+const SEQ = `t2201_seq_${RUN}`;
+const FN = `t2201_fn_${RUN}`;
+const TRG = `t2201_trg_${RUN}`;
 
-describeDb(
-  "syncInvoiceCommissionSafe — write conflict in the caller's tx retries it (#2201)",
-  () => {
-    let prisma: PrismaService;
-    let engine: CommissionEngineService;
-    const slugs: string[] = [];
+describeDb("commission sync inside a caller tx — real Postgres (#2201, SA-392/393/394)", () => {
+  let prisma: PrismaService;
+  let tenantCtx: TenantContextService;
+  let engine: CommissionEngineService;
+  let creditNotes: CreditNotesService;
+  const tenantIds: string[] = [];
+  let seq = 0;
 
-    beforeAll(async () => {
-      requireLocalDatabaseUrl();
-      prisma = new PrismaService(new TenantContextService());
-      await prisma.$connect();
-      // Entitlements/audit are never reached: syncInvoiceCommission is spied out per test.
-      engine = new CommissionEngineService(prisma, {} as any, {} as any);
+  beforeAll(async () => {
+    requireLocalDatabaseUrl();
+    tenantCtx = new TenantContextService();
+    prisma = new PrismaService(tenantCtx);
+    await prisma.$connect();
+
+    const mod = await Test.createTestingModule({
+      providers: [
+        CreditNotesService,
+        CommissionEngineService,
+        RegulatedLedgerService,
+        AuditService,
+        { provide: PrismaService, useValue: prisma },
+        { provide: EntitlementsService, useValue: { hasFlag: jest.fn().mockResolvedValue(true) } },
+        {
+          provide: RouteFlowGateway,
+          useValue: { emitCreditNoteCreated: jest.fn(), emitCreditNoteVoided: jest.fn() },
+        },
+        { provide: NumberingService, useValue: { reserveNext: jest.fn() } },
+      ],
+    }).compile();
+    engine = mod.get(CommissionEngineService);
+    creditNotes = mod.get(CreditNotesService);
+
+    await prisma.$executeRawUnsafe(
+      `CREATE TABLE "${CTL}" (tenant_id text PRIMARY KEY, mode text NOT NULL)`,
+    );
+    await prisma.$executeRawUnsafe(`CREATE SEQUENCE "${SEQ}"`);
+    await prisma.$executeRawUnsafe(`
+      CREATE FUNCTION "${FN}"() RETURNS trigger AS $$
+      DECLARE m text;
+      BEGIN
+        SELECT mode INTO m FROM "${CTL}" WHERE tenant_id = NEW."tenantId";
+        IF m = 'conflict_once' AND nextval('"${SEQ}"') = 1 THEN
+          RAISE EXCEPTION '#2201 forced serialization failure' USING ERRCODE = '40001';
+        ELSIF m = 'unique' THEN
+          RAISE EXCEPTION '#2201 forced unique violation' USING ERRCODE = '23505';
+        END IF;
+        RETURN NEW;
+      END $$ LANGUAGE plpgsql`);
+    await prisma.$executeRawUnsafe(
+      `CREATE TRIGGER "${TRG}" BEFORE INSERT ON "CommissionAccrual" FOR EACH ROW EXECUTE FUNCTION "${FN}"()`,
+    );
+  });
+
+  afterAll(async () => {
+    // Best-effort throughout: a failed cleanup must never mask a test's own result.
+    const swallow = () => undefined;
+    await prisma
+      .$executeRawUnsafe(`DROP TRIGGER IF EXISTS "${TRG}" ON "CommissionAccrual"`)
+      .catch(swallow);
+    await prisma.$executeRawUnsafe(`DROP FUNCTION IF EXISTS "${FN}"()`).catch(swallow);
+    await prisma.$executeRawUnsafe(`DROP SEQUENCE IF EXISTS "${SEQ}"`).catch(swallow);
+    await prisma.$executeRawUnsafe(`DROP TABLE IF EXISTS "${CTL}"`).catch(swallow);
+    for (const tenantId of tenantIds) {
+      const where = { where: { tenantId } };
+      await prisma.commissionAccrual.deleteMany(where).catch(swallow);
+      await prisma.invoicePayment.deleteMany(where).catch(swallow);
+      await prisma.creditNote.deleteMany(where).catch(swallow);
+      await prisma.invoice.deleteMany(where).catch(swallow);
+      await prisma.agentAssignment.deleteMany(where).catch(swallow);
+      await prisma.salesAgentRate.deleteMany(where).catch(swallow);
+      await prisma.salesAgent.deleteMany(where).catch(swallow);
+      await prisma.customer.deleteMany(where).catch(swallow);
+      await prisma.user.deleteMany(where).catch(swallow);
+      await prisma.auditLog.deleteMany(where).catch(swallow);
+      await prisma.tenant.delete({ where: { id: tenantId } }).catch(swallow);
+    }
+    await prisma?.$disconnect();
+  });
+
+  /** A tenant with an agent (10%) covering one customer, a SENT invoice of 100, and a credit of 40. */
+  async function seed(label: string) {
+    seq += 1;
+    const slug = assertTestTenant(
+      `qa-2201-${RUN}-${seq}-${label}`,
+      "commission-sync-conflict.db.spec.ts",
+    );
+    const tenant = await prisma.tenant.create({ data: { slug, name: `#2201 ${slug}` } });
+    tenantIds.push(tenant.id);
+    const tenantId = tenant.id;
+    const user = await prisma.user.create({
+      data: { email: `${slug}@example.invalid`, username: slug, role: "CUSTOMER", tenantId },
     });
-
-    afterAll(async () => {
-      if (slugs.length) {
-        await prisma.tenant.deleteMany({ where: { slug: { in: slugs } } }).catch(() => {
-          // Best-effort: a failed cleanup must never mask the test's own result.
-        });
-      }
-      await prisma?.$disconnect();
+    const customer = await prisma.customer.create({
+      data: { userId: user.id, businessName: `c ${label}`, contactName: `c ${label}`, tenantId },
     });
+    const since = new Date("2020-01-01T00:00:00.000Z");
+    const agent = await prisma.salesAgent.create({ data: { name: `agent ${label}`, tenantId } });
+    await prisma.salesAgentRate.create({
+      data: { agentId: agent.id, ratePct: 10, effectiveFrom: since, tenantId },
+    });
+    await prisma.agentAssignment.create({
+      data: { customerId: customer.id, agentId: agent.id, effectiveFrom: since, tenantId },
+    });
+    const invoice = await prisma.invoice.create({
+      data: {
+        tenantId,
+        customerId: customer.id,
+        invoiceNumber: `INV-2201-${RUN}-${seq}`,
+        status: "SENT",
+        subtotal: 100,
+        taxAmount: 0,
+        total: 100,
+      },
+    });
+    const cn = await prisma.creditNote.create({
+      data: {
+        tenantId,
+        customerId: customer.id,
+        creditNoteNumber: `CN-2201-${RUN}-${seq}`,
+        amount: 40,
+        status: "ISSUED",
+      },
+    });
+    return { tenantId, invoice, cn };
+  }
 
-    it("a real 40001 on attempt 1 re-runs the whole tx; its write persists exactly once", async () => {
-      const slug = assertTestTenant(`qa-2201-${RUN_SUFFIX}`, "commission-sync-conflict.db.spec.ts");
-      slugs.push(slug);
+  const setMode = (tenantId: string, mode: "conflict_once" | "unique") =>
+    prisma.$executeRawUnsafe(
+      `INSERT INTO "${CTL}" (tenant_id, mode) VALUES ($1, $2)`,
+      tenantId,
+      mode,
+    );
+  const inTenant = <T>(tenantId: string, fn: () => Promise<T>) => tenantCtx.run(tenantId, fn);
+  const counts = async (tenantId: string) => ({
+    accruals: await prisma.commissionAccrual.findMany({ where: { tenantId } }),
+    creditPayments: await prisma.invoicePayment.findMany({
+      where: { tenantId, method: "CREDIT_NOTE" },
+    }),
+    creditNotes: await prisma.creditNote.findMany({ where: { tenantId } }),
+    ledgerRows: await prisma.regulatedSalesLedger.count({ where: { tenantId } }),
+  });
+  const syncFailureLogs = (spy: jest.SpyInstance) =>
+    spy.mock.calls.filter((c) => String(c[0]).startsWith("Commission sync failed for invoice"));
 
-      let syncCalls = 0;
-      jest
-        .spyOn(engine, "syncInvoiceCommission")
-        .mockImplementation(async (_id: string, db: any) => {
-          syncCalls += 1;
-          if (syncCalls === 1) {
-            await db.$executeRawUnsafe(
-              `DO $$ BEGIN RAISE EXCEPTION '#2201 forced serialization failure' USING ERRCODE = '40001'; END $$`,
-            );
-          }
-        });
+  describe("SA-394 isTxClient on real Prisma 7 clients (no fakes)", () => {
+    it("a tenantTransaction tx and a raw $transaction tx are tx clients; prisma and forTenant() are not", async () => {
+      const { tenantId } = await seed("detect");
+      const viaTenantTx = await inTenant(tenantId, () =>
+        prisma.tenantTransaction(async (tx: any) => isTxClient(tx)),
+      );
+      const viaRawTx = await prisma.$transaction(async (tx: any) => isTxClient(tx));
+      expect(viaTenantTx).toBe(true);
+      expect(viaRawTx).toBe(true);
+      expect(isTxClient(prisma)).toBe(false);
+      // forTenant() reads the tenant from context; inside it, it is the `$extends`ed client.
+      const extended = await inTenant(tenantId, async () => prisma.forTenant());
+      expect(extended).not.toBe(prisma);
+      expect(isTxClient(extended)).toBe(false);
+      // The trap the old test fell into: the real tx client DOES expose $transaction.
+      await prisma.$transaction(async (tx: any) => {
+        expect(typeof tx.$transaction).toBe("function");
+      });
+    });
+  });
 
-      let attempts = 0;
+  it("(d) control: applyToInvoice's sync joins the caller tx, RELEASEs, and books from the UNCOMMITTED credit", async () => {
+    const { tenantId, invoice, cn } = await seed("control");
+
+    await inTenant(tenantId, () => creditNotes.applyToInvoice(cn.id, invoice.id));
+
+    const c = await counts(tenantId);
+    expect(c.creditPayments.map((p) => Number(p.amount))).toEqual([40]);
+    expect(c.accruals).toHaveLength(1);
+    // Base = goods 100 − credit principal 40 = 60 — only visible INSIDE the caller's tx, where
+    // the credit payment is still uncommitted. A sync on its own connection would read base 100.
+    expect(Number(c.accruals[0].baseAmount)).toBe(60);
+    expect(Number(c.accruals[0].accruedAmount)).toBe(6);
+  });
+
+  it("(b) + SA-392: a real 40001 in the sync makes retryOnTxConflict re-run applyToInvoice; credit and commission land once", async () => {
+    const { tenantId, invoice, cn } = await seed("conflict");
+    await setMode(tenantId, "conflict_once");
+
+    await inTenant(tenantId, () => creditNotes.applyToInvoice(cn.id, invoice.id));
+
+    const [{ last_value }] = await prisma.$queryRawUnsafe<{ last_value: bigint }[]>(
+      `SELECT last_value FROM "${SEQ}"`,
+    );
+    expect(Number(last_value)).toBe(2); // attempt 1 raised, attempt 2 passed: the tx re-ran
+    const c = await counts(tenantId);
+    expect(c.creditPayments.map((p) => Number(p.amount))).toEqual([40]); // applied once
+    expect(c.accruals).toHaveLength(1); // commission synced once
+    expect(Number(c.accruals[0].baseAmount)).toBe(60);
+    expect(c.creditNotes).toHaveLength(1); // no orphan credit note
+    expect(Number(c.creditNotes[0].amountUsed)).toBe(40);
+    expect(c.ledgerRows).toBe(0); // no orphan ledger rows (nothing regulated here)
+  });
+
+  it("(a) a real 23505 in the sync rolls back to the savepoint: the caller's later statement runs, COMMIT persists the credit, no commission row, one error log", async () => {
+    const { tenantId, invoice, cn } = await seed("unique");
+    await setMode(tenantId, "unique");
+    const logSpy = jest.spyOn((engine as any).logger, "error");
+    logSpy.mockClear();
+
+    // applyToInvoice reads the invoice back AFTER the sync (its later statement) and returns it.
+    const result: any = await inTenant(tenantId, () =>
+      creditNotes.applyToInvoice(cn.id, invoice.id),
+    );
+
+    expect(result?.id).toBe(invoice.id);
+    const c = await counts(tenantId);
+    expect(c.creditPayments.map((p) => Number(p.amount))).toEqual([40]);
+    expect(c.accruals).toHaveLength(0);
+    expect(syncFailureLogs(logSpy)).toHaveLength(1);
+    logSpy.mockRestore();
+  });
+
+  it("(c) no caller tx: the sync opens its own tx, and a failure there is swallowed and logged", async () => {
+    const { tenantId, invoice } = await seed("nocaller");
+    await setMode(tenantId, "unique");
+    const logSpy = jest.spyOn((engine as any).logger, "error");
+    logSpy.mockClear();
+
+    await expect(
+      inTenant(tenantId, () => engine.syncInvoiceCommissionSafe(invoice.id)),
+    ).resolves.toBeUndefined();
+
+    expect((await counts(tenantId)).accruals).toHaveLength(0);
+    expect(syncFailureLogs(logSpy)).toHaveLength(1);
+    logSpy.mockRestore();
+  });
+
+  it("mechanism: a real 40001 in a caller's Serializable tx re-runs it under retryOnTxConflict; its write persists once", async () => {
+    const { tenantId } = await seed("mechanism");
+    const slug = `qa-2201-${RUN}-mech-row`;
+    assertTestTenant(slug, "commission-sync-conflict.db.spec.ts");
+    let syncCalls = 0;
+    const spy = jest
+      .spyOn(engine, "syncInvoiceCommission")
+      .mockImplementation(async (_id: string, db: any) => {
+        syncCalls += 1;
+        if (syncCalls === 1) {
+          await db.$executeRawUnsafe(
+            `DO $$ BEGIN RAISE EXCEPTION '#2201 forced' USING ERRCODE = '40001'; END $$`,
+          );
+        }
+      });
+    let attempts = 0;
+    try {
       await retryOnTxConflict("#2201 pin", () =>
-        prisma.$transaction(
-          async (tx: any) => {
-            attempts += 1;
-            await tx.tenant.create({ data: { slug, name: `#2201 ${slug}` } });
-            // Last statement in the tx, the exact position where a swallowed conflict turns the
-            // caller's COMMIT into a silent ROLLBACK.
-            await engine.syncInvoiceCommissionSafe("inv-2201", tx);
-          },
-          { isolationLevel: "Serializable" },
+        inTenant(tenantId, () =>
+          prisma.tenantTransaction(
+            async (tx: any) => {
+              attempts += 1;
+              await tx.auditLog.create({
+                data: { action: "T2201_MECH", entityType: "test", entityId: slug },
+              });
+              // Last statement: where a swallowed conflict turned COMMIT into a silent ROLLBACK.
+              await engine.syncInvoiceCommissionSafe("inv-2201", tx);
+            },
+            { isolationLevel: "Serializable" },
+          ),
         ),
       );
-
-      expect(attempts).toBe(2);
-      expect(syncCalls).toBe(2);
-      expect(await prisma.tenant.count({ where: { slug } })).toBe(1);
-    });
-  },
-);
+    } finally {
+      spy.mockRestore();
+    }
+    expect(attempts).toBe(2);
+    expect(syncCalls).toBe(2);
+    expect(await prisma.auditLog.count({ where: { tenantId, entityId: slug } })).toBe(1);
+  });
+});
