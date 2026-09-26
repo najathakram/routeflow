@@ -19,6 +19,7 @@ import { StripeService } from "./stripe.service";
 import { isStripeResourceMissing } from "./addon.service";
 import { emitAddonDelta, lockTenantForLedger, bookAddonsOnCrossing } from "./addon-ledger";
 import { isPayingRow } from "./mrr.service";
+import { b58GuardRefusal } from "./b58-guard";
 import { withAdvisoryLock, LockTimeoutError, LockUnavailableError } from "../common/db-locks";
 import {
   BILLING_EVENTS,
@@ -174,6 +175,21 @@ export class SubscriptionMutationService {
     return normalizePlanKey(subPlanKey) ?? (tenantPlan ? planKeyFromEnum(tenantPlan) : null);
   }
 
+  /** Log and throw a B58 refusal. A handled 4xx is otherwise invisible — SentryExceptionFilter
+   *  captures >= 500 only and there is no access log — so a money-path refusal logs like
+   *  addon.guard.ts's denials. */
+  private refuseB58(
+    tenantId: string,
+    fromKey: string | null,
+    input: SubscribeInput,
+    refusal: { sameRank: boolean; message: string },
+  ): never {
+    this.logger.warn(
+      `B58 guard refused subscribe tenant=${tenantId} from=${fromKey} to=${input.planKey} cycle=${input.cycle} sameRank=${refusal.sameRank}`,
+    );
+    throw new ConflictException(refusal.message);
+  }
+
   private planMonthly(version: PlanVersionWithCatalog, planKey: string | null | undefined): number {
     if (!planKey) return 0;
     const d = findPlanDefinition(version.definitions, planKey);
@@ -235,42 +251,17 @@ export class SubscriptionMutationService {
     // predating plans-as-data (planKey NULL) is ranked instead of read as "no plan".
     const fromKey = this.resolveFromPlanKey(priorSub?.planKey, tenant.plan);
 
-    // An ACTIVE, same-cycle pick belongs anywhere but here — subscribe() resetting
-    // periodStart/periodEnd would silently re-bucket metering and jump the renewal date (B58).
-    // A DIFFERENT rank belongs on upgrade()/downgrade() (instant-prorated vs.
-    // scheduled-at-period-end). The SAME rank is the same plan under a renamed key (a v7
-    // BUSINESS re-picked as the v8 SCALE): there is nothing to change, and re-subscribing to
-    // "re-pin" the catalog version would pay for that pin with the same period reset — so it is
-    // refused too, and the re-pin is left to platform-admin / the cron that already write it.
-    // A subscription with NO periodEnd has no live cycle to protect (and downgrade() could not
-    // schedule against it), so it stays here: subscribe() is what heals the missing period.
-    if (
-      tenant.status === "ACTIVE" &&
-      priorSub &&
-      fromKey &&
-      priorSub.periodEnd != null &&
-      priorSub.cycle === input.cycle
-    ) {
-      const sameRank = planRank(input.planKey) === planRank(fromKey);
-      // The ONE same-rank pick that really is a change: a row with no stored planKey (the
-      // manual-activation shape) contributes 0 to the MRR snapshot until it gains one, and
-      // upgrade() only moves UP — so subscribe() is what heals it, and refusing it here would
-      // strand the row plan-less forever.
-      if (!sameRank || priorSub.planKey != null) {
-        // A handled 4xx is otherwise invisible — SentryExceptionFilter captures >= 500 only and
-        // there is no access log — so a money-path refusal logs like addon.guard.ts's denials.
-        this.logger.warn(
-          `B58 guard refused subscribe tenant=${tenantId} from=${fromKey} to=${input.planKey} cycle=${input.cycle} sameRank=${sameRank}`,
-        );
-        throw new ConflictException(
-          sameRank
-            ? "You are already on this plan — nothing to change"
-            : "Your subscription is active — use upgrade or downgrade to change plan",
-        );
-      }
-    }
+    // B58 (see b58-guard.ts): the fast refusal on the pre-tx read. #2189 / SA-389: the SAME
+    // guard runs again inside the transaction on the rows re-read under the tenant lock.
+    const refusal = b58GuardRefusal({
+      status: tenant.status,
+      fromKey,
+      sub: priorSub,
+      toPlanKey: input.planKey,
+      toCycle: input.cycle,
+    });
+    if (refusal) this.refuseB58(tenantId, fromKey, input, refusal);
 
-    const wasTrial = tenant.status === "TRIAL";
     const now = new Date();
     const periodEnd = addCycle(now, input.cycle);
 
@@ -312,12 +303,34 @@ export class SubscriptionMutationService {
         }),
         tx.tenantSubscription.findUnique({
           where: { tenantId },
-          select: { planKey: true },
+          select: { planKey: true, cycle: true, periodEnd: true },
         }),
         tx.tenantAddon.findMany({ where: { tenantId, active: true } }),
       ]);
       if (!lockedTenant) throw new NotFoundException("Tenant not found");
       const lockedFromKey = this.resolveFromPlanKey(lockedSub?.planKey, lockedTenant.plan);
+      // #2189 / SA-389 (2): prepare(transition) ran pre-tx (pool reasons) on `fromKey`; if the
+      // plan moved before this lock, the prepared transition is stale — refuse, retryable, with
+      // nothing written (the caller re-runs subscribe(), which re-prepares). Both keys are
+      // normalized by resolveFromPlanKey, so a legacy alias never reads as a change.
+      if (lockedFromKey !== fromKey) {
+        throw new ConflictException({
+          code: "PLAN_CHANGED_DURING_SUBSCRIBE",
+          retryable: true,
+          message: "Your plan changed while this was being processed — please try again.",
+        });
+      }
+      // #2189 / SA-389 (1): the B58 guard again, on the LOCKED rows, before any write.
+      const lockedRefusal = b58GuardRefusal({
+        status: lockedTenant.status,
+        fromKey: lockedFromKey,
+        sub: lockedSub,
+        toPlanKey: input.planKey,
+        toCycle: input.cycle,
+      });
+      if (lockedRefusal) this.refuseB58(tenantId, lockedFromKey, input, lockedRefusal);
+      // #2189 / SA-389 (3): one source — a trial converted concurrently is not converted again.
+      const wasTrial = lockedTenant.status === "TRIAL";
       // Same paying-set basis as before (isPayingRow — class/deletedAt gate it too), now read
       // from the LOCKED row instead of the pre-tx one.
       const wasPaying = isPayingRow(lockedTenant, lockedSub?.planKey ?? null);
