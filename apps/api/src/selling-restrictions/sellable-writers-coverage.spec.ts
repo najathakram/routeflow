@@ -104,7 +104,7 @@ const TABLE: Record<string, Row> = {
   [tpl("update")]: X("OrderTemplateItem"),
   [rec("create")]: X("RecurringInvoiceItem"),
   [rec("update")]: X("RecurringInvoiceItem"),
-  "returns/inline-returns.service.ts::InlineReturnsService.capture": X("ReturnItem"),
+  "returns/inline-returns.service.ts::InlineReturnsService.captureInTx": X("ReturnItem"),
   "returns/returns.service.ts::ReturnsService.create": X("ReturnItem"),
   [vb("create")]: X("VendorBillItem"),
   [vb("update")]: X("VendorBillItem"),
