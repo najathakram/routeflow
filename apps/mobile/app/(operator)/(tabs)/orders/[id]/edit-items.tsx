@@ -39,9 +39,9 @@ import {
   effectiveQty,
   getTierPrice,
   perUnitPrice,
-  priceForMarginFloor,
   roundMoney,
 } from "@routeflow/pricing";
+import { marginFloorPrice } from "../../../../../lib/margin-floor-price";
 import { freeUnitsLabel } from "../../../../../lib/buyer-cart-logic";
 import { isUnitLine, setLineUnits } from "../../../../../lib/sale-line";
 import { buildSubstituteLine } from "../../../../../lib/substitute-line";
@@ -1426,22 +1426,6 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
       )}
     </SafeAreaView>
   );
-}
-
-/**
- * B263 (review round) — the ONE margin-floor derivation both price-edit
- * surfaces read: the list row's below-floor guard and the picker's
- * last-added strip. Same helper, same arguments (`averageCost` per piece,
- * the line's category floor, `unitsPerBox`), so a price the row flags is
- * flagged identically on the scan surface. Null when the product has no
- * known cost — no cost, no floor, no ack.
- */
-function marginFloorPrice(item: DraftItem, marginFloor: number): number | null {
-  const pieceCost = item.averageCost != null ? toNumber(item.averageCost) : null;
-  if (pieceCost == null || !Number.isFinite(pieceCost)) return null;
-  const marginFrac = computeMarginFraction(item.unitPrice, pieceCost, item.unitsPerBox);
-  if (classifyMargin(marginFrac, marginFloor) == null) return null;
-  return priceForMarginFloor(pieceCost, marginFloor, item.unitsPerBox);
 }
 
 // ─── Per-row card ────────────────────────────────────────────────────────────
