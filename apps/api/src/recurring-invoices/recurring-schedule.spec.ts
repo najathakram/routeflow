@@ -96,6 +96,16 @@ describe("resumeSchedulesOnRestore", () => {
     expect(tx.auditLog.create).toHaveBeenCalledTimes(1);
   });
 
+  it("a template weeks overdue after a LONG removal resumes at the first occurrence strictly after NOW, never a past date (no make-up invoice)", async () => {
+    // due Mon Aug 31 (3+ weekly cycles before `now`, Fri Sep 25), removed Aug 20 and restored now
+    const old = new Date(2026, 7, 31);
+    expect(await run([row("w", old)], new Date(2026, 7, 20, 10, 0, 0))).toBe(1);
+    const next = tx.recurringInvoice.updateMany.mock.calls[0][0].data.nextRunAt as Date;
+    expect(next).toEqual(new Date(2026, 8, 28)); // the Monday after now, not Sep 7 / 14 / 21 (all in the past)
+    expect(next.getTime()).toBeGreaterThan(now.getTime());
+    expect(tx.auditLog.create.mock.calls[0][0].data.meta.resumedAt).toBe(next.toISOString());
+  });
+
   it("an Undo STRADDLING midnight: removed 23:50, restored 00:10 the next day, the 00:00 tick fell inside, so it is advanced", async () => {
     const restoredAt = at(25, 0, 10);
     tx.recurringInvoice.findMany.mockResolvedValue([row("w", at(24, 0, 0))]);
