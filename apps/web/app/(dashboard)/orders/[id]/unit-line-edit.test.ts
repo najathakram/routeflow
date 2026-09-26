@@ -12,7 +12,12 @@
  * boxes:4, pieces:0}` (pieces re-expanded from a piece-denominated qty) — never `unitLabel`, and
  * qty itself wrong by a factor of unitsPerBox.
  */
-import { buildEditItemFromLine, buildItemUpdates, type EditItemState } from "./page";
+import {
+  buildEditItemFromLine,
+  buildItemUpdates,
+  editLineFreeUnits,
+  type EditItemState,
+} from "./page";
 import type { OrderItem, ItemUpdate } from "@/lib/api/orders";
 
 function unitLine(overrides: Partial<OrderItem> = {}): OrderItem {
@@ -108,5 +113,22 @@ describe("buildItemUpdates — units_v1 (A3-2)", () => {
 
     expect(seeded.qty).toBe(3);
     expect(seeded.originalQty).toBe(3);
+  });
+});
+
+// SA-378: the BUY_N_GET_M base count is seeded the same way — a unit line's stored boxes:0 must
+// not become promoBaseUnits 0 (which disables the rescale and previews the full snapshot).
+describe("promoBaseUnits seed — B718 fold (SA-378)", () => {
+  it("(i) a unit line with boxes:0, qty 6, promoFreeUnits 2 seeds promoBaseUnits 6; shrinking to 3 previews 1 free unit", () => {
+    const seeded = buildEditItemFromLine(unitLine({ qty: 6, boxes: 0, promoFreeUnits: 2 }));
+    expect(seeded.promoBaseUnits).toBe(6);
+    expect(editLineFreeUnits({ ...seeded, qty: 3 })).toBe(1);
+  });
+
+  it("(ii) control: a pack line with boxes 0, pieces 5, promoFreeUnits 1 keeps promoBaseUnits 0", () => {
+    const seeded = buildEditItemFromLine(
+      plainBoxedLine({ qty: 5, boxes: 0, pieces: 5, promoFreeUnits: 1 }),
+    );
+    expect(seeded.promoBaseUnits).toBe(0);
   });
 });

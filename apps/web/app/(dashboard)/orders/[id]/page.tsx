@@ -624,8 +624,12 @@ export function buildEditItemFromLine(li: OrderItem): EditItemState {
     originalBoxSplit: isUnitLine ? false : li.boxes != null || li.pieces != null,
     // BUY_N_GET_M snapshot + the whole-unit count it was earned at.
     promoFreeUnits: li.promoFreeUnits ?? null,
+    // SA-378: a unit line's base count goes through unitLineCount (a stored boxes:0 is
+    // meaningless there); a PACK line keeps boxes — a boxes:0 + pieces split earns at base 0.
     promoBaseUnits: li.promoFreeUnits
-      ? Math.trunc(Number(li.boxes != null ? li.boxes : li.qty) || 0)
+      ? Math.trunc(
+          Number(isUnitLine ? unitLineCount(li) : li.boxes != null ? li.boxes : li.qty) || 0,
+        )
       : null,
     unit: li.product?.unit ?? "",
     unitLabel: li.unitLabel ?? undefined,
@@ -645,7 +649,8 @@ export function buildEditItemFromLine(li: OrderItem): EditItemState {
  * `productId` alongside `unitLabel` so the server preloads the product/ladder for the edit (a
  * bare `{id, qty, unitLabel}` against a line the server doesn't already know is unit-aware would
  * otherwise silently discard the label — filed separately, not fixed here). `qtyChanged` compares
- * against the STORED line's own count (`orig.boxes`) for a unit line, never its base-piece `qty`.
+ * against the STORED line's own count (`unitLineCount(orig)`) for a unit line, never its
+ * base-piece `qty`.
  */
 export function buildItemUpdates(items: EditItemState[], original: OrderItem[]): ItemUpdate[] {
   const updates: ItemUpdate[] = [];
@@ -729,7 +734,7 @@ export function buildItemUpdates(items: EditItemState[], original: OrderItem[]):
  * (N + M). A pending SUBSTITUTION earns nothing: the snapshot belongs to the
  * product being replaced, and undoing the substitution restores it.
  */
-function editLineFreeUnits(it: {
+export function editLineFreeUnits(it: {
   qty: number;
   unitsPerBox?: number | null;
   boxSplit?: boolean;
