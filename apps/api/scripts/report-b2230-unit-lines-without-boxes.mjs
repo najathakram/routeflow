@@ -13,7 +13,8 @@
  * Output is COUNTS ONLY plus anonymous labels ("tenant A", "tenant B", ...): no tenant id, slug,
  * name, line or document id is printed. Test tenants (scripts/lib/test-tenants.cjs) are counted in
  * a separate `test` block; rows with no tenant are counted under "no tenant". Each count is split
- * by `boxes` NULL vs 0 and by `qty` = 0 vs > 0, so a legitimate zero-quantity shape (if one exists)
+ * by `boxes` NULL vs 0, by `qty` = 0 vs > 0 and by `pieces` > 0 (a part-unit split such as a
+ * non-whole-Case delivery, 0 boxes + 5 pieces), so a legitimate shape (if one exists)
  * is visible before a constraint is chosen. `--tenant <id>` limits the count to one tenant
  * (DB-lane use only).
  *
@@ -49,7 +50,8 @@ export function censusSql(table) {
                  COUNT(*) FILTER (WHERE i.boxes IS NULL)::int AS "boxesNull",
                  COUNT(*) FILTER (WHERE i.boxes IS NOT NULL)::int AS "boxesZero",
                  COUNT(*) FILTER (WHERE i.qty = 0)::int AS "qtyZero",
-                 COUNT(*) FILTER (WHERE i.qty > 0)::int AS "qtyPositive"
+                 COUNT(*) FILTER (WHERE i.qty > 0)::int AS "qtyPositive",
+                 COUNT(*) FILTER (WHERE COALESCE(i.pieces, 0) > 0)::int AS "piecesPositive"
             FROM "${table}" i
             LEFT JOIN "Tenant" t ON t.id = i."tenantId"
            WHERE ${VIOLATION_SQL}
@@ -79,7 +81,14 @@ export function summarize(byTable) {
   );
   const out = {};
   for (const [table, rows] of Object.entries(byTable)) {
-    const total = { rows: 0, boxesNull: 0, boxesZero: 0, qtyZero: 0, qtyPositive: 0 };
+    const total = {
+      rows: 0,
+      boxesNull: 0,
+      boxesZero: 0,
+      qtyZero: 0,
+      qtyPositive: 0,
+      piecesPositive: 0,
+    };
     const detail = rows.map((r) => {
       for (const k of Object.keys(total)) total[k] += Number(r[k] ?? 0);
       return {
@@ -89,6 +98,7 @@ export function summarize(byTable) {
         boxesZero: r.boxesZero,
         qtyZero: r.qtyZero,
         qtyPositive: r.qtyPositive,
+        piecesPositive: r.piecesPositive,
       };
     });
     out[table] = { ...total, tenants: detail.length, detail };
@@ -178,11 +188,11 @@ async function main() {
         for (const [table, s] of Object.entries(byTable)) {
           console.log(
             `${block} ${table}: ${s.rows} violating row(s) in ${s.tenants} tenant bucket(s) ` +
-              `(boxes NULL ${s.boxesNull}, boxes 0 ${s.boxesZero}; qty 0 ${s.qtyZero}, qty > 0 ${s.qtyPositive})`,
+              `(boxes NULL ${s.boxesNull}, boxes 0 ${s.boxesZero}; qty 0 ${s.qtyZero}, qty > 0 ${s.qtyPositive}; pieces > 0 ${s.piecesPositive})`,
           );
           for (const d of s.detail)
             console.log(
-              `  ${d.tenant}  ${d.rows} (boxes NULL ${d.boxesNull}, 0 ${d.boxesZero}; qty 0 ${d.qtyZero}, > 0 ${d.qtyPositive})`,
+              `  ${d.tenant}  ${d.rows} (boxes NULL ${d.boxesNull}, 0 ${d.boxesZero}; qty 0 ${d.qtyZero}, > 0 ${d.qtyPositive}; pieces > 0 ${d.piecesPositive})`,
             );
         }
       }
