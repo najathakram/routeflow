@@ -6,6 +6,7 @@ import {
   type LadderProduct,
   type LadderUnit,
 } from "@routeflow/pricing";
+import { norm } from "../orders/unit-label-norm";
 
 /**
  * THE one place an order/invoice line's pack factor is decided (units_v1, step 4).
@@ -50,7 +51,6 @@ const toFactor = (v: unknown): number => {
   const n = Math.trunc(Number(v));
   return Number.isFinite(n) && n >= 1 ? n : 0;
 };
-const norm = (s: string) => s.trim().toLowerCase();
 const kindOf = (label: string, factor: number): "piece" | "level" =>
   norm(label) === norm(PIECE_LABEL) || factor === 1 ? "piece" : "level";
 

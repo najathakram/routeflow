@@ -152,7 +152,7 @@ describe("RoutesService — F11 run-terminal release (REG-B129 / REG-B211)", () 
       routeRunStop: {
         ...prisma.routeRunStop,
         findMany: jest.fn(),
-        update: jest.fn().mockResolvedValue({}),
+        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
       },
       order: {
         ...prisma.order,

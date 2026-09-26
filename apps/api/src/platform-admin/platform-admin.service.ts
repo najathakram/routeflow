@@ -4,6 +4,7 @@ import {
   NotFoundException,
   ConflictException,
   BadRequestException,
+  InternalServerErrorException,
 } from "@nestjs/common";
 import { JwtService } from "@nestjs/jwt";
 import { ConfigService } from "@nestjs/config";
@@ -34,7 +35,9 @@ import {
   isInviteOnlyPlanKey,
   INVITE_ONLY_PLAN_TRIAL_DAYS,
   inviteOnlyCheckoutAllowed,
+  addonSkuCode,
 } from "../billing/plan-catalog.constants";
+import { bookAddonsOnCrossing } from "../billing/addon-ledger";
 import { roundMoney } from "@routeflow/pricing";
 import { TenantStatusGuard } from "../tenant/tenant-status.guard";
 import { AppConfig } from "../config/configuration";
@@ -911,6 +914,8 @@ ${
 
     const now = new Date();
     const periodEnd = new Date(now.getTime() + dto.billingPeriodDays * 24 * 60 * 60 * 1000);
+    // B863 / SA-277: 365-day prepaid = ANNUAL, shorter = MONTHLY; external rows roll length-preserving (rollCycles).
+    const cycle: "MONTHLY" | "ANNUAL" = dto.billingPeriodDays >= 365 ? "ANNUAL" : "MONTHLY";
 
     // Lane B A2b: the plan being LEFT, read before the transaction so the catalog read in
     // `prepare()` also happens outside it. A tenant with no subscription row falls back to
@@ -936,6 +941,9 @@ ${
     const preparedTransition = transition ? await this.planTransition.prepare(transition) : null;
 
     const tenant = await this.prisma.$transaction(async (tx) => {
+      // B864 / SA-277 (D2): same tenant row lock as updateStatus/updateTenantClass/
+      // updateTenantPriceOverride.
+      await tx.$queryRaw`SELECT id FROM "Tenant" WHERE id = ${id} FOR UPDATE`;
       if (transition && preparedTransition) {
         await this.planTransition.onPlanChange(tx, transition, preparedTransition);
       }
@@ -969,6 +977,7 @@ ${
             planVersionId: version.id,
             periodStart: now,
             periodEnd,
+            cycle,
             externalPayment: true,
             externalPaymentMethod: dto.paymentMethod,
             externalPaymentRef: dto.paymentRef ?? null,
@@ -980,6 +989,7 @@ ${
             planVersionId: version.id,
             periodStart: now,
             periodEnd,
+            cycle,
             // Rolling the period forward disarms every pending transition. A downgrade left
             // armed now points at the OLD (already past) period end, so the very next 02:00
             // sweep would fire it against the subscription this admin just activated.
@@ -1003,18 +1013,22 @@ ${
       if (wasPaying !== isPaying) {
         const addons = await tx.tenantAddon.findMany({
           where: { tenantId: id, active: true },
-          select: { priceSnapshot: true, quantity: true },
+          select: { priceSnapshot: true, quantity: true, sku: true, addonKey: true },
         });
         // basePriceSnapshot/discount are untouched by this write (external/manual activations
         // are priced outside the catalog run-rate — see the REG-743-N5/F2 note in
         // mrr.service.ts), so the "after" contribution reuses the exact fields the write
         // leaves in place — never a catalog-price guess.
-        const contribution = this.mrrService.priceSubscription(
+        // SA-277b: the PLAN_CHANGED amount here is the BASE (plan) share only — the add-on
+        // share of this same crossing is booked separately, through `bookAddonsOnCrossing`
+        // below (the SAME helper `subscribe()` uses for its own kept/prior add-ons), so nothing
+        // is double-counted between a plan.changed row and the addon.enabled rows it books.
+        const baseContribution = this.mrrService.priceSubscription(
           {
             basePriceSnapshot: before.subscription?.basePriceSnapshot ?? null,
             discount: before.subscription?.discount ?? null,
           },
-          addons,
+          [],
         );
         await this.billingEventService.emit(
           id,
@@ -1026,10 +1040,37 @@ ${
             externalActivation: true,
           },
           {
-            amountDelta: roundMoney(isPaying ? contribution : -contribution),
+            amountDelta: roundMoney(isPaying ? baseContribution : -baseContribution),
             actorId: adminId,
             tx,
           },
+        );
+        // Latent-case guard (pre-merge review): `bookAddonsOnCrossing`'s `wasPaying` flag only
+        // knows how to book a tenant CROSSING INTO the paying set (booking each add-on's full
+        // contribution) — it has no "debit" branch for a tenant that left it. Unreachable
+        // today: this method forces `status: "ACTIVE"` unconditionally above and never touches
+        // `class`/`deletedAt`, so `isPaying` can only be `false` here if `wasPaying` already
+        // was (isPayingRow needs status=ACTIVE too) — i.e. wasPaying implies isPaying. Kept as
+        // a fail-loud guard in case that invariant ever changes, rather than silently booking
+        // the wrong direction.
+        if (wasPaying && !isPaying) {
+          throw new InternalServerErrorException(
+            "activation left the paying set — add-on debit not implemented",
+          );
+        }
+        // SA-277b: add-ons book through the SAME crossing helper `subscribe()` uses —
+        // `wasPaying` gates whether each add-on's contribution was already on the ledger.
+        await bookAddonsOnCrossing(
+          tx,
+          this.billingEventService,
+          id,
+          addons.map((a) => ({
+            sku: addonSkuCode(a) ?? a.addonKey,
+            priceSnapshot: a.priceSnapshot,
+            quantity: a.quantity,
+          })),
+          wasPaying,
+          adminId,
         );
       }
 
@@ -1434,11 +1475,29 @@ ${
     // books this tenant's add-ons with a $0 base. Entering the fee is the moment the
     // base becomes known: back-fill the snapshot and emit the run-rate delta in the
     // same transaction, mirroring updatePlan's PLAN_CHANGED emission. Only the
-    // null-snapshot case back-fills — a set snapshot is grandfathered data and an
-    // override on top of it deliberately does not rewrite it.
-    const backfillBase =
-      dto.monthly != null && existing?.planKey != null && existing.basePriceSnapshot == null;
+    // null-snapshot case back-fills — a set snapshot is already-reconciled data
+    // (reconcilePriceLedger, called via syncStripeSubscriptionPrice below, rewrites it).
     await this.prisma.$transaction(async (tx) => {
+      // B864 / SA-277 (SA-163 shape): lock → read paying-set inputs → decide; a racing
+      // activation serialises here.
+      await tx.$queryRaw`SELECT id FROM "Tenant" WHERE id = ${id} FOR UPDATE`;
+      // FIX-7 / SA-277: re-read the subscription (planKey AND basePriceSnapshot) UNDER the
+      // lock — `backfillBase` must be decided from THIS locked read, never from the pre-tx
+      // `existing` read above, or a racing activation that wrote the snapshot between the
+      // pre-tx read and this lock would be clobbered/double-booked.
+      const row = await tx.tenant.findUniqueOrThrow({
+        where: { id },
+        select: {
+          status: true,
+          class: true,
+          deletedAt: true,
+          subscription: { select: { planKey: true, basePriceSnapshot: true } },
+        },
+      });
+      const backfillBase =
+        dto.monthly != null &&
+        row.subscription?.planKey != null &&
+        row.subscription.basePriceSnapshot == null;
       await tx.tenantSubscription.upsert({
         where: { tenantId: id },
         update: {
@@ -1452,11 +1511,17 @@ ${
           priceOverrideAnnual: dto.annual ?? null,
         },
       });
-      if (backfillBase) {
+      // Snapshot written regardless; ONLY the emit is gated — a non-paying tenant books
+      // once, at activation.
+      if (backfillBase && isPayingRow(row, row.subscription?.planKey ?? null)) {
         await this.billingEventService.emit(
           id,
           BILLING_EVENTS.PLAN_CHANGED,
-          { toPlan: existing.planKey, platformAdmin: true, priceOverrideBackfill: true },
+          {
+            toPlan: row.subscription?.planKey ?? null,
+            platformAdmin: true,
+            priceOverrideBackfill: true,
+          },
           { amountDelta: roundMoney(dto.monthly!), actorId: adminId, tx },
         );
       }

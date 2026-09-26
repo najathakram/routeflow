@@ -52,6 +52,13 @@ interface SendInvoiceSheetProps {
    * variables (`email == null` ⇒ mark-as-sent) rather than passing a bare
    * `isPending`, which would light up both rows at once. */
   markingSent?: boolean;
+  /**
+   * #2089: true when `postDeliveryInvoicePrompt` (@routeflow/types) returned
+   * "issue-and-send" — the invoice is still a DRAFT, and sending it issues it
+   * (DRAFT → SENT) in the same action. The sheet says so instead of "Send"/
+   * "Mark as sent", which would misleadingly imply it was already issued.
+   */
+  issuePrompt?: boolean;
 }
 
 /** Turns a phase into the row's label — shared by the WhatsApp (file-share
@@ -94,13 +101,14 @@ export function SendInvoiceSheet({
   openPdfPending,
   onMarkAsSent,
   markingSent,
+  issuePrompt,
 }: SendInvoiceSheetProps) {
   return (
     <Modal visible={open} transparent animationType="slide" onRequestClose={onClose}>
       <Pressable style={styles.backdrop} onPress={onClose} />
       <View style={styles.sheet}>
         <View style={styles.handle} />
-        <Text style={styles.title}>Send invoice</Text>
+        <Text style={styles.title}>{issuePrompt ? "Issue & send invoice" : "Send invoice"}</Text>
         <Text style={styles.sub} numberOfLines={1}>
           {[invoiceNumber, totalFmt, customerName].filter(Boolean).join(" · ")}
         </Text>
@@ -139,7 +147,13 @@ export function SendInvoiceSheet({
           />
           <ChannelRow
             icon="checkmark-circle-outline"
-            label={markingSent ? "Marking as sent…" : "Mark as sent — I'll deliver it myself."}
+            label={
+              markingSent
+                ? "Marking as sent…"
+                : issuePrompt
+                  ? "Issue & mark as sent — I'll deliver it myself."
+                  : "Mark as sent — I'll deliver it myself."
+            }
             onPress={onMarkAsSent}
             disabled={markingSent}
           />

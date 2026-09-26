@@ -1,0 +1,253 @@
+{
+  "buildPlanPath": ".claude/pipeline/2026-09-25-f51-billing-mrr-ledger/build-plan.md",
+  "testPlanPath": ".claude/pipeline/2026-09-25-f51-billing-mrr-ledger/test-plan.md",
+  "runDir": ".claude/pipeline/2026-09-25-f51-billing-mrr-ledger",
+  "scriptsDir": "/Users/maznahamanullah/.claude/skills/dev-pipeline/scripts",
+  "lessonsPath": ".claude/lessons/LESSONS.md",
+  "startedAt": "2026-09-25T19:20:34.862Z",
+  "scale": "major",
+  "mode": "bugfix",
+  "profile": "standard",
+  "workdir": "/Users/maznahamanullah/code/routeflow/.claude/worktrees/zealous-franklin-2c1741",
+  "context": "F51 B863-B866 billing/MRR ledger fixes per SA-277; four bugs, one add-on ledger helper",
+  "siblingPatterns": [
+    {
+      "pattern": "(billingEventService|this\\.events)\\.emit\\(",
+      "note": "every ledger emit with amountDelta must be isPayingRow-gated or inside a pre-scoped cron/webhook path"
+    },
+    {
+      "pattern": "amountDelta:",
+      "note": "signed MRR deltas not derived from a STORED snapshot or not routed through isPayingRow"
+    },
+    {
+      "pattern": "addCycle\\(",
+      "note": "callers on external/prepaid rows must be length-preserving, not calendar-clamped"
+    }
+  ],
+  "tasks": [
+    {
+      "id": "RC-863",
+      "title": "confirm B863 cause",
+      "type": "root-cause",
+      "files": [],
+      "tests": [],
+      "dependsOn": [],
+      "risk": "HIGH"
+    },
+    {
+      "id": "RT-863",
+      "title": "repro tests T1-T5, P1, P2",
+      "type": "repro-test",
+      "files": [],
+      "tests": [
+        "apps/api/src/platform-admin/platform-admin.service.spec.ts",
+        "apps/api/src/billing/billing-cron.service.spec.ts"
+      ],
+      "dependsOn": ["RC-863"],
+      "risk": "HIGH"
+    },
+    {
+      "id": "FIX-863",
+      "title": "cycle on manual activation + length-preserving external roll",
+      "type": "fix",
+      "files": [
+        "apps/api/src/platform-admin/platform-admin.service.ts",
+        "apps/api/src/billing/billing-cron.service.ts"
+      ],
+      "tests": [],
+      "dependsOn": ["RC-863", "RT-863"],
+      "risk": "HIGH",
+      "radius": [8, 12]
+    },
+    {
+      "id": "RP-863",
+      "title": "revert probe billing-cron",
+      "type": "revert-probe",
+      "file": "apps/api/src/billing/billing-cron.service.ts",
+      "test": "cd apps/api && npx jest src/billing/billing-cron.service.spec.ts -t \"REG-B863-ROLL\" --maxWorkers=2",
+      "dependsOn": ["FIX-863"],
+      "risk": "HIGH"
+    },
+    {
+      "id": "RC-864",
+      "title": "confirm B864 cause",
+      "type": "root-cause",
+      "files": [],
+      "tests": [],
+      "dependsOn": [],
+      "risk": "HIGH"
+    },
+    {
+      "id": "RT-864",
+      "title": "repro tests T6, T7, P3, P4",
+      "type": "repro-test",
+      "files": [],
+      "tests": ["apps/api/src/platform-admin/platform-admin.service.spec.ts"],
+      "dependsOn": ["RC-864", "RT-863"],
+      "risk": "HIGH"
+    },
+    {
+      "id": "FIX-864",
+      "title": "gate the override emit in-tx under the tenant lock; lock activation too",
+      "type": "fix",
+      "files": ["apps/api/src/platform-admin/platform-admin.service.ts"],
+      "tests": [],
+      "dependsOn": ["RC-864", "RT-864", "FIX-863"],
+      "risk": "HIGH",
+      "radius": [8, 12]
+    },
+    {
+      "id": "RP-864",
+      "title": "revert probe platform-admin",
+      "type": "revert-probe",
+      "file": "apps/api/src/platform-admin/platform-admin.service.ts",
+      "test": "cd apps/api && npx jest src/platform-admin/platform-admin.service.spec.ts -t \"REG-B864-TRIAL-OVERRIDE\" --maxWorkers=2",
+      "dependsOn": ["FIX-864"],
+      "risk": "HIGH"
+    },
+    {
+      "id": "RC-865",
+      "title": "confirm B865 cause",
+      "type": "root-cause",
+      "files": [],
+      "tests": [],
+      "dependsOn": [],
+      "risk": "HIGH"
+    },
+    {
+      "id": "RT-865",
+      "title": "repro tests T8-T14, P5-P7",
+      "type": "repro-test",
+      "files": [],
+      "tests": [
+        "apps/api/src/billing/addon.service.spec.ts",
+        "apps/api/src/billing/subscription-mutation.service.spec.ts",
+        "apps/api/src/billing/addon-ledger.spec.ts"
+      ],
+      "dependsOn": ["RC-865"],
+      "risk": "HIGH"
+    },
+    {
+      "id": "FIX-865A",
+      "title": "the ONE add-on ledger helper (new file)",
+      "type": "fix",
+      "files": ["apps/api/src/billing/addon-ledger.ts"],
+      "tests": [],
+      "dependsOn": ["RC-865", "RT-865"],
+      "risk": "HIGH",
+      "radius": [5, 10]
+    },
+    {
+      "id": "FIX-865B",
+      "title": "admin AddonService routes through the helper",
+      "type": "fix",
+      "files": ["apps/api/src/billing/addon.service.ts"],
+      "tests": [],
+      "dependsOn": ["FIX-865A"],
+      "risk": "HIGH",
+      "radius": [8, 12]
+    },
+    {
+      "id": "FIX-865C",
+      "title": "self-serve sites route through the helper",
+      "type": "fix",
+      "files": ["apps/api/src/billing/subscription-mutation.service.ts"],
+      "tests": [],
+      "dependsOn": ["FIX-865A"],
+      "risk": "HIGH",
+      "radius": [8, 12]
+    },
+    {
+      "id": "RP-865A",
+      "title": "revert probe addon-ledger",
+      "type": "revert-probe",
+      "file": "apps/api/src/billing/addon-ledger.ts",
+      "test": "cd apps/api && npx jest src/billing/addon-ledger.spec.ts -t \"REG-B865-LEDGER\" --maxWorkers=2",
+      "dependsOn": ["FIX-865A"],
+      "risk": "HIGH"
+    },
+    {
+      "id": "RP-865B",
+      "title": "revert probe addon.service",
+      "type": "revert-probe",
+      "file": "apps/api/src/billing/addon.service.ts",
+      "test": "cd apps/api && npx jest src/billing/addon.service.spec.ts -t \"REG-B865-ADMIN\" --maxWorkers=2",
+      "dependsOn": ["FIX-865B"],
+      "risk": "HIGH"
+    },
+    {
+      "id": "RP-865C",
+      "title": "revert probe subscription-mutation",
+      "type": "revert-probe",
+      "file": "apps/api/src/billing/subscription-mutation.service.ts",
+      "test": "cd apps/api && npx jest src/billing/subscription-mutation.service.spec.ts -t \"REG-B865-SELF\" --maxWorkers=2",
+      "dependsOn": ["FIX-865C"],
+      "risk": "HIGH"
+    },
+    {
+      "id": "RC-866",
+      "title": "confirm B866 cause",
+      "type": "root-cause",
+      "files": [],
+      "tests": [],
+      "dependsOn": [],
+      "risk": "HIGH"
+    },
+    {
+      "id": "RT-866",
+      "title": "repro tests T15, T16, P8",
+      "type": "repro-test",
+      "files": [],
+      "tests": ["apps/api/src/billing/mrr.service.spec.ts"],
+      "dependsOn": ["RC-866"],
+      "risk": "HIGH"
+    },
+    {
+      "id": "FIX-866",
+      "title": "byPlan gross",
+      "type": "fix",
+      "files": ["apps/api/src/billing/mrr.service.ts"],
+      "tests": [],
+      "dependsOn": ["RC-866", "RT-866"],
+      "risk": "HIGH",
+      "radius": [5, 10]
+    },
+    {
+      "id": "RP-866",
+      "title": "revert probe mrr.service",
+      "type": "revert-probe",
+      "file": "apps/api/src/billing/mrr.service.ts",
+      "test": "cd apps/api && npx jest src/billing/mrr.service.spec.ts -t \"REG-B866-BYPLAN\" --maxWorkers=2",
+      "dependsOn": ["FIX-866"],
+      "risk": "HIGH"
+    },
+    {
+      "id": "UI-865",
+      "title": "admin EnableAddonModal shows the no-catalog-SKU 400 (SA-277a)",
+      "type": "feature",
+      "files": [],
+      "tests": [
+        "apps/web/app/(platform-admin)/admin/tenants/[id]/_features/EnableAddonModal.test.tsx"
+      ],
+      "dependsOn": ["FIX-865B"],
+      "risk": "MEDIUM"
+    },
+    {
+      "id": "DBT-F51",
+      "title": "NEED-DB spec (authored here, run by the F2 prover, never in engine gates)",
+      "type": "feature",
+      "files": ["apps/api/src/common/override-activation-ledger.db.spec.ts"],
+      "tests": [],
+      "dependsOn": ["FIX-864", "FIX-865B", "FIX-865C"],
+      "risk": "HIGH"
+    }
+  ],
+  "verifyCommands": {
+    "perRound": [
+      "npx tsc --noEmit -p apps/api/tsconfig.json",
+      "cd apps/api && npx jest src/billing/billing-cron.service.spec.ts src/platform-admin/platform-admin.service.spec.ts src/billing/addon.service.spec.ts src/billing/subscription-mutation.service.spec.ts src/billing/mrr.service.spec.ts src/billing/addon-ledger.spec.ts src/billing/mrr-paying-predicate.parity.spec.ts --maxWorkers=2 --passWithNoTests"
+    ],
+    "final": ["npm test -w apps/api -- --maxWorkers=2", "npm run lint -w apps/api"]
+  },
+  "formatCommand": "git ls-files -m -o --exclude-standard apps/api/src | grep -E '\\.ts$' | xargs -r npx prettier --write"
+}
