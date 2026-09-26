@@ -1655,6 +1655,13 @@ describe("InvoicesService", () => {
           status: InvoiceStatus.DRAFT,
           deliveryBatchId: null,
         })
+        // #2255 / SA-404: the row markSent locks and re-reads as its first statement.
+        .mockResolvedValueOnce({
+          id: "i1",
+          orderId: null,
+          status: InvoiceStatus.DRAFT,
+          payments: [],
+        })
         .mockResolvedValueOnce({
           // fresh read inside the tx, after the DRAFT→SENT flip already committed —
           // a credit applied at order-create time already covers the full total.
@@ -1700,12 +1707,15 @@ describe("InvoicesService", () => {
     });
 
     it("passes the order's explicit-amount intent ids as excludeCreditNoteIds", async () => {
-      prisma.invoice.findUnique.mockResolvedValueOnce({
+      const draft = {
         id: "i2",
         orderId: "ord-2",
         status: InvoiceStatus.DRAFT,
         deliveryBatchId: null,
-      });
+      };
+      prisma.invoice.findUnique
+        .mockResolvedValueOnce(draft) // findOneOrThrow
+        .mockResolvedValueOnce({ ...draft, payments: [] }); // #2255: markSent's locked re-read
       prisma.order.findFirst.mockResolvedValue({ status: "DELIVERED", orderNumber: "O2" });
       prisma.invoice.update.mockResolvedValueOnce({
         id: "i2",
