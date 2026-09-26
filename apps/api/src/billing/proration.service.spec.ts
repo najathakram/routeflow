@@ -167,3 +167,44 @@ describe("ProrationService.prorationPreview", () => {
     expect(p.proratedToday).toBeLessThanOrEqual(12);
   });
 });
+
+// #2187 (SA-277): since B863 a 90/180-day manual row is stored as cycle MONTHLY, and both
+// proration paths used that whole period as the window for a MONTHLY price — a 3×/6×
+// under-quote. RED pin: the quote must not be the period-divided figure. The exact expected
+// amount is tightened once the SA rules on the policy (scale / calendar month / no proration).
+describe("#2187 manual rows with a 90/180-day period (MONTHLY cycle since B863)", () => {
+  const NOW = new Date("2026-10-10T00:00:00Z");
+  const cents = (n: number) => Math.round(n * 100) / 100;
+  const manualRow = (days: number) => ({
+    cycle: "MONTHLY",
+    periodStart: new Date(NOW.getTime() - 10 * DAY),
+    periodEnd: new Date(NOW.getTime() + (days - 10) * DAY),
+  });
+
+  beforeEach(() => {
+    jest.useFakeTimers();
+    jest.setSystemTime(NOW);
+  });
+  afterEach(() => jest.useRealTimers());
+
+  it("control: a 30-day row prorates a monthly delta over its own period", () => {
+    expect(makeService().proratedDiff(manualRow(30), 30)).toBe(cents((30 * 20) / 30));
+  });
+
+  it.each([90, 180])(
+    "proratedDiff never divides a monthly delta across a %i-day period",
+    (days) => {
+      const periodDivided = cents((30 * (days - 10)) / days);
+      expect(makeService().proratedDiff(manualRow(days), 30)).not.toBe(periodDivided);
+    },
+  );
+
+  it.each([90, 180])(
+    "prorationPreview never divides a monthly add-on across a %i-day period",
+    async (days) => {
+      const periodDivided = cents((12 * (days - 10)) / days);
+      const p = await makeService(manualRow(days)).prorationPreview("t1", "SEAT_EXTRA");
+      expect(p.proratedToday).not.toBe(periodDivided);
+    },
+  );
+});
