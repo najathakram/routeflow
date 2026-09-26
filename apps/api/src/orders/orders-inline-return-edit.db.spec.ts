@@ -290,35 +290,62 @@ describeDb(
       ).toBeGreaterThan(0);
     }, 60_000);
 
-    it("SA-340: an adapter-shaped 40001 on the edit tx retries the WHOLE tx with the SAME reserved number (one Return, one credit note)", async () => {
+    it("SA-340: a write conflict thrown INSIDE the edit tx after the return was applied (attempt 1 only) retries the WHOLE tx: no side effect runs twice", async () => {
+      // A control edit with no fault fixes what "once" means for this fixture (stock moved, audit rows).
+      const ctl = await seed("ctl");
+      await edit(ctl, ret(ctl.productId, 3, `k-ctl-${run}`));
+      const measure = async (f: { orderId: string; productId: string; customerId: string }) => {
+        const returns = await raw.return.findMany({ where: { orderId: f.orderId } });
+        const audits = await raw.auditLog.count({
+          where: { entityId: { in: [f.orderId, ...returns.map((r: any) => r.id)] } },
+        });
+        return {
+          returns: returns.length,
+          cns: await raw.creditNote.count({ where: { customerId: f.customerId } }),
+          stockMovements: await raw.stockMovement.count({ where: { productId: f.productId } }),
+          stock: Number(
+            (await raw.product.findUniqueOrThrow({ where: { id: f.productId } })).currentStock,
+          ),
+          audits,
+        };
+      };
+      const control = await measure(ctl);
+      expect(control.returns).toBe(1);
+
       const f = await seed("conflict");
-      const real = prisma.tenantTransaction.bind(prisma);
-      let calls = 0;
-      const spy = jest.spyOn(prisma, "tenantTransaction").mockImplementation(((...args: any[]) => {
-        calls++;
-        // call 1 is NumberingService.reserveNext's own tx (the CN number, reserved ahead); call 2 is the
-        // edit tx's first attempt: fail it the way Prisma 7's pg adapter reports a serialization failure.
-        if (calls === 2) {
-          return Promise.reject(
-            Object.assign(new Error("write conflict"), {
-              name: "DriverAdapterError",
-              cause: { kind: "TransactionWriteConflict", originalCode: "40001" },
-            }),
-          );
+      reserved = [];
+      const svc = orders.inlineReturns;
+      const realApply = svc.captureAndIssueInTx.bind(svc);
+      let attempts = 0;
+      svc.captureAndIssueInTx = async (...args: any[]) => {
+        const out = await realApply(...args); // the return, its credit note and its restock ARE written...
+        attempts += 1;
+        if (attempts === 1) {
+          // ...and THEN the tx aborts, the way Prisma 7 wraps a pg deadlock at READ COMMITTED.
+          throw Object.assign(new Error("deadlock detected"), {
+            code: "P2034",
+            meta: {
+              driverAdapterError: {
+                name: "DriverAdapterError",
+                cause: { kind: "TransactionWriteConflict", originalCode: "40P01" },
+              },
+            },
+          });
         }
-        return (real as any)(...args);
-      }) as any);
+        return out;
+      };
       try {
         await edit(f, ret(f.productId, 3, `k-conflict-${run}`));
       } finally {
-        spy.mockRestore();
+        svc.captureAndIssueInTx = realApply;
       }
-      expect(calls).toBeGreaterThanOrEqual(3); // reservation, failed attempt, retried attempt
+      expect(attempts).toBe(2); // attempt 1 rolled back, attempt 2 committed
       expect(reserved).toHaveLength(1); // the number was reserved ONCE, ahead of the tx
-      expect(await raw.return.count({ where: { orderId: f.orderId } })).toBe(1);
       const cns = await raw.creditNote.findMany({ where: { customerId: f.customerId } });
       expect(cns).toHaveLength(1);
       expect(cns[0].creditNoteNumber).toBe(reserved[0]);
+      // exactly the side effects one clean edit has: one Return, one CN, stock moved once, same audit rows
+      expect(await measure(f)).toEqual(control);
     }, 60_000);
 
     it("replay: the same edit with the same returnKey issues nothing new (one Return, one credit note)", async () => {

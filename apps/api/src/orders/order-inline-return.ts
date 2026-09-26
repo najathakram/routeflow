@@ -1,5 +1,5 @@
 import { ConflictException, ForbiddenException, ServiceUnavailableException } from "@nestjs/common";
-import { retryOnTxConflict } from "../common/tx-retry";
+import { retryOnTxConflict, TX_CONFLICT_BACKOFF_MS } from "../common/tx-retry";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
 import type { InlineReturnLinesDto } from "../returns/dto/capture-inline-return.dto";
 import { INLINE_RETURN_KEY_TAKEN } from "../returns/inline-returns.service";
@@ -255,3 +255,7 @@ export function runEditTx<T>(
     prisma.tenantTransaction(fn, opts),
   );
 }
+
+/** create()'s own retry loop backs off like the house helper (100 ms, then 300 ms) before its next attempt. */
+export const conflictBackoff = (attempt: number): Promise<void> =>
+  new Promise((r) => setTimeout(r, TX_CONFLICT_BACKOFF_MS[attempt] ?? 300));

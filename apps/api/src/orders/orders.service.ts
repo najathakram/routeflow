@@ -2150,7 +2150,10 @@ export class OrdersService implements OnApplicationBootstrap {
           // for OOS items from RF-017).
           if (attempt < MAX_RETRIES - 1) continue;
         }
-        if (inlineRet && txConflictState(e) && attempt < MAX_RETRIES - 1) continue;
+        if (inlineRet && txConflictState(e) && attempt < MAX_RETRIES - 1) {
+          await inlineReturn.conflictBackoff(attempt);
+          continue;
+        }
         throw e;
       }
     }

@@ -301,6 +301,27 @@ describe("runWithConflictRetry (SA-340)", () => {
     expect(svc.reserveCreditNoteNumber).toHaveBeenCalledTimes(1);
   });
 
+  it.each([
+    [
+      "P2034 wrapping a 40P01 adapter error",
+      {
+        code: "P2034",
+        meta: {
+          driverAdapterError: {
+            name: "DriverAdapterError",
+            cause: { kind: "TransactionWriteConflict", originalCode: "40P01" },
+          },
+        },
+      },
+    ],
+    ["P2010 (raw query) carrying 40P01", { code: "P2010", meta: { code: "40P01" } }],
+  ])("%s retries the whole tx (at READ COMMITTED, 40P01 is the real conflict)", async (_n, err) => {
+    const p = await prepareInlineReturn(svcStub() as any, LINES, STAFF);
+    const run = jest.fn().mockRejectedValueOnce(err).mockResolvedValue("ok");
+    await expect(runWithConflictRetry(p, "test", run)).resolves.toBe("ok");
+    expect(run).toHaveBeenCalledTimes(2);
+  });
+
   it("a plain edit (no return) is ONE attempt: the conflict escapes", async () => {
     const run = jest.fn().mockRejectedValue(adapter40001());
     await expect(runWithConflictRetry(null, "test", run)).rejects.toThrow("write conflict");
