@@ -231,6 +231,26 @@ export function exclusionSetHash(ids) {
     .digest("hex");
 }
 
+/** Pure: 0 → "A", 25 → "Z", 26 → "AA" (spreadsheet-style column letters). */
+function tenantLabel(i) {
+  let s = "";
+  for (let n = i + 1; n > 0; n = Math.floor((n - 1) / 26)) {
+    s = String.fromCharCode(65 + ((n - 1) % 26)) + s;
+  }
+  return `tenant ${s}`;
+}
+
+/**
+ * Pure: the per-tenant dry-run summary with ANONYMOUS labels ("tenant A: stamped=… review=…"),
+ * never a tenant id — terminal output included (SA-403 (e) + the client-data policy). Largest
+ * tenant first so the labels carry no id ordering.
+ */
+export function anonymousTenantSummary(byTenant) {
+  return [...byTenant.values()]
+    .sort((a, b) => b.stamped + b.review - (a.stamped + a.review))
+    .map((c, i) => `${tenantLabel(i)}: stamped=${c.stamped} review=${c.review}`);
+}
+
 /**
  * Pure: the --apply refusal when planned rows changed since the dry run. Counts only, never a
  * line or payment id (SA-403 (e) aggregate output).
@@ -538,10 +558,8 @@ async function dryRun() {
     console.log(
       `  REVIEW: ${finalReview.length} invoice(s) total (listed in the plan file; nothing is written for them)`,
     );
-    console.log(`  per tenantId:`);
-    for (const [tenantId, counts] of byTenant) {
-      console.log(`    ${tenantId}: stamped=${counts.stamped} review=${counts.review}`);
-    }
+    console.log(`  per tenant (anonymous labels, SA-403 (e)):`);
+    for (const line of anonymousTenantSummary(byTenant)) console.log(`    ${line}`);
     if (exclusion) {
       console.log(
         `  excluded: ${excludedLineCount} line(s) across ${excludedTenantIds.size} tenant(s)`,
@@ -834,6 +852,25 @@ function selfTest() {
     }
   };
 
+  {
+    const byTenant = new Map([
+      ["1f0e2d3c-4b5a-6978-8a9b-0c1d2e3f4a5b", { stamped: 1, review: 0 }],
+      ["tenant-excl-1", { stamped: 3, review: 2 }],
+    ]);
+    const lines = anonymousTenantSummary(byTenant);
+    check(
+      "anonymousTenantSummary: labels only, largest first, no tenant id or UUID-shaped string",
+      JSON.stringify(lines) ===
+        JSON.stringify(["tenant A: stamped=3 review=2", "tenant B: stamped=1 review=0"]) &&
+        !lines.some((l) => /[0-9a-f]{8}-[0-9a-f]{4}-|tenant-excl-1/i.test(l)),
+    );
+    check(
+      "anonymousTenantSummary: 27th tenant is labelled AA",
+      anonymousTenantSummary(
+        new Map(Array.from({ length: 27 }, (_, i) => [`t${i}`, { stamped: 27 - i, review: 0 }])),
+      )[26].startsWith("tenant AA:"),
+    );
+  }
   {
     const msg = staleRefusalMessage(2, 1);
     check(

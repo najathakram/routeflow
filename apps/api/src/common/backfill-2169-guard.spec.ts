@@ -39,13 +39,18 @@ function noDbEnv(): NodeJS.ProcessEnv {
   return env;
 }
 
+/** SA-403 (e): no output path — abort, dry run or self-test — ever prints a UUID-shaped id. */
+const UUID_SHAPED = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i;
+
 function run(args: string[], envOverrides: NodeJS.ProcessEnv = {}) {
-  return spawnSync(process.execPath, [SCRIPT, ...args], {
+  const res = spawnSync(process.execPath, [SCRIPT, ...args], {
     cwd: API_DIR,
     encoding: "utf8",
     env: { ...noDbEnv(), ...envOverrides },
     timeout: 60_000,
   });
+  expect(`${res.stdout ?? ""}${res.stderr ?? ""}`).not.toMatch(UUID_SHAPED);
+  return res;
 }
 
 const NO_CONNECTION_ATTEMPT = /ECONNREFUSED|ENOTFOUND|ETIMEDOUT|getaddrinfo|Cannot find module/i;
