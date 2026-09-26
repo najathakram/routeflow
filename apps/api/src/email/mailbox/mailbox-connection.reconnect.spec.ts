@@ -218,10 +218,10 @@ async function connectGoogle(service: MailboxConnectionService, g: GoogleGrant) 
   mockOAuthClient.verifyIdToken.mockResolvedValue({
     getPayload: () => ({ sub: g.sub, email: g.email, email_verified: true }),
   });
-  const url = await service.startConnect(TENANT, g.userId);
+  const { url, connectSecret } = await service.startConnect(TENANT, g.userId);
   const state = new URL(url).searchParams.get("state")!;
   const { confirmToken } = await service.handleCallback("g-code", state);
-  return service.confirmConnect(confirmToken, g.userId, TENANT);
+  return service.confirmConnect(confirmToken, connectSecret, g.userId, TENANT);
 }
 
 interface MicrosoftGrant {
@@ -251,10 +251,10 @@ async function connectMicrosoft(service: MailboxConnectionService, m: MicrosoftG
     if (url !== MS_GRAPH_ME_URL) throw new Error(`unexpected GET ${url}`);
     return { data: { id: m.objectId, mail: m.mail, userPrincipalName: m.mail } };
   });
-  const url = await service.startConnectMicrosoft(TENANT, m.userId);
+  const { url, connectSecret } = await service.startConnectMicrosoft(TENANT, m.userId);
   const state = new URL(url).searchParams.get("state")!;
   const { confirmToken } = await service.handleMicrosoftCallback("ms-code", state);
-  return service.confirmConnect(confirmToken, m.userId, TENANT);
+  return service.confirmConnect(confirmToken, connectSecret, m.userId, TENANT);
 }
 
 /**
