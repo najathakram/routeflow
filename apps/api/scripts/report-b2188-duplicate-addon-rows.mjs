@@ -14,10 +14,16 @@
  * name is printed. Test tenants (scripts/lib/test-tenants.cjs) are counted in a separate `test`
  * block. `--tenant <id>` limits the count to one tenant (DB-lane use only).
  *
- * SAFETY: `default_transaction_read_only = on` before any other query; `statement_timeout` caps
+ * `--self-test` runs the pure checks (map shape, anonymous summary) with no database and exits.
+ *
+ * SAFETY: `default_transaction_read_only = on` before any other query; `statement_timeout` and
+ * `lock_timeout` cap
  * every query; the connection is closed in `finally`; only SELECT appears below.
  */
 import { createRequire } from "module";
+import { realpathSync } from "node:fs";
+import { basename } from "node:path";
+import { fileURLToPath } from "node:url";
 import { resolveReportDbUrl } from "./lib/report-db-url.mjs";
 const require = createRequire(import.meta.url);
 const { Client } = require("pg");
@@ -34,8 +40,34 @@ export const LEGACY_ADDON_KEY_TO_SKU = {
   ocr: "OCR_PACK_250",
 };
 
+/** No-DB checks of the pure parts (`--self-test`). Throws on the first failure. */
+export function selfTest() {
+  const eq = (a, b, what) => {
+    if (JSON.stringify(a) !== JSON.stringify(b))
+      throw new Error(`${what}: ${JSON.stringify(a)} !== ${JSON.stringify(b)}`);
+  };
+  eq(LEGACY_ADDON_KEY_TO_SKU.msrp, "MSRP", "legacy map");
+  const s = summarize([
+    { tenantId: "b", slug: "x", code: "MSRP", rows: 2 },
+    { tenantId: "a", slug: "y", code: "OCR_PACK_250", rows: 3 },
+  ]);
+  eq(s.tenants, 2, "tenants");
+  eq(
+    s.detail.map((d) => d.tenant),
+    ["tenant A", "tenant B"],
+    "labels",
+  );
+  if (JSON.stringify(s).includes('"x"') || JSON.stringify(s).includes('"y"'))
+    throw new Error("summary leaked a slug");
+  return "self-test ok";
+}
+
 async function main() {
   const argv = process.argv.slice(2);
+  if (argv.includes("--self-test")) {
+    console.log(selfTest());
+    return;
+  }
   const json = argv.includes("--json");
   const tenantArg = argv.indexOf("--tenant");
   const onlyTenant = tenantArg >= 0 ? argv[tenantArg + 1] : null;
@@ -51,6 +83,7 @@ async function main() {
     await client.connect();
     await client.query("SET default_transaction_read_only = on");
     await client.query("SET statement_timeout = '45s'");
+    await client.query("SET lock_timeout = '5s'");
 
     const legacyKeys = Object.keys(LEGACY_ADDON_KEY_TO_SKU);
     const legacySkus = legacyKeys.map((k) => LEGACY_ADDON_KEY_TO_SKU[k]);
@@ -99,7 +132,34 @@ export function summarize(rows) {
   return { tenants: label.size, groups: rows.length, detail };
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+/**
+ * Run only when invoked directly: importing this module (for `summarize` / `selfTest`) must never
+ * start a report. Paths are compared after realpath, case-insensitively on Windows; when only the
+ * file NAMES match it warns and runs anyway, because a silent exit 0 reads as "nothing found"
+ * (the report-b673 pattern).
+ */
+export function isInvokedDirectly(entry = process.argv[1], self = fileURLToPath(import.meta.url)) {
+  if (!entry) return false;
+  const norm = (p) => {
+    let r = p;
+    try {
+      r = realpathSync(p);
+    } catch {
+      // keep the path as given
+    }
+    return process.platform === "win32" ? r.toLowerCase() : r;
+  };
+  if (norm(entry) === norm(self)) return true;
+  if (basename(entry).toLowerCase() === basename(self).toLowerCase()) {
+    console.error(
+      `report-b2188-duplicate-addon-rows: warning: entry path ${entry} did not match ${self} exactly; running anyway.`,
+    );
+    return true;
+  }
+  return false;
+}
+
+if (isInvokedDirectly()) {
   main().catch((e) => {
     console.error(`report-b2188-duplicate-addon-rows: ${e.message}`);
     process.exit(1);

@@ -1,5 +1,6 @@
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { LEGACY_ADDON_KEY_TO_SKU } from "../billing/plan-catalog.constants";
 
@@ -43,6 +44,30 @@ describe("report-b2188-duplicate-addon-rows.mjs", () => {
     expect(source).toContain("SET default_transaction_read_only = on");
     const sql = codeLines().join("\n");
     expect(sql).not.toMatch(/\b(INSERT|UPDATE|DELETE|TRUNCATE|ALTER|DROP|CREATE|GRANT)\b/);
+  });
+
+  it("caps locks too", () => {
+    expect(source).toContain("SET lock_timeout");
+  });
+
+  // A dead entry check exits 0 with no output, which reads as "no duplicates". Spawn the REAL
+  // file — and the same file through a symlink in a directory whose name has a space — and
+  // require the self-test's own output, so that can never pass silently again.
+  it("--self-test runs when spawned by its real path and through a spaced symlink", () => {
+    const direct = node([SCRIPT, "--self-test"], process.env);
+    expect(direct.status).toBe(0);
+    expect(direct.stdout.trim()).toBe("self-test ok");
+
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "b2188 entry "));
+    const link = path.join(dir, "report-b2188-duplicate-addon-rows.mjs");
+    try {
+      fs.symlinkSync(SCRIPT, link);
+      const viaLink = node([link, "--self-test"], process.env);
+      expect(viaLink.status).toBe(0);
+      expect(viaLink.stdout.trim()).toBe("self-test ok");
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   it("mirrors LEGACY_ADDON_KEY_TO_SKU exactly (deep-equal parity pin)", () => {
