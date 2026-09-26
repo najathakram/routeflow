@@ -30,8 +30,13 @@ describe.each([
 // unconditionally, so a Case line read "3 Cases x $73.33 / ea" and a factor-1 Piece line
 // could read "/ box" — the noun a units_v1 line's own price is PER never matched the noun
 // its qty was just named with. Source-pinned the same way as the rest of this file.
-describe("customer invoice detail (B758 follow-up): the price-suffix noun tracks the line's own unit", () => {
-  const src = readFileSync(join(__dirname, "..", "app/(customer)/invoices/[id].tsx"), "utf8");
+// #2046 round 4 (F2 REQUIRED): the customer ORDER detail screen had the same unconditional
+// product.unit suffix ("3 Cases x $65.00 / box"), so it carries the same pin.
+describe.each([
+  ["customer invoice detail (B758 follow-up)", "app/(customer)/invoices/[id].tsx"],
+  ["customer order detail (B759 follow-up, #2046 r4)", "app/(customer)/orders/[id].tsx"],
+])("%s: the price-suffix noun tracks the line's own unit", (_name, file) => {
+  const src = readFileSync(join(__dirname, "..", file), "utf8");
 
   it("imports invoiceLineUnitNoun from the local invoice-line-display module", () => {
     expect(src).toMatch(

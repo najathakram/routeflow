@@ -28,7 +28,7 @@ import {
   trackingStepIndex,
 } from "../../../lib/order-tracking-logic";
 import { invoiceLineQtyText } from "@routeflow/pricing";
-import { usesUnitDisplay } from "../../../lib/invoice-line-display";
+import { invoiceLineUnitNoun, usesUnitDisplay } from "../../../lib/invoice-line-display";
 import { freeUnitsLabel } from "../../../lib/buyer-cart-logic";
 import { showToast } from "../../../lib/toast";
 import { confirm } from "../../../lib/confirm";
@@ -310,7 +310,13 @@ export default function CustomerOrderDetailScreen() {
                         ? // B759: a units_v1 named unit shows ITS label via the ONE shared formatter.
                           `${invoiceLineQtyText(item)} × $${Number(item.unitPrice).toFixed(2)}`
                         : `${Number(item.qty)} × $${Number(item.unitPrice).toFixed(2)}`}
-                      {item.product?.unit ? ` / ${item.product.unit}` : ""}
+                      {/* #2046 r4: the price-suffix noun tracks the line's own unit, as on the
+                          customer invoice screen — a Case line no longer reads "/ box". */}
+                      {item.unitLabel?.trim()
+                        ? ` / ${invoiceLineUnitNoun(item)}`
+                        : item.product?.unit
+                          ? ` / ${item.product.unit}`
+                          : ""}
                     </Text>
                     {item.notes?.trim() ? (
                       <Text style={styles.itemNote} numberOfLines={4}>
