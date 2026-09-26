@@ -32,7 +32,7 @@ describe("report-b2230-unit-lines-without-boxes", () => {
 
   it("counts the exact violating shape the CHECK will forbid", () => {
     expect(src).toContain(
-      'i."unitLabel" IS NOT NULL AND i."unitsPerBox" > 1 AND (i.boxes IS NULL OR i.boxes < 1)',
+      'i."unitLabel" IS NOT NULL AND COALESCE(i."unitsPerBox", 1) > 1 AND i.qty > 0 AND COALESCE(i.boxes, 0) < 1 AND COALESCE(i.pieces, 0) < 1',
     );
   });
 

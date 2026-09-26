@@ -1,9 +1,10 @@
 /**
- * READ-ONLY census for #2230 / SA-388: how many unit lines (`unitLabel` set) with a pack factor
- * `unitsPerBox > 1` carry NO box count (`boxes` NULL or < 1) today, per line table. Such a line is
- * the shape that reproduced B718's 12x over-bill; no server writer is known to produce one, and
- * #2230 adds a writer guard plus a CHECK (NOT VALID, then VALIDATE). VALIDATE fails if any row
- * violates it, so this count decides whether the migration can validate as-is.
+ * READ-ONLY census for #2230 / SA-388d: how many unit lines carry the ALL-EMPTY split today, per
+ * line table: `unitLabel` set, pack factor `unitsPerBox > 1`, `qty > 0`, and neither `boxes >= 1`
+ * nor `pieces >= 1`. That is B718's over-bill shape (the count is underivable). A part-unit split
+ * such as 0 boxes + 5 pieces is VALID (SA-178) and is not counted; an "Each" line (factor 1) is
+ * exempt. #2230 adds a writer guard plus a CHECK on OrderItem/InvoiceItem (NOT VALID); its
+ * VALIDATE runs only after this census reads zero.
  *
  * NEVER RUN FROM AN IMPLEMENTATION SESSION. The fleet lead runs it under its `railway run`
  * authorization (warn-then-approve):
@@ -37,7 +38,7 @@ const NAME = "report-b2230-unit-lines-without-boxes";
 export const TABLES = ["OrderItem", "InvoiceItem", "EstimateItem"];
 
 /** The violating shape, shared by every table's query (and pinned by the spec). */
-export const VIOLATION_SQL = `i."unitLabel" IS NOT NULL AND i."unitsPerBox" > 1 AND (i.boxes IS NULL OR i.boxes < 1)`;
+export const VIOLATION_SQL = `i."unitLabel" IS NOT NULL AND COALESCE(i."unitsPerBox", 1) > 1 AND i.qty > 0 AND COALESCE(i.boxes, 0) < 1 AND COALESCE(i.pieces, 0) < 1`;
 
 /**
  * One grouped SELECT per table: per tenant, how many violating rows, split by boxes NULL/0 and
