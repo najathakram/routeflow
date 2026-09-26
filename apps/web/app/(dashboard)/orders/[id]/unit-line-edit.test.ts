@@ -99,17 +99,26 @@ describe("buildItemUpdates — units_v1 (A3-2)", () => {
     expect(buildItemUpdates([edited], [orig])).toEqual([]);
   });
 
-  // B718 (SA-369, mirrors mobile #1343): a stored unit line carrying a MEANINGLESS boxes:0 must
-  // not hydrate as "0 Cases" — `boxes ?? qty` passed the 0 through, so a later price-only edit
-  // sent qty:0, which the server silently skips (the edit is dropped with no signal).
-  it("B718: a stored unit line with boxes:0 seeds its count from qty, and a price-only edit sends qty > 0", () => {
-    const orig = unitLine({ qty: 3, boxes: 0 });
+  // B718: a stored unit line carrying a MEANINGLESS boxes:0 must not hydrate as "0 Cases" —
+  // `boxes ?? qty` passed the 0 through, so a later price-only edit sent qty:0, which the server
+  // silently skips. SERVER-SHAPED fixture (#938 F2 BLOCK on #2220): a unit line's stored `qty` is
+  // BASE PIECES (count × unitsPerBox), so 3 Cases of 12 is qty 36 — falling back to `qty` as the
+  // count reads 36 Cases and a price-only save re-bills the line as 432 pieces (12×).
+  it("B718: a server-shaped 3-Case line (qty 36, boxes 0, unitsPerBox 12) seeds 3 Cases, and a price-only save keeps it 3 Cases / 36 pieces, never 432", () => {
+    const orig = unitLine({
+      qty: 36,
+      boxes: 0,
+      unitsPerBox: 12,
+      product: { id: "p-case", name: "Widget", unit: "Box", unitsPerBox: 12 },
+    });
     const seeded = buildEditItemFromLine(orig);
     const edited: EditItemState = { ...seeded, unitPrice: 45 }; // price-only edit
     const updates = buildItemUpdates([edited], [orig]);
     expect(updates).toHaveLength(1);
-    // The bug's own wrong value: pre-fix this UPDATE carried qty:0.
-    expect((updates[0] as { qty: number }).qty).toBe(3);
+    // The UPDATE wire qty for a unit line is the COUNT of the named unit (unitLabel "Case").
+    const wireCount = (updates[0] as { qty: number }).qty;
+    expect(wireCount).toBe(3); // never 36 (Cases) and never 0
+    expect(wireCount * 12).toBe(36); // pieces the server will store — never 432
 
     expect(seeded.qty).toBe(3);
     expect(seeded.originalQty).toBe(3);
@@ -119,8 +128,16 @@ describe("buildItemUpdates — units_v1 (A3-2)", () => {
 // SA-378: the BUY_N_GET_M base count is seeded the same way — a unit line's stored boxes:0 must
 // not become promoBaseUnits 0 (which disables the rescale and previews the full snapshot).
 describe("promoBaseUnits seed — B718 fold (SA-378)", () => {
-  it("(i) a unit line with boxes:0, qty 6, promoFreeUnits 2 seeds promoBaseUnits 6; shrinking to 3 previews 1 free unit", () => {
-    const seeded = buildEditItemFromLine(unitLine({ qty: 6, boxes: 0, promoFreeUnits: 2 }));
+  it("(i) a server-shaped 6-Case line (qty 72, boxes 0, unitsPerBox 12, promoFreeUnits 2) seeds promoBaseUnits 6; shrinking to 3 previews 1 free unit", () => {
+    const seeded = buildEditItemFromLine(
+      unitLine({
+        qty: 72,
+        boxes: 0,
+        unitsPerBox: 12,
+        product: { id: "p-case", name: "Widget", unit: "Box", unitsPerBox: 12 },
+        promoFreeUnits: 2,
+      }),
+    );
     expect(seeded.promoBaseUnits).toBe(6);
     expect(editLineFreeUnits({ ...seeded, qty: 3 })).toBe(1);
   });
