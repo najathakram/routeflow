@@ -6,6 +6,7 @@ import { PLAN_KEYS } from "@routeflow/types";
 import { superAdminClient } from "@/lib/admin-api";
 import { fetchPlanCatalog, type PlanCatalogEntry } from "@/lib/api/platform-pricing";
 import { planLabel } from "../../../_components/AdminBadge";
+import { selectablePlanKeys } from "../../../_components/usePlanOptions";
 
 interface CreatedTenant {
   slug: string;
@@ -40,13 +41,12 @@ export default function AdminCreateTenantPage() {
   // PLAN_KEYS-eligible row degrades to the full PLAN_KEYS list so the form stays submittable.
   React.useEffect(() => {
     let cancelled = false;
-    const planKeys: readonly string[] = PLAN_KEYS;
     fetchPlanCatalog()
       .then((catalog) => {
         if (cancelled) return;
-        const sorted = [...(catalog?.plans ?? [])]
-          .filter((p) => planKeys.includes(p.planKey))
-          .sort((a, b) => a.sortOrder - b.sortOrder);
+        // B857: the same PLAN_KEYS filter + sortOrder every admin plan control uses (L-167).
+        const eligible = selectablePlanKeys(catalog?.plans);
+        const sorted = eligible.map((key) => catalog.plans.find((p) => p.planKey === key)!);
         if (!sorted.length) {
           setPlansUnavailable(true);
           return;

@@ -14,6 +14,7 @@ import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import pg from "pg";
+import { requireLocalPgConfig } from "./lib/local-pg-config.mjs";
 import { redactUrl, resolveDatabaseUrl } from "./lib/railway-db-url.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -21,7 +22,6 @@ const PART1 = resolve(
   here,
   "../prisma/migrations/20260920220000_t6_tenantid_check_not_valid/migration.sql",
 );
-const LOCAL_HOSTS = new Set(["localhost", "127.0.0.1", "::1", "postgres", "db"]);
 
 /** The tables the part-1 migration guards, read from its own ADD CONSTRAINT lines. */
 export function guardedTables(sql) {
@@ -33,12 +33,12 @@ export function guardedTables(sql) {
 async function main() {
   const local = process.argv.includes("--local");
   let url;
+  let localCfg = null; // --local: the explicit fields that were vetted are the ones dialled
   try {
     url = local ? process.env.DATABASE_URL : resolveDatabaseUrl(process.env);
     if (!url) throw new Error("--local requires DATABASE_URL");
     if (local) {
-      const host = new URL(url).hostname.replace(/^\[|\]$/g, "");
-      if (!LOCAL_HOSTS.has(host)) throw new Error(`--local refuses non-local host ${host}`);
+      localCfg = requireLocalPgConfig(url);
     }
   } catch (e) {
     console.error(`t6-null-census: ${e.message}`);
@@ -52,7 +52,7 @@ async function main() {
     return 2;
   }
   console.log(`t6-null-census: target ${redactUrl(url)} — ${tables.length} tables`);
-  const client = new pg.Client({ connectionString: url });
+  const client = new pg.Client(localCfg ?? { connectionString: url });
   try {
     await client.connect();
     await client.query("BEGIN READ ONLY");

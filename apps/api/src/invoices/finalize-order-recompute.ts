@@ -1,4 +1,5 @@
 import { ServiceUnavailableException } from "@nestjs/common";
+import { holdsValues } from "./order-backsync-lines";
 import { Prisma } from "@prisma/client";
 import { roundMoney } from "@routeflow/pricing";
 import { effectiveTaxRateFromTotals } from "../common/tax-rate";
@@ -291,7 +292,7 @@ export async function checkOrderCoverage(params: {
 export async function finalizeOrderRecompute(params: {
   db: Prisma.TransactionClient;
   orderId: string;
-  order: { subtotal: unknown; tax: unknown };
+  order: { subtotal: unknown; tax: unknown; total?: unknown; shippingFee?: unknown };
   deliveredBasis: DeliveredBasis;
   /** Order lines no invoice line resolved to (the caller's existing-line loop already removed
    *  every line it matched). */
@@ -312,6 +313,16 @@ export async function finalizeOrderRecompute(params: {
     const deliveredForLine = deliveredBasis.byLineId.get(orphan.id);
     const refused = deliveredForLine !== undefined && deliveredForLine <= QTY_EPSILON;
     if (!wasBilled && !alreadyCancelled && !refused) continue;
+    // SA-235: a line that already holds exactly these values is not written (no updatedAt churn).
+    const cancelled: Array<[string, unknown]> = [
+      ["status", "CANCELLED"],
+      ["qty", 0],
+      ["subtotal", 0],
+      ["boxes", null],
+      ["pieces", null],
+      ["invoicedQty", 0],
+    ];
+    if (holdsValues(orphan, cancelled)) continue;
     await db.orderItem.update({
       where: { id: orphan.id },
       data: { status: "CANCELLED", qty: 0, subtotal: 0, boxes: null, pieces: null, invoicedQty: 0 },
@@ -336,9 +347,18 @@ export async function finalizeOrderRecompute(params: {
     invoices.reduce((s: number, inv: any) => s + Number(inv.shippingFee ?? 0), 0),
   );
   const total = roundMoney(subtotal + tax + categoryTax + shippingFeeSum);
-  await db.order.update({
-    where: { id: orderId },
-    data: { subtotal, tax, total, shippingFee: shippingFeeSum },
-  });
+  // SA-235: the Order row is written only when a column it would write differs (an identical save moves no updatedAt).
+  const orderWrites: Array<[string, unknown]> = [
+    ["subtotal", subtotal],
+    ["tax", tax],
+    ["total", total],
+    ["shippingFee", shippingFeeSum],
+  ];
+  if (!holdsValues(order, orderWrites)) {
+    await db.order.update({
+      where: { id: orderId },
+      data: { subtotal, tax, total, shippingFee: shippingFeeSum },
+    });
+  }
   return { orderId, subtotal, tax, total, shippingFee: shippingFeeSum };
 }
