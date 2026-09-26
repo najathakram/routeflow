@@ -3,6 +3,7 @@ import { regulatedUnitBasis } from "@routeflow/pricing";
 import { checkableProductIds } from "../selling-restrictions/selling-restrictions.core";
 
 type EditRow = {
+  id?: string | null;
   productId?: string | null;
   qty?: unknown;
   boxes?: unknown;
@@ -21,6 +22,10 @@ type EditRow = {
  * line's sale-time snapshot, an incoming line's LIVE pack — so a boxed line with no split counts as
  * qty x pack. A split line bills from boxes/pieces while `qty` is stored as sent, so it counts as the LARGER
  * of the two (never under-asks). Unit-labelled lines are refused on edit, so `unitLabel` is never set here.
+ *
+ * SA-250: an incoming line with NO split that names (by id) a held row of the same product WITH a split is
+ * counted as `qty` pieces — #2083's edit plan re-splits exactly that payload at the row's own pack (SA-219),
+ * so it bills qty pieces, not qty boxes. A held row without a split keeps the legacy qty x pack reading.
  */
 export type LivePacks = ReadonlyMap<string, number | null>;
 
@@ -46,9 +51,21 @@ export function netEditRestrictionLines(
     for (const r of rows) {
       if (!r.productId) continue;
       const pack = (isHeld ? num(r.unitsPerBox) : null) ?? live.get(r.productId) ?? null;
-      m.set(r.productId, (m.get(r.productId) ?? 0) + pieceCount(r, pack));
+      const count = !isHeld && pieceReSplit(r) ? Number(r.qty) : pieceCount(r, pack);
+      m.set(r.productId, (m.get(r.productId) ?? 0) + count);
     }
     return m;
+  };
+  const heldById = new Map(held.flatMap((r) => (r.id ? [[r.id, r] as const] : [])));
+  const pieceReSplit = (r: EditRow): boolean => {
+    const row = r.id ? heldById.get(r.id) : undefined;
+    return (
+      !!row &&
+      (row.productId ?? null) === (r.productId ?? null) &&
+      r.boxes == null &&
+      r.pieces == null &&
+      (row.boxes != null || row.pieces != null)
+    );
   };
   const had = total(held, true);
   const out: { productId: string; qtyDelta?: number }[] = [];
@@ -69,7 +86,14 @@ export function catalogRestrictionLines(
   );
 }
 
-const HELD_SELECT = { productId: true, qty: true, boxes: true, pieces: true, unitsPerBox: true };
+const HELD_SELECT = {
+  id: true,
+  productId: true,
+  qty: true,
+  boxes: true,
+  pieces: true,
+  unitsPerBox: true,
+};
 type Reader = {
   invoiceItem: { findMany(args: any): Promise<EditRow[]> };
   product: { findMany(args: any): Promise<{ id: string; unitsPerBox: unknown }[]> };

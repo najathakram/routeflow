@@ -163,6 +163,35 @@ describe("invoice edit / copy — selling restrictions (F-05)", () => {
       ).toEqual([]);
     });
 
+    describe("SA-250: a no-split payload on a held SPLIT row counts as pieces (#2083's re-split)", () => {
+      const heldRow = { id: "row-1", ...held[0] };
+
+      it("48 -> 40 pieces sent without a split, by the row's id, is a decrease: asks nothing", () => {
+        expect(
+          netEditRestrictionLines([heldRow], [{ id: "row-1", productId: "p", qty: 40 }], live),
+        ).toEqual([]);
+      });
+
+      it("48 -> 50 pieces the same way asks for the 2-piece increase, not 1152", () => {
+        expect(
+          netEditRestrictionLines([heldRow], [{ id: "row-1", productId: "p", qty: 50 }], live),
+        ).toEqual([{ productId: "p", qtyDelta: 2 }]);
+      });
+
+      it("a held row WITHOUT a split keeps the legacy qty x pack reading", () => {
+        const legacy = { id: "row-1", productId: "p", qty: 2, unitsPerBox: 24 };
+        expect(
+          netEditRestrictionLines([legacy], [{ id: "row-1", productId: "p", qty: 3 }], live),
+        ).toEqual([{ productId: "p", qtyDelta: 24 }]);
+      });
+
+      it("an id naming a row of ANOTHER product is not re-split: the new product is checked", () => {
+        expect(
+          netEditRestrictionLines([heldRow], [{ id: "row-1", productId: "q", qty: 40 }], live),
+        ).toEqual([{ productId: "q" }]);
+      });
+    });
+
     it("a plain unboxed line nets numerically (5 -> 50 asks for 45) and split lines sum", () => {
       expect(
         netEditRestrictionLines([{ productId: "q", qty: 5 }], [{ productId: "q", qty: 50 }], live),
