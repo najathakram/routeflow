@@ -53,3 +53,32 @@ describe("every unit-line writer runs the guard before it writes (#2230)", () =>
     expect(src).toMatch(new RegExp(`${where},?\\s*\\)`));
   });
 });
+
+describe("change-request writes run the unit-aware target check first (#2230, SA-388f)", () => {
+  // The two change-request paths that re-derive a line's split from `wasBoxSplit` would carry an
+  // existing all-empty split forward; assertChangeTargetAllowed must refuse a unit-aware target
+  // BEFORE either one writes. Scoped to approveChangeRequestAtStop's own body.
+  const fs = require("fs") as typeof import("fs");
+  const path = require("path") as typeof import("path");
+  const src = fs.readFileSync(path.resolve(__dirname, "orders.service.ts"), "utf8");
+  const start = src.indexOf("  async approveChangeRequestAtStop(");
+  const rest = src.slice(start + 1);
+  const next = rest.search(/\n {2}(?:async |private |public |protected |static )?\w+\(/);
+  const body = next === -1 ? rest : rest.slice(0, next);
+
+  it("finds the method, the check and both split-deriving writes", () => {
+    expect(start).toBeGreaterThan(-1);
+    expect(body).toContain("unitAware.assertChangeTargetAllowed(");
+    expect(body).toContain("const wasBoxSplit = src.boxes != null;");
+    expect(body).toContain("const wasBoxSplit = existing.boxes != null;");
+  });
+
+  it.each([
+    ["const wasBoxSplit = src.boxes != null;"],
+    ["const wasBoxSplit = existing.boxes != null;"],
+  ])("assertChangeTargetAllowed runs before `%s`", (write) => {
+    const check = body.indexOf("unitAware.assertChangeTargetAllowed(");
+    expect(check).toBeGreaterThan(-1);
+    expect(check).toBeLessThan(body.indexOf(write));
+  });
+});
