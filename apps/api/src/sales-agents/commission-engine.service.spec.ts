@@ -305,6 +305,70 @@ describe("CommissionEngineService", () => {
       expect(created.accruedAmount).toBe(100);
       expect(created.payableAmount).toBe(100);
     });
+
+    // #2169 (SA-395): the writer (invoices.service.ts setCheckStatus) now stamps
+    // `systemKind: "NSF_FEE"` on every NEW bounce-fee line; pre-existing lines carry only the
+    // description prefix until the backfill runs. The engine must read BOTH signals via the
+    // shared isNsfLine predicate (nsf-line.ts) so neither shape ever leaks into commission.
+    it("a systemKind NSF_FEE-stamped line with a NON-prefix description is still excluded from commission", async () => {
+      const invoice = baseInvoice({
+        subtotal: 1025,
+        total: 1025,
+        items: [
+          { description: "Returned check charge", systemKind: "NSF_FEE", qty: 1, unitPrice: 25 },
+          { description: "Widget line", qty: 2, unitPrice: 10 },
+        ],
+        payments: [{ id: "p1", amount: 1025, method: "CASH", status: "PAID" }],
+      });
+      const assignment = { agentId: "agent-1" };
+      const agentRates = [{ ratePct: 10, effectiveFrom: new Date("2026-01-01T00:00:00.000Z") }];
+      const { db } = buildFakeDb({ invoice, assignment, agentRates });
+      await service.syncInvoiceCommission("inv-1", db);
+      const created = db.commissionAccrual.create.mock.calls[0][0].data;
+      expect(created.baseAmount).toBe(1000);
+    });
+
+    it("a NULL-systemKind line with the prefix (pre-backfill, TRANSITION leg) is still excluded", async () => {
+      const invoice = baseInvoice({
+        subtotal: 1025,
+        total: 1025,
+        items: [
+          {
+            description: `${NSF_FEE_DESCRIPTION_PREFIX} CHK-1001`,
+            systemKind: null,
+            qty: 1,
+            unitPrice: 25,
+          },
+          { description: "Widget line", systemKind: null, qty: 2, unitPrice: 10 },
+        ],
+        payments: [{ id: "p1", amount: 1025, method: "CASH", status: "PAID" }],
+      });
+      const assignment = { agentId: "agent-1" };
+      const agentRates = [{ ratePct: 10, effectiveFrom: new Date("2026-01-01T00:00:00.000Z") }];
+      const { db } = buildFakeDb({ invoice, assignment, agentRates });
+      await service.syncInvoiceCommission("inv-1", db);
+      const created = db.commissionAccrual.create.mock.calls[0][0].data;
+      expect(created.baseAmount).toBe(1000);
+    });
+
+    it("a NULL-systemKind custom line WITHOUT the prefix is fully commissionable", async () => {
+      const invoice = baseInvoice({
+        subtotal: 1025,
+        total: 1025,
+        items: [
+          { description: "Custom handling fee", systemKind: null, qty: 1, unitPrice: 25 },
+          { description: "Widget line", systemKind: null, qty: 2, unitPrice: 10 },
+        ],
+        payments: [{ id: "p1", amount: 1025, method: "CASH", status: "PAID" }],
+      });
+      const assignment = { agentId: "agent-1" };
+      const agentRates = [{ ratePct: 10, effectiveFrom: new Date("2026-01-01T00:00:00.000Z") }];
+      const { db } = buildFakeDb({ invoice, assignment, agentRates });
+      await service.syncInvoiceCommission("inv-1", db);
+      const created = db.commissionAccrual.create.mock.calls[0][0].data;
+      // No line excluded: base = subtotal(1025) - discount(0) - nsfFees(0) = 1025.
+      expect(created.baseAmount).toBe(1025);
+    });
   });
 
   describe("reassignment", () => {

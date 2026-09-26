@@ -138,6 +138,20 @@ describe("InvoicesService.duplicate — what the Duplicate button now depends on
     expect(created().items.create[0].unitsPerBox).toBeNull();
   });
 
+  it("#2169 (SA-395, C2 copier contract): a duplicated NSF fee line carries systemKind verbatim", async () => {
+    prisma.invoice.findUnique.mockResolvedValue(
+      source({ items: [{ ...boxedLine, systemKind: "NSF_FEE" }] }),
+    );
+    await service.duplicate("inv-1");
+    expect(created().items.create[0].systemKind).toBe("NSF_FEE");
+  });
+
+  it("#2169: a plain line (no systemKind) copies null, not undefined", async () => {
+    prisma.invoice.findUnique.mockResolvedValue(source());
+    await service.duplicate("inv-1");
+    expect(created().items.create[0].systemKind).toBeNull();
+  });
+
   describe("regulated LEVY - a subtotal-only assertion would pass while the levy is 12x wrong", () => {
     // A regulated boxed product: 12 pieces per box, EXCISE_PER_UNIT $0.10 per PIECE. 6 boxes = 72 pieces
     // at $40/box: subtotal $240 and levy 72 x $0.10 = $7.20 (a qty-only rebuild bases the levy on

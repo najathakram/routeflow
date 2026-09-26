@@ -62,6 +62,12 @@ enum InvoiceStatus {
   WRITTEN_OFF
 }
 
+// #2169 (SA-395): a system-written InvoiceItem purpose marker. One member today (the NSF
+// bounce-fee line); see InvoiceItem.systemKind's doc comment.
+enum InvoiceItemSystemKind {
+  NSF_FEE
+}
+
 enum EstimateStatus {
   DRAFT
   SENT
@@ -311,6 +317,12 @@ model InvoiceItem {
   // from OrderItem.unitLabel on invoice-from-order copy. Null = today's
   // behaviour byte-for-byte.
   unitLabel                String?
+  // #2169 (SA-395): marks a line the SYSTEM wrote for a specific, machine-meaningful purpose —
+  // today only the NSF bounce-fee line `InvoicesService.setCheckStatus`'s BOUNCED branch
+  // creates (the ONLY writer). NULL for every ordinary line and for every pre-existing NSF fee
+  // line until the backfill (apps/api/scripts/backfill-2169-nsf-system-kind.mjs) stamps it — see
+  // apps/api/src/invoices/nsf-line.ts for the TRANSITION dual-read this enables.
+  systemKind                InvoiceItemSystemKind?
   createdAt                DateTime                @default(now())
   updatedAt                DateTime                @updatedAt
   tenantId                 String?

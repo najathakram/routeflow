@@ -3475,6 +3475,9 @@ describe("InvoicesService", () => {
           discount: 0,
           taxRate: 0,
           subtotal: 25,
+          // #2169 (SA-395): the ONE writer of systemKind — every consumer's dual-read predicate
+          // (invoices/nsf-line.ts) depends on this stamp landing here.
+          systemKind: "NSF_FEE",
         }),
       });
       expect(prisma.invoice.update).toHaveBeenCalledWith({

@@ -97,6 +97,7 @@ import { MessagingService } from "../messaging/messaging.service";
 import { formatDate, formatMoney } from "../messaging/messaging.helpers";
 import { CommissionEngineService } from "../sales-agents/commission-engine.service";
 import { NSF_FEE_DESCRIPTION_PREFIX } from "../sales-agents/commission-math";
+import { InvoiceItemSystemKind } from "./nsf-line";
 import { startOfCalendarDay, endOfCalendarDay } from "../common/calendar-date";
 import { lockRowsNoWait } from "../common/db-locks";
 import { NumberingService } from "../import/numbering.service";
@@ -4559,6 +4560,9 @@ export class InvoicesService {
       categoryTaxRate:
         (i as any).categoryTaxRate != null ? Number((i as any).categoryTaxRate) : null,
       categoryPriceIncludesTax: (i as any).categoryPriceIncludesTax ?? null,
+      // #2169 (SA-395): a duplicated NSF fee line is still a real system-written NSF line —
+      // carried verbatim, like every other snapshot column above.
+      systemKind: i.systemKind ?? null,
       tenantId: this.prisma.getTenantId(),
     }));
     const subtotal = roundMoney(itemsData.reduce((s, i) => s + Number(i.subtotal), 0));
@@ -5910,6 +5914,10 @@ export class InvoicesService {
             discount: 0,
             taxRate: 0,
             subtotal: fee,
+            // #2169 (SA-395): the ONE writer of systemKind. Every consumer that needs to know
+            // "is this the NSF fee line" reads it via the shared predicate (invoices/nsf-line.ts),
+            // never by re-matching the description prefix above.
+            systemKind: InvoiceItemSystemKind.NSF_FEE,
           },
         });
         newSubtotal = roundMoney(newSubtotal + fee);
