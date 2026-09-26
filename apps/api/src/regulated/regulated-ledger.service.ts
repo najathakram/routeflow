@@ -1,6 +1,7 @@
 import { Injectable, Logger } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import {
+  prorateLineSubtotal,
   roundMoney,
   regulatedUnitBasis,
   classifySaleAxis,
@@ -72,6 +73,39 @@ export interface SaleLedgerLine {
   packAtSale?: number | null;
   netSales: number; // the line's post-discount subtotal
   categoryTax: number; // computed category tax (0 today — tobacco is rate=0)
+}
+
+/** One re-priced regulated invoice line, as `correctSaleForPriceChange` needs it (B662). */
+export interface PriceCorrectionLine {
+  invoiceItemId: string;
+  qty: number; // the line's qty (its own unit, the same axis as the SALE rows)
+  netSales: number; // the line's NEW post-discount subtotal
+  categoryTax: number; // the line's NEW category tax
+  boxes?: number | null;
+  unitsPerBox?: number | null;
+  promoFreeUnits?: number | null; // BUY_N_GET_M snapshot, in whole selling units
+}
+
+/**
+ * B662, the single branch point for "what does a price change do after a partial return?" (Senior
+ * Architect ruling 2026-09-21: remainder only, computed as a TARGET). The new figure is prorated to the
+ * qty still held in the ledger through the pricing package's proration helper (which knows about free
+ * units); the delta is target minus the net held. A TARGET is idempotent and free of rounding drift.
+ */
+export function priceCorrectionTarget(
+  newAmount: number,
+  remainingQty: number,
+  line: Pick<PriceCorrectionLine, "qty" | "boxes" | "unitsPerBox" | "promoFreeUnits">,
+): number {
+  const freeUnitSize =
+    line.boxes != null && Number(line.unitsPerBox ?? 0) > 1 ? Number(line.unitsPerBox) : 1;
+  return prorateLineSubtotal(
+    newAmount,
+    remainingQty,
+    line.qty,
+    Number(line.promoFreeUnits ?? 0),
+    freeUnitSize,
+  );
 }
 
 /**
@@ -587,8 +621,16 @@ export class RegulatedLedgerService {
     // reconcile RE-PRICED the line (old rows folded in at a different price), and a
     // fractional partial just under the full remaining qty could otherwise
     // over-reverse the net/tax dimensions past 0.
-    let bookedNet = closesRow ? roundMoney(-netRem) : roundMoney(-Number(s.netSales) * frac);
-    let bookedTax = closesRow ? roundMoney(-taxRem) : roundMoney(-Number(s.categoryTax) * frac);
+    // B662: a non-closing chunk takes its share of what the line STILL HOLDS (remaining net/tax over
+    // the remaining native qty), not of the base sale: exact in any order of partial returns and price
+    // corrections, on both axes, and independent of whether the caller loaded the correction map (a
+    // STANDARD return is LINE_UNIT and does not). A $240 sale corrected to $300, 12 of 72 back = -$50.
+    let bookedNet = closesRow
+      ? roundMoney(-netRem)
+      : roundMoney((-netRem * rNative) / rowRemainingNative);
+    let bookedTax = closesRow
+      ? roundMoney(-taxRem)
+      : roundMoney((-taxRem * rNative) / rowRemainingNative);
     if (bookedNet < -netRem) bookedNet = roundMoney(-netRem);
     if (bookedTax < -taxRem) bookedTax = roundMoney(-taxRem);
     // The NATIVE axis is exactly rNative (never re-derived through frac — that would
@@ -894,6 +936,75 @@ export class RegulatedLedgerService {
 
     if (rows.length === 0) return;
     await db.regulatedSalesLedger.createMany({ data: rows });
+  }
+
+  /**
+   * B662: an ISSUED invoice was re-priced, so the ledger's net and category tax for its regulated lines no
+   * longer match the invoice. Book ONE append-only CORRECTION row per line whose held figure differs from
+   * its target (`priceCorrectionTarget`): entryType SALE for an increase, REVERSAL for a decrease, signed
+   * `netSales` / `categoryTax` deltas, qty and unitBasisQty 0 (a price change moves no units), booked in
+   * the CURRENT period (never backdated: a filed period is not reopened), with `correctsEntryId` = the
+   * SALE row corrected and `originalSoldAt` = its sold date. Every id is copied from that SALE row, so an
+   * invoice that later returns to draft re-syncs over the SALE AND its corrections (`reverseInvoiceEntries`
+   * nets every row of the invoice line). Idempotent: the delta is computed against what the ledger
+   * holds, so a repeated adjustment writes nothing. A line with no live SALE row, or nothing left (fully
+   * returned / voided), is skipped. Returns the number of rows written. DRAFT invoices never come here:
+   * they re-sync (`resyncInvoiceLedger`), so a correction can never orphan on a reversed SALE.
+   */
+  async correctSaleForPriceChange(params: {
+    invoiceId: string;
+    lines: PriceCorrectionLine[];
+    db: any;
+  }): Promise<number> {
+    const { invoiceId, lines, db } = params;
+    if (lines.length === 0) return 0;
+    const all: any[] = await db.regulatedSalesLedger.findMany({
+      where: { invoiceId, invoiceItemId: { in: lines.map((l) => l.invoiceItemId) } },
+    });
+    const byItem = new Map<string, any[]>();
+    for (const r of all) byItem.set(r.invoiceItemId, [...(byItem.get(r.invoiceItemId) ?? []), r]);
+
+    const now = new Date();
+    const bucket = periodBucketOf(now);
+    const EPS = 0.005;
+    const rows: any[] = [];
+    for (const line of lines) {
+      const held = byItem.get(line.invoiceItemId) ?? [];
+      // The live SALE this line's corrections point at: the newest base sale (not itself a correction).
+      const base = held
+        .filter((r) => r.entryType === "SALE" && r.correctsEntryId == null && Number(r.qty) > 0)
+        .sort((a, b) => +new Date(b.createdAt ?? 0) - +new Date(a.createdAt ?? 0))[0];
+      if (!base) continue;
+      const heldQty = held.reduce((n, r) => n + Number(r.qty), 0);
+      if (!(heldQty > 0.0005)) continue; // nothing left in the ledger for this line
+      const heldNet = held.reduce((n, r) => n + Number(r.netSales), 0);
+      const heldTax = held.reduce((n, r) => n + Number(r.categoryTax), 0);
+      const dNet = roundMoney(priceCorrectionTarget(line.netSales, heldQty, line) - heldNet);
+      const dTax = roundMoney(priceCorrectionTarget(line.categoryTax, heldQty, line) - heldTax);
+      if (Math.abs(dNet) < EPS && Math.abs(dTax) < EPS) continue;
+      const decrease = (Math.abs(dNet) >= EPS ? dNet : dTax) < 0;
+      rows.push({
+        tenantId: base.tenantId,
+        trackedCategoryId: base.trackedCategoryId,
+        trackedSubcategoryId: base.trackedSubcategoryId ?? null,
+        entryType: decrease ? ("REVERSAL" as const) : ("SALE" as const),
+        orderId: base.orderId,
+        orderItemId: base.orderItemId,
+        invoiceId: base.invoiceId,
+        invoiceItemId: line.invoiceItemId,
+        qty: 0,
+        unitBasisQty: 0,
+        netSales: dNet,
+        categoryTax: dTax,
+        soldAt: now,
+        originalSoldAt: base.soldAt,
+        correctsEntryId: base.id,
+        periodBucket: bucket,
+      });
+    }
+    if (rows.length === 0) return 0;
+    await db.regulatedSalesLedger.createMany({ data: rows });
+    return rows.length;
   }
 
   /**

@@ -1929,14 +1929,15 @@ export class CustomersService {
     try {
       return await this.prisma.tenantTransaction(
         async (tx) => {
-          // Move invoices
-          await tx.invoice.updateMany({
+          // Move orders FIRST, then invoices (SA-218, house lock order: Order before Invoice).
+          // Invoices first was an Invoice → Order edge: 40P01 against any Order → Invoice writer.
+          await tx.order.updateMany({
             where: { customerId: secondaryId },
             data: { customerId: primaryId },
           });
 
-          // Move orders
-          await tx.order.updateMany({
+          // Move invoices
+          await tx.invoice.updateMany({
             where: { customerId: secondaryId },
             data: { customerId: primaryId },
           });

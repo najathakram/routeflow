@@ -170,14 +170,14 @@ describe("MailboxController + MailboxConnectionService: a callback consumes its 
     {
       name: "Google",
       path: "google",
-      start: () => service.startConnect("tenant-a", "admin-1"),
+      start: async () => (await service.startConnect("tenant-a", "admin-1")).url,
       exchanges: () => mockOAuthClient.getToken.mock.calls.length,
       cancelled: `${SETTINGS}&mailbox_cancelled=google`,
     },
     {
       name: "Microsoft",
       path: "microsoft",
-      start: () => service.startConnectMicrosoft("tenant-a", "admin-1"),
+      start: async () => (await service.startConnectMicrosoft("tenant-a", "admin-1")).url,
       exchanges: () =>
         (axios.post as jest.Mock).mock.calls.filter(([url]) => url === MS_TOKEN_URL).length,
       cancelled: `${SETTINGS}&mailbox_error=1`,
@@ -256,7 +256,7 @@ describe("MailboxController + MailboxConnectionService: a callback consumes its 
   });
 
   it("the burn is provider-agnostic: a Google state named in the Microsoft callback's error redirect is dead too", async () => {
-    const state = stateOf(await service.startConnect("tenant-a", "admin-1"));
+    const state = stateOf((await service.startConnect("tenant-a", "admin-1")).url);
 
     await request(app.getHttpServer())
       .get("/settings/email/mailbox/microsoft/callback")

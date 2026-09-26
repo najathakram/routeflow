@@ -442,4 +442,14 @@ describe("every order/invoice line writer is classified for selling restrictions
     );
     expect(missing).toEqual([]);
   });
+
+  it("custom (productless) lines are EXEMPT by owner ruling 2026-09-25, and the uncategorised-lines report row reviews them", () => {
+    // The ban check ignores a line with no catalog product (a tenant that wants one checked adds it to the
+    // catalog). That exemption is only acceptable because this standing review list exists: if the report
+    // code or its wiring goes, this fails and the exemption must be revisited with the owner.
+    const src = (rel: string) => fs.readFileSync(path.join(__dirname, "..", rel), "utf8");
+    expect(src("regulated/report-types.ts")).toContain("UNCATEGORISED_LINE_IN_RULE_STATE");
+    expect(src("regulated/uncategorised-lines.ts")).toContain("productId: null");
+    expect(src("regulated/regulated-report.service.ts")).toContain("uncategorisedLineWarnings(");
+  });
 });

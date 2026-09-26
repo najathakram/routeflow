@@ -33,8 +33,10 @@ import {
   type PromotionRule,
 } from "@routeflow/pricing";
 import { lockRowsNoWait, withAdvisoryLock, type LockMode } from "../common/db-locks";
+import { retryOnTxConflict } from "../common/tx-retry";
 import { assertMoneyInvariantsOrThrow } from "../common/money-invariants.util";
 import { atStopConflict } from "./at-stop-conflicts";
+import { sourceLineFor, type SourceLines } from "./source-line";
 import {
   LOCK_UNAVAILABLE,
   LOCK_UNAVAILABLE_MESSAGE,
@@ -1414,7 +1416,8 @@ export class OrdersService implements OnApplicationBootstrap {
   async create(
     dto: CreateOrderDto,
     user: JwtPayload,
-    options: { skipAutoMerge?: boolean; allowArchived?: boolean } = {},
+    // `sourceLines`: INTERNAL only, never a DTO field (source-line.ts).
+    options: { skipAutoMerge?: boolean; allowArchived?: boolean; sourceLines?: SourceLines } = {},
   ) {
     // F30/R8: Idempotency-Key replay. `idempotencyKey` isn't on CreateOrderDto
     // (the controller threads it in from the `Idempotency-Key` header, never
@@ -1785,7 +1788,8 @@ export class OrdersService implements OnApplicationBootstrap {
 
       // Recompute qty from boxes/pieces when provided (backend is authoritative).
       // Normalize to integers and roll loose pieces >= unitsPerBox into boxes.
-      const upb = Number(product.unitsPerBox ?? 0);
+      const source = sourceLineFor(item.productId, options.sourceLines, items);
+      const upb = source?.unitsPerBox ?? Number(product.unitsPerBox ?? 0);
       let qty = item.qty;
       let boxes: number | null = null;
       let pieces: number | null = null;
@@ -1900,6 +1904,13 @@ export class OrdersService implements OnApplicationBootstrap {
         freeUnits = resolved.freeUnits;
       }
 
+      // D-20 (SA-330): a rolled-over line keeps its SOURCE line's agreed price, type and original price (never
+      // relabelled) and earns no promo units; the subtotal is still derived below at the carried pack and price.
+      if (source) {
+        ({ unitPrice, priceType, originalPrice } = source);
+        freeUnits = 0;
+      }
+
       // For boxed products `unitPrice` is the BOX price; loose pieces are
       // prorated. BUY_N_GET_M's `freeUnits` subtracts whole selling units from the
       // subtotal BEFORE pricing — never a rounded net-unit-price (a $35 line split
@@ -1946,6 +1957,10 @@ export class OrdersService implements OnApplicationBootstrap {
         unitPrice,
         priceType,
         originalPrice,
+        // D-20: a carried override keeps its audit trail (source-line.ts).
+        ...(source
+          ? { overrideReason: source.overrideReason, overriddenBy: source.overriddenBy }
+          : {}),
         // BUY_N_GET_M sale-time snapshot; null for every other line (unaffected).
         promoFreeUnits: freeUnits > 0 ? freeUnits : null,
         subtotal: itemSubtotal,
@@ -4546,21 +4561,32 @@ export class OrdersService implements OnApplicationBootstrap {
     // Credit-note intents: sync operator selection changes, then settle (shrink or
     // top-up) against the order's current invoices. Runs even when line-resync was
     // skipped for partial billing — the credits are payment-level, not line-level.
-    await this.prisma.tenantTransaction(
-      async (tx) => {
-        // EXPLICIT skip: `undefined` means "never touch the stored selection" (see the doc
-        // comment) — an unverified replay lands here and must not re-point this order's credits.
-        if (appliedCreditNotes !== undefined) {
-          await this.creditNotes.syncOrderCreditSelections(
-            tx,
-            orderId,
-            customerId,
-            appliedCreditNotes,
-          );
-        }
-        await this.creditNotes.settleOrderCreditsInTx(tx, orderId);
-      },
-      { isolationLevel: "Serializable" },
+    // SA-269: the WHOLE tx re-runs on a 40001/40P01 conflict (bounded); every step is idempotent.
+    await retryOnTxConflict(`credit sync order=${orderId}`, () =>
+      this.prisma.tenantTransaction(
+        async (tx) => {
+          // SA-218 (house lock order: advisory → Return → Order → Invoice): the Order row FIRST,
+          // before the sync/settle below write any Invoice, so the sync's OrderCreditNote insert (an
+          // FK KEY SHARE on this Order) is a no-wait on a row this tx holds, never Invoice → Order.
+          // No caller still holds the Order when this opens (updateOrderItems' fold tx committed;
+          // replayMergeReconcile has none — SA-093 trap (i)). A tenant-less (SUPER_ADMIN) session
+          // is unscoped anyway, so it locks by id rather than silently locking nothing.
+          const tenantId = this.prisma.getTenantId();
+          await tx.$queryRaw`SELECT id FROM "Order" WHERE id = ${orderId} AND (${tenantId}::text IS NULL OR "tenantId" = ${tenantId}) FOR UPDATE`;
+          // EXPLICIT skip: `undefined` means "never touch the stored selection" (see the doc
+          // comment) — an unverified replay lands here and must not re-point this order's credits.
+          if (appliedCreditNotes !== undefined) {
+            await this.creditNotes.syncOrderCreditSelections(
+              tx,
+              orderId,
+              customerId,
+              appliedCreditNotes,
+            );
+          }
+          await this.creditNotes.settleOrderCreditsInTx(tx, orderId);
+        },
+        { isolationLevel: "Serializable" },
+      ),
     );
   }
 

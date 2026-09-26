@@ -2811,6 +2811,36 @@ citations, closed-out with its own post-init assertion guard).
 
 ## Archived 2026-09-24 — headroom for L-216 (note --section silent loss, B840)
 
+### L-171 · 2026-09-16 · domain · PR-1a F1 (pooled cap vs single-line price basis mismatch)
+
+- **Symptom:** an over-return cap was correctly widened from "one matched line" to "pooled across
+  every live line for that product" — but the sibling pricing branch, reading the SAME key,
+  still priced off one matched line's rate against the newly-pooled quantity, over-crediting a
+  product split across two differently-priced lines.
+- **Root cause:** the cap and the price are two different readers of one key. Widening one
+  reader's basis fixed that reader alone — nothing re-examined the sibling reading the same key.
+- **Lesson:** **When a guard/cap computation for a key is widened to pool across rows, grep
+  every OTHER reader of that key — a cap and a price computed from different bases silently
+  mismatch, and the mismatch is a MONEY bug.**
+- **Guard:** the pricing branch now pools qty/subtotal the same way the cap does, with a
+  `min(returned, sold)` backstop; `returns-refund.spec.ts`'s F1 cases prove the pooled pricing.
+  (Archived 2026-09-25 to make room at cap: zero citations outside the register, and the guard is a standing regression spec, returns-refund.spec.ts, pinning the pooled pricing.)
+
+### L-173 · 2026-09-16 · domain · B449 (Lite lane, plan-gate boundary)
+
+- **Symptom:** a plan-gated page kept firing its own effects/queries while a locked/blurred
+  overlay showed over it — its 403 toasts and query errors leaked to a user who should never
+  have triggered that behavior.
+- **Root cause:** the gate ghosted the real page behind blur/opacity by rendering it as
+  `children` inside the locked view's own slot — that hides the DOM, it doesn't unmount it.
+- **Lesson:** **A route guard choosing between locked and unlocked must render exactly ONE of
+  two subtrees, never wrap the real page inside the locked view's ghost slot — a component
+  hidden behind blur/opacity is still mounted, and its effects/queries still fire.**
+- **Guard:** a route boundary needs a real "still resolving" state distinct from both outcomes;
+  `layout.plan-gate-boundary.test.tsx` pins children absent from the tree while
+  resolving/locked, not just visually hidden.
+  (Archived 2026-09-25 to make room at cap: zero citations outside the register, and the guard is a standing regression test, layout.plan-gate-boundary.test.tsx, pinning children absent while the gate resolves.)
+
 ### L-178 · 2026-09-16 · security · demo-booking PR-2 (raw error message leak)
 
 - **Symptom:** a public-facing catch handler rendered a caught error's `.message` verbatim, so
