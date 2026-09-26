@@ -117,6 +117,9 @@ const TERM_DAYS: Record<string, number> = {
   "Net 60": 60,
 };
 
+/** #2293: round a nullable money field; `null` (clear) and `undefined` (leave as is) pass through. */
+const roundMoneyOrNull = (v: number | null | undefined) => (v == null ? v : roundMoney(v));
+
 /**
  * Payment-term arithmetic on a calendar date, in UTC. `setDate`/`getDate` read LOCAL
  * components, so on a non-UTC host they shift a UTC-midnight instant by the DST delta
@@ -4895,6 +4898,7 @@ export class InvoicesService {
       const alreadyPaid = sumConfirmed(inv.payments);
       const remaining = remainingCapacity(total, inv.payments);
       const paymentStatus = dto.status ?? "PAID";
+      const amount = roundMoney(dto.amount); // #2293: ONE rounded value — guard, write, status
 
       if (paymentStatus === "PAID") {
         if (remaining <= 0) {
@@ -4908,7 +4912,7 @@ export class InvoicesService {
               : "Invoice's remaining balance is already reserved by unconfirmed payments",
           );
         }
-        if (dto.amount > remaining + 0.001)
+        if (amount > remaining + 0.001)
           throw new BadRequestException(
             `Payment exceeds remaining balance of ${remaining.toFixed(2)}`,
           );
@@ -4929,21 +4933,21 @@ export class InvoicesService {
       const createdPayment = await tx.invoicePayment.create({
         data: {
           invoiceId: id,
-          amount: dto.amount,
+          amount,
           method: dto.method,
           reference: dto.reference,
           notes: dto.notes,
           paidAt: dto.paidAt ? new Date(dto.paidAt) : new Date(),
           // Never clamped: a post-dated check settles in the future.
           settledAt: dto.settledAt ? new Date(dto.settledAt) : null,
-          bankCharges: dto.bankCharges,
+          bankCharges: roundMoneyOrNull(dto.bankCharges),
           status: paymentStatus as any,
           paymentNumber,
           checkStatus: dto.method === "CHECK" ? CheckStatus.RECORDED : null,
         },
       });
 
-      const newPaid = paymentStatus === "PAID" ? alreadyPaid + dto.amount : alreadyPaid;
+      const newPaid = paymentStatus === "PAID" ? alreadyPaid + amount : alreadyPaid;
       const newStatus =
         paymentStatus === "PAID"
           ? this.recomputeStatus(newPaid, total, inv.dueDate, inv.status)
@@ -5335,7 +5339,7 @@ export class InvoicesService {
           ...(dto.settledAt !== undefined && {
             settledAt: dto.settledAt ? new Date(dto.settledAt) : null,
           }),
-          ...(dto.bankCharges !== undefined && { bankCharges: roundMoney(dto.bankCharges) }),
+          ...(dto.bankCharges !== undefined && { bankCharges: roundMoneyOrNull(dto.bankCharges) }),
           status: newPaymentStatus,
         },
       });
@@ -5638,7 +5642,7 @@ export class InvoicesService {
             method: dto.method as any,
             paidAt,
             settledAt,
-            bankCharges: dto.bankCharges,
+            bankCharges: roundMoneyOrNull(dto.bankCharges),
             reference: dto.reference,
             notes: dto.notes,
             status: status as any,
