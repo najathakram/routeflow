@@ -65,6 +65,10 @@ import {
   type ShortPickLine,
 } from "../../../../../lib/short-pick";
 import { showToast } from "../../../../../lib/toast";
+import {
+  INVOICE_LATER_TOAST,
+  onPostDeliveryInvoiceFetchFailed,
+} from "../../../../../lib/post-delivery-invoice-fallback";
 import { regulatedPodGateError } from "../../../../../lib/pod-gating";
 import { openRouteInMaps } from "../../../../../components/openInMaps";
 import { useOfflineQueue } from "../../../../../store/offlineQueue";
@@ -896,7 +900,7 @@ export default function PaymentScreen() {
       return;
     }
     if (postDeliveryInvoicePrompt({ invoice: undefined, online: isOnline }) === "offline-later") {
-      showToast("Invoice will be ready to send once you're back online.");
+      showToast(INVOICE_LATER_TOAST);
       proceedToRoute();
       return;
     }
@@ -933,7 +937,14 @@ export default function PaymentScreen() {
           customerEmail: undefined,
         });
       })
-      .catch(() => proceedToRoute()); // best-effort — never strands the driver on this screen
+      // #2251: never silent — log it, tell the driver in the offline path's words, move on.
+      .catch((err) =>
+        onPostDeliveryInvoiceFetchFailed(err, {
+          toast: showToast,
+          log: console.warn,
+          proceed: proceedToRoute,
+        }),
+      );
   };
 
   const press = (k: string) => {

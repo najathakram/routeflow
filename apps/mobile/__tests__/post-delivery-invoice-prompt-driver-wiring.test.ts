@@ -57,8 +57,11 @@ describe("post-delivery invoice prompt — driver wiring (#2089)", () => {
   it("never dead-ends: no-invoice/offline/skip/fetch-failure all still navigate the driver onward", () => {
     const matches = src.match(/proceedToRoute\(\)/g) ?? [];
     // Called directly from every exit path that skips the sheet: no invoice,
-    // offline, skip-or-no-invoice-after-fetch, and fetch failure (.catch).
-    expect(matches.length).toBeGreaterThanOrEqual(4);
+    // offline, skip-or-no-invoice-after-fetch...
+    expect(matches.length).toBeGreaterThanOrEqual(3);
+    // ...and handed to the fetch-failure fallback (#2251), which calls it after its toast
+    // (post-delivery-invoice-fallback.test.ts).
+    expect(src).toMatch(/proceed:\s*proceedToRoute/);
   });
 
   it("also navigates onward when the driver dismisses the sheet without picking a channel", () => {
@@ -66,5 +69,16 @@ describe("post-delivery invoice prompt — driver wiring (#2089)", () => {
     expect(src).toMatch(
       /const closeSendSheet = \(\) => \{[\s\S]*?afterInvoicePromptRef\.current\(\);/,
     );
+  });
+
+  it("#2251 fold: a failed invoice fetch is never silent — same toast as offline, logged", () => {
+    const at = src.indexOf("qc.fetchQuery({ ...orderQueryOptions(primaryOrderId)");
+    const tail = src.slice(src.indexOf(".catch(", at), src.indexOf(".catch(", at) + 300);
+    expect(tail).toMatch(/onPostDeliveryInvoiceFetchFailed\(/);
+    expect(tail).toMatch(/toast:\s*showToast/);
+    expect(tail).toMatch(/proceed:\s*proceedToRoute/);
+    // The offline branch and the failure branch share ONE message constant.
+    expect(src).toMatch(/showToast\(INVOICE_LATER_TOAST\)/);
+    expect(src).not.toMatch(/\.catch\(\(\) => proceedToRoute\(\)\)/);
   });
 });
