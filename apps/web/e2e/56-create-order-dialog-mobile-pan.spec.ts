@@ -1,64 +1,39 @@
 /**
- * #2080 (P0, owner-reported production bug, iPhone). The staff order dialog's
- * own scroll body (`CreateOrderModal.tsx`, `max-h-[65vh] overflow-y-auto`)
- * panned sideways on a vertical swipe.
+ * #2080 (P0, owner-reported production bug, iPhone). The staff order dialog's own scroll
+ * body (`CreateOrderModal.tsx`, `form.max-h-[65vh].overflow-y-auto`) panned sideways on a
+ * vertical swipe; section labels lost their first letters.
  *
- * Root cause, per real device/emulated iOS measurement: the "Requested
- * Delivery Date" / "Order date" `<input type="date">`s (`:1856`, `:1869`)
- * are styled with Tailwind's `w-full`. iOS Safari gives a date input its own
- * menu-button chrome — forced `padding: 0 0.5em` and, for any non-pixel
- * width, `box-sizing: content-box` — so `w-full` renders at `100% + ~16px`
- * (up to +26px on newer iOS) of the actual available space, at EVERY
- * viewport width. Fix: `app/globals.css` gains a `:where()`-scoped rule for
- * `input[type=date|time|datetime-local|month|week]` — `appearance: none`,
- * `box-sizing: border-box`, plus a width floor (not `min-width: 0`, and a
- * `min-height` on `::-webkit-date-and-time-value` — see that file for why).
+ * Root cause: the "Requested Delivery Date" / "Order date" `<input type="date">`s are
+ * `w-full`. On iOS, WebKit's RenderThemeIOS.mm `adjustInputElementButtonStyle` (called from
+ * `adjustMenuListButtonStyle`, i.e. only while appearance is not `none`) runs AFTER the
+ * cascade and overrides author CSS: "Always Enforce padding: 0 0.5em", then min-width
+ * + `box-sizing: content-box` for any width that is not a fixed length. It is NOT a UA-stylesheet
+ * rule (an earlier review assumed it was): preflight's border-box and `px-3` cannot beat it,
+ * which is why production master is broken despite both. `w-full` therefore rendered 100%
+ * of the content box plus padding and border (+12px of body overflow, measured).
+ * Fix: `app/globals.css` sets `-webkit-appearance: none; appearance: none;
+ * box-sizing: border-box; min-width: 0` on every date/time input, inside `:where()`.
  *
- * `#1288`'s shared element-level overflow walk (`findViewportOverflow`) does
- * NOT catch this class of bug: its first pass only flags a box escaping the
- * viewport, its second only checks elements carrying an
- * `overflow-hidden`/`clip` class — a date input a few px too wide inside a
- * plain `overflow-y-auto` scroll body matches neither. This spec instead
- * asserts DIRECTLY on the dialog body's own `scrollWidth` vs `clientWidth` —
- * the same measurement iOS's own rendering makes real, and the one the
- * shared walk structurally can't perform for a sub-padding overflow like
- * this one.
+ * Chromium has no such adjustment, so this spec applies `applyIosDateInputAdjustment`
+ * (helpers/ios-date-input.ts) after the cart is built: it visits EVERY date/time input and
+ * re-creates WebKit's post-cascade step with inline styles under WebKit's own conditions. It
+ * never looks for the fix; the precondition below asserts only that it ran over the dialog's
+ * date inputs. Base 35a3d5af goes red (+12px), the fix goes green (0) in the compiled-CSS
+ * harness recorded on PR #2086; the F2 compose lane runs this spec itself (master red, fix
+ * green) as the landing proof.
  *
- * The `LineItemRow.tsx` boxed qty-controls column was investigated first (an
- * earlier commit on this branch, reverted) and is NOT part of this bug — it
- * sits inside `ul.overflow-hidden` and can't widen the dialog body. A
- * distinct, narrower, REAL 320px-only glitch in that same column (measured:
- * the `min-w-[190px]` floor runs 8px past the grid track's ~182px at 320px)
- * is pinned separately below, described as its own fix, not #2080.
+ * `#1288`'s shared element walk (`findViewportOverflow`) cannot see this class of bug alone
+ * (no box escapes the viewport, no `overflow-hidden` element holds it), so the body's own
+ * `scrollWidth - clientWidth` is asserted directly; the walk still runs as a second net.
  *
- * Reproduces the iOS-only date-input quirk in plain Chromium (no simulator
- * access from this session) by injecting the exact UA-stylesheet override
- * iOS Safari applies, as a page `<style>` tag — AFTER navigation (an
- * `addStyleTag` call before `page.goto` is discarded by the navigation, not
- * carried into the new document) and CONDITIONALLY: only when a date input's
- * OWN computed `appearance` is not already `none`, mirroring the real
- * cascade this bug depends on (iOS applies its forced chrome only where the
- * page hasn't already opted out of it) — on `origin/master` nothing sets
- * `appearance` on a date input, so the check is true and the quirk applies;
- * on this branch, `globals.css`'s own `appearance: none` already won, so the
- * check is false and the injected override is correctly inert. Without this
- * conditional the spec could either never fail (unconditional skip) or fail
- * even after the fix (unconditional inject with `!important`/higher
- * specificity) — Opus measured this exact form discriminating master (12px
- * overflow, fails) from this branch (0px, passes). NOT independently run
- * from this session: no Docker/Playwright access here — needs a live
- * red-on-`origin/master` / green-on-this-branch confirmation before landing.
- *
- * Seeds a cart approximating the owner's reported shape (`e2e-seed.js`
- * fixtures): the one boxed product (Case/Unit toggle + Case price input,
- * `unitsPerBox: 12`, long-ish name), a per-line note, and order-level
- * discount + shipping amounts. No regulated-category product fixture exists
- * in `e2e-seed.js` today (`LICENSED_TRACKED_CATEGORY_NAME` is seeded but not
- * assigned to any cart-addable product) — noted here rather than guessed at
- * with an unverifiable selector.
+ * Cart shape approximates the owner's report (`e2e-seed.js` fixtures): the boxed product
+ * (Case/Unit toggle, cases + units inputs, Case price input), a per-line note, and an
+ * order discount + shipping fee. No regulated-category fixture is cart-addable in
+ * `e2e-seed.js` today, so none is added.
  */
 import { test, expect, type Page } from "@playwright/test";
 import { findViewportOverflow } from "./helpers/overflow";
+import { applyIosDateInputAdjustment } from "./helpers/ios-date-input";
 
 const VIEWPORTS = [
   { width: 320, height: 690, label: "320" },
@@ -67,45 +42,7 @@ const VIEWPORTS = [
   { width: 430, height: 932, label: "430" },
 ] as const;
 
-/**
- * iOS Safari's own UA stylesheet for `type="date"` (and siblings): forced
- * horizontal padding via its menu-button appearance, and content-box sizing
- * for any non-pixel width (the actual mechanism `w-full` — a percentage —
- * trips). No `!important` and no elevated specificity: on this branch the
- * app's own `globals.css` rule must be able to keep winning the cascade —
- * the CONDITIONAL injection below (only when nothing already opted out) is
- * what actually discriminates master from the fix, not this rule's own
- * strength.
- */
-const IOS_DATE_INPUT_QUIRK_CSS = `
-  input[type="date"] {
-    -webkit-appearance: menulist-button;
-    padding: 0 0.5em;
-    box-sizing: content-box;
-  }
-`;
-
 const DIALOG_BODY_SELECTOR = 'form[class*="overflow-y-auto"]';
-
-/**
- * Simulates iOS Safari's UA-stylesheet override for date inputs, but only
- * when nothing on the page has already opted a date input out of it (i.e.
- * its own computed `appearance` isn't already `none`) — see the module
- * header for why this conditional, not the override's own CSS strength, is
- * what makes this spec discriminate master from the fix.
- */
-async function maybeSimulateIosDateInputChrome(page: Page) {
-  const needsSimulation = await page.evaluate(() => {
-    const input = document.querySelector('input[type="date"]');
-    if (!input) return false;
-    const computed = getComputedStyle(input).appearance;
-    return computed !== "none";
-  });
-  if (needsSimulation) {
-    await page.addStyleTag({ content: IOS_DATE_INPUT_QUIRK_CSS });
-  }
-  return needsSimulation;
-}
 
 async function openBuilderWithRealisticCart(page: Page) {
   await page.goto("/orders");
@@ -158,85 +95,75 @@ for (const vp of VIEWPORTS) {
   test.describe(`create-order dialog — ${vp.label}px`, () => {
     test.use({ viewport: { width: vp.width, height: vp.height } });
 
-    test(`dialog body has no scrollWidth/clientWidth overflow with the iOS date-input quirk simulated (${vp.label}px)`, async ({
+    test(`dialog body has no horizontal overflow under the iOS date-input adjustment (${vp.label}px)`, async ({
       page,
     }) => {
       await openBuilderWithRealisticCart(page);
       await expect(page.locator("#delivery-date")).toBeVisible();
       await expect(page.locator("#order-date")).toBeVisible();
 
-      // AFTER navigation, and only when applicable — see module header.
-      const simulated = await maybeSimulateIosDateInputChrome(page);
+      const { visited } = await applyIosDateInputAdjustment(page);
       expect(
-        simulated,
-        "the iOS chrome simulation never applied (a date input's computed appearance was " +
-          "already 'none') — this run proves nothing about the bug it targets",
-      ).toBe(true);
+        visited,
+        "the iOS date-input adjustment did not reach the dialog's two date inputs",
+      ).toBeGreaterThanOrEqual(2);
 
-      // The DIRECT measurement — not the shared element-walk, which cannot
-      // see this class of overflow (see module header).
       const overflowPx = await bodyScrollOverflowPx(page);
       expect(
         overflowPx,
         `dialog body scrollWidth exceeds clientWidth by ${overflowPx}px at ${vp.label}px ` +
-          `with the iOS date-input quirk simulated — this is the owner's reported sideways pan`,
+          `under the iOS date-input adjustment — the owner's reported sideways pan`,
       ).toBeLessThanOrEqual(0);
 
-      // Belt-and-braces: the shared walk still shouldn't find anything else new.
       const { offenders } = await findViewportOverflow(page);
       expect(
         offenders,
         `viewport overflow (shared walk) at ${vp.label}px — ${offenders.length} offender(s), worst: ${JSON.stringify(offenders.slice(0, 5))}`,
       ).toHaveLength(0);
     });
+
+    /**
+     * Not #2080: the boxed line's qty column (`line-qty-controls`) is `min-w-0` below `sm`,
+     * so its own box fits its `minmax(0,1fr)` track by construction; measuring that box
+     * proves nothing. This measures the CONTENT against the TRACK: the cases/units row's
+     * scrollWidth against its clientWidth, and every descendant's right edge against the
+     * track's right boundary (the actions column's left edge minus the row's column-gap).
+     * "[n] cases + [n] units" needs ~186px in the app font and the track is ~176-182px at
+     * 320px, so the row wraps its second group instead of running under the line total.
+     */
+    test(`the boxed line's cases/units content fits its grid track (${vp.label}px)`, async ({
+      page,
+    }) => {
+      await openBuilderWithRealisticCart(page);
+      const qtyColumn = page.getByTestId("line-qty-controls").first();
+      await expect(qtyColumn).toBeVisible();
+      await expect(page.getByTestId("line-qty-cases-row").first()).toBeVisible();
+
+      const m = await qtyColumn.evaluate((col) => {
+        const li = col.parentElement as HTMLElement;
+        const actions = li.querySelector('[data-testid="line-actions-column"]');
+        const row = col.querySelector('[data-testid="line-qty-cases-row"]');
+        const gap = parseFloat(getComputedStyle(li).columnGap) || 0;
+        const trackRight = actions ? actions.getBoundingClientRect().left - gap : NaN;
+        let maxRight = -Infinity;
+        col.querySelectorAll("*").forEach((el) => {
+          const r = el.getBoundingClientRect();
+          if (r.width > 0 && r.height > 0) maxRight = Math.max(maxRight, r.right);
+        });
+        return {
+          rowOverflow: row ? row.scrollWidth - row.clientWidth : NaN,
+          contentPastTrack: Math.round((maxRight - trackRight) * 100) / 100,
+          colWidth: Math.round(col.getBoundingClientRect().width),
+        };
+      });
+      expect(
+        m.rowOverflow,
+        `cases/units row content overflows its ${m.colWidth}px track by ${m.rowOverflow}px at ${vp.label}px`,
+      ).toBeLessThanOrEqual(0);
+      expect(
+        m.contentPastTrack,
+        `qty-controls content runs ${m.contentPastTrack}px past its ${m.colWidth}px track at ${vp.label}px`,
+      ).toBeLessThanOrEqual(0);
+    });
   });
 }
-
-/**
- * A distinct, narrower, REAL bug from the one above — measured separately:
- * at 320px the boxed qty-controls column's `min-w-[190px]` floor runs 8px
- * past the grid track's own ~182px available width (`grid-cols-[minmax(0,1fr)_auto]`
- * resolving column 1 that tight at this specific viewport). NOT #2080 — this
- * column sits inside `ul.overflow-hidden` and can't widen the dialog body,
- * so it never caused the owner's report; it's its own, real, 320px-only
- * clip inside that list. Fix: `min-w-0 sm:min-w-[190px]` on that column
- * (`LineItemRow.tsx`) — shrinks below `sm`, unchanged at/above it.
- *
- * Located via `data-testid`s (`line-qty-controls`, `line-actions-column`),
- * not a text-content filter — the row's own product-info column also
- * contains "cases" text (the "1 case = N units" caption), so a `hasText`
- * filter without a testid finds the WRONG column (219 of 292px, never the
- * qty-controls one) and pins nothing (L-212: a selector that silently
- * matches the wrong element is worse than one that matches zero). Measures
- * against the grid track's own right boundary — `line-actions-column`'s
- * (column 2, same row) left edge minus the row's `gap-x-2` (8px) — not the
- * row's own right edge, which the qty column can't reach regardless (column
- * 2 sits between it and the row's edge).
- */
-test.describe("create-order dialog — boxed line qty column at 320px", () => {
-  test.use({ viewport: { width: 320, height: 690 } });
-
-  test("the boxed qty-controls column fits its grid track at 320px (not #2080)", async ({
-    page,
-  }) => {
-    await openBuilderWithRealisticCart(page);
-
-    const qtyColumn = page.getByTestId("line-qty-controls").first();
-    const actionsColumn = page.getByTestId("line-actions-column").first();
-
-    const qtyBox = await qtyColumn.boundingBox();
-    const actionsBox = await actionsColumn.boundingBox();
-    expect(qtyBox, "line-qty-controls not found").not.toBeNull();
-    expect(actionsBox, "line-actions-column not found").not.toBeNull();
-
-    if (qtyBox && actionsBox) {
-      const GAP_X_PX = 8; // Tailwind's gap-x-2
-      const trackRightBoundary = actionsBox.x - GAP_X_PX;
-      expect(
-        qtyBox.x + qtyBox.width,
-        `qty-controls column's right edge (${qtyBox.x + qtyBox.width}) escapes its grid ` +
-          `track's right boundary (${trackRightBoundary}) at 320px`,
-      ).toBeLessThanOrEqual(trackRightBoundary + 1);
-    }
-  });
-});

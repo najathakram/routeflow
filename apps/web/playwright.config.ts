@@ -833,16 +833,28 @@ export default defineConfig({
       },
     },
 
-    // Create-order dialog mobile pan (#2080, P0) — proves the dialog body's
-    // own scrollWidth/clientWidth stays 0 at 320/375/390/430 with iOS
-    // Safari's date-input chrome simulated (the real cause; see the spec's
-    // own header), plus a separate, narrower 320px-only pin on
-    // LineItemRow's boxed qty-controls column (not #2080). Same
-    // setup/operator shape as "create-order-escape" (08). WITHOUT THIS
-    // ENTRY THE SPEC NEVER RUNS — see 08-create-order-escape's header.
+    // Create-order dialog mobile pan (#2080, P0): the dialog body's own
+    // scrollWidth/clientWidth stays 0 at 320/375/390/430 under a model of iOS
+    // WebKit's post-cascade date-input sizing (helpers/ios-date-input.ts), and
+    // the boxed line's cases/units content fits its grid track. Same
+    // setup/operator shape as "create-order-escape" (08). WITHOUT THIS ENTRY
+    // THE SPEC NEVER RUNS - see 08-create-order-escape's header.
     {
       name: "create-order-dialog-mobile-pan",
       testMatch: /56-create-order-dialog-mobile-pan\.spec\.ts/,
+      dependencies: ["setup"],
+      use: {
+        ...devices["Desktop Chrome"],
+        storageState: path.join(AUTH_DIR, "operator.json"),
+      },
+    },
+
+    // #2080 follow-up: date inputs in narrow grid-cols-2/3 tracks (vendor-bills
+    // and estimates modals, invoices/new, invoices/[id]/edit) fit their cells
+    // at 320/375/390 under the same iOS model. Read-only (one API read).
+    {
+      name: "date-input-grid-overflow",
+      testMatch: /57-date-input-grid-overflow\.spec\.ts/,
       dependencies: ["setup"],
       use: {
         ...devices["Desktop Chrome"],

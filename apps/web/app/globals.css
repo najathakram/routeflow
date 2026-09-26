@@ -235,39 +235,28 @@ body {
   }
 }
 
-/* #2080 (P0, owner-reported production, iOS Safari): a `type="date"` (and its
-   siblings) styled with Tailwind's `w-full` reads that as its CONTENT width on
-   iOS Safari, not its border-box width — the platform gives these inputs its
-   own menu-button chrome (forced ~0.5em horizontal padding) and switches them
-   to content-box sizing for any non-pixel width. So `w-full` renders at
-   100% + ~16px (measured up to +26px on newer iOS versions) of the actual
-   available space, at EVERY viewport width — the real cause of the owner's
-   report (labels losing their first letters, cards clipping left). Chromium
-   without iOS device emulation measures 0 overflow here, which is why this
-   went unreproduced locally for as long as it did.
-   Root fix, not a per-input patch: `appearance: none` opts every date/time
-   input in the app back into standard CSS box-model sizing (`box-sizing:
-   border-box` makes that explicit regardless of Tailwind's global reset load
-   order). Global, not scoped to CreateOrderModal: the app has 94 `type="date"`
-   inputs total, and any one of them inside a scroll container can pan the
-   same way — this is likely part of #2011's class too.
-   `:where(...)` keeps this at 0 specificity so any Tailwind utility class on
-   a specific input (a `w-*`, a design-system override) still wins outright.
-   Two side effects of `appearance: none`, both from removing WebKit's native
-   sizing hints along with its chrome, fixed alongside the root cause:
-   - WebKit bug 198959: an EMPTY date/time input with no explicit height
-     class loses its native minimum height once `appearance: none` is set —
-     the visible date/time TEXT lives in the `::-webkit-date-and-time-value`
-     pseudo-element, which needs its own min-height once the parent's native
-     sizing no longer supplies one.
-   - A date input with no explicit width class (`orders/page.tsx`'s delivery
-     filter, `ReportToolbar.tsx`'s from/to range — neither sets a `w-*`, both
-     relied on the platform's own default date-input width) can shrink to a
-     sliver once `min-width: 0` (this rule's first draft) removes that
-     default too. A width FLOOR — generous enough for "MM/DD/YYYY" plus the
-     picker icon — replaces `min-width: 0`; any input with its own `w-*`
-     class still wins (specificity), so `CreateOrderModal`'s `w-full` inputs
-     are unaffected. */
+/* #2080 (P0, owner-reported production, iOS Safari): the create-order dialog
+   panned sideways because its `w-full` date inputs rendered ~16px wider than
+   their column. Mechanism (WebKit RenderThemeIOS.mm,
+   adjustInputElementButtonStyle, reached from adjustMenuListButtonStyle only
+   while the input's appearance is not `none`): AFTER the cascade, iOS forces
+   `padding: 0 0.5em`, and unless the width is a fixed positive px value it
+   also sets a min-width (the estimated date-text width) and
+   `box-sizing: content-box`. That post-cascade adjustment beats author CSS
+   (Tailwind's preflight border-box and `px-3` included), so `w-full` became
+   100% of the CONTENT box plus padding and border. `appearance: none` (and the
+   `-webkit-` form: no autoprefixer runs here and iOS < 15.4 reads only the
+   prefixed property) switches the adjustment off for every date/time input
+   in the app, not just this dialog.
+   `:where(...)` keeps the rule at 0 specificity, so any utility class on an
+   input (`w-*`, `min-w-*`, `box-content`, ...) still wins. `min-width: 0`,
+   never a positive floor: a positive min-width here would override a `w-*`
+   narrower than it (`w-*` sets width, not min-width) and overflow every date
+   input sitting in a narrow grid track. Inputs with no width class of their
+   own set one explicitly (orders delivery filter, ReportToolbar range: `w-32`,
+   the width Chromium gave them before this rule).
+   The `::-webkit-date-and-time-value` min-height keeps an EMPTY input from
+   collapsing in height once the native sizing is gone (WebKit bug 198959). */
 :where(
   input[type="date"],
   input[type="time"],
@@ -275,9 +264,10 @@ body {
   input[type="month"],
   input[type="week"]
 ) {
+  -webkit-appearance: none;
   appearance: none;
   box-sizing: border-box;
-  min-width: 140px;
+  min-width: 0;
 }
 :where(
   input[type="date"],
