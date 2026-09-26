@@ -16,6 +16,8 @@ import { usePageTitle } from "@/lib/page-title-context";
 import { useAuth } from "@/lib/auth-context";
 import { useDriveMode } from "@/lib/drive-mode";
 import { useRouteRuns, useMyRuns, type RouteRun, type RouteRunStop } from "@/lib/api/routes";
+import { useRoutesAccess, useDeliveryAccess } from "@/lib/api/addons";
+import { useTenantAddons } from "@/lib/api/tobacco";
 import { fmtCalendarDateWithWeekday } from "@/lib/calendar-date";
 import { StopSheet } from "./StopSheet";
 
@@ -316,8 +318,19 @@ export default function MyRunsPage() {
     { assignedToMe: true, limit: 100 },
     { refetchInterval: 60_000, enabled: canActAsDriver },
   );
-  const driverQuery = useMyRuns({ refetchInterval: 60_000, enabled: baseIsDriver });
-  const { data, isLoading, isError } = baseIsDriver ? driverQuery : operatorQuery;
+  // #2145: GET /route-runs/my-runs 403s without the routes or delivery add-on, and
+  // RouteGuard bounces that driver to /dashboard only once the add-ons read resolves.
+  // Hold the loading state until the driver's access is known, and never fire the read
+  // without it, so the 403 error can't flash first. Fails open on an add-ons error,
+  // the same way RouteGuard does.
+  const { isError: addonsFailed } = useTenantAddons();
+  const { enabled: routesAccess } = useRoutesAccess();
+  const { enabled: deliveryAccess } = useDeliveryAccess();
+  const driverRunsOpen = baseIsDriver && (routesAccess || deliveryAccess || addonsFailed);
+  const driverQuery = useMyRuns({ refetchInterval: 60_000, enabled: driverRunsOpen });
+  const activeQuery = baseIsDriver ? driverQuery : operatorQuery;
+  const { data, isError } = activeQuery;
+  const isLoading = activeQuery.isLoading || (baseIsDriver && !driverRunsOpen);
 
   // A pure driver has no "operator view" to toggle back to — always field layout.
   const fieldLayout = baseIsDriver || driveMode;

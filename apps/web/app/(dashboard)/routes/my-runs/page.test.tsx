@@ -1,5 +1,6 @@
 import * as React from "react";
 import { renderWithProviders, screen, waitFor } from "@/test-utils/render";
+import { RECURRING_ROUTES_ADDON } from "@routeflow/types";
 import MyRunsPage from "./page";
 
 const get = jest.fn();
@@ -26,6 +27,17 @@ jest.mock("@/lib/page-title-context", () => ({ usePageTitle: () => ({ setTitle: 
 
 const EMPTY_RUNS = { data: [], meta: { total: 0, page: 1, limit: 100, totalPages: 0 } };
 
+/** GET router: the tenant-addons read answers `addons()`; everything else answers `runs()`. */
+function routeGets(
+  addons: () => Promise<unknown>,
+  runs: () => Promise<unknown> = () => Promise.resolve(EMPTY_RUNS),
+) {
+  get.mockImplementation((url: string) =>
+    url === "/tenants/me/addons" ? addons().then((a) => ({ data: a })) : runs(),
+  );
+}
+const forbidden = () => Promise.reject({ response: { status: 403 } });
+
 /**
  * PHASE 1a — red-first pins:
  *  1. A DRIVER (no canActAsDriver) reaches the field-layout my-runs view via
@@ -41,6 +53,7 @@ describe("MyRunsPage — PHASE 1a (driver-mode 1a) role gating", () => {
     jest.clearAllMocks();
     driveModeOn = false;
     get.mockResolvedValue(EMPTY_RUNS);
+    routeGets(() => Promise.resolve({ addons: [RECURRING_ROUTES_ADDON] }));
   });
 
   it("REG-1a: a DRIVER role reaches the field-layout view via GET /route-runs/my-runs", async () => {
@@ -88,6 +101,47 @@ describe("MyRunsPage — PHASE 1a (driver-mode 1a) role gating", () => {
     expect(
       await screen.findByText(/only available to operators who can also act as drivers/i),
     ).toBeInTheDocument();
-    expect(get).not.toHaveBeenCalled();
+    // No runs read at all. The only GET is the shared tenant-add-ons read (#2145),
+    // which the dashboard layout already makes for every user; react-query dedupes it.
+    expect(get.mock.calls.map((c) => c[0])).toEqual(["/tenants/me/addons"]);
+  });
+});
+
+/**
+ * #2145 — a DRIVER whose tenant has neither the routes nor the delivery add-on is
+ * bounced to /dashboard by RouteGuard once the add-ons read resolves. Until then,
+ * and during that bounce, the page must never fire the 403-ing my-runs read or
+ * render its "Failed to load" error. It fails open on an add-ons error, like RouteGuard.
+ */
+describe("MyRunsPage — #2145 no 403 flash for a driver without the routes add-on", () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    driveModeOn = false;
+    authUser = { role: "DRIVER" };
+  });
+
+  it("add-ons resolved without routes or delivery: no my-runs read, no error render", async () => {
+    routeGets(() => Promise.resolve({ addons: [] }), forbidden);
+    renderWithProviders(<MyRunsPage />);
+
+    await new Promise((r) => setTimeout(r, 50));
+    expect(get).not.toHaveBeenCalledWith("/route-runs/my-runs");
+    expect(screen.queryByText(/failed to load data/i)).not.toBeInTheDocument();
+  });
+
+  it("add-ons still loading: holds the loading state, no my-runs read", async () => {
+    routeGets(() => new Promise(() => {}), forbidden);
+    renderWithProviders(<MyRunsPage />);
+
+    await new Promise((r) => setTimeout(r, 50));
+    expect(get).not.toHaveBeenCalledWith("/route-runs/my-runs");
+    expect(screen.queryByText(/failed to load data/i)).not.toBeInTheDocument();
+  });
+
+  it("add-ons read failed: fails open and loads the driver's runs", async () => {
+    routeGets(() => Promise.reject(new Error("addons 500")));
+    renderWithProviders(<MyRunsPage />);
+
+    await waitFor(() => expect(get).toHaveBeenCalledWith("/route-runs/my-runs"));
   });
 });
