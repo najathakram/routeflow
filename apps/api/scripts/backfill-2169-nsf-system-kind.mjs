@@ -113,10 +113,11 @@ const PAYMENTS_SQL = `
 
 async function resolveTarget() {
   const local = process.argv.includes("--local");
-  const url = local
-    ? process.env.DATABASE_URL
-    : resolveDatabaseUrl(process.env, { requireProxy: true });
-  if (!url) throw new Error("--local requires DATABASE_URL");
+  // B768: every target resolves through the shared resolver (never a direct env read). Under
+  // --local it may fall back to the local connection string; isLocalDbTarget below still refuses
+  // any non-local host, so a stray Railway proxy env cannot redirect a local run.
+  const url = resolveDatabaseUrl(process.env, { requireProxy: !local });
+  if (!url) throw new Error("--local requires a local database connection string");
   if (local && !isLocalDbTarget(url))
     throw new Error(`--local refuses a non-local host (${redactUrl(url)})`);
   return url;
