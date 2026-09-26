@@ -3,8 +3,9 @@ import path from "node:path";
 
 // #2183 / B592: the DB lane (jest.db.config.js) is serial, and a worker-count override can't make
 // it parallel. A CLI `--maxWorkers` beats a config value, so this pins both enforcement points:
-//   1. the runner `npm run test:db` uses (scripts/run-db-tests.mjs) drops `--maxWorkers`, `-w` and
-//      JEST_MAX_WORKERS, warns, and passes everything else through;
+//   1. the runner `npm run test:db` uses (scripts/run-db-tests.mjs) drops `--maxWorkers`, `-w`,
+//      `--runInBand` and `-i` (jest refuses those beside the `--maxWorkers=1` it injects), warns,
+//      and passes everything else through;
 //   2. the lane's globalSetup (test/db-lane-serial.cjs) refuses any run that still resolved to
 //      more than one worker, so a direct `jest -c jest.db.config.js --maxWorkers=4` never starts.
 
@@ -38,6 +39,7 @@ describe("#2183 DB lane is serial whatever the caller asks for", () => {
       const m = await import(${JSON.stringify(path.join(API_DIR, "scripts/run-db-tests.mjs"))});
       const cases = [
         ["--maxWorkers=4"], ["--maxWorkers", "4"], ["-w", "2"], ["-w4"], ["-w=3"],
+        ["--runInBand"], ["-i"], ["--runInBand", "--maxWorkers=2", "-t", "x"],
         ["--maxWorkers=4", "src/orders/order-number.db.spec.ts"], ["-t", "B562", "--ci"],
       ];
       console.log(JSON.stringify(cases.map((c) => m.serialDbArgs(c))));`;
@@ -51,6 +53,9 @@ describe("#2183 DB lane is serial whatever the caller asks for", () => {
       { kept: [], dropped: ["-w 2"] },
       { kept: [], dropped: ["-w4"] },
       { kept: [], dropped: ["-w=3"] },
+      { kept: [], dropped: ["--runInBand"] },
+      { kept: [], dropped: ["-i"] },
+      { kept: ["-t", "x"], dropped: ["--runInBand", "--maxWorkers=2"] },
       { kept: ["src/orders/order-number.db.spec.ts"], dropped: ["--maxWorkers=4"] },
       { kept: ["-t", "B562", "--ci"], dropped: [] },
     ]);
