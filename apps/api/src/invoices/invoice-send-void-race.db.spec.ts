@@ -820,6 +820,7 @@ describeDb(
       );
     });
 
+    // SA-404e: DRAFT, not PENDING — StandalonePaymentDto accepts only DRAFT | PAID, so PENDING cannot come through this path.
     it("(R2) void: a DRAFT standalone payment (recordStandalonePayment) committed while the void waits on the lock ⇒ void 400s after a retry, invoice NOT voided", async () => {
       const warn = jest.spyOn(NestLogger.prototype, "warn");
       try {
