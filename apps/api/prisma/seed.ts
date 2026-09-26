@@ -3,8 +3,12 @@ import { PrismaPg } from "@prisma/adapter-pg";
 import { PrismaClient } from "@prisma/client";
 import * as bcrypt from "bcrypt";
 import { assertTestTenant } from "../../../scripts/lib/test-tenants.cjs";
+import { localConnectionConfig } from "../scripts/lib/local-db-target.cjs";
 
-const pool = new Pool({ connectionString: process.env.DATABASE_URL });
+// A provably-local target dials the explicit fields that were vetted (never the raw string, whose ?host= could
+// redirect it); only a deliberate SEED_ALLOW_REMOTE=1 run uses the raw URL (#2204).
+const localTarget = localConnectionConfig(process.env.DATABASE_URL);
+const pool = new Pool(localTarget ?? { connectionString: process.env.DATABASE_URL });
 const adapter = new PrismaPg(pool);
 const prisma = new PrismaClient({ adapter });
 
@@ -42,7 +46,7 @@ function assertSafeTarget(): void {
   } catch {
     throw new Error("DATABASE_URL is missing or unparseable — refusing to seed.");
   }
-  const isLocal = ["localhost", "127.0.0.1", "::1", "postgres"].includes(host);
+  const isLocal = localTarget !== null; // NOT a hostname allowlist: `?host=` walks past one
   const override = process.env.SEED_ALLOW_REMOTE === "1";
 
   console.log(`seed target: ${host} (tenant "${TENANT_SLUG}")`);
