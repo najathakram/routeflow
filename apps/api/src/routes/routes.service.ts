@@ -8,7 +8,7 @@ import {
 } from "@nestjs/common";
 import { createHash, randomUUID } from "crypto";
 import { ConfigService } from "@nestjs/config";
-import { assertDeliveriesFitStop } from "./delivery-lines.util";
+import { assertDeliveriesFitStop, claimStopCompletion } from "./delivery-lines.util";
 import { PrismaService } from "../prisma/prisma.service";
 import { JwtPayload } from "../auth/jwt-payload.interface";
 import {
@@ -85,7 +85,10 @@ import {
   RUN_LINE_ITEMS_SELECT,
   RUN_STOP_INCLUDE,
 } from "./routes.constants";
-import { withPayableInvoices, withPayableInvoicesForRuns } from "./run-invoice-balance";
+import { withDeliveredSoFar } from "./run-delivered-so-far";
+import { DeletedEvidenceRow, deliveredQtyRecompute } from "./delivered-so-far";
+import { withPayableInvoicesFlat } from "./run-projections";
+import { withRunStopProjections, withRunStopProjectionsForRunsPage } from "./run-projections";
 export {
   NON_ROUTABLE_ORDER_STATUSES,
   RELEASED_CHANGE_REQUEST_REASON,
@@ -1135,7 +1138,7 @@ export class RoutesService {
     // Same normalisation as findOneRun: legacy/seeded run stops may lack a
     // direct customer/address link — fall back to the template RouteStop's
     // data so address-dependent UI (Maps button, "no location" badge) works.
-    const normalisedRuns = data.map((run) => ({
+    const normalisedRuns = data.map((run: any) => ({
       ...run,
       stops: run.stops.map((s) => ({
         ...s,
@@ -1143,8 +1146,7 @@ export class RoutesService {
         customerAddress: s.customerAddress ?? s.routeStop?.customerAddress ?? null,
       })),
     }));
-    // B810/SA-130a call site 1 of 4 — see run-invoice-balance.ts's module doc.
-    const normalisedData = await withPayableInvoicesForRuns(
+    const normalisedData = await withRunStopProjectionsForRunsPage(
       this.prisma.forTenant(),
       normalisedRuns,
     );
@@ -1300,31 +1302,27 @@ export class RoutesService {
           // is the one extra field this fallback needs to group by.
           select: { ...RUN_STOP_INCLUDE.orders.select, customerId: true },
         });
-        // B810/SA-130a call site 2 of 4 — flat orders, wrap/unwrap a pseudo-stop.
-        const [{ orders: ordersWithBalances }] = await withPayableInvoices(
-          this.prisma.forTenant(),
-          [{ orders }],
-        );
+        const ordersWithBalances = await withPayableInvoicesFlat(this.prisma.forTenant(), orders);
         const byCustomer: Record<string, typeof ordersWithBalances> = {};
         for (const o of ordersWithBalances) {
           (byCustomer[o.customerId] ??= []).push(o);
         }
+        const fallbackStops = normalisedStops.map((s: any) => ({
+          ...s,
+          orders: s._resolvedCustomerId ? (byCustomer[s._resolvedCustomerId] ?? []) : [],
+        }));
         return {
           ...run,
-          stops: normalisedStops.map((s: any) => ({
-            ...s,
-            orders: s._resolvedCustomerId ? (byCustomer[s._resolvedCustomerId] ?? []) : [],
-          })),
+          // B785/SA-116: the fallback build must ALSO carry deliveredSoFar (B810 drift class).
+          stops: await withDeliveredSoFar(this.prisma.forTenant(), fallbackStops),
           collectedPayments,
         };
       }
     }
 
-    // B810/SA-130a: call site 3 of 4 (findOneRun's normal, non-fallback path)
-    // — ONE batched invoice.findMany over every order on this run's stops.
     return {
       ...run,
-      stops: await withPayableInvoices(this.prisma.forTenant(), normalisedStops),
+      stops: await withRunStopProjections(this.prisma.forTenant(), normalisedStops),
       collectedPayments,
     };
   }
@@ -2269,7 +2267,7 @@ export class RoutesService {
 
     let autoCompleted = false;
     await this.prisma.tenantTransaction(async (tx) => {
-      await assertDeliveriesFitStop(tx, stop.orders, dto.deliveries);
+      await assertDeliveriesFitStop(tx, stopId, stop.orders, dto.deliveries);
       // Phase 4 (W7b): regulated-delivery POD gate. Re-derive the age/ID
       // requirement from the stop's current orders (authoritative — orders can be
       // linked after dispatch), then block a regulated completion that lacks the
@@ -2288,18 +2286,15 @@ export class RoutesService {
         existingSignatureUrl: stop.signatureUrl,
       });
 
-      // 1. Mark stop completed
-      await tx.routeRunStop.update({
-        where: { id: stopId },
-        data: {
-          status: "COMPLETED",
-          completedAt: new Date(),
-          ...(dto.driverNote !== undefined ? { driverNote: dto.driverNote } : {}),
-          ...(dto.podPhotoUrls ? { podPhotoUrls: dto.podPhotoUrls } : {}),
-          ...(dto.signatureUrl !== undefined ? { signatureUrl: dto.signatureUrl } : {}),
-          ...(dto.safeDropEnabled !== undefined ? { safeDropEnabled: dto.safeDropEnabled } : {}),
-          ...regulatedPatch,
-        },
+      // 1. Mark stop completed (SA-151, see claimStopCompletion).
+      await claimStopCompletion(tx, stopId, {
+        status: "COMPLETED",
+        completedAt: new Date(),
+        ...(dto.driverNote !== undefined ? { driverNote: dto.driverNote } : {}),
+        ...(dto.podPhotoUrls ? { podPhotoUrls: dto.podPhotoUrls } : {}),
+        ...(dto.signatureUrl !== undefined ? { signatureUrl: dto.signatureUrl } : {}),
+        ...(dto.safeDropEnabled !== undefined ? { safeDropEnabled: dto.safeDropEnabled } : {}),
+        ...regulatedPatch,
       });
 
       // 2. Record delivery mutations if provided
@@ -2513,7 +2508,7 @@ export class RoutesService {
     let excess: number | undefined;
     let advancePaymentId: string | null | undefined;
     await this.prisma.tenantTransaction(async (tx) => {
-      await assertDeliveriesFitStop(tx, stop.orders, dto.deliveries);
+      await assertDeliveriesFitStop(tx, stopId, stop.orders, dto.deliveries);
       // Phase 4 (W7b): regulated-delivery POD gate (same as completeStop).
       const db = tx as unknown as RegulatedDeliveryDb;
       const sets = await loadAgeIdCategorySets(db);
@@ -2528,18 +2523,15 @@ export class RoutesService {
         existingSignatureUrl: stop.signatureUrl,
       });
 
-      // 1. Mark stop completed
-      await tx.routeRunStop.update({
-        where: { id: stopId },
-        data: {
-          status: "COMPLETED",
-          completedAt: new Date(),
-          ...(dto.driverNote !== undefined ? { driverNote: dto.driverNote } : {}),
-          ...(dto.podPhotoUrls ? { podPhotoUrls: dto.podPhotoUrls } : {}),
-          ...(dto.signatureUrl !== undefined ? { signatureUrl: dto.signatureUrl } : {}),
-          ...(dto.safeDropEnabled !== undefined ? { safeDropEnabled: dto.safeDropEnabled } : {}),
-          ...regulatedPatch,
-        },
+      // 1. Mark stop completed — SA-151 review, see claimStopCompletion (delivery-lines.util.ts).
+      await claimStopCompletion(tx, stopId, {
+        status: "COMPLETED",
+        completedAt: new Date(),
+        ...(dto.driverNote !== undefined ? { driverNote: dto.driverNote } : {}),
+        ...(dto.podPhotoUrls ? { podPhotoUrls: dto.podPhotoUrls } : {}),
+        ...(dto.signatureUrl !== undefined ? { signatureUrl: dto.signatureUrl } : {}),
+        ...(dto.safeDropEnabled !== undefined ? { safeDropEnabled: dto.safeDropEnabled } : {}),
+        ...regulatedPatch,
       });
 
       // 2. Record delivery mutations. Track which orders were actually delivered
@@ -2549,6 +2541,7 @@ export class RoutesService {
       // it against a deliveredQty of 0 would wrongly zero its open draft.
       const deliveredOrderIdSet = new Set<string>();
       if (dto.deliveries && dto.deliveries.length > 0) {
+        const orderIdByItemId = new Map<string, string>();
         for (const d of dto.deliveries) {
           const item = await tx.orderItem.findFirst({
             where: { id: d.orderItemId },
@@ -2556,6 +2549,7 @@ export class RoutesService {
           });
           if (!item) continue;
           deliveredOrderIdSet.add(item.orderId);
+          orderIdByItemId.set(d.orderItemId, item.orderId);
           await tx.deliveryMutation.create({
             data: {
               orderId: item.orderId,
@@ -2569,13 +2563,18 @@ export class RoutesService {
               quantityDelivered: d.quantityDelivered,
             },
           });
-          // Record the delivered qty so the invoice reconcile below (step 4) bills
-          // what was actually delivered (short/refused lines don't over-bill).
-          // Consumed by reconcileDeliveredOrdersInTx (delivered-reconcile.ts).
-          await tx.orderItem.update({
-            where: { id: d.orderItemId },
-            data: { deliveredQty: (d.type as any) === "REFUSED" ? 0 : d.quantityDelivered },
-          });
+        }
+        // B785/SA-133: RECOMPUTE deliveredQty, never increment/overwrite -- other cumulative
+        // consumers (order-cancel-impact.ts, order-stock.ts, orders.service.ts) are unaffected.
+        for (const orderId of deliveredOrderIdSet) {
+          const pairs = [...orderIdByItemId].filter((p) => p[1] === orderId);
+          const itemIds = pairs.map((p) => p[0]);
+          for (const u of await deliveredQtyRecompute(tx, orderId, itemIds)) {
+            await tx.orderItem.update({
+              where: { id: u.id },
+              data: { deliveredQty: u.deliveredQty },
+            });
+          }
         }
       }
 
@@ -2900,9 +2899,7 @@ export class RoutesService {
       orderBy: { scheduledDate: "asc" },
     });
 
-    // B810/SA-130a: call site 4 of 4 (findMyRuns) — ONE batched
-    // invoice.findMany across every order on this whole page of runs.
-    const myNormalisedRuns = data.map((run) => ({
+    const normalisedRuns = data.map((run: any) => ({
       ...run,
       stops: run.stops.map((s) => ({
         ...s,
@@ -2910,9 +2907,9 @@ export class RoutesService {
         customerAddress: s.customerAddress ?? s.routeStop?.customerAddress ?? null,
       })),
     }));
-    const normalisedData = await withPayableInvoicesForRuns(
+    const normalisedData = await withRunStopProjectionsForRunsPage(
       this.prisma.forTenant(),
-      myNormalisedRuns,
+      normalisedRuns,
     );
 
     // F05 / R5: this endpoint is always driver-scoped (the authenticated
@@ -3077,34 +3074,42 @@ export class RoutesService {
         reason: "stop reopened",
       });
 
-      // 1. Delete delivery mutations for this stop
+      // 1. Delete this stop's delivery mutations — capture their orders/lines FIRST (SA-151): an
+      // order moved to another stop is no longer in `stop.orders`, yet its evidence goes too.
+      const deletedRows: DeletedEvidenceRow[] = await tx.deliveryMutation.findMany({
+        where: { routeRunStopId: stopId },
+        select: { orderId: true, orderItemId: true, type: true, quantityDelivered: true },
+      });
+      const staleDeliveredQtyOrderIds = new Set(deletedRows.map((r) => r.orderId));
+      for (const order of stop.orders) staleDeliveredQtyOrderIds.add(order.id);
       await tx.deliveryMutation.deleteMany({ where: { routeRunStopId: stopId } });
 
-      // 2. Reset order items → PENDING, order status → CONFIRMED (safe
-      // fallback — it was at least CONFIRMED before going OUT_FOR_DELIVERY),
-      // and delete UNPAID transactions.
-      //
-      // `deliveredQty` MUST be reset with the status. `completeWithPayment`
-      // writes it per item (`deliveredQty: REFUSED ? 0 : quantityDelivered`)
-      // independently of whether money changed hands, and
-      // `reconcileOrderDraftInvoice(basis:"delivered")` bills
-      // `Number(li.deliveredQty ?? 0)`. Leaving it standing after a reversal
-      // bills the UNDONE delivery: complete a stop on account (item A 5, item B
-      // 3, $0 collected) → reopen (permitted, since the B54 live-money guard
-      // sees no confirmed payment) → re-deliver only item A with payment, and
-      // item B is invoiced for 3 units nobody delivered. One order maps to one
-      // stop (`Order.routeRunStopId`), so zeroing every item of this stop's
-      // orders reverses exactly this stop's delivery and nothing else.
+      // 2. Reset items → PENDING, order → CONFIRMED, delete UNPAID — STILL-linked orders only.
       for (const order of stop.orders) {
         await tx.orderItem.updateMany({
           // A cancelled line stays cancelled: reopening a stop undoes a DELIVERY, never a cancel.
           where: { orderId: order.id, status: { not: "CANCELLED" } },
-          data: { status: "PENDING", deliveredQty: 0 },
+          data: { status: "PENDING" },
         });
         if (order.status === "DELIVERED" || order.status === "OUT_FOR_DELIVERY") {
           await tx.order.update({ where: { id: order.id }, data: { status: "CONFIRMED" } });
         }
         await tx.transaction.deleteMany({ where: { orderId: order.id, status: "UNPAID" } });
+      }
+
+      // Recompute for EVERY affected order (broader than `stop.orders`) — never zeroed (B803).
+      for (const orderId of staleDeliveredQtyOrderIds) {
+        const lines = await tx.orderItem.findMany({
+          where: { orderId, status: { not: "CANCELLED" } },
+          select: { id: true },
+        });
+        const itemIds = lines.map((li) => li.id);
+        for (const u of await deliveredQtyRecompute(tx, orderId, itemIds, deletedRows)) {
+          await tx.orderItem.update({
+            where: { id: u.id },
+            data: { deliveredQty: u.deliveredQty },
+          });
+        }
       }
 
       // 3. B120: the reset below discards the only pointers to the stored POD
