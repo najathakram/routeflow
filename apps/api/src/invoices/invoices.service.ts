@@ -18,7 +18,6 @@ import {
   normalizeBoxesPieces,
   isBlockingPayment,
   remainingCapacity,
-  inferredFlatRate,
 } from "@routeflow/pricing";
 import { orderLineShape, orderLineUnchanged } from "./order-backsync-lines";
 import {
@@ -93,6 +92,7 @@ import {
   buildPriceAdjustmentUpdates,
   commitPriceAdjustment,
   loadPriceAdjustmentReference,
+  inferredGoodsFlatRate,
   lockInvoiceForPriceAdjustment,
 } from "./price-adjustment-ledger";
 import { AuthorizationGuardService } from "../authorizations/authorization-guard.service";
@@ -102,7 +102,7 @@ import { MessagingService } from "../messaging/messaging.service";
 import { formatDate, formatMoney } from "../messaging/messaging.helpers";
 import { CommissionEngineService } from "../sales-agents/commission-engine.service";
 import { NSF_FEE_DESCRIPTION_PREFIX } from "../sales-agents/commission-math";
-import { InvoiceItemSystemKind } from "./nsf-line";
+import { InvoiceItemSystemKind, notNsfLineWhere } from "./nsf-line";
 import { partitionInvoiceLines, planResyncPairs } from "./resync-plan";
 import { startOfCalendarDay, endOfCalendarDay } from "../common/calendar-date";
 import { lockRowsNoWait } from "../common/db-locks";
@@ -6038,7 +6038,7 @@ export class InvoicesService {
       // B662: item writes, invoice totals and the regulated-ledger sync commit or fail TOGETHER.
       await this.prisma.tenantTransaction(async (tx: any) => {
         const live = await lockInvoiceForPriceAdjustment(tx, inv); // Invoice FIRST, then its rows
-        const inferred = inferredFlatRate({ ...live, lines: live.items });
+        const inferred = inferredGoodsFlatRate(live); // #2243: goods only, never the NSF fee line
         const { categoriesById, unitsPerBoxByProduct } = await loadPriceAdjustmentReference(
           tx,
           live.items,
@@ -6053,7 +6053,7 @@ export class InvoicesService {
         });
         if (inferred?.verified) {
           await tx.invoiceItem.updateMany({
-            where: { invoiceId: inv.id, taxRate: 0 },
+            where: { invoiceId: inv.id, taxRate: 0, AND: [notNsfLineWhere] }, // #2243: NSF stays 0
             data: { taxRate: inferred.rate },
           });
         }
