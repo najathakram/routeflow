@@ -15,10 +15,11 @@
 const googleMapsApiKey = process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY ?? "";
 
 /**
- * #2312: a STORE build must never ship with an empty maps key (every map screen would render blank
- * for reviewers and customers). EAS sets EAS_BUILD_PROFILE while it evaluates this config, so the
- * production profile fails fast here; local `expo start`, the Railway web export and the internal
- * APK profiles are unaffected. The owner sets the key as an EAS environment variable
+ * #2312: an ANDROID store build must never ship with an empty maps key (Google Maps would render
+ * blank for reviewers and customers). iOS draws maps with Apple Maps (components/MapView.tsx uses
+ * PROVIDER_DEFAULT) and needs no key, so an iOS production build is never blocked. EAS sets
+ * EAS_BUILD_PROFILE and EAS_BUILD_PLATFORM while it evaluates this config; local `expo start`, the
+ * Railway web export and the internal APK profiles are unaffected. The owner sets the key as an EAS environment variable
  * (docs/runbooks/mobile-store-release.md).
  *
  * #2312 decisions (owner, recorded on #2312): app.json sets expo-location
@@ -27,9 +28,13 @@ const googleMapsApiKey = process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY ?? "";
  * iPad otherwise fails upload, ITMS-90474; liftable after the iPad layout pass, #2311).
  */
 function assertStoreBuildEnv(env = process.env) {
-  if (env.EAS_BUILD_PROFILE === "production" && !env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY) {
+  if (
+    env.EAS_BUILD_PROFILE === "production" &&
+    env.EAS_BUILD_PLATFORM === "android" &&
+    !env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY
+  ) {
     throw new Error(
-      "EXPO_PUBLIC_GOOGLE_MAPS_API_KEY is not set for the production EAS profile. Set it as an EAS " +
+      "EXPO_PUBLIC_GOOGLE_MAPS_API_KEY is not set for the production Android EAS build. Set it as an EAS " +
         "environment variable (see docs/runbooks/mobile-store-release.md) before a store build.",
     );
   }

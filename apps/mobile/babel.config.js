@@ -10,10 +10,18 @@ const Module = require("module");
 // Fix it path-independently: add THIS workspace's node_modules (from __dirname) to Node's global
 // resolution paths before the preset loads. Babel evaluates this file in every Metro transform
 // worker, so it holds on EAS Linux and macOS workers, locally, and in the web Docker build.
-const appNodeModules = path.join(__dirname, "node_modules");
-const nodePath = (process.env.NODE_PATH || "").split(path.delimiter).filter(Boolean);
-if (!nodePath.includes(appNodeModules)) {
-  process.env.NODE_PATH = [appNodeModules, ...nodePath].join(path.delimiter);
+/** Pure: NODE_PATH with `<appDir>/node_modules` first, unchanged when it is already present. */
+function withAppNodeModules(currentNodePath, appDir) {
+  const appNodeModules = path.join(appDir, "node_modules");
+  const parts = (currentNodePath || "").split(path.delimiter).filter(Boolean);
+  return parts.includes(appNodeModules)
+    ? currentNodePath
+    : [appNodeModules, ...parts].join(path.delimiter);
+}
+
+const nextNodePath = withAppNodeModules(process.env.NODE_PATH, __dirname);
+if (nextNodePath !== process.env.NODE_PATH) {
+  process.env.NODE_PATH = nextNodePath;
   Module._initPaths();
 }
 
@@ -39,3 +47,5 @@ module.exports = function (api) {
     ],
   };
 };
+
+module.exports.withAppNodeModules = withAppNodeModules;
