@@ -240,6 +240,63 @@ describe("CreditNotesService — W5c regulated reversal", () => {
     ).rejects.toThrow(/plus prior credits.*would exceed invoice line subtotal/);
   });
 
+  describe("SA-401a: the per-line QTY cap is cumulative too (base pieces)", () => {
+    // One ordinary line: 5 pieces for $50. An earlier note credited $10 for 4 pieces.
+    const arrange = () => {
+      prisma.invoice.findFirst.mockResolvedValue(
+        invoiceWith([
+          { id: "ii-std", subtotal: 50, qty: 5, trackedCategoryId: null, categoryTaxAmount: 0 },
+        ]),
+      );
+      prisma.creditNote.aggregate.mockResolvedValue({ _sum: { amount: 10 } });
+      prisma.creditNoteItem.findMany.mockResolvedValue([
+        { invoiceItemId: "ii-std", amount: 10, qty: 4 },
+      ]);
+    };
+
+    it("a second credit whose qty would exceed the line qty is a 400, though its amount alone passes", async () => {
+      arrange();
+      await expect(
+        service.create({
+          customerId: "c1",
+          invoiceId: "inv-1",
+          amount: 10, // $10 + prior $10 = $20 <= $50: the amount cap would pass
+          items: [{ invoiceItemId: "ii-std", amount: 10, qty: 2 }], // 4 + 2 = 6 > 5 pieces
+        }),
+      ).rejects.toThrow(/plus prior credited qty \(4\) would exceed invoice line qty \(5\)/);
+      expect(prisma.creditNoteItem.createMany).not.toHaveBeenCalled();
+    });
+
+    it("a qty exactly reaching the line qty passes", async () => {
+      arrange();
+      await service.create({
+        customerId: "c1",
+        invoiceId: "inv-1",
+        amount: 10,
+        items: [{ invoiceItemId: "ii-std", amount: 10, qty: 1 }], // 4 + 1 = 5
+      });
+      const itemsData = prisma.creditNoteItem.createMany.mock.calls[0][0].data;
+      expect(itemsData.map((i: any) => i.qty)).toEqual([1]);
+    });
+
+    it("the default qty (line.qty x amount fraction) is unchanged", async () => {
+      prisma.invoice.findFirst.mockResolvedValue(
+        invoiceWith([
+          { id: "ii-std", subtotal: 50, qty: 5, trackedCategoryId: null, categoryTaxAmount: 0 },
+        ]),
+      );
+      prisma.creditNote.aggregate.mockResolvedValue({ _sum: { amount: 0 } });
+      await service.create({
+        customerId: "c1",
+        invoiceId: "inv-1",
+        amount: 20,
+        items: [{ invoiceItemId: "ii-std", amount: 20 }], // 20/50 of 5 pieces = 2
+      });
+      const itemsData = prisma.creditNoteItem.createMany.mock.calls[0][0].data;
+      expect(itemsData.map((i: any) => i.qty)).toEqual([2]);
+    });
+  });
+
   it("merges duplicate line references into a single CreditNoteItem when within the line", async () => {
     prisma.invoice.findFirst.mockResolvedValue(
       invoiceWith([

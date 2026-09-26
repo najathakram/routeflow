@@ -196,12 +196,16 @@ export class CreditNotesService {
         invoiceItemId: { in: [...mergedByLine.keys()] },
         creditNote: { invoiceId: dto.invoiceId, status: { not: "VOID" } },
       },
-      select: { invoiceItemId: true, amount: true },
+      select: { invoiceItemId: true, amount: true, qty: true },
     });
     const creditedByLine = new Map<string, number>();
+    // SA-401a: credited QUANTITY per line too (base pieces, like InvoiceItem.qty), so a line
+    // cannot be credited for more units than it sold even when its amount cap has headroom.
+    const creditedQtyByLine = new Map<string, number>();
     for (const it of priorLineItems) {
       const k = it.invoiceItemId ?? "";
       creditedByLine.set(k, (creditedByLine.get(k) ?? 0) + Number(it.amount));
+      creditedQtyByLine.set(k, (creditedQtyByLine.get(k) ?? 0) + Number(it.qty ?? 0));
     }
 
     let sum = 0;
@@ -223,6 +227,15 @@ export class CreditNotesService {
         );
       sum += amt;
       const frac = lineSubtotal > 0 ? Math.min(1, amt / lineSubtotal) : 0;
+      const qty = li.qty != null ? this.round3(li.qty) : this.round3(Number(line.qty) * frac);
+      const lineQty = Number(line.qty);
+      const priorQtyForLine = creditedQtyByLine.get(li.invoiceItemId) ?? 0;
+      if (priorQtyForLine + qty > lineQty + 0.001)
+        throw new BadRequestException(
+          priorQtyForLine > 0
+            ? `Credit line qty (${qty}) plus prior credited qty (${this.round3(priorQtyForLine)}) would exceed invoice line qty (${lineQty})`
+            : `Credit line qty (${qty}) exceeds invoice line qty (${lineQty})`,
+        );
       return {
         invoiceItemId: line.id,
         // Snapshot the category as it was AT SALE (the invoice line), NEVER the
@@ -230,7 +243,7 @@ export class CreditNotesService {
         // that actually sold regulated has a matching SALE row to reverse.
         trackedCategoryId: line.trackedCategoryId ?? null,
         amount: roundMoney(amt),
-        qty: li.qty != null ? this.round3(li.qty) : this.round3(Number(line.qty) * frac),
+        qty,
         categoryTax: roundMoney(Number(line.categoryTaxAmount ?? 0) * frac),
       };
     });

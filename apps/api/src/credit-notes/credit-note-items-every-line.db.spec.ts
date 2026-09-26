@@ -1,7 +1,8 @@
 /**
  * SA-311 (#2181) — real-Postgres proof that `CreditNotesService.create` persists a CreditNoteItem
  * for EVERY referenced invoice line (ordinary and regulated), that the per-line cap is therefore
- * cumulative for ordinary lines, and that the regulated-ledger reversal is unchanged.
+ * cumulative for ordinary lines (amount AND, per SA-401a, qty in base pieces), and that the
+ * regulated-ledger reversal is unchanged.
  *
  * Before the fix only regulated items were written, so an ordinary line kept no line link
  * (sales-facts reported it unattributed) and `priorForLine` never saw an earlier credit on it: a
@@ -218,6 +219,28 @@ describeDb(
       );
       expect((await itemsOf(s.tenantId)).map((i) => Number(i.amount))).toEqual([40]);
       expect(await prisma.creditNote.count({ where: { tenantId: s.tenantId } })).toBe(1);
+    });
+
+    it("SA-401a: a second credit whose QTY would exceed the line qty is a 400, though its amount alone passes", async () => {
+      const s = await seed("qtyover");
+      await create(s, 10, [{ invoiceItemId: s.std.id, amount: 10, qty: 4 }]); // 4 of 5 pieces
+      // $10 + $10 = $20 <= $50 (amount cap passes); 4 + 2 = 6 > 5 pieces (qty cap refuses).
+      await expect(
+        create(s, 10, [{ invoiceItemId: s.std.id, amount: 10, qty: 2 }]),
+      ).rejects.toBeInstanceOf(BadRequestException);
+      expect((await itemsOf(s.tenantId)).map((i) => Number(i.qty))).toEqual([4]);
+      expect(await prisma.creditNote.count({ where: { tenantId: s.tenantId } })).toBe(1);
+    });
+
+    it("SA-401a: a qty exactly reaching the line qty passes", async () => {
+      const s = await seed("qtyexact");
+      await create(s, 10, [{ invoiceItemId: s.std.id, amount: 10, qty: 4 }]);
+      await expect(
+        create(s, 10, [{ invoiceItemId: s.std.id, amount: 10, qty: 1 }]), // 4 + 1 = 5
+      ).resolves.toBeDefined();
+      expect((await itemsOf(s.tenantId)).map((i) => Number(i.qty)).sort((a, b) => a - b)).toEqual([
+        1, 4,
+      ]);
     });
   },
 );
