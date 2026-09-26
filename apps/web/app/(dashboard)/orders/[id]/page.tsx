@@ -574,6 +574,15 @@ function restoredPrice(it: EditItemState): Partial<EditItemState> {
 }
 
 /**
+ * B718 (SA-369, mirrors mobile #1343): a unit line's count is its `boxes`, but only when that is
+ * genuinely positive — a stored `boxes: 0` is meaningless, and `boxes ?? qty` passed it through
+ * as "0 Cases", so a later price/note-only edit sent qty:0 (silently skipped by the server).
+ */
+function unitLineCount(li: OrderItem): number {
+  return li.boxes != null && Number(li.boxes) > 0 ? Number(li.boxes) : Number(li.qty);
+}
+
+/**
  * Build one edit-state row from a loaded order line — shared by the DRAFT auto-enter effect and
  * `enterEditMode` so the two seeding sites can never drift (A3-2).
  *
@@ -588,7 +597,7 @@ export function buildEditItemFromLine(li: OrderItem): EditItemState {
   const isUnlisted = !li.productId;
   const label = orderLineName(li) ?? li.productId ?? "Custom item";
   const isUnitLine = li.unitLabel != null;
-  const count = isUnitLine ? Math.round(Number(li.boxes ?? li.qty)) : Math.round(Number(li.qty));
+  const count = isUnitLine ? Math.round(unitLineCount(li)) : Math.round(Number(li.qty));
   return {
     id: li.id,
     isUnlisted,
@@ -673,7 +682,7 @@ export function buildItemUpdates(items: EditItemState[], original: OrderItem[]):
     const orig = original.find((li) => li.id === edited.id);
     if (!orig) continue;
 
-    const origQty = orig.unitLabel != null ? Number(orig.boxes ?? orig.qty) : Number(orig.qty);
+    const origQty = orig.unitLabel != null ? unitLineCount(orig) : Number(orig.qty);
     const qtyChanged = Math.abs(edited.qty - origQty) > 0.0001;
     const priceChanged = Math.abs(edited.unitPrice - Number(orig.unitPrice)) > 0.0001;
     const nameChanged = edited.isUnlisted && edited.productName.trim() !== (orig.name ?? "").trim();

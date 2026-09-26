@@ -93,4 +93,20 @@ describe("buildItemUpdates — units_v1 (A3-2)", () => {
     const edited = buildEditItemFromLine(orig); // no edits
     expect(buildItemUpdates([edited], [orig])).toEqual([]);
   });
+
+  // B718 (SA-369, mirrors mobile #1343): a stored unit line carrying a MEANINGLESS boxes:0 must
+  // not hydrate as "0 Cases" — `boxes ?? qty` passed the 0 through, so a later price-only edit
+  // sent qty:0, which the server silently skips (the edit is dropped with no signal).
+  it("B718: a stored unit line with boxes:0 seeds its count from qty, and a price-only edit sends qty > 0", () => {
+    const orig = unitLine({ qty: 3, boxes: 0 });
+    const seeded = buildEditItemFromLine(orig);
+    const edited: EditItemState = { ...seeded, unitPrice: 45 }; // price-only edit
+    const updates = buildItemUpdates([edited], [orig]);
+    expect(updates).toHaveLength(1);
+    // The bug's own wrong value: pre-fix this UPDATE carried qty:0.
+    expect((updates[0] as { qty: number }).qty).toBe(3);
+
+    expect(seeded.qty).toBe(3);
+    expect(seeded.originalQty).toBe(3);
+  });
 });
