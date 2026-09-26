@@ -1,4 +1,16 @@
-import { assertUnitLineSplit, isEmptyUnitLineSplit, UnitLineSplitError } from "./unit-line-split";
+jest.mock("@sentry/node", () => ({ captureMessage: jest.fn() }));
+
+import { ConflictException } from "@nestjs/common";
+import * as Sentry from "@sentry/node";
+import {
+  assertUnitLineSplit,
+  isEmptyUnitLineSplit,
+  UNIT_LINE_SPLIT_MISSING,
+  UnitLineSplitError,
+} from "./unit-line-split";
+
+const capture = Sentry.captureMessage as unknown as jest.Mock;
+beforeEach(() => capture.mockClear());
 
 /** #2230 / SA-388d: only the all-empty split on a multi-piece unit line is refused. */
 describe("unit-line split guard (#2230, SA-388d)", () => {
@@ -31,7 +43,55 @@ describe("unit-line split guard (#2230, SA-388d)", () => {
   ])("refuses the all-empty split: %s", (_name, line) => {
     expect(isEmptyUnitLineSplit(line as any)).toBe(true);
     expect(() => assertUnitLineSplit(line as any, "writer")).toThrow(UnitLineSplitError);
-    expect(() => assertUnitLineSplit(line as any, "writer")).toThrow(/writer: refusing .*"Case"/);
+  });
+
+  it("an allowed line is never reported", () => {
+    assertUnitLineSplit({ ...caseLine, qty: 36, boxes: 3, pieces: 0 }, "writer");
+    expect(capture).not.toHaveBeenCalled();
+  });
+
+  it("SA-388g: a 409 with UNIT_LINE_SPLIT_MISSING naming the line, reported once with line ids only", () => {
+    const line = {
+      ...caseLine,
+      qty: 36,
+      boxes: null,
+      pieces: null,
+      id: "ii-1",
+      orderItemId: "oi-1",
+      description: "Cola 12oz",
+      productId: "p-1",
+    };
+    let err: unknown;
+    try {
+      assertUnitLineSplit(line, "buildInvoiceItemData");
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(ConflictException);
+    expect((err as ConflictException).getStatus()).toBe(409);
+    expect((err as ConflictException).getResponse()).toMatchObject({
+      code: UNIT_LINE_SPLIT_MISSING,
+      message:
+        "Cola 12oz is sold by the Case but its Case/Each split is missing — ask support to repair " +
+        "this line before invoicing",
+    });
+    expect(capture).toHaveBeenCalledTimes(1);
+    const [msg, ctx] = capture.mock.calls[0];
+    expect(msg).toBe("UNIT_LINE_SPLIT_MISSING at buildInvoiceItemData");
+    expect(ctx).toEqual({
+      level: "error",
+      extra: { where: "buildInvoiceItemData", lineIds: ["ii-1", "oi-1"] },
+    });
+    // no tenant data, no names: only the writer and the ids
+    expect(JSON.stringify(ctx)).not.toMatch(/Cola|p-1|tenant/i);
+  });
+
+  it("names a line with no description by its product, then generically", () => {
+    const base = { ...caseLine, qty: 36, boxes: 0, pieces: 0 };
+    expect(() => assertUnitLineSplit({ ...base, productId: "p-9" }, "w")).toThrow(
+      /^p-9 is sold by the Case/,
+    );
+    expect(() => assertUnitLineSplit(base, "w")).toThrow(/^This line is sold by the Case/);
   });
 });
 
