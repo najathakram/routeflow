@@ -2595,7 +2595,22 @@ export class OrdersService implements OnApplicationBootstrap {
           this.prisma.tenantTransaction(
             async (tx) => {
               await lockOrderForCancel(tx, id);
-              const row = await tx.order.update({ where: { id }, data: statusUpdateData });
+              // SA-404f F2: compare-and-set on the cancellable set the pre-check used — a retry after
+              // a 40001 caused by a concurrent DELIVERED must never cancel a delivered order.
+              const cancellable = Object.keys(allowed).filter((k) =>
+                allowed[k].includes("CANCELLED"),
+              );
+              const claimed = await tx.order.updateMany({
+                where: { id, status: { in: cancellable as OrderStatus[] } },
+                data: statusUpdateData,
+              });
+              if (claimed.count === 0)
+                throw new ConflictException({
+                  code: "ORDER_CHANGED_DURING_EDIT",
+                  message:
+                    "The order changed while it was being cancelled — review it and try again.",
+                });
+              const row = (await tx.order.findUnique({ where: { id } }))!; // the locked row, never gone
               if (cancelReturnsStock) {
                 const activeItems = await tx.orderItem.findMany({
                   where: { orderId: id, status: { not: "CANCELLED" } },
