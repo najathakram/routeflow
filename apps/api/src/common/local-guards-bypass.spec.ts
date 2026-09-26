@@ -3,10 +3,10 @@ import { resolve } from "node:path";
 import { NON_LOCAL_DB_URLS } from "./local-db-bypass-urls";
 
 /**
- * #2204: every `--local` / seed guard refuses the SAME bypass list the helper's spec pins (#2162). Each guard
- * is run as the real script with a bypass URL: it must refuse BEFORE dialling anything (a `?host=prod` URL
- * used to pass the old hostname allowlist). The positive control shows a genuinely local URL gets past the guard
- * (so the refusal is the guard's, not a script that always fails).
+ * #2204: every `--local` / seed guard refuses the bypass list the helper's spec pins (#2162). The full 16-URL list
+ * runs against the shared guard function; each real script is then spawned ONCE with a bypass URL (~14 spawns,
+ * not one per URL: spawn-heavy default-lane specs are the load flakes of #2146/#2192) to prove it calls the guard
+ * before dialling, plus a local control per pg script.
  */
 const api = resolve(__dirname, "../..");
 const LOCAL_CLOSED_PORT = "postgresql://u:p@127.0.0.1:1/x"; // provably local; nothing listens, so pg fails to connect
@@ -84,17 +84,40 @@ function run(g: Guard, url: string) {
   return { status: r.status, out: `${r.stdout}\n${r.stderr}` };
 }
 
+// ONE spawn hosts the whole 16-URL list against the mjs guard function (Jest cannot import ESM here); the
+// helper's own spec (local-db-target.spec.ts) and db-spec.spec.ts run the same list fully in-process.
+function requireLocalPgConfigVerdicts(): Array<{ url: string; refused: boolean }> {
+  const code = `
+    import("./scripts/lib/local-pg-config.mjs").then(({ requireLocalPgConfig }) => {
+      const urls = JSON.parse(process.env.URLS);
+      console.log(JSON.stringify(urls.map((url) => {
+        try { requireLocalPgConfig(url); return { url, refused: false }; } catch { return { url, refused: true }; }
+      })));
+    });`;
+  const r = spawnSync("node", ["-e", code], {
+    cwd: api,
+    encoding: "utf8",
+    env: { ...process.env, URLS: JSON.stringify(NON_LOCAL_DB_URLS.map(([, u]) => u)) },
+  });
+  return JSON.parse(r.stdout);
+}
+
 describe("every --local / seed guard refuses the helper's bypass list (#2204)", () => {
+  it("requireLocalPgConfig (shared by the pg scripts) refuses every URL on the bypass list", () => {
+    const verdicts = requireLocalPgConfigVerdicts();
+    expect(verdicts).toHaveLength(NON_LOCAL_DB_URLS.length);
+    expect(verdicts.filter((v) => !v.refused)).toEqual([]);
+  });
+
+  // ONE bypass URL per guard proves the script really calls the guard BEFORE dialling anything (a `?host=prod`
+  // URL used to pass the old hostname allowlist); the local control proves the refusal is the guard's.
+  const BYPASS = "postgresql://u:p@localhost:5432/x?host=prod.example.com";
   describe.each(GUARDS)("$name", (g) => {
-    it.each(NON_LOCAL_DB_URLS.map((r) => [...r]))(
-      "refuses %s",
-      (_label, url) => {
-        const { status, out } = run(g, url);
-        expect(status).not.toBe(0);
-        expect(out).toMatch(g.refusal);
-      },
-      70_000,
-    );
+    it("refuses a ?host= bypass before dialling", () => {
+      const { status, out } = run(g, BYPASS);
+      expect(status).not.toBe(0);
+      expect(out).toMatch(g.refusal);
+    }, 70_000);
 
     if (g.control) {
       it("control: a provably local URL passes the guard (fails later, at the connection)", () => {
