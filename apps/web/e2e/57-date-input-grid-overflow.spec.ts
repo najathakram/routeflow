@@ -104,6 +104,8 @@ for (const vp of VIEWPORTS) {
 
     test(`invoices/new dates grid (${vp.width}px)`, async ({ page }) => {
       await page.goto("/invoices/new");
+      // /invoices/new opens on a "What is this invoice for?" chooser; the dates grid is in the form.
+      await page.getByRole("button", { name: /^New sale/ }).click({ timeout: 15_000 });
       await expect(page.getByRole("heading", { name: "Invoice Details" })).toBeVisible({
         timeout: 15_000,
       });

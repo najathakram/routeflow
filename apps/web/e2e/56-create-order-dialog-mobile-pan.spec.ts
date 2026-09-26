@@ -65,8 +65,12 @@ async function openBuilderWithRealisticCart(page: Page) {
   // Case price input, and a name long enough to stress-test the row.
   const productSearch = page.getByPlaceholder("Search by name, SKU or scan barcode…");
   await productSearch.fill("E2E Fixture Boxed Case");
+  // The dropdown shows "Create new product" (and "No products found") before the search
+  // response lands; `.first()` alone raced into the create-product form.
   await page
-    .locator('input[placeholder="Search by name, SKU or scan barcode…"] ~ ul li button')
+    .locator('input[placeholder="Search by name, SKU or scan barcode…"] ~ ul li button', {
+      hasNotText: "Create new product",
+    })
     .first()
     .click({ timeout: 10_000 });
 
@@ -248,7 +252,7 @@ function draftFixtureLongName() {
 }
 
 async function openResumedDraftWithLongName(page: Page): Promise<boolean> {
-  await page.route(new RegExp(`/api/v1/drafts/${RESUME_DRAFT_ID}(\?.*)?$`), (route) => {
+  await page.route(new RegExp(`/api/v1/drafts/${RESUME_DRAFT_ID}(\\?.*)?$`), (route) => {
     if (route.request().method() === "OPTIONS") return route.fulfill({ status: 204 });
     return route.fulfill({ status: 200, json: draftFixtureLongName() });
   });
