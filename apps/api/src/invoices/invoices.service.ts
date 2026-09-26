@@ -113,6 +113,8 @@ import { resolveLineUnits } from "../products/line-units";
 import { prepareUnitLadders, requestsUnit } from "../orders/unit-line-build";
 import { standaloneAllocationTotals } from "./standalone-payment-totals";
 import { calendarDayOf } from "./settled-date-filter";
+import { retryOnTxConflict } from "../common/tx-retry";
+import { lockInvoiceRow, nextSentStatus, sendRefusal, voidRefusal } from "./invoice-send-guard";
 
 const TERM_DAYS: Record<string, number> = {
   "Due on Receipt": 0,
@@ -3683,70 +3685,12 @@ export class InvoicesService {
 
   async send(id: string, opts?: { allowPreDelivery?: boolean }) {
     const inv = await this.findOneOrThrow(id);
-    if (inv.status === InvoiceStatus.VOID)
-      throw new BadRequestException("Cannot send a voided invoice");
+    const refusal = sendRefusal(inv.status); // #2255: fast pre-tx; markSent re-checks under the lock
+    if (refusal) throw new BadRequestException(refusal);
     await this.assertOrderInvoiceUnlocked(inv, opts);
     // P5-13: SENT flip + oldest-first credit auto-apply are ONE atomic operation.
     // Idempotent on re-send. If the tx throws, the send fails — money first.
-    const { updated, auto } = await this.prisma.tenantTransaction(
-      async (tx) => {
-        // P5-13: only flip DRAFT → SENT. Re-sending an invoice that credit auto-apply
-        // already made PAID/PARTIAL must NOT downgrade it (auto-apply returns early on a
-        // zero balance and won't restore the status), which would leave paidAt stale.
-        const nextStatus = inv.status === InvoiceStatus.DRAFT ? InvoiceStatus.SENT : inv.status;
-        const updated = await tx.invoice.update({
-          where: { id },
-          data: { status: nextStatus, sentAt: new Date() },
-        });
-        // B108: make the "send() catches up" comment above actually true. An
-        // operator's explicit-amount OrderCreditNote intents are settled HERE,
-        // at their recorded amount, before the oldest-first sweep runs.
-        // settleOrderCreditsInTx clamps to the remaining balance, so money can
-        // never move twice even if it already ran (e.g. at order-create time).
-        // The explicitIds exclusion just below is deliberately KEPT — settling
-        // an explicit intent doesn't change that the sweep must still never
-        // override it.
-        if (updated.orderId) {
-          await this.creditNotes.settleOrderCreditsInTx(tx, updated.orderId);
-        }
-        // An operator's EXPLICIT-amount order selection must not be overridden by the
-        // oldest-first sweep; null-amount intents are already settled and clamp to 0.
-        const explicitIds = updated.orderId
-          ? (
-              await tx.orderCreditNote.findMany({
-                where: { orderId: updated.orderId, amount: { not: null } },
-                select: { creditNoteId: true },
-              })
-            ).map((r: any) => r.creditNoteId)
-          : [];
-        const auto = await this.creditNotes.autoApplyOldestCreditsInTx(tx, id, updated.customerId, {
-          excludeCreditNoteIds: explicitIds,
-        });
-        // A credit pre-applied at order time can already cover this invoice. Auto-apply
-        // returns {applied:0, invoiceStatus:null} on a zero balance, which used to leave
-        // a fully-credited invoice stuck SENT — recompute from the payments it has.
-        if (!auto.invoiceStatus) {
-          const fresh = await tx.invoice.findUnique({ where: { id }, include: { payments: true } });
-          if (fresh) {
-            // F03/R1: CONFIRMED (PAID) payments only.
-            const paid = roundMoney(sumConfirmed(fresh.payments));
-            const st = this.recomputeStatus(paid, Number(fresh.total), fresh.dueDate, fresh.status);
-            if (st !== fresh.status) {
-              await tx.invoice.update({
-                where: { id },
-                data: { status: st, paidAt: st === InvoiceStatus.PAID ? new Date() : null },
-              });
-              auto.invoiceStatus = st;
-            }
-          }
-        }
-        // Sales agents & commissions (flag-gated, no-op when off): the invoice
-        // just flipped DRAFT→SENT (or was re-sent) — accrue/re-sync commission.
-        await this.commissionEngine.syncInvoiceCommissionSafe(id, tx);
-        return { updated, auto };
-      },
-      { isolationLevel: "Serializable" },
-    );
+    const { updated, auto } = await this.markSent(id, inv.orderId);
     this.gateway.emitInvoiceUpdated(this.prisma.getTenantId(), {
       invoiceId: updated.id,
       invoiceNumber: updated.invoiceNumber,
@@ -3776,6 +3720,112 @@ export class InvoicesService {
     return updated;
   }
 
+  /**
+   * The SENT flip + credit settle/auto-apply shared by send() and sendEmail() — ONE Serializable
+   * tx, re-run on a write conflict (#2255, SA-269 retryOnTxConflict). Everything it decides comes
+   * from the row it locks and re-reads first (SA-404), so a retry can never write SENT over a
+   * VOID committed since the caller's read.
+   */
+  private markSent(id: string, orderId: string | null, emailSent = false) {
+    return retryOnTxConflict(`invoice mark-sent id=${id}`, () =>
+      this.prisma.tenantTransaction(
+        async (tx) => {
+          // #2255 / SA-404: FIRST statement — lock (Order →) Invoice and re-read, then decide from
+          // the LOCKED row: a retry runs on a fresh snapshot, never on the caller's pre-tx read.
+          const locked = await lockInvoiceRow(tx, id, orderId);
+          if (!locked) throw new NotFoundException("Invoice not found");
+          const refusal = sendRefusal(locked.status, emailSent);
+          if (refusal) throw new BadRequestException(refusal);
+          const nextStatus = nextSentStatus(locked.status);
+          const updated = await tx.invoice.update({
+            where: { id },
+            data: { status: nextStatus, sentAt: new Date() },
+          });
+          // B108: make the "send() catches up" comment above actually true. An
+          // operator's explicit-amount OrderCreditNote intents are settled HERE,
+          // at their recorded amount, before the oldest-first sweep runs.
+          // settleOrderCreditsInTx clamps to the remaining balance, so money can
+          // never move twice even if it already ran (e.g. at order-create time).
+          // The explicitIds exclusion just below is deliberately KEPT — settling
+          // an explicit intent doesn't change that the sweep must still never
+          // override it.
+          if (updated.orderId) {
+            await this.creditNotes.settleOrderCreditsInTx(tx, updated.orderId);
+          }
+          // An operator's EXPLICIT-amount order selection must not be overridden by the
+          // oldest-first sweep; null-amount intents are already settled and clamp to 0.
+          const explicitIds = updated.orderId
+            ? (
+                await tx.orderCreditNote.findMany({
+                  where: { orderId: updated.orderId, amount: { not: null } },
+                  select: { creditNoteId: true },
+                })
+              ).map((r: any) => r.creditNoteId)
+            : [];
+          const auto = await this.creditNotes.autoApplyOldestCreditsInTx(
+            tx,
+            id,
+            updated.customerId,
+            {
+              excludeCreditNoteIds: explicitIds,
+            },
+          );
+          // A credit pre-applied at order time can already cover this invoice. Auto-apply
+          // returns {applied:0, invoiceStatus:null} on a zero balance, which used to leave
+          // a fully-credited invoice stuck SENT — recompute from the payments it has.
+          if (!auto.invoiceStatus) {
+            const fresh = await tx.invoice.findUnique({
+              where: { id },
+              include: { payments: true },
+            });
+            if (fresh) {
+              // F03/R1: CONFIRMED (PAID) payments only.
+              const paid = roundMoney(sumConfirmed(fresh.payments));
+              const st = this.recomputeStatus(
+                paid,
+                Number(fresh.total),
+                fresh.dueDate,
+                fresh.status,
+              );
+              if (st !== fresh.status) {
+                await tx.invoice.update({
+                  where: { id },
+                  data: { status: st, paidAt: st === InvoiceStatus.PAID ? new Date() : null },
+                });
+                auto.invoiceStatus = st;
+              }
+            }
+          }
+          // Sales agents & commissions (flag-gated, no-op when off): the invoice
+          // just flipped DRAFT→SENT (or was re-sent) — accrue/re-sync commission.
+          await this.commissionEngine.syncInvoiceCommissionSafe(id, tx);
+          return { updated, auto };
+        },
+        { isolationLevel: "Serializable" },
+      ),
+    );
+  }
+
+  /**
+   * SA-404a: sendEmail's pre-send check — a short Serializable tx that locks (Order →) Invoice and
+   * runs the send guard, so a VOID committed before the email means NO email and a 400. R5 keeps
+   * the SENT flip after delivery; the residual is only the email I/O window (markSent then refuses
+   * with VOIDED_DURING_EMAIL).
+   */
+  private assertSendableUnderLock(id: string, orderId: string | null) {
+    return retryOnTxConflict(`invoice send pre-check id=${id}`, () =>
+      this.prisma.tenantTransaction(
+        async (tx) => {
+          const locked = await lockInvoiceRow(tx, id, orderId);
+          if (!locked) throw new NotFoundException("Invoice not found");
+          const refusal = sendRefusal(locked.status);
+          if (refusal) throw new BadRequestException(refusal);
+        },
+        { isolationLevel: "Serializable" },
+      ),
+    );
+  }
+
   /** Send the invoice as an actual email and mark as SENT. */
   async sendEmail(id: string, overrideEmail?: string, variant?: "draft" | "final") {
     const inv = await this.prisma.forTenant().invoice.findUnique({
@@ -3793,8 +3843,8 @@ export class InvoicesService {
       },
     });
     if (!inv) throw new NotFoundException("Invoice not found");
-    if (inv.status === InvoiceStatus.VOID)
-      throw new BadRequestException("Cannot send a voided invoice");
+    const refusal = sendRefusal(inv.status); // #2255: fast pre-tx; markSent re-checks under the lock
+    if (refusal) throw new BadRequestException(refusal);
     await this.assertOrderInvoiceUnlocked(inv);
 
     // Import sentinels (`@imported.local` / `@placeholder.local`) are non-routable —
@@ -3901,6 +3951,7 @@ export class InvoicesService {
       depositAmount: this.computeDepositFields(inv as any, 0).depositAmount,
       depositDueDate: inv.depositDueDate ? formatDate(inv.depositDueDate) : null,
     };
+    await this.assertSendableUnderLock(id, inv.orderId); // SA-404a: VOID now ⇒ 400, no email
     const sendResult = await this.emailService.sendInvoice(emailPayload);
 
     // R5: the email server was configured but the actual send did NOT succeed
@@ -3915,66 +3966,8 @@ export class InvoicesService {
     }
 
     // Mark as SENT. P5-13: SENT flip + oldest-first credit auto-apply are ONE atomic
-    // operation. PDF/email I/O above stays OUTSIDE the tx.
-    const { updated, auto } = await this.prisma.tenantTransaction(
-      async (tx) => {
-        // P5-13: only flip DRAFT → SENT. Re-sending an invoice that credit auto-apply
-        // already made PAID/PARTIAL must NOT downgrade it (auto-apply returns early on a
-        // zero balance and won't restore the status), which would leave paidAt stale.
-        const nextStatus = inv.status === InvoiceStatus.DRAFT ? InvoiceStatus.SENT : inv.status;
-        const updated = await tx.invoice.update({
-          where: { id },
-          data: { status: nextStatus, sentAt: new Date() },
-        });
-        // B108: make the "send() catches up" comment above actually true. An
-        // operator's explicit-amount OrderCreditNote intents are settled HERE,
-        // at their recorded amount, before the oldest-first sweep runs.
-        // settleOrderCreditsInTx clamps to the remaining balance, so money can
-        // never move twice even if it already ran (e.g. at order-create time).
-        // The explicitIds exclusion just below is deliberately KEPT — settling
-        // an explicit intent doesn't change that the sweep must still never
-        // override it.
-        if (updated.orderId) {
-          await this.creditNotes.settleOrderCreditsInTx(tx, updated.orderId);
-        }
-        // An operator's EXPLICIT-amount order selection must not be overridden by the
-        // oldest-first sweep; null-amount intents are already settled and clamp to 0.
-        const explicitIds = updated.orderId
-          ? (
-              await tx.orderCreditNote.findMany({
-                where: { orderId: updated.orderId, amount: { not: null } },
-                select: { creditNoteId: true },
-              })
-            ).map((r: any) => r.creditNoteId)
-          : [];
-        const auto = await this.creditNotes.autoApplyOldestCreditsInTx(tx, id, updated.customerId, {
-          excludeCreditNoteIds: explicitIds,
-        });
-        // A credit pre-applied at order time can already cover this invoice. Auto-apply
-        // returns {applied:0, invoiceStatus:null} on a zero balance, which used to leave
-        // a fully-credited invoice stuck SENT — recompute from the payments it has.
-        if (!auto.invoiceStatus) {
-          const fresh = await tx.invoice.findUnique({ where: { id }, include: { payments: true } });
-          if (fresh) {
-            // F03/R1: CONFIRMED (PAID) payments only.
-            const paid = roundMoney(sumConfirmed(fresh.payments));
-            const st = this.recomputeStatus(paid, Number(fresh.total), fresh.dueDate, fresh.status);
-            if (st !== fresh.status) {
-              await tx.invoice.update({
-                where: { id },
-                data: { status: st, paidAt: st === InvoiceStatus.PAID ? new Date() : null },
-              });
-              auto.invoiceStatus = st;
-            }
-          }
-        }
-        // Sales agents & commissions (flag-gated, no-op when off): the invoice
-        // just flipped DRAFT→SENT (or was re-sent) — accrue/re-sync commission.
-        await this.commissionEngine.syncInvoiceCommissionSafe(id, tx);
-        return { updated, auto };
-      },
-      { isolationLevel: "Serializable" },
-    );
+    // operation. PDF/email I/O above stays OUTSIDE the tx (a retry never re-sends the email).
+    const { updated, auto } = await this.markSent(id, inv.orderId, true);
     this.gateway.emitInvoiceUpdated(this.prisma.getTenantId(), {
       invoiceId: updated.id,
       invoiceNumber: updated.invoiceNumber,
@@ -4259,11 +4252,9 @@ export class InvoicesService {
       include: { payments: true },
     });
     if (!inv) throw new NotFoundException("Invoice not found");
-    const external = this.externalPaidOn(inv.payments ?? []);
-    if (external > 0.001)
-      throw new BadRequestException(
-        `Cannot void an invoice with ${formatMoney(external)} in cash/check/card payments. Reverse or refund those payments first.`,
-      );
+    // #2255 / SA-404: fast pre-tx refusal; the tx re-checks it on the locked row.
+    const refusal = voidRefusal(this.externalPaidOn(inv.payments ?? []));
+    if (refusal) throw new BadRequestException(refusal);
 
     // Wrap in a transaction so the void + invoicedQty decrements are atomic.
     // We need to free up the qty on the source order so the operator can
@@ -4271,19 +4262,27 @@ export class InvoicesService {
     // an order, it should be possible to split it into multiple invoices"
     // scenario. The auto-create-on-DELIVERED captured all remaining qty; voiding
     // releases it so a fresh split can run.
-    return this.prisma.tenantTransaction(
-      async (tx) => {
-        // Wallet money first: a credit applied to this invoice goes back to its note
-        // (spendable again) instead of being stranded on a dead invoice.
-        await this.releaseWalletPaymentsInTx(tx, id);
-        return this.voidInvoiceInTx(tx, id, inv.orderId);
-      },
-      // Serializable, matching the orders-side void caller (orders.service.ts ~:2770):
-      // the default READ COMMITTED left a window between the cap's findMany/update pair
-      // (below, in voidInvoiceInTx) where a concurrent applyToInvoice/settleOrderCreditsInTx
-      // on a different invoice could raise a note's amountUsed, so the blind full-column
-      // cap write could land at amount < amountUsed (F09 A5).
-      { isolationLevel: "Serializable", timeout: 15_000 },
+    // #2255: re-run on a write conflict (SA-269); the claim in voidInvoiceInTx keeps it single.
+    return retryOnTxConflict(`invoice void id=${id}`, () =>
+      this.prisma.tenantTransaction(
+        async (tx) => {
+          // SA-404: FIRST statement — lock (Order →) Invoice, re-read payments, re-check the guard.
+          const locked = await lockInvoiceRow(tx, id, inv.orderId);
+          if (!locked) throw new NotFoundException("Invoice not found");
+          const lockedRefusal = voidRefusal(this.externalPaidOn(locked.payments ?? []));
+          if (lockedRefusal) throw new BadRequestException(lockedRefusal);
+          // Wallet money first: a credit applied to this invoice goes back to its note
+          // (spendable again) instead of being stranded on a dead invoice.
+          await this.releaseWalletPaymentsInTx(tx, id);
+          return this.voidInvoiceInTx(tx, id, inv.orderId);
+        },
+        // Serializable, matching the orders-side void caller (orders.service.ts ~:2770):
+        // the default READ COMMITTED left a window between the cap's findMany/update pair
+        // (below, in voidInvoiceInTx) where a concurrent applyToInvoice/settleOrderCreditsInTx
+        // on a different invoice could raise a note's amountUsed, so the blind full-column
+        // cap write could land at amount < amountUsed (F09 A5).
+        { isolationLevel: "Serializable", timeout: 15_000 },
+      ),
     );
   }
 
@@ -5667,6 +5666,10 @@ export class InvoicesService {
         });
         payments.push(payment);
 
+        // #2255 / SA-404d R2: EVERY payment updates its Invoice row in this tx, unconditionally — a
+        // PENDING/DRAFT payment is blocking money too, and the real UPDATE takes the row lock, so a
+        // concurrent void conflicts (40001) and its retry re-reads it (the #2258 writer invariant).
+        let invoiceData: Prisma.InvoiceUpdateInput = { updatedAt: new Date() };
         if (status === "PAID") {
           // F03/R1: CONFIRMED (PAID) rows only feed recomputeStatus.
           const allPayments = await tx.invoicePayment.findMany({
@@ -5679,14 +5682,12 @@ export class InvoicesService {
             invoice.dueDate,
             invoice.status,
           );
-          await tx.invoice.update({
-            where: { id: alloc.invoiceId },
-            data: {
-              status: newStatus,
-              paidAt: newStatus === InvoiceStatus.PAID ? new Date() : null,
-            },
-          });
+          invoiceData = {
+            status: newStatus,
+            paidAt: newStatus === InvoiceStatus.PAID ? new Date() : null,
+          };
         }
+        await tx.invoice.update({ where: { id: alloc.invoiceId }, data: invoiceData });
       }
 
       // Commission hook: the payments-modal / buyer-allocation path creates PAID
