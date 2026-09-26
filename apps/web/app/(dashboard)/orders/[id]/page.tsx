@@ -397,6 +397,11 @@ export interface EditItemState {
   originalProductId: string;
   originalProductName: string;
   originalQty: number;
+  /** SA-388: a stored unit line with no derivable count (unitLineCount → null). Its qty cannot
+   *  be edited and any price/note edit refuses to save; `lockedSubtotal` keeps its stored money
+   *  in the edit preview instead of a qty-0 recompute. */
+  countLocked?: boolean;
+  lockedSubtotal?: number;
   /** The line's own denomination, restored when a substitution is undone (a
    *  substitute re-denominates the line against ITS case size). */
   originalUnitsPerBox?: number | null;
@@ -574,12 +579,60 @@ function restoredPrice(it: EditItemState): Partial<EditItemState> {
 }
 
 /**
- * B718 (SA-369, mirrors mobile #1343): a unit line's count is its `boxes`, but only when that is
- * genuinely positive — a stored `boxes: 0` is meaningless, and `boxes ?? qty` passed it through
- * as "0 Cases", so a later price/note-only edit sent qty:0 (silently skipped by the server).
+ * B718 / SA-388 (#938, tier 1): the ONE count function for a web unit line (edit-state seeding,
+ * `originalQty`, `promoBaseUnits` and `buildItemUpdates`' comparison all go through it).
+ * - `boxes` when it is a positive integer (unit-line-build.ts stores the COUNT there);
+ * - else `qty ÷ unitsPerBox` — the line's SNAPSHOT factor — when `qty` (base pieces) is a
+ *   positive whole multiple of it;
+ * - else `null`: LOCKED. There is no safe count, so the line takes no qty edit and a price/note
+ *   edit refuses to save (see findLockedUnitLineEdit). Falling back to raw `qty` read base pieces
+ *   as the count — a price-only save re-billed a 3-Case line as 36 Cases (12×).
  */
-function unitLineCount(li: OrderItem): number {
-  return li.boxes != null && Number(li.boxes) > 0 ? Number(li.boxes) : Number(li.qty);
+export function unitLineCount(li: Pick<OrderItem, "boxes" | "qty" | "unitsPerBox">): number | null {
+  const boxes = li.boxes == null ? null : Number(li.boxes);
+  if (boxes != null && Number.isInteger(boxes) && boxes > 0) return boxes;
+  const factor = li.unitsPerBox == null ? null : Number(li.unitsPerBox);
+  const qty = Number(li.qty);
+  if (
+    factor != null &&
+    Number.isInteger(factor) &&
+    factor >= 1 &&
+    Number.isInteger(qty) &&
+    qty > 0 &&
+    qty % factor === 0
+  ) {
+    return qty / factor;
+  }
+  return null;
+}
+
+/** Thrown by buildItemUpdates if a LOCKED unit line's edit ever reaches it (SA-388 backstop —
+ *  the save handlers refuse first via findLockedUnitLineEdit, so no request is ever built). */
+export class LockedUnitLineError extends Error {
+  constructor(readonly lineName: string) {
+    super(`${lineName} needs repair before it can be edited`);
+    this.name = "LockedUnitLineError";
+  }
+}
+
+/**
+ * SA-388: the first LOCKED unit line (no derivable count) that this session changed — its price,
+ * note, qty or a substitution. Cancelling is still allowed (it sends no qty). Both save paths
+ * call this BEFORE building a payload and refuse with a visible message when it returns a line.
+ */
+export function findLockedUnitLineEdit(
+  items: EditItemState[],
+  original: OrderItem[],
+): EditItemState | undefined {
+  return items.find((edited) => {
+    if (!edited.countLocked || edited.isNew || edited.cancelled) return false;
+    const orig = original.find((li) => li.id === edited.id);
+    if (!orig) return false;
+    const priceChanged = Math.abs(edited.unitPrice - Number(orig.unitPrice)) > 0.0001;
+    const noteChanged = (edited.notes ?? "").trim() !== ((orig.notes as string) ?? "").trim();
+    const qtyChanged = Math.abs(edited.qty - edited.originalQty) > 0.0001;
+    return priceChanged || noteChanged || qtyChanged || !!edited.substituteProductId;
+  });
 }
 
 /**
@@ -597,13 +650,18 @@ export function buildEditItemFromLine(li: OrderItem): EditItemState {
   const isUnlisted = !li.productId;
   const label = orderLineName(li) ?? li.productId ?? "Custom item";
   const isUnitLine = li.unitLabel != null;
-  const count = isUnitLine ? Math.round(unitLineCount(li)) : Math.round(Number(li.qty));
+  // SA-388: a unit line's count comes ONLY from unitLineCount; null = LOCKED (seeded at 0, never
+  // sent — findLockedUnitLineEdit / buildItemUpdates refuse any edit that would carry it).
+  const unitCount = isUnitLine ? unitLineCount(li) : null;
+  const countLocked = isUnitLine && unitCount == null;
+  const count = isUnitLine ? (unitCount ?? 0) : Math.round(Number(li.qty));
   return {
     id: li.id,
     isUnlisted,
     originalProductId: li.productId ?? "",
     originalProductName: label,
     originalQty: count,
+    ...(countLocked ? { countLocked: true, lockedSubtotal: Number(li.subtotal ?? 0) } : {}),
     productId: li.productId ?? "",
     productName: label,
     qty: count,
@@ -624,12 +682,10 @@ export function buildEditItemFromLine(li: OrderItem): EditItemState {
     originalBoxSplit: isUnitLine ? false : li.boxes != null || li.pieces != null,
     // BUY_N_GET_M snapshot + the whole-unit count it was earned at.
     promoFreeUnits: li.promoFreeUnits ?? null,
-    // SA-378: a unit line's base count goes through unitLineCount (a stored boxes:0 is
-    // meaningless there); a PACK line keeps boxes — a boxes:0 + pieces split earns at base 0.
+    // SA-378/SA-388: a unit line's base count is the same unitLineCount (0 when LOCKED); a PACK
+    // line keeps boxes — a boxes:0 + pieces split legitimately earns at base 0.
     promoBaseUnits: li.promoFreeUnits
-      ? Math.trunc(
-          Number(isUnitLine ? unitLineCount(li) : li.boxes != null ? li.boxes : li.qty) || 0,
-        )
+      ? Math.trunc(Number(isUnitLine ? unitCount : li.boxes != null ? li.boxes : li.qty) || 0)
       : null,
     unit: li.product?.unit ?? "",
     unitLabel: li.unitLabel ?? undefined,
@@ -687,7 +743,13 @@ export function buildItemUpdates(items: EditItemState[], original: OrderItem[]):
     const orig = original.find((li) => li.id === edited.id);
     if (!orig) continue;
 
-    const origQty = orig.unitLabel != null ? unitLineCount(orig) : Number(orig.qty);
+    // SA-388 backstop: a LOCKED unit line's edit never becomes a request (the save handlers
+    // refuse it visibly first). Cancel is still allowed — it carries no qty.
+    if (!edited.cancelled && findLockedUnitLineEdit([edited], [orig])) {
+      throw new LockedUnitLineError(edited.productName || "This line");
+    }
+    const origQty =
+      orig.unitLabel != null ? (unitLineCount(orig) ?? edited.originalQty) : Number(orig.qty);
     const qtyChanged = Math.abs(edited.qty - origQty) > 0.0001;
     const priceChanged = Math.abs(edited.unitPrice - Number(orig.unitPrice)) > 0.0001;
     const nameChanged = edited.isUnlisted && edited.productName.trim() !== (orig.name ?? "").trim();
@@ -762,7 +824,12 @@ function editLineSubtotal(it: {
   substituteProductId?: string;
   promoFreeUnits?: number | null;
   promoBaseUnits?: number | null;
+  countLocked?: boolean;
+  lockedSubtotal?: number;
 }): number {
+  // SA-388: a LOCKED unit line has no count to price from — preview its stored money unchanged
+  // (it cannot be edited), never a qty-0 recompute that would drop it from the order total.
+  if (it.countLocked) return it.lockedSubtotal ?? 0;
   const { boxes, pieces } = editBoxedSplit(it);
   return computeLineSubtotal({
     unitPrice: it.unitPrice,
@@ -1512,8 +1579,20 @@ export function EditableLineItems({
               {item.cancelled && <span className="text-xs text-danger ml-1.5">Not available</span>}
             </div>
 
+            {/* SA-388: a LOCKED unit line (no derivable count) takes no qty edit — say so on the
+                row, and the save handlers refuse any price/note edit to it. */}
+            {!item.cancelled && item.countLocked && (
+              <span
+                role="status"
+                title="This line's stored quantity can't be read as a count. It can be cancelled, but not edited, until it's repaired."
+                className="shrink-0 rounded-full bg-danger-bg px-2 py-0.5 text-[11px] font-medium text-danger ring-1 ring-danger/30"
+              >
+                This line needs repair
+              </span>
+            )}
+
             {/* Qty input */}
-            {!item.cancelled && (
+            {!item.cancelled && !item.countLocked && (
               <label className="flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-[0.06em] text-navy/40">
                 Qty
                 <input
@@ -1534,29 +1613,32 @@ export function EditableLineItems({
                 levels (OrderLineUnitPicker/UnitPicker self-gate) — every other tenant/product sees
                 today's row byte for byte. Excluded for a substitution in progress (re-denominates
                 against the SUBSTITUTE's case size instead — a separate, untouched concern). */}
-            {!item.cancelled && !item.isUnlisted && !item.substituteProductId && (
-              <OrderLineUnitPicker
-                line={{
-                  productId: item.productId,
-                  productName: item.productName,
-                  unit: item.unit ?? "",
-                  unitsPerBox: item.unitsPerBox ?? undefined,
-                  listPrice: item.basePrice,
-                  unitPrice: item.unitPrice,
-                  // PROMO (server-only, never client-set) has no picker-relevant meaning —
-                  // the picker only branches on DISCOUNTED/MANUAL to skip its tier-refresh.
-                  priceType:
-                    item.priceType === "SPECIAL" ||
-                    item.priceType === "DISCOUNTED" ||
-                    item.priceType === "MANUAL"
-                      ? item.priceType
-                      : "STANDARD",
-                  unitLabel: item.unitLabel,
-                }}
-                tier={tierForProductId(item.productId)}
-                onChange={(option, refresh) => setLineUnit(item.id, option, refresh)}
-              />
-            )}
+            {!item.cancelled &&
+              !item.isUnlisted &&
+              !item.substituteProductId &&
+              !item.countLocked && (
+                <OrderLineUnitPicker
+                  line={{
+                    productId: item.productId,
+                    productName: item.productName,
+                    unit: item.unit ?? "",
+                    unitsPerBox: item.unitsPerBox ?? undefined,
+                    listPrice: item.basePrice,
+                    unitPrice: item.unitPrice,
+                    // PROMO (server-only, never client-set) has no picker-relevant meaning —
+                    // the picker only branches on DISCOUNTED/MANUAL to skip its tier-refresh.
+                    priceType:
+                      item.priceType === "SPECIAL" ||
+                      item.priceType === "DISCOUNTED" ||
+                      item.priceType === "MANUAL"
+                        ? item.priceType
+                        : "STANDARD",
+                    unitLabel: item.unitLabel,
+                  }}
+                  tier={tierForProductId(item.productId)}
+                  onChange={(option, refresh) => setLineUnit(item.id, option, refresh)}
+                />
+              )}
 
             {/* BUY_N_GET_M: name the units the live total below nets off. */}
             {!item.cancelled && editLineFreeUnits(item) > 0 && (
@@ -1603,7 +1685,7 @@ export function EditableLineItems({
                 </button>
               ) : (
                 <>
-                  {!item.substituteProductId && !item.isUnlisted && (
+                  {!item.substituteProductId && !item.isUnlisted && !item.countLocked && (
                     <button
                       className="rounded px-2 py-1 text-xs text-navy/70 hover:bg-surface-raised hover:text-navy disabled:opacity-50"
                       disabled={!pricingReady}
@@ -2256,7 +2338,20 @@ export default function OrderDetailPage() {
     }
   }
 
+  /** SA-388: refuse — visibly, with no request sent — a save that edits a LOCKED unit line.
+   *  Both save paths ("Save Draft"/"Save Changes" and "Save & Publish") call this first. */
+  function refuseLockedUnitLineEdit(): boolean {
+    const locked = findLockedUnitLineEdit(editItems, order!.lineItems);
+    if (!locked) return false;
+    toast({
+      title: `${locked.productName || "This line"} needs repair — its stored quantity can't be read as a count, so it can't be edited. Nothing was saved.`,
+      variant: "error",
+    });
+    return true;
+  }
+
   function handleSaveItems() {
+    if (refuseLockedUnitLineEdit()) return;
     // B465: refuse client-side before the server has to — a SPECIAL-tier line
     // whose price was overridden with no reason would otherwise round-trip a
     // 400 "A reason is required to change a special-price line" with no
@@ -3066,6 +3161,7 @@ export default function OrderDetailPage() {
                           // Save items first, then publish. Exactly the payload
                           // "Save Draft" sends — deletes and prices included — so
                           // publishing straight from edit mode can't bill differently.
+                          if (refuseLockedUnitLineEdit()) return;
                           const updates: ItemUpdate[] = [
                             ...pendingDeletes.map((id): ItemUpdate => ({ id, action: "DELETE" })),
                             ...buildItemUpdates(editItems, order!.lineItems),

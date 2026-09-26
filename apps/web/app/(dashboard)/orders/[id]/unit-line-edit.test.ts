@@ -16,6 +16,9 @@ import {
   buildEditItemFromLine,
   buildItemUpdates,
   editLineFreeUnits,
+  findLockedUnitLineEdit,
+  LockedUnitLineError,
+  unitLineCount,
   type EditItemState,
 } from "./page";
 import type { OrderItem, ItemUpdate } from "@/lib/api/orders";
@@ -122,6 +125,91 @@ describe("buildItemUpdates — units_v1 (A3-2)", () => {
 
     expect(seeded.qty).toBe(3);
     expect(seeded.originalQty).toBe(3);
+  });
+});
+
+// SA-388 (#938, tier 1): ONE count function for a web unit line. `boxes` when a positive integer;
+// else `qty ÷ unitsPerBox` (the line's SNAPSHOT factor) when qty is a whole multiple of it; else
+// LOCKED — no qty edit, and a price/note-only edit refuses to save (no request is ever built).
+// Server-shaped fixtures only: qty is base pieces = count × factor.
+describe("unitLineCount — SA-388", () => {
+  const caseLine = (qty: number, boxes: number | null, factor = 12) =>
+    unitLine({
+      qty,
+      boxes,
+      unitsPerBox: factor,
+      product: { id: "p-case", name: "Widget", unit: "Box", unitsPerBox: factor },
+    });
+  const eachLine = (qty: number, boxes: number | null) =>
+    unitLine({
+      id: "li-each",
+      qty,
+      boxes,
+      unitsPerBox: 1,
+      unitLabel: "Each",
+      product: { id: "p-case", name: "Widget", unit: "Each", unitsPerBox: 1 },
+    });
+
+  it.each([
+    ["factor 12 {qty 36, boxes 3}", 3, caseLine(36, 3)],
+    ["factor 12 {qty 36, boxes 0}", 3, caseLine(36, 0)],
+    ["factor 12 {qty 36, boxes null}", 3, caseLine(36, null)],
+    ['"Each" factor 1 {qty 4, boxes null}', 4, eachLine(4, null)],
+  ])("%s ⇒ %i", (_label, count, line) => {
+    expect(unitLineCount(line)).toBe(count);
+    const seeded = buildEditItemFromLine(line);
+    expect(seeded.qty).toBe(count);
+    expect(seeded.originalQty).toBe(count);
+    expect(seeded.countLocked).toBeFalsy();
+  });
+
+  it("{qty 40, boxes 0, factor 12} ⇒ LOCKED: no derivable count", () => {
+    expect(unitLineCount(caseLine(40, 0))).toBeNull();
+    expect(buildEditItemFromLine(caseLine(40, 0)).countLocked).toBe(true);
+  });
+
+  it.each([
+    ["price-only", { unitPrice: 45 }],
+    ["note-only", { notes: "leave at the side door" }],
+  ])("LOCKED: a %s edit is refused and builds no request", (_label, patch) => {
+    const orig = caseLine(40, 0);
+    const edited: EditItemState = { ...buildEditItemFromLine(orig), ...patch };
+    expect(findLockedUnitLineEdit([edited], [orig])?.id).toBe("li-case");
+    expect(() => buildItemUpdates([edited], [orig])).toThrow(LockedUnitLineError);
+  });
+
+  it("LOCKED: cancelling the line is still allowed (it sends no qty)", () => {
+    const orig = caseLine(40, 0);
+    const edited: EditItemState = { ...buildEditItemFromLine(orig), cancelled: true };
+    expect(findLockedUnitLineEdit([edited], [orig])).toBeUndefined();
+    expect(buildItemUpdates([edited], [orig])).toEqual([{ id: "li-case", action: "CANCEL" }]);
+  });
+
+  it("an untouched line never reports a change — every fixture, LOCKED included", () => {
+    for (const orig of [
+      caseLine(36, 3),
+      caseLine(36, 0),
+      caseLine(36, null),
+      eachLine(4, null),
+      caseLine(40, 0),
+    ]) {
+      const seeded = buildEditItemFromLine(orig);
+      expect(findLockedUnitLineEdit([seeded], [orig])).toBeUndefined();
+      expect(buildItemUpdates([seeded], [orig])).toEqual([]);
+    }
+  });
+
+  it("promoBaseUnits seeds from the same function: {qty 36, boxes 0, promoFreeUnits 2} ⇒ 3", () => {
+    const seeded = buildEditItemFromLine(
+      unitLine({
+        qty: 36,
+        boxes: 0,
+        unitsPerBox: 12,
+        product: { id: "p-case", name: "Widget", unit: "Box", unitsPerBox: 12 },
+        promoFreeUnits: 2,
+      }),
+    );
+    expect(seeded.promoBaseUnits).toBe(3);
   });
 });
 
