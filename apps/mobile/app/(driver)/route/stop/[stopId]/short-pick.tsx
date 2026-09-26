@@ -28,7 +28,9 @@ import {
   deliveredSoFarByLine,
   isLineAdjustable,
   isUnitAwareLine,
+  linesAwaitingEntry,
   normalizeDeliveryPlan,
+  remainingByLine,
   shortPickLinesFromOrder,
   type ShortPickLine,
 } from "../../../../../lib/short-pick";
@@ -37,8 +39,11 @@ import { sanitizeIntInput, parseIntQty } from "../../../../../lib/qty";
 /** Same "adjustable" predicate `shortPickLinesFromOrder` applies for the
  *  money-math half — kept alongside it here since rendering needs the
  *  RICHER `OrderItem` (product name), not the pure `ShortPickLine`. */
-function adjustableLines(order: Order | undefined, soFarById: Record<string, number>): OrderItem[] {
-  return (order?.lineItems ?? []).filter((li) => isLineAdjustable(li, soFarById[li.id] ?? 0));
+function adjustableLines(
+  order: Order | undefined,
+  remainingById: Record<string, number>,
+): OrderItem[] {
+  return (order?.lineItems ?? []).filter((li) => isLineAdjustable(li, remainingById[li.id]));
 }
 
 /**
@@ -89,20 +94,26 @@ export default function ShortPickScreen() {
   // pure `ShortPickLine` doesn't carry a display name.
   // B785/SA-116: pieces delivered at OTHER visits, off the stop's run snapshot — a second visit
   // is offered (and bounded by) the REMAINING, never the full order.
+  // SA-367a: every quantity decision (offered or not, stepper default and ceiling) reads the
+  // server's per-line `remaining`; `deliveredSoFar` only prices the remaining money (SA-367b).
   const soFarById = useMemo(() => deliveredSoFarByLine(stop?.orders), [stop]);
+  const remainingById = useMemo(() => remainingByLine(stop?.orders), [stop]);
   const linesByOrder = useMemo(() => {
     const map: Record<string, OrderItem[]> = {};
-    for (const id of stopOrderIds) map[id] = adjustableLines(ordersById[id], soFarById);
+    for (const id of stopOrderIds) map[id] = adjustableLines(ordersById[id], remainingById);
     return map;
-  }, [stopOrderIds, ordersById, soFarById]);
+  }, [stopOrderIds, ordersById, remainingById]);
 
   // B648/B762 merge: shortPickLinesFromOrder now carries unitLabel/
   // unitsPerBox/boxes through (see lib/short-pick.ts), so this flattened,
   // multi-order form is both the B762 fan-out AND B648's whole-Case data —
   // no separate inline mapping needed.
   const shortPickLines: ShortPickLine[] = useMemo(
-    () => stopOrderIds.flatMap((id) => shortPickLinesFromOrder(ordersById[id], soFarById)),
-    [stopOrderIds, ordersById, soFarById],
+    () =>
+      stopOrderIds.flatMap((id) =>
+        shortPickLinesFromOrder(ordersById[id], remainingById, soFarById),
+      ),
+    [stopOrderIds, ordersById, remainingById, soFarById],
   );
   const visitLineById = useMemo(
     () => Object.fromEntries(shortPickLines.map((l) => [l.orderItemId, l])),
@@ -136,9 +147,14 @@ export default function ShortPickScreen() {
   );
   const orderedTotal = useMemo(() => reconciledTotal(shortPickLines, {}), [shortPickLines]);
   const anyShort = total < orderedTotal - 0.005;
+  // SA-367a: lines the server served no remaining for, still un-entered — Continue waits on them.
+  const awaiting = useMemo(
+    () => linesAwaitingEntry(shortPickLines, qtyById),
+    [shortPickLines, qtyById],
+  );
 
   function handleContinue() {
-    if (!stopId) return;
+    if (!stopId || awaiting.length > 0) return;
     for (const [orderItemId, qty] of Object.entries(qtyById)) {
       setPlanQty(stopId, orderItemId, qty);
     }
@@ -193,7 +209,8 @@ export default function ShortPickScreen() {
                   // (item 3 of the B762 adaptation) — every order's rows read
                   // the SAME snapped number the total/badge use, never the
                   // raw qtyById entry.
-                  qty={normalizedPlan[li.id] ?? li.qty}
+                  qty={normalizedPlan[li.id] ?? (visitLineById[li.id]?.needsEntry ? 0 : li.qty)}
+                  awaitingEntry={awaiting.includes(li.id)}
                   onChangeQty={(q) => setQtyById((m) => ({ ...m, [li.id]: q }))}
                 />
               ))}
@@ -209,7 +226,18 @@ export default function ShortPickScreen() {
         </View>
 
         <View style={{ paddingHorizontal: 16 }}>
-          <Pressable style={styles.continueBtn} onPress={handleContinue}>
+          {awaiting.length > 0 ? (
+            <Text style={styles.hint}>
+              Enter how many were delivered for the highlighted{" "}
+              {awaiting.length === 1 ? "line" : `${awaiting.length} lines`} to continue.
+            </Text>
+          ) : null}
+          <Pressable
+            style={[styles.continueBtn, awaiting.length > 0 ? { opacity: 0.5 } : null]}
+            onPress={handleContinue}
+            disabled={awaiting.length > 0}
+            accessibilityState={{ disabled: awaiting.length > 0 }}
+          >
             <Text style={styles.continueBtnText}>
               {canCollect ? "Continue to payment" : "Review & complete"}
             </Text>
@@ -225,6 +253,7 @@ function ShortPickRow({
   visit,
   soFar,
   qty,
+  awaitingEntry,
   onChangeQty,
 }: {
   li: OrderItem;
@@ -233,13 +262,15 @@ function ShortPickRow({
   /** Pieces already delivered at other visits. */
   soFar: number;
   qty: number;
+  /** SA-367a: no server remaining and not entered yet — the stepper shows EMPTY, never a default. */
+  awaitingEntry?: boolean;
   onChangeQty: (qty: number) => void;
 }) {
   // B785/SA-116: the stepper bound is what THIS visit can still deliver (count − cases delivered
   // so far), read off the per-visit line — identical to the full order on a first visit.
   const ordered = visit?.orderedQty ?? Number(li.qty);
   const type = deliveryTypeForQty(qty, ordered);
-  const [draft, setDraft] = useState(String(qty));
+  const [draft, setDraft] = useState(awaitingEntry ? "" : String(qty));
   // SA-094/SA-094a: a units_v1 line whose OWN unitsPerBox > 1 gets a
   // whole-Case stepper — its ordered qty is base pieces, and a partial
   // piece count within one Case has no physical meaning. A factor-1 unit
@@ -262,11 +293,13 @@ function ShortPickRow({
   // includes the partial-Case remainder (i.e. qty === ordered) still shows the right Case count.
   const casesDelivered = unitAware ? caseStepperCasesDelivered(qty, ordered, unitsPerBox) : 0;
   const atFullDelivery = qty >= ordered;
-  const casesDeliveredLabel = formatCaseStepperSplit(
-    casesDelivered,
-    atFullDelivery ? caseRemainderPieces : 0,
-    li.unitLabel,
-  );
+  const casesDeliveredLabel = awaitingEntry
+    ? "—"
+    : formatCaseStepperSplit(
+        casesDelivered,
+        atFullDelivery ? caseRemainderPieces : 0,
+        li.unitLabel,
+      );
   const caseCountLabel = formatCaseStepperSplit(caseCount, caseRemainderPieces, li.unitLabel);
 
   return (
@@ -282,7 +315,11 @@ function ShortPickRow({
             {soFar > 0 ? ` · ${hasUnitLabel ? caseCountLabel : ordered} still to deliver` : ""}
           </Text>
         </View>
-        {type !== "DELIVERED" ? (
+        {awaitingEntry ? (
+          <View style={[styles.badge, styles.badgeShort]}>
+            <Text style={styles.badgeText}>Enter qty</Text>
+          </View>
+        ) : type !== "DELIVERED" ? (
           <View
             style={[styles.badge, type === "REFUSED" ? styles.badgeRefused : styles.badgeShort]}
           >
@@ -345,7 +382,7 @@ function ShortPickRow({
                 if (clean === "") return;
                 onChangeQty(Math.min(ordered, parseIntQty(clean, qty)));
               }}
-              onBlur={() => setDraft(String(qty))}
+              onBlur={() => setDraft(awaitingEntry ? "" : String(qty))}
               keyboardType="number-pad"
               returnKeyType="done"
               maxLength={5}

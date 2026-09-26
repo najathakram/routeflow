@@ -100,7 +100,11 @@ describe("FIX 6 — shortPickLinesFromOrder carries the real boxes/pieces split 
 
   it("5 of 12 remaining: boxes=0, pieces=5", () => {
     // soFar=55 leaves 5 remaining (60-55).
-    const [line] = shortPickLinesFromOrder({ lineItems: [caseLine] }, { "li-case": 55 });
+    const [line] = shortPickLinesFromOrder(
+      { lineItems: [caseLine] },
+      { "li-case": 5 },
+      { "li-case": 55 },
+    );
     expect(line!.orderedQty).toBe(5);
     expect(line!.boxes).toBe(0);
     expect(line!.pieces).toBe(5);
@@ -108,7 +112,11 @@ describe("FIX 6 — shortPickLinesFromOrder carries the real boxes/pieces split 
 
   it("30 of 12 remaining: boxes=2, pieces=6", () => {
     // soFar=30 leaves 30 remaining (60-30).
-    const [line] = shortPickLinesFromOrder({ lineItems: [caseLine] }, { "li-case": 30 });
+    const [line] = shortPickLinesFromOrder(
+      { lineItems: [caseLine] },
+      { "li-case": 30 },
+      { "li-case": 30 },
+    );
     expect(line!.orderedQty).toBe(30);
     expect(line!.boxes).toBe(2);
     expect(line!.pieces).toBe(6);
@@ -116,14 +124,21 @@ describe("FIX 6 — shortPickLinesFromOrder carries the real boxes/pieces split 
 
   it("an exact-multiple remainder (24 of 12) still reports pieces=0", () => {
     // soFar=36 leaves 24 remaining (60-36).
-    const [line] = shortPickLinesFromOrder({ lineItems: [caseLine] }, { "li-case": 36 });
+    const [line] = shortPickLinesFromOrder(
+      { lineItems: [caseLine] },
+      { "li-case": 24 },
+      { "li-case": 36 },
+    );
     expect(line!.orderedQty).toBe(24);
     expect(line!.boxes).toBe(2);
     expect(line!.pieces).toBe(0);
   });
 
   it("a first visit (no soFar) reports the stored split with pieces=0", () => {
-    const [line] = shortPickLinesFromOrder({ lineItems: [{ ...caseLine, deliveredQty: 0 }] });
+    const [line] = shortPickLinesFromOrder(
+      { lineItems: [{ ...caseLine, deliveredQty: 0 }] },
+      { "li-case": 60 },
+    );
     expect(line!.orderedQty).toBe(60);
     expect(line!.boxes).toBe(5);
     expect(line!.pieces).toBe(0);
@@ -146,7 +161,11 @@ describe("FIX 7 — remaining money is the marginal telescope tail, not a fresh 
   };
 
   it("8 of 10 already delivered at another visit: remaining money is the TAIL price ($11.11), not the front-slice price of 2 units ($22.22)", () => {
-    const [line] = shortPickLinesFromOrder({ lineItems: [promoLine] }, { "li-promo": 8 });
+    const [line] = shortPickLinesFromOrder(
+      { lineItems: [promoLine] },
+      { "li-promo": 2 },
+      { "li-promo": 8 },
+    );
     expect(line!.orderedQty).toBe(2);
     // The old bug (pricing the front 2 pieces out of 10) would have produced 22.22.
     expect(line!.subtotal).not.toBe(22.22);
@@ -154,14 +173,21 @@ describe("FIX 7 — remaining money is the marginal telescope tail, not a fresh 
   });
 
   it("a first visit (no soFar) is unaffected — full stored subtotal, untouched", () => {
-    const [line] = shortPickLinesFromOrder({ lineItems: [{ ...promoLine, deliveredQty: 0 }] });
+    const [line] = shortPickLinesFromOrder(
+      { lineItems: [{ ...promoLine, deliveredQty: 0 }] },
+      { "li-promo": 10 },
+    );
     expect(line!.orderedQty).toBe(10);
     expect(line!.subtotal).toBe(100);
   });
 
   it("a non-promo line (freeUnits 0) is unaffected by the formula change — linear, both ways agree", () => {
     const plain = { ...promoLine, promoFreeUnits: 0 };
-    const [line] = shortPickLinesFromOrder({ lineItems: [plain] }, { "li-promo": 8 });
+    const [line] = shortPickLinesFromOrder(
+      { lineItems: [plain] },
+      { "li-promo": 2 },
+      { "li-promo": 8 },
+    );
     expect(line!.orderedQty).toBe(2);
     expect(line!.subtotal).toBe(20); // 2 of 10 pieces at $10/piece, no promo distortion
   });

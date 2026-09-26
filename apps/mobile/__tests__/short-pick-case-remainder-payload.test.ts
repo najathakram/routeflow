@@ -43,7 +43,11 @@ const caseLine = {
 
 describe("an UNTOUCHED second-visit line sends the FULL remaining, never a floored-down Case boundary", () => {
   it("30 left of 12: untouched sends 30 (DELIVERED, $60), never 24 (PARTIAL, $48)", () => {
-    const [line] = shortPickLinesFromOrder({ lineItems: [caseLine] }, { "li-case": 30 });
+    const [line] = shortPickLinesFromOrder(
+      { lineItems: [caseLine] },
+      { "li-case": 30 },
+      { "li-case": 30 },
+    );
     const plan = normalizeDeliveryPlan([line!], {}); // never touched — no qtyById entry at all
     expect(plan["li-case"]).toBe(30);
     expect(plan["li-case"]).not.toBe(24);
@@ -63,7 +67,11 @@ describe("an UNTOUCHED second-visit line sends the FULL remaining, never a floor
 
   it("5 left of 12: untouched sends 5 (DELIVERED), never 0 (REFUSED)", () => {
     const line5 = { ...caseLine, deliveredQty: 55 }; // soFar governs the remaining view below
-    const [line] = shortPickLinesFromOrder({ lineItems: [line5] }, { "li-case": 55 });
+    const [line] = shortPickLinesFromOrder(
+      { lineItems: [line5] },
+      { "li-case": 5 },
+      { "li-case": 55 },
+    );
     const plan = normalizeDeliveryPlan([line!], {});
     expect(plan["li-case"]).toBe(5);
     expect(plan["li-case"]).not.toBe(0);
@@ -79,7 +87,11 @@ describe("an UNTOUCHED second-visit line sends the FULL remaining, never a floor
 
 describe("the driver can always get BACK to the full remaining after adjusting down", () => {
   it("30 left of 12: minus then plus-to-top lands back on 30 through the SAME plan a screen reads", () => {
-    const [line] = shortPickLinesFromOrder({ lineItems: [caseLine] }, { "li-case": 30 });
+    const [line] = shortPickLinesFromOrder(
+      { lineItems: [caseLine] },
+      { "li-case": 30 },
+      { "li-case": 30 },
+    );
     let qty = 30;
     qty = caseStepperDecrement(qty, line!.orderedQty, 12); // -> 24 (drop the partial Case)
     qty = caseStepperDecrement(qty, line!.orderedQty, 12); // -> 12
@@ -93,7 +105,11 @@ describe("the driver can always get BACK to the full remaining after adjusting d
 
   it("5 left of 12: minus-to-refuse then plus-to-top lands back on 5, never stuck at 0", () => {
     const line5 = { ...caseLine, deliveredQty: 55 };
-    const [line] = shortPickLinesFromOrder({ lineItems: [line5] }, { "li-case": 55 });
+    const [line] = shortPickLinesFromOrder(
+      { lineItems: [line5] },
+      { "li-case": 5 },
+      { "li-case": 55 },
+    );
     let qty = 5;
     qty = caseStepperDecrement(qty, line!.orderedQty, 12); // -> 0 (refuse)
     qty = caseStepperIncrement(qty, line!.orderedQty, 12); // -> back to the top: 5, not stuck at 0
@@ -106,14 +122,22 @@ describe("the driver can always get BACK to the full remaining after adjusting d
 describe("an exact-multiple remainder is unaffected — the fix only changes the partial-Case case", () => {
   it("24 left of 12 (no remainder): untouched still sends 24, a whole-Case value behaves as before", () => {
     const line24 = { ...caseLine, deliveredQty: 36 };
-    const [line] = shortPickLinesFromOrder({ lineItems: [line24] }, { "li-case": 36 });
+    const [line] = shortPickLinesFromOrder(
+      { lineItems: [line24] },
+      { "li-case": 24 },
+      { "li-case": 36 },
+    );
     const plan = normalizeDeliveryPlan([line!], {});
     expect(plan["li-case"]).toBe(24);
   });
 
   it("a genuinely PARTIAL Case-aligned override (12 of 24) still floors correctly, not passed through", () => {
     const line24 = { ...caseLine, deliveredQty: 36 };
-    const [line] = shortPickLinesFromOrder({ lineItems: [line24] }, { "li-case": 36 });
+    const [line] = shortPickLinesFromOrder(
+      { lineItems: [line24] },
+      { "li-case": 24 },
+      { "li-case": 36 },
+    );
     // 13 is NOT the remaining (24) and NOT a whole Case multiple — must still floor to 12, exactly
     // the pre-existing behavior for a genuinely below-remaining, non-boundary value.
     const plan = normalizeDeliveryPlan([line!], { "li-case": 13 });
