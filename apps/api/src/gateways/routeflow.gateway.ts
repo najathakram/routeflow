@@ -298,7 +298,10 @@ export class RouteFlowGateway
       } else if (payload.role === UserRole.CUSTOMER) {
         // B104: the room the emitters address is keyed by the Customer, resolved from the user
         // inside the token's own tenant. #2164: the same rule decides at connect and at every
-        // resync (syncCustomerRooms), and like a buyer token it must carry an `exp`.
+        // resync (syncCustomerRooms), and like a buyer token it must carry a user id and an `exp`.
+        if (typeof payload.sub !== "string" || !payload.sub) {
+          throw new WsException("Invalid customer token");
+        }
         const exp = (payload as { exp?: unknown }).exp;
         if (typeof exp !== "number" || !Number.isFinite(exp)) {
           throw new WsException("Customer token without an expiry");
@@ -448,6 +451,8 @@ export class RouteFlowGateway
    * new connection is refused).
    */
   private async syncCustomerRooms(sockets: RoomMember[]): Promise<void> {
+    // Opus fold: a socket with no user id can never be re-checked, so it is refused, never kept.
+    for (const socket of sockets) if (!socket.data.customerUserId) socket.disconnect(true);
     const userIds = [
       ...new Set(sockets.map((s) => s.data.customerUserId).filter((id): id is string => !!id)),
     ];

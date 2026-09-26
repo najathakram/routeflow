@@ -712,6 +712,22 @@ describe("RouteFlowGateway on a live Socket.IO server", () => {
     });
 
     it.each([
+      ["no sub", {}],
+      ["an empty sub", { sub: "" }],
+    ])("#2164 (Opus fold): a CUSTOMER token with %s is refused at connect", async (_l, sub) => {
+      // Signed by this server, with a real exp — only the user id is missing. It must be refused,
+      // never kept connected in no room.
+      const noSub = jwt.sign(
+        { ...sub, role: "CUSTOMER", status: "ACTIVE", tenantId: "t-1", tenantSlug: "acme" },
+        { expiresIn: "15m" },
+      );
+      expect(await keptAfterConnect(noSub)).toEqual({
+        kept: false,
+        reason: "io server disconnect",
+      });
+    });
+
+    it.each([
       [
         "the user is deactivated",
         () => (store.users.find((u) => u.id === "u-b")!.status = "INACTIVE"),
