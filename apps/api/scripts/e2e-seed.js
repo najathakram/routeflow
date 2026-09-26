@@ -70,6 +70,7 @@ async function bootstrap() {
   // --print-target: a dry check that only resolves and prints where a real reseed would
   // land — exit before opening any connection (no Pool, no PrismaClient). Lets a human/CI
   // confirm the target host against a live DB without ever touching it.
+  console.log(`e2e-seed: units_v1 fixture = ${unitsFixturePlan(dbUrl)}`);
   if (process.argv.includes("--print-target")) {
     process.exit(0);
   }
@@ -387,6 +388,23 @@ async function ensureCommerceFixtures(tenantId) {
 // GRANT is left alone; an expired or DENY row (a spec's leftover) is revoked first, because the
 // partial unique index allows one un-revoked row per (tenant, key). Only ever called with the
 // e2e-routeflow tenant id, which TENANT_SLUG's assertTestTenant already approved.
+// Owner rule: agents never flip a production flag; the owner grants flag.units_v1 on a real
+// environment. So the grant AND the fixture product run only against a provably-local DB — the
+// same isLocalDbTarget gate the buyer fixture uses. `--print-target` prints this same plan, which
+// is how e2e-seed-script.spec.ts proves a non-local target skips it without touching a database.
+function unitsFixturePlan(url) {
+  return isLocalDbTarget(url) ? "run (local target)" : "skipped (non-local target)";
+}
+
+async function ensureUnitsFixtureIfLocal(tenantId) {
+  if (!isLocalDbTarget(dbUrl)) {
+    console.log(`  - units_v1 fixture ${unitsFixturePlan(dbUrl)}`);
+    return;
+  }
+  await ensureUnitsFixture(tenantId);
+  console.log(`  ✓ flag.units_v1 granted; ${UNITS_PRODUCT.sku} has Piece + Case x12`);
+}
+
 async function ensureUnitsFixture(tenantId) {
   const now = new Date();
   await prisma.tenantFeatureOverride.updateMany({
@@ -632,8 +650,7 @@ async function main() {
     await ensureBuyerFixtureIfLocal(existing.id);
 
     // ── units_v1 grant + Piece/Case fixture (#2195) ──────────────────────────────
-    await ensureUnitsFixture(existing.id);
-    console.log(`  ✓ flag.units_v1 granted; ${UNITS_PRODUCT.sku} has Piece + Case x12`);
+    await ensureUnitsFixtureIfLocal(existing.id);
 
     // ── Sweep stale parked drafts left by the web e2e suite ─────────────────────
     // 08-create-order-escape's ESC tests auto-park REAL drafts ("Order, <name>",
@@ -764,8 +781,7 @@ async function main() {
   await ensureBuyerFixtureIfLocal(tenant.id);
 
   // ── units_v1 grant + Piece/Case fixture (#2195) ────────────────────────────────
-  await ensureUnitsFixture(tenant.id);
-  console.log(`  ✓ flag.units_v1 granted; ${UNITS_PRODUCT.sku} has Piece + Case x12`);
+  await ensureUnitsFixtureIfLocal(tenant.id);
 
   console.log("\n✅ E2E seed complete.\n");
 }
