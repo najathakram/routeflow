@@ -200,6 +200,8 @@ describeDb("D-20 next-delivery pack (C8) — real Postgres", () => {
     await pool?.end();
   }, 120_000);
 
+  const OVERRIDER = "staff-overrider-1";
+
   /** A CONFIRMED order with ONE boxed line sold at pack 12 / $36 per box, and a CHANGE_QTY 24 -> 42 request. */
   async function scenario(tag: string, opts: { onRun: boolean }) {
     const user = await raw.user.create({
@@ -259,7 +261,7 @@ describeDb("D-20 next-delivery pack (C8) — real Postgres", () => {
               priceType: "DISCOUNTED",
               originalPrice: "40",
               overrideReason: "Loyalty deal",
-              overriddenBy: user.id,
+              overriddenBy: OVERRIDER, // a DISTINCT id (plain String, no FK): create() must not stamp the approver
               position: 0,
             },
           ],
@@ -278,7 +280,7 @@ describeDb("D-20 next-delivery pack (C8) — real Postgres", () => {
         payload: { orderItemId: line.id, newQty: 42 }, // 18 more pieces
       },
     });
-    return { order, line, product, cr, user };
+    return { order, line, product, cr };
   }
 
   const resolve = (orderId: string, crId: string, action: ChangeRequestResolveAction) =>
@@ -287,7 +289,7 @@ describeDb("D-20 next-delivery pack (C8) — real Postgres", () => {
     );
 
   it("NEXT DELIVERY after a repack 12 -> 6 AND a price change $36 -> $18: the copy keeps the source pack AND price; money is computeLineSubtotal at the source pack and price", async () => {
-    const { order, product, cr, user } = await scenario("nd", { onRun: false });
+    const { order, product, cr } = await scenario("nd", { onRun: false });
     // AFTER the sale the product is repacked AND repriced: live pack 12 -> 6, live price $36 -> $18 per box
     await raw.product.update({
       where: { id: product.id },
@@ -304,7 +306,7 @@ describeDb("D-20 next-delivery pack (C8) — real Postgres", () => {
     expect(copy.priceType).toBe("DISCOUNTED"); // the source's type, never relabelled STANDARD
     expect(Number(copy.originalPrice)).toBe(40); // and its original price, not null
     expect(copy.overrideReason).toBe("Loyalty deal"); // the audit trail rides with the carried price
-    expect(copy.overriddenBy).toBe(user.id);
+    expect(copy.overriddenBy).toBe(OVERRIDER);
     expect(Number(copy.qty)).toBe(18);
     expect(copy.boxes).toBe(1);
     expect(copy.pieces).toBe(6);
