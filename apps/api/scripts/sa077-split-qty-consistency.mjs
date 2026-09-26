@@ -23,6 +23,7 @@
 // Exit: 0 always when the query ran (a report, never a gate) · 2 env/connection error.
 import pg from "pg";
 import { isLocalDbTarget } from "./lib/local-db-target.cjs";
+import { requireLocalPgConfig } from "./lib/local-pg-config.mjs";
 import { redactUrl, resolveDatabaseUrl } from "./lib/railway-db-url.mjs";
 
 const SPLIT_DISAGREES_SQL = `
@@ -54,7 +55,7 @@ async function main() {
     throw new Error(`--local refuses a non-local host (${redactUrl(url)})`);
   }
   console.log(`sa077-split-qty-consistency: target ${redactUrl(url)} READ ONLY`);
-  const client = new pg.Client({ connectionString: url });
+  const client = new pg.Client(local ? requireLocalPgConfig(url) : { connectionString: url });
   await client.connect();
   try {
     await client.query("BEGIN TRANSACTION READ ONLY");

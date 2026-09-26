@@ -44,14 +44,15 @@ const callCount = (text: string) => (strip(text).match(CALL) ?? []).length;
 type Role = "writer" | "recompute";
 // Single-call files only — orders.service.ts carries BOTH a writer and a recompute call (one file,
 // two roles, two computeCategoryTax( occurrences) and is pinned separately below instead of here.
-// B662: invoices.service.ts's recompute (applyPriceAdjustment) moved to price-adjustment-ledger.ts, so
-// invoices.service.ts is now a single-writer file and the extracted helper is the recompute site.
+// B662: invoices.service.ts's recompute (applyPriceAdjustment) moved to price-adjustment-ledger.ts, and
+// #2083 moved its writer (update()'s fresh snapshot) to invoice-edit-plan.ts, so invoices.service.ts
+// carries no computeCategoryTax( call; the two extracted helpers are the writer and recompute sites.
 const ALLOWLIST: { file: string; count: number; role: Role }[] = [
   { file: "invoices/invoice-unit-line.ts", count: 1, role: "writer" }, // buildInvoiceUnitLine
   { file: "invoices/manual-invoice-lines.ts", count: 1, role: "writer" }, // buildManualInvoiceLines
   { file: "order-templates/order-templates.service.ts", count: 1, role: "writer" }, // standing-order line gen
   { file: "orders/unit-line-build.ts", count: 1, role: "writer" }, // categoryTaxForLine
-  { file: "invoices/invoices.service.ts", count: 1, role: "writer" }, // update() rebuilds lines from the live category (D6)
+  { file: "invoices/invoice-edit-plan.ts", count: 1, role: "writer" }, // update()'s fresh snapshot (moved from invoices.service.ts, #2083)
   { file: "invoices/price-adjustment-ledger.ts", count: 1, role: "recompute" }, // buildPriceAdjustmentUpdates (B662)
 ];
 const TWO_ROLE_FILES = [

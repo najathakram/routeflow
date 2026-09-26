@@ -143,7 +143,7 @@ const INVENTORY: Record<string, Row> = {
     kind: "GUARDED",
     needs: "assertInvoiceRewriteAllowed",
     why: "delete-and-recreate re-split at the live pack",
-    trioVia: ["categoryTaxSnapshotOf"],
+    trioVia: ["buildEditedLines"],
   },
   "invoices/invoices.service.ts::InvoicesService.duplicate": {
     kind: "GUARDED",

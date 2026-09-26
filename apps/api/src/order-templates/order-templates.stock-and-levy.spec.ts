@@ -6,6 +6,8 @@ import { SystemConfigService } from "../system-config/system-config.service";
 import { OrdersService } from "../orders/orders.service";
 import { AuthorizationGuardService } from "../authorizations/authorization-guard.service";
 import { NotificationsService } from "../notifications/notifications.service";
+import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
+import { AuditService } from "../audit/audit.service";
 import { createMockPrisma } from "../testing/prisma-mock";
 import { decrementStockForSale } from "../orders/order-stock";
 import { UserRole } from "@prisma/client";
@@ -77,6 +79,14 @@ describe("OrderTemplatesService — stock decrement + regulated levy on generate
           useValue: {
             sendToCustomer: jest.fn().mockResolvedValue(1),
             sendToUser: jest.fn().mockResolvedValue(1),
+          },
+        },
+        { provide: AuditService, useValue: { log: jest.fn().mockResolvedValue(undefined) } },
+        {
+          provide: SellingRestrictionsService,
+          useValue: {
+            assertLinesSellable: jest.fn().mockResolvedValue(undefined),
+            checkLinesSellable: jest.fn().mockResolvedValue({ outcome: "ALLOW", reasons: [] }),
           },
         },
       ],
@@ -199,6 +209,14 @@ describe("OrderTemplatesService — stock decrement + regulated levy on generate
             useValue: {
               sendToCustomer: jest.fn().mockResolvedValue(1),
               sendToUser: jest.fn().mockResolvedValue(1),
+            },
+          },
+          { provide: AuditService, useValue: { log: jest.fn().mockResolvedValue(undefined) } },
+          {
+            provide: SellingRestrictionsService,
+            useValue: {
+              assertLinesSellable: jest.fn().mockResolvedValue(undefined),
+              checkLinesSellable: jest.fn().mockResolvedValue({ outcome: "ALLOW", reasons: [] }),
             },
           },
         ],

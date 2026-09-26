@@ -15,5 +15,5 @@
     "packages": 0
   },
   "fileCount": 1045,
-  "notes": "**2026-09-25 — B861 numbering continuity landed (#2170, dd33057a; docs-only bookkeeping).** `api/feature-modules-6.md` B861 bullet refreshed to the merged shapes: year-0 `0*` scan, CAS on plain columns with `expectedNextNumber` required, `mintConfigured` `FOR UPDATE` on the year-0 row, DTO `next ≤ 999,999,999`, web `Extract<>` type, `seedFromSource` deleted. Lessons L-217/L-218 minted. No source changed. See CHANGELOG.md for the full landing list."
+  "notes": "**2026-09-26 — windows D/E landed (docs-only bookkeeping).** `api/feature-modules-7.md` gains a \"Landing batch 2026-09-26\" section: #2152 lock order + tx-retry, #2172 price-adjustment ledger, #2161 next-delivery pack snapshot, #2150 uncategorised-lines report, #2130 at-door ceiling, #2142 buyer tracking + rooms, #2162 local super-admin. Lessons L-219..L-222 minted. No source changed. See CHANGELOG.md for the full landing list."
 }
