@@ -133,6 +133,10 @@ export { formatCountList, parsePackSizeDetailed, suggestPackSize } from "./pack-
 
 export * from "./trip-grouping";
 
+// ─── Post-delivery invoice prompt (#2089) ─────────────────────────────────────
+
+export * from "./post-delivery-invoice-prompt";
+
 // ─── Shared API DTOs + Prisma-enum parity (wave E / imp-10b) ──────────────────
 //
 // Request/response shapes duplicated identically (or near-identically) between

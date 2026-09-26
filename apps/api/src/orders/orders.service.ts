@@ -7,9 +7,15 @@ import {
   Logger,
   NotFoundException,
   OnApplicationBootstrap,
+  Optional,
   ServiceUnavailableException,
 } from "@nestjs/common";
 import { LeaderCron } from "../common/cron-lock";
+import { InlineReturnsService } from "../returns/inline-returns.service";
+import * as inlineReturn from "./order-inline-return";
+import { prepareInlineReturn, replayAfterCheck } from "./order-inline-return";
+import { reserveInlineReturnNumber as reserveReturnNo } from "./order-inline-return";
+import { applyInlineReturnInTx as applyReturn } from "./order-inline-return";
 import { InjectQueue } from "@nestjs/bull";
 import type { Queue } from "bull";
 import { PrismaService } from "../prisma/prisma.service";
@@ -30,16 +36,11 @@ import {
   type PromotionRule,
 } from "@routeflow/pricing";
 import { lockRowsNoWait, withAdvisoryLock, type LockMode } from "../common/db-locks";
-import { retryOnTxConflict } from "../common/tx-retry";
+import { retryOnTxConflict, txConflictState } from "../common/tx-retry";
 import { assertMoneyInvariantsOrThrow } from "../common/money-invariants.util";
 import { atStopConflict } from "./at-stop-conflicts";
 import { sourceLineFor, type SourceLines } from "./source-line";
-import {
-  LOCK_UNAVAILABLE,
-  LOCK_UNAVAILABLE_MESSAGE,
-  isMergeContention,
-  mapLockError,
-} from "./merge-contention";
+import { assertMergeLockAcquired, isMergeContention, mapLockError } from "./merge-contention";
 import {
   OrderStatus,
   UserRole,
@@ -62,6 +63,7 @@ import {
   IDEMPOTENCY_KEY_CONFLICT,
   IDEMPOTENCY_REPLAY_NEEDS_RECONCILE,
   shouldSkipInPlaceResync,
+  findOrderIdByKeyCheckingReturn as findOrderIdByKey,
 } from "./merge-idempotency";
 import { BUYER_EDIT_CLOSED_STATUSES, computeEditWindow } from "./edit-window";
 import { cancelImpact } from "./order-cancel-impact";
@@ -125,6 +127,14 @@ import * as unitLines from "./unit-line-build";
 import * as unitEdit from "./unit-line-edit";
 import { loadCategoryMapForProducts } from "./category-map";
 import { assertBuyerCartPricesCurrent } from "./buyer-cart-price-check";
+import { reportPackWarnings } from "./merge-pack-warnings";
+import {
+  warnBannedMergedLines,
+  type MergeLosers,
+  type MergePush,
+  type MergeWarnOpts,
+  type MergeWinner,
+} from "./merge-restriction-warning";
 import { collectUnlistedLoserItems } from "./merge-unlisted-lines";
 import { restrictionChannelForPrincipal } from "../selling-restrictions/selling-restrictions.core";
 import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
@@ -186,6 +196,8 @@ export class OrdersService implements OnApplicationBootstrap {
     // and regulated-filing-cron) so every forTenant() call inside the merge resolves
     // that tenant's own config/data, never another tenant's.
     private readonly tenantCtx: TenantContextService,
+    // #2094: optional so unrelated specs build; `inlineReturn` without it fails closed.
+    @Optional() private readonly inlineReturns?: InlineReturnsService,
   ) {}
 
   /**
@@ -635,8 +647,9 @@ export class OrdersService implements OnApplicationBootstrap {
       lockMode?: LockMode;
       onPackMismatch?: (warnings: MergeWarning[]) => void;
       onLivePackFallback?: (warnings: MergeWarning[]) => void;
-    },
+    } & MergeWarnOpts,
   ) {
+    let after: MergePush; // F-05: the push runs after the lock is released
     try {
       const result = await withAdvisoryLock(
         {
@@ -737,24 +750,7 @@ export class OrdersService implements OnApplicationBootstrap {
           // SA-124: split by kind — a genuine disagreement (packMismatch) and a box-unaware
           // contribution with no snapshot resolved via the live product pack (livePackFallback,
           // SA-101(a) branch 4) are independent conditions with their own message and counter.
-          const mismatchWarnings = packWarnings.filter((w) => w.kind === "packMismatch");
-          const livePackWarnings = packWarnings.filter((w) => w.kind === "livePackFallback");
-          if (mismatchWarnings.length > 0) {
-            for (const w of mismatchWarnings) {
-              this.logger.warn(
-                `mergeAllPendingForCustomer: order ${winner.id} product ${w.productId} contributing lines disagree on pack [${w.packs.join(", ")}] — kept as separate lines, never folded (B776)`,
-              );
-            }
-            opts?.onPackMismatch?.(mismatchWarnings);
-          }
-          if (livePackWarnings.length > 0) {
-            for (const w of livePackWarnings) {
-              this.logger.warn(
-                `mergeAllPendingForCustomer: order ${winner.id} product ${w.productId} had no pack snapshot on any contributing line — resolved via the live product pack [${w.packs.join(", ")}] (B776)`,
-              );
-            }
-            opts?.onLivePackFallback?.(livePackWarnings);
-          }
+          reportPackWarnings(this.logger, "merge", winner.id, packWarnings, opts);
 
           await this.prisma.tenantTransaction(async (tx) => {
             // 1/2. Apply every pack-group write: an UPDATE onto the winner's own existing line
@@ -878,6 +874,10 @@ export class OrdersService implements OnApplicationBootstrap {
           this.logger.log(
             `Merged ${losers.length} PENDING order(s) into ${winner.id} for customer ${customerId}`,
           );
+          after = await this.warnMergedBanned(winner, losers, customerId, {
+            ...opts,
+            actor: opts?.actor ?? (options.buyerInitiated ? { type: "BUYER" } : null),
+          });
 
           return this.prisma.forTenant().order.findUnique({
             where: { id: winner.id },
@@ -894,19 +894,35 @@ export class OrdersService implements OnApplicationBootstrap {
       // `wait` it is defensive only (that mode either acquires or throws). Either way it carries
       // the same coded body as mapLockError's 503, so `isMergeContention` (the sweep, every
       // post-commit caller) recognises it identically and defers.
-      if (!result.acquired) {
-        throw new ServiceUnavailableException({
-          code: LOCK_UNAVAILABLE,
-          message: LOCK_UNAVAILABLE_MESSAGE,
-        });
-      }
+      assertMergeLockAcquired(result);
+      // The push runs here, after the lock is released. If the winner's post-warn re-read (inside the lock)
+      // throws, `after` is never assigned and the push is lost: the AuditLog row is then the durable trace.
+      await after?.();
       return result.value;
     } catch (e) {
       mapLockError(e);
     }
   }
 
-  async forceConsolidateCustomer(customerId: string) {
+  /** F-05 (SA-255): merge-and-warn — never blocks, see merge-restriction-warning.ts. */
+  private warnMergedBanned(
+    winner: MergeWinner,
+    losers: MergeLosers,
+    customerId: string,
+    o: MergeWarnOpts = {},
+  ) {
+    const deps = {
+      restrictions: this.sellingRestrictions,
+      prisma: this.prisma,
+      notifications: this.notifications,
+      warn: (m: string) => this.logger.warn(m),
+    };
+    const tenantId = () => this.restrictionTenantId(undefined, winner.tenantId);
+    return warnBannedMergedLines(deps, { tenantId, customerId, winner, losers, ...o });
+  }
+
+  async forceConsolidateCustomer(customerId: string, opts?: MergeWarnOpts) {
+    let after: MergePush;
     try {
       const result = await withAdvisoryLock(
         { family: "order-merge", key: customerId, mode: "wait", waitMs: 20_000 },
@@ -989,18 +1005,7 @@ export class OrdersService implements OnApplicationBootstrap {
             },
           );
           // SA-124: see mergeAllPendingForCustomer — split by kind, independent conditions.
-          const mismatchWarnings = packWarnings.filter((w) => w.kind === "packMismatch");
-          const livePackWarnings = packWarnings.filter((w) => w.kind === "livePackFallback");
-          for (const w of mismatchWarnings) {
-            this.logger.warn(
-              `forceConsolidateCustomer: order ${winner.id} product ${w.productId} contributing lines disagree on pack [${w.packs.join(", ")}] — kept as separate lines, never folded (B776)`,
-            );
-          }
-          for (const w of livePackWarnings) {
-            this.logger.warn(
-              `forceConsolidateCustomer: order ${winner.id} product ${w.productId} had no pack snapshot on any contributing line — resolved via the live product pack [${w.packs.join(", ")}] (B776)`,
-            );
-          }
+          const counts = reportPackWarnings(this.logger, "consolidate", winner.id, packWarnings);
 
           await this.prisma.tenantTransaction(async (tx) => {
             for (const write of mergeWrites) {
@@ -1115,8 +1120,9 @@ export class OrdersService implements OnApplicationBootstrap {
           });
 
           this.logger.log(
-            `forceConsolidateCustomer: merged ${losers.length} order(s) into ${winner.id} for customer ${customerId}, ${mismatchWarnings.length} pack mismatch(es), ${livePackWarnings.length} live-pack fallback(s)`,
+            `forceConsolidateCustomer: merged ${losers.length} order(s) into ${winner.id} for customer ${customerId}, ${counts.mismatch} pack mismatch(es), ${counts.livePack} live-pack fallback(s)`,
           );
+          after = await this.warnMergedBanned(winner, losers, customerId, opts);
           return this.prisma.forTenant().order.findUnique({
             where: { id: winner.id },
             include: {
@@ -1129,12 +1135,8 @@ export class OrdersService implements OnApplicationBootstrap {
         },
       );
       // Defensive: see mergeAllPendingForCustomer — same coded 503 body.
-      if (!result.acquired) {
-        throw new ServiceUnavailableException({
-          code: LOCK_UNAVAILABLE,
-          message: LOCK_UNAVAILABLE_MESSAGE,
-        });
-      }
+      assertMergeLockAcquired(result);
+      await after?.();
       return result.value;
     } catch (e) {
       mapLockError(e);
@@ -1296,92 +1298,10 @@ export class OrdersService implements OnApplicationBootstrap {
     idempotencyKey: string,
     customerId: string,
     requestHash?: string,
+    returnKey?: string,
   ): Promise<{ orderId: string; verified: boolean } | null> {
-    // B215: `forTenant()` hands back the UNSCOPED client when the session carries no tenant
-    // (prisma.service.ts `forTenant`), so for such a caller the lookups below would search
-    // every tenant's rows. Refuse up front — before any read and before the controller enters
-    // the fold — mirroring the identical guard in `create()`. `recordMergeIdempotencyKey`
-    // keeps the same check as the fail-closed backstop inside the fold's transaction.
-    if (!this.prisma.getTenantId()) {
-      this.logger.warn(`idempotency key refused: no tenant scope key=${idempotencyKey}`);
-      throw new ForbiddenException("Idempotency-Key requires a tenant-scoped session");
-    }
-    // B215: every staff merge wave records its OWN key in OrderIdempotencyKey (written inside
-    // the fold's transaction by recordMergeIdempotencyKey), so that table is the authoritative
-    // replay store for the merge branch. Scoped to THIS customer through the order relation —
-    // the key is client-chosen, so a bare match could replay onto another customer's order.
-    const keyed = await this.prisma.forTenant().orderIdempotencyKey.findFirst({
-      where: { key: idempotencyKey, order: { customerId } },
-      select: { orderId: true, responseHash: true },
-    });
-    if (keyed) {
-      if (requestHash !== undefined && keyed.responseHash !== requestHash) {
-        this.logger.warn(
-          `idempotency replay refused: cart mismatch tenant=${this.prisma.getTenantId()} ` +
-            `customer=${customerId} order=${keyed.orderId} key=${idempotencyKey}`,
-        );
-        // B215: machine-readable body — the mobile client cannot mint a fresh key without
-        // abandoning the cart, so it needs `orderId` to offer "Open order" instead of wedging
-        // the screen on a bare message.
-        throw new ConflictException({
-          code: IDEMPOTENCY_KEY_CONFLICT,
-          reason: "CART_MISMATCH",
-          orderId: keyed.orderId,
-          message:
-            "Idempotency-Key reused with a different cart — open the existing order to edit it, or retry it unchanged",
-        });
-      }
-      // VERIFIED only when a fingerprint was supplied AND matched: a caller that passes no
-      // `requestHash` (the db-spec's bare two-argument probe, any future keyless caller) has
-      // proven nothing about the body, so it gets the same unverified treatment as a column hit.
-      return { orderId: keyed.orderId, verified: requestHash !== undefined };
-    }
-    // The single Order column: keys stamped by create() and by recordIdempotencyKey. Unchanged.
-    // B215: deliberately NOT compared against `requestHash` — the column stores no fingerprint,
-    // and its main producer is the create -> retry path (the first POST creates the order and
-    // stamps the key; the retry finds it pending and enters the merge branch). Refusing that
-    // replay for want of a hash would re-open the double-write this fix exists to close, so a
-    // column-only hit is replay-eligible. The key TABLE, which does store the hash, is the only
-    // path that refuses on a mismatch. Pinned by P5.
-    //
-    // B215 (lookup ORDER, D3): this customer-scoped column read runs BEFORE the tenant-wide
-    // `heldByAnotherOrder` check below. Both are "the key exists somewhere in this tenant", but
-    // only this one proves it is THIS customer's own order — checking the tenant-wide table
-    // first refused a legitimate replay of the caller's own key with a 409 whenever the key sat
-    // on the Order column here and any other customer happened to hold a key-table row.
-    const existing = await this.prisma.forTenant().order.findFirst({
-      where: { idempotencyKey, customerId },
-      select: { id: true },
-    });
-    // UNVERIFIED by construction: the column stores no fingerprint, so this hit proves only
-    // "this customer's order already used this key", never "with this cart".
-    if (existing) return { orderId: existing.id, verified: false };
-    // B215: the key may already belong to ANOTHER customer's order in this tenant. The in-tx
-    // insert catches that through `@@unique([tenantId, key])`, but only after
-    // `revertLinkedInvoicesForOrderEdit` has committed on its own connection (outside the fold)
-    // and the whole fold has run — so a 409 there leaves a linked invoice flipped SENT -> DRAFT
-    // for an edit that never landed. Refuse here instead: this lookup runs inside the customer
-    // advisory lock, before any write. The P2002 branch of `recordMergeIdempotencyKey` stays as
-    // the backstop for a true race (a customer-keyed lock does not serialize against another
-    // customer's fold).
-    const heldByAnotherOrder = await this.prisma.forTenant().orderIdempotencyKey.findFirst({
-      where: { key: idempotencyKey },
-      select: { orderId: true },
-    });
-    if (heldByAnotherOrder) {
-      this.logger.warn(
-        `idempotency key already held by another order: refused before the fold ` +
-          `tenant=${this.prisma.getTenantId()} customer=${customerId} ` +
-          `order=${heldByAnotherOrder.orderId} key=${idempotencyKey}`,
-      );
-      throw new ConflictException({
-        code: IDEMPOTENCY_KEY_CONFLICT,
-        reason: "HELD_BY_OTHER_ORDER",
-        orderId: heldByAnotherOrder.orderId,
-        message: "Idempotency-Key already used for a different order",
-      });
-    }
-    return null;
+    const deps = { prisma: this.prisma, logger: this.logger };
+    return findOrderIdByKey(deps, idempotencyKey, customerId, requestHash, returnKey);
   }
 
   /**
@@ -1401,7 +1321,7 @@ export class OrdersService implements OnApplicationBootstrap {
    * whose own column-stamped order was sitting right there (the same D3 ordering bug already
    * fixed in `findOrderIdByIdempotencyKey`).
    */
-  private async findReplayCandidateByKey(idempotencyKey: string, customerId: string) {
+  async findReplayCandidateByKey(idempotencyKey: string, customerId: string) {
     const include = {
       customer: { select: { id: true, businessName: true } },
       lineItems: { include: { product: { select: { id: true, name: true, unit: true } } } },
@@ -1505,6 +1425,7 @@ export class OrdersService implements OnApplicationBootstrap {
     // customer is known; the P2002 branch further down catches the narrow
     // concurrent-race window that pre-check can't.
     const idempotencyKey = (dto as any).idempotencyKey as string | undefined;
+    const inlineRet = await prepareInlineReturn(this.inlineReturns, dto.inlineReturn, user);
     // The key is stored under @@unique([tenantId, idempotencyKey]) and every
     // lookup rides forTenant(), which hands back the UNSCOPED client when the
     // caller carries no tenant (SUPER_ADMIN — admitted here by RolesGuard's
@@ -1663,7 +1584,7 @@ export class OrdersService implements OnApplicationBootstrap {
             );
           }
         }
-        return existing;
+        return replayAfterCheck(this.prisma.forTenant(), inlineRet, existing);
       }
     }
 
@@ -2104,10 +2025,14 @@ export class OrdersService implements OnApplicationBootstrap {
     const MAX_RETRIES = 3;
     const unitOrder = lineItemsData.some((li) => "unitLabel" in li); // units_v1: never auto-merged
     let order: any;
+    let inlineMinted: any = null;
+    const twin = await reserveReturnNo(inlineRet, customerId, user, idempotencyKey, this as any);
+    if (twin) return twin;
     for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
       try {
         order = await this.prisma.tenantTransaction(
           async (tx) => {
+            await inlineReturn.lockInlineReturnCustomer(tx, inlineRet, customerId); // advisory FIRST
             // RF-014: generate the order number inside the transaction so a P2002 on
             // @@unique([tenantId, orderNumber]) is retried with a fresh value. B587: the NUMERIC
             // maximum over conforming `ORD-<digits>` numbers only (see order-number.ts). Minted BEFORE the
@@ -2131,7 +2056,7 @@ export class OrdersService implements OnApplicationBootstrap {
               await this.decrementStockForSale(tx, stockLines, isStaffRole);
             }
 
-            return tx.order.create({
+            const created = await tx.order.create({
               data: {
                 customerId,
                 orderNumber,
@@ -2151,7 +2076,8 @@ export class OrdersService implements OnApplicationBootstrap {
                 // merge set in BOTH directions regardless of what the caller asked for:
                 // as a loser the sweep hard-deletes it (its orderDate and order number
                 // are gone), as a winner it absorbs items that belong to another day.
-                skipAutoMerge: orderDate != null || !!options.skipAutoMerge || unitOrder,
+                skipAutoMerge:
+                  orderDate != null || !!options.skipAutoMerge || unitOrder || !!inlineRet,
                 // Phase 4 (W4): denormalized flag — true when any line is regulated.
                 hasRegulated: lineItemsData.some((li) => li.trackedCategoryId != null),
                 requestedDeliveryDate: dto.requestedDeliveryDate
@@ -2172,6 +2098,13 @@ export class OrdersService implements OnApplicationBootstrap {
                 },
               },
             });
+            inlineMinted = await applyReturn(tx, inlineRet, {
+              customerId,
+              orderId: created.id,
+              user,
+              orderRouteRunId: resolvedRouteRunId ?? dto.routeRunId,
+            });
+            return created;
           },
           // B116 (REG-B116): bound the stock transaction instead of leaving it
           // uncapped — an unbounded interactive transaction can hold the
@@ -2203,17 +2136,22 @@ export class OrdersService implements OnApplicationBootstrap {
             if (existing && existing.customerId !== customerId) {
               throw new ConflictException("Idempotency-Key already used for a different order");
             }
-            if (existing) return existing;
+            if (existing) return replayAfterCheck(this.prisma.forTenant(), inlineRet, existing);
           }
           // Retry only on orderNumber unique-constraint violations (RF-014);
           // propagate all other errors immediately (including ConflictException
           // for OOS items from RF-017).
           if (attempt < MAX_RETRIES - 1) continue;
         }
+        if (inlineRet && txConflictState(e) && attempt < MAX_RETRIES - 1) {
+          await inlineReturn.conflictBackoff(attempt);
+          continue;
+        }
         throw e;
       }
     }
 
+    inlineReturn.emitInlineReturnCredit(inlineRet, this.prisma.getTenantId(), inlineMinted);
     // If driver is creating at a stop, link order to route run and optionally confirm it
     if (dto.routeRunId || dto.routeRunStopId) {
       await this.prisma.forTenant().order.update({
@@ -3027,6 +2965,8 @@ export class OrdersService implements OnApplicationBootstrap {
     if (order.status === "CANCELLED") {
       throw new BadRequestException("Items can't be edited on a cancelled order");
     }
+    const inlineRet = await prepareInlineReturn(this.inlineReturns, dto.inlineReturn, user);
+    let inlineMinted: any = null; // #2094: emitted after the commit
     // units_v1: every branch below re-derives factor + price from the LIVE product (see the guard).
     await unitAware.assertOrderEditAllowed(order, dto, user, () =>
       this.prisma.forTenant().customer.findFirst({ where: { userId: user?.sub, deletedAt: null } }),
@@ -3105,6 +3045,7 @@ export class OrdersService implements OnApplicationBootstrap {
     // a paid one throws cleanly before any mutation so money never detaches from a sent
     // document. No-op when there's no such invoice.
     const postDeliveryEdit = POST_DELIVERY_EDIT_STATUSES.includes(order.status);
+    await inlineReturn.preflightInlineReturn(inlineRet, order, user);
     if (!postDeliveryEdit) {
       await this.invoicesService.revertLinkedInvoicesForOrderEdit(orderId);
     }
@@ -3160,6 +3101,8 @@ export class OrdersService implements OnApplicationBootstrap {
     // must not issue a non-transactional query from in there.
     const creditCheckEnabled = await this.isCreditLimitCheckEnabled();
 
+    await inlineReturn.reserveEditReturnNumber(inlineRet); // #2094: after every refusal above
+
     // P5-08b: the entire mutation phase — item writes, totals recompute, the
     // stock/credit guards, and the order-header update — runs in ONE tenant
     // transaction. A guard violation (or any failure) rolls back every item
@@ -3168,7 +3111,9 @@ export class OrdersService implements OnApplicationBootstrap {
     // totals/line set (not a pre-mutation simulation), so there is no second
     // pricing formula to drift. reconcileOrderDraftInvoice and
     // appendOrderRevision stay OUTSIDE (after commit), unchanged.
-    const { subtotal, tax, total, shouldRevert, shippingFee } = await this.prisma.tenantTransaction(
+    const { subtotal, tax, total, shouldRevert, shippingFee } = await inlineReturn.runEditTx(
+      inlineRet,
+      this.prisma,
       async (tx: any) => {
         // WP1/F2: serialize concurrent edits of ONE order, then snapshot its
         // pre-edit lines INSIDE the transaction. `order` above was read before
@@ -3178,6 +3123,7 @@ export class OrdersService implements OnApplicationBootstrap {
         // inventory error, not just a lost update. The row lock makes the
         // second writer wait; heldItems is then read post-lock and BEFORE any
         // orderItem write below, so it is the true pre-edit state.
+        await inlineReturn.lockInlineReturnCustomer(tx, inlineRet, order.customerId); // advisory FIRST
         await tx.$executeRaw`SELECT id FROM "Order" WHERE id = ${orderId} FOR UPDATE`;
         const heldItems = await tx.orderItem.findMany({
           where: { orderId },
@@ -4411,25 +4357,28 @@ export class OrdersService implements OnApplicationBootstrap {
         // OUT_FOR_DELIVERY orders too (R1 allows editing them) — a qty
         // increase there means more goods physically went out, symmetric with
         // create()'s decrement at order time.
+        let creditGate: (() => Promise<void>) | null = null; // re-run after an inline return (SA-221)
         if (order.status !== "DRAFT") {
           await this.settleStockForEdit(tx, order, heldItems, activeItems, user);
-          await assertWithinCreditLimit(
-            tx,
-            order.customerId,
-            orderId,
-            // The exact total the order.update below writes — Σ of stored
-            // computeLineSubtotal results + regular tax + category tax, cents-
-            // rounded. Note: mirrors the existing edit recompute, which
-            // (pre-existing) does not subtract Order.discountAmount.
-            total,
-            creditCheckEnabled,
-            // B577: do the issued invoices survive this edit? Only a delivered, partially invoiced
-            // order (re-sync skipped) is SURE to; pre-delivery a deposit mirror is rewritten.
-            {
-              invoicesSurviveEdit:
-                postDeliveryEdit && shouldSkipInPlaceResync(order.lineItems ?? []),
-            },
-          );
+          creditGate = () =>
+            assertWithinCreditLimit(
+              tx,
+              order.customerId,
+              orderId,
+              // The exact total the order.update below writes — Σ of stored
+              // computeLineSubtotal results + regular tax + category tax, cents-
+              // rounded. Note: mirrors the existing edit recompute, which
+              // (pre-existing) does not subtract Order.discountAmount.
+              total,
+              creditCheckEnabled,
+              // B577: do the issued invoices survive this edit? Only a delivered, partially invoiced
+              // order (re-sync skipped) is SURE to; pre-delivery a deposit mirror is rewritten.
+              {
+                invoicesSurviveEdit:
+                  postDeliveryEdit && shouldSkipInPlaceResync(order.lineItems ?? []),
+              },
+            );
+          await creditGate();
         }
 
         // Revert a CONFIRMED order back to PENDING when items are edited so the office
@@ -4468,12 +4417,20 @@ export class OrdersService implements OnApplicationBootstrap {
         if (opts?.idempotency) {
           await this.recordMergeIdempotencyKey(tx, orderId, opts.idempotency);
         }
+        // #2094: the return lands in THIS tx after the new total; the gate re-reads (SA-221 c3).
+        inlineMinted = await applyReturn(tx, inlineRet, {
+          customerId: order.customerId,
+          orderId,
+          user,
+        });
+        if (inlineRet && creditGate) await creditGate();
         return { subtotal, tax, total, shouldRevert, shippingFee };
       },
       // Headroom over Prisma's 5s default: the merge branch issues per-line
       // queries inside the transaction (same shape as create()'s in-tx per-line work).
       { timeout: 15_000 },
     );
+    inlineReturn.emitInlineReturnCredit(inlineRet, this.prisma.getTenantId(), inlineMinted);
 
     // R1b SAFETY (two adversarial-review catches): a PARTIALLY-invoiced order must NOT
     // be auto-resynced — rebuilding its finalized/paid invoice at the full order qty

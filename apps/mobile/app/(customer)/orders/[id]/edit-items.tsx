@@ -12,11 +12,14 @@ import {
   useBuyerUpdateOrderItems,
 } from "../../../../lib/api/buyer";
 import { showToast } from "../../../../lib/toast";
+import { invoiceLineUnitNoun } from "../../../../lib/invoice-line-display";
 
 type DraftItem = {
   productId: string;
   name: string;
   unit?: string;
+  /** units_v1: the line's own selling unit (Case, Pallet, Piece…) — null = the pack (#2222). */
+  unitLabel?: string | null;
   qty: number;
   unitPrice: number;
 };
@@ -44,6 +47,7 @@ export default function BuyerEditItemsScreen() {
               productId: li.productId,
               name: li.product?.name ?? "Product",
               unit: li.product?.unit,
+              unitLabel: li.unitLabel,
               qty: Number(li.qty),
               unitPrice: Number(li.unitPrice),
             },
@@ -136,7 +140,12 @@ export default function BuyerEditItemsScreen() {
                   </Text>
                   <Text style={styles.itemPrice}>
                     ${item.unitPrice.toFixed(2)}
-                    {item.unit ? ` / ${item.unit}` : ""}
+                    {/* #2222: a units_v1 line's price is per ITS unit, never the live product.unit. */}
+                    {item.unitLabel?.trim()
+                      ? ` / ${invoiceLineUnitNoun(item)}`
+                      : item.unit
+                        ? ` / ${item.unit}`
+                        : ""}
                   </Text>
                 </View>
                 <View style={styles.qtyRow}>

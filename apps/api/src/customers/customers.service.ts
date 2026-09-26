@@ -1,3 +1,5 @@
+import { restoredUsernameFor } from "./restore-username";
+import { resumeSchedulesOnRestore } from "../recurring-invoices/recurring-schedule";
 import {
   BadRequestException,
   ConflictException,
@@ -2134,7 +2136,12 @@ export class CustomersService {
    * cross-tenant ids (returns null → NotFound), preventing a tenant-isolation
    * oracle.
    */
-  async restoreCustomer(id: string, restoreStatus?: string, overrideUsername?: string) {
+  async restoreCustomer(
+    id: string,
+    restoreStatus?: string,
+    overrideUsername?: string,
+    actorUserId?: string,
+  ) {
     const customer = await this.prisma.forTenant().customer.findUnique({
       where: { id },
       select: {
@@ -2167,18 +2174,14 @@ export class CustomersService {
     // email always lived on Customer.email (untouched by the delete), so restoring it here
     // is correct whether or not this row was ever tombstoned; a customer created with no
     // email gets a fresh placeholder, same as create() mints for one today.
-    const tombstoneSuffix = `~removed~${id.slice(0, 8)}`;
-    const currentUsername = customer.user.username;
-    const restoredUsername =
-      overrideUsername ||
-      (currentUsername.endsWith(tombstoneSuffix)
-        ? currentUsername.slice(0, -tombstoneSuffix.length)
-        : currentUsername);
+    const restoredUsername = restoredUsernameFor(id, customer.user.username, overrideUsername);
     const restoredEmail = customer.email ?? `no-email+${crypto.randomUUID()}@placeholder.local`;
 
     try {
       await this.prisma.tenantTransaction(async (tx) => {
         await tx.customer.update({ where: { id }, data: { deletedAt: null } });
+        // F-05 (SA-290): a restore ends a pause — resume its templates from the next occurrence, not a make-up
+        await resumeSchedulesOnRestore(tx, customer, actorUserId);
 
         // F6: a live user may have since claimed this customer's real email (a fresh
         // signup, or another restore) while this one was removed. tx is already
