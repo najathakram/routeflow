@@ -34,13 +34,7 @@ import { retryOnTxConflict } from "../common/tx-retry";
 import { assertMoneyInvariantsOrThrow } from "../common/money-invariants.util";
 import { atStopConflict } from "./at-stop-conflicts";
 import { sourceLineFor, type SourceLines } from "./source-line";
-import {
-  LOCK_UNAVAILABLE,
-  LOCK_UNAVAILABLE_MESSAGE,
-  assertMergeLockAcquired,
-  isMergeContention,
-  mapLockError,
-} from "./merge-contention";
+import { assertMergeLockAcquired, isMergeContention, mapLockError } from "./merge-contention";
 import {
   OrderStatus,
   UserRole,

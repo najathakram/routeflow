@@ -245,7 +245,7 @@ export const COPIERS: Copier[] = [
     target: "OrderItem",
     anchor: { via: "delegate", model: "orderItem" },
     carried:
-      "productId qty unitPrice subtotal boxes pieces unitsPerBox categoryTaxAmount promoFreeUnits",
+      "productId qty unitPrice subtotal boxes pieces unitsPerBox unitLabel categoryTaxAmount promoFreeUnits",
     reset: "priceType status invoicedQty",
     rederived: "name trackedSubcategoryId",
     na: "deliveredQty overrideReason overriddenBy",
@@ -253,7 +253,6 @@ export const COPIERS: Copier[] = [
       trackedCategoryId: "B767", // CREATE carries categoryTaxAmount without its category attribution
       originalPrice: "unfiled",
       notes: "unfiled",
-      unitLabel: "unfiled",
       position: "unfiled",
       // B297: CREATE carries the invoice lines' categoryTaxAmount but not the trio it was priced at.
       categoryTaxType: "B835",
