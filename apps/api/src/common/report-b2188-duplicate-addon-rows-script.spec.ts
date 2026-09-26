@@ -1,0 +1,84 @@
+import { spawnSync } from "node:child_process";
+import fs from "node:fs";
+import path from "node:path";
+import { LEGACY_ADDON_KEY_TO_SKU } from "../billing/plan-catalog.constants";
+
+// #2188 / SA-385 (6) — apps/api/scripts/report-b2188-duplicate-addon-rows.mjs contract.
+// Read-only, counts only: fails closed without a DB url, carries no write SQL, mirrors the ONE
+// legacy key → sku map exactly, and never lets a tenant id or slug reach its output.
+
+const API_DIR = path.resolve(__dirname, "../..");
+const SCRIPT = path.resolve(API_DIR, "scripts/report-b2188-duplicate-addon-rows.mjs");
+const source = fs.readFileSync(SCRIPT, "utf8");
+
+function codeLines(): string[] {
+  return source
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(
+      (line) =>
+        line !== "" && !line.startsWith("//") && !line.startsWith("*") && !line.startsWith("/*"),
+    );
+}
+
+function node(args: string[], env: NodeJS.ProcessEnv) {
+  return spawnSync(process.execPath, args, {
+    cwd: API_DIR,
+    encoding: "utf8",
+    env,
+    timeout: 60_000,
+  });
+}
+
+describe("report-b2188-duplicate-addon-rows.mjs", () => {
+  it("fails closed with no database url, before connecting", () => {
+    const env: NodeJS.ProcessEnv = { ...process.env };
+    delete env.DATABASE_URL;
+    delete env.DATABASE_PUBLIC_URL;
+    const r = node([SCRIPT], env);
+    expect(r.status).toBe(2);
+  });
+
+  it("sets the session read-only and carries no write-capable SQL", () => {
+    expect(source).toContain("SET default_transaction_read_only = on");
+    const sql = codeLines().join("\n");
+    expect(sql).not.toMatch(/\b(INSERT|UPDATE|DELETE|TRUNCATE|ALTER|DROP|CREATE|GRANT)\b/);
+  });
+
+  it("mirrors LEGACY_ADDON_KEY_TO_SKU exactly (deep-equal parity pin)", () => {
+    const block = source.match(/export const LEGACY_ADDON_KEY_TO_SKU = \{([\s\S]*?)\};/);
+    expect(block).not.toBeNull();
+    const mirror = Object.fromEntries(
+      [...block![1].matchAll(/(\w+):\s*"([A-Z0-9_]+)"/g)].map((m) => [m[1], m[2]]),
+    );
+    expect(mirror).toEqual(LEGACY_ADDON_KEY_TO_SKU);
+  });
+
+  it("summarize labels tenants anonymously and never echoes an id or slug", () => {
+    const rows = [
+      { tenantId: "11111111-aaaa", slug: "acme", code: "MSRP", rows: 2 },
+      { tenantId: "11111111-aaaa", slug: "acme", code: "OCR_PACK_250", rows: 2 },
+      { tenantId: "22222222-bbbb", slug: "globex", code: "MSRP", rows: 3 },
+    ];
+    const r = node(
+      [
+        "--input-type=module",
+        "-e",
+        `import { summarize } from ${JSON.stringify(SCRIPT)};` +
+          `console.log(JSON.stringify(summarize(${JSON.stringify(rows)})));`,
+      ],
+      process.env,
+    );
+    expect(r.status).toBe(0);
+    expect(r.stdout).not.toMatch(/1111|2222|acme|globex/);
+    expect(JSON.parse(r.stdout)).toEqual({
+      tenants: 2,
+      groups: 3,
+      detail: [
+        { tenant: "tenant A", sku: "MSRP", rows: 2 },
+        { tenant: "tenant A", sku: "OCR_PACK_250", rows: 2 },
+        { tenant: "tenant B", sku: "MSRP", rows: 3 },
+      ],
+    });
+  });
+});
