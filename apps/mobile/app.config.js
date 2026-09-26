@@ -14,8 +14,37 @@
 
 const googleMapsApiKey = process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY ?? "";
 
+/**
+ * #2312: a STORE build must never ship with an empty maps key (every map screen would render blank
+ * for reviewers and customers). EAS sets EAS_BUILD_PROFILE while it evaluates this config, so the
+ * production profile fails fast here; local `expo start`, the Railway web export and the internal
+ * APK profiles are unaffected. The owner sets the key as an EAS environment variable
+ * (docs/runbooks/mobile-store-release.md).
+ *
+ * TODO(#2312, owner ruling pending): two store settings wait on a yes/no, see the runbook's
+ * "Pending decisions":
+ *   1. iOS background location: expo-location `isIosBackgroundLocationEnabled: true`
+ *      (lib/location-tracker.native.ts already starts background updates on iOS).
+ *   2. iPad + portrait-only: `ios.infoPlist.UIRequiresFullScreen: true` until #2311 lands.
+ */
+function assertStoreBuildEnv(env = process.env) {
+  if (env.EAS_BUILD_PROFILE === "production" && !env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY) {
+    throw new Error(
+      "EXPO_PUBLIC_GOOGLE_MAPS_API_KEY is not set for the production EAS profile. Set it as an EAS " +
+        "environment variable (see docs/runbooks/mobile-store-release.md) before a store build.",
+    );
+  }
+}
+
 /** @param {{ config: import('@expo/config-types').ExpoConfig }} ctx */
-module.exports = ({ config }) => ({
+module.exports = ({ config }) => {
+  assertStoreBuildEnv();
+  return buildConfig(config);
+};
+module.exports.assertStoreBuildEnv = assertStoreBuildEnv;
+
+/** @param {import('@expo/config-types').ExpoConfig} config */
+const buildConfig = (config) => ({
   ...config,
 
   // ── iOS ──────────────────────────────────────────────────────────────────
