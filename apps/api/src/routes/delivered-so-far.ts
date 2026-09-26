@@ -69,14 +69,20 @@ export function sumDeliveredSoFar(
  * relative Σ (rows beat a stale column, SA-113a); a line with NO row anywhere takes the legacy
  * `deliveredQty ?? 0` — the column IS the evidence for orders delivered before rows existed.
  * "Has rows" is judged BEFORE excluding stop S: a line whose only rows are S's own reads 0
- * (they are excluded), never the column those very rows produced.
+ * (they are excluded), never the column those very rows produced. The column fallback is capped
+ * at the line's `qty` (when given), exactly like `deliveredQtyFromBasis`, so a stale column above
+ * qty never yields a negative remaining and the stepper and billing stay ONE number.
  */
 export function deliveredSoFarForLine(
   rows: RawEvidenceRowWithStop[] | undefined,
   excludeStopId: string | null | undefined,
   columnQty: unknown,
+  qty?: unknown,
 ): number {
-  if (!rows || rows.length === 0) return Math.max(0, Number(columnQty ?? 0));
+  if (!rows || rows.length === 0) {
+    const column = Math.max(0, Number(columnQty ?? 0));
+    return qty != null && Number.isFinite(Number(qty)) ? Math.min(column, Number(qty)) : column;
+  }
   return sumDeliveredSoFar(rows, excludeStopId);
 }
 

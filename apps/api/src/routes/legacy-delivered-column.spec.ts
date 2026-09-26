@@ -108,6 +108,14 @@ describe("SA-345a — deliveredSoFarForLine (the stepper's remaining reads the S
     expect(deliveredSoFarForLine(rows, "s9", 4)).toBe(10);
   });
 
+  it("a stale column above qty is capped at qty (remaining is 0, never negative) — one number with billing", () => {
+    const soFar = deliveredSoFarForLine(undefined, "s9", 90, 60);
+    expect(soFar).toBe(60);
+    expect(60 - soFar).toBe(0);
+    // no qty supplied ⇒ uncapped (the projection/fit-check always supply it)
+    expect(deliveredSoFarForLine(undefined, "s9", 90)).toBe(90);
+  });
+
   it("rows only at the stop being read are excluded and read 0 — NOT the column those rows produced", () => {
     const rows = [
       {
@@ -136,6 +144,14 @@ describe("SA-345a — the projection and the fit-check use the same reader", () 
     const lines = out[0]!.orders[0]!.lineItems as any[];
     expect(lines.find((l) => l.id === "legacy")!.deliveredSoFar).toBe(50);
     expect(lines.find((l) => l.id === "fresh")!.deliveredSoFar).toBe(3);
+  });
+
+  it("attachDeliveredSoFar: a legacy column above qty projects qty (the stepper's remaining is 0, not negative)", () => {
+    const stops = [
+      { id: "s2", orders: [{ id: "o1", lineItems: [{ id: "x", qty: 60, deliveredQty: 90 }] }] },
+    ];
+    const out = attachDeliveredSoFar(stops as any, {});
+    expect((out[0]!.orders[0]!.lineItems as any[])[0].deliveredSoFar).toBe(60);
   });
 
   it("assertDeliveriesFitStop: a legacy line (qty 60, column 50, no rows) has 10 left — 10 fits, 11 is refused", async () => {

@@ -90,6 +90,7 @@ export async function assertDeliveriesFitStop(
       evidenceByLine[item.orderId]?.[item.id],
       stopId,
       item.deliveredQty,
+      item.qty,
     );
     // SA-151 review: clamp at 0 — a data anomaly (deliveredSoFar > qty, e.g. a manual DB fix)
     // must never surface as a negative "remaining", which would make the bound below nonsensical.
