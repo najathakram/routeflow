@@ -836,7 +836,10 @@ export default defineConfig({
     // Create-order dialog mobile pan (#2080, P0): the dialog body's own
     // scrollWidth/clientWidth stays 0 at 320/375/390/430 under a model of iOS
     // WebKit's post-cascade date-input sizing (helpers/ios-date-input.ts), and
-    // the boxed line's cases/units content fits its grid track. Same
+    // the boxed line's cases/units content fits its grid track; and at
+    // 1440/768/390, on create AND a resumed draft with a long product name,
+    // typing a focused date never scrolls the document sideways, moves the
+    // dialog's left edge off screen, or pans the dialog body. Same
     // setup/operator shape as "create-order-escape" (08). WITHOUT THIS ENTRY
     // THE SPEC NEVER RUNS - see 08-create-order-escape's header.
     {
