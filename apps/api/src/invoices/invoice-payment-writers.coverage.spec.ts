@@ -28,7 +28,7 @@ const IMPORT_WHY =
   "same instant as an import would not see that payment under void's Serializable snapshot. The residual " +
   "is an operator voiding an invoice while a bulk import inserts a payment for that same invoice; the " +
   "import derives status from Zoho's Balance Due, not from the payments it writes, so no in-app status is " +
-  "computed from those rows in that window. Follow-up B-id: payments + status write in one tx.";
+  "computed from those rows in that window. Follow-up: #2290 (fix: payments + status in one tx, #2262).";
 
 /** Shrink-only (SA-404b, the sellable/unit-line writers pattern): lower it when an EXEMPT row goes. */
 const EXEMPT_BASELINE = 2;
