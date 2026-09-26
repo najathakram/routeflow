@@ -160,6 +160,7 @@ describeDb(
         },
         logger: new Logger(OrdersService.name),
         inlineReturns: {},
+        creditNotes: { settleOrderCreditsInTx: async () => ({ applied: 0, unapplied: 0 }) },
       });
       tenantId = (await raw.tenant.create({ data: { slug, name: `2272 ${slug}` } })).id;
       buyerUserId = (
