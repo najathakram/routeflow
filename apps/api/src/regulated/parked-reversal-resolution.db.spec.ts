@@ -8,7 +8,7 @@
  * `FOR UPDATE` row locks (SA-089a(c), SA-170), which a mock can't exercise.
  *
  * Scenarios, per SA-089a's own worked examples:
- *  (i)   legacy fully voided -> CLOSES, zero rows written, filing unaffected.
+ *  (i)   legacy fully voided (nothing returned) -> closed, zero rows written, filing unaffected.
  *  (ii)  legacy 5 boxes, 2 already returned LINE_UNIT, resolved at pack 12 with 24 pieces
  *        requested -> SALE +55, ONE reversal correction -22, remaining 36, booked -24, line
  *        ends at 12. Uses the SAME shared cross-lane fixture
@@ -319,7 +319,6 @@ describeDb(
       // connected instances, so resolve() runs its real transaction and its real row locks.
       svc = Object.assign(Object.create(ParkedReversalResolutionService.prototype), {
         prisma,
-        audit: { log: async () => undefined },
         ledger,
       });
 
@@ -358,6 +357,8 @@ describeDb(
     }, 120_000);
 
     afterAll(async () => {
+      // the resolution now writes a REAL in-tx audit row per resolve (#2108)
+      await raw.auditLog.deleteMany({ where: { tenantId } });
       await raw.regulatedLedgerParkedReversal.deleteMany({ where: { tenantId } });
       await raw.regulatedSalesLedger.deleteMany({ where: { tenantId } });
       for (const orderId of orderIds) {
@@ -377,7 +378,7 @@ describeDb(
       await pool?.end();
     }, 120_000);
 
-    it("(i) legacy fully voided -> CLOSES, zero rows written, filing unchanged", async () => {
+    it("(i) legacy fully voided, nothing returned -> closed, zero rows written, filing unchanged", async () => {
       const f = await seedLegacyLine("voided", {
         qty: 5,
         netSales: 50,

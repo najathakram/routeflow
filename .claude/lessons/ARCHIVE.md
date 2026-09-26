@@ -2811,6 +2811,104 @@ citations, closed-out with its own post-init assertion guard).
 
 ## Archived 2026-09-24 — headroom for L-216 (note --section silent loss, B840)
 
+### L-171 · 2026-09-16 · domain · PR-1a F1 (pooled cap vs single-line price basis mismatch)
+
+- **Symptom:** an over-return cap was correctly widened from "one matched line" to "pooled across
+  every live line for that product" — but the sibling pricing branch, reading the SAME key,
+  still priced off one matched line's rate against the newly-pooled quantity, over-crediting a
+  product split across two differently-priced lines.
+- **Root cause:** the cap and the price are two different readers of one key. Widening one
+  reader's basis fixed that reader alone — nothing re-examined the sibling reading the same key.
+- **Lesson:** **When a guard/cap computation for a key is widened to pool across rows, grep
+  every OTHER reader of that key — a cap and a price computed from different bases silently
+  mismatch, and the mismatch is a MONEY bug.**
+- **Guard:** the pricing branch now pools qty/subtotal the same way the cap does, with a
+  `min(returned, sold)` backstop; `returns-refund.spec.ts`'s F1 cases prove the pooled pricing.
+  (Archived 2026-09-25 to make room at cap: zero citations outside the register, and the guard is a standing regression spec, returns-refund.spec.ts, pinning the pooled pricing.)
+
+### L-173 · 2026-09-16 · domain · B449 (Lite lane, plan-gate boundary)
+
+- **Symptom:** a plan-gated page kept firing its own effects/queries while a locked/blurred
+  overlay showed over it — its 403 toasts and query errors leaked to a user who should never
+  have triggered that behavior.
+- **Root cause:** the gate ghosted the real page behind blur/opacity by rendering it as
+  `children` inside the locked view's own slot — that hides the DOM, it doesn't unmount it.
+- **Lesson:** **A route guard choosing between locked and unlocked must render exactly ONE of
+  two subtrees, never wrap the real page inside the locked view's ghost slot — a component
+  hidden behind blur/opacity is still mounted, and its effects/queries still fire.**
+- **Guard:** a route boundary needs a real "still resolving" state distinct from both outcomes;
+  `layout.plan-gate-boundary.test.tsx` pins children absent from the tree while
+  resolving/locked, not just visually hidden.
+  (Archived 2026-09-25 to make room at cap: zero citations outside the register, and the guard is a standing regression test, layout.plan-gate-boundary.test.tsx, pinning children absent while the gate resolves.)
+
+### L-187 · 2026-09-17 · domain · demo-booking slot TOCTOU (check-then-insert race)
+
+- **Symptom:** two concurrent bookings for the same slot could both pass an application-level
+  "is this slot free" check before either had written its row, so both inserted.
+- **Root cause:** the availability check and the insert were two separate statements with no
+  atomicity between them — an application-level check can only narrow the race window, never
+  close it.
+- **Lesson:** **A slot/resource booking that must never double-allocate needs the DB to enforce
+  it, not application code — a partial unique index (`WHERE status != 'CANCELLED'`) makes the
+  second concurrent insert fail atomically at the constraint, instead of racing an app-level
+  read.**
+- **Guard:** the `demo_booking_race_guard` migration's partial unique index; a concurrent-insert
+  regression test proves the second request gets a real constraint violation.
+  (Archived 2026-09-26 to make room at cap: zero or few citations outside the register, and the guard is the demo_booking_race_guard partial unique index plus a concurrent-insert regression test.)
+
+### L-189 · 2026-09-17 · domain · B466 (substitute path bypassed the tier-aware pricer)
+
+- **Symptom:** substituting a product on an order item priced the new line at LIST regardless of
+  the customer's SPECIAL-tier contract price, on a code path nobody had ever pointed a tier-3
+  customer at before.
+- **Root cause:** the substitution branch was its own independent price path — it reused neither
+  `resolveBuyerLinePrice`'s tier resolution nor the batched `CustomerPrice` lookup the ADD/UPDATE
+  branches share, so it defaulted to list price with no way to learn a per-product tier existed.
+- **Lesson:** **A new mutation path onto an already-priced entity (substitute, replace, clone)
+  must resolve price through the SAME tier-aware pricer AND read from the SAME batched
+  price-lookup key set every sibling path uses — a fresh reimplementation silently regresses to
+  the simplest case.**
+- **Guard:** `orders.service.spec.ts`'s B466 suite (SPECIAL-tier substitute prices at tier, not
+  list; batched lookup includes `substituteProductId`). Sibling [[L-072]] (reuse vs.
+  reimplement, applied to a pricer instead of an enum).
+  (Archived 2026-09-26 to make room at cap: zero or few citations outside the register, and the guard is the standing B466 suite in orders.service.spec.ts.)
+
+### L-181 · 2026-09-16 · domain · B451 (dto `any` vs real callers)
+
+- **Symptom:** replacing `estimates.controller.ts`'s `@Body() dto: any` with a real
+  `CreateEstimateDto` made a line-item's `description` required — but `scripts/feature-smoke.mjs`
+  S6 and several `qa-run.js` tests send a bare `{productId, qty}`, relying on the service's own
+  fallback. Caught only by independent review, not the author.
+- **Root cause:** the DTO's field set was derived from the primary web UI form alone;
+  scripted/feature-smoke callers were never grepped.
+- **Lesson:** **Before typing a `dto: any` endpoint (or tightening any field's optionality), grep
+  every caller — web form, mobile, feature-smoke, qa-run, e2e — not just the UI form that
+  motivated the change.**
+- **Guard:** `create-estimate.dto.spec.ts` pins the bare `{productId, qty}` shape passing the
+  real `ValidationPipe` unchanged.
+  (Archived 2026-09-26 to make room at cap: zero or few citations outside the register, and the guard is the standing create-estimate.dto.spec.ts real-ValidationPipe pin.)
+
+### L-199 · 2026-09-18 · tooling · "dead CSS" needs a structural proof, not a route spot-check
+
+- **Symptom:** investigating B538 (an unreachable `.glass-page .desktop-nav [aria-current="page"]`
+  rule), live DOM checks on 2 of the marketing site's 11 routes confirmed `.desktop-nav` is never
+  a descendant of `.glass-page` — but that only proves the claim for the routes actually visited.
+- **Root cause:** a live DOM spot-check is inherently per-instance and cannot cover routes never
+  visited. The marketing app has ONE shared `apps/web/app/(marketing)/layout.tsx` for all 11
+  routes, and every `page.tsx` applies `.glass-page` to its own wrapper _inside_ `{children}`
+  while the layout renders `<SiteHeader/>` (containing `.desktop-nav`) as a sibling of
+  `<main>{children}</main>` — so the non-containment is provable for every route at once by
+  reading the layout, not by sampling the DOM.
+- **Lesson:** **When justifying a CSS-dead-code removal, prefer a structural proof from the
+  shared layout/routing code over live DOM spot-checks on a handful of routes — grep every
+  route's wrapper usage (or read the one shared layout) to cover routes you didn't visit,
+  including ones added later.**
+- **Guard:** `apps/web/app/(marketing)/nav-consistency.test.tsx` renders the real
+  `MarketingLayout` with a `.glass-page` child and asserts `.desktop-nav` is never inside it,
+  with non-vacuity checks, so a future layout/page restructure fails a test instead of surfacing
+  only via another spot-check.
+  (Archived 2026-09-26 to make room at cap: zero or few citations outside the register, and the guard is the standing nav-consistency.test.tsx structural render test.)
+
 ### L-178 · 2026-09-16 · security · demo-booking PR-2 (raw error message leak)
 
 - **Symptom:** a public-facing catch handler rendered a caught error's `.message` verbatim, so
