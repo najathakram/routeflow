@@ -180,7 +180,12 @@ describe("applyInlineReturnInTx", () => {
     const p = await prepareInlineReturn(svc as any, LINES, STAFF);
     await reserveInlineReturnNumber(p, "c1", STAFF);
     const tx = {};
-    const minted = await applyInlineReturnInTx(tx, p, "cust-1", "ord-1", STAFF, "run-1");
+    const minted = await applyInlineReturnInTx(tx, p, {
+      customerId: "cust-1",
+      orderId: "ord-1",
+      user: STAFF,
+      orderRouteRunId: "run-1",
+    });
     expect(minted).toEqual({ id: "cn-1" });
     expect(svc.captureAndIssueInTx).toHaveBeenCalledWith(
       tx,
@@ -197,13 +202,15 @@ describe("applyInlineReturnInTx", () => {
       { ...LINES, customerId: "evil", orderId: "evil" },
       STAFF,
     );
-    await applyInlineReturnInTx({}, p, "cust-1", "ord-1", STAFF);
+    await applyInlineReturnInTx({}, p, { customerId: "cust-1", orderId: "ord-1", user: STAFF });
     const passed = svc.captureAndIssueInTx.mock.calls[0][1];
     expect([passed.customerId, passed.orderId]).toEqual(["cust-1", "ord-1"]);
   });
 
   it("null when there is no inline return", async () => {
-    expect(await applyInlineReturnInTx({}, null, "c", "o", STAFF)).toBeNull();
+    expect(
+      await applyInlineReturnInTx({}, null, { customerId: "c", orderId: "o", user: STAFF }),
+    ).toBeNull();
   });
 });
 
@@ -344,7 +351,7 @@ describe("assertReplayCarriesReturnKey / edit reserve / retry (#2094 A2)", () =>
     const p = await prepareInlineReturn(svc as any, LINES, STAFF);
     p!.preflightTotal = 0; // the stale-price race: dry-run 0, in-tx > 0
     await reserveEditReturnNumber(p);
-    await applyInlineReturnInTx({}, p, "c1", "o1", STAFF);
+    await applyInlineReturnInTx({}, p, { customerId: "c1", orderId: "o1", user: STAFF });
     expect(svc.reserveCreditNoteNumber).toHaveBeenCalledTimes(1); // once, ahead of the tx
     expect(svc.captureAndIssueInTx).toHaveBeenCalledWith(
       expect.anything(),

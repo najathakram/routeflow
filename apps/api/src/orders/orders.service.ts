@@ -2105,8 +2105,12 @@ export class OrdersService implements OnApplicationBootstrap {
                 },
               },
             });
-            const runId = resolvedRouteRunId ?? dto.routeRunId;
-            inlineMinted = await applyReturn(tx, inlineRet, customerId, created.id, user, runId);
+            inlineMinted = await applyReturn(tx, inlineRet, {
+              customerId,
+              orderId: created.id,
+              user,
+              orderRouteRunId: resolvedRouteRunId ?? dto.routeRunId,
+            });
             return created;
           },
           // B116 (REG-B116): bound the stock transaction instead of leaving it
@@ -4418,7 +4422,11 @@ export class OrdersService implements OnApplicationBootstrap {
           await this.recordMergeIdempotencyKey(tx, orderId, opts.idempotency);
         }
         // #2094: the return lands in THIS tx after the new total; the gate re-reads (SA-221 c3).
-        inlineMinted = await applyReturn(tx, inlineRet, order.customerId, orderId, user);
+        inlineMinted = await applyReturn(tx, inlineRet, {
+          customerId: order.customerId,
+          orderId,
+          user,
+        });
         if (inlineRet && creditGate) await creditGate();
         return { subtotal, tax, total, shouldRevert, shippingFee };
       },

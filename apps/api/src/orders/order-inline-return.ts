@@ -169,17 +169,19 @@ export async function lockInlineReturnCustomer(
 export async function applyInlineReturnInTx(
   tx: any,
   p: PreparedInlineReturn | null,
-  customerId: string,
-  orderId: string,
-  user: JwtPayload | undefined,
-  orderRouteRunId?: string | null,
+  ctx: {
+    customerId: string;
+    orderId: string;
+    user: JwtPayload | undefined;
+    orderRouteRunId?: string | null;
+  },
 ): Promise<any> {
   if (!p) return null;
   const out = await p.svc.captureAndIssueInTx(
     tx,
-    { ...p.lines, customerId, orderId },
-    user as JwtPayload,
-    { creditNoteNumber: p.creditNoteNumber, orderRouteRunId },
+    { ...p.lines, customerId: ctx.customerId, orderId: ctx.orderId },
+    ctx.user as JwtPayload,
+    { creditNoteNumber: p.creditNoteNumber, orderRouteRunId: ctx.orderRouteRunId },
   );
   return out.minted;
 }
