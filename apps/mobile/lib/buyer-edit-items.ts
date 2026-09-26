@@ -64,9 +64,10 @@ export function hydrateBuyerDraft(
   const draft: Record<string, BuyerDraftItem> = {};
   for (const li of lines) {
     if (!(Number(li.qty) > 0)) continue; // the screen's long-standing filter, unchanged
-    // #2316 review: a CANCELLED unit line never joins the draft — once the order stops being
-    // read-only, the buyer replace would otherwise re-create it from its stored base pieces.
-    if (li.status === "CANCELLED" && li.unitLabel != null && li.unitLabel !== "") continue;
+    // #2316 review + F2 (tier 1): a CANCELLED line never joins the draft. The buyer path is a
+    // replace-by-product, so a cancelled line left in the draft is RE-CREATED on Save — a cancelled
+    // Case line came back as 24 boxes. Unit or pack, it stays cancelled.
+    if (li.status === "CANCELLED") continue;
     const unitLine = isBuyerUnitLine(li);
     const count = unitLine ? unitLineCount(li) : null;
     draft[li.productId] = {

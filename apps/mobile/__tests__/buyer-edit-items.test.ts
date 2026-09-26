@@ -86,6 +86,21 @@ describe("a unit line cancelled after load never joins the draft (#2316 review)"
   });
 });
 
+describe("a CANCELLED pack line is never re-sent either (F2, #2316)", () => {
+  it("the cancelled pack line is skipped from the draft and the replace payload", () => {
+    const lines = [
+      packLine({ status: "CANCELLED", qty: 24 }),
+      packLine({ id: "L3", productId: "p3", qty: 7 }),
+    ];
+    const draft = hydrateBuyerDraft(lines);
+    expect(draft.p2).toBeUndefined();
+    expect(buyerSavePlan(lines, draft)).toEqual({
+      kind: "replace",
+      items: [{ productId: "p3", qty: 7 }],
+    });
+  });
+});
+
 describe("buyerSavePlan (#2270)", () => {
   it("an order with a live unit line is read-only: refused locally with the notice, no payload", () => {
     const lines = [caseLine(), packLine()];
