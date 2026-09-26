@@ -231,6 +231,18 @@ export function exclusionSetHash(ids) {
     .digest("hex");
 }
 
+/**
+ * Pure: the --apply refusal when planned rows changed since the dry run. Counts only, never a
+ * line or payment id (SA-403 (e) aggregate output).
+ */
+export function staleRefusalMessage(changedLines, changedPayments) {
+  const n = changedLines + changedPayments;
+  return (
+    `${n} planned row(s) changed since the plan (${changedLines} line(s), ` +
+    `${changedPayments} payment(s)); re-run the dry run`
+  );
+}
+
 /** Pure: splits APPLY candidates into non-excluded (kept) and excluded (never stamped). */
 export function partitionApplyByExclusion(applyRows, excludedIds) {
   const excludedSet = new Set(excludedIds);
@@ -660,7 +672,10 @@ async function apply() {
       }
     }
 
-    let stamped = 0;
+    // Re-read EVERY planned row before writing any (SA-403 (e): a refusal reports counts only,
+    // never a line or payment id).
+    let changedLines = 0;
+    let changedPayments = 0;
     for (const a of stampSet) {
       const row = (
         await client.query(
@@ -675,7 +690,10 @@ async function apply() {
         row.description !== a.expected.description ||
         String(row.unitPrice) !== a.expected.unitPrice ||
         new Date(row.updatedAt).toISOString() !== a.expected.updatedAt;
-      if (lineChanged) throw refuse(`line ${a.lineId} has changed since the dry run`);
+      if (lineChanged) {
+        changedLines += 1;
+        continue;
+      }
 
       const payment = (
         await client.query(
@@ -688,8 +706,14 @@ async function apply() {
         payment.status !== a.expected.paymentStatus ||
         payment.checkStatus !== a.expected.paymentCheckStatus ||
         String(payment.nsfFeeAmount) !== a.expected.paymentNsfFeeAmount;
-      if (paymentChanged) throw refuse(`payment ${a.paymentId} has changed since the dry run`);
+      if (paymentChanged) changedPayments += 1;
+    }
+    if (changedLines + changedPayments > 0) {
+      throw refuse(staleRefusalMessage(changedLines, changedPayments));
+    }
 
+    let stamped = 0;
+    for (const a of stampSet) {
       const res = await client.query(
         'UPDATE "InvoiceItem" SET "systemKind" = $2 WHERE id = $1 AND "systemKind" IS NULL',
         [a.lineId, NSF_FEE_SYSTEM_KIND],
@@ -810,6 +834,15 @@ function selfTest() {
     }
   };
 
+  {
+    const msg = staleRefusalMessage(2, 1);
+    check(
+      "staleRefusalMessage: counts only, no line/payment id (SA-403 (e))",
+      msg ===
+        "3 planned row(s) changed since the plan (2 line(s), 1 payment(s)); re-run the dry run" &&
+        !/line-|pay-|[0-9a-f]{8}-[0-9a-f]{4}-/i.test(msg),
+    );
+  }
   check(
     "parseExclusionEnvList: comma/whitespace separated, deduped",
     JSON.stringify(parseExclusionEnvList("tenant-excl-1, tenant-excl-2  tenant-excl-1")) ===
