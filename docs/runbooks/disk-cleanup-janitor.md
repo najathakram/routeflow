@@ -34,6 +34,8 @@ shortfall never triggers the more aggressive later steps.
 6. **Proof/audit folders** under `local-assets/proofs/` and `local-assets/handoff/` older than
    7 days (owner's retention choice).
 
+**Report-only, never deleted (not even by `--apply`):** the default run also lists Claude Code background-task outputs (`<os temp>/claude/**/tasks/*.output`, i.e. `%TEMP%\claude\…` on Windows) over 500 MB and idle for over 1 h, with size, mtime, path and first 120 bytes; stop the task, then delete by hand (2026-09-26: a runaway grep and a Python REPL loop left 5.65 GB + 5.00 GB).
+
 ## What "merged" means (B800)
 
 Ancestry alone is not proof: a branch just created from master, with **zero commits of its own**, points at a mainline master commit and is trivially an ancestor

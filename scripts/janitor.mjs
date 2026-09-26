@@ -11,6 +11,11 @@
 // under .claude/worktrees/ that git no longer lists, (4) Docker BUILD CACHE
 // only, (5) npm cache, (6) proof/audit folders older than 7 days.
 //
+// REPORT-ONLY, never acted on (not even by --apply): Claude Code background-task
+// output files under <os temp>/claude/**/tasks/*.output larger than 500 MB and
+// untouched for over an hour. A runaway task can grow one to several GB (two
+// reached 5.65 GB and 5.00 GB on 2026-09-26); a human decides what to do with it.
+//
 // NEVER touched, ever: Docker volumes / `docker system prune`, the main
 // checkout, a worktree with uncommitted changes, a worktree whose HEAD moved
 // in the last RECENT_ACTIVITY_HOURS, PROTECTED_WORKTREE_NAMES, or any branch
@@ -50,14 +55,18 @@
 //   < 3 GB   stop everything and alert a human
 import { execFileSync } from "node:child_process";
 import {
+  closeSync,
   existsSync,
   lstatSync,
+  openSync,
   readdirSync,
+  readSync,
   realpathSync,
   rmdirSync,
   statSync,
   unlinkSync,
 } from "node:fs";
+import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve, sep, win32 } from "node:path";
 import { pathToFileURL } from "node:url";
 
@@ -66,6 +75,9 @@ export const PROTECTED_BRANCHES = new Set(["master", "main"]);
 export const STALE_PROOF_AGE_DAYS = 7;
 export const DEFAULT_TARGET_GB = 10;
 export const RECENT_ACTIVITY_HOURS = 24;
+export const TASK_OUTPUT_MIN_BYTES = 500 * 1024 ** 2;
+export const TASK_OUTPUT_MIN_AGE_MS = 60 * 60 * 1000;
+export const TASK_OUTPUT_HEAD_BYTES = 120;
 
 // ---------------------------------------------------------------------------
 // Pure classification logic — unit-tested with fixtures in
@@ -175,6 +187,15 @@ export function classifyWorktree(info) {
 
 export function isStaleByAge(mtimeMs, nowMs, days = STALE_PROOF_AGE_DAYS) {
   return nowMs - mtimeMs > days * 24 * 60 * 60 * 1000;
+}
+
+/** A background-task output worth reporting: larger than minBytes AND idle for over minAgeMs. */
+export function isLargeStaleTaskOutput(
+  { size, mtimeMs },
+  nowMs,
+  { minBytes = TASK_OUTPUT_MIN_BYTES, minAgeMs = TASK_OUTPUT_MIN_AGE_MS } = {},
+) {
+  return size > minBytes && nowMs - mtimeMs > minAgeMs;
 }
 
 export function meetsThreshold(freeGb, thresholdGb) {
@@ -662,6 +683,64 @@ function orphanFacts(dir) {
   }
 }
 
+/** Where Claude Code keeps background-task output: <os temp>/claude (%TEMP%\claude on Windows). */
+export function claudeTempRoot() {
+  return join(tmpdir(), "claude");
+}
+
+/** The first `bytes` of a file, opened read-only; null when unreadable. */
+function readHead(p, bytes = TASK_OUTPUT_HEAD_BYTES) {
+  let fd;
+  try {
+    fd = openSync(p, "r");
+    const buf = Buffer.alloc(bytes);
+    return buf.subarray(0, readSync(fd, buf, 0, bytes, 0));
+  } catch {
+    return null;
+  } finally {
+    if (fd !== undefined) closeSync(fd);
+  }
+}
+
+/**
+ * REPORT-ONLY: every `*.output` file in a `tasks` folder at any depth under `root` that
+ * isLargeStaleTaskOutput accepts, largest first, as { path, size, mtimeMs, head }. Reads only —
+ * never deletes or truncates. Links are never followed; an unreadable folder or file is skipped.
+ */
+export function findLargeTaskOutputs(root, { nowMs = Date.now(), ...limits } = {}) {
+  const found = [];
+  const stack = [root];
+  while (stack.length) {
+    const dir = stack.pop();
+    let entries;
+    try {
+      entries = readdirSync(dir, { withFileTypes: true }); // types without a stat per entry
+    } catch {
+      continue;
+    }
+    const inTasks = basename(dir) === "tasks";
+    for (const e of entries) {
+      const p = join(dir, e.name);
+      if (e.isSymbolicLink()) continue;
+      if (e.isDirectory()) {
+        if (e.name !== "node_modules") stack.push(p);
+        continue;
+      }
+      if (!inTasks || !e.isFile() || !e.name.endsWith(".output")) continue;
+      let st;
+      try {
+        st = lstatSync(p);
+      } catch {
+        continue;
+      }
+      if (isLargeStaleTaskOutput(st, nowMs, limits)) {
+        found.push({ path: p, size: st.size, mtimeMs: st.mtimeMs, head: readHead(p) });
+      }
+    }
+  }
+  return found.sort((a, b) => b.size - a.size);
+}
+
 function isDirty(worktreePath) {
   const out = trySh("git", ["-C", worktreePath, "status", "--porcelain"]);
   const ignored = trySh("git", ["-C", worktreePath, "status", "--porcelain", "--ignored=matching"]);
@@ -906,6 +985,22 @@ function runStaleBranches(repoRoot) {
   console.log("Report only — never deletes a remote branch.");
 }
 
+/** Report-only: never deleted or truncated here, and never part of --apply. */
+function reportLargeTaskOutputs(root = claudeTempRoot()) {
+  const found = findLargeTaskOutputs(root);
+  const mb = TASK_OUTPUT_MIN_BYTES / 1024 ** 2;
+  console.log(
+    `\nClaude Code task outputs > ${mb} MB, idle > 1h, under ${root} (${found.length}) — report only:`,
+  );
+  for (const f of found) {
+    console.log(`  - ${(f.size / 1024 ** 3).toFixed(2)} GB  ${new Date(f.mtimeMs).toISOString()}`);
+    console.log(`    ${f.path}`);
+    console.log(`    head: ${f.head ? JSON.stringify(f.head.toString("utf8")) : "(unreadable)"}`);
+  }
+  if (found.length)
+    console.log("  Never deleted by the janitor; stop the task, then remove by hand.");
+}
+
 function main() {
   const argv = process.argv.slice(2);
 
@@ -940,6 +1035,7 @@ function main() {
   }
 
   if (!apply) {
+    reportLargeTaskOutputs();
     console.log("\nReport-only run (pass --apply to actually reclaim). Nothing was changed.");
     return;
   }

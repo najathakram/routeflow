@@ -12,7 +12,9 @@ import {
   readFileSync,
   realpathSync,
   rmSync,
+  statSync,
   symlinkSync,
+  utimesSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -46,6 +48,11 @@ import {
   pathPresent,
   unlinkLinksWindows,
   WINDOWS_DEPS,
+  isLargeStaleTaskOutput,
+  findLargeTaskOutputs,
+  claudeTempRoot,
+  TASK_OUTPUT_MIN_BYTES,
+  TASK_OUTPUT_MIN_AGE_MS,
 } from "./janitor.mjs";
 
 // Run inside a git hook, GIT_DIR / GIT_INDEX_FILE / GIT_WORK_TREE would point every `git -C <tmp>`
@@ -1005,6 +1012,62 @@ t("REG-1326-L4: build/dist/coverage are disposable only at the top level or a pa
   );
   assert.equal(dirtyFromStatus("", "!! apps/api/src/build/\n"), true); // a source folder named build
   assert.equal(dirtyFromStatus("", "!! apps/web/app/coverage/\n"), true);
+});
+
+// Large idle Claude Code task outputs (2026-09-26: 5.65 GB + 5.00 GB took the PC to 3.3 GB free).
+t(
+  "TASK-OUT-1: only an output over 500 MB AND idle over 1h qualifies (strict at both edges)",
+  () => {
+    const now = Date.UTC(2026, 8, 26, 12);
+    const big = TASK_OUTPUT_MIN_BYTES + 1;
+    const old = now - TASK_OUTPUT_MIN_AGE_MS - 1;
+    assert.equal(isLargeStaleTaskOutput({ size: big, mtimeMs: old }, now), true);
+    assert.equal(isLargeStaleTaskOutput({ size: big, mtimeMs: now - 60_000 }, now), false);
+    assert.equal(isLargeStaleTaskOutput({ size: TASK_OUTPUT_MIN_BYTES, mtimeMs: old }, now), false);
+    assert.equal(
+      isLargeStaleTaskOutput({ size: big, mtimeMs: now - TASK_OUTPUT_MIN_AGE_MS }, now),
+      false,
+    );
+  },
+);
+t("TASK-OUT-2: the scan root is <os temp>/claude", () => {
+  assert.equal(claudeTempRoot(), join(tmpdir(), "claude"));
+});
+t("TASK-OUT-3: only the big-and-old tasks/*.output is reported; nothing is changed", () => {
+  // Scaled-down limit (1 KB) so the spec never writes 500 MB to a disk that may be nearly full.
+  const limits = { minBytes: 1024, minAgeMs: TASK_OUTPUT_MIN_AGE_MS };
+  const root = mkdtempSync(join(tmpdir(), "janitor-taskout-"));
+  try {
+    const tasks = join(root, "C--proj", "session-1", "tasks");
+    mkdirSync(tasks, { recursive: true });
+    const now = Date.now();
+    const twoHoursAgo = (now - 2 * 60 * 60 * 1000) / 1000;
+    const write = (path, bytes, mtimeSec) => {
+      writeFileSync(path, "grep: runaway line\n".repeat(Math.ceil(bytes / 19)).slice(0, bytes));
+      if (mtimeSec) utimesSync(path, mtimeSec, mtimeSec);
+      return path;
+    };
+    const bigOld = write(join(tasks, "big-old.output"), 4096, twoHoursAgo);
+    const bigFresh = write(join(tasks, "big-fresh.output"), 4096);
+    const small = write(join(tasks, "small.output"), 100, twoHoursAgo);
+    const before = [bigOld, bigFresh, small].map((p) => statSync(p).size);
+
+    const found = findLargeTaskOutputs(root, { nowMs: now, ...limits });
+    assert.deepEqual(
+      found.map((f) => f.path),
+      [bigOld],
+    );
+    assert.equal(found[0].size, 4096);
+    assert.equal(Math.round(found[0].mtimeMs / 1000), Math.round(twoHoursAgo));
+    assert.equal(found[0].head.length, 120);
+    assert.equal(found[0].head.toString("utf8"), readFileSync(bigOld, "utf8").slice(0, 120));
+    assert.deepEqual(
+      [bigOld, bigFresh, small].map((p) => statSync(p).size),
+      before,
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
 // A REAL Windows junction (runs only on win32; the PC lane runs this before any merge).
