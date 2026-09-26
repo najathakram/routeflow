@@ -59,6 +59,7 @@ import {
   ServiceUnavailableException,
 } from "@nestjs/common";
 import { AddonService } from "./addon.service";
+import { fakeTenantAddonStore } from "../testing/fake-tenant-addon-store";
 
 beforeEach(() => {
   lockQueues.clear();
@@ -104,6 +105,10 @@ function make(opts: Opts = {}) {
     },
     tenantAddon: {
       findUnique: jest.fn().mockResolvedValue(opts.existingAddon ?? null),
+      // #2188: findAddonRow reads via findFirst — delegate so each fixture's findUnique sequence still drives it.
+      findFirst: jest.fn(function (this: any, args: unknown) {
+        return this.findUnique(args);
+      }),
       upsert: jest.fn().mockResolvedValue({ id: "addon1", active: true }),
       update: jest.fn().mockResolvedValue({ id: "addon1", active: false }),
     },
@@ -401,6 +406,10 @@ describe("AddonService.enableAddon — B342 concurrency lock", () => {
     let row: { active: boolean; stripeItemId: string | null } | null = null;
     const tenantAddon = {
       findUnique: jest.fn(async () => (row ? { ...row } : null)),
+      // #2188: findAddonRow reads via findFirst — delegate so each fixture's findUnique sequence still drives it.
+      findFirst: jest.fn(function (this: any, args: unknown) {
+        return this.findUnique(args);
+      }),
       upsert: jest.fn(async ({ create }: any) => {
         row = { active: true, stripeItemId: create.stripeItemId };
         return { id: "addon1", ...row };
@@ -681,5 +690,73 @@ describe("AddonService.enableAddon/disableAddon — B865 ledger (SA-277)", () =>
     await expect(svc.enableAddon("t1", "developer_mode")).resolves.toBeDefined();
     expect(prisma.tenantAddon.upsert).toHaveBeenCalled();
     expect(events.emit).not.toHaveBeenCalled();
+  });
+});
+
+// #2188 / SA-385 (5): an add-on keyed two ways must never become two rows or a doubled ledger.
+// A stateful store proves ROW COUNTS; the DB lane (F2) proves the same on real Postgres.
+describe("#2188 one add-on row whichever way it is keyed (SA-385)", () => {
+  const booked = (events: any) =>
+    events.emit.mock.calls.reduce((sum: number, c: any[]) => sum + (c[3]?.amountDelta ?? 0), 0);
+  const priced = (seed: Parameters<typeof fakeTenantAddonStore>[0]) => {
+    const create = jest.fn().mockResolvedValue({ id: "si_1" });
+    const del = jest.fn().mockResolvedValue({});
+    const made = make({
+      stripe: { isConfigured: true, client: { subscriptionItems: { create, del } } },
+      subscription: { stripeSubId: "sub_1" },
+      publishedSkus: ["MSRP"],
+    });
+    const store = fakeTenantAddonStore(seed);
+    made.prisma.tenantAddon = store;
+    return { ...made, store, create };
+  };
+
+  it("legacy key then SKU key: the second enable is refused and there is still ONE row, booked once", async () => {
+    const { svc, store, events, create } = priced([]);
+    await svc.enableAddon("t1", "msrp", "price_msrp");
+    await expect(svc.enableAddon("t1", "MSRP", "price_msrp")).rejects.toThrow(ConflictException);
+    expect(store.rows).toHaveLength(1);
+    expect(store.rows[0]).toMatchObject({ addonKey: "msrp", sku: "MSRP", active: true });
+    expect(create).toHaveBeenCalledTimes(1); // one Stripe item
+    expect(booked(events)).toBe(10); // +X once
+  });
+
+  it("an active SKU-keyed row (subscribe/self-serve shape) blocks an admin legacy-key enable", async () => {
+    const { svc, store, events } = priced([
+      { addonKey: "MSRP", sku: "MSRP", active: true, priceSnapshot: 10 },
+    ]);
+    await expect(svc.enableAddon("t1", "msrp", "price_msrp")).rejects.toThrow(ConflictException);
+    expect(store.rows).toHaveLength(1);
+    expect(booked(events)).toBe(0);
+  });
+
+  it("disable by EITHER key finds the row and books −X once", async () => {
+    for (const key of ["msrp", "MSRP"]) {
+      const { svc, store, events } = priced([
+        { addonKey: "MSRP", sku: "MSRP", active: true, priceSnapshot: 10 },
+      ]);
+      await svc.disableAddon("t1", key);
+      expect(store.rows).toHaveLength(1);
+      expect(store.rows[0].active).toBe(false);
+      expect(booked(events)).toBe(-10);
+    }
+  });
+
+  it("re-enable after disable re-activates the SAME row in place (still one row)", async () => {
+    const { svc, store, events } = priced([
+      { addonKey: "msrp", sku: "MSRP", active: false, priceSnapshot: 10 },
+    ]);
+    await svc.enableAddon("t1", "MSRP", "price_msrp");
+    expect(store.rows).toHaveLength(1);
+    expect(store.rows[0]).toMatchObject({ id: "row1", addonKey: "msrp", active: true });
+    expect(booked(events)).toBe(10);
+  });
+
+  it("hasAddon resolves the add-on after either path wrote it", async () => {
+    for (const seedKey of ["msrp", "MSRP"]) {
+      const { svc } = priced([{ addonKey: seedKey, sku: "MSRP", active: true }]);
+      await expect(svc.hasAddon("t1", "msrp")).resolves.toBe(true);
+      await expect(svc.hasAddon("t1", "MSRP")).resolves.toBe(true);
+    }
   });
 });
