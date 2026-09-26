@@ -41,7 +41,7 @@ const BASELINE: Record<string, number> = {
   // (orders/replace-all-line-build.ts) — 5740 -> 5540. Lowered to the measured value. Round 5
   // (sourceLineId): buildExistingLineMaps also extracted — still fits at 5540, unchanged.
   "apps/api/src/orders/orders.service.ts": 5488, // #2094: findOrderIdByIdempotencyKey -> merge-idempotency.ts to fit the inline-return hooks (was 5540); B776/SA-124a: buildMergeLineWrites replaced both merge methods' own live-pack fold (was 5751; SA-065 before that: appendOrderRevision -> order-revisions.ts, was 5780; U1 before that: class tail -> order-lifecycle.ts, 5880)
-  "apps/api/src/invoices/invoices.service.ts": 6133, // merge of master 0671706c into #2117 (F-05 PR2): 6192 -> 6133 — the invoice list query moved to invoice-list-query.ts (its calendarDayOf copy dropped for master's settled-date-filter.ts one, #2142); #2083's update() plan kept, F-05 check before the order-line ownership check and re-check right after the Invoice row lock. Verified by wc -l.
+  "apps/api/src/invoices/invoices.service.ts": 6151, // merge of master 896fdd96 (#2258) into #2117 (F-05 PR2): master 6210 -> 6151 — #2117 moves the invoice list query to invoice-list-query.ts and its update()/duplicate() F-05 guards stay (update: check before the order-line ownership check, re-check right after the Invoice row lock; duplicate: before the copy). #2258's lockInvoiceRow/retryOnTxConflict touch only send/markSent/void, untouched here. Verified by wc -l.
   "apps/api/src/orders/orders.service.spec.ts": 9511,
   "apps/api/src/customers/customers.service.ts": 3307,
   "apps/api/src/invoices/invoices.service.spec.ts": 9351,
