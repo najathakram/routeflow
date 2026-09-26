@@ -97,6 +97,7 @@ import { MessagingService } from "../messaging/messaging.service";
 import { formatDate, formatMoney } from "../messaging/messaging.helpers";
 import { CommissionEngineService } from "../sales-agents/commission-engine.service";
 import { NSF_FEE_DESCRIPTION_PREFIX } from "../sales-agents/commission-math";
+import { partitionInvoiceLines, planResyncPairs } from "./resync-plan";
 import { startOfCalendarDay, endOfCalendarDay } from "../common/calendar-date";
 import { lockRowsNoWait } from "../common/db-locks";
 import { NumberingService } from "../import/numbering.service";
@@ -2024,21 +2025,9 @@ export class InvoicesService {
       });
       if (invoices.length === 0) return null;
 
-      // Can't prove which order line a provenance-less (manual/freeform) invoice line
-      // bills → can't safely rebuild it. Bail conservatively.
-      const hasUntracked = (i: any) => (i.items ?? []).some((it: any) => !it.orderItemId);
-      if (invoices.some(hasUntracked)) return null;
-
-      // Map each order line → the ONE invoice that already bills it. A line shared by
-      // two invoices is an unclean partition (double-bill risk) → bail.
-      const invoiceByLine = new Map<string, string>();
-      for (const inv of invoices) {
-        for (const it of inv.items ?? []) {
-          const oid = it.orderItemId as string;
-          if (invoiceByLine.has(oid)) return null; // shared → unclean
-          invoiceByLine.set(oid, inv.id);
-        }
-      }
+      // Partition lines to invoices; null = unclean (untracked or shared line) → bail.
+      const invoiceByLine = partitionInvoiceLines(invoices);
+      if (!invoiceByLine) return null;
 
       const order = await db.order.findUnique({
         where: { id: orderId },
@@ -2060,43 +2049,7 @@ export class InvoicesService {
       });
       if (!order) return null;
 
-      // Primary invoice new (unprovenanced) lines fall back to: the sole open pending
-      // mirror if present, else the earliest invoice. For a single-invoice order this
-      // is simply that one invoice, so it bills every current line.
-      const primaryId =
-        invoices.find((i: any) => i.status === InvoiceStatus.DRAFT && i.deliveryBatchId == null)
-          ?.id ?? invoices[0].id;
-
-      // Category → the invoice that already bills that regulated category (built from
-      // each invoice's provenance-owned lines; "" = standard/non-regulated). A NEW line
-      // attaches to its category's invoice so a SEPARATE_INVOICE split keeps regulated
-      // lines on their -R# sibling instead of co-mingling onto the base. A category
-      // billed by two invoices is ambiguous → its new lines fall back to primary.
-      const categoryOwner = new Map<string, string>();
-      const categoryAmbiguous = new Set<string>();
-      for (const li of order.lineItems) {
-        const owner = invoiceByLine.get(li.id);
-        if (!owner) continue; // unprovenanced line — nothing to map from yet
-        const cat = li.trackedCategoryId ?? "";
-        const prev = categoryOwner.get(cat);
-        if (prev === undefined) categoryOwner.set(cat, owner);
-        else if (prev !== owner) categoryAmbiguous.add(cat);
-      }
-
-      const linesByInvoice = new Map<string, any[]>();
-      for (const inv of invoices) linesByInvoice.set(inv.id, []);
-      for (const li of order.lineItems) {
-        const cat = li.trackedCategoryId ?? "";
-        const invId =
-          invoiceByLine.get(li.id) ??
-          (categoryAmbiguous.has(cat) ? undefined : categoryOwner.get(cat)) ??
-          primaryId;
-        linesByInvoice.get(invId)!.push(li);
-      }
-      const pairs = invoices.map((inv: any) => ({
-        draft: inv,
-        lines: linesByInvoice.get(inv.id) ?? [],
-      }));
+      const pairs = planResyncPairs(invoices, order.lineItems, invoiceByLine);
 
       const updated = await this.rebuildSiblingDrafts(order, pairs, "order", db, {
         preserveStatus: true,
