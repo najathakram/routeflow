@@ -1,4 +1,4 @@
-import { ConflictException } from "@nestjs/common";
+import { ConflictException, ForbiddenException } from "@nestjs/common";
 import type { LadderUnit, TrackedCategoryRow } from "@routeflow/pricing";
 import {
   assertMayUseUnits,
@@ -48,12 +48,21 @@ export async function prepareUnitEditContext(
   user: { role?: string } | undefined,
 ): Promise<UnitEditContext> {
   const items = dto.items ?? [];
-  await assertMayUseUnits(items, {
-    isStaff: user?.role === "OPERATOR" || user?.role === "TENANT_ADMIN",
+  const existingById = new Map<string, LineLike>(order.lineItems.map((li) => [li.id, li]));
+  // SA-407: a buyer's count edit KEEPS its line's own stored unit (the price basis fixed at order
+  // time) — that is not choosing a unit, so it skips the staff-only gate. A buyer NAMING any other
+  // unit was already refused 409 by the guard; staff keep the gate exactly as before.
+  const isStaff = user?.role === "OPERATOR" || user?.role === "TENANT_ADMIN";
+  const keepsOwnUnit = (i: (typeof items)[number]) =>
+    user?.role === "CUSTOMER" &&
+    i.id != null &&
+    i.unitLabel != null &&
+    existingById.get(i.id)?.unitLabel === i.unitLabel;
+  await assertMayUseUnits(isStaff ? items : items.filter((i) => !keepsOwnUnit(i)), {
+    isStaff,
     tenantId: self.prisma.getTenantId(),
     hasFlag: (t, f) => self.entitlements.hasFlag(t, f),
   });
-  const existingById = new Map<string, LineLike>(order.lineItems.map((li) => [li.id, li]));
   // Nothing to resolve (the common case — no item names a unit, no existing line is one) reads
   // NOTHING new: a plain pack-only edit stays byte-identical to pre-A1, no extra query at all.
   const productIds = [
@@ -195,4 +204,19 @@ export async function updateUnitLine(
     ? { ...rest, categoryTaxType, categoryTaxRate, categoryPriceIncludesTax }
     : rest;
   await ctx.tx.orderItem.update({ where: { id: lineId }, data });
+}
+
+/**
+ * SA-407: a CUSTOMER's per-line diff runs the merge branch, not the replace branch that re-checks
+ * ownership inside the transaction (REG-B131: `deletedAt: null` — a removed customer's still-valid
+ * session must not mutate an order). The same check, for the merge branch. No-op for everyone else.
+ */
+export async function assertBuyerOwnsOrder(
+  tx: { customer: { findFirst(a: any): Promise<{ id: string } | null> } },
+  user: { role?: string; sub?: string } | undefined,
+  customerId: string,
+): Promise<void> {
+  if (user?.role !== "CUSTOMER") return;
+  const owner = await tx.customer.findFirst({ where: { userId: user.sub, deletedAt: null } });
+  if (!owner || owner.id !== customerId) throw new ForbiddenException();
 }

@@ -50,6 +50,8 @@ export interface ExistingLine {
   pieces: number | null;
   unitsPerBox: number | null;
   status: string;
+  /** units_v1: set on a line sold by a non-pack unit; its `unitsPerBox` is then that unit's factor. */
+  unitLabel?: string | null;
 }
 
 /** One entry of an `UpdateOrderItemsDto.items` payload. */
@@ -61,6 +63,8 @@ export interface EditItem {
   boxes?: number;
   pieces?: number;
   substituteProductId?: string;
+  /** units_v1: a count of this unit, when set (`qty` is then the COUNT, not pieces). */
+  unitLabel?: string | null;
 }
 
 /** productId → the product's CURRENT catalog `unitsPerBox` (null = a loose / unpacked product). */
@@ -103,6 +107,17 @@ function existingLineEdit(
 ): EditLine | null {
   const before = existingQty(line);
   if (unreadableQty(item)) return { productId: line.productId };
+  // SA-377 carried to orders (SA-407): an id-matched unit line's `qty` is a COUNT of its unit —
+  // counted at the HELD row's snapshot factor, never the live pack, so an unchanged re-send after a
+  // repack nets 0. No readable snapshot factor: unsized, checked (fail closed).
+  if ((line.unitLabel ?? "") !== "" && (item.unitLabel ?? "") !== "" && !hasSplit(item)) {
+    // A different unit re-denominates the line (staff only): its factor isn't the held one — checked.
+    if (item.unitLabel !== line.unitLabel) return { productId: line.productId };
+    const factor = Math.trunc(Number(line.unitsPerBox ?? 0));
+    if (!hasNumber(item.qty)) return null;
+    if (!(factor >= 1)) return { productId: line.productId };
+    return { productId: line.productId, qtyDelta: item.qty * factor - before };
+  }
   if (!hasSplit(item)) {
     // A bare quantity keeps the line's own denomination (pieces on a box-split line, selling
     // units on a box-unaware one): both sides are in the same unit.
