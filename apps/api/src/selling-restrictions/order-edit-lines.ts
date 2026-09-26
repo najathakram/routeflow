@@ -22,6 +22,13 @@
  * null (not the payload's productIds); a split it cannot size is emitted UNSIZED (checked), never
  * guessed. A box-UNAWARE line stores selling units (cases), a split writes PIECES: compared in pieces.
  *
+ * Unit lines (units_v1, #2275 / SA-408): such a line stores PIECES in `qty` and its unit's factor in
+ * its own `unitsPerBox`, while an edit of it sends a COUNT of that unit in `qty`. Compared in pieces:
+ * incoming count × the HELD row's snapshot factor (the live pack only when the row has none), so an
+ * unchanged re-send after a repack nets 0. Comparing the count to the stored pieces let an increase
+ * on a banned product pass as a decrease. A different unit (a staff re-denomination) has another
+ * factor, so it is emitted unsized — checked.
+ *
  * Known over-block (fail-closed, pinned by specs): lines are sized one by one, never netted, so an
  * edit that RAISES a line of a product while another of it falls (a repack, a grow-and-cancel) is
  * checked; a decrease-only edit is the way out. `existing` must be the lock-time read (a pre-lock
@@ -50,6 +57,8 @@ export interface ExistingLine {
   pieces: number | null;
   unitsPerBox: number | null;
   status: string;
+  /** units_v1: set on a line sold by a non-pack unit; its `unitsPerBox` is then that unit's factor. */
+  unitLabel?: string | null;
 }
 
 /** One entry of an `UpdateOrderItemsDto.items` payload. */
@@ -61,6 +70,8 @@ export interface EditItem {
   boxes?: number;
   pieces?: number;
   substituteProductId?: string;
+  /** units_v1: the unit this edit counts in; `qty` is then a COUNT of it, not pieces. */
+  unitLabel?: string | null;
 }
 
 /** productId → the product's CURRENT catalog `unitsPerBox` (null = a loose / unpacked product). */
@@ -103,9 +114,12 @@ function existingLineEdit(
 ): EditLine | null {
   const before = existingQty(line);
   if (unreadableQty(item)) return { productId: line.productId };
+  if ((line.unitLabel ?? "") !== "" && !hasSplit(item))
+    return unitLineEdit(item, line, live, before);
   if (!hasSplit(item)) {
-    // A bare quantity keeps the line's own denomination (pieces on a box-split line, selling
-    // units on a box-unaware one): both sides are in the same unit.
+    // A bare quantity on a PACK line keeps the line's own denomination (pieces on a box-split
+    // line, selling units on a box-unaware one): both sides are in the same unit. A unit line's
+    // bare quantity is a COUNT instead — see unitLineEdit.
     return hasNumber(item.qty) ? { productId: line.productId, qtyDelta: item.qty - before } : null;
   }
   const upb = splitBoxSize(line, live);
@@ -120,6 +134,26 @@ function existingLineEdit(
   // A split writes PIECES; a box-UNAWARE line stores selling units (cases) — compare in pieces.
   const beforePieces = line.boxes == null && line.pieces == null ? before * upb : before;
   return { productId: line.productId, qtyDelta: incoming - beforePieces };
+}
+
+/**
+ * #2275 / SA-408: an edit of a unit line, compared in PIECES — incoming count × the held row's
+ * snapshot factor (the live pack only when the row has none). Another unit re-denominates the line
+ * with a different factor: unsized, checked. No readable factor at all: unsized, checked.
+ */
+function unitLineEdit(
+  item: EditItem,
+  line: ExistingLine & { productId: string },
+  live: LiveUnitsPerBox | undefined,
+  before: number,
+): EditLine | null {
+  if ((item.unitLabel ?? "") !== "" && item.unitLabel !== line.unitLabel) {
+    return { productId: line.productId };
+  }
+  if (!hasNumber(item.qty)) return null;
+  const factor = splitBoxSize(line, live);
+  if (factor === undefined || factor < 1) return { productId: line.productId };
+  return { productId: line.productId, qtyDelta: item.qty * factor - before };
 }
 
 /**

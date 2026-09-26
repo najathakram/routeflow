@@ -235,3 +235,46 @@ describe("sellableLinesForMergeEdit", () => {
     });
   });
 });
+
+/**
+ * #2275 / SA-408 — a units_v1 line stores PIECES (`qty`) and its unit's factor on the row
+ * (`unitsPerBox`); an edit of it sends a COUNT of that unit in `qty`. Master compared the count to
+ * the stored pieces (3 → 4 Cases of 12: 4 − 36 = −32), so an increase on a banned product passed as a
+ * decrease. It is compared in pieces: incoming count × the HELD row's snapshot factor.
+ */
+describe("sellableLinesForMergeEdit — a unit line nets in PIECES at its held factor (#2275)", () => {
+  const caseLine = (over: Partial<ExistingLine> = {}) =>
+    line({ unitLabel: "Case", unitsPerBox: 12, qty: 36, boxes: 3, pieces: 0, ...over } as any);
+  const count = (qty: number, unitLabel = "Case") => items({ id: "li-1", unitLabel, qty });
+
+  it("3 → 4 Cases of a 12-pack is +12 pieces — an increase, so it is checked (master: −32 passed)", () => {
+    expect(merge([caseLine()], count(4))).toEqual([{ productId: "p1", qtyDelta: 12 }]);
+  });
+
+  it("3 → 2 Cases is −12 pieces — a decrease, never checked downstream", () => {
+    expect(merge([caseLine()], count(2))).toEqual([{ productId: "p1", qtyDelta: -12 }]);
+  });
+
+  it("an unchanged re-send after the Case is repacked 12 → 24 nets 0 (the held factor, not the live one)", () => {
+    expect(merge([caseLine()], count(3), new Map([["p1", 24]]))).toEqual([
+      { productId: "p1", qtyDelta: 0 },
+    ]);
+  });
+
+  it("a held row with no snapshot factor falls back to the live pack; none at all is checked unsized", () => {
+    expect(merge([caseLine({ unitsPerBox: null })], count(4), new Map([["p1", 12]]))).toEqual([
+      { productId: "p1", qtyDelta: 12 },
+    ]);
+    expect(merge([caseLine({ unitsPerBox: null })], count(4))).toEqual([{ productId: "p1" }]);
+  });
+
+  it("a DIFFERENT unit re-denominates the line (staff): its factor is not the held one — checked", () => {
+    expect(merge([caseLine()], count(1, "Pallet"))).toEqual([{ productId: "p1" }]);
+  });
+
+  it("pack lines are unchanged: a bare qty on a plain line is still qty − stored", () => {
+    expect(merge([line({ qty: 5 })], items({ id: "li-1", qty: 7 }))).toEqual([
+      { productId: "p1", qtyDelta: 2 },
+    ]);
+  });
+});
