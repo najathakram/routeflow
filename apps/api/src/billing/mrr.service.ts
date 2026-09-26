@@ -39,6 +39,7 @@ export function isPayingRow(
 export interface MrrPlanRow {
   planKey: string;
   tenants: number;
+  /** B866 / SA-277: gross base run-rate, before discounts — Σ raw basePriceSnapshot. */
   baseMrr: number;
 }
 
@@ -246,7 +247,9 @@ export class MrrService {
       mrr += rowPrice;
       const key = s.planKey as string;
       const row = byPlanMap.get(key) ?? { tenants: 0, baseMrr: 0 };
-      row.baseMrr = roundMoney(row.baseMrr + base - discount);
+      // B866 / SA-277: gross — the SAME formula as the top-level baseMrr accumulator (L-119).
+      // Identity: mrr = Σ rowPrice = baseMrr − discountTotal + addonMrr; Σ byPlan.baseMrr = baseMrr.
+      row.baseMrr = roundMoney(row.baseMrr + base);
       // REG-743-N5: a row's `payingWhere` match (a planKey) is not the same claim as "this
       // tenant pays" — a null snapshot or a full discount prices it $0. Count it as paying
       // ONLY when it actually contributes money, so "N paying tenants" and "$0" are never

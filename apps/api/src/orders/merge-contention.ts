@@ -69,3 +69,19 @@ export function mapLockError(e: unknown): never {
   }
   throw e;
 }
+
+/**
+ * `withAdvisoryLock`'s "someone else holds this customer's lock" outcome as the coded 503 the sweep and every
+ * post-commit caller recognise (`isMergeContention`). Moved verbatim out of the two merge methods that each
+ * carried the same `if (!result.acquired) throw …` block inline.
+ */
+export function assertMergeLockAcquired<T extends { acquired: boolean }>(
+  result: T,
+): asserts result is Extract<T, { acquired: true }> {
+  if (!result.acquired) {
+    throw new ServiceUnavailableException({
+      code: LOCK_UNAVAILABLE,
+      message: LOCK_UNAVAILABLE_MESSAGE,
+    });
+  }
+}

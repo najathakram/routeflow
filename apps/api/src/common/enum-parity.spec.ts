@@ -114,6 +114,12 @@ const ENUM_TABLE: Array<[string, keyof typeof PrismaEnums]> = [
   // (features.ts, the shared contract — the explain-trace/diff-log `source` field).
   ["FEATURE_OVERRIDE_KIND_VALUES", "FeatureOverrideKind"],
   ["FEATURE_SOURCE_VALUES", "FeatureSource"],
+  // Order tracking (#2095): long-standing enums, newly mirrored for the shared tracking payload
+  // (packages/types/api/order-tracking.ts) that web and mobile branch on. Existing enums, so the
+  // triage count below does not move.
+  ["ORDER_STATUS_VALUES", "OrderStatus"],
+  ["ROUTE_RUN_STATUS_VALUES", "RouteRunStatus"],
+  ["ROUTE_RUN_STOP_STATUS_VALUES", "RouteRunStopStatus"],
 ];
 
 describe("enum parity: packages/types/api/enums.ts vs @prisma/client", () => {

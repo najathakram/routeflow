@@ -425,8 +425,12 @@ export class CustomersController {
   @Post(":id/restore")
   @Roles(UserRole.OPERATOR)
   @HttpCode(200)
-  restore(@Param("id") id: string, @Body() body?: { status?: string; username?: string }) {
-    return this.customersService.restoreCustomer(id, body?.status, body?.username);
+  restore(
+    @Param("id") id: string,
+    @CurrentUser() user: JwtPayload,
+    @Body() body?: { status?: string; username?: string },
+  ) {
+    return this.customersService.restoreCustomer(id, body?.status, body?.username, user.sub);
   }
 
   // ─── Suggest buyer account merge ──────────────────────────────────────────
