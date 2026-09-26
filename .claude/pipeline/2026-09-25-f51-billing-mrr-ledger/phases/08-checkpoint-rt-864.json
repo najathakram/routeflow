@@ -1,0 +1,51 @@
+{
+  "task": {
+    "id": "RT-864",
+    "title": "repro tests T6, T7, P3, P4",
+    "type": "repro-test",
+    "files": [],
+    "tests": ["apps/api/src/platform-admin/platform-admin.service.spec.ts"],
+    "dependsOn": ["RC-864", "RT-863"],
+    "risk": "HIGH",
+    "briefPath": "/Users/maznahamanullah/code/routeflow/.claude/worktrees/zealous-franklin-2c1741/.claude/pipeline/2026-09-25-f51-billing-mrr-ledger/tasks/RT-864/brief.md",
+    "redRun": {
+      "ran": true,
+      "cwd": "/Users/maznahamanullah/code/routeflow/.claude/worktrees/zealous-franklin-2c1741",
+      "results": [
+        {
+          "command": "cd apps/api && npx jest src/platform-admin/platform-admin.service.spec.ts -t \"REG-B864-TRIAL-OVERRIDE\"",
+          "exitCode": 1,
+          "output": "  ● PlatformAdminService — audit provenance › REG-B864-TRIAL-OVERRIDE books nothing on a TRIAL tenant (flips REG-OVERRIDE-BACKFILL-TRIAL + :1144, SA-277)\n\n    expect(received).toEqual(expected) // deep equality\n\n    - Expected  - 1\n    + Received  + 3\n\n    - Array []\n    + Array [\n    +   1200,\n    + ]\n\n      1168 |     expect(upsertArg.update.basePriceSnapshot).toBe(1200);\n      1169 |     // RED today: the bug books the delta regardless of the tenant's paying-set status.\n    > 1170 |     expect(billingEventService.emit.mock.calls.map((c: any) => c[3]?.amountDelta)).toEqual([]);\n           |                                                                                    ^\n      1171 |   });\n      1172 |\n      1173 |   it(\"REG-B864-TRIAL-OVERRIDE override then activation books exactly +1200 once\", async () => {\n\n      at Object.<anonymous> (platform-admin/platform-admin.service.spec.ts:1170:84)\n\n  ● PlatformAdminService — audit provenance › REG-B864-TRIAL-OVERRIDE override then activation books exactly +1200 once\n\n    expect(received).toBe(expected) // Object.is equality\n\n    Expected: 1200\n    Received: 2400\n\n      1219 |       0,\n      1220 |     );\n    > 1221 |     expect(totalDelta).toBe(1200);\n           |                        ^\n      1222 |     expect(billingEventService.emit).toHaveBeenCalledWith(\n      1223 |       TENANT_ID,\n      1224 |       \"plan.changed\",\n\n      at Object.<anonymous> (platform-admin/platform-admin.service.spec.ts:1221:24)\n\nTest Suites: 1 failed, 1 total\nTests:       2 failed, 86 skipped, 88 total\nSnapshots:   0 total\nTime:        5.402 s, estimated 13 s\nRan all test suites matching src/platform-admin/platform-admin.service.spec.ts with tests matching \"REG-B864-TRIAL-OVERRIDE\"."
+        },
+        {
+          "command": "cd apps/api && npx jest src/platform-admin/platform-admin.service.spec.ts",
+          "exitCode": 1,
+          "output": "Test Suites: 1 failed, 1 total\nTests:       2 failed, 86 passed, 88 total\nSnapshots:   0 total\nTime:        13.505 s\n\nThe only 2 failures in the full file are the two new REG-B864-TRIAL-OVERRIDE tests (T6, T7) with the same failure messages as above. All 86 other tests pass, including the new P3 pin (\"price-override on an ACTIVE/PRODUCTION tenant still books the run-rate delta with actorId (P3)\") and the unchanged P4 test (\"price-override leaves a grandfathered basePriceSnapshot alone and emits nothing\", formerly at :1166)."
+        }
+      ]
+    },
+    "redAudit": {
+      "structurallyRed": true,
+      "tests": [
+        {
+          "test": "REG-B864-TRIAL-OVERRIDE books nothing on a TRIAL tenant",
+          "outcome": "assertion-failure",
+          "note": "Line 1170: expected empty array but received [1200]; bug books a billing event on a TRIAL tenant when it should not"
+        },
+        {
+          "test": "REG-B864-TRIAL-OVERRIDE override then activation books exactly +1200 once",
+          "outcome": "assertion-failure",
+          "note": "Line 1221: expected 1200 but received 2400; bug double-charges the tenant's negotiated fee across override + activation"
+        }
+      ],
+      "blockers": [],
+      "remediation": ""
+    },
+    "redAttempts": 1,
+    "behaviorallyRed": true,
+    "status": "complete",
+    "rounds": 0,
+    "clean": true
+  },
+  "progressLine": "Task RT-864: complete (review clean)"
+}
