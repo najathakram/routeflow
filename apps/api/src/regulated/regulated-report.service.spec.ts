@@ -6,6 +6,7 @@ import { RegulatedService } from "./regulated.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { createMockPrisma } from "../testing/prisma-mock";
 import { defaultColumnKeys } from "./template-registry";
+import * as uncategorised from "./uncategorised-lines";
 
 describe("RegulatedReportService", () => {
   let service: RegulatedReportService;
@@ -419,5 +420,39 @@ describe("RegulatedReportService", () => {
     await service.buildReportCsv({ category: "c1", from: "2026-09-01", to: "2026-09-30" });
     expect(spy).toHaveBeenCalledWith(expect.anything(), { reviewRows: false });
     spy.mockRestore();
+  });
+
+  describe("F-05 uncategorised-lines row: the tenant timezone", () => {
+    const range = { category: "cat-1", from: "2026-09-01", to: "2026-09-30" };
+    let warnings: jest.SpyInstance;
+    const policy = (enabled: boolean) =>
+      ((service as any).sellingRestrictions.getPolicy as jest.Mock).mockResolvedValue({
+        enabled,
+        addressPrecedence: "BILLING_FIRST",
+      });
+    beforeEach(() => {
+      prisma.getTenantId.mockReturnValue("tn-1");
+      warnings = jest.spyOn(uncategorised, "uncategorisedLineWarnings").mockResolvedValue([]);
+    });
+    afterEach(() => warnings.mockRestore());
+
+    it("policy ON: the tenant's timezone is read and passed through to the rule check", async () => {
+      policy(true);
+      prisma.tenantConfig.findUnique.mockResolvedValue({ timezone: "America/Chicago" });
+      await service.buildReport(range);
+      expect(prisma.tenantConfig.findUnique).toHaveBeenCalledWith({
+        where: { tenantId: "tn-1" },
+        select: { timezone: true },
+      });
+      expect(warnings).toHaveBeenCalledTimes(1);
+      expect(warnings.mock.calls[0][3]).toBe("America/Chicago");
+    });
+
+    it("policy OFF: the tenant config is never read (and no timezone is passed)", async () => {
+      policy(false);
+      await service.buildReport(range);
+      expect(prisma.tenantConfig.findUnique).not.toHaveBeenCalled();
+      expect(warnings.mock.calls[0][3]).toBeNull();
+    });
   });
 });
