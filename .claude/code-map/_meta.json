@@ -15,5 +15,5 @@
     "packages": 0
   },
   "fileCount": 1045,
-  "notes": "**2026-09-26 — windows D/E landed (docs-only bookkeeping).** `api/feature-modules-7.md` gains a \"Landing batch 2026-09-26\" section: #2152 lock order + tx-retry, #2172 price-adjustment ledger, #2161 next-delivery pack snapshot, #2150 uncategorised-lines report, #2130 at-door ceiling, #2142 buyer tracking + rooms, #2162 local super-admin. Lessons L-219..L-222 minted. No source changed. See CHANGELOG.md for the full landing list."
+  "notes": "**2026-09-26 — window H landed (docs-only bookkeeping; #2149/#2129/#2186 bookkept separately in #2224, window G).** `api/feature-modules-7.md` gains a \"Landing batch 2026-09-26, window H\" section: #2205 remaining local-db guards, #2139 inline return inside an order edit/merge (supersedes #2138), #2046 order-detail unit-label qty text (B653/B757-9). Lesson L-225 minted. No source changed. See CHANGELOG.md for the full landing list."
 }
