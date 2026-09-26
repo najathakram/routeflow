@@ -23,12 +23,14 @@
  * ("Builders post NEED-DB first — never run DB specs on the compose stack; the prover owns it")
  * this file is authored but never executed here.
  *
- * Targets the approved `test` tenant only (bug-test-plan.md P16), never a throwaway `qa-*` slug —
- * this fixture exercises the tenant's real billing/addon/plan-flag state as seeded by
- * `local:seed`'s genesis catalog publish, not a synthetic one. `assertTestTenant` still gates the
- * slug (defense in depth: a copy-paste of this file into a script must fail the same way). Rows
- * this run creates are tagged with a unique run marker (SKU / businessName suffix) so `afterAll`
- * deletes precisely what it created and never touches other fixture data living in `test`.
+ * Creates its own throwaway `qa-2185-<run>` tenant in `beforeAll` (CI's db-migrations job runs
+ * this lane against a fresh, unseeded database, so it can't depend on `local:seed`'s `test`
+ * tenant existing). Every billing/addon/plan-flag/entitlement collaborator below is stubbed to
+ * "everything permitted" regardless of tenant state, so the fixture never needs the seeded
+ * tenant's real plan/catalog data — only a bare tenant row for the products/customers this run
+ * creates to hang off. `assertTestTenant` still gates the slug (defense in depth: a copy-paste of
+ * this file into a script must fail the same way). `afterAll` deletes every row this run created,
+ * in FK-safe order, then the tenant itself.
  *
  * Follows the tenant-setup/cleanup pattern of `import-item-tenantid.db.spec.ts` /
  * `import-numbering.db.spec.ts`: real `PrismaService` + `TenantContextService`, real
@@ -88,17 +90,19 @@ describeDb(
       // Nothing env-dependent may run at collection time (db-lane.db.spec.ts's rule): the real
       // connection is built here, inside a hook, never at module top level.
       requireLocalDatabaseUrl();
-      const tenantSlug = assertTestTenant("test", "import-commercial-columns.db.spec.ts");
+      const tenantSlug = assertTestTenant(
+        `qa-2185-${RUN_MARKER.toLowerCase()}`,
+        "import-commercial-columns.db.spec.ts",
+      );
       tenantCtx = new TenantContextService();
       prisma = new PrismaService(tenantCtx);
       await prisma.$connect();
 
-      const tenant = await prisma.tenant.findFirst({ where: { slug: tenantSlug } });
-      if (!tenant) {
-        throw new Error(
-          `Approved test tenant "${tenantSlug}" not found — run \`npm run local:seed\` first.`,
-        );
-      }
+      // A bare throwaway tenant — every billing/addon/plan-flag collaborator below is stubbed to
+      // "permitted" so this fixture never needs the seeded `test` tenant's real plan/catalog state.
+      const tenant = await prisma.tenant.create({
+        data: { slug: tenantSlug, name: `B858 ${tenantSlug}` },
+      });
       tenantId = tenant.id;
 
       const module: TestingModule = await Test.createTestingModule({
@@ -143,10 +147,19 @@ describeDb(
     afterEach(() => jest.restoreAllMocks());
 
     afterAll(async () => {
-      // Never delete the shared `test` tenant itself — only the rows this run tagged.
-      await prisma.auditLog
-        .deleteMany({ where: { tenantId, entityId: { in: createdCustomerIds } } })
-        .catch(() => {});
+      // This run's own throwaway tenant — delete every row it created, children before the
+      // tenant itself (Product/Customer/User/CustomerAddress carry no onDelete: Cascade to
+      // Tenant — the FK is an optional scalar that would only SET NULL, leaving orphan rows
+      // behind — so each child table is cleared explicitly before `tenant.delete`).
+      // Never run a tenant-wide delete without the tenant: Prisma drops an `undefined` filter,
+      // so `{ tenantId: undefined }` would match every audit row in the database.
+      if (!tenantId) {
+        await prisma?.$disconnect();
+        return;
+      }
+      // Every audit row of the throwaway tenant (product and customer events alike) — left
+      // behind, tenant.delete would SET NULL them into null-tenant orphans.
+      await prisma.auditLog.deleteMany({ where: { tenantId } }).catch(() => {});
       if (createdProductIds.length > 0) {
         await prisma.product
           .deleteMany({ where: { id: { in: createdProductIds } } })
@@ -166,6 +179,7 @@ describeDb(
       if (createdUserIds.length > 0) {
         await prisma.user.deleteMany({ where: { id: { in: createdUserIds } } }).catch(() => {});
       }
+      await prisma.tenant.delete({ where: { id: tenantId } }).catch(() => {});
       await prisma?.$disconnect();
     });
 
