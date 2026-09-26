@@ -32,6 +32,7 @@ import {
 import { computeLineSubtotal, normalizeBoxesPieces } from "@routeflow/pricing";
 import { describeChangeRequest, describeResolution } from "@/lib/change-requests";
 import { fmtCalendarDate } from "@/lib/formatting";
+import { DeliveryTrackingCard } from "./_components/DeliveryTrackingCard";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -675,6 +676,9 @@ export default function BuyerOrderDetailPage() {
       <div className="mb-8 rounded-xl border border-surface-border bg-white p-6">
         <OrderTimeline status={order.status} />
       </div>
+
+      {/* #2095: where this delivery stands on its route (driver, stops before you, window) */}
+      <DeliveryTrackingCard order={order} />
 
       {/* P5-10: change requests filed after dispatch — PENDING (amber) flips to
           Approved (green) / Declined + reason (red) once resolved. */}

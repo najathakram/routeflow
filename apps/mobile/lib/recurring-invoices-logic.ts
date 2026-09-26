@@ -10,6 +10,13 @@ import type { RecurringFrequency } from "./api/recurring-invoices";
  * generation time — the client never derives a money total here.
  */
 
+/**
+ * B646 / SA-135 (mirrors the web form's hint): a boxed product's template line is a BOX count at the
+ * per-box price; generation stores the invoice line in pieces. Shown under the template's lines.
+ */
+export const RECURRING_QTY_BOXES_HINT =
+  "For a product sold in boxes, Qty counts boxes and Unit price is per box.";
+
 export type PillVariant = "brand" | "green" | "orange" | "red" | "gray" | "purple";
 
 /** State is a boolean, not an enum — Active (green) / Paused (gray). */

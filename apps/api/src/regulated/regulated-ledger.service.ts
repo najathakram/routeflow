@@ -1,6 +1,7 @@
 import { Injectable, Logger } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import {
+  prorateLineSubtotal,
   roundMoney,
   regulatedUnitBasis,
   classifySaleAxis,
@@ -47,6 +48,14 @@ interface RegulatedCorrectionRowInput {
   returnId?: string;
 }
 
+/** #2108: a filed (GENERATED or LOCKED) filing period a parked reversal would otherwise book into, and
+ *  the category whose filing matched. */
+export interface FiledPeriod {
+  periodKey: string;
+  status: string;
+  trackedCategoryId: string;
+}
+
 export interface SaleLedgerLine {
   invoiceItemId: string;
   orderItemId: string | null;
@@ -64,6 +73,39 @@ export interface SaleLedgerLine {
   packAtSale?: number | null;
   netSales: number; // the line's post-discount subtotal
   categoryTax: number; // computed category tax (0 today — tobacco is rate=0)
+}
+
+/** One re-priced regulated invoice line, as `correctSaleForPriceChange` needs it (B662). */
+export interface PriceCorrectionLine {
+  invoiceItemId: string;
+  qty: number; // the line's qty (its own unit, the same axis as the SALE rows)
+  netSales: number; // the line's NEW post-discount subtotal
+  categoryTax: number; // the line's NEW category tax
+  boxes?: number | null;
+  unitsPerBox?: number | null;
+  promoFreeUnits?: number | null; // BUY_N_GET_M snapshot, in whole selling units
+}
+
+/**
+ * B662, the single branch point for "what does a price change do after a partial return?" (Senior
+ * Architect ruling 2026-09-21: remainder only, computed as a TARGET). The new figure is prorated to the
+ * qty still held in the ledger through the pricing package's proration helper (which knows about free
+ * units); the delta is target minus the net held. A TARGET is idempotent and free of rounding drift.
+ */
+export function priceCorrectionTarget(
+  newAmount: number,
+  remainingQty: number,
+  line: Pick<PriceCorrectionLine, "qty" | "boxes" | "unitsPerBox" | "promoFreeUnits">,
+): number {
+  const freeUnitSize =
+    line.boxes != null && Number(line.unitsPerBox ?? 0) > 1 ? Number(line.unitsPerBox) : 1;
+  return prorateLineSubtotal(
+    newAmount,
+    remainingQty,
+    line.qty,
+    Number(line.promoFreeUnits ?? 0),
+    freeUnitSize,
+  );
 }
 
 /**
@@ -579,8 +621,16 @@ export class RegulatedLedgerService {
     // reconcile RE-PRICED the line (old rows folded in at a different price), and a
     // fractional partial just under the full remaining qty could otherwise
     // over-reverse the net/tax dimensions past 0.
-    let bookedNet = closesRow ? roundMoney(-netRem) : roundMoney(-Number(s.netSales) * frac);
-    let bookedTax = closesRow ? roundMoney(-taxRem) : roundMoney(-Number(s.categoryTax) * frac);
+    // B662: a non-closing chunk takes its share of what the line STILL HOLDS (remaining net/tax over
+    // the remaining native qty), not of the base sale: exact in any order of partial returns and price
+    // corrections, on both axes, and independent of whether the caller loaded the correction map (a
+    // STANDARD return is LINE_UNIT and does not). A $240 sale corrected to $300, 12 of 72 back = -$50.
+    let bookedNet = closesRow
+      ? roundMoney(-netRem)
+      : roundMoney((-netRem * rNative) / rowRemainingNative);
+    let bookedTax = closesRow
+      ? roundMoney(-taxRem)
+      : roundMoney((-taxRem * rNative) / rowRemainingNative);
     if (bookedNet < -netRem) bookedNet = roundMoney(-netRem);
     if (bookedTax < -taxRem) bookedTax = roundMoney(-taxRem);
     // The NATIVE axis is exactly rNative (never re-derived through frac — that would
@@ -889,6 +939,75 @@ export class RegulatedLedgerService {
   }
 
   /**
+   * B662: an ISSUED invoice was re-priced, so the ledger's net and category tax for its regulated lines no
+   * longer match the invoice. Book ONE append-only CORRECTION row per line whose held figure differs from
+   * its target (`priceCorrectionTarget`): entryType SALE for an increase, REVERSAL for a decrease, signed
+   * `netSales` / `categoryTax` deltas, qty and unitBasisQty 0 (a price change moves no units), booked in
+   * the CURRENT period (never backdated: a filed period is not reopened), with `correctsEntryId` = the
+   * SALE row corrected and `originalSoldAt` = its sold date. Every id is copied from that SALE row, so an
+   * invoice that later returns to draft re-syncs over the SALE AND its corrections (`reverseInvoiceEntries`
+   * nets every row of the invoice line). Idempotent: the delta is computed against what the ledger
+   * holds, so a repeated adjustment writes nothing. A line with no live SALE row, or nothing left (fully
+   * returned / voided), is skipped. Returns the number of rows written. DRAFT invoices never come here:
+   * they re-sync (`resyncInvoiceLedger`), so a correction can never orphan on a reversed SALE.
+   */
+  async correctSaleForPriceChange(params: {
+    invoiceId: string;
+    lines: PriceCorrectionLine[];
+    db: any;
+  }): Promise<number> {
+    const { invoiceId, lines, db } = params;
+    if (lines.length === 0) return 0;
+    const all: any[] = await db.regulatedSalesLedger.findMany({
+      where: { invoiceId, invoiceItemId: { in: lines.map((l) => l.invoiceItemId) } },
+    });
+    const byItem = new Map<string, any[]>();
+    for (const r of all) byItem.set(r.invoiceItemId, [...(byItem.get(r.invoiceItemId) ?? []), r]);
+
+    const now = new Date();
+    const bucket = periodBucketOf(now);
+    const EPS = 0.005;
+    const rows: any[] = [];
+    for (const line of lines) {
+      const held = byItem.get(line.invoiceItemId) ?? [];
+      // The live SALE this line's corrections point at: the newest base sale (not itself a correction).
+      const base = held
+        .filter((r) => r.entryType === "SALE" && r.correctsEntryId == null && Number(r.qty) > 0)
+        .sort((a, b) => +new Date(b.createdAt ?? 0) - +new Date(a.createdAt ?? 0))[0];
+      if (!base) continue;
+      const heldQty = held.reduce((n, r) => n + Number(r.qty), 0);
+      if (!(heldQty > 0.0005)) continue; // nothing left in the ledger for this line
+      const heldNet = held.reduce((n, r) => n + Number(r.netSales), 0);
+      const heldTax = held.reduce((n, r) => n + Number(r.categoryTax), 0);
+      const dNet = roundMoney(priceCorrectionTarget(line.netSales, heldQty, line) - heldNet);
+      const dTax = roundMoney(priceCorrectionTarget(line.categoryTax, heldQty, line) - heldTax);
+      if (Math.abs(dNet) < EPS && Math.abs(dTax) < EPS) continue;
+      const decrease = (Math.abs(dNet) >= EPS ? dNet : dTax) < 0;
+      rows.push({
+        tenantId: base.tenantId,
+        trackedCategoryId: base.trackedCategoryId,
+        trackedSubcategoryId: base.trackedSubcategoryId ?? null,
+        entryType: decrease ? ("REVERSAL" as const) : ("SALE" as const),
+        orderId: base.orderId,
+        orderItemId: base.orderItemId,
+        invoiceId: base.invoiceId,
+        invoiceItemId: line.invoiceItemId,
+        qty: 0,
+        unitBasisQty: 0,
+        netSales: dNet,
+        categoryTax: dTax,
+        soldAt: now,
+        originalSoldAt: base.soldAt,
+        correctsEntryId: base.id,
+        periodBucket: bucket,
+      });
+    }
+    if (rows.length === 0) return 0;
+    await db.regulatedSalesLedger.createMany({ data: rows });
+    return rows.length;
+  }
+
+  /**
    * Undo a return's REVERSAL rows when the return is CANCELLED before being
    * refunded (symmetric to cancel() deleting the return's stock movements). A
    * delete — not a counter-entry — keeps the `returnId` idempotency guard clean so
@@ -924,6 +1043,118 @@ export class RegulatedLedgerService {
   }
 
   /**
+   * #2108: the ONE product-id definition for a parked sale row: its live invoice item's product,
+   * else the product of the order/invoice line shape (`loadSaleLineShapes`), which survives an
+   * InvoiceItem rotation. list() (`filedPeriodForParked`) and `resolveParkedReversal` both call it.
+   */
+  static productIdOfParkedRow(
+    saleRow: any,
+    productByItem: Map<string, string>,
+    shapeProductId: string | null | undefined,
+  ): string | null {
+    return productByItem.get(saleRow.invoiceItemId) ?? shapeProductId ?? null;
+  }
+
+  /**
+   * #2108 / SA-196: the ONE definition of which categories a parked-reversal resolution touches: the
+   * parked row's own plus every live sale row of the same product on the order (correction rows
+   * excluded). A product re-categorised between two sales has rows in different categories, each with
+   * its own filing, so the conservative fold looks at all of them. `resolveParkedReversal` and the
+   * parked-reversal list both call this, so what the operator is told before resolving is what the
+   * resolution then does.
+   */
+  static touchedCategoryIds(
+    saleRow: any,
+    sales: any[],
+    productByItem: Map<string, string>,
+    productId: string | null | undefined,
+  ): string[] {
+    return [
+      ...new Set(
+        [
+          saleRow,
+          ...sales.filter(
+            (x: any) =>
+              x.correctsEntryId == null &&
+              productId != null &&
+              productByItem.get(x.invoiceItemId) === productId,
+          ),
+        ]
+          .map((x: any) => x.trackedCategoryId)
+          .filter(Boolean),
+      ),
+    ] as string[];
+  }
+
+  /** The filed period (any of `categoryIds`) that contains `bucket`, or null. Deterministic: with two
+   *  filed categories the lowest category id, then period key, wins (SA-213), and the matched category
+   *  is returned so the response names the right one. */
+  async findFiledPeriod(
+    db: any,
+    categoryIds: string[],
+    bucket: string,
+  ): Promise<FiledPeriod | null> {
+    if (categoryIds.length === 0) return null;
+    const bucketStart = new Date(`${bucket}-01T00:00:00.000Z`);
+    const filing = await db.regulatedFiling.findFirst({
+      where: {
+        trackedCategoryId: { in: categoryIds },
+        periodStart: { lte: bucketStart },
+        periodEnd: { gt: bucketStart },
+        status: { in: ["GENERATED", "LOCKED"] },
+      },
+      orderBy: [{ trackedCategoryId: "asc" }, { periodKey: "asc" }],
+      select: { periodKey: true, status: true, trackedCategoryId: true },
+    });
+    return filing
+      ? {
+          periodKey: filing.periodKey,
+          status: filing.status,
+          trackedCategoryId: filing.trackedCategoryId,
+        }
+      : null;
+  }
+
+  /** Read-only: would resolving this parked row book into an already-filed period? Uses the SAME fold
+   *  and the SAME lookup as `resolveParkedReversal` (the park's date derives the bucket; a park in the
+   *  current month is never "filed"). */
+  async filedPeriodForParked(
+    db: any,
+    parked: { saleEntryId: string; orderId: string; createdAt: Date | string },
+  ): Promise<FiledPeriod | null> {
+    const bucket = periodBucketOf(new Date(parked.createdAt));
+    if (bucket === periodBucketOf(new Date())) return null;
+    const saleRow = await db.regulatedSalesLedger.findFirst({ where: { id: parked.saleEntryId } });
+    if (!saleRow) return null;
+    const sales: any[] =
+      (await db.regulatedSalesLedger.findMany({
+        where: { orderId: parked.orderId, entryType: "SALE" },
+      })) ?? [];
+    const itemIds = [
+      ...new Set(sales.map((x: any) => x.invoiceItemId).filter(Boolean)),
+    ] as string[];
+    const items: any[] =
+      itemIds.length > 0
+        ? ((await db.invoiceItem.findMany({
+            where: { id: { in: itemIds } },
+            select: { id: true, productId: true },
+          })) ?? [])
+        : [];
+    const productByItem = new Map<string, string>(items.map((i: any) => [i.id, i.productId]));
+    const shape = (await this.loadSaleLineShapes(db, [saleRow])).get(saleRow.id);
+    return this.findFiledPeriod(
+      db,
+      RegulatedLedgerService.touchedCategoryIds(
+        saleRow,
+        sales,
+        productByItem,
+        RegulatedLedgerService.productIdOfParkedRow(saleRow, productByItem, shape?.productId),
+      ),
+      bucket,
+    );
+  }
+
+  /**
    * SA-089a (amends SA-089, recorded as the SA's error E50) — B660: the operator resolution of
    * ONE parked reversal row. Lives here (not a separate injectable) because both
    * `buildLineRemainingBalances` and `bookReversalChunk` are private to this class — SA-090's
@@ -941,8 +1172,10 @@ export class RegulatedLedgerService {
    *
    * CLOSED IS DECIDED FIRST (SA-089a(a)): before any write, the line's remaining qty AND net —
    * on the ORIGINAL, UNCORRECTED axis — decide whether there is anything left to correct. Both
-   * ≤ EPS means the line was already fully reversed before this operator ever touched it:
-   * resolve and close with NOTHING written, not even the SALE correction. Deciding this AFTER
+   * ≤ EPS means the line was already fully reversed before this operator ever touched it: nothing
+   * is written on THAT row, not even the SALE correction (SA-169: the parked pieces still walk on to
+   * the product's other live rows, so the outcome is `closed` only when nothing booked, parked or
+   * was left over, and `partial` otherwise). Deciding this AFTER
    * writing the SALE's restatement (E50's mistake) manufactures a correction for a line that
    * needed none.
    *
@@ -1008,7 +1241,7 @@ export class RegulatedLedgerService {
     unbookedPieces: number;
     /** SA-182: set when the parked period was already filed, so the reversal was booked in the
      *  CURRENT period instead (an amended return may be required for `periodKey`). */
-    amendedPeriod?: { periodKey: string; status: string } | null;
+    amendedPeriod?: FiledPeriod | null;
     /** SA-193: existing UNRESOLVED parks the leftover was added to (never a new key). */
     grownParks?: { id: string; added: number }[];
     verdictAfter: SaleAxisState | null;
@@ -1171,37 +1404,24 @@ export class RegulatedLedgerService {
           `(${parkBucket}); the date wins.`,
       );
     }
-    let filedPeriod: { periodKey: string; status: string } | null = null;
+    let filedPeriod: FiledPeriod | null = null;
     if (returnDate && parkBucket !== currentBucket) {
-      const bucketStart = new Date(`${parkBucket}-01T00:00:00.000Z`);
-      // SA-196: conservative across categories. A product re-categorised between two sales has rows in
-      // different categories, each with its own filing; the period counts as filed if ANY category this
-      // resolution touches (the parked row's plus every row the walk will visit) has a filing for it.
-      const walkProductId = built.productByItem.get(saleRow.invoiceItemId) ?? shape.productId;
-      const touchedCategoryIds = [
-        ...new Set(
-          [
-            saleRow,
-            ...built.sales.filter(
-              (x: any) =>
-                x.correctsEntryId == null &&
-                built.productByItem.get(x.invoiceItemId) === walkProductId,
-            ),
-          ]
-            .map((x: any) => x.trackedCategoryId)
-            .filter(Boolean),
+      // SA-196: conservative across categories, through the ONE shared fold (list() uses the same one).
+      const walkProductId = RegulatedLedgerService.productIdOfParkedRow(
+        saleRow,
+        built.productByItem,
+        shape.productId,
+      );
+      filedPeriod = await this.findFiledPeriod(
+        db,
+        RegulatedLedgerService.touchedCategoryIds(
+          saleRow,
+          built.sales,
+          built.productByItem,
+          walkProductId,
         ),
-      ];
-      const filing = await db.regulatedFiling.findFirst({
-        where: {
-          trackedCategoryId: { in: touchedCategoryIds },
-          periodStart: { lte: bucketStart },
-          periodEnd: { gt: bucketStart },
-          status: { in: ["GENERATED", "LOCKED"] },
-        },
-        select: { periodKey: true, status: true },
-      });
-      if (filing) filedPeriod = { periodKey: filing.periodKey, status: filing.status };
+        parkBucket,
+      );
     }
     const now = returnDate && !filedPeriod ? returnDate : nowActual;
     const bucket = returnDate && !filedPeriod ? parkBucket : currentBucket;
@@ -1262,10 +1482,16 @@ export class RegulatedLedgerService {
     const parkedRowIds: string[] = [];
     const grownParks: { id: string; added: number }[] = [];
     if (leftover > 0) {
-      const productId = built.productByItem.get(saleRow.invoiceItemId) ?? shape.productId;
+      const productId = RegulatedLedgerService.productIdOfParkedRow(
+        saleRow,
+        built.productByItem,
+        shape.productId,
+      );
       const ordered = built.sales.filter(
         (s: any) =>
-          s.correctsEntryId == null && built.productByItem.get(s.invoiceItemId) === productId,
+          s.correctsEntryId == null &&
+          productId != null &&
+          built.productByItem.get(s.invoiceItemId) === productId,
       );
       // EVERY other live row of the product, in the live path's own order (a fully reversed row
       // skips itself inside the chunk booker) — not only rows after the parked one.
