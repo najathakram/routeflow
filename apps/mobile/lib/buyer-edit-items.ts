@@ -1,4 +1,6 @@
+import { formatQtySplit } from "@routeflow/pricing";
 import { unitLineCount } from "./edit-items-draft";
+import { invoiceLineUnitNoun } from "./invoice-line-display";
 
 /**
  * #2270 (lead ruling, option A): the buyer edit-items screen's pure half.
@@ -31,6 +33,8 @@ export interface BuyerDraftItem {
   unitLabel?: string | null;
   qty: number;
   unitPrice: number;
+  /** A live unit line whose COUNT can't be derived (SA-388 LOCKED) — shown as "locked", never a number. */
+  locked?: boolean;
 }
 
 /** Mirrors the server's `isUnitAwareLine` exactly (unit-aware-guard.ts). */
@@ -60,7 +64,11 @@ export function hydrateBuyerDraft(
   const draft: Record<string, BuyerDraftItem> = {};
   for (const li of lines) {
     if (!(Number(li.qty) > 0)) continue; // the screen's long-standing filter, unchanged
-    const count = isBuyerUnitLine(li) ? unitLineCount(li) : null;
+    // #2316 review: a CANCELLED unit line never joins the draft — once the order stops being
+    // read-only, the buyer replace would otherwise re-create it from its stored base pieces.
+    if (li.status === "CANCELLED" && li.unitLabel != null && li.unitLabel !== "") continue;
+    const unitLine = isBuyerUnitLine(li);
+    const count = unitLine ? unitLineCount(li) : null;
     draft[li.productId] = {
       productId: li.productId,
       name: li.product?.name ?? "Product",
@@ -68,9 +76,30 @@ export function hydrateBuyerDraft(
       unitLabel: count != null ? li.unitLabel : null,
       qty: count ?? Number(li.qty),
       unitPrice: Number(li.unitPrice),
+      ...(unitLine && count == null ? { locked: true } : {}),
     };
   }
   return draft;
+}
+
+/**
+ * #2316 review (Opus BLOCK): the quantity TEXT a read-only row shows, since its steppers are
+ * hidden — a unit line reads "4 Cases" / "1 Case" (its COUNT, named by invoiceLineUnitNoun and
+ * pluralised by the shared formatQtySplit), a LOCKED one reads "locked", a pack line its qty.
+ */
+export function readOnlyQtyText(item: BuyerDraftItem): string {
+  if (item.locked) return "locked";
+  if (item.unitLabel?.trim()) {
+    return formatQtySplit({
+      qty: item.qty,
+      boxes: item.qty,
+      pieces: 0,
+      boxLabel: invoiceLineUnitNoun(item),
+    });
+  }
+  return item.unit
+    ? `${formatQtySplit({ qty: item.qty })} ${item.unit}`
+    : formatQtySplit({ qty: item.qty });
 }
 
 export type BuyerSavePlan =

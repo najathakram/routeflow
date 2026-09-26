@@ -18,6 +18,7 @@ import {
   hydrateBuyerDraft,
   orderUnitLabel,
   readOnlyNotice,
+  readOnlyQtyText,
   type BuyerDraftItem,
 } from "../../../../lib/buyer-edit-items";
 
@@ -33,14 +34,18 @@ export default function BuyerEditItemsScreen() {
 
   const [draft, setDraft] = useState<Record<string, DraftItem>>({});
 
-  // Populate draft once order loads
+  // #2316 review: the unit status is part of the draft's identity — a unit line cancelled after
+  // load flips the order editable, and the draft must be rebuilt then, never carry a stale count.
+  const unitKey = order ? orderUnitLabel(order.lineItems) : null;
+
+  // Populate draft once order loads (and again whenever its unit status changes)
   useEffect(() => {
     if (!order) return;
     // #2270: a unit line hydrates its COUNT (SA-388), never the stored base qty.
     setDraft(hydrateBuyerDraft(order.lineItems));
     // Run only when the order first loads — intentionally omitting draft from deps
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [order?.id]);
+  }, [order?.id, unitKey]);
 
   const items = useMemo(() => Object.values(draft).filter((i) => i.qty > 0), [draft]);
 
@@ -138,7 +143,9 @@ export default function BuyerEditItemsScreen() {
                         : ""}
                   </Text>
                 </View>
-                {readOnly ? null : (
+                {readOnly ? (
+                  <Text style={styles.qtyText}>{readOnlyQtyText(item)}</Text>
+                ) : (
                   <View style={styles.qtyRow}>
                     <Pressable
                       style={styles.qtyBtn}
@@ -214,6 +221,7 @@ const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: ios.bg },
   center: { flex: 1, alignItems: "center", justifyContent: "center" },
   empty: { color: ios.label2, fontSize: 14, textAlign: "center", margin: 32 },
+  qtyText: { color: ios.label, fontSize: 15, fontWeight: "600", marginLeft: 12 },
   notice: { color: ios.label2, fontSize: 14, marginHorizontal: 16, marginTop: 12, lineHeight: 20 },
   section: {
     marginHorizontal: 16,

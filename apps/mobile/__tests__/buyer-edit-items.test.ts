@@ -5,6 +5,7 @@ import {
   hydrateBuyerDraft,
   isBuyerUnitLine,
   readOnlyNotice,
+  readOnlyQtyText,
   type BuyerOrderLineLike,
 } from "../lib/buyer-edit-items";
 
@@ -57,6 +58,31 @@ describe("hydrateBuyerDraft: a unit line shows its COUNT (#2270)", () => {
 
   it("a pack line is unchanged", () => {
     expect(hydrateBuyerDraft([packLine()]).p2).toMatchObject({ qty: 3, unitLabel: null });
+  });
+});
+
+describe("readOnlyQtyText: a read-only row still SHOWS its quantity (#2316 review)", () => {
+  it.each([
+    ["4 Cases (boxes 4)", caseLine(), "4 Cases"],
+    ["4 Cases (boxes 0, 48 = 4 x 12)", caseLine({ boxes: 0 }), "4 Cases"],
+    ["1 Case", caseLine({ qty: 12, boxes: 1 }), "1 Case"],
+    ["a LOCKED unit line reads 'locked', never 40", caseLine({ qty: 40, boxes: 0 }), "locked"],
+    ["a pack line reads its qty + unit", packLine(), "3 ea"],
+  ])("%s", (_n, li, expected) => {
+    const d = hydrateBuyerDraft([li]);
+    expect(readOnlyQtyText(d[li.productId])).toBe(expected);
+  });
+});
+
+describe("a unit line cancelled after load never joins the draft (#2316 review)", () => {
+  it("the CANCELLED Case line is skipped; the order is editable and the payload omits it", () => {
+    const lines = [caseLine({ status: "CANCELLED" }), packLine()];
+    const draft = hydrateBuyerDraft(lines);
+    expect(draft.p1).toBeUndefined();
+    expect(buyerSavePlan(lines, draft)).toEqual({
+      kind: "replace",
+      items: [{ productId: "p2", qty: 3 }],
+    });
   });
 });
 
@@ -115,9 +141,17 @@ describe("buyer edit-items.tsx wiring pins (#2270)", () => {
     expect(planAt).toBeLessThan(mutateAt);
   });
 
+  it("rebuilds the draft whenever the order's unit status changes (no stale count after a cancel)", () => {
+    expect(src).toMatch(/const unitKey = order \? orderUnitLabel\(order\.lineItems\) : null;/);
+    expect(src).toMatch(/\}, \[order\?\.id, unitKey\]\);/);
+  });
+
   it("says read-only UP FRONT and hides the steppers, Add product and Save for a unit order", () => {
     expect(src).toMatch(/readOnlyNotice\(/);
-    expect(src).toMatch(/\{readOnly \? null : \(\s*<View style=\{styles\.qtyRow\}>/);
+    // #2316 review: the hidden stepper is REPLACED by the quantity text, never just removed.
+    expect(src).toMatch(
+      /\{readOnly \? \(\s*<Text style=\{styles\.qtyText\}>\{readOnlyQtyText\(item\)\}<\/Text>\s*\) : \(\s*<View style=\{styles\.qtyRow\}>/,
+    );
     expect(src).toMatch(/\{readOnly \? null : \(\s*<Pressable style=\{styles\.addBtn\}/);
     expect(src).toMatch(/\{readOnly \? null : \(\s*<View style=\{styles\.footer\}>/);
   });
