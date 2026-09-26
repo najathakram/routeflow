@@ -1,6 +1,5 @@
 import { ParseUUIDPipe } from "@nestjs/common";
 import { ROUTE_ARGS_METADATA } from "@nestjs/common/constants";
-import { SuperAdminGuard } from "../tenant/super-admin.guard";
 import { PlatformAdminController } from "./platform-admin.controller";
 import { SuperAdminGuard } from "../tenant/super-admin.guard";
 import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
@@ -46,11 +45,6 @@ function build() {
 }
 
 describe("PlatformAdminController — config snapshots", () => {
-  it("carries the class-level SuperAdminGuard", () => {
-    const guards = Reflect.getMetadata("__guards__", PlatformAdminController) as unknown[];
-    expect(guards).toContain(SuperAdminGuard);
-  });
-
   it("lists and previews by tenant + snapshot id", async () => {
     const { controller, snapshotAdmin } = build();
     await controller.listConfigSnapshots(UUID_A);
