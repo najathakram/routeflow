@@ -97,7 +97,11 @@ import { MessagingService } from "../messaging/messaging.service";
 import { formatDate, formatMoney } from "../messaging/messaging.helpers";
 import { CommissionEngineService } from "../sales-agents/commission-engine.service";
 import { NSF_FEE_DESCRIPTION_PREFIX } from "../sales-agents/commission-math";
-import { startOfCalendarDay, endOfCalendarDay } from "../common/calendar-date";
+import {
+  calendarStampFromInput,
+  startOfCalendarDay,
+  endOfCalendarDay,
+} from "../common/calendar-date";
 import { lockRowsNoWait } from "../common/db-locks";
 import { NumberingService } from "../import/numbering.service";
 import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
@@ -464,8 +468,9 @@ export class InvoicesService {
             shippingFee: shipping,
             total,
             dueDate: dto.dueDate ? new Date(dto.dueDate) : null,
+            // #2197: a client time component is read in the tenant's timezone.
             issueDate: dto.issueDate
-              ? new Date(dto.issueDate)
+              ? calendarStampFromInput(dto.issueDate, tenantDefaults.timezone)
               : startOfCalendarDay(new Date(), tenantDefaults.timezone),
             notes: dto.notes ?? tenantDefaults.notes,
             terms: dto.terms ?? tenantDefaults.terms,
@@ -3316,6 +3321,11 @@ export class InvoicesService {
       throw new BadRequestException("Only DRAFT invoices can be edited");
     await this.assertOrderInvoiceUnlocked(inv);
 
+    // #2197: the same tenant-local calendar-day stamp create() writes.
+    const issueDate = dto.issueDate
+      ? calendarStampFromInput(dto.issueDate, (await this.resolveTenantInvoiceDefaults()).timezone)
+      : undefined;
+
     // units_v1: BOTH rewrite paths — the item replace (re-split at the LIVE pack) and the
     // discount/shipping recompute, whose order back-sync writes onto the linked order's lines.
     if (dto.items || dto.discount !== undefined || dto.shippingFee !== undefined) {
@@ -3408,7 +3418,7 @@ export class InvoicesService {
             shippingFee: shipping,
             total,
             dueDate: dto.dueDate ? new Date(dto.dueDate) : undefined,
-            issueDate: dto.issueDate ? new Date(dto.issueDate) : undefined,
+            issueDate,
             notes: dto.notes,
             terms: dto.terms,
             // "" from the composer's Terms dropdown means "no term" (the operator
@@ -3480,7 +3490,7 @@ export class InvoicesService {
       where: { id },
       data: {
         ...(dto.dueDate && { dueDate: new Date(dto.dueDate) }),
-        ...(dto.issueDate && { issueDate: new Date(dto.issueDate) }),
+        ...(issueDate && { issueDate }),
         ...(dto.notes !== undefined && { notes: dto.notes }),
         ...(dto.terms !== undefined && { terms: dto.terms }),
         // "" clears the label (the composer sends it when the operator hand-typed a

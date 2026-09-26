@@ -1064,6 +1064,65 @@ describe("InvoicesService", () => {
     });
   });
 
+  // ─── #2197 — a client issueDate with a time component is stored as the
+  // TENANT-local calendar day's UTC-midnight stamp, never the raw instant.
+  describe("#2197 — issueDate is normalized to the tenant's calendar-day stamp", () => {
+    const nyDefaults = { notes: null, terms: null, timezone: "America/New_York" };
+
+    it("create(): 23:30 New York on the 25th stores 2026-09-25, not the raw 03:30Z instant", async () => {
+      prisma.customer.findUnique.mockResolvedValue({ id: "cust-1", isTaxExempt: false });
+      prisma.product.findMany.mockResolvedValue([]);
+      jest.spyOn(service as any, "resolveTenantInvoiceDefaults").mockResolvedValue(nyDefaults);
+      prisma.invoice.create.mockResolvedValue({ id: "inv-2197", items: [], payments: [] });
+
+      await service.create({
+        customerId: "cust-1",
+        issueDate: "2026-09-25T23:30:00-04:00",
+        items: [{ description: "Widget", qty: 1, unitPrice: 10, taxRate: 0 }],
+      } as any);
+
+      const data = prisma.invoice.create.mock.calls[0][0].data;
+      expect(data.issueDate).toEqual(new Date("2026-09-25T00:00:00.000Z"));
+    });
+
+    it("create(): a bare calendar date is stored literally in a west-of-UTC tenant", async () => {
+      prisma.customer.findUnique.mockResolvedValue({ id: "cust-1", isTaxExempt: false });
+      prisma.product.findMany.mockResolvedValue([]);
+      jest.spyOn(service as any, "resolveTenantInvoiceDefaults").mockResolvedValue(nyDefaults);
+      prisma.invoice.create.mockResolvedValue({ id: "inv-2197b", items: [], payments: [] });
+
+      await service.create({
+        customerId: "cust-1",
+        issueDate: "2026-09-25",
+        items: [{ description: "Widget", qty: 1, unitPrice: 10, taxRate: 0 }],
+      } as any);
+
+      const data = prisma.invoice.create.mock.calls[0][0].data;
+      expect(data.issueDate).toEqual(new Date("2026-09-25T00:00:00.000Z"));
+    });
+
+    it("update(): a header-only edit with a time component stores the tenant-local day", async () => {
+      prisma.invoice.findUnique.mockResolvedValue({
+        id: "inv-2197u",
+        orderId: null,
+        customerId: "cust-1",
+        status: InvoiceStatus.DRAFT,
+        subtotal: 10,
+        taxAmount: 0,
+        discount: 0,
+        shippingFee: 0,
+        total: 10,
+        issueDate: new Date("2026-09-01T00:00:00.000Z"),
+      });
+      jest.spyOn(service as any, "resolveTenantInvoiceDefaults").mockResolvedValue(nyDefaults);
+      prisma.invoice.update.mockResolvedValue({ id: "inv-2197u" });
+
+      await service.update("inv-2197u", { issueDate: "2026-09-25T23:30:00-04:00" } as any);
+
+      const data = prisma.invoice.update.mock.calls[0][0].data;
+      expect(data.issueDate).toEqual(new Date("2026-09-25T00:00:00.000Z"));
+    });
+  });
   // ─── Pending-mirror reconcile ──────────────────────────────────────────────
 
   describe("reconcileOrderDraftInvoice", () => {

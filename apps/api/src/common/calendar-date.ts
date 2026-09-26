@@ -134,6 +134,27 @@ export function startOfCalendarDay(
 }
 
 /**
+ * A CLIENT-supplied calendar-date field (e.g. invoice `issueDate`) → the
+ * UTC-midnight SYMBOLIC stamp of the day it names (#2197). A bare
+ * `YYYY-MM-DD`, or a value already in stamp form (exactly UTC midnight — a
+ * round-tripped stored date), names its day literally. Any other datetime is a
+ * real instant: its day is read in `timeZone`, so `2026-09-25T23:30:00-04:00`
+ * is the 25th in New York, not the 26th. Never re-derive a bare date through
+ * `timeZone` — UTC midnight is the previous evening west of UTC.
+ */
+export function calendarStampFromInput(raw: string, timeZone?: string | null): Date {
+  if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return new Date(isoFromCalendarDate(raw));
+  const instant = new Date(raw);
+  if (Number.isNaN(instant.getTime())) return instant;
+  const isStamp =
+    instant.getUTCHours() === 0 &&
+    instant.getUTCMinutes() === 0 &&
+    instant.getUTCSeconds() === 0 &&
+    instant.getUTCMilliseconds() === 0;
+  return isStamp ? instant : startOfCalendarDay(instant, timeZone);
+}
+
+/**
  * The last instant (− 1 ms) of the calendar day `date` encodes, evaluated at
  * `timeZone`'s real wall-clock day boundary. `date`'s own UTC year/month/day
  * is read directly (never re-derived through `timeZone`) because every

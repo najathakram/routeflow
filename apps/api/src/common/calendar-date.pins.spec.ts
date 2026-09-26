@@ -1,4 +1,4 @@
-import { calendarDayBounds, startOfCalendarDay } from "./calendar-date";
+import { calendarDayBounds, calendarStampFromInput, startOfCalendarDay } from "./calendar-date";
 
 /**
  * Pin (no REG token; outside the red gate) — bug-test-plan.md T10.
@@ -66,5 +66,41 @@ describe("calendarDayBounds — T12 mirror pin", () => {
     expect(start.toISOString()).toBe("2026-03-08T05:00:00.000Z");
     expect(end.toISOString()).toBe("2026-03-09T04:00:00.000Z");
     expect(end.getTime() - start.getTime()).toBe(23 * 3600 * 1000);
+  });
+});
+
+/**
+ * #2197 — a client-supplied calendar-date field (invoice `issueDate`) becomes the
+ * UTC-midnight SYMBOLIC stamp of the day it names. A bare `YYYY-MM-DD` or a value
+ * already in stamp form names its day literally; any other datetime is a real
+ * instant whose day is read in the tenant's timezone.
+ */
+describe("calendar-date pins — calendarStampFromInput (#2197)", () => {
+  it("stores the tenant-local day for a datetime with a time component", () => {
+    // 23:30 in New York on the 25th is 03:30Z on the 26th — the sale happened on the 25th.
+    expect(
+      calendarStampFromInput("2026-09-25T23:30:00-04:00", "America/New_York").toISOString(),
+    ).toBe("2026-09-25T00:00:00.000Z");
+  });
+
+  it("keeps a bare calendar date literally, whatever the tenant timezone", () => {
+    expect(calendarStampFromInput("2026-09-25", "America/New_York").toISOString()).toBe(
+      "2026-09-25T00:00:00.000Z",
+    );
+    expect(calendarStampFromInput("2026-09-25", "Asia/Tokyo").toISOString()).toBe(
+      "2026-09-25T00:00:00.000Z",
+    );
+  });
+
+  it("keeps a value already in UTC-midnight stamp form literally (a round-tripped stored date)", () => {
+    expect(
+      calendarStampFromInput("2026-09-25T00:00:00.000Z", "America/New_York").toISOString(),
+    ).toBe("2026-09-25T00:00:00.000Z");
+  });
+
+  it("falls back to the UTC day when the tenant timezone is missing", () => {
+    expect(calendarStampFromInput("2026-09-25T23:30:00-04:00", null).toISOString()).toBe(
+      "2026-09-26T00:00:00.000Z",
+    );
   });
 });
