@@ -3170,9 +3170,10 @@ export class OrdersService implements OnApplicationBootstrap {
         // Customer/Driver path: replace items by productId. A4: a DRIVER diff
         // payload skips this branch entirely — it merges below like an operator
         // edit (with prices already stripped), so untouched lines survive.
+        // SA-407: a buyer's per-line diff (a unit line's count / a removal) merges like staff's too.
         if (
-          user?.role === UserRole.CUSTOMER ||
-          (user?.role === UserRole.DRIVER && !isDiffPayload)
+          (user?.role === UserRole.CUSTOMER || user?.role === UserRole.DRIVER) &&
+          !isDiffPayload
         ) {
           if (user.role === UserRole.CUSTOMER) {
             // REG-B131: `deletedAt: null` — the buyer replace-all path is the last door a
@@ -3384,6 +3385,7 @@ export class OrdersService implements OnApplicationBootstrap {
           }
         } else {
           // Operator/admin path.
+          await unitEdit.assertBuyerOwnsOrder(tx, user, order.customerId); // SA-407: buyer diff
           // Whether to wipe + recreate (mobile "replace-all") vs. merge incrementally.
           // R10/B198: explicit `replaceAll: true` ONLY — the old shape-inference
           // heuristic ("every item lacks an id" ⇒ replace) is gone. That
@@ -3410,6 +3412,7 @@ export class OrdersService implements OnApplicationBootstrap {
           // tier is resolved and no extra query is issued for them.
           const isStaffEdit =
             user?.role === UserRole.OPERATOR || user?.role === UserRole.TENANT_ADMIN;
+          const atCustomerTier = isStaffEdit || user?.role === UserRole.CUSTOMER; // SA-407: unit counts
           // B465 fix round (Opus BLOCK): an id-only UPDATE entry (web/mobile send
           // {id, action, qty, unitPrice} with no productId of their own) must resolve
           // tier pricing for the EXISTING line's product too — not just products
@@ -3425,7 +3428,7 @@ export class OrdersService implements OnApplicationBootstrap {
           // CustomerPrice lookup always fell back to the customer's DEFAULT tier even
           // when a per-product SPECIAL row existed for the substitute specifically.
           const substituteProductIds = dto.items.map((i) => i.substituteProductId).filter(Boolean);
-          const operatorProductIds = isStaffEdit
+          const operatorProductIds = atCustomerTier
             ? ([
                 ...new Set([
                   ...dto.items.map((i) => i.productId).filter(Boolean),
@@ -3434,7 +3437,7 @@ export class OrdersService implements OnApplicationBootstrap {
                 ]),
               ] as string[])
             : [];
-          const operatorTierCtx = isStaffEdit
+          const operatorTierCtx = atCustomerTier
             ? await tx.customer.findFirst({
                 where: { id: order.customerId },
                 select: { pricingTier: true },
@@ -3453,7 +3456,7 @@ export class OrdersService implements OnApplicationBootstrap {
             tx,
             ladders: unitCtx.ladders,
             tenantId: this.prisma.getTenantId(),
-            tier: (pid) => (isStaffEdit ? (operatorCpMap.get(pid) ?? operatorDefaultTier) : 1),
+            tier: (pid) => (atCustomerTier ? (operatorCpMap.get(pid) ?? operatorDefaultTier) : 1),
             categoryMap: await loadCategoryMapForProducts(tx, unitCtx.products), // B297
           };
 

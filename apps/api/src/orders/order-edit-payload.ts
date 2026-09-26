@@ -1,6 +1,7 @@
 import { BadRequestException } from "@nestjs/common";
 import { UserRole } from "@prisma/client";
 import { UpdateOrderItemsDto } from "./dto/update-order-items.dto";
+import { buyerLineDiffVerdict } from "./unit-aware-guard";
 
 /**
  * `updateOrderItems`'s payload classification — lifted VERBATIM out of the method (size-ratchet
@@ -24,7 +25,14 @@ import { UpdateOrderItemsDto } from "./dto/update-order-items.dto";
  * of `updateOrderItems` still makes with it (restriction mode, the buyer/driver replace-branch test).
  */
 export function classifyEditPayload(
-  order: { lineItems: ReadonlyArray<{ id: string; productId?: string | null }> },
+  order: {
+    lineItems: ReadonlyArray<{
+      id: string;
+      productId?: string | null;
+      unitLabel?: string | null;
+      status?: string | null;
+    }>;
+  },
   dto: UpdateOrderItemsDto,
   user: { role?: string; sub?: string } | undefined,
 ): boolean {
@@ -33,7 +41,13 @@ export function classifyEditPayload(
     (dto.items ?? []).some(
       (i) => i.id != null || i.action != null || i.substituteProductId != null,
     );
-  if (user?.role === UserRole.CUSTOMER && isDiffPayload) {
+  // SA-407 (#2272): the ONE buyer diff allowed — a unit line's count up/down (id + its own stored
+  // unitLabel + qty) or a removal by id; the guard has already refused the 409 shapes.
+  if (
+    user?.role === UserRole.CUSTOMER &&
+    isDiffPayload &&
+    buyerLineDiffVerdict(order.lineItems, dto) !== "ok"
+  ) {
     throw new BadRequestException(
       "Buyer edits must send the full item list as {productId, qty} entries; incremental item diffs are not supported on this path",
     );
