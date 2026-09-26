@@ -13,16 +13,15 @@ import {
 } from "../../../../lib/api/buyer";
 import { showToast } from "../../../../lib/toast";
 import { invoiceLineUnitNoun } from "../../../../lib/invoice-line-display";
+import {
+  buyerSavePlan,
+  hydrateBuyerDraft,
+  orderUnitLabel,
+  readOnlyNotice,
+  type BuyerDraftItem,
+} from "../../../../lib/buyer-edit-items";
 
-type DraftItem = {
-  productId: string;
-  name: string;
-  unit?: string;
-  /** units_v1: the line's own selling unit (Case, Pallet, Piece…) — null = the pack (#2222). */
-  unitLabel?: string | null;
-  qty: number;
-  unitPrice: number;
-};
+type DraftItem = BuyerDraftItem;
 
 export default function BuyerEditItemsScreen() {
   const router = useRouter();
@@ -37,23 +36,8 @@ export default function BuyerEditItemsScreen() {
   // Populate draft once order loads
   useEffect(() => {
     if (!order) return;
-    setDraft(
-      Object.fromEntries(
-        order.lineItems
-          .filter((li) => Number(li.qty) > 0)
-          .map((li) => [
-            li.productId,
-            {
-              productId: li.productId,
-              name: li.product?.name ?? "Product",
-              unit: li.product?.unit,
-              unitLabel: li.unitLabel,
-              qty: Number(li.qty),
-              unitPrice: Number(li.unitPrice),
-            },
-          ]),
-      ),
-    );
+    // #2270: a unit line hydrates its COUNT (SA-388), never the stored base qty.
+    setDraft(hydrateBuyerDraft(order.lineItems));
     // Run only when the order first loads — intentionally omitting draft from deps
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [order?.id]);
@@ -84,12 +68,15 @@ export default function BuyerEditItemsScreen() {
   };
 
   const save = () => {
-    if (items.length === 0) {
-      showToast("Add at least one item.");
+    // #2270: an order with a live unit line is read-only for buyers (the server refuses every
+    // buyer edit of it) — buyerSavePlan refuses locally, so no request is ever sent for it.
+    const plan = buyerSavePlan(order?.lineItems ?? [], draft);
+    if (plan.kind === "refuse") {
+      showToast(plan.message);
       return;
     }
     updateMut.mutate(
-      { orderId: id, items: items.map((i) => ({ productId: i.productId, qty: i.qty })) },
+      { orderId: id, items: plan.items },
       {
         onSuccess: (updated) => {
           if (updated.status === "PENDING" && order?.status === "CONFIRMED") {
@@ -119,6 +106,8 @@ export default function BuyerEditItemsScreen() {
   }
 
   const catalog = catalogData?.data ?? [];
+  const unitLabel = orderUnitLabel(order.lineItems);
+  const readOnly = unitLabel != null;
 
   return (
     <SafeAreaView style={styles.safe} edges={["top", "left", "right"]}>
@@ -128,6 +117,7 @@ export default function BuyerEditItemsScreen() {
       />
 
       <ScrollView showsVerticalScrollIndicator={false}>
+        {readOnly ? <Text style={styles.notice}>{readOnlyNotice(unitLabel)}</Text> : null}
         {items.length === 0 ? (
           <Text style={styles.empty}>No items — add from catalog below.</Text>
         ) : (
@@ -148,38 +138,42 @@ export default function BuyerEditItemsScreen() {
                         : ""}
                   </Text>
                 </View>
-                <View style={styles.qtyRow}>
-                  <Pressable
-                    style={styles.qtyBtn}
-                    onPress={() => setQty(item.productId, item.qty - 1)}
-                    hitSlop={6}
-                  >
-                    <Ionicons name="remove" size={16} color={ios.brand} />
-                  </Pressable>
-                  <QtyTextInput
-                    value={item.qty}
-                    onChangeQty={(n) => setQty(item.productId, n)}
-                    style={styles.qtyInput}
-                  />
-                  <Pressable
-                    style={styles.qtyBtn}
-                    onPress={() => setQty(item.productId, item.qty + 1)}
-                    hitSlop={6}
-                  >
-                    <Ionicons name="add" size={16} color={ios.brand} />
-                  </Pressable>
-                </View>
+                {readOnly ? null : (
+                  <View style={styles.qtyRow}>
+                    <Pressable
+                      style={styles.qtyBtn}
+                      onPress={() => setQty(item.productId, item.qty - 1)}
+                      hitSlop={6}
+                    >
+                      <Ionicons name="remove" size={16} color={ios.brand} />
+                    </Pressable>
+                    <QtyTextInput
+                      value={item.qty}
+                      onChangeQty={(n) => setQty(item.productId, n)}
+                      style={styles.qtyInput}
+                    />
+                    <Pressable
+                      style={styles.qtyBtn}
+                      onPress={() => setQty(item.productId, item.qty + 1)}
+                      hitSlop={6}
+                    >
+                      <Ionicons name="add" size={16} color={ios.brand} />
+                    </Pressable>
+                  </View>
+                )}
               </View>
             ))}
           </View>
         )}
 
-        <Pressable style={styles.addBtn} onPress={() => setShowCatalog((v) => !v)}>
-          <Ionicons name="add-circle-outline" size={18} color={ios.brand} />
-          <Text style={styles.addBtnText}>{showCatalog ? "Hide catalog" : "Add product"}</Text>
-        </Pressable>
+        {readOnly ? null : (
+          <Pressable style={styles.addBtn} onPress={() => setShowCatalog((v) => !v)}>
+            <Ionicons name="add-circle-outline" size={18} color={ios.brand} />
+            <Text style={styles.addBtnText}>{showCatalog ? "Hide catalog" : "Add product"}</Text>
+          </Pressable>
+        )}
 
-        {showCatalog && (
+        {!readOnly && showCatalog && (
           <View style={styles.section}>
             {catalog.map((p) => (
               <Pressable key={p.id} style={styles.catalogRow} onPress={() => addFromCatalog(p)}>
@@ -198,17 +192,19 @@ export default function BuyerEditItemsScreen() {
           </View>
         )}
 
-        <View style={styles.footer}>
-          <Pressable
-            style={[styles.saveBtn, updateMut.isPending && { opacity: 0.6 }]}
-            onPress={save}
-            disabled={updateMut.isPending}
-          >
-            <Text style={styles.saveBtnText}>
-              {updateMut.isPending ? "Saving…" : "Save changes"}
-            </Text>
-          </Pressable>
-        </View>
+        {readOnly ? null : (
+          <View style={styles.footer}>
+            <Pressable
+              style={[styles.saveBtn, updateMut.isPending && { opacity: 0.6 }]}
+              onPress={save}
+              disabled={updateMut.isPending}
+            >
+              <Text style={styles.saveBtnText}>
+                {updateMut.isPending ? "Saving…" : "Save changes"}
+              </Text>
+            </Pressable>
+          </View>
+        )}
       </ScrollView>
     </SafeAreaView>
   );
@@ -218,6 +214,7 @@ const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: ios.bg },
   center: { flex: 1, alignItems: "center", justifyContent: "center" },
   empty: { color: ios.label2, fontSize: 14, textAlign: "center", margin: 32 },
+  notice: { color: ios.label2, fontSize: 14, marginHorizontal: 16, marginTop: 12, lineHeight: 20 },
   section: {
     marginHorizontal: 16,
     marginTop: 12,
