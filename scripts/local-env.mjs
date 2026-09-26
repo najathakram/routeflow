@@ -10,6 +10,7 @@
 // Usage: node scripts/local-env.mjs [--db] [--smoke] [--db-specs] [--smtp-specs] [--e2e] -- "<command string>"
 import { spawnSync } from "node:child_process";
 import path from "node:path";
+import { loadLocalSaEnv } from "./lib/local-sa-env.mjs";
 import { fileURLToPath } from "node:url";
 
 // Repo root, computed from this file's own location — used to build an ABSOLUTE
@@ -87,7 +88,7 @@ if (flags.has("--db")) {
   const user = process.env.POSTGRES_USER || "user";
   const password = process.env.POSTGRES_PASSWORD || "pass";
   const database = process.env.POSTGRES_DB || "routeflow_dev";
-  env.DATABASE_URL = `postgresql://${user}:${password}@localhost:5432/${database}`;
+  env.DATABASE_URL = `postgresql://${encodeURIComponent(user)}:${encodeURIComponent(password)}@localhost:5432/${encodeURIComponent(database)}`;
   // POSTGRES_* are kept (the compose defaults above are derived from them), but the proxy
   // pair they pair with is gone, so the proxy branch can no longer trigger.
 }
@@ -124,7 +125,7 @@ if (flags.has("--e2e")) {
   env.PLAYWRIGHT_BASE_URL = "http://localhost:3001";
   env.SMOKE_BASE_URL = "http://localhost:3000";
   env.PLAYWRIGHT_TENANT_SLUG = "e2e-routeflow";
-  env.E2E_SEED_DATABASE_URL = `postgresql://${user}:${password}@localhost:5432/${database}`;
+  env.E2E_SEED_DATABASE_URL = `postgresql://${encodeURIComponent(user)}:${encodeURIComponent(password)}@localhost:5432/${encodeURIComponent(database)}`;
   // playwright.config.ts hardcodes `outputFile: "../../.campaign/runs/web-e2e.json"` (matches
   // master — never read PLAYWRIGHT_JSON_OUTPUT_NAME, that var only feeds the OUTPUT_DIR/
   // OUTPUT_NAME fallback path for a reporter's output *directory*, not its file). The var that
@@ -137,6 +138,10 @@ if (flags.has("--e2e")) {
   // an ABSOLUTE path computed from REPO_ROOT above rather than a "../../"-relative one.
   env.PLAYWRIGHT_JSON_OUTPUT_FILE = path.join(REPO_ROOT, ".campaign", "runs", "web-e2e-local.json");
   delete env.CI;
+  // D-03 (#1803): the local-only throwaway super-admin minted by `npm run local:sa` (scripts/local-super-admin.mjs)
+  // lives in a gitignored, owner-only file and WINS over an exported PLAYWRIGHT_SA_* (with a loud warning when it
+  // overrides one). See scripts/lib/local-sa-env.mjs.
+  loadLocalSaEnv(env, path.join(REPO_ROOT, "local-assets", "local-sa.env"));
 }
 
 const res = spawnSync(command, { shell: true, stdio: "inherit", env });

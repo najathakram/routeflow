@@ -5,9 +5,15 @@ import type {
   ActiveOrderSummary,
   CancelImpact,
   CustomerPriceHistory,
+  OrderTrackingResponse,
   UnitAwareLineInput,
 } from "@routeflow/types";
-export type { ActiveOrderSummary, CancelImpact, CustomerPriceHistory } from "@routeflow/types";
+export type {
+  ActiveOrderSummary,
+  CancelImpact,
+  CustomerPriceHistory,
+  OrderTracking,
+} from "@routeflow/types";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -654,19 +660,9 @@ export function useDeleteOrder() {
 
 // ─── Tracking ─────────────────────────────────────────────────────────────────
 
-export interface OrderTracking {
-  runId: string;
-  routeName: string | null;
-  driverName: string | null;
-  runStatus: string;
-  stopNumber: number;
-  stopStatus: string;
-  stopsAhead: number;
-  estimatedArrivalWindow: { start: string | null; end: string | null };
-}
-
+// `OrderTracking` is the shared wire shape (#2095), re-exported at the top of this file.
 export function useOrderTracking(orderId: string, orderStatus?: string) {
-  return useQuery<{ status: string; tracking: OrderTracking | null }>({
+  return useQuery<OrderTrackingResponse>({
     queryKey: ["orders", orderId, "tracking"],
     queryFn: () => apiClient.get(`/orders/${orderId}/tracking`).then((r) => r.data),
     enabled: !!orderId && orderStatus === "OUT_FOR_DELIVERY",
