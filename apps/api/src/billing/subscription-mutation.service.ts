@@ -18,7 +18,7 @@ import { BillingEventService } from "./billing-event.service";
 import { StripeService } from "./stripe.service";
 import { isStripeResourceMissing } from "./addon.service";
 import { emitAddonDelta, lockTenantForLedger, bookAddonsOnCrossing } from "./addon-ledger";
-import { addonRowMatches, addonRowWhere, findAddonRow } from "./addon-row";
+import { addonRowMatches, findAddonRow } from "./addon-row";
 import { isPayingRow } from "./mrr.service";
 import { withAdvisoryLock, LockTimeoutError, LockUnavailableError } from "../common/db-locks";
 import {
@@ -1392,11 +1392,10 @@ export class SubscriptionMutationService {
 
   /** Disable an add-on. Keeps the row (history read-only); nav/flag simply drops. */
   async disableAddon(tenantId: string, sku: string, actorId?: string) {
-    // #2188 / SA-385: the shared predicate (legacy addonKey or SKU), active rows only.
-    const addon = await this.prisma.tenantAddon.findFirst({
-      where: { ...addonRowWhere(tenantId, sku), active: true },
-    });
-    if (!addon) throw new NotFoundException(`Active add-on "${sku}" not found.`);
+    // #2188 / SA-385: the shared lookup (legacy addonKey or SKU) — its deterministic pick
+    // (active first, then oldest) — refused unless that row is active.
+    const addon = await findAddonRow(this.prisma, tenantId, sku);
+    if (!addon?.active) throw new NotFoundException(`Active add-on "${sku}" not found.`);
     // Resolve the CANONICAL code (bridges legacy addonKey like tobacco_dealer → REGULATED_ITEMS).
     const code = addonSkuCode(addon) ?? sku;
     // Symmetric with enableAddon: an admin-granted ("ships dark") add-on is revocable only by
