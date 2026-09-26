@@ -13,7 +13,7 @@ import { StorageService } from "../storage/storage.service";
 import { compressImage } from "../storage/compress.util";
 import { AddonService } from "../billing/addon.service";
 import { SystemConfigService } from "../system-config/system-config.service";
-import { EntitlementsService } from "../billing/entitlements.service";
+import { EntitlementAuthority } from "../billing/entitlement-authority.service";
 import { PlanCatalogService } from "../billing/plan-catalog.service";
 import { RouteFlowGateway } from "../gateways/routeflow.gateway";
 import { buildPlanGateBody } from "../billing/plan-gate";
@@ -79,7 +79,7 @@ export class ProductsService {
     private readonly storage: StorageService,
     private readonly addonService: AddonService,
     private readonly systemConfig: SystemConfigService,
-    private readonly entitlements: EntitlementsService,
+    private readonly authority: EntitlementAuthority,
     private readonly planCatalog: PlanCatalogService,
     private readonly gateway: RouteFlowGateway,
   ) {}
@@ -112,7 +112,8 @@ export class ProductsService {
   private async assertMsrpAllowed(): Promise<void> {
     const tenantId = this.prisma.getTenantId();
     if (!tenantId) return; // no tenant context (e.g. SUPER_ADMIN) — nothing to gate
-    if (await this.entitlements.hasFlag(tenantId, "flag.msrp")) return;
+    // #2198: the ONE evaluation point the flag.msrp route guard uses (overrides + live-mode resolver).
+    if (await this.authority.can(tenantId, "flag.msrp")) return;
     const upgrade = await this.planCatalog.upgradeTargetForFlag("flag.msrp").catch(() => ({
       planKey: null,
       planMonthlyPrice: null,

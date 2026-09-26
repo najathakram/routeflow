@@ -6,7 +6,7 @@ import { PrismaService } from "../prisma/prisma.service";
 import { StorageService } from "../storage/storage.service";
 import { MeterService } from "../billing/meter.service";
 import { PlanCatalogService } from "../billing/plan-catalog.service";
-import { EntitlementsService } from "../billing/entitlements.service";
+import { EntitlementAuthority } from "../billing/entitlement-authority.service";
 import { CommissionEngineService } from "../sales-agents/commission-engine.service";
 import { createMockPrisma } from "../testing/prisma-mock";
 import { RegulatedLedgerService } from "../regulated/regulated-ledger.service";
@@ -84,7 +84,7 @@ describe("CustomersService.deleteAllCustomers — PAID/SENT pre-flight (B127)", 
           },
         },
         { provide: PlanCatalogService, useValue: { getPublishedVersion: jest.fn() } },
-        { provide: EntitlementsService, useValue: { hasFlag: jest.fn().mockResolvedValue(false) } },
+        { provide: EntitlementAuthority, useValue: { can: jest.fn().mockResolvedValue(false) } },
         {
           provide: CommissionEngineService,
           useValue: {
