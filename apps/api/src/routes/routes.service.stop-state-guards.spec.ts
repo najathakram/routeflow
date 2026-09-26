@@ -323,6 +323,27 @@ describe("RoutesService — F10 stop-state guards (REG-B54/B55/B71/B72/B120/B121
         data: { deliveredQty: 0 },
       });
     });
+
+    it("T21b — SA-346: a deleted REFUSED row with a NULL quantityDelivered never qualified, so a legacy-column line keeps its column (only the line with a qualifying deleted row recomputes)", async () => {
+      prisma.deliveryMutation.findMany.mockResolvedValueOnce([
+        // li-1: legacy column line — its only deleted row is REFUSED with quantityDelivered null
+        // (a change-request-shaped row, never delivery evidence, never fed the column).
+        { orderId: "order-1", orderItemId: "li-1", type: "REFUSED", quantityDelivered: null },
+        // li-2: a genuine evidence row was deleted, so it recomputes (to 0 — nothing else remains).
+        { orderId: "order-1", orderItemId: "li-2", type: "DELIVERED", quantityDelivered: 5 },
+      ]);
+      prisma.orderItem.findMany.mockResolvedValue([{ id: "li-1" }, { id: "li-2" }]);
+
+      await service.reopenStop("run-1", "stop-1", operatorPayload);
+
+      expect(prisma.orderItem.update).toHaveBeenCalledWith({
+        where: { id: "li-2" },
+        data: { deliveredQty: 0 },
+      });
+      expect(prisma.orderItem.update).not.toHaveBeenCalledWith(
+        expect.objectContaining({ where: { id: "li-1" } }),
+      );
+    });
   });
 
   // ─── R3 / REG-B71 — updateStopStatus from-state guards ───────────────────

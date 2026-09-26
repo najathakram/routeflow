@@ -1806,8 +1806,12 @@ describeDb(
     });
 
     describe("B785/SA-113a: the at-door reconcile (basis:delivered) reads the evidence basis, real Postgres", () => {
-      it("(1) a line with no evidence row bills at the ordered qty (reconcileOrderDraftInvoice)", async () => {
-        const { tenant, customer } = await seedTenantAndCustomer("b785-1");
+      // SA-345a: a line with NO qualifying row of its own bills its LEGACY COLUMN (`deliveredQty ?? 0`),
+      // capped at qty — never the full qty (the column IS the evidence for an order delivered before
+      // DeliveryMutation rows existed). Coverage (billableQtyFromBasis) keeps "no rows => full qty";
+      // this is the delivered READER, a different question.
+      const seedNoEvidenceLine = async (label: string, column: number | null) => {
+        const { tenant, customer } = await seedTenantAndCustomer(label);
         const productA = await prisma.product.create({
           data: { name: `A ${tenant.slug}`, unit: "ea", pricePerUnit: 10, tenantId: tenant.id },
         });
@@ -1826,26 +1830,56 @@ describeDb(
             productId: productA.id,
             status: "PENDING",
             qty: 10,
+            ...(column === null ? {} : { deliveredQty: column }),
             unitPrice: 10,
             subtotal: 100,
             tenantId: tenant.id,
           },
         });
         await tenantCtx.run(tenant.id, () => invoicesService.createInvoiceFromOrder(order.id));
-
-        await tenantCtx.run(tenant.id, () =>
-          invoicesService.reconcileOrderDraftInvoice(order.id, { basis: "delivered" }),
+        return { tenant, order, lineA, productA };
+      };
+      const reconcileDelivered = async (tenantId: string, orderId: string) => {
+        await tenantCtx.run(tenantId, () =>
+          invoicesService.reconcileOrderDraftInvoice(orderId, { basis: "delivered" }),
         );
-
-        const draft = await prisma.invoice.findFirstOrThrow({
-          where: { orderId: order.id },
+        return prisma.invoice.findFirstOrThrow({
+          where: { orderId },
           include: { items: true },
         });
+      };
+
+      it("(1a) SA-345a: no evidence row + column 0 bills 0 — the line is dropped from the draft, never billed at the full qty", async () => {
+        const { tenant, order, lineA } = await seedNoEvidenceLine("b785-1a", 0);
+
+        const draft = await reconcileDelivered(tenant.id, order.id);
+
+        expect(draft.items).toHaveLength(0);
+        expect(Number(draft.subtotal)).toBe(0);
+        const refreshedA = await prisma.orderItem.findUniqueOrThrow({ where: { id: lineA.id } });
+        expect(Number(refreshedA.invoicedQty)).toBe(0);
+      });
+
+      it("(1b) SA-345a: no evidence row + a legacy column of 7 (qty 10) bills 7 (reconcileOrderDraftInvoice)", async () => {
+        const { tenant, order, lineA } = await seedNoEvidenceLine("b785-1b", 7);
+
+        const draft = await reconcileDelivered(tenant.id, order.id);
+
+        expect(draft.items).toHaveLength(1);
+        expect(Number(draft.items[0]!.qty)).toBe(7);
+        expect(Number(draft.subtotal)).toBe(70);
+        const refreshedA = await prisma.orderItem.findUniqueOrThrow({ where: { id: lineA.id } });
+        expect(Number(refreshedA.invoicedQty)).toBe(7);
+      });
+
+      it("(1c) SA-345a: no evidence row + a stale column of 15 against qty 10 is capped at qty — bills 10, never units nobody ordered", async () => {
+        const { tenant, order } = await seedNoEvidenceLine("b785-1c", 15);
+
+        const draft = await reconcileDelivered(tenant.id, order.id);
+
         expect(draft.items).toHaveLength(1);
         expect(Number(draft.items[0]!.qty)).toBe(10);
         expect(Number(draft.subtotal)).toBe(100);
-        const refreshedA = await prisma.orderItem.findUniqueOrThrow({ where: { id: lineA.id } });
-        expect(Number(refreshedA.invoicedQty)).toBe(10);
       });
 
       it("(2) a REFUSED evidence row bills 0 (reconcileOrderDraftInvoice)", async () => {
@@ -2077,33 +2111,11 @@ describeDb(
         expect(Number(refreshedA.invoicedQty)).toBe(7);
       });
 
-      it("(6) SA-133: an order whose ONLY rows are ADD_ON/null-quantity change-request rows still bills the ordered qty — hasMutations can't regress to 'any row'", async () => {
-        const { tenant, customer } = await seedTenantAndCustomer("b785-6");
-        const productA = await prisma.product.create({
-          data: { name: `A ${tenant.slug}`, unit: "ea", pricePerUnit: 10, tenantId: tenant.id },
-        });
-        const order = await prisma.order.create({
-          data: {
-            customerId: customer.id,
-            status: "PARTIALLY_DELIVERED",
-            subtotal: 100,
-            total: 100,
-            tenantId: tenant.id,
-          },
-        });
-        const lineA = await prisma.orderItem.create({
-          data: {
-            orderId: order.id,
-            productId: productA.id,
-            status: "PENDING",
-            qty: 10,
-            unitPrice: 10,
-            subtotal: 100,
-            tenantId: tenant.id,
-          },
-        });
+      it("(6) SA-133/SA-345a: a line whose ONLY rows are ADD_ON/null-quantity change-request rows has no evidence of its own — it bills its legacy column (7 of 10), and the ADD_ON's signed qty never shrinks or replaces it", async () => {
+        const { tenant, order, productA, lineA } = await seedNoEvidenceLine("b785-6", 7);
         // A door-cut change request: ADD_ON-shaped, signed delta qty, NO quantityDelivered.
-        // Never evidence — must not flip hasMutations or shrink the line's billable qty.
+        // Never evidence — if it wrongly counted, the line would read as delivered -3 (billable
+        // 0), not its column of 7.
         await prisma.deliveryMutation.create({
           data: {
             orderId: order.id,
@@ -2115,19 +2127,32 @@ describeDb(
             tenantId: tenant.id,
           },
         });
-        await tenantCtx.run(tenant.id, () => invoicesService.createInvoiceFromOrder(order.id));
 
-        await tenantCtx.run(tenant.id, () =>
-          invoicesService.reconcileOrderDraftInvoice(order.id, { basis: "delivered" }),
-        );
+        const draft = await reconcileDelivered(tenant.id, order.id);
 
-        const draft = await prisma.invoice.findFirstOrThrow({
-          where: { orderId: order.id },
-          include: { items: true },
-        });
         expect(draft.items).toHaveLength(1);
-        expect(Number(draft.items[0]!.qty)).toBe(10); // unconstrained -- no real evidence exists
-        expect(Number(draft.subtotal)).toBe(100);
+        expect(Number(draft.items[0]!.qty)).toBe(7); // the column decides — no real evidence exists
+        expect(Number(draft.subtotal)).toBe(70);
+      });
+
+      it("(6b) SA-345a: the same ADD_ON-only line with a column of 0 bills 0 (nothing delivered), not the full qty", async () => {
+        const { tenant, order, productA, lineA } = await seedNoEvidenceLine("b785-6b", 0);
+        await prisma.deliveryMutation.create({
+          data: {
+            orderId: order.id,
+            orderItemId: lineA.id,
+            productId: productA.id,
+            type: "ADD_ON",
+            qty: -3,
+            quantityDelivered: null,
+            tenantId: tenant.id,
+          },
+        });
+
+        const draft = await reconcileDelivered(tenant.id, order.id);
+
+        expect(draft.items).toHaveLength(0);
+        expect(Number(draft.subtotal)).toBe(0);
       });
     });
 

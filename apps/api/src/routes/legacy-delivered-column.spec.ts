@@ -235,12 +235,22 @@ describe("SA-346 — deliveredQtyRecompute: rows decide, the force set is the ro
     expect(out).toEqual([{ id: "X", deliveredQty: 0 }]); // L is not returned ⇒ never rewritten
   });
 
-  it("(2d) a deleted NON-qualifying row (change-request provenance, null qty) forces nothing — it never fed the column", async () => {
+  it("(2d-i) a deleted row with a NON-EVIDENCE TYPE (ADD_ON, even with a qty) forces nothing — change-request provenance never fed the column", async () => {
     const out = await deliveredQtyRecompute(
       dbWith([], { L: 10 }) as any,
       "o1",
       ["L"],
-      [deleted("L", "ADD_ON", null as any)],
+      [deleted("L", "ADD_ON", 5)],
+    );
+    expect(out).toEqual([]);
+  });
+
+  it("(2d-ii) a deleted EVIDENCE-TYPED row with a NULL quantityDelivered (REFUSED, qty null) forces nothing — it never qualified", async () => {
+    const out = await deliveredQtyRecompute(
+      dbWith([], { L: 10 }) as any,
+      "o1",
+      ["L"],
+      [deleted("L", "REFUSED", null as any)],
     );
     expect(out).toEqual([]);
   });
