@@ -263,6 +263,12 @@ describe("#2255 Serializable invoice transactions retry on conflict, guards re-r
     const body = cancel.slice(0, cancel.indexOf('isolationLevel: "Serializable"'));
     expect(body).toMatch(/tx\.orderItem\.findMany\(/);
     expect(body).toMatch(/tx\.invoice\.findMany\(/);
+    // SA-404d R1: the FIRST statement locks Order → Invoices and re-checks; the CANCELLED status
+    // write sits inside this locked tx, after it (a refusal leaves the order as it was).
+    const lock = body.indexOf("await lockOrderForCancel(tx, id)");
+    const statusWrite = body.indexOf("tx.order.update(");
+    expect(lock).toBeGreaterThan(-1);
+    expect(statusWrite).toBeGreaterThan(lock);
     expect(body).not.toMatch(/this\.prisma\.(forTenant\(\)\.)?(invoice|orderItem)\./);
   });
 });

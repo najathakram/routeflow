@@ -2774,6 +2774,13 @@ describe("OrdersService", () => {
           { id: "d1", invoiceNumber: "INV-1", status: "DRAFT", total: 40, payments: [] },
           { id: "s1", invoiceNumber: "INV-2", status: "SENT", total: 60, payments: [] },
         ])
+        // #2255 / SA-404d R1: lockOrderForCancel lists the invoices to lock, then re-reads their
+        // payments under the lock, before the body's own read of what to void.
+        .mockResolvedValueOnce([{ id: "d1" }, { id: "s1" }])
+        .mockResolvedValueOnce([
+          { invoiceNumber: "INV-1", payments: [] },
+          { invoiceNumber: "INV-2", payments: [] },
+        ])
         .mockResolvedValueOnce([{ id: "d1" }, { id: "s1" }]);
       const invoices = (service as any).invoicesService;
 
@@ -2800,6 +2807,14 @@ describe("OrdersService", () => {
             status: "PAID",
             total: 50,
             // Wallet money only — must NOT block the cancel.
+            payments: [{ method: "CREDIT_NOTE", amount: 50, status: "PAID" }],
+          },
+        ])
+        // #2255 / SA-404d R1: lockOrderForCancel's lock list + locked re-read (wallet money only).
+        .mockResolvedValueOnce([{ id: "inv-c" }])
+        .mockResolvedValueOnce([
+          {
+            invoiceNumber: "INV-9",
             payments: [{ method: "CREDIT_NOTE", amount: 50, status: "PAID" }],
           },
         ])

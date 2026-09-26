@@ -66,7 +66,7 @@ import {
   findOrderIdByKeyCheckingReturn as findOrderIdByKey,
 } from "./merge-idempotency";
 import { BUYER_EDIT_CLOSED_STATUSES, computeEditWindow } from "./edit-window";
-import { cancelImpact } from "./order-cancel-impact";
+import { cancelBlockedMessage, cancelImpact, lockOrderForCancel } from "./order-cancel-impact";
 import { classifyEditPayload } from "./order-edit-payload";
 import {
   applyBuyerMergeHeaderImpl,
@@ -2573,6 +2573,69 @@ export class OrdersService implements OnApplicationBootstrap {
           { isolationLevel: "Serializable", timeout: 15_000 },
         );
       }
+      if (dto.status === OrderStatus.CANCELLED) {
+        // Cancelling means the customer owes nothing for this order, so EVERY live
+        // invoice on it is voided — not just the pending mirror draft, which is all
+        // this used to do. A SENT invoice left behind stayed collectible against a
+        // cancelled order, and any credit applied to it stayed consumed forever
+        // (settle skips VOID invoices, so nothing could ever give it back).
+        //
+        // Wallet money is returned first, inside the same transaction as the voids,
+        // so a crash can't leave the credit spent and the invoice dead. External
+        // payments are refused by assertCancellableOrThrow above AND re-checked under
+        // the Order → Invoice locks (lockOrderForCancel, SA-404d R1) before any write.
+        // B64 (REG-B64): a DRAFT never took a creation-time decrement, so a DRAFT
+        // cancel neither credits stock NOR marks its lines. The credit and the mark
+        // are ONE decision, not two: `reopenOrder` re-decrements exactly the lines
+        // this cancel marked, so marking a line we did not credit would make reopen
+        // take stock the order never held (understating it by the full quantity).
+        const cancelReturnsStock = order.status !== OrderStatus.DRAFT;
+        // #2255 / SA-404d: re-run on a write conflict (SA-269). The CANCELLED status write sits in this
+        // locked tx, so a refusal under the lock leaves the order exactly as it was — never
+        // cancelled-but-not-unwound — and voidInvoiceInTx's claim keeps a re-run from voiding twice.
+        return retryOnTxConflict(`order cancel void order=${id}`, () =>
+          this.prisma.tenantTransaction(
+            async (tx) => {
+              await lockOrderForCancel(tx, id);
+              const row = await tx.order.update({ where: { id }, data: statusUpdateData });
+              if (cancelReturnsStock) {
+                const activeItems = await tx.orderItem.findMany({
+                  where: { orderId: id, status: { not: "CANCELLED" } },
+                  select: { productId: true, qty: true, deliveredQty: true, status: true },
+                });
+                // Return the creation-time decrement, clamped to the undelivered
+                // remainder (settleStockForEdit with an empty final set). `order` here
+                // is the PRE-cancel record (status not yet CANCELLED in memory).
+                await this.settleStockForEdit(tx, order, activeItems, []);
+              }
+
+              const invoices = await tx.invoice.findMany({
+                where: { orderId: id, status: { not: "VOID" } },
+                select: { id: true },
+              });
+              await this.creditNotes.releaseOrderCreditsInTx(tx, id);
+              for (const inv of invoices) {
+                await this.invoicesService.releaseWalletPaymentsInTx(tx, inv.id);
+                await this.invoicesService.voidInvoiceInTx(tx, inv.id, id);
+              }
+              if (cancelReturnsStock) {
+                // Mark what this cancel released. Pre-F07 cancels left items untouched
+                // and got no stock credit — reopenOrder re-decrements ONLY item-CANCELLED
+                // lines, so both eras stay conservation-consistent.
+                await tx.orderItem.updateMany({
+                  where: { orderId: id, status: { not: "CANCELLED" } },
+                  data: { status: "CANCELLED" },
+                });
+              }
+              return row;
+            },
+            // Headroom over Prisma's 5s default, matching every other
+            // settleStockForEdit call site (:3053, :4755): this transaction now runs
+            // that helper's per-product lock/read/write loop alongside the voids.
+            { isolationLevel: "Serializable", timeout: 15_000 },
+          ),
+        );
+      }
       return this.prisma.forTenant().order.update({ where: { id }, data: statusUpdateData });
     })();
 
@@ -2666,63 +2729,6 @@ export class OrdersService implements OnApplicationBootstrap {
           }
         }
       }
-    } else if (dto.status === OrderStatus.CANCELLED) {
-      // Cancelling means the customer owes nothing for this order, so EVERY live
-      // invoice on it is voided — not just the pending mirror draft, which is all
-      // this used to do. A SENT invoice left behind stayed collectible against a
-      // cancelled order, and any credit applied to it stayed consumed forever
-      // (settle skips VOID invoices, so nothing could ever give it back).
-      //
-      // Wallet money is returned first, inside the same transaction as the voids,
-      // so a crash can't leave the credit spent and the invoice dead. External
-      // payments already blocked this in assertCancellableOrThrow above.
-      // B64 (REG-B64): a DRAFT never took a creation-time decrement, so a DRAFT
-      // cancel neither credits stock NOR marks its lines. The credit and the mark
-      // are ONE decision, not two: `reopenOrder` re-decrements exactly the lines
-      // this cancel marked, so marking a line we did not credit would make reopen
-      // take stock the order never held (understating it by the full quantity).
-      const cancelReturnsStock = order.status !== OrderStatus.DRAFT;
-      // #2255: re-run on a write conflict (SA-269). The body reads its items and invoices under
-      // the tx, and voidInvoiceInTx's claim keeps a re-run from voiding twice.
-      await retryOnTxConflict(`order cancel void order=${id}`, () =>
-        this.prisma.tenantTransaction(
-          async (tx) => {
-            if (cancelReturnsStock) {
-              const activeItems = await tx.orderItem.findMany({
-                where: { orderId: id, status: { not: "CANCELLED" } },
-                select: { productId: true, qty: true, deliveredQty: true, status: true },
-              });
-              // Return the creation-time decrement, clamped to the undelivered
-              // remainder (settleStockForEdit with an empty final set). `order` here
-              // is the PRE-cancel record (status not yet CANCELLED in memory).
-              await this.settleStockForEdit(tx, order, activeItems, []);
-            }
-
-            const invoices = await tx.invoice.findMany({
-              where: { orderId: id, status: { not: "VOID" } },
-              select: { id: true },
-            });
-            await this.creditNotes.releaseOrderCreditsInTx(tx, id);
-            for (const inv of invoices) {
-              await this.invoicesService.releaseWalletPaymentsInTx(tx, inv.id);
-              await this.invoicesService.voidInvoiceInTx(tx, inv.id, id);
-            }
-            if (cancelReturnsStock) {
-              // Mark what this cancel released. Pre-F07 cancels left items untouched
-              // and got no stock credit — reopenOrder re-decrements ONLY item-CANCELLED
-              // lines, so both eras stay conservation-consistent.
-              await tx.orderItem.updateMany({
-                where: { orderId: id, status: { not: "CANCELLED" } },
-                data: { status: "CANCELLED" },
-              });
-            }
-          },
-          // Headroom over Prisma's 5s default, matching every other
-          // settleStockForEdit call site (:3053, :4755): this transaction now runs
-          // that helper's per-product lock/read/write loop alongside the voids.
-          { isolationLevel: "Serializable", timeout: 15_000 },
-        ),
-      );
     }
     // DRAFT→PENDING and PENDING→DRAFT (B283 F1) are handled above, atomically
     // with the status write, inside the `updated` transaction — nothing left
@@ -2831,14 +2837,8 @@ export class OrdersService implements OnApplicationBootstrap {
   private async assertCancellableOrThrow(id: string) {
     const impact = await this.cancelImpact(id);
     if (impact.canCancel) return;
-    if (impact.blockingPayments.length > 0) {
-      const detail = impact.blockingPayments
-        .map((b) => `${formatMoney(b.amount)} on ${b.invoiceNumber || "an invoice"}`)
-        .join(", ");
-      throw new BadRequestException(
-        `This order has payments that must be refunded before it can be cancelled: ${detail}. Reverse or refund them, then cancel.`,
-      );
-    }
+    if (impact.blockingPayments.length > 0)
+      throw new BadRequestException(cancelBlockedMessage(impact.blockingPayments));
     // B56 (REG-B56): delivered goods can't be un-delivered by cancelling the
     // order out from under them — that would erase the revenue for goods the
     // customer already has. Record a return, or edit the order down instead.

@@ -4246,7 +4246,8 @@ export class InvoicesService {
         async (tx) => {
           // SA-404: FIRST statement — lock (Order →) Invoice, re-read payments, re-check the guard.
           const locked = await lockInvoiceRow(tx, id, inv.orderId);
-          const lockedRefusal = voidRefusal(this.externalPaidOn(locked?.payments ?? []));
+          if (!locked) throw new NotFoundException("Invoice not found");
+          const lockedRefusal = voidRefusal(this.externalPaidOn(locked.payments ?? []));
           if (lockedRefusal) throw new BadRequestException(lockedRefusal);
           // Wallet money first: a credit applied to this invoice goes back to its note
           // (spendable again) instead of being stranded on a dead invoice.
@@ -5639,6 +5640,10 @@ export class InvoicesService {
         });
         payments.push(payment);
 
+        // #2255 / SA-404d R2: EVERY payment updates its Invoice row in this tx, unconditionally — a
+        // PENDING/DRAFT payment is blocking money too, and the real UPDATE takes the row lock, so a
+        // concurrent void conflicts (40001) and its retry re-reads it (the #2258 writer invariant).
+        let invoiceData: Prisma.InvoiceUpdateInput = { updatedAt: new Date() };
         if (status === "PAID") {
           // F03/R1: CONFIRMED (PAID) rows only feed recomputeStatus.
           const allPayments = await tx.invoicePayment.findMany({
@@ -5651,14 +5656,12 @@ export class InvoicesService {
             invoice.dueDate,
             invoice.status,
           );
-          await tx.invoice.update({
-            where: { id: alloc.invoiceId },
-            data: {
-              status: newStatus,
-              paidAt: newStatus === InvoiceStatus.PAID ? new Date() : null,
-            },
-          });
+          invoiceData = {
+            status: newStatus,
+            paidAt: newStatus === InvoiceStatus.PAID ? new Date() : null,
+          };
         }
+        await tx.invoice.update({ where: { id: alloc.invoiceId }, data: invoiceData });
       }
 
       // Commission hook: the payments-modal / buyer-allocation path creates PAID
