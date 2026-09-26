@@ -1,7 +1,7 @@
 /**
  * Selling restrictions (lane R step 2a) — which lines of an order EDIT need the choke point.
  *
- * PURE: no Prisma, no Nest. `OrdersService.updateOrderItems` hands in the order's existing lines
+ * PURE: no Prisma, no DB; its only import is the shared unit-label normaliser (SA-408b). `OrdersService.updateOrderItems` hands in the order's existing lines
  * plus the incoming `{id, action, qty}` diff payload; this returns the `EditLine[]` for
  * `SellingRestrictionsService.assertLinesSellable`. It mirrors the service's MERGE branch
  * (apps/api/src/orders/orders.service.ts `updateOrderItems`) — branch ORDER included, not just
@@ -24,8 +24,9 @@
  *
  * Unit lines (units_v1, #2275 / SA-408): such a line stores PIECES in `qty` and its unit's factor in
  * its own `unitsPerBox`, while an edit of it sends a COUNT of that unit in `qty`. Compared in pieces:
- * incoming count × the HELD row's snapshot factor (the live pack only when the row has none), so an
- * unchanged re-send after a repack nets 0. Comparing the count to the stored pieces let an increase
+ * incoming count × the HELD row's snapshot factor, so an unchanged re-send after a repack nets 0. A
+ * held row with no usable snapshot factor is UNSIZED (checked): the live pack is the PACK's size,
+ * never the unit's (SA-408b). Comparing the count to the stored pieces let an increase
  * on a banned product pass as a decrease. A different unit (a staff re-denomination) has another
  * factor, so it is emitted unsized — checked.
  *
@@ -34,6 +35,8 @@
  * checked; a decrease-only edit is the way out. `existing` must be the lock-time read (a pre-lock
  * read can hide an increase under a concurrent edit).
  */
+
+import { norm } from "../products/line-units";
 
 /**
  * One line for `SellingRestrictionsService.assertLinesSellable` — structurally its `SellableLine`
@@ -114,8 +117,7 @@ function existingLineEdit(
 ): EditLine | null {
   const before = existingQty(line);
   if (unreadableQty(item)) return { productId: line.productId };
-  if ((line.unitLabel ?? "") !== "" && !hasSplit(item))
-    return unitLineEdit(item, line, live, before);
+  if ((line.unitLabel ?? "") !== "" && !hasSplit(item)) return unitLineEdit(item, line, before);
   if (!hasSplit(item)) {
     // A bare quantity on a PACK line keeps the line's own denomination (pieces on a box-split
     // line, selling units on a box-unaware one): both sides are in the same unit. A unit line's
@@ -137,22 +139,24 @@ function existingLineEdit(
 }
 
 /**
- * #2275 / SA-408: an edit of a unit line, compared in PIECES — incoming count × the held row's
- * snapshot factor (the live pack only when the row has none). Another unit re-denominates the line
- * with a different factor: unsized, checked. No readable factor at all: unsized, checked.
+ * #2275 / SA-408(b): an edit of a unit line, compared in PIECES — incoming count × the HELD row's
+ * snapshot factor. Another unit (labels compared through THE one normaliser, `norm`) re-denominates
+ * the line with a different factor: unsized, checked. A held row with no usable snapshot factor is
+ * unsized too: the live pack is the PACK's size, never the unit's (`splitBoxSize`'s live fallback is
+ * for pack lines only).
  */
 function unitLineEdit(
   item: EditItem,
   line: ExistingLine & { productId: string },
-  live: LiveUnitsPerBox | undefined,
   before: number,
 ): EditLine | null {
-  if ((item.unitLabel ?? "") !== "" && item.unitLabel !== line.unitLabel) {
+  const asked = item.unitLabel ?? "";
+  if (asked.trim() !== "" && norm(asked) !== norm(line.unitLabel ?? "")) {
     return { productId: line.productId };
   }
   if (!hasNumber(item.qty)) return null;
-  const factor = splitBoxSize(line, live);
-  if (factor === undefined || factor < 1) return { productId: line.productId };
+  const factor = line.unitsPerBox == null ? 0 : Math.trunc(Number(line.unitsPerBox));
+  if (!(factor >= 1)) return { productId: line.productId };
   return { productId: line.productId, qtyDelta: item.qty * factor - before };
 }
 

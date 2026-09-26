@@ -68,7 +68,7 @@ describeDb(
       }) as JwtPayload;
 
     /** A 6-piece Box product with a Case of 12 at $100, and a PENDING order holding 3 Cases (36 pcs). */
-    async function seed(tag: string) {
+    async function seed(tag: string, snapshot: number | null = 12) {
       const product = await raw.product.create({
         data: {
           name: `${tag} cola ${run}`,
@@ -96,7 +96,7 @@ describeDb(
                 productId: product.id,
                 tenantId,
                 unitLabel: "Case",
-                unitsPerBox: 12,
+                unitsPerBox: snapshot,
                 qty: 36,
                 boxes: 3,
                 pieces: 0,
@@ -241,6 +241,16 @@ describeDb(
       const li = await line(f.lineId);
       expect(li.unitsPerBox).toBe(12);
       expect(Number(li.qty)).toBe(36);
+    });
+
+    it("SA-408b: a held Case line with NO snapshot factor — 3 → 4 on a banned product is REFUSED (unsized, never the live pack)", async () => {
+      const f = await seed("nosnap", null);
+      banned = f.productId;
+      await expect(count(f.orderId, f.lineId, 4)).rejects.toMatchObject({
+        response: { code: "SELLING_RESTRICTED" },
+      });
+      expect(seen).toContainEqual({ productId: f.productId });
+      expect(Number((await line(f.lineId)).qty)).toBe(36);
     });
   },
 );

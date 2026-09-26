@@ -50,7 +50,8 @@ const toFactor = (v: unknown): number => {
   const n = Math.trunc(Number(v));
   return Number.isFinite(n) && n >= 1 ? n : 0;
 };
-const norm = (s: string) => s.trim().toLowerCase();
+/** THE unit-label normaliser (SA-408b): every label compare in the codebase goes through it. */
+export const norm = (s: string) => s.trim().toLowerCase();
 const kindOf = (label: string, factor: number): "piece" | "level" =>
   norm(label) === norm(PIECE_LABEL) || factor === 1 ? "piece" : "level";
 

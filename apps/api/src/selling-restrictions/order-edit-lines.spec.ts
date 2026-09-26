@@ -261,11 +261,30 @@ describe("sellableLinesForMergeEdit — a unit line nets in PIECES at its held f
     ]);
   });
 
-  it("a held row with no snapshot factor falls back to the live pack; none at all is checked unsized", () => {
-    expect(merge([caseLine({ unitsPerBox: null })], count(4), new Map([["p1", 12]]))).toEqual([
-      { productId: "p1", qtyDelta: 12 },
+  it("SA-408b: a held row with no usable snapshot factor is UNSIZED — checked, never sized by the live pack", () => {
+    // The live pack is the PACK's size, not the Case's: 4 × 6 − 36 = −12 would pass an increase.
+    expect(merge([caseLine({ unitsPerBox: null })], count(4), new Map([["p1", 6]]))).toEqual([
+      { productId: "p1" },
+    ]);
+    expect(merge([caseLine({ unitsPerBox: 0 })], count(4), new Map([["p1", 12]]))).toEqual([
+      { productId: "p1" },
     ]);
     expect(merge([caseLine({ unitsPerBox: null })], count(4))).toEqual([{ productId: "p1" }]);
+  });
+
+  it("SA-408b: the label compare uses THE one normaliser — 'case' and ' Case' are the held Case", () => {
+    expect(merge([caseLine()], count(4, "case"))).toEqual([{ productId: "p1", qtyDelta: 12 }]);
+    expect(merge([caseLine()], count(4, " Case "))).toEqual([{ productId: "p1", qtyDelta: 12 }]);
+  });
+
+  it("SA-408b: a PACK line's split still sizes from the live pack when its snapshot is null", () => {
+    expect(
+      merge(
+        [line({ qty: 6, boxes: 1, pieces: 0, unitsPerBox: null })],
+        items({ id: "li-1", boxes: 2, pieces: 0 }),
+        new Map([["p1", 6]]),
+      ),
+    ).toEqual([{ productId: "p1", qtyDelta: 6 }]);
   });
 
   it("a DIFFERENT unit re-denominates the line (staff): its factor is not the held one — checked", () => {
