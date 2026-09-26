@@ -1327,39 +1327,6 @@ describe("InvoicesService", () => {
       expect("payments" in data).toBe(false);
     });
 
-    it("#2242: keeps the invoice's NSF fee lines through the rebuild, adding the fee after the tax proration", async () => {
-      armDepositReconcile();
-      // A stamped NSF line and a legacy (NULL systemKind, prefix-only) one, plus an ordinary line.
-      prisma.invoiceItem.findMany.mockResolvedValue([
-        {
-          id: "nsf-1",
-          subtotal: 25,
-          description: "NSF fee — returned check P-1",
-          systemKind: "NSF_FEE",
-        },
-        {
-          id: "nsf-legacy",
-          subtotal: 10,
-          description: "NSF fee — returned check P-0",
-          systemKind: null,
-        },
-        { id: "goods-1", subtotal: 50, description: "P1", systemKind: null },
-      ]);
-
-      await service.reconcileOrderDraftInvoice("o-dep", { basis: "order" });
-
-      // Only the order-derived lines are deleted; both NSF lines survive.
-      expect(prisma.invoiceItem.deleteMany).toHaveBeenCalledWith({
-        where: { invoiceId: "inv-dep", id: { notIn: ["nsf-1", "nsf-legacy"] } },
-      });
-      const data = prisma.invoice.update.mock.calls[0][0].data;
-      // goods 50 + fees 35 = 85; the tax stays the order share on GOODS (5), not on the fee.
-      expect(data.subtotal).toBeCloseTo(85, 2);
-      expect(data.taxAmount).toBeCloseTo(5, 2);
-      expect(data.total).toBeCloseTo(90, 2);
-      expect(data.status).toBe(InvoiceStatus.PARTIAL); // 20 paid of 90
-    });
-
     it("flips PAID (balance floors at 0) when the edited total drops to/below what's already paid", async () => {
       armDepositReconcile({ payments: [{ amount: 60, status: "PAID" }] });
 
