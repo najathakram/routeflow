@@ -1,7 +1,7 @@
 /**
  * Selling restrictions (lane R step 2a) — which lines of an order EDIT need the choke point.
  *
- * PURE: no Prisma, no DB; its only import is the shared unit-label normaliser (SA-408b). `OrdersService.updateOrderItems` hands in the order's existing lines
+ * PURE: no Prisma, no Nest. `OrdersService.updateOrderItems` hands in the order's existing lines
  * plus the incoming `{id, action, qty}` diff payload; this returns the `EditLine[]` for
  * `SellingRestrictionsService.assertLinesSellable`. It mirrors the service's MERGE branch
  * (apps/api/src/orders/orders.service.ts `updateOrderItems`) — branch ORDER included, not just
@@ -36,7 +36,7 @@
  * read can hide an increase under a concurrent edit).
  */
 
-import { norm } from "../products/line-units";
+import { norm } from "../orders/unit-label-norm";
 
 /**
  * One line for `SellingRestrictionsService.assertLinesSellable` — structurally its `SellableLine`
