@@ -1,7 +1,7 @@
 import { Test, TestingModule } from "@nestjs/testing";
 import { BadRequestException, ConflictException, NotFoundException } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
-import { InventoryService } from "./inventory.service";
+import { InventoryService, effectiveDateOf, isReplayCorrection } from "./inventory.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { createMockPrisma } from "../testing/prisma-mock";
 import { AuditService } from "../audit/audit.service";
@@ -107,6 +107,15 @@ describe("InventoryService", () => {
         ),
       ).rejects.toBeInstanceOf(BadRequestException);
       expect(prisma.stockMovement.create).not.toHaveBeenCalled();
+    });
+
+    it("SA-372: the future-date bound is 5 minutes of clock skew — 6 min ahead refused, 4 min accepted", () => {
+      const now = new Date("2026-09-26T12:00:00.000Z");
+      const at = (min: number) => new Date(now.getTime() + min * 60_000).toISOString();
+
+      expect(() => effectiveDateOf(at(6), now)).toThrow(BadRequestException);
+      expect(effectiveDateOf(at(4), now).toISOString()).toBe(at(4));
+      expect(effectiveDateOf(undefined, now)).toBe(now);
     });
 
     it("resets the average to the incoming cost when stock is zero", async () => {
@@ -953,6 +962,34 @@ describe("InventoryService", () => {
       const result = await service.recomputeCosts({});
 
       // 10@1 + 10@5 → 20 @ 3; sell 8 → 12 @ 3; + 10@3 → 22 @ 3.
+      expect(result.results[0].newAvgCost).toBe(3);
+    });
+
+    it("SA-372: a replay correction needs all three marks (COST_BASIS, quantity 0, RECOMPUTE: prefix)", () => {
+      const row = (type: string, quantity: number, reference: string | null) =>
+        isReplayCorrection({ type, quantity: D(quantity), reference });
+
+      expect(row("COST_BASIS", 0, "RECOMPUTE:ENDPOINT")).toBe(true);
+      expect(row("COST_BASIS", 0, "RECOMPUTE:PURCHASE:m9")).toBe(true);
+      expect(row("COST_BASIS", 1, "RECOMPUTE:ENDPOINT")).toBe(false); // moves stock: an input
+      expect(row("PURCHASE", 0, "RECOMPUTE:ENDPOINT")).toBe(false); // wrong type
+      expect(row("COST_BASIS", 0, null)).toBe(false); // manual setCostBasis writes no reference
+      expect(row("COST_BASIS", 0, "B562:REPAIR:abc")).toBe(false); // D2 repair rows stay inputs
+    });
+
+    it("SA-372: a manual COST_BASIS dated between two purchases is folded at its place", async () => {
+      prisma.product.findMany.mockResolvedValue([
+        product({ currentStock: D(20), averageCost: D(3) }),
+      ]);
+      prisma.stockMovement.findMany.mockResolvedValue([
+        { id: "m1", type: "PURCHASE", quantity: D(10), unitCost: D(1), reference: null },
+        { id: "b1", type: "COST_BASIS", quantity: D(0), unitCost: D(4), reference: null },
+        { id: "m2", type: "PURCHASE", quantity: D(10), unitCost: D(2), reference: null },
+      ]);
+
+      const result = await service.recomputeCosts({});
+
+      // 10 @ 1, re-based to 4, then + 10 @ 2 → (40 + 20) / 20 = 3. Skipping b1 would give 1.5.
       expect(result.results[0].newAvgCost).toBe(3);
     });
 

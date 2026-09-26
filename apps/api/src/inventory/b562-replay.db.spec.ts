@@ -30,6 +30,7 @@ import { TenantContextService } from "../tenant/tenant-context.service";
 import { StockAlertService } from "../stock-alerts/stock-alert.service";
 import { describeDb, requireLocalDatabaseUrl } from "../common/testing/db-spec";
 import { decrementStockForSale } from "../orders/order-stock";
+import { costAt, fetchCostIndex } from "../common/invoiced-sales";
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const { assertTestTenant } = require("../../../../scripts/lib/test-tenants.cjs");
@@ -150,6 +151,15 @@ describeDb("B562 PR-3 history-preserving replay — real Postgres", () => {
     tenantCtx.run(w.tenantId, () =>
       inventory.recomputeCosts({ productIds: [w.productId], ...dto }, w.operatorId),
     );
+  /** SA-372: the point-in-time cost the COGS reader would use for this product at `at`. */
+  const costOn = async (w: World, at: Date) =>
+    costAt(
+      await tenantCtx.run(w.tenantId, () =>
+        fetchCostIndex(prisma.forTenant(), [w.productId], new Date()),
+      ),
+      w.productId,
+      at,
+    );
   const productRow = (w: World) => prisma.product.findUniqueOrThrow({ where: { id: w.productId } });
   const ledger = (w: World) =>
     prisma.stockMovement.findMany({
@@ -212,6 +222,10 @@ describeDb("B562 PR-3 history-preserving replay — real Postgres", () => {
   it("a backdated purchase is ACCEPTED, keeps its own snapshot, and appends exactly one COST_BASIS correction", async () => {
     const w = await seedPair("backdated");
     const before = await snapshots(w);
+    // SA-372: a date before every backdated row below — its cost must never be restated.
+    const early = new Date(daysAgo(2.8));
+    const earlyCost = await costOn(w, early);
+    expect(earlyCost).toBe(1);
 
     // D: 10 @ $5 dated two days ago — before the sale.
     const d = await purchase(w, 10, 5, daysAgo(2));
@@ -226,6 +240,10 @@ describeDb("B562 PR-3 history-preserving replay — real Postgres", () => {
     expect([n(cs[0].avgCostAfter), n(cs[0].stockAfter)]).toEqual([3, 22]);
     const after = await snapshots(w);
     for (const [id, snap] of before) expect(after.get(id)).toBe(snap);
+    // SA-372: the correction dated now is the tail the cost index reads, so the current period
+    // costs at the replayed average; the earlier period is untouched.
+    expect(await costOn(w, new Date())).toBe(n((await productRow(w)).averageCost));
+    expect(await costOn(w, early)).toBe(earlyCost);
 
     // E: 10 @ $1 dated 2.5 days ago. The fold must skip the RECOMPUTE row above — folding it would
     // pin the average at 3 and "correct" E away. Own row: (22×3 + 10)/32 = 2.375, counter 32.
@@ -243,6 +261,11 @@ describeDb("B562 PR-3 history-preserving replay — real Postgres", () => {
     expect(await recompute(w, {})).toMatchObject({
       results: [expect.objectContaining({ gap: 0, newAvgCost: 2.5416 })],
     });
+    expect(await costOn(w, new Date())).toBe(2.5416);
+    expect(await costOn(w, early)).toBe(earlyCost);
+    // Idempotent: the correction is now the tail, so a second apply writes nothing.
+    expect((await recompute(w, { dryRun: false })).updated).toBe(0);
+    expect(await corrections(w)).toHaveLength(2);
   });
 
   it("with the SALE rows deleted the ledger can't explain the counter: the endpoint reports it and a backdated purchase REFUSES", async () => {

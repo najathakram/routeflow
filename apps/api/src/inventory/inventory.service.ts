@@ -37,9 +37,19 @@ import { AuditService } from "../audit/audit.service";
 
 /** B562 PR-3 (SA-136 §4): the reference prefix of a replay's own COST_BASIS correction. */
 export const REPLAY_CORRECTION_PREFIX = "RECOMPUTE:";
-/** A replay correction is the fold's OUTPUT, never an input (see replayProduct). */
-export const isReplayCorrection = (reference: string | null | undefined) =>
-  reference?.startsWith(REPLAY_CORRECTION_PREFIX) ?? false;
+/**
+ * A replay correction is the fold's OUTPUT, never an input (see replayProduct). SA-372: all three
+ * marks are required — a COST_BASIS row, quantity 0, and the `RECOMPUTE:` reference — so a manual
+ * or `B562:REPAIR:` cost-basis row (or any other movement) can never be skipped as one.
+ */
+export const isReplayCorrection = (m: {
+  type: string;
+  quantity: Prisma.Decimal | number | string;
+  reference: string | null | undefined;
+}) =>
+  m.type === MovementType.COST_BASIS &&
+  new Prisma.Decimal(m.quantity).isZero() &&
+  (m.reference?.startsWith(REPLAY_CORRECTION_PREFIX) ?? false);
 /** Clock-skew allowance for a client-sent "now" effective date. */
 const EFFECTIVE_DATE_SKEW_MS = 5 * 60 * 1000;
 /**
@@ -2726,7 +2736,7 @@ export class InventoryService {
       if (!isStandard) {
         switch (m.type) {
           case MovementType.COST_BASIS:
-            if (unitCost != null && !isReplayCorrection(m.reference)) {
+            if (unitCost != null && !isReplayCorrection(m)) {
               avg = costDecimal(unitCost);
               hasCostfulHistory = true;
             }
