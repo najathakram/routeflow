@@ -43,7 +43,7 @@ const BASELINE: Record<string, number> = {
   "apps/api/src/orders/orders.service.ts": 5510, // B776/SA-124a: buildMergeLineWrites replaced both merge methods' own live-pack fold (was 5751; SA-065 before that: appendOrderRevision -> order-revisions.ts, was 5780; U1 before that: class tail -> order-lifecycle.ts, 5880)
   "apps/api/src/invoices/invoices.service.ts": 6192, // merge of master 7ea131ab into #2083: both sides shrank it — #2083 SA-203/R-022 (update() planning + totals + catalog reads -> invoice-edit-plan.ts, back-sync shape -> order-backsync-lines.ts; branch baseline was 6305) and master (6264: B662 price-adjustment writes -> price-adjustment-ledger.ts; B769/SA-112 totals -> standalone-payment-totals.ts; B659 prefactor create() context/fold -> manual-invoice-context.ts, with its re-added `hasRegulated` local). Lowered to the merged file, verified by wc -l.
   "apps/api/src/orders/orders.service.spec.ts": 9511,
-  "apps/api/src/customers/customers.service.ts": 3307,
+  "apps/api/src/customers/customers.service.ts": 3302,
   "apps/api/src/invoices/invoices.service.spec.ts": 9351,
   "apps/web/app/(dashboard)/customers/[id]/page.tsx": 4378,
   "apps/web/app/(dashboard)/orders/[id]/page.tsx": 3728,

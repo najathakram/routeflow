@@ -1,5 +1,6 @@
 import { PRODUCT_IMPORT_COLUMNS, CUSTOMER_IMPORT_COLUMNS } from "./import-column-aliases";
 import { parseImportMoney, parseImportNumber } from "./parse-import-number";
+import { roundUnitCost } from "@routeflow/pricing";
 
 /**
  * B858 + B859 — pure column-registry module (FIX1, cause-ruling.md §2.A / SA-284).
@@ -49,13 +50,6 @@ function withBlankGuard(parse: CellParser): CellParser {
     if (isBlank(raw)) return { ok: true, value: undefined };
     return parse(raw);
   };
-}
-
-/** Round `n` to `dp` decimal places, away-from-zero on ties (matches `roundMoney`'s style). */
-function roundTo(n: number, dp: number): number {
-  const sign = n < 0 ? -1 : 1;
-  const factor = 10 ** dp;
-  return (sign * Math.round(Number((Math.abs(n) * factor).toFixed(4)))) / factor;
 }
 
 /**
@@ -123,13 +117,11 @@ const costParser: CellParser = withBlankGuard((raw) => {
   if (n > MAX_STANDARD_COST) {
     return { ok: false, reason: `must be ${MAX_STANDARD_COST} or less` };
   }
-  return { ok: true, value: roundTo(n, 4) };
+  // No mirrors: 4dp rounding reuses @routeflow/pricing's roundUnitCost (same away-from-zero
+  // decimal-string rounding as the old local `roundTo(n, 4)`, which is now retired) rather than a
+  // second local implementation of money rounding.
+  return { ok: true, value: roundUnitCost(n) };
 });
-
-/** Exported so `import.service.ts` can compare `standardCost` at the same 4dp precision (M2). */
-export function roundCost4(n: number): number {
-  return roundTo(n, 4);
-}
 
 function intParser(min: number, max: number): CellParser {
   return withBlankGuard((raw) => {

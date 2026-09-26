@@ -1030,6 +1030,66 @@ describe("ImportService — commercial columns (B858/B859)", () => {
       expect(productsService.update).not.toHaveBeenCalled();
     });
 
+    // ── Opus #938 fold (B): the file-level gate's catch must never turn an entitlement OUTAGE
+    // into "needs the flag" — only a genuine denial gets the friendly message; anything else
+    // (a PLAN_GATE_UNAVAILABLE denial-shaped ForbiddenException, or a plain outage error) is
+    // rethrown unchanged, and no write query ever runs either way. ──────────────────────────
+
+    it.each([
+      [
+        "msrp",
+        "MSRP",
+        "Item Name,SKU,MSRP\nWidget,SKU-1,19.99\n",
+        () => productsService.assertMsrpAllowed,
+      ],
+      [
+        "tobacco",
+        "Tobacco",
+        "Item Name,SKU,Tobacco\nWidget,SKU-1,Yes\n",
+        () => productsService.assertCanFlagTobacco,
+      ],
+      [
+        "reorder",
+        "Reorder Point",
+        "Item Name,SKU,Rate,Reorder Point\nWidget,SKU-1,10,4\n",
+        () => productsService.assertReorderAllowed,
+      ],
+    ])(
+      '%s gate: a generic outage error (DB/network) is rethrown as-is, never as "needs the flag" (preview and run)',
+      async (_key, _header, csv, mock) => {
+        const outage = new Error("connect ECONNREFUSED");
+        mock().mockRejectedValue(outage);
+        const importAny = service.importProducts.bind(service) as any;
+
+        await expect(importAny(Buffer.from(csv), "user-1", { dryRun: true })).rejects.toBe(outage);
+        await expect(importAny(Buffer.from(csv), "user-1")).rejects.toBe(outage);
+        expect(prisma.product.findFirst).not.toHaveBeenCalled();
+        expect(productsService.create).not.toHaveBeenCalled();
+        expect(productsService.update).not.toHaveBeenCalled();
+      },
+    );
+
+    it(
+      "reorder gate: a PLAN_GATE_UNAVAILABLE denial-shaped ForbiddenException (entitlements " +
+        'unresolvable) is rethrown as the outage, never relabeled "needs the forecasting plan flag"',
+      async () => {
+        const unavailable = new ForbiddenException({
+          code: "PLAN_GATE_UNAVAILABLE",
+          message: "Entitlements are temporarily unavailable. Please retry.",
+        });
+        productsService.assertReorderAllowed.mockRejectedValue(unavailable);
+        const csv = "Item Name,SKU,Rate,Reorder Point\nWidget,SKU-1,10,4\n";
+        const importAny = service.importProducts.bind(service) as any;
+
+        for (const dryRun of [true, false]) {
+          await expect(importAny(Buffer.from(csv), "user-1", { dryRun })).rejects.toBe(unavailable);
+        }
+        expect(prisma.product.findFirst).not.toHaveBeenCalled();
+        expect(productsService.create).not.toHaveBeenCalled();
+        expect(productsService.update).not.toHaveBeenCalled();
+      },
+    );
+
     it("P8: two rows whose normalized name collides (no SKU/barcode) are both skipped ambiguous", async () => {
       prisma.product.findFirst.mockResolvedValue(null);
       const csv = "Item Name,Rate\nWidget Pro,10\nwidget   pro,12\n";

@@ -238,6 +238,15 @@ describe("import-columns (FIX1 pins)", () => {
       expect(col().parse("999999.9999").ok).toBe(true);
       expect(col().parse("1000000").ok).toBe(false);
     });
+
+    // No mirrors (house rule): the parser now rounds through @routeflow/pricing's
+    // `roundUnitCost` rather than a local `roundTo` — pin that it still keeps 4dp and rounds a
+    // tie away from zero, exactly like the retired local helper did.
+    it("keeps 4dp and rounds a tie away from zero via the real parser (roundUnitCost, no local mirror)", () => {
+      const r = col().parse("1.23455");
+      expect(r.ok).toBe(true);
+      if (r.ok) expect(r.value).toBe(1.2346);
+    });
   });
 
   // ── SA-305 (1): identity overflow is a bad cell naming the limit — never a truncation ───

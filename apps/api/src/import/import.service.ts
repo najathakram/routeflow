@@ -11,7 +11,7 @@ import { CustomersService } from "../customers/customers.service";
 import { NumberingService } from "./numbering.service";
 import { ExternalRefService } from "./external-ref.service";
 import { ProductsService } from "../products/products.service";
-import { roundMoney } from "@routeflow/pricing";
+import { roundMoney, roundUnitCost } from "@routeflow/pricing";
 import { sumConfirmed } from "../invoices/payment-predicates";
 import { parseImportMoney, parseImportNumber } from "./parse-import-number";
 import { parse } from "csv-parse/sync";
@@ -19,13 +19,7 @@ import { ImportEntityType, InvoiceStatus, MovementType, UserRole } from "@prisma
 import * as bcrypt from "bcrypt";
 import * as crypto from "crypto";
 import { addressStateFields } from "../customers/address-state";
-import {
-  PRODUCT_COLUMNS,
-  CUSTOMER_COLUMNS,
-  resolveColumns,
-  parseRow,
-  roundCost4,
-} from "./import-columns";
+import { PRODUCT_COLUMNS, CUSTOMER_COLUMNS, resolveColumns, parseRow } from "./import-columns";
 import type { CustomerComplianceInput } from "../customers/customer-compliance-input";
 
 /** B858/B859: money fields in PRODUCT_COLUMNS that get rounded-value diff comparison. */
@@ -42,6 +36,28 @@ const PRODUCT_MONEY_FIELDS = new Set([
 /** Lowercase + collapse whitespace — the "unique within the file" key for name-only matching. */
 function normalizeNameKey(name: string): string {
   return name.toLowerCase().replace(/\s+/g, " ").trim();
+}
+
+/**
+ * B858/B859 file-level entitlement gate (import.service.ts's `importProducts`): tells a genuine
+ * entitlement DENIAL apart from an entitlement-check OUTAGE, so the gate's catch never turns an
+ * outage into a false "needs the flag" 403.
+ *
+ * The three asserts this backs (`ProductsService.assertMsrpAllowed` / `assertCanFlagTobacco` /
+ * `assertReorderAllowed`) only ever throw a `ForbiddenException` for an actual denial — a plain
+ * message (tobacco/msrp) or `buildPlanGateBody`'s `{ code: "PLAN_GATE", ... }` (msrp/reorder).
+ * `assertReorderAllowed` can ALSO throw a `ForbiddenException` shaped by `buildPlanFlagDenial` as
+ * `{ code: "PLAN_GATE_UNAVAILABLE", ... }` when entitlement resolution itself failed — that is an
+ * outage wearing a `ForbiddenException`, not a denial, and must never be relabelled. Any other
+ * thrown value (a DB/network error, or anything not a `ForbiddenException`) is unambiguously an
+ * outage too.
+ */
+function isEntitlementDenial(e: unknown): boolean {
+  if (!(e instanceof ForbiddenException)) return false;
+  const body = e.getResponse();
+  const code =
+    typeof body === "object" && body !== null ? (body as { code?: unknown }).code : undefined;
+  return code !== "PLAN_GATE_UNAVAILABLE";
 }
 
 export interface ImportRowPlan {
@@ -2126,7 +2142,8 @@ export class ImportService {
     if (resolved.byField.msrp) {
       try {
         await this.productsService.assertMsrpAllowed();
-      } catch {
+      } catch (e) {
+        if (!isEntitlementDenial(e)) throw e;
         throw new ForbiddenException(
           `Column "${resolved.byField.msrp}" needs the MSRP plan flag; remove the column or enable it`,
         );
@@ -2135,7 +2152,8 @@ export class ImportService {
     if (resolved.byField.isTobacco) {
       try {
         await this.productsService.assertCanFlagTobacco(true);
-      } catch {
+      } catch (e) {
+        if (!isEntitlementDenial(e)) throw e;
         throw new ForbiddenException(
           `Column "${resolved.byField.isTobacco}" needs tobacco_dealer add-on; remove the column or enable it`,
         );
@@ -2145,7 +2163,8 @@ export class ImportService {
     if (reorderColumn) {
       try {
         await this.productsService.assertReorderAllowed();
-      } catch {
+      } catch (e) {
+        if (!isEntitlementDenial(e)) throw e;
         throw new ForbiddenException(
           `Column "${reorderColumn}" needs the forecasting plan flag; remove the column or enable it`,
         );
@@ -2356,7 +2375,7 @@ export class ImportService {
             // which would silently drop the 3rd/4th digit and mask a real cost change.
             differs =
               existingVal == null ||
-              roundCost4(Number(existingVal)) !== roundCost4(Number(newVal as number));
+              roundUnitCost(Number(existingVal)) !== roundUnitCost(Number(newVal as number));
           } else if (PRODUCT_MONEY_FIELDS.has(field)) {
             // a null money column (no MSRP/cost yet) differs from any value, 0 included
             differs =
