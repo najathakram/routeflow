@@ -125,6 +125,43 @@ describe("a LOCKED unit line (#2231, SA-388 rule 1)", () => {
   });
 });
 
+describe("SA-388a: a blocked LOCKED line refuses the WHOLE save and keeps every other edit (#2231)", () => {
+  it("a moved stepper on the locked line + a price edit on a healthy line: blocked by name, draft untouched", () => {
+    const order = orderOf(
+      caseLine({ qty: 40, boxes: 0, pieces: 0 }),
+      caseLine({ id: "L2", productId: "p2", name: "Good case", qty: 36, boxes: 3, pieces: 0 }),
+    );
+    const { draft } = hydrateFromOrder(order);
+    expect(draft.L1.needsRepair).toBe(true);
+    expect(draft.L2.qty).toBe(3);
+    const edited = {
+      ...draft,
+      L1: { ...draft.L1, qty: draft.L1.qty + 1 }, // the stepper may move (SA-388a)
+      L2: { ...draft.L2, unitPrice: 80 },
+    };
+    const before = JSON.stringify(edited);
+    const originals = orderOriginals(order);
+    expect(repairBlockedLines(edited, originals)).toEqual(["Case widget"]);
+    // Pure: the check never discards or rewrites the operator's staged edits.
+    expect(JSON.stringify(edited)).toBe(before);
+    // Once the locked line is removed, the SAME draft saves the healthy line's edit normally.
+    const { L1: _removed, ...rest } = edited;
+    expect(repairBlockedLines(rest, originals)).toEqual([]);
+    expect(
+      stagedDiffItems({ draft: rest, unlisted: [], pendingDeletes: ["L1"] }, originals),
+    ).toEqual([
+      { id: "L1", action: "DELETE" },
+      expect.objectContaining({
+        id: "L2",
+        action: "UPDATE",
+        qty: 3,
+        unitPrice: 80,
+        unitLabel: "Case",
+      }),
+    ]);
+  });
+});
+
 describe("edit-items.tsx source pin: save() refuses a blocked locked line before any request (#2231)", () => {
   const src = readFileSync(
     join(__dirname, "../app/(operator)/(tabs)/orders/[id]/edit-items.tsx"),
@@ -139,5 +176,17 @@ describe("edit-items.tsx source pin: save() refuses a blocked locked line before
     expect(guardAt).toBeGreaterThan(saveAt);
     expect(guardAt).toBeLessThan(mutateAt);
     expect(src.slice(guardAt, mutateAt)).toMatch(/needs repair/);
+  });
+
+  it("SA-388a (1): the refusal only toasts and returns — no setDraft/clearSnapshot/leaveEditor on that path", () => {
+    const saveAt = src.indexOf("const save = () => {");
+    const guardAt = src.indexOf("repairBlockedLines(", saveAt);
+    const guardLine = src.slice(
+      src.indexOf("\n", guardAt) + 1,
+      src.indexOf(";\n", src.indexOf("\n", guardAt)) + 1,
+    );
+    expect(guardLine).toMatch(
+      /^\s*if \(repair\.length\) return showToast\(`\$\{repair\.join\(", "\)\} needs repair — not saved\.`\);$/,
+    );
   });
 });
