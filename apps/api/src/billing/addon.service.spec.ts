@@ -711,7 +711,7 @@ describe("#2188 one add-on row whichever way it is keyed (SA-385)", () => {
     return { ...made, store, create };
   };
 
-  it("legacy key then SKU key: the second enable is refused and there is still ONE row, booked once", async () => {
+  it("SA-385b (a): legacy key then SKU key — refused, still ONE row, booked once", async () => {
     const { svc, store, events, create } = priced([]);
     await svc.enableAddon("t1", "msrp", "price_msrp");
     await expect(svc.enableAddon("t1", "MSRP", "price_msrp")).rejects.toThrow(ConflictException);
@@ -721,7 +721,20 @@ describe("#2188 one add-on row whichever way it is keyed (SA-385)", () => {
     expect(booked(events)).toBe(10); // +X once
   });
 
-  it("an active SKU-keyed row (subscribe/self-serve shape) blocks an admin legacy-key enable", async () => {
+  it("SA-385b (a) reverse: SKU key then legacy key — refused, still ONE row, booked once", async () => {
+    const { svc, store, events, create } = priced([]);
+    await svc.enableAddon("t1", "MSRP", "price_msrp");
+    await expect(svc.enableAddon("t1", "msrp", "price_msrp")).rejects.toThrow(ConflictException);
+    expect(store.rows).toHaveLength(1);
+    expect(store.rows[0]).toMatchObject({ addonKey: "MSRP", sku: "MSRP", active: true });
+    expect(create).toHaveBeenCalledTimes(1);
+    expect(booked(events)).toBe(10);
+  });
+
+  // SA-385b (b): the row subscribe() writes is SKU-keyed (addonKey = sku = code); seeded in that
+  // exact shape, then an admin legacy-key enable must find it. (subscribe() itself only accepts
+  // SELF_SERVICE_ADDON_SKUS today, none legacy-mapped — the shape is the reachable part.)
+  it("SA-385b (b): a subscribe()-shaped SKU row, then admin enable by the legacy key — one row, no second booking", async () => {
     const { svc, store, events } = priced([
       { addonKey: "MSRP", sku: "MSRP", active: true, priceSnapshot: 10 },
     ]);
@@ -730,7 +743,7 @@ describe("#2188 one add-on row whichever way it is keyed (SA-385)", () => {
     expect(booked(events)).toBe(0);
   });
 
-  it("disable by EITHER key finds the row and books −X once", async () => {
+  it("SA-385b (c): disable by EITHER key finds the row and books −X once", async () => {
     for (const key of ["msrp", "MSRP"]) {
       const { svc, store, events } = priced([
         { addonKey: "MSRP", sku: "MSRP", active: true, priceSnapshot: 10 },
@@ -742,7 +755,7 @@ describe("#2188 one add-on row whichever way it is keyed (SA-385)", () => {
     }
   });
 
-  it("re-enable after disable re-activates the SAME row in place (still one row)", async () => {
+  it("SA-385b (c): re-enable after disable re-activates the SAME row in place (still one row)", async () => {
     const { svc, store, events } = priced([
       { addonKey: "msrp", sku: "MSRP", active: false, priceSnapshot: 10 },
     ]);

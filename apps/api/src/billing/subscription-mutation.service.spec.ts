@@ -2670,11 +2670,12 @@ describe("STRIPE-CANCEL-2 — cancel() propagates to Stripe for a READ_ONLY tena
   });
 });
 
-// #2188 / SA-385 (5), tenant side. Today no legacy-mapped SKU (REGULATED_ITEMS, MSRP,
+// #2188 / SA-385 (5), tenant side — a CONSTRUCTED path, UNIT pins only (SA-385b); the reachable
+// pairs are pinned in addon.service.spec.ts and on the DB lane. Today no legacy-mapped SKU (REGULATED_ITEMS, MSRP,
 // SALES_AGENTS, OCR_PACK_250) is self-service, so subscribe()/self-serve cannot yet meet an admin
 // legacy-keyed row; these pins widen SELF_SERVICE_ADDON_SKUS for MSRP inside the block only, so the
 // shared lookup is proven the day one becomes self-service. Admin-side pins: addon.service.spec.ts.
-describe("#2188 tenant paths find an admin legacy-keyed row (SA-385)", () => {
+describe("#2188 tenant paths find an admin legacy-keyed row (constructed path, SA-385b)", () => {
   const selfService = SELF_SERVICE_ADDON_SKUS as unknown as string[];
   beforeEach(() => selfService.push("MSRP"));
   afterEach(() => selfService.splice(selfService.indexOf("MSRP"), 1));
