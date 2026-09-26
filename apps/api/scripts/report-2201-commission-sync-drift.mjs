@@ -35,12 +35,23 @@
  *                      An ESTIMATE: an unrelated later edit also lands here.
  *   - in_sync:         matches now, updated within the lag of the newest payment.
  *   Not covered: an invoice that SHOULD have an accrual and has none (needs rate resolution).
+ *
+ * TEST vs LIVE (SA-394 f): every aggregate is reported twice: approved test tenants
+ * (scripts/lib/test-tenants.cjs `isTestTenant`, decided in memory from the slug) vs everyone
+ * else. No id, slug or name is ever printed. A row whose tenant cannot be resolved counts as live.
+ *
+ * GUARDS: `BEGIN READ ONLY`, then `SET LOCAL statement_timeout = '60s'` and
+ * `SET LOCAL lock_timeout = '5s'`, so a slow query or a held lock aborts the report, never
+ * waits on production writers.
  */
 import { createRequire } from "module";
 import { fileURLToPath } from "url";
 import { dirname, join } from "path";
 import pg from "pg";
 import { resolveReportDbUrl } from "./lib/report-db-url.mjs";
+
+// In memory only: a tenant's slug decides its cohort and is never printed.
+const { isTestTenant } = createRequire(import.meta.url)("../../../scripts/lib/test-tenants.cjs");
 
 const SCRIPT = "report-2201-commission-sync-drift";
 const DEFAULT_SINCE = "2026-03-09T00:00:00.000Z"; // c35a12fd2, the Prisma 7 upgrade
@@ -59,11 +70,16 @@ function loadMath() {
   }
 }
 
-/** Pure: classify one accrual. `payments`: { amount, method, status, createdAt }[]. */
+/**
+ * Pure: classify one accrual and the payable it is off by. `payments`: { amount, method, status,
+ * createdAt }[]. Returns { kind, payableDelta } (payableDelta is 0 unless kind is still_open).
+ */
 export function classify(row, payments, nsfFees, math, lagMs) {
   const accrued = Number(row.accruedAmount);
   const payable = Number(row.payableAmount);
-  if (Math.abs(accrued) <= EPS && Math.abs(payable) <= EPS) return "zeroed";
+  if (Math.abs(accrued) <= EPS && Math.abs(payable) <= EPS) {
+    return { kind: "zeroed", payableDelta: 0 };
+  }
   const paid = payments.filter((p) => p.status === "PAID");
   const money = {
     subtotal: Number(row.subtotal),
@@ -84,12 +100,63 @@ export function classify(row, payments, nsfFees, math, lagMs) {
     Math.abs(base - Number(row.baseAmount)) > EPS ||
     Math.abs(targetAccrued - accrued) > EPS ||
     Math.abs(targetPayable - payable) > EPS;
-  if (off) return "still_open";
+  if (off) return { kind: "still_open", payableDelta: targetPayable - payable };
   const newest = Math.max(0, ...payments.map((p) => new Date(p.createdAt).getTime()));
-  return new Date(row.updatedAt).getTime() - newest > lagMs ? "healed_after" : "in_sync";
+  const kind = new Date(row.updatedAt).getTime() - newest > lagMs ? "healed_after" : "in_sync";
+  return { kind, payableDelta: 0 };
 }
 
-function selfTest() {
+/** The session guard, in order: a read-only tx whose statements and lock waits are bounded. */
+export const READ_ONLY_SESSION = [
+  "BEGIN READ ONLY",
+  "SET LOCAL statement_timeout = '60s'",
+  "SET LOCAL lock_timeout = '5s'",
+];
+
+export async function openReadOnly(client) {
+  for (const sql of READ_ONLY_SESSION) await client.query(sql);
+}
+
+const emptyCohort = () => ({
+  accruals: 0,
+  invoices: 0,
+  zeroed: 0,
+  still_open: 0,
+  healed_after: 0,
+  in_sync: 0,
+  stillOpenPayableDelta: 0,
+});
+
+/**
+ * Pure: the same aggregates for the TEST cohort (`isTest(slug)`) and the LIVE cohort (everyone
+ * else, including a row with no resolvable slug). Rows carry `tenantSlug`, `invoiceId` and the
+ * money columns; nothing identifying leaves this function.
+ */
+export function aggregate(rows, paymentsByInvoice, feesByInvoice, math, lagMs, isTest) {
+  const out = { test: emptyCohort(), live: emptyCohort() };
+  const invoices = { test: new Set(), live: new Set() };
+  for (const r of rows) {
+    const cohort = r.tenantSlug != null && isTest(r.tenantSlug) ? "test" : "live";
+    const { kind, payableDelta } = classify(
+      r,
+      paymentsByInvoice.get(r.invoiceId) ?? [],
+      feesByInvoice.get(r.invoiceId) ?? 0,
+      math,
+      lagMs,
+    );
+    out[cohort].accruals += 1;
+    out[cohort][kind] += 1;
+    out[cohort].stillOpenPayableDelta += payableDelta;
+    invoices[cohort].add(r.invoiceId);
+  }
+  for (const c of ["test", "live"]) {
+    out[c].invoices = invoices[c].size;
+    out[c].stillOpenPayableDelta = Math.round(out[c].stillOpenPayableDelta * 100) / 100;
+  }
+  return out;
+}
+
+async function selfTest() {
   const math = {
     commissionBase: (s) => Math.max(0, s.subtotal - s.discount - s.nsfFees - s.creditApplied),
     collectionRatio: (s) =>
@@ -111,25 +178,51 @@ function selfTest() {
   });
   const credit = [{ amount: 40, method: "CREDIT_NOTE", status: "PAID", createdAt: t0 }];
   const lag = 10 * 60_000;
+  const kind = (r) => classify(r, credit, 0, math, lag).kind;
+  const later = new Date(t0.getTime() + 2 * 3600_000);
+
+  // Cohorts: a test slug (qa-*), a live slug, and a row with no slug (counts as live).
+  const rows = [
+    { ...row({}), tenantSlug: "qa-drift-1", invoiceId: "i1" },
+    { ...row({ baseAmount: 100, accruedAmount: 10 }), tenantSlug: "acme-live", invoiceId: "i2" },
+    { ...row({ updatedAt: later }), tenantSlug: "acme-live", invoiceId: "i3" },
+    { ...row({ accruedAmount: 0, payableAmount: 0 }), tenantSlug: null, invoiceId: "i4" },
+  ];
+  const pays = new Map(rows.map((r) => [r.invoiceId, credit]));
+  const agg = aggregate(rows, pays, new Map(), math, lag, isTestTenant);
+  const printed = JSON.stringify(agg);
+
+  const issued = [];
+  await openReadOnly({ query: async (sql) => issued.push(sql) });
+
   const cases = [
-    ["in_sync", classify(row({}), credit, 0, math, lag)],
     [
-      "still_open (booked without the credit)",
-      classify(row({ baseAmount: 100, accruedAmount: 10 }), credit, 0, math, lag) === "still_open"
-        ? "still_open (booked without the credit)"
-        : "x",
+      "session guard: BEGIN READ ONLY, then statement_timeout 60s, then lock_timeout 5s",
+      issued.join(" | "),
+      "BEGIN READ ONLY | SET LOCAL statement_timeout = '60s' | SET LOCAL lock_timeout = '5s'",
     ],
+    ["in_sync", kind(row({}))],
+    ["still_open", kind(row({ baseAmount: 100, accruedAmount: 10 }))],
+    ["healed_after", kind(row({ updatedAt: later }))],
+    ["zeroed", kind(row({ accruedAmount: 0, payableAmount: 0 }))],
+    ["test cohort: 1 accrual, 1 in_sync", `${agg.test.accruals}/${agg.test.in_sync}`, "1/1"],
     [
-      "healed_after",
-      classify(row({ updatedAt: new Date(t0.getTime() + 2 * 3600_000) }), credit, 0, math, lag),
+      "live cohort: 3 accruals (still_open, healed_after, zeroed incl. the no-slug row)",
+      `${agg.live.accruals}/${agg.live.still_open}/${agg.live.healed_after}/${agg.live.zeroed}`,
+      "3/1/1/1",
     ],
-    ["zeroed", classify(row({ accruedAmount: 0, payableAmount: 0 }), credit, 0, math, lag)],
+    ["live invoices counted per cohort", `${agg.live.invoices}`, "3"],
+    [
+      "no slug or invoice id is ever printed",
+      /qa-drift|acme-live|"i\d"/.test(printed) ? "leak" : "clean",
+      "clean",
+    ],
   ];
   let ok = true;
-  for (const [want, got] of cases) {
-    const pass = want === got;
+  for (const [name, got, want = name] of cases) {
+    const pass = got === want;
     ok &&= pass;
-    console.log(`${pass ? "ok  " : "FAIL"} ${want}${pass ? "" : ` (got ${got})`}`);
+    console.log(`${pass ? "ok  " : "FAIL"} ${name}${pass ? "" : ` (got ${got})`}`);
   }
   process.exit(ok ? 0 : 1);
 }
@@ -151,12 +244,13 @@ async function main() {
   const client = new pg.Client({ connectionString: url });
   await client.connect();
   try {
-    await client.query("BEGIN READ ONLY");
+    await openReadOnly(client);
     const { rows: accruals } = await client.query(
       `SELECT a."invoiceId", a."ratePct", a."baseAmount", a."accruedAmount", a."payableAmount",
-              a."updatedAt", i.subtotal, i.discount, i.total
+              a."updatedAt", i.subtotal, i.discount, i.total, t.slug AS "tenantSlug"
          FROM "CommissionAccrual" a
          JOIN "Invoice" i ON i.id = a."invoiceId"
+         LEFT JOIN "Tenant" t ON t.id = COALESCE(a."tenantId", i."tenantId")
         WHERE i.status NOT IN ('DRAFT', 'VOID')
           AND EXISTS (SELECT 1 FROM "InvoicePayment" p
                        WHERE p."invoiceId" = i.id AND p."createdAt" >= $1)`,
@@ -186,42 +280,18 @@ async function main() {
     }
     const fees = new Map(nsf.map((r) => [r.invoiceId, Number(r.fees)]));
 
-    const counts = { zeroed: 0, still_open: 0, healed_after: 0, in_sync: 0 };
-    let openPayableDelta = 0;
-    for (const a of accruals) {
-      const ps = byInvoice.get(a.invoiceId) ?? [];
-      const kind = classify(a, ps, fees.get(a.invoiceId) ?? 0, math, lagMs);
-      counts[kind] += 1;
-      if (kind === "still_open") {
-        const money = {
-          subtotal: Number(a.subtotal),
-          discount: Number(a.discount),
-          total: Number(a.total),
-          cashCollected: ps
-            .filter((p) => p.status === "PAID" && p.method !== "CREDIT_NOTE")
-            .reduce((s, p) => s + Number(p.amount), 0),
-          creditApplied: ps
-            .filter((p) => p.status === "PAID" && p.method === "CREDIT_NOTE")
-            .reduce((s, p) => s + Number(p.amount), 0),
-          nsfFees: fees.get(a.invoiceId) ?? 0,
-        };
-        const target = math.payableCommission(
-          math.accruedCommission(math.commissionBase(money), Number(a.ratePct)),
-          math.collectionRatio(money),
+    const cohorts = aggregate(accruals, byInvoice, fees, math, lagMs, isTestTenant);
+    const report = { since: since.toISOString(), lagMinutes: lagMs / 60_000, ...cohorts };
+    if (process.argv.includes("--json")) console.log(JSON.stringify(report));
+    else {
+      console.log(`since ${report.since} · lag ${report.lagMinutes} min`);
+      console.log(`${"".padEnd(24)} ${"test".padStart(10)} ${"live".padStart(10)}`);
+      for (const k of Object.keys(cohorts.test)) {
+        console.log(
+          `${k.padEnd(24)} ${String(cohorts.test[k]).padStart(10)} ${String(cohorts.live[k]).padStart(10)}`,
         );
-        openPayableDelta += target - Number(a.payableAmount);
       }
     }
-    const report = {
-      since: since.toISOString(),
-      lagMinutes: lagMs / 60_000,
-      accrualsInScope: accruals.length,
-      invoicesInScope: ids.length,
-      ...counts,
-      stillOpenPayableDelta: Math.round(openPayableDelta * 100) / 100,
-    };
-    if (process.argv.includes("--json")) console.log(JSON.stringify(report));
-    else for (const [k, v] of Object.entries(report)) console.log(`${k.padEnd(24)} ${v}`);
   } finally {
     await client.query("ROLLBACK").catch(() => undefined);
     await client.end();
