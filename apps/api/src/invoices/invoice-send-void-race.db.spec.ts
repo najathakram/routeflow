@@ -626,5 +626,240 @@ describeDb(
         warn.mockRestore();
       }
     });
+    // ─── SA-404d (#2255, bceaf3d2): order cancel under the Order → Invoice locks (R1) and a
+    // DRAFT standalone payment vs a waiting void (R2) — F2 prover cases, two real connections ───
+    const { OrdersService } = require("../orders/orders.service");
+    const { Logger: NestLogger } = require("@nestjs/common");
+    /** A real OrdersService over the real prisma + invoicesService; any other dependency is a no-op stub. */
+    function ordersSvc(): any {
+      const noop: any = new Proxy(async () => undefined, {
+        get: () => noop,
+        apply: async () => undefined,
+      });
+      const base = Object.assign(Object.create(OrdersService.prototype), {
+        prisma,
+        tenantCtx,
+        invoicesService,
+        creditNotes: {
+          releaseOrderCreditsInTx: async () => undefined,
+          previewOrderCreditRelease: async () => [],
+          settleOrderCreditsInTx: async () => ({ applied: 0, unapplied: 0 }),
+        },
+        logger: new NestLogger("OrdersService"),
+      });
+      return new Proxy(base, { get: (t, k, r) => (k in t ? Reflect.get(t, k, r) : noop) });
+    }
+    const opUser = (tenantId: string) =>
+      ({ sub: "f2-op", role: "OPERATOR", tenantId, username: "f2-op" }) as any;
+    /** A CONFIRMED order (no lines) with its SENT invoice linked by orderId. */
+    async function seedOrder(label: string) {
+      const s = await seed(label, "SENT");
+      const inv = await prisma.invoice.findUniqueOrThrow({ where: { id: s.invoiceId } });
+      const order = await prisma.order.create({
+        data: {
+          tenantId: s.tenantId,
+          customerId: inv.customerId,
+          orderNumber: `ORD-F2-2258-${RUN_SUFFIX}-${label}`,
+          status: "CONFIRMED",
+          subtotal: 50,
+          total: 50,
+        } as any,
+      });
+      await prisma.invoice.update({
+        where: { id: s.invoiceId },
+        data: { orderId: order.id } as any,
+      });
+      return { ...s, orderId: order.id, customerId: inv.customerId };
+    }
+    /** T2raw holds the ORDER row; T1 starts and must block on it; `during` runs while T1 waits; T2raw commits. */
+    async function holdOrder(
+      orderId: string,
+      t1: () => Promise<unknown>,
+      during: () => Promise<unknown>,
+    ) {
+      const t2 = new Client({ connectionString: url() });
+      await t2.connect();
+      try {
+        await t2.query("BEGIN");
+        await t2.query(`SELECT id FROM "Order" WHERE id = $1 FOR UPDATE`, [orderId]);
+        const pid = (await t2.query("SELECT pg_backend_pid() AS pid")).rows[0].pid;
+        const p1 = t1().then(
+          (v) => ({ ok: true as const, v }),
+          (e) => ({ ok: false as const, e }),
+        );
+        let blocked = false;
+        for (let i = 0; i < 800 && !blocked; i++) {
+          const q = await t2.query(
+            `SELECT count(*)::int n FROM pg_stat_activity WHERE $1 = ANY(pg_blocking_pids(pid))`,
+            [pid],
+          );
+          blocked = q.rows[0].n > 0;
+          if (!blocked) await new Promise((x) => setTimeout(x, 25));
+        }
+        const duringResult = await during();
+        await t2.query("COMMIT");
+        return { r: (await p1) as any, blocked, duringResult };
+      } finally {
+        await t2.end();
+      }
+    }
+    const warnsFor = (spy: jest.SpyInstance, label: string) =>
+      spy.mock.calls.filter((c) => String(c[0]).includes(label)).length;
+
+    it("(R1) cancel: a REAL CASH payment (recordPayment) committed between assertCancellableOrThrow and the cancel tx's locks ⇒ 400, order NOT cancelled, invoice NOT voided", async () => {
+      const warn = jest.spyOn(NestLogger.prototype, "warn");
+      try {
+        const s = await seedOrder("r1");
+        const orders = ordersSvc();
+        const { r, blocked, duringResult } = await holdOrder(
+          s.orderId,
+          () =>
+            tenantCtx.run(s.tenantId, () =>
+              orders.changeStatus(s.orderId, { status: "CANCELLED" }, opUser(s.tenantId)),
+            ),
+          () =>
+            tenantCtx.run(s.tenantId, () =>
+              invoicesService.recordPayment(s.invoiceId, { amount: 20, method: "CASH" } as any),
+            ),
+        );
+        const order = await prisma.order.findUniqueOrThrow({ where: { id: s.orderId } });
+        const inv = await prisma.invoice.findUniqueOrThrow({
+          where: { id: s.invoiceId },
+          include: { payments: true },
+        });
+        expect({
+          blocked,
+          paid: !!(duringResult as any)?.createdPaymentId,
+          is400: status400(r),
+          msg: msg(r)?.startsWith(
+            "This order has payments that must be refunded before it can be cancelled",
+          ),
+          cancelRetries: warnsFor(warn, `order cancel void order=${s.orderId}`),
+          orderStatus: order.status,
+          invoiceStatus: inv.status,
+          payments: inv.payments.map((p: any) => `${p.method} ${Number(p.amount)} ${p.status}`),
+        }).toEqual({
+          blocked: true,
+          paid: true,
+          is400: true,
+          msg: true,
+          cancelRetries: 1,
+          orderStatus: "CONFIRMED",
+          invoiceStatus: "PARTIAL",
+          payments: ["CASH 20 PAID"],
+        });
+      } finally {
+        warn.mockRestore();
+      }
+    });
+
+    it("(R1-40001) cancel: a forced 40001 on attempt 1 (Order UPDATE trigger) ⇒ ONE retry, CANCELLED once, invoice VOID once", async () => {
+      const warn = jest.spyOn(NestLogger.prototype, "warn");
+      const s = await seedOrder("r1f");
+      const tag = s.orderId.replace(/-/g, "").slice(0, 12);
+      await prisma.$executeRawUnsafe(`CREATE SEQUENCE f2o_once_${tag}`);
+      await prisma.$executeRawUnsafe(
+        `CREATE FUNCTION f2o_raise_${tag}() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.id = '${s.orderId}' AND nextval('f2o_once_${tag}') = 1 THEN RAISE EXCEPTION 'f2 forced conflict' USING ERRCODE = '40001'; END IF; RETURN NEW; END $$`,
+      );
+      await prisma.$executeRawUnsafe(
+        `CREATE TRIGGER f2o_trg_${tag} BEFORE UPDATE ON "Order" FOR EACH ROW EXECUTE FUNCTION f2o_raise_${tag}()`,
+      );
+      let fired = 0;
+      try {
+        await tenantCtx.run(s.tenantId, () =>
+          ordersSvc().changeStatus(s.orderId, { status: "CANCELLED" }, opUser(s.tenantId)),
+        );
+      } finally {
+        fired = Number(
+          (await prisma.$queryRawUnsafe<any[]>(`SELECT last_value FROM f2o_once_${tag}`))[0]
+            .last_value,
+        );
+        await prisma.$executeRawUnsafe(`DROP TRIGGER f2o_trg_${tag} ON "Order"`);
+        await prisma.$executeRawUnsafe(`DROP FUNCTION f2o_raise_${tag}()`);
+        await prisma.$executeRawUnsafe(`DROP SEQUENCE f2o_once_${tag}`);
+      }
+      const retries = warnsFor(warn, `order cancel void order=${s.orderId}`);
+      warn.mockRestore();
+      expect({
+        fired: fired >= 2,
+        retries,
+        order: (await prisma.order.findUniqueOrThrow({ where: { id: s.orderId } })).status,
+        invoice: (await prisma.invoice.findUniqueOrThrow({ where: { id: s.invoiceId } })).status,
+      }).toEqual({ fired: true, retries: 1, order: "CANCELLED", invoice: "VOID" });
+    });
+
+    it("(R1-control) plain cancel ⇒ CANCELLED + invoice VOID; with a CASH payment already on it ⇒ the pre-check 400, nothing changed", async () => {
+      const a = await seedOrder("r1c");
+      await tenantCtx.run(a.tenantId, () =>
+        ordersSvc().changeStatus(a.orderId, { status: "CANCELLED" }, opUser(a.tenantId)),
+      );
+      expect((await prisma.order.findUniqueOrThrow({ where: { id: a.orderId } })).status).toBe(
+        "CANCELLED",
+      );
+      expect((await prisma.invoice.findUniqueOrThrow({ where: { id: a.invoiceId } })).status).toBe(
+        "VOID",
+      );
+      const b = await seedOrder("r1p");
+      await tenantCtx.run(b.tenantId, () =>
+        invoicesService.recordPayment(b.invoiceId, { amount: 20, method: "CASH" } as any),
+      );
+      const r: any = await tenantCtx
+        .run(b.tenantId, () =>
+          ordersSvc().changeStatus(b.orderId, { status: "CANCELLED" }, opUser(b.tenantId)),
+        )
+        .then(
+          (v: any) => ({ ok: true, v }),
+          (e: any) => ({ ok: false, e }),
+        );
+      expect(status400(r)).toBe(true);
+      expect((await prisma.order.findUniqueOrThrow({ where: { id: b.orderId } })).status).toBe(
+        "CONFIRMED",
+      );
+      expect((await prisma.invoice.findUniqueOrThrow({ where: { id: b.invoiceId } })).status).toBe(
+        "PARTIAL",
+      );
+    });
+
+    it("(R2) void: a DRAFT standalone payment (recordStandalonePayment) committed while the void waits on the lock ⇒ void 400s after a retry, invoice NOT voided", async () => {
+      const warn = jest.spyOn(NestLogger.prototype, "warn");
+      try {
+        const s = await seedOrder("r2");
+        const { r, blocked, duringResult } = await holdOrder(
+          s.orderId,
+          () => tenantCtx.run(s.tenantId, () => invoicesService.voidInvoice(s.invoiceId)),
+          () =>
+            tenantCtx.run(s.tenantId, () =>
+              invoicesService.recordStandalonePayment({
+                customerId: s.customerId,
+                totalAmount: 20,
+                method: "CHECK",
+                status: "DRAFT",
+                allocations: [{ invoiceId: s.invoiceId, amount: 20 }],
+              } as any),
+            ),
+        );
+        const inv = await prisma.invoice.findUniqueOrThrow({
+          where: { id: s.invoiceId },
+          include: { payments: true },
+        });
+        expect({
+          blocked,
+          recorded: duringResult != null,
+          is400: status400(r),
+          voidRetries: warnsFor(warn, `invoice void id=${s.invoiceId}`),
+          invoiceStatus: inv.status,
+          payments: inv.payments.map((p: any) => `${p.method} ${Number(p.amount)} ${p.status}`),
+        }).toEqual({
+          blocked: true,
+          recorded: true,
+          is400: true,
+          voidRetries: 1,
+          invoiceStatus: "SENT",
+          payments: ["CHECK 20 DRAFT"],
+        });
+      } finally {
+        warn.mockRestore();
+      }
+    });
   },
 );
