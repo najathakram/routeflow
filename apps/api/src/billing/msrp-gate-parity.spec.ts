@@ -1,5 +1,6 @@
 /**
- * #2198 (SA-329): the MSRP write gate inside ProductsService / CustomersService must return the SAME
+ * #2198 (SA-329, SA-397): every flag.msrp gate inside a service — ProductsService / CustomersService
+ * assertMsrpAllowed, InvoicesService.applyMsrpSnapshots, EstimatesService.msrpEnabled — must return the SAME
  * verdict as the flag.msrp route guard. Both ask `EntitlementAuthority.can` — the one evaluation point
  * (overrides, the resolver's verdict in live mode, the diff log) — never `EntitlementsService.hasFlag`,
  * which only knows the old path and so disagrees with the guard whenever live mode's resolver does.
@@ -7,6 +8,10 @@
  * Real EntitlementAuthority + real PlanFlagGuard + the real `hasFlag` body over mocked collaborators;
  * the two service helpers run with a minimal `this` (they read only prisma, the authority and the catalog).
  */
+// InvoicesService pulls ESM-only deps (same guard as invoices.service.spec.ts).
+jest.mock("../invoices/invoice-pdf.service", () => ({ InvoicePdfService: jest.fn() }));
+jest.mock("../storage/compress.util", () => ({ compressDocument: jest.fn() }));
+
 import { ForbiddenException } from "@nestjs/common";
 import type { ExecutionContext } from "@nestjs/common";
 import { Reflector } from "@nestjs/core";
@@ -15,6 +20,8 @@ import { EntitlementsService } from "./entitlements.service";
 import { PlanFlagGuard } from "./plan-flag.guard";
 import { ProductsService } from "../products/products.service";
 import { CustomersService } from "../customers/customers.service";
+import { InvoicesService } from "../invoices/invoices.service";
+import { EstimatesService } from "../estimates/estimates.service";
 
 type Override = "GRANT" | "DENY" | null;
 interface Case {
@@ -153,6 +160,21 @@ describe("flag.msrp: the service write gate agrees with the route guard (#2198)"
     const customers = await allowed(
       (CustomersService.prototype as any).assertMsrpAllowed.call(self),
     );
-    expect({ products, customers }).toEqual({ products: guardVerdict, customers: guardVerdict });
+    // Invoices: the snapshot runs (reads the MSRP map) only when flag.msrp is allowed.
+    const db = {
+      product: { findMany: jest.fn().mockResolvedValue([{ id: "p1", msrp: 9 }]) },
+      customerPrice: { findMany: jest.fn().mockResolvedValue([]) },
+    };
+    await (InvoicesService.prototype as any).applyMsrpSnapshots.call(self, db, "cust-1", [
+      { productId: "p1" },
+    ]);
+    const invoices = db.product.findMany.mock.calls.length > 0;
+    const estimates = await (EstimatesService.prototype as any).msrpEnabled.call(self, TENANT);
+    expect({ products, customers, invoices, estimates }).toEqual({
+      products: guardVerdict,
+      customers: guardVerdict,
+      invoices: guardVerdict,
+      estimates: guardVerdict,
+    });
   });
 });
