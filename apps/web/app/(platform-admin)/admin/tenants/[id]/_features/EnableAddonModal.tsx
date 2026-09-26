@@ -143,14 +143,22 @@ export function EnableAddonModal({
             Bill via Stripe
           </span>
           {choice === "stripe" && (
-            <input
-              type="text"
-              value={priceId}
-              onChange={(e) => setPriceId(e.target.value)}
-              placeholder="price_1234567890"
-              aria-label="Stripe price ID"
-              className="h-9 rounded-lg border border-slate-600 bg-slate-700 px-3 text-sm text-white focus:border-indigo-500 focus:outline-none"
-            />
+            <>
+              <input
+                type="text"
+                value={priceId}
+                onChange={(e) => setPriceId(e.target.value)}
+                placeholder="price_1234567890"
+                aria-label="Stripe price ID"
+                className="h-9 rounded-lg border border-slate-600 bg-slate-700 px-3 text-sm text-white focus:border-indigo-500 focus:outline-none"
+              />
+              {/* SA-277b: the priced/free split is booked from THIS field (B865, addon.service.ts
+                  FIX-5) — a missing price (or Stripe not configured) books priceSnapshot 0. */}
+              <p className="text-xs text-slate-400">
+                Without a Stripe price (or with Stripe not configured) this is a free grant and adds
+                nothing to MRR.
+              </p>
+            </>
           )}
         </label>
         <label

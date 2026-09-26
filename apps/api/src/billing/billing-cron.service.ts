@@ -487,13 +487,26 @@ export class BillingCronService {
         planKey: { not: null },
         cancelAtPeriodEnd: false,
       },
-      select: { tenantId: true, cycle: true, periodEnd: true },
+      select: {
+        tenantId: true,
+        cycle: true,
+        periodStart: true,
+        periodEnd: true,
+        externalPayment: true,
+      },
     });
     for (const s of subs) {
       const start = s.periodEnd as Date;
+      // B863 / SA-277: an external (prepaid) row rolls by its OWN prior length (start := old end, end := start + prior
+      // length); Stripe/catalog rows keep addCycle's calendar clamping (B329 note above).
+      const priorMs = s.periodStart ? start.getTime() - s.periodStart.getTime() : 0;
+      const periodEnd =
+        s.externalPayment && priorMs > 0
+          ? new Date(start.getTime() + priorMs)
+          : addCycle(start, s.cycle);
       await this.prisma.tenantSubscription.update({
         where: { tenantId: s.tenantId },
-        data: { periodStart: start, periodEnd: addCycle(start, s.cycle) },
+        data: { periodStart: start, periodEnd },
       });
     }
     if (subs.length) this.logger.log(`Rolled ${subs.length} billing cycles`);
