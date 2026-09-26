@@ -173,8 +173,9 @@ describe("#2255 Serializable invoice transactions retry on conflict, guards re-r
       status: InvoiceStatus.VOID,
     });
     expect(prisma.tenantTransaction).toHaveBeenCalledTimes(2);
-    expect(release).toHaveBeenCalledTimes(2); // re-run from a clean, rolled-back tx
-    expect(voidTx).toHaveBeenCalledTimes(2);
+    // Attempt 1 aborted before its body ran; the retry ran it once, on a fresh tx — one void.
+    expect(release).toHaveBeenCalledTimes(1);
+    expect(voidTx).toHaveBeenCalledTimes(1);
   });
 
   it("a non-conflict error is NOT retried (propagates on attempt 1)", async () => {
@@ -223,5 +224,12 @@ describe("#2255 Serializable invoice transactions retry on conflict, guards re-r
     expect(inv.match(/this\.markSent\(/g)).toHaveLength(2);
     const ord = read("orders/orders.service.ts");
     expect(ord).toMatch(/retryOnTxConflict\(\s*`order cancel void/);
+    // SA-404: the order-cancel body already decides from IN-TX reads (its items and its
+    // invoices), so a retry's fresh snapshot is what it acts on — pin that it stays so.
+    const cancel = ord.slice(ord.indexOf("`order cancel void"));
+    const body = cancel.slice(0, cancel.indexOf('isolationLevel: "Serializable"'));
+    expect(body).toMatch(/tx\.orderItem\.findMany\(/);
+    expect(body).toMatch(/tx\.invoice\.findMany\(/);
+    expect(body).not.toMatch(/this\.prisma\.(forTenant\(\)\.)?(invoice|orderItem)\./);
   });
 });

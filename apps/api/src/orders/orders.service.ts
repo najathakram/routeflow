@@ -2682,42 +2682,46 @@ export class OrdersService implements OnApplicationBootstrap {
       // this cancel marked, so marking a line we did not credit would make reopen
       // take stock the order never held (understating it by the full quantity).
       const cancelReturnsStock = order.status !== OrderStatus.DRAFT;
-      await this.prisma.tenantTransaction(
-        async (tx) => {
-          if (cancelReturnsStock) {
-            const activeItems = await tx.orderItem.findMany({
-              where: { orderId: id, status: { not: "CANCELLED" } },
-              select: { productId: true, qty: true, deliveredQty: true, status: true },
-            });
-            // Return the creation-time decrement, clamped to the undelivered
-            // remainder (settleStockForEdit with an empty final set). `order` here
-            // is the PRE-cancel record (status not yet CANCELLED in memory).
-            await this.settleStockForEdit(tx, order, activeItems, []);
-          }
+      // #2255: re-run on a write conflict (SA-269). The body reads its items and invoices under
+      // the tx, and voidInvoiceInTx's claim keeps a re-run from voiding twice.
+      await retryOnTxConflict(`order cancel void order=${id}`, () =>
+        this.prisma.tenantTransaction(
+          async (tx) => {
+            if (cancelReturnsStock) {
+              const activeItems = await tx.orderItem.findMany({
+                where: { orderId: id, status: { not: "CANCELLED" } },
+                select: { productId: true, qty: true, deliveredQty: true, status: true },
+              });
+              // Return the creation-time decrement, clamped to the undelivered
+              // remainder (settleStockForEdit with an empty final set). `order` here
+              // is the PRE-cancel record (status not yet CANCELLED in memory).
+              await this.settleStockForEdit(tx, order, activeItems, []);
+            }
 
-          const invoices = await tx.invoice.findMany({
-            where: { orderId: id, status: { not: "VOID" } },
-            select: { id: true },
-          });
-          await this.creditNotes.releaseOrderCreditsInTx(tx, id);
-          for (const inv of invoices) {
-            await this.invoicesService.releaseWalletPaymentsInTx(tx, inv.id);
-            await this.invoicesService.voidInvoiceInTx(tx, inv.id, id);
-          }
-          if (cancelReturnsStock) {
-            // Mark what this cancel released. Pre-F07 cancels left items untouched
-            // and got no stock credit — reopenOrder re-decrements ONLY item-CANCELLED
-            // lines, so both eras stay conservation-consistent.
-            await tx.orderItem.updateMany({
-              where: { orderId: id, status: { not: "CANCELLED" } },
-              data: { status: "CANCELLED" },
+            const invoices = await tx.invoice.findMany({
+              where: { orderId: id, status: { not: "VOID" } },
+              select: { id: true },
             });
-          }
-        },
-        // Headroom over Prisma's 5s default, matching every other
-        // settleStockForEdit call site (:3053, :4755): this transaction now runs
-        // that helper's per-product lock/read/write loop alongside the voids.
-        { isolationLevel: "Serializable", timeout: 15_000 },
+            await this.creditNotes.releaseOrderCreditsInTx(tx, id);
+            for (const inv of invoices) {
+              await this.invoicesService.releaseWalletPaymentsInTx(tx, inv.id);
+              await this.invoicesService.voidInvoiceInTx(tx, inv.id, id);
+            }
+            if (cancelReturnsStock) {
+              // Mark what this cancel released. Pre-F07 cancels left items untouched
+              // and got no stock credit — reopenOrder re-decrements ONLY item-CANCELLED
+              // lines, so both eras stay conservation-consistent.
+              await tx.orderItem.updateMany({
+                where: { orderId: id, status: { not: "CANCELLED" } },
+                data: { status: "CANCELLED" },
+              });
+            }
+          },
+          // Headroom over Prisma's 5s default, matching every other
+          // settleStockForEdit call site (:3053, :4755): this transaction now runs
+          // that helper's per-product lock/read/write loop alongside the voids.
+          { isolationLevel: "Serializable", timeout: 15_000 },
+        ),
       );
     }
     // DRAFT→PENDING and PENDING→DRAFT (B283 F1) are handled above, atomically
