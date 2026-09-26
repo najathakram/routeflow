@@ -1,5 +1,5 @@
 import { BadRequestException, NotFoundException } from "@nestjs/common";
-import { OrderStatus, Prisma } from "@prisma/client";
+import { OrderStatus } from "@prisma/client";
 import { formatMoney } from "../messaging/messaging.helpers";
 import { isBlockingPayment, roundMoney } from "@routeflow/pricing";
 import type { CreditNotesService } from "../credit-notes/credit-notes.service";
@@ -58,17 +58,12 @@ export function cancelBlockedMessage(blockers: Array<{ invoiceNumber: string; am
  */
 export async function lockOrderForCancel(tx: any, orderId: string): Promise<void> {
   await tx.$executeRaw`SELECT id FROM "Order" WHERE id = ${orderId} FOR UPDATE`;
-  const ids: string[] = (
-    await tx.invoice.findMany({
-      where: { orderId, status: { not: "VOID" } },
-      select: { id: true },
-      orderBy: { id: "asc" },
-    })
-  ).map((i: { id: string }) => i.id);
-  if (ids.length === 0) return;
-  await tx.$executeRaw`SELECT id FROM "Invoice" WHERE id IN (${Prisma.join(ids)}) ORDER BY id FOR UPDATE`;
+  // Lock AND list the live invoices in one statement, stable id order.
+  const rows: Array<{ id: string }> =
+    await tx.$queryRaw`SELECT id FROM "Invoice" WHERE "orderId" = ${orderId} AND status <> 'VOID' ORDER BY id FOR UPDATE`;
+  if (rows.length === 0) return;
   const locked = await tx.invoice.findMany({
-    where: { id: { in: ids } },
+    where: { id: { in: rows.map((r) => r.id) } },
     select: {
       invoiceNumber: true,
       payments: { select: { method: true, amount: true, status: true } },
