@@ -12,6 +12,19 @@ export interface BannedMergedLine {
   message: string;
 }
 
+/** What the merge callers pass through: who acted and where the banned lines go (see below). */
+export interface MergeWarnOpts {
+  /** The acting principal; omitted = an automatic run (judged as the stricter buyer channel). */
+  actor?: ChannelPrincipal | null;
+  /** F-05 (SA-255): the banned lines of the merged order, for the acting UI (beside onPackMismatch). */
+  onBannedLines?: (lines: BannedMergedLine[]) => void;
+}
+export type MergeWinner = { id: string; tenantId?: string | null } & MergeSide;
+export type MergeLosers = Array<{ id: string } & MergeSide>;
+type MergeSide = { lineItems: Array<{ productId: string | null }> };
+/** What a warning run hands back for the caller to run AFTER it releases the merge lock. */
+export type MergePush = (() => Promise<void>) | undefined;
+
 /**
  * F-05 (#2093, SA-255) — MERGE AND WARN. A merge folds orders that were each checked when placed; it sells
  * nothing new, so it is NEVER blocked and never drops or changes a line. It does tell people:
