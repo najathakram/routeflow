@@ -101,4 +101,12 @@ describe("calendar-date pins — calendarStampFromInput (#2197)", () => {
     expect(calendarStampFromInput("2026-02-31T10:00:00Z")).toBeNull();
     expect(calendarStampFromInput("not-a-date")).toBeNull();
   });
+
+  it("returns null (never throws) for an out-of-range month or day that Date cannot build", () => {
+    // new Date("2026-13-01T00:00:00.000Z") is Invalid Date; toISOString() on it throws RangeError,
+    // which would surface as a 500 instead of the 400 the caller maps null to.
+    expect(calendarStampFromInput("2026-13-01")).toBeNull();
+    expect(calendarStampFromInput("2026-00-10T08:00:00Z")).toBeNull();
+    expect(calendarStampFromInput("2026-01-32")).toBeNull();
+  });
 });

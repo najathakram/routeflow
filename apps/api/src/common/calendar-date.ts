@@ -139,12 +139,14 @@ export function startOfCalendarDay(
  * ten characters, the house `calendarDayOf` rule. The client's offset and the
  * tenant's zone are both ignored — re-reading a datetime through either shifts
  * the day (`2026-09-25T20:00:00-04:00` is 00:00Z on the 26th). `null` when the
- * value does not name a real calendar day (bad shape, or `2026-02-31`).
+ * value does not name a real calendar day (bad shape, `2026-02-31`, or `2026-13-01`).
  */
 export function calendarStampFromInput(raw: string): Date | null {
   const day = raw.slice(0, 10);
   if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) return null;
   const stamp = new Date(isoFromCalendarDate(day));
+  // An out-of-range month or day ("2026-13-01") is Invalid Date, and toISOString() would throw.
+  if (Number.isNaN(stamp.getTime())) return null;
   // Date rolls an out-of-range day over ("2026-02-31" → Mar 3) instead of failing.
   return stamp.toISOString().slice(0, 10) === day ? stamp : null;
 }

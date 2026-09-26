@@ -1,6 +1,7 @@
 /**
- * #2197 — a client invoice issueDate with a time component is stored as the TENANT-local calendar
- * day's UTC-midnight stamp, never the raw instant.
+ * #2197 — a client invoice issueDate is stored as the UTC-midnight stamp of the LITERAL day it
+ * names (its first ten characters), never the raw instant; neither its offset nor the tenant zone
+ * moves the day.
  *
  * Split out of invoices.service.spec.ts (not merged into it) per the repo's size ratchet
  * (`common/size-ratchet.spec.ts`). Same bootstrap as invoices.service.b670.spec.ts, duplicated
@@ -37,7 +38,7 @@ import { CommissionEngineService } from "../sales-agents/commission-engine.servi
 import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
 import { InvoiceStatus } from "@prisma/client";
 
-describe("InvoicesService — #2197 issueDate is the tenant calendar-day stamp", () => {
+describe("InvoicesService — #2197 issueDate is the literal calendar day", () => {
   let service: InvoicesService;
   let prisma: ReturnType<typeof createMockPrisma>;
 
