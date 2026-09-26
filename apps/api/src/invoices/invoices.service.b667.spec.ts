@@ -36,6 +36,7 @@ import { CreditNotesService } from "../credit-notes/credit-notes.service";
 import { MessagingService } from "../messaging/messaging.service";
 import { EntitlementsService } from "../billing/entitlements.service";
 import { CommissionEngineService } from "../sales-agents/commission-engine.service";
+import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
 
 describe("InvoicesService — B667 round 5", () => {
   let service: InvoicesService;
@@ -85,6 +86,10 @@ describe("InvoicesService — B667 round 5", () => {
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         InvoicesService,
+        {
+          provide: SellingRestrictionsService,
+          useValue: { assertLinesSellable: jest.fn().mockResolvedValue(undefined) },
+        },
         { provide: PrismaService, useValue: prisma },
         { provide: RouteFlowGateway, useValue: mockGateway },
         { provide: EmailService, useValue: mockEmailService },

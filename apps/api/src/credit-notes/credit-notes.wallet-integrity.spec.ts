@@ -91,6 +91,7 @@ import { MessagingService } from "../messaging/messaging.service";
 import { StorageService } from "../storage/storage.service";
 import { EntitlementsService } from "../billing/entitlements.service";
 import { createMockPrisma } from "../testing/prisma-mock";
+import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
 
 // ─────────────────────────────────────────────────────────────────────────
 // CreditNotesService — settleOrderCreditsInTx (R1) and autoApplyOldestCreditsInTx
@@ -415,6 +416,10 @@ describe("InvoicesService — voidInvoiceInTx caps/voids credit notes it sourced
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         InvoicesService,
+        {
+          provide: SellingRestrictionsService,
+          useValue: { assertLinesSellable: jest.fn().mockResolvedValue(undefined) },
+        },
         { provide: PrismaService, useValue: prisma },
         { provide: RouteFlowGateway, useValue: { emitInvoiceUpdated: jest.fn() } },
         { provide: EmailService, useValue: {} },

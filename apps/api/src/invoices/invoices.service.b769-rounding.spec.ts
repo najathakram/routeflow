@@ -26,6 +26,7 @@ import { EntitlementsService } from "../billing/entitlements.service";
 import { CommissionEngineService } from "../sales-agents/commission-engine.service";
 import { InvoiceStatus } from "@prisma/client";
 import { BadRequestException } from "@nestjs/common";
+import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
 
 // B769: split into its own file rather than grown inline — invoices.service.spec.ts is
 // already at its size-ratchet ceiling (see common/size-ratchet.spec.ts).
@@ -40,6 +41,10 @@ describe("InvoicesService — B769 money rounding", () => {
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         InvoicesService,
+        {
+          provide: SellingRestrictionsService,
+          useValue: { assertLinesSellable: jest.fn().mockResolvedValue(undefined) },
+        },
         { provide: PrismaService, useValue: prisma },
         { provide: RouteFlowGateway, useValue: { emitInvoiceUpdated: jest.fn() } },
         { provide: EmailService, useValue: { sendInvoice: jest.fn() } },

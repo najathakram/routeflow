@@ -5,6 +5,7 @@ import { PrismaService } from "../prisma/prisma.service";
 import { EntitlementsService } from "../billing/entitlements.service";
 import { NumberingService } from "../import/numbering.service";
 import { createMockPrisma } from "../testing/prisma-mock";
+import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
 
 /**
  * B451 — Strix coverage gap 4 (business-logic financial-total manipulation)
@@ -33,6 +34,10 @@ describe("EstimatesService.create — unvalidated discount/tax (B451 gap 4)", ()
     const mod = await Test.createTestingModule({
       providers: [
         EstimatesService,
+        {
+          provide: SellingRestrictionsService,
+          useValue: { assertLinesSellable: jest.fn().mockResolvedValue(undefined) },
+        },
         { provide: PrismaService, useValue: prisma },
         { provide: EntitlementsService, useValue: { hasFlag: jest.fn().mockResolvedValue(false) } },
         {
