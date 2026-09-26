@@ -1,9 +1,11 @@
 /**
  * B680 — DB-lane proof that `InvoicesService.duplicate()` writes its OWN regulated-ledger SALE
  * rows for a regulated invoice copy (same path as create()). The REAL RegulatedLedgerService is
- * wired (not mocked) so the rows are read back from Postgres. Collected only by
- * `jest.db.config.js`; every tenant is a throwaway `qa-b680-<run>-<n>-<label>` slug approved by
- * `assertTestTenant`, deleted in FK order in `afterAll`.
+ * provided below (its one dependency, PrismaService, is real too) so the rows are read back from
+ * Postgres — a jest.fn() ledger here would write nothing and every row assertion would fail.
+ * Collected only by `jest.db.config.js`; every tenant is a throwaway
+ * `qa-b680-<run>-<n>-<label>` slug approved by `assertTestTenant`, deleted in FK order in
+ * `afterAll`.
  */
 
 // Prevent Jest from traversing ESM-only dependencies (same guard as invoices.service.spec.ts /
@@ -34,7 +36,9 @@ import { StorageService } from "../storage/storage.service";
 import { EntitlementsService } from "../billing/entitlements.service";
 import { CommissionEngineService } from "../sales-agents/commission-engine.service";
 import { EstimatesService } from "../estimates/estimates.service";
+import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
 import { NumberingService } from "../import/numbering.service";
+import { periodBucketOf } from "../regulated/period";
 import { describeDb, requireLocalDatabaseUrl } from "../common/testing/db-spec";
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
@@ -42,6 +46,7 @@ const { assertTestTenant } = require("../../../../scripts/lib/test-tenants.cjs")
 
 const RUN_SUFFIX = randomUUID().slice(0, 8);
 let tenantSeq = 0;
+const SOURCE_ISSUE_DATE = new Date("2020-01-15T00:00:00.000Z");
 /** A fresh, policy-approved throwaway tenant slug — never reused across tests in this file. */
 function freshTenantSlug(label: string): string {
   tenantSeq += 1;
@@ -52,7 +57,7 @@ function freshTenantSlug(label: string): string {
 }
 
 describeDb(
-  "update() keeps untouched invoice lines in place — real Postgres (B670/SA-184/196)",
+  "duplicate() writes the copy's own regulated-ledger SALE rows — real Postgres (B680/SA-374)",
   () => {
     let prisma: PrismaService;
     let tenantCtx: TenantContextService;
@@ -108,6 +113,10 @@ describeDb(
       const module: TestingModule = await Test.createTestingModule({
         providers: [
           InvoicesService,
+          {
+            provide: SellingRestrictionsService,
+            useValue: { assertLinesSellable: jest.fn().mockResolvedValue(undefined) },
+          },
           EstimatesService,
           NumberingService,
           { provide: PrismaService, useValue: prisma },
@@ -115,10 +124,7 @@ describeDb(
           { provide: EmailService, useValue: mockEmailService },
           { provide: InvoicePdfService, useValue: { getOrGenerate: jest.fn() } },
           { provide: SystemConfigService, useValue: mockSystemConfig },
-          {
-            provide: RegulatedLedgerService,
-            useValue: { writeSaleEntries: jest.fn(), reverseInvoiceEntries: jest.fn() },
-          },
+          RegulatedLedgerService, // the REAL service: SALE rows are read back from Postgres
           {
             provide: AuthorizationGuardService,
             useValue: {
@@ -215,6 +221,8 @@ describeDb(
           customerId: customer.id,
           invoiceNumber: `INV-B680-${RUN_SUFFIX}-${label}`,
           status: "DRAFT",
+          // An old source date: the copy's SALE row must book today, never this.
+          issueDate: SOURCE_ISSUE_DATE,
           subtotal: 240,
           taxAmount: 7.2,
           total: 247.2,
@@ -252,6 +260,16 @@ describeDb(
         entryType: "SALE",
       });
       expect(Number(rows[0].qty)).toBe(72);
+      // B661 invariant: 6 boxes x the snapshot pack of 12 = 72 pieces on the unit basis.
+      expect(Number(rows[0].unitBasisQty)).toBe(72);
+      // Books in the copy's own period (today), never the source's issueDate.
+      // (The copy's issueDate is the tenant's calendar day, so compare against it rather than
+      // periodBucketOf(new Date()), which could flake across a month boundary.)
+      const copyIssue = new Date(copy.issueDate);
+      expect(Math.abs(Date.now() - copyIssue.getTime())).toBeLessThan(36 * 60 * 60 * 1000);
+      expect(rows[0].soldAt.getTime()).toBe(copyIssue.getTime());
+      expect(rows[0].periodBucket).toBe(periodBucketOf(copyIssue));
+      expect(rows[0].periodBucket).not.toBe(periodBucketOf(SOURCE_ISSUE_DATE));
       expect(rows[0].invoiceId).not.toBe(s.inv.id);
     });
 

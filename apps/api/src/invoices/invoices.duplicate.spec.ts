@@ -300,8 +300,18 @@ describe("InvoicesService.duplicate — what the Duplicate button now depends on
         customer: {},
         payments: [],
       });
+      // Capture the exact tx object the tenantTransaction callback receives.
+      let seenTx: unknown;
+      const passThrough = prisma.tenantTransaction.getMockImplementation()!;
+      prisma.tenantTransaction.mockImplementationOnce((fn: any) =>
+        passThrough((tx: unknown) => {
+          seenTx = tx;
+          return fn(tx);
+        }),
+      );
       await service.duplicate("inv-1");
-      expect(ledger.writeSaleEntries.mock.calls[0][0].db).toBeDefined();
+      expect(seenTx).toBeDefined();
+      expect(ledger.writeSaleEntries.mock.calls[0][0].db).toBe(seenTx);
       expect(prisma.tenantTransaction).toHaveBeenCalledTimes(1);
     });
   });
