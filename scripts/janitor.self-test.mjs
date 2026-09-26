@@ -29,6 +29,8 @@ import {
   isMergedEvidence,
   isRecentlyActive,
   isMergedIntoMaster,
+  mergedPrCoversTip,
+  cherryAllMatched,
   safeRemoveTree,
   resolveRepoContext,
   deleteRefusal,
@@ -585,6 +587,141 @@ t(
           ghOpenLookup: () => false,
         }),
         true,
+      );
+    });
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+// #1732 — every PR here lands as a squash, so on a machine where the local branch tip is not
+// EXACTLY the PR's final head (pushed on from elsewhere, or merged with master after the last
+// local commit) the old gh check said "not merged" and the janitor could never reclaim anything.
+//   (a) a MERGED PR whose merge commit is on master covers the tip when the tip IS its head or an
+//       ANCESTOR of it; a tip AHEAD of the head holds unmerged commits and is never covered;
+//   (b) `git cherry` with no '+' line (every commit already on master) is a gh-free proof, gated
+//       like the B748 patch-id proof (runs last, open-PR veto).
+{
+  const dir = mkdtempSync(join(tmpdir(), "janitor-1732-"));
+  const git = (...args) =>
+    execFileSync("git", ["-C", dir, ...args], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    }).trim();
+  const commit = (file, body, msg) => {
+    writeFileSync(join(dir, file), body);
+    git("add", file);
+    git("-c", "user.name=t", "-c", "user.email=t@example.com", "commit", "-q", "-m", msg);
+    return git("rev-parse", "HEAD");
+  };
+  const noGh = () => false;
+  const noOpen = () => false;
+  try {
+    git("init", "-q", "-b", "master");
+    commit("base.txt", "base", "base");
+
+    // A PR branch with two commits; the local branch "behind" stopped after the first one, and
+    // "ahead" carries one more commit that was never pushed or merged.
+    git("checkout", "-q", "-b", "pr");
+    const c1 = commit("p1.txt", "p1", "pr 1");
+    const head = commit("p2.txt", "p2", "pr 2");
+    git("branch", "behind", c1);
+    git("checkout", "-q", "-b", "ahead");
+    commit("p3.txt", "p3", "ahead-only work");
+    // An unrelated side branch whose commit is NOT on master.
+    git("checkout", "-q", "-b", "elsewhere", "master");
+    const offMaster = commit("x.txt", "x", "not on master");
+    // Master squash-merges the PR at `head`.
+    git("checkout", "-q", "master");
+    git("merge", "-q", "--squash", "pr");
+    git("-c", "user.name=t", "-c", "user.email=t@example.com", "commit", "-q", "-m", "squash pr");
+    const squash = git("rev-parse", "HEAD");
+    const prs = [{ headRefOid: head, mergeCommit: { oid: squash } }];
+    const tipOf = (b) => git("rev-parse", `refs/heads/${b}`);
+
+    t("#1732 (a): a merged PR covers a local tip EQUAL to its head", () => {
+      assert.equal(mergedPrCoversTip(dir, head, prs, "master"), true);
+    });
+    t("#1732 (a): ...and a local tip BEHIND its head (every local commit went into the PR)", () => {
+      assert.equal(mergedPrCoversTip(dir, tipOf("behind"), prs, "master"), true);
+    });
+    t("#1732 (a) guard: a local tip AHEAD of the PR head is NOT covered", () => {
+      assert.equal(mergedPrCoversTip(dir, tipOf("ahead"), prs, "master"), false);
+    });
+    t("#1732 (a) guard: a PR whose merge commit is NOT on master covers nothing", () => {
+      const notMaster = [{ headRefOid: head, mergeCommit: { oid: offMaster } }];
+      assert.equal(mergedPrCoversTip(dir, head, notMaster, "master"), false);
+    });
+    t("#1732 (a) guard: a PR head missing locally, or no merge commit, proves nothing", () => {
+      const missing = [{ headRefOid: "f".repeat(40), mergeCommit: { oid: squash } }];
+      assert.equal(mergedPrCoversTip(dir, tipOf("behind"), missing, "master"), false);
+      assert.equal(mergedPrCoversTip(dir, head, [{ headRefOid: head }], "master"), false);
+      assert.equal(mergedPrCoversTip(dir, head, null, "master"), false);
+    });
+    t(
+      "#1732 (a): end to end, the gh lookup marks the behind branch merged and not the ahead one",
+      () => {
+        const ghLookup = (repo, _branch, tip, masterRef) =>
+          mergedPrCoversTip(repo, tip, prs, masterRef);
+        const opts = { masterRef: "master", ghLookup, ghOpenLookup: noOpen };
+        assert.equal(isMergedIntoMaster(dir, "behind", opts), true);
+        assert.equal(isMergedIntoMaster(dir, "ahead", opts), false);
+      },
+    );
+    t("#1732: with gh unavailable, the squash-merged branch still falls back to patch-id", () => {
+      assert.equal(
+        isMergedIntoMaster(dir, "pr", {
+          masterRef: "master",
+          ghLookup: noGh,
+          ghOpenLookup: noOpen,
+        }),
+        true,
+      );
+    });
+    t("#1732 guard: with gh unavailable, the ahead branch (unmerged work) is NOT merged", () => {
+      assert.equal(
+        isMergedIntoMaster(dir, "ahead", {
+          masterRef: "master",
+          ghLookup: noGh,
+          ghOpenLookup: noOpen,
+        }),
+        false,
+      );
+    });
+
+    // (b) Commits that reached master ONE BY ONE (cherry-picked, with master moving in between),
+    // so no single master commit equals the branch's combined diff: patch-id says no, cherry yes.
+    git("checkout", "-q", "-b", "picked", "master");
+    const k1 = commit("k1.txt", "k1", "picked 1");
+    const k2 = commit("k2.txt", "k2", "picked 2");
+    git("checkout", "-q", "master");
+    git("-c", "user.name=t", "-c", "user.email=t@example.com", "cherry-pick", k1);
+    commit("between.txt", "between", "master moves on");
+    git("-c", "user.name=t", "-c", "user.email=t@example.com", "cherry-pick", k2);
+    git("branch", "picked-plus", "picked");
+    git("checkout", "-q", "picked-plus");
+    commit("k3.txt", "k3", "never picked");
+    git("checkout", "-q", "master");
+    git("branch", "fresh", "master");
+
+    const optsNoGh = { masterRef: "master", ghLookup: noGh, ghOpenLookup: noOpen };
+    t("#1732 (b): every commit already on master (cherry all '-') IS merged without gh", () => {
+      assert.equal(cherryAllMatched(dir, tipOf("picked"), { masterRef: "master" }), true);
+      assert.equal(isMergedIntoMaster(dir, "picked", optsNoGh), true);
+    });
+    t("#1732 (b) guard: one commit not on master ('+') is NOT merged", () => {
+      assert.equal(cherryAllMatched(dir, tipOf("picked-plus"), { masterRef: "master" }), false);
+      assert.equal(isMergedIntoMaster(dir, "picked-plus", optsNoGh), false);
+    });
+    t("#1732 (b) guard: a branch with no commits of its own is NOT merged", () => {
+      assert.equal(cherryAllMatched(dir, tipOf("fresh"), { masterRef: "master" }), false);
+      assert.equal(isMergedIntoMaster(dir, "fresh", optsNoGh), false);
+    });
+    t("#1732 (b) guard: an OPEN PR at the tip vetoes the cherry proof too", () => {
+      const openAtTip = (_r, branch) => branch === "picked";
+      assert.equal(
+        isMergedIntoMaster(dir, "picked", { ...optsNoGh, ghOpenLookup: openAtTip }),
+        false,
       );
     });
   } finally {
