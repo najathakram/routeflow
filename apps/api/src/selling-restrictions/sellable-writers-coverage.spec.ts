@@ -49,7 +49,7 @@ const TABLE: Record<string, Row> = {
   [ord("reopenOrder")]: G,
   [ord("mergeAllPendingForCustomer")]: P("2a: merge (channel from buyerInitiated)"),
   [ord("forceConsolidateCustomer")]: P("2a: consolidate (staff)"),
-  [tpl("createOrderFromTemplate")]: P("2b: standing orders (buyer-owned = BUYER_PORTAL)"),
+  [tpl("createOrderFromTemplate")]: G,
   [ord("recomputeLineCategoryTaxes")]: X("categoryTaxAmount only"),
   [ord("deleteOrder")]: X("removes lines"),
   // Owner ruling 2026-09-25 (#2093): at-door delivery of an order placed before a ban delivers up to the
@@ -109,7 +109,7 @@ const TABLE: Record<string, Row> = {
 };
 
 /** The RATCHET: how many rows are still PENDING. Lower it in the PR that flips a row to GUARDED. */
-const PENDING_BASELINE = 7;
+const PENDING_BASELINE = 6;
 /** GUARDED + PENDING: reclassifying a PENDING row to EXEMPT (an escape, not progress) must change THIS. */
 const ENFORCEMENT_POINTS = 14; // -2: completeWithPayment and reopenStop reclassified EXEMPT with written reasons (#2093)
 const CHOKE_POINT = ["assertLinesSellable", "checkLinesSellable"];
