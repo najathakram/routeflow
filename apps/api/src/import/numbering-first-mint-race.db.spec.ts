@@ -15,8 +15,12 @@
  *
  * Paths pinned:
  *   - year-scoped (`mintForYear`): INVOICE with a year and no saved card row;
- *   - the fast path (`reserveNext`'s upsert + increment): RETURN, the per-year fast-path caller
- *     that mints on the caller's tx (`returns.service.ts`).
+ *   - the fast path (`reserveNext`'s seed + increment, non-year-scoped doc types): RETURN, the
+ *     per-year fast-path caller that mints on the caller's tx (`returns.service.ts`). Before
+ *     #2177 this seed was a Prisma `upsert` (select-then-insert) and failed here with P2002; it
+ *     is now the same `INSERT … ON CONFLICT DO NOTHING` `mintForYear` uses. A standalone
+ *     (no-tx) call runs that identical closure inside its own `tenantTransaction`, so this
+ *     two-connection case covers it by construction.
  *
  * Collected only by `jest.db.config.js`; run with
  * `node scripts/local-env.mjs --db --db-specs -- "npm run test:db -w apps/api --
