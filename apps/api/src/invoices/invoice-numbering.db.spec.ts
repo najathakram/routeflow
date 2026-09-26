@@ -517,10 +517,12 @@ describeDb(
 
       const settings = await tenantCtx.run(tenantA.id, () => numberingService.getSettings());
       const invoiceRow = settings.find((r) => r.docType === "INVOICE");
+      // SA-274 (B861): the preview expectation moved to REG-B861-W — the preview is now the
+      // TRUE next live number (the per-year row's nextNumber), not the year-0 default. `configured`
+      // stays year-0-only, unchanged by this ruling.
       expect(invoiceRow).toMatchObject({
         configured: false,
         nextNumber: 1,
-        preview: "INV-0001",
       });
     }, 30_000);
 

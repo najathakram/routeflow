@@ -7,7 +7,11 @@ const SOCKET_URL = API_URL.replace(/\/api\/v1\/?$/, "");
 
 let socket: Socket | null = null;
 
-export function connectSocket(token: string): Socket {
+/**
+ * `token` may be a getter: socket.io then asks it on EVERY (re)connect attempt, so a socket that
+ * drops after its first token expired comes back on the current one instead of being refused.
+ */
+export function connectSocket(token: string | (() => string | null)): Socket {
   // Guard: return existing socket if already connected OR still connecting
   if (socket?.connected || socket?.active) return socket;
 
@@ -18,7 +22,10 @@ export function connectSocket(token: string): Socket {
   }
 
   socket = io(SOCKET_URL, {
-    auth: { token },
+    auth:
+      typeof token === "function"
+        ? (cb: (data: { token: string }) => void) => cb({ token: token() ?? "" })
+        : { token },
     transports: ["websocket", "polling"],
     reconnection: true,
     reconnectionDelay: 1000,
