@@ -251,6 +251,42 @@ describeDb(
         expect(r.updated).toBe(1);
         expect(await state(inv.id)).toEqual({ status: InvoiceStatus.PAID, payments: 1 });
       }, 30_000);
+
+      it("race: a void committed while the numberless re-import waits on the Invoice lock ⇒ row error, VOID, no synthetic payment", async () => {
+        const { tenantId } = await seed("ref-race");
+        const ref = `zoho-${RUN}-race`;
+        const inv = await importOpen(tenantId, ref);
+        const t2 = new Client({ connectionString: url });
+        await t2.connect();
+        let result: Awaited<ReturnType<ImportService["importInvoices"]>>;
+        let sawBlocked = false;
+        try {
+          await t2.query("BEGIN");
+          await t2.query(`SELECT id FROM "Invoice" WHERE id = $1 FOR UPDATE`, [inv.id]);
+          const pid = (await t2.query("SELECT pg_backend_pid() AS pid")).rows[0].pid;
+          // The re-import pre-reads the prior (SENT) through its ref, then blocks on the row lock.
+          const t1 = importInvoices(tenantId, numberlessCsv(ref, "0", "Paid"));
+          for (let i = 0; i < 800 && !sawBlocked; i++) {
+            const q = await t2.query(
+              `SELECT count(*)::int n FROM pg_stat_activity WHERE $1 = ANY(pg_blocking_pids(pid))`,
+              [pid],
+            );
+            sawBlocked = q.rows[0].n > 0;
+            if (!sawBlocked) await new Promise((x) => setTimeout(x, 25));
+          }
+          await t2.query(
+            `UPDATE "Invoice" SET status = 'VOID', "updatedAt" = now() WHERE id = $1`,
+            [inv.id],
+          );
+          await t2.query("COMMIT");
+          result = await t1;
+        } finally {
+          await t2.end();
+        }
+        expect(sawBlocked).toBe(true); // the entry condition held
+        expect(result!.errors).toEqual([expect.stringContaining("invoice is voided")]);
+        expect(await state(inv.id)).toEqual({ status: InvoiceStatus.VOID, payments: 0 });
+      }, 30_000);
     });
   },
 );
