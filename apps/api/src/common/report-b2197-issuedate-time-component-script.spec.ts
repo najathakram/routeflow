@@ -2,6 +2,7 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 
 // #2197 / R-030 — apps/api/scripts/report-b2197-issuedate-time-component.mjs contract.
 // Read-only, counts only: fails closed without a DB url, carries no write SQL, and never lets a
@@ -60,7 +61,17 @@ describe("report-b2197-issuedate-time-component.mjs", () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "b2197 entry "));
     const link = path.join(dir, "report-b2197-issuedate-time-component.mjs");
     try {
-      fs.symlinkSync(SCRIPT, link);
+      try {
+        fs.symlinkSync(SCRIPT, link);
+      } catch (e: any) {
+        // Same guard as the b2188 spec: a Windows box without symlink rights (EPERM) cannot
+        // build the fixture — the real-path run above still proves the self-test.
+        if (e?.code === "EPERM" || e?.code === "EACCES") {
+          console.warn(`skipped: cannot create a symlink here (${e.code})`);
+          return;
+        }
+        throw e;
+      }
       const viaLink = node([link, "--self-test"], process.env);
       expect(viaLink.status).toBe(0);
       expect(viaLink.stdout.trim()).toBe("self-test ok");
@@ -78,7 +89,8 @@ describe("report-b2197-issuedate-time-component.mjs", () => {
       [
         "--input-type=module",
         "-e",
-        `import { summarize } from ${JSON.stringify(SCRIPT)};` +
+        // An ESM import needs a file:// URL — a bare absolute path is ERR_UNSUPPORTED_ESM_URL_SCHEME on win32.
+        `import { summarize } from ${JSON.stringify(pathToFileURL(SCRIPT).href)};` +
           `console.log(JSON.stringify(summarize(${JSON.stringify(rows)})));`,
       ],
       process.env,

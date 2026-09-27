@@ -227,3 +227,118 @@ export async function findOrderIdByKeyCheckingReturn(
   if (hit) await assertReplayCarriesReturnKey(deps.prisma.forTenant(), returnKey, hit.orderId);
   return hit;
 }
+
+/**
+ * B215: `create()`'s replay candidate for `idempotencyKey`, loaded with the include its
+ * caller's ownership + cart checks read.
+ *
+ * Consults the OrderIdempotencyKey TABLE first and the Order COLUMN only as a fallback: a
+ * keyed request that reached the merge branch has its key in the table alone (the fold writes
+ * it there), and such a request CAN fall through to `create()` — the merge target vanishing
+ * before the advisory lock is the live path — so a column-only lookup would miss the replay
+ * and mint a duplicate order.
+ *
+ * B215/R4 (round 2): the CALLER'S OWN row wins. Lookup order is (1) a key-TABLE row on an
+ * order belonging to `customerId`, (2) this customer's key-stamped Order COLUMN, (3) only then
+ * the tenant-wide table row — which the caller's ownership gate still turns into a 409. Without
+ * step 1/2 a key-table row belonging to ANOTHER customer was fetched first and 409'd a caller
+ * whose own column-stamped order was sitting right there (the same D3 ordering bug already
+ * fixed in `findOrderIdByIdempotencyKey`).
+ */
+export async function loadReplayCandidateByKey(
+  deps: IdempotencyLookupDeps,
+  idempotencyKey: string,
+  customerId: string,
+) {
+  const include = {
+    customer: { select: { id: true, businessName: true } },
+    lineItems: { include: { product: { select: { id: true, name: true, unit: true } } } },
+  };
+  const load = (where: Record<string, unknown>) =>
+    deps.prisma.forTenant().order.findFirst({ where, include });
+  // (1) a key-table row on an order that is THIS customer's.
+  const owned = await deps.prisma.forTenant().orderIdempotencyKey.findFirst({
+    where: { key: idempotencyKey, order: { customerId } },
+    select: { orderId: true },
+  });
+  if (owned) return load({ id: owned.orderId });
+  // (2) this customer's own key-stamped Order column.
+  const ownColumn = await load({ idempotencyKey, customerId });
+  if (ownColumn) return ownColumn;
+  // (3) the tenant-wide key-table row — the caller's ownership gate turns this into a 409.
+  const keyed = await deps.prisma
+    .forTenant()
+    .orderIdempotencyKey.findFirst({ where: { key: idempotencyKey }, select: { orderId: true } });
+  // (4) and finally the tenant-wide column, which is likewise gated by ownership. Unchanged
+  // behaviour for a key stamped on another customer's order: found, then refused.
+  return load(keyed ? { id: keyed.orderId } : { idempotencyKey });
+}
+
+/**
+ * F30/R8 (B196): stamp the replay key onto the order a staff merge landed on,
+ * so a re-delivery of that same request replays instead of folding the same
+ * items in again.
+ *
+ * An order holds at most one key, so a merge overwrites whatever key created
+ * the order. That is deliberate: replays arrive within seconds/minutes of the
+ * request they duplicate, so the MOST RECENT operation on the order is the one
+ * whose replay window is still open. A concurrent claim from another API
+ * replica loses the unique-constraint race (P2002) — the merge it raced has
+ * already been written, so swallow it rather than fail a completed write.
+ */
+export async function stampOrderIdempotencyKey(
+  deps: IdempotencyLookupDeps,
+  orderId: string,
+  idempotencyKey: string,
+): Promise<void> {
+  try {
+    // First key wins (R1): an order can absorb several queued requests (auto-
+    // merge waves); the EARLIEST key is the one a stuck client will retry
+    // with, so never let a later wave clobber it — the later request's own
+    // replay is answered by content comparison against the same order anyway,
+    // for `create()`; the merge path's replay is a bare key lookup, so a key
+    // that was already set leaves that fold unguarded (campaign candidate).
+    await deps.prisma.forTenant().order.updateMany({
+      where: { id: orderId, idempotencyKey: null },
+      data: { idempotencyKey },
+    });
+  } catch (e: any) {
+    if (e?.code !== "P2002") throw e;
+  }
+}
+
+/**
+ * B215: record a staff merge's Idempotency-Key in OrderIdempotencyKey through the FOLD's own
+ * transaction client `tx`, so the key and the fold commit — or roll back — together. Called
+ * only from updateOrderItems' transaction callback. A P2002 means the key already belongs to
+ * another request (every same-customer retry is answered by the replay pre-check before the
+ * fold), so it aborts the fold with a 409: swallowing an error inside a Postgres transaction
+ * would leave the transaction aborted anyway. Uses only deps.prisma (the DB lane builds this
+ * service without DI).
+ */
+export async function insertMergeIdempotencyKey(
+  deps: IdempotencyLookupDeps,
+  tx: any,
+  orderId: string,
+  idem: { key: string; responseHash: string },
+): Promise<void> {
+  const tenantId = deps.prisma.getTenantId();
+  if (!tenantId) {
+    deps.logger.warn(`idempotency key refused: no tenant scope key=${idem.key}`);
+    throw new ForbiddenException("Idempotency-Key requires a tenant-scoped session");
+  }
+  try {
+    await tx.orderIdempotencyKey.create({
+      data: { tenantId, key: idem.key, orderId, responseHash: idem.responseHash },
+    });
+  } catch (e: any) {
+    if (e?.code === "P2002") {
+      deps.logger.warn(
+        `idempotency key already held by another order: fold rolled back ` +
+          `tenant=${tenantId} order=${orderId} key=${idem.key}`,
+      );
+      throw new ConflictException("Idempotency-Key already used for a different order");
+    }
+    throw e;
+  }
+}

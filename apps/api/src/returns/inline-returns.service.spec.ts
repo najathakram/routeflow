@@ -860,6 +860,57 @@ describe("InlineReturnsService", () => {
       expect((result as any).parkedReversals).toEqual({ count: 1, pieces: 6 });
     });
 
+    // #2143: approve() commits, then the post-commit read-back fails. The operator retries the
+    // SAME approval: the unlocked pre-check used to see creditNoteId set and 400. An
+    // already-APPROVED hold must return its current state, idempotently, with no money write.
+    const APPROVED: any = {
+      ...HELD,
+      status: "REFUNDED",
+      holdReason: null,
+      creditNoteId: "cn-approved",
+      approvedById: "user-op",
+      approvedAt: new Date("2026-09-27T06:00:00Z"),
+    };
+
+    it("#2143: a retry of an already-approved return gets its current state, no second write", async () => {
+      prisma.return.findFirst.mockResolvedValue(APPROVED);
+      prisma.return.findUnique.mockResolvedValue(APPROVED);
+      prisma.regulatedLedgerParkedReversal.findMany.mockResolvedValue([]);
+      prisma.tenantTransaction.mockClear();
+
+      const result = await service.approve("ret-held", OPERATOR);
+
+      expect(result).toMatchObject({
+        id: "ret-held",
+        status: "REFUNDED",
+        creditNoteId: "cn-approved",
+      });
+      expect((result as any).parkedReversals).toBeNull();
+      expect(prisma.tenantTransaction).not.toHaveBeenCalled();
+      expect(creditNotes.mintStandaloneInTx).not.toHaveBeenCalled();
+      expect(prisma.stockMovement.create).not.toHaveBeenCalled();
+      expect(ledger.reverseReturnEntries).not.toHaveBeenCalled();
+      expect(prisma.return.updateMany).not.toHaveBeenCalled();
+    });
+
+    it("#2143: the retry's amount does not matter — the first approval stands, nothing is written", async () => {
+      prisma.return.findFirst.mockResolvedValue(APPROVED);
+      prisma.return.findUnique.mockResolvedValue(APPROVED);
+      await expect(service.approve("ret-held", OPERATOR, { amount: 5 })).resolves.toMatchObject({
+        creditNoteId: "cn-approved",
+      });
+      expect(creditNotes.mintStandaloneInTx).not.toHaveBeenCalled();
+    });
+
+    it("#2143: a return issued WITHOUT a hold (never approved) still refuses approve()", async () => {
+      prisma.return.findFirst.mockResolvedValue({
+        ...APPROVED,
+        approvedById: null,
+        approvedAt: null,
+      });
+      await expect(service.approve("ret-held", OPERATOR)).rejects.toThrow(BadRequestException);
+    });
+
     it("approves a REDUCED amount when given one", async () => {
       prisma.return.findFirst.mockResolvedValue(HELD);
       prisma.return.updateMany.mockResolvedValue({ count: 1 });

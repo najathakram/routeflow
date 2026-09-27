@@ -61,7 +61,9 @@ const manifest = {
 // Load DATABASE_URL from the API's .env file so TRUNCATE runs against the
 // same database the API server is connected to.
 function loadEnvDatabaseUrl() {
-  const envPath = path.join(__dirname, "../.env");
+  // ROUTEFLOW_API_DOTENV only picks WHICH .env is read (production-guard-script.spec.ts points it
+  // at a fixture); the guard below still judges whatever URL comes out (#2421).
+  const envPath = process.env.ROUTEFLOW_API_DOTENV || path.join(__dirname, "../.env");
   if (fs.existsSync(envPath)) {
     const content = fs.readFileSync(envPath, "utf8");
     const match = content.match(/^DATABASE_URL\s*=\s*["']?([^"'\r\n]+)["']?/m);
