@@ -45,4 +45,15 @@ describe("mobile order Applied credits (#2404)", () => {
     const edit = read("app/(operator)/(tabs)/orders/[id]/edit-items.tsx");
     expect(edit).toMatch(/!isDriver && order \? <OrderAppliedCredits order=\{order as any\} \/>/);
   });
+
+  // SA-436d LOW: after Remove, the order's Applied credits must refresh on mobile too.
+  it("the unapply hook invalidates the operator order query the panel reads", () => {
+    const api = read("lib/api/credit-notes.ts");
+    const at = api.indexOf("export function useUnapplyCreditNote");
+    expect(at).toBeGreaterThan(-1);
+    const body = api.slice(at, api.indexOf("\n}\n", at));
+    expect(body).toMatch(/invalidateQueries\(\{ queryKey: \["admin", "orders"\] \}\)/);
+    // …and that is the query useAdminOrder (the order screen) reads.
+    expect(read("lib/api/admin.ts")).toMatch(/queryKey: \["admin", "orders", id\]/);
+  });
 });
