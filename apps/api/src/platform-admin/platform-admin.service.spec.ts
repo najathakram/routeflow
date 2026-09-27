@@ -603,6 +603,56 @@ describe("PlatformAdminService — audit provenance", () => {
     });
   });
 
+  it("#2223 / SA-444a: an override row's upgrade keeps basePriceSnapshot = the fee, quotes 0 with the note, books delta 0, and still moves the plan", async () => {
+    prisma.tenant.findUnique.mockResolvedValue({
+      id: TENANT_ID,
+      slug: "acme",
+      plan: "STARTER",
+      status: "ACTIVE",
+      class: "PRODUCTION",
+      deletedAt: null,
+    } as any);
+    prisma.tenant.update.mockResolvedValue({
+      id: TENANT_ID,
+      slug: "acme",
+      plan: "PROFESSIONAL",
+    } as any);
+    planCatalogService.getPublishedVersion.mockResolvedValue({
+      id: "v-9",
+      definitions: [
+        { planKey: "STARTER", monthlyPrice: 99 },
+        { planKey: "GROWTH", monthlyPrice: 249 },
+        { planKey: "SCALE", monthlyPrice: 499 },
+        { planKey: "ENTERPRISE", monthlyPrice: null },
+      ],
+    });
+    // A negotiated $80 fee on STARTER; the snapshot already holds what the tenant pays.
+    (prisma as any).tenantSubscription.findUnique.mockResolvedValue({
+      planKey: "STARTER",
+      basePriceSnapshot: 80,
+      priceOverrideMonthly: 80,
+      discount: null,
+      cycle: "MONTHLY",
+      periodStart: null,
+      periodEnd: null,
+    });
+    prorationService.proratedDiff.mockReturnValue(400); // what a catalog quote would say
+
+    const res: any = await service.updatePlan(TENANT_ID, { plan: "PROFESSIONAL" } as any, ADMIN_ID);
+
+    expect(res).toMatchObject({
+      proratedNow: 0,
+      note: "custom fee unchanged — adjust it in Pricing",
+    });
+    const write = (prisma as any).tenantSubscription.upsert.mock.calls[0][0];
+    expect(write.update).toMatchObject({ planKey: "SCALE", basePriceSnapshot: 80 }); // plan moves, price doesn't
+    expect(write.update).not.toHaveProperty("priceOverrideMonthly"); // never cleared or rewritten
+    const planChanged = billingEventService.emit.mock.calls.find(
+      (c: any[]) => c[1] === "plan.changed",
+    );
+    expect(planChanged?.[3]?.amountDelta).toBe(0);
+  });
+
   it("logs TENANT_PLAN_CHANGED with the previous and new plan in meta, writes planKey/planVersionId consistent with subscribe(), and invalidates entitlements", async () => {
     prisma.tenant.findUnique.mockResolvedValue({
       id: TENANT_ID,
@@ -1196,7 +1246,14 @@ describe("PlatformAdminService — audit provenance", () => {
       status: "TRIAL",
       class: "PRODUCTION",
       deletedAt: null,
-      subscription: { planKey: "ENTERPRISE", basePriceSnapshot: 1200, discount: 0 },
+      // #2460: the real row carries the override the call above just set — activation (SA-464)
+      // snapshots priceOverrideMonthly ?? catalog on the crossing, so the fixture must too.
+      subscription: {
+        planKey: "ENTERPRISE",
+        basePriceSnapshot: 1200,
+        discount: 0,
+        priceOverrideMonthly: 1200,
+      },
     } as any);
     (prisma as any).tenantAddon.findMany.mockResolvedValue([]);
     planCatalogService.getPublishedVersion.mockResolvedValue({
@@ -2471,18 +2528,20 @@ describe("PlatformAdminService — audit provenance", () => {
 
       await service.activateManualSubscription(TENANT_ID, activateDto, ADMIN_ID);
 
-      // basePriceSnapshot is untouched by this write (external activations are priced outside
-      // the catalog run-rate) — the row's existing (null) snapshot prices at $0 both sides,
-      // so the delta reflects that faithfully rather than guessing the catalog price.
+      // #2460 / SA-464 (supersedes REG-743-N5's "$0 run-rate" for the crossing): manual activation
+      // is a PAID path, so the crossing snapshots the catalog price (no override) and books it.
       expect(billingEventService.emit).toHaveBeenCalledWith(
         TENANT_ID,
         "plan.changed",
         expect.objectContaining({ fromPlan: null, toPlan: "SCALE", externalActivation: true }),
-        expect.objectContaining({ amountDelta: 0, actorId: ADMIN_ID }),
+        expect.objectContaining({ amountDelta: 499, actorId: ADMIN_ID }),
       );
     });
 
-    it("B557 books the tenant's actual (pre-existing) basePriceSnapshot in the compensating delta, not a catalog guess", async () => {
+    // #2460 / SA-464: on the crossing the snapshot is REWRITTEN to what the tenant now pays
+    // (override ?? the activated plan's catalog price) — a stale pre-existing snapshot from an
+    // earlier plan is never what gets booked.
+    it("B557 / SA-464 books the activated plan's price on the crossing, not a stale pre-existing snapshot", async () => {
       prisma.tenant.findUnique.mockResolvedValue({ id: TENANT_ID, slug: "acme" } as any);
       prisma.tenant.findUniqueOrThrow.mockResolvedValue({
         status: "SUSPENDED",
@@ -2497,8 +2556,10 @@ describe("PlatformAdminService — audit provenance", () => {
         TENANT_ID,
         "plan.changed",
         expect.objectContaining({ fromPlan: null, toPlan: "SCALE" }),
-        expect.objectContaining({ amountDelta: 349 }),
+        expect.objectContaining({ amountDelta: 499 }),
       );
+      const upsertArg = (prisma as any).tenantSubscription.upsert.mock.calls.at(-1)[0];
+      expect(upsertArg.update.basePriceSnapshot).toBe(499);
     });
 
     // P3b (pin, SA-277/B864 D2): same tenant row lock as updateTenantPriceOverride's :1451 —
@@ -2788,6 +2849,113 @@ describe("PlatformAdminService — audit provenance", () => {
       ).rejects.toThrow("billing event emit failed");
 
       expect(auditLog).not.toHaveBeenCalled();
+    });
+  });
+
+  // #2460 (SA-464 (1), tier 1): manual activation is a PAID path (owner 09-24), so a crossing INTO
+  // the paying set writes basePriceSnapshot = priceOverrideMonthly ?? catalog price in the same tx
+  // and books that contribution. A renewal of an already-paying row writes no snapshot and books
+  // nothing (legacy pilots keep NULL). Free is an explicit override 0 — never NULL.
+  describe("#2460 activateManualSubscription snapshots the price on a crossing into paying", () => {
+    const activate = () =>
+      service.activateManualSubscription(
+        TENANT_ID,
+        { plan: "STARTER", billingPeriodDays: 30, paymentMethod: "ZELLE" } as any,
+        ADMIN_ID,
+      );
+    const setup = (status: string, sub: Record<string, unknown> | null) => {
+      prisma.tenant.findUnique.mockResolvedValue({ id: TENANT_ID, slug: "acme" } as any);
+      prisma.tenant.findUniqueOrThrow.mockResolvedValue({
+        status,
+        class: "PRODUCTION",
+        deletedAt: null,
+        subscription: sub,
+      } as any);
+      (prisma as any).tenantAddon.findMany.mockResolvedValue([]);
+      planCatalogService.getPublishedVersion.mockResolvedValue({
+        id: "v-9",
+        definitions: [{ planKey: "STARTER", monthlyPrice: 99, isCustom: false }],
+      } as any);
+      prisma.tenant.update.mockResolvedValue({
+        id: TENANT_ID,
+        slug: "acme",
+        status: "ACTIVE",
+        plan: "STARTER",
+      } as any);
+    };
+    const upsertArg = () => (prisma as any).tenantSubscription.upsert.mock.calls.at(-1)[0];
+    const planDeltas = () =>
+      billingEventService.emit.mock.calls
+        .filter((c: any) => c[1] === "plan.changed")
+        .map((c: any) => c[3]?.amountDelta);
+
+    it("a TRIAL catalog tenant: snapshot = the catalog price (create AND update), books +99", async () => {
+      setup("TRIAL", {
+        planKey: null,
+        basePriceSnapshot: null,
+        discount: 0,
+        priceOverrideMonthly: null,
+      });
+      await activate();
+      expect(upsertArg().create.basePriceSnapshot).toBe(99);
+      expect(upsertArg().update.basePriceSnapshot).toBe(99);
+      expect(planDeltas()).toEqual([99]);
+    });
+
+    it("a tenant with no subscription row yet: snapshot = the catalog price, books +99", async () => {
+      setup("TRIAL", null);
+      await activate();
+      expect(upsertArg().create.basePriceSnapshot).toBe(99);
+      expect(planDeltas()).toEqual([99]);
+    });
+
+    it("a negotiated override wins: snapshot = the override, books the override", async () => {
+      setup("TRIAL", {
+        planKey: "STARTER",
+        basePriceSnapshot: 150,
+        discount: 0,
+        priceOverrideMonthly: 150,
+      });
+      await activate();
+      expect(upsertArg().update.basePriceSnapshot).toBe(150);
+      expect(planDeltas()).toEqual([150]);
+    });
+
+    it("free = an explicit override 0: snapshot 0, books Δ0", async () => {
+      setup("TRIAL", {
+        planKey: "STARTER",
+        basePriceSnapshot: 0,
+        discount: 0,
+        priceOverrideMonthly: 0,
+      });
+      await activate();
+      expect(upsertArg().update.basePriceSnapshot).toBe(0);
+      expect(planDeltas()).toEqual([0]);
+    });
+
+    it("a lapsed (READ_ONLY) tenant re-activated books the price once", async () => {
+      setup("READ_ONLY", {
+        planKey: "GROWTH",
+        basePriceSnapshot: 249,
+        discount: 0,
+        priceOverrideMonthly: null,
+      });
+      await activate();
+      expect(upsertArg().update.basePriceSnapshot).toBe(99);
+      expect(planDeltas()).toEqual([99]);
+    });
+
+    it("renewing an already-ACTIVE row writes NO snapshot and books nothing (legacy NULL stays NULL)", async () => {
+      setup("ACTIVE", {
+        planKey: "STARTER",
+        basePriceSnapshot: null,
+        discount: 0,
+        priceOverrideMonthly: null,
+      });
+      await activate();
+      expect(upsertArg().update).not.toHaveProperty("basePriceSnapshot");
+      expect(upsertArg().create).not.toHaveProperty("basePriceSnapshot");
+      expect(planDeltas()).toEqual([]);
     });
   });
 });
