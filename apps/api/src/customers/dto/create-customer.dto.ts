@@ -53,7 +53,12 @@ export class CreateCustomerDto {
   @IsOptional() @IsString() @MaxLength(80) lastName?: string;
   @IsOptional() @IsString() @MaxLength(40) taxId?: string;
   @IsOptional() @IsBoolean() isTaxExempt?: boolean;
-  @IsOptional() @Min(0) @Max(MAX_DECIMAL_10_2) creditLimit?: number;
+  // SA-423: scale is part of the Decimal(10,2) bound — refuse a third decimal, never round it.
+  @IsOptional()
+  @IsNumber({ maxDecimalPlaces: 2 })
+  @Min(0)
+  @Max(MAX_DECIMAL_10_2)
+  creditLimit?: number;
   @IsOptional() @IsString() @MaxLength(3) currency?: string;
   @IsOptional() @IsInt() @Min(1) @Max(5) pricingTier?: number;
   /**

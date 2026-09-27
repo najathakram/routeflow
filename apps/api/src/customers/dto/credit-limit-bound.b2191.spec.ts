@@ -107,4 +107,33 @@ describe("CreateCustomerDto / UpdateCustomerDto — creditLimit bound to Decimal
       expect(clErrors[0].constraints?.isNumber).toBeDefined();
     });
   });
+
+  // SA-423 (#938): scale is part of the column's bound exactly as precision is. 12.345 would be
+  // stored silently as 12.35, a monetary write the house rule forbids; an operator-entered term is
+  // refused, not rounded (advance-payment.dto.ts, product-unit.dto.ts use the same decorator).
+  describe.each([
+    ["CreateCustomerDto", createPayload],
+    ["UpdateCustomerDto", updatePayload],
+  ] as const)("%s — creditLimit scale (SA-423)", (_name, payload) => {
+    it("SA-423: creditLimit 12.345 (three decimals) is a validation error on the isNumber constraint", async () => {
+      const clErrors = creditLimitErrors(
+        await validate(payload({ creditLimit: 12.345 }), PIPE_OPTS),
+      );
+      expect(clErrors.length).toBeGreaterThan(0);
+      expect(clErrors[0].constraints?.isNumber).toBeDefined();
+    });
+
+    it.each([12.34, 99_999_999.99])("SA-423: creditLimit %d stays valid", async (value) => {
+      const errors = await validate(payload({ creditLimit: value }), PIPE_OPTS);
+      expect(creditLimitErrors(errors)).toHaveLength(0);
+    });
+  });
+
+  it('SA-423: CreateCustomerDto creditLimit "abc" (non-number) is a validation error on isNumber', async () => {
+    const clErrors = creditLimitErrors(
+      await validate(createPayload({ creditLimit: "abc" }), PIPE_OPTS),
+    );
+    expect(clErrors.length).toBeGreaterThan(0);
+    expect(clErrors[0].constraints?.isNumber).toBeDefined();
+  });
 });
