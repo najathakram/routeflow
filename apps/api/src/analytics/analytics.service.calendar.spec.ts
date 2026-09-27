@@ -4,6 +4,8 @@ import { PrismaService } from "../prisma/prisma.service";
 import { AddonService } from "../billing/addon.service";
 import { SystemConfigService } from "../system-config/system-config.service";
 import { createMockPrisma } from "../testing/prisma-mock";
+import { ProductInsightsService } from "../sales-facts/product-insights.service";
+import { SalesFactsService } from "../sales-facts/sales-facts.service";
 
 /**
  * B118 — On-Time % must judge a completed stop against the END of its run's
@@ -40,6 +42,8 @@ describe("AnalyticsService — B118 tenant-timezone on-time cutoff", () => {
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         AnalyticsService,
+        ProductInsightsService,
+        SalesFactsService,
         { provide: PrismaService, useValue: prisma },
         { provide: AddonService, useValue: addonService },
         { provide: SystemConfigService, useValue: systemConfig },
@@ -170,6 +174,8 @@ describe("AnalyticsService — invoice date windows/buckets read UTC, not host-l
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         AnalyticsService,
+        ProductInsightsService,
+        SalesFactsService,
         { provide: PrismaService, useValue: prisma },
         { provide: AddonService, useValue: { hasAddon: jest.fn().mockResolvedValue(false) } },
         { provide: SystemConfigService, useValue: { get: jest.fn().mockResolvedValue(null) } },

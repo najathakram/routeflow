@@ -80,6 +80,11 @@ import {
 import { CreatePartialInvoiceDto } from "./dto/create-partial-invoice.dto";
 import type { UpdateInvoiceDto } from "./dto/update-invoice.dto";
 import { ListInvoicesDto } from "./dto/list-invoices.dto";
+import {
+  applyInvoiceSearchAndDateFilters,
+  applyInvoiceStatusFilters,
+  invoiceListOrderBy,
+} from "./invoice-list-query";
 import { UpdateShipmentDto } from "../orders/dto/update-shipment.dto";
 import { JwtPayload } from "../auth/jwt-payload.interface";
 import { RouteFlowGateway } from "../gateways/routeflow.gateway";
@@ -102,14 +107,22 @@ import { MessagingService } from "../messaging/messaging.service";
 import { formatDate, formatMoney } from "../messaging/messaging.helpers";
 import { CommissionEngineService } from "../sales-agents/commission-engine.service";
 import { NSF_FEE_DESCRIPTION_PREFIX } from "../sales-agents/commission-math";
+import { InvoiceItemSystemKind } from "./nsf-line";
+import { partitionInvoiceLines, planResyncPairs } from "./resync-plan";
 import { startOfCalendarDay, endOfCalendarDay } from "../common/calendar-date";
 import { lockRowsNoWait } from "../common/db-locks";
 import { NumberingService } from "../import/numbering.service";
 import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
 import { requireRestrictionTenantId } from "../selling-restrictions/restriction-tenant";
+import {
+  addedRestrictionLines,
+  assertEditStillJudged,
+  catalogRestrictionLines,
+} from "./invoice-restriction-lines";
 import { buildManualInvoiceLines, type ManualLineItem } from "./manual-invoice-lines";
 import { foldCategoryTax, loadManualLineContext } from "./manual-invoice-context";
 import { resolveLineUnits } from "../products/line-units";
+import { assertUnitLineSplit } from "../orders/unit-line-split";
 import { prepareUnitLadders, requestsUnit } from "../orders/unit-line-build";
 import { standaloneAllocationTotals } from "./standalone-payment-totals";
 import { calendarDayOf } from "./settled-date-filter";
@@ -123,6 +136,9 @@ const TERM_DAYS: Record<string, number> = {
   "Net 45": 45,
   "Net 60": 60,
 };
+
+/** #2293: round a nullable money field; `null` (clear) and `undefined` (leave as is) pass through. */
+const roundMoneyOrNull = (v: number | null | undefined) => (v == null ? v : roundMoney(v));
 
 /**
  * Payment-term arithmetic on a calendar date, in UTC. `setDate`/`getDate` read LOCAL
@@ -912,6 +928,12 @@ export class InvoicesService {
               roundMoney((storedCategoryTax * prior) / orderQty),
           );
 
+    // #2230: the fields name the line and its id in the 409 / the Sentry report; the call is unchanged.
+    const named = { id: li.id, orderItemId: li.id, description: li.product?.name ?? li.name };
+    assertUnitLineSplit(
+      { ...split, unitLabel: li.unitLabel, unitsPerBox, productId: li.productId, ...named },
+      "buildInvoiceItemData",
+    );
     return {
       // Catalog lines use the product name; unlisted lines carry a free-text `name`.
       description: li.product?.name ?? li.name ?? `Product`,
@@ -2030,21 +2052,9 @@ export class InvoicesService {
       });
       if (invoices.length === 0) return null;
 
-      // Can't prove which order line a provenance-less (manual/freeform) invoice line
-      // bills → can't safely rebuild it. Bail conservatively.
-      const hasUntracked = (i: any) => (i.items ?? []).some((it: any) => !it.orderItemId);
-      if (invoices.some(hasUntracked)) return null;
-
-      // Map each order line → the ONE invoice that already bills it. A line shared by
-      // two invoices is an unclean partition (double-bill risk) → bail.
-      const invoiceByLine = new Map<string, string>();
-      for (const inv of invoices) {
-        for (const it of inv.items ?? []) {
-          const oid = it.orderItemId as string;
-          if (invoiceByLine.has(oid)) return null; // shared → unclean
-          invoiceByLine.set(oid, inv.id);
-        }
-      }
+      // Partition lines to invoices; null = unclean (untracked or shared line) → bail.
+      const invoiceByLine = partitionInvoiceLines(invoices);
+      if (!invoiceByLine) return null;
 
       const order = await db.order.findUnique({
         where: { id: orderId },
@@ -2066,43 +2076,7 @@ export class InvoicesService {
       });
       if (!order) return null;
 
-      // Primary invoice new (unprovenanced) lines fall back to: the sole open pending
-      // mirror if present, else the earliest invoice. For a single-invoice order this
-      // is simply that one invoice, so it bills every current line.
-      const primaryId =
-        invoices.find((i: any) => i.status === InvoiceStatus.DRAFT && i.deliveryBatchId == null)
-          ?.id ?? invoices[0].id;
-
-      // Category → the invoice that already bills that regulated category (built from
-      // each invoice's provenance-owned lines; "" = standard/non-regulated). A NEW line
-      // attaches to its category's invoice so a SEPARATE_INVOICE split keeps regulated
-      // lines on their -R# sibling instead of co-mingling onto the base. A category
-      // billed by two invoices is ambiguous → its new lines fall back to primary.
-      const categoryOwner = new Map<string, string>();
-      const categoryAmbiguous = new Set<string>();
-      for (const li of order.lineItems) {
-        const owner = invoiceByLine.get(li.id);
-        if (!owner) continue; // unprovenanced line — nothing to map from yet
-        const cat = li.trackedCategoryId ?? "";
-        const prev = categoryOwner.get(cat);
-        if (prev === undefined) categoryOwner.set(cat, owner);
-        else if (prev !== owner) categoryAmbiguous.add(cat);
-      }
-
-      const linesByInvoice = new Map<string, any[]>();
-      for (const inv of invoices) linesByInvoice.set(inv.id, []);
-      for (const li of order.lineItems) {
-        const cat = li.trackedCategoryId ?? "";
-        const invId =
-          invoiceByLine.get(li.id) ??
-          (categoryAmbiguous.has(cat) ? undefined : categoryOwner.get(cat)) ??
-          primaryId;
-        linesByInvoice.get(invId)!.push(li);
-      }
-      const pairs = invoices.map((inv: any) => ({
-        draft: inv,
-        lines: linesByInvoice.get(inv.id) ?? [],
-      }));
+      const pairs = planResyncPairs(invoices, order.lineItems, invoiceByLine);
 
       const updated = await this.rebuildSiblingDrafts(order, pairs, "order", db, {
         preserveStatus: true,
@@ -2889,44 +2863,10 @@ export class InvoicesService {
   }
 
   async findAll(query: ListInvoicesDto, user?: JwtPayload) {
-    const {
-      status,
-      statuses,
-      isOverdue,
-      customerId,
-      search,
-      dateFrom,
-      dateTo,
-      dueFrom,
-      dueTo,
-      sortBy,
-      sortOrder,
-      shipped,
-      page = 1,
-      limit = 20,
-    } = query;
+    const { customerId, sortBy, sortOrder, page = 1, limit = 20 } = query;
     const skip = (page - 1) * limit;
     const where: any = {};
-    // Shipments view: only invoices that carry a carrier tracking number.
-    if (shipped) where.shippingTrackingNumber = { not: null };
-    if (isOverdue) {
-      // Derived overdue: unpaid invoices (SENT/VIEWED/PARTIAL) past their due date
-      where.status = {
-        in: [
-          InvoiceStatus.SENT,
-          InvoiceStatus.VIEWED,
-          InvoiceStatus.PARTIAL,
-          InvoiceStatus.OVERDUE,
-        ],
-      };
-      where.dueDate = { lt: new Date() };
-    } else if (statuses && statuses.length > 0) {
-      // RF-204: normalize legacy "VOIDED" alias → the DB enum value "VOID"
-      where.status = { in: statuses.map((s: string) => (s === "VOIDED" ? "VOID" : s)) };
-    } else if (status) {
-      // RF-204: normalize "VOIDED" → "VOID" for single-status filter
-      where.status = (status as string) === "VOIDED" ? "VOID" : status;
-    }
+    applyInvoiceStatusFilters(where, query);
     if (user?.role === UserRole.CUSTOMER) {
       const customer = await this.prisma
         .forTenant()
@@ -2944,59 +2884,8 @@ export class InvoicesService {
     } else if (customerId) {
       where.customerId = customerId;
     }
-    if (search) {
-      where.OR = [
-        { customer: { businessName: { contains: search, mode: "insensitive" } } },
-        { invoiceNumber: { contains: search, mode: "insensitive" } },
-        { shippingTrackingNumber: { contains: search, mode: "insensitive" } },
-      ];
-    }
-    if (dateFrom || dateTo) {
-      where.issueDate = {};
-      if (dateFrom)
-        where.issueDate.gte = new Date(`${calendarDayOf(dateFrom, "dateFrom")}T00:00:00.000Z`);
-      // B89/L-047: issueDate is a UTC-midnight calendar stamp, so its day-end
-      // bound is the LITERAL UTC instant of the date string — never a
-      // host-local `setHours` mutation, which silently disagrees with the
-      // UTC-midnight convention off a UTC host.
-      if (dateTo)
-        where.issueDate.lte = new Date(`${calendarDayOf(dateTo, "dateTo")}T23:59:59.999Z`);
-    }
-    // Due-soon window (Due today / Due tomorrow / Next 7 days chips). MERGE into any
-    // dueDate clause `isOverdue` already set — the two intersect, they don't override
-    // each other. `dueTo` widens to end-of-day like `dateTo`, otherwise a date-only
-    // value truncates to midnight and drops invoices due later that same day.
-    if (dueFrom || dueTo) {
-      where.dueDate = { ...(where.dueDate ?? {}) };
-      if (dueFrom)
-        where.dueDate.gte = new Date(`${calendarDayOf(dueFrom, "dueFrom")}T00:00:00.000Z`);
-      // B89/L-047: dueDate is also a UTC-midnight calendar stamp — same literal
-      // UTC instant convention as issueDate above.
-      if (dueTo) where.dueDate.lte = new Date(`${calendarDayOf(dueTo, "dueTo")}T23:59:59.999Z`);
-    }
-
-    // Build orderBy from sortBy/sortOrder params
-    const validSortFields: Record<string, string> = {
-      date: "issueDate",
-      issueDate: "issueDate",
-      dueDate: "dueDate",
-      total: "total",
-      amount: "total",
-      createdAt: "createdAt",
-      status: "status",
-      invoiceNumber: "invoiceNumber",
-    };
-    // m9: Object.hasOwn (not a bare index) so prototype keys — `constructor`,
-    // `__proto__`, `toString`, `valueOf`… — can't resolve to an INHERITED value
-    // and reach Prisma as a malformed orderBy (→ 500). Unknown OR inherited
-    // falls back to the safe issueDate default.
-    const orderField =
-      sortBy && Object.hasOwn(validSortFields, sortBy) ? validSortFields[sortBy] : "issueDate";
-    const orderDir = sortOrder === "asc" ? "asc" : "desc";
-    // B169: `id` tiebreaker — issueDate/createdAt ties are STRUCTURAL (bulk
-    // imports, UTC-midnight stamps sharing a value), so a single-key orderBy
-    // leaves page order unstable across identical requests.
-    const orderBy: any = [{ [orderField]: orderDir }, { id: orderDir }];
+    applyInvoiceSearchAndDateFilters(where, query);
+    const orderBy = invoiceListOrderBy(sortBy, sortOrder);
 
     const [data, total] = await Promise.all([
       this.prisma.forTenant().invoice.findMany({
@@ -3348,6 +3237,14 @@ export class InvoicesService {
 
     const items = dto.items;
     if (items) {
+      // F-05: netted per product (qtyDelta = requested - held); re-checked under the row lock in the tx below.
+      const restrictionLines = await addedRestrictionLines(this.prisma.forTenant(), id, items);
+      await this.sellingRestrictions.assertLinesSellable({
+        tenantId: requireRestrictionTenantId(this.prisma.getTenantId()),
+        customerId: inv.customerId,
+        lines: restrictionLines,
+        channel: "STAFF",
+      });
       await assertOrderItemIdsBelongToOrder(this.prisma.forTenant(), inv.orderId, items); // SA-093a rd6
       // Products (pack + regulated snapshot) and section tax config for the edited lines (mirrors create()).
       const { productMap, categoryMap } = await loadEditCatalog(this.prisma.forTenant(), items);
@@ -3359,6 +3256,7 @@ export class InvoicesService {
         if (inv.orderId)
           await tx.$executeRaw`SELECT id FROM "Order" WHERE id = ${inv.orderId} FOR UPDATE`;
         await tx.$executeRaw`SELECT id FROM "Invoice" WHERE id = ${id} FOR UPDATE`;
+        await assertEditStillJudged(tx, id, items, restrictionLines); // F-05: under the Invoice row lock
         // SA-184/186: match the payload to THIS invoice's stored rows (by id, tenant-scoped; never by
         // productId), keep untouched rows verbatim and in place, re-price only changed lines. Rules
         // and reasoning: invoice-edit-plan.ts.
@@ -4541,6 +4439,13 @@ export class InvoicesService {
       );
     }
     unitAware.assertNoUnitAwareLines(inv.items, "duplicated"); // the copy drops the unit
+    // F-05: a copy is a new sale of every catalog line it carries.
+    await this.sellingRestrictions.assertLinesSellable({
+      tenantId: requireRestrictionTenantId(this.prisma.getTenantId()),
+      customerId: inv.customerId,
+      lines: catalogRestrictionLines(inv.items),
+      channel: "STAFF",
+    });
 
     const customer = await this.prisma
       .forTenant()
@@ -4580,6 +4485,9 @@ export class InvoicesService {
       categoryTaxRate:
         (i as any).categoryTaxRate != null ? Number((i as any).categoryTaxRate) : null,
       categoryPriceIncludesTax: (i as any).categoryPriceIncludesTax ?? null,
+      // #2169 (SA-395): a duplicated NSF fee line is still a real system-written NSF line —
+      // carried verbatim, like every other snapshot column above.
+      systemKind: i.systemKind ?? null,
       tenantId: this.prisma.getTenantId(),
     }));
     const subtotal = roundMoney(itemsData.reduce((s, i) => s + Number(i.subtotal), 0));
@@ -4913,6 +4821,7 @@ export class InvoicesService {
       const alreadyPaid = sumConfirmed(inv.payments);
       const remaining = remainingCapacity(total, inv.payments);
       const paymentStatus = dto.status ?? "PAID";
+      const amount = roundMoney(dto.amount); // #2293: ONE rounded value — guard, write, status
 
       if (paymentStatus === "PAID") {
         if (remaining <= 0) {
@@ -4926,7 +4835,7 @@ export class InvoicesService {
               : "Invoice's remaining balance is already reserved by unconfirmed payments",
           );
         }
-        if (dto.amount > remaining + 0.001)
+        if (amount > remaining + 0.001)
           throw new BadRequestException(
             `Payment exceeds remaining balance of ${remaining.toFixed(2)}`,
           );
@@ -4947,21 +4856,21 @@ export class InvoicesService {
       const createdPayment = await tx.invoicePayment.create({
         data: {
           invoiceId: id,
-          amount: dto.amount,
+          amount,
           method: dto.method,
           reference: dto.reference,
           notes: dto.notes,
           paidAt: dto.paidAt ? new Date(dto.paidAt) : new Date(),
           // Never clamped: a post-dated check settles in the future.
           settledAt: dto.settledAt ? new Date(dto.settledAt) : null,
-          bankCharges: dto.bankCharges,
+          bankCharges: roundMoneyOrNull(dto.bankCharges),
           status: paymentStatus as any,
           paymentNumber,
           checkStatus: dto.method === "CHECK" ? CheckStatus.RECORDED : null,
         },
       });
 
-      const newPaid = paymentStatus === "PAID" ? alreadyPaid + dto.amount : alreadyPaid;
+      const newPaid = paymentStatus === "PAID" ? alreadyPaid + amount : alreadyPaid;
       const newStatus =
         paymentStatus === "PAID"
           ? this.recomputeStatus(newPaid, total, inv.dueDate, inv.status)
@@ -5313,6 +5222,7 @@ export class InvoicesService {
       }
 
       const newPaymentStatus = dto.status ?? payment.status ?? "PAID";
+      const amount = roundMoney(dto.amount); // #2293: ONE rounded value — guard, status, write
 
       // F03/R1: only a CONFIRMED (PAID) row funds the recomputed status — VOID and
       // DRAFT both contribute $0, mirroring recordPayment (:4415). Counting a DRAFT
@@ -5320,9 +5230,9 @@ export class InvoicesService {
       // nobody confirmed — either by editing an unconfirmed payment or by
       // un-confirming a real one — while sumConfirmed still reported the full
       // balance due: exactly the B11 damage class CONFIRMED_PAYMENT removes. The
-      // remaining-balance guard below deliberately stays on the raw dto.amount so a
+      // remaining-balance guard below deliberately stays on the full amount so a
       // DRAFT still cannot be parked above the invoice total.
-      const effectiveAmount = newPaymentStatus === "PAID" ? dto.amount : 0;
+      const effectiveAmount = newPaymentStatus === "PAID" ? amount : 0;
 
       // F03/R1: the recomputed status still funds only off CONFIRMED (PAID)
       // payments — an unconfirmed DRAFT "other" payment must not inflate the
@@ -5336,14 +5246,14 @@ export class InvoicesService {
       // recordPayment's conversion closes, so this edit can no longer be parked
       // above what the invoice can actually hold once that DRAFT confirms.
       const capacity = remainingCapacity(total, otherPayments);
-      if (newPaymentStatus !== "VOID" && dto.amount > capacity + 0.001) {
+      if (newPaymentStatus !== "VOID" && amount > capacity + 0.001) {
         throw new BadRequestException(`Payment amount exceeds remaining balance`);
       }
 
       await tx.invoicePayment.update({
         where: { id: paymentId },
         data: {
-          amount: dto.amount,
+          amount,
           method: dto.method,
           reference: dto.reference,
           notes: dto.notes,
@@ -5352,7 +5262,7 @@ export class InvoicesService {
           ...(dto.settledAt !== undefined && {
             settledAt: dto.settledAt ? new Date(dto.settledAt) : null,
           }),
-          ...(dto.bankCharges !== undefined && { bankCharges: dto.bankCharges }),
+          ...(dto.bankCharges !== undefined && { bankCharges: roundMoneyOrNull(dto.bankCharges) }),
           status: newPaymentStatus,
         },
       });
@@ -5655,7 +5565,7 @@ export class InvoicesService {
             method: dto.method as any,
             paidAt,
             settledAt,
-            bankCharges: dto.bankCharges,
+            bankCharges: roundMoneyOrNull(dto.bankCharges),
             reference: dto.reference,
             notes: dto.notes,
             status: status as any,
@@ -5937,6 +5847,10 @@ export class InvoicesService {
             discount: 0,
             taxRate: 0,
             subtotal: fee,
+            // #2169 (SA-395): the ONE writer of systemKind. Every consumer that needs to know
+            // "is this the NSF fee line" reads it via the shared predicate (invoices/nsf-line.ts),
+            // never by re-matching the description prefix above.
+            systemKind: InvoiceItemSystemKind.NSF_FEE,
           },
         });
         newSubtotal = roundMoney(newSubtotal + fee);

@@ -41,7 +41,7 @@ const BASELINE: Record<string, number> = {
   // (orders/replace-all-line-build.ts) — 5740 -> 5540. Lowered to the measured value. Round 5
   // (sourceLineId): buildExistingLineMaps also extracted — still fits at 5540, unchanged.
   "apps/api/src/orders/orders.service.ts": 5488, // #2094: findOrderIdByIdempotencyKey -> merge-idempotency.ts to fit the inline-return hooks (was 5540); B776/SA-124a: buildMergeLineWrites replaced both merge methods' own live-pack fold (was 5751; SA-065 before that: appendOrderRevision -> order-revisions.ts, was 5780; U1 before that: class tail -> order-lifecycle.ts, 5880)
-  "apps/api/src/invoices/invoices.service.ts": 6139, // #2301 (SA-065): exportPayments body -> payments-export.ts (verbatim move, read-only); merged with master at 6139 lines, verified by wc -l. // #2258 (#2255): send/sendEmail share markSent (was 6192); // merge of master 7ea131ab into #2083: both sides shrank it — #2083 SA-203/R-022 (update() planning + totals + catalog reads -> invoice-edit-plan.ts, back-sync shape -> order-backsync-lines.ts; branch baseline was 6305) and master (6264: B662 price-adjustment writes -> price-adjustment-ledger.ts; B769/SA-112 totals -> standalone-payment-totals.ts; B659 prefactor create() context/fold -> manual-invoice-context.ts, with its re-added `hasRegulated` local). Lowered to the merged file, verified by wc -l.
+  "apps/api/src/invoices/invoices.service.ts": 6124, // Train A (owner, 3 merge trains): #2323 (SA-065 resync extraction, 6163) then #2117 (F-05 PR2 invoice-list-query extraction, 6151) compose to a measured 6124; lower-of, never raised.
   "apps/api/src/orders/orders.service.spec.ts": 9511,
   "apps/api/src/customers/customers.service.ts": 3307,
   "apps/api/src/invoices/invoices.service.spec.ts": 9351,

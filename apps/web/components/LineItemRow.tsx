@@ -319,7 +319,15 @@ export function LineItemRow({
       )}
       {/* Qty controls */}
       {li.unitsPerBox ? (
-        <div className="col-start-1 row-start-2 flex min-w-[190px] flex-col gap-0.5">
+        // Not #2080 — a narrower 320px glitch found alongside it: the grid's `minmax(0,1fr)`
+        // track resolves to ~170-182px there, and a `min-w-[190px]` floor forced this column
+        // past it. `min-w-0` below `sm` lets the column shrink; its CONTENT fits the shrunk
+        // track because the cases/units row below wraps (spec 56 measures the content, not
+        // this box). `sm:min-w-[190px]` keeps desktop unchanged.
+        <div
+          data-testid="line-qty-controls"
+          className="col-start-1 row-start-2 flex min-w-0 flex-col gap-0.5 sm:min-w-[190px]"
+        >
           {/* Case | Unit sell-by toggle — UI-only; the payload always
               carries {qty, boxes, pieces} regardless of the mode. */}
           <div className="inline-flex self-start overflow-hidden rounded border border-surface-border text-[10px] font-medium">
@@ -362,29 +370,41 @@ export function LineItemRow({
               <span className="text-xs text-navy/70">units</span>
             </div>
           ) : (
-            <div className="flex items-center gap-1.5">
-              <input
-                type="number"
-                min={0}
-                value={li.boxes ?? 0}
-                onChange={(e) => onSetBoxes(parseInt(e.target.value, 10))}
-                onFocus={(e) => e.target.select()}
-                className="w-12 rounded border border-surface-border bg-white px-1.5 py-1 text-center text-sm font-semibold text-navy focus:outline-none focus:ring-1 focus:ring-brand-500"
-                title="Number of whole cases"
-              />
-              <span className="text-xs text-navy/70">cases</span>
-              <span className="text-xs text-navy/30">+</span>
-              <input
-                type="number"
-                min={0}
-                max={li.unitsPerBox - 1}
-                value={li.pieces ?? 0}
-                onChange={(e) => onSetPieces(parseInt(e.target.value, 10))}
-                onFocus={(e) => e.target.select()}
-                className="w-12 rounded border border-surface-border bg-white px-1.5 py-1 text-center text-sm font-semibold text-navy focus:outline-none focus:ring-1 focus:ring-brand-500"
-                title="Extra loose units (less than a full case)"
-              />
-              <span className="text-xs text-navy/70">units</span>
+            // Two no-wrap groups in a wrapping row: "[n] cases" and "+ [n] units" together
+            // need ~186px, but under `sm` the column's track can be narrower (~170-182px at
+            // 320px, less as the line total in column 2 grows). The second group drops to
+            // its own line there instead of overflowing into the line total; on one line
+            // (every `sm`+ layout) nothing changes.
+            <div
+              data-testid="line-qty-cases-row"
+              className="flex flex-wrap items-center gap-x-1.5 gap-y-1"
+            >
+              <span className="flex items-center gap-1.5 whitespace-nowrap">
+                <input
+                  type="number"
+                  min={0}
+                  value={li.boxes ?? 0}
+                  onChange={(e) => onSetBoxes(parseInt(e.target.value, 10))}
+                  onFocus={(e) => e.target.select()}
+                  className="w-12 rounded border border-surface-border bg-white px-1.5 py-1 text-center text-sm font-semibold text-navy focus:outline-none focus:ring-1 focus:ring-brand-500"
+                  title="Number of whole cases"
+                />
+                <span className="text-xs text-navy/70">cases</span>
+              </span>
+              <span className="flex items-center gap-1.5 whitespace-nowrap">
+                <span className="text-xs text-navy/30">+</span>
+                <input
+                  type="number"
+                  min={0}
+                  max={li.unitsPerBox - 1}
+                  value={li.pieces ?? 0}
+                  onChange={(e) => onSetPieces(parseInt(e.target.value, 10))}
+                  onFocus={(e) => e.target.select()}
+                  className="w-12 rounded border border-surface-border bg-white px-1.5 py-1 text-center text-sm font-semibold text-navy focus:outline-none focus:ring-1 focus:ring-brand-500"
+                  title="Extra loose units (less than a full case)"
+                />
+                <span className="text-xs text-navy/70">units</span>
+              </span>
             </div>
           )}
           <span className="text-[10px] text-navy/30">
@@ -431,7 +451,10 @@ export function LineItemRow({
           unitsPerBox: li.unitsPerBox ?? null,
         }).toFixed(2)}
       </span>
-      <div className="col-start-2 row-start-1 flex shrink-0 items-start gap-2 sm:gap-3">
+      <div
+        data-testid="line-actions-column"
+        className="col-start-2 row-start-1 flex shrink-0 items-start gap-2 sm:gap-3"
+      >
         <button
           type="button"
           onClick={onToggleNoteOpen}
