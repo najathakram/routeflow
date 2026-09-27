@@ -51,9 +51,19 @@ interface RoomMember {
 export interface StopCompletedPayload {
   runId: string;
   stopId: string;
-  customerId: string;
+  /** The stop's customer; a run stop's customerId is nullable in the schema. */
+  customerId: string | null;
   orderId?: string;
   completedAt: string;
+}
+
+/**
+ * #2095: a run moved (dispatched, started, a stop arrived/completed/skipped/reopened, stops
+ * reordered, the run ended). Carries the run id and nothing else — never a stop, a count, a name
+ * or an address — so a buyer's tracking card refetches its OWN figures from the tracking endpoint.
+ */
+export interface RouteProgressPayload {
+  runId: string;
 }
 
 export interface UrgentOrderPayload {
@@ -69,13 +79,6 @@ export interface DriverStatusPayload {
   driverName: string;
   status: string;
   updatedAt: string;
-}
-
-export interface LowStockPayload {
-  productId: string;
-  productName: string;
-  sku: string;
-  stockLevel: number;
 }
 
 export interface DriverLocationPayload {
@@ -436,8 +439,24 @@ export class RouteFlowGateway
 
   // ─── Server → Client emitters (called from services) ─────────────────────────
 
+  /**
+   * Operators only. A buyer learns of its own delivery through `order.statusChanged`, and of the
+   * run moving through `route.progress` — never through another customer's stop.
+   */
   emitStopCompleted(tenantId: string | null, payload: StopCompletedPayload) {
     this.server.to(this.tenantRoom(tenantId, "operators")).emit("route.stop.completed", payload);
+  }
+
+  /**
+   * #2095: tells the customers on a run that it moved. Each named customer room gets `{ runId }`
+   * and nothing else; the payload is rebuilt here so an extra field a caller passes can never
+   * leak. One `to([...rooms])` call, so a socket in several of the rooms receives it once.
+   * Operators are not addressed: they get `route.stop.completed` / `driver.status.updated`.
+   */
+  emitRouteProgress(tenantId: string | null, customerIds: string[], payload: RouteProgressPayload) {
+    const rooms = [...new Set(customerIds)].map((id) => this.customerRoom(tenantId, id));
+    if (rooms.length === 0) return;
+    this.server.to(rooms).emit("route.progress", { runId: payload.runId });
   }
 
   emitUrgentOrder(tenantId: string | null, payload: UrgentOrderPayload) {
@@ -446,10 +465,6 @@ export class RouteFlowGateway
 
   emitDriverStatusUpdated(tenantId: string | null, payload: DriverStatusPayload) {
     this.server.to(this.tenantRoom(tenantId, "operators")).emit("driver.status.updated", payload);
-  }
-
-  emitLowStock(tenantId: string | null, payload: LowStockPayload) {
-    this.server.to(this.tenantRoom(tenantId, "operators")).emit("inventory.low.stock", payload);
   }
 
   /** Catalog write — operators' product caches (scan, picker, list) are stale. */

@@ -9,6 +9,8 @@ import { ConfigService } from "@nestjs/config";
 import { Prisma, RouteEndKind, RouteOptimizeMetric, RouteRunStatus } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import { SystemConfigService } from "../system-config/system-config.service";
+import { RouteFlowGateway } from "../gateways/routeflow.gateway";
+import { RouteRealtime } from "../routes/route-realtime";
 import { ApplyRouteVariantDto } from "./dto/apply-route-variant.dto";
 import { buildCostMatrices, type LatLng } from "./cost-matrix";
 
@@ -150,7 +152,13 @@ export class RouteOptimizationService {
     private readonly prisma: PrismaService,
     private readonly config: ConfigService,
     private readonly systemConfig: SystemConfigService,
+    private readonly gateway: RouteFlowGateway,
   ) {}
+
+  /** #2095: post-commit `route.progress` to a re-sequenced run's customers (never throws). */
+  private announceRunProgress(runId: string): Promise<void> {
+    return new RouteRealtime(this.prisma, this.gateway, this.logger).runProgress(runId);
+  }
 
   // ─── Depot resolution ──────────────────────────────────────────────────────
 
@@ -805,6 +813,8 @@ export class RouteOptimizationService {
       where: { id: routeRunId },
       data: { manuallyReordered: false },
     });
+    // #2095: the stop order moved, so each customer's "N stops before you" may have too.
+    await this.announceRunProgress(routeRunId);
 
     const originalOrder = new Map(stops.map((s) => [s.id, s.stopNumber]));
     const reorderedCount = stopOrder.filter(
@@ -1204,6 +1214,9 @@ export class RouteOptimizationService {
     }
 
     await this.prisma.$transaction(ops);
+    // #2095: a run's stops were re-numbered with the template — tell its customers.
+    if (runStopIdsInOrder && runStopIdsInOrder.length > 0)
+      await this.announceRunProgress(dto.runId!);
 
     return { applied: true };
   }

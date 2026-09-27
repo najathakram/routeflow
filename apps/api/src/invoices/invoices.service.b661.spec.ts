@@ -185,7 +185,7 @@ describe("InvoicesService — B661/B671", () => {
     // 2026-09-21: pin today's actual (gap) behavior here rather than silently adding a ledger
     // write to a method that doesn't have one; "duplicate() never re-establishes ledger rows for
     // the copy" is filed as its own follow-up bug (regulated, high) — see the PR body.
-    it("B661 (documents a gap, does not fix it): duplicate() copies a regulated line's boxes/pieces/unitsPerBox verbatim but writes NO ledger rows for the copy", async () => {
+    it("B661/B680: duplicate() copies a regulated line's boxes/pieces/unitsPerBox verbatim and (B680) writes the copy's own ledger rows", async () => {
       const baseInv = {
         id: "inv-reg",
         orderId: null,
@@ -229,9 +229,12 @@ describe("InvoicesService — B661/B671", () => {
       // wired in.
       const copyItem = prisma.invoice.create.mock.calls[0][0].data.items.create[0];
       expect(copyItem).toMatchObject({ qty: 5, boxes: null, pieces: null, unitsPerBox: 12 });
-      // But TODAY nothing calls the ledger — this pins the gap so a future fix's own red-first
-      // test is what flips this assertion, not a silent behavior change inside B661.
-      expect(ledger.writeSaleEntries).not.toHaveBeenCalled();
+      // B680 closed the gap this test used to pin: the copy now books its own SALE rows.
+      expect(ledger.writeSaleEntries).toHaveBeenCalledTimes(1);
+      expect(ledger.writeSaleEntries.mock.calls[0][0]).toMatchObject({
+        invoiceId: "inv-copy",
+        orderId: null,
+      });
     });
   });
 });

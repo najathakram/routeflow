@@ -657,6 +657,13 @@
 - **Lesson:** **When a line is copied, snapshot BOTH unitPrice and unitsPerBox or neither. Carrying the pack with a live price under-bills after a repack; converting a live price to an old pack is refused.**
 - **Guard:** `next-delivery-pack.db.spec.ts` (a repack with a price change, plus an AT_STOP vs NEXT_DELIVERY parity pin).
 
+### L-223 · 2026-09-26 · domain · "one ledger writer" needs a sweep of every emit site, not the named ones (B863–B866)
+
+- **Symptom:** after the named add-on call sites were routed through the new single ledger writer, `subscribe()` still booked add-ons with its own emit on the old live-catalog formula. Only the run's final review caught it.
+- **Root cause:** the brief named the call sites, and the change declared "the single add-on ledger writer" without sweeping the tree, so an unnamed writer kept a second formula.
+- **Lesson:** **Before declaring one writer for a ledger or event stream, grep the whole tree for every emit of those events and every `amountDelta:` site, not only the call sites the brief named. Route each one through the writer or exempt it explicitly.**
+- **Guard:** #2186: `subscribe()` (`subscription-mutation.service.ts` :395-421 at review) was the writer the sweep missed and now calls `emitAddonDelta`. On master, `ADDON_ENABLED/DISABLED` is emitted only in `billing/addon-ledger.ts`. No structural pin yet; propose one beside `mrr-paying-predicate.parity.spec.ts`.
+
 ### L-225 · 2026-09-26 · domain · a display fix proven on one screen must become a shared helper, or sibling screens reproduce the same bug (B653, B757-B759)
 
 - **Symptom:** the invoice-detail screens' qty/unit-label formatting bug (#1275) reappeared,
@@ -766,26 +773,6 @@
   filter; `unit-line-writers.ast.spec.ts` classifies every writer. Propose: a read-only prod
   count (`unitLabel IS NOT NULL` on `OrderItem`/`InvoiceItem`) before any remediation script —
   it returned 0 here and made the planned remediation unnecessary.
-
-### L-211 · 2026-09-21 · process · A target named only in prose is not a target
-
-- **Symptom:** a locally-intended Playwright mint (`npx playwright test --project=setup`) ran
-  against PRODUCTION: operator and customer logged into the prod regression tenant, the seeded
-  buyer 401'd three times. `failedLoginAttempts` on the local row read 0 — the request never
-  arrived there.
-- **Root cause:** `playwright.config.ts` and `auth.setup.ts` both read
-  `process.env.PLAYWRIGHT_BASE_URL ?? "https://routeflowweb-production…"`. Unset means
-  production. The instruction said "against the LOCAL stack" in prose; the env var was not in
-  the command.
-- **Lesson:** **A command that targets an environment must carry the target IN the command
-  (`PLAYWRIGHT_BASE_URL=http://localhost:3001 npx …`), never in the sentence beside it. Where a
-  config defaults to production on an unset variable, that default is the defect, not the
-  operator — and any guard belongs on the RESOLVED URL, not on whether the variable is present.
-  Before GO on a minted state, decode the file's origins and require the local host.**
-- **Guard:** `scripts/local-env.mjs --e2e` sets the base URL itself and strips inherited
-  `RAILWAY_*` (use it for local runs); #1127's buyer setup step gains a skip unless the resolved
-  base URL is local. Propose: the setup project refuses to run against a `*.railway.app` host
-  unless an explicit `PLAYWRIGHT_ALLOW_REMOTE=1` is set.
 
 ### L-212 · 2026-09-21 · testing · a Playwright selector keyed to a responsive utility class rots silently (B620)
 

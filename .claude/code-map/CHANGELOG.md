@@ -9,6 +9,7 @@ below, and set `_meta.json` `"notes"` to that same note plus the pointer to this
 never accumulate history in `"notes"`.
 
 - **2026-09-26 — window H landed (docs-only bookkeeping; #2149/#2129/#2186 bookkept separately in #2224, window G).** `api/feature-modules-7.md` gains a "Landing batch 2026-09-26, window H" section: #2205 remaining local-db guards, #2139 inline return inside an order edit/merge (supersedes #2138), #2046 order-detail unit-label qty text (B653/B757-9). Lesson L-225 minted (a proven-on-one-screen fix must become a shared helper, or sibling screens reproduce the same bug). No source changed.
+- **2026-09-26 — window G landed (docs-only bookkeeping).** `api/feature-modules-7.md` gains a "Landing batch 2026-09-26, window G" section: #2149 merge/consolidate banned-line warnings, #2129 recurring-invoice banned-line suspend + reactivation schedule (`recurring-schedule.ts`), #2186 add-on ledger writer (`addon-ledger.ts`, B863–B866), #2044 STANDARD return cap in pieces, #2061 partial Case billing (`unit-line-bill-guard.ts`). `api/returns-inline.md` + `api/feature-modules-3/returns.md`: `standardReturnPieces` is no longer an identity stub; `soldPiecesForProduct` → `soldQtyForProduct`. Lesson L-223 minted. No source changed.
 - **2026-09-26 — windows D/E landed (docs-only bookkeeping).** `api/feature-modules-7.md` gains a "Landing batch 2026-09-26" section: #2152 lock order + tx-retry, #2172 price-adjustment ledger, #2161 next-delivery pack snapshot, #2150 uncategorised-lines report, #2130 at-door ceiling, #2142 buyer tracking + rooms, #2162 local super-admin. Lessons L-219..L-222 minted. No source changed.
 - **2026-09-25 — B861 numbering continuity landed (#2170, dd33057a; docs-only bookkeeping).** `api/feature-modules-6.md` B861 bullet refreshed to the merged shapes: year-0 `0*` scan, CAS on plain columns with `expectedNextNumber` required, `mintConfigured` `FOR UPDATE` on the year-0 row, DTO `next ≤ 999,999,999`, web `Extract<>` type, `seedFromSource` deleted. Lessons L-217/L-218 minted. No source changed.
 - **2026-09-24 — Wholesaler onboarding playbook pointer (docs-only).** `INDEX.md` "Where to find" gains a row → `docs/runbooks/wholesaler-onboarding.md` (8 gated stages, demo → live); the parked in-app build spec is `docs/superpowers/plans/2026-09-24-wholesaler-onboarding-build.md`. No code changed; no area file touched.
@@ -248,29 +249,6 @@ recordStandalonePayment`'s buyer/online overpay guard now takes a single id-sort
   directive, `EXPOSE 8080`, and `${PORT:-8080}` on the Dockerfile's text. api/infra-hardening-sec-2.md
   F12-003 bullet extended; mobile.md gains one bullet (`Dockerfile` + `railway.toml`). No
   transferable lesson (L-113 class, Dockerfile-only).
-- **2026-09-13 — F38 driver at-door money / offline close-out / run linkage (`docs/710-bookkeeping`,
-  Option-B follow-up for PR #710 = master `14048230`)** — B305 (driver at-door amount due is now
-  the order's open DRAFT invoice(s), never `Order.total` or a raw line sum — `RUN_STOP_INCLUDE`
-  exported + projects subtotal/tax/total/discountAmount/shippingFee/customer.isTaxExempt/open
-  drafts, `RUN_LINE_ITEMS_SELECT` +`categoryTaxAmount`; mobile `run-money.ts` gains
-  `orderAmountDue`/`stopAmountDue`/`deliveredCategoryTax`/`reconciledAmountDue`; round-4 seam fix
-  `df635fdb` added `shortPickCategoryTax` so the short-pick door quote's subtotal and category-tax
-  halves derive from ONE line set, fenced by a source-pin test on `payment.tsx`); B306 (a
-  RUN-tagged over-collection `AdvancePayment` is now reversible — new
-  `invoices.service.ts#reverseRunAdvancesInTx`, called by `voidPayment` and by
-  `routes.service.ts#reopenStop`; `getRunCashCollections`/`enrichRunsWithCollectedPayments`
-  exclude `:REVERSED` references); B307/B308 (an offline-queued mutation now reads as success —
-  new `lib/offline-errors.ts#classifyMutationError`, `returns-logic.ts#summarizeSubmissions` gains
-  a `queued` bucket, wired into `payment.tsx`/`NewOrderScreen.tsx`/`return/index.tsx`); B309 (a
-  DRIVER may only link an order to a stop on their own in-progress run via `orders.service.ts
-create()`'s DRIVER branch; the CUSTOMER branch now refuses any run linkage outright). api.md:
-  3 rows (`routes/`, `invoices/`, `orders/`); mobile.md: 2 rows (`(driver)/` run-money +
-  offline-errors); web.md/packages.md untouched (no diff). Registry rows B305–B309 closed; lesson
-  candidate (two halves of one money figure must derive from ONE line set — a cross-file seam is
-  invisible to per-file review) queued for the lessons register.
-- **2026-09-13 — #704 bookkeeping (`docs/704-bookkeeping`, Option-B follow-up for #704 = master `2d353752`)** — registry tooling from the `security-registry-tags` run: `scripts/campaign/bugs.mjs` gains `--tag` on `file`/`move` and the `already-fixed` ledger state (one transition with pr+evidence, replay refused); `scripts/campaign/plane-sync.mjs` maps tags → Plane labels (R8: lazy read-only resolution, `labels: []` clears on removal, key omitted only when nothing resolves, sorted-tag join in the hash) with self-test T8; `.claude/skills/bug-registry/SKILL.md` gets a `## Security findings` section; `docs/audit/security-findings-index.md` gets a Registry column; `docs/security/security-testing-program.md` §7 points at the registry. Registry rows filed: F48 (B355–B360) + F49 (B361–B393, `already-fixed`). INDEX.md rows "Bug catalogue + agent fix carve-out" and "Plane BUGS mirror" extended; the api.md section is still deferred (api.md is over the 1,024 KiB pre-commit cap until the area-file split on `chore/workflow-redesign` lands); web.md/mobile.md/packages.md untouched (no diff). Same PR: true-telemetry ledger row ($31.12), RUN-LOG entry, B349 owner-ruling note (HKDF from `JWT_SECRET`), lesson L-117 (L-110/L-111 archived). R10's `CONTEXT.md` one-liner is deferred to the `chore/workflow-redesign` landing (the file is not on master).
-- **2026-09-12 — vendored house pipelines + DI-scope boot guard (`chore/vendor-house-skills`)** — `.claude/skills/{dev-pipeline,bug-pipeline,model-routing,lessons-learned}`, code-map refs and `.claude/commands` copied repo-relative (engine + machinery byte-identical, `.prettierignore`), `scripts/validate-code-map.mjs` vendored (unwired: INDEX 682 KB > 20 KB cap), `common/app-module-compile.spec.ts` compiles the real AppModule graph (red on the W16 CrmModule shape), `test/__mocks__/invoice-template.js` + moduleNameMapper. INDEX +2 rows; api.md entry deferred (1,182 KiB > 1,024 KiB pre-commit cap) until the area-file split lands.
-- **2026-09-12 — #703 hotfix bookkeeping (`docs/703-crm-di-bookkeeping`, master `e96c405b`)** — `crm/crm.module.ts` imports `BillingModule` (the #702 module shipped without it: `AddonGuard` → `AddonService` unresolvable at InstanceLoader, prod API 502 for 26 min in window 16; boundary-mocked specs, lint and tsc were green). New repo-truth spec `common/addon-guard-module-import.spec.ts` fails the build for any `AddonGuard` controller whose registering module lacks the import (red 1/12 on the pre-fix tree, green after). api.md: one row. Lessons: L-115 appended (testing), L-041 archived for headroom.
 
 Older entries: [`CHANGELOG-ARCHIVE.md`](CHANGELOG-ARCHIVE.md).
 
