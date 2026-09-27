@@ -1,0 +1,136 @@
+/**
+ * #2587 / SA-516, real Postgres: a bulk customer delete never destroys a money record. The
+ * customer holds exactly the records the old record-free logic treated as disposable, a VOID
+ * credit note and a fully drawn-down (balance 0) advance payment, and no invoice at all, so
+ * the #2558 invoice guards have nothing to say. Both bulk paths must now refuse (409) and leave
+ * the credit note, the advance payment and the customer byte-identical. Pre-fix, both paths
+ * hard-delete them all.
+ *
+ * Runs only under `npm run local:test:db` (jest.db.config.js collects `*.db.spec.ts`; RUN_DB_SPECS
+ * set, DATABASE_URL pointed at the compose/dbspec Postgres). The tenant is a throwaway
+ * `qa-2587-<run>` slug approved by `assertTestTenant`; `afterAll` deletes exactly what it created.
+ */
+import { randomUUID } from "crypto";
+import { ConflictException } from "@nestjs/common";
+import { Client } from "pg";
+import { CustomersService } from "./customers.service";
+import { PrismaService } from "../prisma/prisma.service";
+import { TenantContextService } from "../tenant/tenant-context.service";
+import { describeDb, requireLocalDatabaseUrl } from "../common/testing/db-spec";
+
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+const { assertTestTenant } = require("../../../../scripts/lib/test-tenants.cjs");
+
+const RUN = randomUUID().slice(0, 8);
+
+describeDb("customer bulk deletes keep every money record (#2587, SA-516)", () => {
+  let prisma: PrismaService;
+  let obs: Client;
+  let tenantCtx: TenantContextService;
+  let service: CustomersService;
+  let tenantId: string;
+  let customerId: string;
+  let creditNoteId: string;
+  let advanceId: string;
+
+  async function rowJson(table: string, id: string): Promise<string | null> {
+    const r = await obs.query(`SELECT to_jsonb(t)::text AS j FROM "${table}" t WHERE t.id = $1`, [
+      id,
+    ]);
+    return r.rows[0]?.j ?? null;
+  }
+
+  beforeAll(async () => {
+    const url = requireLocalDatabaseUrl();
+    tenantCtx = new TenantContextService();
+    prisma = new PrismaService(tenantCtx);
+    await prisma.$connect();
+    obs = new Client({ connectionString: url });
+    await obs.connect();
+
+    const slug = assertTestTenant(
+      `qa-2587-${RUN}`,
+      "customer-delete-money-records-2587.db.spec.ts",
+    );
+    tenantId = (await prisma.tenant.create({ data: { slug, name: `2587 ${slug}` } })).id;
+    const user = await prisma.user.create({
+      data: {
+        email: `c2587-${RUN}@example.invalid`,
+        username: `c2587-${RUN}`,
+        role: "CUSTOMER",
+        tenantId,
+      },
+    });
+    customerId = (
+      await prisma.customer.create({
+        data: { userId: user.id, businessName: "2587 money", contactName: "2587", tenantId },
+      })
+    ).id;
+    creditNoteId = (
+      await prisma.creditNote.create({
+        data: {
+          tenantId,
+          customerId,
+          creditNoteNumber: `CN-2587-${RUN}`,
+          amount: 10,
+          status: "VOID",
+        },
+      })
+    ).id;
+    advanceId = (
+      await prisma.advancePayment.create({
+        data: { tenantId, customerId, amount: 25, balance: 0, method: "CASH" },
+      })
+    ).id;
+
+    const stub = {} as never;
+    service = new CustomersService(
+      prisma,
+      { get: () => null } as never,
+      stub,
+      stub,
+      stub,
+      { hasFlag: async () => false } as never,
+      stub,
+      { reverseInvoiceEntries: jest.fn().mockResolvedValue(undefined) } as never,
+      stub,
+    );
+  });
+
+  afterAll(async () => {
+    await prisma.advancePayment.deleteMany({ where: { tenantId } });
+    await prisma.creditNote.deleteMany({ where: { tenantId } });
+    await prisma.customer.deleteMany({ where: { tenantId } });
+    await prisma.user.deleteMany({ where: { tenantId } });
+    await prisma.tenant.deleteMany({ where: { id: tenantId } });
+    await obs?.end().catch(() => undefined);
+    await prisma?.$disconnect();
+  });
+
+  it.each([
+    ["deleteAllCustomers", () => service.deleteAllCustomers()],
+    ["deleteImportedCustomers (no buyer link ⇒ selected)", () => service.deleteImportedCustomers()],
+  ])(
+    "%s: a VOID credit note + a drawn-down advance ⇒ 409, all rows byte-identical",
+    async (_n, run) => {
+      const before = await Promise.all([
+        rowJson("CreditNote", creditNoteId),
+        rowJson("AdvancePayment", advanceId),
+        rowJson("Customer", customerId),
+      ]);
+      expect(before.every((r) => r !== null)).toBe(true);
+
+      const caught: any = await tenantCtx.run(tenantId, () => run()).catch((e) => e);
+      expect(caught).toBeInstanceOf(ConflictException);
+      expect(caught.message).toContain(customerId);
+
+      expect(
+        await Promise.all([
+          rowJson("CreditNote", creditNoteId),
+          rowJson("AdvancePayment", advanceId),
+          rowJson("Customer", customerId),
+        ]),
+      ).toEqual(before);
+    },
+  );
+});

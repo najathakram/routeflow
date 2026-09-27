@@ -16,6 +16,11 @@ import { CUSTOMER_DELETE_BLOCKING } from "../invoices/invoice-status-sets";
  *      alone is not enough: with no onDelete cascade, a leftover invoice would turn the
  *      customer delete into a raw FK error, a 500.)
  * `assertRecordFreeInTx` guards the single-customer hard-delete branch the same way.
+ *
+ * #2587 / SA-516: credit notes (any status), transaction payments, advance payments and invoice
+ * payments are never destroyed by a customer delete. `assertNoMoneyRecords` (pre-flight) and
+ * `assertNoMoneyRecordsInTx` (the in-tx re-check) refuse with a 409 naming the customers, and the
+ * delete paths remove those tables only through `deleteMoneyRecordCas`, which expects ZERO rows.
  */
 const MAX_LISTED_BLOCKERS = 10;
 const BLOCKED =
@@ -109,5 +114,72 @@ export async function assertRecordFreeInTx(tx: Db, customerId: string): Promise<
   if (invoices + payments > 0)
     throw new ConflictException(
       "This customer gained invoices or payments while being deleted — nothing was deleted; please retry.",
+    );
+}
+
+const MONEY_BLOCKED =
+  "Delete blocked — the following customers hold credit notes, payments or advance payments that cannot be destroyed";
+
+/** Per-customer count of money records (#2587 / SA-516): credit notes of any status, transaction payments, advance payments, invoice payments. */
+export async function countMoneyRecords(
+  db: Db,
+  customerIds: string[],
+): Promise<Array<{ customerId: string; count: number }>> {
+  const inIds = { customerId: { in: customerIds } };
+  const [notes, advances, payments, invoicePayments] = await Promise.all([
+    db.creditNote.findMany({ where: inIds, select: { customerId: true } }),
+    db.advancePayment.findMany({ where: inIds, select: { customerId: true } }),
+    db.payment.findMany({
+      where: { transaction: inIds },
+      select: { transaction: { select: { customerId: true } } },
+    }),
+    db.invoicePayment.findMany({
+      where: { invoice: inIds },
+      select: { invoice: { select: { customerId: true } } },
+    }),
+  ]);
+  const counts = new Map<string, number>();
+  const owners: string[] = [
+    ...notes.map((r: { customerId: string }) => r.customerId),
+    ...advances.map((r: { customerId: string }) => r.customerId),
+    ...payments.map((r: { transaction: { customerId: string } }) => r.transaction.customerId),
+    ...invoicePayments.map((r: { invoice: { customerId: string } }) => r.invoice.customerId),
+  ];
+  for (const id of owners) counts.set(id, (counts.get(id) ?? 0) + 1);
+  return [...counts].map(([customerId, count]) => ({ customerId, count }));
+}
+
+function moneyBlockedError(rows: Array<{ customerId: string; count: number }>): ConflictException {
+  const listed = rows
+    .slice(0, MAX_LISTED_BLOCKERS)
+    .map((b) => `${b.customerId}: ${b.count} record(s)`);
+  if (rows.length > MAX_LISTED_BLOCKERS)
+    listed.push(`and ${rows.length - MAX_LISTED_BLOCKERS} more`);
+  return new ConflictException(`${MONEY_BLOCKED}: ${listed.join("; ")}.`);
+}
+
+/** #2587 pre-flight (outside the tx): any money record for any of the customers is a 409. */
+export async function assertNoMoneyRecords(db: Db, customerIds: string[]): Promise<void> {
+  const rows = await countMoneyRecords(db, customerIds);
+  if (rows.length > 0) throw moneyBlockedError(rows);
+}
+
+/** #2587 in-tx twin: the same check on the transaction, before anything is deleted. */
+export async function assertNoMoneyRecordsInTx(tx: Db, customerIds: string[]): Promise<void> {
+  await assertNoMoneyRecords(tx, customerIds);
+}
+
+/**
+ * #2587: a money-record table is only ever "deleted" as a compare-and-set expecting ZERO rows, so
+ * a row that appeared after the re-check is a 409 and a rollback, never destroyed.
+ */
+export async function deleteMoneyRecordCas(
+  delegate: { deleteMany(args: unknown): Promise<{ count: number }> },
+  where: unknown,
+): Promise<void> {
+  const res = await delegate.deleteMany({ where });
+  if (res.count !== 0)
+    throw new ConflictException(
+      "Customer credit notes or payments appeared while deleting — nothing was deleted; please retry.",
     );
 }
