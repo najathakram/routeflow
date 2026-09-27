@@ -254,10 +254,11 @@ export default function CreditNoteDetailPage() {
           variant: "info",
         });
       },
-      onError: () => {
+      // SA-436 PR-2 (#2402): show the server's readable refusal, never a fixed "Please try again."
+      onError: (err: any) => {
         toast({
           title: "Failed to void credit note",
-          description: "Please try again.",
+          description: err?.response?.data?.message ?? "The credit note could not be voided.",
           variant: "error",
         });
       },
