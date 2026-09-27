@@ -1906,6 +1906,21 @@ describe("#2440 subscription upkeep — match by subscription id, status mapping
       expect(email.send).not.toHaveBeenCalled();
     });
 
+    // #2476 / SA-472: the increment is the event's effect; everything after it (admin lookup, portal,
+    // email) is non-throwing and logged — a later throw must never mark the event "error:" and make a
+    // redelivery re-run the increment.
+    it("#2476: an admin lookup that throws AFTER the increment never fails the handler (count once)", async () => {
+      const { svc, prisma, email } = make({ sub: FAILING });
+      prisma.user.findFirst.mockRejectedValue(new Error("db blip"));
+      const warn = jest.spyOn((svc as any).logger, "warn").mockImplementation(() => undefined);
+      await expect((svc as any).onPaymentFailed(failed())).resolves.toBeUndefined();
+      expect(prisma.tenantSubscription.update).toHaveBeenCalledTimes(1);
+      expect(email.send).not.toHaveBeenCalled();
+      expect(warn.mock.calls.some((c: any[]) => /payment-failed email/i.test(String(c[0])))).toBe(
+        true,
+      );
+    });
+
     it("an invoice with no subscription (free pilot / one-off) is untouched", async () => {
       const { svc, prisma, email } = make({ sub: { ...FAILING, stripeSubId: null } });
       await (svc as any).onPaymentFailed({ customer: "cus_1" });

@@ -61,6 +61,7 @@ describe("ConnectWebhookController", () => {
     create: jest.Mock;
     findUnique: jest.Mock;
     update: jest.Mock;
+    updateMany: jest.Mock;
   };
 
   const provider = { verifyEvent: jest.fn(), isConfigured: true };
@@ -85,6 +86,8 @@ describe("ConnectWebhookController", () => {
       create: jest.fn().mockResolvedValue({}),
       findUnique: jest.fn().mockResolvedValue(null),
       update: jest.fn().mockResolvedValue({}),
+      // #2476: the redelivery claim — 1 = this delivery claimed the row.
+      updateMany: jest.fn().mockResolvedValue({ count: 1 }),
     };
     (prisma as any).stripeConnectEvent = stripeConnectEvent;
 
@@ -187,6 +190,41 @@ describe("ConnectWebhookController", () => {
       await controller.handle(rawReq, res);
 
       expect(payments.settleByPaymentIntent).toHaveBeenCalledTimes(1);
+    });
+
+    // #2476 / SA-472: the same exclusive claim as the billing webhook.
+    it("#2476: a redelivery claims the row with ONE updateMany (error: now, NULL past the lease)", async () => {
+      provider.verifyEvent.mockReturnValue(piEvent);
+      stripeConnectEvent.create.mockRejectedValue(uniqueViolation());
+      await controller.handle(rawReq, mockRes());
+      const arg = stripeConnectEvent.updateMany.mock.calls[0][0];
+      expect(arg.where.id).toBe("evt_dup");
+      expect(arg.where.OR).toEqual([
+        { outcome: { startsWith: "error:" } },
+        { outcome: null, processedAt: { lt: expect.any(Date) } },
+      ]);
+      expect(arg.data).toEqual({ processedAt: expect.any(Date), outcome: null });
+    });
+
+    it("#2476: not claimed and still in flight elsewhere ⇒ 503, never routed", async () => {
+      provider.verifyEvent.mockReturnValue(piEvent);
+      stripeConnectEvent.create.mockRejectedValue(uniqueViolation());
+      stripeConnectEvent.updateMany.mockResolvedValue({ count: 0 });
+      stripeConnectEvent.findUnique.mockResolvedValue({ id: "evt_dup", outcome: null });
+      const res = mockRes();
+      await controller.handle(rawReq, res);
+      expect(payments.settleByPaymentIntent).not.toHaveBeenCalled();
+      expect(res.statusCode).toBe(503);
+    });
+
+    it("#2476: an outcome-write failure is logged, never swallowed", async () => {
+      provider.verifyEvent.mockReturnValue(piEvent);
+      stripeConnectEvent.update.mockRejectedValue(new Error("db blip"));
+      const res = mockRes();
+      await controller.handle(rawReq, res);
+      expect(res.statusCode).toBe(200);
+      const errs = (Logger.prototype.error as jest.Mock).mock.calls;
+      expect(errs.some((c: any[]) => /outcome/i.test(String(c[0])))).toBe(true);
     });
 
     it("answers 500 so Stripe redelivers when routing throws", async () => {
