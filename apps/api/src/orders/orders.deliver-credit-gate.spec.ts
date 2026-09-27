@@ -1,3 +1,12 @@
+// SA-434: these driver cases pin OTHER behaviour; ownership is pinned in driver-edit-access*.spec.ts.
+jest.mock("./driver-edit-access", () => ({
+  ...jest.requireActual("./driver-edit-access"),
+  assertDriverMayEditOrder: jest.fn(),
+  confirmPendingAsDriver: jest.fn(async (_p: unknown, id: string, _u: unknown, data: object) => ({
+    id,
+    ...data,
+  })),
+}));
 // Mock InvoicesService / NotificationsService before they are imported: they pull ESM-only modules
 // (@react-pdf/renderer, expo-server-sdk) that Jest's CommonJS transform cannot parse.
 jest.mock("../invoices/invoices.service", () => ({ InvoicesService: jest.fn() }));

@@ -1,6 +1,6 @@
 // #2340 prefactor: moved verbatim out of app/(operator)/(tabs)/orders/[id]/edit-items.tsx
 // (size ratchet, plan #2328 R1). Behaviour-neutral — no logic changed in the move.
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { Pressable, Text, TextInput, View } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { ios } from "@routeflow/ui/tokens";
@@ -17,7 +17,7 @@ import { marginFloorPrice } from "../../lib/margin-floor-price";
 import { freeUnitsLabel } from "../../lib/buyer-cart-logic";
 import { setLineUnits } from "../../lib/sale-line";
 import { draftFreeUnits, ladderProductFor, type DraftItem } from "../../lib/edit-items-draft";
-import { sanitizeIntInput } from "../../lib/qty";
+import { StepperRow } from "../../components/EditItemsStepperRow";
 import { SellByToggle } from "../../components/SellByToggle";
 import { toNumber } from "../../lib/cart-line-state";
 import { styles } from "./styles";
@@ -290,6 +290,8 @@ export function DraftItemCard({
           onChange={onSetQty}
           onIncrement={onIncQty}
           onDecrement={onDecQty}
+          disabled={!!item.needsRepair}
+          hint={item.needsRepair ? "Needs repair — the count can't be edited" : undefined}
         />
       )}
 
@@ -341,93 +343,6 @@ export function DraftItemCard({
         <View style={{ flex: 1 }} />
         <Pressable style={styles.deleteBtn} onPress={onRemove} hitSlop={6}>
           <Ionicons name="trash-outline" size={16} color={ios.system.redInk} />
-        </Pressable>
-      </View>
-    </View>
-  );
-}
-
-// ─── Reusable stepper row (Boxes/Pieces/Qty) ─────────────────────────────────
-
-export function StepperRow({
-  label,
-  value,
-  onChange,
-  onIncrement,
-  onDecrement,
-  max,
-  hint,
-}: {
-  label: string;
-  value: number;
-  onChange: (n: number) => void;
-  onIncrement?: () => void;
-  onDecrement?: () => void;
-  max?: number;
-  hint?: string;
-}) {
-  // Local draft so the user can clear the input without it snapping back to 0.
-  const [draft, setDraft] = useState(String(value));
-  useEffect(() => {
-    setDraft(String(value));
-  }, [value]);
-
-  const dec = () => {
-    if (onDecrement) onDecrement();
-    else onChange(Math.max(0, value - 1));
-  };
-  const inc = () => {
-    if (onIncrement) onIncrement();
-    else {
-      const next = max != null ? Math.min(max, value + 1) : value + 1;
-      onChange(next);
-    }
-  };
-
-  return (
-    <View style={styles.stepperRow}>
-      <View style={{ flex: 1 }}>
-        {/* Clamped: unclamped, a squeezed column renders the label one letter
-            per line on react-native-web. See lib/row-layout.ts. */}
-        <Text style={styles.stepperLabel} numberOfLines={1}>
-          {label}
-        </Text>
-        {hint ? (
-          <Text style={styles.stepperHint} numberOfLines={1}>
-            {hint}
-          </Text>
-        ) : null}
-      </View>
-      <View style={styles.stepper}>
-        <Pressable style={styles.stepBtn} onPress={dec} hitSlop={6}>
-          <Text style={styles.stepText}>−</Text>
-        </Pressable>
-        <TextInput
-          style={styles.qtyInput}
-          value={draft}
-          onChangeText={(txt) => {
-            // Integer-only: strip non-digits + leading zeros live (no "05", no
-            // decimals even when Android shows a decimal key); allow empty mid-edit.
-            const clean = sanitizeIntInput(txt);
-            setDraft(clean);
-            if (clean === "") return;
-            const n = parseInt(clean, 10);
-            if (Number.isFinite(n)) {
-              const clamped = max != null ? Math.min(max, n) : n;
-              onChange(clamped);
-            }
-          }}
-          onBlur={() => {
-            if (draft === "") onChange(0);
-            setDraft(String(value));
-          }}
-          keyboardType="number-pad"
-          returnKeyType="done"
-          maxLength={5}
-          selectTextOnFocus
-        />
-        <Pressable style={styles.stepBtn} onPress={inc} hitSlop={6}>
-          <Text style={styles.stepText}>+</Text>
         </Pressable>
       </View>
     </View>

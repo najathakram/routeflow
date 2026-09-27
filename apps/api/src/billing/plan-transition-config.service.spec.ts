@@ -197,6 +197,21 @@ describe("PlanTransitionConfigService (A2 step b)", () => {
     });
   });
 
+  // #2226 / SA-386: the admin list reads the audit trail with `take = restoredIds.length`, exact only
+  // while each restored snapshot has ONE audit row. The automatic writer's side of that invariant:
+  // a second re-upgrade finds the snapshot already restored (restoreLatest → null) and writes nothing.
+  it("#2226: a second upgrade after an automatic restore writes NO second audit row for that snapshot", async () => {
+    const { svc, snapshots } = build(true);
+    const up = { tenantId: "t1", fromPlanKey: LOW, toPlanKey: HIGH, toPlanVersionId: null };
+    await runTransition(svc, up); // restores s1 → one audit row
+    snapshots.restoreLatest.mockResolvedValueOnce(null); // s1 is stamped: nothing left to restore
+    await runTransition(svc, up);
+    const restored = auditCreate.mock.calls.filter(
+      (c: any[]) => c[0].data.action === "CONFIG_SNAPSHOT_RESTORED",
+    );
+    expect(restored).toHaveLength(1);
+  });
+
   it("no audit row when nothing was restored, and none for a downgrade", async () => {
     const { svc, snapshots } = build(true);
     snapshots.restoreLatest.mockResolvedValueOnce(null);

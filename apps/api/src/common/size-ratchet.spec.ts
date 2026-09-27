@@ -40,17 +40,17 @@ const BASELINE: Record<string, number> = {
   // (the replaceAll rebuild's per-item price/data build) moved verbatim to its own file
   // (orders/replace-all-line-build.ts) — 5740 -> 5540. Lowered to the measured value. Round 5
   // (sourceLineId): buildExistingLineMaps also extracted — still fits at 5540, unchanged.
-  "apps/api/src/orders/orders.service.ts": 5488, // #2094: findOrderIdByIdempotencyKey -> merge-idempotency.ts to fit the inline-return hooks (was 5540); B776/SA-124a: buildMergeLineWrites replaced both merge methods' own live-pack fold (was 5751; SA-065 before that: appendOrderRevision -> order-revisions.ts, was 5780; U1 before that: class tail -> order-lifecycle.ts, 5880)
-  "apps/api/src/invoices/invoices.service.ts": 6124, // Train A (owner, 3 merge trains): #2323 (SA-065 resync extraction, 6163) then #2117 (F-05 PR2 invoice-list-query extraction, 6151) compose to a measured 6124; lower-of, never raised.
+  "apps/api/src/orders/orders.service.ts": 5487, // #2391/SA-065: changeStatus transition table -> order-status-transitions.ts (was 5488); #2094: findOrderIdByIdempotencyKey -> merge-idempotency.ts to fit the inline-return hooks (was 5540); B776/SA-124a: buildMergeLineWrites replaced both merge methods' own live-pack fold (was 5751; SA-065 before that: appendOrderRevision -> order-revisions.ts, was 5780; U1 before that: class tail -> order-lifecycle.ts, 5880)
+  "apps/api/src/invoices/invoices.service.ts": 6111, // #2178: revert-set selection -> order-edit-revert-set.ts (was 6124; measured 6111 after the bdc2e019 merge); Train A (owner, 3 merge trains): #2323 (SA-065 resync extraction, 6163) then #2117 (F-05 PR2 invoice-list-query extraction, 6151) compose to a measured 6124; lower-of, never raised.
   "apps/api/src/orders/orders.service.spec.ts": 9511,
   "apps/api/src/customers/customers.service.ts": 3307,
   "apps/api/src/invoices/invoices.service.spec.ts": 9351,
   "apps/web/app/(dashboard)/customers/[id]/page.tsx": 4378,
-  "apps/web/app/(dashboard)/orders/[id]/page.tsx": 3728,
+  "apps/web/app/(dashboard)/orders/[id]/page.tsx": 3720,
   "apps/api/src/customers/customers.service.spec.ts": 3209,
   "apps/api/src/routes/routes.service.ts": 3189, // prefactor: run/stop select shapes + status constants live in routes/routes.constants.ts (was 3270)
   "apps/web/app/(dashboard)/products/[id]/page.tsx": 2942,
-  "apps/mobile/app/(operator)/(tabs)/orders/[id]/edit-items.tsx": 1403, // #2340 prefactor: DraftItemCard/StepperRow, PriceOverrideModal, the unlisted card+modal, CreateCreditNoteModal, ProductPicker and the StyleSheet moved verbatim to components/edit-items/*; marginFloorPrice -> lib/margin-floor-price.ts (was 3315). Measured, not rounded.
+  "apps/mobile/app/(operator)/(tabs)/orders/[id]/edit-items.tsx": 1405, // #2340 prefactor (re-derived after #2444 moved StepperRow to components/EditItemsStepperRow): DraftItemCard, PriceOverrideModal, the unlisted card+modal, CreateCreditNoteModal, ProductPicker and the StyleSheet moved verbatim to components/edit-items/*; marginFloorPrice -> lib/margin-floor-price.ts (master was 3205 after #2444). Measured, not rounded.
   "apps/mobile/components/NewOrderScreen.tsx": 4056, // SA-085: lineUnitFor + the total/totalItems memo -> lib/cart-order-total.ts (executable pin for the order-total fix) (was 4078)
   "apps/web/app/(dashboard)/inventory/page.tsx": 3303,
   "apps/web/app/(marketing)/marketing.css": 9941,

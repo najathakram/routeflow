@@ -1,0 +1,306 @@
+// SA-429: driver cases here pin other behaviour; ownership is pinned in driver-edit-access*.spec.ts.
+jest.mock("./driver-edit-access", () => ({ assertDriverMayEditOrder: jest.fn() }));
+import { Test, TestingModule } from "@nestjs/testing";
+import {
+  NotFoundException,
+  ForbiddenException,
+  BadRequestException,
+  ConflictException,
+  Logger,
+} from "@nestjs/common";
+import { getQueueToken } from "@nestjs/bull";
+import { ConfigService } from "@nestjs/config";
+
+// The merge paths now run inside a Postgres advisory lock (`common/db-locks.ts`,
+// R3). These specs exercise the merge FOLD's money math, not the lock, so run
+// the critical section inline — the real helper would open a `pg` pool.
+// `lockRowsNoWait` stays REAL: it is a plain `$executeRaw` on the caller's tx (no pool), and the
+// pins below assert the SQL it emits and the 409 it maps 55P03 to.
+jest.mock("../common/db-locks", () => ({
+  ...jest.requireActual("../common/db-locks"),
+  withAdvisoryLock: jest.fn(async (_opts: unknown, fn: () => Promise<unknown>) => ({
+    acquired: true,
+    value: await fn(),
+  })),
+}));
+
+// Mock InvoicesService before it's imported — prevents Jest from traversing
+// invoice-pdf.service.ts which imports @react-pdf/renderer (ESM-only module)
+jest.mock("../invoices/invoices.service", () => ({
+  InvoicesService: jest.fn().mockImplementation(() => ({
+    createFromOrder: jest.fn().mockResolvedValue({ id: "inv-1" }),
+    findAll: jest.fn().mockResolvedValue({ data: [], meta: {} }),
+  })),
+}));
+
+// Mock NotificationsService — it imports expo-server-sdk which is ESM-only
+// and fails Jest's CommonJS parser.
+jest.mock("../notifications/notifications.service", () => ({
+  NotificationsService: jest.fn().mockImplementation(() => ({
+    sendToCustomer: jest.fn().mockResolvedValue(undefined),
+    sendToDriver: jest.fn().mockResolvedValue(undefined),
+  })),
+}));
+
+import { Reflector } from "@nestjs/core";
+import { computeLineSubtotal } from "@routeflow/pricing";
+import { OrdersService } from "./orders.service";
+import { linePieceQty } from "./line-piece-qty";
+import { OrdersController } from "./orders.controller";
+import { ChangeRequestsService } from "./change-requests.service";
+import { ROLES_KEY } from "../auth/decorators/roles.decorator";
+import { InvoicesService } from "../invoices/invoices.service";
+import { SystemConfigService } from "../system-config/system-config.service";
+import { PrismaService } from "../prisma/prisma.service";
+import { RouteFlowGateway } from "../gateways/routeflow.gateway";
+import { TenantContextService } from "../tenant/tenant-context.service";
+import { createMockPrisma } from "../testing/prisma-mock";
+import { NotificationsService } from "../notifications/notifications.service";
+import { InventoryService } from "../inventory/inventory.service";
+import { AuthorizationGuardService } from "../authorizations/authorization-guard.service";
+import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
+import { PromotionsService } from "../promotions/promotions.service";
+import { MessagingService } from "../messaging/messaging.service";
+import { CreditNotesService } from "../credit-notes/credit-notes.service";
+import { CommissionEngineService } from "../sales-agents/commission-engine.service";
+import { EntitlementsService } from "../billing/entitlements.service";
+import { RegulatedLedgerService } from "../regulated/regulated-ledger.service";
+import {
+  OrderStatus,
+  UserRole,
+  Prisma,
+  RouteRunStatus,
+  RouteRunStopStatus,
+  NotificationEvent,
+} from "@prisma/client";
+
+/**
+ * SA-404f F2 / SA-470 condition 1: the order-cancel status write is a compare-and-set on the
+ * cancellable set (updateMany {id, status IN CANCELLABLE}). When the order left that set between
+ * the pre-check and the locked write (e.g. a concurrent DELIVERED), the claim counts 0 and the
+ * cancel is refused with 409 ORDER_CHANGED_DURING_EDIT BEFORE any stock, credit, invoice or item
+ * write. Red on the pre-fix code, whose unconditional order.update cancelled a delivered order.
+ * Split out of orders.service.spec.ts (at its size-ratchet ceiling); same bootstrap, duplicated.
+ */
+const MOCK_ORDER = {
+  id: "ord-1",
+  customerId: "cust-1",
+  orderNumber: "ORD-123",
+  status: "PENDING" as const,
+  source: "APP" as const,
+  urgent: false,
+  subtotal: 14.97,
+  tax: 1.5,
+  total: 16.47,
+  notes: null,
+  driverNote: null,
+  routeRunId: null,
+  routeRunStopId: null,
+  deliveredAt: null,
+  createdAt: new Date(),
+  updatedAt: new Date(),
+  customer: { businessName: "Test Business" },
+};
+
+const operatorPayload = {
+  sub: "user-op",
+  username: "operator",
+  role: "OPERATOR" as const,
+  status: "ACTIVE" as const,
+  forcePasswordChange: false,
+};
+
+describe("SA-404f F2 — order cancel compare-and-set", () => {
+  let service: OrdersService;
+  let prisma: ReturnType<typeof createMockPrisma>;
+  let inventoryService: { recordSale: jest.Mock };
+  let invoicesService: any;
+  let messagingService: any;
+  let creditNotesService: any;
+  let entitlementsService: any;
+  let tenantCtx: { run: jest.Mock };
+  let mockQueue: { add: jest.Mock };
+  let mockGateway: Record<string, jest.Mock>;
+
+  beforeEach(async () => {
+    prisma = createMockPrisma();
+    prisma.order.updateMany.mockResolvedValue({ count: 1 }); // SA-404f F2: cancel CAS claims
+    tenantCtx = { run: jest.fn((_tenantId: string | null, fn: () => unknown) => fn()) };
+    mockQueue = { add: jest.fn() };
+    mockGateway = {
+      emitStopCompleted: jest.fn(),
+      emitOrderCreated: jest.fn(),
+      emitUrgentOrder: jest.fn(),
+      emitOrderStatusChanged: jest.fn(),
+      emitLowStock: jest.fn(),
+    };
+
+    const module: TestingModule = await Test.createTestingModule({
+      providers: [
+        OrdersService,
+        { provide: PrismaService, useValue: prisma },
+        { provide: getQueueToken("invoices"), useValue: mockQueue },
+        { provide: RouteFlowGateway, useValue: mockGateway },
+        {
+          provide: ConfigService,
+          useValue: { get: jest.fn().mockReturnValue(0.1) },
+        },
+        {
+          provide: InvoicesService,
+          useValue: {
+            createFromOrder: jest.fn().mockResolvedValue({ id: "inv-1" }),
+            // W4: createInvoiceFromOrder now returns an array of sibling invoices.
+            createInvoiceFromOrder: jest
+              .fn()
+              .mockResolvedValue([{ id: "inv-1", invoiceNumber: "INV-1", total: 0 }]),
+            createInvoiceFromOrderWithTenant: jest.fn().mockResolvedValue([{ id: "inv-1" }]),
+            send: jest.fn().mockResolvedValue({ id: "inv-1", status: "SENT" }),
+            findOpenOrderDraft: jest.fn().mockResolvedValue(null),
+            reconcileOrderDraftInvoice: jest.fn().mockResolvedValue({ id: "inv-1" }),
+            resyncOrderInvoicesForEdit: jest.fn().mockResolvedValue([{ id: "inv-1" }]),
+            revertLinkedInvoicesForOrderEdit: jest.fn().mockResolvedValue([]),
+            voidInvoice: jest.fn().mockResolvedValue({ id: "inv-1", status: "VOID" }),
+            voidInvoiceInTx: jest.fn().mockResolvedValue({ id: "inv-1", status: "VOID" }),
+            releaseWalletPaymentsInTx: jest.fn().mockResolvedValue({ credits: [], advances: 0 }),
+          },
+        },
+        {
+          provide: SystemConfigService,
+          useValue: {
+            get: jest.fn().mockResolvedValue(null),
+            set: jest.fn().mockResolvedValue(undefined),
+            getAll: jest.fn().mockResolvedValue({}),
+          },
+        },
+        {
+          provide: NotificationsService,
+          useValue: {
+            sendToCustomer: jest.fn().mockResolvedValue(undefined),
+            sendToDriver: jest.fn().mockResolvedValue(undefined),
+          },
+        },
+        {
+          provide: InventoryService,
+          useValue: {
+            recordSale: jest.fn().mockResolvedValue({
+              unitCost: new Prisma.Decimal(0),
+              stockAfter: new Prisma.Decimal(0),
+            }),
+          },
+        },
+        {
+          provide: SellingRestrictionsService,
+          useValue: {
+            assertLinesSellable: jest.fn().mockResolvedValue(undefined),
+            checkLinesSellable: jest.fn().mockResolvedValue({ outcome: "OFF", reasons: [] }),
+            getPolicy: jest.fn().mockResolvedValue({ enabled: false }),
+          },
+        },
+        {
+          provide: AuthorizationGuardService,
+          useValue: {
+            assertAuthorizedOrThrow: jest.fn().mockResolvedValue(undefined),
+            checkAuthorized: jest.fn().mockResolvedValue({ blocked: [] }),
+          },
+        },
+        {
+          provide: PromotionsService,
+          useValue: { activeForCatalog: jest.fn().mockResolvedValue([]) },
+        },
+        {
+          provide: MessagingService,
+          useValue: {
+            notify: jest.fn().mockResolvedValue([]),
+            notifyEvent: jest.fn().mockResolvedValue(undefined),
+          },
+        },
+        {
+          provide: CreditNotesService,
+          useValue: {
+            validateSelectionsForCustomer: jest.fn().mockResolvedValue(undefined),
+            syncOrderCreditSelections: jest.fn().mockResolvedValue(undefined),
+            settleOrderCreditsInTx: jest.fn().mockResolvedValue({ applied: 0, unapplied: 0 }),
+            releaseOrderCreditsInTx: jest.fn().mockResolvedValue([]),
+            previewOrderCreditRelease: jest.fn().mockResolvedValue([]),
+          },
+        },
+        {
+          provide: CommissionEngineService,
+          useValue: {
+            syncInvoiceCommissionSafe: jest.fn().mockResolvedValue(undefined),
+            syncOrderInvoices: jest.fn().mockResolvedValue(undefined),
+            removeInvoiceCommission: jest.fn().mockResolvedValue(undefined),
+          },
+        },
+        {
+          provide: EntitlementsService,
+          useValue: { hasFlag: jest.fn().mockResolvedValue(true) },
+        },
+        // B65: deleteOrder's per-invoice teardown reverses regulated-ledger entries.
+        {
+          provide: RegulatedLedgerService,
+          useValue: { reverseInvoiceEntries: jest.fn().mockResolvedValue(undefined) },
+        },
+        // B323: sweepAllPendingOrders() re-enters each group's own tenant scope via
+        // tenantCtx.run() before calling into anything ambient-scoped.
+        { provide: TenantContextService, useValue: tenantCtx },
+      ],
+    }).compile();
+
+    service = module.get<OrdersService>(OrdersService);
+    inventoryService = module.get(InventoryService);
+    invoicesService = module.get(InvoicesService);
+    messagingService = module.get(MessagingService);
+    creditNotesService = module.get(CreditNotesService);
+    entitlementsService = module.get(EntitlementsService);
+  });
+
+  const CONFIRMED = { ...MOCK_ORDER, status: "CONFIRMED" as const };
+  const arrange = (claimed: number) => {
+    prisma.order.findUnique.mockResolvedValue(CONFIRMED);
+    prisma.order.findFirst.mockResolvedValue(CONFIRMED); // cancelImpact's own read
+    prisma.order.update.mockResolvedValue({ ...CONFIRMED, status: "CANCELLED" });
+    prisma.order.updateMany.mockReset().mockResolvedValue({ count: claimed });
+    prisma.invoice.findMany
+      .mockResolvedValueOnce([
+        { id: "s1", invoiceNumber: "INV-2", status: "SENT", total: 60, payments: [] },
+      ])
+      .mockResolvedValueOnce([{ id: "s1" }]);
+    prisma.orderItem.findMany.mockResolvedValue([]);
+  };
+
+  it("claim count 0 (the order left the cancellable set) ⇒ 409 ORDER_CHANGED_DURING_EDIT and NO write after it", async () => {
+    arrange(0);
+    const err = await service
+      .changeStatus("ord-1", { status: "CANCELLED" as any }, operatorPayload as any)
+      .catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(ConflictException);
+    expect((err as ConflictException).getResponse()).toMatchObject({
+      code: "ORDER_CHANGED_DURING_EDIT",
+    });
+    // The status write is the CAS, never an unconditional update.
+    expect(prisma.order.update).not.toHaveBeenCalled();
+    expect(prisma.order.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: "ord-1", status: { in: expect.not.arrayContaining(["DELIVERED"]) } },
+      }),
+    );
+    // Nothing after the refused claim: no credit release, no invoice void, no stock or item write.
+    expect(creditNotesService.releaseOrderCreditsInTx).not.toHaveBeenCalled();
+    expect(invoicesService.releaseWalletPaymentsInTx).not.toHaveBeenCalled();
+    expect(invoicesService.voidInvoiceInTx).not.toHaveBeenCalled();
+    expect(prisma.orderItem.updateMany).not.toHaveBeenCalled();
+    expect(prisma.product.update).not.toHaveBeenCalled();
+    expect(prisma.stockMovement.create).not.toHaveBeenCalled();
+  });
+
+  it("control: claim count 1 ⇒ the cancel proceeds (credits released, invoice voided)", async () => {
+    arrange(1);
+    await service.changeStatus("ord-1", { status: "CANCELLED" as any }, operatorPayload as any);
+    expect(creditNotesService.releaseOrderCreditsInTx).toHaveBeenCalledWith(
+      expect.anything(),
+      "ord-1",
+    );
+    expect(invoicesService.voidInvoiceInTx).toHaveBeenCalledWith(expect.anything(), "s1", "ord-1");
+  });
+});

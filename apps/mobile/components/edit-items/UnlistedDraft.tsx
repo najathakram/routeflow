@@ -7,9 +7,9 @@ import { ios } from "@routeflow/ui/tokens";
 import { computeLineSubtotal } from "@routeflow/pricing";
 import type { UnlistedDraft } from "../../lib/edit-items-draft";
 import { sanitizeIntInput } from "../../lib/qty";
+import { StepperRow } from "../../components/EditItemsStepperRow";
 import { MoneyTextInput } from "../../components/MoneyTextInput";
 import { styles } from "./styles";
-import { StepperRow } from "./DraftItemCard";
 
 // ─── Unlisted draft card ─────────────────────────────────────────────────────
 

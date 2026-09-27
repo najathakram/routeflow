@@ -40,7 +40,14 @@ interface RoomMember {
    * `buyerTokenExp` (#2142 R1) is the verified handshake token's `exp`, in seconds since the
    * epoch: a socket outlives its token, so the resync ends it once that moment has passed.
    */
-  data: { buyerAccountId?: string; buyerTokenExp?: number };
+  data: {
+    buyerAccountId?: string;
+    buyerTokenExp?: number;
+    /** #2164: a CUSTOMER-role socket's verified user, token tenant and token `exp` (seconds). */
+    customerUserId?: string;
+    customerTenantId?: string | null;
+    customerTokenExp?: number;
+  };
   join(room: string): unknown;
   leave(room: string): unknown;
   disconnect(close?: boolean): unknown;
@@ -293,14 +300,20 @@ export class RouteFlowGateway
         await client.join(this.tenantRoom(tenantId, `driver:${payload.sub}`));
       } else if (payload.role === UserRole.CUSTOMER) {
         // B104: the room the emitters address is keyed by the Customer, resolved from the user
-        // inside the token's own tenant (a removed customer resolves nothing, REG-B131).
-        const customer = tenantId
-          ? await this.prisma.customer.findFirst({
-              where: { userId: payload.sub, tenantId, deletedAt: null },
-              select: { id: true },
-            })
-          : null;
-        if (customer) await client.join(this.customerRoom(tenantId, customer.id));
+        // inside the token's own tenant. #2164: the same rule decides at connect and at every
+        // resync (syncCustomerRooms), and like a buyer token it must carry a user id and an `exp`.
+        if (typeof payload.sub !== "string" || !payload.sub) {
+          throw new WsException("Invalid customer token");
+        }
+        const exp = (payload as { exp?: unknown }).exp;
+        if (typeof exp !== "number" || !Number.isFinite(exp)) {
+          throw new WsException("Customer token without an expiry");
+        }
+        const data = client.data as RoomMember["data"];
+        data.customerUserId = payload.sub;
+        data.customerTenantId = tenantId;
+        data.customerTokenExp = exp;
+        await this.syncCustomerRooms([client]);
       } else if (payload.role === UserRole.SUPER_ADMIN) {
         await client.join("super-admin");
       }
@@ -327,31 +340,44 @@ export class RouteFlowGateway
   async resyncBuyerRooms(): Promise<void> {
     if (!this.server) return;
     let buyers: RoomMember[];
+    let customers: RoomMember[];
     try {
       const sockets = (await this.server.local.fetchSockets()) as unknown as RoomMember[];
       buyers = sockets.filter((s) => !!s.data?.buyerAccountId);
+      customers = sockets.filter((s) => !!s.data?.customerUserId);
     } catch (err) {
       this.logger.warn(`[B104] buyer room resync skipped: ${(err as Error)?.message ?? err}`);
       return;
     }
-    const live = this.disconnectExpiredBuyers(buyers);
+    // #2164: CUSTOMER sockets follow the same two steps (expiry first, needing no DB; then the
+    // DB re-check), each in its own try so one side's failed read never skips the other.
+    const liveBuyers = this.disconnectExpired(buyers, (s) => s.data.buyerTokenExp);
+    const liveCustomers = this.disconnectExpired(customers, (s) => s.data.customerTokenExp);
     try {
-      await this.syncBuyerRooms(live);
+      await this.syncBuyerRooms(liveBuyers);
     } catch (err) {
       this.logger.warn(`[B104] buyer room resync skipped: ${(err as Error)?.message ?? err}`);
+    }
+    try {
+      await this.syncCustomerRooms(liveCustomers);
+    } catch (err) {
+      this.logger.warn(`[#2164] customer room resync skipped: ${(err as Error)?.message ?? err}`);
     }
   }
 
   /**
-   * Disconnects each buyer socket whose token `exp` has passed (the same `now >= exp` rule the
-   * JWT check applies at connect) and returns the rest. `disconnect(true)` closes the transport;
+   * Disconnects each socket whose token `exp` has passed (the same `now >= exp` rule the JWT
+   * check applies at connect) and returns the rest. `disconnect(true)` closes the transport;
    * socket.io removes a closed socket from every room itself, so no room is left to clean up.
    */
-  private disconnectExpiredBuyers(sockets: RoomMember[]): RoomMember[] {
+  private disconnectExpired(
+    sockets: RoomMember[],
+    expOf: (s: RoomMember) => number | undefined,
+  ): RoomMember[] {
     const nowSec = Math.floor(Date.now() / 1000); // jsonwebtoken's own clock rule
     const live: RoomMember[] = [];
     for (const socket of sockets) {
-      const exp = socket.data.buyerTokenExp;
+      const exp = expOf(socket);
       if (typeof exp !== "number" || nowSec >= exp) {
         socket.disconnect(true);
       } else {
@@ -416,6 +442,66 @@ export class RouteFlowGateway
       for (const room of want) {
         if (!socket.rooms.has(room)) await socket.join(room);
       }
+    }
+  }
+
+  /**
+   * #2164: puts each CUSTOMER-role socket in exactly its own customer's room, or disconnects it.
+   * A socket stays only while its user is an ACTIVE, undeleted CUSTOMER and that user's customer
+   * is undeleted, inside the token's own tenant, at a seller that is not blocked. One user read
+   * and one customer read per batch, however many sockets; both finish before any socket is
+   * touched, so a failed read changes nothing (the resync keeps the last verified state, and a
+   * new connection is refused).
+   */
+  private async syncCustomerRooms(sockets: RoomMember[]): Promise<void> {
+    // Opus fold: a socket with no user id can never be re-checked, so it is refused, never kept.
+    for (const socket of sockets) if (!socket.data.customerUserId) socket.disconnect(true);
+    const userIds = [
+      ...new Set(sockets.map((s) => s.data.customerUserId).filter((id): id is string => !!id)),
+    ];
+    if (userIds.length === 0) return;
+
+    const liveUsers = new Map<string, string | null>(); // user id -> the user's own tenant
+    const customerOf = new Map<string, { id: string; tenantId: string | null }>(); // by user id
+    for (let i = 0; i < userIds.length; i += BUYER_RESYNC_BATCH) {
+      const batch = userIds.slice(i, i + BUYER_RESYNC_BATCH);
+      const users = await this.prisma.user.findMany({
+        where: { id: { in: batch }, role: UserRole.CUSTOMER, status: "ACTIVE", deletedAt: null },
+        select: { id: true, tenantId: true },
+      });
+      for (const user of users) liveUsers.set(user.id, user.tenantId);
+      const customers = await this.prisma.customer.findMany({
+        where: {
+          userId: { in: batch },
+          deletedAt: null,
+          tenant: { status: { notIn: [...BLOCKED_SELLER_STATUSES] } },
+        },
+        select: { id: true, userId: true, tenantId: true },
+      });
+      for (const customer of customers) {
+        if (customer.userId) customerOf.set(customer.userId, customer);
+      }
+    }
+
+    for (const socket of sockets) {
+      const userId = socket.data.customerUserId ?? "";
+      const tenantId = socket.data.customerTenantId ?? null;
+      const customer = customerOf.get(userId);
+      const live =
+        !!tenantId &&
+        liveUsers.has(userId) &&
+        liveUsers.get(userId) === tenantId &&
+        !!customer &&
+        customer.tenantId === tenantId;
+      if (!live) {
+        socket.disconnect(true);
+        continue;
+      }
+      const want = this.customerRoom(tenantId, customer.id);
+      for (const room of [...socket.rooms]) {
+        if (room !== socket.id && room !== want) await socket.leave(room);
+      }
+      if (!socket.rooms.has(want)) await socket.join(want);
     }
   }
 

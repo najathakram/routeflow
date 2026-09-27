@@ -3,7 +3,6 @@
 import { StyleSheet } from "react-native";
 import { ios } from "@routeflow/ui/tokens";
 import { PICKER_TRAY_HANDLE_HEIGHT } from "../../lib/edit-items-draft";
-import { QTY_INPUT_WIDTH } from "../../lib/row-layout";
 
 export const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: ios.bg },
@@ -81,46 +80,6 @@ export const styles = StyleSheet.create({
     fontFamily: "Inter_500Medium",
     color: ios.label2,
     textDecorationLine: "underline",
-  },
-
-  // ── Stepper row ───────────────────────────────────────────────────────────
-  stepperRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 12,
-  },
-  stepperLabel: {
-    fontSize: 13,
-    fontFamily: "Inter_500Medium",
-    color: ios.label,
-  },
-  stepperHint: {
-    fontSize: 11,
-    fontFamily: "Inter_400Regular",
-    color: ios.label3,
-    marginTop: 1,
-  },
-  stepper: {
-    flexDirection: "row",
-    alignItems: "center",
-    backgroundColor: ios.fill3,
-    borderRadius: 10,
-    padding: 3,
-  },
-  stepBtn: { width: 30, height: 30, alignItems: "center", justifyContent: "center" },
-  stepText: { color: ios.brand, fontSize: 18 },
-  qtyInput: {
-    // Definite width, not minWidth — see lib/row-layout.ts. This is a
-    // hand-rolled copy of QtyStepper; it needs the same bound.
-    width: QTY_INPUT_WIDTH.edit,
-    flexShrink: 0,
-    paddingHorizontal: 4,
-    textAlign: "center",
-    fontSize: 16,
-    fontFamily: "Inter_700Bold",
-    color: ios.label,
-    fontVariant: ["tabular-nums"],
-    paddingVertical: 2,
   },
 
   // ── Card actions ──────────────────────────────────────────────────────────

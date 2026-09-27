@@ -168,12 +168,16 @@ export class CreditNotesService {
         invoiceItemId: { in: [...mergedByLine.keys()] },
         creditNote: { invoiceId: dto.invoiceId, status: { not: "VOID" } },
       },
-      select: { invoiceItemId: true, amount: true },
+      select: { invoiceItemId: true, amount: true, qty: true },
     });
     const creditedByLine = new Map<string, number>();
+    // SA-401a: credited QUANTITY per line too (base pieces, like InvoiceItem.qty), so a line
+    // cannot be credited for more units than it sold even when its amount cap has headroom.
+    const creditedQtyByLine = new Map<string, number>();
     for (const it of priorLineItems) {
       const k = it.invoiceItemId ?? "";
       creditedByLine.set(k, (creditedByLine.get(k) ?? 0) + Number(it.amount));
+      creditedQtyByLine.set(k, (creditedQtyByLine.get(k) ?? 0) + Number(it.qty ?? 0));
     }
 
     let sum = 0;
@@ -195,6 +199,26 @@ export class CreditNotesService {
         );
       sum += amt;
       const frac = lineSubtotal > 0 ? Math.min(1, amt / lineSubtotal) : 0;
+      const lineQty = Number(line.qty);
+      const priorQtyForLine = creditedQtyByLine.get(li.invoiceItemId) ?? 0;
+      // #2245: an amount-only credit (no qty — the web picker) defaults to line.qty × fraction,
+      // and those round3s accumulate (three 1/3 credits of 2 pieces are 0.667 × 3 = 2.001). The
+      // default is clamped to what is left, and the credit that CLOSES the line's amount takes
+      // exactly the rest. An explicit qty is the operator's number and stays strictly capped.
+      const qtyLeft = this.round3(Math.max(0, lineQty - priorQtyForLine));
+      const closesLine = priorForLine + amt >= lineSubtotal - 0.001;
+      const qty =
+        li.qty != null
+          ? this.round3(li.qty)
+          : closesLine
+            ? qtyLeft
+            : Math.min(this.round3(lineQty * frac), qtyLeft);
+      if (priorQtyForLine + qty > lineQty + 0.001)
+        throw new BadRequestException(
+          priorQtyForLine > 0
+            ? `Credit line qty (${qty}) plus prior credited qty (${this.round3(priorQtyForLine)}) would exceed invoice line qty (${lineQty})`
+            : `Credit line qty (${qty}) exceeds invoice line qty (${lineQty})`,
+        );
       return {
         invoiceItemId: line.id,
         // Snapshot the category as it was AT SALE (the invoice line), NEVER the
@@ -202,7 +226,7 @@ export class CreditNotesService {
         // that actually sold regulated has a matching SALE row to reverse.
         trackedCategoryId: line.trackedCategoryId ?? null,
         amount: roundMoney(amt),
-        qty: li.qty != null ? this.round3(li.qty) : this.round3(Number(line.qty) * frac),
+        qty,
         categoryTax: roundMoney(Number(line.categoryTaxAmount ?? 0) * frac),
       };
     });
@@ -460,14 +484,19 @@ export class CreditNotesService {
             });
             const created = { ...row, customer };
 
-            // Only regulated lines drive a ledger reversal (CreditNoteItem is consumed
-            // solely by reverseCreditNoteEntries, which filters on trackedCategoryId).
-            const regulatedItems = cnItemsData.filter((i) => i.trackedCategoryId);
-            if (regulatedItems.length > 0 && tenantId) {
+            // SA-311 (#2181): EVERY validated line persists its CreditNoteItem, ordinary
+            // and regulated: the line link feeds sales-facts attribution and the
+            // cumulative per-line cap above (priorForLine), which never accumulated for
+            // ordinary lines when only regulated items were written. Only regulated lines
+            // drive a ledger reversal: reverseCreditNoteEntries reads items with
+            // trackedCategoryId not null, so gating the call here keeps it byte-identical.
+            if (cnItemsData.length > 0 && tenantId) {
               await tx.creditNoteItem.createMany({
-                data: regulatedItems.map((i) => ({ ...i, creditNoteId: created.id, tenantId })),
+                data: cnItemsData.map((i) => ({ ...i, creditNoteId: created.id, tenantId })),
               });
-              await this.ledger.reverseCreditNoteEntries({ creditNoteId: created.id, db: tx });
+              if (cnItemsData.some((i) => i.trackedCategoryId)) {
+                await this.ledger.reverseCreditNoteEntries({ creditNoteId: created.id, db: tx });
+              }
             }
             return created;
           },

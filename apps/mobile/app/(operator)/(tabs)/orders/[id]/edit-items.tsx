@@ -15,6 +15,7 @@ import { useLocalSearchParams, useNavigation, useRouter } from "expo-router";
 import { ios } from "@routeflow/ui/tokens";
 import { NavBackButton, NavBar } from "@routeflow/ui/mobile/ios";
 import { useAdminOrder } from "../../../../../lib/api/admin";
+import { UnitPickerRow } from "../../../../../components/UnitPickerRow";
 import type { UnitOption } from "../../../../../lib/unit-options";
 import { useCreditNotes, type CreditNote } from "../../../../../lib/api/credit-notes";
 import { useCustomerPriceHistory, useUpdateOrderItems } from "../../../../../lib/api/orders";
@@ -55,6 +56,7 @@ import {
   type UnlistedDraft,
 } from "../../../../../lib/edit-items-draft";
 import { bumpScanOrder, nextFlash, type ScanFlash } from "../../../../../lib/scan-tray";
+import { ScanTray } from "../../../../../components/ScanTray";
 import { applyPriceOverride } from "../../../../../lib/price-override";
 import { BarcodeFab } from "../../../../../components/BarcodeFab";
 import { scanFabHidden } from "../../../../../lib/scan-fab-visibility";
@@ -73,6 +75,7 @@ import {
 } from "../../../../../lib/credit-limit-error";
 import { useAuthStore } from "../../../../../lib/auth-store";
 import { fmtCalendarDate } from "../../../../../lib/format-date";
+import { useEditItemsDraft } from "../../../../../hooks/useEditItemsDraft";
 import { DraftItemCard } from "../../../../../components/edit-items/DraftItemCard";
 import { PriceOverrideModal } from "../../../../../components/edit-items/PriceOverrideModal";
 import {
@@ -82,7 +85,6 @@ import {
 import { CreateCreditNoteModal } from "../../../../../components/edit-items/CreateCreditNoteModal";
 import { ProductPicker } from "../../../../../components/edit-items/ProductPicker";
 import { styles } from "../../../../../components/edit-items/styles";
-import { useEditItemsDraft } from "../../../../../hooks/useEditItemsDraft";
 
 function toNumber(v: number | string | null | undefined): number {
   if (typeof v === "number") return v;
