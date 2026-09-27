@@ -1,6 +1,7 @@
 // ─── Invoices / payments / finance (wave E / imp-10b) ───────────────────────────
 
 import type { CheckStatus } from "./enums";
+import type { API_ERROR_CODES } from "./error-codes";
 
 export interface CreatePartialInvoiceItem {
   orderItemId: string;
@@ -184,7 +185,7 @@ export interface RecurringInvoice {
 // ─── Vendor-bill scan / AP identical DTOs ──────────────────────────────────────
 
 export interface UnlinkedItemsError {
-  code: "UNLINKED_ITEMS";
+  code: typeof API_ERROR_CODES.UNLINKED_ITEMS;
   message: string;
   unlinkedItems: { id: string; description: string; qty: number; unitCost: number }[];
 }
@@ -198,7 +199,7 @@ export interface UnlinkedItemsError {
  * line as loose pieces anyway.
  */
 export interface PackSizeUnknownError {
-  code: "PACK_SIZE_UNKNOWN";
+  code: typeof API_ERROR_CODES.PACK_SIZE_UNKNOWN;
   message: string;
   packSizeUnknownItems: {
     /** The existing VendorBillItem id; null for a line not yet saved. */
@@ -232,7 +233,7 @@ export interface DuplicateVendorBillInfo {
 }
 
 export interface DuplicateVendorBillError {
-  code: "DUPLICATE_VENDOR_BILL";
+  code: typeof API_ERROR_CODES.DUPLICATE_VENDOR_BILL;
   message: string;
   duplicate: DuplicateVendorBillInfo;
 }

@@ -1705,7 +1705,7 @@ describe("RoutesService", () => {
       );
       expect(txMock.routeRunStop.updateMany).toHaveBeenCalledWith(
         expect.objectContaining({
-          where: { id: "stop-1", status: { not: "COMPLETED" } },
+          where: { id: "stop-1", status: { in: ["PENDING", "IN_PROGRESS"] } }, // #2409: SKIPPED is not claimable
           data: expect.objectContaining({
             signatureUrl: expect.stringMatching(keyRe),
             podPhotoUrls: ["file:///legacy-device-path.jpg"],
