@@ -34,6 +34,7 @@ import {
 } from "./config-snapshot-audit.constants";
 import { escapeHtml, safeLinkHref } from "../common/html-escape";
 import {
+  stripeBaseItem,
   stripeInvoiceSubscriptionId,
   stripeRefId,
   stripeSubscriptionPeriod,
@@ -429,7 +430,9 @@ export class BillingService {
       return { synced: false, reason: `subscription_not_active_${stripeSub.status}` };
     }
 
-    const item = stripeSub.items?.data?.[0];
+    // #2440: the base-plan item — never an add-on item Stripe happened to list first, which
+    // this sync would otherwise overwrite with the plan price.
+    const item = stripeBaseItem(stripeSub, await this.addonItemIds(tenantId));
     if (!item) {
       return { synced: false, reason: "no_subscription_item" };
     }
@@ -981,6 +984,15 @@ export class BillingService {
     this.logger.log(`Tenant ${tenantId} activated via checkout (sub: ${subscriptionId})`);
   }
 
+  /** #2440: the Stripe subscription item ids of the tenant's add-ons (never the base plan). */
+  private async addonItemIds(tenantId: string): Promise<Set<string>> {
+    const addons = await this.prisma.tenantAddon.findMany({
+      where: { tenantId, stripeItemId: { not: null } },
+      select: { stripeItemId: true },
+    });
+    return new Set(addons.map((a) => a.stripeItemId).filter((id): id is string => id != null));
+  }
+
   /**
    * #2436/#2440: a Stripe subscription's current period, read from its base-plan item (never one
    * of the tenant's known add-on items — N2). A null period writes nothing, but is logged (N1): a
@@ -991,14 +1003,7 @@ export class BillingService {
     tenantId: string,
     event: string,
   ): Promise<{ periodStart: Date; periodEnd: Date } | null> {
-    const addons = await this.prisma.tenantAddon.findMany({
-      where: { tenantId, stripeItemId: { not: null } },
-      select: { stripeItemId: true },
-    });
-    const period = stripeSubscriptionPeriod(
-      stripeSub,
-      new Set(addons.map((a) => a.stripeItemId).filter((id): id is string => id != null)),
-    );
+    const period = stripeSubscriptionPeriod(stripeSub, await this.addonItemIds(tenantId));
     if (!period) {
       this.logger.warn(
         `${event}: Stripe subscription ${stripeSub?.id ?? "(unknown)"} for tenant ${tenantId} ` +
