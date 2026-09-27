@@ -78,8 +78,10 @@ describe("PlatformAdminService — audit provenance", () => {
       findUnique: jest.fn().mockResolvedValue(null),
       // getBillingOverview()'s subscriptions list (REG-743-N4).
       findMany: jest.fn().mockResolvedValue([]),
-      // B216: updateStatus()'s admin-reactivation downgrade-disarm write.
-      updateMany: jest.fn().mockResolvedValue({ count: 0 }),
+      // B216: updateStatus()'s admin-reactivation downgrade-disarm write (count 0 by default).
+      // SA-485b: updatePlan's compare-and-set moves the plan (its data carries planKey) — by default the
+      // row still holds what it read (count 1); a test wanting the lost race sets count 0 itself.
+      updateMany: jest.fn(async (args: any) => ({ count: args?.data?.planKey ? 1 : 0 })),
       // ADMIN-UPDATEPLAN-1: updatePlan()'s downgrade-scheduling write (mirrors
       // SubscriptionMutationService.downgrade(), which also uses a plain update — the row
       // must already exist to carry a periodEnd to schedule against).
@@ -1040,7 +1042,7 @@ describe("PlatformAdminService — audit provenance", () => {
       expect(result.proratedNow).toBe(200);
       // An upgrade still applies instantly — unchanged from today.
       expect(prisma.tenant.update).toHaveBeenCalledWith({
-        where: { id: TENANT_ID },
+        where: expect.objectContaining({ id: TENANT_ID }), // SA-485b: + the status as read
         data: { plan: "PROFESSIONAL", planVersionId: "v-9" },
       });
     });
@@ -1291,11 +1293,12 @@ describe("PlatformAdminService — audit provenance", () => {
         // the change never fires and the tenant keeps paying (and using) the higher plan.
         expect((prisma as any).tenantSubscription.update).not.toHaveBeenCalled();
         expect(prisma.tenant.update).toHaveBeenCalledWith({
-          where: { id: TENANT_ID },
+          where: expect.objectContaining({ id: TENANT_ID }), // SA-485b: + the status as read
           data: { plan: "STARTER", planVersionId: "v-9" },
         });
-        const upsertArg = (prisma as any).tenantSubscription.upsert.mock.calls.at(-1)[0];
-        expect(upsertArg.update.downgradeToPlanKey).toBeNull();
+        // SA-485b: the instant write is the compare-and-set updateMany (still disarms a downgrade).
+        const written = (prisma as any).tenantSubscription.updateMany.mock.calls.at(-1)[0];
+        expect(written.data.downgradeToPlanKey).toBeNull();
         expect(result.downgradeToPlanKey).toBeUndefined();
       },
     );
