@@ -1,5 +1,13 @@
 # Lead handoff — 2026-09-27 13:15Z · all 3 machines + Cloud
 
+> **OWNER, ON RETURN: run these first, one per box (added 15:20Z; the owner left before the branch command was sent).**
+> 1. Mac mini Terminal, the #2423 prod migration (skip it if you already ran it before leaving; it's idempotent, and only 20260927043000 should be pending):
+>    `cd ~/code/rf-prod-migrate && BACKUP_DIR="$PWD/backups" railway run --service postgres node ../rf-prod-migrate-2423/apps/api/scripts/backup-production.mjs pre-2423 && railway run --service postgres node ../rf-prod-migrate-2423/apps/api/scripts/prod-migrate.mjs; echo "exit=$?"`
+> 2. PC PowerShell, delete the 2 fully-landed branches (re-checked against GitHub at 15:15Z; the other 97 either belong to open PRs or hold unmerged work):
+>    `gh api -X DELETE "repos/najathakram/routeflow/git/refs/heads/wip%2Fadmin-modal-a11y"; gh api -X DELETE "repos/najathakram/routeflow/git/refs/heads/wip%2Fplan-gated-nav"`
+> Owner answers recorded at 15:15Z: Stripe prod key = standard sk_ (no action); #2093 = audit log + warning; the SA decides while the owner is away (SA-471); PowerShell is allowed in .claude/settings.local.json on the PC.
+
+
 Written by "Routeflow Lead" (PC) after the PC desktop app crashed ~08:15Z (every PC session stopped;
 the Mac/MacBook/Cloud sessions kept working and landed PRs). Owner order 13:10Z: bring every session to a
 safe point and record everything. **Re-verify every sha with `gh`/`git ls-remote` before acting.**
