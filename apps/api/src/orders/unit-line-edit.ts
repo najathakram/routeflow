@@ -116,6 +116,27 @@ export function assertUnitLabelNamed(
   }
 }
 
+/**
+ * SA-474 (#2443): an edit that takes a held unit-aware line back to the PACK — `unitLabel: null`,
+ * or the pack's own label, both resolve to a label-less pack row — is REFUSED, nothing written.
+ * The pack branch would half-apply it: sized at the HELD factor, the held unit's price kept, the
+ * label never cleared. A substitute is a new line and CANCEL/DELETE change no money, so both pass.
+ * Re-denominating to the pack (priced from @routeflow/pricing) is the post-freeze feature.
+ */
+export function assertNoPackRedenomination(
+  li: LineLike | undefined,
+  item: { action?: string; substituteProductId?: string },
+  resolved: ResolvedLineUnits | undefined,
+): void {
+  if (li?.unitLabel == null || resolved == null || resolved.unitLabel != null) return;
+  if (item.substituteProductId != null || item.action === "CANCEL" || item.action === "DELETE")
+    return;
+  throw new ConflictException({
+    code: "UNIT_AWARE_LINE",
+    message: `This line is sold by the ${li.unitLabel} — switching it back to the pack isn't supported yet. Remove the line and re-add it.`,
+  });
+}
+
 export interface UnitWriteContext {
   tx: { orderItem: { create(a: any): Promise<unknown>; update(a: any): Promise<unknown> } };
   ladders: Map<string, LadderUnit[]>;
