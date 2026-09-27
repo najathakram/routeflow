@@ -14,6 +14,7 @@ import { AddonGuard } from "../../billing/addon.guard";
 import { AddonService } from "../../billing/addon.service";
 import { EntitlementsService } from "../../billing/entitlements.service";
 import { FeatureOverrideService } from "../../billing/feature-override.service";
+import { listenOnLoopback } from "../../common/testing/listen-loopback";
 
 const CALLBACK = "/settings/email/mailbox/google/callback";
 const SETTINGS = "http://localhost:3001/settings?tab=email";
@@ -72,7 +73,7 @@ describe("MailboxController — GET google/callback", () => {
     }).compile();
 
     app = moduleRef.createNestApplication();
-    await app.init();
+    await listenOnLoopback(app);
   });
 
   afterAll(async () => {
