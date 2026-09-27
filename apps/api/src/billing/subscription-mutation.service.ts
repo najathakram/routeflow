@@ -314,7 +314,8 @@ export class SubscriptionMutationService {
         }),
         tx.tenantSubscription.findUnique({
           where: { tenantId },
-          select: { planKey: true },
+          // #2223 / SA-444c: the negotiated fee this subscribe() must keep.
+          select: { planKey: true, priceOverrideMonthly: true },
         }),
         tx.tenantAddon.findMany({ where: { tenantId, active: true } }),
       ]);
@@ -358,6 +359,10 @@ export class SubscriptionMutationService {
       );
 
       await this.planTransition.onPlanChange(tx, transition, preparedTransition);
+      // #2223 / SA-444c (ii): a negotiated fee is what the tenant pays — a cycle change or re-subscribe
+      // moves the plan/cycle, never the price. Both upsert branches write override ?? catalog.
+      const override = priceOverrideOf(lockedSub);
+      const newBase = override ?? def.monthlyPrice;
       await tx.tenantSubscription.upsert({
         where: { tenantId },
         create: {
@@ -368,7 +373,7 @@ export class SubscriptionMutationService {
           cycle: input.cycle,
           periodStart: now,
           periodEnd,
-          basePriceSnapshot: def.monthlyPrice,
+          basePriceSnapshot: newBase,
           trialConvertedAt: wasTrial ? now : null,
         },
         update: {
@@ -378,7 +383,7 @@ export class SubscriptionMutationService {
           cycle: input.cycle,
           periodStart: now,
           periodEnd,
-          basePriceSnapshot: def.monthlyPrice,
+          basePriceSnapshot: newBase,
           cancelAtPeriodEnd: false,
           downgradeToPlanKey: null,
           downgradeEffectiveAt: null,
@@ -434,7 +439,18 @@ export class SubscriptionMutationService {
         tenantId,
         BILLING_EVENTS.PLAN_CHANGED,
         { fromPlan: lockedSub?.planKey ?? null, toPlan: input.planKey, cycle: input.cycle },
-        { amountDelta: roundMoney(Number(def.monthlyPrice ?? 0) - oldPlanMonthly), actorId, tx },
+        {
+          // SA-444c: an override row the snapshot already counts (ACTIVE with a plan, the same test as
+          // oldPlanMonthly) books Δ0; one entering the paying set books the fee.
+          amountDelta:
+            override != null
+              ? lockedTenant.status === "ACTIVE" && lockedSub?.planKey
+                ? 0
+                : roundMoney(override)
+              : roundMoney(Number(def.monthlyPrice ?? 0) - oldPlanMonthly),
+          actorId,
+          tx,
+        },
       );
       // B865 / SA-277 FIX-4: every add-on booking here routes through the ONE ledger helper —
       // `before` is the prior stored state ONLY if the tenant was already paying (a genuinely
@@ -713,6 +729,8 @@ export class SubscriptionMutationService {
     // unrelated warning (a revoked cancellation) never reads as "staff will be deactivated".
     let seatAckRequired = false;
     if (priorSub.cancelAtPeriodEnd) warnings.push(CANCELLATION_REVOKED_WARNING);
+    // #2223 / SA-444c (iii): the scheduled downgrade moves the plan, not a negotiated fee.
+    if (priceOverrideOf(priorSub) != null) warnings.push(CUSTOM_FEE_UNCHANGED);
     if (seatsIncluded != null) {
       const activeTeam = await this.prisma.user.count({
         where: {
