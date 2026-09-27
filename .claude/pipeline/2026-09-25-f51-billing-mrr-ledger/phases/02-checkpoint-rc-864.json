@@ -1,0 +1,22 @@
+{
+  "task": {
+    "id": "RC-864",
+    "title": "confirm B864 cause",
+    "type": "root-cause",
+    "files": [],
+    "tests": [],
+    "dependsOn": [],
+    "risk": "HIGH",
+    "briefPath": "/Users/maznahamanullah/code/routeflow/.claude/worktrees/zealous-franklin-2c1741/.claude/pipeline/2026-09-25-f51-billing-mrr-ledger/tasks/RC-864/brief.md",
+    "rootCause": {
+      "reproduced": true,
+      "causeConfirmed": true,
+      "wrongValueObserved": "PROBE upserts=[{\"priceOverrideMonthly\":1200,\"basePriceSnapshot\":1200}]\nPROBE emits=[{\"type\":\"plan.changed\",\"payload\":{\"toPlan\":\"SCALE\",\"platformAdmin\":true,\"priceOverrideBackfill\":true},\"amountDelta\":1200},{\"type\":\"plan.changed\",\"payload\":{\"fromPlan\":\"SCALE\",\"toPlan\":\"SCALE\",\"platformAdmin\":true,\"externalActivation\":true},\"amountDelta\":1200}] ledgerSum=2400",
+      "note": "I reproduced the bug on the current tree and the brief's named cause is what produces the wrong value. The source tree was not changed: git status shows only the pre-existing pipeline and doc changes.\n\n**How I reproduced it:** I copied `apps/api/src/platform-admin/platform-admin.service.spec.ts` into the session scratchpad at `rc864/rc864.spec.ts` and rewrote its relative imports as absolute ones. I then added one probe test inside the \"B557 books a compensating delta\" describe block and ran it with a temporary Jest config (`rc864/jest.json`) using the repo's own ts-jest. The probe test and the neighbouring B557 test both passed as tests; the wrong value is in the probe's printed output.\n\n**What the probe does:**\n- Step 1: a TRIAL, PRODUCTION tenant with planKey SCALE and basePriceSnapshot null calls `updateTenantPriceOverride({monthly:1200})`.\n- Result: the snapshot is back-filled to 1200 and PLAN_CHANGED is emitted with amountDelta 1200, even though the tenant is on TRIAL. That is the gate at `platform-admin.service.ts:1439-1440`, which reads no status or class and never calls `isPayingRow`, followed by the unconditional emit at :1455-1462.\n- Step 2: `activateManualSubscription` runs on the same tenant, which now has snapshot 1200.\n- Result: it sees wasPaying=false and isPaying=true, prices the contribution at 1200, and emits a second +1200 (lines 1001-1037). The ledger totals 2400 while the run-rate is 1200. Before the fix the expected result is a single +1200, at activation only.\n\n**Caveats:**\n- The mocks do not keep state between calls. I fed step 2 the post-override row by hand, `{status:TRIAL, subscription:{planKey:SCALE, basePriceSnapshot:1200, discount:0}}`, matching the upsert I saw in step 1.\n- I did not run `reconcilePriceLedger` (BillingService is mocked in this suite). The claim that it does nothing here is from reading the code only: `billing.service.ts` around lines 522-523 returns early when the old monthly equals the new one (1200 = 1200).\n- The brief's probe tag `REG-OVERRIDE-BACKFILL-TRIAL` does not exist yet; grep found nothing in `apps/api/src`. The existing test at spec lines 1144-1165 asserts `amountDelta:1200` without any tenant status, so it will have to change with the fix.\n\nUsed 11 of the 12 allowed tool calls."
+    },
+    "status": "complete",
+    "rounds": 0,
+    "clean": true
+  },
+  "progressLine": "Task RC-864: complete (review clean)"
+}

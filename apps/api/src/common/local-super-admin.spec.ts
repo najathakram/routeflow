@@ -13,6 +13,8 @@ describe("scripts/local-super-admin.mjs", () => {
     expect(out).toContain("self-test: all passed");
     expect(out).not.toContain("FAIL");
     expect(out).toContain("refuses");
-    expect(out).toContain("mode 0600");
+    // #2221: Node reports 666 on win32 whatever chmod says, so the script skips its mode checks there
+    // (and says so) — the 0600 assertion is only real on POSIX.
+    expect(out).toContain(process.platform === "win32" ? "skip mode assertions" : "mode 0600");
   });
 });

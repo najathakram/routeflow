@@ -668,7 +668,7 @@ export default function InvoicesPage() {
             value={dateFrom}
             onChange={(e) => setFilter("dateFrom", e.target.value)}
             max={dateTo || undefined}
-            className="h-9 rounded border border-surface-border bg-white px-2 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
+            className="h-9 w-32 rounded border border-surface-border bg-white px-2 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
             title="Issue date from"
           />
           <span className="text-navy/70">–</span>
@@ -677,7 +677,7 @@ export default function InvoicesPage() {
             value={dateTo}
             min={dateFrom || undefined}
             onChange={(e) => setFilter("dateTo", e.target.value)}
-            className="h-9 rounded border border-surface-border bg-white px-2 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
+            className="h-9 w-32 rounded border border-surface-border bg-white px-2 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
             title="Issue date to"
           />
           {(dateFrom || dateTo) && (

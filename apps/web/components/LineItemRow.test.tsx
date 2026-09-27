@@ -101,6 +101,25 @@ describe("LineItemRow layout contract (B565)", () => {
     const stepper = within(li).getByText("3").parentElement!;
     expect(stepper).toHaveClass("col-start-1", "row-start-2");
   });
+
+  // #2080 v2: at 320px the cases/units row (~186px) ran past its ~170-182px track into the line
+  // total. The row wraps, but each "[n] cases" / "+ [n] units" group stays whole, so the units
+  // group drops to its own line instead of splitting mid-group. Pixels: e2e 56's content probe.
+  it("wraps the cases/units row between two no-wrap groups (#2080)", () => {
+    renderRow(makeProps(boxedItem));
+    const row = screen.getByTestId("line-qty-cases-row");
+    expect(row).toHaveClass("flex", "flex-wrap");
+    const cases = screen.getByTitle("Number of whole cases").parentElement!;
+    const units = screen.getByTitle("Extra loose units (less than a full case)").parentElement!;
+    expect(cases).not.toBe(units);
+    for (const group of [cases, units]) {
+      expect(group.parentElement).toBe(row);
+      expect(group).toHaveClass("whitespace-nowrap");
+    }
+    expect(within(cases).getByText("cases")).toBeInTheDocument();
+    expect(within(units).getByText("+")).toBeInTheDocument();
+    expect(within(units).getByText("units")).toBeInTheDocument();
+  });
 });
 
 describe("LineItemRow behaviour is unchanged by the layout wrapper", () => {

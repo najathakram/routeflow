@@ -54,6 +54,7 @@ const BASELINE: Record<string, number> = {
   // review finding 2). Verified by running the scanner's own regex directly against the file, not
   // carried forward from the stale pre-B717/B681 draft this commit was originally cut against.
   "invoices/manual-invoice-lines.ts": 2,
+  "invoices/invoice-restriction-lines.ts": 1, // F-05: a READ-ONLY piece count for the sell check on an edit; never derives or stores a line pack
   // B662: `applyPriceAdjustment`'s `unitsPerBoxByProduct` lookup (item 3 above) moved here with its
   // extraction (loadPriceAdjustmentReference): still a regulated BASIS lookup, never a line factor.
   "invoices/price-adjustment-ledger.ts": 1,
@@ -103,6 +104,10 @@ const NON_WRITERS = new Set([
   // the conversion itself (lineInventoryDelta) still reads packSize from the bill line alone; this
   // module never supplies the missing number, it only decides whether to ask.
   "vendor-bills/bill-line-pack.ts",
+  // #2118: read-only analytics, writes no line. Reads the live pack for the product DTO's
+  // "at the current pack" display and as salePackOf's GATE (is a no-snapshot line on a product
+  // boxed today?) — never a multiplier; selling units come from each line's own snapshot.
+  "sales-facts/product-insights.service.ts",
 ]);
 
 const strip = (s: string) => s.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:])\/\/.*$/gm, "$1");

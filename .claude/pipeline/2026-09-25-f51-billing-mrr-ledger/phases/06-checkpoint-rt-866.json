@@ -1,0 +1,45 @@
+{
+  "task": {
+    "id": "RT-866",
+    "title": "repro tests T15, T16, P8",
+    "type": "repro-test",
+    "files": [],
+    "tests": ["apps/api/src/billing/mrr.service.spec.ts"],
+    "dependsOn": ["RC-866"],
+    "risk": "HIGH",
+    "briefPath": "/Users/maznahamanullah/code/routeflow/.claude/worktrees/zealous-franklin-2c1741/.claude/pipeline/2026-09-25-f51-billing-mrr-ledger/tasks/RT-866/brief.md",
+    "redRun": {
+      "ran": true,
+      "results": [
+        {
+          "command": "cd apps/api && npx jest src/billing/mrr.service.spec.ts",
+          "exitCode": 1,
+          "output": "Test Suites: 1 failed, 1 total\nTests: 2 failed, 13 passed, 15 total\nSnapshots: 0 total\n\nFAILING (both fail on their own assertion value, not structurally):\n- MrrService.computeOverview > T15 REG-B866-BYPLAN byPlan baseMrr is gross, highest first (flips :78 'net of discounts', SA-277)\n  expect(o.byPlan).toEqual([{planKey:'BUSINESS',tenants:1,baseMrr:349}, {planKey:'STARTER',tenants:1,baseMrr:59}])\n  Received baseMrr: 339 (the bug's own wrong value) instead of expected 349. at billing/mrr.service.spec.ts:78:22\n- MrrService.computeOverview — REG-MRR-ANNUAL (6-tenant v11 fixture) > T16 REG-B866-BYPLAN prices A(STARTER 99) B(GROWTH 249+addons) C(SCALE 499 fully discounted) D(manual, unpriced) E(addon-rescued) F(SCALE ANNUAL, snapshot=monthly 499) (flips REG-MRR-ANNUAL, SA-277)\n  expect(o.byPlan.find(p=>p.planKey==='SCALE')).toEqual({planKey:'SCALE',tenants:1,baseMrr:998})\n  Received baseMrr: 499 (the bug's own wrong value) instead of expected 998. at billing/mrr.service.spec.ts:516:57\n\nPASSING (13): all other pre-existing tests in the file, including the feature-override MRR exclusion oracle block and REG-743-F4/N5/N1, unaffected.\n\nNo syntax/import/fixture/config errors: `import { roundMoney } from \"@routeflow/pricing\"` (added for T16's identity assertion) resolves cleanly; both failures are plain Jest toEqual mismatches. This is the correct structural RED shape (repro test fails on the bug's own wrong value, no crash/error). File `apps/api/src/billing/mrr.service.spec.ts` (the only file in RT-866's `tests` scope) is unchanged from this run to the last — output matches tests-report.md exactly. No edits were made; no structural problem was found to fix."
+        }
+      ]
+    },
+    "redAudit": {
+      "structurallyRed": true,
+      "tests": [
+        {
+          "test": "T15 REG-B866-BYPLAN byPlan baseMrr is gross, highest first (flips :78 'net of discounts', SA-277)",
+          "outcome": "assertion-failure",
+          "note": "expects byPlan BUSINESS baseMrr 349 (gross), receives 339 (net of discount 349-10) — bug's own wrong value present in output"
+        },
+        {
+          "test": "T16 REG-B866-BYPLAN prices...SCALE (flips REG-MRR-ANNUAL, SA-277)",
+          "outcome": "assertion-failure",
+          "note": "expects SCALE baseMrr 998 (C+F = 499+499), receives 499 (only F) — bug's own wrong value present in output"
+        }
+      ],
+      "blockers": [],
+      "remediation": ""
+    },
+    "redAttempts": 2,
+    "behaviorallyRed": true,
+    "status": "complete",
+    "rounds": 0,
+    "clean": true
+  },
+  "progressLine": "Task RT-866: complete (review clean)"
+}
