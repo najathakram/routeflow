@@ -58,6 +58,7 @@ import {
 import {
   buildStopDeliveries,
   deliveredSoFarByLine,
+  doorQuoteLines,
   fallbackShortPickLines,
   linesAwaitingEntry,
   normalizeDeliveryPlan,
@@ -216,7 +217,12 @@ export default function PaymentScreen() {
   // multi-order stop charged in full instead of collecting only one order's
   // amount.
   const invoiceTotal = (stop?.orders ?? []).reduce((sum, o) => {
-    const shortPickLines = richShortPickLinesByOrder[o.id] ?? [];
+    // #2300: a later visit whose details haven't loaded prices its served remaining, never the full total.
+    const shortPickLines = doorQuoteLines(
+      o,
+      richShortPickLinesByOrder[o.id] ?? [],
+      !!ordersById[o.id],
+    );
     return (
       sum +
       (shortPickLines.length > 0
@@ -284,7 +290,7 @@ export default function PaymentScreen() {
   // figure. B762: true once ANY order on the stop is reconciled, not just
   // the first.
   const anyOrderReconciled = (stop?.orders ?? []).some(
-    (o) => (richShortPickLinesByOrder[o.id]?.length ?? 0) > 0,
+    (o) => doorQuoteLines(o, richShortPickLinesByOrder[o.id] ?? [], !!ordersById[o.id]).length > 0,
   );
   const invoiceLabel = stop?.orders?.[0]?.orderNumber
     ? `ORDER ${stop.orders[0].orderNumber} · ${(stop.customer?.businessName ?? "Customer").toUpperCase()}${

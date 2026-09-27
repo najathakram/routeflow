@@ -105,8 +105,10 @@ describe("edit-items.tsx picker-branch price edit (REG-B263-B)", () => {
   it("REG-B263-G: the parent's onEditPrice handler writes into the draft", () => {
     // Its own `it`: a mount that passes the prop but drops the write on the
     // floor is the same silent no-op from the operator's side.
+    // B805: every draft writer, including this one, goes through the shared
+    // updateDraft(fn) now instead of calling setDraft directly.
     const handler = (parentPickerMount.match(/onEditPrice=\{[\s\S]{0,1200}?\n\s*\}\}/) ?? [""])[0];
-    expect(handler).toMatch(/setDraft\(|setLinePrice\(|updateDraftItem\(/);
+    expect(handler).toMatch(/setDraft\(|setLinePrice\(|updateDraft\(|updateDraftItem\(/);
   });
 });
 
