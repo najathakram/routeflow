@@ -5,7 +5,11 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "@/lib/api-client";
 import { Card, Button, Badge, Modal, useToast } from "@routeflow/ui/web";
 import { Mail, Trash2, AlertTriangle } from "lucide-react";
-import type { MailboxConnectionStatus, MailboxProvider } from "@routeflow/types";
+import {
+  API_ERROR_CODES,
+  type MailboxConnectionStatus,
+  type MailboxProvider,
+} from "@routeflow/types";
 import { useHasAddon } from "@/lib/api/tobacco";
 
 /** email.connected_mailbox — registered `dark` in addon-gate-registry.ts (feature-registry.ts). */
@@ -89,21 +93,19 @@ type Refusal = keyof typeof REFUSED_COPY;
 /**
  * The server's distinct 403 causes on preview/confirm, by the exact value each one sends: the
  * two grant-holder checks in `MailboxConnectionService.assertGrantHolder` (the `message` of a
- * bare ForbiddenException) and AddonGuard's `code` (`ADDON_GATE_CODE`). Any other 403 (RolesGuard,
- * no tenant context) is a permission refusal, never the "other tab" one.
+ * bare ForbiddenException) and AddonGuard's `code`. Any other 403 (RolesGuard, no tenant context)
+ * is a permission refusal, never the "other tab" one. The values come from `@routeflow/types`
+ * (`API_ERROR_CODES`, pinned to the API's throw sites by api-error-codes-parity.spec.ts, #2163).
  */
-const CONNECT_SECRET_MISMATCH = "mailbox_connect_secret_mismatch";
-const CONFIRM_IDENTITY_MISMATCH = "mailbox_confirm_identity_mismatch";
-const ADDON_GATE_CODE = "ADDON_GATE";
 
 function refusalOf(e: any): Refusal {
   const status = e?.response?.status;
   if (status === 400) return "expired";
   if (status !== 403) return "unavailable";
   const body = e?.response?.data;
-  if (body?.message === CONNECT_SECRET_MISMATCH) return "other-tab";
-  if (body?.message === CONFIRM_IDENTITY_MISMATCH) return "other-admin";
-  if (body?.code === ADDON_GATE_CODE) return "no-addon";
+  if (body?.message === API_ERROR_CODES.MAILBOX_CONNECT_SECRET_MISMATCH) return "other-tab";
+  if (body?.message === API_ERROR_CODES.MAILBOX_CONFIRM_IDENTITY_MISMATCH) return "other-admin";
+  if (body?.code === API_ERROR_CODES.ADDON_GATE) return "no-addon";
   return "forbidden";
 }
 

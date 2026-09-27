@@ -33,6 +33,7 @@ import {
   STRIPE_CHECKOUT_STALE_ACTION,
 } from "./config-snapshot-audit.constants";
 import { escapeHtml } from "../common/html-escape";
+import { stripeSubscriptionPeriod } from "./stripe-period";
 
 /** Grace period (in days) after a payment failure before suspending the tenant. */
 const PAYMENT_GRACE_DAYS = 3;
@@ -624,6 +625,8 @@ export class BillingService {
 
     // Fetch the full subscription to get period dates
     const stripeSub = await this.stripe.getSubscription(subscriptionId);
+    // #2436: under API dahlia the period lives on the items; null ⇒ write no period, never NaN.
+    const period = stripeSubscriptionPeriod(stripeSub);
     // Platform billing: which interval the tenant checked out with (set in
     // BillingService.createCheckoutSession metadata), stamped for sync/resume use.
     const billingInterval: string | undefined =
@@ -829,15 +832,13 @@ export class BillingService {
           : ((session.metadata?.plan as TenantPlan) ?? "STARTER"),
         planKey: planKeyForCheckout,
         basePriceSnapshot: resolvedBasePrice,
-        periodStart: new Date(stripeSub.current_period_start * 1000),
-        periodEnd: new Date(stripeSub.current_period_end * 1000),
+        ...(period ?? {}),
         billingInterval,
       },
       update: {
         stripeSubId: subscriptionId,
         stripeCustomerId: session.customer as string,
-        periodStart: new Date(stripeSub.current_period_start * 1000),
-        periodEnd: new Date(stripeSub.current_period_end * 1000),
+        ...(period ?? {}),
         ...(billingInterval ? { billingInterval } : {}),
         ...(planKeyForCheckout ? { planKey: planKeyForCheckout } : {}),
         ...(planKeyForCheckout && resolvedBasePrice != null && !hasNegotiatedOverride
@@ -999,13 +1000,13 @@ export class BillingService {
     if (sub.stripeSubId) {
       try {
         const stripeSub = await this.stripe.getSubscription(sub.stripeSubId);
-        await this.prisma.tenantSubscription.update({
-          where: { tenantId: sub.tenantId },
-          data: {
-            periodStart: new Date(stripeSub.current_period_start * 1000),
-            periodEnd: new Date(stripeSub.current_period_end * 1000),
-          },
-        });
+        const period = stripeSubscriptionPeriod(stripeSub); // #2436: items under dahlia
+        if (period) {
+          await this.prisma.tenantSubscription.update({
+            where: { tenantId: sub.tenantId },
+            data: period,
+          });
+        }
       } catch {
         // Best-effort period update
       }
@@ -1177,8 +1178,8 @@ export class BillingService {
     await this.prisma.tenantSubscription.update({
       where: { tenantId: sub.tenantId },
       data: {
-        periodStart: new Date(subscription.current_period_start * 1000),
-        periodEnd: new Date(subscription.current_period_end * 1000),
+        // #2436: items under dahlia, the top level for an older endpoint version; none ⇒ no write.
+        ...(stripeSubscriptionPeriod(subscription) ?? {}),
         cancelAtPeriodEnd: subscription.cancel_at_period_end,
         ...(subscription.cancel_at_period_end === true ? disarmedDowngrade() : {}),
       },
