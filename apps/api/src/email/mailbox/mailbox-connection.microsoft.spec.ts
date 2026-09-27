@@ -1,6 +1,7 @@
 import { BadRequestException, ForbiddenException } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import axios from "axios";
+import * as crypto from "crypto";
 import { MailboxConnectionService } from "./mailbox-connection.service";
 import { EncryptionService } from "../../common/encryption.service";
 import { withAdvisoryLock } from "../../common/db-locks";
@@ -92,7 +93,7 @@ describe("MailboxConnectionService — Microsoft", () => {
     userId = "user-1",
     tokens: Record<string, unknown> = GOOD_TOKENS,
     me: Record<string, unknown> = GOOD_ME,
-  ): Promise<string> {
+  ): Promise<{ confirmToken: string; connectSecret: string }> {
     (axios.post as jest.Mock).mockImplementation((url: string) => {
       if (url === MS_TOKEN_URL) return Promise.resolve({ data: tokens });
       throw new Error(`unexpected POST ${url}`);
@@ -102,10 +103,10 @@ describe("MailboxConnectionService — Microsoft", () => {
       throw new Error(`unexpected GET ${url}`);
     });
 
-    const url = await service.startConnectMicrosoft(tenantId, userId);
+    const { url, connectSecret } = await service.startConnectMicrosoft(tenantId, userId);
     const state = new URL(url).searchParams.get("state")!;
     const { confirmToken } = await service.handleMicrosoftCallback("code-1", state);
-    return confirmToken;
+    return { confirmToken, connectSecret };
   }
 
   beforeEach(() => jest.clearAllMocks());
@@ -115,7 +116,7 @@ describe("MailboxConnectionService — Microsoft", () => {
   it("startConnectMicrosoft builds an authorize URL with an S256 code_challenge and persists the verifier under the state nonce", async () => {
     const { service, mockRedis } = buildService();
 
-    const url = await service.startConnectMicrosoft("tenant-a", "user-1");
+    const { url, connectSecret } = await service.startConnectMicrosoft("tenant-a", "user-1");
     const parsed = new URL(url);
 
     expect(parsed.origin + parsed.pathname).toBe(
@@ -132,6 +133,13 @@ describe("MailboxConnectionService — Microsoft", () => {
     expect(stored).toMatchObject({ tenantId: "tenant-a", userId: "user-1", provider: "MICROSOFT" });
     expect(typeof stored.verifier).toBe("string");
     expect(ttl).toBeLessThanOrEqual(600);
+    // #2115: the tab gets a fresh 256-bit connect secret; the nonce keeps only its SHA-256.
+    expect(connectSecret).toMatch(/^[A-Za-z0-9_-]{43}$/);
+    expect(stored.secretHash).toBe(
+      crypto.createHash("sha256").update(connectSecret, "utf8").digest("base64url"),
+    );
+    expect(storedJson).not.toContain(connectSecret);
+    expect(url).not.toContain(connectSecret);
   });
 
   it("startConnectMicrosoft 503s when the Microsoft mailbox client isn't configured", async () => {
@@ -174,7 +182,7 @@ describe("MailboxConnectionService — Microsoft", () => {
     });
     (axios.get as jest.Mock).mockResolvedValue({ data: GOOD_ME });
 
-    const url = await service.startConnectMicrosoft("tenant-a", "user-1");
+    const { url } = await service.startConnectMicrosoft("tenant-a", "user-1");
     const state = new URL(url).searchParams.get("state")!;
 
     await service.handleMicrosoftCallback("code-1", state);
@@ -194,7 +202,7 @@ describe("MailboxConnectionService — Microsoft", () => {
     });
     (axios.get as jest.Mock).mockResolvedValue({ data: GOOD_ME });
 
-    const url = await service.startConnectMicrosoft("tenant-a", "user-1");
+    const { url } = await service.startConnectMicrosoft("tenant-a", "user-1");
     const state = new URL(url).searchParams.get("state")!;
     await service.handleMicrosoftCallback("code-1", state);
 
@@ -209,7 +217,7 @@ describe("MailboxConnectionService — Microsoft", () => {
     const { service } = buildService();
     (axios.post as jest.Mock).mockResolvedValue({ data: { access_token: "at-1" } });
 
-    const url = await service.startConnectMicrosoft("tenant-a", "user-1");
+    const { url } = await service.startConnectMicrosoft("tenant-a", "user-1");
     const state = new URL(url).searchParams.get("state")!;
 
     await expect(service.handleMicrosoftCallback("code-1", state)).rejects.toThrow(
@@ -226,7 +234,7 @@ describe("MailboxConnectionService — Microsoft", () => {
       },
     });
 
-    const url = await service.startConnectMicrosoft("tenant-a", "user-1");
+    const { url } = await service.startConnectMicrosoft("tenant-a", "user-1");
     const state = new URL(url).searchParams.get("state")!;
 
     await expect(service.handleMicrosoftCallback("code-1", state)).rejects.toThrow(
@@ -252,7 +260,7 @@ describe("MailboxConnectionService — Microsoft", () => {
       throw new Error(`unexpected POST ${url}`);
     });
 
-    const url = await service.startConnectMicrosoft("tenant-a", "user-1");
+    const { url } = await service.startConnectMicrosoft("tenant-a", "user-1");
     const state = new URL(url).searchParams.get("state")!;
 
     await expect(service.handleMicrosoftCallback("code-1", state)).rejects.toMatchObject({
@@ -271,7 +279,7 @@ describe("MailboxConnectionService — Microsoft", () => {
     };
     const { service } = buildService({ prisma });
 
-    const confirmToken = await connectThroughMicrosoftCallback(service);
+    const { confirmToken } = await connectThroughMicrosoftCallback(service);
 
     expect(typeof confirmToken).toBe("string");
     expect(confirmToken.length).toBeGreaterThan(20);
@@ -299,8 +307,12 @@ describe("MailboxConnectionService — Microsoft", () => {
     const audit = { log: jest.fn().mockResolvedValue(undefined) };
     const { service } = buildService({ prisma, audit });
 
-    const confirmToken = await connectThroughMicrosoftCallback(service, "tenant-a", "user-1");
-    const view = await service.confirmConnect(confirmToken, "user-1", "tenant-a");
+    const { confirmToken, connectSecret } = await connectThroughMicrosoftCallback(
+      service,
+      "tenant-a",
+      "user-1",
+    );
+    const view = await service.confirmConnect(confirmToken, connectSecret, "user-1", "tenant-a");
 
     expect(view).toMatchObject({
       connected: true,
@@ -323,11 +335,15 @@ describe("MailboxConnectionService — Microsoft", () => {
     };
     const { service } = buildService({ prisma });
 
-    const confirmToken = await connectThroughMicrosoftCallback(service, "tenant-a", "user-1");
-
-    await expect(service.confirmConnect(confirmToken, "user-2", "tenant-a")).rejects.toThrow(
-      ForbiddenException,
+    const { confirmToken, connectSecret } = await connectThroughMicrosoftCallback(
+      service,
+      "tenant-a",
+      "user-1",
     );
+
+    await expect(
+      service.confirmConnect(confirmToken, connectSecret, "user-2", "tenant-a"),
+    ).rejects.toThrow(ForbiddenException);
     expect(prisma.mailboxConnection.upsert).not.toHaveBeenCalled();
   });
 
@@ -337,11 +353,15 @@ describe("MailboxConnectionService — Microsoft", () => {
     };
     const { service } = buildService({ prisma });
 
-    const confirmToken = await connectThroughMicrosoftCallback(service, "tenant-a", "user-1");
-
-    await expect(service.confirmConnect(confirmToken, "user-1", "tenant-b")).rejects.toThrow(
-      ForbiddenException,
+    const { confirmToken, connectSecret } = await connectThroughMicrosoftCallback(
+      service,
+      "tenant-a",
+      "user-1",
     );
+
+    await expect(
+      service.confirmConnect(confirmToken, connectSecret, "user-1", "tenant-b"),
+    ).rejects.toThrow(ForbiddenException);
     expect(prisma.mailboxConnection.upsert).not.toHaveBeenCalled();
   });
 
@@ -354,12 +374,16 @@ describe("MailboxConnectionService — Microsoft", () => {
     };
     const { service } = buildService({ prisma });
 
-    const confirmToken = await connectThroughMicrosoftCallback(service, "tenant-a", "user-1");
-
-    await service.confirmConnect(confirmToken, "user-1", "tenant-a");
-    await expect(service.confirmConnect(confirmToken, "user-1", "tenant-a")).rejects.toThrow(
-      BadRequestException,
+    const { confirmToken, connectSecret } = await connectThroughMicrosoftCallback(
+      service,
+      "tenant-a",
+      "user-1",
     );
+
+    await service.confirmConnect(confirmToken, connectSecret, "user-1", "tenant-a");
+    await expect(
+      service.confirmConnect(confirmToken, connectSecret, "user-1", "tenant-a"),
+    ).rejects.toThrow(BadRequestException);
     expect(prisma.mailboxConnection.upsert).toHaveBeenCalledTimes(1);
   });
 
@@ -378,12 +402,17 @@ describe("MailboxConnectionService — Microsoft", () => {
     };
     const { service } = buildService({ prisma });
 
-    const confirmToken = await connectThroughMicrosoftCallback(service, "tenant-a", "user-1", {
-      ...GOOD_TOKENS,
-      refresh_token: "super-secret-ms-refresh-token",
-      access_token: "super-secret-ms-access-token",
-    });
-    await service.confirmConnect(confirmToken, "user-1", "tenant-a");
+    const { confirmToken, connectSecret } = await connectThroughMicrosoftCallback(
+      service,
+      "tenant-a",
+      "user-1",
+      {
+        ...GOOD_TOKENS,
+        refresh_token: "super-secret-ms-refresh-token",
+        access_token: "super-secret-ms-access-token",
+      },
+    );
+    await service.confirmConnect(confirmToken, connectSecret, "user-1", "tenant-a");
 
     const CIPHERTEXT_FORMAT = /^[0-9a-f]{32}:[0-9a-f]{32}:[A-Za-z0-9+/=]+$/;
     expect(savedData.refreshTokenCipher).toMatch(CIPHERTEXT_FORMAT);
@@ -509,8 +538,12 @@ describe("MailboxConnectionService — Microsoft", () => {
     };
     const { service } = buildService({ prisma });
 
-    const confirmToken = await connectThroughMicrosoftCallback(service, "tenant-a", "user-1");
-    await service.confirmConnect(confirmToken, "user-1", "tenant-a");
+    const { confirmToken, connectSecret } = await connectThroughMicrosoftCallback(
+      service,
+      "tenant-a",
+      "user-1",
+    );
+    await service.confirmConnect(confirmToken, connectSecret, "user-1", "tenant-a");
 
     expect(withAdvisoryLock).toHaveBeenCalledWith(
       expect.objectContaining({ family: "mailbox", key: "tenant-a" }),

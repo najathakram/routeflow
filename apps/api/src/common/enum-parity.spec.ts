@@ -114,6 +114,15 @@ const ENUM_TABLE: Array<[string, keyof typeof PrismaEnums]> = [
   // (features.ts, the shared contract — the explain-trace/diff-log `source` field).
   ["FEATURE_OVERRIDE_KIND_VALUES", "FeatureOverrideKind"],
   ["FEATURE_SOURCE_VALUES", "FeatureSource"],
+  // Order tracking (#2095): long-standing enums, newly mirrored for the shared tracking payload
+  // (packages/types/api/order-tracking.ts) that web and mobile branch on. Existing enums, so the
+  // triage count below does not move.
+  ["ORDER_STATUS_VALUES", "OrderStatus"],
+  ["ROUTE_RUN_STATUS_VALUES", "RouteRunStatus"],
+  ["ROUTE_RUN_STOP_STATUS_VALUES", "RouteRunStopStatus"],
+  // #2169 (SA-395): brand-new Prisma enum, mirrored immediately as
+  // `INVOICE_ITEM_SYSTEM_KIND_VALUES` — see the triage tripwire below.
+  ["INVOICE_ITEM_SYSTEM_KIND_VALUES", "InvoiceItemSystemKind"],
 ];
 
 describe("enum parity: packages/types/api/enums.ts vs @prisma/client", () => {
@@ -187,7 +196,11 @@ describe("enum parity: packages/types/api/enums.ts vs @prisma/client", () => {
 // tenant_feature_config_snapshot migration — mirrored immediately as `SNAPSHOT_REASON_VALUES` +
 // its `ENUM_TABLE` row above; verified via `node apps/api/scripts/split-prisma-schema.mjs --check`
 // (95 → 96).
-const PINNED_PRISMA_ENUM_COUNT = 96;
+// Triage for InvoiceItemSystemKind (#2169, SA-395, 2026-09-26): one brand-new Prisma enum
+// (migration 20260926120000_2169_invoice_item_system_kind) — mirrored immediately as
+// `INVOICE_ITEM_SYSTEM_KIND_VALUES` + its `ENUM_TABLE` row above; verified via
+// `node apps/api/scripts/split-prisma-schema.mjs --check` (96 → 97).
+const PINNED_PRISMA_ENUM_COUNT = 97;
 
 describe("enum triage tripwire: generated Prisma enum count (L-072)", () => {
   it("pins the number of generated Prisma enums — a new enum must be triaged into ENUM_TABLE or explicitly left unmirrored", () => {

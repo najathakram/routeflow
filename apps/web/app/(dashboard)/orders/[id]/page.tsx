@@ -76,10 +76,20 @@ import { LicenseGuardModal } from "../_components/LicenseGuardModal";
 import { OrderLineItemsTable } from "./_components/OrderLineItemsTable";
 import { OrderLineItemCards } from "./_components/OrderLineItemCards";
 import { ActionTier } from "./_components/ActionTier";
+import { DemoteReasonModal } from "./_components/DemoteReasonModal";
+import {
+  findLockedUnitLineEdit,
+  LockedUnitLineBadge,
+  lockedUnitLineDisplay,
+  lockedUnitLineRefusal,
+  type LockedUnitLineDisplay,
+  LockedUnitLineError,
+  unitLineCount,
+} from "./_components/unit-line-lock";
 import { parseRegulatedAuthError, type BlockedCategory } from "@/lib/api/authorizations";
 import { parseSellingRestricted } from "@/lib/api/selling-restricted";
 import { BlockedLinesDialog } from "@/components/BlockedLinesDialog";
-import type { BlockedLine } from "@routeflow/types";
+import { postDeliveryInvoicePrompt, type BlockedLine } from "@routeflow/types";
 import { CreditLimitGuardDialog } from "@/components/CreditLimitGuardDialog";
 import { parseCreditLimitError, type CreditLimitInfo } from "@/lib/api/credit-limit";
 import { useProducts } from "@/lib/api/products";
@@ -116,6 +126,13 @@ interface InvoiceModalData {
   customerPhone?: string | null;
   customerMobile?: string | null;
   customerEmail?: string | null;
+  /**
+   * #2089: true when `postDeliveryInvoicePrompt` returned "issue-and-send" — this
+   * is still a DRAFT, and `useSendInvoice`/`useSendInvoiceEmail` issue it
+   * (DRAFT → SENT) in the same call. The modal says so instead of "Mark as Sent",
+   * which would misleadingly imply it was already issued.
+   */
+  issuePrompt?: boolean;
 }
 
 function SendInvoiceModal({ data, onClose }: { data: InvoiceModalData; onClose: () => void }) {
@@ -219,7 +236,9 @@ function SendInvoiceModal({ data, onClose }: { data: InvoiceModalData; onClose: 
         {/* Header */}
         <div className="flex items-start justify-between border-b border-surface-border px-5 py-4">
           <div>
-            <h2 className="text-base font-semibold text-navy">Invoice Ready</h2>
+            <h2 className="text-base font-semibold text-navy">
+              {data.issuePrompt ? "Issue & Send Invoice" : "Invoice Ready"}
+            </h2>
             <p className="mt-0.5 text-sm text-navy/70">
               {data.invoiceNumber} · {totalFmt} · {data.customerName}
             </p>
@@ -254,8 +273,14 @@ function SendInvoiceModal({ data, onClose }: { data: InvoiceModalData; onClose: 
                 )}
               </div>
               <div>
-                <p className="text-sm font-medium text-navy">Mark as Sent</p>
-                <p className="text-xs text-navy/70">Record invoice as sent to customer</p>
+                <p className="text-sm font-medium text-navy">
+                  {data.issuePrompt ? "Issue & Mark as Sent" : "Mark as Sent"}
+                </p>
+                <p className="text-xs text-navy/70">
+                  {data.issuePrompt
+                    ? "Issues the draft invoice and records it sent to customer"
+                    : "Record invoice as sent to customer"}
+                </p>
               </div>
             </button>
           )}
@@ -390,6 +415,7 @@ type ApiOrderStatus =
   | "CANCELLED";
 
 export interface EditItemState {
+  priceEdited?: boolean; // #2381: the operator typed this price (picker remounts keep it)
   id: string; // real DB id for existing items; temp "new-{uuid}" for new items
   isNew?: boolean;
   /** True for a free-text, non-catalog line (no productId; { name, qty, unitPrice }). */
@@ -397,6 +423,10 @@ export interface EditItemState {
   originalProductId: string;
   originalProductName: string;
   originalQty: number;
+  /** SA-388 (unit-line-lock.tsx): no derivable count; lockedSubtotal = its stored money. */
+  countLocked?: boolean;
+  lockedDisplay?: LockedUnitLineDisplay; // #2266
+  lockedSubtotal?: number;
   /** The line's own denomination, restored when a substitution is undone (a
    *  substitute re-denominates the line against ITS case size). */
   originalUnitsPerBox?: number | null;
@@ -588,13 +618,23 @@ export function buildEditItemFromLine(li: OrderItem): EditItemState {
   const isUnlisted = !li.productId;
   const label = orderLineName(li) ?? li.productId ?? "Custom item";
   const isUnitLine = li.unitLabel != null;
-  const count = isUnitLine ? Math.round(Number(li.boxes ?? li.qty)) : Math.round(Number(li.qty));
+  // SA-388: count ONLY from unitLineCount; null = LOCKED (seeded 0, never sent — see backstop).
+  const unitCount = isUnitLine ? unitLineCount(li) : null;
+  const countLocked = isUnitLine && unitCount == null;
+  const count = isUnitLine ? (unitCount ?? 0) : Math.round(Number(li.qty));
   return {
     id: li.id,
     isUnlisted,
     originalProductId: li.productId ?? "",
     originalProductName: label,
     originalQty: count,
+    ...(countLocked
+      ? {
+          countLocked: true,
+          lockedSubtotal: Number(li.subtotal ?? 0),
+          lockedDisplay: lockedUnitLineDisplay(li),
+        }
+      : {}),
     productId: li.productId ?? "",
     productName: label,
     qty: count,
@@ -615,8 +655,9 @@ export function buildEditItemFromLine(li: OrderItem): EditItemState {
     originalBoxSplit: isUnitLine ? false : li.boxes != null || li.pieces != null,
     // BUY_N_GET_M snapshot + the whole-unit count it was earned at.
     promoFreeUnits: li.promoFreeUnits ?? null,
+    // SA-378/388: unit line = unitLineCount (0 if LOCKED); PACK keeps boxes (boxes:0+pieces ⇒ 0).
     promoBaseUnits: li.promoFreeUnits
-      ? Math.trunc(Number(li.boxes != null ? li.boxes : li.qty) || 0)
+      ? Math.trunc(Number(isUnitLine ? unitCount : li.boxes != null ? li.boxes : li.qty) || 0)
       : null,
     unit: li.product?.unit ?? "",
     unitLabel: li.unitLabel ?? undefined,
@@ -636,7 +677,8 @@ export function buildEditItemFromLine(li: OrderItem): EditItemState {
  * `productId` alongside `unitLabel` so the server preloads the product/ladder for the edit (a
  * bare `{id, qty, unitLabel}` against a line the server doesn't already know is unit-aware would
  * otherwise silently discard the label — filed separately, not fixed here). `qtyChanged` compares
- * against the STORED line's own count (`orig.boxes`) for a unit line, never its base-piece `qty`.
+ * against the STORED line's own count (`unitLineCount(orig)`) for a unit line, never its
+ * base-piece `qty`.
  */
 export function buildItemUpdates(items: EditItemState[], original: OrderItem[]): ItemUpdate[] {
   const updates: ItemUpdate[] = [];
@@ -673,7 +715,12 @@ export function buildItemUpdates(items: EditItemState[], original: OrderItem[]):
     const orig = original.find((li) => li.id === edited.id);
     if (!orig) continue;
 
-    const origQty = orig.unitLabel != null ? Number(orig.boxes ?? orig.qty) : Number(orig.qty);
+    // SA-388 backstop: a LOCKED line's edit never becomes a request (cancel is fine: no qty).
+    if (!edited.cancelled && findLockedUnitLineEdit([edited], [orig])) {
+      throw new LockedUnitLineError(edited.productName || "This line");
+    }
+    const origQty =
+      orig.unitLabel != null ? (unitLineCount(orig) ?? edited.originalQty) : Number(orig.qty);
     const qtyChanged = Math.abs(edited.qty - origQty) > 0.0001;
     const priceChanged = Math.abs(edited.unitPrice - Number(orig.unitPrice)) > 0.0001;
     const nameChanged = edited.isUnlisted && edited.productName.trim() !== (orig.name ?? "").trim();
@@ -720,7 +767,7 @@ export function buildItemUpdates(items: EditItemState[], original: OrderItem[]):
  * (N + M). A pending SUBSTITUTION earns nothing: the snapshot belongs to the
  * product being replaced, and undoing the substitution restores it.
  */
-function editLineFreeUnits(it: {
+export function editLineFreeUnits(it: {
   qty: number;
   unitsPerBox?: number | null;
   boxSplit?: boolean;
@@ -748,7 +795,11 @@ function editLineSubtotal(it: {
   substituteProductId?: string;
   promoFreeUnits?: number | null;
   promoBaseUnits?: number | null;
+  countLocked?: boolean;
+  lockedSubtotal?: number;
 }): number {
+  // SA-388: a LOCKED line previews its stored money, never a qty-0 recompute (order total).
+  if (it.countLocked) return it.lockedSubtotal ?? 0;
   const { boxes, pieces } = editBoxedSplit(it);
   return computeLineSubtotal({
     unitPrice: it.unitPrice,
@@ -760,77 +811,6 @@ function editLineSubtotal(it: {
     // server — a plain qty*unitPrice previews a BOGO line at full price.
     freeUnits: editLineFreeUnits(it),
   });
-}
-
-// ─── Demote reason modal ──────────────────────────────────────────────────────
-
-function DemoteReasonModal({
-  open,
-  onClose,
-  onConfirm,
-  loading,
-  targetStatus,
-}: {
-  open: boolean;
-  onClose: () => void;
-  onConfirm: (reason: string) => void;
-  loading: boolean;
-  targetStatus: string;
-}) {
-  const [reason, setReason] = React.useState("");
-
-  const label: Record<string, string> = {
-    PENDING: "Return to Pending",
-    CONFIRMED: "Return to Confirmed",
-  };
-  const description: Record<string, string> = {
-    PENDING: "Why is this order being returned to pending?",
-    CONFIRMED: "Why is this order being returned to confirmed?",
-  };
-
-  React.useEffect(() => {
-    if (open) setReason("");
-  }, [open]);
-
-  if (!open) return null;
-
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4 backdrop-blur-sm">
-      <div className="w-full max-w-sm rounded-2xl bg-white shadow-xl">
-        <div className="border-b border-surface-border px-5 py-4">
-          <h2 className="text-base font-semibold text-navy">
-            {label[targetStatus] ?? "Change Status"}
-          </h2>
-          <p className="mt-1 text-sm text-navy/70">
-            {description[targetStatus] ?? "Reason for this status change."}
-          </p>
-        </div>
-        <div className="px-5 py-4">
-          <label className="block text-sm font-medium text-navy/80 mb-1.5">Reason</label>
-          <textarea
-            className="w-full resize-none rounded-lg border border-surface-border bg-surface-raised px-3 py-2 text-sm text-navy placeholder:text-navy/30 focus:outline-none focus:ring-2 focus:ring-brand-500"
-            rows={3}
-            placeholder="e.g. Customer called to request a change..."
-            value={reason}
-            onChange={(e) => setReason(e.target.value)}
-          />
-        </div>
-        <div className="flex justify-end gap-2 border-t border-surface-border px-5 py-3">
-          <Button variant="ghost" size="sm" onClick={onClose} disabled={loading}>
-            Cancel
-          </Button>
-          <Button
-            size="sm"
-            onClick={() => onConfirm(reason)}
-            disabled={!reason.trim()}
-            loading={loading}
-          >
-            Confirm
-          </Button>
-        </div>
-      </div>
-    </div>
-  );
 }
 
 // ─── Commission rate override (staff + sales_agents addon only) ───────────────
@@ -1391,6 +1371,7 @@ export function EditableLineItems({
       basePrice: option.listPrice,
       overrideReason: undefined,
       reasonBaselinePrice: option.price,
+      priceEdited: false, // #2381: a unit change prices from the ladder
     });
   }
 
@@ -1498,8 +1479,13 @@ export function EditableLineItems({
               {item.cancelled && <span className="text-xs text-danger ml-1.5">Not available</span>}
             </div>
 
+            {/* SA-388: a LOCKED unit line takes no qty edit; saves refuse any edit to it. */}
+            {!item.cancelled && item.countLocked && (
+              <LockedUnitLineBadge display={item.lockedDisplay} />
+            )}
+
             {/* Qty input */}
-            {!item.cancelled && (
+            {!item.cancelled && !item.countLocked && (
               <label className="flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-[0.06em] text-navy/40">
                 Qty
                 <input
@@ -1520,29 +1506,33 @@ export function EditableLineItems({
                 levels (OrderLineUnitPicker/UnitPicker self-gate) — every other tenant/product sees
                 today's row byte for byte. Excluded for a substitution in progress (re-denominates
                 against the SUBSTITUTE's case size instead — a separate, untouched concern). */}
-            {!item.cancelled && !item.isUnlisted && !item.substituteProductId && (
-              <OrderLineUnitPicker
-                line={{
-                  productId: item.productId,
-                  productName: item.productName,
-                  unit: item.unit ?? "",
-                  unitsPerBox: item.unitsPerBox ?? undefined,
-                  listPrice: item.basePrice,
-                  unitPrice: item.unitPrice,
-                  // PROMO (server-only, never client-set) has no picker-relevant meaning —
-                  // the picker only branches on DISCOUNTED/MANUAL to skip its tier-refresh.
-                  priceType:
-                    item.priceType === "SPECIAL" ||
-                    item.priceType === "DISCOUNTED" ||
-                    item.priceType === "MANUAL"
-                      ? item.priceType
-                      : "STANDARD",
-                  unitLabel: item.unitLabel,
-                }}
-                tier={tierForProductId(item.productId)}
-                onChange={(option, refresh) => setLineUnit(item.id, option, refresh)}
-              />
-            )}
+            {!item.cancelled &&
+              !item.isUnlisted &&
+              !item.substituteProductId &&
+              !item.countLocked && (
+                <OrderLineUnitPicker
+                  line={{
+                    productId: item.productId,
+                    productName: item.productName,
+                    unit: item.unit ?? "",
+                    unitsPerBox: item.unitsPerBox ?? undefined,
+                    listPrice: item.basePrice,
+                    unitPrice: item.unitPrice,
+                    // PROMO (server-only, never client-set) has no picker-relevant meaning —
+                    // the picker only branches on DISCOUNTED/MANUAL to skip its tier-refresh.
+                    priceType:
+                      item.priceType === "SPECIAL" ||
+                      item.priceType === "DISCOUNTED" ||
+                      item.priceType === "MANUAL"
+                        ? item.priceType
+                        : "STANDARD",
+                    unitLabel: item.unitLabel,
+                    priceEdited: item.priceEdited,
+                  }}
+                  tier={tierForProductId(item.productId)}
+                  onChange={(option, refresh) => setLineUnit(item.id, option, refresh)}
+                />
+              )}
 
             {/* BUY_N_GET_M: name the units the live total below nets off. */}
             {!item.cancelled && editLineFreeUnits(item) > 0 && (
@@ -1589,7 +1579,7 @@ export function EditableLineItems({
                 </button>
               ) : (
                 <>
-                  {!item.substituteProductId && !item.isUnlisted && (
+                  {!item.substituteProductId && !item.isUnlisted && !item.countLocked && (
                     <button
                       className="rounded px-2 py-1 text-xs text-navy/70 hover:bg-surface-raised hover:text-navy disabled:opacity-50"
                       disabled={!pricingReady}
@@ -1653,7 +1643,7 @@ export function EditableLineItems({
               // save-time check never disagree.
               originalUnitPrice={item.reasonBaselinePrice ?? item.originalUnitPrice}
               overrideReason={item.overrideReason}
-              onPriceChange={(net) => update(item.id, { unitPrice: net })}
+              onPriceChange={(net) => update(item.id, { unitPrice: net, priceEdited: true })}
               onReasonChange={(reason) => update(item.id, { overrideReason: reason || undefined })}
               unitCost={item.unitCost}
               unitsPerBox={item.unitsPerBox}
@@ -2242,7 +2232,19 @@ export default function OrderDetailPage() {
     }
   }
 
+  /** SA-388: refuse visibly, sending nothing, a save editing a LOCKED line (both save paths). */
+  function refuseLockedUnitLineEdit(): boolean {
+    const locked = findLockedUnitLineEdit(editItems, order!.lineItems);
+    if (!locked) return false;
+    toast({
+      title: lockedUnitLineRefusal(locked.productName || "This line", locked.lockedDisplay),
+      variant: "error",
+    });
+    return true;
+  }
+
   function handleSaveItems() {
+    if (refuseLockedUnitLineEdit()) return;
     // B465: refuse client-side before the server has to — a SPECIAL-tier line
     // whose price was overridden with no reason would otherwise round-trip a
     // 400 "A reason is required to change a special-price line" with no
@@ -2365,6 +2367,24 @@ export default function OrderDetailPage() {
         onError: guardError(() => handleDeliver()),
         onSuccess: () => {
           setLocalStatus("DELIVERED");
+          // #2089 (owner ruling): "automatically open the invoice, then ask if you
+          // want to send it" — offline is checked FIRST and unconditionally
+          // (postDeliveryInvoicePrompt's own contract), before ever attempting the
+          // network call below, since a dropped connection right after delivery
+          // must read as "try again once synced," never as "no invoice."
+          if (
+            postDeliveryInvoicePrompt({
+              invoice: undefined,
+              online: typeof navigator === "undefined" ? true : navigator.onLine,
+            }) === "offline-later"
+          ) {
+            toast({
+              title: "Order delivered",
+              description: "The invoice will be ready to send once you're back online.",
+              variant: "warning",
+            });
+            return;
+          }
           // Create the invoice (idempotent — returns existing if already there)
           // then show the send-invoice prompt.
           const invoiceNow = () =>
@@ -2373,7 +2393,14 @@ export default function OrderDetailPage() {
                 // W4: a mixed regulated order returns sibling invoices; prompt to send
                 // the primary (standard/first) one — the rest show on the order detail.
                 const invoice = Array.isArray(invoices) ? invoices[0] : invoices;
-                if (!invoice) return;
+                // #2089: same shared decision — a DRAFT invoice still gets the prompt
+                // (sendEmail issues DRAFT → SENT atomically on send, so "issue and
+                // send" is one action, not two), only VOID/no-invoice skips silently.
+                const outcome = postDeliveryInvoicePrompt({
+                  invoice: invoice ? { status: invoice.status } : null,
+                  online: true,
+                });
+                if (outcome === "skip" || outcome === "offline-later") return;
                 setInvoiceModal({
                   invoiceId: invoice.id,
                   invoiceNumber: invoice.invoiceNumber,
@@ -2386,6 +2413,7 @@ export default function OrderDetailPage() {
                   customerEmail: isInternalEmail(order.customer?.email)
                     ? undefined
                     : order.customer?.email,
+                  issuePrompt: outcome === "issue-and-send",
                 });
               },
               onError: (err: unknown) => {
@@ -3052,6 +3080,7 @@ export default function OrderDetailPage() {
                           // Save items first, then publish. Exactly the payload
                           // "Save Draft" sends — deletes and prices included — so
                           // publishing straight from edit mode can't bill differently.
+                          if (refuseLockedUnitLineEdit()) return;
                           const updates: ItemUpdate[] = [
                             ...pendingDeletes.map((id): ItemUpdate => ({ id, action: "DELETE" })),
                             ...buildItemUpdates(editItems, order!.lineItems),

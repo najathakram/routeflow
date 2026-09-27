@@ -74,6 +74,9 @@ export class InlineReturnsQuoteService {
     dto: QuoteInlineReturnDto,
     user: JwtPayload,
     db: any,
+    // #2178: invoices to leave out of the matching set — the order-edit preflight passes the ones
+    // the edit's revert is about to turn into DRAFTs of an undelivered order (which §3.1 excludes).
+    opts: { excludeInvoiceIds?: readonly string[] } = {},
   ): Promise<QuoteBreakdown & { productBreakdown: Record<string, QuoteBreakdown> }> {
     // Q5/§7: buyers keep the post-delivery request flow — never captured at order-entry
     // time. `@Roles` on the controller already excludes CUSTOMER, but this is the money-
@@ -167,7 +170,14 @@ export class InlineReturnsQuoteService {
 
     const productMap = new Map(products.map((p) => [p.id, p]));
     const productUpbMap = new Map(products.map((p) => [p.id, p.unitsPerBox]));
-    const matchingSet = await this.fetchMatchingSet(db, dto.customerId, productIds, productUpbMap);
+    const matchingSet = await this.fetchMatchingSet(
+      db,
+      dto.customerId,
+      productIds,
+      productUpbMap,
+      undefined,
+      opts.excludeInvoiceIds,
+    );
 
     const tierByProduct = new Map(
       customerPrices
@@ -340,6 +350,7 @@ export class InlineReturnsQuoteService {
     productIds: string[],
     productUpbMap: Map<string, number | null>,
     soldWindowDays = DEFAULT_SOLD_WINDOW_DAYS,
+    excludeInvoiceIds: readonly string[] = [],
   ): Promise<CandidateInvoiceLine[]> {
     const since = new Date();
     since.setDate(since.getDate() - soldWindowDays);
@@ -348,6 +359,7 @@ export class InlineReturnsQuoteService {
       where: {
         customerId,
         orderId: { not: null },
+        ...(excludeInvoiceIds.length > 0 ? { id: { notIn: [...excludeInvoiceIds] } } : {}),
         issueDate: { gte: since },
         OR: [
           { status: REAL_INVOICE_STATUSES },

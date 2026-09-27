@@ -1,7 +1,7 @@
 import { Test, TestingModule } from "@nestjs/testing";
 import { JwtService } from "@nestjs/jwt";
 import { ConfigService } from "@nestjs/config";
-import { PlatformAdminService } from "./platform-admin.service";
+import { PlatformAdminService, isPublicWebBase } from "./platform-admin.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { EmailService } from "../email/email.service";
 import { BillingService } from "../billing/billing.service";
@@ -60,7 +60,9 @@ describe("PlatformAdminService — audit provenance", () => {
     createCheckoutSession: jest.Mock;
     syncStripeSubscriptionPrice: jest.Mock;
   };
-  let emailServiceMock: { send: jest.Mock };
+  let emailServiceMock: { send: jest.Mock; sendTenantWelcomeEmail: jest.Mock };
+  // #2439: named so the WEB_URL tests can point `urls.web` at a public host or localhost.
+  let configMock: { get: jest.Mock };
   let tenantMirror: { upsert: jest.Mock };
 
   const ADMIN_ID = "super-1";
@@ -148,7 +150,12 @@ describe("PlatformAdminService — audit provenance", () => {
         },
       ),
     };
-    emailServiceMock = { send: jest.fn().mockResolvedValue(undefined) };
+    configMock = { get: jest.fn().mockReturnValue({ secret: "s", expiresIn: "15m" }) };
+    emailServiceMock = {
+      send: jest.fn().mockResolvedValue(undefined),
+      // #2439: createTenant's welcome email.
+      sendTenantWelcomeEmail: jest.fn().mockResolvedValue({ delivered: true, transport: "smtp" }),
+    };
     billingServiceMock = {
       createCheckoutSession: jest.fn().mockRejectedValue(new Error("no stripe")),
       syncStripeSubscriptionPrice: jest.fn().mockResolvedValue({ synced: false }),
@@ -161,10 +168,7 @@ describe("PlatformAdminService — audit provenance", () => {
         PlatformAdminService,
         { provide: PrismaService, useValue: prisma },
         { provide: JwtService, useValue: { sign: jest.fn().mockReturnValue("signed.jwt") } },
-        {
-          provide: ConfigService,
-          useValue: { get: jest.fn().mockReturnValue({ secret: "s", expiresIn: "15m" }) },
-        },
+        { provide: ConfigService, useValue: configMock },
         { provide: EmailService, useValue: emailServiceMock },
         { provide: BillingService, useValue: billingServiceMock },
         { provide: PlanCatalogService, useValue: planCatalogService },
@@ -1141,8 +1145,103 @@ describe("PlatformAdminService — audit provenance", () => {
     });
   });
 
-  it("price-override back-fills a null basePriceSnapshot for a custom plan and emits the run-rate delta", async () => {
+  // B864 / SA-277: updateTenantPriceOverride()'s back-fill branch books the run-rate delta
+  // unconditionally — it never checks whether the tenant is actually in MrrService's paying
+  // set (isPayingRow), so entering the negotiated fee on a still-TRIAL ENTERPRISE tenant books
+  // a delta for a tenant that isn't paying yet. The snapshot itself must still be written (the
+  // fee is real, priced-in data), but nothing should be booked until the tenant crosses into
+  // the paying set (e.g. via activateManualSubscription — see REG-B864-TRIAL-OVERRIDE below).
+  it("REG-B864-TRIAL-OVERRIDE books nothing on a TRIAL tenant (flips REG-OVERRIDE-BACKFILL-TRIAL + :1144, SA-277)", async () => {
     prisma.tenant.findUnique.mockResolvedValue({ id: TENANT_ID, slug: "acme" } as any);
+    prisma.tenant.findUniqueOrThrow.mockResolvedValue({
+      status: "TRIAL",
+      class: "PRODUCTION",
+      deletedAt: null,
+      subscription: { planKey: "ENTERPRISE" },
+    } as any);
+    (prisma as any).tenantSubscription.findUnique.mockResolvedValue({
+      priceOverrideMonthly: null,
+      planKey: "ENTERPRISE",
+      basePriceSnapshot: null,
+    });
+
+    await service.updateTenantPriceOverride(TENANT_ID, { monthly: 1200 } as any, ADMIN_ID);
+
+    const upsertArg = (prisma as any).tenantSubscription.upsert.mock.calls.at(-1)[0];
+    // The snapshot is still real, priced-in data — the back-fill write itself is unaffected.
+    expect(upsertArg.update.basePriceSnapshot).toBe(1200);
+    // RED today: the bug books the delta regardless of the tenant's paying-set status.
+    expect(billingEventService.emit.mock.calls.map((c: any) => c[3]?.amountDelta)).toEqual([]);
+  });
+
+  it("REG-B864-TRIAL-OVERRIDE override then activation books exactly +1200 once", async () => {
+    prisma.tenant.findUnique.mockResolvedValue({ id: TENANT_ID, slug: "acme" } as any);
+    prisma.tenant.findUniqueOrThrow.mockResolvedValue({
+      status: "TRIAL",
+      class: "PRODUCTION",
+      deletedAt: null,
+      subscription: { planKey: "ENTERPRISE" },
+    } as any);
+    (prisma as any).tenantSubscription.findUnique.mockResolvedValue({
+      priceOverrideMonthly: null,
+      planKey: "ENTERPRISE",
+      basePriceSnapshot: null,
+    });
+
+    await service.updateTenantPriceOverride(TENANT_ID, { monthly: 1200 } as any, ADMIN_ID);
+
+    // The negotiated fee is now on the row — activation is the moment this TRIAL tenant
+    // actually crosses into the paying set, and that crossing is what should book the delta.
+    prisma.tenant.findUniqueOrThrow.mockResolvedValue({
+      status: "TRIAL",
+      class: "PRODUCTION",
+      deletedAt: null,
+      subscription: { planKey: "ENTERPRISE", basePriceSnapshot: 1200, discount: 0 },
+    } as any);
+    (prisma as any).tenantAddon.findMany.mockResolvedValue([]);
+    planCatalogService.getPublishedVersion.mockResolvedValue({
+      id: "v-9",
+      definitions: [{ planKey: "SCALE", monthlyPrice: 499, isCustom: false }],
+    } as any);
+    prisma.tenant.update.mockResolvedValue({
+      id: TENANT_ID,
+      slug: "acme",
+      status: "ACTIVE",
+      plan: "PROFESSIONAL",
+    } as any);
+
+    await service.activateManualSubscription(
+      TENANT_ID,
+      { plan: "PROFESSIONAL", billingPeriodDays: 365, paymentMethod: "BANK_TRANSFER" } as any,
+      ADMIN_ID,
+    );
+
+    // RED today: the override above ALSO books +1200 it shouldn't, so the total is 2400 —
+    // the tenant's negotiated fee gets counted twice for one real crossing into paying.
+    const totalDelta = billingEventService.emit.mock.calls.reduce(
+      (sum: number, c: any) => sum + (c[3]?.amountDelta ?? 0),
+      0,
+    );
+    expect(totalDelta).toBe(1200);
+    expect(billingEventService.emit).toHaveBeenCalledWith(
+      TENANT_ID,
+      "plan.changed",
+      expect.anything(),
+      expect.objectContaining({ actorId: ADMIN_ID }),
+    );
+  });
+
+  // P3 (pin, SA-277): a tenant that's already ACTIVE/PRODUCTION with a resolved planKey is
+  // already in the paying set — the back-fill delta must still book for it, unchanged from
+  // before this bug's fix.
+  it("price-override on an ACTIVE/PRODUCTION tenant still books the run-rate delta with actorId (P3)", async () => {
+    prisma.tenant.findUnique.mockResolvedValue({ id: TENANT_ID, slug: "acme" } as any);
+    prisma.tenant.findUniqueOrThrow.mockResolvedValue({
+      status: "ACTIVE",
+      class: "PRODUCTION",
+      deletedAt: null,
+      subscription: { planKey: "ENTERPRISE" },
+    } as any);
     (prisma as any).tenantSubscription.findUnique.mockResolvedValue({
       priceOverrideMonthly: null,
       planKey: "ENTERPRISE",
@@ -1160,8 +1259,15 @@ describe("PlatformAdminService — audit provenance", () => {
       TENANT_ID,
       "plan.changed",
       expect.objectContaining({ toPlan: "ENTERPRISE", priceOverrideBackfill: true }),
-      expect.objectContaining({ amountDelta: 1200 }),
+      expect.objectContaining({ amountDelta: 1200, actorId: ADMIN_ID }),
     );
+    // P3: the tenant row lock (:1451) runs inside the tx, before the paying-set read
+    // (findUniqueOrThrow) it gates — a racing activateManualSubscription() must serialize
+    // on the lock before this decides backfillBase's emit.
+    expect(prisma.$queryRaw).toHaveBeenCalledTimes(1);
+    const lockOrder = (prisma.$queryRaw as jest.Mock).mock.invocationCallOrder[0];
+    const readOrder = (prisma.tenant.findUniqueOrThrow as jest.Mock).mock.invocationCallOrder[0];
+    expect(lockOrder).toBeLessThan(readOrder);
   });
 
   it("price-override leaves a grandfathered basePriceSnapshot alone and emits nothing", async () => {
@@ -1887,15 +1993,11 @@ describe("PlatformAdminService — audit provenance", () => {
       expect(prisma.tenant.create).not.toHaveBeenCalled();
     });
 
-    it("REG-R2.4/R2.5/R2.7 a published LITE tenant gets the 0-day trial, the 'complete payment to activate' email variant, and a checkout link", async () => {
+    it("REG-R2.4/R2.5/R2.7 + #2439 a published LITE tenant gets the 0-day trial and a STABLE Pay-now link (no checkout session minted at creation)", async () => {
       planCatalogService.getPublishedVersion.mockResolvedValue({
         id: "v-1",
         definitions: [{ planKey: "LITE" }, { planKey: "STARTER" }],
       } as any);
-      (billingServiceMock.createCheckoutSession as jest.Mock).mockResolvedValue({
-        checkoutUrl: "https://checkout.stripe.com/session-lite",
-        sessionId: "sess-lite",
-      });
 
       const result = await service.createTenant({ ...baseDto, plan: "LITE" } as any);
 
@@ -1903,24 +2005,202 @@ describe("PlatformAdminService — audit provenance", () => {
       const actualMs = (result.trialEndsAt as Date).getTime() - Date.now();
       expect(Math.abs(actualMs)).toBeLessThan(5000);
 
-      // R2.7: self-serve checkout is offered (lever defaults true) with the settings/billing
-      // success/cancel URLs, not the bare tenant-id-only call other plans use.
-      expect(billingServiceMock.createCheckoutSession).toHaveBeenCalledWith(
-        TENANT_ID,
+      // #2439: no 24h Stripe URL is minted at creation — the Pay-now link is stable and the
+      // checkout is minted when the owner clicks it on /settings/billing (R2.7 lever still gates it).
+      expect(billingServiceMock.createCheckoutSession).not.toHaveBeenCalled();
+      expect(result.payUrl).toBe("http://localhost:3001/login?redirect=%2Fsettings%2Fbilling");
+      expect(result).not.toHaveProperty("checkoutUrl");
+
+      // R2.5: the email gets trialDays 0 → the "complete payment to activate" copy.
+      const call = emailServiceMock.sendTenantWelcomeEmail.mock.calls[0][0];
+      expect(call).toMatchObject({ trialDays: 0, payUrl: result.payUrl, workspace: "acme-lite" });
+    });
+  });
+
+  // #2439 (P1, tier 1): the welcome email carries a single-use set-password link, never a
+  // password; the login URL; a stable Pay-now link; and its delivery status is recorded + returned.
+  describe("createTenant — welcome email (#2439)", () => {
+    const baseDto = {
+      slug: "acme-welcome",
+      businessName: "Acme Welcome Co",
+      adminEmail: "owner@acme-welcome.example.com",
+      adminUsername: "acme_owner",
+    } as any;
+
+    beforeEach(() => {
+      prisma.tenant.findUnique.mockResolvedValue(null);
+      prisma.user.findFirst.mockResolvedValue(null);
+      prisma.tenant.create.mockImplementation((args: any) =>
+        Promise.resolve({ id: TENANT_ID, ...args.data }),
+      );
+      prisma.user.create.mockResolvedValue({ id: "admin-1", username: "acme_owner" } as any);
+      planCatalogService.getPublishedVersion.mockResolvedValue({
+        id: "v-1",
+        definitions: [{ planKey: "STARTER" }],
+      } as any);
+    });
+
+    it("creates NO password when none is supplied, and never returns or emails one", async () => {
+      const result = await service.createTenant(baseDto);
+      const userData = (prisma.user.create as jest.Mock).mock.calls[0][0].data;
+      expect(userData.password).toBeNull();
+      expect(userData.forcePasswordChange).toBe(false);
+      expect(result).not.toHaveProperty("tempPassword");
+      const call = emailServiceMock.sendTenantWelcomeEmail.mock.calls[0][0];
+      expect(JSON.stringify(call)).not.toMatch(/password"\s*:/i);
+      expect(emailServiceMock.send).not.toHaveBeenCalled();
+    });
+
+    it("issues a single-use 72h set-password token (hash stored, prior live tokens cleared) and links it", async () => {
+      await service.createTenant(baseDto);
+      const del = (prisma.passwordResetToken.deleteMany as jest.Mock).mock.calls[0][0];
+      expect(del.where).toMatchObject({ userId: "admin-1", usedAt: null });
+      const created = (prisma.passwordResetToken.create as jest.Mock).mock.calls[0][0].data;
+      expect(created.userId).toBe("admin-1");
+      expect(created.tokenHash).toMatch(/^[0-9a-f]{64}$/);
+      expect(created.expiresAt.getTime() - Date.now()).toBeGreaterThan(71.9 * 3600_000);
+      const call = emailServiceMock.sendTenantWelcomeEmail.mock.calls[0][0];
+      const rawToken = String(call.setPasswordUrl).split("token=")[1];
+      expect(call.setPasswordUrl).toBe(`http://localhost:3001/reset-password?token=${rawToken}`);
+      expect(rawToken).toMatch(/^[0-9a-f]{64}$/);
+      expect(created.tokenHash).not.toBe(rawToken);
+      expect(call).toMatchObject({
+        to: "owner@acme-welcome.example.com",
+        username: "acme_owner",
+        workspace: "acme-welcome",
+        expiryHours: 72,
+        loginUrl: "http://localhost:3001/login",
+      });
+    });
+
+    it("keeps an admin-supplied password (hashed) but still never emails it", async () => {
+      await service.createTenant({ ...baseDto, adminPassword: "Chosen-Pass-123" });
+      const userData = (prisma.user.create as jest.Mock).mock.calls[0][0].data;
+      expect(userData.password).toMatch(/^\$2[aby]\$/);
+      const call = emailServiceMock.sendTenantWelcomeEmail.mock.calls[0][0];
+      expect(JSON.stringify(call)).not.toContain("Chosen-Pass-123");
+    });
+
+    it("records AND returns the delivery status", async () => {
+      const ok = await service.createTenant(baseDto);
+      expect(ok.welcomeEmail).toEqual({
+        to: "owner@acme-welcome.example.com",
+        delivered: true,
+        transport: "smtp",
+      });
+      expect(auditLog).toHaveBeenCalledWith(
         expect.objectContaining({
-          successUrl: expect.stringMatching(/\/settings\/billing\?checkout=success$/),
-          cancelUrl: expect.stringMatching(/\/settings\/billing\?checkout=cancelled$/),
+          action: "TENANT_CREATED",
+          meta: expect.objectContaining({ welcomeEmail: ok.welcomeEmail }),
         }),
       );
-      expect(result.checkoutUrl).toBe("https://checkout.stripe.com/session-lite");
+    });
 
-      // R2.5: the email's trial copy switches to the "complete payment to activate" variant
-      // (0 days is meaningless as a countdown) instead of "trial expires in 0 days".
-      const emailCall = (emailServiceMock.send as jest.Mock).mock.calls[0][0];
-      expect(emailCall.html).toContain("Complete payment to activate your account.");
-      expect(emailCall.html).not.toMatch(/trial expires in/i);
-      // B421 pinning: the welcome email carries a temp password — platform sender only.
-      expect(emailCall.senderClass).toBe("platform");
+    it("an undelivered or throwing email never fails tenant creation, and says so", async () => {
+      emailServiceMock.sendTenantWelcomeEmail.mockResolvedValueOnce({
+        delivered: false,
+        transport: "none",
+        error: "no transport",
+      });
+      const a = await service.createTenant(baseDto);
+      expect(a.welcomeEmail).toMatchObject({
+        delivered: false,
+        transport: "none",
+        error: "no transport",
+      });
+
+      emailServiceMock.sendTenantWelcomeEmail.mockRejectedValueOnce(new Error("smtp down"));
+      const b = await service.createTenant(baseDto);
+      expect(b.welcomeEmail).toMatchObject({
+        delivered: false,
+        transport: "none",
+        error: "smtp down",
+      });
+      expect(b.id).toBe(TENANT_ID);
+    });
+  });
+
+  describe("createTenant — welcome email needs a public WEB_URL in production (#2439 fold)", () => {
+    const dto = {
+      slug: "acme-weburl",
+      businessName: "Acme WebUrl Co",
+      adminEmail: "owner@acme-weburl.example.com",
+      adminUsername: "acme_weburl",
+    } as any;
+    const prevEnv = process.env.NODE_ENV;
+    let configGet: jest.Mock;
+
+    beforeEach(() => {
+      prisma.tenant.findUnique.mockResolvedValue(null);
+      prisma.user.findFirst.mockResolvedValue(null);
+      prisma.tenant.create.mockImplementation((args: any) =>
+        Promise.resolve({ id: TENANT_ID, ...args.data }),
+      );
+      prisma.user.create.mockResolvedValue({ id: "admin-1", username: "acme_weburl" } as any);
+      planCatalogService.getPublishedVersion.mockResolvedValue({
+        id: "v-1",
+        definitions: [{ planKey: "STARTER" }],
+      } as any);
+      configGet = configMock.get;
+    });
+    afterEach(() => {
+      process.env.NODE_ENV = prevEnv;
+      configGet.mockReturnValue({ secret: "s", expiresIn: "15m" });
+    });
+
+    function withWeb(web: string | undefined) {
+      configGet.mockImplementation((key: string) =>
+        key === "urls" ? { web } : { secret: "s", expiresIn: "15m" },
+      );
+    }
+
+    it.each([
+      ["unset (localhost fallback)", undefined],
+      ["localhost", "http://localhost:3001"],
+      ["127.0.0.1", "http://127.0.0.1:3001/"],
+    ])(
+      "production + WEB_URL %s: no email, no token, delivered:false 'WEB_URL unset'",
+      async (_l, web) => {
+        process.env.NODE_ENV = "production";
+        withWeb(web);
+        const result = await service.createTenant(dto);
+        expect(emailServiceMock.sendTenantWelcomeEmail).not.toHaveBeenCalled();
+        expect(prisma.passwordResetToken.create).not.toHaveBeenCalled();
+        expect(result.welcomeEmail).toEqual({
+          to: "owner@acme-weburl.example.com",
+          delivered: false,
+          transport: "none",
+          error: "WEB_URL unset",
+        });
+        expect(result.id).toBe(TENANT_ID);
+      },
+    );
+
+    it("production + a public WEB_URL: sends, with links on that host", async () => {
+      process.env.NODE_ENV = "production";
+      withWeb("https://app.example.com/");
+      const result = await service.createTenant(dto);
+      expect(result.welcomeEmail).toMatchObject({ delivered: true });
+      const call = emailServiceMock.sendTenantWelcomeEmail.mock.calls[0][0];
+      expect(call.loginUrl).toBe("https://app.example.com/login");
+      expect(call.setPasswordUrl).toMatch(/^https:\/\/app\.example\.com\/reset-password\?token=/);
+    });
+
+    it("outside production the localhost fallback still sends (local dev)", async () => {
+      process.env.NODE_ENV = "development";
+      withWeb(undefined);
+      const result = await service.createTenant(dto);
+      expect(result.welcomeEmail).toMatchObject({ delivered: true });
+    });
+
+    it("isPublicWebBase", () => {
+      expect(isPublicWebBase("https://app.example.com")).toBe(true);
+      expect(isPublicWebBase("http://localhost:3001")).toBe(false);
+      expect(isPublicWebBase("http://app.localhost")).toBe(false);
+      expect(isPublicWebBase("http://127.0.0.1")).toBe(false);
+      expect(isPublicWebBase("http://[::1]:3001")).toBe(false);
+      expect(isPublicWebBase("http://0.0.0.0")).toBe(false);
+      expect(isPublicWebBase("not a url")).toBe(false);
     });
   });
 
@@ -2221,6 +2501,30 @@ describe("PlatformAdminService — audit provenance", () => {
       );
     });
 
+    // P3b (pin, SA-277/B864 D2): same tenant row lock as updateTenantPriceOverride's :1451 —
+    // it must run inside the tx, before the tx's own paying-set read (`before`, :952), so a
+    // racing updateTenantPriceOverride() serializes on it. `prior` (:924) reads the same model
+    // OUTSIDE the tx (for the plan-transition hook) and is expected to run before the lock.
+    it("P3b: the tenant row lock runs inside the tx, before the paying-set read it gates", async () => {
+      prisma.tenant.findUnique.mockResolvedValue({ id: TENANT_ID, slug: "acme" } as any);
+      prisma.tenant.findUniqueOrThrow.mockResolvedValue({
+        status: "TRIAL",
+        class: "PRODUCTION",
+        deletedAt: null,
+        subscription: null,
+      } as any);
+
+      await service.activateManualSubscription(TENANT_ID, activateDto, ADMIN_ID);
+
+      const lockOrder = (prisma.$queryRaw as jest.Mock).mock.invocationCallOrder;
+      const readOrder = (prisma.tenant.findUniqueOrThrow as jest.Mock).mock.invocationCallOrder;
+      expect(lockOrder).toHaveLength(1);
+      // prior (pre-tx, :924) then lock (:943) then before (in-tx, :952).
+      expect(readOrder).toHaveLength(2);
+      expect(lockOrder[0]).toBeGreaterThan(readOrder[0]);
+      expect(lockOrder[0]).toBeLessThan(readOrder[1]);
+    });
+
     it("emits nothing when the tenant was already ACTIVE with a resolved planKey (no paying-set crossing)", async () => {
       prisma.tenant.findUnique.mockResolvedValue({ id: TENANT_ID, slug: "acme" } as any);
       prisma.tenant.findUniqueOrThrow.mockResolvedValue({
@@ -2247,6 +2551,50 @@ describe("PlatformAdminService — audit provenance", () => {
       await service.activateManualSubscription(TENANT_ID, activateDto, ADMIN_ID);
 
       expect(billingEventService.emit).not.toHaveBeenCalled();
+    });
+
+    // B863 / SA-277: activateManualSubscription() never writes `cycle` in either upsert
+    // branch, so a rolled-over external subscription has no cycle to roll by (billing-cron's
+    // rollCycles() falls through to a 1-month default forever, regardless of the admin's
+    // chosen billingPeriodDays). The write must derive MONTHLY/ANNUAL from billingPeriodDays.
+    it("REG-B863-CYCLE 30 → MONTHLY", async () => {
+      prisma.tenant.findUnique.mockResolvedValue({ id: TENANT_ID, slug: "acme" } as any);
+      prisma.tenant.findUniqueOrThrow.mockResolvedValue({
+        status: "TRIAL",
+        class: "PRODUCTION",
+        deletedAt: null,
+        subscription: null,
+      } as any);
+
+      await service.activateManualSubscription(
+        TENANT_ID,
+        { ...activateDto, billingPeriodDays: 30 },
+        ADMIN_ID,
+      );
+
+      const upsertArg = (prisma as any).tenantSubscription.upsert.mock.calls[0][0];
+      expect(upsertArg.create.cycle).toBe("MONTHLY");
+      expect(upsertArg.update.cycle).toBe("MONTHLY");
+    });
+
+    it("REG-B863-CYCLE 365 → ANNUAL", async () => {
+      prisma.tenant.findUnique.mockResolvedValue({ id: TENANT_ID, slug: "acme" } as any);
+      prisma.tenant.findUniqueOrThrow.mockResolvedValue({
+        status: "TRIAL",
+        class: "PRODUCTION",
+        deletedAt: null,
+        subscription: null,
+      } as any);
+
+      await service.activateManualSubscription(
+        TENANT_ID,
+        { ...activateDto, billingPeriodDays: 365 },
+        ADMIN_ID,
+      );
+
+      const upsertArg = (prisma as any).tenantSubscription.upsert.mock.calls[0][0];
+      expect(upsertArg.create.cycle).toBe("ANNUAL");
+      expect(upsertArg.update.cycle).toBe("ANNUAL");
     });
   });
 

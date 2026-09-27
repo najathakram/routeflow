@@ -19,7 +19,7 @@
  * screen's BUY_N_GET_M netting through so the drawer, the line card and the
  * footer cannot disagree.
  */
-import { roundMoney, effectiveQty, type LadderProduct } from "@routeflow/pricing";
+import { roundMoney, effectiveQty, unitLineCount, type LadderProduct } from "@routeflow/pricing";
 import {
   buildOrderItemDiff,
   type DiffCatalogLine,
@@ -108,6 +108,12 @@ export type DraftItem = {
    */
   promoFreeUnits?: number | null;
   promoBaseUnits?: number | null;
+  /**
+   * #2231 / SA-388: a stored unit line whose COUNT can't be derived (see `unitLineCount`).
+   * Its qty is not editable and any edit to it refuses to save (`repairBlockedLines`) —
+   * the server needs a count on every unit-line UPDATE, and guessing one bills wrong.
+   */
+  needsRepair?: boolean;
 };
 
 /**
@@ -153,6 +159,11 @@ function toNumber(v: number | string | null | undefined): number {
  * clears a line's unit, only resends the one it was loaded with (see
  * `stagedDiffItems` below, which puts it on the wire for a unit line's save).
  */
+// #2231 / SA-388 rule 1: the COUNT of a stored unit line — ONE implementation in
+// @routeflow/pricing (#2276; web and mobile had drifting copies). Re-exported so buyer-edit-items
+// and the specs keep importing it from here.
+export { unitLineCount };
+
 export function hydrateFromOrder(order: { lineItems?: readonly any[] | null } | null | undefined): {
   draft: Record<string, DraftItem>;
   unlisted: UnlistedDraft[];
@@ -186,7 +197,10 @@ export function hydrateFromOrder(order: { lineItems?: readonly any[] | null } | 
     // `item.qty` everywhere downstream — the steppers, the margin hint, the on-screen "Qty
     // (Case) N" — and `buildOrderItemDiff`'s existing `line.boxes ?? line.qty` wire fallback
     // still resolves correctly (boxes is now always unset for a unit line).
-    const qty = unitLabel ? toNumber(li.boxes != null ? li.boxes : li.qty) : toNumber(li.qty);
+    // #2231 / SA-388: the count comes from ONE rule (unitLineCount); an underivable one is 0
+    // + needsRepair (0 on both this side and orderOriginals', so untouched it sends nothing).
+    const count = unitLabel ? unitLineCount(li) : null;
+    const qty = unitLabel ? (count ?? 0) : toNumber(li.qty);
     // B775 (SA-101/SA-108): key by the line's OWN id — the record key is the
     // ONLY identity, never a `?? productId` fallback. units_v1 can legitimately
     // carry two lines for the same product (a Case line + a pack line), and a
@@ -230,8 +244,11 @@ export function hydrateFromOrder(order: { lineItems?: readonly any[] | null } | 
       // at, so a qty edit rescales it exactly like the server does on save.
       promoFreeUnits: li.promoFreeUnits ?? null,
       promoBaseUnits: li.promoFreeUnits
-        ? Math.trunc(Number(li.boxes != null ? li.boxes : li.qty) || 0)
+        ? unitLabel
+          ? count
+          : Math.trunc(Number(li.boxes != null ? li.boxes : li.qty) || 0)
         : null,
+      ...(unitLabel && count == null ? { needsRepair: true } : {}),
     };
   }
   return { draft: next, unlisted: nextUnlisted };
@@ -569,6 +586,7 @@ export interface BaselineLine {
   /** units_v1 (SA-085f MEDIUM #4): present only on a unit-sold line — see `orderOriginals`. */
   unitLabel?: string | null;
   boxes?: number | null;
+  unitsPerBox?: number | null;
 }
 
 export interface BaselineOrderLike {
@@ -594,7 +612,7 @@ export function orderOriginals(order: BaselineOrderLike | null | undefined): Ori
     .map((li) => ({
       id: li.id,
       productId: li.productId ?? null,
-      qty: li.unitLabel ? toNumber(li.boxes != null ? li.boxes : li.qty) : toNumber(li.qty),
+      qty: li.unitLabel ? (unitLineCount(li) ?? 0) : toNumber(li.qty),
       unitPrice: toNumber(li.unitPrice),
       name: li.name ?? null,
       notes: li.notes ?? null,
@@ -644,6 +662,32 @@ export function stagedDiffItems(
     pendingDeletes: [...staged.pendingDeletes],
     pendingCancels: [],
   });
+}
+
+/**
+ * #2231 / SA-388: names of LOCKED unit lines (`needsRepair`) the operator has edited. The
+ * diff can't carry them (no derivable count, qty 0 skips the UPDATE), so Save must refuse
+ * with "needs repair" and send nothing rather than drop the edit or guess a count. Removing
+ * the line is fine — it leaves the draft, and a DELETE needs no count.
+ */
+export function repairBlockedLines(
+  draft: Record<string, DraftItem>,
+  originals: OriginalLine[],
+): string[] {
+  const byId = new Map(originals.map((o) => [o.id, o]));
+  return Object.values(draft)
+    .filter((i) => {
+      const o = i.needsRepair && i.lineId ? byId.get(i.lineId) : undefined;
+      if (!o) return false;
+      return (
+        i.qty !== o.qty ||
+        Math.abs(i.unitPrice - o.unitPrice) > 0.0001 ||
+        (i.notes ?? "").trim() !== (o.notes ?? "").trim() ||
+        (i.overrideReason ?? null) !== (o.overrideReason ?? null) ||
+        !!i.substituteProductId
+      );
+    })
+    .map((i) => i.name);
 }
 
 /** True when Save would send at least one line action. */
