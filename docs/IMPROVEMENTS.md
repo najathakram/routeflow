@@ -139,8 +139,9 @@ replica in the first place.
 The one-shot backfill script ([`apps/api/scripts/merge-pending-orders.js`](../apps/api/scripts/merge-pending-orders.js))
 takes the same lock, transaction-scoped: each customer's merge transaction opens with
 `pg_advisory_xact_lock(hashtext('order-merge'), hashtext(customerId))`, the same key pair as the
-API's session-level lock, so a manual backfill run and a live API instance serialise against each
-other instead of racing.
+API's session-level lock, so a backfill run and an API instance on the same database serialise
+against each other instead of racing. Since #2421 the script is local-only (the shared production
+guard refuses any non-local DATABASE_URL); a production run would need an audited path.
 
 **Remaining work.** A **cron leader lock** (guarding scheduled jobs that must run on exactly one
 replica, distinct from the per-customer order-merge lock above) is tracked separately as its own PR

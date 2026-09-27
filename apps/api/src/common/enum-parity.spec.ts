@@ -123,6 +123,8 @@ const ENUM_TABLE: Array<[string, keyof typeof PrismaEnums]> = [
   // #2169 (SA-395): brand-new Prisma enum, mirrored immediately as
   // `INVOICE_ITEM_SYSTEM_KIND_VALUES` — see the triage tripwire below.
   ["INVOICE_ITEM_SYSTEM_KIND_VALUES", "InvoiceItemSystemKind"],
+  // SA-436 (#2401): brand-new Prisma enum, mirrored immediately — see the triage tripwire below.
+  ["CREDIT_NOTE_APPLY_BLOCK_REASON_VALUES", "CreditNoteApplyBlockReason"],
   // #2159 S1 (wholesaler onboarding): four brand-new Prisma enums, mirrored immediately in
   // packages/types/api/onboarding.ts (the back-office contract) — see the triage tripwire below.
   ["ONBOARDING_STAGE_VALUES", "OnboardingStage"],
@@ -206,11 +208,15 @@ describe("enum parity: packages/types/api/enums.ts vs @prisma/client", () => {
 // (migration 20260926120000_2169_invoice_item_system_kind) — mirrored immediately as
 // `INVOICE_ITEM_SYSTEM_KIND_VALUES` + its `ENUM_TABLE` row above; verified via
 // `node apps/api/scripts/split-prisma-schema.mjs --check` (96 → 97).
+// Triage for CreditNoteApplyBlockReason (SA-436 PR-1, #2401, 2026-09-27): one brand-new Prisma
+// enum (migration 20260927043000_sa436_credit_auto_apply_off) — mirrored immediately as
+// `CREDIT_NOTE_APPLY_BLOCK_REASON_VALUES` + its `ENUM_TABLE` row above; verified via
+// `node apps/api/scripts/split-prisma-schema.mjs --check` (97 → 98).
 // Triage for OnboardingStage + OnboardingCaseStatus + OnboardingStepStatus + OnboardingActorType
 // (#2159 S1, 2026-09-27): four brand-new Prisma enums (migration
 // 20260927060000_onboarding_s1_cases) — mirrored immediately in packages/types/api/onboarding.ts +
-// their `ENUM_TABLE` rows above; verified via `Object.keys(PrismaEnums.$Enums).length` (97 → 101).
-const PINNED_PRISMA_ENUM_COUNT = 101;
+// their `ENUM_TABLE` rows above; verified via `Object.keys(PrismaEnums.$Enums).length` (98 → 102).
+const PINNED_PRISMA_ENUM_COUNT = 102;
 
 describe("enum triage tripwire: generated Prisma enum count (L-072)", () => {
   it("pins the number of generated Prisma enums — a new enum must be triaged into ENUM_TABLE or explicitly left unmirrored", () => {
