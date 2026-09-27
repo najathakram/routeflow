@@ -918,7 +918,7 @@ function findNodeModulesDirs(worktreePath) {
 // Plan + execute
 // ---------------------------------------------------------------------------
 
-function buildPlan(repoRoot, mainCheckoutPath, worktreesRoot) {
+export function buildPlan(repoRoot, mainCheckoutPath, worktreesRoot) {
   const worktrees = listWorktrees(repoRoot);
   const actions = [];
   const skipped = [];
@@ -962,7 +962,16 @@ function buildPlan(repoRoot, mainCheckoutPath, worktreesRoot) {
       }
     }
     if (verdict.worktree === "remove") {
-      actions.push({ step: 2, kind: "worktree", target: wt.path, worktree: name });
+      // #1346: worktreePath, so execute()'s delete-time dirty re-check covers the DESTRUCTIVE
+      // removal too, not only the node_modules clear (a worktree action without it skipped the
+      // re-check entirely).
+      actions.push({
+        step: 2,
+        kind: "worktree",
+        target: wt.path,
+        worktree: name,
+        worktreePath: wt.path,
+      });
     }
     if (verdict.nodeModules === "skip" || verdict.worktree === "skip") {
       skipped.push({ worktree: name, branch: wt.branch, reason: verdict.reason });
@@ -1030,6 +1039,7 @@ function describeAction(a) {
 /** The real OS/git calls execute() uses; the self-test injects fakes instead. */
 const EXECUTE_DEPS = {
   refuseDelete: (target, opts) => refuseDelete(target, resolveRepoContext(), opts),
+  isDirty: (worktreePath) => isDirty(worktreePath),
   removeTree: (t) => safeRemoveTree(t),
   removeWorktree: (t) => {
     const { repoRoot } = resolveRepoContext();
@@ -1053,6 +1063,14 @@ export function execute(a, deps = EXECUTE_DEPS) {
     const why = deps.refuseDelete(a.target, { kind: a.kind, worktreePath: a.worktreePath });
     if (why) {
       deps.log(`   REFUSED, skipped: ${a.target} (${why})`);
+      return "refused";
+    }
+    // B748: the plan (isDirty) is computed once; execute() may run later, or be reordered by a
+    // caller. Re-verify RIGHT BEFORE deleting anything under a worktree — a worktree going dirty
+    // between plan and execute must never lose uncommitted work to a clear/remove that was
+    // decided when it still looked clean.
+    if (a.worktreePath && deps.isDirty(a.worktreePath)) {
+      deps.log(`   REFUSED, skipped: ${a.target} (worktree went dirty since the plan was built)`);
       return "refused";
     }
   }
