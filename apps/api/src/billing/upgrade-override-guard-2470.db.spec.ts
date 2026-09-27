@@ -8,7 +8,7 @@
  * ENTRY (asserted, never timed): T2 holds the TenantSubscription row mid-Pricing-change (fee 80 → 120,
  * uncommitted); `upgrade()` has pre-read the committed fee 80 and is BLOCKED on its guarded UPDATE
  * (pg_blocking_pids); only then does T2 commit. Under READ COMMITTED the blocked UPDATE re-checks its
- * WHERE against the committed row: fee 120 ≠ 80 ⇒ count 0 ⇒ 400. Pre-#2470 (guard on planKey alone)
+ * WHERE against the committed row: fee 120 ≠ 80 ⇒ count 0 ⇒ 409. Pre-#2470 (guard on planKey alone)
  * it matched and wrote basePriceSnapshot = 80 over the new fee — the stale write this pins against.
  *
  * Real PrismaClient + BillingEventService / PlanCatalogService / ProrationService; stand-ins only for
@@ -128,7 +128,7 @@ describeDb("#2470 upgrade() loses the race to a concurrent Pricing change (real 
     return tenant.id;
   }
 
-  it("a Pricing change (80 → 120) committed while upgrade() waits on its guarded write ⇒ 400; the new fee stands", async () => {
+  it("a Pricing change (80 → 120) committed while upgrade() waits on its guarded write ⇒ 409; the new fee stands", async () => {
     const id = await overrideTenant("race", 80);
     const t2 = new Client({ connectionString: url });
     await t2.connect();
