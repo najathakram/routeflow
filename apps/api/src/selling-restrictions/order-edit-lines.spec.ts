@@ -1,3 +1,5 @@
+import { keepsHeldUnit } from "../orders/unit-label-norm";
+import { resolveLineUnits } from "../products/line-units";
 import {
   sellableLinesForMergeEdit,
   type EditItem,
@@ -360,23 +362,66 @@ describe("sellableLinesForMergeEdit — a cleared unitLabel on a held unit line 
  * explicit null / "" / blank = the pack. If either side changes its reading, this fails until the
  * other is changed with it.
  */
-describe("#2288 / SA-447 — the netting and resolveLineUnits read unitLabel the same way (source pin)", () => {
+describe("#2288 / SA-447 / SA-070 — the netting and resolveLineUnits share ONE keep-held-unit rule", () => {
   // eslint-disable-next-line @typescript-eslint/no-require-imports
   const { readFileSync } = require("fs") as typeof import("fs");
   // eslint-disable-next-line @typescript-eslint/no-require-imports
   const { join } = require("path") as typeof import("path");
-  const netting = readFileSync(join(__dirname, "order-edit-lines.ts"), "utf8");
-  const write = readFileSync(join(__dirname, "..", "products", "line-units.ts"), "utf8");
 
-  it("the write keeps the held unit only when the label is absent or re-sent the same", () => {
-    expect(write).toMatch(
-      /explicit === undefined \|\| \(asked !== "" && norm\(asked\) === norm\(held\)\)/,
-    );
-  });
+  // SA-070: ONE keep-held-unit rule (orders/unit-label-norm.ts keepsHeldUnit) drives both sides.
+  // Behavioural: for every label case the write (resolveLineUnits) and the netting agree with it.
+  const product = { unit: "Box", unitsPerBox: 6, pricePerUnit: "55.00" };
+  const ladder = [
+    {
+      label: "Case",
+      factorToBase: 12,
+      price: "100.00",
+      priceTier2: null,
+      priceTier3: null,
+      priceTier4: null,
+      priceTier5: null,
+    },
+    {
+      label: "Pallet",
+      factorToBase: 240,
+      price: null,
+      priceTier2: null,
+      priceTier3: null,
+      priceTier4: null,
+      priceTier5: null,
+    },
+  ];
+  const held = { unitLabel: "Case", unitsPerBox: 12 };
+  it.each([
+    ["absent", undefined, true],
+    ["the same label", "Case", true],
+    ["the same label through norm", " case ", true],
+    ["null", null, false],
+    ['""', "", false],
+    ["blank", "   ", false],
+    ["another unit", "Pallet", false],
+  ] as const)(
+    "SA-070: %s — keepsHeldUnit, the write and the netting agree",
+    (_l, explicit, keeps) => {
+      expect(keepsHeldUnit(explicit, "Case")).toBe(keeps);
+      const written = resolveLineUnits(
+        product,
+        ladder,
+        explicit === undefined ? {} : { unitLabel: explicit },
+        held,
+      );
+      expect(written.unitLabel === "Case" && written.unitsPerBox === 12).toBe(keeps);
+      const netted = merge(
+        [line({ unitLabel: "Case", unitsPerBox: 12, qty: 36, boxes: 3, pieces: 0 } as any)],
+        items({ id: "li-1", qty: 4, ...(explicit === undefined ? {} : { unitLabel: explicit }) }),
+      );
+      expect("qtyDelta" in netted[0]).toBe(keeps);
+    },
+  );
 
-  it("the netting treats an explicit cleared label as a re-denomination, and absent as unchanged", () => {
-    expect(netting).toMatch(/item\.unitLabel !== undefined && asked\.trim\(\) === ""/);
-    expect(netting).toMatch(/norm\(asked\) !== norm\(line\.unitLabel \?\? ""\)/);
+  it("SA-070: a line with no held unit keeps nothing", () => {
+    expect(keepsHeldUnit(undefined, null)).toBe(false);
+    expect(keepsHeldUnit("Case", "")).toBe(false);
   });
 
   // SA-447a: with the label ABSENT, a qty/price edit of a held unit line never reaches the netting

@@ -36,7 +36,7 @@
  * read can hide an increase under a concurrent edit).
  */
 
-import { norm } from "../orders/unit-label-norm";
+import { keepsHeldUnit } from "../orders/unit-label-norm";
 
 /**
  * One line for `SellingRestrictionsService.assertLinesSellable` — structurally its `SellableLine`
@@ -150,14 +150,10 @@ function unitLineEdit(
   line: ExistingLine & { productId: string },
   before: number,
 ): EditLine | null {
-  const asked = item.unitLabel ?? "";
-  // #2288 / SA-447: read unitLabel exactly as the write's resolveLineUnits does — ABSENT keeps the
-  // held unit, the same label re-sent keeps it, and an explicit cleared one (null / "" / blank)
-  // re-denominates the line to the PACK. A re-denomination is unsized: checked in full.
-  if (item.unitLabel !== undefined && asked.trim() === "") return { productId: line.productId };
-  if (asked.trim() !== "" && norm(asked) !== norm(line.unitLabel ?? "")) {
-    return { productId: line.productId };
-  }
+  // #2288 / SA-447 / SA-070: THE keep-held-unit rule the write's resolveLineUnits uses — ABSENT or
+  // the same label keeps the held unit; a cleared label (null / "" / blank) or another one
+  // re-denominates the line (to the pack or that unit). A re-denomination is unsized: checked.
+  if (!keepsHeldUnit(item.unitLabel, line.unitLabel)) return { productId: line.productId };
   if (!hasNumber(item.qty)) return null;
   const factor = line.unitsPerBox == null ? 0 : Math.trunc(Number(line.unitsPerBox));
   if (!(factor >= 1)) return { productId: line.productId };
