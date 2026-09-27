@@ -1283,6 +1283,7 @@ describe("BillingService.syncStripeSubscriptionPrice", () => {
     tenantSubscription: { findUnique: jest.Mock; update: jest.Mock; updateMany: jest.Mock };
     tenantAddon: { findMany: jest.Mock };
     $transaction: jest.Mock;
+    $queryRaw: jest.Mock;
   };
   let stripe: { getSubscription: jest.Mock; updateSubscription: jest.Mock; isConfigured: boolean };
   let pricing: { checkoutPriceData: jest.Mock; resolveTenantPricing: jest.Mock };
@@ -1297,6 +1298,8 @@ describe("BillingService.syncStripeSubscriptionPrice", () => {
         updateMany: jest.fn().mockResolvedValue({ count: 1 }),
       },
       $transaction: jest.fn(async (fn: any) => fn(prisma)),
+      // SA-485b (ii): the reconcile's Tenant row lock.
+      $queryRaw: jest.fn().mockResolvedValue([]),
       // #2440: the tenant's add-on subscription items (none by default).
       tenantAddon: { findMany: jest.fn().mockResolvedValue([]) },
     };
@@ -1453,6 +1456,25 @@ describe("BillingService.syncStripeSubscriptionPrice", () => {
       expect(prisma.tenantSubscription.update).not.toHaveBeenCalled();
       const [c] = planChanged();
       expect(c?.[3]).toMatchObject({ amountDelta: -99, tx: expect.anything() });
+    });
+
+    // SA-485b (ii): the reconcile takes the SAME Tenant FOR UPDATE that updatePlan and
+    // updateTenantPriceOverride take — lock → read → CAS → emit in one tx — so it serializes with them.
+    it("SA-485b: takes the Tenant row lock FIRST, before its read and its compare-and-set", async () => {
+      reads(row("GROWTH", 249), [row("GROWTH", 249)]);
+      await service.syncStripeSubscriptionPrice("t1");
+      const lockIdx = prisma.$queryRaw.mock.calls.findIndex((c: any[]) =>
+        String(c[0]?.join?.("?") ?? c[0]).includes('"Tenant"'),
+      );
+      expect(lockIdx).toBeGreaterThan(-1);
+      const lockAt = prisma.$queryRaw.mock.invocationCallOrder[lockIdx];
+      const reconcileRead = prisma.tenantSubscription.findUnique.mock.calls.findIndex(
+        (c: any[]) => c[0]?.select?.tenant,
+      );
+      expect(lockAt).toBeLessThan(
+        prisma.tenantSubscription.findUnique.mock.invocationCallOrder[reconcileRead],
+      );
+      expect(lockAt).toBeLessThan(prisma.tenantSubscription.updateMany.mock.invocationCallOrder[0]);
     });
 
     it("a plan change committed meanwhile (CAS miss, planKey moved) ⇒ nothing written or booked", async () => {
