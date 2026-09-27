@@ -17,6 +17,7 @@ import { AddonGuard } from "../../billing/addon.guard";
 import { AddonService } from "../../billing/addon.service";
 import { EntitlementsService } from "../../billing/entitlements.service";
 import { FeatureOverrideService } from "../../billing/feature-override.service";
+import { listenOnLoopback } from "../../common/testing/listen-loopback";
 
 jest.mock("axios");
 
@@ -169,7 +170,7 @@ describe("MailboxController: the connect is bound to the tab that started it and
 
     jwt = moduleRef.get(JwtService);
     app = moduleRef.createNestApplication();
-    await app.init();
+    await listenOnLoopback(app);
   });
 
   afterAll(async () => {
