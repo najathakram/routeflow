@@ -27,9 +27,6 @@ const KNOWN: Record<string, string> = {
   // entry when #2519 lands (the tripwire stays green either way).
   "platform-admin/platform-admin.service.ts#updatePlan":
     "#2519 adds the Tenant lock after the hook",
-  // Stripe checkout apply (snapshot flag on): upserts the subscription, then writes an AuditLog row
-  // (Tenant FK) — the same inversion class; filed as #2560 rather than widened into #2551.
-  "billing/billing.service.ts#onCheckoutCompleted": "#2560 (follow-up from #2551)",
 };
 
 function findViolations(files: { rel: string; src: string }[]): string[] {
