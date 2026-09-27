@@ -307,6 +307,24 @@ describe("InlineReturnsService", () => {
       expect((result as any).parkedReversals).toEqual({ count: 2, pieces: 5 });
     });
 
+    // #2144 (+ #2477's first item): after capture() issues the credit, it reads the row back. A
+    // null read-back used to fall back to the PRE-issue snapshot, which carries no creditNoteId —
+    // a response that looks un-issued for a credit that WAS issued. Like approve() (#2467), it now
+    // refuses instead; a retry with the same returnKey replays and returns the issued row.
+    it("#2144: the capture response is the POST-issue row, carrying the issued creditNoteId", async () => {
+      prisma.regulatedLedgerParkedReversal.findMany.mockResolvedValue([]);
+      const result = await service.capture(CAPTURE_DTO as any, OPERATOR);
+      expect(result).toMatchObject({ creditNoteId: "cn-1" });
+    });
+
+    it("#2144: a null read-back after issuing never returns the stale pre-issue snapshot", async () => {
+      prisma.regulatedLedgerParkedReversal.findMany.mockResolvedValue([]);
+      prisma.return.findUnique.mockResolvedValue(null);
+      await expect(service.capture(CAPTURE_DTO as any, OPERATOR)).rejects.toThrow(
+        NotFoundException,
+      );
+    });
+
     it("REG-B735-api-capture-clean: a fresh capture with no parked rows carries parkedReversals: null, never undefined", async () => {
       prisma.regulatedLedgerParkedReversal.findMany.mockResolvedValue([]);
 
