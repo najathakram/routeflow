@@ -97,11 +97,7 @@ import { MessagingService } from "../messaging/messaging.service";
 import { formatDate, formatMoney } from "../messaging/messaging.helpers";
 import { CommissionEngineService } from "../sales-agents/commission-engine.service";
 import { NSF_FEE_DESCRIPTION_PREFIX } from "../sales-agents/commission-math";
-import {
-  calendarStampFromInput,
-  startOfCalendarDay,
-  endOfCalendarDay,
-} from "../common/calendar-date";
+import { issueDateStamp, startOfCalendarDay, endOfCalendarDay } from "../common/calendar-date";
 import { lockRowsNoWait } from "../common/db-locks";
 import { NumberingService } from "../import/numbering.service";
 import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
@@ -130,13 +126,6 @@ export function addCalendarDays(date: Date, days: number): Date {
   const out = new Date(date);
   out.setUTCDate(out.getUTCDate() + days);
   return out;
-}
-
-/** #2197: a client issueDate → the stamp of the literal day it names; 400 when it names none. */
-function issueDateStamp(raw: string): Date {
-  const stamp = calendarStampFromInput(raw);
-  if (!stamp) throw new BadRequestException("issueDate must be a calendar date (YYYY-MM-DD)");
-  return stamp;
 }
 
 // P5-12 / post-dated check payments PR-1: `CHECK_TRANSITIONS` (legal FORWARD transitions for

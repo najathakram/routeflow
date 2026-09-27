@@ -1,3 +1,5 @@
+import { BadRequestException } from "@nestjs/common";
+
 /**
  * A "calendar date" is a YYYY-MM-DD string — the meaningful part of a stored
  * UTC-midnight instant (RouteFlow's storage convention for every calendar-date
@@ -149,6 +151,13 @@ export function calendarStampFromInput(raw: string): Date | null {
   if (Number.isNaN(stamp.getTime())) return null;
   // Date rolls an out-of-range day over ("2026-02-31" → Mar 3) instead of failing.
   return stamp.toISOString().slice(0, 10) === day ? stamp : null;
+}
+
+/** #2197: a client issueDate → the stamp of the literal day it names; 400 when it names none. */
+export function issueDateStamp(raw: string): Date {
+  const stamp = calendarStampFromInput(raw);
+  if (!stamp) throw new BadRequestException("issueDate must be a calendar date (YYYY-MM-DD)");
+  return stamp;
 }
 
 /**
