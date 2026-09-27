@@ -35,6 +35,7 @@ import { CheckVendorBillDuplicateDto } from "./dto/check-vendor-bill-duplicate.d
 import { ReceiveVendorBillDto } from "./dto/receive-vendor-bill.dto";
 import { SaveProductMappingDto } from "./dto/save-product-mapping.dto";
 import { RecordSupplierPaymentDto } from "./dto/supplier-payment.dto";
+import { API_ERROR_CODES } from "../common/api-error-codes";
 
 /** What clients render when a bill is blocked as a duplicate. */
 export interface VendorBillDuplicatePayload {
@@ -384,7 +385,7 @@ export class VendorBillsService {
       if (match?.matchedBy === "number") {
         const duplicate = await this.toDuplicatePayload(match);
         throw new ConflictException({
-          code: "DUPLICATE_VENDOR_BILL",
+          code: API_ERROR_CODES.DUPLICATE_VENDOR_BILL,
           message: this.duplicateMessage(supplierInvoiceNumber, match),
           duplicate,
         });
@@ -657,7 +658,7 @@ export class VendorBillsService {
     const match = await this.vendorBillMatchById(priorScan.vendorBillId, totalOwed);
     if (!match) return;
     throw new ConflictException({
-      code: "DUPLICATE_VENDOR_BILL",
+      code: API_ERROR_CODES.DUPLICATE_VENDOR_BILL,
       message: this.duplicateMessage(priorScan.supplierInvoiceNumber, match),
       duplicate: await this.toDuplicatePayload(match),
     });
@@ -1026,7 +1027,7 @@ export class VendorBillsService {
       (bill.items.length === 0 || unlinkedItems.length > 0)
     ) {
       throw new ConflictException({
-        code: "UNLINKED_ITEMS",
+        code: API_ERROR_CODES.UNLINKED_ITEMS,
         message:
           bill.items.length === 0
             ? "This bill has no line items, so receiving it will not update any inventory or costs."

@@ -100,7 +100,7 @@ describe("CreditNotesService — W5c regulated reversal", () => {
     expect(ledger.reverseCreditNoteEntries).not.toHaveBeenCalled();
   });
 
-  it("crediting only a NON-regulated line never reverses regulated excise (no misattribution)", async () => {
+  it("SA-311: crediting only a NON-regulated line persists its CreditNoteItem but never reverses regulated excise", async () => {
     prisma.invoice.findFirst.mockResolvedValue(
       invoiceWith([
         { id: "ii-reg", subtotal: 50, qty: 5, trackedCategoryId: "cat-A", categoryTaxAmount: 0 },
@@ -114,8 +114,46 @@ describe("CreditNotesService — W5c regulated reversal", () => {
       amount: 50,
       items: [{ invoiceItemId: "ii-std", amount: 50 }], // credit the candy, not the tobacco
     });
-    expect(prisma.creditNoteItem.createMany).not.toHaveBeenCalled();
+    // SA-311 (#2181): the ordinary line keeps its line link (insights attribution + the
+    // cumulative per-line cap read it) ...
+    const itemsData = prisma.creditNoteItem.createMany.mock.calls[0][0].data;
+    expect(itemsData).toEqual([
+      expect.objectContaining({
+        creditNoteId: "cn-1",
+        tenantId: "test-tenant",
+        invoiceItemId: "ii-std",
+        trackedCategoryId: null,
+        amount: 50,
+      }),
+    ]);
+    // ... and the regulated ledger is untouched, exactly as before.
     expect(ledger.reverseCreditNoteEntries).not.toHaveBeenCalled();
+  });
+
+  it("SA-311: a mixed credit persists an item for EVERY referenced line and reverses the ledger once", async () => {
+    prisma.invoice.findFirst.mockResolvedValue(
+      invoiceWith([
+        { id: "ii-reg", subtotal: 50, qty: 5, trackedCategoryId: "cat-A", categoryTaxAmount: 5 },
+        { id: "ii-std", subtotal: 50, qty: 5, trackedCategoryId: null, categoryTaxAmount: 0 },
+      ]),
+    );
+    prisma.creditNote.aggregate.mockResolvedValue({ _sum: { amount: 0 } });
+    await service.create({
+      customerId: "c1",
+      invoiceId: "inv-1",
+      amount: 60,
+      items: [
+        { invoiceItemId: "ii-reg", amount: 20 },
+        { invoiceItemId: "ii-std", amount: 40 },
+      ],
+    });
+    const itemsData = prisma.creditNoteItem.createMany.mock.calls[0][0].data;
+    expect(itemsData.map((i: any) => [i.invoiceItemId, i.trackedCategoryId, i.amount])).toEqual([
+      ["ii-reg", "cat-A", 20],
+      ["ii-std", null, 40],
+    ]);
+    expect(prisma.creditNoteItem.createMany).toHaveBeenCalledTimes(1);
+    expect(ledger.reverseCreditNoteEntries).toHaveBeenCalledTimes(1);
   });
 
   it("rejects line amounts that do not reconcile to the credit-note total", async () => {
@@ -200,6 +238,123 @@ describe("CreditNotesService — W5c regulated reversal", () => {
         items: [{ invoiceItemId: "ii-1", amount: 100 }],
       }),
     ).rejects.toThrow(/plus prior credits.*would exceed invoice line subtotal/);
+  });
+
+  describe("SA-401a: the per-line QTY cap is cumulative too (base pieces)", () => {
+    // One ordinary line: 5 pieces for $50. An earlier note credited $10 for 4 pieces.
+    const arrange = () => {
+      prisma.invoice.findFirst.mockResolvedValue(
+        invoiceWith([
+          { id: "ii-std", subtotal: 50, qty: 5, trackedCategoryId: null, categoryTaxAmount: 0 },
+        ]),
+      );
+      prisma.creditNote.aggregate.mockResolvedValue({ _sum: { amount: 10 } });
+      prisma.creditNoteItem.findMany.mockResolvedValue([
+        { invoiceItemId: "ii-std", amount: 10, qty: 4 },
+      ]);
+    };
+
+    it("a second credit whose qty would exceed the line qty is a 400, though its amount alone passes", async () => {
+      arrange();
+      await expect(
+        service.create({
+          customerId: "c1",
+          invoiceId: "inv-1",
+          amount: 10, // $10 + prior $10 = $20 <= $50: the amount cap would pass
+          items: [{ invoiceItemId: "ii-std", amount: 10, qty: 2 }], // 4 + 2 = 6 > 5 pieces
+        }),
+      ).rejects.toThrow(/plus prior credited qty \(4\) would exceed invoice line qty \(5\)/);
+      expect(prisma.creditNoteItem.createMany).not.toHaveBeenCalled();
+    });
+
+    it("a qty exactly reaching the line qty passes", async () => {
+      arrange();
+      await service.create({
+        customerId: "c1",
+        invoiceId: "inv-1",
+        amount: 10,
+        items: [{ invoiceItemId: "ii-std", amount: 10, qty: 1 }], // 4 + 1 = 5
+      });
+      const itemsData = prisma.creditNoteItem.createMany.mock.calls[0][0].data;
+      expect(itemsData.map((i: any) => i.qty)).toEqual([1]);
+    });
+
+    // #2245 Opus BLOCK: an amount-only credit (no qty — the web picker) defaults its qty to
+    // round3(line.qty × fraction), and those roundings accumulate. The default is clamped to the
+    // line's remaining qty, and the credit that CLOSES the line's amount takes exactly the rest.
+    describe("amount-only default qty never trips the qty cap (#2245)", () => {
+      const arrangeThirds = (prior: { amount: number; qty: number }[]) => {
+        prisma.invoice.findFirst.mockResolvedValue(
+          invoiceWith([
+            { id: "ii-3", subtotal: 3, qty: 2, trackedCategoryId: null, categoryTaxAmount: 0 },
+          ]),
+        );
+        prisma.creditNote.aggregate.mockResolvedValue({
+          _sum: { amount: prior.reduce((t, p) => t + p.amount, 0) },
+        });
+        prisma.creditNoteItem.findMany.mockResolvedValue(
+          prior.map((p) => ({ invoiceItemId: "ii-3", ...p })),
+        );
+      };
+      const qtys = () =>
+        prisma.creditNoteItem.createMany.mock.calls[0][0].data.map((i: any) => i.qty);
+
+      it("the credit that closes the line takes exactly the remaining qty (0.667 + 0.667 + 0.666 = 2)", async () => {
+        arrangeThirds([
+          { amount: 1, qty: 0.667 },
+          { amount: 1, qty: 0.667 },
+        ]);
+        await service.create({
+          customerId: "c1",
+          invoiceId: "inv-1",
+          amount: 1,
+          items: [{ invoiceItemId: "ii-3", amount: 1 }],
+        });
+        expect(qtys()).toEqual([0.666]);
+      });
+
+      it("a non-closing default is clamped to what is left, never above it", async () => {
+        // Earlier explicit credit took 1.9 of 2 pieces for 1.00; this 1.00 (not closing: 2 of 3)
+        // would default to 0.667 — clamped to the 0.1 left.
+        arrangeThirds([{ amount: 1, qty: 1.9 }]);
+        await service.create({
+          customerId: "c1",
+          invoiceId: "inv-1",
+          amount: 1,
+          items: [{ invoiceItemId: "ii-3", amount: 1 }],
+        });
+        expect(qtys()).toEqual([0.1]);
+      });
+
+      it("an EXPLICIT qty is still capped strictly", async () => {
+        arrangeThirds([{ amount: 1, qty: 1.9 }]);
+        await expect(
+          service.create({
+            customerId: "c1",
+            invoiceId: "inv-1",
+            amount: 1,
+            items: [{ invoiceItemId: "ii-3", amount: 1, qty: 0.5 }],
+          }),
+        ).rejects.toThrow(/would exceed invoice line qty \(2\)/);
+      });
+    });
+
+    it("the default qty (line.qty x amount fraction) is unchanged", async () => {
+      prisma.invoice.findFirst.mockResolvedValue(
+        invoiceWith([
+          { id: "ii-std", subtotal: 50, qty: 5, trackedCategoryId: null, categoryTaxAmount: 0 },
+        ]),
+      );
+      prisma.creditNote.aggregate.mockResolvedValue({ _sum: { amount: 0 } });
+      await service.create({
+        customerId: "c1",
+        invoiceId: "inv-1",
+        amount: 20,
+        items: [{ invoiceItemId: "ii-std", amount: 20 }], // 20/50 of 5 pieces = 2
+      });
+      const itemsData = prisma.creditNoteItem.createMany.mock.calls[0][0].data;
+      expect(itemsData.map((i: any) => i.qty)).toEqual([2]);
+    });
   });
 
   it("merges duplicate line references into a single CreditNoteItem when within the line", async () => {

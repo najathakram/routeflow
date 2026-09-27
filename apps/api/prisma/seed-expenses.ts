@@ -20,11 +20,20 @@ const CATEGORIES = [
 
 async function main() {
   for (const cat of CATEGORIES) {
-    await prisma.expenseCategory.upsert({
-      where: { code: cat.code },
-      update: {},
-      create: { name: cat.name, code: cat.code },
+    // Global default category: tenantId IS NULL. Prisma's generated compound-unique filter type
+    // for @@unique([tenantId, code]) requires a non-null tenantId (SQL treats NULL <> NULL in a
+    // unique constraint, so the filter type can't express "the null row"), so upsert() can't
+    // target this row at all -- findFirst + branch is the correct shape. A bare `where: { code }`
+    // was never a real Prisma unique input either way; this never type-checked (B686: prisma/**
+    // was excluded from tsc wholesale) and would have thrown at runtime.
+    const existing = await prisma.expenseCategory.findFirst({
+      where: { tenantId: null, code: cat.code },
     });
+    if (existing) {
+      await prisma.expenseCategory.update({ where: { id: existing.id }, data: { name: cat.name } });
+    } else {
+      await prisma.expenseCategory.create({ data: { name: cat.name, code: cat.code } });
+    }
   }
   console.log("Expense categories seeded");
 }

@@ -8,7 +8,7 @@ A candidate becomes a SKILL.md rule after it appears in 3 log entries. `promoted
 - candidate: List isDraft for every PR in a window plan before the flip
   key: list isdraft for every pr in a window plan before the flip
   first: 2026-09-22
-promoted: a fact restated in a second place is the copy that goes wrong resolve against the primary source (2026-09-22, 4x)
+  promoted: a fact restated in a second place is the copy that goes wrong resolve against the primary source (2026-09-22, 4x)
 - candidate: A brief's landing section is copied from the project CLAUDE.md, never from the global routine
   key: a brief s landing section is copied from the project claude md never from the global routine
   first: 2026-09-22

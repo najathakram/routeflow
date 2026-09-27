@@ -1,4 +1,5 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { DRIVER_CRITICAL_NETWORK_MODE } from "../live-online";
 import { apiClient } from "../api-client";
 import { invalidateOrderCaches } from "./orders";
 import type { InvoiceStatus, RouteAnalysisResult, RouteSettings, StopETA } from "@routeflow/types";
@@ -415,6 +416,9 @@ export function useCompleteWithPayment() {
       qc.invalidateQueries({ queryKey: ["route-runs", runId] });
       qc.invalidateQueries({ queryKey: ["route-runs", "active"] });
     },
+    // #2265: never PAUSE offline — fail fast so the api-client interceptor queues the completion
+    // and payment.tsx's "queued" branch runs (on web, TanStack's default "online" mode paused it).
+    networkMode: DRIVER_CRITICAL_NETWORK_MODE,
   });
 }
 

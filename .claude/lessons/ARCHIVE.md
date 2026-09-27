@@ -2923,6 +2923,26 @@ citations, closed-out with its own post-init assertion guard).
   (Archived 2026-09-24 to make room at cap: zero citations outside the register, and the guard is a
   standing regression test, demo-scheduler.test.tsx, pinning the fixed message for all three failure shapes.)
 
+### L-211 · 2026-09-21 · process · A target named only in prose is not a target
+
+- **Symptom:** a locally-intended Playwright mint (`npx playwright test --project=setup`) ran
+  against PRODUCTION: operator and customer logged into the prod regression tenant, the seeded
+  buyer 401'd three times. `failedLoginAttempts` on the local row read 0 — the request never
+  arrived there.
+- **Root cause:** `playwright.config.ts` and `auth.setup.ts` both read
+  `process.env.PLAYWRIGHT_BASE_URL ?? "https://routeflowweb-production…"`. Unset means
+  production. The instruction said "against the LOCAL stack" in prose; the env var was not in
+  the command.
+- **Lesson:** **A command that targets an environment must carry the target IN the command
+  (`PLAYWRIGHT_BASE_URL=http://localhost:3001 npx …`), never in the sentence beside it. Where a
+  config defaults to production on an unset variable, that default is the defect, not the
+  operator — and any guard belongs on the RESOLVED URL, not on whether the variable is present.
+  Before GO on a minted state, decode the file's origins and require the local host.**
+- **Guard:** `scripts/local-env.mjs --e2e` sets the base URL itself and strips inherited
+  `RAILWAY_*` (use it for local runs); #1127's buyer setup step gains a skip unless the resolved
+  base URL is local. Propose: the setup project refuses to run against a `*.railway.app` host
+  unless an explicit `PLAYWRIGHT_ALLOW_REMOTE=1` is set.
+
 ### L-204 · 2026-09-18/22 · domain · B524 fix round — a new write path didn't inherit a sibling's cache-invalidation fix (recurred on the READ side: 2026-09-22, B698)
 
 - **Symptom:** granting a prerequisite via `FeatureOverrideService.create()`/`.revoke()` then

@@ -171,7 +171,7 @@ describe("RoutesService — F11 run cancel/skip pins (no REG- token; excluded fr
 
     expect(txMock.routeRunStop.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: { id: "stop-1", status: { not: "COMPLETED" } },
+        where: { id: "stop-1", status: { in: ["PENDING", "IN_PROGRESS"] } }, // #2409: SKIPPED is not claimable
         data: expect.objectContaining({ status: "COMPLETED" }),
       }),
     );

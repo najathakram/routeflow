@@ -1,3 +1,5 @@
+import { API_ERROR_CODES } from "@routeflow/types";
+
 /**
  * B743 (PR C): the mobile receive screen's prompt for the API's PACK_SIZE_UNKNOWN refusal. Pure,
  * so the exact wording, including the consequence line, is pinned by a unit test. It matches the
@@ -17,7 +19,7 @@ export interface PackSizeUnknownLine {
   productPack: number;
 }
 export interface PackSizeUnknownError {
-  code: "PACK_SIZE_UNKNOWN";
+  code: typeof API_ERROR_CODES.PACK_SIZE_UNKNOWN;
   message: string;
   packSizeUnknownItems: PackSizeUnknownLine[];
 }
@@ -25,7 +27,7 @@ export interface PackSizeUnknownError {
 /** B743: extract the PACK_SIZE_UNKNOWN payload from an axios error, if that's what it is. */
 export function getPackSizeUnknownError(error: unknown): PackSizeUnknownError | null {
   const data = (error as { response?: { data?: { code?: string } } })?.response?.data;
-  return data?.code === "PACK_SIZE_UNKNOWN" ? (data as PackSizeUnknownError) : null;
+  return data?.code === API_ERROR_CODES.PACK_SIZE_UNKNOWN ? (data as PackSizeUnknownError) : null;
 }
 
 export const LOOSE_PIECES_CONSEQUENCE = "Stock counts each as 1 piece; cost is per piece.";
