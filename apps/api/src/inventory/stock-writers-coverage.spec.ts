@@ -6,8 +6,9 @@ import * as ts from "typescript";
  * B562 PR-2 (SA-136 §6.2) — writer coverage for the stock-ledger invariant (§1): every write to
  * `Product.currentStock` appends a StockMovement for that product in the same transaction.
  *
- * Every `currentStock: { increment | decrement }` property and every raw-SQL `SET "currentStock"`
- * under apps/api/src (non-spec `.ts`) is a WRITE SITE. A site is PAIRED when the nearest enclosing
+ * Every `currentStock: { increment | decrement }` property, every ABSOLUTE `currentStock: <value>`
+ * inside a Prisma `data` / `create` / `update` payload (B562 PR-3, SA-136b), and every raw-SQL
+ * `SET "currentStock"` under apps/api/src (non-spec `.ts`) is a WRITE SITE. A site is PAIRED when the nearest enclosing
  * function (class method, function declaration, arrow or function expression — free functions too,
  * since `orders/order-stock.ts` is a module of functions) also contains a movement write:
  * `<x>.stockMovement.create(...)` / `createMany(...)`, or a call to one of the shared movement
@@ -30,6 +31,19 @@ const ALLOW_UNPAIRED: Record<string, string> = {
 };
 /** The RATCHET: may only go DOWN. */
 const UNPAIRED_BASELINE = 1;
+
+/**
+ * B562 PR-3 (SA-136b): a write made through `this.prisma…` / `prisma.…` rather than a transaction
+ * client is NON-ATOMIC — its movement row (even when the same function writes one) can commit
+ * without it, or it without the row. Such a site must be listed here; the list may only shrink.
+ */
+const ALLOW_NON_ATOMIC: Record<string, string> = {
+  // SA-136b: the Zoho stock sync SETS the counter, then writes its ADJUSTMENT row in a second call,
+  // with the quantity from a pre-read. Paired, but non-atomic. Filed on its own item.
+  "import/import.service.ts::ImportService.importInventory":
+    "paired, non-atomic, filed (SA-136b; absolute set + separate ADJUSTMENT row, pre-read delta)",
+};
+const NON_ATOMIC_BASELINE = 1;
 
 const SRC_ROOT = path.resolve(__dirname, "..");
 
@@ -95,6 +109,18 @@ function stockWriteSites(sf: ts.SourceFile): ts.Node[] {
       )
     )
       out.push(n);
+    // Absolute: `currentStock: <non-object>` as a key of a payload object (`data:` / `create:` /
+    // `update:`), so a response mapping like `{ ...p, currentStock: Number(p.currentStock) }` is not
+    // a site.
+    if (
+      ts.isPropertyAssignment(n) &&
+      n.name.getText(sf) === "currentStock" &&
+      !ts.isObjectLiteralExpression(n.initializer) &&
+      ts.isObjectLiteralExpression(n.parent) &&
+      ts.isPropertyAssignment(n.parent.parent) &&
+      ["data", "create", "update"].includes(n.parent.parent.name.getText(sf))
+    )
+      out.push(n);
     if (ts.isTaggedTemplateExpression(n)) {
       const text = n.template.getText(sf);
       if (/SET\s+"currentStock"/i.test(text)) out.push(n);
@@ -133,10 +159,28 @@ function writesMovement(fn: ts.Node, sf: ts.SourceFile): boolean {
   return found;
 }
 
+/**
+ * True when the site's Prisma call goes through the ambient client (`this.prisma…` / `prisma.…`)
+ * instead of a transaction client handed in (`tx`, `db`, a callback parameter).
+ */
+function viaAmbientClient(site: ts.Node, sf: ts.SourceFile): boolean {
+  for (let c: ts.Node | undefined = site.parent; c; c = c.parent) {
+    if (ts.isCallExpression(c) || ts.isTaggedTemplateExpression(c)) {
+      const callee = ts.isCallExpression(c) ? c.expression : c.tag;
+      const text = callee.getText(sf).replace(/\s+/g, "");
+      if (/\.(update|updateMany|upsert|create|createMany|\$executeRaw|\$queryRaw)\w*$/.test(text))
+        return /^(this\.prisma|prisma)\b/.test(text);
+    }
+    if (isFunctionLike(c)) return false;
+  }
+  return false;
+}
+
 interface Site {
   key: string;
   line: number;
   paired: boolean;
+  ambient: boolean;
 }
 
 function scan(rel: string, text: string): Site[] {
@@ -147,6 +191,7 @@ function scan(rel: string, text: string): Site[] {
       key: `${rel}::${fn ? functionName(fn, sf) : "<module>"}`,
       line: sf.getLineAndCharacterOfPosition(site.getStart()).line + 1,
       paired: fn != null && writesMovement(fn, sf),
+      ambient: viaAmbientClient(site, sf),
     };
   });
 }
@@ -177,6 +222,17 @@ describe("stock-ledger writer coverage (B562 SA-136 §6.2)", () => {
     expect(Object.keys(ALLOW_UNPAIRED).length).toBeLessThanOrEqual(UNPAIRED_BASELINE);
   });
 
+  it("B562 PR-3: every stock write outside a transaction is listed, and the list never grows", () => {
+    const ambient = sites.filter((s) => s.ambient);
+    const unlisted = ambient
+      .filter((s) => !(s.key in ALLOW_NON_ATOMIC))
+      .map((s) => `${s.key} (line ${s.line})`);
+    expect(unlisted).toEqual([]);
+    const ambientKeys = new Set(ambient.map((s) => s.key));
+    for (const key of Object.keys(ALLOW_NON_ATOMIC)) expect(ambientKeys).toContain(key);
+    expect(Object.keys(ALLOW_NON_ATOMIC).length).toBeLessThanOrEqual(NON_ATOMIC_BASELINE);
+  });
+
   // ── positive controls on inline source (the classifier itself) ───────────────────────────────
   it("control: an increment with no movement in its function is unpaired", () => {
     const [s] = scan(
@@ -200,6 +256,23 @@ describe("stock-ledger writer coverage (B562 SA-136 §6.2)", () => {
       "class S { a(tx) { tx.product.update({ data: { currentStock: { decrement: 2 } } }); } b(tx) { tx.stockMovement.create({}); } }",
     );
     expect(sites2).toEqual([expect.objectContaining({ key: "x.ts::S.a", paired: false })]);
+  });
+
+  it("control: an absolute set in a data payload is a site; a response mapping is not", () => {
+    const found = scan(
+      "x.ts",
+      "class S { async m(tx, p) { await tx.product.update({ data: { currentStock: 5 } }); return { ...p, currentStock: Number(p.currentStock) }; } }",
+    );
+    expect(found).toEqual([expect.objectContaining({ key: "x.ts::S.m", paired: false })]);
+  });
+
+  it("control: a write through this.prisma is ambient; one through tx is not", () => {
+    const [a, b] = scan(
+      "x.ts",
+      "class S { async a() { await this.prisma.forTenant().product.update({ data: { currentStock: 1 } }); } async b(tx) { await tx.product.update({ data: { currentStock: { increment: 1 } } }); } }",
+    );
+    expect(a).toMatchObject({ key: "x.ts::S.a", ambient: true });
+    expect(b).toMatchObject({ key: "x.ts::S.b", ambient: false });
   });
 
   it("control: a comment or string mentioning the pattern is not a site", () => {

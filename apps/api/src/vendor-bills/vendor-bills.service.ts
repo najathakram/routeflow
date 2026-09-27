@@ -1205,8 +1205,8 @@ export class VendorBillsService {
           },
         });
 
-        // Backdated bill: later movements' snapshots (and possibly the
-        // average) are now stale — replay the product, like recordPurchase.
+        // Backdated bill: the average later rows imply may have moved — replay the
+        // product like recordPurchase (a dated COST_BASIS correction, SA-136 §4).
         // `throwOnGap: false` — a gap here must flag this ONE line, never
         // abort the whole bill (see the comment above the loop).
         const newer = await tx.stockMovement.count({
@@ -1215,6 +1215,8 @@ export class VendorBillsService {
         if (newer > 0) {
           const replay = await this.inventory.recomputeProductInTx(tx, item.productId, {
             throwOnGap: false,
+            trigger: `BILL:${id}`,
+            performedById: performedById ?? null,
           });
           if (replay?.gapDetected) {
             gapsDetected.push({

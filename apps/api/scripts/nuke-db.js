@@ -1,6 +1,6 @@
-// PRODUCTION GUARD — must be first executable code
+// PRODUCTION GUARD — runs below on the URL this script dials (#2206: it prefers
+// DATABASE_PUBLIC_URL, which the old DATABASE_URL-only check never looked at).
 const { productionGuard } = require("./lib/production-guard");
-productionGuard({ requireFlag: "--i-know-this-deletes-everything" });
 
 /**
  * Wipe all business data from the database (preserves operator/admin users).
@@ -27,7 +27,9 @@ const dbUrl =
   "postgresql://user:pass@localhost:5432/routeflow_dev";
 const deleteAllUsers = process.argv.includes("--all");
 
-const pool = new Pool({ connectionString: dbUrl });
+// #2206: guard the URL this script actually dials, and dial exactly what was checked.
+const target = productionGuard({ requireFlag: "--i-know-this-deletes-everything", dbUrl });
+const pool = new Pool(target);
 const adapter = new PrismaPg(pool);
 const prisma = new PrismaClient({ adapter });
 

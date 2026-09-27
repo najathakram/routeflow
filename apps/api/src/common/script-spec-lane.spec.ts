@@ -2,6 +2,7 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 
 // #2192: the spawn-heavy `*-script.spec.ts` files run in their own serial jest lane
 // (jest.scripts.config.js), after the parallel unit pool, via scripts/run-unit-tests.mjs.
@@ -71,7 +72,7 @@ describe("#2192 script-spec lane", () => {
 
   it("the runner keeps filters for both lanes and the worker count for the pool only", () => {
     const probe = `
-      const m = await import(${JSON.stringify(path.join(API_DIR, "scripts/run-unit-tests.mjs"))});
+      const m = await import(${JSON.stringify(pathToFileURL(path.join(API_DIR, "scripts/run-unit-tests.mjs")).href)});
       const cases = [
         ["--maxWorkers=4"], ["--maxWorkers", "4"], ["-w", "2"], ["-w4"], ["--runInBand"], ["-i"],
         ["--maxWorkers=4", "janitor"], ["-t", "REG-B418", "--ci"], ["--ci"],

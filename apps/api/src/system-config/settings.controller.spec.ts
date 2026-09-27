@@ -207,4 +207,26 @@ describe("SettingsController — GET/PATCH /settings/invoice deposit policy", ()
     expect(svc.set).not.toHaveBeenCalledWith("invoice.depositDefaultPercent", expect.anything());
     expect(svc.set).not.toHaveBeenCalledWith("invoice.depositCollectAtOrder", expect.anything());
   });
+  // SA-436 (#2401): the send-time credit sweep switch lives on TenantConfig, OFF by default.
+  it("GET reports creditAutoApplyOnSend false when the tenant has no config row", async () => {
+    prisma.tenantConfig.findUnique.mockResolvedValue(null);
+    const result = await controller.getInvoiceSettings();
+    expect(result.creditAutoApplyOnSend).toBe(false);
+  });
+
+  it("PATCH {creditAutoApplyOnSend:true} upserts TenantConfig and GET reads it back", async () => {
+    prisma.tenantConfig.findUnique.mockResolvedValue({ creditAutoApplyOnSend: true } as any);
+    const result = await controller.updateInvoiceSettings({ creditAutoApplyOnSend: true });
+    expect(prisma.tenantConfig.upsert).toHaveBeenCalledWith({
+      where: { tenantId: "test-tenant" },
+      create: { tenantId: "test-tenant", creditAutoApplyOnSend: true },
+      update: { creditAutoApplyOnSend: true },
+    });
+    expect(result.creditAutoApplyOnSend).toBe(true);
+  });
+
+  it("PATCH without creditAutoApplyOnSend never writes TenantConfig", async () => {
+    await controller.updateInvoiceSettings({ defaultTerms: "Net 15" });
+    expect(prisma.tenantConfig.upsert).not.toHaveBeenCalled();
+  });
 });
