@@ -156,4 +156,151 @@ describe("#2242 — an order rebuild keeps the NSF fee line", () => {
     expect(data.total).toBeCloseTo(90, 2);
     expect(data.status).toBe(InvoiceStatus.PARTIAL); // 20 paid of 90
   });
+
+  /** preservedNsfLines reads the invoice's own lines per invoice id; one NSF line per id given. */
+  function armNsfLines(byInvoice: Record<string, Array<{ id: string; kind: string | null }>>) {
+    prisma.invoiceItem.findMany.mockImplementation((args: any) =>
+      Promise.resolve(
+        (byInvoice[args?.where?.invoiceId] ?? []).map((n) => ({
+          id: n.id,
+          subtotal: 25,
+          description: "NSF fee — returned check P-9",
+          systemKind: n.kind,
+        })),
+      ),
+    );
+  }
+
+  it.each([
+    ["a stamped", "NSF_FEE"],
+    ["a legacy prefix-only", null],
+  ])(
+    "#2387 fold: the delivered reconcile of a SENT deposit mirror (rebuildSiblingDrafts) keeps %s NSF line",
+    async (_n, kind) => {
+      // Ordered 2 × $25 (tax $5), delivered 1. $10 confirmed + a $20 bounced (VOID) check.
+      prisma.invoice.findFirst.mockImplementation((args: any) =>
+        Promise.resolve(args?.where?.status === InvoiceStatus.DRAFT ? null : { id: "inv-dep" }),
+      );
+      prisma.invoice.findMany.mockResolvedValue([
+        {
+          id: "inv-dep",
+          status: InvoiceStatus.SENT,
+          deliveryBatchId: null,
+          depositPercent: 50,
+          discount: 0,
+          shippingFee: 0,
+          dueDate: new Date("2026-10-01"),
+          items: [],
+          payments: [
+            { amount: 10, status: "PAID" },
+            { amount: 20, status: "VOID" },
+          ],
+        },
+      ]);
+      prisma.order.findUnique.mockResolvedValue({
+        id: "o-dep",
+        customerId: "c1",
+        subtotal: 50,
+        tax: 5,
+        shippingFee: 0,
+        lineItems: [
+          {
+            id: "li1",
+            productId: "p1",
+            qty: 2,
+            deliveredQty: 1,
+            unitPrice: 25,
+            originalPrice: null,
+            priceType: "STANDARD",
+            product: { name: "P1" },
+            status: "DELIVERED",
+          },
+        ],
+      });
+      prisma.deliveryMutation.findMany.mockResolvedValue([]);
+      prisma.customer.findFirst.mockResolvedValue({ isTaxExempt: false });
+      prisma.invoiceItem.deleteMany.mockResolvedValue({});
+      prisma.invoice.update.mockImplementation((args: any) =>
+        Promise.resolve({ id: args.where.id, ...args.data, items: [] }),
+      );
+      prisma.orderItem.update.mockResolvedValue({});
+      armNsfLines({ "inv-dep": [{ id: "nsf-1", kind }] });
+
+      await service.reconcileDeliveredOrdersInTx(prisma, ["o-dep"]);
+
+      expect(prisma.invoiceItem.deleteMany).toHaveBeenCalledWith({
+        where: { invoiceId: "inv-dep", id: { notIn: ["nsf-1"] } },
+      });
+      const data = prisma.invoice.update.mock.calls[0][0].data;
+      expect(data.items.create).toHaveLength(1); // only the delivered goods line is re-created
+      expect(data.subtotal).toBeCloseTo(50, 2); // delivered goods 25 + fee 25
+      expect(data.taxAmount).toBeCloseTo(2.5, 2); // the order's tax share on GOODS only
+      expect(data.total).toBeCloseTo(52.5, 2);
+      expect(data.status).toBe(InvoiceStatus.PARTIAL); // $10 confirmed of 52.50
+    },
+  );
+
+  it("#2387 fold: split siblings keep their NSF line; the tax remainder and shipping stay on -R1", async () => {
+    // Standard line $10 (base) + a SEPARATE_INVOICE line 3 × $10 (-R1); order tax 0.50, ship 5.
+    // The NSF fee sits on the BASE draft: were it counted before the proration and fee
+    // placement, the base (10 + 25) would outweigh -R1 (30) and take the remainder and shipping.
+    const draft = (id: string, cat: string | null) => ({
+      id,
+      status: InvoiceStatus.DRAFT,
+      deliveryBatchId: null,
+      discount: 0,
+      shippingFee: 0,
+      items: [{ orderItemId: cat ? "li-r" : "li-s", trackedCategoryId: cat, unitsPerBox: null }],
+    });
+    prisma.invoice.findMany.mockResolvedValue([draft("inv-base", null), draft("inv-r1", "cat-r")]);
+    const line = (id: string, qty: number, cat: string | null) => ({
+      id,
+      productId: `p-${id}`,
+      qty,
+      deliveredQty: 0,
+      unitPrice: 10,
+      originalPrice: null,
+      priceType: "STANDARD",
+      trackedCategoryId: cat,
+      product: { name: id, trackedCategoryId: cat },
+      status: "PENDING",
+    });
+    prisma.order.findUnique.mockResolvedValue({
+      id: "o-split",
+      customerId: "c1",
+      subtotal: 40,
+      tax: 0.5,
+      shippingFee: 5,
+      lineItems: [line("li-s", 1, null), line("li-r", 3, "cat-r")],
+    });
+    prisma.trackedCategory.findMany.mockResolvedValue([
+      { id: "cat-r", name: "R", invoiceTreatment: "SEPARATE_INVOICE", taxType: "NONE", rate: 0 },
+    ]);
+    prisma.customer.findFirst.mockResolvedValue({ isTaxExempt: false });
+    prisma.invoiceItem.deleteMany.mockResolvedValue({});
+    prisma.invoice.update.mockImplementation((args: any) =>
+      Promise.resolve({ id: args.where.id, ...args.data, items: [] }),
+    );
+    prisma.orderItem.update.mockResolvedValue({});
+    armNsfLines({ "inv-base": [{ id: "nsf-base", kind: "NSF_FEE" }] });
+
+    await service.reconcileOrderDraftInvoice("o-split", { basis: "order" });
+
+    const byId = Object.fromEntries(
+      prisma.invoice.update.mock.calls.map((c: any) => [c[0].where.id, c[0].data]),
+    );
+    expect(prisma.invoiceItem.deleteMany).toHaveBeenCalledWith({
+      where: { invoiceId: "inv-base", id: { notIn: ["nsf-base"] } },
+    });
+    // base: goods 10 + fee 25; tax round(0.125) = 0.13; no shipping.
+    expect(byId["inv-base"].subtotal).toBeCloseTo(35, 2);
+    expect(byId["inv-base"].taxAmount).toBeCloseTo(0.13, 2);
+    expect(byId["inv-base"].shippingFee).toBe(0);
+    expect(byId["inv-base"].total).toBeCloseTo(35.13, 2);
+    // -R1 (the larger GOODS subtotal): round(0.375) = 0.38 less the -0.01 remainder = 0.37, + ship 5.
+    expect(byId["inv-r1"].subtotal).toBeCloseTo(30, 2);
+    expect(byId["inv-r1"].taxAmount).toBeCloseTo(0.37, 2);
+    expect(byId["inv-r1"].shippingFee).toBe(5);
+    expect(byId["inv-r1"].total).toBeCloseTo(35.37, 2);
+  });
 });
