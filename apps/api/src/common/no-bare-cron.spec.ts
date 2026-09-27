@@ -36,6 +36,7 @@ const EXPECTED_NAMES = [
   "inventory.sendLowStockDigest",
   "billing.reviewExpiredOverrides",
   "billing.revokeExpiredOverrides",
+  "invoices.markOverdue",
 ].sort();
 
 function collectSourceFiles(dir: string, out: string[] = [], includeSpecs = false): string[] {
@@ -120,7 +121,8 @@ describe("no bare @Cron in apps/api/src (T2, R2)", () => {
     // N3 (billing-cron.warnTrialsEnding) and N4 (inventory.sendLowStockDigest) each
     // independently bumped 15 -> 16; merged together the true count was 17. Feature grants v2
     // brief B (2026-09-17) added billing.reviewExpiredOverrides, bumping 17 -> 18; B569 added billing.revokeExpiredOverrides, 18 -> 19.
-    expect(declared).toBe(19);
+    // #2520 (SA-495a) scheduled invoices.markOverdue per tenant zone, 19 -> 20.
+    expect(declared).toBe(20);
     // A site that does not match the full `(expr, "name")` shape would be invisible to the name
     // assertions below, so pin the two counts together.
     expect(wellFormed).toBe(declared);
@@ -154,7 +156,7 @@ describe("no bare @Cron in apps/api/src (T2, R2)", () => {
     });
   });
 
-  it("registers the 18 expected job names, all unique", () => {
+  it("registers the 20 expected job names, all unique", () => {
     const names: string[] = [];
     for (const s of sources) {
       const re = new RegExp(LEADER_CRON_SITE.source, "g");

@@ -8,7 +8,6 @@
 import { useState } from "react";
 import {
   ActivityIndicator,
-  Image,
   Pressable,
   RefreshControl,
   ScrollView,
@@ -19,6 +18,7 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
+import { RetryableImage } from "../../components/RetryableImage";
 import { ios } from "@routeflow/ui/tokens";
 import { NavBackButton, NavBar, ProgressTrack } from "@routeflow/ui/mobile/ios";
 import {
@@ -75,7 +75,12 @@ function ShelfRow({
   return (
     <View style={styles.row}>
       {e.imageUrl ? (
-        <Image source={{ uri: e.imageUrl }} style={styles.thumb} resizeMode="cover" />
+        <RetryableImage
+          staleQueryKey={["buyer-shelf"]}
+          source={{ uri: e.imageUrl }}
+          style={styles.thumb}
+          resizeMode="cover"
+        />
       ) : (
         <View style={[styles.thumb, styles.thumbPlaceholder]}>
           <Ionicons name="cube-outline" size={20} color={ios.label3} />
