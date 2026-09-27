@@ -1,4 +1,4 @@
-import { calendarDayBounds, startOfCalendarDay } from "./calendar-date";
+import { calendarDayBounds, calendarStampFromInput, startOfCalendarDay } from "./calendar-date";
 
 /**
  * Pin (no REG token; outside the red gate) — bug-test-plan.md T10.
@@ -66,5 +66,47 @@ describe("calendarDayBounds — T12 mirror pin", () => {
     expect(start.toISOString()).toBe("2026-03-08T05:00:00.000Z");
     expect(end.toISOString()).toBe("2026-03-09T04:00:00.000Z");
     expect(end.getTime() - start.getTime()).toBe(23 * 3600 * 1000);
+  });
+});
+
+/**
+ * #2197 — a client-supplied calendar-date field (invoice `issueDate`) becomes the
+ * UTC-midnight SYMBOLIC stamp of the LITERAL day it names: its first ten characters.
+ * Neither the client's offset nor the tenant zone may move the day.
+ */
+describe("calendar-date pins — calendarStampFromInput (#2197)", () => {
+  it("keeps the literal day of a datetime whose offset differs from the tenant zone", () => {
+    // 23:30 at -05:00 is 04:30Z on the 26th; the client named the 25th.
+    expect(calendarStampFromInput("2026-09-25T23:30:00-05:00")?.toISOString()).toBe(
+      "2026-09-25T00:00:00.000Z",
+    );
+  });
+
+  it("keeps the literal day when the instant is exactly UTC midnight of the next day", () => {
+    // 20:00 at -04:00 is 00:00Z on the 26th; a UTC-midnight shortcut would store the 26th.
+    expect(calendarStampFromInput("2026-09-25T20:00:00-04:00")?.toISOString()).toBe(
+      "2026-09-25T00:00:00.000Z",
+    );
+    expect(calendarStampFromInput("2026-09-26T00:00:00.000Z")?.toISOString()).toBe(
+      "2026-09-26T00:00:00.000Z",
+    );
+  });
+
+  it("keeps a bare calendar date literally", () => {
+    expect(calendarStampFromInput("2026-09-25")?.toISOString()).toBe("2026-09-25T00:00:00.000Z");
+  });
+
+  it("returns null for a value that names no real calendar day", () => {
+    expect(calendarStampFromInput("2026-02-31")).toBeNull();
+    expect(calendarStampFromInput("2026-02-31T10:00:00Z")).toBeNull();
+    expect(calendarStampFromInput("not-a-date")).toBeNull();
+  });
+
+  it("returns null (never throws) for an out-of-range month or day that Date cannot build", () => {
+    // new Date("2026-13-01T00:00:00.000Z") is Invalid Date; toISOString() on it throws RangeError,
+    // which would surface as a 500 instead of the 400 the caller maps null to.
+    expect(calendarStampFromInput("2026-13-01")).toBeNull();
+    expect(calendarStampFromInput("2026-00-10T08:00:00Z")).toBeNull();
+    expect(calendarStampFromInput("2026-01-32")).toBeNull();
   });
 });

@@ -96,7 +96,7 @@ export interface CustomerBalance {
 
 // ─── Finance Dashboard ────────────────────────────────────────────────────────
 
-export function useFinanceDashboard(options?: { refetchInterval?: number }) {
+export function useFinanceDashboard(options?: { refetchInterval?: number; enabled?: boolean }) {
   return useQuery<FinanceDashboard>({
     queryKey: ["finance-dashboard"],
     queryFn: () => apiClient.get("/bookkeeping/finance-dashboard").then((r) => r.data),

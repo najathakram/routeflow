@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import type { useToast } from "@routeflow/ui/web";
-import { resolveProductByCode } from "@/lib/barcode-resolve";
+import { resolveProductByCode, type BarcodeResolveResult } from "@/lib/barcode-resolve";
 
 type ToastFn = ReturnType<typeof useToast>["toast"];
 
@@ -11,7 +11,30 @@ export type ScanResolution =
   | { kind: "added"; product: any; created: boolean }
   | { kind: "archived"; name: string }
   | { kind: "unknown" }
-  | { kind: "error"; message: string };
+  | {
+      kind: "error";
+      message: string;
+      /** The lookup failed for CONNECTIVITY (no response at all) — worth retrying, unlike a 4xx/5xx. */
+      offline?: boolean;
+    };
+
+/**
+ * Did this lookup fail because the request never got an answer (no signal, DNS, timeout, browser
+ * offline)? An HTTP response — even a 500 — means the server was reached, so it is NOT a signal
+ * problem and must not be retried as one.
+ */
+export function isConnectivityError(err: unknown): boolean {
+  const e = err as { response?: unknown; code?: string; message?: string } | null | undefined;
+  if (e?.response) return false;
+  if (typeof navigator !== "undefined" && navigator.onLine === false) return true;
+  return (
+    e?.code === "ERR_NETWORK" ||
+    e?.code === "ECONNABORTED" ||
+    e?.code === "ETIMEDOUT" ||
+    e?.message === "Network Error" ||
+    /timeout/i.test(e?.message ?? "")
+  );
+}
 
 export interface ScanCodeHandlerDeps {
   /**
@@ -43,42 +66,58 @@ export interface ScanCodeHandlerDeps {
  * first row wins (the modal's scan flow has always auto-added; the edit page offers a picker).
  */
 export function useScanCodeHandler(deps: ScanCodeHandlerDeps) {
-  const handlerRef = React.useRef<(code: string) => Promise<ScanResolution>>(async () => ({
-    kind: "unknown",
-  }));
-  handlerRef.current = async (code: string): Promise<ScanResolution> => {
+  const handlerRef = React.useRef<
+    (code: string, opts?: { quiet?: boolean; background?: boolean }) => Promise<ScanResolution>
+  >(async () => ({ kind: "unknown" }));
+  // `quiet` suppresses ONLY the lookup-failure toast: the scan screen shows its own status and
+  // retries a queued scan every few seconds, which must not toast on every failed retry.
+  handlerRef.current = async (
+    code: string,
+    opts?: { quiet?: boolean; background?: boolean },
+  ): Promise<ScanResolution> => {
+    let result: BarcodeResolveResult;
     try {
-      const result = await resolveProductByCode(code);
-      if (result.archived) {
-        // F30 / R5: the product exists but is retired — never put it on an
-        // order silently, and never fall through to "create a new product"
-        // for something the catalog already has.
-        const name = result.product?.name || "Item";
-        deps.toast({
-          variant: "error",
-          title: `${name} is archived — reactivate to sell`,
-        });
-        return { kind: "archived", name };
-      }
-      if (!result.notFound && result.product) {
-        // addLineItem clears search + refocuses
-        const added = deps.addLineItem(result.product);
-        return { kind: "added", product: result.product, created: added?.created ?? true };
-      }
+      // Opus item 5: the try/catch covers ONLY the lookup. It used to also wrap `addLineItem`
+      // below, so a throw from THAT (nothing to do with connectivity) was caught here and
+      // misreported as `offline: true` — which queues the code for a retry that then adds it a
+      // SECOND time, on top of whatever the first (throwing) call already committed.
+      result = await resolveProductByCode(code);
     } catch (err: any) {
       // Network / 5xx — a transient failure is NOT "product doesn't exist";
       // don't open the create-product modal over it.
       const message =
         err?.response?.data?.message ?? err?.message ?? "Check the connection and rescan.";
+      if (!opts?.quiet) {
+        deps.toast({
+          variant: "error",
+          title: "Couldn't look up the code",
+          description: message,
+        });
+      }
+      return { kind: "error", message, offline: isConnectivityError(err) };
+    }
+    if (result.archived) {
+      // F30 / R5: the product exists but is retired — never put it on an
+      // order silently, and never fall through to "create a new product"
+      // for something the catalog already has.
+      const name = result.product?.name || "Item";
       deps.toast({
         variant: "error",
-        title: "Couldn't look up the code",
-        description: message,
+        title: `${name} is archived — reactivate to sell`,
       });
-      return { kind: "error", message };
+      return { kind: "archived", name };
     }
-    // Nothing found — let the caller open create-product with the scanned barcode as SKU
-    deps.onUnknownCode(code);
+    if (!result.notFound && result.product) {
+      // addLineItem clears search + refocuses — outside the try above: a throw here is a real
+      // bug, never a connectivity failure, and must never be silently queued/re-added.
+      const added = deps.addLineItem(result.product);
+      return { kind: "added", product: result.product, created: added?.created ?? true };
+    }
+    // Nothing found — let the caller open create-product with the scanned barcode as SKU. Not for a
+    // BACKGROUND retry: a queued scan resolving minutes later must not pop a dialog mid-scan (and
+    // several would overwrite each other's SKU); the scan screen reports it and the operator can
+    // rescan the code when ready to create it.
+    if (!opts?.background) deps.onUnknownCode(code);
     return { kind: "unknown" };
   };
   return handlerRef;

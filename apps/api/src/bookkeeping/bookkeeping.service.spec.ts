@@ -231,7 +231,9 @@ describe("BookkeepingService", () => {
       const create = jest.fn();
       prisma.tenantTransaction.mockImplementation(async (fn: any) =>
         fn({
+          $executeRaw: jest.fn(), // SA-404f F1: lockInvoicesForPayment
           invoice: {
+            findMany: jest.fn(async () => []),
             findUnique: jest
               .fn()
               .mockResolvedValue({ id: "inv-b812", total: 0.8, payments: existingPayments }),
@@ -267,7 +269,9 @@ describe("BookkeepingService", () => {
       const create = jest.fn();
       prisma.tenantTransaction.mockImplementation(async (fn: any) =>
         fn({
+          $executeRaw: jest.fn(), // SA-404f F1: lockInvoicesForPayment
           invoice: {
+            findMany: jest.fn(async () => []),
             findUnique: jest.fn().mockResolvedValue({ id: "inv-sa121", total: 100, payments: [] }),
             update: jest.fn().mockResolvedValue({ id: "inv-sa121" }),
           },
@@ -288,7 +292,11 @@ describe("BookkeepingService", () => {
       // recordPayment uses tenantTransaction (not $transaction)
       prisma.tenantTransaction.mockImplementation(async (fn: any) => {
         const tx = {
-          invoice: { findUnique: jest.fn().mockResolvedValue(null) },
+          $executeRaw: jest.fn(), // SA-404f F1: lockInvoicesForPayment
+          invoice: {
+            findMany: jest.fn(async () => []),
+            findUnique: jest.fn().mockResolvedValue(null),
+          },
           transaction: { findUnique: jest.fn().mockResolvedValue(null) },
           invoicePayment: { create: jest.fn() },
           payment: { create: jest.fn() },
@@ -303,6 +311,32 @@ describe("BookkeepingService", () => {
   });
 
   // ─── getPdfUrl ────────────────────────────────────────────────────────────
+
+  describe("recordPayment — SA-404f F1: lock (Order →) Invoice BEFORE reading its status", () => {
+    it("takes the Invoice row lock first, so a committed VOID is seen and refused, never written over", async () => {
+      const log: string[] = [];
+      prisma.tenantTransaction.mockImplementation(async (fn: any) =>
+        fn({
+          $executeRaw: jest.fn(async (strings: TemplateStringsArray) => {
+            log.push(strings.join("?").includes('"Order"') ? "lock Order" : "lock Invoice");
+          }),
+          invoice: {
+            findMany: jest.fn(async () => [{ orderId: "ord-1" }]),
+            findUnique: jest.fn(async () => {
+              log.push("read status");
+              return { id: "inv-v", status: "VOID", total: 50, payments: [] };
+            }),
+            update: jest.fn(),
+          },
+          invoicePayment: { create: jest.fn() },
+        }),
+      );
+      await expect(
+        service.recordPayment("inv-v", { amount: 10, method: "CASH" as any }),
+      ).rejects.toThrow("Cannot record a payment on a voided invoice.");
+      expect(log).toEqual(["lock Order", "lock Invoice", "read status"]);
+    });
+  });
 
   describe("getPdfUrl", () => {
     it("should return url when PDF exists", async () => {
@@ -1037,7 +1071,9 @@ describe("BookkeepingService", () => {
       });
       prisma.tenantTransaction.mockImplementation(async (fn: any) =>
         fn({
+          $executeRaw: jest.fn(), // SA-404f F1: lockInvoicesForPayment
           invoice: {
+            findMany: jest.fn(async () => []),
             findUnique: jest.fn(async (args: any) => ({
               id: "inv-b11",
               total: INVOICE_TOTAL,

@@ -8,22 +8,25 @@ export interface InventoryValuation {
 }
 
 export interface RecomputeCostsResult {
+  /** B562 PR-3: true unless the caller sent `dryRun: false` — dry run is the default. */
   dryRun: boolean;
   processed: number;
+  /** Products whose average this call corrected (always 0 on a dry run). */
   updated: number;
   noHistory: { productId: string; name: string }[];
   /** B562: products whose StockMovement ledger can't account for their real
-   *  currentStock (order sales/edits write no movement row) — the replay
-   *  would be sales-blind, so nothing was written for these; `stockDrift` is
-   *  the unaccounted quantity. */
+   *  currentStock — the replay would run on a wrong stock balance, so nothing
+   *  is written for these; `stockDrift` is the unaccounted quantity. */
   gapsDetected: { productId: string; name: string; stockDrift: number }[];
+  /** B562 PR-3 (SA-136 §4): per product, the replayed average and — on an apply that changed it —
+   *  the id of the one appended COST_BASIS correction row. No existing row is ever rewritten. */
   results: {
     productId: string;
     name: string;
+    gap: number;
     oldAvgCost: number | null;
     newAvgCost: number | null;
-    stockDrift: number;
-    movementsBackfilled: number;
+    correctionId: string | null;
   }[];
 }
 
