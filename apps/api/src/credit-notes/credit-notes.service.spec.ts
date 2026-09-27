@@ -444,6 +444,10 @@ describe("CreditNotesService — P5-13 apply-math + auto-apply", () => {
 
   beforeEach(async () => {
     prisma = createMockPrisma();
+    // SA-436 (#2401): these pins describe the sweep with the tenant switch ON (it defaults OFF).
+    (prisma.tenantConfig.findUnique as jest.Mock).mockResolvedValue({
+      creditAutoApplyOnSend: true,
+    });
     const mod = await Test.createTestingModule({
       providers: [
         CreditNotesService,
