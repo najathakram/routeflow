@@ -45,6 +45,8 @@ function make(
     pricing?: any;
     /** count of the checkout's compare-and-swap on the plan (0 = the plan moved concurrently). */
     casCount?: number;
+    /** #2440: count of the plain SUSPENDED → CANCELLED compare-and-swap (no ledger delta). */
+    plainCasCount?: number;
   } = {},
 ) {
   const sub = overrides.sub ?? {
@@ -80,7 +82,11 @@ function make(
   const prisma = {
     tenant: {
       update: jest.fn().mockResolvedValue({}),
+      updateMany: jest.fn().mockResolvedValue({ count: overrides.plainCasCount ?? 0 }),
       findUnique: jest.fn().mockResolvedValue({ plan: "STARTER", planVersionId: "v1" }),
+    },
+    user: {
+      findFirst: jest.fn().mockResolvedValue({ email: "admin@example.test", username: "admin" }),
     },
     tenantSubscription: {
       findFirst: jest.fn().mockResolvedValue(sub),
@@ -112,6 +118,9 @@ function make(
       current_period_start: 1_700_000_000,
       current_period_end: 1_702_000_000,
     }),
+    createBillingPortalSession: jest
+      .fn()
+      .mockResolvedValue({ url: "https://billing.stripe.test/p/session_1" }),
   } as any;
   const email = { send: jest.fn().mockResolvedValue({}) } as any;
   const tenantStatus = { invalidate: jest.fn() } as any;
@@ -152,6 +161,7 @@ function make(
     prisma,
     tx,
     stripe,
+    email,
     events,
     tenantStatus,
     pricing,
@@ -165,15 +175,27 @@ const deltaOf = (events: any, type: string) => {
   return c ? c[3]?.amountDelta : undefined;
 };
 const emitted = (events: any) => events.emit.mock.calls.map((c: any[]) => c[1]);
+// #2440 (SA-450): subscription.deleted/updated match on the subscription id AND its customer, so
+// these fixtures carry both; a customer-only payload or a free pilot (no stripeSubId) is a no-op.
+const LIVE_SUB = {
+  tenantId: "t1",
+  planKey: "BUSINESS",
+  basePriceSnapshot: 349,
+  discount: 0,
+  stripeSubId: "sub_1",
+  stripeCustomerId: "cus_1",
+};
+const SUB_EVT = { id: "sub_1", customer: "cus_1" };
 
 describe("BillingService — Stripe churn/reactivation MRR ledger", () => {
   describe("onSubscriptionDeleted (→ CANCELLED)", () => {
     it("emits a NEGATIVE churn delta via an ACTIVE→CANCELLED CAS for a paying tenant", async () => {
       const { svc, tx, events } = make({
         transitionCount: 1,
+        sub: LIVE_SUB,
         addons: [{ priceSnapshot: 12, quantity: 2 }],
       });
-      await (svc as any).onSubscriptionDeleted({ customer: "cus_1" });
+      await (svc as any).onSubscriptionDeleted(SUB_EVT);
       // Atomic compare-and-swap on status is the idempotency key.
       expect(tx.tenant.updateMany.mock.calls[0][0]).toMatchObject({
         where: { id: "t1", status: "ACTIVE" },
@@ -183,26 +205,27 @@ describe("BillingService — Stripe churn/reactivation MRR ledger", () => {
       expect(deltaOf(events, BILLING_EVENTS.SUBSCRIPTION_CANCELED)).toBe(-373);
     });
 
-    it("is a NO-OP delta when the tenant was already non-ACTIVE, but still lands CANCELLED", async () => {
-      const { svc, prisma, events } = make({ transitionCount: 0 });
-      await (svc as any).onSubscriptionDeleted({ customer: "cus_1" });
+    it("is a NO-OP delta when the tenant was already non-ACTIVE and never force-writes a status", async () => {
+      const { svc, prisma, events } = make({ transitionCount: 0, sub: LIVE_SUB });
+      await (svc as any).onSubscriptionDeleted(SUB_EVT);
       expect(emitted(events)).not.toContain(BILLING_EVENTS.SUBSCRIPTION_CANCELED);
-      // Fallback still forces the terminal CANCELLED status (no duplicate delta).
-      expect(prisma.tenant.update.mock.calls[0][0].data).toMatchObject({ status: "CANCELLED" });
+      // SA-450 (2): the old unconditional tenant.update({status: CANCELLED}) forced TRIAL and
+      // READ_ONLY too; only the SUSPENDED → CANCELLED compare-and-swap remains.
+      expect(prisma.tenant.update).not.toHaveBeenCalled();
     });
 
     it("emits no delta for a legacy Stripe-only tenant (planKey null) even when the CAS wins", async () => {
       const { svc, events } = make({
         transitionCount: 1,
-        sub: { tenantId: "t1", planKey: null, basePriceSnapshot: null, discount: 0 },
+        sub: { ...LIVE_SUB, planKey: null, basePriceSnapshot: null },
       });
-      await (svc as any).onSubscriptionDeleted({ customer: "cus_1" });
+      await (svc as any).onSubscriptionDeleted(SUB_EVT);
       expect(events.emit).not.toHaveBeenCalled();
     });
 
     it("disarms a scheduled downgrade alongside cancelAtPeriodEnd (round 3, finding 10)", async () => {
-      const { svc, prisma } = make({ transitionCount: 1 });
-      await (svc as any).onSubscriptionDeleted({ customer: "cus_1" });
+      const { svc, prisma } = make({ transitionCount: 1, sub: LIVE_SUB });
+      await (svc as any).onSubscriptionDeleted(SUB_EVT);
       // A cancellation SUPERSEDES a scheduled downgrade — cancel()'s own rule. Left armed, the
       // 02:00 sweep re-prices basePriceSnapshot on an already-churned tenant and books a second
       // PLAN_CHANGED delta on top of the churn delta emitted here.
@@ -215,30 +238,28 @@ describe("BillingService — Stripe churn/reactivation MRR ledger", () => {
     });
 
     it("N3: notifies the tenant admin of the cancellation, after the DB writes above", async () => {
-      const { svc, billingNotification } = make({ transitionCount: 1 });
-      await (svc as any).onSubscriptionDeleted({ customer: "cus_1" });
+      const { svc, billingNotification } = make({ transitionCount: 1, sub: LIVE_SUB });
+      await (svc as any).onSubscriptionDeleted(SUB_EVT);
       expect(billingNotification.notifyCancelled).toHaveBeenCalledWith("t1");
     });
 
     it("N3: a rejected notifyCancelled never blocks the cancellation — onSubscriptionDeleted still resolves", async () => {
-      const { svc, billingNotification } = make({ transitionCount: 1 });
+      const { svc, billingNotification } = make({ transitionCount: 1, sub: LIVE_SUB });
       billingNotification.notifyCancelled.mockRejectedValueOnce(new Error("email down"));
-      await expect(
-        (svc as any).onSubscriptionDeleted({ customer: "cus_1" }),
-      ).resolves.toBeUndefined();
+      await expect((svc as any).onSubscriptionDeleted(SUB_EVT)).resolves.toBeUndefined();
     });
   });
 
   describe("onSubscriptionUpdated (round 3, finding 10)", () => {
     const evt = (cancelAtPeriodEnd: boolean) => ({
-      customer: "cus_1",
+      ...SUB_EVT,
       current_period_start: 1_700_000_000,
       current_period_end: 1_702_000_000,
       cancel_at_period_end: cancelAtPeriodEnd,
     });
 
     it("clears the downgrade markers when the update ARMS a cancellation", async () => {
-      const { svc, prisma } = make();
+      const { svc, prisma } = make({ sub: LIVE_SUB });
       await (svc as any).onSubscriptionUpdated(evt(true));
       expect(prisma.tenantSubscription.update.mock.calls[0][0].data).toMatchObject({
         cancelAtPeriodEnd: true,
@@ -249,7 +270,7 @@ describe("BillingService — Stripe churn/reactivation MRR ledger", () => {
     });
 
     it("leaves the downgrade markers untouched on an ordinary update", async () => {
-      const { svc, prisma } = make();
+      const { svc, prisma } = make({ sub: LIVE_SUB });
       await (svc as any).onSubscriptionUpdated(evt(false));
       // A cycle roll, a price sync or an add-on item arrives as subscription.updated too —
       // clearing the markers there would silently drop a downgrade the tenant scheduled.
@@ -1536,9 +1557,9 @@ describe("#2436 Stripe API dahlia — the subscription period lives on items", (
   });
 
   it("customer.subscription.updated reads a dahlia payload's period from items", async () => {
-    const { svc, prisma } = make();
+    const { svc, prisma } = make({ sub: LIVE_SUB });
     await (svc as any).onSubscriptionUpdated({
-      customer: "cus_1",
+      ...SUB_EVT,
       cancel_at_period_end: false,
       ...dahlia(),
     });
@@ -1567,17 +1588,17 @@ describe("#2436 Stripe API dahlia — the subscription period lives on items", (
   });
 
   it("a subscription with no period anywhere writes NO period fields (never an Invalid Date)", async () => {
-    const { svc, prisma } = make();
-    await (svc as any).onSubscriptionUpdated({ customer: "cus_1", cancel_at_period_end: false });
+    const { svc, prisma } = make({ sub: LIVE_SUB });
+    await (svc as any).onSubscriptionUpdated({ ...SUB_EVT, cancel_at_period_end: false });
     const data = prisma.tenantSubscription.update.mock.calls[0][0].data;
     expect(data).not.toHaveProperty("periodStart");
     expect(data).not.toHaveProperty("periodEnd");
   });
 
   it("a pre-dahlia payload (top-level period, older endpoint version) still reads its period", async () => {
-    const { svc, prisma } = make();
+    const { svc, prisma } = make({ sub: LIVE_SUB });
     await (svc as any).onSubscriptionUpdated({
-      customer: "cus_1",
+      ...SUB_EVT,
       cancel_at_period_end: false,
       current_period_start: 1_700_000_000,
       current_period_end: 1_702_000_000,
@@ -1585,5 +1606,263 @@ describe("#2436 Stripe API dahlia — the subscription period lives on items", (
     const data = prisma.tenantSubscription.update.mock.calls[0][0].data;
     expect(data.periodStart).toEqual(START);
     expect(data.periodEnd).toEqual(END);
+  });
+});
+
+// #2440 (SA-450, tier 1): subscription upkeep. deleted/updated match on the subscription id AND its
+// customer (never a customer-wide write); a webhook never forces TRIAL/READ_ONLY to CANCELLED; the −MRR
+// churn delta is booked once per lifecycle (SUSPENDED already removed the run-rate); updated maps only
+// `canceled`; payment_failed counts and links the billing portal; free pilots (no stripeSubId) are
+// untouched by every branch. Real-Postgres pins are F2's NEED-DB.
+describe("#2440 subscription upkeep — match by subscription id, status mapping, dunning", () => {
+  const writesNothing = (prisma: any, tx: any, events: any) => {
+    expect(tx.tenant.updateMany).not.toHaveBeenCalled();
+    expect(prisma.tenant.update).not.toHaveBeenCalled();
+    expect(prisma.tenant.updateMany).not.toHaveBeenCalled();
+    expect(prisma.tenantSubscription.update).not.toHaveBeenCalled();
+    expect(events.emit).not.toHaveBeenCalled();
+  };
+
+  describe("customer.subscription.deleted", () => {
+    it("looks the row up by the subscription id, not the customer", async () => {
+      const { svc, prisma } = make({ transitionCount: 1, sub: LIVE_SUB });
+      await (svc as any).onSubscriptionDeleted(SUB_EVT);
+      expect(prisma.tenantSubscription.findFirst.mock.calls[0][0].where).toEqual({
+        stripeSubId: "sub_1",
+      });
+    });
+
+    it("another customer's subscription id ⇒ log + no-op (no status, row, ledger or email)", async () => {
+      const { svc, prisma, tx, events, billingNotification } = make({
+        transitionCount: 1,
+        sub: { ...LIVE_SUB, stripeCustomerId: "cus_other" },
+      });
+      await (svc as any).onSubscriptionDeleted(SUB_EVT);
+      writesNothing(prisma, tx, events);
+      expect(billingNotification.notifyCancelled).not.toHaveBeenCalled();
+    });
+
+    it("no matching row ⇒ no-op", async () => {
+      const { svc, prisma, tx, events } = make({ transitionCount: 1 });
+      prisma.tenantSubscription.findFirst.mockResolvedValue(null);
+      await (svc as any).onSubscriptionDeleted(SUB_EVT);
+      writesNothing(prisma, tx, events);
+    });
+
+    it("a payload without a subscription id ⇒ no lookup, no-op", async () => {
+      const { svc, prisma, tx, events } = make({ transitionCount: 1, sub: LIVE_SUB });
+      await (svc as any).onSubscriptionDeleted({ customer: "cus_1" });
+      expect(prisma.tenantSubscription.findFirst).not.toHaveBeenCalled();
+      writesNothing(prisma, tx, events);
+    });
+
+    it("a free pilot (no stripeSubId on the row) is untouched", async () => {
+      const { svc, prisma, tx, events } = make({
+        transitionCount: 1,
+        sub: { ...LIVE_SUB, stripeSubId: null },
+      });
+      await (svc as any).onSubscriptionDeleted(SUB_EVT);
+      writesNothing(prisma, tx, events);
+    });
+
+    it("SUSPENDED ⇒ CANCELLED by a plain compare-and-swap, with NO second −MRR delta", async () => {
+      const { svc, prisma, events, billingNotification } = make({
+        transitionCount: 0, // not ACTIVE
+        plainCasCount: 1,
+        sub: LIVE_SUB,
+      });
+      await (svc as any).onSubscriptionDeleted(SUB_EVT);
+      expect(prisma.tenant.updateMany.mock.calls[0][0]).toEqual({
+        where: { id: "t1", status: "SUSPENDED" },
+        data: { status: "CANCELLED" },
+      });
+      // Suspension (cron or platform admin) already booked the −MRR; cancelling books nothing.
+      expect(events.emit).not.toHaveBeenCalled();
+      expect(prisma.tenantSubscription.update.mock.calls[0][0].data).toMatchObject({
+        cancelAtPeriodEnd: true,
+      });
+      expect(billingNotification.notifyCancelled).toHaveBeenCalledWith("t1");
+    });
+
+    it("TRIAL / READ_ONLY are never forced to CANCELLED (both compare-and-swaps lose)", async () => {
+      const { svc, prisma, events, billingNotification } = make({
+        transitionCount: 0,
+        plainCasCount: 0,
+        sub: LIVE_SUB,
+      });
+      await (svc as any).onSubscriptionDeleted(SUB_EVT);
+      expect(prisma.tenant.update).not.toHaveBeenCalled();
+      expect(prisma.tenantSubscription.update).not.toHaveBeenCalled();
+      expect(events.emit).not.toHaveBeenCalled();
+      expect(billingNotification.notifyCancelled).not.toHaveBeenCalled();
+    });
+
+    it("a duplicate webhook after ACTIVE ⇒ CANCELLED books the churn delta exactly once", async () => {
+      const { svc, tx, events } = make({ transitionCount: 1, sub: LIVE_SUB });
+      await (svc as any).onSubscriptionDeleted(SUB_EVT);
+      tx.tenant.updateMany.mockResolvedValue({ count: 0 }); // now CANCELLED: the CAS loses
+      await (svc as any).onSubscriptionDeleted(SUB_EVT);
+      expect(
+        emitted(events).filter((t: string) => t === BILLING_EVENTS.SUBSCRIPTION_CANCELED),
+      ).toHaveLength(1);
+    });
+  });
+
+  describe("customer.subscription.updated", () => {
+    const upd = (status: string, extra: Record<string, unknown> = {}) => ({
+      ...SUB_EVT,
+      status,
+      cancel_at_period_end: false,
+      ...extra,
+    });
+
+    it("looks the row up by the subscription id", async () => {
+      const { svc, prisma } = make({ sub: LIVE_SUB });
+      await (svc as any).onSubscriptionUpdated(upd("active"));
+      expect(prisma.tenantSubscription.findFirst.mock.calls[0][0].where).toEqual({
+        stripeSubId: "sub_1",
+      });
+    });
+
+    it("status canceled behaves as deleted: ACTIVE ⇒ CANCELLED with one −MRR delta", async () => {
+      const { svc, tx, events } = make({ transitionCount: 1, sub: LIVE_SUB });
+      await (svc as any).onSubscriptionUpdated(upd("canceled"));
+      expect(tx.tenant.updateMany.mock.calls[0][0]).toMatchObject({
+        where: { id: "t1", status: "ACTIVE" },
+        data: { status: "CANCELLED" },
+      });
+      expect(deltaOf(events, BILLING_EVENTS.SUBSCRIPTION_CANCELED)).toBe(-349);
+    });
+
+    it.each(["past_due", "unpaid", "trialing", "active", "incomplete"])(
+      "status %s writes NO tenant status (grace stays with the cron, reinstatement with payment)",
+      async (status) => {
+        const { svc, prisma, tx, events } = make({
+          transitionCount: 1,
+          plainCasCount: 1,
+          sub: LIVE_SUB,
+        });
+        await (svc as any).onSubscriptionUpdated(upd(status));
+        expect(tx.tenant.updateMany).not.toHaveBeenCalled();
+        expect(prisma.tenant.updateMany).not.toHaveBeenCalled();
+        expect(prisma.tenant.update).not.toHaveBeenCalled();
+        expect(events.emit).not.toHaveBeenCalled();
+      },
+    );
+
+    it("another customer's subscription id ⇒ no write at all", async () => {
+      const { svc, prisma, tx, events } = make({
+        transitionCount: 1,
+        sub: { ...LIVE_SUB, stripeCustomerId: "cus_other" },
+      });
+      await (svc as any).onSubscriptionUpdated(upd("canceled"));
+      writesNothing(prisma, tx, events);
+    });
+
+    it("a free pilot (no stripeSubId on the row) is untouched", async () => {
+      const { svc, prisma, tx, events } = make({ sub: { ...LIVE_SUB, stripeSubId: null } });
+      await (svc as any).onSubscriptionUpdated(upd("canceled", { cancel_at_period_end: true }));
+      writesNothing(prisma, tx, events);
+    });
+  });
+
+  describe("invoice.payment_failed", () => {
+    const FAILING = {
+      ...LIVE_SUB,
+      failedPaymentCount: 0,
+      tenant: { id: "t1", slug: "acme", name: "Acme" },
+    };
+    // Under dahlia the invoice's subscription lives at parent.subscription_details.subscription.
+    const failed = (extra: Record<string, unknown> = {}) => ({
+      customer: "cus_1",
+      parent: { subscription_details: { subscription: "sub_1" } },
+      ...extra,
+    });
+
+    it("matches by the invoice's subscription id and increments failedPaymentCount", async () => {
+      const { svc, prisma } = make({ sub: FAILING });
+      await (svc as any).onPaymentFailed(failed());
+      expect(prisma.tenantSubscription.findFirst.mock.calls[0][0].where).toEqual({
+        stripeSubId: "sub_1",
+      });
+      expect(prisma.tenantSubscription.update.mock.calls[0][0]).toEqual({
+        where: { tenantId: "t1" },
+        data: { failedPaymentCount: { increment: 1 } },
+      });
+    });
+
+    it("reads a pre-dahlia invoice's top-level subscription too", async () => {
+      const { svc, prisma } = make({ sub: FAILING });
+      await (svc as any).onPaymentFailed({ customer: "cus_1", subscription: { id: "sub_1" } });
+      expect(prisma.tenantSubscription.update).toHaveBeenCalledTimes(1);
+    });
+
+    it("the warning email carries the billing-portal link", async () => {
+      const { svc, stripe, email } = make({ sub: FAILING });
+      await (svc as any).onPaymentFailed(failed());
+      expect(stripe.createBillingPortalSession).toHaveBeenCalledWith(
+        expect.objectContaining({ customerId: "cus_1" }),
+      );
+      expect(email.send).toHaveBeenCalledTimes(1);
+      expect(email.send.mock.calls[0][0].html).toContain("https://billing.stripe.test/p/session_1");
+    });
+
+    it("a portal failure still sends the email, with today's fallback text", async () => {
+      const { svc, stripe, email } = make({ sub: FAILING });
+      stripe.createBillingPortalSession.mockRejectedValue(new Error("portal down"));
+      await (svc as any).onPaymentFailed(failed());
+      expect(email.send).toHaveBeenCalledTimes(1);
+      expect(email.send.mock.calls[0][0].html).toContain("contacting support");
+    });
+
+    it("changes no tenant status", async () => {
+      const { svc, prisma, tx, events } = make({ sub: FAILING });
+      await (svc as any).onPaymentFailed(failed());
+      expect(tx.tenant.updateMany).not.toHaveBeenCalled();
+      expect(prisma.tenant.update).not.toHaveBeenCalled();
+      expect(prisma.tenant.updateMany).not.toHaveBeenCalled();
+      expect(events.emit).not.toHaveBeenCalled();
+    });
+
+    it("another customer's subscription id ⇒ no count, no email", async () => {
+      const { svc, prisma, email } = make({ sub: { ...FAILING, stripeCustomerId: "cus_other" } });
+      await (svc as any).onPaymentFailed(failed());
+      expect(prisma.tenantSubscription.update).not.toHaveBeenCalled();
+      expect(email.send).not.toHaveBeenCalled();
+    });
+
+    it("an invoice with no subscription (free pilot / one-off) is untouched", async () => {
+      const { svc, prisma, email } = make({ sub: { ...FAILING, stripeSubId: null } });
+      await (svc as any).onPaymentFailed({ customer: "cus_1" });
+      expect(prisma.tenantSubscription.findFirst).not.toHaveBeenCalled();
+      expect(prisma.tenantSubscription.update).not.toHaveBeenCalled();
+      expect(email.send).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("invoice.payment_succeeded resets the failure count", () => {
+    const paying = (failedPaymentCount: number) => ({
+      ...LIVE_SUB,
+      failedPaymentCount,
+      tenant: { status: "ACTIVE" },
+    });
+
+    it("resets failedPaymentCount to 0 after a failure", async () => {
+      const { svc, prisma } = make({ transitionCount: 0, sub: paying(2) });
+      await (svc as any).onPaymentSucceeded({ customer: "cus_1" });
+      const reset = prisma.tenantSubscription.update.mock.calls.find(
+        (c: any[]) => c[0].data?.failedPaymentCount !== undefined,
+      );
+      expect(reset?.[0]).toEqual({ where: { tenantId: "t1" }, data: { failedPaymentCount: 0 } });
+    });
+
+    it("writes no reset when the count is already 0", async () => {
+      const { svc, prisma } = make({ transitionCount: 0, sub: paying(0) });
+      await (svc as any).onPaymentSucceeded({ customer: "cus_1" });
+      const reset = prisma.tenantSubscription.update.mock.calls.find(
+        (c: any[]) => c[0].data?.failedPaymentCount !== undefined,
+      );
+      expect(reset).toBeUndefined();
+    });
   });
 });
