@@ -321,7 +321,7 @@ describeDb("#2409 a SKIPPED stop refuses a replayed completion — real Postgres
     // F2 (#938): the concurrent race above never produced the B707 interleave — the quick skip
     // always committed before completeWithPayment's long tx reached its claim. This latch forces
     // it: updateStopStatus reads the stop (PENDING), then reads the run via
-    // forTenant().routeRun.findFirst — the pause point, identical in the pre-#2415 code, so this
+    // forTenant().routeRun.findFirst — the pause point (AFTER that read), identical in the pre-#2415 code, so this
     // pin is RED on the old check-then-update (the skip overwrites COMPLETED with SKIPPED).
     const s = await seedSkippedStop("latch");
     await setStopStatus(s.stopId, "PENDING");
@@ -344,9 +344,14 @@ describeDb("#2409 a SKIPPED stop refuses a replayed completion — real Postgres
               if (method !== "findFirst" || !armed) return fn;
               return async (...args: unknown[]) => {
                 armed = false; // one pause only — the skip's run read
+                // F2 (#2511 @d7ca35c5): read the run FIRST, then hold. Holding before the read let
+                // the single-stop fixture's completion also complete the RUN, so the skip was
+                // refused by the run guard ("completed run") on both codes and never reached the
+                // CAS. With the run already read as IN_PROGRESS, the skip goes on to its write.
+                const result = await Reflect.apply(fn, delegate, args);
                 reachedPause();
                 await gate;
-                return Reflect.apply(fn, delegate, args);
+                return result;
               };
             },
           });
