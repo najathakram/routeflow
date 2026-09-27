@@ -159,7 +159,11 @@ describeDb(
     async function makeTenant(
       tag: string,
       status: TenantStatus,
-      sub?: { planKey: string | null; basePriceSnapshot: number | null },
+      sub?: {
+        planKey: string | null;
+        basePriceSnapshot: number | null;
+        cycle?: "MONTHLY" | "ANNUAL";
+      },
     ): Promise<string> {
       const slug = assertTestTenant(
         `qa-b2460-${tag}-${run}`,
@@ -176,6 +180,7 @@ describeDb(
             planKey: sub.planKey,
             basePriceSnapshot: sub.basePriceSnapshot,
             discount: 0,
+            ...(sub.cycle ? { cycle: sub.cycle } : {}),
           },
         });
       }
@@ -305,6 +310,22 @@ describeDb(
       expect(await figures(id)).toEqual({ snapshot: 0, ledger: 0 });
 
       await mutation.upgrade(id, "GROWTH", "admin-2460");
+
+      expect(await figures(id)).toEqual({ snapshot: price.GROWTH, ledger: price.GROWTH });
+    });
+
+    // SA-464a condition: subscribe()'s re-entry nets against the snapshot its LOCKED re-read selects
+    // (the select #2460 added) — executed here on real Postgres, not a mock. An ACTIVE NULL-snapshot
+    // row re-choosing its plan (a cycle switch, which the B58 guard allows) books the full new price.
+    it("subscribe() re-choice on an ACTIVE NULL-snapshot row books the full new price; figures re-agree", async () => {
+      const id = await makeTenant("resub", TenantStatus.ACTIVE, {
+        planKey: "STARTER",
+        basePriceSnapshot: null,
+        cycle: "ANNUAL",
+      });
+      expect(await figures(id)).toEqual({ snapshot: 0, ledger: 0 });
+
+      await mutation.subscribe(id, { planKey: "GROWTH", cycle: "MONTHLY" } as any, "admin-2460");
 
       expect(await figures(id)).toEqual({ snapshot: price.GROWTH, ledger: price.GROWTH });
     });
