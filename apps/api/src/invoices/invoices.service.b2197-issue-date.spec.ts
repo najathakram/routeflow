@@ -37,6 +37,7 @@ import { EntitlementsService } from "../billing/entitlements.service";
 import { CommissionEngineService } from "../sales-agents/commission-engine.service";
 import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
 import { InvoiceStatus } from "@prisma/client";
+import { entitlementAuthorityFromEntitlements } from "../testing/entitlement-authority-provider";
 
 describe("InvoicesService — #2197 issueDate is the literal calendar day", () => {
   let service: InvoicesService;
@@ -111,6 +112,7 @@ describe("InvoicesService — #2197 issueDate is the literal calendar day", () =
         { provide: MessagingService, useValue: mockMessaging },
         { provide: StorageService, useValue: mockStorage },
         { provide: EntitlementsService, useValue: mockEntitlements },
+        entitlementAuthorityFromEntitlements, // #2241
         { provide: CommissionEngineService, useValue: mockCommissionEngine },
         { provide: NumberingService, useValue: mockNumbering },
       ],
