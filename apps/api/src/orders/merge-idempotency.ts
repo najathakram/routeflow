@@ -1,4 +1,6 @@
+import { ConflictException, ForbiddenException } from "@nestjs/common";
 import { createHash } from "crypto";
+import { assertReplayCarriesReturnKey } from "./order-inline-return";
 
 // Canonical JSON: object keys sorted, undefined-valued keys dropped (an absent field and a
 // missing field fingerprint the same), arrays kept in order at this level.
@@ -27,6 +29,8 @@ export function mergeRequestHash(input: {
   customerId: string;
   items?: readonly unknown[] | null;
   appliedCreditNotes?: unknown;
+  /** #2094: a return added or changed on a replay must not be silently dropped. */
+  inlineReturn?: unknown;
 }): string {
   const items = (input.items ?? []).map(stable).sort();
   // Same treatment as `items`: stable-serialize each entry, then sort the serialized strings.
@@ -41,6 +45,8 @@ export function mergeRequestHash(input: {
         customerId: input.customerId,
         items,
         appliedCreditNotes,
+        // A cart with no return fingerprints exactly as before (an absent key is dropped by stable()).
+        inlineReturn: input.inlineReturn ?? undefined,
       }),
     )
     .digest("hex");
@@ -104,4 +110,120 @@ export function shouldSkipInPlaceResync(
     (li) => Number(li.invoicedQty ?? 0) >= Number(li.qty ?? 0) - QTY_EPSILON,
   );
   return anyInvoiced && !allFullyInvoiced;
+}
+
+/** What the extracted replay lookup needs from OrdersService: its prisma client and logger. */
+export interface IdempotencyLookupDeps {
+  prisma: { getTenantId(): string | null; forTenant(): any };
+  logger: { warn(message: string): void };
+}
+
+export async function findOrderIdByIdempotencyKey(
+  deps: IdempotencyLookupDeps,
+  idempotencyKey: string,
+  customerId: string,
+  requestHash?: string,
+): Promise<{ orderId: string; verified: boolean } | null> {
+  // B215: `forTenant()` hands back the UNSCOPED client when the session carries no tenant
+  // (prisma.service.ts `forTenant`), so for such a caller the lookups below would search
+  // every tenant's rows. Refuse up front — before any read and before the controller enters
+  // the fold — mirroring the identical guard in `create()`. `recordMergeIdempotencyKey`
+  // keeps the same check as the fail-closed backstop inside the fold's transaction.
+  if (!deps.prisma.getTenantId()) {
+    deps.logger.warn(`idempotency key refused: no tenant scope key=${idempotencyKey}`);
+    throw new ForbiddenException("Idempotency-Key requires a tenant-scoped session");
+  }
+  // B215: every staff merge wave records its OWN key in OrderIdempotencyKey (written inside
+  // the fold's transaction by recordMergeIdempotencyKey), so that table is the authoritative
+  // replay store for the merge branch. Scoped to THIS customer through the order relation —
+  // the key is client-chosen, so a bare match could replay onto another customer's order.
+  const keyed = await deps.prisma.forTenant().orderIdempotencyKey.findFirst({
+    where: { key: idempotencyKey, order: { customerId } },
+    select: { orderId: true, responseHash: true },
+  });
+  if (keyed) {
+    if (requestHash !== undefined && keyed.responseHash !== requestHash) {
+      deps.logger.warn(
+        `idempotency replay refused: cart mismatch tenant=${deps.prisma.getTenantId()} ` +
+          `customer=${customerId} order=${keyed.orderId} key=${idempotencyKey}`,
+      );
+      // B215: machine-readable body — the mobile client cannot mint a fresh key without
+      // abandoning the cart, so it needs `orderId` to offer "Open order" instead of wedging
+      // the screen on a bare message.
+      throw new ConflictException({
+        code: IDEMPOTENCY_KEY_CONFLICT,
+        reason: "CART_MISMATCH",
+        orderId: keyed.orderId,
+        message:
+          "Idempotency-Key reused with a different cart — open the existing order to edit it, or retry it unchanged",
+      });
+    }
+    // VERIFIED only when a fingerprint was supplied AND matched: a caller that passes no
+    // `requestHash` (the db-spec's bare two-argument probe, any future keyless caller) has
+    // proven nothing about the body, so it gets the same unverified treatment as a column hit.
+    return { orderId: keyed.orderId, verified: requestHash !== undefined };
+  }
+  // The single Order column: keys stamped by create() and by recordIdempotencyKey. Unchanged.
+  // B215: deliberately NOT compared against `requestHash` — the column stores no fingerprint,
+  // and its main producer is the create -> retry path (the first POST creates the order and
+  // stamps the key; the retry finds it pending and enters the merge branch). Refusing that
+  // replay for want of a hash would re-open the double-write this fix exists to close, so a
+  // column-only hit is replay-eligible. The key TABLE, which does store the hash, is the only
+  // path that refuses on a mismatch. Pinned by P5.
+  //
+  // B215 (lookup ORDER, D3): this customer-scoped column read runs BEFORE the tenant-wide
+  // `heldByAnotherOrder` check below. Both are "the key exists somewhere in this tenant", but
+  // only this one proves it is THIS customer's own order — checking the tenant-wide table
+  // first refused a legitimate replay of the caller's own key with a 409 whenever the key sat
+  // on the Order column here and any other customer happened to hold a key-table row.
+  const existing = await deps.prisma.forTenant().order.findFirst({
+    where: { idempotencyKey, customerId },
+    select: { id: true },
+  });
+  // UNVERIFIED by construction: the column stores no fingerprint, so this hit proves only
+  // "this customer's order already used this key", never "with this cart".
+  if (existing) return { orderId: existing.id, verified: false };
+  // B215: the key may already belong to ANOTHER customer's order in this tenant. The in-tx
+  // insert catches that through `@@unique([tenantId, key])`, but only after
+  // `revertLinkedInvoicesForOrderEdit` has committed on its own connection (outside the fold)
+  // and the whole fold has run — so a 409 there leaves a linked invoice flipped SENT -> DRAFT
+  // for an edit that never landed. Refuse here instead: this lookup runs inside the customer
+  // advisory lock, before any write. The P2002 branch of `recordMergeIdempotencyKey` stays as
+  // the backstop for a true race (a customer-keyed lock does not serialize against another
+  // customer's fold).
+  const heldByAnotherOrder = await deps.prisma.forTenant().orderIdempotencyKey.findFirst({
+    where: { key: idempotencyKey },
+    select: { orderId: true },
+  });
+  if (heldByAnotherOrder) {
+    deps.logger.warn(
+      `idempotency key already held by another order: refused before the fold ` +
+        `tenant=${deps.prisma.getTenantId()} customer=${customerId} ` +
+        `order=${heldByAnotherOrder.orderId} key=${idempotencyKey}`,
+    );
+    throw new ConflictException({
+      code: IDEMPOTENCY_KEY_CONFLICT,
+      reason: "HELD_BY_OTHER_ORDER",
+      orderId: heldByAnotherOrder.orderId,
+      message: "Idempotency-Key already used for a different order",
+    });
+  }
+  return null;
+}
+
+/**
+ * #2094 (Opus R): `findOrderIdByIdempotencyKey`, then a request that carries a return checks it on
+ * EVERY key hit, verified or not (a merge target legitimately holds earlier returns, so only a
+ * request with a returnKey is checked).
+ */
+export async function findOrderIdByKeyCheckingReturn(
+  deps: IdempotencyLookupDeps & { prisma: { forTenant(): unknown } },
+  idempotencyKey: string,
+  customerId: string,
+  requestHash?: string,
+  returnKey?: string,
+): Promise<{ orderId: string; verified: boolean } | null> {
+  const hit = await findOrderIdByIdempotencyKey(deps, idempotencyKey, customerId, requestHash);
+  if (hit) await assertReplayCarriesReturnKey(deps.prisma.forTenant(), returnKey, hit.orderId);
+  return hit;
 }

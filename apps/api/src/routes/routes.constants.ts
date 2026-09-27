@@ -18,6 +18,9 @@ export const RUN_LINE_ITEMS_SELECT = {
   productId: true,
   product: { select: { id: true, name: true, unit: true } },
   qty: true,
+  // SA-345a: the legacy delivered column — the ONLY evidence for a line delivered before
+  // DeliveryMutation rows existed; the run projection reads it when a line has no row.
+  deliveredQty: true,
   unitPrice: true,
   status: true,
   subtotal: true,
@@ -94,6 +97,13 @@ export const RUN_STOP_INCLUDE = {
           total: true,
         },
       },
+      // B810/SA-130a: `payableInvoices` (SA-125's SEPARATE, non-DRAFT-only list,
+      // mirroring recordDeliveryPaymentInTx's own PAYABLE query) is deliberately
+      // NOT selected here — `Order` has no such relation, only `invoices` above.
+      // It is fetched as its own batched `invoice.findMany` and attached
+      // afterward (see run-invoice-balance.ts and this file's 4 call sites in
+      // routes.service.ts) — nesting it under this `select` throws `Unknown
+      // field 'payableInvoices'` against the real Prisma client.
       lineItems: { select: RUN_LINE_ITEMS_SELECT },
     },
   },

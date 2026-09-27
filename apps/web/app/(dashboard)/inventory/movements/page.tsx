@@ -167,14 +167,14 @@ export default function MovementsPage() {
             type="date"
             value={filters.from}
             onChange={(e) => handleFilterChange("from", e.target.value)}
-            className="rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
+            className="w-36 rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
           />
           <span className="text-sm text-navy/70">to</span>
           <input
             type="date"
             value={filters.to}
             onChange={(e) => handleFilterChange("to", e.target.value)}
-            className="rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
+            className="w-36 rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
           />
         </div>
 
@@ -224,7 +224,8 @@ export default function MovementsPage() {
                 return (
                   <tr key={m.id} className="transition-colors hover:bg-surface-raised/50">
                     <td className="px-4 py-3 text-navy/70 whitespace-nowrap">
-                      {formatDate(m.createdAt)}
+                      {/* B562: the movement's accounting date (a backdated receipt shows its own date). */}
+                      {formatDate(m.effectiveAt ?? m.createdAt)}
                     </td>
                     <td className="px-4 py-3">
                       {m.product?.id ? (

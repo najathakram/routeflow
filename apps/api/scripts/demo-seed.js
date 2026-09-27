@@ -1658,6 +1658,8 @@ async function writeOpeningStock(products, orders, supplierIds, operatorId) {
         reference: "Opening balance",
         notes: "Demo opening stock",
         performedById: operatorId,
+        // B562: effectiveAt is the accounting date every replay/cost reader keys on.
+        effectiveAt: openedAt,
         createdAt: openedAt,
       }),
     );

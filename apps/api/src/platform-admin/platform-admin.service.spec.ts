@@ -605,6 +605,10 @@ describe("PlatformAdminService — audit provenance", () => {
       slug: "acme",
       plan: "STARTER",
       status: "ACTIVE",
+      // SA-140: updatePlan()'s wasPaying/isPaying now route through isPayingRow, which needs
+      // class/deletedAt too.
+      class: "PRODUCTION",
+      deletedAt: null,
     } as any);
     prisma.tenant.update.mockResolvedValue({
       id: TENANT_ID,
@@ -691,6 +695,8 @@ describe("PlatformAdminService — audit provenance", () => {
       slug: "acme",
       plan: "STARTER",
       status: "ACTIVE",
+      class: "PRODUCTION",
+      deletedAt: null,
     } as any);
     prisma.tenant.update.mockResolvedValue({
       id: TENANT_ID,
@@ -737,6 +743,8 @@ describe("PlatformAdminService — audit provenance", () => {
       slug: "acme",
       plan: "STARTER",
       status: "ACTIVE",
+      class: "PRODUCTION",
+      deletedAt: null,
     } as any);
     prisma.tenant.update.mockResolvedValue({
       id: TENANT_ID,
@@ -1133,8 +1141,103 @@ describe("PlatformAdminService — audit provenance", () => {
     });
   });
 
-  it("price-override back-fills a null basePriceSnapshot for a custom plan and emits the run-rate delta", async () => {
+  // B864 / SA-277: updateTenantPriceOverride()'s back-fill branch books the run-rate delta
+  // unconditionally — it never checks whether the tenant is actually in MrrService's paying
+  // set (isPayingRow), so entering the negotiated fee on a still-TRIAL ENTERPRISE tenant books
+  // a delta for a tenant that isn't paying yet. The snapshot itself must still be written (the
+  // fee is real, priced-in data), but nothing should be booked until the tenant crosses into
+  // the paying set (e.g. via activateManualSubscription — see REG-B864-TRIAL-OVERRIDE below).
+  it("REG-B864-TRIAL-OVERRIDE books nothing on a TRIAL tenant (flips REG-OVERRIDE-BACKFILL-TRIAL + :1144, SA-277)", async () => {
     prisma.tenant.findUnique.mockResolvedValue({ id: TENANT_ID, slug: "acme" } as any);
+    prisma.tenant.findUniqueOrThrow.mockResolvedValue({
+      status: "TRIAL",
+      class: "PRODUCTION",
+      deletedAt: null,
+      subscription: { planKey: "ENTERPRISE" },
+    } as any);
+    (prisma as any).tenantSubscription.findUnique.mockResolvedValue({
+      priceOverrideMonthly: null,
+      planKey: "ENTERPRISE",
+      basePriceSnapshot: null,
+    });
+
+    await service.updateTenantPriceOverride(TENANT_ID, { monthly: 1200 } as any, ADMIN_ID);
+
+    const upsertArg = (prisma as any).tenantSubscription.upsert.mock.calls.at(-1)[0];
+    // The snapshot is still real, priced-in data — the back-fill write itself is unaffected.
+    expect(upsertArg.update.basePriceSnapshot).toBe(1200);
+    // RED today: the bug books the delta regardless of the tenant's paying-set status.
+    expect(billingEventService.emit.mock.calls.map((c: any) => c[3]?.amountDelta)).toEqual([]);
+  });
+
+  it("REG-B864-TRIAL-OVERRIDE override then activation books exactly +1200 once", async () => {
+    prisma.tenant.findUnique.mockResolvedValue({ id: TENANT_ID, slug: "acme" } as any);
+    prisma.tenant.findUniqueOrThrow.mockResolvedValue({
+      status: "TRIAL",
+      class: "PRODUCTION",
+      deletedAt: null,
+      subscription: { planKey: "ENTERPRISE" },
+    } as any);
+    (prisma as any).tenantSubscription.findUnique.mockResolvedValue({
+      priceOverrideMonthly: null,
+      planKey: "ENTERPRISE",
+      basePriceSnapshot: null,
+    });
+
+    await service.updateTenantPriceOverride(TENANT_ID, { monthly: 1200 } as any, ADMIN_ID);
+
+    // The negotiated fee is now on the row — activation is the moment this TRIAL tenant
+    // actually crosses into the paying set, and that crossing is what should book the delta.
+    prisma.tenant.findUniqueOrThrow.mockResolvedValue({
+      status: "TRIAL",
+      class: "PRODUCTION",
+      deletedAt: null,
+      subscription: { planKey: "ENTERPRISE", basePriceSnapshot: 1200, discount: 0 },
+    } as any);
+    (prisma as any).tenantAddon.findMany.mockResolvedValue([]);
+    planCatalogService.getPublishedVersion.mockResolvedValue({
+      id: "v-9",
+      definitions: [{ planKey: "SCALE", monthlyPrice: 499, isCustom: false }],
+    } as any);
+    prisma.tenant.update.mockResolvedValue({
+      id: TENANT_ID,
+      slug: "acme",
+      status: "ACTIVE",
+      plan: "PROFESSIONAL",
+    } as any);
+
+    await service.activateManualSubscription(
+      TENANT_ID,
+      { plan: "PROFESSIONAL", billingPeriodDays: 365, paymentMethod: "BANK_TRANSFER" } as any,
+      ADMIN_ID,
+    );
+
+    // RED today: the override above ALSO books +1200 it shouldn't, so the total is 2400 —
+    // the tenant's negotiated fee gets counted twice for one real crossing into paying.
+    const totalDelta = billingEventService.emit.mock.calls.reduce(
+      (sum: number, c: any) => sum + (c[3]?.amountDelta ?? 0),
+      0,
+    );
+    expect(totalDelta).toBe(1200);
+    expect(billingEventService.emit).toHaveBeenCalledWith(
+      TENANT_ID,
+      "plan.changed",
+      expect.anything(),
+      expect.objectContaining({ actorId: ADMIN_ID }),
+    );
+  });
+
+  // P3 (pin, SA-277): a tenant that's already ACTIVE/PRODUCTION with a resolved planKey is
+  // already in the paying set — the back-fill delta must still book for it, unchanged from
+  // before this bug's fix.
+  it("price-override on an ACTIVE/PRODUCTION tenant still books the run-rate delta with actorId (P3)", async () => {
+    prisma.tenant.findUnique.mockResolvedValue({ id: TENANT_ID, slug: "acme" } as any);
+    prisma.tenant.findUniqueOrThrow.mockResolvedValue({
+      status: "ACTIVE",
+      class: "PRODUCTION",
+      deletedAt: null,
+      subscription: { planKey: "ENTERPRISE" },
+    } as any);
     (prisma as any).tenantSubscription.findUnique.mockResolvedValue({
       priceOverrideMonthly: null,
       planKey: "ENTERPRISE",
@@ -1152,8 +1255,15 @@ describe("PlatformAdminService — audit provenance", () => {
       TENANT_ID,
       "plan.changed",
       expect.objectContaining({ toPlan: "ENTERPRISE", priceOverrideBackfill: true }),
-      expect.objectContaining({ amountDelta: 1200 }),
+      expect.objectContaining({ amountDelta: 1200, actorId: ADMIN_ID }),
     );
+    // P3: the tenant row lock (:1451) runs inside the tx, before the paying-set read
+    // (findUniqueOrThrow) it gates — a racing activateManualSubscription() must serialize
+    // on the lock before this decides backfillBase's emit.
+    expect(prisma.$queryRaw).toHaveBeenCalledTimes(1);
+    const lockOrder = (prisma.$queryRaw as jest.Mock).mock.invocationCallOrder[0];
+    const readOrder = (prisma.tenant.findUniqueOrThrow as jest.Mock).mock.invocationCallOrder[0];
+    expect(lockOrder).toBeLessThan(readOrder);
   });
 
   it("price-override leaves a grandfathered basePriceSnapshot alone and emits nothing", async () => {
@@ -1552,6 +1662,39 @@ describe("PlatformAdminService — audit provenance", () => {
       await service.listTenants(1, 20, { includeDeleted: true });
       const args = (prisma.tenant.findMany as jest.Mock).mock.calls.at(-1)![0];
       expect(args.where.deletedAt).toBeUndefined();
+    });
+
+    it("SA-140/B556: a drifted tenant (real Tenant.plan, no resolved subscription.planKey) keeps `plan` as the raw legacy enum but resolves `planKey` through the fallback — never silently shown as fully explained by the legacy field alone", async () => {
+      // The exact B556 evidence shape: Tenant.plan=PROFESSIONAL, subscription.planKey=null.
+      prisma.tenant.findMany.mockResolvedValue([
+        { id: TENANT_ID, slug: "acme", plan: "PROFESSIONAL", subscription: { planKey: null } },
+      ] as any);
+      prisma.tenant.count.mockResolvedValue(1);
+
+      const result = await service.listTenants(1, 20, {});
+
+      expect(result.data[0].plan).toBe("PROFESSIONAL"); // shape unchanged (SA precision 4)
+      expect(result.data[0].planKey).toBe("SCALE"); // planKeyFromEnum(PROFESSIONAL) fallback
+    });
+
+    it("SA-140/B556: a resolved subscription.planKey wins over the legacy plan enum for `planKey`", async () => {
+      prisma.tenant.findMany.mockResolvedValue([
+        { id: TENANT_ID, slug: "acme", plan: "PROFESSIONAL", subscription: { planKey: "SCALE" } },
+      ] as any);
+      prisma.tenant.count.mockResolvedValue(1);
+
+      const result = await service.listTenants(1, 20, {});
+
+      expect(result.data[0].plan).toBe("PROFESSIONAL");
+      expect(result.data[0].planKey).toBe("SCALE");
+    });
+
+    it("SA-140/L-169: the subscription select gains planKey (a caller's select must actually fetch what the shared predicate reads)", async () => {
+      prisma.tenant.findMany.mockResolvedValue([]);
+      prisma.tenant.count.mockResolvedValue(0);
+      await service.listTenants(1, 20, {});
+      const args = (prisma.tenant.findMany as jest.Mock).mock.calls.at(-1)![0];
+      expect(args.include.subscription.select.planKey).toBe(true);
     });
   });
 
@@ -2180,6 +2323,30 @@ describe("PlatformAdminService — audit provenance", () => {
       );
     });
 
+    // P3b (pin, SA-277/B864 D2): same tenant row lock as updateTenantPriceOverride's :1451 —
+    // it must run inside the tx, before the tx's own paying-set read (`before`, :952), so a
+    // racing updateTenantPriceOverride() serializes on it. `prior` (:924) reads the same model
+    // OUTSIDE the tx (for the plan-transition hook) and is expected to run before the lock.
+    it("P3b: the tenant row lock runs inside the tx, before the paying-set read it gates", async () => {
+      prisma.tenant.findUnique.mockResolvedValue({ id: TENANT_ID, slug: "acme" } as any);
+      prisma.tenant.findUniqueOrThrow.mockResolvedValue({
+        status: "TRIAL",
+        class: "PRODUCTION",
+        deletedAt: null,
+        subscription: null,
+      } as any);
+
+      await service.activateManualSubscription(TENANT_ID, activateDto, ADMIN_ID);
+
+      const lockOrder = (prisma.$queryRaw as jest.Mock).mock.invocationCallOrder;
+      const readOrder = (prisma.tenant.findUniqueOrThrow as jest.Mock).mock.invocationCallOrder;
+      expect(lockOrder).toHaveLength(1);
+      // prior (pre-tx, :924) then lock (:943) then before (in-tx, :952).
+      expect(readOrder).toHaveLength(2);
+      expect(lockOrder[0]).toBeGreaterThan(readOrder[0]);
+      expect(lockOrder[0]).toBeLessThan(readOrder[1]);
+    });
+
     it("emits nothing when the tenant was already ACTIVE with a resolved planKey (no paying-set crossing)", async () => {
       prisma.tenant.findUnique.mockResolvedValue({ id: TENANT_ID, slug: "acme" } as any);
       prisma.tenant.findUniqueOrThrow.mockResolvedValue({
@@ -2206,6 +2373,50 @@ describe("PlatformAdminService — audit provenance", () => {
       await service.activateManualSubscription(TENANT_ID, activateDto, ADMIN_ID);
 
       expect(billingEventService.emit).not.toHaveBeenCalled();
+    });
+
+    // B863 / SA-277: activateManualSubscription() never writes `cycle` in either upsert
+    // branch, so a rolled-over external subscription has no cycle to roll by (billing-cron's
+    // rollCycles() falls through to a 1-month default forever, regardless of the admin's
+    // chosen billingPeriodDays). The write must derive MONTHLY/ANNUAL from billingPeriodDays.
+    it("REG-B863-CYCLE 30 → MONTHLY", async () => {
+      prisma.tenant.findUnique.mockResolvedValue({ id: TENANT_ID, slug: "acme" } as any);
+      prisma.tenant.findUniqueOrThrow.mockResolvedValue({
+        status: "TRIAL",
+        class: "PRODUCTION",
+        deletedAt: null,
+        subscription: null,
+      } as any);
+
+      await service.activateManualSubscription(
+        TENANT_ID,
+        { ...activateDto, billingPeriodDays: 30 },
+        ADMIN_ID,
+      );
+
+      const upsertArg = (prisma as any).tenantSubscription.upsert.mock.calls[0][0];
+      expect(upsertArg.create.cycle).toBe("MONTHLY");
+      expect(upsertArg.update.cycle).toBe("MONTHLY");
+    });
+
+    it("REG-B863-CYCLE 365 → ANNUAL", async () => {
+      prisma.tenant.findUnique.mockResolvedValue({ id: TENANT_ID, slug: "acme" } as any);
+      prisma.tenant.findUniqueOrThrow.mockResolvedValue({
+        status: "TRIAL",
+        class: "PRODUCTION",
+        deletedAt: null,
+        subscription: null,
+      } as any);
+
+      await service.activateManualSubscription(
+        TENANT_ID,
+        { ...activateDto, billingPeriodDays: 365 },
+        ADMIN_ID,
+      );
+
+      const upsertArg = (prisma as any).tenantSubscription.upsert.mock.calls[0][0];
+      expect(upsertArg.create.cycle).toBe("ANNUAL");
+      expect(upsertArg.update.cycle).toBe("ANNUAL");
     });
   });
 
@@ -2312,6 +2523,66 @@ describe("PlatformAdminService — audit provenance", () => {
       );
 
       expect(billingEventService.emit).not.toHaveBeenCalled();
+    });
+
+    it("SA-140 item 2: entering PRODUCTION books a compensating delta = live priceTenant() minus the pre-existing ledger sum, priced with tx AFTER the class write", async () => {
+      prisma.tenant.findUniqueOrThrow.mockResolvedValue({
+        id: TENANT_ID,
+        slug: "acme",
+        class: "DEMO",
+      } as any);
+      prisma.tenant.update.mockResolvedValue({
+        id: TENANT_ID,
+        slug: "acme",
+        class: "PRODUCTION",
+      } as any);
+      (prisma as any).billingEvent = {
+        aggregate: jest.fn().mockResolvedValue({ _sum: { amountDelta: 150 } }),
+      };
+      mrrService.priceTenant.mockResolvedValue(59);
+
+      await service.updateTenantClass(
+        TENANT_ID,
+        { class: "PRODUCTION", reason: "reclassified as a real customer" } as any,
+        ADMIN_ID,
+      );
+
+      // priced through tx (the SAME mock object the transaction body operates on), not
+      // this.prisma directly — the whole point of the fix (SA-140: a call outside tx would
+      // still see the OLD class under read-committed isolation and silently return 0).
+      expect(mrrService.priceTenant).toHaveBeenCalledWith(TENANT_ID, expect.anything());
+      expect(billingEventService.emit).toHaveBeenCalledWith(
+        TENANT_ID,
+        "tenant.class_changed",
+        expect.objectContaining({ from: "DEMO", to: "PRODUCTION" }),
+        expect.objectContaining({ amountDelta: -91 }), // 59 − 150
+      );
+    });
+
+    it("SA-140 item 2: entering PRODUCTION with no pre-existing ledger history books the live contribution alone", async () => {
+      prisma.tenant.findUniqueOrThrow.mockResolvedValue({
+        id: TENANT_ID,
+        slug: "fresh",
+        class: "TEST",
+      } as any);
+      prisma.tenant.update.mockResolvedValue({
+        id: TENANT_ID,
+        slug: "fresh",
+        class: "PRODUCTION",
+      } as any);
+      (prisma as any).billingEvent = {
+        aggregate: jest.fn().mockResolvedValue({ _sum: { amountDelta: null } }),
+      };
+      mrrService.priceTenant.mockResolvedValue(249);
+
+      await service.updateTenantClass(TENANT_ID, { class: "PRODUCTION" } as any, ADMIN_ID);
+
+      expect(billingEventService.emit).toHaveBeenCalledWith(
+        TENANT_ID,
+        "tenant.class_changed",
+        expect.anything(),
+        expect.objectContaining({ amountDelta: 249 }),
+      );
     });
 
     it("rejects and leaves nothing else applied when the BillingEvent emit throws", async () => {

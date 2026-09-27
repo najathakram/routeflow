@@ -71,6 +71,7 @@ import { CommissionEngineService } from "../sales-agents/commission-engine.servi
 import { EstimatesService } from "../estimates/estimates.service";
 import { NumberingService } from "../import/numbering.service";
 import { describeDb, requireLocalDatabaseUrl } from "../common/testing/db-spec";
+import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const { assertTestTenant } = require("../../../../scripts/lib/test-tenants.cjs");
@@ -150,6 +151,10 @@ describeDb(
       const module: TestingModule = await Test.createTestingModule({
         providers: [
           InvoicesService,
+          {
+            provide: SellingRestrictionsService,
+            useValue: { assertLinesSellable: jest.fn().mockResolvedValue(undefined) },
+          },
           EstimatesService,
           // REAL NumberingService over the REAL PrismaService above — the whole point
           // of this lane is the genuine per-tenant-year NumberingSequence store.
@@ -512,10 +517,12 @@ describeDb(
 
       const settings = await tenantCtx.run(tenantA.id, () => numberingService.getSettings());
       const invoiceRow = settings.find((r) => r.docType === "INVOICE");
+      // SA-274 (B861): the preview expectation moved to REG-B861-W — the preview is now the
+      // TRUE next live number (the per-year row's nextNumber), not the year-0 default. `configured`
+      // stays year-0-only, unchanged by this ruling.
       expect(invoiceRow).toMatchObject({
         configured: false,
         nextNumber: 1,
-        preview: "INV-0001",
       });
     }, 30_000);
 

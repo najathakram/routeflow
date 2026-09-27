@@ -38,6 +38,7 @@ import { EntitlementsService } from "../billing/entitlements.service";
 import { CommissionEngineService } from "../sales-agents/commission-engine.service";
 import { CheckStatus, InvoiceStatus, NotificationEvent, UserRole } from "@prisma/client";
 import { computeLineSubtotal, roundMoney } from "@routeflow/pricing";
+import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
 
 const mockCompressDocument = compressDocument as jest.Mock;
 
@@ -143,6 +144,10 @@ describe("InvoicesService", () => {
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         InvoicesService,
+        {
+          provide: SellingRestrictionsService,
+          useValue: { assertLinesSellable: jest.fn().mockResolvedValue(undefined) },
+        },
         { provide: PrismaService, useValue: prisma },
         { provide: RouteFlowGateway, useValue: mockGateway },
         { provide: EmailService, useValue: mockEmailService },
@@ -150,7 +155,11 @@ describe("InvoicesService", () => {
         { provide: SystemConfigService, useValue: mockSystemConfig },
         {
           provide: RegulatedLedgerService,
-          useValue: { writeSaleEntries: jest.fn(), reverseInvoiceEntries: jest.fn() },
+          useValue: {
+            writeSaleEntries: jest.fn(),
+            reverseInvoiceEntries: jest.fn(),
+            correctSaleForPriceChange: jest.fn(),
+          },
         },
         {
           provide: AuthorizationGuardService,
@@ -630,6 +639,55 @@ describe("InvoicesService", () => {
       expect(created.pieces).toBeNull();
     });
 
+    it("SA-144f/item-3 (correction, B679): a pieces-only line (boxes null, pieces set) taxes on qty as-is, not qty*unitsPerBox", async () => {
+      // Old inline code checked `boxes != null` only, so a pieces-only line (boxes absent,
+      // pieces sent) fell through to the box-unaware branch and was OVER-taxed by
+      // unitsPerBox. regulatedUnitBasis checks boxes-OR-pieces, matching pricing.ts's
+      // effectiveQty, which already treats either one as "qty is already pieces."
+      prisma.invoice.findUnique.mockResolvedValue(draftInvoice);
+      prisma.product.findMany.mockResolvedValue([
+        { id: "prod-box", unitsPerBox: 12, trackedCategoryId: "cat-1" },
+      ]);
+      prisma.trackedCategory.findMany.mockResolvedValue([
+        {
+          id: "cat-1",
+          taxType: "EXCISE_PER_UNIT",
+          rate: 0.1,
+          unitBasis: "pack",
+          priceIncludesTax: false,
+        },
+      ]);
+      prisma.customer.findUnique.mockResolvedValue({ isTaxExempt: false });
+      prisma.invoice.update.mockResolvedValue(draftInvoice);
+
+      await service.update("inv-box", {
+        items: [
+          { productId: "prod-box", description: "Loose pieces", qty: 5, pieces: 5, unitPrice: 10 },
+        ],
+      });
+
+      const created = prisma.invoice.update.mock.calls[0][0].data.items.create[0];
+      expect(created.boxes).toBeNull();
+      expect(created.pieces).toBe(5);
+      expect(created.categoryTaxAmount).toBe(0.5); // 0.1 x 5, never 0.1 x (5*12)=6
+    });
+
+    it("SA-144g: refuses ANY non-blank requested unitLabel up front — this is why the tax derivation below never sees one", async () => {
+      // update()'s pieceQty/categoryTaxAmount derivation (:3401) reads item.unitLabel with no
+      // resolveLineUnits call of its own; its safety rests entirely on this refusal running
+      // BEFORE the item loop, for every item, on ANY non-blank label — including one that
+      // would resolve to the pack itself (e.g. "Case" naming a product's own base unit).
+      prisma.invoice.findUnique.mockResolvedValue(draftInvoice);
+
+      await expect(
+        service.update("inv-box", {
+          items: [{ productId: "prod-box", qty: 3, unitLabel: "Case", unitPrice: 10 }],
+        }),
+      ).rejects.toThrow("Selling by a unit can't be set on an invoice edit yet.");
+
+      expect(prisma.invoice.update).not.toHaveBeenCalled();
+    });
+
     // ─── BUY_N_GET_M: the free-unit snapshot is MONEY and must survive the edit ──
     // The edit path delete-and-recreates every line from the payload, so a plain
     // re-save of an order-derived BOGO invoice used to re-price it at full price
@@ -1037,6 +1095,12 @@ describe("InvoicesService", () => {
       prisma.invoice.update.mockResolvedValue({ id: "d1", status: InvoiceStatus.DRAFT });
       prisma.orderItem.findMany.mockResolvedValue([{ id: "li1" }]);
       prisma.orderItem.update.mockResolvedValue({});
+      // B785/SA-113a: basis "delivered" now reads the evidence basis
+      // (delivered-basis-by-line.ts), never li.deliveredQty — li1's own
+      // evidence row delivers 8 of the ordered 10.
+      prisma.deliveryMutation.findMany.mockResolvedValue([
+        { orderItemId: "li1", type: "DELIVERED", quantityDelivered: 8 },
+      ]);
     }
 
     it("returns null and does nothing when there is no open draft", async () => {
@@ -1581,100 +1645,6 @@ describe("InvoicesService", () => {
   });
 
   // WP2 — order-scoped credit notes: stuck-SENT fix + explicit-amount exclusions.
-  describe("send() — credit-note interactions (WP2)", () => {
-    it("flips a fully-pre-credited DRAFT to PAID, not SENT (stuck-SENT regression)", async () => {
-      prisma.invoice.findUnique
-        .mockResolvedValueOnce({
-          // findOneOrThrow — the invoice as it is before send()
-          id: "i1",
-          orderId: null,
-          status: InvoiceStatus.DRAFT,
-          deliveryBatchId: null,
-        })
-        .mockResolvedValueOnce({
-          // fresh read inside the tx, after the DRAFT→SENT flip already committed —
-          // a credit applied at order-create time already covers the full total.
-          id: "i1",
-          status: InvoiceStatus.SENT,
-          total: 100,
-          dueDate: null,
-          payments: [{ id: "pay-1", amount: 100, status: "PAID" }],
-        })
-        .mockResolvedValueOnce({
-          // final post-tx re-fetch for the return value
-          id: "i1",
-          invoiceNumber: "INV-1",
-          customerId: "c1",
-          status: InvoiceStatus.PAID,
-          total: 100,
-        });
-      prisma.invoice.update.mockResolvedValueOnce({
-        id: "i1",
-        invoiceNumber: "INV-1",
-        customerId: "c1",
-        orderId: null,
-        status: InvoiceStatus.SENT,
-        total: 100,
-        dueDate: null,
-      });
-      // Auto-apply finds nothing left to apply — the credit already covered this
-      // invoice at order-create time via settleOrderCreditsInTx.
-      mockCreditNotes.autoApplyOldestCreditsInTx.mockResolvedValueOnce({
-        applied: 0,
-        invoiceStatus: null,
-      });
-
-      const result = await service.send("i1");
-
-      // The stuck-SENT fix recomputed status from the invoice's own payments and
-      // promoted it to PAID instead of leaving it SENT.
-      expect(prisma.invoice.update).toHaveBeenCalledWith({
-        where: { id: "i1" },
-        data: { status: InvoiceStatus.PAID, paidAt: expect.any(Date) },
-      });
-      expect((result as any).status).toBe(InvoiceStatus.PAID);
-    });
-
-    it("passes the order's explicit-amount intent ids as excludeCreditNoteIds", async () => {
-      prisma.invoice.findUnique.mockResolvedValueOnce({
-        id: "i2",
-        orderId: "ord-2",
-        status: InvoiceStatus.DRAFT,
-        deliveryBatchId: null,
-      });
-      prisma.order.findFirst.mockResolvedValue({ status: "DELIVERED", orderNumber: "O2" });
-      prisma.invoice.update.mockResolvedValueOnce({
-        id: "i2",
-        invoiceNumber: "INV-2",
-        customerId: "c2",
-        orderId: "ord-2",
-        status: InvoiceStatus.SENT,
-        total: 50,
-        dueDate: null,
-      });
-      prisma.orderCreditNote.findMany.mockResolvedValueOnce([
-        { creditNoteId: "cn-explicit-1" },
-        { creditNoteId: "cn-explicit-2" },
-      ]);
-      mockCreditNotes.autoApplyOldestCreditsInTx.mockResolvedValueOnce({
-        applied: 0,
-        invoiceStatus: InvoiceStatus.SENT,
-      });
-
-      await service.send("i2");
-
-      expect(prisma.orderCreditNote.findMany).toHaveBeenCalledWith({
-        where: { orderId: "ord-2", amount: { not: null } },
-        select: { creditNoteId: true },
-      });
-      expect(mockCreditNotes.autoApplyOldestCreditsInTx).toHaveBeenCalledWith(
-        expect.anything(),
-        "i2",
-        "c2",
-        { excludeCreditNoteIds: ["cn-explicit-1", "cn-explicit-2"] },
-      );
-    });
-  });
 
   // R5 — sendEmail must only claim "sent" when the email ACTUALLY went out.
   describe("sendEmail — email honesty (R5)", () => {
@@ -3417,6 +3387,9 @@ describe("InvoicesService", () => {
           discount: 0,
           taxRate: 0,
           subtotal: 25,
+          // #2169 (SA-395): the ONE writer of systemKind — every consumer's dual-read predicate
+          // (invoices/nsf-line.ts) depends on this stamp landing here.
+          systemKind: "NSF_FEE",
         }),
       });
       expect(prisma.invoice.update).toHaveBeenCalledWith({
@@ -4633,14 +4606,28 @@ describe("InvoicesService", () => {
       draft({ id: "d-base", items: [{ orderItemId: "oi-std" }] }),
       draft({ id: "d-r1", items: [{ orderItemId: "oi-reg" }] }),
     ];
-    const mockOrder = (lines: any[], over: any = {}) => ({
-      id: "ord-1",
-      customerId: "cust-1",
-      subtotal: 100,
-      tax: 0,
-      lineItems: lines,
-      ...over,
-    });
+    const mockOrder = (lines: any[], over: any = {}) => {
+      // B785/SA-113a: the delivered basis now comes from evidence rows
+      // (deliveredBasisByLine), never li.deliveredQty — synthesize one
+      // evidence row per fixture line, from the SAME deliveredQty these
+      // fixtures already encode, so every existing test's intent survives
+      // unchanged.
+      prisma.deliveryMutation.findMany.mockResolvedValue(
+        lines.map((li) => ({
+          orderItemId: li.id,
+          type: Number(li.deliveredQty ?? 0) > 0 ? "DELIVERED" : "REFUSED",
+          quantityDelivered: Number(li.deliveredQty ?? 0),
+        })),
+      );
+      return {
+        id: "ord-1",
+        customerId: "cust-1",
+        subtotal: 100,
+        tax: 0,
+        lineItems: lines,
+        ...over,
+      };
+    };
     // Pull the invoice.update payload for a given draft id.
     const updOf = (id: string) =>
       prisma.invoice.update.mock.calls.find((c: any) => c[0].where.id === id)?.[0];
@@ -7033,6 +7020,51 @@ describe("InvoicesService", () => {
       // foldCategoryTax zeroed this line at creation; the recompute must preserve
       // that, not re-derive $100 of excise onto an exempt customer's invoice.
       expect(itemUpdateData().categoryTaxAmount).toBe(0);
+    });
+
+    it("SA-144f/item-3 (correction, B679): a pieces-only stored line taxes on qty as-is, not qty*unitsPerBox", async () => {
+      // Old inline code checked `li.boxes != null` only, so a pieces-only stored line
+      // (boxes null, pieces set) fell into the same product-fallback branch as a
+      // box-unaware selling-units line and was OVER-taxed by unitsPerBox.
+      seedExciseLine();
+      const pieceItem = {
+        id: "li-b57e",
+        invoiceId: "inv-b57e",
+        productId: "prod-reg",
+        trackedCategoryId: "cat-2",
+        unitPrice: 10,
+        discount: 0,
+        subtotal: 100,
+        qty: 10,
+        pieces: 10,
+        boxes: null,
+        unitsPerBox: null,
+        taxRate: 0,
+        categoryTaxAmount: 100,
+      };
+      prisma.invoice.findUnique.mockResolvedValue({
+        id: "inv-b57e",
+        customerId: "cust-2",
+        orderId: null,
+        status: InvoiceStatus.SENT,
+        discount: 0,
+        shippingFee: 0,
+        internalNotes: null,
+        dueDate: null,
+        items: [pieceItem],
+        payments: [],
+      });
+      prisma.invoiceItem.findMany.mockResolvedValue([
+        { ...pieceItem, unitPrice: 5, subtotal: 50, categoryTaxAmount: 0 },
+      ]);
+
+      await service.applyPriceAdjustment("inv-b57e", {
+        items: [{ itemId: "li-b57e", newUnitPrice: 5 }],
+        scope: "SINGLE",
+      });
+
+      // 0.50 x 10 pieces, never 0.50 x (10*20)=200 pieces.
+      expect(itemUpdateData().categoryTaxAmount).toBe(5);
     });
   });
 

@@ -232,6 +232,8 @@ describe("OrdersService — F11 getOrderTracking pins (no REG- token; excluded f
         routeRun: {
           id: "run-1",
           status: "IN_PROGRESS",
+          // A real RouteRun always carries its date (NOT NULL); the payload reports it (#2095).
+          scheduledDate: new Date("2026-09-24T00:00:00.000Z"),
           driver: { id: "d", contactName: "Dee" },
           route: { id: "r", name: "R" },
           stops: [

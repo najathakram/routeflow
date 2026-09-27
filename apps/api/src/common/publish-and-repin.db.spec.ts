@@ -34,18 +34,23 @@
  *     explicitly closes that one exception too, so it is a genuine zero-loss tenant — "a fixture
  *     tenant whose access is fully explained by preset/grants" in the literal, no-exceptions sense.
  *
- * The whole-database report/apply totals are NOT asserted exactly — a shared compose database may
- * carry other PRODUCTION-class tenants (the seeded `test` tenant, at minimum). Every assertion
- * instead keys off this spec's own tenants by their redacted `#<ordinal> (<8-hex hash>)` tag,
- * computed here with the SAME sha256 the script uses, and read `n`/count values back from the
- * tool's own preceding output rather than hard-coding them (same principle
- * backfill-legacy-tenant-ids.db.spec.ts uses for its BACKFILL <n> ROWS phrase).
+ * B824: every CLI call this file makes is scoped with `--only-tenants` (runCli's own doc comment)
+ * to exactly this spec's own (up to 3) fixture tenants, so the report/apply totals below are this
+ * spec's totals, full stop — not a whole-database scan filtered after the fact. Before this fix, a
+ * shared compose database's OTHER PRODUCTION-class tenants (sibling `*.db.spec.ts` files' own
+ * fixtures, at minimum) could tip `--only-test-tenants`'s refusal or receive/contribute writes
+ * from an unscoped `--apply --live`; every assertion still additionally keys off this spec's own
+ * tenants by their redacted `#<ordinal> (<8-hex hash>)` tag (computed here with the SAME sha256
+ * the script uses) as defense in depth, and reads `n`/count values back from the tool's own
+ * preceding output rather than hard-coding them (same principle backfill-legacy-tenant-ids.db.spec.ts
+ * uses for its BACKFILL <n> ROWS phrase).
  *
- * SAFETY. Every row this file creates lives inside two throwaway `e2e-pr0b-*` tenants
+ * SAFETY. Every row this file creates lives inside three throwaway `e2e-pr0b-*` tenants
  * (assertTestTenant) plus one fixture PlanVersion/PlanDefinition pair; teardown deletes exactly
- * those, in FK order. `--apply --live` here always passes --only-test-tenants, so a compose
- * database carrying any OTHER non-test-tenant PRODUCTION row with a loss fails this spec (exit 3,
- * offending slug printed) instead of silently granting something.
+ * those, in FK order. `--apply --live` here always passes --only-test-tenants too, so even if the
+ * `--only-tenants` scope above were ever widened by mistake, an offending non-test-tenant row with
+ * a loss still fails this spec (exit 3, offending slug printed) instead of silently granting
+ * something.
  *
  * Collected only by jest.db.config.js (`.db.spec.ts$`) — run via `npm run local:test:db`.
  */
@@ -86,6 +91,9 @@ const TENANT_KEYS_SLUG = assertTestTenant(
   `e2e-pr0b-${RUN_SUFFIX}-keys`,
   "publish-and-repin.db.spec.ts",
 );
+// B824: every CLI call this file makes is scoped to exactly these 3 slugs (--only-tenants,
+// baked into runCli below) — see runCli's own doc comment for the flake this fixes.
+const ALL_SPEC_SLUGS = [TENANT_LOSS_SLUG, TENANT_ZERO_SLUG, TENANT_KEYS_SLUG];
 const PLAN_VERSION_ID = `${ID_PREFIX}planversion`;
 const PLAN_DEF_SCALE_ID = `${ID_PREFIX}plandef-scale`;
 const PLAN_DEF_LITE_ID = `${ID_PREFIX}plandef-lite`;
@@ -148,13 +156,35 @@ describeDb("publish-and-repin.mjs — real Postgres (report / apply / refusals /
   let db: Client;
   let databaseUrl: string;
 
+  /**
+   * B824: every call this file makes is scoped to exactly this spec's own (up to 3) fixture
+   * tenants via `--only-tenants`, baked in here so no call site can forget it. Before this,
+   * every CLI invocation computed its diff over the WHOLE shared database (every PRODUCTION-class
+   * tenant, `publish-and-repin.mjs`'s own, correct design for a real prod run) — under
+   * `--maxWorkers=2`, sibling `*.db.spec.ts` files seeding their own PRODUCTION-class fixture
+   * tenants made that scan see foreign tenants mid-flight, which could both (a) trip
+   * `--only-test-tenants`'s refusal (exit 3, unretried — see applyLiveWithRetry's doc comment,
+   * which handles a DIFFERENT symptom, a stale whole-database COUNT, not this) on a tenant that
+   * was never ours, and (b) let an unscoped `--apply --live` (D6/D8/D9/K3, via
+   * applyLiveWithRetry, which passes no tenant filter) grant overrides to a concurrent sibling's
+   * own fixture tenant, or have ITS OWN fixture mutated by a sibling's equally-unscoped apply —
+   * three observed occurrences, a different leaked/affected key subset each time, always drawn
+   * from this file's own applicable-loss vocabulary (flag.estimates/forecasting/
+   * import_integrations/messaging/pricing_tiers/recurring_invoices/suppliers), consistent with
+   * cross-contamination between concurrent runs rather than one fixed culprit (B824, diagnosed on
+   * #938). `--only-tenants` (same PR) narrows computeDiff()'s own Tenant query to a slug allowlist
+   * — scoping every call here makes this file's reads and writes fully independent of whatever
+   * else is running against the shared compose database, without serializing the lane. A slug
+   * that doesn't exist yet (TENANT_KEYS, created only after D9) is simply absent from the
+   * scoped result — harmless on the earlier D-numbered calls.
+   */
   function runCli(args: string[], extraEnv: Record<string, string> = {}) {
     const env: NodeJS.ProcessEnv = { ...process.env, ...extraEnv };
     for (const key of Object.keys(env)) {
       if (key.startsWith("RAILWAY_") || key.startsWith("POSTGRES_")) delete env[key];
     }
     env.DATABASE_URL = databaseUrl;
-    return spawnSync(process.execPath, [CLI, ...args], {
+    return spawnSync(process.execPath, [CLI, ...args, "--only-tenants", ALL_SPEC_SLUGS.join(",")], {
       cwd: API_DIR,
       encoding: "utf8",
       env,
@@ -179,21 +209,16 @@ describeDb("publish-and-repin.mjs — real Postgres (report / apply / refusals /
   }
 
   /**
-   * D6/D8/D9 confirm a --live apply using a whole-database loss count `n` read from a PRECEDING,
-   * separate CLI invocation's preview, then pass `GRANT ${n} OVERRIDES` to a LATER, separate
-   * `--live` invocation that independently recomputes its own current `n` and compares. On a
-   * quiet database those two reads agree. But `jest.db.config.js` sets no maxWorkers/runInBand,
-   * so this file runs as ONE of many PARALLEL jest workers against the SAME shared Postgres —
-   * several of the other 27 `.db.spec.ts` files seed their own fixture tenants without bothering
-   * to set `Tenant.class` away from its schema default, `'PRODUCTION'`, so this script's
-   * (correct, safe) whole-database scan can see the total shift between the two calls. That is
-   * the confirmation phrase doing exactly its job — refusing to act on a stale count, exit 3,
-   * zero writes — not a bug in the script; a real operator hitting this would just re-run. This
-   * is why a single-file `npx jest publish-and-repin.db.spec.ts` run is 100% stable (no sibling
-   * workers touching the database) while the full `jest --config jest.db.config.js` lane (CI's
-   * "Replay migrations on a fresh database" job runs exactly this) can catch it — a difference in
-   * concurrency the earlier version of this file didn't account for, not in what the script does.
-   * Retries with a fresh preview on a `phrase-mismatch` refusal only; any other refusal reason is
+   * D6/D8/D9/K3 confirm a --live apply using a loss count `n` read from a PRECEDING, separate CLI
+   * invocation's preview, then pass `GRANT ${n} OVERRIDES` to a LATER, separate `--live`
+   * invocation that independently recomputes its own current `n` and compares. Since B824, every
+   * call runCli makes is scoped with `--only-tenants` to exactly this spec's own tenants (see
+   * runCli's doc comment), so a sibling `*.db.spec.ts` file's own fixture tenants — this file runs
+   * as ONE of many PARALLEL jest workers against the SAME shared Postgres (`jest.db.config.js`
+   * sets no maxWorkers/runInBand) — can no longer shift `n` between the two calls. This retry loop
+   * is kept anyway as defense in depth (e.g. two independent CLI round-trips against our own
+   * tenants racing a driver bug would still show up as a mismatch rather than a wrong write) —
+   * retries with a fresh preview on a `phrase-mismatch` refusal only; any other refusal reason is
    * returned immediately rather than masked.
    */
   async function applyLiveWithRetry(
@@ -425,8 +450,7 @@ describeDb("publish-and-repin.mjs — real Postgres (report / apply / refusals /
 
   it("D6 --apply --live with the correct phrase: writes one GRANT/GRANDFATHER override per APPLICABLE loss, excluding addon-gate-courtesy ones", async () => {
     // See applyLiveWithRetry's own doc comment: n is read fresh on each attempt (mirrors
-    // backfill-legacy-tenant-ids.db.spec.ts's "read n from the tool's own output" pattern) and
-    // retried only on a whole-database count drift from a concurrent sibling worker, never
+    // backfill-legacy-tenant-ids.db.spec.ts's "read n from the tool's own output" pattern), never
     // hard-coded. n is the APPLICABLE count (excludedAddonGateLosses subtracted) — what --apply
     // --live actually writes and what the typed confirmation phrase is computed from.
     const { res, n } = await applyLiveWithRetry([]);
@@ -489,9 +513,9 @@ describeDb("publish-and-repin.mjs — real Postgres (report / apply / refusals /
       expect(res.status).toBe(0);
       expect(result.applied).toBeNull();
     } else {
-      // Something else in the shared database still shows a loss (not ours) — apply live again
-      // (retrying on a whole-database count drift, see applyLiveWithRetry) and prove OUR rows
-      // specifically are untouched, whatever total n the run reports.
+      // Scoped to our own tenants (B824), previewN should always be 0 here — D6 already granted
+      // everything applicable. Kept as a defensive branch: apply live again and prove OUR rows
+      // specifically are untouched, whatever n this run reports.
       const { res } = await applyLiveWithRetry([]);
       expect(res.status).toBe(0);
     }

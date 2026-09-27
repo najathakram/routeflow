@@ -40,7 +40,7 @@ const PHASE_ORDER = [
 // Full model ids only — never a bare alias (model-routing/references/ROUTING-PLAN.md §1).
 const MODEL = {
   fable: 'claude-fable-5-1',
-  opus: 'claude-opus-5',
+  opus: 'claude-opus-5-5',
   sonnet: 'claude-sonnet-5',
   haiku: 'claude-haiku-4-5',
 }

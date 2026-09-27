@@ -4,6 +4,7 @@ import {
   NotFoundException,
   ConflictException,
   BadRequestException,
+  InternalServerErrorException,
 } from "@nestjs/common";
 import { JwtService } from "@nestjs/jwt";
 import { ConfigService } from "@nestjs/config";
@@ -22,7 +23,7 @@ import { FeatureOverrideService } from "../billing/feature-override.service";
 import { PlanTransitionConfigService } from "../billing/plan-transition-config.service";
 import { gateVia } from "../billing/feature-registry";
 import { BillingEventService } from "../billing/billing-event.service";
-import { MrrService } from "../billing/mrr.service";
+import { MrrService, isPayingRow } from "../billing/mrr.service";
 import { TenantMirrorService } from "./tenant-mirror.service";
 import {
   normalizePlanKey,
@@ -34,7 +35,9 @@ import {
   isInviteOnlyPlanKey,
   INVITE_ONLY_PLAN_TRIAL_DAYS,
   inviteOnlyCheckoutAllowed,
+  addonSkuCode,
 } from "../billing/plan-catalog.constants";
+import { bookAddonsOnCrossing } from "../billing/addon-ledger";
 import { roundMoney } from "@routeflow/pricing";
 import { TenantStatusGuard } from "../tenant/tenant-status.guard";
 import { AppConfig } from "../config/configuration";
@@ -177,7 +180,10 @@ export class PlatformAdminService {
             select: { businessName: true, primaryColor: true, logoKey: true },
           },
           subscription: {
-            select: { currentPlan: true, periodEnd: true, cancelAtPeriodEnd: true },
+            // planKey added (SA-140/B556) — _formatTenant()'s planKey field needs it; this
+            // select previously omitted it, so every list row silently fell back to the legacy
+            // Tenant.plan enum (L-169).
+            select: { currentPlan: true, periodEnd: true, cancelAtPeriodEnd: true, planKey: true },
           },
           _count: {
             select: { users: true, customers: true, orders: true },
@@ -473,11 +479,17 @@ ${
     // this call reports could be one a concurrent downgrade() armed a moment later. One
     // transaction means the audit line describes the row as it stood at the transition.
     const { tenant, armedDowngrade } = await this.prisma.$transaction(async (tx) => {
+      // SA-140: lock the row FIRST, before any read this transaction's decision depends on —
+      // closes a race against a concurrent write to the SAME tenant from a different admin
+      // action (updateTenantClass(), reconcilePriceLedger()'s snapshot update, etc.) that could
+      // otherwise interleave with the read-then-decide logic below.
+      await tx.$queryRaw`SELECT id FROM "Tenant" WHERE id = ${id} FOR UPDATE`;
+
       // B556/B557: read the tenant's PRIOR paying-set inputs — status, class, deletedAt, and
       // its subscription's planKey/basePriceSnapshot/discount — before this call writes
       // anything. B556 uses this to detect (and fill) a missing planKey on activation; B557
       // uses the same snapshot to detect whether this status write crosses MrrService's
-      // paying-set boundary (payingWhere: planKey!=null && status=ACTIVE && deletedAt=null &&
+      // paying-set boundary (isPayingRow: planKey!=null && status=ACTIVE && deletedAt=null &&
       // class=PRODUCTION) so a compensating BillingEvent can be booked in either direction —
       // this plain status write used to touch neither, the documented root cause of ledgerMrr
       // drifting away from live mrr (mrr.service.ts's own doc comment, B557).
@@ -556,10 +568,9 @@ ${
       // leaves a permanent +residue in ledgerMrr while live mrr correctly drops it (or, on
       // reactivation, the mirror: live counts it again while the ledger never catches up).
       // class and deletedAt are untouched by this call, so only status (and, via the B556
-      // fill-in just above, possibly planKey) can move payingBase between before/after.
-      const payingBase = before.class === "PRODUCTION" && before.deletedAt === null;
-      const wasPaying = payingBase && before.status === "ACTIVE" && priorPlanKey != null;
-      const isPaying = payingBase && updated.status === "ACTIVE" && finalPlanKey != null;
+      // fill-in just above, possibly planKey) can move isPayingRow between before/after.
+      const wasPaying = isPayingRow(before, priorPlanKey);
+      const isPaying = isPayingRow({ ...before, status: updated.status }, finalPlanKey);
       if (wasPaying !== isPaying) {
         const addons = await tx.tenantAddon.findMany({
           where: { tenantId: id, active: true },
@@ -617,9 +628,14 @@ ${
   }
 
   async updatePlan(id: string, dto: UpdateTenantPlanDto, adminId: string | null = null) {
+    // SA-140: class/deletedAt added so wasPaying/isPaying below can use the shared isPayingRow
+    // predicate — this select previously fetched only status, silently missing the two other
+    // conditions payingWhere/isPayingRow require (a real, previously undetected gap: an admin
+    // plan change on a non-PRODUCTION or soft-deleted-but-ACTIVE tenant could book a delta
+    // `mrr` never counted).
     const before = await this.prisma.tenant.findUnique({
       where: { id },
-      select: { id: true, slug: true, plan: true, status: true },
+      select: { id: true, slug: true, plan: true, status: true, class: true, deletedAt: true },
     });
     if (!before) throw new NotFoundException(`Tenant ${id} not found`);
 
@@ -772,11 +788,15 @@ ${
     // (mrr.service.ts:63-66), the "add-on MRR with no base behind it" that guard warns about.
     const baseSnapshot = definition.monthlyPrice ?? priorSub?.priceOverrideMonthly ?? null;
 
-    // MrrService's paying predicate (mrr.service.ts:44-47): ACTIVE tenant with a non-null
-    // planKey. This write always sets planKey, so an ACTIVE tenant is paying afterwards —
-    // a manual/external activation (which deliberately leaves planKey null) CROSSES in here.
-    const wasPaying = before.status === "ACTIVE" && priorSub?.planKey != null;
-    const isPaying = before.status === "ACTIVE";
+    // SA-140: uses the shared isPayingRow predicate — this previously checked only
+    // status+planKey, missing class/deletedAt (a real gap: a plan change on an ACTIVE but
+    // non-PRODUCTION or soft-deleted tenant could book a delta `mrr` never counts). This write
+    // always sets planKey, so an ACTIVE (and PRODUCTION, non-deleted) tenant is paying
+    // afterwards — a manual/external activation (which deliberately leaves planKey null)
+    // CROSSES in here. class/deletedAt are untouched by this write, so `before` covers both
+    // sides — only which planKey is evaluated differs.
+    const wasPaying = isPayingRow(before, priorSub?.planKey ?? null);
+    const isPaying = isPayingRow(before, definition.planKey);
 
     const transition = {
       tenantId: id,
@@ -894,6 +914,8 @@ ${
 
     const now = new Date();
     const periodEnd = new Date(now.getTime() + dto.billingPeriodDays * 24 * 60 * 60 * 1000);
+    // B863 / SA-277: 365-day prepaid = ANNUAL, shorter = MONTHLY; external rows roll length-preserving (rollCycles).
+    const cycle: "MONTHLY" | "ANNUAL" = dto.billingPeriodDays >= 365 ? "ANNUAL" : "MONTHLY";
 
     // Lane B A2b: the plan being LEFT, read before the transaction so the catalog read in
     // `prepare()` also happens outside it. A tenant with no subscription row falls back to
@@ -919,6 +941,9 @@ ${
     const preparedTransition = transition ? await this.planTransition.prepare(transition) : null;
 
     const tenant = await this.prisma.$transaction(async (tx) => {
+      // B864 / SA-277 (D2): same tenant row lock as updateStatus/updateTenantClass/
+      // updateTenantPriceOverride.
+      await tx.$queryRaw`SELECT id FROM "Tenant" WHERE id = ${id} FOR UPDATE`;
       if (transition && preparedTransition) {
         await this.planTransition.onPlanChange(tx, transition, preparedTransition);
       }
@@ -952,6 +977,7 @@ ${
             planVersionId: version.id,
             periodStart: now,
             periodEnd,
+            cycle,
             externalPayment: true,
             externalPaymentMethod: dto.paymentMethod,
             externalPaymentRef: dto.paymentRef ?? null,
@@ -963,6 +989,7 @@ ${
             planVersionId: version.id,
             periodStart: now,
             periodEnd,
+            cycle,
             // Rolling the period forward disarms every pending transition. A downgrade left
             // armed now points at the OLD (already past) period end, so the very next 02:00
             // sweep would fire it against the subscription this admin just activated.
@@ -978,28 +1005,30 @@ ${
         }),
       ]);
 
-      // B557: status is unconditionally ACTIVE and planKey unconditionally resolved by the
-      // write above, so only class/deletedAt (untouched here) gate whether this activation
-      // actually crosses into MrrService's payingWhere.
-      const payingBase = before.class === "PRODUCTION" && before.deletedAt === null;
-      const wasPaying =
-        payingBase && before.status === "ACTIVE" && before.subscription?.planKey != null;
-      const isPaying = payingBase;
+      // B557 / SA-140: status is unconditionally ACTIVE and planKey unconditionally resolved by
+      // the write above, so only class/deletedAt (untouched here) gate whether this activation
+      // actually crosses into MrrService's paying set — via the shared isPayingRow predicate.
+      const wasPaying = isPayingRow(before, before.subscription?.planKey ?? null);
+      const isPaying = isPayingRow({ ...before, status: "ACTIVE" }, definition.planKey);
       if (wasPaying !== isPaying) {
         const addons = await tx.tenantAddon.findMany({
           where: { tenantId: id, active: true },
-          select: { priceSnapshot: true, quantity: true },
+          select: { priceSnapshot: true, quantity: true, sku: true, addonKey: true },
         });
         // basePriceSnapshot/discount are untouched by this write (external/manual activations
         // are priced outside the catalog run-rate — see the REG-743-N5/F2 note in
         // mrr.service.ts), so the "after" contribution reuses the exact fields the write
         // leaves in place — never a catalog-price guess.
-        const contribution = this.mrrService.priceSubscription(
+        // SA-277b: the PLAN_CHANGED amount here is the BASE (plan) share only — the add-on
+        // share of this same crossing is booked separately, through `bookAddonsOnCrossing`
+        // below (the SAME helper `subscribe()` uses for its own kept/prior add-ons), so nothing
+        // is double-counted between a plan.changed row and the addon.enabled rows it books.
+        const baseContribution = this.mrrService.priceSubscription(
           {
             basePriceSnapshot: before.subscription?.basePriceSnapshot ?? null,
             discount: before.subscription?.discount ?? null,
           },
-          addons,
+          [],
         );
         await this.billingEventService.emit(
           id,
@@ -1011,10 +1040,37 @@ ${
             externalActivation: true,
           },
           {
-            amountDelta: roundMoney(isPaying ? contribution : -contribution),
+            amountDelta: roundMoney(isPaying ? baseContribution : -baseContribution),
             actorId: adminId,
             tx,
           },
+        );
+        // Latent-case guard (pre-merge review): `bookAddonsOnCrossing`'s `wasPaying` flag only
+        // knows how to book a tenant CROSSING INTO the paying set (booking each add-on's full
+        // contribution) — it has no "debit" branch for a tenant that left it. Unreachable
+        // today: this method forces `status: "ACTIVE"` unconditionally above and never touches
+        // `class`/`deletedAt`, so `isPaying` can only be `false` here if `wasPaying` already
+        // was (isPayingRow needs status=ACTIVE too) — i.e. wasPaying implies isPaying. Kept as
+        // a fail-loud guard in case that invariant ever changes, rather than silently booking
+        // the wrong direction.
+        if (wasPaying && !isPaying) {
+          throw new InternalServerErrorException(
+            "activation left the paying set — add-on debit not implemented",
+          );
+        }
+        // SA-277b: add-ons book through the SAME crossing helper `subscribe()` uses —
+        // `wasPaying` gates whether each add-on's contribution was already on the ledger.
+        await bookAddonsOnCrossing(
+          tx,
+          this.billingEventService,
+          id,
+          addons.map((a) => ({
+            sku: addonSkuCode(a) ?? a.addonKey,
+            priceSnapshot: a.priceSnapshot,
+            quantity: a.quantity,
+          })),
+          wasPaying,
+          adminId,
         );
       }
 
@@ -1217,7 +1273,7 @@ ${
     // SCALE/ENTERPRISE), not the legacy `plan` enum shadow.
     const planCounts: Record<string, number> = {};
     for (const t of planScanRows) {
-      const planKey = normalizePlanKey(t.subscription?.planKey) ?? planKeyFromEnum(t.plan);
+      const planKey = this._resolveDisplayPlanKey(t);
       planCounts[planKey] = (planCounts[planKey] ?? 0) + 1;
     }
 
@@ -1419,11 +1475,29 @@ ${
     // books this tenant's add-ons with a $0 base. Entering the fee is the moment the
     // base becomes known: back-fill the snapshot and emit the run-rate delta in the
     // same transaction, mirroring updatePlan's PLAN_CHANGED emission. Only the
-    // null-snapshot case back-fills — a set snapshot is grandfathered data and an
-    // override on top of it deliberately does not rewrite it.
-    const backfillBase =
-      dto.monthly != null && existing?.planKey != null && existing.basePriceSnapshot == null;
+    // null-snapshot case back-fills — a set snapshot is already-reconciled data
+    // (reconcilePriceLedger, called via syncStripeSubscriptionPrice below, rewrites it).
     await this.prisma.$transaction(async (tx) => {
+      // B864 / SA-277 (SA-163 shape): lock → read paying-set inputs → decide; a racing
+      // activation serialises here.
+      await tx.$queryRaw`SELECT id FROM "Tenant" WHERE id = ${id} FOR UPDATE`;
+      // FIX-7 / SA-277: re-read the subscription (planKey AND basePriceSnapshot) UNDER the
+      // lock — `backfillBase` must be decided from THIS locked read, never from the pre-tx
+      // `existing` read above, or a racing activation that wrote the snapshot between the
+      // pre-tx read and this lock would be clobbered/double-booked.
+      const row = await tx.tenant.findUniqueOrThrow({
+        where: { id },
+        select: {
+          status: true,
+          class: true,
+          deletedAt: true,
+          subscription: { select: { planKey: true, basePriceSnapshot: true } },
+        },
+      });
+      const backfillBase =
+        dto.monthly != null &&
+        row.subscription?.planKey != null &&
+        row.subscription.basePriceSnapshot == null;
       await tx.tenantSubscription.upsert({
         where: { tenantId: id },
         update: {
@@ -1437,11 +1511,17 @@ ${
           priceOverrideAnnual: dto.annual ?? null,
         },
       });
-      if (backfillBase) {
+      // Snapshot written regardless; ONLY the emit is gated — a non-paying tenant books
+      // once, at activation.
+      if (backfillBase && isPayingRow(row, row.subscription?.planKey ?? null)) {
         await this.billingEventService.emit(
           id,
           BILLING_EVENTS.PLAN_CHANGED,
-          { toPlan: existing.planKey, platformAdmin: true, priceOverrideBackfill: true },
+          {
+            toPlan: row.subscription?.planKey ?? null,
+            platformAdmin: true,
+            priceOverrideBackfill: true,
+          },
           { amountDelta: roundMoney(dto.monthly!), actorId: adminId, tx },
         );
       }
@@ -1729,13 +1809,37 @@ ${
     return tenant;
   }
 
+  /**
+   * SA-140 (B556): the one place "what plan is this tenant on, for display" is resolved —
+   * `getStats()`'s planCounts breakdown and `_formatTenant()` (behind BOTH listTenants() and
+   * getTenant()) now share this instead of each carrying its own copy (planCounts already had
+   * the correct planKey-first/legacy-fallback logic; `_formatTenant()`'s `plan` field never
+   * consulted `subscription.planKey` at all — the literal mechanism behind B556's original
+   * evidence: a tenant with a real `Tenant.plan` but no resolved `planKey`, shown with the
+   * legacy plan's badge while contributing $0 to MRR). Callers must select
+   * `subscription: { select: { planKey: true, ... } }` — a caller whose select never fetches it
+   * silently resolves the fallback for every row (L-169).
+   */
+  private _resolveDisplayPlanKey(t: {
+    plan: TenantPlan;
+    subscription?: { planKey: string | null } | null;
+  }): string {
+    return normalizePlanKey(t.subscription?.planKey) ?? planKeyFromEnum(t.plan);
+  }
+
   private _formatTenant(t: any) {
     return {
       id: t.id,
       slug: t.slug,
       name: t.name,
       status: t.status,
+      // SA-140 (B556): `plan` keeps its existing shape (the raw legacy TenantPlan enum) for
+      // compatibility with existing consumers — `planKey` is ADDED alongside it, resolved
+      // through the subscription first (resolveDisplayPlanKey), so a drifted tenant
+      // (Tenant.plan set, subscription.planKey null) is visible as such rather than silently
+      // shown as a paying customer via the legacy field alone.
       plan: t.plan,
+      planKey: this._resolveDisplayPlanKey(t),
       trialEndsAt: t.trialEndsAt,
       createdAt: t.createdAt,
       deletedAt: t.deletedAt,
@@ -1897,6 +2001,11 @@ ${
     // OUTSIDE the transaction (below) — it doesn't accept a Prisma client (see its signature
     // above) and is fire-and-forget by design (AuditService.log swallows its own errors).
     const updated = await this.prisma.$transaction(async (tx) => {
+      // SA-140: lock first, same reasoning as updateStatus() — a concurrent write to this same
+      // tenant (a status change, a price resync) must not interleave with the read-then-decide
+      // logic below.
+      await tx.$queryRaw`SELECT id FROM "Tenant" WHERE id = ${tenantId} FOR UPDATE`;
+
       const result = await tx.tenant.update({
         where: { id: tenantId },
         data: { class: dto.class },
@@ -1906,11 +2015,39 @@ ${
       const wasProd = before.class === "PRODUCTION";
       const isProd = dto.class === "PRODUCTION";
       if (wasProd !== isProd) {
+        // SA-140 (B557 item 2): ledgerAgg (mrr.service.ts) sums BillingEvent.amountDelta
+        // WHERE tenant.class = 'PRODUCTION' — a join evaluated against the tenant's CURRENT
+        // class, not class-at-event-time. The moment a tenant enters PRODUCTION, its entire
+        // pre-existing amountDelta history (booked under whatever class it had before) becomes
+        // visible to that SUM in one step, with nothing compensating for the import.
+        //
+        // Entering PRODUCTION: emit a compensating delta = this tenant's LIVE contribution
+        // right now, minus the Σ of everything it's about to import — so its post-flip ledger
+        // contribution lands exactly at its live `mrr` contribution, matching `mrr` at the
+        // instant of the transition instead of importing unrelated pre-PRODUCTION history.
+        // priceTenant() MUST be called with `tx`, AFTER the class write above: it gates on
+        // `tenant.class` itself (mrr.service.ts), and a call without `tx` (or before this
+        // write commits) would still see the OLD class under read-committed isolation and
+        // silently return 0 — understating the compensation with no error (SA-140).
+        //
+        // Leaving PRODUCTION: no compensating entry needed. ledgerAgg's current-class join
+        // automatically excludes ALL of this tenant's BillingEvent rows (past and future) the
+        // instant `class` flips away from PRODUCTION — the same reason isPayingRow's `class`
+        // condition drops it from live `mrr` at the same moment. Both go to zero contribution
+        // together, for the same underlying reason.
+        let amountDelta: number | undefined;
+        if (isProd) {
+          const [priorSum, liveContribution] = await Promise.all([
+            tx.billingEvent.aggregate({ _sum: { amountDelta: true }, where: { tenantId } }),
+            this.mrrService.priceTenant(tenantId, tx),
+          ]);
+          amountDelta = roundMoney(liveContribution - Number(priorSum._sum.amountDelta ?? 0));
+        }
         await this.billingEventService.emit(
           tenantId,
           BILLING_EVENTS.TENANT_CLASS_CHANGED,
           { from: before.class, to: dto.class, reason: dto.reason, platformAdmin: true },
-          { actorId: adminId, tx },
+          { amountDelta, actorId: adminId, tx },
         );
       }
 

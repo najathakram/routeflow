@@ -92,9 +92,13 @@ jest.mock("@/components/BarcodeScannerButton", () => ({
 }));
 
 // The continuous scan screen is mounted whenever scan_v2 is on; only its resolveCode prop matters here.
-let capturedScanScreenResolve: ((code: string) => Promise<unknown>) | undefined;
+type ScanScreenResolve = (
+  code: string,
+  opts?: { quiet?: boolean; background?: boolean },
+) => Promise<unknown>;
+let capturedScanScreenResolve: ScanScreenResolve | undefined;
 jest.mock("./scan/ScanOrderScreen", () => ({
-  ScanOrderScreen: (props: { resolveCode: (code: string) => Promise<unknown> }) => {
+  ScanOrderScreen: (props: { resolveCode: ScanScreenResolve }) => {
     capturedScanScreenResolve = props.resolveCode;
     return null;
   },
@@ -295,6 +299,29 @@ describe("typed Qty and the scan screen (Opus F1)", () => {
     await waitFor(() => expect(lineFor("Sample Cola")).toBeTruthy());
     expect(unitsOf("Sample Cola")).toBe("1"); // +1, not 9
     expect(res).toMatchObject({ created: true }); // so the screen's Undo removes the whole line
+  });
+
+  it("a qty typed for an Enter that added nothing never rides into a background retry either (B595 supersede)", async () => {
+    mockScanV2 = true;
+    mockResolveProductByCode
+      .mockResolvedValueOnce({ notFound: false, archived: true, product: PLAIN }) // the live Enter adds nothing
+      .mockResolvedValueOnce({ notFound: false, archived: false, product: PLAIN }); // the retry's own lookup
+    renderWithProviders(<CreateOrderModal isOpen onClose={jest.fn()} />);
+    fireEvent.change(qtyField(), { target: { value: "9" } });
+    fireEvent.change(search(), { target: { value: "999999999999" } });
+    fireEvent.keyDown(search(), { key: "Enter" });
+    await waitFor(() => expect(mockResolveProductByCode).toHaveBeenCalledTimes(1));
+
+    // The poor-signal queue calls resolveCode again quiet-AND-background, exactly like a retry of
+    // a different queued code: opts must still pass through to the real handler, and the stale
+    // typed qty from the Enter above must not ride into it.
+    let res: any;
+    await act(async () => {
+      res = await capturedScanScreenResolve!("100200300", { quiet: true, background: true });
+    });
+    await waitFor(() => expect(lineFor("Sample Cola")).toBeTruthy());
+    expect(unitsOf("Sample Cola")).toBe("1"); // +1, not the stale typed 9
+    expect(res).toMatchObject({ created: true });
   });
 
   it("a repeat scan on the scan screen does not toast", async () => {
