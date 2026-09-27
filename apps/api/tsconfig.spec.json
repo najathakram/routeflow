@@ -4,5 +4,5 @@
     "noEmit": true,
     "incremental": false
   },
-  "exclude": ["prisma.config.ts", "scripts/**", "prisma/**", "dist", "node_modules"]
+  "exclude": ["prisma.config.ts", "scripts/**", "prisma/migrations/**", "dist", "node_modules"]
 }
