@@ -2685,6 +2685,10 @@ export class CustomersService {
   }
 
   async deleteImportedCustomers(): Promise<{ deleted: number; preserved: number }> {
+    // #2569: a destructive bulk delete has no all-tenant mode (forTenant() is UNSCOPED without a
+    // tenant); refuse a null tenant exactly as deleteAllCustomers does.
+    if (!this.prisma.getTenantId())
+      throw new ForbiddenException("Deleting imported customers requires a tenant context.");
     const all = await this.prisma.forTenant().customer.findMany({
       select: {
         id: true,
@@ -2699,14 +2703,14 @@ export class CustomersService {
 
     const ids = toDelete.map((c) => c.id);
     const uids = toDelete.map((c) => c.userId);
+    // #2569 (SA-510): the same guards as deleteAllCustomers: the pre-flight breakdown, then the
+    // in-tx re-check and the compare-and-set invoice delete (customer-delete-preflight.ts).
+    await assertNoBlockingInvoices(this.prisma.forTenant(), ids, { capList: true });
 
     await this.prisma.tenantTransaction(
       async (tx) => {
-        // Invoices
-        const invoices = await tx.invoice.findMany({
-          where: { customerId: { in: ids } },
-          select: { id: true },
-        });
+        // Invoices (DRAFT/VOID only by now: any blocking one is a 409 and a rollback here)
+        const invoices = await readInvoicesAssertingNoneBlocking(tx, ids);
         const invoiceIds = invoices.map((i) => i.id);
         if (invoiceIds.length) {
           // Reverse each invoice's regulated-sales ledger rows BEFORE its items
@@ -2723,7 +2727,7 @@ export class CustomersService {
           await tx.invoicePayment.deleteMany({ where: { invoiceId: { in: invoiceIds } } });
           await tx.invoiceItem.deleteMany({ where: { invoiceId: { in: invoiceIds } } });
         }
-        await tx.invoice.deleteMany({ where: { customerId: { in: ids } } });
+        await deleteNonBlockingInvoicesCas(tx, ids, invoiceIds.length);
 
         // Credit notes — order↔credit-note links must be deleted BEFORE the notes
         // (OrderCreditNote.creditNoteId has no onDelete, so the FK restricts the parent delete)
