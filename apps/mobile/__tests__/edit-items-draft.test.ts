@@ -37,6 +37,7 @@ import {
   type StagedEdit,
   type UnlistedDraft,
 } from "../lib/edit-items-draft";
+import { readEditItemsSurface } from "./support/edit-items-source";
 
 // A two-line order: one boxed BUY_N_GET_M line, one loose line.
 function orderFixture(): BaselineOrderLike {
@@ -1055,9 +1056,7 @@ describe("edit-items-draft: resolveDraftKeyForPick / newDraftKey (B775 fleet-lea
 describe("edit-items.tsx source pin: the draft record is never keyed by productId (B775)", () => {
   const stripComments = (text: string) =>
     text.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/[^\n]*/g, "");
-  const source = stripComments(
-    readFileSync(join(__dirname, "../app/(operator)/(tabs)/orders/[id]/edit-items.tsx"), "utf8"),
-  );
+  const source = stripComments(readEditItemsSurface());
   // size-ratchet extraction moved resolveDraftKeyForPick's own call site into
   // resolvePickTarget (lib/edit-items-draft.ts) — some pins below check there instead.
   const libSource = stripComments(

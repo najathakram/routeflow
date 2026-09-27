@@ -50,7 +50,7 @@ const BASELINE: Record<string, number> = {
   "apps/api/src/customers/customers.service.spec.ts": 3209,
   "apps/api/src/routes/routes.service.ts": 3189, // prefactor: run/stop select shapes + status constants live in routes/routes.constants.ts (was 3270)
   "apps/web/app/(dashboard)/products/[id]/page.tsx": 2942,
-  "apps/mobile/app/(operator)/(tabs)/orders/[id]/edit-items.tsx": 3315,
+  "apps/mobile/app/(operator)/(tabs)/orders/[id]/edit-items.tsx": 1399, // #2340 prefactor: DraftItemCard/StepperRow, PriceOverrideModal, the unlisted card+modal, CreateCreditNoteModal, ProductPicker and the StyleSheet moved verbatim to components/edit-items/*; marginFloorPrice -> lib/margin-floor-price.ts (was 3315). Measured, not rounded.
   "apps/mobile/components/NewOrderScreen.tsx": 4056, // SA-085: lineUnitFor + the total/totalItems memo -> lib/cart-order-total.ts (executable pin for the order-total fix) (was 4078)
   "apps/web/app/(dashboard)/inventory/page.tsx": 3303,
   "apps/web/app/(marketing)/marketing.css": 9941,
