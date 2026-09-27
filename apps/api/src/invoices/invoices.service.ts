@@ -53,6 +53,7 @@ import {
 import { deliveredBasisByLine, deliveredQtyFromBasis } from "./delivered-basis-by-line";
 import { assertOrderItemIdsBelongToOrder, logSkippedMatches } from "./order-item-provenance";
 import { EntitlementsService } from "../billing/entitlements.service";
+import { EntitlementAuthority } from "../billing/entitlement-authority.service";
 import {
   CheckStatus,
   CreditNoteStatus,
@@ -174,6 +175,8 @@ export class InvoicesService {
     private readonly commissionEngine: CommissionEngineService,
     private readonly numbering: NumberingService,
     private readonly sellingRestrictions: SellingRestrictionsService,
+    // #2198/SA-397: flag.msrp asks the same evaluation point as the route guard.
+    private readonly authority: EntitlementAuthority,
   ) {}
 
   /**
@@ -186,7 +189,7 @@ export class InvoicesService {
     T extends { productId?: string | null; msrp?: number | null; unitLabel?: string | null },
   >(db: any, customerId: string, itemsData: T[]): Promise<void> {
     const tenantId = this.prisma.getTenantId();
-    if (!tenantId || !(await this.entitlements.hasFlag(tenantId, "flag.msrp"))) return;
+    if (!tenantId || !(await this.authority.can(tenantId, "flag.msrp"))) return;
     const ids = [...new Set(itemsData.map((i) => i.productId).filter(Boolean))] as string[];
     if (ids.length === 0) return;
     const map = await loadMsrpMap(db, customerId, ids);

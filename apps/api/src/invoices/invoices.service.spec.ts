@@ -35,6 +35,7 @@ import { AuthorizationGuardService } from "../authorizations/authorization-guard
 import { CreditNotesService } from "../credit-notes/credit-notes.service";
 import { MessagingService } from "../messaging/messaging.service";
 import { EntitlementsService } from "../billing/entitlements.service";
+import { EntitlementAuthority } from "../billing/entitlement-authority.service";
 import { CommissionEngineService } from "../sales-agents/commission-engine.service";
 import { CheckStatus, InvoiceStatus, NotificationEvent, UserRole } from "@prisma/client";
 import { computeLineSubtotal, roundMoney } from "@routeflow/pricing";
@@ -173,6 +174,13 @@ describe("InvoicesService", () => {
         { provide: StorageService, useValue: mockStorage },
         // flag.msrp defaults OFF so applyMsrpSnapshots is a no-op — the
         // pre-MSRP tests keep their exact write shapes (msrp stays null).
+        {
+          provide: EntitlementAuthority,
+          inject: [EntitlementsService],
+          useFactory: (e: { hasFlag?: (t: string, k: string) => Promise<boolean> }) => ({
+            can: (t: string, k: string) => e.hasFlag?.(t, k) ?? Promise.resolve(false),
+          }),
+        },
         { provide: EntitlementsService, useValue: mockEntitlements },
         { provide: CommissionEngineService, useValue: mockCommissionEngine },
         { provide: NumberingService, useValue: mockNumbering },

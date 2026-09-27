@@ -22,6 +22,7 @@ import { EmailService } from "../email/email.service";
 import { CommissionEngineService } from "../sales-agents/commission-engine.service";
 import { RegulatedLedgerService } from "../regulated/regulated-ledger.service";
 import { createMockPrisma } from "../testing/prisma-mock";
+import { entitlementAuthorityFromEntitlements } from "../testing/entitlement-authority-provider";
 
 describe("CustomersService.setCustomerConsent (SA-305 (2))", () => {
   let service: CustomersService;
@@ -53,6 +54,7 @@ describe("CustomersService.setCustomerConsent (SA-305 (2))", () => {
         { provide: MeterService, useValue: { read: jest.fn() } },
         { provide: PlanCatalogService, useValue: { getPublishedVersion: jest.fn() } },
         { provide: EntitlementsService, useValue: { hasFlag: jest.fn().mockResolvedValue(false) } },
+        entitlementAuthorityFromEntitlements, // #2241
         {
           provide: RegulatedLedgerService,
           useValue: { reverseInvoiceEntries: jest.fn() },

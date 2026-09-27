@@ -82,9 +82,11 @@ export class ProductsService {
     private readonly storage: StorageService,
     private readonly addonService: AddonService,
     private readonly systemConfig: SystemConfigService,
+    // Kept alongside `authority`: buildPlanFlagDenial (the forecasting gate's denial body) reads it.
     private readonly entitlements: EntitlementsService,
     private readonly planCatalog: PlanCatalogService,
     private readonly gateway: RouteFlowGateway,
+    // #2198/#2241: the ONE EntitlementAuthority (MSRP + forecasting gates).
     private readonly authority: EntitlementAuthority,
     private readonly featureOverrides: FeatureOverrideService,
   ) {}
@@ -123,7 +125,8 @@ export class ProductsService {
   async assertMsrpAllowed(): Promise<void> {
     const tenantId = this.prisma.getTenantId();
     if (!tenantId) return; // no tenant context (e.g. SUPER_ADMIN) — nothing to gate
-    if (await this.entitlements.hasFlag(tenantId, "flag.msrp")) return;
+    // #2198: the ONE evaluation point the flag.msrp route guard uses (overrides + live-mode resolver).
+    if (await this.authority.can(tenantId, "flag.msrp")) return;
     const upgrade = await this.planCatalog.upgradeTargetForFlag("flag.msrp").catch(() => ({
       planKey: null,
       planMonthlyPrice: null,

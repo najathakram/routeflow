@@ -19,7 +19,7 @@ import { PrismaService } from "../prisma/prisma.service";
 import { StorageService } from "../storage/storage.service";
 import { AddonService } from "../billing/addon.service";
 import { SystemConfigService } from "../system-config/system-config.service";
-import { EntitlementsService } from "../billing/entitlements.service";
+import { EntitlementAuthority } from "../billing/entitlement-authority.service";
 import { PlanCatalogService } from "../billing/plan-catalog.service";
 import { createMockPrisma } from "../testing/prisma-mock";
 import { RouteFlowGateway } from "../gateways/routeflow.gateway";
@@ -66,7 +66,7 @@ describe("ProductsService — F8-003 import error disclosure", () => {
         { provide: StorageService, useValue: {} },
         { provide: AddonService, useValue: { assertWithinLimit: jest.fn() } },
         { provide: SystemConfigService, useValue: { get: jest.fn().mockResolvedValue(null) } },
-        { provide: EntitlementsService, useValue: { hasFlag: jest.fn().mockResolvedValue(false) } },
+        { provide: EntitlementAuthority, useValue: { can: jest.fn().mockResolvedValue(false) } },
         { provide: PlanCatalogService, useValue: { upgradeTargetForFlag: jest.fn() } },
         { provide: RouteFlowGateway, useValue: { emitProductUpdated: jest.fn() } },
       ],
@@ -118,7 +118,7 @@ describe("ProductsService.clearAll — cross-tenant wipe regression", () => {
         { provide: StorageService, useValue: {} },
         { provide: AddonService, useValue: {} },
         { provide: SystemConfigService, useValue: { get: jest.fn().mockResolvedValue(null) } },
-        { provide: EntitlementsService, useValue: { hasFlag: jest.fn().mockResolvedValue(false) } },
+        { provide: EntitlementAuthority, useValue: { can: jest.fn().mockResolvedValue(false) } },
         { provide: PlanCatalogService, useValue: { upgradeTargetForFlag: jest.fn() } },
         { provide: RouteFlowGateway, useValue: { emitProductUpdated: jest.fn() } },
       ],
@@ -198,7 +198,7 @@ describe("ProductsService.bulkAssignParent — cross-tenant parent id rejected",
         { provide: StorageService, useValue: {} },
         { provide: AddonService, useValue: {} },
         { provide: SystemConfigService, useValue: { get: jest.fn().mockResolvedValue(null) } },
-        { provide: EntitlementsService, useValue: { hasFlag: jest.fn().mockResolvedValue(false) } },
+        { provide: EntitlementAuthority, useValue: { can: jest.fn().mockResolvedValue(false) } },
         { provide: PlanCatalogService, useValue: { upgradeTargetForFlag: jest.fn() } },
         { provide: RouteFlowGateway, useValue: { emitProductUpdated: jest.fn() } },
       ],
