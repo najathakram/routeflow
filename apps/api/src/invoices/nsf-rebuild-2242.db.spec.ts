@@ -46,7 +46,6 @@ import { CommissionEngineService } from "../sales-agents/commission-engine.servi
 import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
 import { EstimatesService } from "../estimates/estimates.service";
 import { NumberingService } from "../import/numbering.service";
-import { NSF_FEE_DESCRIPTION_PREFIX } from "../sales-agents/commission-math";
 import { describeDb, requireLocalDatabaseUrl } from "../common/testing/db-spec";
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
@@ -150,8 +149,10 @@ describeDb(
         const where = { where: { tenantId } };
         await prisma.regulatedSalesLedger.deleteMany(where).catch(swallow);
         await prisma.invoicePayment.deleteMany(where).catch(swallow);
+        await prisma.paymentCounter.deleteMany(where).catch(swallow);
         await prisma.invoiceItem.deleteMany(where).catch(swallow);
         await prisma.invoice.deleteMany(where).catch(swallow);
+        await prisma.deliveryMutation.deleteMany(where).catch(swallow);
         await prisma.orderItem.deleteMany(where).catch(swallow);
         await prisma.order.deleteMany(where).catch(swallow);
         await prisma.product.deleteMany(where).catch(swallow);
@@ -166,8 +167,8 @@ describeDb(
 
     /**
      * A PENDING order (10 × $5 = $50, tax $5) mirrored by ONE issued deposit invoice (SENT,
-     * depositPercent 50) that carries the order line plus an NSF fee line of $25 (`systemKind` as
-     * given; `null` = a legacy prefix-only line from before #2169's stamp).
+     * depositPercent 50) that carries the order line plus an NSF fee line of $25, booked by a
+     * bounced check (`null` = a legacy prefix-only line from before #2169's stamp).
      */
     async function seed(label: string, nsfKind: InvoiceItemSystemKind | null) {
       seq += 1;
@@ -215,9 +216,9 @@ describeDb(
           invoiceNumber: `INV-2242-${RUN}-${seq}`,
           status: "SENT",
           depositPercent: 50,
-          subtotal: 75,
+          subtotal: 50,
           taxAmount: 5,
-          total: 80,
+          total: 55,
         },
       });
       await prisma.invoiceItem.create({
@@ -232,18 +233,8 @@ describeDb(
           subtotal: 50,
         },
       });
-      const nsf = await prisma.invoiceItem.create({
-        data: {
-          tenantId,
-          invoiceId: invoice.id,
-          description: `${NSF_FEE_DESCRIPTION_PREFIX} P-${seq}`,
-          qty: 1,
-          unitPrice: 25,
-          taxRate: 0,
-          subtotal: 25,
-          systemKind: nsfKind,
-        },
-      });
+      // A $20 check bounces with the $25 fee through the real writers (invoice → 75 / 5 / 80).
+      const nsf = await bounceCheck(tenantId, invoice.id, 20, nsfKind === null);
       return { tenantId, orderId: order.id, invoiceId: invoice.id, nsfId: nsf.id };
     }
 
@@ -294,36 +285,49 @@ describeDb(
       return { tenantId, customerId: customer.id };
     }
 
-    async function nsfLine(
+    /**
+     * The NSF line exactly as production books it (fleet rule: money fixtures are shaped by the
+     * REAL writer): a CHECK recorded through recordPayment, then bounced through setCheckStatus
+     * with a $25 fee, which writes the stamped (NSF_FEE) line and moves the invoice's subtotal and
+     * total. `legacy` then clears systemKind, the one hand edit: the shape of a line booked before
+     * #2169's stamp, which only the description prefix identifies.
+     */
+    async function bounceCheck(
       tenantId: string,
       invoiceId: string,
-      kind: InvoiceItemSystemKind | null,
+      amount: number,
+      legacy: boolean,
     ) {
-      return prisma.invoiceItem.create({
-        data: {
-          tenantId,
-          invoiceId,
-          description: `${NSF_FEE_DESCRIPTION_PREFIX} P-${seq}`,
-          qty: 1,
-          unitPrice: 25,
-          taxRate: 0,
-          subtotal: 25,
-          systemKind: kind,
-        },
+      await tenantCtx.run(tenantId, () =>
+        invoices.recordPayment(invoiceId, { amount, method: "CHECK" } as any),
+      );
+      const check = await prisma.invoicePayment.findFirstOrThrow({
+        where: { invoiceId, method: "CHECK" },
       });
+      await tenantCtx.run(tenantId, () =>
+        invoices.setCheckStatus(invoiceId, check.id, { status: "BOUNCED", nsfFeeAmount: 25 }),
+      );
+      const nsf = await prisma.invoiceItem.findFirstOrThrow({
+        where: { invoiceId, systemKind: InvoiceItemSystemKind.NSF_FEE },
+      });
+      if (legacy) {
+        await prisma.invoiceItem.update({ where: { id: nsf.id }, data: { systemKind: null } });
+      }
+      return nsf;
     }
 
     it.each([
-      ["a stamped (systemKind NSF_FEE) line", InvoiceItemSystemKind.NSF_FEE],
-      ["a legacy prefix-only (NULL systemKind) line", null],
+      ["a stamped (systemKind NSF_FEE) line", false],
+      ["a legacy prefix-only (NULL systemKind) line", true],
     ])(
       "#2387 fold: the delivered reconcile of a SENT deposit mirror keeps %s; PARTIAL on goods-only tax",
-      async (_n, kind) => {
-        const { tenantId, customerId } = await newTenant(kind ? "dlv-stamped" : "dlv-legacy");
+      async (_n, legacy) => {
+        const { tenantId, customerId } = await newTenant(legacy ? "dlv-legacy" : "dlv-stamped");
         const product = await prisma.product.create({
           data: { tenantId, name: "p dlv", unit: "each", pricePerUnit: 25 },
         });
-        // Ordered 2 × $25 (tax $5), delivered 1 (no delivery mutations → deliveredQty is the basis).
+        // Ordered 2 × $25 (tax $5). The legacy deliveredQty column stays 0: the delivered basis
+        // must come from the DeliveryMutation evidence row below.
         const order = await prisma.order.create({
           data: { tenantId, customerId, status: "DELIVERED", subtotal: 50, tax: 5, total: 55 },
         });
@@ -333,12 +337,11 @@ describeDb(
             orderId: order.id,
             productId: product.id,
             qty: 2,
-            deliveredQty: 1,
             unitPrice: 25,
             subtotal: 50,
           },
         });
-        // The SENT deposit mirror: goods 50 + fee 25, tax 5 → 80; $10 confirmed, a $20 check bounced.
+        // The SENT deposit mirror as issued at placement: goods 50 + tax 5 = 55.
         const invoice = await prisma.invoice.create({
           data: {
             tenantId,
@@ -347,9 +350,9 @@ describeDb(
             invoiceNumber: `INV-2242-${RUN}-${seq}`,
             status: "SENT",
             depositPercent: 50,
-            subtotal: 75,
+            subtotal: 50,
             taxAmount: 5,
-            total: 80,
+            total: 55,
           },
         });
         await prisma.invoiceItem.create({
@@ -364,19 +367,20 @@ describeDb(
             subtotal: 50,
           },
         });
-        const nsf = await nsfLine(tenantId, invoice.id, kind);
-        await prisma.invoicePayment.create({
-          data: { tenantId, invoiceId: invoice.id, amount: 10, method: "CASH", status: "PAID" },
-        });
-        await prisma.invoicePayment.create({
+        // $10 cash confirmed; a $20 check bounces with a $25 NSF fee (invoice → 75 / 5 / 80).
+        await tenantCtx.run(tenantId, () =>
+          invoices.recordPayment(invoice.id, { amount: 10, method: "CASH" } as any),
+        );
+        const nsf = await bounceCheck(tenantId, invoice.id, 20, legacy);
+        // The short delivery, shaped as completeStop (routes.service.ts) writes it: 1 of 2.
+        await prisma.deliveryMutation.create({
           data: {
             tenantId,
-            invoiceId: invoice.id,
-            amount: 20,
-            method: "CHECK",
-            status: "VOID",
-            checkStatus: "BOUNCED",
-            bouncedAt: new Date(),
+            orderId: order.id,
+            orderItemId: li.id,
+            productId: product.id,
+            type: "DELIVERED",
+            quantityDelivered: 1,
           },
         });
 
@@ -393,6 +397,8 @@ describeDb(
           include: { items: true },
         });
         expect(inv!.items).toHaveLength(2); // the delivered goods line + the kept NSF line
+        const goods = inv!.items.find((it) => it.id !== nsf.id)!;
+        expect(Number(goods.qty)).toBe(1); // billed from the mutation, not the 0 column
         expect(Number(inv!.subtotal)).toBe(50); // delivered goods 25 + fee 25
         expect(Number(inv!.taxAmount)).toBe(2.5); // the order's tax share on goods only
         expect(Number(inv!.total)).toBe(52.5);
@@ -400,118 +406,126 @@ describeDb(
       },
     );
 
-    it("#2387 fold: split siblings keep the NSF line; the tax remainder and shipping stay on -R1", async () => {
-      const { tenantId, customerId } = await newTenant("split");
-      const cat = await prisma.trackedCategory.create({
-        data: { tenantId, name: "R", invoiceTreatment: "SEPARATE_INVOICE" },
-      });
-      const pStd = await prisma.product.create({
-        data: { tenantId, name: "p std", unit: "each", pricePerUnit: 10 },
-      });
-      const pReg = await prisma.product.create({
-        data: {
-          tenantId,
-          name: "p reg",
-          unit: "each",
-          pricePerUnit: 10,
-          trackedCategoryId: cat.id,
-        },
-      });
-      // Base: 1 × $10. -R1: 3 × $10. Order tax 0.50, shipping 5 (the drafts carry none → re-seeded).
-      const order = await prisma.order.create({
-        data: {
-          tenantId,
-          customerId,
-          status: "PENDING",
-          subtotal: 40,
-          tax: 0.5,
-          shippingFee: 5,
-          total: 45.5,
-        },
-      });
-      const liStd = await prisma.orderItem.create({
-        data: {
-          tenantId,
-          orderId: order.id,
-          productId: pStd.id,
-          qty: 1,
-          unitPrice: 10,
-          subtotal: 10,
-        },
-      });
-      const liReg = await prisma.orderItem.create({
-        data: {
-          tenantId,
-          orderId: order.id,
-          productId: pReg.id,
-          qty: 3,
-          unitPrice: 10,
-          subtotal: 30,
-          trackedCategoryId: cat.id,
-        },
-      });
-      const groupId = randomUUID();
-      const mkDraft = (suffix: string, subtotal: number) =>
-        prisma.invoice.create({
+    it.each([
+      ["a stamped (systemKind NSF_FEE) line", false],
+      ["a legacy prefix-only (NULL systemKind) line", true],
+    ])(
+      "#2387 fold: split siblings keep %s; the tax remainder and shipping stay on -R1",
+      async (_n, legacy) => {
+        const { tenantId, customerId } = await newTenant(legacy ? "split-legacy" : "split");
+        const cat = await prisma.trackedCategory.create({
+          data: { tenantId, name: "R", invoiceTreatment: "SEPARATE_INVOICE" },
+        });
+        const pStd = await prisma.product.create({
+          data: { tenantId, name: "p std", unit: "each", pricePerUnit: 10 },
+        });
+        const pReg = await prisma.product.create({
+          data: {
+            tenantId,
+            name: "p reg",
+            unit: "each",
+            pricePerUnit: 10,
+            trackedCategoryId: cat.id,
+          },
+        });
+        // Base: 1 × $10. -R1: 3 × $10. Order tax 0.50, shipping 5 (the drafts carry none → re-seeded).
+        const order = await prisma.order.create({
           data: {
             tenantId,
             customerId,
-            orderId: order.id,
-            invoiceGroupId: groupId,
-            invoiceNumber: `INV-2242-${RUN}-${seq}${suffix}`,
-            status: "DRAFT",
-            subtotal,
-            taxAmount: 0,
-            total: subtotal,
+            status: "PENDING",
+            subtotal: 40,
+            tax: 0.5,
+            shippingFee: 5,
+            total: 45.5,
           },
         });
-      const base = await mkDraft("", 35);
-      const r1 = await mkDraft("-R1", 30);
-      await prisma.invoiceItem.create({
-        data: {
-          tenantId,
-          invoiceId: base.id,
-          orderItemId: liStd.id,
-          productId: pStd.id,
-          description: "p std",
-          qty: 1,
-          unitPrice: 10,
-          subtotal: 10,
-        },
-      });
-      await prisma.invoiceItem.create({
-        data: {
-          tenantId,
-          invoiceId: r1.id,
-          orderItemId: liReg.id,
-          productId: pReg.id,
-          description: "p reg",
-          qty: 3,
-          unitPrice: 10,
-          subtotal: 30,
-          trackedCategoryId: cat.id,
-        },
-      });
-      // The fee sits on the BASE: counted before the proration, base (35) would outweigh -R1 (30).
-      const nsf = await nsfLine(tenantId, base.id, InvoiceItemSystemKind.NSF_FEE);
+        const liStd = await prisma.orderItem.create({
+          data: {
+            tenantId,
+            orderId: order.id,
+            productId: pStd.id,
+            qty: 1,
+            unitPrice: 10,
+            subtotal: 10,
+          },
+        });
+        const liReg = await prisma.orderItem.create({
+          data: {
+            tenantId,
+            orderId: order.id,
+            productId: pReg.id,
+            qty: 3,
+            unitPrice: 10,
+            subtotal: 30,
+            trackedCategoryId: cat.id,
+          },
+        });
+        const groupId = randomUUID();
+        const mkDraft = (suffix: string, subtotal: number) =>
+          prisma.invoice.create({
+            data: {
+              tenantId,
+              customerId,
+              orderId: order.id,
+              invoiceGroupId: groupId,
+              invoiceNumber: `INV-2242-${RUN}-${seq}${suffix}`,
+              status: "DRAFT",
+              subtotal,
+              taxAmount: 0,
+              total: subtotal,
+            },
+          });
+        const base = await mkDraft("", 10);
+        const r1 = await mkDraft("-R1", 30);
+        await prisma.invoiceItem.create({
+          data: {
+            tenantId,
+            invoiceId: base.id,
+            orderItemId: liStd.id,
+            productId: pStd.id,
+            description: "p std",
+            qty: 1,
+            unitPrice: 10,
+            subtotal: 10,
+          },
+        });
+        await prisma.invoiceItem.create({
+          data: {
+            tenantId,
+            invoiceId: r1.id,
+            orderItemId: liReg.id,
+            productId: pReg.id,
+            description: "p reg",
+            qty: 3,
+            unitPrice: 10,
+            subtotal: 30,
+            trackedCategoryId: cat.id,
+          },
+        });
+        // A $5 check on the BASE bounces with the $25 fee. Counted before the proration and fee
+        // placement, the base (10 + 25) would outweigh -R1 (30) and take the remainder and shipping.
+        const nsf = await bounceCheck(tenantId, base.id, 5, legacy);
 
-      await tenantCtx.run(tenantId, () =>
-        invoices.reconcileOrderDraftInvoice(order.id, { basis: "order" }),
-      );
+        await tenantCtx.run(tenantId, () =>
+          invoices.reconcileOrderDraftInvoice(order.id, { basis: "order" }),
+        );
 
-      const kept = await prisma.invoiceItem.findUnique({ where: { id: nsf.id } });
-      expect(kept?.invoiceId).toBe(base.id);
-      expect(Number(kept!.taxRate)).toBe(0);
-      const b = await prisma.invoice.findUnique({ where: { id: base.id } });
-      const r = await prisma.invoice.findUnique({ where: { id: r1.id } });
-      expect(Number(b!.subtotal)).toBe(35); // goods 10 + fee 25
-      expect(Number(b!.taxAmount)).toBe(0.13); // round(0.125)
-      expect(Number(b!.shippingFee)).toBe(0);
-      expect(Number(b!.total)).toBe(35.13);
-      expect(Number(r!.subtotal)).toBe(30);
-      expect(Number(r!.taxAmount)).toBe(0.37); // round(0.375) = 0.38, less the -0.01 remainder
-      expect(Number(r!.shippingFee)).toBe(5);
-      expect(Number(r!.total)).toBe(35.37);
-    });
+        const kept = await prisma.invoiceItem.findUnique({ where: { id: nsf.id } });
+        expect(kept?.invoiceId).toBe(base.id);
+        expect(Number(kept!.subtotal)).toBe(25);
+        expect(Number(kept!.taxRate)).toBe(0);
+        const b = await prisma.invoice.findUnique({ where: { id: base.id } });
+        const r = await prisma.invoice.findUnique({ where: { id: r1.id } });
+        expect(Number(b!.subtotal)).toBe(35); // goods 10 + fee 25
+        expect(Number(b!.taxAmount)).toBe(0.13); // round(0.125)
+        expect(Number(b!.shippingFee)).toBe(0);
+        expect(Number(b!.total)).toBe(35.13);
+        expect(Number(r!.subtotal)).toBe(30);
+        expect(Number(r!.taxAmount)).toBe(0.37); // round(0.375) = 0.38, less the -0.01 remainder
+        expect(Number(r!.shippingFee)).toBe(5);
+        expect(Number(r!.total)).toBe(35.37);
+      },
+    );
   },
 );
