@@ -765,6 +765,12 @@ describe("ChangeRequestsService", () => {
         routeRun: { driverId: "drv-1", status: "IN_PROGRESS" },
       });
       prisma.driver.findFirst.mockResolvedValue({ id: "drv-1" });
+      // SA-434: the SA-429 predicate reads the ORDER's own stop chain (not order.routeRun).
+      prisma.order.findFirst.mockResolvedValue({ routeRunStopId: "stop-1" });
+      prisma.routeRunStop.findFirst.mockResolvedValue({
+        status: "PENDING",
+        routeRun: { driverId: "drv-1", status: "IN_PROGRESS" },
+      });
       prisma.changeRequest.updateMany.mockResolvedValue({ count: 1 });
       prisma.changeRequest.findUnique.mockResolvedValue({ ...PENDING_CR, status: "DECLINED" });
 
