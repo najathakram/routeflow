@@ -16,6 +16,7 @@ import {
   type UseMutationOptions,
 } from "@tanstack/react-query";
 import { apiClient } from "../api-client";
+import { DRIVER_CRITICAL_NETWORK_MODE } from "../live-online";
 import { captureSettleHandlers } from "../inline-return-submit-key";
 import { useOfflineQueue, type QueuedAction } from "../../store/offlineQueue";
 import type { FailedActionRecord } from "../queue-drain";
@@ -70,6 +71,10 @@ export function buildCaptureMutationOptions(
 ): UseMutationOptions<InlineReturnRecord, Error, CaptureVars> {
   const settle = captureSettleHandlers<CaptureVars>(settleCapture, failed);
   return {
+    // #2420 (F2 at 27271e9c): never PAUSE offline — TanStack's default "online" mode held a capture
+    // confirmed offline as a spinner (no "Saved offline", empty queue) until reconnect. Fail fast so
+    // the api-client interceptor queues it and the screen shows the queued result (#2265 class).
+    networkMode: DRIVER_CRITICAL_NETWORK_MODE,
     mutationFn: (dto) => apiClient.post("/returns/inline/capture", dto).then((r) => r.data),
     onSuccess: (data, variables) => {
       // Mobile's OWN query keys (lib/api/admin.ts, returns.ts, credit-notes.ts) — web's bare
