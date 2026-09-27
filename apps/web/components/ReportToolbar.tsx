@@ -78,14 +78,14 @@ export function ReportToolbar({
           type="date"
           value={from}
           onChange={(e) => onFromChange(e.target.value)}
-          className="h-9 rounded border border-surface-border bg-white px-2 text-sm text-navy focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
+          className="h-9 w-32 rounded border border-surface-border bg-white px-2 text-sm text-navy focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
         />
         <span className="text-sm text-navy/70">to</span>
         <input
           type="date"
           value={to}
           onChange={(e) => onToChange(e.target.value)}
-          className="h-9 rounded border border-surface-border bg-white px-2 text-sm text-navy focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
+          className="h-9 w-32 rounded border border-surface-border bg-white px-2 text-sm text-navy focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
         />
       </div>
 
