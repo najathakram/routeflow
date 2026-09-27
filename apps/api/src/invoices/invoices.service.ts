@@ -107,6 +107,7 @@ import { requireRestrictionTenantId } from "../selling-restrictions/restriction-
 import { buildManualInvoiceLines, type ManualLineItem } from "./manual-invoice-lines";
 import { foldCategoryTax, loadManualLineContext } from "./manual-invoice-context";
 import { resolveLineUnits } from "../products/line-units";
+import { assertUnitLineSplit } from "../orders/unit-line-split";
 import { prepareUnitLadders, requestsUnit } from "../orders/unit-line-build";
 import { standaloneAllocationTotals } from "./standalone-payment-totals";
 import { calendarDayOf } from "./settled-date-filter";
@@ -911,6 +912,12 @@ export class InvoicesService {
               roundMoney((storedCategoryTax * prior) / orderQty),
           );
 
+    // #2230: the fields name the line and its id in the 409 / the Sentry report; the call is unchanged.
+    const named = { id: li.id, orderItemId: li.id, description: li.product?.name ?? li.name };
+    assertUnitLineSplit(
+      { ...split, unitLabel: li.unitLabel, unitsPerBox, productId: li.productId, ...named },
+      "buildInvoiceItemData",
+    );
     return {
       // Catalog lines use the product name; unlisted lines carry a free-text `name`.
       description: li.product?.name ?? li.name ?? `Product`,
