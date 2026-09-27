@@ -47,6 +47,15 @@ function assertSecrets() {
   if (process.env.NODE_ENV === "production" && !process.env.STORAGE_URL_SIGNING_SECRET) {
     missing.push("STORAGE_URL_SIGNING_SECRET");
   }
+  // #2159 S2: the onboarding intake links are signed with their OWN secret (never derived from
+  // JWT_SECRET), so a JWT_SECRET leak can't forge a link. Production fails closed; elsewhere an
+  // unset secret only disables the feature (issuing a link refuses, every link reads 404).
+  if (
+    process.env.NODE_ENV === "production" &&
+    (process.env.ONBOARDING_TOKEN_SECRET ?? "").trim().length < 32
+  ) {
+    missing.push("ONBOARDING_TOKEN_SECRET (32+ chars)");
+  }
   if (missing.length > 0) {
     console.error(`\n❌ FATAL: Missing required environment variables: ${missing.join(", ")}`);
     console.error("   These must be set before the API can start.\n");

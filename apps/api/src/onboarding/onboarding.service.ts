@@ -48,6 +48,14 @@ type CaseRow = Prisma.OnboardingCaseGetPayload<{ include: { steps: true } }>;
 type StepRow = CaseRow["steps"][number];
 
 const NOT_FOUND = "Onboarding case not found";
+
+/** Revokes every still-active intake link of a case (S2 token lifecycle: LOST or LIVE). */
+async function revokeIntakeLinks(tx: Tx, caseId: string): Promise<void> {
+  await tx.intakeAccessToken.updateMany({
+    where: { caseId, revokedAt: null },
+    data: { revokedAt: new Date() },
+  });
+}
 const EVENTS_SHOWN = 200;
 
 /**
@@ -282,6 +290,8 @@ export class OnboardingService {
         data.status = dto.status;
       }
       await tx.onboardingCase.update({ where: { id }, data });
+      // S2: a LOST case's intake link dies with it (plan §4 token lifecycle).
+      if (data.status === "LOST") await revokeIntakeLinks(tx, id);
       const changed = Object.keys(dto).filter(
         (k) => (dto as Record<string, unknown>)[k] !== undefined,
       );
@@ -334,6 +344,8 @@ export class OnboardingService {
           where: { id },
           data: { status: "LIVE", closedAt: new Date() },
         });
+        await revokeIntakeLinks(tx, id); // S2: a LIVE case's intake link is revoked
+
         await this.event(tx, id, "case.live", adminId, { from: c.stage });
       }
     });
