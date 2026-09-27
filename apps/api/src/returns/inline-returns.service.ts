@@ -789,6 +789,17 @@ export class InlineReturnsService {
     // current state silently instead of throwing.
     const pre = await this.prisma.forTenant().return.findFirst({ where: { id, kind: "INLINE" } });
     if (!pre) throw new NotFoundException("Return not found");
+    // #2143: an ALREADY-APPROVED hold (approve() committed, then its read-back failed and the
+    // operator retried). The approval set status REFUNDED, the credit note and approvedAt, so a
+    // retry returns the current state — idempotent, no transaction, no second money write. A
+    // return issued without a hold has no approvedAt and still falls through to the 400 below.
+    if (pre.status === "REFUNDED" && pre.creditNoteId && pre.approvedAt) {
+      const current = await this.prisma
+        .forTenant()
+        .return.findUnique({ where: { id }, include: { items: true } });
+      if (!current) throw new NotFoundException("Return not found");
+      return this.withParkedReversals(current);
+    }
     if (pre.status !== "RECEIVED" || pre.holdReason !== "DRIVER_CAP" || pre.creditNoteId) {
       throw new BadRequestException("Only a driver-cap hold awaiting approval can be approved");
     }

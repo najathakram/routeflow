@@ -129,6 +129,7 @@ import { prepareUnitLadders, requestsUnit } from "../orders/unit-line-build";
 import { standaloneAllocationTotals } from "./standalone-payment-totals";
 import { calendarDayOf } from "./settled-date-filter";
 import { retryOnTxConflict } from "../common/tx-retry";
+import { AfterCommit, gatewayFor, withAfterCommit } from "../common/after-commit";
 import {
   lockInvoiceRow,
   lockInvoicesForPayment,
@@ -1406,7 +1407,7 @@ export class InvoicesService {
    */
   async reconcileOrderDraftInvoice(
     orderId: string,
-    opts: { basis: "order" | "delivered"; tx?: any },
+    opts: { basis: "order" | "delivered"; tx?: any; after?: AfterCommit },
   ) {
     const db = opts.tx ?? this.prisma.forTenant();
     const split = await this.reconcileSplitOrderDrafts(orderId, opts.basis, db);
@@ -1562,7 +1563,8 @@ export class InvoicesService {
     // before — this whole block is deposit-mirror-only.
     if (isDepositMirror && nextStatus !== InvoiceStatus.DRAFT) {
       await this.commissionEngine.syncInvoiceCommissionSafe(draft.id, db);
-      this.gateway.emitInvoiceUpdated(this.prisma.getTenantId(), {
+      const gateway = gatewayFor(opts.tx, opts.after, this.gateway, "reconcileOrderDraftInvoice");
+      gateway.emitInvoiceUpdated(this.prisma.getTenantId(), {
         invoiceId: updated.id,
         invoiceNumber: updated.invoiceNumber,
         customerId: updated.customerId,
@@ -2049,7 +2051,11 @@ export class InvoicesService {
    * because this method rebuilds each invoice at the full current line qty and would
    * otherwise expand an already-issued invoice to cover units/lines it never billed.
    */
-  async resyncOrderInvoicesForEdit(orderId: string, tx?: any): Promise<any[] | null> {
+  async resyncOrderInvoicesForEdit(
+    orderId: string,
+    tx?: any,
+    after?: AfterCommit,
+  ): Promise<any[] | null> {
     const run = async (db: any): Promise<any[] | null> => {
       const invoices = await db.invoice.findMany({
         where: { orderId, status: { not: InvoiceStatus.VOID } },
@@ -2118,15 +2124,16 @@ export class InvoicesService {
     // pre-edit total until it was manually refetched. Emitted here, at the OUTER
     // tail rather than inside `run`, so it lands POST-COMMIT on the only
     // production call site (orders.service.ts updateOrderItems, which passes no
-    // `tx`). INVARIANT for a future caller: passing a `tx` makes the emit fire
-    // inside that caller's transaction, so a later rollback would publish an
-    // invoice update that never committed — emit-after-commit there instead.
+    // `tx`). #2175: a caller that passes its own `tx` must also pass its
+    // AfterCommit queue (gatewayFor refuses otherwise), so the emit is queued and
+    // sent only once THAT transaction commits — never from inside it.
     // Exactly once per rebuilt invoice: rebuildSiblingDrafts returns one row per
     // linked invoice (the partition bails on any shared/unprovenanced line).
     if (updated) {
       const tenantId = this.prisma.getTenantId();
+      const gateway = gatewayFor(tx, after, this.gateway, "resyncOrderInvoicesForEdit");
       for (const inv of updated) {
-        this.gateway.emitInvoiceUpdated(tenantId, {
+        gateway.emitInvoiceUpdated(tenantId, {
           invoiceId: inv.id,
           invoiceNumber: inv.invoiceNumber,
           customerId: inv.customerId,
@@ -4731,7 +4738,7 @@ export class InvoicesService {
     // Refuse a null tenant BEFORE the transaction opens — same policy as sites
     // 2/3 (D3): a PAY number is never minted from the shared "singleton" row.
     const { tenantId, tenantShort } = this.requirePaymentTenant();
-    return this.prisma.tenantTransaction(async (tx) => {
+    return withAfterCommit(this.prisma, async (tx, after) => {
       // Lock the invoice row so concurrent payment requests serialize here
       await tx.$executeRaw`SELECT id FROM "Invoice" WHERE id = ${id} FOR UPDATE`;
 
@@ -4821,7 +4828,7 @@ export class InvoicesService {
           payments: { orderBy: { createdAt: "desc" } },
         },
       });
-      this.gateway.emitInvoiceUpdated(this.prisma.getTenantId(), {
+      after.defer(this.gateway).emitInvoiceUpdated(this.prisma.getTenantId(), {
         invoiceId: paid.id,
         invoiceNumber: paid.invoiceNumber,
         customerId: paid.customerId,
@@ -4887,6 +4894,7 @@ export class InvoicesService {
    */
   async recordDeliveryPaymentInTx(
     tx: any,
+    after: AfterCommit, // #2175: the caller's queue — its transaction owns the flush
     orderIds: string[],
     amount: number,
     method: string,
@@ -4991,7 +4999,7 @@ export class InvoicesService {
         },
       });
       await this.commissionEngine.syncInvoiceCommissionSafe(inv.id, tx);
-      this.gateway.emitInvoiceUpdated(this.prisma.getTenantId(), {
+      after.defer(this.gateway).emitInvoiceUpdated(this.prisma.getTenantId(), {
         invoiceId: inv.id,
         invoiceNumber: inv.invoiceNumber,
         customerId: inv.customerId,
@@ -5131,7 +5139,7 @@ export class InvoicesService {
         "Cannot edit a payment to method CREDIT_NOTE or ADVANCE. Void this payment and apply the credit note / advance via the dedicated action.",
       );
     }
-    return this.prisma.tenantTransaction(async (tx) => {
+    return withAfterCommit(this.prisma, async (tx, after) => {
       // PR-2 (check-payments B1 hardening, review-opus-v2 finding m3): recordPayment
       // already row-locks the invoice before reading its payments; updatePayment had
       // no equivalent, so two concurrent edits could both read a stale remaining
@@ -5223,7 +5231,7 @@ export class InvoicesService {
           payments: { orderBy: { createdAt: "desc" } },
         },
       });
-      this.gateway.emitInvoiceUpdated(this.prisma.getTenantId(), {
+      after.defer(this.gateway).emitInvoiceUpdated(this.prisma.getTenantId(), {
         invoiceId: updated.id,
         invoiceNumber: updated.invoiceNumber,
         customerId: updated.customerId,
@@ -5237,7 +5245,7 @@ export class InvoicesService {
 
   async deletePayment(invoiceId: string, paymentId: string) {
     let imageKey: string | null = null;
-    const updated = await this.prisma.tenantTransaction(async (tx) => {
+    const updated = await withAfterCommit(this.prisma, async (tx, after) => {
       // PR-2 review (routeflow-Lead, 2026-09-16): same Invoice FOR UPDATE lock as
       // updatePayment/recordPayment, taken BEFORE touching the payment row, and in
       // the same order — deletePayment and voidPayment previously took no lock at
@@ -5300,7 +5308,7 @@ export class InvoicesService {
           payments: { orderBy: { createdAt: "desc" } },
         },
       });
-      this.gateway.emitInvoiceUpdated(this.prisma.getTenantId(), {
+      after.defer(this.gateway).emitInvoiceUpdated(this.prisma.getTenantId(), {
         invoiceId: updated.id,
         invoiceNumber: updated.invoiceNumber,
         customerId: updated.customerId,
@@ -5360,7 +5368,7 @@ export class InvoicesService {
   // ─── Delete ───────────────────────────────────────────────────────────────
 
   async deleteInvoice(id: string) {
-    return this.prisma.tenantTransaction(async (tx) => {
+    return withAfterCommit(this.prisma, async (tx, after) => {
       const inv = await tx.invoice.findUnique({
         where: { id },
         include: { payments: true },
@@ -5409,7 +5417,7 @@ export class InvoicesService {
 
       // #2142 W1: a deleted DRAFT was never issued, so its number and total stay on the
       // operators' feed; the customer's room (the buyer portal) hears only of issued invoices.
-      this.gateway.emitInvoiceUpdated(
+      after.defer(this.gateway).emitInvoiceUpdated(
         this.prisma.getTenantId(),
         {
           invoiceId: id,
@@ -5574,7 +5582,7 @@ export class InvoicesService {
   // ─── Void a single payment ────────────────────────────────────────────────
 
   async voidPayment(invoiceId: string, paymentId: string) {
-    return this.prisma.tenantTransaction(async (tx) => {
+    return withAfterCommit(this.prisma, async (tx, after) => {
       // PR-2 review (routeflow-Lead, 2026-09-16): same Invoice FOR UPDATE lock as
       // updatePayment/recordPayment/deletePayment, taken BEFORE touching the
       // payment row, and in the same order — voidPayment previously took no lock
@@ -5657,7 +5665,7 @@ export class InvoicesService {
         },
       });
 
-      this.gateway.emitInvoiceUpdated(this.prisma.getTenantId(), {
+      after.defer(this.gateway).emitInvoiceUpdated(this.prisma.getTenantId(), {
         invoiceId,
         invoiceNumber: invoice.invoiceNumber,
         customerId: invoice.customerId,
@@ -5685,7 +5693,7 @@ export class InvoicesService {
    * transaction (all balance readers use the stored total).
    */
   async setCheckStatus(invoiceId: string, paymentId: string, dto: SetCheckStatusDto) {
-    return this.prisma.tenantTransaction(async (tx) => {
+    return withAfterCommit(this.prisma, async (tx, after) => {
       // PR-2 review (routeflow-Lead, 2026-09-16): same Invoice FOR UPDATE lock as
       // recordPayment/updatePayment/deletePayment/voidPayment, taken BEFORE
       // touching the payment row, and in the same order — setCheckStatus
@@ -5734,7 +5742,7 @@ export class InvoicesService {
           select: { invoiceNumber: true, customerId: true, status: true, total: true },
         });
         if (!invoice) throw new NotFoundException("Invoice not found");
-        this.gateway.emitInvoiceUpdated(this.prisma.getTenantId(), {
+        after.defer(this.gateway).emitInvoiceUpdated(this.prisma.getTenantId(), {
           invoiceId,
           invoiceNumber: invoice.invoiceNumber,
           customerId: invoice.customerId,
@@ -5817,7 +5825,7 @@ export class InvoicesService {
       // DEPOSITED/CLEARED branches above change no balances, so no hook there.
       await this.commissionEngine.syncInvoiceCommissionSafe(invoiceId, tx);
 
-      this.gateway.emitInvoiceUpdated(this.prisma.getTenantId(), {
+      after.defer(this.gateway).emitInvoiceUpdated(this.prisma.getTenantId(), {
         invoiceId,
         invoiceNumber: invoice.invoiceNumber,
         customerId: invoice.customerId,
