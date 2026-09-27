@@ -122,10 +122,12 @@ describe("a LOCKED unit line (#2231, SA-388 rule 1)", () => {
 
   it("removing the locked line is still allowed (DELETE needs no count)", () => {
     const order = locked();
-    const { draft } = hydrateFromOrder(order);
+    hydrateFromOrder(order);
+    // The screen's removeLine takes the line OUT of the draft and queues its id (B805: a
+    // pendingDelete whose id still survives in the draft is dropped — the surviving state wins).
     expect(repairBlockedLines({}, orderOriginals(order))).toEqual([]);
     expect(
-      stagedDiffItems({ draft, unlisted: [], pendingDeletes: ["L1"] }, orderOriginals(order)),
+      stagedDiffItems({ draft: {}, unlisted: [], pendingDeletes: ["L1"] }, orderOriginals(order)),
     ).toEqual([{ id: "L1", action: "DELETE" }]);
   });
 });
