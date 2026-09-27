@@ -692,7 +692,7 @@ function findNodeModulesDirs(worktreePath) {
 // Plan + execute
 // ---------------------------------------------------------------------------
 
-function buildPlan(repoRoot, mainCheckoutPath, worktreesRoot) {
+export function buildPlan(repoRoot, mainCheckoutPath, worktreesRoot) {
   const worktrees = listWorktrees(repoRoot);
   const actions = [];
   const skipped = [];
@@ -725,7 +725,16 @@ function buildPlan(repoRoot, mainCheckoutPath, worktreesRoot) {
       }
     }
     if (verdict.worktree === "remove") {
-      actions.push({ step: 2, kind: "worktree", target: wt.path, worktree: name });
+      // #1346: worktreePath, so execute()'s delete-time dirty re-check covers the DESTRUCTIVE
+      // removal too, not only the node_modules clear (a worktree action without it skipped the
+      // re-check entirely).
+      actions.push({
+        step: 2,
+        kind: "worktree",
+        target: wt.path,
+        worktree: name,
+        worktreePath: wt.path,
+      });
     }
     if (verdict.nodeModules === "skip" || verdict.worktree === "skip") {
       skipped.push({ worktree: name, branch: wt.branch, reason: verdict.reason });

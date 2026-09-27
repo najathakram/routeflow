@@ -13,6 +13,7 @@ import {
   realpathSync,
   rmSync,
   symlinkSync,
+  utimesSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -40,6 +41,7 @@ import {
   orphanEligible,
   branchTip,
   execute,
+  buildPlan,
   CMD_UNSAFE,
   unlinkLinksWithin,
   cmdRmdirArgs,
@@ -1111,6 +1113,94 @@ if (process.platform === "win32" && CMD_UNSAFE.test(winBase)) {
       safeRemoveTree(tree);
       assert.equal(existsSync(tree), false);
       assert.equal(existsSync(join(target, "pkg", "SENTINEL")), true);
+    });
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+}
+
+// #1346 — the delete-time dirty re-check (execute()) keys on the action's worktreePath. The
+// node_modules action carried it, the WORKTREE-REMOVAL action did not, so the destructive path was
+// never re-checked; the unit cases above hand-build a worktree action with the field and could not
+// see that. This pin goes through the REAL buildPlan on a real repo: a merged, clean, idle, pushed
+// linked worktree must come out as a `worktree` action carrying worktreePath, and execute() on
+// THAT action must refuse once the tree is dirty.
+{
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "janitor-1346-")));
+  const main = join(root, "main");
+  const origin = join(root, "origin.git");
+  const lane = join(root, "wt", "lane");
+  const git = (cwd, ...args) =>
+    execFileSync("git", ["-C", cwd, ...args], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    }).trim();
+  const id = ["-c", "user.name=t", "-c", "user.email=t@example.com"];
+  try {
+    execFileSync("git", ["init", "-q", "--bare", origin]);
+    execFileSync("git", ["init", "-q", "-b", "master", main]);
+    writeFileSync(join(main, "a.txt"), "a");
+    git(main, "add", "a.txt");
+    git(main, ...id, "commit", "-q", "-m", "base");
+    git(main, "remote", "add", "origin", origin);
+    // The lane's work reaches master through a real --no-ff merge (merged without gh), and is
+    // pushed with an upstream (not "unpushed").
+    git(main, "worktree", "add", "-q", "-b", "feat/lane", lane);
+    writeFileSync(join(lane, "l.txt"), "lane work");
+    git(lane, "add", "l.txt");
+    git(lane, ...id, "commit", "-q", "-m", "lane work");
+    git(main, ...id, "merge", "-q", "--no-ff", "-m", "merge lane", "feat/lane");
+    git(main, "push", "-q", "origin", "master", "feat/lane");
+    git(main, "fetch", "-q", "origin");
+    git(lane, "branch", "-q", "--set-upstream-to=origin/feat/lane");
+    // Idle: backdate the lane's HEAD reflog past RECENT_ACTIVITY_HOURS.
+    const laneGitDir = git(lane, "rev-parse", "--absolute-git-dir");
+    const old = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000);
+    utimesSync(join(laneGitDir, "logs", "HEAD"), old, old);
+
+    const { actions } = buildPlan(main, main, join(root, "wt"));
+    const removal = actions.find((a) => a.kind === "worktree");
+
+    t("#1346: buildPlan's worktree-REMOVAL action carries worktreePath", () => {
+      assert.ok(
+        removal,
+        `no worktree action planned: ${JSON.stringify(actions.map((a) => a.kind))}`,
+      );
+      assert.equal(realpathSync(removal.worktreePath), realpathSync(lane));
+    });
+
+    t(
+      "#1346: execute() on that planned action refuses when the tree went dirty since the plan",
+      () => {
+        const calls = [];
+        const deps = {
+          refuseDelete: () => null,
+          isDirty: (p) => (calls.push(`isDirty ${p}`), true),
+          removeTree: () => calls.push("removeTree"),
+          removeWorktree: (t) => calls.push(`removeWorktree ${t}`),
+          run: () => {},
+          log: () => {},
+        };
+        assert.equal(execute(removal, deps), "refused");
+        assert.ok(!calls.some((c) => c.startsWith("removeWorktree")), JSON.stringify(calls));
+        assert.ok(
+          calls.some((c) => c.startsWith("isDirty")),
+          "the re-check must have run",
+        );
+      },
+    );
+
+    t("#1346: ...and still removes it when the tree is clean at delete time", () => {
+      const calls = [];
+      execute(removal, {
+        refuseDelete: () => null,
+        isDirty: () => false,
+        removeTree: () => {},
+        removeWorktree: (t) => calls.push(`removeWorktree ${t}`),
+        run: () => {},
+        log: () => {},
+      });
+      assert.deepEqual(calls, [`removeWorktree ${removal.target}`]);
     });
   } finally {
     rmSync(root, { recursive: true, force: true });
