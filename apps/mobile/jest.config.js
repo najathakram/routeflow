@@ -45,6 +45,8 @@ module.exports = {
     // Same reason for the shared return-state helpers: resolve to SOURCE, no build step to depend on.
     "^@routeflow/returns$": "<rootDir>/../../packages/returns/src/index.ts",
     "^expo-secure-store$": "<rootDir>/__tests__/__mocks__/expo-secure-store.js",
+    // The kit's pure money-input helpers (#2331) resolve to SOURCE; the rest of the kit is stubbed.
+    "^@routeflow/ui/native/money-input$": "<rootDir>/../../packages/ui/src/native/money-input.ts",
     "^@routeflow/ui/(.*)$": "<rootDir>/__tests__/__mocks__/@routeflow/ui.js",
     "^@routeflow/types$": "<rootDir>/__tests__/__mocks__/@routeflow/types.js",
   },
