@@ -37,7 +37,7 @@ safe point and record everything. **Re-verify every sha with `gh`/`git ls-remote
 | #2464 | eb8eb3a9 | #2463, #2290 import VOID | SA-467/468 + lead Opus + F2 | CI green at sha |
 | #2433 | 5b4b0a04 | B562 PR-3 cost replay | SA-455 + lead Opus + F2 | cites #2449 |
 | #2419 | a66c4732 | #2206 prod guard (security) | SA-445 + lead Opus | check F2/CI |
-| #2448 | 1c34dcc5 | #2437 live cutover runbook | SA-457a + lead Opus | F prover proving 1-3 (PC); items 4-5 = owner's own cutover run. Docs follow-up REQUIRED before owner runs it (§6) |
+| #2448 | 1c34dcc5 | #2437 live cutover runbook | SA-457a + lead Opus + F prover (option c, #938 c-5856252229) | tier-1 complete; items 4-5 = owner's own cutover run. Docs follow-up REQUIRED before owner runs it (§6) |
 | #2469 | 3db8d2b6 | #2466 payment lock order | SA-470d + lead Opus + F2 re-run | CI owed: every check is the billing-block pattern → re-run in window. Follow-ups §6 |
 | docs | #2244 81c1242b, #2408 fbd8acd0, #2412 fcbfe982 | — | scope-checked docs-only | tier-2 PASS still to post; land serially, drop on `_meta.json` conflict |
 
@@ -67,7 +67,7 @@ migration first) · #2385 (BLOCKED: its merge reverts 4 master app files — res
 ## 5. Sessions & state (window titles)
 **PC (crashed 08:15Z; lanes being brought to a safe point; lane handoffs → `local-assets/handoff/2026-09-27/lanes/*.md`)**
 - Routeflow Lead — this file. Cron sweep job 2edaf3d2 (:17/:47) may have died with the app.
-- RouteFlow Lane F prover — proving #2448 1-3 at 1c34dcc5 (option c), then #2425 d6e98be9. Safe-point msg delivered.
+- RouteFlow Lane F prover — SAFE. #2448 proof PASS posted; next #2425 @d6e98be9. Only routeflow_postgres up (idle). Handoff lanes/F-prover.md.
 - RouteFlow Lane U-po — local only, unpushed: fix/b2188-spec-windows-esm-url (Windows test fix, master merged,
   folding 2 new bare-path specs), fix/2198 ba2d7bb53 (#2241), #2185 mid-merge in rf-lane-U-po-12; next #2093,
   #2233, #2088. Safe-point msg delivered. It gets the first PC verify slot ("U-po go").
