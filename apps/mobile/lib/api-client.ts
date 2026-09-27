@@ -115,6 +115,8 @@ function processQueue(error: unknown, token: string | null = null) {
 type ExtendedConfig = InternalAxiosRequestConfig & {
   _retry?: boolean;
   _offlineQueued?: boolean;
+  /** Per-request opt-out for READ-ONLY POSTs (e.g. the inline-return quote): never queued. */
+  _skipOfflineQueue?: boolean;
 };
 
 apiClient.interceptors.response.use(
@@ -152,6 +154,7 @@ apiClient.interceptors.response.use(
       isMutation &&
       !isFormData &&
       !original?._offlineQueued &&
+      !original?._skipOfflineQueue &&
       queueAsOffline
     ) {
       if (original) original._offlineQueued = true;
