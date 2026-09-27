@@ -523,8 +523,13 @@ describe("InventoryService", () => {
   describe("recordSale", () => {
     const tx = () => prisma as any;
 
+    // SA-136b: stockAfter is read off the counter update's own returned row.
+    const counterAfter = (n: number | string) =>
+      prisma.product.update.mockResolvedValue({ currentStock: D(n) } as any);
+
     it("writes the SALE movement with the average cost for AVCO products", async () => {
       prisma.product.findFirst.mockResolvedValue(product());
+      counterAfter(6);
 
       const result = await service.recordSale("prod-1", D(4), "ORD-1", "user-1", tx());
 
@@ -609,6 +614,7 @@ describe("InventoryService", () => {
 
     it("never throws when stock goes negative", async () => {
       prisma.product.findFirst.mockResolvedValue(product({ currentStock: D(1) }));
+      counterAfter(-4);
 
       const result = await service.recordSale("prod-1", D(5), null, null, tx());
 
@@ -616,7 +622,24 @@ describe("InventoryService", () => {
       expect(prisma.product.update).toHaveBeenCalledWith({
         where: { id: "prod-1" },
         data: { currentStock: { decrement: D(5) } },
+        select: { currentStock: true },
       });
+    });
+
+    it("SA-136b: writes the row AFTER the counter update, stockAfter from its returned row", async () => {
+      // A pre-read says 10, but a concurrent writer left the counter at 3 when this decrement of
+      // 4 landed: the row must carry the -1 the update returned, never 10 - 4 = 6.
+      prisma.product.findFirst.mockResolvedValue(product({ currentStock: D(10) }));
+      counterAfter(-1);
+
+      const result = await service.recordSale("prod-1", D(4), "ORD-1", null, tx());
+
+      const movementArgs = prisma.stockMovement.create.mock.calls[0][0].data;
+      expect(movementArgs.stockAfter.toString()).toBe("-1");
+      expect(result.stockAfter.toString()).toBe("-1");
+      expect(prisma.product.update.mock.invocationCallOrder[0]).toBeLessThan(
+        prisma.stockMovement.create.mock.invocationCallOrder[0],
+      );
     });
   });
 

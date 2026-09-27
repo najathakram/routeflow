@@ -143,3 +143,69 @@ describe("SA-429 placement in OrdersService.updateOrderItems", () => {
     expect(second).toBeGreaterThan(body.indexOf("FOR UPDATE"));
   });
 });
+
+describe("SA-434 (#2391) — driver changeStatus and change-request resolve", () => {
+  const { confirmPendingAsDriver, underOrderLockForDriver } =
+    require("./driver-edit-access") as typeof import("./driver-edit-access");
+  const txWith = (count: number, calls: string[]) => {
+    const tx: any = {
+      $executeRaw: jest.fn(async () => calls.push("lock")),
+      driver: { findFirst: jest.fn(async () => (calls.push("predicate"), { id: "d1" })) },
+      order: {
+        findFirst: jest.fn(async () => ({ routeRunStopId: "s1" })),
+        updateMany: jest.fn(async () => (calls.push("cas"), { count })),
+        findUnique: jest.fn(async () => ({ id: "o1", status: "CONFIRMED" })),
+      },
+      routeRunStop: {
+        findFirst: jest.fn(async () => ({
+          status: "PENDING",
+          routeRun: { driverId: "d1", status: "IN_PROGRESS" },
+        })),
+      },
+    };
+    return { tx, prisma: { tenantTransaction: (fn: any) => fn(tx) } };
+  };
+
+  it("underOrderLockForDriver: Order lock, THEN the predicate on the tx client, THEN the write", async () => {
+    const calls: string[] = [];
+    const { prisma } = txWith(1, calls);
+    await underOrderLockForDriver(prisma, "o1", driver, async () => calls.push("write"));
+    expect(calls).toEqual(["lock", "predicate", "write"]);
+  });
+
+  it("confirmPendingAsDriver: a CAS on {id, status: PENDING}; count 0 ⇒ 409 ORDER_CHANGED_DURING_EDIT", async () => {
+    const ok = txWith(1, []);
+    await expect(
+      confirmPendingAsDriver(ok.prisma, "o1", driver, { status: "CONFIRMED" }),
+    ).resolves.toMatchObject({ id: "o1" });
+    expect(ok.tx.order.updateMany).toHaveBeenCalledWith({
+      where: { id: "o1", status: "PENDING" },
+      data: { status: "CONFIRMED" },
+    });
+    const lost = txWith(0, []);
+    await expect(
+      confirmPendingAsDriver(lost.prisma, "o1", driver, { status: "CONFIRMED" }),
+    ).rejects.toMatchObject({ response: { code: "ORDER_CHANGED_DURING_EDIT" } });
+  });
+
+  it("source: the predicate is the FIRST statement of changeStatus and of resolve", () => {
+    const fs = require("fs") as typeof import("fs");
+    const path = require("path") as typeof import("path");
+    const read = (f: string) => fs.readFileSync(path.join(__dirname, f), "utf8");
+    const firstStatement = (src: string, sig: string) => {
+      const body = src.slice(src.indexOf(sig));
+      const open = body.indexOf("{\n") + 2;
+      return body
+        .slice(open)
+        .split("\n")
+        .map((l) => l.trim())
+        .find((l) => l !== "" && !l.startsWith("//"));
+    };
+    expect(firstStatement(read("orders.service.ts"), "async changeStatus(")).toMatch(
+      /^await driverAccess\.assertDriverMayEditOrder\(this\.prisma\.forTenant\(\), id, user\);/,
+    );
+    expect(firstStatement(read("change-requests.service.ts"), "async resolve(")).toMatch(
+      /^await assertDriverMayEditOrder\(this\.prisma\.forTenant\(\), orderId, user\);/,
+    );
+  });
+});

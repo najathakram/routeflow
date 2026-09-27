@@ -6,11 +6,14 @@ import { CONFIRMED_PAYMENT } from "../invoices/payment-predicates";
  * Invoiced-sales sourcing for the analytics / forecasting / COGS readers.
  *
  * Source of truth for "what sold" is INVOICED SALES, not `StockMovement
- * type:"SALE"`: the only SALE writer (the route-delivery path's
- * `InventoryService.recordSale` call) was removed in c5f579c2 (2026-07-16),
- * so no flow writes SALE rows anymore — and a tenant that invoices directly
- * never had them at all. Invoices cover both flows (route deliveries are
- * invoiced too, via delivered-basis invoicing).
+ * type:"SALE"`. B562 PR-2 (SA-136 §2): SALE rows are written again, by the
+ * order stock paths (orders/order-stock.ts — create, edit, cancel, uncancel,
+ * promote/demote, standing orders), but they exist for the STOCK LEDGER and
+ * the cost replay: they move at order time, carry no invoice pricing, and
+ * nothing before that PR has them. COGS and demand keep reading invoices,
+ * which cover every flow (route deliveries are invoiced too, via
+ * delivered-basis invoicing). A SALE row's `avgCostAfter` is the unchanged
+ * average, so the point-in-time cost index below reads it harmlessly.
  *
  * ⚠️ Always query THROUGH `invoice.findMany`, never top-level
  * `invoiceItem.findMany`: invoice lines are created as NESTED writes, which
@@ -486,8 +489,8 @@ export function estimateCogs(
 }
 
 /**
- * One bounded snapshot query for exactly the sold products. Snapshot volume is
- * restock-rate-bounded (SALE rows are no longer written), so this stays small;
+ * One bounded snapshot query for exactly the sold products. Snapshot volume grows
+ * with order stock events since B562 PR-2 (SALE rows carry `avgCostAfter`), not only restocks;
  * if a tenant ever makes it heavy, the escape hatch is a raw
  * `DISTINCT ON (productId)` lateral query — not built until needed.
  */

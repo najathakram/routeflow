@@ -64,6 +64,8 @@ const operatorPayload = {
   role: "OPERATOR" as const,
   status: "ACTIVE" as const,
   forcePasswordChange: false,
+  tenantId: "tenant-1",
+  tenantSlug: "test",
 };
 
 const driverPayload = {
@@ -72,6 +74,8 @@ const driverPayload = {
   role: "DRIVER" as const,
   status: "ACTIVE" as const,
   forcePasswordChange: false,
+  tenantId: "tenant-1",
+  tenantSlug: "test",
 };
 
 describe("RoutesService", () => {
@@ -1701,7 +1705,7 @@ describe("RoutesService", () => {
       );
       expect(txMock.routeRunStop.updateMany).toHaveBeenCalledWith(
         expect.objectContaining({
-          where: { id: "stop-1", status: { not: "COMPLETED" } },
+          where: { id: "stop-1", status: { in: ["PENDING", "IN_PROGRESS"] } }, // #2409: SKIPPED is not claimable
           data: expect.objectContaining({
             signatureUrl: expect.stringMatching(keyRe),
             podPhotoUrls: ["file:///legacy-device-path.jpg"],
