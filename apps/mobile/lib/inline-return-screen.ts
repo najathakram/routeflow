@@ -233,3 +233,23 @@ export function inlineReturnsGate(addon: {
   if (!addon.resolved) return "loading";
   return addon.enabled ? "allowed" : "blocked";
 }
+
+/**
+ * #2420 review (required fold): the route every "Record return" entry point opens — web's
+ * RecordReturnAction twins (order detail: customer + order; customer detail: customer only).
+ * Pure so the params are pinned without a navigator.
+ */
+export function inlineReturnHref(args: {
+  customerId: string;
+  orderId?: string | null;
+  customerName?: string | null;
+}): { pathname: "/(operator)/returns/inline"; params: Record<string, string> } {
+  return {
+    pathname: "/(operator)/returns/inline",
+    params: {
+      customerId: args.customerId,
+      ...(args.orderId ? { orderId: args.orderId } : {}),
+      ...(args.customerName ? { customerName: args.customerName } : {}),
+    },
+  };
+}
