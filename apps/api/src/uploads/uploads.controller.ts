@@ -18,6 +18,8 @@ import * as mime from "mime-types";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
 import { PrismaService } from "../prisma/prisma.service";
 import { UploadsAccessGuard } from "./uploads-access.guard";
+import { SkipThrottle } from "@nestjs/throttler";
+import { UploadsThrottled } from "../common/throttlers";
 
 /**
  * Serves locally-stored upload files when Cloudflare R2 is not configured.
@@ -41,6 +43,10 @@ import { UploadsAccessGuard } from "./uploads-access.guard";
  */
 @Controller("uploads")
 @UseGuards(UploadsAccessGuard)
+// #2091: images are counted against their own per-IP ceiling (throttle.uploadsLimit, default
+// 1200 / 60 s), never the ordinary 100 / 60 s API limit — see common/throttlers.ts.
+@SkipThrottle({ default: true })
+@UploadsThrottled()
 export class UploadsController {
   private readonly logger = new Logger(UploadsController.name);
 
