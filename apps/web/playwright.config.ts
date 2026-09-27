@@ -832,5 +832,37 @@ export default defineConfig({
         navigationTimeout: 60_000,
       },
     },
+
+    // Create-order dialog mobile pan (#2080, P0): the dialog body's own
+    // scrollWidth/clientWidth stays 0 at 320/375/390/430 under a model of iOS
+    // WebKit's post-cascade date-input sizing (helpers/ios-date-input.ts), and
+    // the boxed line's cases/units content fits its grid track; and at
+    // 1440/768/390, on create AND a resumed draft with a long product name,
+    // typing a focused date never scrolls the document sideways, moves the
+    // dialog's left edge off screen, or pans the dialog body. Same
+    // setup/operator shape as "create-order-escape" (08). WITHOUT THIS ENTRY
+    // THE SPEC NEVER RUNS - see 08-create-order-escape's header.
+    {
+      name: "create-order-dialog-mobile-pan",
+      testMatch: /56-create-order-dialog-mobile-pan\.spec\.ts/,
+      dependencies: ["setup"],
+      use: {
+        ...devices["Desktop Chrome"],
+        storageState: path.join(AUTH_DIR, "operator.json"),
+      },
+    },
+
+    // #2080 follow-up: date inputs in narrow grid-cols-2/3 tracks (vendor-bills
+    // and estimates modals, invoices/new, invoices/[id]/edit) fit their cells
+    // at 320/375/390 under the same iOS model. Read-only (one API read).
+    {
+      name: "date-input-grid-overflow",
+      testMatch: /57-date-input-grid-overflow\.spec\.ts/,
+      dependencies: ["setup"],
+      use: {
+        ...devices["Desktop Chrome"],
+        storageState: path.join(AUTH_DIR, "operator.json"),
+      },
+    },
   ],
 });
