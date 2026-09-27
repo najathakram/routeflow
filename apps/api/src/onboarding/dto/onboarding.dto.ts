@@ -99,3 +99,9 @@ export class ListDemoBookingsQueryDto {
   @IsOptional() @IsISO8601() from?: string;
   @IsOptional() @IsISO8601() to?: string;
 }
+
+/** `GET platform-admin/onboarding/funnel` (#2159 S5). Defaults: the last 90 days. */
+export class OnboardingFunnelQueryDto {
+  @IsOptional() @IsISO8601() from?: string;
+  @IsOptional() @IsISO8601() to?: string;
+}
