@@ -23,9 +23,18 @@
 // as merged, so an active lane's fresh worktree could lose its node_modules or
 // be removed. A branch is merged when its tip is in origin/master but NOT on
 // master's first-parent mainline (it arrived through a merge), or when GitHub
-// reports its PR MERGED with the PR head equal to the local tip (this also
-// covers squash merges). A fast-forwarded branch is indistinguishable from a
-// fresh one and is left alone — a safe false negative.
+// reports a PR on it MERGED into master (its merge commit on origin/master) with
+// the local tip equal to, or an ancestor of, the PR head (#1732: a tip AHEAD of
+// the PR head holds unmerged commits and never counts), or when
+// `squashPatchId` proves a squash merge WITHOUT `gh` (B748): the branch's own
+// combined diff (merge-base..tip) has the same `patch-id --verbatim` as a
+// commit on master's first-parent chain since that base. That last proof is
+// inference, not direct evidence, so it is the weakest of the three — it runs
+// only when the others are silent, and an OPEN PR at the tip vetoes it. Last,
+// `cherryAllMatched` (#1732): `git cherry` finds every branch commit already on
+// master (cherry-picked or rebase-merged work), under the same veto. A
+// fast-forwarded branch is indistinguishable from a fresh one and is left
+// alone — a safe false negative.
 //
 // Safety rule (L-180/L-193): a Windows directory junction must NEVER be
 // deleted with a recursive delete that can follow it into its target — that
@@ -84,10 +93,22 @@ export function isProtectedBranch(branch, protectedBranches = PROTECTED_BRANCHES
 
 /**
  * B800: merged only on proof the branch carried work of its own (see the header).
- * evidence: { tipIsAncestor, tipOnMainline, prMergedAtTip }
+ * evidence: { tipIsAncestor, tipOnMainline, prMergedAtTip, squashPatchId }
+ *
+ * `squashPatchId` (B748) is the squash-merge proof that needs no `gh`. It is the most permissive
+ * of the three signals — content equality, not ancestry — so mergeEvidence computes it last and
+ * only when nothing cheaper already said yes.
  */
-export function isMergedEvidence({ tipIsAncestor, tipOnMainline, prMergedAtTip }) {
+export function isMergedEvidence({
+  tipIsAncestor,
+  tipOnMainline,
+  prMergedAtTip,
+  squashPatchId,
+  cherryMatched,
+}) {
   if (prMergedAtTip) return true;
+  if (squashPatchId) return true; // B748: squash proof that needs no `gh`
+  if (cherryMatched) return true; // #1732: every commit already on master, by patch-id
   return !!tipIsAncestor && !tipOnMainline;
 }
 
@@ -535,12 +556,82 @@ export function mainlineCommits(repoRoot, masterRef = "origin/master") {
   return mainlineCache.get(key);
 }
 
-/** B800: GitHub says this branch's PR MERGED, at exactly this local tip. Any failure: false. */
-function ghPrMergedAtTip(repoRoot, branch, tip) {
+/** Does `ancestor` exist and lie in `descendant`'s history (or equal it)? Any failure: false. */
+function isAncestorOrSelf(repoRoot, ancestor, descendant) {
+  if (!ancestor || !descendant) return false;
+  try {
+    execFileSync("git", ["-C", repoRoot, "merge-base", "--is-ancestor", ancestor, descendant], {
+      stdio: "ignore",
+    });
+    return true;
+  } catch {
+    return false; // not an ancestor, or an object missing locally: not proven
+  }
+}
+
+/**
+ * #1732: does one of these MERGED PRs cover this local tip? `prs` is `gh pr list --json
+ * headRefOid,mergeCommit` output. A PR covers the tip when
+ *   - its merge commit is on `masterRef` (it merged into master, not into some other base), and
+ *   - the local tip IS the PR head, or an ANCESTOR of it: every local commit went into that PR.
+ * The old rule required `headRefOid === tip` exactly, so a worktree whose branch was pushed on
+ * (from another machine, or by the landing coordinator's merge of master) looked unmerged forever.
+ * A local tip AHEAD of the PR head is never covered: those extra commits were never merged. A PR
+ * head or merge commit whose object is missing locally is not proven either (fails closed).
+ */
+export function mergedPrCoversTip(repoRoot, tip, prs, masterRef = "origin/master") {
+  if (!tip || !Array.isArray(prs)) return false;
+  return prs.some((p) => {
+    const head = p?.headRefOid;
+    const mergeCommit = p?.mergeCommit?.oid;
+    if (!head || !mergeCommit) return false;
+    if (!isAncestorOrSelf(repoRoot, mergeCommit, masterRef)) return false;
+    return head === tip || isAncestorOrSelf(repoRoot, tip, head);
+  });
+}
+
+/** B800/#1732: GitHub says a MERGED PR on this branch covers this local tip. Any failure: false. */
+function ghPrMergedAtTip(repoRoot, branch, tip, masterRef = "origin/master") {
   const out = trySh(
     "gh",
-    ["pr", "list", "--head", branch, "--state", "merged", "--json", "headRefOid", "--limit", "5"],
+    [
+      "pr",
+      "list",
+      "--head",
+      branch,
+      "--state",
+      "merged",
+      "--json",
+      "headRefOid,mergeCommit",
+      "--limit",
+      "5",
+    ],
     { cwd: repoRoot, timeout: 15_000 }, // a network hang never blocks the report; timeout = not proven
+  );
+  if (!out) return false;
+  try {
+    return mergedPrCoversTip(repoRoot, tip, JSON.parse(out), masterRef);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Is there an OPEN PR whose head is exactly this tip?
+ *
+ * A patch-id match says "master carries an identical change", which is NOT the same as "this
+ * branch is done". A lane can re-land the same diff (a revert-and-redo, a cherry-pick someone
+ * else merged first) while its own PR is still open and under review. An open PR at the tip is
+ * the branch's owner saying it is live, so it VETOES the patch-id proof — the ancestry and
+ * merged-PR proofs are unaffected, since those are direct evidence rather than inference.
+ *
+ * Absence of `gh` is not a veto: null/false means "no answer", and the scan proceeds as before.
+ */
+function ghOpenPrAtTip(repoRoot, branch, tip) {
+  const out = trySh(
+    "gh",
+    ["pr", "list", "--head", branch, "--state", "open", "--json", "headRefOid", "--limit", "5"],
+    { cwd: repoRoot, timeout: 15_000 },
   );
   if (!out) return false;
   try {
@@ -564,12 +655,140 @@ export function branchTip(repoRoot, branch) {
   ]);
 }
 
+/**
+ * Raw bytes of `git <args>`, NEVER decoded. Buffer, or null on failure.
+ *
+ * A diff is not text. `sh`/`trySh` decode as UTF-8 and `.trim()`, so any byte sequence that is not
+ * valid UTF-8 becomes U+FFFD — two different binary blobs collapse to the same string and would
+ * hash alike, and the trim can drop bytes patch-id counts. Everything on the patch-id path stays
+ * in Buffers for that reason.
+ */
+function gitRaw(repoRoot, args, input) {
+  try {
+    return execFileSync("git", ["-C", repoRoot, ...args], {
+      ...(input === undefined ? {} : { input }),
+      encoding: "buffer",
+      stdio: [input === undefined ? "ignore" : "pipe", "pipe", "ignore"],
+      maxBuffer: 512 * 1024 * 1024,
+    });
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Every patch-id in a raw diff stream, in order. `--verbatim`, never `--stable`.
+ *
+ * `--stable` (and `--unstable`) strip whitespace before hashing, so a change that only re-indents
+ * or re-spaces a line hashes identically to not making it at all. That is a DATA-LOSS bug here: a
+ * lane whose work was squash-merged, which then pushes an unmerged follow-up that only re-indents
+ * a line its own earlier work added, produces a combined diff whose `--stable` id equals the
+ * squash commit's — so the janitor would call the branch merged and delete the worktree holding
+ * that unpushed commit. `--verbatim` hashes the bytes as they are.
+ */
+function patchIdsOfDiff(repoRoot, diffBuf) {
+  if (!diffBuf || diffBuf.length === 0) return [];
+  const out = gitRaw(repoRoot, ["patch-id", "--verbatim"], diffBuf);
+  if (!out) return [];
+  return out
+    .toString("utf8")
+    .split("\n")
+    .map((line) => line.trim().split(/\s+/)[0])
+    .filter(Boolean);
+}
+
+/**
+ * B748: proof WITHOUT `gh` that a squash merge landed this branch's work on master.
+ *
+ * GitHub's "Squash and merge" replays the branch as ONE new commit, so the tip is not an ancestor
+ * and is not on the mainline — every ancestry signal reads "not merged", and `ghPrMergedAtTip` is
+ * the only thing that saved it. `gh` is absent on CI runners and on the cloud container, so that
+ * proof is unavailable exactly where the janitor runs unattended.
+ *
+ * The branch's OWN combined change is `merge-base..tip`; a squash commit on master carries that
+ * same change, so their patch-ids match. Per-commit matching (`git cherry`) is not enough: a
+ * multi-commit branch collapses to one commit whose patch-id equals the COMBINED diff and no
+ * individual commit's.
+ *
+ * Fails CLOSED everywhere — unreadable history, an empty diff (a branch with no work of its own,
+ * which B800 says is never merged), or a scan longer than `maxScan` all return false. A false
+ * negative leaves disk behind; a false positive deletes someone's work.
+ */
+export function squashMergedByPatchId(
+  repoRoot,
+  tip,
+  { masterRef = "origin/master", maxScan = 1000 } = {},
+) {
+  if (!tip) return false;
+  const mergeBase = trySh("git", ["-C", repoRoot, "merge-base", masterRef, tip]);
+  if (!mergeBase || mergeBase === tip) return false; // nothing of its own to have been squashed
+
+  // BOTH sides must run the SAME command with the SAME options. Porcelain `git diff` applies
+  // rename detection and honours the invoking user's diff config; `diff-tree` is plumbing and
+  // does neither, so mixing them meant a squash-merged RENAME never matched and its worktree was
+  // never reclaimed. Plumbing on both sides, so the comparison cannot depend on who is running it.
+  const ownIds = patchIdsOfDiff(
+    repoRoot,
+    gitRaw(repoRoot, ["diff-tree", "-p", "--binary", mergeBase, tip]),
+  );
+  // Exactly one patch is expected. Zero = unreadable, or a branch carrying no change of its own
+  // (B800: never merged). Anything else is not a shape this can reason about — fail closed.
+  if (ownIds.length !== 1) return false;
+  const own = ownIds[0];
+
+  const list = trySh("git", [
+    "-C",
+    repoRoot,
+    "rev-list",
+    "--first-parent",
+    `${mergeBase}..${masterRef}`,
+  ]);
+  if (list == null) return false; // unreadable mainline: fail closed
+  const shas = list.split("\n").filter(Boolean);
+  if (shas.length === 0) return false; // nothing on master since the base: nothing to have squashed
+  if (shas.length > maxScan) return false; // pathological range: fail closed rather than churn
+
+  // ONE pass over the range, not two processes per commit: rev-list feeds `diff-tree --stdin`,
+  // whose whole stream feeds one `patch-id`. Measured on a 187-commit range this is ~5-8s against
+  // ~40s for the per-commit loop, per worktree scanned.
+  const diffs = gitRaw(
+    repoRoot,
+    ["diff-tree", "-p", "--binary", "--stdin"],
+    Buffer.from(`${shas.join("\n")}\n`),
+  );
+  if (!diffs) return false; // unreadable: fail closed
+  return patchIdsOfDiff(repoRoot, diffs).includes(own);
+}
+
+/**
+ * #1732: proof WITHOUT `gh` that every commit of this branch is already on master:
+ * `git cherry <master> <tip>` lists each commit not in master's history, `-` when an equivalent
+ * patch is upstream and `+` when not. At least one line and no `+` line = merged. This covers what
+ * the combined-diff proof cannot: a branch whose commits reached master one by one (cherry-picks,
+ * a rebase-merge, or a squash of a branch that later merged master in). Like the patch-id proof it
+ * is inference, so it runs only when nothing direct proved the merge, and an OPEN PR vetoes it.
+ * Zero lines (a branch with no work of its own, B800) or any failure: false.
+ */
+export function cherryAllMatched(repoRoot, tip, { masterRef = "origin/master" } = {}) {
+  if (!tip) return false;
+  const out = trySh("git", ["-C", repoRoot, "cherry", masterRef, tip]);
+  if (out == null) return false; // unreadable: fail closed
+  const lines = out.split("\n").filter(Boolean);
+  return lines.length > 0 && lines.every((line) => line.startsWith("- "));
+}
+
 export function mergeEvidence(
   repoRoot,
   branch,
-  { masterRef = "origin/master", ghLookup = ghPrMergedAtTip } = {},
+  { masterRef = "origin/master", ghLookup = ghPrMergedAtTip, ghOpenLookup = ghOpenPrAtTip } = {},
 ) {
-  const none = { tipIsAncestor: false, tipOnMainline: false, prMergedAtTip: false };
+  const none = {
+    tipIsAncestor: false,
+    tipOnMainline: false,
+    prMergedAtTip: false,
+    squashPatchId: false,
+    cherryMatched: false,
+  };
   if (!branch) return none; // detached HEAD — cannot prove merged
   const tip = branchTip(repoRoot, branch);
   if (!tip) return none;
@@ -586,11 +805,18 @@ export function mergeEvidence(
   const tipOnMainline = mainline ? mainline.has(tip) : true; // unreadable mainline: fail closed
   // Ancestry through a merge is already proof; only ask GitHub when it is not.
   const proven = tipIsAncestor && !tipOnMainline;
-  return {
-    tipIsAncestor,
-    tipOnMainline,
-    prMergedAtTip: proven ? false : !!ghLookup(repoRoot, branch, tip),
-  };
+  const prMergedAtTip = proven ? false : !!ghLookup(repoRoot, branch, tip, masterRef);
+  // B748: only when nothing cheaper proved it. The patch-id scan walks master since the merge
+  // base, so it must never run on the common already-proven paths. An OPEN PR at this tip vetoes
+  // it outright — and the veto is checked FIRST, so a live branch never pays for the scan either.
+  // #1732: the same veto and ordering gate the `git cherry` proof, which runs last.
+  const inferenceAllowed = !proven && !prMergedAtTip && !ghOpenLookup(repoRoot, branch, tip);
+  const squashPatchId = inferenceAllowed
+    ? squashMergedByPatchId(repoRoot, tip, { masterRef })
+    : false;
+  const cherryMatched =
+    inferenceAllowed && !squashPatchId ? cherryAllMatched(repoRoot, tip, { masterRef }) : false;
+  return { tipIsAncestor, tipOnMainline, prMergedAtTip, squashPatchId, cherryMatched };
 }
 
 export function isMergedIntoMaster(repoRoot, branch, opts) {
@@ -701,7 +927,18 @@ function buildPlan(repoRoot, mainCheckoutPath, worktreesRoot) {
   for (const wt of worktrees) {
     const name = wt.path.split(/[\\/]/).pop();
     const isMainCheckout = resolve(wt.path) === resolve(mainCheckoutPath);
-    const isMerged = isMainCheckout ? true : isMergedIntoMaster(repoRoot, wt.branch);
+    // The patch-id scan walks master's first-parent chain, so it is the most expensive question
+    // asked here. classifyWorktree already returns "skip" for a locked, protected-name or
+    // protected-branch worktree BEFORE it ever consults isMerged — so computing it for one is
+    // pure cost with no effect on the verdict. `null` records "not asked", and reads as falsy at
+    // the `!isMerged` branch those cases never reach.
+    const skippedBeforeMerge =
+      !!wt.locked || isProtectedWorktreeName(name) || isProtectedBranch(wt.branch);
+    const isMerged = isMainCheckout
+      ? true
+      : skippedBeforeMerge
+        ? null
+        : isMergedIntoMaster(repoRoot, wt.branch);
     const info = {
       name,
       branch: wt.branch,
