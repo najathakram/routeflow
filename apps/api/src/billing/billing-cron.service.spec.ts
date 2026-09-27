@@ -255,6 +255,37 @@ describe("BillingCronService", () => {
     expect(emitted(events)).toContain(BILLING_EVENTS.GRACE_EXPIRED);
   });
 
+  // #2223 / SA-444c: a scheduled downgrade moves the PLAN, never a negotiated fee — the snapshot stays
+  // the override, Δ0, priceOverrideMonthly untouched. A catalog row keeps today's catalog delta.
+  it("SA-444c: a due downgrade of an override row keeps the fee — snapshot = fee, Δ0, plan moves", async () => {
+    const { svc, tx, events } = make({
+      downgrades: [
+        {
+          tenantId: "t1",
+          planKey: "BUSINESS",
+          planVersionId: "v7",
+          downgradeToPlanKey: "STARTER",
+          downgradeEffectiveAt: new Date(Date.now() - 86400000),
+          retainedUserIds: [],
+          priceOverrideMonthly: 150,
+        },
+      ],
+    });
+    await svc.applyScheduledDowngrades();
+    const data = tx.tenantSubscription.update.mock.calls[0][0].data;
+    expect(data).toMatchObject({ planKey: "STARTER", basePriceSnapshot: 150 });
+    expect(data).not.toHaveProperty("priceOverrideMonthly");
+    expect(deltaOf(events, BILLING_EVENTS.PLAN_CHANGED)).toBe(0);
+  });
+
+  it("SA-444c: the downgrade query selects the override it keeps", async () => {
+    const { svc, prisma } = make({ downgrades: [] });
+    await svc.applyScheduledDowngrades();
+    expect(prisma.tenantSubscription.findMany.mock.calls[0][0].select).toMatchObject({
+      priceOverrideMonthly: true,
+    });
+  });
+
   it("A2b: a scheduled downgrade snapshots via the hook INSIDE its transaction, before the plan write", async () => {
     const { svc, tx, planTransition } = make({
       downgrades: [
