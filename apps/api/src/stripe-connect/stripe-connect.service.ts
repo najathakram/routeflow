@@ -115,12 +115,16 @@ export class StripeConnectService {
    * REG-2441: Stripe otherwise pre-selects whichever Stripe account is
    * already signed in on the operator's browser — on the owner's own browser
    * that is RouteFlow's platform account, so a tenant could end up
-   * "connected" to the platform's account instead of their own.
-   * `stripe_landing=register` + `always_prompt=true` force Stripe's own
-   * account picker, and prefilling `stripe_user[email]`/
-   * `stripe_user[business_name]` steers a fresh sign-in toward the tenant's
-   * business rather than leaving the fields blank. Prefill is best-effort:
-   * an empty value is omitted rather than sent as `stripe_user[email]=`.
+   * "connected" to the platform's account instead of their own. The actual
+   * guard against that is the refusal in `completeOAuth` below — these URL
+   * params are NOT the guard, just a best-effort nudge that reduces the
+   * chance of picking the wrong account in the first place: `stripe_landing=
+   * register` + `always_prompt=true` push Stripe toward its own account
+   * picker instead of an auto-selected session, and prefilling
+   * `stripe_user[email]`/`stripe_user[business_name]` steers a fresh sign-in
+   * toward the tenant's business rather than leaving the fields blank.
+   * Prefill is best-effort: an empty value is omitted rather than sent as
+   * `stripe_user[email]=`.
    */
   async buildAuthorizeUrl(
     tenantId: string,
@@ -221,6 +225,28 @@ export class StripeConnectService {
     });
     if (!tenant) throw new BadRequestException("tenant_not_found");
 
+    // REG-2441: resolve the PLATFORM's own account id BEFORE exchanging the
+    // code — a code exchange creates a live Stripe OAuth grant, so doing the
+    // exchange first and only then discovering we can't even check for a
+    // self-connect would leave a live, unrecorded connection dangling on
+    // Stripe's side with nothing to show for it here. Fail closed if the
+    // platform-id check itself can't be made — never proceed to exchange
+    // (and never store) without it. Cached after the first successful read
+    // since the platform's own account id never changes per process; an
+    // empty/missing id is never cached or trusted, even if a provider
+    // implementation ever resolves "" instead of throwing.
+    let platformAccountId: string;
+    try {
+      platformAccountId = this.platformAccountId ?? (await this.oauth.retrievePlatformAccountId());
+      if (!platformAccountId) {
+        throw new Error("Platform account id was empty.");
+      }
+    } catch (err: any) {
+      this.logger.warn(`Platform account check failed for ${tenant.slug}: ${err?.message}`);
+      throw new BadRequestException("platform_account_check_failed");
+    }
+    this.platformAccountId = platformAccountId;
+
     let token: ConnectOAuthToken;
     try {
       token = await this.oauth.exchangeCode(code);
@@ -231,25 +257,8 @@ export class StripeConnectService {
     const accountId = token.accountRef;
     if (!accountId) throw new BadRequestException("account_missing");
 
-    // REG-2441: refuse a connect that resolved to the PLATFORM's own Stripe
-    // account (Stripe pre-selected whichever account was signed in on the
-    // browser). Fail closed if the platform-id check itself can't be made —
-    // never store an unverified account. Cached after the first successful
-    // read since the platform's own account id never changes per process.
-    let platformAccountId: string;
-    try {
-      platformAccountId = this.platformAccountId ?? (await this.oauth.retrievePlatformAccountId());
-      // Defensive: an empty/missing id must never be cached or trusted, even
-      // if a provider implementation ever returns "" instead of throwing —
-      // caching "" would silently disable this check until process restart.
-      if (!platformAccountId) {
-        throw new Error("Platform account id was empty.");
-      }
-    } catch (err: any) {
-      this.logger.warn(`Platform account check failed for ${tenant.slug}: ${err?.message}`);
-      throw new BadRequestException("platform_account_check_failed");
-    }
-    this.platformAccountId = platformAccountId;
+    // The id COMPARISON stays here, after the exchange — it's the exchanged
+    // account we're checking, so this can only run once we have it.
     if (accountId === platformAccountId) {
       this.logger.warn(
         `Tenant ${tenant.slug} attempted to connect the platform's own Stripe account ` +
@@ -319,12 +328,40 @@ export class StripeConnectService {
   /**
    * The connected, charge-ready account for a tenant — the gate in front of
    * every buyer card action. Returns null rather than throwing so read paths
-   * can render "card unavailable" instead of erroring.
+   * can render "card unavailable" instead of erroring — callers
+   * (`PaymentRequestsService.paymentContext` sets `cardEnabled: !!account`;
+   * `createBuyerPaymentRequest` throws a user-safe "does not accept card
+   * payments yet" on null) already treat null as "cards temporarily
+   * unavailable", so failing closed here degrades gracefully rather than
+   * breaking anything.
+   *
+   * REG-2441: also refuses the PLATFORM's own account id, the same guard as
+   * `completeOAuth` — a row can only carry that id if it slipped in before
+   * this guard existed. FAILS CLOSED on the platform-id check itself: a
+   * lookup that throws, or resolves empty, returns null rather than the
+   * stored account, using (and refreshing) the same in-memory cache
+   * `completeOAuth` populates.
    */
   async chargeableAccount(tenantId: string): Promise<string | null> {
     if (!this.oauth.isConfigured) return null;
     const row = await this.prisma.tenantStripeConnect.findUnique({ where: { tenantId } });
     if (!row || row.disconnectedAt || !row.chargesEnabled) return null;
+
+    let platformAccountId: string;
+    try {
+      platformAccountId = this.platformAccountId ?? (await this.oauth.retrievePlatformAccountId());
+      if (!platformAccountId) {
+        throw new Error("Platform account id was empty.");
+      }
+    } catch (err: any) {
+      this.logger.warn(
+        `Platform account check failed for tenant ${tenantId}: ${err?.message} — refusing to charge.`,
+      );
+      return null;
+    }
+    this.platformAccountId = platformAccountId;
+
+    if (row.stripeAccountId === platformAccountId) return null;
     return row.stripeAccountId;
   }
 

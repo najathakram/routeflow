@@ -116,10 +116,12 @@ describe("StripeConnectService", () => {
 
     // REG-2441: Stripe pre-selects whichever account is signed in on the
     // browser unless told otherwise — on the owner's own browser that is
-    // RouteFlow's platform account. `stripe_landing=register` +
-    // `always_prompt=true` force Stripe's account-picker instead of an
-    // auto-selected session.
-    it("REG-2441: the authorize URL forces the Stripe account picker (stripe_landing=register, always_prompt=true)", async () => {
+    // RouteFlow's platform account. The actual guard against that is the
+    // refusal in `completeOAuth`; these params are only a best-effort nudge
+    // toward Stripe's own account-picker instead of an auto-selected session
+    // — they reduce the chance of picking the wrong account, they don't
+    // prevent it.
+    it("REG-2441: the authorize URL nudges toward the Stripe account picker (stripe_landing=register, always_prompt=true)", async () => {
       const url = await service.buildAuthorizeUrl("tenant-1", "user-1", "alice");
       const params = new URL(url).searchParams;
       expect(params.get("stripe_landing")).toBe("register");
@@ -280,7 +282,7 @@ describe("StripeConnectService", () => {
       expect(tenantStripeConnect.upsert).not.toHaveBeenCalled();
     });
 
-    it("REG-2441: fails closed — stores nothing when the platform-account check itself throws", async () => {
+    it("REG-2441: fails closed BEFORE the exchange — a throwing platform-id lookup never calls exchangeCode, stores nothing", async () => {
       mockJwt.verifyAsync.mockResolvedValue(statePayload);
       tenantStripeConnect.updateMany.mockResolvedValueOnce({ count: 1 });
       prisma.tenant.findUnique.mockResolvedValue({ id: "tenant-1", slug: "acme" } as any);
@@ -290,6 +292,10 @@ describe("StripeConnectService", () => {
       await expect(service.completeOAuth("code", "state")).rejects.toMatchObject({
         response: { message: "platform_account_check_failed" },
       });
+      // The platform-id lookup now runs BEFORE the code exchange (REG-2441
+      // fold 1) so a failed lookup never creates a live, unrecorded Stripe
+      // OAuth grant.
+      expect(mockOauth.exchangeCode).not.toHaveBeenCalled();
       expect(tenantStripeConnect.upsert).not.toHaveBeenCalled();
     });
 
@@ -305,6 +311,7 @@ describe("StripeConnectService", () => {
       await expect(service.completeOAuth("code", "state")).rejects.toMatchObject({
         response: { message: "platform_account_check_failed" },
       });
+      expect(mockOauth.exchangeCode).not.toHaveBeenCalled();
       expect(tenantStripeConnect.upsert).not.toHaveBeenCalled();
 
       // Nothing was cached from the empty result — the next callback retries
@@ -345,6 +352,7 @@ describe("StripeConnectService", () => {
       await expect(service.completeOAuth("code-1", "state")).rejects.toMatchObject({
         response: { message: "platform_account_check_failed" },
       });
+      expect(mockOauth.exchangeCode).not.toHaveBeenCalled();
       expect(tenantStripeConnect.upsert).not.toHaveBeenCalled();
 
       tenantStripeConnect.updateMany.mockResolvedValueOnce({ count: 1 });
@@ -570,6 +578,64 @@ describe("StripeConnectService", () => {
       });
       await service.disconnect("tenant-1");
       expect(mockOauth.deauthorize).toHaveBeenCalledWith("ca_test", "acct_1");
+    });
+  });
+
+  // ─── chargeableAccount — REG-2441 also refuses the platform's own account ──
+
+  describe("chargeableAccount", () => {
+    it("returns the stored account when it is charge-ready and not the platform's own", async () => {
+      tenantStripeConnect.findUnique.mockResolvedValue({
+        stripeAccountId: "acct_tenant_fake",
+        disconnectedAt: null,
+        chargesEnabled: true,
+      });
+      mockOauth.retrievePlatformAccountId.mockResolvedValue("acct_platform_fake");
+
+      await expect(service.chargeableAccount("tenant-1")).resolves.toBe("acct_tenant_fake");
+    });
+
+    it("REG-2441: returns null when the stored account IS the platform's own account", async () => {
+      tenantStripeConnect.findUnique.mockResolvedValue({
+        stripeAccountId: "acct_platform_fake",
+        disconnectedAt: null,
+        chargesEnabled: true,
+      });
+      mockOauth.retrievePlatformAccountId.mockResolvedValue("acct_platform_fake");
+
+      await expect(service.chargeableAccount("tenant-1")).resolves.toBeNull();
+    });
+
+    it("REG-2441: fails closed to null when the platform-id lookup throws", async () => {
+      tenantStripeConnect.findUnique.mockResolvedValue({
+        stripeAccountId: "acct_tenant_fake",
+        disconnectedAt: null,
+        chargesEnabled: true,
+      });
+      mockOauth.retrievePlatformAccountId.mockRejectedValue(new Error("stripe down"));
+
+      await expect(service.chargeableAccount("tenant-1")).resolves.toBeNull();
+    });
+
+    it("REG-2441: fails closed to null when the platform-id lookup resolves empty", async () => {
+      tenantStripeConnect.findUnique.mockResolvedValue({
+        stripeAccountId: "acct_tenant_fake",
+        disconnectedAt: null,
+        chargesEnabled: true,
+      });
+      mockOauth.retrievePlatformAccountId.mockResolvedValue("");
+
+      await expect(service.chargeableAccount("tenant-1")).resolves.toBeNull();
+    });
+
+    it("still returns null (unchanged) for a disconnected or not-charges-enabled row, without even reaching the platform check", async () => {
+      tenantStripeConnect.findUnique.mockResolvedValue({
+        stripeAccountId: "acct_tenant_fake",
+        disconnectedAt: new Date(),
+        chargesEnabled: true,
+      });
+      await expect(service.chargeableAccount("tenant-1")).resolves.toBeNull();
+      expect(mockOauth.retrievePlatformAccountId).not.toHaveBeenCalled();
     });
   });
 });
