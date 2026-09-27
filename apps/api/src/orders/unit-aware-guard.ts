@@ -108,6 +108,12 @@ export function buyerLineDiffVerdict(
     const removal = item.action === "CANCEL" || item.action === "DELETE";
     const line = byId.get(item.id);
     if (removal) {
+      // SA-507b: a removal names a line of THIS order — a foreign id is a 400 "shape" (one code, no
+      // existence oracle), never a bare-id write the merge branch would apply to another order.
+      if (!line) {
+        verdict = "shape";
+        continue;
+      }
       const extra =
         item.qty !== undefined ||
         item.boxes != null ||

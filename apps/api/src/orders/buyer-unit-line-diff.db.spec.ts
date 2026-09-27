@@ -232,6 +232,36 @@ describeDb(
       expect(await raw.orderItem.count({ where: { orderId: f.orderId } })).toBe(1);
     });
 
+    it("SA-507b: a buyer CANCEL/DELETE naming ANOTHER order's line is a 400; that line is untouched", async () => {
+      const mine = await seed("idor-mine");
+      const other = await seed("idor-other");
+      const before = await line(other.lineId);
+      for (const action of ["CANCEL", "DELETE"]) {
+        await expect(
+          edit(mine.orderId, { replaceAll: false, items: [{ id: other.lineId, action }] }),
+        ).rejects.toMatchObject({ status: 400 });
+      }
+      expect(await line(other.lineId)).toEqual(before);
+      expect(await raw.orderItem.count({ where: { id: other.lineId } })).toBe(1);
+    });
+
+    it("SA-507b: a tier-3 buyer's count edit is priced at the Case's TIER-3 ladder price", async () => {
+      const f = await seed("tier3");
+      await raw.productUnit.updateMany({
+        where: { productId: f.productId, label: "Case" },
+        data: { priceTier3: "90.00" },
+      });
+      await raw.customer.update({ where: { id: customerId }, data: { pricingTier: 3 } });
+      try {
+        await edit(f.orderId, count(f.lineId, 4));
+      } finally {
+        await raw.customer.update({ where: { id: customerId }, data: { pricingTier: 1 } });
+      }
+      const li = await line(f.lineId);
+      expect(Number(li.unitPrice)).toBe(90); // tier 1 would be 100
+      expect(Number(li.subtotal)).toBe(360);
+    });
+
     it.each([
       [
         "a unit switch",

@@ -1,7 +1,7 @@
 import { BadRequestException, ConflictException, ForbiddenException } from "@nestjs/common";
 import { UserRole } from "@prisma/client";
 import { assertOrderEditAllowed, buyerLineDiffVerdict } from "./unit-aware-guard";
-import { classifyEditPayload } from "./order-edit-payload";
+import { assertBuyerDiffShape, classifyEditPayload } from "./order-edit-payload";
 import { orderEditMode } from "./order-edit-restrictions";
 import { assertBuyerOwnsOrder, prepareUnitEditContext } from "./unit-line-edit";
 import { sellableLinesForMergeEdit } from "../selling-restrictions/order-edit-lines";
@@ -127,19 +127,70 @@ describe("assertOrderEditAllowed — CUSTOMER on a unit-line order (SA-407)", ()
 });
 
 describe("classifyEditPayload — CUSTOMER (SA-407)", () => {
-  it("accepts the count diff and a removal", () => {
-    expect(
-      classifyEditPayload(order, diff({ id: "li-case", unitLabel: "Case", qty: 4 }) as any, buyer),
-    ).toBe(true);
-    expect(
-      classifyEditPayload(order, diff({ id: "li-pack", action: "DELETE" }) as any, buyer),
-    ).toBe(true);
+  it("never throws for a buyer: it only classifies (the 400 moved behind the guard, SA-507a)", () => {
+    for (const d of [
+      diff({ id: "li-case", unitLabel: "Case", qty: 4 }),
+      diff({ id: "li-pack", action: "DELETE" }),
+      diff({ id: "li-pack", qty: 2 }),
+      diff({ id: "li-case", unitLabel: "Each", qty: 4 }),
+    ]) {
+      expect(classifyEditPayload(order, d as any, buyer)).toBe(true);
+    }
+  });
+});
+
+describe("assertBuyerDiffShape — the buyer-diff 400 (SA-507b)", () => {
+  const check = (d: any, findOwner = owner) =>
+    assertBuyerDiffShape(order, d, buyer, true, findOwner);
+
+  it("passes the count diff and a removal of this order's own line", async () => {
+    await expect(
+      check(diff({ id: "li-case", unitLabel: "Case", qty: 4 })),
+    ).resolves.toBeUndefined();
+    await expect(check(diff({ id: "li-pack", action: "DELETE" }))).resolves.toBeUndefined();
   });
 
-  it("keeps the 400 for every other buyer diff", () => {
+  it("keeps the 400 for every other buyer diff", async () => {
     for (const d of [diff({ id: "li-pack", qty: 2 }), diff({ productId: "p-chips", qty: 2 })]) {
-      expect(() => classifyEditPayload(order, d as any, buyer)).toThrow(BadRequestException);
+      await expect(check(d)).rejects.toThrow(BadRequestException);
     }
+  });
+
+  it("a CANCEL/DELETE naming ANOTHER order's line is the 400 'shape', never admitted", async () => {
+    for (const action of ["CANCEL", "DELETE"]) {
+      expect(buyerLineDiffVerdict(lines, diff({ id: "li-foreign", action }))).toBe("shape");
+      await expect(check(diff({ id: "li-foreign", action }))).rejects.toThrow(BadRequestException);
+    }
+  });
+
+  it("a non-owner meets the bare 403, never the 400", async () => {
+    await expect(
+      check(diff({ id: "li-foreign", action: "CANCEL" }), async () => ({ id: "cust-other" })),
+    ).rejects.toThrow(ForbiddenException);
+  });
+
+  it("never answers a 409 shape itself (the guard does), and ignores staff/full lists", async () => {
+    await expect(
+      check(diff({ id: "li-case", unitLabel: "Each", qty: 4 })),
+    ).resolves.toBeUndefined();
+    await expect(
+      assertBuyerDiffShape(
+        order,
+        diff({ id: "li-pack", qty: 2 }) as any,
+        { role: "OPERATOR" },
+        true,
+        owner,
+      ),
+    ).resolves.toBeUndefined();
+    await expect(
+      assertBuyerDiffShape(
+        order,
+        { items: [{ productId: "p-chips", qty: 2 }] } as any,
+        buyer,
+        false,
+        owner,
+      ),
+    ).resolves.toBeUndefined();
   });
 });
 
