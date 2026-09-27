@@ -9,6 +9,7 @@ import { PlanFlagGuard } from "../billing/plan-flag.guard";
 import { RequirePlanFlag } from "../billing/require-plan-flag.decorator";
 import { CreditNotesService } from "./credit-notes.service";
 import { CreateCreditNoteDto } from "./dto/create-credit-note.dto";
+import { SetAutoApplyExclusionDto } from "./dto/set-auto-apply-exclusion.dto";
 
 // WP5b (R3b.3, R3b.5): flag.credit_notes ships dark (DARK_PLAN_FLAGS in
 // plan-flag-policy.ts) — this class-level guard is a courtesy allow until the
@@ -76,8 +77,24 @@ export class CreditNotesController {
   // #2403 / SA-436 PR-3: a staff action; TENANT_ADMIN named explicitly (RolesGuard already
   // lets it satisfy OPERATOR).
   @Roles(UserRole.OPERATOR, UserRole.TENANT_ADMIN)
-  unapply(@Param("id") id: string, @Body() body: { invoiceId: string }) {
-    return this.creditNotesService.unapplyFromInvoice(id, body.invoiceId);
+  unapply(
+    @Param("id") id: string,
+    @Body() body: { invoiceId: string },
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.creditNotesService.unapplyFromInvoice(id, body.invoiceId, user?.sub ?? null);
+  }
+
+  // SA-436 (#2401): OPERATOR and TENANT_ADMIN only; a DRIVER or CUSTOMER gets 403.
+  @Patch(":id/auto-apply-exclusion")
+  @UseGuards(RolesGuard)
+  @Roles(UserRole.OPERATOR, UserRole.TENANT_ADMIN)
+  setAutoApplyExclusion(
+    @Param("id") id: string,
+    @Body() dto: SetAutoApplyExclusionDto,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.creditNotesService.setAutoApplyExcluded(id, dto.excluded, user?.sub ?? null);
   }
 
   @Patch(":id")
