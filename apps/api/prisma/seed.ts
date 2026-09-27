@@ -4,6 +4,7 @@ import { PrismaClient } from "@prisma/client";
 import * as bcrypt from "bcrypt";
 import { assertTestTenant } from "../../../scripts/lib/test-tenants.cjs";
 import { localConnectionConfig } from "../scripts/lib/local-db-target.cjs";
+import { ensureParityBuyers } from "./seed-parity-buyer";
 
 // A provably-local target dials the explicit fields that were vetted (never the raw string, whose ?host= could
 // redirect it); only a deliberate SEED_ALLOW_REMOTE=1 run uses the raw URL (#2204).
@@ -904,6 +905,14 @@ async function main() {
     });
     console.log(`Granted flag.units_v1 on "${TENANT_SLUG}" (${tenantId})`);
   }
+
+  // #2338: buyer-portal fixtures for the native-parity proof harness (local databases only).
+  await ensureParityBuyers(prisma, {
+    tenantId,
+    tenantSlug: TENANT_SLUG,
+    loadedCustomerId: customers[0].id,
+    isLocalTarget: localTarget != null,
+  });
 
   console.log(
     `Seeded tenant "${TENANT_SLUG}" (${tenantId}): 7 users, ${productDefs.length} products, ` +

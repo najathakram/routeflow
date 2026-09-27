@@ -3,6 +3,12 @@
 // say against the registers, plus one bounded write: --apply merges proposed PR numbers into
 // features.jsonl's "prs":[…] substring, working tree only. Never stages, never commits, never pushes.
 //
+// History walk: readCommits() runs `git log --first-parent`, so it sees only the mainline, which
+// is one squash-merge commit per PR (where that PR's trailers live). A --since range that crosses
+// a true merge commit reports the merge commit's own message but silently drops every trailer
+// carried by commits reachable only through its second parent. This is deliberate: a feature
+// branch's WIP commits must not double-count. Self-test T12m pins it.
+//
 // Usage:
 //   node scripts/roadmap/from-git.mjs [--since <ref>]
 //   node scripts/roadmap/from-git.mjs --apply
