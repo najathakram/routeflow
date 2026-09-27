@@ -257,7 +257,7 @@ describeDb("#2562 run-stop reorder vs a concurrent run start — real Postgres",
     );
     const deadline = Date.now() + timeoutMs;
     for (;;) {
-      await prisma.$queryRaw`SELECT pg_stat_clear_snapshot()`;
+      await prisma.$executeRaw`SELECT pg_stat_clear_snapshot()`; // returns void: $executeRaw
       const rows: Array<{ n: bigint | number }> = await prisma.$queryRaw`
         SELECT count(*)::int AS n FROM pg_stat_activity
         WHERE cardinality(pg_blocking_pids(pid)) > 0`;
@@ -303,8 +303,13 @@ describeDb("#2562 run-stop reorder vs a concurrent run start — real Postgres",
         (e: unknown) => ({ ok: false as const, error: e as Error }),
       );
 
-    const blocked = await observeBlocked(reorder);
-    releaseStart();
+    let blocked: boolean;
+    try {
+      blocked = await observeBlocked(reorder);
+    } finally {
+      // Always let T2 commit, so a harness failure can never leave its tx (and the cleanup) hung.
+      releaseStart();
+    }
     await start;
     const outcome = await reorder;
 
