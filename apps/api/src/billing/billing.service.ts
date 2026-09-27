@@ -1,3 +1,4 @@
+import { TX_CONFLICT_MAX_ATTEMPTS } from "../common/tx-retry";
 import {
   Injectable,
   Logger,
@@ -523,39 +524,59 @@ export class BillingService {
     planKey: string,
     sync: { synced: boolean; reason?: string },
   ): Promise<void> {
-    const sub = await this.prisma.tenantSubscription.findUnique({
-      where: { tenantId },
-      select: {
-        planKey: true,
-        basePriceSnapshot: true,
-        tenant: { select: { status: true, deletedAt: true, class: true } },
-      },
-    });
-    if (!sub || sub.planKey == null) return;
-
-    const oldMonthly = sub.basePriceSnapshot != null ? Number(sub.basePriceSnapshot) : 0;
     const newMonthly = roundMoney(resolvedMonthly);
-    if (oldMonthly === newMonthly) return;
+    // #2509: ONE transaction per attempt — read, compare-and-set the snapshot on the (planKey,
+    // basePriceSnapshot) just read, and emit in the same tx. A concurrent plan change or Pricing write
+    // that lands between the read and the write makes the CAS miss instead of being overwritten or
+    // double-booked. A miss re-reads: a plan change since the read ⇒ this resolved price is stale for
+    // the row, so stop (the plan path wrote its own snapshot); only the snapshot moved ⇒ retry.
+    for (let attempt = 0; attempt < TX_CONFLICT_MAX_ATTEMPTS; attempt++) {
+      const outcome = await this.prisma.$transaction(async (tx) => {
+        const sub = await tx.tenantSubscription.findUnique({
+          where: { tenantId },
+          select: {
+            planKey: true,
+            basePriceSnapshot: true,
+            tenant: { select: { status: true, deletedAt: true, class: true } },
+          },
+        });
+        if (!sub || sub.planKey == null) return "done" as const;
+        if (normalizePlanKey(sub.planKey) !== normalizePlanKey(planKey)) {
+          this.logger.warn(
+            `#2509: tenant ${tenantId}'s plan changed during a price sync — the resolved price is stale; not reconciled`,
+          );
+          return "done" as const;
+        }
+        const oldMonthly = sub.basePriceSnapshot != null ? Number(sub.basePriceSnapshot) : 0;
+        if (oldMonthly === newMonthly) return "done" as const;
 
-    await this.prisma.tenantSubscription.update({
-      where: { tenantId },
-      data: { basePriceSnapshot: newMonthly },
-    });
+        const { count } = await tx.tenantSubscription.updateMany({
+          where: { tenantId, planKey: sub.planKey, basePriceSnapshot: sub.basePriceSnapshot },
+          data: { basePriceSnapshot: newMonthly },
+        });
+        if (count === 0) return "retry" as const;
 
-    if (!isPayingRow(sub.tenant, sub.planKey)) return;
-
-    await this.events.emit(
-      tenantId,
-      BILLING_EVENTS.PLAN_CHANGED,
-      {
-        source: "platform_pricing_sync",
-        planKey,
-        oldMonthly,
-        newMonthly,
-        stripeSynced: sync.synced,
-        stripeReason: sync.reason ?? null,
-      },
-      { amountDelta: roundMoney(newMonthly - oldMonthly) },
+        if (isPayingRow(sub.tenant, sub.planKey)) {
+          await this.events.emit(
+            tenantId,
+            BILLING_EVENTS.PLAN_CHANGED,
+            {
+              source: "platform_pricing_sync",
+              planKey,
+              oldMonthly,
+              newMonthly,
+              stripeSynced: sync.synced,
+              stripeReason: sync.reason ?? null,
+            },
+            { amountDelta: roundMoney(newMonthly - oldMonthly), tx },
+          );
+        }
+        return "done" as const;
+      });
+      if (outcome === "done") return;
+    }
+    this.logger.warn(
+      `#2509: tenant ${tenantId}'s price reconcile kept losing its compare-and-set — left for the next sync`,
     );
   }
 

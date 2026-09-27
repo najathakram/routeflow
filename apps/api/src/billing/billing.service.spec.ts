@@ -1506,7 +1506,8 @@ describe("BillingService.syncStripeSubscriptionPrice", () => {
 
     // MrrService prices every paying tenant from basePriceSnapshot and reconciles the
     // total against Σ BillingEvent.amountDelta — a price change must move BOTH.
-    expect(prisma.tenantSubscription.update).toHaveBeenCalledWith(
+    // #2509: the snapshot moves by compare-and-set (reconcilePriceLedger's one transaction).
+    expect(prisma.tenantSubscription.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({ data: { basePriceSnapshot: 150 } }),
     );
     const call = events.emit.mock.calls.find((c: any[]) => c[1] === BILLING_EVENTS.PLAN_CHANGED);
@@ -1548,7 +1549,8 @@ describe("BillingService.syncStripeSubscriptionPrice", () => {
 
     // The snapshot always stays current — so a later reactivation books the CORRECT (new)
     // price, not a stale one.
-    expect(prisma.tenantSubscription.update).toHaveBeenCalledWith(
+    // #2509: the snapshot moves by compare-and-set (reconcilePriceLedger's one transaction).
+    expect(prisma.tenantSubscription.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({ data: { basePriceSnapshot: 599 } }),
     );
     // But no ledger event — `mrr` never counted this tenant while suspended, and a delta here
