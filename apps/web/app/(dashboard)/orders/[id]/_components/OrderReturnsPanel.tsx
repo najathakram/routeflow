@@ -18,7 +18,9 @@ export interface OrderReturnsPanelProps {
 }
 
 export function OrderReturnsPanel({ orderId }: OrderReturnsPanelProps) {
-  const { data } = useReturns({ orderId, limit: 50 });
+  // #2406: "ALL" so a captured INLINE return (every return this panel is meant to show) is
+  // included alongside any STANDARD (post-delivery RMA) return on this order.
+  const { data } = useReturns({ orderId, kind: "ALL", limit: 50 });
   const returns = data?.data ?? [];
 
   if (returns.length === 0) return null;

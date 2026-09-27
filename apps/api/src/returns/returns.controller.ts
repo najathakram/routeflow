@@ -1,5 +1,16 @@
-import { Body, Controller, Get, Headers, Param, Post, Query, UseGuards } from "@nestjs/common";
+import {
+  BadRequestException,
+  Body,
+  Controller,
+  Get,
+  Headers,
+  Param,
+  Post,
+  Query,
+  UseGuards,
+} from "@nestjs/common";
 import { UserRole } from "@prisma/client";
+import { RETURN_KIND_VALUES } from "@routeflow/types";
 import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
 import { RolesGuard } from "../auth/guards/roles.guard";
 import { Roles } from "../auth/decorators/roles.decorator";
@@ -19,6 +30,14 @@ import { ProcessRefundDto } from "./dto/process-refund.dto";
 import { QuoteInlineReturnDto } from "./dto/quote-inline-return.dto";
 import { CaptureInlineReturnDto } from "./dto/capture-inline-return.dto";
 import { ApproveInlineReturnDto } from "./dto/approve-inline-return.dto";
+
+/** #2406: `GET /returns?kind=` whitelist — `RETURN_KIND_VALUES` (the real Prisma enum,
+ * pinned in enum-parity.spec.ts) plus the read-only "ALL" filter. Anything else is a 400
+ * BEFORE the service/prisma is ever touched — never pass a raw query string into `where.kind`. */
+const RETURN_KIND_FILTER_VALUES = [...RETURN_KIND_VALUES, "ALL"] as const;
+type ReturnKindFilter = (typeof RETURN_KIND_FILTER_VALUES)[number];
+const isReturnKindFilter = (value: string): value is ReturnKindFilter =>
+  (RETURN_KIND_FILTER_VALUES as readonly string[]).includes(value);
 
 // This controller also serves CUSTOMER and DRIVER roles (not just OPERATOR), so
 // gating it must stay behind the kill switch until the v7-STARTER audit question
@@ -137,13 +156,20 @@ export class ReturnsController {
     @Query("search") search?: string,
     @Query("page") page?: string,
     @Query("limit") limit?: string,
+    @Query("kind") kind?: string,
   ) {
+    // #2406: default STANDARD keeps the existing Returns list unchanged; INLINE/ALL are opt-in.
+    // Whitelisted BEFORE the service is called — an unrecognized value never reaches `where.kind`.
+    if (kind !== undefined && !isReturnKindFilter(kind)) {
+      throw new BadRequestException(`Invalid kind filter: ${kind}`);
+    }
     return this.returnsService.findAllForUser(user, {
       orderId,
       customerId,
       status,
       reason,
       search,
+      kind: (kind as ReturnKindFilter | undefined) ?? "STANDARD",
       page: page ? +page : 1,
       limit: limit ? +limit : 20,
     });

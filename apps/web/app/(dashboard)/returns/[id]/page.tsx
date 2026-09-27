@@ -521,7 +521,9 @@ export default function ReturnDetailPage() {
 
         {/* Actions based on status */}
         <div className="flex flex-wrap items-center gap-2">
-          {status === "PENDING" && (
+          {/* #2406: an INLINE return has its own capture/approve flow (PR-1c/1d) — never
+              the STANDARD approve/reject actions, even if it were ever PENDING. */}
+          {status === "PENDING" && ret.kind !== "INLINE" && (
             <>
               <Button
                 size="sm"

@@ -5,17 +5,20 @@ import type { Return } from "@/lib/api/returns";
 
 // #2406 — renders the SERVER's own figures from GET /returns?orderId=<id>, never a quote's.
 let mockReturns: Return[] = [];
+const useReturnsMock = jest.fn();
 jest.mock("@/lib/api/returns", () => ({
-  useReturns: () => ({
-    data: {
-      data: mockReturns,
-      meta: { total: mockReturns.length, page: 1, limit: 50, totalPages: 1 },
-    },
-  }),
+  useReturns: (...args: unknown[]) => useReturnsMock(...args),
 }));
 
 beforeEach(() => {
   mockReturns = [];
+  useReturnsMock.mockReset();
+  useReturnsMock.mockImplementation(() => ({
+    data: {
+      data: mockReturns,
+      meta: { total: mockReturns.length, page: 1, limit: 50, totalPages: 1 },
+    },
+  }));
 });
 
 describe("OrderReturnsPanel (#2406)", () => {
@@ -50,6 +53,36 @@ describe("OrderReturnsPanel (#2406)", () => {
       "href",
       "/credit-notes/cn-1",
     );
+  });
+
+  it("requests kind ALL — so a captured INLINE return is not silently dropped", () => {
+    renderWithProviders(<OrderReturnsPanel orderId="o1" />);
+    expect(useReturnsMock).toHaveBeenCalledWith(
+      expect.objectContaining({ orderId: "o1", kind: "ALL", limit: 50 }),
+    );
+  });
+
+  it("renders an INLINE row's refundAmount", () => {
+    mockReturns = [
+      {
+        id: "ret-inline-1",
+        returnNumber: "R-3",
+        kind: "INLINE",
+        customerId: "c1",
+        orderId: "o1",
+        status: "REFUNDED",
+        reason: "DAMAGED",
+        items: [],
+        createdAt: "2026-09-03",
+        updatedAt: "2026-09-03",
+        refundAmount: "14.9700",
+        refundEstimate: null,
+        refundEstimateReason: "INLINE",
+      } as unknown as Return,
+    ];
+    renderWithProviders(<OrderReturnsPanel orderId="o1" />);
+    expect(screen.getByText("#R-3")).toBeInTheDocument();
+    expect(screen.getByText("$14.97")).toBeInTheDocument();
   });
 
   it("hides the credit-note link and amount when absent, without crashing", () => {
