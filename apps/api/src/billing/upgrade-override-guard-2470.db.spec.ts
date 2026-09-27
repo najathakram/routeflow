@@ -146,6 +146,9 @@ describeDb("#2470 upgrade() loses the race to a concurrent Pricing change (real 
         (e: unknown) => ({ ok: false, e }),
       );
       for (let i = 0; i < 800 && !blocked; i++) {
+        // T2 polls INSIDE its own open tx, where pg_stat_activity is a cached per-tx snapshot —
+        // clear it each poll or the wait is never observed (F2 on #2506).
+        await t2.query("SELECT pg_stat_clear_snapshot()");
         const q = await t2.query(
           `SELECT count(*)::int n FROM pg_stat_activity WHERE $1 = ANY(pg_blocking_pids(pid))`,
           [pid],
