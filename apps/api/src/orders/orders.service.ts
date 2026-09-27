@@ -12,6 +12,7 @@ import {
 } from "@nestjs/common";
 import { randomUUID } from "crypto";
 import { LeaderCron } from "../common/cron-lock";
+import { withAfterCommit } from "../common/after-commit";
 import { InlineReturnsService } from "../returns/inline-returns.service";
 import * as inlineReturn from "./order-inline-return";
 import { prepareInlineReturn, replayAfterCheck } from "./order-inline-return";
@@ -1020,7 +1021,7 @@ export class OrdersService implements OnApplicationBootstrap {
           // SA-124: see mergeAllPendingForCustomer — split by kind, independent conditions.
           const counts = reportPackWarnings(this.logger, "consolidate", winner.id, packWarnings);
 
-          await this.prisma.tenantTransaction(async (tx) => {
+          await withAfterCommit(this.prisma, async (tx, after) => {
             for (const write of mergeWrites) {
               if (write.kind === "update") {
                 await tx.orderItem.update({ where: { id: write.lineId }, data: write.data });
@@ -1129,6 +1130,7 @@ export class OrdersService implements OnApplicationBootstrap {
             await this.invoicesService.reconcileOrderDraftInvoice(winner.id, {
               basis: "order",
               tx,
+              after,
             });
           });
 

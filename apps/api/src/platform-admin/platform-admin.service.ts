@@ -992,9 +992,38 @@ export class PlatformAdminService {
           status: true,
           class: true,
           deletedAt: true,
-          subscription: { select: { planKey: true, basePriceSnapshot: true, discount: true } },
+          subscription: {
+            select: {
+              planKey: true,
+              basePriceSnapshot: true,
+              discount: true,
+              priceOverrideMonthly: true,
+            },
+          },
         },
       });
+
+      // B557 / SA-140: status is unconditionally ACTIVE and planKey unconditionally resolved by
+      // the write below, so only class/deletedAt (untouched here) gate whether this activation
+      // actually crosses into MrrService's paying set — via the shared isPayingRow predicate.
+      const wasPaying = isPayingRow(before, before.subscription?.planKey ?? null);
+      const isPaying = isPayingRow({ ...before, status: "ACTIVE" }, definition.planKey);
+      // #2460 / SA-464 (1): manual activation is a PAID path (owner 09-24), so a crossing INTO the
+      // paying set snapshots what the tenant pays — a negotiated override (0 = free, explicitly),
+      // else the catalog price — in this same tx, and books it below. A renewal of a row already in
+      // the set writes no snapshot and books nothing (a legacy NULL stays NULL, reported as unpriced).
+      const crossingIn = !wasPaying && isPaying;
+      const override = before.subscription?.priceOverrideMonthly;
+      const snapshotWrite = crossingIn
+        ? {
+            basePriceSnapshot:
+              override != null
+                ? Number(override)
+                : definition.monthlyPrice != null
+                  ? Number(definition.monthlyPrice)
+                  : null,
+          }
+        : {};
 
       const [updated] = await Promise.all([
         tx.tenant.update({
@@ -1016,6 +1045,7 @@ export class PlatformAdminService {
             externalPaymentMethod: dto.paymentMethod,
             externalPaymentRef: dto.paymentRef ?? null,
             externalPaymentNotes: dto.notes ?? null,
+            ...snapshotWrite,
           },
           update: {
             currentPlan: dto.plan,
@@ -1035,31 +1065,28 @@ export class PlatformAdminService {
             externalPaymentMethod: dto.paymentMethod,
             externalPaymentRef: dto.paymentRef ?? null,
             externalPaymentNotes: dto.notes ?? null,
+            ...snapshotWrite,
           },
         }),
       ]);
 
-      // B557 / SA-140: status is unconditionally ACTIVE and planKey unconditionally resolved by
-      // the write above, so only class/deletedAt (untouched here) gate whether this activation
-      // actually crosses into MrrService's paying set — via the shared isPayingRow predicate.
-      const wasPaying = isPayingRow(before, before.subscription?.planKey ?? null);
-      const isPaying = isPayingRow({ ...before, status: "ACTIVE" }, definition.planKey);
       if (wasPaying !== isPaying) {
         const addons = await tx.tenantAddon.findMany({
           where: { tenantId: id, active: true },
           select: { priceSnapshot: true, quantity: true, sku: true, addonKey: true },
         });
-        // basePriceSnapshot/discount are untouched by this write (external/manual activations
-        // are priced outside the catalog run-rate — see the REG-743-N5/F2 note in
-        // mrr.service.ts), so the "after" contribution reuses the exact fields the write
-        // leaves in place — never a catalog-price guess.
+        // #2460 / SA-464: entering, the contribution is priced off the snapshot this call just
+        // wrote (after − before, where before contributed 0 outside the set); leaving (latent,
+        // see below), off the stored snapshot the tenant was counted at (−before).
         // SA-277b: the PLAN_CHANGED amount here is the BASE (plan) share only — the add-on
         // share of this same crossing is booked separately, through `bookAddonsOnCrossing`
         // below (the SAME helper `subscribe()` uses for its own kept/prior add-ons), so nothing
         // is double-counted between a plan.changed row and the addon.enabled rows it books.
         const baseContribution = this.mrrService.priceSubscription(
           {
-            basePriceSnapshot: before.subscription?.basePriceSnapshot ?? null,
+            basePriceSnapshot: crossingIn
+              ? (snapshotWrite as { basePriceSnapshot: number | null }).basePriceSnapshot
+              : (before.subscription?.basePriceSnapshot ?? null),
             discount: before.subscription?.discount ?? null,
           },
           [],

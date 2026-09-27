@@ -1,5 +1,5 @@
 {
-  "mappedSha": "9c5e4b45567bc59e1e9e90e622b35448806b0791",
+  "mappedSha": "471a7670b68e0e6c48d177c66b2118387b03f63d",
   "generatedAt": "2026-09-26T05:18:11.487Z",
   "layout": "split-2026-09-13",
   "areas": [
@@ -15,5 +15,5 @@
     "packages": 0
   },
   "fileCount": 1045,
-  "notes": "**2026-09-26 — window G landed (docs-only bookkeeping).** `api/feature-modules-7.md` gains a \"Landing batch 2026-09-26, window G\" section: #2149 merge/consolidate banned-line warnings, #2129 recurring-invoice banned-line suspend + reactivation schedule (`recurring-schedule.ts`), #2186 add-on ledger writer (`addon-ledger.ts`, B863–B866), #2044 STANDARD return cap in pieces, #2061 partial Case billing (`unit-line-bill-guard.ts`). `api/returns-inline.md` + `api/feature-modules-3/returns.md`: `standardReturnPieces` is no longer an identity stub; `soldPiecesForProduct` → `soldQtyForProduct`. Lesson L-223 minted. No source changed. See CHANGELOG.md for the full landing list."
+  "notes": "**2026-09-27 — evening landings #2503, #2494 (docs-only bookkeeping).** New `api/landing-2026-09-27-evening.md` (TOC row in `api.md`): SA-464 manual-activation snapshot ledger (#2503), SA-436 credit auto-apply off by default + `CreditNoteApplyBlock` + required apply `invoiceId` (#2494, additive migration). B877 closed already-fixed (#2494). mappedSha -> 471a7670. No source changed. See CHANGELOG.md for the full landing list."
 }

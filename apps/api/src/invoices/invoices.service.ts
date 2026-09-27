@@ -11,7 +11,12 @@ import { assertNoNegativeLineSubtotal } from "../common/money-invariants.util";
 import { randomUUID } from "crypto";
 import { PrismaService } from "../prisma/prisma.service";
 import { StorageService } from "../storage/storage.service";
-import { compressDocument } from "../storage/compress.util";
+import {
+  deletePaymentImage,
+  getPaymentImageUrl,
+  uploadPaymentImage,
+  type PaymentImageDeps,
+} from "./payment-image";
 import {
   computeLineSubtotal,
   roundMoney,
@@ -106,6 +111,7 @@ import { InvoiceItemSystemKind, notNsfLineWhere } from "./nsf-line";
 import { preservedNsfLines } from "./nsf-preserve";
 import { partitionInvoiceLines, planResyncPairs } from "./resync-plan";
 import { issueDateStamp, startOfCalendarDay, endOfCalendarDay } from "../common/calendar-date";
+import { calendarFieldStamp, dueDateStamps, dueStamp } from "./invoice-due-dates";
 import { lockRowsNoWait } from "../common/db-locks";
 import { NumberingService } from "../import/numbering.service";
 import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
@@ -123,6 +129,7 @@ import { prepareUnitLadders, requestsUnit } from "../orders/unit-line-build";
 import { standaloneAllocationTotals } from "./standalone-payment-totals";
 import { calendarDayOf } from "./settled-date-filter";
 import { retryOnTxConflict } from "../common/tx-retry";
+import { AfterCommit, gatewayFor, withAfterCommit } from "../common/after-commit";
 import {
   lockInvoiceRow,
   lockInvoicesForPayment,
@@ -396,6 +403,7 @@ export class InvoicesService {
   /** SA-135: an internal caller's line may carry `packSnapshot` (ManualLineItem); the HTTP DTO never can. */
   async create(dto: Omit<CreateInvoiceDto, "items"> & { items: ManualLineItem[] }) {
     const issueDateInput = dto.issueDate ? issueDateStamp(dto.issueDate) : null; // #2197: 400 first
+    const due = dueDateStamps(dto); // #2256: the due dates too, refused before any read or write
     const customer = await this.prisma
       .forTenant()
       .customer.findUnique({ where: { id: dto.customerId } });
@@ -491,14 +499,14 @@ export class InvoicesService {
             discount: invDiscount,
             shippingFee: shipping,
             total,
-            dueDate: dto.dueDate ? new Date(dto.dueDate) : null,
+            dueDate: due.dueDate,
             // #2197: the literal calendar day the client named, never a raw instant.
             issueDate: issueDateInput ?? startOfCalendarDay(new Date(), tenantDefaults.timezone),
             notes: dto.notes ?? tenantDefaults.notes,
             terms: dto.terms ?? tenantDefaults.terms,
             paymentTermsLabel: dto.paymentTermsLabel ?? null,
             depositPercent: dto.depositPercent ?? null,
-            depositDueDate: dto.depositDueDate ? new Date(dto.depositDueDate) : null,
+            depositDueDate: due.depositDueDate,
             referenceNumber: dto.referenceNumber ?? null,
             subject: dto.subject ?? null,
             shippingCarrier: dto.shippingCarrier?.trim() || null,
@@ -618,7 +626,7 @@ export class InvoicesService {
     const issueDate = order.orderDate ?? startOfCalendarDay(new Date(), tenantDefaults.timezone);
     let dueDate: Date;
     if (overrides?.dueDate) {
-      dueDate = new Date(overrides.dueDate);
+      dueDate = calendarFieldStamp(overrides.dueDate, "dueDate"); // #2256
     } else {
       dueDate = addCalendarDays(issueDate, dueDays);
     }
@@ -649,7 +657,7 @@ export class InvoicesService {
         ? {
             depositPercent: overrides.depositPercent,
             depositDueDate: overrides.depositDueDate
-              ? new Date(overrides.depositDueDate)
+              ? calendarFieldStamp(overrides.depositDueDate, "depositDueDate")
               : issueDate,
           }
         : effectiveDepositPercent != null
@@ -1399,7 +1407,7 @@ export class InvoicesService {
    */
   async reconcileOrderDraftInvoice(
     orderId: string,
-    opts: { basis: "order" | "delivered"; tx?: any },
+    opts: { basis: "order" | "delivered"; tx?: any; after?: AfterCommit },
   ) {
     const db = opts.tx ?? this.prisma.forTenant();
     const split = await this.reconcileSplitOrderDrafts(orderId, opts.basis, db);
@@ -1555,7 +1563,8 @@ export class InvoicesService {
     // before — this whole block is deposit-mirror-only.
     if (isDepositMirror && nextStatus !== InvoiceStatus.DRAFT) {
       await this.commissionEngine.syncInvoiceCommissionSafe(draft.id, db);
-      this.gateway.emitInvoiceUpdated(this.prisma.getTenantId(), {
+      const gateway = gatewayFor(opts.tx, opts.after, this.gateway, "reconcileOrderDraftInvoice");
+      gateway.emitInvoiceUpdated(this.prisma.getTenantId(), {
         invoiceId: updated.id,
         invoiceNumber: updated.invoiceNumber,
         customerId: updated.customerId,
@@ -2042,7 +2051,11 @@ export class InvoicesService {
    * because this method rebuilds each invoice at the full current line qty and would
    * otherwise expand an already-issued invoice to cover units/lines it never billed.
    */
-  async resyncOrderInvoicesForEdit(orderId: string, tx?: any): Promise<any[] | null> {
+  async resyncOrderInvoicesForEdit(
+    orderId: string,
+    tx?: any,
+    after?: AfterCommit,
+  ): Promise<any[] | null> {
     const run = async (db: any): Promise<any[] | null> => {
       const invoices = await db.invoice.findMany({
         where: { orderId, status: { not: InvoiceStatus.VOID } },
@@ -2111,15 +2124,16 @@ export class InvoicesService {
     // pre-edit total until it was manually refetched. Emitted here, at the OUTER
     // tail rather than inside `run`, so it lands POST-COMMIT on the only
     // production call site (orders.service.ts updateOrderItems, which passes no
-    // `tx`). INVARIANT for a future caller: passing a `tx` makes the emit fire
-    // inside that caller's transaction, so a later rollback would publish an
-    // invoice update that never committed — emit-after-commit there instead.
+    // `tx`). #2175: a caller that passes its own `tx` must also pass its
+    // AfterCommit queue (gatewayFor refuses otherwise), so the emit is queued and
+    // sent only once THAT transaction commits — never from inside it.
     // Exactly once per rebuilt invoice: rebuildSiblingDrafts returns one row per
     // linked invoice (the partition bails on any shared/unprovenanced line).
     if (updated) {
       const tenantId = this.prisma.getTenantId();
+      const gateway = gatewayFor(tx, after, this.gateway, "resyncOrderInvoicesForEdit");
       for (const inv of updated) {
-        this.gateway.emitInvoiceUpdated(tenantId, {
+        gateway.emitInvoiceUpdated(tenantId, {
           invoiceId: inv.id,
           invoiceNumber: inv.invoiceNumber,
           customerId: inv.customerId,
@@ -2503,7 +2517,7 @@ export class InvoicesService {
     const issueDate = order.orderDate ?? startOfCalendarDay(new Date(), tenantTimezone);
     let dueDate: Date;
     if (overrides?.dueDate) {
-      dueDate = new Date(overrides.dueDate);
+      dueDate = calendarFieldStamp(overrides.dueDate, "dueDate"); // #2256
     } else {
       dueDate = addCalendarDays(issueDate, dueDays);
     }
@@ -2545,7 +2559,7 @@ export class InvoicesService {
         ? {
             depositPercent: overrides.depositPercent,
             depositDueDate: overrides.depositDueDate
-              ? new Date(overrides.depositDueDate)
+              ? calendarFieldStamp(overrides.depositDueDate, "depositDueDate")
               : issueDate,
           }
         : effectiveDepositPercent != null
@@ -2731,9 +2745,9 @@ export class InvoicesService {
     const issueDate = order.orderDate ?? startOfCalendarDay(new Date(), tenantDefaults.timezone);
     let dueDate: Date;
     if (dto.dueDate) {
-      dueDate = new Date(dto.dueDate);
+      dueDate = calendarFieldStamp(dto.dueDate, "dueDate"); // #2256
     } else if (overrides?.dueDate) {
-      dueDate = new Date(overrides.dueDate);
+      dueDate = calendarFieldStamp(overrides.dueDate, "dueDate"); // #2256
     } else {
       dueDate = addCalendarDays(issueDate, dueDays);
     }
@@ -2759,7 +2773,7 @@ export class InvoicesService {
       explicitDepositPercent != null
         ? {
             depositPercent: explicitDepositPercent,
-            depositDueDate: explicitDepositDueDate ? new Date(explicitDepositDueDate) : issueDate,
+            depositDueDate: dueStamp(explicitDepositDueDate, "depositDueDate") ?? issueDate,
           }
         : effectiveDepositPercent != null
           ? { depositPercent: effectiveDepositPercent, depositDueDate: issueDate }
@@ -3238,6 +3252,7 @@ export class InvoicesService {
 
     // #2197: the same literal calendar-day stamp create() writes.
     const issueDate = dto.issueDate ? issueDateStamp(dto.issueDate) : undefined;
+    const due = dueDateStamps(dto); // #2256: and the due dates, before either rewrite path runs
 
     // units_v1: BOTH rewrite paths — the item replace (re-split at the LIVE pack) and the
     // discount/shipping recompute, whose order back-sync writes onto the linked order's lines.
@@ -3339,7 +3354,7 @@ export class InvoicesService {
             discount: invDiscount,
             shippingFee: shipping,
             total,
-            dueDate: dto.dueDate ? new Date(dto.dueDate) : undefined,
+            dueDate: due.dueDate ?? undefined,
             issueDate,
             notes: dto.notes,
             terms: dto.terms,
@@ -3354,7 +3369,7 @@ export class InvoicesService {
             ...(dto.subject !== undefined && { subject: dto.subject || null }),
             ...(dto.depositPercent !== undefined && { depositPercent: dto.depositPercent }),
             ...(dto.depositDueDate !== undefined && {
-              depositDueDate: dto.depositDueDate ? new Date(dto.depositDueDate) : null,
+              depositDueDate: due.depositDueDate,
             }),
             pdfUrl: null,
             items: {
@@ -3411,7 +3426,7 @@ export class InvoicesService {
     const updated = await this.prisma.forTenant().invoice.update({
       where: { id },
       data: {
-        ...(dto.dueDate && { dueDate: new Date(dto.dueDate) }),
+        ...(due.dueDate && { dueDate: due.dueDate }),
         ...(issueDate && { issueDate }),
         ...(dto.notes !== undefined && { notes: dto.notes }),
         ...(dto.terms !== undefined && { terms: dto.terms }),
@@ -3427,7 +3442,7 @@ export class InvoicesService {
         ...(dto.subject !== undefined && { subject: dto.subject || null }),
         ...(dto.depositPercent !== undefined && { depositPercent: dto.depositPercent }),
         ...(dto.depositDueDate !== undefined && {
-          depositDueDate: dto.depositDueDate ? new Date(dto.depositDueDate) : null,
+          depositDueDate: due.depositDueDate,
         }),
         ...recalcData,
       },
@@ -3517,7 +3532,7 @@ export class InvoicesService {
       d == null ? null : d instanceof Date ? d : new Date(d as string);
     const oldDueDate = asDate(inv.dueDate);
     const oldDueDateStr = oldDueDate ? oldDueDate.toISOString().slice(0, 10) : "none";
-    const newDueDate = dto.dueDate ? new Date(dto.dueDate) : oldDueDate;
+    const newDueDate = dto.dueDate ? calendarFieldStamp(dto.dueDate, "dueDate") : oldDueDate; // #2256
     const newDueDateStr = newDueDate ? newDueDate.toISOString().slice(0, 10) : "none";
 
     // F03/R1: CONFIRMED (PAID) payments only — same predicate every other status
@@ -4695,78 +4710,21 @@ export class InvoicesService {
     return payment;
   }
 
-  private async findPaymentOrThrow(paymentId: string) {
-    const payment = await this.prisma
-      .forTenant()
-      .invoicePayment.findUnique({ where: { id: paymentId } });
-    if (!payment) throw new NotFoundException("Payment not found");
-    return payment;
+  // Receipt/slip/check photos on a payment EVENT live in payment-image.ts (size ratchet).
+  uploadPaymentImage(paymentId: string, buffer: Buffer, originalName: string, mimeType: string) {
+    return uploadPaymentImage(this.paymentImageDeps(), paymentId, buffer, originalName, mimeType);
   }
 
-  /**
-   * Attach a receipt/slip/check photo to a payment EVENT. Uses `compressDocument`
-   * (NOT `compressImage`) — like the expense-receipt endpoint, this route has no
-   * controller MIME allowlist and mobile file pickers routinely send
-   * `application/octet-stream`/empty content-type; `compressDocument` byte-sniffs
-   * via sharp (any real image → JPEG) and tolerates a PDF, so a real receipt/check
-   * photo never 500s on a generic content-type.
-   */
-  async uploadPaymentImage(
-    paymentId: string,
-    buffer: Buffer,
-    originalName: string,
-    mimeType: string,
-  ): Promise<{ url: string }> {
-    const payment = await this.findPaymentOrThrow(paymentId);
-    let compressed;
-    try {
-      compressed = await compressDocument(buffer, mimeType);
-    } catch {
-      throw new BadRequestException("File is not a decodable image or PDF");
-    }
-    // One object per payment EVENT: a grouped standalone payment (several rows
-    // sharing paymentGroupId) anchors on the group id so the same photo is
-    // reachable from every allocation row.
-    const anchor = payment.paymentGroupId ?? payment.id;
-    const key = `payments/${anchor}/image.${compressed.ext}`;
-    await this.storage.upload(key, compressed.buffer, compressed.mimeType);
-    const data = {
-      imageKey: key,
-      imageOriginalName: originalName,
-      imageMimeType: compressed.mimeType,
-    };
-    if (payment.paymentGroupId) {
-      await this.prisma
-        .forTenant()
-        .invoicePayment.updateMany({ where: { paymentGroupId: payment.paymentGroupId }, data });
-    } else {
-      await this.prisma.forTenant().invoicePayment.update({ where: { id: paymentId }, data });
-    }
-    return { url: await this.storage.presignedUrl(key) };
+  getPaymentImageUrl(paymentId: string) {
+    return getPaymentImageUrl(this.paymentImageDeps(), paymentId);
   }
 
-  async getPaymentImageUrl(paymentId: string): Promise<{ url: string }> {
-    const payment = await this.findPaymentOrThrow(paymentId);
-    if (!payment.imageKey) throw new NotFoundException("No image attached to this payment");
-    return { url: await this.storage.presignedUrl(payment.imageKey) };
+  deletePaymentImage(paymentId: string) {
+    return deletePaymentImage(this.paymentImageDeps(), paymentId);
   }
 
-  async deletePaymentImage(paymentId: string): Promise<{ success: boolean }> {
-    const payment = await this.findPaymentOrThrow(paymentId);
-    if (!payment.imageKey) throw new NotFoundException("No image to delete");
-    const clear = { imageKey: null, imageOriginalName: null, imageMimeType: null };
-    if (payment.paymentGroupId) {
-      await this.prisma.forTenant().invoicePayment.updateMany({
-        where: { paymentGroupId: payment.paymentGroupId },
-        data: clear,
-      });
-    } else {
-      await this.prisma
-        .forTenant()
-        .invoicePayment.update({ where: { id: paymentId }, data: clear });
-    }
-    await this.storage.delete(payment.imageKey);
-    return { success: true };
+  private paymentImageDeps(): PaymentImageDeps {
+    return { prisma: this.prisma, storage: this.storage };
   }
 
   // ─── Payment recording ────────────────────────────────────────────────────
@@ -4780,7 +4738,7 @@ export class InvoicesService {
     // Refuse a null tenant BEFORE the transaction opens — same policy as sites
     // 2/3 (D3): a PAY number is never minted from the shared "singleton" row.
     const { tenantId, tenantShort } = this.requirePaymentTenant();
-    return this.prisma.tenantTransaction(async (tx) => {
+    return withAfterCommit(this.prisma, async (tx, after) => {
       // Lock the invoice row so concurrent payment requests serialize here
       await tx.$executeRaw`SELECT id FROM "Invoice" WHERE id = ${id} FOR UPDATE`;
 
@@ -4870,7 +4828,7 @@ export class InvoicesService {
           payments: { orderBy: { createdAt: "desc" } },
         },
       });
-      this.gateway.emitInvoiceUpdated(this.prisma.getTenantId(), {
+      after.defer(this.gateway).emitInvoiceUpdated(this.prisma.getTenantId(), {
         invoiceId: paid.id,
         invoiceNumber: paid.invoiceNumber,
         customerId: paid.customerId,
@@ -4936,6 +4894,7 @@ export class InvoicesService {
    */
   async recordDeliveryPaymentInTx(
     tx: any,
+    after: AfterCommit, // #2175: the caller's queue — its transaction owns the flush
     orderIds: string[],
     amount: number,
     method: string,
@@ -5040,7 +4999,7 @@ export class InvoicesService {
         },
       });
       await this.commissionEngine.syncInvoiceCommissionSafe(inv.id, tx);
-      this.gateway.emitInvoiceUpdated(this.prisma.getTenantId(), {
+      after.defer(this.gateway).emitInvoiceUpdated(this.prisma.getTenantId(), {
         invoiceId: inv.id,
         invoiceNumber: inv.invoiceNumber,
         customerId: inv.customerId,
@@ -5180,7 +5139,7 @@ export class InvoicesService {
         "Cannot edit a payment to method CREDIT_NOTE or ADVANCE. Void this payment and apply the credit note / advance via the dedicated action.",
       );
     }
-    return this.prisma.tenantTransaction(async (tx) => {
+    return withAfterCommit(this.prisma, async (tx, after) => {
       // PR-2 (check-payments B1 hardening, review-opus-v2 finding m3): recordPayment
       // already row-locks the invoice before reading its payments; updatePayment had
       // no equivalent, so two concurrent edits could both read a stale remaining
@@ -5272,7 +5231,7 @@ export class InvoicesService {
           payments: { orderBy: { createdAt: "desc" } },
         },
       });
-      this.gateway.emitInvoiceUpdated(this.prisma.getTenantId(), {
+      after.defer(this.gateway).emitInvoiceUpdated(this.prisma.getTenantId(), {
         invoiceId: updated.id,
         invoiceNumber: updated.invoiceNumber,
         customerId: updated.customerId,
@@ -5286,7 +5245,7 @@ export class InvoicesService {
 
   async deletePayment(invoiceId: string, paymentId: string) {
     let imageKey: string | null = null;
-    const updated = await this.prisma.tenantTransaction(async (tx) => {
+    const updated = await withAfterCommit(this.prisma, async (tx, after) => {
       // PR-2 review (routeflow-Lead, 2026-09-16): same Invoice FOR UPDATE lock as
       // updatePayment/recordPayment, taken BEFORE touching the payment row, and in
       // the same order — deletePayment and voidPayment previously took no lock at
@@ -5349,7 +5308,7 @@ export class InvoicesService {
           payments: { orderBy: { createdAt: "desc" } },
         },
       });
-      this.gateway.emitInvoiceUpdated(this.prisma.getTenantId(), {
+      after.defer(this.gateway).emitInvoiceUpdated(this.prisma.getTenantId(), {
         invoiceId: updated.id,
         invoiceNumber: updated.invoiceNumber,
         customerId: updated.customerId,
@@ -5409,7 +5368,7 @@ export class InvoicesService {
   // ─── Delete ───────────────────────────────────────────────────────────────
 
   async deleteInvoice(id: string) {
-    return this.prisma.tenantTransaction(async (tx) => {
+    return withAfterCommit(this.prisma, async (tx, after) => {
       const inv = await tx.invoice.findUnique({
         where: { id },
         include: { payments: true },
@@ -5458,7 +5417,7 @@ export class InvoicesService {
 
       // #2142 W1: a deleted DRAFT was never issued, so its number and total stay on the
       // operators' feed; the customer's room (the buyer portal) hears only of issued invoices.
-      this.gateway.emitInvoiceUpdated(
+      after.defer(this.gateway).emitInvoiceUpdated(
         this.prisma.getTenantId(),
         {
           invoiceId: id,
@@ -5623,7 +5582,7 @@ export class InvoicesService {
   // ─── Void a single payment ────────────────────────────────────────────────
 
   async voidPayment(invoiceId: string, paymentId: string) {
-    return this.prisma.tenantTransaction(async (tx) => {
+    return withAfterCommit(this.prisma, async (tx, after) => {
       // PR-2 review (routeflow-Lead, 2026-09-16): same Invoice FOR UPDATE lock as
       // updatePayment/recordPayment/deletePayment, taken BEFORE touching the
       // payment row, and in the same order — voidPayment previously took no lock
@@ -5706,7 +5665,7 @@ export class InvoicesService {
         },
       });
 
-      this.gateway.emitInvoiceUpdated(this.prisma.getTenantId(), {
+      after.defer(this.gateway).emitInvoiceUpdated(this.prisma.getTenantId(), {
         invoiceId,
         invoiceNumber: invoice.invoiceNumber,
         customerId: invoice.customerId,
@@ -5734,7 +5693,7 @@ export class InvoicesService {
    * transaction (all balance readers use the stored total).
    */
   async setCheckStatus(invoiceId: string, paymentId: string, dto: SetCheckStatusDto) {
-    return this.prisma.tenantTransaction(async (tx) => {
+    return withAfterCommit(this.prisma, async (tx, after) => {
       // PR-2 review (routeflow-Lead, 2026-09-16): same Invoice FOR UPDATE lock as
       // recordPayment/updatePayment/deletePayment/voidPayment, taken BEFORE
       // touching the payment row, and in the same order — setCheckStatus
@@ -5783,7 +5742,7 @@ export class InvoicesService {
           select: { invoiceNumber: true, customerId: true, status: true, total: true },
         });
         if (!invoice) throw new NotFoundException("Invoice not found");
-        this.gateway.emitInvoiceUpdated(this.prisma.getTenantId(), {
+        after.defer(this.gateway).emitInvoiceUpdated(this.prisma.getTenantId(), {
           invoiceId,
           invoiceNumber: invoice.invoiceNumber,
           customerId: invoice.customerId,
@@ -5866,7 +5825,7 @@ export class InvoicesService {
       // DEPOSITED/CLEARED branches above change no balances, so no hook there.
       await this.commissionEngine.syncInvoiceCommissionSafe(invoiceId, tx);
 
-      this.gateway.emitInvoiceUpdated(this.prisma.getTenantId(), {
+      after.defer(this.gateway).emitInvoiceUpdated(this.prisma.getTenantId(), {
         invoiceId,
         invoiceNumber: invoice.invoiceNumber,
         customerId: invoice.customerId,
