@@ -441,7 +441,7 @@ describe("SubscriptionMutationService.subscribe (MRR = signed change)", () => {
   it("PIN T10: ACTIVE cycle switch to a LOWER plan (ANNUAL→MONTHLY) still nets a NEGATIVE plan delta and disables dropped add-ons — the B58 guard must NOT fire on a cycle switch", async () => {
     const { svc, tx, events } = make({
       tenantStatus: "ACTIVE",
-      sub: { planKey: "BUSINESS", cycle: "ANNUAL" },
+      sub: { planKey: "BUSINESS", cycle: "ANNUAL", basePriceSnapshot: 349 }, // #2460: a consistent row carries its snapshot (the ledger nets against it, SA-464).
       priorAddons: [
         {
           id: "a1",
@@ -463,6 +463,15 @@ describe("SubscriptionMutationService.subscribe (MRR = signed change)", () => {
       data: { active: false },
     });
     expect(emitted(events)).not.toContain(BILLING_EVENTS.TRIAL_CONVERTED);
+  });
+
+  it("#2460: an ACTIVE subscribe() re-choice nets against the stored snapshot — NULL ⇒ the full new price", async () => {
+    const { svc, events } = make({
+      tenantStatus: "ACTIVE",
+      sub: { planKey: "STARTER", cycle: "MONTHLY", basePriceSnapshot: null },
+    });
+    await svc.subscribe("t1", { planKey: "BUSINESS", cycle: "MONTHLY" }, "admin");
+    expect(deltaOf(events, BILLING_EVENTS.PLAN_CHANGED)).toBe(349); // never 349 − 59
   });
 
   it("reactivation from READ_ONLY (stale planKey retained) emits a full +base delta, not 0", async () => {
@@ -552,7 +561,8 @@ describe("SubscriptionMutationService.subscribe (MRR = signed change)", () => {
       class: "PRODUCTION",
       deletedAt: null,
     });
-    tx.tenantSubscription.findUnique.mockResolvedValue({ planKey: "TEAM" });
+    // #2460 / SA-464: the concurrent activation snapshotted what it booked (TEAM 149).
+    tx.tenantSubscription.findUnique.mockResolvedValue({ planKey: "TEAM", basePriceSnapshot: 149 });
     tx.tenantAddon.findMany.mockResolvedValue([
       {
         id: "a1",
@@ -637,6 +647,30 @@ describe("#2223 SA-444c — subscribe() and the downgrade preview keep the overr
     expect(deltaOf(events, BILLING_EVENTS.PLAN_CHANGED)).toBe(0);
   });
 
+  // SA-464b: a paying override row whose snapshot is NULL (not yet counted) — the cycle change writes
+  // the fee and books it in full, so snapshot MRR and ledger MRR re-agree.
+  it("SA-464b: subscribe() cycle change on a paying override row with a NULL snapshot writes the fee and books +fee", async () => {
+    const { svc, tx, events } = make({
+      tenantStatus: "ACTIVE",
+      sub: {
+        planKey: "STARTER",
+        cycle: "MONTHLY",
+        priceOverrideMonthly: 80,
+        basePriceSnapshot: null,
+      },
+    });
+    tx.tenantSubscription.findUnique.mockResolvedValue({
+      planKey: "STARTER",
+      priceOverrideMonthly: 80,
+      basePriceSnapshot: null,
+    });
+    await svc.subscribe("t1", { planKey: "STARTER", cycle: "ANNUAL" }, "admin");
+    const arg = tx.tenantSubscription.upsert.mock.calls[0][0];
+    expect(arg.update.basePriceSnapshot).toBe(80);
+    expect(arg.create.basePriceSnapshot).toBe(80);
+    expect(deltaOf(events, BILLING_EVENTS.PLAN_CHANGED)).toBe(80);
+  });
+
   it("subscribe() re-subscribe of an override row ENTERING the paying set books the fee", async () => {
     const { svc, tx, events } = make({
       tenantStatus: "READ_ONLY",
@@ -681,6 +715,38 @@ describe("#2223 SA-444c — subscribe() and the downgrade preview keep the overr
 });
 
 describe("SubscriptionMutationService.upgrade", () => {
+  // #2460 / SA-464 (2): the ledger nets against what the MRR snapshot actually counted — the stored
+  // basePriceSnapshot, NULL ⇒ 0 — never the catalog price of the plan being left. A NULL-snapshot
+  // row (e.g. a manual activation before #2460) then books the FULL new price, and snapshot MRR and
+  // ledger MRR re-agree. The charge (proration) still nets against the catalog entitlement.
+  it("#2460: an ACTIVE catalog row with a NULL snapshot books the FULL new price", async () => {
+    const { svc, events } = make({
+      sub: {
+        planKey: "STARTER",
+        cycle: "MONTHLY",
+        periodStart: null,
+        periodEnd: null,
+        basePriceSnapshot: null,
+      },
+    });
+    await svc.upgrade("t1", "BUSINESS", "admin");
+    expect(deltaOf(events, BILLING_EVENTS.PLAN_CHANGED)).toBe(349); // 349 − 0, never 349 − 59
+  });
+
+  it("#2460: a consistent catalog row nets against its stored snapshot", async () => {
+    const { svc, events } = make({
+      sub: {
+        planKey: "STARTER",
+        cycle: "MONTHLY",
+        periodStart: null,
+        periodEnd: null,
+        basePriceSnapshot: 59,
+      },
+    });
+    await svc.upgrade("t1", "BUSINESS", "admin");
+    expect(deltaOf(events, BILLING_EVENTS.PLAN_CHANGED)).toBe(290);
+  });
+
   it("#2223 / SA-444a: an override row upgrades the PLAN but not the price — quote 0 with the note, snapshot = the fee, delta 0", async () => {
     const { svc, tx, events } = make({
       sub: {
@@ -721,7 +787,13 @@ describe("SubscriptionMutationService.upgrade", () => {
 
   it("applies instantly (optimistic guard) with MRR delta = new − old", async () => {
     const { svc, tx, events } = make({
-      sub: { planKey: "STARTER", cycle: "MONTHLY", periodStart: null, periodEnd: null },
+      sub: {
+        planKey: "STARTER",
+        cycle: "MONTHLY",
+        periodStart: null,
+        periodEnd: null,
+        basePriceSnapshot: 59, // #2460: a consistent row carries its snapshot (the ledger nets against it, SA-464).
+      },
     });
     await svc.upgrade("t1", "BUSINESS", "admin");
     expect(tx.tenantSubscription.updateMany.mock.calls[0][0].where).toMatchObject({
@@ -1144,7 +1216,13 @@ describe("SubscriptionMutationService — invite-only plans are never self-servi
     const { svc, tx, events } = make({
       catalog: catalogWithLite(),
       tenantStatus: "ACTIVE",
-      sub: { planKey: "LITE", cycle: "MONTHLY", periodStart: null, periodEnd: null },
+      sub: {
+        planKey: "LITE",
+        cycle: "MONTHLY",
+        periodStart: null,
+        periodEnd: null,
+        basePriceSnapshot: 29, // #2460: a consistent row carries its snapshot (the ledger nets against it, SA-464).
+      },
     });
     await svc.upgrade("t1", "STARTER", "admin");
     // Reached the write: the rank check passed (STARTER rank 1 > LITE rank 0) and the
@@ -1814,6 +1892,7 @@ describe("SubscriptionMutationService — one armed transition at a time (REG-B5
         cancelAtPeriodEnd: true,
         downgradeToPlanKey: "STARTER",
         downgradeEffectiveAt: periodEnd,
+        basePriceSnapshot: 59, // #2460: a consistent row carries its snapshot (the ledger nets against it, SA-464).
       },
     });
     await svc.upgrade("t1", "BUSINESS", "admin");
