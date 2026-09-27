@@ -1013,7 +1013,7 @@ export class BookkeepingService implements OnModuleInit {
    * revenue, L-119) so both sides of gross profit share a basis. Each line
    * is costed at qty × the product's point-in-time average cost at the
    * invoice's issueDate (invoice lines carry no cost of their own;
-   * `StockMovement type:"SALE"` rows are dead — see common/invoiced-sales.ts).
+   * `StockMovement type:"SALE"` rows are a stock-ledger record, not a COGS source — see common/invoiced-sales.ts).
    * COGS stays gross of restocked returns (FU-2, deliberate — not fixed
    * here). No tobacco exclusion here: accounting records always reflect real
    * financials. B456: `netProfit` also subtracts `badDebtExpense` — the

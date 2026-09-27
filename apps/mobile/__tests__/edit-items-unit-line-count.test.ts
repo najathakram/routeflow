@@ -45,6 +45,11 @@ describe("unitLineCount (SA-388 rule 1)", () => {
     ["qty not a whole multiple of the factor", { qty: 40, boxes: 0, unitsPerBox: 12 }],
     ["no snapshot factor", { qty: 36, boxes: 0, unitsPerBox: null }],
     ["fractional boxes, non-multiple qty", { qty: 40, boxes: 3.5, unitsPerBox: 12 }],
+    // #2269 Opus/SA LOW (matches web #2220): nothing to count, or a non-integer basis.
+    ["qty 0, boxes 0, factor 12", { qty: 0, boxes: 0, unitsPerBox: 12 }],
+    ["negative qty", { qty: -12, boxes: 0, unitsPerBox: 12 }],
+    ["fractional factor", { qty: 3, boxes: null, unitsPerBox: 1.5 }],
+    ["fractional qty, factor 1", { qty: 2.5, boxes: null, unitsPerBox: 1 }],
   ])("%s => LOCKED (null)", (_n, li) => {
     expect(unitLineCount(li)).toBeNull();
   });
@@ -117,10 +122,12 @@ describe("a LOCKED unit line (#2231, SA-388 rule 1)", () => {
 
   it("removing the locked line is still allowed (DELETE needs no count)", () => {
     const order = locked();
-    const { draft } = hydrateFromOrder(order);
+    hydrateFromOrder(order);
+    // The screen's removeLine takes the line OUT of the draft and queues its id (B805: a
+    // pendingDelete whose id still survives in the draft is dropped — the surviving state wins).
     expect(repairBlockedLines({}, orderOriginals(order))).toEqual([]);
     expect(
-      stagedDiffItems({ draft, unlisted: [], pendingDeletes: ["L1"] }, orderOriginals(order)),
+      stagedDiffItems({ draft: {}, unlisted: [], pendingDeletes: ["L1"] }, orderOriginals(order)),
     ).toEqual([{ id: "L1", action: "DELETE" }]);
   });
 });

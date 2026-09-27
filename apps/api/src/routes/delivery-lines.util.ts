@@ -19,13 +19,96 @@ export async function claimStopCompletion(
   stopId: string,
   data: Record<string, unknown>,
 ): Promise<void> {
+  // #2409: only a PENDING / IN_PROGRESS stop can be completed — a SKIPPED one (the office skipped
+  // it while a completion sat in the driver's offline queue) must never flip to COMPLETED.
   const claimed = await tx.routeRunStop.updateMany({
-    where: { id: stopId, status: { not: "COMPLETED" } },
+    where: { id: stopId, status: { in: COMPLETABLE_STOP_STATUSES } },
     data,
   });
   if (claimed.count === 0) {
+    const current = await tx.routeRunStop.findUnique({
+      where: { id: stopId },
+      select: { status: true },
+    });
+    assertStopNotSkipped(current?.status);
     throw new ConflictException("This stop was already completed by another request.");
   }
+}
+
+/** #2409: the stop statuses a completion may claim from. */
+export const COMPLETABLE_STOP_STATUSES = ["PENDING", "IN_PROGRESS"];
+
+/**
+ * #2409: a SKIPPED stop refuses a completion with a readable 409 — the pre-transaction guard in
+ * both completeStop and completeWithPayment, and the loser branch of claimStopCompletion. A
+ * replayed offline completion then dead-letters on the driver's device (a 4xx), with the failed
+ * badge, instead of silently turning a skipped stop into a completed one (201).
+ */
+export function assertStopNotSkipped(status: string | null | undefined): void {
+  if (status === "SKIPPED") {
+    throw new ConflictException({
+      code: "STOP_SKIPPED",
+      message:
+        "This stop was skipped by dispatch, so it can't be completed. Ask dispatch to reopen it.",
+    });
+  }
+}
+
+/**
+ * #2292: the pieces-per-unit of a units_v1 line, by the SA-388 count derivation the driver's
+ * stepper uses — the count is `boxes` when a positive integer, else `qty ÷ unitsPerBox` (the
+ * sale-time snapshot) when that factor is an integer ≥ 1 and qty a positive whole multiple of it;
+ * the factor is then `qty ÷ count`. Null when the line is not a unit line (no `unitLabel`: a pack
+ * line) or its count is LOCKED (no whole count can be derived — never guessed).
+ */
+export function unitLineFactor(line: {
+  qty: unknown;
+  boxes?: unknown;
+  unitsPerBox?: unknown;
+  unitLabel?: string | null;
+}): number | null {
+  if (!line.unitLabel?.trim()) return null;
+  const qty = Number(line.qty);
+  const boxes = Number(line.boxes);
+  const upb = Number(line.unitsPerBox);
+  let count: number | null = null;
+  if (Number.isInteger(boxes) && boxes > 0) count = boxes;
+  else if (Number.isInteger(upb) && upb >= 1 && qty > 0 && Number.isInteger(qty / upb)) {
+    count = qty / upb;
+  }
+  if (count == null) return null;
+  const factor = qty / count;
+  return Number.isInteger(factor) && factor >= 1 ? factor : null;
+}
+
+/** "3 Cases" / "1 Case" / "0 Cases" — the same plural rule as `formatQtySplit`'s `boxLabel`. */
+function unitCount(n: number, unit: string): string {
+  const plural = unit.endsWith("s") ? unit : `${unit}s`;
+  return `${n} ${n === 1 ? unit : plural}`;
+}
+
+/**
+ * #2292: the "left / delivered earlier" part of a cap refusal, in the unit the driver sees. A pack
+ * line is unchanged (bare numbers). A unit line states whole units when BOTH figures are whole
+ * multiples of its factor ("3 Cases left, 7 Cases delivered earlier"); a LOCKED line, or a
+ * remainder that is not a whole unit, states pieces labelled "pieces" — never a fractional Case.
+ */
+export function capRefusalCounts(
+  line: { qty: unknown; boxes?: unknown; unitsPerBox?: unknown; unitLabel?: string | null },
+  remaining: number,
+  deliveredSoFar: number,
+): string {
+  if (!line.unitLabel?.trim()) return `${remaining} left, ${deliveredSoFar} delivered earlier`;
+  const factor = unitLineFactor(line);
+  const unit = line.unitLabel.trim();
+  if (
+    factor != null &&
+    Number.isInteger(remaining / factor) &&
+    Number.isInteger(deliveredSoFar / factor)
+  ) {
+    return `${unitCount(remaining / factor, unit)} left, ${unitCount(deliveredSoFar / factor, unit)} delivered earlier`;
+  }
+  return `${remaining} pieces left, ${deliveredSoFar} pieces delivered earlier`;
 }
 
 /**
@@ -66,6 +149,9 @@ export async function assertDeliveriesFitStop(
     orderId: string;
     qty: unknown;
     deliveredQty?: unknown;
+    boxes?: unknown;
+    unitsPerBox?: unknown;
+    unitLabel?: string | null;
     name: string | null;
     product: { name: string } | null;
     status?: string;
@@ -77,6 +163,9 @@ export async function assertDeliveriesFitStop(
       orderId: true,
       qty: true,
       deliveredQty: true,
+      boxes: true,
+      unitsPerBox: true,
+      unitLabel: true,
       name: true,
       product: { select: { name: true } },
       status: true,
@@ -129,7 +218,7 @@ export async function assertDeliveriesFitStop(
           ? item.order?.status === "DRAFT"
             ? `${label} belongs to an order that is not confirmed yet — nothing can be delivered against it`
             : `${label} was cancelled — nothing can be delivered against it`
-          : `${label}: ${remaining} left, ${deliveredSoFar} delivered earlier — refresh the stop`,
+          : `${label}: ${capRefusalCounts(item, remaining, deliveredSoFar)} — refresh the stop`,
       );
     }
   }

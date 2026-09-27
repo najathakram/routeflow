@@ -32,19 +32,20 @@ describe("post-delivery invoice prompt — driver wiring (#2089)", () => {
     expect(fetchAt).toBeGreaterThan(at);
     const gate = src.slice(at, fetchAt);
     expect(gate).toMatch(
-      /postDeliveryInvoicePrompt\(\{\s*invoice:\s*undefined,\s*online:\s*isOnline\s*\}\)\s*===\s*"offline-later"/,
+      // #2265: `online` is the LIVE read (isLiveOnline), never the render-time selector.
+      /postDeliveryInvoicePrompt\(\{\s*invoice:\s*undefined,\s*online\s*\}\)\s*===\s*"offline-later"/,
     );
   });
 
   it("never calls the OPERATOR-only from-order create endpoint — reads the order's existing invoice instead", () => {
     expect(src).not.toMatch(/useCreateInvoiceFromOrder\(/);
     expect(src).toMatch(
-      /qc\.fetchQuery\(\{ \.\.\.orderQueryOptions\(primaryOrderId\), staleTime: 0 \}\)/,
+      /qc\.fetchQuery\(\{\s*\.\.\.orderQueryOptions\(primaryOrderId\),\s*staleTime: 0,/,
     );
   });
 
   it("routes the fetched invoice's status through postDeliveryInvoicePrompt and threads issuePrompt to the sheet", () => {
-    const at = src.indexOf("qc.fetchQuery({ ...orderQueryOptions(primaryOrderId)");
+    const at = src.indexOf("qc.fetchQuery({");
     expect(at).toBeGreaterThan(-1);
     const body = src.slice(at, src.indexOf(".catch(", at));
     expect(body).toMatch(
@@ -72,7 +73,7 @@ describe("post-delivery invoice prompt — driver wiring (#2089)", () => {
   });
 
   it("#2251 fold: a failed invoice fetch is never silent — same toast as offline, logged", () => {
-    const at = src.indexOf("qc.fetchQuery({ ...orderQueryOptions(primaryOrderId)");
+    const at = src.indexOf("qc.fetchQuery({");
     const tail = src.slice(src.indexOf(".catch(", at), src.indexOf(".catch(", at) + 300);
     expect(tail).toMatch(/onPostDeliveryInvoiceFetchFailed\(/);
     expect(tail).toMatch(/toast:\s*showToast/);

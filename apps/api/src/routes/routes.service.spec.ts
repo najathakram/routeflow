@@ -83,8 +83,9 @@ describe("RoutesService", () => {
       | "emitStopCompleted"
       | "emitOrderCreated"
       | "emitOrderStatusChanged"
-      | "emitLowStock"
       | "emitToDriver"
+      | "emitRouteProgress"
+      | "emitDriverStatusUpdated"
     >
   >;
   let notifications: jest.Mocked<Pick<NotificationsService, "sendToDriver">>;
@@ -110,8 +111,9 @@ describe("RoutesService", () => {
       emitStopCompleted: jest.fn(),
       emitOrderCreated: jest.fn(),
       emitOrderStatusChanged: jest.fn(),
-      emitLowStock: jest.fn(),
       emitToDriver: jest.fn(),
+      emitRouteProgress: jest.fn(),
+      emitDriverStatusUpdated: jest.fn(),
     };
 
     notifications = {
@@ -1699,7 +1701,7 @@ describe("RoutesService", () => {
       );
       expect(txMock.routeRunStop.updateMany).toHaveBeenCalledWith(
         expect.objectContaining({
-          where: { id: "stop-1", status: { not: "COMPLETED" } },
+          where: { id: "stop-1", status: { in: ["PENDING", "IN_PROGRESS"] } }, // #2409: SKIPPED is not claimable
           data: expect.objectContaining({
             signatureUrl: expect.stringMatching(keyRe),
             podPhotoUrls: ["file:///legacy-device-path.jpg"],

@@ -5,6 +5,8 @@ import { PrismaService } from "../prisma/prisma.service";
 import { AddonService } from "../billing/addon.service";
 import { SystemConfigService } from "../system-config/system-config.service";
 import { createMockPrisma } from "../testing/prisma-mock";
+import { ProductInsightsService } from "../sales-facts/product-insights.service";
+import { SalesFactsService } from "../sales-facts/sales-facts.service";
 
 const D = (n: number | string) => new Prisma.Decimal(n);
 
@@ -22,6 +24,10 @@ describe("AnalyticsService — invoiced-sales readers", () => {
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         AnalyticsService,
+        // #2118: getProductSales/getProductDemand delegate into the sales-facts layer — the
+        // REAL services over the same mocked Prisma, so every pin below still exercises them.
+        ProductInsightsService,
+        SalesFactsService,
         { provide: PrismaService, useValue: prisma },
         { provide: AddonService, useValue: addonService },
         { provide: SystemConfigService, useValue: systemConfig },
@@ -568,7 +574,7 @@ describe("AnalyticsService — invoiced-sales readers", () => {
       ...over,
     });
 
-    it("reads THROUGH Invoice (never invoiceItem) and filters to real sales", async () => {
+    it("reads THROUGH Invoice (never invoiceItem) and filters to accrual sales", async () => {
       prisma.invoice.findMany.mockResolvedValue([inv()]);
 
       await service.getProductSales("p1");
@@ -578,7 +584,8 @@ describe("AnalyticsService — invoiced-sales readers", () => {
       expect(prisma.invoiceItem.findMany).not.toHaveBeenCalled();
       const args = prisma.invoice.findMany.mock.calls[0][0];
       expect(args.where.items).toEqual({ some: { productId: "p1" } });
-      expect(args.where.status).toEqual({ notIn: ["DRAFT", "VOID", "WRITTEN_OFF"] });
+      // #2118 plan A2: a WRITTEN_OFF invoice was a sale at issue (badged); only DRAFT/VOID out.
+      expect(args.where.status).toEqual({ notIn: ["DRAFT", "VOID"] });
       // Only this product's lines come back, not every line on the invoice.
       expect(args.select.items.where).toEqual({ productId: "p1" });
     });
@@ -762,13 +769,14 @@ describe("AnalyticsService — invoiced-sales readers", () => {
       expect(res.range).toBe(range);
     });
 
-    it("filters out DRAFT/VOID/WRITTEN_OFF and matches only this product's lines", async () => {
+    it("filters out DRAFT/VOID (accrual basis) and matches only this product's lines", async () => {
       prisma.invoice.findMany.mockResolvedValue([]);
 
       await service.getProductDemand("p1", "30d");
 
       const args = prisma.invoice.findMany.mock.calls[0][0];
-      expect(args.where.status).toEqual({ notIn: ["DRAFT", "VOID", "WRITTEN_OFF"] });
+      // #2118 plan A2: WRITTEN_OFF is a sale at issue; only DRAFT/VOID are excluded.
+      expect(args.where.status).toEqual({ notIn: ["DRAFT", "VOID"] });
       expect(args.where.items).toEqual({ some: { productId: "p1" } });
       // The nested filter is what keeps other products' (and null-productId ad-hoc)
       // lines out of each invoice's item array.
