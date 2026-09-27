@@ -286,6 +286,7 @@ describeDb("SA-436 PR-2 credit-note void-with-reversal (#2402)", () => {
     expect(blocks).toHaveLength(2);
     expect(blocks.every((bl) => bl.reason === "VOID_REVERSAL")).toBe(true);
     expect(blocks.every((bl) => bl.createdById === actorId)).toBe(true);
+    expect(blocks.every((bl) => bl.tenantId === tenantId)).toBe(true); // SA-436b
     expect(blocks.map((bl) => bl.invoiceId).sort()).toEqual([invA, invB].sort());
 
     const audits = await prisma.auditLog.findMany({
