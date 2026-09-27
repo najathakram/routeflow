@@ -111,6 +111,7 @@ import { InvoiceItemSystemKind, notNsfLineWhere } from "./nsf-line";
 import { preservedNsfLines } from "./nsf-preserve";
 import { partitionInvoiceLines, planResyncPairs } from "./resync-plan";
 import { issueDateStamp, startOfCalendarDay, endOfCalendarDay } from "../common/calendar-date";
+import { calendarFieldStamp, dueDateStamps, dueStamp } from "./invoice-due-dates";
 import { lockRowsNoWait } from "../common/db-locks";
 import { NumberingService } from "../import/numbering.service";
 import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
@@ -401,6 +402,7 @@ export class InvoicesService {
   /** SA-135: an internal caller's line may carry `packSnapshot` (ManualLineItem); the HTTP DTO never can. */
   async create(dto: Omit<CreateInvoiceDto, "items"> & { items: ManualLineItem[] }) {
     const issueDateInput = dto.issueDate ? issueDateStamp(dto.issueDate) : null; // #2197: 400 first
+    const due = dueDateStamps(dto); // #2256: the due dates too, refused before any read or write
     const customer = await this.prisma
       .forTenant()
       .customer.findUnique({ where: { id: dto.customerId } });
@@ -496,14 +498,14 @@ export class InvoicesService {
             discount: invDiscount,
             shippingFee: shipping,
             total,
-            dueDate: dto.dueDate ? new Date(dto.dueDate) : null,
+            dueDate: due.dueDate,
             // #2197: the literal calendar day the client named, never a raw instant.
             issueDate: issueDateInput ?? startOfCalendarDay(new Date(), tenantDefaults.timezone),
             notes: dto.notes ?? tenantDefaults.notes,
             terms: dto.terms ?? tenantDefaults.terms,
             paymentTermsLabel: dto.paymentTermsLabel ?? null,
             depositPercent: dto.depositPercent ?? null,
-            depositDueDate: dto.depositDueDate ? new Date(dto.depositDueDate) : null,
+            depositDueDate: due.depositDueDate,
             referenceNumber: dto.referenceNumber ?? null,
             subject: dto.subject ?? null,
             shippingCarrier: dto.shippingCarrier?.trim() || null,
@@ -623,7 +625,7 @@ export class InvoicesService {
     const issueDate = order.orderDate ?? startOfCalendarDay(new Date(), tenantDefaults.timezone);
     let dueDate: Date;
     if (overrides?.dueDate) {
-      dueDate = new Date(overrides.dueDate);
+      dueDate = calendarFieldStamp(overrides.dueDate, "dueDate"); // #2256
     } else {
       dueDate = addCalendarDays(issueDate, dueDays);
     }
@@ -654,7 +656,7 @@ export class InvoicesService {
         ? {
             depositPercent: overrides.depositPercent,
             depositDueDate: overrides.depositDueDate
-              ? new Date(overrides.depositDueDate)
+              ? calendarFieldStamp(overrides.depositDueDate, "depositDueDate")
               : issueDate,
           }
         : effectiveDepositPercent != null
@@ -2508,7 +2510,7 @@ export class InvoicesService {
     const issueDate = order.orderDate ?? startOfCalendarDay(new Date(), tenantTimezone);
     let dueDate: Date;
     if (overrides?.dueDate) {
-      dueDate = new Date(overrides.dueDate);
+      dueDate = calendarFieldStamp(overrides.dueDate, "dueDate"); // #2256
     } else {
       dueDate = addCalendarDays(issueDate, dueDays);
     }
@@ -2550,7 +2552,7 @@ export class InvoicesService {
         ? {
             depositPercent: overrides.depositPercent,
             depositDueDate: overrides.depositDueDate
-              ? new Date(overrides.depositDueDate)
+              ? calendarFieldStamp(overrides.depositDueDate, "depositDueDate")
               : issueDate,
           }
         : effectiveDepositPercent != null
@@ -2736,9 +2738,9 @@ export class InvoicesService {
     const issueDate = order.orderDate ?? startOfCalendarDay(new Date(), tenantDefaults.timezone);
     let dueDate: Date;
     if (dto.dueDate) {
-      dueDate = new Date(dto.dueDate);
+      dueDate = calendarFieldStamp(dto.dueDate, "dueDate"); // #2256
     } else if (overrides?.dueDate) {
-      dueDate = new Date(overrides.dueDate);
+      dueDate = calendarFieldStamp(overrides.dueDate, "dueDate"); // #2256
     } else {
       dueDate = addCalendarDays(issueDate, dueDays);
     }
@@ -2764,7 +2766,7 @@ export class InvoicesService {
       explicitDepositPercent != null
         ? {
             depositPercent: explicitDepositPercent,
-            depositDueDate: explicitDepositDueDate ? new Date(explicitDepositDueDate) : issueDate,
+            depositDueDate: dueStamp(explicitDepositDueDate, "depositDueDate") ?? issueDate,
           }
         : effectiveDepositPercent != null
           ? { depositPercent: effectiveDepositPercent, depositDueDate: issueDate }
@@ -3243,6 +3245,7 @@ export class InvoicesService {
 
     // #2197: the same literal calendar-day stamp create() writes.
     const issueDate = dto.issueDate ? issueDateStamp(dto.issueDate) : undefined;
+    const due = dueDateStamps(dto); // #2256: and the due dates, before either rewrite path runs
 
     // units_v1: BOTH rewrite paths — the item replace (re-split at the LIVE pack) and the
     // discount/shipping recompute, whose order back-sync writes onto the linked order's lines.
@@ -3344,7 +3347,7 @@ export class InvoicesService {
             discount: invDiscount,
             shippingFee: shipping,
             total,
-            dueDate: dto.dueDate ? new Date(dto.dueDate) : undefined,
+            dueDate: due.dueDate ?? undefined,
             issueDate,
             notes: dto.notes,
             terms: dto.terms,
@@ -3359,7 +3362,7 @@ export class InvoicesService {
             ...(dto.subject !== undefined && { subject: dto.subject || null }),
             ...(dto.depositPercent !== undefined && { depositPercent: dto.depositPercent }),
             ...(dto.depositDueDate !== undefined && {
-              depositDueDate: dto.depositDueDate ? new Date(dto.depositDueDate) : null,
+              depositDueDate: due.depositDueDate,
             }),
             pdfUrl: null,
             items: {
@@ -3416,7 +3419,7 @@ export class InvoicesService {
     const updated = await this.prisma.forTenant().invoice.update({
       where: { id },
       data: {
-        ...(dto.dueDate && { dueDate: new Date(dto.dueDate) }),
+        ...(due.dueDate && { dueDate: due.dueDate }),
         ...(issueDate && { issueDate }),
         ...(dto.notes !== undefined && { notes: dto.notes }),
         ...(dto.terms !== undefined && { terms: dto.terms }),
@@ -3432,7 +3435,7 @@ export class InvoicesService {
         ...(dto.subject !== undefined && { subject: dto.subject || null }),
         ...(dto.depositPercent !== undefined && { depositPercent: dto.depositPercent }),
         ...(dto.depositDueDate !== undefined && {
-          depositDueDate: dto.depositDueDate ? new Date(dto.depositDueDate) : null,
+          depositDueDate: due.depositDueDate,
         }),
         ...recalcData,
       },
@@ -3522,7 +3525,7 @@ export class InvoicesService {
       d == null ? null : d instanceof Date ? d : new Date(d as string);
     const oldDueDate = asDate(inv.dueDate);
     const oldDueDateStr = oldDueDate ? oldDueDate.toISOString().slice(0, 10) : "none";
-    const newDueDate = dto.dueDate ? new Date(dto.dueDate) : oldDueDate;
+    const newDueDate = dto.dueDate ? calendarFieldStamp(dto.dueDate, "dueDate") : oldDueDate; // #2256
     const newDueDateStr = newDueDate ? newDueDate.toISOString().slice(0, 10) : "none";
 
     // F03/R1: CONFIRMED (PAID) payments only — same predicate every other status
