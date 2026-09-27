@@ -12,6 +12,7 @@ import { normalizeBoxesPieces, roundMoney } from "@routeflow/pricing";
 import { fetchInvoicedSaleLines, roundQty } from "../common/invoiced-sales";
 import { poLineFromInput } from "./po-line-input";
 import { costDecimal, nextAverageCost, planLotConsumption, reverseAverageCost } from "./costing";
+import { recordSaleMovement, resolveSaleCost } from "./sale-movement";
 import { RecordPurchaseDto } from "./dto/record-purchase.dto";
 import { RecordAdjustmentDto } from "./dto/record-adjustment.dto";
 import { CommitStockCountDto } from "./dto/commit-stock-count.dto";
@@ -934,71 +935,27 @@ export class InventoryService {
     performedById: string | null,
     tx: Prisma.TransactionClient,
   ): Promise<{ unitCost: Prisma.Decimal; stockAfter: Prisma.Decimal }> {
-    const product = await tx.product.findFirst({
-      where: { id: productId },
-      select: { costingMethod: true, averageCost: true, standardCost: true, currentStock: true },
-    });
+    // B562 PR-2: the cost resolver and the SALE row writer live in sale-movement.ts, shared with
+    // the order stock paths (orders/order-stock.ts) so a sale is costed one way everywhere.
+    // SA-136b: the row is written AFTER the counter moves, with `stockAfter` read off the update's
+    // own returned row — never a pre-read (a concurrent writer between the two would falsify it).
+    const cost = await resolveSaleCost(tx, productId, quantity);
+    const { unitCost, lotConsumptions } = cost;
 
-    const avgCost = product?.averageCost ?? null;
-    const fallback = costDecimal(avgCost ?? 0);
-    let unitCost = fallback;
-    let lotConsumptions: { id: string; take: Prisma.Decimal }[] = [];
-
-    if (
-      product?.costingMethod === CostingMethod.FIFO ||
-      product?.costingMethod === CostingMethod.LIFO
-    ) {
-      const orderBy =
-        product.costingMethod === CostingMethod.FIFO
-          ? { purchaseDate: "asc" as const }
-          : { purchaseDate: "desc" as const };
-      const lots = await tx.stockLot.findMany({
-        where: { productId, remainingQty: { gt: 0 } },
-        orderBy,
-      });
-      // Blend the consumed lots' costs; any uncovered remainder (negative
-      // stock / pre-fix data without lots) is priced at the average cost.
-      const plan = planLotConsumption(lots, quantity, fallback);
-      unitCost = plan.weightedUnitCost;
-      lotConsumptions = plan.consumptions;
-    } else if (product?.costingMethod === CostingMethod.STANDARD) {
-      unitCost = costDecimal(product.standardCost ?? avgCost ?? 0);
-    } else if (product?.costingMethod === CostingMethod.LAST_COST) {
-      // Last cost — cost the sale at the most recent PURCHASE's unit cost
-      // (pos-cost-roles-spec §1: "most recent bill's unit cost"). Read the typed
-      // PURCHASE movement, NOT the latest StockLot: positive adjustments and
-      // stock-counts create lots stamped at the AVERAGE cost, which would poison
-      // the last-cost source. Order by effectiveAt (the bill/purchase date — B562:
-      // what createdAt carried before it became write-once), then createdAt + id so
-      // the pick is deterministic when same-day bills share a date. Falls back to the
-      // average cost when the product has no purchases yet. Not lot-consuming.
-      const lastPurchase = await tx.stockMovement.findFirst({
-        where: { productId, type: MovementType.PURCHASE },
-        orderBy: [{ effectiveAt: "desc" }, { createdAt: "desc" }, { id: "desc" }],
-        select: { unitCost: true },
-      });
-      unitCost = costDecimal(lastPurchase?.unitCost ?? avgCost ?? 0);
-    }
-
-    const stockAfter = (product?.currentStock ?? new Prisma.Decimal(0)).sub(quantity);
-
-    await tx.stockMovement.create({
-      data: {
-        productId,
-        type: MovementType.SALE,
-        quantity: quantity.neg(),
-        unitCost,
-        // Sales never move the average — snapshot carries it forward
-        avgCostAfter: avgCost,
-        stockAfter,
-        reference,
-        performedById,
-      },
-    });
-
-    await tx.product.update({
+    const updated = await tx.product.update({
       where: { id: productId },
       data: { currentStock: { decrement: quantity } },
+      select: { currentStock: true },
+    });
+    const stockAfter = updated.currentStock;
+
+    await recordSaleMovement(tx, {
+      productId,
+      quantity: quantity.neg(),
+      stockAfter,
+      reference,
+      performedById,
+      cost,
     });
 
     for (const consumption of lotConsumptions) {
@@ -1948,9 +1905,9 @@ export class InventoryService {
   // ── Forecasting ──
   /**
    * 30-day demand per product, from invoiced sales windowed on
-   * Invoice.issueDate. `StockMovement type:"SALE"` is not viable: its only
-   * writer (the route-delivery recordSale call) was removed in c5f579c2, so
-   * movement rows read as zero demand for every tenant. Line `qty` is the
+   * Invoice.issueDate. `StockMovement type:"SALE"` is not viable: SALE rows
+   * only exist since B562 PR-2 (order stock events), so history before it reads
+   * as zero demand, and they move at order time, not sale. Line `qty` is the
    * same denomination order-create decrements `currentStock` by, so
    * `daysRemaining = currentStock / avgDaily` stays unit-consistent. See
    * common/invoiced-sales.ts for the through-Invoice rule.
