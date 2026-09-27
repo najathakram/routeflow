@@ -72,6 +72,25 @@ describe("StripeConnectOAuthProvider", () => {
     });
   });
 
+  // REG-2441: `accounts.retrieve()` with NO id argument reads the PLATFORM's
+  // own account (as opposed to `retrieveAccount(accountRef)` above, which
+  // always passes one) — `completeOAuth` compares this against the just-
+  // connected account to refuse a self-connect.
+  it("retrievePlatformAccountId calls accounts.retrieve() with no argument and returns its id", async () => {
+    const { provider, stripe } = buildProvider();
+    stripe.accounts.retrieve.mockResolvedValue({ id: "acct_platform_fake" });
+
+    await expect(provider.retrievePlatformAccountId()).resolves.toBe("acct_platform_fake");
+    expect(stripe.accounts.retrieve).toHaveBeenCalledWith();
+  });
+
+  it("retrievePlatformAccountId throws rather than returning an empty/missing id", async () => {
+    const { provider, stripe } = buildProvider();
+    stripe.accounts.retrieve.mockResolvedValue({});
+
+    await expect(provider.retrievePlatformAccountId()).rejects.toThrow(/no account id/i);
+  });
+
   it("sends deauthorize in Stripe's snake_case shape", async () => {
     const { provider, stripe } = buildProvider();
     stripe.oauth.deauthorize.mockResolvedValue({});

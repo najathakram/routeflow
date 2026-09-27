@@ -63,6 +63,14 @@ export class StripeConnectOAuthProvider implements ConnectOAuthProvider {
     };
   }
 
+  async retrievePlatformAccountId(): Promise<string> {
+    const acct = await this.client.accounts.retrieve();
+    if (!acct?.id) {
+      throw new Error("Stripe accounts.retrieve() (platform) returned no account id.");
+    }
+    return acct.id;
+  }
+
   async deauthorize(clientId: string, accountRef: string): Promise<void> {
     await this.client.oauth.deauthorize({ client_id: clientId, stripe_user_id: accountRef });
   }

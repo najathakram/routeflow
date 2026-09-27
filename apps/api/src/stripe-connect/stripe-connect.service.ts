@@ -2,6 +2,7 @@ import { randomUUID } from "crypto";
 import { BadRequestException, Inject, Injectable, Logger } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { JwtService } from "@nestjs/jwt";
+import { UserRole } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import {
   CONNECT_OAUTH_PROVIDER,
@@ -47,6 +48,13 @@ import { AppConfig } from "../config/configuration";
 @Injectable()
 export class StripeConnectService {
   private readonly logger = new Logger(StripeConnectService.name);
+
+  /**
+   * The platform's own Stripe account id, cached after the first successful
+   * `retrievePlatformAccountId()` call — it never changes for a running
+   * process, and `completeOAuth` needs it on every callback (B2441).
+   */
+  private platformAccountId: string | null = null;
 
   constructor(
     private readonly prisma: PrismaService,
@@ -103,8 +111,22 @@ export class StripeConnectService {
    * connect, so this upserts a "link started" shell; `stripeAccountId` stays
    * null until the callback actually completes, and a later relink only
    * touches the pending-jti pair, never clobbering an existing connection.
+   *
+   * REG-2441: Stripe otherwise pre-selects whichever Stripe account is
+   * already signed in on the operator's browser — on the owner's own browser
+   * that is RouteFlow's platform account, so a tenant could end up
+   * "connected" to the platform's account instead of their own.
+   * `stripe_landing=register` + `always_prompt=true` force Stripe's own
+   * account picker, and prefilling `stripe_user[email]`/
+   * `stripe_user[business_name]` steers a fresh sign-in toward the tenant's
+   * business rather than leaving the fields blank. Prefill is best-effort:
+   * an empty value is omitted rather than sent as `stripe_user[email]=`.
    */
-  async buildAuthorizeUrl(tenantId: string, startedByName?: string | null): Promise<string> {
+  async buildAuthorizeUrl(
+    tenantId: string,
+    startedByUserId?: string | null,
+    startedByName?: string | null,
+  ): Promise<string> {
     if (!this.isConfigured) {
       throw new BadRequestException(
         "Stripe Connect is not configured on this platform yet (STRIPE_SECRET_KEY / STRIPE_CONNECT_CLIENT_ID).",
@@ -120,13 +142,44 @@ export class StripeConnectService {
       create: { tenantId, pendingJti: jti, pendingJtiIssuedAt: new Date() },
       update: { pendingJti: jti, pendingJtiIssuedAt: new Date() },
     });
+
+    const [requester, tenant] = await Promise.all([
+      // Tenant-scoped on purpose: a requester id that belongs to a different
+      // tenant (stale/forged) must never leak that other tenant's email into
+      // this authorize URL — findFirst with both id AND tenantId yields
+      // nothing in that case, and the fallback below takes over.
+      startedByUserId
+        ? this.prisma.user.findFirst({
+            where: { id: startedByUserId, tenantId, deletedAt: null },
+            select: { email: true },
+          })
+        : Promise.resolve(null),
+      this.prisma.tenant.findUnique({ where: { id: tenantId }, select: { name: true } }),
+    ]);
+    let adminEmail = requester?.email || null;
+    if (!adminEmail) {
+      // Fall back to the tenant's own admin (TENANT_ADMIN, oldest first) when
+      // the requesting user's id/email wasn't available on the request.
+      const fallbackAdmin = await this.prisma.user.findFirst({
+        where: { tenantId, role: UserRole.TENANT_ADMIN, deletedAt: null },
+        orderBy: { createdAt: "asc" },
+        select: { email: true },
+      });
+      adminEmail = fallbackAdmin?.email || null;
+    }
+    const businessName = tenant?.name || null;
+
     const params = new URLSearchParams({
       response_type: "code",
       client_id: this.clientId,
       scope: "read_write",
       redirect_uri: this.redirectUri,
       state,
+      stripe_landing: "register",
+      always_prompt: "true",
     });
+    if (adminEmail) params.set("stripe_user[email]", adminEmail);
+    if (businessName) params.set("stripe_user[business_name]", businessName);
     return `https://connect.stripe.com/oauth/authorize?${params.toString()}`;
   }
 
@@ -177,6 +230,33 @@ export class StripeConnectService {
     }
     const accountId = token.accountRef;
     if (!accountId) throw new BadRequestException("account_missing");
+
+    // REG-2441: refuse a connect that resolved to the PLATFORM's own Stripe
+    // account (Stripe pre-selected whichever account was signed in on the
+    // browser). Fail closed if the platform-id check itself can't be made —
+    // never store an unverified account. Cached after the first successful
+    // read since the platform's own account id never changes per process.
+    let platformAccountId: string;
+    try {
+      platformAccountId = this.platformAccountId ?? (await this.oauth.retrievePlatformAccountId());
+      // Defensive: an empty/missing id must never be cached or trusted, even
+      // if a provider implementation ever returns "" instead of throwing —
+      // caching "" would silently disable this check until process restart.
+      if (!platformAccountId) {
+        throw new Error("Platform account id was empty.");
+      }
+    } catch (err: any) {
+      this.logger.warn(`Platform account check failed for ${tenant.slug}: ${err?.message}`);
+      throw new BadRequestException("platform_account_check_failed");
+    }
+    this.platformAccountId = platformAccountId;
+    if (accountId === platformAccountId) {
+      this.logger.warn(
+        `Tenant ${tenant.slug} attempted to connect the platform's own Stripe account ` +
+          `(${accountId}) — refused, nothing stored.`,
+      );
+      throw new BadRequestException("platform_account_not_allowed");
+    }
 
     // Account status now, so chargesEnabled is correct before the first
     // account.updated webhook arrives.
