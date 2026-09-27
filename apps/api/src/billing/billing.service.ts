@@ -432,9 +432,15 @@ export class BillingService {
 
     // #2440: the base-plan item — never an add-on item Stripe happened to list first, which
     // this sync would otherwise overwrite with the plan price.
-    const item = stripeBaseItem(stripeSub, await this.addonItemIds(tenantId));
+    const addonIds = await this.addonItemIds(tenantId);
+    const item = stripeBaseItem(stripeSub, addonIds);
     if (!item) {
       return { synced: false, reason: "no_subscription_item" };
+    }
+    // SA-461: stripeBaseItem falls back to the first item (right for the period read); here that
+    // fallback would be an add-on, so there is no base-plan item to reprice.
+    if (addonIds.has(item.id)) {
+      return { synced: false, reason: "no_base_item" };
     }
 
     const itemInterval = item.price?.recurring?.interval;
