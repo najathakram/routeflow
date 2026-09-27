@@ -63,6 +63,7 @@ import { SellingRestrictionsModule } from "./selling-restrictions/selling-restri
 import { CommissionsModule } from "./sales-agents/commissions.module";
 import { CrmModule } from "./crm/crm.module";
 import { DemoBookingModule } from "./demo-booking/demo-booking.module";
+import { OnboardingModule } from "./onboarding/onboarding.module";
 
 import { TenantStatusGuard } from "./tenant/tenant-status.guard";
 import { ImpersonationGuard } from "./auth/guards/impersonation.guard";
@@ -185,6 +186,7 @@ import { AppService } from "./app.service";
     CommissionsModule,
     CrmModule,
     DemoBookingModule,
+    OnboardingModule,
   ],
   controllers: [AppController],
   providers: [

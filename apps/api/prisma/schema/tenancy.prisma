@@ -217,6 +217,7 @@ model Tenant {
   commissionPayouts        CommissionPayout[]
   crmConnection            CrmConnection?
   mailboxConnection        MailboxConnection?
+  onboardingCase           OnboardingCase?
 
   @@index([slug])
   @@index([status])
@@ -297,6 +298,8 @@ model User {
   canActAsDriver      Boolean    @default(false)
   failedLoginAttempts Int        @default(0)
   lockedUntil         DateTime?
+  /// Last successful interactive sign-in (#2159 S1 — the onboarding "drivers have logged in" check).
+  lastLoginAt         DateTime?
   createdAt           DateTime   @default(now())
   updatedAt           DateTime   @updatedAt
   deletedAt           DateTime?

@@ -36,6 +36,7 @@ const EXPECTED_NAMES = [
   "inventory.sendLowStockDigest",
   "billing.reviewExpiredOverrides",
   "billing.revokeExpiredOverrides",
+  "onboarding.refreshAutoChecks",
 ].sort();
 
 function collectSourceFiles(dir: string, out: string[] = [], includeSpecs = false): string[] {
@@ -113,14 +114,14 @@ describe("no bare @Cron in apps/api/src (T2, R2)", () => {
     expect(offenders).toEqual([]);
   });
 
-  it("has exactly 19 `@LeaderCron(` sites, every one of them well-formed", () => {
+  it("has exactly 20 `@LeaderCron(` sites, every one of them well-formed", () => {
     const declared = sources.reduce((n, s) => n + countMatches(s.text, LEADER_CRON), 0);
     const wellFormed = sources.reduce((n, s) => n + countMatches(s.text, LEADER_CRON_SITE), 0);
 
     // N3 (billing-cron.warnTrialsEnding) and N4 (inventory.sendLowStockDigest) each
     // independently bumped 15 -> 16; merged together the true count was 17. Feature grants v2
-    // brief B (2026-09-17) added billing.reviewExpiredOverrides, bumping 17 -> 18; B569 added billing.revokeExpiredOverrides, 18 -> 19.
-    expect(declared).toBe(19);
+    // brief B (2026-09-17) added billing.reviewExpiredOverrides, bumping 17 -> 18; B569 added billing.revokeExpiredOverrides, 18 -> 19; #2159 S1 added onboarding.refreshAutoChecks, 19 -> 20.
+    expect(declared).toBe(20);
     // A site that does not match the full `(expr, "name")` shape would be invisible to the name
     // assertions below, so pin the two counts together.
     expect(wellFormed).toBe(declared);

@@ -123,6 +123,12 @@ const ENUM_TABLE: Array<[string, keyof typeof PrismaEnums]> = [
   // #2169 (SA-395): brand-new Prisma enum, mirrored immediately as
   // `INVOICE_ITEM_SYSTEM_KIND_VALUES` — see the triage tripwire below.
   ["INVOICE_ITEM_SYSTEM_KIND_VALUES", "InvoiceItemSystemKind"],
+  // #2159 S1 (wholesaler onboarding): four brand-new Prisma enums, mirrored immediately in
+  // packages/types/api/onboarding.ts (the back-office contract) — see the triage tripwire below.
+  ["ONBOARDING_STAGE_VALUES", "OnboardingStage"],
+  ["ONBOARDING_CASE_STATUS_VALUES", "OnboardingCaseStatus"],
+  ["ONBOARDING_STEP_STATUS_VALUES", "OnboardingStepStatus"],
+  ["ONBOARDING_ACTOR_TYPE_VALUES", "OnboardingActorType"],
 ];
 
 describe("enum parity: packages/types/api/enums.ts vs @prisma/client", () => {
@@ -200,7 +206,11 @@ describe("enum parity: packages/types/api/enums.ts vs @prisma/client", () => {
 // (migration 20260926120000_2169_invoice_item_system_kind) — mirrored immediately as
 // `INVOICE_ITEM_SYSTEM_KIND_VALUES` + its `ENUM_TABLE` row above; verified via
 // `node apps/api/scripts/split-prisma-schema.mjs --check` (96 → 97).
-const PINNED_PRISMA_ENUM_COUNT = 97;
+// Triage for OnboardingStage + OnboardingCaseStatus + OnboardingStepStatus + OnboardingActorType
+// (#2159 S1, 2026-09-27): four brand-new Prisma enums (migration
+// 20260927060000_onboarding_s1_cases) — mirrored immediately in packages/types/api/onboarding.ts +
+// their `ENUM_TABLE` rows above; verified via `Object.keys(PrismaEnums.$Enums).length` (97 → 101).
+const PINNED_PRISMA_ENUM_COUNT = 101;
 
 describe("enum triage tripwire: generated Prisma enum count (L-072)", () => {
   it("pins the number of generated Prisma enums — a new enum must be triaged into ENUM_TABLE or explicitly left unmirrored", () => {
