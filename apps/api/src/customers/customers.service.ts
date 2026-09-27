@@ -15,6 +15,12 @@ import { BuyerMergeRequestStatus, MergeInitiator } from "@prisma/client";
 import { ConfigService } from "@nestjs/config";
 import * as bcrypt from "bcrypt";
 import { PrismaService } from "../prisma/prisma.service";
+import {
+  assertNoBlockingInvoices,
+  assertRecordFreeInTx,
+  deleteNonBlockingInvoicesCas,
+  readInvoicesAssertingNoneBlocking,
+} from "./customer-delete-preflight";
 import { CommissionEngineService } from "../sales-agents/commission-engine.service";
 import { RegulatedLedgerService } from "../regulated/regulated-ledger.service";
 import { roundMoney, remainingCapacity } from "@routeflow/pricing";
@@ -62,9 +68,6 @@ import { GRACE_DAYS } from "../billing/plan-catalog.constants";
 import { portalInviteEmailHtml } from "./portal-invite-email";
 
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
-
-// Cap on how many blocking customers deleteAllCustomers() names in its 409 message.
-const MAX_LISTED_BLOCKERS = 10;
 
 @Injectable()
 export class CustomersService {
@@ -2349,27 +2352,10 @@ export class CustomersService {
     // Hard-delete path (only reached when there are no financial records).
     // Delete all dependent non-financial records in correct order.
     await this.prisma.tenantTransaction(async (tx) => {
-      // Payments on invoices
-      const invoices = await tx.invoice.findMany({
-        where: { customerId: id },
-        select: { id: true },
-      });
-      const invoiceIds = invoices.map((i) => i.id);
-      // DEFENSIVE, and deliberately not dead code: this path is only reached
-      // when the pre-flight counted ZERO invoices, but that count is read
-      // OUTSIDE this transaction, so an invoice created in between would be
-      // destroyed here. Reversing keeps the file-wide invariant uniform —
-      // every invoice destruction reverses its ledger entries first.
-      for (const invoiceId of invoiceIds) {
-        await this.ledger.reverseInvoiceEntries({ invoiceId, db: tx });
-      }
-      if (invoiceIds.length)
-        await tx.invoicePayment.deleteMany({ where: { invoiceId: { in: invoiceIds } } });
-
-      // Invoice items
-      if (invoiceIds.length)
-        await tx.invoiceItem.deleteMany({ where: { invoiceId: { in: invoiceIds } } });
-      await tx.invoice.deleteMany({ where: { customerId: id } });
+      // SA-510a (3): this branch runs only for a customer the pre-flight counted record-free, but
+      // that count is read OUTSIDE this tx; refuse (409, rollback) rather than destroy an invoice or
+      // payment created in between.
+      await assertRecordFreeInTx(tx, id);
 
       // Credit notes — order↔credit-note links must be deleted BEFORE the notes
       // (OrderCreditNote.creditNoteId has no onDelete, so the FK restricts the parent delete)
@@ -2499,22 +2485,8 @@ export class CustomersService {
   async batchDelete(
     ids: string[],
   ): Promise<{ deleted: number; failed: { id: string; reason: string }[] }> {
-    // Pre-flight: collect per-customer PAID/SENT invoice counts.
-    const blockers = await this.prisma.forTenant().invoice.groupBy({
-      by: ["customerId"],
-      where: {
-        customerId: { in: ids },
-        status: { in: ["PAID", "SENT"] },
-      },
-      _count: { _all: true },
-    });
-
-    if (blockers.length > 0) {
-      const breakdown = blockers.map((b) => `${b.customerId}: ${b._count._all} invoice(s)`);
-      throw new ConflictException(
-        `Bulk delete blocked — the following customers have PAID or SENT invoices that cannot be destroyed: ${breakdown.join("; ")}.`,
-      );
-    }
+    // #2558/SA-510a: the pre-flight breakdown (the tx-side guards live in deleteCustomer).
+    await assertNoBlockingInvoices(this.prisma.forTenant(), ids);
 
     const failed: { id: string; reason: string }[] = [];
     let deleted = 0;
@@ -2558,39 +2530,12 @@ export class CustomersService {
     const customerIds = customers.map((c) => c.id);
     const userIds = customers.map((c) => c.userId);
 
-    // Pre-flight: collect per-customer PAID/SENT invoice counts. Mirrors
-    // batchDelete()'s pre-flight above — financial records from PAID or SENT
-    // invoices must never be silently destroyed, including by a full wipe.
-    const blockers = await this.prisma.forTenant().invoice.groupBy({
-      by: ["customerId"],
-      where: {
-        customerId: { in: customerIds },
-        status: { in: ["PAID", "SENT"] },
-      },
-      _count: { _all: true },
-    });
-
-    if (blockers.length > 0) {
-      // batchDelete() enumerates every blocker because its `ids` are a bounded UI
-      // selection; here they are every customer in the tenant, so cap the list —
-      // a 409 body listing thousands of opaque uuids is unreadable, not actionable.
-      const breakdown = blockers
-        .slice(0, MAX_LISTED_BLOCKERS)
-        .map((b) => `${b.customerId}: ${b._count._all} invoice(s)`);
-      if (blockers.length > MAX_LISTED_BLOCKERS) {
-        breakdown.push(`and ${blockers.length - MAX_LISTED_BLOCKERS} more`);
-      }
-      throw new ConflictException(
-        `Bulk delete blocked — the following customers have PAID or SENT invoices that cannot be destroyed: ${breakdown.join("; ")}.`,
-      );
-    }
+    // #2558/SA-510a: the pre-flight breakdown; re-checked inside the tx, and the delete is a CAS.
+    await assertNoBlockingInvoices(this.prisma.forTenant(), customerIds, { capList: true });
 
     await this.prisma.tenantTransaction(
       async (tx) => {
-        const invoices = await tx.invoice.findMany({
-          where: { customerId: { in: customerIds } },
-          select: { id: true },
-        });
+        const invoices = await readInvoicesAssertingNoneBlocking(tx, customerIds); // SA-510a (1)
         const invoiceIds = invoices.map((i) => i.id);
         if (invoiceIds.length) {
           // Reverse each invoice's regulated-sales ledger rows BEFORE its items
@@ -2607,7 +2552,7 @@ export class CustomersService {
           await tx.invoicePayment.deleteMany({ where: { invoiceId: { in: invoiceIds } } });
           await tx.invoiceItem.deleteMany({ where: { invoiceId: { in: invoiceIds } } });
         }
-        await tx.invoice.deleteMany({ where: { customerId: { in: customerIds } } });
+        await deleteNonBlockingInvoicesCas(tx, customerIds, invoiceIds.length); // SA-510a (2)
 
         // Order↔credit-note links must be deleted BEFORE the credit notes
         // (OrderCreditNote.creditNoteId has no onDelete, so the FK restricts the parent delete)
