@@ -58,11 +58,7 @@ describe("RoutesService — F11 run cancel/skip pins (no REG- token; excluded fr
   let gateway: jest.Mocked<
     Pick<
       RouteFlowGateway,
-      | "emitStopCompleted"
-      | "emitOrderCreated"
-      | "emitOrderStatusChanged"
-      | "emitLowStock"
-      | "emitToDriver"
+      "emitStopCompleted" | "emitOrderCreated" | "emitOrderStatusChanged" | "emitToDriver"
     >
   >;
   let notifications: jest.Mocked<Pick<NotificationsService, "sendToDriver">>;
@@ -89,7 +85,6 @@ describe("RoutesService — F11 run cancel/skip pins (no REG- token; excluded fr
       emitStopCompleted: jest.fn(),
       emitOrderCreated: jest.fn(),
       emitOrderStatusChanged: jest.fn(),
-      emitLowStock: jest.fn(),
       emitToDriver: jest.fn(),
     };
 
