@@ -9,6 +9,7 @@ import {
   type UnitLineProduct,
 } from "./unit-line-build";
 import type { ResolvedLineUnits } from "../products/line-units";
+import { liveLines } from "./order-edit-cancelled";
 import type { UpdateOrderItemsDto } from "./dto/update-order-items.dto";
 import type { OrdersService } from "./orders.service";
 
@@ -26,6 +27,7 @@ type LineLike = {
   productId?: string | null;
   unitLabel?: string | null;
   unitsPerBox?: number | null;
+  status?: string | null;
 };
 
 export interface UnitEditContext {
@@ -53,7 +55,15 @@ export async function prepareUnitEditContext(
     tenantId: self.prisma.getTenantId(),
     hasFlag: (t, f) => self.entitlements.hasFlag(t, f),
   });
-  const existingById = new Map<string, LineLike>(order.lineItems.map((li) => [li.id, li]));
+  // SA-422b(b): drop CANCELLED lines ONLY for the roles planCancelledLines refuses (CUSTOMER,
+  // DRIVER) — it has already answered their edits of a cancelled id. EVERY other role (staff,
+  // SUPER_ADMIN) and a missing principal keep every line (Opus delta items 6 + follow-up): the
+  // lock-time map (heldById) keeps cancelled rows too, so dropping them here let an edit of a
+  // cancelled Case line pass this pre-lock check, commit the linked-invoice revert, then 409.
+  const refusedByPlan = user?.role === "CUSTOMER" || user?.role === "DRIVER";
+  const existingById = new Map<string, LineLike>(
+    (refusedByPlan ? liveLines(order.lineItems) : order.lineItems).map((li) => [li.id, li]),
+  );
   // Nothing to resolve (the common case — no item names a unit, no existing line is one) reads
   // NOTHING new: a plain pack-only edit stays byte-identical to pre-A1, no extra query at all.
   const productIds = [

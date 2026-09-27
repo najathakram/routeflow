@@ -9,7 +9,7 @@
  *
  * Fixtures are placeholders (acme-style ids); no live-client data.
  */
-import { ForbiddenException, NotFoundException } from "@nestjs/common";
+import { ForbiddenException, InjectionToken, NotFoundException } from "@nestjs/common";
 import { InvoiceStatus } from "@prisma/client";
 import { Test } from "@nestjs/testing";
 import { BuyerController } from "./buyer.controller";
@@ -59,7 +59,7 @@ async function boot(row: ReturnType<typeof invoice>) {
   const findAll = jest.fn().mockResolvedValue({ data: [row], meta: { total: 1 } });
   const update = jest.fn().mockResolvedValue({});
   const getOrGenerate = jest.fn().mockResolvedValue("https://files.example.test/inv.pdf");
-  const stub = (token: unknown) => ({ provide: token, useValue: {} });
+  const stub = (token: InjectionToken) => ({ provide: token, useValue: {} });
   const moduleRef = await Test.createTestingModule({
     controllers: [BuyerController],
     providers: [

@@ -18,7 +18,6 @@ import {
   normalizeBoxesPieces,
   isBlockingPayment,
   remainingCapacity,
-  inferredFlatRate,
 } from "@routeflow/pricing";
 import { orderLineShape, orderLineUnchanged } from "./order-backsync-lines";
 import {
@@ -94,6 +93,7 @@ import {
   buildPriceAdjustmentUpdates,
   commitPriceAdjustment,
   loadPriceAdjustmentReference,
+  inferredGoodsFlatRate,
   lockInvoiceForPriceAdjustment,
 } from "./price-adjustment-ledger";
 import { AuthorizationGuardService } from "../authorizations/authorization-guard.service";
@@ -103,9 +103,10 @@ import { MessagingService } from "../messaging/messaging.service";
 import { formatDate, formatMoney } from "../messaging/messaging.helpers";
 import { CommissionEngineService } from "../sales-agents/commission-engine.service";
 import { NSF_FEE_DESCRIPTION_PREFIX } from "../sales-agents/commission-math";
-import { InvoiceItemSystemKind } from "./nsf-line";
+import { InvoiceItemSystemKind, notNsfLineWhere } from "./nsf-line";
+import { preservedNsfLines } from "./nsf-preserve";
 import { partitionInvoiceLines, planResyncPairs } from "./resync-plan";
-import { startOfCalendarDay, endOfCalendarDay } from "../common/calendar-date";
+import { issueDateStamp, startOfCalendarDay, endOfCalendarDay } from "../common/calendar-date";
 import { lockRowsNoWait } from "../common/db-locks";
 import { NumberingService } from "../import/numbering.service";
 import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
@@ -124,6 +125,7 @@ import { standaloneAllocationTotals } from "./standalone-payment-totals";
 import { calendarDayOf } from "./settled-date-filter";
 import { retryOnTxConflict } from "../common/tx-retry";
 import { lockInvoiceRow, nextSentStatus, sendRefusal, voidRefusal } from "./invoice-send-guard";
+import { selectEditRevertedInvoices } from "./order-edit-revert-set";
 
 const TERM_DAYS: Record<string, number> = {
   "Due on Receipt": 0,
@@ -389,6 +391,7 @@ export class InvoicesService {
    */
   /** SA-135: an internal caller's line may carry `packSnapshot` (ManualLineItem); the HTTP DTO never can. */
   async create(dto: Omit<CreateInvoiceDto, "items"> & { items: ManualLineItem[] }) {
+    const issueDateInput = dto.issueDate ? issueDateStamp(dto.issueDate) : null; // #2197: 400 first
     const customer = await this.prisma
       .forTenant()
       .customer.findUnique({ where: { id: dto.customerId } });
@@ -485,9 +488,8 @@ export class InvoicesService {
             shippingFee: shipping,
             total,
             dueDate: dto.dueDate ? new Date(dto.dueDate) : null,
-            issueDate: dto.issueDate
-              ? new Date(dto.issueDate)
-              : startOfCalendarDay(new Date(), tenantDefaults.timezone),
+            // #2197: the literal calendar day the client named, never a raw instant.
+            issueDate: issueDateInput ?? startOfCalendarDay(new Date(), tenantDefaults.timezone),
             notes: dto.notes ?? tenantDefaults.notes,
             terms: dto.terms ?? tenantDefaults.terms,
             paymentTermsLabel: dto.paymentTermsLabel ?? null,
@@ -1499,7 +1501,9 @@ export class InvoicesService {
         Number((order as any).shippingFee ?? 0) - Number(otherFeeAgg._sum.shippingFee ?? 0),
       ),
     );
-    const total = roundMoney(subtotal - Number(draft.discount ?? 0) + draftFee + taxAmount);
+    const nsf = await preservedNsfLines(db, draft.id); // #2242: NSF fee lines survive, untaxed
+    const invSubtotal = roundMoney(subtotal + nsf.feeTotal);
+    const total = roundMoney(invSubtotal - Number(draft.discount ?? 0) + draftFee + taxAmount);
 
     // WP-D1: a plain pending-mirror DRAFT keeps forcing DRAFT (byte-identical to
     // before). A deposit mirror already ISSUED (SENT/VIEWED/PARTIAL/OVERDUE) instead
@@ -1520,11 +1524,11 @@ export class InvoicesService {
         )
       : InvoiceStatus.DRAFT;
 
-    await db.invoiceItem.deleteMany({ where: { invoiceId: draft.id } });
+    await db.invoiceItem.deleteMany({ where: { invoiceId: draft.id, id: { notIn: nsf.keepIds } } });
     const updated = await db.invoice.update({
       where: { id: draft.id },
       data: {
-        subtotal,
+        subtotal: invSubtotal,
         taxAmount,
         shippingFee: draftFee,
         total,
@@ -1886,6 +1890,7 @@ export class InvoicesService {
         taxAmount: 0,
         shippingFee: 0,
         total: 0,
+        nsf: { keepIds: [] as string[], feeTotal: 0 }, // #2242: set per draft below
       };
     });
     // Snapshot MSRP on every sibling draft's rebuilt lines.
@@ -1931,13 +1936,15 @@ export class InvoicesService {
         pd.shippingFee = i === maxIdx ? orderFee : 0;
       });
     }
-    perDraft.forEach((pd) => {
+    for (const pd of perDraft) {
       // RF-4: tax = allocated regular tax + this draft's category tax (both exempt-0).
       pd.taxAmount = roundMoney(pd.regularTax + pd.categoryTax);
+      pd.nsf = await preservedNsfLines(db, pd.draft.id); // #2242: kept, added after tax proration
+      pd.subtotal = roundMoney(pd.subtotal + pd.nsf.feeTotal);
       pd.total = roundMoney(
         pd.subtotal - Number(pd.draft.discount ?? 0) + pd.shippingFee + pd.taxAmount,
       );
-    });
+    }
 
     const updated: any[] = [];
     for (const pd of perDraft) {
@@ -1959,7 +1966,9 @@ export class InvoicesService {
           pd.draft.status,
         );
       }
-      await db.invoiceItem.deleteMany({ where: { invoiceId: pd.draft.id } });
+      await db.invoiceItem.deleteMany({
+        where: { invoiceId: pd.draft.id, id: { notIn: pd.nsf.keepIds } },
+      });
       const inv = await db.invoice.update({
         where: { id: pd.draft.id },
         data: {
@@ -3223,6 +3232,9 @@ export class InvoicesService {
       throw new BadRequestException("Only DRAFT invoices can be edited");
     await this.assertOrderInvoiceUnlocked(inv);
 
+    // #2197: the same literal calendar-day stamp create() writes.
+    const issueDate = dto.issueDate ? issueDateStamp(dto.issueDate) : undefined;
+
     // units_v1: BOTH rewrite paths — the item replace (re-split at the LIVE pack) and the
     // discount/shipping recompute, whose order back-sync writes onto the linked order's lines.
     if (dto.items || dto.discount !== undefined || dto.shippingFee !== undefined) {
@@ -3324,7 +3336,7 @@ export class InvoicesService {
             shippingFee: shipping,
             total,
             dueDate: dto.dueDate ? new Date(dto.dueDate) : undefined,
-            issueDate: dto.issueDate ? new Date(dto.issueDate) : undefined,
+            issueDate,
             notes: dto.notes,
             terms: dto.terms,
             // "" from the composer's Terms dropdown means "no term" (the operator
@@ -3396,7 +3408,7 @@ export class InvoicesService {
       where: { id },
       data: {
         ...(dto.dueDate && { dueDate: new Date(dto.dueDate) }),
-        ...(dto.issueDate && { issueDate: new Date(dto.issueDate) }),
+        ...(issueDate && { issueDate }),
         ...(dto.notes !== undefined && { notes: dto.notes }),
         ...(dto.terms !== undefined && { terms: dto.terms }),
         // "" clears the label (the composer sends it when the operator hand-typed a
@@ -4313,36 +4325,11 @@ export class InvoicesService {
     opts?: { lockRows?: boolean },
   ): Promise<string[]> {
     const db = tx ?? this.prisma.forTenant();
-    const linked = await db.invoice.findMany({
-      where: {
-        orderId,
-        deliveryBatchId: null,
-        status: { in: [InvoiceStatus.SENT, InvoiceStatus.VIEWED, InvoiceStatus.OVERDUE] },
-      },
-      select: { id: true, invoiceNumber: true, internalNotes: true, depositPercent: true },
-    });
-    if (linked.length === 0) return [];
-
-    // Only pay for the fence reads when a deposit invoice is actually in play — an
-    // order with no deposit mirror issues the exact same queries as before.
-    let depositMirrorExempt = false;
-    if (linked.some((inv: any) => inv.depositPercent != null)) {
-      const order = await db.order.findFirst({ where: { id: orderId }, select: { status: true } });
-      const nonVoidCount = await db.invoice.count({
-        where: { orderId, status: { not: InvoiceStatus.VOID } },
-      });
-      depositMirrorExempt =
-        !!order &&
-        order.status !== "DELIVERED" &&
-        order.status !== "CANCELLED" &&
-        nonVoidCount === 1;
-    }
-
+    // #2178: the ONE selection (incl. the exempt deposit mirror, which stays SENT) — shared with the
+    // inline-return preflight, which prices against the matching set as it will be after this revert.
+    const linked = await selectEditRevertedInvoices(db, orderId);
     const reverted: string[] = [];
     for (const inv of linked) {
-      // Exempt (see above): leave it SENT — the widened reconcile re-syncs it, and
-      // its payments (if any) stay attached to a still-issued document.
-      if (depositMirrorExempt && inv.depositPercent != null) continue;
       // Under the caller's tx: hold the row before the count, so the payment-block below reads a
       // state no concurrent recordPayment can change until this tx commits or rolls back.
       if (opts?.lockRows) await lockRowsNoWait(db, "Invoice", [inv.id], "INVOICE_BUSY");
@@ -6041,7 +6028,7 @@ export class InvoicesService {
       // B662: item writes, invoice totals and the regulated-ledger sync commit or fail TOGETHER.
       await this.prisma.tenantTransaction(async (tx: any) => {
         const live = await lockInvoiceForPriceAdjustment(tx, inv); // Invoice FIRST, then its rows
-        const inferred = inferredFlatRate({ ...live, lines: live.items });
+        const inferred = inferredGoodsFlatRate(live); // #2243: goods only, never the NSF fee line
         const { categoriesById, unitsPerBoxByProduct } = await loadPriceAdjustmentReference(
           tx,
           live.items,
@@ -6056,7 +6043,7 @@ export class InvoicesService {
         });
         if (inferred?.verified) {
           await tx.invoiceItem.updateMany({
-            where: { invoiceId: inv.id, taxRate: 0 },
+            where: { invoiceId: inv.id, taxRate: 0, AND: [notNsfLineWhere] }, // #2243: NSF stays 0
             data: { taxRate: inferred.rate },
           });
         }
