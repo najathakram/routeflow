@@ -62,9 +62,14 @@ describe("app.json store decisions (#2312, owner)", () => {
     expect(String(location[1].locationAlwaysAndWhenInUsePermission)).toMatch(/background/);
   });
 
-  it("portrait-only iPad support declares UIRequiresFullScreen (ITMS-90474)", () => {
+  // #2311 PR 1: "orientation": "portrait" locks only the iPhone. `expo config --type introspect`
+  // generates UISupportedInterfaceOrientations~ipad = all four orientations and
+  // UIRequiresFullScreen = false, so iPad multitasking is valid (no ITMS-90474) with no override.
+  // Forcing UIRequiresFullScreen: true would take split view / slide over away on iPad.
+  it("iPad keeps multitasking: no UIRequiresFullScreen and no iPad orientation override", () => {
     expect(expo.orientation).toBe("portrait");
     expect(expo.ios.supportsTablet).toBe(true);
-    expect(expo.ios.infoPlist.UIRequiresFullScreen).toBe(true);
+    expect(expo.ios.infoPlist.UIRequiresFullScreen).toBeUndefined();
+    expect(expo.ios.infoPlist["UISupportedInterfaceOrientations~ipad"]).toBeUndefined();
   });
 });
