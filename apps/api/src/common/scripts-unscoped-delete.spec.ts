@@ -1,6 +1,11 @@
 import { spawnSync } from "node:child_process";
 import * as fs from "fs";
 import * as path from "path";
+import {
+  isUnscopedBulkArg,
+  scanUnscopedWrites,
+  stripComments,
+} from "./testing/unscoped-write-scan";
 
 /**
  * #2421: `scripts/import-zoho.js` ran `invoice.deleteMany({})` (and ~30 more unscoped deletes)
@@ -35,9 +40,6 @@ const ALLOWED: Record<string, Reviewed> = {
   },
 };
 
-const JS_UNSCOPED = /\.(deleteMany|updateMany)\(\s*(\{\s*\})?\s*\)/g;
-// Every string / template literal (template holes kept as-is), scanned for raw SQL.
-const LITERAL = /`(?:\\[\s\S]|\$\{[^}]*\}|[^`\\])*`|"(?:\\.|[^"\\\n])*"|'(?:\\.|[^'\\\n])*'/g;
 const LOCAL_ONLY_GUARD = /productionGuard\(\s*\{[^}]*\bdbUrl\b/s;
 
 function scriptFiles(dir: string, out: string[] = []): string[] {
@@ -52,27 +54,15 @@ function scriptFiles(dir: string, out: string[] = []): string[] {
   return out;
 }
 
-/** Source with comments blanked, so prose that mentions deleteMany({}) never counts. */
-function code(file: string): string {
-  return fs
-    .readFileSync(file, "utf8")
-    .replace(/\/\*[\s\S]*?\*\//g, "")
-    .replace(/(^|[^:"'`\\])\/\/.*$/gm, "$1");
-}
-
 function unscopedWrites(src: string): number {
-  let n = (src.match(JS_UNSCOPED) ?? []).length;
-  for (const lit of src.match(LITERAL) ?? []) {
-    if (/\bDELETE\s+FROM\b/i.test(lit) && !/\bWHERE\b/i.test(lit)) n++;
-    if (/\bTRUNCATE\s+(TABLE\s+)?["\w]/i.test(lit)) n++;
-  }
-  return n;
+  const r = scanUnscopedWrites(src);
+  return r.jsCalls.length + r.rawSql.length;
 }
 
 const scanned = scriptFiles(SCRIPTS).map((f) => {
   const rel = path.relative(SCRIPTS, f).replace(/\\/g, "/");
-  const src = code(f);
-  return { rel, src, unscoped: unscopedWrites(src) };
+  const raw = fs.readFileSync(f, "utf8");
+  return { rel, src: stripComments(raw), unscoped: unscopedWrites(raw) };
 });
 
 describe("#2421 apps/api/scripts: unscoped bulk writes only on the reviewed allow-list", () => {
@@ -110,7 +100,7 @@ describe("#2421 import-zoho.js stays retired", () => {
 
   it("loads no database driver and has no bulk write", () => {
     expect(src).not.toMatch(/require\([^)]*(@prisma|["'\/]pg["'])/);
-    expect(unscopedWrites(code(path.join(SCRIPTS, "import-zoho.js")))).toBe(0);
+    expect(unscopedWrites(src)).toBe(0);
   });
 
   it("refuses unconditionally, even with --execute", () => {
@@ -121,5 +111,61 @@ describe("#2421 import-zoho.js stays retired", () => {
     });
     expect(res.status).toBe(1);
     expect(`${res.stdout}${res.stderr}`).toMatch(/RETIRED/);
+  });
+});
+
+describe("#2421 the scanner itself (Opus review)", () => {
+  it.each([
+    ["no argument", ""],
+    ["an empty object", "{}"],
+    ["updateMany with data but no where", "{ data: { archived: true } }"],
+    ["deleteMany with an empty where", "{ where: {} }"],
+    ["an empty where among other keys", "{ data: { x: 1 }, where: { } }"],
+  ])("flags %s", (_label, arg) => {
+    expect(isUnscopedBulkArg(arg)).toBe(true);
+  });
+
+  it.each([
+    ["a tenant where", "{ where: { tenantId } }"],
+    ["a row where with data", "{ where: { id }, data: { x: 1 } }"],
+    ["a quoted where key", '{ "where": { id: 1 } }'],
+    ["a variable (not judged statically)", "args"],
+    ["a spread that may carry the where", "{ ...scope, data }"],
+  ])("accepts %s", (_label, arg) => {
+    expect(isUnscopedBulkArg(arg)).toBe(false);
+  });
+
+  it("finds a call with whitespace before the paren", () => {
+    expect(scanUnscopedWrites("await prisma.invoice.deleteMany ({});").jsCalls).toHaveLength(1);
+    expect(scanUnscopedWrites("await prisma.invoice.deleteMany\n  ();").jsCalls).toHaveLength(1);
+  });
+
+  it("flags any literal containing TRUNCATE, and raw DELETE / UPDATE ... SET without WHERE", () => {
+    expect(scanUnscopedWrites('const q = "truncate customers";').rawSql).toHaveLength(1);
+    expect(scanUnscopedWrites('db.query(`DELETE FROM "Invoice"`);').rawSql).toHaveLength(1);
+    expect(scanUnscopedWrites('db.query(`UPDATE "Order" SET total = 0`);').rawSql).toHaveLength(1);
+    expect(
+      scanUnscopedWrites('db.query(`UPDATE "Order" SET total = 0 WHERE id = $1`);').rawSql,
+    ).toHaveLength(0);
+  });
+
+  it("joins literals concatenated with + (a WHERE in the next piece counts)", () => {
+    const src = 'q(`UPDATE "User" SET s = $1` + ` WHERE "id" = $2`);';
+    expect(scanUnscopedWrites(src).rawSql).toHaveLength(0);
+  });
+
+  it("strips comments only outside strings, so 'a//b' never hides the code after it", () => {
+    const src = "const a = 'a//b'; x.deleteMany({}); // trailing\n/* block */ y.deleteMany({});";
+    expect(stripComments(src)).toContain("x.deleteMany({})");
+    expect(scanUnscopedWrites(src).jsCalls).toHaveLength(2);
+    expect(scanUnscopedWrites("// x.deleteMany({})\n/* y.deleteMany({}) */").jsCalls).toHaveLength(
+      0,
+    );
+  });
+
+  it("text inside a string that merely mentions deleteMany({}) is not a call", () => {
+    expect(
+      scanUnscopedWrites('console.log("run x.deleteMany({}) with care");').jsCalls,
+    ).toHaveLength(0);
   });
 });
