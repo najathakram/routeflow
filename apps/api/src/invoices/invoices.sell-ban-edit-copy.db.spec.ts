@@ -373,16 +373,29 @@ describeDb("F05 ban check on invoice update (net delta) + duplicate — real Pos
 
     // #2225: a line that names a held row's id but a DIFFERENT held product is not that row's
     // line (heldMatch requires the same product, invoice-restriction-lines.ts): it counts at the
-    // target product's LIVE pack. Built to discriminate — the held boxed row carries pack 12, the
-    // target (loose, banned) has none: live pack ⇒ loose 20 + 5 = 25 ≤ 30 held ⇒ ALLOWED; a bug
-    // that reused the matched row's pack would count 20 + 5×12 = 80 ⇒ REFUSED.
+    // target product's LIVE pack. Built to discriminate — the target (loose, banned) has no pack:
+    // live pack ⇒ 20 + 5 = 25 ≤ 30 held ⇒ ALLOWED; a bug that matched by id alone would reuse the
+    // held row's pack, 20 + 5×12 = 80 ⇒ REFUSED.
+    // SA-465a: the held boxed row must carry a STORED pack of 12 and NO split. create() stores
+    // unitsPerBox NULL for an unsplit line, which fell back to live either way (not
+    // discriminating). A box-split row would not discriminate either: the id-only bug then takes
+    // SA-250's re-split branch and counts qty 5. So the pack is stored on the unsplit row directly.
     it("S1 swapping a held boxed row's id onto another HELD product counts at the target's LIVE pack (ALLOWED)", async () => {
       const s = await seed("s1");
       const inv = await createDraft(s, [line(s.banned, 30), line(s.boxed, 2)]);
       await setFlag(s, true);
+      const created = await rows(inv.id);
+      await prisma.invoiceItem.update({
+        where: { id: created.find((r: any) => r.productId === s.boxed)!.id },
+        data: { unitsPerBox: 12 },
+      });
       const held = await rows(inv.id);
       const loose = held.find((r: any) => r.productId === s.banned)!;
       const boxedRow = held.find((r: any) => r.productId === s.boxed)!;
+      // The premise that makes S1 discriminate: a stored pack of 12 on an unsplit row.
+      expect(boxedRow.unitsPerBox).toBe(12);
+      expect(boxedRow.boxes ?? null).toBeNull();
+      expect(boxedRow.pieces ?? null).toBeNull();
       await run(s, () =>
         invoicesService.update(inv.id, {
           items: [line(s.banned, 20, { id: loose.id }), line(s.banned, 5, { id: boxedRow.id })],
