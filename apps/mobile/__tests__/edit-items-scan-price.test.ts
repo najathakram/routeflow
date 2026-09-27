@@ -15,6 +15,7 @@
  */
 import { readFileSync } from "fs";
 import { join } from "path";
+import { readEditItemsSurface } from "./support/edit-items-source";
 
 const SCREEN_PATH = join(
   __dirname,
@@ -26,7 +27,9 @@ const SCREEN_PATH = join(
   "[id]",
   "edit-items.tsx",
 );
-const source = readFileSync(SCREEN_PATH, "utf8");
+// #2340: the screen plus its sliced modules, in an order that keeps ProductPicker (and only the
+// modules after it) in pickerSrc — the same split the single file had.
+const source = readEditItemsSurface();
 
 // `ProductPicker` owns the whole scan-add surface (cause-ruling.md §2 D3);
 // splitting here is how the picker-branch assertions below can't

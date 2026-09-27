@@ -33,3 +33,16 @@ export function importPaymentStatus(
   if (next === inv.status) return null;
   return { status: next, paidAt: next === InvoiceStatus.PAID ? now : null };
 }
+
+/** A row the import refuses on purpose (reported by reason, not the generic "import failed"). */
+export class ImportRowRefused extends Error {}
+
+/**
+ * SA-424 N1: an imported payment never lands on a VOID or WRITTEN_OFF invoice — checked on the row
+ * the per-row tx has LOCKED, so a void committed while the import waited is refused, not written over.
+ */
+export function importPaymentRefusal(status: InvoiceStatus): string | null {
+  if (status === InvoiceStatus.VOID) return "invoice is voided";
+  if (status === InvoiceStatus.WRITTEN_OFF) return "invoice is written off";
+  return null;
+}

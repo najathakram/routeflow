@@ -162,6 +162,7 @@ describe("OrdersService", () => {
 
   beforeEach(async () => {
     prisma = createMockPrisma();
+    prisma.order.updateMany.mockResolvedValue({ count: 1 }); // SA-404f F2: cancel CAS claims
     tenantCtx = { run: jest.fn((_tenantId: string | null, fn: () => unknown) => fn()) };
     mockQueue = { add: jest.fn() };
     mockGateway = {

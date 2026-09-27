@@ -1,4 +1,4 @@
-import { InvoiceStatus } from "@prisma/client";
+import { InvoiceStatus, Prisma } from "@prisma/client";
 import { formatMoney } from "../messaging/messaging.helpers";
 
 /**
@@ -42,4 +42,37 @@ export async function lockInvoiceRow(tx: any, id: string, orderId: string | null
   if (orderId) await tx.$executeRaw`SELECT id FROM "Order" WHERE id = ${orderId} FOR UPDATE`;
   await tx.$executeRaw`SELECT id FROM "Invoice" WHERE id = ${id} FOR UPDATE`;
   return tx.invoice.findUnique({ where: { id }, include: { payments: true } });
+}
+
+/**
+ * SA-404f F1: a payment writer's FIRST statements — lock the invoices' ORDER rows, then the
+ * invoices, each set in id order (SA-214 global order: Order → Invoice). A void takes the same
+ * rows, so a writer that reads an invoice's status AFTER this sees a committed VOID and refuses,
+ * instead of writing PAID/PARTIAL back over it (the void-first half of the #2258 race). The
+ * orderId pre-read is safe unlocked: an invoice's orderId never changes.
+ */
+export async function lockInvoicesForPayment(tx: any, invoiceIds: string[]): Promise<void> {
+  const ids = [...new Set(invoiceIds)].sort();
+  if (ids.length === 0) return;
+  const heads: Array<{ orderId: string | null }> = await tx.invoice.findMany({
+    where: { id: { in: ids } },
+    select: { orderId: true },
+  });
+  const orderIds = [...new Set(heads.map((h) => h.orderId).filter((o): o is string => !!o))].sort();
+  if (orderIds.length > 0)
+    await tx.$executeRaw`SELECT id FROM "Order" WHERE id IN (${Prisma.join(orderIds)}) ORDER BY id FOR UPDATE`;
+  await tx.$executeRaw`SELECT id FROM "Invoice" WHERE id IN (${Prisma.join(ids)}) ORDER BY id FOR UPDATE`;
+}
+
+/** #2472: an invoice may be written off only from an open, collectible status (checked on the LOCKED row). */
+export function writeOffRefusal(status: InvoiceStatus): string | null {
+  const open: InvoiceStatus[] = ["SENT", "VIEWED", "PARTIAL", "OVERDUE"] as InvoiceStatus[];
+  return open.includes(status) ? null : `Cannot write off an invoice with status ${status}`;
+}
+
+/** A payment may not land on a VOID or WRITTEN_OFF invoice (checked on the LOCKED row). */
+export function paymentRefusal(status: InvoiceStatus): string | null {
+  if (status === InvoiceStatus.VOID) return "voided";
+  if (status === InvoiceStatus.WRITTEN_OFF) return "written-off";
+  return null;
 }

@@ -188,11 +188,20 @@ export function calendarStampFromInput(raw: string): Date | null {
   return stamp.toISOString().slice(0, 10) === day ? stamp : null;
 }
 
+/**
+ * #2197/#2256: a client calendar-date field → the stamp of the literal day it names; 400 (naming
+ * `field`) when it names none. Every invoice date the client supplies (issueDate, dueDate,
+ * depositDueDate) goes through this, never `new Date(raw)`.
+ */
+export function calendarFieldStamp(raw: string, field: string): Date {
+  const stamp = calendarStampFromInput(raw);
+  if (!stamp) throw new BadRequestException(`${field} must be a calendar date (YYYY-MM-DD)`);
+  return stamp;
+}
+
 /** #2197: a client issueDate → the stamp of the literal day it names; 400 when it names none. */
 export function issueDateStamp(raw: string): Date {
-  const stamp = calendarStampFromInput(raw);
-  if (!stamp) throw new BadRequestException("issueDate must be a calendar date (YYYY-MM-DD)");
-  return stamp;
+  return calendarFieldStamp(raw, "issueDate");
 }
 
 /**
@@ -214,4 +223,26 @@ export function endOfCalendarDay(date: Date | string, timeZone?: string | null):
   );
   const nextMidnightLocal = localMidnightUtc(next.year, next.month, next.day, timeZone || "UTC");
   return new Date(nextMidnightLocal.getTime() - 1);
+}
+
+/**
+ * SA-488 (#2493 item 3): THE overdue rule. An invoice is overdue once `now` is past the END of its
+ * due day in the tenant's zone (UTC when the zone is unknown) — the whole due day is grace. The
+ * cron, the list filter, bookkeeping aging and the KPI summary use `overdueCutoff` (its SQL twin);
+ * recomputeStatus uses this. The two agree at every boundary (pinned).
+ */
+export function isOverdue(
+  dueDate: Date | string | null | undefined,
+  now: Date = new Date(),
+  timeZone?: string | null,
+): boolean {
+  if (!dueDate) return false;
+  // #2518 review: defined FROM the exact SQL twin, never via endOfCalendarDay — that reads the zone
+  // offset at a UTC-midnight guess, which is an hour off on a DST eve east of UTC.
+  return startOfCalendarDay(dueDate, "UTC").getTime() < overdueCutoff(now, timeZone).getTime();
+}
+
+/** The SQL twin of `isOverdue`: `dueDate < overdueCutoff(now, tz)` selects exactly the overdue rows. */
+export function overdueCutoff(now: Date = new Date(), timeZone?: string | null): Date {
+  return startOfCalendarDay(now, timeZone);
 }

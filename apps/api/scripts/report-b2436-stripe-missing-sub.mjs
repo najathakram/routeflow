@@ -5,8 +5,12 @@
  * `stripeSubId` was never stored (the overdue cron and the double-subscription guard then skip the
  * tenant). This counts the population the fix's backfill/reconciliation will need to cover.
  *
- * NEVER RUN FROM AN IMPLEMENTATION SESSION. The fleet lead runs it under its `railway run`
- * authorization (warn-then-approve):
+ * The count is an UPPER BOUND: a Stripe customer is created before any payment (at checkout start,
+ * or by the billing customer endpoint), so an abandoned checkout also has a customer and no
+ * subscription id. Reconcile each candidate against Stripe before acting on it.
+ *
+ * OWNER-ONLY. Never run from an implementation session or by a lead: the owner runs it via
+ * `railway run`, with a per-call approval:
  *
  *   railway run --service postgres node apps/api/scripts/report-b2436-stripe-missing-sub.mjs [--json]
  *
