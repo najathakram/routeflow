@@ -251,6 +251,39 @@ async function t12() {
   check("T12 stdout line-for-line", stdout, expected);
 }
 
+// ── T12m: --first-parent drops a true merge's second-parent trailers ────────
+async function t12m() {
+  const { dir, regDir, shas } = buildRepoG();
+  // A side branch off c6 carries its own trailers, then merges back with --no-ff.
+  gitRun(dir, ["checkout", "-q", "-b", "side"]);
+  const side = commitG(dir, "wip: side (#107)", "Bug: B9\nFeature: F-99");
+  gitRun(dir, ["checkout", "-q", "-"]);
+  gitRun(dir, ["merge", "-q", "--no-ff", "side", "-m", "Merge side (#108)"]);
+  const merge = gitRun(dir, ["rev-parse", "HEAD"]).trim();
+  // The fixture really crosses a merge: HEAD has two parents and the side commit is in range.
+  check(
+    "T12m merge has two parents",
+    gitRun(dir, ["rev-list", "--parents", "-n", "1", "HEAD"]).trim().split(" ").length,
+    3,
+  );
+  checkTrue(
+    "T12m side commit is reachable in range",
+    gitRun(dir, ["rev-list", `${shas.c6}..HEAD`]).includes(side),
+  );
+
+  const { code, stdout, stderr } = await runCli(["--since", shas.c6], { regDir });
+  checkTrue("T12m exit 0", code === 0, `stderr=${stderr}`);
+  checkTrue("T12m second-parent Bug trailer not reported", !stdout.includes("B9"), stdout);
+  checkTrue("T12m second-parent Feature trailer not reported", !stdout.includes("F-99"), stdout);
+  checkTrue("T12m side commit not listed", !stdout.includes(sha7(side)), stdout);
+  checkTrue(
+    "T12m only the merge commit is walked",
+    stdout.includes(`  0 of 1 commits since ${sha7(shas.c6)} carry a roadmap trailer`) &&
+      stdout.includes(`    ${sha7(merge)}  Merge side (#108)`),
+    stdout,
+  );
+}
+
 // ── T13: unusable git → exit 2 ───────────────────────────────────────────────
 async function t13() {
   const { regDir } = buildRepoG();
@@ -440,15 +473,34 @@ async function t17() {
   );
 }
 
+// ── T17v (#2273): `npm run verify` runs this self-test ────────────────────────
+// Unwired, this file protects nothing (the #2271 review found it orphaned), so it pins its own
+// place in the root verify chain, the way google-signin-check's T8 does.
+function t17v() {
+  const pkg = JSON.parse(
+    readFileSync(fileURLToPath(new URL("../../package.json", import.meta.url)), "utf8"),
+  );
+  const verify = typeof pkg.scripts?.verify === "string" ? pkg.scripts.verify : "";
+  checkTrue(
+    "T17v verify chain runs scripts/roadmap/from-git.self-test.mjs",
+    verify
+      .split("&&")
+      .some((step) => step.trim() === "node scripts/roadmap/from-git.self-test.mjs"),
+    "not found as its own `&&` step in package.json scripts.verify",
+  );
+}
+
 async function main() {
   console.log("from-git.self-test");
   t11();
   await t12();
+  await t12m();
   await t13();
   await t14();
   await t15();
   await t16();
   await t17();
+  t17v();
 }
 
 try {
