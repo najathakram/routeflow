@@ -19,6 +19,8 @@
 //   POST   platform-admin/onboarding/cases/:id/adopt-catalog                → OnboardingCaseDetail
 //   GET    platform-admin/demo-bookings?status=&from=&to=                   → DemoBookingListItem[]
 
+import type { DemoBookingStatus } from "./enums";
+
 export const ONBOARDING_STAGE_VALUES = [
   "FOLLOW_UP",
   "AGREE",
@@ -202,7 +204,7 @@ export interface DemoBookingListItem {
   startsAt: string;
   endsAt: string;
   timeZone: string;
-  status: "CONFIRMED" | "CANCELLED" | "COMPLETED";
+  status: DemoBookingStatus;
   meetUrl: string | null;
   createdAt: string;
   /** The onboarding case opened from this booking, if any. */
@@ -218,5 +220,6 @@ export const ONBOARDING_CONFLICT_CODES = [
   "ONBOARDING_STEP_BEHIND_GATE",
   "ONBOARDING_STEP_WAIVED",
   "ONBOARDING_STEP_NOT_PENDING",
+  "ONBOARDING_BOOKING_HAS_CASE",
 ] as const;
 export type OnboardingConflictCode = (typeof ONBOARDING_CONFLICT_CODES)[number];

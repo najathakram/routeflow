@@ -270,6 +270,38 @@ describe("GoogleOAuthService device info threading (Phase 0 T6)", () => {
     );
   });
 
+  it("#2159 S1: a Google sign-in stamps lastLoginAt; a failed stamp never blocks the sign-in", async () => {
+    const { service, prisma, refreshTokenUpsert } = buildService();
+    prisma.user.findFirst.mockResolvedValue({
+      id: "admin-1",
+      username: "admin",
+      role: "SUPER_ADMIN",
+      status: "ACTIVE",
+      googleId: "g1",
+      forcePasswordChange: false,
+      tenantId: null,
+      password: null,
+    });
+    await service.findOrCreateUser({
+      type: "platform",
+      googleId: "g1",
+      email: "admin@example.com",
+    } as any);
+    expect(prisma.user.update).toHaveBeenCalledWith({
+      where: { id: "admin-1" },
+      data: { lastLoginAt: expect.any(Date) },
+    });
+
+    prisma.user.update.mockRejectedValueOnce(new Error("db down"));
+    refreshTokenUpsert.mockClear();
+    await service.findOrCreateUser({
+      type: "platform",
+      googleId: "g1",
+      email: "admin@example.com",
+    } as any);
+    expect(refreshTokenUpsert).toHaveBeenCalled(); // the session was still minted
+  });
+
   it("handlePlatformAuth omits device info when none is provided", async () => {
     const { service, prisma, refreshTokenUpsert } = buildService();
     prisma.user.findFirst.mockResolvedValue({

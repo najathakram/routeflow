@@ -15,12 +15,13 @@ import {
   MinLength,
   ValidateNested,
 } from "class-validator";
-import { OnboardingCaseStatus, OnboardingStage } from "@prisma/client";
+import { DemoBookingStatus, OnboardingCaseStatus, OnboardingStage } from "@prisma/client";
 // Values come from the generated Prisma enums: `@routeflow/types` ships TypeScript source and is
 // TYPE-ONLY at API runtime (the compiled API cannot load it). The shared mirrors are pinned
 // set-equal to these by enum-parity.spec.ts.
 const STAGE_VALUES = Object.values(OnboardingStage);
 const CASE_STATUS_VALUES = Object.values(OnboardingCaseStatus);
+const DEMO_BOOKING_STATUS_VALUES = Object.values(DemoBookingStatus);
 
 const DATE_ONLY = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -94,8 +95,7 @@ export class ListOnboardingCasesQueryDto {
 }
 
 export class ListDemoBookingsQueryDto {
-  @IsOptional() @IsIn(["CONFIRMED", "CANCELLED", "COMPLETED"]) status?:
-    "CONFIRMED" | "CANCELLED" | "COMPLETED";
+  @IsOptional() @IsIn(DEMO_BOOKING_STATUS_VALUES) status?: DemoBookingStatus;
   @IsOptional() @IsISO8601() from?: string;
   @IsOptional() @IsISO8601() to?: string;
 }

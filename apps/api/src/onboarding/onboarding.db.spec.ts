@@ -462,9 +462,7 @@ describeDb("onboarding cases (#2159 S1) — real Postgres", () => {
       contactEmail: `sam-${RUN}@example.invalid`,
       demoBookingId: b.id,
     });
-    await expect(svc.create({ demoBookingId: b.id }, ADMIN)).rejects.toBeInstanceOf(
-      ConflictException,
-    );
+    await expectConflict(svc.create({ demoBookingId: b.id }, ADMIN), "ONBOARDING_BOOKING_HAS_CASE");
     const list = await svc.listDemoBookings({
       from: "2030-01-01T00:00:00Z",
       to: "2030-01-03T00:00:00Z",

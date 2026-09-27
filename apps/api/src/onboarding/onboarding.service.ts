@@ -225,7 +225,11 @@ export class OnboardingService {
       });
     } catch (err) {
       if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === "P2002") {
-        throw new ConflictException("An onboarding case already exists for that demo booking");
+        throw new ConflictException({
+          statusCode: 409,
+          code: "ONBOARDING_BOOKING_HAS_CASE",
+          message: "An onboarding case already exists for that demo booking",
+        });
       }
       throw err;
     }
