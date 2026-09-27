@@ -3117,3 +3117,18 @@ citations, closed-out with its own post-init assertion guard).
 - **Guard:** the validator already prints its resolved values in its self-consistency line;
   propose a periodic doc-vs-validator cross-check.
   (Archived 2026-09-27 to make room at cap: standing spec guard named above, no citation outside the register that would break; whole and verbatim.)
+
+### L-182 · 2026-09-16 · tooling · #799 self-test wall-clock regression (host vs CI)
+
+- **Symptom:** #799 added spawn-heavy self-test cases; wall-clock went from 63–131s to 487s on
+  the dev host, breaking every local pre-push, while CI's faster runner stayed green throughout.
+- **Root cause:** a PR changing self-test/verify tooling was judged solely on CI's green check —
+  CI's runner speed isn't this host's, so a wall-clock regression invisible on CI can still
+  break every subsequent local pre-push on the machine that actually does the work.
+- **Lesson:** **A PR touching a self-test or verify-tooling script must be measured, or run
+  through the full local pre-push, on the actual dev host before merge — CI green is not a
+  sufficient gate for tooling-timing changes, only for correctness.**
+- **Guard:** the merge session re-measures self-test wall-clock during its scoped review.
+  (Archived 2026-09-26 to make room at cap: one citation, `scripts/campaign/bugs.mjs:4878`, a
+  code comment that still resolves here; the guard is the standing merge-session re-measure
+  ritual, unchanged by archiving the prose.)
