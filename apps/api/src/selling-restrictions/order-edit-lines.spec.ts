@@ -378,4 +378,21 @@ describe("#2288 / SA-447 — the netting and resolveLineUnits read unitLabel the
     expect(netting).toMatch(/item\.unitLabel !== undefined && asked\.trim\(\) === ""/);
     expect(netting).toMatch(/norm\(asked\) !== norm\(line\.unitLabel \?\? ""\)/);
   });
+
+  // SA-447a: with the label ABSENT, a qty/price edit of a held unit line never reaches the netting
+  // because updateOrderItems refuses it first (UNIT_AWARE_LINE). The real-PG pin relies on that
+  // order; this fails if a later reorder puts the restriction check ahead of the label check.
+  it("SA-447a: in updateOrderItems, assertUnitLabelNamed runs BEFORE assertLinesSellable", () => {
+    const service = readFileSync(join(__dirname, "..", "orders", "orders.service.ts"), "utf8");
+    const start = service.indexOf("  async updateOrderItems(");
+    expect(start).toBeGreaterThan(-1);
+    const rest = service.slice(start + 1);
+    const nextMethod = rest.search(/\n  (?:async |private |public |protected )?[A-Za-z]+\(/);
+    const body = nextMethod === -1 ? rest : rest.slice(0, nextMethod);
+    const labelCheck = body.indexOf("assertUnitLabelNamed(");
+    const restrictionCheck = body.indexOf("assertLinesSellable(");
+    expect(labelCheck).toBeGreaterThan(-1);
+    expect(restrictionCheck).toBeGreaterThan(-1);
+    expect(labelCheck).toBeLessThan(restrictionCheck);
+  });
 });
