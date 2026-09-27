@@ -126,26 +126,46 @@ export async function countMoneyRecords(
   customerIds: string[],
 ): Promise<Array<{ customerId: string; count: number }>> {
   const inIds = { customerId: { in: customerIds } };
-  const [notes, advances, payments, invoicePayments] = await Promise.all([
-    db.creditNote.findMany({ where: inIds, select: { customerId: true } }),
-    db.advancePayment.findMany({ where: inIds, select: { customerId: true } }),
-    db.payment.findMany({
+  // #2597: aggregate in SQL. Never read every money row just to learn whose it is: on
+  // deleteAllCustomers the customer set is the whole tenant.
+  const byCustomer = { by: ["customerId"], where: inIds, _count: { _all: true } };
+  const [notes, advances, perTxn, perInvoice] = await Promise.all([
+    db.creditNote.groupBy(byCustomer),
+    db.advancePayment.groupBy(byCustomer),
+    db.payment.groupBy({
+      by: ["transactionId"],
       where: { transaction: inIds },
-      select: { transaction: { select: { customerId: true } } },
+      _count: { _all: true },
     }),
-    db.invoicePayment.findMany({
+    db.invoicePayment.groupBy({
+      by: ["invoiceId"],
       where: { invoice: inIds },
-      select: { invoice: { select: { customerId: true } } },
+      _count: { _all: true },
     }),
   ]);
   const counts = new Map<string, number>();
-  const owners: string[] = [
-    ...notes.map((r: { customerId: string }) => r.customerId),
-    ...advances.map((r: { customerId: string }) => r.customerId),
-    ...payments.map((r: { transaction: { customerId: string } }) => r.transaction.customerId),
-    ...invoicePayments.map((r: { invoice: { customerId: string } }) => r.invoice.customerId),
-  ];
-  for (const id of owners) counts.set(id, (counts.get(id) ?? 0) + 1);
+  const add = (id: string, n: number) => counts.set(id, (counts.get(id) ?? 0) + n);
+  for (const r of [...notes, ...advances] as Array<{
+    customerId: string;
+    _count: { _all: number };
+  }>)
+    add(r.customerId, r._count._all);
+  // Payments are owned through their parent: read the owners of just the parents that have any.
+  const viaParent = async (
+    parent: { findMany(args: unknown): Promise<Array<{ id: string; customerId: string }>> },
+    groups: Array<Record<string, unknown> & { _count: { _all: number } }>,
+    key: string,
+  ) => {
+    if (groups.length === 0) return;
+    const n = new Map(groups.map((g) => [String(g[key]), g._count._all]));
+    const owners = await parent.findMany({
+      where: { id: { in: [...n.keys()] } },
+      select: { id: true, customerId: true },
+    });
+    for (const o of owners) add(o.customerId, n.get(o.id) ?? 0);
+  };
+  await viaParent(db.transaction, perTxn, "transactionId");
+  await viaParent(db.invoice, perInvoice, "invoiceId");
   return [...counts].map(([customerId, count]) => ({ customerId, count }));
 }
 
@@ -196,15 +216,22 @@ function deliveryHistoryWhere(customerIds: string[]) {
 }
 
 export async function countDeliveryHistory(db: Db, customerIds: string[]): Promise<string[]> {
-  const stops: Array<{ customerId: string | null; routeStop: { customerId: string | null } }> =
-    await db.routeRunStop.findMany({
-      where: deliveryHistoryWhere(customerIds),
-      select: { customerId: true, routeStop: { select: { customerId: true } } },
-    });
+  // #2597: owners only, aggregated in SQL (the stops' own customer, and the owners of RouteStops
+  // that have runs) rather than every RouteRunStop row.
+  const [own, viaStops]: [
+    Array<{ customerId: string | null }>,
+    Array<{ customerId: string | null }>,
+  ] = await Promise.all([
+    db.routeRunStop.groupBy({ by: ["customerId"], where: { customerId: { in: customerIds } } }),
+    db.routeStop.findMany({
+      where: { customerId: { in: customerIds }, routeRunStops: { some: {} } },
+      select: { customerId: true },
+      distinct: ["customerId"],
+    }),
+  ]);
   const owners = new Set<string>();
-  for (const s of stops)
-    for (const id of [s.customerId, s.routeStop?.customerId])
-      if (id && customerIds.includes(id)) owners.add(id);
+  for (const r of [...own, ...viaStops])
+    if (r.customerId && customerIds.includes(r.customerId)) owners.add(r.customerId);
   return [...owners];
 }
 
