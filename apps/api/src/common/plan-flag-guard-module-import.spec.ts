@@ -6,6 +6,7 @@ import { SuppliersModule } from "../suppliers/suppliers.module";
 import { MessagesModule } from "../messages/messages.module";
 import { CustomersModule } from "../customers/customers.module";
 import { EntitlementsModule } from "../billing/entitlements.module";
+import { SalesFactsModule } from "../sales-facts/sales-facts.module";
 
 /**
  * WP5a/5b/5c: PlanFlagGuard is only PROVIDED (and EXPORTED) by EntitlementsModule
@@ -24,6 +25,7 @@ describe("modules using PlanFlagGuard import EntitlementsModule", () => {
     ["SuppliersModule", SuppliersModule],
     ["MessagesModule", MessagesModule],
     ["CustomersModule", CustomersModule],
+    ["SalesFactsModule", SalesFactsModule],
   ])("%s imports EntitlementsModule", (_name, moduleClass) => {
     const imports = (Reflect.getMetadata("imports", moduleClass) ?? []) as unknown[];
     expect(imports).toContain(EntitlementsModule);

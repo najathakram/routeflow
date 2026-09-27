@@ -1187,7 +1187,7 @@ export default function AnalyticsPage() {
               value={fromInput}
               max={toInput}
               onChange={(e) => setFromInput(e.target.value)}
-              className="h-9 rounded border border-surface-border bg-white px-2 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
+              className="h-9 w-32 rounded border border-surface-border bg-white px-2 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
               title="From date"
             />
             <span className="text-navy/70 text-sm">–</span>
@@ -1196,7 +1196,7 @@ export default function AnalyticsPage() {
               value={toInput}
               min={fromInput}
               onChange={(e) => setToInput(e.target.value)}
-              className="h-9 rounded border border-surface-border bg-white px-2 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
+              className="h-9 w-32 rounded border border-surface-border bg-white px-2 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
               title="To date"
             />
             <Button variant="primary" size="sm" onClick={handleApply}>

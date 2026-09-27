@@ -14,6 +14,7 @@ import { AddonGuard } from "../../billing/addon.guard";
 import { AddonService } from "../../billing/addon.service";
 import { EntitlementsService } from "../../billing/entitlements.service";
 import { FeatureOverrideService } from "../../billing/feature-override.service";
+import { listenOnLoopback } from "../../common/testing/listen-loopback";
 
 /**
  * HTTP-level tests for `GET /settings/email/mailbox/microsoft/callback` (email-connect-microsoft
@@ -70,7 +71,7 @@ describe("MailboxController — GET microsoft/callback", () => {
     }).compile();
 
     app = moduleRef.createNestApplication();
-    await app.init();
+    await listenOnLoopback(app);
   });
 
   afterAll(async () => {

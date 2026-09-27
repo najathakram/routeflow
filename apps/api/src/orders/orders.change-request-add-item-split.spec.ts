@@ -1,3 +1,8 @@
+// SA-434: these driver cases pin OTHER behaviour; ownership is pinned in driver-edit-access*.spec.ts.
+jest.mock("./driver-edit-access", () => ({
+  ...jest.requireActual("./driver-edit-access"),
+  assertDriverMayEditOrder: jest.fn(),
+}));
 import { buildOrdersService, operatorPayload } from "./testing/orders-service-harness";
 
 /**

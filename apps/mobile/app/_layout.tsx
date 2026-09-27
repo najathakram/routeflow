@@ -21,6 +21,7 @@ import { useBuyerSessionStore } from "../lib/buyer-session-store";
 import { useDeveloperMode } from "../lib/api/addons";
 import { ConfirmModal } from "../components/ConfirmModal";
 import { initSentry } from "../lib/sentry";
+import { maybeDevParityLogin } from "../lib/dev-parity-login";
 import { queryClient } from "../lib/query-client";
 
 initSentry();
@@ -57,7 +58,9 @@ function RootLayoutNav() {
   useEffect(() => {
     initTenant();
     initialize();
-    initBuyer();
+    // #2338: the dev-only parity sign-in runs after the buyer store has loaded. It is a no-op
+    // unless __DEV__, the parity env var and a local API all hold (lib/dev-parity-login.ts).
+    void initBuyer().then(() => maybeDevParityLogin());
   }, []);
 
   useEffect(() => {
