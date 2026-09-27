@@ -86,7 +86,9 @@ describe("API error codes: local copy = shared list (#2163, L-072)", () => {
 
   it("the scan actually covered all three apps (guards a path typo turning the scan vacuous)", () => {
     for (const root of SCAN_ROOTS) {
-      expect(sources.some((s) => s.rel.startsWith(root))).toBe(true);
+      // `rel` uses the platform separator (\ on win32): compare against the same form.
+      const platformRoot = path.join(...root.split("/"));
+      expect(sources.some((s) => s.rel.startsWith(platformRoot))).toBe(true);
     }
   });
 });

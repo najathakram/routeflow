@@ -1,5 +1,6 @@
 import { spawnSync } from "node:child_process";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 
 // #2183: `npm run local:test:db` runs the DB lane on its own fresh database
 // (scripts/local-db-specs.mjs). These pins cover the parts that must never drift, without touching
@@ -16,7 +17,7 @@ function probe(body: string): unknown {
     [
       "--input-type=module",
       "-e",
-      `const m = await import(${JSON.stringify(SCRIPT)}); console.log(JSON.stringify(${body}));`,
+      `const m = await import(${JSON.stringify(pathToFileURL(SCRIPT).href)}); console.log(JSON.stringify(${body}));`,
     ],
     { encoding: "utf8" },
   );

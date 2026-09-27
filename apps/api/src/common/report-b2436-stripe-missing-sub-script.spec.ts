@@ -1,6 +1,7 @@
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 
 // #2436 — apps/api/scripts/report-b2436-stripe-missing-sub.mjs contract. Read-only, counts only:
 // fails closed without a DB url, carries no write SQL, and --self-test runs when spawned by its real
@@ -60,7 +61,7 @@ describe("report-b2436-stripe-missing-sub.mjs", () => {
       [
         "--input-type=module",
         "-e",
-        `import { summarize } from ${JSON.stringify(SCRIPT)};` +
+        `import { summarize } from ${JSON.stringify(pathToFileURL(SCRIPT).href)};` +
           `console.log(JSON.stringify(summarize(${JSON.stringify(rows)})));`,
       ],
       process.env,
