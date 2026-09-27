@@ -3051,3 +3051,68 @@ describe("#2188 tenant paths find an admin legacy-keyed row (constructed path, S
     expect(addonBooked(events)).toBe(-20);
   });
 });
+
+// #2551 / SA-503a (tier 1, lock-order conformance): every subscription writer takes the Tenant row
+// lock (lockTenantForLedger) as its FIRST statement after the plan-transition hook — before any
+// TenantSubscription write — so it can never hold the subscription row while waiting on a Tenant
+// lock held by reconcilePriceLedger/updatePlan/updateTenantPriceOverride (40P01).
+describe("#2551 lock-order conformance — Tenant lock before the subscription write", () => {
+  const trace = (tx: any, order: string[]) => {
+    tx.$queryRaw.mockImplementation(async (strings: TemplateStringsArray) => {
+      const sql = Array.from(strings).join("?");
+      if (/FROM "Tenant" WHERE id = \? FOR UPDATE/.test(sql)) order.push("tenant-lock");
+      return [];
+    });
+    for (const m of ["update", "updateMany", "upsert"] as const) {
+      const fn = tx.tenantSubscription[m];
+      if (!fn) continue;
+      const real = fn.getMockImplementation();
+      fn.mockImplementation(async (...a: any[]) => {
+        order.push("sub-write");
+        return real ? real(...a) : { count: 1 };
+      });
+    }
+  };
+
+  it("upgrade(): hook → Tenant lock → guarded subscription write", async () => {
+    const { svc, tx, planTransition } = make({
+      sub: { planKey: "STARTER", cycle: "MONTHLY", periodStart: null, periodEnd: null },
+    });
+    const order: string[] = [];
+    planTransition.onPlanChange.mockImplementation(async () => {
+      order.push("onPlanChange");
+      return { action: "none" };
+    });
+    trace(tx, order);
+
+    await svc.upgrade("t1", "BUSINESS", "admin");
+
+    expect(order.slice(0, 3)).toEqual(["onPlanChange", "tenant-lock", "sub-write"]);
+  });
+
+  it("cancel(): Tenant lock → subscription write (its second tx)", async () => {
+    const { periodEnd } = activePeriod();
+    const { svc, tx } = make({
+      tenantStatus: "ACTIVE",
+      sub: { planKey: "BUSINESS", cycle: "MONTHLY", periodEnd, stripeSubId: null },
+    });
+    const order: string[] = [];
+    trace(tx, order);
+
+    await svc.cancel("t1", "admin");
+
+    expect(order.slice(0, 2)).toEqual(["tenant-lock", "sub-write"]);
+  });
+
+  it("resume(): Tenant lock → subscription write", async () => {
+    const { svc, tx } = make({
+      sub: { planKey: "BUSINESS", cycle: "MONTHLY", cancelAtPeriodEnd: true },
+    });
+    const order: string[] = [];
+    trace(tx, order);
+
+    await svc.resume("t1", "admin");
+
+    expect(order.slice(0, 2)).toEqual(["tenant-lock", "sub-write"]);
+  });
+});
