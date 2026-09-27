@@ -16,12 +16,8 @@
 
 // ─── Production guard ─────────────────────────────────────────────────────────
 const { productionGuard } = require("./lib/production-guard");
-// --all (broad TRUNCATE) requires explicit confirmation; targeted manifest mode does not
-if (process.argv.includes("--all")) {
-  productionGuard({ requireFlag: "--i-know-this-deletes-everything" });
-} else {
-  productionGuard(); // block Railway env even in targeted mode
-}
+// Runs below, once the URL is resolved (#2206): --all (broad TRUNCATE) also requires explicit
+// confirmation; targeted manifest mode does not, but is still refused on any non-local target.
 
 const { PrismaClient } = require("../../../node_modules/@prisma/client");
 const { PrismaPg } = require("../../../node_modules/@prisma/adapter-pg");
@@ -42,7 +38,12 @@ function loadEnvDatabaseUrl() {
 const dbUrl = loadEnvDatabaseUrl();
 console.log(`\n🔗 Connecting to: ${dbUrl.replace(/:([^:@]+)@/, ":***@")}`);
 
-const pool = new Pool({ connectionString: dbUrl });
+// #2206: guard the URL this script actually dials, and dial exactly what was checked.
+const target = productionGuard({
+  requireFlag: process.argv.includes("--all") ? "--i-know-this-deletes-everything" : undefined,
+  dbUrl,
+});
+const pool = new Pool(target);
 const adapter = new PrismaPg(pool);
 const prisma = new PrismaClient({ adapter });
 

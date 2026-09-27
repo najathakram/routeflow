@@ -162,12 +162,62 @@ describe("#2262 import writes payments + the Invoice row in one transaction (SA-
     prisma.invoice.findFirst.mockResolvedValue(inv);
     prisma.invoicePayment.findMany.mockResolvedValue([]);
     prisma.invoice.findMany.mockResolvedValue([]);
-    prisma.invoicePayment.create.mockRejectedValueOnce(new Error("insert failed"));
+    prisma.invoicePayment.create.mockImplementationOnce(async (a: any) => {
+      writes.push({ op: "payment", tx: currentTx, invoiceId: a.data.invoiceId });
+      throw new Error("insert failed");
+    });
     const csv = "Invoice Number,Amount Applied to Invoice,Mode,Date\nINV-3001,40,Cash,2026-01-01\n";
     const result = await service.importPayments(Buffer.from(csv), "user-1");
     expect(result.errors.join(" ")).toMatch(/Payment for INV-3001/); // pushRowError sanitizes the cause
-    // Inside ONE tx the status write comes after the payment — the failed insert means no
-    // invoice write in this run's per-row tx (the DB rolls the tx back; this pins the order).
-    expect(writes.filter((w) => w.op === "invoiceUpdate" && w.tx !== null)).toHaveLength(0);
+    // SA-424 N3: the failed insert was attempted INSIDE the per-row tx (pre-fix it ran on the pool,
+    // tx null) and nothing was written to the invoice in that tx — so the rollback takes all of it.
+    const attempt = writes.find((w) => w.op === "payment");
+    expect(attempt?.tx).not.toBeNull();
+    expect(writes.filter((w) => w.op === "invoiceUpdate" && w.tx === attempt?.tx)).toHaveLength(0);
+  });
+
+  it("importPayments (SA-424 N1): an invoice found VOID under the lock is a row error — no payment, placeholder kept", async () => {
+    const inv = {
+      id: "inv-1",
+      invoiceNumber: "INV-3001",
+      total: 100,
+      status: InvoiceStatus.SENT,
+      dueDate: null,
+    };
+    prisma.invoice.findFirst
+      .mockResolvedValueOnce(inv) // the pre-tx lookup by number: still SENT
+      .mockResolvedValue({ ...inv, status: InvoiceStatus.VOID }); // under the lock: voided meanwhile
+    prisma.invoicePayment.findMany.mockResolvedValue([]);
+    prisma.invoice.findMany.mockResolvedValue([]);
+    const csv = "Invoice Number,Amount Applied to Invoice,Mode,Date\nINV-3001,40,Cash,2026-01-01\n";
+    const result = await service.importPayments(Buffer.from(csv), "user-1");
+    expect(result.imported).toBe(0);
+    expect(result.skipped).toBe(1);
+    expect(result.errors).toEqual(["Payment for INV-3001: invoice is voided"]);
+    expect(writes.filter((w) => w.op === "payment")).toHaveLength(0);
+    expect(prisma.invoicePayment.deleteMany).not.toHaveBeenCalled(); // the placeholder stays
+  });
+
+  it("importPayments (SA-424 N2): the end sweep is a compare-and-set on the status it read", async () => {
+    prisma.invoice.findFirst.mockResolvedValue(null); // no rows import; only the sweep runs
+    prisma.invoice.findMany.mockResolvedValue([
+      {
+        id: "inv-9",
+        status: InvoiceStatus.SENT,
+        total: 100,
+        dueDate: null,
+        payments: [{ amount: 100, status: "PAID" }],
+      },
+    ]);
+    prisma.invoice.updateMany.mockResolvedValue({ count: 0 }); // voided since the read ⇒ no match
+    (prisma.$transaction as unknown as jest.Mock).mockImplementation(async (ops: any) =>
+      Promise.all(ops),
+    );
+    const csv = "Invoice Number,Amount Applied to Invoice,Mode,Date\nINV-X,40,Cash,2026-01-01\n";
+    await service.importPayments(Buffer.from(csv), "user-1");
+    expect(prisma.invoice.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: "inv-9", status: InvoiceStatus.SENT } }),
+    );
+    expect(prisma.invoice.update).not.toHaveBeenCalled(); // never a blind write by id
   });
 });
