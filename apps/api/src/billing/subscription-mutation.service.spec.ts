@@ -465,6 +465,15 @@ describe("SubscriptionMutationService.subscribe (MRR = signed change)", () => {
     expect(emitted(events)).not.toContain(BILLING_EVENTS.TRIAL_CONVERTED);
   });
 
+  it("#2460: an ACTIVE subscribe() re-choice nets against the stored snapshot — NULL ⇒ the full new price", async () => {
+    const { svc, events } = make({
+      tenantStatus: "ACTIVE",
+      sub: { planKey: "STARTER", cycle: "MONTHLY", basePriceSnapshot: null },
+    });
+    await svc.subscribe("t1", { planKey: "BUSINESS", cycle: "MONTHLY" }, "admin");
+    expect(deltaOf(events, BILLING_EVENTS.PLAN_CHANGED)).toBe(349); // never 349 − 59
+  });
+
   it("reactivation from READ_ONLY (stale planKey retained) emits a full +base delta, not 0", async () => {
     const { svc, events } = make({
       tenantStatus: "READ_ONLY",
@@ -681,6 +690,38 @@ describe("#2223 SA-444c — subscribe() and the downgrade preview keep the overr
 });
 
 describe("SubscriptionMutationService.upgrade", () => {
+  // #2460 / SA-464 (2): the ledger nets against what the MRR snapshot actually counted — the stored
+  // basePriceSnapshot, NULL ⇒ 0 — never the catalog price of the plan being left. A NULL-snapshot
+  // row (e.g. a manual activation before #2460) then books the FULL new price, and snapshot MRR and
+  // ledger MRR re-agree. The charge (proration) still nets against the catalog entitlement.
+  it("#2460: an ACTIVE catalog row with a NULL snapshot books the FULL new price", async () => {
+    const { svc, events } = make({
+      sub: {
+        planKey: "STARTER",
+        cycle: "MONTHLY",
+        periodStart: null,
+        periodEnd: null,
+        basePriceSnapshot: null,
+      },
+    });
+    await svc.upgrade("t1", "BUSINESS", "admin");
+    expect(deltaOf(events, BILLING_EVENTS.PLAN_CHANGED)).toBe(349); // 349 − 0, never 349 − 59
+  });
+
+  it("#2460: a consistent catalog row nets against its stored snapshot", async () => {
+    const { svc, events } = make({
+      sub: {
+        planKey: "STARTER",
+        cycle: "MONTHLY",
+        periodStart: null,
+        periodEnd: null,
+        basePriceSnapshot: 59,
+      },
+    });
+    await svc.upgrade("t1", "BUSINESS", "admin");
+    expect(deltaOf(events, BILLING_EVENTS.PLAN_CHANGED)).toBe(290);
+  });
+
   it("#2223 / SA-444a: an override row upgrades the PLAN but not the price — quote 0 with the note, snapshot = the fee, delta 0", async () => {
     const { svc, tx, events } = make({
       sub: {
