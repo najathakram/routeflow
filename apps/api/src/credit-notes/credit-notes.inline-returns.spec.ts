@@ -113,6 +113,13 @@ describe("CreditNotesService — PR-1c (m-1 mintStandaloneInTx, §6.3 met exclus
   // ─── §6.3: "met" exclusion from the general oldest-first sweep ──────────────
 
   describe("autoApplyOldestCreditsInTx — §6.3 excludes an unmet inline-return credit from the general sweep", () => {
+    // SA-436 (#2401): the sweep runs only with the tenant switch ON (it defaults OFF).
+    beforeEach(() => {
+      (prisma.tenantConfig.findUnique as jest.Mock).mockResolvedValue({
+        creditAutoApplyOnSend: true,
+      });
+    });
+
     function primeInvoice(total: number) {
       prisma.invoice.findUnique.mockResolvedValue({ id: "inv-other", total, payments: [] });
     }
