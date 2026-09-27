@@ -321,7 +321,10 @@ export class RouteFlowGateway
         data.staffUserId = payload.sub;
         data.staffRole = payload.role;
         data.staffTenantId = tenantId;
-        data.staffCanActAsDriver = payload.canActAsDriver === true;
+        // #1534 fold: only a PRESENT claim is compared — a token that does not carry it (issued
+        // before every issuer minted it) asserts nothing about it, so it is not a mismatch.
+        data.staffCanActAsDriver =
+          typeof payload.canActAsDriver === "boolean" ? payload.canActAsDriver : undefined;
         const [live] = await this.checkStaffSockets([client as unknown as RoomMember]);
         if (!live) return;
       }
@@ -549,7 +552,8 @@ export class RouteFlowGateway
   /**
    * #1534 / SA-515: keeps each staff socket only while its user is ACTIVE and undeleted and still
    * has the role, tenant and canActAsDriver its token was minted with — a role change (including a
-   * canActAsDriver toggle) or a tenant move ends the socket, and the client re-authenticates. One
+   * canActAsDriver toggle, when the token carries that claim) or a tenant move ends the socket, and
+   * the client re-authenticates. One
    * user read per batch, however many sockets; it finishes before any socket is touched, so a
    * failed read throws and changes nothing. Returns, in order, whether each socket was kept.
    */
@@ -579,7 +583,7 @@ export class RouteFlowGateway
         !!row &&
         row.role === staffRole &&
         (row.tenantId ?? null) === (staffTenantId ?? null) &&
-        row.canActAsDriver === (staffCanActAsDriver === true);
+        (staffCanActAsDriver === undefined || row.canActAsDriver === staffCanActAsDriver);
       if (!live) socket.disconnect(true);
       return live;
     });
