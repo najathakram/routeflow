@@ -1702,6 +1702,8 @@ function DraftItemCard({
           onChange={onSetQty}
           onIncrement={onIncQty}
           onDecrement={onDecQty}
+          disabled={!!item.needsRepair}
+          hint={item.needsRepair ? "Needs repair — the count can't be edited" : undefined}
         />
       )}
 

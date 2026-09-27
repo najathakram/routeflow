@@ -16,6 +16,7 @@ export function StepperRow({
   onDecrement,
   max,
   hint,
+  disabled = false,
 }: {
   label: string;
   value: number;
@@ -24,6 +25,8 @@ export function StepperRow({
   onDecrement?: () => void;
   max?: number;
   hint?: string;
+  /** #2232: a LOCKED unit line (needsRepair) — no count can be edited; shown dimmed. */
+  disabled?: boolean;
 }) {
   // Local draft so the user can clear the input without it snapping back to 0.
   const [draft, setDraft] = useState(String(value));
@@ -57,8 +60,11 @@ export function StepperRow({
           </Text>
         ) : null}
       </View>
-      <View style={styles.stepper}>
-        <Pressable style={styles.stepBtn} onPress={dec} hitSlop={6}>
+      <View
+        style={[styles.stepper, disabled && { opacity: 0.4 }]}
+        accessibilityState={{ disabled }}
+      >
+        <Pressable style={styles.stepBtn} onPress={dec} hitSlop={6} disabled={disabled}>
           <Text style={styles.stepText}>−</Text>
         </Pressable>
         <TextInput
@@ -84,8 +90,9 @@ export function StepperRow({
           returnKeyType="done"
           maxLength={5}
           selectTextOnFocus
+          editable={!disabled}
         />
-        <Pressable style={styles.stepBtn} onPress={inc} hitSlop={6}>
+        <Pressable style={styles.stepBtn} onPress={inc} hitSlop={6} disabled={disabled}>
           <Text style={styles.stepText}>+</Text>
         </Pressable>
       </View>
