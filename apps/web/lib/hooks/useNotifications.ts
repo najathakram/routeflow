@@ -120,13 +120,6 @@ export function useNotifications() {
         description: `${data.driverName} is now ${data.status.toLowerCase()}`,
       });
 
-    const onLowStock = (data: { productName: string; stockLevel: number }) =>
-      push({
-        type: "stock",
-        title: "Low stock alert",
-        description: `${data.productName} — ${data.stockLevel} unit${data.stockLevel === 1 ? "" : "s"} remaining`,
-      });
-
     // Buyer-connect: sign-in email didn't match the customer record, so the
     // request needs seller review — actionable, and it also drives the
     // pending-approvals query so the bell's pinned section picks it up
@@ -173,7 +166,6 @@ export function useNotifications() {
     socket.on("order.urgent.placed", onUrgentOrder);
     socket.on("route.stop.completed", onStopCompleted);
     socket.on("driver.status.updated", onDriverStatus);
-    socket.on("inventory.low.stock", onLowStock);
     socket.on("buyer.connect.requested", onBuyerConnectRequested);
     socket.on("buyer.connect.autolinked", onBuyerAutoLinked);
     socket.on("crm.lead.handoff", onCrmHandoff);
@@ -182,7 +174,6 @@ export function useNotifications() {
       socket.off("order.urgent.placed", onUrgentOrder);
       socket.off("route.stop.completed", onStopCompleted);
       socket.off("driver.status.updated", onDriverStatus);
-      socket.off("inventory.low.stock", onLowStock);
       socket.off("buyer.connect.requested", onBuyerConnectRequested);
       socket.off("buyer.connect.autolinked", onBuyerAutoLinked);
       socket.off("crm.lead.handoff", onCrmHandoff);

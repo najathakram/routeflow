@@ -825,7 +825,7 @@ export default function EstimatesPage() {
               setDateFrom(e.target.value);
               setPage(1);
             }}
-            className="h-10 rounded border border-surface-border bg-white px-2 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
+            className="h-10 w-32 rounded border border-surface-border bg-white px-2 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
             title="Issue date from"
           />
           <span className="text-navy/70">–</span>
@@ -837,7 +837,7 @@ export default function EstimatesPage() {
               setDateTo(e.target.value);
               setPage(1);
             }}
-            className="h-10 rounded border border-surface-border bg-white px-2 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
+            className="h-10 w-32 rounded border border-surface-border bg-white px-2 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
             title="Issue date to"
           />
           {(dateFrom || dateTo) && (

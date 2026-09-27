@@ -16,7 +16,8 @@
       "supportsTablet": true,
       "bundleIdentifier": "com.routeflow.mobile",
       "infoPlist": {
-        "ITSAppUsesNonExemptEncryption": false
+        "ITSAppUsesNonExemptEncryption": false,
+        "UIRequiresFullScreen": true
       }
     },
     "android": {
@@ -56,6 +57,7 @@
         {
           "locationWhenInUsePermission": "RouteFlow shares your location with dispatch while you run a delivery route.",
           "locationAlwaysAndWhenInUsePermission": "RouteFlow shares your location with dispatch while you deliver, including when the app is in the background.",
+          "isIosBackgroundLocationEnabled": true,
           "isAndroidBackgroundLocationEnabled": true,
           "isAndroidForegroundServiceEnabled": true
         }

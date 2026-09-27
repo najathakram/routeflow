@@ -30,10 +30,14 @@ import { CONFIRMED_PAYMENT } from "../invoices/payment-predicates";
  * - Ad-hoc lines (`productId = null`) are excluded from per-product
  *   aggregates and contribute $0 to COGS.
  *
- * Known limitation: returns / credit notes are not netted out of units or
- * COGS (parity with getProductDemand); VOID / WRITTEN_OFF invoices drop out
- * wholesale via the status filter.
- * net sales: see `fetchAccrualNetSales`.
+ * Known limitation: returns / credit notes are not netted out of the units or
+ * COGS these LINE readers return, and their status filter
+ * (`REAL_INVOICE_STATUSES`) drops DRAFT / VOID / WRITTEN_OFF invoices wholesale.
+ * The revenue side is different since #2118 (plan A2): `fetchAccrualNetSales`
+ * and the product demand / sales reads (`sales-facts/`, which
+ * `getProductDemand` / `getProductSales` delegate to) use
+ * `ACCRUAL_REVENUE_STATUSES`, which keeps WRITTEN_OFF as a sale; only the net
+ * figures (`fetchAccrualNetSales`, the insights endpoints) subtract credits.
  */
 
 /**
@@ -180,6 +184,42 @@ export interface AccrualNetSales {
   net: number;
 }
 
+/** The three accrual-net terms as summed by a reader, before rounding. */
+export type AccrualNetTerms = Omit<AccrualNetSales, "net">;
+
+/**
+ * The ONE B440 composition (#2118): each term is rounded to cents FIRST, then `net` is taken
+ * from the rounded terms — never clamped (a credit-heavy window legitimately nets negative).
+ * `fetchAccrualNetSales*` below and the sales-facts layer (`apps/api/src/sales-facts/`) all
+ * call this, so no reader restates the arithmetic.
+ */
+export function netOf(terms: AccrualNetTerms): AccrualNetSales {
+  const gross = roundMoney(terms.gross);
+  const creditNotes = roundMoney(terms.creditNotes);
+  const externalRefunds = roundMoney(terms.externalRefunds);
+  return {
+    gross,
+    creditNotes,
+    externalRefunds,
+    net: roundMoney(gross - creditNotes - externalRefunds),
+  };
+}
+
+/**
+ * B440 credit-note term predicate: every non-VOID credit note nets, keyed on its OWN
+ * `createdAt` (never `appliedAt`). Shared by `fetchAccrualNetSales*` and the sales-facts
+ * readers so the two can never drift (L-167).
+ */
+export const ACCRUAL_CREDIT_NOTE_FILTER = {
+  status: { not: CreditNoteStatus.VOID },
+} as const;
+
+/**
+ * B455 return term predicate: only EXTERNAL_REFUND-method returns net here, keyed on
+ * `refundedAt` — a CREDIT_NOTE-method return is already netted through its credit note.
+ */
+export const EXTERNAL_REFUND_FILTER = { refundMethod: "EXTERNAL_REFUND" } as const;
+
 /** Inclusive date window — `lte` matches the `dateRange()` callers. */
 export interface AccrualWindow {
   gte: Date;
@@ -224,7 +264,7 @@ export async function fetchAccrualNetSales(
       where: {
         tenantId,
         createdAt: window,
-        status: { not: CreditNoteStatus.VOID },
+        ...ACCRUAL_CREDIT_NOTE_FILTER,
         ...customerFilter,
       },
       _sum: { amount: true },
@@ -233,19 +273,18 @@ export async function fetchAccrualNetSales(
     // exclusion term needed here. `refundMethod` is load-bearing: a
     // CN-method return is already netted via the CreditNote read above.
     db.return.aggregate({
-      where: { tenantId, refundMethod: "EXTERNAL_REFUND", refundedAt: window, ...customerFilter },
+      where: { tenantId, ...EXTERNAL_REFUND_FILTER, refundedAt: window, ...customerFilter },
       _sum: { refundAmount: true },
     }),
   ]);
 
   const sumTotal = Number(invoiceAgg._sum.total ?? 0);
   const sumTaxAmount = Number(invoiceAgg._sum.taxAmount ?? 0);
-  const gross = roundMoney(sumTotal - sumTaxAmount);
-  const creditNotes = roundMoney(Number(creditNoteAgg._sum.amount ?? 0));
-  const externalRefunds = roundMoney(Number(returnAgg._sum.refundAmount ?? 0));
-  const net = roundMoney(gross - creditNotes - externalRefunds);
-
-  return { gross, creditNotes, externalRefunds, net };
+  return netOf({
+    gross: sumTotal - sumTaxAmount,
+    creditNotes: Number(creditNoteAgg._sum.amount ?? 0),
+    externalRefunds: Number(returnAgg._sum.refundAmount ?? 0),
+  });
 }
 
 /** Per-customer accrual net sales for one tenant-window — union of customers
@@ -263,44 +302,40 @@ export async function fetchAccrualNetSalesByCustomer(
     }),
     db.creditNote.groupBy({
       by: ["customerId"],
-      where: { tenantId, createdAt: window, status: { not: CreditNoteStatus.VOID } },
+      where: { tenantId, createdAt: window, ...ACCRUAL_CREDIT_NOTE_FILTER },
       _sum: { amount: true },
     }),
     db.return.groupBy({
       by: ["customerId"],
-      where: { tenantId, refundMethod: "EXTERNAL_REFUND", refundedAt: window },
+      where: { tenantId, ...EXTERNAL_REFUND_FILTER, refundedAt: window },
       _sum: { refundAmount: true },
     }),
   ]);
 
   const gross = new Map<string, number>();
   for (const row of invoiceRows) {
-    gross.set(
-      row.customerId,
-      roundMoney(Number(row._sum.total ?? 0) - Number(row._sum.taxAmount ?? 0)),
-    );
+    gross.set(row.customerId, Number(row._sum.total ?? 0) - Number(row._sum.taxAmount ?? 0));
   }
   const creditNotes = new Map<string, number>();
   for (const row of creditNoteRows) {
-    creditNotes.set(row.customerId, roundMoney(Number(row._sum.amount ?? 0)));
+    creditNotes.set(row.customerId, Number(row._sum.amount ?? 0));
   }
   const externalRefunds = new Map<string, number>();
   for (const row of returnRows) {
-    externalRefunds.set(row.customerId, roundMoney(Number(row._sum.refundAmount ?? 0)));
+    externalRefunds.set(row.customerId, Number(row._sum.refundAmount ?? 0));
   }
 
   const customerIds = new Set([...gross.keys(), ...creditNotes.keys(), ...externalRefunds.keys()]);
   const result = new Map<string, AccrualNetSales>();
   for (const customerId of customerIds) {
-    const g = gross.get(customerId) ?? 0;
-    const cn = creditNotes.get(customerId) ?? 0;
-    const er = externalRefunds.get(customerId) ?? 0;
-    result.set(customerId, {
-      gross: g,
-      creditNotes: cn,
-      externalRefunds: er,
-      net: roundMoney(g - cn - er),
-    });
+    result.set(
+      customerId,
+      netOf({
+        gross: gross.get(customerId) ?? 0,
+        creditNotes: creditNotes.get(customerId) ?? 0,
+        externalRefunds: externalRefunds.get(customerId) ?? 0,
+      }),
+    );
   }
   return result;
 }

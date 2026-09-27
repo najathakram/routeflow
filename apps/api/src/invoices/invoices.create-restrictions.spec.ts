@@ -75,7 +75,7 @@ describe("InvoicesService.create — selling restrictions (F-05)", () => {
     await expect(create()).rejects.toBeDefined();
     expect(restrictions.assertLinesSellable).toHaveBeenCalledTimes(1);
     expect(restrictions.assertLinesSellable).toHaveBeenCalledWith({
-      tenantId: expect.any(String),
+      tenantId: "test-tenant",
       customerId: "cust-1",
       // the freeform fee line has no product: nothing to check
       lines: [{ productId: "p-banned" }, { productId: "p-ok" }],

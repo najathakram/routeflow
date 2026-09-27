@@ -312,16 +312,94 @@ describe("NumberingService", () => {
     // and keeps this exact byte-identical fast path both before and after the
     // fix.
     it("P-3: reserveNext(docType) with no year keys year:0 and formats with no year segment for a non-year-scoped type (byte-identical to the pre-B100 series)", async () => {
-      prisma.numberingSequence.upsert.mockResolvedValue({
-        prefix: "RET-",
-        padding: 4,
-        nextNumber: 5,
-      });
-      prisma.numberingSequence.update.mockResolvedValue({ nextNumber: 6 });
+      const tx = {
+        $executeRaw: jest.fn().mockResolvedValue(0),
+        numberingSequence: {
+          upsert: jest.fn(),
+          update: jest.fn().mockResolvedValue({ prefix: "RET-", padding: 4, nextNumber: 6 }),
+        },
+      };
+      prisma.tenantTransaction.mockImplementation((fn: any) => fn(tx));
 
       const result = await service.reserveNext("RETURN");
 
       expect(result).toBe("RET-0005");
+      expect(tx.numberingSequence.update).toHaveBeenCalledWith({
+        where: { tenantId_docType_year: { tenantId: "test-tenant", docType: "RETURN", year: 0 } },
+        data: { nextNumber: { increment: 1 } },
+      });
+    });
+
+    // #2177 (SA-409): the fast-path seed never raises for the LOSER of a first-mint race — it
+    // inserts nothing and reserves the winner's next number. Behavioural, over an in-memory
+    // NumberingSequence with the real unique key and ON-CONFLICT-DO-NOTHING semantics: the store
+    // has NO `upsert`, so a regression back to the select-then-insert seed fails here as a
+    // TypeError. The genuine two-connection race is pinned on real Postgres in
+    // numbering-first-mint-race.db.spec.ts.
+    function fakeSequenceStore() {
+      const rows = new Map<string, { prefix: string; padding: number; nextNumber: number }>();
+      const keyOf = (tenantId: string, docType: string, year: number) =>
+        `${tenantId}|${docType}|${year}`;
+      const store = {
+        rows,
+        // The seed's bound values, in order: id, tenantId, docType, year, prefix, padding.
+        $executeRaw: jest.fn((_sql: TemplateStringsArray, ...v: any[]) => {
+          const key = keyOf(v[1], v[2], v[3]);
+          if (rows.has(key)) return Promise.resolve(0); // conflict: the loser inserts nothing
+          rows.set(key, { prefix: v[4], padding: v[5], nextNumber: 1 });
+          return Promise.resolve(1);
+        }),
+        numberingSequence: {
+          update: jest.fn(({ where, data }: any) => {
+            const w = where.tenantId_docType_year;
+            const row = rows.get(keyOf(w.tenantId, w.docType, w.year));
+            if (!row)
+              return Promise.reject(Object.assign(new Error("not found"), { code: "P2025" }));
+            row.nextNumber += data.nextNumber.increment;
+            return Promise.resolve({ ...row });
+          }),
+        },
+      };
+      return store;
+    }
+
+    it("#2177: on a caller's tx, the first mint seeds and the loser inserts nothing and gets n+1", async () => {
+      const store = fakeSequenceStore();
+      const opts = { year: 2026, tenantId: "tenant-1", tx: store as any };
+
+      const winner = await service.reserveNext("RETURN", opts);
+      const loser = await service.reserveNext("RETURN", opts);
+
+      expect([winner, loser]).toEqual(["RET-2026-0001", "RET-2026-0002"]);
+      expect(await store.$executeRaw.mock.results[1].value).toBe(0); // the loser inserted nothing
+      expect(store.rows.size).toBe(1);
+      expect(prisma.tenantTransaction).not.toHaveBeenCalled(); // never a nested transaction
+    });
+
+    it("#2177: a row a concurrent winner already committed at n is kept — the loser reserves n, never resets it", async () => {
+      const store = fakeSequenceStore();
+      store.rows.set("test-tenant|RETURN|2026", { prefix: "RET-", padding: 4, nextNumber: 5 });
+
+      const n = await service.reserveNext("RETURN", {
+        year: 2026,
+        tenantId: "tenant-1",
+        tx: store as any,
+      });
+
+      expect(n).toBe("RET-2026-0005");
+      expect(store.rows.get("test-tenant|RETURN|2026")?.nextNumber).toBe(6);
+    });
+
+    it("#2177: with no caller tx, the SAME seed-then-increment runs inside its own tenantTransaction", async () => {
+      const store = fakeSequenceStore();
+      prisma.tenantTransaction.mockImplementation((fn: any) => fn(store));
+
+      const first = await service.reserveNext("RETURN");
+      const second = await service.reserveNext("RETURN");
+
+      expect([first, second]).toEqual(["RET-0001", "RET-0002"]);
+      expect(prisma.tenantTransaction).toHaveBeenCalledTimes(2);
+      expect(await store.$executeRaw.mock.results[1].value).toBe(0);
     });
 
     // Helper: drive the year-scoped INVOICE mint through a tx the test controls
