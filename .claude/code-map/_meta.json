@@ -1,5 +1,5 @@
 {
-  "mappedSha": "471a7670b68e0e6c48d177c66b2118387b03f63d",
+  "mappedSha": "ec1a95035e2fd0a4e9bc2108c55a0e2466c9fe26",
   "generatedAt": "2026-09-26T05:18:11.487Z",
   "layout": "split-2026-09-13",
   "areas": [
@@ -15,5 +15,5 @@
     "packages": 0
   },
   "fileCount": 1045,
-  "notes": "**2026-09-27 — evening landings #2503, #2494 (docs-only bookkeeping).** New `api/landing-2026-09-27-evening.md` (TOC row in `api.md`): SA-464 manual-activation snapshot ledger (#2503), SA-436 credit auto-apply off by default + `CreditNoteApplyBlock` + required apply `invoiceId` (#2494, additive migration). B877 closed already-fixed (#2494). mappedSha -> 471a7670. No source changed. See CHANGELOG.md for the full landing list."
+  "notes": "**2026-09-27 — night landing #2390 (docs-only bookkeeping).** New `mobile/landing-2026-09-27-night.md` (TOC row in `mobile.md`): operator edit-items.tsx sliced verbatim into `components/edit-items/` + `lib/margin-floor-price.ts`; it also reflowed the unformatted web `RecordInlineReturnDialog.tsx`. mappedSha -> ec1a9503. No source changed. See CHANGELOG.md for the full landing list."
 }

@@ -34,4 +34,5 @@ in `useOpenPurchaseOrders` always return zero rows for that leg; `lib/api/buyer.
 | [mobile/screens-by-role.md](mobile/screens-by-role.md) | Screens by role (`app/`): `(auth)`, `(customer)`, `(driver)`, `(operator)`, `(tenant)`             |
 | [mobile/tests-1.md](mobile/tests-1.md)                 | Tests (1/2): `__tests__/` intro + batches through 2026-08-25 recurring-routes/order-delivery split |
 | [mobile/tests-2.md](mobile/tests-2.md)                 | Tests (2/2): batches from 2026-08-28 `developer_mode` narrowing through 2026-09-09 Train 1/2       |
+| [mobile/landing-2026-09-27-night.md](mobile/landing-2026-09-27-night.md) | Landing 2026-09-27 night: operator edit-items sliced into `components/edit-items/` (#2390) |
 | [mobile/catchup-2026-09-21.md](mobile/catchup-2026-09-21.md) | Catch-up 2026-09-21: `BlockedLinesModal`, `po-list-logic`, `selling-restricted` |
