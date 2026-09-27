@@ -12,6 +12,8 @@
 //     records them, and asserts `git merge-base --is-ancestor <required> <image sha>` for each. The
 //     required commit is PROOF_STACK_REQUIRE (a PR's merge or head commit) or the checkout's HEAD.
 //     Anything else, including an unlabelled image, is a "stale image" failure before the lane runs.
+//     A dirty-tree image fails too when PROOF_STACK_REQUIRE is set (a PR proof); in the HEAD dev
+//     loop it is only a warning.
 //
 // Pure planning plus an injected `run(cmd, args) → { status, stdout, stderr }`, so the spec drives
 // it with fakes and no docker.
@@ -84,10 +86,19 @@ export function checkProofStack({ required, images, ancestor }) {
       );
       continue;
     }
-    if (img.dirty === "true")
+    if (img.dirty === "true") {
+      // SA-473a: a PR proof (PROOF_STACK_REQUIRE) must run on committed code only; an image built
+      // from a dirty tree may hold changes no commit carries. The HEAD dev loop only warns.
+      if (required.from === "PROOF_STACK_REQUIRE") {
+        failures.push(
+          `stale image: ${img.image} was built from a dirty tree at ${img.sha.slice(0, 12)} — a PR proof needs an image built from a clean checkout (commit or discard, then npm run local:up)`,
+        );
+        continue;
+      }
       warnings.push(
         `${img.image} was built from a DIRTY tree at ${img.sha.slice(0, 12)}: it may hold uncommitted changes`,
       );
+    }
     if (required.error) continue;
     const verdict = ancestor(required.sha, img.sha);
     if (verdict === null)

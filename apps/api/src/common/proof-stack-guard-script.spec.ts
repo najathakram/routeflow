@@ -49,6 +49,8 @@ const out = {
   unlabelled: check([{ image: "api", sha: null, dirty: null }, { image: "web", sha: "unknown", dirty: "unknown" }]),
   unreadable: check([{ image: "api", error: "cannot inspect api" }]),
   dirty: check([{ image: "api", sha: "${B}", dirty: "true" }]),
+  dirtyPr: p.checkProofStack({ required: { sha: "${A}", from: "PROOF_STACK_REQUIRE" },
+    images: [{ image: "api", sha: "${B}", dirty: "true" }], ancestor: anc }),
   noRequired: p.checkProofStack({ required: { error: "required commit nope is not in this clone" },
     images: [{ image: "api", sha: "${A}", dirty: "false" }], ancestor: anc }),
   unrelatable: p.checkProofStack({ required, images: [{ image: "api", sha: "${B}", dirty: "false" }], ancestor: () => null }),
@@ -122,7 +124,14 @@ describe("proof-stack library (#2491)", () => {
     expect(r.noRequired.failures).toEqual(["required commit nope is not in this clone"]);
   });
 
-  it("warns (without failing) on an image built from a dirty tree", () => {
+  it("fails a dirty-tree image as stale when proving a PR (PROOF_STACK_REQUIRE)", () => {
+    expect(r.dirtyPr.ok).toBe(false);
+    expect(r.dirtyPr.failures).toEqual([
+      expect.stringMatching(/^stale image: api was built from a dirty tree at bbbbbbbbbbbb/),
+    ]);
+  });
+
+  it("warns (without failing) on a dirty-tree image in the HEAD dev loop", () => {
     expect(r.dirty.ok).toBe(true);
     expect(r.dirty.warnings[0]).toMatch(/DIRTY tree at bbbbbbbbbbbb/);
   });
@@ -233,6 +242,26 @@ describeFakes("local-env.mjs --proof-stack / --build-sha (#2491), fake docker an
     const r = run(["--proof-stack"], { FAKE_HEAD: B, FAKE_IMAGE_SHA: B, PROOF_STACK_REQUIRE: A });
     expect(r.status).toBe(0);
     expect(r.out).toMatch(/required aaaaaaaaaaaa \(PROOF_STACK_REQUIRE\) · OK/);
+  });
+
+  it("refuses a dirty-tree image for a PR proof, but only warns in the HEAD dev loop", () => {
+    const pr = run(["--proof-stack"], {
+      FAKE_HEAD: B,
+      FAKE_IMAGE_SHA: B,
+      FAKE_IMAGE_DIRTY: "true",
+      PROOF_STACK_REQUIRE: A,
+    });
+    expect(pr.status).toBe(1);
+    expect(pr.ran).toBeNull();
+    expect(pr.out).toMatch(/stale image: routeflow-api:local was built from a dirty tree/);
+    const dev = run(["--proof-stack"], {
+      FAKE_HEAD: B,
+      FAKE_IMAGE_SHA: B,
+      FAKE_IMAGE_DIRTY: "true",
+    });
+    expect(dev.status).toBe(0);
+    expect(dev.ran).not.toBeNull();
+    expect(dev.out).toMatch(/WARNING .*DIRTY tree/);
   });
 
   it("refuses an unlabelled image and an image that was never built", () => {

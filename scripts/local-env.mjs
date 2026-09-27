@@ -62,9 +62,11 @@ Flags:
                org.routeflow.dirty labels (used by local:up and local:build).
   --proof-stack  #2491 (SA-473 (d)): BEFORE the command runs, read both stack images' build shas,
                print them as one "proof-stack:" line, append the record to
-               local-assets/proof-stack.jsonl (PROOF_STACK_LOG overrides), and refuse (exit 1, "stale image", command never
-               run) unless each image was built from a descendant of PROOF_STACK_REQUIRE (a PR's
-               merge or head commit) or, when that is unset, of this checkout's HEAD.
+               local-assets/proof-stack.jsonl (PROOF_STACK_LOG overrides), and refuse (exit 1,
+               "stale image", command never run) unless each image was built from a descendant
+               of PROOF_STACK_REQUIRE (a PR's merge or head commit) or, when that is unset, of
+               this checkout's HEAD. With PROOF_STACK_REQUIRE set, an image built from a dirty
+               tree is refused too (the HEAD dev loop only warns).
   --help       Print this help and exit 0.
 
 Everything after \`--\` is one command string, run through the platform shell (so \`&&\`

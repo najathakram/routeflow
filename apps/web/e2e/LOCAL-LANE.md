@@ -63,7 +63,8 @@ stack-backed lane (`local:validate`, `local:validate:features`, `local:e2e`, `lo
 prints a `proof-stack:` line with both shas. It then refuses with **stale image** unless each image
 was built from a descendant of the commit under proof: `PROOF_STACK_REQUIRE=<PR merge or head sha>`,
 or this checkout's HEAD when that is unset. An unlabelled image (built outside `local:up`) is
-refused too. The fix is always `npm run local:up`; never prove on the old image. A lane that drives
+refused too, and so is an image built from a dirty tree when `PROOF_STACK_REQUIRE` is set (a PR
+proof needs committed code; the HEAD dev loop only warns). The fix is always `npm run local:up`; never prove on the old image. A lane that drives
 Playwright or curl by hand runs `npm run local:proof-stack` first and quotes its line in the proof.
 Every check is appended to `local-assets/proof-stack.jsonl`.
 
