@@ -1279,7 +1279,10 @@ describe("B216 — a Stripe reinstatement LEAVES a downgrade scheduled before th
  */
 describe("BillingService.syncStripeSubscriptionPrice", () => {
   let service: BillingService;
-  let prisma: { tenantSubscription: { findUnique: jest.Mock; update: jest.Mock } };
+  let prisma: {
+    tenantSubscription: { findUnique: jest.Mock; update: jest.Mock };
+    tenantAddon: { findMany: jest.Mock };
+  };
   let stripe: { getSubscription: jest.Mock; updateSubscription: jest.Mock; isConfigured: boolean };
   let pricing: { checkoutPriceData: jest.Mock; resolveTenantPricing: jest.Mock };
   let events: { emit: jest.Mock };
@@ -1287,6 +1290,8 @@ describe("BillingService.syncStripeSubscriptionPrice", () => {
   beforeEach(async () => {
     prisma = {
       tenantSubscription: { findUnique: jest.fn(), update: jest.fn().mockResolvedValue({}) },
+      // #2440: the tenant's add-on subscription items (none by default).
+      tenantAddon: { findMany: jest.fn().mockResolvedValue([]) },
     };
     stripe = {
       getSubscription: jest.fn(),
@@ -1530,6 +1535,39 @@ describe("BillingService.syncStripeSubscriptionPrice", () => {
     await service.syncStripeSubscriptionPrice("t1");
 
     expect(pricing.checkoutPriceData).toHaveBeenCalledWith("t1", "month");
+  });
+  // #2440 (lead ruling A, a money bug): Stripe does not order items base-first. An add-on item
+  // listed first must never be repriced to the plan price — only the base-plan item is.
+  it("#2440: reprices the base-plan item, never an add-on item listed first", async () => {
+    prisma.tenantSubscription.findUnique.mockResolvedValue({
+      tenantId: "t1",
+      stripeSubId: "sub_1",
+      billingInterval: "month",
+    });
+    prisma.tenantAddon.findMany.mockResolvedValue([{ stripeItemId: "si_addon" }]);
+    stripe.getSubscription.mockResolvedValue({
+      status: "active",
+      items: {
+        data: [
+          { id: "si_addon", price: { recurring: { interval: "month" }, product: "prod_addon" } },
+          { id: "si_base", price: { recurring: { interval: "month" }, product: "prod_base" } },
+        ],
+      },
+    });
+    pricing.checkoutPriceData.mockResolvedValue({
+      currency: "usd",
+      product_data: { name: "RouteFlow Growth — monthly" },
+      unit_amount: 15000,
+      recurring: { interval: "month" },
+    });
+
+    const result = await service.syncStripeSubscriptionPrice("t1");
+
+    expect(result.synced).toBe(true);
+    const [, params] = stripe.updateSubscription.mock.calls[0];
+    expect(params.items).toHaveLength(1);
+    expect(params.items[0].id).toBe("si_base");
+    expect(params.items[0].price_data.product).toBe("prod_base");
   });
 });
 
