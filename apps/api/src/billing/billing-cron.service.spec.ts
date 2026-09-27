@@ -281,6 +281,31 @@ describe("BillingCronService", () => {
     expect(deltaOf(events, BILLING_EVENTS.PLAN_CHANGED)).toBe(0);
   });
 
+  // SA-464b: the same override row with a NULL snapshot (not yet counted) — the downgrade writes the fee
+  // and books it in full, so snapshot MRR and ledger MRR re-agree.
+  it("SA-464b: a due downgrade of an override row with a NULL snapshot writes the fee and books +fee", async () => {
+    const { svc, tx, events } = make({
+      downgrades: [
+        {
+          tenantId: "t1",
+          planKey: "BUSINESS",
+          planVersionId: "v7",
+          downgradeToPlanKey: "STARTER",
+          downgradeEffectiveAt: new Date(Date.now() - 86400000),
+          retainedUserIds: [],
+          priceOverrideMonthly: 150,
+          basePriceSnapshot: null,
+        },
+      ],
+    });
+    await svc.applyScheduledDowngrades();
+    expect(tx.tenantSubscription.update.mock.calls[0][0].data).toMatchObject({
+      planKey: "STARTER",
+      basePriceSnapshot: 150,
+    });
+    expect(deltaOf(events, BILLING_EVENTS.PLAN_CHANGED)).toBe(150);
+  });
+
   it("SA-444c: the downgrade query selects the override it keeps", async () => {
     const { svc, prisma } = make({ downgrades: [] });
     await svc.applyScheduledDowngrades();
