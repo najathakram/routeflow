@@ -202,7 +202,7 @@ export async function checkOrderCoverage(params: {
   // Reuse merge-idempotency.ts's shouldSkipInPlaceResync tolerance/zero-qty rule exactly: `qty`
   // is Decimal(10,3), and Node's float math (0.7 + 0.1 === 0.7999999999999999) means a strict
   // `>=` never counts a fully-billed line as covered. A zero-billable-qty line (never billable
-  // at all, or refused on a DELIVERED order) can never block coverage either.
+  // at all, or an evidence row of 0 — a REFUSED delivery) can never block coverage either.
   const billableLines = activeLines.filter((li) => billableQtyOf(li) > QTY_EPSILON);
   const fullyCovered = billableLines.every((li) => {
     const agg = byTarget.get(`line:${li.id}`);
@@ -282,11 +282,11 @@ export async function checkOrderCoverage(params: {
  * fullyCovered gate excludes it), but an already-CANCELLED line with stale non-zero qty/subtotal
  * (a prior return, a prior recompute) still gets its numbers normalized to zero.
  *
- * SA-093a, round 6: a line with its OWN mutation row showing 0 delivered (a REFUSED delivery)
+ * SA-093a, round 6: a line with its OWN evidence row showing 0 delivered (a REFUSED delivery)
  * is ALSO cancelled once the order is fully covered — the pre-PR behaviour, restored on purpose
  * for this specific line: a refused line was never going to be billed at all, so once delivery
- * is done there is nothing left pending for it. This is keyed on THAT line's own mutation row,
- * never on order.status (see `delivered-basis-by-line.ts`) — a line with no mutation row of its
+ * is done there is nothing left pending for it. This is keyed on THAT line's own evidence row,
+ * never on order.status (see `delivered-basis-by-line.ts`) — a line with no evidence row of its
  * own is never "refused" by this rule, whatever the order's other lines or status say.
  */
 export async function finalizeOrderRecompute(params: {
@@ -303,7 +303,7 @@ export async function finalizeOrderRecompute(params: {
 }): Promise<OrderRecomputeTotals> {
   const { db, orderId, order, deliveredBasis, unbilled, categoryTaxSum, invoices } = params;
 
-  // Cancel a genuine orphan (was billed, now removed), a line refused by its OWN mutation row,
+  // Cancel a genuine orphan (was billed, now removed), a line refused by its OWN evidence row,
   // and normalize an already-cancelled line's stale qty/subtotal. A line that was NEVER billed
   // and isn't refused/already-cancelled is left untouched — it should not appear here at all
   // while the caller's gate holds.

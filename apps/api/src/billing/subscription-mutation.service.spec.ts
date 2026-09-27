@@ -67,7 +67,8 @@ import {
 } from "@nestjs/common";
 import { SubscriptionMutationService } from "./subscription-mutation.service";
 import { ProrationService } from "./proration.service";
-import { BILLING_EVENTS } from "./plan-catalog.constants";
+import { BILLING_EVENTS, SELF_SERVICE_ADDON_SKUS } from "./plan-catalog.constants";
+import { fakeTenantAddonStore } from "../testing/fake-tenant-addon-store";
 
 beforeEach(() => {
   lockQueues.clear();
@@ -281,6 +282,10 @@ function make(opts: Opts = {}) {
     tenantAddon: {
       upsert: jest.fn().mockResolvedValue({}),
       update: jest.fn().mockResolvedValue({}),
+      // #2188: findAddonRow reads via findFirst — delegate so each fixture's findUnique sequence still drives it.
+      findFirst: jest.fn(function (this: any, args: unknown) {
+        return this.findUnique(args);
+      }),
       // FIX-864 r2 finding #0: disableAddon's in-tx re-read under the row lock (mirrors
       // addon.service.ts's admin-path fix) — defaults to the same row `prisma.tenantAddon
       // .findFirst` handed out pre-tx, so the existing disableAddon fixtures still see an
@@ -1124,6 +1129,10 @@ describe("SubscriptionMutationService.enableAddon — F1 tenant-path concurrency
     let row: { active: boolean; quantity: number; priceSnapshot: unknown } | null = null;
     const tenantAddon = {
       findUnique: jest.fn(async () => (row ? { ...row } : null)),
+      // #2188: findAddonRow reads via findFirst — delegate so each fixture's findUnique sequence still drives it.
+      findFirst: jest.fn(function (this: any, args: unknown) {
+        return this.findUnique(args);
+      }),
       upsert: jest.fn(async ({ create, update }: any) => {
         const applied = row ? update : create;
         // B865 / SA-277: the STORED priceSnapshot must persist across the (serialised) second
@@ -2793,5 +2802,64 @@ describe("#2189 subscribe() re-checks under the lock (SA-389)", () => {
     expect(events.emit.mock.calls.map((c: any[]) => c[1])).not.toContain(
       BILLING_EVENTS.TRIAL_CONVERTED,
     );
+  });
+});
+
+// #2188 / SA-385 (5), tenant side — a CONSTRUCTED path, UNIT pins only (SA-385b); the reachable
+// pairs are pinned in addon.service.spec.ts and on the DB lane. Today no legacy-mapped SKU (REGULATED_ITEMS, MSRP,
+// SALES_AGENTS, OCR_PACK_250) is self-service, so subscribe()/self-serve cannot yet meet an admin
+// legacy-keyed row; these pins widen SELF_SERVICE_ADDON_SKUS for MSRP inside the block only, so the
+// shared lookup is proven the day one becomes self-service. Admin-side pins: addon.service.spec.ts.
+describe("#2188 tenant paths find an admin legacy-keyed row (constructed path, SA-385b)", () => {
+  const selfService = SELF_SERVICE_ADDON_SKUS as unknown as string[];
+  beforeEach(() => selfService.push("MSRP"));
+  afterEach(() => selfService.splice(selfService.indexOf("MSRP"), 1));
+
+  const addonBooked = (events: any) =>
+    events.emit.mock.calls
+      .filter((c: any[]) =>
+        [BILLING_EVENTS.ADDON_ENABLED, BILLING_EVENTS.ADDON_DISABLED].includes(c[1]),
+      )
+      .reduce((sum: number, c: any[]) => sum + (c[3]?.amountDelta ?? 0), 0);
+  const withStore = (seed: Parameters<typeof fakeTenantAddonStore>[0], opts: Opts = {}) => {
+    const made = make(opts);
+    const store = fakeTenantAddonStore(seed);
+    made.prisma.tenantAddon = store;
+    made.tx.tenantAddon = store;
+    return { ...made, store };
+  };
+
+  it("self-serve enable re-activates the admin's legacy row IN PLACE and nets the ledger once", async () => {
+    const { svc, store, events } = withStore([
+      { addonKey: "msrp", sku: "MSRP", active: true, quantity: 1, priceSnapshot: 0 },
+    ]);
+    await svc.enableAddon("t1", "MSRP", 1);
+    expect(store.rows).toHaveLength(1);
+    expect(store.rows[0]).toMatchObject({ id: "row1", addonKey: "msrp", active: true });
+    expect(addonBooked(events)).toBe(20); // {0,1} → {20,1}: +X once, never +X on a second row
+  });
+
+  it("subscribe re-activates an INACTIVE admin legacy row instead of creating a second", async () => {
+    const { svc, store } = withStore(
+      [{ addonKey: "msrp", sku: "MSRP", active: false, quantity: 1, priceSnapshot: 20 }],
+      { tenantStatus: "TRIAL" },
+    );
+    await svc.subscribe(
+      "t1",
+      { planKey: "TEAM", cycle: "MONTHLY", addons: [{ sku: "MSRP", quantity: 1 }] },
+      "admin",
+    );
+    expect(store.rows).toHaveLength(1);
+    expect(store.rows[0]).toMatchObject({ id: "row1", addonKey: "msrp", active: true });
+  });
+
+  it("self-serve disable finds the admin's legacy row and books −X once", async () => {
+    const { svc, store, events } = withStore(
+      [{ addonKey: "msrp", sku: "MSRP", active: true, quantity: 1, priceSnapshot: 20 }],
+      { txTenantStatus: "ACTIVE" },
+    );
+    await svc.disableAddon("t1", "MSRP");
+    expect(store.rows[0].active).toBe(false);
+    expect(addonBooked(events)).toBe(-20);
   });
 });

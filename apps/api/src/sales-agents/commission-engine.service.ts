@@ -1,13 +1,14 @@
 import { ConflictException, Injectable, Logger } from "@nestjs/common";
 import type { CommissionAccrualStatus, CommissionAdjustmentKind } from "@prisma/client";
-import { PrismaService } from "../prisma/prisma.service";
+import { PrismaService, isTxClient } from "../prisma/prisma.service";
 import { EntitlementsService } from "../billing/entitlements.service";
 import { AuditService } from "../audit/audit.service";
 import { roundMoney } from "@routeflow/pricing";
+import { isNsfLine } from "../invoices/nsf-line";
+import { txConflictState } from "../common/tx-retry";
 import {
   COMMISSION_EPS,
   InvoiceMoneyState,
-  NSF_FEE_DESCRIPTION_PREFIX,
   RateSource,
   accruedCommission,
   collectionRatio,
@@ -70,7 +71,8 @@ export class CommissionEngineService {
     if (!tenantId) return;
     if (!(await this.entitlements.hasFlag(tenantId, "flag.sales_agents"))) return;
 
-    if (db && this.isTransactionClient(db)) {
+    // A caller tx (SA-394 `isTxClient`) is joined; a base / forTenant() client is not.
+    if (isTxClient(db)) {
       await this.runSync(invoiceId, db);
     } else {
       await this.prisma.tenantTransaction((tx: any) => this.runSync(invoiceId, tx));
@@ -78,38 +80,60 @@ export class CommissionEngineService {
   }
 
   /**
-   * True when `db` is an interactive-transaction client. Prisma's tx client —
-   * and the tenant-scoping Proxy `tenantTransaction` wraps it in, which passes
-   * `$`-prefixed keys straight through — omits `$transaction`; a base or
-   * `$extends`ed client (what `forTenant()` returns) exposes it. Callers that
-   * pass the latter therefore get wrapped in a real transaction rather than
-   * silently losing the B73 row lock.
-   */
-  private isTransactionClient(db: any): boolean {
-    return typeof db?.$transaction !== "function";
-  }
-
-  /**
-   * Hook-safe wrapper: catches EVERYTHING, logs loudly, never throws — a
-   * commission bug must never block an invoice or payment write. The hourly
-   * reconciliation cron heals any sync this swallows.
+   * Hook-safe wrapper: a commission bug must never block an invoice or payment
+   * write. The hourly reconciliation cron heals any sync this skips.
    *
-   * Caveat the engine is written around: when `db` is the CALLER's transaction,
-   * a database error raised inside it aborts that whole Postgres transaction,
-   * so swallowing it here cannot save the caller — the commit fails anyway.
-   * The engine therefore must not provoke foreseeable in-transaction database
-   * errors (see the pre-insert check in `createAccrualRow`); this wrapper is
-   * the backstop for logic bugs, not a licence to let constraint violations fly.
+   * With NO caller transaction (or a base / `forTenant()` client): catches
+   * everything, logs loudly, never throws.
+   *
+   * Inside the CALLER's transaction (SA-393, #2236; same shape as
+   * plan-transition-config.service.ts restoreWithoutBlocking): a statement error
+   * aborts the whole Postgres transaction, so a bare catch cannot save the caller
+   * (its next statement fails with 25P02, or its COMMIT silently becomes a
+   * ROLLBACK). The sync therefore runs under `SAVEPOINT commission_sync`:
+   * - success: RELEASE;
+   * - a write conflict (`txConflictState`, 40001/40P01, #2201): RETHROWN with no
+   *   rollback-to, so the caller's `retryOnTxConflict` / serialization loop re-runs
+   *   the whole transaction (a savepoint cannot rescue a serialization failure);
+   * - any other error: ROLLBACK TO the savepoint (undoing only the sync), log, and
+   *   let the caller carry on. If the rollback-to itself fails, the transaction is
+   *   unusable, so that is rethrown rather than hidden.
+   * If the SAVEPOINT cannot even be opened, the transaction is already unusable, so
+   * that error propagates too.
    */
   async syncInvoiceCommissionSafe(invoiceId: string, db?: any): Promise<void> {
+    if (!isTxClient(db)) {
+      try {
+        await this.syncInvoiceCommission(invoiceId, db);
+      } catch (err) {
+        this.logSyncFailure(invoiceId, err);
+      }
+      return;
+    }
+    await db.$executeRaw`SAVEPOINT commission_sync`;
     try {
       await this.syncInvoiceCommission(invoiceId, db);
+      await db.$executeRaw`RELEASE SAVEPOINT commission_sync`;
     } catch (err) {
-      this.logger.error(
-        `Commission sync failed for invoice ${invoiceId}: ${(err as Error)?.message ?? err}`,
-        (err as Error)?.stack,
-      );
+      if (txConflictState(err)) throw err;
+      try {
+        await db.$executeRaw`ROLLBACK TO SAVEPOINT commission_sync`;
+      } catch (rollbackErr) {
+        this.logger.error(
+          `Commission sync for invoice ${invoiceId} failed and ROLLBACK TO SAVEPOINT also failed; ` +
+            `the caller's transaction is unusable: ${(rollbackErr as Error)?.message ?? rollbackErr}`,
+        );
+        throw rollbackErr;
+      }
+      this.logSyncFailure(invoiceId, err);
     }
+  }
+
+  private logSyncFailure(invoiceId: string, err: unknown): void {
+    this.logger.error(
+      `Commission sync failed for invoice ${invoiceId}: ${(err as Error)?.message ?? err}`,
+      (err as Error)?.stack,
+    );
   }
 
   /** All non-DRAFT invoices of one order (per-order override changes, order edits). */
@@ -232,7 +256,7 @@ export class CommissionEngineService {
       where: { id: invoiceId },
       include: {
         payments: { select: { id: true, amount: true, method: true, status: true } },
-        items: { select: { description: true, qty: true, unitPrice: true } },
+        items: { select: { description: true, qty: true, unitPrice: true, systemKind: true } },
         order: {
           select: {
             orderDate: true,
@@ -295,7 +319,7 @@ export class CommissionEngineService {
 
     const nsfFees = roundMoney(
       (invoice.items ?? [])
-        .filter((i: any) => i.description?.startsWith(NSF_FEE_DESCRIPTION_PREFIX))
+        .filter((i: any) => isNsfLine(i))
         .reduce((s: number, i: any) => s + Number(i.qty) * Number(i.unitPrice), 0),
     );
     const moneyState: InvoiceMoneyState = {

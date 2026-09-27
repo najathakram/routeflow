@@ -15,6 +15,7 @@ import {
   type TrackedCategoryRow,
   roundMoney,
 } from "@routeflow/pricing";
+import { assertUnitLineSplit } from "./unit-line-split";
 import { lineUnitsPerBoxSnapshot, type ResolvedLineUnits } from "../products/line-units";
 
 /**
@@ -342,29 +343,32 @@ export function buildUnitLine(input: {
   }
 
   const categoryTax = taxFor(split.qty, subtotal);
-  return {
-    productId: item.productId,
-    name: null,
-    qty: split.qty,
-    boxes: split.boxes,
-    pieces: split.pieces,
-    unitsPerBox: lineUnitsPerBoxSnapshot(resolved, split.boxes, "boxed"),
-    unitLabel: label,
-    unitPrice,
-    priceType,
-    originalPrice,
-    promoFreeUnits: null,
-    subtotal,
-    notes: item.itemNote || item.notes || undefined,
-    trackedCategoryId: product.trackedCategoryId ?? null,
-    trackedSubcategoryId: product.trackedSubcategoryId ?? null,
-    categoryTaxAmount: categoryTax.amount,
-    // B297 (SA-088): the rate trio categoryTaxAmount was computed from (or, for a caller that
-    // defers the amount to a later recompute pass, deferred the same way — see `taxFor`).
-    categoryTaxType: categoryTax.snapshot.categoryTaxType,
-    categoryTaxRate: categoryTax.snapshot.categoryTaxRate,
-    categoryPriceIncludesTax: categoryTax.snapshot.categoryPriceIncludesTax,
-    position: input.position,
-    tenantId: input.tenantId,
-  };
+  return assertUnitLineSplit(
+    {
+      productId: item.productId,
+      name: null,
+      qty: split.qty,
+      boxes: split.boxes,
+      pieces: split.pieces,
+      unitsPerBox: lineUnitsPerBoxSnapshot(resolved, split.boxes, "boxed"),
+      unitLabel: label,
+      unitPrice,
+      priceType,
+      originalPrice,
+      promoFreeUnits: null,
+      subtotal,
+      notes: item.itemNote || item.notes || undefined,
+      trackedCategoryId: product.trackedCategoryId ?? null,
+      trackedSubcategoryId: product.trackedSubcategoryId ?? null,
+      categoryTaxAmount: categoryTax.amount,
+      // B297 (SA-088): the rate trio categoryTaxAmount was computed from (or, for a caller that
+      // defers the amount to a later recompute pass, deferred the same way — see `taxFor`).
+      categoryTaxType: categoryTax.snapshot.categoryTaxType,
+      categoryTaxRate: categoryTax.snapshot.categoryTaxRate,
+      categoryPriceIncludesTax: categoryTax.snapshot.categoryPriceIncludesTax,
+      position: input.position,
+      tenantId: input.tenantId,
+    },
+    "buildUnitLine",
+  );
 }

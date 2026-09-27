@@ -18,6 +18,7 @@ import { BillingEventService } from "./billing-event.service";
 import { StripeService } from "./stripe.service";
 import { isStripeResourceMissing } from "./addon.service";
 import { emitAddonDelta, lockTenantForLedger, bookAddonsOnCrossing } from "./addon-ledger";
+import { addonRowMatches, findAddonRow } from "./addon-row";
 import { isPayingRow } from "./mrr.service";
 import { b58GuardRefusal } from "./b58-guard";
 import { withAdvisoryLock, LockTimeoutError, LockUnavailableError } from "../common/db-locks";
@@ -346,10 +347,20 @@ export class SubscriptionMutationService {
         lockedTenant.status === "ACTIVE" && lockedSub?.planKey
           ? this.planMonthly(version, lockedFromKey)
           : 0;
-      const priorByCode = new Map<string, { id: string; qty: number; snapshot: unknown }>();
+      // #2188 / SA-385 (3): a code's prior is the SAME row findAddonRow re-activates below — the
+      // oldest active row matching the shared predicate — so the ledger nets against that row.
+      const byAge = [...lockedAddons].sort(
+        (a, b) => Number(a.createdAt ?? 0) - Number(b.createdAt ?? 0),
+      );
+      const codes = new Set<string>(desired.keys());
       for (const row of lockedAddons) {
         const code = addonSkuCode(row);
-        if (code)
+        if (code) codes.add(code);
+      }
+      const priorByCode = new Map<string, { id: string; qty: number; snapshot: unknown }>();
+      for (const code of codes) {
+        const row = byAge.find((r) => addonRowMatches(r, code));
+        if (row)
           priorByCode.set(code, { id: row.id, qty: row.quantity, snapshot: row.priceSnapshot });
       }
       // Only self-service add-ons are the tenant's to drop: an admin-granted SKU the payload
@@ -399,8 +410,11 @@ export class SubscriptionMutationService {
       });
       for (const [code, qty] of desired) {
         const meta = skuByCode.get(code)!;
+        // #2188 / SA-385: re-activate the tenant's row for this SKU IN PLACE — including one
+        // the admin path keyed on a legacy addonKey, active or not — else create it.
+        const row = await findAddonRow(tx, tenantId, code);
         await tx.tenantAddon.upsert({
-          where: { tenantId_addonKey: { tenantId, addonKey: code } },
+          where: { tenantId_addonKey: { tenantId, addonKey: row?.addonKey ?? code } },
           create: {
             tenantId,
             addonKey: code,
@@ -1323,15 +1337,15 @@ export class SubscriptionMutationService {
             // `before` snapshot derived from it) can never observe a stale pre-lock state a
             // concurrent enable/disable committed in between.
             await lockTenantForLedger(tx, tenantId);
-            const existing = await tx.tenantAddon.findUnique({
-              where: { tenantId_addonKey: { tenantId, addonKey: sku } },
-            });
+            // #2188 / SA-385: finds a row the admin path keyed on a legacy addonKey too.
+            const existing = await findAddonRow(tx, tenantId, sku);
             const before = existing?.active
               ? { priceSnapshot: existing.priceSnapshot, quantity: existing.quantity }
               : { priceSnapshot: 0, quantity: 0 };
 
+            // Re-activate an existing row IN PLACE (whichever key it carries); else create.
             await tx.tenantAddon.upsert({
-              where: { tenantId_addonKey: { tenantId, addonKey: sku } },
+              where: { tenantId_addonKey: { tenantId, addonKey: existing?.addonKey ?? sku } },
               create: {
                 tenantId,
                 addonKey: sku,
@@ -1391,10 +1405,10 @@ export class SubscriptionMutationService {
 
   /** Disable an add-on. Keeps the row (history read-only); nav/flag simply drops. */
   async disableAddon(tenantId: string, sku: string, actorId?: string) {
-    const addon = await this.prisma.tenantAddon.findFirst({
-      where: { tenantId, active: true, OR: [{ sku }, { addonKey: sku }] },
-    });
-    if (!addon) throw new NotFoundException(`Active add-on "${sku}" not found.`);
+    // #2188 / SA-385: the shared lookup (legacy addonKey or SKU) — its deterministic pick
+    // (active first, then oldest) — refused unless that row is active.
+    const addon = await findAddonRow(this.prisma, tenantId, sku);
+    if (!addon?.active) throw new NotFoundException(`Active add-on "${sku}" not found.`);
     // Resolve the CANONICAL code (bridges legacy addonKey like tobacco_dealer → REGULATED_ITEMS).
     const code = addonSkuCode(addon) ?? sku;
     // Symmetric with enableAddon: an admin-granted ("ships dark") add-on is revocable only by
