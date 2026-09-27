@@ -64,6 +64,8 @@ const operatorPayload = {
   role: "OPERATOR" as const,
   status: "ACTIVE" as const,
   forcePasswordChange: false,
+  tenantId: "tenant-1",
+  tenantSlug: "test",
 };
 
 const driverPayload = {
@@ -72,6 +74,8 @@ const driverPayload = {
   role: "DRIVER" as const,
   status: "ACTIVE" as const,
   forcePasswordChange: false,
+  tenantId: "tenant-1",
+  tenantSlug: "test",
 };
 
 describe("RoutesService", () => {

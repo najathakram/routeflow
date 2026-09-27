@@ -58,7 +58,7 @@ import { randomUUID } from "crypto";
 import { Test, TestingModule } from "@nestjs/testing";
 import { getQueueToken } from "@nestjs/bull";
 import { ConfigService } from "@nestjs/config";
-import { PrismaClient } from "@prisma/client";
+import { PrismaClient, PriceType } from "@prisma/client";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { Pool } from "pg";
 import { describeDb, requireLocalDatabaseUrl } from "../common/testing/db-spec";
@@ -254,7 +254,7 @@ describeDb("B776 R1 chain (SA-124g/h gate) — real Postgres", () => {
       pieces: number | null;
       unitsPerBox: number | null;
       unitPrice: number;
-      priceType?: string;
+      priceType?: PriceType;
       overrideReason?: string | null;
     }>,
   ) {
