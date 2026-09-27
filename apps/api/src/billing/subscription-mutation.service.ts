@@ -305,8 +305,16 @@ export class SubscriptionMutationService {
         }),
         tx.tenantSubscription.findUnique({
           where: { tenantId },
-          // #2223 / SA-444c: priceOverrideMonthly is the negotiated fee this subscribe() must keep.
-          select: { planKey: true, cycle: true, periodEnd: true, priceOverrideMonthly: true },
+          // #2189: planKey/cycle/periodEnd feed the B58 re-check under the lock. #2223 / SA-444c: the
+          // negotiated fee this subscribe() must keep; #2460 / SA-464 (2): the stored snapshot the
+          // ledger nets against.
+          select: {
+            planKey: true,
+            cycle: true,
+            periodEnd: true,
+            priceOverrideMonthly: true,
+            basePriceSnapshot: true,
+          },
         }),
         tx.tenantAddon.findMany({ where: { tenantId, active: true } }),
       ]);
@@ -345,9 +353,11 @@ export class SubscriptionMutationService {
       // (`planKey: { not: null }`) — e.g. a manual platform-admin activation — so it too
       // contributes 0 and writing a planKey onto it books the full base, even though
       // `lockedFromKey` resolves through the legacy enum for ranking.
+      // #2460 / SA-464 (2): an ACTIVE row nets against what the MRR snapshot counted — its STORED
+      // basePriceSnapshot (NULL ⇒ 0) — never the catalog price of the plan it holds.
       const oldPlanMonthly =
         lockedTenant.status === "ACTIVE" && lockedSub?.planKey
-          ? this.planMonthly(version, lockedFromKey)
+          ? Number(lockedSub.basePriceSnapshot ?? 0)
           : 0;
       // #2188 / SA-385 (3): a code's prior is the SAME row findAddonRow re-activates below — the
       // oldest active row matching the shared predicate — so the ledger nets against that row.
@@ -453,14 +463,9 @@ export class SubscriptionMutationService {
         BILLING_EVENTS.PLAN_CHANGED,
         { fromPlan: lockedSub?.planKey ?? null, toPlan: input.planKey, cycle: input.cycle },
         {
-          // SA-444c: an override row the snapshot already counts (ACTIVE with a plan, the same test as
-          // oldPlanMonthly) books Δ0; one entering the paying set books the fee.
-          amountDelta:
-            override != null
-              ? lockedTenant.status === "ACTIVE" && lockedSub?.planKey
-                ? 0
-                : roundMoney(override)
-              : roundMoney(Number(def.monthlyPrice ?? 0) - oldPlanMonthly),
+          // SA-444c + SA-464 (2): the new snapshot (override ?? catalog) minus what the MRR snapshot
+          // counted — a consistent override row already paying books Δ0; one entering books the fee.
+          amountDelta: roundMoney(Number(newBase ?? 0) - oldPlanMonthly),
           actorId,
           tx,
         },
@@ -823,14 +828,13 @@ export class SubscriptionMutationService {
     // to the run-rate, so gaining a planKey books the FULL base. The prorated charge nets against
     // the entitlement instead: the tenant already holds `fromKey` and owes only the difference.
     // #2223 / SA-444a: an override row keeps paying its negotiated fee — the plan moves, the price
-    // doesn't: quote 0, the snapshot stays the fee, and the ledger nets against what it counted.
+    // doesn't: quote 0, the snapshot stays the fee.
+    // #2460 / SA-464 (2): for EVERY row the ledger nets against what the MRR snapshot counted — the
+    // stored basePriceSnapshot, NULL ⇒ 0 (a NULL-snapshot row books the full new price and the two
+    // figures re-agree). The prorated CHARGE below still nets against the catalog entitlement.
     const override = priceOverrideOf(sub);
     const newBase = override ?? newMonthly;
-    const ledgerOldMonthly = !sub.planKey
-      ? 0
-      : override != null
-        ? Number(sub.basePriceSnapshot ?? override)
-        : oldMonthly;
+    const ledgerOldMonthly = sub.planKey ? Number(sub.basePriceSnapshot ?? 0) : 0;
     const amountDelta = roundMoney(newBase - ledgerOldMonthly);
     const proratedNow =
       override != null ? 0 : this.proration.proratedDiff(sub, newMonthly - oldMonthly);
