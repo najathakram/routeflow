@@ -183,7 +183,9 @@ describe("ProductInsightsService (#2118)", () => {
       };
       const raw = prisma.$queryRaw.mock.calls[0];
       expect(raw.slice(1)).toEqual(["test-tenant", "test-tenant", window.gte, window.lt, "p1"]);
-      expect(raw[0].join("?")).toMatch(/"createdAt" >= \?\s+AND cn\."createdAt" < \?/);
+      expect((raw[0] as unknown as string[]).join("?")).toMatch(
+        /"createdAt" >= \?\s+AND cn\."createdAt" < \?/,
+      );
 
       const where = prisma.return.findMany.mock.calls[0][0].where;
       expect(where.tenantId).toBe("test-tenant");

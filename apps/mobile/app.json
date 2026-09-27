@@ -16,8 +16,7 @@
       "supportsTablet": true,
       "bundleIdentifier": "com.routeflow.mobile",
       "infoPlist": {
-        "ITSAppUsesNonExemptEncryption": false,
-        "UIRequiresFullScreen": true
+        "ITSAppUsesNonExemptEncryption": false
       }
     },
     "android": {

@@ -19,6 +19,9 @@ export interface OrderLineUnitPickerLine {
   unitLabel?: string;
   packBase?: PackBase;
   tierPrices?: Parameters<typeof ladderProductOf>[0]["tierPrices"];
+  /** #2381: the operator TYPED this line's price this session. The first-sight refresh (which
+   *  re-runs on every remount, e.g. "Not available" → Undo) must not snap it back to the ladder. */
+  priceEdited?: boolean;
 }
 
 /**
@@ -68,12 +71,25 @@ export function OrderLineUnitPicker({
 
   // The customer's tier changed under a unit line: refresh its ladder price. A one-time price the
   // operator typed (DISCOUNTED / MANUAL) is theirs and stands.
+  //
+  // #2305: refresh only when the LADDER price moves (first sight of the held unit, or a tier/unit
+  // change), never because `line.unitPrice` moved. The order-edit price row sets only `unitPrice`
+  // (priceType stays STANDARD), so re-checking on every price change snapped a typed price straight
+  // back to the ladder's and Save then sent nothing.
   const held = options.find((o) => o.value === (line.unitLabel ?? ""));
+  const lastLadderPrice = React.useRef<number | undefined>(undefined);
   React.useEffect(() => {
     if (!line.unitLabel || !held) return;
+    const firstSight = lastLadderPrice.current === undefined;
+    const ladderMoved = lastLadderPrice.current !== held.price;
+    lastLadderPrice.current = held.price;
+    if (!ladderMoved) return;
+    // #2381: a remount (or a ladder arriving late) is a first sight, not a ladder move; a price
+    // the operator typed stands. A real move afterwards (the tier changed) still re-prices.
+    if (firstSight && line.priceEdited) return;
     if (line.priceType === "DISCOUNTED" || line.priceType === "MANUAL") return;
     if (held.price !== line.unitPrice) onChange(held, true);
-  }, [line.unitLabel, line.priceType, line.unitPrice, held, onChange]);
+  }, [line.unitLabel, line.priceType, line.unitPrice, line.priceEdited, held, onChange]);
 
   return (
     <UnitPicker

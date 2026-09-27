@@ -1,6 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "../api-client";
 import type { AnyPaymentMethod, SelectablePaymentMethod } from "../payment-methods";
+import { API_ERROR_CODES } from "@routeflow/types";
 import type {
   CheckVendorBillDuplicateDto,
   DuplicateVendorBillError,
@@ -100,7 +101,7 @@ interface PaginatedResponse<T> {
 /** Extract the UNLINKED_ITEMS payload from an axios error, if that's what it is. */
 export function getUnlinkedItemsError(error: unknown): UnlinkedItemsError | null {
   const data = (error as { response?: { data?: { code?: string } } })?.response?.data;
-  return data?.code === "UNLINKED_ITEMS" ? (data as UnlinkedItemsError) : null;
+  return data?.code === API_ERROR_CODES.UNLINKED_ITEMS ? (data as UnlinkedItemsError) : null;
 }
 
 /** One line the API's PACK_SIZE_UNKNOWN gate flagged (B743; mirrors pack-size-gate.ts). */
@@ -116,7 +117,7 @@ export interface PackSizeUnknownLine {
   productPack: number;
 }
 export interface PackSizeUnknownError {
-  code: "PACK_SIZE_UNKNOWN";
+  code: typeof API_ERROR_CODES.PACK_SIZE_UNKNOWN;
   message: string;
   packSizeUnknownItems: PackSizeUnknownLine[];
 }
@@ -124,13 +125,15 @@ export interface PackSizeUnknownError {
 /** B743: extract the PACK_SIZE_UNKNOWN payload from an axios error, if that's what it is. */
 export function getPackSizeUnknownError(error: unknown): PackSizeUnknownError | null {
   const data = (error as { response?: { data?: { code?: string } } })?.response?.data;
-  return data?.code === "PACK_SIZE_UNKNOWN" ? (data as PackSizeUnknownError) : null;
+  return data?.code === API_ERROR_CODES.PACK_SIZE_UNKNOWN ? (data as PackSizeUnknownError) : null;
 }
 
 /** Extract the DUPLICATE_VENDOR_BILL payload from an axios error, if that's what it is. */
 export function getDuplicateVendorBillError(error: unknown): DuplicateVendorBillError | null {
   const data = (error as { response?: { data?: { code?: string } } })?.response?.data;
-  return data?.code === "DUPLICATE_VENDOR_BILL" ? (data as DuplicateVendorBillError) : null;
+  return data?.code === API_ERROR_CODES.DUPLICATE_VENDOR_BILL
+    ? (data as DuplicateVendorBillError)
+    : null;
 }
 
 /** Lifecycle of an archived scan. DISCARDED is filtered out server-side, so a
