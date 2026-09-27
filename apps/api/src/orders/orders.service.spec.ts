@@ -6683,6 +6683,8 @@ describe("OrdersService", () => {
 
     it("a buyer (CUSTOMER) diff-shaped payload is rejected with 400 before any mutation", async () => {
       prisma.order.findUnique.mockResolvedValue({ ...twoLineOrder, status: "PENDING" });
+      // SA-507b: the 400 answers the ORDER'S OWNER only (a non-owner meets the bare 403 first).
+      prisma.customer.findFirst.mockResolvedValue({ id: twoLineOrder.customerId });
 
       await expect(
         service.updateOrderItems(

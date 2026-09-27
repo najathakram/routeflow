@@ -37,7 +37,7 @@ import {
   inviteOnlyCheckoutAllowed,
   addonSkuCode,
 } from "../billing/plan-catalog.constants";
-import { bookAddonsOnCrossing } from "../billing/addon-ledger";
+import { bookAddonsOnCrossing, lockTenantForLedger } from "../billing/addon-ledger";
 import { roundMoney } from "@routeflow/pricing";
 import { TenantStatusGuard } from "../tenant/tenant-status.guard";
 import { AppConfig } from "../config/configuration";
@@ -748,6 +748,7 @@ export class PlatformAdminService {
         );
       }
       await this.prisma.$transaction(async (tx) => {
+        await lockTenantForLedger(tx, id); // #2551 / SA-503a: Tenant before the subscription
         await tx.tenantSubscription.update({
           where: { tenantId: id },
           data: {
@@ -842,41 +843,58 @@ export class PlatformAdminService {
 
     const tenant = await this.prisma.$transaction(async (tx) => {
       await this.planTransition.onPlanChange(tx, transition, preparedTransition);
-      const updated = await tx.tenant.update({
-        where: { id },
-        data: { plan: dto.plan, planVersionId: version.id },
-      });
-      // Upsert subscription record to reflect plan change — the same catalog-derived
-      // fields subscribe() writes, so entitlements resolution reads a consistent state
-      // regardless of which mutation path last touched this tenant. `basePriceSnapshot`
-      // must move WITH `planKey`: MrrService prices a tenant from the snapshot alone
-      // (mrr.service.ts:82), so leaving it stale/null would book the old plan's price —
-      // or $0 — under the new plan.
-      await tx.tenantSubscription.upsert({
-        where: { tenantId: id },
-        create: {
-          tenantId: id,
-          currentPlan: dto.plan,
-          planKey: definition.planKey,
-          planVersionId: version.id,
-          basePriceSnapshot: baseSnapshot,
-        },
-        update: {
-          currentPlan: dto.plan,
-          planKey: definition.planKey,
-          planVersionId: version.id,
-          basePriceSnapshot: baseSnapshot,
-          // A committing plan write disarms any scheduled downgrade — the same invariant every
-          // self-service writer holds (subscription-mutation.service.ts). Left armed, the 02:00
-          // sweep (which filters on downgradeEffectiveAt alone, never on rank or current plan)
-          // would silently undo this admin's change and deactivate the tenant's staff.
-          // `cancelAtPeriodEnd` is deliberately NOT touched: an admin plan edit must not revoke
-          // a cancellation the tenant asked for — that is resume()'s job.
-          downgradeToPlanKey: null,
-          downgradeEffectiveAt: null,
-          retainedUserIds: [],
-        },
-      });
+      // Hook FIRST (house lock order: snapshot/config rows before tenant rows, as upgrade() does).
+      // #2470 / SA-485b (i): priorSub, `before` and everything derived from them were read BEFORE this
+      // tx. Take the Tenant row lock updateTenantPriceOverride and reconcilePriceLedger take, then write
+      // by compare-and-set on what was read — the tenant's status, the subscription's planKey + fee +
+      // snapshot. Anything that moved since (a Pricing change, its reconcile, a status change) is a 409,
+      // never a stale fee/snapshot written back or a double-booked delta.
+      await tx.$queryRaw`SELECT id FROM "Tenant" WHERE id = ${id} FOR UPDATE`;
+      const conflict = () =>
+        new ConflictException("The subscription changed concurrently — please retry.");
+      const updated = await tx.tenant
+        .update({
+          where: { id, status: before.status },
+          data: { plan: dto.plan, planVersionId: version.id },
+        })
+        .catch((e: unknown) => {
+          if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === "P2025")
+            throw conflict();
+          throw e;
+        });
+      // The subscription moves to the target plan — the same catalog-derived fields subscribe()
+      // writes. `basePriceSnapshot` must move WITH `planKey`: MrrService prices a tenant from the
+      // snapshot alone (mrr.service.ts:82), so a stale/null one would book the old plan's price.
+      const subWrite = {
+        currentPlan: dto.plan,
+        planKey: definition.planKey,
+        planVersionId: version.id,
+        basePriceSnapshot: baseSnapshot,
+      };
+      if (priorSub) {
+        const { count } = await tx.tenantSubscription.updateMany({
+          where: {
+            tenantId: id,
+            planKey: priorSub.planKey ?? null,
+            priceOverrideMonthly: priorSub.priceOverrideMonthly ?? null,
+            basePriceSnapshot: priorSub.basePriceSnapshot ?? null,
+          },
+          data: {
+            ...subWrite,
+            // A committing plan write disarms any scheduled downgrade — the same invariant every
+            // self-service writer holds (subscription-mutation.service.ts). Left armed, the 02:00
+            // sweep (which filters on downgradeEffectiveAt alone) would silently undo this change
+            // and deactivate the tenant's staff. `cancelAtPeriodEnd` is deliberately NOT touched: an
+            // admin plan edit must not revoke a cancellation the tenant asked for (resume()'s job).
+            downgradeToPlanKey: null,
+            downgradeEffectiveAt: null,
+            retainedUserIds: [],
+          },
+        });
+        if (count === 0) throw conflict();
+      } else {
+        await tx.tenantSubscription.create({ data: { tenantId: id, ...subWrite } });
+      }
 
       // Moving the snapshot run-rate without a matching ledger delta makes `mrr` and
       // `ledgerMrr`/`momDelta` diverge permanently (mrr.service.ts:21-27), so this path

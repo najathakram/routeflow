@@ -20,6 +20,7 @@ import { isStripeResourceMissing } from "./addon.service";
 import { emitAddonDelta, lockTenantForLedger, bookAddonsOnCrossing } from "./addon-ledger";
 import { addonRowMatches, findAddonRow } from "./addon-row";
 import { isPayingRow } from "./mrr.service";
+import { b58GuardRefusal } from "./b58-guard";
 import { withAdvisoryLock, LockTimeoutError, LockUnavailableError } from "../common/db-locks";
 import {
   BILLING_EVENTS,
@@ -176,6 +177,21 @@ export class SubscriptionMutationService {
     return normalizePlanKey(subPlanKey) ?? (tenantPlan ? planKeyFromEnum(tenantPlan) : null);
   }
 
+  /** Log and throw a B58 refusal. A handled 4xx is otherwise invisible — SentryExceptionFilter
+   *  captures >= 500 only and there is no access log — so a money-path refusal logs like
+   *  addon.guard.ts's denials. */
+  private refuseB58(
+    tenantId: string,
+    fromKey: string | null,
+    input: SubscribeInput,
+    refusal: { sameRank: boolean; message: string },
+  ): never {
+    this.logger.warn(
+      `B58 guard refused subscribe tenant=${tenantId} from=${fromKey} to=${input.planKey} cycle=${input.cycle} sameRank=${refusal.sameRank}`,
+    );
+    throw new ConflictException(refusal.message);
+  }
+
   private planMonthly(version: PlanVersionWithCatalog, planKey: string | null | undefined): number {
     if (!planKey) return 0;
     const d = findPlanDefinition(version.definitions, planKey);
@@ -237,42 +253,17 @@ export class SubscriptionMutationService {
     // predating plans-as-data (planKey NULL) is ranked instead of read as "no plan".
     const fromKey = this.resolveFromPlanKey(priorSub?.planKey, tenant.plan);
 
-    // An ACTIVE, same-cycle pick belongs anywhere but here — subscribe() resetting
-    // periodStart/periodEnd would silently re-bucket metering and jump the renewal date (B58).
-    // A DIFFERENT rank belongs on upgrade()/downgrade() (instant-prorated vs.
-    // scheduled-at-period-end). The SAME rank is the same plan under a renamed key (a v7
-    // BUSINESS re-picked as the v8 SCALE): there is nothing to change, and re-subscribing to
-    // "re-pin" the catalog version would pay for that pin with the same period reset — so it is
-    // refused too, and the re-pin is left to platform-admin / the cron that already write it.
-    // A subscription with NO periodEnd has no live cycle to protect (and downgrade() could not
-    // schedule against it), so it stays here: subscribe() is what heals the missing period.
-    if (
-      tenant.status === "ACTIVE" &&
-      priorSub &&
-      fromKey &&
-      priorSub.periodEnd != null &&
-      priorSub.cycle === input.cycle
-    ) {
-      const sameRank = planRank(input.planKey) === planRank(fromKey);
-      // The ONE same-rank pick that really is a change: a row with no stored planKey (the
-      // manual-activation shape) contributes 0 to the MRR snapshot until it gains one, and
-      // upgrade() only moves UP — so subscribe() is what heals it, and refusing it here would
-      // strand the row plan-less forever.
-      if (!sameRank || priorSub.planKey != null) {
-        // A handled 4xx is otherwise invisible — SentryExceptionFilter captures >= 500 only and
-        // there is no access log — so a money-path refusal logs like addon.guard.ts's denials.
-        this.logger.warn(
-          `B58 guard refused subscribe tenant=${tenantId} from=${fromKey} to=${input.planKey} cycle=${input.cycle} sameRank=${sameRank}`,
-        );
-        throw new ConflictException(
-          sameRank
-            ? "You are already on this plan — nothing to change"
-            : "Your subscription is active — use upgrade or downgrade to change plan",
-        );
-      }
-    }
+    // B58 (see b58-guard.ts): the fast refusal on the pre-tx read. #2189 / SA-389: the SAME
+    // guard runs again inside the transaction on the rows re-read under the tenant lock.
+    const refusal = b58GuardRefusal({
+      status: tenant.status,
+      fromKey,
+      sub: priorSub,
+      toPlanKey: input.planKey,
+      toCycle: input.cycle,
+    });
+    if (refusal) this.refuseB58(tenantId, fromKey, input, refusal);
 
-    const wasTrial = tenant.status === "TRIAL";
     const now = new Date();
     const periodEnd = addCycle(now, input.cycle);
 
@@ -314,14 +305,43 @@ export class SubscriptionMutationService {
         }),
         tx.tenantSubscription.findUnique({
           where: { tenantId },
-          // #2223 / SA-444c: the negotiated fee this subscribe() must keep; #2460 / SA-464 (2): the
-          // stored snapshot the ledger nets against.
-          select: { planKey: true, priceOverrideMonthly: true, basePriceSnapshot: true },
+          // #2189: planKey/cycle/periodEnd feed the B58 re-check under the lock. #2223 / SA-444c: the
+          // negotiated fee this subscribe() must keep; #2460 / SA-464 (2): the stored snapshot the
+          // ledger nets against.
+          select: {
+            planKey: true,
+            cycle: true,
+            periodEnd: true,
+            priceOverrideMonthly: true,
+            basePriceSnapshot: true,
+          },
         }),
         tx.tenantAddon.findMany({ where: { tenantId, active: true } }),
       ]);
       if (!lockedTenant) throw new NotFoundException("Tenant not found");
       const lockedFromKey = this.resolveFromPlanKey(lockedSub?.planKey, lockedTenant.plan);
+      // #2189 / SA-389 (2): prepare(transition) ran pre-tx (pool reasons) on `fromKey`; if the
+      // plan moved before this lock, the prepared transition is stale — refuse, retryable, with
+      // nothing written (the caller re-runs subscribe(), which re-prepares). Both keys are
+      // normalized by resolveFromPlanKey, so a legacy alias never reads as a change.
+      if (lockedFromKey !== fromKey) {
+        throw new ConflictException({
+          code: "PLAN_CHANGED_DURING_SUBSCRIBE",
+          retryable: true,
+          message: "Your plan changed while this was being processed — please try again.",
+        });
+      }
+      // #2189 / SA-389 (1): the B58 guard again, on the LOCKED rows, before any write.
+      const lockedRefusal = b58GuardRefusal({
+        status: lockedTenant.status,
+        fromKey: lockedFromKey,
+        sub: lockedSub,
+        toPlanKey: input.planKey,
+        toCycle: input.cycle,
+      });
+      if (lockedRefusal) this.refuseB58(tenantId, lockedFromKey, input, lockedRefusal);
+      // #2189 / SA-389 (3): one source — a trial converted concurrently is not converted again.
+      const wasTrial = lockedTenant.status === "TRIAL";
       // Same paying-set basis as before (isPayingRow — class/deletedAt gate it too), now read
       // from the LOCKED row instead of the pre-tx one.
       const wasPaying = isPayingRow(lockedTenant, lockedSub?.planKey ?? null);
@@ -834,11 +854,22 @@ export class SubscriptionMutationService {
       // changes for one tenant can never wait on each other in opposite orders (deadlock). If the
       // guard below then loses a race, the throw rolls the hook's writes back with it.
       await this.planTransition.onPlanChange(tx, transition, preparedTransition);
+      // #2551 / SA-503a: the house order — Tenant row lock right after the hook, before the
+      // subscription write (reconcile/updatePlan/Pricing hold Tenant, then write this row).
+      await lockTenantForLedger(tx, tenantId);
       // Optimistic guard: only apply if still on the expected plan (blocks a concurrent
       // double-upgrade from re-emitting the delta). Matches the STORED key (null matches
-      // IS NULL), never the resolved one.
+      // IS NULL), never the resolved one. #2470: and the negotiated fee it read (null matches
+      // IS NULL) — a concurrent Pricing change makes this lose the race, never write a stale fee.
       const applied = await tx.tenantSubscription.updateMany({
-        where: { tenantId, planKey: sub.planKey },
+        where: {
+          tenantId,
+          planKey: sub.planKey,
+          priceOverrideMonthly: sub.priceOverrideMonthly ?? null,
+          // #2470 Opus fold (1): and the snapshot it read — a Pricing change commits the fee, then
+          // reconcile's snapshot; an upgrade reading between them must lose, never double-book.
+          basePriceSnapshot: sub.basePriceSnapshot ?? null,
+        },
         data: {
           planKey,
           currentPlan: planKeyToEnum(planKey),
@@ -855,7 +886,8 @@ export class SubscriptionMutationService {
         },
       });
       if (applied.count === 0) {
-        throw new BadRequestException("Plan changed concurrently — please retry.");
+        // #2470: a lost race is a concurrency conflict (409), like the other plan paths.
+        throw new ConflictException("Plan changed concurrently — please retry.");
       }
       await tx.tenant.update({
         where: { id: tenantId },
@@ -953,6 +985,7 @@ export class SubscriptionMutationService {
     }
 
     await this.prisma.$transaction(async (tx) => {
+      await lockTenantForLedger(tx, tenantId); // #2551 / SA-503a: Tenant before the subscription
       await tx.tenantSubscription.update({
         where: { tenantId },
         data: {
@@ -1107,6 +1140,7 @@ export class SubscriptionMutationService {
     }
 
     await this.prisma.$transaction(async (tx) => {
+      await lockTenantForLedger(tx, tenantId); // #2551 / SA-503a: Tenant before the subscription
       await tx.tenantSubscription.update({
         where: { tenantId },
         // A cancellation SUPERSEDES any scheduled downgrade — leaving one armed would let
@@ -1195,6 +1229,7 @@ export class SubscriptionMutationService {
     }
 
     await this.prisma.$transaction(async (tx) => {
+      await lockTenantForLedger(tx, tenantId); // #2551 / SA-503a: Tenant before the subscription
       await tx.tenantSubscription.update({
         where: { tenantId },
         data: {
