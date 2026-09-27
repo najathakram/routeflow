@@ -90,9 +90,6 @@ export interface AppConfig {
   stripe: {
     secretKey: string;
     webhookSecret: string;
-    priceStarter: string;
-    priceProfessional: string;
-    priceEnterprise: string;
     /** Connect platform client id (ca_…) — tenant-account OAuth linking. */
     connectClientId: string;
     /** Signing secret of the "events on connected accounts" webhook endpoint. */
@@ -155,9 +152,6 @@ export const configuration = (): AppConfig => ({
   stripe: {
     secretKey: process.env.STRIPE_SECRET_KEY ?? "",
     webhookSecret: process.env.STRIPE_WEBHOOK_SECRET ?? "",
-    priceStarter: process.env.STRIPE_PRICE_STARTER ?? "",
-    priceProfessional: process.env.STRIPE_PRICE_PROFESSIONAL ?? "",
-    priceEnterprise: process.env.STRIPE_PRICE_ENTERPRISE ?? "",
     connectClientId: process.env.STRIPE_CONNECT_CLIENT_ID ?? "",
     connectWebhookSecret: process.env.STRIPE_CONNECT_WEBHOOK_SECRET ?? "",
   },
