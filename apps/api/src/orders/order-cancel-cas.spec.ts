@@ -330,18 +330,58 @@ describe("SA-404f F2 — order cancel compare-and-set", () => {
   // pre-read promoted to PENDING before the lock took stock, so the cancel must credit it back
   // (settleStockForEdit no-ops on DRAFT; passing the stale pre-read would cancel the lines with no
   // credit and a later reopen would take the stock twice, B64).
-  it("#2472 fold: DRAFT pre-read but PENDING under the lock ⇒ the (real) stock credit runs AS PENDING", async () => {
-    arrange(1);
-    const DRAFT = { ...MOCK_ORDER, status: "DRAFT" as const };
+  // SA-492b: prove the credit WRITE runs (not only the arg): one active, undelivered line on a stocked
+  // product; the real settleStockForEdit must increment the product's stock by it.
+  const oneLine = () => {
+    prisma.orderItem.findMany.mockResolvedValue([
+      {
+        productId: "prod-1",
+        qty: 5,
+        deliveredQty: 0,
+        status: "CONFIRMED",
+        unitsPerBox: null,
+        boxes: null,
+        pieces: null,
+        unitLabel: null,
+      },
+    ] as any);
+    prisma.product.findMany.mockResolvedValue([
+      { id: "prod-1", name: "Tomatoes", currentStock: 10, unitsPerBox: null },
+    ] as any);
+    prisma.product.update.mockResolvedValue({ id: "prod-1", currentStock: 15 } as any);
+  };
+  const lockedAs = (preRead: "DRAFT", locked: "PENDING" | "DRAFT") => {
+    const pre = { ...MOCK_ORDER, status: preRead };
     prisma.order.findUnique.mockImplementation(async (args: any) =>
       args?.select && Object.keys(args.select).length === 1 && args.select.status
-        ? { status: "PENDING" }
-        : DRAFT,
+        ? { status: locked }
+        : pre,
     );
-    prisma.order.findFirst.mockResolvedValue(DRAFT);
-    const settle = jest.spyOn(service as any, "settleStockForEdit"); // NOT mocked — the real credit runs
+    prisma.order.findFirst.mockResolvedValue(pre);
+  };
+  const credit = () =>
+    prisma.product.update.mock.calls.find(
+      (c: any[]) => c[0]?.data?.currentStock?.increment !== undefined,
+    );
+
+  it("#2472 fold: DRAFT pre-read but PENDING under the lock ⇒ the real stock credit WRITES (+5)", async () => {
+    arrange(1);
+    oneLine();
+    lockedAs("DRAFT", "PENDING");
+    const settle = jest.spyOn(service as any, "settleStockForEdit"); // NOT mocked
     await service.changeStatus("ord-1", { status: "CANCELLED" as any }, operatorPayload as any);
-    expect(settle).toHaveBeenCalledTimes(1);
     expect((settle.mock.calls[0] as any[])[1]).toMatchObject({ id: "ord-1", status: "PENDING" });
+    expect(credit()?.[0]).toEqual({
+      where: { id: "prod-1" },
+      data: { currentStock: { increment: 5 } },
+    });
+  });
+
+  it("#2472 fold mirror: DRAFT under the lock too ⇒ no credit write (a draft never took stock)", async () => {
+    arrange(1);
+    oneLine();
+    lockedAs("DRAFT", "DRAFT");
+    await service.changeStatus("ord-1", { status: "CANCELLED" as any }, operatorPayload as any);
+    expect(credit()).toBeUndefined();
   });
 });
