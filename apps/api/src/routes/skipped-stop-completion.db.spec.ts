@@ -216,6 +216,17 @@ describeDb("#2409 a SKIPPED stop refuses a replayed completion — real Postgres
 
   const operator = { sub: "op-2409", role: "OPERATOR" } as never;
 
+  /** #2414 Opus nit: a refused completion leaves no delivery or payment rows behind. */
+  async function expectNothingWritten(s: { tenantId: string; stopId: string }) {
+    expect(await prisma.deliveryMutation.count({ where: { routeRunStopId: s.stopId } })).toBe(0);
+    expect(await prisma.invoicePayment.count({ where: { tenantId: s.tenantId } })).toBe(0);
+    expect(await prisma.payment.count({ where: { tenantId: s.tenantId } })).toBe(0);
+  }
+
+  async function setStopStatus(stopId: string, status: "PENDING" | "SKIPPED") {
+    await prisma.routeRunStop.update({ where: { id: stopId }, data: { status } });
+  }
+
   it("completeWithPayment replayed onto a SKIPPED stop: 409 STOP_SKIPPED, the stop stays SKIPPED", async () => {
     const s = await seedSkippedStop("cwp");
     await expect(
@@ -231,6 +242,7 @@ describeDb("#2409 a SKIPPED stop refuses a replayed completion — real Postgres
     const after = await prisma.routeRunStop.findUnique({ where: { id: s.stopId } });
     expect(after?.status).toBe("SKIPPED");
     expect(after?.completedAt).toBeNull();
+    await expectNothingWritten(s);
   });
 
   it("completeStop replayed onto a SKIPPED stop: 409 STOP_SKIPPED, the stop stays SKIPPED", async () => {
@@ -242,6 +254,7 @@ describeDb("#2409 a SKIPPED stop refuses a replayed completion — real Postgres
     ).rejects.toMatchObject({ response: expect.objectContaining({ code: "STOP_SKIPPED" }) });
     const after = await prisma.routeRunStop.findUnique({ where: { id: s.stopId } });
     expect(after?.status).toBe("SKIPPED");
+    await expectNothingWritten(s);
   });
 
   it("the atomic claim on a real row: a SKIPPED stop is never claimed (a skip that races the guard)", async () => {
@@ -253,5 +266,37 @@ describeDb("#2409 a SKIPPED stop refuses a replayed completion — real Postgres
     ).rejects.toMatchObject({ response: expect.objectContaining({ code: "STOP_SKIPPED" }) });
     const after = await prisma.routeRunStop.findUnique({ where: { id: s.stopId } });
     expect(after?.status).toBe("SKIPPED");
+  });
+
+  it("#2415: skip vs complete race on a real PENDING row — exactly one winner, never COMPLETED→SKIPPED", async () => {
+    for (let round = 0; round < 5; round++) {
+      const s = await seedSkippedStop(`race${round}`);
+      await setStopStatus(s.stopId, "PENDING");
+      const [complete, skip] = await Promise.allSettled([
+        tenantCtx.run(s.tenantId, () =>
+          routesService.completeWithPayment(
+            s.runId,
+            s.stopId,
+            { deliveries: [] } as never,
+            operator,
+          ),
+        ),
+        tenantCtx.run(s.tenantId, () =>
+          routesService.updateStopStatus(s.runId, s.stopId, { status: "SKIPPED" }, operator),
+        ),
+      ]);
+      const after = await prisma.routeRunStop.findUnique({ where: { id: s.stopId } });
+      // Never both: a completion and a skip can't both win the same row.
+      expect(complete.status === "fulfilled" && skip.status === "fulfilled").toBe(false);
+      if (after?.status === "COMPLETED") {
+        expect(complete.status).toBe("fulfilled");
+        expect(skip.status).toBe("rejected"); // STOP_ALREADY_COMPLETED, or the pre-read's 409
+      } else {
+        expect(after?.status).toBe("SKIPPED");
+        expect(skip.status).toBe("fulfilled");
+        expect(complete.status).toBe("rejected"); // STOP_SKIPPED
+        await expectNothingWritten(s);
+      }
+    }
   });
 });

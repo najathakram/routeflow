@@ -358,7 +358,7 @@ describe("RoutesService — F10 stop-state guards (REG-B54/B55/B71/B72/B120/B121
       await expect(
         service.updateStopStatus("run-1", "stop-1", { status: "SKIPPED" }, operatorPayload),
       ).rejects.toThrow(ConflictException);
-      expect(prisma.routeRunStop.update).not.toHaveBeenCalled();
+      expect(prisma.routeRunStop.updateMany).not.toHaveBeenCalled(); // #2415: the write is a CAS now
     });
 
     it("T7 — REG-B71: no stop transition is accepted on a COMPLETED or CANCELLED run", async () => {
@@ -372,13 +372,13 @@ describe("RoutesService — F10 stop-state guards (REG-B54/B55/B71/B72/B120/B121
       await expect(
         service.updateStopStatus("run-1", "stop-1", { status: "IN_PROGRESS" }, operatorPayload),
       ).rejects.toThrow(ConflictException);
-      expect(prisma.routeRunStop.update).not.toHaveBeenCalled();
+      expect(prisma.routeRunStop.updateMany).not.toHaveBeenCalled(); // #2415: the write is a CAS now
 
       prisma.routeRun.findFirst.mockResolvedValueOnce({ driverId: "drv-1", status: "CANCELLED" });
       await expect(
         service.updateStopStatus("run-1", "stop-1", { status: "IN_PROGRESS" }, operatorPayload),
       ).rejects.toThrow(ConflictException);
-      expect(prisma.routeRunStop.update).not.toHaveBeenCalled();
+      expect(prisma.routeRunStop.updateMany).not.toHaveBeenCalled(); // #2415: the write is a CAS now
     });
 
     it("T8 — REG-B71: a normal PATCH still succeeds and now consults the run's status for every caller", async () => {
@@ -389,13 +389,14 @@ describe("RoutesService — F10 stop-state guards (REG-B54/B55/B71/B72/B120/B121
         arrivedAt: null,
       });
       prisma.routeRun.findFirst.mockResolvedValue({ driverId: "drv-1", status: "IN_PROGRESS" });
-      prisma.routeRunStop.update.mockResolvedValue({});
+      prisma.routeRunStop.updateMany.mockResolvedValue({ count: 1 });
 
       await service.updateStopStatus("run-1", "stop-1", { status: "IN_PROGRESS" }, operatorPayload);
 
-      expect(prisma.routeRunStop.update).toHaveBeenCalledWith(
+      // #2415: the write is a compare-and-swap that never lands on a COMPLETED row.
+      expect(prisma.routeRunStop.updateMany).toHaveBeenCalledWith(
         expect.objectContaining({
-          where: { id: "stop-1" },
+          where: { id: "stop-1", status: { not: "COMPLETED" } },
           data: expect.objectContaining({ arrivedAt: expect.any(Date) }),
         }),
       );
@@ -412,7 +413,7 @@ describe("RoutesService — F10 stop-state guards (REG-B54/B55/B71/B72/B120/B121
         arrivedAt: null,
       });
       await service.updateStopStatus("run-1", "stop-1", { status: "IN_PROGRESS" }, operatorPayload);
-      expect(prisma.routeRunStop.update).toHaveBeenCalledTimes(2);
+      expect(prisma.routeRunStop.updateMany).toHaveBeenCalledTimes(2);
     });
   });
 
