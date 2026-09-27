@@ -166,6 +166,14 @@ export interface InlineReturnRecordItem {
 
 export type InlineReturnStatus = "RECEIVED" | "REFUNDED" | "REJECTED" | "CANCELLED";
 
+/** B735: unresolved `RegulatedLedgerParkedReversal` rows for this return, read fresh right
+ *  before the response is built (`InlineReturnsService.withParkedReversals`) — never a value
+ *  threaded from the reversal call itself, so it's correct on every exit including a replay. */
+export interface InlineReturnParkedReversals {
+  count: number;
+  pieces: number;
+}
+
 export interface InlineReturnRecord {
   id: string;
   returnNumber: string | null;
@@ -186,6 +194,10 @@ export interface InlineReturnRecord {
    *  an OFFICE capture never sets this (PR 1 asserts it stays null/absent). */
   holdReason?: string | null;
   heldAmount?: number | null;
+  /** B735: non-null iff this return has an unresolved regulated-ledger park (the B681 park
+   *  guard could not safely reverse a legacy/unknown box-axis SALE row). `null` = checked and clean; ABSENT =
+   *  not checked (the post-commit read failed, or no tenant context) — never assume clean. */
+  parkedReversals?: InlineReturnParkedReversals | null;
   creditSubtotal?: number | null;
   creditTax?: number | null;
   creditCategoryTax?: number | null;
