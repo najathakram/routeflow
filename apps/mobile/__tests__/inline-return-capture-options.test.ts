@@ -61,3 +61,12 @@ it.each([
   opts.onError!(err as any, vars, undefined as any, undefined as any);
   expect(settle).toHaveBeenCalledWith(vars, outcome);
 });
+
+// #2420 (F2 at 27271e9c, the #2265 class): a capture confirmed OFFLINE sat as a spinner — TanStack's
+// default networkMode "online" PAUSED the mutation, so the api-client interceptor never queued it
+// and the screen never showed "Saved offline". The capture must fail fast offline like the driver's
+// critical calls (lib/live-online.ts DRIVER_CRITICAL_NETWORK_MODE).
+it("#2420: the capture mutation never pauses offline (networkMode 'always')", () => {
+  const { opts } = setup();
+  expect(opts.networkMode).toBe("always");
+});

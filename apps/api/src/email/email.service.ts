@@ -1904,6 +1904,67 @@ export class EmailService {
     });
   }
 
+  /**
+   * #2439: the new-workspace welcome email. It carries the workspace, the username, a single-use
+   * set-password link (never a password), the login URL and — when self-serve checkout is allowed
+   * for the plan — a STABLE "Pay now" link (login → /settings/billing, which mints a fresh Stripe
+   * checkout on click), so nothing in it goes stale in 24h. Platform sender only.
+   */
+  async sendTenantWelcomeEmail(params: {
+    to: string;
+    username: string;
+    businessName: string;
+    workspace: string;
+    setPasswordUrl: string;
+    expiryHours: number;
+    loginUrl: string;
+    payUrl: string | null;
+    trialDays: number;
+  }) {
+    const p = (html: string) =>
+      `<p style="margin:0 0 16px;font-size:15px;color:#374151;">${html}</p>`;
+    const paySection = params.payUrl
+      ? `${p(
+          params.trialDays === 0
+            ? "Complete payment to activate your workspace:"
+            : `Your trial runs for ${params.trialDays} days. Complete payment any time to keep going:`,
+        )}
+    ${renderBrandButton("Pay now", params.payUrl)}
+    ${p('<span style="font-size:13px;color:#6b7280;">Sign in, then you\'ll go straight to billing.</span>')}`
+      : "";
+    const body = `${p(`Hi ${escapeHtml(params.username)},`)}
+    ${p(`Your RouteFlow workspace for <strong>${escapeHtml(params.businessName)}</strong> is ready.`)}
+    ${p(`<strong>Workspace:</strong> ${escapeHtml(params.workspace)}<br/><strong>Username:</strong> ${escapeHtml(params.username)}`)}
+    ${p("Start by setting your password:")}
+    ${renderBrandButton("Set your password", params.setPasswordUrl)}
+    ${p(`<span style="font-size:13px;color:#6b7280;">This link works once and expires in ${params.expiryHours} hours.</span>`)}
+    ${renderBrandButton("Sign in", params.loginUrl)}
+    ${paySection}`;
+    const { html, text } = renderBrandedEmail({
+      headerHtml: brandHeaderHtml(),
+      heading: "Your RouteFlow workspace is ready",
+      bodyHtml: body,
+      bodyText: [
+        `Hi ${params.username},`,
+        `Your RouteFlow workspace for ${params.businessName} is ready.`,
+        `Workspace: ${params.workspace}`,
+        `Username: ${params.username}`,
+        `Set your password (works once, expires in ${params.expiryHours} hours): ${params.setPasswordUrl}`,
+        `Sign in: ${params.loginUrl}`,
+        ...(params.payUrl
+          ? [`Pay now (sign in, then you'll go straight to billing): ${params.payUrl}`]
+          : []),
+      ],
+      footerNote: "RouteFlow Platform — this is an automated account email.",
+    });
+    return this.sendPlatform({
+      to: params.to,
+      subject: `Welcome to RouteFlow — your ${params.businessName} workspace is ready`,
+      html,
+      text,
+    });
+  }
+
   /** Notice to a user's OLD address after their login email is changed — never opt-out. */
   async sendEmailChangedNotice(params: { to: string; username: string; newEmail: string }) {
     const body = `<p style="margin:0 0 16px;font-size:15px;color:#374151;">Hi ${escapeHtml(params.username)},</p>
