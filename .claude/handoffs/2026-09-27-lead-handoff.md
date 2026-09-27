@@ -5,6 +5,9 @@
 >    `cd ~/code/rf-prod-migrate && BACKUP_DIR="$PWD/backups" railway run --service postgres node ../rf-prod-migrate-2423/apps/api/scripts/backup-production.mjs pre-2423 && railway run --service postgres node ../rf-prod-migrate-2423/apps/api/scripts/prod-migrate.mjs; echo "exit=$?"`
 > 2. PC PowerShell, delete the 2 fully-landed branches (re-checked against GitHub at 15:15Z; the other 97 either belong to open PRs or hold unmerged work):
 >    `gh api -X DELETE "repos/najathakram/routeflow/git/refs/heads/wip%2Fadmin-modal-a11y"; gh api -X DELETE "repos/najathakram/routeflow/git/refs/heads/wip%2Fplan-gated-nav"`
+> 3. (after #2425's migration) **#2486 Sign in with Apple, part A** (SA-477): backup pre-2309, then prod-migrate (exactly 20260927100000), then schema-drift 0, then set the FOUR APPLE_* variables on the Railway @routeflow/api service. The lead posts the exact command when #2486 is gated.
+> 4. GitHub repo secret **E2E_DRIVER_PASSWORD** (for #2029 driver-mode's CI proof; the wiring is optional until it's added).
+> STATUS 15:45Z: #2423's migration was already in prod (the owner's run showed NO DRIFT). The #2425 migration command was given to the owner at about 15:35Z; result pending.
 > Owner answers recorded at 15:15Z: Stripe prod key = standard sk_ (no action); #2093 = audit log + warning; the SA decides while the owner is away (SA-471); PowerShell is allowed in .claude/settings.local.json on the PC.
 
 
