@@ -190,7 +190,7 @@ describe("SA-422b — the cancelled-line rules run before any unit check", () =>
     expect([...order].sort((x, y) => x - y)).toEqual(order);
   });
 
-  it("(b) prepareUnitEditContext: a CANCELLED unit line's id is absent from existingById", async () => {
+  it("(b) prepareUnitEditContext: a CANCELLED unit line's id is absent for a NON-staff caller, kept for staff (Opus item 6)", async () => {
     const { prepareUnitEditContext } =
       require("./unit-line-edit") as typeof import("./unit-line-edit");
     const self = {
@@ -207,15 +207,12 @@ describe("SA-422b — the cancelled-line rules run before any unit check", () =>
       { id: "li-x", productId: "p1", unitLabel: "Case", unitsPerBox: 12, status: "CANCELLED" },
       { id: "li-l", productId: "p2", unitLabel: null, unitsPerBox: 6, status: "PENDING" },
     ];
-    const ctx = await prepareUnitEditContext(
-      self,
-      { lineItems: lines } as any,
-      { items: [] } as any,
-      {
-        role: "OPERATOR",
-      },
-    );
-    expect(ctx.existingById.has("li-x")).toBe(false);
-    expect(ctx.existingById.has("li-l")).toBe(true);
+    const forRole = (role: string) =>
+      prepareUnitEditContext(self, { lineItems: lines } as any, { items: [] } as any, { role });
+    const driverCtx = await forRole("DRIVER");
+    expect(driverCtx.existingById.has("li-x")).toBe(false);
+    expect(driverCtx.existingById.has("li-l")).toBe(true);
+    const staffCtx = await forRole("OPERATOR");
+    expect(staffCtx.existingById.has("li-x")).toBe(true);
   });
 });
