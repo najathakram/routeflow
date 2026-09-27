@@ -303,6 +303,26 @@ describe("BillingService — Stripe churn/reactivation MRR ledger", () => {
       expect(deltaOf(events, BILLING_EVENTS.SUBSCRIPTION_SUSPENDED)).toBe(-373);
     });
 
+    // #2045 (6): emitPayingDelta's paying-set gate reads class/deletedAt post-CAS (SA-140) — a
+    // non-PRODUCTION or soft-deleted tenant was never in the paying set, so its suspension books
+    // nothing (the status write itself still applies).
+    it.each([
+      ["a TEST-class tenant", { deletedAt: null, class: "TEST" }],
+      ["a soft-deleted tenant", { deletedAt: new Date("2026-09-01"), class: "PRODUCTION" }],
+    ])("#2045: %s — the suspension applies but books no delta", async (_label, row) => {
+      const { svc, tx, events } = make({
+        stripeStatus: "unpaid",
+        transitionCount: 1,
+        addons: [{ priceSnapshot: 12, quantity: 2 }],
+      });
+      tx.tenant.findUniqueOrThrow.mockResolvedValue(row);
+      await svc.suspendOverdueTenants();
+      expect(tx.tenant.updateMany.mock.calls[0][0]).toMatchObject({
+        data: { status: "SUSPENDED" },
+      });
+      expect(deltaOf(events, BILLING_EVENTS.SUBSCRIPTION_SUSPENDED) ?? 0).toBe(0);
+    });
+
     it("N3: notifies the tenant admin with reason 'overdue payment' only when the suspension actually applied", async () => {
       const { svc, billingNotification } = make({ stripeStatus: "unpaid", transitionCount: 1 });
       await svc.suspendOverdueTenants();

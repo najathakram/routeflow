@@ -693,6 +693,40 @@ describe("PlatformAdminService — audit provenance", () => {
       billingEventService.emit.mock.calls.find((c: any[]) => c[1] === "plan.changed")?.[3]
         ?.amountDelta;
 
+    // #2045 (6): updatePlan's ledger delta is gated by the shared isPayingRow — a non-PRODUCTION
+    // tenant (or a soft-deleted one) is outside the paying set on both sides, so it books Δ0 even on
+    // a ranked upgrade that moves its snapshot.
+    it.each([
+      ["a TEST-class tenant", { class: "TEST", deletedAt: null }],
+      [
+        "a soft-deleted PRODUCTION tenant",
+        { class: "PRODUCTION", deletedAt: new Date("2026-09-01") },
+      ],
+      ["control: a live PRODUCTION tenant", { class: "PRODUCTION", deletedAt: null }],
+    ])("#2045: %s — updatePlan's ranked-upgrade delta", async (label, extra) => {
+      catalog();
+      tenant("STARTER");
+      prisma.tenant.findUnique.mockResolvedValue({
+        id: TENANT_ID,
+        slug: "acme",
+        plan: "STARTER",
+        status: "ACTIVE",
+        ...extra,
+      } as any);
+      (prisma as any).tenantSubscription.findUnique.mockResolvedValue({
+        planKey: "STARTER",
+        basePriceSnapshot: 99,
+        priceOverrideMonthly: null,
+        discount: null,
+        cycle: "MONTHLY",
+        periodStart: null,
+        periodEnd: null,
+      });
+      await service.updatePlan(TENANT_ID, { plan: "PROFESSIONAL" } as any, ADMIN_ID);
+      // PROFESSIONAL resolves to SCALE (499); a paying row books 499 − 99, a non-paying one Δ0.
+      expect(planDelta() ?? 0).toBe(label.startsWith("control") ? 400 : 0);
+    });
+
     it("same-rank change (PROFESSIONAL → SCALE) on an override row: snapshot = the fee, Δ0, no quote", async () => {
       catalog();
       tenant("PROFESSIONAL");
@@ -2928,6 +2962,32 @@ describe("PlatformAdminService — audit provenance", () => {
         expect.objectContaining({ from: "PRODUCTION", to: "TEST", reason: "reclassified as QA" }),
         expect.objectContaining({ actorId: ADMIN_ID }),
       );
+    });
+
+    // #2045 (1): the class the PRODUCTION-boundary decision is made from must be read UNDER the
+    // Tenant lock — read before it, a concurrent class flip committing in between would make this
+    // call book (or skip) the class_changed rebase against a stale class.
+    it("#2045: reads the tenant's class AFTER taking the Tenant row lock, inside the tx", async () => {
+      const order: string[] = [];
+      (prisma.$queryRaw as jest.Mock).mockImplementation(async (strings: TemplateStringsArray) => {
+        if (/FROM "Tenant" WHERE id = \? FOR UPDATE/.test(Array.from(strings).join("?")))
+          order.push("tenant-lock");
+        return [];
+      });
+      prisma.tenant.findUniqueOrThrow.mockImplementation((async () => {
+        order.push("read-class");
+        return { id: TENANT_ID, slug: "acme", class: "PRODUCTION" };
+      }) as any);
+      prisma.tenant.update.mockResolvedValue({ id: TENANT_ID, slug: "acme", class: "TEST" } as any);
+
+      await service.updateTenantClass(
+        TENANT_ID,
+        { class: "TEST", reason: "reclassified as QA" } as any,
+        ADMIN_ID,
+      );
+
+      expect(order.indexOf("tenant-lock")).toBeGreaterThanOrEqual(0);
+      expect(order.indexOf("read-class")).toBeGreaterThan(order.indexOf("tenant-lock"));
     });
 
     it("does not emit a BillingEvent when moving between two non-PRODUCTION classes", async () => {
