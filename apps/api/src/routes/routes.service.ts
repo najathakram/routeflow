@@ -36,6 +36,7 @@ import { LIVE_CUSTOMER_STOP_WHERE, SCHEDULED_ROUTE_KIND_WHERE } from "./route-st
 // desync from every other confirmed-money read in the codebase.
 import { CONFIRMED_PAYMENT } from "../invoices/payment-predicates";
 import { geocodeAddress } from "../common/geocode.util";
+import { withAfterCommit } from "../common/after-commit";
 import { TripOriginDto, TripOriginType } from "../trips/dto/create-trip.dto";
 import { TripEndDto, TripEndType } from "../trips/dto/route-planning.dto";
 import { ListRoutesDto } from "./dto/list-routes.dto";
@@ -2512,7 +2513,7 @@ export class RoutesService {
     // no payment was collected this completion — no payment call, no fields).
     let excess: number | undefined;
     let advancePaymentId: string | null | undefined;
-    await this.prisma.tenantTransaction(async (tx) => {
+    await withAfterCommit(this.prisma, async (tx, after) => {
       await assertDeliveriesFitStop(tx, stopId, stop.orders, dto.deliveries);
       // Phase 4 (W7b): regulated-delivery POD gate (same as completeStop).
       const db = tx as unknown as RegulatedDeliveryDb;
@@ -2614,6 +2615,7 @@ export class RoutesService {
       if (dto.payment && dto.payment.amount > 0) {
         const recorded = await this.invoicesService.recordDeliveryPaymentInTx(
           tx,
+          after,
           deliveredOrderIds,
           dto.payment.amount,
           dto.payment.method,
