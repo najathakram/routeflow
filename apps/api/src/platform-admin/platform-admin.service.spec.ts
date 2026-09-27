@@ -1,3 +1,4 @@
+import { Prisma } from "@prisma/client";
 import { ConflictException } from "@nestjs/common";
 import { Test, TestingModule } from "@nestjs/testing";
 import { JwtService } from "@nestjs/jwt";
@@ -645,9 +646,9 @@ describe("PlatformAdminService — audit provenance", () => {
       proratedNow: 0,
       note: "custom fee unchanged — adjust it in Pricing",
     });
-    const write = (prisma as any).tenantSubscription.upsert.mock.calls[0][0];
-    expect(write.update).toMatchObject({ planKey: "SCALE", basePriceSnapshot: 80 }); // plan moves, price doesn't
-    expect(write.update).not.toHaveProperty("priceOverrideMonthly"); // never cleared or rewritten
+    const write = (prisma as any).tenantSubscription.updateMany.mock.calls[0][0];
+    expect(write.data).toMatchObject({ planKey: "SCALE", basePriceSnapshot: 80 }); // plan moves, price doesn't
+    expect(write.data).not.toHaveProperty("priceOverrideMonthly"); // never cleared or rewritten
     const planChanged = billingEventService.emit.mock.calls.find(
       (c: any[]) => c[1] === "plan.changed",
     );
@@ -695,35 +696,71 @@ describe("PlatformAdminService — audit provenance", () => {
       tenant("PROFESSIONAL");
       sub("SCALE", 80);
       const res: any = await service.updatePlan(TENANT_ID, { plan: "SCALE" } as any, ADMIN_ID);
-      const write = (prisma as any).tenantSubscription.upsert.mock.calls[0][0];
-      expect(write.update).toMatchObject({ planKey: "SCALE", basePriceSnapshot: 80 });
-      expect(write.update).not.toHaveProperty("priceOverrideMonthly");
+      const write = (prisma as any).tenantSubscription.updateMany.mock.calls[0][0];
+      expect(write.data).toMatchObject({ planKey: "SCALE", basePriceSnapshot: 80 });
+      expect(write.data).not.toHaveProperty("priceOverrideMonthly");
       expect(res.proratedNow ?? null).toBeNull();
       expect(planDelta() ?? 0).toBe(0);
     });
 
-    // #2470 Opus fold (2): updatePlan read priorSub before its tx and wrote with no guard — it now locks
-    // the Tenant row (the lock updateTenantPriceOverride takes) and re-reads fee + snapshot under it.
-    it("fold: a Pricing change between updatePlan's read and its lock ⇒ 409, nothing written or booked", async () => {
+    // #2470 Opus fold (2) / SA-485b (i): updatePlan read priorSub before its tx; its subscription write is
+    // now a compare-and-set on {tenantId, planKey, fee, snapshot} as READ and its tenant write matches the
+    // status as read — a Pricing change / reconcile / status change since the read is a 409.
+    it("SA-485b: the subscription write is a compare-and-set on planKey + fee + snapshot as read", async () => {
       catalog();
       tenant("STARTER");
-      (prisma as any).tenantSubscription.findUnique
-        .mockResolvedValueOnce({
-          planKey: "STARTER",
-          basePriceSnapshot: 80,
-          priceOverrideMonthly: 80,
-          discount: null,
-          cycle: "MONTHLY",
-          periodStart: null,
-          periodEnd: null,
-        }) // the pre-read
-        .mockResolvedValue({ priceOverrideMonthly: 120, basePriceSnapshot: 80 }); // under the lock
+      sub("STARTER", 80);
+      await service.updatePlan(TENANT_ID, { plan: "PROFESSIONAL" } as any, ADMIN_ID);
+      expect((prisma as any).tenantSubscription.updateMany.mock.calls[0][0].where).toEqual({
+        tenantId: TENANT_ID,
+        planKey: "STARTER",
+        priceOverrideMonthly: 80,
+        basePriceSnapshot: 80,
+      });
+      expect(prisma.tenant.update.mock.calls[0][0].where).toEqual({
+        id: TENANT_ID,
+        status: "ACTIVE",
+      });
+    });
+
+    it("SA-485b: the guarded subscription write misses (a Pricing change since the read) ⇒ 409, nothing booked", async () => {
+      catalog();
+      tenant("STARTER");
+      sub("STARTER", 80);
+      (prisma as any).tenantSubscription.updateMany.mockResolvedValueOnce({ count: 0 });
       const err = await service
         .updatePlan(TENANT_ID, { plan: "PROFESSIONAL" } as any, ADMIN_ID)
         .catch((e: unknown) => e);
       expect(err).toBeInstanceOf(ConflictException);
-      expect((prisma as any).tenantSubscription.upsert).not.toHaveBeenCalled();
       expect(billingEventService.emit).not.toHaveBeenCalled();
+    });
+
+    it("SA-485b: the tenant row changed status since the read (P2025 on the guarded update) ⇒ 409", async () => {
+      catalog();
+      tenant("STARTER");
+      sub("STARTER", 80);
+      prisma.tenant.update.mockRejectedValueOnce(
+        new Prisma.PrismaClientKnownRequestError("Record not found", {
+          code: "P2025",
+          clientVersion: "test",
+        }),
+      );
+      const err = await service
+        .updatePlan(TENANT_ID, { plan: "PROFESSIONAL" } as any, ADMIN_ID)
+        .catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(ConflictException);
+      expect(billingEventService.emit).not.toHaveBeenCalled();
+    });
+
+    it("SA-485b: no subscription row before ⇒ it is CREATED (never a guarded update of nothing)", async () => {
+      catalog();
+      tenant("STARTER");
+      (prisma as any).tenantSubscription.findUnique.mockResolvedValue(null);
+      await service.updatePlan(TENANT_ID, { plan: "PROFESSIONAL" } as any, ADMIN_ID);
+      expect((prisma as any).tenantSubscription.updateMany).not.toHaveBeenCalled();
+      expect((prisma as any).tenantSubscription.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({ tenantId: TENANT_ID, planKey: "SCALE" }),
+      });
     });
 
     it("fold: updatePlan locks the Tenant row inside its tx before writing the subscription", async () => {
@@ -737,7 +774,7 @@ describe("PlatformAdminService — audit provenance", () => {
       );
       expect(i).toBeGreaterThan(-1);
       expect((prisma.$queryRaw as jest.Mock).mock.invocationCallOrder[i]).toBeLessThan(
-        ((prisma as any).tenantSubscription.upsert as jest.Mock).mock.invocationCallOrder[0],
+        ((prisma as any).tenantSubscription.updateMany as jest.Mock).mock.invocationCallOrder[0],
       );
     });
 
@@ -755,8 +792,8 @@ describe("PlatformAdminService — audit provenance", () => {
         proratedNow: 0,
         note: "custom fee unchanged — adjust it in Pricing",
       });
-      const write = (prisma as any).tenantSubscription.upsert.mock.calls[0][0];
-      expect(write.update).toMatchObject({ planKey: "SCALE", basePriceSnapshot: 0 });
+      const write = (prisma as any).tenantSubscription.updateMany.mock.calls[0][0];
+      expect(write.data).toMatchObject({ planKey: "SCALE", basePriceSnapshot: 0 });
       expect(planDelta() ?? 0).toBe(0);
     });
   });
@@ -801,19 +838,12 @@ describe("PlatformAdminService — audit provenance", () => {
     // basePriceSnapshot moves with planKey: MrrService prices from the snapshot alone, so a
     // stale/absent one would report SCALE tenants at the old plan's price (or $0).
     expect(prisma.tenant.update).toHaveBeenCalledWith({
-      where: { id: TENANT_ID },
+      where: expect.objectContaining({ id: TENANT_ID }), // SA-485b: + the status as read
       data: { plan: "PROFESSIONAL", planVersionId: "v-9" },
     });
-    expect((prisma as any).tenantSubscription.upsert).toHaveBeenCalledWith({
-      where: { tenantId: TENANT_ID },
-      create: {
-        tenantId: TENANT_ID,
-        currentPlan: "PROFESSIONAL",
-        planKey: "SCALE",
-        planVersionId: "v-9",
-        basePriceSnapshot: 499,
-      },
-      update: {
+    expect((prisma as any).tenantSubscription.updateMany).toHaveBeenCalledWith({
+      where: expect.objectContaining({ tenantId: TENANT_ID }), // SA-485b: a compare-and-set
+      data: {
         currentPlan: "PROFESSIONAL",
         planKey: "SCALE",
         planVersionId: "v-9",
@@ -827,7 +857,7 @@ describe("PlatformAdminService — audit provenance", () => {
       },
     });
     // …but it must NOT revoke a cancellation the tenant asked for — that is resume()'s job.
-    expect((prisma as any).tenantSubscription.upsert.mock.calls[0][0].update).not.toHaveProperty(
+    expect((prisma as any).tenantSubscription.updateMany.mock.calls[0][0].data).not.toHaveProperty(
       "cancelAtPeriodEnd",
     );
     expect(entitlementsService.invalidate).toHaveBeenCalledWith(TENANT_ID);
@@ -883,9 +913,9 @@ describe("PlatformAdminService — audit provenance", () => {
 
     // The custom definition carries no catalog price; writing planKey with a null snapshot
     // would enter the tenant in the rollup at $0 base while its add-ons book MRR behind it.
-    expect((prisma as any).tenantSubscription.upsert).toHaveBeenCalledWith(
+    expect((prisma as any).tenantSubscription.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        update: expect.objectContaining({ planKey: "ENTERPRISE", basePriceSnapshot: 1200 }),
+        data: expect.objectContaining({ planKey: "ENTERPRISE", basePriceSnapshot: 1200 }),
       }),
     );
     expect(billingEventService.emit).toHaveBeenCalledWith(
