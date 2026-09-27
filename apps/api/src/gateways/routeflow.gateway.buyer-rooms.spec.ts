@@ -897,6 +897,23 @@ describe("RouteFlowGateway on a live Socket.IO server", () => {
       });
     });
 
+    // #1534 fold: a token issued before canActAsDriver was a claim everywhere (or by an issuer that
+    // omits it) does not ASSERT it — so it is not compared; only a present claim must match the row.
+    it("#1534: a token WITHOUT the canActAsDriver claim, for a row with it true, connects and survives resync", async () => {
+      const client = await connect(staffToken("u-op-drv", "OPERATOR", "t-1"));
+      expect(await serverRooms(client)).toEqual(["tenant:t-1:operators"]);
+      await gateway.resyncBuyerRooms();
+      expect(await serverHolds(client.socket.id!)).toBe(true);
+    });
+
+    it("#1534: a PRESENT canActAsDriver claim matching the row connects and survives resync", async () => {
+      const client = await connect(
+        staffToken("u-op-drv", "OPERATOR", "t-1", { canActAsDriver: true }),
+      );
+      await gateway.resyncBuyerRooms();
+      expect(await serverHolds(client.socket.id!)).toBe(true);
+    });
+
     it("#1534: the user read failing refuses a staff connection (fails closed)", async () => {
       prisma.user.findMany.mockRejectedValueOnce(new Error("db down"));
       expect((await keptAfterConnect(staffToken("u-op", "OPERATOR", "t-1"))).kept).toBe(false);
@@ -911,7 +928,11 @@ describe("RouteFlowGateway on a live Socket.IO server", () => {
     ])(
       "#1534: when %s, the connected staff socket is disconnected at the next resync",
       async (_l, change) => {
-        const operator = await connect(staffToken("u-op", "OPERATOR", "t-1"));
+        // The token asserts canActAsDriver (as login, refresh and Google tokens do), so a toggle of
+        // the row's flag is a mismatch.
+        const operator = await connect(
+          staffToken("u-op", "OPERATOR", "t-1", { canActAsDriver: false }),
+        );
         const admin = await connect(staffToken("u-admin", "TENANT_ADMIN", "t-1")); // untouched
         const buyer = await connect(buyerToken("buyer-a")); // buyer control
         const id = operator.socket.id!;
