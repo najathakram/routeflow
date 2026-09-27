@@ -9,6 +9,9 @@
 > 4. GitHub repo secret **E2E_DRIVER_PASSWORD** (for #2029 driver-mode's CI proof; the wiring is optional until it's added).
 > STATUS 15:45Z: #2423's migration was already in prod (the owner's run showed NO DRIFT). The #2425 migration command was given to the owner at about 15:35Z; result pending.
 > 5. **OWNER DECISION (SA-481/SA-471):** #2500 is being built as option B hardened: the client-requested live fresh-start wipe path is KEPT but made strictly safer (one resolved URL, explicit --local / --live-tenant-override paths, --backup-taken + type-back, the two live tenants excluded). Question for you: retire the live fresh-start path entirely instead (option A)?
+> 6. **SECURITY census (#2538 landed 6cf5a141; read-only, SA-499 + lead Opus confirmed: a read-only session, 2 SELECTs, anonymised output).** Mac mini Terminal, once the Mac Lead reports ~/code/rf-report-2533 ready:
+>    `cd ~/code/rf-prod-migrate && railway run --service postgres node ../rf-report-2533/apps/api/scripts/report-2533-product-image-keys.mjs; echo "exit=$?"`
+>    It prints anonymised tenant labels and counts of product rows holding a foreign image key. If any are found, the scrub is #2544 (a separate, owner-approved write).
 > Owner answers recorded at 15:15Z: Stripe prod key = standard sk_ (no action); #2093 = audit log + warning; the SA decides while the owner is away (SA-471); PowerShell is allowed in .claude/settings.local.json on the PC.
 
 
