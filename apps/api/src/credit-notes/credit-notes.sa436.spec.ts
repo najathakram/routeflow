@@ -315,7 +315,7 @@ describe("CreditNotesService — SA-436 credit auto-apply off, exclusion and app
 
   describe("setAutoApplyExcluded", () => {
     it("sets the flag and audits it with the actor", async () => {
-      prisma.creditNote.findUnique.mockResolvedValue({ id: "cn-a" });
+      prisma.creditNote.findFirst.mockResolvedValue({ id: "cn-a" });
       prisma.creditNote.update.mockResolvedValue({ id: "cn-a", autoApplyExcluded: true });
 
       const res = await service.setAutoApplyExcluded("cn-a", true, "user-7");
@@ -336,8 +336,22 @@ describe("CreditNotesService — SA-436 credit auto-apply off, exclusion and app
       });
     });
 
+    it("the lookup goes through the tenant-scoped findFirst (a foreign tenant's id ⇒ 404)", async () => {
+      prisma.creditNote.findFirst.mockResolvedValue(null); // the proxy's tenantId filter matched nothing
+      prisma.creditNote.findUnique.mockResolvedValue({ id: "cn-foreign" }); // must not be consulted
+      await expect(
+        service.setAutoApplyExcluded("cn-foreign", true, "user-7"),
+      ).rejects.toBeInstanceOf(NotFoundException);
+      expect(prisma.creditNote.findFirst).toHaveBeenCalledWith({
+        where: { id: "cn-foreign" },
+        select: { id: true },
+      });
+      expect(prisma.creditNote.update).not.toHaveBeenCalled();
+      expect(prisma.auditLog.create).not.toHaveBeenCalled();
+    });
+
     it("a missing note ⇒ 404 and zero writes", async () => {
-      prisma.creditNote.findUnique.mockResolvedValue(null);
+      prisma.creditNote.findFirst.mockResolvedValue(null);
       await expect(service.setAutoApplyExcluded("nope", true, "user-7")).rejects.toBeInstanceOf(
         NotFoundException,
       );
