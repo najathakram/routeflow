@@ -114,7 +114,14 @@ describeDb(
     async function invoicedOrder(p: {
       productId: string;
       status: string;
-      line: Record<string, unknown>;
+      line: {
+        qty: number;
+        unitPrice: string;
+        subtotal: string;
+        boxes?: number;
+        pieces?: number;
+        unitsPerBox?: number;
+      };
       issueDate?: Date;
     }) {
       const o = await raw.order.create({
