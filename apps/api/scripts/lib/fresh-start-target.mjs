@@ -129,5 +129,36 @@ export function planFreshStart(args, env, deps) {
     source,
     banner: `DB:     ${deps.redact(url)}  (source: ${source})`,
     poolConfig,
+    // Printed on every live run, dry or not, so the backup is never a surprise at --execute.
+    ...(args.live ? { backupCommand: BACKUP_COMMAND(args.slug) } : {}),
   };
+}
+
+/**
+ * #2508 review (F1): the exclusion list must FAIL CLOSED. The slug compare in planFreshStart only
+ * catches the exact spelling, so every excluded slug is also looked up in the SAME database the
+ * wipe will hit (`found`, from prisma.tenant.findMany({ slug: { in: exclude } })): any slug that
+ * names no tenant (a typo, a case variant) aborts the run, and the target is refused by tenant id.
+ * @param exclude the --exclude-tenant slugs
+ * @param found   [{ id, slug, name }] rows the database returned for them
+ * @param tenant  the resolved target tenant { id, slug, name }
+ * @returns {{ ok: true, lines: string[] } | { ok: false, reason: string }}
+ */
+export function checkExcludedTenants({ exclude, found, tenant }) {
+  const bySlug = new Map(found.map((t) => [t.slug, t]));
+  const unknown = exclude.filter((s) => !bySlug.has(s));
+  if (unknown.length)
+    return {
+      ok: false,
+      reason:
+        `--exclude-tenant names no tenant: ${unknown.join(", ")} — an exclusion that protects ` +
+        "nothing is refused (check the spelling; slugs are exact)",
+    };
+  const excluded = exclude.map((s) => bySlug.get(s));
+  if (excluded.some((t) => t.id === tenant.id))
+    return {
+      ok: false,
+      reason: `${tenant.name} (${tenant.id}) is excluded: it is never wiped, in any mode`,
+    };
+  return { ok: true, lines: excluded.map((t) => `EXCLUDED (never wiped): ${t.name} (${t.id})`) };
 }

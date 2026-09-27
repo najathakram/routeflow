@@ -277,7 +277,8 @@ async function nuke(tenantId) {
 }
 
 (async () => {
-  const { parseFreshStartArgs, planFreshStart } = await import("./lib/fresh-start-target.mjs");
+  const { parseFreshStartArgs, planFreshStart, checkExcludedTenants } =
+    await import("./lib/fresh-start-target.mjs");
   const { resolveDatabaseUrl, redactUrl } = await import("./lib/railway-db-url.mjs");
   const args = parseFreshStartArgs(process.argv.slice(2));
   if (args.error) {
@@ -301,11 +302,29 @@ async function nuke(tenantId) {
   prisma = new PrismaClient({ adapter: new PrismaPg(new Pool(target.poolConfig)) });
 
   console.log(`\n${target.banner}`);
+  if (target.backupCommand) console.log(`Backup: ${target.backupCommand}`);
   console.log(`Tenant: ${slug}`);
   console.log(`Mode:   ${execute ? "EXECUTE (DESTRUCTIVE)" : "DRY-RUN (counts only)"}\n`);
 
   const tenant = await getTenant();
   console.log(`Resolved tenant: ${tenant.name} (id=${tenant.id})\n`);
+
+  // #2508 F1: every excluded slug must name a tenant in THIS database (same client), and the
+  // target is refused by id, all BEFORE any count or write.
+  const found = args.exclude.length
+    ? await prisma.tenant.findMany({
+        where: { slug: { in: args.exclude } },
+        select: { id: true, slug: true, name: true },
+      })
+    : [];
+  const exclusion = checkExcludedTenants({ exclude: args.exclude, found, tenant });
+  if (!exclusion.ok) {
+    console.error(exclusion.reason);
+    await prisma.$disconnect();
+    process.exit(1);
+  }
+  for (const line of exclusion.lines) console.log(line);
+  if (exclusion.lines.length) console.log("");
 
   console.log("Row counts in nuke scope:");
   const rows = await countAll(tenant.id);

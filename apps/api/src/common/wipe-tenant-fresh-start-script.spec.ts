@@ -88,6 +88,17 @@ console.log(JSON.stringify({
   noPath: plan(["acme"], {}),
   bothPaths: plan(["acme", "--local", "--live-tenant-override"], {}),
   noSlug: plan([], {}),
+  excl: (() => {
+    const tenant = { id: "t-acme", slug: "acme", name: "Acme" };
+    const found = [{ id: "t-big", slug: "big", name: "Big Co" }];
+    return {
+      ok: t.checkExcludedTenants({ exclude: ["big"], found, tenant }),
+      typo: t.checkExcludedTenants({ exclude: ["big", "acmee"], found, tenant }),
+      caseVariant: t.checkExcludedTenants({ exclude: ["BIG"], found: [], tenant }),
+      targetById: t.checkExcludedTenants({ exclude: ["alias"], found: [{ id: "t-acme", slug: "alias", name: "Acme" }], tenant }),
+      none: t.checkExcludedTenants({ exclude: [], found: [], tenant }),
+    };
+  })(),
 }));
 `;
 
@@ -125,6 +136,8 @@ describe("fresh-start target planner (#2500)", () => {
       source: "Railway proxy",
       banner: "DB:     R(postgresql://proxy-host/db)  (source: Railway proxy)",
       poolConfig: { connectionString: "postgresql://proxy-host/db" },
+      backupCommand:
+        "railway run --service postgres node apps/api/scripts/backup-production.mjs pre-fresh-start-acme",
     });
   });
 
@@ -159,6 +172,19 @@ describe("fresh-start target planner (#2500)", () => {
   it("an excluded tenant is refused in both modes", () => {
     expect(r.excludedLocal.reason).toMatch(/on the --exclude-tenant list: it is never wiped/);
     expect(r.excludedLive.reason).toMatch(/on the --exclude-tenant list: it is never wiped/);
+  });
+
+  it("every excluded slug must resolve to a tenant: a typo or case variant aborts (fails closed)", () => {
+    expect(r.excl.ok).toEqual({ ok: true, lines: ["EXCLUDED (never wiped): Big Co (t-big)"] });
+    expect(r.excl.typo).toMatchObject({ ok: false });
+    expect(r.excl.typo.reason).toMatch(/--exclude-tenant names no tenant: acmee/);
+    expect(r.excl.caseVariant.reason).toMatch(/names no tenant: BIG/);
+    expect(r.excl.none).toEqual({ ok: true, lines: [] });
+  });
+
+  it("the target is refused when its tenant id is in the resolved exclusion set", () => {
+    expect(r.excl.targetById).toMatchObject({ ok: false });
+    expect(r.excl.targetById.reason).toMatch(/Acme \(t-acme\) is excluded: it is never wiped/);
   });
 
   it("no path flag, both path flags and no slug are usage errors (exit 2)", () => {
@@ -207,6 +233,25 @@ describe("wipe-tenant-fresh-start.js (#2500), real script, no database", () => {
     expect(r.out).toMatch(/Can't reach database server at 127\.0\.0\.1:1\b/);
     expect(r.out).not.toMatch(/127\.0\.0\.1:[23]|decoy/);
     expect(r.status).toBe(99);
+  });
+
+  it("source pin: exclusions resolve with the same client after getTenant() and BEFORE the counts", () => {
+    const code = readFileSync(SCRIPT, "utf8");
+    const at = (needle: string) => {
+      const i = code.indexOf(needle);
+      expect(i).toBeGreaterThan(-1);
+      return i;
+    };
+    const tenant = at("const tenant = await getTenant();");
+    const lookup = code.search(
+      /prisma\.tenant\.findMany\(\{\s*where: \{ slug: \{ in: args\.exclude \} \}/,
+    );
+    expect(lookup).toBeGreaterThan(-1);
+    const check = at("checkExcludedTenants({");
+    const counts = at("const rows = await countAll(tenant.id);");
+    expect(tenant).toBeLessThan(lookup);
+    expect(lookup).toBeLessThan(check);
+    expect(check).toBeLessThan(counts);
   });
 
   it("source pin: the script reads no DATABASE_* variable and builds its one Pool from the plan", () => {
