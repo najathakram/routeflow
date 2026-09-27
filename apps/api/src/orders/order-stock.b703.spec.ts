@@ -27,7 +27,7 @@ function fakeTx(products: P[]) {
     // decrementStockForSale's aggregated `UPDATE … FROM (VALUES (id, qty)…) RETURNING`.
     $queryRaw: jest.fn(async (_strings: TemplateStringsArray, ...values: any[]) => {
       const bound = flat(values).filter((v) => v !== "t-1");
-      const rows = [];
+      const rows: { id: string; currentStock: Prisma.Decimal }[] = [];
       for (let i = 0; i < bound.length; i += 2) {
         const p = byId(bound[i]);
         p.currentStock -= Number(bound[i + 1]);

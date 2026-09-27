@@ -11,7 +11,12 @@ import { assertNoNegativeLineSubtotal } from "../common/money-invariants.util";
 import { randomUUID } from "crypto";
 import { PrismaService } from "../prisma/prisma.service";
 import { StorageService } from "../storage/storage.service";
-import { compressDocument } from "../storage/compress.util";
+import {
+  deletePaymentImage,
+  getPaymentImageUrl,
+  uploadPaymentImage,
+  type PaymentImageDeps,
+} from "./payment-image";
 import {
   computeLineSubtotal,
   roundMoney,
@@ -106,6 +111,7 @@ import { InvoiceItemSystemKind, notNsfLineWhere } from "./nsf-line";
 import { preservedNsfLines } from "./nsf-preserve";
 import { partitionInvoiceLines, planResyncPairs } from "./resync-plan";
 import { issueDateStamp, startOfCalendarDay, endOfCalendarDay } from "../common/calendar-date";
+import { calendarFieldStamp, dueDateStamps, dueStamp } from "./invoice-due-dates";
 import { lockRowsNoWait } from "../common/db-locks";
 import { NumberingService } from "../import/numbering.service";
 import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
@@ -123,7 +129,14 @@ import { prepareUnitLadders, requestsUnit } from "../orders/unit-line-build";
 import { standaloneAllocationTotals } from "./standalone-payment-totals";
 import { calendarDayOf } from "./settled-date-filter";
 import { retryOnTxConflict } from "../common/tx-retry";
-import { lockInvoiceRow, nextSentStatus, sendRefusal, voidRefusal } from "./invoice-send-guard";
+import {
+  lockInvoiceRow,
+  lockInvoicesForPayment,
+  nextSentStatus,
+  paymentRefusal,
+  sendRefusal,
+  voidRefusal,
+} from "./invoice-send-guard";
 import { selectEditRevertedInvoices } from "./order-edit-revert-set";
 
 const TERM_DAYS: Record<string, number> = {
@@ -389,6 +402,7 @@ export class InvoicesService {
   /** SA-135: an internal caller's line may carry `packSnapshot` (ManualLineItem); the HTTP DTO never can. */
   async create(dto: Omit<CreateInvoiceDto, "items"> & { items: ManualLineItem[] }) {
     const issueDateInput = dto.issueDate ? issueDateStamp(dto.issueDate) : null; // #2197: 400 first
+    const due = dueDateStamps(dto); // #2256: the due dates too, refused before any read or write
     const customer = await this.prisma
       .forTenant()
       .customer.findUnique({ where: { id: dto.customerId } });
@@ -484,14 +498,14 @@ export class InvoicesService {
             discount: invDiscount,
             shippingFee: shipping,
             total,
-            dueDate: dto.dueDate ? new Date(dto.dueDate) : null,
+            dueDate: due.dueDate,
             // #2197: the literal calendar day the client named, never a raw instant.
             issueDate: issueDateInput ?? startOfCalendarDay(new Date(), tenantDefaults.timezone),
             notes: dto.notes ?? tenantDefaults.notes,
             terms: dto.terms ?? tenantDefaults.terms,
             paymentTermsLabel: dto.paymentTermsLabel ?? null,
             depositPercent: dto.depositPercent ?? null,
-            depositDueDate: dto.depositDueDate ? new Date(dto.depositDueDate) : null,
+            depositDueDate: due.depositDueDate,
             referenceNumber: dto.referenceNumber ?? null,
             subject: dto.subject ?? null,
             shippingCarrier: dto.shippingCarrier?.trim() || null,
@@ -611,7 +625,7 @@ export class InvoicesService {
     const issueDate = order.orderDate ?? startOfCalendarDay(new Date(), tenantDefaults.timezone);
     let dueDate: Date;
     if (overrides?.dueDate) {
-      dueDate = new Date(overrides.dueDate);
+      dueDate = calendarFieldStamp(overrides.dueDate, "dueDate"); // #2256
     } else {
       dueDate = addCalendarDays(issueDate, dueDays);
     }
@@ -642,7 +656,7 @@ export class InvoicesService {
         ? {
             depositPercent: overrides.depositPercent,
             depositDueDate: overrides.depositDueDate
-              ? new Date(overrides.depositDueDate)
+              ? calendarFieldStamp(overrides.depositDueDate, "depositDueDate")
               : issueDate,
           }
         : effectiveDepositPercent != null
@@ -2496,7 +2510,7 @@ export class InvoicesService {
     const issueDate = order.orderDate ?? startOfCalendarDay(new Date(), tenantTimezone);
     let dueDate: Date;
     if (overrides?.dueDate) {
-      dueDate = new Date(overrides.dueDate);
+      dueDate = calendarFieldStamp(overrides.dueDate, "dueDate"); // #2256
     } else {
       dueDate = addCalendarDays(issueDate, dueDays);
     }
@@ -2538,7 +2552,7 @@ export class InvoicesService {
         ? {
             depositPercent: overrides.depositPercent,
             depositDueDate: overrides.depositDueDate
-              ? new Date(overrides.depositDueDate)
+              ? calendarFieldStamp(overrides.depositDueDate, "depositDueDate")
               : issueDate,
           }
         : effectiveDepositPercent != null
@@ -2724,9 +2738,9 @@ export class InvoicesService {
     const issueDate = order.orderDate ?? startOfCalendarDay(new Date(), tenantDefaults.timezone);
     let dueDate: Date;
     if (dto.dueDate) {
-      dueDate = new Date(dto.dueDate);
+      dueDate = calendarFieldStamp(dto.dueDate, "dueDate"); // #2256
     } else if (overrides?.dueDate) {
-      dueDate = new Date(overrides.dueDate);
+      dueDate = calendarFieldStamp(overrides.dueDate, "dueDate"); // #2256
     } else {
       dueDate = addCalendarDays(issueDate, dueDays);
     }
@@ -2752,7 +2766,7 @@ export class InvoicesService {
       explicitDepositPercent != null
         ? {
             depositPercent: explicitDepositPercent,
-            depositDueDate: explicitDepositDueDate ? new Date(explicitDepositDueDate) : issueDate,
+            depositDueDate: dueStamp(explicitDepositDueDate, "depositDueDate") ?? issueDate,
           }
         : effectiveDepositPercent != null
           ? { depositPercent: effectiveDepositPercent, depositDueDate: issueDate }
@@ -3231,6 +3245,7 @@ export class InvoicesService {
 
     // #2197: the same literal calendar-day stamp create() writes.
     const issueDate = dto.issueDate ? issueDateStamp(dto.issueDate) : undefined;
+    const due = dueDateStamps(dto); // #2256: and the due dates, before either rewrite path runs
 
     // units_v1: BOTH rewrite paths — the item replace (re-split at the LIVE pack) and the
     // discount/shipping recompute, whose order back-sync writes onto the linked order's lines.
@@ -3332,7 +3347,7 @@ export class InvoicesService {
             discount: invDiscount,
             shippingFee: shipping,
             total,
-            dueDate: dto.dueDate ? new Date(dto.dueDate) : undefined,
+            dueDate: due.dueDate ?? undefined,
             issueDate,
             notes: dto.notes,
             terms: dto.terms,
@@ -3347,7 +3362,7 @@ export class InvoicesService {
             ...(dto.subject !== undefined && { subject: dto.subject || null }),
             ...(dto.depositPercent !== undefined && { depositPercent: dto.depositPercent }),
             ...(dto.depositDueDate !== undefined && {
-              depositDueDate: dto.depositDueDate ? new Date(dto.depositDueDate) : null,
+              depositDueDate: due.depositDueDate,
             }),
             pdfUrl: null,
             items: {
@@ -3404,7 +3419,7 @@ export class InvoicesService {
     const updated = await this.prisma.forTenant().invoice.update({
       where: { id },
       data: {
-        ...(dto.dueDate && { dueDate: new Date(dto.dueDate) }),
+        ...(due.dueDate && { dueDate: due.dueDate }),
         ...(issueDate && { issueDate }),
         ...(dto.notes !== undefined && { notes: dto.notes }),
         ...(dto.terms !== undefined && { terms: dto.terms }),
@@ -3420,7 +3435,7 @@ export class InvoicesService {
         ...(dto.subject !== undefined && { subject: dto.subject || null }),
         ...(dto.depositPercent !== undefined && { depositPercent: dto.depositPercent }),
         ...(dto.depositDueDate !== undefined && {
-          depositDueDate: dto.depositDueDate ? new Date(dto.depositDueDate) : null,
+          depositDueDate: due.depositDueDate,
         }),
         ...recalcData,
       },
@@ -3510,7 +3525,7 @@ export class InvoicesService {
       d == null ? null : d instanceof Date ? d : new Date(d as string);
     const oldDueDate = asDate(inv.dueDate);
     const oldDueDateStr = oldDueDate ? oldDueDate.toISOString().slice(0, 10) : "none";
-    const newDueDate = dto.dueDate ? new Date(dto.dueDate) : oldDueDate;
+    const newDueDate = dto.dueDate ? calendarFieldStamp(dto.dueDate, "dueDate") : oldDueDate; // #2256
     const newDueDateStr = newDueDate ? newDueDate.toISOString().slice(0, 10) : "none";
 
     // F03/R1: CONFIRMED (PAID) payments only — same predicate every other status
@@ -4688,78 +4703,21 @@ export class InvoicesService {
     return payment;
   }
 
-  private async findPaymentOrThrow(paymentId: string) {
-    const payment = await this.prisma
-      .forTenant()
-      .invoicePayment.findUnique({ where: { id: paymentId } });
-    if (!payment) throw new NotFoundException("Payment not found");
-    return payment;
+  // Receipt/slip/check photos on a payment EVENT live in payment-image.ts (size ratchet).
+  uploadPaymentImage(paymentId: string, buffer: Buffer, originalName: string, mimeType: string) {
+    return uploadPaymentImage(this.paymentImageDeps(), paymentId, buffer, originalName, mimeType);
   }
 
-  /**
-   * Attach a receipt/slip/check photo to a payment EVENT. Uses `compressDocument`
-   * (NOT `compressImage`) — like the expense-receipt endpoint, this route has no
-   * controller MIME allowlist and mobile file pickers routinely send
-   * `application/octet-stream`/empty content-type; `compressDocument` byte-sniffs
-   * via sharp (any real image → JPEG) and tolerates a PDF, so a real receipt/check
-   * photo never 500s on a generic content-type.
-   */
-  async uploadPaymentImage(
-    paymentId: string,
-    buffer: Buffer,
-    originalName: string,
-    mimeType: string,
-  ): Promise<{ url: string }> {
-    const payment = await this.findPaymentOrThrow(paymentId);
-    let compressed;
-    try {
-      compressed = await compressDocument(buffer, mimeType);
-    } catch {
-      throw new BadRequestException("File is not a decodable image or PDF");
-    }
-    // One object per payment EVENT: a grouped standalone payment (several rows
-    // sharing paymentGroupId) anchors on the group id so the same photo is
-    // reachable from every allocation row.
-    const anchor = payment.paymentGroupId ?? payment.id;
-    const key = `payments/${anchor}/image.${compressed.ext}`;
-    await this.storage.upload(key, compressed.buffer, compressed.mimeType);
-    const data = {
-      imageKey: key,
-      imageOriginalName: originalName,
-      imageMimeType: compressed.mimeType,
-    };
-    if (payment.paymentGroupId) {
-      await this.prisma
-        .forTenant()
-        .invoicePayment.updateMany({ where: { paymentGroupId: payment.paymentGroupId }, data });
-    } else {
-      await this.prisma.forTenant().invoicePayment.update({ where: { id: paymentId }, data });
-    }
-    return { url: await this.storage.presignedUrl(key) };
+  getPaymentImageUrl(paymentId: string) {
+    return getPaymentImageUrl(this.paymentImageDeps(), paymentId);
   }
 
-  async getPaymentImageUrl(paymentId: string): Promise<{ url: string }> {
-    const payment = await this.findPaymentOrThrow(paymentId);
-    if (!payment.imageKey) throw new NotFoundException("No image attached to this payment");
-    return { url: await this.storage.presignedUrl(payment.imageKey) };
+  deletePaymentImage(paymentId: string) {
+    return deletePaymentImage(this.paymentImageDeps(), paymentId);
   }
 
-  async deletePaymentImage(paymentId: string): Promise<{ success: boolean }> {
-    const payment = await this.findPaymentOrThrow(paymentId);
-    if (!payment.imageKey) throw new NotFoundException("No image to delete");
-    const clear = { imageKey: null, imageOriginalName: null, imageMimeType: null };
-    if (payment.paymentGroupId) {
-      await this.prisma.forTenant().invoicePayment.updateMany({
-        where: { paymentGroupId: payment.paymentGroupId },
-        data: clear,
-      });
-    } else {
-      await this.prisma
-        .forTenant()
-        .invoicePayment.update({ where: { id: paymentId }, data: clear });
-    }
-    await this.storage.delete(payment.imageKey);
-    return { success: true };
+  private paymentImageDeps(): PaymentImageDeps {
+    return { prisma: this.prisma, storage: this.storage };
   }
 
   // ─── Payment recording ────────────────────────────────────────────────────
@@ -4980,6 +4938,15 @@ export class InvoicesService {
       // Row-lock (like recordPayment) then read paid FRESH, so a concurrent
       // back-office payment on the same invoice can't also read 0 and over-collect.
       await tx.$executeRaw`SELECT id FROM "Invoice" WHERE id = ${inv.id} FOR UPDATE`;
+      // SA-404f N1: the PAYABLE read above was taken before this lock — re-derive it under the lock.
+      // An invoice voided / written off meanwhile is SKIPPED (the driver's cash goes to the next
+      // invoice or the advance below), never written back over.
+      const locked = await tx.invoice.findUnique({
+        where: { id: inv.id },
+        select: { status: true },
+      });
+      if (!locked || !(PAYABLE as string[]).includes(locked.status)) continue;
+      inv.status = locked.status;
       // F03/R1: CONFIRMED (PAID) payments only.
       const priorPayments = await tx.invoicePayment.findMany({
         where: { invoiceId: inv.id, ...CONFIRMED_PAYMENT },
@@ -5503,12 +5470,12 @@ export class InvoicesService {
       // explicit lock of its own — it just INSERTs an InvoicePayment, which only holds `FOR KEY
       // SHARE` on the parent Invoice row — and `FOR NO KEY UPDATE` does NOT conflict with `FOR
       // KEY SHARE`, so NOWAIT here would not actually exclude that writer; `FOR UPDATE` does.
-      if (opts?.assertAllocationsWithinBalance) {
-        const ids = [...new Set(dto.allocations.map((a) => a.invoiceId))].sort();
-        if (ids.length > 0) {
-          await tx.$executeRaw`SELECT id FROM "Invoice" WHERE id IN (${Prisma.join(ids)}) ORDER BY id FOR UPDATE`;
-        }
-      }
+      // SA-404f F1: now UNCONDITIONAL, and Order → Invoice (SA-214) — every standalone payment,
+      // not only the buyer path, reads its invoices' status under the lock a void also takes.
+      await lockInvoicesForPayment(
+        tx,
+        dto.allocations.map((a) => a.invoiceId),
+      );
 
       const payments: any[] = [];
       for (let i = 0; i < dto.allocations.length; i++) {
@@ -5523,8 +5490,8 @@ export class InvoicesService {
         });
         if (!invoice)
           throw new NotFoundException(`Invoice ${alloc.invoiceId} not found for customer`);
-        if (invoice.status === "VOID")
-          throw new BadRequestException(`Invoice ${alloc.invoiceId} is voided`);
+        const refused = paymentRefusal(invoice.status); // SA-404f F1: on the LOCKED row
+        if (refused) throw new BadRequestException(`Invoice ${alloc.invoiceId} is ${refused}`);
         if (opts?.assertAllocationsWithinBalance) {
           const alreadyPaid = sumConfirmed(invoice.payments);
           const balance = roundMoney(Number(invoice.total) - alreadyPaid);

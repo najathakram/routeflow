@@ -38,6 +38,7 @@ import {
   sumConfirmed,
 } from "../invoices/payment-predicates";
 import { settledDateFilter } from "../invoices/settled-date-filter";
+import { lockInvoicesForPayment } from "../invoices/invoice-send-guard";
 
 /**
  * Receipt-extraction model. Receipts are small documents where a misread line
@@ -190,6 +191,9 @@ export class BookkeepingService implements OnModuleInit {
 
   async recordPayment(id: string, dto: RecordPaymentDto) {
     return this.prisma.tenantTransaction(async (tx) => {
+      // SA-404f F1: FIRST lock (Order →) Invoice, so the status read below sees a committed VOID
+      // and refuses, instead of writing PAID/PARTIAL back over it.
+      await lockInvoicesForPayment(tx, [id]);
       const inv = await tx.invoice.findUnique({
         where: { id },
         // F03/R1: this sum ADVANCES invoice state (the status write below is

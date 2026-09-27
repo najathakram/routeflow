@@ -80,6 +80,9 @@ import { DemoteReasonModal } from "./_components/DemoteReasonModal";
 import {
   findLockedUnitLineEdit,
   LockedUnitLineBadge,
+  lockedUnitLineDisplay,
+  lockedUnitLineRefusal,
+  type LockedUnitLineDisplay,
   LockedUnitLineError,
   unitLineCount,
 } from "./_components/unit-line-lock";
@@ -412,6 +415,7 @@ type ApiOrderStatus =
   | "CANCELLED";
 
 export interface EditItemState {
+  priceEdited?: boolean; // #2381: the operator typed this price (picker remounts keep it)
   id: string; // real DB id for existing items; temp "new-{uuid}" for new items
   isNew?: boolean;
   /** True for a free-text, non-catalog line (no productId; { name, qty, unitPrice }). */
@@ -421,6 +425,7 @@ export interface EditItemState {
   originalQty: number;
   /** SA-388 (unit-line-lock.tsx): no derivable count; lockedSubtotal = its stored money. */
   countLocked?: boolean;
+  lockedDisplay?: LockedUnitLineDisplay; // #2266
   lockedSubtotal?: number;
   /** The line's own denomination, restored when a substitution is undone (a
    *  substitute re-denominates the line against ITS case size). */
@@ -623,7 +628,13 @@ export function buildEditItemFromLine(li: OrderItem): EditItemState {
     originalProductId: li.productId ?? "",
     originalProductName: label,
     originalQty: count,
-    ...(countLocked ? { countLocked: true, lockedSubtotal: Number(li.subtotal ?? 0) } : {}),
+    ...(countLocked
+      ? {
+          countLocked: true,
+          lockedSubtotal: Number(li.subtotal ?? 0),
+          lockedDisplay: lockedUnitLineDisplay(li),
+        }
+      : {}),
     productId: li.productId ?? "",
     productName: label,
     qty: count,
@@ -1360,6 +1371,7 @@ export function EditableLineItems({
       basePrice: option.listPrice,
       overrideReason: undefined,
       reasonBaselinePrice: option.price,
+      priceEdited: false, // #2381: a unit change prices from the ladder
     });
   }
 
@@ -1468,7 +1480,9 @@ export function EditableLineItems({
             </div>
 
             {/* SA-388: a LOCKED unit line takes no qty edit; saves refuse any edit to it. */}
-            {!item.cancelled && item.countLocked && <LockedUnitLineBadge />}
+            {!item.cancelled && item.countLocked && (
+              <LockedUnitLineBadge display={item.lockedDisplay} />
+            )}
 
             {/* Qty input */}
             {!item.cancelled && !item.countLocked && (
@@ -1513,6 +1527,7 @@ export function EditableLineItems({
                         ? item.priceType
                         : "STANDARD",
                     unitLabel: item.unitLabel,
+                    priceEdited: item.priceEdited,
                   }}
                   tier={tierForProductId(item.productId)}
                   onChange={(option, refresh) => setLineUnit(item.id, option, refresh)}
@@ -1628,7 +1643,7 @@ export function EditableLineItems({
               // save-time check never disagree.
               originalUnitPrice={item.reasonBaselinePrice ?? item.originalUnitPrice}
               overrideReason={item.overrideReason}
-              onPriceChange={(net) => update(item.id, { unitPrice: net })}
+              onPriceChange={(net) => update(item.id, { unitPrice: net, priceEdited: true })}
               onReasonChange={(reason) => update(item.id, { overrideReason: reason || undefined })}
               unitCost={item.unitCost}
               unitsPerBox={item.unitsPerBox}
@@ -2222,7 +2237,7 @@ export default function OrderDetailPage() {
     const locked = findLockedUnitLineEdit(editItems, order!.lineItems);
     if (!locked) return false;
     toast({
-      title: `${locked.productName || "This line"} needs repair — its stored quantity can't be read as a count, so it can't be edited. Nothing was saved.`,
+      title: lockedUnitLineRefusal(locked.productName || "This line", locked.lockedDisplay),
       variant: "error",
     });
     return true;
