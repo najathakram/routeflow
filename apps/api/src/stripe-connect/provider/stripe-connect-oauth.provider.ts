@@ -1,5 +1,6 @@
 import { Injectable, Logger } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
+import type Stripe from "stripe";
 import { AppConfig } from "../../config/configuration";
 import {
   ConnectAccountSnapshot,
@@ -9,9 +10,11 @@ import {
 
 // Stripe v22 CJS `export =` isn't compatible with `module: "nodenext"` named
 // imports, so we use require() for the constructor value (mirrors
-// payment-requests/provider/stripe-payment-provider.ts).
+// payment-requests/provider/stripe-payment-provider.ts). A type-only import
+// of the `Stripe` type above is unaffected by that interop split — it's
+// erased at compile time — so the client itself can still be properly typed.
 // eslint-disable-next-line @typescript-eslint/no-require-imports
-const Stripe = require("stripe");
+const StripeCtor = require("stripe");
 
 /**
  * The ONLY file in the stripe-connect module that imports the Stripe SDK or
@@ -29,11 +32,11 @@ const Stripe = require("stripe");
 @Injectable()
 export class StripeConnectOAuthProvider implements ConnectOAuthProvider {
   private readonly logger = new Logger(StripeConnectOAuthProvider.name);
-  private readonly stripe: any;
+  private readonly stripe: Stripe | null;
 
   constructor(config: ConfigService<AppConfig>) {
     const secretKey = config.get<AppConfig["stripe"]>("stripe")?.secretKey ?? "";
-    this.stripe = secretKey ? new Stripe(secretKey) : null;
+    this.stripe = secretKey ? (new StripeCtor(secretKey) as Stripe) : null;
     if (!secretKey) {
       this.logger.warn("STRIPE_SECRET_KEY not set — Stripe Connect linking disabled.");
     }
@@ -43,7 +46,7 @@ export class StripeConnectOAuthProvider implements ConnectOAuthProvider {
     return this.stripe !== null;
   }
 
-  private get client(): any {
+  private get client(): Stripe {
     if (!this.stripe) {
       throw new Error("Stripe is not configured. Set STRIPE_SECRET_KEY to enable Connect.");
     }
@@ -64,9 +67,16 @@ export class StripeConnectOAuthProvider implements ConnectOAuthProvider {
   }
 
   async retrievePlatformAccountId(): Promise<string> {
-    const acct = await this.client.accounts.retrieve();
+    // `accounts.retrieve(null)`, NOT the zero-arg form: the SDK's typing
+    // (v22.6.2) is `retrieve(id: string | null, ...)` — a null/non-string id
+    // hits `GET /v1/account` (the caller's own account), and passing no
+    // argument at all only compiled before because the client was untyped
+    // `any`. `retrieveCurrent()` exists too, but this call must go through
+    // the same `accounts.retrieve` path `retrieveAccount` above uses, and
+    // Stripe's own docs describe `retrieve(null)` for "your own account".
+    const acct = await this.client.accounts.retrieve(null);
     if (!acct?.id) {
-      throw new Error("Stripe accounts.retrieve() (platform) returned no account id.");
+      throw new Error("Stripe accounts.retrieve(null) (platform) returned no account id.");
     }
     return acct.id;
   }

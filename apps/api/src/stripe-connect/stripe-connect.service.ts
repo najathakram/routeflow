@@ -147,29 +147,38 @@ export class StripeConnectService {
       update: { pendingJti: jti, pendingJtiIssuedAt: new Date() },
     });
 
+    // PREFILL-EMAIL RULING (SA-458, supersedes the earlier "requester
+    // first"): the prefilled email becomes the login for the Stripe account
+    // that gets created/signed into, and that account belongs to the
+    // BUSINESS, not to whichever staff member happened to click the button.
+    // Order: (1) the requester's own email, but ONLY when the requester is a
+    // TENANT_ADMIN — the role that actually owns the business's Stripe
+    // account; (2) else the tenant's oldest non-deleted TENANT_ADMIN, so a
+    // non-admin requester (e.g. OPERATOR) still steers Stripe toward the
+    // account's rightful owner instead of a line staffer's inbox; (3) else
+    // the requester's own email regardless of role, when the tenant has no
+    // TENANT_ADMIN at all — some prefill beats none; (4) else omitted.
     const [requester, tenant] = await Promise.all([
       // Tenant-scoped on purpose: a requester id that belongs to a different
       // tenant (stale/forged) must never leak that other tenant's email into
       // this authorize URL — findFirst with both id AND tenantId yields
-      // nothing in that case, and the fallback below takes over.
+      // nothing in that case, so a cross-tenant id is ignored entirely.
       startedByUserId
         ? this.prisma.user.findFirst({
             where: { id: startedByUserId, tenantId, deletedAt: null },
-            select: { email: true },
+            select: { email: true, role: true },
           })
         : Promise.resolve(null),
       this.prisma.tenant.findUnique({ where: { id: tenantId }, select: { name: true } }),
     ]);
-    let adminEmail = requester?.email || null;
+    let adminEmail = requester?.role === UserRole.TENANT_ADMIN ? requester.email : null;
     if (!adminEmail) {
-      // Fall back to the tenant's own admin (TENANT_ADMIN, oldest first) when
-      // the requesting user's id/email wasn't available on the request.
       const fallbackAdmin = await this.prisma.user.findFirst({
         where: { tenantId, role: UserRole.TENANT_ADMIN, deletedAt: null },
         orderBy: { createdAt: "asc" },
         select: { email: true },
       });
-      adminEmail = fallbackAdmin?.email || null;
+      adminEmail = fallbackAdmin?.email || requester?.email || null;
     }
     const businessName = tenant?.name || null;
 

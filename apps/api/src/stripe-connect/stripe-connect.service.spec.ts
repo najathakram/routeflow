@@ -128,25 +128,41 @@ describe("StripeConnectService", () => {
       expect(params.get("always_prompt")).toBe("true");
     });
 
-    it("REG-2441: prefills stripe_user[email]/stripe_user[business_name] from the requesting user, tenant-scoped", async () => {
-      (prisma as any).user.findFirst.mockResolvedValueOnce({ email: "admin@acme.test" });
+    it("REG-2441: prefills stripe_user[business_name] from the tenant, tenant-scoped requester lookup", async () => {
+      (prisma as any).user.findFirst.mockResolvedValueOnce({
+        email: "admin@acme.test",
+        role: UserRole.TENANT_ADMIN,
+      });
       (prisma as any).tenant.findUnique.mockResolvedValue({ name: "Acme Wholesale" });
 
       const url = await service.buildAuthorizeUrl("tenant-1", "user-1", "alice");
       const params = new URL(url).searchParams;
-      expect(params.get("stripe_user[email]")).toBe("admin@acme.test");
       expect(params.get("stripe_user[business_name]")).toBe("Acme Wholesale");
-      // Tenant-scoped lookup, not a bare findUnique by id — see the two
-      // PIN/fallback tests below for why that matters.
+      // Tenant-scoped lookup, not a bare findUnique by id — see the PINs
+      // below for why that matters.
       expect((prisma as any).user.findFirst).toHaveBeenNthCalledWith(1, {
         where: { id: "user-1", tenantId: "tenant-1", deletedAt: null },
-        select: { email: true },
+        select: { email: true, role: true },
       });
     });
 
-    it("REG-2441: falls back to the tenant's TENANT_ADMIN (not an older OPERATOR) when the requester has no email", async () => {
+    // SA-458 PREFILL-EMAIL RULING pins ────────────────────────────────────
+
+    it("SA-458: a TENANT_ADMIN requester gets their own email — no fallback lookup needed", async () => {
+      (prisma as any).user.findFirst.mockResolvedValueOnce({
+        email: "tenant-admin@acme.test",
+        role: UserRole.TENANT_ADMIN,
+      });
+
+      const url = await service.buildAuthorizeUrl("tenant-1", "user-1", "alice");
+      const params = new URL(url).searchParams;
+      expect(params.get("stripe_user[email]")).toBe("tenant-admin@acme.test");
+      expect((prisma as any).user.findFirst).toHaveBeenCalledTimes(1);
+    });
+
+    it("SA-458: an OPERATOR requester with a TENANT_ADMIN present gets the ADMIN's email, not the operator's", async () => {
       (prisma as any).user.findFirst
-        .mockResolvedValueOnce(null) // requester lookup: no match
+        .mockResolvedValueOnce({ email: "operator@acme.test", role: UserRole.OPERATOR })
         .mockResolvedValueOnce({ email: "tenant-admin@acme.test" }); // fallback: oldest TENANT_ADMIN
 
       const url = await service.buildAuthorizeUrl("tenant-1", "user-1", "alice");
@@ -159,7 +175,17 @@ describe("StripeConnectService", () => {
       });
     });
 
-    it("PIN: a requester id from another tenant yields no email — the fallback admin is used instead", async () => {
+    it("SA-458: an OPERATOR requester with NO tenant admin gets the operator's own email", async () => {
+      (prisma as any).user.findFirst
+        .mockResolvedValueOnce({ email: "operator@acme.test", role: UserRole.OPERATOR })
+        .mockResolvedValueOnce(null); // no TENANT_ADMIN exists for this tenant
+
+      const url = await service.buildAuthorizeUrl("tenant-1", "user-1", "alice");
+      const params = new URL(url).searchParams;
+      expect(params.get("stripe_user[email]")).toBe("operator@acme.test");
+    });
+
+    it("SA-458 / PIN: a requester id from another tenant is ignored — the fallback admin is used instead", async () => {
       (prisma as any).user.findFirst
         .mockResolvedValueOnce(null) // tenant-scoped requester lookup finds nothing for a cross-tenant id
         .mockResolvedValueOnce({ email: "fallback-admin@acme.test" });
@@ -169,7 +195,7 @@ describe("StripeConnectService", () => {
       expect(params.get("stripe_user[email]")).toBe("fallback-admin@acme.test");
       expect((prisma as any).user.findFirst).toHaveBeenNthCalledWith(1, {
         where: { id: "user-from-other-tenant", tenantId: "tenant-1", deletedAt: null },
-        select: { email: true },
+        select: { email: true, role: true },
       });
     });
 
