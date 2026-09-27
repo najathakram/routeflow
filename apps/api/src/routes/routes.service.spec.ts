@@ -1414,7 +1414,7 @@ describe("RoutesService", () => {
             { id: "stop-1", status: "PENDING" },
             { id: "stop-2", status: "COMPLETED" },
           ]),
-          update: jest.fn().mockResolvedValue({}),
+          updateMany: jest.fn().mockResolvedValue({ count: 1 }),
           findUniqueOrThrow: jest.fn().mockResolvedValue({ id: "stop-1", status: "COMPLETED" }),
         },
         routeRun: {
@@ -1459,7 +1459,7 @@ describe("RoutesService", () => {
             { id: "stop-1", status: "PENDING" },
             { id: "stop-2", status: "PENDING" }, // still pending
           ]),
-          update: jest.fn().mockResolvedValue({}),
+          updateMany: jest.fn().mockResolvedValue({ count: 1 }),
         },
         routeRun: { ...prisma.routeRun, update: jest.fn() },
         order: { ...prisma.order, updateMany: jest.fn().mockResolvedValue({ count: 0 }) },
@@ -1500,7 +1500,7 @@ describe("RoutesService", () => {
             { id: "stop-1", status: "PENDING" },
             { id: "stop-2", status: "COMPLETED" },
           ]),
-          update: jest.fn().mockResolvedValue({}),
+          updateMany: jest.fn().mockResolvedValue({ count: 1 }),
           findUniqueOrThrow: jest.fn().mockResolvedValue({ id: "stop-1", status: "COMPLETED" }),
         },
         routeRun: {
@@ -1545,7 +1545,7 @@ describe("RoutesService", () => {
         routeRunStop: {
           ...prisma.routeRunStop,
           findMany: jest.fn().mockResolvedValue([{ id: "stop-1", status: "PENDING" }]),
-          update: jest.fn().mockResolvedValue({}),
+          updateMany: jest.fn().mockResolvedValue({ count: 1 }),
         },
         routeRun: { ...prisma.routeRun, update: jest.fn() },
         order: { ...prisma.order, updateMany: jest.fn().mockResolvedValue({ count: 0 }) },
@@ -1624,7 +1624,7 @@ describe("RoutesService", () => {
         routeRunStop: {
           ...prisma.routeRunStop,
           findMany: jest.fn().mockResolvedValue([{ id: "stop-1", status: "PENDING" }]),
-          update: jest.fn().mockResolvedValue({}),
+          updateMany: jest.fn().mockResolvedValue({ count: 1 }),
         },
         routeRun: { ...prisma.routeRun, update: jest.fn().mockResolvedValue({}) },
         order: { ...prisma.order, updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
@@ -1667,7 +1667,7 @@ describe("RoutesService", () => {
         routeRunStop: {
           ...prisma.routeRunStop,
           findMany: jest.fn().mockResolvedValue([{ id: "stop-1", status: "PENDING" }]),
-          update: jest.fn().mockResolvedValue({}),
+          updateMany: jest.fn().mockResolvedValue({ count: 1 }),
         },
         routeRun: { ...prisma.routeRun, update: jest.fn() },
         order: { ...prisma.order, updateMany: jest.fn().mockResolvedValue({ count: 0 }) },
@@ -1697,9 +1697,9 @@ describe("RoutesService", () => {
         expect.any(Buffer),
         "image/jpeg",
       );
-      expect(txMock.routeRunStop.update).toHaveBeenCalledWith(
+      expect(txMock.routeRunStop.updateMany).toHaveBeenCalledWith(
         expect.objectContaining({
-          where: { id: "stop-1" },
+          where: { id: "stop-1", status: { not: "COMPLETED" } },
           data: expect.objectContaining({
             signatureUrl: expect.stringMatching(keyRe),
             podPhotoUrls: ["file:///legacy-device-path.jpg"],
@@ -1940,7 +1940,7 @@ describe("RoutesService", () => {
         routeRunStop: {
           ...prisma.routeRunStop,
           findMany: jest.fn().mockResolvedValue([{ id: "stop-1", status: "PENDING" }]),
-          update: jest.fn().mockResolvedValue({}),
+          updateMany: jest.fn().mockResolvedValue({ count: 1 }),
         },
         routeRun: { ...prisma.routeRun, update: jest.fn().mockResolvedValue({}) },
         order: { ...prisma.order, updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
@@ -2020,7 +2020,7 @@ describe("RoutesService", () => {
         routeRunStop: {
           ...prisma.routeRunStop,
           findMany: jest.fn().mockResolvedValue([{ id: "stop-1", status: "PENDING" }]),
-          update: jest.fn().mockResolvedValue({}),
+          updateMany: jest.fn().mockResolvedValue({ count: 1 }),
         },
         routeRun: { ...prisma.routeRun, update: jest.fn().mockResolvedValue({}) },
         order: { ...prisma.order, updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
@@ -2069,6 +2069,124 @@ describe("RoutesService", () => {
       );
     });
 
+    // B785/SA-116: a second visit must ADD to what earlier visits already delivered,
+    // never replace it — other consumers (order-cancel-impact.ts, order-stock.ts,
+    // orders.service.ts's stock-settle deltas) still sum OrderItem.deliveredQty as a
+    // CUMULATIVE total across every visit.
+    it("B785/SA-133: RECOMPUTES OrderItem.deliveredQty from the evidence basis, never increment/overwrite", async () => {
+      prisma.routeRun.findUnique.mockResolvedValue(IN_PROGRESS_RUN);
+      prisma.routeRunStop.findFirst.mockResolvedValue({
+        id: "stop-1",
+        routeRunId: "run-1",
+        status: "PENDING",
+        signatureUrl: null,
+        orders: [
+          { id: "ord-1", status: "PENDING", customerId: "cust-1", orderNumber: "SO-1", total: 50 },
+        ],
+      });
+      prisma.driver.findFirst.mockResolvedValue(null);
+      const orderItemUpdate = jest.fn().mockResolvedValue({});
+      const txMock = {
+        ...prisma,
+        routeRunStop: {
+          ...prisma.routeRunStop,
+          findMany: jest.fn().mockResolvedValue([{ id: "stop-1", status: "PENDING" }]),
+          updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+        },
+        routeRun: { ...prisma.routeRun, update: jest.fn().mockResolvedValue({}) },
+        order: { ...prisma.order, updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
+        orderItem: {
+          ...prisma.orderItem,
+          findFirst: jest.fn().mockResolvedValue({ orderId: "ord-1", productId: "p1" }),
+          findMany: jest.fn().mockResolvedValue([{ id: "oi-1", orderId: "ord-1", qty: 10 }]),
+          update: orderItemUpdate,
+        },
+        deliveryMutation: {
+          ...prisma.deliveryMutation,
+          create: jest.fn(),
+          // The recompute re-reads AFTER this completion's own create — this is what
+          // it would see once that row (plus any prior visit's rows) is in place.
+          findMany: jest
+            .fn()
+            .mockResolvedValue([{ orderItemId: "oi-1", type: "DELIVERED", quantityDelivered: 3 }]),
+        },
+        $executeRaw: jest.fn().mockResolvedValue(0),
+      };
+      (prisma.tenantTransaction as jest.Mock).mockImplementation((fn: any) => fn(txMock));
+      prisma.routeRunStop.findUniqueOrThrow.mockResolvedValue({
+        id: "stop-1",
+        status: "COMPLETED",
+      });
+
+      await service.completeWithPayment(
+        "run-1",
+        "stop-1",
+        { deliveries: [{ orderItemId: "oi-1", type: "DELIVERED", quantityDelivered: 3 }] },
+        operatorPayload,
+      );
+
+      expect(orderItemUpdate).toHaveBeenCalledWith({
+        where: { id: "oi-1" },
+        data: { deliveredQty: 3 },
+      });
+    });
+
+    it("B785/SA-133: a REFUSED evidence row recomputes deliveredQty to 0, not its own quantityDelivered", async () => {
+      prisma.routeRun.findUnique.mockResolvedValue(IN_PROGRESS_RUN);
+      prisma.routeRunStop.findFirst.mockResolvedValue({
+        id: "stop-1",
+        routeRunId: "run-1",
+        status: "PENDING",
+        signatureUrl: null,
+        orders: [
+          { id: "ord-1", status: "PENDING", customerId: "cust-1", orderNumber: "SO-1", total: 50 },
+        ],
+      });
+      prisma.driver.findFirst.mockResolvedValue(null);
+      const orderItemUpdate = jest.fn().mockResolvedValue({});
+      const txMock = {
+        ...prisma,
+        routeRunStop: {
+          ...prisma.routeRunStop,
+          findMany: jest.fn().mockResolvedValue([{ id: "stop-1", status: "PENDING" }]),
+          updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+        },
+        routeRun: { ...prisma.routeRun, update: jest.fn().mockResolvedValue({}) },
+        order: { ...prisma.order, updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
+        orderItem: {
+          ...prisma.orderItem,
+          findFirst: jest.fn().mockResolvedValue({ orderId: "ord-1", productId: "p1" }),
+          findMany: jest.fn().mockResolvedValue([{ id: "oi-1", orderId: "ord-1", qty: 10 }]),
+          update: orderItemUpdate,
+        },
+        deliveryMutation: {
+          ...prisma.deliveryMutation,
+          create: jest.fn(),
+          findMany: jest
+            .fn()
+            .mockResolvedValue([{ orderItemId: "oi-1", type: "REFUSED", quantityDelivered: 0 }]),
+        },
+        $executeRaw: jest.fn().mockResolvedValue(0),
+      };
+      (prisma.tenantTransaction as jest.Mock).mockImplementation((fn: any) => fn(txMock));
+      prisma.routeRunStop.findUniqueOrThrow.mockResolvedValue({
+        id: "stop-1",
+        status: "COMPLETED",
+      });
+
+      await service.completeWithPayment(
+        "run-1",
+        "stop-1",
+        { deliveries: [{ orderItemId: "oi-1", type: "REFUSED", quantityDelivered: 0 }] },
+        operatorPayload,
+      );
+
+      expect(orderItemUpdate).toHaveBeenCalledWith({
+        where: { id: "oi-1" },
+        data: { deliveredQty: 0 },
+      });
+    });
+
     // Opus review of #1292: this shape (no `payment` at all — the ordinary case for
     // most tenants) had no coverage in the CI-run unit lane, and the DB lane's path
     // filter doesn't cover routes/**, so a regression that moved the reconcile call
@@ -2090,7 +2208,7 @@ describe("RoutesService", () => {
         routeRunStop: {
           ...prisma.routeRunStop,
           findMany: jest.fn().mockResolvedValue([{ id: "stop-1", status: "PENDING" }]),
-          update: jest.fn().mockResolvedValue({}),
+          updateMany: jest.fn().mockResolvedValue({ count: 1 }),
         },
         routeRun: { ...prisma.routeRun, update: jest.fn().mockResolvedValue({}) },
         order: { ...prisma.order, updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
@@ -2167,7 +2285,7 @@ describe("RoutesService", () => {
         routeRunStop: {
           ...prisma.routeRunStop,
           findMany: jest.fn().mockResolvedValue([{ id: "stop-1", status: "PENDING" }]),
-          update: jest.fn().mockResolvedValue({}),
+          updateMany: jest.fn().mockResolvedValue({ count: 1 }),
         },
         routeRun: { ...prisma.routeRun, update: jest.fn().mockResolvedValue({}) },
         order: { ...prisma.order, updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
@@ -2219,7 +2337,7 @@ describe("RoutesService", () => {
         routeRunStop: {
           ...prisma.routeRunStop,
           findMany: jest.fn().mockResolvedValue([{ id: "stop-1", status: "PENDING" }]),
-          update: jest.fn().mockResolvedValue({}),
+          updateMany: jest.fn().mockResolvedValue({ count: 1 }),
         },
         routeRun: { ...prisma.routeRun, update: jest.fn().mockResolvedValue({}) },
         order: { ...prisma.order, updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
@@ -2272,7 +2390,7 @@ describe("RoutesService", () => {
         routeRunStop: {
           ...prisma.routeRunStop,
           findMany: jest.fn().mockResolvedValue([{ id: "stop-1", status: "PENDING" }]),
-          update: jest.fn().mockResolvedValue({}),
+          updateMany: jest.fn().mockResolvedValue({ count: 1 }),
         },
         routeRun: { ...prisma.routeRun, update: jest.fn().mockResolvedValue({}) },
         order: { ...prisma.order, updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
@@ -2387,6 +2505,8 @@ describe("RoutesService", () => {
         productId: true,
         product: { select: { id: true, name: true, unit: true } },
         qty: true,
+        // SA-345a: the legacy delivered column (a line with no DeliveryMutation row reads it).
+        deliveredQty: true,
         unitPrice: true,
         status: true,
         subtotal: true,

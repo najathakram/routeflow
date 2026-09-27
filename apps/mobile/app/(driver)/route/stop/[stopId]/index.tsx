@@ -99,6 +99,14 @@ export default function StopDetailScreen() {
   const stop = useMemo(() => run?.stops?.find((s) => s.id === stopId), [run, stopId]);
   const pod = usePodStore((s) => s.pods[stopId ?? ""] ?? undefined);
   const setRegulated = usePodStore((s) => s.setRegulated);
+  // NEW-m1-1: memoize items so itemsFromStop is not called on every render.
+  // Without this, tapping any checkbox on a DELIVERED stop triggers
+  // React error #185 (max update depth exceeded) because itemsFromStop
+  // returns a new array reference on each render cycle, causing downstream
+  // effects that depend on `items` to re-run indefinitely.
+  // #2257: declared ABOVE the early returns below — every hook runs on every render, or the
+  // loading → loaded toggle changes the hook count and React throws #310.
+  const items = useMemo(() => (stop ? itemsFromStop(stop) : []), [stop]);
 
   if (activeLoading || runLoading) {
     return (
@@ -179,12 +187,6 @@ export default function StopDetailScreen() {
   const photoCount = pod?.photoUrls?.length ?? 0;
   const hasSig = !!pod?.signatureUri;
   const hasNote = !!pod?.note;
-  // NEW-m1-1: memoize items so itemsFromStop is not called on every render.
-  // Without this, tapping any checkbox on a DELIVERED stop triggers
-  // React error #185 (max update depth exceeded) because itemsFromStop
-  // returns a new array reference on each render cycle, causing downstream
-  // effects that depend on `items` to re-run indefinitely.
-  const items = useMemo(() => itemsFromStop(stop), [stop]);
   const itemCount = items.length;
   // R1e: the stop's order for the direct "Edit items" flow. A stop usually has one
   // order (a delivery); a consolidated multi-order stop edits the first.
