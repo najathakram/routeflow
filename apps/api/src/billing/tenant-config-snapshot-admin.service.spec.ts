@@ -200,7 +200,10 @@ describe("TenantConfigSnapshotAdminService (A2 step c)", () => {
     snapshots.list.mockResolvedValueOnce([{ id: "s1", restoredAt: TAKEN }]);
     prisma.auditLog.findMany.mockResolvedValueOnce([
       {
-        meta: { snapshotId: "s1", report: { restored: -1, skipped: 0, keptNewer: 0, unchanged: 0 } },
+        meta: {
+          snapshotId: "s1",
+          report: { restored: -1, skipped: 0, keptNewer: 0, unchanged: 0 },
+        },
       },
       {
         meta: { snapshotId: "s1", report: { restored: 3, skipped: 0, keptNewer: 0, unchanged: 0 } },
