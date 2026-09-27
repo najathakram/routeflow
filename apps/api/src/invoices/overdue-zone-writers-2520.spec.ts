@@ -330,9 +330,10 @@ describe("#2520 — persisted OVERDUE in the tenant zone", () => {
   it("every persisted-status writer passes the tenant zone (the required parameter, counted)", () => {
     const read = (rel: string) => fs.readFileSync(path.join(__dirname, "..", rel), "utf8");
     const calls = (src: string) => src.match(/recomputeInvoiceStatus\(/g)?.length ?? 0;
-    // 11 writers + the injected price-adjustment dep in invoices.service; 3 in credit notes.
+    // 11 writers + the injected price-adjustment dep in invoices.service; in credit notes the 3
+    // settlement writers + #2536's voidPreview (a read-only preview of the status after a void).
     expect(calls(read("invoices/invoices.service.ts"))).toBe(12);
-    expect(calls(read("credit-notes/credit-notes.service.ts"))).toBe(3);
+    expect(calls(read("credit-notes/credit-notes.service.ts"))).toBe(4);
     for (const rel of ["invoices/invoices.service.ts", "credit-notes/credit-notes.service.ts"])
       expect(read(rel)).not.toMatch(/recomputeStatus\(/);
   });
