@@ -1,4 +1,7 @@
 import { z } from "zod";
+// #2429: the SUBPATH, so Jest can map it to source (the root @routeflow/types is a hand stub in
+// tests; see jest.config.js).
+import { passwordPolicyErrors } from "@routeflow/types/api/password-policy";
 
 /**
  * Shared password-form logic for the set/change password screens and the
@@ -17,11 +20,13 @@ export function buildPasswordSchema(mode: PasswordMode) {
     .object({
       currentPassword:
         mode === "change" ? z.string().min(1, "Current password is required") : z.string(),
-      newPassword: z
-        .string()
-        .min(8, "Must be at least 8 characters")
-        .regex(/[A-Z]/, "Must contain an uppercase letter")
-        .regex(/[0-9]/, "Must contain a number"),
+      // #2429: THE server policy (@routeflow/types) — a number OR a special character, and a
+      // lowercase letter; mobile used to demand a number and skip the lowercase rule.
+      newPassword: z.string().superRefine((pw, ctx) => {
+        for (const message of passwordPolicyErrors(pw)) {
+          ctx.addIssue({ code: z.ZodIssueCode.custom, message });
+        }
+      }),
       confirmPassword: z.string().min(1, "Please confirm your new password"),
     })
     .refine((d) => d.newPassword === d.confirmPassword, {

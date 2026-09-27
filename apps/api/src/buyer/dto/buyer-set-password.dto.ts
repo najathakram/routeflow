@@ -1,5 +1,11 @@
 import { ApiProperty } from "@nestjs/swagger";
 import { IsString, MinLength, Matches } from "class-validator";
+import {
+  PASSWORD_MIN_LENGTH,
+  PASSWORD_POLICY_DESCRIPTION,
+  PASSWORD_POLICY_PATTERN,
+  passwordPolicyMessage,
+} from "../../common/password-policy";
 
 /**
  * Mirrors the staff SetPasswordDto (auth/dto/set-password.dto.ts): first-password
@@ -10,13 +16,10 @@ import { IsString, MinLength, Matches } from "class-validator";
 export class BuyerSetPasswordDto {
   @ApiProperty({
     minLength: 8,
-    description: "Min 8 chars, must contain uppercase, lowercase, and number or special character",
+    description: PASSWORD_POLICY_DESCRIPTION,
   })
   @IsString()
-  @MinLength(8)
-  @Matches(/^(?=.*[a-z])(?=.*[A-Z])(?=.*[\d\W])/, {
-    message:
-      "newPassword must contain at least one uppercase letter, one lowercase letter, and one number or special character",
-  })
+  @MinLength(PASSWORD_MIN_LENGTH)
+  @Matches(PASSWORD_POLICY_PATTERN, { message: passwordPolicyMessage("newPassword") })
   newPassword: string;
 }

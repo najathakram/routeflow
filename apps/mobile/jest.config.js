@@ -46,6 +46,10 @@ module.exports = {
     "^@routeflow/returns$": "<rootDir>/../../packages/returns/src/index.ts",
     "^expo-secure-store$": "<rootDir>/__tests__/__mocks__/expo-secure-store.js",
     "^@routeflow/ui/(.*)$": "<rootDir>/__tests__/__mocks__/@routeflow/ui.js",
+    // #2429: an `@routeflow/types/api/<module>` SUBPATH resolves to its SOURCE (outside
+    // node_modules, like pricing above) — a real shared value, never a hand-copied stub. The bare
+    // `@routeflow/types` import keeps the stub below.
+    "^@routeflow/types/api/(.*)$": "<rootDir>/../../packages/types/api/$1.ts",
     "^@routeflow/types$": "<rootDir>/__tests__/__mocks__/@routeflow/types.js",
   },
   // Avoid trying to transform node_modules (except socket.io-client which ships ESM)

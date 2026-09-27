@@ -29,6 +29,8 @@ describe("buildPasswordSchema", () => {
     ["too short", "Sh0rt"],
     ["no uppercase", "alllower1"],
     ["no number", "NoNumbersHere"],
+    // #2429: the server policy also needs a LOWERCASE letter — this was accepted, then refused late.
+    ["no lowercase", "ABCDEFG1"],
   ])("rejects a weak new password (%s) in both modes", (_label, newPassword) => {
     for (const mode of ["set", "change"] as const) {
       const result = buildPasswordSchema(mode).safeParse({
@@ -37,6 +39,21 @@ describe("buildPasswordSchema", () => {
         confirmPassword: newPassword,
       });
       expect(result.success).toBe(false);
+    }
+  });
+
+  // #2429: the server accepts a number OR a special character; mobile demanded a number only.
+  it.each([
+    ["a special character instead of a number", "Fresh!pass"],
+    ["a number", "Fresh123"],
+  ])("accepts a policy-valid new password (%s) in both modes", (_label, newPassword) => {
+    for (const mode of ["set", "change"] as const) {
+      const result = buildPasswordSchema(mode).safeParse({
+        ...valid,
+        newPassword,
+        confirmPassword: newPassword,
+      });
+      expect(result.success).toBe(true);
     }
   });
 

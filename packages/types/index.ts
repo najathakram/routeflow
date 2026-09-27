@@ -146,6 +146,7 @@ export * from "./post-delivery-invoice-prompt";
 // `@prisma/client` by `apps/api/src/common/enum-parity.spec.ts`.
 
 export * from "./api/enums";
+export * from "./api/password-policy";
 export * from "./api/billing";
 export * from "./api/orders";
 export * from "./api/customers";

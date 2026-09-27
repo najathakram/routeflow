@@ -17,6 +17,7 @@ import {
   type BuyerProfile,
 } from "@/lib/buyer-auth";
 import { BUYER_KEYS } from "@/lib/auth-keys";
+import { passwordPolicyErrors } from "@routeflow/types";
 
 // ─── Schema ───────────────────────────────────────────────────────────────────
 
@@ -28,10 +29,12 @@ const schema = z
     // Mirrors the server policy (BuyerChangePasswordDto): upper + lower + digit-or-special.
     newPassword: z
       .string()
-      .min(8, "New password must be at least 8 characters")
-      .regex(/[A-Z]/, "Must contain at least one uppercase letter")
-      .regex(/[a-z]/, "Must contain at least one lowercase letter")
-      .regex(/[\d\W]/, "Must contain at least one number or special character"),
+      // #2429: THE password policy (@routeflow/types) — one source for web, mobile and the API.
+      .superRefine((pw, ctx) => {
+        for (const message of passwordPolicyErrors(pw)) {
+          ctx.addIssue({ code: z.ZodIssueCode.custom, message });
+        }
+      }),
     confirmPassword: z.string().min(1, "Please confirm your new password"),
   })
   .refine((d) => d.newPassword === d.confirmPassword, {

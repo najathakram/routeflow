@@ -1,5 +1,11 @@
 import { ApiProperty, ApiPropertyOptional } from "@nestjs/swagger";
 import { IsEmail, IsNotEmpty, IsOptional, IsString, Matches, MinLength } from "class-validator";
+import {
+  PASSWORD_MIN_LENGTH,
+  PASSWORD_POLICY_DESCRIPTION,
+  PASSWORD_POLICY_PATTERN,
+  passwordPolicyMessage,
+} from "../../common/password-policy";
 
 export class BuyerRegisterDto {
   @ApiProperty({ example: "Jane Smith" })
@@ -14,11 +20,8 @@ export class BuyerRegisterDto {
   // Same complexity policy as staff passwords (auth/dto/change-password.dto.ts).
   @ApiProperty({ example: "SecurePass1!", minLength: 8 })
   @IsString()
-  @MinLength(8)
-  @Matches(/^(?=.*[a-z])(?=.*[A-Z])(?=.*[\d\W])/, {
-    message:
-      "password must contain at least one uppercase letter, one lowercase letter, and one number or special character",
-  })
+  @MinLength(PASSWORD_MIN_LENGTH)
+  @Matches(PASSWORD_POLICY_PATTERN, { message: passwordPolicyMessage("password") })
   password: string;
 
   @ApiPropertyOptional({ example: "+1-555-0100" })
