@@ -51,9 +51,11 @@ The marketing version (`expo.version`, currently `1.1.1` in `app.json`) is still
    on every platform, so `app.json`'s expo-location plugin sets `"isIosBackgroundLocationEnabled":
 true` (the existing "Always" usage string is reused). **App Review note:** "Dispatch tracks
    active delivery runs only." The same note is in #2313's review-notes template.
-2. **iPad + portrait-only: `ios.infoPlist.UIRequiresFullScreen: true`** for the first release.
-   Portrait-only with `supportsTablet: true` otherwise fails the upload (ITMS-90474, iPad
-   multitasking needs every orientation). Recorded on #2311 as liftable after the iPad layout pass.
+2. **iPad: no `UIRequiresFullScreen`** (#2311 PR 1). `"orientation": "portrait"` locks only the
+   iPhone: `npx expo config --type introspect` (run in `apps/mobile`) shows
+   `UISupportedInterfaceOrientations~ipad` = all four orientations and `UIRequiresFullScreen` =
+   false, so iPad multitasking is valid and ITMS-90474 does not apply. Re-run that command before a
+   store build if `orientation` or `ios.infoPlist` ever changes.
 
 ## 6. Owner checklist (from epic #2307)
 

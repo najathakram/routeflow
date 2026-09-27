@@ -1,3 +1,5 @@
+import { BadRequestException } from "@nestjs/common";
+
 /**
  * A "calendar date" is a YYYY-MM-DD string — the meaningful part of a stored
  * UTC-midnight instant (RouteFlow's storage convention for every calendar-date
@@ -166,6 +168,31 @@ export function startOfCalendarDay(
   return new Date(
     `${String(year)}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}T00:00:00.000Z`,
   );
+}
+
+/**
+ * A CLIENT-supplied calendar-date field (e.g. invoice `issueDate`) → the
+ * UTC-midnight SYMBOLIC stamp of the literal day it names (#2197): its first
+ * ten characters, the house `calendarDayOf` rule. The client's offset and the
+ * tenant's zone are both ignored — re-reading a datetime through either shifts
+ * the day (`2026-09-25T20:00:00-04:00` is 00:00Z on the 26th). `null` when the
+ * value does not name a real calendar day (bad shape, `2026-02-31`, or `2026-13-01`).
+ */
+export function calendarStampFromInput(raw: string): Date | null {
+  const day = raw.slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) return null;
+  const stamp = new Date(isoFromCalendarDate(day));
+  // An out-of-range month or day ("2026-13-01") is Invalid Date, and toISOString() would throw.
+  if (Number.isNaN(stamp.getTime())) return null;
+  // Date rolls an out-of-range day over ("2026-02-31" → Mar 3) instead of failing.
+  return stamp.toISOString().slice(0, 10) === day ? stamp : null;
+}
+
+/** #2197: a client issueDate → the stamp of the literal day it names; 400 when it names none. */
+export function issueDateStamp(raw: string): Date {
+  const stamp = calendarStampFromInput(raw);
+  if (!stamp) throw new BadRequestException("issueDate must be a calendar date (YYYY-MM-DD)");
+  return stamp;
 }
 
 /**

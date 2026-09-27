@@ -262,9 +262,17 @@ describe("OrdersService.create — B587 order-number generation", () => {
     withQueryRaw(queryRawImpl);
   };
   // The transaction client the service receives carries its own $queryRaw — wire ours into it.
+  // B562 PR-2: the stock decrement is also a `$queryRaw` (UPDATE … RETURNING); it is answered with
+  // no rows here so `qr` sees only the order-number query this spec is about.
+  const isStockUpdate = (args: any[]) =>
+    JSON.stringify(args[0]?.sql ?? args[0] ?? "").includes("currentStock");
   const withQueryRaw = (qr: jest.Mock) =>
     (prisma.tenantTransaction as jest.Mock).mockImplementation((fn: any) =>
-      fn({ ...prisma, $queryRaw: qr, $executeRaw: jest.fn().mockResolvedValue(0) }),
+      fn({
+        ...prisma,
+        $queryRaw: (...args: any[]) => (isStockUpdate(args) ? Promise.resolve([]) : qr(...args)),
+        $executeRaw: jest.fn().mockResolvedValue(0),
+      }),
     );
   const created = () => prisma.order.create.mock.calls.map((c: any) => c[0].data.orderNumber);
 

@@ -62,6 +62,21 @@ function money(n: number): string {
   return n.toLocaleString("en-US", { style: "currency", currency: "USD" });
 }
 
+/**
+ * The capture response's `refundAmount` is a Prisma Decimal, which JSON carries as a STRING
+ * ("22.5000"); the shared type says `number`. A `typeof === "number"` check therefore never held and
+ * the credit amount never showed (#2097). Accept both, and return null for anything that is not a
+ * finite amount so the row is hidden rather than rendered as $NaN.
+ */
+function refundAmountOf(value: unknown): number | null {
+  if (typeof value === "number") return Number.isFinite(value) ? value : null;
+  if (typeof value === "string" && value.trim() !== "") {
+    const n = Number(value);
+    return Number.isFinite(n) ? n : null;
+  }
+  return null;
+}
+
 export interface RecordInlineReturnDialogProps {
   open: boolean;
   onClose: () => void;
@@ -190,9 +205,18 @@ export function RecordInlineReturnDialog({
       onSuccess: (data) => {
         if (!returnKeyRef.current) returnKeyRef.current = mintReturnKey();
         setQuote(data);
+        // A new quote from Step 1 credits its excess at current price by default. Without this a
+        // "return only what was bought" pick from an earlier quote stayed highlighted while the
+        // new quote credited the excess (#2097). Only THIS path resets: the re-quote that picking
+        // option 3 itself triggers (handleExcessOptionChange) must keep the pick.
+        setExcessOption(DEFAULT_EXCESS_OPTION);
         setStep("quote");
       },
       onError: (err) => {
+        // A failed Step-1 quote must not leave the OLD quote behind: `lines` were edited since it,
+        // so Back from the refusal would show a quote that no longer matches them. With no quote,
+        // Back returns to Step 1.
+        setQuote(null);
         setRefusalMessage(extractRefusalMessage(err));
         setStep("refused");
       },
@@ -200,6 +224,7 @@ export function RecordInlineReturnDialog({
   }
 
   function handleExcessOptionChange(option: ExcessOption) {
+    const previousOption = excessOption;
     setExcessOption(option);
     if (option !== "RETURN_ONLY_PURCHASED" || !quote) return;
     quoteMutation.mutate(dropExcessAndRequote(customerId, quote), {
@@ -213,6 +238,11 @@ export function RecordInlineReturnDialog({
         setLines((prev) => applyCoveredPiecesToLines(prev, data) as DialogLine[]);
       },
       onError: (err) => {
+        // The pick is set BEFORE its re-quote. If the re-quote fails the quote on screen is still
+        // the OLD one with the excess in it, so the pick must go back: leaving option 3 checked
+        // there would let capture credit the excess at current price under a "Return only what was
+        // bought" label.
+        setExcessOption(previousOption);
         setRefusalMessage(extractRefusalMessage(err));
         setStep("refused");
       },
@@ -558,10 +588,10 @@ export function RecordInlineReturnDialog({
                 </dd>
               </div>
             )}
-            {typeof result.refundAmount === "number" && (
+            {refundAmountOf(result.refundAmount) !== null && (
               <div className="flex justify-between">
                 <dt className="text-navy/70">Amount</dt>
-                <dd>{money(result.refundAmount)}</dd>
+                <dd>{money(refundAmountOf(result.refundAmount) as number)}</dd>
               </div>
             )}
             <div className="flex justify-between">
@@ -573,6 +603,22 @@ export function RecordInlineReturnDialog({
               </dd>
             </div>
           </dl>
+          {result.parkedReversals && (
+            <div
+              data-testid="inline-return-parked-warning"
+              className="rounded-lg border border-amber-300 bg-amber-50 p-3"
+            >
+              <p className="text-sm font-medium text-navy">Ledger reversal parked</p>
+              <p className="text-xs text-navy/70">
+                The credit note and refund are recorded, but {result.parkedReversals.pieces}{" "}
+                piece(s) across {result.parkedReversals.count} line(s) were not taken off the
+                regulated sales ledger. The original sale&apos;s pack size is unknown, so the system
+                could not work out the reversal safely. The period cannot be filed until this is
+                resolved. Next step: open the regulated report, supply the pack size for the parked
+                line(s), and resolve them.
+              </p>
+            </div>
+          )}
           <div className="flex justify-end">
             <Button onClick={onClose}>Done</Button>
           </div>

@@ -1473,6 +1473,75 @@ describe("EmailService.sendInvoice — units_v1 qty text (B653)", () => {
 // ─── N2: account + invite email templates ──────────────────────────────────────
 
 describe("EmailService — N2 account/invite templates", () => {
+  // #2439: the new-workspace welcome email.
+  const WELCOME = {
+    to: "owner@acme.example.com",
+    username: "acme_owner",
+    businessName: "Acme Wholesale",
+    workspace: "acme",
+    setPasswordUrl: "https://app.routeflow.info/reset-password?token=abc123",
+    expiryHours: 72,
+    loginUrl: "https://app.routeflow.info/login",
+    payUrl: "https://app.routeflow.info/login?redirect=%2Fsettings%2Fbilling",
+    trialDays: 14,
+  };
+
+  it("sendTenantWelcomeEmail (#2439): workspace, username, set-password, sign-in and Pay-now links; never a password", async () => {
+    const svc = makeService();
+    const sendSpy = jest
+      .spyOn(svc, "sendPlatform")
+      .mockResolvedValue({ delivered: true, transport: "smtp" } as any);
+
+    const r = await svc.sendTenantWelcomeEmail(WELCOME);
+
+    expect(r).toEqual({ delivered: true, transport: "smtp" });
+    const { subject, html, text } = sendSpy.mock.calls[0][0];
+    expect(subject).toBe("Welcome to RouteFlow — your Acme Wholesale workspace is ready");
+    expect(html).toContain('href="https://app.routeflow.info/reset-password?token=abc123"');
+    expect(html).toContain('href="https://app.routeflow.info/login"');
+    expect(html).toContain(
+      'href="https://app.routeflow.info/login?redirect=%2Fsettings%2Fbilling"',
+    );
+    expect(html).toContain("Workspace:</strong> acme");
+    expect(html).toContain("Username:</strong> acme_owner");
+    expect(html).toContain("expires in 72 hours");
+    expect(text).toContain("Pay now");
+    // No credential value anywhere — only the set-password link.
+    expect(`${html}\n${text}`).not.toMatch(
+      /temporary password|<strong>password|password:\s*[A-Z0-9]{6}-/i,
+    );
+  });
+
+  it("sendTenantWelcomeEmail (#2439): no Pay-now section when checkout isn't offered; 0-day trial says 'activate'", async () => {
+    const svc = makeService();
+    const sendSpy = jest
+      .spyOn(svc, "sendPlatform")
+      .mockResolvedValue({ delivered: true, transport: "smtp" } as any);
+
+    await svc.sendTenantWelcomeEmail({ ...WELCOME, payUrl: null });
+    expect(sendSpy.mock.calls[0][0].html).not.toContain("Pay now");
+    expect(sendSpy.mock.calls[0][0].text).not.toContain("Pay now");
+
+    await svc.sendTenantWelcomeEmail({ ...WELCOME, trialDays: 0 });
+    expect(sendSpy.mock.calls[1][0].html).toContain("Complete payment to activate your workspace");
+  });
+
+  it("sendTenantWelcomeEmail (#2439): escapes the business name and username", async () => {
+    const svc = makeService();
+    const sendSpy = jest
+      .spyOn(svc, "sendPlatform")
+      .mockResolvedValue({ delivered: true, transport: "smtp" } as any);
+    await svc.sendTenantWelcomeEmail({
+      ...WELCOME,
+      businessName: "<b>A&B</b>",
+      username: '<i>"x"</i>',
+    });
+    const html = sendSpy.mock.calls[0][0].html;
+    expect(html).not.toContain("<b>A&B</b>");
+    expect(html).toContain("&lt;b&gt;A&amp;B&lt;/b&gt;");
+    expect(html).not.toContain('<i>"x"</i>');
+  });
+
   it("sendSetPasswordEmail: subject, link, and expiry hours all land in the html", async () => {
     const svc = makeService();
     const sendSpy = jest

@@ -1,6 +1,5 @@
 import type { Metadata, Viewport } from "next";
-import { Inter, Instrument_Serif, Spline_Sans, Spline_Sans_Mono } from "next/font/google";
-import { geistSans, geistMono } from "./fonts";
+import { geistSans, geistMono, inter, instrumentSerif, splineSans, splineSansMono } from "./fonts";
 import "./globals.css";
 // Marketing stylesheet. It has to be imported here, not from the segments that
 // use it: the App Router drops the `not-found` segment's own CSS chunk on
@@ -30,41 +29,7 @@ import { TenantProvider } from "@/components/tenant-provider";
 import { ServiceWorkerRegistry } from "@/components/ServiceWorkerRegistry";
 import { SentryInit } from "@/components/SentryInit";
 
-// Ledger UI typeface. Drives `font-sans` app-wide via --font-spline.
-const splineSans = Spline_Sans({
-  subsets: ["latin"],
-  variable: "--font-spline",
-  weight: ["400", "500", "600", "700"],
-  display: "swap",
-});
-
-// Ledger monospace — money columns and codes (tabular-nums) via .money / .mono.
-const splineSansMono = Spline_Sans_Mono({
-  subsets: ["latin"],
-  variable: "--font-spline-mono",
-  weight: ["400", "500", "600"],
-  display: "swap",
-});
-
-// Kept as a fallback in the font stack during the Spline Sans migration.
-const inter = Inter({
-  subsets: ["latin"],
-  variable: "--font-inter",
-  weight: ["400", "500", "600", "700"],
-  display: "swap",
-});
-
-// Marketing site display font. The italic face drives the <em> styling in
-// display headings (`<h1 className="display">…<em>…</em>…`). Loaded once at
-// the root, but the marketing CSS scopes it under `.rf-marketing` so the
-// rest of the app keeps using Inter.
-const instrumentSerif = Instrument_Serif({
-  subsets: ["latin"],
-  weight: "400",
-  style: ["normal", "italic"],
-  variable: "--font-instrument-serif",
-  display: "swap",
-});
+// Fonts are self-hosted in ./fonts.ts (#2397: next/font/google's build-time fetch failed deploys).
 
 export const viewport: Viewport = {
   width: "device-width",
