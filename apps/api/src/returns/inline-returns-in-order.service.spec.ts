@@ -366,6 +366,7 @@ describe("InlineReturnsService in-transaction core (#2094)", () => {
         { customerId: "cust-1", items: INPUT.items, routeRunStopId: undefined },
         OPERATOR,
         expect.anything(),
+        { excludeInvoiceIds: [] }, // #2178: no revert follows here, so nothing is excluded
       );
       expect(prisma.return.create).not.toHaveBeenCalled();
       expect(prisma.stockMovement.create).not.toHaveBeenCalled();
