@@ -62,6 +62,7 @@ import {
   type AdminAuditActionCode,
 } from "./audit-actions.constant";
 import { escapeHtml } from "../common/html-escape";
+import { CUSTOM_FEE_UNCHANGED, priceOverrideOf } from "../billing/price-override";
 
 @Injectable()
 export class PlatformAdminService {
@@ -770,23 +771,29 @@ ${
     // Stripe here; both admin and tenant plan-change paths are Stripe-silent). Computed from
     // the SAME shared helper and the SAME inputs (sub window + monthly-price delta) the
     // tenant-facing upgrade() uses, so the two paths never drift apart on the money math.
+    // #2223 / SA-444a: an override row keeps paying its negotiated fee — the upgrade quotes 0.
+    const override = priceOverrideOf(priorSub);
     const proratedNow =
       isRankedPlanChange && rankTo > rankFrom
-        ? this.proration.proratedDiff(
-            {
-              cycle: priorSub?.cycle ?? "MONTHLY",
-              periodStart: priorSub?.periodStart ?? null,
-              periodEnd: priorSub?.periodEnd ?? null,
-            },
-            Number(definition.monthlyPrice ?? 0) - Number(fromDefinition?.monthlyPrice ?? 0),
-          )
+        ? override != null
+          ? 0
+          : this.proration.proratedDiff(
+              {
+                cycle: priorSub?.cycle ?? "MONTHLY",
+                periodStart: priorSub?.periodStart ?? null,
+                periodEnd: priorSub?.periodEnd ?? null,
+              },
+              Number(definition.monthlyPrice ?? 0) - Number(fromDefinition?.monthlyPrice ?? 0),
+            )
         : null;
 
     // A custom (Enterprise) definition has no catalog price — the tenant's negotiated fee
     // lives in `priceOverrideMonthly` instead. Writing `planKey` with a null snapshot would
     // enter the tenant in the rollup at $0 base while its active add-ons start counting
     // (mrr.service.ts:63-66), the "add-on MRR with no base behind it" that guard warns about.
-    const baseSnapshot = definition.monthlyPrice ?? priorSub?.priceOverrideMonthly ?? null;
+    // SA-444a: the snapshot is what the tenant PAYS, so the negotiated fee comes first — a
+    // catalog-target change on an override row keeps it (delta 0, MRR and ledger unmoved).
+    const baseSnapshot = priorSub?.priceOverrideMonthly ?? definition.monthlyPrice ?? null;
 
     // SA-140: uses the shared isPayingRow predicate — this previously checked only
     // status+planKey, missing class/deletedAt (a real gap: a plan change on an ACTIVE but
@@ -893,6 +900,7 @@ ${
       slug: tenant.slug,
       plan: tenant.plan,
       ...(proratedNow != null ? { proratedNow } : {}),
+      ...(proratedNow != null && override != null ? { note: CUSTOM_FEE_UNCHANGED } : {}),
     };
   }
 
