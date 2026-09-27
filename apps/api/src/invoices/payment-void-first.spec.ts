@@ -47,6 +47,7 @@ import { MessagingService } from "../messaging/messaging.service";
 import { EntitlementsService } from "../billing/entitlements.service";
 import { CommissionEngineService } from "../sales-agents/commission-engine.service";
 import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
+import { AfterCommit } from "../common/after-commit";
 
 describe("SA-404f — payment writers lock before they read (void-first)", () => {
   let service: InvoicesService;
@@ -237,7 +238,13 @@ describe("SA-404f — payment writers lock before they read (void-first)", () =>
         async ({ where }: any) =>
           ({ id: where.id, status: where.id === "inv-a" ? "VOID" : "SENT" }) as any,
       );
-      await service.recordDeliveryPaymentInTx(prisma as any, ["ord-1"], 100, "CASH");
+      await service.recordDeliveryPaymentInTx(
+        prisma as any,
+        new AfterCommit(),
+        ["ord-1"],
+        100,
+        "CASH",
+      );
       const b = booked();
       expect(b.invoices).not.toContain("inv-a");
       expect(b.invoices).toContain("inv-b");
@@ -249,7 +256,13 @@ describe("SA-404f — payment writers lock before they read (void-first)", () =>
       prisma.invoice.findUnique.mockImplementation(
         async ({ where }: any) => ({ id: where.id, status: "SENT" }) as any,
       );
-      await service.recordDeliveryPaymentInTx(prisma as any, ["ord-1"], 100, "CASH");
+      await service.recordDeliveryPaymentInTx(
+        prisma as any,
+        new AfterCommit(),
+        ["ord-1"],
+        100,
+        "CASH",
+      );
       const b = booked();
       expect(b.invoices).toEqual(["inv-a", "inv-b"]);
       expect(b.total).toBeCloseTo(100, 2);

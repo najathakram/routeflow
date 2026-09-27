@@ -59,6 +59,7 @@ import { EstimatesService } from "../estimates/estimates.service";
 import { NumberingService } from "../import/numbering.service";
 import { describeDb, requireLocalDatabaseUrl } from "../common/testing/db-spec";
 import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
+import { AfterCommit } from "../common/after-commit";
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const { assertTestTenant } = require("../../../../scripts/lib/test-tenants.cjs");
@@ -1161,7 +1162,13 @@ describeDb(
         () =>
           tenantCtx.run(s.tenantId, () =>
             prisma.tenantTransaction((tx: any) =>
-              invoicesService.recordDeliveryPaymentInTx(tx, [s.orderId], 50, "CASH"),
+              invoicesService.recordDeliveryPaymentInTx(
+                tx,
+                new AfterCommit(),
+                [s.orderId],
+                50,
+                "CASH",
+              ),
             ),
           ),
         voidUnderLock(s.invoiceId),
