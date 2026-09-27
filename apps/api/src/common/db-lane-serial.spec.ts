@@ -1,5 +1,6 @@
 import { spawnSync } from "node:child_process";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 
 // #2183 / B592: the DB lane (jest.db.config.js) is serial, and a worker-count override can't make
 // it parallel. A CLI `--maxWorkers` beats a config value, so this pins both enforcement points:
@@ -36,7 +37,7 @@ describe("#2183 DB lane is serial whatever the caller asks for", () => {
 
   it("the runner drops every worker override form and keeps the rest", () => {
     const probe = `
-      const m = await import(${JSON.stringify(path.join(API_DIR, "scripts/run-db-tests.mjs"))});
+      const m = await import(${JSON.stringify(pathToFileURL(path.join(API_DIR, "scripts/run-db-tests.mjs")).href)});
       const cases = [
         ["--maxWorkers=4"], ["--maxWorkers", "4"], ["-w", "2"], ["-w4"], ["-w=3"],
         ["--runInBand"], ["-i"], ["--runInBand", "--maxWorkers=2", "-t", "x"],

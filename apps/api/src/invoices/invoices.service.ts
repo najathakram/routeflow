@@ -11,7 +11,12 @@ import { assertNoNegativeLineSubtotal } from "../common/money-invariants.util";
 import { randomUUID } from "crypto";
 import { PrismaService } from "../prisma/prisma.service";
 import { StorageService } from "../storage/storage.service";
-import { compressDocument } from "../storage/compress.util";
+import {
+  deletePaymentImage,
+  getPaymentImageUrl,
+  uploadPaymentImage,
+  type PaymentImageDeps,
+} from "./payment-image";
 import {
   computeLineSubtotal,
   roundMoney,
@@ -4698,78 +4703,21 @@ export class InvoicesService {
     return payment;
   }
 
-  private async findPaymentOrThrow(paymentId: string) {
-    const payment = await this.prisma
-      .forTenant()
-      .invoicePayment.findUnique({ where: { id: paymentId } });
-    if (!payment) throw new NotFoundException("Payment not found");
-    return payment;
+  // Receipt/slip/check photos on a payment EVENT live in payment-image.ts (size ratchet).
+  uploadPaymentImage(paymentId: string, buffer: Buffer, originalName: string, mimeType: string) {
+    return uploadPaymentImage(this.paymentImageDeps(), paymentId, buffer, originalName, mimeType);
   }
 
-  /**
-   * Attach a receipt/slip/check photo to a payment EVENT. Uses `compressDocument`
-   * (NOT `compressImage`) — like the expense-receipt endpoint, this route has no
-   * controller MIME allowlist and mobile file pickers routinely send
-   * `application/octet-stream`/empty content-type; `compressDocument` byte-sniffs
-   * via sharp (any real image → JPEG) and tolerates a PDF, so a real receipt/check
-   * photo never 500s on a generic content-type.
-   */
-  async uploadPaymentImage(
-    paymentId: string,
-    buffer: Buffer,
-    originalName: string,
-    mimeType: string,
-  ): Promise<{ url: string }> {
-    const payment = await this.findPaymentOrThrow(paymentId);
-    let compressed;
-    try {
-      compressed = await compressDocument(buffer, mimeType);
-    } catch {
-      throw new BadRequestException("File is not a decodable image or PDF");
-    }
-    // One object per payment EVENT: a grouped standalone payment (several rows
-    // sharing paymentGroupId) anchors on the group id so the same photo is
-    // reachable from every allocation row.
-    const anchor = payment.paymentGroupId ?? payment.id;
-    const key = `payments/${anchor}/image.${compressed.ext}`;
-    await this.storage.upload(key, compressed.buffer, compressed.mimeType);
-    const data = {
-      imageKey: key,
-      imageOriginalName: originalName,
-      imageMimeType: compressed.mimeType,
-    };
-    if (payment.paymentGroupId) {
-      await this.prisma
-        .forTenant()
-        .invoicePayment.updateMany({ where: { paymentGroupId: payment.paymentGroupId }, data });
-    } else {
-      await this.prisma.forTenant().invoicePayment.update({ where: { id: paymentId }, data });
-    }
-    return { url: await this.storage.presignedUrl(key) };
+  getPaymentImageUrl(paymentId: string) {
+    return getPaymentImageUrl(this.paymentImageDeps(), paymentId);
   }
 
-  async getPaymentImageUrl(paymentId: string): Promise<{ url: string }> {
-    const payment = await this.findPaymentOrThrow(paymentId);
-    if (!payment.imageKey) throw new NotFoundException("No image attached to this payment");
-    return { url: await this.storage.presignedUrl(payment.imageKey) };
+  deletePaymentImage(paymentId: string) {
+    return deletePaymentImage(this.paymentImageDeps(), paymentId);
   }
 
-  async deletePaymentImage(paymentId: string): Promise<{ success: boolean }> {
-    const payment = await this.findPaymentOrThrow(paymentId);
-    if (!payment.imageKey) throw new NotFoundException("No image to delete");
-    const clear = { imageKey: null, imageOriginalName: null, imageMimeType: null };
-    if (payment.paymentGroupId) {
-      await this.prisma.forTenant().invoicePayment.updateMany({
-        where: { paymentGroupId: payment.paymentGroupId },
-        data: clear,
-      });
-    } else {
-      await this.prisma
-        .forTenant()
-        .invoicePayment.update({ where: { id: paymentId }, data: clear });
-    }
-    await this.storage.delete(payment.imageKey);
-    return { success: true };
+  private paymentImageDeps(): PaymentImageDeps {
+    return { prisma: this.prisma, storage: this.storage };
   }
 
   // ─── Payment recording ────────────────────────────────────────────────────

@@ -9,7 +9,8 @@ import * as bcrypt from "bcrypt";
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const { productionGuard } = require("./lib/production-guard");
-productionGuard({ requireFlag: "--confirm" });
+// #2206: PrismaClient() below reads DATABASE_URL, so that is the URL to prove local.
+productionGuard({ requireFlag: "--confirm", dbUrl: process.env.DATABASE_URL });
 
 const prisma = new PrismaClient();
 
