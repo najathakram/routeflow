@@ -922,9 +922,11 @@ describeDb(
     // order void takes — so a payment can no longer COMMIT while a void waits (the old R2 premise;
     // its harness held the Order lock while awaiting the payment and deadlocked). The invariant R2
     // guards is unchanged: a void and a concurrent payment on one invoice SERIALIZE — never a VOID
-    // invoice holding a payment. ENTRY: T2 holds the ORDER row; the void starts and blocks; the DRAFT
-    // payment starts and blocks behind it (both waiters asserted); T2 commits. Exactly one of the two
-    // consistent outcomes is allowed (observe which, never predict the winner).
+    // invoice holding a payment. ENTRY: T2 holds the ORDER row; the DRAFT payment starts and blocks
+    // FIRST, then the void (its unlocked pre-read sees no payment) queues behind it — both waiters
+    // asserted; T2 commits. SA-470c: queued payment-first so R2's original intent (the payment lands,
+    // the void re-reads under the lock and refuses) is the branch exercised, while the assertion
+    // stays winner-agnostic; the branch that occurred is logged for F2's report.
     it("(R2) void vs a DRAFT standalone payment, both queued on the Order lock ⇒ they serialize: never a VOID invoice holding a payment", async () => {
       const s = await seedOrder("r2");
       const t2 = new Client({ connectionString: url() });
@@ -954,10 +956,6 @@ describeDb(
             await new Promise((x) => setTimeout(x, 25));
           }
         };
-        const pVoid = settle(
-          tenantCtx.run(s.tenantId, () => invoicesService.voidInvoice(s.invoiceId)),
-        );
-        await waitFor(1);
         const pPay = settle(
           tenantCtx.run(s.tenantId, () =>
             invoicesService.recordStandalonePayment({
@@ -968,6 +966,10 @@ describeDb(
               allocations: [{ invoiceId: s.invoiceId, amount: 20 }],
             } as any),
           ),
+        );
+        await waitFor(1);
+        const pVoid = settle(
+          tenantCtx.run(s.tenantId, () => invoicesService.voidInvoice(s.invoiceId)),
         );
         await waitFor(2);
         await t2.query("COMMIT");
@@ -1003,6 +1005,10 @@ describeDb(
         invoiceStatus: "SENT",
         payments: ["CHECK 20 DRAFT"],
       };
+      // SA-470c (ii): report which consistent branch Postgres produced.
+      console.info(
+        `R2 branch: ${observed.payOk && !observed.voidOk ? "payment-wins" : observed.voidOk && !observed.payOk ? "void-wins" : "neither"}`,
+      );
       expect([voidWon, paymentWon]).toContainEqual(observed);
     });
 
