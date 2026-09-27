@@ -113,7 +113,7 @@ import { useMarginConfig, floorForCategory } from "@/lib/api/margin";
 import { MarginHint } from "@/components/MarginHint";
 import { MoneyInput, DecimalInput } from "@/components/MoneyInput";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
-import { AppliedCreditsPanel } from "./AppliedCreditsPanel";
+import { AppliedCreditsPanel, appliedOnOrderRows } from "./AppliedCreditsPanel";
 import { InlineCreateProductModal } from "@/components/InlineCreateProductModal";
 import { resolveProductByCode } from "@/lib/barcode-resolve";
 import { ShipmentCard } from "@/components/ShipmentCard";
@@ -3084,6 +3084,7 @@ export default function OrderDetailPage() {
                     setCreditsTouched(true);
                   }}
                   estimatedOrderTotal={editTotal}
+                  appliedOnOrder={appliedOnOrderRows(order)}
                 />
 
                 {/* Returns Inside Order Creation, edit mode (#2406) — quoted here, captured
