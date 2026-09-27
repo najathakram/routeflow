@@ -27,6 +27,7 @@ import {
 import { settledDateFilter } from "../invoices/settled-date-filter";
 import {
   CREDIT_NOT_APPLICABLE,
+  CUSTOMER_DELETE_BLOCKING,
   KPI_SUMMARY_EXCLUDED,
   LIFETIME_INVOICED_EXCLUDED,
 } from "../invoices/invoice-status-sets";
@@ -2499,12 +2500,12 @@ export class CustomersService {
   async batchDelete(
     ids: string[],
   ): Promise<{ deleted: number; failed: { id: string; reason: string }[] }> {
-    // Pre-flight: collect per-customer PAID/SENT invoice counts.
+    // Pre-flight: collect per-customer counts of issued or paid invoices (#2558).
     const blockers = await this.prisma.forTenant().invoice.groupBy({
       by: ["customerId"],
       where: {
         customerId: { in: ids },
-        status: { in: ["PAID", "SENT"] },
+        status: { in: CUSTOMER_DELETE_BLOCKING }, // #2558: every issued or paid invoice
       },
       _count: { _all: true },
     });
@@ -2512,7 +2513,7 @@ export class CustomersService {
     if (blockers.length > 0) {
       const breakdown = blockers.map((b) => `${b.customerId}: ${b._count._all} invoice(s)`);
       throw new ConflictException(
-        `Bulk delete blocked — the following customers have PAID or SENT invoices that cannot be destroyed: ${breakdown.join("; ")}.`,
+        `Bulk delete blocked — the following customers have issued or paid invoices that cannot be destroyed: ${breakdown.join("; ")}.`,
       );
     }
 
@@ -2565,7 +2566,7 @@ export class CustomersService {
       by: ["customerId"],
       where: {
         customerId: { in: customerIds },
-        status: { in: ["PAID", "SENT"] },
+        status: { in: CUSTOMER_DELETE_BLOCKING }, // #2558: every issued or paid invoice
       },
       _count: { _all: true },
     });
@@ -2581,7 +2582,7 @@ export class CustomersService {
         breakdown.push(`and ${blockers.length - MAX_LISTED_BLOCKERS} more`);
       }
       throw new ConflictException(
-        `Bulk delete blocked — the following customers have PAID or SENT invoices that cannot be destroyed: ${breakdown.join("; ")}.`,
+        `Bulk delete blocked — the following customers have issued or paid invoices that cannot be destroyed: ${breakdown.join("; ")}.`,
       );
     }
 

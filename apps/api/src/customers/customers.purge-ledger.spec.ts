@@ -17,8 +17,9 @@
  * The two paths that genuinely leak are the BULK ones, and neither was named in
  * the report:
  *
- *   - `deleteAllCustomers` blocks only on **PAID or SENT** invoices, then
- *     hard-deletes every remaining invoice — DRAFT included.
+ *   - `deleteAllCustomers` blocks only on issued or paid invoices (PAID or SENT at the time;
+ *     SENT/VIEWED/PARTIAL/OVERDUE/PAID since #2558), then hard-deletes every remaining invoice —
+ *     DRAFT included.
  *   - `deleteImportedCustomers` has **no invoice guard at all**.
  *
  * The load-bearing fact that makes those real: a **DRAFT invoice already carries

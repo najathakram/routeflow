@@ -70,3 +70,17 @@ export const LIFETIME_INVOICED_EXCLUDED: InvoiceStatus[] = [
   InvoiceStatus.DRAFT,
   InvoiceStatus.VOID,
 ];
+
+/**
+ * #2558: invoices a customer delete must never destroy: issued and still owed (SENT, VIEWED,
+ * PARTIAL, OVERDUE) or paid. The pre-flights of `CustomersService.batchDelete` and
+ * `deleteAllCustomers` block on this set. They used to block on PAID/SENT only, so a customer whose
+ * open invoices had been viewed, part-paid or marked OVERDUE could be wiped with them.
+ */
+export const CUSTOMER_DELETE_BLOCKING: InvoiceStatus[] = [
+  InvoiceStatus.SENT,
+  InvoiceStatus.VIEWED,
+  InvoiceStatus.PARTIAL,
+  InvoiceStatus.OVERDUE,
+  InvoiceStatus.PAID,
+];
