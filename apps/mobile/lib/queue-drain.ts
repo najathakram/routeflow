@@ -16,6 +16,7 @@
  *    silently — both land in `failedActions` with a reason instead of being
  *    dequeued with zero signal (REG-B143 / REG-B111).
  */
+import axios from "axios";
 import type { QueuedAction } from "../store/offlineQueue";
 
 export const MAX_RETRIES = 3;
@@ -158,7 +159,10 @@ function isRetriableLockContention(err: unknown, status: number | undefined): bo
  * did land is safe.
  */
 export function isNetworkClassError(err: unknown): boolean {
-  return (err as { response?: unknown })?.response == null;
+  // #2389 Opus nit (a): ONLY an axios transport failure. A plain Error with no `response` — e.g.
+  // api-client's "No refresh token" for a signed-out driver — is NOT unreachable: treating it so
+  // blocked the queue forever with no failed badge. It keeps the normal retry → dead-letter path.
+  return axios.isAxiosError(err) && !err.response && err.code !== "ERR_CANCELED";
 }
 
 export async function drainQueue(actions: QueuedAction[], deps: DrainDeps): Promise<DrainResult> {

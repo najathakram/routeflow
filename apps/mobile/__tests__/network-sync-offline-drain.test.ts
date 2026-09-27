@@ -95,7 +95,11 @@ const flush = async () => {
   for (let i = 0; i < 4; i++) await new Promise((r) => setTimeout(r, 0));
 };
 const offlineError = () =>
-  Object.assign(new Error("Network Error"), { code: "ERR_NETWORK", request: {} });
+  Object.assign(new Error("Network Error"), {
+    isAxiosError: true,
+    code: "ERR_NETWORK",
+    request: {},
+  });
 
 beforeEach(() => {
   jest.clearAllMocks();
@@ -133,13 +137,38 @@ describe("drainQueue: network-class failures never count toward MAX_RETRIES (#23
   });
 
   it("a timed-out replay (no response) is network-class too", async () => {
-    const timeout = Object.assign(new Error("timeout"), { code: "ECONNABORTED", request: {} });
+    const timeout = Object.assign(new Error("timeout"), {
+      isAxiosError: true,
+      code: "ECONNABORTED",
+      request: {},
+    });
     const r = await drainQueue([q("a")], {
       request: jest.fn().mockRejectedValue(timeout),
       notifyFailed: jest.fn(),
     });
     expect(r.unreachedIds).toEqual(["a"]);
     expect(r.retriedIds).toEqual([]);
+  });
+
+  it("Opus nit (a): a NON-axios error with no response (api-client's 'No refresh token') is NOT unreachable — it keeps the retry → dead-letter path, so it surfaces", async () => {
+    const r = await drainQueue([q("a")], {
+      request: jest.fn().mockRejectedValue(new Error("No refresh token")),
+      notifyFailed: jest.fn(),
+    });
+    expect(r.unreachedIds).toEqual([]);
+    expect(r.retriedIds).toEqual(["a"]);
+  });
+
+  it("Opus nit (a): a cancelled axios request (ERR_CANCELED) is not network-class", async () => {
+    const cancelled = Object.assign(new Error("canceled"), {
+      isAxiosError: true,
+      code: "ERR_CANCELED",
+    });
+    const r = await drainQueue([q("a")], {
+      request: jest.fn().mockRejectedValue(cancelled),
+      notifyFailed: jest.fn(),
+    });
+    expect(r.unreachedIds).toEqual([]);
   });
 
   it("a server 4xx still DEAD-LETTERS, exactly as before", async () => {
@@ -166,6 +195,27 @@ describe("drainQueue: network-class failures never count toward MAX_RETRIES (#23
     expect([0, 1, 2, 3, 4, 5, 6, 50].map(nextDrainDelayMs)).toEqual([
       2000, 4000, 8000, 16000, 32000, 60000, 60000, 60000,
     ]);
+  });
+});
+
+describe("useNetworkSync: a throwing drain never leaves `syncing` stuck (Opus nit c)", () => {
+  it("after a drain step throws, the NEXT drain still runs", async () => {
+    // Throw from inside the drain via the RF-170 run pre-check's NON-caught path: make the
+    // store's dequeue throw once on delivery, then succeed.
+    request.mockResolvedValue({ status: 201 });
+    dequeue.mockImplementationOnce(() => {
+      throw new Error("store write failed");
+    });
+    const warn = jest.spyOn(console, "warn").mockImplementation(() => {});
+    useNetworkSync();
+    netListener!({ isConnected: true, isInternetReachable: true });
+    await flush();
+    netListener!({ isConnected: true, isInternetReachable: true });
+    await flush();
+    expect(request).toHaveBeenCalledTimes(2); // the second drain was not blocked by `syncing`
+    expect(warn).toHaveBeenCalledWith("[offline-queue] drain failed", expect.any(Error));
+    warn.mockRestore();
+    request.mockReset();
   });
 });
 
@@ -215,6 +265,8 @@ describe("useNetworkSync: case C — queued offline, then reconnect, replays and
       jest.useRealTimers();
     }
     await flush();
+    // Opus nit (b): the backoff really re-attempted — not a drain that simply never ran.
+    expect(request.mock.calls.length).toBeGreaterThan(1);
     expect(incrementRetry).not.toHaveBeenCalled();
     expect(addFailedAction).not.toHaveBeenCalled();
     expect(dequeue).not.toHaveBeenCalled();
