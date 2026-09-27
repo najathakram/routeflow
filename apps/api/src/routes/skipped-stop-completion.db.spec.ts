@@ -299,4 +299,65 @@ describeDb("#2409 a SKIPPED stop refuses a replayed completion — real Postgres
       }
     }
   });
+
+  it("#2415 DETERMINISTIC: a skip paused after its PENDING read, a completion commits, the skip resumes → 409 STOP_ALREADY_COMPLETED, the stop stays COMPLETED", async () => {
+    // F2 (#938): the concurrent race above never produced the B707 interleave — the quick skip
+    // always committed before completeWithPayment's long tx reached its claim. This latch forces
+    // it: updateStopStatus reads the stop (PENDING), then reads the run via
+    // forTenant().routeRun.findFirst — the pause point, identical in the pre-#2415 code, so this
+    // pin is RED on the old check-then-update (the skip overwrites COMPLETED with SKIPPED).
+    const s = await seedSkippedStop("latch");
+    await setStopStatus(s.stopId, "PENDING");
+
+    let armed = true;
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    let reachedPause!: () => void;
+    const paused = new Promise<void>((r) => (reachedPause = r));
+    const realForTenant = prisma.forTenant.bind(prisma);
+    const spy = jest.spyOn(prisma, "forTenant").mockImplementation(() => {
+      const client = realForTenant();
+      return new Proxy(client, {
+        get(target, prop) {
+          const value = Reflect.get(target, prop);
+          if (prop !== "routeRun" || !armed) return value;
+          return new Proxy(value, {
+            get(delegate, method) {
+              const fn = Reflect.get(delegate, method);
+              if (method !== "findFirst" || !armed) return fn;
+              return async (...args: unknown[]) => {
+                armed = false; // one pause only — the skip's run read
+                reachedPause();
+                await gate;
+                return Reflect.apply(fn, delegate, args);
+              };
+            },
+          });
+        },
+      });
+    });
+    try {
+      const skip = tenantCtx.run(s.tenantId, () =>
+        routesService.updateStopStatus(s.runId, s.stopId, { status: "SKIPPED" }, operator),
+      );
+      await paused; // the skip has read the stop as PENDING and is held
+      await tenantCtx.run(s.tenantId, () =>
+        routesService.completeWithPayment(s.runId, s.stopId, { deliveries: [] } as never, operator),
+      );
+      expect((await prisma.routeRunStop.findUnique({ where: { id: s.stopId } }))?.status).toBe(
+        "COMPLETED",
+      );
+      release();
+      await expect(skip).rejects.toMatchObject({
+        response: expect.objectContaining({ code: "STOP_ALREADY_COMPLETED" }),
+      });
+      // The completion survives: never COMPLETED → SKIPPED.
+      expect((await prisma.routeRunStop.findUnique({ where: { id: s.stopId } }))?.status).toBe(
+        "COMPLETED",
+      );
+    } finally {
+      release?.();
+      spy.mockRestore();
+    }
+  });
 });
