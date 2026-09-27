@@ -23,3 +23,15 @@ export {
   type MoneyTextInputProps as MoneyInputProps,
 } from "./MoneyInput";
 export { parseMoney, sanitizeMoneyInput } from "./money-input";
+
+// Badge (#2332)
+export { Badge, type BadgeProps } from "./Badge";
+export { resolveBadgeStyle, BADGE_HEIGHT } from "./badge-style";
+export {
+  STATUS_TONES,
+  TONE_COLORS,
+  resolveStatusTone,
+  type BadgeStatus,
+  type BadgeVariant,
+  type StatusToneEntry,
+} from "../status-tones";

@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import { Plus } from "lucide-react";
-import { Button, Input, PasswordInput, Textarea } from "@routeflow/ui/web";
+import { Badge, Button, Input, PasswordInput, Textarea } from "@routeflow/ui/web";
 import { MoneyInput } from "@/components/MoneyInput";
 
 const VARIANTS = ["primary", "secondary", "ghost", "danger", "link"] as const;
@@ -45,6 +45,15 @@ function SurfaceGallery({ surface }: { surface: "operator" | "buyer" }) {
           <Button variant="secondary" aria-label="Add" className="w-[34px] px-0">
             <Plus className="h-4 w-4" />
           </Button>
+        </div>
+      </Section>
+      <Section title="Badges">
+        <div className="flex flex-wrap gap-2">
+          <Badge status="DELIVERED" />
+          <Badge status="PENDING" />
+          <Badge status="OVERDUE" />
+          <Badge status="OUT_FOR_DELIVERY" />
+          <Badge status="DRAFT" />
         </div>
       </Section>
       <Section title="Fields">

@@ -3,6 +3,7 @@ import { ScrollView, Text, View } from "react-native";
 import { Redirect } from "expo-router";
 import Svg, { Path } from "react-native-svg";
 import {
+  Badge,
   Button,
   IconButton,
   MoneyField,
@@ -68,6 +69,15 @@ function SurfaceGallery({ surface }: { surface: LedgerSurface }) {
             </Button>
             <IconButton accessibilityLabel="Add" icon={PlusIcon} />
             <IconButton accessibilityLabel="Add" variant="secondary" icon={PlusIcon} />
+          </View>
+        </Section>
+        <Section title="Badges">
+          <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
+            <Badge status="DELIVERED" />
+            <Badge status="PENDING" />
+            <Badge status="OVERDUE" />
+            <Badge status="OUT_FOR_DELIVERY" />
+            <Badge status="DRAFT" />
           </View>
         </Section>
         <Section title="Fields">

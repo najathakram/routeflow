@@ -13,6 +13,7 @@
     "./tokens": "./src/tokens.ts",
     "./ledger": "./src/tokens/ledger.ts",
     "./accent": "./src/tokens/accent.ts",
+    "./status-tones": "./src/status-tones.ts",
     "./native": "./src/native/index.ts",
     "./native/money-input": "./src/native/money-input.ts"
   },
