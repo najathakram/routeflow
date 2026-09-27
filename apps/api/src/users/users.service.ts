@@ -16,9 +16,7 @@ import { ListUsersDto } from "./dto/list-users.dto";
 import { CreateOperatorDto } from "./dto/create-operator.dto";
 import { UpdateUserDto } from "./dto/update-user.dto";
 import { ChangeUserStatusDto } from "./dto/change-user-status.dto";
-
-/** How long a staff invite / admin-reset set-password link stays valid (NOTIFY-SPEC N2). */
-const SET_PASSWORD_TOKEN_TTL_MS = 72 * 60 * 60 * 1000;
+import { issueSetPasswordLink } from "./set-password-token";
 
 @Injectable()
 export class UsersService {
@@ -30,12 +28,6 @@ export class UsersService {
     private readonly configService: ConfigService<AppConfig>,
   ) {}
 
-  /** Hash a raw token with SHA-256 for storage — same shape as auth.service.ts's and
-   *  buyer-auth.service.ts's own copies (no shared helper exists in this codebase yet). */
-  private hashToken(token: string): string {
-    return crypto.createHash("sha256").update(token).digest("hex");
-  }
-
   /**
    * Creates a single-use, 72h PasswordResetToken (the same model/consuming endpoint as
    * self-service password reset — POST /auth/reset-password) and emails a set-password
@@ -45,22 +37,13 @@ export class UsersService {
    */
   private async sendSetPasswordInvite(userId: string, to: string, username: string): Promise<void> {
     try {
-      const rawToken = crypto.randomBytes(32).toString("hex");
-      const tokenHash = this.hashToken(rawToken);
-      const expiresAt = new Date(Date.now() + SET_PASSWORD_TOKEN_TTL_MS);
-
-      await this.prisma.passwordResetToken.deleteMany({
-        where: { userId, usedAt: null, expiresAt: { gt: new Date() } },
-      });
-      await this.prisma.passwordResetToken.create({ data: { userId, tokenHash, expiresAt } });
-
       const urls = this.configService.get<AppConfig["urls"]>("urls")!;
-      const setPasswordUrl = `${urls.web}/reset-password?token=${rawToken}`;
+      const link = await issueSetPasswordLink(this.prisma, userId, urls.web);
       const result = await this.email.sendSetPasswordEmail({
         to,
         username,
-        setPasswordUrl,
-        expiryHours: SET_PASSWORD_TOKEN_TTL_MS / (60 * 60 * 1000),
+        setPasswordUrl: link.url,
+        expiryHours: link.expiryHours,
       });
       if (!result.delivered) {
         this.logger.error(
