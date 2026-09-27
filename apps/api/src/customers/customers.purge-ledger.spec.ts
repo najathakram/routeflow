@@ -69,9 +69,11 @@ describe("CustomersService — purge paths reverse the regulated ledger", () => 
       calls.push("deleteItems");
       return Promise.resolve({ count: 0 });
     });
+    // SA-510a: deleteAllCustomers' invoice delete is a CAS that must remove exactly the rows it
+    // read (primeInvoices' two DRAFTs).
     prisma.invoice.deleteMany.mockImplementation(() => {
       calls.push("deleteInvoices");
-      return Promise.resolve({ count: 0 });
+      return Promise.resolve({ count: 2 });
     });
 
     const module: TestingModule = await Test.createTestingModule({
@@ -114,7 +116,10 @@ describe("CustomersService — purge paths reverse the regulated ledger", () => 
 
   /** Two DRAFT invoices — the status that used to look safe and is not. */
   function primeInvoices() {
-    prisma.invoice.findMany.mockResolvedValue([{ id: "inv-1" }, { id: "inv-2" }]);
+    prisma.invoice.findMany.mockResolvedValue([
+      { id: "inv-1", customerId: "cust-1", status: "DRAFT" },
+      { id: "inv-2", customerId: "cust-1", status: "DRAFT" },
+    ]);
   }
 
   it("REG-LEDGER-PURGE: deleteAllCustomers reverses every invoice's ledger entries BEFORE deleting them", async () => {
