@@ -252,5 +252,46 @@ describeDb(
       expect(seen).toContainEqual({ productId: f.productId });
       expect(Number((await line(f.lineId)).qty)).toBe(36);
     });
+
+    // #2288 / SA-447: the write re-denominates a held unit line whose label is CLEARED (null) to the
+    // PACK; the netting must agree, so the edit is a re-denomination — unsized, checked in full.
+    const edit = (orderId: string, item: Record<string, unknown>) =>
+      tenantCtx.run(tenantId, () =>
+        orders.updateOrderItems(orderId, { replaceAll: false, items: [item] } as any, staff()),
+      );
+
+    it("SA-447: a banned product's held Case line with unitLabel CLEARED (null) is REFUSED before any write", async () => {
+      const f = await seed("clear");
+      banned = f.productId;
+      // Same count (3): at the held factor this would net 0 — but the write re-denominates to the pack.
+      await expect(
+        edit(f.orderId, { id: f.lineId, unitLabel: null, qty: 3 }),
+      ).rejects.toMatchObject({
+        response: { code: "SELLING_RESTRICTED" },
+      });
+      expect(seen).toContainEqual({ productId: f.productId }); // unsized: checked in full
+      const li = await line(f.lineId);
+      expect(li.unitLabel).toBe("Case"); // nothing written
+      expect(Number(li.qty)).toBe(36);
+      expect(li.unitsPerBox).toBe(12);
+    });
+
+    it("SA-447: with unitLabel ABSENT the edit never re-denominates — a qty edit is refused by UNIT_AWARE_LINE before the netting; a note-only edit nets nothing and is allowed", async () => {
+      const f = await seed("absent");
+      banned = f.productId;
+      // assertUnitLabelNamed (updateOrderItems :2978) runs before assertLinesSellable (:3024).
+      await expect(edit(f.orderId, { id: f.lineId, qty: 3 })).rejects.toMatchObject({
+        response: { code: "UNIT_AWARE_LINE" },
+      });
+      expect(seen).toEqual([]);
+      // Note-only, label absent (unitPrice/qty would be refused by UNIT_AWARE_LINE too): unitLineEdit
+      // returns null (no quantity change) — never checked.
+      await edit(f.orderId, { id: f.lineId, notes: "leave at the side door" });
+      expect(seen.filter((l) => l.productId === f.productId)).toEqual([]);
+      const li = await line(f.lineId);
+      expect(li.unitLabel).toBe("Case");
+      expect(Number(li.qty)).toBe(36);
+      expect(li.notes).toBe("leave at the side door");
+    });
   },
 );

@@ -30,20 +30,24 @@ describe("CreditNotesController — plan gate (WP5b)", () => {
   });
 
   // create/apply/void/unapply/update each still carry their own RolesGuard + @Roles.
-  it.each(["create", "apply", "voidNote", "unapply", "update"])(
-    "handler %s keeps its own RolesGuard + @Roles(OPERATOR)",
-    (handlerName) => {
-      const handler = (CreditNotesController.prototype as unknown as Record<string, unknown>)[
-        handlerName
-      ];
-      expect(typeof handler).toBe("function");
-      const handlerGuards = (Reflect.getMetadata("__guards__", handler as object) ?? []) as Array<{
-        name: string;
-      }>;
-      expect(handlerGuards.map((g) => g.name)).toContain("RolesGuard");
-      expect(Reflect.getMetadata(ROLES_KEY, handler as object)).toEqual([UserRole.OPERATOR]);
-    },
-  );
+  // void/unapply name TENANT_ADMIN explicitly too (#2403 / SA-436 PR-3).
+  it.each([
+    ["create", [UserRole.OPERATOR]],
+    ["apply", [UserRole.OPERATOR]],
+    ["voidNote", [UserRole.OPERATOR, UserRole.TENANT_ADMIN]],
+    ["unapply", [UserRole.OPERATOR, UserRole.TENANT_ADMIN]],
+    ["update", [UserRole.OPERATOR]],
+  ] as const)("handler %s keeps its own RolesGuard + @Roles(%j)", (handlerName, roles) => {
+    const handler = (CreditNotesController.prototype as unknown as Record<string, unknown>)[
+      handlerName
+    ];
+    expect(typeof handler).toBe("function");
+    const handlerGuards = (Reflect.getMetadata("__guards__", handler as object) ?? []) as Array<{
+      name: string;
+    }>;
+    expect(handlerGuards.map((g) => g.name)).toContain("RolesGuard");
+    expect(Reflect.getMetadata(ROLES_KEY, handler as object)).toEqual([...roles]);
+  });
 
   // findAll/findOne remain readable by any authenticated (customer-portal-aware)
   // role — no per-handler RolesGuard was ever added to them.

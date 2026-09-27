@@ -5,6 +5,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { connectSocket, disconnectSocket } from "../socket";
 import {
   buyerNotificationsKey,
+  buyerRefreshTokens,
   getBuyerAccessToken,
   getStoredActiveSeller,
   getStoredBuyerId,
@@ -59,6 +60,8 @@ function saveToStorage(key: string | null, notifications: BuyerNotification[]) {
  */
 export function useBuyerNotifications(sellerTenantId?: string | null) {
   const [notifications, setNotifications] = React.useState<BuyerNotification[]>([]);
+  // #2167: the socket's token expired and could not be refreshed, so live updates have stopped.
+  const [sessionExpired, setSessionExpired] = React.useState(false);
   const qc = useQueryClient();
   const tenantId =
     sellerTenantId === undefined ? (getStoredActiveSeller()?.tenant?.id ?? null) : sellerTenantId;
@@ -95,7 +98,14 @@ export function useBuyerNotifications(sellerTenantId?: string | null) {
 
     // The getter, not the token: every reconnect presents the CURRENT buyer token (the buyer
     // client refreshes it on a 401), so a dropped socket does not come back on an expired one.
-    const socket = connectSocket(getBuyerAccessToken);
+    // #2167: the server disconnects a socket whose token expired, and socket.io does not retry
+    // after that. `recovery` refreshes through the buyer refresh flow and reconnects; when the
+    // refresh fails the portal shows the expired state instead of failing silently.
+    setSessionExpired(false);
+    const socket = connectSocket(getBuyerAccessToken, {
+      refresh: async () => (await buyerRefreshTokens()) !== null,
+      onSessionExpired: () => setSessionExpired(true),
+    });
 
     // B104: the server joins a buyer's socket to the rooms of EVERY seller it is linked to, so an
     // event may belong to another seller than the portal on screen. Caches are keyed by ids and
@@ -194,5 +204,5 @@ export function useBuyerNotifications(sellerTenantId?: string | null) {
     saveToStorage(storageKeyRef.current, []);
   }, []);
 
-  return { notifications, unreadCount, markAllRead, clearAll, push };
+  return { notifications, unreadCount, markAllRead, clearAll, push, sessionExpired };
 }

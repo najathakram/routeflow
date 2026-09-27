@@ -64,14 +64,18 @@ export class CreditNotesController {
 
   @Post(":id/void")
   @UseGuards(RolesGuard)
-  @Roles(UserRole.OPERATOR)
+  // #2403 / SA-436 PR-3: a staff action; TENANT_ADMIN named explicitly (RolesGuard already
+  // lets it satisfy OPERATOR).
+  @Roles(UserRole.OPERATOR, UserRole.TENANT_ADMIN)
   voidNote(@Param("id") id: string) {
     return this.creditNotesService.voidCreditNote(id);
   }
 
   @Post(":id/unapply")
   @UseGuards(RolesGuard)
-  @Roles(UserRole.OPERATOR)
+  // #2403 / SA-436 PR-3: a staff action; TENANT_ADMIN named explicitly (RolesGuard already
+  // lets it satisfy OPERATOR).
+  @Roles(UserRole.OPERATOR, UserRole.TENANT_ADMIN)
   unapply(@Param("id") id: string, @Body() body: { invoiceId: string }) {
     return this.creditNotesService.unapplyFromInvoice(id, body.invoiceId);
   }
