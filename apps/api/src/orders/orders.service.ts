@@ -2587,7 +2587,6 @@ export class OrdersService implements OnApplicationBootstrap {
         // are ONE decision, not two: `reopenOrder` re-decrements exactly the lines
         // this cancel marked, so marking a line we did not credit would make reopen
         // take stock the order never held (understating it by the full quantity).
-        const cancelReturnsStock = order.status !== OrderStatus.DRAFT;
         // #2255 / SA-404d: re-run on a write conflict (SA-269). The CANCELLED status write sits in this
         // locked tx, so a refusal under the lock leaves the order exactly as it was — never
         // cancelled-but-not-unwound — and voidInvoiceInTx's claim keeps a re-run from voiding twice.
@@ -2595,6 +2594,12 @@ export class OrdersService implements OnApplicationBootstrap {
           this.prisma.tenantTransaction(
             async (tx) => {
               await lockOrderForCancel(tx, id);
+              // #2472 (2): decided from the status UNDER the lock, never the unlocked pre-read.
+              const lockedStatus = (await tx.order.findUnique({
+                where: { id },
+                select: { status: true },
+              }))!.status;
+              const cancelReturnsStock = lockedStatus !== OrderStatus.DRAFT;
               // SA-404f F2: compare-and-set on the cancellable set the pre-check used — a retry after
               // a 40001 caused by a concurrent DELIVERED must never cancel a delivered order.
               const cancellable = Object.keys(ORDER_STATUS_TRANSITIONS).filter((k) =>
