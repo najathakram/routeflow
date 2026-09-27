@@ -920,6 +920,15 @@ describe("InlineReturnsService", () => {
       expect(creditNotes.mintStandaloneInTx).not.toHaveBeenCalled();
     });
 
+    it("#2143: an already-approved retry whose re-read comes back empty is a 404, no write", async () => {
+      prisma.return.findFirst.mockResolvedValue(APPROVED);
+      prisma.return.findUnique.mockResolvedValue(null);
+      prisma.tenantTransaction.mockClear();
+      await expect(service.approve("ret-held", OPERATOR)).rejects.toThrow(NotFoundException);
+      expect(prisma.tenantTransaction).not.toHaveBeenCalled();
+      expect(creditNotes.mintStandaloneInTx).not.toHaveBeenCalled();
+    });
+
     it("#2143: a return issued WITHOUT a hold (never approved) still refuses approve()", async () => {
       prisma.return.findFirst.mockResolvedValue({
         ...APPROVED,
