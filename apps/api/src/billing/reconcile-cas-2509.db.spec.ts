@@ -92,13 +92,13 @@ describeDb("#2509 reconcilePriceLedger compare-and-set (real Postgres, two conne
     });
 
   /** T2 holds `sql` (uncommitted) on the row while the sync's reconcile blocks on its CAS; then commits. */
-  async function raceSync(tenantId: string, sql: string) {
+  async function raceSync(tenantId: string, statements: string[]) {
     const t2 = new Client({ connectionString: url });
     await t2.connect();
     let blocked = false;
     try {
       await t2.query("BEGIN");
-      await t2.query(sql, [tenantId]);
+      for (const sql of statements) await t2.query(sql, [tenantId]);
       const pid = (await t2.query("SELECT pg_backend_pid() AS pid")).rows[0].pid;
       const p1 = svc.syncStripeSubscriptionPrice(tenantId);
       for (let i = 0; i < 400 && !blocked; i++) {
@@ -120,10 +120,10 @@ describeDb("#2509 reconcilePriceLedger compare-and-set (real Postgres, two conne
 
   it("a concurrent upgrade (GROWTH 249 → SCALE 499) during the reconcile ⇒ the reconcile writes and books nothing", async () => {
     const id = await growthTenant("upgrade");
-    const blocked = await raceSync(
-      id,
+    // An upgrade writes plan and snapshot in its one guarded UPDATE, as upgrade() does.
+    const blocked = await raceSync(id, [
       `UPDATE "TenantSubscription" SET "planKey" = 'SCALE', "basePriceSnapshot" = 499 WHERE "tenantId" = $1`,
-    );
+    ]);
     const sub = await prisma.tenantSubscription.findUniqueOrThrow({ where: { tenantId: id } });
     expect({
       blocked,
@@ -133,12 +133,14 @@ describeDb("#2509 reconcilePriceLedger compare-and-set (real Postgres, two conne
     }).toEqual({ blocked: true, planKey: "SCALE", snapshot: 499, events: 0 });
   }, 30_000);
 
-  it("a second Pricing write (snapshot 249 → 200, same plan) during the reconcile ⇒ retried, booked once against 200", async () => {
+  it("a second Pricing change (fee, then snapshot 249 → 200, same plan) during the reconcile ⇒ retried, booked once against 200", async () => {
     const id = await growthTenant("reprice");
-    const blocked = await raceSync(
-      id,
+    // SA-464f: a Pricing change writes the fee and the snapshot in SEPARATE statements, as production
+    // does (updateTenantPriceOverride's fee, then reconcile's snapshot); T2 holds both uncommitted.
+    const blocked = await raceSync(id, [
+      `UPDATE "TenantSubscription" SET "priceOverrideMonthly" = 200 WHERE "tenantId" = $1`,
       `UPDATE "TenantSubscription" SET "basePriceSnapshot" = 200 WHERE "tenantId" = $1`,
-    );
+    ]);
     const sub = await prisma.tenantSubscription.findUniqueOrThrow({ where: { tenantId: id } });
     const events = await syncEvents(id);
     expect({
