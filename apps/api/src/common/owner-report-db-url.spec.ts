@@ -32,6 +32,7 @@ const B768_REPORTS = [
   "report-receiving-unit-drift.mjs",
   "report-train4-damage.mjs",
   "sales-gap-analysis.js",
+  "stock-ledger-gap.mjs", // B562 PR-2 (SA-136 §6.3) — born on the resolver
 ];
 
 /**
@@ -50,7 +51,6 @@ const ALLOWED: Record<string, string> = {
   "backfill-b294-order-line-taxrate.mjs": "--local mode only (writer: requireProxy otherwise)",
   // The drift gate and the production guard deliberately read the raw variable.
   "schema-drift.mjs": "drift gate (railway-db-url.mjs: read-only drift check)",
-  "lib/production-guard.js": "the guard that inspects DATABASE_URL itself",
   // Writers, destructive/QA and admin scripts: out of B768's scope (a separate decision). Listed so
   // any change to them is deliberate. propose-pack-sizes.mjs reports by default but WRITES
   // unitsPerBox under --execute, so it is a writer.

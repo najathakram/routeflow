@@ -20,20 +20,18 @@ const { PrismaPg } = require("../../../node_modules/@prisma/adapter-pg");
 const { Pool } = require("../../../node_modules/pg");
 const { productionGuard } = require("./lib/production-guard");
 
-productionGuard({ requireFlag: "--confirm" });
-
 const dbUrl = process.env.DATABASE_URL ?? "postgresql://user:pass@localhost:5432/routeflow_dev";
 
-const pool = new Pool({ connectionString: dbUrl });
+// #2206: guard the URL this script actually dials, and dial exactly what was checked.
+const target = productionGuard({ requireFlag: "--confirm", dbUrl });
+const pool = new Pool(target);
 const adapter = new PrismaPg(pool);
 const prisma = new PrismaClient({ adapter });
-
-const isRailway = dbUrl.includes("railway") || dbUrl.includes("rlwy");
 
 async function main() {
   console.log("\n========================================================");
   console.log("  RouteFlow — Nuke Tenant Data");
-  console.log(`  Target: ${isRailway ? "⚠  RAILWAY PRODUCTION" : "Local dev"}`);
+  console.log(`  Target: local ${target.host}:${target.port}/${target.database}`);
   console.log(`  DB: ${dbUrl.replace(/:\/\/[^@]+@/, "://***@")}`);
   console.log("========================================================\n");
 

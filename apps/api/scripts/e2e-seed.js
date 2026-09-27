@@ -293,7 +293,25 @@ async function ensureCommerceFixtures(tenantId) {
   for (const p of FIXTURE_PRODUCTS) {
     const product = await prisma.product.upsert({
       where: { tenantId_sku: { tenantId, sku: p.sku } },
-      create: { tenantId, currentStock: 500, isActive: true, ...p },
+      // B562 (SA-136 §1): the opening stock is a PURCHASE movement, so the ledger explains the counter
+      // (stock-ledger-gap.mjs reports a product whose counter its movements don't add up to).
+      create: {
+        tenantId,
+        currentStock: 500,
+        isActive: true,
+        ...p,
+        stockMovements: {
+          create: [
+            {
+              tenantId,
+              type: "PURCHASE",
+              quantity: 500,
+              stockAfter: 500,
+              notes: "Opening stock (e2e seed)",
+            },
+          ],
+        },
+      },
       update: { isActive: true },
     });
     products.set(p.sku, product);

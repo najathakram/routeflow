@@ -17,6 +17,7 @@ import { createMockPrisma } from "../testing/prisma-mock";
 // gets its own dedicated tax-rate describe block below.
 const ZERO_TAX_SYSTEM_CONFIG = { get: jest.fn().mockResolvedValue(null) };
 import type { JwtPayload } from "../auth/jwt-payload.interface";
+import type { QuoteInlineReturnItemDto } from "./dto/quote-inline-return.dto";
 
 const OPERATOR: JwtPayload = {
   sub: "user-op-1",
@@ -66,7 +67,10 @@ describe("InlineReturnsQuoteService — M8 driver scoping", () => {
     db = prisma.forTenant();
   });
 
-  const dto = { customerId: "cust-1", items: [{ productId: "prod-1", qty: 1 }] };
+  const dto = {
+    customerId: "cust-1",
+    items: [{ productId: "prod-1", qty: 1 } as QuoteInlineReturnItemDto],
+  };
 
   it("Opus fix-round MAJOR: refuses a CUSTOMER caller explicitly, before any DB read (Q5)", async () => {
     await expect(service.quote(dto, CUSTOMER)).rejects.toThrow(ForbiddenException);
@@ -333,7 +337,10 @@ describe("InlineReturnsQuoteService — Opus fix-round BLOCKER: the matching/all
     // fall back to product.unitsPerBox (12) to read this as ONE BOX (12 pieces, $24), not
     // one loose piece ($2).
     const result = await service.quote(
-      { customerId: "cust-1", items: [{ productId: "prod-1", qty: 1 }] },
+      {
+        customerId: "cust-1",
+        items: [{ productId: "prod-1", qty: 1 } as QuoteInlineReturnItemDto],
+      },
       OPERATOR,
     );
 
@@ -694,7 +701,10 @@ describe("InlineReturnsQuoteService — Opus fix-round BLOCKER: the matching/all
     (db.returnItem.findMany as jest.Mock).mockResolvedValue([]);
 
     const result = await service.quote(
-      { customerId: "cust-1", items: [{ productId: "prod-1", qty: 1, pieces: 5 }] },
+      {
+        customerId: "cust-1",
+        items: [{ productId: "prod-1", qty: 1, pieces: 5 } as QuoteInlineReturnItemDto],
+      },
       OPERATOR,
     );
     expect(result.total).toBe(15.0);
@@ -715,7 +725,10 @@ describe("InlineReturnsQuoteService — Opus fix-round BLOCKER: the matching/all
     (db.returnItem.findMany as jest.Mock).mockResolvedValue([]);
 
     const result = await service.quote(
-      { customerId: "cust-1", items: [{ productId: "prod-1", qty: 5 }] },
+      {
+        customerId: "cust-1",
+        items: [{ productId: "prod-1", qty: 5 } as QuoteInlineReturnItemDto],
+      },
       OPERATOR,
     );
     expect(result.total).toBe(15.0);
@@ -862,7 +875,10 @@ describe("InlineReturnsQuoteService — PR-1c: unreferenced-chunk tax fallback r
 
   it("prices tax at the tenant's CURRENT 8% rate — $50.00 subtotal, $4.00 tax (revert ⇒ $0.00 tax)", async () => {
     const result = await service.quote(
-      { customerId: "cust-1", items: [{ productId: "prod-1", qty: 5 }] },
+      {
+        customerId: "cust-1",
+        items: [{ productId: "prod-1", qty: 5 } as QuoteInlineReturnItemDto],
+      },
       OPERATOR,
     );
 
@@ -880,7 +896,10 @@ describe("InlineReturnsQuoteService — PR-1c: unreferenced-chunk tax fallback r
     });
 
     const result = await service.quote(
-      { customerId: "cust-1", items: [{ productId: "prod-1", qty: 5 }] },
+      {
+        customerId: "cust-1",
+        items: [{ productId: "prod-1", qty: 5 } as QuoteInlineReturnItemDto],
+      },
       OPERATOR,
     );
 
@@ -892,8 +911,8 @@ describe("InlineReturnsQuoteService — PR-1c: unreferenced-chunk tax fallback r
       {
         customerId: "cust-1",
         items: [
-          { productId: "prod-1", qty: 5 },
-          { productId: "prod-2", qty: 3 },
+          { productId: "prod-1", qty: 5 } as QuoteInlineReturnItemDto,
+          { productId: "prod-2", qty: 3 } as QuoteInlineReturnItemDto,
         ],
       },
       OPERATOR,

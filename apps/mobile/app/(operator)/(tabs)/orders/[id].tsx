@@ -69,6 +69,7 @@ import { SendInvoiceSheet } from "../../../../components/SendInvoiceSheet";
 import { ReasonSheet } from "../../../../components/ReasonSheet";
 import { canDeleteOrder, demotionRequiresReason } from "../../../../lib/order-status-flow";
 import { statusActions, type StatusAction } from "../../../../lib/order-actions";
+import { useRecordReturn } from "../../../../hooks/useRecordReturn";
 
 function formatCurrency(n: number | string | undefined): string {
   const v = typeof n === "string" ? Number(n) : (n ?? 0);
@@ -103,6 +104,12 @@ export default function OrderDetailScreen() {
   const router = useRouter();
   const { id } = useLocalSearchParams<{ id: string }>();
   const { data: order, isLoading, isError, refetch } = useAdminOrder(id ?? "");
+  // #2420: before any early return (rules of hooks) — null until the add-on resolves allowed.
+  const recordReturn = useRecordReturn({
+    customerId: order?.customerId ?? order?.customer?.id,
+    orderId: order?.id,
+    customerName: order?.customer?.businessName,
+  });
   // `order_ui_v2` (dark): card rows instead of the legacy item row.
   const orderUiV2 = useOrderUiV2();
   const changeMut = useChangeOrderStatus();
@@ -984,6 +991,18 @@ export default function OrderDetailScreen() {
           <View style={styles.card}>
             <Text style={styles.cardTitle}>More</Text>
             <View style={styles.actionsCol}>
+              {/* #2420: Record return — web's RecordReturnAction twin. Any order status (never
+                  gated on it); hidden without the orders_inline_returns add-on. */}
+              {recordReturn ? (
+                <Pressable
+                  style={[styles.actionBtn, styles.secondaryAction]}
+                  onPress={recordReturn}
+                  accessibilityRole="button"
+                >
+                  <Ionicons name="return-down-back-outline" size={18} color={ios.brand} />
+                  <Text style={styles.actionBtnText}>Record return</Text>
+                </Pressable>
+              ) : null}
               {/* Split into multiple invoices — available once the order has items
                   and isn't a draft / cancelled. The screen prevents over-invoicing via
                   OrderItem.invoicedQty. */}
