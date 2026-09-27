@@ -7,6 +7,7 @@ import { effectiveBuyerPrice, getTierPrice } from "@routeflow/pricing";
 import { OrdersService } from "../orders/orders.service";
 import { ReplenishmentService } from "./replenishment.service";
 import { PromotionsService } from "../promotions/promotions.service";
+import { signableImageKeys } from "../products/product-image-keys";
 
 /** Max images presigned per product for the tile's dot-pager (P5-02). */
 const MAX_TILE_IMAGES = 4;
@@ -207,10 +208,10 @@ export class BuyerCatalogService {
 
         // Dot pager: presign up to the first 4 images (HMAC-local, no network).
         // First entry corresponds to thumbnailUrl (same key, first image).
-        const imageUrls =
-          (p.imageKeys?.length ?? 0) > 0
-            ? await this.storage.presignedUrls(p.imageKeys.slice(0, MAX_TILE_IMAGES))
-            : [];
+        // #2533: only keys under this product's own prefix are listed or signed.
+        const ownKeys = signableImageKeys(p.id, p.imageKeys);
+        const tileKeys = ownKeys.slice(0, MAX_TILE_IMAGES);
+        const imageUrls = tileKeys.length > 0 ? await this.storage.presignedUrls(tileKeys) : [];
 
         return {
           id: p.id,
@@ -226,7 +227,7 @@ export class BuyerCatalogService {
           isNew: p.isNew ?? false,
           isDeal: p.isDeal ?? false,
           thumbnailUrl: p.thumbnailUrl ?? null,
-          imageKeys: p.imageKeys ?? [],
+          imageKeys: ownKeys,
           imageUrls,
           ...this.deriveStock(p),
         };
@@ -494,7 +495,7 @@ export class BuyerCatalogService {
           priceHist[f.productId]?.lastPrice ?? null,
         ),
         thumbnailUrl: null as string | null, // thumbnails resolved in catalog listing
-        imageKeys: f.product.imageKeys ?? [],
+        imageKeys: signableImageKeys(f.productId, f.product.imageKeys),
         // Needed so add-to-cart from the mobile favorites screen orders a boxed
         // product as boxes (not loose pieces) — matches getCatalog.
         unitsPerBox: f.product.unitsPerBox ?? null,

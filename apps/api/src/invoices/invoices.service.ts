@@ -10,6 +10,7 @@ import * as unitAware from "../orders/unit-aware-guard";
 import { assertNoNegativeLineSubtotal } from "../common/money-invariants.util";
 import { randomUUID } from "crypto";
 import { PrismaService } from "../prisma/prisma.service";
+import { recomputeInvoiceStatus } from "./invoice-status";
 import { StorageService } from "../storage/storage.service";
 import {
   deletePaymentImage,
@@ -41,7 +42,7 @@ import {
   splitConfirmed,
   sumConfirmed,
 } from "./payment-predicates";
-import { PAYABLE, KPI_SUMMARY_EXCLUDED } from "./invoice-status-sets";
+import { PAYABLE } from "./invoice-status-sets";
 import { reconcileDeliveredOrdersInTx as reconcileDeliveredOrdersInTxImpl } from "./delivered-reconcile";
 import { packAtSaleByProduct, priorUnitsPerBoxMap, toSaleLedgerLines } from "./pack-at-sale";
 import { assertIntegerPieces, billPackOf } from "./unit-line-bill-guard";
@@ -67,6 +68,7 @@ import {
   UserRole,
 } from "@prisma/client";
 import type { InvoiceKpiSummary } from "@routeflow/types";
+import { computeInvoiceKpiSummary } from "./invoice-kpi-summary";
 import { CHECK_TRANSITIONS } from "../common/check-transitions";
 import {
   CreateInvoiceDto,
@@ -110,7 +112,13 @@ import { NSF_FEE_DESCRIPTION_PREFIX } from "../sales-agents/commission-math";
 import { InvoiceItemSystemKind, notNsfLineWhere } from "./nsf-line";
 import { preservedNsfLines } from "./nsf-preserve";
 import { partitionInvoiceLines, planResyncPairs } from "./resync-plan";
-import { issueDateStamp, startOfCalendarDay, endOfCalendarDay } from "../common/calendar-date";
+import {
+  issueDateStamp,
+  overdueCutoff,
+  addCalendarDays,
+  startOfCalendarDay,
+  endOfCalendarDay,
+} from "../common/calendar-date";
 import { calendarFieldStamp, dueDateStamps, dueStamp } from "./invoice-due-dates";
 import { lockRowsNoWait } from "../common/db-locks";
 import { NumberingService } from "../import/numbering.service";
@@ -129,6 +137,7 @@ import { prepareUnitLadders, requestsUnit } from "../orders/unit-line-build";
 import { standaloneAllocationTotals } from "./standalone-payment-totals";
 import { calendarDayOf } from "./settled-date-filter";
 import { retryOnTxConflict } from "../common/tx-retry";
+import { AfterCommit, gatewayFor, withAfterCommit } from "../common/after-commit";
 import {
   lockInvoiceRow,
   lockInvoicesForPayment,
@@ -136,6 +145,7 @@ import {
   paymentRefusal,
   sendRefusal,
   voidRefusal,
+  writeOffRefusal,
 } from "./invoice-send-guard";
 import { selectEditRevertedInvoices } from "./order-edit-revert-set";
 
@@ -150,16 +160,7 @@ const TERM_DAYS: Record<string, number> = {
 /** #2293: round a nullable money field; `null` (clear) and `undefined` (leave as is) pass through. */
 const roundMoneyOrNull = (v: number | null | undefined) => (v == null ? v : roundMoney(v));
 
-/**
- * Payment-term arithmetic on a calendar date, in UTC. `setDate`/`getDate` read LOCAL
- * components, so on a non-UTC host they shift a UTC-midnight instant by the DST delta
- * and can land the due date on the previous calendar day.
- */
-export function addCalendarDays(date: Date, days: number): Date {
-  const out = new Date(date);
-  out.setUTCDate(out.getUTCDate() + days);
-  return out;
-}
+export { addCalendarDays } from "../common/calendar-date";
 
 // P5-12 / post-dated check payments PR-1: `CHECK_TRANSITIONS` (legal FORWARD transitions for
 // the check lifecycle) now comes from `../common/check-transitions` — an API-local mirror of the
@@ -334,25 +335,9 @@ export class InvoicesService {
     return this.generateInvoiceNumber();
   }
 
-  private recomputeStatus(
-    totalPaid: number,
-    total: number,
-    dueDate: Date | null,
-    currentStatus?: InvoiceStatus,
-  ): InvoiceStatus {
-    // DRAFT, VOID, and WRITTEN_OFF are terminal/deliberate states — payment-driven
-    // recalculation must never override them.
-    if (
-      currentStatus === InvoiceStatus.DRAFT ||
-      currentStatus === InvoiceStatus.VOID ||
-      currentStatus === InvoiceStatus.WRITTEN_OFF
-    ) {
-      return currentStatus;
-    }
-    if (totalPaid >= total - 0.001) return InvoiceStatus.PAID;
-    if (totalPaid > 0) return InvoiceStatus.PARTIAL;
-    if (dueDate && new Date(dueDate) < new Date()) return InvoiceStatus.OVERDUE;
-    return InvoiceStatus.SENT;
+  /** SA-488: delegates to the shared invoice-status.ts body (optional trailing `timeZone`). */
+  private recomputeStatus(...args: Parameters<typeof recomputeInvoiceStatus>): InvoiceStatus {
+    return recomputeInvoiceStatus(...args);
   }
 
   /**
@@ -1406,7 +1391,7 @@ export class InvoicesService {
    */
   async reconcileOrderDraftInvoice(
     orderId: string,
-    opts: { basis: "order" | "delivered"; tx?: any },
+    opts: { basis: "order" | "delivered"; tx?: any; after?: AfterCommit },
   ) {
     const db = opts.tx ?? this.prisma.forTenant();
     const split = await this.reconcileSplitOrderDrafts(orderId, opts.basis, db);
@@ -1562,7 +1547,8 @@ export class InvoicesService {
     // before — this whole block is deposit-mirror-only.
     if (isDepositMirror && nextStatus !== InvoiceStatus.DRAFT) {
       await this.commissionEngine.syncInvoiceCommissionSafe(draft.id, db);
-      this.gateway.emitInvoiceUpdated(this.prisma.getTenantId(), {
+      const gateway = gatewayFor(opts.tx, opts.after, this.gateway, "reconcileOrderDraftInvoice");
+      gateway.emitInvoiceUpdated(this.prisma.getTenantId(), {
         invoiceId: updated.id,
         invoiceNumber: updated.invoiceNumber,
         customerId: updated.customerId,
@@ -2049,7 +2035,11 @@ export class InvoicesService {
    * because this method rebuilds each invoice at the full current line qty and would
    * otherwise expand an already-issued invoice to cover units/lines it never billed.
    */
-  async resyncOrderInvoicesForEdit(orderId: string, tx?: any): Promise<any[] | null> {
+  async resyncOrderInvoicesForEdit(
+    orderId: string,
+    tx?: any,
+    after?: AfterCommit,
+  ): Promise<any[] | null> {
     const run = async (db: any): Promise<any[] | null> => {
       const invoices = await db.invoice.findMany({
         where: { orderId, status: { not: InvoiceStatus.VOID } },
@@ -2118,15 +2108,16 @@ export class InvoicesService {
     // pre-edit total until it was manually refetched. Emitted here, at the OUTER
     // tail rather than inside `run`, so it lands POST-COMMIT on the only
     // production call site (orders.service.ts updateOrderItems, which passes no
-    // `tx`). INVARIANT for a future caller: passing a `tx` makes the emit fire
-    // inside that caller's transaction, so a later rollback would publish an
-    // invoice update that never committed — emit-after-commit there instead.
+    // `tx`). #2175: a caller that passes its own `tx` must also pass its
+    // AfterCommit queue (gatewayFor refuses otherwise), so the emit is queued and
+    // sent only once THAT transaction commits — never from inside it.
     // Exactly once per rebuilt invoice: rebuildSiblingDrafts returns one row per
     // linked invoice (the partition bails on any shared/unprovenanced line).
     if (updated) {
       const tenantId = this.prisma.getTenantId();
+      const gateway = gatewayFor(tx, after, this.gateway, "resyncOrderInvoicesForEdit");
       for (const inv of updated) {
-        this.gateway.emitInvoiceUpdated(tenantId, {
+        gateway.emitInvoiceUpdated(tenantId, {
           invoiceId: inv.id,
           invoiceNumber: inv.invoiceNumber,
           customerId: inv.customerId,
@@ -2880,7 +2871,9 @@ export class InvoicesService {
     const { customerId, sortBy, sortOrder, page = 1, limit = 20 } = query;
     const skip = (page - 1) * limit;
     const where: any = {};
-    applyInvoiceStatusFilters(where, query);
+    // SA-488: the isOverdue filter ends the due day in the tenant's zone (read only when used).
+    const tz = query.isOverdue ? (await this.resolveTenantInvoiceDefaults()).timezone : null;
+    applyInvoiceStatusFilters(where, query, tz);
     if (user?.role === UserRole.CUSTOMER) {
       const customer = await this.prisma
         .forTenant()
@@ -2980,158 +2973,13 @@ export class InvoicesService {
     };
   }
 
-  /**
-   * B12: the invoices page's six KPI tiles, computed by the DATABASE over the
-   * whole OPEN set — never a client `useInvoices({ limit: 999 })`
-   * fetch-all-then-reduce, which silently drops whichever rows page 1000+
-   * would have held (exactly the oldest, most delinquent invoices).
-   *
-   * `today` is the VIEWER's calendar day (`YYYY-MM-DD`), passed by the client
-   * so the tiles agree with the same due-soon chips the list page renders —
-   * the server never derives "today" from its own clock (L-047).
-   */
-  async getKpiSummary(today: string, user: JwtPayload): Promise<InvoiceKpiSummary> {
-    // The DTO's regex pins the SHAPE; this pins the CALENDAR. `2026-13-01`
-    // matches the regex and would blow up on `.toISOString()` below — after
-    // three queries had already run — and `2026-02-30` would silently roll to
-    // Mar 2 and bucket the tiles against a day the caller never asked for.
-    const todayInstant = new Date(`${today}T00:00:00.000Z`);
-    if (Number.isNaN(todayInstant.getTime()) || todayInstant.toISOString().slice(0, 10) !== today) {
-      throw new BadRequestException("today must be a real calendar date (YYYY-MM-DD)");
-    }
-
-    const tenantId = this.prisma.getTenantId();
-    // No tenant context (SUPER_ADMIN / unset): `forTenant()` would read UNSCOPED
-    // while the raw query's `"tenantId" = NULL` matches nothing — one response
-    // mixing all-tenant totals with a zeroed average. Return the zeroed summary
-    // instead, the same guard `resolveTenantInvoiceDefaults` uses.
-    if (!tenantId) {
-      return {
-        totalOutstanding: 0,
-        overdue: 0,
-        dueToday: 0,
-        dueIn30: 0,
-        avgDays: 0,
-        awaitingConfirmationCount: 0,
-      };
-    }
-
-    // A CUSTOMER sees only their OWN receivables — the same scope `findAll`
-    // applies above, resolved the same way. Without it the tiles would hand a
-    // buyer the whole tenant's outstanding balance. (For the money tiles DRAFT
-    // needs no extra exclusion: KPI_SUMMARY_EXCLUDED already drops it. The
-    // awaiting-confirmation count is not on that set, so it carries findAll's
-    // buyer DRAFT rule itself — see m7 below.)
-    let customerId: string | undefined;
-    if (user?.role === UserRole.CUSTOMER) {
-      const customer = await this.prisma
-        .forTenant()
-        .customer.findFirst({ where: { userId: user.sub } });
-      // No customer profile: `findAll` returns an empty page, so the tiles zero out.
-      if (!customer) {
-        return {
-          totalOutstanding: 0,
-          overdue: 0,
-          dueToday: 0,
-          dueIn30: 0,
-          avgDays: 0,
-          awaitingConfirmationCount: 0,
-        };
-      }
-      customerId = customer.id;
-    }
-
-    const [invoices, awaitingConfirmationCount, avgDaysRows] = await Promise.all([
-      // No `take` — the OPEN set is read whole, not capped like a rendering page.
-      this.prisma.forTenant().invoice.findMany({
-        where: { status: { notIn: KPI_SUMMARY_EXCLUDED }, ...(customerId ? { customerId } : {}) },
-        select: {
-          total: true,
-          status: true,
-          dueDate: true,
-          payments: { select: { amount: true, status: true } },
-        },
-      }),
-      // m7 (F16 hotfix): this tile is NOT on the money tiles' OPEN basis. It
-      // reproduces the client memo it replaced, which counted every DRAFT
-      // payment on every invoice `useInvoices({ limit: 999 })` returned —
-      // `for (const p of inv.payments ?? []) { if (p.status === "DRAFT")
-      // awaitingConfirmationCount++; }`, above and outside the memo's own
-      // status branches, so no invoice status was excluded. Scoping it to
-      // KPI_SUMMARY_EXCLUDED zeroed the tile for the commonest case there is:
-      // a payment recorded against a still-DRAFT invoice, which `recordPayment`
-      // deliberately leaves DRAFT (recomputeStatus treats DRAFT as terminal).
-      // The queue exists to make unconfirmed money visible wherever it sits;
-      // the invoice's own status is not what makes a draft payment actionable.
-      this.prisma.forTenant().invoicePayment.count({
-        where: {
-          status: "DRAFT",
-          // Staff: no invoice-status scope at all — the memo had none. A BUYER
-          // gets exactly `findAll`'s buyer scope instead: their own customer's
-          // invoices, minus the DRAFT ones a buyer is never shown.
-          ...(customerId ? { invoice: { customerId, status: { not: InvoiceStatus.DRAFT } } } : {}),
-        },
-      }),
-      // Tenant id (and a buyer's customer id) reach the raw query as BOUND
-      // values, never string-interpolated.
-      this.prisma.$queryRaw<{ avgDays: number | null }[]>`
-        SELECT AVG(EXTRACT(EPOCH FROM ("paidAt" - "sentAt")) / 86400)::float AS "avgDays"
-        FROM "Invoice"
-        WHERE "tenantId" = ${tenantId}
-          ${customerId ? Prisma.sql`AND "customerId" = ${customerId}` : Prisma.empty}
-          AND status = 'PAID'
-          AND "paidAt" IS NOT NULL
-          AND "sentAt" IS NOT NULL
-          -- A PAID invoice re-sent as a receipt re-stamps sentAt AFTER paidAt
-          -- (send(), sendEmail()), which would feed a large negative duration
-          -- into the average. The client memo this replaced discarded those
-          -- rows with "days >= 0"; so does this.
-          AND "paidAt" >= "sentAt"
-      `,
-    ]);
-
-    // RF-202 convention: ISO date-string comparison (YYYY-MM-DD), never raw
-    // Date objects — a due date is a UTC-midnight calendar stamp, `today` is
-    // the viewer's own calendar day, so the comparison must stay date-only.
-    const cutoff = addCalendarDays(new Date(`${today}T00:00:00.000Z`), 30)
-      .toISOString()
-      .slice(0, 10);
-
-    let totalOutstanding = 0;
-    let overdue = 0;
-    let dueToday = 0;
-    let dueIn30 = 0;
-    for (const inv of invoices) {
-      // Same balance basis as findAll's enrichment above: CONFIRMED (PAID)
-      // payments only reduce the outstanding figure.
-      const balance = Math.max(0, Number(inv.total) - sumConfirmed(inv.payments as any));
-      totalOutstanding += balance;
-      const dueDateIso = inv.dueDate
-        ? (inv.dueDate instanceof Date ? inv.dueDate : new Date(inv.dueDate))
-            .toISOString()
-            .slice(0, 10)
-        : null;
-      // m5: the client memo's own basis was `status === "OVERDUE" || (due <
-      // today)` — a disjunct, not a date-only rule. An invoice the server has
-      // already flipped to OVERDUE is overdue whatever its dueDate says (null,
-      // or moved into the future by an edit), so it must not fall into
-      // dueIn30 or out of every bucket.
-      if (inv.status === InvoiceStatus.OVERDUE) overdue += balance;
-      // No dueDate and not flagged OVERDUE: totalOutstanding only, no bucket.
-      else if (dueDateIso == null) continue;
-      else if (dueDateIso < today) overdue += balance;
-      else if (dueDateIso === today) dueToday += balance;
-      else if (dueDateIso <= cutoff) dueIn30 += balance;
-    }
-
-    return {
-      totalOutstanding: roundMoney(totalOutstanding),
-      overdue: roundMoney(overdue),
-      dueToday: roundMoney(dueToday),
-      dueIn30: roundMoney(dueIn30),
-      avgDays: avgDaysRows[0]?.avgDays ?? 0,
-      awaitingConfirmationCount,
+  /** B12: the invoices page's KPI tiles live in invoice-kpi-summary.ts (size ratchet). */
+  async getKpiSummary(viewerToday: string, user: JwtPayload): Promise<InvoiceKpiSummary> {
+    const deps = {
+      prisma: this.prisma,
+      resolveTenantInvoiceDefaults: () => this.resolveTenantInvoiceDefaults(),
     };
+    return computeInvoiceKpiSummary(deps, viewerToday, user);
   }
 
   async findOne(id: string, user?: JwtPayload) {
@@ -4731,7 +4579,7 @@ export class InvoicesService {
     // Refuse a null tenant BEFORE the transaction opens — same policy as sites
     // 2/3 (D3): a PAY number is never minted from the shared "singleton" row.
     const { tenantId, tenantShort } = this.requirePaymentTenant();
-    return this.prisma.tenantTransaction(async (tx) => {
+    return withAfterCommit(this.prisma, async (tx, after) => {
       // Lock the invoice row so concurrent payment requests serialize here
       await tx.$executeRaw`SELECT id FROM "Invoice" WHERE id = ${id} FOR UPDATE`;
 
@@ -4750,8 +4598,8 @@ export class InvoicesService {
         include: { payments: { where: { status: { not: "VOID" } } } },
       });
       if (!inv) throw new NotFoundException("Invoice not found");
-      if (inv.status === InvoiceStatus.VOID)
-        throw new BadRequestException("Cannot record payment on voided invoice");
+      const refusal = paymentRefusal(inv.status); // #2472 (4): VOID and WRITTEN_OFF, like the others
+      if (refusal) throw new BadRequestException(`Cannot record payment on ${refusal} invoice`);
 
       const total = Number(inv.total);
       const alreadyPaid = sumConfirmed(inv.payments);
@@ -4821,7 +4669,7 @@ export class InvoicesService {
           payments: { orderBy: { createdAt: "desc" } },
         },
       });
-      this.gateway.emitInvoiceUpdated(this.prisma.getTenantId(), {
+      after.defer(this.gateway).emitInvoiceUpdated(this.prisma.getTenantId(), {
         invoiceId: paid.id,
         invoiceNumber: paid.invoiceNumber,
         customerId: paid.customerId,
@@ -4887,6 +4735,7 @@ export class InvoicesService {
    */
   async recordDeliveryPaymentInTx(
     tx: any,
+    after: AfterCommit, // #2175: the caller's queue — its transaction owns the flush
     orderIds: string[],
     amount: number,
     method: string,
@@ -4991,7 +4840,7 @@ export class InvoicesService {
         },
       });
       await this.commissionEngine.syncInvoiceCommissionSafe(inv.id, tx);
-      this.gateway.emitInvoiceUpdated(this.prisma.getTenantId(), {
+      after.defer(this.gateway).emitInvoiceUpdated(this.prisma.getTenantId(), {
         invoiceId: inv.id,
         invoiceNumber: inv.invoiceNumber,
         customerId: inv.customerId,
@@ -5131,7 +4980,7 @@ export class InvoicesService {
         "Cannot edit a payment to method CREDIT_NOTE or ADVANCE. Void this payment and apply the credit note / advance via the dedicated action.",
       );
     }
-    return this.prisma.tenantTransaction(async (tx) => {
+    return withAfterCommit(this.prisma, async (tx, after) => {
       // PR-2 (check-payments B1 hardening, review-opus-v2 finding m3): recordPayment
       // already row-locks the invoice before reading its payments; updatePayment had
       // no equivalent, so two concurrent edits could both read a stale remaining
@@ -5223,7 +5072,7 @@ export class InvoicesService {
           payments: { orderBy: { createdAt: "desc" } },
         },
       });
-      this.gateway.emitInvoiceUpdated(this.prisma.getTenantId(), {
+      after.defer(this.gateway).emitInvoiceUpdated(this.prisma.getTenantId(), {
         invoiceId: updated.id,
         invoiceNumber: updated.invoiceNumber,
         customerId: updated.customerId,
@@ -5237,7 +5086,7 @@ export class InvoicesService {
 
   async deletePayment(invoiceId: string, paymentId: string) {
     let imageKey: string | null = null;
-    const updated = await this.prisma.tenantTransaction(async (tx) => {
+    const updated = await withAfterCommit(this.prisma, async (tx, after) => {
       // PR-2 review (routeflow-Lead, 2026-09-16): same Invoice FOR UPDATE lock as
       // updatePayment/recordPayment, taken BEFORE touching the payment row, and in
       // the same order — deletePayment and voidPayment previously took no lock at
@@ -5300,7 +5149,7 @@ export class InvoicesService {
           payments: { orderBy: { createdAt: "desc" } },
         },
       });
-      this.gateway.emitInvoiceUpdated(this.prisma.getTenantId(), {
+      after.defer(this.gateway).emitInvoiceUpdated(this.prisma.getTenantId(), {
         invoiceId: updated.id,
         invoiceNumber: updated.invoiceNumber,
         customerId: updated.customerId,
@@ -5325,20 +5174,18 @@ export class InvoicesService {
 
   async writeOff(id: string, dto: WriteOffDto) {
     const inv = await this.findOneOrThrow(id);
-    const allowedStatuses: InvoiceStatus[] = [
-      InvoiceStatus.SENT,
-      InvoiceStatus.VIEWED,
-      InvoiceStatus.PARTIAL,
-      InvoiceStatus.OVERDUE,
-    ];
-    if (!allowedStatuses.includes(inv.status)) {
-      throw new BadRequestException(`Cannot write off an invoice with status ${inv.status}`);
-    }
+    const early = writeOffRefusal(inv.status);
+    if (early) throw new BadRequestException(early);
     // Sales agents & commissions: materially a no-op for money (payable
     // derives from payments, and WRITTEN_OFF releases nothing beyond cash
     // already collected) but wrapped atomically to refresh the accrual's
     // display status alongside the write-off.
     return this.prisma.tenantTransaction(async (tx) => {
+      // #2472 (3): (Order →) Invoice locked FIRST and re-checked there — a void since the pre-read wins.
+      const locked = await lockInvoiceRow(tx, id, inv.orderId);
+      if (!locked) throw new NotFoundException("Invoice not found");
+      const refused = writeOffRefusal(locked.status);
+      if (refused) throw new BadRequestException(refused);
       const written = await tx.invoice.update({
         where: { id },
         data: {
@@ -5360,7 +5207,7 @@ export class InvoicesService {
   // ─── Delete ───────────────────────────────────────────────────────────────
 
   async deleteInvoice(id: string) {
-    return this.prisma.tenantTransaction(async (tx) => {
+    return withAfterCommit(this.prisma, async (tx, after) => {
       const inv = await tx.invoice.findUnique({
         where: { id },
         include: { payments: true },
@@ -5409,7 +5256,7 @@ export class InvoicesService {
 
       // #2142 W1: a deleted DRAFT was never issued, so its number and total stay on the
       // operators' feed; the customer's room (the buyer portal) hears only of issued invoices.
-      this.gateway.emitInvoiceUpdated(
+      after.defer(this.gateway).emitInvoiceUpdated(
         this.prisma.getTenantId(),
         {
           invoiceId: id,
@@ -5456,125 +5303,128 @@ export class InvoicesService {
     // settlements used to collide on the GLOBAL paymentNumber unique).
     const { tenantShort, start } = await this.nextPaymentNumber(dto.allocations.length);
 
-    return this.prisma.tenantTransaction(async (tx) => {
-      // B311: the buyer/online path's anti-overpay guard reads the invoice's balance and
-      // THEN checks it — with no row lock between the two, a concurrent office payment on the
-      // same invoice could commit in between, and this check would still pass against the
-      // STALE balance it already read, overpaying the invoice exactly like B310's wallet race.
-      // Lock every allocation's invoice FIRST, all in ONE statement in id-sorted order —
-      // Opus review (F39): taking them one at a time inside the loop below (in whatever order
-      // the caller's `allocations` array happens to list them) would let two concurrent
-      // multi-allocation calls acquire the same two rows in opposite orders and deadlock
-      // (db-locks.ts's "take rows in a consistent order" rule). Plain blocking `FOR UPDATE`,
-      // not the house `lockRowsNoWait` NOWAIT primitive: the competing office payment takes NO
-      // explicit lock of its own — it just INSERTs an InvoicePayment, which only holds `FOR KEY
-      // SHARE` on the parent Invoice row — and `FOR NO KEY UPDATE` does NOT conflict with `FOR
-      // KEY SHARE`, so NOWAIT here would not actually exclude that writer; `FOR UPDATE` does.
-      // SA-404f F1: now UNCONDITIONAL, and Order → Invoice (SA-214) — every standalone payment,
-      // not only the buyer path, reads its invoices' status under the lock a void also takes.
-      await lockInvoicesForPayment(
-        tx,
-        dto.allocations.map((a) => a.invoiceId),
-      );
+    // #2472 (1): a multi-invoice payment can deadlock (40P01) with completeWithPayment — re-run it.
+    return retryOnTxConflict(`standalone payment group=${paymentGroupId}`, () =>
+      this.prisma.tenantTransaction(async (tx) => {
+        // B311: the buyer/online path's anti-overpay guard reads the invoice's balance and
+        // THEN checks it — with no row lock between the two, a concurrent office payment on the
+        // same invoice could commit in between, and this check would still pass against the
+        // STALE balance it already read, overpaying the invoice exactly like B310's wallet race.
+        // Lock every allocation's invoice FIRST, all in ONE statement in id-sorted order —
+        // Opus review (F39): taking them one at a time inside the loop below (in whatever order
+        // the caller's `allocations` array happens to list them) would let two concurrent
+        // multi-allocation calls acquire the same two rows in opposite orders and deadlock
+        // (db-locks.ts's "take rows in a consistent order" rule). Plain blocking `FOR UPDATE`,
+        // not the house `lockRowsNoWait` NOWAIT primitive: the competing office payment takes NO
+        // explicit lock of its own — it just INSERTs an InvoicePayment, which only holds `FOR KEY
+        // SHARE` on the parent Invoice row — and `FOR NO KEY UPDATE` does NOT conflict with `FOR
+        // KEY SHARE`, so NOWAIT here would not actually exclude that writer; `FOR UPDATE` does.
+        // SA-404f F1: now UNCONDITIONAL, and Order → Invoice (SA-214) — every standalone payment,
+        // not only the buyer path, reads its invoices' status under the lock a void also takes.
+        await lockInvoicesForPayment(
+          tx,
+          dto.allocations.map((a) => a.invoiceId),
+        );
 
-      const payments: any[] = [];
-      for (let i = 0; i < dto.allocations.length; i++) {
-        const alloc = dto.allocations[i];
-        const paymentNumber = `PAY-${tenantShort}-${String(start + i).padStart(4, "0")}`;
+        const payments: any[] = [];
+        for (let i = 0; i < dto.allocations.length; i++) {
+          const alloc = dto.allocations[i];
+          const paymentNumber = `PAY-${tenantShort}-${String(start + i).padStart(4, "0")}`;
 
-        // Validate invoice belongs to customer and is not voided. F03/R1:
-        // CONFIRMED (PAID) rows only feed the balance check below.
-        const invoice = await tx.invoice.findFirst({
-          where: { id: alloc.invoiceId, customerId: dto.customerId },
-          include: { payments: { where: CONFIRMED_PAYMENT } },
-        });
-        if (!invoice)
-          throw new NotFoundException(`Invoice ${alloc.invoiceId} not found for customer`);
-        const refused = paymentRefusal(invoice.status); // SA-404f F1: on the LOCKED row
-        if (refused) throw new BadRequestException(`Invoice ${alloc.invoiceId} is ${refused}`);
-        if (opts?.assertAllocationsWithinBalance) {
-          const alreadyPaid = sumConfirmed(invoice.payments);
-          const balance = roundMoney(Number(invoice.total) - alreadyPaid);
-          if (alloc.amount > balance + 0.001) {
-            // Rolls back the whole group; the caller recomputes and retries.
-            throw new ConflictException(
-              `Payments on invoice ${invoice.invoiceNumber} changed while this payment was being prepared — please retry.`,
-            );
-          }
-        }
-
-        const payment = await tx.invoicePayment.create({
-          data: {
-            invoiceId: alloc.invoiceId,
-            amount: roundMoney(alloc.amount),
-            method: dto.method as any,
-            paidAt,
-            settledAt,
-            bankCharges: roundMoneyOrNull(dto.bankCharges),
-            reference: dto.reference,
-            notes: dto.notes,
-            status: status as any,
-            paymentNumber,
-            paymentGroupId,
-            checkStatus: dto.method === "CHECK" ? CheckStatus.RECORDED : null,
-          },
-        });
-        payments.push(payment);
-
-        // #2255 / SA-404d R2: EVERY payment updates its Invoice row in this tx, unconditionally — a
-        // PENDING/DRAFT payment is blocking money too, and the real UPDATE takes the row lock, so a
-        // concurrent void conflicts (40001) and its retry re-reads it (the #2258 writer invariant).
-        let invoiceData: Prisma.InvoiceUpdateInput = { updatedAt: new Date() };
-        if (status === "PAID") {
-          // F03/R1: CONFIRMED (PAID) rows only feed recomputeStatus.
-          const allPayments = await tx.invoicePayment.findMany({
-            where: { invoiceId: alloc.invoiceId, ...CONFIRMED_PAYMENT },
+          // Validate invoice belongs to customer and is not voided. F03/R1:
+          // CONFIRMED (PAID) rows only feed the balance check below.
+          const invoice = await tx.invoice.findFirst({
+            where: { id: alloc.invoiceId, customerId: dto.customerId },
+            include: { payments: { where: CONFIRMED_PAYMENT } },
           });
-          const totalPaid = sumConfirmed(allPayments);
-          const newStatus = this.recomputeStatus(
-            totalPaid,
-            Number(invoice.total),
-            invoice.dueDate,
-            invoice.status,
-          );
-          invoiceData = {
-            status: newStatus,
-            paidAt: newStatus === InvoiceStatus.PAID ? new Date() : null,
-          };
+          if (!invoice)
+            throw new NotFoundException(`Invoice ${alloc.invoiceId} not found for customer`);
+          const refused = paymentRefusal(invoice.status); // SA-404f F1: on the LOCKED row
+          if (refused) throw new BadRequestException(`Invoice ${alloc.invoiceId} is ${refused}`);
+          if (opts?.assertAllocationsWithinBalance) {
+            const alreadyPaid = sumConfirmed(invoice.payments);
+            const balance = roundMoney(Number(invoice.total) - alreadyPaid);
+            if (alloc.amount > balance + 0.001) {
+              // Rolls back the whole group; the caller recomputes and retries.
+              throw new ConflictException(
+                `Payments on invoice ${invoice.invoiceNumber} changed while this payment was being prepared — please retry.`,
+              );
+            }
+          }
+
+          const payment = await tx.invoicePayment.create({
+            data: {
+              invoiceId: alloc.invoiceId,
+              amount: roundMoney(alloc.amount),
+              method: dto.method as any,
+              paidAt,
+              settledAt,
+              bankCharges: roundMoneyOrNull(dto.bankCharges),
+              reference: dto.reference,
+              notes: dto.notes,
+              status: status as any,
+              paymentNumber,
+              paymentGroupId,
+              checkStatus: dto.method === "CHECK" ? CheckStatus.RECORDED : null,
+            },
+          });
+          payments.push(payment);
+
+          // #2255 / SA-404d R2: EVERY payment updates its Invoice row in this tx, unconditionally — a
+          // PENDING/DRAFT payment is blocking money too, and the real UPDATE takes the row lock, so a
+          // concurrent void conflicts (40001) and its retry re-reads it (the #2258 writer invariant).
+          let invoiceData: Prisma.InvoiceUpdateInput = { updatedAt: new Date() };
+          if (status === "PAID") {
+            // F03/R1: CONFIRMED (PAID) rows only feed recomputeStatus.
+            const allPayments = await tx.invoicePayment.findMany({
+              where: { invoiceId: alloc.invoiceId, ...CONFIRMED_PAYMENT },
+            });
+            const totalPaid = sumConfirmed(allPayments);
+            const newStatus = this.recomputeStatus(
+              totalPaid,
+              Number(invoice.total),
+              invoice.dueDate,
+              invoice.status,
+            );
+            invoiceData = {
+              status: newStatus,
+              paidAt: newStatus === InvoiceStatus.PAID ? new Date() : null,
+            };
+          }
+          await tx.invoice.update({ where: { id: alloc.invoiceId }, data: invoiceData });
         }
-        await tx.invoice.update({ where: { id: alloc.invoiceId }, data: invoiceData });
-      }
 
-      // Commission hook: the payments-modal / buyer-allocation path creates PAID
-      // payments across many invoices — each one's payable must move with the
-      // cash in the SAME tx (otherwise it lags until the reconciliation cron).
-      for (const alloc of dto.allocations) {
-        await this.commissionEngine.syncInvoiceCommissionSafe(alloc.invoiceId, tx);
-      }
+        // Commission hook: the payments-modal / buyer-allocation path creates PAID
+        // payments across many invoices — each one's payable must move with the
+        // cash in the SAME tx (otherwise it lags until the reconciliation cron).
+        for (const alloc of dto.allocations) {
+          await this.commissionEngine.syncInvoiceCommissionSafe(alloc.invoiceId, tx);
+        }
 
-      // Handle excess amount → create AdvancePayment (rounded up front, SA-112)
-      if (excess > 0.001) {
-        await tx.advancePayment.create({
-          data: {
-            customerId: dto.customerId,
-            amount: excess,
-            balance: excess,
-            method: dto.method as any,
-            reference: dto.reference,
-            notes: dto.notes,
-            receivedAt: paidAt,
-          },
-        });
-      }
+        // Handle excess amount → create AdvancePayment (rounded up front, SA-112)
+        if (excess > 0.001) {
+          await tx.advancePayment.create({
+            data: {
+              customerId: dto.customerId,
+              amount: excess,
+              balance: excess,
+              method: dto.method as any,
+              reference: dto.reference,
+              notes: dto.notes,
+              receivedAt: paidAt,
+            },
+          });
+        }
 
-      return { payments, paymentGroupId, excess: Math.max(0, excess) };
-    });
+        return { payments, paymentGroupId, excess: Math.max(0, excess) };
+      }),
+    );
   }
 
   // ─── Void a single payment ────────────────────────────────────────────────
 
   async voidPayment(invoiceId: string, paymentId: string) {
-    return this.prisma.tenantTransaction(async (tx) => {
+    return withAfterCommit(this.prisma, async (tx, after) => {
       // PR-2 review (routeflow-Lead, 2026-09-16): same Invoice FOR UPDATE lock as
       // updatePayment/recordPayment/deletePayment, taken BEFORE touching the
       // payment row, and in the same order — voidPayment previously took no lock
@@ -5657,7 +5507,7 @@ export class InvoicesService {
         },
       });
 
-      this.gateway.emitInvoiceUpdated(this.prisma.getTenantId(), {
+      after.defer(this.gateway).emitInvoiceUpdated(this.prisma.getTenantId(), {
         invoiceId,
         invoiceNumber: invoice.invoiceNumber,
         customerId: invoice.customerId,
@@ -5685,7 +5535,7 @@ export class InvoicesService {
    * transaction (all balance readers use the stored total).
    */
   async setCheckStatus(invoiceId: string, paymentId: string, dto: SetCheckStatusDto) {
-    return this.prisma.tenantTransaction(async (tx) => {
+    return withAfterCommit(this.prisma, async (tx, after) => {
       // PR-2 review (routeflow-Lead, 2026-09-16): same Invoice FOR UPDATE lock as
       // recordPayment/updatePayment/deletePayment/voidPayment, taken BEFORE
       // touching the payment row, and in the same order — setCheckStatus
@@ -5734,7 +5584,7 @@ export class InvoicesService {
           select: { invoiceNumber: true, customerId: true, status: true, total: true },
         });
         if (!invoice) throw new NotFoundException("Invoice not found");
-        this.gateway.emitInvoiceUpdated(this.prisma.getTenantId(), {
+        after.defer(this.gateway).emitInvoiceUpdated(this.prisma.getTenantId(), {
           invoiceId,
           invoiceNumber: invoice.invoiceNumber,
           customerId: invoice.customerId,
@@ -5817,7 +5667,7 @@ export class InvoicesService {
       // DEPOSITED/CLEARED branches above change no balances, so no hook there.
       await this.commissionEngine.syncInvoiceCommissionSafe(invoiceId, tx);
 
-      this.gateway.emitInvoiceUpdated(this.prisma.getTenantId(), {
+      after.defer(this.gateway).emitInvoiceUpdated(this.prisma.getTenantId(), {
         invoiceId,
         invoiceNumber: invoice.invoiceNumber,
         customerId: invoice.customerId,
@@ -5925,11 +5775,11 @@ export class InvoicesService {
   // ─── Cron ─────────────────────────────────────────────────────────────────
 
   async markOverdue() {
-    const now = new Date();
+    const { timezone } = await this.resolveTenantInvoiceDefaults(); // SA-488: the tenant's day
     await this.prisma.forTenant().invoice.updateMany({
       where: {
         status: { in: [InvoiceStatus.SENT, InvoiceStatus.VIEWED, InvoiceStatus.PARTIAL] },
-        dueDate: { lt: now },
+        dueDate: { lt: overdueCutoff(new Date(), timezone) },
       },
       data: { status: InvoiceStatus.OVERDUE },
     });

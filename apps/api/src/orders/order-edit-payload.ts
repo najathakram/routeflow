@@ -1,6 +1,7 @@
-import { BadRequestException } from "@nestjs/common";
+import { BadRequestException, ForbiddenException } from "@nestjs/common";
 import { UserRole } from "@prisma/client";
 import { UpdateOrderItemsDto } from "./dto/update-order-items.dto";
+import { buyerLineDiffVerdict } from "./unit-aware-guard";
 
 /**
  * `updateOrderItems`'s payload classification — lifted VERBATIM out of the method (size-ratchet
@@ -13,10 +14,9 @@ import { UpdateOrderItemsDto } from "./dto/update-order-items.dto";
  * (deleteMany, then re-create only productId-carrying entries). A diff routed
  * through the replace branch therefore deleted every untouched line on the
  * order. Diff-shaped DRIVER payloads go through the operator merge branch
- * instead (price fields stripped just below), and a diff-shaped CUSTOMER
- * payload is rejected outright: no buyer client sends one (web+mobile buyer
- * portals send full {productId, qty} lists), and failing loudly beats
- * silently destroying the order's lines.
+ * instead (price fields stripped just below). A diff-shaped CUSTOMER payload is
+ * refused by `assertBuyerDiffShape` (below, run after the unit guard) unless it
+ * is SA-407's per-line unit-count edit or a removal of this order's own line.
  */
 /**
  * Mutates `dto.items` in place (the driver price-strip, when it applies) — matching the original
@@ -24,7 +24,14 @@ import { UpdateOrderItemsDto } from "./dto/update-order-items.dto";
  * of `updateOrderItems` still makes with it (restriction mode, the buyer/driver replace-branch test).
  */
 export function classifyEditPayload(
-  order: { lineItems: ReadonlyArray<{ id: string; productId?: string | null }> },
+  order: {
+    lineItems: ReadonlyArray<{
+      id: string;
+      productId?: string | null;
+      unitLabel?: string | null;
+      status?: string | null;
+    }>;
+  },
   dto: UpdateOrderItemsDto,
   user: { role?: string; sub?: string } | undefined,
 ): boolean {
@@ -33,11 +40,6 @@ export function classifyEditPayload(
     (dto.items ?? []).some(
       (i) => i.id != null || i.action != null || i.substituteProductId != null,
     );
-  if (user?.role === UserRole.CUSTOMER && isDiffPayload) {
-    throw new BadRequestException(
-      "Buyer edits must send the full item list as {productId, qty} entries; incremental item diffs are not supported on this path",
-    );
-  }
   if (user?.role === UserRole.DRIVER && isDiffPayload) {
     // B13: non-staff never set prices. The merge branch honors per-line
     // unitPrice overrides for operators, so strip price fields from every
@@ -60,4 +62,28 @@ export function classifyEditPayload(
     });
   }
   return isDiffPayload;
+}
+
+/**
+ * SA-407 / SA-507b (#2272): the ONE buyer diff allowed is a unit line's count up/down (id + its own
+ * stored unitLabel + qty) or a removal of one of THIS order's lines by id; every other buyer diff
+ * is a 400. Called AFTER `assertOrderEditAllowed` (ownership first, then the 409 conflict shapes),
+ * so it only ever answers "shape" — never a 409, and never to a non-owner (SA-507a: an auto-merge
+ * once ran the old in-classifier throw ahead of the guard and turned every 409 into this 400).
+ */
+export async function assertBuyerDiffShape(
+  order: { customerId: string; lineItems: Parameters<typeof buyerLineDiffVerdict>[0] },
+  dto: UpdateOrderItemsDto,
+  user: { role?: string } | undefined,
+  isDiffPayload: boolean,
+  findOwner: () => Promise<{ id: string } | null>,
+): Promise<void> {
+  if (user?.role !== UserRole.CUSTOMER || !isDiffPayload) return;
+  if (buyerLineDiffVerdict(order.lineItems, dto) !== "shape") return;
+  // Ownership FIRST (lead, #2561): a non-owner gets the bare 403, never this 400 as an oracle.
+  const owner = await findOwner();
+  if (!owner || owner.id !== order.customerId) throw new ForbiddenException();
+  throw new BadRequestException(
+    "Buyer edits must send the full item list as {productId, qty} entries; incremental item diffs are not supported on this path",
+  );
 }

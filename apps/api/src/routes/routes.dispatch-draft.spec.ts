@@ -241,6 +241,6 @@ describe("RoutesService — DRAFT orders never ride a dispatch or complete as de
       operatorPayload,
     );
 
-    expect(invoicesService.recordDeliveryPaymentInTx.mock.calls[0][1]).toEqual(["ord-2"]);
+    expect(invoicesService.recordDeliveryPaymentInTx.mock.calls[0][2]).toEqual(["ord-2"]); // [1] = #2175 queue
   });
 });

@@ -35,6 +35,38 @@ export async function claimStopCompletion(
   }
 }
 
+/**
+ * #2415: the compare-and-swap for updateStopStatus (skip / arrive). The old check-then-`update`
+ * let a skip that read PENDING overwrite a completion that committed in between — COMPLETED became
+ * SKIPPED and its DeliveryMutation / invoice / payment were stranded. The write now only lands on a
+ * row that is still not COMPLETED; losing to a completion answers 409 STOP_ALREADY_COMPLETED.
+ * (`not COMPLETED`, not `in [PENDING, IN_PROGRESS]`: a SKIPPED stop may still be marked
+ * IN_PROGRESS, as before — only the race with a completion is closed.)
+ */
+export async function claimStopStatusChange(
+  db: any,
+  stopId: string,
+  data: Record<string, unknown>,
+): Promise<void> {
+  const claimed = await db.routeRunStop.updateMany({
+    where: { id: stopId, status: { not: "COMPLETED" } },
+    data,
+  });
+  if (claimed.count > 0) return;
+  const current = await db.routeRunStop.findUnique({
+    where: { id: stopId },
+    select: { status: true },
+  });
+  if (current?.status === "COMPLETED") {
+    throw new ConflictException({
+      code: "STOP_ALREADY_COMPLETED",
+      message:
+        "This stop was just completed. Reopen it instead — that reverses the delivery correctly.",
+    });
+  }
+  throw new NotFoundException("Stop not found");
+}
+
 /** #2409: the stop statuses a completion may claim from. */
 export const COMPLETABLE_STOP_STATUSES = ["PENDING", "IN_PROGRESS"];
 
