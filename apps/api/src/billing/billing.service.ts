@@ -532,6 +532,10 @@ export class BillingService {
     // the row, so stop (the plan path wrote its own snapshot); only the snapshot moved ⇒ retry.
     for (let attempt = 0; attempt < TX_CONFLICT_MAX_ATTEMPTS; attempt++) {
       const outcome = await this.prisma.$transaction(async (tx) => {
+        // SA-485b (ii): the same Tenant row lock updatePlan and updateTenantPriceOverride take, FIRST —
+        // lock → read → CAS → emit, so a plan change or Pricing write serializes with this reconcile.
+        // The CAS below stays for writers that do not take this lock (upgrade()).
+        await tx.$queryRaw`SELECT id FROM "Tenant" WHERE id = ${tenantId} FOR UPDATE`;
         const sub = await tx.tenantSubscription.findUnique({
           where: { tenantId },
           select: {
