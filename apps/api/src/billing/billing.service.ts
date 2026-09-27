@@ -1132,11 +1132,14 @@ export class BillingService {
     event: string,
   ) {
     if (!subscriptionId) return null;
-    const sub = await this.prisma.tenantSubscription.findFirst({
-      where: { stripeSubId: subscriptionId },
-      include: { tenant: { select: { id: true, slug: true, name: true } } },
-    });
     const customerId = stripeRefId(customer);
+    // #2473 (3): the customer is part of the lookup (the post-read check below stays as a guard).
+    const sub = customerId
+      ? await this.prisma.tenantSubscription.findFirst({
+          where: { stripeSubId: subscriptionId, stripeCustomerId: customerId },
+          include: { tenant: { select: { id: true, slug: true, name: true } } },
+        })
+      : null;
     if (
       !sub ||
       sub.stripeSubId !== subscriptionId ||
@@ -1193,11 +1196,13 @@ export class BillingService {
       select: { email: true, username: true },
     });
     if (!adminUser?.email) return;
-    // Best-effort billing-portal link; any portal error (or a non-http(s) URL, which
-    // safeLinkHref refuses) falls back to today's plain text.
-    const href = safeLinkHref(await this.portalUrlOrEmpty(sub.tenantId), "onPaymentFailed");
+    // #2473 (1): link the in-app billing page, never a Stripe portal SESSION url (short-lived, and a
+    // bearer link to the tenant's billing). A non-http(s) FRONTEND_URL (safeLinkHref refuses it)
+    // falls back to the plain text.
+    const baseUrl = process.env.FRONTEND_URL ?? "http://localhost:3001";
+    const href = safeLinkHref(`${baseUrl}/settings/billing`, "onPaymentFailed");
     const updateLine = href
-      ? `<p><a href="${escapeHtml(href)}">Update your payment method in the billing portal</a>.</p>`
+      ? `<p><a href="${escapeHtml(href)}">Update your payment method in Billing settings</a>.</p>`
       : `<p>You can update your payment details by contacting support or visiting your billing portal.</p>`;
     await this.email.send({
       to: adminUser.email,
@@ -1208,18 +1213,6 @@ export class BillingService {
 ${updateLine}
 <p>RouteFlow Platform</p>`,
     });
-  }
-
-  /** #2440: the tenant's billing-portal URL, or "" on any portal error (logged, never thrown). */
-  private async portalUrlOrEmpty(tenantId: string): Promise<string> {
-    try {
-      return (await this.createBillingPortalSession(tenantId)).portalUrl;
-    } catch (e) {
-      this.logger.warn(
-        `Billing portal link unavailable for tenant ${tenantId}: ${(e as Error).message}`,
-      );
-      return "";
-    }
   }
 
   private async onSubscriptionDeleted(subscription: any): Promise<void> {
@@ -1257,6 +1250,9 @@ ${updateLine}
       BILLING_EVENTS.SUBSCRIPTION_CANCELED,
       { source: "stripe", reason },
     );
+    // #2473 (4): the two compare-and-swaps are not one transaction, by design — their predicates
+    // (ACTIVE, then SUSPENDED) are mutually exclusive, so an interleaved suspension between them is
+    // caught by the second CAS, and a crash between them leaves ACTIVE, which the overdue cron settles.
     const cancelled =
       churned ||
       (
