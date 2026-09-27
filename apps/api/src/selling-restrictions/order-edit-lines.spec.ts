@@ -297,3 +297,85 @@ describe("sellableLinesForMergeEdit — a unit line nets in PIECES at its held f
     ]);
   });
 });
+
+/**
+ * #2288 / SA-447 — a HELD unit line whose incoming `unitLabel` is CLEARED (explicit null, "", or
+ * blank) is re-denominated to the PACK by the write (`products/line-units.ts` resolveLineUnits: only
+ * an ABSENT label, or the same one re-sent, keeps the held unit). The netting used to read
+ * `item.unitLabel ?? ""` and net the count at the HELD factor, so the netting and the write disagreed
+ * on pieces. A cleared label is a re-denomination: unsized, so the choke point checks the product in
+ * full. An absent label keeps today's SA-408 netting; a pack line is untouched.
+ */
+describe("sellableLinesForMergeEdit — a cleared unitLabel on a held unit line re-denominates (#2288, SA-447)", () => {
+  const caseLine = (over: Partial<ExistingLine> = {}) =>
+    line({ unitLabel: "Case", unitsPerBox: 12, qty: 36, boxes: 3, pieces: 0, ...over } as any);
+
+  it.each([
+    ["null", null],
+    ['""', ""],
+    ["blank", "   "],
+  ])(
+    "SA-447: unitLabel %s on a held Case line is a re-denomination — unsized, checked",
+    (_l, label) => {
+      expect(merge([caseLine()], items({ id: "li-1", unitLabel: label, qty: 4 }))).toEqual([
+        { productId: "p1" },
+      ]);
+    },
+  );
+
+  it("SA-447: a cleared label with no qty is still a re-denomination — checked", () => {
+    expect(merge([caseLine()], items({ id: "li-1", unitLabel: null }))).toEqual([
+      { productId: "p1" },
+    ]);
+  });
+
+  it("SA-447: an ABSENT unitLabel keeps today's SA-408 netting (count × held factor)", () => {
+    expect(merge([caseLine()], items({ id: "li-1", qty: 4 }))).toEqual([
+      { productId: "p1", qtyDelta: 12 },
+    ]);
+  });
+
+  it("SA-447: the SAME label (through norm) keeps the netting", () => {
+    expect(merge([caseLine()], items({ id: "li-1", unitLabel: " case ", qty: 4 }))).toEqual([
+      { productId: "p1", qtyDelta: 12 },
+    ]);
+  });
+
+  it("SA-447: a DIFFERENT label on a held line is still a re-denomination — checked", () => {
+    expect(merge([caseLine()], items({ id: "li-1", unitLabel: "Pallet", qty: 1 }))).toEqual([
+      { productId: "p1" },
+    ]);
+  });
+
+  it("SA-447: unitLabel null on a PACK line is untouched by this branch — qty − stored", () => {
+    expect(merge([line({ qty: 5 })], items({ id: "li-1", unitLabel: null, qty: 7 }))).toEqual([
+      { productId: "p1", qtyDelta: 2 },
+    ]);
+  });
+});
+
+/**
+ * #2288 / SA-447 source pin: the netting reads `unitLabel` with the SAME three cases as the write's
+ * resolveLineUnits — absent (undefined) = the held unit; the same label re-sent = the held unit;
+ * explicit null / "" / blank = the pack. If either side changes its reading, this fails until the
+ * other is changed with it.
+ */
+describe("#2288 / SA-447 — the netting and resolveLineUnits read unitLabel the same way (source pin)", () => {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const { readFileSync } = require("fs") as typeof import("fs");
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const { join } = require("path") as typeof import("path");
+  const netting = readFileSync(join(__dirname, "order-edit-lines.ts"), "utf8");
+  const write = readFileSync(join(__dirname, "..", "products", "line-units.ts"), "utf8");
+
+  it("the write keeps the held unit only when the label is absent or re-sent the same", () => {
+    expect(write).toMatch(
+      /explicit === undefined \|\| \(asked !== "" && norm\(asked\) === norm\(held\)\)/,
+    );
+  });
+
+  it("the netting treats an explicit cleared label as a re-denomination, and absent as unchanged", () => {
+    expect(netting).toMatch(/item\.unitLabel !== undefined && asked\.trim\(\) === ""/);
+    expect(netting).toMatch(/norm\(asked\) !== norm\(line\.unitLabel \?\? ""\)/);
+  });
+});

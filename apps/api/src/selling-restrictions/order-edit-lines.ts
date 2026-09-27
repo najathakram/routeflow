@@ -151,6 +151,10 @@ function unitLineEdit(
   before: number,
 ): EditLine | null {
   const asked = item.unitLabel ?? "";
+  // #2288 / SA-447: read unitLabel exactly as the write's resolveLineUnits does — ABSENT keeps the
+  // held unit, the same label re-sent keeps it, and an explicit cleared one (null / "" / blank)
+  // re-denominates the line to the PACK. A re-denomination is unsized: checked in full.
+  if (item.unitLabel !== undefined && asked.trim() === "") return { productId: line.productId };
   if (asked.trim() !== "" && norm(asked) !== norm(line.unitLabel ?? "")) {
     return { productId: line.productId };
   }
