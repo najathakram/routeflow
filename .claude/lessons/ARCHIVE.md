@@ -2922,3 +2922,76 @@ citations, closed-out with its own post-init assertion guard).
   raw 500 all rendering the SAME fixed message, never the response body.
   (Archived 2026-09-24 to make room at cap: zero citations outside the register, and the guard is a
   standing regression test, demo-scheduler.test.tsx, pinning the fixed message for all three failure shapes.)
+
+### L-204 · 2026-09-18/22 · domain · B524 fix round — a new write path didn't inherit a sibling's cache-invalidation fix (recurred on the READ side: 2026-09-22, B698)
+
+- **Symptom:** granting a prerequisite via `FeatureOverrideService.create()`/`.revoke()` then
+  acting on the new requires check could read a stale snapshot and false-400 for up to 30s —
+  those methods invalidated only their own override cache, never `FeatureResolverService`'s
+  separate cache the new check reads.
+- **Root cause:** `AddonService` already had this exact bug fixed (B509). B524 added the same
+  requires check to a SECOND write path reading the same cache; a fix on one writer doesn't
+  propagate to a sibling by analogy.
+- **Lesson:** **When a new check reads a cache another writer is allowed to leave briefly
+  stale, audit EVERY writer of that value for whether it already invalidates the SAME cache.**
+- **Recurred on the READ side (B698, 2026-09-22):** B677 (#1199) made a boxed purchase-order
+  line's stored `totalCost` exact (case cost x cases, one rounding) and stopped the FORM from
+  re-multiplying pieces by the 4 dp per-piece cost. THREE readers kept doing exactly that (web `PODetailRow`,
+  the mobile PO detail row+header, and the mobile LIST row's fallback), so 1,000 cases of 12 at
+  $11.00 stored as $11,000.00 still displayed $11,000.40 one screen over. The fix swept the writers
+  and the form; nobody grepped the readers. **A stored exact figure is READ, never rebuilt from its rounded
+  components: when a fix makes a stored value exact, grep every site that derives the same value
+  (`qty * unitCost`-shaped expressions across web AND mobile) and point each at the stored field,
+  with the derivation only as a fallback for rows that have none.**
+- **Guard:** `createFeatureOverride`/`revokeFeatureOverride` now call
+  `EntitlementAuthority.invalidate(tenantId)`, mirroring B509;
+  `platform-admin.controller.override-requires.spec.ts` pins both calls directly. B698:
+  `resolveStoredPOLineAmounts` in web `purchase-orders-shared.ts` (stored total wins) and a
+  rendered `PurchaseOrdersTab.test.tsx` case at the drift value, verified red on the old row.
+- Attribution: candidate from Lane D (PR #913), originally filed as "L-199" from a stale local
+  view of the register (already taken here); renumbered on fold-in.
+  (Archived 2026-09-27 to make room at cap: standing spec guard named above, no citation outside the register that would break; whole and verbatim.)
+
+### L-207 · 2026-09-19 · domain · B562 (averageCost recomputed by replaying an incomplete StockMovement ledger)
+
+- **Symptom:** recomputing a product's `averageCost` by replaying its `StockMovement` ledger
+  silently overwrote a correct `averageCost` and rewrote every `stockAfter`/`avgCostAfter`
+  snapshot, destroying the evidence needed to notice.
+- **Root cause:** order create/edit decrements `Product.currentStock` with NO `StockMovement` row
+  (`orders.service` `decrementStockForSale` / `settleStockForEdit`), so the ledger was an
+  incomplete event log; the replay started from stock=0 and never read orders, so it computed cost
+  from a sales-blind history.
+- **Lesson:** **Never recompute derived state (a cost, a balance) by replaying an event log unless
+  the log is provably complete — assert completeness (ledger-implied stock vs the live counter)
+  and REFUSE or REPORT on divergence rather than write a plausible-looking wrong number. When the
+  refusal sits inside a shared transaction (a bill/batch with many lines), degrade per item (skip
+  the replay for the gapped item and report it) rather than failing the whole batch — a
+  fail-closed guard that blocks accounts-payable is its own outage.**
+- **Guard:** behavioral specs in `apps/api/src/inventory/inventory.service.spec.ts`
+  (`replayProduct` two-pass refuse-on-gap; null-cost import leaves `averageCost` untouched),
+  `apps/api/src/vendor-bills/vendor-bills.service.spec.ts` (two-line bill: gapped line still
+  received and reported under `gapsDetected`, clean line unaffected),
+  `apps/api/src/products/products.service.spec.ts` and
+  `apps/api/src/import/import-robustness.spec.ts` (no phantom `unitCost` 0). PR #934; follow-ups
+  B567/B568 filed.
+  (Archived 2026-09-27 to make room at cap: standing spec guard named above, no citation outside the register that would break; whole and verbatim.)
+
+### L-210 · 2026-09-21 · domain · One shared read poisons every consumer (B606)
+
+- **Symptom:** a buyer saw $120 for a single pack of a $24 product on the catalog tile, product
+  detail, variant row and favourites, and every new standing-order line inherited it — a 5x
+  overcharge. Staff paths over-charged 10.7x on the same product.
+- **Root cause:** `getCustomerPriceHistory` remembered the per-Case price of a unit-aware line
+  (`unitLabel:"Case"`, 6 packs) against the product with no `unitLabel` filter. Every buyer price
+  surface funnels through that one query, and `effectiveBuyerPrice` lets a remembered price
+  ABOVE list win over the tier, so one poisoned row propagated to four UIs and a template writer.
+- **Lesson:** **A single query that feeds customer-facing prices needs its own regression spec
+  pinning what it must EXCLUDE — not just coverage of its callers. When a new line shape
+  (unit-aware, boxed, upsell) is introduced, grep every `findMany` that reads `unitPrice` and ask
+  whether the new shape's price is denominated the same way; if not, the filter goes in the
+  query, not in each consumer.**
+- **Guard:** `orders/price-history-unit-lines.spec.ts` (#1123) pins the `unitLabel: null`
+  filter; `unit-line-writers.ast.spec.ts` classifies every writer. Propose: a read-only prod
+  count (`unitLabel IS NOT NULL` on `OrderItem`/`InvoiceItem`) before any remediation script —
+  it returned 0 here and made the planned remediation unnecessary.
+  (Archived 2026-09-27 to make room at cap: standing spec guard named above, no citation outside the register that would break; whole and verbatim.)

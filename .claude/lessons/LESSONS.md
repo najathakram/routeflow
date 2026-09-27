@@ -128,6 +128,20 @@
 - **Guard:** none yet — propose a removal checklist item: "list every client call site of the
   endpoint(s) this control posts to, not just this control's own references."
 
+### L-227 · 2026-09-27 · process · a ratchet row must be measured on the MERGED tree, not the branch (train A)
+
+- **Symptom:** a branch passed the size ratchet at its own head, then failed it once master was merged in (a service 6220 lines against a 6217 cap, its spec 9377 against 9376), and in merge train A two branches carried different rows (6163 vs 6151) for the same file.
+- **Root cause:** a ratchet row is a property of one file's line count, and the count moves with every merge into it; a number measured before the merge is a claim about a tree that will not exist.
+- **Lesson:** **Set and verify every ratchet row on the merged tree at land time, with `wc -l` on the merged file. On a conflicting row take the lower of the two sides and never raise it; if the merge pushes a file over, extract first.**
+- **Guard:** `size-ratchet.spec.ts` on the merged tree (train A: `invoices.service.ts` row set to 6124, the merged file's `wc -l`, below both sides). Cf. [[L-215]].
+
+### L-228 · 2026-09-27 · process · a merge train must leave master's tree equal to the tree that was verified (train A)
+
+- **Symptom:** a train of 14 PRs merged `--no-ff` and verified as one head (tree e98a41e8) was landed as a single squash; nothing but a deliberate check said the squash equalled what had been tested.
+- **Root cause:** a squash-merge builds its own tree from the PR diff against the current base, so anything that moved on master after the train was built (or a hand-resolved conflict) changes what lands without changing what was verified.
+- **Lesson:** **Land a train only after its head is verified and any hand hunk (import unions, ratchet rows) is confirmed against the merge-tree; after the squash, compare `git rev-parse origin/master^{tree}` with the verified tree and stop on any difference.**
+- **Guard:** the train PR body states the expected tree; the landing coordinator runs the comparison (train A: master's tree equals e98a41e8, checked). Dropped PRs are named with their reason so they re-enter the next train. Cf. [[L-197]].
+
 ## tooling
 
 ### L-206 · 2026-09-18 · tooling · a test that pins a literal from another workspace's prose is an invisible cross-workspace coupling
@@ -165,6 +179,7 @@
   merge ref.**
 - **Guard:** none yet — propose a landing-tool helper that pushes an empty commit instead of
   calling `gh run rerun` whenever the PR predates a relevant base-branch fix.
+- **Fold-in 2026-09-27 (CI base must equal master):** a close/reopen or empty commit is not proof either. GitHub recomputes `refs/pull/N/merge` asynchronously, so a run started seconds after can still check out the OLD base (seen three times in one night). Before trusting a green run, read its checkout line (`HEAD is now at <merge> into <base>`) and require `<base>` to equal the current master; if not, wait until `git ls-remote origin refs/pull/N/merge` shows a merge commit whose first parent is master, then trigger again.
 
 ### L-191 · 2026-09-17 · tooling · MailboxCard.tsx JSX apostrophes only caught by a full web lint
 
@@ -468,35 +483,14 @@
   proof against the old code and confirm it fails for the intended reason.**
 - **Guard:** `REG-B861-AB`/`AD` assert `BadRequestException`.
 
+### L-226 · 2026-09-27 · testing · a money fixture must be shaped by the production writer (#2274, #2245, #2305)
+
+- **Symptom:** ledger and unit-line specs built rows by hand in shapes the writer never produces (credit overshoot legs the per-line and header caps would refuse; quantities not in base pieces), so they proved a state that cannot exist and could miss the one the writer can.
+- **Root cause:** a hand-built fixture encodes the author's model of the writer, not the writer's output; the spec can only agree with the model (cf. [[L-220]]).
+- **Lesson:** **Build every money or unit fixture with the production writer (or copy its exact shape: base-piece qty, `net + tax` amounts, the maps it stores). Before asserting an overshoot or edge state, confirm the writer can reach it; if only a downstream clamp stops it, test that clamp.**
+- **Guard:** review checks each fixture against the writer's call site (train A: `credit-notes.service.ts` caps, `returns.service.ts` return maps); `regulated-ledger-price-correction.db.spec.ts` drives the real writers.
+
 ## domain
-
-### L-204 · 2026-09-18/22 · domain · B524 fix round — a new write path didn't inherit a sibling's cache-invalidation fix (recurred on the READ side: 2026-09-22, B698)
-
-- **Symptom:** granting a prerequisite via `FeatureOverrideService.create()`/`.revoke()` then
-  acting on the new requires check could read a stale snapshot and false-400 for up to 30s —
-  those methods invalidated only their own override cache, never `FeatureResolverService`'s
-  separate cache the new check reads.
-- **Root cause:** `AddonService` already had this exact bug fixed (B509). B524 added the same
-  requires check to a SECOND write path reading the same cache; a fix on one writer doesn't
-  propagate to a sibling by analogy.
-- **Lesson:** **When a new check reads a cache another writer is allowed to leave briefly
-  stale, audit EVERY writer of that value for whether it already invalidates the SAME cache.**
-- **Recurred on the READ side (B698, 2026-09-22):** B677 (#1199) made a boxed purchase-order
-  line's stored `totalCost` exact (case cost x cases, one rounding) and stopped the FORM from
-  re-multiplying pieces by the 4 dp per-piece cost. THREE readers kept doing exactly that (web `PODetailRow`,
-  the mobile PO detail row+header, and the mobile LIST row's fallback), so 1,000 cases of 12 at
-  $11.00 stored as $11,000.00 still displayed $11,000.40 one screen over. The fix swept the writers
-  and the form; nobody grepped the readers. **A stored exact figure is READ, never rebuilt from its rounded
-  components: when a fix makes a stored value exact, grep every site that derives the same value
-  (`qty * unitCost`-shaped expressions across web AND mobile) and point each at the stored field,
-  with the derivation only as a fallback for rows that have none.**
-- **Guard:** `createFeatureOverride`/`revokeFeatureOverride` now call
-  `EntitlementAuthority.invalidate(tenantId)`, mirroring B509;
-  `platform-admin.controller.override-requires.spec.ts` pins both calls directly. B698:
-  `resolveStoredPOLineAmounts` in web `purchase-orders-shared.ts` (stored total wins) and a
-  rendered `PurchaseOrdersTab.test.tsx` case at the drift value, verified red on the old row.
-- Attribution: candidate from Lane D (PR #913), originally filed as "L-199" from a stale local
-  view of the register (already taken here); renumbered on fold-in.
 
 ### L-185 · 2026-09-17 · domain · B440 (report `total` repurposed, footer stopped matching its own column)
 
@@ -625,29 +619,6 @@
   web mirror both gate on one field's presence; each has a red-first regression test pinning
   the double-subtraction case.
 
-### L-207 · 2026-09-19 · domain · B562 (averageCost recomputed by replaying an incomplete StockMovement ledger)
-
-- **Symptom:** recomputing a product's `averageCost` by replaying its `StockMovement` ledger
-  silently overwrote a correct `averageCost` and rewrote every `stockAfter`/`avgCostAfter`
-  snapshot, destroying the evidence needed to notice.
-- **Root cause:** order create/edit decrements `Product.currentStock` with NO `StockMovement` row
-  (`orders.service` `decrementStockForSale` / `settleStockForEdit`), so the ledger was an
-  incomplete event log; the replay started from stock=0 and never read orders, so it computed cost
-  from a sales-blind history.
-- **Lesson:** **Never recompute derived state (a cost, a balance) by replaying an event log unless
-  the log is provably complete — assert completeness (ledger-implied stock vs the live counter)
-  and REFUSE or REPORT on divergence rather than write a plausible-looking wrong number. When the
-  refusal sits inside a shared transaction (a bill/batch with many lines), degrade per item (skip
-  the replay for the gapped item and report it) rather than failing the whole batch — a
-  fail-closed guard that blocks accounts-payable is its own outage.**
-- **Guard:** behavioral specs in `apps/api/src/inventory/inventory.service.spec.ts`
-  (`replayProduct` two-pass refuse-on-gap; null-cost import leaves `averageCost` untouched),
-  `apps/api/src/vendor-bills/vendor-bills.service.spec.ts` (two-line bill: gapped line still
-  received and reported under `gapsDetected`, clean line unaffected),
-  `apps/api/src/products/products.service.spec.ts` and
-  `apps/api/src/import/import-robustness.spec.ts` (no phantom `unitCost` 0). PR #934; follow-ups
-  B567/B568 filed.
-
 ### L-220 · 2026-09-26 · domain · a money-ledger change needs every axis, every ordering, and a DB spec that calls the production writer (B662)
 
 - **Symptom:** a ledger pro-rate fix was verified on one axis and one order of operations, and the DB spec booked the reversal by hand, so a LINE_UNIT under-reversal and a return, adjust, return drift survived review.
@@ -741,25 +712,6 @@
   successful.**
 - **Guard:** none yet — propose `post-deploy-check` reading the full status array (not just
   index 0) or verifying the served commit sha directly.
-
-### L-210 · 2026-09-21 · domain · One shared read poisons every consumer (B606)
-
-- **Symptom:** a buyer saw $120 for a single pack of a $24 product on the catalog tile, product
-  detail, variant row and favourites, and every new standing-order line inherited it — a 5x
-  overcharge. Staff paths over-charged 10.7x on the same product.
-- **Root cause:** `getCustomerPriceHistory` remembered the per-Case price of a unit-aware line
-  (`unitLabel:"Case"`, 6 packs) against the product with no `unitLabel` filter. Every buyer price
-  surface funnels through that one query, and `effectiveBuyerPrice` lets a remembered price
-  ABOVE list win over the tier, so one poisoned row propagated to four UIs and a template writer.
-- **Lesson:** **A single query that feeds customer-facing prices needs its own regression spec
-  pinning what it must EXCLUDE — not just coverage of its callers. When a new line shape
-  (unit-aware, boxed, upsell) is introduced, grep every `findMany` that reads `unitPrice` and ask
-  whether the new shape's price is denominated the same way; if not, the filter goes in the
-  query, not in each consumer.**
-- **Guard:** `orders/price-history-unit-lines.spec.ts` (#1123) pins the `unitLabel: null`
-  filter; `unit-line-writers.ast.spec.ts` classifies every writer. Propose: a read-only prod
-  count (`unitLabel IS NOT NULL` on `OrderItem`/`InvoiceItem`) before any remediation script —
-  it returned 0 here and made the planned remediation unnecessary.
 
 ### L-211 · 2026-09-21 · process · A target named only in prose is not a target
 
