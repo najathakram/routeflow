@@ -456,7 +456,8 @@ export class OrdersService implements OnApplicationBootstrap {
             // scan-ok: draft-payment-not-void — pending F03 classification, see above.
             payments: {
               where: { method: "CREDIT_NOTE", status: { not: "VOID" } },
-              select: { id: true, amount: true, creditNoteId: true },
+              // #2404: autoApplied (SA-436 PR-1) labels each credit Automatic / Manual.
+              select: { id: true, amount: true, creditNoteId: true, autoApplied: true },
             },
           },
         },
