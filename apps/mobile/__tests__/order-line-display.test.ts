@@ -351,3 +351,25 @@ describe("unit-aware boxed line names its own unit", () => {
     );
   });
 });
+
+/**
+ * #2049: a units_v1 FACTOR-1 unit line (no boxes/pieces split at all — the unit's pieces-per-unit
+ * factor is 1, e.g. "Piece") still carries its own `unitLabel`. Before this fix, `orderLineCardModel`
+ * only read `unitLabel` inside the boxed/hasSplit branches, so this line silently fell through to
+ * the bare "N × $price" form with no unit named — the same B757/#1275 bug #2046 already fixed on
+ * this screen's OTHER code path (the orderUiV2-off fallback) but not on this one (OrderLineCard).
+ */
+describe("unit-aware FACTOR-1 line names its own unit even with no split (#2049)", () => {
+  it("a 5-Piece line reads '5 Piece', never a bare '5'", () => {
+    const m = orderLineCardModel(
+      line({ qty: 5, unitLabel: "Piece", unitPrice: 2, subtotal: 10 }),
+      "CONFIRMED",
+    );
+    expect(m.qtyPriceLine).toBe("5 Piece × $2.00");
+  });
+
+  it("a plain pack line (no unitLabel) is byte-identical to before this fix", () => {
+    const m = orderLineCardModel(line({ qty: 5, unitPrice: 2, subtotal: 10 }), "CONFIRMED");
+    expect(m.qtyPriceLine).toBe("5 × $2.00");
+  });
+});
