@@ -21,8 +21,10 @@ import {
   buyerLoginWithGoogle,
   getBuyerSellers,
   type BuyerSeller,
+  type BuyerUser,
 } from "../../lib/buyer-auth";
 import { useBuyerSessionStore } from "../../lib/buyer-session-store";
+import { SELLERLESS_LANDING } from "../../lib/buyer-route-guard";
 import { GoogleButton } from "@routeflow/ui/mobile/ios";
 
 export default function CustomerLoginScreen() {
@@ -46,6 +48,7 @@ export default function CustomerLoginScreen() {
   const [googleLoading, setGoogleLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [pendingSellers, setPendingSellers] = useState<BuyerSeller[]>([]);
+  const [pendingBuyer, setPendingBuyer] = useState<BuyerUser | null>(null);
   const [sellerPickerOpen, setSellerPickerOpen] = useState(false);
 
   const onLogin = async () => {
@@ -63,26 +66,7 @@ export default function CustomerLoginScreen() {
 
     try {
       const res = await buyerLogin(email.trim().toLowerCase(), password);
-      setBuyer(res.buyer);
-
-      const sellers = await getBuyerSellers();
-
-      if (sellers.length === 0) {
-        setError(
-          "Your account is not connected to any supplier. Ask your supplier to send you a portal invite.",
-        );
-        setLoading(false);
-        return;
-      }
-
-      if (sellers.length === 1) {
-        await storeSetSeller(sellers[0]!);
-        router.replace(postLoginTarget);
-        return;
-      }
-
-      // Multiple sellers — show picker
-      showSellerPicker(sellers);
+      await finishSignIn(res.buyer, await getBuyerSellers());
     } catch (e: any) {
       // BUG-OPS1-5: friendly message for the 429 throttle response.
       if (e?.response?.status === 429) {
@@ -106,22 +90,7 @@ export default function CustomerLoginScreen() {
     setGoogleLoading(true);
     try {
       const { buyer, sellerCount } = await buyerLoginWithGoogle();
-      setBuyer(buyer);
-
-      if (sellerCount === 0) {
-        setError(
-          "Your account is not connected to any supplier. Ask your supplier to send you a portal invite.",
-        );
-        return;
-      }
-
-      const sellers = await getBuyerSellers();
-      if (sellers.length === 1) {
-        await storeSetSeller(sellers[0]!);
-        router.replace(postLoginTarget);
-        return;
-      }
-      showSellerPicker(sellers);
+      await finishSignIn(buyer, sellerCount === 0 ? [] : await getBuyerSellers());
     } catch (e: any) {
       const code = (e as Error)?.message ?? "";
       if (code === "cancelled") return;
@@ -137,7 +106,25 @@ export default function CustomerLoginScreen() {
     }
   };
 
-  const showSellerPicker = (sellers: BuyerSeller[]) => {
+  // #2341: publish the buyer to the session store only once the seller outcome
+  // is known. The route guards read "buyer set, no seller" as the 0-seller
+  // state and send it to sellers/connect, so setting the buyer before the
+  // seller would bounce a 1-seller login or a mid-pick picker to connect.
+  const finishSignIn = async (buyer: BuyerUser, sellers: BuyerSeller[]) => {
+    if (sellers.length === 0) {
+      // Mirrors web's /buyer/portal: a buyer with no seller yet connects one.
+      setBuyer(buyer);
+      router.replace(SELLERLESS_LANDING as any);
+      return;
+    }
+    if (sellers.length === 1) {
+      await storeSetSeller(sellers[0]!);
+      setBuyer(buyer);
+      router.replace(postLoginTarget);
+      return;
+    }
+    // Multiple sellers — hold the buyer until one is picked.
+    setPendingBuyer(buyer);
     setPendingSellers(sellers);
     setSellerPickerOpen(true);
   };
@@ -147,6 +134,7 @@ export default function CustomerLoginScreen() {
     if (!seller) return;
     setSellerPickerOpen(false);
     await storeSetSeller(seller);
+    if (pendingBuyer) setBuyer(pendingBuyer);
     router.replace("/(customer)/(tabs)/home");
   };
 
