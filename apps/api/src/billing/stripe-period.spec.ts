@@ -56,4 +56,32 @@ describe("stripe-period", () => {
       stripeSubscriptionPeriod({ current_period_start: "x", current_period_end: NaN }),
     ).toBeNull();
   });
+
+  // #2440 N2 (Opus on #2446, SA-452 LOW): an add-on item (TenantAddon.stripeItemId) is never the
+  // period source when the base-plan item is present.
+  it("reads the base-plan item, skipping known add-on items", () => {
+    const sub = {
+      items: {
+        data: [
+          {
+            id: "si_addon",
+            current_period_start: 1_600_000_000,
+            current_period_end: 1_600_100_000,
+          },
+          { id: "si_base", current_period_start: 1_700_000_000, current_period_end: 1_702_000_000 },
+        ],
+      },
+    };
+    expect(stripeSubscriptionPeriod(sub, new Set(["si_addon"]))).toEqual({
+      periodStart: new Date(1_700_000_000 * 1000),
+      periodEnd: new Date(1_702_000_000 * 1000),
+    });
+  });
+
+  it("falls back to the first item when every item is a known add-on", () => {
+    const sub = {
+      items: { data: [{ id: "si_addon", current_period_start: 1, current_period_end: 2 }] },
+    };
+    expect(stripeSubscriptionPeriod(sub, new Set(["si_addon"]))?.periodEnd).toEqual(new Date(2000));
+  });
 });
