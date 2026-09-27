@@ -2586,13 +2586,16 @@ describe("PlatformAdminService — audit provenance", () => {
       expect(lockOrder[0]).toBeLessThan(readOrder[1]);
     });
 
-    it("emits nothing when the tenant was already ACTIVE with a resolved planKey (no paying-set crossing)", async () => {
+    // #2522 / SA-464f: this pin used to activate a paying GROWTH row onto SCALE and expect nothing;
+    // a plan-switching renewal now rebases + books (the #2522 table). A SAME-plan renewal still
+    // emits nothing.
+    it("emits nothing when the tenant was already ACTIVE on the same plan (no crossing, no plan switch)", async () => {
       prisma.tenant.findUnique.mockResolvedValue({ id: TENANT_ID, slug: "acme" } as any);
       prisma.tenant.findUniqueOrThrow.mockResolvedValue({
         status: "ACTIVE",
         class: "PRODUCTION",
         deletedAt: null,
-        subscription: { planKey: "GROWTH", basePriceSnapshot: 249, discount: 0 },
+        subscription: { planKey: "SCALE", basePriceSnapshot: 499, discount: 0 },
       } as any);
 
       await service.activateManualSubscription(TENANT_ID, activateDto, ADMIN_ID);
