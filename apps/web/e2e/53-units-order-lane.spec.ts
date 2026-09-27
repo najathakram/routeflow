@@ -83,6 +83,119 @@ async function apiHeaders(
 /** Resolves the fixture by SKU/name, creates ONE PENDING order with a Case line (count 3) through
  *  the API, and asserts the server truth in base pieces (SA-388). Every test calls it, so each one
  *  owns its own order and none depends on another's side effects. */
+// #2305 only reproduces on a TIERED catalog (a price ladder on the product AND on the Case level;
+// the customer stays tier 1). The lane sets that ladder itself before each test and restores exactly
+// what it found afterwards, so it always covers the tiered path whatever the shared tenant holds.
+type TierKey = "priceTier2" | "priceTier3" | "priceTier4" | "priceTier5";
+const TIER_KEYS: TierKey[] = ["priceTier2", "priceTier3", "priceTier4", "priceTier5"];
+const PRODUCT_TIERS: Record<TierKey, string> = {
+  priceTier2: "1.90",
+  priceTier3: "1.80",
+  priceTier4: "1.70",
+  priceTier5: "1.60",
+};
+const CASE_TIERS: Record<TierKey, number> = {
+  priceTier2: 20,
+  priceTier3: 19,
+  priceTier4: 18,
+  priceTier5: 17,
+};
+
+interface SavedLadder {
+  api: string;
+  headers: { authorization: string; "x-tenant-slug": string };
+  productId: string;
+  unitId: string;
+  /** Product tiers are non-null Decimals (default 0) — restored as the strings read back. */
+  product: Record<TierKey, string>;
+  /** Unit tiers are nullable — null restores "derived". */
+  unit: Record<TierKey, number | null>;
+}
+
+/** Reads the fixture's current tier prices, then applies the lane's ladder. */
+async function applyTierLadder(page: Page, request: APIRequestContext): Promise<SavedLadder> {
+  await page.goto("/orders");
+  await expect(page.getByRole("button", { name: "New Order" })).toBeVisible({ timeout: 15_000 });
+  const headers = await apiHeaders(page);
+  expect(headers, "no operator access token — operator storageState is stale").toBeTruthy();
+  const api = apiBase(page.url());
+
+  const listRes = await request.get(
+    `${api}/api/v1/products?search=${encodeURIComponent(UNITS_SKU)}`,
+    { headers: headers! },
+  );
+  expect(listRes.ok(), `GET /products?search returned ${listRes.status()}`).toBe(true);
+  const listBody = await listRes.json();
+  const rows = (listBody.data ?? listBody.products ?? listBody) as Array<{
+    id: string;
+    sku?: string;
+  }>;
+  const listed = rows.find?.((p) => p.sku === UNITS_SKU);
+  expect(listed, `Fixture product SKU "${UNITS_SKU}" not found — ${SEED_HINT}`).toBeTruthy();
+
+  const productRes = await request.get(`${api}/api/v1/products/${listed!.id}`, {
+    headers: headers!,
+  });
+  expect(productRes.ok(), `GET /products/:id returned ${productRes.status()}`).toBe(true);
+  const product = (await productRes.json()) as Record<TierKey, string | number>;
+
+  const unitsRes = await request.get(`${api}/api/v1/products/${listed!.id}/units`, {
+    headers: headers!,
+  });
+  expect(unitsRes.ok(), `GET /products/:id/units returned ${unitsRes.status()}`).toBe(true);
+  const caseUnit = (
+    (await unitsRes.json()) as Array<
+      { id: string; label: string } & Record<TierKey, string | number | null>
+    >
+  ).find((u) => u.label === "Case");
+  expect(caseUnit, `Fixture product "${UNITS_SKU}" has no "Case" unit — ${SEED_HINT}`).toBeTruthy();
+
+  const saved: SavedLadder = {
+    api,
+    headers: headers!,
+    productId: listed!.id,
+    unitId: caseUnit!.id,
+    product: Object.fromEntries(TIER_KEYS.map((k) => [k, String(product[k] ?? "0")])) as Record<
+      TierKey,
+      string
+    >,
+    unit: Object.fromEntries(
+      TIER_KEYS.map((k) => [k, caseUnit![k] == null ? null : Number(caseUnit![k])]),
+    ) as Record<TierKey, number | null>,
+  };
+
+  const setProduct = await request.patch(`${api}/api/v1/products/${saved.productId}`, {
+    headers: saved.headers,
+    data: PRODUCT_TIERS,
+  });
+  expect(setProduct.ok(), `PATCH /products/:id (tiers) returned ${setProduct.status()}`).toBe(true);
+  const setUnit = await request.patch(
+    `${api}/api/v1/products/${saved.productId}/units/${saved.unitId}`,
+    { headers: saved.headers, data: CASE_TIERS },
+  );
+  expect(
+    setUnit.ok(),
+    `PATCH /products/:id/units/:unitId (tiers) returned ${setUnit.status()}`,
+  ).toBe(true);
+  return saved;
+}
+
+/** Puts back exactly the tier prices `applyTierLadder` read. */
+async function restoreTierLadder(request: APIRequestContext, saved: SavedLadder): Promise<void> {
+  const product = await request.patch(`${saved.api}/api/v1/products/${saved.productId}`, {
+    headers: saved.headers,
+    data: saved.product,
+  });
+  expect(product.ok(), `restore PATCH /products/:id returned ${product.status()}`).toBe(true);
+  const unit = await request.patch(
+    `${saved.api}/api/v1/products/${saved.productId}/units/${saved.unitId}`,
+    { headers: saved.headers, data: saved.unit },
+  );
+  expect(unit.ok(), `restore PATCH /products/:id/units/:unitId returned ${unit.status()}`).toBe(
+    true,
+  );
+}
+
 async function createCaseOrder(page: Page, request: APIRequestContext) {
   // Hydration entry wait — same signal 24-order-edit-pricing uses before touching
   // localStorage or the API.
@@ -179,8 +292,18 @@ async function createCaseOrder(page: Page, request: APIRequestContext) {
 }
 
 test.describe("Units v1 — order → edit → invoice lane (#2233 / SA-390)", () => {
-  test.beforeEach(async ({ context }) => {
+  // Serial: every test sets and restores the same product's tier ladder.
+  test.describe.configure({ mode: "serial" });
+  let saved: SavedLadder | null = null;
+
+  test.beforeEach(async ({ context, page, request }) => {
     await setTenantCookie(context, BASE);
+    saved = await applyTierLadder(page, request);
+  });
+
+  test.afterEach(async ({ request }) => {
+    if (saved) await restoreTierLadder(request, saved);
+    saved = null;
   });
 
   test('a Case line is stored in base pieces and the order detail shows "3 Cases" (SA-388)', async ({
