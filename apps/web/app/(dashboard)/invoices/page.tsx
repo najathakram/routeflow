@@ -563,7 +563,12 @@ export default function InvoicesPage() {
         subtitle="Track receivables — what's outstanding, due soon, and overdue across your customers."
         action={
           !isCustomer ? (
-            <div className="flex items-center gap-2">
+            // B770: overflowed at 390px (New Invoice off-screen) because PageHeader's own
+            // action wrapper (shrink-0, no max-w-full) never actually shrank enough for THIS
+            // flex-wrap to trigger — fixed at the PageHeader level too
+            // (packages/ui/src/web/PageHeader.tsx), this row's own wrap is still needed so
+            // the content itself has somewhere to go once it can.
+            <div className="flex flex-wrap items-center justify-end gap-2">
               <Button
                 variant="secondary"
                 size="sm"
