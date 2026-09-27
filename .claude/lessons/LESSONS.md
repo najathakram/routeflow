@@ -142,6 +142,44 @@
 - **Lesson:** **Land a train only after its head is verified and any hand hunk (import unions, ratchet rows) is confirmed against the merge-tree; after the squash, compare `git rev-parse origin/master^{tree}` with the verified tree and stop on any difference.**
 - **Guard:** the train PR body states the expected tree; the landing coordinator runs the comparison (train A: master's tree equals e98a41e8, checked). Dropped PRs are named with their reason so they re-enter the next train. Cf. [[L-197]].
 
+### L-230 · 2026-09-22 · process · a verification framed as "is my work safe" answers itself by construction
+
+- **Symptom:** on the #1219/#1221 merge rehearsal, the forward probe (revert only #1221's own fix,
+  confirm its own cases fail) passed and looked complete. The reverse probe (revert the OTHER
+  side's fix, confirm THEIR cases fail) found #1221's fix had no guard in the DEFAULT Jest lane —
+  reverting it left all 395 unit tests green.
+- **Root cause:** "is my work safe" is answered the moment your own side passes, so it stops there
+  by construction — it never asks whether the merge weakened anything ELSE.
+- **Lesson:** **Frame a merge verification as "did this change weaken anything", symmetric: revert
+  YOUR change on the merged tree and confirm your cases still fail, then revert THEIRS and confirm
+  theirs still fail.** A missing guard is silent in the direction that matters — green suite, more
+  test files, every signal points the right way. Structural fix, not "review harder": a fix guarded
+  only by a DB-lane spec must ALSO carry a default-lane pin — the DB spec proves it against real
+  transactions, the unit pin proves it still exists after a merge that doesn't re-trigger the DB
+  lane (it fires on ADDING a `.db.spec.ts`, not on changing the logic it protects).
+- **Guard:** #1221's added default-lane pin; the default-lane-pin requirement for any
+  DB-lane-guarded fix going forward.
+
+### L-231 · 2026-09-22 · process · a register claim needs the check that would disprove it, not just the belief
+
+- **Symptom:** this incident's own write-up first carried a false claim — "no CI workflow runs the
+  DB lane" — relayed from a colleague and written as though first-hand. False:
+  `db-migrations.yml` runs `npm run test:db -w apps/api`, path-gated on `*.db.spec.ts`, exactly why
+  it fired for #1221 (that PR added one). Separately, a stated clock time was already stale by the
+  time it was "corrected": 09:00Z when it was 08:34Z, then 09:05Z when it was 09:35Z.
+- **Root cause:** a claim someone VERIFIED and a claim someone RELAYED look identical once written
+  down — the register records what is believed, not how it came to be believed. A stated
+  elapsed/clock time is a proxy by construction and is stale the instant it's read.
+- **Lesson:** **A register claim must carry how it was established** — the command, the file:line,
+  or who checked it — so a later reader can disprove it in under a minute if it's wrong; an
+  unfalsifiable claim is not a fact yet. **A CLOCK-time claim carries `date -u`'s output, not an
+  estimate; an ELAPSED-time claim shouldn't be asserted at all, only the command that measures it.**
+  For a docs PR mid-edit: QUEUE IT OR EDIT IT, NOT BOTH — freeze and publish a final sha only once
+  inside a merge window; a quoted sha mid-edit is stale on arrival.
+- **Guard:** none automated yet — propose a lint on register entries requiring a cited command or
+  file:line beside any factual claim, and a landing-procedure reminder to run `date -u` before
+  quoting a time. Related: [[L-213]].
+
 ## tooling
 
 ### L-206 · 2026-09-18 · tooling · a test that pins a literal from another workspace's prose is an invisible cross-workspace coupling
@@ -297,18 +335,6 @@
 - **Guard:** none yet — propose keying freshness on source/test/ledger paths only, and having
   the pre-push hook regenerate reports itself.
 
-### L-177 · 2026-09-16 · tooling · squash-simulate docs
-
-- **Symptom:** master's code-map `mappedSha` pointed at a branch commit orphaned by a squash
-  merge; `validate-code-map` failed every local pre-push.
-- **Root cause:** the stamping step simulated the merge with `git merge --no-ff` locally instead
-  of `--squash` (the strategy the PR would actually land with), so the sha it stamped never
-  existed on master's real history.
-- **Lesson:** **A script stamping a value for a squash-merged PR must simulate the ACTUAL merge
-  strategy (`--squash`), never `--no-ff` — validate the stamped sha resolves on the target branch
-  before landing.**
-- **Guard:** none yet — propose `--stamp` refusing a sha that isn't reachable from master.
-
 ### L-176 · 2026-09-16/22/23 · tooling · worktree without its own node_modules resolves to the main checkout (recurred three times: 2026-09-22, 2026-09-23)
 
 - **Symptom:** a worktree with no `node_modules` of its own resolved workspace deps up to the
@@ -343,28 +369,6 @@
   `packages/*/dist` mtimes against `src`, or a verify-chain step that refuses to run tests when
   `dist` is older than `src` for any workspace package; the third recurrence's specific gap (which
   consumers lack a `moduleNameMapper` for which package) would need the same kind of check.
-
-### L-175 · 2026-09-16 · tooling · shared dev host disk budget
-
-- **Symptom:** the shared dev host's `C:` drive hit 0 bytes free, stalling every session with no
-  warning until root-caused.
-- **Root cause:** ~28 worktrees' `node_modules`/`.next` plus accumulated Docker/WSL/npm caches
-  consumed the whole disk; nothing monitored free space before it hit zero.
-- **Lesson:** **A shared dev host running N concurrent worktrees needs a disk-budget gate — warn
-  below a threshold before launching more work, not after operations start failing.**
-- **Guard:** none yet — propose a session-start hook warning at < 30 GB free.
-
-### L-174 · 2026-09-16 · tooling · demo-booking lane (raw NUL byte from an escape literal)
-
-- **Symptom:** a source file kept "working" after an agent tool chain wrote a `\uXXXX`-shaped
-  escape literal into it — until `file`/git/prettier treated it as binary, because what actually
-  landed was the raw byte the escape describes, not the 6-char sequence.
-- **Root cause:** a tool-chain step decoded the escape before the write, turning a literal meant
-  to stay text into its raw byte — nothing downstream checked the file was still actually text.
-- **Lesson:** **After writing any escape-sequence literal through an agent tool chain, verify it
-  landed as literal text, not the decoded byte.**
-- **Guard:** `file <path>` (must say "text") or `grep -cP '\x00' <path>` (must be 0) before
-  trusting the write; a pre-commit NUL-byte check on text sources is the durable fix.
 
 ### L-216 · 2026-09-24 · tooling · bugs.mjs note --section silently replaced record analysis (B840)
 
@@ -633,6 +637,25 @@
 - **Lesson:** **A DTO field documented or consumed as a calendar day (statements, invoices, schedules) must be normalized at the write boundary through a literal first-10-characters day extractor — never `new Date(rawString)` directly, and never re-derived from a timezone. A shape that names no real day is a 400, checked before anything else is read.**
 - **Guard:** `common/calendar-date.ts`'s `calendarStampFromInput`/`issueDateStamp`, called as `InvoicesService.create()`'s first statement; `calendar-date.pins.spec.ts`, `invoice-issue-date-b2197.db.spec.ts`. Cf. the F25 calendar-date convention (archived L-047) — this is the same house rule recurring at a new call site.
 
+### L-229 · 2026-09-22 · domain · a pro-rata ratio must come from the specific row, never a sum (B661)
+
+- **Symptom:** unfolded from L-214 (same B661 fix, same PR, same review) — the pro-rata ratio used
+  to reverse a regulated line's pieces was first taken from an AGGREGATE over every SALE row of
+  the order line. A product repacked 12 -> 10 between the original write and a delivered-basis
+  reconcile gave a ratio of 11 (the average), so a 2-box partial credit booked -22 pieces where the
+  truth, from that specific row's own 10-pack snapshot, was -20.
+- **Root cause:** the fix reached for whatever quantity was conveniently in scope (a sum across the
+  parent's rows) instead of the one row actually being reversed. Summing erases which pack snapshot
+  applied to which piece.
+- **Lesson:** **A pro-rata ratio must be derived from the specific stored row being reversed,
+  never a sum across the parent entity's rows.** Near-invisible in testing: the CLOSING operation
+  books the exact remaining and absorbs the difference, so the TOTAL always reconciles — the error
+  only surfaces as filing-PERIOD attribution, and only when a partial straddles a boundary. Where a
+  sibling path already pro-rates correctly (`reverseReturnEntries` off the live row's own ratio),
+  match it rather than inventing a second derivation (cf. [[L-167]]).
+- **Guard:** `regulated-ledger.service.spec.ts`'s mixed-pack reconcile case pins the ratio source.
+  Related: [[L-214]].
+
 ## security
 
 ### L-188 · 2026-09-17 · security · demo-booking OAuth/booking tokens in URL query strings
@@ -739,4 +762,3 @@
   N times.**
 - **Guard:** the landing procedure re-reads the coordination issue (#938) immediately before each
   merge; no unattended batch merge loops.
-
