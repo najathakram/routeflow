@@ -24,8 +24,9 @@ const googleMapsApiKey = process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY ?? "";
  *
  * #2312 decisions (owner, recorded on #2312): app.json sets expo-location
  * `isIosBackgroundLocationEnabled: true` (match Android: lib/location-tracker.native.ts starts
- * background updates on iOS too) and `ios.infoPlist.UIRequiresFullScreen: true` (portrait-only on
- * iPad otherwise fails upload, ITMS-90474; liftable after the iPad layout pass, #2311).
+ * background updates on iOS too). #2311 PR 1 removed the `UIRequiresFullScreen: true` #2312 added:
+ * Expo's own introspection already writes every iPad orientation (portrait locks only the iPhone),
+ * so ITMS-90474 never applied, and the key only took iPad multitasking away.
  */
 function assertStoreBuildEnv(env = process.env) {
   if (

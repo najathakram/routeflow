@@ -39,9 +39,9 @@ import {
   effectiveQty,
   getTierPrice,
   perUnitPrice,
-  priceForMarginFloor,
   roundMoney,
 } from "@routeflow/pricing";
+import { marginFloorPrice } from "../../../../../lib/margin-floor-price";
 import { freeUnitsLabel } from "../../../../../lib/buyer-cart-logic";
 import { isUnitLine, setLineUnits } from "../../../../../lib/sale-line";
 import { buildSubstituteLine } from "../../../../../lib/substitute-line";
@@ -118,6 +118,7 @@ import {
 } from "../../../../../lib/credit-limit-error";
 import { useAuthStore } from "../../../../../lib/auth-store";
 import { fmtCalendarDate } from "../../../../../lib/format-date";
+import { useEditItemsDraft } from "../../../../../hooks/useEditItemsDraft";
 
 function toNumber(v: number | string | null | undefined): number {
   if (typeof v === "number") return v;
@@ -201,14 +202,9 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
   // session-local, keyed by the SAME draft key as `draft` itself (SA-108).
   const [floorAcked, setFloorAcked] = useState<Set<string>>(new Set());
 
-  // SA-108: keyed by the line's own identity, never productId (hydrateFromOrder).
-  const [draft, setDraft] = useState<Record<string, DraftItem>>({});
-  // SA-108d (E44 correction of SA-108a): a manually-kept-fresh mirror of
-  // `draft` for React's eager-dispatch gap — see resolvePickTarget/
-  // applyPickToDraft's doc comment (lib/edit-items-draft.ts) for the full
-  // synchronization contract this ref exists to satisfy.
-  const draftRef = useRef<Record<string, DraftItem>>({});
-  draftRef.current = draft;
+  // B805: the stateful draft/draftRef/updateDraft trio lives in this shared
+  // hook now — see its own doc comment for the SA-108/SA-108d rationale.
+  const { draft, setDraft, draftRef, updateDraft } = useEditItemsDraft();
   // New + existing ad-hoc lines (productId null). Kept separate from `draft`
   // and diffed on save so they aren't dropped.
   const [unlisted, setUnlisted] = useState<UnlistedDraft[]>([]);
@@ -367,7 +363,8 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
     );
     setCreditsTouched(false);
     setJustCreatedCredits([]);
-  }, [order, id]);
+    // setDraft: stable useState setter, forwarded through useEditItemsDraft.
+  }, [order, id, setDraft]);
 
   // The snapshot key resolves SYNCHRONOUSLY from the store (unlike
   // lib/user-scoped-storage.ts's async key, whose extra hop that module's own
@@ -429,7 +426,7 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
     setCreditsTouched(restored.creditsTouched);
     setFloorAcked(new Set(restored.floorAcked));
     setRestoreState("applied");
-  }, [order, baselineOrder, restored, restoreState]);
+  }, [order, baselineOrder, restored, restoreState, setDraft]);
 
   // Live total mirrors the server math (BOX-price proration when split).
   const total = useMemo(() => {
@@ -579,7 +576,7 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
   // ── Per-line helpers ──────────────────────────────────────────────────────
 
   const setQty = (id: string, qty: number) =>
-    setDraft((d) => {
+    updateDraft((d) => {
       const cur = d[id];
       if (!cur) return d;
       const q = Math.max(0, Math.floor(qty));
@@ -599,12 +596,12 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
     return next;
   };
   const setBoxes = (id: string, boxes: number) =>
-    setDraft((d) => {
+    updateDraft((d) => {
       const cur = d[id];
       return cur ? commitLine(d, id, applyBoxEdit(cur, boxes, Number(cur.unitsPerBox ?? 0))) : d;
     });
   const setPieces = (id: string, pieces: number) =>
-    setDraft((d) => {
+    updateDraft((d) => {
       const cur = d[id];
       return cur ? commitLine(d, id, applyPieceEdit(cur, pieces, Number(cur.unitsPerBox ?? 0))) : d;
     });
@@ -612,7 +609,7 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
   /** Unit mode: the operator types a TOTAL unit count; normalize it back into
    *  cases + loose (7 units of a 6-pack -> 1 case + 1 loose) via setLineUnits. */
   const setUnits = (id: string, units: number) =>
-    setDraft((d) => {
+    updateDraft((d) => {
       const cur = d[id];
       if (!cur) return d;
       const upb = Number(cur.unitsPerBox ?? 0);
@@ -624,12 +621,12 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
     });
 
   const setSellBy = (id: string, sellBy: "case" | "unit") =>
-    setDraft((d) => (d[id] ? { ...d, [id]: { ...d[id], sellBy } } : d));
+    updateDraft((d) => (d[id] ? { ...d, [id]: { ...d[id], sellBy } } : d));
 
   // units_v1: apply a `UnitPickerRow` choice — see lib/edit-items-draft.ts#applyUnitPick
   // (pack-restore tier price, the current-selling-unit-factor convention; size-ratchet extraction).
   const setUnitLabel = (id: string, option: UnitOption) =>
-    setDraft((d) => {
+    updateDraft((d) => {
       const cur = d[id];
       if (!cur) return d;
       const packTierPrice = cur.packLadder
@@ -641,14 +638,14 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
   // "Set to floor" one-tap fix (P10-POS-1) — same price-write path as the
   // price-override modal, minus the reason (the ack itself is the record).
   const setLinePrice = (id: string, unitPrice: number) =>
-    setDraft((d) => {
+    updateDraft((d) => {
       const cur = d[id];
       if (!cur) return d;
       return { ...d, [id]: { ...cur, unitPrice } };
     });
 
   const setLineNote = (id: string, notes: string) =>
-    setDraft((d) => (d[id] ? { ...d, [id]: { ...d[id], notes } } : d));
+    updateDraft((d) => (d[id] ? { ...d, [id]: { ...d[id], notes } } : d));
 
   // units_v1 (SA-085i(c)): a unit line steps its COUNT via setQty; a non-unit line delegates
   // to setBoxes/setQty exactly like master did.
@@ -704,10 +701,8 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
       catalogPrice,
       packLadder: buildPackLadder({ ...p, unitsPerBox }),
     });
-    const commit = () => {
-      draftRef.current = apply(draftRef.current);
-      setDraft(apply);
-    };
+    // B805: the pick commits through updateDraft like every other writer.
+    const commit = () => updateDraft(apply);
     if (kind === "piece" && existingLabel) {
       confirm(`Add 1 ${existingLabel}?`, `${p.name} is sold by ${existingLabel}.`, commit, {
         confirmText: `Add 1 ${existingLabel}`,
@@ -727,17 +722,28 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
     else setQty(id, Math.max(0, (cur.qty ?? 0) - 1));
   };
 
-  const removeLine = (id: string) =>
-    setDraft((d) => {
-      const cur = d[id];
-      // An existing (already-saved) line must be explicitly DELETE'd in the diff
-      // — otherwise the incremental merge would leave it untouched on the order.
-      if (cur?.lineId)
-        setPendingDeletes((prev) => (prev.includes(cur.lineId!) ? prev : [...prev, cur.lineId!]));
+  const removeLine = (id: string) => {
+    // B805: the pendingDeletes append is a SIDE EFFECT, so it must run
+    // OUTSIDE the pure fn handed to updateDraft (which may run twice — see
+    // updateDraft's own comment). Read from draftRef.current, the same
+    // synchronously-accurate mirror updateDraft itself maintains, not the
+    // component-level `draft` state (which could be a render behind inside
+    // a same-tick burst). If a later action in the same batch re-adds this
+    // SAME lineId (a rescan, or the price modal), order-item-diff.ts's
+    // `buildOrderItemDiff` drops a pendingDelete whose id survives as a live
+    // catalog entry — the surviving state wins, never a DELETE alongside
+    // that entry's own UPDATE.
+    const cur = draftRef.current[id];
+    if (cur?.lineId) {
+      const lineId = cur.lineId;
+      setPendingDeletes((prev) => (prev.includes(lineId) ? prev : [...prev, lineId]));
+    }
+    updateDraft((d) => {
       const next = { ...d };
       delete next[id];
       return next;
     });
+  };
 
   // ── The picker's pull-out drawer ──────────────────────────────────────────
   // Rows come from the ONE tray derivation the sale builders use
@@ -989,7 +995,7 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
             // SA-108: write back to priceEditItem's OWN stored key — a new
             // row has no lineId, so re-deriving one would double-CREATE it.
             const key = priceEditItem.key;
-            setDraft((d) => ({
+            updateDraft((d) => ({
               ...d,
               [key]: {
                 ...priceEditItem.item,
@@ -1116,7 +1122,7 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
           onEditPrice={(_item, price, reason) => {
             const key = lastScannedId;
             if (!key) return;
-            setDraft((d) => {
+            updateDraft((d) => {
               const cur = d[key];
               if (!cur) return d;
               return {
@@ -1135,7 +1141,7 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
             if (substituteFor) {
               const tierPrice = tierPriceFor(p);
               const listPrice = toNumber(p.pricePerUnit);
-              setDraft((d) => {
+              updateDraft((d) => {
                 const next = { ...d };
                 const old = next[substituteFor];
                 // Re-denominates the inherited piece count against the
@@ -1426,22 +1432,6 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
       )}
     </SafeAreaView>
   );
-}
-
-/**
- * B263 (review round) — the ONE margin-floor derivation both price-edit
- * surfaces read: the list row's below-floor guard and the picker's
- * last-added strip. Same helper, same arguments (`averageCost` per piece,
- * the line's category floor, `unitsPerBox`), so a price the row flags is
- * flagged identically on the scan surface. Null when the product has no
- * known cost — no cost, no floor, no ack.
- */
-function marginFloorPrice(item: DraftItem, marginFloor: number): number | null {
-  const pieceCost = item.averageCost != null ? toNumber(item.averageCost) : null;
-  if (pieceCost == null || !Number.isFinite(pieceCost)) return null;
-  const marginFrac = computeMarginFraction(item.unitPrice, pieceCost, item.unitsPerBox);
-  if (classifyMargin(marginFrac, marginFloor) == null) return null;
-  return priceForMarginFloor(pieceCost, marginFloor, item.unitsPerBox);
 }
 
 // ─── Per-row card ────────────────────────────────────────────────────────────
