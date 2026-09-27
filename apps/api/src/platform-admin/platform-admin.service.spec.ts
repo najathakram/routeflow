@@ -60,7 +60,9 @@ describe("PlatformAdminService — audit provenance", () => {
     createCheckoutSession: jest.Mock;
     syncStripeSubscriptionPrice: jest.Mock;
   };
-  let emailServiceMock: { send: jest.Mock };
+  let emailServiceMock: { send: jest.Mock; sendTenantWelcomeEmail: jest.Mock };
+  // #2439: named so the WEB_URL tests can point `urls.web` at a public host or localhost.
+  let configMock: { get: jest.Mock };
   let tenantMirror: { upsert: jest.Mock };
 
   const ADMIN_ID = "super-1";
@@ -148,6 +150,7 @@ describe("PlatformAdminService — audit provenance", () => {
         },
       ),
     };
+    configMock = { get: jest.fn().mockReturnValue({ secret: "s", expiresIn: "15m" }) };
     emailServiceMock = {
       send: jest.fn().mockResolvedValue(undefined),
       // #2439: createTenant's welcome email.
@@ -165,10 +168,7 @@ describe("PlatformAdminService — audit provenance", () => {
         PlatformAdminService,
         { provide: PrismaService, useValue: prisma },
         { provide: JwtService, useValue: { sign: jest.fn().mockReturnValue("signed.jwt") } },
-        {
-          provide: ConfigService,
-          useValue: { get: jest.fn().mockReturnValue({ secret: "s", expiresIn: "15m" }) },
-        },
+        { provide: ConfigService, useValue: configMock },
         { provide: EmailService, useValue: emailServiceMock },
         { provide: BillingService, useValue: billingServiceMock },
         { provide: PlanCatalogService, useValue: planCatalogService },
@@ -2012,7 +2012,7 @@ describe("PlatformAdminService — audit provenance", () => {
       expect(result).not.toHaveProperty("checkoutUrl");
 
       // R2.5: the email gets trialDays 0 → the "complete payment to activate" copy.
-      const call = (emailServiceMock.sendTenantWelcomeEmail as jest.Mock).mock.calls[0][0];
+      const call = emailServiceMock.sendTenantWelcomeEmail.mock.calls[0][0];
       expect(call).toMatchObject({ trialDays: 0, payUrl: result.payUrl, workspace: "acme-lite" });
     });
   });
@@ -2046,7 +2046,7 @@ describe("PlatformAdminService — audit provenance", () => {
       expect(userData.password).toBeNull();
       expect(userData.forcePasswordChange).toBe(false);
       expect(result).not.toHaveProperty("tempPassword");
-      const call = (emailServiceMock.sendTenantWelcomeEmail as jest.Mock).mock.calls[0][0];
+      const call = emailServiceMock.sendTenantWelcomeEmail.mock.calls[0][0];
       expect(JSON.stringify(call)).not.toMatch(/password"\s*:/i);
       expect(emailServiceMock.send).not.toHaveBeenCalled();
     });
@@ -2059,7 +2059,7 @@ describe("PlatformAdminService — audit provenance", () => {
       expect(created.userId).toBe("admin-1");
       expect(created.tokenHash).toMatch(/^[0-9a-f]{64}$/);
       expect(created.expiresAt.getTime() - Date.now()).toBeGreaterThan(71.9 * 3600_000);
-      const call = (emailServiceMock.sendTenantWelcomeEmail as jest.Mock).mock.calls[0][0];
+      const call = emailServiceMock.sendTenantWelcomeEmail.mock.calls[0][0];
       const rawToken = String(call.setPasswordUrl).split("token=")[1];
       expect(call.setPasswordUrl).toBe(`http://localhost:3001/reset-password?token=${rawToken}`);
       expect(rawToken).toMatch(/^[0-9a-f]{64}$/);
@@ -2077,7 +2077,7 @@ describe("PlatformAdminService — audit provenance", () => {
       await service.createTenant({ ...baseDto, adminPassword: "Chosen-Pass-123" });
       const userData = (prisma.user.create as jest.Mock).mock.calls[0][0].data;
       expect(userData.password).toMatch(/^\$2[aby]\$/);
-      const call = (emailServiceMock.sendTenantWelcomeEmail as jest.Mock).mock.calls[0][0];
+      const call = emailServiceMock.sendTenantWelcomeEmail.mock.calls[0][0];
       expect(JSON.stringify(call)).not.toContain("Chosen-Pass-123");
     });
 
@@ -2097,7 +2097,7 @@ describe("PlatformAdminService — audit provenance", () => {
     });
 
     it("an undelivered or throwing email never fails tenant creation, and says so", async () => {
-      (emailServiceMock.sendTenantWelcomeEmail as jest.Mock).mockResolvedValueOnce({
+      emailServiceMock.sendTenantWelcomeEmail.mockResolvedValueOnce({
         delivered: false,
         transport: "none",
         error: "no transport",
@@ -2109,9 +2109,7 @@ describe("PlatformAdminService — audit provenance", () => {
         error: "no transport",
       });
 
-      (emailServiceMock.sendTenantWelcomeEmail as jest.Mock).mockRejectedValueOnce(
-        new Error("smtp down"),
-      );
+      emailServiceMock.sendTenantWelcomeEmail.mockRejectedValueOnce(new Error("smtp down"));
       const b = await service.createTenant(baseDto);
       expect(b.welcomeEmail).toMatchObject({
         delivered: false,
@@ -2143,7 +2141,7 @@ describe("PlatformAdminService — audit provenance", () => {
         id: "v-1",
         definitions: [{ planKey: "STARTER" }],
       } as any);
-      configGet = (service as any).config.get as jest.Mock;
+      configGet = configMock.get;
     });
     afterEach(() => {
       process.env.NODE_ENV = prevEnv;
@@ -2183,7 +2181,7 @@ describe("PlatformAdminService — audit provenance", () => {
       withWeb("https://app.example.com/");
       const result = await service.createTenant(dto);
       expect(result.welcomeEmail).toMatchObject({ delivered: true });
-      const call = (emailServiceMock.sendTenantWelcomeEmail as jest.Mock).mock.calls[0][0];
+      const call = emailServiceMock.sendTenantWelcomeEmail.mock.calls[0][0];
       expect(call.loginUrl).toBe("https://app.example.com/login");
       expect(call.setPasswordUrl).toMatch(/^https:\/\/app\.example\.com\/reset-password\?token=/);
     });
