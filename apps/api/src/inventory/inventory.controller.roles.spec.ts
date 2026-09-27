@@ -41,4 +41,10 @@ describe("InventoryController effective @Roles (B168)", () => {
       expect(effective(h)).toEqual(expect.arrayContaining([UserRole.OPERATOR, UserRole.DRIVER]));
     }
   });
+
+  // B562 PR-3 (SA-136 §4): the cost-correction endpoint is TENANT_ADMIN only (platform admin via the
+  // guard's hierarchy) — an OPERATOR can no longer reach it.
+  it("B562 recomputeCosts resolves to exactly [TENANT_ADMIN]", () => {
+    expect(effective("recomputeCosts")).toEqual([UserRole.TENANT_ADMIN]);
+  });
 });
