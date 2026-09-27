@@ -1,5 +1,6 @@
 import { BadRequestException, Injectable, Logger } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
+import { calendarStampFromInput } from "../common/calendar-date";
 import { VendorBillsService } from "../vendor-bills/vendor-bills.service";
 import { CustomersService } from "../customers/customers.service";
 import { NumberingService } from "./numbering.service";
@@ -44,6 +45,22 @@ const INVENTORY_PURCHASE_KEYWORDS = [
   "cost of goods",
   "goods purchase",
 ];
+
+/**
+ * #2493: a CSV date cell → the UTC-midnight stamp of the calendar day it names. A `YYYY-MM-DD…`
+ * value keeps its literal first ten characters (the #2197 rule); any other format a Zoho export
+ * may use ("09/25/2026", "25 Sep 2026") takes the day it names as parsed, read back from the same
+ * parse's own calendar fields so neither the value's offset nor the server zone moves it. A value
+ * naming no day is null (no due date), never an Invalid Date.
+ */
+export function importCalendarDay(raw: string | null | undefined): Date | null {
+  const value = (raw ?? "").trim();
+  if (!value) return null;
+  if (/^\d{4}-\d{2}-\d{2}/.test(value)) return calendarStampFromInput(value);
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return null;
+  return new Date(Date.UTC(parsed.getFullYear(), parsed.getMonth(), parsed.getDate()));
+}
 
 @Injectable()
 export class ImportService {
@@ -704,11 +721,9 @@ export class ImportService {
       } catch (_e) {
         /* ignore */
       }
-      try {
-        if (first["Due Date"]) dueDate = new Date(first["Due Date"]);
-      } catch (_e) {
-        /* ignore */
-      }
+      // #2493: the literal calendar day the CSV names, never `new Date(raw)` (whose offset or
+      // server zone can move the day); see importCalendarDay.
+      if (first["Due Date"]) dueDate = importCalendarDay(first["Due Date"]);
       try {
         const pd = first["Payment Date"] || first["Last Payment Date"];
         if (pd) paidDate = new Date(pd);
