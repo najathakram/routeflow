@@ -62,6 +62,7 @@ import { nextOrderNumberFor } from "./order-number";
 import * as unitAware from "./unit-aware-guard";
 import * as cancelledLines from "./order-edit-cancelled";
 import * as driverAccess from "./driver-edit-access";
+import { assertRemovalsNameALine, writeLineRemoval } from "./order-line-removal";
 import { ORDER_STATUS_TRANSITIONS, assertOrderStatusTransition } from "./order-status-transitions";
 import { AppliedCreditNoteDto, CreateOrderDto } from "./dto/create-order.dto";
 import {
@@ -2884,6 +2885,7 @@ export class OrdersService implements OnApplicationBootstrap {
       isCreateMerge?: boolean;
     },
   ) {
+    assertRemovalsNameALine(dto.items); // #2563: an id-less CANCEL/DELETE, before any read or write
     // SA-429: a DRIVER edits only an order on their own IN_PROGRESS run — FIRST, before any state leaks.
     await driverAccess.assertDriverMayEditOrder(this.prisma.forTenant(), orderId, user);
     const order = await this.prisma.forTenant().order.findUnique({
@@ -3799,35 +3801,11 @@ export class OrdersService implements OnApplicationBootstrap {
                 const hasDeliveries = await tx.deliveryMutation.count({
                   where: { orderItemId: item.id },
                 });
-                if ((li && Number(li.invoicedQty ?? 0) > 0) || hasDeliveries > 0) {
-                  await tx.orderItem.update({
-                    where: { id: item.id },
-                    data: {
-                      status: "CANCELLED",
-                      qty: 0,
-                      subtotal: 0,
-                      boxes: null,
-                      pieces: null,
-                      // A zeroed line has no free units left to show against it.
-                      promoFreeUnits: null,
-                    },
-                  });
-                } else {
-                  await tx.orderItem.delete({ where: { id: item.id } });
-                }
+                const keep = (li && Number(li.invoicedQty ?? 0) > 0) || hasDeliveries > 0;
+                // #2563: scoped to THIS order ({ id, orderId }); a foreign line id is a 404.
+                await writeLineRemoval(tx, orderId, item.id, keep ? "strike-off" : "delete");
               } else if (item.action === "CANCEL") {
-                await tx.orderItem.update({
-                  where: { id: item.id },
-                  data: {
-                    status: "CANCELLED",
-                    qty: 0,
-                    subtotal: 0,
-                    boxes: null,
-                    pieces: null,
-                    // A zeroed line has no free units left to show against it.
-                    promoFreeUnits: null,
-                  },
-                });
+                await writeLineRemoval(tx, orderId, item.id, "strike-off");
               } else if (item.substituteProductId) {
                 const product = await tx.product.findUniqueOrThrow({
                   where: { id: item.substituteProductId },

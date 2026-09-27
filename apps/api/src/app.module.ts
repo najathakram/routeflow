@@ -5,6 +5,7 @@ import { BullModule } from "@nestjs/bull";
 import { ScheduleModule } from "@nestjs/schedule";
 import { ThrottlerModule, ThrottlerGuard } from "@nestjs/throttler";
 import { RedisThrottlerStorage } from "./common/redis-throttler.storage";
+import { buildThrottlers } from "./common/throttlers";
 
 import { configuration } from "./config/configuration";
 import { PrismaModule } from "./prisma/prisma.module";
@@ -95,7 +96,7 @@ import { AppService } from "./app.service";
     ThrottlerModule.forRootAsync({
       inject: [ConfigService],
       useFactory: (config: ConfigService) => ({
-        throttlers: [{ ttl: 60_000, limit: 100 }],
+        throttlers: buildThrottlers(config),
         storage: new RedisThrottlerStorage(config),
       }),
     }),
