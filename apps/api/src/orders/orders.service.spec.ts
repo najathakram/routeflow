@@ -1,3 +1,5 @@
+// SA-429: driver cases here pin other behaviour; ownership is pinned in driver-edit-access*.spec.ts.
+jest.mock("./driver-edit-access", () => ({ assertDriverMayEditOrder: jest.fn() }));
 import { Test, TestingModule } from "@nestjs/testing";
 import {
   NotFoundException,
