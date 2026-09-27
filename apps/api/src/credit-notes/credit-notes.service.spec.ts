@@ -279,6 +279,66 @@ describe("CreditNotesService — W5c regulated reversal", () => {
       expect(itemsData.map((i: any) => i.qty)).toEqual([1]);
     });
 
+    // #2245 Opus BLOCK: an amount-only credit (no qty — the web picker) defaults its qty to
+    // round3(line.qty × fraction), and those roundings accumulate. The default is clamped to the
+    // line's remaining qty, and the credit that CLOSES the line's amount takes exactly the rest.
+    describe("amount-only default qty never trips the qty cap (#2245)", () => {
+      const arrangeThirds = (prior: { amount: number; qty: number }[]) => {
+        prisma.invoice.findFirst.mockResolvedValue(
+          invoiceWith([
+            { id: "ii-3", subtotal: 3, qty: 2, trackedCategoryId: null, categoryTaxAmount: 0 },
+          ]),
+        );
+        prisma.creditNote.aggregate.mockResolvedValue({
+          _sum: { amount: prior.reduce((t, p) => t + p.amount, 0) },
+        });
+        prisma.creditNoteItem.findMany.mockResolvedValue(
+          prior.map((p) => ({ invoiceItemId: "ii-3", ...p })),
+        );
+      };
+      const qtys = () =>
+        prisma.creditNoteItem.createMany.mock.calls[0][0].data.map((i: any) => i.qty);
+
+      it("the credit that closes the line takes exactly the remaining qty (0.667 + 0.667 + 0.666 = 2)", async () => {
+        arrangeThirds([
+          { amount: 1, qty: 0.667 },
+          { amount: 1, qty: 0.667 },
+        ]);
+        await service.create({
+          customerId: "c1",
+          invoiceId: "inv-1",
+          amount: 1,
+          items: [{ invoiceItemId: "ii-3", amount: 1 }],
+        });
+        expect(qtys()).toEqual([0.666]);
+      });
+
+      it("a non-closing default is clamped to what is left, never above it", async () => {
+        // Earlier explicit credit took 1.9 of 2 pieces for 1.00; this 1.00 (not closing: 2 of 3)
+        // would default to 0.667 — clamped to the 0.1 left.
+        arrangeThirds([{ amount: 1, qty: 1.9 }]);
+        await service.create({
+          customerId: "c1",
+          invoiceId: "inv-1",
+          amount: 1,
+          items: [{ invoiceItemId: "ii-3", amount: 1 }],
+        });
+        expect(qtys()).toEqual([0.1]);
+      });
+
+      it("an EXPLICIT qty is still capped strictly", async () => {
+        arrangeThirds([{ amount: 1, qty: 1.9 }]);
+        await expect(
+          service.create({
+            customerId: "c1",
+            invoiceId: "inv-1",
+            amount: 1,
+            items: [{ invoiceItemId: "ii-3", amount: 1, qty: 0.5 }],
+          }),
+        ).rejects.toThrow(/would exceed invoice line qty \(2\)/);
+      });
+    });
+
     it("the default qty (line.qty x amount fraction) is unchanged", async () => {
       prisma.invoice.findFirst.mockResolvedValue(
         invoiceWith([

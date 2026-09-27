@@ -227,9 +227,20 @@ export class CreditNotesService {
         );
       sum += amt;
       const frac = lineSubtotal > 0 ? Math.min(1, amt / lineSubtotal) : 0;
-      const qty = li.qty != null ? this.round3(li.qty) : this.round3(Number(line.qty) * frac);
       const lineQty = Number(line.qty);
       const priorQtyForLine = creditedQtyByLine.get(li.invoiceItemId) ?? 0;
+      // #2245: an amount-only credit (no qty — the web picker) defaults to line.qty × fraction,
+      // and those round3s accumulate (three 1/3 credits of 2 pieces are 0.667 × 3 = 2.001). The
+      // default is clamped to what is left, and the credit that CLOSES the line's amount takes
+      // exactly the rest. An explicit qty is the operator's number and stays strictly capped.
+      const qtyLeft = this.round3(Math.max(0, lineQty - priorQtyForLine));
+      const closesLine = priorForLine + amt >= lineSubtotal - 0.001;
+      const qty =
+        li.qty != null
+          ? this.round3(li.qty)
+          : closesLine
+            ? qtyLeft
+            : Math.min(this.round3(lineQty * frac), qtyLeft);
       if (priorQtyForLine + qty > lineQty + 0.001)
         throw new BadRequestException(
           priorQtyForLine > 0

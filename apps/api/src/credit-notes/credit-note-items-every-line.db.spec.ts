@@ -232,6 +232,32 @@ describeDb(
       expect(await prisma.creditNote.count({ where: { tenantId: s.tenantId } })).toBe(1);
     });
 
+    it("#2245 Opus BLOCK: three amount-only partial credits that close a line all pass (rounded default qtys sum to the line qty)", async () => {
+      const s = await seed("thirds");
+      // An ordinary line of 2 pieces for 3.00 — credited 1.00 three times with no qty, as the web
+      // picker sends. Each default qty is round3(2 × 1/3) = 0.667; three of those are 2.001 > 2,
+      // so the per-line qty cap refused the THIRD (closing) credit. The closing credit now takes
+      // exactly the remaining qty.
+      const odd = await prisma.invoiceItem.create({
+        data: {
+          tenantId: s.tenantId,
+          invoiceId: s.invoiceId,
+          description: "thirds",
+          qty: 2,
+          unitPrice: 1.5,
+          subtotal: 3,
+        },
+      });
+      for (let i = 0; i < 3; i++) {
+        // eslint-disable-next-line no-await-in-loop
+        await expect(create(s, 1, [{ invoiceItemId: odd.id, amount: 1 }])).resolves.toBeDefined();
+      }
+      const rows = (await itemsOf(s.tenantId)).filter((i) => i.invoiceItemId === odd.id);
+      expect(rows).toHaveLength(3);
+      expect(Math.round(rows.reduce((t, i) => t + Number(i.qty), 0) * 1000) / 1000).toBe(2);
+      expect(Math.round(rows.reduce((t, i) => t + Number(i.amount), 0) * 100) / 100).toBe(3);
+    });
+
     it("SA-401a: a qty exactly reaching the line qty passes", async () => {
       const s = await seed("qtyexact");
       await create(s, 10, [{ invoiceItemId: s.std.id, amount: 10, qty: 4 }]);
