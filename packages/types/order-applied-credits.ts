@@ -22,8 +22,8 @@ export interface AppliedCreditPaymentInput {
   method?: string;
   /** Omitted by callers that already excluded VOID payments. */
   status?: string;
-  /** SA-436 PR-1: set by the auto-apply sweep. Missing (existing rows) reads as manual. */
-  autoApplied?: boolean | null;
+  /** SA-436 PR-1: true when the auto-apply sweep wrote this payment (existing rows: false). */
+  autoApplied: boolean;
   creditNote?: AppliedCreditNoteRef | null;
 }
 

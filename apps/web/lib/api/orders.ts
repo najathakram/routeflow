@@ -57,12 +57,12 @@ export interface Order {
     total: number;
     /** CREDIT_NOTE payments only (server-scoped include), listed by the order's
      *  "Applied credits" panel (#2404). `creditNote` is attached by the order read
-     *  (InvoicePayment has no relation); `autoApplied` arrives with SA-436 PR-1. */
+     *  (InvoicePayment has no relation); `autoApplied` is SA-436 PR-1's column. */
     payments?: Array<{
       id: string;
       amount: number | string;
       creditNoteId?: string | null;
-      autoApplied?: boolean | null;
+      autoApplied: boolean;
       creditNote?: { id: string; creditNoteNumber: string; reason?: string | null } | null;
     }>;
   }>;

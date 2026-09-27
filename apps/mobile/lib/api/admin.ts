@@ -213,12 +213,12 @@ export interface AdminOrder {
     invoiceNumber: string;
     status: string;
     total: number;
-    // #2404: `creditNote` is attached by the order read; `autoApplied` arrives with SA-436 PR-1.
+    // #2404: `creditNote` is attached by the order read; `autoApplied` is SA-436 PR-1's column.
     payments?: Array<{
       id: string;
       amount: number | string;
       creditNoteId?: string | null;
-      autoApplied?: boolean | null;
+      autoApplied: boolean;
       creditNote?: { id: string; creditNoteNumber: string; reason?: string | null } | null;
     }>;
   }>;
