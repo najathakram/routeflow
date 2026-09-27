@@ -255,6 +255,33 @@ describe("BillingCronService", () => {
     expect(emitted(events)).toContain(BILLING_EVENTS.GRACE_EXPIRED);
   });
 
+  // #2460 / SA-464 (2): the downgrade's ledger nets against the STORED snapshot (NULL ⇒ 0), never
+  // the pinned catalog price of the plan being left, so snapshot MRR and ledger MRR stay equal.
+  it("#2460: a downgrade of a NULL-snapshot row books the new price in full (never 59 − 349)", async () => {
+    const { svc, events } = make({
+      downgrades: [
+        {
+          tenantId: "t1",
+          planKey: "BUSINESS",
+          planVersionId: "v7",
+          downgradeToPlanKey: "STARTER",
+          retainedUserIds: [],
+          basePriceSnapshot: null,
+        },
+      ],
+    });
+    await svc.applyScheduledDowngrades();
+    expect(deltaOf(events, BILLING_EVENTS.PLAN_CHANGED)).toBe(59);
+  });
+
+  it("#2460: the downgrade query selects the stored snapshot it nets against", async () => {
+    const { svc, prisma } = make({ downgrades: [] });
+    await svc.applyScheduledDowngrades();
+    expect(prisma.tenantSubscription.findMany.mock.calls[0][0].select).toMatchObject({
+      basePriceSnapshot: true,
+    });
+  });
+
   it("A2b: a scheduled downgrade snapshots via the hook INSIDE its transaction, before the plan write", async () => {
     const { svc, tx, planTransition } = make({
       downgrades: [
