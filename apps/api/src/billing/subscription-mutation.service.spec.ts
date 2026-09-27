@@ -755,6 +755,103 @@ describe("#2223 SA-444c — subscribe() and the downgrade preview keep the overr
 });
 
 describe("SubscriptionMutationService.upgrade", () => {
+  // #2470 (Opus (3) on #2458): the optimistic guard also matches the negotiated fee it read, so a
+  // concurrent Pricing change makes the upgrade LOSE the race instead of writing a stale fee.
+  it("#2470: the optimistic guard matches the stored override the upgrade read", async () => {
+    const { svc, tx } = make({
+      sub: {
+        planKey: "STARTER",
+        cycle: "MONTHLY",
+        periodStart: null,
+        periodEnd: null,
+        priceOverrideMonthly: 80,
+        basePriceSnapshot: 80,
+      },
+    });
+    await svc.upgrade("t1", "BUSINESS", "admin");
+    expect(tx.tenantSubscription.updateMany.mock.calls[0][0].where).toMatchObject({
+      planKey: "STARTER",
+      priceOverrideMonthly: 80,
+    });
+  });
+
+  // #2470 Opus fold (1): a Pricing change commits in TWO steps (fee, then reconcile's snapshot), so the
+  // guard also matches the snapshot the upgrade read — an upgrade reading between them loses the race.
+  it("#2470 fold: the guard also matches the stored snapshot the upgrade read", async () => {
+    const { svc, tx } = make({
+      sub: {
+        planKey: "STARTER",
+        cycle: "MONTHLY",
+        periodStart: null,
+        periodEnd: null,
+        priceOverrideMonthly: 120,
+        basePriceSnapshot: 80, // fee committed, reconcile not yet
+      },
+    });
+    await svc.upgrade("t1", "BUSINESS", "admin");
+    expect(tx.tenantSubscription.updateMany.mock.calls[0][0].where).toMatchObject({
+      planKey: "STARTER",
+      priceOverrideMonthly: 120,
+      basePriceSnapshot: 80,
+    });
+  });
+
+  it("#2470 fold: a guard miss is a 409 ConflictException (concurrency), not a 400", async () => {
+    const { svc, tx, events } = make({
+      sub: {
+        planKey: "STARTER",
+        cycle: "MONTHLY",
+        periodStart: null,
+        periodEnd: null,
+        basePriceSnapshot: 59,
+      },
+    });
+    tx.tenantSubscription.updateMany.mockResolvedValueOnce({ count: 0 });
+    const err = await svc.upgrade("t1", "BUSINESS", "admin").catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(ConflictException);
+    expect(deltaOf(events, BILLING_EVENTS.PLAN_CHANGED)).toBeUndefined();
+  });
+
+  it("#2470: a catalog row's guard matches a NULL override (a fee set concurrently loses the race)", async () => {
+    const { svc, tx } = make({
+      sub: {
+        planKey: "STARTER",
+        cycle: "MONTHLY",
+        periodStart: null,
+        periodEnd: null,
+        basePriceSnapshot: 59,
+      },
+    });
+    await svc.upgrade("t1", "BUSINESS", "admin");
+    expect(tx.tenantSubscription.updateMany.mock.calls[0][0].where).toMatchObject({
+      planKey: "STARTER",
+      priceOverrideMonthly: null,
+    });
+  });
+
+  it("#2470: a free (override 0) row's upgrade keeps snapshot 0, quotes 0 with the note, books Δ0", async () => {
+    const { svc, tx, events } = make({
+      sub: {
+        planKey: "STARTER",
+        cycle: "MONTHLY",
+        periodStart: null,
+        periodEnd: null,
+        priceOverrideMonthly: 0,
+        basePriceSnapshot: 0,
+      },
+    });
+    const res: any = await svc.upgrade("t1", "BUSINESS", "admin");
+    expect(res).toMatchObject({
+      proratedNow: 0,
+      note: "custom fee unchanged — adjust it in Pricing",
+    });
+    expect(tx.tenantSubscription.updateMany.mock.calls[0][0].data).toMatchObject({
+      planKey: "BUSINESS",
+      basePriceSnapshot: 0,
+    });
+    expect(deltaOf(events, BILLING_EVENTS.PLAN_CHANGED)).toBe(0);
+  });
+
   // #2460 / SA-464 (2): the ledger nets against what the MRR snapshot actually counted — the stored
   // basePriceSnapshot, NULL ⇒ 0 — never the catalog price of the plan being left. A NULL-snapshot
   // row (e.g. a manual activation before #2460) then books the FULL new price, and snapshot MRR and
@@ -928,7 +1025,7 @@ describe("SubscriptionMutationService.upgrade", () => {
   it("A2b: a lost optimistic-guard race still rejects (the hook's writes roll back with the tx)", async () => {
     const { svc, tx, planTransition } = make({ sub: { planKey: "STARTER", cycle: "MONTHLY" } });
     tx.tenantSubscription.updateMany.mockResolvedValue({ count: 0 });
-    await expect(svc.upgrade("t1", "BUSINESS")).rejects.toBeInstanceOf(BadRequestException);
+    await expect(svc.upgrade("t1", "BUSINESS")).rejects.toBeInstanceOf(ConflictException);
     expect(planTransition.onPlanChange).toHaveBeenCalledTimes(1);
   });
 
@@ -948,7 +1045,7 @@ describe("SubscriptionMutationService.upgrade", () => {
   it("rejects a concurrent double-upgrade (updateMany matched 0 rows)", async () => {
     const { svc, tx } = make({ sub: { planKey: "STARTER", cycle: "MONTHLY" } });
     tx.tenantSubscription.updateMany.mockResolvedValue({ count: 0 });
-    await expect(svc.upgrade("t1", "BUSINESS")).rejects.toBeInstanceOf(BadRequestException);
+    await expect(svc.upgrade("t1", "BUSINESS")).rejects.toBeInstanceOf(ConflictException);
   });
 
   it("rejects a same/lower target", async () => {

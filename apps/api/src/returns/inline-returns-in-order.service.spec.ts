@@ -276,6 +276,8 @@ describe("InlineReturnsService in-transaction core (#2094)", () => {
     });
 
     it("the standalone path keeps its full-amount intent (unchanged)", async () => {
+      // #2144: capture() re-reads the issued row and refuses a null read-back.
+      prisma.return.findUnique.mockResolvedValue({ id: "ret-1", creditNoteId: "cn-1", items: [] });
       await (service as any).capture(
         { ...INPUT, items: [{ productId: "prod-1", qty: 6 }] },
         OPERATOR,
