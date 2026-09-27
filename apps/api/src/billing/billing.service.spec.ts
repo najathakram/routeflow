@@ -78,6 +78,7 @@ function make(
       findFirst: jest.fn().mockResolvedValue(null), // no processed session in the tx by default
     },
     $executeRaw: jest.fn().mockResolvedValue(0),
+    $queryRaw: jest.fn().mockResolvedValue([]),
   };
   const prisma = {
     tenant: {
@@ -301,6 +302,26 @@ describe("BillingService — Stripe churn/reactivation MRR ledger", () => {
         data: { status: "SUSPENDED" },
       });
       expect(deltaOf(events, BILLING_EVENTS.SUBSCRIPTION_SUSPENDED)).toBe(-373);
+    });
+
+    // #2045 (6): emitPayingDelta's paying-set gate reads class/deletedAt post-CAS (SA-140) — a
+    // non-PRODUCTION or soft-deleted tenant was never in the paying set, so its suspension books
+    // nothing (the status write itself still applies).
+    it.each([
+      ["a TEST-class tenant", { deletedAt: null, class: "TEST" }],
+      ["a soft-deleted tenant", { deletedAt: new Date("2026-09-01"), class: "PRODUCTION" }],
+    ])("#2045: %s — the suspension applies but books no delta", async (_label, row) => {
+      const { svc, tx, events } = make({
+        stripeStatus: "unpaid",
+        transitionCount: 1,
+        addons: [{ priceSnapshot: 12, quantity: 2 }],
+      });
+      tx.tenant.findUniqueOrThrow.mockResolvedValue(row);
+      await svc.suspendOverdueTenants();
+      expect(tx.tenant.updateMany.mock.calls[0][0]).toMatchObject({
+        data: { status: "SUSPENDED" },
+      });
+      expect(deltaOf(events, BILLING_EVENTS.SUBSCRIPTION_SUSPENDED) ?? 0).toBe(0);
     });
 
     it("N3: notifies the tenant admin with reason 'overdue payment' only when the suspension actually applied", async () => {
@@ -1037,9 +1058,11 @@ describe("onCheckoutCompleted — B445 planKey + basePriceSnapshot write", () =>
         expect(emitted(events)).toEqual([]);
       });
 
+      // #2560 / SA-508: a conflict is now retried in-process (retryOnTxConflict); one that PERSISTS
+      // past the budget still rethrows (Stripe redelivers) WITHOUT the HOOK_FAILED alarm row.
       it("MUST-FIX: a deadlock/serialization failure is a retryable race — it rethrows WITHOUT the HOOK_FAILED alarm row", async () => {
         const { svc, prisma, planTransition } = make({ transitionCount: 1 });
-        planTransition.onPlanChange.mockRejectedValueOnce(
+        planTransition.onPlanChange.mockRejectedValue(
           Object.assign(new Error("Transaction failed due to a write conflict or a deadlock"), {
             code: "P2034",
           }),
@@ -1048,6 +1071,56 @@ describe("onCheckoutCompleted — B445 planKey + basePriceSnapshot write", () =>
         await expect((svc as any).onCheckoutCompleted(withId("cs_dl"))).rejects.toThrow(/deadlock/);
 
         expect(prisma.auditLog.create).not.toHaveBeenCalled();
+      });
+
+      // #2560 / SA-508: the house lock order inside the snapshot-on checkout tx — the per-session
+      // advisory lock, the hook, THEN the Tenant row lock, then the subscription writes + AuditLog.
+      it("#2560: advisory lock → hook → Tenant lock → subscription write → AuditLog", async () => {
+        const { svc, tx, planTransition } = make({ transitionCount: 1 });
+        const order: string[] = [];
+        tx.$executeRaw.mockImplementation(async () => {
+          order.push("advisory");
+          return 0;
+        });
+        planTransition.onPlanChange.mockImplementation(async () => {
+          order.push("hook");
+          return { action: "none" };
+        });
+        tx.$queryRaw.mockImplementation(async (strings: TemplateStringsArray) => {
+          if (/FROM "Tenant" WHERE id = \? FOR UPDATE/.test(Array.from(strings).join("?")))
+            order.push("tenant-lock");
+          return [];
+        });
+        const realUpsert = tx.tenantSubscription.upsert.getMockImplementation()!;
+        tx.tenantSubscription.upsert.mockImplementation(async (a: any) => {
+          order.push("sub-write");
+          return realUpsert(a);
+        });
+        tx.auditLog.create.mockImplementation(async () => {
+          order.push("audit");
+          return {};
+        });
+
+        await (svc as any).onCheckoutCompleted(withId("cs_order"));
+
+        expect(order).toEqual(["advisory", "hook", "tenant-lock", "sub-write", "audit"]);
+      });
+
+      it("#2560: a single 40P01 on the checkout tx is retried and the checkout applies once, no alarm row", async () => {
+        const { svc, prisma, planTransition } = make({ transitionCount: 1 });
+        planTransition.onPlanChange.mockRejectedValueOnce(
+          Object.assign(new Error("deadlock detected"), { code: "40P01" }),
+        );
+
+        await (svc as any).onCheckoutCompleted(withId("cs_retry"));
+
+        expect(planTransition.onPlanChange).toHaveBeenCalledTimes(2);
+        expect(prisma.tenantSubscription.upsert).toHaveBeenCalledTimes(1);
+        expect(
+          prisma.auditLog.create.mock.calls.filter(
+            (c: any[]) => c[0]?.data?.action === "STRIPE_CHECKOUT_HOOK_FAILED",
+          ),
+        ).toHaveLength(0);
       });
 
       it("MUST-FIX: the alarm audit row carries the error NAME and code only — never the raw message", async () => {
