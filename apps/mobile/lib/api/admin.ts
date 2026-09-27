@@ -213,7 +213,14 @@ export interface AdminOrder {
     invoiceNumber: string;
     status: string;
     total: number;
-    payments?: Array<{ id: string; amount: number | string; creditNoteId?: string | null }>;
+    // #2404: `creditNote` is attached by the order read; `autoApplied` arrives with SA-436 PR-1.
+    payments?: Array<{
+      id: string;
+      amount: number | string;
+      creditNoteId?: string | null;
+      autoApplied?: boolean | null;
+      creditNote?: { id: string; creditNoteNumber: string; reason?: string | null } | null;
+    }>;
   }>;
   /**
    * P5-08 edit-window descriptor (server-computed). `editable` is the single source
