@@ -16,6 +16,11 @@ import { ImportEntityType, InvoiceStatus, MovementType, UserRole } from "@prisma
 import * as bcrypt from "bcrypt";
 import * as crypto from "crypto";
 import { addressStateFields } from "../customers/address-state";
+import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
+import {
+  flagRestrictedLines,
+  writeRestrictedLinesAudit,
+} from "../selling-restrictions/restricted-lines-flag";
 
 /**
  * F9-008: hard row-count cap on any CSV import. The byte-size caps on the upload
@@ -55,6 +60,7 @@ export class ImportService {
     private readonly customersService: CustomersService,
     private readonly numbering: NumberingService,
     private readonly externalRefs: ExternalRefService,
+    private readonly sellingRestrictions: SellingRestrictionsService,
   ) {}
 
   private parseCsv(buffer: Buffer): any[] {
@@ -539,11 +545,31 @@ export class ImportService {
   async importInvoices(
     buffer: Buffer,
     userId: string,
-  ): Promise<{ imported: number; updated: number; skipped: number; errors: string[] }> {
+  ): Promise<{
+    imported: number;
+    updated: number;
+    skipped: number;
+    errors: string[];
+    restrictedLines: Array<{
+      invoiceNumber: string;
+      productId: string;
+      productName: string;
+      message: string;
+    }>;
+  }> {
     const rows = this.parseCsv(buffer);
     let imported = 0,
       updated = 0,
       skipped = 0;
+    // F-05 (#2093): IMPORT IS EXEMPT — every row imports unchanged; flag only. Collected as we go
+    // (customer + catalog productIds per newly-created invoice), checked in ONE batch per
+    // customer AFTER the loop (never per row) so a 500-row file issues a handful of reads, not
+    // hundreds.
+    const flagCandidates: Array<{
+      customerId: string;
+      invoiceNumber: string;
+      productIds: string[];
+    }> = [];
     // Invoice import auto-creates missing customers as a side effect; track that so
     // the CUSTOMERS grace window still opens if those rows push the tenant over cap.
     // No pre-check here — the soft cap blocks only a deliberate new-customer create,
@@ -1028,6 +1054,18 @@ export class ImportService {
           );
         }
 
+        // F-05 (#2093): collected, not checked here — see the batched check after the loop.
+        const importedProductIds = itemsData
+          .map((it: any) => it.productId)
+          .filter((id: any): id is string => !!id);
+        if (importedProductIds.length > 0) {
+          flagCandidates.push({
+            customerId,
+            invoiceNumber: newInvoice.invoiceNumber,
+            productIds: importedProductIds,
+          });
+        }
+
         imported++;
       } catch (e: any) {
         this.pushRowError(errors, invoiceNumber || rowLabel, e);
@@ -1038,7 +1076,55 @@ export class ImportService {
     // the tenant over cap, so the next deliberate create is gated as it should be.
     if (autoCreatedCustomers) await this.customersService.maybeStartCustomerGrace();
 
-    return { imported, updated, skipped, errors };
+    // F-05 (#2093): IMPORT IS EXEMPT — every row above already imported unchanged. ONE
+    // checkLinesSellable call per customer (never per row), then ONE audit row for the
+    // whole run — written here, outside every per-invoice transaction above, and never
+    // throwing or retroactively touching a row that already committed.
+    const tenantId = this.prisma.getTenantId() ?? "";
+    const restrictedLines: Array<{
+      invoiceNumber: string;
+      productId: string;
+      productName: string;
+      message: string;
+    }> = [];
+    const byCustomer = new Map<string, typeof flagCandidates>();
+    for (const c of flagCandidates)
+      byCustomer.set(c.customerId, [...(byCustomer.get(c.customerId) ?? []), c]);
+    for (const [customerId, entries] of byCustomer) {
+      const flagged = await flagRestrictedLines(
+        { restrictions: this.sellingRestrictions, warn: (m) => this.logger.warn(m) },
+        { tenantId, customerId, productIds: entries.flatMap((e) => e.productIds) },
+      );
+      const byProduct = new Map(flagged.map((f) => [f.productId, f]));
+      for (const e of entries)
+        for (const pid of e.productIds) {
+          const f = byProduct.get(pid);
+          if (f)
+            restrictedLines.push({
+              invoiceNumber: e.invoiceNumber,
+              productId: pid,
+              productName: f.productName,
+              message: f.message,
+            });
+        }
+    }
+    if (restrictedLines.length > 0) {
+      await writeRestrictedLinesAudit(
+        { prisma: this.prisma, warn: (m) => this.logger.warn(m) },
+        {
+          tenantId,
+          action: "invoice.import.restricted_lines",
+          entityType: "invoices",
+          entityId: "import",
+          meta: {
+            invoiceNumbers: [...new Set(restrictedLines.map((r) => r.invoiceNumber))],
+            productIds: [...new Set(restrictedLines.map((r) => r.productId))],
+          },
+        },
+      );
+    }
+
+    return { imported, updated, skipped, errors, restrictedLines };
   }
 
   async importPayments(
