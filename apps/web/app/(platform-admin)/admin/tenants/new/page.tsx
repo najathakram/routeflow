@@ -7,6 +7,7 @@ import { superAdminClient } from "@/lib/admin-api";
 import { fetchPlanCatalog, type PlanCatalogEntry } from "@/lib/api/platform-pricing";
 import { planLabel } from "../../../_components/AdminBadge";
 import { selectablePlanKeys } from "../../../_components/usePlanOptions";
+import { CopyButton } from "@/components/CopyButton";
 
 interface CreatedTenant {
   slug: string;
@@ -139,17 +140,26 @@ export default function AdminCreateTenantPage() {
                 </div>
               ))}
             {success.payUrl && (
-              <p className="mt-3 text-sm text-green-300">
-                Pay-now link (never expires — sign in, then billing):{" "}
+              <div className="mt-3 text-sm text-green-300">
+                <div className="flex items-center justify-between gap-2">
+                  <span>Pay-now link (never expires — sign in, then billing):</span>
+                  <CopyButton
+                    value={success.payUrl}
+                    label="Copy Pay-now link"
+                    className="admin-tap inline-flex shrink-0 items-center gap-1 rounded px-2 py-1 text-xs font-medium text-indigo-300 hover:bg-indigo-900/40"
+                  />
+                </div>
+                {/* #2438: the link is one unbroken token in a monospace face; break-all keeps it
+                    inside the card at every width instead of running off the right edge. */}
                 <a
                   href={success.payUrl}
                   target="_blank"
                   rel="noreferrer"
-                  className="admin-inline font-mono text-indigo-300 underline hover:text-indigo-200"
+                  className="admin-inline mt-1 block break-all font-mono text-indigo-300 underline hover:text-indigo-200"
                 >
                   {success.payUrl}
                 </a>
-              </p>
+              </div>
             )}
             <div className="mt-3 flex gap-3">
               <Link
