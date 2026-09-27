@@ -681,6 +681,66 @@ describe("#2223 SA-444c — subscribe() and the downgrade preview keep the overr
 });
 
 describe("SubscriptionMutationService.upgrade", () => {
+  // #2470 (Opus (3) on #2458): the optimistic guard also matches the negotiated fee it read, so a
+  // concurrent Pricing change makes the upgrade LOSE the race instead of writing a stale fee.
+  it("#2470: the optimistic guard matches the stored override the upgrade read", async () => {
+    const { svc, tx } = make({
+      sub: {
+        planKey: "STARTER",
+        cycle: "MONTHLY",
+        periodStart: null,
+        periodEnd: null,
+        priceOverrideMonthly: 80,
+        basePriceSnapshot: 80,
+      },
+    });
+    await svc.upgrade("t1", "BUSINESS", "admin");
+    expect(tx.tenantSubscription.updateMany.mock.calls[0][0].where).toMatchObject({
+      planKey: "STARTER",
+      priceOverrideMonthly: 80,
+    });
+  });
+
+  it("#2470: a catalog row's guard matches a NULL override (a fee set concurrently loses the race)", async () => {
+    const { svc, tx } = make({
+      sub: {
+        planKey: "STARTER",
+        cycle: "MONTHLY",
+        periodStart: null,
+        periodEnd: null,
+        basePriceSnapshot: 59,
+      },
+    });
+    await svc.upgrade("t1", "BUSINESS", "admin");
+    expect(tx.tenantSubscription.updateMany.mock.calls[0][0].where).toMatchObject({
+      planKey: "STARTER",
+      priceOverrideMonthly: null,
+    });
+  });
+
+  it("#2470: a free (override 0) row's upgrade keeps snapshot 0, quotes 0 with the note, books Δ0", async () => {
+    const { svc, tx, events } = make({
+      sub: {
+        planKey: "STARTER",
+        cycle: "MONTHLY",
+        periodStart: null,
+        periodEnd: null,
+        priceOverrideMonthly: 0,
+        basePriceSnapshot: 0,
+      },
+    });
+    const res: any = await svc.upgrade("t1", "BUSINESS", "admin");
+    expect(res).toMatchObject({
+      proratedNow: 0,
+      note: "custom fee unchanged — adjust it in Pricing",
+    });
+    expect(tx.tenantSubscription.updateMany.mock.calls[0][0].data).toMatchObject({
+      planKey: "BUSINESS",
+      basePriceSnapshot: 0,
+    });
+    expect(deltaOf(events, BILLING_EVENTS.PLAN_CHANGED)).toBe(0);
+  });
+
   it("#2223 / SA-444a: an override row upgrades the PLAN but not the price — quote 0 with the note, snapshot = the fee, delta 0", async () => {
     const { svc, tx, events } = make({
       sub: {
