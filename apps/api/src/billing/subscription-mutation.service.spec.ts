@@ -647,6 +647,30 @@ describe("#2223 SA-444c — subscribe() and the downgrade preview keep the overr
     expect(deltaOf(events, BILLING_EVENTS.PLAN_CHANGED)).toBe(0);
   });
 
+  // SA-464b: a paying override row whose snapshot is NULL (not yet counted) — the cycle change writes
+  // the fee and books it in full, so snapshot MRR and ledger MRR re-agree.
+  it("SA-464b: subscribe() cycle change on a paying override row with a NULL snapshot writes the fee and books +fee", async () => {
+    const { svc, tx, events } = make({
+      tenantStatus: "ACTIVE",
+      sub: {
+        planKey: "STARTER",
+        cycle: "MONTHLY",
+        priceOverrideMonthly: 80,
+        basePriceSnapshot: null,
+      },
+    });
+    tx.tenantSubscription.findUnique.mockResolvedValue({
+      planKey: "STARTER",
+      priceOverrideMonthly: 80,
+      basePriceSnapshot: null,
+    });
+    await svc.subscribe("t1", { planKey: "STARTER", cycle: "ANNUAL" }, "admin");
+    const arg = tx.tenantSubscription.upsert.mock.calls[0][0];
+    expect(arg.update.basePriceSnapshot).toBe(80);
+    expect(arg.create.basePriceSnapshot).toBe(80);
+    expect(deltaOf(events, BILLING_EVENTS.PLAN_CHANGED)).toBe(80);
+  });
+
   it("subscribe() re-subscribe of an override row ENTERING the paying set books the fee", async () => {
     const { svc, tx, events } = make({
       tenantStatus: "READ_ONLY",
