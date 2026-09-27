@@ -30,6 +30,8 @@ interface ItemLike {
   id?: string | null;
   productId?: string | null;
   action?: string | null;
+  /** Carried by every edit item (unused by these rules; typed so real payloads fit, #1315). */
+  qty?: number;
 }
 type Principal = { role?: string; sub?: string } | undefined;
 

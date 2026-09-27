@@ -71,7 +71,14 @@ describe("attachDeliveredSoFar", () => {
       { id: "s1", orders: [] },
     ]);
     const out = attachDeliveredSoFar(
-      [{ id: "s1", orders: [{ id: "o1", lineItems: undefined }] }],
+      [
+        {
+          id: "s1",
+          orders: [
+            { id: "o1", lineItems: undefined as { id: string; qty?: unknown }[] | undefined },
+          ],
+        },
+      ],
       {},
     );
     expect(out[0]!.orders[0]!.lineItems).toEqual([]);

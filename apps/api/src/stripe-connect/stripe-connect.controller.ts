@@ -34,7 +34,11 @@ export class StripeConnectController {
   /** Returns the Stripe authorize URL; the web client navigates the browser there. */
   @Post("link")
   async link(@CurrentUser() user: JwtPayload) {
-    const url = await this.connect.buildAuthorizeUrl(user.tenantId!, user.username ?? null);
+    const url = await this.connect.buildAuthorizeUrl(
+      user.tenantId!,
+      user.sub,
+      user.username ?? null,
+    );
     return { url };
   }
 
@@ -59,6 +63,9 @@ const OAUTH_ERROR_MESSAGES: Record<string, string> = {
   tenant_not_found: "We couldn't find your account — start again from Settings.",
   stripe_exchange_failed: "Stripe rejected the connect code — try linking again.",
   account_missing: "Stripe did not return an account — try linking again.",
+  platform_account_not_allowed:
+    "That's RouteFlow's own Stripe account — sign in to your business's Stripe account and try again.",
+  platform_account_check_failed: "Couldn't verify that Stripe account — try connecting again.",
 };
 const OAUTH_GENERIC_ERROR = "Could not connect Stripe — try again from Settings.";
 

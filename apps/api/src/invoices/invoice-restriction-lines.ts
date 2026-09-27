@@ -19,7 +19,8 @@ type EditRow = {
  * the choke point reads as "cannot be netted, check it".
  *
  * Pieces are what the line BILLS: `regulatedUnitBasis` (the one conversion) at the line's own pack — a held
- * line's sale-time snapshot, an incoming line's LIVE pack — so a boxed line with no split counts as
+ * line's sale-time snapshot; an incoming line that names (by id) a held row of the SAME product, that row's
+ * pack (SA-377); any other incoming line, the product's LIVE pack — so a boxed line with no split counts as
  * qty x pack. A split line bills from boxes/pieces while `qty` is stored as sent, so it counts as the LARGER
  * of the two (never under-asks). Unit-labelled lines are refused on edit, so `unitLabel` is never set here.
  *
