@@ -610,7 +610,115 @@ describe("SubscriptionMutationService.subscribe — A2b plan-transition hook", (
   });
 });
 
+// #2223 / SA-444c: a negotiated fee survives EVERY snapshot write — subscribe() (cycle change or
+// re-subscribe) and the downgrade preview, not only upgrade(). A paying override row books Δ0; one
+// entering the paying set books the fee; catalog rows are unchanged.
+describe("#2223 SA-444c — subscribe() and the downgrade preview keep the override fee", () => {
+  it("subscribe() cycle change on a paying override row: both upsert branches write the fee, Δ0", async () => {
+    const { svc, tx, events } = make({
+      tenantStatus: "ACTIVE",
+      sub: {
+        planKey: "STARTER",
+        cycle: "MONTHLY",
+        priceOverrideMonthly: 80,
+        basePriceSnapshot: 80,
+      },
+    });
+    tx.tenantSubscription.findUnique.mockResolvedValue({
+      planKey: "STARTER",
+      priceOverrideMonthly: 80,
+      basePriceSnapshot: 80,
+    });
+    await svc.subscribe("t1", { planKey: "STARTER", cycle: "ANNUAL" }, "admin");
+    const arg = tx.tenantSubscription.upsert.mock.calls[0][0];
+    expect(arg.create.basePriceSnapshot).toBe(80);
+    expect(arg.update.basePriceSnapshot).toBe(80);
+    expect(arg.update).not.toHaveProperty("priceOverrideMonthly");
+    expect(deltaOf(events, BILLING_EVENTS.PLAN_CHANGED)).toBe(0);
+  });
+
+  it("subscribe() re-subscribe of an override row ENTERING the paying set books the fee", async () => {
+    const { svc, tx, events } = make({
+      tenantStatus: "READ_ONLY",
+      sub: { planKey: "BUSINESS", priceOverrideMonthly: 80, basePriceSnapshot: 80 },
+    });
+    tx.tenantSubscription.findUnique.mockResolvedValue({
+      planKey: "BUSINESS",
+      priceOverrideMonthly: 80,
+      basePriceSnapshot: 80,
+    });
+    await svc.subscribe("t1", { planKey: "BUSINESS", cycle: "MONTHLY" }, "admin");
+    expect(tx.tenantSubscription.upsert.mock.calls[0][0].update.basePriceSnapshot).toBe(80);
+    expect(deltaOf(events, BILLING_EVENTS.PLAN_CHANGED)).toBe(80);
+  });
+
+  it("subscribe()'s locked re-read selects the override it keeps", async () => {
+    const { svc, tx } = make({
+      tenantStatus: "ACTIVE",
+      sub: { planKey: "STARTER", cycle: "MONTHLY" },
+    });
+    await svc.subscribe("t1", { planKey: "STARTER", cycle: "ANNUAL" }, "admin");
+    expect(tx.tenantSubscription.findUnique.mock.calls[0][0].select).toMatchObject({
+      priceOverrideMonthly: true,
+    });
+  });
+
+  it("the DOWNGRADE preview of an override row carries the custom-fee note", async () => {
+    const { svc } = make({
+      tenantStatus: "ACTIVE",
+      sub: {
+        planKey: "BUSINESS",
+        cycle: "MONTHLY",
+        periodStart: new Date(Date.now() - 5 * 86400000),
+        periodEnd: new Date(Date.now() + 25 * 86400000),
+        priceOverrideMonthly: 80,
+      },
+    });
+    const preview: any = await svc.planChangePreview("t1", "STARTER", "MONTHLY");
+    expect(preview.action).toBe("DOWNGRADE");
+    expect(preview.warning).toContain("custom fee unchanged — adjust it in Pricing");
+  });
+});
+
 describe("SubscriptionMutationService.upgrade", () => {
+  it("#2223 / SA-444a: an override row upgrades the PLAN but not the price — quote 0 with the note, snapshot = the fee, delta 0", async () => {
+    const { svc, tx, events } = make({
+      sub: {
+        planKey: "STARTER",
+        cycle: "MONTHLY",
+        periodStart: null,
+        periodEnd: null,
+        priceOverrideMonthly: 80,
+        basePriceSnapshot: 80,
+      },
+    });
+    const res: any = await svc.upgrade("t1", "BUSINESS", "admin");
+    expect(res).toMatchObject({
+      proratedNow: 0,
+      note: "custom fee unchanged — adjust it in Pricing",
+    });
+    const data = tx.tenantSubscription.updateMany.mock.calls[0][0].data;
+    expect(data).toMatchObject({ planKey: "BUSINESS", basePriceSnapshot: 80 });
+    expect(data).not.toHaveProperty("priceOverrideMonthly");
+    expect(deltaOf(events, BILLING_EVENTS.PLAN_CHANGED)).toBe(0);
+  });
+
+  it("#2223 / SA-444a: the preview quotes an override row 0 and says why", async () => {
+    const { svc } = make({
+      tenantStatus: "ACTIVE",
+      sub: {
+        planKey: "STARTER",
+        cycle: "MONTHLY",
+        periodStart: new Date(Date.now() - 5 * 86400000),
+        periodEnd: new Date(Date.now() + 25 * 86400000),
+        priceOverrideMonthly: 80,
+      },
+    });
+    const preview: any = await svc.planChangePreview("t1", "BUSINESS", "MONTHLY");
+    expect(preview).toMatchObject({ action: "UPGRADE", proratedNow: 0 });
+    expect(preview.warning).toContain("custom fee unchanged — adjust it in Pricing");
+  });
+
   it("applies instantly (optimistic guard) with MRR delta = new − old", async () => {
     const { svc, tx, events } = make({
       sub: { planKey: "STARTER", cycle: "MONTHLY", periodStart: null, periodEnd: null },
