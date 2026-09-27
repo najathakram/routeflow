@@ -9,6 +9,7 @@ import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
 import { RolesGuard } from "../auth/guards/roles.guard";
 import { AddonGuard } from "../billing/addon.guard";
 import { DriverPaymentsGuard } from "./driver-payments.guard";
+import { listenOnLoopback } from "../common/testing/listen-loopback";
 
 /**
  * #2109: PATCH /route-runs/:id/stops/:stopId took an inline-typed body, so the global
@@ -44,7 +45,7 @@ describe("PATCH /route-runs/:id/stops/:stopId body validation (#2109)", () => {
     app.useGlobalPipes(
       new ValidationPipe({ whitelist: true, transform: true, forbidNonWhitelisted: true }),
     );
-    await app.init();
+    await listenOnLoopback(app); // #2267: bind 127.0.0.1 before any request
   });
 
   afterEach(async () => {

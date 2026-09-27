@@ -9,6 +9,7 @@ import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
 import { RolesGuard } from "../auth/guards/roles.guard";
 import { AddonGuard } from "../billing/addon.guard";
 import { DriverPaymentsGuard } from "./driver-payments.guard";
+import { listenOnLoopback } from "../common/testing/listen-loopback";
 
 /**
  * #2110: PATCH /route-runs/:id/stops/reorder used to be declared AFTER
@@ -40,7 +41,7 @@ describe("RouteRunsController: stop routes resolve to the right handler (#2110)"
       .useValue(allow)
       .compile();
     app = moduleRef.createNestApplication();
-    await app.init();
+    await listenOnLoopback(app); // #2267: bind 127.0.0.1 before any request
   });
 
   afterEach(async () => {
