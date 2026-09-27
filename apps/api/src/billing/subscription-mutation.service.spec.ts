@@ -546,7 +546,7 @@ describe("SubscriptionMutationService.subscribe (MRR = signed change)", () => {
    * committed write is visible before anything is priced.
    */
   it("F1: a concurrent activateManualSubscription commits between the pre-tx read and the lock — subscribe() must NOT double-book the base or the add-on", async () => {
-    const { svc, tx, events } = make({
+    const { svc, prisma, tx, events } = make({
       // Pre-tx snapshot: still TRIAL, no subscription row yet — the state BEFORE the
       // concurrent activation committed.
       tenantStatus: "TRIAL",
@@ -574,15 +574,55 @@ describe("SubscriptionMutationService.subscribe (MRR = signed change)", () => {
       },
     ]);
 
-    await svc.subscribe("t1", { planKey: "BUSINESS", cycle: "MONTHLY" }, "admin");
+    // #2189 / SA-389 (2): the from-plan moved (none → TEAM) between the pre-read that fed
+    // prepare() and the lock, so the first attempt is refused retryably with NOTHING booked...
+    const first = await svc
+      .subscribe("t1", { planKey: "BUSINESS", cycle: "MONTHLY" }, "admin")
+      .catch((e: any) => e);
+    // SA-389a (a): nothing written — no subscription/tenant write, no BillingEvent, no add-on
+    // ledger row (emitAddonDelta books through events.emit).
+    expect(first.getResponse()).toMatchObject({
+      code: "PLAN_CHANGED_DURING_SUBSCRIBE",
+      retryable: true,
+    });
+    expect(tx.tenantSubscription.upsert).not.toHaveBeenCalled();
+    expect(tx.tenant.update).not.toHaveBeenCalled();
+    expect(tx.tenantAddon.upsert).not.toHaveBeenCalled();
+    expect(events.emit).not.toHaveBeenCalled();
 
-    // Nets against the locked TEAM (149), not the stale pre-tx TRIAL/no-plan baseline (which
-    // would book the full 349).
+    // ...and the caller's retry re-reads (the committed activation is now the pre-tx state too)
+    // and nets against the locked TEAM (149), never the stale TRIAL/no-plan baseline (349).
+    prisma.tenant.findUnique.mockResolvedValue({
+      status: "ACTIVE",
+      plan: "TEAM",
+      class: "PRODUCTION",
+      deletedAt: null,
+    });
+    prisma.tenantSubscription.findUnique.mockResolvedValue({ planKey: "TEAM" });
+    await svc.subscribe("t1", { planKey: "BUSINESS", cycle: "MONTHLY" }, "admin");
+    // SA-389a (b): SA-277b's money assertion, moved to the retry — booked EXACTLY ONCE against
+    // the post-activation state, so the two calls together equal one clean subscribe on an
+    // already-paying row: one PLAN_CHANGED of 349 − 149, no TRIAL_CONVERTED, no add-on booking.
+    expect(emitted(events)).toEqual([BILLING_EVENTS.PLAN_CHANGED]);
     expect(deltaOf(events, BILLING_EVENTS.PLAN_CHANGED)).toBe(200); // 349 − 149
     // REGULATED_ITEMS was already paying under the locked state, so the crossing helper nets
     // it to a NO-OP — never a second +39 on top of what activateManualSubscription booked.
     expect(emitted(events)).not.toContain(BILLING_EVENTS.ADDON_ENABLED);
     expect(deltaOf(events, BILLING_EVENTS.ADDON_ENABLED)).toBeUndefined();
+  });
+
+  it("SA-389a (c) control: no interleaving (pre-read == locked read) ⇒ one write, one PLAN_CHANGED, no 409", async () => {
+    const tenantRow = { status: "ACTIVE", plan: "TEAM", class: "PRODUCTION", deletedAt: null };
+    // #2460 / SA-464 (2): an ACTIVE row nets against its STORED snapshot, so the fixture carries it.
+    const sub = { planKey: "TEAM", cycle: "MONTHLY", periodEnd: null, basePriceSnapshot: 149 };
+    const { svc, prisma, tx, events } = make({ sub });
+    prisma.tenant.findUnique.mockResolvedValue(tenantRow);
+    tx.tenant.findUnique.mockResolvedValue(tenantRow);
+    tx.tenantSubscription.findUnique.mockResolvedValue(sub);
+    await svc.subscribe("t1", { planKey: "BUSINESS", cycle: "MONTHLY" }, "admin");
+    expect(tx.tenantSubscription.upsert).toHaveBeenCalledTimes(1);
+    expect(emitted(events)).toEqual([BILLING_EVENTS.PLAN_CHANGED]);
+    expect(deltaOf(events, BILLING_EVENTS.PLAN_CHANGED)).toBe(200); // 349 − 149
   });
 });
 
@@ -2951,6 +2991,102 @@ describe("STRIPE-CANCEL-2 — cancel() propagates to Stripe for a READ_ONLY tena
       data: { stripeSubId: null },
     });
     expect(events.emit).not.toHaveBeenCalled();
+  });
+});
+
+// #2189 / SA-389: the B58 guard and every pre-tx input prepare() consumed are re-checked UNDER
+// the tenant lock, before any write. Two-connection proof is the DB lane's (F2).
+describe("#2189 subscribe() re-checks under the lock (SA-389)", () => {
+  const source = require("fs").readFileSync(
+    require("path").join(__dirname, "subscription-mutation.service.ts"),
+    "utf8",
+  ) as string;
+
+  it("placement: the ONE guard runs pre-tx and again after lockTenantForLedger, before any write", () => {
+    const body = source.slice(
+      source.indexOf("async subscribe("),
+      source.indexOf("async planChangePreview("),
+    );
+    const calls = [...body.matchAll(/b58GuardRefusal\(/g)].map((m) => m.index!);
+    expect(calls).toHaveLength(2);
+    const lock = body.indexOf("await lockTenantForLedger(tx, tenantId)");
+    const tx = body.indexOf("this.prisma.$transaction(");
+    const firstWrite = body.indexOf("this.planTransition.onPlanChange(");
+    expect(calls[0]).toBeLessThan(tx); // fast refusal, pre-tx
+    expect(calls[1]).toBeGreaterThan(lock); // re-check under the lock
+    expect(calls[1]).toBeLessThan(firstWrite); // before anything is written
+    const stale = body.indexOf("PLAN_CHANGED_DURING_SUBSCRIBE");
+    expect(stale).toBeGreaterThan(lock);
+    expect(stale).toBeLessThan(firstWrite);
+    // SA-389 (3): one source for wasTrial — the locked tenant.
+    expect(body).not.toMatch(/const wasTrial = tenant\.status/);
+    expect(body).toMatch(/const wasTrial = lockedTenant\.status === "TRIAL"/);
+  });
+
+  it("a plan committed between the pre-read and the lock ⇒ 409 PLAN_CHANGED_DURING_SUBSCRIBE, nothing written, no event", async () => {
+    const { svc, tx, events, planTransition } = make({ tenantStatus: "TRIAL" });
+    tx.tenant.findUnique.mockResolvedValue({
+      status: "ACTIVE",
+      plan: "TEAM",
+      class: "PRODUCTION",
+      deletedAt: null,
+    });
+    tx.tenantSubscription.findUnique.mockResolvedValue({
+      planKey: "BUSINESS",
+      cycle: "ANNUAL",
+      periodEnd: null,
+    });
+    const err = await svc
+      .subscribe("t1", { planKey: "TEAM", cycle: "MONTHLY" }, "admin")
+      .catch((e: any) => e);
+    expect(err).toBeInstanceOf(ConflictException);
+    expect(err.getResponse()).toMatchObject({
+      code: "PLAN_CHANGED_DURING_SUBSCRIBE",
+      retryable: true,
+    });
+    expect(tx.tenantSubscription.upsert).not.toHaveBeenCalled();
+    expect(tx.tenant.update).not.toHaveBeenCalled();
+    expect(planTransition.onPlanChange).not.toHaveBeenCalled();
+    expect(events.emit).not.toHaveBeenCalled();
+  });
+
+  it("the locked row can make the B58 guard refuse even when the pre-read allowed it (no write)", async () => {
+    const sub = { planKey: "TEAM", cycle: "MONTHLY", periodEnd: null };
+    const { svc, tx, events } = make({ tenantStatus: "TRIAL", sub });
+    tx.tenant.findUnique.mockResolvedValue({
+      status: "ACTIVE",
+      plan: "TEAM",
+      class: "PRODUCTION",
+      deletedAt: null,
+    });
+    tx.tenantSubscription.findUnique.mockResolvedValue({
+      ...sub,
+      periodEnd: new Date(Date.now() + 20 * 24 * 3600 * 1000),
+    });
+    await expect(
+      svc.subscribe("t1", { planKey: "TEAM", cycle: "MONTHLY" }, "admin"),
+    ).rejects.toThrow("You are already on this plan — nothing to change");
+    expect(tx.tenantSubscription.upsert).not.toHaveBeenCalled();
+    expect(events.emit).not.toHaveBeenCalled();
+  });
+
+  it("wasTrial comes from the LOCKED tenant: converted in between ⇒ no trialConvertedAt, no TRIAL_CONVERTED", async () => {
+    const sub = { planKey: "TEAM", cycle: "MONTHLY", periodEnd: null };
+    const { svc, tx, events } = make({ tenantStatus: "TRIAL", sub });
+    tx.tenant.findUnique.mockResolvedValue({
+      status: "ACTIVE",
+      plan: "TEAM",
+      class: "PRODUCTION",
+      deletedAt: null,
+    });
+    tx.tenantSubscription.findUnique.mockResolvedValue(sub);
+    await svc.subscribe("t1", { planKey: "TEAM", cycle: "MONTHLY" }, "admin");
+    const written = tx.tenantSubscription.upsert.mock.calls[0][0];
+    expect(written.create.trialConvertedAt).toBeNull();
+    expect(written.update.trialConvertedAt).toBeUndefined();
+    expect(events.emit.mock.calls.map((c: any[]) => c[1])).not.toContain(
+      BILLING_EVENTS.TRIAL_CONVERTED,
+    );
   });
 });
 

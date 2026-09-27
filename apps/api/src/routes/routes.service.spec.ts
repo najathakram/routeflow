@@ -23,6 +23,7 @@ import { FeatureConfigService } from "../billing/feature-config.service";
 import { geocodeAddress } from "../common/geocode.util";
 import { compressImage } from "../storage/compress.util";
 import { createMockPrisma } from "../testing/prisma-mock";
+import { AfterCommit } from "../common/after-commit";
 
 jest.mock("../common/geocode.util", () => ({ geocodeAddress: jest.fn() }));
 // Real sharp is exercised by compress.util.spec.ts (incl. the SVG-signature
@@ -1982,6 +1983,7 @@ describe("RoutesService", () => {
       // `reference` token — load-bearing for the settlement cash lookup.
       expect(invoicesService.recordDeliveryPaymentInTx).toHaveBeenCalledWith(
         txMock,
+        expect.any(AfterCommit), // #2175: the route tx's post-commit queue
         ["ord-1"],
         50,
         "CASH",
@@ -2061,6 +2063,7 @@ describe("RoutesService", () => {
       // reconcileDeliveredOrdersInTx, asserted separately below).
       expect(invoicesService.recordDeliveryPaymentInTx).toHaveBeenCalledWith(
         txMock,
+        expect.any(AfterCommit), // #2175: the route tx's post-commit queue
         ["ord-1", "ord-2"],
         50,
         "CASH",

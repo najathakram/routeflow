@@ -10,6 +10,7 @@
  */
 import { readFileSync } from "fs";
 import { join } from "path";
+import { readEditItemsSurface } from "./support/edit-items-source";
 
 const SCREEN_PATH = join(
   __dirname,
@@ -22,7 +23,8 @@ const SCREEN_PATH = join(
   "edit-items.tsx",
 );
 const MODULE_PATH = join(__dirname, "..", "lib", "edit-items-draft.ts");
-const source = readFileSync(SCREEN_PATH, "utf8");
+// #2340: the screen plus the modules it was sliced into.
+const source = readEditItemsSurface();
 const moduleSource = readFileSync(MODULE_PATH, "utf8");
 
 /** A source-text assertion must never be satisfied (or defeated) by prose. */
