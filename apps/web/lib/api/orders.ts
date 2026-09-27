@@ -5,6 +5,7 @@ import type {
   ActiveOrderSummary,
   CancelImpact,
   CustomerPriceHistory,
+  InlineReturnLinesRequest,
   PriceType,
 } from "@routeflow/types";
 
@@ -278,10 +279,19 @@ export function useCreateOrder() {
       appliedCreditNotes?: { creditNoteId: string; amount?: number }[];
       /** Staff-only per-order commission override; 0 = exempt. */
       commissionRatePct?: number;
+      /** #2406: an inline return to capture in the SAME write as this order — `customerId`/
+       *  `orderId` are DERIVED server-side from the order being created, never sent here (see
+       *  CreateOrderDto.inlineReturn, apps/api/src/orders/orders.controller.ts). */
+      inlineReturn?: InlineReturnLinesRequest;
     }
   >({
     mutationFn: (dto) => apiClient.post("/orders", dto).then((r) => r.data),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["orders"] }),
+    onSuccess: (_data, variables) => {
+      qc.invalidateQueries({ queryKey: ["orders"] });
+      // #2406: this create carried an inline return — refresh any "Returns on this order"
+      // read (GET /returns?orderId=).
+      if (variables.inlineReturn) qc.invalidateQueries({ queryKey: ["returns"] });
+    },
   });
 }
 
@@ -438,9 +448,21 @@ export function useUpdateOrderItems() {
        * Staff-only (operator/tenant-admin); the server ignores it otherwise.
        */
       appliedCreditNotes?: { creditNoteId: string; amount?: number }[];
+      /** #2406: an inline return to capture in the SAME write as this edit — `customerId`/
+       *  `orderId` are DERIVED server-side from the order being edited, never sent here (see
+       *  UpdateOrderItemsDto.inlineReturn). */
+      inlineReturn?: InlineReturnLinesRequest;
     }
   >({
-    mutationFn: ({ id, items, orderNotes, replaceAll, shippingFee, appliedCreditNotes }) =>
+    mutationFn: ({
+      id,
+      items,
+      orderNotes,
+      replaceAll,
+      shippingFee,
+      appliedCreditNotes,
+      inlineReturn,
+    }) =>
       apiClient
         .patch<Order>(`/orders/${id}/items`, {
           items,
@@ -448,11 +470,15 @@ export function useUpdateOrderItems() {
           replaceAll,
           shippingFee,
           appliedCreditNotes,
+          inlineReturn,
         })
         .then((r) => r.data),
-    onSuccess: (data) => {
+    onSuccess: (data, variables) => {
       qc.setQueryData(["orders", data.id], data);
       qc.invalidateQueries({ queryKey: ["orders"] });
+      // #2406: this write carried an inline return — refresh the order-detail "Returns on
+      // this order" panel (GET /returns?orderId=), which reads the server's own figures.
+      if (variables.inlineReturn) qc.invalidateQueries({ queryKey: ["returns"] });
     },
   });
 }

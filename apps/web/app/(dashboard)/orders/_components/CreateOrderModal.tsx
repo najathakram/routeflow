@@ -52,6 +52,11 @@ import { CreditNotePicker, type CreditSelection } from "./CreditNotePicker";
 import { useAuth } from "@/lib/auth-context";
 import { useHasAddon } from "@/lib/api/tobacco";
 import { SALES_AGENTS_ADDON, useOrderUiV2, useScanV2 } from "@/lib/api/addons";
+import {
+  OrderInlineReturnsSection,
+  type OrderInlineReturnsSectionHandle,
+} from "./OrderInlineReturnsSection";
+import { useOrderInlineReturnSave } from "./use-order-inline-return-save";
 
 // ─── Schema ───────────────────────────────────────────────────────────────────
 
@@ -156,6 +161,9 @@ export function CreateOrderModal({
 }: CreateOrderModalProps) {
   const { toast } = useToast();
   const createOrder = useCreateOrder();
+  // #2406: an inline return started (lines entered + quoted) before this order is saved.
+  const returnsRef = React.useRef<OrderInlineReturnsSectionHandle>(null);
+  const returnSave = useOrderInlineReturnSave(returnsRef);
 
   // Minimize & resume drafts (pos-cost-roles-spec §2).
   const createDraft = useCreateDraft();
@@ -1109,6 +1117,12 @@ export function CreateOrderModal({
     options: { mergeChoice?: "merge" | "separate"; asDraft?: boolean } = {},
   ) => {
     const { mergeChoice, asDraft } = options;
+    // #2406: fold in whatever the operator has typed into the Returns section.
+    const inlineReturn = returnSave.build(selectedCustomer!.id, "");
+    if (inlineReturn === "missing-reason") {
+      toast({ title: "Choose a reason for the return before saving", variant: "error" });
+      return;
+    }
     const itemsForSubmit = (
       asDraft
         ? lineItems.filter(
@@ -1155,6 +1169,7 @@ export function CreateOrderModal({
         // Bill-now (createSale) has no path through this modal today — only
         // the create-order payload needs threading here.
         ...(appliedCredits.length ? { appliedCreditNotes: appliedCredits } : {}),
+        ...(inlineReturn ? { inlineReturn } : {}),
       } as any,
       {
         onSuccess: (created: any) => {
@@ -1164,6 +1179,7 @@ export function CreateOrderModal({
           setMergePrompt(null);
           pendingFormValuesRef.current = null;
           pendingAsDraftRef.current = false;
+          returnSave.onSuccess();
           onClose();
         },
         onError: (err: any) => {
@@ -1190,7 +1206,13 @@ export function CreateOrderModal({
           if (blocked && blocked.length > 0) {
             licenseRetryRef.current = { data, options };
             setLicenseBlock(blocked);
+            return;
           }
+          // #2406: none of the precondition flows above matched (each re-submits the SAME
+          // attempt and must keep the returnKey) — an inline-return-carrying save refused
+          // for any other 4xx reason mints a fresh one and surfaces the message near the
+          // Returns section. The modal itself stays open (no onClose() on this path already).
+          if (inlineReturn) returnSave.onError(err, false);
         },
       },
     );
@@ -1890,6 +1912,15 @@ export function CreateOrderModal({
               value={appliedCredits}
               onChange={setAppliedCredits}
               estimatedOrderTotal={total}
+            />
+          )}
+
+          {/* ── Returns Inside Order Creation (#2406) — collapsed until opened ── */}
+          {selectedCustomer && (
+            <OrderInlineReturnsSection
+              ref={returnsRef}
+              customerId={selectedCustomer.id}
+              refusalMessage={returnSave.refusalMessage}
             />
           )}
 

@@ -87,6 +87,9 @@ export function useReturns(params?: {
   search?: string;
   page?: number;
   limit?: number;
+  /** #2406: scope to one order's returns — backs the order-detail "Returns on this order"
+   *  panel (OrderReturnsPanel). The API's GET /returns already supports this filter. */
+  orderId?: string;
 }) {
   return useQuery<PaginatedResponse<Return>>({
     queryKey: ["returns", params],

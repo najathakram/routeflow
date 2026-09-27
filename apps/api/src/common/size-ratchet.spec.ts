@@ -46,7 +46,7 @@ const BASELINE: Record<string, number> = {
   "apps/api/src/customers/customers.service.ts": 3307,
   "apps/api/src/invoices/invoices.service.spec.ts": 9351,
   "apps/web/app/(dashboard)/customers/[id]/page.tsx": 4378,
-  "apps/web/app/(dashboard)/orders/[id]/page.tsx": 3720,
+  "apps/web/app/(dashboard)/orders/[id]/page.tsx": 3728, // #2406: edit-mode Returns section + "Returns on this order" panel wiring, offset by extracting the "Applied credits" block -> _components/AppliedCreditsSection.tsx (was 3720; measured 3735 pre-change on d4e84dc9, drifted above the stale baseline within headroom from unrelated PRs)
   "apps/api/src/customers/customers.service.spec.ts": 3209,
   "apps/api/src/routes/routes.service.ts": 3142, // #2512: POD-ingest helpers -> routes/pod-ingest.ts (was 3189); prefactor: run/stop select shapes + status constants live in routes/routes.constants.ts (was 3270)
   "apps/web/app/(dashboard)/products/[id]/page.tsx": 2942,

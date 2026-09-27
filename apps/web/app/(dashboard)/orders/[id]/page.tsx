@@ -62,6 +62,13 @@ import { useAuth } from "@/lib/auth-context";
 import { useHasAddon } from "@/lib/api/tobacco";
 import { SALES_AGENTS_ADDON, useOrderUiV2 } from "@/lib/api/addons";
 import { RecordReturnAction } from "../../returns/_components/RecordReturnAction";
+import {
+  OrderInlineReturnsSection,
+  type OrderInlineReturnsSectionHandle,
+} from "../_components/OrderInlineReturnsSection";
+import { useOrderInlineReturnSave } from "../_components/use-order-inline-return-save";
+import { AppliedCreditsSection } from "./_components/AppliedCreditsSection";
+import { OrderReturnsPanel } from "./_components/OrderReturnsPanel";
 import { describeCancelImpact } from "@/lib/cancel-impact";
 import { fmtCalendarDate, isInternalEmail } from "@/lib/formatting";
 import { formatMoney, formatQty } from "@/lib/format";
@@ -2052,6 +2059,9 @@ export default function OrderDetailPage() {
   // (undefined on the wire = leave the server's stored intents untouched).
   const [editCredits, setEditCredits] = React.useState<CreditSelection[]>([]);
   const [creditsTouched, setCreditsTouched] = React.useState(false);
+  // #2406: an inline return started in edit mode, folded into the SAME updateOrderItems write.
+  const returnsRef = React.useRef<OrderInlineReturnsSectionHandle>(null);
+  const returnSave = useOrderInlineReturnSave(returnsRef);
 
   // Demotion modal
   const [demoteTarget, setDemoteTarget] = React.useState<ApiOrderStatus | null>(null);
@@ -2273,7 +2283,14 @@ export default function OrderDetailPage() {
     // matches the API's "no dto.shippingFee ⇒ keep the stored fee" rule).
     const feeChanged = Math.abs(editShippingFee - Number(order!.shippingFee ?? 0)) > 0.0001;
 
-    if (updates.length === 0 && !feeChanged && !creditsTouched) {
+    // #2406: fold in whatever the operator has typed into the edit-mode Returns section.
+    const inlineReturn = returnSave.build(order!.customerId, order!.id);
+    if (inlineReturn === "missing-reason") {
+      toast({ title: "Choose a reason for the return before saving", variant: "error" });
+      return;
+    }
+
+    if (updates.length === 0 && !feeChanged && !creditsTouched && !inlineReturn) {
       setIsEditing(false);
       return;
     }
@@ -2292,6 +2309,7 @@ export default function OrderDetailPage() {
         // the picker — undefined on the wire leaves the server's stored
         // intents untouched (see CreditNotePicker / syncOrderCreditSelections).
         ...(creditsTouched ? { appliedCreditNotes: editCredits } : {}),
+        ...(inlineReturn ? { inlineReturn } : {}),
       },
       {
         onSuccess: () => {
@@ -2299,8 +2317,19 @@ export default function OrderDetailPage() {
           setEditItems([]);
           setEditCredits([]);
           setCreditsTouched(false);
+          returnSave.onSuccess();
         },
-        onError: guardError(() => handleSaveItems()),
+        onError: (err: any) => {
+          // #2406: guardError's restricted/license/credit dialogs re-submit the SAME
+          // attempt — an inline return keeps its returnKey through those; anything else
+          // 4xx is treated as an unhandled refusal (see useOrderInlineReturnSave).
+          const alreadyHandled =
+            !!parseSellingRestricted(err) ||
+            (parseRegulatedAuthError(err)?.length ?? 0) > 0 ||
+            !!parseCreditLimitError(err);
+          if (inlineReturn) returnSave.onError(err, alreadyHandled);
+          guardError(() => handleSaveItems())(err);
+        },
       },
     );
   }
@@ -3062,6 +3091,15 @@ export default function OrderDetailPage() {
                   estimatedOrderTotal={editTotal}
                 />
 
+                {/* Returns Inside Order Creation, edit mode (#2406) — quoted here, captured
+                    in the SAME save as the item edits below. */}
+                <OrderInlineReturnsSection
+                  ref={returnsRef}
+                  customerId={order.customerId}
+                  entryOrderId={order.id}
+                  refusalMessage={returnSave.refusalMessage}
+                />
+
                 <div className="flex gap-2 flex-wrap">
                   {localStatus === "DRAFT" ? (
                     <>
@@ -3456,56 +3494,11 @@ export default function OrderDetailPage() {
               </div>
             </dl>
 
-            {/* Applied credits — intent (order.orderCreditNotes) vs money already
-                moved (Σ CREDIT_NOTE payments across this order's invoices). Credits
-                reduce the invoice balance due, never this order total above. */}
-            {(order.orderCreditNotes?.length ?? 0) > 0 && (
-              <div className="mt-3 space-y-2 border-t border-surface-border pt-3">
-                <p className="text-xs font-semibold uppercase tracking-wider text-navy/70">
-                  Applied credits
-                </p>
-                {order.orderCreditNotes!.map((oc) => {
-                  const appliedSoFar = (order.invoices ?? []).reduce((sum, inv) => {
-                    const pays = inv.payments ?? [];
-                    return (
-                      sum +
-                      pays
-                        .filter((p) => p.creditNoteId === oc.creditNoteId)
-                        .reduce((s, p) => s + Number(p.amount), 0)
-                    );
-                  }, 0);
-                  return (
-                    <div key={oc.id} className="flex items-start justify-between gap-2 text-xs">
-                      <div className="min-w-0">
-                        <Link
-                          href={`/credit-notes/${oc.creditNoteId}`}
-                          className="font-mono font-medium text-brand-600 hover:underline"
-                        >
-                          {oc.creditNote?.creditNoteNumber ?? oc.creditNoteId.slice(0, 8)}
-                        </Link>
-                        {oc.creditNote?.reason && (
-                          <span
-                            className="ml-1.5 truncate text-navy/70"
-                            title={oc.creditNote.reason}
-                          >
-                            {oc.creditNote.reason}
-                          </span>
-                        )}
-                        <div className="text-navy/50">
-                          {oc.amount != null
-                            ? `Requested ${formatMoney(oc.amount)}`
-                            : "Up to remaining"}
-                        </div>
-                      </div>
-                      <span className="shrink-0 font-medium text-navy">
-                        {formatMoney(appliedSoFar)} applied
-                      </span>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
+            <AppliedCreditsSection order={order} />
           </Card>
+
+          {/* Returns on this order (#2406) — server figures only, never the quote's. */}
+          <OrderReturnsPanel orderId={order.id} />
 
           {/* Carrier shipment — operator records carrier + tracking when goods ship
               via a carrier instead of our own route. Gated so it doesn't render on
