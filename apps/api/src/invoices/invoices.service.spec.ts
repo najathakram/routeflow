@@ -4309,6 +4309,12 @@ describe("InvoicesService", () => {
       prisma.invoice.update.mockResolvedValue({} as any);
       // T-B83 / R4 / REG-B83: deterministic id for the excess-advance assertions.
       prisma.advancePayment.create.mockResolvedValue({ id: "adv-1" } as any);
+      // SA-404f N1: the under-lock re-read sees each invoice as listed (nothing voided meanwhile).
+      prisma.invoice.findUnique.mockImplementation(async ({ where }: any) =>
+        ((await prisma.invoice.findMany.mock.results.at(-1)?.value) ?? []).find(
+          (r: any) => r.id === where.id,
+        ),
+      );
     });
 
     it("records an InvoicePayment against the order's existing invoice and marks it PAID", async () => {

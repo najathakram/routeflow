@@ -10,7 +10,8 @@ import * as ts from "typescript";
  * to void's older snapshot, so the invariant is pinned here instead of trusted.
  *
  *   TOUCHES — the method creates the payment through a transaction client and, in the same method,
- *             calls `<that client>.invoice.update` / `.updateMany` (AST-checked below).
+ *             calls `<that client>.invoice.update` / `.updateMany` / `.create` (AST-checked below; SA-424 F1(a):
+ *             creating the invoice in the same tx covers the payment the same way an update does).
  *   EXEMPT  — does not meet that shape; the reason is recorded and owned by a ruling.
  *
  * Same technique as selling-restrictions/sellable-writers-coverage.spec.ts: the inventory must EQUAL
@@ -21,17 +22,8 @@ type Row = { kind: "TOUCHES" } | { kind: "EXEMPT"; why: string };
 const T: Row = { kind: "TOUCHES" };
 const X = (why: string): Row => ({ kind: "EXEMPT", why });
 
-/** SA-404b, verbatim in substance: why the bulk Zoho import may write payments outside the shape. */
-const IMPORT_WHY =
-  "SA-404b: the bulk Zoho import writes historical payments for invoices it is itself creating or " +
-  "re-importing, through the pool with no transaction and no Invoice update, so a void running in the " +
-  "same instant as an import would not see that payment under void's Serializable snapshot. The residual " +
-  "is an operator voiding an invoice while a bulk import inserts a payment for that same invoice; the " +
-  "import derives status from Zoho's Balance Due, not from the payments it writes, so no in-app status is " +
-  "computed from those rows in that window. Follow-up: #2290 (fix: payments + status in one tx, #2262).";
-
 /** Shrink-only (SA-404b, the sellable/unit-line writers pattern): lower it when an EXEMPT row goes. */
-const EXEMPT_BASELINE = 2;
+const EXEMPT_BASELINE = 0; // #2262 / SA-424: the import writers moved to TOUCHES (was 2)
 
 const TABLE: Record<string, Row> = {
   "bookkeeping/bookkeeping.service.ts::BookkeepingService.recordPayment": T,
@@ -40,11 +32,9 @@ const TABLE: Record<string, Row> = {
   "invoices/invoices.service.ts::InvoicesService.recordDeliveryPaymentInTx": T,
   "invoices/invoices.service.ts::InvoicesService.recordPayment": T,
   "invoices/invoices.service.ts::InvoicesService.recordStandalonePayment": T,
-  // SA-404b: EXEMPT with a written reason; fixed by a follow-up B-id (each imported invoice's payments
-  // and its status write in ONE transaction that updates the Invoice row — restores the invariant and
-  // makes the import's invoice + payments atomic).
-  "import/import.service.ts::ImportService.importInvoices": X(IMPORT_WHY),
-  "import/import.service.ts::ImportService.importPayments": X(IMPORT_WHY),
+  // #2262 / SA-424: the bulk import now writes payments and the Invoice row in one tx.
+  "import/import.service.ts::ImportService.importInvoices": T,
+  "import/import.service.ts::ImportService.importPayments": T,
 };
 
 const SRC = path.resolve(__dirname, "..");
@@ -121,7 +111,7 @@ function inventory(): Site[] {
           const callee = n.expression.getText(sf).replace(/\s+/g, "");
           const c = callee.match(/^(.*)\.invoicePayment\.(create|createMany|upsert)$/);
           if (c && WRITE.test(callee)) creates.push({ node: n, receiver: c[1] });
-          const u = callee.match(/^(.*)\.invoice\.(update|updateMany)$/);
+          const u = callee.match(/^(.*)\.invoice\.(update|updateMany|create)$/); // SA-424 F1(a)
           if (u) updates.push({ node: n, receiver: u[1] });
         }
         ts.forEachChild(n, walk);
@@ -164,6 +154,20 @@ const UNCONDITIONAL = `class X { async m(tx: any, s: string) {
   await tx.invoice.update({ where: { id: "i" }, data });
 } }`;
 
+/** SA-424 F1(a) controls: an invoice CREATE on the same client covers under the same branch rule. */
+const CREATE_SAME_TX = `class X { async m(tx: any, s: string) {
+  await tx.invoice.create({ data: {} });
+  if (s === "PAID") { await tx.invoicePayment.create({ data: {} }); }
+} }`;
+const CREATE_ONLY_CONDITIONAL = `class X { async m(tx: any, s: string) {
+  await tx.invoicePayment.create({ data: {} });
+  if (s === "NEW") { await tx.invoice.create({ data: {} }); }
+} }`;
+const CREATE_OTHER_CLIENT = `class X { prisma: any; async m(tx: any) {
+  await this.prisma.invoice.create({ data: {} });
+  await tx.invoicePayment.create({ data: {} });
+} }`;
+
 /** Whether the lone create in `src` is covered — the same rule the inventory applies. */
 function coveredIn(src: string): boolean {
   const sf = ts.createSourceFile("x.ts", src, ts.ScriptTarget.Latest, true);
@@ -174,7 +178,7 @@ function coveredIn(src: string): boolean {
     if (ts.isCallExpression(n) && ts.isPropertyAccessExpression(n.expression)) {
       const t = n.expression.getText(sf);
       if (t === "tx.invoicePayment.create") creates.push(n);
-      if (t === "tx.invoice.update") updates.push(n);
+      if (t === "tx.invoice.update" || t === "tx.invoice.create") updates.push(n);
     }
     ts.forEachChild(n, walk);
   };
@@ -202,6 +206,12 @@ describe("InvoicePayment writers update the Invoice row in the same transaction 
     // Conservative by design: an if/else pair of updates does not count — compute the data under the
     // condition and write ONE unconditional update (the recordStandalonePayment shape).
     expect(coveredIn(UNCONDITIONAL)).toBe(true);
+  });
+
+  it("SA-424 F1(a) controls: a same-client invoice CREATE covers; a conditional or other-client one does not", () => {
+    expect(coveredIn(CREATE_SAME_TX)).toBe(true);
+    expect(coveredIn(CREATE_ONLY_CONDITIONAL)).toBe(false);
+    expect(coveredIn(CREATE_OTHER_CLIENT)).toBe(false);
   });
 
   it.each(Object.entries(TABLE).filter(([, r]) => r.kind === "TOUCHES"))(

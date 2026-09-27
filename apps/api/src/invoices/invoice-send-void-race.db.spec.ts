@@ -922,43 +922,316 @@ describeDb(
     });
 
     // SA-404e: DRAFT, not PENDING — StandalonePaymentDto accepts only DRAFT | PAID, so PENDING cannot come through this path.
-    it("(R2) void: a DRAFT standalone payment (recordStandalonePayment) committed while the void waits on the lock ⇒ void 400s after a retry, invoice NOT voided", async () => {
+    // SA-404f (#2466) reworked R2: every payment writer now takes (Order →) Invoice FIRST, the same
+    // order void takes — so a payment can no longer COMMIT while a void waits (the old R2 premise;
+    // its harness held the Order lock while awaiting the payment and deadlocked). The invariant R2
+    // guards is unchanged: a void and a concurrent payment on one invoice SERIALIZE — never a VOID
+    // invoice holding a payment. ENTRY: T2 holds the ORDER row; the DRAFT payment starts and blocks
+    // FIRST, then the void (its unlocked pre-read sees no payment) queues behind it — both waiters
+    // asserted; T2 commits. SA-470c: queued payment-first so R2's original intent (the payment lands,
+    // the void re-reads under the lock and refuses) is the branch exercised, while the assertion
+    // stays winner-agnostic; the branch that occurred is logged for F2's report.
+    it("(R2) void vs a DRAFT standalone payment, both queued on the Order lock ⇒ they serialize: never a VOID invoice holding a payment", async () => {
+      const s = await seedOrder("r2");
+      const t2 = new Client({ connectionString: url() });
+      await t2.connect();
+      let voidR: any;
+      let payR: any;
+      let waiters = 0;
+      try {
+        await t2.query("BEGIN");
+        await t2.query(`SELECT id FROM "Order" WHERE id = $1 FOR UPDATE`, [s.orderId]);
+        const settle = (p: Promise<unknown>) =>
+          p.then(
+            (v) => ({ ok: true as const, v }),
+            (e) => ({ ok: false as const, e }),
+          );
+        const blockedCount = async () =>
+          (
+            await t2.query(
+              `SELECT count(*)::int n FROM pg_stat_activity
+                WHERE datname = current_database() AND cardinality(pg_blocking_pids(pid)) > 0`,
+            )
+          ).rows[0].n as number;
+        const waitFor = async (n: number) => {
+          for (let i = 0; i < 800; i++) {
+            waiters = await blockedCount();
+            if (waiters >= n) return;
+            await new Promise((x) => setTimeout(x, 25));
+          }
+        };
+        const pPay = settle(
+          tenantCtx.run(s.tenantId, () =>
+            invoicesService.recordStandalonePayment({
+              customerId: s.customerId,
+              totalAmount: 20,
+              method: "CHECK",
+              status: "DRAFT",
+              allocations: [{ invoiceId: s.invoiceId, amount: 20 }],
+            } as any),
+          ),
+        );
+        await waitFor(1);
+        const pVoid = settle(
+          tenantCtx.run(s.tenantId, () => invoicesService.voidInvoice(s.invoiceId)),
+        );
+        await waitFor(2);
+        await t2.query("COMMIT");
+        [voidR, payR] = await Promise.all([pVoid, pPay]);
+      } finally {
+        await t2.end();
+      }
+      const inv = await prisma.invoice.findUniqueOrThrow({
+        where: { id: s.invoiceId },
+        include: { payments: true },
+      });
+      const observed = {
+        waiters: waiters >= 2,
+        voidOk: voidR.ok,
+        payOk: payR.ok,
+        refusedIs400: status400(voidR.ok ? payR : voidR),
+        invoiceStatus: inv.status,
+        payments: inv.payments.map((p: any) => `${p.method} ${Number(p.amount)} ${p.status}`),
+      };
+      const voidWon = {
+        waiters: true,
+        voidOk: true,
+        payOk: false,
+        refusedIs400: true,
+        invoiceStatus: "VOID",
+        payments: [],
+      };
+      const paymentWon = {
+        waiters: true,
+        voidOk: false,
+        payOk: true,
+        refusedIs400: true,
+        invoiceStatus: "SENT",
+        payments: ["CHECK 20 DRAFT"],
+      };
+      // SA-470c (ii): report which consistent branch Postgres produced.
+      console.info(
+        `R2 branch: ${observed.payOk && !observed.voidOk ? "payment-wins" : observed.voidOk && !observed.payOk ? "void-wins" : "neither"}`,
+      );
+      expect([voidWon, paymentWon]).toContainEqual(observed);
+    });
+
+    // ─── SA-404f / SA-404g (#2466, SA-470 condition 2): the VOID-FIRST half, two real connections ───
+    // ENTRY (every F1/N1 case): T2 holds the Invoice row lock and flips it to VOID (uncommitted); the
+    // payment writer (T1) has started and is BLOCKED on T2 (pg_blocking_pids — interleave's barrier,
+    // asserted as `blocked`), and only then does T2 commit. Pre-fix, T1 read the status UNLOCKED
+    // (still SENT) and wrote a payment over the VOID; fixed, T1's first statement is the
+    // (Order →) Invoice lock, so it re-reads VOID under it. F2 runs this: RED on a revert of the fix
+    // commit, GREEN at the head.
+    const { BookkeepingService } = require("../bookkeeping/bookkeeping.service");
+    /** A real BookkeepingService.recordPayment over the real prisma (its only other dependency is stubbed). */
+    const bookkeeping = () =>
+      Object.assign(Object.create(BookkeepingService.prototype), {
+        prisma,
+        commissionEngine: mockCommissionEngine,
+      });
+    const voidUnderLock = (invoiceId: string) => async (c: any) => {
+      await c.query(`UPDATE "Invoice" SET status = 'VOID', "updatedAt" = now() WHERE id = $1`, [
+        invoiceId,
+      ]);
+    };
+    const invoiceState = async (invoiceId: string) => {
+      const inv = await prisma.invoice.findUniqueOrThrow({
+        where: { id: invoiceId },
+        include: { payments: true },
+      });
+      return {
+        status: inv.status,
+        payments: inv.payments.map((p: any) => `${p.method} ${Number(p.amount)} ${p.status}`),
+      };
+    };
+    const standalone = (s: { tenantId: string; invoiceId: string }, customerId: string) =>
+      tenantCtx.run(s.tenantId, () =>
+        invoicesService.recordStandalonePayment({
+          customerId,
+          totalAmount: 20,
+          method: "CASH",
+          status: "PAID",
+          allocations: [{ invoiceId: s.invoiceId, amount: 20 }],
+        } as any),
+      );
+    const customerOf = async (invoiceId: string) =>
+      (await prisma.invoice.findUniqueOrThrow({ where: { id: invoiceId } })).customerId;
+
+    it("(SA-404f F1-standalone) VOID committed while recordStandalonePayment waits on the Invoice lock ⇒ 400, no payment, stays VOID", async () => {
+      const s = await seed("f1sa", "SENT");
+      const customerId = await customerOf(s.invoiceId);
+      const r = await interleave(
+        s.invoiceId,
+        () => standalone(s, customerId),
+        voidUnderLock(s.invoiceId),
+      );
+      expect({
+        blocked: !r.notBlocked,
+        is400: status400(r),
+        ...(await invoiceState(s.invoiceId)),
+      }).toEqual({
+        blocked: true,
+        is400: true,
+        status: "VOID",
+        payments: [],
+      });
+    });
+
+    it("(SA-404f F1-standalone control) nothing interleaves ⇒ one CASH payment, invoice PARTIAL", async () => {
+      const s = await seed("f1sac", "SENT");
+      const customerId = await customerOf(s.invoiceId);
+      await standalone(s, customerId);
+      expect(await invoiceState(s.invoiceId)).toEqual({
+        status: "PARTIAL",
+        payments: ["CASH 20 PAID"],
+      });
+    });
+
+    it("(SA-404f F1-bookkeeping) VOID committed while BookkeepingService.recordPayment waits on the Invoice lock ⇒ 400, no payment, stays VOID", async () => {
+      const s = await seed("f1bk", "SENT");
+      const r = await interleave(
+        s.invoiceId,
+        () =>
+          tenantCtx.run(s.tenantId, () =>
+            bookkeeping().recordPayment(s.invoiceId, { amount: 20, method: "CASH" }),
+          ),
+        voidUnderLock(s.invoiceId),
+      );
+      expect({
+        blocked: !r.notBlocked,
+        is400: status400(r),
+        ...(await invoiceState(s.invoiceId)),
+      }).toEqual({
+        blocked: true,
+        is400: true,
+        status: "VOID",
+        payments: [],
+      });
+    });
+
+    it("(SA-404f F1-bookkeeping control) nothing interleaves ⇒ one CASH payment", async () => {
+      const s = await seed("f1bkc", "SENT");
+      await tenantCtx.run(s.tenantId, () =>
+        bookkeeping().recordPayment(s.invoiceId, { amount: 20, method: "CASH" }),
+      );
+      expect((await invoiceState(s.invoiceId)).payments).toEqual(["CASH 20 PAID"]);
+    });
+
+    // SA-404g N1: the delivery writer re-derives PAYABLE under each invoice's lock and SKIPS one voided
+    // meanwhile — the driver's cash moves to the next invoice (or the advance), and money is conserved.
+    it("(SA-404g N1-delivery) the oldest invoice VOIDED while the delivery payment waits on its lock ⇒ skipped; the cash lands on the next invoice; conserved", async () => {
+      const s = await seedOrder("n1dl");
+      const second = await prisma.invoice.create({
+        data: {
+          tenantId: s.tenantId,
+          customerId: s.customerId,
+          orderId: s.orderId,
+          invoiceNumber: `INV-F2-2466-${RUN_SUFFIX}-n1dl-2`,
+          status: "SENT",
+          subtotal: 50,
+          total: 50,
+          items: {
+            create: [
+              {
+                tenantId: s.tenantId,
+                description: "f2 line 2",
+                qty: 1,
+                unitPrice: 50,
+                subtotal: 50,
+              },
+            ],
+          },
+        } as any,
+      });
+      const r = await interleave(
+        s.invoiceId,
+        () =>
+          tenantCtx.run(s.tenantId, () =>
+            prisma.tenantTransaction((tx: any) =>
+              invoicesService.recordDeliveryPaymentInTx(tx, [s.orderId], 50, "CASH"),
+            ),
+          ),
+        voidUnderLock(s.invoiceId),
+      );
+      const out: any = r.ok ? r.v : null;
+      expect({
+        blocked: !r.notBlocked,
+        ok: r.ok,
+        conserved: out ? Number(out.applied) + Number(out.excess) : null,
+        voided: await invoiceState(s.invoiceId),
+        next: await invoiceState(second.id),
+      }).toEqual({
+        blocked: true,
+        ok: true,
+        conserved: 50,
+        voided: { status: "VOID", payments: [] },
+        next: { status: "PAID", payments: ["CASH 50 PAID"] },
+      });
+    });
+
+    // SA-404f F2: the cancel's status write is a compare-and-set on the cancellable set. ENTRY: T2 holds
+    // the ORDER row; changeStatus(CANCELLED) has passed its pre-check (CONFIRMED) and is BLOCKED in
+    // lockOrderForCancel; T2 sets the order DELIVERED and commits. The cancel must refuse (409
+    // ORDER_CHANGED_DURING_EDIT) — directly, or after one 40001 retry (the retried tx sees DELIVERED) —
+    // and leave the order DELIVERED with its invoice NOT voided.
+    it("(SA-404f F2 + 40001 retry) DELIVERED committed while the cancel waits on the Order lock ⇒ 409, stays DELIVERED, invoice not voided", async () => {
       const warn = jest.spyOn(NestLogger.prototype, "warn");
       try {
-        const s = await seedOrder("r2");
-        const { r, blocked, duringResult } = await holdOrder(
-          s.orderId,
-          () => tenantCtx.run(s.tenantId, () => invoicesService.voidInvoice(s.invoiceId)),
-          () =>
-            tenantCtx.run(s.tenantId, () =>
-              invoicesService.recordStandalonePayment({
-                customerId: s.customerId,
-                totalAmount: 20,
-                method: "CHECK",
-                status: "DRAFT",
-                allocations: [{ invoiceId: s.invoiceId, amount: 20 }],
-              } as any),
-            ),
-        );
-        const inv = await prisma.invoice.findUniqueOrThrow({
-          where: { id: s.invoiceId },
-          include: { payments: true },
-        });
+        const s = await seedOrder("f2dl");
+        const t2 = new Client({ connectionString: url() });
+        await t2.connect();
+        let r: any;
+        let blocked = false;
+        try {
+          await t2.query("BEGIN");
+          await t2.query(`SELECT id FROM "Order" WHERE id = $1 FOR UPDATE`, [s.orderId]);
+          const pid = (await t2.query("SELECT pg_backend_pid() AS pid")).rows[0].pid;
+          const p1 = tenantCtx
+            .run(s.tenantId, () =>
+              ordersSvc().changeStatus(s.orderId, { status: "CANCELLED" }, opUser(s.tenantId)),
+            )
+            .then(
+              (v: unknown) => ({ ok: true as const, v }),
+              (e: any) => ({ ok: false as const, e }),
+            );
+          for (let i = 0; i < 800 && !blocked; i++) {
+            const q = await t2.query(
+              `SELECT count(*)::int n FROM pg_stat_activity WHERE $1 = ANY(pg_blocking_pids(pid))`,
+              [pid],
+            );
+            blocked = q.rows[0].n > 0;
+            if (!blocked) await new Promise((x) => setTimeout(x, 25));
+          }
+          await t2.query(
+            `UPDATE "Order" SET status = 'DELIVERED', "updatedAt" = now() WHERE id = $1`,
+            [s.orderId],
+          );
+          await t2.query("COMMIT");
+          r = await p1;
+        } finally {
+          await t2.end();
+        }
+        const order = await prisma.order.findUniqueOrThrow({ where: { id: s.orderId } });
+        const retries = warnsFor(warn, `order cancel void order=${s.orderId}`);
         expect({
           blocked,
-          recorded: duringResult != null,
-          is400: status400(r),
-          voidRetries: warnsFor(warn, `invoice void id=${s.invoiceId}`),
-          invoiceStatus: inv.status,
-          payments: inv.payments.map((p: any) => `${p.method} ${Number(p.amount)} ${p.status}`),
+          ok: r.ok,
+          status: r.e?.getStatus?.(),
+          code: r.e?.getResponse?.()?.code,
+          orderStatus: order.status,
+          invoice: (await invoiceState(s.invoiceId)).status,
         }).toEqual({
           blocked: true,
-          recorded: true,
-          is400: true,
-          voidRetries: 1,
-          invoiceStatus: "SENT",
-          payments: ["CHECK 20 DRAFT"],
+          ok: false,
+          status: 409,
+          code: "ORDER_CHANGED_DURING_EDIT",
+          orderStatus: "DELIVERED",
+          invoice: "SENT",
         });
+        // Observe, don't predict: the refusal comes on the first attempt or after exactly one 40001
+        // retry (Serializable snapshot vs T2's commit). Never more, and never a delivered order cancelled.
+        expect(retries).toBeLessThanOrEqual(1);
       } finally {
         warn.mockRestore();
       }
