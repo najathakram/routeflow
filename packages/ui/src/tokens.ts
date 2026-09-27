@@ -1,60 +1,105 @@
 // Design system tokens for use in React Native StyleSheet
 // (React Native does not support Tailwind CSS)
 //
-// Re-pointed to the Ledger source (#2330): every value below comes from `./tokens/ledger`, the
-// same module the web Tailwind preset is built from. The keys are the pre-Ledger ones, kept so
-// the existing importers restyle in place. New work uses `@routeflow/ui/native`.
+// #2330 ruling (a): the pre-Ledger values below are deliberately NOT re-pointed, so existing
+// screens do not move. Ledger values are ADDED under new keys (from `./tokens/ledger`, the source
+// the web Tailwind preset is built from); new work uses `@routeflow/ui/native`. Screens move to
+// Ledger when they are rebuilt behind `useNewUi(role)`.
 
 import {
-  ledgerBrand,
   ledgerBuyerScale,
   ledgerInk,
-  ledgerLegacy,
-  ledgerMarketingCanvas,
   ledgerRadius,
   ledgerStatus,
   ledgerSurface,
 } from "./tokens/ledger";
-import { nativeFonts, nativeShadows } from "./native/tokens";
 
 export const colors = {
-  brand: ledgerBrand,
-  buyer: ledgerBuyerScale,
-  canvas: ledgerMarketingCanvas,
-  ink: ledgerInk,
-  navy: {
-    DEFAULT: ledgerInk[900],
-    light: ledgerLegacy.navyLight,
+  brand: {
+    50: "#f0faf9",
+    100: "#ccefee",
+    200: "#9adedd",
+    300: "#67cecc",
+    400: "#34bebb",
+    500: "#0b9e9b",
+    600: "#0b6e6b",
+    700: "#08524f",
+    800: "#063836",
+    900: "#042523",
   },
-  success: { DEFAULT: ledgerStatus.success.fg, bg: ledgerStatus.success.bg },
-  warning: { DEFAULT: ledgerStatus.warning.fg, bg: ledgerStatus.warning.bg },
-  danger: { DEFAULT: ledgerStatus.danger.fg, bg: ledgerStatus.danger.bg },
-  info: { DEFAULT: ledgerStatus.info.fg, bg: ledgerStatus.info.bg },
+  canvas: {
+    DEFAULT: "#0f1b2d",
+    mid: "#152238",
+    light: "#1a2d4a",
+  },
+  navy: {
+    DEFAULT: "#1B3A5C",
+    light: "#2563EB",
+  },
+  success: {
+    DEFAULT: "#16a34a",
+    bg: "#dcfce7",
+  },
+  warning: {
+    DEFAULT: "#d97706",
+    bg: "#fef3c7",
+  },
+  danger: {
+    DEFAULT: "#dc2626",
+    bg: "#fee2e2",
+  },
   surface: {
-    DEFAULT: ledgerSurface.paper,
-    raised: ledgerSurface.canvas,
+    DEFAULT: "#ffffff",
+    raised: "#f8fafc",
+    border: "#e2e8f0",
+    // Ledger additions (#2330).
     sunken: ledgerSurface.sunken,
-    border: ledgerSurface.line,
     borderStrong: ledgerSurface.lineStrong,
   },
+  // Ledger additions (#2330).
+  ink: ledgerInk,
+  buyer: ledgerBuyerScale,
+  info: { DEFAULT: ledgerStatus.info.fg, bg: ledgerStatus.info.bg },
 } as const;
 
 export const fontFamily = {
-  sans: [nativeFonts.ui[400], "system-ui", "sans-serif"] as string[],
-  mono: [nativeFonts.mono[400], "monospace"] as string[],
+  sans: ["Inter", "system-ui", "sans-serif"] as string[],
 } as const;
 
 export const borderRadius = {
-  sm: ledgerRadius.sm,
+  sm: 4,
+  // Ledger additions (#2330): controls 6, cards 10.
   ctl: ledgerRadius.ctl,
-  DEFAULT: ledgerRadius.default,
   card: ledgerRadius.card,
-  lg: ledgerRadius.lg,
-  xl: ledgerRadius.xl,
-  full: ledgerRadius.full,
+  DEFAULT: 8,
+  lg: 12,
+  xl: 16,
+  full: 9999,
 } as const;
 
-export const shadows = nativeShadows;
+export const shadows = {
+  card: {
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.08,
+    shadowRadius: 3,
+    elevation: 2,
+  },
+  dropdown: {
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.12,
+    shadowRadius: 6,
+    elevation: 4,
+  },
+  modal: {
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 20 },
+    shadowOpacity: 0.15,
+    shadowRadius: 25,
+    elevation: 10,
+  },
+} as const;
 
 // iOS-style token namespace for the Apple-style mobile re-skin (driver + operator).
 // Customer/buyer screens keep using `colors` above. New screens import from here.

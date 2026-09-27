@@ -26,26 +26,34 @@ import { buildNativeTheme } from "../../../packages/ui/src/native/theme";
 import { borderRadius, colors, shadows } from "../../../packages/ui/src/tokens";
 import { surfaceForSegments } from "../lib/theme-surface";
 
-describe("legacy @routeflow/ui/tokens re-pointed to Ledger", () => {
-  it("uses the Ledger brand, ink and surface values, not the pre-Ledger ones", () => {
-    expect(colors.brand[500]).toBe(ledgerBrand[500]);
-    expect(colors.brand[500]).not.toBe("#0b9e9b");
-    expect(colors.navy.DEFAULT).toBe(ledgerInk[900]);
-    expect(colors.surface.raised).toBe(ledgerSurface.canvas);
-    expect(colors.surface.border).toBe(ledgerSurface.line);
-    expect(colors.danger.DEFAULT).toBe(ledgerStatus.danger.fg);
-    expect(colors.info.bg).toBe(ledgerStatus.info.bg);
+describe("legacy @routeflow/ui/tokens: ruling (a), additive only", () => {
+  it("keeps every pre-Ledger value, so existing screens do not move", () => {
+    expect(colors.brand[500]).toBe("#0b9e9b");
+    expect(colors.brand[50]).toBe("#f0faf9");
+    expect(colors.navy.DEFAULT).toBe("#1B3A5C");
+    expect(colors.surface.raised).toBe("#f8fafc");
+    expect(colors.surface.border).toBe("#e2e8f0");
+    expect(borderRadius.DEFAULT).toBe(8);
+    expect(shadows.card).toEqual({
+      shadowColor: "#000",
+      shadowOffset: { width: 0, height: 1 },
+      shadowOpacity: 0.08,
+      shadowRadius: 3,
+      elevation: 2,
+    });
   });
 
-  it("adds the ctl and card radii and keeps the old keys", () => {
-    expect(borderRadius.ctl).toBe(6);
-    expect(borderRadius.card).toBe(10);
-    expect(borderRadius.DEFAULT).toBe(ledgerRadius.default);
-    expect(borderRadius.full).toBe(ledgerRadius.full);
+  it("adds Ledger values under new keys", () => {
+    expect(colors.ink).toBe(ledgerInk);
+    expect(colors.info.DEFAULT).toBe(ledgerStatus.info.fg);
+    expect(colors.surface.sunken).toBe(ledgerSurface.sunken);
+    expect(borderRadius.ctl).toBe(ledgerRadius.ctl);
+    expect(borderRadius.card).toBe(ledgerRadius.card);
   });
 
-  it("shadows are the Ledger shadows in RN shape", () => {
-    expect(shadows).toBe(nativeShadows);
+  it("the native kit's Ledger values differ from the legacy ones (the kit is the new look)", () => {
+    expect(ledgerBrand[500]).toBe("#14A39F");
+    expect(nativeShadows.card.shadowOpacity).toBe(0.05);
   });
 });
 

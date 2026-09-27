@@ -10,13 +10,15 @@ import { ledgerAccents, type LedgerAccent, type LedgerSurface } from "./ledger";
 const HEX6 = /^#?[0-9a-f]{6}$/i;
 
 /**
- * Mix a `#rrggbb` colour toward black (amount < 0) or white (amount > 0) by |amount|. Returns the
- * input unchanged when it is not a 6-digit hex.
+ * Mix a `#rrggbb` colour toward black (amount < 0) or white (amount > 0) by |amount|. This is
+ * web's original `shade()` verbatim (pinned byte-identical by
+ * `apps/web/components/tenant-provider-ramp.test.ts`): it returns the input unchanged only when a
+ * channel fails to parse.
  */
 export function shadeHex(hex: string, amount: number): string {
-  if (!HEX6.test(hex)) return hex;
   const clean = hex.replace("#", "");
   const ch = [clean.slice(0, 2), clean.slice(2, 4), clean.slice(4, 6)].map((h) => parseInt(h, 16));
+  if (ch.some((n) => isNaN(n))) return hex;
   const target = amount < 0 ? 0 : 255;
   const t = Math.abs(amount);
   return (
