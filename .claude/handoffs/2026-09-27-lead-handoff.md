@@ -136,3 +136,4 @@ never merge on a stale/failed check · lead never merges/flips/railway-runs; own
   `.claude/handoffs/2026-09-27-*.md` on their machines (mac-lead, landing-coordinator, macbook-landing, macbook-bookkeeping, …).
 - The follow-up tickets from today's Opus notes are being filed (R1.1b; the #2448 runbook fix goes to R1.1a, and it must land before the owner's cutover).
 - Follow-ups filed: #2476 (billing webhook ledger claim), #2477 (inline-returns parks), #2478 (Void re-import noise), #2479 (cutover runbook fixes, R1.1a, BEFORE owner cutover, assigned to MacBook landing via Mac Lead); the rest were already in #2470-#2473. #2455 added to Project #3.
+- 15:30Z: lane-lock fixes: new labels lane:returns-followups (#2143/#2144/#2477), lane:selling-restrictions (#2093), lane:credit-notes (#2404); #2452→tooling; #1470/#1924 triaged→purchasing. The code-map refresh for today's landings is owned by MacBook bookkeeping (#2385 + a rolling bookkeeping PR).
