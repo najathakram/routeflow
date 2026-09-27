@@ -5,7 +5,7 @@
  *    ONLY the send-time oldest-first sweep (`autoApplyOldestCreditsInTx`); an order's hand-picked
  *    intent still settles at send regardless of the switch (`settleOrderCreditsInTx`).
  *  - `CreditNote.autoApplyExcluded` (`setAutoApplyExcluded`) skips a note in the sweep and is
- *    audited (`AuditLog` action `CREDIT_NOTE_AUTO_APPLY_EXCLUSION`).
+ *    audited (`AuditLog` action `EXCLUDED`).
  *  - `CreditNoteApplyBlock` (`apply-block.ts`) is the shared don't-re-apply memory for a
  *    (credit note, invoice) pair: written by `unapplyFromInvoice` (UNAPPLIED) and by a dropped
  *    order intent in `syncOrderCreditSelections` (UNTICKED, one row per non-VOID invoice of the
@@ -353,7 +353,7 @@ describeDb("SA-436/SA-436a credit-note auto-apply gate, blocks and exclusions (#
     expect(Number(newerPays[0].amount)).toBe(60);
 
     const audit = await prisma.auditLog.findFirst({
-      where: { tenantId, action: "CREDIT_NOTE_AUTO_APPLY_EXCLUSION", entityId: olderId },
+      where: { tenantId, entityType: "CreditNote", action: "EXCLUDED", entityId: olderId },
     });
     expect(audit).not.toBeNull();
     expect(audit!.userId).toBe(actorId);
@@ -609,7 +609,7 @@ describeDb("SA-436/SA-436a credit-note auto-apply gate, blocks and exclusions (#
     expect(err).toBeInstanceOf(NotFoundException);
 
     const audit = await prisma.auditLog.findFirst({
-      where: { tenantId, action: "CREDIT_NOTE_AUTO_APPLY_EXCLUSION", entityId: missingId },
+      where: { tenantId, action: "EXCLUDED", entityId: missingId },
     });
     expect(audit).toBeNull();
   }, 30_000);

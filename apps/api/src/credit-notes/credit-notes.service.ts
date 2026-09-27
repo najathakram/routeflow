@@ -1620,8 +1620,8 @@ export class CreditNotesService {
         data: {
           tenantId: this.prisma.getTenantId(),
           userId: actorId,
-          action: "CREDIT_NOTE_AUTO_APPLY_EXCLUSION",
-          entityType: "creditNote",
+          action: "EXCLUDED",
+          entityType: "CreditNote", // SA-442: one credit-note audit vocabulary
           entityId: id,
           meta: { excluded },
         },
