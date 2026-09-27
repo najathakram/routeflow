@@ -599,6 +599,56 @@ describe("PlatformAdminService — audit provenance", () => {
     });
   });
 
+  it("#2223 / SA-444a: an override row's upgrade keeps basePriceSnapshot = the fee, quotes 0 with the note, books delta 0, and still moves the plan", async () => {
+    prisma.tenant.findUnique.mockResolvedValue({
+      id: TENANT_ID,
+      slug: "acme",
+      plan: "STARTER",
+      status: "ACTIVE",
+      class: "PRODUCTION",
+      deletedAt: null,
+    } as any);
+    prisma.tenant.update.mockResolvedValue({
+      id: TENANT_ID,
+      slug: "acme",
+      plan: "PROFESSIONAL",
+    } as any);
+    planCatalogService.getPublishedVersion.mockResolvedValue({
+      id: "v-9",
+      definitions: [
+        { planKey: "STARTER", monthlyPrice: 99 },
+        { planKey: "GROWTH", monthlyPrice: 249 },
+        { planKey: "SCALE", monthlyPrice: 499 },
+        { planKey: "ENTERPRISE", monthlyPrice: null },
+      ],
+    });
+    // A negotiated $80 fee on STARTER; the snapshot already holds what the tenant pays.
+    (prisma as any).tenantSubscription.findUnique.mockResolvedValue({
+      planKey: "STARTER",
+      basePriceSnapshot: 80,
+      priceOverrideMonthly: 80,
+      discount: null,
+      cycle: "MONTHLY",
+      periodStart: null,
+      periodEnd: null,
+    });
+    prorationService.proratedDiff.mockReturnValue(400); // what a catalog quote would say
+
+    const res: any = await service.updatePlan(TENANT_ID, { plan: "PROFESSIONAL" } as any, ADMIN_ID);
+
+    expect(res).toMatchObject({
+      proratedNow: 0,
+      note: "custom fee unchanged — adjust it in Pricing",
+    });
+    const write = (prisma as any).tenantSubscription.upsert.mock.calls[0][0];
+    expect(write.update).toMatchObject({ planKey: "SCALE", basePriceSnapshot: 80 }); // plan moves, price doesn't
+    expect(write.update).not.toHaveProperty("priceOverrideMonthly"); // never cleared or rewritten
+    const planChanged = billingEventService.emit.mock.calls.find(
+      (c: any[]) => c[1] === "plan.changed",
+    );
+    expect(planChanged?.[3]?.amountDelta).toBe(0);
+  });
+
   it("logs TENANT_PLAN_CHANGED with the previous and new plan in meta, writes planKey/planVersionId consistent with subscribe(), and invalidates entitlements", async () => {
     prisma.tenant.findUnique.mockResolvedValue({
       id: TENANT_ID,
