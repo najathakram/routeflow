@@ -246,3 +246,14 @@ export function isOverdue(
 export function overdueCutoff(now: Date = new Date(), timeZone?: string | null): Date {
   return startOfCalendarDay(now, timeZone);
 }
+
+/**
+ * Payment-term arithmetic on a calendar date, in UTC. `setDate`/`getDate` read LOCAL
+ * components, so on a non-UTC host they shift a UTC-midnight instant by the DST delta
+ * and can land the due date on the previous calendar day.
+ */
+export function addCalendarDays(date: Date, days: number): Date {
+  const out = new Date(date);
+  out.setUTCDate(out.getUTCDate() + days);
+  return out;
+}
