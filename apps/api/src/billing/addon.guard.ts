@@ -11,6 +11,7 @@ import { EntitlementsService } from "./entitlements.service";
 import { FeatureOverrideService } from "./feature-override.service";
 import { REQUIRE_ADDON_KEY } from "./require-addon.decorator";
 import { addonGateState } from "./addon-gate-registry";
+import { API_ERROR_CODES } from "../common/api-error-codes";
 
 /**
  * Addon keys that are internal platform-admin switches rather than purchasable add-ons.
@@ -22,7 +23,7 @@ import { addonGateState } from "./addon-gate-registry";
 const INTERNAL_ADDON_KEYS = new Set(["developer_mode"]);
 
 /** Stable machine-readable code for an add-on denial — clients branch on this, never on the text. */
-export const ADDON_GATE_CODE = "ADDON_GATE";
+export const ADDON_GATE_CODE = API_ERROR_CODES.ADDON_GATE;
 
 /**
  * Enforces @RequireAddon(key) through the gate registry (addon-gate-registry.ts). Guard order matters:

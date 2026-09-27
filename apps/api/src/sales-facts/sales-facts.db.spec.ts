@@ -189,7 +189,7 @@ describeDb("sales-facts — real Postgres (#2118, plan §E)", () => {
         ...(opts.createdAt ? { createdAt: opts.createdAt } : {}),
       },
     });
-    const items = [];
+    const items: Awaited<ReturnType<typeof prisma.invoiceItem.create>>[] = [];
     for (const [i, l] of opts.lines.entries()) {
       // eslint-disable-next-line no-await-in-loop
       const item = await prisma.invoiceItem.create({
