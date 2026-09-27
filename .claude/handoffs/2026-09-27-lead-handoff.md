@@ -112,3 +112,18 @@ never merge on a stale/failed check · lead never merges/flips/railway-runs; own
 3. Get Remote Control on; message Mac Lead + coordinator: land §3 queue in order #2451 → #2465 (then #2442 v2 PR) → #2467 → #2464 (then #2468) → #2433 → #2419 → #2448 → docs.
 4. Get SA ruling on #2458; tier-2 PASS for docs #2244/#2408/#2412.
 5. Resume PC lanes from `local-assets/handoff/2026-09-27/lanes/*.md`, one verify at a time.
+
+## 9. UPDATE 14:50Z (supersedes §0/§3 where they differ)
+- master `886fe727`, PRIVATE. Landed in the window that closed 14:19Z: #2451 049ace15 · #2448 80093f83 · #2465 214802bb ·
+  #2464 e3f88cc4 · #2467 4f88f96f · #2469 886fe727 (plus #2445, #2459, #2462 earlier). post-deploy-check passed.
+- Owner at ~14:35Z: "you can make the repo public and do the landings", so a NEW window is authorized. The Mac landing
+  coordinator opens it when watchdog 67992 exits (~14:40Z), with a fresh 180 min.
+  Queue: #2433 → #2419 (if F2/CI OK) → #2412 → #2408 → #2458 @29ca0cd2 → #2460 (cherry-picked after #2458) → #2475 @cd274ec0 → PC PRs.
+- Lead verdicts posted on #938: #2458 PASS (condition met; #2460 must follow immediately) · #2475 PASS (CI owed) ·
+  #2474 PASS, HELD for the migrations in strict order #2423 → #2425 → #2309A → #2474 (20260927120000) · docs #2412/#2408 PASS ·
+  #2244 folded into #2385 (lessons conflict) · #2385 scope OK, rebuild after #2412+#2408 (B870 collision).
+- Safe point lifted ONLY for window work: the coordinator, Lane B (#2460), bookkeeping (#2385), and PC pushes one verify at a time
+  (U-po win32 fix has the slot; then #2241, #2330 N-kit 852ff243, #2135 salvage 9e8b471f5, #2438 S-order c820fae1, #2240 Sales-facts f3fcc84b).
+- Every PC session now has Remote Control ON and a lane handoff in `local-assets/handoff/2026-09-27/lanes/`. Mac lanes' handoffs are in
+  `.claude/handoffs/2026-09-27-*.md` on their machines (mac-lead, landing-coordinator, macbook-landing, macbook-bookkeeping, …).
+- The follow-up tickets from today's Opus notes are being filed (R1.1b; the #2448 runbook fix goes to R1.1a, and it must land before the owner's cutover).
