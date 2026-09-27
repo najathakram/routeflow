@@ -268,6 +268,9 @@ describe("BillingCronService", () => {
           downgradeEffectiveAt: new Date(Date.now() - 86400000),
           retainedUserIds: [],
           priceOverrideMonthly: 150,
+          // #2460: a consistent override row — its snapshot is the fee it pays (SA-444a), so the
+          // ledger (new − stored snapshot, SA-464 (2)) books Δ0.
+          basePriceSnapshot: 150,
         },
       ],
     });
@@ -530,6 +533,7 @@ describe("BillingCronService", () => {
           planVersionId: "v7",
           downgradeToPlanKey: "STARTER",
           retainedUserIds: ["u1"],
+          basePriceSnapshot: 349, // #2460: a consistent row carries its snapshot (the ledger nets against it, SA-464).
         },
       ],
       activeTeam: 5, // over the STARTER cap of 1
@@ -747,6 +751,7 @@ describe("BillingCronService", () => {
           planVersionId: "v11",
           downgradeToPlanKey: "LITE",
           retainedUserIds: [],
+          basePriceSnapshot: 249, // #2460: a consistent row carries its snapshot (the ledger nets against it, SA-464).
         },
       ],
     });
