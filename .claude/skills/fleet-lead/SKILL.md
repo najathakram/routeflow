@@ -55,10 +55,10 @@ itself.** When you catch one, write the guard, not the apology.
 
 ## 3. Gates (the merge contract)
 
-| Tier | Applies to | Gate |
-| --- | --- | --- |
-| 1 | pricing, regulated ledger, invoice/order money, migrations | **two independent PASSes posted on the board (#938) at the exact merging sha** + real green CI |
-| 2 | UI, docs, tests, tooling | real green CI + one posted PASS at the sha (+ Playwright 1440/768/390 for any UI, from one host, OS/Chromium recorded) |
+| Tier | Applies to                                                 | Gate                                                                                                                   |
+| ---- | ---------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| 1    | pricing, regulated ledger, invoice/order money, migrations | **two independent PASSes posted on the board (#938) at the exact merging sha** + real green CI                         |
+| 2    | UI, docs, tests, tooling                                   | real green CI + one posted PASS at the sha (+ Playwright 1440/768/390 for any UI, from one host, OS/Chromium recorded) |
 
 - The coordinator resolves every sha against origin before merging (`merge-base --is-ancestor`);
   tree-identity is the only exception, and only when tree hashes match.
