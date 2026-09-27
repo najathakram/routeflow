@@ -72,6 +72,7 @@ import {
 import { FeatureConfigService } from "../billing/feature-config.service";
 import { ROUTES_DISPATCH_KEY, assertRouteKindDispatchAllowed } from "./route-dispatch-mode";
 import { observeRunCredit } from "./run-credit-observation";
+import { RouteRealtime } from "./route-realtime";
 import {
   reconcileDeliveredStopOrders,
   resolvePostReconcileOrderTotals,
@@ -110,6 +111,11 @@ export class RoutesService {
     private readonly storage: StorageService,
     private readonly featureConfig: FeatureConfigService,
   ) {}
+
+  /** #2095: post-commit realtime announcements (never throws). A getter, not a field initializer. */
+  private get live() {
+    return new RouteRealtime(this.prisma, this.gateway, this.logger);
+  }
 
   // ── Route Templates ────────────────────────────────────────────────────
 
@@ -601,6 +607,7 @@ export class RoutesService {
         .forTenant()
         .route.update({ where: { id: run.routeId }, data: { plannedPolyline: null } }),
     ]);
+    await this.live.runProgress(runId);
     return { success: true };
   }
 
@@ -1014,6 +1021,7 @@ export class RoutesService {
         `applyStopRegulatedFlags failed for run ${run.id}: ${e instanceof Error ? e.message : e}`,
       ),
     );
+    await this.live.runProgress(run.id);
 
     // RF-015: notify the assigned driver via WebSocket + push so the run
     // appears on their device immediately after dispatch (no pull-to-refresh needed).
@@ -1551,6 +1559,7 @@ export class RoutesService {
         updatedAt: new Date().toISOString(),
       });
     }
+    await this.live.runProgress(id);
 
     return updated;
   }
@@ -1963,7 +1972,11 @@ export class RoutesService {
     if (dto.driverNote !== undefined) updates.driverNote = dto.driverNote;
     if (dto.status === "IN_PROGRESS" && !stop.arrivedAt) updates.arrivedAt = new Date();
 
-    return this.prisma.forTenant().routeRunStop.update({ where: { id: stopId }, data: updates });
+    const updated = await this.prisma
+      .forTenant()
+      .routeRunStop.update({ where: { id: stopId }, data: updates });
+    await this.live.runProgress(runId);
+    return updated;
   }
 
   // ── RF-019: Idempotency helpers ───────────────────────────────────────────
@@ -2408,22 +2421,8 @@ export class RoutesService {
         .catch(() => {});
     }
 
-    if (autoCompleted) {
-      const completed = await this.prisma.forTenant().routeRun.findUnique({
-        where: { id: runId },
-        include: {
-          driver: { select: { id: true, contactName: true, user: { select: { username: true } } } },
-        },
-      });
-      if (completed?.driver) {
-        this.gateway.emitDriverStatusUpdated(this.prisma.getTenantId(), {
-          driverId: completed.driver.id,
-          driverName: completed.driver.contactName ?? completed.driver.user?.username ?? "Driver",
-          status: RouteRunStatus.COMPLETED,
-          updatedAt: new Date().toISOString(),
-        });
-      }
-    }
+    // #2095: post-commit order/stop/driver/progress events — see route-realtime.ts.
+    await this.live.stopCompleted(runId, stop, autoCompleted);
 
     const result = await this.prisma
       .forTenant()
@@ -2711,22 +2710,8 @@ export class RoutesService {
         .catch(() => {});
     }
 
-    if (autoCompleted) {
-      const completed = await this.prisma.forTenant().routeRun.findUnique({
-        where: { id: runId },
-        include: {
-          driver: { select: { id: true, contactName: true, user: { select: { username: true } } } },
-        },
-      });
-      if (completed?.driver) {
-        this.gateway.emitDriverStatusUpdated(this.prisma.getTenantId(), {
-          driverId: completed.driver.id,
-          driverName: completed.driver.contactName ?? completed.driver.user?.username ?? "Driver",
-          status: RouteRunStatus.COMPLETED,
-          updatedAt: new Date().toISOString(),
-        });
-      }
-    }
+    // #2095: post-commit order/stop/driver/progress events — see route-realtime.ts.
+    await this.live.stopCompleted(runId, stop, autoCompleted);
 
     const result = await this.prisma
       .forTenant()
@@ -3058,6 +3043,7 @@ export class RoutesService {
       }
     }
 
+    const reopened: typeof stop.orders = [];
     await this.prisma.tenantTransaction(async (tx) => {
       // 0. B306: a zero-payable-invoice completion books the WHOLE at-door
       // amount as an AdvancePayment with no InvoicePayment row, so the
@@ -3093,6 +3079,7 @@ export class RoutesService {
         });
         if (order.status === "DELIVERED" || order.status === "OUT_FOR_DELIVERY") {
           await tx.order.update({ where: { id: order.id }, data: { status: "CONFIRMED" } });
+          reopened.push(order);
         }
         await tx.transaction.deleteMany({ where: { orderId: order.id, status: "UNPAID" } });
       }
@@ -3202,6 +3189,7 @@ export class RoutesService {
       }
     });
 
+    await this.live.stopReopened(runId, reopened);
     return { success: true, message: "Stop reopened — you can now re-submit the delivery." };
   }
 
