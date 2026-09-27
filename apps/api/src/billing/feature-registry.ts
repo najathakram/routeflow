@@ -166,6 +166,8 @@ export const FEATURE_REGISTRY: readonly FeatureDef[] = [
         "POST /regulated/filings/prepare",
         "GET /regulated/filings/:id/csv",
         "GET /regulated/filings/:id/pdf",
+        "GET /regulated/parked-reversals",
+        "POST /regulated/parked-reversals/:id/resolve",
         "ALL /tobacco/* (class-level)",
       ],
       grantPath: 'Platform Admin → Tenants → [tenant] → add-ons (addonKey "tobacco_dealer")',
@@ -279,7 +281,9 @@ export const FEATURE_REGISTRY: readonly FeatureDef[] = [
         "GET /settings/email/mailbox",
         "GET /settings/email/mailbox/google/start",
         "GET /settings/email/mailbox/microsoft/start",
+        "GET /settings/email/mailbox/confirm/:token/preview",
         "POST /settings/email/mailbox/confirm",
+        "POST /settings/email/mailbox/confirm/cancel",
         "DELETE /settings/email/mailbox",
       ],
       grantPath:

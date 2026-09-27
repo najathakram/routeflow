@@ -1,3 +1,5 @@
+import { restoredUsernameFor } from "./restore-username";
+import { resumeSchedulesOnRestore } from "../recurring-invoices/recurring-schedule";
 import {
   BadRequestException,
   ConflictException,
@@ -1287,12 +1289,12 @@ export class CustomersService {
     },
   ) {
     await this.findCustomerOrThrow(customerId);
-    if (dto.amount <= 0) throw new BadRequestException("Amount must be greater than 0");
+    if (roundMoney(dto.amount) <= 0) throw new BadRequestException("Amount must be greater than 0");
     return this.prisma.forTenant().advancePayment.create({
       data: {
         customerId,
-        amount: dto.amount,
-        balance: dto.amount, // initial balance equals amount
+        amount: roundMoney(dto.amount),
+        balance: roundMoney(dto.amount), // initial balance equals amount
         method: dto.method as any,
         reference: dto.reference,
         notes: dto.notes,
@@ -1526,7 +1528,7 @@ export class CustomersService {
       await tx.invoicePayment.create({
         data: {
           invoiceId: dto.invoiceId,
-          amount: applyAmount,
+          amount: roundMoney(applyAmount),
           method: "ADVANCE" as any,
           advancePaymentId: ap.id,
           reference: `AP-${ap.id.slice(0, 8)}`,
@@ -1535,7 +1537,7 @@ export class CustomersService {
 
       await tx.advancePayment.update({
         where: { id: ap.id },
-        data: { balance: { decrement: applyAmount } },
+        data: { balance: { decrement: roundMoney(applyAmount) } },
       });
 
       // PR-2 review (routeflow-Lead, 2026-09-16): the status recompute must stay
@@ -1929,14 +1931,15 @@ export class CustomersService {
     try {
       return await this.prisma.tenantTransaction(
         async (tx) => {
-          // Move invoices
-          await tx.invoice.updateMany({
+          // Move orders FIRST, then invoices (SA-218, house lock order: Order before Invoice).
+          // Invoices first was an Invoice → Order edge: 40P01 against any Order → Invoice writer.
+          await tx.order.updateMany({
             where: { customerId: secondaryId },
             data: { customerId: primaryId },
           });
 
-          // Move orders
-          await tx.order.updateMany({
+          // Move invoices
+          await tx.invoice.updateMany({
             where: { customerId: secondaryId },
             data: { customerId: primaryId },
           });
@@ -2133,7 +2136,12 @@ export class CustomersService {
    * cross-tenant ids (returns null → NotFound), preventing a tenant-isolation
    * oracle.
    */
-  async restoreCustomer(id: string, restoreStatus?: string, overrideUsername?: string) {
+  async restoreCustomer(
+    id: string,
+    restoreStatus?: string,
+    overrideUsername?: string,
+    actorUserId?: string,
+  ) {
     const customer = await this.prisma.forTenant().customer.findUnique({
       where: { id },
       select: {
@@ -2166,18 +2174,14 @@ export class CustomersService {
     // email always lived on Customer.email (untouched by the delete), so restoring it here
     // is correct whether or not this row was ever tombstoned; a customer created with no
     // email gets a fresh placeholder, same as create() mints for one today.
-    const tombstoneSuffix = `~removed~${id.slice(0, 8)}`;
-    const currentUsername = customer.user.username;
-    const restoredUsername =
-      overrideUsername ||
-      (currentUsername.endsWith(tombstoneSuffix)
-        ? currentUsername.slice(0, -tombstoneSuffix.length)
-        : currentUsername);
+    const restoredUsername = restoredUsernameFor(id, customer.user.username, overrideUsername);
     const restoredEmail = customer.email ?? `no-email+${crypto.randomUUID()}@placeholder.local`;
 
     try {
       await this.prisma.tenantTransaction(async (tx) => {
         await tx.customer.update({ where: { id }, data: { deletedAt: null } });
+        // F-05 (SA-290): a restore ends a pause — resume its templates from the next occurrence, not a make-up
+        await resumeSchedulesOnRestore(tx, customer, actorUserId);
 
         // F6: a live user may have since claimed this customer's real email (a fresh
         // signup, or another restore) while this one was removed. tx is already

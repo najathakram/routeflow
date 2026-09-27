@@ -21,6 +21,7 @@ import { UploadsController } from "./uploads.controller";
 import { UploadsAccessGuard } from "./uploads-access.guard";
 import { PrismaService } from "../prisma/prisma.service";
 import { signLocalUrl, verifyLocalUrlSignature, StorageService } from "../storage/storage.service";
+import { listenOnLoopback } from "../common/testing/listen-loopback";
 
 describe("Local URL signing primitives", () => {
   const SECRET = "test-secret-deadbeef";
@@ -158,7 +159,7 @@ describe("UploadsAccessGuard — end-to-end via supertest", () => {
       .compile();
 
     app = module.createNestApplication();
-    await app.init();
+    await listenOnLoopback(app);
   });
 
   afterAll(async () => {

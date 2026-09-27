@@ -18,6 +18,7 @@ import {
   type POStatus,
   type PurchaseOrder,
   type Supplier,
+  linePack,
 } from "./purchase-orders-shared";
 import { CreatePOModal } from "./PurchaseOrdersCreateModal";
 import { ReceivePOModal } from "./PurchaseOrdersReceiveModal";
@@ -87,7 +88,10 @@ function PODetailRow({
               </thead>
               <tbody className="divide-y divide-surface-border">
                 {(po.items ?? []).map((item: POItem) => {
-                  const upb = Number(catalogById.get(item.productId)?.unitsPerBox ?? 0);
+                  const upb = linePack(
+                    item,
+                    Number(catalogById.get(item.productId)?.unitsPerBox ?? 0),
+                  );
                   const isBoxed = upb > 1;
                   const ordered = Number(item.qtyOrdered ?? 0);
                   const received = Number(item.qtyReceived ?? 0);
@@ -251,14 +255,14 @@ export function PurchaseOrdersTab({
           value={dateFrom}
           onChange={(e) => setDateFrom(e.target.value)}
           placeholder="From"
-          className="rounded border border-surface-border px-3 py-1.5 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
+          className="w-36 rounded border border-surface-border px-3 py-1.5 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
         />
         <input
           type="date"
           value={dateTo}
           onChange={(e) => setDateTo(e.target.value)}
           placeholder="To"
-          className="rounded border border-surface-border px-3 py-1.5 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
+          className="w-36 rounded border border-surface-border px-3 py-1.5 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
         />
         {(statusFilter || supplierFilter || dateFrom || dateTo) && (
           <button

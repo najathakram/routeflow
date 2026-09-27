@@ -14,6 +14,7 @@ import {
   Badge,
 } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
+import { scheduleScannerRefocus } from "@/lib/refocus-scanner";
 import { useUrlSearch } from "@/lib/hooks/useUrlSearch";
 import { useUrlPage, useClampPage } from "@/lib/hooks/useUrlPage";
 import {
@@ -225,7 +226,7 @@ function CreateEstimateModal({
       );
       setProductSearch("");
       setDebouncedProductSearch("");
-      setTimeout(() => productSearchRef.current?.focus(), 50);
+      scheduleScannerRefocus(productSearchRef, 50);
       return;
     }
     const upb: number | undefined = product.unitsPerBox ? Number(product.unitsPerBox) : undefined;
@@ -258,7 +259,7 @@ function CreateEstimateModal({
       const { items: _, ...rest } = e;
       return rest;
     });
-    setTimeout(() => productSearchRef.current?.focus(), 50);
+    scheduleScannerRefocus(productSearchRef, 50);
   };
 
   // Barcode / Enter handler
@@ -824,7 +825,7 @@ export default function EstimatesPage() {
               setDateFrom(e.target.value);
               setPage(1);
             }}
-            className="h-10 rounded border border-surface-border bg-white px-2 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
+            className="h-10 w-32 rounded border border-surface-border bg-white px-2 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
             title="Issue date from"
           />
           <span className="text-navy/70">–</span>
@@ -836,7 +837,7 @@ export default function EstimatesPage() {
               setDateTo(e.target.value);
               setPage(1);
             }}
-            className="h-10 rounded border border-surface-border bg-white px-2 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
+            className="h-10 w-32 rounded border border-surface-border bg-white px-2 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
             title="Issue date to"
           />
           {(dateFrom || dateTo) && (

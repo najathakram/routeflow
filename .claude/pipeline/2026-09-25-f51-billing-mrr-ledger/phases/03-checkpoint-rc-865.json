@@ -1,0 +1,22 @@
+{
+  "task": {
+    "id": "RC-865",
+    "title": "confirm B865 cause",
+    "type": "root-cause",
+    "files": [],
+    "tests": [],
+    "dependsOn": [],
+    "risk": "HIGH",
+    "briefPath": "/Users/maznahamanullah/code/routeflow/.claude/worktrees/zealous-franklin-2c1741/.claude/pipeline/2026-09-25-f51-billing-mrr-ledger/tasks/RC-865/brief.md",
+    "rootCause": {
+      "reproduced": true,
+      "causeConfirmed": true,
+      "wrongValueObserved": "ADMIN stripe create calls: 1 | upsert.create.priceSnapshot: undefined | upsert.update.priceSnapshot: undefined | prisma models touched: [\"tenant\",\"tenantAddon\",\"tenantSubscription\"]  ||  SELF enable emits: [[\"addon.enabled\",24]] | prisma models touched: [\"tenantAddon\",\"$transaction\"]  ||  SELF disable emits (stored snapshot=10, catalog=12, qty=2): [[\"addon.disabled\",-24]]",
+      "note": "I reproduced the bug on the current tree (branch fix/b863-b866-billing-mrr-ledger) with a throwaway Jest probe. The probe lives only in the scratchpad (scratchpad/probe/rc865.spec.ts) and ran through `npx jest --roots <scratchpad>` from apps/api. I changed no repo files.\n\nAdmin path, apps/api/src/billing/addon.service.ts: I called enableAddon(\"t1\",\"msrp\",\"price_x\") with Stripe configured and stripeSubId \"sub_1\".\n- The Stripe subscription item was created (1 call), so the add-on is billed.\n- The upsert at :246-260 has priceSnapshot undefined in both create and update.\n- The only Prisma models the call touched were tenant, tenantAddon and tenantSubscription. There was no billingEvent and no $transaction.\n- The constructor takes 6 arguments (:48-55) and none of them is a BillingEventService.\n- The named cause is confirmed: no priceSnapshot, no emit, no transaction. With a null snapshot, MrrService prices the add-on at $0. That $0 is from the cause-brief (mrr.service.ts:237-239); this probe did not run MrrService.\n\nSelf-serve path, apps/api/src/billing/subscription-mutation.service.ts: I used FORECASTING, a self-service SKU, with catalog price 12 and quantity 2.\n- enableAddon emitted ADDON_ENABLED with amountDelta 24. The only models it read were tenantAddon and $transaction, so there is no tenant-status or isPayingRow check before the emit (:1259-1265). It would book for a TRIAL tenant too.\n- disableAddon on a row with stored priceSnapshot 10 booked -24, which is minus the catalog price (12×2), not -20 from the stored snapshot. This confirms :1322 prices from the catalog and :1324-1329 emits without a gate.\n- These match the test-plan wrong values [24] and -24 for T12/T13.\n\nDiscrepancy: the brief's probe `-t \"REG-ADMIN-ADDON-MRR\"` does not exist at HEAD. A grep of apps/ and packages/ found no match. The cause-brief attributes it to commit 7c3a5d61, which is not on this tree. So I could not run the named probe, and the scratch probe above stands in for it.\n\nNot verified: whether production has any admin add-on rows priced with a stripePriceId (the registry says latent). I did not run anything against a database."
+    },
+    "status": "complete",
+    "rounds": 0,
+    "clean": true
+  },
+  "progressLine": "Task RC-865: complete (review clean)"
+}

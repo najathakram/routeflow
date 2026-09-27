@@ -35,6 +35,7 @@ import {
   type BadgeVariant,
 } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
+import { scheduleScannerRefocus } from "@/lib/refocus-scanner";
 import { useUrlSearch } from "@/lib/hooks/useUrlSearch";
 import { useUrlPage, useClampPage } from "@/lib/hooks/useUrlPage";
 import {
@@ -508,7 +509,7 @@ function CreateBillModal({ isOpen, onClose }: { isOpen: boolean; onClose: () => 
       if (!product) {
         toast({ title: `Item not found: ${code.trim()}`, variant: "error" });
         setScanInput("");
-        setTimeout(() => scanInputRef.current?.focus(), 50);
+        scheduleScannerRefocus(scanInputRef, 50);
         return;
       }
       const existing = lineItemsRef.current.findIndex((li) => li.productId === product!.id);
@@ -533,7 +534,7 @@ function CreateBillModal({ isOpen, onClose }: { isOpen: boolean; onClose: () => 
         });
       }
       setScanInput("");
-      setTimeout(() => scanInputRef.current?.focus(), 50);
+      scheduleScannerRefocus(scanInputRef, 50);
     },
     [toast],
   );
@@ -1229,7 +1230,7 @@ function InventoryPurchasesTab() {
               value={markPaidDate}
               onChange={(e) => setMarkPaidDate(e.target.value)}
               title="Payment date"
-              className="h-9 rounded border border-surface-border bg-white px-2 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
+              className="h-9 w-32 rounded border border-surface-border bg-white px-2 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
             />
             <Button
               variant="danger"
@@ -1338,7 +1339,7 @@ function InventoryPurchasesTab() {
               setPage(1);
             }}
             title="Bill date from"
-            className="h-10 rounded border border-surface-border bg-white px-2 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
+            className="h-10 w-32 rounded border border-surface-border bg-white px-2 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
           />
           <span className="text-navy/70">–</span>
           <input
@@ -1350,7 +1351,7 @@ function InventoryPurchasesTab() {
               setPage(1);
             }}
             title="Bill date to"
-            className="h-10 rounded border border-surface-border bg-white px-2 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
+            className="h-10 w-32 rounded border border-surface-border bg-white px-2 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
           />
           {(dateFrom || dateTo) && (
             <button
@@ -1951,7 +1952,7 @@ function OtherExpensesTab() {
             setFrom(e.target.value);
             setPage(1);
           }}
-          className="h-9 rounded border border-surface-border bg-white px-2 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
+          className="h-9 w-32 rounded border border-surface-border bg-white px-2 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
         />
         <input
           type="date"
@@ -1960,7 +1961,7 @@ function OtherExpensesTab() {
             setTo(e.target.value);
             setPage(1);
           }}
-          className="h-9 rounded border border-surface-border bg-white px-2 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
+          className="h-9 w-32 rounded border border-surface-border bg-white px-2 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
         />
         {(categoryId || from || to) && (
           <button

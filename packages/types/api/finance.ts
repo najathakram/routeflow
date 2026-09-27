@@ -39,6 +39,15 @@ export interface CreateInvoiceItem {
   notes?: string;
 }
 
+/** An invoice PATCH line: a create line plus the stored row it edits (SA-186) and
+ *  an operator-attested pack for an unrecoverable legacy box line (SA-189). */
+export interface UpdateInvoiceItem extends CreateInvoiceItem {
+  /** Stored line id — the server matches THIS row; unknown/foreign ids are a 400. */
+  id?: string;
+  /** Integer >= 2, only from an operator who set the box/piece count explicitly. */
+  unitsPerBox?: number;
+}
+
 export interface SendInvoiceEmailResult {
   success: boolean;
   sentTo: string;

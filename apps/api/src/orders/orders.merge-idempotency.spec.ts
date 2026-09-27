@@ -1126,3 +1126,43 @@ describe("OrdersService.create — the caller's OWN row wins the replay lookup (
     expect(prisma.order.create).not.toHaveBeenCalled();
   });
 });
+
+// ─── #2094 W1 — the return is part of the cart's fingerprint ──────────────────
+
+describe("mergeRequestHash with an inlineReturn (#2094 W1)", () => {
+  const cart = { customerId: "cust-1", items: [{ productId: "p1", qty: 5 }] };
+  const ret = (over: Record<string, unknown> = {}) => ({
+    returnKey: "k1",
+    items: [{ productId: "p1", boxes: 0, pieces: 2 }],
+    ...over,
+  });
+
+  it("a cart WITHOUT a return fingerprints exactly as before (no key stored under the old hashes changes)", () => {
+    expect(mergeRequestHash({ ...cart, inlineReturn: undefined })).toBe(mergeRequestHash(cart));
+    expect(mergeRequestHash({ ...cart, inlineReturn: null })).toBe(mergeRequestHash(cart));
+  });
+
+  it("an ADDED return changes the fingerprint: a merge replay can never silently drop it", () => {
+    expect(mergeRequestHash({ ...cart, inlineReturn: ret() })).not.toBe(mergeRequestHash(cart));
+  });
+
+  it("a CHANGED return (new nonce, another quantity) changes the fingerprint", () => {
+    const base = mergeRequestHash({ ...cart, inlineReturn: ret() });
+    expect(mergeRequestHash({ ...cart, inlineReturn: ret({ returnKey: "k2" }) })).not.toBe(base);
+    expect(
+      mergeRequestHash({
+        ...cart,
+        inlineReturn: ret({ items: [{ productId: "p1", boxes: 0, pieces: 3 }] }),
+      }),
+    ).not.toBe(base);
+  });
+
+  it("the same return is stable, whatever the key order of its object", () => {
+    const a = mergeRequestHash({ ...cart, inlineReturn: ret() });
+    const b = mergeRequestHash({
+      ...cart,
+      inlineReturn: { items: [{ pieces: 2, productId: "p1", boxes: 0 }], returnKey: "k1" },
+    });
+    expect(a).toBe(b);
+  });
+});

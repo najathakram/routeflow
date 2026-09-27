@@ -41,6 +41,18 @@ interface OAuthState {
    * builds don't send it.
    */
   deviceState?: string;
+  /**
+   * B825: the browser origin the callback should redirect back to for a
+   * BROWSER-based flow (never the native `mobile` deep-link flow above) —
+   * the Expo mobile-web build's own origin, so a driver signing in from
+   * there returns to it instead of always landing on the Next web app.
+   * Already validated against the exact allow-list (AuthController's
+   * `resolveReturnOrigin`) at mint time, in `generateAuthUrl` — the HMAC over
+   * this whole payload (B349) makes it tamper-proof from here on, so nothing
+   * downstream needs to re-derive or re-check it against the allow-list;
+   * only the callback's PRE-signature-check peek does (untrusted input).
+   */
+  returnOrigin?: string;
 }
 
 export interface GoogleProfile {
@@ -58,6 +70,8 @@ export interface GoogleProfile {
   mobile?: boolean;
   /** F12-005: device-generated state nonce to echo back in the mobile deep link. */
   deviceState?: string;
+  /** B825: already-validated browser origin for a non-`mobile` (browser) flow. */
+  returnOrigin?: string;
 }
 
 interface TokenPair {
@@ -237,6 +251,9 @@ export class GoogleOAuthService {
     context?: "portal" | "staff" | "buyer-standalone",
     mobile?: boolean,
     deviceState?: string,
+    // B825: already validated by the caller (AuthController.resolveReturnOrigin)
+    // against the exact WEB_URL/MOBILE_WEB_URL allow-list — never re-derived here.
+    returnOrigin?: string,
   ): Promise<string> {
     const nonce = crypto.randomUUID();
     const stateObj: OAuthState = {
@@ -248,6 +265,7 @@ export class GoogleOAuthService {
       ...(mobile && { mobile: true }),
       // F12-005: carry the device state nonce through Google (opaque round-trip).
       ...(deviceState && { deviceState }),
+      ...(returnOrigin && { returnOrigin }),
     };
     const payloadJson = JSON.stringify(stateObj);
     const state = this.signState(payloadJson);
@@ -431,6 +449,7 @@ export class GoogleOAuthService {
       linkUserId: stateObj.linkUserId,
       mobile: stateObj.mobile,
       deviceState: stateObj.deviceState,
+      returnOrigin: stateObj.returnOrigin,
     };
   }
 

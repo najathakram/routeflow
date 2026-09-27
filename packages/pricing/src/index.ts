@@ -8,3 +8,4 @@ export * from "./po-line";
 export * from "./legacy-line-pieces";
 export * from "./regulated-unit-basis";
 export * from "./legacy-box-axis";
+export * from "./inferred-flat-rate";

@@ -40,6 +40,7 @@ import {
 } from "@routeflow/ui/web";
 import { orderLineName } from "@/lib/product-display";
 import { usePageTitle } from "@/lib/page-title-context";
+import { scheduleScannerRefocus } from "@/lib/refocus-scanner";
 import {
   useOrder,
   useUpdateOrderStatus,
@@ -78,7 +79,7 @@ import { ActionTier } from "./_components/ActionTier";
 import { parseRegulatedAuthError, type BlockedCategory } from "@/lib/api/authorizations";
 import { parseSellingRestricted } from "@/lib/api/selling-restricted";
 import { BlockedLinesDialog } from "@/components/BlockedLinesDialog";
-import type { BlockedLine } from "@routeflow/types";
+import { postDeliveryInvoicePrompt, type BlockedLine } from "@routeflow/types";
 import { CreditLimitGuardDialog } from "@/components/CreditLimitGuardDialog";
 import { parseCreditLimitError, type CreditLimitInfo } from "@/lib/api/credit-limit";
 import { useProducts } from "@/lib/api/products";
@@ -115,6 +116,13 @@ interface InvoiceModalData {
   customerPhone?: string | null;
   customerMobile?: string | null;
   customerEmail?: string | null;
+  /**
+   * #2089: true when `postDeliveryInvoicePrompt` returned "issue-and-send" — this
+   * is still a DRAFT, and `useSendInvoice`/`useSendInvoiceEmail` issue it
+   * (DRAFT → SENT) in the same call. The modal says so instead of "Mark as Sent",
+   * which would misleadingly imply it was already issued.
+   */
+  issuePrompt?: boolean;
 }
 
 function SendInvoiceModal({ data, onClose }: { data: InvoiceModalData; onClose: () => void }) {
@@ -218,7 +226,9 @@ function SendInvoiceModal({ data, onClose }: { data: InvoiceModalData; onClose: 
         {/* Header */}
         <div className="flex items-start justify-between border-b border-surface-border px-5 py-4">
           <div>
-            <h2 className="text-base font-semibold text-navy">Invoice Ready</h2>
+            <h2 className="text-base font-semibold text-navy">
+              {data.issuePrompt ? "Issue & Send Invoice" : "Invoice Ready"}
+            </h2>
             <p className="mt-0.5 text-sm text-navy/70">
               {data.invoiceNumber} · {totalFmt} · {data.customerName}
             </p>
@@ -253,8 +263,14 @@ function SendInvoiceModal({ data, onClose }: { data: InvoiceModalData; onClose: 
                 )}
               </div>
               <div>
-                <p className="text-sm font-medium text-navy">Mark as Sent</p>
-                <p className="text-xs text-navy/70">Record invoice as sent to customer</p>
+                <p className="text-sm font-medium text-navy">
+                  {data.issuePrompt ? "Issue & Mark as Sent" : "Mark as Sent"}
+                </p>
+                <p className="text-xs text-navy/70">
+                  {data.issuePrompt
+                    ? "Issues the draft invoice and records it sent to customer"
+                    : "Record invoice as sent to customer"}
+                </p>
               </div>
             </button>
           )}
@@ -1307,9 +1323,9 @@ export function EditableLineItems({
     }
     setAddSearch("");
     setAddOpen(false);
-    // Refocus for next scan — use two timeouts: first after state settles, second as fallback
-    setTimeout(() => addInputRef.current?.focus(), 80);
-    setTimeout(() => addInputRef.current?.focus(), 200);
+    // Refocus for next scan — two tries: first after state settles, second as fallback. Each
+    // is guarded on its own (B744): never taken from a note or qty field the operator is in.
+    scheduleScannerRefocus(addInputRef, [80, 200]);
   }
 
   async function handleScanEnter() {
@@ -1329,7 +1345,7 @@ export function EditableLineItems({
           variant: "error",
           title: `${result.product?.name || "Item"} is archived — reactivate to sell`,
         });
-        setTimeout(() => addInputRef.current?.select(), 50);
+        scheduleScannerRefocus(addInputRef, 50, { select: true });
         return;
       }
       if (!result.notFound && result.product) {
@@ -1339,7 +1355,7 @@ export function EditableLineItems({
           // next wedge scan (which types) overwrites it instead of appending:
           // the operator can pick a row OR just scan the next label.
           setAddOpen(true);
-          setTimeout(() => addInputRef.current?.select(), 50);
+          scheduleScannerRefocus(addInputRef, 50, { select: true });
           return;
         }
         addProduct(result.product);
@@ -1351,7 +1367,7 @@ export function EditableLineItems({
     } catch {
       // Network / 5xx: keep the code selected for an easy rescan; don't treat
       // a transient failure as "product doesn't exist".
-      setTimeout(() => addInputRef.current?.select(), 50);
+      scheduleScannerRefocus(addInputRef, 50, { select: true });
     } finally {
       setAddLoading(false);
     }
@@ -2364,6 +2380,24 @@ export default function OrderDetailPage() {
         onError: guardError(() => handleDeliver()),
         onSuccess: () => {
           setLocalStatus("DELIVERED");
+          // #2089 (owner ruling): "automatically open the invoice, then ask if you
+          // want to send it" — offline is checked FIRST and unconditionally
+          // (postDeliveryInvoicePrompt's own contract), before ever attempting the
+          // network call below, since a dropped connection right after delivery
+          // must read as "try again once synced," never as "no invoice."
+          if (
+            postDeliveryInvoicePrompt({
+              invoice: undefined,
+              online: typeof navigator === "undefined" ? true : navigator.onLine,
+            }) === "offline-later"
+          ) {
+            toast({
+              title: "Order delivered",
+              description: "The invoice will be ready to send once you're back online.",
+              variant: "warning",
+            });
+            return;
+          }
           // Create the invoice (idempotent — returns existing if already there)
           // then show the send-invoice prompt.
           const invoiceNow = () =>
@@ -2372,7 +2406,14 @@ export default function OrderDetailPage() {
                 // W4: a mixed regulated order returns sibling invoices; prompt to send
                 // the primary (standard/first) one — the rest show on the order detail.
                 const invoice = Array.isArray(invoices) ? invoices[0] : invoices;
-                if (!invoice) return;
+                // #2089: same shared decision — a DRAFT invoice still gets the prompt
+                // (sendEmail issues DRAFT → SENT atomically on send, so "issue and
+                // send" is one action, not two), only VOID/no-invoice skips silently.
+                const outcome = postDeliveryInvoicePrompt({
+                  invoice: invoice ? { status: invoice.status } : null,
+                  online: true,
+                });
+                if (outcome === "skip" || outcome === "offline-later") return;
                 setInvoiceModal({
                   invoiceId: invoice.id,
                   invoiceNumber: invoice.invoiceNumber,
@@ -2385,6 +2426,7 @@ export default function OrderDetailPage() {
                   customerEmail: isInternalEmail(order.customer?.email)
                     ? undefined
                     : order.customer?.email,
+                  issuePrompt: outcome === "issue-and-send",
                 });
               },
               onError: (err: unknown) => {

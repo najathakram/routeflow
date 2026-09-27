@@ -127,7 +127,6 @@ describe("RoutesService — F11 run-terminal release (REG-B129 / REG-B211)", () 
       | "emitStopCompleted"
       | "emitOrderCreated"
       | "emitOrderStatusChanged"
-      | "emitLowStock"
       | "emitToDriver"
       | "emitDriverStatusUpdated"
     >
@@ -152,7 +151,7 @@ describe("RoutesService — F11 run-terminal release (REG-B129 / REG-B211)", () 
       routeRunStop: {
         ...prisma.routeRunStop,
         findMany: jest.fn(),
-        update: jest.fn().mockResolvedValue({}),
+        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
       },
       order: {
         ...prisma.order,
@@ -190,7 +189,6 @@ describe("RoutesService — F11 run-terminal release (REG-B129 / REG-B211)", () 
       emitStopCompleted: jest.fn(),
       emitOrderCreated: jest.fn(),
       emitOrderStatusChanged: jest.fn(),
-      emitLowStock: jest.fn(),
       emitToDriver: jest.fn(),
       emitDriverStatusUpdated: jest.fn(),
     };

@@ -57,6 +57,10 @@ function make(
   const tx = {
     tenant: {
       updateMany: jest.fn().mockResolvedValue({ count: overrides.transitionCount ?? 1 }),
+      // SA-140: transitionAndEmit reads deletedAt/class post-CAS for emitPayingDelta's
+      // isPayingRow gate — every existing test's tenant is PRODUCTION/non-deleted by default,
+      // preserving current behavior exactly.
+      findUniqueOrThrow: jest.fn().mockResolvedValue({ deletedAt: null, class: "PRODUCTION" }),
     },
     tenantAddon: {
       findMany: jest.fn().mockResolvedValue(overrides.addons ?? []),
@@ -1387,6 +1391,9 @@ describe("BillingService.syncStripeSubscriptionPrice", () => {
       basePriceSnapshot: 249,
       stripeSubId: "sub_1",
       billingInterval: "month",
+      // SA-140: reconcilePriceLedger's own internal findUnique (same mock — this fixture backs
+      // both) now selects the tenant relation for its isPayingRow gate.
+      tenant: { status: "ACTIVE", deletedAt: null, class: "PRODUCTION" },
     });
     stripe.getSubscription.mockResolvedValue({
       status: "active",
@@ -1411,6 +1418,50 @@ describe("BillingService.syncStripeSubscriptionPrice", () => {
     const call = events.emit.mock.calls.find((c: any[]) => c[1] === BILLING_EVENTS.PLAN_CHANGED);
     expect(call).toBeDefined();
     expect(call[3]?.amountDelta).toBe(-99); // 150 − 249
+  });
+
+  it("SA-140 item 1: a suspended PRODUCTION tenant's price still moves the snapshot but books NO ledger event (gate the emit, not the snapshot)", async () => {
+    prisma.tenantSubscription.findUnique.mockResolvedValue({
+      tenantId: "t1",
+      planKey: "SCALE",
+      basePriceSnapshot: 499,
+      stripeSubId: "sub_1",
+      billingInterval: "month",
+      tenant: { status: "SUSPENDED", deletedAt: null, class: "PRODUCTION" },
+    });
+    pricing.resolveTenantPricing.mockResolvedValue({
+      planKey: "SCALE",
+      planName: "Scale",
+      monthly: 599,
+      annual: 5990,
+      source: "override",
+      currency: "usd",
+    });
+    stripe.getSubscription.mockResolvedValue({
+      status: "active",
+      items: {
+        data: [{ id: "si_1", price: { recurring: { interval: "month" }, product: "prod_1" } }],
+      },
+    });
+    pricing.checkoutPriceData.mockResolvedValue({
+      currency: "usd",
+      product_data: { name: "RouteFlow Scale — monthly" },
+      unit_amount: 59900,
+      recurring: { interval: "month" },
+    });
+
+    await service.syncStripeSubscriptionPrice("t1");
+
+    // The snapshot always stays current — so a later reactivation books the CORRECT (new)
+    // price, not a stale one.
+    expect(prisma.tenantSubscription.update).toHaveBeenCalledWith(
+      expect.objectContaining({ data: { basePriceSnapshot: 599 } }),
+    );
+    // But no ledger event — `mrr` never counted this tenant while suspended, and a delta here
+    // would drift `ledgerMrr` above `mrr` (the exact bug this item fixes).
+    expect(
+      events.emit.mock.calls.find((c: any[]) => c[1] === BILLING_EVENTS.PLAN_CHANGED),
+    ).toBeUndefined();
   });
 
   it("does not touch the ledger for a non-paying (planKey null) subscription", async () => {

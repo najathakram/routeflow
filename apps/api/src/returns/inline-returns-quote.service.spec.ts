@@ -544,6 +544,85 @@ describe("InlineReturnsQuoteService — Opus fix-round BLOCKER: the matching/all
     expect(result.total).toBe(12.0);
   });
 
+  describe("SA-159: an unclassifiable prior STANDARD return blocks only its own product", () => {
+    const seed = () => {
+      (db.customer.findFirst as jest.Mock).mockResolvedValue({
+        id: "cust-1",
+        pricingTier: 1,
+        isTaxExempt: false,
+      });
+      (db.customerPrice.findMany as jest.Mock).mockResolvedValue([]);
+      const prod = (id: string) => ({
+        id,
+        pricePerUnit: 12,
+        priceTier2: 12,
+        priceTier3: 12,
+        priceTier4: 12,
+        priceTier5: 12,
+      });
+      (db.product.findMany as jest.Mock).mockResolvedValue([prod("prod-1"), prod("prod-2")]);
+      const invItem = (id: string, productId: string) => ({
+        id,
+        orderItemId: `oi-${productId}`,
+        productId,
+        qty: 1,
+        unitPrice: 12,
+        subtotal: 12,
+        boxes: null,
+        pieces: null,
+        unitsPerBox: 12,
+        promoFreeUnits: null,
+        taxRate: 0,
+        categoryTaxAmount: 0,
+      });
+      (db.invoice.findMany as jest.Mock).mockResolvedValue([
+        {
+          orderId: "order-1",
+          subtotal: 24,
+          discount: 0,
+          taxAmount: 0,
+          items: [invItem("ii-1", "prod-1"), invItem("ii-2", "prod-2")],
+        },
+      ]);
+      // prod-1: stored pack, no split, no invoice split => unknown basis; prod-2: a split line => factor 1.
+      (db.orderItem.findMany as jest.Mock).mockResolvedValue([
+        {
+          id: "oi-prod-1",
+          productId: "prod-1",
+          qty: 1,
+          unitsPerBox: 12,
+          boxes: null,
+          pieces: null,
+        },
+        { id: "oi-prod-2", productId: "prod-2", qty: 12, unitsPerBox: 12, boxes: 1, pieces: 0 },
+      ]);
+      (db.invoiceItem.findMany as jest.Mock).mockResolvedValue([]);
+      (db.return.findMany as jest.Mock).mockResolvedValue([
+        { items: [{ productId: "prod-1", qty: 1 }] },
+      ]);
+      (db.returnItem.findMany as jest.Mock).mockResolvedValue([]);
+    };
+
+    it("quotes the clean product on the same source order", async () => {
+      seed();
+      const result = await service.quote(
+        { customerId: "cust-1", items: [{ productId: "prod-2", qty: 1, boxes: 1, pieces: 0 }] },
+        OPERATOR,
+      );
+      expect(result.total).toBe(12.0);
+    });
+
+    it("refuses the unclassifiable product's own line with the reason", async () => {
+      seed();
+      await expect(
+        service.quote(
+          { customerId: "cust-1", items: [{ productId: "prod-1", qty: 1, boxes: 1, pieces: 0 }] },
+          OPERATOR,
+        ),
+      ).rejects.toMatchObject({ response: { code: "INLINE_RETURN_PRIOR_BASIS_UNKNOWN" } });
+    });
+  });
+
   it("SA-101(2): an unknown pack (no candidate lines, no product.unitsPerBox) refuses a BOXED request with a 409 — never silently credits $0", async () => {
     (db.customer.findFirst as jest.Mock).mockResolvedValue({
       id: "cust-1",

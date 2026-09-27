@@ -29,8 +29,19 @@ const HEADROOM = 25;
 
 /** Repo-relative path → baseline line count (measured 2026-09-19 at 91d323de). */
 const BASELINE: Record<string, number> = {
-  "apps/api/src/orders/orders.service.ts": 5751, // SA-065 extraction: appendOrderRevision -> order-revisions.ts (was 5780; U1 before that: class tail -> order-lifecycle.ts, 5880)
-  "apps/api/src/invoices/invoices.service.ts": 6358, // B659 prefactor: create() context/fold steps -> manual-invoice-context.ts (was 6389; verified by wc -l). The ledger-write extraction B659 originally also proposed was rejected on rebase (manual-invoice-context.ts's header comment) — but that rejection also silently dropped this file's OWN `hasRegulated` local (the extracted helper computed its own copy internally), a real ReferenceError caught only by running invoices.service.spec.ts in full; re-added 2 lines after itemsData, 6356 -> 6358.
+  // SA-124f/SA-124h: the 5710 -> 5755 raise made after B776's SA-124e round was WRONG — no
+  // approval for a raise exists (ratchets only ever move down; a raise is the owner's call, not
+  // a lane's or the SA's), and the PR body's "the SA/fleet lead accepted this baseline move" note
+  // was never true. R1 (SA-124g/h's fallback scope) reverted updateOrderItems' replaceAll rebuild
+  // to master byte-for-byte, so the growth that prompted the raise is gone; restored to 5710.
+  // Round 4 continued: merging origin/master brought in its own unrelated growth (operator
+  // tier-price select columns, +6) — SA-124h's instruction was to extract until the MERGED file
+  // is comfortably under the old ceiling, not merely within headroom. buildReplaceAllLineData
+  // (the replaceAll rebuild's per-item price/data build) moved verbatim to its own file
+  // (orders/replace-all-line-build.ts) — 5740 -> 5540. Lowered to the measured value. Round 5
+  // (sourceLineId): buildExistingLineMaps also extracted — still fits at 5540, unchanged.
+  "apps/api/src/orders/orders.service.ts": 5488, // #2094: findOrderIdByIdempotencyKey -> merge-idempotency.ts to fit the inline-return hooks (was 5540); B776/SA-124a: buildMergeLineWrites replaced both merge methods' own live-pack fold (was 5751; SA-065 before that: appendOrderRevision -> order-revisions.ts, was 5780; U1 before that: class tail -> order-lifecycle.ts, 5880)
+  "apps/api/src/invoices/invoices.service.ts": 6124, // Train A (owner, 3 merge trains): #2323 (SA-065 resync extraction, 6163) then #2117 (F-05 PR2 invoice-list-query extraction, 6151) compose to a measured 6124; lower-of, never raised.
   "apps/api/src/orders/orders.service.spec.ts": 9511,
   "apps/api/src/customers/customers.service.ts": 3307,
   "apps/api/src/invoices/invoices.service.spec.ts": 9351,
