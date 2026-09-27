@@ -843,6 +843,9 @@ export class SubscriptionMutationService {
           tenantId,
           planKey: sub.planKey,
           priceOverrideMonthly: sub.priceOverrideMonthly ?? null,
+          // #2470 Opus fold (1): and the snapshot it read — a Pricing change commits the fee, then
+          // reconcile's snapshot; an upgrade reading between them must lose, never double-book.
+          basePriceSnapshot: sub.basePriceSnapshot ?? null,
         },
         data: {
           planKey,
@@ -860,7 +863,8 @@ export class SubscriptionMutationService {
         },
       });
       if (applied.count === 0) {
-        throw new BadRequestException("Plan changed concurrently — please retry.");
+        // #2470: a lost race is a concurrency conflict (409), like the other plan paths.
+        throw new ConflictException("Plan changed concurrently — please retry.");
       }
       await tx.tenant.update({
         where: { id: tenantId },

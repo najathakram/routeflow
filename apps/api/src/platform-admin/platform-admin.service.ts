@@ -842,6 +842,23 @@ export class PlatformAdminService {
 
     const tenant = await this.prisma.$transaction(async (tx) => {
       await this.planTransition.onPlanChange(tx, transition, preparedTransition);
+      // Hook FIRST (house lock order: snapshot/config rows before tenant rows, as upgrade() does).
+      // #2470 Opus fold (2): priorSub (and the snapshot/fee derived from it) was read before this tx.
+      // Take the Tenant row lock updateTenantPriceOverride takes, and re-read under it: a Pricing
+      // change committed since the pre-read is a 409, never a stale fee/snapshot written back.
+      await tx.$queryRaw`SELECT id FROM "Tenant" WHERE id = ${id} FOR UPDATE`;
+      const lockedSub = await tx.tenantSubscription.findUnique({
+        where: { tenantId: id },
+        select: { priceOverrideMonthly: true, basePriceSnapshot: true },
+      });
+      const same = (x: unknown, y: unknown) =>
+        (x == null ? null : Number(x)) === (y == null ? null : Number(y));
+      if (
+        !same(lockedSub?.priceOverrideMonthly, priorSub?.priceOverrideMonthly) ||
+        !same(lockedSub?.basePriceSnapshot, priorSub?.basePriceSnapshot)
+      ) {
+        throw new ConflictException("Pricing changed concurrently — please retry.");
+      }
       const updated = await tx.tenant.update({
         where: { id },
         data: { plan: dto.plan, planVersionId: version.id },

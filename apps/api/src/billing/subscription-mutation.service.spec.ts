@@ -985,7 +985,7 @@ describe("SubscriptionMutationService.upgrade", () => {
   it("A2b: a lost optimistic-guard race still rejects (the hook's writes roll back with the tx)", async () => {
     const { svc, tx, planTransition } = make({ sub: { planKey: "STARTER", cycle: "MONTHLY" } });
     tx.tenantSubscription.updateMany.mockResolvedValue({ count: 0 });
-    await expect(svc.upgrade("t1", "BUSINESS")).rejects.toBeInstanceOf(BadRequestException);
+    await expect(svc.upgrade("t1", "BUSINESS")).rejects.toBeInstanceOf(ConflictException);
     expect(planTransition.onPlanChange).toHaveBeenCalledTimes(1);
   });
 
@@ -1005,7 +1005,7 @@ describe("SubscriptionMutationService.upgrade", () => {
   it("rejects a concurrent double-upgrade (updateMany matched 0 rows)", async () => {
     const { svc, tx } = make({ sub: { planKey: "STARTER", cycle: "MONTHLY" } });
     tx.tenantSubscription.updateMany.mockResolvedValue({ count: 0 });
-    await expect(svc.upgrade("t1", "BUSINESS")).rejects.toBeInstanceOf(BadRequestException);
+    await expect(svc.upgrade("t1", "BUSINESS")).rejects.toBeInstanceOf(ConflictException);
   });
 
   it("rejects a same/lower target", async () => {
