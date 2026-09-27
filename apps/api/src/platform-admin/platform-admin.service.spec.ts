@@ -653,6 +653,74 @@ describe("PlatformAdminService — audit provenance", () => {
     expect(planChanged?.[3]?.amountDelta).toBe(0);
   });
 
+  // #2470 (Opus (5) on #2458): the admin paths an override row can take besides a ranked upgrade.
+  describe("#2470 admin updatePlan — same-rank and a free (0) override keep the fee", () => {
+    const catalog = () =>
+      planCatalogService.getPublishedVersion.mockResolvedValue({
+        id: "v-9",
+        definitions: [
+          { planKey: "STARTER", monthlyPrice: 99 },
+          { planKey: "GROWTH", monthlyPrice: 249 },
+          { planKey: "SCALE", monthlyPrice: 499 },
+        ],
+      });
+    const tenant = (plan: string) => {
+      prisma.tenant.findUnique.mockResolvedValue({
+        id: TENANT_ID,
+        slug: "acme",
+        plan,
+        status: "ACTIVE",
+        class: "PRODUCTION",
+        deletedAt: null,
+      } as any);
+      prisma.tenant.update.mockResolvedValue({ id: TENANT_ID, slug: "acme", plan } as any);
+    };
+    const sub = (planKey: string, fee: number) =>
+      (prisma as any).tenantSubscription.findUnique.mockResolvedValue({
+        planKey,
+        basePriceSnapshot: fee,
+        priceOverrideMonthly: fee,
+        discount: null,
+        cycle: "MONTHLY",
+        periodStart: null,
+        periodEnd: null,
+      });
+    const planDelta = () =>
+      billingEventService.emit.mock.calls.find((c: any[]) => c[1] === "plan.changed")?.[3]
+        ?.amountDelta;
+
+    it("same-rank change (PROFESSIONAL → SCALE) on an override row: snapshot = the fee, Δ0, no quote", async () => {
+      catalog();
+      tenant("PROFESSIONAL");
+      sub("SCALE", 80);
+      const res: any = await service.updatePlan(TENANT_ID, { plan: "SCALE" } as any, ADMIN_ID);
+      const write = (prisma as any).tenantSubscription.upsert.mock.calls[0][0];
+      expect(write.update).toMatchObject({ planKey: "SCALE", basePriceSnapshot: 80 });
+      expect(write.update).not.toHaveProperty("priceOverrideMonthly");
+      expect(res.proratedNow ?? null).toBeNull();
+      expect(planDelta() ?? 0).toBe(0);
+    });
+
+    it("a free (override 0) row upgraded by an admin: snapshot 0, quote 0 with the note, Δ0", async () => {
+      catalog();
+      tenant("STARTER");
+      sub("STARTER", 0);
+      prorationService.proratedDiff.mockReturnValue(400);
+      const res: any = await service.updatePlan(
+        TENANT_ID,
+        { plan: "PROFESSIONAL" } as any,
+        ADMIN_ID,
+      );
+      expect(res).toMatchObject({
+        proratedNow: 0,
+        note: "custom fee unchanged — adjust it in Pricing",
+      });
+      const write = (prisma as any).tenantSubscription.upsert.mock.calls[0][0];
+      expect(write.update).toMatchObject({ planKey: "SCALE", basePriceSnapshot: 0 });
+      expect(planDelta() ?? 0).toBe(0);
+    });
+  });
+
   it("logs TENANT_PLAN_CHANGED with the previous and new plan in meta, writes planKey/planVersionId consistent with subscribe(), and invalidates entitlements", async () => {
     prisma.tenant.findUnique.mockResolvedValue({
       id: TENANT_ID,
