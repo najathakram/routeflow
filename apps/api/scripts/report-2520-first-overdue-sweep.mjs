@@ -1,8 +1,8 @@
 /**
  * READ-ONLY count for #2520: how many invoices the FIRST run of the new hourly overdue sweep
- * (OverdueSweepService, SA-495a) would flip SENT / VIEWED / PARTIAL → OVERDUE, per tenant.
+ * (OverdueSweepService, SA-495a/SA-506) would flip SENT / VIEWED → OVERDUE (never PARTIAL), per tenant.
  *
- * The sweep's rule, mirrored here: a TRIAL or ACTIVE tenant's invoice in SENT / VIEWED / PARTIAL
+ * The sweep's rule, mirrored here: a TRIAL or ACTIVE tenant's invoice in SENT / VIEWED
  * whose `dueDate` is before the START of that tenant's local today (its TenantConfig.timezone;
  * UTC when unset), i.e. `dueDate < overdueCutoff(now, tz)`. Nothing has ever run this sweep in
  * production (markOverdue was never scheduled), so the first run flips the whole backlog at once.
@@ -60,10 +60,9 @@ export function summarize(rows) {
       );
     return {
       tenant: label.get(r.tenantId),
-      invoices: r.sent + r.viewed + r.partial,
+      invoices: r.sent + r.viewed,
       sent: r.sent,
       viewed: r.viewed,
-      partial: r.partial,
       openBalance: Math.round(r.openBalance * 100) / 100,
       oldestDaysPastDue: r.oldestDaysPastDue,
     };
@@ -88,7 +87,7 @@ export function selfTest() {
   eq(cutoffFor(now, null).toISOString(), "2026-10-02T00:00:00.000Z", "utc");
   eq(cutoffFor(now, "Not/AZone").toISOString(), "2026-10-02T00:00:00.000Z", "bad zone");
   const s = summarize([
-    { tenantId: "t", sent: 2, viewed: 1, partial: 0, openBalance: 10.005, oldestDaysPastDue: 40 },
+    { tenantId: "t", sent: 2, viewed: 1, openBalance: 10.005, oldestDaysPastDue: 40 },
   ]);
   eq([s.tenants, s.invoices, s.viewed], [1, 3, 1], "summary");
   if (JSON.stringify(s).includes('"t"')) throw new Error("summary leaked a tenant id");
@@ -141,18 +140,17 @@ async function main() {
       const { rows: r } = await client.query(
         `SELECT COUNT(*) FILTER (WHERE i.status = 'SENT')::int    AS sent,
                 COUNT(*) FILTER (WHERE i.status = 'VIEWED')::int  AS viewed,
-                COUNT(*) FILTER (WHERE i.status = 'PARTIAL')::int AS partial,
                 COALESCE(SUM(i.total - COALESCE(p.paid, 0)), 0)::float AS "openBalance",
                 COALESCE(MAX(EXTRACT(DAY FROM ($3::timestamptz - i."dueDate"))), 0)::int AS "oldestDaysPastDue"
            FROM "Invoice" i
            LEFT JOIN (SELECT "invoiceId", SUM(amount) AS paid FROM "InvoicePayment"
                        WHERE status = 'PAID' GROUP BY "invoiceId") p ON p."invoiceId" = i.id
-          WHERE i."tenantId" = $1 AND i.status IN ('SENT', 'VIEWED', 'PARTIAL')
+          WHERE i."tenantId" = $1 AND i.status IN ('SENT', 'VIEWED')
             AND i."dueDate" < $2`,
         [t.id, cutoff, now],
       );
       const x = r[0];
-      if (x.sent + x.viewed + x.partial > 0) rows.push({ tenantId: t.id, slug: t.slug, ...x });
+      if (x.sent + x.viewed > 0) rows.push({ tenantId: t.id, slug: t.slug, ...x });
     }
     const report = {
       at: now.toISOString(),
@@ -170,7 +168,7 @@ async function main() {
       );
       for (const d of s.detail)
         console.log(
-          `  ${d.tenant}  ${d.invoices} (SENT ${d.sent}, VIEWED ${d.viewed}, PARTIAL ${d.partial}), open ${d.openBalance}, oldest ${d.oldestDaysPastDue} day(s) past due`,
+          `  ${d.tenant}  ${d.invoices} (SENT ${d.sent}, VIEWED ${d.viewed}), open ${d.openBalance}, oldest ${d.oldestDaysPastDue} day(s) past due`,
         );
     }
   } finally {

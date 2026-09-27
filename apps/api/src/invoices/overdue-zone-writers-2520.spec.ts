@@ -52,6 +52,7 @@ import {
   OverdueSweepService,
   overdueSweepMode,
 } from "./overdue-sweep.service";
+import { tenantTimeZone } from "../common/tenant-time-zone";
 import * as fs from "fs";
 import * as path from "path";
 
@@ -194,6 +195,11 @@ describe("#2520 — persisted OVERDUE in the tenant zone", () => {
       "t-tyo": "Asia/Tokyo",
       "t-utc": null,
     };
+    const ORIGINAL = process.env.OVERDUE_SWEEP_MODE;
+    afterEach(() => {
+      if (ORIGINAL === undefined) delete process.env.OVERDUE_SWEEP_MODE;
+      else process.env.OVERDUE_SWEEP_MODE = ORIGINAL;
+    });
 
     const sweep = () => {
       const tenantCtx = { run: jest.fn((_id: string, fn: () => unknown) => fn()) };
@@ -202,25 +208,78 @@ describe("#2520 — persisted OVERDUE in the tenant zone", () => {
         zones[args.where.tenantId] ? { timezone: zones[args.where.tenantId] } : null,
       );
       prisma.invoice.updateMany.mockResolvedValue({ count: 1 });
-      return { svc: new OverdueSweepService(prisma as any, tenantCtx as any), tenantCtx };
+      prisma.invoice.count.mockResolvedValue(2);
+      const svc = new OverdueSweepService(prisma as any, tenantCtx as any);
+      const log = jest.spyOn((svc as any).logger, "log").mockImplementation(() => undefined);
+      const warn = jest.spyOn((svc as any).logger, "warn").mockImplementation(() => undefined);
+      return { svc, tenantCtx, log, warn };
     };
-    const cutoffFor = (tenantId: string) =>
-      prisma.invoice.updateMany.mock.calls.find((c: any[]) => c[0].where.tenantId === tenantId)![0]
-        .where.dueDate.lt;
+    const cutoffFor = (fn: jest.Mock, tenantId: string) =>
+      fn.mock.calls.find((c: any[]) => c[0].where.tenantId === tenantId)![0].where.dueDate.lt;
 
-    it("sweeps every billing-live tenant with an explicit tenant filter, each in its own zone", async () => {
+    it("enforced: flips every billing-live tenant with an explicit tenant filter, each in its own zone", async () => {
+      process.env.OVERDUE_SWEEP_MODE = "enforced";
+      at(now.toISOString());
       const { svc, tenantCtx } = sweep();
-      const res = await svc.markOverdue(now);
+      await svc.runScheduled();
       expect(prisma.tenant.findMany.mock.calls[0][0].where.status.in).toEqual(["TRIAL", "ACTIVE"]);
       expect(tenantCtx.run.mock.calls.map((c: any[]) => c[0])).toEqual(["t-chi", "t-tyo", "t-utc"]);
-      expect(res).toEqual({ tenants: 3, flipped: 3, failed: 0 });
+      expect(prisma.invoice.count).not.toHaveBeenCalled();
       // An invoice due Oct 1: still grace in Chicago, overdue in Tokyo and in UTC.
       const due = new Date("2026-10-01T00:00:00.000Z");
-      expect(due < cutoffFor("t-chi")).toBe(false);
-      expect(due < cutoffFor("t-tyo")).toBe(true);
-      expect(due < cutoffFor("t-utc")).toBe(true);
+      expect(due < cutoffFor(prisma.invoice.updateMany, "t-chi")).toBe(false);
+      expect(due < cutoffFor(prisma.invoice.updateMany, "t-tyo")).toBe(true);
+      expect(due < cutoffFor(prisma.invoice.updateMany, "t-utc")).toBe(true);
+    });
+
+    it("B2: only SENT and VIEWED are ever flipped (never PARTIAL)", async () => {
+      const { svc } = sweep();
+      await svc.markOverdue(now, "enforced");
       for (const c of prisma.invoice.updateMany.mock.calls)
-        expect(c[0].where.status.in).toEqual(["SENT", "VIEWED", "PARTIAL"]);
+        expect(c[0].where.status.in).toEqual(["SENT", "VIEWED"]);
+    });
+
+    it.each([undefined, "dark"])(
+      "dark (mode %s — the default): the SAME where as a COUNT, one log line by tenant id, nothing written",
+      async (v) => {
+        if (v === undefined) delete process.env.OVERDUE_SWEEP_MODE;
+        else process.env.OVERDUE_SWEEP_MODE = v;
+        at(now.toISOString());
+        const { svc, log } = sweep();
+        await svc.runScheduled();
+        expect(prisma.invoice.updateMany).not.toHaveBeenCalled();
+        expect(prisma.invoice.count).toHaveBeenCalledTimes(3);
+        for (const c of prisma.invoice.count.mock.calls)
+          expect(c[0].where).toEqual(
+            expect.objectContaining({ status: { in: ["SENT", "VIEWED"] } }),
+          );
+        const due = new Date("2026-10-01T00:00:00.000Z");
+        expect(due < cutoffFor(prisma.invoice.count, "t-chi")).toBe(false);
+        expect(log).toHaveBeenCalledTimes(1);
+        expect(String(log.mock.calls[0][0])).toBe(
+          "markOverdue [dark]: 6 invoice(s) WOULD flip (nothing written) across 3 tenant(s), 0 failed; per tenant t-chi=2, t-tyo=2, t-utc=2",
+        );
+      },
+    );
+
+    it("off: runs NO query and logs that it is off", async () => {
+      process.env.OVERDUE_SWEEP_MODE = "off";
+      const { svc, log } = sweep();
+      await svc.runScheduled();
+      expect(prisma.tenant.findMany).not.toHaveBeenCalled();
+      expect(prisma.invoice.count).not.toHaveBeenCalled();
+      expect(prisma.invoice.updateMany).not.toHaveBeenCalled();
+      expect(String(log.mock.calls[0][0])).toMatch(/\[off\].*ran no query/);
+    });
+
+    it("an unknown value runs DARK with a warning (fail closed toward no writes)", async () => {
+      process.env.OVERDUE_SWEEP_MODE = "true";
+      const { svc, warn } = sweep();
+      await svc.runScheduled();
+      expect(warn.mock.calls[0][0]).toMatch(/OVERDUE_SWEEP_MODE="true" is not off\|dark\|enforced/);
+      expect(prisma.invoice.updateMany).not.toHaveBeenCalled();
+      expect(prisma.invoice.count).toHaveBeenCalledTimes(3);
+      expect(overdueSweepMode({ OVERDUE_SWEEP_MODE: " Enforced " }).mode).toBe("enforced");
     });
 
     it("one tenant failing never stops the others", async () => {
@@ -228,59 +287,8 @@ describe("#2520 — persisted OVERDUE in the tenant zone", () => {
       prisma.invoice.updateMany
         .mockRejectedValueOnce(new Error("boom"))
         .mockResolvedValue({ count: 2 });
-      const res = await svc.markOverdue(now);
-      expect(res).toEqual({ tenants: 3, flipped: 4, failed: 1 });
-    });
-
-    describe("ships DARK (#2556, owner policy): OVERDUE_SWEEP_MODE", () => {
-      const ORIGINAL = process.env.OVERDUE_SWEEP_MODE;
-      afterEach(() => {
-        if (ORIGINAL === undefined) delete process.env.OVERDUE_SWEEP_MODE;
-        else process.env.OVERDUE_SWEEP_MODE = ORIGINAL;
-      });
-
-      it("off is the default, and anything unrecognised is off (fail closed)", () => {
-        expect(overdueSweepMode({})).toBe("off");
-        for (const v of ["", "true", "yes", "ON!", "dryrun", "1"])
-          expect(overdueSweepMode({ OVERDUE_SWEEP_MODE: v })).toBe("off");
-        expect(overdueSweepMode({ OVERDUE_SWEEP_MODE: " On " })).toBe("on");
-        expect(overdueSweepMode({ OVERDUE_SWEEP_MODE: "dry-run" })).toBe("dry-run");
-      });
-
-      it.each([undefined, "off", "true"])(
-        "mode %s ⇒ the cron reads and writes NOTHING",
-        async (v) => {
-          if (v === undefined) delete process.env.OVERDUE_SWEEP_MODE;
-          else process.env.OVERDUE_SWEEP_MODE = v;
-          const { svc } = sweep();
-          await svc.runScheduled();
-          expect(prisma.tenant.findMany).not.toHaveBeenCalled();
-          expect(prisma.invoice.updateMany).not.toHaveBeenCalled();
-          expect(prisma.invoice.count).not.toHaveBeenCalled();
-        },
-      );
-
-      it("dry-run ⇒ counts per tenant, logs anonymous counts, and writes nothing", async () => {
-        process.env.OVERDUE_SWEEP_MODE = "dry-run";
-        const { svc } = sweep();
-        prisma.invoice.count.mockResolvedValue(4);
-        const log = jest.spyOn((svc as any).logger, "log").mockImplementation(() => undefined);
-        await svc.runScheduled();
-        expect(prisma.invoice.updateMany).not.toHaveBeenCalled();
-        expect(prisma.invoice.count).toHaveBeenCalledTimes(3);
-        const lines = log.mock.calls.map((c) => String(c[0]));
-        expect(lines).toContain("markOverdue DRY RUN: tenant #1 would flip 4");
-        expect(lines.join("\n")).toMatch(/12 invoice\(s\) would flip across 3 tenant/);
-        for (const id of Object.keys(zones)) expect(lines.join("\n")).not.toContain(id);
-      });
-
-      it("on ⇒ the per-tenant flip", async () => {
-        process.env.OVERDUE_SWEEP_MODE = "on";
-        const { svc } = sweep();
-        await svc.runScheduled();
-        expect(prisma.invoice.updateMany).toHaveBeenCalledTimes(3);
-        expect(prisma.invoice.count).not.toHaveBeenCalled();
-      });
+      const res = await svc.markOverdue(now, "enforced");
+      expect(res).toEqual({ mode: "enforced", tenants: 3, rows: 4, failed: 1 });
     });
 
     it("fails closed without a tenant id (never an unscoped sweep)", async () => {
@@ -298,6 +306,25 @@ describe("#2520 — persisted OVERDUE in the tenant zone", () => {
       const mod = fs.readFileSync(path.join(__dirname, "invoices.module.ts"), "utf8");
       expect(mod).toMatch(/OverdueSweepService/);
     });
+  });
+
+  it("B3: the zone comes from an EXPLICIT tenant id when there is no ambient tenant", async () => {
+    jest.spyOn(prisma, "getTenantId").mockReturnValue(undefined as any);
+    prisma.tenantConfig.findUnique.mockResolvedValue({ timezone: CHICAGO });
+    await expect(tenantTimeZone(prisma as any, "t-explicit")).resolves.toBe(CHICAGO);
+    expect(prisma.tenantConfig.findUnique.mock.calls[0][0].where).toEqual({
+      tenantId: "t-explicit",
+    });
+    prisma.tenantConfig.findUnique.mockClear();
+    await expect(tenantTimeZone(prisma as any)).resolves.toBeNull();
+    expect(prisma.tenantConfig.findUnique).not.toHaveBeenCalled();
+    const cn = fs.readFileSync(
+      path.join(__dirname, "..", "credit-notes/credit-notes.service.ts"),
+      "utf8",
+    );
+    expect(cn).toMatch(
+      /async settleOrderCreditsInTx\([\s\S]*?tenantTimeZone\(this\.prisma, tenantId\)/,
+    );
   });
 
   it("every persisted-status writer passes the tenant zone (the required parameter, counted)", () => {
