@@ -5384,7 +5384,8 @@ export class InvoicesService {
     return this.prisma.tenantTransaction(async (tx) => {
       // #2472 (3): (Order →) Invoice locked FIRST and re-checked there — a void since the pre-read wins.
       const locked = await lockInvoiceRow(tx, id, inv.orderId);
-      const refused = locked ? writeOffRefusal(locked.status) : "Invoice not found";
+      if (!locked) throw new NotFoundException("Invoice not found");
+      const refused = writeOffRefusal(locked.status);
       if (refused) throw new BadRequestException(refused);
       const written = await tx.invoice.update({
         where: { id },

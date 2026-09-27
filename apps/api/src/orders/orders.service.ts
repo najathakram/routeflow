@@ -2600,6 +2600,7 @@ export class OrdersService implements OnApplicationBootstrap {
                 select: { status: true },
               }))!.status;
               const cancelReturnsStock = lockedStatus !== OrderStatus.DRAFT;
+              const lockedOrder = { ...order, status: lockedStatus };
               // SA-404f F2: compare-and-set on the cancellable set the pre-check used — a retry after
               // a 40001 caused by a concurrent DELIVERED must never cancel a delivered order.
               const cancellable = Object.keys(ORDER_STATUS_TRANSITIONS).filter((k) =>
@@ -2621,10 +2622,9 @@ export class OrdersService implements OnApplicationBootstrap {
                   where: { orderId: id, status: { not: "CANCELLED" } },
                   select: STOCK_SETTLE_SELECT,
                 });
-                // Return the creation-time decrement, clamped to the undelivered
-                // remainder (settleStockForEdit with an empty final set). `order` here
-                // is the PRE-cancel record (status not yet CANCELLED in memory).
-                await this.settleStockForEdit(tx, order, activeItems, [], user, {
+                // Return the creation-time decrement, clamped to the undelivered remainder (empty final
+                // set), AS the status read under the lock (#2472: a stale DRAFT pre-read would no-op).
+                await this.settleStockForEdit(tx, lockedOrder, activeItems, [], user, {
                   notes: "CANCEL",
                 });
               }
