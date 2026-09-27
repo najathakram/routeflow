@@ -1896,6 +1896,18 @@ describe("#2440 subscription upkeep — match by subscription id, status mapping
         expect(email.send.mock.calls[0][0].html).toContain(
           'href="https://app.example.test/settings/billing"',
         );
+        // SA-450a (1): NEVER a Stripe portal URL.
+        expect(email.send.mock.calls[0][0].html).not.toContain("billing.stripe.test");
+      });
+
+      it("SA-450a (3): FRONTEND_URL unset ⇒ the plain-text fallback, and the email is still sent", async () => {
+        delete process.env.FRONTEND_URL;
+        const { svc, stripe, email } = make({ sub: FAILING });
+        await (svc as any).onPaymentFailed(failed());
+        expect(stripe.createBillingPortalSession).not.toHaveBeenCalled();
+        expect(email.send).toHaveBeenCalledTimes(1);
+        expect(email.send.mock.calls[0][0].html).toContain("contacting support");
+        expect(email.send.mock.calls[0][0].html).not.toContain("href=");
       });
 
       it("a scheme-less FRONTEND_URL (safeLinkHref refuses it) still sends, with the plain text", async () => {
