@@ -33,6 +33,8 @@ describeDb("BillingService — #2440 subscription upkeep, real Postgres (SA-450/
   const run = randomUUID().slice(0, 8);
   const tenantIds: string[] = [];
   const PORTAL_URL = "https://billing.stripe.test/p/session_2440";
+  /** The in-app base the payment-failed email links (#2473); the service's own default when unset. */
+  const frontend = () => process.env.FRONTEND_URL ?? "http://localhost:3001";
 
   const stripe = {
     isConfigured: true,
@@ -210,10 +212,14 @@ describeDb("BillingService — #2440 subscription upkeep, real Postgres (SA-450/
     expect(sub.failedPaymentCount).toBe(1);
     expect(await statusOf(t.tenantId)).toBe("ACTIVE");
     expect(email.send).toHaveBeenCalledTimes(1);
-    expect(email.send.mock.calls[0][0].html).toContain(PORTAL_URL);
+    // #2473 (1): the in-app billing page, never a (short-lived, bearer) portal session URL.
+    expect(email.send.mock.calls[0][0].html).toContain(`${frontend()}/settings/billing`);
+    expect(email.send.mock.calls[0][0].html).not.toContain(PORTAL_URL);
+    expect(stripe.createBillingPortalSession).not.toHaveBeenCalled();
   });
 
-  it("SA-450 (4): a billing-portal failure still sends the email, with the fallback text", async () => {
+  // #2473 (1): no portal session is created any more, so a Stripe portal outage cannot touch the email.
+  it("SA-450 (4) / #2473: a Stripe portal outage never affects the email (no session is created)", async () => {
     const t = await makeTenant("portal-down", TenantStatus.ACTIVE);
     await prisma.user.create({
       data: {
@@ -235,8 +241,9 @@ describeDb("BillingService — #2440 subscription upkeep, real Postgres (SA-450/
     });
     expect(sub.failedPaymentCount).toBe(1);
     expect(email.send).toHaveBeenCalledTimes(1);
-    expect(email.send.mock.calls[0][0].html).toContain("contacting support");
+    expect(email.send.mock.calls[0][0].html).toContain(`${frontend()}/settings/billing`);
     expect(email.send.mock.calls[0][0].html).not.toContain(PORTAL_URL);
+    expect(stripe.createBillingPortalSession).not.toHaveBeenCalled();
   });
 
   it("SA-461: every Stripe item a known add-on ⇒ the price sync returns no_base_item and writes nothing", async () => {

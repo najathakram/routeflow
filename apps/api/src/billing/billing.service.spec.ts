@@ -1702,8 +1702,10 @@ describe("#2440 subscription upkeep — match by subscription id, status mapping
     it("looks the row up by the subscription id, not the customer", async () => {
       const { svc, prisma } = make({ transitionCount: 1, sub: LIVE_SUB });
       await (svc as any).onSubscriptionDeleted(SUB_EVT);
+      // #2473 (3): the customer is part of the lookup, not only a post-read check.
       expect(prisma.tenantSubscription.findFirst.mock.calls[0][0].where).toEqual({
         stripeSubId: "sub_1",
+        stripeCustomerId: "cus_1",
       });
     });
 
@@ -1794,8 +1796,10 @@ describe("#2440 subscription upkeep — match by subscription id, status mapping
     it("looks the row up by the subscription id", async () => {
       const { svc, prisma } = make({ sub: LIVE_SUB });
       await (svc as any).onSubscriptionUpdated(upd("active"));
+      // #2473 (3): the customer is part of the lookup, not only a post-read check.
       expect(prisma.tenantSubscription.findFirst.mock.calls[0][0].where).toEqual({
         stripeSubId: "sub_1",
+        stripeCustomerId: "cus_1",
       });
     });
 
@@ -1857,8 +1861,10 @@ describe("#2440 subscription upkeep — match by subscription id, status mapping
     it("matches by the invoice's subscription id and increments failedPaymentCount", async () => {
       const { svc, prisma } = make({ sub: FAILING });
       await (svc as any).onPaymentFailed(failed());
+      // #2473 (3): the customer is part of the lookup, not only a post-read check.
       expect(prisma.tenantSubscription.findFirst.mock.calls[0][0].where).toEqual({
         stripeSubId: "sub_1",
+        stripeCustomerId: "cus_1",
       });
       expect(prisma.tenantSubscription.update.mock.calls[0][0]).toEqual({
         where: { tenantId: "t1" },
@@ -1872,22 +1878,34 @@ describe("#2440 subscription upkeep — match by subscription id, status mapping
       expect(prisma.tenantSubscription.update).toHaveBeenCalledTimes(1);
     });
 
-    it("the warning email carries the billing-portal link", async () => {
-      const { svc, stripe, email } = make({ sub: FAILING });
-      await (svc as any).onPaymentFailed(failed());
-      expect(stripe.createBillingPortalSession).toHaveBeenCalledWith(
-        expect.objectContaining({ customerId: "cus_1" }),
-      );
-      expect(email.send).toHaveBeenCalledTimes(1);
-      expect(email.send.mock.calls[0][0].html).toContain("https://billing.stripe.test/p/session_1");
-    });
+    // #2473 (1): a Stripe portal SESSION url is short-lived and a bearer link — the email links the
+    // in-app billing page instead, and never mints a portal session.
+    describe("the warning email links the in-app billing page", () => {
+      const prev = process.env.FRONTEND_URL;
+      afterEach(() => {
+        if (prev === undefined) delete process.env.FRONTEND_URL;
+        else process.env.FRONTEND_URL = prev;
+      });
 
-    it("a portal failure still sends the email, with today's fallback text", async () => {
-      const { svc, stripe, email } = make({ sub: FAILING });
-      stripe.createBillingPortalSession.mockRejectedValue(new Error("portal down"));
-      await (svc as any).onPaymentFailed(failed());
-      expect(email.send).toHaveBeenCalledTimes(1);
-      expect(email.send.mock.calls[0][0].html).toContain("contacting support");
+      it("links ${FRONTEND_URL}/settings/billing and never creates a portal session", async () => {
+        process.env.FRONTEND_URL = "https://app.example.test";
+        const { svc, stripe, email } = make({ sub: FAILING });
+        await (svc as any).onPaymentFailed(failed());
+        expect(stripe.createBillingPortalSession).not.toHaveBeenCalled();
+        expect(email.send).toHaveBeenCalledTimes(1);
+        expect(email.send.mock.calls[0][0].html).toContain(
+          'href="https://app.example.test/settings/billing"',
+        );
+      });
+
+      it("a scheme-less FRONTEND_URL (safeLinkHref refuses it) still sends, with the plain text", async () => {
+        process.env.FRONTEND_URL = "app.example.test";
+        const { svc, email } = make({ sub: FAILING });
+        await (svc as any).onPaymentFailed(failed());
+        expect(email.send).toHaveBeenCalledTimes(1);
+        expect(email.send.mock.calls[0][0].html).toContain("contacting support");
+        expect(email.send.mock.calls[0][0].html).not.toContain("href=");
+      });
     });
 
     it("changes no tenant status", async () => {
