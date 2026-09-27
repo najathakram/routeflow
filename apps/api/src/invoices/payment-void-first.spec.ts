@@ -29,6 +29,7 @@ jest.mock("../storage/compress.util", () => ({
   compressDocument: jest.fn(),
 }));
 
+import { NotFoundException } from "@nestjs/common";
 import { Test, TestingModule } from "@nestjs/testing";
 import { InvoicesService } from "./invoices.service";
 import { InvoicePdfService } from "./invoice-pdf.service";
@@ -300,6 +301,17 @@ describe("SA-404f — payment writers lock before they read (void-first)", () =>
       await expect(
         service.recordPayment("inv-1", { amount: 20, method: "CASH" } as any),
       ).rejects.toThrow("Cannot record payment on voided invoice");
+    });
+
+    it("(3) nit: the invoice gone under the lock ⇒ 404, nothing written", async () => {
+      prisma.tenantTransaction.mockImplementation(async (fn: any) => fn(loggedTx([])));
+      prisma.invoice.findUnique
+        .mockResolvedValueOnce({ id: "inv-1", status: "SENT", orderId: null } as any) // pre-read
+        .mockResolvedValue(null); // under the lock
+      await expect(service.writeOff("inv-1", { reason: "bad debt" } as any)).rejects.toBeInstanceOf(
+        NotFoundException,
+      );
+      expect(prisma.invoice.update).not.toHaveBeenCalled();
     });
 
     it("(3) writeOff re-checks under the (Order →) Invoice lock: VOID since the pre-read ⇒ 400, nothing written", async () => {

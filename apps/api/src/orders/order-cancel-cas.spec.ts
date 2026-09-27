@@ -325,4 +325,23 @@ describe("SA-404f F2 — order cancel compare-and-set", () => {
     await service.changeStatus("ord-1", { status: "CANCELLED" as any }, operatorPayload as any);
     expect(settle).toHaveBeenCalledTimes(1);
   });
+
+  // #2472 Opus fold (Opus on #2515): the stock credit itself must run AS the locked status — a DRAFT
+  // pre-read promoted to PENDING before the lock took stock, so the cancel must credit it back
+  // (settleStockForEdit no-ops on DRAFT; passing the stale pre-read would cancel the lines with no
+  // credit and a later reopen would take the stock twice, B64).
+  it("#2472 fold: DRAFT pre-read but PENDING under the lock ⇒ the (real) stock credit runs AS PENDING", async () => {
+    arrange(1);
+    const DRAFT = { ...MOCK_ORDER, status: "DRAFT" as const };
+    prisma.order.findUnique.mockImplementation(async (args: any) =>
+      args?.select && Object.keys(args.select).length === 1 && args.select.status
+        ? { status: "PENDING" }
+        : DRAFT,
+    );
+    prisma.order.findFirst.mockResolvedValue(DRAFT);
+    const settle = jest.spyOn(service as any, "settleStockForEdit"); // NOT mocked — the real credit runs
+    await service.changeStatus("ord-1", { status: "CANCELLED" as any }, operatorPayload as any);
+    expect(settle).toHaveBeenCalledTimes(1);
+    expect((settle.mock.calls[0] as any[])[1]).toMatchObject({ id: "ord-1", status: "PENDING" });
+  });
 });
