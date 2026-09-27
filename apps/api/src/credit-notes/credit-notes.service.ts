@@ -1581,7 +1581,9 @@ export class CreditNotesService {
    */
   async setAutoApplyExcluded(id: string, excluded: boolean, actorId: string | null) {
     return this.prisma.tenantTransaction(async (tx: any) => {
-      const cn = await tx.creditNote.findUnique({ where: { id }, select: { id: true } });
+      // findFirst, not findUnique: the tenant proxy injects tenantId into findFirst's where, so a
+      // foreign tenant's note id is a 404 here (findUnique skips the injection and 500s later).
+      const cn = await tx.creditNote.findFirst({ where: { id }, select: { id: true } });
       if (!cn) throw new NotFoundException("Credit note not found");
       const updated = await tx.creditNote.update({
         where: { id },
