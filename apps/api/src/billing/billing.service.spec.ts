@@ -85,6 +85,8 @@ function make(
       updateMany: jest.fn().mockResolvedValue({ count: overrides.plainCasCount ?? 0 }),
       findUnique: jest.fn().mockResolvedValue({ plan: "STARTER", planVersionId: "v1" }),
     },
+    // #2440 N2: the tenant's add-on subscription items (none by default).
+    tenantAddon: { findMany: jest.fn().mockResolvedValue([]) },
     user: {
       findFirst: jest.fn().mockResolvedValue({ email: "admin@example.test", username: "admin" }),
     },
@@ -113,10 +115,14 @@ function make(
   } as any;
   const stripe = {
     isConfigured: true,
+    // #2440 N3: dahlia-shaped by default — the period lives on the subscription's items.
     getSubscription: jest.fn().mockResolvedValue({
       status: overrides.stripeStatus ?? "past_due",
-      current_period_start: 1_700_000_000,
-      current_period_end: 1_702_000_000,
+      items: {
+        data: [
+          { id: "si_base", current_period_start: 1_700_000_000, current_period_end: 1_702_000_000 },
+        ],
+      },
     }),
     createBillingPortalSession: jest
       .fn()
@@ -1864,5 +1870,76 @@ describe("#2440 subscription upkeep — match by subscription id, status mapping
       );
       expect(reset).toBeUndefined();
     });
+  });
+});
+
+// #2440: Opus nits on #2446, folded here. N1: a null period is logged in every handler (a null
+// periodEnd hides the tenant from the overdue cron). N2: the period comes from the base-plan item,
+// never a known add-on item (TenantAddon.stripeItemId).
+describe("#2440 Opus nits on #2446 — period source and null-period warnings", () => {
+  const twoItems = {
+    items: {
+      data: [
+        { id: "si_addon", current_period_start: 1_600_000_000, current_period_end: 1_600_100_000 },
+        { id: "si_base", current_period_start: 1_700_000_000, current_period_end: 1_702_000_000 },
+      ],
+    },
+  };
+  const BASE_END = new Date(1_702_000_000 * 1000);
+
+  it("N2: subscription.updated reads the base item's period, skipping the tenant's add-on item", async () => {
+    const { svc, prisma } = make({ sub: LIVE_SUB });
+    prisma.tenantAddon.findMany.mockResolvedValue([{ stripeItemId: "si_addon" }]);
+    await (svc as any).onSubscriptionUpdated({
+      ...SUB_EVT,
+      cancel_at_period_end: false,
+      ...twoItems,
+    });
+    expect(prisma.tenantSubscription.update.mock.calls[0][0].data.periodEnd).toEqual(BASE_END);
+  });
+
+  it("N2: payment_succeeded reads the base item's period, skipping the tenant's add-on item", async () => {
+    const { svc, prisma, stripe } = make({
+      transitionCount: 0,
+      sub: { ...LIVE_SUB, failedPaymentCount: 0, tenant: { status: "ACTIVE" } },
+    });
+    prisma.tenantAddon.findMany.mockResolvedValue([{ stripeItemId: "si_addon" }]);
+    stripe.getSubscription.mockResolvedValue(twoItems);
+    await (svc as any).onPaymentSucceeded({ customer: "cus_1" });
+    const periodWrite = prisma.tenantSubscription.update.mock.calls.find(
+      (c: any[]) => c[0].data?.periodEnd !== undefined,
+    );
+    expect(periodWrite?.[0].data.periodEnd).toEqual(BASE_END);
+  });
+
+  it("N1: subscription.updated with no period logs a warning", async () => {
+    const { svc } = make({ sub: LIVE_SUB });
+    const warn = jest.spyOn((svc as any).logger, "warn").mockImplementation(() => undefined);
+    await (svc as any).onSubscriptionUpdated({ ...SUB_EVT, cancel_at_period_end: false });
+    expect(warn.mock.calls.some((c: any[]) => /no billing period/.test(String(c[0])))).toBe(true);
+  });
+
+  it("N1: payment_succeeded with no period on the retrieved subscription logs a warning", async () => {
+    const { svc, stripe } = make({
+      transitionCount: 0,
+      sub: { ...LIVE_SUB, failedPaymentCount: 0, tenant: { status: "ACTIVE" } },
+    });
+    stripe.getSubscription.mockResolvedValue({ status: "active" });
+    const warn = jest.spyOn((svc as any).logger, "warn").mockImplementation(() => undefined);
+    await (svc as any).onPaymentSucceeded({ customer: "cus_1" });
+    expect(warn.mock.calls.some((c: any[]) => /no billing period/.test(String(c[0])))).toBe(true);
+  });
+
+  it("N1: checkout.session.completed with no period logs a warning and still stores stripeSubId", async () => {
+    const { svc, prisma, stripe } = make({ transitionCount: 1 });
+    stripe.getSubscription.mockResolvedValue({ status: "active" });
+    const warn = jest.spyOn((svc as any).logger, "warn").mockImplementation(() => undefined);
+    await (svc as any).onCheckoutCompleted({
+      metadata: { tenantId: "t1" },
+      subscription: "sub_1",
+      customer: "cus_1",
+    });
+    expect(prisma.tenantSubscription.upsert.mock.calls[0][0].update.stripeSubId).toBe("sub_1");
+    expect(warn.mock.calls.some((c: any[]) => /no billing period/.test(String(c[0])))).toBe(true);
   });
 });
