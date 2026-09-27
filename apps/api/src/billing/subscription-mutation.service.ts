@@ -854,6 +854,9 @@ export class SubscriptionMutationService {
       // changes for one tenant can never wait on each other in opposite orders (deadlock). If the
       // guard below then loses a race, the throw rolls the hook's writes back with it.
       await this.planTransition.onPlanChange(tx, transition, preparedTransition);
+      // #2551 / SA-503a: the house order — Tenant row lock right after the hook, before the
+      // subscription write (reconcile/updatePlan/Pricing hold Tenant, then write this row).
+      await lockTenantForLedger(tx, tenantId);
       // Optimistic guard: only apply if still on the expected plan (blocks a concurrent
       // double-upgrade from re-emitting the delta). Matches the STORED key (null matches
       // IS NULL), never the resolved one. #2470: and the negotiated fee it read (null matches
@@ -982,6 +985,7 @@ export class SubscriptionMutationService {
     }
 
     await this.prisma.$transaction(async (tx) => {
+      await lockTenantForLedger(tx, tenantId); // #2551 / SA-503a: Tenant before the subscription
       await tx.tenantSubscription.update({
         where: { tenantId },
         data: {
@@ -1136,6 +1140,7 @@ export class SubscriptionMutationService {
     }
 
     await this.prisma.$transaction(async (tx) => {
+      await lockTenantForLedger(tx, tenantId); // #2551 / SA-503a: Tenant before the subscription
       await tx.tenantSubscription.update({
         where: { tenantId },
         // A cancellation SUPERSEDES any scheduled downgrade — leaving one armed would let
@@ -1224,6 +1229,7 @@ export class SubscriptionMutationService {
     }
 
     await this.prisma.$transaction(async (tx) => {
+      await lockTenantForLedger(tx, tenantId); // #2551 / SA-503a: Tenant before the subscription
       await tx.tenantSubscription.update({
         where: { tenantId },
         data: {
