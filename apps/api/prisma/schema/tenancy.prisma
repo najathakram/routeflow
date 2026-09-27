@@ -151,6 +151,7 @@ model Tenant {
   creditNotes              CreditNote[]
   creditNoteItems          CreditNoteItem[]
   orderCreditNotes         OrderCreditNote[]
+  creditNoteApplyBlocks    CreditNoteApplyBlock[]
   estimates                Estimate[]
   estimateItems            EstimateItem[]
   vendorBills              VendorBill[]
@@ -264,6 +265,10 @@ model TenantConfig {
   // checksDigestSentForDay above, read/written by
   // inventory/low-stock-digest.service.ts's inventory.sendLowStockDigest job.
   lowStockDigestSentForDay DateTime? @db.Date
+  // SA-436 (#2401): whether sending an invoice sweeps the customer's open credit notes onto it
+  // oldest-first (credit-notes.service autoApplyOldestCreditsInTx). OFF by default (owner ruling):
+  // a send then applies nothing automatically; an order's hand-picked credit intents still settle.
+  creditAutoApplyOnSend    Boolean   @default(false)
   updatedAt                DateTime  @updatedAt
 
   tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)

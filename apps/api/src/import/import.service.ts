@@ -846,19 +846,28 @@ export class ImportService {
             .forTenant()
             .invoice.findFirst({ where: { invoiceNumber } });
           if (existing) {
-            const needsUpdate =
-              existing.status !== status ||
-              (existing.dueDate?.getTime() ?? 0) !== (dueDate?.getTime() ?? 0) ||
-              (existing.paidAt?.getTime() ?? 0) !== (paidAt?.getTime() ?? 0);
-            if (needsUpdate) {
-              await this.prisma.forTenant().invoice.update({
+            // #2468 / SA-468: the sync runs under the invoice's row lock and re-reads it there — an
+            // invoice the app VOIDed or WROTE OFF is never resurrected by the external file (a
+            // row error, no write), even when the void lands while this import waits.
+            const wrote = await this.prisma.tenantTransaction(async (tx) => {
+              await tx.$executeRaw`SELECT id FROM "Invoice" WHERE id = ${existing.id} FOR UPDATE`;
+              const locked = await tx.invoice.findFirst({ where: { id: existing.id } });
+              const refused = locked ? importPaymentRefusal(locked.status) : null;
+              if (refused) throw new ImportRowRefused(`${refused} — re-import skipped`);
+              const cur = locked ?? existing;
+              const needsUpdate =
+                cur.status !== status ||
+                (cur.dueDate?.getTime() ?? 0) !== (dueDate?.getTime() ?? 0) ||
+                (cur.paidAt?.getTime() ?? 0) !== (paidAt?.getTime() ?? 0);
+              if (!needsUpdate) return false;
+              await tx.invoice.update({
                 where: { id: existing.id },
                 data: { status, dueDate, paidAt },
               });
-              updated++;
-            } else {
-              skipped++;
-            }
+              return true;
+            });
+            if (wrote) updated++;
+            else skipped++;
             continue;
           }
         } else {
@@ -916,57 +925,63 @@ export class ImportService {
             );
           } else if (prior) {
             // Same status/dueDate/paidAt sync as the source-numbered branch above.
-            const needsUpdate =
-              prior.status !== status ||
-              (prior.dueDate?.getTime() ?? 0) !== (dueDate?.getTime() ?? 0) ||
-              (prior.paidAt?.getTime() ?? 0) !== (paidAt?.getTime() ?? 0);
-            if (needsUpdate) {
-              // #2262 / SA-404b: the status write and its synthetic payment are ONE tx that
-              // updates the Invoice row (the void invariant; invoice + payment atomic).
-              await this.prisma.tenantTransaction(async (tx) => {
-                await tx.invoice.update({
-                  where: { id: prior.id },
-                  data: { status, dueDate, paidAt },
+            // #2262 / SA-404b: the status write and its synthetic payment are ONE tx that updates the
+            // Invoice row (the void invariant; invoice + payment atomic). #2468 / SA-468: that tx locks
+            // the row first and re-reads it — a VOID / WRITTEN_OFF prior is skipped with a row error,
+            // never resurrected to PAID/PARTIAL with a synthetic payment.
+            const wrote = await this.prisma.tenantTransaction(async (tx) => {
+              await tx.$executeRaw`SELECT id FROM "Invoice" WHERE id = ${prior.id} FOR UPDATE`;
+              const locked = await tx.invoice.findFirst({ where: { id: prior.id } });
+              const refused = locked ? importPaymentRefusal(locked.status) : null;
+              if (refused) throw new ImportRowRefused(`${refused} — re-import skipped`);
+              const cur = locked ?? prior;
+              const needsUpdate =
+                cur.status !== status ||
+                (cur.dueDate?.getTime() ?? 0) !== (dueDate?.getTime() ?? 0) ||
+                (cur.paidAt?.getTime() ?? 0) !== (paidAt?.getTime() ?? 0);
+              if (!needsUpdate) return false;
+              await tx.invoice.update({
+                where: { id: prior.id },
+                data: { status, dueDate, paidAt },
+              });
+              // F2 (REG-B268-C): a re-import that flips the prior invoice to
+              // PAID/PARTIAL must get the SAME synthetic-payment treatment a
+              // brand-new PAID/PARTIAL invoice gets on create (:897-915) —
+              // otherwise the invoice is PAID with zero InvoicePayment rows,
+              // which reconciliation/balance-due math reads as unpaid. Guarded
+              // on "no payment already exists" so a SECOND re-import of an
+              // already-synthesized-payment row doesn't duplicate it.
+              if (status === InvoiceStatus.PAID || status === InvoiceStatus.PARTIAL) {
+                const existingPayment = await tx.invoicePayment.findFirst({
+                  where: { invoiceId: prior.id },
                 });
-                // F2 (REG-B268-C): a re-import that flips the prior invoice to
-                // PAID/PARTIAL must get the SAME synthetic-payment treatment a
-                // brand-new PAID/PARTIAL invoice gets on create (:897-915) —
-                // otherwise the invoice is PAID with zero InvoicePayment rows,
-                // which reconciliation/balance-due math reads as unpaid. Guarded
-                // on "no payment already exists" so a SECOND re-import of an
-                // already-synthesized-payment row doesn't duplicate it.
-                if (status === InvoiceStatus.PAID || status === InvoiceStatus.PARTIAL) {
-                  const existingPayment = await tx.invoicePayment.findFirst({
-                    where: { invoiceId: prior.id },
-                  });
-                  if (!existingPayment) {
-                    // B779: total/balanceDue are individually rounded (parseImportMoney), but
-                    // their subtraction can still land off-cent in float (24.30 - 10.10 =
-                    // 14.200000000000001) — round every monetary write.
-                    const paidAmount = !isNaN(balanceDue)
-                      ? roundMoney(total - balanceDue)
-                      : status === InvoiceStatus.PAID
-                        ? total
-                        : 0;
-                    if (paidAmount > 0.01) {
-                      await tx.invoicePayment.create({
-                        data: {
-                          invoiceId: prior.id,
-                          amount: paidAmount,
-                          method: "OTHER",
-                          reference: "zoho-import",
-                          notes: "Imported from Zoho",
-                          createdAt: paidAt || issueDate,
-                        },
-                      });
-                    }
+                if (!existingPayment) {
+                  // B779: total/balanceDue are individually rounded (parseImportMoney), but
+                  // their subtraction can still land off-cent in float (24.30 - 10.10 =
+                  // 14.200000000000001) — round every monetary write.
+                  const paidAmount = !isNaN(balanceDue)
+                    ? roundMoney(total - balanceDue)
+                    : status === InvoiceStatus.PAID
+                      ? total
+                      : 0;
+                  if (paidAmount > 0.01) {
+                    await tx.invoicePayment.create({
+                      data: {
+                        invoiceId: prior.id,
+                        amount: paidAmount,
+                        method: "OTHER",
+                        reference: "zoho-import",
+                        notes: "Imported from Zoho",
+                        createdAt: paidAt || issueDate,
+                      },
+                    });
                   }
                 }
-              });
-              updated++;
-            } else {
-              skipped++;
-            }
+              }
+              return true;
+            });
+            if (wrote) updated++;
+            else skipped++;
             continue;
           }
           // Reserve a fresh number through NumberingService (standalone — no
@@ -1050,7 +1065,10 @@ export class ImportService {
 
         imported++;
       } catch (e: any) {
-        this.pushRowError(errors, invoiceNumber || rowLabel, e);
+        // #2468: a deliberate refusal is reported by its reason, not the generic "import failed".
+        if (e instanceof ImportRowRefused)
+          errors.push(`${invoiceNumber || rowLabel}: ${e.message}`);
+        else this.pushRowError(errors, invoiceNumber || rowLabel, e);
         skipped++;
       }
     }

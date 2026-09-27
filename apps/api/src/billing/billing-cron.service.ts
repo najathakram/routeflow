@@ -222,6 +222,8 @@ export class BillingCronService {
         planVersionId: true,
         // #2223 / SA-444c: the negotiated fee a downgrade keeps.
         priceOverrideMonthly: true,
+        // #2460 / SA-464 (2): the ledger nets against the stored snapshot, never the catalog.
+        basePriceSnapshot: true,
         downgradeToPlanKey: true,
         downgradeEffectiveAt: true,
         retainedUserIds: true,
@@ -262,15 +264,15 @@ export class BillingCronService {
           }
           targetVersion = published;
         }
-        // #2223 / SA-444c (i): an override row keeps its fee — snapshot = the fee, Δ0; a catalog row
-        // keeps the catalog delta below.
+        // #2223 / SA-444c (i) + #2460 / SA-464 (2), one invariant (snapshot = what the tenant pays):
+        // the new snapshot is the negotiated fee, else the target's price; the ledger books it minus
+        // what the MRR snapshot counted (the stored snapshot, NULL ⇒ 0) — never a catalog price for
+        // the plan being left. A consistent override row therefore books Δ0.
         const override = priceOverrideOf(s);
-        const amountDelta =
-          override != null
-            ? 0
-            : roundMoney(
-                this.planMonthly(targetVersion, target) - this.planMonthly(fromVersion, s.planKey),
-              );
+        const newBase = override ?? this.planMonthly(targetVersion, target);
+        const amountDelta = roundMoney(
+          newBase - (s.planKey ? Number(s.basePriceSnapshot ?? 0) : 0),
+        );
         const seatCap = targetDef.seatsIncluded ?? null;
 
         const tenantPlan = (s as { tenant?: { plan?: string } }).tenant?.plan;
