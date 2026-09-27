@@ -99,6 +99,8 @@ RouteFlow landing coordinator (window 11:40–14:40Z) · RouteFlow SA resumption
 - Live tenants: two paying tenants are DO-NOT-TOUCH (no backfill/stamp/repair); slugs never in git/GitHub.
 - Plane: `plane:check` trips a tenant-uuid denylist false positive on 6 old records.
 
+- **#2093 design (U-po, lead ruling 13:25Z, owner may override):** build option (A): no schema. A non-throwing `checkLinesSellable` before the first line write gives ONE AuditLog row plus the banned lines in the response (import: per-row warnings; split: `bannedLines`, with the audit row naming the parent and children, i.e. "children inherit"). Both rows become GUARDED; PENDING_BASELINE 2→0; ENFORCEMENT_POINTS stays 12. Option (B), a persisted per-invoice `restrictedLines` flag shown on the invoice, is an OWNER QUESTION for later. Known gap to note in the PR: an invoice dated inside a since-LIFTED ban window is missed by a today-check.
+
 ## 7. Lead rules that bit today (logged via lead-closeout.mjs)
 Owner commands always restated in full inline · docs PR merge-base diff over apps/packages/scripts must be empty (#2385) ·
 trains before singles · post-train close linked issues · merge-only re-pin = tree identity; import-only hand hunks allowed ·
