@@ -64,6 +64,12 @@ export async function lockInvoicesForPayment(tx: any, invoiceIds: string[]): Pro
   await tx.$executeRaw`SELECT id FROM "Invoice" WHERE id IN (${Prisma.join(ids)}) ORDER BY id FOR UPDATE`;
 }
 
+/** #2472: an invoice may be written off only from an open, collectible status (checked on the LOCKED row). */
+export function writeOffRefusal(status: InvoiceStatus): string | null {
+  const open: InvoiceStatus[] = ["SENT", "VIEWED", "PARTIAL", "OVERDUE"] as InvoiceStatus[];
+  return open.includes(status) ? null : `Cannot write off an invoice with status ${status}`;
+}
+
 /** A payment may not land on a VOID or WRITTEN_OFF invoice (checked on the LOCKED row). */
 export function paymentRefusal(status: InvoiceStatus): string | null {
   if (status === InvoiceStatus.VOID) return "voided";

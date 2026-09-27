@@ -1,5 +1,6 @@
 import { readFileSync } from "fs";
 import { join } from "path";
+import { readEditItemsSurface } from "./support/edit-items-source";
 
 /**
  * #2232 (SA-388a UX follow-up): a LOCKED unit line — a stored line whose count can't be derived
@@ -9,10 +10,8 @@ import { join } from "path";
  * Mobile tests are pure-logic (no render harness), so this pins the WIRING: the screen passes the
  * line's `needsRepair` to its Qty StepperRow, and StepperRow disables both buttons and the input.
  */
-const screen = readFileSync(
-  join(__dirname, "..", "app", "(operator)", "(tabs)", "orders", "[id]", "edit-items.tsx"),
-  "utf8",
-);
+// #2340: the Qty StepperRow lives in the DraftItemCard module now — read the edit-items surface.
+const screen = readEditItemsSurface();
 const stepper = readFileSync(
   join(__dirname, "..", "components", "EditItemsStepperRow.tsx"),
   "utf8",
