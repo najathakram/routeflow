@@ -976,6 +976,7 @@ export class SubscriptionMutationService {
     }
 
     await this.prisma.$transaction(async (tx) => {
+      await lockTenantForLedger(tx, tenantId); // #2551 / SA-503a: Tenant before the subscription
       await tx.tenantSubscription.update({
         where: { tenantId },
         data: {

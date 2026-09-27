@@ -37,7 +37,7 @@ import {
   inviteOnlyCheckoutAllowed,
   addonSkuCode,
 } from "../billing/plan-catalog.constants";
-import { bookAddonsOnCrossing } from "../billing/addon-ledger";
+import { bookAddonsOnCrossing, lockTenantForLedger } from "../billing/addon-ledger";
 import { roundMoney } from "@routeflow/pricing";
 import { TenantStatusGuard } from "../tenant/tenant-status.guard";
 import { AppConfig } from "../config/configuration";
@@ -748,6 +748,7 @@ export class PlatformAdminService {
         );
       }
       await this.prisma.$transaction(async (tx) => {
+        await lockTenantForLedger(tx, id); // #2551 / SA-503a: Tenant before the subscription
         await tx.tenantSubscription.update({
           where: { tenantId: id },
           data: {
