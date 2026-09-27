@@ -115,10 +115,15 @@ const CHANGELOG_MAX_ENTRIES = 30;
 const ROW_MAX_BYTES = 200;
 const AREA_MAX_BYTES = 100_000;
 
-// CHANGELOG.md's entry delimiter is a top-level dated bullet
-// ("- **YYYY-MM-DD** — ..."), NOT a "## " heading — the file has no "## "
-// headings at all (see its own header prose above the first entry).
-const CHANGELOG_ENTRY_RE = /^- \*\*\d{4}-\d{2}-\d{2}\*\*/;
+// CHANGELOG.md's entry delimiter is a top-level bullet whose bold text STARTS with a
+// date, NOT a "## " heading (the file has no "## " headings at all; see its own
+// header prose above the first entry). Two styles are live: the older
+// "- **YYYY-MM-DD** — ..." (date alone in bold) and the current
+// "- **YYYY-MM-DD — title.** ..." (date then more bold text). The old regex required
+// the closing "**" right after the date, so it counted none of the current style and
+// the entry cap went silently unenforced (#2229). An indented (nested) bullet is not
+// an entry.
+const CHANGELOG_ENTRY_RE = /^- \*\*\d{4}-\d{2}-\d{2}(?=\*\*|\s)/;
 
 function countChangelogEntries(file) {
   const text = readFileSync(file, "utf8");
@@ -174,7 +179,7 @@ if (changelogBytes > CHANGELOG_MAX_BYTES) {
   fail(
     `CHANGELOG SIZE: ${rel(CHANGELOG)} is ${changelogBytes} bytes, over the ` +
       `${CHANGELOG_MAX_BYTES} byte cap (by ${changelogBytes - CHANGELOG_MAX_BYTES}). Trim to the ` +
-      `newest entries and replace the rest with "Older entries: \`git log -- .claude/code-map\`".`,
+      `newest entries and move the rest, whole and verbatim, to the top of ${rel(CHANGELOG_ARCHIVE)}.`,
   );
 }
 
@@ -183,8 +188,8 @@ if (changelogEntries > CHANGELOG_MAX_ENTRIES) {
   fail(
     `CHANGELOG ENTRIES: ${rel(CHANGELOG)} has ${changelogEntries} dated entries, over the ` +
       `${CHANGELOG_MAX_ENTRIES}-entry cap (by ${changelogEntries - CHANGELOG_MAX_ENTRIES}). Trim to ` +
-      `the newest ${CHANGELOG_MAX_ENTRIES} and replace the rest with ` +
-      `"Older entries: \`git log -- .claude/code-map\`".`,
+      `the newest ${CHANGELOG_MAX_ENTRIES} and move the rest, whole and verbatim, to the top of ` +
+      `${rel(CHANGELOG_ARCHIVE)} (newest first).`,
   );
 }
 
