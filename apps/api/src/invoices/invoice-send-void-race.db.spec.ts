@@ -918,46 +918,92 @@ describeDb(
     });
 
     // SA-404e: DRAFT, not PENDING — StandalonePaymentDto accepts only DRAFT | PAID, so PENDING cannot come through this path.
-    it("(R2) void: a DRAFT standalone payment (recordStandalonePayment) committed while the void waits on the lock ⇒ void 400s after a retry, invoice NOT voided", async () => {
-      const warn = jest.spyOn(NestLogger.prototype, "warn");
+    // SA-404f (#2466) reworked R2: every payment writer now takes (Order →) Invoice FIRST, the same
+    // order void takes — so a payment can no longer COMMIT while a void waits (the old R2 premise;
+    // its harness held the Order lock while awaiting the payment and deadlocked). The invariant R2
+    // guards is unchanged: a void and a concurrent payment on one invoice SERIALIZE — never a VOID
+    // invoice holding a payment. ENTRY: T2 holds the ORDER row; the void starts and blocks; the DRAFT
+    // payment starts and blocks behind it (both waiters asserted); T2 commits. Exactly one of the two
+    // consistent outcomes is allowed (observe which, never predict the winner).
+    it("(R2) void vs a DRAFT standalone payment, both queued on the Order lock ⇒ they serialize: never a VOID invoice holding a payment", async () => {
+      const s = await seedOrder("r2");
+      const t2 = new Client({ connectionString: url() });
+      await t2.connect();
+      let voidR: any;
+      let payR: any;
+      let waiters = 0;
       try {
-        const s = await seedOrder("r2");
-        const { r, blocked, duringResult } = await holdOrder(
-          s.orderId,
-          () => tenantCtx.run(s.tenantId, () => invoicesService.voidInvoice(s.invoiceId)),
-          () =>
-            tenantCtx.run(s.tenantId, () =>
-              invoicesService.recordStandalonePayment({
-                customerId: s.customerId,
-                totalAmount: 20,
-                method: "CHECK",
-                status: "DRAFT",
-                allocations: [{ invoiceId: s.invoiceId, amount: 20 }],
-              } as any),
-            ),
+        await t2.query("BEGIN");
+        await t2.query(`SELECT id FROM "Order" WHERE id = $1 FOR UPDATE`, [s.orderId]);
+        const settle = (p: Promise<unknown>) =>
+          p.then(
+            (v) => ({ ok: true as const, v }),
+            (e) => ({ ok: false as const, e }),
+          );
+        const blockedCount = async () =>
+          (
+            await t2.query(
+              `SELECT count(*)::int n FROM pg_stat_activity
+                WHERE datname = current_database() AND cardinality(pg_blocking_pids(pid)) > 0`,
+            )
+          ).rows[0].n as number;
+        const waitFor = async (n: number) => {
+          for (let i = 0; i < 800; i++) {
+            waiters = await blockedCount();
+            if (waiters >= n) return;
+            await new Promise((x) => setTimeout(x, 25));
+          }
+        };
+        const pVoid = settle(
+          tenantCtx.run(s.tenantId, () => invoicesService.voidInvoice(s.invoiceId)),
         );
-        const inv = await prisma.invoice.findUniqueOrThrow({
-          where: { id: s.invoiceId },
-          include: { payments: true },
-        });
-        expect({
-          blocked,
-          recorded: duringResult != null,
-          is400: status400(r),
-          voidRetries: warnsFor(warn, `invoice void id=${s.invoiceId}`),
-          invoiceStatus: inv.status,
-          payments: inv.payments.map((p: any) => `${p.method} ${Number(p.amount)} ${p.status}`),
-        }).toEqual({
-          blocked: true,
-          recorded: true,
-          is400: true,
-          voidRetries: 1,
-          invoiceStatus: "SENT",
-          payments: ["CHECK 20 DRAFT"],
-        });
+        await waitFor(1);
+        const pPay = settle(
+          tenantCtx.run(s.tenantId, () =>
+            invoicesService.recordStandalonePayment({
+              customerId: s.customerId,
+              totalAmount: 20,
+              method: "CHECK",
+              status: "DRAFT",
+              allocations: [{ invoiceId: s.invoiceId, amount: 20 }],
+            } as any),
+          ),
+        );
+        await waitFor(2);
+        await t2.query("COMMIT");
+        [voidR, payR] = await Promise.all([pVoid, pPay]);
       } finally {
-        warn.mockRestore();
+        await t2.end();
       }
+      const inv = await prisma.invoice.findUniqueOrThrow({
+        where: { id: s.invoiceId },
+        include: { payments: true },
+      });
+      const observed = {
+        waiters: waiters >= 2,
+        voidOk: voidR.ok,
+        payOk: payR.ok,
+        refusedIs400: status400(voidR.ok ? payR : voidR),
+        invoiceStatus: inv.status,
+        payments: inv.payments.map((p: any) => `${p.method} ${Number(p.amount)} ${p.status}`),
+      };
+      const voidWon = {
+        waiters: true,
+        voidOk: true,
+        payOk: false,
+        refusedIs400: true,
+        invoiceStatus: "VOID",
+        payments: [],
+      };
+      const paymentWon = {
+        waiters: true,
+        voidOk: false,
+        payOk: true,
+        refusedIs400: true,
+        invoiceStatus: "SENT",
+        payments: ["CHECK 20 DRAFT"],
+      };
+      expect([voidWon, paymentWon]).toContainEqual(observed);
     });
 
     // ─── SA-404f / SA-404g (#2466, SA-470 condition 2): the VOID-FIRST half, two real connections ───
