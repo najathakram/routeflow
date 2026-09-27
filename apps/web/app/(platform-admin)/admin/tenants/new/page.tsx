@@ -33,6 +33,8 @@ export default function AdminCreateTenantPage() {
   const [isLoading, setIsLoading] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
   const [success, setSuccess] = React.useState<CreatedTenant | null>(null);
+  // #2438: a failed copy selects the link text so the admin can copy it by hand.
+  const payLinkRef = React.useRef<HTMLAnchorElement>(null);
   const [plans, setPlans] = React.useState<PlanCatalogEntry[]>([]);
   const [plansLoading, setPlansLoading] = React.useState(true);
   const [plansUnavailable, setPlansUnavailable] = React.useState(false);
@@ -146,12 +148,15 @@ export default function AdminCreateTenantPage() {
                   <CopyButton
                     value={success.payUrl}
                     label="Copy Pay-now link"
+                    failedText="Copy failed — select the link"
+                    selectOnFail={payLinkRef}
                     className="admin-tap inline-flex shrink-0 items-center gap-1 rounded px-2 py-1 text-xs font-medium text-indigo-300 hover:bg-indigo-900/40"
                   />
                 </div>
                 {/* #2438: the link is one unbroken token in a monospace face; break-all keeps it
                     inside the card at every width instead of running off the right edge. */}
                 <a
+                  ref={payLinkRef}
                   href={success.payUrl}
                   target="_blank"
                   rel="noreferrer"

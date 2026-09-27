@@ -217,7 +217,27 @@ describe("#2439 create-tenant success panel", () => {
     const copy = screen.getByRole("button", { name: "Copy Pay-now link" });
     fireEvent.click(copy);
     expect(navigator.clipboard.writeText).toHaveBeenCalledWith(payUrl);
-    expect(copy).toHaveTextContent("Copied");
+    await waitFor(() => expect(copy).toHaveTextContent("Copied"));
+  });
+
+  // #2598 review: a false "Copied" leaves the PREVIOUS clipboard (maybe another tenant's link) to be
+  // pasted into the client's email. A failed copy must say so and select the link instead.
+  it("a failed copy of the Pay-now link says so and selects the link, never 'Copied'", async () => {
+    const payUrl = "https://app.example/login?redirect=%2Fsettings%2Fbilling";
+    Object.assign(navigator, {
+      clipboard: { writeText: jest.fn().mockRejectedValue(new Error("denied")) },
+    });
+    await submitWith({
+      id: "t1",
+      slug: "acme",
+      payUrl,
+      welcomeEmail: { to: "o@acme.example", delivered: true, transport: "smtp" },
+    });
+    const copy = screen.getByRole("button", { name: "Copy Pay-now link" });
+    fireEvent.click(copy);
+    await waitFor(() => expect(copy).toHaveTextContent("Copy failed — select the link"));
+    expect(copy).not.toHaveTextContent("Copied");
+    expect(window.getSelection()?.toString()).toBe(payUrl);
   });
 
   it("renders no Copy button when there is no Pay-now link", async () => {
