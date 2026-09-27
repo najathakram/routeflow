@@ -28,6 +28,7 @@ function make(
   } = {},
 ) {
   const tx = {
+    $queryRaw: jest.fn().mockResolvedValue([]),
     tenantSubscription: { update: jest.fn().mockResolvedValue({}) },
     tenant: { update: jest.fn().mockResolvedValue({}) },
     user: {
@@ -374,6 +375,40 @@ describe("BillingCronService", () => {
       toPlanKey: "STARTER",
       actor: { id: null },
     });
+  });
+
+  // #2551 / SA-503a: the downgrade takes the Tenant row lock right after the hook and BEFORE its
+  // subscription write — the house order every other ledger writer uses (no 40P01 vs reconcile).
+  it("#2551: hook → Tenant lock → subscription write", async () => {
+    const { svc, tx, planTransition } = make({
+      downgrades: [
+        {
+          tenantId: "t1",
+          planKey: "BUSINESS",
+          planVersionId: "v7",
+          downgradeToPlanKey: "STARTER",
+          retainedUserIds: [],
+        },
+      ],
+    });
+    const order: string[] = [];
+    planTransition.onPlanChange.mockImplementation(async () => {
+      order.push("onPlanChange");
+      return { action: "none" };
+    });
+    tx.$queryRaw.mockImplementation(async (strings: TemplateStringsArray) => {
+      if (/FROM "Tenant" WHERE id = \? FOR UPDATE/.test(Array.from(strings).join("?")))
+        order.push("tenant-lock");
+      return [];
+    });
+    tx.tenantSubscription.update.mockImplementation(async () => {
+      order.push("plan-write");
+      return {};
+    });
+
+    await svc.applyScheduledDowngrades();
+
+    expect(order).toEqual(["onPlanChange", "tenant-lock", "plan-write"]);
   });
 
   it("flag OFF: the sweep issues exactly its old query (no tenant.plan join) and never touches the hook", async () => {
