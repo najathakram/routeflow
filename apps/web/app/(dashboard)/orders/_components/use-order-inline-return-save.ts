@@ -2,6 +2,19 @@ import * as React from "react";
 import { buildCaptureRequest, extractRefusalMessage, mintReturnKey } from "@routeflow/returns";
 import type { InlineReturnLinesRequest } from "@routeflow/types";
 import type { OrderInlineReturnsSectionHandle } from "./OrderInlineReturnsSection";
+import { parseRegulatedAuthError } from "@/lib/api/authorizations";
+import { parseSellingRestricted } from "@/lib/api/selling-restricted";
+import { parseCreditLimitError } from "@/lib/api/credit-limit";
+
+/** A refusal the page's guardError dialogs own (restricted / license / credit): they re-submit the
+ *  SAME attempt, so an inline return keeps its returnKey through them (SA-484 item 3). */
+export function isGuardHandledRefusal(err: unknown): boolean {
+  return (
+    !!parseSellingRestricted(err) ||
+    (parseRegulatedAuthError(err)?.length ?? 0) > 0 ||
+    !!parseCreditLimitError(err)
+  );
+}
 
 // ─── Shared save-time wiring for the Returns section (#2406) ───────────────────────────────
 //
@@ -26,16 +39,35 @@ export interface OrderInlineReturnSave {
    *  will re-submit the SAME attempt — that must keep the returnKey, so this only mints a
    *  fresh one and surfaces a message for an otherwise-unhandled 4xx. */
   onError(err: unknown, alreadyHandled: boolean): void;
+  /** The order-edit page's save sites: `build` plus the missing-reason toast. `null` = blocked
+   *  (the caller just returns), `undefined` = no return on this save. */
+  prepare(customerId: string, orderId: string): InlineReturnLinesRequest | null | undefined;
+  /** Wraps a save's onError: a guardError-owned refusal keeps the returnKey, any other 4xx mints
+   *  a fresh one; then `next` runs as before. */
+  chainError(sent: unknown, next: (err: unknown) => void): (err: unknown) => void;
 }
 
 export function useOrderInlineReturnSave(
   returnsRef: React.RefObject<OrderInlineReturnsSectionHandle | null>,
+  onMissingReason?: () => void,
 ): OrderInlineReturnSave {
   const keyRef = React.useRef("");
   const [refusalMessage, setRefusalMessage] = React.useState("");
 
-  return {
+  const api: OrderInlineReturnSave = {
     refusalMessage,
+    prepare(customerId, orderId) {
+      const built = api.build(customerId, orderId);
+      if (built !== "missing-reason") return built;
+      onMissingReason?.();
+      return null;
+    },
+    chainError(sent, next) {
+      return (err) => {
+        if (sent) api.onError(err, isGuardHandledRefusal(err));
+        next(err);
+      };
+    },
     build(customerId, orderId) {
       const draft = returnsRef.current?.getDraft() ?? null;
       if (!draft) return undefined;
@@ -65,4 +97,5 @@ export function useOrderInlineReturnSave(
       }
     },
   };
+  return api;
 }

@@ -79,13 +79,14 @@ beforeEach(() => {
   patch.mockResolvedValue({ data: { ...order, lineItems: order.lineItems } });
 });
 
-async function enterEditModeAndOpenReturns() {
+async function enterEditModeAndOpenReturns({ draft = false } = {}) {
   render(
     <Providers>
       <OrderDetailPage />
     </Providers>,
   );
-  fireEvent.click(await screen.findByRole("button", { name: /edit items/i }));
+  // A DRAFT auto-enters edit mode (page.tsx draftAutoEntered) — there is no Edit Items click.
+  if (!draft) fireEvent.click(await screen.findByRole("button", { name: /edit items/i }));
   fireEvent.click(await screen.findByRole("button", { name: /^returns$/i }));
   // The line hydrates from the order's own line items (entryOrderId = order.id) — "Widget"
   // also appears in the page's own editable Line Items list above, so wait for TWO matches
@@ -176,5 +177,23 @@ describe("order detail edit mode — Returns section (#2406)", () => {
     expect(screen.getByTestId("order-return-refusal")).toHaveTextContent("returnKey already used");
     // Edit mode is still open — the Save button (and the Returns section) are still on screen.
     expect(screen.getByRole("button", { name: /^save changes$/i })).toBeInTheDocument();
+  });
+
+  it("a DRAFT's Publish Order carries the return too (never silently dropped)", async () => {
+    const draft = { ...order, status: "DRAFT" };
+    const base = get.getMockImplementation()!;
+    get.mockImplementation((url: string) =>
+      url === "/orders/o1" ? Promise.resolve({ data: draft }) : base(url),
+    );
+    patch.mockResolvedValue({ data: draft });
+    await enterEditModeAndOpenReturns({ draft: true });
+
+    fireEvent.click(await screen.findByRole("button", { name: /publish order/i }));
+    await waitFor(() => expect(patch).toHaveBeenCalledWith("/orders/o1/items", expect.anything()));
+    const [, body] = patch.mock.calls.find(([url]) => url === "/orders/o1/items")!;
+    expect(body.inlineReturn).toBeDefined();
+    expect(body.inlineReturn.reason).toBe("DAMAGED");
+    expect(body.inlineReturn).not.toHaveProperty("customerId");
+    expect(body.inlineReturn).not.toHaveProperty("orderId");
   });
 });

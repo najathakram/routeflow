@@ -2061,7 +2061,9 @@ export default function OrderDetailPage() {
   const [creditsTouched, setCreditsTouched] = React.useState(false);
   // #2406: an inline return started in edit mode, folded into the SAME updateOrderItems write.
   const returnsRef = React.useRef<OrderInlineReturnsSectionHandle>(null);
-  const returnSave = useOrderInlineReturnSave(returnsRef);
+  const returnSave = useOrderInlineReturnSave(returnsRef, () =>
+    toast({ title: "Choose a reason for the return before saving", variant: "error" }),
+  );
 
   // Demotion modal
   const [demoteTarget, setDemoteTarget] = React.useState<ApiOrderStatus | null>(null);
@@ -2284,11 +2286,8 @@ export default function OrderDetailPage() {
     const feeChanged = Math.abs(editShippingFee - Number(order!.shippingFee ?? 0)) > 0.0001;
 
     // #2406: fold in whatever the operator has typed into the edit-mode Returns section.
-    const inlineReturn = returnSave.build(order!.customerId, order!.id);
-    if (inlineReturn === "missing-reason") {
-      toast({ title: "Choose a reason for the return before saving", variant: "error" });
-      return;
-    }
+    const inlineReturn = returnSave.prepare(order!.customerId, order!.id);
+    if (inlineReturn === null) return;
 
     if (updates.length === 0 && !feeChanged && !creditsTouched && !inlineReturn) {
       setIsEditing(false);
@@ -2319,17 +2318,10 @@ export default function OrderDetailPage() {
           setCreditsTouched(false);
           returnSave.onSuccess();
         },
-        onError: (err: any) => {
-          // #2406: guardError's restricted/license/credit dialogs re-submit the SAME
-          // attempt — an inline return keeps its returnKey through those; anything else
-          // 4xx is treated as an unhandled refusal (see useOrderInlineReturnSave).
-          const alreadyHandled =
-            !!parseSellingRestricted(err) ||
-            (parseRegulatedAuthError(err)?.length ?? 0) > 0 ||
-            !!parseCreditLimitError(err);
-          if (inlineReturn) returnSave.onError(err, alreadyHandled);
-          guardError(() => handleSaveItems())(err);
-        },
+        onError: returnSave.chainError(
+          inlineReturn,
+          guardError(() => handleSaveItems()),
+        ),
       },
     );
   }
@@ -3142,8 +3134,16 @@ export default function OrderDetailPage() {
                           // from edit mode silently drops the fee the operator typed.
                           const feeChanged =
                             Math.abs(editShippingFee - Number(order!.shippingFee ?? 0)) > 0.0001;
+                          // #2406: the Returns section rides this save too, never silently dropped.
+                          const inlineReturn = returnSave.prepare(order!.customerId, order!.id);
+                          if (inlineReturn === null) return;
                           const saveThenPublish = () => {
-                            if (updates.length > 0 || feeChanged || creditsTouched) {
+                            if (
+                              updates.length > 0 ||
+                              feeChanged ||
+                              creditsTouched ||
+                              inlineReturn
+                            ) {
                               updateItems.mutate(
                                 {
                                   id: order!.id,
@@ -3161,10 +3161,14 @@ export default function OrderDetailPage() {
                                   // need the explicit carry-through (shippingFee had
                                   // this exact miss last PR — do not repeat it).
                                   ...(creditsTouched ? { appliedCreditNotes: editCredits } : {}),
+                                  ...(inlineReturn ? { inlineReturn } : {}),
                                 },
                                 {
-                                  onSuccess: doPublish,
-                                  onError: guardError(() => saveThenPublish()),
+                                  onSuccess: () => (returnSave.onSuccess(), doPublish()),
+                                  onError: returnSave.chainError(
+                                    inlineReturn,
+                                    guardError(() => saveThenPublish()),
+                                  ),
                                 },
                               );
                             } else {
