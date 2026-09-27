@@ -1,3 +1,5 @@
+import { Prisma } from "@prisma/client";
+import { ConflictException } from "@nestjs/common";
 import { Test, TestingModule } from "@nestjs/testing";
 import { JwtService } from "@nestjs/jwt";
 import { ConfigService } from "@nestjs/config";
@@ -76,8 +78,10 @@ describe("PlatformAdminService — audit provenance", () => {
       findUnique: jest.fn().mockResolvedValue(null),
       // getBillingOverview()'s subscriptions list (REG-743-N4).
       findMany: jest.fn().mockResolvedValue([]),
-      // B216: updateStatus()'s admin-reactivation downgrade-disarm write.
-      updateMany: jest.fn().mockResolvedValue({ count: 0 }),
+      // B216: updateStatus()'s admin-reactivation downgrade-disarm write (count 0 by default).
+      // SA-485b: updatePlan's compare-and-set moves the plan (its data carries planKey) — by default the
+      // row still holds what it read (count 1); a test wanting the lost race sets count 0 itself.
+      updateMany: jest.fn(async (args: any) => ({ count: args?.data?.planKey ? 1 : 0 })),
       // ADMIN-UPDATEPLAN-1: updatePlan()'s downgrade-scheduling write (mirrors
       // SubscriptionMutationService.downgrade(), which also uses a plain update — the row
       // must already exist to carry a periodEnd to schedule against).
@@ -644,13 +648,156 @@ describe("PlatformAdminService — audit provenance", () => {
       proratedNow: 0,
       note: "custom fee unchanged — adjust it in Pricing",
     });
-    const write = (prisma as any).tenantSubscription.upsert.mock.calls[0][0];
-    expect(write.update).toMatchObject({ planKey: "SCALE", basePriceSnapshot: 80 }); // plan moves, price doesn't
-    expect(write.update).not.toHaveProperty("priceOverrideMonthly"); // never cleared or rewritten
+    const write = (prisma as any).tenantSubscription.updateMany.mock.calls[0][0];
+    expect(write.data).toMatchObject({ planKey: "SCALE", basePriceSnapshot: 80 }); // plan moves, price doesn't
+    expect(write.data).not.toHaveProperty("priceOverrideMonthly"); // never cleared or rewritten
     const planChanged = billingEventService.emit.mock.calls.find(
       (c: any[]) => c[1] === "plan.changed",
     );
     expect(planChanged?.[3]?.amountDelta).toBe(0);
+  });
+
+  // #2470 (Opus (5) on #2458): the admin paths an override row can take besides a ranked upgrade.
+  describe("#2470 admin updatePlan — same-rank and a free (0) override keep the fee", () => {
+    const catalog = () =>
+      planCatalogService.getPublishedVersion.mockResolvedValue({
+        id: "v-9",
+        definitions: [
+          { planKey: "STARTER", monthlyPrice: 99 },
+          { planKey: "GROWTH", monthlyPrice: 249 },
+          { planKey: "SCALE", monthlyPrice: 499 },
+        ],
+      });
+    const tenant = (plan: string) => {
+      prisma.tenant.findUnique.mockResolvedValue({
+        id: TENANT_ID,
+        slug: "acme",
+        plan,
+        status: "ACTIVE",
+        class: "PRODUCTION",
+        deletedAt: null,
+      } as any);
+      prisma.tenant.update.mockResolvedValue({ id: TENANT_ID, slug: "acme", plan } as any);
+    };
+    const sub = (planKey: string, fee: number) =>
+      (prisma as any).tenantSubscription.findUnique.mockResolvedValue({
+        planKey,
+        basePriceSnapshot: fee,
+        priceOverrideMonthly: fee,
+        discount: null,
+        cycle: "MONTHLY",
+        periodStart: null,
+        periodEnd: null,
+      });
+    const planDelta = () =>
+      billingEventService.emit.mock.calls.find((c: any[]) => c[1] === "plan.changed")?.[3]
+        ?.amountDelta;
+
+    it("same-rank change (PROFESSIONAL → SCALE) on an override row: snapshot = the fee, Δ0, no quote", async () => {
+      catalog();
+      tenant("PROFESSIONAL");
+      sub("SCALE", 80);
+      const res: any = await service.updatePlan(TENANT_ID, { plan: "SCALE" } as any, ADMIN_ID);
+      const write = (prisma as any).tenantSubscription.updateMany.mock.calls[0][0];
+      expect(write.data).toMatchObject({ planKey: "SCALE", basePriceSnapshot: 80 });
+      expect(write.data).not.toHaveProperty("priceOverrideMonthly");
+      expect(res.proratedNow ?? null).toBeNull();
+      expect(planDelta() ?? 0).toBe(0);
+    });
+
+    // #2470 Opus fold (2) / SA-485b (i): updatePlan read priorSub before its tx; its subscription write is
+    // now a compare-and-set on {tenantId, planKey, fee, snapshot} as READ and its tenant write matches the
+    // status as read — a Pricing change / reconcile / status change since the read is a 409.
+    it("SA-485b: the subscription write is a compare-and-set on planKey + fee + snapshot as read", async () => {
+      catalog();
+      tenant("STARTER");
+      sub("STARTER", 80);
+      await service.updatePlan(TENANT_ID, { plan: "PROFESSIONAL" } as any, ADMIN_ID);
+      expect((prisma as any).tenantSubscription.updateMany.mock.calls[0][0].where).toEqual({
+        tenantId: TENANT_ID,
+        planKey: "STARTER",
+        priceOverrideMonthly: 80,
+        basePriceSnapshot: 80,
+      });
+      expect(prisma.tenant.update.mock.calls[0][0].where).toEqual({
+        id: TENANT_ID,
+        status: "ACTIVE",
+      });
+    });
+
+    it("SA-485b: the guarded subscription write misses (a Pricing change since the read) ⇒ 409, nothing booked", async () => {
+      catalog();
+      tenant("STARTER");
+      sub("STARTER", 80);
+      (prisma as any).tenantSubscription.updateMany.mockResolvedValueOnce({ count: 0 });
+      const err = await service
+        .updatePlan(TENANT_ID, { plan: "PROFESSIONAL" } as any, ADMIN_ID)
+        .catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(ConflictException);
+      expect(billingEventService.emit).not.toHaveBeenCalled();
+    });
+
+    it("SA-485b: the tenant row changed status since the read (P2025 on the guarded update) ⇒ 409", async () => {
+      catalog();
+      tenant("STARTER");
+      sub("STARTER", 80);
+      prisma.tenant.update.mockRejectedValueOnce(
+        new Prisma.PrismaClientKnownRequestError("Record not found", {
+          code: "P2025",
+          clientVersion: "test",
+        }),
+      );
+      const err = await service
+        .updatePlan(TENANT_ID, { plan: "PROFESSIONAL" } as any, ADMIN_ID)
+        .catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(ConflictException);
+      expect(billingEventService.emit).not.toHaveBeenCalled();
+    });
+
+    it("SA-485b: no subscription row before ⇒ it is CREATED (never a guarded update of nothing)", async () => {
+      catalog();
+      tenant("STARTER");
+      (prisma as any).tenantSubscription.findUnique.mockResolvedValue(null);
+      await service.updatePlan(TENANT_ID, { plan: "PROFESSIONAL" } as any, ADMIN_ID);
+      expect((prisma as any).tenantSubscription.updateMany).not.toHaveBeenCalled();
+      expect((prisma as any).tenantSubscription.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({ tenantId: TENANT_ID, planKey: "SCALE" }),
+      });
+    });
+
+    it("fold: updatePlan locks the Tenant row inside its tx before writing the subscription", async () => {
+      catalog();
+      tenant("STARTER");
+      sub("STARTER", 80);
+      await service.updatePlan(TENANT_ID, { plan: "PROFESSIONAL" } as any, ADMIN_ID);
+      const calls = (prisma.$queryRaw as jest.Mock).mock.calls;
+      const i = calls.findIndex((c: any[]) =>
+        String(c[0]?.join?.("?") ?? c[0]).includes('"Tenant"'),
+      );
+      expect(i).toBeGreaterThan(-1);
+      expect((prisma.$queryRaw as jest.Mock).mock.invocationCallOrder[i]).toBeLessThan(
+        ((prisma as any).tenantSubscription.updateMany as jest.Mock).mock.invocationCallOrder[0],
+      );
+    });
+
+    it("a free (override 0) row upgraded by an admin: snapshot 0, quote 0 with the note, Δ0", async () => {
+      catalog();
+      tenant("STARTER");
+      sub("STARTER", 0);
+      prorationService.proratedDiff.mockReturnValue(400);
+      const res: any = await service.updatePlan(
+        TENANT_ID,
+        { plan: "PROFESSIONAL" } as any,
+        ADMIN_ID,
+      );
+      expect(res).toMatchObject({
+        proratedNow: 0,
+        note: "custom fee unchanged — adjust it in Pricing",
+      });
+      const write = (prisma as any).tenantSubscription.updateMany.mock.calls[0][0];
+      expect(write.data).toMatchObject({ planKey: "SCALE", basePriceSnapshot: 0 });
+      expect(planDelta() ?? 0).toBe(0);
+    });
   });
 
   it("logs TENANT_PLAN_CHANGED with the previous and new plan in meta, writes planKey/planVersionId consistent with subscribe(), and invalidates entitlements", async () => {
@@ -693,19 +840,12 @@ describe("PlatformAdminService — audit provenance", () => {
     // basePriceSnapshot moves with planKey: MrrService prices from the snapshot alone, so a
     // stale/absent one would report SCALE tenants at the old plan's price (or $0).
     expect(prisma.tenant.update).toHaveBeenCalledWith({
-      where: { id: TENANT_ID },
+      where: expect.objectContaining({ id: TENANT_ID }), // SA-485b: + the status as read
       data: { plan: "PROFESSIONAL", planVersionId: "v-9" },
     });
-    expect((prisma as any).tenantSubscription.upsert).toHaveBeenCalledWith({
-      where: { tenantId: TENANT_ID },
-      create: {
-        tenantId: TENANT_ID,
-        currentPlan: "PROFESSIONAL",
-        planKey: "SCALE",
-        planVersionId: "v-9",
-        basePriceSnapshot: 499,
-      },
-      update: {
+    expect((prisma as any).tenantSubscription.updateMany).toHaveBeenCalledWith({
+      where: expect.objectContaining({ tenantId: TENANT_ID }), // SA-485b: a compare-and-set
+      data: {
         currentPlan: "PROFESSIONAL",
         planKey: "SCALE",
         planVersionId: "v-9",
@@ -719,7 +859,7 @@ describe("PlatformAdminService — audit provenance", () => {
       },
     });
     // …but it must NOT revoke a cancellation the tenant asked for — that is resume()'s job.
-    expect((prisma as any).tenantSubscription.upsert.mock.calls[0][0].update).not.toHaveProperty(
+    expect((prisma as any).tenantSubscription.updateMany.mock.calls[0][0].data).not.toHaveProperty(
       "cancelAtPeriodEnd",
     );
     expect(entitlementsService.invalidate).toHaveBeenCalledWith(TENANT_ID);
@@ -775,9 +915,9 @@ describe("PlatformAdminService — audit provenance", () => {
 
     // The custom definition carries no catalog price; writing planKey with a null snapshot
     // would enter the tenant in the rollup at $0 base while its add-ons book MRR behind it.
-    expect((prisma as any).tenantSubscription.upsert).toHaveBeenCalledWith(
+    expect((prisma as any).tenantSubscription.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        update: expect.objectContaining({ planKey: "ENTERPRISE", basePriceSnapshot: 1200 }),
+        data: expect.objectContaining({ planKey: "ENTERPRISE", basePriceSnapshot: 1200 }),
       }),
     );
     expect(billingEventService.emit).toHaveBeenCalledWith(
@@ -902,7 +1042,7 @@ describe("PlatformAdminService — audit provenance", () => {
       expect(result.proratedNow).toBe(200);
       // An upgrade still applies instantly — unchanged from today.
       expect(prisma.tenant.update).toHaveBeenCalledWith({
-        where: { id: TENANT_ID },
+        where: expect.objectContaining({ id: TENANT_ID }), // SA-485b: + the status as read
         data: { plan: "PROFESSIONAL", planVersionId: "v-9" },
       });
     });
@@ -1195,11 +1335,12 @@ describe("PlatformAdminService — audit provenance", () => {
         // the change never fires and the tenant keeps paying (and using) the higher plan.
         expect((prisma as any).tenantSubscription.update).not.toHaveBeenCalled();
         expect(prisma.tenant.update).toHaveBeenCalledWith({
-          where: { id: TENANT_ID },
+          where: expect.objectContaining({ id: TENANT_ID }), // SA-485b: + the status as read
           data: { plan: "STARTER", planVersionId: "v-9" },
         });
-        const upsertArg = (prisma as any).tenantSubscription.upsert.mock.calls.at(-1)[0];
-        expect(upsertArg.update.downgradeToPlanKey).toBeNull();
+        // SA-485b: the instant write is the compare-and-set updateMany (still disarms a downgrade).
+        const written = (prisma as any).tenantSubscription.updateMany.mock.calls.at(-1)[0];
+        expect(written.data.downgradeToPlanKey).toBeNull();
         expect(result.downgradeToPlanKey).toBeUndefined();
       },
     );

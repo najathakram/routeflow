@@ -1,7 +1,12 @@
-import { ForbiddenException } from "@nestjs/common";
+import { BadRequestException, ForbiddenException } from "@nestjs/common";
 import { randomUUID } from "crypto";
 import { compressImage } from "../storage/compress.util";
-import { parseImageDataUrl, podArtifactKey, type PodArtifactKind } from "./pod-artifacts.util";
+import {
+  parseImageDataUrl,
+  podArtifactKey,
+  podCaptureValueRefusal,
+  type PodArtifactKind,
+} from "./pod-artifacts.util";
 
 /**
  * #2512 (size ratchet, SA-065): the POD-ingest helpers moved verbatim out of routes.service.ts —
@@ -63,6 +68,16 @@ export async function ingestPodCapture(
   dto: { signatureUrl?: string; podPhotoUrls?: string[] },
   stopId: string,
 ): Promise<void> {
+  // #2542: every schemeless value is a storage key and must be exactly this tenant's pod key —
+  // refused (400) before anything is uploaded or written.
+  const values = [dto.signatureUrl, ...(dto.podPhotoUrls ?? [])].filter((v) => v !== undefined);
+  if (values.length > 0) {
+    const tenantId = requirePodTenantId(deps.prisma);
+    for (const v of values) {
+      const why = podCaptureValueRefusal(v, tenantId);
+      if (why) throw new BadRequestException(why);
+    }
+  }
   if (dto.signatureUrl) {
     const key = await ingestPodDataUrl(deps, dto.signatureUrl, stopId, "signature");
     if (key) dto.signatureUrl = key;

@@ -625,9 +625,12 @@ export class InlineReturnsService {
       const reissued = await this.prisma
         .forTenant()
         .return.findUnique({ where: { id: result.ret.id }, include: { items: true } });
-      // Should-never-happen: the row was just written/read in this same request. Fall back
-      // to the pre-issue snapshot rather than let a stale/missing read surface as a 500.
-      return this.withParkedReversals(reissued ?? result.ret);
+      // #2144: never fall back to the PRE-issue snapshot — it has no creditNoteId, so the response
+      // would look un-issued for a credit that WAS issued. Like approve() (#2467), a null read-back
+      // (the row vanished mid-request) refuses; a retry with the same returnKey replays and
+      // returns the issued row.
+      if (!reissued) throw new NotFoundException("Return not found");
+      return this.withParkedReversals(reissued);
     }
     return this.withParkedReversals(result.ret);
   }
