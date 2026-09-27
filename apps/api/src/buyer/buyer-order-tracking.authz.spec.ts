@@ -12,7 +12,7 @@
  *
  * Fixtures are placeholders (acme / globex); no live-client data.
  */
-import { INestApplication } from "@nestjs/common";
+import { INestApplication, InjectionToken } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { JwtService } from "@nestjs/jwt";
 import { PassportModule } from "@nestjs/passport";
@@ -255,7 +255,7 @@ beforeEach(async () => {
   orderFindUnique = standIn.orderFindUnique;
   const prisma = standIn.prisma as unknown as PrismaService;
 
-  const stub = (token: unknown) => ({ provide: token, useValue: {} });
+  const stub = (token: InjectionToken) => ({ provide: token, useValue: {} });
   const moduleRef = await Test.createTestingModule({
     imports: [PassportModule],
     controllers: [BuyerController],
