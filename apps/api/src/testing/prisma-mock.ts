@@ -144,6 +144,7 @@ export function createMockPrisma(): jest.Mocked<PrismaService> {
     orderTemplateItem: modelProxy(),
     creditNoteItem: modelProxy(),
     orderCreditNote: modelProxy(),
+    creditNoteApplyBlock: modelProxy(), // SA-436 (#2401)
     promotion: modelProxy(),
     promotionProduct: modelProxy(),
     // P6-1 (F0): messaging thread schema (message was previously missing).
@@ -218,6 +219,7 @@ export function createMockPrisma(): jest.Mocked<PrismaService> {
     importQueueItem: modelProxy(),
     creditNoteItem: modelProxy(),
     orderCreditNote: modelProxy(),
+    creditNoteApplyBlock: modelProxy(), // SA-436 (#2401)
     promotion: modelProxy(),
     promotionProduct: modelProxy(),
     // Raw query support inside transactions
