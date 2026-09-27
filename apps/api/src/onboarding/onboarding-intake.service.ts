@@ -32,6 +32,7 @@ import {
   type AdminAuditActionCode,
 } from "../platform-admin/audit-actions.constant";
 import { INTAKE_SCHEMA_VERSION, validateSectionAnswers } from "./dto/intake-sections.dto";
+import { onboardingTokenSecret } from "./onboarding-token-secret";
 
 /** Every token failure — forged, unknown, expired, revoked, closed case — looks exactly alike (L-178). */
 export const LINK_NOT_FOUND = "Link not found or expired.";
@@ -111,8 +112,9 @@ export class OnboardingIntakeService {
     private readonly catalog: PlanCatalogService,
   ) {}
 
-  private secret(): string {
-    return (process.env.ONBOARDING_TOKEN_SECRET ?? "").trim();
+  /** Null when unset or shorter than ONBOARDING_TOKEN_SECRET_MIN_LENGTH (SA-456: same bar as boot). */
+  private secret(): string | null {
+    return onboardingTokenSecret();
   }
 
   // ─── Back office: the link ──────────────────────────────────────────────────────
@@ -123,8 +125,7 @@ export class OnboardingIntakeService {
     send: boolean,
   ): Promise<IssueIntakeLinkResponse> {
     const secret = this.secret();
-    if (secret.length < 16)
-      throw new ConflictException("Intake links are not configured on this server");
+    if (!secret) throw new ConflictException("Intake links are not configured on this server");
     const c = await this.prisma.onboardingCase.findUnique({ where: { id: caseId } });
     if (!c) throw new NotFoundException("Onboarding case not found");
     if (c.status !== "OPEN") {
@@ -190,7 +191,8 @@ export class OnboardingIntakeService {
    */
   async resolve(token: unknown): Promise<TokenCase> {
     if (typeof token !== "string" || token.length < 16 || token.length > 300) throw notFound();
-    if (!verifySignedToken(token, this.secret())) throw notFound();
+    const secret = this.secret();
+    if (!secret || !verifySignedToken(token, secret)) throw notFound();
     const row = await this.prisma.intakeAccessToken.findUnique({
       where: { tokenHash: hashSignedToken(token) },
       include: { case: true },

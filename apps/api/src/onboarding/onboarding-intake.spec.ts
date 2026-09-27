@@ -1,17 +1,20 @@
 import * as fs from "fs";
 import * as path from "path";
 import { GUARDS_METADATA, METHOD_METADATA, PATH_METADATA } from "@nestjs/common/constants";
-import { RequestMethod } from "@nestjs/common";
+import { ConflictException, NotFoundException, RequestMethod } from "@nestjs/common";
 import { INTAKE_ERROR_CODES, INTAKE_LINK_NOT_FOUND } from "@routeflow/types";
 import { validateSectionAnswers, INTAKE_RESERVED_SLUGS } from "./dto/intake-sections.dto";
 import {
   LINK_NOT_FOUND,
+  OnboardingIntakeService,
   PRIVACY_VERSION,
   TERMS_VERSION,
   assertAllowedUpload,
   safeFileName,
 } from "./onboarding-intake.service";
 import { PublicOnboardingController, intakeFileFilter } from "./public-onboarding.controller";
+import { ONBOARDING_TOKEN_SECRET_MIN_LENGTH } from "./onboarding-token-secret";
+import { mintSignedToken } from "../common/signed-token";
 
 const ACCOUNT = {
   legalName: "Acme Wholesale LLC",
@@ -218,5 +221,62 @@ describe("Terms/Privacy versions track the published pages", () => {
 
   it("PRIVACY_VERSION equals the Privacy page's Last updated date", () => {
     expect(PRIVACY_VERSION).toBe(lastUpdated(page("privacy")));
+  });
+});
+
+// SA-456: the request-time half of the ONBOARDING_TOKEN_SECRET contract — the same 32-char bar
+// as boot. An unset or short secret refuses to issue a link and makes every link read 404.
+describe("intake links with an unset or short secret (SA-456)", () => {
+  const prev = process.env.ONBOARDING_TOKEN_SECRET;
+  afterEach(() => {
+    if (prev === undefined) delete process.env.ONBOARDING_TOKEN_SECRET;
+    else process.env.ONBOARDING_TOKEN_SECRET = prev;
+  });
+
+  function service() {
+    const prisma = {
+      onboardingCase: { findUnique: jest.fn() },
+      intakeAccessToken: { findUnique: jest.fn() },
+    };
+    const svc = new OnboardingIntakeService(
+      prisma as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never,
+    );
+    return { svc, prisma };
+  }
+
+  it.each([
+    ["unset", undefined],
+    ["short (31 chars)", "k".repeat(ONBOARDING_TOKEN_SECRET_MIN_LENGTH - 1)],
+  ])("issueLink refuses with 409 when the secret is %s, before touching the DB", async (_l, s) => {
+    if (s === undefined) delete process.env.ONBOARDING_TOKEN_SECRET;
+    else process.env.ONBOARDING_TOKEN_SECRET = s;
+    const { svc, prisma } = service();
+    await expect(svc.issueLink("case-1", "admin-1", false)).rejects.toBeInstanceOf(
+      ConflictException,
+    );
+    expect(prisma.onboardingCase.findUnique).not.toHaveBeenCalled();
+  });
+
+  it("a link signed under a short secret reads 404 while that secret is configured", async () => {
+    const short = "k".repeat(ONBOARDING_TOKEN_SECRET_MIN_LENGTH - 1);
+    process.env.ONBOARDING_TOKEN_SECRET = short;
+    const token = mintSignedToken(short);
+    const { svc, prisma } = service();
+    await expect(svc.resolve(token)).rejects.toBeInstanceOf(NotFoundException);
+    expect(prisma.intakeAccessToken.findUnique).not.toHaveBeenCalled();
+  });
+
+  it("a full-length secret passes the gate and reaches the hash lookup", async () => {
+    const good = "k".repeat(ONBOARDING_TOKEN_SECRET_MIN_LENGTH);
+    process.env.ONBOARDING_TOKEN_SECRET = good;
+    const { svc, prisma } = service();
+    prisma.intakeAccessToken.findUnique.mockResolvedValue(null);
+    await expect(svc.resolve(mintSignedToken(good))).rejects.toBeInstanceOf(NotFoundException);
+    expect(prisma.intakeAccessToken.findUnique).toHaveBeenCalledTimes(1);
   });
 });
