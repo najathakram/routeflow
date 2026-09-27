@@ -170,7 +170,7 @@ export async function assertNoMoneyRecordsInTx(tx: Db, customerIds: string[]): P
 }
 
 /**
- * #2587: a money-record table is only ever "deleted" as a compare-and-set expecting ZERO rows, so
+ * #2587 (and #2591, delivery history): a protected table is only ever "deleted" as a compare-and-set expecting ZERO rows, so
  * a row that appeared after the re-check is a 409 and a rollback, never destroyed.
  */
 export async function deleteMoneyRecordCas(
@@ -180,6 +180,48 @@ export async function deleteMoneyRecordCas(
   const res = await delegate.deleteMany({ where });
   if (res.count !== 0)
     throw new ConflictException(
-      "Customer credit notes or payments appeared while deleting — nothing was deleted; please retry.",
+      "Customer records that block a delete appeared while deleting — nothing was deleted; please retry.",
     );
+}
+
+/**
+ * #2591 / SA-516b: a customer with delivery history (ANY RouteRunStop, its own or one on one of
+ * its RouteStops) is never hard-deleted — the history is refused, never destroyed (deleting the
+ * RouteStop under a RouteRunStop was an FK 500). History-free route template rows stay deletable.
+ */
+function deliveryHistoryWhere(customerIds: string[]) {
+  return {
+    OR: [{ customerId: { in: customerIds } }, { routeStop: { customerId: { in: customerIds } } }],
+  };
+}
+
+export async function countDeliveryHistory(db: Db, customerIds: string[]): Promise<string[]> {
+  const stops: Array<{ customerId: string | null; routeStop: { customerId: string | null } }> =
+    await db.routeRunStop.findMany({
+      where: deliveryHistoryWhere(customerIds),
+      select: { customerId: true, routeStop: { select: { customerId: true } } },
+    });
+  const owners = new Set<string>();
+  for (const s of stops)
+    for (const id of [s.customerId, s.routeStop?.customerId])
+      if (id && customerIds.includes(id)) owners.add(id);
+  return [...owners];
+}
+
+/** Pre-flight (and, called with the tx, its in-tx twin): any delivery history is a 409. */
+export async function assertNoDeliveryHistory(db: Db, customerIds: string[]): Promise<void> {
+  const owners = await countDeliveryHistory(db, customerIds);
+  if (owners.length > 0) {
+    const listed = owners.slice(0, MAX_LISTED_BLOCKERS);
+    if (owners.length > MAX_LISTED_BLOCKERS)
+      listed.push(`and ${owners.length - MAX_LISTED_BLOCKERS} more`);
+    throw new ConflictException(
+      `Delete blocked — the following customers have delivery history that cannot be destroyed: ${listed.join("; ")}.`,
+    );
+  }
+}
+
+/** The RouteRunStop delete as a compare-and-set expecting ZERO rows. */
+export async function deleteDeliveryHistoryCas(tx: Db, customerIds: string[]): Promise<void> {
+  await deleteMoneyRecordCas(tx.routeRunStop, deliveryHistoryWhere(customerIds));
 }

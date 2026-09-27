@@ -223,4 +223,85 @@ describe("customer deletes never destroy a money record (#2587, SA-516)", () => 
       },
     );
   });
+
+  // #2591 / SA-516b: delivery history (ANY RouteRunStop, the customer's own or one on its
+  // RouteStop) is refused, never deleted. Pre-fix, cleanup-imported hit an FK 500 on the RouteStop.
+  describe("delivery history (#2591, SA-516b)", () => {
+    const HISTORY: Array<[string, Record<string, unknown>]> = [
+      ["its own RouteRunStop", { customerId: "cust-1", routeStop: { customerId: null } }],
+      [
+        "a RouteRunStop on its RouteStop",
+        { customerId: null, routeStop: { customerId: "cust-1" } },
+      ],
+    ];
+
+    describe.each(BULK)("%s", (_name, run) => {
+      it.each(HISTORY)("%s ⇒ the pre-flight refuses naming the customer", async (_k, stop) => {
+        seedBulk();
+        prisma.routeRunStop.findMany.mockResolvedValue([stop] as any);
+        const caught: any = await run().catch((e) => e);
+        expect(caught).toBeInstanceOf(ConflictException);
+        expect(caught.message).toContain("delivery history");
+        expect(caught.message).toContain("cust-1");
+        expect(prisma.tenantTransaction).not.toHaveBeenCalled();
+        expect(prisma.routeRunStop.deleteMany).not.toHaveBeenCalled();
+        expect(prisma.routeStop.deleteMany).not.toHaveBeenCalled();
+      });
+
+      it("history appearing after the pre-flight ⇒ the in-tx twin refuses before any delete", async () => {
+        seedBulk();
+        prisma.routeRunStop.findMany
+          .mockResolvedValueOnce([])
+          .mockResolvedValue([HISTORY[1][1]] as any);
+        const caught: any = await run().catch((e) => e);
+        expect(caught).toBeInstanceOf(ConflictException);
+        expect(prisma.tenantTransaction).toHaveBeenCalledTimes(1);
+        expect(prisma.routeRunStop.deleteMany).not.toHaveBeenCalled();
+        expect(prisma.customer.deleteMany).not.toHaveBeenCalled();
+      });
+
+      it("a RouteRunStop slipping past the re-check ⇒ the zero-row CAS refuses", async () => {
+        seedBulk();
+        prisma.routeRunStop.deleteMany.mockResolvedValue({ count: 1 } as any);
+        const caught: any = await run().catch((e) => e);
+        expect(caught).toBeInstanceOf(ConflictException);
+        expect(prisma.routeStop.deleteMany).not.toHaveBeenCalled();
+        expect(prisma.customer.deleteMany).not.toHaveBeenCalled();
+      });
+
+      it("history-free control ⇒ the route template rows (RouteStop/RouteCustomer) are still deleted", async () => {
+        seedBulk();
+        await run();
+        expect(prisma.routeRunStop.deleteMany).toHaveBeenCalledWith({
+          where: {
+            OR: [
+              { customerId: { in: expect.arrayContaining(["cust-1"]) } },
+              { routeStop: { customerId: { in: expect.arrayContaining(["cust-1"]) } } },
+            ],
+          },
+        });
+        expect(prisma.routeStop.deleteMany).toHaveBeenCalled();
+        expect(prisma.routeCustomer.deleteMany).toHaveBeenCalled();
+        expect(prisma.customer.deleteMany).toHaveBeenCalled();
+      });
+    });
+
+    it("single path: history without force ⇒ 409; with force (batch shape) ⇒ the soft delete", async () => {
+      prisma.customer.findUnique.mockResolvedValue({
+        id: "cust-1",
+        userId: "user-1",
+        deletedAt: null,
+        user: { status: "ACTIVE", username: "shop" },
+      } as any);
+      prisma.routeRunStop.findMany.mockResolvedValue([HISTORY[1][1]] as any);
+      const caught: any = await service.deleteCustomer("cust-1").catch((e) => e);
+      expect(caught).toBeInstanceOf(ConflictException);
+      expect(caught.message).toContain("delivery history");
+      await expect(
+        service.deleteCustomer("cust-1", true, { hardDeleteWhenRecordFree: true }),
+      ).resolves.toEqual({ success: true, softDeleted: true });
+      expect(prisma.routeRunStop.deleteMany).not.toHaveBeenCalled();
+      expect(prisma.customer.delete).not.toHaveBeenCalled();
+    });
+  });
 });

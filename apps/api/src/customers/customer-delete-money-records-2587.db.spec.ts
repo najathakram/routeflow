@@ -134,3 +134,113 @@ describeDb("customer bulk deletes keep every money record (#2587, SA-516)", () =
     },
   );
 });
+
+/**
+ * #2591 / SA-516b, real Postgres: cleanup-imported on a customer whose RouteStop is referenced by
+ * a RouteRunStop (delivery history). Pre-fix this was the FK 500
+ * (RouteRunStop_routeStopId_fkey); now it is a 409 naming the customer, and the route, run, stops
+ * and the customer are all kept byte-identical. Its own throwaway `qa-2591-<run>` tenant.
+ */
+describeDb("cleanup imported refuses a customer with delivery history (#2591, SA-516b)", () => {
+  let prisma: PrismaService;
+  let obs: Client;
+  let tenantCtx: TenantContextService;
+  let service: CustomersService;
+  let tenantId: string;
+  const rows: Array<[string, string]> = []; // [table, id] to compare before/after
+
+  async function snapshot(): Promise<Array<string | null>> {
+    const out: Array<string | null> = [];
+    for (const [table, id] of rows) {
+      const r = await obs.query(`SELECT to_jsonb(t)::text AS j FROM "${table}" t WHERE t.id = $1`, [
+        id,
+      ]);
+      out.push(r.rows[0]?.j ?? null);
+    }
+    return out;
+  }
+
+  beforeAll(async () => {
+    const url = requireLocalDatabaseUrl();
+    tenantCtx = new TenantContextService();
+    prisma = new PrismaService(tenantCtx);
+    await prisma.$connect();
+    obs = new Client({ connectionString: url });
+    await obs.connect();
+
+    const slug = assertTestTenant(
+      `qa-2591-${RUN}`,
+      "customer-delete-money-records-2587.db.spec.ts",
+    );
+    tenantId = (await prisma.tenant.create({ data: { slug, name: `2591 ${slug}` } })).id;
+    const user = await prisma.user.create({
+      data: {
+        email: `c2591-${RUN}@example.invalid`,
+        username: `c2591-${RUN}`,
+        role: "CUSTOMER",
+        tenantId,
+      },
+    });
+    const customer = await prisma.customer.create({
+      data: { userId: user.id, businessName: "2591 history", contactName: "2591", tenantId },
+    });
+    const route = await prisma.route.create({ data: { tenantId, name: `2591 ${RUN}` } });
+    const stop = await prisma.routeStop.create({
+      data: { tenantId, routeId: route.id, customerId: customer.id, stopNumber: 1 },
+    });
+    const run = await prisma.routeRun.create({
+      data: { tenantId, routeId: route.id, scheduledDate: new Date("2026-09-01T12:00:00Z") },
+    });
+    // customerId left null: the history is reachable only through the customer's RouteStop.
+    const runStop = await prisma.routeRunStop.create({
+      data: { tenantId, routeRunId: run.id, routeStopId: stop.id, stopNumber: 1 },
+    });
+    rows.push(
+      ["Customer", customer.id],
+      ["User", user.id],
+      ["Route", route.id],
+      ["RouteStop", stop.id],
+      ["RouteRun", run.id],
+      ["RouteRunStop", runStop.id],
+    );
+
+    const stub = {} as never;
+    service = new CustomersService(
+      prisma,
+      { get: () => null } as never,
+      stub,
+      stub,
+      stub,
+      { hasFlag: async () => false } as never,
+      stub,
+      { reverseInvoiceEntries: jest.fn().mockResolvedValue(undefined) } as never,
+      stub,
+    );
+  });
+
+  afterAll(async () => {
+    await prisma.routeRunStop.deleteMany({ where: { tenantId } });
+    await prisma.routeRun.deleteMany({ where: { tenantId } });
+    await prisma.routeStop.deleteMany({ where: { tenantId } });
+    await prisma.route.deleteMany({ where: { tenantId } });
+    await prisma.customer.deleteMany({ where: { tenantId } });
+    await prisma.user.deleteMany({ where: { tenantId } });
+    await prisma.tenant.deleteMany({ where: { id: tenantId } });
+    await obs?.end().catch(() => undefined);
+    await prisma?.$disconnect();
+  });
+
+  it("a RouteStop referenced by a RouteRunStop ⇒ 409 naming the customer (not the FK 500), every row kept", async () => {
+    const before = await snapshot();
+    expect(before.every((r) => r !== null)).toBe(true);
+
+    const caught: any = await tenantCtx
+      .run(tenantId, () => service.deleteImportedCustomers())
+      .catch((e) => e);
+    expect(caught).toBeInstanceOf(ConflictException);
+    expect(caught.message).toContain("delivery history");
+    expect(caught.message).toContain(rows[0][1]);
+
+    expect(await snapshot()).toEqual(before);
+  });
+});

@@ -17,10 +17,13 @@ import * as bcrypt from "bcrypt";
 import { PrismaService } from "../prisma/prisma.service";
 import {
   assertNoBlockingInvoices,
+  assertNoDeliveryHistory,
   assertNoMoneyRecords,
   assertNoMoneyRecordsInTx,
   assertRecordFreeInTx,
+  countDeliveryHistory,
   countMoneyRecords,
+  deleteDeliveryHistoryCas,
   deleteMoneyRecordCas,
   deleteNonBlockingInvoicesCas,
   readInvoicesAssertingNoneBlocking,
@@ -2282,7 +2285,7 @@ export class CustomersService {
     // since-deleted invoice is still open). Neither showed up in the counts above, so
     // the hard-delete path below ran unconditionally and destroyed real liabilities
     // with no soft-delete, no statement, no audit row.
-    const [orderCount, invoiceCount, returnCount, advanceBalance, openCreditNotes, money] =
+    const [orderCount, invoiceCount, returnCount, advanceBalance, openCreditNotes, money, history] =
       await Promise.all([
         this.prisma.forTenant().order.count({ where: { customerId: id } }),
         this.prisma.forTenant().invoice.count({ where: { customerId: id } }),
@@ -2296,6 +2299,7 @@ export class CustomersService {
           select: { amount: true, amountUsed: true },
         }),
         countMoneyRecords(this.prisma.forTenant(), [id]), // #2587/SA-516: any status, any balance
+        countDeliveryHistory(this.prisma.forTenant(), [id]), // #2591/SA-516b
       ]);
 
     const hasAdvanceBalance = Number(advanceBalance._sum.balance ?? 0) > 0.001;
@@ -2305,11 +2309,13 @@ export class CustomersService {
       (cn) => Number(cn.amount) - Number(cn.amountUsed) > 0.001,
     );
     const hasMoneyRecords = money.length > 0;
+    const hasDeliveryHistory = history.length > 0;
     const hasFinancialRecords =
       orderCount + invoiceCount + returnCount > 0 ||
       hasAdvanceBalance ||
       hasOpenCreditNote ||
-      hasMoneyRecords;
+      hasMoneyRecords ||
+      hasDeliveryHistory;
 
     if (hasFinancialRecords && !force) {
       const parts = [
@@ -2321,6 +2327,7 @@ export class CustomersService {
       if (hasOpenCreditNote) parts.push("an open credit note");
       if (hasMoneyRecords && !hasAdvanceBalance && !hasOpenCreditNote)
         parts.push("credit notes, payments or advance payments");
+      if (hasDeliveryHistory) parts.push("delivery history");
       throw new ConflictException(
         `Cannot delete customer with existing financial records. ` +
           `Affected: ${parts.join(", ")}. ` +
@@ -2368,6 +2375,7 @@ export class CustomersService {
       // payment created in between.
       await assertRecordFreeInTx(tx, id);
       await assertNoMoneyRecordsInTx(tx, [id]); // #2587/SA-516
+      await assertNoDeliveryHistory(tx, [id]); // #2591/SA-516b
 
       // #2587/SA-516: credit notes are never destroyed (so no order links to clear either)
       await deleteMoneyRecordCas(tx.creditNote, { customerId: id });
@@ -2438,7 +2446,7 @@ export class CustomersService {
       }
 
       // Route associations (RouteRunStop references RouteStop, so delete run stops first)
-      await tx.routeRunStop.deleteMany({ where: { customerId: id } });
+      await deleteDeliveryHistoryCas(tx, [id]); // #2591: expects zero rows
       await tx.routeCustomer.deleteMany({ where: { customerId: id } });
       await tx.routeStop.deleteMany({ where: { customerId: id } });
 
@@ -2535,11 +2543,13 @@ export class CustomersService {
     // #2558/SA-510a: the pre-flight breakdown; re-checked inside the tx, and the delete is a CAS.
     await assertNoBlockingInvoices(this.prisma.forTenant(), customerIds, { capList: true });
     await assertNoMoneyRecords(this.prisma.forTenant(), customerIds); // #2587/SA-516
+    await assertNoDeliveryHistory(this.prisma.forTenant(), customerIds); // #2591/SA-516b
 
     await this.prisma.tenantTransaction(
       async (tx) => {
-        const invoices = await readInvoicesAssertingNoneBlocking(tx, customerIds);
-        await assertNoMoneyRecordsInTx(tx, customerIds); // #2587/SA-516 // SA-510a (1)
+        const invoices = await readInvoicesAssertingNoneBlocking(tx, customerIds); // SA-510a (1)
+        await assertNoMoneyRecordsInTx(tx, customerIds); // #2587/SA-516
+        await assertNoDeliveryHistory(tx, customerIds); // #2591/SA-516b: the in-tx twin
         const invoiceIds = invoices.map((i) => i.id);
         if (invoiceIds.length) {
           // Reverse each invoice's regulated-sales ledger rows BEFORE its items
@@ -2626,10 +2636,9 @@ export class CustomersService {
           await tx.orderTemplate.deleteMany({ where: { customerId: { in: customerIds } } });
         }
 
-        await tx.routeRunStop.deleteMany({ where: { customerId: { in: customerIds } } });
+        await deleteDeliveryHistoryCas(tx, customerIds); // #2591: expects zero rows
         await tx.routeCustomer.deleteMany({ where: { customerId: { in: customerIds } } });
         await tx.routeStop.deleteMany({ where: { customerId: { in: customerIds } } });
-        await tx.routeRunStop.deleteMany({ where: { customerId: { in: customerIds } } });
         await tx.transaction.deleteMany({ where: { customerId: { in: customerIds } } });
         await deleteMoneyRecordCas(tx.advancePayment, { customerId: { in: customerIds } });
         await tx.customerPrice.deleteMany({ where: { customerId: { in: customerIds } } });
@@ -2701,12 +2710,14 @@ export class CustomersService {
     // in-tx re-check and the compare-and-set invoice delete (customer-delete-preflight.ts).
     await assertNoBlockingInvoices(this.prisma.forTenant(), ids, { capList: true });
     await assertNoMoneyRecords(this.prisma.forTenant(), ids); // #2587/SA-516
+    await assertNoDeliveryHistory(this.prisma.forTenant(), ids); // #2591/SA-516b
 
     await this.prisma.tenantTransaction(
       async (tx) => {
         // Invoices (DRAFT/VOID only by now: any blocking one is a 409 and a rollback here)
         const invoices = await readInvoicesAssertingNoneBlocking(tx, ids);
         await assertNoMoneyRecordsInTx(tx, ids); // #2587/SA-516
+        await assertNoDeliveryHistory(tx, ids); // #2591/SA-516b: the in-tx twin
         const invoiceIds = invoices.map((i) => i.id);
         if (invoiceIds.length) {
           // Reverse each invoice's regulated-sales ledger rows BEFORE its items
@@ -2798,7 +2809,7 @@ export class CustomersService {
         }
 
         // Route associations
-        await tx.routeRunStop.deleteMany({ where: { customerId: { in: ids } } });
+        await deleteDeliveryHistoryCas(tx, ids); // #2591: expects zero rows
         await tx.routeCustomer.deleteMany({ where: { customerId: { in: ids } } });
         await tx.routeStop.deleteMany({ where: { customerId: { in: ids } } });
 
