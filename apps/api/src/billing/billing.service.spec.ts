@@ -1538,6 +1538,37 @@ describe("BillingService.syncStripeSubscriptionPrice", () => {
   });
   // #2440 (lead ruling A, a money bug): Stripe does not order items base-first. An add-on item
   // listed first must never be repriced to the plan price — only the base-plan item is.
+  // SA-461: when EVERY item is a known add-on there is no base-plan item to reprice — the period
+  // read may fall back to the first item, but the price sync must refuse rather than overwrite an
+  // add-on with the plan price.
+  it("#2440 SA-461: every item a known add-on ⇒ { synced: false, reason: 'no_base_item' }", async () => {
+    prisma.tenantSubscription.findUnique.mockResolvedValue({
+      tenantId: "t1",
+      stripeSubId: "sub_1",
+      billingInterval: "month",
+    });
+    prisma.tenantAddon.findMany.mockResolvedValue([{ stripeItemId: "si_addon" }]);
+    stripe.getSubscription.mockResolvedValue({
+      status: "active",
+      items: {
+        data: [
+          { id: "si_addon", price: { recurring: { interval: "month" }, product: "prod_addon" } },
+        ],
+      },
+    });
+    pricing.checkoutPriceData.mockResolvedValue({
+      currency: "usd",
+      product_data: { name: "RouteFlow Growth — monthly" },
+      unit_amount: 15000,
+      recurring: { interval: "month" },
+    });
+
+    const result = await service.syncStripeSubscriptionPrice("t1");
+
+    expect(result).toEqual({ synced: false, reason: "no_base_item" });
+    expect(stripe.updateSubscription).not.toHaveBeenCalled();
+  });
+
   it("#2440: reprices the base-plan item, never an add-on item listed first", async () => {
     prisma.tenantSubscription.findUnique.mockResolvedValue({
       tenantId: "t1",
