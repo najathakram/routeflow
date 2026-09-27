@@ -197,4 +197,44 @@ describe("OrderLineUnitPicker", () => {
       false,
     );
   });
+
+  // #2381: "Not available" → Undo unmounts and remounts the picker, and the first-sight refresh
+  // snapped a price the operator had TYPED back to the ladder's. A typed price survives a remount.
+  describe("a typed price survives a remount (#2381)", () => {
+    const typed = { ...caseLine, unitPrice: 300, priceEdited: true };
+
+    it("first sight after a remount does not re-price a line whose price was typed", () => {
+      const onChange = jest.fn();
+      const first = render(<OrderLineUnitPicker line={typed} tier={2} onChange={onChange} />);
+      first.unmount(); // "Not available"
+      render(<OrderLineUnitPicker line={typed} tier={2} onChange={onChange} />); // Undo
+      expect(onChange).not.toHaveBeenCalled();
+    });
+
+    it("nor when the ladder loads after the picker mounted", () => {
+      const onChange = jest.fn();
+      mockUnits = undefined;
+      const view = render(<OrderLineUnitPicker line={typed} tier={2} onChange={onChange} />);
+      mockUnits = [CASE];
+      view.rerender(<OrderLineUnitPicker line={typed} tier={2} onChange={onChange} />);
+      expect(onChange).not.toHaveBeenCalled();
+    });
+
+    it("a real ladder move afterwards (the customer's tier changes) still re-prices it", () => {
+      const onChange = jest.fn();
+      const view = render(<OrderLineUnitPicker line={typed} tier={1} onChange={onChange} />);
+      expect(onChange).not.toHaveBeenCalled();
+      view.rerender(<OrderLineUnitPicker line={typed} tier={2} onChange={onChange} />);
+      expect(onChange).toHaveBeenCalledWith(
+        expect.objectContaining({ value: "Case", price: 240 }),
+        true,
+      );
+    });
+
+    it("an untyped line is still refreshed on first sight (unchanged)", () => {
+      const onChange = jest.fn();
+      render(<OrderLineUnitPicker line={caseLine} tier={2} onChange={onChange} />);
+      expect(onChange).toHaveBeenCalledWith(expect.objectContaining({ price: 240 }), true);
+    });
+  });
 });
