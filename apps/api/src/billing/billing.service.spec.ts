@@ -1280,8 +1280,9 @@ describe("B216 — a Stripe reinstatement LEAVES a downgrade scheduled before th
 describe("BillingService.syncStripeSubscriptionPrice", () => {
   let service: BillingService;
   let prisma: {
-    tenantSubscription: { findUnique: jest.Mock; update: jest.Mock };
+    tenantSubscription: { findUnique: jest.Mock; update: jest.Mock; updateMany: jest.Mock };
     tenantAddon: { findMany: jest.Mock };
+    $transaction: jest.Mock;
   };
   let stripe: { getSubscription: jest.Mock; updateSubscription: jest.Mock; isConfigured: boolean };
   let pricing: { checkoutPriceData: jest.Mock; resolveTenantPricing: jest.Mock };
@@ -1289,7 +1290,13 @@ describe("BillingService.syncStripeSubscriptionPrice", () => {
 
   beforeEach(async () => {
     prisma = {
-      tenantSubscription: { findUnique: jest.fn(), update: jest.fn().mockResolvedValue({}) },
+      tenantSubscription: {
+        findUnique: jest.fn(),
+        update: jest.fn().mockResolvedValue({}),
+        // #2509: reconcilePriceLedger's compare-and-set write (1 = the row still held what it read).
+        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+      },
+      $transaction: jest.fn(async (fn: any) => fn(prisma)),
       // #2440: the tenant's add-on subscription items (none by default).
       tenantAddon: { findMany: jest.fn().mockResolvedValue([]) },
     };
@@ -1414,6 +1421,61 @@ describe("BillingService.syncStripeSubscriptionPrice", () => {
     // (or 400) the caller — it reports itself as unsynced.
     expect(result).toEqual({ synced: false, reason: "price_unresolvable" });
     expect(stripe.updateSubscription).not.toHaveBeenCalled();
+  });
+
+  // #2509: reconcilePriceLedger is ONE transaction — read, compare-and-set on the (planKey, snapshot) it
+  // read, emit in the same tx. A miss re-reads: a plan changed meanwhile ⇒ this resolved price is stale
+  // for the row, skip (the plan path wrote its own snapshot); only the snapshot moved ⇒ retry against it.
+  describe("#2509 reconcilePriceLedger — compare-and-set in one transaction", () => {
+    const row = (planKey: string, snapshot: number) => ({
+      tenantId: "t1",
+      planKey,
+      basePriceSnapshot: snapshot,
+      stripeSubId: null, // the Stripe push is a no-op; only the reconcile is under test
+      billingInterval: "month",
+      tenant: { status: "ACTIVE", deletedAt: null, class: "PRODUCTION" },
+    });
+    /** The sync's own read returns `first`; each reconcile read (it selects the tenant) takes the next. */
+    const reads = (first: any, reconcileReads: any[]) =>
+      prisma.tenantSubscription.findUnique.mockImplementation(async (args: any) =>
+        args?.select?.tenant ? (reconcileReads.shift() ?? reconcileReads[0]) : first,
+      );
+    const planChanged = () =>
+      events.emit.mock.calls.filter((c: any[]) => c[1] === BILLING_EVENTS.PLAN_CHANGED);
+
+    it("writes by compare-and-set on the planKey + snapshot it read, and emits in the same tx", async () => {
+      reads(row("GROWTH", 249), [row("GROWTH", 249)]);
+      await service.syncStripeSubscriptionPrice("t1");
+      expect(prisma.tenantSubscription.updateMany).toHaveBeenCalledWith({
+        where: { tenantId: "t1", planKey: "GROWTH", basePriceSnapshot: 249 },
+        data: { basePriceSnapshot: 150 },
+      });
+      expect(prisma.tenantSubscription.update).not.toHaveBeenCalled();
+      const [c] = planChanged();
+      expect(c?.[3]).toMatchObject({ amountDelta: -99, tx: expect.anything() });
+    });
+
+    it("a plan change committed meanwhile (CAS miss, planKey moved) ⇒ nothing written or booked", async () => {
+      reads(row("GROWTH", 249), [row("GROWTH", 249), row("SCALE", 499)]);
+      prisma.tenantSubscription.updateMany.mockResolvedValueOnce({ count: 0 });
+      await service.syncStripeSubscriptionPrice("t1");
+      expect(prisma.tenantSubscription.updateMany).toHaveBeenCalledTimes(1);
+      expect(planChanged()).toHaveLength(0);
+    });
+
+    it("only the snapshot moved (CAS miss, same plan) ⇒ retried against the fresh value, booked once", async () => {
+      reads(row("GROWTH", 249), [row("GROWTH", 249), row("GROWTH", 200)]);
+      prisma.tenantSubscription.updateMany
+        .mockResolvedValueOnce({ count: 0 })
+        .mockResolvedValueOnce({ count: 1 });
+      await service.syncStripeSubscriptionPrice("t1");
+      expect(prisma.tenantSubscription.updateMany.mock.calls[1][0]).toEqual({
+        where: { tenantId: "t1", planKey: "GROWTH", basePriceSnapshot: 200 },
+        data: { basePriceSnapshot: 150 },
+      });
+      expect(planChanged()).toHaveLength(1);
+      expect(planChanged()[0][3].amountDelta).toBe(-50); // 150 − 200, never 150 − 249
+    });
   });
 
   it("moves the MRR ledger with the price: writes basePriceSnapshot and emits a signed amountDelta", async () => {
