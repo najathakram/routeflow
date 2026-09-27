@@ -1505,3 +1505,85 @@ describe("BillingService.syncStripeSubscriptionPrice", () => {
     expect(pricing.checkoutPriceData).toHaveBeenCalledWith("t1", "month");
   });
 });
+
+// #2436 (P0): SDK 22.6.2 pins Stripe API 2026-08-26.dahlia, where current_period_start/end live on
+// the subscription's ITEMS (SubscriptionItems.d.ts:54-58), not on the subscription. Reading the old
+// top-level field gave `new Date(NaN)` — Prisma rejected it, checkout.session.completed 500'd and
+// stripeSubId was never stored. These fixtures are dahlia-shaped; the old mocks kept tests green.
+describe("#2436 Stripe API dahlia — the subscription period lives on items", () => {
+  const START = new Date(1_700_000_000 * 1000);
+  const END = new Date(1_702_000_000 * 1000);
+  const dahlia = (extra: Record<string, unknown> = {}) => ({
+    status: "active",
+    items: { data: [{ current_period_start: 1_700_000_000, current_period_end: 1_702_000_000 }] },
+    ...extra,
+  });
+
+  it("checkout.session.completed stores stripeSubId and the period read from items", async () => {
+    const { svc, prisma, stripe } = make({ transitionCount: 1 });
+    stripe.getSubscription.mockResolvedValue(dahlia());
+    await (svc as any).onCheckoutCompleted({
+      metadata: { tenantId: "t1" },
+      subscription: "sub_1",
+      customer: "cus_1",
+    });
+    const args = prisma.tenantSubscription.upsert.mock.calls[0][0];
+    expect(args.update.stripeSubId).toBe("sub_1");
+    expect(args.create.periodStart).toEqual(START);
+    expect(args.create.periodEnd).toEqual(END);
+    expect(args.update.periodStart).toEqual(START);
+    expect(args.update.periodEnd).toEqual(END);
+  });
+
+  it("customer.subscription.updated reads a dahlia payload's period from items", async () => {
+    const { svc, prisma } = make();
+    await (svc as any).onSubscriptionUpdated({
+      customer: "cus_1",
+      cancel_at_period_end: false,
+      ...dahlia(),
+    });
+    const data = prisma.tenantSubscription.update.mock.calls[0][0].data;
+    expect(data.periodStart).toEqual(START);
+    expect(data.periodEnd).toEqual(END);
+  });
+
+  it("invoice.payment_succeeded refreshes the period from the retrieved subscription's items", async () => {
+    const { svc, prisma, stripe } = make({
+      sub: {
+        tenantId: "t1",
+        planKey: "BUSINESS",
+        basePriceSnapshot: 349,
+        discount: 0,
+        stripeSubId: "sub_1",
+        tenant: { status: "ACTIVE" },
+      },
+    });
+    stripe.getSubscription.mockResolvedValue(dahlia());
+    await (svc as any).onPaymentSucceeded({ customer: "cus_1" });
+    const periodWrite = prisma.tenantSubscription.update.mock.calls.find(
+      (c: any[]) => c[0].data?.periodStart !== undefined,
+    );
+    expect(periodWrite?.[0].data).toMatchObject({ periodStart: START, periodEnd: END });
+  });
+
+  it("a subscription with no period anywhere writes NO period fields (never an Invalid Date)", async () => {
+    const { svc, prisma } = make();
+    await (svc as any).onSubscriptionUpdated({ customer: "cus_1", cancel_at_period_end: false });
+    const data = prisma.tenantSubscription.update.mock.calls[0][0].data;
+    expect(data).not.toHaveProperty("periodStart");
+    expect(data).not.toHaveProperty("periodEnd");
+  });
+
+  it("a pre-dahlia payload (top-level period, older endpoint version) still reads its period", async () => {
+    const { svc, prisma } = make();
+    await (svc as any).onSubscriptionUpdated({
+      customer: "cus_1",
+      cancel_at_period_end: false,
+      current_period_start: 1_700_000_000,
+      current_period_end: 1_702_000_000,
+    });
+    const data = prisma.tenantSubscription.update.mock.calls[0][0].data;
+    expect(data.periodStart).toEqual(START);
+    expect(data.periodEnd).toEqual(END);
+  });
+});
