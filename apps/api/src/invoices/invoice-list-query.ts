@@ -1,6 +1,7 @@
 import { InvoiceStatus } from "@prisma/client";
 import type { ListInvoicesDto } from "./dto/list-invoices.dto";
 import { calendarDayOf } from "./settled-date-filter";
+import { overdueCutoff } from "../common/calendar-date";
 
 /**
  * The invoice LIST query, lifted verbatim out of `InvoicesService.findAll` (size-ratchet prefactor for
@@ -9,16 +10,21 @@ import { calendarDayOf } from "./settled-date-filter";
  */
 
 /** Status / overdue / shipments filters: the first stage, before the buyer scoping. */
-export function applyInvoiceStatusFilters(where: any, query: ListInvoicesDto): void {
+export function applyInvoiceStatusFilters(
+  where: any,
+  query: ListInvoicesDto,
+  timeZone?: string | null,
+): void {
   const { status, statuses, isOverdue, shipped } = query;
   // Shipments view: only invoices that carry a carrier tracking number.
   if (shipped) where.shippingTrackingNumber = { not: null };
   if (isOverdue) {
-    // Derived overdue: unpaid invoices (SENT/VIEWED/PARTIAL) past their due date
+    // Derived overdue: unpaid invoices past the END of their due day in the tenant's zone
+    // (SA-488: the same rule as the cron, recomputeStatus and bookkeeping aging).
     where.status = {
       in: [InvoiceStatus.SENT, InvoiceStatus.VIEWED, InvoiceStatus.PARTIAL, InvoiceStatus.OVERDUE],
     };
-    where.dueDate = { lt: new Date() };
+    where.dueDate = { lt: overdueCutoff(new Date(), timeZone) };
   } else if (statuses && statuses.length > 0) {
     // RF-204: normalize legacy "VOIDED" alias → the DB enum value "VOID"
     where.status = { in: statuses.map((s: string) => (s === "VOIDED" ? "VOID" : s)) };
