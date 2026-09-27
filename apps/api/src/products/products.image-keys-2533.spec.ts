@@ -9,6 +9,8 @@ import { EntitlementsService } from "../billing/entitlements.service";
 import { PlanCatalogService } from "../billing/plan-catalog.service";
 import { createMockPrisma } from "../testing/prisma-mock";
 import { RouteFlowGateway } from "../gateways/routeflow.gateway";
+import { entitlementAuthorityFromEntitlements } from "../testing/entitlement-authority-provider";
+import { FeatureOverrideService } from "../billing/feature-override.service";
 import {
   assertImageKeysReorder,
   isOwnProductImageKey,
@@ -82,6 +84,9 @@ describe("ProductsService — cross-tenant image keys (#2533)", () => {
         { provide: AddonService, useValue: { assertWithinLimit: jest.fn() } },
         { provide: SystemConfigService, useValue: { get: jest.fn().mockResolvedValue(null) } },
         { provide: EntitlementsService, useValue: { hasFlag: jest.fn().mockResolvedValue(false) } },
+        entitlementAuthorityFromEntitlements, // #2241
+        // #2185: ProductsService reads admin overrides for the forecasting-gate denial body.
+        { provide: FeatureOverrideService, useValue: { get: jest.fn().mockResolvedValue(null) } },
         { provide: PlanCatalogService, useValue: { upgradeTargetForFlag: jest.fn() } },
         { provide: RouteFlowGateway, useValue: { emitProductUpdated: jest.fn() } },
       ],

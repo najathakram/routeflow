@@ -49,6 +49,7 @@ import { recomputeInvoiceStatus } from "./invoice-status";
 import { applyInvoiceStatusFilters } from "./invoice-list-query";
 import * as fs from "fs";
 import * as path from "path";
+import { entitlementAuthorityFromEntitlements } from "../testing/entitlement-authority-provider";
 
 describe("InvoicesService — #2493 due dates under a negative-offset process zone", () => {
   let service: InvoicesService;
@@ -123,6 +124,7 @@ describe("InvoicesService — #2493 due dates under a negative-offset process zo
         { provide: MessagingService, useValue: mockMessaging },
         { provide: StorageService, useValue: mockStorage },
         { provide: EntitlementsService, useValue: mockEntitlements },
+        entitlementAuthorityFromEntitlements, // #2241
         { provide: CommissionEngineService, useValue: mockCommissionEngine },
         { provide: NumberingService, useValue: mockNumbering },
       ],

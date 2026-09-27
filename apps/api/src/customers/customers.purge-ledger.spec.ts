@@ -17,8 +17,9 @@
  * The two paths that genuinely leak are the BULK ones, and neither was named in
  * the report:
  *
- *   - `deleteAllCustomers` blocks only on **PAID or SENT** invoices, then
- *     hard-deletes every remaining invoice — DRAFT included.
+ *   - `deleteAllCustomers` blocks only on issued or paid invoices (PAID or SENT at the time;
+ *     SENT/VIEWED/PARTIAL/OVERDUE/PAID since #2558), then hard-deletes every remaining invoice —
+ *     DRAFT included.
  *   - `deleteImportedCustomers` has **no invoice guard at all**.
  *
  * The load-bearing fact that makes those real: a **DRAFT invoice already carries
@@ -68,9 +69,11 @@ describe("CustomersService — purge paths reverse the regulated ledger", () => 
       calls.push("deleteItems");
       return Promise.resolve({ count: 0 });
     });
+    // SA-510a: deleteAllCustomers' invoice delete is a CAS that must remove exactly the rows it
+    // read (primeInvoices' two DRAFTs).
     prisma.invoice.deleteMany.mockImplementation(() => {
       calls.push("deleteInvoices");
-      return Promise.resolve({ count: 0 });
+      return Promise.resolve({ count: 2 });
     });
 
     const module: TestingModule = await Test.createTestingModule({
@@ -113,7 +116,10 @@ describe("CustomersService — purge paths reverse the regulated ledger", () => 
 
   /** Two DRAFT invoices — the status that used to look safe and is not. */
   function primeInvoices() {
-    prisma.invoice.findMany.mockResolvedValue([{ id: "inv-1" }, { id: "inv-2" }]);
+    prisma.invoice.findMany.mockResolvedValue([
+      { id: "inv-1", customerId: "cust-1", status: "DRAFT" },
+      { id: "inv-2", customerId: "cust-1", status: "DRAFT" },
+    ]);
   }
 
   it("REG-LEDGER-PURGE: deleteAllCustomers reverses every invoice's ledger entries BEFORE deleting them", async () => {
