@@ -28,7 +28,7 @@
  * tenants this run created, in FK order. No client identifiers anywhere.
  */
 
-jest.mock("./invoice-pdf.service", () => ({
+jest.mock("../invoices/invoice-pdf.service", () => ({
   InvoicePdfService: jest.fn().mockImplementation(() => ({
     getOrGenerate: jest.fn().mockResolvedValue("https://example.com/invoice.pdf"),
   })),
@@ -134,7 +134,10 @@ describeDb("SA-436/SA-436a credit-note auto-apply gate, blocks and exclusions (#
         },
         {
           provide: MessagingService,
-          useValue: { notify: jest.fn().mockResolvedValue([]), notifyEvent: jest.fn() },
+          useValue: {
+            notify: jest.fn().mockResolvedValue([]),
+            notifyEvent: jest.fn().mockResolvedValue(undefined),
+          },
         },
         {
           provide: StorageService,
@@ -263,9 +266,10 @@ describeDb("SA-436/SA-436a credit-note auto-apply gate, blocks and exclusions (#
 
   it("1: OFF (no TenantConfig row) — sending sweeps NOTHING, but the order's hand-picked intent still settles", async () => {
     const { tenantId, customerId } = await seedTenant("p1", null);
-    const invoiceId = await seedDraftInvoice(tenantId, customerId, 40);
+    // $60 invoice: the $40 intent leaves $20 an ON sweep would fill from the unrelated $25 note.
+    const invoiceId = await seedDraftInvoice(tenantId, customerId, 60);
     const order = await prisma.order.create({
-      data: { tenantId, customerId, status: "PENDING", total: 40 },
+      data: { tenantId, customerId, status: "PENDING", total: 60 },
     });
     await prisma.invoice.update({ where: { id: invoiceId }, data: { orderId: order.id } });
 
@@ -284,7 +288,7 @@ describeDb("SA-436/SA-436a credit-note auto-apply gate, blocks and exclusions (#
     await tenantCtx.run(tenantId, () => invoices.send(invoiceId, { allowPreDelivery: true }));
 
     const inv = await prisma.invoice.findUnique({ where: { id: invoiceId } });
-    expect(inv?.status).toBe("PAID");
+    expect(inv?.status).toBe("PARTIAL"); // $40 of $60: the sweep did NOT top it up
 
     const intentNote = await prisma.creditNote.findUnique({ where: { id: intentNoteId } });
     expect(Number(intentNote!.amountUsed)).toBe(40);
@@ -610,6 +614,29 @@ describeDb("SA-436/SA-436a credit-note auto-apply gate, blocks and exclusions (#
 
     const audit = await prisma.auditLog.findFirst({
       where: { tenantId, action: "EXCLUDED", entityId: missingId },
+    });
+    expect(audit).toBeNull();
+  }, 30_000);
+
+  it("13: a FOREIGN tenant's note id ⇒ 404 on the exclusion PATCH, and nothing is written", async () => {
+    const owner = await seedTenant("p13-owner", true);
+    const other = await seedTenant("p13-other", true);
+    const noteId = await seedOpenCredit(owner.tenantId, owner.customerId, 20);
+
+    let err: any;
+    try {
+      await tenantCtx.run(other.tenantId, () =>
+        creditNotes.setAutoApplyExcluded(noteId, true, randomUUID()),
+      );
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(NotFoundException);
+
+    const note = await prisma.creditNote.findUnique({ where: { id: noteId } });
+    expect(note?.autoApplyExcluded).toBe(false);
+    const audit = await prisma.auditLog.findFirst({
+      where: { action: "EXCLUDED", entityId: noteId },
     });
     expect(audit).toBeNull();
   }, 30_000);
