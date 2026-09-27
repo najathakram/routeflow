@@ -14,9 +14,17 @@ const epoch = (v: unknown): number | null =>
  * version, so an older-shaped top-level field is the fallback. Null when neither yields a real
  * epoch — callers then write no period at all, never `new Date(NaN)` (Prisma rejects it, which
  * 500'd checkout.session.completed and left stripeSubId unstored).
+ *
+ * #2440 N2: the period is read from the BASE-PLAN item — the first item that is not one of the
+ * tenant's known add-on items (`addonItemIds`, from TenantAddon.stripeItemId) — falling back to the
+ * first item when every item is a known add-on.
  */
-export function stripeSubscriptionPeriod(sub: any): { periodStart: Date; periodEnd: Date } | null {
-  const item = sub?.items?.data?.[0];
+export function stripeSubscriptionPeriod(
+  sub: any,
+  addonItemIds: ReadonlySet<string> = new Set(),
+): { periodStart: Date; periodEnd: Date } | null {
+  const items: any[] = Array.isArray(sub?.items?.data) ? sub.items.data : [];
+  const item = items.find((i) => !addonItemIds.has(i?.id)) ?? items[0];
   const start = epoch(item?.current_period_start) ?? epoch(sub?.current_period_start);
   const end = epoch(item?.current_period_end) ?? epoch(sub?.current_period_end);
   if (start == null || end == null) return null;
