@@ -266,9 +266,17 @@ describe("#2255 Serializable invoice transactions retry on conflict, guards re-r
     // SA-404d R1: the FIRST statement locks Order → Invoices and re-checks; the CANCELLED status
     // write sits inside this locked tx, after it (a refusal leaves the order as it was).
     const lock = body.indexOf("await lockOrderForCancel(tx, id)");
-    const statusWrite = body.indexOf("tx.order.update(");
+    const statusWrite = body.indexOf("tx.order.updateMany(");
     expect(lock).toBeGreaterThan(-1);
     expect(statusWrite).toBeGreaterThan(lock);
+    // SA-404f F2: the status write is a compare-and-set on the cancellable set — a retry after a
+    // concurrent DELIVERED must 409, never cancel a delivered order.
+    const cas = body.slice(statusWrite, statusWrite + 400);
+    expect(cas).toMatch(/status:\s*\{\s*in:\s*cancellable/);
+    expect(body).toMatch(/claimed\.count === 0[\s\S]{0,120}ORDER_CHANGED_DURING_EDIT/);
+    expect(body).not.toMatch(
+      /tx\.order\.update\(\{\s*where:\s*\{\s*id\s*\},\s*data:\s*statusUpdateData/,
+    );
     expect(body).not.toMatch(/this\.prisma\.(forTenant\(\)\.)?(invoice|orderItem)\./);
   });
 });
