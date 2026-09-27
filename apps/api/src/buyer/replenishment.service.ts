@@ -1,6 +1,7 @@
 import { Injectable } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { normalizeBoxesPieces } from "@routeflow/pricing";
+import { firstSignableImageKey } from "../products/product-image-keys";
 
 /** Where a product sits against its inferred reorder cadence. */
 export type ReplenishmentState = "low" | "due-soon" | "ok";
@@ -139,7 +140,7 @@ export class ReplenishmentService {
         name: agg.product.name,
         unit: agg.product.unit,
         unitsPerBox: upb > 1 ? upb : null,
-        imageKey: agg.product.imageKeys.length > 0 ? agg.product.imageKeys[0] : null,
+        imageKey: firstSignableImageKey(productId, agg.product.imageKeys), // #2533: own prefix only
         lastOrderedAt: new Date(lastMs).toISOString(),
         orderCount: dates.length,
         cadenceDays,
