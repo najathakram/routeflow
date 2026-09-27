@@ -83,8 +83,9 @@ describe("RoutesService", () => {
       | "emitStopCompleted"
       | "emitOrderCreated"
       | "emitOrderStatusChanged"
-      | "emitLowStock"
       | "emitToDriver"
+      | "emitRouteProgress"
+      | "emitDriverStatusUpdated"
     >
   >;
   let notifications: jest.Mocked<Pick<NotificationsService, "sendToDriver">>;
@@ -110,8 +111,9 @@ describe("RoutesService", () => {
       emitStopCompleted: jest.fn(),
       emitOrderCreated: jest.fn(),
       emitOrderStatusChanged: jest.fn(),
-      emitLowStock: jest.fn(),
       emitToDriver: jest.fn(),
+      emitRouteProgress: jest.fn(),
+      emitDriverStatusUpdated: jest.fn(),
     };
 
     notifications = {
