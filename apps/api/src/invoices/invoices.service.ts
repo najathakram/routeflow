@@ -103,6 +103,7 @@ import { formatDate, formatMoney } from "../messaging/messaging.helpers";
 import { CommissionEngineService } from "../sales-agents/commission-engine.service";
 import { NSF_FEE_DESCRIPTION_PREFIX } from "../sales-agents/commission-math";
 import { InvoiceItemSystemKind, notNsfLineWhere } from "./nsf-line";
+import { preservedNsfLines } from "./nsf-preserve";
 import { partitionInvoiceLines, planResyncPairs } from "./resync-plan";
 import { issueDateStamp, startOfCalendarDay, endOfCalendarDay } from "../common/calendar-date";
 import { lockRowsNoWait } from "../common/db-locks";
@@ -1496,7 +1497,9 @@ export class InvoicesService {
         Number((order as any).shippingFee ?? 0) - Number(otherFeeAgg._sum.shippingFee ?? 0),
       ),
     );
-    const total = roundMoney(subtotal - Number(draft.discount ?? 0) + draftFee + taxAmount);
+    const nsf = await preservedNsfLines(db, draft.id); // #2242: NSF fee lines survive, untaxed
+    const invSubtotal = roundMoney(subtotal + nsf.feeTotal);
+    const total = roundMoney(invSubtotal - Number(draft.discount ?? 0) + draftFee + taxAmount);
 
     // WP-D1: a plain pending-mirror DRAFT keeps forcing DRAFT (byte-identical to
     // before). A deposit mirror already ISSUED (SENT/VIEWED/PARTIAL/OVERDUE) instead
@@ -1517,11 +1520,11 @@ export class InvoicesService {
         )
       : InvoiceStatus.DRAFT;
 
-    await db.invoiceItem.deleteMany({ where: { invoiceId: draft.id } });
+    await db.invoiceItem.deleteMany({ where: { invoiceId: draft.id, id: { notIn: nsf.keepIds } } });
     const updated = await db.invoice.update({
       where: { id: draft.id },
       data: {
-        subtotal,
+        subtotal: invSubtotal,
         taxAmount,
         shippingFee: draftFee,
         total,
@@ -1883,6 +1886,7 @@ export class InvoicesService {
         taxAmount: 0,
         shippingFee: 0,
         total: 0,
+        nsf: { keepIds: [] as string[], feeTotal: 0 }, // #2242: set per draft below
       };
     });
     // Snapshot MSRP on every sibling draft's rebuilt lines.
@@ -1928,13 +1932,15 @@ export class InvoicesService {
         pd.shippingFee = i === maxIdx ? orderFee : 0;
       });
     }
-    perDraft.forEach((pd) => {
+    for (const pd of perDraft) {
       // RF-4: tax = allocated regular tax + this draft's category tax (both exempt-0).
       pd.taxAmount = roundMoney(pd.regularTax + pd.categoryTax);
+      pd.nsf = await preservedNsfLines(db, pd.draft.id); // #2242: kept, added after tax proration
+      pd.subtotal = roundMoney(pd.subtotal + pd.nsf.feeTotal);
       pd.total = roundMoney(
         pd.subtotal - Number(pd.draft.discount ?? 0) + pd.shippingFee + pd.taxAmount,
       );
-    });
+    }
 
     const updated: any[] = [];
     for (const pd of perDraft) {
@@ -1956,7 +1962,9 @@ export class InvoicesService {
           pd.draft.status,
         );
       }
-      await db.invoiceItem.deleteMany({ where: { invoiceId: pd.draft.id } });
+      await db.invoiceItem.deleteMany({
+        where: { invoiceId: pd.draft.id, id: { notIn: pd.nsf.keepIds } },
+      });
       const inv = await db.invoice.update({
         where: { id: pd.draft.id },
         data: {

@@ -74,13 +74,21 @@ export function createMockPrisma(): MockPrisma {
       }),
     );
 
+  // Prisma's update() returns the written row. B562 PR-2's order stock paths read the counter the
+  // update returned (the SALE movement's stockAfter), so the product mock returns one by default.
+  const productProxy = () => {
+    const proxy = modelProxy();
+    proxy.update.mockResolvedValue({ currentStock: 0, averageCost: null });
+    return proxy;
+  };
+
   const allModels = () => ({
     user: modelProxy(),
     customer: modelProxy(),
     customerAddress: modelProxy(),
     driver: modelProxy(),
     driverLocation: modelProxy(),
-    product: modelProxy(),
+    product: productProxy(),
     productUnit: modelProxy(),
     order: modelProxy(),
     orderItem: modelProxy(),
@@ -198,7 +206,7 @@ export function createMockPrisma(): MockPrisma {
     customer: modelProxy(),
     customerAddress: modelProxy(),
     driver: modelProxy(),
-    product: modelProxy(),
+    product: productProxy(),
     productUnit: modelProxy(),
     order: modelProxy(),
     orderItem: modelProxy(),

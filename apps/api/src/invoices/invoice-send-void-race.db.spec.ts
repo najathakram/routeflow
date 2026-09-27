@@ -178,10 +178,14 @@ describeDb(
     const { Client } = require("pg");
     const url = () => process.env.DATABASE_URL as string;
     async function cleanupTenant(tenantId: string): Promise<void> {
+      // B562 PR-2 pin below: its SALE rows and order lines go before their order and product.
+      await prisma.stockMovement.deleteMany({ where: { product: { tenantId } } });
+      await prisma.orderItem.deleteMany({ where: { order: { tenantId } } });
       await prisma.invoicePayment.deleteMany({ where: { tenantId } });
       await prisma.invoiceItem.deleteMany({ where: { tenantId } });
       await prisma.invoice.deleteMany({ where: { tenantId } });
       await prisma.order.deleteMany({ where: { tenantId } });
+      await prisma.product.deleteMany({ where: { tenantId } });
       await prisma.paymentCounter.deleteMany({ where: { id: tenantId } });
       await prisma.customer.deleteMany({ where: { tenantId } });
       await prisma.user.deleteMany({ where: { tenantId } });
@@ -705,6 +709,99 @@ describeDb(
     }
     const warnsFor = (spy: jest.SpyInstance, label: string) =>
       spy.mock.calls.filter((c) => String(c[0]).includes(label)).length;
+
+    // B562 PR-2 × #2258: the cancel's stock credit (settleStockForEdit → its SALE "CANCEL" row) runs
+    // INSIDE the retried cancel tx. A real 40001 raised AFTER the settle (on the invoice void) must
+    // roll the credit back with everything else, and the retry must book it exactly once.
+    it("(R1-40001-stock) cancel: a forced 40001 after the stock settle ⇒ ONE retry, ONE CANCEL movement, counter credited once", async () => {
+      const warn = jest.spyOn(NestLogger.prototype, "warn");
+      const s = await seedOrder("r1s");
+      const operator = await prisma.user.create({
+        data: {
+          email: `${s.orderId}-op@example.invalid`,
+          username: `${s.orderId}-op`,
+          role: "OPERATOR",
+          tenantId: s.tenantId,
+        },
+      });
+      const product = await prisma.product.create({
+        data: {
+          name: `B562 ${s.orderId}`,
+          unit: "ea",
+          pricePerUnit: 10,
+          currentStock: 95,
+          tenantId: s.tenantId,
+        } as any,
+      });
+      await prisma.orderItem.create({
+        data: {
+          orderId: s.orderId,
+          productId: product.id,
+          qty: 5,
+          unitPrice: 10,
+          subtotal: 50,
+          status: "CONFIRMED",
+          tenantId: s.tenantId,
+        } as any,
+      });
+      const tag = s.orderId.replace(/-/g, "").slice(0, 12);
+      await prisma.$executeRawUnsafe(`CREATE SEQUENCE b562s_once_${tag}`);
+      await prisma.$executeRawUnsafe(
+        `CREATE FUNCTION b562s_raise_${tag}() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.id = '${s.invoiceId}' AND nextval('b562s_once_${tag}') = 1 THEN RAISE EXCEPTION 'b562 forced conflict' USING ERRCODE = '40001'; END IF; RETURN NEW; END $$`,
+      );
+      await prisma.$executeRawUnsafe(
+        `CREATE TRIGGER b562s_trg_${tag} BEFORE UPDATE ON "Invoice" FOR EACH ROW EXECUTE FUNCTION b562s_raise_${tag}()`,
+      );
+      let fired = 0;
+      try {
+        await tenantCtx.run(s.tenantId, () =>
+          ordersSvc().changeStatus(
+            s.orderId,
+            { status: "CANCELLED" },
+            {
+              ...opUser(s.tenantId),
+              sub: operator.id,
+            },
+          ),
+        );
+      } finally {
+        fired = Number(
+          (await prisma.$queryRawUnsafe<any[]>(`SELECT last_value FROM b562s_once_${tag}`))[0]
+            .last_value,
+        );
+        await prisma.$executeRawUnsafe(`DROP TRIGGER b562s_trg_${tag} ON "Invoice"`);
+        await prisma.$executeRawUnsafe(`DROP FUNCTION b562s_raise_${tag}()`);
+        await prisma.$executeRawUnsafe(`DROP SEQUENCE b562s_once_${tag}`);
+      }
+      const retries = warnsFor(warn, `order cancel void order=${s.orderId}`);
+      warn.mockRestore();
+      const rows = await prisma.stockMovement.findMany({
+        where: { productId: product.id, reference: `ORDER:${s.orderId}` },
+      });
+      expect({
+        fired: fired >= 2,
+        retries,
+        order: (await prisma.order.findUniqueOrThrow({ where: { id: s.orderId } })).status,
+        invoice: (await prisma.invoice.findUniqueOrThrow({ where: { id: s.invoiceId } })).status,
+        counter: Number(
+          (await prisma.product.findUniqueOrThrow({ where: { id: product.id } })).currentStock,
+        ),
+        rows: rows.map((r) => [
+          r.type,
+          r.notes,
+          Number(r.quantity),
+          Number(r.stockAfter),
+          r.performedById,
+        ]),
+      }).toEqual({
+        fired: true,
+        retries: 1,
+        order: "CANCELLED",
+        invoice: "VOID",
+        counter: 100,
+        rows: [["SALE", "CANCEL", 5, 100, operator.id]],
+      });
+    });
 
     it("(R1) cancel: a REAL CASH payment (recordPayment) committed between assertCancellableOrThrow and the cancel tx's locks ⇒ 400, order NOT cancelled, invoice NOT voided", async () => {
       const warn = jest.spyOn(NestLogger.prototype, "warn");

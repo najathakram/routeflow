@@ -13,7 +13,7 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useLocalSearchParams, useRouter } from "expo-router";
-import { useQueryClient } from "@tanstack/react-query";
+import { onlineManager, useQueryClient } from "@tanstack/react-query";
 import { manipulateAsync, SaveFormat } from "expo-image-manipulator";
 import { ios } from "@routeflow/ui/tokens";
 import { NavAction, NavBackButton, NavBar, SegmentedControl } from "@routeflow/ui/mobile/ios";
@@ -76,6 +76,7 @@ import {
 import { regulatedPodGateError } from "../../../../../lib/pod-gating";
 import { openRouteInMaps } from "../../../../../components/openInMaps";
 import { useOfflineQueue } from "../../../../../store/offlineQueue";
+import { DRIVER_CRITICAL_NETWORK_MODE, isLiveOnline } from "../../../../../lib/live-online";
 import * as Location from "expo-location";
 import { postDeliveryInvoicePrompt, type InvoiceStatus } from "@routeflow/types";
 import { useInvoicePdf, useSendInvoice } from "../../../../../lib/api/invoices";
@@ -328,7 +329,6 @@ export default function PaymentScreen() {
   // (already created earlier in its lifecycle — see RouteRunOrder.invoiceId,
   // populated before the driver ever reaches this screen) via a fresh
   // orderQueryOptions fetch, rather than creating one.
-  const isOnline = useOfflineQueue((s) => s.isOnline);
   const sendMut = useSendInvoice();
   const pdfMut = useInvoicePdf();
   const [sendSheet, setSendSheet] = useState<{
@@ -921,7 +921,12 @@ export default function PaymentScreen() {
       proceedToRoute();
       return;
     }
-    if (postDeliveryInvoicePrompt({ invoice: undefined, online: isOnline }) === "offline-later") {
+    // #2265: read connectivity LIVE here — the render-time `isOnline` is stale after the await.
+    const online = isLiveOnline({
+      browserOnline: onlineManager.isOnline(),
+      netInfoOnline: useOfflineQueue.getState().isOnline,
+    });
+    if (postDeliveryInvoicePrompt({ invoice: undefined, online }) === "offline-later") {
       showToast(INVOICE_LATER_TOAST);
       proceedToRoute();
       return;
@@ -934,7 +939,12 @@ export default function PaymentScreen() {
     // staleTime: 0 — this order's query cache may still hold the PRE-completion
     // snapshot (populated by the useQueries fan-out above); force a real
     // network hit rather than risk reading it back unchanged.
-    qc.fetchQuery({ ...orderQueryOptions(primaryOrderId), staleTime: 0 })
+    // #2265: networkMode "always" — offline, fail fast into the fallback below instead of pausing.
+    qc.fetchQuery({
+      ...orderQueryOptions(primaryOrderId),
+      staleTime: 0,
+      networkMode: DRIVER_CRITICAL_NETWORK_MODE,
+    })
       .then((fresh) => {
         const inv = fresh?.invoices?.[0];
         const outcome = postDeliveryInvoicePrompt({

@@ -198,12 +198,21 @@ describeDb("B776 R1 chain (SA-124g/h gate) — real Postgres", () => {
     svc = module.get(OrdersService);
 
     tenantId = (await raw.tenant.create({ data: { slug, name: `R1 chain ${slug}` } })).id;
+    // B562 PR-2: an order stock event books a SALE movement whose performedById is the acting
+    // user (a StockMovement → User FK), so the operator must be a real user, as a real JWT sub is.
+    const op = await raw.user.create({
+      data: { email: `op-${run}@example.test`, username: `op-${run}`, role: "OPERATOR", tenantId },
+    });
+    userIds.push(op.id);
+    operatorPayload.sub = op.id;
   }, 120_000);
 
   afterAll(async () => {
     if (orderIds.length) await raw.orderItem.deleteMany({ where: { orderId: { in: orderIds } } });
     if (orderIds.length) await raw.order.deleteMany({ where: { id: { in: orderIds } } });
     if (customerIds.length) await raw.customer.deleteMany({ where: { id: { in: customerIds } } });
+    if (productIds.length)
+      await raw.stockMovement.deleteMany({ where: { productId: { in: productIds } } });
     if (productIds.length) await raw.product.deleteMany({ where: { id: { in: productIds } } });
     if (userIds.length) await raw.user.deleteMany({ where: { id: { in: userIds } } });
     if (tenantId) await raw.tenant.deleteMany({ where: { id: tenantId } });

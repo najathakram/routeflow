@@ -81,7 +81,9 @@ async function pooled(items, limit, fn) {
 }
 
 function trunc(s, n) {
-  const flat = String(s).replace(/\r?\n+/g, " ").trim();
+  const flat = String(s)
+    .replace(/\r?\n+/g, " ")
+    .trim();
   return flat.length > n ? flat.slice(0, n) + "…" : flat;
 }
 
@@ -191,7 +193,10 @@ h(`## Open PRs`);
         for (const c of rollup) {
           const state = (c.conclusion || c.state || "").toUpperCase();
           if (["SUCCESS", "NEUTRAL", "SKIPPED"].includes(state)) pass++;
-          else if (["FAILURE", "ERROR", "CANCELLED", "TIMED_OUT", "STARTUP_FAILURE"].includes(state)) fail++;
+          else if (
+            ["FAILURE", "ERROR", "CANCELLED", "TIMED_OUT", "STARTUP_FAILURE"].includes(state)
+          )
+            fail++;
           else pending++;
         }
         const row = {
@@ -204,7 +209,7 @@ h(`## Open PRs`);
         };
         report.openPrs.push(row);
         h(
-          `| #${pr.number} | ${trunc(pr.title, 60)} | \`${row.head}\` | ${row.draft ? "yes" : "no"} | ${pr.mergeable} | ${pass}/${fail}/${pending} |`
+          `| #${pr.number} | ${trunc(pr.title, 60)} | \`${row.head}\` | ${row.draft ? "yes" : "no"} | ${pr.mergeable} | ${pass}/${fail}/${pending} |`,
         );
       }
       if (prs.length === 0) h(`(none open)`);
@@ -378,7 +383,9 @@ h(`## Pointers`);
       .sort((a, b) => b.mtime - a.mtime);
     if (entries.length > 0) {
       report.newestHandoff = entries[0].f;
-      h(`- Newest .claude/handoffs/ file: ${entries[0].f} (${new Date(entries[0].mtime).toISOString()})`);
+      h(
+        `- Newest .claude/handoffs/ file: ${entries[0].f} (${new Date(entries[0].mtime).toISOString()})`,
+      );
     } else {
       h(`- .claude/handoffs/: empty`);
     }
