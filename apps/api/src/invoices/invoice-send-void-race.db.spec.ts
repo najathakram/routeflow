@@ -329,7 +329,9 @@ describeDb(
         status: "VOID",
         emailsSent: 0,
       });
-    });
+      // 60 s, not the lane's 30 s default: the first sendEmail of a run pays a cold warm-up
+      // (F2 measured 22–25 s once), and a timeout there is a false red, not a race result.
+    }, 60_000);
 
     // SA-404b documented residual, red BY DESIGN: a bare payment INSERT that never touches the
     // Invoice row is invisible to void's Serializable snapshot. No production writer does that —
