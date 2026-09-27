@@ -80,6 +80,9 @@ import { DemoteReasonModal } from "./_components/DemoteReasonModal";
 import {
   findLockedUnitLineEdit,
   LockedUnitLineBadge,
+  lockedUnitLineDisplay,
+  lockedUnitLineRefusal,
+  type LockedUnitLineDisplay,
   LockedUnitLineError,
   unitLineCount,
 } from "./_components/unit-line-lock";
@@ -421,6 +424,7 @@ export interface EditItemState {
   originalQty: number;
   /** SA-388 (unit-line-lock.tsx): no derivable count; lockedSubtotal = its stored money. */
   countLocked?: boolean;
+  lockedDisplay?: LockedUnitLineDisplay; // #2266
   lockedSubtotal?: number;
   /** The line's own denomination, restored when a substitution is undone (a
    *  substitute re-denominates the line against ITS case size). */
@@ -623,7 +627,13 @@ export function buildEditItemFromLine(li: OrderItem): EditItemState {
     originalProductId: li.productId ?? "",
     originalProductName: label,
     originalQty: count,
-    ...(countLocked ? { countLocked: true, lockedSubtotal: Number(li.subtotal ?? 0) } : {}),
+    ...(countLocked
+      ? {
+          countLocked: true,
+          lockedSubtotal: Number(li.subtotal ?? 0),
+          lockedDisplay: lockedUnitLineDisplay(li),
+        }
+      : {}),
     productId: li.productId ?? "",
     productName: label,
     qty: count,
@@ -1468,7 +1478,9 @@ export function EditableLineItems({
             </div>
 
             {/* SA-388: a LOCKED unit line takes no qty edit; saves refuse any edit to it. */}
-            {!item.cancelled && item.countLocked && <LockedUnitLineBadge />}
+            {!item.cancelled && item.countLocked && (
+              <LockedUnitLineBadge display={item.lockedDisplay} />
+            )}
 
             {/* Qty input */}
             {!item.cancelled && !item.countLocked && (
@@ -2222,7 +2234,7 @@ export default function OrderDetailPage() {
     const locked = findLockedUnitLineEdit(editItems, order!.lineItems);
     if (!locked) return false;
     toast({
-      title: `${locked.productName || "This line"} needs repair — its stored quantity can't be read as a count, so it can't be edited. Nothing was saved.`,
+      title: lockedUnitLineRefusal(locked.productName || "This line", locked.lockedDisplay),
       variant: "error",
     });
     return true;
