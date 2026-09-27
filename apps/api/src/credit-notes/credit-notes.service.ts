@@ -1022,8 +1022,9 @@ export class CreditNotesService {
 
   /** The note's live CREDIT_NOTE applications (the rows a reversal restores), with their invoice. */
   private liveCreditPayments(db: any, creditNoteId: string) {
-    // scan-ok: draft-payment-not-void — a CREDIT_NOTE-method payment is only ever written
-    // CONFIRMED by applyCreditInTx; not-VOID is the complete filter (see cancelStandaloneInTx).
+    // A CREDIT_NOTE-method payment is only ever written CONFIRMED by applyCreditInTx, so not-VOID
+    // is the complete filter here (see cancelStandaloneInTx).
+    // scan-ok: draft-payment-not-void — CREDIT_NOTE payments are never DRAFT/PENDING.
     return db.invoicePayment.findMany({
       where: { creditNoteId, method: PaymentMethod.CREDIT_NOTE, status: { not: "VOID" } },
       orderBy: { createdAt: "desc" },
