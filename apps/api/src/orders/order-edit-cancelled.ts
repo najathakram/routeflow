@@ -97,7 +97,8 @@ async function assertBuyerOwns(
  * non-staff diff it drops CANCEL/DELETE entries aimed at an already-CANCELLED line from `dto.items`
  * (mutating, like `classifyEditPayload`). `noop` = the diff held nothing else, so the edit writes
  * nothing at all. A buyer's ownership is settled FIRST — before the refusal (it names a product on
- * THIS order) and before a no-op (the caller then reads THIS order back): SA-422a.
+ * THIS order) and before a no-op (the caller then reads THIS order back): SA-422a. A payload that
+ * also carries an `inlineReturn` is never a no-op — the return must still run (Opus N1).
  */
 export async function planCancelledLines(
   prisma: Pick<PrismaService, "forTenant">,
@@ -125,7 +126,7 @@ export async function planCancelledLines(
   dto.items = kept as UpdateOrderItemsDto["items"];
   if (kept.length > 0) return { noop: false };
   await assertBuyerOwns(prisma, principal, order.customerId); // SA-422a: never read back a foreign order
-  return { noop: true };
+  return { noop: !dto.inlineReturn }; // Opus N1: an inline return still runs (with no line edits)
 }
 
 /**

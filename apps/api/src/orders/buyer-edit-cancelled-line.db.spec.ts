@@ -217,7 +217,7 @@ describeDb(
           subtotal: "10.00",
         },
       ]);
-      const before = (await rows(o.id)).map(money);
+      const before = await rows(o.id); // full rows, ids included (Opus N2)
       const stockBefore = await stock(cola);
       await expect(
         edit(
@@ -231,7 +231,7 @@ describeDb(
           buyer(),
         ),
       ).rejects.toMatchObject({ response: { code: "LINE_CANCELLED_BY_SELLER", productId: cola } });
-      expect((await rows(o.id)).map(money)).toEqual(before);
+      expect(await rows(o.id)).toEqual(before);
       expect(await stock(cola)).toBe(stockBefore);
     });
 
@@ -268,22 +268,20 @@ describeDb(
           subtotal: "10.00",
         },
       ]);
-      const cancelledBefore = (await rows(o.id)).filter((r) => r.status === "CANCELLED").map(money);
+      const cancelledBefore = (await rows(o.id)).filter((r) => r.status === "CANCELLED"); // full row (N2)
       const liveBefore = (await rows(o.id)).filter((r) => r.status !== "CANCELLED").map(money);
       await edit(o.id, { items: [{ productId: cola, qty: 6 }] }, buyer());
       expect((await rows(o.id)).filter((r) => r.status !== "CANCELLED").map(money)).toEqual(
         liveBefore,
       );
-      expect((await rows(o.id)).filter((r) => r.status === "CANCELLED").map(money)).toEqual(
-        cancelledBefore,
-      );
+      expect((await rows(o.id)).filter((r) => r.status === "CANCELLED")).toEqual(cancelledBefore);
     });
 
     it("diff path (DRIVER): UPDATE on a cancelled id is a 409; CANCEL on it is a 200 no-op", async () => {
       const cola = await product("diff");
       const o = await order([cancelledCase(cola)]);
       const cancelledId = o.lineItems[0].id;
-      const before = (await rows(o.id)).map(money);
+      const before = await rows(o.id); // full rows, ids included (Opus N2)
       await expect(
         edit(o.id, { replaceAll: false, items: [{ id: cancelledId, qty: 1 }] }, driver()),
       ).rejects.toMatchObject({ response: { code: "LINE_CANCELLED_BY_SELLER" } });
@@ -293,7 +291,7 @@ describeDb(
         driver(),
       );
       expect(res?.id).toBe(o.id);
-      expect((await rows(o.id)).map(money)).toEqual(before);
+      expect(await rows(o.id)).toEqual(before);
     });
   },
 );

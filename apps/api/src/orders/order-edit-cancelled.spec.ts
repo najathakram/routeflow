@@ -137,6 +137,18 @@ describe("planCancelledLines — diff path (SA-422 rule 4)", () => {
     });
   });
 
+  it("Opus N1: a strike-off-only diff that ALSO carries an inlineReturn is not a no-op (the return runs)", async () => {
+    const dto: any = {
+      replaceAll: false,
+      items: [{ id: "li-x", action: "CANCEL" }],
+      inlineReturn: { items: [{ productId: "p-chips", qty: 1 }], returnKey: "k1" },
+    };
+    await expect(planCancelledLines(owned, order, dto, driver, true)).resolves.toEqual({
+      noop: false,
+    });
+    expect(dto.items).toEqual([]);
+  });
+
   it("staff diffs are unchanged", async () => {
     const dto = { replaceAll: false, items: [{ id: "li-x", qty: 3 }] };
     await expect(planCancelledLines(owned, order, dto as any, staff, true)).resolves.toEqual({
@@ -154,5 +166,56 @@ describe("assertHeldCancelledLines — the same rules re-checked under the row l
     expect(() =>
       assertHeldCancelledLines(order.lineItems, [{ productId: "p-chips", qty: 1 }], buyer, false),
     ).not.toThrow();
+  });
+});
+
+describe("SA-422b — the cancelled-line rules run before any unit check", () => {
+  it("(a) updateOrderItems: CANCELLED-order 400 → classify → planCancelledLines → unit guard → unit loop", () => {
+    const fs = require("fs") as typeof import("fs");
+    const path = require("path") as typeof import("path");
+    const src: string = fs.readFileSync(path.join(__dirname, "orders.service.ts"), "utf8");
+    const body = src.slice(src.indexOf("async updateOrderItems("));
+    const at = (needle: string) => {
+      const i = body.indexOf(needle);
+      expect(i).toBeGreaterThan(-1);
+      return i;
+    };
+    const order = [
+      at(`"Items can't be edited on a cancelled order"`),
+      at("classifyEditPayload(order, dto, user)"),
+      at("cancelledLines.planCancelledLines("),
+      at("unitAware.assertOrderEditAllowed("),
+      at("unitEdit.prepareUnitEditContext("),
+    ];
+    expect([...order].sort((x, y) => x - y)).toEqual(order);
+  });
+
+  it("(b) prepareUnitEditContext: a CANCELLED unit line's id is absent from existingById", async () => {
+    const { prepareUnitEditContext } =
+      require("./unit-line-edit") as typeof import("./unit-line-edit");
+    const self = {
+      prisma: {
+        getTenantId: () => "t1",
+        forTenant: () => ({
+          product: { findMany: jest.fn().mockResolvedValue([]) },
+          productUnit: { findMany: jest.fn().mockResolvedValue([]) },
+        }),
+      },
+      entitlements: { hasFlag: jest.fn().mockResolvedValue(true) },
+    } as any;
+    const lines = [
+      { id: "li-x", productId: "p1", unitLabel: "Case", unitsPerBox: 12, status: "CANCELLED" },
+      { id: "li-l", productId: "p2", unitLabel: null, unitsPerBox: 6, status: "PENDING" },
+    ];
+    const ctx = await prepareUnitEditContext(
+      self,
+      { lineItems: lines } as any,
+      { items: [] } as any,
+      {
+        role: "OPERATOR",
+      },
+    );
+    expect(ctx.existingById.has("li-x")).toBe(false);
+    expect(ctx.existingById.has("li-l")).toBe(true);
   });
 });

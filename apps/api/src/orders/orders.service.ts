@@ -2970,6 +2970,13 @@ export class OrdersService implements OnApplicationBootstrap {
     if (order.status === "CANCELLED") {
       throw new BadRequestException("Items can't be edited on a cancelled order");
     }
+    const isDiffPayload = classifyEditPayload(order, dto, user); // A4/B13: see order-edit-payload.ts
+    // SA-422: never revive a seller-CANCELLED line (409 before any write; a strike-off of one is a
+    // no-op). SA-422b: BEFORE every unit check, so a cancelled line's id gets this answer first.
+    if (
+      (await cancelledLines.planCancelledLines(this.prisma, order, dto, user, isDiffPayload)).noop
+    )
+      return cancelledLines.readEditedOrder(this.prisma, orderId);
     const inlineRet = await prepareInlineReturn(this.inlineReturns, dto.inlineReturn, user);
     let inlineMinted: any = null; // #2094: emitted after the commit
     // units_v1: every branch below re-derives factor + price from the LIVE product (see the guard).
@@ -3014,13 +3021,6 @@ export class OrdersService implements OnApplicationBootstrap {
         "This order is already out for delivery. Send a change request instead.",
       );
     }
-
-    const isDiffPayload = classifyEditPayload(order, dto, user); // A4/B13: see order-edit-payload.ts
-    // SA-422: never revive a seller-CANCELLED line (409 before any write; a strike-off of one is a no-op).
-    if (
-      (await cancelledLines.planCancelledLines(this.prisma, order, dto, user, isDiffPayload)).noop
-    )
-      return cancelledLines.readEditedOrder(this.prisma, orderId);
 
     // Lane R: a banned product added by this edit refuses (409 SELLING_RESTRICTED) BEFORE the invoice
     // revert and any write. Non-draft only (a draft is judged at its promotion). OFF = one policy read
