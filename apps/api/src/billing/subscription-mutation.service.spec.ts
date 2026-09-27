@@ -441,7 +441,7 @@ describe("SubscriptionMutationService.subscribe (MRR = signed change)", () => {
   it("PIN T10: ACTIVE cycle switch to a LOWER plan (ANNUAL→MONTHLY) still nets a NEGATIVE plan delta and disables dropped add-ons — the B58 guard must NOT fire on a cycle switch", async () => {
     const { svc, tx, events } = make({
       tenantStatus: "ACTIVE",
-      sub: { planKey: "BUSINESS", cycle: "ANNUAL" },
+      sub: { planKey: "BUSINESS", cycle: "ANNUAL", basePriceSnapshot: 349 }, // #2460: a consistent row carries its snapshot (the ledger nets against it, SA-464).
       priorAddons: [
         {
           id: "a1",
@@ -463,6 +463,15 @@ describe("SubscriptionMutationService.subscribe (MRR = signed change)", () => {
       data: { active: false },
     });
     expect(emitted(events)).not.toContain(BILLING_EVENTS.TRIAL_CONVERTED);
+  });
+
+  it("#2460: an ACTIVE subscribe() re-choice nets against the stored snapshot — NULL ⇒ the full new price", async () => {
+    const { svc, events } = make({
+      tenantStatus: "ACTIVE",
+      sub: { planKey: "STARTER", cycle: "MONTHLY", basePriceSnapshot: null },
+    });
+    await svc.subscribe("t1", { planKey: "BUSINESS", cycle: "MONTHLY" }, "admin");
+    expect(deltaOf(events, BILLING_EVENTS.PLAN_CHANGED)).toBe(349); // never 349 − 59
   });
 
   it("reactivation from READ_ONLY (stale planKey retained) emits a full +base delta, not 0", async () => {
@@ -537,7 +546,7 @@ describe("SubscriptionMutationService.subscribe (MRR = signed change)", () => {
    * committed write is visible before anything is priced.
    */
   it("F1: a concurrent activateManualSubscription commits between the pre-tx read and the lock — subscribe() must NOT double-book the base or the add-on", async () => {
-    const { svc, tx, events } = make({
+    const { svc, prisma, tx, events } = make({
       // Pre-tx snapshot: still TRIAL, no subscription row yet — the state BEFORE the
       // concurrent activation committed.
       tenantStatus: "TRIAL",
@@ -552,7 +561,8 @@ describe("SubscriptionMutationService.subscribe (MRR = signed change)", () => {
       class: "PRODUCTION",
       deletedAt: null,
     });
-    tx.tenantSubscription.findUnique.mockResolvedValue({ planKey: "TEAM" });
+    // #2460 / SA-464: the concurrent activation snapshotted what it booked (TEAM 149).
+    tx.tenantSubscription.findUnique.mockResolvedValue({ planKey: "TEAM", basePriceSnapshot: 149 });
     tx.tenantAddon.findMany.mockResolvedValue([
       {
         id: "a1",
@@ -564,15 +574,55 @@ describe("SubscriptionMutationService.subscribe (MRR = signed change)", () => {
       },
     ]);
 
-    await svc.subscribe("t1", { planKey: "BUSINESS", cycle: "MONTHLY" }, "admin");
+    // #2189 / SA-389 (2): the from-plan moved (none → TEAM) between the pre-read that fed
+    // prepare() and the lock, so the first attempt is refused retryably with NOTHING booked...
+    const first = await svc
+      .subscribe("t1", { planKey: "BUSINESS", cycle: "MONTHLY" }, "admin")
+      .catch((e: any) => e);
+    // SA-389a (a): nothing written — no subscription/tenant write, no BillingEvent, no add-on
+    // ledger row (emitAddonDelta books through events.emit).
+    expect(first.getResponse()).toMatchObject({
+      code: "PLAN_CHANGED_DURING_SUBSCRIBE",
+      retryable: true,
+    });
+    expect(tx.tenantSubscription.upsert).not.toHaveBeenCalled();
+    expect(tx.tenant.update).not.toHaveBeenCalled();
+    expect(tx.tenantAddon.upsert).not.toHaveBeenCalled();
+    expect(events.emit).not.toHaveBeenCalled();
 
-    // Nets against the locked TEAM (149), not the stale pre-tx TRIAL/no-plan baseline (which
-    // would book the full 349).
+    // ...and the caller's retry re-reads (the committed activation is now the pre-tx state too)
+    // and nets against the locked TEAM (149), never the stale TRIAL/no-plan baseline (349).
+    prisma.tenant.findUnique.mockResolvedValue({
+      status: "ACTIVE",
+      plan: "TEAM",
+      class: "PRODUCTION",
+      deletedAt: null,
+    });
+    prisma.tenantSubscription.findUnique.mockResolvedValue({ planKey: "TEAM" });
+    await svc.subscribe("t1", { planKey: "BUSINESS", cycle: "MONTHLY" }, "admin");
+    // SA-389a (b): SA-277b's money assertion, moved to the retry — booked EXACTLY ONCE against
+    // the post-activation state, so the two calls together equal one clean subscribe on an
+    // already-paying row: one PLAN_CHANGED of 349 − 149, no TRIAL_CONVERTED, no add-on booking.
+    expect(emitted(events)).toEqual([BILLING_EVENTS.PLAN_CHANGED]);
     expect(deltaOf(events, BILLING_EVENTS.PLAN_CHANGED)).toBe(200); // 349 − 149
     // REGULATED_ITEMS was already paying under the locked state, so the crossing helper nets
     // it to a NO-OP — never a second +39 on top of what activateManualSubscription booked.
     expect(emitted(events)).not.toContain(BILLING_EVENTS.ADDON_ENABLED);
     expect(deltaOf(events, BILLING_EVENTS.ADDON_ENABLED)).toBeUndefined();
+  });
+
+  it("SA-389a (c) control: no interleaving (pre-read == locked read) ⇒ one write, one PLAN_CHANGED, no 409", async () => {
+    const tenantRow = { status: "ACTIVE", plan: "TEAM", class: "PRODUCTION", deletedAt: null };
+    // #2460 / SA-464 (2): an ACTIVE row nets against its STORED snapshot, so the fixture carries it.
+    const sub = { planKey: "TEAM", cycle: "MONTHLY", periodEnd: null, basePriceSnapshot: 149 };
+    const { svc, prisma, tx, events } = make({ sub });
+    prisma.tenant.findUnique.mockResolvedValue(tenantRow);
+    tx.tenant.findUnique.mockResolvedValue(tenantRow);
+    tx.tenantSubscription.findUnique.mockResolvedValue(sub);
+    await svc.subscribe("t1", { planKey: "BUSINESS", cycle: "MONTHLY" }, "admin");
+    expect(tx.tenantSubscription.upsert).toHaveBeenCalledTimes(1);
+    expect(emitted(events)).toEqual([BILLING_EVENTS.PLAN_CHANGED]);
+    expect(deltaOf(events, BILLING_EVENTS.PLAN_CHANGED)).toBe(200); // 349 − 149
   });
 });
 
@@ -637,6 +687,30 @@ describe("#2223 SA-444c — subscribe() and the downgrade preview keep the overr
     expect(deltaOf(events, BILLING_EVENTS.PLAN_CHANGED)).toBe(0);
   });
 
+  // SA-464b: a paying override row whose snapshot is NULL (not yet counted) — the cycle change writes
+  // the fee and books it in full, so snapshot MRR and ledger MRR re-agree.
+  it("SA-464b: subscribe() cycle change on a paying override row with a NULL snapshot writes the fee and books +fee", async () => {
+    const { svc, tx, events } = make({
+      tenantStatus: "ACTIVE",
+      sub: {
+        planKey: "STARTER",
+        cycle: "MONTHLY",
+        priceOverrideMonthly: 80,
+        basePriceSnapshot: null,
+      },
+    });
+    tx.tenantSubscription.findUnique.mockResolvedValue({
+      planKey: "STARTER",
+      priceOverrideMonthly: 80,
+      basePriceSnapshot: null,
+    });
+    await svc.subscribe("t1", { planKey: "STARTER", cycle: "ANNUAL" }, "admin");
+    const arg = tx.tenantSubscription.upsert.mock.calls[0][0];
+    expect(arg.update.basePriceSnapshot).toBe(80);
+    expect(arg.create.basePriceSnapshot).toBe(80);
+    expect(deltaOf(events, BILLING_EVENTS.PLAN_CHANGED)).toBe(80);
+  });
+
   it("subscribe() re-subscribe of an override row ENTERING the paying set books the fee", async () => {
     const { svc, tx, events } = make({
       tenantStatus: "READ_ONLY",
@@ -681,6 +755,135 @@ describe("#2223 SA-444c — subscribe() and the downgrade preview keep the overr
 });
 
 describe("SubscriptionMutationService.upgrade", () => {
+  // #2470 (Opus (3) on #2458): the optimistic guard also matches the negotiated fee it read, so a
+  // concurrent Pricing change makes the upgrade LOSE the race instead of writing a stale fee.
+  it("#2470: the optimistic guard matches the stored override the upgrade read", async () => {
+    const { svc, tx } = make({
+      sub: {
+        planKey: "STARTER",
+        cycle: "MONTHLY",
+        periodStart: null,
+        periodEnd: null,
+        priceOverrideMonthly: 80,
+        basePriceSnapshot: 80,
+      },
+    });
+    await svc.upgrade("t1", "BUSINESS", "admin");
+    expect(tx.tenantSubscription.updateMany.mock.calls[0][0].where).toMatchObject({
+      planKey: "STARTER",
+      priceOverrideMonthly: 80,
+    });
+  });
+
+  // #2470 Opus fold (1): a Pricing change commits in TWO steps (fee, then reconcile's snapshot), so the
+  // guard also matches the snapshot the upgrade read — an upgrade reading between them loses the race.
+  it("#2470 fold: the guard also matches the stored snapshot the upgrade read", async () => {
+    const { svc, tx } = make({
+      sub: {
+        planKey: "STARTER",
+        cycle: "MONTHLY",
+        periodStart: null,
+        periodEnd: null,
+        priceOverrideMonthly: 120,
+        basePriceSnapshot: 80, // fee committed, reconcile not yet
+      },
+    });
+    await svc.upgrade("t1", "BUSINESS", "admin");
+    expect(tx.tenantSubscription.updateMany.mock.calls[0][0].where).toMatchObject({
+      planKey: "STARTER",
+      priceOverrideMonthly: 120,
+      basePriceSnapshot: 80,
+    });
+  });
+
+  it("#2470 fold: a guard miss is a 409 ConflictException (concurrency), not a 400", async () => {
+    const { svc, tx, events } = make({
+      sub: {
+        planKey: "STARTER",
+        cycle: "MONTHLY",
+        periodStart: null,
+        periodEnd: null,
+        basePriceSnapshot: 59,
+      },
+    });
+    tx.tenantSubscription.updateMany.mockResolvedValueOnce({ count: 0 });
+    const err = await svc.upgrade("t1", "BUSINESS", "admin").catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(ConflictException);
+    expect(deltaOf(events, BILLING_EVENTS.PLAN_CHANGED)).toBeUndefined();
+  });
+
+  it("#2470: a catalog row's guard matches a NULL override (a fee set concurrently loses the race)", async () => {
+    const { svc, tx } = make({
+      sub: {
+        planKey: "STARTER",
+        cycle: "MONTHLY",
+        periodStart: null,
+        periodEnd: null,
+        basePriceSnapshot: 59,
+      },
+    });
+    await svc.upgrade("t1", "BUSINESS", "admin");
+    expect(tx.tenantSubscription.updateMany.mock.calls[0][0].where).toMatchObject({
+      planKey: "STARTER",
+      priceOverrideMonthly: null,
+    });
+  });
+
+  it("#2470: a free (override 0) row's upgrade keeps snapshot 0, quotes 0 with the note, books Δ0", async () => {
+    const { svc, tx, events } = make({
+      sub: {
+        planKey: "STARTER",
+        cycle: "MONTHLY",
+        periodStart: null,
+        periodEnd: null,
+        priceOverrideMonthly: 0,
+        basePriceSnapshot: 0,
+      },
+    });
+    const res: any = await svc.upgrade("t1", "BUSINESS", "admin");
+    expect(res).toMatchObject({
+      proratedNow: 0,
+      note: "custom fee unchanged — adjust it in Pricing",
+    });
+    expect(tx.tenantSubscription.updateMany.mock.calls[0][0].data).toMatchObject({
+      planKey: "BUSINESS",
+      basePriceSnapshot: 0,
+    });
+    expect(deltaOf(events, BILLING_EVENTS.PLAN_CHANGED)).toBe(0);
+  });
+
+  // #2460 / SA-464 (2): the ledger nets against what the MRR snapshot actually counted — the stored
+  // basePriceSnapshot, NULL ⇒ 0 — never the catalog price of the plan being left. A NULL-snapshot
+  // row (e.g. a manual activation before #2460) then books the FULL new price, and snapshot MRR and
+  // ledger MRR re-agree. The charge (proration) still nets against the catalog entitlement.
+  it("#2460: an ACTIVE catalog row with a NULL snapshot books the FULL new price", async () => {
+    const { svc, events } = make({
+      sub: {
+        planKey: "STARTER",
+        cycle: "MONTHLY",
+        periodStart: null,
+        periodEnd: null,
+        basePriceSnapshot: null,
+      },
+    });
+    await svc.upgrade("t1", "BUSINESS", "admin");
+    expect(deltaOf(events, BILLING_EVENTS.PLAN_CHANGED)).toBe(349); // 349 − 0, never 349 − 59
+  });
+
+  it("#2460: a consistent catalog row nets against its stored snapshot", async () => {
+    const { svc, events } = make({
+      sub: {
+        planKey: "STARTER",
+        cycle: "MONTHLY",
+        periodStart: null,
+        periodEnd: null,
+        basePriceSnapshot: 59,
+      },
+    });
+    await svc.upgrade("t1", "BUSINESS", "admin");
+    expect(deltaOf(events, BILLING_EVENTS.PLAN_CHANGED)).toBe(290);
+  });
+
   it("#2223 / SA-444a: an override row upgrades the PLAN but not the price — quote 0 with the note, snapshot = the fee, delta 0", async () => {
     const { svc, tx, events } = make({
       sub: {
@@ -721,7 +924,13 @@ describe("SubscriptionMutationService.upgrade", () => {
 
   it("applies instantly (optimistic guard) with MRR delta = new − old", async () => {
     const { svc, tx, events } = make({
-      sub: { planKey: "STARTER", cycle: "MONTHLY", periodStart: null, periodEnd: null },
+      sub: {
+        planKey: "STARTER",
+        cycle: "MONTHLY",
+        periodStart: null,
+        periodEnd: null,
+        basePriceSnapshot: 59, // #2460: a consistent row carries its snapshot (the ledger nets against it, SA-464).
+      },
     });
     await svc.upgrade("t1", "BUSINESS", "admin");
     expect(tx.tenantSubscription.updateMany.mock.calls[0][0].where).toMatchObject({
@@ -816,7 +1025,7 @@ describe("SubscriptionMutationService.upgrade", () => {
   it("A2b: a lost optimistic-guard race still rejects (the hook's writes roll back with the tx)", async () => {
     const { svc, tx, planTransition } = make({ sub: { planKey: "STARTER", cycle: "MONTHLY" } });
     tx.tenantSubscription.updateMany.mockResolvedValue({ count: 0 });
-    await expect(svc.upgrade("t1", "BUSINESS")).rejects.toBeInstanceOf(BadRequestException);
+    await expect(svc.upgrade("t1", "BUSINESS")).rejects.toBeInstanceOf(ConflictException);
     expect(planTransition.onPlanChange).toHaveBeenCalledTimes(1);
   });
 
@@ -836,7 +1045,7 @@ describe("SubscriptionMutationService.upgrade", () => {
   it("rejects a concurrent double-upgrade (updateMany matched 0 rows)", async () => {
     const { svc, tx } = make({ sub: { planKey: "STARTER", cycle: "MONTHLY" } });
     tx.tenantSubscription.updateMany.mockResolvedValue({ count: 0 });
-    await expect(svc.upgrade("t1", "BUSINESS")).rejects.toBeInstanceOf(BadRequestException);
+    await expect(svc.upgrade("t1", "BUSINESS")).rejects.toBeInstanceOf(ConflictException);
   });
 
   it("rejects a same/lower target", async () => {
@@ -1144,7 +1353,13 @@ describe("SubscriptionMutationService — invite-only plans are never self-servi
     const { svc, tx, events } = make({
       catalog: catalogWithLite(),
       tenantStatus: "ACTIVE",
-      sub: { planKey: "LITE", cycle: "MONTHLY", periodStart: null, periodEnd: null },
+      sub: {
+        planKey: "LITE",
+        cycle: "MONTHLY",
+        periodStart: null,
+        periodEnd: null,
+        basePriceSnapshot: 29, // #2460: a consistent row carries its snapshot (the ledger nets against it, SA-464).
+      },
     });
     await svc.upgrade("t1", "STARTER", "admin");
     // Reached the write: the rank check passed (STARTER rank 1 > LITE rank 0) and the
@@ -1814,6 +2029,7 @@ describe("SubscriptionMutationService — one armed transition at a time (REG-B5
         cancelAtPeriodEnd: true,
         downgradeToPlanKey: "STARTER",
         downgradeEffectiveAt: periodEnd,
+        basePriceSnapshot: 59, // #2460: a consistent row carries its snapshot (the ledger nets against it, SA-464).
       },
     });
     await svc.upgrade("t1", "BUSINESS", "admin");
@@ -2775,6 +2991,102 @@ describe("STRIPE-CANCEL-2 — cancel() propagates to Stripe for a READ_ONLY tena
       data: { stripeSubId: null },
     });
     expect(events.emit).not.toHaveBeenCalled();
+  });
+});
+
+// #2189 / SA-389: the B58 guard and every pre-tx input prepare() consumed are re-checked UNDER
+// the tenant lock, before any write. Two-connection proof is the DB lane's (F2).
+describe("#2189 subscribe() re-checks under the lock (SA-389)", () => {
+  const source = require("fs").readFileSync(
+    require("path").join(__dirname, "subscription-mutation.service.ts"),
+    "utf8",
+  ) as string;
+
+  it("placement: the ONE guard runs pre-tx and again after lockTenantForLedger, before any write", () => {
+    const body = source.slice(
+      source.indexOf("async subscribe("),
+      source.indexOf("async planChangePreview("),
+    );
+    const calls = [...body.matchAll(/b58GuardRefusal\(/g)].map((m) => m.index!);
+    expect(calls).toHaveLength(2);
+    const lock = body.indexOf("await lockTenantForLedger(tx, tenantId)");
+    const tx = body.indexOf("this.prisma.$transaction(");
+    const firstWrite = body.indexOf("this.planTransition.onPlanChange(");
+    expect(calls[0]).toBeLessThan(tx); // fast refusal, pre-tx
+    expect(calls[1]).toBeGreaterThan(lock); // re-check under the lock
+    expect(calls[1]).toBeLessThan(firstWrite); // before anything is written
+    const stale = body.indexOf("PLAN_CHANGED_DURING_SUBSCRIBE");
+    expect(stale).toBeGreaterThan(lock);
+    expect(stale).toBeLessThan(firstWrite);
+    // SA-389 (3): one source for wasTrial — the locked tenant.
+    expect(body).not.toMatch(/const wasTrial = tenant\.status/);
+    expect(body).toMatch(/const wasTrial = lockedTenant\.status === "TRIAL"/);
+  });
+
+  it("a plan committed between the pre-read and the lock ⇒ 409 PLAN_CHANGED_DURING_SUBSCRIBE, nothing written, no event", async () => {
+    const { svc, tx, events, planTransition } = make({ tenantStatus: "TRIAL" });
+    tx.tenant.findUnique.mockResolvedValue({
+      status: "ACTIVE",
+      plan: "TEAM",
+      class: "PRODUCTION",
+      deletedAt: null,
+    });
+    tx.tenantSubscription.findUnique.mockResolvedValue({
+      planKey: "BUSINESS",
+      cycle: "ANNUAL",
+      periodEnd: null,
+    });
+    const err = await svc
+      .subscribe("t1", { planKey: "TEAM", cycle: "MONTHLY" }, "admin")
+      .catch((e: any) => e);
+    expect(err).toBeInstanceOf(ConflictException);
+    expect(err.getResponse()).toMatchObject({
+      code: "PLAN_CHANGED_DURING_SUBSCRIBE",
+      retryable: true,
+    });
+    expect(tx.tenantSubscription.upsert).not.toHaveBeenCalled();
+    expect(tx.tenant.update).not.toHaveBeenCalled();
+    expect(planTransition.onPlanChange).not.toHaveBeenCalled();
+    expect(events.emit).not.toHaveBeenCalled();
+  });
+
+  it("the locked row can make the B58 guard refuse even when the pre-read allowed it (no write)", async () => {
+    const sub = { planKey: "TEAM", cycle: "MONTHLY", periodEnd: null };
+    const { svc, tx, events } = make({ tenantStatus: "TRIAL", sub });
+    tx.tenant.findUnique.mockResolvedValue({
+      status: "ACTIVE",
+      plan: "TEAM",
+      class: "PRODUCTION",
+      deletedAt: null,
+    });
+    tx.tenantSubscription.findUnique.mockResolvedValue({
+      ...sub,
+      periodEnd: new Date(Date.now() + 20 * 24 * 3600 * 1000),
+    });
+    await expect(
+      svc.subscribe("t1", { planKey: "TEAM", cycle: "MONTHLY" }, "admin"),
+    ).rejects.toThrow("You are already on this plan — nothing to change");
+    expect(tx.tenantSubscription.upsert).not.toHaveBeenCalled();
+    expect(events.emit).not.toHaveBeenCalled();
+  });
+
+  it("wasTrial comes from the LOCKED tenant: converted in between ⇒ no trialConvertedAt, no TRIAL_CONVERTED", async () => {
+    const sub = { planKey: "TEAM", cycle: "MONTHLY", periodEnd: null };
+    const { svc, tx, events } = make({ tenantStatus: "TRIAL", sub });
+    tx.tenant.findUnique.mockResolvedValue({
+      status: "ACTIVE",
+      plan: "TEAM",
+      class: "PRODUCTION",
+      deletedAt: null,
+    });
+    tx.tenantSubscription.findUnique.mockResolvedValue(sub);
+    await svc.subscribe("t1", { planKey: "TEAM", cycle: "MONTHLY" }, "admin");
+    const written = tx.tenantSubscription.upsert.mock.calls[0][0];
+    expect(written.create.trialConvertedAt).toBeNull();
+    expect(written.update.trialConvertedAt).toBeUndefined();
+    expect(events.emit.mock.calls.map((c: any[]) => c[1])).not.toContain(
+      BILLING_EVENTS.TRIAL_CONVERTED,
+    );
   });
 });
 

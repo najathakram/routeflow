@@ -3,6 +3,7 @@ import { PrismaService } from "../prisma/prisma.service";
 import { StorageService } from "../storage/storage.service";
 import { RegulatedVisibilityService } from "./regulated-visibility.service";
 import { getTierPrice } from "@routeflow/pricing";
+import { firstSignableImageKey } from "../products/product-image-keys";
 
 @Injectable()
 export class BuyerDashboardService {
@@ -194,10 +195,8 @@ export class BuyerDashboardService {
         .map(async (f) => {
           const product = freqProductMap.get(f.productId!)!;
           const effectiveTier = cpMap.get(f.productId!) ?? defaultTier;
-          const thumbnailUrl =
-            product.imageKeys.length > 0
-              ? await this.storage.presignedUrl(product.imageKeys[0])
-              : null;
+          const thumbKey = firstSignableImageKey(f.productId!, product.imageKeys); // #2533
+          const thumbnailUrl = thumbKey ? await this.storage.presignedUrl(thumbKey) : null;
           return {
             productId: product.id,
             name: product.name,
@@ -225,8 +224,8 @@ export class BuyerDashboardService {
     const newFromSeller = await Promise.all(
       newProducts.map(async (p) => {
         const effectiveTier = newCpMap.get(p.id) ?? defaultTier;
-        const thumbnailUrl =
-          p.imageKeys.length > 0 ? await this.storage.presignedUrl(p.imageKeys[0]) : null;
+        const thumbKey = firstSignableImageKey(p.id, p.imageKeys); // #2533
+        const thumbnailUrl = thumbKey ? await this.storage.presignedUrl(thumbKey) : null;
         return {
           id: p.id,
           name: p.name,
@@ -252,8 +251,8 @@ export class BuyerDashboardService {
     const featuredItems = await Promise.all(
       featuredProducts.map(async (p) => {
         const effectiveTier = featCpMap.get(p.id) ?? defaultTier;
-        const thumbnailUrl =
-          p.imageKeys.length > 0 ? await this.storage.presignedUrl(p.imageKeys[0]) : null;
+        const thumbKey = firstSignableImageKey(p.id, p.imageKeys); // #2533
+        const thumbnailUrl = thumbKey ? await this.storage.presignedUrl(thumbKey) : null;
         return {
           id: p.id,
           name: p.name,
@@ -323,8 +322,8 @@ export class BuyerDashboardService {
     const suggestedItems = await Promise.all(
       suggestedProducts.map(async (p) => {
         const effectiveTier = sugCpMap.get(p.id) ?? defaultTier;
-        const thumbnailUrl =
-          p.imageKeys.length > 0 ? await this.storage.presignedUrl(p.imageKeys[0]) : null;
+        const thumbKey = firstSignableImageKey(p.id, p.imageKeys); // #2533
+        const thumbnailUrl = thumbKey ? await this.storage.presignedUrl(thumbKey) : null;
         return {
           id: p.id,
           name: p.name,
