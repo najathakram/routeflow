@@ -405,6 +405,7 @@ type ApiOrderStatus =
   | "CANCELLED";
 
 export interface EditItemState {
+  priceEdited?: boolean; // #2381: the operator typed this price (picker remounts keep it)
   id: string; // real DB id for existing items; temp "new-{uuid}" for new items
   isNew?: boolean;
   /** True for a free-text, non-catalog line (no productId; { name, qty, unitPrice }). */
@@ -1406,6 +1407,7 @@ export function EditableLineItems({
       basePrice: option.listPrice,
       overrideReason: undefined,
       reasonBaselinePrice: option.price,
+      priceEdited: false, // #2381: a unit change prices from the ladder
     });
   }
 
@@ -1553,6 +1555,7 @@ export function EditableLineItems({
                       ? item.priceType
                       : "STANDARD",
                   unitLabel: item.unitLabel,
+                  priceEdited: item.priceEdited,
                 }}
                 tier={tierForProductId(item.productId)}
                 onChange={(option, refresh) => setLineUnit(item.id, option, refresh)}
@@ -1668,7 +1671,7 @@ export function EditableLineItems({
               // save-time check never disagree.
               originalUnitPrice={item.reasonBaselinePrice ?? item.originalUnitPrice}
               overrideReason={item.overrideReason}
-              onPriceChange={(net) => update(item.id, { unitPrice: net })}
+              onPriceChange={(net) => update(item.id, { unitPrice: net, priceEdited: true })}
               onReasonChange={(reason) => update(item.id, { overrideReason: reason || undefined })}
               unitCost={item.unitCost}
               unitsPerBox={item.unitsPerBox}
