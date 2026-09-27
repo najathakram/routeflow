@@ -210,6 +210,37 @@ describe("#2551 tripwire — no subscription write in a $transaction before the 
         "viaHelperGood",
         "      await lockTenantForLedger(tx, tenantId);\n      await this.writeSub(tx, tenantId);",
       ),
+      // #2581 (the lead's #2578 review): the remaining evasions
+      tenantTx: `class X {\n  async tenantTx() {\n    await this.prisma.tenantTransaction(async (tx) => {\n      await tx.tenantSubscription.update({});\n    });\n  }\n}\n`,
+      nonAsync: `class X {\n  async nonAsync() {\n    await this.prisma.$transaction((tx) => {\n      return tx.tenantSubscription.update({});\n    });\n  }\n}\n`,
+      arrowHelper:
+        wrap(
+          "arrowHelper",
+          "      await writeSubArrow(tx, tenantId);\n      await lockTenantForLedger(tx, tenantId);",
+        ) +
+        "const writeSubArrow = async (c: any, id: string) => {\n  await c.tenantSubscription.update({ where: { tenantId: id } });\n};\n",
+      multiLevel:
+        wrap(
+          "multiLevel",
+          "      await this.outerWrite(tx, tenantId);\n      await lockTenantForLedger(tx, tenantId);",
+        ) +
+        "class Z {\n  private async outerWrite(c: any, id: string) {\n    await this.innerWrite(c, id);\n  }\n  private async innerWrite(d: any, id: string) {\n    await d.tenantSubscription.upsert({});\n  }\n}\n",
+      lockInIf: wrap(
+        "lockInIf",
+        "      if (flag) {\n        await lockTenantForLedger(tx, tenantId);\n      }\n      await tx.tenantSubscription.update({});",
+      ),
+      lockInString: wrap(
+        "lockInString",
+        '      const note = "lockTenantForLedger(tx, tenantId)";\n      await tx.tenantSubscription.update({});',
+      ),
+      regexQuote: wrap(
+        "regexQuote",
+        '      const re = /"/;\n      // await lockTenantForLedger(tx, tenantId);\n      const q = "x";\n      await tx.tenantSubscription.update({});',
+      ),
+      rawSelectForUpdate: wrap(
+        "rawSelectForUpdate",
+        '      await tx.$queryRaw`SELECT 1 FROM "TenantSubscription" WHERE "tenantId" = ${id} FOR UPDATE`;\n      await lockTenantForLedger(tx, tenantId);',
+      ),
     };
     expect(findViolations(Object.entries(cases).map(([rel, src]) => ({ rel, src })))).toEqual([
       "bad#bad",
@@ -218,6 +249,14 @@ describe("#2551 tripwire — no subscription write in a $transaction before the 
       "rawUpdate#rawUpdate",
       "commentLock#commentLock",
       "viaHelper#viaHelper",
+      "tenantTx#tenantTx",
+      "nonAsync#nonAsync",
+      "arrowHelper#arrowHelper",
+      "multiLevel#multiLevel",
+      "lockInIf#lockInIf",
+      "lockInString#lockInString",
+      "regexQuote#regexQuote",
+      "rawSelectForUpdate#rawSelectForUpdate",
     ]);
   });
 });
