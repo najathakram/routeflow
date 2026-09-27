@@ -148,7 +148,11 @@ describe("PlatformAdminService — audit provenance", () => {
         },
       ),
     };
-    emailServiceMock = { send: jest.fn().mockResolvedValue(undefined) };
+    emailServiceMock = {
+      send: jest.fn().mockResolvedValue(undefined),
+      // #2439: createTenant's welcome email.
+      sendTenantWelcomeEmail: jest.fn().mockResolvedValue({ delivered: true, transport: "smtp" }),
+    };
     billingServiceMock = {
       createCheckoutSession: jest.fn().mockRejectedValue(new Error("no stripe")),
       syncStripeSubscriptionPrice: jest.fn().mockResolvedValue({ synced: false }),
@@ -1989,15 +1993,11 @@ describe("PlatformAdminService — audit provenance", () => {
       expect(prisma.tenant.create).not.toHaveBeenCalled();
     });
 
-    it("REG-R2.4/R2.5/R2.7 a published LITE tenant gets the 0-day trial, the 'complete payment to activate' email variant, and a checkout link", async () => {
+    it("REG-R2.4/R2.5/R2.7 + #2439 a published LITE tenant gets the 0-day trial and a STABLE Pay-now link (no checkout session minted at creation)", async () => {
       planCatalogService.getPublishedVersion.mockResolvedValue({
         id: "v-1",
         definitions: [{ planKey: "LITE" }, { planKey: "STARTER" }],
       } as any);
-      (billingServiceMock.createCheckoutSession as jest.Mock).mockResolvedValue({
-        checkoutUrl: "https://checkout.stripe.com/session-lite",
-        sessionId: "sess-lite",
-      });
 
       const result = await service.createTenant({ ...baseDto, plan: "LITE" } as any);
 
@@ -2005,24 +2005,120 @@ describe("PlatformAdminService — audit provenance", () => {
       const actualMs = (result.trialEndsAt as Date).getTime() - Date.now();
       expect(Math.abs(actualMs)).toBeLessThan(5000);
 
-      // R2.7: self-serve checkout is offered (lever defaults true) with the settings/billing
-      // success/cancel URLs, not the bare tenant-id-only call other plans use.
-      expect(billingServiceMock.createCheckoutSession).toHaveBeenCalledWith(
-        TENANT_ID,
+      // #2439: no 24h Stripe URL is minted at creation — the Pay-now link is stable and the
+      // checkout is minted when the owner clicks it on /settings/billing (R2.7 lever still gates it).
+      expect(billingServiceMock.createCheckoutSession).not.toHaveBeenCalled();
+      expect(result.payUrl).toBe("http://localhost:3001/login?redirect=%2Fsettings%2Fbilling");
+      expect(result).not.toHaveProperty("checkoutUrl");
+
+      // R2.5: the email gets trialDays 0 → the "complete payment to activate" copy.
+      const call = (emailServiceMock.sendTenantWelcomeEmail as jest.Mock).mock.calls[0][0];
+      expect(call).toMatchObject({ trialDays: 0, payUrl: result.payUrl, workspace: "acme-lite" });
+    });
+  });
+
+  // #2439 (P1, tier 1): the welcome email carries a single-use set-password link, never a
+  // password; the login URL; a stable Pay-now link; and its delivery status is recorded + returned.
+  describe("createTenant — welcome email (#2439)", () => {
+    const baseDto = {
+      slug: "acme-welcome",
+      businessName: "Acme Welcome Co",
+      adminEmail: "owner@acme-welcome.example.com",
+      adminUsername: "acme_owner",
+    } as any;
+
+    beforeEach(() => {
+      prisma.tenant.findUnique.mockResolvedValue(null);
+      prisma.user.findFirst.mockResolvedValue(null);
+      prisma.tenant.create.mockImplementation((args: any) =>
+        Promise.resolve({ id: TENANT_ID, ...args.data }),
+      );
+      prisma.user.create.mockResolvedValue({ id: "admin-1", username: "acme_owner" } as any);
+      planCatalogService.getPublishedVersion.mockResolvedValue({
+        id: "v-1",
+        definitions: [{ planKey: "STARTER" }],
+      } as any);
+    });
+
+    it("creates NO password when none is supplied, and never returns or emails one", async () => {
+      const result = await service.createTenant(baseDto);
+      const userData = (prisma.user.create as jest.Mock).mock.calls[0][0].data;
+      expect(userData.password).toBeNull();
+      expect(userData.forcePasswordChange).toBe(false);
+      expect(result).not.toHaveProperty("tempPassword");
+      const call = (emailServiceMock.sendTenantWelcomeEmail as jest.Mock).mock.calls[0][0];
+      expect(JSON.stringify(call)).not.toMatch(/password"\s*:/i);
+      expect(emailServiceMock.send).not.toHaveBeenCalled();
+    });
+
+    it("issues a single-use 72h set-password token (hash stored, prior live tokens cleared) and links it", async () => {
+      await service.createTenant(baseDto);
+      const del = (prisma.passwordResetToken.deleteMany as jest.Mock).mock.calls[0][0];
+      expect(del.where).toMatchObject({ userId: "admin-1", usedAt: null });
+      const created = (prisma.passwordResetToken.create as jest.Mock).mock.calls[0][0].data;
+      expect(created.userId).toBe("admin-1");
+      expect(created.tokenHash).toMatch(/^[0-9a-f]{64}$/);
+      expect(created.expiresAt.getTime() - Date.now()).toBeGreaterThan(71.9 * 3600_000);
+      const call = (emailServiceMock.sendTenantWelcomeEmail as jest.Mock).mock.calls[0][0];
+      const rawToken = String(call.setPasswordUrl).split("token=")[1];
+      expect(call.setPasswordUrl).toBe(`http://localhost:3001/reset-password?token=${rawToken}`);
+      expect(rawToken).toMatch(/^[0-9a-f]{64}$/);
+      expect(created.tokenHash).not.toBe(rawToken);
+      expect(call).toMatchObject({
+        to: "owner@acme-welcome.example.com",
+        username: "acme_owner",
+        workspace: "acme-welcome",
+        expiryHours: 72,
+        loginUrl: "http://localhost:3001/login",
+      });
+    });
+
+    it("keeps an admin-supplied password (hashed) but still never emails it", async () => {
+      await service.createTenant({ ...baseDto, adminPassword: "Chosen-Pass-123" });
+      const userData = (prisma.user.create as jest.Mock).mock.calls[0][0].data;
+      expect(userData.password).toMatch(/^\$2[aby]\$/);
+      const call = (emailServiceMock.sendTenantWelcomeEmail as jest.Mock).mock.calls[0][0];
+      expect(JSON.stringify(call)).not.toContain("Chosen-Pass-123");
+    });
+
+    it("records AND returns the delivery status", async () => {
+      const ok = await service.createTenant(baseDto);
+      expect(ok.welcomeEmail).toEqual({
+        to: "owner@acme-welcome.example.com",
+        delivered: true,
+        transport: "smtp",
+      });
+      expect(auditLog).toHaveBeenCalledWith(
         expect.objectContaining({
-          successUrl: expect.stringMatching(/\/settings\/billing\?checkout=success$/),
-          cancelUrl: expect.stringMatching(/\/settings\/billing\?checkout=cancelled$/),
+          action: "TENANT_CREATED",
+          meta: expect.objectContaining({ welcomeEmail: ok.welcomeEmail }),
         }),
       );
-      expect(result.checkoutUrl).toBe("https://checkout.stripe.com/session-lite");
+    });
 
-      // R2.5: the email's trial copy switches to the "complete payment to activate" variant
-      // (0 days is meaningless as a countdown) instead of "trial expires in 0 days".
-      const emailCall = (emailServiceMock.send as jest.Mock).mock.calls[0][0];
-      expect(emailCall.html).toContain("Complete payment to activate your account.");
-      expect(emailCall.html).not.toMatch(/trial expires in/i);
-      // B421 pinning: the welcome email carries a temp password — platform sender only.
-      expect(emailCall.senderClass).toBe("platform");
+    it("an undelivered or throwing email never fails tenant creation, and says so", async () => {
+      (emailServiceMock.sendTenantWelcomeEmail as jest.Mock).mockResolvedValueOnce({
+        delivered: false,
+        transport: "none",
+        error: "no transport",
+      });
+      const a = await service.createTenant(baseDto);
+      expect(a.welcomeEmail).toMatchObject({
+        delivered: false,
+        transport: "none",
+        error: "no transport",
+      });
+
+      (emailServiceMock.sendTenantWelcomeEmail as jest.Mock).mockRejectedValueOnce(
+        new Error("smtp down"),
+      );
+      const b = await service.createTenant(baseDto);
+      expect(b.welcomeEmail).toMatchObject({
+        delivered: false,
+        transport: "none",
+        error: "smtp down",
+      });
+      expect(b.id).toBe(TENANT_ID);
     });
   });
 
