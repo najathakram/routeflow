@@ -19,7 +19,7 @@
  * screen's BUY_N_GET_M netting through so the drawer, the line card and the
  * footer cannot disagree.
  */
-import { roundMoney, effectiveQty, type LadderProduct } from "@routeflow/pricing";
+import { roundMoney, effectiveQty, unitLineCount, type LadderProduct } from "@routeflow/pricing";
 import {
   buildOrderItemDiff,
   type DiffCatalogLine,
@@ -159,36 +159,10 @@ function toNumber(v: number | string | null | undefined): number {
  * clears a line's unit, only resends the one it was loaded with (see
  * `stagedDiffItems` below, which puts it on the wire for a unit line's save).
  */
-/**
- * #2231 / SA-388 rule 1: the COUNT of a stored unit line, from its server-shaped fields (qty in
- * base pieces = count x factor; unit-line-build.ts snapshots the unit's factor as `unitsPerBox`).
- * `boxes` when it is a positive integer; else `qty / unitsPerBox` when that snapshot is >= 1
- * and qty is a whole multiple of it (factor-1 "Each" lines, boxes null, land here); else null
- * = LOCKED — no server writer produces such a line, so it is never guessed at.
- */
-export function unitLineCount(li: {
-  qty?: unknown;
-  boxes?: unknown;
-  unitsPerBox?: unknown;
-}): number | null {
-  const boxes = Number(li.boxes);
-  if (li.boxes != null && Number.isInteger(boxes) && boxes > 0) return boxes;
-  // Mirrors web's unitLineCount (#2220) exactly: an integer factor >= 1 and a POSITIVE integer
-  // qty that is a whole multiple of it — qty 0, a fractional factor or fractional qty is LOCKED.
-  const qty = Number(li.qty);
-  const upb = Number(li.unitsPerBox);
-  if (
-    li.unitsPerBox != null &&
-    Number.isInteger(upb) &&
-    upb >= 1 &&
-    Number.isInteger(qty) &&
-    qty > 0 &&
-    qty % upb === 0
-  ) {
-    return qty / upb;
-  }
-  return null;
-}
+// #2231 / SA-388 rule 1: the COUNT of a stored unit line — ONE implementation in
+// @routeflow/pricing (#2276; web and mobile had drifting copies). Re-exported so buyer-edit-items
+// and the specs keep importing it from here.
+export { unitLineCount };
 
 export function hydrateFromOrder(order: { lineItems?: readonly any[] | null } | null | undefined): {
   draft: Record<string, DraftItem>;

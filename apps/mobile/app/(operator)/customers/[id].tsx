@@ -34,6 +34,7 @@ import { roundMoney } from "@routeflow/pricing";
 import { tierLabel } from "../../../lib/tier-label";
 import { showToast } from "../../../lib/toast";
 import { confirm } from "../../../lib/confirm";
+import { useRecordReturn } from "../../../hooks/useRecordReturn";
 
 function fmt(n: number | string | null | undefined): string {
   const v = n == null ? 0 : typeof n === "string" ? Number(n) : n;
@@ -53,6 +54,11 @@ export default function CustomerDetailScreen() {
   }, [isCreateAlias, router]);
 
   const { data: customer, isLoading } = useCustomer(isCreateAlias ? "" : (id ?? ""));
+  // #2420: before the early return (rules of hooks) — null until the add-on resolves allowed.
+  const recordReturn = useRecordReturn({
+    customerId: isCreateAlias ? null : id,
+    customerName: customer?.businessName,
+  });
   const hasSalesAgents = useHasAddon(SALES_AGENTS_ADDON);
   const { data: currentAgent } = useCustomerCurrentAgent(
     isCreateAlias ? "" : (id ?? ""),
@@ -338,6 +344,23 @@ export default function CustomerDetailScreen() {
           {/* Quick actions */}
           <View style={styles.card}>
             <Text style={styles.cardTitle}>Actions</Text>
+            {/* #2420: Record return — web's customer-detail RecordReturnAction twin (no order). */}
+            {recordReturn ? (
+              <Pressable
+                style={styles.actionListRow}
+                onPress={recordReturn}
+                accessibilityRole="button"
+              >
+                <Ionicons name="return-down-back-outline" size={16} color={ios.brand} />
+                <Text style={styles.actionListText}>Record return</Text>
+                <Ionicons
+                  name="chevron-forward"
+                  size={14}
+                  color={ios.label3}
+                  style={{ marginLeft: "auto" }}
+                />
+              </Pressable>
+            ) : null}
             <Pressable
               style={styles.actionListRow}
               onPress={() => router.push(`/(operator)/orders?customerId=${id}`)}

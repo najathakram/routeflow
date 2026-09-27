@@ -1,35 +1,9 @@
 import { invoiceLineQtyText } from "@routeflow/pricing";
 import type { OrderItem } from "@/lib/api/orders";
 
-/**
- * B718 / SA-388 (#938, tier 1): the ONE count function for a web unit line (edit-state seeding,
- * `originalQty`, `promoBaseUnits` and `buildItemUpdates`' comparison all go through it).
- * - `boxes` when it is a positive integer (unit-line-build.ts stores the COUNT there);
- * - else `qty ÷ unitsPerBox` — the line's SNAPSHOT factor — when `qty` (base pieces) is a
- *   positive whole multiple of it;
- * - else `null`: LOCKED. There is no safe count, so the line takes no qty edit and a price/note
- *   edit refuses to save (see findLockedUnitLineEdit). Falling back to raw `qty` read base pieces
- *   as the count — a price-only save re-billed a 3-Case line as 36 Cases (12×).
- *
- * Extracted from orders/[id]/page.tsx (size ratchet) — behavior unchanged.
- */
-export function unitLineCount(li: Pick<OrderItem, "boxes" | "qty" | "unitsPerBox">): number | null {
-  const boxes = li.boxes == null ? null : Number(li.boxes);
-  if (boxes != null && Number.isInteger(boxes) && boxes > 0) return boxes;
-  const factor = li.unitsPerBox == null ? null : Number(li.unitsPerBox);
-  const qty = Number(li.qty);
-  if (
-    factor != null &&
-    Number.isInteger(factor) &&
-    factor >= 1 &&
-    Number.isInteger(qty) &&
-    qty > 0 &&
-    qty % factor === 0
-  ) {
-    return qty / factor;
-  }
-  return null;
-}
+// B718 / SA-388: the ONE count function for a unit line lives in @routeflow/pricing (#2276 —
+// web and mobile imported drifting copies); re-exported so this page's imports stay unchanged.
+export { unitLineCount } from "@routeflow/pricing";
 
 /** Thrown by buildItemUpdates if a LOCKED unit line's edit ever reaches it (SA-388 backstop —
  *  the save handlers refuse first via findLockedUnitLineEdit, so no request is ever built). */

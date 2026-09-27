@@ -45,6 +45,7 @@ import { sumInlineReturnCredit } from "./inline-return-credit.util";
 import { InlineReturnsQuoteService } from "./inline-returns-quote.service";
 import type { CaptureInlineReturnDto, InlineReturnLinesDto } from "./dto/capture-inline-return.dto";
 import type { ApproveInlineReturnDto } from "./dto/approve-inline-return.dto";
+import { selectEditRevertedInvoices } from "../invoices/order-edit-revert-set";
 
 /** design.md §8 — the ONE gate every money-writing method here re-checks itself,
  * regardless of the registry's rollout state (the `AddonGuard` on the controller courtesy-
@@ -425,17 +426,21 @@ export class InlineReturnsService {
    * locks, is authoritative and may differ (a stale price race), so the caller never uses this figure
    * to decide whether an in-tx counter reservation is needed: it reserves ahead regardless (SA-292).
    *
-   * KNOWN RESIDUAL (L1, SA-321; fix scoped on #2178 for R1.1): the preflight is NOT a full guarantee
-   * in one case. It prices BEFORE `revertLinkedInvoicesForOrderEdit`, and that revert drops this
-   * order's own invoice from the matching set. Precondition, all of: an UNDELIVERED order with its
-   * own SENT invoice, plus a boxed return line on a product with no live pack whose only pack
-   * evidence is that invoice. The in-tx pricing can then fail INLINE_RETURN_PACK_UNKNOWN: the edit
-   * rolls back and the invoice is left DRAFT (the B215 class); the operator re-sends it.
+   * #2178 (closes the L1 residual, SA-321): on an UNDELIVERED order edit the caller passes
+   * `revertOrderId`, and the dry run prices against the matching set as it will be AFTER
+   * `revertLinkedInvoicesForOrderEdit` — the invoices that revert turns into DRAFTs of an undelivered
+   * order are left out (the ONE selection, invoices/order-edit-revert-set.ts). So a boxed return whose
+   * only pack evidence is this order's own SENT invoice now refuses INLINE_RETURN_PACK_UNKNOWN HERE,
+   * before the revert commits, instead of in the tx after it (the B215 class).
    */
   async preflightCapture(
     dto: CaptureInlineReturnDto,
     user: JwtPayload,
     order: { routeRunId: string | null },
+    // #2178: set on an UNDELIVERED order edit, whose linked-invoice revert runs next: price against
+    // the matching set as it will be AFTER that revert (the reverted invoices left out), so a return
+    // whose only pack evidence is this order's own SENT invoice refuses HERE, before the revert.
+    opts: { revertOrderId?: string } = {},
   ): Promise<number | null> {
     const db = this.prisma.forTenant();
     if (dto.returnKey) {
@@ -451,10 +456,14 @@ export class InlineReturnsService {
       }
     }
     if (user.role === UserRole.DRIVER) await this.assertDriverOwnsOrder(db, dto, order);
+    const excludeInvoiceIds = opts.revertOrderId
+      ? (await selectEditRevertedInvoices(db, opts.revertOrderId)).map((inv) => inv.id)
+      : [];
     const priced = await this.quoteService.priceInlineReturn(
       { customerId: dto.customerId, items: dto.items, routeRunStopId: dto.routeRunStopId },
       user,
       db,
+      { excludeInvoiceIds },
     );
     return priced.total; // the dry-run total: a gate only; the edit path reserves ahead regardless (SA-292)
   }

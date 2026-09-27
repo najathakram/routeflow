@@ -313,7 +313,10 @@ describe("marketing.css is delivered from the root layout — R-MKT T6", () => {
 // marketing port leaking into shared files, not to freeze globals.css
 // forever; see B511 above for the same precedent).
 const GLOBALS_CSS_SHA256 = "20db8512526ff90aacc47444eca5e02bafb5d00f1f23806aeab0a07b72968293";
-const TAILWIND_CONFIG_SHA256 = "5b62085fee3f38bba484393c94238b8651806d8c7e0e47efc9a91cce68ff9754";
+// tailwind.config.ts re-pinned by #2329: the preset now builds its values from the shared
+// Ledger token source (packages/ui/src/tokens/ledger.ts). Behaviour-preserving — the compiled
+// web CSS is byte-identical before and after — and unrelated to the marketing port.
+const TAILWIND_CONFIG_SHA256 = "5731ba0cb3c580056ec0c57b3cd90d5e529828fbb0aa549913afbdbd096c03c0";
 
 function sha256OfFile(filePath: string): string {
   return crypto.createHash("sha256").update(fs.readFileSync(filePath)).digest("hex");
