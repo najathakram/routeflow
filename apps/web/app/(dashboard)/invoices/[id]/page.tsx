@@ -1479,7 +1479,7 @@ function AdjustPricesPanel({ invoice, onClose }: { invoice: Invoice; onClose: ()
               type="date"
               value={sinceDate}
               onChange={(e) => setSinceDate(e.target.value)}
-              className="h-9 rounded-lg border border-surface-border bg-white px-3 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
+              className="h-9 w-36 rounded-lg border border-surface-border bg-white px-3 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
             />
             <p className="mt-1 text-xs text-navy/70">
               All matching invoices created on or after this date will be updated.

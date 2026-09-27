@@ -1,0 +1,53 @@
+import type { Prisma } from "@prisma/client";
+import { LEGACY_ADDON_KEY_TO_SKU } from "./plan-catalog.constants";
+
+/**
+ * #2188 / SA-385: the ONE way to find a tenant's TenantAddon row for an add-on.
+ *
+ * An add-on can be keyed two ways — admin enableAddon writes the raw legacy addonKey
+ * ("tobacco_dealer"), subscribe()/self-serve write the SKU ("REGULATED_ITEMS") — and the
+ * (tenantId, addonKey) unique cannot stop the pair because the keys differ. Every existence read
+ * (admin enable pre-check + in-tx re-check, admin disable, subscribe, self-serve enable/disable,
+ * hasAddon) goes through this predicate, so either path finds the other's row and re-activates it
+ * in place instead of creating a second one.
+ *
+ * The legacy keys come from the INVERSE of {@link LEGACY_ADDON_KEY_TO_SKU} — never a second map.
+ */
+
+/** The canonical code for a raw admin addonKey (a legacy key maps to its SKU; anything else is itself). */
+export function addonCodeOf(addonKey: string): string {
+  return LEGACY_ADDON_KEY_TO_SKU[addonKey] ?? addonKey;
+}
+
+/** Every legacy addonKey whose map value is `sku`. */
+export function legacyKeysFor(sku: string): string[] {
+  return Object.keys(LEGACY_ADDON_KEY_TO_SKU).filter((k) => LEGACY_ADDON_KEY_TO_SKU[k] === sku);
+}
+
+/** The shared predicate: addonKey = sku, OR sku = sku, OR addonKey is one of sku's legacy keys. */
+export function addonRowWhere(tenantId: string, sku: string): Prisma.TenantAddonWhereInput {
+  const legacy = legacyKeysFor(sku);
+  return {
+    tenantId,
+    OR: [{ addonKey: sku }, { sku }, ...(legacy.length ? [{ addonKey: { in: legacy } }] : [])],
+  };
+}
+
+/** The same predicate for rows already in memory (subscribe's locked findMany). */
+export function addonRowMatches(row: { addonKey: string; sku?: string | null }, sku: string) {
+  return row.addonKey === sku || row.sku === sku || legacyKeysFor(sku).includes(row.addonKey);
+}
+
+type AddonReader = { tenantAddon: Pick<Prisma.TenantAddonDelegate, "findFirst"> };
+
+/**
+ * The tenant's row for `sku` — an active row first, then the oldest — or null. A tenant that
+ * already holds two rows (pre-#2188 data, reported by report-b2188-duplicate-addon-rows.mjs) gets
+ * a deterministic pick; deduping those is its own ruling.
+ */
+export function findAddonRow(db: AddonReader, tenantId: string, sku: string) {
+  return db.tenantAddon.findFirst({
+    where: addonRowWhere(tenantId, sku),
+    orderBy: [{ active: "desc" }, { createdAt: "asc" }],
+  });
+}

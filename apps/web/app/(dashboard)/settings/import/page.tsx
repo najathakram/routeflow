@@ -825,7 +825,7 @@ export default function SettingsImportPage() {
       <FinishSetupCard />
 
       {/* Import cards — uniform 2-column grid, cards stretch to equal height per row */}
-      <div className="grid grid-cols-2 gap-5">
+      <div className="grid grid-cols-1 gap-5 lg:grid-cols-2">
         {IMPORT_SECTIONS.map((section, i) => (
           <ImportCard key={section.id} section={section} step={i + 1} />
         ))}

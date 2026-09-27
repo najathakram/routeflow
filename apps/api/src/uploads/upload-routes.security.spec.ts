@@ -63,6 +63,7 @@ import { BookkeepingController } from "../bookkeeping/bookkeeping.controller";
 import { BookkeepingService } from "../bookkeeping/bookkeeping.service";
 import { ImportController } from "../import/import.controller";
 import { ImportService } from "../import/import.service";
+import { listenOnLoopback } from "../common/testing/listen-loopback";
 
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const request = require("supertest");
@@ -115,7 +116,7 @@ async function bootstrap(
     .compile();
 
   const app = moduleRef.createNestApplication();
-  await app.init();
+  await listenOnLoopback(app);
   return app;
 }
 

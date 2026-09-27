@@ -359,24 +359,33 @@ export class NumberingService {
       return callerTx ? run(callerTx) : this.prisma.tenantTransaction(run);
     }
 
-    // Fast path (unchanged): ensure a row exists, then atomically increment it.
-    // Standalone, each statement autocommits, so no row lock outlives this call;
-    // on a caller's tx the two statements run there (never a nested transaction),
-    // and `key` carries the tenantId explicitly, so the un-extended client is
-    // still tenant-scoped.
+    // Fast path: ensure a row exists, then atomically increment it. On a caller's
+    // tx both statements run there (never a nested transaction); standalone, they
+    // get their own short transaction, as the year-scoped branch above does.
     const key = { tenantId_docType_year: { tenantId, docType, year } };
-    const db = callerTx ?? this.prisma.forTenant();
-    const seq = await db.numberingSequence.upsert({
-      where: key,
-      create: { tenantId, docType, year, prefix: d.prefix, padding: d.padding, nextNumber: 1 },
-      update: {},
-    });
-    const updated = await db.numberingSequence.update({
-      where: key,
-      data: { nextNumber: { increment: 1 } },
-    });
-    const reserved = updated.nextNumber - 1;
-    return this.format(seq.prefix, reserved, seq.padding, year);
+    const run = async (tx: Prisma.TransactionClient) => {
+      // #2177: the seed MUST NOT raise. A Prisma `upsert` here is a select-then-insert, so two
+      // first mints racing the same (tenant, docType, year) row surfaced P2002 to the loser —
+      // and inside a caller's transaction a unique violation aborts the WHOLE transaction
+      // (SQLSTATE 25P02). A conflict-tolerant INSERT seeds atomically instead: the loser waits
+      // on the winner's uncommitted row, inserts nothing, and increments after it (the same
+      // seed `mintForYear` uses).
+      await tx.$executeRaw`
+        INSERT INTO "NumberingSequence"
+          ("id", "tenantId", "docType", "year", "prefix", "padding", "nextNumber", "updatedAt")
+        VALUES (
+          ${randomUUID()}, ${tenantId}, ${docType}::"DocumentNumberType", ${year},
+          ${d.prefix}, ${d.padding}, 1, NOW()
+        )
+        ON CONFLICT ("tenantId", "docType", "year") DO NOTHING
+      `;
+      const updated = await tx.numberingSequence.update({
+        where: key,
+        data: { nextNumber: { increment: 1 } },
+      });
+      return this.format(updated.prefix, updated.nextNumber - 1, updated.padding, year);
+    };
+    return callerTx ? run(callerTx) : this.prisma.tenantTransaction(run);
   }
 
   /**
