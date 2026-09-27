@@ -17,6 +17,7 @@ import { ADDON_KEY_TO_REGISTRY_KEY } from "./feature-registry";
 import { EntitlementAuthority } from "./entitlement-authority.service";
 import { BillingEventService } from "./billing-event.service";
 import { emitAddonDelta, lockTenantForLedger } from "./addon-ledger";
+import { addonCodeOf, findAddonRow } from "./addon-row";
 
 /**
  * A Stripe `resource_missing` / 404 error means the item we tried to act on is
@@ -69,10 +70,8 @@ export class AddonService {
    *   }
    */
   async hasAddon(tenantId: string, addonKey: string): Promise<boolean> {
-    const addon = await this.prisma.tenantAddon.findUnique({
-      where: { tenantId_addonKey: { tenantId, addonKey } },
-      select: { active: true },
-    });
+    // #2188 / SA-385: resolves the add-on whichever way it was keyed (legacy key or SKU).
+    const addon = await findAddonRow(this.prisma, tenantId, addonCodeOf(addonKey));
     return addon?.active === true;
   }
 
@@ -169,16 +168,14 @@ export class AddonService {
     // entitlement — admin on "tobacco_dealer", tenant on "REGULATED_ITEMS" — so the two paths
     // raced despite both holding a lock. An unbridged key has no tenant-path equivalent and
     // keys on itself.
-    const lockSku = LEGACY_ADDON_KEY_TO_SKU[addonKey] ?? addonKey;
+    const lockSku = addonCodeOf(addonKey);
     const lockKey = `addon:${tenantId}:${lockSku}`;
     try {
       const result = await withAdvisoryLock(
         { family: "billing", key: lockKey, mode: "wait", waitMs: 10_000 },
         async () => {
-          // Check if add-on already exists
-          const existing = await this.prisma.tenantAddon.findUnique({
-            where: { tenantId_addonKey: { tenantId, addonKey } },
-          });
+          // Check if add-on already exists — keyed either way (#2188 / SA-385).
+          const existing = await findAddonRow(this.prisma, tenantId, lockSku);
 
           if (existing?.active) {
             throw new ConflictException(
@@ -282,9 +279,7 @@ export class AddonService {
             // pre-check does, and best-effort delete the orphan Stripe item THIS call already
             // created (mirroring disableAddon's own Stripe-cleanup handling) rather than leave
             // a live item nothing points to.
-            const current = await tx.tenantAddon.findUnique({
-              where: { tenantId_addonKey: { tenantId, addonKey } },
-            });
+            const current = await findAddonRow(tx, tenantId, lockSku);
             if (current?.active) {
               if (stripeItemId) {
                 try {
@@ -304,8 +299,11 @@ export class AddonService {
               );
             }
 
+            // #2188 / SA-385: an existing row — keyed by this legacy addonKey OR by the SKU a
+            // self-serve/subscribe path wrote — is re-activated IN PLACE, by its OWN addonKey;
+            // only when there is none is a new row created, under this path's (raw) key.
             const row = await tx.tenantAddon.upsert({
-              where: { tenantId_addonKey: { tenantId, addonKey } },
+              where: { tenantId_addonKey: { tenantId, addonKey: current?.addonKey ?? addonKey } },
               create: {
                 tenantId,
                 addonKey,
@@ -327,7 +325,7 @@ export class AddonService {
                 // here would overwrite that good value and make addonSkuCode() drop the
                 // add-on from entitlements even though the row is active. Fall through to
                 // `undefined` (leave the column untouched) instead of clobbering it; only the
-                // create branch above may legitimately write a fresh row's sku as null.
+                // create branch below may legitimately write a fresh row's sku as null.
                 sku: skuToStore ?? undefined,
                 stripePriceId: stripePriceId ?? undefined,
                 stripeItemId: stripeItemId ?? undefined,
@@ -389,9 +387,8 @@ export class AddonService {
    * an add-on the tenant no longer has.
    */
   async disableAddon(tenantId: string, addonKey: string) {
-    const addon = await this.prisma.tenantAddon.findUnique({
-      where: { tenantId_addonKey: { tenantId, addonKey } },
-    });
+    // #2188 / SA-385: finds the row whichever way it was keyed (legacy key or SKU).
+    const addon = await findAddonRow(this.prisma, tenantId, addonCodeOf(addonKey));
 
     if (!addon) {
       throw new NotFoundException(`Add-on "${addonKey}" not found for tenant ${tenantId}`);
@@ -437,14 +434,14 @@ export class AddonService {
       await lockTenantForLedger(tx, tenantId);
       await tx.$queryRaw`SELECT id FROM "TenantAddon" WHERE id = ${addon.id} FOR UPDATE`;
       const current = await tx.tenantAddon.findUnique({
-        where: { tenantId_addonKey: { tenantId, addonKey } },
+        where: { tenantId_addonKey: { tenantId, addonKey: addon.addonKey } },
       });
       if (!current?.active) {
         // Already disabled by a concurrent call that won the race — nothing left to do.
         return current ?? addon;
       }
       const row = await tx.tenantAddon.update({
-        where: { tenantId_addonKey: { tenantId, addonKey } },
+        where: { tenantId_addonKey: { tenantId, addonKey: addon.addonKey } },
         data: { active: false, stripeItemId: null },
       });
       // B865 / SA-277 FIX-6: the event's sku is the CANONICAL code (bridges a legacy addonKey
@@ -452,7 +449,7 @@ export class AddonService {
       // to the legacy map / raw key when the row never resolved a catalog sku.
       await emitAddonDelta(tx, this.events, {
         tenantId,
-        sku: addonSkuCode(current) ?? LEGACY_ADDON_KEY_TO_SKU[addonKey] ?? addonKey,
+        sku: addonSkuCode(current) ?? addonCodeOf(addonKey),
         before: { priceSnapshot: current.priceSnapshot, quantity: current.quantity },
         after: { priceSnapshot: 0, quantity: 0 },
       });
