@@ -32,7 +32,7 @@ import {
   STRIPE_CHECKOUT_REFUSED_ACTION,
   STRIPE_CHECKOUT_STALE_ACTION,
 } from "./config-snapshot-audit.constants";
-import { escapeHtml } from "../common/html-escape";
+import { escapeHtml, safeLinkHref } from "../common/html-escape";
 import {
   stripeInvoiceSubscriptionId,
   stripeRefId,
@@ -1137,17 +1137,11 @@ export class BillingService {
     });
 
     if (adminUser?.email) {
-      // Best-effort billing-portal link; any portal error falls back to the plain text.
-      let portalUrl: string | null = null;
-      try {
-        portalUrl = (await this.createBillingPortalSession(sub.tenantId)).portalUrl;
-      } catch (e) {
-        this.logger.warn(
-          `Billing portal link unavailable for tenant ${sub.tenantId}: ${(e as Error).message}`,
-        );
-      }
-      const updateLine = portalUrl
-        ? `<p><a href="${escapeHtml(portalUrl)}">Update your payment method in the billing portal</a>.</p>`
+      // Best-effort billing-portal link; any portal error (or a non-http(s) URL, which
+      // safeLinkHref refuses) falls back to today's plain text.
+      const href = safeLinkHref(await this.portalUrlOrEmpty(sub.tenantId), "onPaymentFailed");
+      const updateLine = href
+        ? `<p><a href="${escapeHtml(href)}">Update your payment method in the billing portal</a>.</p>`
         : `<p>You can update your payment details by contacting support or visiting your billing portal.</p>`;
       try {
         await this.email.send({
@@ -1162,6 +1156,18 @@ ${updateLine}
       } catch {
         /* best-effort */
       }
+    }
+  }
+
+  /** #2440: the tenant's billing-portal URL, or "" on any portal error (logged, never thrown). */
+  private async portalUrlOrEmpty(tenantId: string): Promise<string> {
+    try {
+      return (await this.createBillingPortalSession(tenantId)).portalUrl;
+    } catch (e) {
+      this.logger.warn(
+        `Billing portal link unavailable for tenant ${tenantId}: ${(e as Error).message}`,
+      );
+      return "";
     }
   }
 
