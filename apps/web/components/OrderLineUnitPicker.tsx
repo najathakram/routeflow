@@ -68,9 +68,18 @@ export function OrderLineUnitPicker({
 
   // The customer's tier changed under a unit line: refresh its ladder price. A one-time price the
   // operator typed (DISCOUNTED / MANUAL) is theirs and stands.
+  //
+  // #2305: refresh only when the LADDER price moves (first sight of the held unit, or a tier/unit
+  // change), never because `line.unitPrice` moved. The order-edit price row sets only `unitPrice`
+  // (priceType stays STANDARD), so re-checking on every price change snapped a typed price straight
+  // back to the ladder's and Save then sent nothing.
   const held = options.find((o) => o.value === (line.unitLabel ?? ""));
+  const lastLadderPrice = React.useRef<number | undefined>(undefined);
   React.useEffect(() => {
     if (!line.unitLabel || !held) return;
+    const ladderMoved = lastLadderPrice.current !== held.price;
+    lastLadderPrice.current = held.price;
+    if (!ladderMoved) return;
     if (line.priceType === "DISCOUNTED" || line.priceType === "MANUAL") return;
     if (held.price !== line.unitPrice) onChange(held, true);
   }, [line.unitLabel, line.priceType, line.unitPrice, held, onChange]);

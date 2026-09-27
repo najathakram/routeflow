@@ -18,7 +18,6 @@ import {
   normalizeBoxesPieces,
   isBlockingPayment,
   remainingCapacity,
-  inferredFlatRate,
 } from "@routeflow/pricing";
 import { orderLineShape, orderLineUnchanged } from "./order-backsync-lines";
 import {
@@ -93,6 +92,7 @@ import {
   buildPriceAdjustmentUpdates,
   commitPriceAdjustment,
   loadPriceAdjustmentReference,
+  inferredGoodsFlatRate,
   lockInvoiceForPriceAdjustment,
 } from "./price-adjustment-ledger";
 import { AuthorizationGuardService } from "../authorizations/authorization-guard.service";
@@ -102,9 +102,9 @@ import { MessagingService } from "../messaging/messaging.service";
 import { formatDate, formatMoney } from "../messaging/messaging.helpers";
 import { CommissionEngineService } from "../sales-agents/commission-engine.service";
 import { NSF_FEE_DESCRIPTION_PREFIX } from "../sales-agents/commission-math";
-import { InvoiceItemSystemKind } from "./nsf-line";
+import { InvoiceItemSystemKind, notNsfLineWhere } from "./nsf-line";
 import { partitionInvoiceLines, planResyncPairs } from "./resync-plan";
-import { startOfCalendarDay, endOfCalendarDay } from "../common/calendar-date";
+import { issueDateStamp, startOfCalendarDay, endOfCalendarDay } from "../common/calendar-date";
 import { lockRowsNoWait } from "../common/db-locks";
 import { NumberingService } from "../import/numbering.service";
 import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
@@ -386,6 +386,7 @@ export class InvoicesService {
    */
   /** SA-135: an internal caller's line may carry `packSnapshot` (ManualLineItem); the HTTP DTO never can. */
   async create(dto: Omit<CreateInvoiceDto, "items"> & { items: ManualLineItem[] }) {
+    const issueDateInput = dto.issueDate ? issueDateStamp(dto.issueDate) : null; // #2197: 400 first
     const customer = await this.prisma
       .forTenant()
       .customer.findUnique({ where: { id: dto.customerId } });
@@ -482,9 +483,8 @@ export class InvoicesService {
             shippingFee: shipping,
             total,
             dueDate: dto.dueDate ? new Date(dto.dueDate) : null,
-            issueDate: dto.issueDate
-              ? new Date(dto.issueDate)
-              : startOfCalendarDay(new Date(), tenantDefaults.timezone),
+            // #2197: the literal calendar day the client named, never a raw instant.
+            issueDate: issueDateInput ?? startOfCalendarDay(new Date(), tenantDefaults.timezone),
             notes: dto.notes ?? tenantDefaults.notes,
             terms: dto.terms ?? tenantDefaults.terms,
             paymentTermsLabel: dto.paymentTermsLabel ?? null,
@@ -3220,6 +3220,9 @@ export class InvoicesService {
       throw new BadRequestException("Only DRAFT invoices can be edited");
     await this.assertOrderInvoiceUnlocked(inv);
 
+    // #2197: the same literal calendar-day stamp create() writes.
+    const issueDate = dto.issueDate ? issueDateStamp(dto.issueDate) : undefined;
+
     // units_v1: BOTH rewrite paths — the item replace (re-split at the LIVE pack) and the
     // discount/shipping recompute, whose order back-sync writes onto the linked order's lines.
     if (dto.items || dto.discount !== undefined || dto.shippingFee !== undefined) {
@@ -3321,7 +3324,7 @@ export class InvoicesService {
             shippingFee: shipping,
             total,
             dueDate: dto.dueDate ? new Date(dto.dueDate) : undefined,
-            issueDate: dto.issueDate ? new Date(dto.issueDate) : undefined,
+            issueDate,
             notes: dto.notes,
             terms: dto.terms,
             // "" from the composer's Terms dropdown means "no term" (the operator
@@ -3393,7 +3396,7 @@ export class InvoicesService {
       where: { id },
       data: {
         ...(dto.dueDate && { dueDate: new Date(dto.dueDate) }),
-        ...(dto.issueDate && { issueDate: new Date(dto.issueDate) }),
+        ...(issueDate && { issueDate }),
         ...(dto.notes !== undefined && { notes: dto.notes }),
         ...(dto.terms !== undefined && { terms: dto.terms }),
         // "" clears the label (the composer sends it when the operator hand-typed a
@@ -6038,7 +6041,7 @@ export class InvoicesService {
       // B662: item writes, invoice totals and the regulated-ledger sync commit or fail TOGETHER.
       await this.prisma.tenantTransaction(async (tx: any) => {
         const live = await lockInvoiceForPriceAdjustment(tx, inv); // Invoice FIRST, then its rows
-        const inferred = inferredFlatRate({ ...live, lines: live.items });
+        const inferred = inferredGoodsFlatRate(live); // #2243: goods only, never the NSF fee line
         const { categoriesById, unitsPerBoxByProduct } = await loadPriceAdjustmentReference(
           tx,
           live.items,
@@ -6053,7 +6056,7 @@ export class InvoicesService {
         });
         if (inferred?.verified) {
           await tx.invoiceItem.updateMany({
-            where: { invoiceId: inv.id, taxRate: 0 },
+            where: { invoiceId: inv.id, taxRate: 0, AND: [notNsfLineWhere] }, // #2243: NSF stays 0
             data: { taxRate: inferred.rate },
           });
         }
