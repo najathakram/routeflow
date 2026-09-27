@@ -961,6 +961,9 @@ describeDb(
         // not on the 30 s test timeout.
         const waitFor = async (n: number) => {
           for (let i = 0; i < 400; i++) {
+            // SA-492: T2 polls inside its own open tx, where pg_stat_activity is a cached snapshot —
+            // clear it each poll or a stale "not blocked" is read (F2's #2506 diagnosis, as #2519 does).
+            await t2.query("SELECT pg_stat_clear_snapshot()");
             waiters = await blockedCount();
             if (waiters >= n) return;
             await new Promise((x) => setTimeout(x, 25));
