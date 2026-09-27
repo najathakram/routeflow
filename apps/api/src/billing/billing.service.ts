@@ -106,6 +106,21 @@ function scheduleLeftArmed(sub: {
  */
 const CHECKOUT_TX_OPTIONS = { timeout: 6_000, maxWait: 2_000 } as const;
 
+/** #2473: the payment-failed email's plain-text line (no link). */
+const BILLING_SETTINGS_FALLBACK =
+  "<p>You can update your payment details by contacting support or visiting your billing portal.</p>";
+
+/**
+ * #2473: the payment-failed email's link to the in-app billing page. safeLinkHref refuses a
+ * non-http(s) base (logged), which falls back to the plain text.
+ */
+function billingSettingsLine(baseUrl: string): string {
+  const href = safeLinkHref(`${baseUrl}/settings/billing`, "onPaymentFailed");
+  return href
+    ? `<p><a href="${escapeHtml(href)}">Update your payment method in Billing settings</a>.</p>`
+    : BILLING_SETTINGS_FALLBACK;
+}
+
 @Injectable()
 export class BillingService {
   private readonly logger = new Logger(BillingService.name);
@@ -1197,13 +1212,10 @@ export class BillingService {
     });
     if (!adminUser?.email) return;
     // #2473 (1): link the in-app billing page, never a Stripe portal SESSION url (short-lived, and a
-    // bearer link to the tenant's billing). A non-http(s) FRONTEND_URL (safeLinkHref refuses it)
-    // falls back to the plain text.
-    const baseUrl = process.env.FRONTEND_URL ?? "http://localhost:3001";
-    const href = safeLinkHref(`${baseUrl}/settings/billing`, "onPaymentFailed");
-    const updateLine = href
-      ? `<p><a href="${escapeHtml(href)}">Update your payment method in Billing settings</a>.</p>`
-      : `<p>You can update your payment details by contacting support or visiting your billing portal.</p>`;
+    // bearer link to the tenant's billing). SA-450a (3): with FRONTEND_URL unset there is no real app
+    // URL to link — never a localhost default in an email — so the plain text is used.
+    const baseUrl = process.env.FRONTEND_URL;
+    const updateLine = baseUrl ? billingSettingsLine(baseUrl) : BILLING_SETTINGS_FALLBACK;
     await this.email.send({
       to: adminUser.email,
       subject: `Payment failed — ${sub.tenant.name ?? sub.tenant.slug}`,

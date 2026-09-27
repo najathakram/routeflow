@@ -33,8 +33,17 @@ describeDb("BillingService — #2440 subscription upkeep, real Postgres (SA-450/
   const run = randomUUID().slice(0, 8);
   const tenantIds: string[] = [];
   const PORTAL_URL = "https://billing.stripe.test/p/session_2440";
-  /** The in-app base the payment-failed email links (#2473); the service's own default when unset. */
-  const frontend = () => process.env.FRONTEND_URL ?? "http://localhost:3001";
+  /** The in-app base the payment-failed email links (#2473), set explicitly for this file. */
+  const FRONTEND = "https://app.example.test";
+  const frontend = () => FRONTEND;
+  const prevFrontend = process.env.FRONTEND_URL;
+  beforeAll(() => {
+    process.env.FRONTEND_URL = FRONTEND;
+  });
+  afterAll(() => {
+    if (prevFrontend === undefined) delete process.env.FRONTEND_URL;
+    else process.env.FRONTEND_URL = prevFrontend;
+  });
 
   const stripe = {
     isConfigured: true,
