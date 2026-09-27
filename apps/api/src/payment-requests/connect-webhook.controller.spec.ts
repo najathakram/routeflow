@@ -154,6 +154,7 @@ describe("ConnectWebhookController", () => {
       provider.verifyEvent.mockReturnValue(piEvent);
       stripeConnectEvent.create.mockRejectedValue(uniqueViolation());
       stripeConnectEvent.findUnique.mockResolvedValue({ id: "evt_dup", outcome: "settled" });
+      stripeConnectEvent.updateMany.mockResolvedValue({ count: 0 }); // #2476: a completed row is never claimable
       const res = mockRes();
 
       await controller.handle(rawReq, res);

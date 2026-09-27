@@ -4,6 +4,7 @@ import { SkipThrottle } from "@nestjs/throttler";
 import type { Request, Response } from "express";
 import { Prisma } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
+import { claimRedelivery } from "../common/webhook-ledger-claim";
 import { AuditService } from "../audit/audit.service";
 import { RouteFlowGateway } from "../gateways/routeflow.gateway";
 import { StripeConnectService } from "../stripe-connect/stripe-connect.service";
@@ -42,7 +43,8 @@ function isUniqueConstraintViolation(err: unknown): boolean {
  * write. The row's `outcome` is filled in once routing finishes, and is what
  * separates a duplicate from a retry: a collision whose row shows no outcome
  * or an `error:` one is re-routed, because that is the redelivery this
- * controller's own 500 asked for (see `alreadyProcessed`).
+ * controller's own 500 asked for. #2476: a redelivery takes the row EXCLUSIVELY first
+ * (`claimRedelivery`, common/webhook-ledger-claim.ts): an in-flight row inside its lease is a 503.
  *
  * ANTI-SPOOF (invariant 2): every event whose tenant is resolved from
  * metadata (payment_intent.succeeded, checkout.session.expired via
@@ -124,11 +126,20 @@ export class ConnectWebhookController {
       });
     } catch (err) {
       if (isUniqueConstraintViolation(err)) {
-        if (await this.alreadyProcessed(evt.eventId)) {
+        // #2476 / SA-472: take the row EXCLUSIVELY (one updateMany) before re-routing.
+        const claim = await claimRedelivery(this.prisma.stripeConnectEvent as any, evt.eventId);
+        if (claim === "duplicate") {
           this.logger.log(
             `Connect webhook ${evt.type} (${evt.eventId}) already processed — duplicate delivery, skipping`,
           );
           res.status(HttpStatus.OK).json({ received: true });
+          return;
+        }
+        if (claim === "in_flight") {
+          this.logger.warn(
+            `Connect webhook ${evt.type} (${evt.eventId}) is being processed by another delivery — 503, Stripe retries`,
+          );
+          res.status(HttpStatus.SERVICE_UNAVAILABLE).json({ error: "Webhook event in progress" });
           return;
         }
         // An earlier delivery of this event did NOT finish. Skipping here
@@ -159,25 +170,15 @@ export class ConnectWebhookController {
     } finally {
       // Best-effort bookkeeping only — never let it mask the response
       // already sent above.
+      // #2476: LOGGED on failure, never swallowed (the row stays in flight until its lease expires).
       await this.prisma.stripeConnectEvent
         .update({ where: { id: evt.eventId }, data: { outcome } })
-        .catch(() => {});
+        .catch((e: unknown) =>
+          this.logger.error(
+            `Connect webhook ${evt.type} (${evt.eventId}) outcome write failed (row left in flight): ${(e as Error)?.message}`,
+          ),
+        );
     }
-  }
-
-  /**
-   * A unique violation on the ledger insert only means "seen before" — it
-   * does NOT mean "handled before", and the difference is the whole retry
-   * story. `handle()` answers 500 on a routing failure precisely so Stripe
-   * redelivers, so an unconditional skip on P2002 would throw away every
-   * retry it asked for, including a manual "Resend" from the Stripe dashboard
-   * (same event id). Only a delivery that ran to completion and recorded a
-   * non-`error:` outcome is a true duplicate; a NULL outcome (the process
-   * died mid-route) or an `error:` one is a delivery that must run again.
-   */
-  private async alreadyProcessed(eventId: string): Promise<boolean> {
-    const row = await this.prisma.stripeConnectEvent.findUnique({ where: { id: eventId } });
-    return !!row?.outcome && !row.outcome.startsWith("error:");
   }
 
   private async route(evt: NormalizedConnectEvent): Promise<string> {

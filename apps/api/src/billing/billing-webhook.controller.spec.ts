@@ -124,6 +124,7 @@ describe("#2442 BillingWebhookController — throttle skip and event-id ledger",
         throw dup();
       },
       existing: { outcome: "processed" },
+      claimed: 0, // #2476: a completed row is never claimable
     });
     await controller.handleWebhook(req as never, res as never);
     expect(billing.handleWebhookEvent).not.toHaveBeenCalled();

@@ -4,6 +4,7 @@ import { SkipThrottle } from "@nestjs/throttler";
 import type { Request, Response } from "express";
 import { Prisma } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
+import { claimRedelivery } from "../common/webhook-ledger-claim";
 import { StripeService } from "./stripe.service";
 import { BillingService } from "./billing.service";
 
@@ -95,15 +96,26 @@ export class BillingWebhookController {
         res.status(HttpStatus.INTERNAL_SERVER_ERROR).json({ error: "Webhook handler failed" });
         return;
       }
-      if (await this.alreadyProcessed(event.id)) {
+      // #2476 / SA-472: take the row EXCLUSIVELY before re-running — one updateMany, so two
+      // concurrent redeliveries can never both run the handler.
+      const claim = await claimRedelivery(this.prisma.stripeBillingEvent as any, event.id);
+      if (claim === "duplicate") {
         this.logger.log(
           `Webhook ${event.type} (${event.id}) already processed — duplicate, skipped`,
         );
         res.status(HttpStatus.OK).json({ received: true });
         return;
       }
+      if (claim === "in_flight") {
+        // A 2xx would acknowledge an event another worker may still fail; Stripe retries a 503.
+        this.logger.warn(
+          `Webhook ${event.type} (${event.id}) is being processed by another delivery — 503, Stripe retries`,
+        );
+        res.status(HttpStatus.SERVICE_UNAVAILABLE).json({ error: "Webhook event in progress" });
+        return;
+      }
       this.logger.warn(
-        `Webhook ${event.type} (${event.id}) redelivered after an unfinished attempt — reprocessing`,
+        `Webhook ${event.type} (${event.id}) redelivered after a failed or expired attempt — reprocessing`,
       );
     }
 
@@ -120,16 +132,14 @@ export class BillingWebhookController {
       res.status(HttpStatus.INTERNAL_SERVER_ERROR).json({ error: "Webhook handler failed" });
     } finally {
       // Best-effort bookkeeping: never let it change the response already sent. A lost outcome
-      // leaves the row NULL, which a redelivery treats as unfinished and re-runs (safe).
+      // leaves the row NULL, re-claimable once its lease expires. #2476: LOGGED, never swallowed.
       await this.prisma.stripeBillingEvent
         .update({ where: { id: event.id }, data: { outcome } })
-        .catch(() => {});
+        .catch((e: unknown) =>
+          this.logger.error(
+            `Webhook ${event.type} (${event.id}) outcome write failed (row left in flight): ${(e as Error)?.message}`,
+          ),
+        );
     }
-  }
-
-  /** #2442: only a delivery that ran to completion (non-null, non-`error:` outcome) is a duplicate. */
-  private async alreadyProcessed(eventId: string): Promise<boolean> {
-    const row = await this.prisma.stripeBillingEvent.findUnique({ where: { id: eventId } });
-    return !!row?.outcome && !row.outcome.startsWith("error:");
   }
 }

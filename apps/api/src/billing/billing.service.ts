@@ -1213,33 +1213,42 @@ export class BillingService {
       `Payment failed for tenant ${sub.tenantId} (${sub.tenant.slug}). Grace period: ${PAYMENT_GRACE_DAYS} days.`,
     );
 
-    // Send warning email to tenant admin
+    // #2476 / SA-472: the increment above IS the event's effect. Everything after it is best-effort
+    // and never throws — a throw here would record "error:" and make a redelivery re-run the increment.
+    try {
+      await this.sendPaymentFailedEmail(sub);
+    } catch (e) {
+      this.logger.warn(
+        `payment-failed email for tenant ${sub.tenantId} not sent: ${(e as Error)?.message}`,
+      );
+    }
+  }
+
+  /** The admin warning for a failed payment (#2440): portal link best-effort, plain-text fallback. */
+  private async sendPaymentFailedEmail(sub: {
+    tenantId: string;
+    tenant: { slug: string; name: string | null };
+  }): Promise<void> {
     const adminUser = await this.prisma.user.findFirst({
       where: { tenantId: sub.tenantId, role: "TENANT_ADMIN", deletedAt: null },
       select: { email: true, username: true },
     });
-
-    if (adminUser?.email) {
-      // Best-effort billing-portal link; any portal error (or a non-http(s) URL, which
-      // safeLinkHref refuses) falls back to today's plain text.
-      const href = safeLinkHref(await this.portalUrlOrEmpty(sub.tenantId), "onPaymentFailed");
-      const updateLine = href
-        ? `<p><a href="${escapeHtml(href)}">Update your payment method in the billing portal</a>.</p>`
-        : `<p>You can update your payment details by contacting support or visiting your billing portal.</p>`;
-      try {
-        await this.email.send({
-          to: adminUser.email,
-          subject: `Payment failed — ${sub.tenant.name ?? sub.tenant.slug}`,
-          html: `<p>Hello ${escapeHtml(adminUser.username)},</p>
+    if (!adminUser?.email) return;
+    // Best-effort billing-portal link; any portal error (or a non-http(s) URL, which
+    // safeLinkHref refuses) falls back to today's plain text.
+    const href = safeLinkHref(await this.portalUrlOrEmpty(sub.tenantId), "onPaymentFailed");
+    const updateLine = href
+      ? `<p><a href="${escapeHtml(href)}">Update your payment method in the billing portal</a>.</p>`
+      : `<p>You can update your payment details by contacting support or visiting your billing portal.</p>`;
+    await this.email.send({
+      to: adminUser.email,
+      subject: `Payment failed — ${sub.tenant.name ?? sub.tenant.slug}`,
+      html: `<p>Hello ${escapeHtml(adminUser.username)},</p>
 <p>We were unable to process your subscription payment for <strong>${escapeHtml(sub.tenant.name ?? sub.tenant.slug)}</strong>.</p>
 <p>Please update your payment method within <strong>${PAYMENT_GRACE_DAYS} days</strong> to avoid service interruption.</p>
 ${updateLine}
 <p>RouteFlow Platform</p>`,
-        });
-      } catch {
-        /* best-effort */
-      }
-    }
+    });
   }
 
   /** #2440: the tenant's billing-portal URL, or "" on any portal error (logged, never thrown). */
