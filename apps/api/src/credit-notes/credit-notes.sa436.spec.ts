@@ -328,7 +328,8 @@ describe("CreditNotesService — SA-436 credit auto-apply off, exclusion and app
       expect(prisma.auditLog.create).toHaveBeenCalledWith({
         data: expect.objectContaining({
           userId: "user-7",
-          action: "CREDIT_NOTE_AUTO_APPLY_EXCLUSION",
+          entityType: "CreditNote",
+          action: "EXCLUDED",
           entityId: "cn-a",
           meta: { excluded: true },
         }),
