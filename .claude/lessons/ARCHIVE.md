@@ -2942,3 +2942,37 @@ citations, closed-out with its own post-init assertion guard).
   `RAILWAY_*` (use it for local runs); #1127's buyer setup step gains a skip unless the resolved
   base URL is local. Propose: the setup project refuses to run against a `*.railway.app` host
   unless an explicit `PLAYWRIGHT_ALLOW_REMOTE=1` is set.
+
+### L-174 · 2026-09-16 · tooling · demo-booking lane (raw NUL byte from an escape literal)
+
+- **Symptom:** a source file kept "working" after an agent tool chain wrote a `\uXXXX`-shaped
+  escape literal into it — until `file`/git/prettier treated it as binary, because what actually
+  landed was the raw byte the escape describes, not the 6-char sequence.
+- **Root cause:** a tool-chain step decoded the escape before the write, turning a literal meant
+  to stay text into its raw byte — nothing downstream checked the file was still actually text.
+- **Lesson:** **After writing any escape-sequence literal through an agent tool chain, verify it
+  landed as literal text, not the decoded byte.**
+- **Guard:** `file <path>` (must say "text") or `grep -cP '\x00' <path>` (must be 0) before
+  trusting the write; a pre-commit NUL-byte check on text sources is the durable fix.
+
+### L-175 · 2026-09-16 · tooling · shared dev host disk budget
+
+- **Symptom:** the shared dev host's `C:` drive hit 0 bytes free, stalling every session with no
+  warning until root-caused.
+- **Root cause:** ~28 worktrees' `node_modules`/`.next` plus accumulated Docker/WSL/npm caches
+  consumed the whole disk; nothing monitored free space before it hit zero.
+- **Lesson:** **A shared dev host running N concurrent worktrees needs a disk-budget gate — warn
+  below a threshold before launching more work, not after operations start failing.**
+- **Guard:** none yet — propose a session-start hook warning at < 30 GB free.
+
+### L-177 · 2026-09-16 · tooling · squash-simulate docs
+
+- **Symptom:** master's code-map `mappedSha` pointed at a branch commit orphaned by a squash
+  merge; `validate-code-map` failed every local pre-push.
+- **Root cause:** the stamping step simulated the merge with `git merge --no-ff` locally instead
+  of `--squash` (the strategy the PR would actually land with), so the sha it stamped never
+  existed on master's real history.
+- **Lesson:** **A script stamping a value for a squash-merged PR must simulate the ACTUAL merge
+  strategy (`--squash`), never `--no-ff` — validate the stamped sha resolves on the target branch
+  before landing.**
+- **Guard:** none yet — propose `--stamp` refusing a sha that isn't reachable from master.
