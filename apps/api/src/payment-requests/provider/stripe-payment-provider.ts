@@ -10,6 +10,7 @@ import {
   ExpireCheckoutResult,
   NormalizedConnectEvent,
 } from "./payment-provider.interface";
+import { STRIPE_API_VERSION } from "../../billing/stripe-period";
 
 // Stripe v22 CJS `export =` isn't compatible with `module: "nodenext"` named
 // imports, so we use require() for the constructor value (mirrors
@@ -47,7 +48,7 @@ export class StripePaymentProvider implements PaymentProvider {
     const stripeConfig = config.get<AppConfig["stripe"]>("stripe");
     const secretKey = stripeConfig?.secretKey ?? "";
     this.webhookSecret = stripeConfig?.connectWebhookSecret ?? "";
-    this.stripe = secretKey ? new Stripe(secretKey) : null;
+    this.stripe = secretKey ? new Stripe(secretKey, { apiVersion: STRIPE_API_VERSION }) : null; // #2436
     if (!secretKey) {
       this.logger.warn("STRIPE_SECRET_KEY not set — buyer card payments disabled.");
     }

@@ -6,6 +6,7 @@ import {
   ConnectOAuthProvider,
   ConnectOAuthToken,
 } from "./connect-oauth.interface";
+import { STRIPE_API_VERSION } from "../../billing/stripe-period";
 
 // Stripe v22 CJS `export =` isn't compatible with `module: "nodenext"` named
 // imports, so we use require() for the constructor value (mirrors
@@ -33,7 +34,7 @@ export class StripeConnectOAuthProvider implements ConnectOAuthProvider {
 
   constructor(config: ConfigService<AppConfig>) {
     const secretKey = config.get<AppConfig["stripe"]>("stripe")?.secretKey ?? "";
-    this.stripe = secretKey ? new Stripe(secretKey) : null;
+    this.stripe = secretKey ? new Stripe(secretKey, { apiVersion: STRIPE_API_VERSION }) : null; // #2436
     if (!secretKey) {
       this.logger.warn("STRIPE_SECRET_KEY not set — Stripe Connect linking disabled.");
     }
