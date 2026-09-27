@@ -4,10 +4,10 @@ import { PrismaService } from "../prisma/prisma.service";
 import { EntitlementsService } from "../billing/entitlements.service";
 import { AuditService } from "../audit/audit.service";
 import { roundMoney } from "@routeflow/pricing";
+import { isNsfLine } from "../invoices/nsf-line";
 import {
   COMMISSION_EPS,
   InvoiceMoneyState,
-  NSF_FEE_DESCRIPTION_PREFIX,
   RateSource,
   accruedCommission,
   collectionRatio,
@@ -232,7 +232,7 @@ export class CommissionEngineService {
       where: { id: invoiceId },
       include: {
         payments: { select: { id: true, amount: true, method: true, status: true } },
-        items: { select: { description: true, qty: true, unitPrice: true } },
+        items: { select: { description: true, qty: true, unitPrice: true, systemKind: true } },
         order: {
           select: {
             orderDate: true,
@@ -295,7 +295,7 @@ export class CommissionEngineService {
 
     const nsfFees = roundMoney(
       (invoice.items ?? [])
-        .filter((i: any) => i.description?.startsWith(NSF_FEE_DESCRIPTION_PREFIX))
+        .filter((i: any) => isNsfLine(i))
         .reduce((s: number, i: any) => s + Number(i.qty) * Number(i.unitPrice), 0),
     );
     const moneyState: InvoiceMoneyState = {
