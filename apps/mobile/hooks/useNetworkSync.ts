@@ -1,10 +1,17 @@
 import { useEffect, useRef } from "react";
 import NetInfo from "@react-native-community/netinfo";
+import { onlineManager } from "@tanstack/react-query";
 import { useOfflineQueue, selectFailedActionCount, type QueuedAction } from "../store/offlineQueue";
 import { apiClient } from "../lib/api-client";
 import { showToast } from "../lib/toast";
 import { alertInfo } from "../lib/confirm";
-import { drainQueue, buildReplayRequestConfig, describeFailedDrain } from "../lib/queue-drain";
+import {
+  drainQueue,
+  buildReplayRequestConfig,
+  describeFailedDrain,
+  nextDrainDelayMs,
+} from "../lib/queue-drain";
+import { isLiveOnline } from "../lib/live-online";
 import { resolveQueueIdentity, settleQueueOwnership } from "../lib/queue-identity";
 import { inlineReturnDrainSettleRecords } from "../lib/inline-return-submit-key";
 import { useInlineReturnSubmissionStore } from "../store/inlineReturnSubmissionStore";
@@ -32,9 +39,21 @@ export function useNetworkSync() {
   // until the operator acknowledges it — see components/OfflineBanner.tsx.
   const failedCount = useOfflineQueue(selectFailedActionCount);
   const syncing = useRef(false);
+  // #2389 (tier 1): NetInfo's latest verdict + the backoff state for an unreachable drain. The
+  // drain only ever runs when BOTH NetInfo and TanStack's onlineManager (window online/offline on
+  // the web export) say online — a web NetInfo re-subscribe can report "connected" while the
+  // browser is offline, and draining then dead-lettered a queued stop completion in ~0.2s.
+  const netOnlineRef = useRef<boolean | undefined>(undefined);
+  const queueRef = useRef(queue);
+  queueRef.current = queue;
+  const unreachedStreak = useRef(0);
+  const retryTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const liveOnline = () =>
+    isLiveOnline({ browserOnline: onlineManager.isOnline(), netInfoOnline: netOnlineRef.current });
 
   const runDrain = async (currentQueue: QueuedAction[]) => {
     if (syncing.current || currentQueue.length === 0) return;
+    if (!liveOnline()) return; // #2389: never drain offline — offline time is not a retry
 
     // REG-B137: nothing is replayed under a session that does not own it.
     // With nobody signed in there is no token to replay under at all, so the
@@ -93,6 +112,19 @@ export function useNetworkSync() {
 
     for (const id of result.delivered) dequeue(id);
     for (const id of result.retriedIds) incrementRetry(id);
+    // #2389: unreached entries stay queued, retry counts untouched; try again on a bounded
+    // backoff (the reconnect event below also re-triggers immediately). Never a hot loop.
+    if (result.unreachedIds.length > 0) {
+      const delay = nextDrainDelayMs(unreachedStreak.current);
+      unreachedStreak.current += 1;
+      if (retryTimer.current) clearTimeout(retryTimer.current);
+      retryTimer.current = setTimeout(() => {
+        retryTimer.current = null;
+        void runDrain(queueRef.current);
+      }, delay);
+    } else {
+      unreachedStreak.current = 0;
+    }
     for (const record of result.failedActions) dequeue(record.action.id);
 
     // SA-091b: a capture that lands (or is definitively refused) FROM THE OFFLINE QUEUE never
@@ -124,13 +156,31 @@ export function useNetworkSync() {
   useEffect(() => {
     const unsubscribe = NetInfo.addEventListener((state) => {
       const online = !!(state.isConnected && state.isInternetReachable !== false);
+      netOnlineRef.current = online;
       setOnline(online);
+      if (queue.length > 0) runDrain(queue); // runDrain itself gates on the LIVE online state
+    });
+    // #2389: the web export's reconnect arrives as the window "online" event, which TanStack's
+    // onlineManager observes — NetInfo alone missed it, so a queued completion waited for the
+    // next tap. Reconnect re-triggers the drain immediately.
+    const unsubscribeOnline = onlineManager.subscribe((online) => {
       if (online && queue.length > 0) {
+        unreachedStreak.current = 0;
         runDrain(queue);
       }
     });
-    return () => unsubscribe();
+    return () => {
+      unsubscribe();
+      unsubscribeOnline();
+    };
   }, [queue]);
+
+  useEffect(
+    () => () => {
+      if (retryTimer.current) clearTimeout(retryTimer.current);
+    },
+    [],
+  );
 
   return {
     isOnline,

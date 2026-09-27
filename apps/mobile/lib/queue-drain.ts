@@ -66,6 +66,14 @@ export interface DrainResult {
   /** Ids that hit a retriable failure — left queued, retries incremented. */
   retriedIds: string[];
   /**
+   * #2389 (tier 1): ids never attempted because the device is unreachable — the first action
+   * hit a network-class error (no response: offline, DNS, timeout), so it and everything
+   * queued after it stay queued with their retry counts UNCHANGED (FIFO kept). Offline time
+   * must never count toward MAX_RETRIES, or a queued stop completion is dead-lettered by the
+   * drain itself before the device reconnects.
+   */
+  unreachedIds: string[];
+  /**
    * Entries that must NEVER be silently dropped: a non-retriable 4xx or an
    * already retry-exhausted entry. These are persisted to the offline queue
    * store's `failedActions` list and alerted — never just dequeued.
@@ -143,12 +151,23 @@ function isRetriableLockContention(err: unknown, status: number | undefined): bo
  * or a merge-lock-contention 409/503 — see `isRetriableLockContention`) is
  * left queued with its retry count bumped by the caller.
  */
+/**
+ * #2389: a failure with NO server response — the request never demonstrably reached the API
+ * (offline, DNS/route failure, a timed-out socket). Distinct from a 5xx (the server answered)
+ * and a 4xx (the server refused). Replays carry their idempotency key, so re-sending one that
+ * did land is safe.
+ */
+export function isNetworkClassError(err: unknown): boolean {
+  return (err as { response?: unknown })?.response == null;
+}
+
 export async function drainQueue(actions: QueuedAction[], deps: DrainDeps): Promise<DrainResult> {
   const delivered: string[] = [];
   const retriedIds: string[] = [];
+  const unreachedIds: string[] = [];
   const failedActions: FailedActionRecord[] = [];
 
-  for (const action of actions) {
+  for (const [index, action] of actions.entries()) {
     if (action.retries >= MAX_RETRIES) {
       const record: FailedActionRecord = {
         action,
@@ -170,6 +189,12 @@ export async function drainQueue(actions: QueuedAction[], deps: DrainDeps): Prom
         status >= 400 &&
         status < 500 &&
         !isRetriableLockContention(err, status);
+      if (isNetworkClassError(err)) {
+        // Unreachable: stop here — the rest would fail the same way, and replaying them out of
+        // order would break the FIFO the queue relies on (POD attaches before completions).
+        unreachedIds.push(...actions.slice(index).map((a) => a.id));
+        break;
+      }
       if (isNonRetriableClientError) {
         const message = serverMessage(err) ?? (err instanceof Error ? err.message : String(err));
         const record: FailedActionRecord = {
@@ -186,7 +211,17 @@ export async function drainQueue(actions: QueuedAction[], deps: DrainDeps): Prom
     }
   }
 
-  return { delivered, retriedIds, failedActions };
+  return { delivered, retriedIds, unreachedIds, failedActions };
+}
+
+/**
+ * #2389: when to try the queue again after a drain stopped unreachable — bounded exponential
+ * backoff (2s, 4s, 8s … capped at 60s), so an offline device never hot-loops the network. The
+ * reconnect event re-triggers a drain immediately regardless.
+ */
+export function nextDrainDelayMs(consecutiveUnreached: number): number {
+  const n = Math.max(0, Math.floor(consecutiveUnreached));
+  return Math.min(60_000, 2_000 * 2 ** Math.min(n, 5));
 }
 
 /**
