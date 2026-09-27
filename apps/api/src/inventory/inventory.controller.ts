@@ -148,22 +148,15 @@ export class InventoryController {
     return this.inventoryService.bulkSetCostBasis(dto, user.id);
   }
 
-  // B562 (interim mitigation, owner-approved 2026-09-18): the web and mobile UI
-  // entry points that called this endpoint were deliberately removed — this
-  // recompute replays purchase history but is blind to raw order decrements
-  // (order creation/edits decrement stock without writing StockMovement rows).
-  // `recomputeCosts`/`recomputeProductInTx` NOW DETECT this (a nonzero
-  // stockDrift between currentStock and the replayed ledger) and refuse to
-  // write a sales-blind average or rewrite snapshots for the affected product
-  // — see replayProduct's gap-detection comment — so a call here can no
-  // longer silently corrupt valuation. It still can't produce a TRUE average
-  // for a product with any order-consumption gap (root cause: order paths
-  // write no StockMovement — unfixed, tracked as remaining B562 work), so it
-  // mostly reports `gapsDetected` rather than repairing anything useful. Keep
-  // the UI hidden until that root cause lands.
+  // B562 PR-3 (SA-136 §4): TENANT_ADMIN only (platform admin included), dry run by default. The
+  // apply path only APPENDS one dated COST_BASIS correction per product whose replayed average
+  // differs — it never rewrites a movement — and refuses (reports) any product whose ledger can't
+  // account for its stock. Audited on every apply. The web/mobile entry points stay hidden (#931)
+  // until this deploys.
   @Post("recompute-costs")
-  recomputeCosts(@Body() dto: RecomputeCostsDto) {
-    return this.inventoryService.recomputeCosts(dto);
+  @Roles(UserRole.TENANT_ADMIN)
+  recomputeCosts(@Body() dto: RecomputeCostsDto, @CurrentUser() user: { id: string }) {
+    return this.inventoryService.recomputeCosts(dto, user?.id ?? null);
   }
 
   @Get("suppliers")

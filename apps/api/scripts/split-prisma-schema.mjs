@@ -201,6 +201,7 @@ const MODEL_DOMAIN = {
   CreditNote: "finance",
   CreditNoteItem: "finance",
   OrderCreditNote: "finance",
+  CreditNoteApplyBlock: "finance",
   Estimate: "finance",
   EstimateItem: "finance",
   VendorBill: "finance",
