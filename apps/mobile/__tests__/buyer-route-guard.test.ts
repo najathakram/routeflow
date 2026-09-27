@@ -9,8 +9,10 @@ import {
   SELLERLESS_LANDING,
   customerLayoutTarget,
   isSellerlessRoute,
+  postSignInStep,
   rootBuyerGate,
 } from "../lib/buyer-route-guard";
+import type { BuyerSeller } from "../lib/buyer-auth";
 
 const CONNECT = "/(customer)/sellers/connect";
 const LOGIN = "/(auth)/customer-login";
@@ -138,6 +140,42 @@ describe("rootBuyerGate", () => {
       for (const segs of [[], ["(customer)", "sellers"], ["(customer)", "(tabs)", "home"]]) {
         expect(rootBuyerGate({ ...s, segments: segs })).toEqual({ handled: false, to: null });
       }
+    });
+  });
+});
+
+describe("postSignInStep (#2546: only an ACTIVE link can become the active seller)", () => {
+  const link = (slug: string, linkStatus: string): BuyerSeller => ({
+    linkId: `link-${slug}`,
+    linkStatus,
+    tenant: { id: `t-${slug}`, slug, name: slug, logoKey: null, primaryColor: null },
+    customer: null,
+  });
+
+  it("no links at all → connect", () => {
+    expect(postSignInStep([])).toEqual({ kind: "connect" });
+  });
+
+  it.each(["INVITED", "PENDING_SELLER_APPROVAL"])(
+    "only a %s link → the seller list, never activated",
+    (status) => {
+      expect(postSignInStep([link("acme", status)])).toEqual({ kind: "list" });
+    },
+  );
+
+  it("one ACTIVE link among pending ones → open that one", () => {
+    const active = link("acme", "ACTIVE");
+    expect(
+      postSignInStep([link("beta", "PENDING_SELLER_APPROVAL"), active, link("gamma", "INVITED")]),
+    ).toEqual({ kind: "open", seller: active });
+  });
+
+  it("several ACTIVE links → pick among the ACTIVE ones only", () => {
+    const a = link("acme", "ACTIVE");
+    const b = link("beta", "ACTIVE");
+    expect(postSignInStep([a, link("gamma", "INVITED"), b])).toEqual({
+      kind: "pick",
+      sellers: [a, b],
     });
   });
 });

@@ -9,7 +9,12 @@
  * Every other (customer) route still requires an active seller.
  */
 
+import type { BuyerSeller } from "./buyer-auth";
+import { canOpenSeller } from "./seller-directory-logic";
+
 export const SELLERLESS_LANDING = "/(customer)/sellers/connect";
+/** A buyer whose only links are INVITED / PENDING_SELLER_APPROVAL waits on the seller list. */
+export const PENDING_LANDING = "/(customer)/sellers";
 const CUSTOMER_LOGIN = "/(auth)/customer-login";
 const CUSTOMER_HOME = "/(customer)/(tabs)/home";
 
@@ -49,4 +54,24 @@ export function rootBuyerGate(s: {
     return { handled: true, to: s.segments[0] === "(customer)" ? null : CUSTOMER_HOME };
   }
   return { handled: true, to: isSellerlessRoute(s.segments) ? null : SELLERLESS_LANDING };
+}
+
+/**
+ * #2546: what a sign-in does with the buyer's links. Only an ACTIVE link may
+ * become the active seller (`canOpenSeller`) — a pending or invited link would
+ * pass the route guard and then 403 on every seller-scoped call. Pending-only
+ * buyers land on the seller list (their requests are shown there); a buyer
+ * with no links at all lands on connect.
+ */
+export type PostSignInStep =
+  | { kind: "connect" }
+  | { kind: "list" }
+  | { kind: "open"; seller: BuyerSeller }
+  | { kind: "pick"; sellers: BuyerSeller[] };
+
+export function postSignInStep(sellers: BuyerSeller[]): PostSignInStep {
+  const active = sellers.filter(canOpenSeller);
+  if (active.length === 1) return { kind: "open", seller: active[0]! };
+  if (active.length > 1) return { kind: "pick", sellers: active };
+  return sellers.length > 0 ? { kind: "list" } : { kind: "connect" };
 }

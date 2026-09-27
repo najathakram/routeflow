@@ -24,7 +24,7 @@ import {
   type BuyerUser,
 } from "../../lib/buyer-auth";
 import { useBuyerSessionStore } from "../../lib/buyer-session-store";
-import { SELLERLESS_LANDING } from "../../lib/buyer-route-guard";
+import { PENDING_LANDING, SELLERLESS_LANDING, postSignInStep } from "../../lib/buyer-route-guard";
 import { GoogleButton } from "@routeflow/ui/mobile/ios";
 
 export default function CustomerLoginScreen() {
@@ -89,8 +89,10 @@ export default function CustomerLoginScreen() {
     setError(null);
     setGoogleLoading(true);
     try {
-      const { buyer, sellerCount } = await buyerLoginWithGoogle();
-      await finishSignIn(buyer, sellerCount === 0 ? [] : await getBuyerSellers());
+      // #2546: always read the links — the server's sellerCount counts ACTIVE links
+      // only, and a pending-only buyer must land on the seller list, not connect.
+      const { buyer } = await buyerLoginWithGoogle();
+      await finishSignIn(buyer, await getBuyerSellers());
     } catch (e: any) {
       const code = (e as Error)?.message ?? "";
       if (code === "cancelled") return;
@@ -110,23 +112,29 @@ export default function CustomerLoginScreen() {
   // is known. The route guards read "buyer set, no seller" as the 0-seller
   // state and send it to sellers/connect, so setting the buyer before the
   // seller would bounce a 1-seller login or a mid-pick picker to connect.
+  // #2546: only an ACTIVE link may become the active seller (postSignInStep).
   const finishSignIn = async (buyer: BuyerUser, sellers: BuyerSeller[]) => {
-    if (sellers.length === 0) {
-      // Mirrors web's /buyer/portal: a buyer with no seller yet connects one.
-      setBuyer(buyer);
-      router.replace(SELLERLESS_LANDING as any);
-      return;
+    const step = postSignInStep(sellers);
+    switch (step.kind) {
+      case "connect":
+      case "list":
+        // Mirrors web's /buyer/portal: no usable seller yet — connect one, or
+        // wait on the seller list while a request is pending.
+        setBuyer(buyer);
+        router.replace((step.kind === "connect" ? SELLERLESS_LANDING : PENDING_LANDING) as any);
+        return;
+      case "open":
+        await storeSetSeller(step.seller);
+        setBuyer(buyer);
+        router.replace(postLoginTarget);
+        return;
+      case "pick":
+        // Several ACTIVE sellers — hold the buyer until one is picked.
+        setPendingBuyer(buyer);
+        setPendingSellers(step.sellers);
+        setSellerPickerOpen(true);
+        return;
     }
-    if (sellers.length === 1) {
-      await storeSetSeller(sellers[0]!);
-      setBuyer(buyer);
-      router.replace(postLoginTarget);
-      return;
-    }
-    // Multiple sellers — hold the buyer until one is picked.
-    setPendingBuyer(buyer);
-    setPendingSellers(sellers);
-    setSellerPickerOpen(true);
   };
 
   const onSelectSeller = async (sellerId: string) => {
