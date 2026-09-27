@@ -1,0 +1,192 @@
+/**
+ * #2470 (Opus (3) on #2458) — real Postgres, two connections. `SubscriptionMutationService.upgrade()`
+ * reads the subscription BEFORE its tx, then writes through an optimistic `updateMany` guard. The
+ * guard now matches the negotiated fee it read (`priceOverrideMonthly`) as well as the plan key, so a
+ * Pricing change committed between the read and the write makes the upgrade LOSE the race (the
+ * existing "Plan changed concurrently" 400) instead of writing the old fee back over the new one.
+ *
+ * ENTRY (asserted, never timed): T2 holds the TenantSubscription row mid-Pricing-change (fee 80 → 120,
+ * uncommitted); `upgrade()` has pre-read the committed fee 80 and is BLOCKED on its guarded UPDATE
+ * (pg_blocking_pids); only then does T2 commit. Under READ COMMITTED the blocked UPDATE re-checks its
+ * WHERE against the committed row: fee 120 ≠ 80 ⇒ count 0 ⇒ 400. Pre-#2470 (guard on planKey alone)
+ * it matched and wrote basePriceSnapshot = 80 over the new fee — the stale write this pins against.
+ *
+ * Real PrismaClient + BillingEventService / PlanCatalogService / ProrationService; stand-ins only for
+ * collaborators upgrade() never touches. Throwaway `qa-*` tenant (assertTestTenant). DB lane (F2).
+ */
+import { randomUUID } from "crypto";
+import { Client } from "pg";
+import { PrismaClient, TenantClass, TenantStatus } from "@prisma/client";
+import { PrismaPg } from "@prisma/adapter-pg";
+import { Pool } from "pg";
+import { describeDb, requireLocalDatabaseUrl } from "../common/testing/db-spec";
+import { SubscriptionMutationService } from "./subscription-mutation.service";
+import { BillingEventService } from "./billing-event.service";
+import { PlanCatalogService } from "./plan-catalog.service";
+import { ProrationService } from "./proration.service";
+
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+const { assertTestTenant } = require("../../../../scripts/lib/test-tenants.cjs");
+
+describeDb("#2470 upgrade() loses the race to a concurrent Pricing change (real Postgres)", () => {
+  let url: string;
+  let pool: Pool;
+  let prisma: PrismaClient;
+  let mutation: SubscriptionMutationService;
+  const tenantIds: string[] = [];
+  const run = randomUUID().slice(0, 8);
+  let createdVersionId: string | undefined;
+
+  const planTransitionStub = {
+    isEnabled: () => Promise.resolve(false),
+    prepare: () => Promise.resolve({ enabled: false, planAllows: null }),
+    onPlanChange: () => Promise.resolve({ action: "none" }),
+    transactionOptions: () => undefined,
+    invalidateCaches: () => undefined,
+  } as any;
+
+  beforeAll(async () => {
+    url = requireLocalDatabaseUrl();
+    pool = new Pool({ connectionString: url });
+    prisma = new PrismaClient({ adapter: new PrismaPg(pool) });
+    const published = await prisma.planVersion.findFirst({ where: { status: "PUBLISHED" } });
+    if (!published) {
+      // int4 column — never derive from Date.now()
+      const version =
+        ((await prisma.planVersion.aggregate({ _max: { version: true } }))._max.version ?? 0) + 1;
+      const created = await prisma.planVersion.create({
+        data: {
+          version,
+          status: "PUBLISHED",
+          publishedAt: new Date(),
+          notes: "qa fixture — created by upgrade-override-guard-2470.db.spec.ts",
+          definitions: {
+            create: [
+              {
+                planKey: "STARTER",
+                name: "Starter",
+                monthlyPrice: 99,
+                isCustom: false,
+                featureFlags: [],
+              },
+              {
+                planKey: "GROWTH",
+                name: "Growth",
+                monthlyPrice: 249,
+                isCustom: false,
+                featureFlags: [],
+              },
+            ],
+          },
+        },
+      });
+      createdVersionId = created.id;
+    }
+    const catalog = new PlanCatalogService(prisma as any);
+    mutation = new SubscriptionMutationService(
+      prisma as any,
+      catalog,
+      new ProrationService(prisma as any, catalog),
+      { getSubscription: jest.fn().mockResolvedValue(undefined) } as any, // subscription
+      { invalidate: jest.fn() } as any, // entitlementsService
+      new BillingEventService(prisma as any),
+      { invalidate: jest.fn() } as any, // tenantStatus
+      {} as any, // stripe — upgrade() never calls it
+      { notifyUpgradeConfirmed: jest.fn().mockResolvedValue(undefined) } as any, // billingNotification
+      planTransitionStub,
+    );
+  });
+
+  afterAll(async () => {
+    if (tenantIds.length) await prisma.tenant.deleteMany({ where: { id: { in: tenantIds } } });
+    if (createdVersionId) {
+      await prisma.planDefinition.deleteMany({ where: { planVersionId: createdVersionId } });
+      await prisma.planVersion.delete({ where: { id: createdVersionId } });
+    }
+    await prisma.$disconnect();
+    await pool.end();
+  });
+
+  async function overrideTenant(tag: string, fee: number): Promise<string> {
+    const slug = assertTestTenant(
+      `qa-b2470-${tag}-${run}`,
+      "upgrade-override-guard-2470.db.spec.ts",
+    );
+    const tenant = await prisma.tenant.create({
+      data: { slug, name: slug, class: TenantClass.PRODUCTION, status: TenantStatus.ACTIVE },
+    });
+    tenantIds.push(tenant.id);
+    await prisma.tenantSubscription.create({
+      data: {
+        tenantId: tenant.id,
+        planKey: "STARTER",
+        basePriceSnapshot: fee,
+        priceOverrideMonthly: fee,
+        discount: 0,
+      },
+    });
+    return tenant.id;
+  }
+
+  it("a Pricing change (80 → 120) committed while upgrade() waits on its guarded write ⇒ 400; the new fee stands", async () => {
+    const id = await overrideTenant("race", 80);
+    const t2 = new Client({ connectionString: url });
+    await t2.connect();
+    let r: { ok: boolean; e?: any };
+    let blocked = false;
+    try {
+      await t2.query("BEGIN");
+      await t2.query(
+        `UPDATE "TenantSubscription" SET "priceOverrideMonthly" = 120, "basePriceSnapshot" = 120 WHERE "tenantId" = $1`,
+        [id],
+      );
+      const pid = (await t2.query("SELECT pg_backend_pid() AS pid")).rows[0].pid;
+      const p1 = mutation.upgrade(id, "GROWTH", "admin-2470").then(
+        () => ({ ok: true }),
+        (e: unknown) => ({ ok: false, e }),
+      );
+      for (let i = 0; i < 800 && !blocked; i++) {
+        const q = await t2.query(
+          `SELECT count(*)::int n FROM pg_stat_activity WHERE $1 = ANY(pg_blocking_pids(pid))`,
+          [pid],
+        );
+        blocked = q.rows[0].n > 0;
+        if (!blocked) await new Promise((x) => setTimeout(x, 25));
+      }
+      await t2.query("COMMIT");
+      r = await p1;
+    } finally {
+      await t2.end();
+    }
+    const sub = await prisma.tenantSubscription.findUniqueOrThrow({ where: { tenantId: id } });
+    expect({
+      blocked,
+      ok: r.ok,
+      status: r.e?.getStatus?.(),
+      planKey: sub.planKey,
+      fee: Number(sub.priceOverrideMonthly),
+      snapshot: Number(sub.basePriceSnapshot),
+      planChanged: await prisma.billingEvent.count({
+        where: { tenantId: id, type: "plan.changed" },
+      }),
+    }).toEqual({
+      blocked: true,
+      ok: false,
+      status: 400,
+      planKey: "STARTER",
+      fee: 120,
+      snapshot: 120, // never the stale 80
+      planChanged: 0,
+    });
+  }, 30_000);
+
+  it("control: with no concurrent change the override row upgrades (plan moves, snapshot stays the fee)", async () => {
+    const id = await overrideTenant("ctl", 80);
+    await mutation.upgrade(id, "GROWTH", "admin-2470");
+    const sub = await prisma.tenantSubscription.findUniqueOrThrow({ where: { tenantId: id } });
+    expect({ planKey: sub.planKey, snapshot: Number(sub.basePriceSnapshot) }).toEqual({
+      planKey: "GROWTH",
+      snapshot: 80,
+    });
+  }, 30_000);
+});
