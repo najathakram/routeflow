@@ -4,7 +4,8 @@
 --
 -- "User"."lastLoginAt": a nullable ADD COLUMN with no default is metadata-only on Postgres 11+
 -- (no table rewrite). It takes a brief ACCESS EXCLUSIVE lock; lock_timeout below bounds the wait
--- so a busy "User" table can never queue readers behind it. If the wait exceeds 5s the migration
+-- so a busy "User" table can never queue readers behind it (SET LOCAL: scoped to this migration's
+-- transaction, never leaking into the session). If the wait exceeds 5s the migration
 -- rolls back and is recorded FAILED — recover with
 --   prisma migrate resolve --rolled-back 20260927060000_onboarding_s1_cases
 -- from apps/api, then re-run. NEVER `--applied`.
@@ -16,7 +17,7 @@
 --   DROP TABLE "OnboardingEvent", "OnboardingStep", "OnboardingCase";
 --   DROP TYPE "OnboardingActorType", "OnboardingStepStatus", "OnboardingCaseStatus", "OnboardingStage";
 --   ALTER TABLE "User" DROP COLUMN "lastLoginAt";
-SET lock_timeout = '5s';
+SET LOCAL lock_timeout = '5s';
 
 -- CreateEnum
 CREATE TYPE "OnboardingStage" AS ENUM ('FOLLOW_UP', 'AGREE', 'ACTIVATE', 'COLLECT', 'CONFIGURE', 'VERIFY_TRAIN', 'GO_LIVE', 'HYPERCARE');
