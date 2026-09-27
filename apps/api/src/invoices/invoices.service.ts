@@ -105,12 +105,8 @@ import { NSF_FEE_DESCRIPTION_PREFIX } from "../sales-agents/commission-math";
 import { InvoiceItemSystemKind, notNsfLineWhere } from "./nsf-line";
 import { preservedNsfLines } from "./nsf-preserve";
 import { partitionInvoiceLines, planResyncPairs } from "./resync-plan";
-import {
-  calendarFieldStamp,
-  issueDateStamp,
-  startOfCalendarDay,
-  endOfCalendarDay,
-} from "../common/calendar-date";
+import { issueDateStamp, startOfCalendarDay, endOfCalendarDay } from "../common/calendar-date";
+import { calendarFieldStamp, dueDateStamps, dueStamp } from "./invoice-due-dates";
 import { lockRowsNoWait } from "../common/db-locks";
 import { NumberingService } from "../import/numbering.service";
 import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
@@ -401,11 +397,7 @@ export class InvoicesService {
   /** SA-135: an internal caller's line may carry `packSnapshot` (ManualLineItem); the HTTP DTO never can. */
   async create(dto: Omit<CreateInvoiceDto, "items"> & { items: ManualLineItem[] }) {
     const issueDateInput = dto.issueDate ? issueDateStamp(dto.issueDate) : null; // #2197: 400 first
-    // #2256: the due dates carry the same literal-day rule, also refused before any read or write.
-    const dueDateInput = dto.dueDate ? calendarFieldStamp(dto.dueDate, "dueDate") : null;
-    const depositDueDateInput = dto.depositDueDate
-      ? calendarFieldStamp(dto.depositDueDate, "depositDueDate")
-      : null;
+    const due = dueDateStamps(dto); // #2256: the due dates too, refused before any read or write
     const customer = await this.prisma
       .forTenant()
       .customer.findUnique({ where: { id: dto.customerId } });
@@ -501,14 +493,14 @@ export class InvoicesService {
             discount: invDiscount,
             shippingFee: shipping,
             total,
-            dueDate: dueDateInput,
+            dueDate: due.dueDate,
             // #2197: the literal calendar day the client named, never a raw instant.
             issueDate: issueDateInput ?? startOfCalendarDay(new Date(), tenantDefaults.timezone),
             notes: dto.notes ?? tenantDefaults.notes,
             terms: dto.terms ?? tenantDefaults.terms,
             paymentTermsLabel: dto.paymentTermsLabel ?? null,
             depositPercent: dto.depositPercent ?? null,
-            depositDueDate: depositDueDateInput,
+            depositDueDate: due.depositDueDate,
             referenceNumber: dto.referenceNumber ?? null,
             subject: dto.subject ?? null,
             shippingCarrier: dto.shippingCarrier?.trim() || null,
@@ -2769,9 +2761,7 @@ export class InvoicesService {
       explicitDepositPercent != null
         ? {
             depositPercent: explicitDepositPercent,
-            depositDueDate: explicitDepositDueDate
-              ? calendarFieldStamp(explicitDepositDueDate, "depositDueDate")
-              : issueDate,
+            depositDueDate: dueStamp(explicitDepositDueDate, "depositDueDate") ?? issueDate,
           }
         : effectiveDepositPercent != null
           ? { depositPercent: effectiveDepositPercent, depositDueDate: issueDate }
@@ -3250,11 +3240,7 @@ export class InvoicesService {
 
     // #2197: the same literal calendar-day stamp create() writes.
     const issueDate = dto.issueDate ? issueDateStamp(dto.issueDate) : undefined;
-    // #2256: and the due dates, before either rewrite path runs.
-    const dueDateInput = dto.dueDate ? calendarFieldStamp(dto.dueDate, "dueDate") : undefined;
-    const depositDueDateInput = dto.depositDueDate
-      ? calendarFieldStamp(dto.depositDueDate, "depositDueDate")
-      : null;
+    const due = dueDateStamps(dto); // #2256: and the due dates, before either rewrite path runs
 
     // units_v1: BOTH rewrite paths — the item replace (re-split at the LIVE pack) and the
     // discount/shipping recompute, whose order back-sync writes onto the linked order's lines.
@@ -3356,7 +3342,7 @@ export class InvoicesService {
             discount: invDiscount,
             shippingFee: shipping,
             total,
-            dueDate: dueDateInput,
+            dueDate: due.dueDate ?? undefined,
             issueDate,
             notes: dto.notes,
             terms: dto.terms,
@@ -3371,7 +3357,7 @@ export class InvoicesService {
             ...(dto.subject !== undefined && { subject: dto.subject || null }),
             ...(dto.depositPercent !== undefined && { depositPercent: dto.depositPercent }),
             ...(dto.depositDueDate !== undefined && {
-              depositDueDate: depositDueDateInput,
+              depositDueDate: due.depositDueDate,
             }),
             pdfUrl: null,
             items: {
@@ -3428,7 +3414,7 @@ export class InvoicesService {
     const updated = await this.prisma.forTenant().invoice.update({
       where: { id },
       data: {
-        ...(dueDateInput && { dueDate: dueDateInput }),
+        ...(due.dueDate && { dueDate: due.dueDate }),
         ...(issueDate && { issueDate }),
         ...(dto.notes !== undefined && { notes: dto.notes }),
         ...(dto.terms !== undefined && { terms: dto.terms }),
@@ -3444,7 +3430,7 @@ export class InvoicesService {
         ...(dto.subject !== undefined && { subject: dto.subject || null }),
         ...(dto.depositPercent !== undefined && { depositPercent: dto.depositPercent }),
         ...(dto.depositDueDate !== undefined && {
-          depositDueDate: depositDueDateInput,
+          depositDueDate: due.depositDueDate,
         }),
         ...recalcData,
       },
