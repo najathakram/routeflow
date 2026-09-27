@@ -1,5 +1,7 @@
-import { NotFoundException } from "@nestjs/common";
-import { writeLineRemoval } from "./order-line-removal";
+import { BadRequestException, NotFoundException } from "@nestjs/common";
+import { UserRole } from "@prisma/client";
+import { assertRemovalsNameALine, writeLineRemoval } from "./order-line-removal";
+import { OrdersService } from "./orders.service";
 
 /**
  * #2563 (SA-507b): a per-line diff removal writes only a line of the order being edited —
@@ -45,6 +47,56 @@ describe("writeLineRemoval (#2563)", () => {
       await expect(writeLineRemoval(tx(0), "ord-1", "li-foreign", mode)).rejects.toThrow(
         NotFoundException,
       );
+    },
+  );
+
+  // Lead Opus FAIL on #2573: Prisma DROPS an undefined key, so `{ id: undefined, orderId }` matched
+  // EVERY line of the order — an id-less CANCEL struck them all off with count > 0 (no 404).
+  it.each([undefined, null, ""])(
+    "a missing line id (%p) is a 400 and writes nothing",
+    async (id) => {
+      for (const mode of ["strike-off", "delete"] as const) {
+        const db = tx(3);
+        await expect(writeLineRemoval(db, "ord-1", id as any, mode)).rejects.toThrow(
+          BadRequestException,
+        );
+        expect(db.orderItem.updateMany).not.toHaveBeenCalled();
+        expect(db.orderItem.deleteMany).not.toHaveBeenCalled();
+      }
+    },
+  );
+});
+
+describe("assertRemovalsNameALine (#2563 fold)", () => {
+  it("refuses an id-less CANCEL or DELETE; allows named removals and non-removals", () => {
+    for (const action of ["CANCEL", "DELETE"]) {
+      expect(() => assertRemovalsNameALine([{ action }])).toThrow(BadRequestException);
+      expect(() => assertRemovalsNameALine([{ id: "", action }])).toThrow(BadRequestException);
+      expect(() => assertRemovalsNameALine([{ id: "li-1", action }])).not.toThrow();
+    }
+    expect(() => assertRemovalsNameALine([{ action: "UPDATE" }, {}])).not.toThrow();
+    expect(() => assertRemovalsNameALine(undefined)).not.toThrow();
+  });
+
+  it.each([UserRole.OPERATOR, UserRole.DRIVER])(
+    "updateOrderItems (%s): an id-less CANCEL/DELETE is a 400 before ANY read",
+    async (role) => {
+      for (const action of ["CANCEL", "DELETE"]) {
+        const findUnique = jest.fn();
+        const svc: any = Object.assign(Object.create(OrdersService.prototype), {
+          prisma: {
+            forTenant: () => ({ order: { findUnique }, driver: { findFirst: jest.fn() } }),
+          },
+        });
+        await expect(
+          svc.updateOrderItems(
+            "ord-1",
+            { replaceAll: false, items: [{ action }] },
+            { role, sub: "u" },
+          ),
+        ).rejects.toThrow(BadRequestException);
+        expect(findUnique).not.toHaveBeenCalled();
+      }
     },
   );
 });

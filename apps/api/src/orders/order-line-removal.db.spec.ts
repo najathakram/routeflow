@@ -36,7 +36,7 @@ import type { JwtPayload } from "../auth/jwt-payload.interface";
 const { assertTestTenant } = require("../../../../scripts/lib/test-tenants.cjs");
 
 describeDb(
-  "SA-474 (#2443) — a held Case line is never re-denominated to the pack, real Postgres",
+  "#2563 — a diff removal writes only a named line of the edited order, real Postgres",
   () => {
     let pool: Pool;
     let raw: PrismaClient;
@@ -48,15 +48,19 @@ describeDb(
     let tenantId = "";
     let operatorUserId = "";
     let buyerUserId = "";
+    let driverUserId = "";
+    let driverId = "";
+    const routeIds: string[] = [];
+    const runIds: string[] = [];
     let customerId = "";
     const productIds: string[] = [];
     const orderIds: string[] = [];
 
-    const operator = (): JwtPayload =>
+    const principal = (role: "OPERATOR" | "DRIVER", sub: string): JwtPayload =>
       ({
-        sub: operatorUserId,
-        username: `op-${run}`,
-        role: "OPERATOR",
+        sub,
+        username: `${role.toLowerCase()}-${run}`,
+        role,
         status: "ACTIVE",
         forcePasswordChange: false,
         tenantId,
@@ -82,15 +86,54 @@ describeDb(
       return p.id;
     }
 
-    async function order(line: any) {
+    const operator = () => principal("OPERATOR", operatorUserId);
+    const driver = () => principal("DRIVER", driverUserId);
+
+    /** SA-429: the driver's own IN_PROGRESS run and a PENDING stop, so a driver may edit the order. */
+    async function driverStop(): Promise<{ routeRunId: string; routeRunStopId: string }> {
+      const route = await raw.route.create({
+        data: { name: `2563 route ${run}-${routeIds.length}`, tenantId } as any,
+      });
+      routeIds.push(route.id);
+      const routeStop = await raw.routeStop.create({
+        data: { tenantId, routeId: route.id, stopNumber: 1, customerId } as any,
+      });
+      const rr = await raw.routeRun.create({
+        data: {
+          tenantId,
+          routeId: route.id,
+          scheduledDate: new Date("2026-09-27T00:00:00.000Z"),
+          status: "IN_PROGRESS" as any,
+          driverId,
+        },
+      });
+      runIds.push(rr.id);
+      const stop = await raw.routeRunStop.create({
+        data: {
+          tenantId,
+          routeRunId: rr.id,
+          routeStopId: routeStop.id,
+          stopNumber: 1,
+          status: "PENDING" as any,
+        } as any,
+      });
+      return { routeRunId: rr.id, routeRunStopId: stop.id };
+    }
+
+    async function order(
+      lines: any | any[],
+      stop?: { routeRunId: string; routeRunStopId: string },
+    ) {
+      const list = Array.isArray(lines) ? lines : [lines];
       const o = await raw.order.create({
         data: {
           customerId,
           tenantId,
           status: "PENDING",
-          subtotal: "0.00",
-          total: "0.00",
-          lineItems: { create: [{ tenantId, ...line }] },
+          subtotal: "20.00",
+          total: "20.00",
+          ...(stop ?? {}),
+          lineItems: { create: list.map((l) => ({ tenantId, ...l })) },
         },
         include: { lineItems: true },
       });
@@ -98,8 +141,16 @@ describeDb(
       return o;
     }
 
-    const edit = (orderId: string, dto: any) =>
-      tenantCtx.run(tenantId, () => orders.updateOrderItems(orderId, dto, operator()));
+    const edit = (orderId: string, dto: any, who: JwtPayload = operator()) =>
+      tenantCtx.run(tenantId, () => orders.updateOrderItems(orderId, dto, who));
+    /** The whole order as stored: its header money and every line (ids included). */
+    const snapshot = async (orderId: string) => ({
+      header: await raw.order.findUniqueOrThrow({
+        where: { id: orderId },
+        select: { subtotal: true, total: true, status: true },
+      }),
+      lines: await rows(orderId),
+    });
     const rows = (orderId: string) =>
       raw.orderItem.findMany({ where: { orderId }, orderBy: { createdAt: "asc" } });
     const stock = async (id: string) =>
@@ -162,17 +213,30 @@ describeDb(
           data: { userId: buyerUserId, businessName: "2563 co", contactName: "Tester", tenantId },
         })
       ).id;
+      driverUserId = (
+        await raw.user.create({
+          data: { email: `d-${run}@example.test`, username: `d-${run}`, role: "DRIVER", tenantId },
+        })
+      ).id;
+      driverId = (await raw.driver.create({ data: { userId: driverUserId, tenantId } as any })).id;
     }, 120_000);
 
     afterAll(async () => {
       await raw.orderRevision?.deleteMany?.({ where: { orderId: { in: orderIds } } });
       await raw.orderItem.deleteMany({ where: { orderId: { in: orderIds } } });
       await raw.order.deleteMany({ where: { id: { in: orderIds } } });
+      await raw.routeRunStop.deleteMany({ where: { routeRunId: { in: runIds } } });
+      await raw.routeRun.deleteMany({ where: { id: { in: runIds } } });
+      await raw.routeStop.deleteMany({ where: { routeId: { in: routeIds } } });
+      await raw.route.deleteMany({ where: { id: { in: routeIds } } });
       await raw.stockMovement.deleteMany({ where: { productId: { in: productIds } } });
       await raw.productUnit.deleteMany({ where: { productId: { in: productIds } } });
       await raw.product.deleteMany({ where: { id: { in: productIds } } });
       await raw.customer.deleteMany({ where: { id: customerId } });
-      await raw.user.deleteMany({ where: { id: { in: [operatorUserId, buyerUserId] } } });
+      await raw.driver.deleteMany({ where: { tenantId } });
+      await raw.user.deleteMany({
+        where: { id: { in: [operatorUserId, buyerUserId, driverUserId] } },
+      });
       await raw.tenant.deleteMany({ where: { id: tenantId } });
       await prisma?.$disconnect();
       await raw?.$disconnect();
@@ -190,20 +254,50 @@ describeDb(
       subtotal: "10.00",
     });
 
-    it.each(["CANCEL", "DELETE"])(
-      "a %s naming another order's line is a 404; both orders are byte-identical",
-      async (action) => {
-        const cola = await product(`foreign-${action}`);
-        const mine = await order(packLine(cola));
+    const cases = [
+      ["OPERATOR", "CANCEL"],
+      ["OPERATOR", "DELETE"],
+      ["DRIVER", "CANCEL"],
+      ["DRIVER", "DELETE"],
+    ] as const;
+    const as = async (role: "OPERATOR" | "DRIVER") =>
+      role === "DRIVER"
+        ? { who: driver(), stop: await driverStop() }
+        : { who: operator(), stop: undefined };
+
+    it.each(cases)(
+      "%s %s naming ANOTHER order's line is a 404; both orders (header + lines) byte-identical",
+      async (role, action) => {
+        const cola = await product(`foreign-${role}-${action}`);
+        const { who, stop } = await as(role);
+        const mine = await order(packLine(cola), stop);
         const other = await order(packLine(cola));
-        const [mineBefore, otherBefore] = [await rows(mine.id), await rows(other.id)];
+        const [mineBefore, otherBefore] = [await snapshot(mine.id), await snapshot(other.id)];
         const stockBefore = await stock(cola);
         await expect(
-          edit(mine.id, { replaceAll: false, items: [{ id: other.lineItems[0].id, action }] }),
+          edit(mine.id, { replaceAll: false, items: [{ id: other.lineItems[0].id, action }] }, who),
         ).rejects.toMatchObject({ status: 404 });
-        expect(await rows(other.id)).toEqual(otherBefore);
-        expect(await rows(mine.id)).toEqual(mineBefore);
+        expect(await snapshot(other.id)).toEqual(otherBefore);
+        expect(await snapshot(mine.id)).toEqual(mineBefore);
         expect(await stock(cola)).toBe(stockBefore);
+      },
+    );
+
+    // Lead Opus FAIL on #2573 / SA-511c: Prisma drops an undefined key, so an id-less removal's
+    // `{ id: undefined, orderId }` matched EVERY line of the order and struck them all off.
+    it.each(cases)(
+      "%s id-less %s on a multi-line order is a 400; every line and the header byte-identical",
+      async (role, action) => {
+        const cola = await product(`idless-${role}-${action}`);
+        const chips = await product(`idless2-${role}-${action}`);
+        const { who, stop } = await as(role);
+        const o = await order([packLine(cola), packLine(chips)], stop);
+        const before = await snapshot(o.id);
+        await expect(
+          edit(o.id, { replaceAll: false, items: [{ action }] }, who),
+        ).rejects.toMatchObject({ status: 400 });
+        expect(await snapshot(o.id)).toEqual(before);
+        expect(before.lines).toHaveLength(2);
       },
     );
 
