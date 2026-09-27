@@ -17,7 +17,7 @@ that touches production data or Railway variables is done by the owner, in this 
    `checkout.session.completed` fails with a 500 and the new `stripeSubId` is lost.
 2. **#2441 merged and deployed before step 6.4** (tenants reconnecting Connect). Without it, the
    tenant "Connect Stripe" flow can offer the platform's own account.
-3. A fresh-backup routine you can run on demand (step 3).
+3. `apps/api/scripts/backup-production.mjs` runs for you under `railway run` (step 3).
 4. The current test values of the four Stripe secrets, saved in the password manager, for
    rollback.
 
@@ -43,6 +43,16 @@ key** and clears only the ids the test account returns with `livemode: false`:
 - **Unproven ids:** an id the test account does not know (`resource_missing`), or that errors, is
   **not proven test-mode**. It is listed as skipped and never cleared. Investigate those by hand.
 - **Live ids:** an id the test account reports as live makes `--apply` refuse outright.
+- **Consequence of excluding a tenant:** an excluded tenant that still carries a test
+  `cus_`/`sub_`/`price_` id keeps a **dangling** id after the flip. `ensureStripeCustomer()`
+  returns a stored `stripeCustomerId` as-is (`billing.service.ts`), so that tenant's **first live
+  checkout fails** until a later scoped, owner-approved run clears it.
+  - To clear it, get the owner's yes for that tenant, drop it from `--exclude-tenant`, and re-run
+    the dry run and apply.
+  - The run still passes the **test** key on its own command line (it verifies against the test
+    account), so it works after the Railway variables are live.
+  - This is exactly the path of the live paying tenants excluded here. The dry run's skipped list
+    shows `live` or `missing` for ids the test account does not own.
 - **`--exclude-tenant <slug,...>`:** drops every row of the named tenants before planning, so
   they can never be written. The owner supplies the slugs **at run time only**; never write a
   tenant slug into git, this runbook, a ticket or a PR. An unknown slug aborts the run.
@@ -63,7 +73,7 @@ Check each item above. Record the #2446 deployment id and its `SUCCESS` status.
 ### 2. Stripe dashboard (live mode): everything before touching data
 
 1. **Billing webhook.** Add the endpoint `https://<api-host>/api/v1/billing/webhook`.
-   - Pin its **API version to `2026-08-26.dahlia`**, the `STRIPE_API_VERSION` #2446 pins in code.
+   - Pin its **API version to `2026-08-26.dahlia`**, the value of `STRIPE_API_VERSION` exported from `apps/api/src/billing/stripe-period.ts` (#2446).
      Payloads in any other version will not match what the handlers read.
    - Events: `checkout.session.completed`, `invoice.payment_succeeded`,
      `invoice.payment_failed`, `customer.subscription.updated`, `customer.subscription.deleted`.
@@ -87,8 +97,15 @@ Have the four live values ready to paste (step 5) before continuing.
 
 ### 3. Backup
 
-Take a fresh production database backup with the standard Railway backup routine, and note its
-id.
+Owner-run, immediately before step 4:
+
+```bash
+railway run --service postgres node apps/api/scripts/backup-production.mjs pre-stripe-live-cutover
+```
+
+It writes `backups/production_<timestamp>_pre-stripe-live-cutover.sql` (gitignored) and exits
+non-zero if the dump is rejected. Do not continue without exit 0. Note the file name for the
+rollback.
 
 ### 4. Purge the test ids (still on the test key)
 
