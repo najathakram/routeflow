@@ -805,7 +805,7 @@ function CreateBillModal({ isOpen, onClose }: { isOpen: boolean; onClose: () => 
               ))}
             </select>
           </div>
-          <div className="grid grid-cols-3 gap-3">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
             <div>
               <label className="mb-1.5 block text-sm font-medium text-navy/80">Bill Date</label>
               <input
