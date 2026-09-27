@@ -944,19 +944,30 @@ describeDb(
             (v) => ({ ok: true as const, v }),
             (e) => ({ ok: false as const, e }),
           );
+        // #2472 (5) / SA-470d: count only backends waiting behind T2 — blocked by T2 itself, or by a
+        // backend T2 blocks (the second waiter queues behind the first) — not every blocked backend.
+        const t2pid = (await t2.query("SELECT pg_backend_pid() AS pid")).rows[0].pid;
         const blockedCount = async () =>
           (
             await t2.query(
-              `SELECT count(*)::int n FROM pg_stat_activity
-                WHERE datname = current_database() AND cardinality(pg_blocking_pids(pid)) > 0`,
+              `SELECT count(*)::int n FROM pg_stat_activity a
+                WHERE a.datname = current_database()
+                  AND EXISTS (SELECT 1 FROM unnest(pg_blocking_pids(a.pid)) b
+                               WHERE b = $1 OR $1 = ANY(pg_blocking_pids(b)))`,
+              [t2pid],
             )
           ).rows[0].n as number;
+        // Bounded, and it THROWS: a barrier that never forms fails on this message (e.g. on a revert),
+        // not on the 30 s test timeout.
         const waitFor = async (n: number) => {
-          for (let i = 0; i < 800; i++) {
+          for (let i = 0; i < 400; i++) {
             waiters = await blockedCount();
             if (waiters >= n) return;
             await new Promise((x) => setTimeout(x, 25));
           }
+          throw new Error(
+            `R2 barrier: ${waiters} of ${n} expected waiters blocked behind T2 after 10 s`,
+          );
         };
         const pPay = settle(
           tenantCtx.run(s.tenantId, () =>
