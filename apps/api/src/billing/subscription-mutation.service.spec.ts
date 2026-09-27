@@ -3104,6 +3104,18 @@ describe("#2551 lock-order conformance — Tenant lock before the subscription w
     expect(order.slice(0, 2)).toEqual(["tenant-lock", "sub-write"]);
   });
 
+  it("downgrade(): Tenant lock → subscription write (fold: it inserts a BillingEvent after)", async () => {
+    const { svc, tx } = make({
+      sub: { planKey: "BUSINESS", cycle: "MONTHLY", periodEnd: new Date("2026-08-01") },
+    });
+    const order: string[] = [];
+    trace(tx, order);
+
+    await svc.downgrade("t1", "STARTER", ["u1"], "admin");
+
+    expect(order.slice(0, 2)).toEqual(["tenant-lock", "sub-write"]);
+  });
+
   it("resume(): Tenant lock → subscription write", async () => {
     const { svc, tx } = make({
       sub: { planKey: "BUSINESS", cycle: "MONTHLY", cancelAtPeriodEnd: true },

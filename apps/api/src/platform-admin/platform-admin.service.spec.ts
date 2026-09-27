@@ -987,6 +987,48 @@ describe("PlatformAdminService — audit provenance", () => {
       expect(changedCalls).toHaveLength(0);
     });
 
+    // #2551 fold (SA-503a delta): the scheduled-downgrade branch writes the subscription row and then
+    // inserts a BillingEvent (Tenant FK ⇒ KEY SHARE) — it must take the Tenant lock FIRST, the house
+    // order, or it can 40P01 against a Tenant-first writer (reconcile/Pricing).
+    it("#2551: the scheduled-downgrade tx takes the Tenant lock before its subscription write", async () => {
+      prisma.tenant.findUnique.mockResolvedValue({
+        id: TENANT_ID,
+        slug: "acme",
+        plan: "PROFESSIONAL",
+        status: "ACTIVE",
+      } as any);
+      planCatalogService.getPublishedVersion.mockResolvedValue({
+        id: "v-9",
+        definitions: [
+          { planKey: "STARTER", monthlyPrice: 99 },
+          { planKey: "SCALE", monthlyPrice: 499 },
+        ],
+      });
+      (prisma as any).tenantSubscription.findUnique.mockResolvedValue({
+        planKey: "SCALE",
+        basePriceSnapshot: 499,
+        priceOverrideMonthly: null,
+        discount: null,
+        cycle: "MONTHLY",
+        periodStart: new Date("2026-07-01"),
+        periodEnd: new Date("2026-08-01"),
+      });
+      const order: string[] = [];
+      (prisma.$queryRaw as jest.Mock).mockImplementation(async (strings: TemplateStringsArray) => {
+        if (/FROM "Tenant" WHERE id = \? FOR UPDATE/.test(Array.from(strings).join("?")))
+          order.push("tenant-lock");
+        return [];
+      });
+      (prisma as any).tenantSubscription.update.mockImplementation(async () => {
+        order.push("sub-write");
+        return {};
+      });
+
+      await service.updatePlan(TENANT_ID, { plan: "STARTER" } as any, ADMIN_ID);
+
+      expect(order).toEqual(["tenant-lock", "sub-write"]);
+    });
+
     // Coverage gap flagged when the row above landed: the DOWNGRADE branch's own guard —
     // it cannot SCHEDULE a downgrade against a subscription with no `periodEnd` to schedule
     // against (mirrors SubscriptionMutationService.downgrade()'s identical check at
