@@ -26,6 +26,9 @@ import { RegulatedModule } from "../regulated/regulated.module";
 // Lane R: OrdersService is the first consumer of the selling-restrictions choke point. The module
 // imports only ProductLabelsModule (+ the global PrismaService) — no cycle with OrdersModule.
 import { SellingRestrictionsModule } from "../selling-restrictions/selling-restrictions.module";
+// #2094: OrdersService takes a return inside an order create/edit via InlineReturnsService. The
+// returns module imports nothing from orders, so there is no cycle.
+import { ReturnsModule } from "../returns/returns.module";
 
 @Module({
   imports: [
@@ -44,6 +47,7 @@ import { SellingRestrictionsModule } from "../selling-restrictions/selling-restr
     EntitlementsModule,
     RegulatedModule,
     SellingRestrictionsModule,
+    ReturnsModule,
   ],
   controllers: [OrdersController],
   providers: [OrdersService, ChangeRequestsService],
