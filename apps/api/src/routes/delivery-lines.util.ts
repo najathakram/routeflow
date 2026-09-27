@@ -29,6 +29,63 @@ export async function claimStopCompletion(
 }
 
 /**
+ * #2292: the pieces-per-unit of a units_v1 line, by the SA-388 count derivation the driver's
+ * stepper uses — the count is `boxes` when a positive integer, else `qty ÷ unitsPerBox` (the
+ * sale-time snapshot) when that factor is an integer ≥ 1 and qty a positive whole multiple of it;
+ * the factor is then `qty ÷ count`. Null when the line is not a unit line (no `unitLabel`: a pack
+ * line) or its count is LOCKED (no whole count can be derived — never guessed).
+ */
+export function unitLineFactor(line: {
+  qty: unknown;
+  boxes?: unknown;
+  unitsPerBox?: unknown;
+  unitLabel?: string | null;
+}): number | null {
+  if (!line.unitLabel?.trim()) return null;
+  const qty = Number(line.qty);
+  const boxes = Number(line.boxes);
+  const upb = Number(line.unitsPerBox);
+  let count: number | null = null;
+  if (Number.isInteger(boxes) && boxes > 0) count = boxes;
+  else if (Number.isInteger(upb) && upb >= 1 && qty > 0 && Number.isInteger(qty / upb)) {
+    count = qty / upb;
+  }
+  if (count == null) return null;
+  const factor = qty / count;
+  return Number.isInteger(factor) && factor >= 1 ? factor : null;
+}
+
+/** "3 Cases" / "1 Case" / "0 Cases" — the same plural rule as `formatQtySplit`'s `boxLabel`. */
+function unitCount(n: number, unit: string): string {
+  const plural = unit.endsWith("s") ? unit : `${unit}s`;
+  return `${n} ${n === 1 ? unit : plural}`;
+}
+
+/**
+ * #2292: the "left / delivered earlier" part of a cap refusal, in the unit the driver sees. A pack
+ * line is unchanged (bare numbers). A unit line states whole units when BOTH figures are whole
+ * multiples of its factor ("3 Cases left, 7 Cases delivered earlier"); a LOCKED line, or a
+ * remainder that is not a whole unit, states pieces labelled "pieces" — never a fractional Case.
+ */
+export function capRefusalCounts(
+  line: { qty: unknown; boxes?: unknown; unitsPerBox?: unknown; unitLabel?: string | null },
+  remaining: number,
+  deliveredSoFar: number,
+): string {
+  if (!line.unitLabel?.trim()) return `${remaining} left, ${deliveredSoFar} delivered earlier`;
+  const factor = unitLineFactor(line);
+  const unit = line.unitLabel.trim();
+  if (
+    factor != null &&
+    Number.isInteger(remaining / factor) &&
+    Number.isInteger(deliveredSoFar / factor)
+  ) {
+    return `${unitCount(remaining / factor, unit)} left, ${unitCount(deliveredSoFar / factor, unit)} delivered earlier`;
+  }
+  return `${remaining} pieces left, ${deliveredSoFar} pieces delivered earlier`;
+}
+
+/**
  * Refuse a delivery payload BEFORE any write. Every line must (1) belong to an order carried by
  * THIS stop — a driver owns the run, not the tenant's other orders, and each line drives a
  * DeliveryMutation, `deliveredQty` and the delivered-basis invoice reconcile of the order it
@@ -66,6 +123,9 @@ export async function assertDeliveriesFitStop(
     orderId: string;
     qty: unknown;
     deliveredQty?: unknown;
+    boxes?: unknown;
+    unitsPerBox?: unknown;
+    unitLabel?: string | null;
     name: string | null;
     product: { name: string } | null;
     status?: string;
@@ -77,6 +137,9 @@ export async function assertDeliveriesFitStop(
       orderId: true,
       qty: true,
       deliveredQty: true,
+      boxes: true,
+      unitsPerBox: true,
+      unitLabel: true,
       name: true,
       product: { select: { name: true } },
       status: true,
@@ -129,7 +192,7 @@ export async function assertDeliveriesFitStop(
           ? item.order?.status === "DRAFT"
             ? `${label} belongs to an order that is not confirmed yet — nothing can be delivered against it`
             : `${label} was cancelled — nothing can be delivered against it`
-          : `${label}: ${remaining} left, ${deliveredSoFar} delivered earlier — refresh the stop`,
+          : `${label}: ${capRefusalCounts(item, remaining, deliveredSoFar)} — refresh the stop`,
       );
     }
   }

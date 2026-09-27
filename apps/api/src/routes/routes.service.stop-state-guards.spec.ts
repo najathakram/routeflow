@@ -74,11 +74,7 @@ describe("RoutesService — F10 stop-state guards (REG-B54/B55/B71/B72/B120/B121
   let gateway: jest.Mocked<
     Pick<
       RouteFlowGateway,
-      | "emitStopCompleted"
-      | "emitOrderCreated"
-      | "emitOrderStatusChanged"
-      | "emitLowStock"
-      | "emitToDriver"
+      "emitStopCompleted" | "emitOrderCreated" | "emitOrderStatusChanged" | "emitToDriver"
     >
   >;
   let notifications: jest.Mocked<Pick<NotificationsService, "sendToDriver">>;
@@ -110,7 +106,6 @@ describe("RoutesService — F10 stop-state guards (REG-B54/B55/B71/B72/B120/B121
       emitStopCompleted: jest.fn(),
       emitOrderCreated: jest.fn(),
       emitOrderStatusChanged: jest.fn(),
-      emitLowStock: jest.fn(),
       emitToDriver: jest.fn(),
     };
 

@@ -4,7 +4,7 @@ import {
 } from "../selling-restrictions/selling-restrictions.core";
 import { ADDRESS_SELECT } from "../selling-restrictions/selling-restrictions.service";
 import { endOfCalendarDay } from "../common/calendar-date";
-import { NSF_FEE_DESCRIPTION_PREFIX } from "../sales-agents/commission-math";
+import { notNsfLineWhere } from "../invoices/nsf-line";
 import type { ReportWarning } from "./report-types";
 
 /**
@@ -73,11 +73,12 @@ export async function uncategorisedLineWarnings(
     where: {
       status: { notIn: ["DRAFT", "VOID"] },
       issueDate: { gte: range.from, lt: range.toExclusive },
-      // productless AND not the system NSF fee line (the exported prefix the commission engine keys on; there
-      // is no fee marker column yet, #2169). A REAL product line with the same description is never excluded:
-      // this only ever narrows the productless lines.
+      // productless AND not the system NSF fee line — the shared dual-read predicate (#2169,
+      // SA-395): stamped `systemKind` OR (NULL + the legacy description prefix, until the
+      // backfill runs). A REAL product line with the same description is never excluded: this
+      // only ever narrows the productless lines.
       items: {
-        some: { productId: null, NOT: { description: { startsWith: NSF_FEE_DESCRIPTION_PREFIX } } },
+        some: { productId: null, ...notNsfLineWhere },
       },
     },
     select: {
