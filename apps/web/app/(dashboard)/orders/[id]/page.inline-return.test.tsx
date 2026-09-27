@@ -187,6 +187,22 @@ describe("order detail edit mode — Returns section (#2406)", () => {
     );
     patch.mockResolvedValue({ data: draft });
     await enterEditModeAndOpenReturns({ draft: true });
+    // SA-484i: a return rides the save only once quoted.
+    post.mockResolvedValueOnce({
+      data: {
+        chunks: [],
+        subtotal: 0,
+        taxAmount: 0,
+        categoryTax: 0,
+        total: 0,
+        productBreakdown: {},
+      },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /get quote/i }));
+    await waitFor(() =>
+      expect(post).toHaveBeenCalledWith("/returns/inline/quote", expect.anything()),
+    );
+    await screen.findByRole("button", { name: /^back$/i }); // the quote step is showing
 
     fireEvent.click(await screen.findByRole("button", { name: /publish order/i }));
     await waitFor(() => expect(patch).toHaveBeenCalledWith("/orders/o1/items", expect.anything()));

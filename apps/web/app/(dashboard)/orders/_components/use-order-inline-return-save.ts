@@ -31,7 +31,7 @@ export interface OrderInlineReturnSave {
   build(
     customerId: string,
     orderId: string,
-  ): InlineReturnLinesRequest | "missing-reason" | undefined;
+  ): InlineReturnLinesRequest | "missing-reason" | "needs-quote" | undefined;
   /** SA-484a: the create's `Idempotency-Key`, minted TOGETHER with the returnKey in `build` and
    *  cleared with it — so a retry of the same attempt resends both, a new attempt mints both. */
   idempotencyKey(): string;
@@ -50,20 +50,27 @@ export interface OrderInlineReturnSave {
   chainError(sent: unknown, next: (err: unknown) => void): (err: unknown) => void;
 }
 
+/** The toast a blocked return save shows (both hosts). */
+export const RETURN_SAVE_BLOCKED = {
+  "missing-reason": "Choose a reason for the return before saving",
+  "needs-quote": "Get a quote for the return before saving",
+} as const;
+
 export function useOrderInlineReturnSave(
   returnsRef: React.RefObject<OrderInlineReturnsSectionHandle | null>,
-  onMissingReason?: () => void,
+  onBlocked?: (why: "missing-reason" | "needs-quote") => void,
 ): OrderInlineReturnSave {
   const keyRef = React.useRef("");
   const idemRef = React.useRef("");
+  const genRef = React.useRef(0);
   const [refusalMessage, setRefusalMessage] = React.useState("");
 
   const api: OrderInlineReturnSave = {
     refusalMessage,
     prepare(customerId, orderId) {
       const built = api.build(customerId, orderId);
-      if (built !== "missing-reason") return built;
-      onMissingReason?.();
+      if (built !== "missing-reason" && built !== "needs-quote") return built;
+      onBlocked?.(built);
       return null;
     },
     chainError(sent, next) {
@@ -73,9 +80,17 @@ export function useOrderInlineReturnSave(
       };
     },
     build(customerId, orderId) {
+      // SA-484i: a discarded draft's key pair never carries into the next one.
+      const gen = returnsRef.current?.generation() ?? 0;
+      if (gen !== genRef.current) {
+        genRef.current = gen;
+        keyRef.current = "";
+        idemRef.current = "";
+      }
       const draft = returnsRef.current?.getDraft() ?? null;
       if (!draft) return undefined;
       if (!draft.captureReason) return "missing-reason";
+      if (!draft.quoted) return "needs-quote";
       if (!keyRef.current) {
         keyRef.current = mintReturnKey();
         idemRef.current = mintReturnKey();

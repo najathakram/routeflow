@@ -66,7 +66,10 @@ import {
   OrderInlineReturnsSection,
   type OrderInlineReturnsSectionHandle,
 } from "../_components/OrderInlineReturnsSection";
-import { useOrderInlineReturnSave } from "../_components/use-order-inline-return-save";
+import {
+  RETURN_SAVE_BLOCKED,
+  useOrderInlineReturnSave,
+} from "../_components/use-order-inline-return-save";
 import { AppliedCreditsSection } from "./_components/AppliedCreditsSection";
 import { OrderReturnsPanel } from "./_components/OrderReturnsPanel";
 import { describeCancelImpact } from "@/lib/cancel-impact";
@@ -2061,8 +2064,8 @@ export default function OrderDetailPage() {
   const [creditsTouched, setCreditsTouched] = React.useState(false);
   // #2406: an inline return started in edit mode, folded into the SAME updateOrderItems write.
   const returnsRef = React.useRef<OrderInlineReturnsSectionHandle>(null);
-  const returnSave = useOrderInlineReturnSave(returnsRef, () =>
-    toast({ title: "Choose a reason for the return before saving", variant: "error" }),
+  const returnSave = useOrderInlineReturnSave(returnsRef, (why) =>
+    toast({ title: RETURN_SAVE_BLOCKED[why], variant: "error" }),
   );
 
   // Demotion modal

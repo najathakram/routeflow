@@ -56,7 +56,7 @@ import {
   OrderInlineReturnsSection,
   type OrderInlineReturnsSectionHandle,
 } from "./OrderInlineReturnsSection";
-import { useOrderInlineReturnSave } from "./use-order-inline-return-save";
+import { RETURN_SAVE_BLOCKED, useOrderInlineReturnSave } from "./use-order-inline-return-save";
 
 // ─── Schema ───────────────────────────────────────────────────────────────────
 
@@ -1119,8 +1119,8 @@ export function CreateOrderModal({
     const { mergeChoice, asDraft } = options;
     // #2406: fold in whatever the operator has typed into the Returns section.
     const inlineReturn = returnSave.build(selectedCustomer!.id, "");
-    if (inlineReturn === "missing-reason") {
-      toast({ title: "Choose a reason for the return before saving", variant: "error" });
+    if (inlineReturn === "missing-reason" || inlineReturn === "needs-quote") {
+      toast({ title: RETURN_SAVE_BLOCKED[inlineReturn], variant: "error" });
       return;
     }
     const itemsForSubmit = (

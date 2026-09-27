@@ -23,6 +23,8 @@ import {
 export interface OrderInlineReturnsDraft {
   lines: InlineReturnLineDraft[];
   captureReason: ReturnReason | "";
+  /** SA-484i: a return rides the save only once it has been QUOTED. */
+  quoted: boolean;
 }
 
 export interface OrderInlineReturnsSectionHandle {
@@ -31,6 +33,9 @@ export interface OrderInlineReturnsSectionHandle {
   getDraft(): OrderInlineReturnsDraft | null;
   /** Clears the draft and collapses the section — called after a successful save. */
   reset(): void;
+  /** Bumps on every discard/reset, so the save hook drops its returnKey/Idempotency-Key pair
+   *  (SA-484i: a discarded draft's keys never carry into a new one). */
+  generation(): number;
 }
 
 export interface OrderInlineReturnsSectionProps {
@@ -56,9 +61,11 @@ export const OrderInlineReturnsSection = React.forwardRef<
   // #2406 (lead fold): SAVE captures only what the operator can SEE — a collapsed section never
   // contributes a draft, and collapsing one with lines entered asks to discard them first.
   const expandedRef = React.useRef(false);
+  const genRef = React.useRef(0);
   expandedRef.current = expanded;
   const hasLines = () => !!stateRef.current && hasAnyQtyEntered(stateRef.current.lines);
   const discard = () => {
+    genRef.current += 1;
     stateRef.current = null;
     setConfirmDiscard(false);
     setExpanded(false);
@@ -71,9 +78,10 @@ export const OrderInlineReturnsSection = React.forwardRef<
       getDraft: () => {
         const state = stateRef.current;
         if (!expandedRef.current || !state || !hasAnyQtyEntered(state.lines)) return null;
-        return { lines: state.lines, captureReason: state.captureReason };
+        return { lines: state.lines, captureReason: state.captureReason, quoted: !!state.quote };
       },
       reset: discard,
+      generation: () => genRef.current,
     }),
     [],
   );

@@ -1,5 +1,5 @@
 import * as React from "react";
-import { fireEvent, renderWithProviders, screen, waitFor } from "@/test-utils/render";
+import { act, fireEvent, renderWithProviders, screen, waitFor } from "@/test-utils/render";
 import { CreateOrderModal } from "./CreateOrderModal";
 
 // #2406 — CreateOrderModal host: the Returns section, and the returnKey/refusal lifecycle
@@ -114,6 +114,21 @@ async function openReturnsAndAddLine(pieces: string) {
   fireEvent.change(screen.getByLabelText(/^reason$/i), { target: { value: "DAMAGED" } });
 }
 
+async function quoteIt() {
+  fireEvent.click(screen.getByRole("button", { name: /get quote/i }));
+  await waitFor(() => expect(quoteMutate).toHaveBeenCalled());
+  act(() => {
+    quoteMutate.mock.calls[quoteMutate.mock.calls.length - 1][1].onSuccess({
+      chunks: [],
+      subtotal: 0,
+      taxAmount: 0,
+      categoryTax: 0,
+      total: 0,
+      productBreakdown: {},
+    });
+  });
+}
+
 beforeEach(() => {
   jest.clearAllMocks();
   mockCustomers = [acme];
@@ -142,13 +157,15 @@ describe("CreateOrderModal — inline return payload on save (#2406)", () => {
     await openReturnsAndAddLine("5");
     fireEvent.click(screen.getByRole("button", { name: /get quote/i }));
     await waitFor(() => expect(quoteMutate).toHaveBeenCalledTimes(1));
-    quoteMutate.mock.calls[0][1].onSuccess({
-      chunks: [],
-      subtotal: 0,
-      taxAmount: 0,
-      categoryTax: 0,
-      total: 0,
-      productBreakdown: {},
+    act(() => {
+      quoteMutate.mock.calls[0][1].onSuccess({
+        chunks: [],
+        subtotal: 0,
+        taxAmount: 0,
+        categoryTax: 0,
+        total: 0,
+        productBreakdown: {},
+      });
     });
 
     fireEvent.click(screen.getByRole("button", { name: /save as draft/i }));
@@ -169,13 +186,15 @@ describe("CreateOrderModal — inline return payload on save (#2406)", () => {
     await openReturnsAndAddLine("5");
     fireEvent.click(screen.getByRole("button", { name: /get quote/i }));
     await waitFor(() => expect(quoteMutate).toHaveBeenCalledTimes(1));
-    quoteMutate.mock.calls[0][1].onSuccess({
-      chunks: [],
-      subtotal: 0,
-      taxAmount: 0,
-      categoryTax: 0,
-      total: 0,
-      productBreakdown: {},
+    act(() => {
+      quoteMutate.mock.calls[0][1].onSuccess({
+        chunks: [],
+        subtotal: 0,
+        taxAmount: 0,
+        categoryTax: 0,
+        total: 0,
+        productBreakdown: {},
+      });
     });
 
     fireEvent.click(screen.getByRole("button", { name: /save as draft/i }));
@@ -207,13 +226,15 @@ describe("CreateOrderModal — inline return payload on save (#2406)", () => {
     await openReturnsAndAddLine("5");
     fireEvent.click(screen.getByRole("button", { name: /get quote/i }));
     await waitFor(() => expect(quoteMutate).toHaveBeenCalledTimes(1));
-    quoteMutate.mock.calls[0][1].onSuccess({
-      chunks: [],
-      subtotal: 0,
-      taxAmount: 0,
-      categoryTax: 0,
-      total: 0,
-      productBreakdown: {},
+    act(() => {
+      quoteMutate.mock.calls[0][1].onSuccess({
+        chunks: [],
+        subtotal: 0,
+        taxAmount: 0,
+        categoryTax: 0,
+        total: 0,
+        productBreakdown: {},
+      });
     });
 
     fireEvent.click(screen.getByRole("button", { name: /save as draft/i }));
@@ -245,6 +266,7 @@ describe("CreateOrderModal — collapsing the Returns section (#2406)", () => {
     fireEvent.click(screen.getByRole("button", { name: /keep editing/i }));
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
     expect(screen.getByLabelText(/qty \(pieces\)/i)).toHaveValue(5);
+    await quoteIt();
     fireEvent.click(screen.getByRole("button", { name: /save as draft/i }));
     expect(createOrderMutate.mock.calls[0][0].inlineReturn).toBeDefined();
   });
@@ -263,5 +285,54 @@ describe("CreateOrderModal — collapsing the Returns section (#2406)", () => {
     // Re-opening starts empty — nothing from the discarded draft survives.
     fireEvent.click(screen.getByRole("button", { name: /^returns$/i }));
     expect(screen.queryByLabelText(/qty \(pieces\)/i)).not.toBeInTheDocument();
+  });
+
+  // SA-484i: the return rides the save ONLY when the section is expanded AND quoted.
+  it("never expanded ⇒ the save carries no inlineReturn", async () => {
+    renderWithProviders(<CreateOrderModal isOpen onClose={jest.fn()} />);
+    await pickCustomer();
+    fireEvent.click(screen.getByRole("button", { name: /save as draft/i }));
+    expect(createOrderMutate.mock.calls[0][0]).not.toHaveProperty("inlineReturn");
+  });
+
+  it("expanded but NOT quoted ⇒ the save is blocked (nothing sent)", async () => {
+    renderWithProviders(<CreateOrderModal isOpen onClose={jest.fn()} />);
+    await pickCustomer();
+    await openReturnsAndAddLine("5");
+    fireEvent.click(screen.getByRole("button", { name: /save as draft/i }));
+    expect(createOrderMutate).not.toHaveBeenCalled();
+  });
+
+  it("expanded → quoted → discarded ⇒ no inlineReturn, and re-expanding shows an empty section", async () => {
+    renderWithProviders(<CreateOrderModal isOpen onClose={jest.fn()} />);
+    await pickCustomer();
+    await openReturnsAndAddLine("5");
+    await quoteIt();
+    fireEvent.click(screen.getByRole("button", { name: /^returns$/i }));
+    fireEvent.click(screen.getByRole("button", { name: /discard return/i }));
+    fireEvent.click(screen.getByRole("button", { name: /save as draft/i }));
+    expect(createOrderMutate.mock.calls[0][0]).not.toHaveProperty("inlineReturn");
+    fireEvent.click(screen.getByRole("button", { name: /^returns$/i }));
+    expect(screen.queryByLabelText(/qty \(pieces\)/i)).not.toBeInTheDocument();
+  });
+
+  it("a discard drops the returnKey/Idempotency-Key pair: the next return gets a fresh pair", async () => {
+    renderWithProviders(<CreateOrderModal isOpen onClose={jest.fn()} />);
+    await pickCustomer();
+    await openReturnsAndAddLine("5");
+    await quoteIt();
+    fireEvent.click(screen.getByRole("button", { name: /save as draft/i }));
+    const first = createOrderMutate.mock.calls[0][0];
+    // A network failure keeps the pair for a retry of the SAME attempt …
+    act(() => createOrderMutate.mock.calls[0][1].onError({ response: { status: 500 } }));
+    // … but the operator discards that return and builds a new one.
+    fireEvent.click(screen.getByRole("button", { name: /^returns$/i }));
+    fireEvent.click(screen.getByRole("button", { name: /discard return/i }));
+    await openReturnsAndAddLine("2");
+    await quoteIt();
+    fireEvent.click(screen.getByRole("button", { name: /save as draft/i }));
+    const second = createOrderMutate.mock.calls[1][0];
+    expect(second.inlineReturn.returnKey).not.toBe(first.inlineReturn.returnKey);
+    expect(second.idempotencyKey).not.toBe(first.idempotencyKey);
   });
 });
