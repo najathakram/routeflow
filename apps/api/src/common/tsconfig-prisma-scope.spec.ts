@@ -24,7 +24,9 @@ function resolvedFileNames(configFileName: string): string[] {
   const raw = ts.readConfigFile(configPath, ts.sys.readFile);
   if (raw.error) throw new Error(ts.flattenDiagnosticMessageText(raw.error.messageText, "\n"));
   const parsed = ts.parseJsonConfigFileContent(raw.config, ts.sys, API_DIR);
-  return parsed.fileNames;
+  // TypeScript reports "/"-separated paths on every OS; the expectations below use path.join,
+  // which is "\" on win32 — normalize to the platform form so the comparison holds everywhere.
+  return parsed.fileNames.map((f) => path.normalize(f));
 }
 
 describe("B686: tsconfig.json type-checks the hand-written prisma/ scripts", () => {

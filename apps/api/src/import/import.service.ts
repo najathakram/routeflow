@@ -12,7 +12,11 @@ import { NumberingService } from "./numbering.service";
 import { ExternalRefService } from "./external-ref.service";
 import { ProductsService } from "../products/products.service";
 import { roundMoney, roundUnitCost } from "@routeflow/pricing";
-import { importPaymentStatus } from "./import-payment-status";
+import {
+  ImportRowRefused,
+  importPaymentRefusal,
+  importPaymentStatus,
+} from "./import-payment-status";
 import { parseImportMoney, parseImportNumber } from "./parse-import-number";
 import { parse } from "csv-parse/sync";
 import { ImportEntityType, InvoiceStatus, MovementType, UserRole } from "@prisma/client";
@@ -1607,6 +1611,14 @@ export class ImportService {
         // against it and a failure leaves neither half.
         await this.prisma.tenantTransaction(async (tx) => {
           await tx.$executeRaw`SELECT id FROM "Invoice" WHERE id = ${invoice.id} FOR UPDATE`;
+          // SA-424 N1: refuse a VOID / WRITTEN_OFF invoice on the LOCKED row, before any write —
+          // no payment, and the zoho-import placeholder is kept.
+          const current = await tx.invoice.findFirst({
+            where: { id: invoice.id },
+            select: { status: true },
+          });
+          const refused = current ? importPaymentRefusal(current.status) : null;
+          if (refused) throw new ImportRowRefused(refused);
           await tx.invoicePayment.deleteMany({
             where: { invoiceId: invoice.id, reference: "zoho-import" },
           });
@@ -1634,7 +1646,9 @@ export class ImportService {
         });
         imported++;
       } catch (e: any) {
-        this.pushRowError(errors, `Payment for ${invoiceNumber}`, e);
+        if (e instanceof ImportRowRefused)
+          errors.push(`Payment for ${invoiceNumber}: ${e.message}`);
+        else this.pushRowError(errors, `Payment for ${invoiceNumber}`, e);
         skipped++;
       }
     }
@@ -1645,16 +1659,23 @@ export class ImportService {
       .forTenant()
       .invoice.findMany({ include: { payments: true } });
     const now = new Date();
-    const statusUpdates: Array<{ id: string; status: InvoiceStatus; paidAt: Date | null }> = [];
+    const statusUpdates: Array<{
+      id: string;
+      from: InvoiceStatus;
+      status: InvoiceStatus;
+      paidAt: Date | null;
+    }> = [];
     for (const inv of allInvoices) {
       const change = importPaymentStatus(inv, inv.payments, now); // #2262: the one shared rule
-      if (change) statusUpdates.push({ id: inv.id, ...change });
+      if (change) statusUpdates.push({ id: inv.id, from: inv.status, ...change });
     }
     if (statusUpdates.length > 0) {
+      // SA-424 N2: compare-and-set on the status this sweep READ — an invoice voided (or paid)
+      // since the read is left alone (count 0 ⇒ skipped), never written over by a stale verdict.
       await this.prisma.$transaction(
         statusUpdates.map((u) =>
-          this.prisma.forTenant().invoice.update({
-            where: { id: u.id },
+          this.prisma.forTenant().invoice.updateMany({
+            where: { id: u.id, status: u.from },
             data: { status: u.status, paidAt: u.paidAt },
           }),
         ),

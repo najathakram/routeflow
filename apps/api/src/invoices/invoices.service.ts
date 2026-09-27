@@ -124,7 +124,14 @@ import { prepareUnitLadders, requestsUnit } from "../orders/unit-line-build";
 import { standaloneAllocationTotals } from "./standalone-payment-totals";
 import { calendarDayOf } from "./settled-date-filter";
 import { retryOnTxConflict } from "../common/tx-retry";
-import { lockInvoiceRow, nextSentStatus, sendRefusal, voidRefusal } from "./invoice-send-guard";
+import {
+  lockInvoiceRow,
+  lockInvoicesForPayment,
+  nextSentStatus,
+  paymentRefusal,
+  sendRefusal,
+  voidRefusal,
+} from "./invoice-send-guard";
 import { selectEditRevertedInvoices } from "./order-edit-revert-set";
 
 const TERM_DAYS: Record<string, number> = {
@@ -4983,6 +4990,15 @@ export class InvoicesService {
       // Row-lock (like recordPayment) then read paid FRESH, so a concurrent
       // back-office payment on the same invoice can't also read 0 and over-collect.
       await tx.$executeRaw`SELECT id FROM "Invoice" WHERE id = ${inv.id} FOR UPDATE`;
+      // SA-404f N1: the PAYABLE read above was taken before this lock — re-derive it under the lock.
+      // An invoice voided / written off meanwhile is SKIPPED (the driver's cash goes to the next
+      // invoice or the advance below), never written back over.
+      const locked = await tx.invoice.findUnique({
+        where: { id: inv.id },
+        select: { status: true },
+      });
+      if (!locked || !(PAYABLE as string[]).includes(locked.status)) continue;
+      inv.status = locked.status;
       // F03/R1: CONFIRMED (PAID) payments only.
       const priorPayments = await tx.invoicePayment.findMany({
         where: { invoiceId: inv.id, ...CONFIRMED_PAYMENT },
@@ -5506,12 +5522,12 @@ export class InvoicesService {
       // explicit lock of its own — it just INSERTs an InvoicePayment, which only holds `FOR KEY
       // SHARE` on the parent Invoice row — and `FOR NO KEY UPDATE` does NOT conflict with `FOR
       // KEY SHARE`, so NOWAIT here would not actually exclude that writer; `FOR UPDATE` does.
-      if (opts?.assertAllocationsWithinBalance) {
-        const ids = [...new Set(dto.allocations.map((a) => a.invoiceId))].sort();
-        if (ids.length > 0) {
-          await tx.$executeRaw`SELECT id FROM "Invoice" WHERE id IN (${Prisma.join(ids)}) ORDER BY id FOR UPDATE`;
-        }
-      }
+      // SA-404f F1: now UNCONDITIONAL, and Order → Invoice (SA-214) — every standalone payment,
+      // not only the buyer path, reads its invoices' status under the lock a void also takes.
+      await lockInvoicesForPayment(
+        tx,
+        dto.allocations.map((a) => a.invoiceId),
+      );
 
       const payments: any[] = [];
       for (let i = 0; i < dto.allocations.length; i++) {
@@ -5526,8 +5542,8 @@ export class InvoicesService {
         });
         if (!invoice)
           throw new NotFoundException(`Invoice ${alloc.invoiceId} not found for customer`);
-        if (invoice.status === "VOID")
-          throw new BadRequestException(`Invoice ${alloc.invoiceId} is voided`);
+        const refused = paymentRefusal(invoice.status); // SA-404f F1: on the LOCKED row
+        if (refused) throw new BadRequestException(`Invoice ${alloc.invoiceId} is ${refused}`);
         if (opts?.assertAllocationsWithinBalance) {
           const alreadyPaid = sumConfirmed(invoice.payments);
           const balance = roundMoney(Number(invoice.total) - alreadyPaid);

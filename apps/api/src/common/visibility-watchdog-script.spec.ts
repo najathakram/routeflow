@@ -802,19 +802,23 @@ describe("visibility-watchdog.mjs: argument validation and single instance (#207
   });
 
   it("FOUR parallel starts on one lock: exactly one arms, the rest are refused (no create-then-write race)", async () => {
+    // The holder must outlive a refused starter's identity check. On win32 that check is a cold
+    // PowerShell `Get-CimInstance Win32_Process` (seconds under load): with a 3 s holder the three
+    // starters saw it already gone and correctly took over a free lock. 15 s on win32; 3 s elsewhere.
+    const HOLDER_MINUTES = process.platform === "win32" ? "0.25" : "0.05";
     const logFile = newLogPath("parallel");
     const start = () =>
       new Promise<number | null>((resolve) => {
         const child = spawn(
           process.execPath,
-          [SCRIPT, "--minutes", "0.05", "--repo", "acme/test"],
+          [SCRIPT, "--minutes", HOLDER_MINUTES, "--repo", "acme/test"],
           { env: fakeEnv("success", logFile), stdio: "ignore" },
         );
         child.once("exit", resolve);
       });
     const codes = await Promise.all([start(), start(), start(), start()]);
     expect([...codes].sort()).toEqual([0, 3, 3, 3]);
-  }, 30_000);
+  }, 60_000);
 
   it("Windows identity is checked from the command line (Win32_Process), never trusted by pid alone", () => {
     const src = fs.readFileSync(SCRIPT, "utf8");

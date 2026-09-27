@@ -198,34 +198,43 @@ describeDb("#2262 import payments + Invoice row in one transaction (real Postgre
     );
   }, 30_000);
 
-  it("(b) a void committed while the import waits on the Invoice lock is never overwritten by a stale status", async () => {
+  it("(b) a void committed while the import waits on the Invoice lock ⇒ row error, NO payment, stays VOID (SA-424 N1)", async () => {
     const { tenantId, customerId } = await seed("serial");
     const inv = await seedInvoice(tenantId, customerId, `INV-${YEAR}-7301`);
     const t2 = new Client({ connectionString: url });
     await t2.connect();
+    let result: Awaited<ReturnType<ImportService["importPayments"]>>;
+    let sawBlocked = false;
     try {
       await t2.query("BEGIN");
       await t2.query(`SELECT id FROM "Invoice" WHERE id = $1 FOR UPDATE`, [inv.id]);
+      const pid = (await t2.query("SELECT pg_backend_pid() AS pid")).rows[0].pid;
       const csv = `Invoice Number,Amount Applied to Invoice,Mode,Date\nINV-${YEAR}-7301,100,Cash,${YEAR}-01-02\n`;
       const t1 = tenantCtx.run(tenantId, () =>
         importService.importPayments(Buffer.from(csv), "user-1"),
       );
-      // Wait until the import is blocked on T2's row lock (it pre-read SENT before the lock).
-      for (let i = 0; i < 100; i++) {
+      // ENTRY CONDITION (SA-E17), proven not timed: the import's per-row tx is BLOCKED on T2's
+      // Invoice row lock (it pre-read the invoice as SENT, by number, before the lock).
+      for (let i = 0; i < 400 && !sawBlocked; i++) {
         const { rows } = await t2.query(
-          `SELECT count(*)::int AS n FROM pg_locks WHERE NOT granted AND locktype IN ('transactionid','tuple')`,
+          `SELECT count(*)::int AS n FROM pg_stat_activity WHERE $1 = ANY(pg_blocking_pids(pid))`,
+          [pid],
         );
-        if (rows[0].n > 0) break;
-        await new Promise((r) => setTimeout(r, 50));
+        sawBlocked = rows[0].n > 0;
+        if (!sawBlocked) await new Promise((r) => setTimeout(r, 25));
       }
       await t2.query(`UPDATE "Invoice" SET status = 'VOID' WHERE id = $1`, [inv.id]);
       await t2.query("COMMIT");
-      await t1;
+      result = await t1;
     } finally {
       await t2.end();
     }
-    // The import ran AFTER the void, on the row it locked and re-read: VOID is a state the import
-    // never auto-flips, so it stays VOID — never the PAID a stale pre-read would have written.
+    expect(sawBlocked).toBe(true);
+    // Under the lock the import sees the committed VOID and refuses the row (SA-424 N1): no payment
+    // (pre-fix: a CASH $100 payment landed on the VOID invoice), a row error, and it stays VOID.
+    expect(result!.imported).toBe(0);
+    expect(result!.errors).toEqual([`Payment for INV-${YEAR}-7301: invoice is voided`]);
+    expect(await prisma.invoicePayment.count({ where: { invoiceId: inv.id } })).toBe(0);
     expect((await prisma.invoice.findUniqueOrThrow({ where: { id: inv.id } })).status).toBe(
       InvoiceStatus.VOID,
     );
