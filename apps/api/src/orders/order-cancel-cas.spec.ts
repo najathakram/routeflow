@@ -303,4 +303,26 @@ describe("SA-404f F2 — order cancel compare-and-set", () => {
     );
     expect(invoicesService.voidInvoiceInTx).toHaveBeenCalledWith(expect.anything(), "s1", "ord-1");
   });
+
+  // #2472 (2): whether the cancel returns stock is decided from the order's status UNDER the cancel
+  // lock, never the unlocked pre-read — a DRAFT (which never reserved stock) must not be credited.
+  it("#2472: pre-read CONFIRMED but DRAFT under the lock ⇒ no stock credit, no line marking", async () => {
+    arrange(1);
+    prisma.order.findUnique.mockImplementation(async (args: any) =>
+      args?.select && Object.keys(args.select).length === 1 && args.select.status
+        ? { status: "DRAFT" }
+        : CONFIRMED,
+    );
+    const settle = jest.spyOn(service as any, "settleStockForEdit").mockResolvedValue(undefined);
+    await service.changeStatus("ord-1", { status: "CANCELLED" as any }, operatorPayload as any);
+    expect(settle).not.toHaveBeenCalled();
+    expect(prisma.orderItem.updateMany).not.toHaveBeenCalled();
+  });
+
+  it("#2472 control: CONFIRMED under the lock too ⇒ the stock credit runs", async () => {
+    arrange(1);
+    const settle = jest.spyOn(service as any, "settleStockForEdit").mockResolvedValue(undefined);
+    await service.changeStatus("ord-1", { status: "CANCELLED" as any }, operatorPayload as any);
+    expect(settle).toHaveBeenCalledTimes(1);
+  });
 });
