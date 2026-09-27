@@ -219,6 +219,8 @@ export class BillingCronService {
         tenantId: true,
         planKey: true,
         planVersionId: true,
+        // #2460 / SA-464 (2): the ledger nets against the stored snapshot, never the catalog.
+        basePriceSnapshot: true,
         downgradeToPlanKey: true,
         downgradeEffectiveAt: true,
         retainedUserIds: true,
@@ -259,8 +261,11 @@ export class BillingCronService {
           }
           targetVersion = published;
         }
+        // #2460 / SA-464 (2): new price − what the MRR snapshot counted (stored snapshot, NULL ⇒ 0),
+        // never the pinned catalog price of the plan being left — the two figures stay equal.
         const amountDelta = roundMoney(
-          this.planMonthly(targetVersion, target) - this.planMonthly(fromVersion, s.planKey),
+          this.planMonthly(targetVersion, target) -
+            (s.planKey ? Number(s.basePriceSnapshot ?? 0) : 0),
         );
         const seatCap = targetDef.seatsIncluded ?? null;
 

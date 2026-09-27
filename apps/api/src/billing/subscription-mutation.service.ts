@@ -314,7 +314,7 @@ export class SubscriptionMutationService {
         }),
         tx.tenantSubscription.findUnique({
           where: { tenantId },
-          select: { planKey: true },
+          select: { planKey: true, basePriceSnapshot: true }, // #2460: the ledger nets against it
         }),
         tx.tenantAddon.findMany({ where: { tenantId, active: true } }),
       ]);
@@ -331,9 +331,11 @@ export class SubscriptionMutationService {
       // (`planKey: { not: null }`) — e.g. a manual platform-admin activation — so it too
       // contributes 0 and writing a planKey onto it books the full base, even though
       // `lockedFromKey` resolves through the legacy enum for ranking.
+      // #2460 / SA-464 (2): an ACTIVE row nets against what the MRR snapshot counted — its STORED
+      // basePriceSnapshot (NULL ⇒ 0) — never the catalog price of the plan it holds.
       const oldPlanMonthly =
         lockedTenant.status === "ACTIVE" && lockedSub?.planKey
-          ? this.planMonthly(version, lockedFromKey)
+          ? Number(lockedSub.basePriceSnapshot ?? 0)
           : 0;
       // #2188 / SA-385 (3): a code's prior is the SAME row findAddonRow re-activates below — the
       // oldest active row matching the shared predicate — so the ledger nets against that row.
@@ -792,14 +794,13 @@ export class SubscriptionMutationService {
     // to the run-rate, so gaining a planKey books the FULL base. The prorated charge nets against
     // the entitlement instead: the tenant already holds `fromKey` and owes only the difference.
     // #2223 / SA-444a: an override row keeps paying its negotiated fee — the plan moves, the price
-    // doesn't: quote 0, the snapshot stays the fee, and the ledger nets against what it counted.
+    // doesn't: quote 0, the snapshot stays the fee.
+    // #2460 / SA-464 (2): for EVERY row the ledger nets against what the MRR snapshot counted — the
+    // stored basePriceSnapshot, NULL ⇒ 0 (a NULL-snapshot row books the full new price and the two
+    // figures re-agree). The prorated CHARGE below still nets against the catalog entitlement.
     const override = priceOverrideOf(sub);
     const newBase = override ?? newMonthly;
-    const ledgerOldMonthly = !sub.planKey
-      ? 0
-      : override != null
-        ? Number(sub.basePriceSnapshot ?? override)
-        : oldMonthly;
+    const ledgerOldMonthly = sub.planKey ? Number(sub.basePriceSnapshot ?? 0) : 0;
     const amountDelta = roundMoney(newBase - ledgerOldMonthly);
     const proratedNow =
       override != null ? 0 : this.proration.proratedDiff(sub, newMonthly - oldMonthly);

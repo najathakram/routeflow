@@ -2350,18 +2350,20 @@ describe("PlatformAdminService — audit provenance", () => {
 
       await service.activateManualSubscription(TENANT_ID, activateDto, ADMIN_ID);
 
-      // basePriceSnapshot is untouched by this write (external activations are priced outside
-      // the catalog run-rate) — the row's existing (null) snapshot prices at $0 both sides,
-      // so the delta reflects that faithfully rather than guessing the catalog price.
+      // #2460 / SA-464 (supersedes REG-743-N5's "$0 run-rate" for the crossing): manual activation
+      // is a PAID path, so the crossing snapshots the catalog price (no override) and books it.
       expect(billingEventService.emit).toHaveBeenCalledWith(
         TENANT_ID,
         "plan.changed",
         expect.objectContaining({ fromPlan: null, toPlan: "SCALE", externalActivation: true }),
-        expect.objectContaining({ amountDelta: 0, actorId: ADMIN_ID }),
+        expect.objectContaining({ amountDelta: 499, actorId: ADMIN_ID }),
       );
     });
 
-    it("B557 books the tenant's actual (pre-existing) basePriceSnapshot in the compensating delta, not a catalog guess", async () => {
+    // #2460 / SA-464: on the crossing the snapshot is REWRITTEN to what the tenant now pays
+    // (override ?? the activated plan's catalog price) — a stale pre-existing snapshot from an
+    // earlier plan is never what gets booked.
+    it("B557 / SA-464 books the activated plan's price on the crossing, not a stale pre-existing snapshot", async () => {
       prisma.tenant.findUnique.mockResolvedValue({ id: TENANT_ID, slug: "acme" } as any);
       prisma.tenant.findUniqueOrThrow.mockResolvedValue({
         status: "SUSPENDED",
@@ -2376,8 +2378,10 @@ describe("PlatformAdminService — audit provenance", () => {
         TENANT_ID,
         "plan.changed",
         expect.objectContaining({ fromPlan: null, toPlan: "SCALE" }),
-        expect.objectContaining({ amountDelta: 349 }),
+        expect.objectContaining({ amountDelta: 499 }),
       );
+      const upsertArg = (prisma as any).tenantSubscription.upsert.mock.calls.at(-1)[0];
+      expect(upsertArg.update.basePriceSnapshot).toBe(499);
     });
 
     // P3b (pin, SA-277/B864 D2): same tenant row lock as updateTenantPriceOverride's :1451 —
