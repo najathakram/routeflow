@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import { RetryableImg } from "@/components/RetryableImg";
 import Link from "next/link";
 import { Package, Heart, Plus, Bell } from "lucide-react";
 import type { PromotionRule, PromoResult } from "@routeflow/pricing";
@@ -133,7 +134,8 @@ export function ProductTile({
         className="relative block aspect-[4/5] overflow-hidden bg-surface-raised border-b border-surface-border"
       >
         {currentUrl ? (
-          <img
+          <RetryableImg
+            staleQueryKey={["buyer", "products"]}
             src={currentUrl}
             alt={product.name}
             className="h-full w-full object-cover"
