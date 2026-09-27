@@ -1,20 +1,21 @@
 import { Injectable, Logger } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
-import type Stripe from "stripe";
+import type StripeClient from "stripe";
 import { AppConfig } from "../../config/configuration";
 import {
   ConnectAccountSnapshot,
   ConnectOAuthProvider,
   ConnectOAuthToken,
 } from "./connect-oauth.interface";
+import { STRIPE_API_VERSION } from "../../billing/stripe-period";
 
 // Stripe v22 CJS `export =` isn't compatible with `module: "nodenext"` named
 // imports, so we use require() for the constructor value (mirrors
 // payment-requests/provider/stripe-payment-provider.ts). A type-only import
-// of the `Stripe` type above is unaffected by that interop split — it's
+// of the `StripeClient` type above is unaffected by that interop split — it's
 // erased at compile time — so the client itself can still be properly typed.
 // eslint-disable-next-line @typescript-eslint/no-require-imports
-const StripeCtor = require("stripe");
+const Stripe = require("stripe");
 
 /**
  * The ONLY file in the stripe-connect module that imports the Stripe SDK or
@@ -32,11 +33,13 @@ const StripeCtor = require("stripe");
 @Injectable()
 export class StripeConnectOAuthProvider implements ConnectOAuthProvider {
   private readonly logger = new Logger(StripeConnectOAuthProvider.name);
-  private readonly stripe: Stripe | null;
+  private readonly stripe: StripeClient | null;
 
   constructor(config: ConfigService<AppConfig>) {
     const secretKey = config.get<AppConfig["stripe"]>("stripe")?.secretKey ?? "";
-    this.stripe = secretKey ? (new StripeCtor(secretKey) as Stripe) : null;
+    this.stripe = secretKey
+      ? (new Stripe(secretKey, { apiVersion: STRIPE_API_VERSION }) as StripeClient) // #2436
+      : null;
     if (!secretKey) {
       this.logger.warn("STRIPE_SECRET_KEY not set — Stripe Connect linking disabled.");
     }
@@ -46,7 +49,7 @@ export class StripeConnectOAuthProvider implements ConnectOAuthProvider {
     return this.stripe !== null;
   }
 
-  private get client(): Stripe {
+  private get client(): StripeClient {
     if (!this.stripe) {
       throw new Error("Stripe is not configured. Set STRIPE_SECRET_KEY to enable Connect.");
     }

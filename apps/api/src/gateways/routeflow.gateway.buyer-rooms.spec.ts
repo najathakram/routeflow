@@ -952,6 +952,7 @@ describe("RouteFlowGateway on a live Socket.IO server", () => {
         none, // entitlements
         { removeInvoiceCommission: jest.fn(async () => undefined) } as never,
         none, // numbering
+        none, // selling restrictions
       );
       jest
         .spyOn(
