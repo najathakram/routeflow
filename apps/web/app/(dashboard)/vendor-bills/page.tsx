@@ -1230,7 +1230,7 @@ function InventoryPurchasesTab() {
               value={markPaidDate}
               onChange={(e) => setMarkPaidDate(e.target.value)}
               title="Payment date"
-              className="h-9 rounded border border-surface-border bg-white px-2 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
+              className="h-9 w-32 rounded border border-surface-border bg-white px-2 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
             />
             <Button
               variant="danger"
@@ -1339,7 +1339,7 @@ function InventoryPurchasesTab() {
               setPage(1);
             }}
             title="Bill date from"
-            className="h-10 rounded border border-surface-border bg-white px-2 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
+            className="h-10 w-32 rounded border border-surface-border bg-white px-2 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
           />
           <span className="text-navy/70">–</span>
           <input
@@ -1351,7 +1351,7 @@ function InventoryPurchasesTab() {
               setPage(1);
             }}
             title="Bill date to"
-            className="h-10 rounded border border-surface-border bg-white px-2 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
+            className="h-10 w-32 rounded border border-surface-border bg-white px-2 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
           />
           {(dateFrom || dateTo) && (
             <button
@@ -1952,7 +1952,7 @@ function OtherExpensesTab() {
             setFrom(e.target.value);
             setPage(1);
           }}
-          className="h-9 rounded border border-surface-border bg-white px-2 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
+          className="h-9 w-32 rounded border border-surface-border bg-white px-2 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
         />
         <input
           type="date"
@@ -1961,7 +1961,7 @@ function OtherExpensesTab() {
             setTo(e.target.value);
             setPage(1);
           }}
-          className="h-9 rounded border border-surface-border bg-white px-2 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
+          className="h-9 w-32 rounded border border-surface-border bg-white px-2 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
         />
         {(categoryId || from || to) && (
           <button

@@ -1460,7 +1460,7 @@ export default function NewInvoicePage() {
                     setDeliveredOn(value);
                     setDeliveredNow(value <= todayIso());
                   }}
-                  className="h-9 rounded-lg border border-surface-border bg-white px-2 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
+                  className="h-9 w-32 rounded-lg border border-surface-border bg-white px-2 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
                 />
               </div>
             </div>
