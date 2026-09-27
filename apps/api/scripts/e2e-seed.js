@@ -70,6 +70,7 @@ async function bootstrap() {
   // --print-target: a dry check that only resolves and prints where a real reseed would
   // land — exit before opening any connection (no Pool, no PrismaClient). Lets a human/CI
   // confirm the target host against a live DB without ever touching it.
+  console.log(`e2e-seed: units_v1 fixture = ${unitsFixturePlan(dbUrl)}`);
   if (process.argv.includes("--print-target")) {
     process.exit(0);
   }
@@ -200,6 +201,22 @@ const FIXTURE_PRODUCTS = [
   },
 ];
 
+// #2195: units_v1 fixture. The ladder is pack + ProductUnit rows + an implicit Piece, and
+// ProductUnitsService refuses a row that repeats the pack's factor. So the product itself is the
+// Piece (no pack, factor 1) and Case x12 is a real ProductUnit row: an order line in "Case"
+// resolves through the ProductUnit ladder, the path units_v1 adds, not the legacy boxed pack
+// (E2E-FIX-BOX already covers that). The name avoids "case"/"box" so 13-boxed-order-entry's
+// product search never matches it.
+const UNITS_FEATURE_KEY = "flag.units_v1";
+const UNITS_GRANT_REASON = "e2e-seed: units_v1 fixture on the approved test tenant (#2195)";
+const UNITS_PRODUCT = {
+  sku: "E2E-FIX-UNITS",
+  name: "E2E Fixture Units Widget",
+  unit: "Piece",
+  pricePerUnit: cents(200),
+};
+const UNITS_CASE = { label: "Case", factorToBase: 12, price: cents(2100) };
+
 const FIXTURE_INVOICE_NUMBER = "E2E-FIX-INV-001";
 // One PENDING order with one line on the first plain fixture product: 06 CP-02/CP-06 read real
 // order rows off a fresh DB, and 21 REG-B24 needs an ACTIVE order item against a catalog product
@@ -276,7 +293,25 @@ async function ensureCommerceFixtures(tenantId) {
   for (const p of FIXTURE_PRODUCTS) {
     const product = await prisma.product.upsert({
       where: { tenantId_sku: { tenantId, sku: p.sku } },
-      create: { tenantId, currentStock: 500, isActive: true, ...p },
+      // B562 (SA-136 §1): the opening stock is a PURCHASE movement, so the ledger explains the counter
+      // (stock-ledger-gap.mjs reports a product whose counter its movements don't add up to).
+      create: {
+        tenantId,
+        currentStock: 500,
+        isActive: true,
+        ...p,
+        stockMovements: {
+          create: [
+            {
+              tenantId,
+              type: "PURCHASE",
+              quantity: 500,
+              stockAfter: 500,
+              notes: "Opening stock (e2e seed)",
+            },
+          ],
+        },
+      },
       update: { isActive: true },
     });
     products.set(p.sku, product);
@@ -366,6 +401,67 @@ async function ensureCommerceFixtures(tenantId) {
 // script is also run against production (`railway run ... e2e-seed.js`). So the fixture is created
 // ONLY when the resolved target is provably local (allowlist in lib/local-db-target.cjs) — never on
 // Railway or any host we cannot classify — and no flag overrides that.
+// #2195: grant flag.units_v1 through the same TenantFeatureOverride row the Backoffice writes
+// (FeatureOverrideService.grant), then seed the Piece/Case x12 product. Idempotent: an active
+// GRANT is left alone; an expired or DENY row (a spec's leftover) is revoked first, because the
+// partial unique index allows one un-revoked row per (tenant, key). Only ever called with the
+// e2e-routeflow tenant id, which TENANT_SLUG's assertTestTenant already approved.
+// Owner rule: agents never flip a production flag; the owner grants flag.units_v1 on a real
+// environment. So the grant AND the fixture product run only against a provably-local DB — the
+// same isLocalDbTarget gate the buyer fixture uses. `--print-target` prints this same plan, which
+// is how e2e-seed-script.spec.ts proves a non-local target skips it without touching a database.
+function unitsFixturePlan(url) {
+  return isLocalDbTarget(url) ? "run (local target)" : "skipped (non-local target)";
+}
+
+async function ensureUnitsFixtureIfLocal(tenantId) {
+  if (!isLocalDbTarget(dbUrl)) {
+    console.log(`  - units_v1 fixture ${unitsFixturePlan(dbUrl)}`);
+    return;
+  }
+  await ensureUnitsFixture(tenantId);
+  console.log(`  ✓ flag.units_v1 granted; ${UNITS_PRODUCT.sku} has Piece + Case x12`);
+}
+
+async function ensureUnitsFixture(tenantId) {
+  const now = new Date();
+  await prisma.tenantFeatureOverride.updateMany({
+    where: { tenantId, featureKey: UNITS_FEATURE_KEY, revokedAt: null, expiresAt: { lte: now } },
+    data: { revokedAt: now },
+  });
+  const active = await prisma.tenantFeatureOverride.findFirst({
+    where: { tenantId, featureKey: UNITS_FEATURE_KEY, revokedAt: null },
+  });
+  if (active && active.effect !== "GRANT") {
+    await prisma.tenantFeatureOverride.update({
+      where: { id: active.id },
+      data: { revokedAt: now },
+    });
+  }
+  if (!active || active.effect !== "GRANT") {
+    await prisma.tenantFeatureOverride.create({
+      data: {
+        tenantId,
+        featureKey: UNITS_FEATURE_KEY,
+        effect: "GRANT",
+        kind: "SUPPORT",
+        reason: UNITS_GRANT_REASON,
+      },
+    });
+  }
+
+  const product = await prisma.product.upsert({
+    where: { tenantId_sku: { tenantId, sku: UNITS_PRODUCT.sku } },
+    create: { tenantId, currentStock: 500, isActive: true, ...UNITS_PRODUCT },
+    update: { isActive: true },
+  });
+  await prisma.productUnit.upsert({
+    where: { productId_label: { productId: product.id, label: UNITS_CASE.label } },
+    create: { tenantId, productId: product.id, ...UNITS_CASE },
+    update: {},
+  });
+}
+
 async function ensureBuyerFixtureIfLocal(tenantId) {
   if (!isLocalDbTarget(dbUrl)) {
     console.log("  - buyer fixture skipped (non-local target)");
@@ -571,6 +667,9 @@ async function main() {
     await ensureCommerceFixtures(existing.id);
     await ensureBuyerFixtureIfLocal(existing.id);
 
+    // ── units_v1 grant + Piece/Case fixture (#2195) ──────────────────────────────
+    await ensureUnitsFixtureIfLocal(existing.id);
+
     // ── Sweep stale parked drafts left by the web e2e suite ─────────────────────
     // 08-create-order-escape's ESC tests auto-park REAL drafts ("Order, <name>",
     // device "Desktop web") on this tenant; the spec now deletes its own, but runs
@@ -698,6 +797,9 @@ async function main() {
   // ── Commerce fixtures (B566) ─────────────────────────────────────────────────
   await ensureCommerceFixtures(tenant.id);
   await ensureBuyerFixtureIfLocal(tenant.id);
+
+  // ── units_v1 grant + Piece/Case fixture (#2195) ────────────────────────────────
+  await ensureUnitsFixtureIfLocal(tenant.id);
 
   console.log("\n✅ E2E seed complete.\n");
 }

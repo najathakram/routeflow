@@ -42,11 +42,7 @@ describe("RoutesService — DRAFT orders never ride a dispatch or complete as de
   let gateway: jest.Mocked<
     Pick<
       RouteFlowGateway,
-      | "emitStopCompleted"
-      | "emitOrderCreated"
-      | "emitOrderStatusChanged"
-      | "emitLowStock"
-      | "emitToDriver"
+      "emitStopCompleted" | "emitOrderCreated" | "emitOrderStatusChanged" | "emitToDriver"
     >
   >;
   let notifications: jest.Mocked<Pick<NotificationsService, "sendToDriver">>;
@@ -73,7 +69,6 @@ describe("RoutesService — DRAFT orders never ride a dispatch or complete as de
       emitStopCompleted: jest.fn(),
       emitOrderCreated: jest.fn(),
       emitOrderStatusChanged: jest.fn(),
-      emitLowStock: jest.fn(),
       emitToDriver: jest.fn(),
     };
 
@@ -126,7 +121,7 @@ describe("RoutesService — DRAFT orders never ride a dispatch or complete as de
       ...prisma,
       routeRunStop: {
         ...prisma.routeRunStop,
-        update: jest.fn().mockResolvedValue({}),
+        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
         findMany: jest.fn().mockResolvedValue([{ id: "stop-1", status: "PENDING" }]),
       },
       routeRun: { ...prisma.routeRun, update: jest.fn().mockResolvedValue({}) },

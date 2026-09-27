@@ -18,6 +18,9 @@ export const RUN_LINE_ITEMS_SELECT = {
   productId: true,
   product: { select: { id: true, name: true, unit: true } },
   qty: true,
+  // SA-345a: the legacy delivered column — the ONLY evidence for a line delivered before
+  // DeliveryMutation rows existed; the run projection reads it when a line has no row.
+  deliveredQty: true,
   unitPrice: true,
   status: true,
   subtotal: true,

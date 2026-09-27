@@ -276,6 +276,21 @@ async function emailTabRendered(page: Page) {
   ).toBeVisible();
 }
 
+/** The dialog's open animation has finished (dialog and overlay), so a screenshot is not a mid-fade still:
+ *  every finite animation on the page is done and the dialog is fully opaque. Infinite ones (spinners) are
+ *  skipped: their `finished` never resolves. */
+async function dialogSettled(page: Page, dialog: Locator) {
+  await page.evaluate(() =>
+    Promise.all(
+      document
+        .getAnimations()
+        .filter((a) => Number.isFinite(a.effect?.getComputedTiming().endTime ?? 0))
+        .map((a) => a.finished.catch(() => undefined)),
+    ),
+  );
+  await expect(dialog).toHaveCSS("opacity", "1");
+}
+
 /** Two animation frames: long enough for a resolved query to reach the DOM, so an absence
  *  asserted afterwards is not just "not rendered yet". */
 async function settle(page: Page) {
@@ -433,6 +448,7 @@ test.describe("Mailbox connect card (F-10b), provider always stubbed", () => {
       await expect(page).toHaveURL(/\/settings\?tab=email$/);
       expect(h.previews).toEqual([{ token: CONFIRM_TOKEN, secret: CONNECT_SECRETS.google }]);
       expect(h.confirmBodies).toEqual([]);
+      await dialogSettled(page, dialog);
       await page.screenshot({ path: testInfo.outputPath(`mailbox-confirm-dialog-${vp.name}.png`) });
 
       await dialog.getByRole("button", { name: "Confirm" }).click();

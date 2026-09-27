@@ -18,6 +18,9 @@ export interface ConfigSnapshotListItem {
   ageDays: number;
   /** null = the stored payload is not a readable version-1 document. */
   entries: { configs: number; overrides: number } | null;
+  /** Read back from the restore's own audit row (no migration) — null for a row that was never
+   *  restored, or whose audit row is missing/unreadable (never fabricated). */
+  restoreReport: (ConfigSnapshotRestoreReport & { automatic: boolean }) | null;
 }
 
 export type ConfigSnapshotEntryKind = "config" | "override";
@@ -36,6 +39,8 @@ export interface ConfigSnapshotPreview {
   ageDays: number;
   /** Older than the 90-day automatic-restore horizon: restoring it is a deliberate admin override. */
   beyondAutoRestoreHorizon: boolean;
+  /** The horizon itself (days), so the UI never hardcodes the number the copy quotes. */
+  autoRestoreMaxAgeDays: number;
   /** The plan the tenant is on NOW — the plan the restore is judged against. */
   currentPlanKey: string;
   willRestore: { kind: ConfigSnapshotEntryKind; featureKey: string }[];

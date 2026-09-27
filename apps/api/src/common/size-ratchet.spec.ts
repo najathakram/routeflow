@@ -40,13 +40,13 @@ const BASELINE: Record<string, number> = {
   // (the replaceAll rebuild's per-item price/data build) moved verbatim to its own file
   // (orders/replace-all-line-build.ts) — 5740 -> 5540. Lowered to the measured value. Round 5
   // (sourceLineId): buildExistingLineMaps also extracted — still fits at 5540, unchanged.
-  "apps/api/src/orders/orders.service.ts": 5488, // #2094: findOrderIdByIdempotencyKey -> merge-idempotency.ts to fit the inline-return hooks (was 5540); B776/SA-124a: buildMergeLineWrites replaced both merge methods' own live-pack fold (was 5751; SA-065 before that: appendOrderRevision -> order-revisions.ts, was 5780; U1 before that: class tail -> order-lifecycle.ts, 5880)
-  "apps/api/src/invoices/invoices.service.ts": 6192, // merge of master 7ea131ab into #2083: both sides shrank it — #2083 SA-203/R-022 (update() planning + totals + catalog reads -> invoice-edit-plan.ts, back-sync shape -> order-backsync-lines.ts; branch baseline was 6305) and master (6264: B662 price-adjustment writes -> price-adjustment-ledger.ts; B769/SA-112 totals -> standalone-payment-totals.ts; B659 prefactor create() context/fold -> manual-invoice-context.ts, with its re-added `hasRegulated` local). Lowered to the merged file, verified by wc -l.
+  "apps/api/src/orders/orders.service.ts": 5487, // #2391/SA-065: changeStatus transition table -> order-status-transitions.ts (was 5488); #2094: findOrderIdByIdempotencyKey -> merge-idempotency.ts to fit the inline-return hooks (was 5540); B776/SA-124a: buildMergeLineWrites replaced both merge methods' own live-pack fold (was 5751; SA-065 before that: appendOrderRevision -> order-revisions.ts, was 5780; U1 before that: class tail -> order-lifecycle.ts, 5880)
+  "apps/api/src/invoices/invoices.service.ts": 6111, // #2178: revert-set selection -> order-edit-revert-set.ts (was 6124; measured 6111 after the bdc2e019 merge); Train A (owner, 3 merge trains): #2323 (SA-065 resync extraction, 6163) then #2117 (F-05 PR2 invoice-list-query extraction, 6151) compose to a measured 6124; lower-of, never raised.
   "apps/api/src/orders/orders.service.spec.ts": 9511,
   "apps/api/src/customers/customers.service.ts": 3307,
   "apps/api/src/invoices/invoices.service.spec.ts": 9351,
   "apps/web/app/(dashboard)/customers/[id]/page.tsx": 4378,
-  "apps/web/app/(dashboard)/orders/[id]/page.tsx": 3728,
+  "apps/web/app/(dashboard)/orders/[id]/page.tsx": 3720,
   "apps/api/src/customers/customers.service.spec.ts": 3209,
   "apps/api/src/routes/routes.service.ts": 3189, // prefactor: run/stop select shapes + status constants live in routes/routes.constants.ts (was 3270)
   "apps/web/app/(dashboard)/products/[id]/page.tsx": 2942,
