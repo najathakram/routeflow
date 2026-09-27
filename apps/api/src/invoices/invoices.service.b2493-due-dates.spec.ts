@@ -40,6 +40,11 @@ import { SellingRestrictionsService } from "../selling-restrictions/selling-rest
 import { InvoiceStatus } from "@prisma/client";
 
 import { importCalendarDay } from "../import/import.service";
+import { endOfCalendarDay, isOverdue, overdueCutoff } from "../common/calendar-date";
+import { recomputeInvoiceStatus } from "./invoice-status";
+import { applyInvoiceStatusFilters } from "./invoice-list-query";
+import * as fs from "fs";
+import * as path from "path";
 
 describe("InvoicesService — #2493 due dates under a negative-offset process zone", () => {
   let service: InvoicesService;
@@ -261,6 +266,115 @@ describe("InvoicesService — #2493 due dates under a negative-offset process zo
       ["2026-02-31", null],
     ])("%j → null (no due date), never an Invalid Date", (raw, expected) => {
       expect(importCalendarDay(raw)).toBe(expected);
+    });
+  });
+  // ─── Item 3 (SA-488): OVERDUE only once the due day has ENDED in the tenant's zone ─────────────
+  describe("item 3 — the one overdue rule (SA-488)", () => {
+    const LA = "America/Los_Angeles"; // PDT (UTC-7) on 2026-09-25
+    const due = new Date("2026-09-25T00:00:00.000Z");
+    // 20:00 PDT on the due day = 03:00Z on the 26th (past the UTC end of the day).
+    const eveningOfDueDayLA = new Date("2026-09-26T03:00:00.000Z");
+    const at2330LA = new Date("2026-09-26T06:30:00.000Z"); // 23:30 PDT, still the due day
+    const at0030LA = new Date("2026-09-26T07:30:00.000Z"); // 00:30 PDT, the day after
+
+    it.each(["UTC", LA, "Asia/Kolkata", "Pacific/Kiritimati", "Pacific/Pago_Pago"])(
+      "boundary table in %s: grace through the last ms of the due day, overdue 1 ms later; the SQL twin agrees",
+      (tz) => {
+        const end = endOfCalendarDay(due, tz);
+        expect(isOverdue(due, end, tz)).toBe(false);
+        expect(isOverdue(due, new Date(end.getTime() + 1), tz)).toBe(true);
+        // Sweep D-1 .. D+2 every 15 minutes: the predicate and `dueDate < cutoff` never disagree.
+        for (
+          let t = due.getTime() - 86_400_000;
+          t <= due.getTime() + 2 * 86_400_000;
+          t += 900_000
+        ) {
+          const now = new Date(t);
+          expect(due < overdueCutoff(now, tz)).toBe(isOverdue(due, now, tz));
+        }
+        expect(due < overdueCutoff(end, tz)).toBe(false);
+        expect(due < overdueCutoff(new Date(end.getTime() + 1), tz)).toBe(true);
+      },
+    );
+
+    it("no due date is never overdue", () => {
+      expect(isOverdue(null, at0030LA, LA)).toBe(false);
+    });
+
+    it("recomputeStatus ± zone: a US tenant is NOT overdue at 20:00 local on the due day", () => {
+      expect(recomputeInvoiceStatus(0, 100, due, "SENT" as any, LA, eveningOfDueDayLA)).toBe(
+        "SENT",
+      );
+      expect(recomputeInvoiceStatus(0, 100, due, "SENT" as any, LA, at0030LA)).toBe("OVERDUE");
+      // No zone: UTC — the due day ended at 00:00Z on the 26th.
+      expect(recomputeInvoiceStatus(0, 100, due, "SENT" as any, undefined, eveningOfDueDayLA)).toBe(
+        "OVERDUE",
+      );
+      // Payments and terminal states still win over the date.
+      expect(recomputeInvoiceStatus(10, 100, due, "SENT" as any, LA, at0030LA)).toBe("PARTIAL");
+      expect(recomputeInvoiceStatus(0, 100, due, "DRAFT" as any, LA, at0030LA)).toBe("DRAFT");
+    });
+
+    describe("five paths agree at 23:30 vs 00:30 local (LA tenant)", () => {
+      afterEach(() => jest.useRealTimers());
+      const at = (now: Date) =>
+        jest.useFakeTimers({ now, doNotFake: ["nextTick", "setImmediate", "queueMicrotask"] });
+      const tenantLA = () => {
+        prisma.tenantConfig.findUnique.mockResolvedValue({
+          invoiceNotes: null,
+          invoiceTerms: null,
+          timezone: LA,
+        });
+        jest.spyOn(prisma, "getTenantId").mockReturnValue("test-tenant");
+      };
+
+      it.each([
+        ["23:30 local (still the due day)", at2330LA, false],
+        ["00:30 local (the day after)", at0030LA, true],
+      ])("%s", async (_label, now, overdue) => {
+        at(now);
+        tenantLA();
+        // 1. the predicate  2. recomputeStatus
+        expect(isOverdue(due, now, LA)).toBe(overdue);
+        expect(recomputeInvoiceStatus(0, 100, due, "SENT" as any, LA, now) === "OVERDUE").toBe(
+          overdue,
+        );
+        // 3. the list filter (isOverdue=true): the row is selected iff dueDate < where.dueDate.lt
+        const where: any = {};
+        applyInvoiceStatusFilters(where, { isOverdue: true } as any, LA);
+        expect(due < where.dueDate.lt).toBe(overdue);
+        // 4. the overdue cron
+        prisma.invoice.updateMany.mockResolvedValue({ count: 0 });
+        await service.markOverdue();
+        expect(due < prisma.invoice.updateMany.mock.calls[0][0].where.dueDate.lt).toBe(overdue);
+        // 5. the KPI summary buckets on the TENANT's today, whatever day the viewer sends
+        prisma.invoice.findMany.mockResolvedValue([
+          { id: "inv-due", total: 100, dueDate: due, status: "SENT", payments: [] },
+        ]);
+        prisma.invoice.count.mockResolvedValue(0);
+        prisma.$queryRaw.mockResolvedValue([{ avgDays: 0 }]);
+        const kpi = await service.getKpiSummary("2026-09-20", {
+          sub: "op",
+          role: "OPERATOR",
+        } as any);
+        expect(kpi.overdue).toBe(overdue ? 100 : 0);
+        expect(kpi.dueToday).toBe(overdue ? 0 : 100);
+      });
+    });
+
+    it("no raw `dueDate < now` compare survives in the overdue paths (tripwire, with a control)", () => {
+      const read = (rel: string) => fs.readFileSync(path.join(__dirname, "..", rel), "utf8");
+      const raw = /dueDate\)? *(<|>=) *(now|new Date\(\))|dueDate: \{ lt: (now|new Date\(\)) \}/;
+      expect(raw.test("if (inv.dueDate && inv.dueDate < now) x();")).toBe(true); // control
+      for (const rel of [
+        "invoices/invoices.service.ts",
+        "invoices/invoice-status.ts",
+        "invoices/invoice-list-query.ts",
+        "credit-notes/credit-notes.service.ts",
+        "bookkeeping/bookkeeping.service.ts",
+      ]) {
+        expect({ rel, hit: raw.test(read(rel)) }).toEqual({ rel, hit: false });
+      }
     });
   });
 });

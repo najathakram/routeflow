@@ -224,3 +224,23 @@ export function endOfCalendarDay(date: Date | string, timeZone?: string | null):
   const nextMidnightLocal = localMidnightUtc(next.year, next.month, next.day, timeZone || "UTC");
   return new Date(nextMidnightLocal.getTime() - 1);
 }
+
+/**
+ * SA-488 (#2493 item 3): THE overdue rule. An invoice is overdue once `now` is past the END of its
+ * due day in the tenant's zone (UTC when the zone is unknown) — the whole due day is grace. The
+ * cron, the list filter, bookkeeping aging and the KPI summary use `overdueCutoff` (its SQL twin);
+ * recomputeStatus uses this. The two agree at every boundary (pinned).
+ */
+export function isOverdue(
+  dueDate: Date | string | null | undefined,
+  now: Date = new Date(),
+  timeZone?: string | null,
+): boolean {
+  if (!dueDate) return false;
+  return now.getTime() > endOfCalendarDay(dueDate, timeZone).getTime();
+}
+
+/** The SQL twin of `isOverdue`: `dueDate < overdueCutoff(now, tz)` selects exactly the overdue rows. */
+export function overdueCutoff(now: Date = new Date(), timeZone?: string | null): Date {
+  return startOfCalendarDay(now, timeZone);
+}

@@ -10,6 +10,7 @@ import * as unitAware from "../orders/unit-aware-guard";
 import { assertNoNegativeLineSubtotal } from "../common/money-invariants.util";
 import { randomUUID } from "crypto";
 import { PrismaService } from "../prisma/prisma.service";
+import { recomputeInvoiceStatus } from "./invoice-status";
 import { StorageService } from "../storage/storage.service";
 import {
   deletePaymentImage,
@@ -110,7 +111,12 @@ import { NSF_FEE_DESCRIPTION_PREFIX } from "../sales-agents/commission-math";
 import { InvoiceItemSystemKind, notNsfLineWhere } from "./nsf-line";
 import { preservedNsfLines } from "./nsf-preserve";
 import { partitionInvoiceLines, planResyncPairs } from "./resync-plan";
-import { issueDateStamp, startOfCalendarDay, endOfCalendarDay } from "../common/calendar-date";
+import {
+  issueDateStamp,
+  overdueCutoff,
+  startOfCalendarDay,
+  endOfCalendarDay,
+} from "../common/calendar-date";
 import { calendarFieldStamp, dueDateStamps, dueStamp } from "./invoice-due-dates";
 import { lockRowsNoWait } from "../common/db-locks";
 import { NumberingService } from "../import/numbering.service";
@@ -334,25 +340,9 @@ export class InvoicesService {
     return this.generateInvoiceNumber();
   }
 
-  private recomputeStatus(
-    totalPaid: number,
-    total: number,
-    dueDate: Date | null,
-    currentStatus?: InvoiceStatus,
-  ): InvoiceStatus {
-    // DRAFT, VOID, and WRITTEN_OFF are terminal/deliberate states — payment-driven
-    // recalculation must never override them.
-    if (
-      currentStatus === InvoiceStatus.DRAFT ||
-      currentStatus === InvoiceStatus.VOID ||
-      currentStatus === InvoiceStatus.WRITTEN_OFF
-    ) {
-      return currentStatus;
-    }
-    if (totalPaid >= total - 0.001) return InvoiceStatus.PAID;
-    if (totalPaid > 0) return InvoiceStatus.PARTIAL;
-    if (dueDate && new Date(dueDate) < new Date()) return InvoiceStatus.OVERDUE;
-    return InvoiceStatus.SENT;
+  /** SA-488: delegates to the shared invoice-status.ts body (optional trailing `timeZone`). */
+  private recomputeStatus(...args: Parameters<typeof recomputeInvoiceStatus>): InvoiceStatus {
+    return recomputeInvoiceStatus(...args);
   }
 
   /**
@@ -2880,7 +2870,9 @@ export class InvoicesService {
     const { customerId, sortBy, sortOrder, page = 1, limit = 20 } = query;
     const skip = (page - 1) * limit;
     const where: any = {};
-    applyInvoiceStatusFilters(where, query);
+    // SA-488: the isOverdue filter ends the due day in the tenant's zone (read only when used).
+    const tz = query.isOverdue ? (await this.resolveTenantInvoiceDefaults()).timezone : null;
+    applyInvoiceStatusFilters(where, query, tz);
     if (user?.role === UserRole.CUSTOMER) {
       const customer = await this.prisma
         .forTenant()
@@ -2986,11 +2978,12 @@ export class InvoicesService {
    * fetch-all-then-reduce, which silently drops whichever rows page 1000+
    * would have held (exactly the oldest, most delinquent invoices).
    *
-   * `today` is the VIEWER's calendar day (`YYYY-MM-DD`), passed by the client
-   * so the tiles agree with the same due-soon chips the list page renders —
-   * the server never derives "today" from its own clock (L-047).
+   * `today` is the VIEWER's calendar day (`YYYY-MM-DD`), passed by the client. SA-488 (#2493):
+   * when the tenant's zone is known the buckets use the TENANT's today instead, so the tiles agree
+   * with the overdue cron, list filter and bookkeeping aging; the viewer's day is the fallback.
    */
-  async getKpiSummary(today: string, user: JwtPayload): Promise<InvoiceKpiSummary> {
+  async getKpiSummary(viewerToday: string, user: JwtPayload): Promise<InvoiceKpiSummary> {
+    let today = viewerToday;
     // The DTO's regex pins the SHAPE; this pins the CALENDAR. `2026-13-01`
     // matches the regex and would blow up on `.toISOString()` below — after
     // three queries had already run — and `2026-02-30` would silently roll to
@@ -2999,6 +2992,8 @@ export class InvoicesService {
     if (Number.isNaN(todayInstant.getTime()) || todayInstant.toISOString().slice(0, 10) !== today) {
       throw new BadRequestException("today must be a real calendar date (YYYY-MM-DD)");
     }
+    const { timezone } = await this.resolveTenantInvoiceDefaults();
+    if (timezone) today = overdueCutoff(new Date(), timezone).toISOString().slice(0, 10);
 
     const tenantId = this.prisma.getTenantId();
     // No tenant context (SUPER_ADMIN / unset): `forTenant()` would read UNSCOPED
@@ -5925,11 +5920,11 @@ export class InvoicesService {
   // ─── Cron ─────────────────────────────────────────────────────────────────
 
   async markOverdue() {
-    const now = new Date();
+    const { timezone } = await this.resolveTenantInvoiceDefaults(); // SA-488: the tenant's day
     await this.prisma.forTenant().invoice.updateMany({
       where: {
         status: { in: [InvoiceStatus.SENT, InvoiceStatus.VIEWED, InvoiceStatus.PARTIAL] },
-        dueDate: { lt: now },
+        dueDate: { lt: overdueCutoff(new Date(), timezone) },
       },
       data: { status: InvoiceStatus.OVERDUE },
     });
