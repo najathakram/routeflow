@@ -8,7 +8,11 @@ import {
 } from "@nestjs/common";
 import { createHash, randomUUID } from "crypto";
 import { ConfigService } from "@nestjs/config";
-import { assertDeliveriesFitStop, claimStopCompletion } from "./delivery-lines.util";
+import {
+  assertDeliveriesFitStop,
+  assertStopNotSkipped,
+  claimStopCompletion,
+} from "./delivery-lines.util";
 import { PrismaService } from "../prisma/prisma.service";
 import { JwtPayload } from "../auth/jwt-payload.interface";
 import {
@@ -2255,6 +2259,7 @@ export class RoutesService {
     });
     if (!stop) throw new NotFoundException("Stop not found");
     if (stop.status === "COMPLETED") throw new BadRequestException("Stop is already completed");
+    assertStopNotSkipped(stop.status); // #2409
 
     const driver =
       user.role === UserRole.DRIVER
@@ -2467,6 +2472,7 @@ export class RoutesService {
     });
     if (!stop) throw new NotFoundException("Stop not found");
     if (stop.status === "COMPLETED") throw new BadRequestException("Stop is already completed");
+    assertStopNotSkipped(stop.status); // #2409
 
     const driver =
       user.role === UserRole.DRIVER

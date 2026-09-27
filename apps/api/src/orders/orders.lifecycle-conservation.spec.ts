@@ -733,13 +733,15 @@ describe("OrdersService — F07 lifecycle-conservation (TP-API)", () => {
      */
     function captureTenantTransaction() {
       const allOptions: any[] = [];
-      const txExecuteRaw: jest.Mock = jest.fn().mockResolvedValue(0);
+      // B562 PR-2: the aggregated decrement is `$queryRaw … RETURNING`, the lock `$executeRaw`; one spy
+      // (resolving no rows) serves both so the decrement oracle below finds it wherever it is issued.
+      const txExecuteRaw: jest.Mock = jest.fn().mockResolvedValue([]);
       prisma.tenantTransaction.mockImplementation((fn: any, opts?: any) => {
         allOptions.push(opts);
         const tx = {
           ...(prisma as unknown as Record<string, any>),
           $executeRaw: txExecuteRaw,
-          $queryRaw: jest.fn().mockResolvedValue([]),
+          $queryRaw: txExecuteRaw,
         };
         return fn(tx);
       });
