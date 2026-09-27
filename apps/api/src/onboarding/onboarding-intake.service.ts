@@ -279,6 +279,22 @@ export class OnboardingIntakeService {
     }
     await this.prisma.$transaction(async (tx) => {
       await tx.$queryRaw`SELECT id FROM "OnboardingCase" WHERE id = ${t.caseId} FOR UPDATE`;
+      // #2431 fold (d): a double submit of the SAME order, versions and signer is not a new
+      // acceptance — keep the current row (checked under the case lock, so two concurrent
+      // submits serialise and the second sees the first).
+      const current = await tx.orderAcceptance.findFirst({
+        where: { caseId: t.caseId, supersededAt: null },
+      });
+      if (
+        current &&
+        current.termsVersion === TERMS_VERSION &&
+        current.privacyVersion === PRIVACY_VERSION &&
+        current.acceptedName === input.acceptedName.trim() &&
+        current.acceptedEmail === input.acceptedEmail.trim() &&
+        sameOrder(current.orderSnapshot, snapshot)
+      ) {
+        return;
+      }
       const now = new Date();
       await tx.orderAcceptance.updateMany({
         where: { caseId: t.caseId, supersededAt: null },
@@ -317,6 +333,9 @@ export class OnboardingIntakeService {
     file: UploadedFile | undefined,
   ): Promise<IntakeSessionView> {
     const t = await this.resolve(token);
+    // #2431 fold (a): a file belongs to its section — once the section is sent in, approved,
+    // applied or waived, the customer can no longer add to it.
+    await this.assertSectionEditable(t.caseId, sectionKey);
     await this.storeFile(t.caseId, sectionKey, kind, file, "customer");
     return this.sessionView(t);
   }
@@ -345,6 +364,9 @@ export class OnboardingIntakeService {
       where: { id: fileId, caseId: t.caseId, uploadedBy: "customer", deletedAt: null },
     });
     if (!f) throw new NotFoundException("File not found");
+    // #2431 fold (a): nor delete from it — an approved file's object must never be removed
+    // by the customer. Checked before any write, so a refusal leaves row and object intact.
+    await this.assertSectionEditable(t.caseId, f.sectionKey);
     await this.prisma.intakeFile.update({ where: { id: f.id }, data: { deletedAt: new Date() } });
     await this.storage
       .delete(f.storageKey)
@@ -577,6 +599,15 @@ export class OnboardingIntakeService {
     return tx.intakeSection.findUniqueOrThrow({ where: { id: rows[0].id } });
   }
 
+  /** A section with no row yet has never been touched, so it is EMPTY (editable). */
+  private async assertSectionEditable(caseId: string, key: IntakeSectionKey): Promise<void> {
+    const s = await this.prisma.intakeSection.findUnique({
+      where: { caseId_key: { caseId, key } },
+      select: { status: true },
+    });
+    this.assertEditable(s?.status ?? "EMPTY");
+  }
+
   private assertEditable(status: string): void {
     if (!EDITABLE.has(status)) {
       throw new ConflictException({
@@ -625,6 +656,28 @@ export class OnboardingIntakeService {
 }
 
 // ─── Pure helpers ─────────────────────────────────────────────────────────────────
+
+/** The same order, ignoring when it was computed (`computedAt` differs on every quote). */
+export function sameOrder(a: unknown, b: unknown): boolean {
+  const strip = (v: unknown) => {
+    if (!v || typeof v !== "object" || Array.isArray(v)) return v;
+    const { computedAt: _at, ...rest } = v as Record<string, unknown>;
+    return rest;
+  };
+  return canonicalJson(strip(a)) === canonicalJson(strip(b));
+}
+
+/** Key-order-independent JSON (jsonb does not keep key order), for equality checks only. */
+export function canonicalJson(v: unknown): string {
+  if (v === null || typeof v !== "object") return JSON.stringify(v ?? null);
+  if (Array.isArray(v)) return `[${v.map(canonicalJson).join(",")}]`;
+  const o = v as Record<string, unknown>;
+  return `{${Object.keys(o)
+    .filter((k) => o[k] !== undefined)
+    .sort()
+    .map((k) => `${JSON.stringify(k)}:${canonicalJson(o[k])}`)
+    .join(",")}}`;
+}
 
 const SECTION_LABEL: Record<IntakeSectionKey, string> = {
   ACCOUNT: "Account",

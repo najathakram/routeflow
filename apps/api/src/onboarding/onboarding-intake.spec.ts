@@ -11,6 +11,7 @@ import {
   TERMS_VERSION,
   assertAllowedUpload,
   safeFileName,
+  sameOrder,
 } from "./onboarding-intake.service";
 import { PublicOnboardingController, intakeFileFilter } from "./public-onboarding.controller";
 import { ONBOARDING_TOKEN_SECRET_MIN_LENGTH } from "./onboarding-token-secret";
@@ -278,5 +279,29 @@ describe("intake links with an unset or short secret (SA-456)", () => {
     prisma.intakeAccessToken.findUnique.mockResolvedValue(null);
     await expect(svc.resolve(mintSignedToken(good))).rejects.toBeInstanceOf(NotFoundException);
     expect(prisma.intakeAccessToken.findUnique).toHaveBeenCalledTimes(1);
+  });
+});
+
+// #2431 fold (d): accept's "same order" check — jsonb reorders keys and every quote stamps a
+// fresh computedAt, neither of which makes it a different order.
+describe("sameOrder (#2431 fold d)", () => {
+  const base = { planKey: "GROWTH", dueToday: 99, lines: [{ key: "GROWTH", monthly: 99 }] };
+  it("ignores key order and computedAt", () => {
+    expect(
+      sameOrder(
+        { ...base, computedAt: "2030-01-01T00:00:00Z" },
+        {
+          lines: [{ monthly: 99, key: "GROWTH" }],
+          dueToday: 99,
+          planKey: "GROWTH",
+          computedAt: "x",
+        },
+      ),
+    ).toBe(true);
+  });
+  it("any real difference is a different order", () => {
+    expect(sameOrder(base, { ...base, dueToday: 149 })).toBe(false);
+    expect(sameOrder(base, { ...base, lines: [{ key: "GROWTH", monthly: 149 }] })).toBe(false);
+    expect(sameOrder(base, null)).toBe(false);
   });
 });

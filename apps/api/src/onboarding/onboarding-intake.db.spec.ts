@@ -415,6 +415,73 @@ describeDb("onboarding intake link (#2159 S2) — real Postgres", () => {
     });
   });
 
+  it("files follow their section's state: once APPROVED (or otherwise locked) the customer can neither add nor delete (#2431 fold a)", async () => {
+    const c = await newCase();
+    const t = tokenOf((await intake.issueLink(c.id, ADMIN, false)).url);
+    const csv = (name: string) => ({
+      originalname: name,
+      mimetype: "text/csv",
+      size: 3,
+      buffer: Buffer.from("a,b"),
+    });
+    await intake.uploadAsCustomer(t, "DATA_FILES", "customers", csv("customers.csv"));
+    const f = await prisma.intakeFile.findFirstOrThrow({ where: { caseId: c.id } });
+    expect(stored.has(f.storageKey)).toBe(true);
+
+    // The admin approves the section (set directly: this pin is about the file gates).
+    await prisma.intakeSection.update({
+      where: { caseId_key: { caseId: c.id, key: "DATA_FILES" } },
+      data: { status: "APPROVED" },
+    });
+
+    await expect(
+      intake.uploadAsCustomer(t, "DATA_FILES", "products", csv("products.csv")),
+    ).rejects.toMatchObject({ response: { code: "INTAKE_SECTION_LOCKED" } });
+    expect(await prisma.intakeFile.count({ where: { caseId: c.id } })).toBe(1);
+
+    await expect(intake.deleteAsCustomer(t, f.id)).rejects.toMatchObject({
+      response: { code: "INTAKE_SECTION_LOCKED" },
+    });
+    // Nothing moved: the row is live and the stored object is still there.
+    expect(
+      (await prisma.intakeFile.findUniqueOrThrow({ where: { id: f.id } })).deletedAt,
+    ).toBeNull();
+    expect(stored.has(f.storageKey)).toBe(true);
+
+    // Sent back for changes → editable again, so the customer can fix their files.
+    await prisma.intakeSection.update({
+      where: { caseId_key: { caseId: c.id, key: "DATA_FILES" } },
+      data: { status: "CHANGES_REQUESTED" },
+    });
+    await intake.deleteAsCustomer(t, f.id);
+    expect(stored.has(f.storageKey)).toBe(false);
+  });
+
+  it("accept is idempotent: a double submit of the same order, versions and signer keeps ONE current row (#2431 fold d)", async () => {
+    planMonthly = 99;
+    const c = await newCase({ planKey: "GROWTH", interval: "month" });
+    const t = tokenOf((await intake.issueLink(c.id, ADMIN, false)).url);
+    const signer = {
+      acceptedName: "Pat Example",
+      acceptedEmail: "pat@example.invalid",
+      ip: "203.0.113.9",
+      userAgent: "UA/1",
+    };
+    await intake.accept(t, signer);
+    const first = await prisma.orderAcceptance.findFirstOrThrow({ where: { caseId: c.id } });
+    await intake.accept(t, { ...signer, ip: "203.0.113.10" });
+    const rows = await prisma.orderAcceptance.findMany({ where: { caseId: c.id } });
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toEqual(first);
+    expect(
+      await prisma.onboardingEvent.count({ where: { caseId: c.id, type: "order.accepted" } }),
+    ).toBe(1);
+
+    // A different signer is a new acceptance (it supersedes).
+    await intake.accept(t, { ...signer, acceptedName: "Sam Example" });
+    expect(await prisma.orderAcceptance.count({ where: { caseId: c.id } })).toBe(2);
+  });
+
   it("a case's token never opens another case's data", async () => {
     const a = await newCase();
     const b = await newCase();
