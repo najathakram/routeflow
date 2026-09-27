@@ -79,11 +79,25 @@ const refusal = (productId: string, name: string | null) =>
     message: `Your supplier removed ${name ?? "this product"} from this order — ask them to add it back.`,
   });
 
+/** A buyer must own the order before this module names a product on it OR reads it back (SA-422a). */
+async function assertBuyerOwns(
+  prisma: Pick<PrismaService, "forTenant">,
+  principal: Principal,
+  customerId: string,
+): Promise<void> {
+  if (principal?.role !== "CUSTOMER") return;
+  const owner = await prisma
+    .forTenant()
+    .customer.findFirst({ where: { userId: principal.sub, deletedAt: null } });
+  if (!owner || owner.id !== customerId) throw new ForbiddenException();
+}
+
 /**
  * SA-422 (2)+(4) before any write (call it before the linked-invoice revert). Throws the 409; for a
  * non-staff diff it drops CANCEL/DELETE entries aimed at an already-CANCELLED line from `dto.items`
  * (mutating, like `classifyEditPayload`). `noop` = the diff held nothing else, so the edit writes
- * nothing at all. A buyer's ownership is settled FIRST: the refusal names a product on THIS order.
+ * nothing at all. A buyer's ownership is settled FIRST — before the refusal (it names a product on
+ * THIS order) and before a no-op (the caller then reads THIS order back): SA-422a.
  */
 export async function planCancelledLines(
   prisma: Pick<PrismaService, "forTenant">,
@@ -95,12 +109,7 @@ export async function planCancelledLines(
   const items = (dto.items ?? []) as ItemLike[];
   const hit = refusedItem(order.lineItems, items, principal, isDiff);
   if (hit) {
-    if (principal?.role === "CUSTOMER") {
-      const owner = await prisma
-        .forTenant()
-        .customer.findFirst({ where: { userId: principal.sub, deletedAt: null } });
-      if (!owner || owner.id !== order.customerId) throw new ForbiddenException();
-    }
+    await assertBuyerOwns(prisma, principal, order.customerId);
     const product = hit.productId
       ? await prisma
           .forTenant()
@@ -114,7 +123,9 @@ export async function planCancelledLines(
   const kept = items.filter((i) => !(i.id && cancelledIds.has(i.id) && isStrikeOff(i)));
   if (kept.length === items.length) return { noop: false };
   dto.items = kept as UpdateOrderItemsDto["items"];
-  return { noop: kept.length === 0 };
+  if (kept.length > 0) return { noop: false };
+  await assertBuyerOwns(prisma, principal, order.customerId); // SA-422a: never read back a foreign order
+  return { noop: true };
 }
 
 /**

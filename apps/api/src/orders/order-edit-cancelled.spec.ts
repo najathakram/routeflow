@@ -119,6 +119,24 @@ describe("planCancelledLines — diff path (SA-422 rule 4)", () => {
     expect(mixed.items).toEqual([{ id: "li-c", qty: 2 }]);
   });
 
+  it("SA-422a: a NON-OWNER buyer's strike-off-only diff is a 403, never the order read back", async () => {
+    const dto = { replaceAll: false, items: [{ id: "li-x", action: "CANCEL" }] };
+    await expect(
+      planCancelledLines(prismaWith({ id: "someone" }), order, dto as any, buyer, true),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+    await expect(
+      planCancelledLines(
+        owned,
+        order,
+        { replaceAll: false, items: [{ id: "li-x", action: "CANCEL" }] } as any,
+        buyer,
+        true,
+      ),
+    ).resolves.toEqual({
+      noop: true,
+    });
+  });
+
   it("staff diffs are unchanged", async () => {
     const dto = { replaceAll: false, items: [{ id: "li-x", qty: 3 }] };
     await expect(planCancelledLines(owned, order, dto as any, staff, true)).resolves.toEqual({
