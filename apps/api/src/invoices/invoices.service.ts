@@ -119,6 +119,9 @@ const TERM_DAYS: Record<string, number> = {
   "Net 60": 60,
 };
 
+/** #2293: round a nullable money field; `null` (clear) and `undefined` (leave as is) pass through. */
+const roundMoneyOrNull = (v: number | null | undefined) => (v == null ? v : roundMoney(v));
+
 /**
  * Payment-term arithmetic on a calendar date, in UTC. `setDate`/`getDate` read LOCAL
  * components, so on a non-UTC host they shift a UTC-midnight instant by the DST delta
@@ -4904,6 +4907,7 @@ export class InvoicesService {
       const alreadyPaid = sumConfirmed(inv.payments);
       const remaining = remainingCapacity(total, inv.payments);
       const paymentStatus = dto.status ?? "PAID";
+      const amount = roundMoney(dto.amount); // #2293: ONE rounded value — guard, write, status
 
       if (paymentStatus === "PAID") {
         if (remaining <= 0) {
@@ -4917,7 +4921,7 @@ export class InvoicesService {
               : "Invoice's remaining balance is already reserved by unconfirmed payments",
           );
         }
-        if (dto.amount > remaining + 0.001)
+        if (amount > remaining + 0.001)
           throw new BadRequestException(
             `Payment exceeds remaining balance of ${remaining.toFixed(2)}`,
           );
@@ -4938,21 +4942,21 @@ export class InvoicesService {
       const createdPayment = await tx.invoicePayment.create({
         data: {
           invoiceId: id,
-          amount: dto.amount,
+          amount,
           method: dto.method,
           reference: dto.reference,
           notes: dto.notes,
           paidAt: dto.paidAt ? new Date(dto.paidAt) : new Date(),
           // Never clamped: a post-dated check settles in the future.
           settledAt: dto.settledAt ? new Date(dto.settledAt) : null,
-          bankCharges: dto.bankCharges,
+          bankCharges: roundMoneyOrNull(dto.bankCharges),
           status: paymentStatus as any,
           paymentNumber,
           checkStatus: dto.method === "CHECK" ? CheckStatus.RECORDED : null,
         },
       });
 
-      const newPaid = paymentStatus === "PAID" ? alreadyPaid + dto.amount : alreadyPaid;
+      const newPaid = paymentStatus === "PAID" ? alreadyPaid + amount : alreadyPaid;
       const newStatus =
         paymentStatus === "PAID"
           ? this.recomputeStatus(newPaid, total, inv.dueDate, inv.status)
@@ -5304,6 +5308,7 @@ export class InvoicesService {
       }
 
       const newPaymentStatus = dto.status ?? payment.status ?? "PAID";
+      const amount = roundMoney(dto.amount); // #2293: ONE rounded value — guard, status, write
 
       // F03/R1: only a CONFIRMED (PAID) row funds the recomputed status — VOID and
       // DRAFT both contribute $0, mirroring recordPayment (:4415). Counting a DRAFT
@@ -5311,9 +5316,9 @@ export class InvoicesService {
       // nobody confirmed — either by editing an unconfirmed payment or by
       // un-confirming a real one — while sumConfirmed still reported the full
       // balance due: exactly the B11 damage class CONFIRMED_PAYMENT removes. The
-      // remaining-balance guard below deliberately stays on the raw dto.amount so a
+      // remaining-balance guard below deliberately stays on the full amount so a
       // DRAFT still cannot be parked above the invoice total.
-      const effectiveAmount = newPaymentStatus === "PAID" ? dto.amount : 0;
+      const effectiveAmount = newPaymentStatus === "PAID" ? amount : 0;
 
       // F03/R1: the recomputed status still funds only off CONFIRMED (PAID)
       // payments — an unconfirmed DRAFT "other" payment must not inflate the
@@ -5327,14 +5332,14 @@ export class InvoicesService {
       // recordPayment's conversion closes, so this edit can no longer be parked
       // above what the invoice can actually hold once that DRAFT confirms.
       const capacity = remainingCapacity(total, otherPayments);
-      if (newPaymentStatus !== "VOID" && dto.amount > capacity + 0.001) {
+      if (newPaymentStatus !== "VOID" && amount > capacity + 0.001) {
         throw new BadRequestException(`Payment amount exceeds remaining balance`);
       }
 
       await tx.invoicePayment.update({
         where: { id: paymentId },
         data: {
-          amount: dto.amount,
+          amount,
           method: dto.method,
           reference: dto.reference,
           notes: dto.notes,
@@ -5343,7 +5348,7 @@ export class InvoicesService {
           ...(dto.settledAt !== undefined && {
             settledAt: dto.settledAt ? new Date(dto.settledAt) : null,
           }),
-          ...(dto.bankCharges !== undefined && { bankCharges: dto.bankCharges }),
+          ...(dto.bankCharges !== undefined && { bankCharges: roundMoneyOrNull(dto.bankCharges) }),
           status: newPaymentStatus,
         },
       });
@@ -5646,7 +5651,7 @@ export class InvoicesService {
             method: dto.method as any,
             paidAt,
             settledAt,
-            bankCharges: dto.bankCharges,
+            bankCharges: roundMoneyOrNull(dto.bankCharges),
             reference: dto.reference,
             notes: dto.notes,
             status: status as any,
