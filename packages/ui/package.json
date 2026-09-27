@@ -10,7 +10,8 @@
     "./web": "./src/web/index.ts",
     "./mobile": "./src/mobile/index.ts",
     "./mobile/ios": "./src/mobile/ios/index.ts",
-    "./tokens": "./src/tokens.ts"
+    "./tokens": "./src/tokens.ts",
+    "./ledger": "./src/tokens/ledger.ts"
   },
   "scripts": {
     "lint": "eslint . --max-warnings 0",

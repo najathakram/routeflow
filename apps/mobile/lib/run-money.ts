@@ -432,12 +432,19 @@ export function deliveredCategoryTax(
  */
 export function shortPickCategoryTax(
   lineItems: RunMoneyLineItem[],
-  shortPickLines: ReadonlyArray<{ orderItemId: string }>,
+  shortPickLines: ReadonlyArray<{ orderItemId: string; needsEntry?: boolean }>,
   deliveredQtyById: Record<string, number>,
 ): number {
   const shortPickIds = new Set(shortPickLines.map((l) => l.orderItemId));
   const restricted = lineItems.filter((li) => li.id != null && shortPickIds.has(li.id));
-  return deliveredCategoryTax(restricted, deliveredQtyById);
+  // SA-367a: a line served no `remaining` and not yet entered has NO default — 0 here, exactly as
+  // its subtotal half (short-pick.ts#effectiveDeliveredQty) — never deliveredCategoryTax's
+  // "absent = fully delivered", which would quote its full excise against a $0 subtotal.
+  const plan = { ...deliveredQtyById };
+  for (const l of shortPickLines) {
+    if (l.needsEntry && plan[l.orderItemId] == null) plan[l.orderItemId] = 0;
+  }
+  return deliveredCategoryTax(restricted, plan);
 }
 
 export interface ReconciledAmountDueInput {

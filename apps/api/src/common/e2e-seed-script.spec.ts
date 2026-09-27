@@ -92,3 +92,42 @@ describe("e2e-seed.js DATABASE_URL resolution (tooling lesson: railway-run-targe
     expect(res.status).toBe(0);
   });
 });
+
+// #2295 review: the units_v1 grant + Case fixture (#2195) must never run against a non-local
+// target — agents never flip a production flag (the owner grants units_v1). `--print-target`
+// prints the plan from the SAME `isLocalDbTarget` predicate the gate uses, and never connects.
+describe("e2e-seed.js units_v1 fixture runs only against a local DB (#2195 / #2295)", () => {
+  it.each([
+    ["a Railway proxy host", "postgresql://u:p@monorail.proxy.rlwy.net:5432/railway"],
+    ["an internal Railway host", "postgresql://u:p@postgres.railway.internal:5432/railway"],
+    ["any remote host", "postgresql://u:p@db.example.com:5432/x"],
+  ])("SKIPS the grant and fixture for %s", (_label, url) => {
+    const res = run(scrubbedEnv({ DATABASE_URL: url }));
+    expect(res.stdout).toContain("e2e-seed: units_v1 fixture = skipped (non-local target)");
+    expect(res.stdout).not.toContain("units_v1 fixture = run");
+    expect(res.status).toBe(0);
+  });
+
+  it("runs it for the local compose target", () => {
+    const res = run(scrubbedEnv({ DATABASE_URL: "postgresql://u:p@localhost:5432/routeflow_dev" }));
+    expect(res.stdout).toContain("e2e-seed: units_v1 fixture = run (local target)");
+    expect(res.status).toBe(0);
+  });
+
+  it("the ungated writer is reachable only through the local-target gate", () => {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const src: string = require("node:fs").readFileSync(SCRIPT, "utf8");
+    // Exactly one call of the ungated writer, and it sits inside ensureUnitsFixtureIfLocal AFTER
+    // its isLocalDbTarget early return.
+    expect(src.match(/await ensureUnitsFixture\(/g)).toHaveLength(1);
+    const gate = src.slice(
+      src.indexOf("async function ensureUnitsFixtureIfLocal("),
+      src.indexOf("async function ensureUnitsFixture(tenantId)"),
+    );
+    expect(gate).toMatch(
+      /if \(!isLocalDbTarget\(dbUrl\)\) \{[\s\S]*?return;[\s\S]*?await ensureUnitsFixture\(/,
+    );
+    // Both main() branches (existing tenant, fresh tenant) go through the gate.
+    expect(src.match(/await ensureUnitsFixtureIfLocal\(/g)).toHaveLength(2);
+  });
+});

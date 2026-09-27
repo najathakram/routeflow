@@ -2,7 +2,6 @@ import {
   BadRequestException,
   ConflictException,
   ForbiddenException,
-  HttpException,
   Injectable,
   Logger,
   NotFoundException,
@@ -15,6 +14,7 @@ import { roundMoney, sumConfirmed, remainingCapacity } from "@routeflow/pricing"
 import { InvoiceStatus, PaymentMethod } from "@prisma/client";
 import { CommissionEngineService } from "../sales-agents/commission-engine.service";
 import { NumberingService } from "../import/numbering.service";
+import { retryOnTxConflict, txConflictState } from "../common/tx-retry";
 import {
   CREDIT_NOT_APPLICABLE,
   CREDIT_SETTLE_EXCLUDED,
@@ -39,42 +39,14 @@ export class CreditNotesService {
   }
 
   /**
-   * F1 (REG-B267-F/G): true for a Postgres SSI serialization failure
-   * (SQLSTATE 40001) or a deadlock (40P01), in EITHER shape Prisma 7's
-   * driver-adapter engine can surface it as:
-   *  - the fully-wrapped `PrismaClientKnownRequestError` with `code: "P2034"`
-   *    (the shape the doc comment above assumed), OR
-   *  - a raw `DriverAdapterError` (name: "DriverAdapterError") straight from
-   *    `@prisma/adapter-pg`, which maps SQLSTATE 40001/40P01 to
-   *    `cause.kind: "TransactionWriteConflict"` and sets `message` to that
-   *    same string — observed escaping UNWRAPPED under real concurrent load
-   *    (REG-B267-H, DB lane) even though a sibling racer in the exact same
-   *    run got the P2034-wrapped shape for the identical conflict.
-   * Anything else (P2002, a validation exception, …) is NOT this.
-   *
-   * Opus re-check fix (REG-B267-I): an `HttpException` — or any error already
-   * carrying an HTTP status — is a validated application-level rejection
-   * (e.g. `validateAndBuildCnItems`'s in-tx `BadRequestException` when the
-   * amount cap check re-runs SERIALIZABLE), never a transient serialization
-   * conflict. The old message-substring fallback matched "40001" appearing
-   * literally inside such a message (a cap-check error text can legitimately
-   * quote a code-looking number) and retried a 400 that should have
-   * propagated on the first attempt. Structured signals are checked first;
-   * the substring fallback runs ONLY when the error is not already an
-   * HttpException.
+   * F1 (REG-B267-F/G/I), folded onto the house predicate (Opus on #2234, #2200's scope for this
+   * one call site): a write conflict is whatever `txConflictState` (common/tx-retry.ts) says:
+   * 40001 / 40P01 in every Prisma 7 / pg shape, P2034, or an unwrapped DriverAdapterError
+   * TransactionWriteConflict. It never counts an HttpException (REG-B267-I) and never matches on
+   * message text, so a 40P01 the commission sync now rethrows is retried here, not a 500.
    */
   private isSerializationFailure(err: any): boolean {
-    if (err instanceof HttpException) return false;
-    if (err?.code === "P2034") return true;
-    if (err?.name === "DriverAdapterError" && err?.cause?.kind === "TransactionWriteConflict")
-      return true;
-    if (err?.meta?.code === "40001") return true;
-    const message = String(err?.message ?? "");
-    return (
-      message.includes("40001") ||
-      message.includes("could not serialize access") ||
-      message === "TransactionWriteConflict"
-    );
+    return txConflictState(err) != null;
   }
 
   /**
@@ -196,12 +168,16 @@ export class CreditNotesService {
         invoiceItemId: { in: [...mergedByLine.keys()] },
         creditNote: { invoiceId: dto.invoiceId, status: { not: "VOID" } },
       },
-      select: { invoiceItemId: true, amount: true },
+      select: { invoiceItemId: true, amount: true, qty: true },
     });
     const creditedByLine = new Map<string, number>();
+    // SA-401a: credited QUANTITY per line too (base pieces, like InvoiceItem.qty), so a line
+    // cannot be credited for more units than it sold even when its amount cap has headroom.
+    const creditedQtyByLine = new Map<string, number>();
     for (const it of priorLineItems) {
       const k = it.invoiceItemId ?? "";
       creditedByLine.set(k, (creditedByLine.get(k) ?? 0) + Number(it.amount));
+      creditedQtyByLine.set(k, (creditedQtyByLine.get(k) ?? 0) + Number(it.qty ?? 0));
     }
 
     let sum = 0;
@@ -223,6 +199,26 @@ export class CreditNotesService {
         );
       sum += amt;
       const frac = lineSubtotal > 0 ? Math.min(1, amt / lineSubtotal) : 0;
+      const lineQty = Number(line.qty);
+      const priorQtyForLine = creditedQtyByLine.get(li.invoiceItemId) ?? 0;
+      // #2245: an amount-only credit (no qty — the web picker) defaults to line.qty × fraction,
+      // and those round3s accumulate (three 1/3 credits of 2 pieces are 0.667 × 3 = 2.001). The
+      // default is clamped to what is left, and the credit that CLOSES the line's amount takes
+      // exactly the rest. An explicit qty is the operator's number and stays strictly capped.
+      const qtyLeft = this.round3(Math.max(0, lineQty - priorQtyForLine));
+      const closesLine = priorForLine + amt >= lineSubtotal - 0.001;
+      const qty =
+        li.qty != null
+          ? this.round3(li.qty)
+          : closesLine
+            ? qtyLeft
+            : Math.min(this.round3(lineQty * frac), qtyLeft);
+      if (priorQtyForLine + qty > lineQty + 0.001)
+        throw new BadRequestException(
+          priorQtyForLine > 0
+            ? `Credit line qty (${qty}) plus prior credited qty (${this.round3(priorQtyForLine)}) would exceed invoice line qty (${lineQty})`
+            : `Credit line qty (${qty}) exceeds invoice line qty (${lineQty})`,
+        );
       return {
         invoiceItemId: line.id,
         // Snapshot the category as it was AT SALE (the invoice line), NEVER the
@@ -230,7 +226,7 @@ export class CreditNotesService {
         // that actually sold regulated has a matching SALE row to reverse.
         trackedCategoryId: line.trackedCategoryId ?? null,
         amount: roundMoney(amt),
-        qty: li.qty != null ? this.round3(li.qty) : this.round3(Number(line.qty) * frac),
+        qty,
         categoryTax: roundMoney(Number(line.categoryTaxAmount ?? 0) * frac),
       };
     });
@@ -488,14 +484,19 @@ export class CreditNotesService {
             });
             const created = { ...row, customer };
 
-            // Only regulated lines drive a ledger reversal (CreditNoteItem is consumed
-            // solely by reverseCreditNoteEntries, which filters on trackedCategoryId).
-            const regulatedItems = cnItemsData.filter((i) => i.trackedCategoryId);
-            if (regulatedItems.length > 0 && tenantId) {
+            // SA-311 (#2181): EVERY validated line persists its CreditNoteItem, ordinary
+            // and regulated: the line link feeds sales-facts attribution and the
+            // cumulative per-line cap above (priorForLine), which never accumulated for
+            // ordinary lines when only regulated items were written. Only regulated lines
+            // drive a ledger reversal: reverseCreditNoteEntries reads items with
+            // trackedCategoryId not null, so gating the call here keeps it byte-identical.
+            if (cnItemsData.length > 0 && tenantId) {
               await tx.creditNoteItem.createMany({
-                data: regulatedItems.map((i) => ({ ...i, creditNoteId: created.id, tenantId })),
+                data: cnItemsData.map((i) => ({ ...i, creditNoteId: created.id, tenantId })),
               });
-              await this.ledger.reverseCreditNoteEntries({ creditNoteId: created.id, db: tx });
+              if (cnItemsData.some((i) => i.trackedCategoryId)) {
+                await this.ledger.reverseCreditNoteEntries({ creditNoteId: created.id, db: tx });
+              }
             }
             return created;
           },
@@ -823,45 +824,49 @@ export class CreditNotesService {
   }
 
   async applyToInvoice(creditNoteId: string, invoiceId: string, amount?: number) {
-    return this.prisma.tenantTransaction(
-      async (tx) => {
-        const cn = await tx.creditNote.findUnique({ where: { id: creditNoteId } });
-        if (!cn || cn.status === "APPLIED" || cn.status === "VOID")
-          throw new BadRequestException("Credit note is not available for application");
-        if (cn.expiresAt && new Date(cn.expiresAt) <= new Date())
-          throw new BadRequestException("Credit note has expired");
+    // SA-392 (#2201): the WHOLE Serializable tx re-runs on a 40001/40P01 conflict (bounded); the
+    // body is DB-only and idempotent, and the in-tx commission sync now rethrows a conflict.
+    return retryOnTxConflict(`credit apply cn=${creditNoteId} inv=${invoiceId}`, () =>
+      this.prisma.tenantTransaction(
+        async (tx) => {
+          const cn = await tx.creditNote.findUnique({ where: { id: creditNoteId } });
+          if (!cn || cn.status === "APPLIED" || cn.status === "VOID")
+            throw new BadRequestException("Credit note is not available for application");
+          if (cn.expiresAt && new Date(cn.expiresAt) <= new Date())
+            throw new BadRequestException("Credit note has expired");
 
-        const inv = await tx.invoice.findUnique({
-          where: { id: invoiceId },
-          include: { payments: true },
-        });
-        if (!inv) throw new NotFoundException("Invoice not found");
+          const inv = await tx.invoice.findUnique({
+            where: { id: invoiceId },
+            include: { payments: true },
+          });
+          if (!inv) throw new NotFoundException("Invoice not found");
 
-        if (CREDIT_NOT_APPLICABLE.includes(inv.status)) {
-          throw new BadRequestException(
-            `Cannot apply credit note to invoice with status ${inv.status}`,
-          );
-        }
-        if (cn.customerId !== inv.customerId) {
-          throw new BadRequestException("Credit note and invoice belong to different customers");
-        }
+          if (CREDIT_NOT_APPLICABLE.includes(inv.status)) {
+            throw new BadRequestException(
+              `Cannot apply credit note to invoice with status ${inv.status}`,
+            );
+          }
+          if (cn.customerId !== inv.customerId) {
+            throw new BadRequestException("Credit note and invoice belong to different customers");
+          }
 
-        const { applied } = await this.applyCreditInTx(tx, cn, inv, amount);
-        if (applied <= 0)
-          throw new BadRequestException(
-            "Credit note has no remaining balance or invoice is fully paid",
-          );
+          const { applied } = await this.applyCreditInTx(tx, cn, inv, amount);
+          if (applied <= 0)
+            throw new BadRequestException(
+              "Credit note has no remaining balance or invoice is fully paid",
+            );
 
-        return tx.invoice.findUnique({
-          where: { id: invoiceId },
-          include: {
-            customer: { select: { id: true, businessName: true } },
-            items: true,
-            payments: { orderBy: { createdAt: "desc" } },
-          },
-        });
-      },
-      { isolationLevel: "Serializable" },
+          return tx.invoice.findUnique({
+            where: { id: invoiceId },
+            include: {
+              customer: { select: { id: true, businessName: true } },
+              items: true,
+              payments: { orderBy: { createdAt: "desc" } },
+            },
+          });
+        },
+        { isolationLevel: "Serializable" },
+      ),
     );
   }
 
@@ -916,39 +921,42 @@ export class CreditNotesService {
   }
 
   async voidCreditNote(id: string) {
-    const voided = await this.prisma.tenantTransaction(
-      async (tx: any) => {
-        const cn = await tx.creditNote.findFirst({
-          where: { id },
-          select: { status: true, amountUsed: true },
-        });
-        if (!cn) throw new NotFoundException("Credit note not found");
-        // A credit that's been consumed as a payment can't be voided — un-applying it
-        // first is the only safe path. Without this, void would delete the ledger
-        // reversal (re-inflating net sales) AND leave the InvoicePayment orphaned.
-        if (cn.status === "APPLIED" || Number(cn.amountUsed) > 0) {
-          throw new BadRequestException(
-            "Cannot void a credit note that has been applied — un-apply it first.",
-          );
-        }
-        // Race-free flip: only ISSUED/DRAFT + unused → VOID. A concurrent
-        // applyToInvoice (also serializable) that sets amountUsed>0 / APPLIED makes
-        // this updateMany match 0 rows, so we refuse rather than orphan the payment.
-        const flipped = await tx.creditNote.updateMany({
-          where: { id, status: { notIn: ["APPLIED", "VOID"] }, amountUsed: 0 },
-          data: { status: "VOID" },
-        });
-        if (flipped.count === 0) {
-          throw new BadRequestException(
-            "Cannot void a credit note that has been applied — un-apply it first.",
-          );
-        }
-        // W5c: undo the regulated ledger reversal booked at creation (safe now — the
-        // credit was never consumed, so voiding restores the sale to full).
-        await this.ledger.unreverseCreditNoteEntries({ creditNoteId: id, db: tx });
-        return tx.creditNote.findUnique({ where: { id } });
-      },
-      { isolationLevel: "Serializable" },
+    // SA-392 (#2201): the WHOLE Serializable tx re-runs on a 40001/40P01 conflict (bounded).
+    const voided = await retryOnTxConflict(`credit void cn=${id}`, () =>
+      this.prisma.tenantTransaction(
+        async (tx: any) => {
+          const cn = await tx.creditNote.findFirst({
+            where: { id },
+            select: { status: true, amountUsed: true },
+          });
+          if (!cn) throw new NotFoundException("Credit note not found");
+          // A credit that's been consumed as a payment can't be voided — un-applying it
+          // first is the only safe path. Without this, void would delete the ledger
+          // reversal (re-inflating net sales) AND leave the InvoicePayment orphaned.
+          if (cn.status === "APPLIED" || Number(cn.amountUsed) > 0) {
+            throw new BadRequestException(
+              "Cannot void a credit note that has been applied — un-apply it first.",
+            );
+          }
+          // Race-free flip: only ISSUED/DRAFT + unused → VOID. A concurrent
+          // applyToInvoice (also serializable) that sets amountUsed>0 / APPLIED makes
+          // this updateMany match 0 rows, so we refuse rather than orphan the payment.
+          const flipped = await tx.creditNote.updateMany({
+            where: { id, status: { notIn: ["APPLIED", "VOID"] }, amountUsed: 0 },
+            data: { status: "VOID" },
+          });
+          if (flipped.count === 0) {
+            throw new BadRequestException(
+              "Cannot void a credit note that has been applied — un-apply it first.",
+            );
+          }
+          // W5c: undo the regulated ledger reversal booked at creation (safe now — the
+          // credit was never consumed, so voiding restores the sale to full).
+          await this.ledger.unreverseCreditNoteEntries({ creditNoteId: id, db: tx });
+          return tx.creditNote.findUnique({ where: { id } });
+        },
+        { isolationLevel: "Serializable" },
+      ),
     );
 
     // B343: emitted outside the tx, mirroring create()'s emitCreditNoteCreated — a
@@ -1487,57 +1495,60 @@ export class CreditNotesService {
    * dollars. Returns the fresh credit note row.
    */
   async unapplyFromInvoice(creditNoteId: string, invoiceId: string) {
-    return this.prisma.tenantTransaction(
-      async (tx: any) => {
-        // scan-ok: draft-payment-not-void — method-scoped to CREDIT_NOTE (see
-        // pullBackOrderCreditPair above).
-        const payments = await tx.invoicePayment.findMany({
-          where: {
-            creditNoteId,
-            invoiceId,
-            method: PaymentMethod.CREDIT_NOTE,
-            status: { not: "VOID" },
-          },
-          orderBy: { createdAt: "desc" },
-        });
-        if (!payments.length)
-          throw new BadRequestException(
-            "This credit note has no active application to that invoice",
-          );
-
-        let restored = 0;
-        for (const p of payments) {
-          restored = roundMoney(restored + (await this.restoreCreditFromPaymentInTx(tx, p)));
-        }
-
-        const invoice = await tx.invoice.findFirst({
-          where: { id: invoiceId },
-          select: { orderId: true },
-        });
-        if (invoice?.orderId) {
-          const link = await tx.orderCreditNote.findFirst({
-            where: { orderId: invoice.orderId, creditNoteId },
+    // SA-392 (#2201): the WHOLE Serializable tx re-runs on a 40001/40P01 conflict (bounded).
+    return retryOnTxConflict(`credit unapply cn=${creditNoteId} inv=${invoiceId}`, () =>
+      this.prisma.tenantTransaction(
+        async (tx: any) => {
+          // scan-ok: draft-payment-not-void — method-scoped to CREDIT_NOTE (see
+          // pullBackOrderCreditPair above).
+          const payments = await tx.invoicePayment.findMany({
+            where: {
+              creditNoteId,
+              invoiceId,
+              method: PaymentMethod.CREDIT_NOTE,
+              status: { not: "VOID" },
+            },
+            orderBy: { createdAt: "desc" },
           });
-          if (link) {
-            if (link.amount == null) {
-              await tx.orderCreditNote.delete({ where: { id: link.id } });
-            } else {
-              const newAmt = roundMoney(Number(link.amount) - restored);
-              if (newAmt > 0.001) {
-                await tx.orderCreditNote.update({
-                  where: { id: link.id },
-                  data: { amount: newAmt },
-                });
-              } else {
+          if (!payments.length)
+            throw new BadRequestException(
+              "This credit note has no active application to that invoice",
+            );
+
+          let restored = 0;
+          for (const p of payments) {
+            restored = roundMoney(restored + (await this.restoreCreditFromPaymentInTx(tx, p)));
+          }
+
+          const invoice = await tx.invoice.findFirst({
+            where: { id: invoiceId },
+            select: { orderId: true },
+          });
+          if (invoice?.orderId) {
+            const link = await tx.orderCreditNote.findFirst({
+              where: { orderId: invoice.orderId, creditNoteId },
+            });
+            if (link) {
+              if (link.amount == null) {
                 await tx.orderCreditNote.delete({ where: { id: link.id } });
+              } else {
+                const newAmt = roundMoney(Number(link.amount) - restored);
+                if (newAmt > 0.001) {
+                  await tx.orderCreditNote.update({
+                    where: { id: link.id },
+                    data: { amount: newAmt },
+                  });
+                } else {
+                  await tx.orderCreditNote.delete({ where: { id: link.id } });
+                }
               }
             }
           }
-        }
 
-        return tx.creditNote.findUnique({ where: { id: creditNoteId } });
-      },
-      { isolationLevel: "Serializable" },
+          return tx.creditNote.findUnique({ where: { id: creditNoteId } });
+        },
+        { isolationLevel: "Serializable" },
+      ),
     );
   }
 

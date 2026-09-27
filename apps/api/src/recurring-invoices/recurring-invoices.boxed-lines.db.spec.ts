@@ -46,6 +46,7 @@ import { CommissionEngineService } from "../sales-agents/commission-engine.servi
 import { EstimatesService } from "../estimates/estimates.service";
 import { NumberingService } from "../import/numbering.service";
 import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
+import { NotificationsService } from "../notifications/notifications.service";
 import { describeDb, requireLocalDatabaseUrl } from "../common/testing/db-spec";
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
@@ -81,8 +82,13 @@ describeDb("B646 — a boxed recurring template line is stored in pieces, real P
         // boxed template quantities, so it allows every line.
         {
           provide: SellingRestrictionsService,
-          useValue: { assertLinesSellable: jest.fn().mockResolvedValue(undefined) },
+          useValue: {
+            assertLinesSellable: jest.fn().mockResolvedValue(undefined),
+            // the unattended run (`generateInvoiceFromTemplate`) asks the non-throwing check
+            checkLinesSellable: jest.fn().mockResolvedValue({ outcome: "ALLOW", reasons: [] }),
+          },
         },
+        { provide: NotificationsService, useValue: { sendToUser: jest.fn().mockResolvedValue(1) } },
         { provide: PrismaService, useValue: prisma },
         { provide: TenantContextService, useValue: tenantCtx },
         {

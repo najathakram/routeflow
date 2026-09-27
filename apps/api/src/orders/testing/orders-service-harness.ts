@@ -23,6 +23,7 @@ jest.mock("../../notifications/notifications.service", () => ({
   NotificationsService: jest.fn().mockImplementation(() => ({
     sendToCustomer: jest.fn().mockResolvedValue(undefined),
     sendToDriver: jest.fn().mockResolvedValue(undefined),
+    sendToUser: jest.fn().mockResolvedValue(1),
   })),
 }));
 
@@ -121,6 +122,7 @@ export async function buildOrdersService() {
         useValue: {
           sendToCustomer: jest.fn().mockResolvedValue(undefined),
           sendToDriver: jest.fn().mockResolvedValue(undefined),
+          sendToUser: jest.fn().mockResolvedValue(1),
         },
       },
       {
@@ -204,7 +206,10 @@ export async function buildOrdersService() {
     /** the side-effect stubs a refused or rolled-back status change must never reach */
     sideEffects: {
       gateway: module.get(RouteFlowGateway) as unknown as { emitOrderStatusChanged: jest.Mock },
-      notifications: module.get(NotificationsService) as unknown as { sendToCustomer: jest.Mock },
+      notifications: module.get(NotificationsService) as unknown as {
+        sendToCustomer: jest.Mock;
+        sendToUser: jest.Mock;
+      },
       messaging: module.get(MessagingService) as unknown as { notifyEvent: jest.Mock },
     },
   };
