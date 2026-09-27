@@ -55,6 +55,21 @@ export interface ShortPickLine {
    * stepper's upper bound; never derived from the live product.
    */
   boxes?: number | null;
+  /**
+   * SA-175/FIX 6: pieces left over after `boxes` whole units of `unitsPerBox` — always
+   * `orderedQty - boxes*unitsPerBox`; null when no split is known (`unitsPerBox` missing or
+   * <= 1). A REMAINING view (second visit) is not always an exact multiple of the case size —
+   * some of it may have been delivered piecemeal at another visit — so the stepper needs the
+   * TRUE remainder, never one a `Math.round` rounded away.
+   */
+  pieces?: number | null;
+  /**
+   * SA-367a: the run read served NO `remaining` for this line (an api older than #1353). The client
+   * never derives the remaining itself, so there is no default: the stepper starts EMPTY and the
+   * driver must enter what was delivered — never the full qty. `orderedQty` then carries the line's
+   * qty only as the input ceiling (the server's 400 is the real bound). See `linesAwaitingEntry`.
+   */
+  needsEntry?: boolean;
 }
 
 /**
@@ -70,31 +85,133 @@ export function isUnitAwareLine(li: Pick<ShortPickLine, "unitLabel" | "unitsPerB
   return (li.unitLabel ?? "").trim() !== "" && Number(li.unitsPerBox ?? 0) > 1;
 }
 
+// ─── Whole-Case stepper math (FIX 6, SA-175) ───────────────────────────────────
+//
+// `ordered` is the line's REMAINING qty (a second visit) or its full qty (a first visit) — not
+// always an exact multiple of `unitsPerBox`. `caseStepperCasesDelivered` FLOORS, never rounds:
+// a rounded-up Case count can bound the stepper's top above what actually remains (30 left of a
+// 12-Case rounds to "3 of 3" = 36, over-delivering — the server's own fit check then refuses the
+// submit). The stepper's true top value is always exactly `ordered` itself (the last, partial
+// step) — never `floor(ordered/unitsPerBox) * unitsPerBox`, which can be LESS than `ordered` and
+// would silently strand a partial Case's worth of pieces as undeliverable.
+//
+// Pulled out of the review row (short-pick.tsx) as pure functions per this project's
+// mobile-tests-are-pure-logic-only convention — the money-relevant part of a stepper widget is
+// exactly the part that must be independently, deterministically testable.
+
+/** Whole Cases `qty` represents — floored and capped at the whole Cases `ordered` allows. The
+ *  shared basis every function below reads, so display and both step directions can never
+ *  disagree on what "N Cases" means for a given qty. */
+export function caseStepperCasesDelivered(
+  qty: number,
+  ordered: number,
+  unitsPerBox: number,
+): number {
+  if (unitsPerBox <= 0) return 0;
+  const caseCount = Math.floor(ordered / unitsPerBox);
+  const clampedQty = Math.max(0, Math.min(qty, ordered));
+  return Math.min(caseCount, Math.floor(clampedQty / unitsPerBox));
+}
+
+/** Pieces left over after the whole Cases `ordered` contains — 0 when `ordered` is an exact
+ *  multiple of `unitsPerBox`. */
+export function caseStepperRemainderPieces(ordered: number, unitsPerBox: number): number {
+  if (unitsPerBox <= 0) return 0;
+  return Math.max(0, ordered - Math.floor(ordered / unitsPerBox) * unitsPerBox);
+}
+
 /**
- * B648/SA-094a: the delivered qty this module ever uses for a line. For a
- * unit-aware line (`isUnitAwareLine`, factor > 1), `deliveredQtyById`'s raw
- * entry SNAPS DOWN to the nearest whole multiple of the line's own
- * `unitsPerBox` — `clamp(floor(raw / unitsPerBox) * unitsPerBox, 0,
- * orderedQty)` — so a stray/leftover piece count (e.g. 300 on a 288-piece
- * Case) can never leak a fractional Case into the money math (300 -> 288,
- * one whole Case, never 300 pieces of "partial"). n=0 -> REFUSED, n=count ->
- * DELIVERED, anything between -> PARTIAL at that many WHOLE cases. No entry
- * at all is the universal "untouched" default every other line already
- * uses: fully delivered. Every function below reads through this ONE place —
- * `normalizeDeliveryPlan` exports the same snapping for every caller that
- * needs a full plan map, not just one line's value (SA-094b's normalizer
- * requirement: the category-tax half and the review row's own badge must
- * read the SAME snapped number reconciledTotal/buildDeliveries already do).
+ * One step DOWN. The top state (`qty === ordered`, including any partial-Case remainder) steps
+ * down to `casesDelivered` WHOLE Cases first (dropping just the remainder); every step below
+ * that drops one whole Case. Always reaches 0 — the driver can refuse the line even when less
+ * than one whole Case remains (`ordered < unitsPerBox`, `casesDelivered` 0 throughout).
+ */
+export function caseStepperDecrement(qty: number, ordered: number, unitsPerBox: number): number {
+  if (unitsPerBox <= 0) return 0;
+  const casesDelivered = caseStepperCasesDelivered(qty, ordered, unitsPerBox);
+  const remainderPieces = caseStepperRemainderPieces(ordered, unitsPerBox);
+  const atFull = qty >= ordered;
+  const next =
+    atFull && remainderPieces > 0
+      ? casesDelivered * unitsPerBox
+      : Math.max(0, casesDelivered - 1) * unitsPerBox;
+  return Math.max(0, next);
+}
+
+/**
+ * One step UP. Its top value is exactly `ordered` — never `caseCount * unitsPerBox`, which can
+ * be LESS than `ordered` (a partial Case still remains) and is never MORE (`ordered` is already
+ * the true, floored-and-remaindered bound) — so this can never send more than what remains.
+ */
+export function caseStepperIncrement(qty: number, ordered: number, unitsPerBox: number): number {
+  if (unitsPerBox <= 0) return ordered;
+  const caseCount = Math.floor(ordered / unitsPerBox);
+  const casesDelivered = caseStepperCasesDelivered(qty, ordered, unitsPerBox);
+  const next = casesDelivered < caseCount ? (casesDelivered + 1) * unitsPerBox : ordered;
+  return Math.min(ordered, next);
+}
+
+/**
+ * SA-175 review: the Case-stepper's own label, ALWAYS naming the Case count — even 0 — unlike
+ * `@routeflow/pricing`'s `formatQtySplit` (which suppresses a zero box count, correct for its
+ * other, non-stepper callers). "0 of 0" alone reads as "nothing to account for here"; "0 Cases +
+ * 5 pcs" tells the driver there's still a genuine partial-Case remainder to short or refuse.
+ */
+export function formatCaseStepperSplit(
+  boxes: number,
+  pieces: number,
+  boxLabel?: string | null,
+): string {
+  const singular = (boxLabel ?? "").trim() || "box";
+  const plural = singular === "box" ? "boxes" : singular.endsWith("s") ? singular : `${singular}s`;
+  const boxPart = `${boxes} ${boxes === 1 ? singular : plural}`;
+  return pieces > 0 ? `${boxPart} + ${pieces} pcs` : boxPart;
+}
+
+/**
+ * B648/SA-094a (SA-175 review, FLOOR-OR-PASS-THROUGH): the delivered qty this module ever uses
+ * for a line. For a unit-aware line (`isUnitAwareLine`, factor > 1): a raw entry that already
+ * reaches or exceeds `orderedQty` (the REMAINING qty on a second visit, per B785/SA-116 — not
+ * always an exact multiple of `unitsPerBox`) passes through AS `orderedQty`, never floored —
+ * that top value is the stepper's own genuine partial-Case step (`caseStepperIncrement`), and
+ * flooring it silently dropped the remainder (30 left of a 12-Case floored to 24, stranding the
+ * driver at a PARTIAL $48 instead of the true $60 due). Any value strictly BELOW `orderedQty`
+ * still SNAPS DOWN to the nearest whole multiple of `unitsPerBox` —
+ * `clamp(floor(raw / unitsPerBox) * unitsPerBox, 0, orderedQty)` — so a stray/leftover piece
+ * count there (e.g. 300 on a 288-piece Case) can never leak a fractional Case into the money math.
+ * n=0 -> REFUSED, n=orderedQty -> DELIVERED, anything between -> PARTIAL at that many WHOLE
+ * cases (or the exact remainder at the top). No entry at all is the universal "untouched" default
+ * every other line already uses: fully delivered. Every function below reads through this ONE
+ * place — `normalizeDeliveryPlan` exports the same resolution for every caller that needs a full
+ * plan map, not just one line's value (SA-094b's normalizer requirement: the category-tax half
+ * and the review row's own badge must read the SAME resolved number reconciledTotal/
+ * buildDeliveries already do).
  */
 function effectiveDeliveredQty(
-  li: Pick<ShortPickLine, "orderItemId" | "orderedQty" | "unitLabel" | "unitsPerBox">,
+  li: Pick<
+    ShortPickLine,
+    "orderItemId" | "orderedQty" | "unitLabel" | "unitsPerBox" | "needsEntry"
+  >,
   deliveredQtyById: Record<string, number>,
 ): number {
   const raw = deliveredQtyById[li.orderItemId];
+  // SA-367a: no server `remaining` ⇒ no default. An untouched line counts 0 here (it bills nothing
+  // in the estimate) and `buildDeliveries` refuses to build a payload until the driver enters it.
+  if (li.needsEntry && raw == null) return 0;
   if (isUnitAwareLine(li)) {
     if (raw == null) return li.orderedQty;
+    const clampedRaw = Math.max(0, raw);
+    // SA-175 review fix (post-FIX-6): on a second visit `orderedQty` is the REMAINING qty, not
+    // always an exact multiple of `unitsPerBox` — its own top state is a genuine partial Case
+    // (caseStepperIncrement's last step lands exactly on it). Flooring FIRST, before checking
+    // whether `raw` already reaches that top, silently dropped the partial-Case remainder: 30
+    // left of a 12-Case floored to 24 (PARTIAL $48 of $60, never the untouched $60 full amount),
+    // and 5 left of 12 floored to 0 (REFUSED $0, even though the driver never touched the row).
+    // A raw value that already reaches (or exceeds) `orderedQty` must pass through AS the
+    // remaining, never get floored down to the whole-Case boundary below it.
+    if (clampedRaw >= li.orderedQty) return li.orderedQty;
     const upb = Number(li.unitsPerBox);
-    const snapped = Math.floor(Math.max(0, raw) / upb) * upb;
+    const snapped = Math.floor(clampedRaw / upb) * upb;
     return Math.max(0, Math.min(snapped, li.orderedQty));
   }
   return Math.max(0, Math.min(raw ?? li.orderedQty, li.orderedQty));
@@ -117,6 +234,10 @@ export function normalizeDeliveryPlan(
 ): Record<string, number> {
   const out: Record<string, number> = {};
   for (const li of lines) {
+    // SA-367a: an un-entered needsEntry line stays ABSENT — a resolved 0 here would read as the
+    // driver's own "refused" once this map reaches buildStopDeliveries, bypassing its fail-closed
+    // check. Every money reader treats it as 0 itself (effectiveDeliveredQty, shortPickCategoryTax).
+    if (li.needsEntry && deliveredQtyById[li.orderItemId] == null) continue;
     out[li.orderItemId] = effectiveDeliveredQty(li, deliveredQtyById);
   }
   return out;
@@ -162,6 +283,133 @@ export interface ShortPickSourceLine {
   product?: { unitsPerBox?: number | null } | null;
 }
 
+/** orderItemId -> pieces already delivered at OTHER visits (the run read's per-stop
+ *  `deliveredSoFar` projection, B785/SA-116). Absent/0 = a first visit. DISPLAY-ONLY (SA-367b):
+ *  it prices the remaining money as the marginal tail; it never decides a quantity. */
+export type DeliveredSoFarById = Readonly<Record<string, number>>;
+
+/** orderItemId -> the server-computed `remaining` for THIS stop (SA-366: the same `lineRemaining`
+ *  the completion bound accepts up to — 0 for a cancelled line or a line of a cancelled/draft
+ *  order). A line ABSENT from the map had no `remaining` served (an older api): SA-367a. */
+export type ServerRemainingById = Readonly<Record<string, number>>;
+
+/**
+ * SA-367a: flattens the run read's stop snapshot (`stop.orders[].lineItems[].remaining`) to a map —
+ * the ONLY source of every quantity decision here (stepper default, Case ceiling, the "nothing
+ * left" drop, the DELIVERED/PARTIAL type). A missing, null or non-finite value is left OUT (not
+ * 0, not qty), so the line falls to `needsEntry`.
+ */
+export function remainingByLine(
+  stopOrders:
+    | readonly {
+        lineItems?: readonly { id: string; remaining?: number | string | null }[] | null;
+      }[]
+    | null
+    | undefined,
+): Record<string, number> {
+  const out: Record<string, number> = {};
+  for (const o of stopOrders ?? []) {
+    for (const li of o.lineItems ?? []) {
+      if (li.remaining == null) continue;
+      const n = Number(li.remaining);
+      if (Number.isFinite(n)) out[li.id] = Math.max(0, n);
+    }
+  }
+  return out;
+}
+
+/** Flattens the run read's stop snapshot (`stop.orders[].lineItems[].deliveredSoFar`) to a map. */
+export function deliveredSoFarByLine(
+  stopOrders:
+    | readonly {
+        lineItems?: readonly { id: string; deliveredSoFar?: number | string | null }[] | null;
+      }[]
+    | null
+    | undefined,
+): Record<string, number> {
+  const out: Record<string, number> = {};
+  for (const o of stopOrders ?? []) {
+    for (const li of o.lineItems ?? []) {
+      const n = Number(li.deliveredSoFar ?? 0);
+      if (n > 0) out[li.id] = n;
+    }
+  }
+  return out;
+}
+
+/**
+ * B785/SA-116 + SA-367a: whether the review screen offers a line at all. With a server `remaining`
+ * the line is offered exactly while something remains (`remaining > 0` — which also drops a
+ * cancelled line, or a line of a cancelled/draft order, whose served remaining is 0). With NO
+ * `remaining` served (an older api) the pre-B785 rule holds: not cancelled and nothing delivered
+ * yet. The client never computes `qty − deliveredSoFar` to decide this.
+ */
+export function isLineAdjustable(
+  li: { status?: string | null; qty: number | string; deliveredQty?: number | string | null },
+  remaining?: number,
+): boolean {
+  if (li.status === "CANCELLED") return false;
+  if (remaining !== undefined) return remaining > 0;
+  return Number(li.deliveredQty ?? 0) === 0;
+}
+
+/**
+ * B785/SA-116 + SA-367a: the PER-VISIT view of a line — what THIS visit can still deliver. Every
+ * QUANTITY comes from the server's `remaining`: the ordered qty (so the stepper default, the
+ * DELIVERED/PARTIAL type and the default explicit entry) and a unit-aware line's Case ceiling
+ * (`floor(remaining / unitsPerBox)` plus the true remainder). `soFar` only prices the remaining
+ * money (FIX 7, display-only per SA-367b; the server bills from its own reader on close). No
+ * `remaining` served ⇒ `needsEntry`: no default at all, `orderedQty` = the line's qty as a ceiling.
+ */
+function visitView(li: ShortPickSourceLine, remaining: number | undefined, soFar: number) {
+  const qty = Number(li.qty);
+  const freeUnitSize = freeUnitSizeFor(li);
+  const upb = Number(li.unitsPerBox ?? 0);
+  const hasSplit = li.boxes != null && upb > 0;
+  if (remaining === undefined || !(soFar > 0)) {
+    // A first visit (nothing delivered elsewhere) or no served remaining: the stored split and the
+    // full agreed money. `orderedQty` is the served remaining when there is one (it equals qty on
+    // a first visit), else qty as the needsEntry ceiling.
+    const ordered = remaining ?? qty;
+    const boxes = hasSplit && ordered !== qty ? Math.floor(ordered / upb) : (li.boxes ?? null);
+    return {
+      orderedQty: ordered,
+      subtotal: li.subtotal ?? null,
+      freeUnits: li.promoFreeUnits ?? 0,
+      freeUnitSize,
+      boxes,
+      pieces: hasSplit ? ordered - Number(boxes) * upb : null,
+      ...(remaining === undefined ? { needsEntry: true } : {}),
+    };
+  }
+  // FIX 6 (SA-175): FLOOR, never round — a rounded-up Case count can bound the stepper's top
+  // above what actually remains (30 left of a 12-Case rounds to "3 of 3" = 36, over-delivering).
+  // FIX 7 (SA-175): the remaining money is the CUMULATIVE telescope's tail, not a fresh proration
+  // of the front `remaining` pieces — prorateLineSubtotal's promo/BOGO curve is non-linear, so
+  // "price(qty) − price(soFar)" (the true marginal price of the pieces beyond soFar) can differ
+  // from "price(remaining)" (which silently re-prices the first `remaining` pieces as if THEY
+  // were the ones still owed, wrong the moment a free unit lands on one side of that split and
+  // not the other). This exactly matches the server's own paid-basis formula.
+  const boxes = hasSplit ? Math.floor(remaining / upb) : (li.boxes ?? null);
+  return {
+    orderedQty: remaining,
+    subtotal:
+      li.subtotal == null
+        ? null
+        : // SA-175 review (W/N): both operands are already roundMoney'd inside
+          // prorateLineSubtotal, but their JS-float subtraction can still land a cent off
+          // (e.g. 0.1 − 0.03 → 0.06999999999999999) — round the tail itself too.
+          roundMoney(
+            prorateLineSubtotal(li.subtotal, qty, qty, li.promoFreeUnits ?? 0, freeUnitSize) -
+              prorateLineSubtotal(li.subtotal, soFar, qty, li.promoFreeUnits ?? 0, freeUnitSize),
+          ),
+    freeUnits: 0, // already netted out of the prorated subtotal above
+    freeUnitSize: 1,
+    boxes,
+    pieces: hasSplit ? remaining - (boxes as number) * upb : null,
+  };
+}
+
 /**
  * An order's lines -> `ShortPickLine[]` (B762): the SAME mapping
  * short-pick.tsx and payment.tsx each used to inline separately, byte-
@@ -170,27 +418,27 @@ export interface ShortPickSourceLine {
  * shared derivation is what keeps that convention enforced rather than
  * merely documented. Excludes CANCELLED lines (not adjustable) and lines
  * already delivered (a reopened, partially-completed stop shouldn't
- * re-offer an already-settled line).
+ * re-offer an already-settled line). B785/SA-367a: a line is offered at the
+ * server's `remaining` (`remainingById`, off the stop's run snapshot); a line
+ * with no served remaining is offered with an EMPTY stepper (`needsEntry`).
  */
 export function shortPickLinesFromOrder(
   order: { lineItems?: readonly ShortPickSourceLine[] | null } | null | undefined,
+  remainingById: ServerRemainingById,
+  soFarById: DeliveredSoFarById = {},
 ): ShortPickLine[] {
   return (order?.lineItems ?? [])
-    .filter((li) => li.status !== "CANCELLED" && Number(li.deliveredQty ?? 0) === 0)
+    .filter((li) => isLineAdjustable(li, remainingById[li.id]))
     .map((li) => ({
       orderItemId: li.id,
       productId: li.productId,
-      orderedQty: Number(li.qty),
-      subtotal: li.subtotal ?? null,
-      freeUnits: li.promoFreeUnits ?? 0,
-      freeUnitSize: freeUnitSizeFor(li),
+      ...visitView(li, remainingById[li.id], soFarById[li.id] ?? 0),
       // B648/SA-094 (carried through the B762 merge): without these,
       // isUnitAwareLine reads every multi-order line as a plain pack line —
       // a Case line loses its whole-Case stepper and normalizeDeliveryPlan's
       // snap the moment it's reviewed through the multi-order fan-out.
       unitLabel: li.unitLabel ?? null,
       unitsPerBox: li.unitsPerBox ?? null,
-      boxes: li.boxes ?? null,
     }));
 }
 
@@ -207,6 +455,10 @@ export interface StopSnapshotLine {
   boxes?: number | null;
   unitsPerBox?: number | null;
   unitLabel?: string | null;
+  /** B785/SA-116: pieces delivered at OTHER visits (run read projection) — display money only. */
+  deliveredSoFar?: number | string | null;
+  /** SA-366/SA-367a: the server-computed remaining for this stop — every quantity decision. */
+  remaining?: number | string | null;
 }
 
 /**
@@ -240,20 +492,80 @@ export interface StopSnapshotLine {
 export function fallbackShortPickLines(
   order: { lineItems?: readonly StopSnapshotLine[] | null } | null | undefined,
 ): ShortPickLine[] {
-  return (order?.lineItems ?? [])
-    .filter((li) => li.status !== "CANCELLED")
-    .map((li) => ({
-      orderItemId: li.id,
-      productId: li.productId,
-      orderedQty: Number(li.qty ?? 0),
-      subtotal: li.subtotal != null ? Number(li.subtotal) : null,
-      freeUnits: 0,
-      freeUnitSize: 1,
-      // B648/SA-094 (carried through the B762 merge) — see StopSnapshotLine.
-      unitLabel: li.unitLabel ?? null,
-      unitsPerBox: li.unitsPerBox ?? null,
-      boxes: li.boxes ?? null,
-    }));
+  // SA-367a: the snapshot IS the run read, so it carries the server's `remaining` itself.
+  const remainingById = remainingByLine([order ?? {}]);
+  return (
+    (order?.lineItems ?? [])
+      // B785/SA-116 + SA-367a: a later visit's fallback entry is the server's REMAINING, never a
+      // re-claim of the full order (closes the SA-115 residual below); a line with nothing
+      // remaining (including a cancelled line/order, served 0) is dropped rather than re-sent.
+      .filter((li) => li.status !== "CANCELLED" && (remainingById[li.id] ?? 1) > 0)
+      .map((li) => {
+        const qty = Number(li.qty ?? 0);
+        const served = remainingById[li.id];
+        const ordered = served ?? qty;
+        const partial = served !== undefined && served !== qty;
+        const upb = Number(li.unitsPerBox ?? 0);
+        const hasSplit = li.boxes != null && upb > 0;
+        // FIX 6 (SA-175): FLOOR, never round (see visitView's twin comment) — no promo data
+        // rides this snapshot (freeUnits/freeUnitSize stay 0/1 below), so unlike visitView the
+        // linear front-slice proration here is already exact; only the Case-count rounding needs
+        // the same fix.
+        const boxes = hasSplit ? (partial ? Math.floor(ordered / upb) : Number(li.boxes)) : null;
+        return {
+          orderItemId: li.id,
+          productId: li.productId,
+          orderedQty: ordered,
+          subtotal:
+            li.subtotal == null
+              ? null
+              : partial
+                ? prorateLineSubtotal(Number(li.subtotal), ordered, qty, 0, 1)
+                : Number(li.subtotal),
+          freeUnits: 0,
+          freeUnitSize: 1,
+          // B648/SA-094 (carried through the B762 merge) — see StopSnapshotLine.
+          unitLabel: li.unitLabel ?? null,
+          unitsPerBox: li.unitsPerBox ?? null,
+          boxes: hasSplit ? boxes : (li.boxes ?? null),
+          pieces: hasSplit ? ordered - (boxes as number) * upb : null,
+          // SA-367a: no served remaining ⇒ no default — this close cannot proceed until the driver
+          // enters the line on the review screen (`linesAwaitingEntry`).
+          ...(served === undefined ? { needsEntry: true } : {}),
+        };
+      })
+  );
+}
+
+/**
+ * #2300: a LATER visit — the server served a `remaining` below `qty` on at least one active line
+ * (#1353 caps a re-delivery to what is left). A line with no served remaining says nothing either way.
+ */
+export function isLaterVisit(
+  order: { lineItems?: readonly StopSnapshotLine[] | null } | null | undefined,
+): boolean {
+  const remainingById = remainingByLine([order ?? {}]);
+  return (order?.lineItems ?? []).some((li) => {
+    const served = remainingById[li.id];
+    return li.status !== "CANCELLED" && served !== undefined && served < Number(li.qty ?? 0);
+  });
+}
+
+/**
+ * #2300: the lines the payment screen's door QUOTE prices for one order. Its landed rich lines when
+ * it has any; while its per-order fetch hasn't landed on a later visit, the stop snapshot's own
+ * remaining-based fallback lines — never the full order total, which overstates what is owed.
+ * `[]` means "price the whole order" (a first visit, or a landed order with nothing adjustable),
+ * exactly as before. Display/cap only: the close payload keeps its own line choice.
+ */
+export function doorQuoteLines(
+  order: { lineItems?: readonly StopSnapshotLine[] | null } | null | undefined,
+  richLines: readonly ShortPickLine[],
+  landed: boolean,
+): ShortPickLine[] {
+  if (richLines.length > 0) return [...richLines];
+  if (landed || !isLaterVisit(order)) return [];
+  return fallbackShortPickLines(order);
 }
 
 /** DELIVERED at the full ordered qty, REFUSED at 0, else PARTIAL. */
@@ -289,6 +601,13 @@ export function buildDeliveries(
   lines: ShortPickLine[],
   deliveredQtyById: Record<string, number>,
 ): PlannedDelivery[] {
+  // SA-367a: fail closed — a line with no served remaining and no driver entry has NO honest
+  // default (neither the full qty nor 0/REFUSED), so no payload may be built until it is entered.
+  // Both screens gate on `linesAwaitingEntry` first; this is the backstop.
+  const awaiting = linesAwaitingEntry(lines, deliveredQtyById);
+  if (awaiting.length > 0) {
+    throw new Error(`Enter the delivered quantity for ${awaiting.length} line(s) before closing.`);
+  }
   const out: PlannedDelivery[] = [];
   for (const li of lines) {
     const clamped = effectiveDeliveredQty(li, deliveredQtyById);
@@ -327,6 +646,20 @@ export function reconciledTotal(
     );
   }
   return roundMoney(sum);
+}
+
+/**
+ * SA-367a: the ids of lines the driver still has to enter — lines served no `remaining`
+ * (`needsEntry`) with no entry in `deliveredQtyById`. Non-empty ⇒ the review screen's Continue
+ * and the payment screen's close are blocked, and `buildDeliveries` throws.
+ */
+export function linesAwaitingEntry(
+  lines: readonly Pick<ShortPickLine, "orderItemId" | "needsEntry">[],
+  deliveredQtyById: Record<string, number>,
+): string[] {
+  return lines
+    .filter((li) => li.needsEntry && deliveredQtyById[li.orderItemId] == null)
+    .map((li) => li.orderItemId);
 }
 
 /** True when every line is still at its default (fully delivered) qty. */

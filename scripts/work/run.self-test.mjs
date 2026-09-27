@@ -33,6 +33,7 @@ import {
   TRIAGE_LOG_RETENTION,
 } from "./run.mjs";
 import { shouldSkipTrigger, DEBOUNCE_WINDOW_MS } from "./trigger.mjs";
+import { readFileSync as readPkgFile } from "node:fs";
 
 let failures = 0;
 function check(name, got, want) {
@@ -555,6 +556,19 @@ const isoMinutesAgo = (m) => new Date(NOW.getTime() - m * 60_000).toISOString();
 }
 
 // ── result ────────────────────────────────────────────────────────────────
+// ── VERIFY-PIN (#2285): `npm run verify` runs this self-test ──────────────────
+// Unwired, this file protects nothing (found orphaned in the #2273 sweep), so it pins its own
+// place in the root verify chain, the same pattern as the F-22 self-tests' T10v/T17v (#2283).
+{
+  const pkg = JSON.parse(readPkgFile(new URL("../../package.json", import.meta.url), "utf8"));
+  const verify = typeof pkg.scripts?.verify === "string" ? pkg.scripts.verify : "";
+  check(
+    "VERIFY-PIN: verify chain runs scripts/work/run.self-test.mjs",
+    verify.split("&&").some((step) => step.trim() === "node scripts/work/run.self-test.mjs"),
+    true,
+  );
+}
+
 console.log(
   failures === 0 ? `\nrun.self-test: ALL GREEN` : `\nrun.self-test: ${failures} FAILURE(S)`,
 );

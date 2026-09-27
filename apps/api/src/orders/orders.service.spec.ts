@@ -1,3 +1,5 @@
+// SA-429: driver cases here pin other behaviour; ownership is pinned in driver-edit-access*.spec.ts.
+jest.mock("./driver-edit-access", () => ({ assertDriverMayEditOrder: jest.fn() }));
 import { Test, TestingModule } from "@nestjs/testing";
 import {
   NotFoundException,
@@ -1960,7 +1962,7 @@ describe("OrdersService", () => {
     // contract, and settle must reproduce it exactly (held/requested are
     // compared in each line's own stored denomination) — so this spec
     // documents what create() already does today.
-    describe("WP1 — boxed-line qty basis on CREATE (regression, no behavior change)", () => {
+    describe("WP1 + B703 — boxed-line qty basis on CREATE (always pieces)", () => {
       const BOXED_12 = {
         id: "prod-box12",
         name: "Water Case",
@@ -1975,20 +1977,14 @@ describe("OrdersService", () => {
         (service as any).systemConfig.get.mockResolvedValue("0");
       });
 
-      /**
-       * B116 (REG-B116 / R15) replaced create()'s per-line `tx.product.update`
-       * with ONE aggregated raw `UPDATE … FROM (VALUES …)`, so the qty BASIS
-       * this describe() pins is now read off that statement's bindings. Same
-       * oracle (27 pieces / 2 selling units), new call site — the returned
-       * reader hands back the `[productId, qty]` pairs in VALUES-list order.
-       */
+      // B116/B562: the one aggregated `$queryRaw` UPDATE's `[productId, qty]` bindings (pieces).
       function captureStockDecrement() {
-        const txExecuteRaw: jest.Mock = jest.fn().mockResolvedValue(0);
+        const txExecuteRaw: jest.Mock = jest.fn().mockResolvedValue([]);
         prisma.tenantTransaction.mockImplementation((fn: any) =>
           fn({
             ...(prisma as unknown as Record<string, any>),
             $executeRaw: txExecuteRaw,
-            $queryRaw: jest.fn().mockResolvedValue([]),
+            $queryRaw: txExecuteRaw,
           }),
         );
         const isSql = (v: any) => typeof v?.sql === "string" && Array.isArray(v?.values);
@@ -2042,7 +2038,7 @@ describe("OrdersService", () => {
         expect(readDecrement()).toContain("test-tenant");
       });
 
-      it("the same boxed product ordered legacy-style with bare qty:2 (no boxes/pieces keys) decrements 2 — the SELLING-UNITS basis", async () => {
+      it("B703 (SA-136b): the same boxed product ordered box-unaware (bare qty:2) decrements 24 pieces", async () => {
         prisma.product.findMany.mockResolvedValue([BOXED_12]);
         const readDecrement = captureStockDecrement();
 
@@ -2052,7 +2048,7 @@ describe("OrdersService", () => {
         );
 
         expect(prisma.product.update).not.toHaveBeenCalled();
-        expect(readDecrement().slice(0, 2)).toEqual(["prod-box12", 2]);
+        expect(readDecrement().slice(0, 2)).toEqual(["prod-box12", 24]);
         expect(readDecrement()).toContain("test-tenant");
       });
     });
@@ -3152,12 +3148,12 @@ describe("OrdersService", () => {
     }
 
     function mockTenantTransactionWithRawSpy(): jest.Mock {
-      const txExecuteRaw = jest.fn().mockResolvedValue(0);
+      const txExecuteRaw = jest.fn().mockResolvedValue([]); // B562: + the $queryRaw decrement
       prisma.tenantTransaction.mockImplementation((fn: any) =>
         fn({
           ...(prisma as unknown as Record<string, any>),
           $executeRaw: txExecuteRaw,
-          $queryRaw: jest.fn().mockResolvedValue([]),
+          $queryRaw: txExecuteRaw,
         }),
       );
       return txExecuteRaw;
@@ -3359,6 +3355,8 @@ describe("OrdersService", () => {
         { id: "ord-1", status: "PENDING" },
         expect.arrayContaining([expect.objectContaining({ productId: "prod-box12", qty: 27 })]),
         [],
+        operatorPayload, // B562 PR-2: the acting user and the event the SALE rows record
+        { notes: "DEMOTE" },
       );
 
       // Now the credit-back itself rejects — the claim already flipped the row
@@ -8207,9 +8205,11 @@ describe("OrdersService", () => {
         $executeRaw: jest.fn().mockResolvedValue(0),
         product: {
           findMany: jest.fn().mockResolvedValue([]),
-          update: jest.fn().mockResolvedValue({}),
+          update: jest.fn().mockResolvedValue({ currentStock: 0 }), // B562: the written row
+          findFirst: jest.fn().mockResolvedValue(null),
         },
-      };
+        stockMovement: { create: jest.fn().mockResolvedValue({ id: "mv" }), findFirst: jest.fn() },
+      } as any;
     });
 
     it("(a) increase 1→3 boxes (qty 12→36) decrements 24", async () => {

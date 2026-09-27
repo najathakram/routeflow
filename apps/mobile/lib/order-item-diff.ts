@@ -117,13 +117,24 @@ export function buildOrderItemDiff(args: {
   const surviving = new Set<string>();
   for (const l of catalog) if (l.lineId) surviving.add(l.lineId);
   for (const u of unlisted) if (u.lineId) surviving.add(u.lineId);
-  const explicit = new Set([...pendingDeletes, ...pendingCancels]);
+  // B805 (Opus N1): an id can be BOTH in pendingDeletes/pendingCancels AND
+  // surviving — the draft record is keyed by lineId, so removing a line and
+  // then re-adding the SAME product (a rescan in one batch, or reopening the
+  // price modal on a line mid-remove) can re-populate `draft[lineId]` after
+  // the trash button already queued that lineId here. The later, surviving
+  // state wins: a pending delete/cancel whose id is still a live catalog/
+  // unlisted entry is dropped, never emitted alongside that entry's own
+  // UPDATE/CREATE — sending both actions for the same id in one diff is a
+  // contradiction the server should never have to resolve.
+  const pendingDeletesLive = pendingDeletes.filter((id) => !surviving.has(id));
+  const pendingCancelsLive = pendingCancels.filter((id) => !surviving.has(id));
+  const explicit = new Set([...pendingDeletesLive, ...pendingCancelsLive]);
   const droppedDeletes = originals
     .map((o) => o.id)
     .filter((id) => !surviving.has(id) && !explicit.has(id));
 
-  for (const id of [...pendingDeletes, ...droppedDeletes]) out.push({ id, action: "DELETE" });
-  for (const id of pendingCancels) out.push({ id, action: "CANCEL" });
+  for (const id of [...pendingDeletesLive, ...droppedDeletes]) out.push({ id, action: "DELETE" });
+  for (const id of pendingCancelsLive) out.push({ id, action: "CANCEL" });
 
   for (const line of catalog) {
     if (line.qty <= 0) continue; // zero-out goes through delete/cancel; DTO qty is Min(1)
