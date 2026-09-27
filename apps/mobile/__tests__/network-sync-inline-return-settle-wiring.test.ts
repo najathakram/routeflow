@@ -14,6 +14,8 @@ jest.mock("react", () => ({
     fn();
   },
   useRef: <T>(v: T) => ({ current: v }),
+  // #2389: the hook imports onlineManager from @tanstack/react-query (module init calls createContext).
+  createContext: () => ({ Provider: () => null }),
 }));
 
 let netListener: ((state: any) => void) | null = null;
