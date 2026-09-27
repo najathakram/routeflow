@@ -2933,6 +2933,7 @@ export class OrdersService implements OnApplicationBootstrap {
       const product = pid ? unitCtx.products.get(pid) : undefined;
       if (product)
         unitRows.set(item, resolveLineUnits(product, unitCtx.ladders.get(pid!) ?? [], item, li));
+      unitEdit.assertNoPackRedenomination(li, item, unitRows.get(item)); // SA-474
     }
 
     // B63 (REG-B63): buyers self-edit only pre-dispatch orders — the post-dispatch
@@ -3107,6 +3108,7 @@ export class OrdersService implements OnApplicationBootstrap {
               item,
               resolveLineUnits(product, unitCtx.ladders.get(pid!) ?? [], item, li),
             );
+          unitEdit.assertNoPackRedenomination(li, item, unitRows.get(item)); // SA-474
         }
 
         // Customer/Driver path: replace items by productId. A4: a DRIVER diff

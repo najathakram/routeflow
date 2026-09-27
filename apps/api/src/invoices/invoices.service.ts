@@ -42,7 +42,7 @@ import {
   splitConfirmed,
   sumConfirmed,
 } from "./payment-predicates";
-import { PAYABLE, KPI_SUMMARY_EXCLUDED } from "./invoice-status-sets";
+import { PAYABLE } from "./invoice-status-sets";
 import { reconcileDeliveredOrdersInTx as reconcileDeliveredOrdersInTxImpl } from "./delivered-reconcile";
 import { packAtSaleByProduct, priorUnitsPerBoxMap, toSaleLedgerLines } from "./pack-at-sale";
 import { assertIntegerPieces, billPackOf } from "./unit-line-bill-guard";
@@ -68,6 +68,7 @@ import {
   UserRole,
 } from "@prisma/client";
 import type { InvoiceKpiSummary } from "@routeflow/types";
+import { computeInvoiceKpiSummary } from "./invoice-kpi-summary";
 import { CHECK_TRANSITIONS } from "../common/check-transitions";
 import {
   CreateInvoiceDto,
@@ -114,6 +115,7 @@ import { partitionInvoiceLines, planResyncPairs } from "./resync-plan";
 import {
   issueDateStamp,
   overdueCutoff,
+  addCalendarDays,
   startOfCalendarDay,
   endOfCalendarDay,
 } from "../common/calendar-date";
@@ -158,16 +160,7 @@ const TERM_DAYS: Record<string, number> = {
 /** #2293: round a nullable money field; `null` (clear) and `undefined` (leave as is) pass through. */
 const roundMoneyOrNull = (v: number | null | undefined) => (v == null ? v : roundMoney(v));
 
-/**
- * Payment-term arithmetic on a calendar date, in UTC. `setDate`/`getDate` read LOCAL
- * components, so on a non-UTC host they shift a UTC-midnight instant by the DST delta
- * and can land the due date on the previous calendar day.
- */
-export function addCalendarDays(date: Date, days: number): Date {
-  const out = new Date(date);
-  out.setUTCDate(out.getUTCDate() + days);
-  return out;
-}
+export { addCalendarDays } from "../common/calendar-date";
 
 // P5-12 / post-dated check payments PR-1: `CHECK_TRANSITIONS` (legal FORWARD transitions for
 // the check lifecycle) now comes from `../common/check-transitions` — an API-local mirror of the
@@ -2980,161 +2973,13 @@ export class InvoicesService {
     };
   }
 
-  /**
-   * B12: the invoices page's six KPI tiles, computed by the DATABASE over the
-   * whole OPEN set — never a client `useInvoices({ limit: 999 })`
-   * fetch-all-then-reduce, which silently drops whichever rows page 1000+
-   * would have held (exactly the oldest, most delinquent invoices).
-   *
-   * `today` is the VIEWER's calendar day (`YYYY-MM-DD`), passed by the client. SA-488 (#2493):
-   * when the tenant's zone is known the buckets use the TENANT's today instead, so the tiles agree
-   * with the overdue cron, list filter and bookkeeping aging; the viewer's day is the fallback.
-   */
+  /** B12: the invoices page's KPI tiles live in invoice-kpi-summary.ts (size ratchet). */
   async getKpiSummary(viewerToday: string, user: JwtPayload): Promise<InvoiceKpiSummary> {
-    let today = viewerToday;
-    // The DTO's regex pins the SHAPE; this pins the CALENDAR. `2026-13-01`
-    // matches the regex and would blow up on `.toISOString()` below — after
-    // three queries had already run — and `2026-02-30` would silently roll to
-    // Mar 2 and bucket the tiles against a day the caller never asked for.
-    const todayInstant = new Date(`${today}T00:00:00.000Z`);
-    if (Number.isNaN(todayInstant.getTime()) || todayInstant.toISOString().slice(0, 10) !== today) {
-      throw new BadRequestException("today must be a real calendar date (YYYY-MM-DD)");
-    }
-    const { timezone } = await this.resolveTenantInvoiceDefaults();
-    if (timezone) today = overdueCutoff(new Date(), timezone).toISOString().slice(0, 10);
-
-    const tenantId = this.prisma.getTenantId();
-    // No tenant context (SUPER_ADMIN / unset): `forTenant()` would read UNSCOPED
-    // while the raw query's `"tenantId" = NULL` matches nothing — one response
-    // mixing all-tenant totals with a zeroed average. Return the zeroed summary
-    // instead, the same guard `resolveTenantInvoiceDefaults` uses.
-    if (!tenantId) {
-      return {
-        totalOutstanding: 0,
-        overdue: 0,
-        dueToday: 0,
-        dueIn30: 0,
-        avgDays: 0,
-        awaitingConfirmationCount: 0,
-      };
-    }
-
-    // A CUSTOMER sees only their OWN receivables — the same scope `findAll`
-    // applies above, resolved the same way. Without it the tiles would hand a
-    // buyer the whole tenant's outstanding balance. (For the money tiles DRAFT
-    // needs no extra exclusion: KPI_SUMMARY_EXCLUDED already drops it. The
-    // awaiting-confirmation count is not on that set, so it carries findAll's
-    // buyer DRAFT rule itself — see m7 below.)
-    let customerId: string | undefined;
-    if (user?.role === UserRole.CUSTOMER) {
-      const customer = await this.prisma
-        .forTenant()
-        .customer.findFirst({ where: { userId: user.sub } });
-      // No customer profile: `findAll` returns an empty page, so the tiles zero out.
-      if (!customer) {
-        return {
-          totalOutstanding: 0,
-          overdue: 0,
-          dueToday: 0,
-          dueIn30: 0,
-          avgDays: 0,
-          awaitingConfirmationCount: 0,
-        };
-      }
-      customerId = customer.id;
-    }
-
-    const [invoices, awaitingConfirmationCount, avgDaysRows] = await Promise.all([
-      // No `take` — the OPEN set is read whole, not capped like a rendering page.
-      this.prisma.forTenant().invoice.findMany({
-        where: { status: { notIn: KPI_SUMMARY_EXCLUDED }, ...(customerId ? { customerId } : {}) },
-        select: {
-          total: true,
-          status: true,
-          dueDate: true,
-          payments: { select: { amount: true, status: true } },
-        },
-      }),
-      // m7 (F16 hotfix): this tile is NOT on the money tiles' OPEN basis. It
-      // reproduces the client memo it replaced, which counted every DRAFT
-      // payment on every invoice `useInvoices({ limit: 999 })` returned —
-      // `for (const p of inv.payments ?? []) { if (p.status === "DRAFT")
-      // awaitingConfirmationCount++; }`, above and outside the memo's own
-      // status branches, so no invoice status was excluded. Scoping it to
-      // KPI_SUMMARY_EXCLUDED zeroed the tile for the commonest case there is:
-      // a payment recorded against a still-DRAFT invoice, which `recordPayment`
-      // deliberately leaves DRAFT (recomputeStatus treats DRAFT as terminal).
-      // The queue exists to make unconfirmed money visible wherever it sits;
-      // the invoice's own status is not what makes a draft payment actionable.
-      this.prisma.forTenant().invoicePayment.count({
-        where: {
-          status: "DRAFT",
-          // Staff: no invoice-status scope at all — the memo had none. A BUYER
-          // gets exactly `findAll`'s buyer scope instead: their own customer's
-          // invoices, minus the DRAFT ones a buyer is never shown.
-          ...(customerId ? { invoice: { customerId, status: { not: InvoiceStatus.DRAFT } } } : {}),
-        },
-      }),
-      // Tenant id (and a buyer's customer id) reach the raw query as BOUND
-      // values, never string-interpolated.
-      this.prisma.$queryRaw<{ avgDays: number | null }[]>`
-        SELECT AVG(EXTRACT(EPOCH FROM ("paidAt" - "sentAt")) / 86400)::float AS "avgDays"
-        FROM "Invoice"
-        WHERE "tenantId" = ${tenantId}
-          ${customerId ? Prisma.sql`AND "customerId" = ${customerId}` : Prisma.empty}
-          AND status = 'PAID'
-          AND "paidAt" IS NOT NULL
-          AND "sentAt" IS NOT NULL
-          -- A PAID invoice re-sent as a receipt re-stamps sentAt AFTER paidAt
-          -- (send(), sendEmail()), which would feed a large negative duration
-          -- into the average. The client memo this replaced discarded those
-          -- rows with "days >= 0"; so does this.
-          AND "paidAt" >= "sentAt"
-      `,
-    ]);
-
-    // RF-202 convention: ISO date-string comparison (YYYY-MM-DD), never raw
-    // Date objects — a due date is a UTC-midnight calendar stamp, `today` is
-    // the viewer's own calendar day, so the comparison must stay date-only.
-    const cutoff = addCalendarDays(new Date(`${today}T00:00:00.000Z`), 30)
-      .toISOString()
-      .slice(0, 10);
-
-    let totalOutstanding = 0;
-    let overdue = 0;
-    let dueToday = 0;
-    let dueIn30 = 0;
-    for (const inv of invoices) {
-      // Same balance basis as findAll's enrichment above: CONFIRMED (PAID)
-      // payments only reduce the outstanding figure.
-      const balance = Math.max(0, Number(inv.total) - sumConfirmed(inv.payments as any));
-      totalOutstanding += balance;
-      const dueDateIso = inv.dueDate
-        ? (inv.dueDate instanceof Date ? inv.dueDate : new Date(inv.dueDate))
-            .toISOString()
-            .slice(0, 10)
-        : null;
-      // m5: the client memo's own basis was `status === "OVERDUE" || (due <
-      // today)` — a disjunct, not a date-only rule. An invoice the server has
-      // already flipped to OVERDUE is overdue whatever its dueDate says (null,
-      // or moved into the future by an edit), so it must not fall into
-      // dueIn30 or out of every bucket.
-      if (inv.status === InvoiceStatus.OVERDUE) overdue += balance;
-      // No dueDate and not flagged OVERDUE: totalOutstanding only, no bucket.
-      else if (dueDateIso == null) continue;
-      else if (dueDateIso < today) overdue += balance;
-      else if (dueDateIso === today) dueToday += balance;
-      else if (dueDateIso <= cutoff) dueIn30 += balance;
-    }
-
-    return {
-      totalOutstanding: roundMoney(totalOutstanding),
-      overdue: roundMoney(overdue),
-      dueToday: roundMoney(dueToday),
-      dueIn30: roundMoney(dueIn30),
-      avgDays: avgDaysRows[0]?.avgDays ?? 0,
-      awaitingConfirmationCount,
+    const deps = {
+      prisma: this.prisma,
+      resolveTenantInvoiceDefaults: () => this.resolveTenantInvoiceDefaults(),
     };
+    return computeInvoiceKpiSummary(deps, viewerToday, user);
   }
 
   async findOne(id: string, user?: JwtPayload) {

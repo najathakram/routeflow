@@ -260,16 +260,30 @@ describeDb(
         orders.updateOrderItems(orderId, { replaceAll: false, items: [item] } as any, staff()),
       );
 
-    it("SA-447: a banned product's held Case line with unitLabel CLEARED (null) is REFUSED before any write", async () => {
+    // SA-447 × SA-474 (SA-474c): a CLEARED label on a held unit line is now refused by SA-474's
+    // assertNoPackRedenomination — 409 UNIT_AWARE_LINE, before the restriction netting is ever
+    // reached (the same precedence the ABSENT-label case below pins). SA-447's re-denomination
+    // netting rule stays pinned by the pure unitLineEdit cases for the day the units freeze lifts.
+    it("SA-447 × SA-474: a banned product's held Case line with unitLabel CLEARED (null) is refused by UNIT_AWARE_LINE before the netting, nothing written", async () => {
       const f = await seed("clear");
       banned = f.productId;
-      // Same count (3): at the held factor this would net 0 — but the write re-denominates to the pack.
+      const linesOf = () =>
+        raw.orderItem.findMany({ where: { orderId: f.orderId }, orderBy: { id: "asc" } });
+      const stockOf = async () => ({
+        onHand: String(
+          (await raw.product.findUniqueOrThrow({ where: { id: f.productId } })).currentStock,
+        ),
+        movements: await raw.stockMovement.count({ where: { productId: f.productId } }),
+      });
+      const [linesBefore, stockBefore] = [await linesOf(), await stockOf()];
       await expect(
         edit(f.orderId, { id: f.lineId, unitLabel: null, qty: 3 }),
       ).rejects.toMatchObject({
-        response: { code: "SELLING_RESTRICTED" },
+        response: { code: "UNIT_AWARE_LINE" },
       });
-      expect(seen).toContainEqual({ productId: f.productId }); // unsized: checked in full
+      expect(seen).toEqual([]); // the restriction choke point is never reached
+      expect(await linesOf()).toEqual(linesBefore); // no order-line write
+      expect(await stockOf()).toEqual(stockBefore); // no stock write
       const li = await line(f.lineId);
       expect(li.unitLabel).toBe("Case"); // nothing written
       expect(Number(li.qty)).toBe(36);
