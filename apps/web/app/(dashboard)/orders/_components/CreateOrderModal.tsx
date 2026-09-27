@@ -1120,6 +1120,9 @@ export function CreateOrderModal({
     // #2406: fold in whatever the operator has typed into the Returns section.
     const inlineReturn = returnSave.build(selectedCustomer!.id, "");
     if (inlineReturn === "missing-reason" || inlineReturn === "needs-quote") {
+      // Close a merge-vs-separate prompt that led here, so the operator lands back on the
+      // Returns section they must fix (never a stale prompt over the blocked form).
+      setMergePrompt(null);
       toast({ title: RETURN_SAVE_BLOCKED[inlineReturn], variant: "error" });
       return;
     }

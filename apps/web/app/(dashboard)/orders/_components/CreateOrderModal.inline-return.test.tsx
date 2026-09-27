@@ -30,12 +30,13 @@ jest.mock("@/lib/api/orders", () => ({
     error: null,
     reset: jest.fn(),
   }),
-  useActiveOrderForCustomer: () => ({ data: undefined }),
+  useActiveOrderForCustomer: () => ({ data: mockActiveOrder }),
   useCustomerPriceHistory: () => ({ data: undefined }),
   // InlineReturnSection's own entryOrderId hydration — CreateOrderModal never passes one, so
   // this is always called with "".
   useOrder: () => ({ data: undefined }),
 }));
+let mockActiveOrder: unknown = undefined;
 const quoteMutate = jest.fn();
 jest.mock("@/lib/api/inline-returns", () => ({
   useInlineReturnQuote: () => ({ mutate: quoteMutate, isPending: false }),
@@ -131,6 +132,7 @@ async function quoteIt() {
 
 beforeEach(() => {
   jest.clearAllMocks();
+  mockActiveOrder = undefined;
   mockCustomers = [acme];
   hasInlineReturns = true;
 });
@@ -334,5 +336,26 @@ describe("CreateOrderModal — collapsing the Returns section (#2406)", () => {
     const second = createOrderMutate.mock.calls[1][0];
     expect(second.inlineReturn.returnKey).not.toBe(first.inlineReturn.returnKey);
     expect(second.idempotencyKey).not.toBe(first.idempotencyKey);
+  });
+
+  it("a blocked return save closes the merge-vs-separate prompt that led to it", async () => {
+    mockActiveOrder = {
+      id: "ord-open",
+      orderNumber: "ORD-OPEN-1",
+      status: "PENDING",
+      total: 10,
+      itemCount: 1,
+    };
+    renderWithProviders(<CreateOrderModal isOpen onClose={jest.fn()} />);
+    await pickCustomer();
+    await openReturnsAndAddLine("5"); // lines + reason, but NOT quoted
+    fireEvent.click(screen.getByRole("button", { name: /save as draft/i }));
+    fireEvent.click(await screen.findByRole("button", { name: /separate/i }));
+    expect(createOrderMutate).not.toHaveBeenCalled();
+    await waitFor(() =>
+      expect(screen.queryByRole("button", { name: /separate/i })).not.toBeInTheDocument(),
+    );
+    // Back on the Returns section the operator must fix.
+    expect(screen.getByLabelText(/qty \(pieces\)/i)).toBeInTheDocument();
   });
 });
