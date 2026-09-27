@@ -2,7 +2,6 @@ import { useMemo, useState } from "react";
 import {
   ActivityIndicator,
   FlatList,
-  Image,
   Pressable,
   RefreshControl,
   ScrollView,
@@ -14,6 +13,7 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
+import { RetryableImage } from "../../../components/RetryableImage";
 import { ios } from "@routeflow/ui/tokens";
 import { NavBar } from "@routeflow/ui/mobile/ios";
 import {
@@ -320,7 +320,12 @@ function ProductCard({
   return (
     <View style={styles.productCard}>
       {thumb ? (
-        <Image source={{ uri: thumb }} style={styles.thumb} resizeMode="cover" />
+        <RetryableImage
+          staleQueryKey={["buyer-products"]}
+          source={{ uri: thumb }}
+          style={styles.thumb}
+          resizeMode="cover"
+        />
       ) : (
         <View style={[styles.thumb, styles.thumbPlaceholder]}>
           <Ionicons name="cube-outline" size={22} color={ios.label3} />

@@ -162,5 +162,45 @@ describeDb(
       expect(events).toHaveLength(1);
       expect(events[0].amountDelta).toBeNull();
     });
+
+    // #2045 (1) — discriminating PARALLEL case (F2's finding on #2584: every case above is a
+    // single call, so it stays green with the class read moved back before the lock). Two
+    // CONCURRENT flips into PRODUCTION: with the class read under the Tenant lock, the second call
+    // reads PRODUCTION and books nothing ⇒ exactly ONE tenant.class_changed. With the read before
+    // the lock (the revert) both calls read DEMO and both book ⇒ TWO.
+    it("#2045: two concurrent flips into PRODUCTION book exactly ONE class_changed event; the ledger lands on the live contribution", async () => {
+      const slug = assertTestTenant(
+        `qa-tclass-race-${run}`,
+        "update-tenant-class-ledger.db.spec.ts",
+      );
+      const tenant = await prisma.tenant.create({
+        data: { slug, name: slug, class: TenantClass.DEMO, status: TenantStatus.ACTIVE },
+      });
+      tenantIds.push(tenant.id);
+      await prisma.tenantSubscription.create({
+        data: { tenantId: tenant.id, planKey: "STARTER", basePriceSnapshot: 59, discount: 0 },
+      });
+      await prisma.billingEvent.createMany({
+        data: [
+          { tenantId: tenant.id, type: "plan.changed", payload: {}, amountDelta: 100 },
+          { tenantId: tenant.id, type: "plan.changed", payload: {}, amountDelta: 50 },
+        ],
+      });
+
+      const results = await Promise.allSettled([
+        service.updateTenantClass(tenant.id, { class: "PRODUCTION" } as any, "admin-1"),
+        service.updateTenantClass(tenant.id, { class: "PRODUCTION" } as any, "admin-2"),
+      ]);
+
+      const events = await prisma.billingEvent.findMany({
+        where: { tenantId: tenant.id, type: "tenant.class_changed" },
+        select: { amountDelta: true },
+      });
+      expect({
+        statuses: results.map((r) => r.status),
+        classChanged: events.length,
+        ledger: await ledgerSum(tenant.id),
+      }).toEqual({ statuses: ["fulfilled", "fulfilled"], classChanged: 1, ledger: 59 });
+    });
   },
 );
