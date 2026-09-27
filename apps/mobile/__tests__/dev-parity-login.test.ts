@@ -13,16 +13,17 @@ jest.mock("../lib/buyer-auth", () => ({
 
 const setBuyer = jest.fn();
 const setActiveSeller = jest.fn();
+const signOut = jest.fn();
 let storeState: { buyer: any; activeSeller: any } = { buyer: null, activeSeller: null };
 jest.mock("../lib/buyer-session-store", () => ({
   useBuyerSessionStore: {
-    getState: () => ({ ...storeState, setBuyer, setActiveSeller }),
+    getState: () => ({ ...storeState, setBuyer, setActiveSeller, signOut }),
   },
 }));
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const {
-  isPrivateApiUrl,
+  isSimulatorApiUrl,
   parseParityLogin,
   maybeDevParityLogin,
 } = require("../lib/dev-parity-login");
@@ -39,28 +40,27 @@ beforeEach(() => {
   getBuyerSellers.mockResolvedValue([{ tenant: { slug: "other" } }, { tenant: { slug: "test" } }]);
 });
 
-describe("guard 3: only a loopback or private-LAN API", () => {
+describe("guard 3 (Opus fold): only the simulator's own loopback API, http(s) only", () => {
   it.each([
     "http://localhost:3000",
+    "https://localhost:3000",
     "http://127.0.0.1:3000",
     "http://[::1]:3000",
-    "http://10.0.0.5:3000",
-    "http://172.16.0.2:3000",
-    "http://172.31.255.1:3000",
-    "http://192.168.4.25:3000",
-  ])("%s is private", (u) => expect(isPrivateApiUrl(u)).toBe(true));
+    "http://10.0.2.2:3000", // the Android emulator's alias for the host loopback
+  ])("%s is allowed", (u) => expect(isSimulatorApiUrl(u)).toBe(true));
 
   it.each([
+    "http://192.168.4.25:3000", // LAN addresses are refused: the harness is simulator-only
+    "http://10.0.0.5:3000",
+    "http://172.16.0.2:3000",
+    "http://127.0.0.2:3000",
+    "ftp://localhost:3000", // not http(s)
+    "file://localhost/x",
     "https://routeflowapi-production.up.railway.app",
-    "https://www.routeflow.info",
-    "http://172.32.0.1:3000",
-    "http://11.0.0.1",
-    "http://192.169.0.1",
-    "http://999.1.1.1",
     "http://localhost.evil.com",
     "not a url",
     undefined,
-  ])("%s is NOT private", (u) => expect(isPrivateApiUrl(u)).toBe(false));
+  ])("%s is refused", (u) => expect(isSimulatorApiUrl(u)).toBe(false));
 });
 
 describe("credentials parsing", () => {
@@ -71,10 +71,14 @@ describe("credentials parsing", () => {
       seller: "test",
     });
   });
-  it.each([undefined, "", "not json", '{"email":"a"}', '{"email":"","password":"x"}'])(
-    "%s is refused",
-    (raw) => expect(parseParityLogin(raw)).toBeNull(),
-  );
+  it.each([
+    undefined,
+    "",
+    "not json",
+    '{"email":"a"}',
+    '{"email":"","password":"x"}',
+    '{"email":"a@b","password":"x"}', // no seller: no default-tenant fallback (Opus fold)
+  ])("%s is refused", (raw) => expect(parseParityLogin(raw)).toBeNull());
 });
 
 describe("maybeDevParityLogin: every guard", () => {
@@ -115,6 +119,20 @@ describe("maybeDevParityLogin: every guard", () => {
     expect(setActiveSeller).toHaveBeenCalledWith({ tenant: { slug: "test" } });
   });
 
+  it("Opus fold: a seller that is not linked ⇒ skipped, NO activation, and the half sign-in is cleared", async () => {
+    getBuyerSellers.mockResolvedValue([{ tenant: { slug: "other" } }]);
+    await expect(maybeDevParityLogin(LOCAL)).resolves.toBe("skipped");
+    expect(setActiveSeller).not.toHaveBeenCalled();
+    expect(signOut).toHaveBeenCalledTimes(1);
+  });
+
+  it("Opus fold: a seller lookup that throws after setBuyer also clears the half sign-in", async () => {
+    getBuyerSellers.mockRejectedValue(new Error("500"));
+    await expect(maybeDevParityLogin(LOCAL)).resolves.toBe("skipped");
+    expect(setActiveSeller).not.toHaveBeenCalled();
+    expect(signOut).toHaveBeenCalledTimes(1);
+  });
+
   it("a failed sign-in never throws (the app stays on its login screen)", async () => {
     buyerLogin.mockRejectedValue(new Error("401"));
     await expect(maybeDevParityLogin(LOCAL)).resolves.toBe("skipped");
@@ -127,12 +145,26 @@ describe("static pins: nothing leaks outside the dev branch", () => {
   const src = fs.readFileSync(path.join(mobile, "lib", "dev-parity-login.ts"), "utf8");
   const code = src.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, "");
 
-  it("every EXPO_PUBLIC_PARITY_LOGIN read and the marker live inside `if (__DEV__)`", () => {
-    const devStart = code.indexOf("if (__DEV__) {");
-    expect(devStart).toBeGreaterThan(-1);
+  it("every EXPO_PUBLIC_PARITY_LOGIN read and the marker are CONTAINED in the `if (__DEV__)` block", () => {
+    const open = code.indexOf("if (__DEV__) {");
+    expect(open).toBeGreaterThan(-1);
+    // The block's matching close brace, by counting braces from its opening one.
+    let depth = 0;
+    let close = -1;
+    for (let i = code.indexOf("{", open); i < code.length; i++) {
+      if (code[i] === "{") depth++;
+      else if (code[i] === "}" && --depth === 0) {
+        close = i;
+        break;
+      }
+    }
+    expect(close).toBeGreaterThan(open);
     for (const needle of ["process.env.EXPO_PUBLIC_PARITY_LOGIN", "dev-parity-login"]) {
-      const first = code.indexOf(needle);
-      expect(first).toBeGreaterThan(devStart);
+      let at = code.indexOf(needle);
+      expect(at).toBeGreaterThan(-1);
+      for (; at !== -1; at = code.indexOf(needle, at + 1)) {
+        expect(at > open && at < close).toBe(true);
+      }
     }
   });
 

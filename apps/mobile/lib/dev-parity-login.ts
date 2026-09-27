@@ -13,9 +13,12 @@
  *   2. AND EXPO_PUBLIC_PARITY_LOGIN is set. It is written only into the GITIGNORED
  *      apps/mobile/.env.parity by the harness, from the local `test` seed's fixtures
  *      (scripts/native-parity/fixtures.cjs). There is no credential literal in app code.
- *   3. AND the API base URL is loopback or a private LAN address (localhost, 127.0.0.0/8, ::1,
- *      10/8, 172.16/12, 192.168/16). Any other host is a no-op, so it can never sign in against a
- *      deployed API.
+ *   3. AND the API base URL is the SIMULATOR'S OWN loopback, over http(s) only: exactly
+ *      localhost, 127.0.0.1, ::1, or 10.0.2.2 (the Android emulator's alias for the host). The
+ *      harness is simulator-only, so no LAN address, no other scheme and no other host qualifies;
+ *      it can never sign in against a deployed API (Opus fold).
+ *   4. The seller is REQUIRED and must be one the buyer is linked to. There is no default-tenant
+ *      fallback: if it is missing, the half-finished sign-in is cleared (store signOut).
  * EXPO_PUBLIC_PARITY_LOGIN is referenced in this file ONLY (pinned). It signs in through the same
  * buyerLogin → getBuyerSellers → session store path the real login screen uses; nothing new server-side.
  */
@@ -24,37 +27,32 @@ import { useBuyerSessionStore } from "./buyer-session-store";
 
 export type ParityLoginResult = "skipped" | "already-signed-in" | "signed-in";
 
-/** Pure: is `url`'s host loopback or a private (RFC 1918) address? Anything unparseable is no. */
-export function isPrivateApiUrl(url: string | undefined): boolean {
+const SIMULATOR_HOSTS = new Set(["localhost", "127.0.0.1", "::1", "10.0.2.2"]);
+
+/** Pure: is `url` an http(s) URL on the simulator's own loopback? Anything else, or unparseable, is no. */
+export function isSimulatorApiUrl(url: string | undefined): boolean {
   if (!url) return false;
-  let host: string;
+  let parsed: URL;
   try {
-    host = new URL(url).hostname.replace(/^\[|\]$/g, "");
+    parsed = new URL(url);
   } catch {
     return false;
   }
-  if (host === "localhost" || host === "::1") return true;
-  const m = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(host);
-  if (!m) return false;
-  const [a, b] = [Number(m[1]), Number(m[2])];
-  if ([a, b, Number(m[3]), Number(m[4])].some((n) => n > 255)) return false;
-  return a === 127 || a === 10 || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168);
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return false;
+  return SIMULATOR_HOSTS.has(parsed.hostname.replace(/^\[|\]$/g, ""));
 }
 
 /** Pure: `{"email":"…","password":"…","seller":"test"}` → credentials, or null if malformed. */
 export function parseParityLogin(
   raw: string | undefined,
-): { email: string; password: string; seller?: string } | null {
+): { email: string; password: string; seller: string } | null {
   if (!raw) return null;
   try {
     const v = JSON.parse(raw);
     if (typeof v?.email !== "string" || typeof v?.password !== "string") return null;
-    if (!v.email || !v.password) return null;
-    return {
-      email: v.email,
-      password: v.password,
-      seller: typeof v.seller === "string" ? v.seller : undefined,
-    };
+    if (typeof v?.seller !== "string") return null; // no default-tenant fallback (Opus fold)
+    if (!v.email || !v.password || !v.seller) return null;
+    return { email: v.email, password: v.password, seller: v.seller };
   } catch {
     return null;
   }
@@ -78,21 +76,32 @@ export async function maybeDevParityLogin(env?: {
     };
     const creds = parseParityLogin(e.parityLogin);
     if (!creds) return "skipped";
-    if (!isPrivateApiUrl(e.apiUrl ?? "http://localhost:3000")) return "skipped";
+    if (!isSimulatorApiUrl(e.apiUrl ?? "http://localhost:3000")) return "skipped";
     const store = useBuyerSessionStore.getState();
     if (store.buyer?.email?.toLowerCase() === creds.email.toLowerCase() && store.activeSeller) {
       return "already-signed-in";
     }
+    let signedIn = false;
     try {
       const res = await buyerLogin(creds.email.toLowerCase(), creds.password);
       store.setBuyer(res.buyer);
+      signedIn = true;
       const sellers = await getBuyerSellers();
-      const seller = sellers.find((s) => s.tenant?.slug === creds.seller) ?? sellers[0];
-      if (!seller) return "skipped";
+      // The NAMED seller only: never a default tenant (Opus fold).
+      const seller = sellers.find((s) => s.tenant?.slug === creds.seller);
+      if (!seller) throw new Error(`the parity buyer is not linked to "${creds.seller}"`);
       await store.setActiveSeller(seller);
       console.warn(`[dev-parity-login] signed in ${creds.email} (local test fixture)`);
       return "signed-in";
     } catch (e: any) {
+      // Never leave a half-finished session: a buyer set without its seller is cleared.
+      if (signedIn) {
+        try {
+          await store.signOut();
+        } catch {
+          // Best-effort: signOut already clears local tokens even if the server call fails.
+        }
+      }
       console.warn(`[dev-parity-login] sign-in failed: ${e?.message ?? e}`);
       return "skipped";
     }

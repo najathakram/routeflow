@@ -88,7 +88,9 @@ RUN npx expo export --platform web
 # production bundle. Its body, the "dev-parity-login" marker and every EXPO_PUBLIC_PARITY_LOGIN
 # read sit inside `if (__DEV__)`, which the production export folds away. Fail the build if any trace
 # survives.
-RUN if grep -rqE "dev-parity-login|EXPO_PUBLIC_PARITY_LOGIN" dist; then \
+# A missing dist must FAIL too (exit 2), never pass as "no trace found" (Opus nit).
+RUN test -d dist || { echo "no dist/ to check for the dev-only parity sign-in" >&2; exit 2; }; \
+    if grep -rqE "dev-parity-login|EXPO_PUBLIC_PARITY_LOGIN" dist; then \
       echo "production bundle carries the dev-only parity sign-in (lib/dev-parity-login.ts)" >&2; \
       exit 1; \
     fi

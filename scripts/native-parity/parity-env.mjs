@@ -10,7 +10,8 @@
  *     writes it, then runs `expo start --ios` (Expo Go on the booted simulator) with exactly that env;
  *     lib/dev-parity-login.ts signs the buyer in at boot. Restart it to switch state.
  *
- * The API URL is always loopback: the app-side guard refuses anything else anyway.
+ * The API URL is always http://localhost:3000. The app-side guard accepts ONLY the simulator's own
+ * loopback over http(s) (localhost, 127.0.0.1, ::1, 10.0.2.2) and refuses LAN or deployed hosts.
  */
 import { spawnSync } from "node:child_process";
 import { writeFileSync } from "node:fs";
