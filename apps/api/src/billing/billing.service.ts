@@ -33,7 +33,11 @@ import {
   STRIPE_CHECKOUT_STALE_ACTION,
 } from "./config-snapshot-audit.constants";
 import { escapeHtml } from "../common/html-escape";
-import { stripeSubscriptionPeriod } from "./stripe-period";
+import {
+  stripeInvoiceSubscriptionId,
+  stripeRefId,
+  stripeSubscriptionPeriod,
+} from "./stripe-period";
 
 /** Grace period (in days) after a payment failure before suspending the tenant. */
 const PAYMENT_GRACE_DAYS = 3;
@@ -996,6 +1000,15 @@ export class BillingService {
       return;
     }
 
+    // #2440: a paid invoice ends the dunning run — reset the count onPaymentFailed raises. Only a
+    // row that actually failed is written (a free pilot's count is 0, so it is never touched).
+    if (sub.failedPaymentCount > 0) {
+      await this.prisma.tenantSubscription.update({
+        where: { tenantId: sub.tenantId },
+        data: { failedPaymentCount: 0 },
+      });
+    }
+
     // Fetch the subscription to update period dates
     if (sub.stripeSubId) {
       try {
@@ -1065,17 +1078,53 @@ export class BillingService {
     this.logger.log(`Payment succeeded for tenant ${sub.tenantId} (customer ${customerId})`);
   }
 
-  private async onPaymentFailed(invoice: any): Promise<void> {
-    const customerId =
-      typeof invoice.customer === "string" ? invoice.customer : invoice.customer?.id;
-
-    if (!customerId) return;
-
+  /**
+   * #2440 (SA-450): the local subscription row a Stripe subscription or invoice event belongs to,
+   * matched by the subscription id AND its customer — never customer-wide. A missing id, no row, or
+   * a row whose customer differs is logged and returns null, and the caller writes nothing. Free
+   * pilots have no stripeSubId, so they never match.
+   */
+  private async matchStripeSubscription(
+    subscriptionId: string | null,
+    customer: unknown,
+    event: string,
+  ) {
+    if (!subscriptionId) return null;
     const sub = await this.prisma.tenantSubscription.findFirst({
-      where: { stripeCustomerId: customerId },
+      where: { stripeSubId: subscriptionId },
       include: { tenant: { select: { id: true, slug: true, name: true } } },
     });
+    const customerId = stripeRefId(customer);
+    if (
+      !sub ||
+      sub.stripeSubId !== subscriptionId ||
+      !customerId ||
+      sub.stripeCustomerId !== customerId
+    ) {
+      this.logger.warn(
+        `#2440: ${event} for subscription ${subscriptionId} (customer ${customerId ?? "none"}) ` +
+          `matched no tenant subscription — ignored`,
+      );
+      return null;
+    }
+    return sub;
+  }
+
+  private async onPaymentFailed(invoice: any): Promise<void> {
+    const sub = await this.matchStripeSubscription(
+      stripeInvoiceSubscriptionId(invoice),
+      invoice?.customer,
+      "invoice.payment_failed",
+    );
     if (!sub) return;
+
+    // Dunning is counted, not enforced here: no status change. Grace and suspension stay with
+    // suspendOverdueTenants (which re-checks Stripe); reinstatement stays with payment_succeeded,
+    // which resets this count.
+    await this.prisma.tenantSubscription.update({
+      where: { tenantId: sub.tenantId },
+      data: { failedPaymentCount: { increment: 1 } },
+    });
 
     this.logger.warn(
       `Payment failed for tenant ${sub.tenantId} (${sub.tenant.slug}). Grace period: ${PAYMENT_GRACE_DAYS} days.`,
@@ -1088,6 +1137,18 @@ export class BillingService {
     });
 
     if (adminUser?.email) {
+      // Best-effort billing-portal link; any portal error falls back to the plain text.
+      let portalUrl: string | null = null;
+      try {
+        portalUrl = (await this.createBillingPortalSession(sub.tenantId)).portalUrl;
+      } catch (e) {
+        this.logger.warn(
+          `Billing portal link unavailable for tenant ${sub.tenantId}: ${(e as Error).message}`,
+        );
+      }
+      const updateLine = portalUrl
+        ? `<p><a href="${escapeHtml(portalUrl)}">Update your payment method in the billing portal</a>.</p>`
+        : `<p>You can update your payment details by contacting support or visiting your billing portal.</p>`;
       try {
         await this.email.send({
           to: adminUser.email,
@@ -1095,7 +1156,7 @@ export class BillingService {
           html: `<p>Hello ${escapeHtml(adminUser.username)},</p>
 <p>We were unable to process your subscription payment for <strong>${escapeHtml(sub.tenant.name ?? sub.tenant.slug)}</strong>.</p>
 <p>Please update your payment method within <strong>${PAYMENT_GRACE_DAYS} days</strong> to avoid service interruption.</p>
-<p>You can update your payment details by contacting support or visiting your billing portal.</p>
+${updateLine}
 <p>RouteFlow Platform</p>`,
         });
       } catch {
@@ -1105,18 +1166,31 @@ export class BillingService {
   }
 
   private async onSubscriptionDeleted(subscription: any): Promise<void> {
-    const customerId =
-      typeof subscription.customer === "string" ? subscription.customer : subscription.customer?.id;
-
-    if (!customerId) return;
-
-    const sub = await this.prisma.tenantSubscription.findFirst({
-      where: { stripeCustomerId: customerId },
-    });
+    const sub = await this.matchStripeSubscription(
+      stripeRefId(subscription?.id),
+      subscription?.customer,
+      "customer.subscription.deleted",
+    );
     if (!sub) return;
+    await this.cancelFromStripe(sub, "subscription_deleted");
+  }
 
-    // Atomic ACTIVE→CANCELLED: emits the −MRR delta exactly once, even across duplicate webhooks
-    // or a race with the plans-as-data cron (both leave a non-ACTIVE status → count 0 here).
+  /**
+   * #2440 (SA-450): Stripe ended the subscription (deleted, or updated to `canceled`).
+   * ACTIVE → CANCELLED books the −MRR churn delta once (transitionAndEmit's CAS). SUSPENDED →
+   * CANCELLED is a plain CAS with NO delta: the suspension (overdue cron or platform admin)
+   * already removed the run-rate. TRIAL and READ_ONLY are never forced to CANCELLED, and a
+   * repeat webhook finds CANCELLED, loses both CASes and writes nothing.
+   */
+  private async cancelFromStripe(
+    sub: {
+      tenantId: string;
+      planKey: string | null;
+      basePriceSnapshot: Prisma.Decimal | null;
+      discount: Prisma.Decimal | null;
+    },
+    reason: string,
+  ): Promise<void> {
     const churned = await this.transitionAndEmit(
       sub.tenantId,
       sub,
@@ -1124,15 +1198,21 @@ export class BillingService {
       "CANCELLED",
       -1,
       BILLING_EVENTS.SUBSCRIPTION_CANCELED,
-      { source: "stripe", reason: "subscription_deleted" },
+      { source: "stripe", reason },
     );
-    // Not a paying→churn transition (already non-ACTIVE) — still land the Stripe-deleted tenant in
-    // CANCELLED (a terminal hard-block), without a duplicate ledger delta.
-    if (!churned) {
-      await this.prisma.tenant.update({
-        where: { id: sub.tenantId },
-        data: { status: "CANCELLED" },
-      });
+    const cancelled =
+      churned ||
+      (
+        await this.prisma.tenant.updateMany({
+          where: { id: sub.tenantId, status: "SUSPENDED" },
+          data: { status: "CANCELLED" },
+        })
+      ).count === 1;
+    if (!cancelled) {
+      this.logger.log(
+        `Stripe ${reason} for tenant ${sub.tenantId}: status is not ACTIVE/SUSPENDED — left as is`,
+      );
+      return;
     }
     this.tenantStatusGuard.invalidate(sub.tenantId);
 
@@ -1144,7 +1224,7 @@ export class BillingService {
       data: { cancelAtPeriodEnd: true, ...disarmedDowngrade() },
     });
 
-    this.logger.log(`Subscription cancelled for tenant ${sub.tenantId} (customer ${customerId})`);
+    this.logger.log(`Subscription cancelled for tenant ${sub.tenantId} (${reason})`);
 
     // N3: best-effort admin notification, never blocks the cancellation above (a Stripe
     // webhook retry is deduped by BillingNotificationService's own idempotency claim).
@@ -1161,14 +1241,11 @@ export class BillingService {
   }
 
   private async onSubscriptionUpdated(subscription: any): Promise<void> {
-    const customerId =
-      typeof subscription.customer === "string" ? subscription.customer : subscription.customer?.id;
-
-    if (!customerId) return;
-
-    const sub = await this.prisma.tenantSubscription.findFirst({
-      where: { stripeCustomerId: customerId },
-    });
+    const sub = await this.matchStripeSubscription(
+      stripeRefId(subscription?.id),
+      subscription?.customer,
+      "customer.subscription.updated",
+    );
     if (!sub) return;
 
     // Update period dates and cancellation flag. The downgrade markers are cleared ONLY when
@@ -1188,6 +1265,12 @@ export class BillingService {
     this.logger.debug(
       `Subscription updated for tenant ${sub.tenantId} — cancel_at_period_end: ${subscription.cancel_at_period_end}`,
     );
+
+    // #2440 (SA-450): only `canceled` maps to a status (as deleted). past_due / unpaid write none —
+    // grace stays with suspendOverdueTenants, reinstatement with invoice.payment_succeeded.
+    if (subscription.status === "canceled") {
+      await this.cancelFromStripe(sub, "subscription_canceled");
+    }
   }
 
   // ─── Cron: suspend tenants with expired trials / overdue payments ─────────

@@ -22,3 +22,22 @@ export function stripeSubscriptionPeriod(sub: any): { periodStart: Date; periodE
   if (start == null || end == null) return null;
   return { periodStart: new Date(start * 1000), periodEnd: new Date(end * 1000) };
 }
+
+/** A Stripe expandable reference (`"id"` or an expanded `{ id }`) as its id, else null. */
+export function stripeRefId(v: unknown): string | null {
+  if (typeof v === "string") return v || null;
+  const id = (v as { id?: unknown } | null | undefined)?.id;
+  return typeof id === "string" && id ? id : null;
+}
+
+/**
+ * #2440: the subscription an invoice belongs to. Under dahlia it lives at
+ * `parent.subscription_details.subscription`; an older endpoint version sends the top-level
+ * `subscription`. null = not a subscription invoice (a one-off, or a free pilot's).
+ */
+export function stripeInvoiceSubscriptionId(invoice: any): string | null {
+  return (
+    stripeRefId(invoice?.parent?.subscription_details?.subscription) ??
+    stripeRefId(invoice?.subscription)
+  );
+}
