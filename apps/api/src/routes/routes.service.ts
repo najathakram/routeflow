@@ -12,6 +12,7 @@ import {
   assertDeliveriesFitStop,
   assertStopNotSkipped,
   claimStopCompletion,
+  claimStopStatusChange,
 } from "./delivery-lines.util";
 import { PrismaService } from "../prisma/prisma.service";
 import { JwtPayload } from "../auth/jwt-payload.interface";
@@ -1976,9 +1977,10 @@ export class RoutesService {
     if (dto.driverNote !== undefined) updates.driverNote = dto.driverNote;
     if (dto.status === "IN_PROGRESS" && !stop.arrivedAt) updates.arrivedAt = new Date();
 
-    const updated = await this.prisma
-      .forTenant()
-      .routeRunStop.update({ where: { id: stopId }, data: updates });
+    // #2415: compare-and-swap — a completion that commits between the read above and this write
+    // must never be overwritten with SKIPPED (it would strand its delivery side effects).
+    await claimStopStatusChange(this.prisma.forTenant(), stopId, updates);
+    const updated = await this.prisma.forTenant().routeRunStop.findFirst({ where: { id: stopId } });
     await this.live.runProgress(runId);
     return updated;
   }
@@ -2258,8 +2260,6 @@ export class RoutesService {
       },
     });
     if (!stop) throw new NotFoundException("Stop not found");
-    if (stop.status === "COMPLETED") throw new BadRequestException("Stop is already completed");
-    assertStopNotSkipped(stop.status); // #2409
 
     const driver =
       user.role === UserRole.DRIVER
@@ -2271,6 +2271,10 @@ export class RoutesService {
     if (user.role === UserRole.DRIVER && (!driver || run.driverId !== driver.id)) {
       throw new ForbiddenException("You do not have access to this route run");
     }
+    // #2415: stop STATE only after the B72 ownership check, so a driver with no claim on this run
+    // can't learn whether the stop is completed or skipped.
+    if (stop.status === "COMPLETED") throw new BadRequestException("Stop is already completed");
+    assertStopNotSkipped(stop.status); // #2409
 
     // RF-019: Idempotency check (outside transaction for speed)
     if (dto.idempotencyKey) {
@@ -2471,8 +2475,6 @@ export class RoutesService {
       },
     });
     if (!stop) throw new NotFoundException("Stop not found");
-    if (stop.status === "COMPLETED") throw new BadRequestException("Stop is already completed");
-    assertStopNotSkipped(stop.status); // #2409
 
     const driver =
       user.role === UserRole.DRIVER
@@ -2484,6 +2486,10 @@ export class RoutesService {
     if (user.role === UserRole.DRIVER && (!driver || run.driverId !== driver.id)) {
       throw new ForbiddenException("You do not have access to this route run");
     }
+    // #2415: stop STATE only after the B72 ownership check, so a driver with no claim on this run
+    // can't learn whether the stop is completed or skipped.
+    if (stop.status === "COMPLETED") throw new BadRequestException("Stop is already completed");
+    assertStopNotSkipped(stop.status); // #2409
 
     // RF-006: reject physical-money payment with zero amount
     if (dto.payment && dto.payment.amount <= 0) {
