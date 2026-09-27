@@ -2,8 +2,8 @@
 
 Docs-only bookkeeping (Option B). A coverage pass (every first-parent master commit since the map's last
 full mapping, `9c5e4b45`, checked for a code-map mention) found these 22 code PRs landed with no
-entry; #2501/#2502 landed after the afternoon batch. Each bullet below was grepped in the merged tree
-unless marked "(per PR body)". Grouped by area.
+entry; #2501, #2502 and #2485 landed after the afternoon batch. Each bullet below was grepped in the
+merged tree unless marked "(per PR body)". Grouped by area.
 
 
 ## api — orders, invoices, returns
@@ -199,7 +199,8 @@ unless marked "(per PR body)". Grouped by area.
   failing this spec. Non-win32 platforms (incl. Linux CI) still assert the real `mode 0600`.
   Closes #2221.
 
-## Landed after `96c17054` (bullets from the PR bodies; the code is not in this branch's base)
+## Landed after `96c17054` (evening, through `e2fead9f`)
 
-- **#2501 payment receipt images move out of invoices.service, `4e1ad1b4`:** behaviour-neutral size-ratchet extraction (SA-065): `uploadPaymentImage`, `getPaymentImageUrl`, `deletePaymentImage` and the private `findPaymentOrThrow` move verbatim into `invoices/payment-image.ts` (explicit `deps.prisma`/`deps.storage`), leaving one-line delegates; `size-ratchet.spec.ts` row lowered. Lands before #2485/#2392/#2493/#2494 (per PR body). Closes #2498.
-- **#2502 master's api specs pass on win32, `4e53280c`:** test-only. ESM imports of a bare `C:\\` path now go through `pathToFileURL(x).href` (the report-script specs, `db-lane-serial`, `local-db-specs`, `script-spec-lane`), with a new pin `no-bare-path-esm-import.spec.ts`; the tsconfig-scope specs normalise path separators; symlink cases skip on EPERM/EACCES; spawn budgets raised. Every Windows pre-push was red on master while Linux CI stayed green (per PR body).
+- **#2501 payment receipt images move out of invoices.service, `4e1ad1b4`:** behaviour-neutral size-ratchet extraction (SA-065): `uploadPaymentImage`, `getPaymentImageUrl`, `deletePaymentImage` (+ the private `findPaymentOrThrow`) move verbatim into `invoices/payment-image.ts`, which takes an explicit `PaymentImageDeps` (`prisma`, `storage`); the service keeps one-line delegates and its `size-ratchet.spec.ts` row is lowered. Closes #2498.
+- **#2502 master's api specs pass on win32, `4e53280c`:** test-only. ESM imports of a bare `C:\` path go through `pathToFileURL(x).href` (the report-script specs, `db-lane-serial`, `local-db-specs`, `script-spec-lane`), pinned by the new `common/no-bare-path-esm-import.spec.ts`; the tsconfig-scope specs normalise path separators; symlink cases skip on EPERM/EACCES; spawn budgets raised. Every Windows pre-push was red on master while Linux CI stayed green.
+- **#2485 an invoice due date keeps the literal calendar day, `e2fead9f`:** `common/calendar-date.ts` `calendarFieldStamp(raw, field)` stores a `YYYY-MM-DD` prefix as UTC midnight and 400s naming the field when it names no real day (`issueDateStamp` delegates to it); `invoices/invoice-due-dates.ts` `dueStamp`/`dueDateStamps` (moved out for the size ratchet) stamp `dueDate`/`depositDueDate` in `create()`/`update()`/`updateTerms()`/`createInvoiceFromOrder*`/`createPartialFromOrder`, validated before any read or write. Spec `invoices.service.b2256-due-date.spec.ts`. Second instance of L-232. Closes #2256.
