@@ -11,8 +11,10 @@ interface CreditNoteReader {
   creditNote: {
     findMany(args: {
       where: { id: { in: string[] } };
-      select: { id: true; creditNoteNumber: true; reason: true };
-    }): Promise<Array<{ id: string; creditNoteNumber: string; reason: string | null }>>;
+      select: { id: true; creditNoteNumber: true; reason: true; autoApplied: true };
+    }): Promise<
+      Array<{ id: string; creditNoteNumber: string; reason: string | null; autoApplied: boolean }>
+    >;
   };
 }
 
@@ -34,7 +36,8 @@ export async function attachPaymentCreditNotes(
   if (ids.length === 0) return;
   const notes = await db.creditNote.findMany({
     where: { id: { in: ids } },
-    select: { id: true, creditNoteNumber: true, reason: true },
+    // autoApplied (note-level): recognises a pre-#2423 sweep's payment (SA-436 review).
+    select: { id: true, creditNoteNumber: true, reason: true, autoApplied: true },
   });
   const byId = new Map(notes.map((n) => [n.id, n]));
   for (const inv of order.invoices ?? []) {

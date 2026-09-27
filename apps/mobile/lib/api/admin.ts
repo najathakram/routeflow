@@ -219,7 +219,12 @@ export interface AdminOrder {
       amount: number | string;
       creditNoteId?: string | null;
       autoApplied: boolean;
-      creditNote?: { id: string; creditNoteNumber: string; reason?: string | null } | null;
+      creditNote?: {
+        id: string;
+        creditNoteNumber: string;
+        reason?: string | null;
+        autoApplied?: boolean;
+      } | null;
     }>;
   }>;
   /**

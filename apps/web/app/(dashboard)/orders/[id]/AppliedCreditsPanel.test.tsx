@@ -1,6 +1,6 @@
 /**
  * #2404 (P0, epic #2400, SA-436 PR-3): the order's "Applied credits" panel lists EVERY credit
- * actually on the order's invoices — automatic and manual, each with its invoice — plus the
+ * actually on the order's invoices — automatic or applied, each with its invoice — plus the
  * picked credits not yet applied, and staff can Remove an applied one (un-apply). Before, it
  * listed the hand-picked intents only, so an auto-applied credit was invisible on the order.
  */
@@ -53,7 +53,7 @@ const order = {
 beforeEach(() => mutate.mockReset());
 
 describe("AppliedCreditsPanel (#2404)", () => {
-  it("lists every applied credit with its invoice and Automatic / Manual, plus pending picks", () => {
+  it("lists every applied credit with its invoice and Automatic / Applied, plus pending picks", () => {
     render(<AppliedCreditsPanel order={order as any} role="OPERATOR" />);
     const a = screen.getByTestId("applied-credit-payment:p1");
     expect(within(a).getByText("CN-A")).toBeTruthy();
@@ -61,8 +61,9 @@ describe("AppliedCreditsPanel (#2404)", () => {
     expect(within(a).getByText("Automatic")).toBeTruthy();
     expect(within(a).getByText("$12.50")).toBeTruthy();
     expect(
-      within(screen.getByTestId("applied-credit-payment:p2")).getByText("Manual"),
+      within(screen.getByTestId("applied-credit-payment:p2")).getByText("Applied"),
     ).toBeTruthy();
+    expect(screen.queryByText("Manual")).toBeNull();
     const pending = screen.getByTestId("applied-credit-intent:oc-c");
     expect(within(pending).getByText("Not yet applied")).toBeTruthy();
     expect(within(pending).getByText("Up to remaining")).toBeTruthy();
@@ -97,5 +98,42 @@ describe("AppliedCreditsPanel (#2404)", () => {
     const src = readFileSync(join(__dirname, "page.tsx"), "utf8");
     expect(src).toMatch(/<AppliedCreditsPanel[\s\S]*?order=\{order\}[\s\S]*?role=\{/);
     expect(src).not.toMatch(/order\.orderCreditNotes!\.map/);
+  });
+
+  it("the Remove confirm quotes the (note, invoice) pair total the server un-applies (SA-436 review)", () => {
+    const twoOnOne = {
+      invoices: [
+        {
+          id: "inv-1",
+          invoiceNumber: "INV-1",
+          status: "SENT",
+          total: 100,
+          payments: [
+            {
+              id: "x1",
+              amount: "5.00",
+              creditNoteId: "cn-b",
+              autoApplied: false,
+              creditNote: { id: "cn-b", creditNoteNumber: "CN-B" },
+            },
+            {
+              id: "x2",
+              amount: "2.50",
+              creditNoteId: "cn-b",
+              autoApplied: false,
+              creditNote: { id: "cn-b", creditNoteNumber: "CN-B" },
+            },
+          ],
+        },
+      ],
+      orderCreditNotes: [],
+    };
+    render(<AppliedCreditsPanel order={twoOnOne as any} role="OPERATOR" />);
+    fireEvent.click(
+      within(screen.getByTestId("applied-credit-payment:x1")).getByRole("button", {
+        name: "Remove credit",
+      }),
+    );
+    expect(screen.getByText(/un-apply \$7\.50 of CN-B from INV-1/)).toBeTruthy();
   });
 });

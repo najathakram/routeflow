@@ -11,7 +11,7 @@ const money = (n: number) =>
 
 /**
  * #2404 (P0, epic #2400, SA-436 PR-3), mirroring web's AppliedCreditsPanel: EVERY credit actually
- * on the order's invoices (automatic or manual, each with its invoice) plus the picked credits
+ * on the order's invoices (Automatic or Applied, each with its invoice) plus the picked credits
  * not yet applied, from the SAME shared rule (`orderAppliedCredits`). Remove un-applies an
  * applied credit from its invoice. The operator app is staff-only, like the invoice screen's
  * own Remove credit.
@@ -39,13 +39,13 @@ export function OrderAppliedCredits({ order }: { order: OrderAppliedCreditsInput
               <View style={styles.metaRow}>
                 <Text style={styles.sub}>on {row.invoiceNumber}</Text>
                 <Text style={styles.chip}>
-                  {row.source === "automatic" ? "Automatic" : "Manual"}
+                  {row.source === "automatic" ? "Automatic" : "Applied"}
                 </Text>
                 <Pressable
                   onPress={() =>
                     confirm(
                       "Remove this credit?",
-                      `This un-applies ${money(row.amount)} of ${row.creditNoteNumber} from ${row.invoiceNumber} and restores it to the credit note's balance.`,
+                      `This un-applies ${money(row.pairTotal)} of ${row.creditNoteNumber} from ${row.invoiceNumber} and restores it to the credit note's balance.`,
                       () =>
                         unapply.mutate(
                           { id: row.creditNoteId, invoiceId: row.invoiceId },
@@ -61,7 +61,8 @@ export function OrderAppliedCredits({ order }: { order: OrderAppliedCreditsInput
                     )
                   }
                   hitSlop={6}
-                  style={styles.remove}
+                  disabled={unapply.isPending}
+                  style={[styles.remove, unapply.isPending && { opacity: 0.4 }]}
                   accessibilityRole="button"
                   accessibilityLabel={`Remove credit ${row.creditNoteNumber} from ${row.invoiceNumber}`}
                 >

@@ -1,7 +1,7 @@
 /**
  * #2404 (P0, epic #2400, SA-436 PR-3): the order's "Applied credits" panel is built from the
  * credit ACTUALLY on the order's invoices (every non-VOID CREDIT_NOTE payment on a non-VOID
- * invoice, automatic or manual) plus the hand-picked intents not yet applied. Before, it listed
+ * invoice, automatic or applied) plus the hand-picked intents not yet applied. Before, it listed
  * the intents only, so a credit auto-applied on send was invisible on the order. One pure rule
  * (packages/types), shared by web and mobile.
  */
@@ -57,7 +57,7 @@ const base: OrderAppliedCreditsInput = {
 };
 
 describe("orderAppliedCredits (#2404)", () => {
-  it("lists every applied credit payment, automatic and manual, with its invoice", () => {
+  it("lists every applied credit payment, automatic and applied, with its invoice", () => {
     const rows = orderAppliedCredits(base).filter((r) => r.kind === "applied");
     expect(rows).toEqual([
       expect.objectContaining({
@@ -73,14 +73,14 @@ describe("orderAppliedCredits (#2404)", () => {
         creditNoteNumber: "CN-B",
         invoiceNumber: "INV-1",
         amount: 5,
-        source: "manual",
+        source: "applied",
       }),
       expect.objectContaining({
         paymentId: "p3",
         creditNoteNumber: "CN-B",
         invoiceNumber: "INV-2",
         amount: 3.25,
-        source: "manual",
+        source: "applied",
       }),
     ]);
   });
@@ -91,9 +91,78 @@ describe("orderAppliedCredits (#2404)", () => {
     expect(base.orderCreditNotes!.some((oc) => oc.creditNoteId === "cn-a")).toBe(false);
   });
 
-  it("a payment without autoApplied reads as manual (existing rows, SA-436)", () => {
+  it("a payment with autoApplied=false reads as a neutral 'applied', never 'manual' (SA-436 review)", () => {
     const row = orderAppliedCredits(base).find((r) => r.paymentId === "p3")!;
-    expect(row.source).toBe("manual");
+    expect(row.source).toBe("applied");
+    expect(
+      orderAppliedCredits(base).some((r) => (r as { source?: string }).source === "manual"),
+    ).toBe(false);
+  });
+
+  it("THE INCIDENT: a pre-#2423 sweep payment (autoApplied=false) of a note the sweep auto-applied, with no order intent, reads 'automatic'", () => {
+    const rows = orderAppliedCredits({
+      invoices: [
+        {
+          id: "inv-1",
+          invoiceNumber: "INV-1",
+          status: "SENT",
+          payments: [
+            {
+              id: "old",
+              amount: "9.00",
+              creditNoteId: "cn-old",
+              autoApplied: false,
+              creditNote: {
+                id: "cn-old",
+                creditNoteNumber: "CN-OLD",
+                reason: "old test credit",
+                autoApplied: true,
+              },
+            },
+            {
+              id: "picked",
+              amount: "4.00",
+              creditNoteId: "cn-pick",
+              autoApplied: false,
+              creditNote: { id: "cn-pick", creditNoteNumber: "CN-PICK", autoApplied: true },
+            },
+          ],
+        },
+      ],
+      orderCreditNotes: [{ id: "oc", creditNoteId: "cn-pick", amount: null }],
+    });
+    expect(rows.find((r) => r.paymentId === "old")!.source).toBe("automatic");
+    // a hand-picked note that was also once auto-applied elsewhere: the pick decides, so neutral
+    expect(rows.find((r) => r.paymentId === "picked")!.source).toBe("applied");
+  });
+
+  it("each applied row carries the (note, invoice) pair total the server's unapply reverses", () => {
+    const rows = orderAppliedCredits({
+      invoices: [
+        {
+          id: "inv-1",
+          invoiceNumber: "INV-1",
+          status: "SENT",
+          payments: [
+            { id: "a", amount: "5.00", creditNoteId: "cn-b", autoApplied: false },
+            { id: "b", amount: "2.50", creditNoteId: "cn-b", autoApplied: false },
+            { id: "c", amount: "1.00", creditNoteId: "cn-x", autoApplied: false },
+          ],
+        },
+        {
+          id: "inv-2",
+          invoiceNumber: "INV-2",
+          status: "SENT",
+          payments: [{ id: "d", amount: "3.25", creditNoteId: "cn-b", autoApplied: false }],
+        },
+      ],
+      orderCreditNotes: [],
+    });
+    const byId = Object.fromEntries(rows.map((r) => [r.paymentId, r]));
+    expect((byId.a as any).pairTotal).toBe(7.5);
+    expect((byId.b as any).pairTotal).toBe(7.5);
+    expect((byId.c as any).pairTotal).toBe(1);
+    expect((byId.d as any).pairTotal).toBe(3.25);
   });
 
   it("an intent already applied is not listed twice; an unapplied one shows as pending", () => {

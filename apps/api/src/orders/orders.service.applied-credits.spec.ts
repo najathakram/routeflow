@@ -165,7 +165,12 @@ describe("OrdersService.findOne — credit payments carry their credit note (#24
     expect(prisma.creditNote.findMany).toHaveBeenCalledTimes(1);
     const arg = prisma.creditNote.findMany.mock.calls[0][0];
     expect([...arg.where.id.in].sort()).toEqual(["cn-a", "cn-b"]);
-    expect(arg.select).toEqual({ id: true, creditNoteNumber: true, reason: true });
+    expect(arg.select).toEqual({
+      id: true,
+      creditNoteNumber: true,
+      reason: true,
+      autoApplied: true,
+    });
     expect(order.invoices[0].payments[0].creditNote).toEqual({
       id: "cn-a",
       creditNoteNumber: "CN-A",
