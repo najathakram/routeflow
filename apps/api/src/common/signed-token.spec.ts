@@ -14,7 +14,9 @@ describe("signed-token (lifted from demo-booking; shared with onboarding intake 
     const t = mintSignedToken(SECRET);
     const [nonce, mac] = t.split(".");
     expect(verifySignedToken(`x${nonce}.${mac}`, SECRET)).toBe(false);
-    expect(verifySignedToken(`${nonce}.${mac.slice(0, -1)}A`, SECRET)).toBe(false);
+    // Swap the MAC's last character for a DIFFERENT one: a fixed "A" was a no-op 1 run in 64.
+    const last = mac.slice(-1) === "A" ? "B" : "A";
+    expect(verifySignedToken(`${nonce}.${mac.slice(0, -1)}${last}`, SECRET)).toBe(false);
     expect(verifySignedToken(`${nonce}${mac}`, SECRET)).toBe(false);
     expect(verifySignedToken(".abc", SECRET)).toBe(false);
     expect(verifySignedToken("", SECRET)).toBe(false);
