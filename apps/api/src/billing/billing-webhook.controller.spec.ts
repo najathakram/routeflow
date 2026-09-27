@@ -11,6 +11,8 @@ function build(
     create?: () => Promise<unknown>;
     /** #2442: the already-ledgered row a duplicate insert finds. */
     existing?: { outcome: string | null } | null;
+    /** #2476: rows the redelivery claim (one updateMany) takes — 1 = claimed. */
+    claimed?: number;
   } = {},
 ) {
   const stripe = {
@@ -25,6 +27,7 @@ function build(
       create: jest.fn(opts.create ?? (async () => ({}))),
       findUnique: jest.fn(async () => opts.existing ?? null),
       update: jest.fn(async () => ({})),
+      updateMany: jest.fn(async () => ({ count: opts.claimed ?? 1 })),
     },
   };
   const controller = new BillingWebhookController(
@@ -184,5 +187,92 @@ describe("#2442 BillingWebhookController — throttle skip and event-id ledger",
     prisma.stripeBillingEvent.update.mockRejectedValue(new Error("db blip"));
     await expect(controller.handleWebhook(req as never, res as never)).resolves.toBeUndefined();
     expect(res.status).toHaveBeenCalledWith(HttpStatus.OK);
+  });
+});
+
+// #2476 / SA-472: a redelivery (P2002) claims the ledger row EXCLUSIVELY with one updateMany — an
+// "error:" row at once, a NULL (in-flight) row only once its lease (5 min, processedAt) has expired.
+// Count 0 ⇒ re-read: completed ⇒ 200 duplicate; still in flight elsewhere ⇒ 503 (a 2xx would ack an
+// event another worker may still fail). The outcome write in finally is LOGGED on failure.
+describe("#2476 BillingWebhookController — exclusive claim on redelivery (SA-472)", () => {
+  const LEASE_MS = 5 * 60 * 1000;
+  const dup = () =>
+    new Prisma.PrismaClientKnownRequestError("Unique constraint failed", {
+      code: "P2002",
+      clientVersion: "test",
+    });
+  const evt = () => ({ type: "invoice.payment_failed", id: "evt_pf", created: 1_700_000_000 });
+
+  it("claims with ONE updateMany: an error: row, or a NULL row older than the 5-minute lease", async () => {
+    const { controller, prisma, req, res } = build({
+      construct: evt,
+      create: async () => {
+        throw dup();
+      },
+    });
+    const before = Date.now();
+    await controller.handleWebhook(req as never, res as never);
+    const arg = (prisma.stripeBillingEvent.updateMany.mock.calls as any[])[0][0];
+    expect(arg.where.id).toBe("evt_pf");
+    expect(arg.where.OR).toEqual([
+      { outcome: { startsWith: "error:" } },
+      { outcome: null, processedAt: { lt: expect.any(Date) } },
+    ]);
+    const cutoff = arg.where.OR[1].processedAt.lt.getTime();
+    expect(cutoff).toBeLessThanOrEqual(Date.now() - LEASE_MS + 5);
+    expect(cutoff).toBeGreaterThanOrEqual(before - LEASE_MS - 5);
+    expect(arg.data).toEqual({ processedAt: expect.any(Date), outcome: null });
+  });
+
+  it("claimed (count 1) ⇒ the handler runs", async () => {
+    const { controller, billing, req, res } = build({
+      construct: evt,
+      create: async () => {
+        throw dup();
+      },
+      claimed: 1,
+    });
+    await controller.handleWebhook(req as never, res as never);
+    expect(billing.handleWebhookEvent).toHaveBeenCalledTimes(1);
+    expect(res.status).toHaveBeenCalledWith(HttpStatus.OK);
+  });
+
+  it("not claimed and completed ⇒ 200 duplicate, handler not run", async () => {
+    const { controller, billing, req, res, json } = build({
+      construct: evt,
+      create: async () => {
+        throw dup();
+      },
+      claimed: 0,
+      existing: { outcome: "processed" },
+    });
+    await controller.handleWebhook(req as never, res as never);
+    expect(billing.handleWebhookEvent).not.toHaveBeenCalled();
+    expect(res.status).toHaveBeenCalledWith(HttpStatus.OK);
+    expect(json).toHaveBeenCalledWith({ received: true });
+  });
+
+  it("not claimed and still in flight elsewhere (NULL inside the lease) ⇒ 503, handler not run", async () => {
+    const { controller, billing, req, res, json } = build({
+      construct: evt,
+      create: async () => {
+        throw dup();
+      },
+      claimed: 0,
+      existing: { outcome: null },
+    });
+    await controller.handleWebhook(req as never, res as never);
+    expect(billing.handleWebhookEvent).not.toHaveBeenCalled();
+    expect(res.status).toHaveBeenCalledWith(HttpStatus.SERVICE_UNAVAILABLE);
+    expect(json).toHaveBeenCalledWith({ error: "Webhook event in progress" });
+  });
+
+  it("an outcome-write failure is LOGGED (never swallowed) and never changes the response", async () => {
+    const { controller, prisma, req, res } = build({ construct: evt });
+    prisma.stripeBillingEvent.update.mockRejectedValue(new Error("db blip"));
+    const err = jest.spyOn((controller as any).logger, "error").mockImplementation(() => undefined);
+    await controller.handleWebhook(req as never, res as never);
+    expect(res.status).toHaveBeenCalledWith(HttpStatus.OK);
+    expect(err.mock.calls.some((c: any[]) => /outcome/i.test(String(c[0])))).toBe(true);
   });
 });
