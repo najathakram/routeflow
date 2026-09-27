@@ -440,6 +440,23 @@ async function t17() {
   );
 }
 
+// ── T17v (#2273): `npm run verify` runs this self-test ────────────────────────
+// Unwired, this file protects nothing (the #2271 review found it orphaned), so it pins its own
+// place in the root verify chain, the way google-signin-check's T8 does.
+function t17v() {
+  const pkg = JSON.parse(
+    readFileSync(fileURLToPath(new URL("../../package.json", import.meta.url)), "utf8"),
+  );
+  const verify = typeof pkg.scripts?.verify === "string" ? pkg.scripts.verify : "";
+  checkTrue(
+    "T17v verify chain runs scripts/roadmap/from-git.self-test.mjs",
+    verify
+      .split("&&")
+      .some((step) => step.trim() === "node scripts/roadmap/from-git.self-test.mjs"),
+    "not found as its own `&&` step in package.json scripts.verify",
+  );
+}
+
 async function main() {
   console.log("from-git.self-test");
   t11();
@@ -449,6 +466,7 @@ async function main() {
   await t15();
   await t16();
   await t17();
+  t17v();
 }
 
 try {
