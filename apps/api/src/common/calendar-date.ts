@@ -237,7 +237,9 @@ export function isOverdue(
   timeZone?: string | null,
 ): boolean {
   if (!dueDate) return false;
-  return now.getTime() > endOfCalendarDay(dueDate, timeZone).getTime();
+  // #2518 review: defined FROM the exact SQL twin, never via endOfCalendarDay — that reads the zone
+  // offset at a UTC-midnight guess, which is an hour off on a DST eve east of UTC.
+  return startOfCalendarDay(dueDate, "UTC").getTime() < overdueCutoff(now, timeZone).getTime();
 }
 
 /** The SQL twin of `isOverdue`: `dueDate < overdueCutoff(now, tz)` selects exactly the overdue rows. */

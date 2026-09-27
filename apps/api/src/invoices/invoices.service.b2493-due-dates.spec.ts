@@ -1,8 +1,12 @@
 /**
- * #2493 item 4 — the #2256 literal-day rule holds under a NEGATIVE-offset process time zone, on
- * the two from-order paths #2256 did not pin (createPartialFromOrder, and
- * createInvoiceFromOrderWithTenant, the worker path), and the import CSV's "Due Date" (item 2)
- * follows it too.
+ * #2493 item 4 — the #2256 literal-day rule on the two from-order paths #2256 did not pin
+ * (createPartialFromOrder, and createInvoiceFromOrderWithTenant, the worker path), and the import
+ * CSV's "Due Date" (item 2).
+ *
+ * Zones are passed as DATA, never through `process.env.TZ`: jest hands each test file a COPY of the
+ * environment, so assigning TZ there never reaches Node's zone cache (the analytics.service
+ * .calendar.spec.ts lesson, archived L-047). A host-zone-dependent read is pinned with a stub Date
+ * whose local and UTC calendar days differ, which discriminates on every host including UTC CI.
  *
  * Split out of invoices.service.spec.ts per the size ratchet. Same bootstrap as
  * invoices.service.b2256-due-date.spec.ts, duplicated deliberately so this file stays
@@ -40,7 +44,7 @@ import { SellingRestrictionsService } from "../selling-restrictions/selling-rest
 import { InvoiceStatus } from "@prisma/client";
 
 import { importCalendarDay } from "../import/import.service";
-import { endOfCalendarDay, isOverdue, overdueCutoff } from "../common/calendar-date";
+import { isOverdue, overdueCutoff } from "../common/calendar-date";
 import { recomputeInvoiceStatus } from "./invoice-status";
 import { applyInvoiceStatusFilters } from "./invoice-list-query";
 import * as fs from "fs";
@@ -127,24 +131,9 @@ describe("InvoicesService — #2493 due dates under a negative-offset process zo
     service = module.get<InvoicesService>(InvoicesService);
   });
 
-  // Los Angeles is UTC-7 in September: a `new Date(raw)` read back through local getters moves
-  // an evening-at-offset value to the wrong day, which is exactly what this zone exposes.
-  const ORIGINAL_TZ = process.env.TZ;
-  beforeAll(() => {
-    process.env.TZ = "America/Los_Angeles";
-  });
-  afterAll(() => {
-    if (ORIGINAL_TZ === undefined) delete process.env.TZ;
-    else process.env.TZ = ORIGINAL_TZ;
-  });
-
   const day25 = new Date("2026-09-25T00:00:00.000Z");
   const OFFSET = "2026-09-25T23:30:00-05:00";
   const UTC_MIDNIGHT = "2026-09-25T20:00:00-04:00";
-
-  it("the process zone really is negative-offset for these cases", () => {
-    expect(new Date(2026, 8, 25).getTimezoneOffset()).toBeGreaterThan(0);
-  });
 
   const orderWith = (over: Record<string, unknown> = {}) => ({
     id: "ord-2493",
@@ -259,6 +248,24 @@ describe("InvoicesService — #2493 due dates under a negative-offset process zo
       expect(importCalendarDay(raw)).toEqual(day25);
     });
 
+    it("a non-ISO value reads the LOCAL calendar day of its own parse, never the UTC one", () => {
+      // What `new Date("09/25/2026")` is on a host EAST of UTC: local Sep 25 00:00 = UTC Sep 24,
+      // and west of UTC a late-evening parse is local Sep 25 / UTC Sep 26. Stubbed both ways so the
+      // pin discriminates on any host (a getUTC* mutation turns it red).
+      const stub = (utcDay: number) =>
+        ({
+          getTime: () => 0,
+          getFullYear: () => 2026,
+          getMonth: () => 8,
+          getDate: () => 25,
+          getUTCFullYear: () => 2026,
+          getUTCMonth: () => 8,
+          getUTCDate: () => utcDay,
+        }) as unknown as Date;
+      expect(importCalendarDay("09/25/2026", () => stub(24))).toEqual(day25);
+      expect(importCalendarDay("09/25/2026", () => stub(26))).toEqual(day25);
+    });
+
     it.each([
       ["", null],
       [null, null],
@@ -277,23 +284,46 @@ describe("InvoicesService — #2493 due dates under a negative-offset process zo
     const at2330LA = new Date("2026-09-26T06:30:00.000Z"); // 23:30 PDT, still the due day
     const at0030LA = new Date("2026-09-26T07:30:00.000Z"); // 00:30 PDT, the day after
 
-    it.each(["UTC", LA, "Asia/Kolkata", "Pacific/Kiritimati", "Pacific/Pago_Pago"])(
-      "boundary table in %s: grace through the last ms of the due day, overdue 1 ms later; the SQL twin agrees",
-      (tz) => {
-        const end = endOfCalendarDay(due, tz);
-        expect(isOverdue(due, end, tz)).toBe(false);
-        expect(isOverdue(due, new Date(end.getTime() + 1), tz)).toBe(true);
-        // Sweep D-1 .. D+2 every 15 minutes: the predicate and `dueDate < cutoff` never disagree.
-        for (
-          let t = due.getTime() - 86_400_000;
-          t <= due.getTime() + 2 * 86_400_000;
-          t += 900_000
-        ) {
-          const now = new Date(t);
-          expect(due < overdueCutoff(now, tz)).toBe(isOverdue(due, now, tz));
+    /** The oracle, independent of calendar-date.ts: the calendar day `instant` falls on in `tz`. */
+    const localDay = (instant: Date, tz: string) =>
+      new Intl.DateTimeFormat("en-CA", {
+        timeZone: tz,
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+      }).format(instant);
+
+    it.each([
+      ["UTC", "2026-09-25"],
+      [LA, "2026-09-25"],
+      ["Asia/Kolkata", "2026-09-25"],
+      ["Pacific/Kiritimati", "2026-09-25"],
+      ["Pacific/Pago_Pago", "2026-09-25"],
+      // DST eves east of UTC (the review's case): the NEXT day starts on the other offset.
+      ["Australia/Sydney", "2026-10-03"], // AEST +10 → AEDT +11 at 02:00 on Oct 4
+      ["Pacific/Auckland", "2026-09-26"], // NZST +12 → NZDT +13 at 02:00 on Sep 27
+      [LA, "2026-10-31"], // PDT -7 → PST -8 at 02:00 on Nov 1
+    ])(
+      "boundary table in %s (due %s): overdue exactly when the zone's day has moved past the due day",
+      (tz, dueDay) => {
+        const d = new Date(`${dueDay}T00:00:00.000Z`);
+        // The true local midnight after the due day, found from the oracle alone.
+        let lo = d.getTime() - 86_400_000;
+        let hi = d.getTime() + 2 * 86_400_000;
+        while (hi - lo > 1) {
+          const mid = Math.floor((lo + hi) / 2);
+          if (localDay(new Date(mid), tz) > dueDay) hi = mid;
+          else lo = mid;
         }
-        expect(due < overdueCutoff(end, tz)).toBe(false);
-        expect(due < overdueCutoff(new Date(end.getTime() + 1), tz)).toBe(true);
+        expect(isOverdue(d, new Date(hi - 1), tz)).toBe(false);
+        expect(isOverdue(d, new Date(hi), tz)).toBe(true);
+        // Sweep D-1 .. D+2 every 15 minutes: the predicate, its SQL twin and the oracle agree.
+        for (let t = d.getTime() - 86_400_000; t <= d.getTime() + 2 * 86_400_000; t += 900_000) {
+          const now = new Date(t);
+          const expected = localDay(now, tz) > dueDay;
+          expect(isOverdue(d, now, tz)).toBe(expected);
+          expect(d < overdueCutoff(now, tz)).toBe(expected);
+        }
       },
     );
 

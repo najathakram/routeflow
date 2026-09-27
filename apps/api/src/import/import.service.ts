@@ -53,11 +53,16 @@ const INVENTORY_PURCHASE_KEYWORDS = [
  * parse's own calendar fields so neither the value's offset nor the server zone moves it. A value
  * naming no day is null (no due date), never an Invalid Date.
  */
-export function importCalendarDay(raw: string | null | undefined): Date | null {
+export function importCalendarDay(
+  raw: string | null | undefined,
+  // The non-ISO parse, injectable so a spec can hand in a Date whose LOCAL and UTC days differ
+  // (the only way to pin "local getters" on a UTC CI host; TZ can't be set inside jest).
+  parse: (value: string) => Date = (value) => new Date(value),
+): Date | null {
   const value = (raw ?? "").trim();
   if (!value) return null;
   if (/^\d{4}-\d{2}-\d{2}/.test(value)) return calendarStampFromInput(value);
-  const parsed = new Date(value);
+  const parsed = parse(value);
   if (Number.isNaN(parsed.getTime())) return null;
   return new Date(Date.UTC(parsed.getFullYear(), parsed.getMonth(), parsed.getDate()));
 }
