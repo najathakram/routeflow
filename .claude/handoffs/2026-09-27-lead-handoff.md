@@ -68,7 +68,7 @@ migration first) · #2385 (BLOCKED: its merge reverts 4 master app files — res
 **PC (crashed 08:15Z; lanes being brought to a safe point; lane handoffs → `local-assets/handoff/2026-09-27/lanes/*.md`)**
 - Routeflow Lead — this file. Cron sweep job 2edaf3d2 (:17/:47) may have died with the app.
 - RouteFlow Lane F prover — SAFE. #2448 proof PASS posted; next #2425 @d6e98be9. Only routeflow_postgres up (idle). Handoff lanes/F-prover.md.
-- RouteFlow Lane U-po — local only, unpushed: fix/b2188-spec-windows-esm-url (Windows test fix, master merged,
+- RouteFlow Lane U-po — SAFE (all 3 branches committed, trailer on HEAD, trees clean, nothing pushed; lanes/U-po.md). Local only, unpushed: fix/b2188-spec-windows-esm-url (Windows test fix, master merged,
   folding 2 new bare-path specs), fix/2198 ba2d7bb53 (#2241), #2185 mid-merge in rf-lane-U-po-12; next #2093,
   #2233, #2088. Safe-point msg delivered. It gets the first PC verify slot ("U-po go").
 - RouteFlow MacBook bookkeeping (runs on the PC) — #2385 fix (restore apps/ + fold landings). Got "continue", NOT safe-point (msg cap).
