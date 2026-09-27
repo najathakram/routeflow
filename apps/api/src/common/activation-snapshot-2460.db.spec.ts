@@ -29,6 +29,7 @@ import { BillingEventService } from "../billing/billing-event.service";
 import { MrrService, isPayingRow } from "../billing/mrr.service";
 import { PlanCatalogService } from "../billing/plan-catalog.service";
 import { ProrationService } from "../billing/proration.service";
+import { BillingService } from "../billing/billing.service";
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const { assertTestTenant } = require("../../../../scripts/lib/test-tenants.cjs");
@@ -113,16 +114,48 @@ describeDb(
       const proration = new ProrationService(prisma as any, catalog);
       mrr = new MrrService(prisma as any);
 
+      // F2 (#938): the Pricing step must run the REAL reconcile path — updateTenantPriceOverride awaits
+      // syncStripeSubscriptionPrice, whose reconcilePriceLedger rewrites the snapshot and books the Δ.
+      // A real BillingService; the Stripe push is a natural no-op here (these rows have no
+      // stripeSubId), and the tenant's price resolves from its own row (override ?? catalog).
+      const pricing = {
+        resolveTenantPricing: async (tenantId: string) => {
+          const sub = await prisma.tenantSubscription.findUniqueOrThrow({ where: { tenantId } });
+          const monthly =
+            sub.priceOverrideMonthly != null
+              ? Number(sub.priceOverrideMonthly)
+              : (price[sub.planKey ?? "STARTER"] ?? 0);
+          return {
+            planKey: sub.planKey,
+            planName: sub.planKey,
+            monthly,
+            annual: monthly * 10,
+            source: sub.priceOverrideMonthly != null ? "override" : "catalog",
+            currency: "usd",
+          };
+        },
+      };
+      const billing = new BillingService(
+        prisma as any,
+        { isConfigured: true } as any, // stripe — no stripeSubId, so no Stripe call is made
+        { send: jest.fn().mockResolvedValue({}) } as any, // email
+        { invalidate: jest.fn() } as any, // tenantStatusGuard
+        events,
+        pricing as any,
+        { notifyCancelled: jest.fn(), notifySuspended: jest.fn() } as any, // billingNotification
+        planTransitionStub,
+      );
+
       platformAdmin = new PlatformAdminService(
         prisma as any,
         noop, // jwtService
         noop, // config
         noop, // emailService
-        { syncStripeSubscriptionPrice: jest.fn().mockResolvedValue(undefined) } as any, // billingService
-        { resolveTenantPricing: jest.fn().mockResolvedValue({}) } as any, // platformPricingService
+        billing, // billingService — the real reconcile path (F2)
+        pricing as any, // platformPricingService
         catalog,
         proration, // updatePlan quotes a proration
-        noop, // entitlementsService
+        { invalidate: jest.fn() } as any, // entitlementsService — updatePlan invalidates (F2)
         events,
         noop, // meterService
         { invalidate: jest.fn() } as any, // tenantStatusGuard
