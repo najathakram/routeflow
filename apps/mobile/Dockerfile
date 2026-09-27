@@ -84,6 +84,15 @@ ENV NODE_PATH=/app/apps/mobile/node_modules
 # Export the app as a static web bundle (Expo Router web output → dist/)
 RUN npx expo export --platform web
 
+# #2338 SECURITY TIER 1: the dev-only parity sign-in (lib/dev-parity-login.ts) must never reach a
+# production bundle. Its body, the "dev-parity-login" marker and every EXPO_PUBLIC_PARITY_LOGIN
+# read sit inside `if (__DEV__)`, which the production export folds away. Fail the build if any trace
+# survives.
+RUN if grep -rqE "dev-parity-login|EXPO_PUBLIC_PARITY_LOGIN" dist; then \
+      echo "production bundle carries the dev-only parity sign-in (lib/dev-parity-login.ts)" >&2; \
+      exit 1; \
+    fi
+
 # ─── Stage 2: Runner ──────────────────────────────────────────────────────────
 # B389/F12-003: nginx-unprivileged is nginx's own image, already hardened to
 # run entirely as a non-root user — no USER directive meant plain `nginx:alpine`
