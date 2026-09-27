@@ -630,7 +630,7 @@ export class BillingService {
     // Fetch the full subscription to get period dates
     const stripeSub = await this.stripe.getSubscription(subscriptionId);
     // #2436: under API dahlia the period lives on the items; null ⇒ write no period, never NaN.
-    const period = stripeSubscriptionPeriod(stripeSub);
+    const period = await this.subscriptionPeriod(stripeSub, tenantId, "checkout.session.completed");
     // Platform billing: which interval the tenant checked out with (set in
     // BillingService.createCheckoutSession metadata), stamped for sync/resume use.
     const billingInterval: string | undefined =
@@ -981,6 +981,33 @@ export class BillingService {
     this.logger.log(`Tenant ${tenantId} activated via checkout (sub: ${subscriptionId})`);
   }
 
+  /**
+   * #2436/#2440: a Stripe subscription's current period, read from its base-plan item (never one
+   * of the tenant's known add-on items — N2). A null period writes nothing, but is logged (N1): a
+   * null periodEnd silently hides the tenant from suspendOverdueTenants.
+   */
+  private async subscriptionPeriod(
+    stripeSub: any,
+    tenantId: string,
+    event: string,
+  ): Promise<{ periodStart: Date; periodEnd: Date } | null> {
+    const addons = await this.prisma.tenantAddon.findMany({
+      where: { tenantId, stripeItemId: { not: null } },
+      select: { stripeItemId: true },
+    });
+    const period = stripeSubscriptionPeriod(
+      stripeSub,
+      new Set(addons.map((a) => a.stripeItemId).filter((id): id is string => id != null)),
+    );
+    if (!period) {
+      this.logger.warn(
+        `${event}: Stripe subscription ${stripeSub?.id ?? "(unknown)"} for tenant ${tenantId} ` +
+          `has no billing period — period not written`,
+      );
+    }
+    return period;
+  }
+
   private async onPaymentSucceeded(invoice: any): Promise<void> {
     const customerId =
       typeof invoice.customer === "string" ? invoice.customer : invoice.customer?.id;
@@ -1013,7 +1040,11 @@ export class BillingService {
     if (sub.stripeSubId) {
       try {
         const stripeSub = await this.stripe.getSubscription(sub.stripeSubId);
-        const period = stripeSubscriptionPeriod(stripeSub); // #2436: items under dahlia
+        const period = await this.subscriptionPeriod(
+          stripeSub,
+          sub.tenantId,
+          "invoice.payment_succeeded",
+        );
         if (period) {
           await this.prisma.tenantSubscription.update({
             where: { tenantId: sub.tenantId },
@@ -1258,11 +1289,16 @@ ${updateLine}
     // this event ARMS a cancellation (a cancellation supersedes a scheduled downgrade, as
     // cancel() rules): clearing them on every update would let an unrelated Stripe write (a
     // cycle roll, a price sync, an add-on item) silently drop a schedule the tenant made here.
+    const period = await this.subscriptionPeriod(
+      subscription,
+      sub.tenantId,
+      "customer.subscription.updated",
+    );
     await this.prisma.tenantSubscription.update({
       where: { tenantId: sub.tenantId },
       data: {
         // #2436: items under dahlia, the top level for an older endpoint version; none ⇒ no write.
-        ...(stripeSubscriptionPeriod(subscription) ?? {}),
+        ...(period ?? {}),
         cancelAtPeriodEnd: subscription.cancel_at_period_end,
         ...(subscription.cancel_at_period_end === true ? disarmedDowngrade() : {}),
       },
