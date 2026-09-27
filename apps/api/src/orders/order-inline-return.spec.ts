@@ -402,6 +402,7 @@ describe("preflightInlineReturn (Opus R1)", () => {
       { ...LINES, customerId: "cust-1", orderId: "ord-1" },
       STAFF,
       { routeRunId: "run-1" },
+      {}, // #2178: willRevert defaults to false, so no revertOrderId
     );
   });
 });

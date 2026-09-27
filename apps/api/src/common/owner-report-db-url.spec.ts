@@ -32,6 +32,7 @@ const B768_REPORTS = [
   "report-receiving-unit-drift.mjs",
   "report-train4-damage.mjs",
   "sales-gap-analysis.js",
+  "stock-ledger-gap.mjs", // B562 PR-2 (SA-136 §6.3) — born on the resolver
 ];
 
 /**

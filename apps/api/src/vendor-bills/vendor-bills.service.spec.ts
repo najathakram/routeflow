@@ -322,8 +322,11 @@ describe("VendorBillsService", () => {
 
       // throwOnGap:false — a gap on this line must flag it, never abort the
       // whole (possibly multi-line) bill transaction. See B562 tests below.
+      // B562 PR-3: the correction a backdated bill causes is referenced RECOMPUTE:BILL:<billId>.
       expect(inventory.recomputeProductInTx).toHaveBeenCalledWith(expect.anything(), "prod-1", {
         throwOnGap: false,
+        trigger: "BILL:bill-1",
+        performedById: "user-1",
       });
       expect(inventory.fireStockAlerts).toHaveBeenCalledWith(["prod-1"]);
     });
@@ -431,13 +434,13 @@ describe("VendorBillsService", () => {
         expect(inventory.recomputeProductInTx).toHaveBeenCalledWith(
           expect.anything(),
           "prod-clean",
-          { throwOnGap: false },
+          expect.objectContaining({ throwOnGap: false, trigger: "BILL:bill-1" }),
         );
         // The gapped product's replay was also attempted non-throwing...
         expect(inventory.recomputeProductInTx).toHaveBeenCalledWith(
           expect.anything(),
           "prod-gapped",
-          { throwOnGap: false },
+          expect.objectContaining({ throwOnGap: false, trigger: "BILL:bill-1" }),
         );
         // ...and it alone is reported, same per-line shape as recomputeCosts's gapsDetected.
         expect((result as any).gapsDetected).toEqual([

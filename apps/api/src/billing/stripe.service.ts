@@ -1,6 +1,7 @@
 import { Injectable, Logger, OnModuleInit } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { AppConfig } from "../config/configuration";
+import { STRIPE_API_VERSION } from "./stripe-period";
 
 // Stripe v22 CJS `export =` isn't compatible with `module: "nodenext"` named
 // imports, so we use require() for the constructor value.
@@ -23,7 +24,7 @@ export class StripeService implements OnModuleInit {
   onModuleInit() {
     const secretKey = this.config.get<AppConfig["stripe"]>("stripe")?.secretKey;
     if (secretKey) {
-      this.stripe = new Stripe(secretKey);
+      this.stripe = new Stripe(secretKey, { apiVersion: STRIPE_API_VERSION }); // #2436
       this.logger.log("Stripe SDK initialised");
     } else {
       this.logger.warn(

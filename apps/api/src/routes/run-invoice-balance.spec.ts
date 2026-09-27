@@ -214,7 +214,8 @@ describe("attachPayableInvoices", () => {
   });
 
   it("tolerates a stop with no orders", () => {
-    const result = attachPayableInvoices([{ id: "stop-1" }], {});
+    const stops: { id: string; orders?: { id: string }[] | null }[] = [{ id: "stop-1" }];
+    const result = attachPayableInvoices(stops, {});
     expect(result[0]!.orders).toEqual([]);
   });
 });
