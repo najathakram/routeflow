@@ -59,4 +59,24 @@ describe("ReturnDetailPage (#2406)", () => {
     renderWithProviders(<ReturnDetailPage />);
     expect(screen.getByRole("heading", { name: "R-100" })).toBeInTheDocument();
   });
+
+  // Lead fold on #2601: an INLINE row sits at RECEIVED (or APPROVED/IN_TRANSIT) too, and the
+  // server refuses every standard-path action on it — so none may render.
+  it.each(["APPROVED", "IN_TRANSIT", "RECEIVED"])(
+    "an INLINE %s return shows no Resolve / Cancel / receive / in-transit actions",
+    (status) => {
+      mockReturn = { ...baseReturn, kind: "INLINE", status } as Return;
+      renderWithProviders(<ReturnDetailPage />);
+      for (const name of [/resolve/i, /cancel return/i, /^cancel$/i, /received/i, /in transit/i]) {
+        expect(screen.queryByRole("button", { name })).not.toBeInTheDocument();
+      }
+    },
+  );
+
+  it("a STANDARD RECEIVED return still shows Resolve and Cancel (control)", () => {
+    mockReturn = { ...baseReturn, kind: "STANDARD", status: "RECEIVED" } as Return;
+    renderWithProviders(<ReturnDetailPage />);
+    expect(screen.getAllByRole("button", { name: /resolve/i }).length).toBeGreaterThan(0);
+    expect(screen.getAllByRole("button", { name: /cancel/i }).length).toBeGreaterThan(0);
+  });
 });

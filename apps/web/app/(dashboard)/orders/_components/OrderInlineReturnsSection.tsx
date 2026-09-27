@@ -50,22 +50,30 @@ export const OrderInlineReturnsSection = React.forwardRef<
 >(function OrderInlineReturnsSection({ customerId, entryOrderId, refusalMessage }, ref) {
   const hasInlineReturns = useHasAddon(ORDERS_INLINE_RETURNS_ADDON);
   const [expanded, setExpanded] = React.useState(false);
+  const [confirmDiscard, setConfirmDiscard] = React.useState(false);
   const [resetToken, setResetToken] = React.useState(0);
   const stateRef = React.useRef<InlineReturnSectionState | null>(null);
+  // #2406 (lead fold): SAVE captures only what the operator can SEE — a collapsed section never
+  // contributes a draft, and collapsing one with lines entered asks to discard them first.
+  const expandedRef = React.useRef(false);
+  expandedRef.current = expanded;
+  const hasLines = () => !!stateRef.current && hasAnyQtyEntered(stateRef.current.lines);
+  const discard = () => {
+    stateRef.current = null;
+    setConfirmDiscard(false);
+    setExpanded(false);
+    setResetToken((n) => n + 1);
+  };
 
   React.useImperativeHandle(
     ref,
     () => ({
       getDraft: () => {
         const state = stateRef.current;
-        if (!state || !hasAnyQtyEntered(state.lines)) return null;
+        if (!expandedRef.current || !state || !hasAnyQtyEntered(state.lines)) return null;
         return { lines: state.lines, captureReason: state.captureReason };
       },
-      reset: () => {
-        stateRef.current = null;
-        setExpanded(false);
-        setResetToken((n) => n + 1);
-      },
+      reset: discard,
     }),
     [],
   );
@@ -77,12 +85,38 @@ export const OrderInlineReturnsSection = React.forwardRef<
       <button
         type="button"
         className="flex w-full items-center justify-between text-sm font-semibold text-navy"
-        onClick={() => setExpanded((v) => !v)}
+        onClick={() => {
+          if (!expanded) return setExpanded(true);
+          if (hasLines()) return setConfirmDiscard(true);
+          setExpanded(false);
+        }}
         aria-expanded={expanded}
       >
         <span>Returns</span>
         {expanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
       </button>
+      {confirmDiscard && (
+        <div
+          role="alert"
+          className="space-y-2 rounded-md border border-warning/40 bg-warning/5 p-3 text-sm"
+        >
+          <p className="text-navy">
+            Discard this return? Its lines won&apos;t be saved with the order.
+          </p>
+          <div className="flex gap-2">
+            <button type="button" className="font-semibold text-danger" onClick={discard}>
+              Discard return
+            </button>
+            <button
+              type="button"
+              className="font-semibold text-navy"
+              onClick={() => setConfirmDiscard(false)}
+            >
+              Keep editing
+            </button>
+          </div>
+        </div>
+      )}
       {expanded && (
         <InlineReturnSection
           customerId={customerId}

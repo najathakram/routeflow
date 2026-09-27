@@ -232,3 +232,36 @@ describe("CreateOrderModal — inline return payload on save (#2406)", () => {
     );
   });
 });
+
+// Lead fold on #2601: SAVE captures only the return the operator can SEE. Collapsing a section
+// with lines entered asks to discard; a discarded (or collapsed) return never rides the save.
+describe("CreateOrderModal — collapsing the Returns section (#2406)", () => {
+  it("collapse with lines asks first; Keep editing keeps the lines and they are saved", async () => {
+    renderWithProviders(<CreateOrderModal isOpen onClose={jest.fn()} />);
+    await pickCustomer();
+    await openReturnsAndAddLine("5");
+    fireEvent.click(screen.getByRole("button", { name: /^returns$/i }));
+    expect(screen.getByRole("alert")).toHaveTextContent(/discard this return/i);
+    fireEvent.click(screen.getByRole("button", { name: /keep editing/i }));
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(screen.getByLabelText(/qty \(pieces\)/i)).toHaveValue(5);
+    fireEvent.click(screen.getByRole("button", { name: /save as draft/i }));
+    expect(createOrderMutate.mock.calls[0][0].inlineReturn).toBeDefined();
+  });
+
+  it("Discard return collapses, clears, and the save carries NO inlineReturn", async () => {
+    renderWithProviders(<CreateOrderModal isOpen onClose={jest.fn()} />);
+    await pickCustomer();
+    await openReturnsAndAddLine("5");
+    fireEvent.click(screen.getByRole("button", { name: /^returns$/i }));
+    fireEvent.click(screen.getByRole("button", { name: /discard return/i }));
+    expect(screen.queryByLabelText(/qty \(pieces\)/i)).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /save as draft/i }));
+    expect(createOrderMutate).toHaveBeenCalledTimes(1);
+    expect(createOrderMutate.mock.calls[0][0]).not.toHaveProperty("inlineReturn");
+    expect(createOrderMutate.mock.calls[0][0]).not.toHaveProperty("idempotencyKey");
+    // Re-opening starts empty — nothing from the discarded draft survives.
+    fireEvent.click(screen.getByRole("button", { name: /^returns$/i }));
+    expect(screen.queryByLabelText(/qty \(pieces\)/i)).not.toBeInTheDocument();
+  });
+});
