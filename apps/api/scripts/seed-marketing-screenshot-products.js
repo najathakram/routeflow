@@ -30,6 +30,7 @@ const { PrismaPg } = require("../../../node_modules/@prisma/adapter-pg");
 const { Pool } = require("../../../node_modules/pg");
 const bcrypt = require("../../../node_modules/bcrypt");
 const { assertTestTenant } = require("../../../scripts/lib/test-tenants.cjs");
+const { productionGuard } = require("./lib/production-guard");
 
 function resolveDbUrl() {
   const e = process.env;
@@ -49,7 +50,9 @@ function resolveDbUrl() {
 }
 
 const dbUrl = resolveDbUrl();
-const pool = new Pool({ connectionString: dbUrl });
+// #2421: local-only via the shared guard (the host pg dials, allow-listed); dial exactly what was checked.
+const target = productionGuard({ dbUrl });
+const pool = new Pool(target);
 const adapter = new PrismaPg(pool);
 const prisma = new PrismaClient({ adapter });
 
@@ -314,13 +317,6 @@ async function ensureDemoInvoice(tenantId, customerId, productIdBySku) {
 }
 
 async function main() {
-  const isRailway = dbUrl.includes("railway") || dbUrl.includes("rlwy");
-  if (isRailway) {
-    throw new Error(
-      "seed-marketing-screenshot-products.js refuses to run against a Railway-shaped " +
-        "DATABASE_URL — this seed is for the local compose DB only.",
-    );
-  }
   console.log(`\n🧴 Marketing-screenshot product seed — local dev`);
   console.log(`   DB: ${dbUrl.replace(/:\/\/[^@]+@/, "://***@")}`);
   console.log(`   Tenant: ${TENANT_SLUG}\n`);
