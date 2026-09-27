@@ -40,4 +40,9 @@ describe("mobile order Applied credits (#2404)", () => {
     expect(screen).toMatch(/<OrderAppliedCredits order=\{order\} \/>/);
     expect(screen).not.toMatch(/order\.orderCreditNotes!\.map/);
   });
+
+  it("the order edit screen (credit picker) shows the order's applied credits too, staff only", () => {
+    const edit = read("app/(operator)/(tabs)/orders/[id]/edit-items.tsx");
+    expect(edit).toMatch(/!isDriver && order \? <OrderAppliedCredits order=\{order as any\} \/>/);
+  });
 });

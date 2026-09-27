@@ -10,6 +10,11 @@ import { RemoveCreditButton } from "../../invoices/[id]/RemoveCreditButton";
 
 type AppliedRow = Extract<ReturnType<typeof orderAppliedCredits>[number], { kind: "applied" }>;
 
+/** The applied rows only — what the edit-mode credit picker lists read-only (#2404). */
+export function appliedOnOrderRows(order: OrderAppliedCreditsInput): AppliedRow[] {
+  return orderAppliedCredits(order).filter((r): r is AppliedRow => r.kind === "applied");
+}
+
 /**
  * #2404 (P0, epic #2400, SA-436 PR-3): the order's "Applied credits" — EVERY credit actually on
  * the order's invoices (automatic or manual, each with its invoice) plus the picked credits not
