@@ -429,6 +429,15 @@ export class PlatformAdminService {
     payUrl: string | null;
     trialDays: number;
   }): Promise<{ to: string; delivered: boolean; transport: string; error?: string }> {
+    // #2439 (Opus fold): in production a welcome email built on the localhost fallback would hand
+    // the customer dead links. Don't send it (and don't mint a token for it) — report it as
+    // undelivered so the admin UI's alert points at "Reset admin password".
+    if (process.env.NODE_ENV === "production" && !isPublicWebBase(p.webBase)) {
+      this.logger.error(
+        `Welcome email NOT sent for tenant ${p.workspace}: WEB_URL is unset or points at localhost`,
+      );
+      return { to: p.to, delivered: false, transport: "none", error: "WEB_URL unset" };
+    }
     try {
       const link = await issueSetPasswordLink(this.prisma, p.userId, p.webBase);
       const r = await this.emailService.sendTenantWelcomeEmail({
@@ -2079,4 +2088,21 @@ export class PlatformAdminService {
 
     return updated;
   }
+}
+
+/** False for a missing/unparseable base URL or one that points at this machine (#2439). */
+export function isPublicWebBase(webBase: string): boolean {
+  let host: string;
+  try {
+    host = new URL(webBase).hostname.toLowerCase();
+  } catch {
+    return false;
+  }
+  return !(
+    host === "localhost" ||
+    host.endsWith(".localhost") ||
+    host === "0.0.0.0" ||
+    host === "[::1]" ||
+    host.startsWith("127.")
+  );
 }

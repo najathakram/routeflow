@@ -1,7 +1,7 @@
 import { Test, TestingModule } from "@nestjs/testing";
 import { JwtService } from "@nestjs/jwt";
 import { ConfigService } from "@nestjs/config";
-import { PlatformAdminService } from "./platform-admin.service";
+import { PlatformAdminService, isPublicWebBase } from "./platform-admin.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { EmailService } from "../email/email.service";
 import { BillingService } from "../billing/billing.service";
@@ -2119,6 +2119,90 @@ describe("PlatformAdminService — audit provenance", () => {
         error: "smtp down",
       });
       expect(b.id).toBe(TENANT_ID);
+    });
+  });
+
+  describe("createTenant — welcome email needs a public WEB_URL in production (#2439 fold)", () => {
+    const dto = {
+      slug: "acme-weburl",
+      businessName: "Acme WebUrl Co",
+      adminEmail: "owner@acme-weburl.example.com",
+      adminUsername: "acme_weburl",
+    } as any;
+    const prevEnv = process.env.NODE_ENV;
+    let configGet: jest.Mock;
+
+    beforeEach(() => {
+      prisma.tenant.findUnique.mockResolvedValue(null);
+      prisma.user.findFirst.mockResolvedValue(null);
+      prisma.tenant.create.mockImplementation((args: any) =>
+        Promise.resolve({ id: TENANT_ID, ...args.data }),
+      );
+      prisma.user.create.mockResolvedValue({ id: "admin-1", username: "acme_weburl" } as any);
+      planCatalogService.getPublishedVersion.mockResolvedValue({
+        id: "v-1",
+        definitions: [{ planKey: "STARTER" }],
+      } as any);
+      configGet = (service as any).config.get as jest.Mock;
+    });
+    afterEach(() => {
+      process.env.NODE_ENV = prevEnv;
+      configGet.mockReturnValue({ secret: "s", expiresIn: "15m" });
+    });
+
+    function withWeb(web: string | undefined) {
+      configGet.mockImplementation((key: string) =>
+        key === "urls" ? { web } : { secret: "s", expiresIn: "15m" },
+      );
+    }
+
+    it.each([
+      ["unset (localhost fallback)", undefined],
+      ["localhost", "http://localhost:3001"],
+      ["127.0.0.1", "http://127.0.0.1:3001/"],
+    ])(
+      "production + WEB_URL %s: no email, no token, delivered:false 'WEB_URL unset'",
+      async (_l, web) => {
+        process.env.NODE_ENV = "production";
+        withWeb(web);
+        const result = await service.createTenant(dto);
+        expect(emailServiceMock.sendTenantWelcomeEmail).not.toHaveBeenCalled();
+        expect(prisma.passwordResetToken.create).not.toHaveBeenCalled();
+        expect(result.welcomeEmail).toEqual({
+          to: "owner@acme-weburl.example.com",
+          delivered: false,
+          transport: "none",
+          error: "WEB_URL unset",
+        });
+        expect(result.id).toBe(TENANT_ID);
+      },
+    );
+
+    it("production + a public WEB_URL: sends, with links on that host", async () => {
+      process.env.NODE_ENV = "production";
+      withWeb("https://app.example.com/");
+      const result = await service.createTenant(dto);
+      expect(result.welcomeEmail).toMatchObject({ delivered: true });
+      const call = (emailServiceMock.sendTenantWelcomeEmail as jest.Mock).mock.calls[0][0];
+      expect(call.loginUrl).toBe("https://app.example.com/login");
+      expect(call.setPasswordUrl).toMatch(/^https:\/\/app\.example\.com\/reset-password\?token=/);
+    });
+
+    it("outside production the localhost fallback still sends (local dev)", async () => {
+      process.env.NODE_ENV = "development";
+      withWeb(undefined);
+      const result = await service.createTenant(dto);
+      expect(result.welcomeEmail).toMatchObject({ delivered: true });
+    });
+
+    it("isPublicWebBase", () => {
+      expect(isPublicWebBase("https://app.example.com")).toBe(true);
+      expect(isPublicWebBase("http://localhost:3001")).toBe(false);
+      expect(isPublicWebBase("http://app.localhost")).toBe(false);
+      expect(isPublicWebBase("http://127.0.0.1")).toBe(false);
+      expect(isPublicWebBase("http://[::1]:3001")).toBe(false);
+      expect(isPublicWebBase("http://0.0.0.0")).toBe(false);
+      expect(isPublicWebBase("not a url")).toBe(false);
     });
   });
 
