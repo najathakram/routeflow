@@ -10,6 +10,7 @@ import { RequirePlanFlag } from "../billing/require-plan-flag.decorator";
 import { CreditNotesService } from "./credit-notes.service";
 import { CreateCreditNoteDto } from "./dto/create-credit-note.dto";
 import { SetAutoApplyExclusionDto } from "./dto/set-auto-apply-exclusion.dto";
+import { ApplyCreditNoteDto, UnapplyCreditNoteDto } from "./dto/apply-credit-note.dto";
 
 // WP5b (R3b.3, R3b.5): flag.credit_notes ships dark (DARK_PLAN_FLAGS in
 // plan-flag-policy.ts) — this class-level guard is a courtesy allow until the
@@ -59,7 +60,7 @@ export class CreditNotesController {
   @Post(":id/apply")
   @UseGuards(RolesGuard)
   @Roles(UserRole.OPERATOR)
-  apply(@Param("id") id: string, @Body() body: { invoiceId: string; amount?: number }) {
+  apply(@Param("id") id: string, @Body() body: ApplyCreditNoteDto) {
     return this.creditNotesService.applyToInvoice(id, body.invoiceId, body.amount);
   }
 
@@ -75,7 +76,7 @@ export class CreditNotesController {
   @Roles(UserRole.OPERATOR)
   unapply(
     @Param("id") id: string,
-    @Body() body: { invoiceId: string },
+    @Body() body: UnapplyCreditNoteDto,
     @CurrentUser() user: JwtPayload,
   ) {
     return this.creditNotesService.unapplyFromInvoice(id, body.invoiceId, user?.sub ?? null);
