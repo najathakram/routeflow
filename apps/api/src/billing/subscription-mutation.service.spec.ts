@@ -735,6 +735,43 @@ describe("SubscriptionMutationService.upgrade", () => {
     });
   });
 
+  // #2470 Opus fold (1): a Pricing change commits in TWO steps (fee, then reconcile's snapshot), so the
+  // guard also matches the snapshot the upgrade read — an upgrade reading between them loses the race.
+  it("#2470 fold: the guard also matches the stored snapshot the upgrade read", async () => {
+    const { svc, tx } = make({
+      sub: {
+        planKey: "STARTER",
+        cycle: "MONTHLY",
+        periodStart: null,
+        periodEnd: null,
+        priceOverrideMonthly: 120,
+        basePriceSnapshot: 80, // fee committed, reconcile not yet
+      },
+    });
+    await svc.upgrade("t1", "BUSINESS", "admin");
+    expect(tx.tenantSubscription.updateMany.mock.calls[0][0].where).toMatchObject({
+      planKey: "STARTER",
+      priceOverrideMonthly: 120,
+      basePriceSnapshot: 80,
+    });
+  });
+
+  it("#2470 fold: a guard miss is a 409 ConflictException (concurrency), not a 400", async () => {
+    const { svc, tx, events } = make({
+      sub: {
+        planKey: "STARTER",
+        cycle: "MONTHLY",
+        periodStart: null,
+        periodEnd: null,
+        basePriceSnapshot: 59,
+      },
+    });
+    tx.tenantSubscription.updateMany.mockResolvedValueOnce({ count: 0 });
+    const err = await svc.upgrade("t1", "BUSINESS", "admin").catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(ConflictException);
+    expect(deltaOf(events, BILLING_EVENTS.PLAN_CHANGED)).toBeUndefined();
+  });
+
   it("#2470: a catalog row's guard matches a NULL override (a fee set concurrently loses the race)", async () => {
     const { svc, tx } = make({
       sub: {

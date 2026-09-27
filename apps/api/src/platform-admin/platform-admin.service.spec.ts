@@ -1,3 +1,4 @@
+import { ConflictException } from "@nestjs/common";
 import { Test, TestingModule } from "@nestjs/testing";
 import { JwtService } from "@nestjs/jwt";
 import { ConfigService } from "@nestjs/config";
@@ -699,6 +700,45 @@ describe("PlatformAdminService — audit provenance", () => {
       expect(write.update).not.toHaveProperty("priceOverrideMonthly");
       expect(res.proratedNow ?? null).toBeNull();
       expect(planDelta() ?? 0).toBe(0);
+    });
+
+    // #2470 Opus fold (2): updatePlan read priorSub before its tx and wrote with no guard — it now locks
+    // the Tenant row (the lock updateTenantPriceOverride takes) and re-reads fee + snapshot under it.
+    it("fold: a Pricing change between updatePlan's read and its lock ⇒ 409, nothing written or booked", async () => {
+      catalog();
+      tenant("STARTER");
+      (prisma as any).tenantSubscription.findUnique
+        .mockResolvedValueOnce({
+          planKey: "STARTER",
+          basePriceSnapshot: 80,
+          priceOverrideMonthly: 80,
+          discount: null,
+          cycle: "MONTHLY",
+          periodStart: null,
+          periodEnd: null,
+        }) // the pre-read
+        .mockResolvedValue({ priceOverrideMonthly: 120, basePriceSnapshot: 80 }); // under the lock
+      const err = await service
+        .updatePlan(TENANT_ID, { plan: "PROFESSIONAL" } as any, ADMIN_ID)
+        .catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(ConflictException);
+      expect((prisma as any).tenantSubscription.upsert).not.toHaveBeenCalled();
+      expect(billingEventService.emit).not.toHaveBeenCalled();
+    });
+
+    it("fold: updatePlan locks the Tenant row inside its tx before writing the subscription", async () => {
+      catalog();
+      tenant("STARTER");
+      sub("STARTER", 80);
+      await service.updatePlan(TENANT_ID, { plan: "PROFESSIONAL" } as any, ADMIN_ID);
+      const calls = (prisma.$queryRaw as jest.Mock).mock.calls;
+      const i = calls.findIndex((c: any[]) =>
+        String(c[0]?.join?.("?") ?? c[0]).includes('"Tenant"'),
+      );
+      expect(i).toBeGreaterThan(-1);
+      expect((prisma.$queryRaw as jest.Mock).mock.invocationCallOrder[i]).toBeLessThan(
+        ((prisma as any).tenantSubscription.upsert as jest.Mock).mock.invocationCallOrder[0],
+      );
     });
 
     it("a free (override 0) row upgraded by an admin: snapshot 0, quote 0 with the note, Δ0", async () => {

@@ -175,10 +175,72 @@ describeDb("#2470 upgrade() loses the race to a concurrent Pricing change (real 
     }).toEqual({
       blocked: true,
       ok: false,
-      status: 400,
+      status: 409, // #2470 fold: a guard miss is a concurrency 409
       planKey: "STARTER",
       fee: 120,
       snapshot: 120, // never the stale 80
+      planChanged: 0,
+    });
+  }, 30_000);
+
+  // Opus fold (1): production commits a Pricing change in TWO steps — updateTenantPriceOverride commits
+  // the fee, then reconcilePriceLedger writes the snapshot. An upgrade that reads BETWEEN them (fee 120,
+  // snapshot 80) must lose to the reconcile's snapshot write, or both book +40 (ledger +80 vs MRR +40).
+  it("two-step Pricing (fee committed, snapshot write held) while upgrade() waits ⇒ 409; nothing double-booked", async () => {
+    const id = await overrideTenant("twostep", 80);
+    // Step 1, committed on its own: the fee (the snapshot still 80 — reconcile has not run).
+    await prisma.tenantSubscription.update({
+      where: { tenantId: id },
+      data: { priceOverrideMonthly: 120 },
+    });
+    const t2 = new Client({ connectionString: url });
+    await t2.connect();
+    let r: { ok: boolean; e?: any };
+    let blocked = false;
+    try {
+      // Step 2 held open: the reconcile's snapshot write.
+      await t2.query("BEGIN");
+      await t2.query(
+        `UPDATE "TenantSubscription" SET "basePriceSnapshot" = 120 WHERE "tenantId" = $1`,
+        [id],
+      );
+      const pid = (await t2.query("SELECT pg_backend_pid() AS pid")).rows[0].pid;
+      const p1 = mutation.upgrade(id, "GROWTH", "admin-2470").then(
+        () => ({ ok: true }),
+        (e: unknown) => ({ ok: false, e }),
+      );
+      for (let i = 0; i < 800 && !blocked; i++) {
+        await t2.query("SELECT pg_stat_clear_snapshot()");
+        const q = await t2.query(
+          `SELECT count(*)::int n FROM pg_stat_activity WHERE $1 = ANY(pg_blocking_pids(pid))`,
+          [pid],
+        );
+        blocked = q.rows[0].n > 0;
+        if (!blocked) await new Promise((x) => setTimeout(x, 25));
+      }
+      await t2.query("COMMIT");
+      r = await p1;
+    } finally {
+      await t2.end();
+    }
+    const sub = await prisma.tenantSubscription.findUniqueOrThrow({ where: { tenantId: id } });
+    expect({
+      blocked,
+      ok: r.ok,
+      status: r.e?.getStatus?.(),
+      planKey: sub.planKey,
+      fee: Number(sub.priceOverrideMonthly),
+      snapshot: Number(sub.basePriceSnapshot),
+      planChanged: await prisma.billingEvent.count({
+        where: { tenantId: id, type: "plan.changed" },
+      }),
+    }).toEqual({
+      blocked: true,
+      ok: false,
+      status: 409,
+      planKey: "STARTER",
+      fee: 120,
+      snapshot: 120,
       planChanged: 0,
     });
   }, 30_000);
