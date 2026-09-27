@@ -127,3 +127,4 @@ never merge on a stale/failed check · lead never merges/flips/railway-runs; own
 - Every PC session now has Remote Control ON and a lane handoff in `local-assets/handoff/2026-09-27/lanes/`. Mac lanes' handoffs are in
   `.claude/handoffs/2026-09-27-*.md` on their machines (mac-lead, landing-coordinator, macbook-landing, macbook-bookkeeping, …).
 - The follow-up tickets from today's Opus notes are being filed (R1.1b; the #2448 runbook fix goes to R1.1a, and it must land before the owner's cutover).
+- Follow-ups filed: #2476 (billing webhook ledger claim), #2477 (inline-returns parks), #2478 (Void re-import noise), #2479 (cutover runbook fixes, R1.1a, BEFORE owner cutover, assigned to MacBook landing via Mac Lead); the rest were already in #2470-#2473. #2455 added to Project #3.
