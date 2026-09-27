@@ -196,8 +196,8 @@ export interface ScanResult {
 export function scanUnscopedWrites(src: string): ScanResult {
   const segs = segments(src);
   // Calls are found in CODE only: every literal becomes an empty-string placeholder, so text that
-  // merely mentions deleteMany({}) inside a string is never a call, while argument shapes (keys,
-  // braces) survive for the where check.
+  // merely mentions an empty-argument bulk delete inside a string is never a call, while argument
+  // shapes (keys, braces) survive for the where check.
   const code = segs.map((s) => (s.kind === "code" ? s.text : '""')).join("");
   const jsCalls: string[] = [];
   const call = /\.(deleteMany|updateMany)\s*\(/g;
