@@ -227,7 +227,7 @@ describeDb("#2094 — inline return inside the order transaction, real Postgres"
     const f = await seedCustomer("replay");
     const order = await inOrderTx(f.customerId, (tx) => newOrder(tx, f.customerId, 100));
     const attempt = () =>
-      inOrderTx(f.customerId, (tx) =>
+      inOrderTx(f.customerId, (tx): ReturnType<InlineReturnsService["captureAndIssueInTx"]> =>
         svc.captureAndIssueInTx(
           tx,
           {
@@ -318,7 +318,7 @@ describeDb("#2094 — inline return inside the order transaction, real Postgres"
     const f = await seedCustomer("lock");
     const order = await inOrderTx(f.customerId, (tx) => newOrder(tx, f.customerId, 500));
     const go = (key: string) =>
-      inOrderTx(f.customerId, (tx) =>
+      inOrderTx(f.customerId, (tx): ReturnType<InlineReturnsService["captureAndIssueInTx"]> =>
         svc.captureAndIssueInTx(
           tx,
           { ...lines(f.productId, 3, key), customerId: f.customerId, orderId: order.id },

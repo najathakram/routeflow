@@ -681,7 +681,15 @@ describe("InvoicesService", () => {
 
       await expect(
         service.update("inv-box", {
-          items: [{ productId: "prod-box", qty: 3, unitLabel: "Case", unitPrice: 10 }],
+          items: [
+            {
+              productId: "prod-box",
+              description: "Case",
+              qty: 3,
+              unitLabel: "Case",
+              unitPrice: 10,
+            },
+          ],
         }),
       ).rejects.toThrow("Selling by a unit can't be set on an invoice edit yet.");
 
@@ -8600,7 +8608,7 @@ describe("InvoicesService", () => {
       // …and the POPULATION it averages is pinned: the pass-through oracle
       // above cannot tell a correctly-scoped average from one taken over the
       // wrong rows.
-      const sql = (prisma.$queryRaw.mock.calls[0][0] as string[]).join("?");
+      const sql = (prisma.$queryRaw.mock.calls[0][0] as unknown as string[]).join("?");
       expect(sql).toContain("status = 'PAID'");
       expect(sql).toContain('"paidAt" IS NOT NULL');
       expect(sql).toContain('"sentAt" IS NOT NULL');
