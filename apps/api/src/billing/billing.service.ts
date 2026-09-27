@@ -1,4 +1,4 @@
-import { TX_CONFLICT_MAX_ATTEMPTS, retryOnTxConflict } from "../common/tx-retry";
+import { TX_CONFLICT_MAX_ATTEMPTS } from "../common/tx-retry";
 import {
   Injectable,
   Logger,
@@ -26,6 +26,8 @@ import {
 } from "./plan-catalog.constants";
 import { BillingNotificationService } from "./billing-notification.service";
 import { PlanTransitionConfigService } from "./plan-transition-config.service";
+import { lockTenantForLedger } from "./addon-ledger";
+import { retryOnTxConflict } from "../common/tx-retry";
 import {
   STRIPE_CHECKOUT_APPLIED_ACTION,
   STRIPE_CHECKOUT_ENTITY,
@@ -894,56 +896,66 @@ export class BillingService {
     let upserted: any;
     if (transition && preparedTransition?.enabled) {
       try {
-        upserted = await this.prisma.$transaction(
-          async (tx) => {
-            // One processor per checkout session at a time (the audit row below has no unique
-            // index, and adding one is a migration): a concurrent redelivery waits here, then sees
-            // the winner's committed row and does nothing.
-            if (session.id) {
-              await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${"stripe-checkout"}), hashtext(${session.id}))`;
-              const done = await tx.auditLog.findFirst({
-                where: {
-                  tenantId,
-                  entityType: STRIPE_CHECKOUT_ENTITY,
-                  entityId: session.id,
-                  action: STRIPE_CHECKOUT_APPLIED_ACTION,
-                },
-                select: { id: true },
-              });
-              if (done) return ALREADY_APPLIED;
-            }
-            // A snapshot failure (a DOWNGRADE) throws -> the handler fails -> Stripe redelivers,
-            // so a downgrade is never applied without its snapshot (fail closed).
-            await this.planTransition.onPlanChange(tx, transition, preparedTransition);
-            // Compare-and-swap on the plan we judged the transition from (the same shape as
-            // upgrade()'s guard): if an in-app change moved it since we read it, this checkout is
-            // stale — throw so the tx (hook writes included) rolls back and Stripe redelivers,
-            // instead of silently reversing the newer change.
-            if (existingOverride) {
-              const held = await tx.tenantSubscription.updateMany({
-                where: { tenantId, planKey: existingOverride.planKey ?? null },
-                data: { stripeSubId: subscriptionId },
-              });
-              if (held.count === 0) {
-                throw new ConflictException("Plan changed concurrently — the checkout is retried.");
+        // #2560 / SA-508: a lock conflict (40P01/40001) is retried in-process — the advisory lock
+        // and the in-tx "already applied" check make a re-run idempotent; one that persists past the
+        // budget still rethrows below and Stripe redelivers.
+        upserted = await retryOnTxConflict("billing.onCheckoutCompleted", () =>
+          this.prisma.$transaction(
+            async (tx) => {
+              // One processor per checkout session at a time (the audit row below has no unique
+              // index, and adding one is a migration): a concurrent redelivery waits here, then sees
+              // the winner's committed row and does nothing.
+              if (session.id) {
+                await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${"stripe-checkout"}), hashtext(${session.id}))`;
+                const done = await tx.auditLog.findFirst({
+                  where: {
+                    tenantId,
+                    entityType: STRIPE_CHECKOUT_ENTITY,
+                    entityId: session.id,
+                    action: STRIPE_CHECKOUT_APPLIED_ACTION,
+                  },
+                  select: { id: true },
+                });
+                if (done) return ALREADY_APPLIED;
               }
-            }
-            const row = await tx.tenantSubscription.upsert(upsertArgs);
-            if (session.id) {
-              await tx.auditLog.create({
-                data: {
-                  tenantId,
-                  action: STRIPE_CHECKOUT_APPLIED_ACTION,
-                  entityType: STRIPE_CHECKOUT_ENTITY,
-                  entityId: session.id,
-                  meta: { fromPlanKey: transition.fromPlanKey, toPlanKey: transition.toPlanKey },
-                },
-              });
-            }
-            return row;
-          },
-          // Explicit, bounded budget — see CHECKOUT_TX_OPTIONS for why these numbers.
-          CHECKOUT_TX_OPTIONS,
+              // A snapshot failure (a DOWNGRADE) throws -> the handler fails -> Stripe redelivers,
+              // so a downgrade is never applied without its snapshot (fail closed).
+              await this.planTransition.onPlanChange(tx, transition, preparedTransition);
+              // #2560 / SA-508: the house order — the Tenant row lock right after the hook, before the
+              // subscription writes and the AuditLog insert (its Tenant FK takes KEY SHARE).
+              await lockTenantForLedger(tx, tenantId);
+              // Compare-and-swap on the plan we judged the transition from (the same shape as
+              // upgrade()'s guard): if an in-app change moved it since we read it, this checkout is
+              // stale — throw so the tx (hook writes included) rolls back and Stripe redelivers,
+              // instead of silently reversing the newer change.
+              if (existingOverride) {
+                const held = await tx.tenantSubscription.updateMany({
+                  where: { tenantId, planKey: existingOverride.planKey ?? null },
+                  data: { stripeSubId: subscriptionId },
+                });
+                if (held.count === 0) {
+                  throw new ConflictException(
+                    "Plan changed concurrently — the checkout is retried.",
+                  );
+                }
+              }
+              const row = await tx.tenantSubscription.upsert(upsertArgs);
+              if (session.id) {
+                await tx.auditLog.create({
+                  data: {
+                    tenantId,
+                    action: STRIPE_CHECKOUT_APPLIED_ACTION,
+                    entityType: STRIPE_CHECKOUT_ENTITY,
+                    entityId: session.id,
+                    meta: { fromPlanKey: transition.fromPlanKey, toPlanKey: transition.toPlanKey },
+                  },
+                });
+              }
+              return row;
+            },
+            // Explicit, bounded budget — see CHECKOUT_TX_OPTIONS for why these numbers.
+            CHECKOUT_TX_OPTIONS,
+          ),
         );
       } catch (err) {
         if (!(err instanceof ConflictException) && !isDeadlockOrSerialization(err)) {
