@@ -84,6 +84,18 @@
  *       Accepted ONLY alongside `--only-test-tenants` (exit 2 otherwise, before connecting), and
  *       the phrase must equal exactly what the prompt would have asked for.
  *
+ * SCOPING (B824) — --only-tenants <comma-separated slug list>   Narrows computeDiff()'s Tenant
+ *       query (both --report and --apply) to exactly the given slugs, in addition to the existing
+ *       class='PRODUCTION' AND deletedAt IS NULL filter. Valid in both modes (unlike
+ *       --only-test-tenants/--backup-attested, which are write-path-only). A slug with no matching
+ *       row is simply absent from the result, same as any other empty scope — not an error.
+ *       Exists so a caller running against a SHARED database with other concurrent writers (e.g.
+ *       publish-and-repin.db.spec.ts under `--maxWorkers=2`, where sibling *.db.spec.ts files seed
+ *       their own PRODUCTION-class fixture tenants) can make its own report/apply fully
+ *       independent of whatever else is running — see that spec file's own header doc for the
+ *       flake this fixed (B824). Never printed to stdout (a scoping list is still a set of test
+ *       slugs — the same NO PII rule below applies).
+ *
  * TEST-ONLY HOOK
  *   PUBLISH_REPIN_CONFIRM_TOKEN — supplies the typed confirmation as a value instead of reading a
  *   TTY, so apps/api/src/common/publish-and-repin.db.spec.ts can execute --apply --live against
@@ -142,8 +154,8 @@ const HELP = `publish-and-repin.mjs — PR-0b zero-loss report / grandfather-gra
 Usage: node apps/api/scripts/publish-and-repin.mjs
          [--report | --apply] [--live] [--backup-attested "<text>"]
          [--include-addon-gates | --include-addon-keys <comma list>]
-         [--only-test-tenants [--confirm "<phrase>"]] [--plan-flag-enforcement on|off]
-         [--json] [--help]
+         [--only-test-tenants [--confirm "<phrase>"]] [--only-tenants <comma list>]
+         [--plan-flag-enforcement on|off] [--json] [--help]
 
 Modes (default --report; --report and --apply are mutually exclusive):
   --report    read-only: per-tenant GAINS/LOSSES vs. the one-rule resolver. Exit 4 if LOSSES > 0
@@ -170,6 +182,9 @@ Unattended --apply --live (approved TEST tenants only):
                          (scripts/lib/test-tenants.cjs) — one offender refuses the whole batch.
   --confirm "<phrase>"   supply the typed confirmation as a value (requires --only-test-tenants).
 
+  --only-tenants <comma list>   scope computeDiff() to exactly these slugs (--report or --apply) —
+                         isolates a caller sharing the database with other concurrent writers.
+
   --json      emit the report/preview as JSON instead of prose.
   --help      print this help and exit 0.
 
@@ -188,6 +203,7 @@ function parseArgs(argv) {
     json: false,
     backupAttested: null,
     onlyTestTenants: false,
+    onlyTenantsRaw: null,
     confirm: null,
     // See the header doc and the const below this function: this does NOT read the live API
     // service's actual env var. Defaults to "off" — the KNOWN current production value: the
@@ -214,6 +230,9 @@ function parseArgs(argv) {
     else if (arg.startsWith("--backup-attested="))
       opts.backupAttested = arg.slice("--backup-attested=".length);
     else if (arg === "--only-test-tenants") opts.onlyTestTenants = true;
+    else if (arg === "--only-tenants") opts.onlyTenantsRaw = argv[++i] ?? "";
+    else if (arg.startsWith("--only-tenants="))
+      opts.onlyTenantsRaw = arg.slice("--only-tenants=".length);
     else if (arg === "--confirm") opts.confirm = argv[++i] ?? "";
     else if (arg.startsWith("--confirm=")) opts.confirm = arg.slice("--confirm=".length);
     else if (arg === "--plan-flag-enforcement") opts.planFlagEnforcement = argv[++i] ?? "";
@@ -258,6 +277,17 @@ function parseArgs(argv) {
       }
     }
     opts.includeAddonKeys = new Set(keys);
+  }
+  opts.onlyTenants = null;
+  if (opts.onlyTenantsRaw !== null) {
+    const slugs = opts.onlyTenantsRaw
+      .split(",")
+      .map((s) => s.trim())
+      .filter((s) => s.length > 0);
+    if (slugs.length === 0) {
+      opts.errors.push("--only-tenants requires a non-empty comma-separated list");
+    }
+    opts.onlyTenants = new Set(slugs);
   }
   // N6: match the other "has no effect without --apply" refusals — --report is read-only and
   // never writes, so these write-path-only flags being silently accepted (and silently ignored)
@@ -481,6 +511,9 @@ async function computeDiff() {
   // computeOldPathEffective/computeNewPathEffective consults Tenant.status at all, so excluding
   // it would just create a blind spot for a tenant that later resumes with no grandfather grant
   // ever computed for it (a real gap an earlier version of this script had).
+  // --only-tenants (B824) narrows this further, to exactly the given slugs — see the header doc.
+  // $1::text[] IS NULL short-circuits the whole OR when unscoped (the common, production case).
+  const onlyTenantsArr = opts.onlyTenants ? [...opts.onlyTenants] : null;
   const tenants = await client
     .query(
       `SELECT t.id, t.slug, t.plan, t."planVersionId", s."planKey" AS "subPlanKey"
@@ -488,7 +521,9 @@ async function computeDiff() {
          LEFT JOIN "TenantSubscription" s ON s."tenantId" = t.id
         WHERE t.class = 'PRODUCTION'
           AND t."deletedAt" IS NULL
+          AND ($1::text[] IS NULL OR t.slug = ANY($1::text[]))
         ORDER BY t.id ASC`,
+      [onlyTenantsArr],
     )
     .then((r) => r.rows);
 
