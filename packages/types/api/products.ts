@@ -85,7 +85,8 @@ export interface VariantAssignResult {
 
 /** Per-buyer sales history for the product-detail Sales card. Backed by
  *  `GET /analytics/product-sales/:productId?limit=` — reads INVOICED sales only
- *  (DRAFT/VOID/WRITTEN_OFF excluded), newest first. `lineTotal`/`unitPrice` are
+ *  (DRAFT/VOID excluded; WRITTEN_OFF included and badged via `writtenOff`, #2118),
+ *  newest first, at most `limit` LINES. `lineTotal`/`unitPrice` are
  *  authoritative — never re-derive from qty × unitPrice (would over-charge a
  *  boxed line by `unitsPerBox`). */
 export interface ProductSaleLine {
@@ -114,6 +115,9 @@ export interface ProductSaleLine {
   originalPrice: number | null;
   /** True when the line carries a non-STANDARD price (override/promo/tier). */
   overridden: boolean;
+  /** True when the invoice was written off — still a sale (accrual basis), badged.
+   *  Optional so older fixtures stay valid; the API always sends it. */
+  writtenOff?: boolean;
 }
 
 export interface ProductSalesSummary {

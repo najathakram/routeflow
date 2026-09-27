@@ -59,6 +59,7 @@ import { ListOrdersDto } from "./dto/list-orders.dto";
 import { nextOrderNumberFor } from "./order-number";
 import * as unitAware from "./unit-aware-guard";
 import * as cancelledLines from "./order-edit-cancelled";
+import { assertDriverMayEditOrder } from "./driver-edit-access";
 import { AppliedCreditNoteDto, CreateOrderDto } from "./dto/create-order.dto";
 import {
   IDEMPOTENCY_KEY_CONFLICT,
@@ -2952,6 +2953,8 @@ export class OrdersService implements OnApplicationBootstrap {
       isCreateMerge?: boolean;
     },
   ) {
+    // SA-429: a DRIVER edits only an order on their own IN_PROGRESS run — FIRST, before any state leaks.
+    await assertDriverMayEditOrder(this.prisma.forTenant(), orderId, user);
     const order = await this.prisma.forTenant().order.findUnique({
       where: { id: orderId },
       include: {
@@ -3148,6 +3151,7 @@ export class OrdersService implements OnApplicationBootstrap {
           },
         });
         restrictionPlan?.assertHeld(heldItems);
+        await assertDriverMayEditOrder(tx, orderId, user); // SA-429: re-derived under the Order lock
         cancelledLines.assertHeldCancelledLines(heldItems, dto.items, user, isDiffPayload); // SA-422
 
         // units_v1 (A1, #1102 precedent): the pre-lock resolution above can go stale under a

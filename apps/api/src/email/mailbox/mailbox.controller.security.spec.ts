@@ -14,6 +14,7 @@ import { AddonGuard } from "../../billing/addon.guard";
 import { AddonService } from "../../billing/addon.service";
 import { EntitlementsService } from "../../billing/entitlements.service";
 import { FeatureOverrideService } from "../../billing/feature-override.service";
+import { listenOnLoopback } from "../../common/testing/listen-loopback";
 
 /**
  * HTTP-level, real-guard-chain tests for MailboxController (security review fix round —
@@ -136,7 +137,7 @@ describe("MailboxController — real guard chain over HTTP", () => {
 
     jwtService = moduleRef.get(JwtService);
     app = moduleRef.createNestApplication();
-    await app.init();
+    await listenOnLoopback(app);
   });
 
   afterAll(async () => {
