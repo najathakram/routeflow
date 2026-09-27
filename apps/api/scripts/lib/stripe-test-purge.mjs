@@ -1,6 +1,6 @@
 /**
  * #2437 — pure planning for purge-test-stripe-ids.mjs (no DB, no network; pinned by
- * stripe-test-purge.spec.ts).
+ * src/common/purge-test-stripe-ids-script.spec.ts).
  *
  * Before the Stripe live-mode cutover, every Stripe id the platform stored was minted by the TEST
  * account. After STRIPE_SECRET_KEY flips to sk_live those ids are dangling, and worse,
@@ -79,9 +79,10 @@ export function buildPlan({ subscriptions, addons, connects }, verdict) {
   for (const a of addons) collect("TenantAddon", a, ["stripePriceId", "stripeItemId"]);
 
   // TenantStripeConnect carries its own mode: a test-mode (livemode=false) connection that is
-  // still active is marked disconnected the way StripeConnectService.disconnect() does
-  // (disconnectedAt + chargesEnabled=false; stripeAccountId kept for the audit trail), so the
-  // tenant reconnects through live OAuth.
+  // still active gets disconnectedAt + chargesEnabled=false (stripeAccountId kept for the audit
+  // trail), so the tenant reconnects through live OAuth. Unlike StripeConnectService.disconnect()
+  // it does NOT deauthorize the account at Stripe and does not touch pendingJti: a test-mode
+  // authorization has no effect on the live platform.
   for (const c of connects) {
     if (c.livemode === false && c.stripeAccountId && !c.disconnectedAt) {
       changes.push({
@@ -97,23 +98,65 @@ export function buildPlan({ subscriptions, addons, connects }, verdict) {
   return { changes, skipped, liveIds };
 }
 
+/**
+ * Owner exclusions (#2437 review): tenants named at RUN TIME with --exclude-tenant are never
+ * touched. Slugs are never written into git; they arrive on argv and resolve against the DB.
+ * @param slugs the --exclude-tenant values
+ * @param tenants [{id, slug}] from the Tenant table
+ * @returns {{ ids: Set<string>, unknown: string[] }} an unknown slug must abort the run
+ */
+export function resolveExclusions(slugs, tenants) {
+  const bySlug = new Map(tenants.map((t) => [t.slug, t.id]));
+  const ids = new Set();
+  const unknown = [];
+  for (const slug of slugs) {
+    const id = bySlug.get(slug);
+    if (id) ids.add(id);
+    else unknown.push(slug);
+  }
+  return { ids, unknown };
+}
+
+/** Drop every row of an excluded tenant before planning, so it can never be written. */
+export function withoutExcluded({ subscriptions, addons, connects }, excludedIds) {
+  const keep = (r) => !excludedIds.has(r.tenantId);
+  return {
+    subscriptions: subscriptions.filter(keep),
+    addons: addons.filter(keep),
+    connects: connects.filter(keep),
+  };
+}
+
 /** The type-back the operator must pass as --confirm: the exact number of changes. */
 export function confirmationCount(plan) {
   return String(plan.changes.length);
 }
 
 const ALLOWED_FLAGS = new Set(["--apply", "--local", "--backup-taken", "--help", "-h"]);
-const VALUED_FLAGS = new Set(["--confirm"]);
+const VALUED_FLAGS = new Set(["--confirm", "--exclude-tenant"]);
 
 /** Strict argv parsing: an unknown flag is an error, never ignored (cf. #2284). */
 export function parseArgs(argv) {
-  const out = { apply: false, local: false, backupTaken: false, help: false, confirm: null };
+  const out = {
+    apply: false,
+    local: false,
+    backupTaken: false,
+    help: false,
+    confirm: null,
+    excludeTenants: [],
+  };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (VALUED_FLAGS.has(a)) {
       const v = argv[i + 1];
       if (v === undefined || v.startsWith("--")) return { error: `${a} needs a value` };
-      out.confirm = v;
+      if (a === "--confirm") out.confirm = v;
+      else {
+        // --exclude-tenant a,b and repeated --exclude-tenant a --exclude-tenant b both work.
+        const slugs = v.split(",").map((x) => x.trim());
+        if (slugs.some((x) => !x)) return { error: `${a} has an empty slug` };
+        for (const x of slugs) if (!out.excludeTenants.includes(x)) out.excludeTenants.push(x);
+      }
       i++;
       continue;
     }

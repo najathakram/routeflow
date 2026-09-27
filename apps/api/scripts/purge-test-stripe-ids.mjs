@@ -9,12 +9,17 @@
  *
  *   TenantSubscription.stripeCustomerId / stripeSubId    cleared when the test account returns them
  *   TenantAddon.stripePriceId / stripeItemId             cleared when the test account returns them
- *   TenantStripeConnect (livemode = false, still active) marked disconnected (disconnectedAt,
- *                                                        chargesEnabled=false), as disconnect() does
+ *   TenantStripeConnect (livemode = false, still active) disconnectedAt + chargesEnabled=false
+ *                                                        (no Stripe deauthorize, pendingJti untouched)
  *
  * An id the test account does NOT know is NOT proven test-mode and is never cleared (listed as
  * skipped). A live key is refused: after the flip, test ids cannot be verified. Free-pilot rule:
  * the overdue sweep's `stripeSubId: { not: null }` filter is untouched (see lib/stripe-test-purge.mjs).
+ *
+ * EXCLUSIONS: --exclude-tenant <slug,...> drops every row of those tenants before planning. The
+ * owner supplies the slugs at run time; never write one into git, a doc or a ticket. An unknown
+ * slug aborts the run. The dry run prints each touched tenant's slug beside its UUID so the owner
+ * can say yes per tenant.
  *
  * APPLY (owner only, with a fresh backup):
  *   --apply --backup-taken --confirm <N>   (N = the change count the dry run printed)
@@ -39,10 +44,12 @@ import {
   confirmationCount,
   idsToVerify,
   parseArgs,
+  resolveExclusions,
+  withoutExcluded,
 } from "./lib/stripe-test-purge.mjs";
 
 const TAG = "purge-test-stripe-ids";
-const USAGE = `Usage: node apps/api/scripts/purge-test-stripe-ids.mjs [--local] [--apply --backup-taken --confirm <N>]
+const USAGE = `Usage: node apps/api/scripts/purge-test-stripe-ids.mjs [--local] [--exclude-tenant <slug,...>] [--apply --backup-taken --confirm <N>]
   Dry run by default. Needs STRIPE_SECRET_KEY = the CURRENT sk_test key (run BEFORE the live cutover).
   Production: STRIPE_SECRET_KEY=sk_test_… railway run --service postgres node apps/api/scripts/purge-test-stripe-ids.mjs`;
 
@@ -132,8 +139,24 @@ async function main() {
       )
     ).rows;
 
-    const verdict = await verifyWithStripe(idsToVerify({ subscriptions, addons }));
-    const plan = buildPlan({ subscriptions, addons, connects }, verdict);
+    const tenants = (await client.query(`SELECT id, slug FROM "Tenant"`)).rows;
+    const slugOf = new Map(tenants.map((t) => [t.id, t.slug]));
+    const who = (tenantId) => `${slugOf.get(tenantId) ?? "?"} (${tenantId})`;
+    const exclusion = resolveExclusions(args.excludeTenants, tenants);
+    if (exclusion.unknown.length)
+      fail(
+        `--exclude-tenant names no tenant: ${exclusion.unknown.join(", ")} (nothing verified or written)`,
+      );
+    const all = { subscriptions, addons, connects };
+    const rows = withoutExcluded(all, exclusion.ids);
+    const dropped =
+      subscriptions.length +
+      addons.length +
+      connects.length -
+      (rows.subscriptions.length + rows.addons.length + rows.connects.length);
+
+    const verdict = await verifyWithStripe(idsToVerify(rows));
+    const plan = buildPlan(rows, verdict);
 
     console.log(
       `${TAG}: target ${redactUrl(url)} · key ${keyMode} · ${args.apply ? "APPLY" : "DRY RUN"}`,
@@ -142,6 +165,8 @@ async function main() {
       `  read: ${subscriptions.length} subscription row(s), ${addons.length} add-on row(s), ` +
         `${connects.length} test-mode Connect row(s)`,
     );
+    for (const id of exclusion.ids) console.log(`  EXCLUDED (never touched): ${who(id)}`);
+    if (exclusion.ids.size) console.log(`  excluded rows dropped before planning: ${dropped}`);
     const byModel = {};
     for (const c of plan.changes) byModel[c.model] = (byModel[c.model] ?? 0) + 1;
     console.log(`  changes: ${plan.changes.length} ${JSON.stringify(byModel)}`);
@@ -151,13 +176,20 @@ async function main() {
         : `clear ${Object.entries(c.clear)
             .map(([f, v]) => `${f}=${v}`)
             .join(", ")}`;
-      console.log(`    ${c.model} ${c.id} (tenant ${c.tenantId}): ${what}`);
+      console.log(`    ${c.model} ${c.id} (tenant ${who(c.tenantId)}): ${what}`);
     }
     if (plan.skipped.length) {
       console.log(`  skipped (not proven test-mode, left as-is): ${plan.skipped.length}`);
       for (const s of plan.skipped)
-        console.log(`    ${s.model} ${s.id} ${s.field}=${s.value} → ${s.verdict}`);
+        console.log(
+          `    ${s.model} ${s.id} (tenant ${who(s.tenantId)}) ${s.field}=${s.value} → ${s.verdict}`,
+        );
     }
+    // The owner says yes per tenant (runbook step 4) from this list before any --apply.
+    const perTenant = new Map();
+    for (const c of plan.changes) perTenant.set(c.tenantId, (perTenant.get(c.tenantId) ?? 0) + 1);
+    console.log(`  tenants touched: ${perTenant.size}`);
+    for (const [t, n] of perTenant) console.log(`    ${who(t)}: ${n} change(s)`);
     if (keyMode !== "test")
       console.log(
         "  NOTE: no sk_test key, so nothing could be verified and nothing would be cleared.",
@@ -165,7 +197,8 @@ async function main() {
 
     if (!args.apply) {
       console.log(
-        `\nDry run only. To apply (owner, after a fresh backup): --apply --backup-taken --confirm ${confirmationCount(plan)}`,
+        `\nDry run only. To apply (owner, after a fresh backup), repeat the SAME --exclude-tenant ` +
+          `value and add: --apply --backup-taken --confirm ${confirmationCount(plan)}`,
       );
       return;
     }

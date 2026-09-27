@@ -79,7 +79,21 @@ console.log(JSON.stringify({
     p.parseArgs(["--aply"]),
     p.parseArgs(["--confirm"]),
     p.parseArgs(["--confirm", "--apply"]),
+    p.parseArgs(["--exclude-tenant", "acme,globex", "--exclude-tenant", "acme"]),
+    p.parseArgs(["--exclude-tenant", "acme,"]),
+    p.parseArgs(["--exclude-tenant"]),
   ],
+  exclusion: (() => {
+    const r = p.resolveExclusions(["acme", "nope"], [{ id: "t1", slug: "acme" }, { id: "t2", slug: "globex" }]);
+    const kept = p.withoutExcluded({ subscriptions: subs, addons, connects }, r.ids);
+    const excludedPlan = p.buildPlan(kept, verdict);
+    return {
+      ids: [...r.ids],
+      unknown: r.unknown,
+      touched: [...new Set(excludedPlan.changes.map((c) => c.tenantId))].sort(),
+      rows: [kept.subscriptions.length, kept.addons.length, kept.connects.length],
+    };
+  })(),
   refusals: {
     live: p.applyRefusal({ args: ok, keyMode: "live", plan: cleanPlan }),
     none: p.applyRefusal({ args: ok, keyMode: "none", plan: cleanPlan }),
@@ -162,6 +176,7 @@ describe("stripe-test-purge planner (#2437)", () => {
       backupTaken: false,
       help: false,
       confirm: null,
+      excludeTenants: [],
     });
     expect(r.args[1]).toEqual({
       apply: true,
@@ -169,10 +184,21 @@ describe("stripe-test-purge planner (#2437)", () => {
       backupTaken: true,
       help: false,
       confirm: "7",
+      excludeTenants: [],
     });
     expect(r.args[2].error).toMatch(/unknown argument: --aply/);
     expect(r.args[3].error).toMatch(/--confirm needs a value/);
     expect(r.args[4].error).toMatch(/--confirm needs a value/);
+    expect(r.args[5].excludeTenants).toEqual(["acme", "globex"]);
+    expect(r.args[6].error).toMatch(/empty slug/);
+    expect(r.args[7].error).toMatch(/--exclude-tenant needs a value/);
+  });
+
+  it("drops every row of an excluded tenant before planning; unknown slugs are reported", () => {
+    expect(r.exclusion.ids).toEqual(["t1"]);
+    expect(r.exclusion.unknown).toEqual(["nope"]);
+    expect(r.exclusion.rows).toEqual([2, 0, 3]); // t1's subscription, add-on and Connect row gone
+    expect(r.exclusion.touched).not.toContain("t1");
   });
 
   it("refuses --apply without a test key, with live ids, without a backup or the exact count", () => {
@@ -211,10 +237,12 @@ describe("purge-test-stripe-ids.mjs gates (#2437), no database env", () => {
   });
 
   it("never falls back to a stray target: no proxy variables means a refusal", () => {
-    const { status } = runScript([], {
+    const { status, out } = runScript([], {
       STRIPE_SECRET_KEY: "sk_test_notreal",
       DATABASE_URL: "postgresql://u:p@127.0.0.1:1/none",
     });
     expect(status).toBe(1);
+    expect(out).toMatch(/Missing Railway proxy variables/);
+    expect(out).toMatch(/never falls back to DATABASE_URL/);
   });
 });
