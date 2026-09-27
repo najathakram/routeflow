@@ -10,7 +10,7 @@ import {
   UseGuards,
 } from "@nestjs/common";
 import { UserRole } from "@prisma/client";
-import { RETURN_KIND_VALUES } from "@routeflow/types";
+import { ReturnKind } from "@prisma/client";
 import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
 import { RolesGuard } from "../auth/guards/roles.guard";
 import { Roles } from "../auth/decorators/roles.decorator";
@@ -31,10 +31,12 @@ import { QuoteInlineReturnDto } from "./dto/quote-inline-return.dto";
 import { CaptureInlineReturnDto } from "./dto/capture-inline-return.dto";
 import { ApproveInlineReturnDto } from "./dto/approve-inline-return.dto";
 
-/** #2406: `GET /returns?kind=` whitelist — `RETURN_KIND_VALUES` (the real Prisma enum,
- * pinned in enum-parity.spec.ts) plus the read-only "ALL" filter. Anything else is a 400
- * BEFORE the service/prisma is ever touched — never pass a raw query string into `where.kind`. */
-const RETURN_KIND_FILTER_VALUES = [...RETURN_KIND_VALUES, "ALL"] as const;
+/** #2406: `GET /returns?kind=` whitelist — the Prisma `ReturnKind` enum (the same set as the
+ * shared RETURN_KIND_VALUES, pinned by enum-parity.spec.ts) plus the read-only "ALL" filter.
+ * Anything else is a 400 BEFORE the service/prisma is touched — never a raw string into
+ * `where.kind`. NOT imported from @routeflow/types: that package ships TS source, and a VALUE
+ * import crashes the compiled api at boot (runtime-routeflow-types-imports.spec.ts). */
+const RETURN_KIND_FILTER_VALUES = [...Object.values(ReturnKind), "ALL"] as const;
 type ReturnKindFilter = (typeof RETURN_KIND_FILTER_VALUES)[number];
 const isReturnKindFilter = (value: string): value is ReturnKindFilter =>
   (RETURN_KIND_FILTER_VALUES as readonly string[]).includes(value);
