@@ -64,7 +64,6 @@ const ALLOWED: Record<string, string> = {
   "create-super-admin.js": "writer",
   "fix-legacy-business-name.js": "writer",
   "fix-order-number-duplicates.js": "writer",
-  "import-zoho.js": "writer",
   "invalidate-tenant-pdf-cache.js": "writer",
   "link-google.js": "writer",
   "merge-duplicate-products.js": "destructive",
