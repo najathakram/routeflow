@@ -2995,3 +2995,71 @@ citations, closed-out with its own post-init assertion guard).
   count (`unitLabel IS NOT NULL` on `OrderItem`/`InvoiceItem`) before any remediation script —
   it returned 0 here and made the planned remediation unnecessary.
   (Archived 2026-09-27 to make room at cap: standing spec guard named above, no citation outside the register that would break; whole and verbatim.)
+
+### L-214 · 2026-09-22 · domain · a second quantity axis needs every writer AND every "already done" guard
+
+- **Symptom:** a FULL credit note against a box-unaware regulated line reversed 5 of the 60 pieces
+  it sold, leaving 55 phantom pieces on the tax filing per credited line. Net, qty and tax were all
+  correct — only the piece axis was wrong — and a later invoice void never cleared the residue, so
+  the rows stayed wrong permanently.
+- **Root cause:** B661 moved the SALE row's `unitBasisQty` onto a PIECE axis while `qty` stayed in
+  the line's own unit (boxes for a box-unaware line). `reverseCreditNoteEntries` kept booking the
+  line-unit value into the piece column, so the two sides no longer cancelled. Compounding it, the
+  "this line is already fully reversed, skip it" guard in `reverseInvoiceEntries` tested `qty`,
+  `netSales` and `categoryTax` but NOT `unitBasisQty` — so the one operation that could have healed
+  the residue was the operation that proved it invisible.
+- **Lesson:** **When a row carries two quantity axes that mean different things, moving ONE reader
+  or writer onto the new axis is never the whole change: sweep every OTHER writer that books a
+  paired row into the same column, and widen every "nothing left to do" guard to test EVERY axis it
+  guards. A guard that checks a subset of dimensions does not merely miss the bug — it makes the bug
+  permanent, because it convinces the healing path there is nothing to heal.**
+- **Same fix, second lesson (pro-rata source):** the replacement first took its pieces-per-unit
+  ratio from an AGGREGATE over every SALE row of the order line, which silently averages rows
+  written under different snapshots — a product repacked 12 -> 10 between the original write and a
+  delivered-basis reconcile gave 11, so a 2-box partial credit booked -22 where the truth was -20.
+  **A pro-rata ratio must be derived from the specific stored row being reversed, never from a sum
+  across the parent entity's rows.** This class is near-invisible in testing because the CLOSING
+  operation books the exact remaining and absorbs the difference, so the TOTAL always reconciles —
+  the error only surfaces as period attribution, and only when a partial straddles a period
+  boundary. Where a sibling path already pro-rates correctly
+  (`reverseReturnEntries` off the live row's own ratio), match it rather than inventing a second
+  derivation (cf. L-167).
+- **Guard:** `regulated-ledger.service.spec.ts` pins the piece axis on the credit path (full credit
+  closes to exactly 0 pieces, a partial pro-rates off the SALE row's own ratio, the second half
+  leaves no residue) and pins that a line square on money but carrying a piece residue is NOT
+  skipped by a void. When a fix breaks existing fixtures, verify each modelled a shape a real
+  writer can produce before changing it — four here defaulted the two axes independently and modelled rows no writer emits, which is why
+  changing them was correct; the justification is that the old assertion's AGGREGATE was the
+  defect's own signature (qty netting to zero while pieces don't IS the legacy residue), not
+  merely that the case looked unreachable. A mixed-pack reconcile case pins the ratio source.
+  (Archived 2026-09-27 to make room at cap: standing spec guard named above, no citation outside the register that would break; whole and verbatim.)
+
+### L-217 · 2026-09-25 · testing · a CAS/updateMany needs an executed real-DB proof of its SUCCESS path (B861)
+
+- **Symptom:** a compare-and-set `updateMany({ where: { ...compoundUniqueKey, nextNumber } })` passed
+  tsc and every unit mock, yet would have 500'd every second save of a configured row.
+- **Root cause:** a spread compound-unique key escapes TypeScript's excess-property check, mocks accept
+  any `where`, and only a real Prisma client rejects it ("Unknown argument"). The tests covered only
+  the CAS refusal path, so the success path never ran against a real client.
+- **Lesson:** **A CAS/updateMany (or any where/select/include) change needs an executed real-DB proof
+  of its SUCCESS path, not only the refusal path. Build WhereInputs from plain columns, never a spread
+  compound-unique key.**
+- **Guard:** `numbering-continuity.db.spec.ts` "a save carrying the current expectedNextNumber updates
+  the saved row" (cf. [[L-205]] on tests that cannot fail).
+  (Archived 2026-09-27 to make room at cap: standing spec guard named above, no citation outside the register that would break; whole and verbatim.)
+
+### L-196 · 2026-09-17 · tooling · a config file silently overriding a code default drifts from its docs
+
+- **Symptom:** CLAUDE.md and this file's own header both stated the lessons register caps at 40
+  entries / ~25–40 KB; the register had run at 52/64 KB all along with zero validator complaints,
+  since `_meta.json`'s own fields silently override `validate-lessons.mjs`'s hardcoded defaults.
+- **Root cause:** the validator's fallback defaults exist only for a repo with no `_meta.json`
+  yet, but nothing re-derives or checks the DOCS against whichever value is actually live — a
+  limit living in a data file can drift from every doc describing it with no warning.
+- **Lesson:** **When a limit lives in a config/data file with a code-level fallback default, the
+  code's default is not the source of truth once the config sets a real value — read the
+  validator's own resolved value, never infer it from source or a doc, and update every doc
+  stating the limit in the SAME commit the config changes it.**
+- **Guard:** the validator already prints its resolved values in its self-consistency line;
+  propose a periodic doc-vs-validator cross-check.
+  (Archived 2026-09-27 to make room at cap: standing spec guard named above, no citation outside the register that would break; whole and verbatim.)

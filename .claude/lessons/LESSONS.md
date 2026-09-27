@@ -244,21 +244,6 @@
 - **Guard:** none automatic yet — a landing coordinator diffs `origin/master...HEAD` on the
   rebuilt branch and confirms zero changes under the schema-owning PR's files before pushing.
 
-### L-196 · 2026-09-17 · tooling · a config file silently overriding a code default drifts from its docs
-
-- **Symptom:** CLAUDE.md and this file's own header both stated the lessons register caps at 40
-  entries / ~25–40 KB; the register had run at 52/64 KB all along with zero validator complaints,
-  since `_meta.json`'s own fields silently override `validate-lessons.mjs`'s hardcoded defaults.
-- **Root cause:** the validator's fallback defaults exist only for a repo with no `_meta.json`
-  yet, but nothing re-derives or checks the DOCS against whichever value is actually live — a
-  limit living in a data file can drift from every doc describing it with no warning.
-- **Lesson:** **When a limit lives in a config/data file with a code-level fallback default, the
-  code's default is not the source of truth once the config sets a real value — read the
-  validator's own resolved value, never infer it from source or a doc, and update every doc
-  stating the limit in the SAME commit the config changes it.**
-- **Guard:** the validator already prints its resolved values in its self-consistency line;
-  propose a periodic doc-vs-validator cross-check.
-
 ### L-182 · 2026-09-16 · tooling · #799 self-test wall-clock regression (host vs CI)
 
 - **Symptom:** #799 added spawn-heavy self-test cases; wall-clock went from 63–131s to 487s on
@@ -461,19 +446,6 @@
   plainly that it is unverified.**
 - **Guard:** none — judgment. Grep `isWeb`/`Platform.OS` in any file a fix touches.
 
-### L-217 · 2026-09-25 · testing · a CAS/updateMany needs an executed real-DB proof of its SUCCESS path (B861)
-
-- **Symptom:** a compare-and-set `updateMany({ where: { ...compoundUniqueKey, nextNumber } })` passed
-  tsc and every unit mock, yet would have 500'd every second save of a configured row.
-- **Root cause:** a spread compound-unique key escapes TypeScript's excess-property check, mocks accept
-  any `where`, and only a real Prisma client rejects it ("Unknown argument"). The tests covered only
-  the CAS refusal path, so the success path never ran against a real client.
-- **Lesson:** **A CAS/updateMany (or any where/select/include) change needs an executed real-DB proof
-  of its SUCCESS path, not only the refusal path. Build WhereInputs from plain columns, never a spread
-  compound-unique key.**
-- **Guard:** `numbering-continuity.db.spec.ts` "a save carrying the current expectedNextNumber updates
-  the saved row" (cf. [[L-205]] on tests that cannot fail).
-
 ### L-218 · 2026-09-25 · testing · a red-proof that matches message TEXT can be vacuous (B861)
 
 - **Symptom:** the red-proofs AB/AD passed on the OLD code, so they proved nothing about the fix.
@@ -489,6 +461,13 @@
 - **Root cause:** a hand-built fixture encodes the author's model of the writer, not the writer's output; the spec can only agree with the model (cf. [[L-220]]).
 - **Lesson:** **Build every money or unit fixture with the production writer (or copy its exact shape: base-piece qty, `net + tax` amounts, the maps it stores). Before asserting an overshoot or edge state, confirm the writer can reach it; if only a downstream clamp stops it, test that clamp.**
 - **Guard:** review checks each fixture against the writer's call site (train A: `credit-notes.service.ts` caps, `returns.service.ts` return maps); `regulated-ledger-price-correction.db.spec.ts` drives the real writers.
+
+### L-234 · 2026-09-27 · testing · a whole-database script needs an explicit scope allowlist, not a rerun (B824, train C)
+
+- **Symptom:** `publish-and-repin.db.spec.ts` failed three different ways under `--maxWorkers=2` — an unrelated tenant tripped `--only-test-tenants`'s refusal, an unscoped `--apply --live` wrote onto a sibling spec's own fixture tenant, and this spec's fixture received unwanted writes back — each time green when run alone, so it read all night as "a known flake, verify alone before treating as a blocker."
+- **Root cause:** `publish-and-repin.mjs`'s `computeDiff()` correctly scans the WHOLE database for a real prod run, but under parallel jest workers it also picks up sibling `*.db.spec.ts` files' own live fixture tenants — real cross-suite contamination, not a stale-count race a retry masks. Running it alone "fixes" all three by removing the siblings, which is exactly why that green is not a safety signal.
+- **Lesson:** **A `*.db.spec.ts` (or script) that computes a diff/apply, or any read+write, over a shared, unscoped table under parallel workers must scope every call to its own fixture rows (an id/slug allowlist flag on the tool it drives). "Green alone, red in the full lane" for such a spec means look for a missing scope, not a flake to rerun past.**
+- **Guard:** `publish-and-repin.mjs --only-tenants <slugs>`; `publish-and-repin.db.spec.ts`'s `runCli()` passes its own 3 fixture slugs on every call (report, preview, live apply).
 
 ## domain
 
@@ -640,6 +619,13 @@
 - **Lesson:** **When a line is copied, snapshot BOTH unitPrice and unitsPerBox or neither. Carrying the pack with a live price under-bills after a repack; converting a live price to an old pack is refused.**
 - **Guard:** `next-delivery-pack.db.spec.ts` (a repack with a price change, plus an AT_STOP vs NEXT_DELIVERY parity pin).
 
+### L-232 · 2026-09-27 · domain · a calendar-day field keeps the client's literal day, never a re-derived one (#2249, train B)
+
+- **Symptom:** `invoices.service.ts` stored `new Date(dto.issueDate)` raw, so a client datetime with a time component or offset crossing a UTC day boundary (e.g. `23:30-04:00`) silently landed one day later — breaking the UTC-midnight symbolic convention that statements, the regulated report and sales-facts buckets all assume.
+- **Root cause:** the field is a day-granular calendar stamp, not a real instant, but the write path treated the client's string as an instant and let the day move with it. An earlier version made it worse by re-reading in the tenant timezone.
+- **Lesson:** **A DTO field documented or consumed as a calendar day (statements, invoices, schedules) must be normalized at the write boundary through a literal first-10-characters day extractor — never `new Date(rawString)` directly, and never re-derived from a timezone. A shape that names no real day is a 400, checked before anything else is read.**
+- **Guard:** `common/calendar-date.ts`'s `calendarStampFromInput`/`issueDateStamp`, called as `InvoicesService.create()`'s first statement; `calendar-date.pins.spec.ts`, `invoice-issue-date-b2197.db.spec.ts`. Cf. the F25 calendar-date convention (archived L-047) — this is the same house rule recurring at a new call site.
+
 ## security
 
 ### L-188 · 2026-09-17 · security · demo-booking OAuth/booking tokens in URL query strings
@@ -660,6 +646,13 @@
 - **Root cause:** the guard and the driver parsed the same string differently (`?host=`, `hostaddr`, `service`, multi-host lists, sockets, an encoded `?` in the database name).
 - **Lesson:** **A safety guard on a connection string must parse it the way the DRIVER does (pg-connection-string), then dial the vetted explicit fields, never the raw string it just approved.**
 - **Guard:** `scripts/lib/local-db-target.cjs` and its bypass-list spec (`local-db-target.spec.ts`).
+
+### L-233 · 2026-09-27 · security · a role check is not an ownership check (#2386, SA-429, train B)
+
+- **Symptom:** the DRIVER branch of `updateOrderItems` checked only `role === "DRIVER"` — any driver in the tenant could edit any order's items, not just orders on their own active run.
+- **Root cause:** the branch was written assuming the role check was the whole authorization decision; no assignment/ownership predicate existed at all, and the gap is easy to miss because the code "looks done" (it correctly 403s the wrong role, just not the wrong instance).
+- **Lesson:** **For a tenant-scoped, role-gated write path, "the role is correct" and "this principal is entitled to touch this specific resource" are two separate checks. A new role-gated branch needs an explicit resource-ownership assertion — re-derived from the resource's own foreign-key chain, never a denormalized shortcut field — written and tested as its own predicate, run before any other guard AND re-checked under the row lock.**
+- **Guard:** `orders/driver-edit-access.ts`'s `assertDriverMayEditOrder` (follows `order.routeRunStopId → RouteRunStop → RouteRun`, never `order.routeRunId` directly); called first in `updateOrderItems`, before the cancelled-order check, and again under the Order `FOR UPDATE`. `driver-edit-access.spec.ts`, `driver-edit-access.db.spec.ts`.
 
 ## deploy
 
@@ -759,39 +752,3 @@
 - **Guard:** the landing procedure re-reads the coordination issue (#938) immediately before each
   merge; no unattended batch merge loops.
 
-### L-214 · 2026-09-22 · domain · a second quantity axis needs every writer AND every "already done" guard
-
-- **Symptom:** a FULL credit note against a box-unaware regulated line reversed 5 of the 60 pieces
-  it sold, leaving 55 phantom pieces on the tax filing per credited line. Net, qty and tax were all
-  correct — only the piece axis was wrong — and a later invoice void never cleared the residue, so
-  the rows stayed wrong permanently.
-- **Root cause:** B661 moved the SALE row's `unitBasisQty` onto a PIECE axis while `qty` stayed in
-  the line's own unit (boxes for a box-unaware line). `reverseCreditNoteEntries` kept booking the
-  line-unit value into the piece column, so the two sides no longer cancelled. Compounding it, the
-  "this line is already fully reversed, skip it" guard in `reverseInvoiceEntries` tested `qty`,
-  `netSales` and `categoryTax` but NOT `unitBasisQty` — so the one operation that could have healed
-  the residue was the operation that proved it invisible.
-- **Lesson:** **When a row carries two quantity axes that mean different things, moving ONE reader
-  or writer onto the new axis is never the whole change: sweep every OTHER writer that books a
-  paired row into the same column, and widen every "nothing left to do" guard to test EVERY axis it
-  guards. A guard that checks a subset of dimensions does not merely miss the bug — it makes the bug
-  permanent, because it convinces the healing path there is nothing to heal.**
-- **Same fix, second lesson (pro-rata source):** the replacement first took its pieces-per-unit
-  ratio from an AGGREGATE over every SALE row of the order line, which silently averages rows
-  written under different snapshots — a product repacked 12 -> 10 between the original write and a
-  delivered-basis reconcile gave 11, so a 2-box partial credit booked -22 where the truth was -20.
-  **A pro-rata ratio must be derived from the specific stored row being reversed, never from a sum
-  across the parent entity's rows.** This class is near-invisible in testing because the CLOSING
-  operation books the exact remaining and absorbs the difference, so the TOTAL always reconciles —
-  the error only surfaces as period attribution, and only when a partial straddles a period
-  boundary. Where a sibling path already pro-rates correctly
-  (`reverseReturnEntries` off the live row's own ratio), match it rather than inventing a second
-  derivation (cf. L-167).
-- **Guard:** `regulated-ledger.service.spec.ts` pins the piece axis on the credit path (full credit
-  closes to exactly 0 pieces, a partial pro-rates off the SALE row's own ratio, the second half
-  leaves no residue) and pins that a line square on money but carrying a piece residue is NOT
-  skipped by a void. When a fix breaks existing fixtures, verify each modelled a shape a real
-  writer can produce before changing it — four here defaulted the two axes independently and modelled rows no writer emits, which is why
-  changing them was correct; the justification is that the old assertion's AGGREGATE was the
-  defect's own signature (qty netting to zero while pieces don't IS the legacy residue), not
-  merely that the case looked unreachable. A mixed-pack reconcile case pins the ratio source.
