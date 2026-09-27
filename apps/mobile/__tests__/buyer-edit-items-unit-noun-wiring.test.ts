@@ -18,8 +18,10 @@ describe("customer edit-items (#2222): the line price-suffix noun tracks the lin
     );
   });
 
-  it("carries the order line's unitLabel into the draft", () => {
-    expect(src).toMatch(/unitLabel:\s*li\.unitLabel/);
+  it("carries the order line's unitLabel into the draft (hydration lives in lib/buyer-edit-items since #2270)", () => {
+    expect(src).toMatch(/hydrateBuyerDraft\(order\.lineItems\)/);
+    const lib = readFileSync(join(__dirname, "..", "lib/buyer-edit-items.ts"), "utf8");
+    expect(lib).toMatch(/unitLabel:\s*count != null \? li\.unitLabel : null/);
   });
 
   it("gates the price-suffix noun on item.unitLabel, falling back to the unit only when blank", () => {
