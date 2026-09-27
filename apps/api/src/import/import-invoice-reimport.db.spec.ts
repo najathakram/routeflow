@@ -129,8 +129,8 @@ describeDb(
       });
     }
 
-    const numberedCsv = (number: string) =>
-      `Invoice Number,Customer Name,Total,Balance Due,Invoice Status\n${number},QA Import Co,100,0,Paid\n`;
+    const numberedCsv = (number: string, status = "Paid") =>
+      `Invoice Number,Customer Name,Total,Balance Due,Invoice Status\n${number},QA Import Co,100,0,${status}\n`;
     const numberlessCsv = (ref: string, balance: string, status: string) =>
       `Invoice ID,Customer Name,Total,Balance Due,Invoice Status\n${ref},QA Import Co,100,${balance},${status}\n`;
 
@@ -167,6 +167,27 @@ describeDb(
           const r = await importInvoices(tenantId, numberedCsv(number));
           expect(r.errors).toEqual([expect.stringContaining(why)]);
           expect(r.updated).toBe(0);
+          expect(await state(inv.id)).toEqual({ status: st, payments: 0 });
+        },
+        30_000,
+      );
+
+      // #2478: the same file re-run against an invoice already in that terminal state changes
+      // nothing, so it is a silent skip on every run, never a permanent row error.
+      it.each([
+        [InvoiceStatus.VOID, "Void"],
+        [InvoiceStatus.WRITTEN_OFF, "Written Off"],
+      ])(
+        "#2478: a %s invoice re-imported unchanged ⇒ a silent skip on every run; nothing written",
+        async (st, csvStatus) => {
+          const { tenantId, customerId } = await seed(`num-same-${st}`);
+          const number = `INV-${YEAR}-8401`;
+          const inv = await seedNumbered(tenantId, customerId, number, st);
+          for (let run = 0; run < 2; run++) {
+            const r = await importInvoices(tenantId, numberedCsv(number, csvStatus));
+            expect(r.errors).toEqual([]);
+            expect({ updated: r.updated, skipped: r.skipped }).toEqual({ updated: 0, skipped: 1 });
+          }
           expect(await state(inv.id)).toEqual({ status: st, payments: 0 });
         },
         30_000,
@@ -234,6 +255,30 @@ describeDb(
 
           expect(r.errors).toEqual([expect.stringContaining(why)]);
           expect({ imported: r.imported, updated: r.updated }).toEqual({ imported: 0, updated: 0 });
+          expect(await state(inv.id)).toEqual({ status: st, payments: 0 });
+          expect(await prisma.invoice.count({ where: { tenantId } })).toBe(1); // never re-minted
+        },
+        30_000,
+      );
+
+      it.each([
+        [InvoiceStatus.VOID, "Void"],
+        [InvoiceStatus.WRITTEN_OFF, "Written Off"],
+      ])(
+        "#2478: imported open, %s in-app, re-imported as that same status ⇒ a silent skip on every run",
+        async (st, csvStatus) => {
+          const { tenantId } = await seed(`ref-same-${st}`);
+          const ref = `zoho-${RUN}-same-${st}`;
+          const inv = await importOpen(tenantId, ref);
+          await prisma.invoice.update({ where: { id: inv.id }, data: { status: st } });
+          for (let run = 0; run < 2; run++) {
+            const r = await importInvoices(tenantId, numberlessCsv(ref, "100", csvStatus));
+            expect(r.errors).toEqual([]);
+            expect({ imported: r.imported, updated: r.updated }).toEqual({
+              imported: 0,
+              updated: 0,
+            });
+          }
           expect(await state(inv.id)).toEqual({ status: st, payments: 0 });
           expect(await prisma.invoice.count({ where: { tenantId } })).toBe(1); // never re-minted
         },

@@ -62,6 +62,7 @@ import { nextOrderNumberFor } from "./order-number";
 import * as unitAware from "./unit-aware-guard";
 import * as cancelledLines from "./order-edit-cancelled";
 import * as driverAccess from "./driver-edit-access";
+import { assertRemovalsNameALine, writeLineRemoval } from "./order-line-removal";
 import { ORDER_STATUS_TRANSITIONS, assertOrderStatusTransition } from "./order-status-transitions";
 import { AppliedCreditNoteDto, CreateOrderDto } from "./dto/create-order.dto";
 import {
@@ -76,7 +77,7 @@ import {
 } from "./merge-idempotency";
 import { BUYER_EDIT_CLOSED_STATUSES, computeEditWindow } from "./edit-window";
 import { cancelBlockedMessage, cancelImpact, lockOrderForCancel } from "./order-cancel-impact";
-import { classifyEditPayload } from "./order-edit-payload";
+import { assertBuyerDiffShape, classifyEditPayload } from "./order-edit-payload";
 import {
   applyBuyerMergeHeaderImpl,
   bulkDeleteOrdersImpl,
@@ -106,6 +107,7 @@ import { redactUpsellForCustomer } from "../common/upsell-redaction";
 import { currentTaxRate } from "../common/tax-rate";
 import { NotificationsService } from "../notifications/notifications.service";
 import { InvoicesService } from "../invoices/invoices.service";
+import { dueStamp } from "../invoices/invoice-due-dates";
 import {
   decrementStockForSale,
   restoreStockForReopen,
@@ -2169,6 +2171,10 @@ export class OrdersService implements OnApplicationBootstrap {
    * existing open order.
    */
   async createSale(dto: CreateSaleDto, user: JwtPayload) {
+    // #2493: refuse a due date that names no real day (the DTO's @IsDateString passes
+    // `2026-02-31`) BEFORE the order is created and stock decremented; the invoice step would
+    // otherwise 400 and leave a DELIVERED order with no invoice.
+    dueStamp(dto.dueDate, "dueDate");
     const orderDate = parseOrderDate(dto.orderDate, user.role);
 
     // Delivery-date picker (owner 2026-08-25): `deliveredOn` REPLACES
@@ -2507,7 +2513,6 @@ export class OrdersService implements OnApplicationBootstrap {
         // are ONE decision, not two: `reopenOrder` re-decrements exactly the lines
         // this cancel marked, so marking a line we did not credit would make reopen
         // take stock the order never held (understating it by the full quantity).
-        const cancelReturnsStock = order.status !== OrderStatus.DRAFT;
         // #2255 / SA-404d: re-run on a write conflict (SA-269). The CANCELLED status write sits in this
         // locked tx, so a refusal under the lock leaves the order exactly as it was — never
         // cancelled-but-not-unwound — and voidInvoiceInTx's claim keeps a re-run from voiding twice.
@@ -2515,6 +2520,13 @@ export class OrdersService implements OnApplicationBootstrap {
           this.prisma.tenantTransaction(
             async (tx) => {
               await lockOrderForCancel(tx, id);
+              // #2472 (2): decided from the status UNDER the lock, never the unlocked pre-read.
+              const lockedStatus = (await tx.order.findUnique({
+                where: { id },
+                select: { status: true },
+              }))!.status;
+              const cancelReturnsStock = lockedStatus !== OrderStatus.DRAFT;
+              const lockedOrder = { ...order, status: lockedStatus };
               // SA-404f F2: compare-and-set on the cancellable set the pre-check used — a retry after
               // a 40001 caused by a concurrent DELIVERED must never cancel a delivered order.
               const cancellable = Object.keys(ORDER_STATUS_TRANSITIONS).filter((k) =>
@@ -2536,10 +2548,9 @@ export class OrdersService implements OnApplicationBootstrap {
                   where: { orderId: id, status: { not: "CANCELLED" } },
                   select: STOCK_SETTLE_SELECT,
                 });
-                // Return the creation-time decrement, clamped to the undelivered
-                // remainder (settleStockForEdit with an empty final set). `order` here
-                // is the PRE-cancel record (status not yet CANCELLED in memory).
-                await this.settleStockForEdit(tx, order, activeItems, [], user, {
+                // Return the creation-time decrement, clamped to the undelivered remainder (empty final
+                // set), AS the status read under the lock (#2472: a stale DRAFT pre-read would no-op).
+                await this.settleStockForEdit(tx, lockedOrder, activeItems, [], user, {
                   notes: "CANCEL",
                 });
               }
@@ -2874,6 +2885,7 @@ export class OrdersService implements OnApplicationBootstrap {
       isCreateMerge?: boolean;
     },
   ) {
+    assertRemovalsNameALine(dto.items); // #2563: an id-less CANCEL/DELETE, before any read or write
     // SA-429: a DRIVER edits only an order on their own IN_PROGRESS run — FIRST, before any state leaks.
     await driverAccess.assertDriverMayEditOrder(this.prisma.forTenant(), orderId, user);
     const order = await this.prisma.forTenant().order.findUnique({
@@ -2904,9 +2916,11 @@ export class OrdersService implements OnApplicationBootstrap {
     const inlineRet = await prepareInlineReturn(this.inlineReturns, dto.inlineReturn, user);
     let inlineMinted: any = null; // #2094: emitted after the commit
     // units_v1: every branch below re-derives factor + price from the LIVE product (see the guard).
-    await unitAware.assertOrderEditAllowed(order, dto, user, () =>
-      this.prisma.forTenant().customer.findFirst({ where: { userId: user?.sub, deletedAt: null } }),
-    );
+    const findOwner = () =>
+      this.prisma.forTenant().customer.findFirst({ where: { userId: user?.sub, deletedAt: null } });
+    await unitAware.assertOrderEditAllowed(order, dto, user, findOwner);
+    // SA-507a/b: the buyer-diff 400 runs AFTER the guard (ownership, then the 409 shapes).
+    await assertBuyerDiffShape(order, dto, user, isDiffPayload, findOwner);
 
     // units_v1 (A1): resolve every dto item's unit-awareness ONCE, up front — see unit-line-edit.ts.
     // Hoisted here, BEFORE the restriction plan and the un-tx'd revertLinkedInvoicesForOrderEdit
@@ -2923,6 +2937,7 @@ export class OrdersService implements OnApplicationBootstrap {
       const product = pid ? unitCtx.products.get(pid) : undefined;
       if (product)
         unitRows.set(item, resolveLineUnits(product, unitCtx.ladders.get(pid!) ?? [], item, li));
+      unitEdit.assertNoPackRedenomination(li, item, unitRows.get(item)); // SA-474
     }
 
     // B63 (REG-B63): buyers self-edit only pre-dispatch orders — the post-dispatch
@@ -3097,14 +3112,16 @@ export class OrdersService implements OnApplicationBootstrap {
               item,
               resolveLineUnits(product, unitCtx.ladders.get(pid!) ?? [], item, li),
             );
+          unitEdit.assertNoPackRedenomination(li, item, unitRows.get(item)); // SA-474
         }
 
         // Customer/Driver path: replace items by productId. A4: a DRIVER diff
         // payload skips this branch entirely — it merges below like an operator
         // edit (with prices already stripped), so untouched lines survive.
+        // SA-407: a buyer's per-line diff (a unit line's count / a removal) merges like staff's too.
         if (
-          user?.role === UserRole.CUSTOMER ||
-          (user?.role === UserRole.DRIVER && !isDiffPayload)
+          (user?.role === UserRole.CUSTOMER || user?.role === UserRole.DRIVER) &&
+          !isDiffPayload
         ) {
           if (user.role === UserRole.CUSTOMER) {
             // REG-B131: `deletedAt: null` — the buyer replace-all path is the last door a
@@ -3322,6 +3339,7 @@ export class OrdersService implements OnApplicationBootstrap {
           }
         } else {
           // Operator/admin path.
+          await unitEdit.assertBuyerOwnsOrder(tx, user, order.customerId); // SA-407: buyer diff
           // Whether to wipe + recreate (mobile "replace-all") vs. merge incrementally.
           // R10/B198: explicit `replaceAll: true` ONLY — the old shape-inference
           // heuristic ("every item lacks an id" ⇒ replace) is gone. That
@@ -3348,6 +3366,7 @@ export class OrdersService implements OnApplicationBootstrap {
           // tier is resolved and no extra query is issued for them.
           const isStaffEdit =
             user?.role === UserRole.OPERATOR || user?.role === UserRole.TENANT_ADMIN;
+          const atCustomerTier = isStaffEdit || user?.role === UserRole.CUSTOMER; // SA-407: unit counts
           // B465 fix round (Opus BLOCK): an id-only UPDATE entry (web/mobile send
           // {id, action, qty, unitPrice} with no productId of their own) must resolve
           // tier pricing for the EXISTING line's product too — not just products
@@ -3363,7 +3382,7 @@ export class OrdersService implements OnApplicationBootstrap {
           // CustomerPrice lookup always fell back to the customer's DEFAULT tier even
           // when a per-product SPECIAL row existed for the substitute specifically.
           const substituteProductIds = dto.items.map((i) => i.substituteProductId).filter(Boolean);
-          const operatorProductIds = isStaffEdit
+          const operatorProductIds = atCustomerTier
             ? ([
                 ...new Set([
                   ...dto.items.map((i) => i.productId).filter(Boolean),
@@ -3372,7 +3391,7 @@ export class OrdersService implements OnApplicationBootstrap {
                 ]),
               ] as string[])
             : [];
-          const operatorTierCtx = isStaffEdit
+          const operatorTierCtx = atCustomerTier
             ? await tx.customer.findFirst({
                 where: { id: order.customerId },
                 select: { pricingTier: true },
@@ -3391,7 +3410,7 @@ export class OrdersService implements OnApplicationBootstrap {
             tx,
             ladders: unitCtx.ladders,
             tenantId: this.prisma.getTenantId(),
-            tier: (pid) => (isStaffEdit ? (operatorCpMap.get(pid) ?? operatorDefaultTier) : 1),
+            tier: (pid) => (atCustomerTier ? (operatorCpMap.get(pid) ?? operatorDefaultTier) : 1),
             categoryMap: await loadCategoryMapForProducts(tx, unitCtx.products), // B297
           };
 
@@ -3782,35 +3801,11 @@ export class OrdersService implements OnApplicationBootstrap {
                 const hasDeliveries = await tx.deliveryMutation.count({
                   where: { orderItemId: item.id },
                 });
-                if ((li && Number(li.invoicedQty ?? 0) > 0) || hasDeliveries > 0) {
-                  await tx.orderItem.update({
-                    where: { id: item.id },
-                    data: {
-                      status: "CANCELLED",
-                      qty: 0,
-                      subtotal: 0,
-                      boxes: null,
-                      pieces: null,
-                      // A zeroed line has no free units left to show against it.
-                      promoFreeUnits: null,
-                    },
-                  });
-                } else {
-                  await tx.orderItem.delete({ where: { id: item.id } });
-                }
+                const keep = (li && Number(li.invoicedQty ?? 0) > 0) || hasDeliveries > 0;
+                // #2563: scoped to THIS order ({ id, orderId }); a foreign line id is a 404.
+                await writeLineRemoval(tx, orderId, item.id, keep ? "strike-off" : "delete");
               } else if (item.action === "CANCEL") {
-                await tx.orderItem.update({
-                  where: { id: item.id },
-                  data: {
-                    status: "CANCELLED",
-                    qty: 0,
-                    subtotal: 0,
-                    boxes: null,
-                    pieces: null,
-                    // A zeroed line has no free units left to show against it.
-                    promoFreeUnits: null,
-                  },
-                });
+                await writeLineRemoval(tx, orderId, item.id, "strike-off");
               } else if (item.substituteProductId) {
                 const product = await tx.product.findUniqueOrThrow({
                   where: { id: item.substituteProductId },

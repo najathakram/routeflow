@@ -73,6 +73,22 @@ export class CreditNotesController {
     return this.creditNotesService.voidCreditNote(id);
   }
 
+  // SA-436 PR-2 (#2402): the invoices a void-with-reversal reopens, and any refusal. Read-only.
+  @Get(":id/void-preview")
+  @UseGuards(RolesGuard)
+  @Roles(UserRole.OPERATOR, UserRole.TENANT_ADMIN)
+  voidPreview(@Param("id") id: string) {
+    return this.creditNotesService.voidPreview(id);
+  }
+
+  // SA-436 PR-2 (#2402): un-apply everywhere, remember each pair, then void.
+  @Post(":id/void-with-reversal")
+  @UseGuards(RolesGuard)
+  @Roles(UserRole.OPERATOR, UserRole.TENANT_ADMIN)
+  voidWithReversal(@Param("id") id: string, @CurrentUser() user: JwtPayload) {
+    return this.creditNotesService.voidWithReversal(id, user?.sub ?? null);
+  }
+
   @Post(":id/unapply")
   @UseGuards(RolesGuard)
   // #2403 / SA-436 PR-3: a staff action; TENANT_ADMIN named explicitly (RolesGuard already

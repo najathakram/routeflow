@@ -29,6 +29,7 @@ jest.mock("../storage/compress.util", () => ({
   compressDocument: jest.fn(),
 }));
 
+import { NotFoundException } from "@nestjs/common";
 import { Test, TestingModule } from "@nestjs/testing";
 import { InvoicesService } from "./invoices.service";
 import { InvoicePdfService } from "./invoice-pdf.service";
@@ -265,6 +266,78 @@ describe("SA-404f — payment writers lock before they read (void-first)", () =>
       const b = booked();
       expect(b.invoices).toEqual(["inv-a", "inv-b"]);
       expect(b.total).toBeCloseTo(100, 2);
+    });
+  });
+
+  // #2472 — Opus follow-ups on #2469.
+  describe("#2472 payment lock follow-ups", () => {
+    const conflict = () => Object.assign(new Error("deadlock detected"), { code: "P2034" });
+
+    it("(1) a 40P01/40001 on the standalone payment's first attempt is retried once — one payment", async () => {
+      prisma.tenantTransaction
+        .mockImplementationOnce(() => Promise.reject(conflict()))
+        .mockImplementation(async (fn: any) => fn(loggedTx([])));
+      prisma.invoice.findMany.mockResolvedValue([{ orderId: null }] as any);
+      prisma.invoice.findFirst.mockResolvedValue({
+        id: "inv-1",
+        status: "SENT",
+        total: 100,
+        payments: [],
+      } as any);
+      await service.recordStandalonePayment(standalone());
+      expect(prisma.tenantTransaction).toHaveBeenCalledTimes(2);
+      expect(prisma.invoicePayment.create).toHaveBeenCalledTimes(1);
+    });
+
+    it("(4) recordPayment refuses a WRITTEN_OFF invoice like the other payment writers — no payment", async () => {
+      prisma.tenantTransaction.mockImplementation(async (fn: any) => fn(loggedTx([])));
+      prisma.invoice.findUnique.mockResolvedValue({
+        id: "inv-1",
+        status: "WRITTEN_OFF",
+        total: 100,
+        payments: [],
+      } as any);
+      await expect(
+        service.recordPayment("inv-1", { amount: 20, method: "CASH" } as any),
+      ).rejects.toThrow(/written-off/);
+      expect(prisma.invoicePayment.create).not.toHaveBeenCalled();
+    });
+
+    it("(4) control: recordPayment still refuses a VOID invoice with its existing message", async () => {
+      prisma.tenantTransaction.mockImplementation(async (fn: any) => fn(loggedTx([])));
+      prisma.invoice.findUnique.mockResolvedValue({
+        id: "inv-1",
+        status: "VOID",
+        total: 100,
+        payments: [],
+      } as any);
+      await expect(
+        service.recordPayment("inv-1", { amount: 20, method: "CASH" } as any),
+      ).rejects.toThrow("Cannot record payment on voided invoice");
+    });
+
+    it("(3) nit: the invoice gone under the lock ⇒ 404, nothing written", async () => {
+      prisma.tenantTransaction.mockImplementation(async (fn: any) => fn(loggedTx([])));
+      prisma.invoice.findUnique
+        .mockResolvedValueOnce({ id: "inv-1", status: "SENT", orderId: null } as any) // pre-read
+        .mockResolvedValue(null); // under the lock
+      await expect(service.writeOff("inv-1", { reason: "bad debt" } as any)).rejects.toBeInstanceOf(
+        NotFoundException,
+      );
+      expect(prisma.invoice.update).not.toHaveBeenCalled();
+    });
+
+    it("(3) writeOff re-checks under the (Order →) Invoice lock: VOID since the pre-read ⇒ 400, nothing written", async () => {
+      const log: string[] = [];
+      prisma.tenantTransaction.mockImplementation(async (fn: any) => fn(loggedTx(log)));
+      prisma.invoice.findUnique
+        .mockResolvedValueOnce({ id: "inv-1", status: "SENT", orderId: "ord-1" } as any) // pre-read
+        .mockResolvedValue({ id: "inv-1", status: "VOID", orderId: "ord-1", payments: [] } as any); // locked
+      await expect(service.writeOff("inv-1", { reason: "bad debt" } as any)).rejects.toThrow(
+        /Cannot write off an invoice with status VOID/,
+      );
+      expect(log.slice(0, 2)).toEqual(["lock Order", "lock Invoice"]);
+      expect(prisma.invoice.update).not.toHaveBeenCalled();
     });
   });
 });
