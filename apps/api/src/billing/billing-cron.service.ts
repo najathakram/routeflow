@@ -20,6 +20,7 @@ import {
   UnknownPlanKeyError,
 } from "./plan-catalog.constants";
 import { addCycle } from "./billing-math";
+import { lockTenantForLedger } from "./addon-ledger";
 import { BillingNotificationService } from "./billing-notification.service";
 import { PlanTransitionConfigService, SnapshotFailedError } from "./plan-transition-config.service";
 
@@ -295,6 +296,9 @@ export class BillingCronService {
           if (transition && preparedTransition) {
             await this.planTransition.onPlanChange(tx, transition, preparedTransition);
           }
+          // #2551 / SA-503a: the house order — Tenant row lock right after the hook, before the
+          // subscription write (reconcile/updatePlan/Pricing hold Tenant, then write this row).
+          await lockTenantForLedger(tx, s.tenantId);
           await tx.tenantSubscription.update({
             where: { tenantId: s.tenantId },
             data: {
