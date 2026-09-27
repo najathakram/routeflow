@@ -15,6 +15,7 @@ import { InvoiceStatus, PaymentMethod } from "@prisma/client";
 import { CommissionEngineService } from "../sales-agents/commission-engine.service";
 import { NumberingService } from "../import/numbering.service";
 import { retryOnTxConflict, txConflictState } from "../common/tx-retry";
+import { blockedPairs, clearApplyBlocks, pairKey, writeApplyBlocks } from "./apply-block";
 import {
   CREDIT_NOT_APPLICABLE,
   CREDIT_SETTLE_EXCLUDED,
@@ -677,6 +678,7 @@ export class CreditNotesService {
         method: PaymentMethod.CREDIT_NOTE,
         creditNoteId: cn.id,
         reference: cn.creditNoteNumber,
+        autoApplied: !!opts?.autoApplied, // SA-436: the sweep's payments; every other writer is manual
         ...(effectiveTenantId ? { tenantId: effectiveTenantId } : {}),
       },
     });
@@ -733,6 +735,16 @@ export class CreditNotesService {
       invoiceStatus: null,
     };
     if (!invoiceId || !customerId) return nothing;
+    // SA-436 (#2401): the tenant's send-time sweep switch, OFF by default (owner ruling). No config
+    // row reads as OFF. Read inside the caller's send tx; the order's own intents settle regardless.
+    const tenantId = this.prisma.getTenantId();
+    const cfg = tenantId
+      ? await tx.tenantConfig.findUnique({
+          where: { tenantId },
+          select: { creditAutoApplyOnSend: true },
+        })
+      : null;
+    if (!cfg?.creditAutoApplyOnSend) return nothing;
 
     const first = await tx.invoice.findUnique({
       where: { id: invoiceId },
@@ -749,13 +761,18 @@ export class CreditNotesService {
       where: {
         customerId,
         status: { not: "VOID" },
+        autoApplyExcluded: false, // SA-436: an operator kept this note out of the sweep
         OR: [{ expiresAt: null }, { expiresAt: { gt: now } }],
         ...(opts?.excludeCreditNoteIds?.length ? { id: { notIn: opts.excludeCreditNoteIds } } : {}),
       },
       orderBy: { createdAt: "asc" },
     });
+    // SA-436: a pair an operator removed (unapply / untick / void-reversal) is never re-applied.
+    const blocked = await blockedPairs(tx, [invoiceId]);
     const openWithBalance = (candidates ?? []).filter(
-      (c: any) => roundMoney(Number(c.amount) - Number(c.amountUsed)) > 0.001,
+      (c: any) =>
+        roundMoney(Number(c.amount) - Number(c.amountUsed)) > 0.001 &&
+        !blocked.has(pairKey(c.id, invoiceId)),
     );
     // §6.3: an INLINE return's own credit note is reserved for ITS OWN carrying order
     // until that order is "met" — skip it here so this general oldest-first sweep (any
@@ -826,6 +843,8 @@ export class CreditNotesService {
             throw new BadRequestException(
               "Credit note has no remaining balance or invoice is fully paid",
             );
+          // SA-436: explicit human intent wins, so a manual apply lifts this pair's block.
+          await clearApplyBlocks(tx, creditNoteId, [invoiceId]);
 
           return tx.invoice.findUnique({
             where: { id: invoiceId },
@@ -1288,6 +1307,13 @@ export class CreditNotesService {
 
     const existing = await tx.orderCreditNote.findMany({ where: { orderId } });
     const selectionById = new Map(selections.map((s) => [s.creditNoteId, s]));
+    // SA-436a: the order's non-VOID invoices, the scope of an untick's block and a re-tick's clear.
+    const orderInvoiceIds: string[] = (
+      (await tx.invoice.findMany({
+        where: { orderId, status: { not: "VOID" } },
+        select: { id: true },
+      })) ?? []
+    ).map((i: any) => i.id);
 
     for (const row of existing) {
       // design.md §2.1/§6.3: an INLINE return's own intent on its OWN carrying order is
@@ -1302,6 +1328,14 @@ export class CreditNotesService {
         // Dropped selection — pull back this pair's money then delete the row.
         await this.pullBackOrderCreditPair(tx, orderId, row.creditNoteId);
         await tx.orderCreditNote.delete({ where: { id: row.id } });
+        // SA-436a: an untick blocks the note on every non-VOID invoice of the order, so neither
+        // the send-time sweep nor a later settle puts it back. No actor reaches this path.
+        await writeApplyBlocks(tx, {
+          tenantId: this.prisma.getTenantId(),
+          creditNoteId: row.creditNoteId,
+          invoiceIds: orderInvoiceIds,
+          reason: "UNTICKED",
+        });
         continue;
       }
       const nextAmount = sel.amount != null ? roundMoney(sel.amount) : null;
@@ -1311,12 +1345,16 @@ export class CreditNotesService {
         // pull back this pair's money; settle re-applies at the new request.
         await this.pullBackOrderCreditPair(tx, orderId, row.creditNoteId);
         await tx.orderCreditNote.update({ where: { id: row.id }, data: { amount: nextAmount } });
+        // SA-436a: a re-amount is explicit intent; lift the note's blocks so settle re-applies.
+        await clearApplyBlocks(tx, row.creditNoteId, orderInvoiceIds);
       }
     }
 
     const existingIds = new Set(existing.map((r: any) => r.creditNoteId));
     for (const sel of selections) {
       if (existingIds.has(sel.creditNoteId)) continue;
+      // SA-436a: a (re-)tick is explicit intent; lift the note's blocks so settle applies it.
+      await clearApplyBlocks(tx, sel.creditNoteId, orderInvoiceIds);
       await tx.orderCreditNote.create({
         data: {
           orderId,
@@ -1360,6 +1398,11 @@ export class CreditNotesService {
       orderBy: { invoiceNumber: "asc" },
     });
     if (invoices.length === 0) return result;
+    // SA-436: a pair an operator removed is skipped by the apply pass below (never the shrink).
+    const blocked = await blockedPairs(
+      tx,
+      invoices.map((i: any) => i.id),
+    );
 
     // (a) shrink
     for (const inv of invoices) {
@@ -1443,6 +1486,7 @@ export class CreditNotesService {
           : roundMoney(Number(cn0.amount) - Number(cn0.amountUsed));
       for (const inv of invoices) {
         if (!(unmet > 0.001)) break;
+        if (blocked.has(pairKey(intent.creditNoteId, inv.id))) continue;
         // Fresh reads — earlier loop iterations move money.
         const cn = await tx.creditNote.findUnique({ where: { id: intent.creditNoteId } });
         const freshInv = await tx.invoice.findUnique({
@@ -1465,7 +1509,7 @@ export class CreditNotesService {
    * order's OrderCreditNote intent so a later settle doesn't just re-apply the same
    * dollars. Returns the fresh credit note row.
    */
-  async unapplyFromInvoice(creditNoteId: string, invoiceId: string) {
+  async unapplyFromInvoice(creditNoteId: string, invoiceId: string, actorId: string | null = null) {
     // SA-392 (#2201): the WHOLE Serializable tx re-runs on a 40001/40P01 conflict (bounded).
     return retryOnTxConflict(`credit unapply cn=${creditNoteId} inv=${invoiceId}`, () =>
       this.prisma.tenantTransaction(
@@ -1490,6 +1534,14 @@ export class CreditNotesService {
           for (const p of payments) {
             restored = roundMoney(restored + (await this.restoreCreditFromPaymentInTx(tx, p)));
           }
+          // SA-436: remember the removal so neither the sweep nor a settle re-applies this pair.
+          await writeApplyBlocks(tx, {
+            tenantId: this.prisma.getTenantId(),
+            creditNoteId,
+            invoiceIds: [invoiceId],
+            reason: "UNAPPLIED",
+            createdById: actorId,
+          });
 
           const invoice = await tx.invoice.findFirst({
             where: { id: invoiceId },
@@ -1521,6 +1573,32 @@ export class CreditNotesService {
         { isolationLevel: "Serializable" },
       ),
     );
+  }
+
+  /**
+   * SA-436 (#2401): keep this note out of (or back in) the send-time oldest-first sweep. A manual
+   * apply stays allowed either way. Audited with the acting user.
+   */
+  async setAutoApplyExcluded(id: string, excluded: boolean, actorId: string | null) {
+    return this.prisma.tenantTransaction(async (tx: any) => {
+      const cn = await tx.creditNote.findUnique({ where: { id }, select: { id: true } });
+      if (!cn) throw new NotFoundException("Credit note not found");
+      const updated = await tx.creditNote.update({
+        where: { id },
+        data: { autoApplyExcluded: excluded },
+      });
+      await tx.auditLog.create({
+        data: {
+          tenantId: this.prisma.getTenantId(),
+          userId: actorId,
+          action: "EXCLUDED",
+          entityType: "CreditNote", // SA-442: one credit-note audit vocabulary
+          entityId: id,
+          meta: { excluded },
+        },
+      });
+      return updated;
+    });
   }
 
   /**
