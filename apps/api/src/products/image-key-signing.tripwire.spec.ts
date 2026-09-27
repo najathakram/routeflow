@@ -6,7 +6,8 @@ import * as ts from "typescript";
  * #2533 (SECURITY), defence in depth: every place that SIGNS a product image goes through the
  * own-prefix filter (`signableImageKeys` / `firstSignableImageKey` in products/product-image-keys.ts).
  * A `storage.presignedUrl(s)(…)` whose argument reads `<something>.imageKeys` directly would sign a
- * key planted before the write guard (another tenant's file). Scans src/products and src/buyer.
+ * key planted before the write guard (another tenant's file). Scans every non-spec source in
+ * apps/api/src (SA-499).
  */
 const SRC = path.resolve(__dirname, "..");
 
@@ -31,7 +32,9 @@ function sources(dir: string): string[] {
   return fs.readdirSync(dir, { withFileTypes: true }).flatMap((e) => {
     const p = path.join(dir, e.name);
     if (e.isDirectory()) return sources(p);
-    return /\.ts$/.test(e.name) && !/\.spec\.ts$/.test(e.name) ? [p] : [];
+    return /\.ts$/.test(e.name) && !/\.spec\.ts$/.test(e.name) && !/\.d\.ts$/.test(e.name)
+      ? [p]
+      : [];
   });
 }
 
@@ -53,9 +56,12 @@ describe("#2533 tripwire: product images are signed only through the own-prefix 
     expect(rawImageKeySigns("c.ts", "await this.storage.presignedUrls(imageKeys);")).toEqual([]);
   });
 
-  it("no source in src/products or src/buyer signs a raw .imageKeys value", () => {
-    const files = [...sources(path.join(SRC, "products")), ...sources(path.join(SRC, "buyer"))];
-    expect(files.length).toBeGreaterThan(10);
+  it("no source anywhere in apps/api/src signs a raw .imageKeys value", () => {
+    const files = sources(SRC);
+    expect(files.length).toBeGreaterThan(300);
+    expect(files.some((f) => f.endsWith(path.join("buyer", "buyer-dashboard.service.ts")))).toBe(
+      true,
+    );
     const hits = files.flatMap((f) =>
       rawImageKeySigns(path.relative(SRC, f), fs.readFileSync(f, "utf8")),
     );
