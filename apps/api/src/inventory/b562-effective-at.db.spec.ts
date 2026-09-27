@@ -153,7 +153,10 @@ describeDb("B562 PR-1 effectiveAt — real Postgres", () => {
     }
   });
 
-  it("the replay orders a backdated purchase inserted LAST at its own date — the same figures master produced", async () => {
+  // B562 PR-3 (SA-136 §4) made snapshots WRITE-ONCE: a backdated row carries the state after ITS
+  // insertion, and the replay folds in accounting order but rewrites no row — it appends a dated
+  // COST_BASIS correction only when the average it implies differs (here it doesn't).
+  it("the replay folds a backdated purchase inserted LAST at its own date; every row keeps its insertion snapshot", async () => {
     const w = await seedWorld("replay");
     await purchase(w, 100, 10, d1);
     await purchase(w, 50, 12, d4);
@@ -169,8 +172,15 @@ describeDb("B562 PR-1 effectiveAt — real Postgres", () => {
       where: { productId: w.productId },
       orderBy: [{ effectiveAt: "asc" }, { createdAt: "asc" }, { id: "asc" }],
     });
-    expect(rows.map((r) => Number(r.stockAfter))).toEqual([100, 200, 250]);
-    expect(rows.map((r) => n4(r.avgCostAfter))).toEqual([10, 15, 14.4]);
+    // In accounting order d1, d2, d4 — each row's own insertion-time state: d1 100@10; d4 inserted
+    // second (150 @ (100×10 + 50×12)/150 = 10.6667); d2 inserted last (250 @ (150×10.6667 + 100×20)/250
+    // = 14.4). The fold (d1 → d2 → d4) is 14.4 = the average, but the LAST row in accounting order (d4)
+    // holds 10.6667 — the figure the cost index would read for today — so the replay appends one
+    // COST_BASIS row dated now carrying 14.4.
+    expect(rows.map((r) => Number(r.stockAfter))).toEqual([100, 250, 150, 250]);
+    expect(rows.map((r) => n4(r.avgCostAfter))).toEqual([10, 14.4, 10.6667, 14.4]);
+    expect(rows.map((r) => r.type)).toEqual(["PURCHASE", "PURCHASE", "PURCHASE", "COST_BASIS"]);
+    expect(rows[3].notes).toBe("as-of-now snapshot 10.6667 → 14.4");
   });
 
   it("the point-in-time cost index keys on effectiveAt, so a backdated receipt costs the period it belongs to", async () => {
@@ -183,7 +193,9 @@ describeDb("B562 PR-1 effectiveAt — real Postgres", () => {
       fetchCostIndex(prisma.forTenant(), [w.productId], new Date()),
     );
     expect(costAt(index, w.productId, new Date(d1.getTime() + DAY))).toBe(10);
-    expect(costAt(index, w.productId, d3)).toBe(15); // the backdated d2 receipt, not insertion day
+    // The backdated d2 receipt keys the period it belongs to (not insertion day), carrying the average
+    // known when it was entered — PR-3's write-once snapshots never restate a past period.
+    expect(costAt(index, w.productId, d3)).toBe(14.4);
     expect(costAt(index, w.productId, new Date())).toBe(14.4);
   });
 });
