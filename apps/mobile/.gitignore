@@ -39,3 +39,6 @@ yarn-error.*
 # generated native folders
 /ios
 /android
+
+# #2312: store-submit credentials (Play service-account JSON etc.). Never commit.
+secrets/

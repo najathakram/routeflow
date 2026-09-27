@@ -84,7 +84,7 @@ describe("EstimatesService.convertToInvoice — selling restrictions (F-05)", ()
     await expect(service.convertToInvoice("est-1")).rejects.toThrow("stop: past the guard");
     expect(restrictions.assertLinesSellable).toHaveBeenCalledTimes(1);
     expect(restrictions.assertLinesSellable).toHaveBeenCalledWith({
-      tenantId: expect.any(String),
+      tenantId: "test-tenant",
       customerId: "cust-1",
       // a product-less (freeform) line has nothing to check; the two catalog lines are asked about
       lines: [{ productId: "p-banned" }, { productId: "p-ok" }],

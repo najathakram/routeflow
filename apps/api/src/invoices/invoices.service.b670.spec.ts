@@ -645,8 +645,12 @@ describe("InvoicesService — update() line preservation", () => {
       await expect(
         service.update("inv-box", { items: [payload({ id: "item-of-another-invoice" })] } as any),
       ).rejects.toThrow("unknown line id");
-      // Only this invoice's rows were read (tenant-scoped client): nothing else was looked up.
-      expect(prisma.invoiceItem.findMany).toHaveBeenCalledTimes(1);
+      // Only this invoice's rows were read (tenant-scoped client): nothing else was looked up. F-05 PR2 adds
+      // two reads of the SAME rows (the sell check's held lines, pre-lock and again under the row lock), so
+      // every read is pinned to this invoice alone rather than counted.
+      const reads = prisma.invoiceItem.findMany.mock.calls.map(([args]: any[]) => args.where);
+      expect(reads.length).toBeGreaterThan(0);
+      for (const where of reads) expect(where).toEqual({ invoiceId: "inv-box" });
       expect(prisma.invoiceItem.findMany).toHaveBeenCalledWith({ where: { invoiceId: "inv-box" } });
     });
 

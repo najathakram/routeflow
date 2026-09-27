@@ -247,6 +247,12 @@ describe("InvoicesService — B663", () => {
       prisma.invoice.update.mockImplementation((args: any) =>
         Promise.resolve({ id: "inv-dep", ...args.data, items: [] }),
       );
+      // B785/SA-113a: the deposit-mirror rebuild now reads the evidence basis
+      // (delivered-basis-by-line.ts), never li.deliveredQty — li-1's own evidence
+      // row delivers 6 of the ordered 10.
+      prisma.deliveryMutation.findMany.mockResolvedValue([
+        { orderItemId: "li-1", type: "DELIVERED", quantityDelivered: 6 },
+      ]);
 
       await service.reconcileDeliveredOrdersInTx(prisma as any, ["ord-1"]);
 

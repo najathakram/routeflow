@@ -7,6 +7,7 @@ import {
   annualSaving,
   cyclePrice,
   daysBetween,
+  periodMonths,
   prorateDaily,
   Cycle,
 } from "./billing-math";
@@ -183,12 +184,14 @@ export class ProrationService {
     const msInWindow = windowEnd.getTime() - windowStart.getTime();
     const msRemaining = Math.max(0, Math.min(msInWindow, windowEnd.getTime() - now.getTime()));
     const monthly = Number(sku.monthlyPrice);
+    // A 90/180-day manual row (cycle MONTHLY since B863) covers 3/6 monthly charges (SA-383).
+    const windowCharge = monthly * periodMonths(windowStart, windowEnd);
 
     return {
       sku: sku.sku,
       name: sku.name,
       monthly: roundMoney(monthly),
-      proratedToday: prorateDaily(monthly, msRemaining / MS_PER_DAY, msInWindow / MS_PER_DAY),
+      proratedToday: prorateDaily(windowCharge, msRemaining / MS_PER_DAY, msInWindow / MS_PER_DAY),
       daysRemaining: Math.round(msRemaining / MS_PER_DAY),
       daysInCycle: daysBetween(windowStart, windowEnd),
       effectiveAt: now.toISOString(),
@@ -224,6 +227,7 @@ export class ProrationService {
     }
     const msIn = end.getTime() - start.getTime();
     const msRem = Math.max(0, Math.min(msIn, end.getTime() - now.getTime()));
-    return msIn > 0 ? roundMoney((monthlyDelta * msRem) / msIn) : 0;
+    // A 90/180-day manual row (cycle MONTHLY since B863) covers 3/6 monthly charges (SA-383).
+    return msIn > 0 ? roundMoney((monthlyDelta * periodMonths(start, end) * msRem) / msIn) : 0;
   }
 }
