@@ -24,6 +24,8 @@ import { SubscriptionMutationService } from "./subscription-mutation.service";
 import { BillingEventService } from "./billing-event.service";
 import { PlanCatalogService } from "./plan-catalog.service";
 import { ProrationService } from "./proration.service";
+import { MrrService } from "./mrr.service";
+import { PlatformAdminService } from "../platform-admin/platform-admin.service";
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const { assertTestTenant } = require("../../../../scripts/lib/test-tenants.cjs");
@@ -33,6 +35,7 @@ describeDb("#2470 upgrade() loses the race to a concurrent Pricing change (real 
   let pool: Pool;
   let prisma: PrismaClient;
   let mutation: SubscriptionMutationService;
+  let platformAdmin: PlatformAdminService;
   const tenantIds: string[] = [];
   const run = randomUUID().slice(0, 8);
   let createdVersionId: string | undefined;
@@ -83,6 +86,27 @@ describeDb("#2470 upgrade() loses the race to a concurrent Pricing change (real 
       createdVersionId = created.id;
     }
     const catalog = new PlanCatalogService(prisma as any);
+    const noop = {} as any;
+    // SA-485b (i): the real updatePlan (it never calls the billing service).
+    platformAdmin = new PlatformAdminService(
+      prisma as any,
+      noop, // jwtService
+      noop, // config
+      noop, // emailService
+      noop, // billingService — updatePlan never calls it
+      noop, // platformPricingService
+      catalog,
+      new ProrationService(prisma as any, catalog),
+      { invalidate: jest.fn() } as any, // entitlementsService
+      new BillingEventService(prisma as any),
+      noop, // meterService
+      { invalidate: jest.fn() } as any, // tenantStatusGuard
+      { log: jest.fn().mockResolvedValue(undefined) } as any, // auditService
+      new MrrService(prisma as any),
+      noop, // tenantMirror
+      noop, // featureOverrides
+      planTransitionStub,
+    );
     mutation = new SubscriptionMutationService(
       prisma as any,
       catalog,
@@ -240,6 +264,68 @@ describeDb("#2470 upgrade() loses the race to a concurrent Pricing change (real 
       status: 409,
       planKey: "STARTER",
       fee: 120,
+      snapshot: 120,
+      planChanged: 0,
+    });
+  }, 30_000);
+
+  // SA-485b (i): the same two-step Pricing race against the ADMIN plan change. updatePlan read fee 120 /
+  // snapshot 80, takes the Tenant lock, and blocks on its compare-and-set subscription write while T2
+  // holds reconcile's snapshot UPDATE; after T2 commits the CAS misses ⇒ 409, the tx rolls back (the
+  // tenant's plan too), the snapshot stays 120 and nothing is booked.
+  it("SA-485b: updatePlan blocked at its guarded write while reconcile's snapshot write commits ⇒ 409, nothing booked", async () => {
+    const id = await overrideTenant("admin", 80);
+    await prisma.tenantSubscription.update({
+      where: { tenantId: id },
+      data: { priceOverrideMonthly: 120 }, // step 1 of the Pricing change, committed alone
+    });
+    const t2 = new Client({ connectionString: url });
+    await t2.connect();
+    let r: { ok: boolean; e?: any };
+    let blocked = false;
+    try {
+      await t2.query("BEGIN");
+      await t2.query(
+        `UPDATE "TenantSubscription" SET "basePriceSnapshot" = 120 WHERE "tenantId" = $1`,
+        [id],
+      );
+      const pid = (await t2.query("SELECT pg_backend_pid() AS pid")).rows[0].pid;
+      const p1 = platformAdmin.updatePlan(id, { plan: "GROWTH" } as any, "admin-2470").then(
+        () => ({ ok: true }),
+        (e: unknown) => ({ ok: false, e }),
+      );
+      for (let i = 0; i < 800 && !blocked; i++) {
+        await t2.query("SELECT pg_stat_clear_snapshot()");
+        const q = await t2.query(
+          `SELECT count(*)::int n FROM pg_stat_activity WHERE $1 = ANY(pg_blocking_pids(pid))`,
+          [pid],
+        );
+        blocked = q.rows[0].n > 0;
+        if (!blocked) await new Promise((x) => setTimeout(x, 25));
+      }
+      await t2.query("COMMIT");
+      r = await p1;
+    } finally {
+      await t2.end();
+    }
+    const sub = await prisma.tenantSubscription.findUniqueOrThrow({ where: { tenantId: id } });
+    const tenant = await prisma.tenant.findUniqueOrThrow({ where: { id } });
+    expect({
+      blocked,
+      ok: r.ok,
+      status: r.e?.getStatus?.(),
+      planKey: sub.planKey,
+      tenantPlan: tenant.plan,
+      snapshot: Number(sub.basePriceSnapshot),
+      planChanged: await prisma.billingEvent.count({
+        where: { tenantId: id, type: "plan.changed" },
+      }),
+    }).toEqual({
+      blocked: true,
+      ok: false,
+      status: 409,
+      planKey: "STARTER",
+      tenantPlan: "STARTER",
       snapshot: 120,
       planChanged: 0,
     });
