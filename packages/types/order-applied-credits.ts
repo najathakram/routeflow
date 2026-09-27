@@ -5,13 +5,23 @@
  * OrderCreditNote intents not yet applied to any of them. The old panel listed intents only, so
  * a credit auto-applied on send never showed on the order.
  *
- * No arithmetic: each row's amount is the server-rounded payment amount, parsed for display.
+ * Label (SA-436 review, the owner's incident): "automatic" when the payment says so, OR when its
+ * note was auto-applied (note-level flag) and the order has no intent for it — payments the
+ * pre-#2423 sweep wrote carry autoApplied=false, and calling those "manual" would mislabel the
+ * incident's credits. Everything else is a neutral "applied"; there is no "manual" label.
+ *
+ * Amounts are the server-rounded payment amounts, parsed for display; `pairTotal` (the Remove
+ * confirm's figure — the server's unapply reverses every payment of that note on that invoice)
+ * is summed in integer cents, display only.
  */
 
 export interface AppliedCreditNoteRef {
   id: string;
   creditNoteNumber: string;
   reason?: string | null;
+  /** Note-level flag the auto-apply sweep has always set (pre-SA-436 sweeps never marked the
+   *  payment). Used only to recognise an old sweep's payment; see `sourceOf`. */
+  autoApplied?: boolean;
 }
 
 export interface AppliedCreditPaymentInput {
@@ -54,7 +64,9 @@ export type OrderAppliedCreditRow =
       invoiceId: string;
       invoiceNumber: string;
       amount: number;
-      source: "automatic" | "manual";
+      /** Σ this note's payments on this invoice — what Remove (unapply) gives back. */
+      pairTotal: number;
+      source: "automatic" | "applied";
     }
   | {
       kind: "pending";
@@ -67,17 +79,31 @@ export type OrderAppliedCreditRow =
       requested: number | null;
     };
 
+const cents = (v: string | number) => Math.round(Number(v) * 100);
+
 export function orderAppliedCredits(order: OrderAppliedCreditsInput): OrderAppliedCreditRow[] {
   const rows: OrderAppliedCreditRow[] = [];
   const applied = new Set<string>();
+  const intents = new Set((order.orderCreditNotes ?? []).map((oc) => oc.creditNoteId));
+  const pairCents = new Map<string, number>();
+  const counted = (inv: { status: string }, p: AppliedCreditPaymentInput) =>
+    inv.status !== "VOID" &&
+    !!p.creditNoteId &&
+    (p.method === undefined || p.method === "CREDIT_NOTE") &&
+    p.status !== "VOID";
+  for (const inv of order.invoices ?? []) {
+    for (const p of inv.payments ?? []) {
+      if (!counted(inv, p)) continue;
+      const k = `${p.creditNoteId}|${inv.id}`;
+      pairCents.set(k, (pairCents.get(k) ?? 0) + cents(p.amount));
+    }
+  }
 
   for (const inv of order.invoices ?? []) {
-    if (inv.status === "VOID") continue;
     for (const p of inv.payments ?? []) {
-      if (!p.creditNoteId) continue;
-      if (p.method !== undefined && p.method !== "CREDIT_NOTE") continue;
-      if (p.status === "VOID") continue;
+      if (!counted(inv, p) || !p.creditNoteId) continue;
       applied.add(p.creditNoteId);
+      const oldSweep = !!p.creditNote?.autoApplied && !intents.has(p.creditNoteId);
       rows.push({
         kind: "applied",
         key: `payment:${p.id}`,
@@ -88,7 +114,8 @@ export function orderAppliedCredits(order: OrderAppliedCreditsInput): OrderAppli
         invoiceId: inv.id,
         invoiceNumber: inv.invoiceNumber,
         amount: Number(p.amount),
-        source: p.autoApplied ? "automatic" : "manual",
+        pairTotal: (pairCents.get(`${p.creditNoteId}|${inv.id}`) ?? 0) / 100,
+        source: p.autoApplied || oldSweep ? "automatic" : "applied",
       });
     }
   }

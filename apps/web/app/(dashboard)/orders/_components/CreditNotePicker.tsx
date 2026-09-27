@@ -8,6 +8,7 @@ import {
   type CreditNote,
 } from "@/lib/api/credit-notes";
 import type { OrderAppliedCreditRow } from "@routeflow/types";
+import { formatMoney } from "@/lib/format";
 import { MoneyInput } from "@/components/MoneyInput";
 import { fmtCalendarDate } from "@/lib/formatting";
 
@@ -310,9 +311,9 @@ export function CreditNotePicker({
             <ul className="space-y-0.5 text-navy/70">
               {notPicked.map((r) => (
                 <li key={r.key}>
-                  <span className="font-mono text-navy">{r.creditNoteNumber}</span> · $
-                  {r.amount.toFixed(2)} on {r.invoiceNumber} ·{" "}
-                  {r.source === "automatic" ? "Automatic" : "Manual"}
+                  <span className="font-mono text-navy">{r.creditNoteNumber}</span> ·{" "}
+                  {formatMoney(r.amount)} on {r.invoiceNumber} ·{" "}
+                  {r.source === "automatic" ? "Automatic" : "Applied"}
                 </li>
               ))}
             </ul>

@@ -17,7 +17,7 @@ export function appliedOnOrderRows(order: OrderAppliedCreditsInput): AppliedRow[
 
 /**
  * #2404 (P0, epic #2400, SA-436 PR-3): the order's "Applied credits" — EVERY credit actually on
- * the order's invoices (automatic or manual, each with its invoice) plus the picked credits not
+ * the order's invoices (Automatic or Applied, each with its invoice) plus the picked credits not
  * yet applied, from the shared `orderAppliedCredits` rule (mobile renders the same rows). Staff
  * can Remove an applied credit: it un-applies from that invoice. Credits reduce the invoice
  * balance due, never the order total.
@@ -70,7 +70,7 @@ export function AppliedCreditsPanel({
                     {row.invoiceNumber}
                   </Link>
                   <span className="rounded bg-sunken px-1.5 py-0.5 font-medium text-navy/70">
-                    {row.source === "automatic" ? "Automatic" : "Manual"}
+                    {row.source === "automatic" ? "Automatic" : "Applied"}
                   </span>
                   <RemoveCreditButton
                     role={role}
@@ -109,7 +109,7 @@ export function AppliedCreditsPanel({
           )
         }
         title="Remove this credit?"
-        description={`This will un-apply ${formatMoney(removing?.amount ?? 0)} of ${removing?.creditNoteNumber ?? ""} from ${removing?.invoiceNumber ?? ""} and restore it to the credit note's balance.`}
+        description={`This will un-apply ${formatMoney(removing?.pairTotal ?? 0)} of ${removing?.creditNoteNumber ?? ""} from ${removing?.invoiceNumber ?? ""} and restore it to the credit note's balance.`}
         confirmLabel="Remove credit"
         loading={unapply.isPending}
       />

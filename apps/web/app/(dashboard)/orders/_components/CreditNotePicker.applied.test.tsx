@@ -26,6 +26,7 @@ const applied = [
     invoiceId: "inv-1",
     invoiceNumber: "INV-1",
     amount: 12.5,
+    pairTotal: 12.5,
     source: "automatic" as const,
   },
   {
@@ -38,12 +39,13 @@ const applied = [
     invoiceId: "inv-1",
     invoiceNumber: "INV-1",
     amount: 5,
-    source: "manual" as const,
+    source: "applied" as const,
+    pairTotal: 5,
   },
 ];
 
 describe("CreditNotePicker — credits already on the order (#2404)", () => {
-  it("lists applied credits that are not picks, read-only, with Automatic / Manual", () => {
+  it("lists applied credits that are not picks, read-only, with Automatic / Applied", () => {
     render(
       <CreditNotePicker
         customerId="cust-1"
@@ -56,6 +58,7 @@ describe("CreditNotePicker — credits already on the order (#2404)", () => {
     expect(within(box).getByText(/CN-A/)).toBeTruthy();
     expect(within(box).getByText(/Automatic/)).toBeTruthy();
     expect(within(box).getByText(/INV-1/)).toBeTruthy();
+    expect(within(box).getByText(/\$12\.50/)).toBeTruthy();
     // cn-b is a pick: it already has its own checkbox row, so it is not repeated here.
     expect(within(box).queryByText(/CN-B/)).toBeNull();
     expect(within(box).queryByRole("checkbox")).toBeNull();

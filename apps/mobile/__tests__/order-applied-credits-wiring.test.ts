@@ -3,7 +3,7 @@ import { join } from "path";
 
 /**
  * #2404 (P0, epic #2400, SA-436 PR-3), mobile mirrors web: the operator order screen lists
- * EVERY credit actually on the order's invoices (automatic and manual, each with its invoice)
+ * EVERY credit actually on the order's invoices (Automatic or Applied, each with its invoice)
  * plus the picked credits not yet applied, from the SAME shared rule as web
  * (`orderAppliedCredits`, @routeflow/types; its logic is pinned in
  * apps/api/src/common/order-applied-credits.spec.ts), with Remove on an applied credit.
@@ -20,10 +20,11 @@ describe("mobile order Applied credits (#2404)", () => {
     expect(panel).toMatch(/orderAppliedCredits\(order\)/);
   });
 
-  it("shows the invoice and Automatic / Manual for an applied credit, and pending picks", () => {
+  it("shows the invoice and Automatic / Applied for an applied credit, and pending picks", () => {
     expect(panel).toMatch(/row\.invoiceNumber/);
     expect(panel).toMatch(/"Automatic"/);
-    expect(panel).toMatch(/"Manual"/);
+    expect(panel).toMatch(/"Applied"/);
+    expect(panel).not.toMatch(/"Manual"/); // SA-436 review: no "manual" label
     expect(panel).toMatch(/>Not yet applied</);
   });
 
@@ -55,5 +56,13 @@ describe("mobile order Applied credits (#2404)", () => {
     expect(body).toMatch(/invalidateQueries\(\{ queryKey: \["admin", "orders"\] \}\)/);
     // …and that is the query useAdminOrder (the order screen) reads.
     expect(read("lib/api/admin.ts")).toMatch(/queryKey: \["admin", "orders", id\]/);
+  });
+
+  it("the Remove confirm quotes the (note, invoice) pair total (SA-436 review)", () => {
+    expect(panel).toMatch(/un-applies \$\{money\(row\.pairTotal\)\}/);
+  });
+
+  it("Remove is disabled while an unapply is pending (SA-436 review)", () => {
+    expect(panel).toMatch(/disabled=\{unapply\.isPending\}/);
   });
 });
