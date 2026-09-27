@@ -266,6 +266,27 @@ jobs:
       - name: Install dependencies
         run: npm ci --engine-strict=false
 
+      # ── prettier --check on the PR's changed files only (#2413 / SA-422g) ──────
+      # `.husky/pre-commit`'s lint-staged only formats STAGED paths in a local commit, so it
+      # can never catch a squash merge (GitHub) or a hook-bypassed push — that is exactly how
+      # apps/api/src/billing/tenant-config-snapshot-admin.service.spec.ts reached master
+      # unformatted (097762e05, a 16-PR train squash) and nothing in `verify` below runs
+      # `prettier --check` at all. This is deliberately scoped to the diff, not a repo-wide
+      # `prettier --check .` — cheap (a handful of files, not the whole tree) and it can never
+      # false-red a PR over a file the PR never touched (see .prettierignore's own history of
+      # repo-wide-reformat churn). See scripts/ci-prettier-changed.mjs for the exit-code
+      # contract and apps/api/src/common/ci-prettier-changed-script.spec.ts for its tests.
+      # Only meaningful on a pull_request (GITHUB_BASE_REF is unset otherwise); a
+      # workflow_dispatch off master falls back to diffing origin/master against itself, i.e.
+      # an empty, always-passing list — never a false red on a manual run.
+      #
+      # Placed right after install (needs only node_modules/prettier, not the Prisma client)
+      # and BEFORE the heavier steps below, so a formatting violation fails in seconds and
+      # still gets reported even when `Verify` itself is red — `--continue=dependencies-
+      # successful` is turbo's own concern, not this step's; this step has no dependency on it.
+      - name: Prettier check (PR changed files)
+        run: node scripts/ci-prettier-changed.mjs
+
       # apps/api's `postinstall` already runs this, so it is normally a ~5s no-op.
       # Kept explicit so the job still type-checks if an install ever gains
       # --ignore-scripts: tsc cannot resolve @prisma/client without it.
@@ -297,22 +318,6 @@ jobs:
       # was never consumed by anything downstream.
       - name: Verify (lockfile, bug-signature scan, types, lint, tests)
         run: npm run verify
-
-      # ── prettier --check on the PR's changed files only (#2413 / SA-422g) ──────
-      # `.husky/pre-commit`'s lint-staged only formats STAGED paths in a local commit, so it
-      # can never catch a squash merge (GitHub) or a hook-bypassed push — that is exactly how
-      # apps/api/src/billing/tenant-config-snapshot-admin.service.spec.ts reached master
-      # unformatted (097762e05, a 16-PR train squash) and nothing in `verify` above runs
-      # `prettier --check` at all. This is deliberately scoped to the diff, not a repo-wide
-      # `prettier --check .` — cheap (a handful of files, not the whole tree) and it can never
-      # false-red a PR over a file the PR never touched (see .prettierignore's own history of
-      # repo-wide-reformat churn). See scripts/ci-prettier-changed.mjs for the exit-code
-      # contract and apps/api/src/common/ci-prettier-changed-script.spec.ts for its tests.
-      # Only meaningful on a pull_request (GITHUB_BASE_REF is unset otherwise); a
-      # workflow_dispatch off master falls back to diffing origin/master against itself, i.e.
-      # an empty, always-passing list — never a false red on a manual run.
-      - name: Prettier check (PR changed files)
-        run: node scripts/ci-prettier-changed.mjs
 
       # Registry state, not tree state — so this belongs in CI and not in the
       # local pre-push gate, where it would add network latency to every push.

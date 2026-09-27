@@ -32,9 +32,12 @@
 //      closed, since a silent empty-list here would look identical to "nothing changed"
 //
 // TEST-ONLY OVERRIDE (see apps/api/src/common/ci-prettier-changed-script.spec.ts)
-//   CI_PRETTIER_CWD   Directory to run git/prettier in, instead of this script's own repo
-//                     root. Lets the spec drive a throwaway git repo with no risk to the real
-//                     tree, the same isolation ci-freshness-guard-script.spec.ts uses.
+//   CI_PRETTIER_CWD   Directory to run `git diff` and `prettier --check` in, instead of this
+//                     script's own repo root. Lets the spec drive a throwaway git repo with no
+//                     risk to the real tree, the same isolation ci-freshness-guard-script.spec.ts
+//                     uses. The prettier BINARY itself is always resolved from repoRoot() (see
+//                     below), never from this override — a fixture repo needs no node_modules
+//                     of its own, and this can never accidentally reach into another checkout.
 
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
@@ -147,7 +150,10 @@ function main() {
       targets.map((f) => `  ${f}`).join("\n"),
   );
 
-  const prettierBin = path.join(root, "node_modules", "prettier", "bin", "prettier.cjs");
+  // Always this script's OWN repo (repoRoot()), never `root`/CI_PRETTIER_CWD — the binary is
+  // this checkout's installed dependency, not something a diff-only fixture repo should ever
+  // need to provide.
+  const prettierBin = path.join(repoRoot(), "node_modules", "prettier", "bin", "prettier.cjs");
   if (!fs.existsSync(prettierBin)) {
     console.log(`::error::ci-prettier-changed: prettier binary not found at ${prettierBin}`);
     return 2;

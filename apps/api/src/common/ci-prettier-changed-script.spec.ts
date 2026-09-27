@@ -55,12 +55,9 @@ function runScript(repo: string, baseRef: string) {
 beforeAll(() => {
   dir = initRepo();
 
-  // node_modules/prettier is required by the script (it resolves the binary relative to
-  // CI_PRETTIER_CWD) — symlink the real repo's install into the fixture rather than
-  // reinstalling prettier in a temp dir.
-  fs.mkdirSync(path.join(dir, "node_modules"), { recursive: true });
-  const realPrettierPkg = path.join(REAL_PRETTIER_ROOT, "node_modules", "prettier");
-  fs.symlinkSync(realPrettierPkg, path.join(dir, "node_modules", "prettier"), "junction");
+  // No node_modules/prettier needed in the fixture: the script resolves the prettier BINARY
+  // from its own repoRoot() (this checkout's real install), never from CI_PRETTIER_CWD — only
+  // `git diff` and prettier's cwd (for prettier.config.js discovery) run inside `dir`.
 
   // master: one clean, formatted file.
   fs.writeFileSync(path.join(dir, "clean.js"), 'module.exports = "ok";\n');
@@ -114,6 +111,10 @@ describe("ci-prettier-changed.mjs contract", () => {
   });
 
   it("a changed file with an unsupported extension -> skipped, exits 0", () => {
+    // Isolate from the earlier cases' commits (added-clean.ts is still on HEAD after the
+    // dirty-file revert) — move the baseline up to HEAD first so this case's diff vs
+    // origin/master contains ONLY the .png this test is about, not every prior test's file.
+    git(["update-ref", "refs/remotes/origin/master", "HEAD"], dir);
     fs.writeFileSync(path.join(dir, "added.png"), "not-really-a-png-but-irrelevant");
     git(["add", "-A"], dir);
     git(["commit", "-q", "-m", "feat: add a non-prettier file"], dir);
