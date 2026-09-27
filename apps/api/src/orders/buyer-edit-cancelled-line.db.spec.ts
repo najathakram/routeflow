@@ -49,6 +49,9 @@ describeDb(
     let tenantId = "";
     let buyerUserId = "";
     let driverUserId = "";
+    let driverId = "";
+    const routeIds: string[] = [];
+    const runIds: string[] = [];
     let customerId = "";
     const productIds: string[] = [];
     const orderIds: string[] = [];
@@ -86,7 +89,7 @@ describeDb(
     }
 
     /** A PENDING order with the given lines (each already shaped as an OrderItem create). */
-    async function order(lines: any[]) {
+    async function order(lines: any[], stop?: { routeRunId: string; routeRunStopId: string }) {
       const o = await raw.order.create({
         data: {
           customerId,
@@ -94,6 +97,7 @@ describeDb(
           status: "PENDING",
           subtotal: "0.00",
           total: "0.00",
+          ...(stop ?? {}),
           lineItems: { create: lines.map((l) => ({ tenantId, ...l })) },
         },
         include: { lineItems: true },
@@ -114,6 +118,40 @@ describeDb(
       subtotal: "54.00",
       status: "CANCELLED",
     });
+
+    /**
+     * SA-429 (#2386): a DRIVER edits only an order on a stop of their own IN_PROGRESS run, with the stop
+     * PENDING or IN_PROGRESS. The ALLOWED fixture: the driver's run, a PENDING stop the order sits on.
+     */
+    async function driverStop(): Promise<{ routeRunId: string; routeRunStopId: string }> {
+      const route = await raw.route.create({
+        data: { name: `2320 route ${run}`, tenantId } as any,
+      });
+      routeIds.push(route.id);
+      const routeStop = await raw.routeStop.create({
+        data: { tenantId, routeId: route.id, stopNumber: 1, customerId } as any,
+      });
+      const rr = await raw.routeRun.create({
+        data: {
+          tenantId,
+          routeId: route.id,
+          scheduledDate: new Date("2026-09-27T00:00:00.000Z"),
+          status: "IN_PROGRESS" as any,
+          driverId,
+        },
+      });
+      runIds.push(rr.id);
+      const stop = await raw.routeRunStop.create({
+        data: {
+          tenantId,
+          routeRunId: rr.id,
+          routeStopId: routeStop.id,
+          stopNumber: 1,
+          status: "PENDING" as any,
+        } as any,
+      });
+      return { routeRunId: rr.id, routeRunStopId: stop.id };
+    }
 
     const edit = (orderId: string, dto: any, who: JwtPayload) =>
       tenantCtx.run(tenantId, () => orders.updateOrderItems(orderId, dto, who));
@@ -180,6 +218,7 @@ describeDb(
           data: { email: `d-${run}@example.test`, username: `d-${run}`, role: "DRIVER", tenantId },
         })
       ).id;
+      driverId = (await raw.driver.create({ data: { userId: driverUserId, tenantId } as any })).id;
       customerId = (
         await raw.customer.create({
           data: { userId: buyerUserId, businessName: "2320 co", contactName: "Tester", tenantId },
@@ -191,10 +230,15 @@ describeDb(
       await raw.orderRevision?.deleteMany?.({ where: { orderId: { in: orderIds } } });
       await raw.orderItem.deleteMany({ where: { orderId: { in: orderIds } } });
       await raw.order.deleteMany({ where: { id: { in: orderIds } } });
+      await raw.routeRunStop.deleteMany({ where: { routeRunId: { in: runIds } } });
+      await raw.routeRun.deleteMany({ where: { id: { in: runIds } } });
+      await raw.routeStop.deleteMany({ where: { routeId: { in: routeIds } } });
+      await raw.route.deleteMany({ where: { id: { in: routeIds } } });
       await raw.stockMovement.deleteMany({ where: { productId: { in: productIds } } });
       await raw.productUnit.deleteMany({ where: { productId: { in: productIds } } });
       await raw.product.deleteMany({ where: { id: { in: productIds } } });
       await raw.customer.deleteMany({ where: { id: customerId } });
+      await raw.driver.deleteMany({ where: { tenantId } });
       await raw.user.deleteMany({ where: { id: { in: [buyerUserId, driverUserId] } } });
       await raw.tenant.deleteMany({ where: { id: tenantId } });
       await prisma?.$disconnect();
@@ -279,7 +323,9 @@ describeDb(
 
     it("diff path (DRIVER): UPDATE on a cancelled id is a 409; CANCEL on it is a 200 no-op", async () => {
       const cola = await product("diff");
-      const o = await order([cancelledCase(cola)]);
+      // SA-429: the driver's own IN_PROGRESS run and PENDING stop, so ownership passes and the
+      // cancelled-line rule is what answers.
+      const o = await order([cancelledCase(cola)], await driverStop());
       const cancelledId = o.lineItems[0].id;
       const before = await rows(o.id); // full rows, ids included (Opus N2)
       await expect(
