@@ -1,6 +1,8 @@
 import { BadRequestException, Injectable, NotFoundException, OnModuleInit } from "@nestjs/common";
 import { CommissionEngineService } from "../sales-agents/commission-engine.service";
 import { PrismaService } from "../prisma/prisma.service";
+import { isOverdue, overdueCutoff } from "../common/calendar-date";
+import { tenantTimeZone } from "../common/tenant-time-zone";
 import {
   CheckStatus,
   InvoiceStatus,
@@ -1141,6 +1143,7 @@ export class BookkeepingService implements OnModuleInit {
 
   async getSummary() {
     const now = new Date();
+    const tz = await tenantTimeZone(this.prisma); // SA-488: the tenant's due day
     const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
     const sevenDaysAgo = new Date(now);
     sevenDaysAgo.setDate(now.getDate() - 7);
@@ -1197,7 +1200,7 @@ export class BookkeepingService implements OnModuleInit {
                 InvoiceStatus.OVERDUE,
               ],
             },
-            dueDate: { lt: now },
+            dueDate: { lt: overdueCutoff(now, tz) },
           },
         }),
       ],
@@ -1309,6 +1312,7 @@ export class BookkeepingService implements OnModuleInit {
   // ── Finance Dashboard ──
   async getFinanceDashboard() {
     const now = new Date();
+    const tz = await tenantTimeZone(this.prisma); // SA-488: the tenant's due day
     const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
     const startOfWeek = new Date(startOfToday);
     startOfWeek.setDate(startOfToday.getDate() - startOfToday.getDay());
@@ -1343,7 +1347,7 @@ export class BookkeepingService implements OnModuleInit {
       const paid = inv.payments.reduce((s, p) => s + Number(p.amount), 0);
       const bal = Number(inv.total) - paid;
       if (bal <= 0) continue;
-      if (!inv.dueDate || inv.dueDate >= now) {
+      if (!inv.dueDate || !isOverdue(inv.dueDate, now, tz)) {
         arCurrent += bal;
         continue;
       }
@@ -1488,6 +1492,7 @@ export class BookkeepingService implements OnModuleInit {
 
   async getArAgingInvoices(intervalDays = 30) {
     const now = new Date();
+    const tz = await tenantTimeZone(this.prisma); // SA-488: the tenant's due day
     const interval = Math.max(1, intervalDays);
     const invoices = await this.prisma.forTenant().invoice.findMany({
       where: {
@@ -1533,7 +1538,7 @@ export class BookkeepingService implements OnModuleInit {
         dueDate: inv.dueDate,
         status: inv.status,
       };
-      if (!inv.dueDate || inv.dueDate >= now) {
+      if (!inv.dueDate || !isOverdue(inv.dueDate, now, tz)) {
         buckets[bucketKeys[0]].push(entry);
         continue;
       }
@@ -1676,6 +1681,7 @@ export class BookkeepingService implements OnModuleInit {
       }
     > = {};
     const now = new Date();
+    const tz = await tenantTimeZone(this.prisma); // SA-488: the tenant's due day
     const unpaidStatuses: Set<string> = new Set([
       InvoiceStatus.SENT,
       InvoiceStatus.VIEWED,
@@ -1708,7 +1714,7 @@ export class BookkeepingService implements OnModuleInit {
         const bal = Number(inv.total) - paid;
         byCustomer[key].invoiceCount++;
         byCustomer[key].balance += bal;
-        if (inv.dueDate && inv.dueDate < now) byCustomer[key].overdue += bal;
+        if (isOverdue(inv.dueDate, now, tz)) byCustomer[key].overdue += bal;
       }
     }
 
