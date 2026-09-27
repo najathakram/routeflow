@@ -301,11 +301,12 @@ describeDb("F05 ban check on invoice update (net delta) + duplicate — real Pos
       await setFlag(s, true);
       const [held] = await rows(inv.id);
       const before = await snapshot(inv.id);
-      await expect(
-        run(s, () =>
-          invoicesService.update(inv.id, { items: [line(s.banned, 50, { id: held.id })] } as any),
-        ),
-      ).rejects.toMatchObject(REFUSED);
+      const err = await run(s, () =>
+        invoicesService.update(inv.id, { items: [line(s.banned, 50, { id: held.id })] } as any),
+      ).catch((e: any) => e);
+      // #2225: the name promises 409 — assert the status, not only the code.
+      expect(err).toMatchObject(REFUSED);
+      expect(err.getStatus()).toBe(409);
       expect(await snapshot(inv.id)).toBe(before);
     });
 
@@ -364,10 +365,49 @@ describeDb("F05 ban check on invoice update (net delta) + duplicate — real Pos
         invoicesService.update(inv.id, { items: [line(s.boxed, 20, { id: held.id })] } as any),
       );
       const [after] = await rows(inv.id);
-      // it billed at most what was held: never more pieces than the held 27
-      expect(
-        Number(after.boxes ?? 0) * 12 + Number(after.pieces ?? 0) || Number(after.qty),
-      ).toBeLessThanOrEqual(27);
+      // #2225: exactly what was sent was written (a bare `<= 27` also passed when nothing was):
+      // qty 20, billing 20 pieces.
+      expect(Number(after.qty)).toBe(20);
+      expect(Number(after.boxes ?? 0) * 12 + Number(after.pieces ?? 0) || Number(after.qty)).toBe(
+        20,
+      );
+    });
+
+    // #2225: a line that names a held row's id but a DIFFERENT held product is not that row's
+    // line (heldMatch requires the same product, invoice-restriction-lines.ts): it counts at the
+    // target product's LIVE pack. Built to discriminate — the target (loose, banned) has no pack:
+    // live pack ⇒ 20 + 5 = 25 ≤ 30 held ⇒ ALLOWED; a bug that matched by id alone would reuse the
+    // held row's pack, 20 + 5×12 = 80 ⇒ REFUSED.
+    // SA-465a: the held boxed row must carry a STORED pack of 12 and NO split. create() stores
+    // unitsPerBox NULL for an unsplit line, which fell back to live either way (not
+    // discriminating). A box-split row would not discriminate either: the id-only bug then takes
+    // SA-250's re-split branch and counts qty 5. So the pack is stored on the unsplit row directly.
+    it("S1 swapping a held boxed row's id onto another HELD product counts at the target's LIVE pack (ALLOWED)", async () => {
+      const s = await seed("s1");
+      const inv = await createDraft(s, [line(s.banned, 30), line(s.boxed, 2)]);
+      await setFlag(s, true);
+      const created = await rows(inv.id);
+      await prisma.invoiceItem.update({
+        where: { id: created.find((r: any) => r.productId === s.boxed)!.id },
+        data: { unitsPerBox: 12 },
+      });
+      const held = await rows(inv.id);
+      const loose = held.find((r: any) => r.productId === s.banned)!;
+      const boxedRow = held.find((r: any) => r.productId === s.boxed)!;
+      // The premise that makes S1 discriminate: a stored pack of 12 on an unsplit row.
+      expect(boxedRow.unitsPerBox).toBe(12);
+      expect(boxedRow.boxes ?? null).toBeNull();
+      expect(boxedRow.pieces ?? null).toBeNull();
+      await run(s, () =>
+        invoicesService.update(inv.id, {
+          items: [line(s.banned, 20, { id: loose.id }), line(s.banned, 5, { id: boxedRow.id })],
+        } as any),
+      );
+      const after = await rows(inv.id);
+      expect(after.every((r: any) => r.productId === s.banned)).toBe(true);
+      expect(after.map((r: any) => Number(r.qty)).sort((a: number, b: number) => a - b)).toEqual([
+        5, 20,
+      ]);
     });
 
     it("D2 no-split INCREASE on the same held split row (27 -> qty 30) is REFUSED, nothing written", async () => {

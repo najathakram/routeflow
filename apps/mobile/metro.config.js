@@ -32,6 +32,7 @@ const routeflowExports = {
   "@routeflow/types": path.resolve(workspaceRoot, "packages/types/index.ts"),
   "@routeflow/pricing": path.resolve(workspaceRoot, "packages/pricing/src/index.ts"),
   "@routeflow/scanning": path.resolve(workspaceRoot, "packages/scanning/src/index.ts"),
+  "@routeflow/returns": path.resolve(workspaceRoot, "packages/returns/src/index.ts"),
 };
 
 config.resolver.resolveRequest = (context, moduleName, platform) => {
