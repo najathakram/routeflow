@@ -29,6 +29,7 @@ const request = require("supertest");
 
 import { JwtStrategy } from "../auth/strategies/jwt.strategy";
 import { buildThrottlers } from "../common/throttlers";
+import { listenOnLoopback } from "../common/testing/listen-loopback";
 import { PrismaService } from "../prisma/prisma.service";
 import { signLocalUrl } from "../storage/storage.service";
 import { UploadsController } from "./uploads.controller";
@@ -135,7 +136,8 @@ describe("#2091 — GET /uploads/* throttling (real guard chain, production thro
     // UploadsAccessGuard falls back to when a request carries no valid signature.
     moduleRef.get(JwtStrategy);
     const app = moduleRef.createNestApplication();
-    await app.init();
+    // #2267: bound to 127.0.0.1 once, so supertest never re-listens on [::] per request.
+    await listenOnLoopback(app);
     return app;
   }
 
