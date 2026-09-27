@@ -188,11 +188,20 @@ export function calendarStampFromInput(raw: string): Date | null {
   return stamp.toISOString().slice(0, 10) === day ? stamp : null;
 }
 
+/**
+ * #2197/#2256: a client calendar-date field → the stamp of the literal day it names; 400 (naming
+ * `field`) when it names none. Every invoice date the client supplies (issueDate, dueDate,
+ * depositDueDate) goes through this, never `new Date(raw)`.
+ */
+export function calendarFieldStamp(raw: string, field: string): Date {
+  const stamp = calendarStampFromInput(raw);
+  if (!stamp) throw new BadRequestException(`${field} must be a calendar date (YYYY-MM-DD)`);
+  return stamp;
+}
+
 /** #2197: a client issueDate → the stamp of the literal day it names; 400 when it names none. */
 export function issueDateStamp(raw: string): Date {
-  const stamp = calendarStampFromInput(raw);
-  if (!stamp) throw new BadRequestException("issueDate must be a calendar date (YYYY-MM-DD)");
-  return stamp;
+  return calendarFieldStamp(raw, "issueDate");
 }
 
 /**
