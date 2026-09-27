@@ -419,3 +419,79 @@ describe("SA-366: projected `remaining` === the largest q the bound accepts", ()
     }
   });
 });
+
+// #2292: a units_v1 line stores qty in BASE PIECES (count × factor), so the refusal used to read
+// "0 left, 120 delivered earlier" while the driver's stepper for the same line says "3 Cases". The
+// refusal now counts in the line's own unit via the SA-388 derivation (boxes when a positive
+// integer, else qty ÷ the snapshot unitsPerBox when whole), falls back to pieces labelled "pieces"
+// when the line is LOCKED, and leaves a pack line exactly as it was.
+describe("assertDeliveriesFitStop — refusal counts in the line's unit (#2292)", () => {
+  const prior = (qty: number) => [
+    {
+      orderId: "o1",
+      orderItemId: "oi1",
+      routeRunStopId: "stop-prior",
+      type: "DELIVERED",
+      quantityDelivered: qty,
+    },
+  ];
+  const deliver = (item: Record<string, unknown>, priorQty: number, q: number) =>
+    assertDeliveriesFitStop(
+      mockTx({ id: "oi1", orderId: "o1", ...item }, prior(priorQty)),
+      "stop-now",
+      [{ id: "o1" }],
+      [{ orderItemId: "oi1", quantityDelivered: q }],
+    );
+  // 10 Cases of 12, stored the units_v1 way: boxes = count, qty = count × factor.
+  const caseLine = {
+    qty: 120,
+    boxes: 10,
+    pieces: 0,
+    unitsPerBox: 12,
+    unitLabel: "Case",
+    product: { name: "Sparkling Water" },
+  };
+
+  it("fully delivered earlier: '0 Cases left, 10 Cases delivered earlier' — never '0 left, 120 delivered'", async () => {
+    await expect(deliver(caseLine, 120, 12)).rejects.toThrow(
+      "Sparkling Water: 0 Cases left, 10 Cases delivered earlier — refresh the stop",
+    );
+  });
+
+  it("partly delivered: '3 Cases left, 7 Cases delivered earlier'; one Case stays singular", async () => {
+    await expect(deliver(caseLine, 84, 48)).rejects.toThrow(
+      "Sparkling Water: 3 Cases left, 7 Cases delivered earlier",
+    );
+    await expect(deliver(caseLine, 108, 24)).rejects.toThrow(
+      "Sparkling Water: 1 Case left, 9 Cases delivered earlier",
+    );
+  });
+
+  it("no split stored: the count comes from qty ÷ the snapshot unitsPerBox when whole", async () => {
+    await expect(deliver({ ...caseLine, boxes: null, pieces: null }, 120, 12)).rejects.toThrow(
+      "Sparkling Water: 0 Cases left, 10 Cases delivered earlier",
+    );
+  });
+
+  it("LOCKED line (qty not a whole multiple, no usable boxes): pieces, labelled 'pieces'", async () => {
+    await expect(
+      deliver({ ...caseLine, qty: 40, boxes: 0, unitsPerBox: 12 }, 40, 12),
+    ).rejects.toThrow("Sparkling Water: 0 pieces left, 40 pieces delivered earlier");
+  });
+
+  it("a remainder that is not a whole unit is stated in pieces, never a fractional Case", async () => {
+    await expect(deliver(caseLine, 7, 120)).rejects.toThrow(
+      "Sparkling Water: 113 pieces left, 7 pieces delivered earlier",
+    );
+  });
+
+  it("a pack line (no unitLabel) is unchanged", async () => {
+    await expect(
+      deliver(
+        { qty: 24, boxes: 2, pieces: 0, unitsPerBox: 12, product: { name: "Crackers" } },
+        24,
+        1,
+      ),
+    ).rejects.toThrow("Crackers: 0 left, 24 delivered earlier — refresh the stop");
+  });
+});

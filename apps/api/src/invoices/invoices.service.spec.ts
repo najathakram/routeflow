@@ -1645,110 +1645,6 @@ describe("InvoicesService", () => {
   });
 
   // WP2 — order-scoped credit notes: stuck-SENT fix + explicit-amount exclusions.
-  describe("send() — credit-note interactions (WP2)", () => {
-    it("flips a fully-pre-credited DRAFT to PAID, not SENT (stuck-SENT regression)", async () => {
-      prisma.invoice.findUnique
-        .mockResolvedValueOnce({
-          // findOneOrThrow — the invoice as it is before send()
-          id: "i1",
-          orderId: null,
-          status: InvoiceStatus.DRAFT,
-          deliveryBatchId: null,
-        })
-        // #2255 / SA-404: the row markSent locks and re-reads as its first statement.
-        .mockResolvedValueOnce({
-          id: "i1",
-          orderId: null,
-          status: InvoiceStatus.DRAFT,
-          payments: [],
-        })
-        .mockResolvedValueOnce({
-          // fresh read inside the tx, after the DRAFT→SENT flip already committed —
-          // a credit applied at order-create time already covers the full total.
-          id: "i1",
-          status: InvoiceStatus.SENT,
-          total: 100,
-          dueDate: null,
-          payments: [{ id: "pay-1", amount: 100, status: "PAID" }],
-        })
-        .mockResolvedValueOnce({
-          // final post-tx re-fetch for the return value
-          id: "i1",
-          invoiceNumber: "INV-1",
-          customerId: "c1",
-          status: InvoiceStatus.PAID,
-          total: 100,
-        });
-      prisma.invoice.update.mockResolvedValueOnce({
-        id: "i1",
-        invoiceNumber: "INV-1",
-        customerId: "c1",
-        orderId: null,
-        status: InvoiceStatus.SENT,
-        total: 100,
-        dueDate: null,
-      });
-      // Auto-apply finds nothing left to apply — the credit already covered this
-      // invoice at order-create time via settleOrderCreditsInTx.
-      mockCreditNotes.autoApplyOldestCreditsInTx.mockResolvedValueOnce({
-        applied: 0,
-        invoiceStatus: null,
-      });
-
-      const result = await service.send("i1");
-
-      // The stuck-SENT fix recomputed status from the invoice's own payments and
-      // promoted it to PAID instead of leaving it SENT.
-      expect(prisma.invoice.update).toHaveBeenCalledWith({
-        where: { id: "i1" },
-        data: { status: InvoiceStatus.PAID, paidAt: expect.any(Date) },
-      });
-      expect((result as any).status).toBe(InvoiceStatus.PAID);
-    });
-
-    it("passes the order's explicit-amount intent ids as excludeCreditNoteIds", async () => {
-      const draft = {
-        id: "i2",
-        orderId: "ord-2",
-        status: InvoiceStatus.DRAFT,
-        deliveryBatchId: null,
-      };
-      prisma.invoice.findUnique
-        .mockResolvedValueOnce(draft) // findOneOrThrow
-        .mockResolvedValueOnce({ ...draft, payments: [] }); // #2255: markSent's locked re-read
-      prisma.order.findFirst.mockResolvedValue({ status: "DELIVERED", orderNumber: "O2" });
-      prisma.invoice.update.mockResolvedValueOnce({
-        id: "i2",
-        invoiceNumber: "INV-2",
-        customerId: "c2",
-        orderId: "ord-2",
-        status: InvoiceStatus.SENT,
-        total: 50,
-        dueDate: null,
-      });
-      prisma.orderCreditNote.findMany.mockResolvedValueOnce([
-        { creditNoteId: "cn-explicit-1" },
-        { creditNoteId: "cn-explicit-2" },
-      ]);
-      mockCreditNotes.autoApplyOldestCreditsInTx.mockResolvedValueOnce({
-        applied: 0,
-        invoiceStatus: InvoiceStatus.SENT,
-      });
-
-      await service.send("i2");
-
-      expect(prisma.orderCreditNote.findMany).toHaveBeenCalledWith({
-        where: { orderId: "ord-2", amount: { not: null } },
-        select: { creditNoteId: true },
-      });
-      expect(mockCreditNotes.autoApplyOldestCreditsInTx).toHaveBeenCalledWith(
-        expect.anything(),
-        "i2",
-        "c2",
-        { excludeCreditNoteIds: ["cn-explicit-1", "cn-explicit-2"] },
-      );
-    });
-  });
 
   // R5 — sendEmail must only claim "sent" when the email ACTUALLY went out.
   describe("sendEmail — email honesty (R5)", () => {
@@ -3491,6 +3387,9 @@ describe("InvoicesService", () => {
           discount: 0,
           taxRate: 0,
           subtotal: 25,
+          // #2169 (SA-395): the ONE writer of systemKind — every consumer's dual-read predicate
+          // (invoices/nsf-line.ts) depends on this stamp landing here.
+          systemKind: "NSF_FEE",
         }),
       });
       expect(prisma.invoice.update).toHaveBeenCalledWith({

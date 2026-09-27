@@ -537,6 +537,37 @@ export function fallbackShortPickLines(
   );
 }
 
+/**
+ * #2300: a LATER visit — the server served a `remaining` below `qty` on at least one active line
+ * (#1353 caps a re-delivery to what is left). A line with no served remaining says nothing either way.
+ */
+export function isLaterVisit(
+  order: { lineItems?: readonly StopSnapshotLine[] | null } | null | undefined,
+): boolean {
+  const remainingById = remainingByLine([order ?? {}]);
+  return (order?.lineItems ?? []).some((li) => {
+    const served = remainingById[li.id];
+    return li.status !== "CANCELLED" && served !== undefined && served < Number(li.qty ?? 0);
+  });
+}
+
+/**
+ * #2300: the lines the payment screen's door QUOTE prices for one order. Its landed rich lines when
+ * it has any; while its per-order fetch hasn't landed on a later visit, the stop snapshot's own
+ * remaining-based fallback lines — never the full order total, which overstates what is owed.
+ * `[]` means "price the whole order" (a first visit, or a landed order with nothing adjustable),
+ * exactly as before. Display/cap only: the close payload keeps its own line choice.
+ */
+export function doorQuoteLines(
+  order: { lineItems?: readonly StopSnapshotLine[] | null } | null | undefined,
+  richLines: readonly ShortPickLine[],
+  landed: boolean,
+): ShortPickLine[] {
+  if (richLines.length > 0) return [...richLines];
+  if (landed || !isLaterVisit(order)) return [];
+  return fallbackShortPickLines(order);
+}
+
 /** DELIVERED at the full ordered qty, REFUSED at 0, else PARTIAL. */
 export function deliveryTypeForQty(deliveredQty: number, orderedQty: number): DeliveryType {
   if (deliveredQty <= 0) return "REFUSED";

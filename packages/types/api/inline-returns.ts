@@ -177,7 +177,8 @@ export interface InlineReturnRecord {
   photoUrls: string[];
   creditNoteId?: string | null;
   refundMethod?: string | null;
-  refundAmount?: number | null;
+  /** A Prisma Decimal: JSON carries it as a STRING ("22.5000"); consumers parse it (refundAmountOf). */
+  refundAmount?: number | string | null;
   refundedAt?: string | null;
   kind: "INLINE";
   returnKey?: string | null;
