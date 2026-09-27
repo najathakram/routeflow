@@ -75,6 +75,11 @@ import {
 import { CreatePartialInvoiceDto } from "./dto/create-partial-invoice.dto";
 import type { UpdateInvoiceDto } from "./dto/update-invoice.dto";
 import { ListInvoicesDto } from "./dto/list-invoices.dto";
+import {
+  applyInvoiceSearchAndDateFilters,
+  applyInvoiceStatusFilters,
+  invoiceListOrderBy,
+} from "./invoice-list-query";
 import { UpdateShipmentDto } from "../orders/dto/update-shipment.dto";
 import { JwtPayload } from "../auth/jwt-payload.interface";
 import { RouteFlowGateway } from "../gateways/routeflow.gateway";
@@ -104,6 +109,11 @@ import { lockRowsNoWait } from "../common/db-locks";
 import { NumberingService } from "../import/numbering.service";
 import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
 import { requireRestrictionTenantId } from "../selling-restrictions/restriction-tenant";
+import {
+  addedRestrictionLines,
+  assertEditStillJudged,
+  catalogRestrictionLines,
+} from "./invoice-restriction-lines";
 import { buildManualInvoiceLines, type ManualLineItem } from "./manual-invoice-lines";
 import { foldCategoryTax, loadManualLineContext } from "./manual-invoice-context";
 import { resolveLineUnits } from "../products/line-units";
@@ -2844,44 +2854,10 @@ export class InvoicesService {
   }
 
   async findAll(query: ListInvoicesDto, user?: JwtPayload) {
-    const {
-      status,
-      statuses,
-      isOverdue,
-      customerId,
-      search,
-      dateFrom,
-      dateTo,
-      dueFrom,
-      dueTo,
-      sortBy,
-      sortOrder,
-      shipped,
-      page = 1,
-      limit = 20,
-    } = query;
+    const { customerId, sortBy, sortOrder, page = 1, limit = 20 } = query;
     const skip = (page - 1) * limit;
     const where: any = {};
-    // Shipments view: only invoices that carry a carrier tracking number.
-    if (shipped) where.shippingTrackingNumber = { not: null };
-    if (isOverdue) {
-      // Derived overdue: unpaid invoices (SENT/VIEWED/PARTIAL) past their due date
-      where.status = {
-        in: [
-          InvoiceStatus.SENT,
-          InvoiceStatus.VIEWED,
-          InvoiceStatus.PARTIAL,
-          InvoiceStatus.OVERDUE,
-        ],
-      };
-      where.dueDate = { lt: new Date() };
-    } else if (statuses && statuses.length > 0) {
-      // RF-204: normalize legacy "VOIDED" alias → the DB enum value "VOID"
-      where.status = { in: statuses.map((s: string) => (s === "VOIDED" ? "VOID" : s)) };
-    } else if (status) {
-      // RF-204: normalize "VOIDED" → "VOID" for single-status filter
-      where.status = (status as string) === "VOIDED" ? "VOID" : status;
-    }
+    applyInvoiceStatusFilters(where, query);
     if (user?.role === UserRole.CUSTOMER) {
       const customer = await this.prisma
         .forTenant()
@@ -2899,59 +2875,8 @@ export class InvoicesService {
     } else if (customerId) {
       where.customerId = customerId;
     }
-    if (search) {
-      where.OR = [
-        { customer: { businessName: { contains: search, mode: "insensitive" } } },
-        { invoiceNumber: { contains: search, mode: "insensitive" } },
-        { shippingTrackingNumber: { contains: search, mode: "insensitive" } },
-      ];
-    }
-    if (dateFrom || dateTo) {
-      where.issueDate = {};
-      if (dateFrom)
-        where.issueDate.gte = new Date(`${calendarDayOf(dateFrom, "dateFrom")}T00:00:00.000Z`);
-      // B89/L-047: issueDate is a UTC-midnight calendar stamp, so its day-end
-      // bound is the LITERAL UTC instant of the date string — never a
-      // host-local `setHours` mutation, which silently disagrees with the
-      // UTC-midnight convention off a UTC host.
-      if (dateTo)
-        where.issueDate.lte = new Date(`${calendarDayOf(dateTo, "dateTo")}T23:59:59.999Z`);
-    }
-    // Due-soon window (Due today / Due tomorrow / Next 7 days chips). MERGE into any
-    // dueDate clause `isOverdue` already set — the two intersect, they don't override
-    // each other. `dueTo` widens to end-of-day like `dateTo`, otherwise a date-only
-    // value truncates to midnight and drops invoices due later that same day.
-    if (dueFrom || dueTo) {
-      where.dueDate = { ...(where.dueDate ?? {}) };
-      if (dueFrom)
-        where.dueDate.gte = new Date(`${calendarDayOf(dueFrom, "dueFrom")}T00:00:00.000Z`);
-      // B89/L-047: dueDate is also a UTC-midnight calendar stamp — same literal
-      // UTC instant convention as issueDate above.
-      if (dueTo) where.dueDate.lte = new Date(`${calendarDayOf(dueTo, "dueTo")}T23:59:59.999Z`);
-    }
-
-    // Build orderBy from sortBy/sortOrder params
-    const validSortFields: Record<string, string> = {
-      date: "issueDate",
-      issueDate: "issueDate",
-      dueDate: "dueDate",
-      total: "total",
-      amount: "total",
-      createdAt: "createdAt",
-      status: "status",
-      invoiceNumber: "invoiceNumber",
-    };
-    // m9: Object.hasOwn (not a bare index) so prototype keys — `constructor`,
-    // `__proto__`, `toString`, `valueOf`… — can't resolve to an INHERITED value
-    // and reach Prisma as a malformed orderBy (→ 500). Unknown OR inherited
-    // falls back to the safe issueDate default.
-    const orderField =
-      sortBy && Object.hasOwn(validSortFields, sortBy) ? validSortFields[sortBy] : "issueDate";
-    const orderDir = sortOrder === "asc" ? "asc" : "desc";
-    // B169: `id` tiebreaker — issueDate/createdAt ties are STRUCTURAL (bulk
-    // imports, UTC-midnight stamps sharing a value), so a single-key orderBy
-    // leaves page order unstable across identical requests.
-    const orderBy: any = [{ [orderField]: orderDir }, { id: orderDir }];
+    applyInvoiceSearchAndDateFilters(where, query);
+    const orderBy = invoiceListOrderBy(sortBy, sortOrder);
 
     const [data, total] = await Promise.all([
       this.prisma.forTenant().invoice.findMany({
@@ -3303,6 +3228,14 @@ export class InvoicesService {
 
     const items = dto.items;
     if (items) {
+      // F-05: netted per product (qtyDelta = requested - held); re-checked under the row lock in the tx below.
+      const restrictionLines = await addedRestrictionLines(this.prisma.forTenant(), id, items);
+      await this.sellingRestrictions.assertLinesSellable({
+        tenantId: requireRestrictionTenantId(this.prisma.getTenantId()),
+        customerId: inv.customerId,
+        lines: restrictionLines,
+        channel: "STAFF",
+      });
       await assertOrderItemIdsBelongToOrder(this.prisma.forTenant(), inv.orderId, items); // SA-093a rd6
       // Products (pack + regulated snapshot) and section tax config for the edited lines (mirrors create()).
       const { productMap, categoryMap } = await loadEditCatalog(this.prisma.forTenant(), items);
@@ -3314,6 +3247,7 @@ export class InvoicesService {
         if (inv.orderId)
           await tx.$executeRaw`SELECT id FROM "Order" WHERE id = ${inv.orderId} FOR UPDATE`;
         await tx.$executeRaw`SELECT id FROM "Invoice" WHERE id = ${id} FOR UPDATE`;
+        await assertEditStillJudged(tx, id, items, restrictionLines); // F-05: under the Invoice row lock
         // SA-184/186: match the payload to THIS invoice's stored rows (by id, tenant-scoped; never by
         // productId), keep untouched rows verbatim and in place, re-price only changed lines. Rules
         // and reasoning: invoice-edit-plan.ts.
@@ -4496,6 +4430,13 @@ export class InvoicesService {
       );
     }
     unitAware.assertNoUnitAwareLines(inv.items, "duplicated"); // the copy drops the unit
+    // F-05: a copy is a new sale of every catalog line it carries.
+    await this.sellingRestrictions.assertLinesSellable({
+      tenantId: requireRestrictionTenantId(this.prisma.getTenantId()),
+      customerId: inv.customerId,
+      lines: catalogRestrictionLines(inv.items),
+      channel: "STAFF",
+    });
 
     const customer = await this.prisma
       .forTenant()

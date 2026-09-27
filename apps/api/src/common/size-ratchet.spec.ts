@@ -41,7 +41,7 @@ const BASELINE: Record<string, number> = {
   // (orders/replace-all-line-build.ts) — 5740 -> 5540. Lowered to the measured value. Round 5
   // (sourceLineId): buildExistingLineMaps also extracted — still fits at 5540, unchanged.
   "apps/api/src/orders/orders.service.ts": 5488, // #2094: findOrderIdByIdempotencyKey -> merge-idempotency.ts to fit the inline-return hooks (was 5540); B776/SA-124a: buildMergeLineWrites replaced both merge methods' own live-pack fold (was 5751; SA-065 before that: appendOrderRevision -> order-revisions.ts, was 5780; U1 before that: class tail -> order-lifecycle.ts, 5880)
-  "apps/api/src/invoices/invoices.service.ts": 6163, // #2268 (SA-065 extract-first): resyncOrderInvoicesForEdit's pure partition + pairing moved verbatim to invoices/resync-plan.ts, landed BEFORE #2250 so #2250 and #2242 fit. Measured by wc -l.
+  "apps/api/src/invoices/invoices.service.ts": 6124, // Train A (owner, 3 merge trains): #2323 (SA-065 resync extraction, 6163) then #2117 (F-05 PR2 invoice-list-query extraction, 6151) compose to a measured 6124; lower-of, never raised.
   "apps/api/src/orders/orders.service.spec.ts": 9511,
   "apps/api/src/customers/customers.service.ts": 3307,
   "apps/api/src/invoices/invoices.service.spec.ts": 9351,
