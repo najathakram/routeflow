@@ -839,9 +839,14 @@ export class SubscriptionMutationService {
       await this.planTransition.onPlanChange(tx, transition, preparedTransition);
       // Optimistic guard: only apply if still on the expected plan (blocks a concurrent
       // double-upgrade from re-emitting the delta). Matches the STORED key (null matches
-      // IS NULL), never the resolved one.
+      // IS NULL), never the resolved one. #2470: and the negotiated fee it read (null matches
+      // IS NULL) — a concurrent Pricing change makes this lose the race, never write a stale fee.
       const applied = await tx.tenantSubscription.updateMany({
-        where: { tenantId, planKey: sub.planKey },
+        where: {
+          tenantId,
+          planKey: sub.planKey,
+          priceOverrideMonthly: sub.priceOverrideMonthly ?? null,
+        },
         data: {
           planKey,
           currentPlan: planKeyToEnum(planKey),
