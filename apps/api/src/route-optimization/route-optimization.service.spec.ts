@@ -236,8 +236,8 @@ describe("RouteOptimizationService", () => {
             customer: {
               id: "cust-1",
               businessName: "A",
-              deliveryWindowStart: null,
-              deliveryWindowEnd: null,
+              deliveryWindowStart: null as string | null,
+              deliveryWindowEnd: null as string | null,
             },
             customerAddress: { id: "addr-1", lat: 40.01, lng: -73.99 },
           },
@@ -248,8 +248,8 @@ describe("RouteOptimizationService", () => {
             customer: {
               id: "cust-2",
               businessName: "B",
-              deliveryWindowStart: null,
-              deliveryWindowEnd: null,
+              deliveryWindowStart: null as string | null,
+              deliveryWindowEnd: null as string | null,
             },
             customerAddress: { id: "addr-2", lat: 40.02, lng: -73.98 },
           },
@@ -1441,7 +1441,7 @@ describe("RouteOptimizationService", () => {
       prisma.$transaction = jest.fn(async () => {
         events.push("commit");
         return [];
-      });
+      }) as unknown as typeof prisma.$transaction;
       const progress = jest
         .spyOn(RouteRealtime.prototype, "runProgress")
         .mockImplementation(async () => {
@@ -1655,7 +1655,7 @@ describe("RouteOptimizationService", () => {
       prisma.$transaction = jest.fn(async () => {
         events.push("commit");
         return [];
-      });
+      }) as unknown as typeof prisma.$transaction;
       progress.mockImplementation(async () => {
         events.push("announce");
       });
