@@ -2505,7 +2505,7 @@ export class CustomersService {
       by: ["customerId"],
       where: {
         customerId: { in: ids },
-        status: { in: CUSTOMER_DELETE_BLOCKING }, // #2558: every issued or paid invoice
+        status: { in: CUSTOMER_DELETE_BLOCKING }, // #2558/SA-510: every status but DRAFT/VOID
       },
       _count: { _all: true },
     });
@@ -2513,7 +2513,7 @@ export class CustomersService {
     if (blockers.length > 0) {
       const breakdown = blockers.map((b) => `${b.customerId}: ${b._count._all} invoice(s)`);
       throw new ConflictException(
-        `Bulk delete blocked — the following customers have issued or paid invoices that cannot be destroyed: ${breakdown.join("; ")}.`,
+        `Bulk delete blocked — the following customers have issued, paid or written-off invoices that cannot be destroyed: ${breakdown.join("; ")}.`,
       );
     }
 
@@ -2566,7 +2566,7 @@ export class CustomersService {
       by: ["customerId"],
       where: {
         customerId: { in: customerIds },
-        status: { in: CUSTOMER_DELETE_BLOCKING }, // #2558: every issued or paid invoice
+        status: { in: CUSTOMER_DELETE_BLOCKING }, // #2558/SA-510: every status but DRAFT/VOID
       },
       _count: { _all: true },
     });
@@ -2582,7 +2582,7 @@ export class CustomersService {
         breakdown.push(`and ${blockers.length - MAX_LISTED_BLOCKERS} more`);
       }
       throw new ConflictException(
-        `Bulk delete blocked — the following customers have issued or paid invoices that cannot be destroyed: ${breakdown.join("; ")}.`,
+        `Bulk delete blocked — the following customers have issued, paid or written-off invoices that cannot be destroyed: ${breakdown.join("; ")}.`,
       );
     }
 

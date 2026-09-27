@@ -72,15 +72,16 @@ export const LIFETIME_INVOICED_EXCLUDED: InvoiceStatus[] = [
 ];
 
 /**
- * #2558: invoices a customer delete must never destroy: issued and still owed (SENT, VIEWED,
- * PARTIAL, OVERDUE) or paid. The pre-flights of `CustomersService.batchDelete` and
+ * #2558 / SA-510: invoices a customer delete must never destroy: EVERY status except DRAFT and VOID
+ * (issued and still owed, paid, or written off). Defined by EXCLUSION from the Prisma enum, so a
+ * status added later blocks by default. The pre-flights of `CustomersService.batchDelete` and
  * `deleteAllCustomers` block on this set. They used to block on PAID/SENT only, so a customer whose
- * open invoices had been viewed, part-paid or marked OVERDUE could be wiped with them.
+ * invoices had been viewed, part-paid, marked OVERDUE or written off could be wiped with them.
  */
-export const CUSTOMER_DELETE_BLOCKING: InvoiceStatus[] = [
-  InvoiceStatus.SENT,
-  InvoiceStatus.VIEWED,
-  InvoiceStatus.PARTIAL,
-  InvoiceStatus.OVERDUE,
-  InvoiceStatus.PAID,
+export const CUSTOMER_DELETE_NON_BLOCKING: readonly InvoiceStatus[] = [
+  InvoiceStatus.DRAFT,
+  InvoiceStatus.VOID,
 ];
+export const CUSTOMER_DELETE_BLOCKING: InvoiceStatus[] = (
+  Object.values(InvoiceStatus) as InvoiceStatus[]
+).filter((s) => !CUSTOMER_DELETE_NON_BLOCKING.includes(s));

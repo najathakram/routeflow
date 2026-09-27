@@ -2,7 +2,9 @@
  * #2558: a customer delete never destroys an issued or paid invoice. Both pre-flights
  * (`batchDelete`, `deleteAllCustomers`) used to block on PAID/SENT only, so a customer whose open
  * invoices had been VIEWED, part-paid (PARTIAL) or marked OVERDUE (which #2556's sweep starts
- * persisting) passed the check; `deleteAllCustomers` then hard-deleted those invoices. Red-first.
+ * persisting) passed the check; `deleteAllCustomers` then hard-deleted those invoices. SA-510: the
+ * blocking set is every status EXCEPT DRAFT and VOID (WRITTEN_OFF blocks), defined by exclusion
+ * from the Prisma enum so a future status blocks by default. Red-first.
  * Bootstrap copied from customers.service.delete-all.spec.ts.
  */
 import { Test, TestingModule } from "@nestjs/testing";
@@ -18,6 +20,11 @@ import { CommissionEngineService } from "../sales-agents/commission-engine.servi
 import { createMockPrisma } from "../testing/prisma-mock";
 import { RegulatedLedgerService } from "../regulated/regulated-ledger.service";
 import { EmailService } from "../email/email.service";
+import { InvoiceStatus } from "@prisma/client";
+import {
+  CUSTOMER_DELETE_BLOCKING,
+  CUSTOMER_DELETE_NON_BLOCKING,
+} from "../invoices/invoice-status-sets";
 
 describe("CustomersService — delete pre-flight blocks every issued or paid invoice (#2558)", () => {
   let service: CustomersService;
@@ -91,7 +98,7 @@ describe("CustomersService — delete pre-flight blocks every issued or paid inv
     service = module.get<CustomersService>(CustomersService);
   });
 
-  it.each(["OVERDUE", "PARTIAL", "VIEWED", "SENT", "PAID"])(
+  it.each(["OVERDUE", "PARTIAL", "VIEWED", "WRITTEN_OFF", "SENT", "PAID"])(
     "deleteAllCustomers: one %s invoice blocks the wipe, and nothing is deleted",
     async (status) => {
       (prisma.invoice.groupBy as jest.Mock).mockImplementation(blockOnStatus(status, "cust-2", 1));
@@ -102,7 +109,7 @@ describe("CustomersService — delete pre-flight blocks every issued or paid inv
     },
   );
 
-  it.each(["OVERDUE", "PARTIAL", "VIEWED"])(
+  it.each(["OVERDUE", "PARTIAL", "VIEWED", "WRITTEN_OFF"])(
     "batchDelete: one %s invoice blocks the batch before any delete",
     async (status) => {
       (prisma.invoice.groupBy as jest.Mock).mockImplementation(blockOnStatus(status, "cust-1", 1));
@@ -113,6 +120,14 @@ describe("CustomersService — delete pre-flight blocks every issued or paid inv
       expect(del).not.toHaveBeenCalled();
     },
   );
+
+  it("SA-510: the blocking set is the whole enum minus DRAFT and VOID (a new status blocks by default)", () => {
+    const all = Object.values(InvoiceStatus).sort();
+    expect([...CUSTOMER_DELETE_BLOCKING, ...CUSTOMER_DELETE_NON_BLOCKING].sort()).toEqual(all);
+    expect([...CUSTOMER_DELETE_NON_BLOCKING].sort()).toEqual(["DRAFT", "VOID"]);
+    expect(CUSTOMER_DELETE_BLOCKING).toContain("WRITTEN_OFF");
+    expect(new Set(CUSTOMER_DELETE_BLOCKING).size).toBe(CUSTOMER_DELETE_BLOCKING.length);
+  });
 
   it.each(["DRAFT", "VOID"])(
     "no over-correction: a %s invoice alone does not block (deleteAllCustomers still runs)",
