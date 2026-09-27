@@ -14,6 +14,23 @@
   **Bills & Purchasing** added under Warehouse → `/vendor-bills`). Buyer portal + platform-admin
   layouts carry the `.surface-buyer`/`.surface-admin` class. Plan + tracker:
   `docs/design-package/IMPLEMENTATION-PLAN.md`; open questions: `/QUESTIONS.md`.
+- **`globals.css` date/time-input rule (#2080, P0; v2 #2086).** Cause: WebKit's RenderThemeIOS
+  `adjustInputElementButtonStyle` runs AFTER the cascade whenever a date/time input's computed
+  `appearance` is not `none`: it forces `padding: 0 0.5em` and, unless the width is a fixed px
+  value, a min-width plus `box-sizing: content-box`, so `w-full` rendered ~16-26px wider than its
+  column and the create-order dialog panned sideways on iPhone. Rule (`:where(...)`, 0
+  specificity, so any utility class on an input wins): `-webkit-appearance: none; appearance:
+  none; box-sizing: border-box; min-width: 0`, plus a `::-webkit-date-and-time-value` min-height
+  (WebKit bug 198959). NEVER a positive min-width: it overrides a narrower `w-*` and overflows
+  date inputs in `minmax(0,1fr)` grid tracks. So a date input with no width of its own must set
+  one (`w-32` for `px-2` filters, `w-36` for `px-3`). Pins: `app/globals-date-input.static.test.ts`
+  (no positive min-width; both appearance forms; date inputs carry a width class);
+  `marketing-port.static.test.ts` T7 hash. E2E: `e2e/helpers/ios-date-input.ts` models the WebKit
+  adjustment (visited-count precondition, never "changed", SA-360b); spec 56 (create-order dialog
+  body overflow 320-430; create + resumed draft at 1440/768/390 with a long name and a typed date:
+  no document scroll, dialog left >= 0, body scrollLeft 0) and spec 57 (dates in narrow grids:
+  vendor-bills, estimates, invoices/new, invoices/[id]/edit). The LineItemRow cases/units row
+  wraps below `sm` (see `components-shared.md`).
 - **Phase 1d behavioral UX standards.** `lib/undo.ts` — `useUndo()` (reversible act + 8s Undo toast;
   Toast now returns an id + `dismiss()` and has an `action` slot). `lib/session-expiry.ts` +
   `components/ReAuthProvider.tsx` — in-place re-auth sheet (password unlock + **Continue with Google**
