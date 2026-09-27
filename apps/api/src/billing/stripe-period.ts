@@ -1,0 +1,24 @@
+/**
+ * #2436 (P0): the Stripe API version every client pins. SDK 22.6.2's default is this same
+ * `2026-08-26.dahlia`; pinning it explicitly means an SDK bump can never silently move the shape
+ * the handlers read (stripe-period.spec.ts pins it equal to the SDK's own ApiVersion).
+ */
+export const STRIPE_API_VERSION = "2026-08-26.dahlia" as const;
+
+const epoch = (v: unknown): number | null =>
+  typeof v === "number" && Number.isFinite(v) ? v : null;
+
+/**
+ * A subscription's current billing period. Under dahlia `current_period_start/end` live on the
+ * subscription ITEMS (SubscriptionItems.d.ts:54-58); a webhook payload follows the ENDPOINT's API
+ * version, so an older-shaped top-level field is the fallback. Null when neither yields a real
+ * epoch — callers then write no period at all, never `new Date(NaN)` (Prisma rejects it, which
+ * 500'd checkout.session.completed and left stripeSubId unstored).
+ */
+export function stripeSubscriptionPeriod(sub: any): { periodStart: Date; periodEnd: Date } | null {
+  const item = sub?.items?.data?.[0];
+  const start = epoch(item?.current_period_start) ?? epoch(sub?.current_period_start);
+  const end = epoch(item?.current_period_end) ?? epoch(sub?.current_period_end);
+  if (start == null || end == null) return null;
+  return { periodStart: new Date(start * 1000), periodEnd: new Date(end * 1000) };
+}
