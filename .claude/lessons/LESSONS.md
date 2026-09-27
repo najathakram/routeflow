@@ -371,6 +371,23 @@
   prove zero loss with a checker that does not share the repair's parser.**
 - **Guard:** B840: `note` appends, overwrite needs `--replace`, pinned in the bugs self-test.
 
+### L-235 · 2026-09-27 · tooling · a tsconfig that excludes specs also switches off the test runner's type-check (#1315, B806)
+
+- **Symptom:** a spec fixture built with the wrong shape (#1286's `taxNone = () => 0`) reached CI
+  green; once #1315 finally compiled the api specs, ~7,000 spec type errors surfaced, 6,328 of
+  them masked by one wrongly typed mock factory (`createMockPrisma`).
+- **Root cause:** `apps/api/tsconfig.json` excluded `*.spec.ts` from `check-types`, and ts-jest
+  (`isolatedModules`, transpile-only) read the same config, so neither gate type-checked a spec —
+  each assumed the other did.
+- **Lesson:** **When a type-check config excludes tests, find which gate type-checks them instead;
+  a transpile-only test runner (`isolatedModules`, SWC, babel) checks nothing. If no gate does,
+  add one — ratchet an existing error count down (shrink-only baseline) rather than wait for
+  zero.**
+- **Guard:** api `check-types` runs `scripts/check-types-ratchet.mjs` over src + specs (src
+  zero-tolerance, per-spec counts in `check-types.spec-baseline.json`, which only
+  `--lower-baseline` moves); `scripts/lib/check-types-ratchet-core.mjs` refuses a
+  `// @ts-nocheck` spec (`isNoCheckFile`).
+
 ## testing
 
 ### L-205 · 2026-09-18 · testing · regression tests pinned literal source text, not behavior
@@ -756,15 +773,3 @@
 - **Guard:** #1133 (b8765689) added `data-testid="line-total"`; spec 13's `readLineTotal` reads it
   via `getByTestId`.
 
-### L-213 · 2026-09-21 · process · a batch merge script must re-read the board per merge, not per batch
-
-- **Symptom:** two PRs (#1112, #1087) landed over a BLOCK/UNPROVEN verdict posted on the shared
-  coordination issue minutes earlier, because the verdict was read once before a script merged ten
-  PRs in a row.
-- **Root cause:** the review-channel read was a per-batch precondition, so every merge after the
-  first ran on a stale view of the channel. This is L-209 applied in code instead of by hand.
-- **Lesson:** **The "read the shared review channel immediately before every merge" rule (L-209)
-  binds each individual merge, not the batch — a loop that merges N PRs must re-read the channel
-  N times.**
-- **Guard:** the landing procedure re-reads the coordination issue (#938) immediately before each
-  merge; no unattended batch merge loops.

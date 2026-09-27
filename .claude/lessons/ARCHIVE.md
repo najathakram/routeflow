@@ -3132,3 +3132,19 @@ citations, closed-out with its own post-init assertion guard).
   (Archived 2026-09-26 to make room at cap: one citation, `scripts/campaign/bugs.mjs:4878`, a
   code comment that still resolves here; the guard is the standing merge-session re-measure
   ritual, unchanged by archiving the prose.)
+
+### L-213 · 2026-09-21 · process · a batch merge script must re-read the board per merge, not per batch
+
+- **Symptom:** two PRs (#1112, #1087) landed over a BLOCK/UNPROVEN verdict posted on the shared
+  coordination issue minutes earlier, because the verdict was read once before a script merged ten
+  PRs in a row.
+- **Root cause:** the review-channel read was a per-batch precondition, so every merge after the
+  first ran on a stale view of the channel. This is L-209 applied in code instead of by hand.
+- **Lesson:** **The "read the shared review channel immediately before every merge" rule (L-209)
+  binds each individual merge, not the batch — a loop that merges N PRs must re-read the channel
+  N times.**
+- **Guard:** the landing procedure re-reads the coordination issue (#938) immediately before each
+  merge; no unattended batch merge loops.
+  (Archived 2026-09-27 to make room at cap for L-235: 0 outside citations; the rule is the
+  per-merge application of L-209, which stays active; guard = the landing procedure's re-read of
+  #938 before each merge, unchanged by archiving the prose.)

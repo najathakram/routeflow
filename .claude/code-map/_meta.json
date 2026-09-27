@@ -15,5 +15,5 @@
     "packages": 0
   },
   "fileCount": 1045,
-  "notes": "**2026-09-27 — merge train D landed (#2422 `fd810a7a` 7 PRs) + #2376 (`826b5ac2`; docs-only bookkeeping).** New `api/landing-2026-09-27-train-d.md` (TOC row in `api.md`), one bullet per PR. B874 discharged already-fixed (#2398). L-233 gained a recurrence note; no new lesson id minted this batch. No source changed. See CHANGELOG.md for the full landing list."
+  "notes": "**2026-09-27 — afternoon landings (27 single-PR code landings after train D, through `96c17054`; docs-only bookkeeping).** New `api/landing-2026-09-27-afternoon.md` (TOC row in `api.md`), one bullet per PR, checked against the merged tree. Also folds #2244 (window H). No source changed. See CHANGELOG.md for the full landing list."
 }
