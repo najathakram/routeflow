@@ -9,7 +9,7 @@
 import { NON_LOCAL_DB_URLS } from "./local-db-bypass-urls";
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
-const { classifyDbTarget } = require("../../scripts/lib/production-guard");
+const { classifyDbTarget, classifyApiTarget } = require("../../scripts/lib/production-guard");
 
 const LOCAL_ENV = {}; // no RAILWAY_ENVIRONMENT, NODE_ENV unset
 
@@ -101,5 +101,44 @@ describe("#2206 classifyDbTarget: the environment checks still win", () => {
     expect(classifyDbTarget(undefined, { NODE_ENV: "production" }, { requireDb: false }).ok).toBe(
       false,
     );
+  });
+});
+
+describe("#2421 classifyDbTarget: NODE_ENV=production in any case or padding", () => {
+  const LOCAL = "postgresql://user:pass@localhost:5432/routeflow_dev";
+  it.each(["production", "Production", "PRODUCTION", " production ", "production\n"])(
+    "refuses NODE_ENV=%j",
+    (value) => {
+      expect(classifyDbTarget(LOCAL, { NODE_ENV: value }).ok).toBe(false);
+    },
+  );
+  it("still allows development/test", () => {
+    expect(classifyDbTarget(LOCAL, { NODE_ENV: "development" }).ok).toBe(true);
+    expect(classifyDbTarget(LOCAL, { NODE_ENV: "test" }).ok).toBe(true);
+  });
+});
+
+describe("#2421 classifyApiTarget: an HTTP API base URL must be provably local", () => {
+  it.each([
+    ["localhost", "http://localhost:3000/api/v1"],
+    ["127.0.0.1", "http://127.0.0.1:3000/api/v1"],
+    ["::1", "http://[::1]:3000/api/v1"],
+    ["https localhost", "https://localhost/api/v1"],
+  ])("allows %s", (_label, url) => {
+    expect(classifyApiTarget(url)).toEqual({ ok: true });
+  });
+
+  it.each([
+    ["the production API host", "https://routeflowapi-production.up.railway.app/api/v1"],
+    ["a lookalike", "http://localhost.railway.app/api/v1"],
+    ["a nip.io loopback lookalike", "http://127.0.0.1.nip.io/api/v1"],
+    ["localhost as userinfo", "http://localhost@api.example.com/api/v1"],
+    ["credentials on a local host", "http://u:p@localhost:3000/api/v1"],
+    ["a non-http scheme", "ftp://localhost/api/v1"],
+    ["an empty value", ""],
+    ["undefined", undefined],
+    ["an unparseable value", "not a url"],
+  ])("refuses %s", (_label, url) => {
+    expect(classifyApiTarget(url).ok).toBe(false);
   });
 });

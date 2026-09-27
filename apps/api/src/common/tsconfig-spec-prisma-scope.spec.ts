@@ -19,7 +19,11 @@ function resolvedFileNames(configFileName: string): string[] {
   const configPath = path.join(API_DIR, configFileName);
   const raw = ts.readConfigFile(configPath, ts.sys.readFile);
   if (raw.error) throw new Error(ts.flattenDiagnosticMessageText(raw.error.messageText, "\n"));
-  return ts.parseJsonConfigFileContent(raw.config, ts.sys, API_DIR).fileNames;
+  // TypeScript reports "/"-separated paths on every OS; the expectations use path.join ("\\" on
+  // win32), so normalize to the platform form.
+  return ts
+    .parseJsonConfigFileContent(raw.config, ts.sys, API_DIR)
+    .fileNames.map((f) => path.normalize(f));
 }
 
 describe("#1315 fold: tsconfig.spec.json keeps the hand-written prisma/*.ts scripts in scope", () => {
