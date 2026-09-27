@@ -2803,13 +2803,16 @@ describe("PlatformAdminService — audit provenance", () => {
       expect(lockOrder[0]).toBeLessThan(readOrder[1]);
     });
 
-    it("emits nothing when the tenant was already ACTIVE with a resolved planKey (no paying-set crossing)", async () => {
+    // #2522 / SA-464f: this pin used to activate a paying GROWTH row onto SCALE and expect nothing;
+    // a plan-switching renewal now rebases + books (the #2522 table). A SAME-plan renewal still
+    // emits nothing.
+    it("emits nothing when the tenant was already ACTIVE on the same plan (no crossing, no plan switch)", async () => {
       prisma.tenant.findUnique.mockResolvedValue({ id: TENANT_ID, slug: "acme" } as any);
       prisma.tenant.findUniqueOrThrow.mockResolvedValue({
         status: "ACTIVE",
         class: "PRODUCTION",
         deletedAt: null,
-        subscription: { planKey: "GROWTH", basePriceSnapshot: 249, discount: 0 },
+        subscription: { planKey: "SCALE", basePriceSnapshot: 499, discount: 0 },
       } as any);
 
       await service.activateManualSubscription(TENANT_ID, activateDto, ADMIN_ID);
@@ -3199,6 +3202,80 @@ describe("PlatformAdminService — audit provenance", () => {
       expect(upsertArg().update).not.toHaveProperty("basePriceSnapshot");
       expect(upsertArg().create).not.toHaveProperty("basePriceSnapshot");
       expect(planDeltas()).toEqual([]);
+    });
+  });
+  // #2522 (SA-464f, extends SA-464 (1), tier 1): a renewal of an already-paying row that also
+  // changes planKey is a ranked plan change — the one invariant applies as in upgrade()/updatePlan:
+  // snapshot = override ?? the NEW plan's catalog price, Δ = newBase − (stored snapshot ?? 0), in
+  // the same tx. Same-plan renewal still writes nothing; a crossing keeps SA-464 (1).
+  describe("#2522 activateManualSubscription plan-switch on an already-paying row", () => {
+    const setup = (status: string, sub: Record<string, unknown>) => {
+      prisma.tenant.findUnique.mockResolvedValue({ id: TENANT_ID, slug: "acme" } as any);
+      prisma.tenant.findUniqueOrThrow.mockResolvedValue({
+        status,
+        class: "PRODUCTION",
+        deletedAt: null,
+        subscription: { discount: 0, ...sub },
+      } as any);
+      (prisma as any).tenantAddon.findMany.mockResolvedValue([]);
+      planCatalogService.getPublishedVersion.mockResolvedValue({
+        id: "v-9",
+        definitions: [
+          { planKey: "STARTER", monthlyPrice: 99, isCustom: false },
+          { planKey: "GROWTH", monthlyPrice: 249, isCustom: false },
+        ],
+      } as any);
+      prisma.tenant.update.mockResolvedValue({
+        id: TENANT_ID,
+        slug: "acme",
+        status: "ACTIVE",
+        plan: "GROWTH",
+      } as any);
+    };
+    const activate = (plan: string) =>
+      service.activateManualSubscription(
+        TENANT_ID,
+        { plan, billingPeriodDays: 30, paymentMethod: "ZELLE" } as any,
+        ADMIN_ID,
+      );
+    const upsertUpdate = () =>
+      (prisma as any).tenantSubscription.upsert.mock.calls.at(-1)[0].update;
+    const planDeltas = () =>
+      billingEventService.emit.mock.calls
+        .filter((c: any) => c[1] === "plan.changed")
+        .map((c: any) => c[3]?.amountDelta);
+
+    // [path, status, stored planKey, stored snapshot, override, target plan, expected snapshot
+    //  write (undefined = none), expected plan.changed deltas]
+    it.each([
+      ["crossing × catalog", "TRIAL", "STARTER", 99, null, "GROWTH", 249, [249]],
+      ["crossing × override", "TRIAL", "STARTER", 150, 150, "GROWTH", 150, [150]],
+      ["crossing × NULL", "TRIAL", "STARTER", null, null, "GROWTH", 249, [249]],
+      ["same-plan × catalog", "ACTIVE", "GROWTH", 249, null, "GROWTH", undefined, []],
+      ["same-plan × override", "ACTIVE", "GROWTH", 150, 150, "GROWTH", undefined, []],
+      ["same-plan × NULL", "ACTIVE", "GROWTH", null, null, "GROWTH", undefined, []],
+      ["plan-switch × catalog (up)", "ACTIVE", "STARTER", 99, null, "GROWTH", 249, [150]],
+      ["plan-switch × catalog (down)", "ACTIVE", "GROWTH", 249, null, "STARTER", 99, [-150]],
+      ["plan-switch × override", "ACTIVE", "STARTER", 150, 150, "GROWTH", 150, [0]],
+      ["plan-switch × NULL (self-heals)", "ACTIVE", "STARTER", null, null, "GROWTH", 249, [249]],
+    ] as const)(
+      "%s",
+      async (_label, status, planKey, snapshot, override, target, expectedSnap, deltas) => {
+        setup(status, { planKey, basePriceSnapshot: snapshot, priceOverrideMonthly: override });
+        await activate(target);
+        if (expectedSnap === undefined)
+          expect(upsertUpdate()).not.toHaveProperty("basePriceSnapshot");
+        else expect(upsertUpdate().basePriceSnapshot).toBe(expectedSnap);
+        expect(planDeltas()).toEqual(deltas);
+      },
+    );
+
+    it("the plan-switch books in the SAME tx as the snapshot write", async () => {
+      setup("ACTIVE", { planKey: "STARTER", basePriceSnapshot: 99, priceOverrideMonthly: null });
+      await activate("GROWTH");
+      const call = billingEventService.emit.mock.calls.find((c: any) => c[1] === "plan.changed")!;
+      expect(call[3].tx).toBeDefined();
+      expect(call[2]).toMatchObject({ fromPlan: "STARTER", toPlan: "GROWTH" });
     });
   });
 });
