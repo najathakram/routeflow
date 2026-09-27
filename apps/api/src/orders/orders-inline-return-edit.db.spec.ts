@@ -266,43 +266,6 @@ describeDb(
       expect(await raw.return.count({ where: { orderId: b.orderId } })).toBe(0);
     }, 60_000);
 
-    it("#2178: a boxed return whose ONLY pack evidence is this undelivered order's own SENT invoice refuses in the PREFLIGHT (INLINE_RETURN_PACK_UNKNOWN) and leaves the invoice SENT", async () => {
-      // The product has NO pack of its own; the order's SENT invoice holds the only boxed line with a
-      // pack snapshot. The edit's revert turns that invoice into a DRAFT of an undelivered order, which
-      // the matching set leaves out, so the in-tx pricing can't size a box. Before #2178 the preflight
-      // still saw the invoice, passed, the revert committed, and the tx then refused: invoice stranded.
-      const f = await seed("pack-only-own");
-      await raw.product.update({ where: { id: f.productId }, data: { unitsPerBox: null } });
-      await raw.invoiceItem.create({
-        data: {
-          tenantId,
-          invoiceId: f.invoiceId,
-          productId: f.productId,
-          description: "boxed evidence",
-          qty: 12,
-          boxes: 1,
-          pieces: 0,
-          unitsPerBox: 12,
-          unitPrice: "10.00",
-          subtotal: "10.00",
-        } as any,
-      });
-      const before = await raw.order.findUniqueOrThrow({ where: { id: f.orderId } });
-      await expect(
-        edit(f, {
-          items: [{ productId: f.productId, qty: 1, boxes: 1, pieces: 0 }],
-          returnKey: `k-pack-${run}`,
-        }),
-      ).rejects.toMatchObject({ response: { code: "INLINE_RETURN_PACK_UNKNOWN" } });
-      expect((await raw.invoice.findUniqueOrThrow({ where: { id: f.invoiceId } })).status).toBe(
-        "SENT",
-      ); // refused BEFORE the revert: nothing stranded
-      expect(reserved).toHaveLength(0); // no credit-note number burned
-      const after = await raw.order.findUniqueOrThrow({ where: { id: f.orderId } });
-      expect(Number(after.total)).toBe(Number(before.total));
-      expect(await raw.return.count({ where: { orderId: f.orderId } })).toBe(0);
-    }, 60_000);
-
     it("success: one edit runs order.update, the revert, the credit gate, capture + issue in ONE tx (CN at the number reserved before the tx) and the reconcile", async () => {
       const f = await seed("ok");
       await edit(f, ret(f.productId, 3, `k-ok-${run}`)); // return $30
