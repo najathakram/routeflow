@@ -551,7 +551,7 @@ function QuietHoursCard({ settings, isAdmin }: { settings: MessagingSettings; is
             disabled={!isAdmin || !enabled}
             onChange={(e) => setStart(e.target.value)}
             aria-label="Quiet hours start"
-            className="rounded border border-surface-border px-2 py-1 text-sm text-navy disabled:opacity-50"
+            className="w-32 rounded border border-surface-border px-2 py-1 text-sm text-navy disabled:opacity-50"
           />
         </label>
         <label className="flex items-center gap-2 text-sm text-navy">
@@ -562,7 +562,7 @@ function QuietHoursCard({ settings, isAdmin }: { settings: MessagingSettings; is
             disabled={!isAdmin || !enabled}
             onChange={(e) => setEnd(e.target.value)}
             aria-label="Quiet hours end"
-            className="rounded border border-surface-border px-2 py-1 text-sm text-navy disabled:opacity-50"
+            className="w-32 rounded border border-surface-border px-2 py-1 text-sm text-navy disabled:opacity-50"
           />
         </label>
       </div>

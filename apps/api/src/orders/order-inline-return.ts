@@ -204,12 +204,16 @@ export async function preflightInlineReturn(
   p: PreparedInlineReturn | null,
   order: { id: string; customerId: string; routeRunId: string | null },
   user: JwtPayload | undefined,
+  // #2178: true when this edit's linked-invoice revert runs next (an undelivered order): the dry run
+  // then prices against the post-revert matching set, so it refuses before that revert commits.
+  willRevert = false,
 ): Promise<void> {
   if (!p) return;
   p.preflightTotal = await p.svc.preflightCapture(
     { ...p.lines, customerId: order.customerId, orderId: order.id },
     user as JwtPayload,
     { routeRunId: order.routeRunId },
+    willRevert ? { revertOrderId: order.id } : {},
   );
 }
 
