@@ -17,7 +17,7 @@ export interface AppliedCreditNoteRef {
 export interface AppliedCreditPaymentInput {
   id: string;
   amount: string | number;
-  creditNoteId: string | null;
+  creditNoteId?: string | null;
   /** Omitted by callers that already selected CREDIT_NOTE payments only. */
   method?: string;
   /** Omitted by callers that already excluded VOID payments. */
