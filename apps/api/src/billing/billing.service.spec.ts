@@ -1498,6 +1498,19 @@ describe("BillingService.syncStripeSubscriptionPrice", () => {
       expect(planChanged()).toHaveLength(1);
       expect(planChanged()[0][3].amountDelta).toBe(-50); // 150 − 200, never 150 − 249
     });
+
+    // SA-503a (#2528 fold): the reconcile runs AFTER the fee and the Stripe push committed, so a lock
+    // conflict here must be retried — never a 500 that leaves the snapshot stale behind them.
+    it("SA-503a: a 40P01 on the reconcile's transaction is retried and books exactly once", async () => {
+      reads(row("GROWTH", 249), [row("GROWTH", 249)]);
+      prisma.$transaction.mockImplementationOnce(async () => {
+        throw Object.assign(new Error("deadlock detected"), { code: "40P01" });
+      });
+      await service.syncStripeSubscriptionPrice("t1");
+      expect(prisma.$transaction).toHaveBeenCalledTimes(2);
+      expect(planChanged()).toHaveLength(1);
+      expect(planChanged()[0][3].amountDelta).toBe(-99);
+    });
   });
 
   it("moves the MRR ledger with the price: writes basePriceSnapshot and emits a signed amountDelta", async () => {
