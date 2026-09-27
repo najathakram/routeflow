@@ -61,7 +61,7 @@ import { nextOrderNumberFor } from "./order-number";
 import * as unitAware from "./unit-aware-guard";
 import * as cancelledLines from "./order-edit-cancelled";
 import * as driverAccess from "./driver-edit-access";
-import { assertOrderStatusTransition } from "./order-status-transitions";
+import { ORDER_STATUS_TRANSITIONS, assertOrderStatusTransition } from "./order-status-transitions";
 import { AppliedCreditNoteDto, CreateOrderDto } from "./dto/create-order.dto";
 import {
   IDEMPOTENCY_KEY_CONFLICT,
@@ -2597,8 +2597,8 @@ export class OrdersService implements OnApplicationBootstrap {
               await lockOrderForCancel(tx, id);
               // SA-404f F2: compare-and-set on the cancellable set the pre-check used — a retry after
               // a 40001 caused by a concurrent DELIVERED must never cancel a delivered order.
-              const cancellable = Object.keys(allowed).filter((k) =>
-                allowed[k].includes("CANCELLED"),
+              const cancellable = Object.keys(ORDER_STATUS_TRANSITIONS).filter((k) =>
+                ORDER_STATUS_TRANSITIONS[k].includes("CANCELLED"),
               );
               const claimed = await tx.order.updateMany({
                 where: { id, status: { in: cancellable as OrderStatus[] } },
