@@ -832,14 +832,16 @@ export class ImportService {
             const wrote = await this.prisma.tenantTransaction(async (tx) => {
               await tx.$executeRaw`SELECT id FROM "Invoice" WHERE id = ${existing.id} FOR UPDATE`;
               const locked = await tx.invoice.findFirst({ where: { id: existing.id } });
-              const refused = locked ? importPaymentRefusal(locked.status) : null;
-              if (refused) throw new ImportRowRefused(`${refused} — re-import skipped`);
               const cur = locked ?? existing;
               const needsUpdate =
                 cur.status !== status ||
                 (cur.dueDate?.getTime() ?? 0) !== (dueDate?.getTime() ?? 0) ||
                 (cur.paidAt?.getTime() ?? 0) !== (paidAt?.getTime() ?? 0);
+              // #2478: nothing would change (e.g. an already-VOID invoice re-imported as void) ⇒ a
+              // silent no-op skip, every run. Only a re-import that WOULD write is refused below.
               if (!needsUpdate) return false;
+              const refused = locked ? importPaymentRefusal(locked.status) : null;
+              if (refused) throw new ImportRowRefused(`${refused} — re-import skipped`);
               await tx.invoice.update({
                 where: { id: existing.id },
                 data: { status, dueDate, paidAt },
@@ -912,14 +914,16 @@ export class ImportService {
             const wrote = await this.prisma.tenantTransaction(async (tx) => {
               await tx.$executeRaw`SELECT id FROM "Invoice" WHERE id = ${prior.id} FOR UPDATE`;
               const locked = await tx.invoice.findFirst({ where: { id: prior.id } });
-              const refused = locked ? importPaymentRefusal(locked.status) : null;
-              if (refused) throw new ImportRowRefused(`${refused} — re-import skipped`);
               const cur = locked ?? prior;
               const needsUpdate =
                 cur.status !== status ||
                 (cur.dueDate?.getTime() ?? 0) !== (dueDate?.getTime() ?? 0) ||
                 (cur.paidAt?.getTime() ?? 0) !== (paidAt?.getTime() ?? 0);
+              // #2478: nothing would change (e.g. an already-VOID invoice re-imported as void) ⇒ a
+              // silent no-op skip, every run. Only a re-import that WOULD write is refused below.
               if (!needsUpdate) return false;
+              const refused = locked ? importPaymentRefusal(locked.status) : null;
+              if (refused) throw new ImportRowRefused(`${refused} — re-import skipped`);
               await tx.invoice.update({
                 where: { id: prior.id },
                 data: { status, dueDate, paidAt },

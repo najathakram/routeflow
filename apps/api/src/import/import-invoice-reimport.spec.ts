@@ -147,6 +147,28 @@ describe("#2468 invoice re-import never resurrects a VOID / WRITTEN_OFF invoice 
       expect(writesOf("payment")).toHaveLength(0);
     });
 
+    // #2478: an already-VOID / WRITTEN_OFF invoice re-imported with the SAME status and dates would
+    // change nothing, so every run of the same file is a silent no-op skip, never a row error.
+    it.each([
+      [InvoiceStatus.VOID, "Void"],
+      [InvoiceStatus.WRITTEN_OFF, "Written Off"],
+    ])(
+      "#2478: a %s prior re-imported unchanged is a silent skip — no error, no write",
+      async (st, csvStatus) => {
+        prisma.invoice.findFirst.mockResolvedValue(prior(st));
+        const r = await service.importInvoices(Buffer.from(numberless(csvStatus)), "user-1");
+        expect(r.errors).toEqual([]);
+        expect({ updated: r.updated, skipped: r.skipped, imported: r.imported }).toEqual({
+          updated: 0,
+          skipped: 1,
+          imported: 0,
+        });
+        expect(writesOf("invoiceUpdate")).toHaveLength(0);
+        expect(writesOf("payment")).toHaveLength(0);
+        expect(writesOf("invoiceCreate")).toHaveLength(0);
+      },
+    );
+
     it("control: a SENT prior still syncs to PAID with one synthetic payment, in one tx", async () => {
       prisma.invoice.findFirst.mockResolvedValue(prior(InvoiceStatus.SENT));
       const r = await service.importInvoices(Buffer.from(numberless()), "user-1");
@@ -174,6 +196,33 @@ describe("#2468 invoice re-import never resurrects a VOID / WRITTEN_OFF invoice 
         expect(writesOf("invoiceUpdate")).toHaveLength(0);
       },
     );
+
+    it.each([
+      [InvoiceStatus.VOID, "Void"],
+      [InvoiceStatus.WRITTEN_OFF, "Written Off"],
+    ])(
+      "#2478: an existing %s invoice re-imported unchanged is a silent skip, every run",
+      async (st, csvStatus) => {
+        prisma.invoice.findFirst.mockResolvedValue(prior(st));
+        for (let run = 0; run < 2; run++) {
+          const r = await service.importInvoices(Buffer.from(numbered(csvStatus)), "user-1");
+          expect(r.errors).toEqual([]);
+          expect(r.skipped).toBe(1);
+          expect(r.updated).toBe(0);
+        }
+        expect(writesOf("invoiceUpdate")).toHaveLength(0);
+      },
+    );
+
+    it("#2478: a VOID invoice whose re-import WOULD change a field (its due date) is still refused", async () => {
+      prisma.invoice.findFirst.mockResolvedValue({
+        ...prior(InvoiceStatus.VOID),
+        dueDate: new Date("2026-01-15T00:00:00Z"),
+      });
+      const r = await service.importInvoices(Buffer.from(numbered("Void")), "user-1");
+      expect(r.errors).toEqual([expect.stringContaining("invoice is voided")]);
+      expect(writesOf("invoiceUpdate")).toHaveLength(0);
+    });
 
     it("control: a SENT invoice still syncs its status, now under the row lock (inside a tx)", async () => {
       prisma.invoice.findFirst.mockResolvedValue(prior(InvoiceStatus.SENT));
