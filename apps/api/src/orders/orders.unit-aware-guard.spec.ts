@@ -315,6 +315,26 @@ describe("OrdersService — units_v1 fail-closed guard on rewrite paths", () => 
       expect(invoicesService.revertLinkedInvoicesForOrderEdit).not.toHaveBeenCalled();
     });
 
+    it.each([
+      ["SUPER_ADMIN", { ...operatorPayload, role: "SUPER_ADMIN" }],
+      ["a missing user", undefined],
+    ])(
+      "Opus delta (0bebefad): %s editing a CANCELLED Case line is refused BEFORE any invoice/mirror write",
+      async (_who, user) => {
+        prisma.order.findUnique.mockResolvedValue(unitAwareOrder({ status: "CANCELLED" }));
+        const err = await service
+          .updateOrderItems(
+            "ord-1",
+            { replaceAll: false, items: [{ id: "li-case", qty: 3 }] } as never,
+            user as never,
+          )
+          .catch((e) => e);
+        expect(err).toBeInstanceOf(ConflictException);
+        expect(err.getResponse()).toMatchObject({ code: "UNIT_AWARE_LINE" });
+        expect(invoicesService.revertLinkedInvoicesForOrderEdit).not.toHaveBeenCalled();
+      },
+    );
+
     it("a CANCELLED unit-aware line does not trip the guard (the edit proceeds past it)", async () => {
       prisma.order.findUnique.mockResolvedValue(unitAwareOrder({ status: "CANCELLED" }));
       const err = await service

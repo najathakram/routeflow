@@ -55,13 +55,14 @@ export async function prepareUnitEditContext(
     tenantId: self.prisma.getTenantId(),
     hasFlag: (t, f) => self.entitlements.hasFlag(t, f),
   });
-  // SA-422b(b): for a NON-staff caller, live lines only — planCancelledLines already refused any
-  // edit of a CANCELLED line's id. STAFF keep every line (Opus delta item 6): the lock-time map
-  // (heldById) keeps cancelled rows too, so dropping them here let a staff edit of a cancelled Case
-  // line pass this pre-lock check, commit the linked-invoice revert, and only then 409 in the tx.
-  const isStaff = user?.role === "OPERATOR" || user?.role === "TENANT_ADMIN";
+  // SA-422b(b): drop CANCELLED lines ONLY for the roles planCancelledLines refuses (CUSTOMER,
+  // DRIVER) — it has already answered their edits of a cancelled id. EVERY other role (staff,
+  // SUPER_ADMIN) and a missing principal keep every line (Opus delta items 6 + follow-up): the
+  // lock-time map (heldById) keeps cancelled rows too, so dropping them here let an edit of a
+  // cancelled Case line pass this pre-lock check, commit the linked-invoice revert, then 409.
+  const refusedByPlan = user?.role === "CUSTOMER" || user?.role === "DRIVER";
   const existingById = new Map<string, LineLike>(
-    (isStaff ? order.lineItems : liveLines(order.lineItems)).map((li) => [li.id, li]),
+    (refusedByPlan ? liveLines(order.lineItems) : order.lineItems).map((li) => [li.id, li]),
   );
   // Nothing to resolve (the common case — no item names a unit, no existing line is one) reads
   // NOTHING new: a plain pack-only edit stays byte-identical to pre-A1, no extra query at all.
