@@ -69,6 +69,10 @@ import {
   IDEMPOTENCY_REPLAY_NEEDS_RECONCILE,
   shouldSkipInPlaceResync,
   findOrderIdByKeyCheckingReturn as findOrderIdByKey,
+  insertMergeIdempotencyKey,
+  loadReplayCandidateByKey,
+  stampOrderIdempotencyKey,
+  type IdempotencyLookupDeps,
 } from "./merge-idempotency";
 import { BUYER_EDIT_CLOSED_STATUSES, computeEditWindow } from "./edit-window";
 import { cancelBlockedMessage, cancelImpact, lockOrderForCancel } from "./order-cancel-impact";
@@ -102,6 +106,7 @@ import { redactUpsellForCustomer } from "../common/upsell-redaction";
 import { currentTaxRate } from "../common/tax-rate";
 import { NotificationsService } from "../notifications/notifications.service";
 import { InvoicesService } from "../invoices/invoices.service";
+import { dueStamp } from "../invoices/invoice-due-dates";
 import {
   decrementStockForSale,
   restoreStockForReopen,
@@ -1315,114 +1320,28 @@ export class OrdersService implements OnApplicationBootstrap {
     requestHash?: string,
     returnKey?: string,
   ): Promise<{ orderId: string; verified: boolean } | null> {
-    const deps = { prisma: this.prisma, logger: this.logger };
-    return findOrderIdByKey(deps, idempotencyKey, customerId, requestHash, returnKey);
+    return findOrderIdByKey(this.idemDeps(), idempotencyKey, customerId, requestHash, returnKey);
   }
 
-  /**
-   * B215: `create()`'s replay candidate for `idempotencyKey`, loaded with the include its
-   * caller's ownership + cart checks read.
-   *
-   * Consults the OrderIdempotencyKey TABLE first and the Order COLUMN only as a fallback: a
-   * keyed request that reached the merge branch has its key in the table alone (the fold writes
-   * it there), and such a request CAN fall through to `create()` — the merge target vanishing
-   * before the advisory lock is the live path — so a column-only lookup would miss the replay
-   * and mint a duplicate order.
-   *
-   * B215/R4 (round 2): the CALLER'S OWN row wins. Lookup order is (1) a key-TABLE row on an
-   * order belonging to `customerId`, (2) this customer's key-stamped Order COLUMN, (3) only then
-   * the tenant-wide table row — which the caller's ownership gate still turns into a 409. Without
-   * step 1/2 a key-table row belonging to ANOTHER customer was fetched first and 409'd a caller
-   * whose own column-stamped order was sitting right there (the same D3 ordering bug already
-   * fixed in `findOrderIdByIdempotencyKey`).
-   */
+  /** B215/F30: replay-key lookup + stamping live in merge-idempotency.ts (size ratchet). */
   async findReplayCandidateByKey(idempotencyKey: string, customerId: string) {
-    const include = {
-      customer: { select: { id: true, businessName: true } },
-      lineItems: { include: { product: { select: { id: true, name: true, unit: true } } } },
-    };
-    const load = (where: Record<string, unknown>) =>
-      this.prisma.forTenant().order.findFirst({ where, include });
-    // (1) a key-table row on an order that is THIS customer's.
-    const owned = await this.prisma.forTenant().orderIdempotencyKey.findFirst({
-      where: { key: idempotencyKey, order: { customerId } },
-      select: { orderId: true },
-    });
-    if (owned) return load({ id: owned.orderId });
-    // (2) this customer's own key-stamped Order column.
-    const ownColumn = await load({ idempotencyKey, customerId });
-    if (ownColumn) return ownColumn;
-    // (3) the tenant-wide key-table row — the caller's ownership gate turns this into a 409.
-    const keyed = await this.prisma
-      .forTenant()
-      .orderIdempotencyKey.findFirst({ where: { key: idempotencyKey }, select: { orderId: true } });
-    // (4) and finally the tenant-wide column, which is likewise gated by ownership. Unchanged
-    // behaviour for a key stamped on another customer's order: found, then refused.
-    return load(keyed ? { id: keyed.orderId } : { idempotencyKey });
+    return loadReplayCandidateByKey(this.idemDeps(), idempotencyKey, customerId);
   }
 
-  /**
-   * F30/R8 (B196): stamp the replay key onto the order a staff merge landed on,
-   * so a re-delivery of that same request replays instead of folding the same
-   * items in again.
-   *
-   * An order holds at most one key, so a merge overwrites whatever key created
-   * the order. That is deliberate: replays arrive within seconds/minutes of the
-   * request they duplicate, so the MOST RECENT operation on the order is the one
-   * whose replay window is still open. A concurrent claim from another API
-   * replica loses the unique-constraint race (P2002) — the merge it raced has
-   * already been written, so swallow it rather than fail a completed write.
-   */
   async recordIdempotencyKey(orderId: string, idempotencyKey: string): Promise<void> {
-    try {
-      // First key wins (R1): an order can absorb several queued requests (auto-
-      // merge waves); the EARLIEST key is the one a stuck client will retry
-      // with, so never let a later wave clobber it — the later request's own
-      // replay is answered by content comparison against the same order anyway,
-      // for `create()`; the merge path's replay is a bare key lookup, so a key
-      // that was already set leaves that fold unguarded (campaign candidate).
-      await this.prisma.forTenant().order.updateMany({
-        where: { id: orderId, idempotencyKey: null },
-        data: { idempotencyKey },
-      });
-    } catch (e: any) {
-      if (e?.code !== "P2002") throw e;
-    }
+    return stampOrderIdempotencyKey(this.idemDeps(), orderId, idempotencyKey);
   }
 
-  /**
-   * B215: record a staff merge's Idempotency-Key in OrderIdempotencyKey through the FOLD's own
-   * transaction client `tx`, so the key and the fold commit — or roll back — together. Called
-   * only from updateOrderItems' transaction callback. A P2002 means the key already belongs to
-   * another request (every same-customer retry is answered by the replay pre-check before the
-   * fold), so it aborts the fold with a 409: swallowing an error inside a Postgres transaction
-   * would leave the transaction aborted anyway. Uses only this.prisma (the DB lane builds this
-   * service without DI).
-   */
   async recordMergeIdempotencyKey(
     tx: any,
     orderId: string,
     idem: { key: string; responseHash: string },
   ): Promise<void> {
-    const tenantId = this.prisma.getTenantId();
-    if (!tenantId) {
-      this.logger.warn(`idempotency key refused: no tenant scope key=${idem.key}`);
-      throw new ForbiddenException("Idempotency-Key requires a tenant-scoped session");
-    }
-    try {
-      await tx.orderIdempotencyKey.create({
-        data: { tenantId, key: idem.key, orderId, responseHash: idem.responseHash },
-      });
-    } catch (e: any) {
-      if (e?.code === "P2002") {
-        this.logger.warn(
-          `idempotency key already held by another order: fold rolled back ` +
-            `tenant=${tenantId} order=${orderId} key=${idem.key}`,
-        );
-        throw new ConflictException("Idempotency-Key already used for a different order");
-      }
-      throw e;
-    }
+    return insertMergeIdempotencyKey(this.idemDeps(), tx, orderId, idem);
+  }
+
+  private idemDeps(): IdempotencyLookupDeps {
+    return { prisma: this.prisma, logger: this.logger };
   }
 
   async create(
@@ -2251,6 +2170,10 @@ export class OrdersService implements OnApplicationBootstrap {
    * existing open order.
    */
   async createSale(dto: CreateSaleDto, user: JwtPayload) {
+    // #2493: refuse a due date that names no real day (the DTO's @IsDateString passes
+    // `2026-02-31`) BEFORE the order is created and stock decremented; the invoice step would
+    // otherwise 400 and leave a DELIVERED order with no invoice.
+    dueStamp(dto.dueDate, "dueDate");
     const orderDate = parseOrderDate(dto.orderDate, user.role);
 
     // Delivery-date picker (owner 2026-08-25): `deliveredOn` REPLACES
@@ -2589,7 +2512,6 @@ export class OrdersService implements OnApplicationBootstrap {
         // are ONE decision, not two: `reopenOrder` re-decrements exactly the lines
         // this cancel marked, so marking a line we did not credit would make reopen
         // take stock the order never held (understating it by the full quantity).
-        const cancelReturnsStock = order.status !== OrderStatus.DRAFT;
         // #2255 / SA-404d: re-run on a write conflict (SA-269). The CANCELLED status write sits in this
         // locked tx, so a refusal under the lock leaves the order exactly as it was — never
         // cancelled-but-not-unwound — and voidInvoiceInTx's claim keeps a re-run from voiding twice.
@@ -2597,6 +2519,13 @@ export class OrdersService implements OnApplicationBootstrap {
           this.prisma.tenantTransaction(
             async (tx) => {
               await lockOrderForCancel(tx, id);
+              // #2472 (2): decided from the status UNDER the lock, never the unlocked pre-read.
+              const lockedStatus = (await tx.order.findUnique({
+                where: { id },
+                select: { status: true },
+              }))!.status;
+              const cancelReturnsStock = lockedStatus !== OrderStatus.DRAFT;
+              const lockedOrder = { ...order, status: lockedStatus };
               // SA-404f F2: compare-and-set on the cancellable set the pre-check used — a retry after
               // a 40001 caused by a concurrent DELIVERED must never cancel a delivered order.
               const cancellable = Object.keys(ORDER_STATUS_TRANSITIONS).filter((k) =>
@@ -2618,10 +2547,9 @@ export class OrdersService implements OnApplicationBootstrap {
                   where: { orderId: id, status: { not: "CANCELLED" } },
                   select: STOCK_SETTLE_SELECT,
                 });
-                // Return the creation-time decrement, clamped to the undelivered
-                // remainder (settleStockForEdit with an empty final set). `order` here
-                // is the PRE-cancel record (status not yet CANCELLED in memory).
-                await this.settleStockForEdit(tx, order, activeItems, [], user, {
+                // Return the creation-time decrement, clamped to the undelivered remainder (empty final
+                // set), AS the status read under the lock (#2472: a stale DRAFT pre-read would no-op).
+                await this.settleStockForEdit(tx, lockedOrder, activeItems, [], user, {
                   notes: "CANCEL",
                 });
               }
