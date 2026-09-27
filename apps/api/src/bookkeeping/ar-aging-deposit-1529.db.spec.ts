@@ -101,6 +101,9 @@ describeDb("#1529 AR aging surfaces overdue deposits (real Postgres)", () => {
   });
 
   afterAll(async () => {
+    await prisma.invoicePayment
+      .deleteMany({ where: { invoice: { tenantId: TENANT } } })
+      .catch(() => undefined);
     await prisma.invoice.deleteMany({ where: { tenantId: TENANT } }).catch(() => undefined);
     await prisma.customer.deleteMany({ where: { tenantId: TENANT } }).catch(() => undefined);
     await prisma.user.deleteMany({ where: { tenantId: TENANT } }).catch(() => undefined);
@@ -127,5 +130,65 @@ describeDb("#1529 AR aging surfaces overdue deposits (real Postgres)", () => {
       ["current", "days1_30", "days31_60", "days61_90", "days90plus", "total"].sort(),
     );
     expect(result.totals.current).toBe(1600);
+  });
+
+  // SA-517 item 4 (the lead's fold on #2603): the deposit check nets CONFIRMED payments only — the
+  // same `payments: { where: CONFIRMED_PAYMENT }` the balance uses. Each case seeds its own invoice
+  // (a 50% deposit due 10 days ago on a 1000 invoice due in 30) and reads only its own row.
+  const depositInvoice = async (
+    suffix: string,
+    payment: { amount: number; status: "PAID" | "DRAFT" },
+  ) =>
+    prisma.invoice.create({
+      data: {
+        customerId: CUSTOMER,
+        tenantId: TENANT,
+        status: "SENT",
+        invoiceNumber: `INV-${sfx}-${suffix}`,
+        subtotal: 1000,
+        total: 1000,
+        dueDate: dayStamp(30),
+        depositPercent: 50,
+        depositDueDate: dayStamp(-10),
+        payments: {
+          create: {
+            amount: payment.amount,
+            method: "CASH",
+            status: payment.status,
+            tenantId: TENANT,
+          },
+        },
+      },
+    });
+  const aging = async () =>
+    (await tenantCtx.run(TENANT, () => service.getArAgingInvoices())) as any;
+  const rowOf = (result: any, invoiceNumber: string) =>
+    result.buckets.current.find((e: any) => e.invoiceNumber === invoiceNumber);
+
+  it("#1529: a CONFIRMED payment at or above the deposit ⇒ NOT overdue, and the row stays out of the summary", async () => {
+    const before = (await aging()).depositOverdue;
+    await depositInvoice("paid", { amount: 600, status: "PAID" });
+    const after = await aging();
+    expect(rowOf(after, `INV-${sfx}-paid`)).toMatchObject({
+      balance: 400,
+      depositAmount: 500,
+      depositOverdue: false,
+    });
+    expect(after.depositOverdue).toEqual(before); // not counted, adds nothing outstanding
+  });
+
+  it("#1529: a DRAFT payment is ignored in totalPaid — the deposit stays overdue and the balance whole", async () => {
+    const before = (await aging()).depositOverdue;
+    await depositInvoice("draft", { amount: 600, status: "DRAFT" });
+    const after = await aging();
+    expect(rowOf(after, `INV-${sfx}-draft`)).toMatchObject({
+      balance: 1000,
+      depositAmount: 500,
+      depositOverdue: true,
+    });
+    expect(after.depositOverdue).toEqual({
+      count: before.count + 1,
+      outstanding: before.outstanding + 500, // the whole deposit: the DRAFT 600 nets nothing
+    });
   });
 });
