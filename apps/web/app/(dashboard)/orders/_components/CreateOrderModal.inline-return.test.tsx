@@ -192,6 +192,13 @@ describe("CreateOrderModal — inline return payload on save (#2406)", () => {
     expect(createOrderMutate).toHaveBeenCalledTimes(2);
     const secondKey = createOrderMutate.mock.calls[1][0].inlineReturn.returnKey;
     expect(secondKey).toBe(firstKey);
+    // SA-484a: the create's Idempotency-Key rides with it — present, distinct, and the SAME on
+    // the retry, so the server replays the attempt instead of minting a second order + return.
+    const [idem1, idem2] = [0, 1].map((i) => createOrderMutate.mock.calls[i][0].idempotencyKey);
+    expect(typeof idem1).toBe("string");
+    expect(idem1).not.toBe(firstKey);
+    expect(idem2).toBe(idem1);
+    expect(createOrderMutate.mock.calls[0][0].inlineReturn).not.toHaveProperty("idempotencyKey");
   });
 
   it("after a 4xx refusal, the next submit mints a NEW returnKey", async () => {
@@ -219,5 +226,9 @@ describe("CreateOrderModal — inline return payload on save (#2406)", () => {
     fireEvent.click(screen.getByRole("button", { name: /save as draft/i }));
     const secondKey = createOrderMutate.mock.calls[1][0].inlineReturn.returnKey;
     expect(secondKey).not.toBe(firstKey);
+    // SA-484a: a new attempt mints BOTH keys fresh.
+    expect(createOrderMutate.mock.calls[1][0].idempotencyKey).not.toBe(
+      createOrderMutate.mock.calls[0][0].idempotencyKey,
+    );
   });
 });

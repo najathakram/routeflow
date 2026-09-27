@@ -32,6 +32,9 @@ export interface OrderInlineReturnSave {
     customerId: string,
     orderId: string,
   ): InlineReturnLinesRequest | "missing-reason" | undefined;
+  /** SA-484a: the create's `Idempotency-Key`, minted TOGETHER with the returnKey in `build` and
+   *  cleared with it — so a retry of the same attempt resends both, a new attempt mints both. */
+  idempotencyKey(): string;
   /** Call from the mutation's onSuccess once the save actually went through. */
   onSuccess(): void;
   /** Call from the mutation's onError. `alreadyHandled` = some OTHER flow (guardError's
@@ -52,6 +55,7 @@ export function useOrderInlineReturnSave(
   onMissingReason?: () => void,
 ): OrderInlineReturnSave {
   const keyRef = React.useRef("");
+  const idemRef = React.useRef("");
   const [refusalMessage, setRefusalMessage] = React.useState("");
 
   const api: OrderInlineReturnSave = {
@@ -72,7 +76,10 @@ export function useOrderInlineReturnSave(
       const draft = returnsRef.current?.getDraft() ?? null;
       if (!draft) return undefined;
       if (!draft.captureReason) return "missing-reason";
-      if (!keyRef.current) keyRef.current = mintReturnKey();
+      if (!keyRef.current) {
+        keyRef.current = mintReturnKey();
+        idemRef.current = mintReturnKey();
+      }
       const full = buildCaptureRequest({
         customerId,
         orderId,
@@ -83,8 +90,12 @@ export function useOrderInlineReturnSave(
       const { customerId: _c, orderId: _o, ...rest } = full;
       return rest;
     },
+    idempotencyKey() {
+      return idemRef.current;
+    },
     onSuccess() {
       keyRef.current = "";
+      idemRef.current = "";
       setRefusalMessage("");
       returnsRef.current?.reset();
     },
@@ -93,6 +104,7 @@ export function useOrderInlineReturnSave(
       const status = (err as { response?: { status?: number } } | undefined)?.response?.status;
       if (status != null && status >= 400 && status < 500) {
         keyRef.current = "";
+        idemRef.current = "";
         setRefusalMessage(extractRefusalMessage(err));
       }
     },

@@ -283,9 +283,19 @@ export function useCreateOrder() {
        *  `orderId` are DERIVED server-side from the order being created, never sent here (see
        *  CreateOrderDto.inlineReturn, apps/api/src/orders/orders.controller.ts). */
       inlineReturn?: InlineReturnLinesRequest;
+      /** SA-484a: the B215 replay key, sent as the `Idempotency-Key` HEADER (never in the body),
+       *  paired with `inlineReturn.returnKey` — one per save attempt, reused on its retries. */
+      idempotencyKey?: string;
     }
   >({
-    mutationFn: (dto) => apiClient.post("/orders", dto).then((r) => r.data),
+    mutationFn: ({ idempotencyKey, ...dto }) =>
+      apiClient
+        .post(
+          "/orders",
+          dto,
+          idempotencyKey ? { headers: { "Idempotency-Key": idempotencyKey } } : undefined,
+        )
+        .then((r) => r.data),
     onSuccess: (_data, variables) => {
       qc.invalidateQueries({ queryKey: ["orders"] });
       // #2406: this create carried an inline return — refresh any "Returns on this order"

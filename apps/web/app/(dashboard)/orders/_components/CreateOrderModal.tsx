@@ -1169,7 +1169,8 @@ export function CreateOrderModal({
         // Bill-now (createSale) has no path through this modal today — only
         // the create-order payload needs threading here.
         ...(appliedCredits.length ? { appliedCreditNotes: appliedCredits } : {}),
-        ...(inlineReturn ? { inlineReturn } : {}),
+        // SA-484a: the create's Idempotency-Key HEADER rides with the returnKey (same lifecycle).
+        ...(inlineReturn ? { inlineReturn, idempotencyKey: returnSave.idempotencyKey() } : {}),
       } as any,
       {
         onSuccess: (created: any) => {
