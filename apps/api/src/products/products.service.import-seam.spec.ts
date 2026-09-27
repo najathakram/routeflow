@@ -22,7 +22,7 @@ import { createMockPrisma } from "../testing/prisma-mock";
 
 const UPGRADE = {
   planKey: "PRO",
-  planMonthlyPrice: 99,
+  planMonthlyPrice: "99",
   addonSku: null,
   addonMonthlyPrice: null,
 };
