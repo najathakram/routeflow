@@ -1,3 +1,4 @@
+import { priceOverrideOf } from "./price-override";
 import { Injectable, Logger } from "@nestjs/common";
 import { CronExpression } from "@nestjs/schedule";
 import { LeaderCron } from "../common/cron-lock";
@@ -219,6 +220,8 @@ export class BillingCronService {
         tenantId: true,
         planKey: true,
         planVersionId: true,
+        // #2223 / SA-444c: the negotiated fee a downgrade keeps.
+        priceOverrideMonthly: true,
         downgradeToPlanKey: true,
         downgradeEffectiveAt: true,
         retainedUserIds: true,
@@ -259,9 +262,15 @@ export class BillingCronService {
           }
           targetVersion = published;
         }
-        const amountDelta = roundMoney(
-          this.planMonthly(targetVersion, target) - this.planMonthly(fromVersion, s.planKey),
-        );
+        // #2223 / SA-444c (i): an override row keeps its fee — snapshot = the fee, Δ0; a catalog row
+        // keeps the catalog delta below.
+        const override = priceOverrideOf(s);
+        const amountDelta =
+          override != null
+            ? 0
+            : roundMoney(
+                this.planMonthly(targetVersion, target) - this.planMonthly(fromVersion, s.planKey),
+              );
         const seatCap = targetDef.seatsIncluded ?? null;
 
         const tenantPlan = (s as { tenant?: { plan?: string } }).tenant?.plan;
@@ -295,7 +304,7 @@ export class BillingCronService {
               // bad row never stops the sweep from applying every other tenant's downgrade.
               currentPlan: planKeyToEnum(target),
               planVersionId: targetVersion.id,
-              basePriceSnapshot: targetDef.monthlyPrice ?? null,
+              basePriceSnapshot: override ?? targetDef.monthlyPrice ?? null,
               downgradeToPlanKey: null,
               downgradeEffectiveAt: null,
               retainedUserIds: [],
