@@ -223,6 +223,16 @@ describeDb("#2409 a SKIPPED stop refuses a replayed completion — real Postgres
     expect(await prisma.payment.count({ where: { tenantId: s.tenantId } })).toBe(0);
   }
 
+  /** The only two ways a skip may lose to a completion (#2415 CAS code, or the B71 pre-read 409). */
+  function isSkipLostToCompletion(err: unknown): boolean {
+    const response = (err as { getResponse?: () => unknown })?.getResponse?.();
+    if ((response as { code?: string } | undefined)?.code === "STOP_ALREADY_COMPLETED") return true;
+    return (
+      (err as Error)?.message ===
+      "This stop is completed. Reopen it instead — that reverses the delivery correctly."
+    );
+  }
+
   async function setStopStatus(stopId: string, status: "PENDING" | "SKIPPED") {
     await prisma.routeRunStop.update({ where: { id: stopId }, data: { status } });
   }
@@ -290,11 +300,18 @@ describeDb("#2409 a SKIPPED stop refuses a replayed completion — real Postgres
       expect(complete.status === "fulfilled" && skip.status === "fulfilled").toBe(false);
       if (after?.status === "COMPLETED") {
         expect(complete.status).toBe("fulfilled");
-        expect(skip.status).toBe("rejected"); // STOP_ALREADY_COMPLETED, or the pre-read's 409
+        // The skip loses in exactly one of two SPECIFIC ways (never "any rejection"): at the CAS
+        // (#2415, 409 STOP_ALREADY_COMPLETED) or at its pre-read, which already saw COMPLETED (the
+        // existing B71 409). The deterministic latch pin below pins the CAS path alone.
+        expect(skip.status).toBe("rejected");
+        expect(isSkipLostToCompletion((skip as PromiseRejectedResult).reason)).toBe(true);
       } else {
         expect(after?.status).toBe("SKIPPED");
         expect(skip.status).toBe("fulfilled");
-        expect(complete.status).toBe("rejected"); // STOP_SKIPPED
+        expect(complete.status).toBe("rejected");
+        expect((complete as PromiseRejectedResult).reason).toMatchObject({
+          response: expect.objectContaining({ code: "STOP_SKIPPED" }),
+        });
         await expectNothingWritten(s);
       }
     }
