@@ -169,6 +169,49 @@ describe("customer deletes never destroy a money record (#2587, SA-516)", () => 
     });
   });
 
+  // REG-B189 inverse (SA-516c(1)): the three REG-B189 describes pinned that each purge site
+  // cleared the order↔credit-note links before DELETING the customer's credit notes. SA-516 forbids
+  // deleting them, so each site now refuses: a 409 naming the customer, the note and its links kept.
+  describe("REG-B189 inverse — a credit note blocks the delete and is kept (SA-516c)", () => {
+    const cn = { customerId: "cust-1", amount: 10, amountUsed: 10 };
+    const kept = () => {
+      expect(prisma.creditNote.deleteMany).not.toHaveBeenCalled();
+      expect(prisma.orderCreditNote.deleteMany).not.toHaveBeenCalled();
+    };
+
+    it("REG-B189 deleteAllCustomers: 409 naming the customer, credit note and links kept", async () => {
+      seedBulk();
+      prisma.creditNote.findMany.mockResolvedValue([cn] as any);
+      const caught: any = await service.deleteAllCustomers().catch((e) => e);
+      expect(caught).toBeInstanceOf(ConflictException);
+      expect(caught.message).toContain("cust-1: 1 record(s)");
+      kept();
+    });
+
+    it("REG-B189 deleteImportedCustomers: 409 naming the customer, credit note and links kept", async () => {
+      seedBulk();
+      prisma.creditNote.findMany.mockResolvedValue([cn] as any);
+      const caught: any = await service.deleteImportedCustomers().catch((e) => e);
+      expect(caught).toBeInstanceOf(ConflictException);
+      expect(caught.message).toContain("cust-1: 1 record(s)");
+      kept();
+    });
+
+    it("REG-B189 deleteCustomer (hard delete): 409, credit note and links kept", async () => {
+      prisma.customer.findUnique.mockResolvedValue({
+        id: "cust-1",
+        userId: "user-1",
+        deletedAt: null,
+        user: { status: "ACTIVE", username: "shop" },
+      } as any);
+      prisma.creditNote.findMany.mockResolvedValue([cn] as any);
+      const caught: any = await service.deleteCustomer("cust-1").catch((e) => e);
+      expect(caught).toBeInstanceOf(ConflictException);
+      expect(caught.message).toContain("credit notes, payments or advance payments");
+      kept();
+    });
+  });
+
   describe("deleteCustomer (single, SA-516a)", () => {
     beforeEach(() => {
       prisma.customer.findUnique.mockResolvedValue({
