@@ -177,6 +177,45 @@ describe("CreditNotesService — SA-436 PR-2 void-with-reversal", () => {
       ]);
     });
 
+    it("SA-498a: an order holding only an intent (no payment) joins the sorted Order lock set", async () => {
+      armNote();
+      armRestore();
+      prisma.invoicePayment.findMany.mockResolvedValue(livePayments);
+      // o-0 and o-3 carry this note's intent rows but no payment of it; o-2 has both.
+      prisma.orderCreditNote.findMany.mockResolvedValue([
+        { orderId: "o-3" },
+        { orderId: "o-0" },
+        { orderId: "o-2" },
+      ]);
+      const exec = jest.fn().mockResolvedValue(0);
+      (prisma.tenantTransaction as jest.Mock).mockImplementation((fn: any) =>
+        fn({ ...prisma, $executeRaw: exec }),
+      );
+
+      await service.voidWithReversal("cn-a", "user-7");
+
+      expect(prisma.orderCreditNote.findMany).toHaveBeenCalledWith({
+        where: { creditNoteId: "cn-a" },
+        select: { orderId: true },
+      });
+      const locked = exec.mock.calls.map(
+        (c: any[]) => `${c[0].join("?").match(/FROM "(\w+)"/)[1]}:${c[1]}`,
+      );
+      expect(locked.slice(0, 7)).toEqual([
+        "Order:o-0",
+        "Order:o-1",
+        "Order:o-2",
+        "Order:o-3",
+        "Invoice:inv-1",
+        "Invoice:inv-2",
+        "CreditNote:cn-a",
+      ]);
+      // ...and the rows it then deletes are exactly those intents, under those locks.
+      expect(prisma.orderCreditNote.deleteMany).toHaveBeenCalledWith({
+        where: { creditNoteId: "cn-a" },
+      });
+    });
+
     it("restores every application, blocks each pair, drops the intents, voids, un-reverses and audits", async () => {
       armNote();
       armRestore();

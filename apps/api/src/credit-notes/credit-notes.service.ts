@@ -1103,8 +1103,19 @@ export class CreditNotesService {
       this.prisma.tenantTransaction(
         async (tx: any) => {
           const seen: any[] = await this.liveCreditPayments(tx, id);
+          // SA-498a: the lock set is COMPLETE, per SA-214: every order this void writes. That is the
+          // orders of the invoices it reopens, UNION the orders whose OrderCreditNote intent rows it
+          // deletes below (an intent can sit on an order this note never paid anything on).
+          const intentOrders: Array<{ orderId: string }> =
+            (await tx.orderCreditNote.findMany({
+              where: { creditNoteId: id },
+              select: { orderId: true },
+            })) ?? [];
           const orderIds = [
-            ...new Set(seen.map((p) => p.invoice?.orderId).filter(Boolean) as string[]),
+            ...new Set([
+              ...(seen.map((p) => p.invoice?.orderId).filter(Boolean) as string[]),
+              ...intentOrders.map((r) => r.orderId),
+            ]),
           ].sort();
           const invoiceIds = [...new Set(seen.map((p) => p.invoiceId as string))].sort();
           for (const orderId of orderIds) {
