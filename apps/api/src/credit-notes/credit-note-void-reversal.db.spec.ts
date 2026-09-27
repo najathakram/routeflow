@@ -28,7 +28,7 @@
  * tenants this run created, in FK order. No client identifiers anywhere.
  */
 
-jest.mock("./invoice-pdf.service", () => ({
+jest.mock("../invoices/invoice-pdf.service", () => ({
   InvoicePdfService: jest.fn().mockImplementation(() => ({
     getOrGenerate: jest.fn().mockResolvedValue("https://example.com/invoice.pdf"),
   })),
@@ -134,7 +134,10 @@ describeDb("SA-436 PR-2 credit-note void-with-reversal (#2402)", () => {
         },
         {
           provide: MessagingService,
-          useValue: { notify: jest.fn().mockResolvedValue([]), notifyEvent: jest.fn() },
+          useValue: {
+            notify: jest.fn().mockResolvedValue([]),
+            notifyEvent: jest.fn().mockResolvedValue(undefined),
+          },
         },
         {
           provide: StorageService,
