@@ -280,10 +280,19 @@ describe("RoutesService → RouteRealtime wiring (#2095)", () => {
       arrivedAt: null,
     });
     prisma.routeRun.findFirst.mockResolvedValue({ driverId: "drv-1", status: "IN_PROGRESS" });
-    prisma.routeRunStop.update.mockImplementation(async () => {
+    // #2415: the write is a compare-and-swap (updateMany), then the row is read back.
+    prisma.routeRunStop.updateMany.mockImplementation(async () => {
       events.push("write");
-      return { id: "stop-2", status: "SKIPPED" };
+      return { count: 1 };
     });
+    prisma.routeRunStop.findFirst
+      .mockResolvedValueOnce({
+        id: "stop-2",
+        routeRunId: "run-1",
+        status: "PENDING",
+        arrivedAt: null,
+      })
+      .mockResolvedValueOnce({ id: "stop-2", status: "SKIPPED" });
 
     const result = await service.updateStopStatus(
       "run-1",

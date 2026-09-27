@@ -12,6 +12,7 @@ import {
   assertDeliveriesFitStop,
   assertStopNotSkipped,
   claimStopCompletion,
+  claimStopStatusChange,
 } from "./delivery-lines.util";
 import { PrismaService } from "../prisma/prisma.service";
 import { JwtPayload } from "../auth/jwt-payload.interface";
@@ -56,14 +57,8 @@ import { CompleteWithPaymentDto } from "./dto/complete-with-payment.dto";
 import { SettleRunDto } from "./dto/settle-run.dto";
 import { AttachPodArtifactDto } from "./dto/attach-pod-artifact.dto";
 import { StorageService } from "../storage/storage.service";
-import { compressImage } from "../storage/compress.util";
-import {
-  isPodStorageKey,
-  isRenderableDataUrl,
-  parseImageDataUrl,
-  podArtifactKey,
-  type PodArtifactKind,
-} from "./pod-artifacts.util";
+import { ingestPodCapture, ingestPodDataUrl, requirePodTenantId } from "./pod-ingest";
+import { isPodStorageKey, isRenderableDataUrl, parseImageDataUrl } from "./pod-artifacts.util";
 import {
   assertRegulatedDeliverySatisfied,
   deriveStopRegulatedRequirements,
@@ -105,6 +100,10 @@ export {
 @Injectable()
 export class RoutesService {
   private readonly logger = new Logger(RoutesService.name);
+  /** #2512: the POD-ingest helpers' dependencies (routes/pod-ingest.ts). */
+  private get podDeps() {
+    return { prisma: this.prisma, storage: this.storage, logger: this.logger };
+  }
 
   constructor(
     private readonly prisma: PrismaService,
@@ -1977,9 +1976,10 @@ export class RoutesService {
     if (dto.driverNote !== undefined) updates.driverNote = dto.driverNote;
     if (dto.status === "IN_PROGRESS" && !stop.arrivedAt) updates.arrivedAt = new Date();
 
-    const updated = await this.prisma
-      .forTenant()
-      .routeRunStop.update({ where: { id: stopId }, data: updates });
+    // #2415: compare-and-swap — a completion that commits between the read above and this write
+    // must never be overwritten with SKIPPED (it would strand its delivery side effects).
+    await claimStopStatusChange(this.prisma.forTenant(), stopId, updates);
+    const updated = await this.prisma.forTenant().routeRunStop.findFirst({ where: { id: stopId } });
     await this.live.runProgress(runId);
     return updated;
   }
@@ -2033,69 +2033,6 @@ export class RoutesService {
   // (file:// URIs, the old "native-captured" sentinel) pass through
   // unchanged so not-yet-updated driver builds keep completing stops.
 
-  /** Tenant id for POD storage keys — every POD caller is a tenant-scoped request. */
-  private requireTenantId(): string {
-    const tenantId = this.prisma.getTenantId();
-    if (!tenantId) throw new ForbiddenException("Tenant context required");
-    return tenantId;
-  }
-
-  /**
-   * Rasterize + store one data-URL artifact; returns the storage key, or null
-   * when the value isn't an ingestable image data URL OR the rasterize fails —
-   * on failure the caller keeps the original data URL, which is still durable
-   * and renderable by the web client (just larger than a stored file).
-   */
-  private async ingestPodDataUrl(
-    value: string,
-    stopId: string,
-    kind: PodArtifactKind,
-    artifactId?: string,
-  ): Promise<string | null> {
-    const parsed = parseImageDataUrl(value);
-    if (!parsed) return null;
-    try {
-      const compressed = await compressImage(
-        parsed.buffer,
-        parsed.mimeType,
-        kind === "signature" ? 1000 : 1600,
-      );
-      const key = podArtifactKey(
-        this.requireTenantId(),
-        stopId,
-        kind,
-        artifactId ?? randomUUID(),
-        compressed.ext,
-      );
-      await this.storage.upload(key, compressed.buffer, compressed.mimeType);
-      return key;
-    } catch (e) {
-      this.logger.warn(
-        `POD ${kind} ingest failed for stop ${stopId}: ${(e as Error)?.message ?? e}`,
-      );
-      return null;
-    }
-  }
-
-  /** Rewrite a completion payload's data-URL artifacts to storage keys in place. */
-  private async ingestPodCapture(
-    dto: { signatureUrl?: string; podPhotoUrls?: string[] },
-    stopId: string,
-  ): Promise<void> {
-    if (dto.signatureUrl) {
-      const key = await this.ingestPodDataUrl(dto.signatureUrl, stopId, "signature");
-      if (key) dto.signatureUrl = key;
-    }
-    if (dto.podPhotoUrls?.length) {
-      const rewritten: string[] = [];
-      for (const value of dto.podPhotoUrls) {
-        const key = await this.ingestPodDataUrl(value, stopId, "photo");
-        rewritten.push(key ?? value);
-      }
-      dto.podPhotoUrls = rewritten;
-    }
-  }
-
   /**
    * Attach one POD artifact to a run stop, before OR after completion (the
    * driver app uploads photos right before firing the completion; an offline
@@ -2131,7 +2068,7 @@ export class RoutesService {
       throw new BadRequestException("dataUrl must be a data:image/... URL");
     }
 
-    const tenantId = this.requireTenantId();
+    const tenantId = requirePodTenantId(this.prisma);
     const artifactId = dto.artifactId ?? randomUUID();
     const marker = `/${dto.kind}-${artifactId}.`;
     const existing =
@@ -2160,7 +2097,7 @@ export class RoutesService {
       );
     }
 
-    const key = await this.ingestPodDataUrl(dto.dataUrl, stopId, dto.kind, artifactId);
+    const key = await ingestPodDataUrl(this.podDeps, dto.dataUrl, stopId, dto.kind, artifactId);
     if (!key) throw new BadRequestException("File is not a decodable image");
 
     await this.prisma.forTenant().routeRunStop.update({
@@ -2198,7 +2135,7 @@ export class RoutesService {
       }
     }
 
-    const tenantId = this.requireTenantId();
+    const tenantId = requirePodTenantId(this.prisma);
     const photos: { url: string }[] = [];
     let legacyPhotoCount = 0;
     for (const value of stop.podPhotoUrls ?? []) {
@@ -2259,8 +2196,6 @@ export class RoutesService {
       },
     });
     if (!stop) throw new NotFoundException("Stop not found");
-    if (stop.status === "COMPLETED") throw new BadRequestException("Stop is already completed");
-    assertStopNotSkipped(stop.status); // #2409
 
     const driver =
       user.role === UserRole.DRIVER
@@ -2272,6 +2207,10 @@ export class RoutesService {
     if (user.role === UserRole.DRIVER && (!driver || run.driverId !== driver.id)) {
       throw new ForbiddenException("You do not have access to this route run");
     }
+    // #2415: stop STATE only after the B72 ownership check, so a driver with no claim on this run
+    // can't learn whether the stop is completed or skipped.
+    if (stop.status === "COMPLETED") throw new BadRequestException("Stop is already completed");
+    assertStopNotSkipped(stop.status); // #2409
 
     // RF-019: Idempotency check (outside transaction for speed)
     if (dto.idempotencyKey) {
@@ -2282,7 +2221,7 @@ export class RoutesService {
 
     // Durable POD: rewrite data-URL artifacts to storage keys before the tx
     // (after the idempotency check so a cached replay never re-uploads).
-    await this.ingestPodCapture(dto, stopId);
+    await ingestPodCapture(this.podDeps, dto, stopId);
 
     let autoCompleted = false;
     await this.prisma.tenantTransaction(async (tx) => {
@@ -2472,8 +2411,6 @@ export class RoutesService {
       },
     });
     if (!stop) throw new NotFoundException("Stop not found");
-    if (stop.status === "COMPLETED") throw new BadRequestException("Stop is already completed");
-    assertStopNotSkipped(stop.status); // #2409
 
     const driver =
       user.role === UserRole.DRIVER
@@ -2485,6 +2422,10 @@ export class RoutesService {
     if (user.role === UserRole.DRIVER && (!driver || run.driverId !== driver.id)) {
       throw new ForbiddenException("You do not have access to this route run");
     }
+    // #2415: stop STATE only after the B72 ownership check, so a driver with no claim on this run
+    // can't learn whether the stop is completed or skipped.
+    if (stop.status === "COMPLETED") throw new BadRequestException("Stop is already completed");
+    assertStopNotSkipped(stop.status); // #2409
 
     // RF-006: reject physical-money payment with zero amount
     if (dto.payment && dto.payment.amount <= 0) {
@@ -2505,7 +2446,7 @@ export class RoutesService {
 
     // Durable POD: rewrite data-URL artifacts to storage keys before the tx
     // (after the idempotency check so a cached replay never re-uploads).
-    await this.ingestPodCapture(dto, stopId);
+    await ingestPodCapture(this.podDeps, dto, stopId);
 
     let autoCompleted = false;
     let paymentIds: string[] = [];
