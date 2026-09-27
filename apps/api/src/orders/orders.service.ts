@@ -3052,7 +3052,7 @@ export class OrdersService implements OnApplicationBootstrap {
     // a paid one throws cleanly before any mutation so money never detaches from a sent
     // document. No-op when there's no such invoice.
     const postDeliveryEdit = POST_DELIVERY_EDIT_STATUSES.includes(order.status);
-    await inlineReturn.preflightInlineReturn(inlineRet, order, user);
+    await inlineReturn.preflightInlineReturn(inlineRet, order, user, !postDeliveryEdit); // #2178
     if (!postDeliveryEdit) {
       await this.invoicesService.revertLinkedInvoicesForOrderEdit(orderId);
     }
