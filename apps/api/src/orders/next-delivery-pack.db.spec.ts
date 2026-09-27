@@ -180,6 +180,12 @@ describeDb("D-20 next-delivery pack (C8) — real Postgres", () => {
     crSvc = module.get(ChangeRequestsService);
 
     tenantId = (await raw.tenant.create({ data: { slug, name: `nextdlv ${slug}` } })).id;
+    // B562 PR-2: an at-stop approve writes a SALE row whose performedById is a User FK, so the
+    // approver must be a real user (in this run's own qa-* tenant), not a bare JWT sub.
+    const op = await raw.user.create({
+      data: { email: `op-${run}@example.test`, username: `op-${run}`, role: "OPERATOR", tenantId },
+    });
+    operatorPayload.sub = op.id;
   }, 120_000);
 
   afterAll(async () => {
@@ -192,6 +198,7 @@ describeDb("D-20 next-delivery pack (C8) — real Postgres", () => {
     await raw.routeRun.deleteMany({ where: { tenantId } });
     await raw.route.deleteMany({ where: { tenantId } });
     await raw.customer.deleteMany({ where: { tenantId } });
+    await raw.stockMovement.deleteMany({ where: { tenantId } });
     await raw.product.deleteMany({ where: { tenantId } });
     await raw.user.deleteMany({ where: { tenantId } });
     if (tenantId) await raw.tenant.deleteMany({ where: { id: tenantId } });

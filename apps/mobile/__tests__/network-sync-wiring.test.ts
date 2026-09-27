@@ -18,6 +18,9 @@ jest.mock("react", () => ({
     fn();
   },
   useRef: <T>(v: T) => ({ current: v }),
+  // #2389: the hook now imports onlineManager from @tanstack/react-query, whose module init calls
+  // React.createContext — a stub keeps that import loadable under this renderer-less mock.
+  createContext: () => ({ Provider: () => null }),
 }));
 
 let netListener: ((state: any) => void) | null = null;
