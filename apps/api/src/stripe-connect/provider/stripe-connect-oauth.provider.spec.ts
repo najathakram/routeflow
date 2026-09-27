@@ -18,9 +18,6 @@ function buildProvider() {
     get: () => ({
       secretKey: "sk_test_123",
       webhookSecret: "whsec_billing",
-      priceStarter: "",
-      priceProfessional: "",
-      priceEnterprise: "",
       connectClientId: "ca_123",
       connectWebhookSecret: "whsec_connect_test",
     }),
