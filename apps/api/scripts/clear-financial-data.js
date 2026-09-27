@@ -1,7 +1,9 @@
 #!/usr/bin/env node
 // PRODUCTION GUARD — must be first executable code
 const { productionGuard } = require("./lib/production-guard");
-productionGuard({ requireFlag: "--i-know-this-deletes-everything" });
+// This script calls the HTTP API (ROUTEFLOW_URL), not a database, so only the environment checks
+// apply here (#2206). Its API target is a separate exposure, tracked as a follow-up.
+productionGuard({ requireFlag: "--i-know-this-deletes-everything", requireDb: false });
 
 /**
  * Clear Financial Data Script

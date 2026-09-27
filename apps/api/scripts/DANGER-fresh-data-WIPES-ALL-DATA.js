@@ -1,6 +1,7 @@
-// PRODUCTION GUARD — must be first executable code
+// PRODUCTION GUARD — runs below, before the first database connection, on the URL resolved
+// from apps/api/.env / DATABASE_URL (#2206: the old top-of-file call checked a URL this script
+// never used when apps/api/.env set one).
 const { productionGuard } = require("./lib/production-guard");
-productionGuard({ requireFlag: "--i-know-this-deletes-everything" });
 
 /**
  * Fresh data population script.
@@ -69,7 +70,12 @@ function loadEnvDatabaseUrl() {
   return process.env.DATABASE_URL || "postgresql://user:pass@localhost:5432/routeflow_dev";
 }
 
-const pool = new Pool({ connectionString: loadEnvDatabaseUrl() });
+// #2206: guard the URL this script actually dials, and dial exactly what was checked.
+const target = productionGuard({
+  requireFlag: "--i-know-this-deletes-everything",
+  dbUrl: loadEnvDatabaseUrl(),
+});
+const pool = new Pool(target);
 const adapter = new PrismaPg(pool);
 const prisma = new PrismaClient({ adapter });
 
