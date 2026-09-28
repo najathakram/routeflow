@@ -92,6 +92,7 @@ function makeMailboxTable() {
       throttledUntil: null,
       lastError: null,
       lastErrorAt: null,
+      alertPendingAt: null,
       lastSentAt: null,
       connectedByUserId: null,
       createdAt: at,
@@ -286,6 +287,7 @@ function readable(row: Row, prev: Row, encryption: EncryptionService): Record<st
     throttledUntil: row.throttledUntil,
     lastError: row.lastError,
     lastErrorAt: row.lastErrorAt,
+    alertPendingAt: row.alertPendingAt, // #2113: an owed alert about the old grant is dropped
     // The mailbox's own history: kept for the same mailbox, reset for a different one.
     lastSentAt: row.lastSentAt,
   };
@@ -364,6 +366,7 @@ describe("MailboxConnectionService — reconnecting replaces the tenant's single
         throttledUntil: T("2026-12-31T01:00:00.000Z"),
         lastError: "Rate-limited by Google — falling back to the next sender.",
         lastErrorAt: T("2026-09-23T10:00:00.000Z"),
+        alertPendingAt: T("2026-09-23T10:00:00.000Z"),
       },
     });
     const googleRow = table.peek(TENANT)!;
@@ -389,6 +392,7 @@ describe("MailboxConnectionService — reconnecting replaces the tenant's single
       throttledUntil: null,
       lastError: null,
       lastErrorAt: null,
+      alertPendingAt: null,
       lastSentAt: null,
     });
     // What the web is told, exactly — no Google-era value in any field.
@@ -469,6 +473,7 @@ describe("MailboxConnectionService — reconnecting replaces the tenant's single
       throttledUntil: null,
       lastError: null,
       lastErrorAt: null,
+      alertPendingAt: null,
       // The Outlook mailbox's last send is not this Gmail mailbox's, and the row holds nothing
       // older than the Outlook connection, so "never sent" is the only truthful value.
       lastSentAt: null,
@@ -549,6 +554,7 @@ describe("MailboxConnectionService — reconnecting replaces the tenant's single
       throttledUntil: null,
       lastError: null,
       lastErrorAt: null,
+      alertPendingAt: null,
       lastSentAt: lastSend,
     });
     expect(audit.log).toHaveBeenLastCalledWith(

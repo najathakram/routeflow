@@ -1,4 +1,5 @@
 import { Injectable, Logger } from "@nestjs/common";
+import { AfterCommit } from "../../common/after-commit";
 import { ConfigService } from "@nestjs/config";
 import type { MailboxConnection, MailboxConnectionStatus, Prisma } from "@prisma/client";
 import axios from "axios";
@@ -92,6 +93,8 @@ export interface MailboxStateChange {
   reasonCode: MailboxStateChangeReason;
   /** When the mailbox will be tried again (THROTTLED); null for REVOKED. */
   throttledUntil: Date | null;
+  /** #2113: the `alertPendingAt` this transition committed — the value a deliverer claims. */
+  alertPendingAt: Date;
 }
 
 export type MailboxStateChangeListener = (change: MailboxStateChange) => void | Promise<void>;
@@ -763,8 +766,10 @@ export class MailboxSendService {
    *   - the transition's audit row, through `tx.auditLog.create` rather than `AuditService.log`
    *     (which swallows its own errors and has no transaction handle): if the audit write fails,
    *     the status change rolls back, so a connection never changes state without its record.
-   * The state change is emitted only after the commit, so no one is ever told about a change that
-   * didn't happen. `lastError` / `lastErrorAt` are written by the winning update, with the same
+   * When the change warrants an alert, the same transaction also stamps `alertPendingAt` (#2113):
+   * the alert is owed from the commit on, and `MailboxAlertOutbox` settles it exactly once.
+   * The state change is emitted only after the commit (an AfterCommit queue), so no one is ever
+   * told about a change that didn't happen. `lastError` / `lastErrorAt` are written by the winning update, with the same
    * messages as before F-10a. Returns whether this call made the transition. Never throws.
    */
   private async transition(
@@ -776,8 +781,12 @@ export class MailboxSendService {
   ): Promise<boolean> {
     const throttledUntil = to === "THROTTLED" ? (fields.throttledUntil ?? null) : null;
     let outcome: { changed: boolean; alert: boolean };
+    // #2113 (SA-528): the alert is emitted from an AfterCommit queue, so its claim can only run
+    // once the transaction that owes it (alertPendingAt, below) has committed.
+    const after = new AfterCommit();
     try {
       outcome = await this.prisma.$transaction(async (tx) => {
+        after.reset();
         const { count } = await tx.mailboxConnection.updateMany({
           where: { ...evidence, id: conn.id, status: { in: TRANSITION_FROM[to] } },
           data: {
@@ -790,6 +799,24 @@ export class MailboxSendService {
         if (count !== 1) return { changed: false, alert: false };
         // Read before this transition's own row exists, so only an EARLIER rate limit mutes it.
         const alert = to === "REVOKED" || !(await this.throttledRecently(tx, conn.id));
+        if (alert) {
+          // #2113: owed until a deliverer clears it — a process death after the commit can no
+          // longer lose it (the `mailbox-alert.sweepPending` job delivers it instead).
+          const alertPendingAt = new Date();
+          await tx.mailboxConnection.update({ where: { id: conn.id }, data: { alertPendingAt } });
+          after.push(() =>
+            this.emitStateChange({
+              tenantId: conn.tenantId,
+              connectionId: conn.id,
+              provider: conn.provider,
+              accountEmail: conn.accountEmail,
+              status: to,
+              reasonCode,
+              throttledUntil,
+              alertPendingAt,
+            }),
+          );
+        }
         // Provider, account and a fixed reason vocabulary — never a token, code or secret.
         await tx.auditLog.create({
           data: {
@@ -820,15 +847,7 @@ export class MailboxSendService {
       );
       return true;
     }
-    this.emitStateChange({
-      tenantId: conn.tenantId,
-      connectionId: conn.id,
-      provider: conn.provider,
-      accountEmail: conn.accountEmail,
-      status: to,
-      reasonCode,
-      throttledUntil,
-    });
+    after.flush();
     return true;
   }
 

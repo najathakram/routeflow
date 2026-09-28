@@ -975,6 +975,11 @@ model MailboxConnection {
   lastError            String?
   lastErrorAt          DateTime?
   lastSentAt           DateTime?
+  /// #2113 (SA-528) — durable admin alert. Set in the SAME transaction as an automatic
+  /// REVOKED/THROTTLED transition that warrants an alert; null = nothing owed. A deliverer claims
+  /// it by CAS (value → a lease ≥ 3× the sweep cadence ahead), delivers, then clears it by CAS on
+  /// the lease. A value <= now is due: a fresh transition, or a lease whose deliverer died.
+  alertPendingAt       DateTime?
   connectedByUserId    String?
   createdAt            DateTime                @default(now())
   updatedAt            DateTime                @updatedAt
