@@ -252,3 +252,23 @@ export async function assertNoDeliveryHistory(db: Db, customerIds: string[]): Pr
 export async function deleteDeliveryHistoryCas(tx: Db, customerIds: string[]): Promise<void> {
   await deleteMoneyRecordCas(tx.routeRunStop, deliveryHistoryWhere(customerIds));
 }
+
+/**
+ * #2572: the guards above re-check what the delete READS, but a row INSERTed for a customer after
+ * those reads (a concurrent invoice create, say) is neither read nor deleted, so the customer-row
+ * delete itself fails on the foreign key: a raw Prisma P2003, which reached the client as a 500.
+ * Wrap ONLY the customer-row delete: a P2003 there is a 409 (the transaction still rolls back,
+ * nothing is deleted); any other error, including an FK error from any other statement, is
+ * rethrown unchanged.
+ */
+export async function deleteCustomerRowsFkRaceAs409<T>(del: Promise<T>): Promise<T> {
+  try {
+    return await del;
+  } catch (e) {
+    if ((e as { code?: unknown } | null)?.code === "P2003")
+      throw new ConflictException(
+        "Customer records changed while deleting — nothing was deleted; please retry.",
+      );
+    throw e;
+  }
+}
