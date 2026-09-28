@@ -1,6 +1,6 @@
 import { BadRequestException } from "@nestjs/common";
 import { API_ERROR_CODES } from "../common/api-error-codes";
-import { isNsfLine } from "./nsf-line";
+import { isNsfLine, type NsfLineFacts } from "./nsf-line";
 
 /**
  * #2656 / SA-549: the NSF bounce-fee line is NEVER taxed. Every server write that accepts a per-line
@@ -15,12 +15,13 @@ import { isNsfLine } from "./nsf-line";
  */
 export function assertNsfLinesUntaxed(
   items: ReadonlyArray<{ taxRate?: number | null; description?: string | null }>,
-  rows?: ReadonlyArray<{ systemKind?: string | null; description?: string | null } | null>,
+  // A stored InvoiceItem row (StoredEditRow is an open record) — read for its NsfLineFacts only.
+  rows?: ReadonlyArray<object | null>,
 ): void {
   items.forEach((item, i) => {
     const row = rows?.[i] ?? null;
     const nsf = row
-      ? isNsfLine(row)
+      ? isNsfLine(row as NsfLineFacts)
       : isNsfLine({ systemKind: null, description: item.description ?? null });
     if (nsf && Number(item.taxRate ?? 0) > 0)
       throw new BadRequestException({
