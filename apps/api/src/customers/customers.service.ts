@@ -23,6 +23,7 @@ import {
   assertRecordFreeInTx,
   countDeliveryHistory,
   countMoneyRecords,
+  deleteCustomerRowsFkRaceAs409,
   deleteDeliveryHistoryCas,
   deleteMoneyRecordCas,
   deleteNonBlockingInvoicesCas,
@@ -2474,7 +2475,7 @@ export class CustomersService {
       await tx.expense.updateMany({ where: { customerId: id }, data: { customerId: null } });
 
       // Finally delete customer + user
-      await tx.customer.delete({ where: { id } });
+      await deleteCustomerRowsFkRaceAs409(tx.customer.delete({ where: { id } })); // #2572
       await tx.user.delete({ where: { id: customer.userId } });
     });
 
@@ -2655,7 +2656,9 @@ export class CustomersService {
           data: { customerId: null },
         });
 
-        await tx.customer.deleteMany({ where: { id: { in: customerIds } } });
+        await deleteCustomerRowsFkRaceAs409(
+          tx.customer.deleteMany({ where: { id: { in: customerIds } } }),
+        ); // #2572
         await tx.user.deleteMany({ where: { id: { in: userIds } } });
       },
       { timeout: 60_000 },
@@ -2841,7 +2844,7 @@ export class CustomersService {
         await tx.customerLink.deleteMany({ where: { customerId: { in: ids } } });
 
         // Finally delete customer + user rows
-        await tx.customer.deleteMany({ where: { id: { in: ids } } });
+        await deleteCustomerRowsFkRaceAs409(tx.customer.deleteMany({ where: { id: { in: ids } } })); // #2572
         await tx.user.deleteMany({ where: { id: { in: uids } } });
       },
       { timeout: 120_000 },

@@ -81,6 +81,16 @@ export interface CaptureInlineReturnRequest {
   photoUrls?: string[];
 }
 
+// ─── Request: inlineReturn embedded on order create/edit (#2406) ───────────────
+//
+// The shape carried on `POST /orders`'s `inlineReturn` and `PATCH /orders/:id/items`'s
+// `inlineReturn` — a `CaptureInlineReturnRequest` minus `customerId`/`orderId`, both DERIVED
+// server-side from the order being created/edited (never sent by the client). Mirrors
+// `InlineReturnLinesDto` (apps/api/src/returns/dto/capture-inline-return.dto.ts) field-for-
+// field. Web's create/update order payload types (`useCreateOrder`/`useUpdateOrderItems` in
+// apps/web/lib/api/orders.ts) reference this rather than redeclaring it.
+export type InlineReturnLinesRequest = Omit<CaptureInlineReturnRequest, "customerId" | "orderId">;
+
 // ─── Request: POST /returns/inline/:id/approve (PR 2 — typed here for completeness) ────
 
 export interface ApproveInlineReturnRequest {
