@@ -1,4 +1,4 @@
-import { inferredFlatRate } from "@routeflow/pricing";
+import { inferredFlatRate, isNsfLine } from "@routeflow/pricing";
 
 /**
  * B294 (SA-141): each stored line's `{ taxRate, taxable }` when the operator invoice edit loads.
@@ -13,18 +13,29 @@ import { inferredFlatRate } from "@routeflow/pricing";
 export function hydratedLineTax(invoice: {
   subtotal?: unknown;
   taxAmount?: unknown;
-  items?: ReadonlyArray<{ taxRate?: unknown; categoryTaxAmount?: unknown }>;
+  items?: ReadonlyArray<{
+    taxRate?: unknown;
+    categoryTaxAmount?: unknown;
+    subtotal?: unknown;
+    systemKind?: string | null;
+    description?: string | null;
+  }>;
 }): Array<{ taxRate: number; taxable: boolean }> {
   const items = invoice.items ?? [];
+  // #2392 / SA-478: the NSF bounce-fee line is never taxed. It is excluded from the inference —
+  // both its line and its money, since the header subtotal includes the untaxed fee (otherwise the
+  // rate is diluted: $7.50 on $100 goods + a $25 fee read as 0.06) — and it is never filled.
+  const nsf = items.map((it) => isNsfLine(it));
+  const nsfSubtotal = items.reduce((s, it, i) => (nsf[i] ? s + (Number(it.subtotal) || 0) : s), 0);
   const inferred = inferredFlatRate({
-    subtotal: invoice.subtotal,
+    subtotal: (Number(invoice.subtotal) || 0) - nsfSubtotal,
     taxAmount: invoice.taxAmount,
-    lines: items,
+    lines: items.filter((_, i) => !nsf[i]),
   });
   const fill = inferred?.verified ? inferred.rate : 0;
-  return items.map((it) => {
+  return items.map((it, i) => {
     const stored = Number(it.taxRate ?? 0);
-    const taxRate = stored > 0 ? stored : fill;
+    const taxRate = stored > 0 ? stored : nsf[i] ? 0 : fill;
     return { taxRate, taxable: taxRate > 0 };
   });
 }

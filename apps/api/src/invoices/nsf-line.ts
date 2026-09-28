@@ -1,5 +1,5 @@
 import { InvoiceItemSystemKind, type Prisma } from "@prisma/client";
-import { NSF_FEE_DESCRIPTION_PREFIX } from "../sales-agents/commission-math";
+import { NSF_FEE_DESCRIPTION_PREFIX, isNsfLineFacts } from "@routeflow/pricing";
 
 /**
  * #2169 (SA-395) — the ONE shared predicate for "is this InvoiceItem the system NSF bounce-fee
@@ -39,10 +39,9 @@ export interface NsfLineFacts {
  * flag.
  */
 export function isNsfLineWithLeg(line: NsfLineFacts, hasTransitionLeg: boolean): boolean {
-  if (line.systemKind === InvoiceItemSystemKind.NSF_FEE) return true;
-  if (!hasTransitionLeg) return false;
-  if (line.systemKind != null) return false; // stamped with some other kind: never the prefix fallback
-  return (line.description ?? "").startsWith(NSF_FEE_DESCRIPTION_PREFIX);
+  // #2392 / SA-478 (A): THE rule lives in @routeflow/pricing (isNsfLineFacts), shared with web and
+  // mobile; this module keeps HAS_TRANSITION_LEG and the Prisma where-builders below.
+  return isNsfLineFacts(line, hasTransitionLeg);
 }
 
 /** In-memory branch: for a line already fetched (e.g. the commission engine's `invoice.items`). */
