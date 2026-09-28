@@ -7,6 +7,8 @@ import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import {
   existsSync,
+  lstatSync,
+  lutimesSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -39,6 +41,7 @@ import {
   isJestCacheDirName,
   staleJestCacheEntries,
   jestCacheDeleteRefusal,
+  planJestCacheActions,
   JEST_CACHE_AGE_DAYS,
   removeWorktreeSafely,
   windowsRemoveTree,
@@ -1636,6 +1639,85 @@ if (process.platform === "win32" && CMD_UNSAFE.test(winBase)) {
       ]);
     },
   );
+}
+
+// #2671 (the lead's condition on #2672): a symlink inside a Jest cache root (a `.jest-cache` and a
+// `jest_*` one) is never followed for age and never swept, and its target survives an apply. The
+// whole thing runs in a tmp SANDBOX (mkdtemp); no real cache or worktree is ever touched.
+{
+  const sandbox = realpathSync(mkdtempSync(join(tmpdir(), "janitor-2671-")));
+  try {
+    const DAY = 86_400_000;
+    const old = new Date(Date.now() - (JEST_CACHE_AGE_DAYS + 5) * DAY);
+    const outside = join(sandbox, "outside-target");
+    mkdirSync(outside);
+    writeFileSync(join(outside, "keep.txt"), "must survive");
+    const roots = [
+      join(sandbox, "wt", "apps", "api", ".jest-cache"),
+      join(sandbox, "tmp", "jest_dx"),
+    ];
+    for (const root of roots) {
+      mkdirSync(root, { recursive: true });
+      // (a) a stale symlink ENTRY pointing outside the cache
+      const link = join(root, "linked-entry");
+      symlinkSync(outside, link, "dir");
+      lutimesSync(link, old, old);
+      // (b) a stale REAL entry that contains a symlink pointing outside
+      const real = join(root, "haste-map-old");
+      mkdirSync(real);
+      writeFileSync(join(real, "data"), "x");
+      symlinkSync(outside, join(real, "inner-link"), "dir");
+      lutimesSync(join(real, "inner-link"), old, old);
+      utimesSync(join(real, "data"), old, old);
+      utimesSync(real, old, old);
+      // (c) a FRESH real entry that must stay
+      mkdirSync(join(root, "haste-map-new"));
+    }
+    // The target is stale too, so EITHER bug (following the link for its age, or not skipping the
+    // link at all) would plan it and the assertions below would catch it.
+    utimesSync(join(outside, "keep.txt"), old, old);
+    utimesSync(outside, old, old);
+
+    const actions = planJestCacheActions(roots, Date.now());
+    t(
+      "#2671 sandbox: a symlink entry is never planned (neither followed for age nor swept)",
+      () => {
+        for (const root of roots) {
+          const targets = actions.filter((a) => a.root === root).map((a) => a.target);
+          assert.deepEqual(targets, [join(root, "haste-map-old")], root);
+        }
+      },
+    );
+
+    t(
+      "#2671 sandbox: --apply removes only the stale real entries; every link target survives",
+      () => {
+        const deps = {
+          refuseDelete: () => "WRONG GUARD",
+          refuseJestCacheDelete: (tg, root) =>
+            jestCacheDeleteRefusal(realpathSync(tg), [realpathSync(root)]),
+          isDirty: () => false,
+          removeTree: (tg) => safeRemoveTree(tg),
+          removeWorktree: () => {},
+          run: () => {},
+          log: () => {},
+        };
+        for (const a of actions) assert.equal(execute(a, deps), "done", a.target);
+        for (const root of roots) {
+          assert.equal(existsSync(join(root, "haste-map-old")), false, "stale real entry swept");
+          assert.equal(
+            lstatSync(join(root, "linked-entry")).isSymbolicLink(),
+            true,
+            "link entry kept",
+          );
+          assert.equal(existsSync(join(root, "haste-map-new")), true, "fresh entry kept");
+        }
+        assert.equal(readFileSync(join(outside, "keep.txt"), "utf8"), "must survive");
+      },
+    );
+  } finally {
+    rmSync(sandbox, { recursive: true, force: true });
+  }
 }
 
 console.log(`janitor self-test: ${pass} passed, ${failures.length} failed`);

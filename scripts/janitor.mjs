@@ -1053,19 +1053,35 @@ export function buildPlan(repoRoot, mainCheckoutPath, worktreesRoot) {
   // #2671: Jest caches. The legacy SHARED default cache in the OS temp dir (every verify from a new
   // worktree path re-keyed it; it reached 8 GB) and each worktree's per-workspace `.jest-cache`.
   // Only entries untouched for JEST_CACHE_AGE_DAYS go; a live run's recent entries stay.
-  for (const root of jestCacheRoots(worktrees.map((w) => w.path).concat(mainCheckoutPath))) {
+  actions.push(
+    ...planJestCacheActions(
+      jestCacheRoots(worktrees.map((w) => w.path).concat(mainCheckoutPath)),
+      now,
+    ),
+  );
+
+  return { actions, skipped };
+}
+
+/**
+ * #2671: the step-7 actions for these Jest cache roots: one per direct entry untouched for
+ * JEST_CACHE_AGE_DAYS. A symlink entry is never planned and never followed for its age (its target
+ * could be anywhere); a real directory's age is its own and its direct children's newest lstat mtime.
+ */
+export function planJestCacheActions(roots, nowMs) {
+  const actions = [];
+  for (const root of roots) {
     const entries = [];
     for (const name of safeReaddir(root)) {
       const full = join(root, name);
       const m = newestMtimeMs(full);
       if (m != null) entries.push({ path: full, mtimeMs: m });
     }
-    for (const target of staleJestCacheEntries(entries, now)) {
+    for (const target of staleJestCacheEntries(entries, nowMs)) {
       actions.push({ step: 7, kind: "jest-cache", target, root });
     }
   }
-
-  return { actions, skipped };
+  return actions;
 }
 
 function safeReaddir(dir) {
