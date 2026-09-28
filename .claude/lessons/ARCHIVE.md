@@ -2811,6 +2811,104 @@ citations, closed-out with its own post-init assertion guard).
 
 ## Archived 2026-09-24 — headroom for L-216 (note --section silent loss, B840)
 
+### L-171 · 2026-09-16 · domain · PR-1a F1 (pooled cap vs single-line price basis mismatch)
+
+- **Symptom:** an over-return cap was correctly widened from "one matched line" to "pooled across
+  every live line for that product" — but the sibling pricing branch, reading the SAME key,
+  still priced off one matched line's rate against the newly-pooled quantity, over-crediting a
+  product split across two differently-priced lines.
+- **Root cause:** the cap and the price are two different readers of one key. Widening one
+  reader's basis fixed that reader alone — nothing re-examined the sibling reading the same key.
+- **Lesson:** **When a guard/cap computation for a key is widened to pool across rows, grep
+  every OTHER reader of that key — a cap and a price computed from different bases silently
+  mismatch, and the mismatch is a MONEY bug.**
+- **Guard:** the pricing branch now pools qty/subtotal the same way the cap does, with a
+  `min(returned, sold)` backstop; `returns-refund.spec.ts`'s F1 cases prove the pooled pricing.
+  (Archived 2026-09-25 to make room at cap: zero citations outside the register, and the guard is a standing regression spec, returns-refund.spec.ts, pinning the pooled pricing.)
+
+### L-173 · 2026-09-16 · domain · B449 (Lite lane, plan-gate boundary)
+
+- **Symptom:** a plan-gated page kept firing its own effects/queries while a locked/blurred
+  overlay showed over it — its 403 toasts and query errors leaked to a user who should never
+  have triggered that behavior.
+- **Root cause:** the gate ghosted the real page behind blur/opacity by rendering it as
+  `children` inside the locked view's own slot — that hides the DOM, it doesn't unmount it.
+- **Lesson:** **A route guard choosing between locked and unlocked must render exactly ONE of
+  two subtrees, never wrap the real page inside the locked view's ghost slot — a component
+  hidden behind blur/opacity is still mounted, and its effects/queries still fire.**
+- **Guard:** a route boundary needs a real "still resolving" state distinct from both outcomes;
+  `layout.plan-gate-boundary.test.tsx` pins children absent from the tree while
+  resolving/locked, not just visually hidden.
+  (Archived 2026-09-25 to make room at cap: zero citations outside the register, and the guard is a standing regression test, layout.plan-gate-boundary.test.tsx, pinning children absent while the gate resolves.)
+
+### L-187 · 2026-09-17 · domain · demo-booking slot TOCTOU (check-then-insert race)
+
+- **Symptom:** two concurrent bookings for the same slot could both pass an application-level
+  "is this slot free" check before either had written its row, so both inserted.
+- **Root cause:** the availability check and the insert were two separate statements with no
+  atomicity between them — an application-level check can only narrow the race window, never
+  close it.
+- **Lesson:** **A slot/resource booking that must never double-allocate needs the DB to enforce
+  it, not application code — a partial unique index (`WHERE status != 'CANCELLED'`) makes the
+  second concurrent insert fail atomically at the constraint, instead of racing an app-level
+  read.**
+- **Guard:** the `demo_booking_race_guard` migration's partial unique index; a concurrent-insert
+  regression test proves the second request gets a real constraint violation.
+  (Archived 2026-09-26 to make room at cap: zero or few citations outside the register, and the guard is the demo_booking_race_guard partial unique index plus a concurrent-insert regression test.)
+
+### L-189 · 2026-09-17 · domain · B466 (substitute path bypassed the tier-aware pricer)
+
+- **Symptom:** substituting a product on an order item priced the new line at LIST regardless of
+  the customer's SPECIAL-tier contract price, on a code path nobody had ever pointed a tier-3
+  customer at before.
+- **Root cause:** the substitution branch was its own independent price path — it reused neither
+  `resolveBuyerLinePrice`'s tier resolution nor the batched `CustomerPrice` lookup the ADD/UPDATE
+  branches share, so it defaulted to list price with no way to learn a per-product tier existed.
+- **Lesson:** **A new mutation path onto an already-priced entity (substitute, replace, clone)
+  must resolve price through the SAME tier-aware pricer AND read from the SAME batched
+  price-lookup key set every sibling path uses — a fresh reimplementation silently regresses to
+  the simplest case.**
+- **Guard:** `orders.service.spec.ts`'s B466 suite (SPECIAL-tier substitute prices at tier, not
+  list; batched lookup includes `substituteProductId`). Sibling [[L-072]] (reuse vs.
+  reimplement, applied to a pricer instead of an enum).
+  (Archived 2026-09-26 to make room at cap: zero or few citations outside the register, and the guard is the standing B466 suite in orders.service.spec.ts.)
+
+### L-181 · 2026-09-16 · domain · B451 (dto `any` vs real callers)
+
+- **Symptom:** replacing `estimates.controller.ts`'s `@Body() dto: any` with a real
+  `CreateEstimateDto` made a line-item's `description` required — but `scripts/feature-smoke.mjs`
+  S6 and several `qa-run.js` tests send a bare `{productId, qty}`, relying on the service's own
+  fallback. Caught only by independent review, not the author.
+- **Root cause:** the DTO's field set was derived from the primary web UI form alone;
+  scripted/feature-smoke callers were never grepped.
+- **Lesson:** **Before typing a `dto: any` endpoint (or tightening any field's optionality), grep
+  every caller — web form, mobile, feature-smoke, qa-run, e2e — not just the UI form that
+  motivated the change.**
+- **Guard:** `create-estimate.dto.spec.ts` pins the bare `{productId, qty}` shape passing the
+  real `ValidationPipe` unchanged.
+  (Archived 2026-09-26 to make room at cap: zero or few citations outside the register, and the guard is the standing create-estimate.dto.spec.ts real-ValidationPipe pin.)
+
+### L-199 · 2026-09-18 · tooling · "dead CSS" needs a structural proof, not a route spot-check
+
+- **Symptom:** investigating B538 (an unreachable `.glass-page .desktop-nav [aria-current="page"]`
+  rule), live DOM checks on 2 of the marketing site's 11 routes confirmed `.desktop-nav` is never
+  a descendant of `.glass-page` — but that only proves the claim for the routes actually visited.
+- **Root cause:** a live DOM spot-check is inherently per-instance and cannot cover routes never
+  visited. The marketing app has ONE shared `apps/web/app/(marketing)/layout.tsx` for all 11
+  routes, and every `page.tsx` applies `.glass-page` to its own wrapper _inside_ `{children}`
+  while the layout renders `<SiteHeader/>` (containing `.desktop-nav`) as a sibling of
+  `<main>{children}</main>` — so the non-containment is provable for every route at once by
+  reading the layout, not by sampling the DOM.
+- **Lesson:** **When justifying a CSS-dead-code removal, prefer a structural proof from the
+  shared layout/routing code over live DOM spot-checks on a handful of routes — grep every
+  route's wrapper usage (or read the one shared layout) to cover routes you didn't visit,
+  including ones added later.**
+- **Guard:** `apps/web/app/(marketing)/nav-consistency.test.tsx` renders the real
+  `MarketingLayout` with a `.glass-page` child and asserts `.desktop-nav` is never inside it,
+  with non-vacuity checks, so a future layout/page restructure fails a test instead of surfacing
+  only via another spot-check.
+  (Archived 2026-09-26 to make room at cap: zero or few citations outside the register, and the guard is the standing nav-consistency.test.tsx structural render test.)
+
 ### L-178 · 2026-09-16 · security · demo-booking PR-2 (raw error message leak)
 
 - **Symptom:** a public-facing catch handler rendered a caught error's `.message` verbatim, so
@@ -2824,3 +2922,229 @@ citations, closed-out with its own post-init assertion guard).
   raw 500 all rendering the SAME fixed message, never the response body.
   (Archived 2026-09-24 to make room at cap: zero citations outside the register, and the guard is a
   standing regression test, demo-scheduler.test.tsx, pinning the fixed message for all three failure shapes.)
+
+### L-211 · 2026-09-21 · process · A target named only in prose is not a target
+
+- **Symptom:** a locally-intended Playwright mint (`npx playwright test --project=setup`) ran
+  against PRODUCTION: operator and customer logged into the prod regression tenant, the seeded
+  buyer 401'd three times. `failedLoginAttempts` on the local row read 0 — the request never
+  arrived there.
+- **Root cause:** `playwright.config.ts` and `auth.setup.ts` both read
+  `process.env.PLAYWRIGHT_BASE_URL ?? "https://routeflowweb-production…"`. Unset means
+  production. The instruction said "against the LOCAL stack" in prose; the env var was not in
+  the command.
+- **Lesson:** **A command that targets an environment must carry the target IN the command
+  (`PLAYWRIGHT_BASE_URL=http://localhost:3001 npx …`), never in the sentence beside it. Where a
+  config defaults to production on an unset variable, that default is the defect, not the
+  operator — and any guard belongs on the RESOLVED URL, not on whether the variable is present.
+  Before GO on a minted state, decode the file's origins and require the local host.**
+- **Guard:** `scripts/local-env.mjs --e2e` sets the base URL itself and strips inherited
+  `RAILWAY_*` (use it for local runs); #1127's buyer setup step gains a skip unless the resolved
+  base URL is local. Propose: the setup project refuses to run against a `*.railway.app` host
+  unless an explicit `PLAYWRIGHT_ALLOW_REMOTE=1` is set.
+
+### L-174 · 2026-09-16 · tooling · demo-booking lane (raw NUL byte from an escape literal)
+
+- **Symptom:** a source file kept "working" after an agent tool chain wrote a `\uXXXX`-shaped
+  escape literal into it — until `file`/git/prettier treated it as binary, because what actually
+  landed was the raw byte the escape describes, not the 6-char sequence.
+- **Root cause:** a tool-chain step decoded the escape before the write, turning a literal meant
+  to stay text into its raw byte — nothing downstream checked the file was still actually text.
+- **Lesson:** **After writing any escape-sequence literal through an agent tool chain, verify it
+  landed as literal text, not the decoded byte.**
+- **Guard:** `file <path>` (must say "text") or `grep -cP '\x00' <path>` (must be 0) before
+  trusting the write; a pre-commit NUL-byte check on text sources is the durable fix.
+
+### L-175 · 2026-09-16 · tooling · shared dev host disk budget
+
+- **Symptom:** the shared dev host's `C:` drive hit 0 bytes free, stalling every session with no
+  warning until root-caused.
+- **Root cause:** ~28 worktrees' `node_modules`/`.next` plus accumulated Docker/WSL/npm caches
+  consumed the whole disk; nothing monitored free space before it hit zero.
+- **Lesson:** **A shared dev host running N concurrent worktrees needs a disk-budget gate — warn
+  below a threshold before launching more work, not after operations start failing.**
+- **Guard:** none yet — propose a session-start hook warning at < 30 GB free.
+
+### L-177 · 2026-09-16 · tooling · squash-simulate docs
+
+- **Symptom:** master's code-map `mappedSha` pointed at a branch commit orphaned by a squash
+  merge; `validate-code-map` failed every local pre-push.
+- **Root cause:** the stamping step simulated the merge with `git merge --no-ff` locally instead
+  of `--squash` (the strategy the PR would actually land with), so the sha it stamped never
+  existed on master's real history.
+- **Lesson:** **A script stamping a value for a squash-merged PR must simulate the ACTUAL merge
+  strategy (`--squash`), never `--no-ff` — validate the stamped sha resolves on the target branch
+  before landing.**
+- **Guard:** none yet — propose `--stamp` refusing a sha that isn't reachable from master.
+
+### L-204 · 2026-09-18/22 · domain · B524 fix round — a new write path didn't inherit a sibling's cache-invalidation fix (recurred on the READ side: 2026-09-22, B698)
+
+- **Symptom:** granting a prerequisite via `FeatureOverrideService.create()`/`.revoke()` then
+  acting on the new requires check could read a stale snapshot and false-400 for up to 30s —
+  those methods invalidated only their own override cache, never `FeatureResolverService`'s
+  separate cache the new check reads.
+- **Root cause:** `AddonService` already had this exact bug fixed (B509). B524 added the same
+  requires check to a SECOND write path reading the same cache; a fix on one writer doesn't
+  propagate to a sibling by analogy.
+- **Lesson:** **When a new check reads a cache another writer is allowed to leave briefly
+  stale, audit EVERY writer of that value for whether it already invalidates the SAME cache.**
+- **Recurred on the READ side (B698, 2026-09-22):** B677 (#1199) made a boxed purchase-order
+  line's stored `totalCost` exact (case cost x cases, one rounding) and stopped the FORM from
+  re-multiplying pieces by the 4 dp per-piece cost. THREE readers kept doing exactly that (web `PODetailRow`,
+  the mobile PO detail row+header, and the mobile LIST row's fallback), so 1,000 cases of 12 at
+  $11.00 stored as $11,000.00 still displayed $11,000.40 one screen over. The fix swept the writers
+  and the form; nobody grepped the readers. **A stored exact figure is READ, never rebuilt from its rounded
+  components: when a fix makes a stored value exact, grep every site that derives the same value
+  (`qty * unitCost`-shaped expressions across web AND mobile) and point each at the stored field,
+  with the derivation only as a fallback for rows that have none.**
+- **Guard:** `createFeatureOverride`/`revokeFeatureOverride` now call
+  `EntitlementAuthority.invalidate(tenantId)`, mirroring B509;
+  `platform-admin.controller.override-requires.spec.ts` pins both calls directly. B698:
+  `resolveStoredPOLineAmounts` in web `purchase-orders-shared.ts` (stored total wins) and a
+  rendered `PurchaseOrdersTab.test.tsx` case at the drift value, verified red on the old row.
+- Attribution: candidate from Lane D (PR #913), originally filed as "L-199" from a stale local
+  view of the register (already taken here); renumbered on fold-in.
+  (Archived 2026-09-27 to make room at cap: standing spec guard named above, no citation outside the register that would break; whole and verbatim.)
+
+### L-207 · 2026-09-19 · domain · B562 (averageCost recomputed by replaying an incomplete StockMovement ledger)
+
+- **Symptom:** recomputing a product's `averageCost` by replaying its `StockMovement` ledger
+  silently overwrote a correct `averageCost` and rewrote every `stockAfter`/`avgCostAfter`
+  snapshot, destroying the evidence needed to notice.
+- **Root cause:** order create/edit decrements `Product.currentStock` with NO `StockMovement` row
+  (`orders.service` `decrementStockForSale` / `settleStockForEdit`), so the ledger was an
+  incomplete event log; the replay started from stock=0 and never read orders, so it computed cost
+  from a sales-blind history.
+- **Lesson:** **Never recompute derived state (a cost, a balance) by replaying an event log unless
+  the log is provably complete — assert completeness (ledger-implied stock vs the live counter)
+  and REFUSE or REPORT on divergence rather than write a plausible-looking wrong number. When the
+  refusal sits inside a shared transaction (a bill/batch with many lines), degrade per item (skip
+  the replay for the gapped item and report it) rather than failing the whole batch — a
+  fail-closed guard that blocks accounts-payable is its own outage.**
+- **Guard:** behavioral specs in `apps/api/src/inventory/inventory.service.spec.ts`
+  (`replayProduct` two-pass refuse-on-gap; null-cost import leaves `averageCost` untouched),
+  `apps/api/src/vendor-bills/vendor-bills.service.spec.ts` (two-line bill: gapped line still
+  received and reported under `gapsDetected`, clean line unaffected),
+  `apps/api/src/products/products.service.spec.ts` and
+  `apps/api/src/import/import-robustness.spec.ts` (no phantom `unitCost` 0). PR #934; follow-ups
+  B567/B568 filed.
+  (Archived 2026-09-27 to make room at cap: standing spec guard named above, no citation outside the register that would break; whole and verbatim.)
+
+### L-210 · 2026-09-21 · domain · One shared read poisons every consumer (B606)
+
+- **Symptom:** a buyer saw $120 for a single pack of a $24 product on the catalog tile, product
+  detail, variant row and favourites, and every new standing-order line inherited it — a 5x
+  overcharge. Staff paths over-charged 10.7x on the same product.
+- **Root cause:** `getCustomerPriceHistory` remembered the per-Case price of a unit-aware line
+  (`unitLabel:"Case"`, 6 packs) against the product with no `unitLabel` filter. Every buyer price
+  surface funnels through that one query, and `effectiveBuyerPrice` lets a remembered price
+  ABOVE list win over the tier, so one poisoned row propagated to four UIs and a template writer.
+- **Lesson:** **A single query that feeds customer-facing prices needs its own regression spec
+  pinning what it must EXCLUDE — not just coverage of its callers. When a new line shape
+  (unit-aware, boxed, upsell) is introduced, grep every `findMany` that reads `unitPrice` and ask
+  whether the new shape's price is denominated the same way; if not, the filter goes in the
+  query, not in each consumer.**
+- **Guard:** `orders/price-history-unit-lines.spec.ts` (#1123) pins the `unitLabel: null`
+  filter; `unit-line-writers.ast.spec.ts` classifies every writer. Propose: a read-only prod
+  count (`unitLabel IS NOT NULL` on `OrderItem`/`InvoiceItem`) before any remediation script —
+  it returned 0 here and made the planned remediation unnecessary.
+  (Archived 2026-09-27 to make room at cap: standing spec guard named above, no citation outside the register that would break; whole and verbatim.)
+
+### L-214 · 2026-09-22 · domain · a second quantity axis needs every writer AND every "already done" guard
+
+- **Symptom:** a FULL credit note against a box-unaware regulated line reversed 5 of the 60 pieces
+  it sold, leaving 55 phantom pieces on the tax filing per credited line. Net, qty and tax were all
+  correct — only the piece axis was wrong — and a later invoice void never cleared the residue, so
+  the rows stayed wrong permanently.
+- **Root cause:** B661 moved the SALE row's `unitBasisQty` onto a PIECE axis while `qty` stayed in
+  the line's own unit (boxes for a box-unaware line). `reverseCreditNoteEntries` kept booking the
+  line-unit value into the piece column, so the two sides no longer cancelled. Compounding it, the
+  "this line is already fully reversed, skip it" guard in `reverseInvoiceEntries` tested `qty`,
+  `netSales` and `categoryTax` but NOT `unitBasisQty` — so the one operation that could have healed
+  the residue was the operation that proved it invisible.
+- **Lesson:** **When a row carries two quantity axes that mean different things, moving ONE reader
+  or writer onto the new axis is never the whole change: sweep every OTHER writer that books a
+  paired row into the same column, and widen every "nothing left to do" guard to test EVERY axis it
+  guards. A guard that checks a subset of dimensions does not merely miss the bug — it makes the bug
+  permanent, because it convinces the healing path there is nothing to heal.**
+- **Same fix, second lesson (pro-rata source):** the replacement first took its pieces-per-unit
+  ratio from an AGGREGATE over every SALE row of the order line, which silently averages rows
+  written under different snapshots — a product repacked 12 -> 10 between the original write and a
+  delivered-basis reconcile gave 11, so a 2-box partial credit booked -22 where the truth was -20.
+  **A pro-rata ratio must be derived from the specific stored row being reversed, never from a sum
+  across the parent entity's rows.** This class is near-invisible in testing because the CLOSING
+  operation books the exact remaining and absorbs the difference, so the TOTAL always reconciles —
+  the error only surfaces as period attribution, and only when a partial straddles a period
+  boundary. Where a sibling path already pro-rates correctly
+  (`reverseReturnEntries` off the live row's own ratio), match it rather than inventing a second
+  derivation (cf. L-167).
+- **Guard:** `regulated-ledger.service.spec.ts` pins the piece axis on the credit path (full credit
+  closes to exactly 0 pieces, a partial pro-rates off the SALE row's own ratio, the second half
+  leaves no residue) and pins that a line square on money but carrying a piece residue is NOT
+  skipped by a void. When a fix breaks existing fixtures, verify each modelled a shape a real
+  writer can produce before changing it — four here defaulted the two axes independently and modelled rows no writer emits, which is why
+  changing them was correct; the justification is that the old assertion's AGGREGATE was the
+  defect's own signature (qty netting to zero while pieces don't IS the legacy residue), not
+  merely that the case looked unreachable. A mixed-pack reconcile case pins the ratio source.
+  (Archived 2026-09-27 to make room at cap: standing spec guard named above, no citation outside the register that would break; whole and verbatim.)
+
+### L-217 · 2026-09-25 · testing · a CAS/updateMany needs an executed real-DB proof of its SUCCESS path (B861)
+
+- **Symptom:** a compare-and-set `updateMany({ where: { ...compoundUniqueKey, nextNumber } })` passed
+  tsc and every unit mock, yet would have 500'd every second save of a configured row.
+- **Root cause:** a spread compound-unique key escapes TypeScript's excess-property check, mocks accept
+  any `where`, and only a real Prisma client rejects it ("Unknown argument"). The tests covered only
+  the CAS refusal path, so the success path never ran against a real client.
+- **Lesson:** **A CAS/updateMany (or any where/select/include) change needs an executed real-DB proof
+  of its SUCCESS path, not only the refusal path. Build WhereInputs from plain columns, never a spread
+  compound-unique key.**
+- **Guard:** `numbering-continuity.db.spec.ts` "a save carrying the current expectedNextNumber updates
+  the saved row" (cf. [[L-205]] on tests that cannot fail).
+  (Archived 2026-09-27 to make room at cap: standing spec guard named above, no citation outside the register that would break; whole and verbatim.)
+
+### L-196 · 2026-09-17 · tooling · a config file silently overriding a code default drifts from its docs
+
+- **Symptom:** CLAUDE.md and this file's own header both stated the lessons register caps at 40
+  entries / ~25–40 KB; the register had run at 52/64 KB all along with zero validator complaints,
+  since `_meta.json`'s own fields silently override `validate-lessons.mjs`'s hardcoded defaults.
+- **Root cause:** the validator's fallback defaults exist only for a repo with no `_meta.json`
+  yet, but nothing re-derives or checks the DOCS against whichever value is actually live — a
+  limit living in a data file can drift from every doc describing it with no warning.
+- **Lesson:** **When a limit lives in a config/data file with a code-level fallback default, the
+  code's default is not the source of truth once the config sets a real value — read the
+  validator's own resolved value, never infer it from source or a doc, and update every doc
+  stating the limit in the SAME commit the config changes it.**
+- **Guard:** the validator already prints its resolved values in its self-consistency line;
+  propose a periodic doc-vs-validator cross-check.
+  (Archived 2026-09-27 to make room at cap: standing spec guard named above, no citation outside the register that would break; whole and verbatim.)
+
+### L-182 · 2026-09-16 · tooling · #799 self-test wall-clock regression (host vs CI)
+
+- **Symptom:** #799 added spawn-heavy self-test cases; wall-clock went from 63–131s to 487s on
+  the dev host, breaking every local pre-push, while CI's faster runner stayed green throughout.
+- **Root cause:** a PR changing self-test/verify tooling was judged solely on CI's green check —
+  CI's runner speed isn't this host's, so a wall-clock regression invisible on CI can still
+  break every subsequent local pre-push on the machine that actually does the work.
+- **Lesson:** **A PR touching a self-test or verify-tooling script must be measured, or run
+  through the full local pre-push, on the actual dev host before merge — CI green is not a
+  sufficient gate for tooling-timing changes, only for correctness.**
+- **Guard:** the merge session re-measures self-test wall-clock during its scoped review.
+  (Archived 2026-09-26 to make room at cap: one citation, `scripts/campaign/bugs.mjs:4878`, a
+  code comment that still resolves here; the guard is the standing merge-session re-measure
+  ritual, unchanged by archiving the prose.)
+
+### L-213 · 2026-09-21 · process · a batch merge script must re-read the board per merge, not per batch
+
+- **Symptom:** two PRs (#1112, #1087) landed over a BLOCK/UNPROVEN verdict posted on the shared
+  coordination issue minutes earlier, because the verdict was read once before a script merged ten
+  PRs in a row.
+- **Root cause:** the review-channel read was a per-batch precondition, so every merge after the
+  first ran on a stale view of the channel. This is L-209 applied in code instead of by hand.
+- **Lesson:** **The "read the shared review channel immediately before every merge" rule (L-209)
+  binds each individual merge, not the batch — a loop that merges N PRs must re-read the channel
+  N times.**
+- **Guard:** the landing procedure re-reads the coordination issue (#938) immediately before each
+  merge; no unattended batch merge loops.
+  (Archived 2026-09-27 to make room at cap for L-235: 0 outside citations; the rule is the
+  per-merge application of L-209, which stays active; guard = the landing procedure's re-read of
+  #938 before each merge, unchanged by archiving the prose.)

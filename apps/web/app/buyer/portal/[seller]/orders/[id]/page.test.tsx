@@ -31,7 +31,11 @@ jest.mock("@/lib/buyer-auth-context", () => ({
 
 let mockOrder: unknown;
 const mockUpdateItems = jest.fn().mockResolvedValue({});
+// #2095: the page now renders the "Track your delivery" card, which reads this hook.
+let mockTracking: unknown;
 jest.mock("@/lib/api/buyer", () => ({
+  ...jest.requireActual("@/lib/api/buyer"),
+  useBuyerOrderTracking: () => mockTracking,
   useBuyerOrder: () => ({ data: mockOrder, isLoading: false, isError: false }),
   useBuyerCancelOrder: () => ({ mutateAsync: jest.fn(), mutate: jest.fn(), isPending: false }),
   useBuyerUpdateOrderItems: () => ({
@@ -102,6 +106,46 @@ function order(lineItems: unknown[], over: Record<string, unknown> = {}) {
 
 beforeEach(() => {
   jest.clearAllMocks();
+  mockTracking = {
+    data: { status: "PENDING", tracking: null },
+    isLoading: false,
+    isError: false,
+    refetch: jest.fn(),
+  };
+});
+
+describe("BuyerOrderDetailPage — Track your delivery (#2095)", () => {
+  it("shows the tracking card under the timeline, fed by this order's tracking", () => {
+    mockOrder = order([LISTED], { status: "CONFIRMED" });
+    mockTracking = {
+      data: {
+        status: "CONFIRMED",
+        tracking: {
+          runId: "run-1",
+          routeName: null,
+          driverName: "Sam",
+          runStatus: "IN_PROGRESS",
+          stopNumber: 5,
+          stopStatus: "PENDING",
+          stopsAhead: 2,
+          scheduledDate: "2026-09-29T00:00:00.000Z",
+          estimatedArrivalWindow: { start: "09:00", end: "11:00" },
+        },
+      },
+      isLoading: false,
+      isError: false,
+      refetch: jest.fn(),
+    };
+    renderWithProviders(<BuyerOrderDetailPage />);
+    expect(screen.getByRole("heading", { name: "Track your delivery" })).toBeInTheDocument();
+    expect(screen.getByTestId("tracking-headline")).toHaveTextContent("2 stops before you");
+  });
+
+  it("a not-yet-scheduled order says so", () => {
+    mockOrder = order([LISTED]);
+    renderWithProviders(<BuyerOrderDetailPage />);
+    expect(screen.getByTestId("tracking-headline")).toHaveTextContent("Not scheduled yet");
+  });
 });
 
 describe("BuyerOrderDetailPage — order with a custom line (B586)", () => {

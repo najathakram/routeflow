@@ -1,3 +1,4 @@
+import { formatQtySplit } from "@routeflow/pricing";
 import type { ProductSaleLine, ProductSalesSummary } from "./api/product-sales";
 
 /**
@@ -44,4 +45,15 @@ export function productSaleRowTarget(
   return line.orderId
     ? { screen: "order", id: line.orderId }
     : { screen: "invoice", id: line.invoiceId };
+}
+
+/**
+ * A Sales-card row's quantity text, from the line's stored base-piece split: "1 box + 6 pcs".
+ * Web parity (SalesHistoryCard). The product's own `unit` is its SELLING unit, never the
+ * loose-piece noun, so it is deliberately not passed (#2253: it rendered "1 box + 6 box").
+ */
+export function productSaleQtyLabel(
+  line: Pick<ProductSaleLine, "qty" | "boxes" | "pieces">,
+): string {
+  return formatQtySplit({ qty: line.qty, boxes: line.boxes, pieces: line.pieces });
 }

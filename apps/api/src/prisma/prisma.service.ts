@@ -16,6 +16,20 @@ function tenantNotFound(model: string): Prisma.PrismaClientKnownRequestError {
   });
 }
 
+/**
+ * SA-394 (#2201): true iff `db` is a Prisma 7 interactive-transaction client, raw or wrapped by
+ * `tenantTransaction`'s tenant Proxy (which passes `$`-prefixed keys straight through).
+ *
+ * Do NOT test for `$transaction`: Prisma 7 builds the tx client as a "nested" client that still
+ * exposes `$transaction` (for savepoints), so that test is always false on a real DB. What a tx
+ * client lacks is the runtime's itx deny-list (`$connect`, `$disconnect`, `$on`, `$use`,
+ * `$extends` read as undefined). A base client and a `forTenant()` (`$extends`ed) client keep
+ * `$connect`. `null`/`undefined` is not a transaction.
+ */
+export function isTxClient(db: unknown): boolean {
+  return db != null && typeof (db as { $connect?: unknown }).$connect !== "function";
+}
+
 @Injectable()
 export class PrismaService extends PrismaClient implements OnModuleInit, OnModuleDestroy {
   constructor(@Optional() private readonly tenantCtx?: TenantContextService) {

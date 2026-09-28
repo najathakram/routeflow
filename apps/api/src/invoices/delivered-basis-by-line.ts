@@ -1,4 +1,5 @@
 import { Prisma } from "@prisma/client";
+import { DELIVERY_EVIDENCE_TYPES } from "./delivery-evidence";
 
 /**
  * SA-093a/SA-113b (rounds 6-7, #1185): the delivered basis for coverage/billing is
@@ -52,19 +53,20 @@ export interface DeliveredBasis {
   byLineId: Map<string, number>;
 }
 
-/** Round 7 / SA-113b: the only types whose row can be delivery evidence. ADD_ON is deliberately
- *  absent — see this module's own doc. */
-const DELIVERY_EVIDENCE_TYPES = new Set(["DELIVERED", "PARTIAL", "SUBSTITUTED", "REFUSED"]);
-
 /**
+ * SA-131a/B785: the evidence-type list is shared with the at-door reconcile
+ * (delivery-evidence.ts) — one evidence definition, not two.
+ *
  * SA-113b: an evidence row needs BOTH a qualifying type AND a non-null `quantityDelivered` --
  * the close paths (completeStop/completeWithPayment) always set it; the at-door change-request
  * path never does, even for its REFUSED-typed REMOVE_ITEM rows (qty carries the signed delta,
  * not a delivered amount). A REFUSED row's own quantityDelivered value is never read (delivered
  * is always forced to 0 for it) -- its non-null PRESENCE is only the qualification signal.
  */
-function isEvidenceRow(m: { type: string; quantityDelivered: unknown }): boolean {
-  return m.quantityDelivered != null && DELIVERY_EVIDENCE_TYPES.has(m.type);
+export function isEvidenceRow(m: { type: string; quantityDelivered: unknown }): boolean {
+  return (
+    m.quantityDelivered != null && (DELIVERY_EVIDENCE_TYPES as readonly string[]).includes(m.type)
+  );
 }
 
 export async function deliveredBasisByLine(
@@ -94,4 +96,30 @@ export function billableQtyFromBasis(
   const delivered = basis.byLineId.get(li.id);
   if (delivered === undefined) return qty;
   return Math.min(qty, delivered);
+}
+
+/**
+ * SA-345/345a: the "delivered" READER — what a line has actually been delivered, used by the
+ * delivered-basis invoice rebuilds (reconcileOrderDraftInvoice, rebuildSiblingDrafts and, through
+ * it, the deposit-mirror rebuild) and, via `deliveredSoFarForLine`, by the stepper's remaining.
+ * SAME `DeliveredBasis` object as `billableQtyFromBasis`, a different question: coverage asks
+ * "what may still be billed" (no rows ⇒ the full qty, SA-093a); this asks "what was delivered"
+ * (no rows ⇒ nothing is assumed beyond the legacy column).
+ *
+ * PER LINE: a line WITH its own qualifying rows takes Σrows (rows beat a stale SET column,
+ * SA-113a); a line with NO own row takes `deliveredQty ?? 0` — master's rule, never the full qty
+ * and never 0 just because it is unseen. Orders delivered before evidence rows existed (or whose
+ * rows a pre-B803 reopen deleted) carry the column as their ONLY evidence. The order-level "no
+ * rows at all" case is unreachable from today's close (a reconciled order always got a row in the
+ * same tx, routes.service.ts completeWithPayment) but is exactly a legacy order, and falls out of
+ * the same per-line rule. Capped at qty so a stale column can never bill units nobody ordered.
+ */
+export function deliveredQtyFromBasis(
+  li: { id: string; qty: unknown; deliveredQty?: unknown },
+  basis: DeliveredBasis,
+): number {
+  const qty = Number(li.qty ?? 0);
+  const own = basis.byLineId.get(li.id);
+  const delivered = own !== undefined ? own : Number(li.deliveredQty ?? 0);
+  return Math.max(0, Math.min(qty, delivered));
 }

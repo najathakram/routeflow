@@ -95,6 +95,21 @@ describe("LineItemRowReadOnly — qty, price, total", () => {
     expect(screen.getByText("$67.50")).toBeInTheDocument();
     expect(screen.queryByText("$810.00")).toBeNull();
   });
+
+  it("boxed with its own selling-unit name (units_v1 -> the boxLabel prop): '3 Cases', never 'boxes'", () => {
+    renderRow({ unitPrice: 30, unitsPerBox: 12, boxes: 3, pieces: 0, qty: 36, boxLabel: "Case" });
+    expect(screen.getByText("3 Cases · $30.00 / Case of 12")).toBeInTheDocument();
+  });
+
+  it("#2049: a FACTOR-1 unit line (no split) reads '5 Piece', never a bare '5'", () => {
+    renderRow({ qty: 5, unitPrice: 2, boxLabel: "Piece" });
+    expect(screen.getByText("5 Piece × $2.00")).toBeInTheDocument();
+  });
+
+  it("#2049: no unit name is byte-identical to before this fix", () => {
+    renderRow({ qty: 5, unitPrice: 2 });
+    expect(screen.getByText("5 × $2.00")).toBeInTheDocument();
+  });
 });
 
 describe("LineItemRowReadOnly — money contract (matches what the order bills)", () => {

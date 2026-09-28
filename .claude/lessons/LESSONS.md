@@ -128,6 +128,58 @@
 - **Guard:** none yet — propose a removal checklist item: "list every client call site of the
   endpoint(s) this control posts to, not just this control's own references."
 
+### L-227 · 2026-09-27 · process · a ratchet row must be measured on the MERGED tree, not the branch (train A)
+
+- **Symptom:** a branch passed the size ratchet at its own head, then failed it once master was merged in (a service 6220 lines against a 6217 cap, its spec 9377 against 9376), and in merge train A two branches carried different rows (6163 vs 6151) for the same file.
+- **Root cause:** a ratchet row is a property of one file's line count, and the count moves with every merge into it; a number measured before the merge is a claim about a tree that will not exist.
+- **Lesson:** **Set and verify every ratchet row on the merged tree at land time, with `wc -l` on the merged file. On a conflicting row take the lower of the two sides and never raise it; if the merge pushes a file over, extract first.**
+- **Guard:** `size-ratchet.spec.ts` on the merged tree (train A: `invoices.service.ts` row set to 6124, the merged file's `wc -l`, below both sides). Cf. [[L-215]].
+
+### L-228 · 2026-09-27 · process · a merge train must leave master's tree equal to the tree that was verified (train A)
+
+- **Symptom:** a train of 14 PRs merged `--no-ff` and verified as one head (tree e98a41e8) was landed as a single squash; nothing but a deliberate check said the squash equalled what had been tested.
+- **Root cause:** a squash-merge builds its own tree from the PR diff against the current base, so anything that moved on master after the train was built (or a hand-resolved conflict) changes what lands without changing what was verified.
+- **Lesson:** **Land a train only after its head is verified and any hand hunk (import unions, ratchet rows) is confirmed against the merge-tree; after the squash, compare `git rev-parse origin/master^{tree}` with the verified tree and stop on any difference.**
+- **Guard:** the train PR body states the expected tree; the landing coordinator runs the comparison (train A: master's tree equals e98a41e8, checked). Dropped PRs are named with their reason so they re-enter the next train. Cf. [[L-197]].
+
+### L-230 · 2026-09-22 · process · a verification framed as "is my work safe" answers itself by construction
+
+- **Symptom:** on the #1219/#1221 merge rehearsal, the forward probe (revert only #1221's own fix,
+  confirm its own cases fail) passed and looked complete. The reverse probe (revert the OTHER
+  side's fix, confirm THEIR cases fail) found #1221's fix had no guard in the DEFAULT Jest lane —
+  reverting it left all 395 unit tests green.
+- **Root cause:** "is my work safe" is answered the moment your own side passes, so it stops there
+  by construction — it never asks whether the merge weakened anything ELSE.
+- **Lesson:** **Frame a merge verification as "did this change weaken anything", symmetric: revert
+  YOUR change on the merged tree and confirm your cases still fail, then revert THEIRS and confirm
+  theirs still fail.** A missing guard is silent in the direction that matters — green suite, more
+  test files, every signal points the right way. Structural fix, not "review harder": a fix guarded
+  only by a DB-lane spec must ALSO carry a default-lane pin — the DB spec proves it against real
+  transactions, the unit pin proves it still exists after a merge that doesn't re-trigger the DB
+  lane (it fires on ADDING a `.db.spec.ts`, not on changing the logic it protects).
+- **Guard:** #1221's added default-lane pin; the default-lane-pin requirement for any
+  DB-lane-guarded fix going forward.
+
+### L-231 · 2026-09-22 · process · a register claim needs the check that would disprove it, not just the belief
+
+- **Symptom:** this incident's own write-up first carried a false claim — "no CI workflow runs the
+  DB lane" — relayed from a colleague and written as though first-hand. False:
+  `db-migrations.yml` runs `npm run test:db -w apps/api`, path-gated on `*.db.spec.ts`, exactly why
+  it fired for #1221 (that PR added one). Separately, a stated clock time was already stale by the
+  time it was "corrected": 09:00Z when it was 08:34Z, then 09:05Z when it was 09:35Z.
+- **Root cause:** a claim someone VERIFIED and a claim someone RELAYED look identical once written
+  down — the register records what is believed, not how it came to be believed. A stated
+  elapsed/clock time is a proxy by construction and is stale the instant it's read.
+- **Lesson:** **A register claim must carry how it was established** — the command, the file:line,
+  or who checked it — so a later reader can disprove it in under a minute if it's wrong; an
+  unfalsifiable claim is not a fact yet. **A CLOCK-time claim carries `date -u`'s output, not an
+  estimate; an ELAPSED-time claim shouldn't be asserted at all, only the command that measures it.**
+  For a docs PR mid-edit: QUEUE IT OR EDIT IT, NOT BOTH — freeze and publish a final sha only once
+  inside a merge window; a quoted sha mid-edit is stale on arrival.
+- **Guard:** none automated yet — propose a lint on register entries requiring a cited command or
+  file:line beside any factual claim, and a landing-procedure reminder to run `date -u` before
+  quoting a time. Related: [[L-213]].
+
 ## tooling
 
 ### L-206 · 2026-09-18 · tooling · a test that pins a literal from another workspace's prose is an invisible cross-workspace coupling
@@ -149,26 +201,6 @@
   grep-for-pinned-literals check exists — propose one in the docs-only-push exemption logic.
 - Renumbered from L-199: an unrelated "dead CSS" lesson landed on master at that id via #909.
 
-### L-199 · 2026-09-18 · tooling · "dead CSS" needs a structural proof, not a route spot-check
-
-- **Symptom:** investigating B538 (an unreachable `.glass-page .desktop-nav [aria-current="page"]`
-  rule), live DOM checks on 2 of the marketing site's 11 routes confirmed `.desktop-nav` is never
-  a descendant of `.glass-page` — but that only proves the claim for the routes actually visited.
-- **Root cause:** a live DOM spot-check is inherently per-instance and cannot cover routes never
-  visited. The marketing app has ONE shared `apps/web/app/(marketing)/layout.tsx` for all 11
-  routes, and every `page.tsx` applies `.glass-page` to its own wrapper _inside_ `{children}`
-  while the layout renders `<SiteHeader/>` (containing `.desktop-nav`) as a sibling of
-  `<main>{children}</main>` — so the non-containment is provable for every route at once by
-  reading the layout, not by sampling the DOM.
-- **Lesson:** **When justifying a CSS-dead-code removal, prefer a structural proof from the
-  shared layout/routing code over live DOM spot-checks on a handful of routes — grep every
-  route's wrapper usage (or read the one shared layout) to cover routes you didn't visit,
-  including ones added later.**
-- **Guard:** `apps/web/app/(marketing)/nav-consistency.test.tsx` renders the real
-  `MarketingLayout` with a `.glass-page` child and asserts `.desktop-nav` is never inside it,
-  with non-vacuity checks, so a future layout/page restructure fails a test instead of surfacing
-  only via another spot-check.
-
 ### L-198 · 2026-09-18 · tooling · `gh run rerun` replays the original checkout, not a fresh merge-ref
 
 - **Symptom:** across ~12 PRs in one landing window, the first "fresh" `gh run rerun` after a
@@ -185,6 +217,7 @@
   merge ref.**
 - **Guard:** none yet — propose a landing-tool helper that pushes an empty commit instead of
   calling `gh run rerun` whenever the PR predates a relevant base-branch fix.
+- **Fold-in 2026-09-27 (CI base must equal master):** a close/reopen or empty commit is not proof either. GitHub recomputes `refs/pull/N/merge` asynchronously, so a run started seconds after can still check out the OLD base (seen three times in one night). Before trusting a green run, read its checkout line (`HEAD is now at <merge> into <base>`) and require `<base>` to equal the current master; if not, wait until `git ls-remote origin refs/pull/N/merge` shows a merge commit whose first parent is master, then trigger again.
 
 ### L-191 · 2026-09-17 · tooling · MailboxCard.tsx JSX apostrophes only caught by a full web lint
 
@@ -249,33 +282,6 @@
 - **Guard:** none automatic yet — a landing coordinator diffs `origin/master...HEAD` on the
   rebuilt branch and confirms zero changes under the schema-owning PR's files before pushing.
 
-### L-196 · 2026-09-17 · tooling · a config file silently overriding a code default drifts from its docs
-
-- **Symptom:** CLAUDE.md and this file's own header both stated the lessons register caps at 40
-  entries / ~25–40 KB; the register had run at 52/64 KB all along with zero validator complaints,
-  since `_meta.json`'s own fields silently override `validate-lessons.mjs`'s hardcoded defaults.
-- **Root cause:** the validator's fallback defaults exist only for a repo with no `_meta.json`
-  yet, but nothing re-derives or checks the DOCS against whichever value is actually live — a
-  limit living in a data file can drift from every doc describing it with no warning.
-- **Lesson:** **When a limit lives in a config/data file with a code-level fallback default, the
-  code's default is not the source of truth once the config sets a real value — read the
-  validator's own resolved value, never infer it from source or a doc, and update every doc
-  stating the limit in the SAME commit the config changes it.**
-- **Guard:** the validator already prints its resolved values in its self-consistency line;
-  propose a periodic doc-vs-validator cross-check.
-
-### L-182 · 2026-09-16 · tooling · #799 self-test wall-clock regression (host vs CI)
-
-- **Symptom:** #799 added spawn-heavy self-test cases; wall-clock went from 63–131s to 487s on
-  the dev host, breaking every local pre-push, while CI's faster runner stayed green throughout.
-- **Root cause:** a PR changing self-test/verify tooling was judged solely on CI's green check —
-  CI's runner speed isn't this host's, so a wall-clock regression invisible on CI can still
-  break every subsequent local pre-push on the machine that actually does the work.
-- **Lesson:** **A PR touching a self-test or verify-tooling script must be measured, or run
-  through the full local pre-push, on the actual dev host before merge — CI green is not a
-  sufficient gate for tooling-timing changes, only for correctness.**
-- **Guard:** the merge session re-measures self-test wall-clock during its scoped review.
-
 ### L-180 · 2026-09-16/22 · tooling · npm/dir junctions across worktrees are unsafe near git worktree ops (recurred: 2026-09-22)
 
 - **Symptom:** (a) after `git worktree move`, invalid-hook-call errors and mangled Jest paths;
@@ -317,18 +323,6 @@
 - **Guard:** none yet — propose keying freshness on source/test/ledger paths only, and having
   the pre-push hook regenerate reports itself.
 
-### L-177 · 2026-09-16 · tooling · squash-simulate docs
-
-- **Symptom:** master's code-map `mappedSha` pointed at a branch commit orphaned by a squash
-  merge; `validate-code-map` failed every local pre-push.
-- **Root cause:** the stamping step simulated the merge with `git merge --no-ff` locally instead
-  of `--squash` (the strategy the PR would actually land with), so the sha it stamped never
-  existed on master's real history.
-- **Lesson:** **A script stamping a value for a squash-merged PR must simulate the ACTUAL merge
-  strategy (`--squash`), never `--no-ff` — validate the stamped sha resolves on the target branch
-  before landing.**
-- **Guard:** none yet — propose `--stamp` refusing a sha that isn't reachable from master.
-
 ### L-176 · 2026-09-16/22/23 · tooling · worktree without its own node_modules resolves to the main checkout (recurred three times: 2026-09-22, 2026-09-23)
 
 - **Symptom:** a worktree with no `node_modules` of its own resolved workspace deps up to the
@@ -364,28 +358,6 @@
   `dist` is older than `src` for any workspace package; the third recurrence's specific gap (which
   consumers lack a `moduleNameMapper` for which package) would need the same kind of check.
 
-### L-175 · 2026-09-16 · tooling · shared dev host disk budget
-
-- **Symptom:** the shared dev host's `C:` drive hit 0 bytes free, stalling every session with no
-  warning until root-caused.
-- **Root cause:** ~28 worktrees' `node_modules`/`.next` plus accumulated Docker/WSL/npm caches
-  consumed the whole disk; nothing monitored free space before it hit zero.
-- **Lesson:** **A shared dev host running N concurrent worktrees needs a disk-budget gate — warn
-  below a threshold before launching more work, not after operations start failing.**
-- **Guard:** none yet — propose a session-start hook warning at < 30 GB free.
-
-### L-174 · 2026-09-16 · tooling · demo-booking lane (raw NUL byte from an escape literal)
-
-- **Symptom:** a source file kept "working" after an agent tool chain wrote a `\uXXXX`-shaped
-  escape literal into it — until `file`/git/prettier treated it as binary, because what actually
-  landed was the raw byte the escape describes, not the 6-char sequence.
-- **Root cause:** a tool-chain step decoded the escape before the write, turning a literal meant
-  to stay text into its raw byte — nothing downstream checked the file was still actually text.
-- **Lesson:** **After writing any escape-sequence literal through an agent tool chain, verify it
-  landed as literal text, not the decoded byte.**
-- **Guard:** `file <path>` (must say "text") or `grep -cP '\x00' <path>` (must be 0) before
-  trusting the write; a pre-commit NUL-byte check on text sources is the durable fix.
-
 ### L-216 · 2026-09-24 · tooling · bugs.mjs note --section silently replaced record analysis (B840)
 
 - **Symptom:** two registry reconciles and ~32 earlier notes wiped Summary/Root cause/Fix text in
@@ -398,6 +370,23 @@
   "additive" run must be pure insertions. Repair from history as the union of every version, and
   prove zero loss with a checker that does not share the repair's parser.**
 - **Guard:** B840: `note` appends, overwrite needs `--replace`, pinned in the bugs self-test.
+
+### L-235 · 2026-09-27 · tooling · a tsconfig that excludes specs also switches off the test runner's type-check (#1315, B806)
+
+- **Symptom:** a spec fixture built with the wrong shape (#1286's `taxNone = () => 0`) reached CI
+  green; once #1315 finally compiled the api specs, ~7,000 spec type errors surfaced, 6,328 of
+  them masked by one wrongly typed mock factory (`createMockPrisma`).
+- **Root cause:** `apps/api/tsconfig.json` excluded `*.spec.ts` from `check-types`, and ts-jest
+  (`isolatedModules`, transpile-only) read the same config, so neither gate type-checked a spec —
+  each assumed the other did.
+- **Lesson:** **When a type-check config excludes tests, find which gate type-checks them instead;
+  a transpile-only test runner (`isolatedModules`, SWC, babel) checks nothing. If no gate does,
+  add one — ratchet an existing error count down (shrink-only baseline) rather than wait for
+  zero.**
+- **Guard:** api `check-types` runs `scripts/check-types-ratchet.mjs` over src + specs (src
+  zero-tolerance, per-spec counts in `check-types.spec-baseline.json`, which only
+  `--lower-baseline` moves); `scripts/lib/check-types-ratchet-core.mjs` refuses a
+  `// @ts-nocheck` spec (`isNoCheckFile`).
 
 ## testing
 
@@ -466,65 +455,30 @@
   plainly that it is unverified.**
 - **Guard:** none — judgment. Grep `isWeb`/`Platform.OS` in any file a fix touches.
 
+### L-218 · 2026-09-25 · testing · a red-proof that matches message TEXT can be vacuous (B861)
+
+- **Symptom:** the red-proofs AB/AD passed on the OLD code, so they proved nothing about the fix.
+- **Root cause:** they matched `/reload/`, which the pre-existing 409's message also contains, so the
+  wrong error satisfied the assertion.
+- **Lesson:** **Assert by error CLASS or code, never by message text another error can share. Run the
+  proof against the old code and confirm it fails for the intended reason.**
+- **Guard:** `REG-B861-AB`/`AD` assert `BadRequestException`.
+
+### L-226 · 2026-09-27 · testing · a money fixture must be shaped by the production writer (#2274, #2245, #2305)
+
+- **Symptom:** ledger and unit-line specs built rows by hand in shapes the writer never produces (credit overshoot legs the per-line and header caps would refuse; quantities not in base pieces), so they proved a state that cannot exist and could miss the one the writer can.
+- **Root cause:** a hand-built fixture encodes the author's model of the writer, not the writer's output; the spec can only agree with the model (cf. [[L-220]]).
+- **Lesson:** **Build every money or unit fixture with the production writer (or copy its exact shape: base-piece qty, `net + tax` amounts, the maps it stores). Before asserting an overshoot or edge state, confirm the writer can reach it; if only a downstream clamp stops it, test that clamp.**
+- **Guard:** review checks each fixture against the writer's call site (train A: `credit-notes.service.ts` caps, `returns.service.ts` return maps); `regulated-ledger-price-correction.db.spec.ts` drives the real writers.
+
+### L-234 · 2026-09-27 · testing · a whole-database script needs an explicit scope allowlist, not a rerun (B824, train C)
+
+- **Symptom:** `publish-and-repin.db.spec.ts` failed three different ways under `--maxWorkers=2` — an unrelated tenant tripped `--only-test-tenants`'s refusal, an unscoped `--apply --live` wrote onto a sibling spec's own fixture tenant, and this spec's fixture received unwanted writes back — each time green when run alone, so it read all night as "a known flake, verify alone before treating as a blocker."
+- **Root cause:** `publish-and-repin.mjs`'s `computeDiff()` correctly scans the WHOLE database for a real prod run, but under parallel jest workers it also picks up sibling `*.db.spec.ts` files' own live fixture tenants — real cross-suite contamination, not a stale-count race a retry masks. Running it alone "fixes" all three by removing the siblings, which is exactly why that green is not a safety signal.
+- **Lesson:** **A `*.db.spec.ts` (or script) that computes a diff/apply, or any read+write, over a shared, unscoped table under parallel workers must scope every call to its own fixture rows (an id/slug allowlist flag on the tool it drives). "Green alone, red in the full lane" for such a spec means look for a missing scope, not a flake to rerun past.**
+- **Guard:** `publish-and-repin.mjs --only-tenants <slugs>`; `publish-and-repin.db.spec.ts`'s `runCli()` passes its own 3 fixture slugs on every call (report, preview, live apply).
+
 ## domain
-
-### L-204 · 2026-09-18/22 · domain · B524 fix round — a new write path didn't inherit a sibling's cache-invalidation fix (recurred on the READ side: 2026-09-22, B698)
-
-- **Symptom:** granting a prerequisite via `FeatureOverrideService.create()`/`.revoke()` then
-  acting on the new requires check could read a stale snapshot and false-400 for up to 30s —
-  those methods invalidated only their own override cache, never `FeatureResolverService`'s
-  separate cache the new check reads.
-- **Root cause:** `AddonService` already had this exact bug fixed (B509). B524 added the same
-  requires check to a SECOND write path reading the same cache; a fix on one writer doesn't
-  propagate to a sibling by analogy.
-- **Lesson:** **When a new check reads a cache another writer is allowed to leave briefly
-  stale, audit EVERY writer of that value for whether it already invalidates the SAME cache.**
-- **Recurred on the READ side (B698, 2026-09-22):** B677 (#1199) made a boxed purchase-order
-  line's stored `totalCost` exact (case cost x cases, one rounding) and stopped the FORM from
-  re-multiplying pieces by the 4 dp per-piece cost. THREE readers kept doing exactly that (web `PODetailRow`,
-  the mobile PO detail row+header, and the mobile LIST row's fallback), so 1,000 cases of 12 at
-  $11.00 stored as $11,000.00 still displayed $11,000.40 one screen over. The fix swept the writers
-  and the form; nobody grepped the readers. **A stored exact figure is READ, never rebuilt from its rounded
-  components: when a fix makes a stored value exact, grep every site that derives the same value
-  (`qty * unitCost`-shaped expressions across web AND mobile) and point each at the stored field,
-  with the derivation only as a fallback for rows that have none.**
-- **Guard:** `createFeatureOverride`/`revokeFeatureOverride` now call
-  `EntitlementAuthority.invalidate(tenantId)`, mirroring B509;
-  `platform-admin.controller.override-requires.spec.ts` pins both calls directly. B698:
-  `resolveStoredPOLineAmounts` in web `purchase-orders-shared.ts` (stored total wins) and a
-  rendered `PurchaseOrdersTab.test.tsx` case at the drift value, verified red on the old row.
-- Attribution: candidate from Lane D (PR #913), originally filed as "L-199" from a stale local
-  view of the register (already taken here); renumbered on fold-in.
-
-### L-187 · 2026-09-17 · domain · demo-booking slot TOCTOU (check-then-insert race)
-
-- **Symptom:** two concurrent bookings for the same slot could both pass an application-level
-  "is this slot free" check before either had written its row, so both inserted.
-- **Root cause:** the availability check and the insert were two separate statements with no
-  atomicity between them — an application-level check can only narrow the race window, never
-  close it.
-- **Lesson:** **A slot/resource booking that must never double-allocate needs the DB to enforce
-  it, not application code — a partial unique index (`WHERE status != 'CANCELLED'`) makes the
-  second concurrent insert fail atomically at the constraint, instead of racing an app-level
-  read.**
-- **Guard:** the `demo_booking_race_guard` migration's partial unique index; a concurrent-insert
-  regression test proves the second request gets a real constraint violation.
-
-### L-189 · 2026-09-17 · domain · B466 (substitute path bypassed the tier-aware pricer)
-
-- **Symptom:** substituting a product on an order item priced the new line at LIST regardless of
-  the customer's SPECIAL-tier contract price, on a code path nobody had ever pointed a tier-3
-  customer at before.
-- **Root cause:** the substitution branch was its own independent price path — it reused neither
-  `resolveBuyerLinePrice`'s tier resolution nor the batched `CustomerPrice` lookup the ADD/UPDATE
-  branches share, so it defaulted to list price with no way to learn a per-product tier existed.
-- **Lesson:** **A new mutation path onto an already-priced entity (substitute, replace, clone)
-  must resolve price through the SAME tier-aware pricer AND read from the SAME batched
-  price-lookup key set every sibling path uses — a fresh reimplementation silently regresses to
-  the simplest case.**
-- **Guard:** `orders.service.spec.ts`'s B466 suite (SPECIAL-tier substitute prices at tier, not
-  list; batched lookup includes `substituteProductId`). Sibling [[L-072]] (reuse vs.
-  reimplement, applied to a pricer instead of an enum).
 
 ### L-185 · 2026-09-17 · domain · B440 (report `total` repurposed, footer stopped matching its own column)
 
@@ -539,20 +493,6 @@
 - **Guard:** none yet — propose a regression test with a fixture where the two diverge (nonzero
   tax), asserting both formulas independently.
 
-### L-181 · 2026-09-16 · domain · B451 (dto `any` vs real callers)
-
-- **Symptom:** replacing `estimates.controller.ts`'s `@Body() dto: any` with a real
-  `CreateEstimateDto` made a line-item's `description` required — but `scripts/feature-smoke.mjs`
-  S6 and several `qa-run.js` tests send a bare `{productId, qty}`, relying on the service's own
-  fallback. Caught only by independent review, not the author.
-- **Root cause:** the DTO's field set was derived from the primary web UI form alone;
-  scripted/feature-smoke callers were never grepped.
-- **Lesson:** **Before typing a `dto: any` endpoint (or tightening any field's optionality), grep
-  every caller — web form, mobile, feature-smoke, qa-run, e2e — not just the UI form that
-  motivated the change.**
-- **Guard:** `create-estimate.dto.spec.ts` pins the bare `{productId, qty}` shape passing the
-  real `ValidationPipe` unchanged.
-
 ### L-167 · 2026-09-16 · domain · #781 (B156/B158/B170)
 
 - **Symptom:** three separately-reported bugs all traced to the same root cause — a
@@ -565,20 +505,6 @@
 - **Guard:** shared `buildListWhere()` backs `findAll`, `exportCustomers`, and the status-change
   guards; a test asserting every consumer calls the _same_ function reference (not just a
   matching result) is flagged, not yet added.
-
-### L-173 · 2026-09-16 · domain · B449 (Lite lane, plan-gate boundary)
-
-- **Symptom:** a plan-gated page kept firing its own effects/queries while a locked/blurred
-  overlay showed over it — its 403 toasts and query errors leaked to a user who should never
-  have triggered that behavior.
-- **Root cause:** the gate ghosted the real page behind blur/opacity by rendering it as
-  `children` inside the locked view's own slot — that hides the DOM, it doesn't unmount it.
-- **Lesson:** **A route guard choosing between locked and unlocked must render exactly ONE of
-  two subtrees, never wrap the real page inside the locked view's ghost slot — a component
-  hidden behind blur/opacity is still mounted, and its effects/queries still fire.**
-- **Guard:** a route boundary needs a real "still resolving" state distinct from both outcomes;
-  `layout.plan-gate-boundary.test.tsx` pins children absent from the tree while
-  resolving/locked, not just visually hidden.
 
 ### L-170 · 2026-09-16 · domain · #743 fix round F3 (roundMoney before comparison)
 
@@ -593,20 +519,6 @@
 - **Guard:** `invoices.service.ts`'s two `balanceDue` sites and the PDF template now wrap in
   `roundMoney()` before the comparison. Also fixed at `customers.service.ts`'s
   `applyAdvancePaymentToInvoiceLocked` (#814), same class.
-
-### L-171 · 2026-09-16 · domain · PR-1a F1 (pooled cap vs single-line price basis mismatch)
-
-- **Symptom:** an over-return cap was correctly widened from "one matched line" to "pooled across
-  every live line for that product" — but the sibling pricing branch, reading the SAME key,
-  still priced off one matched line's rate against the newly-pooled quantity, over-crediting a
-  product split across two differently-priced lines.
-- **Root cause:** the cap and the price are two different readers of one key. Widening one
-  reader's basis fixed that reader alone — nothing re-examined the sibling reading the same key.
-- **Lesson:** **When a guard/cap computation for a key is widened to pool across rows, grep
-  every OTHER reader of that key — a cap and a price computed from different bases silently
-  mismatch, and the mismatch is a MONEY bug.**
-- **Guard:** the pricing branch now pools qty/subtotal the same way the cap does, with a
-  `min(returned, sold)` backstop; `returns-refund.spec.ts`'s F1 cases prove the pooled pricing.
 
 ### L-072 · 2026-09-03 · domain · wave E `imp-10b`
 
@@ -695,28 +607,77 @@
   web mirror both gate on one field's presence; each has a red-first regression test pinning
   the double-subtraction case.
 
-### L-207 · 2026-09-19 · domain · B562 (averageCost recomputed by replaying an incomplete StockMovement ledger)
+### L-220 · 2026-09-26 · domain · a money-ledger change needs every axis, every ordering, and a DB spec that calls the production writer (B662)
 
-- **Symptom:** recomputing a product's `averageCost` by replaying its `StockMovement` ledger
-  silently overwrote a correct `averageCost` and rewrote every `stockAfter`/`avgCostAfter`
-  snapshot, destroying the evidence needed to notice.
-- **Root cause:** order create/edit decrements `Product.currentStock` with NO `StockMovement` row
-  (`orders.service` `decrementStockForSale` / `settleStockForEdit`), so the ledger was an
-  incomplete event log; the replay started from stock=0 and never read orders, so it computed cost
-  from a sales-blind history.
-- **Lesson:** **Never recompute derived state (a cost, a balance) by replaying an event log unless
-  the log is provably complete — assert completeness (ledger-implied stock vs the live counter)
-  and REFUSE or REPORT on divergence rather than write a plausible-looking wrong number. When the
-  refusal sits inside a shared transaction (a bill/batch with many lines), degrade per item (skip
-  the replay for the gapped item and report it) rather than failing the whole batch — a
-  fail-closed guard that blocks accounts-payable is its own outage.**
-- **Guard:** behavioral specs in `apps/api/src/inventory/inventory.service.spec.ts`
-  (`replayProduct` two-pass refuse-on-gap; null-cost import leaves `averageCost` untouched),
-  `apps/api/src/vendor-bills/vendor-bills.service.spec.ts` (two-line bill: gapped line still
-  received and reported under `gapsDetected`, clean line unaffected),
-  `apps/api/src/products/products.service.spec.ts` and
-  `apps/api/src/import/import-robustness.spec.ts` (no phantom `unitCost` 0). PR #934; follow-ups
-  B567/B568 filed.
+- **Symptom:** a ledger pro-rate fix was verified on one axis and one order of operations, and the DB spec booked the reversal by hand, so a LINE_UNIT under-reversal and a return, adjust, return drift survived review.
+- **Root cause:** the proof re-derived the writer's behaviour instead of exercising it, so it could only agree with the author's model (cf. [[L-214]]).
+- **Lesson:** **For a money-ledger change enumerate every axis the writer serves, test the interleaving permutations, and make the DB spec CALL the production writer, never re-book the rows by hand.**
+- **Guard:** `regulated-ledger-price-correction.db.spec.ts` drives `reverseReturnEntries` and `correctSaleForPriceChange`; the master control reproduces the old wrong values.
+
+### L-221 · 2026-09-26 · domain · retry a whole idempotent tx on a conflict through ONE shared predicate (SA-269)
+
+- **Symptom:** none observed in production: a design rule set by SA-269/SA-340 when #2152 added a transaction retry, so callers would not each invent their own conflict test.
+- **Root cause (of the risk):** the conflict shapes differ across Prisma and pg (40001, 40P01 in every Prisma/pg shape, P2034, TransactionWriteConflict), so a per-caller classifier matches a subset or retries a business error.
+- **Lesson:** **Retry the WHOLE transaction (each attempt re-takes its first lock) on a write conflict, classified by one shared predicate (`common/tx-retry` `txConflictState`). An HttpException is never a conflict.**
+- **Guard:** `REG-SA269-1/2/3` in the tx-retry specs.
+
+### L-222 · 2026-09-26 · domain · a line's unitPrice and unitsPerBox are ONE denomination (SA-330)
+
+- **Symptom:** a rolled-over next-delivery line was split and priced at the LIVE product pack, so after a repack it was re-split and re-priced from the source line.
+- **Root cause:** the copy carried the price without its pack, or the pack without its price; a live price converted to an old pack is a second pricing formula.
+- **Lesson:** **When a line is copied, snapshot BOTH unitPrice and unitsPerBox or neither. Carrying the pack with a live price under-bills after a repack; converting a live price to an old pack is refused.**
+- **Guard:** `next-delivery-pack.db.spec.ts` (a repack with a price change, plus an AT_STOP vs NEXT_DELIVERY parity pin).
+
+### L-223 · 2026-09-26 · domain · "one ledger writer" needs a sweep of every emit site, not the named ones (B863–B866)
+
+- **Symptom:** after the named add-on call sites were routed through the new single ledger writer, `subscribe()` still booked add-ons with its own emit on the old live-catalog formula. Only the run's final review caught it.
+- **Root cause:** the brief named the call sites, and the change declared "the single add-on ledger writer" without sweeping the tree, so an unnamed writer kept a second formula.
+- **Lesson:** **Before declaring one writer for a ledger or event stream, grep the whole tree for every emit of those events and every `amountDelta:` site, not only the call sites the brief named. Route each one through the writer or exempt it explicitly.**
+- **Guard:** #2186: `subscribe()` (`subscription-mutation.service.ts` :395-421 at review) was the writer the sweep missed and now calls `emitAddonDelta`. On master, `ADDON_ENABLED/DISABLED` is emitted only in `billing/addon-ledger.ts`. No structural pin yet; propose one beside `mrr-paying-predicate.parity.spec.ts`.
+
+### L-225 · 2026-09-26 · domain · a display fix proven on one screen must become a shared helper, or sibling screens reproduce the same bug (B653, B757-B759)
+
+- **Symptom:** the invoice-detail screens' qty/unit-label formatting bug (#1275) reappeared,
+  unfixed, on both order-detail screens (web's `OrderLineItemsTable`, mobile's operator and
+  customer order detail) — each had hand-formatted a boxed line's qty text inline instead of
+  reusing the already-proven fix, so a `unitLabel`'d line (Case, Pallet) still showed a bare
+  boxes/pieces split and a factor-1 unit line skipped unit display entirely.
+- **Root cause:** the first fix landed as inline logic on the screen it was reported against,
+  not as a shared helper — nothing forced every OTHER screen rendering the same kind of line to
+  pick it up, so each sibling screen kept its own copy of the original bug.
+- **Lesson:** **When a display/formatting bug is fixed on one screen, extract the fix into a
+  shared helper and audit every sibling screen rendering the same data shape for the same bug —
+  a proof against one screen is not a proof against its copies.**
+- **Guard:** `apps/*/lib/invoice-line-display[.ts]`'s `usesUnitDisplay`/`invoiceLineQtyText` is
+  now the one qty-text formatter, imported by all four affected screens; a `describe.each` wiring
+  test (`order-detail-unit-display-wiring.test.ts` / its web equivalent) pins the same import and
+  condition across every one of them.
+
+### L-232 · 2026-09-27 · domain · a calendar-day field keeps the client's literal day, never a re-derived one (#2249, train B)
+
+- **Symptom:** `invoices.service.ts` stored `new Date(dto.issueDate)` raw, so a client datetime with a time component or offset crossing a UTC day boundary (e.g. `23:30-04:00`) silently landed one day later — breaking the UTC-midnight symbolic convention that statements, the regulated report and sales-facts buckets all assume.
+- **Root cause:** the field is a day-granular calendar stamp, not a real instant, but the write path treated the client's string as an instant and let the day move with it. An earlier version made it worse by re-reading in the tenant timezone.
+- **Lesson:** **A DTO field documented or consumed as a calendar day (statements, invoices, schedules) must be normalized at the write boundary through a literal first-10-characters day extractor — never `new Date(rawString)` directly, and never re-derived from a timezone. A shape that names no real day is a 400, checked before anything else is read.**
+- **Guard:** `common/calendar-date.ts`'s `calendarStampFromInput`/`issueDateStamp`, called as `InvoicesService.create()`'s first statement; `calendar-date.pins.spec.ts`, `invoice-issue-date-b2197.db.spec.ts`. Cf. the F25 calendar-date convention (archived L-047) — this is the same house rule recurring at a new call site.
+
+### L-229 · 2026-09-22 · domain · a pro-rata ratio must come from the specific row, never a sum (B661)
+
+- **Symptom:** unfolded from L-214 (same B661 fix, same PR, same review) — the pro-rata ratio used
+  to reverse a regulated line's pieces was first taken from an AGGREGATE over every SALE row of
+  the order line. A product repacked 12 -> 10 between the original write and a delivered-basis
+  reconcile gave a ratio of 11 (the average), so a 2-box partial credit booked -22 pieces where the
+  truth, from that specific row's own 10-pack snapshot, was -20.
+- **Root cause:** the fix reached for whatever quantity was conveniently in scope (a sum across the
+  parent's rows) instead of the one row actually being reversed. Summing erases which pack snapshot
+  applied to which piece.
+- **Lesson:** **A pro-rata ratio must be derived from the specific stored row being reversed,
+  never a sum across the parent entity's rows.** Near-invisible in testing: the CLOSING operation
+  books the exact remaining and absorbs the difference, so the TOTAL always reconciles — the error
+  only surfaces as filing-PERIOD attribution, and only when a partial straddles a boundary. Where a
+  sibling path already pro-rates correctly (`reverseReturnEntries` off the live row's own ratio),
+  match it rather than inventing a second derivation (cf. [[L-167]]).
+- **Guard:** `regulated-ledger.service.spec.ts`'s mixed-pack reconcile case pins the ratio source.
+  Related: [[L-214]].
 
 ## security
 
@@ -731,6 +692,21 @@
   or a POST body for a server-side one.**
 - **Guard:** none yet — propose a lint/review checklist item flagging `token`/`code`/`secret`-
   named query params on any new route.
+
+### L-219 · 2026-09-26 · security · judge a DB-target guard by how the DRIVER parses the URL (D-03)
+
+- **Symptom:** a local-only DB guard checked `new URL(url).hostname`, so `…@localhost/x?host=prod` passed the guard while the pg driver dialled prod.
+- **Root cause:** the guard and the driver parsed the same string differently (`?host=`, `hostaddr`, `service`, multi-host lists, sockets, an encoded `?` in the database name).
+- **Lesson:** **A safety guard on a connection string must parse it the way the DRIVER does (pg-connection-string), then dial the vetted explicit fields, never the raw string it just approved.**
+- **Guard:** `scripts/lib/local-db-target.cjs` and its bypass-list spec (`local-db-target.spec.ts`).
+
+### L-233 · 2026-09-27 · security · a role check is not an ownership check (#2386, SA-429, train B)
+
+- **Symptom:** the DRIVER branch of `updateOrderItems` checked only `role === "DRIVER"` — any driver in the tenant could edit any order's items, not just orders on their own active run.
+- **Root cause:** the branch was written assuming the role check was the whole authorization decision; no assignment/ownership predicate existed at all, and the gap is easy to miss because the code "looks done" (it correctly 403s the wrong role, just not the wrong instance).
+- **Lesson:** **For a tenant-scoped, role-gated write path, "the role is correct" and "this principal is entitled to touch this specific resource" are two separate checks. A new role-gated branch needs an explicit resource-ownership assertion — re-derived from the resource's own foreign-key chain, never a denormalized shortcut field — written and tested as its own predicate, run before any other guard AND re-checked under the row lock.**
+- **Guard:** `orders/driver-edit-access.ts`'s `assertDriverMayEditOrder` (follows `order.routeRunStopId → RouteRunStop → RouteRun`, never `order.routeRunId` directly); called first in `updateOrderItems`, before the cancelled-order check, and again under the Order `FOR UPDATE`. `driver-edit-access.spec.ts`, `driver-edit-access.db.spec.ts`.
+- **Recurred 2026-09-27 (train D, #2398/#2391, SA-434):** the SAME predicate was missing (or independently reinvented weaker) at two MORE call sites reachable by the DRIVER role: `orders.service.ts`'s `changeStatus()` had no check at all, and `change-requests.service.ts`'s `resolve()` checked only `order.routeRun.driverId` with no run/stop status. The fix reused `assertDriverMayEditOrder` verbatim rather than writing a third bespoke check. Confirms the lesson generalizes beyond the one endpoint it was first found on: audit EVERY role-gated write path reachable by the same role, not just the one a report named.
 
 ## deploy
 
@@ -784,45 +760,6 @@
 - **Guard:** none yet — propose `post-deploy-check` reading the full status array (not just
   index 0) or verifying the served commit sha directly.
 
-### L-210 · 2026-09-21 · domain · One shared read poisons every consumer (B606)
-
-- **Symptom:** a buyer saw $120 for a single pack of a $24 product on the catalog tile, product
-  detail, variant row and favourites, and every new standing-order line inherited it — a 5x
-  overcharge. Staff paths over-charged 10.7x on the same product.
-- **Root cause:** `getCustomerPriceHistory` remembered the per-Case price of a unit-aware line
-  (`unitLabel:"Case"`, 6 packs) against the product with no `unitLabel` filter. Every buyer price
-  surface funnels through that one query, and `effectiveBuyerPrice` lets a remembered price
-  ABOVE list win over the tier, so one poisoned row propagated to four UIs and a template writer.
-- **Lesson:** **A single query that feeds customer-facing prices needs its own regression spec
-  pinning what it must EXCLUDE — not just coverage of its callers. When a new line shape
-  (unit-aware, boxed, upsell) is introduced, grep every `findMany` that reads `unitPrice` and ask
-  whether the new shape's price is denominated the same way; if not, the filter goes in the
-  query, not in each consumer.**
-- **Guard:** `orders/price-history-unit-lines.spec.ts` (#1123) pins the `unitLabel: null`
-  filter; `unit-line-writers.ast.spec.ts` classifies every writer. Propose: a read-only prod
-  count (`unitLabel IS NOT NULL` on `OrderItem`/`InvoiceItem`) before any remediation script —
-  it returned 0 here and made the planned remediation unnecessary.
-
-### L-211 · 2026-09-21 · process · A target named only in prose is not a target
-
-- **Symptom:** a locally-intended Playwright mint (`npx playwright test --project=setup`) ran
-  against PRODUCTION: operator and customer logged into the prod regression tenant, the seeded
-  buyer 401'd three times. `failedLoginAttempts` on the local row read 0 — the request never
-  arrived there.
-- **Root cause:** `playwright.config.ts` and `auth.setup.ts` both read
-  `process.env.PLAYWRIGHT_BASE_URL ?? "https://routeflowweb-production…"`. Unset means
-  production. The instruction said "against the LOCAL stack" in prose; the env var was not in
-  the command.
-- **Lesson:** **A command that targets an environment must carry the target IN the command
-  (`PLAYWRIGHT_BASE_URL=http://localhost:3001 npx …`), never in the sentence beside it. Where a
-  config defaults to production on an unset variable, that default is the defect, not the
-  operator — and any guard belongs on the RESOLVED URL, not on whether the variable is present.
-  Before GO on a minted state, decode the file's origins and require the local host.**
-- **Guard:** `scripts/local-env.mjs --e2e` sets the base URL itself and strips inherited
-  `RAILWAY_*` (use it for local runs); #1127's buyer setup step gains a skip unless the resolved
-  base URL is local. Propose: the setup project refuses to run against a `*.railway.app` host
-  unless an explicit `PLAYWRIGHT_ALLOW_REMOTE=1` is set.
-
 ### L-212 · 2026-09-21 · testing · a Playwright selector keyed to a responsive utility class rots silently (B620)
 
 - **Symptom:** the boxed-proration e2e spec's line-total reader matched nothing and reported
@@ -836,52 +773,3 @@
 - **Guard:** #1133 (b8765689) added `data-testid="line-total"`; spec 13's `readLineTotal` reads it
   via `getByTestId`.
 
-### L-213 · 2026-09-21 · process · a batch merge script must re-read the board per merge, not per batch
-
-- **Symptom:** two PRs (#1112, #1087) landed over a BLOCK/UNPROVEN verdict posted on the shared
-  coordination issue minutes earlier, because the verdict was read once before a script merged ten
-  PRs in a row.
-- **Root cause:** the review-channel read was a per-batch precondition, so every merge after the
-  first ran on a stale view of the channel. This is L-209 applied in code instead of by hand.
-- **Lesson:** **The "read the shared review channel immediately before every merge" rule (L-209)
-  binds each individual merge, not the batch — a loop that merges N PRs must re-read the channel
-  N times.**
-- **Guard:** the landing procedure re-reads the coordination issue (#938) immediately before each
-  merge; no unattended batch merge loops.
-
-### L-214 · 2026-09-22 · domain · a second quantity axis needs every writer AND every "already done" guard
-
-- **Symptom:** a FULL credit note against a box-unaware regulated line reversed 5 of the 60 pieces
-  it sold, leaving 55 phantom pieces on the tax filing per credited line. Net, qty and tax were all
-  correct — only the piece axis was wrong — and a later invoice void never cleared the residue, so
-  the rows stayed wrong permanently.
-- **Root cause:** B661 moved the SALE row's `unitBasisQty` onto a PIECE axis while `qty` stayed in
-  the line's own unit (boxes for a box-unaware line). `reverseCreditNoteEntries` kept booking the
-  line-unit value into the piece column, so the two sides no longer cancelled. Compounding it, the
-  "this line is already fully reversed, skip it" guard in `reverseInvoiceEntries` tested `qty`,
-  `netSales` and `categoryTax` but NOT `unitBasisQty` — so the one operation that could have healed
-  the residue was the operation that proved it invisible.
-- **Lesson:** **When a row carries two quantity axes that mean different things, moving ONE reader
-  or writer onto the new axis is never the whole change: sweep every OTHER writer that books a
-  paired row into the same column, and widen every "nothing left to do" guard to test EVERY axis it
-  guards. A guard that checks a subset of dimensions does not merely miss the bug — it makes the bug
-  permanent, because it convinces the healing path there is nothing to heal.**
-- **Same fix, second lesson (pro-rata source):** the replacement first took its pieces-per-unit
-  ratio from an AGGREGATE over every SALE row of the order line, which silently averages rows
-  written under different snapshots — a product repacked 12 -> 10 between the original write and a
-  delivered-basis reconcile gave 11, so a 2-box partial credit booked -22 where the truth was -20.
-  **A pro-rata ratio must be derived from the specific stored row being reversed, never from a sum
-  across the parent entity's rows.** This class is near-invisible in testing because the CLOSING
-  operation books the exact remaining and absorbs the difference, so the TOTAL always reconciles —
-  the error only surfaces as period attribution, and only when a partial straddles a period
-  boundary. Where a sibling path already pro-rates correctly
-  (`reverseReturnEntries` off the live row's own ratio), match it rather than inventing a second
-  derivation (cf. L-167).
-- **Guard:** `regulated-ledger.service.spec.ts` pins the piece axis on the credit path (full credit
-  closes to exactly 0 pieces, a partial pro-rates off the SALE row's own ratio, the second half
-  leaves no residue) and pins that a line square on money but carrying a piece residue is NOT
-  skipped by a void. When a fix breaks existing fixtures, verify each modelled a shape a real
-  writer can produce before changing it — four here defaulted the two axes independently and modelled rows no writer emits, which is why
-  changing them was correct; the justification is that the old assertion's AGGREGATE was the
-  defect's own signature (qty netting to zero while pieces don't IS the legacy residue), not
-  merely that the case looked unreachable. A mixed-pack reconcile case pins the ratio source.

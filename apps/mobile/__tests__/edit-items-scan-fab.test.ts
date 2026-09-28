@@ -16,6 +16,7 @@
  */
 import { readFileSync } from "fs";
 import { join } from "path";
+import { readEditItemsSurface } from "./support/edit-items-source";
 
 const SCREEN_PATH = join(
   __dirname,
@@ -27,7 +28,8 @@ const SCREEN_PATH = join(
   "[id]",
   "edit-items.tsx",
 );
-const source = readFileSync(SCREEN_PATH, "utf8");
+// #2340: the screen plus the modules it was sliced into.
+const source = readEditItemsSurface();
 
 // The line-list branch is everything OUTSIDE `ProductPicker` — it owns
 // every scan primitive today (cause-ruling.md §1, `:1737` onward). Splitting

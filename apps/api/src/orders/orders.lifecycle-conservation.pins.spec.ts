@@ -132,6 +132,7 @@ describe("OrdersService — F07 lifecycle-conservation pins (green pre-fix)", ()
 
   beforeEach(async () => {
     prisma = createMockPrisma();
+    prisma.order.updateMany.mockResolvedValue({ count: 1 }); // SA-404f F2: cancel CAS claims
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [

@@ -26,9 +26,13 @@ const { PrismaPg } = require("@prisma/adapter-pg");
 const { Pool } = require("pg");
 
 const EXECUTE = process.argv.includes("--execute");
+// #2421: local-only via the shared guard (the host pg dials, allow-listed); dial exactly what was checked.
+// Dry run included: a cross-tenant one-off; a production run needs an audited path (not built).
+const { productionGuard } = require("./lib/production-guard");
+const target = productionGuard({ dbUrl: process.env.DATABASE_URL });
 
 (async () => {
-  const pool = new Pool({ connectionString: process.env.DATABASE_URL });
+  const pool = new Pool(target);
   const prisma = new PrismaClient({ adapter: new PrismaPg(pool) });
 
   // Customers with more than one mergeable PENDING order.

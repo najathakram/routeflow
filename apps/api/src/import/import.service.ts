@@ -1,11 +1,16 @@
 import { BadRequestException, Injectable, Logger } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
+import { calendarStampFromInput } from "../common/calendar-date";
 import { VendorBillsService } from "../vendor-bills/vendor-bills.service";
 import { CustomersService } from "../customers/customers.service";
 import { NumberingService } from "./numbering.service";
 import { ExternalRefService } from "./external-ref.service";
 import { roundMoney } from "@routeflow/pricing";
-import { sumConfirmed } from "../invoices/payment-predicates";
+import {
+  ImportRowRefused,
+  importPaymentRefusal,
+  importPaymentStatus,
+} from "./import-payment-status";
 import { parseImportMoney, parseImportNumber } from "./parse-import-number";
 import { parse } from "csv-parse/sync";
 import { ImportEntityType, InvoiceStatus, MovementType, UserRole } from "@prisma/client";
@@ -40,6 +45,27 @@ const INVENTORY_PURCHASE_KEYWORDS = [
   "cost of goods",
   "goods purchase",
 ];
+
+/**
+ * #2493: a CSV date cell → the UTC-midnight stamp of the calendar day it names. A `YYYY-MM-DD…`
+ * value keeps its literal first ten characters (the #2197 rule); any other format a Zoho export
+ * may use ("09/25/2026", "25 Sep 2026") takes the day it names as parsed, read back from the same
+ * parse's own calendar fields so neither the value's offset nor the server zone moves it. A value
+ * naming no day is null (no due date), never an Invalid Date.
+ */
+export function importCalendarDay(
+  raw: string | null | undefined,
+  // The non-ISO parse, injectable so a spec can hand in a Date whose LOCAL and UTC days differ
+  // (the only way to pin "local getters" on a UTC CI host; TZ can't be set inside jest).
+  parse: (value: string) => Date = (value) => new Date(value),
+): Date | null {
+  const value = (raw ?? "").trim();
+  if (!value) return null;
+  if (/^\d{4}-\d{2}-\d{2}/.test(value)) return calendarStampFromInput(value);
+  const parsed = parse(value);
+  if (Number.isNaN(parsed.getTime())) return null;
+  return new Date(Date.UTC(parsed.getFullYear(), parsed.getMonth(), parsed.getDate()));
+}
 
 @Injectable()
 export class ImportService {
@@ -700,11 +726,9 @@ export class ImportService {
       } catch (_e) {
         /* ignore */
       }
-      try {
-        if (first["Due Date"]) dueDate = new Date(first["Due Date"]);
-      } catch (_e) {
-        /* ignore */
-      }
+      // #2493: the literal calendar day the CSV names, never `new Date(raw)` (whose offset or
+      // server zone can move the day); see importCalendarDay.
+      if (first["Due Date"]) dueDate = importCalendarDay(first["Due Date"]);
       try {
         const pd = first["Payment Date"] || first["Last Payment Date"];
         if (pd) paidDate = new Date(pd);
@@ -822,19 +846,30 @@ export class ImportService {
             .forTenant()
             .invoice.findFirst({ where: { invoiceNumber } });
           if (existing) {
-            const needsUpdate =
-              existing.status !== status ||
-              (existing.dueDate?.getTime() ?? 0) !== (dueDate?.getTime() ?? 0) ||
-              (existing.paidAt?.getTime() ?? 0) !== (paidAt?.getTime() ?? 0);
-            if (needsUpdate) {
-              await this.prisma.forTenant().invoice.update({
+            // #2468 / SA-468: the sync runs under the invoice's row lock and re-reads it there — an
+            // invoice the app VOIDed or WROTE OFF is never resurrected by the external file (a
+            // row error, no write), even when the void lands while this import waits.
+            const wrote = await this.prisma.tenantTransaction(async (tx) => {
+              await tx.$executeRaw`SELECT id FROM "Invoice" WHERE id = ${existing.id} FOR UPDATE`;
+              const locked = await tx.invoice.findFirst({ where: { id: existing.id } });
+              const cur = locked ?? existing;
+              const needsUpdate =
+                cur.status !== status ||
+                (cur.dueDate?.getTime() ?? 0) !== (dueDate?.getTime() ?? 0) ||
+                (cur.paidAt?.getTime() ?? 0) !== (paidAt?.getTime() ?? 0);
+              // #2478: nothing would change (e.g. an already-VOID invoice re-imported as void) ⇒ a
+              // silent no-op skip, every run. Only a re-import that WOULD write is refused below.
+              if (!needsUpdate) return false;
+              const refused = locked ? importPaymentRefusal(locked.status) : null;
+              if (refused) throw new ImportRowRefused(`${refused} — re-import skipped`);
+              await tx.invoice.update({
                 where: { id: existing.id },
                 data: { status, dueDate, paidAt },
               });
-              updated++;
-            } else {
-              skipped++;
-            }
+              return true;
+            });
+            if (wrote) updated++;
+            else skipped++;
             continue;
           }
         } else {
@@ -892,12 +927,24 @@ export class ImportService {
             );
           } else if (prior) {
             // Same status/dueDate/paidAt sync as the source-numbered branch above.
-            const needsUpdate =
-              prior.status !== status ||
-              (prior.dueDate?.getTime() ?? 0) !== (dueDate?.getTime() ?? 0) ||
-              (prior.paidAt?.getTime() ?? 0) !== (paidAt?.getTime() ?? 0);
-            if (needsUpdate) {
-              await this.prisma.forTenant().invoice.update({
+            // #2262 / SA-404b: the status write and its synthetic payment are ONE tx that updates the
+            // Invoice row (the void invariant; invoice + payment atomic). #2468 / SA-468: that tx locks
+            // the row first and re-reads it — a VOID / WRITTEN_OFF prior is skipped with a row error,
+            // never resurrected to PAID/PARTIAL with a synthetic payment.
+            const wrote = await this.prisma.tenantTransaction(async (tx) => {
+              await tx.$executeRaw`SELECT id FROM "Invoice" WHERE id = ${prior.id} FOR UPDATE`;
+              const locked = await tx.invoice.findFirst({ where: { id: prior.id } });
+              const cur = locked ?? prior;
+              const needsUpdate =
+                cur.status !== status ||
+                (cur.dueDate?.getTime() ?? 0) !== (dueDate?.getTime() ?? 0) ||
+                (cur.paidAt?.getTime() ?? 0) !== (paidAt?.getTime() ?? 0);
+              // #2478: nothing would change (e.g. an already-VOID invoice re-imported as void) ⇒ a
+              // silent no-op skip, every run. Only a re-import that WOULD write is refused below.
+              if (!needsUpdate) return false;
+              const refused = locked ? importPaymentRefusal(locked.status) : null;
+              if (refused) throw new ImportRowRefused(`${refused} — re-import skipped`);
+              await tx.invoice.update({
                 where: { id: prior.id },
                 data: { status, dueDate, paidAt },
               });
@@ -909,9 +956,9 @@ export class ImportService {
               // on "no payment already exists" so a SECOND re-import of an
               // already-synthesized-payment row doesn't duplicate it.
               if (status === InvoiceStatus.PAID || status === InvoiceStatus.PARTIAL) {
-                const existingPayment = await this.prisma
-                  .forTenant()
-                  .invoicePayment.findFirst({ where: { invoiceId: prior.id } });
+                const existingPayment = await tx.invoicePayment.findFirst({
+                  where: { invoiceId: prior.id },
+                });
                 if (!existingPayment) {
                   // B779: total/balanceDue are individually rounded (parseImportMoney), but
                   // their subtraction can still land off-cent in float (24.30 - 10.10 =
@@ -922,7 +969,7 @@ export class ImportService {
                       ? total
                       : 0;
                   if (paidAmount > 0.01) {
-                    await this.prisma.forTenant().invoicePayment.create({
+                    await tx.invoicePayment.create({
                       data: {
                         invoiceId: prior.id,
                         amount: paidAmount,
@@ -935,10 +982,10 @@ export class ImportService {
                   }
                 }
               }
-              updated++;
-            } else {
-              skipped++;
-            }
+              return true;
+            });
+            if (wrote) updated++;
+            else skipped++;
             continue;
           }
           // Reserve a fresh number through NumberingService (standalone — no
@@ -949,28 +996,57 @@ export class ImportService {
           invoiceNumber = await this.numbering.reserveNext("INVOICE", { year });
         }
 
-        const newInvoice = await this.prisma.forTenant().invoice.create({
-          data: {
-            invoiceNumber,
-            customerId: customer.id,
-            status,
-            subtotal,
-            taxAmount: 0,
-            discount,
-            shippingFee,
-            total,
-            issueDate,
-            dueDate,
-            paidAt,
-            notes,
-            terms,
-            items: { create: itemsData },
-          },
+        // #2262 / SA-404b: the invoice and its synthetic payment are ONE tx — a partial import can
+        // never leave a payment without its invoice (or an invoice without the payment its status
+        // implies). The number was reserved above, outside (NumberingService is standalone).
+        const customerId = customer.id; // narrowed here; the tx callback below cannot see that
+        const newInvoice = await this.prisma.tenantTransaction(async (tx) => {
+          const created = await tx.invoice.create({
+            data: {
+              invoiceNumber,
+              customerId,
+              status,
+              subtotal,
+              taxAmount: 0,
+              discount,
+              shippingFee,
+              total,
+              issueDate,
+              dueDate,
+              paidAt,
+              notes,
+              terms,
+              items: { create: itemsData },
+            },
+          });
+          // For PAID/PARTIAL invoices, create a synthetic payment record so
+          // balance-due calculations are correct without a separate payments import
+          if (status === InvoiceStatus.PAID || status === InvoiceStatus.PARTIAL) {
+            // B779: round every monetary write — see the sibling branch's comment above.
+            const paidAmount = !isNaN(balanceDue)
+              ? roundMoney(total - balanceDue)
+              : status === InvoiceStatus.PAID
+                ? total
+                : 0;
+            if (paidAmount > 0.01) {
+              await tx.invoicePayment.create({
+                data: {
+                  invoiceId: created.id,
+                  amount: paidAmount,
+                  method: "OTHER",
+                  reference: "zoho-import",
+                  notes: "Imported from Zoho",
+                  createdAt: paidAt || issueDate,
+                },
+              });
+            }
+          }
+          return created;
         });
 
-        // Durable identity for a source-numberless row (B268/D4) — recorded before
-        // any further write, so a re-upload of the same file finds THIS invoice
-        // instead of minting a second one.
+        // Durable identity for a source-numberless row (B268/D4) — recorded right after the
+        // invoice + payment tx commits (no write follows it), so a re-upload of the same file
+        // finds THIS invoice instead of minting a second one.
         //
         // Opus re-check fix (REG-B268-F): a customer/total MISMATCH must NOT
         // repoint the plain `importRef` key — that key belongs to the ORIGINAL
@@ -991,32 +1067,12 @@ export class ImportService {
           );
         }
 
-        // For PAID/PARTIAL invoices, create a synthetic payment record so
-        // balance-due calculations are correct without a separate payments import
-        if (status === InvoiceStatus.PAID || status === InvoiceStatus.PARTIAL) {
-          // B779: round every monetary write — see the sibling branch's comment above.
-          const paidAmount = !isNaN(balanceDue)
-            ? roundMoney(total - balanceDue)
-            : status === InvoiceStatus.PAID
-              ? total
-              : 0;
-          if (paidAmount > 0.01) {
-            await this.prisma.forTenant().invoicePayment.create({
-              data: {
-                invoiceId: newInvoice.id,
-                amount: paidAmount,
-                method: "OTHER",
-                reference: "zoho-import",
-                notes: "Imported from Zoho",
-                createdAt: paidAt || issueDate,
-              },
-            });
-          }
-        }
-
         imported++;
       } catch (e: any) {
-        this.pushRowError(errors, invoiceNumber || rowLabel, e);
+        // #2468: a deliberate refusal is reported by its reason, not the generic "import failed".
+        if (e instanceof ImportRowRefused)
+          errors.push(`${invoiceNumber || rowLabel}: ${e.message}`);
+        else this.pushRowError(errors, invoiceNumber || rowLabel, e);
         skipped++;
       }
     }
@@ -1143,73 +1199,76 @@ export class ImportService {
 
         // Also remove any synthetic "zoho-import" placeholder payment for this invoice
         // now that we have the real payment record
-        await this.prisma.forTenant().invoicePayment.deleteMany({
-          where: { invoiceId: invoice.id, reference: "zoho-import" },
-        });
-
-        await this.prisma.forTenant().invoicePayment.create({
-          data: {
-            invoiceId: invoice.id,
-            amount,
-            method,
-            reference: zohoPaymentId || reference || null,
-            notes: reference && reference !== zohoPaymentId ? reference : null,
-            createdAt,
-          },
+        // #2262 / SA-404b: the payment and its invoice's status are ONE tx that locks and UPDATES
+        // the Invoice row (touched even when the status stays), so a concurrent void serializes
+        // against it and a failure leaves neither half.
+        await this.prisma.tenantTransaction(async (tx) => {
+          await tx.$executeRaw`SELECT id FROM "Invoice" WHERE id = ${invoice.id} FOR UPDATE`;
+          // SA-424 N1: refuse a VOID / WRITTEN_OFF invoice on the LOCKED row, before any write —
+          // no payment, and the zoho-import placeholder is kept.
+          const current = await tx.invoice.findFirst({
+            where: { id: invoice.id },
+            select: { status: true },
+          });
+          const refused = current ? importPaymentRefusal(current.status) : null;
+          if (refused) throw new ImportRowRefused(refused);
+          await tx.invoicePayment.deleteMany({
+            where: { invoiceId: invoice.id, reference: "zoho-import" },
+          });
+          await tx.invoicePayment.create({
+            data: {
+              invoiceId: invoice.id,
+              amount,
+              method,
+              reference: zohoPaymentId || reference || null,
+              notes: reference && reference !== zohoPaymentId ? reference : null,
+              createdAt,
+            },
+          });
+          const locked = await tx.invoice.findFirst({
+            where: { id: invoice.id },
+            include: { payments: true },
+          });
+          const change = locked
+            ? importPaymentStatus(locked, locked.payments ?? [], new Date())
+            : null;
+          await tx.invoice.update({
+            where: { id: invoice.id },
+            data: change ?? { status: locked?.status ?? invoice.status },
+          });
         });
         imported++;
       } catch (e: any) {
-        this.pushRowError(errors, `Payment for ${invoiceNumber}`, e);
+        if (e instanceof ImportRowRefused)
+          errors.push(`Payment for ${invoiceNumber}: ${e.message}`);
+        else this.pushRowError(errors, `Payment for ${invoiceNumber}`, e);
         skipped++;
       }
     }
 
-    // Update invoice statuses based on total payments — wrapped in a single transaction.
-    // DRAFT, VOID, and WRITTEN_OFF are deliberate user/system states that must NOT be
-    // auto-flipped by the payment-based recalc — otherwise an unsent draft or a voided
-    // invoice with a past due date would silently appear as OVERDUE in receivables.
+    // Sweep every invoice's status from its payments (wrapped in a single transaction) with the
+    // same rule the per-row tx applied — see import-payment-status.ts for the rule and its reasons.
     const allInvoices = await this.prisma
       .forTenant()
       .invoice.findMany({ include: { payments: true } });
     const now = new Date();
-    const TERMINAL_STATUSES: InvoiceStatus[] = [
-      InvoiceStatus.DRAFT,
-      InvoiceStatus.VOID,
-      InvoiceStatus.WRITTEN_OFF,
-    ];
-    const statusUpdates: Array<{ id: string; status: InvoiceStatus; paidAt: Date | null }> = [];
+    const statusUpdates: Array<{
+      id: string;
+      from: InvoiceStatus;
+      status: InvoiceStatus;
+      paidAt: Date | null;
+    }> = [];
     for (const inv of allInvoices) {
-      if (TERMINAL_STATUSES.includes(inv.status)) continue;
-      // CONFIRMED-only: a payment counts toward an invoice's status only once an
-      // operator has confirmed it (status === "PAID"). `status !== "VOID"` is the
-      // historical buggy shorthand (B11) that also folded in an unconfirmed DRAFT
-      // row — see ../invoices/payment-predicates.ts and campaign batch F03. This
-      // recalc sweeps EVERY invoice in the tenant, so the loose filter let an
-      // unrelated payments upload flip a live invoice to PAID on a DRAFT payment.
-      // Every payment THIS importer creates is CONFIRMED (schema default PAID),
-      // so only pre-existing DRAFT rows change behaviour here.
-      const totalPaid = sumConfirmed(inv.payments);
-      const total = Number(inv.total);
-      let newStatus: InvoiceStatus;
-      // Match InvoicesService.recomputeStatus — a tenth of a cent of slack, not a
-      // whole cent (which would call a 1-cent-short invoice fully PAID).
-      if (totalPaid >= total - 0.001) newStatus = InvoiceStatus.PAID;
-      else if (totalPaid > 0) newStatus = InvoiceStatus.PARTIAL;
-      else if (inv.dueDate && inv.dueDate < now) newStatus = InvoiceStatus.OVERDUE;
-      else newStatus = inv.status;
-      if (newStatus !== inv.status) {
-        statusUpdates.push({
-          id: inv.id,
-          status: newStatus,
-          paidAt: newStatus === InvoiceStatus.PAID ? now : null,
-        });
-      }
+      const change = importPaymentStatus(inv, inv.payments, now); // #2262: the one shared rule
+      if (change) statusUpdates.push({ id: inv.id, from: inv.status, ...change });
     }
     if (statusUpdates.length > 0) {
+      // SA-424 N2: compare-and-set on the status this sweep READ — an invoice voided (or paid)
+      // since the read is left alone (count 0 ⇒ skipped), never written over by a stale verdict.
       await this.prisma.$transaction(
         statusUpdates.map((u) =>
-          this.prisma.forTenant().invoice.update({
-            where: { id: u.id },
+          this.prisma.forTenant().invoice.updateMany({
+            where: { id: u.id, status: u.from },
             data: { status: u.status, paidAt: u.paidAt },
           }),
         ),

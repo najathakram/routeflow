@@ -28,6 +28,7 @@ function make(
   } = {},
 ) {
   const tx = {
+    $queryRaw: jest.fn().mockResolvedValue([]),
     tenantSubscription: { update: jest.fn().mockResolvedValue({}) },
     tenant: { update: jest.fn().mockResolvedValue({}) },
     user: {
@@ -255,6 +256,92 @@ describe("BillingCronService", () => {
     expect(emitted(events)).toContain(BILLING_EVENTS.GRACE_EXPIRED);
   });
 
+  // #2223 / SA-444c: a scheduled downgrade moves the PLAN, never a negotiated fee — the snapshot stays
+  // the override, Δ0, priceOverrideMonthly untouched. A catalog row keeps today's catalog delta.
+  it("SA-444c: a due downgrade of an override row keeps the fee — snapshot = fee, Δ0, plan moves", async () => {
+    const { svc, tx, events } = make({
+      downgrades: [
+        {
+          tenantId: "t1",
+          planKey: "BUSINESS",
+          planVersionId: "v7",
+          downgradeToPlanKey: "STARTER",
+          downgradeEffectiveAt: new Date(Date.now() - 86400000),
+          retainedUserIds: [],
+          priceOverrideMonthly: 150,
+          // #2460: a consistent override row — its snapshot is the fee it pays (SA-444a), so the
+          // ledger (new − stored snapshot, SA-464 (2)) books Δ0.
+          basePriceSnapshot: 150,
+        },
+      ],
+    });
+    await svc.applyScheduledDowngrades();
+    const data = tx.tenantSubscription.update.mock.calls[0][0].data;
+    expect(data).toMatchObject({ planKey: "STARTER", basePriceSnapshot: 150 });
+    expect(data).not.toHaveProperty("priceOverrideMonthly");
+    expect(deltaOf(events, BILLING_EVENTS.PLAN_CHANGED)).toBe(0);
+  });
+
+  // SA-464b: the same override row with a NULL snapshot (not yet counted) — the downgrade writes the fee
+  // and books it in full, so snapshot MRR and ledger MRR re-agree.
+  it("SA-464b: a due downgrade of an override row with a NULL snapshot writes the fee and books +fee", async () => {
+    const { svc, tx, events } = make({
+      downgrades: [
+        {
+          tenantId: "t1",
+          planKey: "BUSINESS",
+          planVersionId: "v7",
+          downgradeToPlanKey: "STARTER",
+          downgradeEffectiveAt: new Date(Date.now() - 86400000),
+          retainedUserIds: [],
+          priceOverrideMonthly: 150,
+          basePriceSnapshot: null,
+        },
+      ],
+    });
+    await svc.applyScheduledDowngrades();
+    expect(tx.tenantSubscription.update.mock.calls[0][0].data).toMatchObject({
+      planKey: "STARTER",
+      basePriceSnapshot: 150,
+    });
+    expect(deltaOf(events, BILLING_EVENTS.PLAN_CHANGED)).toBe(150);
+  });
+
+  it("SA-444c: the downgrade query selects the override it keeps", async () => {
+    const { svc, prisma } = make({ downgrades: [] });
+    await svc.applyScheduledDowngrades();
+    expect(prisma.tenantSubscription.findMany.mock.calls[0][0].select).toMatchObject({
+      priceOverrideMonthly: true,
+    });
+  });
+
+  // #2460 / SA-464 (2): the downgrade's ledger nets against the STORED snapshot (NULL ⇒ 0), never
+  // the pinned catalog price of the plan being left, so snapshot MRR and ledger MRR stay equal.
+  it("#2460: a downgrade of a NULL-snapshot row books the new price in full (never 59 − 349)", async () => {
+    const { svc, events } = make({
+      downgrades: [
+        {
+          tenantId: "t1",
+          planKey: "BUSINESS",
+          planVersionId: "v7",
+          downgradeToPlanKey: "STARTER",
+          retainedUserIds: [],
+          basePriceSnapshot: null,
+        },
+      ],
+    });
+    await svc.applyScheduledDowngrades();
+    expect(deltaOf(events, BILLING_EVENTS.PLAN_CHANGED)).toBe(59);
+  });
+
+  it("#2460: the downgrade query selects the stored snapshot it nets against", async () => {
+    const { svc, prisma } = make({ downgrades: [] });
+    await svc.applyScheduledDowngrades();
+    expect(prisma.tenantSubscription.findMany.mock.calls[0][0].select).toMatchObject({
+      basePriceSnapshot: true,
+    });
+  });
+
   it("A2b: a scheduled downgrade snapshots via the hook INSIDE its transaction, before the plan write", async () => {
     const { svc, tx, planTransition } = make({
       downgrades: [
@@ -288,6 +375,40 @@ describe("BillingCronService", () => {
       toPlanKey: "STARTER",
       actor: { id: null },
     });
+  });
+
+  // #2551 / SA-503a: the downgrade takes the Tenant row lock right after the hook and BEFORE its
+  // subscription write — the house order every other ledger writer uses (no 40P01 vs reconcile).
+  it("#2551: hook → Tenant lock → subscription write", async () => {
+    const { svc, tx, planTransition } = make({
+      downgrades: [
+        {
+          tenantId: "t1",
+          planKey: "BUSINESS",
+          planVersionId: "v7",
+          downgradeToPlanKey: "STARTER",
+          retainedUserIds: [],
+        },
+      ],
+    });
+    const order: string[] = [];
+    planTransition.onPlanChange.mockImplementation(async () => {
+      order.push("onPlanChange");
+      return { action: "none" };
+    });
+    tx.$queryRaw.mockImplementation(async (strings: TemplateStringsArray) => {
+      if (/FROM "Tenant" WHERE id = \? FOR UPDATE/.test(Array.from(strings).join("?")))
+        order.push("tenant-lock");
+      return [];
+    });
+    tx.tenantSubscription.update.mockImplementation(async () => {
+      order.push("plan-write");
+      return {};
+    });
+
+    await svc.applyScheduledDowngrades();
+
+    expect(order).toEqual(["onPlanChange", "tenant-lock", "plan-write"]);
   });
 
   it("flag OFF: the sweep issues exactly its old query (no tenant.plan join) and never touches the hook", async () => {
@@ -472,6 +593,7 @@ describe("BillingCronService", () => {
           planVersionId: "v7",
           downgradeToPlanKey: "STARTER",
           retainedUserIds: ["u1"],
+          basePriceSnapshot: 349, // #2460: a consistent row carries its snapshot (the ledger nets against it, SA-464).
         },
       ],
       activeTeam: 5, // over the STARTER cap of 1
@@ -689,6 +811,7 @@ describe("BillingCronService", () => {
           planVersionId: "v11",
           downgradeToPlanKey: "LITE",
           retainedUserIds: [],
+          basePriceSnapshot: 249, // #2460: a consistent row carries its snapshot (the ledger nets against it, SA-464).
         },
       ],
     });
@@ -846,5 +969,97 @@ describe("BillingCronService", () => {
     await svc.rollCycles();
     const data = prisma.tenantSubscription.update.mock.calls[0][0].data;
     expect(data.periodEnd.toISOString()).toBe("2026-04-15T00:00:00.000Z");
+  });
+
+  // B863 / SA-277: rollCycles() selects no periodStart/externalPayment and always calls
+  // addCycle(periodEnd, cycle) — a manually-activated external row whose `cycle` field is
+  // mislabeled (or whose real billing period doesn't match the stored cycle enum) rolls by
+  // the wrong span forever. An externally-paid row must instead roll by its OWN observed
+  // period length (periodEnd - periodStart), not by the `cycle` column.
+  it("REG-B863-ROLL 365-day external row rolls +365d (flips REG-ROLL-MANUAL-ANNUAL, SA-277)", async () => {
+    const periodStart = new Date("2025-01-01T00:00:00.000Z");
+    const periodEnd = new Date("2026-01-01T00:00:00.000Z");
+    const { svc, prisma } = make({
+      rollSubs: [
+        {
+          tenantId: "t-manual-annual",
+          cycle: "MONTHLY",
+          externalPayment: true,
+          periodStart,
+          periodEnd,
+        },
+      ],
+    });
+    await svc.rollCycles();
+
+    const data = prisma.tenantSubscription.update.mock.calls[0][0].data;
+    expect(data.periodStart).toEqual(periodEnd);
+    expect(data.periodEnd.toISOString()).toBe("2027-01-01T00:00:00.000Z");
+    expect(prisma.tenantSubscription.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        select: expect.objectContaining({ periodStart: true, externalPayment: true }),
+      }),
+    );
+  });
+
+  it("REG-B863-ROLL 90-day external row rolls +90d", async () => {
+    const periodStart = new Date("2025-10-03T00:00:00.000Z");
+    const periodEnd = new Date("2026-01-01T00:00:00.000Z");
+    const { svc, prisma } = make({
+      rollSubs: [
+        { tenantId: "t1", cycle: "MONTHLY", externalPayment: true, periodStart, periodEnd },
+      ],
+    });
+    await svc.rollCycles();
+    const data = prisma.tenantSubscription.update.mock.calls[0][0].data;
+    expect(data.periodEnd.toISOString()).toBe("2026-04-01T00:00:00.000Z");
+  });
+
+  it("REG-B863-ROLL 180-day external row rolls +180d", async () => {
+    const periodStart = new Date("2025-07-05T00:00:00.000Z");
+    const periodEnd = new Date("2026-01-01T00:00:00.000Z");
+    const { svc, prisma } = make({
+      rollSubs: [
+        { tenantId: "t1", cycle: "MONTHLY", externalPayment: true, periodStart, periodEnd },
+      ],
+    });
+    await svc.rollCycles();
+    const data = prisma.tenantSubscription.update.mock.calls[0][0].data;
+    expect(data.periodEnd.toISOString()).toBe("2026-06-30T00:00:00.000Z");
+  });
+
+  // Pin: a Stripe/catalog-priced row (externalPayment: false) is still rolled by `addCycle`
+  // off its `cycle` column — only externally-paid rows change under B863's fix.
+  it("rollCycles still rolls a Stripe/catalog row (externalPayment: false) by addCycle +1 month", async () => {
+    const periodEnd = new Date("2026-01-01T00:00:00.000Z");
+    const periodStart = new Date("2025-10-03T00:00:00.000Z"); // 90d back
+    const { svc, prisma } = make({
+      rollSubs: [
+        { tenantId: "t1", cycle: "MONTHLY", externalPayment: false, periodStart, periodEnd },
+      ],
+    });
+    await svc.rollCycles();
+    const data = prisma.tenantSubscription.update.mock.calls[0][0].data;
+    expect(data.periodEnd.toISOString()).toBe("2026-02-01T00:00:00.000Z");
+  });
+
+  // Pin: an external row with no periodStart on record can't derive an observed period
+  // length, so it falls back to the old addCycle(periodEnd, cycle) behavior.
+  it("rollCycles falls back to addCycle for an external row with periodStart: null", async () => {
+    const periodEnd = new Date("2026-01-01T00:00:00.000Z");
+    const { svc, prisma } = make({
+      rollSubs: [
+        {
+          tenantId: "t1",
+          cycle: "MONTHLY",
+          externalPayment: true,
+          periodStart: null,
+          periodEnd,
+        },
+      ],
+    });
+    await svc.rollCycles();
+    const data = prisma.tenantSubscription.update.mock.calls[0][0].data;
+    expect(data.periodEnd.toISOString()).toBe("2026-02-01T00:00:00.000Z");
   });
 });

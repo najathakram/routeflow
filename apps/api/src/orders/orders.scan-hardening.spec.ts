@@ -1367,7 +1367,7 @@ describe("OrdersController.create — staff merge is denomination-aware (T-B199 
       1,
       "cust-1",
       {},
-      { lockMode: "try" },
+      { lockMode: "try", actor: expect.objectContaining({ role: "OPERATOR" }) },
     );
 
     // (b) the POST-CREATE auto-consolidation on a CUSTOMER caller.
@@ -1379,7 +1379,7 @@ describe("OrdersController.create — staff merge is denomination-aware (T-B199 
       2,
       "cust-1",
       { buyerInitiated: true },
-      { lockMode: "try" },
+      { lockMode: "try", actor: expect.objectContaining({ role: "CUSTOMER" }) },
     );
   });
 

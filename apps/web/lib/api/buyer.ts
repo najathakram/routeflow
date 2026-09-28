@@ -6,11 +6,13 @@ import { getStoredActiveSeller } from "@/lib/buyer-auth";
 import type { ExpiringAuthorization } from "./authorizations";
 import type { PromotionRule } from "@routeflow/pricing";
 import type { ChangeRequest } from "@/lib/change-requests";
+import { isTrackingLive, type OrderTrackingResponse } from "@routeflow/types";
 import type {
   BuyerAnalytics,
   BuyerAuthorizationRow,
   BuyerCreateChangeRequestInput,
   BuyerPayment,
+  BuyerProductDetailExtras,
   BuyerPromotion,
   BuyerRemittance,
   BuyerStatement,
@@ -63,21 +65,9 @@ export interface BuyerProduct {
   stockLeft?: number | null;
 }
 
-export interface BuyerProductDetail extends BuyerProduct {
-  imageUrls: string[];
-  variants: Array<{
-    id: string;
-    name: string;
-    sku: string | null;
-    buyerPrice: number;
-    unit: string;
-    /** Promo inputs — a variant row prices through `deriveTilePrice` like any tile. */
-    category: string | null;
-    unitsPerBox: number | null;
-  }>;
-  /** P5-03: whether the caller has a PENDING restock alert on this product. */
-  alertSubscribed?: boolean;
-}
+/** Detail-only fields are shared with mobile via @routeflow/types (#2345). */
+export interface BuyerProductDetail
+  extends Omit<BuyerProduct, "imageUrls">, BuyerProductDetailExtras {}
 
 export interface BuyerOrder {
   id: string;
@@ -91,6 +81,8 @@ export interface BuyerOrder {
   notes: string | null;
   requestedDeliveryDate: string | null;
   createdAt: string;
+  /** When the order was delivered (null until then); the tracking card shows it. */
+  deliveredAt?: string | null;
   customer: { id: string; businessName: string };
   lineItems: Array<{
     id: string;
@@ -408,6 +400,34 @@ export function useBuyerOrder(orderId: string) {
     queryKey: ["buyer", "order", orderId],
     queryFn: () => buyerApiClient.get(`/buyer/orders/${orderId}`).then((r) => r.data),
     enabled: !!orderId,
+  });
+}
+
+/** How often a live "Track your delivery" card refreshes (#2095). */
+export const BUYER_TRACKING_POLL_MS = 60_000;
+
+/**
+ * TanStack `refetchInterval` for the tracking card: every minute while the delivery is live, and
+ * never once the order is delivered or cancelled. WHEN is the shared `isTrackingLive` rule (the
+ * one mobile polls on); only the cadence is the web's.
+ */
+export function buyerTrackingRefetchInterval(
+  data: OrderTrackingResponse | undefined,
+): number | false {
+  return isTrackingLive(data) ? BUYER_TRACKING_POLL_MS : false;
+}
+
+/**
+ * #2095: the order's delivery tracking (driver first name, stops before you, delivery window).
+ * Keyed UNDER the order's own key, so every invalidation of the order (cancel, edit, a realtime
+ * order.statusChanged push) refreshes the card with it.
+ */
+export function useBuyerOrderTracking(orderId: string) {
+  return useQuery<OrderTrackingResponse>({
+    queryKey: ["buyer", "order", orderId, "tracking"],
+    queryFn: () => buyerApiClient.get(`/buyer/orders/${orderId}/tracking`).then((r) => r.data),
+    enabled: !!orderId,
+    refetchInterval: (query) => buyerTrackingRefetchInterval(query.state.data),
   });
 }
 
