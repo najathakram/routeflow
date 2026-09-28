@@ -201,6 +201,7 @@ const MODEL_DOMAIN = {
   CreditNote: "finance",
   CreditNoteItem: "finance",
   OrderCreditNote: "finance",
+  CreditNoteApplyBlock: "finance",
   Estimate: "finance",
   EstimateItem: "finance",
   VendorBill: "finance",
@@ -251,6 +252,9 @@ const MODEL_DOMAIN = {
   CrmConnection: "platform",
   CrmHandoff: "platform",
   MailboxConnection: "platform",
+  OnboardingCase: "platform",
+  OnboardingStep: "platform",
+  OnboardingEvent: "platform",
 
   // ─── compliance ────────────────────────────────────────────────────────────
   TobaccoReport: "compliance",
