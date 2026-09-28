@@ -11,7 +11,10 @@
  *   - case 5 is the production path itself: the PLAN grants flag.returns, no override, no rows;
  *   - cases 1–2 reach flag.returns through a GRANT override on it instead (`requires` folds
  *     GRANT/DENY overrides into its set alongside ent.flags);
- *   - case 3 has neither.
+ *   - case 3 (#2700, SA-559d) is pinned to the version WITHOUT flag.returns, so "flags gain forward"
+ *     decides: it holds the key exactly when the PUBLISHED GROWTH carries flag.returns (a seeded
+ *     DB: true; a fresh DB, whose fixture GROWTH has no flags: false — the plan-absence path), and
+ *     a DENY on flag.returns then removes it on either DB.
  *
  * Only Stripe / BillingEventService / EntitlementAuthority / FeatureResolverService are stubbed
  * (boundaries `sa385b` also stubs); PrismaService, EntitlementsService, FeatureOverrideService,
@@ -231,12 +234,35 @@ describeDb(
       expect(after).toBe(0);
     });
 
-    it("(3) no flag.returns (and no GRANT) → hasAddon false, guard throws Forbidden", async () => {
+    it("(3) #2700: a pin WITHOUT flag.returns follows the published GROWTH through the union (a fresh DB: plan absence → false; a seeded DB: true), and a DENY on flag.returns wins on either", async () => {
       const t = await throwawayTenant("case3");
       const before = await prisma.tenantAddon.count({ where: { tenantId: t } });
 
-      // No override at all, and the tenant is pinned to the spec-owned version WITHOUT
-      // flag.returns — so a seeded DB's published catalog cannot turn this green or red.
+      // What "flags gain forward" implies for this pin: the spec-owned version is never PUBLISHED,
+      // so the tenant's plan flags are its own [] ∪ the PUBLISHED GROWTH's. Read, not assumed —
+      // a fresh DB (ensurePublishedCatalog's GROWTH carries no flags) and a seeded one differ.
+      const published = await new PlanCatalogService(prisma as any).getPublishedVersion();
+      const publishedGrowthHasReturns = !!published?.definitions
+        .find((d) => d.planKey === "GROWTH")
+        ?.featureFlags.includes(FLAG);
+      await expect(addons.hasAddon(t, KEY)).resolves.toBe(publishedGrowthHasReturns);
+      if (publishedGrowthHasReturns) {
+        await expect(addons.getActiveAddons(t)).resolves.toContain(KEY);
+        await expect(guardFor(KEY, t)()).resolves.toBe(true);
+      } else {
+        await expect(addons.getActiveAddons(t)).resolves.not.toContain(KEY);
+        await expect(guardFor(KEY, t)()).rejects.toBeInstanceOf(ForbiddenException);
+      }
+
+      // SA-559d: a DENY on flag.returns wins over a union-granted flag, whatever the DB.
+      await featureOverrides.create({
+        tenantId: t,
+        featureKey: FLAG,
+        effect: "DENY",
+        reason: "#2700 db.spec — fixture deny of flag.returns over a union grant",
+        expiresAt: null,
+        createdById: null,
+      });
       await expect(addons.hasAddon(t, KEY)).resolves.toBe(false);
       await expect(addons.getActiveAddons(t)).resolves.not.toContain(KEY);
       await expect(guardFor(KEY, t)()).rejects.toBeInstanceOf(ForbiddenException);

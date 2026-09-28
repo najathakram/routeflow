@@ -17,6 +17,7 @@ import type { AddonSeed, DefinitionSeed } from "./plan-catalog-v11.definitions";
 import {
   V12_ADDON_SEEDS,
   V12_DEFINITIONS,
+  buildV12Rows,
   type PublishedVersionRef,
   type V12AddonSkuRow,
   type V12DefinitionRow,
@@ -82,4 +83,96 @@ export function liteCarriesV13Flags(
 ): boolean {
   const lite = definitions.find((d) => d.planKey === "LITE");
   return !!lite && V13_LITE_ADDED_FLAGS.every((f) => lite.featureFlags.includes(f));
+}
+
+/** The shape of a PUBLISHED version's rows the precondition compares (Decimals arrive as objects). */
+export interface PublishedCatalogRows {
+  definitions: ReadonlyArray<Record<string, unknown> & { planKey: string }>;
+  addonSkus: ReadonlyArray<Record<string, unknown> & { sku: string }>;
+}
+
+const DEF_FIELDS = [
+  "name",
+  "monthlyPrice",
+  "annualPrice",
+  "isCustom",
+  "customersIncluded",
+  "seatsIncluded",
+  "routesConcurrent",
+  "scansIncluded",
+  "msgsIncluded",
+  "featureFlags",
+  "sortOrder",
+] as const;
+const SKU_FIELDS = [
+  "name",
+  "monthlyPrice",
+  "unit",
+  "includedAtPlan",
+  "meteredKey",
+  "capacityPerUnit",
+  "stackable",
+  "grantsFlags",
+  "sortOrder",
+] as const;
+
+/** Prisma Decimal / number / null → a comparable JSON value. */
+function norm(v: unknown): unknown {
+  if (v == null) return null;
+  if (
+    typeof v === "object" &&
+    !Array.isArray(v) &&
+    typeof (v as { toString(): string }).toString === "function"
+  ) {
+    const n = Number((v as { toString(): string }).toString());
+    return Number.isFinite(n) ? n : v;
+  }
+  return v;
+}
+
+/**
+ * #2700 (lead F4 / SA-559d): v13 is "v12 + LITE ∋ flag.returns" ONLY IF the version actually
+ * PUBLISHED in the target DB is v12. Diffs that published catalog against buildV12Rows, ignoring
+ * LITE's featureFlags only — any other difference (a post-v12 Plans-editor edit, a missing or extra
+ * plan or SKU) is listed, and the publisher REFUSES, so a live edit is never silently reverted by
+ * publishing a v13 built from the v12 constants. `[]` = safe to publish.
+ */
+export function diffPublishedAgainstV12(published: PublishedCatalogRows): string[] {
+  const v12 = buildV12RowsForDiff();
+  const out: string[] = [];
+  const pubDefs = new Map(published.definitions.map((d) => [d.planKey, d]));
+  const wantDefs = new Map(v12.definitionRows.map((d) => [d.planKey as string, d]));
+  for (const key of new Set([...pubDefs.keys(), ...wantDefs.keys()])) {
+    const got = pubDefs.get(key);
+    const want = wantDefs.get(key);
+    if (!got) out.push(`PlanDefinition ${key}: missing from the published version`);
+    else if (!want) out.push(`PlanDefinition ${key}: not in v12 (published has it)`);
+    else
+      for (const f of DEF_FIELDS) {
+        if (key === "LITE" && f === "featureFlags") continue;
+        const a = JSON.stringify(norm(got[f]));
+        const b = JSON.stringify(norm((want as unknown as Record<string, unknown>)[f]));
+        if (a !== b) out.push(`PlanDefinition ${key}.${f}: published ${a}, v12 ${b}`);
+      }
+  }
+  const pubSkus = new Map(published.addonSkus.map((s) => [s.sku, s]));
+  const wantSkus = new Map(v12.addonSkuRows.map((s) => [s.sku as string, s]));
+  for (const sku of new Set([...pubSkus.keys(), ...wantSkus.keys()])) {
+    const got = pubSkus.get(sku);
+    const want = wantSkus.get(sku);
+    if (!got) out.push(`AddonSku ${sku}: missing from the published version`);
+    else if (!want) out.push(`AddonSku ${sku}: not in v12 (published has it)`);
+    else
+      for (const f of SKU_FIELDS) {
+        const a = JSON.stringify(norm(got[f]));
+        const b = JSON.stringify(norm((want as unknown as Record<string, unknown>)[f]));
+        if (a !== b) out.push(`AddonSku ${sku}.${f}: published ${a}, v12 ${b}`);
+      }
+  }
+  return out;
+}
+
+function buildV12RowsForDiff() {
+  // The notes string is irrelevant to the diff; any published ref works.
+  return buildV12Rows(null);
 }

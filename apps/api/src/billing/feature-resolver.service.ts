@@ -4,7 +4,7 @@ import { EntitlementsService } from "./entitlements.service";
 import { FeatureOverrideService, FeatureOverrideEffect } from "./feature-override.service";
 import { PlanCatalogService } from "./plan-catalog.service";
 import { FEATURE_REGISTRY, FeatureDef, isDefaultGrantedAddon } from "./feature-registry";
-import { findPlanDefinition } from "./plan-catalog.constants";
+import { effectivePlanFlags, findPlanDefinition } from "./plan-catalog.constants";
 import type { EffectiveFeature, FeatureSource } from "@routeflow/types";
 
 /** One key's fully-resolved verdict — the pieces `EntitlementAuthority`/the explain-trace/preview need. */
@@ -99,7 +99,12 @@ export class FeatureResolverService {
     const activeAddonKeys = activeAddonRows.map((a) => a.addonKey);
     const version = await this.catalog.getVersionForTenant(ent.planVersionId);
     const def = findPlanDefinition(version.definitions, ent.planKey);
-    const planFeatureFlags = new Set(def?.featureFlags ?? []);
+    // #2700 (SA-559d): the plan's flags gain forward exactly as EntitlementsService.compute's do,
+    // so a flag the PUBLISHED plan added is PRESET (included), never mistaken for an addon grant
+    // (ADDON_SKU, charged). One published read, only when the pinned version isn't itself published.
+    const published =
+      version.status !== "PUBLISHED" ? await this.catalog.getPublishedVersion() : null;
+    const planFeatureFlags = new Set(def ? effectivePlanFlags(def, version.id, published) : []);
     const activeAddonSet = new Set(activeAddonKeys);
     const activeSkuSet = new Set(ent.addons);
 

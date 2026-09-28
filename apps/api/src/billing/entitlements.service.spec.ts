@@ -482,3 +482,33 @@ describe("EntitlementsService — #2700 (SA-559(2)): feature flags gain forward"
     expect(prisma.tenant.findUnique).toHaveBeenCalledTimes(1);
   });
 });
+
+describe("EntitlementsService — #2700: the REAL v11 → v12 gain at compute level (lead pin)", () => {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const v11 = require("../../prisma/plan-catalog-v11.definitions");
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const v12 = require("../../prisma/plan-catalog-v12.definitions");
+  const versionOf = (id: string, status: string, defs: any[]) => ({
+    id,
+    status,
+    definitions: defs,
+    addonSkus: [],
+  });
+
+  it("a GROWTH tenant pinned to v11 gains v12's five new plan flags; its caps stay v11's", async () => {
+    const { svc, catalog } = makeService(tenantFixture({ plan: "STARTER", planKey: "GROWTH" }));
+    catalog.getVersionForTenant.mockResolvedValue(
+      versionOf("planver_v11", "SUPERSEDED", v11.V11_DEFINITIONS),
+    );
+    catalog.getPublishedVersion.mockResolvedValue(
+      versionOf("planver_v12", "PUBLISHED", v12.V12_DEFINITIONS),
+    );
+    const e = await svc.resolve("t1");
+    const v11Growth = v11.V11_DEFINITIONS.find((d: any) => d.planKey === "GROWTH");
+    for (const flag of v12.NEW_PLAN_FLAGS) expect(e.flags).toContain(flag);
+    for (const flag of v11Growth.featureFlags) expect(e.flags).toContain(flag);
+    expect(e.planVersionId).toBe("planver_v11");
+    expect(e.caps.seats).toBe(v11Growth.seatsIncluded);
+    expect(e.caps.customers).toBe(v11Growth.customersIncluded);
+  });
+});

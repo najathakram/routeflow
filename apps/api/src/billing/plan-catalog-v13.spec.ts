@@ -70,3 +70,72 @@ describe("plan-catalog-v13.definitions (#2700)", () => {
     expect(liteCarriesV13Flags(V12_DEFINITIONS.filter((d) => d.planKey !== "LITE"))).toBe(false);
   });
 });
+
+describe("#2700 F4 / SA-559d: v13 publishes only over a PUBLISHED v12", () => {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const { diffPublishedAgainstV12 } = require("../../prisma/plan-catalog-v13.definitions");
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const { publishV13 } = require("../../prisma/publish-plan-catalog-v13");
+  /** A Prisma-Decimal-like value (what a real read returns for money columns). */
+  const dec = (n: number | null) => (n == null ? null : { toString: () => String(n) });
+  const publishedV12 = () => {
+    const rows = buildV12Rows(null);
+    return {
+      version: 12,
+      definitions: rows.definitionRows.map((d) => ({
+        ...d,
+        monthlyPrice: dec(d.monthlyPrice),
+        annualPrice: dec(d.annualPrice),
+      })),
+      addonSkus: rows.addonSkuRows.map((s) => ({ ...s, monthlyPrice: dec(s.monthlyPrice) })),
+    };
+  };
+
+  it("an untouched published v12 has no drift (Decimals compared by value)", () => {
+    expect(diffPublishedAgainstV12(publishedV12())).toEqual([]);
+  });
+
+  it("LITE's featureFlags are the one thing ignored", () => {
+    const p = publishedV12();
+    p.definitions.find((d) => d.planKey === "LITE")!.featureFlags = ["flag.returns", "flag.x"];
+    expect(diffPublishedAgainstV12(p)).toEqual([]);
+  });
+
+  it("a post-v12 edit is named: a price, another plan's flags, a missing SKU, an extra plan", () => {
+    const p = publishedV12();
+    p.definitions.find((d) => d.planKey === "STARTER")!.monthlyPrice = dec(1);
+    p.definitions.find((d) => d.planKey === "GROWTH")!.featureFlags = [];
+    p.addonSkus.pop();
+    p.definitions.push({
+      ...p.definitions[0],
+      planKey: "EXTRA" as (typeof p.definitions)[number]["planKey"],
+    });
+    const drift: string[] = diffPublishedAgainstV12(p);
+    expect(drift).toHaveLength(4);
+    expect(drift.join("\n")).toMatch(/STARTER\.monthlyPrice: published 1/);
+    expect(drift.join("\n")).toMatch(/GROWTH\.featureFlags/);
+    expect(drift.join("\n")).toMatch(/AddonSku .*: missing from the published version/);
+    expect(drift.join("\n")).toMatch(/PlanDefinition EXTRA: not in v12/);
+  });
+
+  it("publishV13 REFUSES over a drifted published version and writes nothing", async () => {
+    const p = publishedV12();
+    p.definitions.find((d) => d.planKey === "STARTER")!.monthlyPrice = dec(1);
+    const writes: string[] = [];
+    const prisma = {
+      planVersion: {
+        findFirst: jest.fn().mockResolvedValue(p),
+        create: jest.fn(() => writes.push("create")),
+        update: jest.fn(() => writes.push("update")),
+        updateMany: jest.fn(() => writes.push("updateMany")),
+      },
+      $transaction: jest.fn(() => writes.push("$transaction")),
+    };
+    const log = jest.spyOn(console, "log").mockImplementation(() => undefined);
+    await expect(publishV13(prisma)).rejects.toThrow(
+      /not v12 .*refusing:\n {2}PlanDefinition STARTER\.monthlyPrice/s,
+    );
+    log.mockRestore();
+    expect(writes).toEqual([]);
+  });
+});

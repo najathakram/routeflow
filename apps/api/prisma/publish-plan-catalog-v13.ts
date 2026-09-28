@@ -26,7 +26,12 @@ import { Pool } from "pg";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { Prisma, PrismaClient } from "@prisma/client";
 import type { AddonSkuCode } from "../src/billing/plan-catalog.constants";
-import { V13_ADDON_SEEDS, buildV13Rows, liteCarriesV13Flags } from "./plan-catalog-v13.definitions";
+import {
+  buildV13Rows,
+  diffPublishedAgainstV12,
+  liteCarriesV13Flags,
+  V13_ADDON_SEEDS,
+} from "./plan-catalog-v13.definitions";
 
 const WITH_CATALOG = {
   definitions: { orderBy: { sortOrder: "asc" } },
@@ -66,6 +71,20 @@ export async function publishV13(prisma: PrismaClient): Promise<PublishV13Result
       `already published: v${published!.version}'s LITE already carries flag.returns — nothing to do.`,
     );
     return { action: "noop", version: published!.version };
+  }
+
+  // #2700 (lead F4 / SA-559d): v13 is built from the v12 CONSTANTS, so it is only "v12 + LITE ∋
+  // flag.returns" if what is actually PUBLISHED here is v12. Any other difference (a post-v12
+  // Plans-editor edit, say) would be silently reverted by this publish: print it and refuse.
+  if (published) {
+    const drift = diffPublishedAgainstV12(published);
+    if (drift.length > 0) {
+      throw new Error(
+        `The PUBLISHED plan version v${published.version} is not v12 (ignoring LITE's flags), so ` +
+          "publishing v13 would revert these differences — refusing:\n  " +
+          drift.join("\n  "),
+      );
+    }
   }
 
   const targetSkus = new Set(V13_ADDON_SEEDS.map((s) => s.sku));
