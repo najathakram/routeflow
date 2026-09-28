@@ -202,3 +202,47 @@ export interface BuyerPromotion {
   endsAt: string;
   productIds: string[];
 }
+
+// ─── Catalog + favorites (#2703, SA-562: server truth, one declaration) ─────────
+
+/** A catalog row — GET /buyer/products and the core of GET /buyer/products/:id. The API's
+ *  buyer-catalog.service returns exactly this type, so the server's own compile pins it. */
+export interface BuyerProduct {
+  id: string;
+  name: string;
+  description: string | null;
+  sku: string | null;
+  barcode: string | null;
+  unit: string;
+  category: string | null;
+  /** Box packaging: when unitsPerBox > 1 this is the BOX price. */
+  buyerPrice: number;
+  unitsPerBox: number | null;
+  thumbnailUrl: string | null;
+  imageKeys: string[];
+  isFeatured: boolean;
+  isNew: boolean;
+  isDeal: boolean;
+  /** Presigned URLs for the first images (max 4) — the tile dot-pager. [] when no images. */
+  imageUrls: string[];
+  inStock: boolean;
+  stockStatus: "IN_STOCK" | "LOW" | "OUT_OF_STOCK";
+  /** Whole units remaining, exposed ONLY while stockStatus === "LOW"; else null. */
+  stockLeft: number | null;
+}
+
+/** GET /buyer/favorites — NOT a BuyerProduct: `id` is the favorite row's id; the product is
+ *  `productId`. `thumbnailUrl` is always null here (thumbnails resolve in the catalog). */
+export interface BuyerFavoriteProduct {
+  id: string;
+  productId: string;
+  name: string;
+  sku: string | null;
+  unit: string;
+  category: string | null;
+  buyerPrice: number;
+  thumbnailUrl: string | null;
+  imageKeys: string[];
+  unitsPerBox: number | null;
+  createdAt: string;
+}

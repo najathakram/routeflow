@@ -372,7 +372,7 @@ function ProductCard({
             add({
               productId: product.id,
               name: product.name,
-              unitPrice: Number(product.buyerPrice ?? product.basePrice ?? product.price) || 0,
+              unitPrice: product.buyerPrice,
               unit: product.unit,
               unitsPerBox: product.unitsPerBox ?? null,
               category: product.category ?? null,

@@ -11,7 +11,9 @@ import type {
   BuyerAnalytics,
   BuyerAuthorizationRow,
   BuyerCreateChangeRequestInput,
+  BuyerFavoriteProduct,
   BuyerPayment,
+  BuyerProduct,
   BuyerProductDetailExtras,
   BuyerPromotion,
   BuyerRemittance,
@@ -42,28 +44,8 @@ export type {
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-export interface BuyerProduct {
-  id: string;
-  name: string;
-  description: string | null;
-  sku: string | null;
-  barcode: string | null;
-  unit: string;
-  category: string | null;
-  buyerPrice: number;
-  unitsPerBox: number | null;
-  thumbnailUrl: string | null;
-  imageKeys: string[];
-  isFeatured: boolean;
-  isNew?: boolean;
-  isDeal?: boolean;
-  /** Presigned URLs (max 4) for the tile dot-pager; first entry == thumbnailUrl. */
-  imageUrls?: string[];
-  inStock?: boolean;
-  stockStatus?: "IN_STOCK" | "LOW" | "OUT_OF_STOCK";
-  /** Whole units remaining — present only while stockStatus === "LOW". */
-  stockLeft?: number | null;
-}
+// #2703 (SA-562): catalog row + favorites = ONE declaration in @routeflow/types.
+export type { BuyerFavoriteProduct, BuyerProduct } from "@routeflow/types";
 
 /** Detail-only fields are shared with mobile via @routeflow/types (#2345). */
 export interface BuyerProductDetail
@@ -610,21 +592,8 @@ export function useBuyerReorder() {
 
 // ─── Favorites ───────────────────────────────────────────────────────────────
 
-export interface BuyerFavoriteItem {
-  id: string;
-  productId: string;
-  name: string;
-  sku: string | null;
-  unit: string;
-  category: string | null;
-  buyerPrice: number;
-  thumbnailUrl: string | null;
-  imageKeys: string[];
-  createdAt: string;
-}
-
 export function useBuyerFavorites() {
-  return useQuery<BuyerFavoriteItem[]>({
+  return useQuery<BuyerFavoriteProduct[]>({
     queryKey: ["buyer", "favorites"],
     queryFn: () => buyerApiClient.get("/buyer/favorites").then((r) => r.data),
   });

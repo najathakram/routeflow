@@ -16,7 +16,9 @@ import type {
   BuyerAnalytics,
   BuyerAuthorizationRow,
   BuyerCreateChangeRequestInput,
+  BuyerFavoriteProduct,
   BuyerPayment,
+  BuyerProduct,
   BuyerProductDetailExtras,
   BuyerPromotion,
   BuyerRemittance,
@@ -51,33 +53,8 @@ export type { ChangeRequestStatus, ChangeRequestType } from "./change-requests";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-export interface BuyerProduct {
-  id: string;
-  name: string;
-  description?: string;
-  category?: string;
-  unit?: string;
-  /** Legacy field — may be absent. Prefer buyerPrice then basePrice. */
-  price?: number;
-  buyerPrice?: number;
-  basePrice?: number;
-  imageUrl?: string;
-  isFavorite?: boolean;
-  /** Box packaging: when > 1 the buyerPrice/basePrice is the BOX price. */
-  unitsPerBox?: number | null;
-  // Catalogue v2 merch/stock fields (P5-02 DTO; optional so older cached shapes
-  // still type-check). Mirrors buyer-catalog.service.ts BuyerProduct.
-  sku?: string | null;
-  barcode?: string | null;
-  thumbnailUrl?: string | null;
-  imageUrls?: string[];
-  isFeatured?: boolean;
-  isNew?: boolean;
-  isDeal?: boolean;
-  inStock?: boolean;
-  stockStatus?: "IN_STOCK" | "LOW" | "OUT_OF_STOCK";
-  stockLeft?: number | null;
-}
+// #2703 (SA-562): the catalog row + favorites shapes are ONE declaration in @routeflow/types.
+export type { BuyerFavoriteProduct, BuyerProduct } from "@routeflow/types";
 
 // ─── Change requests (P5-09/10 twin — P5-16b) ─────────────────────────────────
 // Type/Status/Resolution are identical to `./change-requests`'s (which now
@@ -427,7 +404,7 @@ export function useBuyerCategories() {
 }
 
 export function useBuyerFavorites() {
-  return useQuery<BuyerProduct[]>({
+  return useQuery<BuyerFavoriteProduct[]>({
     queryKey: ["buyer-favorites"],
     queryFn: () => buyerApiClient.get("/buyer/favorites").then((r) => r.data),
     staleTime: 60_000,
