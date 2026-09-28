@@ -3,7 +3,7 @@ import { CUSTOMER_DELETE_BLOCKING } from "../invoices/invoice-status-sets";
 
 /**
  * #2558 / SA-510a: the guards that keep a customer delete from destroying an issued, paid or
- * written-off invoice (`CUSTOMER_DELETE_BLOCKING`, every status but DRAFT/VOID). Shared by
+ * written-off or VOID invoice (`CUSTOMER_DELETE_BLOCKING`, every status but DRAFT). Shared by
  * `CustomersService.batchDelete`, `deleteAllCustomers` and `deleteCustomer` (and, next,
  * `deleteImportedCustomers`, #2569). Three layers, because the pre-flight alone is a
  * time-of-check/time-of-use race (an invoice can be sent or paid between it and the delete):
