@@ -24,7 +24,6 @@ function load(modulePath: string) {
     }),
   }));
   jest.doMock("../api-client", () => ({ apiClient: { post: jest.fn(), get: jest.fn() } }));
-  // eslint-disable-next-line @typescript-eslint/no-var-requires
   const mod = require(modulePath);
   const run = async (hook: () => any, variables: unknown): Promise<Keys> => {
     invalidateQueries.mockClear();
