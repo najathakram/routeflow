@@ -3244,3 +3244,215 @@ citations, closed-out with its own post-init assertion guard).
 - **Guard:** `REG-B861-AB`/`AD` assert `BadRequestException`.
   (Archived 2026-09-28 to make room at cap for L-242: one outside citation, a handoff note that
   still resolves here; guard = the REG-B861-AB/AD specs asserting BadRequestException, unchanged.)
+
+### L-165 · 2026-09-16 · testing · #779 (B225/B244/B411)
+
+- **Symptom:** two unrelated integration tests intermittently failed under load — one asserted
+  elapsed wall-clock time, the other an ambient tmpdir file count shared across parallel workers.
+- **Root cause:** both asserted a proxy for correctness instead of the run's own declared
+  outcome. Neither proxy is stable under load; the process's own exit signal/result was
+  available and ignored.
+- **Lesson:** **Assert a process's own reported result/exit signal, never wall-clock timing or a
+  shared/global count, as a stand-in for it.** A shared ambient count in particular races every
+  other parallel worker touching the same path.
+- **Guard:** code review should flag any `Date.now()`-delta or directory-listing-count assertion
+  in a spec touching a spawned process or shared tmp path — no automated lint yet.
+  (Merged into L-205 on 2026-09-28, owner-directed compaction #3; archived whole so the id keeps its full text.)
+
+### L-212 · 2026-09-21 · testing · a Playwright selector keyed to a responsive utility class rots silently (B620)
+
+- **Symptom:** the boxed-proration e2e spec's line-total reader matched nothing and reported
+  nothing — a selector that matches zero elements raised no error.
+- **Root cause:** the selector was keyed to a layout utility class (`span.w-16`); a later UI
+  change (#946) replaced it with a breakpoint-prefixed variant (`sm:w-16`), so the literal class
+  no longer existed and the query silently returned an empty set.
+- **Lesson:** **Never select by a layout or responsive utility class — a breakpoint prefix added
+  later makes the selector match nothing with no error. Select by `data-testid`, which no styling
+  change can rename.**
+- **Guard:** #1133 (b8765689) added `data-testid="line-total"`; spec 13's `readLineTotal` reads it
+  via `getByTestId`.
+  (Merged into L-202 on 2026-09-28, owner-directed compaction #3; archived whole so the id keeps its full text.)
+
+### L-225 · 2026-09-26 · domain · a display fix proven on one screen must become a shared helper, or sibling screens reproduce the same bug (B653, B757-B759)
+
+- **Symptom:** the invoice-detail screens' qty/unit-label formatting bug (#1275) reappeared,
+  unfixed, on both order-detail screens (web's `OrderLineItemsTable`, mobile's operator and
+  customer order detail) — each had hand-formatted a boxed line's qty text inline instead of
+  reusing the already-proven fix, so a `unitLabel`'d line (Case, Pallet) still showed a bare
+  boxes/pieces split and a factor-1 unit line skipped unit display entirely.
+- **Root cause:** the first fix landed as inline logic on the screen it was reported against,
+  not as a shared helper — nothing forced every OTHER screen rendering the same kind of line to
+  pick it up, so each sibling screen kept its own copy of the original bug.
+- **Lesson:** **When a display/formatting bug is fixed on one screen, extract the fix into a
+  shared helper and audit every sibling screen rendering the same data shape for the same bug —
+  a proof against one screen is not a proof against its copies.**
+- **Guard:** `apps/*/lib/invoice-line-display[.ts]`'s `usesUnitDisplay`/`invoiceLineQtyText` is
+  now the one qty-text formatter, imported by all four affected screens; a `describe.each` wiring
+  test (`order-detail-unit-display-wiring.test.ts` / its web equivalent) pins the same import and
+  condition across every one of them.
+  (Merged into L-167 on 2026-09-28, owner-directed compaction #3; archived whole so the id keeps its full text.)
+
+### L-223 · 2026-09-26 · domain · "one ledger writer" needs a sweep of every emit site, not the named ones (B863–B866)
+
+- **Symptom:** after the named add-on call sites were routed through the new single ledger writer, `subscribe()` still booked add-ons with its own emit on the old live-catalog formula. Only the run's final review caught it.
+- **Root cause:** the brief named the call sites, and the change declared "the single add-on ledger writer" without sweeping the tree, so an unnamed writer kept a second formula.
+- **Lesson:** **Before declaring one writer for a ledger or event stream, grep the whole tree for every emit of those events and every `amountDelta:` site, not only the call sites the brief named. Route each one through the writer or exempt it explicitly.**
+- **Guard:** #2186: `subscribe()` (`subscription-mutation.service.ts` :395-421 at review) was the writer the sweep missed and now calls `emitAddonDelta`. On master, `ADDON_ENABLED/DISABLED` is emitted only in `billing/addon-ledger.ts`. No structural pin yet; propose one beside `mrr-paying-predicate.parity.spec.ts`.
+  (Merged into L-200 on 2026-09-28, owner-directed compaction #3; archived whole so the id keeps its full text.)
+
+### L-159 · 2026-09-15 · domain · B421 (PDF + web-detail rounds, independent review)
+
+- **Symptom:** a PDF template's fallback re-derived `totalPaid`/`creditApplied`/`advanceApplied`
+  independently, each gated on its OWN `!= null` check — a caller passing an old,
+  credit-inclusive `totalPaid` alone got the other two re-split from raw payments too,
+  double-subtracting. A web page reinvented the identical bug independently right after.
+- **Root cause:** three related figures each checked their own presence instead of sharing ONE
+  gate, so a partially-precomputed payload silently mixed two inconsistent bases.
+- **Lesson:** **When a fallback re-derives several related figures from raw data, gate ALL of
+  them on ONE presence check, never per-field — a caller must get either the full precomputed
+  set or the full re-derived set, never a mix.**
+- **Guard:** `payment-predicates.ts`'s `resolveConfirmedAmounts(precomputed, payments)` and the
+  web mirror both gate on one field's presence; each has a red-first regression test pinning
+  the double-subtraction case.
+  (Merged into L-119 on 2026-09-28, owner-directed compaction #3; archived whole so the id keeps its full text.)
+
+### L-185 · 2026-09-17 · domain · B440 (report `total` repurposed, footer stopped matching its own column)
+
+- **Symptom:** a report's `total` field was repurposed from "sum of the displayed column" to a
+  pre-tax, windowed expense figure — the footer stopped equalling the sum of its own column.
+- **Root cause:** one field was serving two consumers at once: a UI sum-of-column invariant and a
+  cross-report reconciliation value. Changing the value for one silently broke the other, because
+  nothing named which contract the field promised.
+- **Lesson:** **When a report field feeds both a displayed column's own sum AND a value another
+  report must reconcile against, give the two consumers separate named fields — never let one
+  field serve both.**
+- **Guard:** none yet — propose a regression test with a fixture where the two diverge (nonzero
+  tax), asserting both formulas independently.
+  (Merged into L-143 on 2026-09-28, owner-directed compaction #3; archived whole so the id keeps its full text.)
+
+### L-194 · 2026-09-17 · tooling · preview_start binds to the main checkout, not the calling session's worktree
+
+- **Symptom:** a UI proof for a worktree branch via `preview_start({name})` produced
+  plausible-looking screenshots, but a breakpoint that definitely existed in the branch appeared
+  completely broken — the main checkout's own copy of the changed file had zero references to
+  the new component.
+- **Root cause:** `preview_start` launches its named `launch.json` configs from the MAIN
+  CHECKOUT's working directory, never the calling session's worktree — a worktree whose changes
+  aren't ALSO in the main checkout gets proofed against stale, unrelated code with no warning.
+- **Lesson:** **A UI proof for a worktree/branch not checked out in the main checkout must run
+  its OWN dev server FROM the worktree, and must positively verify what's being served — grep the
+  rendered HTML for something only the branch's changes would produce — before trusting any
+  screenshot. A server coming up and a page looking plausible is not evidence the right code is
+  running.**
+- **Guard:** none yet — propose a one-line reminder in the worktree UI-proof runbook: confirm
+  the served code matches the branch BEFORE capturing.
+  (Merged into L-176 on 2026-09-28, owner-directed compaction #3; archived whole so the id keeps its full text.)
+
+### L-201 · 2026-09-18 · process · five registry-id collisions in one session, all from allocating off an incomplete view
+
+- **Symptom:** five id collisions in one fleet window — a lead's "next free" read of merged
+  master missing an unmerged PR's reservations; a lane self-resolving to "the next real id" per
+  the B499-style protocol, blind to a second branch independently claiming the same id; two
+  allocations racing an unconfirmed in-flight request; a fix commit's own id reference going
+  stale when its registry record got renumbered during filing; and a fifth arrived after this
+  entry was drafted — an unrelated lesson landed on master at the same id this entry's branch had
+  already used.
+- **Root cause:** each was a _correct_ read of an _incomplete_ view — merged master, one
+  worktree's local scan, or memory of a conversation. Nobody can see an id reserved in an
+  unmerged branch until it's fetched, and nothing forces that fetch before allocating. The
+  self-resolve protocol makes this WORSE: a tree resolving blind to a concurrent claim produces
+  two full entries at the same id, each with a plausible justification — harder to catch than a
+  naive duplicate, since neither looks wrong alone.
+- **Lesson:** **A shared, monotonically-allocated id cannot be safely allocated from memory,
+  merged-mainline state, or one worktree's local scan — only from a fresh `fetch --all --prune`
+  then `git log --all -- <path-for-that-id>` across every local AND remote ref, unmerged branches
+  included. Treat any handed-to-you id as unverified until confirmed the same way — even from
+  the allocation owner, whose view can go stale the moment a concurrent branch reserves one.**
+- **Guard:** none yet — scoped a `bugs.mjs next-id` proposal (fetch-all-refs scan + a companion
+  neighbor query) so allocation routes through a command, not memory. See [[L-197]], same
+  problem, landed/unlanded side.
+  (Merged into L-197 on 2026-09-28, owner-directed compaction #3; archived whole so the id keeps its full text.)
+
+### L-228 · 2026-09-27 · process · a merge train must leave master's tree equal to the tree that was verified (train A)
+
+- **Symptom:** a train of 14 PRs merged `--no-ff` and verified as one head (tree e98a41e8) was landed as a single squash; nothing but a deliberate check said the squash equalled what had been tested.
+- **Root cause:** a squash-merge builds its own tree from the PR diff against the current base, so anything that moved on master after the train was built (or a hand-resolved conflict) changes what lands without changing what was verified.
+- **Lesson:** **Land a train only after its head is verified and any hand hunk (import unions, ratchet rows) is confirmed against the merge-tree; after the squash, compare `git rev-parse origin/master^{tree}` with the verified tree and stop on any difference.**
+- **Guard:** the train PR body states the expected tree; the landing coordinator runs the comparison (train A: master's tree equals e98a41e8, checked). Dropped PRs are named with their reason so they re-enter the next train. Cf. [[L-197]].
+  (Merged into L-195 on 2026-09-28, owner-directed compaction #3; archived whole so the id keeps its full text.)
+
+### L-209 · 2026-09-19 · process · read the shared review channel immediately before every merge
+
+- **Symptom:** three PRs were squash-merged on green CI plus an in-session review while an
+  independent reviewer had already posted a ship-after-fixes verdict with blockers on the shared
+  coordination issue minutes earlier. The blockers (a prod E2E gate that goes red on unseeded
+  fixtures, a script that sent live-tenant addresses to a third party before its test-tenant
+  gate, a vendor verdict accepted without checking its inferred components) landed on master and
+  needed fix-forward PRs plus a manual prod re-seed.
+- **Root cause:** the merge gate checked CI plus one commissioned review, not the channel where
+  independent reviews are posted — a green CI cannot see a blocker that lives in prose.
+- **Lesson:** **A merge gate must include a fresh read of the shared review channel for that
+  specific PR — re-fetch it and filter for REVIEW / BLOCKED / HOLD lines naming the PR,
+  immediately before `gh pr merge`, not once at window open. Any unresolved blocker line, or a
+  REVIEW line newer than the last commit reviewed, holds the merge.**
+- **Guard:** landing-coordinator routine step "read the coordination issue for REVIEW lines on
+  this PR" before each merge (no code guard).
+  (Merged into L-215 on 2026-09-28, owner-directed compaction #3; archived whole so the id keeps its full text.)
+
+### L-234 · 2026-09-27 · testing · a whole-database script needs an explicit scope allowlist, not a rerun (B824, train C)
+
+- **Symptom:** `publish-and-repin.db.spec.ts` failed three different ways under `--maxWorkers=2` — an unrelated tenant tripped `--only-test-tenants`'s refusal, an unscoped `--apply --live` wrote onto a sibling spec's own fixture tenant, and this spec's fixture received unwanted writes back — each time green when run alone, so it read all night as "a known flake, verify alone before treating as a blocker."
+- **Root cause:** `publish-and-repin.mjs`'s `computeDiff()` correctly scans the WHOLE database for a real prod run, but under parallel jest workers it also picks up sibling `*.db.spec.ts` files' own live fixture tenants — real cross-suite contamination, not a stale-count race a retry masks. Running it alone "fixes" all three by removing the siblings, which is exactly why that green is not a safety signal.
+- **Lesson:** **A `*.db.spec.ts` (or script) that computes a diff/apply, or any read+write, over a shared, unscoped table under parallel workers must scope every call to its own fixture rows (an id/slug allowlist flag on the tool it drives). "Green alone, red in the full lane" for such a spec means look for a missing scope, not a flake to rerun past.**
+- **Guard:** `publish-and-repin.mjs --only-tenants <slugs>`; `publish-and-repin.db.spec.ts`'s `runCli()` passes its own 3 fixture slugs on every call (report, preview, live apply).
+  (Merged into L-050 on 2026-09-28, owner-directed compaction #3; archived whole so the id keeps its full text.)
+
+### L-235 · 2026-09-27 · tooling · a tsconfig that excludes specs also switches off the test runner's type-check (#1315, B806)
+
+- **Symptom:** a spec fixture built with the wrong shape (#1286's `taxNone = () => 0`) reached CI
+  green; once #1315 finally compiled the api specs, ~7,000 spec type errors surfaced, 6,328 of
+  them masked by one wrongly typed mock factory (`createMockPrisma`).
+- **Root cause:** `apps/api/tsconfig.json` excluded `*.spec.ts` from `check-types`, and ts-jest
+  (`isolatedModules`, transpile-only) read the same config, so neither gate type-checked a spec —
+  each assumed the other did.
+- **Lesson:** **When a type-check config excludes tests, find which gate type-checks them instead;
+  a transpile-only test runner (`isolatedModules`, SWC, babel) checks nothing. If no gate does,
+  add one — ratchet an existing error count down (shrink-only baseline) rather than wait for
+  zero.**
+- **Guard:** api `check-types` runs `scripts/check-types-ratchet.mjs` over src + specs (src
+  zero-tolerance, per-spec counts in `check-types.spec-baseline.json`, which only
+  `--lower-baseline` moves); `scripts/lib/check-types-ratchet-core.mjs` refuses a
+  `// @ts-nocheck` spec (`isNoCheckFile`).
+  (Merged into L-191 on 2026-09-28, owner-directed compaction #3; archived whole so the id keeps its full text.)
+
+### L-242 · 2026-09-28 · domain · never key a UI draft or map by a nullable id (B889, #2709)
+
+- **Symptom:** mobile buyer edit-items keyed its draft by `productId`. The seller's custom lines
+  (`productId` null) collapsed into one "Product" row, and Save sent `productId: null`, which the
+  server silently ignored.
+- **Root cause:** a draft keyed by a nullable id: every null collides on one key, and the null class
+  is not a real member of the keyed set.
+- **Lesson:** **Never key a UI draft or map by a nullable id. Key on the non-null identity and skip or
+  segregate the null class explicitly, mirroring web's established filter and the server's own
+  definition (`isUnlisted = !productId`).**
+- **Guard:** #2709's pins in `apps/mobile/__tests__/buyer-edit-items-custom-lines.test.ts`
+  (`isCustomLine` skips seller custom lines in `hydrateBuyerDraft`).
+  (Merged into L-238 on 2026-09-28, owner-directed compaction #3; archived whole so the id keeps its full text.)
+
+### L-236 · 2026-09-28 · security · a stored storage key is trusted only after an exact own-prefix segment match (#2538, #2547)
+
+- **Symptom:** a tenant could plant another tenant's object key in its own product row (`PATCH
+  /products/:id` `imageKeys`) and have the server presign or delete it; separately, a POD key
+  `tenants/<own>/pod/../../<other>/…` passed a `startsWith` ownership check.
+- **Root cause:** a key persisted on a tenant-owned row was trusted once written, and ownership
+  was tested as a string prefix, which cannot see `..` segments.
+- **Lesson:** **Validate a storage/object key by parsing it into segments — exact segment count,
+  every segment from a safe-character allowlist, no `.`/`..`/empty segment, the owner id in its
+  fixed position — never with `startsWith`. Check it at write AND again at every sign/read/delete,
+  so a row poisoned before the write guard existed still leaks and deletes nothing.**
+- **Guard:** `products/product-image-keys.ts` (`isOwnProductImageKey`, `assertImageKeysReorder`) +
+  `image-key-signing.tripwire.spec.ts`, `products.image-keys-2533.spec.ts`;
+  `routes/pod-artifacts.util.ts` (`isPodStorageKey`, `podCaptureValueRefusal`) +
+  `routes.pod-key-traversal-2542.spec.ts`; `scripts/report-2533-product-image-keys.mjs` finds
+  rows poisoned before the fix.
+  (Merged into L-219 on 2026-09-28, owner-directed compaction #3; archived whole so the id keeps its full text.)
