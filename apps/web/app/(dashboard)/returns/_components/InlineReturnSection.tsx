@@ -11,7 +11,9 @@
 // client-side money math beyond what the dialog already did with these same
 // @routeflow/returns helpers — every dollar figure rendered here comes verbatim from the quote.
 import * as React from "react";
-import { Button, Input, Select } from "@routeflow/ui/web";
+import { Button, Input, Select, useToast } from "@routeflow/ui/web";
+import { BarcodeScannerButton } from "@/components/BarcodeScannerButton";
+import { useScanCodeHandler } from "../../orders/_components/scan/useScanCodeHandler";
 import { useOrder } from "@/lib/api/orders";
 import { useProducts } from "@/lib/api/products";
 import { useInlineReturnQuote } from "@/lib/api/inline-returns";
@@ -22,6 +24,7 @@ import type {
 } from "@routeflow/types";
 import {
   applyCoveredPiecesToLines,
+  applyReturnScan,
   buildQuoteRequest,
   DEFAULT_EXCESS_OPTION,
   dropExcessAndRequote,
@@ -185,6 +188,37 @@ export function InlineReturnSection({
     setProductSearch("");
   }
 
+  // #2694: scan into "What came back" with the order picker's scanner — the shared
+  // BarcodeScannerButton (camera + USB wedge) and the order modal's resolve ladder. A scan adds the
+  // product with 1 piece; a repeat scan adds a piece (applyReturnScan). Returns never create a
+  // product, so an unknown code is a message.
+  const { toast } = useToast();
+  const productSearchRef = React.useRef<HTMLInputElement>(null);
+  const linesRef = React.useRef(lines);
+  linesRef.current = lines;
+  const scanHandlerRef = useScanCodeHandler({
+    addLineItem: (product) => {
+      const created = !linesRef.current.some((l) => l.productId === product.id);
+      setLines(
+        (prev) =>
+          applyReturnScan<SectionLine>(prev, product, (base) => ({
+            ...base,
+            lineKey: crypto.randomUUID(),
+          })).lines,
+      );
+      setProductSearch("");
+      return { created };
+    },
+    onUnknownCode: (code) => toast({ variant: "error", title: `No product with barcode ${code}` }),
+    toast,
+  });
+  function handleProductSearchEnter() {
+    const code = productSearch.trim();
+    if (!code) return;
+    setProductSearch("");
+    void scanHandlerRef.current(code);
+  }
+
   function handleGetQuote() {
     setQuoteError("");
     quoteMutation.mutate(buildQuoteRequest(customerId, lines), {
@@ -324,12 +358,33 @@ export function InlineReturnSection({
           </div>
 
           <div className="relative">
-            <Input
-              label="Add another product"
-              placeholder="Search products…"
-              value={productSearch}
-              onChange={(e) => setProductSearch(e.target.value)}
-            />
+            <div className="flex items-end gap-2">
+              <div className="min-w-0 flex-1">
+                <Input
+                  ref={productSearchRef}
+                  label="Add another product"
+                  placeholder="Search or scan products…"
+                  value={productSearch}
+                  onChange={(e) => setProductSearch(e.target.value)}
+                  onKeyDown={(e) => {
+                    // The scanner button's wedge detector already handled (and preventDefault'd)
+                    // a scan's Enter — standing down here keeps ONE scan to ONE add (#2704).
+                    if (e.defaultPrevented) return;
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      handleProductSearchEnter();
+                    }
+                  }}
+                />
+              </div>
+              <BarcodeScannerButton
+                inputRef={productSearchRef}
+                onScan={(code) => void scanHandlerRef.current(code)}
+                onError={(message) => toast({ variant: "error", title: message })}
+                className="h-10 min-h-[44px] w-10 min-w-[44px] shrink-0"
+                title="Scan barcode"
+              />
+            </div>
             {productSearch.trim().length > 1 && (productResults?.data?.length ?? 0) > 0 && (
               <div className="absolute z-10 mt-1 w-full rounded-lg border border-surface-border bg-white shadow-card">
                 {productResults!.data
