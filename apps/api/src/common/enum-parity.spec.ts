@@ -134,6 +134,12 @@ const ENUM_TABLE: Array<[string, keyof typeof PrismaEnums]> = [
   // #2159 S2 (onboarding intake link): two brand-new Prisma enums, mirrored in onboarding.ts.
   ["INTAKE_SECTION_KEY_VALUES", "IntakeSectionKey"],
   ["INTAKE_SECTION_STATUS_VALUES", "IntakeSectionStatus"],
+  // #2717 M1 (SA-572a, #2728 P1): four brand-new Prisma enums, mirrored immediately in
+  // packages/types/api/enums.ts — see the triage tripwire below.
+  ["PRODUCT_KIND_VALUES", "ProductKind"],
+  ["PACKAGING_LEVEL_VALUES", "PackagingLevel"],
+  ["BARCODE_SYMBOLOGY_VALUES", "BarcodeSymbology"],
+  ["BARCODE_ORIGIN_VALUES", "BarcodeOrigin"],
 ];
 
 describe("enum parity: packages/types/api/enums.ts vs @prisma/client", () => {
@@ -222,7 +228,12 @@ describe("enum parity: packages/types/api/enums.ts vs @prisma/client", () => {
 // Triage for IntakeSectionKey + IntakeSectionStatus (#2159 S2, 2026-09-27): two brand-new Prisma
 // enums (migration 20260927070000_onboarding_s2_intake) — mirrored immediately in
 // packages/types/api/onboarding.ts + their `ENUM_TABLE` rows above (102 → 104).
-const PINNED_PRISMA_ENUM_COUNT = 104;
+// Triage for ProductKind + PackagingLevel + BarcodeSymbology + BarcodeOrigin (#2717 M1, SA-572a,
+// #2728 P1, 2026-09-28): four brand-new Prisma enums (migration
+// 20260928230000_2717_m1_catalog_barcodes_images) — mirrored immediately in
+// packages/types/api/enums.ts + their `ENUM_TABLE` rows above; verified via
+// `node apps/api/scripts/split-prisma-schema.mjs --check` (104 → 108).
+const PINNED_PRISMA_ENUM_COUNT = 108;
 
 describe("enum triage tripwire: generated Prisma enum count (L-072)", () => {
   it("pins the number of generated Prisma enums — a new enum must be triaged into ENUM_TABLE or explicitly left unmirrored", () => {
