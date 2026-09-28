@@ -11,6 +11,8 @@
  * Mobile Jest is pure-logic (testEnvironment: node, no renderer), so this
  * asserts over the exported constants and geometry rather than rendering.
  */
+import { readFileSync } from "fs";
+import { join } from "path";
 import {
   BAND_EDIT_CHIP_WIDTH,
   BAND_GAP,
@@ -157,5 +159,24 @@ describe("textColumnWidth", () => {
       controlWidth: pill + 32,
     });
     expect(column).toBeGreaterThanOrEqual(MIN_TEXT_COLUMN);
+  });
+});
+
+// #2727: the buyer cart row's qty field had no definite width, so on web its <input> took the
+// UA ~177px and squeezed the product name to "B…" at 390. Its width is now registered here and
+// the cart screen's style must consume it (source-pinned: this lane can't render RN).
+describe("buyer cart qty field (#2727)", () => {
+  it("registers a bounded width for the buyer cart", () => {
+    expect(QTY_INPUT_WIDTH.buyerCart).toBeGreaterThanOrEqual(40);
+    expect(QTY_INPUT_WIDTH.buyerCart).toBeLessThanOrEqual(64);
+  });
+
+  it("orders/cart.tsx sizes its qty input with that definite width", () => {
+    const src = readFileSync(join(__dirname, "..", "app/(customer)/orders/cart.tsx"), "utf8");
+    const at = src.indexOf("qtyInputReset: {");
+    expect(at).toBeGreaterThan(-1);
+    const block = src.slice(at, src.indexOf("}", at));
+    expect(block).toMatch(/width: QTY_INPUT_WIDTH\.buyerCart/);
+    expect(block).toMatch(/flexShrink: 0/);
   });
 });
