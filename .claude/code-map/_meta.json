@@ -1,5 +1,5 @@
 {
-  "mappedSha": "cc2380f7c10d582ff14ceb7655f793590c5ca09d",
+  "mappedSha": "297a9887fb43a40684eca310d63d90541538db93",
   "generatedAt": "2026-09-28T01:03:32.671Z",
   "layout": "split-2026-09-13",
   "areas": [
@@ -15,5 +15,5 @@
     "packages": 0
   },
   "fileCount": 1045,
-  "notes": "**2026-09-28 — afternoon landings (18 code PRs after `2f8a155f`, through `cc2380f7`; docs-only bookkeeping).** New `api/landing-2026-09-28-afternoon.md` (TOC row in `api.md`), one bullet per PR keyed by PR number, each grepped in the merged tree (#2650 ships a migration). Registry: B760 (#2301) and B719 (#2637) closed already-fixed; B889 and B890 filed for the Mac Lead. Skills: the lead's fleet-lead working copy folded (4 rules; LEAD-LOG and RULE-CANDIDATES unioned). Lesson L-241 minted (quoted heredoc for text with backticks), L-230 archived. mappedSha -> cc2380f7. No source changed. See CHANGELOG.md for the full landing list."
+  "notes": "**2026-09-28 — evening landing #2673 (docs-only bookkeeping).** New `api/landing-2026-09-28-evening.md` (TOC row in `api.md`): NSF follow-ups (one goods-only inferred rate in `@routeflow/pricing`, 400 `NSF_LINE_UNTAXED`, b294 REVIEW). B876 closed already-fixed (#2673). Skills: the lead's \"never brief from an issue or PR title\" rule promoted into fleet-lead §2; LEAD-LOG (+8, 183) and RULE-CANDIDATES (+1) unioned from the lead's current copy. mappedSha -> 297a9887. No source changed. See CHANGELOG.md for the full landing list."
 }
