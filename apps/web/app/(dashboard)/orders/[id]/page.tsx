@@ -3093,6 +3093,7 @@ export default function OrderDetailPage() {
                   customerId={order.customerId}
                   entryOrderId={order.id}
                   refusalMessage={returnSave.refusalMessage}
+                  refusalReturn={returnSave.refusalReturn}
                 />
 
                 <div className="flex gap-2 flex-wrap">
