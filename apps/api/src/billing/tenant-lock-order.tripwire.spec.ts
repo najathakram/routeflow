@@ -27,11 +27,11 @@ const WRITES = "update|updateMany|upsert|create|createMany|delete|deleteMany";
 /** Raw SQL that writes or row-locks the subscription row (searched in template contents). */
 const RAW_SUB_TAKE =
   /\b(?:UPDATE|INSERT\s+INTO)\s+(?:"public"\.)?"TenantSubscription"|\bSELECT\b[^`]*?\bFROM\s+(?:"public"\.)?"TenantSubscription"[^`]*?\bFOR\s+(?:NO\s+KEY\s+)?UPDATE\b/;
-/** Named functions/methods: `name(firstParam` at line start. */
+/** Named functions/methods: `name(` at line start (the parameter list is parsed from the paren). */
 const DECL =
-  /^\s*(?:export\s+)?(?:(?:private|public|protected)\s+)?(?:static\s+)?(?:async\s+)?(?:function\s+)?(\w+)\s*\(\s*(\w+)?/gm;
-/** Arrow-const helpers: `const name = async (firstParam`. */
-const ARROW = /\b(?:const|let)\s+(\w+)\s*=\s*(?:async\s*)?\(\s*(\w+)/g;
+  /^\s*(?:export\s+)?(?:(?:private|public|protected)\s+)?(?:static\s+)?(?:async\s+)?(?:function\s+)?(\w+)\s*\(/gm;
+/** Arrow-const helpers: `const name = async (`. */
+const ARROW = /\b(?:const|let)\s+(\w+)\s*=\s*(?:async\s*)?\(/g;
 const NOT_A_NAME = new Set([
   "if",
   "for",
@@ -122,22 +122,65 @@ function blockEnd(masked: string, open: number): number {
 
 const subWriteVia = (v: string) =>
   new RegExp(`\\b${esc(v)}\\.tenantSubscription\\.(?:${WRITES})\\s*\\(`);
-const callWith = (h: string, v: string) =>
-  new RegExp(`\\b(?:this\\.)?${esc(h)}\\(\\s*${esc(v)}\\b`);
+/**
+ * #2614: the top-level comma-separated pieces between the paren at `open` (index just past `(`) and
+ * its match, on `masked` (so commas and parens inside strings are already blanked).
+ */
+function splitArgs(masked: string, open: number): { args: string[]; end: number } {
+  const args: string[] = [];
+  let depth = 0;
+  let start = open;
+  let i = open;
+  for (; i < masked.length; i++) {
+    const ch = masked[i];
+    if (ch === "(" || ch === "[" || ch === "{" || ch === "<") depth++;
+    else if (ch === ")" || ch === "]" || ch === "}" || ch === ">") {
+      if (depth === 0) break;
+      depth--;
+    } else if (ch === "," && depth === 0) {
+      args.push(masked.slice(start, i));
+      start = i + 1;
+    }
+  }
+  const last = masked.slice(start, i);
+  if (last.trim() || args.length) args.push(last);
+  return { args, end: i };
+}
+
+/** A declared parameter's name: `client: Tx`, `c = x`, `...rest`, `opt?: T` ⇒ its identifier. */
+const paramName = (piece: string) => /^\s*(?:\.\.\.)?(\w+)/.exec(piece)?.[1];
+
+/**
+ * #2614: the first index in `body` where a call to helper `h` passes `v` at one of the argument
+ * positions `h` writes the subscription row through (`this.h(…)` or `h(…)`), else -1.
+ */
+function helperCallAt(body: string, h: string, positions: Set<number>, v: string): number {
+  const re = new RegExp(`\\b(?:this\\.)?${esc(h)}\\(`, "g");
+  for (const m of body.matchAll(re)) {
+    const { args } = splitArgs(body, m.index! + m[0].length);
+    for (const at of positions) if (args[at]?.trim() === v) return m.index!;
+  }
+  return -1;
+}
 
 type Scanned = { rel: string; code: string; masked: string };
 
-/** Functions/methods/arrow-consts that write the subscription row through their FIRST parameter —
- *  directly, by raw SQL, or through another such helper (resolved to a fixpoint: multi-level). */
-function helperWriters(files: Scanned[]): Set<string> {
-  const candidates: { name: string; param: string; code: string; masked: string }[] = [];
+/** Functions/methods/arrow-consts that write the subscription row through one of their parameters
+ *  — directly, by raw SQL, or through another such helper (resolved to a fixpoint: multi-level).
+ *  #2614: keyed by name → the parameter POSITIONS that write, so a tx passed as a non-first argument
+ *  is seen, and a tx passed in a position the helper does not write through is not. */
+function helperWriters(files: Scanned[]): Map<string, Set<number>> {
+  const candidates: { name: string; params: string[]; code: string; masked: string }[] = [];
   for (const { code, masked } of files) {
-    const add = (name: string, param: string | undefined, from: number) => {
-      if (!param || NOT_A_NAME.has(name)) return;
-      const arrow = masked.indexOf("=>", from);
-      const brace = masked.indexOf("{", from);
+    const add = (name: string, paren: number) => {
+      if (NOT_A_NAME.has(name)) return;
+      const { args, end: close } = splitArgs(masked, paren);
+      const params = args.map((p) => paramName(p) ?? "");
+      if (!params.some(Boolean)) return;
+      const arrow = masked.indexOf("=>", close);
+      const brace = masked.indexOf("{", close);
       if (brace < 0) return;
-      // For an arrow const, the body is the block after `=>` (skip a block in the param list).
+      // For an arrow const, the body is the block after `=>` (skip a block in the return type).
       const open =
         arrow >= 0 && arrow < brace + 200 && masked.indexOf("{", arrow) >= 0
           ? masked.indexOf("{", arrow) + 1
@@ -145,27 +188,30 @@ function helperWriters(files: Scanned[]): Set<string> {
       const end = blockEnd(masked, open);
       candidates.push({
         name,
-        param,
+        params,
         code: code.slice(open, end),
         masked: masked.slice(open, end),
       });
     };
-    for (const d of masked.matchAll(DECL)) add(d[1], d[2], d.index! + d[0].length);
-    for (const d of masked.matchAll(ARROW)) add(d[1], d[2], d.index! + d[0].length);
+    for (const d of masked.matchAll(DECL)) add(d[1], d.index! + d[0].length);
+    for (const d of masked.matchAll(ARROW)) add(d[1], d.index! + d[0].length);
   }
-  const helpers = new Set<string>();
+  const helpers = new Map<string, Set<number>>();
   for (let changed = true; changed;) {
     changed = false;
     for (const c of candidates) {
-      if (helpers.has(c.name)) continue;
-      const writes =
-        subWriteVia(c.param).test(c.masked) ||
-        (RAW_SUB_TAKE.test(c.code) && new RegExp(`\\b${esc(c.param)}\\.\\$`).test(c.masked)) ||
-        [...helpers].some((h) => callWith(h, c.param).test(c.masked));
-      if (writes) {
-        helpers.add(c.name);
-        changed = true;
-      }
+      c.params.forEach((param, at) => {
+        if (!param || helpers.get(c.name)?.has(at)) return;
+        const writes =
+          subWriteVia(param).test(c.masked) ||
+          (RAW_SUB_TAKE.test(c.code) && new RegExp(`\\b${esc(param)}\\.\\$`).test(c.masked)) ||
+          [...helpers].some(([h, pos]) => helperCallAt(c.masked, h, pos, param) >= 0);
+        if (writes) {
+          if (!helpers.has(c.name)) helpers.set(c.name, new Set());
+          helpers.get(c.name)!.add(at);
+          changed = true;
+        }
+      });
     }
   }
   return helpers;
@@ -215,7 +261,8 @@ function findViolations(raw: { rel: string; src: string }[]): string[] {
       const bodyCode = code.slice(open, end);
       const write = Math.min(
         ...[
-          firstIndex(body, [subWriteVia(txName), ...[...helpers].map((h) => callWith(h, txName))]),
+          firstIndex(body, [subWriteVia(txName)]),
+          ...[...helpers].map(([h, pos]) => helperCallAt(body, h, pos, txName)),
           firstIndex(bodyCode, [RAW_SUB_TAKE]),
         ].map((x) => (x < 0 ? Infinity : x)),
       );
