@@ -1,3 +1,4 @@
+import { normalizeBoxesPieces } from "@routeflow/pricing";
 import type { TrayRow } from "./scan-tray";
 import type { PrefilledReturnLine } from "./inline-return-screen";
 
@@ -56,16 +57,27 @@ export function returnTrayRows(
   });
 }
 
-/** The tray's typed qty (in pieces) onto the line; 0 or less removes it. */
+/** A count as the line's raw input string: 0 is "" (nothing entered), as the editor shows it. */
+const asInput = (n: number) => (n > 0 ? String(n) : "");
+
+/**
+ * The tray's typed qty (in pieces) onto the line; 0 or less removes it. SA-561: a BOXED line goes
+ * back through the pack split (`normalizeBoxesPieces`), so "2 cs + 3" stepped once is "2 cs + 4",
+ * never "52 pieces"; a non-boxed line stays plain pieces.
+ */
 export function setReturnLineQty(
   lines: readonly PrefilledReturnLine[],
   productId: string,
   qty: number,
 ): PrefilledReturnLine[] {
   if (!(qty > 0)) return lines.filter((l) => l.productId !== productId);
-  return lines.map((l) =>
-    l.productId === productId ? { ...l, boxes: "", pieces: String(Math.floor(qty)) } : l,
-  );
+  return lines.map((l) => {
+    if (l.productId !== productId) return l;
+    const pack = packOf(l);
+    if (!pack) return { ...l, boxes: "", pieces: String(Math.floor(qty)) };
+    const split = normalizeBoxesPieces({ qty: Math.floor(qty), unitsPerBox: pack });
+    return { ...l, boxes: asInput(split.boxes ?? 0), pieces: asInput(split.pieces ?? 0) };
+  });
 }
 
 /** The tray's + / − stepper: one piece; taking the last piece removes the line. */
