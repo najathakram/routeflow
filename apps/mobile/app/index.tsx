@@ -5,6 +5,8 @@ import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import { ios } from "@routeflow/ui/tokens";
 import { BrandGlyph } from "@routeflow/ui/mobile/ios";
+import { SHELL_ON } from "../lib/web-shell/shell-env";
+import { SHELL_ROUTE } from "../lib/web-shell/shell-routing";
 
 const FEATURES = [
   {
@@ -102,7 +104,11 @@ export default function LandingScreen() {
 
             <Pressable
               style={styles.ghostBtn}
-              onPress={() => router.push("/(auth)/customer-login")}
+              onPress={() =>
+                router.push(
+                  (SHELL_ON ? `${SHELL_ROUTE}?role=buyer` : "/(auth)/customer-login") as any,
+                )
+              }
             >
               <Text style={styles.ghostBtnText}>I'm a Buyer</Text>
             </Pressable>

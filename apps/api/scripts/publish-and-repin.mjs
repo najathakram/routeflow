@@ -145,6 +145,7 @@ const {
   isPlanFlagEnforcementOn,
   planKeyFromEnum,
   findPlanDefinition,
+  effectivePlanFlagsMirror,
   addonSkuCode,
 } = require("./lib/feature-registry-mirror.cjs");
 const { isTestTenant } = require("../../../scripts/lib/test-tenants.cjs");
@@ -423,7 +424,10 @@ async function computeEntitlements(tenant, activeAddons, catalog) {
   const effectivePlanKey = def.planKey;
 
   const skuByCode = new Map(version.addonSkus.map((s) => [s.sku, s]));
-  const flags = new Set(def.featureFlags);
+  // #2700 (SA-559b): flags gain forward, exactly as compute() — without it a pinned tenant whose
+  // PUBLISHED plan already carries a flag reads as a false loss, and --apply would write a false
+  // GRANT override for it.
+  const flags = new Set(effectivePlanFlagsMirror(def, version.id, catalog.getPublished()));
 
   let publishedSkuByCode = null;
   for (const addon of activeAddons) {
