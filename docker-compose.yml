@@ -159,6 +159,7 @@ services:
       DATABASE_URL: postgresql://${POSTGRES_USER:-user}:${POSTGRES_PASSWORD:-pass}@postgres:5432/${POSTGRES_DB:-routeflow_dev}
       REDIS_URL: redis://redis:6379
       JWT_SECRET: local-dev-only-jwt-secret-change-me
+      ONBOARDING_TOKEN_SECRET: local-dev-only-onboarding-token-secret-change-me
       JWT_REFRESH_SECRET: local-dev-only-jwt-refresh-secret-change-me
       CORS_ORIGINS: http://localhost:3001,http://localhost:3000
       # pB10 / RF-160: local throwaway override — the Playwright lane + retries +

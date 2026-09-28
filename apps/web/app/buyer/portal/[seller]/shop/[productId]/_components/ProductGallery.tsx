@@ -3,6 +3,7 @@
 import * as React from "react";
 import { Package } from "lucide-react";
 import { objectPositionForUrl } from "@/lib/image-focal";
+import { RetryableImg } from "@/components/RetryableImg";
 
 // ─── Product Gallery (detail page) ─────────────────────────────────────────────
 //
@@ -23,7 +24,8 @@ export function ProductGallery({ images, name }: ProductGalleryProps) {
     <div className="flex flex-col gap-3">
       <div className="relative aspect-[4/5] w-full overflow-hidden rounded-xl border border-surface-border bg-surface-raised">
         {activeUrl ? (
-          <img
+          <RetryableImg
+            staleQueryKey={["buyer", "product"]}
             src={activeUrl}
             alt={name}
             className="h-full w-full object-cover"
@@ -50,7 +52,8 @@ export function ProductGallery({ images, name }: ProductGalleryProps) {
               }`}
               aria-label={`Show image ${i + 1}`}
             >
-              <img
+              <RetryableImg
+                staleQueryKey={["buyer", "product"]}
                 src={url}
                 alt=""
                 className="h-full w-full object-cover"

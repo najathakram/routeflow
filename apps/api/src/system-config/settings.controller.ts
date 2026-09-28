@@ -508,6 +508,14 @@ export class SettingsController {
     const hideOriginalPriceRaw = await this.svc.get("invoice.hideOriginalPrice");
     const depositDefaultPercentRaw = await this.svc.get("invoice.depositDefaultPercent");
     const depositCollectAtOrderRaw = await this.svc.get("invoice.depositCollectAtOrder");
+    // SA-436 (#2401): lives on TenantConfig (the send tx reads it there); no row reads as OFF.
+    const tenantId = this.prisma.getTenantId();
+    const cfg = tenantId
+      ? await this.prisma.tenantConfig.findUnique({
+          where: { tenantId },
+          select: { creditAutoApplyOnSend: true },
+        })
+      : null;
     return {
       defaultTerms: defaultTerms ?? "Net 30",
       hideOriginalPrice: hideOriginalPriceRaw === "true",
@@ -518,6 +526,7 @@ export class SettingsController {
           ? Number(depositDefaultPercentRaw)
           : null,
       depositCollectAtOrder: depositCollectAtOrderRaw === "true",
+      creditAutoApplyOnSend: cfg?.creditAutoApplyOnSend ?? false,
     };
   }
 
@@ -538,6 +547,14 @@ export class SettingsController {
     }
     if (dto.depositCollectAtOrder !== undefined) {
       await this.svc.set("invoice.depositCollectAtOrder", String(dto.depositCollectAtOrder));
+    }
+    const tenantId = this.prisma.getTenantId();
+    if (dto.creditAutoApplyOnSend !== undefined && tenantId) {
+      await this.prisma.tenantConfig.upsert({
+        where: { tenantId },
+        create: { tenantId, creditAutoApplyOnSend: dto.creditAutoApplyOnSend },
+        update: { creditAutoApplyOnSend: dto.creditAutoApplyOnSend },
+      });
     }
     return this.getInvoiceSettings();
   }
