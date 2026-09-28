@@ -435,6 +435,12 @@ describeDb(
         select: { type: true },
       });
       expect(booked).toEqual([]); // nothing booked for a non-paying row
+      // SA-513a: the upgrade still leaves exactly ONE plan.changed history row, at Δ0.
+      const planChanged = await prisma.billingEvent.findMany({
+        where: { tenantId: id, type: "plan.changed" },
+        select: { amountDelta: true },
+      });
+      expect(planChanged.map((e) => Number(e.amountDelta ?? 0))).toEqual([0]);
       expect(await figures(id)).toEqual({ snapshot: 0, ledger: 0 }); // MRR unchanged
 
       await platformAdmin.updateTenantClass(id, { class: "PRODUCTION" } as any, "admin-2583");

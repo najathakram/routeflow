@@ -3283,6 +3283,18 @@ describe("#2583 subscribe()/upgrade() book on the shared paying predicate", () =
       expect(h.tx.tenantSubscription.updateMany.mock.calls[0][0].data.basePriceSnapshot).toBe(349);
     });
 
+    // SA-513a (b): the three older paying pins moved to ACTIVE; this keeps the TRIAL case explicit —
+    // a TRIAL tenant is outside the paying set, so its upgrade books Δ0 in exactly ONE plan.changed.
+    it("a TRIAL (non-paying) tenant's upgrade books Δ0 in exactly one plan.changed", async () => {
+      const h = make({ sub: sub("STARTER", 59) });
+      arrange(h, tenantRow("TRIAL", "PRODUCTION"));
+      await h.svc.upgrade("t1", "BUSINESS", "admin");
+      const planChanged = h.events.emit.mock.calls.filter(
+        (c: any[]) => c[1] === BILLING_EVENTS.PLAN_CHANGED,
+      );
+      expect(planChanged.map((c: any[]) => c[3]?.amountDelta)).toEqual([0]);
+    });
+
     it("the class is read UNDER the Tenant lock: PRODUCTION pre-tx but TEST under the lock ⇒ Δ0", async () => {
       const h = make({ sub: sub("STARTER", 59) });
       arrange(h, tenantRow("ACTIVE", "PRODUCTION"), tenantRow("ACTIVE", "TEST"));
