@@ -94,8 +94,12 @@ const lineFor = (name: string) =>
     .map((el) => el.closest("li"))
     .find((li) => li?.querySelector('[title="Remove"]')) as HTMLElement;
 
-const unitsOf = (name: string) =>
-  lineFor(name).querySelector("span.w-8.text-center")?.textContent ?? "";
+// #2696 (b): a line's qty is an input when the modal passes onSetQty; the span is the fallback.
+const unitsOf = (name: string) => {
+  const line = lineFor(name);
+  const input = line.querySelector<HTMLInputElement>('input[aria-label="Quantity"]');
+  return input ? input.value : (line.querySelector("span.w-8.text-center")?.textContent ?? "");
+};
 
 /** Open the just-added line's note and focus it — synchronously, inside the re-arm window. */
 function focusNoteOf(name: string): HTMLTextAreaElement {

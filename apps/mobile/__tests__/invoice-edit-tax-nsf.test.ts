@@ -46,3 +46,27 @@ describe("#2392 (a) — the NSF fee line is excluded from the tax inference and 
     ]);
   });
 });
+
+// #2656 / SA-549: the NSF line is never taxed — the API refuses a rate > 0 on it — so a legacy draft
+// whose NSF line was STORED taxed loads at 0, untaxable; the next save sends 0 and heals the row.
+describe("#2656 — a legacy NSF line stored taxed loads untaxed", () => {
+  it.each([
+    ["stamped", stampedNsf],
+    ["pre-backfill (prefix only)", legacyNsf],
+  ])(
+    "%s NSF line stored at 0.08 → { taxRate 0, taxable false }; goods keep their own rate",
+    (_l, nsf) => {
+      const goodsRated = { ...goods, taxRate: 0.075 };
+      expect(
+        hydratedLineTax({
+          subtotal: 125,
+          taxAmount: 9.5,
+          items: [goodsRated, { ...nsf, taxRate: 0.08 }] as any,
+        }),
+      ).toEqual([
+        { taxRate: 0.075, taxable: true },
+        { taxRate: 0, taxable: false },
+      ]);
+    },
+  );
+});

@@ -46,7 +46,7 @@ import {
   NSF_FEE_DESCRIPTION_PREFIX,
   NSF_FEE_SYSTEM_KIND,
   NSF_HAS_TRANSITION_LEG,
-  inferredFlatRate,
+  inferredGoodsFlatRate,
   isNsfLine,
 } from "@routeflow/pricing";
 import { isTestTenant } from "../../../scripts/lib/test-tenants.cjs";
@@ -90,15 +90,19 @@ export function notNsfSql(firstParam) {
 /** Pure: one invoice → APPLY / REVIEW / null (skipped). */
 export function classifyInvoice(invoice, lines, fixDate = FIX_DATE) {
   // #2392 / SA-478: the NSF bounce-fee line is never taxed — excluded from the inference, both its
-  // line and its money (the header subtotal includes the untaxed fee, which diluted the rate).
-  const nsf = lines.map((l) => isNsfLine(l));
-  const nsfSubtotal = lines.reduce((s, l, i) => (nsf[i] ? s + (Number(l.subtotal) || 0) : s), 0);
-  const inferred = inferredFlatRate({
-    subtotal: (Number(invoice.subtotal) || 0) - nsfSubtotal,
+  // line and its money. #2656: that goods-only rule (rounded) is the ONE shared helper.
+  const inferred = inferredGoodsFlatRate({
+    subtotal: invoice.subtotal,
     taxAmount: invoice.taxAmount,
-    lines: lines.filter((_, i) => !nsf[i]),
+    lines,
   });
   if (!inferred) return null;
+  // #2656 / SA-549: an NSF line ALREADY carrying a rate means the header tax includes tax on the fee,
+  // so the goods-only rate is inflated. Never APPLY it (the apply's re-read gate would refuse the whole
+  // tx on that line anyway) — a human looks.
+  if (lines.some((l) => isNsfLine(l) && Number(l.taxRate ?? 0) > 0)) {
+    return { kind: "REVIEW", rate: inferred.rate, reason: "NSF line already taxed" };
+  }
   if (!inferred.verified) {
     return {
       kind: "REVIEW",
@@ -525,6 +529,24 @@ function selfTest() {
       ],
       "APPLY",
       0.075,
+    ],
+    // #2656 / SA-549: goods at 0 but the NSF line ALREADY taxed (7.5% on the $25 fee, $1.88) —
+    // the header tax is inflated to $9.38, which a goods-only inference reads as 0.0938. Never APPLY
+    // (the apply's re-read gate would refuse the whole tx on the rated NSF line anyway): REVIEW.
+    [
+      "REVIEW #2656: goods at 0 + an NSF line already taxed is never planned as APPLY",
+      { subtotal: 125, taxAmount: 9.38, createdAt: before },
+      [
+        { taxRate: 0, subtotal: 100, systemKind: null, description: "Cola 12pk" },
+        {
+          taxRate: 0.075,
+          subtotal: 25,
+          systemKind: "NSF_FEE",
+          description: `${NSF_FEE_DESCRIPTION_PREFIX} #9`,
+        },
+      ],
+      "REVIEW",
+      0.0938,
     ],
     [
       "skipped: only category tax",
