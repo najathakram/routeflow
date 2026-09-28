@@ -1,7 +1,9 @@
 /**
- * #2476 / SA-472 — real Postgres. Both Stripe webhook ledgers take a redelivered event EXCLUSIVELY with
- * one updateMany (common/webhook-ledger-claim.ts): an "error:" row at once, a NULL (in-flight) row only
- * once its 5-minute lease (processedAt) has expired. Not claimed: a completed row is a 200 duplicate;
+ * #2476 / SA-472 / SA-472a — real Postgres. Both Stripe webhook ledgers insert with one raw
+ * INSERT … ON CONFLICT DO NOTHING and take a redelivered event EXCLUSIVELY with one raw UPDATE
+ * (common/webhook-ledger-claim.ts): an "error:" row at once, a NULL (in-flight) row only once its
+ * 5-minute lease has expired — processedAt and the lease both on the DATABASE clock. The outcome write
+ * is fenced on the holder's processedAt token, so a worker whose lease was taken over cannot overwrite. Not claimed: a completed row is a 200 duplicate;
  * one still in flight elsewhere is a 503 that never runs the handler.
  *
  * The controllers run for real on a real PrismaClient, and each delivery gets its own pool connection.
@@ -13,7 +15,7 @@
  * Throwaway `qa-*` tenants (assertTestTenant); afterAll deletes what it made. DB lane — run by F2.
  */
 import { randomUUID } from "crypto";
-import { PrismaClient, TenantClass, TenantStatus } from "@prisma/client";
+import { Prisma, PrismaClient, TenantClass, TenantStatus } from "@prisma/client";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { Pool } from "pg";
 import { HttpStatus } from "@nestjs/common";
@@ -87,17 +89,27 @@ describeDb("#2476 webhook ledger exclusive claim on redelivery (real Postgres, S
     };
   }
 
+  /** Seeds a ledger row whose claim is `ageMs` old on the DATABASE clock (the clock the lease reads). */
   async function seedBillingRow(id: string, outcome: string | null, ageMs: number) {
     billingIds.push(id);
-    await prisma.stripeBillingEvent.create({
-      data: {
-        id,
-        type: "invoice.paid",
-        createdAt: new Date(),
-        processedAt: new Date(Date.now() - ageMs),
-        outcome,
-      },
-    });
+    await prisma.$executeRaw(Prisma.sql`INSERT INTO "StripeBillingEvent"
+      ("id", "type", "createdAt", "processedAt", "outcome")
+      VALUES (${id}, 'invoice.paid', (CURRENT_TIMESTAMP AT TIME ZONE 'UTC'),
+        (CURRENT_TIMESTAMP AT TIME ZONE 'UTC') - ${`${ageMs} milliseconds`}::interval, ${outcome})`);
+  }
+
+  /** Ages an existing row's claim to `ageMs` on the database clock. */
+  async function ageBillingRow(id: string, ageMs: number) {
+    await prisma.$executeRaw(Prisma.sql`UPDATE "StripeBillingEvent"
+      SET "processedAt" = (CURRENT_TIMESTAMP AT TIME ZONE 'UTC') - ${`${ageMs} milliseconds`}::interval
+      WHERE "id" = ${id}`);
+  }
+
+  async function dbNowUtc(): Promise<Date> {
+    const [r] = await prisma.$queryRaw<{ now: Date }[]>(
+      Prisma.sql`SELECT (CURRENT_TIMESTAMP AT TIME ZONE 'UTC') AS "now"`,
+    );
+    return r.now;
   }
 
   it("two concurrent deliveries ⇒ exactly one handler run, the other 503, one ledger row", async () => {
@@ -150,6 +162,55 @@ describeDb("#2476 webhook ledger exclusive claim on redelivery (real Postgres, S
       expect({ runs: calls.n, status: o.out.status }).toEqual({ runs, status });
     },
   );
+
+  it("SA-472a: the first delivery's processedAt is the DATABASE clock (UTC), and the createdAt round-trips", async () => {
+    const id = `evt_2476_dbclock_${run}`;
+    const { ctl } = billingController({ id, type: "invoice.paid" }, async () => undefined);
+    const before = await dbNowUtc();
+    const o = res();
+    await ctl.handleWebhook(req as any, o.r as any);
+    const after = await dbNowUtc();
+    const row = await prisma.stripeBillingEvent.findUniqueOrThrow({ where: { id } });
+    expect(o.out.status).toBe(HttpStatus.OK);
+    expect(row.processedAt.getTime()).toBeGreaterThanOrEqual(before.getTime());
+    expect(row.processedAt.getTime()).toBeLessThanOrEqual(after.getTime());
+    expect(row.createdAt.toISOString()).toBe("2023-11-14T22:13:20.000Z"); // created 1_700_000_000
+    expect(row.outcome).toBe("processed");
+  });
+
+  it("SA-472a FENCE: a worker whose lease was taken over cannot overwrite the new holder's outcome", async () => {
+    const id = `evt_2476_fence_${run}`;
+    const g = gate();
+    let startedA = false;
+    let n = 0;
+    // A: held, then FAILS. B (after A's lease expires): succeeds.
+    const { ctl, calls } = billingController({ id, type: "invoice.paid" }, async () => {
+      n += 1;
+      if (n === 1) {
+        startedA = true;
+        await g.opened;
+        throw new Error("A failed late");
+      }
+    });
+    const a = res();
+    const pA = ctl.handleWebhook(req as any, a.r as any);
+    for (let i = 0; i < 400 && !startedA; i++) await new Promise((x) => setTimeout(x, 10));
+    expect(startedA).toBe(true); // ENTRY: A holds the row, in flight
+
+    await ageBillingRow(id, WEBHOOK_CLAIM_LEASE_MS + 60_000); // A's lease expires (DB clock)
+    const b = res();
+    await ctl.handleWebhook(req as any, b.r as any); // B re-claims and completes
+    g.open();
+    await pA; // A's fenced write must match 0 rows
+
+    const row = await prisma.stripeBillingEvent.findUniqueOrThrow({ where: { id } });
+    expect({ runs: calls.n, a: a.out.status, b: b.out.status, outcome: row.outcome }).toEqual({
+      runs: 2,
+      a: HttpStatus.INTERNAL_SERVER_ERROR,
+      b: HttpStatus.OK,
+      outcome: "processed", // B's result stands; A's late "error:" never lands
+    });
+  });
 
   describe("Connect webhook — the same claim", () => {
     function connectController(eventId: string, settle: () => Promise<{ handled: boolean }>) {
@@ -214,16 +275,11 @@ describeDb("#2476 webhook ledger exclusive claim on redelivery (real Postgres, S
     it("a NULL row older than the lease is re-claimed and settled once", async () => {
       const id = `evt_2476_cstale_${run}`;
       connectIds.push(id);
-      await prisma.stripeConnectEvent.create({
-        data: {
-          id,
-          accountRef: "acct_2476",
-          type: "payment_intent.succeeded",
-          createdAt: new Date(),
-          processedAt: new Date(Date.now() - WEBHOOK_CLAIM_LEASE_MS - 60_000),
-          outcome: null,
-        },
-      });
+      await prisma.$executeRaw(Prisma.sql`INSERT INTO "StripeConnectEvent"
+        ("id", "accountRef", "type", "createdAt", "processedAt", "outcome")
+        VALUES (${id}, 'acct_2476', 'payment_intent.succeeded', (CURRENT_TIMESTAMP AT TIME ZONE 'UTC'),
+          (CURRENT_TIMESTAMP AT TIME ZONE 'UTC') - ${`${WEBHOOK_CLAIM_LEASE_MS + 60_000} milliseconds`}::interval,
+          NULL)`);
       const { ctl, calls } = connectController(id, async () => ({ handled: true }));
       const o = res();
       await ctl.handle(creq as any, o.r as any);

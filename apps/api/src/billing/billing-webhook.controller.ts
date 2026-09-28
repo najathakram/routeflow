@@ -2,15 +2,10 @@ import { Controller, Post, Req, Res, HttpCode, HttpStatus, Logger } from "@nestj
 import { ApiTags, ApiExcludeEndpoint } from "@nestjs/swagger";
 import { SkipThrottle } from "@nestjs/throttler";
 import type { Request, Response } from "express";
-import { Prisma } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
-import { claimRedelivery } from "../common/webhook-ledger-claim";
+import { claimRedelivery, insertLedgerRow } from "../common/webhook-ledger-claim";
 import { StripeService } from "./stripe.service";
 import { BillingService } from "./billing.service";
-
-function isUniqueConstraintViolation(err: unknown): boolean {
-  return err instanceof Prisma.PrismaClientKnownRequestError && err.code === "P2002";
-}
 
 /**
  * Handles Stripe webhook events.
@@ -27,9 +22,13 @@ function isUniqueConstraintViolation(err: unknown): boolean {
  * #2442 — EVENT LEDGER (as ConnectWebhookController's): every verified event is inserted into
  * `StripeBillingEvent` BEFORE it is handled. A redelivery collides on the Stripe event id and is
  * acked as a duplicate only when the first delivery COMPLETED (a non-null, non-`error:` outcome) —
- * so a redelivered invoice.payment_failed never increments failedPaymentCount twice. A collision
- * whose row shows no outcome or an `error:` one is re-run: that is the redelivery our own 500 asked
- * for, and every handler is already idempotent on its own compare-and-swaps.
+ * so a redelivered invoice.payment_failed never increments failedPaymentCount twice.
+ *
+ * #2476 / SA-472a — handlers are NOT all idempotent (onPaymentFailed's increment is a bare add), so a
+ * re-run must be EXCLUSIVE: a redelivery re-runs only after claiming the row (common/
+ * webhook-ledger-claim.ts — an `error:` row at once, a NULL row only past its lease, both on the DB
+ * clock); a row still in flight elsewhere is a 503. The outcome is written only while this delivery
+ * still holds its claim, so a worker whose lease was taken over never overwrites the new holder.
  */
 @ApiTags("billing-webhooks")
 @Controller("billing/webhook")
@@ -79,44 +78,45 @@ export class BillingWebhookController {
       return;
     }
 
-    // #2442: insert-first ledger, before any handler write.
+    // #2442: insert-first ledger, before any handler write. #2476: the insert (or, on a redelivery,
+    // the exclusive claim) returns this delivery's claim token — processedAt, on the DB clock.
+    let token: Date;
     try {
-      await this.prisma.stripeBillingEvent.create({
-        data: {
-          id: event.id,
-          type: event.type,
-          createdAt: new Date(
-            (Number.isFinite(event.created) ? event.created : Date.now() / 1000) * 1000,
-          ),
-        },
+      const inserted = await insertLedgerRow(this.prisma, "StripeBillingEvent", {
+        id: event.id,
+        type: event.type,
+        createdAt: new Date(
+          (Number.isFinite(event.created) ? event.created : Date.now() / 1000) * 1000,
+        ),
       });
-    } catch (err) {
-      if (!isUniqueConstraintViolation(err)) {
-        this.logger.error(`Webhook ledger insert failed for ${event.type} (${event.id})`, err);
-        res.status(HttpStatus.INTERNAL_SERVER_ERROR).json({ error: "Webhook handler failed" });
-        return;
-      }
-      // #2476 / SA-472: take the row EXCLUSIVELY before re-running — one updateMany, so two
-      // concurrent redeliveries can never both run the handler.
-      const claim = await claimRedelivery(this.prisma.stripeBillingEvent as any, event.id);
-      if (claim === "duplicate") {
-        this.logger.log(
-          `Webhook ${event.type} (${event.id}) already processed — duplicate, skipped`,
-        );
-        res.status(HttpStatus.OK).json({ received: true });
-        return;
-      }
-      if (claim === "in_flight") {
-        // A 2xx would acknowledge an event another worker may still fail; Stripe retries a 503.
+      if (inserted) {
+        token = inserted;
+      } else {
+        const claim = await claimRedelivery(this.prisma, "StripeBillingEvent", event.id);
+        if (claim.kind === "duplicate") {
+          this.logger.log(
+            `Webhook ${event.type} (${event.id}) already processed — duplicate, skipped`,
+          );
+          res.status(HttpStatus.OK).json({ received: true });
+          return;
+        }
+        if (claim.kind === "in_flight") {
+          // A 2xx would acknowledge an event another worker may still fail; Stripe retries a 503.
+          this.logger.warn(
+            `Webhook ${event.type} (${event.id}) is being processed by another delivery — 503, Stripe retries`,
+          );
+          res.status(HttpStatus.SERVICE_UNAVAILABLE).json({ error: "Webhook event in progress" });
+          return;
+        }
         this.logger.warn(
-          `Webhook ${event.type} (${event.id}) is being processed by another delivery — 503, Stripe retries`,
+          `Webhook ${event.type} (${event.id}) redelivered after a failed or expired attempt — reprocessing`,
         );
-        res.status(HttpStatus.SERVICE_UNAVAILABLE).json({ error: "Webhook event in progress" });
-        return;
+        token = claim.token;
       }
-      this.logger.warn(
-        `Webhook ${event.type} (${event.id}) redelivered after a failed or expired attempt — reprocessing`,
-      );
+    } catch (err) {
+      this.logger.error(`Webhook ledger insert/claim failed for ${event.type} (${event.id})`, err);
+      res.status(HttpStatus.INTERNAL_SERVER_ERROR).json({ error: "Webhook handler failed" });
+      return;
     }
 
     // A handler failure is NOT a signature problem: report it as what it is (500, so Stripe
@@ -133,8 +133,19 @@ export class BillingWebhookController {
     } finally {
       // Best-effort bookkeeping: never let it change the response already sent. A lost outcome
       // leaves the row NULL, re-claimable once its lease expires. #2476: LOGGED, never swallowed.
+      // #2476: fenced on this delivery's claim — count 0 means the lease expired and another
+      // delivery re-claimed the row; its result, not ours, is the one that stands.
       await this.prisma.stripeBillingEvent
-        .update({ where: { id: event.id }, data: { outcome } })
+        .updateMany({
+          where: { id: event.id, outcome: null, processedAt: token },
+          data: { outcome },
+        })
+        .then(({ count }) => {
+          if (count === 0)
+            this.logger.error(
+              `Webhook ${event.type} (${event.id}) claim lost before its outcome write — "${outcome}" not recorded`,
+            );
+        })
         .catch((e: unknown) =>
           this.logger.error(
             `Webhook ${event.type} (${event.id}) outcome write failed (row left in flight): ${(e as Error)?.message}`,

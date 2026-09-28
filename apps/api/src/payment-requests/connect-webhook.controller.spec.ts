@@ -52,6 +52,10 @@ function mockRes() {
   return res;
 }
 
+// #2476: the ledger insert + claim are raw SQL; their claim tokens (processedAt, DB clock).
+const T_INSERT = new Date("2026-09-28T05:00:00.000Z");
+const T_CLAIM = new Date("2026-09-28T05:07:00.000Z");
+
 const rawReq = { headers: { "stripe-signature": "sig_test" }, rawBody: Buffer.from("{}") } as any;
 
 describe("ConnectWebhookController", () => {
@@ -63,6 +67,8 @@ describe("ConnectWebhookController", () => {
     update: jest.Mock;
     updateMany: jest.Mock;
   };
+  /** #2476: rows the raw redelivery claim returns — one row = this delivery claimed it. */
+  let claimRows: jest.Mock;
 
   const provider = { verifyEvent: jest.fn(), isConfigured: true };
   const payments = {
@@ -86,10 +92,31 @@ describe("ConnectWebhookController", () => {
       create: jest.fn().mockResolvedValue({}),
       findUnique: jest.fn().mockResolvedValue(null),
       update: jest.fn().mockResolvedValue({}),
-      // #2476: the redelivery claim — 1 = this delivery claimed the row.
+      // #2476: the fenced outcome write — 1 = this delivery still held its claim.
       updateMany: jest.fn().mockResolvedValue({ count: 1 }),
     };
     (prisma as any).stripeConnectEvent = stripeConnectEvent;
+    // #2476: raw INSERT … ON CONFLICT DO NOTHING (modelled by `create`: a P2002 rejection = a
+    // redelivery, no row), the raw claim UPDATE (claimRows) and the re-read SELECT (findUnique).
+    claimRows = jest.fn().mockResolvedValue([{ processedAt: T_CLAIM }]);
+    (prisma as any).$queryRaw = jest.fn(async (q: Prisma.Sql) => {
+      const sql = q.sql.trim();
+      if (/^INSERT/i.test(sql)) {
+        try {
+          await stripeConnectEvent.create();
+        } catch (e) {
+          if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === "P2002") return [];
+          throw e;
+        }
+        return [{ processedAt: T_INSERT }];
+      }
+      if (/^UPDATE/i.test(sql)) return claimRows();
+      if (/^SELECT/i.test(sql)) {
+        const row = await stripeConnectEvent.findUnique();
+        return row ? [{ outcome: row.outcome }] : [];
+      }
+      return [];
+    });
 
     payments.settleByPaymentIntent.mockResolvedValue({ handled: true });
     payments.failBySession.mockResolvedValue({ handled: true });
@@ -134,18 +161,22 @@ describe("ConnectWebhookController", () => {
 
       await controller.handle(rawReq, res);
 
-      expect(stripeConnectEvent.create).toHaveBeenCalledWith({
-        data: {
-          id: "evt_dup",
-          accountRef: "acct_1",
-          type: "payment_intent.succeeded",
-          createdAt: piEvent.created,
-        },
-      });
+      const insert = ((prisma as any).$queryRaw.mock.calls as any[])
+        .map((c) => c[0] as Prisma.Sql)
+        .find((q) => q.sql.trim().startsWith("INSERT"));
+      expect(insert?.sql).toMatch(/INSERT INTO "StripeConnectEvent"/);
+      expect(insert?.values).toEqual(
+        expect.arrayContaining([
+          "evt_dup",
+          "acct_1",
+          "payment_intent.succeeded",
+          piEvent.created.toISOString(),
+        ]),
+      );
       expect(payments.settleByPaymentIntent).toHaveBeenCalledTimes(1);
       expect(res.statusCode).toBe(200);
-      expect(stripeConnectEvent.update).toHaveBeenCalledWith({
-        where: { id: "evt_dup" },
+      expect(stripeConnectEvent.updateMany).toHaveBeenCalledWith({
+        where: { id: "evt_dup", outcome: null, processedAt: T_INSERT },
         data: { outcome: "settled" },
       });
     });
@@ -154,7 +185,7 @@ describe("ConnectWebhookController", () => {
       provider.verifyEvent.mockReturnValue(piEvent);
       stripeConnectEvent.create.mockRejectedValue(uniqueViolation());
       stripeConnectEvent.findUnique.mockResolvedValue({ id: "evt_dup", outcome: "settled" });
-      stripeConnectEvent.updateMany.mockResolvedValue({ count: 0 }); // #2476: a completed row is never claimable
+      claimRows.mockResolvedValue([]); // #2476: a completed row is never claimable
       const res = mockRes();
 
       await controller.handle(rawReq, res);
@@ -194,23 +225,23 @@ describe("ConnectWebhookController", () => {
     });
 
     // #2476 / SA-472: the same exclusive claim as the billing webhook.
-    it("#2476: a redelivery claims the row with ONE updateMany (error: now, NULL past the lease)", async () => {
+    it("#2476: a redelivery claims the row with ONE raw UPDATE (error: now, NULL past the lease)", async () => {
       provider.verifyEvent.mockReturnValue(piEvent);
       stripeConnectEvent.create.mockRejectedValue(uniqueViolation());
       await controller.handle(rawReq, mockRes());
-      const arg = stripeConnectEvent.updateMany.mock.calls[0][0];
-      expect(arg.where.id).toBe("evt_dup");
-      expect(arg.where.OR).toEqual([
-        { outcome: { startsWith: "error:" } },
-        { outcome: null, processedAt: { lt: expect.any(Date) } },
-      ]);
-      expect(arg.data).toEqual({ processedAt: expect.any(Date), outcome: null });
+      const q = ((prisma as any).$queryRaw.mock.calls as any[])
+        .map((c) => c[0] as Prisma.Sql)
+        .find((x) => x.sql.trim().startsWith("UPDATE"));
+      expect(q?.sql).toMatch(/UPDATE "StripeConnectEvent"/);
+      expect(q?.sql).toMatch(/"outcome" LIKE 'error:%'/);
+      expect(q?.sql).toMatch(/"outcome" IS NULL AND "processedAt" </);
+      expect(q?.values).toEqual(["evt_dup", "300000 milliseconds"]);
     });
 
     it("#2476: not claimed and still in flight elsewhere ⇒ 503, never routed", async () => {
       provider.verifyEvent.mockReturnValue(piEvent);
       stripeConnectEvent.create.mockRejectedValue(uniqueViolation());
-      stripeConnectEvent.updateMany.mockResolvedValue({ count: 0 });
+      claimRows.mockResolvedValue([]);
       stripeConnectEvent.findUnique.mockResolvedValue({ id: "evt_dup", outcome: null });
       const res = mockRes();
       await controller.handle(rawReq, res);
@@ -220,7 +251,7 @@ describe("ConnectWebhookController", () => {
 
     it("#2476: an outcome-write failure is logged, never swallowed", async () => {
       provider.verifyEvent.mockReturnValue(piEvent);
-      stripeConnectEvent.update.mockRejectedValue(new Error("db blip"));
+      stripeConnectEvent.updateMany.mockRejectedValue(new Error("db blip"));
       const res = mockRes();
       await controller.handle(rawReq, res);
       expect(res.statusCode).toBe(200);
@@ -236,8 +267,8 @@ describe("ConnectWebhookController", () => {
       await controller.handle(rawReq, res);
 
       expect(res.statusCode).toBe(500);
-      expect(stripeConnectEvent.update).toHaveBeenCalledWith({
-        where: { id: "evt_dup" },
+      expect(stripeConnectEvent.updateMany).toHaveBeenCalledWith({
+        where: { id: "evt_dup", outcome: null, processedAt: T_INSERT },
         data: { outcome: "error:Invoice inv-1 is voided" },
       });
     });
@@ -269,8 +300,8 @@ describe("ConnectWebhookController", () => {
       expect(audit.log).toHaveBeenCalledWith(
         expect.objectContaining({ tenantId: "tenant-1", action: "stripe.charge.dispute.created" }),
       );
-      expect(stripeConnectEvent.update).toHaveBeenCalledWith({
-        where: { id: "evt_dispute" },
+      expect(stripeConnectEvent.updateMany).toHaveBeenCalledWith({
+        where: { id: "evt_dispute", outcome: null, processedAt: T_INSERT },
         data: { outcome: "notified" },
       });
     });
@@ -283,8 +314,8 @@ describe("ConnectWebhookController", () => {
       await controller.handle(rawReq, res);
 
       expect(audit.log).not.toHaveBeenCalled();
-      expect(stripeConnectEvent.update).toHaveBeenCalledWith({
-        where: { id: "evt_dispute" },
+      expect(stripeConnectEvent.updateMany).toHaveBeenCalledWith({
+        where: { id: "evt_dispute", outcome: null, processedAt: T_INSERT },
         data: { outcome: "no_matching_tenant" },
       });
     });
@@ -305,8 +336,8 @@ describe("ConnectWebhookController", () => {
 
     expect(payments.failBySession).toHaveBeenCalledTimes(1);
     expect(res.statusCode).toBe(200);
-    expect(stripeConnectEvent.update).toHaveBeenCalledWith({
-      where: { id: "evt_async_fail" },
+    expect(stripeConnectEvent.updateMany).toHaveBeenCalledWith({
+      where: { id: "evt_async_fail", outcome: null, processedAt: T_INSERT },
       data: { outcome: "failed" },
     });
   });

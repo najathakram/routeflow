@@ -2,6 +2,11 @@ import { HttpStatus } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
 import { BillingWebhookController } from "./billing-webhook.controller";
 
+const T_INSERT = new Date("2026-09-28T05:00:00.000Z");
+const T_CLAIM = new Date("2026-09-28T05:07:00.000Z");
+const rawOf = (m: jest.Mock, verb: string) =>
+  (m.mock.calls as any[]).map((c) => c[0] as Prisma.Sql).find((q) => q.sql.trim().startsWith(verb));
+
 // B593 review F1: a handler failure must not masquerade as a signature failure.
 function build(
   opts: {
@@ -11,7 +16,7 @@ function build(
     create?: () => Promise<unknown>;
     /** #2442: the already-ledgered row a duplicate insert finds. */
     existing?: { outcome: string | null } | null;
-    /** #2476: rows the redelivery claim (one updateMany) takes — 1 = claimed. */
+    /** #2476: rows the redelivery claim (one raw UPDATE) takes — 1 = claimed. */
     claimed?: number;
   } = {},
 ) {
@@ -22,12 +27,32 @@ function build(
     ),
   };
   const billing = { handleWebhookEvent: jest.fn(opts.handle ?? (async () => undefined)) };
+  // #2476: the ledger insert and the claim are raw SQL (common/webhook-ledger-claim.ts). `create` keeps
+  // its #2442 meaning — it models the INSERT: resolve = inserted, reject P2002 = a redelivery (ON
+  // CONFLICT DO NOTHING returns no row), any other rejection = an insert failure.
+  const create = jest.fn(opts.create ?? (async () => ({})));
+  const $queryRaw = jest.fn(async (q: Prisma.Sql) => {
+    const sql = q.sql.trim();
+    if (/^INSERT/i.test(sql)) {
+      try {
+        await create();
+      } catch (e) {
+        if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === "P2002") return [];
+        throw e;
+      }
+      return [{ processedAt: T_INSERT }];
+    }
+    if (/^UPDATE/i.test(sql)) return (opts.claimed ?? 1) === 1 ? [{ processedAt: T_CLAIM }] : [];
+    if (/^SELECT/i.test(sql)) return opts.existing ? [{ outcome: opts.existing.outcome }] : [];
+    return [];
+  });
   const prisma = {
+    $queryRaw,
     stripeBillingEvent: {
-      create: jest.fn(opts.create ?? (async () => ({}))),
-      findUnique: jest.fn(async () => opts.existing ?? null),
+      create,
       update: jest.fn(async () => ({})),
-      updateMany: jest.fn(async () => ({ count: opts.claimed ?? 1 })),
+      // #2476: the fenced outcome write — 1 = this delivery still held its claim.
+      updateMany: jest.fn(async () => ({ count: 1 })),
     },
   };
   const controller = new BillingWebhookController(
@@ -105,14 +130,12 @@ describe("#2442 BillingWebhookController — throttle skip and event-id ledger",
   it("ledgers the event id BEFORE the handler runs", async () => {
     const { controller, billing, prisma, req, res } = build({ construct: failedEvt });
     await controller.handleWebhook(req as never, res as never);
-    expect(prisma.stripeBillingEvent.create).toHaveBeenCalledWith({
-      data: {
-        id: "evt_pf",
-        type: "invoice.payment_failed",
-        createdAt: new Date(1_700_000_000_000),
-      },
-    });
-    expect(prisma.stripeBillingEvent.create.mock.invocationCallOrder[0]).toBeLessThan(
+    const insert = rawOf(prisma.$queryRaw, "INSERT");
+    expect(insert?.sql).toMatch(/INSERT INTO "StripeBillingEvent"/);
+    expect(insert?.values).toEqual(
+      expect.arrayContaining(["evt_pf", "invoice.payment_failed", "2023-11-14T22:13:20.000Z"]),
+    );
+    expect(prisma.$queryRaw.mock.invocationCallOrder[0]).toBeLessThan(
       billing.handleWebhookEvent.mock.invocationCallOrder[0],
     );
   });
@@ -162,8 +185,8 @@ describe("#2442 BillingWebhookController — throttle skip and event-id ledger",
   it("records outcome 'processed' on success", async () => {
     const { controller, prisma, req, res } = build({ construct: failedEvt });
     await controller.handleWebhook(req as never, res as never);
-    expect(prisma.stripeBillingEvent.update).toHaveBeenCalledWith({
-      where: { id: "evt_pf" },
+    expect(prisma.stripeBillingEvent.updateMany).toHaveBeenCalledWith({
+      where: { id: "evt_pf", outcome: null, processedAt: T_INSERT },
       data: { outcome: "processed" },
     });
   });
@@ -176,8 +199,8 @@ describe("#2442 BillingWebhookController — throttle skip and event-id ledger",
       },
     });
     await controller.handleWebhook(req as never, res as never);
-    expect(prisma.stripeBillingEvent.update).toHaveBeenCalledWith({
-      where: { id: "evt_pf" },
+    expect(prisma.stripeBillingEvent.updateMany).toHaveBeenCalledWith({
+      where: { id: "evt_pf", outcome: null, processedAt: T_INSERT },
       data: { outcome: "error:db down" },
     });
     expect(res.status).toHaveBeenCalledWith(HttpStatus.INTERNAL_SERVER_ERROR);
@@ -185,7 +208,7 @@ describe("#2442 BillingWebhookController — throttle skip and event-id ledger",
 
   it("a failed outcome write never changes the response already sent", async () => {
     const { controller, prisma, res, req } = build({ construct: failedEvt });
-    prisma.stripeBillingEvent.update.mockRejectedValue(new Error("db blip"));
+    prisma.stripeBillingEvent.updateMany.mockRejectedValue(new Error("db blip"));
     await expect(controller.handleWebhook(req as never, res as never)).resolves.toBeUndefined();
     expect(res.status).toHaveBeenCalledWith(HttpStatus.OK);
   });
@@ -204,25 +227,20 @@ describe("#2476 BillingWebhookController — exclusive claim on redelivery (SA-4
     });
   const evt = () => ({ type: "invoice.payment_failed", id: "evt_pf", created: 1_700_000_000 });
 
-  it("claims with ONE updateMany: an error: row, or a NULL row older than the 5-minute lease", async () => {
+  it("claims with ONE raw UPDATE: an error: row, or a NULL row older than the 5-minute lease", async () => {
     const { controller, prisma, req, res } = build({
       construct: evt,
       create: async () => {
         throw dup();
       },
     });
-    const before = Date.now();
     await controller.handleWebhook(req as never, res as never);
-    const arg = (prisma.stripeBillingEvent.updateMany.mock.calls as any[])[0][0];
-    expect(arg.where.id).toBe("evt_pf");
-    expect(arg.where.OR).toEqual([
-      { outcome: { startsWith: "error:" } },
-      { outcome: null, processedAt: { lt: expect.any(Date) } },
-    ]);
-    const cutoff = arg.where.OR[1].processedAt.lt.getTime();
-    expect(cutoff).toBeLessThanOrEqual(Date.now() - LEASE_MS + 5);
-    expect(cutoff).toBeGreaterThanOrEqual(before - LEASE_MS - 5);
-    expect(arg.data).toEqual({ processedAt: expect.any(Date), outcome: null });
+    const q = rawOf(prisma.$queryRaw, "UPDATE");
+    expect(q?.sql).toMatch(/UPDATE "StripeBillingEvent"/);
+    expect(q?.sql).toMatch(/"outcome" LIKE 'error:%'/);
+    expect(q?.sql).toMatch(/"outcome" IS NULL AND "processedAt" </);
+    expect(q?.sql).toMatch(/RETURNING "processedAt"/);
+    expect(q?.values).toEqual(["evt_pf", `${LEASE_MS} milliseconds`]);
   });
 
   it("claimed (count 1) ⇒ the handler runs", async () => {
@@ -270,7 +288,7 @@ describe("#2476 BillingWebhookController — exclusive claim on redelivery (SA-4
 
   it("an outcome-write failure is LOGGED (never swallowed) and never changes the response", async () => {
     const { controller, prisma, req, res } = build({ construct: evt });
-    prisma.stripeBillingEvent.update.mockRejectedValue(new Error("db blip"));
+    prisma.stripeBillingEvent.updateMany.mockRejectedValue(new Error("db blip"));
     const err = jest.spyOn((controller as any).logger, "error").mockImplementation(() => undefined);
     await controller.handleWebhook(req as never, res as never);
     expect(res.status).toHaveBeenCalledWith(HttpStatus.OK);
