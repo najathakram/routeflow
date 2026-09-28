@@ -50,7 +50,7 @@ export interface PurchaseOrder {
   /**
    * The server-stored document total: the raw Prisma `PurchaseOrder.totalAmount` (`Decimal(10,2)`), so a
    * numeric STRING. B719 (#1485): this type used to declare a `total` the API never sends, so the list's
-   * Total column read `undefined` and showed $0.00 on every row. Read it through `poListTotal`.
+   * Total column read `undefined` and showed $0.00 on every row. Read it through `poDisplayTotal` (@routeflow/pricing).
    */
   totalAmount?: number | string | null;
   expectedDate: string;
@@ -222,20 +222,4 @@ export function toCreateItem(line: POLineItem, unitsPerBox: number) {
   }
   const { qty, unitCost } = resolvePOLine(line, unitsPerBox);
   return { productId: line.productId, qty, unitCost };
-}
-
-/**
- * B719 (#1485): the total a purchase-order LIST row shows. The mobile list's rule (`poDisplayTotal`):
- * the server-stored `totalAmount` when it is a positive number (it arrives as a numeric string), else
- * the rounded sum of the lines' STORED totals (never `qty x unitCost`, B698). The list endpoint
- * includes no `product`, so each line's own stored pack is the only pack there is.
- */
-export function poListTotal(po: Pick<PurchaseOrder, "totalAmount" | "items">): number {
-  const stored = Number(po.totalAmount);
-  if (Number.isFinite(stored) && stored > 0) return roundMoney(stored);
-  const lines = (po.items ?? []).reduce(
-    (sum, item) => sum + resolveStoredPOLineAmounts(item, 0).totalCost,
-    0,
-  );
-  return Number.isFinite(lines) ? roundMoney(lines) : 0;
 }
