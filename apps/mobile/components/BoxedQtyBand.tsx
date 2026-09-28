@@ -1,7 +1,10 @@
+import { useState } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
+import { Ionicons } from "@expo/vector-icons";
 import { ios } from "@routeflow/ui/tokens";
 import { QtyStepper } from "./QtyStepper";
 import { boxedLineSummary, type BoxedSummaryLine } from "../lib/boxed-line-summary";
+import { canRemoveLooseUnits, looseUnitsVisible } from "../lib/loose-units";
 
 export interface BoxedQtyBandProps {
   /** Raw line fields, exactly as the builder's footer memo passes them. */
@@ -53,6 +56,9 @@ export function BoxedQtyBand({
   onChangePieces,
   onEdit,
 }: BoxedQtyBandProps) {
+  // #2698 (SA-564): one unit sold — loose units are opt-in, the same rule as CartRow.
+  const [looseUnitsOpen, setLooseUnitsOpen] = useState(false);
+  const showLoose = looseUnitsVisible(looseUnitsOpen, line.pieces);
   return (
     <>
       <View style={styles.control}>
@@ -61,21 +67,48 @@ export function BoxedQtyBand({
         </Text>
         <QtyStepper size="mini" value={line.boxes ?? 0} onChangeQty={onChangeBoxes} />
       </View>
-      <View style={styles.control}>
-        {/* Clamped + width-capped: "Loose containers" must not widen the
-            control past its 104px pill or line 1 stops fitting at 320px. */}
-        <Text style={styles.label} numberOfLines={1}>
-          {`Loose ${unit ?? "units"}`}
-        </Text>
-        <QtyStepper
-          size="mini"
-          value={line.pieces ?? 0}
-          onChangeQty={onChangePieces}
-          // Mirror the Review sheet's clamp (setLinePieces itself doesn't):
-          // a full case's worth of loose belongs in the Cases stepper.
-          max={unitsPerBox - 1}
-        />
-      </View>
+      {showLoose ? (
+        <View style={styles.control}>
+          {/* Clamped + width-capped: "Loose containers" must not widen the
+              control past its 104px pill or line 1 stops fitting at 320px. */}
+          <View style={styles.looseLabelRow}>
+            <Text style={styles.label} numberOfLines={1}>
+              {`Loose ${unit ?? "units"}`}
+            </Text>
+            {canRemoveLooseUnits(line.boxes) ? (
+              <Pressable
+                onPress={() => {
+                  onChangePieces(0);
+                  setLooseUnitsOpen(false);
+                }}
+                hitSlop={8}
+                accessibilityRole="button"
+                accessibilityLabel="Remove extra units"
+              >
+                <Ionicons name="close-circle" size={14} color={ios.label2} />
+              </Pressable>
+            ) : null}
+          </View>
+          <QtyStepper
+            size="mini"
+            value={line.pieces ?? 0}
+            onChangeQty={onChangePieces}
+            // Mirror the Review sheet's clamp (setLinePieces itself doesn't):
+            // a full case's worth of loose belongs in the Cases stepper.
+            max={unitsPerBox - 1}
+          />
+        </View>
+      ) : (
+        <Pressable
+          onPress={() => setLooseUnitsOpen(true)}
+          hitSlop={8}
+          style={styles.looseAdd}
+          accessibilityRole="button"
+          accessibilityLabel="Add extra loose units"
+        >
+          <Text style={styles.looseAddText}>+ units</Text>
+        </Pressable>
+      )}
       <View style={styles.summaryRow}>
         <Text style={styles.summary} numberOfLines={1}>
           {boxedLineSummary(line, unitsPerBox, unitPrice)}
@@ -100,6 +133,19 @@ const styles = StyleSheet.create({
   // maxWidth = the mini stepper pill width (see row-layout.test.ts): a long
   // unit noun ellipsizes instead of widening the control.
   control: { alignItems: "center", gap: 4, maxWidth: 104 },
+  looseLabelRow: { flexDirection: "row", alignItems: "center", gap: 4, maxWidth: 104 },
+  // #2698: the opt-in control — dashed, small, in the loose stepper's slot.
+  looseAdd: {
+    alignSelf: "flex-end",
+    paddingHorizontal: 10,
+    minHeight: 30,
+    justifyContent: "center",
+    borderRadius: 8,
+    borderWidth: 1,
+    borderStyle: "dashed",
+    borderColor: ios.separator,
+  },
+  looseAddText: { fontSize: 12, fontFamily: "Inter_600SemiBold", color: ios.brand },
   label: {
     fontSize: 11,
     fontFamily: "Inter_600SemiBold",
