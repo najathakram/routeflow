@@ -2,14 +2,12 @@ import { ConflictException } from "@nestjs/common";
 import { InvoiceStatus } from "@prisma/client";
 import {
   computeCategoryTax,
-  inferredFlatRate,
   regulatedUnitBasis,
   roundMoney,
   type CategoryTaxType,
 } from "@routeflow/pricing";
 import type { RegulatedLedgerService } from "../regulated/regulated-ledger.service";
 import { sumConfirmed } from "./payment-predicates";
-import { isNsfLine } from "./nsf-line";
 
 /**
  * B662: keep the regulated ledger equal to a re-priced invoice, inside the SAME transaction as the invoice
@@ -248,26 +246,4 @@ export async function commitPriceAdjustment(args: {
     new Set(itemUpdates.map((u) => u.id)),
     tx,
   );
-}
-
-/**
- * #2243 (SA-395 5b): B294's flat-rate inference over the invoice's GOODS only. The system NSF fee
- * line (setCheckStatus's BOUNCED branch, untaxed, booked straight into the header subtotal) is not
- * a taxable line: counted in, it would dilute the inferred rate (regular tax ÷ goods-plus-fee) and
- * then be stamped with it. #2169's shared predicate decides which lines are NSF.
- */
-export function inferredGoodsFlatRate(live: {
-  subtotal: unknown;
-  taxAmount: unknown;
-  items: any[];
-}) {
-  const goods = (live.items ?? []).filter((l: any) => !isNsfLine(l));
-  const fees = (live.items ?? [])
-    .filter((l: any) => isNsfLine(l))
-    .reduce((s: number, l: any) => s + Number(l.subtotal), 0);
-  return inferredFlatRate({
-    subtotal: roundMoney(Number(live.subtotal) - fees),
-    taxAmount: live.taxAmount,
-    lines: goods,
-  });
 }

@@ -109,11 +109,21 @@ rollback.
 
 ### 4. Purge the test ids (still on the test key)
 
+**Keep the key out of shell history.** Never type a Stripe key into a command line. Read it once
+into a shell variable without echo, and pass the variable:
+
+```bash
+read -rs STRIPE_TEST_KEY   # paste the sk_test_… key; nothing is shown or saved to history
+```
+
+Every purge command below uses `"$STRIPE_TEST_KEY"`. When the cutover is finished (after step 5's
+re-run), `unset STRIPE_TEST_KEY`.
+
 1. **Dry run**, with the **current** test key. Name the tenants that must not be touched on the
    command line only:
 
    ```bash
-   STRIPE_SECRET_KEY=sk_test_… railway run --service postgres node apps/api/scripts/purge-test-stripe-ids.mjs --exclude-tenant <slug,...>
+   STRIPE_SECRET_KEY="$STRIPE_TEST_KEY" railway run --service postgres node apps/api/scripts/purge-test-stripe-ids.mjs --exclude-tenant <slug,...>
    ```
 
    It prints:
@@ -136,7 +146,7 @@ rollback.
    printed:
 
    ```bash
-   STRIPE_SECRET_KEY=sk_test_… railway run --service postgres node apps/api/scripts/purge-test-stripe-ids.mjs --exclude-tenant <slug,...> --apply --backup-taken --confirm N
+   STRIPE_SECRET_KEY="$STRIPE_TEST_KEY" railway run --service postgres node apps/api/scripts/purge-test-stripe-ids.mjs --exclude-tenant <slug,...> --apply --backup-taken --confirm N
    ```
 
    The script refuses:
@@ -160,14 +170,43 @@ Set all of them in one edit; the service redeploys once:
 | `API_PUBLIC_URL`                | the public API origin (Connect OAuth redirect)                                                    |
 
 Keep the test values in the password manager, not in Railway, so a rollback is a variable swap.
+Paste the live values into the Railway dashboard's variable editor, never into a shell command.
 
-After the redeploy, re-run the step 4 dry run on the test key. It should show `changes: 0`
-(nothing new was minted in the window).
+After the redeploy, re-run the step 4 dry run, with the same `"$STRIPE_TEST_KEY"` and the same
+`--exclude-tenant`. It should show `changes: 0` (nothing new was minted in the window).
+
+**If it shows `changes: N` with N > 0:** test ids were minted between step 4 and the redeploy (a
+checkout or a Connect OAuth that ran on the test key). They are still verified against the test
+account, so the same purge clears them, and ids minted since the flip are live, unknown to the
+test account, and only ever appear as skipped. Then:
+
+1. Read every listed change. Each must be an id the test account returned as `livemode: false`;
+   the script refuses `--apply` if any id is reported as live.
+2. Get the owner's yes for every tenant in the new **tenants touched** list (as in step 4.2).
+3. Take a fresh backup (step 3, with a new label such as `pre-stripe-live-cutover-2`).
+4. Apply with the new count: `--apply --backup-taken --confirm N`.
+5. Re-run the dry run. Repeat only while N keeps shrinking. If N stays above 0 or grows,
+   something is still on the test key: stop, and check that `STRIPE_SECRET_KEY` on
+   `@routeflow/api` really is `sk_live_…` and the deployment reached `SUCCESS`.
 
 ### 6. Verify
 
-1. Wait for the api deployment to reach `SUCCESS`, then run `npm run post-deploy-check`.
-2. In the Stripe live dashboard, send a test event to each webhook endpoint and confirm a 2xx.
+1. Wait for the api deployment to reach `SUCCESS`, then point the check at production (it
+   defaults to `http://localhost:3000`):
+
+   ```bash
+   SMOKE_BASE_URL=https://routeflowapi-production.up.railway.app npm run post-deploy-check
+   ```
+
+2. **Webhooks.** In the Stripe live dashboard, open each endpoint and confirm it is **enabled**,
+   has the pinned API version and the listed events, and that its signing secret matches the
+   Railway variable.
+   - If the dashboard offers **Send test event** for the live endpoint, use it and confirm a 2xx.
+   - Live mode may not offer that button (Stripe CLI `stripe trigger` is test-mode only). Then the
+     first real delivery is the proof: watch the endpoint's **Event deliveries** and confirm a
+     2xx for the first live event on each endpoint (for the Connect endpoint, the
+     `account.updated` from the first tenant reconnect in step 6.4). A 4xx or 5xx there means
+     the signing secret or URL is wrong: fix it before telling tenants to check out.
 3. On a test tenant (`test`, `e2e-*`, `qa-*`), open Settings → Billing and start a checkout.
    - It should create a **new** live customer and never reuse a purged id.
    - Cancel it before paying.

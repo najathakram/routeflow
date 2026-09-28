@@ -1,6 +1,6 @@
 {
-  "mappedSha": "471a7670b68e0e6c48d177c66b2118387b03f63d",
-  "generatedAt": "2026-09-26T05:18:11.487Z",
+  "mappedSha": "cc2380f7c10d582ff14ceb7655f793590c5ca09d",
+  "generatedAt": "2026-09-28T01:03:32.671Z",
   "layout": "split-2026-09-13",
   "areas": [
     "api",
@@ -15,5 +15,5 @@
     "packages": 0
   },
   "fileCount": 1045,
-  "notes": "**2026-09-27 — evening landings #2503, #2494 (docs-only bookkeeping).** New `api/landing-2026-09-27-evening.md` (TOC row in `api.md`): SA-464 manual-activation snapshot ledger (#2503), SA-436 credit auto-apply off by default + `CreditNoteApplyBlock` + required apply `invoiceId` (#2494, additive migration). B877 closed already-fixed (#2494). mappedSha -> 471a7670. No source changed. See CHANGELOG.md for the full landing list."
+  "notes": "**2026-09-28 — afternoon landings (18 code PRs after `2f8a155f`, through `cc2380f7`; docs-only bookkeeping).** New `api/landing-2026-09-28-afternoon.md` (TOC row in `api.md`), one bullet per PR keyed by PR number, each grepped in the merged tree (#2650 ships a migration). Registry: B760 (#2301) and B719 (#2637) closed already-fixed; B889 and B890 filed for the Mac Lead. Skills: the lead's fleet-lead working copy folded (4 rules; LEAD-LOG and RULE-CANDIDATES unioned). Lesson L-241 minted (quoted heredoc for text with backticks), L-230 archived. mappedSha -> cc2380f7. No source changed. See CHANGELOG.md for the full landing list."
 }
