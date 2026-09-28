@@ -12,6 +12,23 @@ export interface AppliedCreditsSectionProps {
   order: Order;
 }
 
+type OrderCreditNoteRow = NonNullable<Order["orderCreditNotes"]>[number];
+
+/**
+ * #2600 (SA-484f/g): the row's intent label, built from the two SERVER figures only — the order's
+ * requested intent (`oc.amount`) and the credit note's own total (`oc.creditNote.amount`). When the
+ * intent is below the note's total, say what happens to the rest; otherwise today's label. No
+ * client money math (a comparison, never a subtraction).
+ */
+export function requestedLabel(oc: OrderCreditNoteRow): string {
+  if (oc.amount == null) return "Up to remaining";
+  const cnTotal = oc.creditNote?.amount;
+  if (cnTotal != null && Number(oc.amount) < Number(cnTotal)) {
+    return `Requested ${formatMoney(oc.amount)} of ${formatMoney(cnTotal)} (the rest stays as store credit)`;
+  }
+  return `Requested ${formatMoney(oc.amount)}`;
+}
+
 export function AppliedCreditsSection({ order }: AppliedCreditsSectionProps) {
   if ((order.orderCreditNotes?.length ?? 0) === 0) return null;
 
@@ -42,9 +59,7 @@ export function AppliedCreditsSection({ order }: AppliedCreditsSectionProps) {
                   {oc.creditNote.reason}
                 </span>
               )}
-              <div className="text-navy/50">
-                {oc.amount != null ? `Requested ${formatMoney(oc.amount)}` : "Up to remaining"}
-              </div>
+              <div className="text-navy/50">{requestedLabel(oc)}</div>
             </div>
             <span className="shrink-0 font-medium text-navy">
               {formatMoney(appliedSoFar)} applied
