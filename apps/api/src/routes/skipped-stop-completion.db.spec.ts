@@ -685,7 +685,7 @@ describeDb("#2409 a SKIPPED stop refuses a replayed completion — real Postgres
     }
   });
 
-  it("#2631 cancel × completion race ×6: never a deadlock (40P01/P2034) or a non-HTTP error", async () => {
+  it("#2631 cancel × completion ×6: never a 40P01 under contention — regression guard, not a discriminator", async () => {
     for (let round = 0; round < 6; round++) {
       // eslint-disable-next-line no-await-in-loop
       const s = await seedSkippedStop(`2631-race-${round}`, { secondStop: true });
