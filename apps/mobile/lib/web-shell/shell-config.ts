@@ -14,8 +14,12 @@ export type ShellRole = "operator" | "buyer" | "driver";
  * becomes the handoff route.
  */
 export const BUYER_SHELL_ENTRY = "/buyer/login";
-/** Staff land on the web root; the web sends a signed-out visitor to its own /login. */
-export const STAFF_SHELL_ENTRY = "/";
+/**
+ * Staff land on the web's own login. NOT "/": the web redirects "/" into the app only for a
+ * signed-in WEB session, so a natively signed-in operator (no web session yet, until the Q1
+ * handoff) got the marketing page (sim proof F1, #2554).
+ */
+export const STAFF_SHELL_ENTRY = "/login";
 
 export interface ShellConfig {
   /** Absolute base URL of the web, without a trailing slash. */
