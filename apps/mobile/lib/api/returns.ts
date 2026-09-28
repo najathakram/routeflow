@@ -140,6 +140,7 @@ function useReturnTransition(action: Parameters<typeof returnTransition>[0]) {
       if (action === "cancel") {
         qc.invalidateQueries({ queryKey: ["products"] });
         qc.invalidateQueries({ queryKey: ["inventory"] });
+        qc.invalidateQueries({ queryKey: ["admin", "products"] }); // SA-543a: operator product lists
       }
     },
   });
@@ -177,6 +178,7 @@ export function useReceiveReturn() {
       // #1528 (B86): receive restocks server-side — refresh the stock views too.
       qc.invalidateQueries({ queryKey: ["products"] });
       qc.invalidateQueries({ queryKey: ["inventory"] });
+      qc.invalidateQueries({ queryKey: ["admin", "products"] }); // SA-543a: operator product lists
     },
   });
 }
