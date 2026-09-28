@@ -174,3 +174,63 @@ describe("invoice edit page — save-error toast (B788)", () => {
     expect(screen.getByText("Please try again.")).toBeInTheDocument();
   });
 });
+
+/**
+ * #2656 / SA-549: the NSF bounce-fee line is never taxed. The API refuses a rate > 0 on it
+ * (NSF_LINE_UNTAXED), so the edit form locks that line's tax-rate input at 0 — and a legacy draft
+ * whose NSF line was stored taxed loads (and therefore saves) at 0, healing on its next save.
+ */
+describe("invoice edit page — the NSF fee line's tax rate is locked at 0 (#2656)", () => {
+  const goodsLine = {
+    id: "li-g",
+    productId: "p1",
+    description: "Widget",
+    qty: 1,
+    unitPrice: 100,
+    subtotal: 100,
+    taxRate: 0.075,
+  };
+  const nsfLine = {
+    id: "li-nsf",
+    productId: null,
+    description: "NSF fee — returned check #7",
+    systemKind: "NSF_FEE",
+    qty: 1,
+    unitPrice: 25,
+    subtotal: 25,
+    taxRate: 0.08, // legacy: stored taxed
+  };
+  const findItems = (v: unknown): any[] | undefined => {
+    if (Array.isArray(v) && v.some((x) => x && typeof x === "object" && "taxRate" in x)) return v;
+    if (v && typeof v === "object")
+      for (const x of Object.values(v)) {
+        const f = findItems(x);
+        if (f) return f;
+      }
+    return undefined;
+  };
+
+  it("disables the NSF line's rate input at 0; the goods line's stays editable at its rate", () => {
+    mockInvoice = draft([goodsLine, nsfLine]);
+    renderWithProviders(<EditInvoicePage />);
+    const nsfInput = screen.getByRole("textbox", { name: /NSF fee: never taxed/i });
+    expect(nsfInput).toBeDisabled();
+    expect((nsfInput as HTMLInputElement).value).toMatch(/^0(\.0*)?$/);
+    const rateInputs = screen.getAllByPlaceholderText("0.10");
+    const goodsInput = rateInputs.find((el) => el !== nsfInput)!;
+    expect(goodsInput).not.toBeDisabled();
+    expect((goodsInput as HTMLInputElement).value).toMatch(/^0\.075/);
+  });
+
+  it("a save sends taxRate 0 for the NSF line and the goods line's own rate", async () => {
+    mockInvoice = draft([goodsLine, nsfLine]);
+    renderWithProviders(<EditInvoicePage />);
+    await userEvent.click(screen.getByRole("button", { name: /save changes/i }));
+    const call = updateMutate.mock.calls[0] ?? updateMutateAsync.mock.calls[0];
+    const items = findItems(call?.[0]);
+    expect(items).toBeDefined();
+    const byId = Object.fromEntries(items!.map((i: any) => [i.id, i]));
+    expect(byId["li-nsf"].taxRate).toBe(0);
+    expect(byId["li-g"].taxRate).toBe(0.075);
+  });
+});

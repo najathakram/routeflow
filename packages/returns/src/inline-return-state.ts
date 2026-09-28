@@ -163,6 +163,50 @@ export function coveredPiecesByProduct(quote: InlineReturnQuoteResponse): Map<st
   return byProduct;
 }
 
+/**
+ * #2693: the plain-words reason option 3 is unavailable (owner's wording: "the retailer has not
+ * bought this item before"). Shown in place of the API's raw `items must contain at least 1
+ * elements`, which is all an empty re-quote ever produced.
+ */
+export const NOTHING_BOUGHT_BEFORE_MESSAGE =
+  "This customer hasn't bought these items before — there's no invoice to return them against.";
+
+/**
+ * #2693: option 3 is only possible when the quote matched at least one piece to an invoice line.
+ * With zero covered pieces `dropExcessAndRequote` would build an EMPTY request, so the option is
+ * disabled and the re-quote is never sent. The one predicate web and mobile both use.
+ */
+export function canReturnOnlyPurchased(quote: InlineReturnQuoteResponse): boolean {
+  for (const pieces of coveredPiecesByProduct(quote).values()) if (pieces > 0) return true;
+  return false;
+}
+
+/**
+ * #2693: the products option 3 would drop entirely (excess on the quote, nothing covered), named
+ * from the operator's own lines in line order, each once. For the "Not bought before: …" note
+ * shown when option 3 is still possible for the other products.
+ */
+export function notBoughtBeforeNames(
+  quote: InlineReturnQuoteResponse,
+  lines: ReadonlyArray<Pick<InlineReturnLineDraft, "productId" | "productName">>,
+): string[] {
+  const covered = coveredPiecesByProduct(quote);
+  const dropped = new Set(
+    quote.chunks
+      .filter(
+        (c) => c.sourceOrderId == null && c.pieces > 0 && !((covered.get(c.productId) ?? 0) > 0),
+      )
+      .map((c) => c.productId),
+  );
+  const names: string[] = [];
+  for (const line of lines) {
+    if (dropped.has(line.productId) && !names.includes(line.productName)) {
+      names.push(line.productName);
+    }
+  }
+  return names;
+}
+
 export function dropExcessAndRequote(
   customerId: string,
   quote: InlineReturnQuoteResponse,
@@ -302,6 +346,28 @@ export function refundAmountOf(value: unknown): number | null {
     return Number.isFinite(n) ? n : null;
   }
   return null;
+}
+
+/** #2424: the capture key was reused with DIFFERENT items; the earlier return WAS recorded. */
+export const INLINE_RETURN_KEY_REUSED_CODE = "INLINE_RETURN_KEY_REUSED_WITH_DIFFERENT_ITEMS";
+
+/**
+ * #2647: the return the server says was ALREADY recorded under this capture key (its 409 body
+ * carries `returnId` / `returnNumber`), or null for any other error. Both clients use it to offer
+ * "Open RET-…" and clear the draft, so the same goods are never re-entered as a "new" return and
+ * credited twice. Shared by web and mobile: never a second hand-rolled copy.
+ */
+export function keyReusedReturnOf(
+  error: unknown,
+): { returnId: string; returnNumber: string | null } | null {
+  const body = (error as ApiErrorLike | undefined)?.response?.data as
+    { code?: string; returnId?: unknown; returnNumber?: unknown } | undefined;
+  if (body?.code !== INLINE_RETURN_KEY_REUSED_CODE) return null;
+  if (typeof body.returnId !== "string" || body.returnId === "") return null;
+  return {
+    returnId: body.returnId,
+    returnNumber: typeof body.returnNumber === "string" ? body.returnNumber : null,
+  };
 }
 
 export function extractRefusalMessage(error: unknown, fallback = "Something went wrong"): string {

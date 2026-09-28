@@ -48,7 +48,12 @@ export type InlineReturnScreenState =
     }
   | { step: "success"; result: InlineReturnRecord }
   | { step: "queued" }
-  | { step: "refused"; message: string };
+  | {
+      step: "refused";
+      message: string;
+      /** #2647: the return already recorded under this capture key (a key-reused 409). */
+      recorded?: { returnId: string; returnNumber: string | null } | null;
+    };
 
 export type InlineReturnScreenEvent =
   | {
@@ -61,7 +66,11 @@ export type InlineReturnScreenEvent =
   | { type: "captureStarted" }
   | { type: "captured"; result: InlineReturnRecord }
   | { type: "queued" }
-  | { type: "refused"; message: string }
+  | {
+      type: "refused";
+      message: string;
+      recorded?: { returnId: string; returnNumber: string | null } | null;
+    }
   | { type: "edit" };
 
 export const initialInlineReturnScreen: InlineReturnScreenState = { step: "lines" };
@@ -91,7 +100,9 @@ export function inlineReturnScreenReducer(
     case "queued":
       return state.step === "success" ? state : { step: "queued" };
     case "refused":
-      return settled ? state : { step: "refused", message: event.message };
+      return settled
+        ? state
+        : { step: "refused", message: event.message, recorded: event.recorded ?? null };
     case "edit":
       return state.step === "capturing" ? state : initialInlineReturnScreen;
   }

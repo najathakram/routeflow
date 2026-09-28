@@ -1,6 +1,6 @@
 {
-  "mappedSha": "471a7670b68e0e6c48d177c66b2118387b03f63d",
-  "generatedAt": "2026-09-26T05:18:11.487Z",
+  "mappedSha": "297a9887fb43a40684eca310d63d90541538db93",
+  "generatedAt": "2026-09-28T01:03:32.671Z",
   "layout": "split-2026-09-13",
   "areas": [
     "api",
@@ -15,5 +15,5 @@
     "packages": 0
   },
   "fileCount": 1045,
-  "notes": "**2026-09-27 — evening landings #2503, #2494 (docs-only bookkeeping).** New `api/landing-2026-09-27-evening.md` (TOC row in `api.md`): SA-464 manual-activation snapshot ledger (#2503), SA-436 credit auto-apply off by default + `CreditNoteApplyBlock` + required apply `invoiceId` (#2494, additive migration). B877 closed already-fixed (#2494). mappedSha -> 471a7670. No source changed. See CHANGELOG.md for the full landing list."
+  "notes": "**2026-09-28 — evening landing #2673 (docs-only bookkeeping).** New `api/landing-2026-09-28-evening.md` (TOC row in `api.md`): NSF follow-ups (one goods-only inferred rate in `@routeflow/pricing`, 400 `NSF_LINE_UNTAXED`, b294 REVIEW). B876 closed already-fixed (#2673). Skills: the lead's \"never brief from an issue or PR title\" rule promoted into fleet-lead §2; LEAD-LOG (+8, 183) and RULE-CANDIDATES (+1) unioned from the lead's current copy. mappedSha -> 297a9887. No source changed. See CHANGELOG.md for the full landing list."
 }
