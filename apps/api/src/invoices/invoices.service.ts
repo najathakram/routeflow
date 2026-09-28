@@ -111,9 +111,9 @@ import { MessagingService } from "../messaging/messaging.service";
 import { formatDate, formatMoney } from "../messaging/messaging.helpers";
 import { CommissionEngineService } from "../sales-agents/commission-engine.service";
 import { NSF_FEE_DESCRIPTION_PREFIX } from "../sales-agents/commission-math";
-import { InvoiceItemSystemKind, notNsfLineWhere } from "./nsf-line";
+import { InvoiceItemSystemKind, isNsfLine, notNsfLineWhere } from "./nsf-line";
 import { preservedNsfLines } from "./nsf-preserve";
-import { partitionInvoiceLines, planResyncPairs } from "./resync-plan";
+import { partitionInvoiceLines, planResyncPairs, RESYNC_ITEM_SELECT } from "./resync-plan";
 import {
   issueDateStamp,
   overdueCutoff,
@@ -1246,13 +1246,13 @@ export class InvoicesService {
           db: tx,
         });
       }
-      // Bump invoicedQty once per order item (each belongs to exactly one group).
-      for (const { li, remainingQty } of remainingItems) {
-        await tx.orderItem.update({
-          where: { id: li.id },
-          data: { invoicedQty: { increment: remainingQty } },
-        });
-      }
+      // Bump invoicedQty once per order item (each belongs to exactly one group). #2612 / SA-523:
+      // a CAS on the values read, so a concurrent split or partial is a 409, never an over-bill.
+      await bumpInvoicedQtyCas(
+        tx,
+        remainingItems.map(({ li, remainingQty }) => ({ orderItemId: li.id, qty: remainingQty })),
+        new Map(remainingItems.map(({ li }) => [li.id, li])),
+      );
       // Apply any order-selected credit notes to the freshly created invoice(s).
       // Pass the effective tenantId explicitly: this runs on an unwrapped tx in the
       // fire-and-forget path (createInvoiceFromOrderWithTenant), where the tenant
@@ -1994,7 +1994,7 @@ export class InvoicesService {
    *
    * Returns the updated invoices, or NULL when the order has no linked non-void
    * invoice, or when the partition is not clean/provable (a line shared across two
-   * invoices, or an invoice line with no orderItemId provenance) — in which case it
+   * invoices, or a non-NSF invoice line with no orderItemId provenance) — in which case it
    * BAILS rather than risk a double-bill, leaving the invoices as-is. Runs in its own
    * transaction when none is supplied (mirrors the post-commit reconcile call site).
    *
@@ -2024,7 +2024,7 @@ export class InvoicesService {
           discount: true,
           shippingFee: true,
           dueDate: true,
-          items: { select: { orderItemId: true, unitsPerBox: true } },
+          items: { select: RESYNC_ITEM_SELECT }, // #2268: + the NSF-line reads
           payments: { select: { amount: true, status: true } },
         },
       });
@@ -5797,6 +5797,13 @@ export class InvoicesService {
     // SINGLE scope only re-prices this invoice's own lines in place, off each line's own numbers.
     if (dto.scope !== "SINGLE") {
       unitAware.assertNoUnitAwareLines(invoice.items, "re-priced across invoices");
+    }
+    // #2392 (d) / SA-478: the NSF bounce-fee line is a system charge, never re-priced by hand.
+    const nsfIds = new Set(invoice.items.filter((li) => isNsfLine(li)).map((li) => li.id));
+    if (dto.items.some((i) => nsfIds.has(i.itemId))) {
+      throw new BadRequestException(
+        "The NSF fee line can't be re-priced. Void the bounce or issue a credit note instead.",
+      );
     }
 
     // F03/R3: category (excise) tax follows the customer's exemption exactly like

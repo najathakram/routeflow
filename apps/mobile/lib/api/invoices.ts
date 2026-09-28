@@ -155,6 +155,9 @@ export interface CreateInvoiceDto {
   shippingFee?: number;
   referenceNumber?: string;
   subject?: string;
+  /** #1529: opt-in deposit schedule (a percent of the total due by its own date), as on web. */
+  depositPercent?: number;
+  depositDueDate?: string;
   /** Carrier shipment tracking recorded at creation time. */
   shippingCarrier?: string;
   shippingTrackingNumber?: string;

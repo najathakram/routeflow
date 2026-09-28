@@ -107,10 +107,12 @@ describe("the staff merge branch carries the inlineReturn to updateOrderItems (#
     expect(controller.slice(fold, fold + 900)).toContain("inlineReturn: dto.inlineReturn");
   });
 
-  it("a merge replay checks the return on EVERY key hit, verified or not (Opus R)", () => {
+  it("a merge replay checks the return on EVERY key hit, verified or not (Opus R); #2424: the whole return, items included", () => {
     const call = controller.indexOf("findOrderIdByIdempotencyKey(");
     expect(call).toBeGreaterThan(-1);
-    expect(controller.slice(call, call + 300)).toContain("dto.inlineReturn?.returnKey");
+    const args = controller.slice(call, call + 300);
+    expect(args).toMatch(/dto\.inlineReturn,/); // the lines (key + items + reason), not the bare key
+    expect(args).not.toContain("dto.inlineReturn?.returnKey");
   });
 
   it("never refuses a merge for carrying one any more", () => {
