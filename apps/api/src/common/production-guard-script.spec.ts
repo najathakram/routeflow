@@ -11,15 +11,19 @@
  *     "not provably local" refusal asserted here.
  */
 import { spawnSync } from "node:child_process";
-import { existsSync } from "node:fs";
-import { resolve } from "node:path";
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
 
 const api = resolve(__dirname, "../..");
 const BYPASS = "postgresql://u:p@localhost:5432/x?host=host.invalid";
 const REFUSED = /not provably local/;
-// apps/api/.env WINS over DATABASE_URL in the two scripts that read it; with one present the
-// injected bypass is not what they dial, so there the case can only require a safe exit.
-const DOTENV_PRESENT = existsSync(resolve(api, ".env"));
+// apps/api/.env WINS over DATABASE_URL in the two scripts that read it, so those cases point
+// ROUTEFLOW_API_DOTENV at a fixture .env holding the bypass: the assertion no longer depends on
+// whether this machine has a real apps/api/.env (#2419 review nit).
+const dotenvDir = mkdtempSync(join(tmpdir(), "prod-guard-dotenv-"));
+const BYPASS_DOTENV = join(dotenvDir, ".env");
+writeFileSync(BYPASS_DOTENV, `DATABASE_URL="${BYPASS}"\n`);
 
 function run(cmd: string[], env: Record<string, string>) {
   const res = spawnSync(cmd[0], cmd.slice(1), {
@@ -77,10 +81,33 @@ describe("#2206 guarded scripts refuse a ?host= bypass before dialling", () => {
   it.each([
     ["DANGER-fresh-data-WIPES-ALL-DATA.js", node("DANGER-fresh-data-WIPES-ALL-DATA.js")],
     ["cleanup-qa-data.js --all", node("cleanup-qa-data.js", "--all")],
-  ])("%s (apps/api/.env, else DATABASE_URL)", (_name, cmd) => {
+    ["cleanup-qa-data.js (targeted mode, no --all)", node("cleanup-qa-data.js")],
+  ])("%s judges the apps/api/.env URL it reads first", (_name, cmd) => {
+    const { code, out } = run(cmd, {
+      ROUTEFLOW_API_DOTENV: BYPASS_DOTENV,
+      DATABASE_URL: "postgresql://user:pass@localhost:5432/routeflow_dev",
+    });
+    expect(code).toBe(1);
+    expect(out).toMatch(REFUSED);
+  });
+
+  it.each([
+    ["merge-duplicate-products.js (dry run)", node("merge-duplicate-products.js")],
+    ["merge-pending-orders.js (dry run)", node("merge-pending-orders.js")],
+    ["seed-marketing-screenshot-products.js", node("seed-marketing-screenshot-products.js")],
+  ])("%s refuses a non-local DATABASE_URL before dialling (#2421)", (_name, cmd) => {
     const { code, out } = run(cmd, { DATABASE_URL: BYPASS });
     expect(code).toBe(1);
-    if (!DOTENV_PRESENT) expect(out).toMatch(REFUSED);
+    expect(out).toMatch(REFUSED);
+  });
+
+  it("clear-financial-data.js refuses a non-local API host before any request (#2421)", () => {
+    const { code, out } = run(node("clear-financial-data.js"), {
+      ROUTEFLOW_URL: "https://routeflowapi-production.up.railway.app/api/v1",
+    });
+    expect(code).toBe(1);
+    expect(out).toMatch(/API host .* is not provably local/);
+    expect(out).not.toMatch(/Logging in/);
   });
 
   it("clear-financial-data.js (HTTP API, no database) still refuses inside Railway", () => {

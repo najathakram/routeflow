@@ -2,6 +2,7 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 import { LEGACY_ADDON_KEY_TO_SKU } from "../billing/plan-catalog.constants";
 
 // #2188 / SA-385 (6) — apps/api/scripts/report-b2188-duplicate-addon-rows.mjs contract.
@@ -105,7 +106,8 @@ describe("report-b2188-duplicate-addon-rows.mjs", () => {
       [
         "--input-type=module",
         "-e",
-        `import { summarize } from ${JSON.stringify(SCRIPT)};` +
+        // An ESM import needs a file:// URL — a bare absolute path is ERR_UNSUPPORTED_ESM_URL_SCHEME on win32.
+        `import { summarize } from ${JSON.stringify(pathToFileURL(SCRIPT).href)};` +
           `console.log(JSON.stringify(summarize(${JSON.stringify(rows)})));`,
       ],
       process.env,
