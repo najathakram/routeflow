@@ -1,4 +1,4 @@
-import { decideStaffOverride } from "./index";
+import { decideStaffOverride, needsOverrideReason } from "./index";
 
 /**
  * #2696(c) / SA-558 + SA-558a — ONE rule for a staff-typed price on an order line, shared by the
@@ -79,5 +79,53 @@ describe("#2696(c) decideStaffOverride — the decision matrix", () => {
       unitPrice: 11,
       originalPrice: 10,
     });
+  });
+});
+
+// SA-558b (3): ONE exported predicate, called by decideStaffOverride AND by the api's existing-line
+// edit (baseline = the STORED price, hasReason = sent-or-stored) and add-during-edit (baseline = the
+// tier price). Clients call it with each action's baseline too. Its matrix is pinned once, here.
+describe("#2696(c) needsOverrideReason — the one predicate", () => {
+  const base = { baselinePrice: 8, isSpecialTier: true };
+  it.each([
+    ["the baseline itself", 8, false, false],
+    ["inside the ½¢ band", 8.004, false, false],
+    ["a real change, no reason", 9, false, true],
+    ["a real change, with a reason", 9, true, false],
+  ])("special line, %s ⇒ needs a reason: %s", (_l, p, hasReason, expected) => {
+    expect(needsOverrideReason({ ...base, overridePrice: p, hasReason })).toBe(expected);
+  });
+  it("a non-special line never needs a reason", () => {
+    expect(
+      needsOverrideReason({
+        baselinePrice: 10,
+        isSpecialTier: false,
+        overridePrice: 3,
+        hasReason: false,
+      }),
+    ).toBe(false);
+  });
+  it("decideStaffOverride refuses exactly when needsOverrideReason is true", () => {
+    for (const p of [7, 7.996, 8, 8.004, 8.006, 9, 10, 12]) {
+      for (const hasReason of [false, true]) {
+        const refused =
+          "refused" in
+          decideStaffOverride({
+            overridePrice: p,
+            baselinePrice: 8,
+            listPrice: 10,
+            isSpecialTier: true,
+            hasReason,
+          });
+        expect(refused).toBe(
+          needsOverrideReason({
+            overridePrice: p,
+            baselinePrice: 8,
+            isSpecialTier: true,
+            hasReason,
+          }),
+        );
+      }
+    }
   });
 });
