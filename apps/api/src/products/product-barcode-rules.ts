@@ -1,5 +1,5 @@
 import { BarcodeOrigin, BarcodeSymbology, PackagingLevel } from "@prisma/client";
-import { ProductBarcodeView, ProductImageView } from "@routeflow/types";
+import type { ProductBarcodeView, ProductImageView } from "@routeflow/types";
 import { defaultSellLevel } from "@routeflow/pricing";
 import { inferBarcodeSymbology } from "../common/barcode-symbology";
 
