@@ -156,9 +156,16 @@ export default function CreditNoteDetailScreen() {
             </View>
           </View>
 
-          {/* Actions */}
-          {flags.canApply || flags.canVoid ? (
+          {/* Actions — #2648: Edit on any non-VOID note (reason/expiry save; amount reissues). */}
+          {flags.canApply || flags.canVoid || cn.status !== "VOID" ? (
             <View style={styles.actionsGrid}>
+              {cn.status !== "VOID" ? (
+                <ActionTile
+                  icon="create-outline"
+                  label="Edit"
+                  onPress={() => router.push(`/(operator)/credit-notes/${cn.id}/edit`)}
+                />
+              ) : null}
               {canApply ? (
                 <ActionTile
                   icon="checkmark-circle-outline"
@@ -171,11 +178,7 @@ export default function CreditNoteDetailScreen() {
               ) : null}
             </View>
           ) : (
-            <Text style={styles.readonly}>
-              {cn.status === "APPLIED"
-                ? "This credit note has been applied."
-                : "This credit note is void."}
-            </Text>
+            <Text style={styles.readonly}>This credit note is void.</Text>
           )}
 
           {/* Reason */}

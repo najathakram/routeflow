@@ -1,6 +1,11 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "../api-client";
-import type { CreditNoteStatus } from "@routeflow/types";
+import type {
+  CreditNoteStatus,
+  CreditNoteVoidPreview,
+  ReissueCreditNoteInput,
+  ReissueCreditNoteResult,
+} from "@routeflow/types";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -180,18 +185,7 @@ export function useUpdateCreditNote() {
   });
 }
 
-/** SA-436 PR-2: what a void-with-reversal would un-apply, and any refusal. Read-only. */
-export interface VoidPreview {
-  refusal: string | null;
-  restoresTotal: number;
-  invoices: Array<{
-    invoiceId: string;
-    invoiceNumber: string;
-    amount: number;
-    statusBefore: string;
-    statusAfter: string;
-  }>;
-}
+export type VoidPreview = CreditNoteVoidPreview;
 
 export function useVoidPreview(id: string, enabled: boolean) {
   return useQuery<VoidPreview>({
@@ -202,20 +196,9 @@ export function useVoidPreview(id: string, enabled: boolean) {
   });
 }
 
-/** #2648 / SA-535(b): an amount/line edit. The server voids the note (with reversal) and issues
- *  an unapplied replacement in one transaction; `idempotencyKey` makes a retry safe. */
-export interface ReissueCreditNoteDto {
-  amount: number;
-  items?: Array<{ invoiceItemId: string; amount: number }>;
-  reason?: string;
-  expiresAt?: string | null;
-}
-
-export interface ReissueResult {
-  voided: { id: string; creditNoteNumber: string };
-  creditNote: CreditNote;
-  unapplied: Array<{ invoiceId: string; invoiceNumber: string; amount: number }>;
-}
+/** #2648 / SA-535(b): an amount/line edit (void-with-reversal + an unapplied replacement). */
+export type ReissueCreditNoteDto = ReissueCreditNoteInput;
+export type ReissueResult = ReissueCreditNoteResult<CreditNote>;
 
 export function useReissueCreditNote() {
   const qc = useQueryClient();
