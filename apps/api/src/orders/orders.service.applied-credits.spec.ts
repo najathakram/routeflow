@@ -51,6 +51,8 @@ const operatorPayload = {
   role: "OPERATOR" as const,
   status: "ACTIVE" as const,
   forcePasswordChange: false,
+  tenantId: "tenant-1",
+  tenantSlug: "acme",
 };
 
 const orderWith = (invoices: unknown[]) => ({

@@ -5,7 +5,15 @@
  * the intents only, so a credit auto-applied on send was invisible on the order. One pure rule
  * (packages/types), shared by web and mobile.
  */
-import { orderAppliedCredits, type OrderAppliedCreditsInput } from "@routeflow/types";
+import {
+  orderAppliedCredits,
+  type OrderAppliedCreditRow,
+  type OrderAppliedCreditsInput,
+} from "@routeflow/types";
+
+/** The applied-row label (`source` exists only on kind "applied"). */
+const sourceOf = (r: OrderAppliedCreditRow | undefined) =>
+  r && r.kind === "applied" ? r.source : undefined;
 
 const CN = (id: string, n: string, reason: string | null = null) => ({
   id,
@@ -41,7 +49,13 @@ const base: OrderAppliedCreditsInput = {
       invoiceNumber: "INV-2",
       status: "SENT",
       payments: [
-        { id: "p3", amount: "3.25", creditNoteId: "cn-b", creditNote: CN("cn-b", "CN-B") },
+        {
+          id: "p3",
+          amount: "3.25",
+          creditNoteId: "cn-b",
+          autoApplied: false,
+          creditNote: CN("cn-b", "CN-B"),
+        },
       ],
     },
   ],
@@ -87,13 +101,13 @@ describe("orderAppliedCredits (#2404)", () => {
 
   it("an auto-applied credit with NO intent on the order still shows (the incident)", () => {
     const rows = orderAppliedCredits(base);
-    expect(rows.some((r) => r.creditNoteId === "cn-a" && r.source === "automatic")).toBe(true);
+    expect(rows.some((r) => r.creditNoteId === "cn-a" && sourceOf(r) === "automatic")).toBe(true);
     expect(base.orderCreditNotes!.some((oc) => oc.creditNoteId === "cn-a")).toBe(false);
   });
 
   it("a payment with autoApplied=false reads as a neutral 'applied', never 'manual' (SA-436 review)", () => {
     const row = orderAppliedCredits(base).find((r) => r.paymentId === "p3")!;
-    expect(row.source).toBe("applied");
+    expect(sourceOf(row)).toBe("applied");
     expect(
       orderAppliedCredits(base).some((r) => (r as { source?: string }).source === "manual"),
     ).toBe(false);
@@ -131,9 +145,9 @@ describe("orderAppliedCredits (#2404)", () => {
       ],
       orderCreditNotes: [{ id: "oc", creditNoteId: "cn-pick", amount: null }],
     });
-    expect(rows.find((r) => r.paymentId === "old")!.source).toBe("automatic");
+    expect(sourceOf(rows.find((r) => r.paymentId === "old"))).toBe("automatic");
     // a hand-picked note that was also once auto-applied elsewhere: the pick decides, so neutral
-    expect(rows.find((r) => r.paymentId === "picked")!.source).toBe("applied");
+    expect(sourceOf(rows.find((r) => r.paymentId === "picked"))).toBe("applied");
   });
 
   it("each applied row carries the (note, invoice) pair total the server's unapply reverses", () => {
@@ -185,7 +199,13 @@ describe("orderAppliedCredits (#2404)", () => {
           invoiceNumber: "INV-V",
           status: "VOID",
           payments: [
-            { id: "x", amount: "9", creditNoteId: "cn-v", creditNote: CN("cn-v", "CN-V") },
+            {
+              id: "x",
+              amount: "9",
+              creditNoteId: "cn-v",
+              autoApplied: false,
+              creditNote: CN("cn-v", "CN-V"),
+            },
           ],
         },
         {
@@ -198,14 +218,16 @@ describe("orderAppliedCredits (#2404)", () => {
               amount: "4",
               creditNoteId: "cn-y",
               status: "VOID",
+              autoApplied: false,
               creditNote: CN("cn-y", "CN-Y"),
             },
-            { id: "z", amount: "7", creditNoteId: null, method: "CASH" },
+            { id: "z", amount: "7", creditNoteId: null, method: "CASH", autoApplied: false },
             {
               id: "w",
               amount: "2",
               creditNoteId: "cn-w",
               method: "CREDIT_NOTE",
+              autoApplied: false,
               creditNote: CN("cn-w", "CN-W"),
             },
           ],
