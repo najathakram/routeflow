@@ -231,18 +231,19 @@ model Invoice {
   updatedAt              DateTime      @updatedAt
   tenantId               String?
 
-  customer           Customer              @relation(fields: [customerId], references: [id])
-  tenant             Tenant?               @relation(fields: [tenantId], references: [id])
-  order              Order?                @relation(fields: [orderId], references: [id])
-  deliveryBatch      DeliveryBatch?        @relation(fields: [deliveryBatchId], references: [id])
+  customer           Customer               @relation(fields: [customerId], references: [id])
+  tenant             Tenant?                @relation(fields: [tenantId], references: [id])
+  order              Order?                 @relation(fields: [orderId], references: [id])
+  deliveryBatch      DeliveryBatch?         @relation(fields: [deliveryBatchId], references: [id])
   items              InvoiceItem[]
   payments           InvoicePayment[]
   creditNotes        CreditNote[]
-  recurringInvoice   RecurringInvoice?     @relation(fields: [recurringInvoiceId], references: [id])
+  creditApplyBlocks  CreditNoteApplyBlock[]
+  recurringInvoice   RecurringInvoice?      @relation(fields: [recurringInvoiceId], references: [id])
   paymentRequests    BuyerPaymentRequest[]
   commissionAccruals CommissionAccrual[]
   // F01/B17+B70: back-relation of Estimate.invoiceId (the converted-from estimate).
-  estimate           Estimate?             @relation("EstimateInvoice")
+  estimate           Estimate?              @relation("EstimateInvoice")
 
   @@unique([tenantId, invoiceNumber])
   @@index([customerId])
@@ -325,7 +326,7 @@ model InvoiceItem {
   // creates (the ONLY writer). NULL for every ordinary line and for every pre-existing NSF fee
   // line until the backfill (apps/api/scripts/backfill-2169-nsf-system-kind.mjs) stamps it — see
   // apps/api/src/invoices/nsf-line.ts for the TRANSITION dual-read this enables.
-  systemKind                InvoiceItemSystemKind?
+  systemKind               InvoiceItemSystemKind?
   createdAt                DateTime                @default(now())
   updatedAt                DateTime                @updatedAt
   tenantId                 String?
@@ -366,6 +367,9 @@ model InvoicePayment {
   paymentNumber    String?       @unique
   bankCharges      Decimal?      @db.Decimal(10, 2)
   status           PaymentStatus @default(PAID)
+  // SA-436 (#2401): this CREDIT_NOTE payment was written by the send-time sweep, not by a person.
+  // Existing rows read as manual.
+  autoApplied      Boolean       @default(false)
   paymentGroupId   String?
   tenantId         String?
 
@@ -552,19 +556,23 @@ model CreditNote {
   // application was automatic. "Expired" is a COMPUTED FILTER in code (excluded from
   // the wallet, never auto-applies) — NEVER a status flip; an expired note keeps its
   // amountUsed / already-issued InvoicePayments untouched.
-  expiresAt   DateTime?
-  appliedAt   DateTime?
-  autoApplied Boolean   @default(false)
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
-  tenantId    String?
+  expiresAt         DateTime?
+  appliedAt         DateTime?
+  autoApplied       Boolean   @default(false)
+  // SA-436 (#2401): an operator excluded this note from the send-time oldest-first sweep. A manual
+  // apply (applyToInvoice) is still allowed.
+  autoApplyExcluded Boolean   @default(false)
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+  tenantId          String?
 
-  customer        Customer          @relation(fields: [customerId], references: [id])
-  tenant          Tenant?           @relation(fields: [tenantId], references: [id])
-  invoice         Invoice?          @relation(fields: [invoiceId], references: [id])
+  customer        Customer               @relation(fields: [customerId], references: [id])
+  tenant          Tenant?                @relation(fields: [tenantId], references: [id])
+  invoice         Invoice?               @relation(fields: [invoiceId], references: [id])
   invoicePayments InvoicePayment[]
   items           CreditNoteItem[]
   orderLinks      OrderCreditNote[]
+  applyBlocks     CreditNoteApplyBlock[]
 
   @@unique([tenantId, creditNoteNumber])
   @@index([customerId])
@@ -620,6 +628,34 @@ model OrderCreditNote {
 
   @@unique([orderId, creditNoteId])
   @@index([creditNoteId])
+  @@index([tenantId])
+}
+
+// SA-436 (#2401): why a (credit note, invoice) pair must not be re-applied automatically.
+enum CreditNoteApplyBlockReason {
+  UNAPPLIED // an operator removed the credit from the invoice (unapplyFromInvoice)
+  UNTICKED // an operator dropped the credit from the order's selections (syncOrderCreditSelections)
+  VOID_REVERSAL // the note was voided with its applications reversed (SA-436 PR-2)
+}
+
+// SA-436 (#2401): the don't-re-apply memory. While a row exists, neither the send-time sweep nor the
+// order-intent settle applies this note to this invoice; a manual apply deletes the row (explicit
+// human intent wins), and so does re-ticking or re-amounting the note on the order (SA-436a).
+model CreditNoteApplyBlock {
+  id           String                     @id @default(uuid())
+  tenantId     String
+  creditNoteId String
+  invoiceId    String
+  reason       CreditNoteApplyBlockReason
+  createdById  String? // null when a system path (the order-selection sync) wrote it
+  createdAt    DateTime                   @default(now())
+
+  tenant     Tenant     @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  creditNote CreditNote @relation(fields: [creditNoteId], references: [id], onDelete: Cascade)
+  invoice    Invoice    @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+
+  @@unique([creditNoteId, invoiceId])
+  @@index([invoiceId])
   @@index([tenantId])
 }
 

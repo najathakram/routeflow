@@ -92,6 +92,8 @@ function build(tenantId: string | null) {
   const { tx, log } = createOpLogTx(respond);
   const prisma = {
     getTenantId: () => tenantId,
+    // SA-495a (#2520): credit settlement resolves the tenant zone once (no zone configured here).
+    tenantConfig: { findUnique: jest.fn().mockResolvedValue(null) },
     tenantTransaction: jest.fn((fn: (t: any) => unknown) => fn(tx)),
   };
   const creditNotes = new CreditNotesService(

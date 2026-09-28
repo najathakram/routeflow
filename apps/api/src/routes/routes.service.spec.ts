@@ -23,6 +23,7 @@ import { FeatureConfigService } from "../billing/feature-config.service";
 import { geocodeAddress } from "../common/geocode.util";
 import { compressImage } from "../storage/compress.util";
 import { createMockPrisma } from "../testing/prisma-mock";
+import { AfterCommit } from "../common/after-commit";
 
 jest.mock("../common/geocode.util", () => ({ geocodeAddress: jest.fn() }));
 // Real sharp is exercised by compress.util.spec.ts (incl. the SVG-signature
@@ -575,19 +576,22 @@ describe("RoutesService", () => {
     });
 
     it("reorderRunStops clears the PARENT route's polyline — it's what the run map draws", async () => {
-      prisma.routeRun.findUnique.mockResolvedValue({ ...MOCK_RUN, routeId: "route-1" });
+      prisma.routeRun.findFirst.mockResolvedValue({ ...MOCK_RUN, routeId: "route-1" });
       prisma.routeRunStop.findMany.mockResolvedValue([
-        { id: "runstop-1", stopNumber: 1 },
-        { id: "runstop-2", stopNumber: 2 },
+        { id: "runstop-1", stopNumber: 1, status: "PENDING" },
+        { id: "runstop-2", stopNumber: 2, status: "PENDING" },
       ]);
-      prisma.$transaction = jest.fn().mockResolvedValue([]);
+      prisma.routeRunStop.updateMany.mockResolvedValue({ count: 1 });
 
       await service.reorderRunStops("run-1", [
         { id: "runstop-2", stopNumber: 1 },
         { id: "runstop-1", stopNumber: 2 },
       ]);
 
-      expect(polylineCleared()).toBe(true);
+      expect(prisma.route.update).toHaveBeenCalledWith({
+        where: { id: "route-1" },
+        data: { plannedPolyline: null },
+      });
     });
   });
 
@@ -1982,6 +1986,7 @@ describe("RoutesService", () => {
       // `reference` token — load-bearing for the settlement cash lookup.
       expect(invoicesService.recordDeliveryPaymentInTx).toHaveBeenCalledWith(
         txMock,
+        expect.any(AfterCommit), // #2175: the route tx's post-commit queue
         ["ord-1"],
         50,
         "CASH",
@@ -2061,6 +2066,7 @@ describe("RoutesService", () => {
       // reconcileDeliveredOrdersInTx, asserted separately below).
       expect(invoicesService.recordDeliveryPaymentInTx).toHaveBeenCalledWith(
         txMock,
+        expect.any(AfterCommit), // #2175: the route tx's post-commit queue
         ["ord-1", "ord-2"],
         50,
         "CASH",

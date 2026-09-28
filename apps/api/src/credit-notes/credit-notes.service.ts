@@ -8,6 +8,8 @@ import {
 } from "@nestjs/common";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
 import { PrismaService } from "../prisma/prisma.service";
+import { recomputeInvoiceStatus } from "../invoices/invoice-status";
+import { tenantTimeZone } from "../common/tenant-time-zone";
 import { RouteFlowGateway } from "../gateways/routeflow.gateway";
 import { RegulatedLedgerService } from "../regulated/regulated-ledger.service";
 import { roundMoney, sumConfirmed, remainingCapacity } from "@routeflow/pricing";
@@ -15,6 +17,7 @@ import { InvoiceStatus, PaymentMethod } from "@prisma/client";
 import { CommissionEngineService } from "../sales-agents/commission-engine.service";
 import { NumberingService } from "../import/numbering.service";
 import { retryOnTxConflict, txConflictState } from "../common/tx-retry";
+import { blockedPairs, clearApplyBlocks, pairKey, writeApplyBlocks } from "./apply-block";
 import {
   CREDIT_NOT_APPLICABLE,
   CREDIT_SETTLE_EXCLUDED,
@@ -235,26 +238,6 @@ export class CreditNotesService {
         `Credit line amounts (${roundMoney(sum)}) must sum to the credit note amount (${dto.amount})`,
       );
     return cnItemsData;
-  }
-
-  private recomputeStatus(
-    totalPaid: number,
-    total: number,
-    dueDate: Date | null,
-    currentStatus?: InvoiceStatus,
-  ): InvoiceStatus {
-    // DRAFT, VOID, and WRITTEN_OFF are terminal/deliberate states — never auto-override.
-    if (
-      currentStatus === InvoiceStatus.DRAFT ||
-      currentStatus === InvoiceStatus.VOID ||
-      currentStatus === InvoiceStatus.WRITTEN_OFF
-    ) {
-      return currentStatus;
-    }
-    if (totalPaid >= total - 0.001) return InvoiceStatus.PAID;
-    if (totalPaid > 0) return InvoiceStatus.PARTIAL;
-    if (dueDate && new Date(dueDate) < new Date()) return InvoiceStatus.OVERDUE;
-    return InvoiceStatus.SENT;
   }
 
   /**
@@ -651,6 +634,7 @@ export class CreditNotesService {
    */
   private async applyCreditInTx(
     tx: any,
+    tz: string | null, // SA-495a: the caller's tenant zone, resolved once — never per row
     cn: {
       id: string;
       creditNoteNumber: string;
@@ -706,6 +690,7 @@ export class CreditNotesService {
         method: PaymentMethod.CREDIT_NOTE,
         creditNoteId: cn.id,
         reference: cn.creditNoteNumber,
+        autoApplied: !!opts?.autoApplied, // SA-436: the sweep's payments; every other writer is manual
         ...(effectiveTenantId ? { tenantId: effectiveTenantId } : {}),
       },
     });
@@ -716,7 +701,13 @@ export class CreditNotesService {
     // on top of a 60-dollar DRAFT sibling was flipping a $100 invoice straight to
     // PAID off unconfirmed money. Matches restoreCreditFromPaymentInTx's own basis.
     const newPaid = roundMoney(sumConfirmed(inv.payments) + applyAmount);
-    const newStatus = this.recomputeStatus(newPaid, Number(inv.total), inv.dueDate, inv.status);
+    const newStatus = recomputeInvoiceStatus(
+      newPaid,
+      Number(inv.total),
+      inv.dueDate,
+      inv.status,
+      tz,
+    );
     await tx.invoice.update({
       where: { id: inv.id },
       data: { status: newStatus, paidAt: newStatus === InvoiceStatus.PAID ? new Date() : null },
@@ -757,11 +748,22 @@ export class CreditNotesService {
     customerId: string,
     opts?: { excludeCreditNoteIds?: string[] },
   ): Promise<{ applied: number; invoiceStatus: InvoiceStatus | null }> {
+    const tz = await tenantTimeZone(this.prisma); // SA-495a: once per call, before any loop
     const nothing: { applied: number; invoiceStatus: InvoiceStatus | null } = {
       applied: 0,
       invoiceStatus: null,
     };
     if (!invoiceId || !customerId) return nothing;
+    // SA-436 (#2401): the tenant's send-time sweep switch, OFF by default (owner ruling). No config
+    // row reads as OFF. Read inside the caller's send tx; the order's own intents settle regardless.
+    const tenantId = this.prisma.getTenantId();
+    const cfg = tenantId
+      ? await tx.tenantConfig.findUnique({
+          where: { tenantId },
+          select: { creditAutoApplyOnSend: true },
+        })
+      : null;
+    if (!cfg?.creditAutoApplyOnSend) return nothing;
 
     const first = await tx.invoice.findUnique({
       where: { id: invoiceId },
@@ -778,13 +780,18 @@ export class CreditNotesService {
       where: {
         customerId,
         status: { not: "VOID" },
+        autoApplyExcluded: false, // SA-436: an operator kept this note out of the sweep
         OR: [{ expiresAt: null }, { expiresAt: { gt: now } }],
         ...(opts?.excludeCreditNoteIds?.length ? { id: { notIn: opts.excludeCreditNoteIds } } : {}),
       },
       orderBy: { createdAt: "asc" },
     });
+    // SA-436: a pair an operator removed (unapply / untick / void-reversal) is never re-applied.
+    const blocked = await blockedPairs(tx, [invoiceId]);
     const openWithBalance = (candidates ?? []).filter(
-      (c: any) => roundMoney(Number(c.amount) - Number(c.amountUsed)) > 0.001,
+      (c: any) =>
+        roundMoney(Number(c.amount) - Number(c.amountUsed)) > 0.001 &&
+        !blocked.has(pairKey(c.id, invoiceId)),
     );
     // §6.3: an INLINE return's own credit note is reserved for ITS OWN carrying order
     // until that order is "met" — skip it here so this general oldest-first sweep (any
@@ -809,7 +816,7 @@ export class CreditNotesService {
       if (!(running > 0.001)) break;
       // `running` as the requested amount = a hard clamp; over-applying is
       // impossible even if the invoice re-read were stale.
-      const res = await this.applyCreditInTx(tx, cn, inv, running, { autoApplied: true });
+      const res = await this.applyCreditInTx(tx, tz, cn, inv, running, { autoApplied: true });
       if (res.applied <= 0) break;
       running = roundMoney(running - res.applied);
       totalApplied = roundMoney(totalApplied + res.applied);
@@ -824,6 +831,7 @@ export class CreditNotesService {
   }
 
   async applyToInvoice(creditNoteId: string, invoiceId: string, amount?: number) {
+    const tz = await tenantTimeZone(this.prisma); // SA-495a: once per call, before any loop
     // SA-392 (#2201): the WHOLE Serializable tx re-runs on a 40001/40P01 conflict (bounded); the
     // body is DB-only and idempotent, and the in-tx commission sync now rethrows a conflict.
     return retryOnTxConflict(`credit apply cn=${creditNoteId} inv=${invoiceId}`, () =>
@@ -850,11 +858,13 @@ export class CreditNotesService {
             throw new BadRequestException("Credit note and invoice belong to different customers");
           }
 
-          const { applied } = await this.applyCreditInTx(tx, cn, inv, amount);
+          const { applied } = await this.applyCreditInTx(tx, tz, cn, inv, amount);
           if (applied <= 0)
             throw new BadRequestException(
               "Credit note has no remaining balance or invoice is fully paid",
             );
+          // SA-436: explicit human intent wins, so a manual apply lifts this pair's block.
+          await clearApplyBlocks(tx, creditNoteId, [invoiceId]);
 
           return tx.invoice.findUnique({
             where: { id: invoiceId },
@@ -887,6 +897,7 @@ export class CreditNotesService {
    * silently void a note that's still "used" on paper (m-5's "restore < amountUsed" case).
    */
   async cancelStandaloneInTx(tx: any, creditNoteId: string): Promise<{ restored: number }> {
+    const tz = await tenantTimeZone(this.prisma); // SA-495a: once per call, before any loop
     // scan-ok: draft-payment-not-void — a CREDIT_NOTE-method InvoicePayment is an
     // internal ledger write this service itself creates atomically as CONFIRMED;
     // it is never written as DRAFT/PENDING like an imported bank row or a
@@ -897,7 +908,7 @@ export class CreditNotesService {
     });
     let restored = 0;
     for (const p of payments) {
-      restored = roundMoney(restored + (await this.restoreCreditFromPaymentInTx(tx, p)));
+      restored = roundMoney(restored + (await this.restoreCreditFromPaymentInTx(tx, tz, p)));
     }
 
     const cn = await tx.creditNote.findFirst({
@@ -973,6 +984,212 @@ export class CreditNotesService {
   }
 
   /**
+   * SA-436 PR-2 (#2402): the refusal (400 text) for voiding this note with its applications
+   * reversed, or null when it may proceed. Shared by the preview and the void so both say the same.
+   * - already VOID;
+   * - backs a live return (not CANCELLED/REJECTED): the customer's return credit is not the
+   *   operator's to take back here — cancel the return instead (cancelStandaloneInTx's rule);
+   * - amountUsed exceeds what its non-VOID CREDIT_NOTE payments account for: money consumed
+   *   through a path this cannot find and restore (RETURN_CREDIT_CONSUMED).
+   */
+  private async voidWithReversalRefusal(
+    db: any,
+    cn: { id: string; status: string; amountUsed: unknown },
+    payments: Array<{ amount: unknown }>,
+  ): Promise<string | null> {
+    if (cn.status === "VOID") return "This credit note is already void.";
+    const ret = await db.return.findFirst({
+      where: { creditNoteId: cn.id, status: { notIn: ["CANCELLED", "REJECTED"] } },
+      select: { returnNumber: true },
+    });
+    if (ret) {
+      return `This credit note backs a return${ret.returnNumber ? ` (${ret.returnNumber})` : ""}. Cancel the return instead of voiding its credit.`;
+    }
+    const onInvoices = roundMoney(payments.reduce((s, p) => s + Number(p.amount), 0));
+    if (roundMoney(Number(cn.amountUsed) - onInvoices) > 0.001) {
+      return "Part of this credit was used somewhere it cannot be reversed from here (RETURN_CREDIT_CONSUMED). Nothing was changed.";
+    }
+    return null;
+  }
+
+  /** The note's live CREDIT_NOTE applications (the rows a reversal restores), with their invoice. */
+  private liveCreditPayments(db: any, creditNoteId: string) {
+    // A CREDIT_NOTE-method payment is only ever written CONFIRMED by applyCreditInTx, so not-VOID
+    // is the complete filter here (see cancelStandaloneInTx).
+    // scan-ok: draft-payment-not-void — CREDIT_NOTE payments are never DRAFT/PENDING.
+    return db.invoicePayment.findMany({
+      where: { creditNoteId, method: PaymentMethod.CREDIT_NOTE, status: { not: "VOID" } },
+      orderBy: { createdAt: "desc" },
+      include: {
+        invoice: {
+          select: {
+            id: true,
+            invoiceNumber: true,
+            orderId: true,
+            total: true,
+            dueDate: true,
+            status: true,
+            payments: { select: { id: true, amount: true, status: true } },
+          },
+        },
+      },
+    });
+  }
+
+  /**
+   * SA-436 PR-2 (#2402): GET :id/void-preview — read-only. The invoices a void-with-reversal
+   * reopens and by how much, each with its status before and after, plus the refusal (if any)
+   * the void itself would return.
+   */
+  async voidPreview(id: string) {
+    const tz = await tenantTimeZone(this.prisma); // SA-495a: once per call, before any loop
+    const db = this.prisma.forTenant();
+    const cn = await db.creditNote.findFirst({
+      where: { id },
+      select: { id: true, creditNoteNumber: true, status: true, amount: true, amountUsed: true },
+    });
+    if (!cn) throw new NotFoundException("Credit note not found");
+    const payments: any[] = await this.liveCreditPayments(db, id);
+    const byInvoice = new Map<string, { inv: any; amount: number; payIds: Set<string> }>();
+    for (const p of payments) {
+      const row = byInvoice.get(p.invoiceId) ?? { inv: p.invoice, amount: 0, payIds: new Set() };
+      row.amount = roundMoney(row.amount + Number(p.amount));
+      row.payIds.add(p.id);
+      byInvoice.set(p.invoiceId, row);
+    }
+    const invoices = [...byInvoice.values()].map(({ inv, amount, payIds }) => {
+      const remaining = (inv.payments ?? []).filter((q: any) => !payIds.has(q.id));
+      return {
+        invoiceId: inv.id,
+        invoiceNumber: inv.invoiceNumber,
+        amount,
+        statusBefore: inv.status,
+        statusAfter: recomputeInvoiceStatus(
+          sumConfirmed(remaining),
+          Number(inv.total),
+          inv.dueDate,
+          inv.status,
+          tz,
+        ),
+      };
+    });
+    return {
+      creditNoteId: cn.id,
+      creditNoteNumber: cn.creditNoteNumber,
+      restoresTotal: roundMoney(invoices.reduce((s, i) => s + i.amount, 0)),
+      invoices,
+      refusal: await this.voidWithReversalRefusal(db, cn, payments),
+    };
+  }
+
+  /**
+   * SA-436 PR-2 (#2402): POST :id/void-with-reversal. Un-applies every live application of the
+   * note (restoreCreditFromPaymentInTx recomputes each invoice's status), remembers each pair
+   * (CreditNoteApplyBlock VOID_REVERSAL) and drops the note's order intents, then runs the SAME
+   * compare-and-set void and ledger un-reversal as voidCreditNote.
+   *
+   * Serializable and retried whole on a conflict (L-221). Lock order SA-214: the payments'
+   * Orders (sorted), then their Invoices (sorted), then the CreditNote row. Every refusal is
+   * decided BEFORE the first write, so a refused call writes nothing.
+   */
+  async voidWithReversal(id: string, actorId: string | null) {
+    const tz = await tenantTimeZone(this.prisma); // SA-495a: once per call, before any loop
+    const result = await retryOnTxConflict(`credit void-with-reversal cn=${id}`, () =>
+      this.prisma.tenantTransaction(
+        async (tx: any) => {
+          const seen: any[] = await this.liveCreditPayments(tx, id);
+          // SA-498a: the lock set is COMPLETE, per SA-214: every order this void writes. That is the
+          // orders of the invoices it reopens, UNION the orders whose OrderCreditNote intent rows it
+          // deletes below (an intent can sit on an order this note never paid anything on).
+          const intentOrders: Array<{ orderId: string }> =
+            (await tx.orderCreditNote.findMany({
+              where: { creditNoteId: id },
+              select: { orderId: true },
+            })) ?? [];
+          const orderIds = [
+            ...new Set([
+              ...(seen.map((p) => p.invoice?.orderId).filter(Boolean) as string[]),
+              ...intentOrders.map((r) => r.orderId),
+            ]),
+          ].sort();
+          const invoiceIds = [...new Set(seen.map((p) => p.invoiceId as string))].sort();
+          for (const orderId of orderIds) {
+            await tx.$executeRaw`SELECT id FROM "Order" WHERE id = ${orderId} FOR UPDATE`;
+          }
+          for (const invoiceId of invoiceIds) {
+            await tx.$executeRaw`SELECT id FROM "Invoice" WHERE id = ${invoiceId} FOR UPDATE`;
+          }
+          await tx.$executeRaw`SELECT id FROM "CreditNote" WHERE id = ${id} FOR UPDATE`;
+
+          const cn = await tx.creditNote.findFirst({
+            where: { id },
+            select: { id: true, status: true, amountUsed: true },
+          });
+          if (!cn) throw new NotFoundException("Credit note not found");
+          // Re-read under the locks: the rows the reversal restores are exactly these.
+          const payments: any[] = await this.liveCreditPayments(tx, id);
+          const refusal = await this.voidWithReversalRefusal(tx, cn, payments);
+          if (refusal) throw new BadRequestException(refusal);
+
+          const reopened: Array<{ invoiceId: string; invoiceNumber: string; amount: number }> = [];
+          for (const p of payments) {
+            const restored = await this.restoreCreditFromPaymentInTx(tx, tz, p);
+            const row = reopened.find((r) => r.invoiceId === p.invoiceId);
+            if (row) row.amount = roundMoney(row.amount + restored);
+            else
+              reopened.push({
+                invoiceId: p.invoiceId,
+                invoiceNumber: p.invoice?.invoiceNumber,
+                amount: restored,
+              });
+          }
+          await writeApplyBlocks(tx, {
+            tenantId: this.prisma.getTenantId(),
+            creditNoteId: id,
+            invoiceIds: reopened.map((r) => r.invoiceId),
+            reason: "VOID_REVERSAL",
+            createdById: actorId,
+          });
+          await tx.orderCreditNote.deleteMany({ where: { creditNoteId: id } });
+
+          // The same compare-and-set as voidCreditNote: every dollar is back, so amountUsed is 0.
+          const flipped = await tx.creditNote.updateMany({
+            where: { id, status: { not: "VOID" }, amountUsed: 0 },
+            data: { status: "VOID" },
+          });
+          if (flipped.count === 0) {
+            throw new BadRequestException(
+              "This credit note changed while it was being voided. Nothing was changed; try again.",
+            );
+          }
+          await this.ledger.unreverseCreditNoteEntries({ creditNoteId: id, db: tx });
+          await tx.auditLog.create({
+            data: {
+              tenantId: this.prisma.getTenantId(),
+              userId: actorId,
+              action: "VOIDED", // SA-442 vocabulary
+              entityType: "CreditNote",
+              entityId: id,
+              meta: { reversed: reopened },
+            },
+          });
+          const voided = await tx.creditNote.findUnique({ where: { id } });
+          return { creditNote: voided, reopened };
+        },
+        { isolationLevel: "Serializable" },
+      ),
+    );
+
+    this.gateway.emitCreditNoteVoided(this.prisma.getTenantId(), {
+      creditNoteId: result.creditNote.id,
+      creditNoteNumber: result.creditNote.creditNoteNumber,
+      customerId: result.creditNote.customerId,
+      amount: Number(result.creditNote.amount),
+    });
+    return result;
+  }
+
+  /**
    * Inverse of applyCreditInTx: give (part of) an applied credit back to the wallet.
    * Deletes (or shrinks) the CREDIT_NOTE InvoicePayment, decrements amountUsed,
    * reverts APPLIED→ISSUED when the credit is no longer fully consumed, and
@@ -981,6 +1198,7 @@ export class CreditNotesService {
    */
   private async restoreCreditFromPaymentInTx(
     tx: any,
+    tz: string | null, // SA-495a: the caller's tenant zone, resolved once — never per row
     payment: { id: string; invoiceId: string; creditNoteId: string | null; amount: unknown },
     reduceBy?: number,
   ): Promise<number> {
@@ -1031,7 +1249,13 @@ export class CreditNotesService {
       // confirmed money, never a DRAFT (or, once PENDING exists, an un-cleared check) —
       // sumConfirmed replaces the not-void filter (F03 discipline; design.md §3.4).
       const paid = sumConfirmed(inv.payments);
-      const newStatus = this.recomputeStatus(paid, Number(inv.total), inv.dueDate, inv.status);
+      const newStatus = recomputeInvoiceStatus(
+        paid,
+        Number(inv.total),
+        inv.dueDate,
+        inv.status,
+        tz,
+      );
       await tx.invoice.update({
         where: { id: inv.id },
         data: {
@@ -1055,6 +1279,7 @@ export class CreditNotesService {
    */
   private async restoreAdvanceFromPaymentInTx(
     tx: any,
+    tz: string | null, // SA-495a: the caller's tenant zone, resolved once — never per row
     payment: { id: string; invoiceId: string; advancePaymentId: string | null; amount: unknown },
     tenantId: string | null,
     reduceBy?: number,
@@ -1108,7 +1333,13 @@ export class CreditNotesService {
       // PR-2 (check-payments B1 hardening): same sumConfirmed basis as
       // restoreCreditFromPaymentInTx above.
       const paid = sumConfirmed(inv.payments);
-      const newStatus = this.recomputeStatus(paid, Number(inv.total), inv.dueDate, inv.status);
+      const newStatus = recomputeInvoiceStatus(
+        paid,
+        Number(inv.total),
+        inv.dueDate,
+        inv.status,
+        tz,
+      );
       await tx.invoice.update({
         where: { id: inv.id },
         data: {
@@ -1172,6 +1403,7 @@ export class CreditNotesService {
     orderId: string,
     creditNoteId: string,
   ): Promise<void> {
+    const tz = await tenantTimeZone(this.prisma); // SA-495a: once per call, before any loop
     const pays = await tx.invoicePayment.findMany({
       where: {
         creditNoteId,
@@ -1183,7 +1415,7 @@ export class CreditNotesService {
       },
       orderBy: { createdAt: "desc" },
     });
-    for (const p of pays) await this.restoreCreditFromPaymentInTx(tx, p);
+    for (const p of pays) await this.restoreCreditFromPaymentInTx(tx, tz, p);
   }
 
   /**
@@ -1231,6 +1463,7 @@ export class CreditNotesService {
     tx: any,
     invoiceWhere: Record<string, unknown>,
   ): Promise<Array<{ creditNoteId: string; creditNoteNumber: string; amount: number }>> {
+    const tz = await tenantTimeZone(this.prisma); // SA-495a: once per call, before any loop
     const payments = await tx.invoicePayment.findMany({
       where: {
         method: PaymentMethod.CREDIT_NOTE,
@@ -1244,7 +1477,7 @@ export class CreditNotesService {
 
     const byNote = new Map<string, { creditNoteNumber: string; amount: number }>();
     for (const p of payments) {
-      const restored = await this.restoreCreditFromPaymentInTx(tx, p);
+      const restored = await this.restoreCreditFromPaymentInTx(tx, tz, p);
       if (!(restored > 0.001) || !p.creditNoteId) continue;
       const prev = byNote.get(p.creditNoteId);
       const number =
@@ -1317,6 +1550,13 @@ export class CreditNotesService {
 
     const existing = await tx.orderCreditNote.findMany({ where: { orderId } });
     const selectionById = new Map(selections.map((s) => [s.creditNoteId, s]));
+    // SA-436a: the order's non-VOID invoices, the scope of an untick's block and a re-tick's clear.
+    const orderInvoiceIds: string[] = (
+      (await tx.invoice.findMany({
+        where: { orderId, status: { not: "VOID" } },
+        select: { id: true },
+      })) ?? []
+    ).map((i: any) => i.id);
 
     for (const row of existing) {
       // design.md §2.1/§6.3: an INLINE return's own intent on its OWN carrying order is
@@ -1331,6 +1571,14 @@ export class CreditNotesService {
         // Dropped selection — pull back this pair's money then delete the row.
         await this.pullBackOrderCreditPair(tx, orderId, row.creditNoteId);
         await tx.orderCreditNote.delete({ where: { id: row.id } });
+        // SA-436a: an untick blocks the note on every non-VOID invoice of the order, so neither
+        // the send-time sweep nor a later settle puts it back. No actor reaches this path.
+        await writeApplyBlocks(tx, {
+          tenantId: this.prisma.getTenantId(),
+          creditNoteId: row.creditNoteId,
+          invoiceIds: orderInvoiceIds,
+          reason: "UNTICKED",
+        });
         continue;
       }
       const nextAmount = sel.amount != null ? roundMoney(sel.amount) : null;
@@ -1340,12 +1588,16 @@ export class CreditNotesService {
         // pull back this pair's money; settle re-applies at the new request.
         await this.pullBackOrderCreditPair(tx, orderId, row.creditNoteId);
         await tx.orderCreditNote.update({ where: { id: row.id }, data: { amount: nextAmount } });
+        // SA-436a: a re-amount is explicit intent; lift the note's blocks so settle re-applies.
+        await clearApplyBlocks(tx, row.creditNoteId, orderInvoiceIds);
       }
     }
 
     const existingIds = new Set(existing.map((r: any) => r.creditNoteId));
     for (const sel of selections) {
       if (existingIds.has(sel.creditNoteId)) continue;
+      // SA-436a: a (re-)tick is explicit intent; lift the note's blocks so settle applies it.
+      await clearApplyBlocks(tx, sel.creditNoteId, orderInvoiceIds);
       await tx.orderCreditNote.create({
         data: {
           orderId,
@@ -1377,6 +1629,7 @@ export class CreditNotesService {
     // the payment would be written tenant-orphaned.
     tenantId: string | null = this.prisma.getTenantId(),
   ): Promise<{ applied: number; unapplied: number }> {
+    const tz = await tenantTimeZone(this.prisma, tenantId); // #2556 B3: the explicit tenant, not the ambient one
     const result = { applied: 0, unapplied: 0 };
     const intents = await tx.orderCreditNote.findMany({
       where: { orderId },
@@ -1389,6 +1642,11 @@ export class CreditNotesService {
       orderBy: { invoiceNumber: "asc" },
     });
     if (invoices.length === 0) return result;
+    // SA-436: a pair an operator removed is skipped by the apply pass below (never the shrink).
+    const blocked = await blockedPairs(
+      tx,
+      invoices.map((i: any) => i.id),
+    );
 
     // (a) shrink
     for (const inv of invoices) {
@@ -1411,7 +1669,7 @@ export class CreditNotesService {
         );
       for (const p of creditPays) {
         if (!(excess > 0.001)) break;
-        const restored = await this.restoreCreditFromPaymentInTx(tx, p, excess);
+        const restored = await this.restoreCreditFromPaymentInTx(tx, tz, p, excess);
         excess = roundMoney(excess - restored);
         result.unapplied = roundMoney(result.unapplied + restored);
         // Fold the restore back into the in-memory snapshot so the apply pass below
@@ -1443,7 +1701,7 @@ export class CreditNotesService {
           );
         for (const p of advancePays) {
           if (!(excess > 0.001)) break;
-          const restored = await this.restoreAdvanceFromPaymentInTx(tx, p, tenantId, excess);
+          const restored = await this.restoreAdvanceFromPaymentInTx(tx, tz, p, tenantId, excess);
           excess = roundMoney(excess - restored);
           result.unapplied = roundMoney(result.unapplied + restored);
         }
@@ -1472,6 +1730,7 @@ export class CreditNotesService {
           : roundMoney(Number(cn0.amount) - Number(cn0.amountUsed));
       for (const inv of invoices) {
         if (!(unmet > 0.001)) break;
+        if (blocked.has(pairKey(intent.creditNoteId, inv.id))) continue;
         // Fresh reads — earlier loop iterations move money.
         const cn = await tx.creditNote.findUnique({ where: { id: intent.creditNoteId } });
         const freshInv = await tx.invoice.findUnique({
@@ -1479,7 +1738,7 @@ export class CreditNotesService {
           include: { payments: true },
         });
         if (!cn || !freshInv) break;
-        const res = await this.applyCreditInTx(tx, cn, freshInv, unmet, { tenantId });
+        const res = await this.applyCreditInTx(tx, tz, cn, freshInv, unmet, { tenantId });
         if (res.applied <= 0) continue;
         unmet = roundMoney(unmet - res.applied);
         result.applied = roundMoney(result.applied + res.applied);
@@ -1494,7 +1753,8 @@ export class CreditNotesService {
    * order's OrderCreditNote intent so a later settle doesn't just re-apply the same
    * dollars. Returns the fresh credit note row.
    */
-  async unapplyFromInvoice(creditNoteId: string, invoiceId: string) {
+  async unapplyFromInvoice(creditNoteId: string, invoiceId: string, actorId: string | null = null) {
+    const tz = await tenantTimeZone(this.prisma); // SA-495a: once per call, before any loop
     // SA-392 (#2201): the WHOLE Serializable tx re-runs on a 40001/40P01 conflict (bounded).
     return retryOnTxConflict(`credit unapply cn=${creditNoteId} inv=${invoiceId}`, () =>
       this.prisma.tenantTransaction(
@@ -1517,8 +1777,16 @@ export class CreditNotesService {
 
           let restored = 0;
           for (const p of payments) {
-            restored = roundMoney(restored + (await this.restoreCreditFromPaymentInTx(tx, p)));
+            restored = roundMoney(restored + (await this.restoreCreditFromPaymentInTx(tx, tz, p)));
           }
+          // SA-436: remember the removal so neither the sweep nor a settle re-applies this pair.
+          await writeApplyBlocks(tx, {
+            tenantId: this.prisma.getTenantId(),
+            creditNoteId,
+            invoiceIds: [invoiceId],
+            reason: "UNAPPLIED",
+            createdById: actorId,
+          });
 
           const invoice = await tx.invoice.findFirst({
             where: { id: invoiceId },
@@ -1550,6 +1818,34 @@ export class CreditNotesService {
         { isolationLevel: "Serializable" },
       ),
     );
+  }
+
+  /**
+   * SA-436 (#2401): keep this note out of (or back in) the send-time oldest-first sweep. A manual
+   * apply stays allowed either way. Audited with the acting user.
+   */
+  async setAutoApplyExcluded(id: string, excluded: boolean, actorId: string | null) {
+    return this.prisma.tenantTransaction(async (tx: any) => {
+      // findFirst, not findUnique: the tenant proxy injects tenantId into findFirst's where, so a
+      // foreign tenant's note id is a 404 here (findUnique skips the injection and 500s later).
+      const cn = await tx.creditNote.findFirst({ where: { id }, select: { id: true } });
+      if (!cn) throw new NotFoundException("Credit note not found");
+      const updated = await tx.creditNote.update({
+        where: { id },
+        data: { autoApplyExcluded: excluded },
+      });
+      await tx.auditLog.create({
+        data: {
+          tenantId: this.prisma.getTenantId(),
+          userId: actorId,
+          action: "EXCLUDED",
+          entityType: "CreditNote", // SA-442: one credit-note audit vocabulary
+          entityId: id,
+          meta: { excluded },
+        },
+      });
+      return updated;
+    });
   }
 
   /**
