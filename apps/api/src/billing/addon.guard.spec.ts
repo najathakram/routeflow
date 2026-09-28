@@ -74,7 +74,10 @@ describe("AddonGuard", () => {
     addonService.getActiveAddons.mockResolvedValue(["tobacco_dealer"]);
 
     await expect(guard.canActivate(contextFor({ tenantId: "t1" }))).resolves.toBe(true);
-    expect(addonService.getActiveAddons).toHaveBeenCalledWith("t1");
+    // SA-540: the route's keys scope the default-grant work (onlyKeys).
+    expect(addonService.getActiveAddons).toHaveBeenCalledWith("t1", {
+      onlyKeys: ["tobacco_dealer"],
+    });
   });
 
   it("throws Forbidden when the addon is not active (legacy single-string metadata)", async () => {
@@ -92,7 +95,9 @@ describe("AddonGuard", () => {
 
     await expect(guard.canActivate(contextFor({ tenantId: "t1" }))).resolves.toBe(true);
     expect(addonService.getActiveAddons).toHaveBeenCalledTimes(1);
-    expect(addonService.getActiveAddons).toHaveBeenCalledWith("t1");
+    expect(addonService.getActiveAddons).toHaveBeenCalledWith("t1", {
+      onlyKeys: ["recurring_routes", "order_delivery"],
+    });
   });
 
   it("throws Forbidden when the tenant has none of several listed addons", async () => {
