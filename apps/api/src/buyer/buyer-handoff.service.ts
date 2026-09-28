@@ -1,6 +1,6 @@
 import { Injectable } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
-import { isBuyerLoginEligible } from "../auth/login-eligibility";
+import { isLoginEligible } from "../auth/login-eligibility";
 import {
   HandoffCodeService,
   handoffCodeInvalid,
@@ -34,7 +34,7 @@ export class BuyerHandoffService {
     const account = row.buyerAccountId
       ? await this.prisma.buyerAccount.findUnique({ where: { id: row.buyerAccountId } })
       : null;
-    if (!account || !isBuyerLoginEligible(account)) throw handoffCodeInvalid();
+    if (!isLoginEligible(account)) throw handoffCodeInvalid();
     const result = await this.buyerAuth.issueHandoffPair(account, {
       ...deviceInfo,
       deviceName: `hybrid-shell:${row.deviceId}`,

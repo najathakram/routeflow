@@ -17,6 +17,7 @@ import { BuyerJwtPayload } from "./interfaces/buyer-jwt-payload.interface";
 import { BuyerRegisterDto } from "./dto/buyer-register.dto";
 import { BuyerLoginDto } from "./dto/buyer-login.dto";
 import { escapeHtml } from "../common/html-escape";
+import { isLoginEligible, isSignInBlocked } from "../auth/login-eligibility";
 
 export interface BuyerDeviceInfo {
   userAgent?: string;
@@ -201,14 +202,12 @@ export class BuyerAuthService {
     // F3-005: return a CONSTANT "Invalid credentials" for not-found, deleted,
     // suspended, AND wrong-password alike — never a distinct message, so none
     // of these leaks account existence/status via the response BODY.
-    if (!account || account.deletedAt) {
-      throw new UnauthorizedException("Invalid credentials");
-    }
-
-    // Account lockout — same policy as staff (auth.service.ts): locked
-    // accounts fail without running bcrypt and with the identical message
-    // (enumeration-safe); time-based auto-unlock only.
-    if (account.lockedUntil && account.lockedUntil > new Date()) {
+    //
+    // Deleted, or the account lockout — same policy as staff (auth.service.ts):
+    // refused without running bcrypt and with the identical message
+    // (enumeration-safe); time-based auto-unlock only. The rule lives in
+    // login-eligibility.ts (one rule for every sign-in path, #2653).
+    if (!account || isSignInBlocked(account)) {
       throw new UnauthorizedException("Invalid credentials");
     }
 
@@ -227,7 +226,7 @@ export class BuyerAuthService {
     // runs) — a timing oracle for "is this email a suspended buyer account"
     // that the message-level fix above never addressed. Only reachable with
     // the CORRECT password, so nothing new leaks to a stranger guessing.
-    if (account.status !== "ACTIVE") {
+    if (!isLoginEligible(account)) {
       throw new UnauthorizedException("Invalid credentials");
     }
     if (account.failedLoginAttempts > 0 || account.lockedUntil) {
@@ -258,7 +257,7 @@ export class BuyerAuthService {
 
   /**
    * #2653 in-app sign-in handoff (SA-542b): a FRESH pair for an account that BuyerHandoffService
-   * has already checked (isBuyerLoginEligible), minted by the SAME issuer as login() and returned
+   * has already checked (isLoginEligible), minted by the SAME issuer as login() and returned
    * in login()'s shape. Never the app's own pair.
    */
   async issueHandoffPair(

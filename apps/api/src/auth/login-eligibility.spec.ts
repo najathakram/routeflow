@@ -1,14 +1,15 @@
 /**
  * #2653 (SA-542a/b): the handoff exchange signs someone in WITHOUT a password, so it must apply the
- * exact rule the password logins apply once the password checks out. This pins isLoginEligible /
- * isBuyerLoginEligible to the REAL AuthService.validateUser and BuyerAuthService.login across every
- * account state, so the helpers and the login paths can never drift.
+ * exact rule the password logins apply once the password checks out. Both login paths now CALL
+ * login-eligibility.ts (one rule, SA-070); this pins its verdicts against the REAL
+ * AuthService.validateUser and BuyerAuthService.login across every account state, and (SA-542c)
+ * that each caller keeps the timing-oracle order around bcrypt.
  */
 import * as bcrypt from "bcrypt";
 import { UnauthorizedException } from "@nestjs/common";
 import { AuthService } from "./auth.service";
 import { BuyerAuthService } from "../buyer/buyer-auth.service";
-import { isBuyerLoginEligible, isLoginEligible } from "./login-eligibility";
+import { isLoginEligible } from "./login-eligibility";
 
 // bcrypt.compare stays REAL; the wrapper only records the calls, for SA-542c's order pins below.
 jest.mock("bcrypt", () => {
@@ -54,7 +55,7 @@ describe("isLoginEligible === validateUser's post-password rule (staff)", () => 
   });
 });
 
-describe("isBuyerLoginEligible === BuyerAuthService.login's post-password rule (buyers)", () => {
+describe("isLoginEligible === BuyerAuthService.login's post-password rule (buyers)", () => {
   let hash: string;
   beforeAll(async () => {
     hash = await bcrypt.hash("pw", 4);
@@ -92,7 +93,7 @@ describe("isBuyerLoginEligible === BuyerAuthService.login's post-password rule (
         if (e instanceof UnauthorizedException) return false;
         throw e;
       });
-    expect(isBuyerLoginEligible(account as never)).toBe(viaLogin);
+    expect(isLoginEligible(account as never)).toBe(viaLogin);
   });
 });
 
