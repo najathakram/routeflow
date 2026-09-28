@@ -84,6 +84,8 @@ function priced(total = 30, subtotal = 28, taxAmount = 2, categoryTax = 0) {
   };
 }
 
+import { inlineReturnItemsFingerprint } from "./inline-return-fingerprint";
+
 const CAPTURE_DTO = {
   customerId: "cust-1",
   orderId: "ord-carrying",
@@ -307,6 +309,24 @@ describe("InlineReturnsService", () => {
       expect((result as any).parkedReversals).toEqual({ count: 2, pieces: 5 });
     });
 
+    // #2144 (+ #2477's first item): after capture() issues the credit, it reads the row back. A
+    // null read-back used to fall back to the PRE-issue snapshot, which carries no creditNoteId —
+    // a response that looks un-issued for a credit that WAS issued. Like approve() (#2467), it now
+    // refuses instead; a retry with the same returnKey replays and returns the issued row.
+    it("#2144: the capture response is the POST-issue row, carrying the issued creditNoteId", async () => {
+      prisma.regulatedLedgerParkedReversal.findMany.mockResolvedValue([]);
+      const result = await service.capture(CAPTURE_DTO as any, OPERATOR);
+      expect(result).toMatchObject({ creditNoteId: "cn-1" });
+    });
+
+    it("#2144: a null read-back after issuing never returns the stale pre-issue snapshot", async () => {
+      prisma.regulatedLedgerParkedReversal.findMany.mockResolvedValue([]);
+      prisma.return.findUnique.mockResolvedValue(null);
+      await expect(service.capture(CAPTURE_DTO as any, OPERATOR)).rejects.toThrow(
+        NotFoundException,
+      );
+    });
+
     it("REG-B735-api-capture-clean: a fresh capture with no parked rows carries parkedReversals: null, never undefined", async () => {
       prisma.regulatedLedgerParkedReversal.findMany.mockResolvedValue([]);
 
@@ -501,6 +521,111 @@ describe("InlineReturnsService", () => {
   });
 
   // ─── MED-7: P2002 returnKey collision outside the aborted transaction ───────
+
+  // #2424 (tier 1): a same-key, same-(customer, order) replay used to return the stored Return
+  // WITHOUT comparing items, so a second, different capture reusing the key was silently lost.
+  describe("#2424: a returnKey replay must carry the same items", () => {
+    const stored = (items: any[] | null, over: any = {}) => ({
+      id: "ret-first",
+      returnNumber: "RET-2026-0042",
+      returnKey: "nonce-1",
+      kind: "INLINE",
+      customerId: "cust-1",
+      orderId: "ord-carrying",
+      status: "REFUNDED",
+      creditNoteId: "cn-first",
+      holdReason: null,
+      capturePayload: items === null ? null : inlineReturnItemsFingerprint(items),
+      items: [],
+      ...over,
+    });
+    const DIFFERENT = { ...CAPTURE_DTO, items: [{ productId: "prod-1", qty: 9 }] };
+
+    it("the capture stores the request items' fingerprint on the Return", async () => {
+      await service.capture(CAPTURE_DTO as any, OPERATOR);
+      expect(prisma.return.create.mock.calls[0][0].data.capturePayload).toEqual(
+        inlineReturnItemsFingerprint(CAPTURE_DTO.items),
+      );
+    });
+
+    it("pre-read replay with the SAME items ⇒ the stored Return (no new write)", async () => {
+      prisma.return.findFirst.mockResolvedValueOnce(stored(CAPTURE_DTO.items));
+      const res: any = await service.capture(CAPTURE_DTO as any, OPERATOR);
+      expect(res.id).toBe("ret-first");
+      expect(prisma.return.create).not.toHaveBeenCalled();
+    });
+
+    it("pre-read replay with DIFFERENT items ⇒ 409 KEY_REUSED_WITH_DIFFERENT_ITEMS, nothing written", async () => {
+      prisma.return.findFirst.mockResolvedValueOnce(stored(CAPTURE_DTO.items));
+      const p = service.capture(DIFFERENT as any, OPERATOR);
+      await expect(p).rejects.toThrow(ConflictException);
+      prisma.return.findFirst.mockResolvedValueOnce(stored(CAPTURE_DTO.items));
+      expect(await codeOf(service.capture(DIFFERENT as any, OPERATOR))).toBe(
+        INLINE_RETURN_ERROR_CODES.RETURN_KEY_REUSED_WITH_DIFFERENT_ITEMS,
+      );
+      expect(prisma.tenantTransaction).not.toHaveBeenCalled();
+      expect(prisma.return.create).not.toHaveBeenCalled();
+      // the lead's fold (2): the body says the earlier return WAS recorded, and names it
+      prisma.return.findFirst.mockResolvedValueOnce(stored(CAPTURE_DTO.items));
+      const body = await service
+        .capture(DIFFERENT as any, OPERATOR)
+        .catch((e: any) => e.getResponse());
+      expect(body).toMatchObject({ returnId: "ret-first", returnNumber: "RET-2026-0042" });
+      expect(body.message).toMatch(/RET-2026-0042 was already recorded/);
+    });
+
+    it("the same items in a different order are the same capture (replay)", async () => {
+      const two = [
+        { productId: "prod-1", qty: 6 },
+        { productId: "prod-2", qty: 2 },
+      ];
+      prisma.return.findFirst.mockResolvedValueOnce(stored(two));
+      const res: any = await service.capture(
+        { ...CAPTURE_DTO, items: [two[1], two[0]] } as any,
+        OPERATOR,
+      );
+      expect(res.id).toBe("ret-first");
+    });
+
+    it("a legacy row (captured before #2424, no fingerprint) still replays", async () => {
+      prisma.return.findFirst.mockResolvedValueOnce(stored(null));
+      const res: any = await service.capture(DIFFERENT as any, OPERATOR);
+      expect(res.id).toBe("ret-first");
+    });
+
+    it("P2002 recovery with DIFFERENT items ⇒ 409 KEY_REUSED_WITH_DIFFERENT_ITEMS", async () => {
+      prisma.tenantTransaction.mockImplementationOnce(async () => {
+        const err: any = new Error("Unique constraint failed");
+        err.code = "P2002";
+        err.meta = { target: ["tenantId", "returnKey"] };
+        throw err;
+      });
+      prisma.return.findFirst.mockResolvedValueOnce(null); // pre-tx: nothing yet
+      prisma.return.findFirst.mockResolvedValueOnce(stored(CAPTURE_DTO.items)); // the racer's row
+      expect(await codeOf(service.capture(DIFFERENT as any, OPERATOR))).toBe(
+        INLINE_RETURN_ERROR_CODES.RETURN_KEY_REUSED_WITH_DIFFERENT_ITEMS,
+      );
+    });
+
+    it("in-lock re-check (captureInTx, the order create/edit path) with DIFFERENT items ⇒ 409, no create", async () => {
+      prisma.return.findFirst.mockResolvedValueOnce(stored(CAPTURE_DTO.items));
+      expect(await codeOf(service.captureInTx(prisma, DIFFERENT as any, OPERATOR))).toBe(
+        INLINE_RETURN_ERROR_CODES.RETURN_KEY_REUSED_WITH_DIFFERENT_ITEMS,
+      );
+      expect(prisma.return.create).not.toHaveBeenCalled();
+    });
+
+    it("the order-path pre-read (preflightCapture) with DIFFERENT items ⇒ 409; SAME items ⇒ null (a replay)", async () => {
+      prisma.return.findFirst.mockResolvedValueOnce(stored(CAPTURE_DTO.items));
+      await expect(
+        service.preflightCapture(DIFFERENT as any, OPERATOR, { routeRunId: null }),
+      ).rejects.toThrow(ConflictException);
+      prisma.return.findFirst.mockResolvedValueOnce(stored(CAPTURE_DTO.items));
+      await expect(
+        service.preflightCapture(CAPTURE_DTO as any, OPERATOR, { routeRunId: null }),
+      ).resolves.toBeNull();
+    });
+  });
 
   describe("MED-7: returnKey P2002 collision", () => {
     it("catches the conflict OUTSIDE the aborted transaction and replays when the raced row matches this (customerId, orderId)", async () => {
@@ -860,6 +985,66 @@ describe("InlineReturnsService", () => {
       expect((result as any).parkedReversals).toEqual({ count: 1, pieces: 6 });
     });
 
+    // #2143: approve() commits, then the post-commit read-back fails. The operator retries the
+    // SAME approval: the unlocked pre-check used to see creditNoteId set and 400. An
+    // already-APPROVED hold must return its current state, idempotently, with no money write.
+    const APPROVED: any = {
+      ...HELD,
+      status: "REFUNDED",
+      holdReason: null,
+      creditNoteId: "cn-approved",
+      approvedById: "user-op",
+      approvedAt: new Date("2026-09-27T06:00:00Z"),
+    };
+
+    it("#2143: a retry of an already-approved return gets its current state, no second write", async () => {
+      prisma.return.findFirst.mockResolvedValue(APPROVED);
+      prisma.return.findUnique.mockResolvedValue(APPROVED);
+      prisma.regulatedLedgerParkedReversal.findMany.mockResolvedValue([]);
+      prisma.tenantTransaction.mockClear();
+
+      const result = await service.approve("ret-held", OPERATOR);
+
+      expect(result).toMatchObject({
+        id: "ret-held",
+        status: "REFUNDED",
+        creditNoteId: "cn-approved",
+      });
+      expect((result as any).parkedReversals).toBeNull();
+      expect(prisma.tenantTransaction).not.toHaveBeenCalled();
+      expect(creditNotes.mintStandaloneInTx).not.toHaveBeenCalled();
+      expect(prisma.stockMovement.create).not.toHaveBeenCalled();
+      expect(ledger.reverseReturnEntries).not.toHaveBeenCalled();
+      expect(prisma.return.updateMany).not.toHaveBeenCalled();
+    });
+
+    it("#2143: the retry's amount does not matter — the first approval stands, nothing is written", async () => {
+      prisma.return.findFirst.mockResolvedValue(APPROVED);
+      prisma.return.findUnique.mockResolvedValue(APPROVED);
+      await expect(service.approve("ret-held", OPERATOR, { amount: 5 })).resolves.toMatchObject({
+        creditNoteId: "cn-approved",
+      });
+      expect(creditNotes.mintStandaloneInTx).not.toHaveBeenCalled();
+    });
+
+    it("#2143: an already-approved retry whose re-read comes back empty is a 404, no write", async () => {
+      prisma.return.findFirst.mockResolvedValue(APPROVED);
+      prisma.return.findUnique.mockResolvedValue(null);
+      prisma.tenantTransaction.mockClear();
+      await expect(service.approve("ret-held", OPERATOR)).rejects.toThrow(NotFoundException);
+      expect(prisma.tenantTransaction).not.toHaveBeenCalled();
+      expect(creditNotes.mintStandaloneInTx).not.toHaveBeenCalled();
+    });
+
+    it("#2143: a return issued WITHOUT a hold (never approved) still refuses approve()", async () => {
+      prisma.return.findFirst.mockResolvedValue({
+        ...APPROVED,
+        approvedById: null,
+        approvedAt: null,
+      });
+      await expect(service.approve("ret-held", OPERATOR)).rejects.toThrow(BadRequestException);
+    });
+
     it("approves a REDUCED amount when given one", async () => {
       prisma.return.findFirst.mockResolvedValue(HELD);
       prisma.return.updateMany.mockResolvedValue({ count: 1 });
@@ -1112,12 +1297,13 @@ describe("InlineReturnsService", () => {
 // nonce. These pin the codes the server puts on each such refusal, and that the mobile client's
 // set is exactly this set (read from the mobile source, the enum-parity precedent).
 describe("InlineReturnsService — refusal codes (SA-204)", () => {
-  it("exports the four capture refusal codes", () => {
+  it("exports the five capture refusal codes", () => {
     expect(INLINE_RETURN_ERROR_CODES).toEqual({
       ORDER_NOT_FOUND: "INLINE_RETURN_ORDER_NOT_FOUND",
       ORDER_CUSTOMER_MISMATCH: "INLINE_RETURN_ORDER_CUSTOMER_MISMATCH",
       ORDER_CANCELLED: "INLINE_RETURN_ORDER_CANCELLED",
       RETURN_KEY_CONFLICT: "INLINE_RETURN_KEY_CONFLICT",
+      RETURN_KEY_REUSED_WITH_DIFFERENT_ITEMS: "INLINE_RETURN_KEY_REUSED_WITH_DIFFERENT_ITEMS", // #2424
     });
   });
 

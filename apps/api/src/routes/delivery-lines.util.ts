@@ -1,4 +1,9 @@
-import { BadRequestException, ConflictException, NotFoundException } from "@nestjs/common";
+import {
+  BadRequestException,
+  ConflictException,
+  ForbiddenException,
+  NotFoundException,
+} from "@nestjs/common";
 import {
   deliveredSoFarForLine,
   fetchEvidenceByLine,
@@ -35,7 +40,79 @@ export async function claimStopCompletion(
   }
 }
 
+/**
+ * #2415: the compare-and-swap for updateStopStatus (skip / arrive). The old check-then-`update`
+ * let a skip that read PENDING overwrite a completion that committed in between — COMPLETED became
+ * SKIPPED and its DeliveryMutation / invoice / payment were stranded. The write now only lands on a
+ * row that is still not COMPLETED; losing to a completion answers 409 STOP_ALREADY_COMPLETED.
+ * (`not COMPLETED`, not `in [PENDING, IN_PROGRESS]`: a SKIPPED stop may still be marked
+ * IN_PROGRESS, as before — only the race with a completion is closed.)
+ */
+export async function claimStopStatusChange(
+  db: any,
+  stopId: string,
+  data: Record<string, unknown>,
+): Promise<void> {
+  const claimed = await db.routeRunStop.updateMany({
+    where: { id: stopId, status: { not: "COMPLETED" } },
+    data,
+  });
+  if (claimed.count > 0) return;
+  const current = await db.routeRunStop.findUnique({
+    where: { id: stopId },
+    select: { status: true },
+  });
+  if (current?.status === "COMPLETED") {
+    throw new ConflictException({
+      code: "STOP_ALREADY_COMPLETED",
+      message:
+        "This stop was just completed. Reopen it instead — that reverses the delivery correctly.",
+    });
+  }
+  throw new NotFoundException("Stop not found");
+}
+
 /** #2409: the stop statuses a completion may claim from. */
+/** #2514: RF-003's run-status refusal, called AFTER the B72 ownership check (never before it). */
+export function assertRunInProgress(status: string): void {
+  if (status !== "IN_PROGRESS") {
+    throw new ForbiddenException(
+      `Cannot complete a stop on a run that is not in progress (current status: ${status}).`,
+    );
+  }
+}
+
+/**
+ * #2514 (SA-533 / 533e): a stop status PATCH (IN_PROGRESS / SKIPPED) on a LIVE run only. One
+ * transaction, in the house lock order for this family, STOP rows → RouteRun, the order
+ * completeStop / completeWithPayment (claimStopCompletion, then the RF-016 run auto-complete) and
+ * reopenStop already take:
+ *   1. the #2415 stop CAS (takes the stop row lock; a completed stop ⇒ 409 STOP_ALREADY_COMPLETED);
+ *   2. `RouteRun … FOR UPDATE`, re-read the status, a COMPLETED/CANCELLED run ⇒ 409 (same text as
+ *      the pre-lock check) — the throw rolls the stop CAS back.
+ * A run that completes or is cancelled while this PATCH waits is seen under the run lock, never
+ * overwritten after. (SA-533's original run-first order inverted the completion paths' stop → run
+ * order and could deadlock — SA-E84.)
+ */
+export async function claimStopStatusChangeOnLiveRun(
+  prisma: { tenantTransaction<T>(fn: (tx: any) => Promise<T>): Promise<T> },
+  runId: string,
+  stopId: string,
+  data: Record<string, unknown>,
+): Promise<void> {
+  await prisma.tenantTransaction(async (tx) => {
+    await claimStopStatusChange(tx, stopId, data); // stop row FIRST (house order)
+    await tx.$executeRaw`SELECT id FROM "RouteRun" WHERE id = ${runId} FOR UPDATE`;
+    const run = await tx.routeRun.findFirst({ where: { id: runId }, select: { status: true } });
+    if (!run) throw new NotFoundException("Route run not found");
+    if (run.status === "COMPLETED" || run.status === "CANCELLED") {
+      throw new ConflictException(
+        `Cannot change a stop on a ${String(run.status).toLowerCase()} run.`,
+      );
+    }
+  });
+}
+
 export const COMPLETABLE_STOP_STATUSES = ["PENDING", "IN_PROGRESS"];
 
 /**

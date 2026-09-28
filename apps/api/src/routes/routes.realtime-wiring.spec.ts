@@ -280,10 +280,19 @@ describe("RoutesService → RouteRealtime wiring (#2095)", () => {
       arrivedAt: null,
     });
     prisma.routeRun.findFirst.mockResolvedValue({ driverId: "drv-1", status: "IN_PROGRESS" });
-    prisma.routeRunStop.update.mockImplementation(async () => {
+    // #2415: the write is a compare-and-swap (updateMany), then the row is read back.
+    prisma.routeRunStop.updateMany.mockImplementation(async () => {
       events.push("write");
-      return { id: "stop-2", status: "SKIPPED" };
+      return { count: 1 };
     });
+    prisma.routeRunStop.findFirst
+      .mockResolvedValueOnce({
+        id: "stop-2",
+        routeRunId: "run-1",
+        status: "PENDING",
+        arrivedAt: null,
+      })
+      .mockResolvedValueOnce({ id: "stop-2", status: "SKIPPED" });
 
     const result = await service.updateStopStatus(
       "run-1",
@@ -298,15 +307,16 @@ describe("RoutesService → RouteRealtime wiring (#2095)", () => {
   });
 
   it("reordering a run's stops tells the run's customers, after the reorder commits", async () => {
-    prisma.routeRun.findUnique.mockResolvedValue(RUN);
+    // #2135: the reorder runs in one locked tenantTransaction (reorderRunStopsInTx), so the
+    // run and its stops are read inside it.
+    prisma.routeRun.findFirst.mockResolvedValue(RUN);
     prisma.routeRunStop.findMany.mockResolvedValue([
-      { id: "stop-1", stopNumber: 1 },
-      { id: "stop-2", stopNumber: 2 },
+      { id: "stop-1", stopNumber: 1, status: "PENDING" },
+      { id: "stop-2", stopNumber: 2, status: "PENDING" },
     ]);
-    (prisma.$transaction as jest.Mock).mockImplementation(async () => {
-      events.push("commit");
-      return [];
-    });
+    prisma.routeRunStop.updateMany.mockResolvedValue({ count: 1 });
+    prisma.route.update.mockResolvedValue({});
+    commitAfterCallback();
 
     await service.reorderRunStops("run-1", [
       { id: "stop-2", stopNumber: 1 },

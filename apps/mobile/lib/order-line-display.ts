@@ -267,8 +267,12 @@ export function orderLineCardModel(li: LineInput, orderStatus: string): OrderLin
       ? formatQtySplit({ ...normalizeBoxesPieces({ qty: n, unitsPerBox: upb }), boxLabel })
       : formatQtySplit({ qty: n });
   const delivered = li.deliveredQty == null ? null : Number(li.deliveredQty);
+  // B669 (#1702): a CANCELLED line owes nothing — "0 of 8 delivered" beside it reads as a shortfall.
   const deliveryText =
-    DELIVERY_PROGRESS_STATUSES.has(orderStatus) && delivered != null && delivered < qty
+    DELIVERY_PROGRESS_STATUSES.has(orderStatus) &&
+    !cancelled &&
+    delivered != null &&
+    delivered < qty
       ? `${qtyText(delivered)} of ${qtyText(qty)} delivered`
       : null;
   const tagText = tag ? `${tag.label} price` : null;

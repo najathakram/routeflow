@@ -38,6 +38,10 @@ export interface ArAgingBucket {
   balance: number;
   dueDate?: string;
   status: string;
+  /** #1529 (SA-517 PR-A): the invoice's deposit — null when it has none. */
+  depositAmount?: number | null;
+  depositDueDate?: string | null;
+  depositOverdue?: boolean;
 }
 
 export interface ExpenseLineItem {
@@ -124,6 +128,8 @@ export function useArAgingInvoices(intervalDays?: number) {
       days90plus: number;
       total: number;
     };
+    /** #1529: overdue deposits, never a totals key (the buckets already hold those balances). */
+    depositOverdue?: { count: number; outstanding: number };
   }>({
     queryKey: ["reports", "ar-aging-invoices", intervalDays],
     queryFn: () =>

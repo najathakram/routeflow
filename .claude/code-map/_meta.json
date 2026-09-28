@@ -1,6 +1,6 @@
 {
-  "mappedSha": "ec1a95035e2fd0a4e9bc2108c55a0e2466c9fe26",
-  "generatedAt": "2026-09-26T05:18:11.487Z",
+  "mappedSha": "3d9b027b5e70a1405ad4d15f6ec215f7bdc60a00",
+  "generatedAt": "2026-09-28T01:03:32.671Z",
   "layout": "split-2026-09-13",
   "areas": [
     "api",
@@ -15,5 +15,5 @@
     "packages": 0
   },
   "fileCount": 1045,
-  "notes": "**2026-09-27 — night landing #2390 (docs-only bookkeeping).** New `mobile/landing-2026-09-27-night.md` (TOC row in `mobile.md`): operator edit-items.tsx sliced verbatim into `components/edit-items/` + `lib/margin-floor-price.ts`; it also reflowed the unformatted web `RecordInlineReturnDialog.tsx`. mappedSha -> ec1a9503. No source changed. See CHANGELOG.md for the full landing list."
+  "notes": "**2026-09-28 — overnight landings, 39 PRs `a1ef8e7`..`3d9b027b` (the #2554 table's 38 + the unmapped #2390; docs-only bookkeeping).** New `api/landing-2026-09-28-overnight.md` (TOC row in `api.md`), one bullet per PR, each checked against the merged tree: billing lock order + CAS + tx retry (#2240, #2519, #2555, #2578, #2609, #2580, #2584, #2568), customer-delete guards (#2566, #2586, #2589, #2594, #2607), orders/returns/routes (#2511, #2516, #2535, #2561, #2573, #2559, #2492, #2545, #2547, #2601), invoices/import/vendor bills (#2526, #2515, #2518, #2556, #2564, #2536, #2475, #2553, #2523), products/storage/realtime (#2538, #2532, #2593), web/mobile/packages (#2390, #2510, #2571), tooling (#2575). Lessons L-236..L-239 minted, L-216/L-220/L-227/L-229 archived verbatim. mappedSha 471a7670 -> 3d9b027b. No source changed. See CHANGELOG.md for the full landing list."
 }

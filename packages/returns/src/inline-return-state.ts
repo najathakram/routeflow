@@ -285,6 +285,25 @@ interface ApiErrorLike {
   };
 }
 
+// ─── Money display helpers (formatting only — no math) ─────────────────────────
+
+/**
+ * The capture response's `refundAmount` is a Prisma Decimal, which JSON carries as a STRING
+ * ("22.5000"); the shared type says `number`. A `typeof === "number"` check therefore never
+ * held and the credit amount never showed (#2097). Accept both, and return null for anything
+ * that is not a finite amount so the row is hidden rather than rendered as $NaN. Shared by
+ * RecordInlineReturnDialog's own result screen and OrderReturnsPanel (#2406) — never a second
+ * hand-rolled copy.
+ */
+export function refundAmountOf(value: unknown): number | null {
+  if (typeof value === "number") return Number.isFinite(value) ? value : null;
+  if (typeof value === "string" && value.trim() !== "") {
+    const n = Number(value);
+    return Number.isFinite(n) ? n : null;
+  }
+  return null;
+}
+
 export function extractRefusalMessage(error: unknown, fallback = "Something went wrong"): string {
   const body = (error as ApiErrorLike | undefined)?.response?.data;
   const status = (error as ApiErrorLike | undefined)?.response?.status;

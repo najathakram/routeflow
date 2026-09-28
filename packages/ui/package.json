@@ -11,7 +11,9 @@
     "./mobile": "./src/mobile/index.ts",
     "./mobile/ios": "./src/mobile/ios/index.ts",
     "./tokens": "./src/tokens.ts",
-    "./ledger": "./src/tokens/ledger.ts"
+    "./ledger": "./src/tokens/ledger.ts",
+    "./accent": "./src/tokens/accent.ts",
+    "./native": "./src/native/index.ts"
   },
   "scripts": {
     "lint": "eslint . --max-warnings 0",

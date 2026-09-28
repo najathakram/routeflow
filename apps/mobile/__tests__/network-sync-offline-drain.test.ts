@@ -7,7 +7,12 @@
  * failure never counts toward MAX_RETRIES. A server 4xx still dead-letters; a 5xx still retries.
  */
 import { onlineManager } from "@tanstack/react-query";
-import { drainQueue, MAX_RETRIES, nextDrainDelayMs } from "../lib/queue-drain";
+import {
+  drainQueue,
+  MAX_RETRIES,
+  nextDrainDelayMs,
+  queriesToRefreshAfterDrain,
+} from "../lib/queue-drain";
 
 // Effect cleanups are collected and run after each test, so one test's hook instance (its
 // onlineManager subscription, its backoff timer) never leaks into the next.
@@ -74,6 +79,12 @@ jest.mock("../lib/tenant-store", () => ({
   useTenantStore: { getState: () => ({ slug: "t-1" }) },
 }));
 const request = jest.fn();
+// #2410: the hook refreshes route queries through the shared client (lib/query-client imports
+// react-native, which this lane cannot load) — stubbed at the module boundary.
+const mockInvalidate = jest.fn();
+jest.mock("../lib/query-client", () => ({
+  queryClient: { invalidateQueries: (...a: any[]) => mockInvalidate(...a) },
+}));
 jest.mock("../lib/api-client", () => ({
   apiClient: {
     // RF-170's pre-check: the run is still active.
@@ -191,6 +202,14 @@ describe("drainQueue: network-class failures never count toward MAX_RETRIES (#23
     expect(r.unreachedIds).toEqual([]);
   });
 
+  it("#2410: only a delivered route-run write refreshes the route queries", () => {
+    expect(queriesToRefreshAfterDrain([{ endpoint: "/route-runs/r1/stops/s1/complete" }])).toEqual([
+      ["route-runs"],
+    ]);
+    expect(queriesToRefreshAfterDrain([{ endpoint: "/orders" }])).toEqual([]);
+    expect(queriesToRefreshAfterDrain([])).toEqual([]);
+  });
+
   it("backoff is bounded: 2s, 4s, 8s … capped at 60s", () => {
     expect([0, 1, 2, 3, 4, 5, 6, 50].map(nextDrainDelayMs)).toEqual([
       2000, 4000, 8000, 16000, 32000, 60000, 60000, 60000,
@@ -228,6 +247,17 @@ describe("useNetworkSync: case C — queued offline, then reconnect, replays and
     expect(request).toHaveBeenCalledTimes(1);
     expect(dequeue).toHaveBeenCalledWith("c1");
     expect(addFailedAction).not.toHaveBeenCalled();
+    // #2410: the delivered completion refreshes the route list right away.
+    expect(mockInvalidate).toHaveBeenCalledWith({ queryKey: ["route-runs"] });
+  });
+
+  it("#2410: an unreachable drain refreshes nothing (nothing was delivered)", async () => {
+    request.mockRejectedValueOnce(offlineError());
+    useNetworkSync();
+    netListener!({ isConnected: true, isInternetReachable: true });
+    await flush();
+    expect(mockInvalidate).not.toHaveBeenCalled();
+    request.mockReset();
   });
 
   it("C: browser offline + a NetInfo 'connected' glitch → NO replay; reconnect → replay 201 → delivered", async () => {

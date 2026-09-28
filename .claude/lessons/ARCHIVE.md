@@ -3148,3 +3148,50 @@ citations, closed-out with its own post-init assertion guard).
   (Archived 2026-09-27 to make room at cap for L-235: 0 outside citations; the rule is the
   per-merge application of L-209, which stays active; guard = the landing procedure's re-read of
   #938 before each merge, unchanged by archiving the prose.)
+
+### L-216 · 2026-09-24 · tooling · bugs.mjs note --section silently replaced record analysis (B840)
+
+- **Symptom:** two registry reconciles and ~32 earlier notes wiped Summary/Root cause/Fix text in
+  ~150 bug records; noticed only because a "notes-only" commit showed insertions == deletions.
+- **Root cause:** `bugs.mjs note --section` REPLACES the section body; a verb named "note" reads
+  as append, so every caller assumed it was additive. The first repair then matched sections with a
+  multiline-flag regex whose `$` ended at the first line, restoring only first lines.
+- **Lesson:** **A CLI verb named like an append ("note", "add", "log") that actually replaces is a
+  silent-loss class: before any bulk run, check the verb on one record and read the diff. A bulk
+  "additive" run must be pure insertions. Repair from history as the union of every version, and
+  prove zero loss with a checker that does not share the repair's parser.**
+- **Guard:** B840: `note` appends, overwrite needs `--replace`, pinned in the bugs self-test.
+
+### L-220 · 2026-09-26 · domain · a money-ledger change needs every axis, every ordering, and a DB spec that calls the production writer (B662)
+
+- **Symptom:** a ledger pro-rate fix was verified on one axis and one order of operations, and the DB spec booked the reversal by hand, so a LINE_UNIT under-reversal and a return, adjust, return drift survived review.
+- **Root cause:** the proof re-derived the writer's behaviour instead of exercising it, so it could only agree with the author's model (cf. [[L-214]]).
+- **Lesson:** **For a money-ledger change enumerate every axis the writer serves, test the interleaving permutations, and make the DB spec CALL the production writer, never re-book the rows by hand.**
+- **Guard:** `regulated-ledger-price-correction.db.spec.ts` drives `reverseReturnEntries` and `correctSaleForPriceChange`; the master control reproduces the old wrong values.
+
+### L-227 · 2026-09-27 · process · a ratchet row must be measured on the MERGED tree, not the branch (train A)
+
+- **Symptom:** a branch passed the size ratchet at its own head, then failed it once master was merged in (a service 6220 lines against a 6217 cap, its spec 9377 against 9376), and in merge train A two branches carried different rows (6163 vs 6151) for the same file.
+- **Root cause:** a ratchet row is a property of one file's line count, and the count moves with every merge into it; a number measured before the merge is a claim about a tree that will not exist.
+- **Lesson:** **Set and verify every ratchet row on the merged tree at land time, with `wc -l` on the merged file. On a conflicting row take the lower of the two sides and never raise it; if the merge pushes a file over, extract first.**
+- **Guard:** `size-ratchet.spec.ts` on the merged tree (train A: `invoices.service.ts` row set to 6124, the merged file's `wc -l`, below both sides). Cf. [[L-215]].
+
+### L-229 · 2026-09-22 · domain · a pro-rata ratio must come from the specific row, never a sum (B661)
+
+- **Symptom:** unfolded from L-214 (same B661 fix, same PR, same review) — the pro-rata ratio used
+  to reverse a regulated line's pieces was first taken from an AGGREGATE over every SALE row of
+  the order line. A product repacked 12 -> 10 between the original write and a delivered-basis
+  reconcile gave a ratio of 11 (the average), so a 2-box partial credit booked -22 pieces where the
+  truth, from that specific row's own 10-pack snapshot, was -20.
+- **Root cause:** the fix reached for whatever quantity was conveniently in scope (a sum across the
+  parent's rows) instead of the one row actually being reversed. Summing erases which pack snapshot
+  applied to which piece.
+- **Lesson:** **A pro-rata ratio must be derived from the specific stored row being reversed,
+  never a sum across the parent entity's rows.** Near-invisible in testing: the CLOSING operation
+  books the exact remaining and absorbs the difference, so the TOTAL always reconciles — the error
+  only surfaces as filing-PERIOD attribution, and only when a partial straddles a boundary. Where a
+  sibling path already pro-rates correctly (`reverseReturnEntries` off the live row's own ratio),
+  match it rather than inventing a second derivation (cf. [[L-167]]).
+- **Guard:** `regulated-ledger.service.spec.ts`'s mixed-pack reconcile case pins the ratio source.
+  Related: [[L-214]].
+
