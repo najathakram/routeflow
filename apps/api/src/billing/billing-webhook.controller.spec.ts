@@ -1,8 +1,18 @@
 import { HttpStatus } from "@nestjs/common";
+import { Prisma } from "@prisma/client";
 import { BillingWebhookController } from "./billing-webhook.controller";
 
 // B593 review F1: a handler failure must not masquerade as a signature failure.
-function build(opts: { construct?: () => unknown; handle?: () => Promise<void> } = {}) {
+function build(
+  opts: {
+    construct?: () => unknown;
+    handle?: () => Promise<void>;
+    /** #2442: the ledger insert (default: a first delivery). */
+    create?: () => Promise<unknown>;
+    /** #2442: the already-ledgered row a duplicate insert finds. */
+    existing?: { outcome: string | null } | null;
+  } = {},
+) {
   const stripe = {
     isConfigured: true,
     constructWebhookEvent: jest.fn(
@@ -10,11 +20,22 @@ function build(opts: { construct?: () => unknown; handle?: () => Promise<void> }
     ),
   };
   const billing = { handleWebhookEvent: jest.fn(opts.handle ?? (async () => undefined)) };
-  const controller = new BillingWebhookController(stripe as never, billing as never);
+  const prisma = {
+    stripeBillingEvent: {
+      create: jest.fn(opts.create ?? (async () => ({}))),
+      findUnique: jest.fn(async () => opts.existing ?? null),
+      update: jest.fn(async () => ({})),
+    },
+  };
+  const controller = new BillingWebhookController(
+    stripe as never,
+    billing as never,
+    prisma as never,
+  );
   const json = jest.fn();
   const res = { status: jest.fn().mockReturnValue({ json }) };
   const req = { headers: { "stripe-signature": "sig" }, rawBody: Buffer.from("{}") };
-  return { controller, stripe, billing, res, json, req };
+  return { controller, stripe, billing, prisma, res, json, req };
 }
 
 describe("BillingWebhookController — signature vs handler failures", () => {
@@ -54,5 +75,114 @@ describe("BillingWebhookController — signature vs handler failures", () => {
     expect(res.status).toHaveBeenCalledWith(HttpStatus.INTERNAL_SERVER_ERROR);
     expect(res.status).not.toHaveBeenCalledWith(HttpStatus.BAD_REQUEST);
     expect(json).toHaveBeenCalledWith({ error: "Webhook handler failed" });
+  });
+});
+
+// #2442: the billing webhook mirrors the Connect webhook — Stripe, not a browser, is the caller
+// (@SkipThrottle), and an insert-first event ledger makes a redelivery of a COMPLETED event a no-op
+// (closing #2440's residual: a redelivered invoice.payment_failed incremented failedPaymentCount
+// twice). A delivery whose first attempt errored or never finished is re-run — that is the retry
+// our own 500 asked for.
+describe("#2442 BillingWebhookController — throttle skip and event-id ledger", () => {
+  const dup = () =>
+    new Prisma.PrismaClientKnownRequestError("Unique constraint failed", {
+      code: "P2002",
+      clientVersion: "test",
+    });
+  const failedEvt = () => ({
+    type: "invoice.payment_failed",
+    id: "evt_pf",
+    created: 1_700_000_000,
+  });
+
+  it("is exempt from the per-IP throttler", () => {
+    expect(Reflect.getMetadata("THROTTLER:SKIPdefault", BillingWebhookController)).toBe(true);
+  });
+
+  it("ledgers the event id BEFORE the handler runs", async () => {
+    const { controller, billing, prisma, req, res } = build({ construct: failedEvt });
+    await controller.handleWebhook(req as never, res as never);
+    expect(prisma.stripeBillingEvent.create).toHaveBeenCalledWith({
+      data: {
+        id: "evt_pf",
+        type: "invoice.payment_failed",
+        createdAt: new Date(1_700_000_000_000),
+      },
+    });
+    expect(prisma.stripeBillingEvent.create.mock.invocationCallOrder[0]).toBeLessThan(
+      billing.handleWebhookEvent.mock.invocationCallOrder[0],
+    );
+  });
+
+  it("a redelivered, already-COMPLETED invoice.payment_failed is a no-op (200, handler not run)", async () => {
+    const { controller, billing, res, json, req } = build({
+      construct: failedEvt,
+      create: async () => {
+        throw dup();
+      },
+      existing: { outcome: "processed" },
+    });
+    await controller.handleWebhook(req as never, res as never);
+    expect(billing.handleWebhookEvent).not.toHaveBeenCalled();
+    expect(res.status).toHaveBeenCalledWith(HttpStatus.OK);
+    expect(json).toHaveBeenCalledWith({ received: true });
+  });
+
+  it.each([
+    ["an error outcome", { outcome: "error:boom" }],
+    ["no outcome (the first attempt never finished)", { outcome: null }],
+  ])("a redelivery after %s is re-run", async (_label, existing) => {
+    const { controller, billing, res, req } = build({
+      construct: failedEvt,
+      create: async () => {
+        throw dup();
+      },
+      existing,
+    });
+    await controller.handleWebhook(req as never, res as never);
+    expect(billing.handleWebhookEvent).toHaveBeenCalledTimes(1);
+    expect(res.status).toHaveBeenCalledWith(HttpStatus.OK);
+  });
+
+  it("a ledger insert failure (not a duplicate) is a 500 and the handler never runs", async () => {
+    const { controller, billing, res, req } = build({
+      create: async () => {
+        throw new Error("connection reset");
+      },
+    });
+    await controller.handleWebhook(req as never, res as never);
+    expect(billing.handleWebhookEvent).not.toHaveBeenCalled();
+    expect(res.status).toHaveBeenCalledWith(HttpStatus.INTERNAL_SERVER_ERROR);
+  });
+
+  it("records outcome 'processed' on success", async () => {
+    const { controller, prisma, req, res } = build({ construct: failedEvt });
+    await controller.handleWebhook(req as never, res as never);
+    expect(prisma.stripeBillingEvent.update).toHaveBeenCalledWith({
+      where: { id: "evt_pf" },
+      data: { outcome: "processed" },
+    });
+  });
+
+  it("records an 'error:' outcome on a handler failure, so Stripe's redelivery re-runs it", async () => {
+    const { controller, prisma, req, res } = build({
+      construct: failedEvt,
+      handle: async () => {
+        throw new Error("db down");
+      },
+    });
+    await controller.handleWebhook(req as never, res as never);
+    expect(prisma.stripeBillingEvent.update).toHaveBeenCalledWith({
+      where: { id: "evt_pf" },
+      data: { outcome: "error:db down" },
+    });
+    expect(res.status).toHaveBeenCalledWith(HttpStatus.INTERNAL_SERVER_ERROR);
+  });
+
+  it("a failed outcome write never changes the response already sent", async () => {
+    const { controller, prisma, res, req } = build({ construct: failedEvt });
+    prisma.stripeBillingEvent.update.mockRejectedValue(new Error("db blip"));
+    await expect(controller.handleWebhook(req as never, res as never)).resolves.toBeUndefined();
+    expect(res.status).toHaveBeenCalledWith(HttpStatus.OK);
   });
 });
