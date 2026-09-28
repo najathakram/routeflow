@@ -12,6 +12,7 @@
 import { Test, TestingModule } from "@nestjs/testing";
 import { randomUUID } from "crypto";
 import { ProductsService } from "./products.service";
+import * as productCatalogSync from "./product-catalog-sync";
 import { PrismaService } from "../prisma/prisma.service";
 import { TenantContextService } from "../tenant/tenant-context.service";
 import { StorageService } from "../storage/storage.service";
@@ -145,26 +146,56 @@ describeDb("#2728 M1 catalog dual write — real Postgres", () => {
     expect(oldCodeRows).toHaveLength(0);
   });
 
-  it("SA-572c RACE: two concurrent creates of one NEW code on two products -> exactly one succeeds, one gets 409 BARCODE_TAKEN (never a raw error)", async () => {
-    const tenantId = await seedTenant("race");
-    const attempt = (name: string) =>
-      inTenant(tenantId, () =>
-        service.create({
-          name,
-          unit: "each",
-          pricePerUnit: "1.00",
-          barcode: "999888777",
-          unitsPerBox: 1,
-        } as any),
-      );
-    const results = await Promise.allSettled([attempt("Racer A"), attempt("Racer B")]);
-    const fulfilled = results.filter((r) => r.status === "fulfilled");
-    const rejected = results.filter((r) => r.status === "rejected");
-    expect(fulfilled).toHaveLength(1);
-    expect(rejected).toHaveLength(1);
-    const reason = (rejected[0] as PromiseRejectedResult).reason;
-    expect(typeof reason.getResponse).toBe("function");
-    expect(reason.getResponse()).toMatchObject({ code: "BARCODE_TAKEN" });
+  // SA-572c RACE, amended SA-572f (FINAL): 6 rounds, fresh code each round. The lock path
+  // (assertBarcodeAvailable, under the xact advisory lock) returns the WINNER's productId in the
+  // 409 body; the P2002-unique-violation mapping path (mapBarcodeUniqueViolation) is only ever hit
+  // when the lock failed to serialize the two writers, and its 409 body carries productId: null
+  // (the constraint violation alone can't say who holds it). Asserting productId === the winner's
+  // id, PLUS that mapBarcodeUniqueViolation is never called, is what actually discriminates "the
+  // lock worked" from "P2002 papered over a race the lock should have prevented" — a P2002 → 409
+  // mapping alone passes this suite even with the lock removed.
+  //
+  // revert-red: remove the xact lock in syncProductBarcodesFromLegacy/product create ⇒ the loser
+  // passes assertBarcodeAvailable (it can't see the uncommitted winner), blocks on the legacy
+  // unique in product.create, gets P2002 ⇒ mapBarcodeUniqueViolation fires and the mapped 409
+  // carries productId: null ⇒ both assertions below fail in at least one of the 6 rounds.
+  it("SA-572c RACE (6 rounds): exactly one succeeds, the loser's 409 carries the WINNER's productId, mapBarcodeUniqueViolation never fires", async () => {
+    const tenantId = await seedTenant("race6");
+    const mapperSpy = jest.spyOn(productCatalogSync, "mapBarcodeUniqueViolation");
+    try {
+      for (let round = 0; round < 6; round += 1) {
+        const code = `9998887${round}${randomUUID().slice(0, 4)}`;
+        const attempt = (name: string) =>
+          inTenant(tenantId, () =>
+            service.create({
+              name,
+              unit: "each",
+              pricePerUnit: "1.00",
+              barcode: code,
+              unitsPerBox: 1,
+            } as any),
+          );
+        // eslint-disable-next-line no-await-in-loop
+        const results = await Promise.allSettled([
+          attempt(`Racer A${round}`),
+          attempt(`Racer B${round}`),
+        ]);
+        const fulfilled = results.filter(
+          (r): r is PromiseFulfilledResult<{ id: string }> => r.status === "fulfilled",
+        );
+        const rejected = results.filter((r) => r.status === "rejected");
+        expect(fulfilled).toHaveLength(1);
+        expect(rejected).toHaveLength(1);
+        const winnerId = fulfilled[0].value.id;
+        const reason = (rejected[0] as PromiseRejectedResult).reason;
+        expect(typeof reason.getResponse).toBe("function");
+        const body = reason.getResponse();
+        expect(body).toMatchObject({ code: "BARCODE_TAKEN", productId: winnerId });
+      }
+      expect(mapperSpy).not.toHaveBeenCalled();
+    } finally {
+      mapperSpy.mockRestore();
+    }
   });
 
   it("product B update to a code A already holds -> 409 BARCODE_TAKEN; B's legacy barcode unchanged (tx rolled back)", async () => {

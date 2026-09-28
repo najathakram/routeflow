@@ -44,8 +44,9 @@ import {
 } from "./product-catalog-sync";
 import {
   barcodeRowsToView,
+  mirrorableImageKeys,
+  parseFocalFromKey,
   synthesizeLegacyBarcodes,
-  synthesizeLegacyImages,
 } from "./product-barcode-rules";
 
 /** `-fp50x40` → focal point 50% across, 40% down. Omitted if focal is centre. */
@@ -441,19 +442,39 @@ export class ProductsService {
       barcodeRows.length > 0
         ? barcodeRowsToView(barcodeRows)
         : synthesizeLegacyBarcodes({ barcode: product.barcode, unitsPerBox: product.unitsPerBox });
-    const images =
-      imageRows.length > 0
-        ? imageRows.map((row) => ({
-            storageKey: row.storageKey,
-            url: urlByKey.get(row.storageKey) ?? null,
-            focalX: row.focalX,
-            focalY: row.focalY,
-            sortOrder: row.sortOrder,
-            isPrimary: row.isPrimary,
-            altText: row.altText,
-            origin: "ROW" as const,
-          }))
-        : synthesizeLegacyImages(imageKeys, (key) => urlByKey.get(key) ?? null);
+    // #2728 M1 follow-up (SA-572f, amendment 1 — FINAL): a PER-KEY merge over
+    // mirrorableImageKeys(product), not an all-or-nothing switch on imageRows.length. A key the
+    // dual-write's per-key belt skipped (held by another product) or that's simply never had a row
+    // created for it yet still renders — via its LEGACY fallback — right alongside the keys that do
+    // have rows, so an edit that (correctly) leaves some keys row-less never blanks the gallery.
+    const mirrorKeys = mirrorableImageKeys(product.id, product.imageKeys);
+    const imageRowByKey = new Map(imageRows.map((row) => [row.storageKey, row]));
+    const images = mirrorKeys.map((key, index) => {
+      const existingRow = imageRowByKey.get(key);
+      if (existingRow) {
+        return {
+          storageKey: existingRow.storageKey,
+          url: urlByKey.get(existingRow.storageKey) ?? null,
+          focalX: existingRow.focalX,
+          focalY: existingRow.focalY,
+          sortOrder: existingRow.sortOrder,
+          isPrimary: existingRow.isPrimary,
+          altText: existingRow.altText,
+          origin: "ROW" as const,
+        };
+      }
+      const focal = parseFocalFromKey(key);
+      return {
+        storageKey: key,
+        url: urlByKey.get(key) ?? null,
+        focalX: focal ? focal.x : null,
+        focalY: focal ? focal.y : null,
+        sortOrder: index,
+        isPrimary: index === 0,
+        altText: null,
+        origin: "LEGACY" as const,
+      };
+    });
     return { ...product, imageKeys, imageUrls, stockAlertCount, barcodes, images };
   }
 

@@ -1,7 +1,7 @@
 import { ConflictException } from "@nestjs/common";
 import { BarcodeOrigin, PackagingLevel, Prisma } from "@prisma/client";
 import { API_ERROR_CODES } from "../common/api-error-codes";
-import { parseFocalFromKey, planBarcodeRows } from "./product-barcode-rules";
+import { mirrorableImageKeys, parseFocalFromKey, planBarcodeRows } from "./product-barcode-rules";
 
 /**
  * Any Prisma 7 interactive-transaction client — raw or the tenant-wrapped Proxy `tenantTransaction`
@@ -238,9 +238,21 @@ export async function syncProductBarcodesFromLegacy(
 }
 
 /**
- * SA-572b Q4/Q6: make this product's `ProductImage` rows match `imageKeys` in order (sortOrder =
- * index, isPrimary = index 0, focal parsed via `parseFocalFromKey`) — delete rows whose storageKey
- * fell out of the array, update rows whose sortOrder/isPrimary/focal drifted, create the rest.
+ * SA-572b Q4/Q6 (amended SA-572f): make this product's `ProductImage` rows match
+ * `mirrorableImageKeys(productId, imageKeys)` — own signable keys, deduped (first occurrence keeps
+ * its position; sortOrder = its index in THAT list, gaps allowed) — in order (isPrimary = index 0
+ * IF that key is kept, focal parsed via `parseFocalFromKey`): delete rows whose storageKey fell out
+ * of the mirror set, update rows whose sortOrder/isPrimary/focal drifted, create the rest.
+ *
+ * BELT (SA-572f, PER KEY): legacy (pre-#2533) `imageKeys` can hold a key another product's row
+ * already mirrors (a planted foreign key from before the #2533 prefix rule, or two products' legacy
+ * arrays both naming the same key some other way) — mirroring it here would hit
+ * `@@unique([tenantId, storageKey])` on create. Before writing, look up which of the mirrorable keys
+ * another product's row already holds and SKIP those, one key at a time: never re-assign, delete, or
+ * otherwise touch another product's row, and never throw — the other keys still mirror normally and
+ * the edit succeeds. A skipped key is simply absent from this product's rows; the read-model
+ * (`findOne`) still renders it via its LEGACY fallback.
+ *
  * Call this AFTER the legacy `product.update` in the SAME tx: the UPDATE statement takes the row
  * lock on `Product`, so whichever concurrent writer commits last also has its `imageKeys` value be
  * the one this sync mirrors (the row lock — not this helper — is what serializes two concurrent
@@ -257,16 +269,35 @@ export async function syncProductImagesFromLegacy(
     );
   }
 
-  const desired = imageKeys.map((storageKey, index) => {
-    const focal = parseFocalFromKey(storageKey);
-    return {
-      storageKey,
-      sortOrder: index,
-      isPrimary: index === 0,
-      focalX: focal ? focal.x : null,
-      focalY: focal ? focal.y : null,
-    };
-  });
+  const mirrorKeys = mirrorableImageKeys(productId, imageKeys);
+
+  const foreignHeld: Array<{ storageKey: string }> =
+    mirrorKeys.length > 0
+      ? await tx.productImage.findMany({
+          // `productId <> X` is NULL-false in SQL, so a tray row (productId NULL) must be named too.
+          where: {
+            tenantId,
+            storageKey: { in: mirrorKeys },
+            OR: [{ productId: { not: productId } }, { productId: null }],
+          },
+          select: { storageKey: true },
+        })
+      : [];
+  const foreignKeys = new Set(foreignHeld.map((r) => r.storageKey));
+
+  const desired = mirrorKeys
+    .map((storageKey, index) => ({ storageKey, index }))
+    .filter(({ storageKey }) => !foreignKeys.has(storageKey))
+    .map(({ storageKey, index }) => {
+      const focal = parseFocalFromKey(storageKey);
+      return {
+        storageKey,
+        sortOrder: index,
+        isPrimary: index === 0,
+        focalX: focal ? focal.x : null,
+        focalY: focal ? focal.y : null,
+      };
+    });
   const desiredByKey = new Map(desired.map((d) => [d.storageKey, d]));
 
   const existingRows: Array<{

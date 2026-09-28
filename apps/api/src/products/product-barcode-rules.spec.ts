@@ -1,11 +1,33 @@
 import {
   barcodeRowsToView,
+  mirrorableImageKeys,
   parseFocalFromKey,
   planBarcodeRows,
   printableUnitBarcode,
   synthesizeLegacyBarcodes,
   synthesizeLegacyImages,
 } from "./product-barcode-rules";
+
+const PID = "11111111-1111-4111-8111-111111111111";
+const own = (n: number) => `products/${PID}/img-${n}.jpg`;
+const OTHER = "22222222-2222-4222-8222-222222222222";
+const foreign = (n: number) => `products/${OTHER}/img-${n}.jpg`;
+
+// #2728 M1 follow-up (SA-572f): the mirror set for ProductImage rows — own signable keys, deduped.
+describe("mirrorableImageKeys (#2728 M1 follow-up, SA-572f)", () => {
+  it("dedupes a repeated own key, first occurrence keeps its position", () => {
+    expect(mirrorableImageKeys(PID, [own(1), own(1), own(2)])).toEqual([own(1), own(2)]);
+  });
+
+  it("drops a foreign (not-this-product) key entirely", () => {
+    expect(mirrorableImageKeys(PID, [own(1), foreign(1), own(2)])).toEqual([own(1), own(2)]);
+  });
+
+  it("null/undefined imageKeys -> empty", () => {
+    expect(mirrorableImageKeys(PID, null)).toEqual([]);
+    expect(mirrorableImageKeys(PID, undefined)).toEqual([]);
+  });
+});
 
 // T4 (R4, #2717 M1, SA-572a): the owner's rule — one legacy barcode becomes the product's
 // level rows; unitsPerBox > 1 gets a BOX row plus a COPIED UNIT row sharing the code.

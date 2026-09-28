@@ -106,7 +106,10 @@ describe("ProductsService.findOne — additive read fallback (T14)", () => {
     expect((result as any).images[1].focalY).toBe(70);
   });
 
-  it("with rows -> the rows are returned as-is (not re-synthesized)", async () => {
+  // #2728 M1 follow-up (SA-572f, amendment 1 — FINAL): images are a PER-KEY merge over
+  // mirrorableImageKeys, not an all-or-nothing switch — a mirrorable key with no row (b-fp30x70.jpg
+  // here) still renders, via its LEGACY fallback, alongside the keys that DO have a row.
+  it("with rows -> rows returned as-is; a mirrorable key with no row still renders via LEGACY", async () => {
     const rows = [
       {
         code: "036000291452",
@@ -155,6 +158,16 @@ describe("ProductsService.findOne — additive read fallback (T14)", () => {
         isPrimary: true,
         altText: null,
         origin: "ROW",
+      },
+      {
+        storageKey: "products/prod-1/b-fp30x70.jpg",
+        url: "signed:products/prod-1/b-fp30x70.jpg",
+        focalX: 30,
+        focalY: 70,
+        sortOrder: 1,
+        isPrimary: false,
+        altText: null,
+        origin: "LEGACY",
       },
     ]);
   });

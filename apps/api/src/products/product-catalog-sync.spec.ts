@@ -1,3 +1,5 @@
+import * as fs from "fs";
+import * as path from "path";
 import {
   assertBarcodeAvailable,
   lockBarcodeCodes,
@@ -30,7 +32,7 @@ interface ProductRow {
 interface ImageRow {
   id: string;
   tenantId: string;
-  productId: string;
+  productId: string | null;
   storageKey: string;
   sortOrder: number;
   isPrimary: boolean;
@@ -117,6 +119,26 @@ function makeTx(
     productImage: {
       findMany: jest.fn(({ where }: { where: Record<string, unknown> }) => {
         calls.push({ op: "productImage.findMany", args: { where } });
+        if ("storageKey" in where) {
+          const inList = (where.storageKey as { in: string[] }).in;
+          // Models `OR: [{ productId: { not: X } }, { productId: null }]` (a row of another product,
+          // or a tray row with no product, holds the key).
+          const orArms =
+            (where.OR as Array<{ productId: { not: string } | null }> | undefined) ?? [];
+          const notProductId = orArms.find((a) => a.productId !== null)?.productId?.not;
+          return Promise.resolve(
+            imageRows
+              .filter(
+                (r) =>
+                  r.tenantId === where.tenantId &&
+                  inList.includes(r.storageKey) &&
+                  (notProductId === undefined ||
+                    r.productId === null ||
+                    r.productId !== notProductId),
+              )
+              .map((r) => ({ storageKey: r.storageKey, productId: r.productId })),
+          );
+        }
         return Promise.resolve(
           imageRows.filter((r) => r.tenantId === where.tenantId && r.productId === where.productId),
         );
@@ -421,5 +443,141 @@ describe("syncProductImagesFromLegacy (T8)", () => {
       syncProductImagesFromLegacy(tx, { tenantId: "t1", productId: "", imageKeys: [] }),
     ).rejects.toThrow();
     expect(tx.calls).toHaveLength(0);
+  });
+
+  // #2728 M1 follow-up (SA-572f, amendment 1 — FINAL): legacy (pre-#2533) imageKeys can hold a
+  // duplicate key or a key that names another product's own prefix (a planted foreign key). Mirror
+  // only mirrorableImageKeys (own, deduped) and skip — PER KEY, never throw, never touch another
+  // product's row — any key another product's row already holds.
+  it("a duplicate key mirrors ONCE: k1 sortOrder 0 primary, k2 sortOrder 1 (exactly 2 creates)", async () => {
+    const tx = makeTx();
+    await syncProductImagesFromLegacy(tx, {
+      tenantId: "t1",
+      productId: "p1",
+      imageKeys: ["products/p1/k1.jpg", "products/p1/k1.jpg", "products/p1/k2.jpg"],
+    });
+    const creates = tx.calls.filter((c) => c.op === "productImage.create");
+    expect(creates).toHaveLength(2);
+    expect((creates[0].args as { data: Record<string, unknown> }).data).toMatchObject({
+      storageKey: "products/p1/k1.jpg",
+      sortOrder: 0,
+      isPrimary: true,
+    });
+    expect((creates[1].args as { data: Record<string, unknown> }).data).toMatchObject({
+      storageKey: "products/p1/k2.jpg",
+      sortOrder: 1,
+      isPrimary: false,
+    });
+  });
+
+  it("a foreign-prefixed key (not this product's own) never mirrors: no row for it", async () => {
+    const tx = makeTx();
+    await syncProductImagesFromLegacy(tx, {
+      tenantId: "t1",
+      productId: "p1",
+      imageKeys: ["products/p1/k1.jpg", "products/OTHER/x.jpg"],
+    });
+    const creates = tx.calls.filter((c) => c.op === "productImage.create");
+    expect(creates).toHaveLength(1);
+    expect((creates[0].args as { data: Record<string, unknown> }).data.storageKey).toBe(
+      "products/p1/k1.jpg",
+    );
+  });
+
+  it("a key another product's row already holds is SKIPPED (per-key), never thrown, other keys still mirror", async () => {
+    const tx = makeTx({
+      images: [
+        {
+          id: "img-other",
+          tenantId: "t1",
+          productId: "other-product",
+          storageKey: "products/p1/k1.jpg",
+          sortOrder: 0,
+          isPrimary: true,
+          focalX: null,
+          focalY: null,
+        },
+      ],
+    });
+    await expect(
+      syncProductImagesFromLegacy(tx, {
+        tenantId: "t1",
+        productId: "p1",
+        imageKeys: ["products/p1/k1.jpg", "products/p1/k2.jpg"],
+      }),
+    ).resolves.toBeUndefined();
+    const creates = tx.calls.filter((c) => c.op === "productImage.create");
+    expect(creates).toHaveLength(1);
+    expect((creates[0].args as { data: Record<string, unknown> }).data).toMatchObject({
+      storageKey: "products/p1/k2.jpg",
+      sortOrder: 1,
+    });
+    // Never touches (deletes/updates) the OTHER product's row.
+    expect(tx.calls.some((c) => c.op === "productImage.deleteMany")).toBe(false);
+  });
+
+  it("a TRAY row (productId NULL) holding a key counts as held too: skipped, never a unique-violation create", async () => {
+    const tx = makeTx({
+      images: [
+        {
+          id: "img-tray",
+          tenantId: "t1",
+          productId: null,
+          storageKey: "products/p1/k1.jpg",
+          sortOrder: 0,
+          isPrimary: false,
+          focalX: null,
+          focalY: null,
+        },
+      ],
+    });
+    await syncProductImagesFromLegacy(tx, {
+      tenantId: "t1",
+      productId: "p1",
+      imageKeys: ["products/p1/k1.jpg"],
+    });
+    expect(tx.calls.filter((c) => c.op === "productImage.create")).toHaveLength(0);
+    const held = tx.calls.find(
+      (c) =>
+        c.op === "productImage.findMany" && "storageKey" in (c.args as { where: object }).where,
+    );
+    expect((held?.args as { where: { OR: unknown[] } }).where.OR).toContainEqual({
+      productId: null,
+    });
+  });
+});
+
+/**
+ * SA-572c / SA-572g source pin: every caller's tx body must call `lockBarcodeCodes(` BEFORE
+ * `assertBarcodeAvailable(` (source order, matched pairwise in order of appearance — each caller
+ * has exactly one of each). This is the ordering the RACE pin in products-dual-write.db.spec.ts
+ * (SA-572c RACE) exercises against a real Postgres advisory lock.
+ *
+ * revert-red: remove the xact lock (or reorder the two calls) in any of these tx bodies and this
+ * fails immediately, with no Postgres needed — the loser would otherwise pass
+ * assertBarcodeAvailable (it can't see the uncommitted winner), block on the legacy unique in
+ * product.create, get P2002, and the mapped 409 would carry productId null instead of the winner's
+ * id (the exact failure the DB-lane race pin's productId assertion is there to catch).
+ */
+describe("source pin: lockBarcodeCodes precedes assertBarcodeAvailable in every caller tx body", () => {
+  const FILES = ["products.service.ts", path.join("..", "import", "import.service.ts")];
+
+  it("lockBarcodeCodes( appears before its paired assertBarcodeAvailable( in each file", () => {
+    let totalPairs = 0;
+    for (const rel of FILES) {
+      const src = fs.readFileSync(path.join(__dirname, rel), "utf8");
+      const lockIdxs: number[] = [];
+      const assertIdxs: number[] = [];
+      for (const m of src.matchAll(/lockBarcodeCodes\(/g)) lockIdxs.push(m.index as number);
+      for (const m of src.matchAll(/assertBarcodeAvailable\(/g)) assertIdxs.push(m.index as number);
+      expect(lockIdxs.length).toBeGreaterThan(0);
+      expect(lockIdxs.length).toBe(assertIdxs.length);
+      for (let i = 0; i < lockIdxs.length; i += 1) {
+        expect(lockIdxs[i]).toBeLessThan(assertIdxs[i]);
+      }
+      totalPairs += lockIdxs.length;
+    }
+    // Non-vacuous: both files together must have found real pairs to check.
+    expect(totalPairs).toBeGreaterThanOrEqual(4);
   });
 });

@@ -22,7 +22,7 @@
 import { Pool } from "pg";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { PrismaClient } from "@prisma/client";
-import { planBarcodeRows } from "../src/products/product-barcode-rules";
+import { mirrorableImageKeys, planBarcodeRows } from "../src/products/product-barcode-rules";
 
 export interface BarcodeConflictRow {
   tenantId: string;
@@ -36,17 +36,42 @@ export interface BarcodeConflictRow {
   primaryFor?: string | null;
 }
 
+/** One `ProductImage` row's identity — used only to detect a mirrorable key another product's row
+ *  already holds (SA-572f). #2728 M1 follow-up. */
+export interface ImageConflictRow {
+  tenantId: string;
+  productId: string;
+  storageKey: string;
+}
+
 export interface BarcodeConflictProduct {
   id: string;
   tenantId: string | null;
   barcode: string | null;
   unitsPerBox: number | null;
   hasRows: boolean;
+  /** Legacy imageKeys array (raw, may hold a duplicate or a non-own key). Optional/defaulted to
+   *  `[]` so existing barcode-only callers need no change. #2728 M1 follow-up. */
+  imageKeys?: string[];
+  /** Does this product have at least one ProductImage row? Optional/defaulted to `false`. */
+  hasImageRows?: boolean;
 }
 
 export interface BarcodeConflictCounts {
   codesOnMultipleProducts: number;
   productsDriftedFromLegacy: number;
+  /** A product with a non-blank barcode OR >=1 mirrorable image key, and ZERO rows of the matching
+   *  table (barcode rows for the barcode case, image rows for the image case). Counted once per
+   *  product even when BOTH are missing. #2728 M1 follow-up (SA-572f). */
+  unmirroredProducts: number;
+  /** A product whose legacy `imageKeys` holds a duplicate or a non-own (foreign-prefixed) key —
+   *  `mirrorableImageKeys` silently drops these, so they never become a row. #2728 M1 follow-up. */
+  productsWithUnmirrorableImageKeys: number;
+  /** Counts KEYS, not products: a mirrorable key of product P for which a `ProductImage` row with
+   *  the SAME (tenantId, storageKey) exists under a DIFFERENT productId — the belt
+   *  `syncProductImagesFromLegacy`/the backfill skip per-key would have engaged for. #2728 M1
+   *  follow-up (SA-572f). */
+  imageKeysHeldByAnotherProduct: number;
 }
 
 /** Strip credentials from a Postgres connection string for safe logging. */
@@ -91,6 +116,7 @@ function rowKeys(
 export function countBarcodeConflicts(
   rows: BarcodeConflictRow[],
   products: BarcodeConflictProduct[],
+  imageRows: ImageConflictRow[] = [],
 ): BarcodeConflictCounts {
   const byTenantCode = new Map<string, Set<string>>();
   for (const row of rows) {
@@ -123,7 +149,45 @@ export function countBarcodeConflicts(
     if (!same) productsDriftedFromLegacy += 1;
   }
 
-  return { codesOnMultipleProducts, productsDriftedFromLegacy };
+  // #2728 M1 follow-up (SA-572f/g): who holds a ProductImage row for a given (tenantId, storageKey)?
+  const imageHoldersByKey = new Map<string, Set<string>>();
+  for (const row of imageRows) {
+    const key = `${row.tenantId}::${row.storageKey}`;
+    const set = imageHoldersByKey.get(key) ?? new Set<string>();
+    set.add(row.productId);
+    imageHoldersByKey.set(key, set);
+  }
+
+  let unmirroredProducts = 0;
+  let productsWithUnmirrorableImageKeys = 0;
+  let imageKeysHeldByAnotherProduct = 0;
+
+  for (const product of products) {
+    const rawImageKeys = product.imageKeys ?? [];
+    const mirrorKeys = mirrorableImageKeys(product.id, rawImageKeys);
+    if (mirrorKeys.length !== rawImageKeys.length) productsWithUnmirrorableImageKeys += 1;
+
+    for (const key of mirrorKeys) {
+      const holders = imageHoldersByKey.get(`${product.tenantId}::${key}`);
+      if (holders && (holders.size > 1 || !holders.has(product.id))) {
+        imageKeysHeldByAnotherProduct += 1;
+      }
+    }
+
+    const hasBarcode = typeof product.barcode === "string" && product.barcode.trim().length > 0;
+    const hasMirrorableImage = mirrorKeys.length > 0;
+    const missingBarcodeRows = hasBarcode && !product.hasRows;
+    const missingImageRows = hasMirrorableImage && !(product.hasImageRows ?? false);
+    if (missingBarcodeRows || missingImageRows) unmirroredProducts += 1;
+  }
+
+  return {
+    codesOnMultipleProducts,
+    productsDriftedFromLegacy,
+    unmirroredProducts,
+    productsWithUnmirrorableImageKeys,
+    imageKeysHeldByAnotherProduct,
+  };
 }
 
 function parseArgs(argv: string[]): { tenantSlug?: string } {
@@ -134,41 +198,69 @@ function parseArgs(argv: string[]): { tenantSlug?: string } {
   return { tenantSlug: argVal("tenant") };
 }
 
-async function loadCounts(
+/**
+ * #2728 M1 follow-up (SA-572f, item D): every read runs inside ONE `prisma.$transaction`, the
+ * transaction sets `SET TRANSACTION READ ONLY` as its very first statement (a Postgres-level
+ * guarantee this report can never write, on top of it never calling anything but `findMany`), and
+ * the tenant-not-found refusal is generic — this script's own header promises stderr never echoes
+ * a tenant slug/name/id, product name/id, or barcode value, and an error message is exactly the
+ * kind of place one leaks (R-030a).
+ */
+export async function loadCounts(
   prisma: PrismaClient,
   tenantSlug?: string,
 ): Promise<BarcodeConflictCounts> {
-  const tenantWhere = tenantSlug ? { where: { slug: tenantSlug }, select: { id: true } } : null;
-  let tenantId: string | undefined;
-  if (tenantWhere) {
-    const tenant = await prisma.tenant.findUnique(tenantWhere);
-    if (!tenant) throw new Error(`tenant "${tenantSlug}" not found`);
-    tenantId = tenant.id;
-  }
+  return prisma.$transaction(async (tx) => {
+    await tx.$executeRaw`SET TRANSACTION READ ONLY`;
 
-  const rows = await prisma.productBarcode.findMany({
-    where: tenantId ? { tenantId } : undefined,
-    select: {
-      tenantId: true,
-      productId: true,
-      code: true,
-      level: true,
-      origin: true,
-      copiedFromLevel: true,
-      primaryFor: true,
-    },
+    const tenantWhere = tenantSlug ? { where: { slug: tenantSlug }, select: { id: true } } : null;
+    let tenantId: string | undefined;
+    if (tenantWhere) {
+      const tenant = await tx.tenant.findUnique(tenantWhere);
+      if (!tenant) throw new Error("tenant not found (check --tenant)");
+      tenantId = tenant.id;
+    }
+
+    const rows = await tx.productBarcode.findMany({
+      where: tenantId ? { tenantId } : undefined,
+      select: {
+        tenantId: true,
+        productId: true,
+        code: true,
+        level: true,
+        origin: true,
+        copiedFromLevel: true,
+        primaryFor: true,
+      },
+    });
+    const rowProductIds = new Set(rows.map((r) => r.productId));
+
+    const rawImageRows = await tx.productImage.findMany({
+      where: tenantId ? { tenantId } : undefined,
+      select: { tenantId: true, productId: true, storageKey: true },
+    });
+    // productId is non-null in practice (every ProductImage row is created with one) — filter
+    // defensively rather than assert, so a stray null row can never crash the report.
+    const imageRows: ImageConflictRow[] = rawImageRows.filter(
+      (r): r is typeof r & { productId: string } => r.productId != null,
+    );
+    const imageRowProductIds = new Set(imageRows.map((r) => r.productId));
+
+    const products = await tx.product.findMany({
+      where: tenantId ? { tenantId } : undefined,
+      select: { id: true, tenantId: true, barcode: true, unitsPerBox: true, imageKeys: true },
+    });
+
+    return countBarcodeConflicts(
+      rows,
+      products.map((p) => ({
+        ...p,
+        hasRows: rowProductIds.has(p.id),
+        hasImageRows: imageRowProductIds.has(p.id),
+      })),
+      imageRows,
+    );
   });
-  const rowProductIds = new Set(rows.map((r) => r.productId));
-
-  const products = await prisma.product.findMany({
-    where: tenantId ? { tenantId } : undefined,
-    select: { id: true, tenantId: true, barcode: true, unitsPerBox: true },
-  });
-
-  return countBarcodeConflicts(
-    rows,
-    products.map((p) => ({ ...p, hasRows: rowProductIds.has(p.id) })),
-  );
 }
 
 async function main() {

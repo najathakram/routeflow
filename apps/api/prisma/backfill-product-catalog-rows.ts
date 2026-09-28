@@ -33,7 +33,11 @@
 import { Pool } from "pg";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { Prisma, PrismaClient } from "@prisma/client";
-import { parseFocalFromKey, planBarcodeRows } from "../src/products/product-barcode-rules";
+import {
+  mirrorableImageKeys,
+  parseFocalFromKey,
+  planBarcodeRows,
+} from "../src/products/product-barcode-rules";
 import { lockBarcodeCodes, lockProductRow } from "../src/products/product-catalog-sync";
 import { isTestTenant } from "../../../scripts/lib/test-tenants.cjs";
 // paying-tenant.cjs has no .d.cts declaration file (unlike test-tenants.cjs), so it is required
@@ -58,6 +62,10 @@ export interface BackfillCounts {
   productsWithImageRowsAlready: number;
   barcodeRowsPlanned: number;
   barcodeRowsInserted: number;
+  /** SA-572g(3): a product whose barcode changed between the page read and the row lock — its
+   *  barcode rows are skipped THIS run rather than risk inverting the app's lock order. Counted so
+   *  the run's output shows it, rather than a silent no-op the next run is left to explain. */
+  barcodeSkippedCodeChanged: number;
   imageRowsPlanned: number;
   imageRowsInserted: number;
 }
@@ -128,6 +136,7 @@ export async function backfillProductCatalogRows(
     productsWithImageRowsAlready: 0,
     barcodeRowsPlanned: 0,
     barcodeRowsInserted: 0,
+    barcodeSkippedCodeChanged: 0,
     imageRowsPlanned: 0,
     imageRowsInserted: 0,
   };
@@ -208,7 +217,10 @@ export async function backfillProductCatalogRows(
           if (p._count.images > 0) {
             counts.productsWithImageRowsAlready += 1;
           } else {
-            counts.imageRowsPlanned += p.imageKeys.length;
+            // #2728 M1 follow-up (SA-572f): plan against the SAME mirror set the sync/apply/read
+            // paths use (own signable keys, deduped) — not the raw legacy array, which can hold a
+            // duplicate or a foreign-prefixed key that would never become a row.
+            counts.imageRowsPlanned += mirrorableImageKeys(p.id, p.imageKeys).length;
           }
           continue;
         }
@@ -253,6 +265,9 @@ export async function backfillProductCatalogRows(
           // lock, we hold the wrong code's lock, and taking the new one now (after the row lock) would
           // invert the app's order (code → row) and could deadlock. Skip its barcode rows this run;
           // the next run mirrors it (it is still row-less only if no app sync ran).
+          if (needsBarcodeRows && fresh._count.barcodes === 0 && fresh.barcode !== p.barcode) {
+            counts.barcodeSkippedCodeChanged += 1;
+          }
           if (needsBarcodeRows && fresh._count.barcodes === 0 && fresh.barcode === p.barcode) {
             const rows = planBarcodeRows({
               barcode: fresh.barcode,
@@ -279,8 +294,29 @@ export async function backfillProductCatalogRows(
           }
 
           if (needsImageRows && fresh._count.images === 0) {
-            const imageData: Prisma.ProductImageCreateManyInput[] = fresh.imageKeys.map(
-              (key, index) => {
+            // #2728 M1 follow-up (SA-572f): plan/insert against mirrorableImageKeys (own, deduped),
+            // and — PER KEY, mirroring the app's own dual-write belt — never insert a row for a key
+            // another product's row already holds. The backfill is INSERT-ONLY, so a held key is
+            // simply omitted here; it is never deleted or reassigned.
+            const mirrorKeys = mirrorableImageKeys(p.id, fresh.imageKeys);
+            const foreignHeld: Array<{ storageKey: string }> =
+              mirrorKeys.length > 0
+                ? await tx.productImage.findMany({
+                    where: {
+                      tenantId: tenant.id,
+                      storageKey: { in: mirrorKeys },
+                      // A tray row (productId NULL) counts as held too: `<>` is NULL-false in SQL.
+                      OR: [{ productId: { not: p.id } }, { productId: null }],
+                    },
+                    select: { storageKey: true },
+                  })
+                : [];
+            const foreignKeys = new Set(foreignHeld.map((r) => r.storageKey));
+
+            const imageData: Prisma.ProductImageCreateManyInput[] = mirrorKeys
+              .map((key, index) => ({ key, index }))
+              .filter(({ key }) => !foreignKeys.has(key))
+              .map(({ key, index }) => {
                 const focal = parseFocalFromKey(key);
                 return {
                   tenantId: tenant.id,
@@ -291,8 +327,7 @@ export async function backfillProductCatalogRows(
                   focalX: focal?.x ?? null,
                   focalY: focal?.y ?? null,
                 };
-              },
-            );
+              });
             counts.imageRowsPlanned += imageData.length;
             if (imageData.length > 0) {
               const res = await tx.productImage.createMany({

@@ -23,12 +23,23 @@ import { randomUUID } from "crypto";
 import { Pool } from "pg";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { PrismaClient, TenantClass, TenantStatus } from "@prisma/client";
+import { Test, TestingModule } from "@nestjs/testing";
 import { describeDb, requireLocalDatabaseUrl } from "../common/testing/db-spec";
 import {
   backfillProductCatalogRows,
   BackfillRefused,
 } from "../../prisma/backfill-product-catalog-rows";
+import { planBarcodeRows } from "../products/product-barcode-rules";
 import { syncProductBarcodesFromLegacy } from "../products/product-catalog-sync";
+import { ProductsService } from "../products/products.service";
+import { PrismaService } from "../prisma/prisma.service";
+import { TenantContextService } from "../tenant/tenant-context.service";
+import { StorageService } from "../storage/storage.service";
+import { AddonService } from "../billing/addon.service";
+import { SystemConfigService } from "../system-config/system-config.service";
+import { EntitlementsService } from "../billing/entitlements.service";
+import { PlanCatalogService } from "../billing/plan-catalog.service";
+import { RouteFlowGateway } from "../gateways/routeflow.gateway";
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const { assertTestTenant } = require("../../../../scripts/lib/test-tenants.cjs") as {
@@ -310,6 +321,110 @@ describeDb("backfill-product-catalog-rows backfillProductCatalogRows() (db)", ()
 
     const after = await prisma.productBarcode.count({ where: { tenantId: liveTenantId } });
     expect(after).toBe(before);
+  });
+
+  // SA-572e — F2 runs this at the PR sha; typechecked only here, not executed (no local Postgres in
+  // this worktree). Real-PG proof that the backfill and a concurrent app update() never corrupt
+  // each other's write: six rounds, a fresh row-less product each round, backfill(apply) racing
+  // ProductsService.update() to the SAME barcode lock family. Both sides must resolve (no raw
+  // error either side — assertBarcodeAvailable/the P2002 mapper only ever produce a clean 409, and
+  // this product is never contended so neither should even see one), and afterwards the product's
+  // rows must deep-equal exactly what planBarcodeRows({barcode: Y, unitsPerBox: 12}) plans — i.e.
+  // whichever writer ran second mirrors the FINAL legacy state, never a half-applied mix of both.
+  it("SA-572e: backfill(apply) racing ProductsService.update() on a fresh row-less product leaves rows == planBarcodeRows(final state)", async () => {
+    let productsTenantCtx: TenantContextService;
+    let productsPrisma: PrismaService;
+    let productsService: ProductsService;
+
+    const module: TestingModule = await Test.createTestingModule({
+      providers: [
+        ProductsService,
+        {
+          provide: PrismaService,
+          useFactory: () => {
+            productsTenantCtx = new TenantContextService();
+            productsPrisma = new PrismaService(productsTenantCtx);
+            return productsPrisma;
+          },
+        },
+        {
+          provide: StorageService,
+          useValue: {
+            presignedUrl: jest.fn().mockResolvedValue("http://mock-url"),
+            presignedUrls: jest
+              .fn()
+              .mockImplementation((keys: string[]) =>
+                Promise.resolve(keys.map(() => "http://mock-url")),
+              ),
+            upload: jest.fn().mockResolvedValue(undefined),
+            delete: jest.fn().mockResolvedValue(undefined),
+          },
+        },
+        { provide: AddonService, useValue: { hasAddon: jest.fn().mockResolvedValue(false) } },
+        { provide: SystemConfigService, useValue: { get: jest.fn().mockResolvedValue(null) } },
+        { provide: EntitlementsService, useValue: { hasFlag: jest.fn().mockResolvedValue(false) } },
+        {
+          provide: PlanCatalogService,
+          useValue: { upgradeTargetForFlag: jest.fn().mockResolvedValue(null) },
+        },
+        { provide: RouteFlowGateway, useValue: { emitProductUpdated: jest.fn() } },
+      ],
+    }).compile();
+    productsService = module.get(ProductsService);
+    await productsPrisma!.$connect();
+
+    try {
+      for (let round = 0; round < 6; round += 1) {
+        const codeX = await seedCode();
+        const codeY = await seedCode();
+        const product = await prisma.product.create({
+          data: {
+            tenantId: testTenantId,
+            unit: "case",
+            pricePerUnit: 10,
+            name: `race-${run}-${round}`,
+            barcode: codeX,
+            unitsPerBox: 12,
+          },
+        });
+        productIds[`race${round}`] = product.id;
+
+        const results = await Promise.allSettled([
+          backfillProductCatalogRows(prisma, { tenantSlug: testSlug, apply: true }),
+          productsTenantCtx!.run(testTenantId, () =>
+            productsService.update(product.id, { barcode: codeY } as any),
+          ),
+        ]);
+
+        for (const result of results) {
+          expect(result.status).toBe("fulfilled");
+        }
+
+        const rows = await prisma.productBarcode.findMany({
+          where: { tenantId: testTenantId, productId: product.id },
+          select: {
+            code: true,
+            level: true,
+            origin: true,
+            copiedFromLevel: true,
+            primaryFor: true,
+          },
+          orderBy: { level: "asc" },
+        });
+        const expected = planBarcodeRows({ barcode: codeY, unitsPerBox: 12 })
+          .map((r) => ({
+            code: r.code,
+            level: r.level,
+            origin: r.origin,
+            copiedFromLevel: r.copiedFromLevel,
+            primaryFor: r.primaryFor,
+          }))
+          .sort((a, b) => a.level.localeCompare(b.level));
+        expect(rows).toEqual(expected);
+      }
+    } finally {
+      await productsPrisma!.$disconnect();
+    }
   });
 
   it("refuses when the live-tenant override names a DIFFERENT slug", async () => {

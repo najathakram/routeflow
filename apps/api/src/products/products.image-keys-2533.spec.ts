@@ -146,6 +146,38 @@ describe("ProductsService — cross-tenant image keys (#2533)", () => {
     expect(storage.delete).toHaveBeenCalledWith(own(1));
   });
 
+  // #2728 M1 follow-up (SA-572f, amendment 1 — FINAL): findOne's `images` is a PER-KEY merge over
+  // mirrorableImageKeys(product) — a key with a ProductImage row renders ROW, a key with none (a
+  // duplicate's second occurrence, or one skipped by the sync's per-key belt) renders LEGACY, in
+  // the same list, same order.
+  it("findOne merges rows and legacy fallback PER KEY over mirrorableImageKeys (dedup, own-only)", async () => {
+    prisma.product.findUnique.mockResolvedValue({
+      ...row([own(1), own(1), own(2), FOREIGN]),
+      barcode: null,
+      unitsPerBox: null,
+      barcodes: [],
+      images: [
+        {
+          storageKey: own(1),
+          sortOrder: 0,
+          isPrimary: true,
+          focalX: null,
+          focalY: null,
+          altText: null,
+        },
+      ],
+    });
+    const p: any = await service.findOne(P);
+    expect(p.images).toHaveLength(2); // FOREIGN is never in the mirror set; own(1) deduped to one
+    expect(p.images[0]).toMatchObject({ storageKey: own(1), origin: "ROW", isPrimary: true });
+    expect(p.images[1]).toMatchObject({
+      storageKey: own(2),
+      origin: "LEGACY",
+      sortOrder: 1,
+      isPrimary: false,
+    });
+  });
+
   it("#2717 M1: image rows sync from the value the UPDATE wrote, not the earlier read (a concurrent upload is kept)", async () => {
     // The PATCH carries no imageKeys; between update()'s read ([own(1)]) and its write, a concurrent
     // upload pushed own(2). The UPDATE returns the post-write row, so the rows must follow it.

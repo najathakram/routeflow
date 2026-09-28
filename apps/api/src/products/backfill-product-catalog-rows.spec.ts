@@ -40,7 +40,10 @@ function mockPrisma(overrides: Record<string, unknown> = {}) {
   const tx = {
     product: { findUnique: jest.fn() },
     productBarcode: { createMany: jest.fn().mockResolvedValue({ count: 0 }) },
-    productImage: { createMany: jest.fn().mockResolvedValue({ count: 0 }) },
+    productImage: {
+      findMany: jest.fn().mockResolvedValue([]),
+      createMany: jest.fn().mockResolvedValue({ count: 0 }),
+    },
   };
   return {
     tenant: {
@@ -306,6 +309,75 @@ describe("backfillProductCatalogRows — planned counts over a mixed product set
     expect(prisma.__tx.productBarcode.createMany).not.toHaveBeenCalled();
     expect(counts.barcodeRowsInserted).toBe(0);
     expect(counts.imageRowsInserted).toBe(1);
+    // SA-572g(3): this skip (lock-order inversion avoidance) is now counted, not silent.
+    expect(counts.barcodeSkippedCodeChanged).toBe(1);
+  });
+
+  // #2728 M1 follow-up (SA-572f, amendment 1 — FINAL): the backfill's image planning uses
+  // mirrorableImageKeys too — a duplicate legacy key plans/inserts exactly ONE row.
+  it("a duplicate imageKeys entry plans/inserts exactly 1 image row (mirrorableImageKeys dedup)", async () => {
+    const prisma = mockPrisma();
+    prisma.tenant.findUnique.mockResolvedValue({ id: "t1", slug: "test" });
+    prisma.product.findMany.mockResolvedValueOnce([
+      {
+        id: "H",
+        barcode: null,
+        unitsPerBox: null,
+        imageKeys: ["products/H/k1.jpg", "products/H/k1.jpg"],
+        _count: { barcodes: 0, images: 0 },
+      },
+    ]);
+    prisma.product.findMany.mockResolvedValueOnce([]);
+    prisma.__tx.product.findUnique.mockResolvedValue({
+      barcode: null,
+      unitsPerBox: null,
+      imageKeys: ["products/H/k1.jpg", "products/H/k1.jpg"],
+      tenantId: "t1",
+      _count: { barcodes: 0, images: 0 },
+    });
+    prisma.__tx.productImage.createMany.mockResolvedValue({ count: 1 });
+
+    const counts = await backfillProductCatalogRows(prisma, { tenantSlug: "test", apply: true });
+
+    expect(counts.imageRowsPlanned).toBe(1);
+    expect(prisma.__tx.productImage.createMany).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.arrayContaining([expect.anything()]) }),
+    );
+    const data = (prisma.__tx.productImage.createMany.mock.calls[0][0] as { data: unknown[] }).data;
+    expect(data).toHaveLength(1);
+  });
+
+  // A key another product's row already holds is SKIPPED (per key), never inserted, never throws —
+  // the backfill is INSERT-ONLY so this is simply an omission, not a delete.
+  it("a legacy image key another product's row already holds is skipped, not inserted", async () => {
+    const prisma = mockPrisma();
+    prisma.tenant.findUnique.mockResolvedValue({ id: "t1", slug: "test" });
+    prisma.product.findMany.mockResolvedValueOnce([
+      {
+        id: "I",
+        barcode: null,
+        unitsPerBox: null,
+        imageKeys: ["products/I/k1.jpg", "products/I/k2.jpg"],
+        _count: { barcodes: 0, images: 0 },
+      },
+    ]);
+    prisma.product.findMany.mockResolvedValueOnce([]);
+    prisma.__tx.product.findUnique.mockResolvedValue({
+      barcode: null,
+      unitsPerBox: null,
+      imageKeys: ["products/I/k1.jpg", "products/I/k2.jpg"],
+      tenantId: "t1",
+      _count: { barcodes: 0, images: 0 },
+    });
+    prisma.__tx.productImage.findMany.mockResolvedValue([{ storageKey: "products/I/k1.jpg" }]);
+    prisma.__tx.productImage.createMany.mockResolvedValue({ count: 1 });
+
+    const counts = await backfillProductCatalogRows(prisma, { tenantSlug: "test", apply: true });
+
+    expect(counts.imageRowsPlanned).toBe(1);
+    const data = (prisma.__tx.productImage.createMany.mock.calls[0][0] as { data: unknown[] }).data;
+    expect(data).toHaveLength(1);
+    expect((data[0] as { storageKey: string }).storageKey).toBe("products/I/k2.jpg");
   });
 
   it("F2/F3: locks in the app's order — code lock, row lock, THEN the fresh read, THEN createMany", async () => {

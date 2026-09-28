@@ -2,6 +2,7 @@ import { BarcodeOrigin, BarcodeSymbology, PackagingLevel } from "@prisma/client"
 import type { ProductBarcodeView, ProductImageView } from "@routeflow/types";
 import { defaultSellLevel } from "@routeflow/pricing";
 import { inferBarcodeSymbology } from "../common/barcode-symbology";
+import { signableImageKeys } from "./product-image-keys";
 
 /** #2717 M1 (SA-572a): a single planned/persisted ProductBarcode row. */
 export interface PlannedBarcodeRow {
@@ -125,6 +126,29 @@ export function barcodeRowsToView(
     copiedFromLevel: row.copiedFromLevel,
     primaryFor: row.primaryFor,
   }));
+}
+
+/**
+ * #2728 M1 follow-up (SA-572f): the set of `imageKeys` this product's ProductImage rows may ever
+ * mirror — its OWN signable keys (`signableImageKeys`; #2533 already excludes another product's/
+ * tenant's key), de-duplicated with FIRST occurrence winning and order kept. Legacy (pre-#2533)
+ * data can hold the same key twice, which would otherwise hit `@@unique([tenantId, storageKey])`
+ * on the second mirrored create. Shared by the dual-write sync, the backfill's image planning, and
+ * the read-model fallback so all three agree on exactly which keys a row can exist for.
+ */
+export function mirrorableImageKeys(
+  productId: string,
+  imageKeys: readonly string[] | null | undefined,
+): string[] {
+  const own = signableImageKeys(productId, imageKeys);
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const key of own) {
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(key);
+  }
+  return out;
 }
 
 /**
