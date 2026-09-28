@@ -168,3 +168,118 @@ A candidate becomes a SKILL.md rule after it appears in 3 log entries. `promoted
 - candidate: a-grep-is-a-sample-the-typechecker-is-the-proof
   key: a grep is a sample the typechecker is the proof
   first: 2026-09-23
+- candidate: One routing authority per lane: machine leads own their lanes' instructions; the fleet lead routes through them
+  key: one routing authority per lane machine leads own their lanes instructions the fleet lead routes through them
+  first: 2026-09-26
+- candidate: A DB spec proves nothing about rows written through a mocked collaborator; check the providers, not the header
+  key: a db spec proves nothing about rows written through a mocked collaborator check the providers not the header
+  first: 2026-09-26
+- candidate: Repo scripts that write shared state default to dry-run and reject unknown flags
+  key: repo scripts that write shared state default to dry run and reject unknown flags
+  first: 2026-09-26
+- candidate: Platform-branching scripts get platform-aware specs; Linux CI cannot prove the PC pre-push
+  key: platform branching scripts get platform aware specs linux ci cannot prove the pc pre push
+  first: 2026-09-26
+- candidate: Verify concurrency is a per-machine budget read from memory pressure, not one global rule
+  key: verify concurrency is a per machine budget read from memory pressure not one global rule
+  first: 2026-09-26
+- candidate: A money fixture must be shaped by the writer, not by the reader under test
+  key: a money fixture must be shaped by the writer not by the reader under test
+  first: 2026-09-26
+- candidate: A money verdict waits for the executed proof, not the other way round
+  key: a money verdict waits for the executed proof not the other way round
+  first: 2026-09-26
+- candidate: A report that can exit 0 silently is not a report — spawn it in the spec
+  key: a report that can exit 0 silently is not a report spawn it in the spec
+  first: 2026-09-26
+- candidate: Grant a verify slot only after reading free disk; caches are the first reclaim
+  key: grant a verify slot only after reading free disk caches are the first reclaim
+  first: 2026-09-26
+- candidate: Migration timestamps are unique across open PRs, checked before proof
+  key: migration timestamps are unique across open prs checked before proof
+  first: 2026-09-26
+- candidate: A migration that restricts writes lands after the code that stops the violating writes; only additive migrations go first
+  key: a migration that restricts writes lands after the code that stops the violating writes only additive migrations go first
+  first: 2026-09-26
+- candidate: Verify the delivery path of a mobile fix (installed build channel + runtime) before promising it ships by OTA
+  key: verify the delivery path of a mobile fix installed build channel runtime before promising it ships by ota
+  first: 2026-09-26
+- candidate: A verdict is evidence only once it is on the board at the sha; post the SA text verbatim before citing it
+  key: a verdict is evidence only once it is on the board at the sha post the sa text verbatim before citing it
+  first: 2026-09-26
+- candidate: Ratchet-listed files are measured on the merged tree, not the branch
+  key: ratchet listed files are measured on the merged tree not the branch
+  first: 2026-09-26
+- candidate: A peer never authorizes a verification bypass for another session
+  key: a peer never authorizes a verification bypass for another session
+  first: 2026-09-26
+- candidate: A green CI run counts only if its base equals current master
+  key: a green ci run counts only if its base equals current master
+  first: 2026-09-26
+- candidate: No node_modules symlinks: an install in a linked worktree writes into main
+  key: no node modules symlinks an install in a linked worktree writes into main
+  first: 2026-09-27
+- candidate: Batch landings are safe only when master's final tree equals the tree that was tested
+  key: batch landings are safe only when master s final tree equals the tree that was tested
+  first: 2026-09-27
+- candidate: Confirm the shipped surface matches the owner's current product before building for a store
+  key: confirm the shipped surface matches the owner s current product before building for a store
+  first: 2026-09-27
+  promoted: a money fixture must be shaped by the writer (2026-09-27, 3x)
+- candidate: A pre-lock check and its lock-time re-check must read the same population; a fold that narrows one narrows both
+  key: a pre lock check and its lock time re check must read the same population a fold that narrows one narrows both
+  first: 2026-09-27
+- candidate: Trains land before single PRs in a shared window
+  key: trains land before single prs in a shared window
+  first: 2026-09-27
+- candidate: Post-train close-out closes the constituent PRs' linked issues explicitly
+  key: post train close out closes the constituent prs linked issues explicitly
+  first: 2026-09-27
+- candidate: Land gate-complete work within hours; a queue is where rebuild cost accrues
+  key: land gate complete work within hours a queue is where rebuild cost accrues
+  first: 2026-09-27
+- candidate: An owner action is always restated in full in the message that asks for it
+  key: an owner action is always restated in full in the message that asks for it
+  first: 2026-09-27
+- candidate: A docs PR's merge-base diff over apps/ packages/ scripts/ must be empty
+  key: a docs pr s merge base diff over apps packages scripts must be empty
+  first: 2026-09-27
+- candidate: When the lead is offline >30 min, the Mac Lead commissions the lead-side Opus review
+  key: when the lead is offline 30 min the mac lead commissions the lead side opus review
+  first: 2026-09-27
+- candidate: Owner commands go first, complete, in one message, before any other tool call
+  key: owner commands go first complete in one message before any other tool call
+  first: 2026-09-27
+- candidate: Machine-wide pre-push reds jump the queue; verify the fix branch exists on origin
+  key: machine wide pre push reds jump the queue verify the fix branch exists on origin
+  first: 2026-09-27
+- candidate: Never PASS a race pin before its executed revert-red probe
+  key: never pass a race pin before its executed revert red probe
+  first: 2026-09-27
+- candidate: Roll the board issue to a pinned successor at 2,300 comments
+  key: roll the board issue to a pinned successor at 2 300 comments
+  first: 2026-09-27
+- candidate: A spec that calls the guard directly cannot prove the guard's position in the request path
+  key: a spec that calls the guard directly cannot prove the guard s position in the request path
+  first: 2026-09-27
+- candidate: Times from date -u only
+  key: times from date u only
+  first: 2026-09-27
+- candidate: Scratch checks never commit
+  key: scratch checks never commit
+  first: 2026-09-27
+  promoted: a fact restated in a second place is the copy that goes wrong (2026-09-28, 6x)
+- candidate: A verdict is one comment, headed with PR + full sha + outcome; never embedded in a relay
+  key: a verdict is one comment headed with pr full sha outcome never embedded in a relay
+  first: 2026-09-28
+- candidate: merge-tree exit 0 proves no textual conflict, never a green merged tree; run the touched specs on the merge result
+  key: merge tree exit 0 proves no textual conflict never a green merged tree run the touched specs on the merge result
+  first: 2026-09-28
+- candidate: Never brief from an issue title or a PR title
+  key: never brief from an issue title or a pr title
+  first: 2026-09-28
+  promoted: a fact restated in a second place is the copy that goes wrong resolve against the primary source (2026-09-28, 6x)
+- candidate: Never interrupt the pc-slot holder
+  key: never interrupt the pc slot holder
+  first: 2026-09-28
+  promoted: merge tree exit 0 proves no textual conflict never a green merged tree run the touched specs on the merge result (2026-09-28, 3x)
