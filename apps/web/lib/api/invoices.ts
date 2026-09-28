@@ -14,6 +14,7 @@ import type {
   SendInvoiceEmailResult,
   SetCheckStatusDto,
   StandalonePaymentDto,
+  UpdateInvoiceItem,
 } from "@routeflow/types";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -48,6 +49,7 @@ export type {
   SendInvoiceEmailResult,
   SetCheckStatusDto,
   StandalonePaymentDto,
+  UpdateInvoiceItem,
 } from "@routeflow/types";
 
 /** P5-12: lifecycle of a CHECK InvoicePayment. Always null/absent on non-check payments. */
@@ -358,7 +360,11 @@ export function useDuplicateInvoice() {
 
 export function useUpdateInvoice() {
   const qc = useQueryClient();
-  return useMutation<Invoice, Error, { id: string } & Partial<CreateInvoiceDto>>({
+  return useMutation<
+    Invoice,
+    Error,
+    { id: string } & Partial<Omit<CreateInvoiceDto, "items">> & { items?: UpdateInvoiceItem[] }
+  >({
     mutationFn: ({ id, ...dto }) => apiClient.patch(`/invoices/${id}`, dto).then((r) => r.data),
     onSuccess: (_, { id }) => {
       qc.invalidateQueries({ queryKey: ["invoices"] });

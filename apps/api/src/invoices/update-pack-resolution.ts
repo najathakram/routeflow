@@ -42,52 +42,6 @@
 import { BadRequestException } from "@nestjs/common";
 import { computeLineSubtotal, roundMoney, splitWithoutPack } from "@routeflow/pricing";
 
-/** A surviving `InvoiceItem` row, as this module needs it. */
-export interface PriorPackRow {
-  productId: string | null;
-  unitsPerBox: unknown;
-}
-
-/**
- * The pack each product's own stored lines carry, keyed by productId — and only where EVERY
- * stored line of that product agrees (SA-077b). Unanimity is not a positional guess: it does not
- * matter which stored line pairs with which payload row when they all say the same thing. On
- * disagreement nothing is carried and the caller falls through to the live pack with a warn,
- * rather than picking one arbitrarily. A line with no pack counts as disagreement when a sibling
- * has one, because "no pack" is not evidence for a pack. A pack of 1 or 0 never enters the map.
- */
-export async function loadPriorPacks(
-  invoiceItem: { findMany: (args: unknown) => Promise<PriorPackRow[]> },
-  invoiceId: string,
-  productIds: string[],
-): Promise<Map<string, number>> {
-  if (productIds.length === 0) return new Map();
-  return buildPriorPackMap(
-    await invoiceItem.findMany({
-      where: { invoiceId, productId: { in: productIds } },
-      select: { productId: true, unitsPerBox: true },
-    }),
-  );
-}
-
-export function buildPriorPackMap(rows: PriorPackRow[]): Map<string, number> {
-  const seen = new Map<string, Set<number>>();
-  for (const r of rows) {
-    if (!r.productId) continue;
-    const pack = Number(r.unitsPerBox ?? 0);
-    const set = seen.get(r.productId) ?? new Set<number>();
-    set.add(pack > 1 ? pack : 0); // 0 stands for "this line carries no pack"
-    seen.set(r.productId, set);
-  }
-  const packs = new Map<string, number>();
-  for (const [productId, set] of seen) {
-    if (set.size !== 1) continue; // the stored lines disagree — carry nothing
-    const [only] = [...set];
-    if (only > 1) packs.set(productId, only);
-  }
-  return packs;
-}
-
 /**
  * SA-077(2): the 4xx message for a split that no pack can price, or null when the line is fine.
  * Wraps `splitWithoutPack` — the ONE definition — and adds the line label so the caller's refusal

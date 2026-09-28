@@ -1,7 +1,8 @@
 import * as React from "react";
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { PLAN_KEYS } from "@routeflow/types";
 import AdminCreateTenantPage from "./page";
+import { superAdminClient } from "@/lib/admin-api";
 
 jest.mock("@/lib/admin-api", () => ({
   superAdminClient: {
@@ -150,5 +151,102 @@ describe("AdminCreateTenantPage — plan <select> sourced from the catalog (T14)
     const select = screen.getByRole("combobox") as HTMLSelectElement;
     const options = Array.from(select.querySelectorAll("option")) as HTMLOptionElement[];
     expect(options.map((o) => o.value)).toEqual([...PLAN_KEYS]);
+  });
+});
+
+// #2439: the success panel reports the welcome email's delivery and the stable Pay-now link —
+// and never shows a password.
+describe("#2439 create-tenant success panel", () => {
+  async function submitWith(data: Record<string, unknown>) {
+    mockFetchPlanCatalog.mockResolvedValue({ version: 1, effectiveAt: null, plans: [] });
+    (superAdminClient.post as jest.Mock).mockResolvedValueOnce({ data });
+    render(<AdminCreateTenantPage />);
+    fireEvent.change(screen.getByLabelText(/slug/i), { target: { value: "acme" } });
+    fireEvent.change(screen.getByLabelText(/business name/i), { target: { value: "Acme" } });
+    fireEvent.change(screen.getByLabelText(/admin email/i), {
+      target: { value: "o@acme.example" },
+    });
+    fireEvent.change(screen.getByLabelText(/admin username/i), { target: { value: "owner" } });
+    fireEvent.submit(screen.getByRole("button", { name: /create tenant/i }).closest("form")!);
+    return screen.findByTestId("welcome-email-status");
+  }
+
+  it("says the welcome email was sent, and shows the stable Pay-now link", async () => {
+    const status = await submitWith({
+      id: "t1",
+      slug: "acme",
+      payUrl: "https://app.example/login?redirect=%2Fsettings%2Fbilling",
+      welcomeEmail: { to: "o@acme.example", delivered: true, transport: "smtp" },
+    });
+    expect(status).toHaveTextContent(/Welcome email sent to o@acme.example/);
+    expect(screen.getByRole("link", { name: /login\?redirect/ })).toHaveAttribute(
+      "href",
+      "https://app.example/login?redirect=%2Fsettings%2Fbilling",
+    );
+    expect(screen.queryByText(/temporary password/i)).not.toBeInTheDocument();
+  });
+
+  it("warns loudly when the welcome email was NOT delivered", async () => {
+    const status = await submitWith({
+      id: "t1",
+      slug: "acme",
+      payUrl: null,
+      welcomeEmail: {
+        to: "o@acme.example",
+        delivered: false,
+        transport: "none",
+        error: "no transport",
+      },
+    });
+    expect(status).toHaveAttribute("role", "alert");
+    expect(status).toHaveTextContent(/NOT delivered/);
+    expect(status).toHaveTextContent(/Reset admin password/);
+  });
+
+  // #2438: the Pay-now link is one unbroken monospace token; it ran off the card on a phone.
+  it("wraps the Pay-now link inside the card (break-all) and gives it its own Copy button", async () => {
+    const payUrl = "https://app.example/login?redirect=%2Fsettings%2Fbilling";
+    Object.assign(navigator, { clipboard: { writeText: jest.fn().mockResolvedValue(undefined) } });
+    await submitWith({
+      id: "t1",
+      slug: "acme",
+      payUrl,
+      welcomeEmail: { to: "o@acme.example", delivered: true, transport: "smtp" },
+    });
+    expect(screen.getByRole("link", { name: /login\?redirect/ })).toHaveClass("break-all");
+    const copy = screen.getByRole("button", { name: "Copy Pay-now link" });
+    fireEvent.click(copy);
+    expect(navigator.clipboard.writeText).toHaveBeenCalledWith(payUrl);
+    await waitFor(() => expect(copy).toHaveTextContent("Copied"));
+  });
+
+  // #2598 review: a false "Copied" leaves the PREVIOUS clipboard (maybe another tenant's link) to be
+  // pasted into the client's email. A failed copy must say so and select the link instead.
+  it("a failed copy of the Pay-now link says so and selects the link, never 'Copied'", async () => {
+    const payUrl = "https://app.example/login?redirect=%2Fsettings%2Fbilling";
+    Object.assign(navigator, {
+      clipboard: { writeText: jest.fn().mockRejectedValue(new Error("denied")) },
+    });
+    await submitWith({
+      id: "t1",
+      slug: "acme",
+      payUrl,
+      welcomeEmail: { to: "o@acme.example", delivered: true, transport: "smtp" },
+    });
+    const copy = screen.getByRole("button", { name: "Copy Pay-now link" });
+    fireEvent.click(copy);
+    await waitFor(() => expect(copy).toHaveTextContent("Copy failed — select the link"));
+    expect(copy).not.toHaveTextContent("Copied");
+    expect(window.getSelection()?.toString()).toBe(payUrl);
+  });
+
+  it("renders no Copy button when there is no Pay-now link", async () => {
+    await submitWith({
+      id: "t1",
+      slug: "acme",
+      payUrl: null,
+      welcomeEmail: { to: "o@acme.example", delivered: true, transport: "smtp" },
+    });
+    expect(screen.queryByRole("button", { name: "Copy Pay-now link" })).not.toBeInTheDocument();
   });
 });

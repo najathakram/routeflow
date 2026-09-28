@@ -26,6 +26,8 @@ export interface Copier {
   carried?: string; //  copied from the source line (or the source line's own snapshot)
   reset?: string; //    deliberately set to a default (a wrong VALUE here is not detectable by key presence)
   rederived?: string; // recomputed from the live product / tier / promo / tax rules
+  /** carried from the SOURCE line through create()'s internal `options.sourceLines` (invisible to the anchored literal): checked structurally, each key must appear in the copier's `sourceLines` literal */
+  viaOptions?: string;
   na?: string; //       cannot apply (source has no such field, or the target fills it later by design)
   gaps?: Record<string, GapRef>; // should be carried but is not: the debt this contract pins
 }
@@ -73,6 +75,8 @@ export const COPIERS: Copier[] = [
       "categoryTaxType categoryTaxRate categoryPriceIncludesTax", // B297: the order line's own trio, verbatim
     rederived: "description msrp taxRate",
     reset: "discount",
+    // #2169 (SA-395): built from a request line, never a copy of a system-stamped source line.
+    na: "systemKind",
   },
   {
     id: "C2",
@@ -82,7 +86,9 @@ export const COPIERS: Copier[] = [
     anchor: { via: "prop", name: "items" },
     carried:
       "description productId qty unitPrice discount taxRate boxes pieces promoFreeUnits msrp subtotal trackedCategoryId trackedSubcategoryId categoryTaxAmount unitsPerBox originalPrice priceType notes " +
-      "categoryTaxType categoryTaxRate categoryPriceIncludesTax", // B297: the source line's trio, verbatim
+      // #2169 (SA-395): a duplicated NSF fee line stays a real system-written NSF line — carried
+      // verbatim, same as every other snapshot column here.
+      "categoryTaxType categoryTaxRate categoryPriceIncludesTax systemKind", // B297: the source line's trio, verbatim
     na: "unitLabel orderItemId", // unit lines are refused (409); order-linked invoices are refused (RF-011)
   },
   {
@@ -113,7 +119,8 @@ export const COPIERS: Copier[] = [
       "taxRate msrp trackedCategoryId trackedSubcategoryId categoryTaxAmount categoryTaxType categoryTaxRate categoryPriceIncludesTax",
     reset: "discount",
     // The estimate line has no such column / no order link; unit-aware lines are refused (409 UNIT_AWARE_LINE).
-    na: "promoFreeUnits notes orderItemId unitLabel",
+    // #2169 (SA-395): an estimate line, never a copy of a system-stamped source line.
+    na: "promoFreeUnits notes orderItemId unitLabel systemKind",
     gaps: { priceType: "unfiled", originalPrice: "unfiled" },
   },
   {
@@ -126,7 +133,8 @@ export const COPIERS: Copier[] = [
     // InvoicesService.create prices the category tax and stamps the B297 trio from the LIVE category.
     rederived:
       "subtotal msrp categoryTaxAmount categoryTaxType categoryTaxRate categoryPriceIncludesTax",
-    na: "originalPrice priceType promoFreeUnits notes orderItemId", // RecurringInvoiceItem has none of these columns
+    // #2169 (SA-395): a template-generated line, never a copy of a system-stamped source line.
+    na: "originalPrice priceType promoFreeUnits notes orderItemId systemKind", // RecurringInvoiceItem has none of these columns
     gaps: {
       boxes: "B646",
       pieces: "B646",
@@ -166,12 +174,15 @@ export const COPIERS: Copier[] = [
     anchor: { via: "prop", name: "items" },
     carried: "productId qty boxes pieces",
     // The new line is written by OrdersService.create, which stamps the B297 trio from the live category.
+    // D-20 / #1808 (SA-330): unitsPerBox, unitPrice, priceType and originalPrice are the SOURCE line's, passed as
+    // create()'s INTERNAL `options.sourceLines` (orders/source-line.ts), never the live pack or today's price;
+    // the contract checks each key is in approveNextDelivery's `sourceLines` literal. The subtotal is re-derived
+    // by computeLineSubtotal at that carried pack and price; promoFreeUnits is 0 for a rollover line.
+    viaOptions: "unitsPerBox unitPrice priceType originalPrice overrideReason overriddenBy",
     rederived:
-      "name unitPrice subtotal priceType originalPrice promoFreeUnits trackedCategoryId trackedSubcategoryId categoryTaxAmount position categoryTaxType categoryTaxRate categoryPriceIncludesTax",
-    na: ORDER_FRESH,
+      "name subtotal promoFreeUnits trackedCategoryId trackedSubcategoryId categoryTaxAmount position categoryTaxType categoryTaxRate categoryPriceIncludesTax",
+    na: "deliveredQty invoicedQty status", // overrideReason/overriddenBy ride viaOptions (D-20)
     gaps: {
-      // B655 (#1174) now writes boxes/pieces; the new line still carries no unitsPerBox snapshot.
-      unitsPerBox: "B655",
       unitLabel: "unfiled",
       notes: "unverified",
     },
@@ -206,7 +217,7 @@ export const COPIERS: Copier[] = [
   {
     id: "C12",
     file: "returns/inline-returns.service.ts",
-    fn: "capture",
+    fn: "captureInTx",
     target: "ReturnItem",
     anchor: { via: "prop", name: "items" },
     carried:
@@ -222,7 +233,8 @@ export const COPIERS: Copier[] = [
     anchor: { via: "push", name: "itemsData" },
     carried: "description productId qty unitPrice subtotal discount",
     reset: "taxRate", // forced 0
-    na: "originalPrice msrp priceType boxes pieces unitsPerBox promoFreeUnits notes orderItemId trackedCategoryId trackedSubcategoryId categoryTaxAmount unitLabel categoryTaxType categoryTaxRate categoryPriceIncludesTax",
+    // #2169 (SA-395): an imported CSV line, never a copy of a system-stamped source line.
+    na: "originalPrice msrp priceType boxes pieces unitsPerBox promoFreeUnits notes orderItemId trackedCategoryId trackedSubcategoryId categoryTaxAmount unitLabel categoryTaxType categoryTaxRate categoryPriceIncludesTax systemKind",
   }, // CSV: per-piece by construction
   // C17 (not in R-ui's first table: the discovery pass found it; R-ui then verified it, invoices.service.ts
   // 2273-2420, callers 3540/3601/6342 = invoice edit and status flows). It UPDATES an existing order line, and
@@ -240,7 +252,7 @@ export const COPIERS: Copier[] = [
     target: "OrderItem",
     anchor: { via: "delegate", model: "orderItem" },
     carried:
-      "productId qty unitPrice subtotal boxes pieces unitsPerBox categoryTaxAmount promoFreeUnits",
+      "productId qty unitPrice subtotal boxes pieces unitsPerBox unitLabel categoryTaxAmount promoFreeUnits",
     reset: "priceType status invoicedQty",
     rederived: "name trackedSubcategoryId",
     na: "deliveredQty overrideReason overriddenBy",
@@ -248,7 +260,6 @@ export const COPIERS: Copier[] = [
       trackedCategoryId: "B767", // CREATE carries categoryTaxAmount without its category attribution
       originalPrice: "unfiled",
       notes: "unfiled",
-      unitLabel: "unfiled",
       position: "unfiled",
       // B297: CREATE carries the invoice lines' categoryTaxAmount but not the trio it was priced at.
       categoryTaxType: "B835",

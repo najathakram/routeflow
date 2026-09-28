@@ -361,7 +361,7 @@ describe("OrdersService.updateOrderItems — units_v1 (A1) staff conversion", ()
     );
     expect(prisma.orderItem.update).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: { id: "li-case" },
+        where: { id: "li-case", orderId: "ord-1" },
         data: expect.objectContaining({
           qty: 36,
           boxes: 3,
@@ -432,7 +432,7 @@ describe("OrdersService.updateOrderItems — units_v1 (A1) staff conversion", ()
     );
     expect(prisma.orderItem.update).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: { id: "li-pack" },
+        where: { id: "li-pack", orderId: "ord-1" },
         data: expect.objectContaining({
           productId: "prod-case",
           unitLabel: "Case",
@@ -491,7 +491,7 @@ describe("OrdersService.updateOrderItems — units_v1 (A1) staff conversion", ()
 
     expect(prisma.orderItem.update).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: { id: "li-pack" },
+        where: { id: "li-pack", orderId: "ord-1" },
         data: expect.objectContaining({
           productId: "prod-case-reg",
           categoryTaxType: "EXCISE_PER_UNIT",
