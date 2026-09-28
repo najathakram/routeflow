@@ -1507,28 +1507,33 @@ export class RoutesService {
       dto.status === RouteRunStatus.CANCELLED || dto.status === RouteRunStatus.COMPLETED;
 
     const updated = releasesOrders
-      ? await this.prisma.tenantTransaction(async (tx) => {
-          await lockRunStopsForTerminalStatus(tx, id); // #2631 / SA-550: STOP rows → RouteRun
-          const row = await tx.routeRun.update({ where: { id }, data: updates, include });
-          const stops = await tx.routeRunStop.findMany({
-            where: { routeRunId: id, status: { not: "COMPLETED" } },
-            select: { id: true },
-          });
-          const stopIds = stops.map((s: { id: string }) => s.id);
-          // Without this line the release is invisible: an operator asking
-          // "why did these orders come off run X / reappear in dispatch?" has
-          // nothing but a null pointer, indistinguishable from an order that
-          // was never dispatched (same reason completeStop logs its withheld
-          // auto-completion below).
-          const { released } = await this.releaseUndeliveredOrders(tx, stopIds);
-          if (released > 0) {
-            this.logger.log(
-              `updateRunStatus: run ${id} → ${dto.status} released ${released} undelivered order(s) ` +
-                `from stop(s) ${stopIds.join(",")}.`,
-            );
-          }
-          return row;
-        })
+      ? // #2631 (lead's Opus): the stop-first lock inverts reorder's run → stops order and
+        // route-optimization's unordered stop batches — a cancel × reorder/optimize deadlock is
+        // retried, never a 500. Each attempt re-locks and re-reads everything (no outer state).
+        await retryOnTxConflict("routes.updateRunStatus", () =>
+          this.prisma.tenantTransaction(async (tx) => {
+            await lockRunStopsForTerminalStatus(tx, id); // #2631 / SA-550: STOP rows → RouteRun
+            const row = await tx.routeRun.update({ where: { id }, data: updates, include });
+            const stops = await tx.routeRunStop.findMany({
+              where: { routeRunId: id, status: { not: "COMPLETED" } },
+              select: { id: true },
+            });
+            const stopIds = stops.map((s: { id: string }) => s.id);
+            // Without this line the release is invisible: an operator asking
+            // "why did these orders come off run X / reappear in dispatch?" has
+            // nothing but a null pointer, indistinguishable from an order that
+            // was never dispatched (same reason completeStop logs its withheld
+            // auto-completion below).
+            const { released } = await this.releaseUndeliveredOrders(tx, stopIds);
+            if (released > 0) {
+              this.logger.log(
+                `updateRunStatus: run ${id} → ${dto.status} released ${released} undelivered order(s) ` +
+                  `from stop(s) ${stopIds.join(",")}.`,
+              );
+            }
+            return row;
+          }),
+        )
       : await this.prisma.forTenant().routeRun.update({ where: { id }, data: updates, include });
 
     // B585: observation only — never awaited, never blocks or fails the start. First start only.

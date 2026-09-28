@@ -94,6 +94,13 @@ describe("routes lock order: STOP rows → RouteRun (#2631, SA-550)", () => {
     );
   });
 
+  it("(iv) updateRunStatus's terminal tx runs under retryOnTxConflict (its stop-first lock inverts reorder / optimize)", () => {
+    const body = methodBody("updateRunStatus");
+    expect(body).toMatch(
+      /retryOnTxConflict\("routes\.updateRunStatus", \(\) =>\s*this\.prisma\.tenantTransaction\(async \(tx\) => \{\s*await lockRunStopsForTerminalStatus\(tx, id\)/,
+    );
+  });
+
   it("(iii) reopenStop resets its outer `reopened` list at the top of each attempt (a retry never duplicates)", () => {
     const cb = firstTxCallback(methodBody("reopenStop"));
     expect(cb.slice(1).trim().startsWith("reopened.length = 0;")).toBe(true);
