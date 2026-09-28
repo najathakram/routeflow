@@ -1953,8 +1953,8 @@ export class RoutesService {
     if (dto.driverNote !== undefined) updates.driverNote = dto.driverNote;
     if (dto.status === "IN_PROGRESS" && !stop.arrivedAt) updates.arrivedAt = new Date();
 
-    // #2415 CAS + #2514: under the RouteRun lock — a completion that commits after the reads above
-    // is never overwritten (stop CAS), and neither is a run that completes/cancels meanwhile.
+    // #2415 stop CAS, then (#2514) the RouteRun lock + re-check — stop → run, the house order —
+    // so neither a completion nor a run finishing meanwhile is ever overwritten.
     await claimStopStatusChangeOnLiveRun(this.prisma, runId, stopId, updates);
     const updated = await this.prisma.forTenant().routeRunStop.findFirst({ where: { id: stopId } });
     await this.live.runProgress(runId);

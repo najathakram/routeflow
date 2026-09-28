@@ -496,7 +496,7 @@ describe("assertDeliveriesFitStop — refusal counts in the line's unit (#2292)"
   });
 });
 
-describe("claimStopStatusChangeOnLiveRun (#2514, SA-533)", () => {
+describe("claimStopStatusChangeOnLiveRun (#2514, SA-533e — stop → run house order)", () => {
   const make = (runStatus: string | null) => {
     const calls: string[] = [];
     const tx = {
@@ -515,21 +515,24 @@ describe("claimStopStatusChangeOnLiveRun (#2514, SA-533)", () => {
     return { prisma, tx, calls };
   };
 
-  it("locks the run row FIRST, re-reads it, then the stop CAS — all on one tx", async () => {
+  it("the stop CAS FIRST, then the run row lock, then the re-read — all on one tx", async () => {
     const { prisma, calls } = make("IN_PROGRESS");
     await claimStopStatusChangeOnLiveRun(prisma, "run-1", "stop-1", { status: "SKIPPED" });
-    expect(calls).toEqual(["lock", "read", "cas"]);
+    expect(calls).toEqual(["cas", "lock", "read"]);
     expect(prisma.tenantTransaction).toHaveBeenCalledTimes(1);
   });
 
   it.each(["COMPLETED", "CANCELLED"])(
-    "a %s run (seen under the lock) is a 409 and the stop is never written",
+    "a %s run (seen under the lock) is a 409 thrown INSIDE the tx, so the stop CAS rolls back",
     async (status) => {
-      const { prisma, tx } = make(status);
+      const { prisma, calls } = make(status);
       await expect(
         claimStopStatusChangeOnLiveRun(prisma, "run-1", "stop-1", { status: "SKIPPED" }),
       ).rejects.toThrow(`Cannot change a stop on a ${status.toLowerCase()} run.`);
-      expect(tx.routeRunStop.updateMany).not.toHaveBeenCalled();
+      // The CAS ran first (the house order); the throw after the run re-read rejects the SAME
+      // tenantTransaction callback — Postgres rolls the stop write back (real-PG pin: F2's latch).
+      expect(calls).toEqual(["cas", "lock", "read"]);
+      await expect(prisma.tenantTransaction.mock.results[0].value).rejects.toThrow();
     },
   );
 

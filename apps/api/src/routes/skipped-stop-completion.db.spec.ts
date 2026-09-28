@@ -404,12 +404,122 @@ describeDb("#2409 a SKIPPED stop refuses a replayed completion — real Postgres
     }
   });
 
-  it("#2514 DETERMINISTIC: the run COMPLETES while a stop PATCH waits on the run lock → 409, the stop unchanged", async () => {
+  it("#2514 ONE-STOP (SA-533e): the LAST stop's completion also completes the run while the paused skip waits → 409 STOP_ALREADY_COMPLETED at the stop (never the run guard, never 40P01)", async () => {
+    // F2 (#938): the concurrent race above never produced the B707 interleave — the quick skip
+    // always committed before completeWithPayment's long tx reached its claim. This latch forces
+    // it: updateStopStatus reads the stop (PENDING), then reads the run via
+    // forTenant().routeRun.findFirst — the pause point (AFTER that read), identical in the pre-#2415 code, so this
+    // pin is RED on the old check-then-update (the skip overwrites COMPLETED with SKIPPED).
+    // SA-533e: ONE stop — completing it auto-completes the run (RF-016). In the house order (stop
+    // CAS FIRST, then the run lock) the skip still loses at the STOP, never to the run guard; the
+    // SA-533 run-first order refused here with the run 409 and could deadlock against completion.
+    const s = await seedSkippedStop("latch-one");
+    await setStopStatus(s.stopId, "PENDING");
+
+    let armed = true;
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    let reachedPause!: () => void;
+    const paused = new Promise<void>((r) => (reachedPause = r));
+    const realForTenant = prisma.forTenant.bind(prisma);
+    const spy = jest.spyOn(prisma, "forTenant").mockImplementation(() => {
+      const client = realForTenant();
+      return new Proxy(client, {
+        get(target, prop) {
+          const value = Reflect.get(target, prop);
+          if (prop !== "routeRun" || !armed) return value;
+          return new Proxy(value, {
+            get(delegate, method) {
+              const fn = Reflect.get(delegate, method);
+              if (method !== "findFirst" || !armed) return fn;
+              return async (...args: unknown[]) => {
+                armed = false; // one pause only — the skip's run read
+                // F2 (#2511 @d7ca35c5): read the run FIRST, then hold. Holding before the read let
+                // the single-stop fixture's completion also complete the RUN, so the skip was
+                // refused by the run guard ("completed run") on both codes and never reached the
+                // CAS. With the run already read as IN_PROGRESS, the skip goes on to its write.
+                const result = await Reflect.apply(fn, delegate, args);
+                reachedPause();
+                await gate;
+                return result;
+              };
+            },
+          });
+        },
+      });
+    });
+    try {
+      const skip = tenantCtx.run(s.tenantId, () =>
+        routesService.updateStopStatus(s.runId, s.stopId, { status: "SKIPPED" }, operator),
+      );
+      await paused; // the skip has read the stop as PENDING and is held
+      await tenantCtx.run(s.tenantId, () =>
+        routesService.completeWithPayment(s.runId, s.stopId, { deliveries: [] } as never, operator),
+      );
+      expect((await prisma.routeRunStop.findUnique({ where: { id: s.stopId } }))?.status).toBe(
+        "COMPLETED",
+      );
+      release();
+      await expect(skip).rejects.toMatchObject({
+        response: expect.objectContaining({ code: "STOP_ALREADY_COMPLETED" }),
+      });
+      // The completion survives: never COMPLETED → SKIPPED.
+      expect((await prisma.routeRunStop.findUnique({ where: { id: s.stopId } }))?.status).toBe(
+        "COMPLETED",
+      );
+    } finally {
+      release?.();
+      spy.mockRestore();
+    }
+  });
+
+  it("#2514 ONE-STOP race (SA-533e): N rounds of skip vs completing the LAST stop — never a deadlock or 500, one winner", async () => {
+    for (let round = 0; round < 8; round++) {
+      const s = await seedSkippedStop(`race-one${round}`);
+      await setStopStatus(s.stopId, "PENDING");
+      const [complete, skip] = await Promise.allSettled([
+        tenantCtx.run(s.tenantId, () =>
+          routesService.completeWithPayment(
+            s.runId,
+            s.stopId,
+            { deliveries: [] } as never,
+            operator,
+          ),
+        ),
+        tenantCtx.run(s.tenantId, () =>
+          routesService.updateStopStatus(s.runId, s.stopId, { status: "SKIPPED" }, operator),
+        ),
+      ]);
+      // No deadlock (Postgres 40P01 / Prisma P2034) and no un-mapped 500: every loser is a 409.
+      for (const r of [complete, skip]) {
+        if (r.status !== "rejected") continue;
+        const e = r.reason as any;
+        expect(String(e?.code ?? "")).not.toMatch(/P2034|40P01/);
+        expect(JSON.stringify(e?.meta ?? {})).not.toMatch(/40P01|deadlock/i);
+        expect(e?.getStatus?.()).toBe(409);
+      }
+      expect(complete.status === "fulfilled" && skip.status === "fulfilled").toBe(false);
+      const after = await prisma.routeRunStop.findUnique({ where: { id: s.stopId } });
+      if (after?.status === "COMPLETED") {
+        expect(skip.status).toBe("rejected");
+        expect(isSkipLostToCompletion((skip as PromiseRejectedResult).reason)).toBe(true);
+      } else {
+        expect(after?.status).toBe("SKIPPED");
+        expect(complete.status).toBe("rejected");
+      }
+    }
+  });
+
+  it("#2514 DETERMINISTIC run-latch (SA-533e order): the run COMPLETES while the PATCH waits on the run lock → 409, the stop CAS rolled back", async () => {
     // updateStopStatus is paused after its pre-lock run read (IN_PROGRESS). A second transaction
-    // then marks the run COMPLETED and HOLDS the run row lock. The PATCH resumes and blocks on its
-    // own `RouteRun FOR UPDATE`; once the run transaction commits, the PATCH re-reads the run
-    // under the lock and refuses. RED on the pre-#2514 code: no run lock, so the stop was written.
-    const s = await seedSkippedStop("run-latch");
+    // then marks the run COMPLETED and HOLDS the run row lock. The PATCH resumes: its stop CAS
+    // (house order, stop FIRST) succeeds, then it blocks on `RouteRun FOR UPDATE`; once the run
+    // transaction commits, the PATCH re-reads the run under the lock and refuses — the throw rolls
+    // its stop CAS back. RED on the pre-#2514 code: no run lock, so the stop was written.
+    // Two stops (SA-533e): the second stays PENDING. Stop B's own completion cannot auto-complete
+    // the run while stop A is open (RF-016 needs every stop done), so a held terminal UPDATE on the
+    // run is the actor that "completes the run while the PATCH waits".
+    const s = await seedSkippedStop("run-latch", { secondStop: true });
     await setStopStatus(s.stopId, "PENDING");
 
     let armed = true;

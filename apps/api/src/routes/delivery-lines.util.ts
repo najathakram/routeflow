@@ -73,14 +73,6 @@ export async function claimStopStatusChange(
 }
 
 /** #2409: the stop statuses a completion may claim from. */
-/**
- * #2514 (SA-533): a stop status PATCH (IN_PROGRESS / SKIPPED) on a LIVE run only. One transaction:
- * lock the RouteRun row FIRST, re-read its status under the lock, refuse a COMPLETED/CANCELLED run
- * (409, same text as the pre-lock check), then the #2415 stop CAS on the SAME tx. The terminal
- * transition (updateRunStatus → COMPLETED/CANCELLED) UPDATEs the run row inside its own tx, so the
- * two serialize: a run that completes while this PATCH waits is seen, never overwritten after.
- * Lock order is RouteRun → RouteRunStop, the same as the terminal path (no new edge).
- */
 /** #2514: RF-003's run-status refusal, called AFTER the B72 ownership check (never before it). */
 export function assertRunInProgress(status: string): void {
   if (status !== "IN_PROGRESS") {
@@ -90,6 +82,18 @@ export function assertRunInProgress(status: string): void {
   }
 }
 
+/**
+ * #2514 (SA-533 / 533e): a stop status PATCH (IN_PROGRESS / SKIPPED) on a LIVE run only. One
+ * transaction, in the house lock order for this family, STOP rows → RouteRun, the order
+ * completeStop / completeWithPayment (claimStopCompletion, then the RF-016 run auto-complete) and
+ * reopenStop already take:
+ *   1. the #2415 stop CAS (takes the stop row lock; a completed stop ⇒ 409 STOP_ALREADY_COMPLETED);
+ *   2. `RouteRun … FOR UPDATE`, re-read the status, a COMPLETED/CANCELLED run ⇒ 409 (same text as
+ *      the pre-lock check) — the throw rolls the stop CAS back.
+ * A run that completes or is cancelled while this PATCH waits is seen under the run lock, never
+ * overwritten after. (SA-533's original run-first order inverted the completion paths' stop → run
+ * order and could deadlock — SA-E84.)
+ */
 export async function claimStopStatusChangeOnLiveRun(
   prisma: { tenantTransaction<T>(fn: (tx: any) => Promise<T>): Promise<T> },
   runId: string,
@@ -97,6 +101,7 @@ export async function claimStopStatusChangeOnLiveRun(
   data: Record<string, unknown>,
 ): Promise<void> {
   await prisma.tenantTransaction(async (tx) => {
+    await claimStopStatusChange(tx, stopId, data); // stop row FIRST (house order)
     await tx.$executeRaw`SELECT id FROM "RouteRun" WHERE id = ${runId} FOR UPDATE`;
     const run = await tx.routeRun.findFirst({ where: { id: runId }, select: { status: true } });
     if (!run) throw new NotFoundException("Route run not found");
@@ -105,7 +110,6 @@ export async function claimStopStatusChangeOnLiveRun(
         `Cannot change a stop on a ${String(run.status).toLowerCase()} run.`,
       );
     }
-    await claimStopStatusChange(tx, stopId, data);
   });
 }
 
