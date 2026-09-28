@@ -194,3 +194,25 @@ describe("InlineReturnSection — 'return only what was bought' with nothing bou
     expect(screen.queryByText(/must contain at least 1 elements/i)).not.toBeInTheDocument();
   });
 });
+
+// B891 (symptom pin): every line's "Qty (pieces)" label used to share the label-derived id
+// "qty-(pieces)", so line 2's label targeted LINE 1's input and line 2's input was unlabelled.
+describe("InlineReturnSection — each line's labels target that line's own fields (B891)", () => {
+  it("two lines ⇒ two distinct, correctly-labelled Qty inputs", async () => {
+    productResults = [PRODUCT, { id: "prod-2", name: "Gadget", unit: "each", unitsPerBox: null }];
+    renderSection();
+    fireEvent.change(screen.getByLabelText(/add another product/i), { target: { value: "wid" } });
+    fireEvent.click(await screen.findByText("Widget"));
+    fireEvent.change(screen.getByLabelText(/add another product/i), { target: { value: "gad" } });
+    fireEvent.click(await screen.findByText("Gadget"));
+
+    const qty = screen.getAllByLabelText(/qty \(pieces\)/i) as HTMLInputElement[];
+    expect(qty).toHaveLength(2);
+    expect(qty[0]).not.toBe(qty[1]);
+    expect(qty[0].id).not.toBe(qty[1].id);
+    // Typing through line 2's label reaches line 2's input only.
+    fireEvent.change(qty[1], { target: { value: "7" } });
+    expect(qty[1].value).toBe("7");
+    expect(qty[0].value).not.toBe("7");
+  });
+});
