@@ -16,6 +16,7 @@ import { randomUUID } from "crypto";
 import { Client } from "pg";
 import { InvoiceStatus } from "@prisma/client";
 import { ImportService } from "./import.service";
+import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { TenantContextService } from "../tenant/tenant-context.service";
 import { VendorBillsService } from "../vendor-bills/vendor-bills.service";
@@ -50,6 +51,13 @@ describeDb(
           ImportService,
           NumberingService,
           ExternalRefService,
+          // #2093: importInvoices flags banned lines (never blocks); ALLOW keeps this suite's rows unflagged.
+          {
+            provide: SellingRestrictionsService,
+            useValue: {
+              checkLinesSellable: jest.fn().mockResolvedValue({ outcome: "ALLOW", reasons: [] }),
+            },
+          },
           { provide: PrismaService, useValue: prisma },
           { provide: VendorBillsService, useValue: { create: jest.fn(), receive: jest.fn() } },
           {
