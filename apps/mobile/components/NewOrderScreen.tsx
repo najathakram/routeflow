@@ -20,9 +20,9 @@ import {
   computeOrderTotal,
   lineUnitFor,
   priceEditorPrefill,
-  priceEditorSaveOverride,
   type UnlistedTotalLine,
 } from "../lib/cart-order-total";
+import { decideTrayPrice } from "../lib/staff-price-override";
 import { useProductCategories } from "../lib/api/products";
 import { useProductSearch } from "../lib/use-product-search";
 import { mergeProductIndex } from "../lib/paged-rows";
@@ -685,6 +685,7 @@ function ProductPickView({
           if (pricing.unitPrice !== undefined) {
             line.unitPrice = pricing.unitPrice;
             line.priceSource = "operator";
+            if (pricing.overrideReason) line.overrideReason = pricing.overrideReason;
           }
         }
         nextItems[li.productId] = line;
@@ -930,17 +931,22 @@ function ProductPickView({
 
   // Set (or clear) a one-time price override for a line. Empty/invalid clears it
   // so the line falls back to the catalog price.
-  const setLinePrice = (id: string, value: number | null) =>
+  const setLinePrice = (id: string, value: number | null, overrideReason?: string) =>
     setItems((m) => {
       const prev = m[id];
       if (!prev) return m;
       if (value == null || value < 0) {
         const { unitPrice: _drop, priceSource: _dropSource, ...rest } = prev;
+        delete rest.overrideReason;
         return { ...m, [id]: rest };
       }
       // B755: the ONE place an operator types a price on a catalog line — tagged "operator"
       // so a resume never mistakes it for a history pre-fill (addOne) and re-prices it away.
-      return { ...m, [id]: { ...prev, unitPrice: value, priceSource: "operator" } };
+      // #2696(c): the reason rides with it (required on a special line — decideTrayPrice).
+      const next: LineState = { ...prev, unitPrice: value, priceSource: "operator" };
+      if (overrideReason) next.overrideReason = overrideReason;
+      else delete next.overrideReason;
+      return { ...m, [id]: next };
     });
 
   // ── Unlisted (ad-hoc, non-catalog) line helpers ──────────────────────────
@@ -1264,14 +1270,6 @@ function ProductPickView({
     removeLine,
     isUnlisted: (id: string) => unlisted.some((u) => u.id === id),
     unlistedQty: (id: string) => unlisted.find((u) => u.id === id)?.qty ?? 0,
-    // SPECIAL (tier ≠ 1) lines are the customer's permanent price and are
-    // never overridable — the same rule submit already enforces by stripping a
-    // lingering override before it posts. The tray must not offer an edit that
-    // would be silently discarded.
-    isSpecialLine: (id: string) => {
-      const p = productById.get(id);
-      return p ? isSpecialFor(p) : false;
-    },
     showInline,
     updateUnlistedQty,
     removeUnlisted,
@@ -1344,14 +1342,8 @@ function ProductPickView({
   // this surface lived in CartModal, reachable only by leaving scan mode —
   // while the order EDIT screen has had a one-tap edit under its scanner for
   // two releases.
-  const onTrayEditPrice = useCallback((id: string) => {
-    const a = actionsRef.current;
-    if (!a.isUnlisted(id) && a.isSpecialLine(id)) {
-      a.showInline("Contract price — not editable on this order");
-      return;
-    }
-    setPriceEditId(id);
-  }, []);
+  // #2696(c): a SPECIAL (tier) line too — moving off it takes a reason in LinePriceModal.
+  const onTrayEditPrice = useCallback((id: string) => setPriceEditId(id), []);
   // Resolved lazily (two map lookups) rather than memoized: it is null on every
   // render but the handful where the sheet is open.
   const priceEditTarget = ((): {
@@ -1359,18 +1351,27 @@ function ProductPickView({
     name: string;
     unitPrice: number;
     unlisted: boolean;
+    /** #2696(c): the one-rule inputs (catalog lines only) — see decideTrayPrice. */
+    rule?: { base: number; listPrice: number; isSpecial: boolean; reason?: string };
   } | null => {
     if (!priceEditId) return null;
     const u = unlisted.find((x) => x.id === priceEditId);
     if (u) return { id: u.id, name: u.name, unitPrice: u.unitPrice, unlisted: true };
     const p = productById.get(priceEditId);
     if (!p) return null;
+    const line = items[priceEditId];
     return {
       id: priceEditId,
       name: displayName(p, products),
       // SA-085i(b): the override if set, else what's billed today — never the pack's price.
-      unitPrice: priceEditorPrefill(items[priceEditId], p, effectiveTierFor(p.id)),
+      unitPrice: priceEditorPrefill(line, p, effectiveTierFor(p.id)),
       unlisted: false,
+      rule: {
+        base: unitPriceBase(line ?? {}, tierPriceFor(p)),
+        listPrice: toNumber(p.pricePerUnit),
+        isSpecial: isSpecialFor(p),
+        reason: line?.overrideReason,
+      },
     };
   })();
 
@@ -1479,7 +1480,11 @@ function ProductPickView({
       // Mobile has no separate "permanent discount" concept — any explicit
       // override the operator set is tagged MANUAL (never DISCOUNTED), which
       // is exactly what the resume-hydration pin rule above checks for.
-      const hasOverride = !special && line.unitPrice != null && line.unitPrice !== priceBase;
+      // #2696(c): a special line's override parks only WITH its reason (as submit sends it).
+      const hasOverride =
+        (!special || !!line.overrideReason?.trim()) &&
+        line.unitPrice != null &&
+        line.unitPrice !== priceBase;
       lines.push({
         productId,
         productName: displayName(p),
@@ -1487,8 +1492,9 @@ function ProductPickView({
         listPrice,
         ...(special ? { specialPrice: tierPrice } : {}),
         ...(hasOverride ? { discountedPrice: line.unitPrice } : {}),
-        unitPrice: special ? priceBase : hasOverride ? line.unitPrice! : priceBase,
-        priceType: special ? "SPECIAL" : hasOverride ? "MANUAL" : "STANDARD",
+        ...(hasOverride && line.overrideReason ? { overrideReason: line.overrideReason } : {}),
+        unitPrice: hasOverride ? line.unitPrice! : priceBase,
+        priceType: hasOverride ? "MANUAL" : special ? "SPECIAL" : "STANDARD",
         qty,
         ...(p.unitsPerBox ? { unitsPerBox: Number(p.unitsPerBox) } : {}),
         ...(line.boxes != null ? { boxes: line.boxes } : {}),
@@ -1787,11 +1793,17 @@ function ProductPickView({
         // units_v1: see lib/unit-options.ts#unitPriceBase — the comparison base is the ACTIVE
         // unit's own resolved price, never the pack's `tierPriceFor`.
         const catalog = unitPriceBase(line, p ? tierPriceFor(p) : 0);
-        // SPECIAL lines drop any lingering override (e.g. from an old draft) —
-        // web can't produce one there, and the server owns the tier price.
+        // #2696(c): a SPECIAL line's override is sent only WITH its reason (the server refuses
+        // one without); a lingering reasonless one (e.g. an old draft) is dropped, as before.
+        const specialOk = p != null && (!isSpecialFor(p) || !!line.overrideReason?.trim());
         const override =
-          p != null && !isSpecialFor(p) && line.unitPrice != null && line.unitPrice !== catalog
-            ? { unitPrice: line.unitPrice }
+          specialOk && line.unitPrice != null && line.unitPrice !== catalog
+            ? {
+                unitPrice: line.unitPrice,
+                ...(line.overrideReason?.trim()
+                  ? { overrideReason: line.overrideReason.trim() }
+                  : {}),
+              }
             : {};
         const note = line.note?.trim() ? { notes: line.note.trim() } : {};
         const unitLabel = line.unitLabel?.trim() || undefined;
@@ -2442,20 +2454,22 @@ function ProductPickView({
         open={priceEditTarget != null}
         name={priceEditTarget?.name ?? ""}
         unitPrice={priceEditTarget?.unitPrice ?? null}
+        rule={priceEditTarget?.rule}
         onClose={() => setPriceEditId(null)}
-        onSave={(value) => {
+        onSave={(value, reason) => {
           const target = priceEditTarget;
           setPriceEditId(null);
           if (!target) return;
           // Money discipline: round every monetary write. The line TOTAL is never written
           // here — the tray/footer re-derive it through computeLineSubtotal from this price.
           const price = value == null ? null : roundMoney(value);
-          if (target.unlisted) return updateUnlistedPrice(target.id, price);
-          // SA-085i(b): write an override ONLY when it diverges from the base (same comparison
-          // submit/park make) — saving the pre-fill UNTOUCHED must never store one.
-          const p = productById.get(target.id);
-          const base = p ? unitPriceBase(items[target.id] ?? {}, tierPriceFor(p)) : null;
-          setLinePrice(target.id, base != null ? priceEditorSaveOverride(price, base) : price);
+          if (target.unlisted || !target.rule) return updateUnlistedPrice(target.id, price);
+          // #2696(c): the server's rule A (decideTrayPrice → pricing's decideStaffOverride) —
+          // within ½¢ of the base clears (SA-085i(b): saving the pre-fill never stores an
+          // override); a special line's change carries its reason (the modal refuses without).
+          const d = decideTrayPrice({ typed: price, ...target.rule, reason });
+          if (d.kind === "set") setLinePrice(target.id, d.price, d.overrideReason);
+          else if (d.kind === "clear") setLinePrice(target.id, null);
         }}
       />
 

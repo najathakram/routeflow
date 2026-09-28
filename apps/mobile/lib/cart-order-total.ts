@@ -16,7 +16,8 @@ export function lineUnitFor(line: LineState | undefined, product: Product, tier:
   const isSpecial = tier !== 1;
   const tierPrice = getTierPrice(product, tier);
   const base = unitPriceBase(line ?? {}, tierPrice);
-  return isSpecial ? base : effectiveUnitPrice(line, base);
+  // #2696(c): a special line bills an override only WITH its reason (the server refuses one without).
+  return isSpecial && !line?.overrideReason?.trim() ? base : effectiveUnitPrice(line, base);
 }
 
 /**

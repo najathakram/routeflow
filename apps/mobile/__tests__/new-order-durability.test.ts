@@ -186,29 +186,28 @@ describe("NewOrderScreen scan-tray price affordance (REG-NEWORDER-TRAYPRICE)", (
     // No line total is ever written here — the tray and footer re-derive it.
     expect(mount).not.toMatch(/lineTotal|\*\s*qty|qty\s*\*/);
     // SA-085i(b): an untouched pre-fill (price === the resolved base) must never be stored as
-    // a redundant override — priceEditorSaveOverride makes the SAME comparison submit/park do,
-    // as a lib function with its own value tests (cart-order-total.test.ts), not re-derived here.
-    expect(mount).toMatch(/unitPriceBase\(items\[target\.id\] \?\? \{\}, tierPriceFor\(p\)\)/);
-    expect(mount).toMatch(/priceEditorSaveOverride\(price, base\)/);
+    // a redundant override. #2696(c): the save goes through decideTrayPrice (pricing's
+    // decideStaffOverride, value-tested in special-override-2696.test.ts), which CLEARS within
+    // half a cent of the base; the base is the unitPriceBase the target resolves (TRAYPRICE-E).
+    expect(mount).toMatch(/decideTrayPrice\(\{ typed: price, \.\.\.target\.rule, reason \}\)/);
+    expect(mount).toMatch(/d\.kind === "clear"\) setLinePrice\(target\.id, null\)/);
   });
 
   it("REG-NEWORDER-TRAYPRICE-E: the pre-fill and the tray's price both call the lib's price functions (SA-085i(b)), not tierPriceFor directly", () => {
     const target = (screen.match(/const priceEditTarget = \(\(\)[\s\S]*?\}\)\(\);/) ?? [""])[0];
-    expect(target).toMatch(
-      /priceEditorPrefill\(items\[priceEditId\], p, effectiveTierFor\(p\.id\)\)/,
-    );
+    expect(target).toMatch(/priceEditorPrefill\(line, p, effectiveTierFor\(p\.id\)\)/);
+    expect(target).toMatch(/const line = items\[priceEditId\];/);
+    expect(target).toMatch(/base: unitPriceBase\(line \?\? \{\}, tierPriceFor\(p\)\)/);
     const tray = (screen.match(/trayRowsFrom\(\{[\s\S]*?\}\),/) ?? [""])[0];
     expect(tray).toMatch(/lineUnitFor\(items\[p\.id\], full, effectiveTierFor\(p\.id\)\)/);
   });
 
-  it("REG-NEWORDER-TRAYPRICE-C: a SPECIAL-tier line refuses the edit", () => {
-    const handler = (screen.match(/const onTrayEditPrice = useCallback[\s\S]*?\}, \[\]\);/) ?? [
-      "",
-    ])[0];
-    expect(handler).toBeTruthy();
-    expect(handler).toMatch(/isSpecialLine\(id\)/);
-    expect(handler).toMatch(/return;/);
-    expect(screen).toMatch(/isSpecialLine:\s*\(id: string\) => \{[\s\S]{0,160}?isSpecialFor\(p\)/);
+  it("REG-NEWORDER-TRAYPRICE-C (#2696(c)): a SPECIAL-tier line opens the editor — the reason is asked there", () => {
+    expect(screen).toMatch(
+      /const onTrayEditPrice = useCallback\(\(id: string\) => setPriceEditId\(id\), \[\]\);/,
+    );
+    expect(screen).not.toMatch(/isSpecialLine/);
+    expect(screen).toMatch(/isSpecial: isSpecialFor\(p\)/);
   });
 
   it("REG-NEWORDER-TRAYPRICE-D: the camera pauses while the price sheet is over it", () => {
