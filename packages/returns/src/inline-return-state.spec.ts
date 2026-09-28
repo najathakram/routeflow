@@ -2,6 +2,7 @@ import {
   applyCoveredPiecesToLines,
   buildCaptureRequest,
   buildQuoteRequest,
+  boxedProductIds,
   canOverrideReturnCredit,
   creditOverrideNote,
   creditOverrideProblem,
@@ -685,6 +686,16 @@ describe("#2695 (SA-557): the staff credit price override on the wire", () => {
         }),
         fmt,
       ),
-    ).toBe("Credit lowered to $3.50 from $5.00 — dented");
+    ).toBe("Credit lowered to $3.50 each from $5.00 each — dented");
+    expect(
+      creditOverrideNote(
+        chunk({ priceSource: "MANUAL", unitPrice: 18, originalPrice: 24 }),
+        fmt,
+        true,
+      ),
+    ).toBe("Credit lowered to $18.00 per box from $24.00 per box");
+    expect([
+      ...boxedProductIds([line({ productId: "a", unitsPerBox: 12 }), line({ productId: "b" })]),
+    ]).toEqual(["a"]);
   });
 });

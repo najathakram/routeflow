@@ -96,20 +96,31 @@ export function creditOverrideProblem(
 }
 
 /** A lowered credit, as the server priced it (`priceSource` MANUAL): the price, the default it
- *  replaced, and why — null for every other chunk. `money` is the host's own formatter. */
+ *  replaced, and why — null for every other chunk. `money` is the host's own formatter. A MANUAL
+ *  chunk's prices are per SELLING unit (one box when boxed), unlike a matched default's per-piece
+ *  `unitPrice`, so the host says which: `boxed` labels them "per box", else "each". */
 export function creditOverrideNote(
   chunk: Pick<
     InlineReturnQuoteChunk,
     "priceSource" | "unitPrice" | "originalPrice" | "overrideReason"
   >,
   money: (n: number) => string,
+  boxed = false,
 ): string | null {
   if (chunk.priceSource !== "MANUAL") return null;
+  const per = boxed ? " per box" : " each";
   return (
-    `Credit lowered to ${money(chunk.unitPrice ?? 0)}` +
-    (chunk.originalPrice != null ? ` from ${money(chunk.originalPrice)}` : "") +
+    `Credit lowered to ${money(chunk.unitPrice ?? 0)}${per}` +
+    (chunk.originalPrice != null ? ` from ${money(chunk.originalPrice)}${per}` : "") +
     (chunk.overrideReason ? ` — ${chunk.overrideReason}` : "")
   );
+}
+
+/** The products a host should label "per box" in {@link creditOverrideNote}. */
+export function boxedProductIds(
+  lines: Pick<InlineReturnLineDraft, "productId" | "unitsPerBox">[],
+): Set<string> {
+  return new Set(lines.filter((l) => isBoxedProduct(l)).map((l) => l.productId));
 }
 
 function overrideFields(line: Pick<InlineReturnLineDraft, "creditUnitPrice" | "overrideReason">): {

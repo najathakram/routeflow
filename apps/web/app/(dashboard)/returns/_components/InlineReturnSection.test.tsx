@@ -304,7 +304,7 @@ describe("InlineReturnSection — #2695 staff credit price override", () => {
       ]),
     );
     expect(
-      await screen.findByText("Credit lowered to $3.50 from $5.00 — dented"),
+      await screen.findByText("Credit lowered to $3.50 each from $5.00 each — dented"),
     ).toBeInTheDocument();
   });
 

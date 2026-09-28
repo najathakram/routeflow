@@ -22,6 +22,7 @@ import { NavBackButton, NavBar, SearchBar } from "@routeflow/ui/mobile/ios";
 import {
   applyCoveredPiecesToLines,
   applyReturnScan,
+  boxedProductIds,
   buildQuoteRequest,
   canReturnOnlyPurchased,
   CREDIT_OVERRIDE_REASON_MAX,
@@ -406,6 +407,7 @@ export default function InlineReturnScreen() {
           <QuoteView
             quote={screen.quote}
             lines={screen.quotedLines}
+            boxedIds={boxedProductIds(screen.quotedLines)}
             excessOption={screen.excessOption}
             onExcessOption={changeExcess}
             reason={reason}
@@ -502,6 +504,8 @@ function QuoteView(props: {
   quote: import("@routeflow/types").InlineReturnQuoteResponse;
   /** The quoted lines, for naming products option 3 would drop (#2693). */
   lines: ReadonlyArray<Pick<InlineReturnLineDraft, "productId" | "productName">>;
+  /** #2695: products whose override note reads "per box". */
+  boxedIds: Set<string>;
   excessOption: ExcessOption;
   onExcessOption: (o: ExcessOption) => void;
   reason: ReturnReason | "";
@@ -528,8 +532,10 @@ function QuoteView(props: {
             Net {money(c.subtotal)} · Tax {money(c.taxAmount)}
             {c.categoryTax > 0 ? ` · Levy ${money(c.categoryTax)}` : ""}
           </Text>
-          {creditOverrideNote(c, money) ? (
-            <Text style={styles.hint}>{creditOverrideNote(c, money)}</Text>
+          {creditOverrideNote(c, money, props.boxedIds.has(c.productId)) ? (
+            <Text style={styles.hint}>
+              {creditOverrideNote(c, money, props.boxedIds.has(c.productId))}
+            </Text>
           ) : null}
         </View>
       ))}
@@ -541,9 +547,9 @@ function QuoteView(props: {
             {money(excessTotals.subtotal)} · Tax {money(excessTotals.taxAmount)}
           </Text>
           {excess.map((c, i) =>
-            creditOverrideNote(c, money) ? (
+            creditOverrideNote(c, money, props.boxedIds.has(c.productId)) ? (
               <Text key={`excess-override-${i}`} style={styles.hint}>
-                {creditOverrideNote(c, money)}
+                {creditOverrideNote(c, money, props.boxedIds.has(c.productId))}
               </Text>
             ) : null,
           )}

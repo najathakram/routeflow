@@ -26,6 +26,7 @@ import type {
 import {
   applyCoveredPiecesToLines,
   applyReturnScan,
+  boxedProductIds,
   buildQuoteRequest,
   canOverrideReturnCredit,
   canReturnOnlyPurchased,
@@ -282,6 +283,7 @@ export function InlineReturnSection({
   const excessTotals = sumChunkTotals(excess);
   const onlyBoughtPossible = quote ? canReturnOnlyPurchased(quote) : false;
   const notBoughtBefore = quote && onlyBoughtPossible ? notBoughtBeforeNames(quote, lines) : [];
+  const boxedIds = boxedProductIds(lines);
   const overrideProblem = creditOverrideProblem(lines);
   const canGetQuote = hasAnyQtyEntered(lines) && getQuoteEnabled && overrideProblem === null;
 
@@ -493,6 +495,7 @@ export function InlineReturnSection({
                 <CoveredChunkRow
                   key={`${chunk.sourceOrderId}-${chunk.sourceInvoiceItemId}-${i}`}
                   chunk={chunk}
+                  boxed={boxedIds.has(chunk.productId)}
                 />
               ))}
             </div>
@@ -506,7 +509,11 @@ export function InlineReturnSection({
                 current price.
               </p>
               {excess.map((c, i) => (
-                <CreditOverrideNote key={`excess-override-${i}`} chunk={c} />
+                <CreditOverrideNote
+                  key={`excess-override-${i}`}
+                  chunk={c}
+                  boxed={boxedIds.has(c.productId)}
+                />
               ))}
               <div className="mt-2 space-y-1 text-sm text-navy">
                 <div className="flex justify-between">
@@ -605,7 +612,7 @@ export function InlineReturnSection({
   );
 }
 
-function CoveredChunkRow({ chunk }: { chunk: InlineReturnQuoteChunk }) {
+function CoveredChunkRow({ chunk, boxed }: { chunk: InlineReturnQuoteChunk; boxed: boolean }) {
   const { data: sourceOrder } = useOrder(chunk.sourceOrderId ?? "");
   return (
     <div className="rounded-lg border border-surface-border p-3 text-sm">
@@ -621,13 +628,13 @@ function CoveredChunkRow({ chunk }: { chunk: InlineReturnQuoteChunk }) {
         <span>Tax {money(chunk.taxAmount)}</span>
         {chunk.categoryTax > 0 && <span>Levy {money(chunk.categoryTax)}</span>}
       </div>
-      <CreditOverrideNote chunk={chunk} />
+      <CreditOverrideNote chunk={chunk} boxed={boxed} />
     </div>
   );
 }
 
 /** #2695: a lowered credit, shown as the server priced it — the default it replaced, and why. */
-function CreditOverrideNote({ chunk }: { chunk: InlineReturnQuoteChunk }) {
-  const note = creditOverrideNote(chunk, money);
+function CreditOverrideNote({ chunk, boxed }: { chunk: InlineReturnQuoteChunk; boxed: boolean }) {
+  const note = creditOverrideNote(chunk, money, boxed);
   return note ? <p className="mt-1 text-xs text-navy/70">{note}</p> : null;
 }
