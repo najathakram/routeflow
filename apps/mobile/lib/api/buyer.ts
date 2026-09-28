@@ -17,6 +17,8 @@ import type {
   BuyerAuthorizationRow,
   BuyerCreateChangeRequestInput,
   BuyerFavoriteProduct,
+  BuyerInvoiceItem,
+  BuyerInvoicePayment,
   BuyerOrder,
   BuyerPayment,
   BuyerProduct,
@@ -58,6 +60,8 @@ export type { ChangeRequestStatus, ChangeRequestType } from "./change-requests";
 // #2703 (SA-562): the catalog row + favorites shapes are ONE declaration in @routeflow/types.
 export type {
   BuyerFavoriteProduct,
+  BuyerInvoiceItem,
+  BuyerInvoicePayment,
   BuyerOrder,
   BuyerOrderLine,
   BuyerOrderListItem,
@@ -69,47 +73,6 @@ export type {
 // BuyerOrder / BuyerOrderListItem and the buyer-facing ChangeRequest row are ONE declaration in
 // @routeflow/types (SA-562). `./change-requests`' ChangeRequest is the narrower DRIVER-flow shape
 // and stays separate.
-
-export interface BuyerInvoiceItem {
-  id: string;
-  description: string;
-  qty: number;
-  unitPrice: number;
-  discount?: number;
-  subtotal: number;
-  boxes?: number | null;
-  pieces?: number | null;
-  /** units_v1: set when this line sells by a named unit (Case, Pallet, Piece…) — `boxes` is
-   *  then the COUNT of that unit (never a physical box). Null = the pack (B758). */
-  unitLabel?: string | null;
-  /** BUY_N_GET_M: whole free SELLING units on this line — names the reduced
-   *  `subtotal` so it doesn't read as a pricing error. */
-  promoFreeUnits?: number | null;
-  /** Per-line note, buyer-visible. */
-  notes?: string | null;
-  product?: { id: string; name: string; unit?: string };
-}
-
-/** Check lifecycle states (P5-12). Only ever set when method = CHECK. */
-export type BuyerCheckStatus = "RECORDED" | "DEPOSITED" | "CLEARED" | "BOUNCED";
-
-/** Raw InvoicePayment row from GET /buyer/invoices/:id (no DTO mapping). Field
- *  is `method`; `paymentMethod` kept only for older cached shapes. Decimal
- *  fields may arrive as strings — render via Number(), never do arithmetic. */
-export interface BuyerInvoicePayment {
-  id: string;
-  amount: number;
-  createdAt: string;
-  method?: string;
-  /** @deprecated the API returns `method` — kept for older cached shapes. */
-  paymentMethod?: string;
-  reference?: string;
-  notes?: string;
-  status?: "DRAFT" | "PAID" | "VOID" | string;
-  checkStatus?: BuyerCheckStatus | null;
-  nsfFeeAmount?: number | string | null;
-  paidAt?: string;
-}
 
 export interface BuyerInvoice {
   id: string;

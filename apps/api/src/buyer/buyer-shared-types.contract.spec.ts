@@ -8,12 +8,15 @@
 import type { Prisma } from "@prisma/client";
 import type {
   BuyerFavoriteProduct,
+  BuyerInvoiceItem,
+  BuyerInvoicePayment,
   BuyerOrder,
   BuyerOrderListItem,
   BuyerProduct,
   ChangeRequest,
   DecimalWire,
 } from "@routeflow/types";
+import type { InvoicesService } from "../invoices/invoices.service";
 import type { OrdersService } from "../orders/orders.service";
 import type { computeEditWindow } from "../orders/edit-window";
 import type { BuyerCatalogService } from "./buyer-catalog.service";
@@ -52,6 +55,7 @@ type FindOneRow = NarrowedCR<
     editWindow: ReturnType<typeof computeEditWindow>;
   }
 >;
+type InvoiceRow = Wire<Awaited<ReturnType<InvoicesService["findOne"]>>>;
 /** Compiles only when A and B are mutually assignable. */
 type Same<A, B> = [A] extends [B] ? ([B] extends [A] ? true : false) : false;
 const pin = <T extends true>(): T => true as T;
@@ -65,5 +69,10 @@ describe("buyer shared types (#2703): the API's return types ARE the shared type
   it("orders: findAll → BuyerOrderListItem, findOne (+ editWindow) → BuyerOrder (one-way)", () => {
     expect(pin<Satisfies<FindAllRow, BuyerOrderListItem>>()).toBe(true);
     expect(pin<Satisfies<FindOneRow, BuyerOrder>>()).toBe(true);
+  });
+
+  it("invoice detail: findOne's items / payments → BuyerInvoiceItem / BuyerInvoicePayment (one-way)", () => {
+    expect(pin<Satisfies<InvoiceRow["items"][number], BuyerInvoiceItem>>()).toBe(true);
+    expect(pin<Satisfies<InvoiceRow["payments"][number], BuyerInvoicePayment>>()).toBe(true);
   });
 });

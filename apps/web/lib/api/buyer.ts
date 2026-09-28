@@ -12,6 +12,8 @@ import type {
   BuyerAuthorizationRow,
   BuyerCreateChangeRequestInput,
   BuyerFavoriteProduct,
+  BuyerInvoiceItem,
+  BuyerInvoicePayment,
   BuyerOrder,
   BuyerOrderListItem,
   BuyerPayment,
@@ -468,31 +470,9 @@ export interface BuyerInvoiceDetail {
   creditApplied?: number;
   /** Confirmed advance-payment applications (B421) — same treatment. */
   advanceApplied?: number;
-  items: Array<{
-    id: string;
-    description: string;
-    productId: string | null;
-    qty: number;
-    unitPrice: number;
-    discount: number;
-    subtotal: number;
-    priceType: string;
-    /** BUY_N_GET_M snapshot carried from the order line — drives the "{n} free"
-     *  label so a reduced subtotal doesn't read as a pricing error. */
-    promoFreeUnits?: number | null;
-    /** Per-line note, buyer-visible. */
-    notes?: string | null;
-  }>;
-  payments: Array<{
-    id: string;
-    amount: number;
-    method: string;
-    status?: string;
-    checkStatus?: "RECORDED" | "DEPOSITED" | "CLEARED" | "BOUNCED" | null;
-    nsfFeeAmount?: number | null;
-    paidAt?: string | null;
-    createdAt?: string;
-  }>;
+  /** #2703: one declaration in @routeflow/types, shared with mobile. */
+  items: BuyerInvoiceItem[];
+  payments: BuyerInvoicePayment[];
   customer: { id: string; businessName: string };
 }
 

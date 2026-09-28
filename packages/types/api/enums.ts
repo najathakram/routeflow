@@ -443,6 +443,19 @@ export const ITEM_STATUS_VALUES = [
 ] as const;
 export type ItemStatus = (typeof ITEM_STATUS_VALUES)[number];
 
+/** Prisma `PaymentMethod` — an invoice payment's method (#2703). */
+export const PAYMENT_METHOD_VALUES = [
+  "CASH",
+  "CHECK",
+  "ACH",
+  "OTHER",
+  "CREDIT_NOTE",
+  "ADVANCE",
+  "CREDIT_CARD",
+  "ZELLE",
+] as const;
+export type PaymentMethod = (typeof PAYMENT_METHOD_VALUES)[number];
+
 export const ROUTE_RUN_STATUS_VALUES = [
   "SCHEDULED",
   "IN_PROGRESS",

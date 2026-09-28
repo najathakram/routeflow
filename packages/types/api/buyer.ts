@@ -6,9 +6,12 @@ import type {
   ChangeRequestStatus,
   ChangeRequestType,
   CheckStatus,
+  CreditNoteStatus,
   InvoiceStatus,
+  InvoiceTreatment,
   ItemStatus,
   OrderStatusValue,
+  PaymentMethod,
   PaymentStatus,
   PromotionScope,
   PromotionType,
@@ -355,4 +358,58 @@ export interface BuyerOrder extends BuyerOrderListItem {
   editWindow: BuyerOrderEditWindow;
   /** Run state backing the edit window (null until the order is on a run). */
   routeRun: { status: RouteRunStatusValue; startedAt: string | null } | null;
+}
+
+// ─── Invoice detail lines + payments (#2703, SA-562/562a: server truth) ─────────
+
+/** An invoice line as GET /buyer/invoices/:id returns it (InvoicesService.findOne; the buyer
+ *  boundary nulls an upsell line's originalPrice and reads its priceType as STANDARD). */
+export interface BuyerInvoiceItem {
+  id: string;
+  description: string;
+  productId: string | null;
+  qty: DecimalWire;
+  unitPrice: DecimalWire;
+  discount: DecimalWire;
+  originalPrice: DecimalWire | null;
+  msrp: DecimalWire | null;
+  priceType: PriceType;
+  subtotal: DecimalWire;
+  /** units_v1: set when the line sells by a named unit — `boxes` is then that unit's COUNT. */
+  unitLabel: string | null;
+  boxes: number | null;
+  pieces: number | null;
+  unitsPerBox: number | null;
+  /** BUY_N_GET_M: whole free SELLING units on this line (names the reduced subtotal). */
+  promoFreeUnits: number | null;
+  /** Per-line note, buyer-visible. */
+  notes: string | null;
+  categoryTaxAmount: DecimalWire;
+  product: { id: string; name: string; unit: string; unitsPerBox: number | null } | null;
+  trackedCategory: { id: string; name: string; invoiceTreatment: InvoiceTreatment } | null;
+  trackedSubcategory: { id: string; name: string } | null;
+}
+
+/** A payment row on GET /buyer/invoices/:id (newest first). `creditNote` is set when
+ *  method = CREDIT_NOTE. */
+export interface BuyerInvoicePayment {
+  id: string;
+  amount: DecimalWire;
+  method: PaymentMethod;
+  reference: string | null;
+  notes: string | null;
+  paidAt: string;
+  createdAt: string;
+  status: PaymentStatus;
+  /** Check lifecycle (P5-12) — only ever set when method = CHECK. */
+  checkStatus: CheckStatus | null;
+  nsfFeeAmount: DecimalWire | null;
+  creditNote: {
+    id: string;
+    creditNoteNumber: string;
+    reason: string | null;
+    amount: DecimalWire;
+    amountUsed: DecimalWire;
+    status: CreditNoteStatus;
+  } | null;
 }
