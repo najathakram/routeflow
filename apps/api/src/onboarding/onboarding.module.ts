@@ -5,6 +5,8 @@ import { StorageModule } from "../storage/storage.module";
 import { OnboardingController } from "./onboarding.controller";
 import { OnboardingIntakeService } from "./onboarding-intake.service";
 import { OnboardingService } from "./onboarding.service";
+import { OnboardingTenantController } from "./onboarding-tenant.controller";
+import { OnboardingTenantService } from "./onboarding-tenant.service";
 import { PublicOnboardingController } from "./public-onboarding.controller";
 
 /**
@@ -14,8 +16,8 @@ import { PublicOnboardingController } from "./public-onboarding.controller";
  */
 @Module({
   imports: [BillingModule, EmailModule, StorageModule],
-  controllers: [OnboardingController, PublicOnboardingController],
-  providers: [OnboardingService, OnboardingIntakeService],
+  controllers: [OnboardingController, PublicOnboardingController, OnboardingTenantController],
+  providers: [OnboardingService, OnboardingIntakeService, OnboardingTenantService],
   exports: [OnboardingService],
 })
 export class OnboardingModule {}
