@@ -104,7 +104,7 @@ describe("CustomersService.deleteImportedCustomers — invoice guard (#2569)", (
     "an imported customer with a %s invoice ⇒ refused with the blocked customer named, nothing deleted",
     async (status) => {
       (prisma.invoice.groupBy as jest.Mock).mockImplementation(blockOnStatus(status, "cust-2", 1));
-      const caught: any = await service.deleteImportedCustomers().catch((e) => e);
+      const caught: any = await service.runImportedCustomersCleanup().catch((e) => e);
       expect(caught).toBeInstanceOf(ConflictException);
       expect(caught.message).toContain("cust-2: 1 invoice(s)");
       nothingDestroyed();
@@ -115,24 +115,24 @@ describe("CustomersService.deleteImportedCustomers — invoice guard (#2569)", (
     (prisma.invoice.groupBy as jest.Mock).mockResolvedValue([]);
     prisma.invoice.findMany.mockResolvedValue([]);
     prisma.invoice.deleteMany.mockResolvedValue({ count: 0 });
-    await service.deleteImportedCustomers();
+    await service.runImportedCustomersCleanup();
     expect((prisma.invoice.groupBy as jest.Mock).mock.calls[0][0].where.customerId).toEqual({
       in: ["cust-1", "cust-2"],
     });
   });
 
-  it("DRAFT/VOID-only ⇒ proceeds, deleting exactly the invoices it read", async () => {
+  it("DRAFT-only ⇒ proceeds, deleting exactly the invoices it read (a VOID blocks, SA-530)", async () => {
     (prisma.invoice.groupBy as jest.Mock).mockResolvedValue([]);
     prisma.invoice.findMany.mockResolvedValue([
       { id: "inv-1", customerId: "cust-1", status: "DRAFT" },
-      { id: "inv-2", customerId: "cust-2", status: "VOID" },
+      { id: "inv-2", customerId: "cust-2", status: "DRAFT" },
     ]);
     prisma.invoice.deleteMany.mockResolvedValue({ count: 2 });
-    const res = await service.deleteImportedCustomers();
+    const res = await service.runImportedCustomersCleanup();
     expect(res).toEqual({ deleted: 2, preserved: 1 });
     expect(prisma.invoice.deleteMany.mock.calls[0][0].where).toEqual({
       customerId: { in: ["cust-1", "cust-2"] },
-      status: { notIn: ["SENT", "VIEWED", "PARTIAL", "PAID", "OVERDUE", "WRITTEN_OFF"] },
+      status: { notIn: ["SENT", "VIEWED", "PARTIAL", "PAID", "OVERDUE", "VOID", "WRITTEN_OFF"] },
     });
   });
 
@@ -141,7 +141,7 @@ describe("CustomersService.deleteImportedCustomers — invoice guard (#2569)", (
     prisma.invoice.findMany.mockResolvedValue([
       { id: "inv-1", customerId: "cust-1", status: "PAID" },
     ]);
-    const caught: any = await service.deleteImportedCustomers().catch((e) => e);
+    const caught: any = await service.runImportedCustomersCleanup().catch((e) => e);
     expect(caught).toBeInstanceOf(ConflictException);
     expect(caught.message).toContain("cust-1: 1 invoice(s)");
     expect(prisma.invoice.deleteMany).not.toHaveBeenCalled();
@@ -150,7 +150,7 @@ describe("CustomersService.deleteImportedCustomers — invoice guard (#2569)", (
 
   it("a null tenant is refused before anything is read (no all-tenant wipe)", async () => {
     prisma.getTenantId.mockReturnValue(null);
-    await expect(service.deleteImportedCustomers()).rejects.toThrow(ForbiddenException);
+    await expect(service.runImportedCustomersCleanup()).rejects.toThrow(ForbiddenException);
     expect(prisma.customer.findMany).not.toHaveBeenCalled();
     nothingDestroyed();
   });

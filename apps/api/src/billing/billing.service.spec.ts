@@ -1075,7 +1075,7 @@ describe("onCheckoutCompleted — B445 planKey + basePriceSnapshot write", () =>
 
       // #2560 / SA-508: the house lock order inside the snapshot-on checkout tx — the per-session
       // advisory lock, the hook, THEN the Tenant row lock, then the subscription writes + AuditLog.
-      it("#2560: advisory lock → hook → Tenant lock → subscription write → AuditLog", async () => {
+      it("#2560: advisory lock → hook → Tenant lock → CAS → subscription write → AuditLog", async () => {
         const { svc, tx, planTransition } = make({ transitionCount: 1 });
         const order: string[] = [];
         tx.$executeRaw.mockImplementation(async () => {
@@ -1091,6 +1091,11 @@ describe("onCheckoutCompleted — B445 planKey + basePriceSnapshot write", () =>
             order.push("tenant-lock");
           return [];
         });
+        // #2581: the compare-and-set on an existing row is a subscription write too — after the lock.
+        tx.tenantSubscription.updateMany.mockImplementation(async () => {
+          order.push("cas");
+          return { count: 1 };
+        });
         const realUpsert = tx.tenantSubscription.upsert.getMockImplementation()!;
         tx.tenantSubscription.upsert.mockImplementation(async (a: any) => {
           order.push("sub-write");
@@ -1103,7 +1108,7 @@ describe("onCheckoutCompleted — B445 planKey + basePriceSnapshot write", () =>
 
         await (svc as any).onCheckoutCompleted(withId("cs_order"));
 
-        expect(order).toEqual(["advisory", "hook", "tenant-lock", "sub-write", "audit"]);
+        expect(order).toEqual(["advisory", "hook", "tenant-lock", "cas", "sub-write", "audit"]);
       });
 
       it("#2560: a single 40P01 on the checkout tx is retried and the checkout applies once, no alarm row", async () => {
@@ -1353,8 +1358,10 @@ describe("B216 — a Stripe reinstatement LEAVES a downgrade scheduled before th
 describe("BillingService.syncStripeSubscriptionPrice", () => {
   let service: BillingService;
   let prisma: {
-    tenantSubscription: { findUnique: jest.Mock; update: jest.Mock };
+    tenantSubscription: { findUnique: jest.Mock; update: jest.Mock; updateMany: jest.Mock };
     tenantAddon: { findMany: jest.Mock };
+    $transaction: jest.Mock;
+    $queryRaw: jest.Mock;
   };
   let stripe: { getSubscription: jest.Mock; updateSubscription: jest.Mock; isConfigured: boolean };
   let pricing: { checkoutPriceData: jest.Mock; resolveTenantPricing: jest.Mock };
@@ -1362,7 +1369,15 @@ describe("BillingService.syncStripeSubscriptionPrice", () => {
 
   beforeEach(async () => {
     prisma = {
-      tenantSubscription: { findUnique: jest.fn(), update: jest.fn().mockResolvedValue({}) },
+      tenantSubscription: {
+        findUnique: jest.fn(),
+        update: jest.fn().mockResolvedValue({}),
+        // #2509: reconcilePriceLedger's compare-and-set write (1 = the row still held what it read).
+        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+      },
+      $transaction: jest.fn(async (fn: any) => fn(prisma)),
+      // SA-485b (ii): the reconcile's Tenant row lock.
+      $queryRaw: jest.fn().mockResolvedValue([]),
       // #2440: the tenant's add-on subscription items (none by default).
       tenantAddon: { findMany: jest.fn().mockResolvedValue([]) },
     };
@@ -1489,6 +1504,93 @@ describe("BillingService.syncStripeSubscriptionPrice", () => {
     expect(stripe.updateSubscription).not.toHaveBeenCalled();
   });
 
+  // #2509: reconcilePriceLedger is ONE transaction — read, compare-and-set on the (planKey, snapshot) it
+  // read, emit in the same tx. A miss re-reads: a plan changed meanwhile ⇒ this resolved price is stale
+  // for the row, skip (the plan path wrote its own snapshot); only the snapshot moved ⇒ retry against it.
+  describe("#2509 reconcilePriceLedger — compare-and-set in one transaction", () => {
+    const row = (planKey: string, snapshot: number) => ({
+      tenantId: "t1",
+      planKey,
+      basePriceSnapshot: snapshot,
+      stripeSubId: null, // the Stripe push is a no-op; only the reconcile is under test
+      billingInterval: "month",
+      tenant: { status: "ACTIVE", deletedAt: null, class: "PRODUCTION" },
+    });
+    /** The sync's own read returns `first`; each reconcile read (it selects the tenant) takes the next. */
+    const reads = (first: any, reconcileReads: any[]) =>
+      prisma.tenantSubscription.findUnique.mockImplementation(async (args: any) =>
+        args?.select?.tenant ? (reconcileReads.shift() ?? reconcileReads[0]) : first,
+      );
+    const planChanged = () =>
+      events.emit.mock.calls.filter((c: any[]) => c[1] === BILLING_EVENTS.PLAN_CHANGED);
+
+    it("writes by compare-and-set on the planKey + snapshot it read, and emits in the same tx", async () => {
+      reads(row("GROWTH", 249), [row("GROWTH", 249)]);
+      await service.syncStripeSubscriptionPrice("t1");
+      expect(prisma.tenantSubscription.updateMany).toHaveBeenCalledWith({
+        where: { tenantId: "t1", planKey: "GROWTH", basePriceSnapshot: 249 },
+        data: { basePriceSnapshot: 150 },
+      });
+      expect(prisma.tenantSubscription.update).not.toHaveBeenCalled();
+      const [c] = planChanged();
+      expect(c?.[3]).toMatchObject({ amountDelta: -99, tx: expect.anything() });
+    });
+
+    // SA-485b (ii): the reconcile takes the SAME Tenant FOR UPDATE that updatePlan and
+    // updateTenantPriceOverride take — lock → read → CAS → emit in one tx — so it serializes with them.
+    it("SA-485b: takes the Tenant row lock FIRST, before its read and its compare-and-set", async () => {
+      reads(row("GROWTH", 249), [row("GROWTH", 249)]);
+      await service.syncStripeSubscriptionPrice("t1");
+      const lockIdx = prisma.$queryRaw.mock.calls.findIndex((c: any[]) =>
+        String(c[0]?.join?.("?") ?? c[0]).includes('"Tenant"'),
+      );
+      expect(lockIdx).toBeGreaterThan(-1);
+      const lockAt = prisma.$queryRaw.mock.invocationCallOrder[lockIdx];
+      const reconcileRead = prisma.tenantSubscription.findUnique.mock.calls.findIndex(
+        (c: any[]) => c[0]?.select?.tenant,
+      );
+      expect(lockAt).toBeLessThan(
+        prisma.tenantSubscription.findUnique.mock.invocationCallOrder[reconcileRead],
+      );
+      expect(lockAt).toBeLessThan(prisma.tenantSubscription.updateMany.mock.invocationCallOrder[0]);
+    });
+
+    it("a plan change committed meanwhile (CAS miss, planKey moved) ⇒ nothing written or booked", async () => {
+      reads(row("GROWTH", 249), [row("GROWTH", 249), row("SCALE", 499)]);
+      prisma.tenantSubscription.updateMany.mockResolvedValueOnce({ count: 0 });
+      await service.syncStripeSubscriptionPrice("t1");
+      expect(prisma.tenantSubscription.updateMany).toHaveBeenCalledTimes(1);
+      expect(planChanged()).toHaveLength(0);
+    });
+
+    it("only the snapshot moved (CAS miss, same plan) ⇒ retried against the fresh value, booked once", async () => {
+      reads(row("GROWTH", 249), [row("GROWTH", 249), row("GROWTH", 200)]);
+      prisma.tenantSubscription.updateMany
+        .mockResolvedValueOnce({ count: 0 })
+        .mockResolvedValueOnce({ count: 1 });
+      await service.syncStripeSubscriptionPrice("t1");
+      expect(prisma.tenantSubscription.updateMany.mock.calls[1][0]).toEqual({
+        where: { tenantId: "t1", planKey: "GROWTH", basePriceSnapshot: 200 },
+        data: { basePriceSnapshot: 150 },
+      });
+      expect(planChanged()).toHaveLength(1);
+      expect(planChanged()[0][3].amountDelta).toBe(-50); // 150 − 200, never 150 − 249
+    });
+
+    // SA-503a (#2528 fold): the reconcile runs AFTER the fee and the Stripe push committed, so a lock
+    // conflict here must be retried — never a 500 that leaves the snapshot stale behind them.
+    it("SA-503a: a 40P01 on the reconcile's transaction is retried and books exactly once", async () => {
+      reads(row("GROWTH", 249), [row("GROWTH", 249)]);
+      prisma.$transaction.mockImplementationOnce(async () => {
+        throw Object.assign(new Error("deadlock detected"), { code: "40P01" });
+      });
+      await service.syncStripeSubscriptionPrice("t1");
+      expect(prisma.$transaction).toHaveBeenCalledTimes(2);
+      expect(planChanged()).toHaveLength(1);
+      expect(planChanged()[0][3].amountDelta).toBe(-99);
+    });
+  });
+
   it("moves the MRR ledger with the price: writes basePriceSnapshot and emits a signed amountDelta", async () => {
     prisma.tenantSubscription.findUnique.mockResolvedValue({
       tenantId: "t1",
@@ -1517,7 +1619,8 @@ describe("BillingService.syncStripeSubscriptionPrice", () => {
 
     // MrrService prices every paying tenant from basePriceSnapshot and reconciles the
     // total against Σ BillingEvent.amountDelta — a price change must move BOTH.
-    expect(prisma.tenantSubscription.update).toHaveBeenCalledWith(
+    // #2509: the snapshot moves by compare-and-set (reconcilePriceLedger's one transaction).
+    expect(prisma.tenantSubscription.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({ data: { basePriceSnapshot: 150 } }),
     );
     const call = events.emit.mock.calls.find((c: any[]) => c[1] === BILLING_EVENTS.PLAN_CHANGED);
@@ -1559,7 +1662,8 @@ describe("BillingService.syncStripeSubscriptionPrice", () => {
 
     // The snapshot always stays current — so a later reactivation books the CORRECT (new)
     // price, not a stale one.
-    expect(prisma.tenantSubscription.update).toHaveBeenCalledWith(
+    // #2509: the snapshot moves by compare-and-set (reconcilePriceLedger's one transaction).
+    expect(prisma.tenantSubscription.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({ data: { basePriceSnapshot: 599 } }),
     );
     // But no ledger event — `mrr` never counted this tenant while suspended, and a delta here
@@ -1948,11 +2052,30 @@ describe("#2440 subscription upkeep — match by subscription id, status mapping
     it("the warning email carries the billing-portal link", async () => {
       const { svc, stripe, email } = make({ sub: FAILING });
       await (svc as any).onPaymentFailed(failed());
-      expect(stripe.createBillingPortalSession).toHaveBeenCalledWith(
+      // The second argument (#2476's request cap) is pinned by its own test below.
+      expect(stripe.createBillingPortalSession.mock.calls[0][0]).toEqual(
         expect.objectContaining({ customerId: "cus_1" }),
       );
       expect(email.send).toHaveBeenCalledTimes(1);
       expect(email.send.mock.calls[0][0].html).toContain("https://billing.stripe.test/p/session_1");
+    });
+
+    // #2476 Opus MED fold: stripe-node's defaults (80 s timeout, network retries) could hold the
+    // webhook claim for minutes; the email's portal link is best-effort, so its call is capped.
+    it("#2476: the payment-failed portal call is capped (10 s, no network retries)", async () => {
+      const { svc, stripe } = make({ sub: FAILING });
+      await (svc as any).onPaymentFailed(failed());
+      expect(stripe.createBillingPortalSession).toHaveBeenCalledWith(
+        expect.objectContaining({ customerId: "cus_1" }),
+        { timeoutMs: 10_000, maxNetworkRetries: 0 },
+      );
+    });
+
+    it("#2476: the user-facing portal session keeps Stripe's default request options", async () => {
+      const { svc, stripe } = make({ sub: FAILING });
+      await svc.createBillingPortalSession("t1");
+      expect(stripe.createBillingPortalSession).toHaveBeenCalledTimes(1);
+      expect(stripe.createBillingPortalSession.mock.calls[0][1]).toBeUndefined();
     });
 
     it("a portal failure still sends the email, with today's fallback text", async () => {
@@ -1977,6 +2100,21 @@ describe("#2440 subscription upkeep — match by subscription id, status mapping
       await (svc as any).onPaymentFailed(failed());
       expect(prisma.tenantSubscription.update).not.toHaveBeenCalled();
       expect(email.send).not.toHaveBeenCalled();
+    });
+
+    // #2476 / SA-472: the increment is the event's effect; everything after it (admin lookup, portal,
+    // email) is non-throwing and logged — a later throw must never mark the event "error:" and make a
+    // redelivery re-run the increment.
+    it("#2476: an admin lookup that throws AFTER the increment never fails the handler (count once)", async () => {
+      const { svc, prisma, email } = make({ sub: FAILING });
+      prisma.user.findFirst.mockRejectedValue(new Error("db blip"));
+      const warn = jest.spyOn((svc as any).logger, "warn").mockImplementation(() => undefined);
+      await expect((svc as any).onPaymentFailed(failed())).resolves.toBeUndefined();
+      expect(prisma.tenantSubscription.update).toHaveBeenCalledTimes(1);
+      expect(email.send).not.toHaveBeenCalled();
+      expect(warn.mock.calls.some((c: any[]) => /payment-failed email/i.test(String(c[0])))).toBe(
+        true,
+      );
     });
 
     it("an invoice with no subscription (free pilot / one-off) is untouched", async () => {

@@ -3,10 +3,12 @@
  * the complete-stop DTO accepts arbitrary strings, so `tenants/<own>/pod/../../<other>/…` (or an
  * encoded / backslashed variant) could be stored and then signed as another tenant's R2 object. A
  * POD key must now be EXACTLY `tenants/<own>/pod/<stopId>/<name>.<ext>`, on WRITE and at SIGN.
- * Red-first against the prefix check. Bootstrap copied from routes.service.stop-state-guards.spec.ts.
+ * Red-first against the prefix check. #2550 adds the per-stop pin on write, the pinned null refusal
+ * and the unicode / trailing-dot rows. Bootstrap copied from routes.service.stop-state-guards.spec.ts
+ * (trimmed to what these cases use).
  */
 import { Test, TestingModule } from "@nestjs/testing";
-import { BadRequestException, ConflictException, ForbiddenException } from "@nestjs/common";
+import { BadRequestException } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { RoutesService } from "./routes.service";
 import { PrismaService } from "../prisma/prisma.service";
@@ -14,14 +16,8 @@ import { RouteFlowGateway } from "../gateways/routeflow.gateway";
 import { NotificationsService } from "../notifications/notifications.service";
 import { MessagingService } from "../messaging/messaging.service";
 import { InvoicesService } from "../invoices/invoices.service";
-// F03/F05 own the "counts as collected money" predicate — R1's live-money
-// reopen guard must pin to THIS shared const rather than a literal
-// `status: "PAID"`, same convention as every other confirmed-money read.
-import { CONFIRMED_PAYMENT } from "../invoices/payment-predicates";
 import { StorageService } from "../storage/storage.service";
 import { FeatureConfigService } from "../billing/feature-config.service";
-import { geocodeAddress } from "../common/geocode.util";
-import { compressImage } from "../storage/compress.util";
 import { createMockPrisma } from "../testing/prisma-mock";
 
 jest.mock("../common/geocode.util", () => ({ geocodeAddress: jest.fn() }));
@@ -35,45 +31,7 @@ jest.mock("../storage/compress.util", () => ({
   }),
 }));
 
-// Campaign batch F10 — REG-B54/B55/B71/B72/B120/B121. Every test below is a
-// RED-GATE proof: written before the fix lands, each must fail on an
-// assertion (never a compile/import error) against the CURRENT
-// (pre-implementation) behavior of RoutesService. See
-// .claude/pipeline/2026-09-01-F10-reopen-stop-state-guards/{spec,test-plan}.md.
-
-const operatorPayload = { sub: "user-op", role: "OPERATOR", tenantId: "t1" } as any;
 const driverPayload = { sub: "user-drv", role: "DRIVER", tenantId: "t1" } as any;
-
-const RUN_FIXTURE = {
-  id: "run-1",
-  driverId: "drv-1",
-  status: "SCHEDULED" as const,
-  startedAt: null as Date | null,
-  settlementNote: null as string | null,
-  settlementVariance: null as number | null,
-};
-
-// The order carried by reopenStop's stop fixture — status DELIVERED so the
-// reversal's order-demotion step (step 4) is exercised.
-const REOPEN_ORDER = { id: "order-1", status: "DELIVERED", lineItems: [] as unknown[] };
-
-const REOPEN_STOP_BASE = {
-  id: "stop-1",
-  status: "COMPLETED" as const,
-  orders: [REOPEN_ORDER],
-  signatureUrl: null as string | null,
-  podPhotoUrls: [] as string[],
-  ageVerified: false,
-  identityVerified: false,
-  identityType: null as string | null,
-  identityVerifiedAt: null as Date | null,
-  completedAt: null as Date | null,
-  safeDropEnabled: false,
-  driverNote: null as string | null,
-};
-
-const SIG_DATA_URL = "data:image/png;base64,aGk=";
-const PHOTO_DATA_URL = "data:image/jpeg;base64,/9j/fake";
 
 import { isPodStorageKey, podCaptureValueRefusal } from "./pod-artifacts.util";
 import { ingestPodCapture } from "./pod-ingest";
@@ -98,11 +56,6 @@ describe("RoutesService — POD key traversal (#2542)", () => {
 
   beforeEach(async () => {
     prisma = createMockPrisma();
-    // R6's archival write targets `tx.auditLog.create`; `createMockPrisma()`
-    // carries `auditLog` in its shared model list, so the top-level mock and the
-    // default tenantTransaction client are the SAME jest.fn — which is what makes
-    // T16's "was NOT the call site" assertion mean something. Never re-attach it
-    // by hand here: that would fork the two and the assertion would pass vacuously.
 
     invoicesService = {
       recordDeliveryPaymentInTx: jest
@@ -171,6 +124,11 @@ describe("RoutesService — POD key traversal (#2542)", () => {
     `tenants/${T}/pod/`,
     `tenants/t2/pod/stop-9/photo-abcd1234.jpg`,
     `products/p1/x.jpg`,
+    // #2550 (c): unicode look-alikes and trailing dots never pass the ASCII-only shape.
+    `tenants/${T}/pod/stop-1/photo\u2024jpg`, // U+2024 ONE DOT LEADER
+    `tenants/${T}/pod/\uff0e\uff0e/stop-1/photo.jpg`, // fullwidth ．． segment
+    `tenants/${T}/pod/stop-1/photo.jpg.`,
+    `tenants/${T}/pod/stop-1/photo.`,
   ];
 
   describe("isPodStorageKey: exact structure, own tenant only", () => {
@@ -198,6 +156,44 @@ describe("RoutesService — POD key traversal (#2542)", () => {
     });
     it.each(ESCAPES)("refuses %s", (v) => {
       expect(podCaptureValueRefusal(v, T)).toMatch(/own proof-of-delivery key/);
+    });
+
+    it("#2550 (a): with a stop id, a same-tenant key for ANOTHER stop is refused (no relink)", () => {
+      expect(podCaptureValueRefusal(OWN, T, "stop-1")).toBeNull();
+      expect(
+        podCaptureValueRefusal(`tenants/${T}/pod/stop-2/photo-abcd1234.jpg`, T, "stop-1"),
+      ).toMatch(/this stop's own proof-of-delivery key/);
+      // Without a stop id (the tenant-only check) the same key is still own-tenant.
+      expect(podCaptureValueRefusal(`tenants/${T}/pod/stop-2/photo-abcd1234.jpg`, T)).toBeNull();
+    });
+
+    it("#2550 (b): null is REFUSED, never read as absent (it would clear a stored signature)", async () => {
+      expect(podCaptureValueRefusal(null, T)).toBe("a POD value must be a string");
+      const deps = {
+        prisma: { getTenantId: () => T },
+        storage: { upload: jest.fn() },
+        logger: { warn: jest.fn() },
+      };
+      await expect(
+        ingestPodCapture(deps, { signatureUrl: null as unknown as string }, "stop-1"),
+      ).rejects.toThrow(BadRequestException);
+      expect(deps.storage.upload).not.toHaveBeenCalled();
+    });
+
+    it("ingestPodCapture refuses another stop's key and a traversal before anything is uploaded", async () => {
+      const relinkDeps = {
+        prisma: { getTenantId: () => T },
+        storage: { upload: jest.fn() },
+        logger: { warn: jest.fn() },
+      };
+      await expect(
+        ingestPodCapture(
+          relinkDeps,
+          { podPhotoUrls: [`tenants/${T}/pod/stop-2/photo-abcd1234.jpg`] },
+          "stop-1",
+        ),
+      ).rejects.toThrow(BadRequestException);
+      expect(relinkDeps.storage.upload).not.toHaveBeenCalled();
     });
 
     it("ingestPodCapture refuses a traversal before anything is uploaded", async () => {
