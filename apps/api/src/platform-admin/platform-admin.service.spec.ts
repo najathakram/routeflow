@@ -3298,6 +3298,25 @@ describe("PlatformAdminService — audit provenance", () => {
       },
     );
 
+    // #2570 (the lead's nit on #2568): round every monetary write — a 3dp negotiated fee is written
+    // and booked at cents, on the plan-switch and on the crossing alike.
+    it.each([
+      ["a plan-switch", "ACTIVE", 100, 123.46 - 100],
+      ["a crossing", "TRIAL", null, 123.46],
+    ])(
+      "#2570: %s writes and books a 3dp override rounded to cents",
+      async (_l, status, stored, delta) => {
+        setup(status, {
+          planKey: "STARTER",
+          basePriceSnapshot: stored,
+          priceOverrideMonthly: 123.456,
+        });
+        await activate("GROWTH");
+        expect(upsertUpdate().basePriceSnapshot).toBe(123.46);
+        expect(planDeltas()).toEqual([Math.round(delta * 100) / 100]);
+      },
+    );
+
     it("the plan-switch books in the SAME tx as the snapshot write", async () => {
       setup("ACTIVE", { planKey: "STARTER", basePriceSnapshot: 99, priceOverrideMonthly: null });
       await activate("GROWTH");

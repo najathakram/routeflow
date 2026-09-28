@@ -1047,11 +1047,12 @@ export class PlatformAdminService {
         isPaying &&
         normalizePlanKey(before.subscription?.planKey) !== definition.planKey;
       const override = before.subscription?.priceOverrideMonthly;
+      // #2570: round every monetary write — the snapshot (and so the delta booked from it) at cents.
       const newBase =
         override != null
-          ? Number(override)
+          ? roundMoney(Number(override))
           : definition.monthlyPrice != null
-            ? Number(definition.monthlyPrice)
+            ? roundMoney(Number(definition.monthlyPrice))
             : null;
       const snapshotWrite = crossingIn || planSwitch ? { basePriceSnapshot: newBase } : {};
 

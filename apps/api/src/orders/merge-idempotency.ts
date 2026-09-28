@@ -1,6 +1,7 @@
 import { ConflictException, ForbiddenException } from "@nestjs/common";
 import { createHash } from "crypto";
 import { assertReplayCarriesReturnKey } from "./order-inline-return";
+import type { InlineReturnReplayLines } from "../returns/inline-return-fingerprint";
 
 // Canonical JSON: object keys sorted, undefined-valued keys dropped (an absent field and a
 // missing field fingerprint the same), arrays kept in order at this level.
@@ -221,10 +222,10 @@ export async function findOrderIdByKeyCheckingReturn(
   idempotencyKey: string,
   customerId: string,
   requestHash?: string,
-  returnKey?: string,
+  inlineReturn?: InlineReturnReplayLines, // #2424: its items are compared too, not only its key
 ): Promise<{ orderId: string; verified: boolean } | null> {
   const hit = await findOrderIdByIdempotencyKey(deps, idempotencyKey, customerId, requestHash);
-  if (hit) await assertReplayCarriesReturnKey(deps.prisma.forTenant(), returnKey, hit.orderId);
+  if (hit) await assertReplayCarriesReturnKey(deps.prisma.forTenant(), inlineReturn, hit.orderId);
   return hit;
 }
 
