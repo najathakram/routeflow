@@ -771,30 +771,3 @@ export function useDeleteCustomerTaxDocument(customerId: string) {
     },
   });
 }
-
-// ─── Cleanup imported customers ────────────────────────────────────────────────
-
-export interface CleanupPreview {
-  toDelete: number;
-  toKeep: number;
-  buyers: { id: string; businessName: string }[];
-}
-
-export function useCleanupPreview() {
-  return useQuery<CleanupPreview>({
-    queryKey: ["customers", "cleanup-preview"],
-    queryFn: () => apiClient.get("/customers/cleanup-preview").then((r) => r.data),
-    enabled: false,
-    staleTime: 0,
-  });
-}
-
-export function useDeleteImportedCustomers() {
-  const qc = useQueryClient();
-  return useMutation<{ deleted: number; preserved: number }>({
-    mutationFn: () => apiClient.delete("/customers/cleanup-imported").then((r) => r.data),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["customers"] });
-    },
-  });
-}
