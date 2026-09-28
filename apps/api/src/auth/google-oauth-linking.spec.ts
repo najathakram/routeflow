@@ -207,13 +207,14 @@ describe("GoogleOAuthService — lookup order & claims (#2495)", () => {
       if (where.googleId) return Promise.resolve(null);
       return Promise.resolve(row);
     });
-    prisma.user.update.mockImplementation(({ data }: any) => Promise.resolve({ ...row, ...data }));
+    // #2495 LOW: the link write is now a CAS (updateMany scoped to googleId:null).
+    prisma.user.updateMany.mockResolvedValue({ count: 1 } as any);
 
     const { service } = buildService(prisma);
     const result: any = await service.findOrCreateUser(profileFor("google-new") as any);
 
-    expect(prisma.user.update).toHaveBeenCalledWith({
-      where: { id: "user-1" },
+    expect(prisma.user.updateMany).toHaveBeenCalledWith({
+      where: { id: "user-1", googleId: null },
       data: { googleId: "google-new", forcePasswordChange: false },
     });
     expect(result.user.id).toBe("user-1");
@@ -358,4 +359,130 @@ describe("GoogleOAuthService — lookup order & claims (#2495)", () => {
       }
     }
   }
+
+  // ─── #2495 LOW: the googleId-NULL auto-link write is a CAS ────────────────
+  // The read-then-write link was check-then-update: two concurrent sign-ins for the
+  // same email (rightful sub + attacker's sub) could both pass the read (googleId
+  // still null) before either wrote. The write itself is now guarded — updateMany
+  // scoped to `googleId: null` — so only the first writer's CAS succeeds; a loser
+  // (count: 0) re-reads and is refused if a DIFFERENT sub won the race.
+
+  it("platform: CAS write loses the race (count 0) to a DIFFERENT sub already bound ⇒ 409, no further update", async () => {
+    const prisma = createMockPrisma();
+    const row = {
+      id: "user-1",
+      username: "admin",
+      role: "SUPER_ADMIN",
+      status: "ACTIVE",
+      googleId: null,
+      email: PROFILE_EMAIL,
+      tenantId: null,
+    };
+    prisma.user.findFirst.mockImplementation(({ where }: any) => {
+      if (where.googleId) return Promise.resolve(null); // no sub match yet
+      return Promise.resolve(row); // email match, googleId still null at read time
+    });
+    // The CAS write loses: another request already bound a DIFFERENT sub between
+    // our read and our write.
+    prisma.user.updateMany.mockResolvedValue({ count: 0 } as any);
+    prisma.user.findUnique.mockResolvedValue({ ...row, googleId: "attacker-won-sub" } as any);
+
+    const { service } = buildService(prisma);
+    await expect(service.findOrCreateUser(profileFor("my-sub") as any)).rejects.toThrow(
+      new ConflictException("google_account_mismatch"),
+    );
+  });
+
+  it("platform: CAS write loses the race (count 0) but the winner used the SAME sub ⇒ proceeds, no error", async () => {
+    const prisma = createMockPrisma();
+    const row = {
+      id: "user-1",
+      username: "admin",
+      role: "SUPER_ADMIN",
+      status: "ACTIVE",
+      googleId: null,
+      email: PROFILE_EMAIL,
+      tenantId: null,
+    };
+    prisma.user.findFirst.mockImplementation(({ where }: any) => {
+      if (where.googleId) return Promise.resolve(null);
+      return Promise.resolve(row);
+    });
+    prisma.user.updateMany.mockResolvedValue({ count: 0 } as any);
+    // A duplicate concurrent request with the SAME sub won first — harmless.
+    prisma.user.findUnique.mockResolvedValue({ ...row, googleId: "my-sub" } as any);
+
+    const { service } = buildService(prisma);
+    const result: any = await service.findOrCreateUser(profileFor("my-sub") as any);
+    expect(result.user.id).toBe("user-1");
+  });
+
+  it("staff: CAS write loses the race (count 0) to a DIFFERENT sub already bound ⇒ 409", async () => {
+    const prisma = createMockPrisma();
+    const TENANT = { id: "tenant-1", slug: "acme", status: "ACTIVE" };
+    prisma.tenant.findFirst.mockResolvedValue(TENANT as any);
+    const row = {
+      id: "staff-1",
+      username: "op1",
+      role: "OPERATOR",
+      status: "ACTIVE",
+      googleId: null,
+      email: PROFILE_EMAIL,
+      tenantId: TENANT.id,
+    };
+    prisma.user.findFirst.mockImplementation(({ where }: any) => {
+      if (where.googleId) return Promise.resolve(null);
+      return Promise.resolve(row);
+    });
+    prisma.user.updateMany.mockResolvedValue({ count: 0 } as any);
+    prisma.user.findUnique.mockResolvedValue({ ...row, googleId: "attacker-won-sub" } as any);
+
+    const { service } = buildService(prisma);
+    const profile = {
+      type: "tenant" as const,
+      tenantSlug: TENANT.slug,
+      googleId: "my-sub",
+      email: PROFILE_EMAIL,
+      name: "Op",
+    };
+    await expect(service.findOrCreateUser(profile as any)).rejects.toThrow(
+      new ConflictException("google_account_mismatch"),
+    );
+  });
+
+  it("buyer: CAS write loses the race (count 0) to a DIFFERENT sub already bound ⇒ 409, no email re-sent", async () => {
+    const prisma = createMockPrisma();
+    const row = {
+      id: "buyer-1",
+      email: PROFILE_EMAIL,
+      name: "Buyer",
+      googleId: null,
+      status: "ACTIVE",
+      deletedAt: null,
+      passwordSet: false,
+      emailVerified: true,
+    };
+    prisma.buyerAccount.findFirst.mockImplementation(({ where }: any) => {
+      if (where.googleId) return Promise.resolve(null);
+      return Promise.resolve(row);
+    });
+    prisma.buyerAccount.updateMany.mockResolvedValue({ count: 0 } as any);
+    prisma.buyerAccount.findUnique.mockResolvedValue({
+      ...row,
+      googleId: "attacker-won-sub",
+    } as any);
+
+    const { service, emailService } = buildService(prisma);
+    const profile = {
+      type: "tenant" as const,
+      context: "buyer-standalone" as const,
+      googleId: "my-sub",
+      email: PROFILE_EMAIL,
+      name: "Buyer",
+    };
+    await expect(service.findOrCreateUser(profile as any)).rejects.toThrow(
+      new ConflictException("google_account_mismatch"),
+    );
+    expect(emailService.send).not.toHaveBeenCalled();
+  });
 });

@@ -536,6 +536,43 @@ export class GoogleOAuthService {
     return byEmail;
   }
 
+  // ─── Link race guard (#2495 LOW) ────────────────────────────────────────────
+  // The googleId-NULL email-match auto-link (handlePlatformAuth, handleTenantAuth's
+  // staff link, handleBuyerPortalAuth's first-link branch) used to be check-then-update:
+  // read the row with googleId:null, then unconditionally write the sub. Two concurrent
+  // sign-ins for the same email (one with the rightful sub, one with an attacker's) could
+  // both pass the read before either wrote, and the writer that lost the race would still
+  // overwrite whatever the winner just set. Guard the write itself with a compare-and-set
+  // (`updateMany` scoped to `googleId: null`) so only the first writer succeeds; a losing
+  // writer re-reads and either finds itself already linked (a harmless duplicate — same
+  // sub) or a DIFFERENT sub now bound, which is refused exactly like the read-time check.
+  private async casLinkGoogleId<T extends { id: string; googleId: string | null }>(
+    updateMany: (args: {
+      where: Record<string, unknown>;
+      data: Record<string, unknown>;
+    }) => Promise<{ count: number }>,
+    findUnique: (id: string) => Promise<T | null>,
+    row: T,
+    profile: GoogleProfile,
+    data: Record<string, unknown>,
+  ): Promise<{ row: T; linked: boolean }> {
+    const result = await updateMany({ where: { id: row.id, googleId: null }, data });
+    if (result.count === 1) {
+      return { row: { ...row, ...data } as T, linked: true };
+    }
+
+    // Lost the race — someone else wrote googleId on this row between our read and
+    // our write. Re-read and decide who won.
+    const fresh = await findUnique(row.id);
+    if (!fresh) throw new ForbiddenException("unauthorized");
+    if (fresh.googleId && fresh.googleId !== profile.googleId) {
+      throw new ConflictException("google_account_mismatch");
+    }
+    // Already linked to THIS same sub (a duplicate concurrent request) — proceed
+    // with the row as it now stands; no side effect to repeat.
+    return { row: fresh, linked: false };
+  }
+
   /** Find or create the appropriate user record and return a token pair. */
   async findOrCreateUser(
     profile: GoogleProfile,
@@ -566,10 +603,13 @@ export class GoogleOAuthService {
     // Also clear forcePasswordChange — Google-authenticated users cannot set a
     // password via the change-password form, so the flag must not block them.
     if (!user.googleId) {
-      await this.prisma.user.update({
-        where: { id: user.id },
-        data: { googleId: profile.googleId, forcePasswordChange: false },
-      });
+      await this.casLinkGoogleId(
+        (args) => this.prisma.user.updateMany(args),
+        (id) => this.prisma.user.findUnique({ where: { id } }),
+        user,
+        profile,
+        { googleId: profile.googleId, forcePasswordChange: false },
+      );
     }
 
     const tokens = await this.issueUserTokenPair(user, null, deviceInfo);
@@ -624,12 +664,16 @@ export class GoogleOAuthService {
       if (profile.context === "portal") throw new ForbiddenException("google_email_is_staff");
 
       if (!staffUser.googleId) {
-        staffUser = await this.prisma.user.update({
-          where: { id: staffUser.id },
+        const { row } = await this.casLinkGoogleId(
+          (args) => this.prisma.user.updateMany(args),
+          (id) => this.prisma.user.findUnique({ where: { id } }),
+          staffUser,
+          profile,
           // Clear forcePasswordChange — Google users cannot use the password
           // change form, so the flag must not redirect them to /change-password.
-          data: { googleId: profile.googleId, forcePasswordChange: false },
-        });
+          { googleId: profile.googleId, forcePasswordChange: false },
+        );
+        staffUser = row;
       }
       const tokens = await this.issueUserTokenPair(staffUser, tenant.slug, deviceInfo);
       return {
@@ -677,42 +721,59 @@ export class GoogleOAuthService {
       const squattedPassword = googleAttestsMailbox && buyer.passwordSet && !buyer.emailVerified;
 
       if (!buyer.googleId) {
+        let linked: boolean;
         if (squattedPassword) {
           const placeholderHash = await bcrypt.hash(crypto.randomBytes(32).toString("hex"), 10);
-          buyer = await this.prisma.buyerAccount.update({
-            where: { id: buyer.id },
-            data: {
+          const casResult = await this.casLinkGoogleId(
+            (args) => this.prisma.buyerAccount.updateMany(args),
+            (id) => this.prisma.buyerAccount.findUnique({ where: { id } }),
+            buyer,
+            profile,
+            {
               googleId: profile.googleId,
               emailVerified: true,
               passwordHash: placeholderHash,
               passwordSet: false,
             },
-          });
-          await this.prisma.buyerRefreshToken.deleteMany({
-            where: { buyerAccountId: buyer.id },
-          });
-          this.logger.warn(
-            `Buyer ${buyer.id} had an unverified password neutralized on first Google link ` +
-              `(mailbox now attested by Google; prior sessions revoked)`,
           );
+          buyer = casResult.row;
+          linked = casResult.linked;
+          if (linked) {
+            await this.prisma.buyerRefreshToken.deleteMany({
+              where: { buyerAccountId: buyer.id },
+            });
+            this.logger.warn(
+              `Buyer ${buyer.id} had an unverified password neutralized on first Google link ` +
+                `(mailbox now attested by Google; prior sessions revoked)`,
+            );
+          }
         } else {
-          buyer = await this.prisma.buyerAccount.update({
-            where: { id: buyer.id },
-            data: {
+          const casResult = await this.casLinkGoogleId(
+            (args) => this.prisma.buyerAccount.updateMany(args),
+            (id) => this.prisma.buyerAccount.findUnique({ where: { id } }),
+            buyer,
+            profile,
+            {
               googleId: profile.googleId,
               ...(googleAttestsMailbox ? { emailVerified: true } : {}),
             },
-          });
+          );
+          buyer = casResult.row;
+          linked = casResult.linked;
         }
-        void this.emailService
-          .send({
-            to: buyer.email,
-            subject: "Google Sign-In linked to your RouteFlow account",
-            html: `<p>Your Google account (<strong>${escapeHtml(profile.email)}</strong>) has been linked to your RouteFlow portal account.</p><p>If you did not authorise this, please contact support immediately.</p>`,
-            // email-connect-google PR-3: platform sender only — never a tenant mailbox/SMTP.
-            senderClass: "platform",
-          })
-          .catch((e: Error) => this.logger.warn(`Google link notification failed: ${e.message}`));
+        // Only notify when THIS request actually performed the link — a request
+        // that lost the race to an identical concurrent one must not re-send it.
+        if (linked) {
+          void this.emailService
+            .send({
+              to: buyer.email,
+              subject: "Google Sign-In linked to your RouteFlow account",
+              html: `<p>Your Google account (<strong>${escapeHtml(profile.email)}</strong>) has been linked to your RouteFlow portal account.</p><p>If you did not authorise this, please contact support immediately.</p>`,
+              // email-connect-google PR-3: platform sender only — never a tenant mailbox/SMTP.
+              senderClass: "platform",
+            })
+            .catch((e: Error) => this.logger.warn(`Google link notification failed: ${e.message}`));
+        }
       } else if (googleAttestsMailbox && !buyer.emailVerified) {
         // Already-linked account whose mailbox was never verified (e.g. password
         // registration followed by Google linking before this gate existed). Same
