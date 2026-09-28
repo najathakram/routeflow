@@ -23,7 +23,6 @@ import {
   computeLineSubtotal,
   roundMoney,
   normalizeBoxesPieces,
-  isBlockingPayment,
   remainingCapacity,
 } from "@routeflow/pricing";
 import { computeDepositFields } from "./deposit-fields";
@@ -92,6 +91,7 @@ import { UpdateShipmentDto } from "../orders/dto/update-shipment.dto";
 import { JwtPayload } from "../auth/jwt-payload.interface";
 import { RouteFlowGateway } from "../gateways/routeflow.gateway";
 import { EmailService } from "../email/email.service";
+import { isTxTimeout, splitInvoiceRetry } from "./split-invoice-retry";
 import { InvoicePdfService } from "./invoice-pdf.service";
 import { invoiceItemQtyFields } from "./invoice-pdf-item";
 import { buildInvoiceEmailAttachment, InvoiceEmailAttachment } from "./invoice-attachment";
@@ -111,9 +111,9 @@ import { MessagingService } from "../messaging/messaging.service";
 import { formatDate, formatMoney } from "../messaging/messaging.helpers";
 import { CommissionEngineService } from "../sales-agents/commission-engine.service";
 import { NSF_FEE_DESCRIPTION_PREFIX } from "../sales-agents/commission-math";
-import { InvoiceItemSystemKind, notNsfLineWhere } from "./nsf-line";
+import { InvoiceItemSystemKind, isNsfLine, notNsfLineWhere } from "./nsf-line";
 import { preservedNsfLines } from "./nsf-preserve";
-import { partitionInvoiceLines, planResyncPairs } from "./resync-plan";
+import { partitionInvoiceLines, planResyncPairs, RESYNC_ITEM_SELECT } from "./resync-plan";
 import {
   issueDateStamp,
   overdueCutoff,
@@ -126,6 +126,7 @@ import { lockRowsNoWait } from "../common/db-locks";
 import { NumberingService } from "../import/numbering.service";
 import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
 import { requireRestrictionTenantId } from "../selling-restrictions/restriction-tenant";
+import { flagSplitRestrictedLines } from "../selling-restrictions/restricted-lines-flag";
 import {
   addedRestrictionLines,
   assertEditStillJudged,
@@ -147,6 +148,7 @@ import {
   paymentRefusal,
   sendRefusal,
   voidRefusal,
+  externalPaidOn,
   writeOffRefusal,
 } from "./invoice-send-guard";
 import { selectEditRevertedInvoices } from "./order-edit-revert-set";
@@ -1054,10 +1056,20 @@ export class InvoicesService {
 
     const groups = await this.groupOrderLinesForInvoicing(remainingItems, db);
 
+    // F-05 #2093: flag (never block) + ONE audit row outside any tx; children inherit the flags.
+    const flagged = await flagSplitRestrictedLines(
+      this.sellingRestrictions,
+      this.prisma,
+      this.logger,
+      {
+        ...{ tenantId, order, remainingItems },
+      },
+    );
     const orderSubtotal = Number(order.subtotal) || 1;
     const orderTax = Number(order.tax) || 0;
 
     const groupData = groups.map((g) => {
+      const pids = new Set(g.items.map(({ li }: any) => li.productId));
       const itemsData = g.items.map(({ li, remainingQty }: any) =>
         // remainingQty = qty − invoicedQty, so prior + bill reaches the full line
         // qty and the stored subtotal is copied exactly (minus what prior invoices
@@ -1084,6 +1096,7 @@ export class InvoicesService {
         taxAmount: 0,
         shippingFee: 0,
         total: 0,
+        restrictedLines: flagged.filter((f) => pids.has(f.productId)),
       };
     });
     // Snapshot MSRP on every group's lines (each sibling invoice bills the same
@@ -1232,6 +1245,8 @@ export class InvoicesService {
           },
           include,
         });
+        if (!inv) throw splitInvoiceRetry(); // #2662: stop before anything reads or flags it
+        (inv as any).restrictedLines = gd.restrictedLines; // F-05 #2093: children inherit the flag
         out.push(inv);
         // W5: write the regulated-sales ledger from this invoice's regulated lines
         // (built off the created items, so invoiceItemId is real). orderItemId
@@ -1268,6 +1283,7 @@ export class InvoicesService {
     } catch (err: any) {
       if (err?.code === "P2002")
         throw new ConflictException("Invoice number conflict — please retry.");
+      if (isTxTimeout(err)) throw splitInvoiceRetry(); // #2662: rolled back — a retryable 503
       throw err;
     }
   }
@@ -1994,7 +2010,7 @@ export class InvoicesService {
    *
    * Returns the updated invoices, or NULL when the order has no linked non-void
    * invoice, or when the partition is not clean/provable (a line shared across two
-   * invoices, or an invoice line with no orderItemId provenance) — in which case it
+   * invoices, or a non-NSF invoice line with no orderItemId provenance) — in which case it
    * BAILS rather than risk a double-bill, leaving the invoices as-is. Runs in its own
    * transaction when none is supplied (mirrors the post-commit reconcile call site).
    *
@@ -2024,7 +2040,7 @@ export class InvoicesService {
           discount: true,
           shippingFee: true,
           dueDate: true,
-          items: { select: { orderItemId: true, unitsPerBox: true } },
+          items: { select: RESYNC_ITEM_SELECT }, // #2268: + the NSF-line reads
           payments: { select: { amount: true, status: true } },
         },
       });
@@ -3873,36 +3889,6 @@ export class InvoicesService {
   }
 
   /**
-   * Money on an invoice comes in two flavours and they unwind differently:
-   *
-   *  - **Wallet money** (CREDIT_NOTE, ADVANCE) came from a balance this system
-   *    owns, so voiding can simply put it back — and MUST, or the customer's
-   *    credit is silently consumed by an invoice that no longer exists.
-   *  - **External money** (cash, check, card) left the customer's hands. Software
-   *    cannot un-take it, so it still blocks the void until a human refunds or
-   *    reverses it.
-   *
-   * Returns the external total so callers can decide whether to block.
-   */
-  private externalPaidOn(payments: Array<{ method?: unknown; amount: unknown; status?: string }>) {
-    // PR-2 (check-payments B1 hardening, N4 owner ruling): isBlockingPayment (NOT
-    // isHeldPayment) — a DRAFT external payment is money in flight and must keep
-    // blocking the void exactly as it does today; HELD (PAID ∪ PENDING) is for money
-    // TOTALS only, never an existence/blocking check. See orders.service.ts's
-    // cancelImpact for the identical conversion.
-    return roundMoney(
-      payments
-        .filter(
-          (p) =>
-            isBlockingPayment(p) &&
-            (p.method as any) !== "CREDIT_NOTE" &&
-            (p.method as any) !== "ADVANCE",
-        )
-        .reduce((s, p) => s + Number(p.amount), 0),
-    );
-  }
-
-  /**
    * Hand an invoice's wallet-funded payments back to the balances they came from:
    * credit notes via the credit-note restore primitive, advances by re-crediting
    * `AdvancePayment.balance` (mirroring voidPayment's inverse). Returns what moved
@@ -3996,7 +3982,7 @@ export class InvoicesService {
     });
     if (!inv) throw new NotFoundException("Invoice not found");
     // #2255 / SA-404: fast pre-tx refusal; the tx re-checks it on the locked row.
-    const refusal = voidRefusal(this.externalPaidOn(inv.payments ?? []));
+    const refusal = voidRefusal(externalPaidOn(inv.payments ?? []));
     if (refusal) throw new BadRequestException(refusal);
 
     // Wrap in a transaction so the void + invoicedQty decrements are atomic.
@@ -4012,7 +3998,7 @@ export class InvoicesService {
           // SA-404: FIRST statement — lock (Order →) Invoice, re-read payments, re-check the guard.
           const locked = await lockInvoiceRow(tx, id, inv.orderId);
           if (!locked) throw new NotFoundException("Invoice not found");
-          const lockedRefusal = voidRefusal(this.externalPaidOn(locked.payments ?? []));
+          const lockedRefusal = voidRefusal(externalPaidOn(locked.payments ?? []));
           if (lockedRefusal) throw new BadRequestException(lockedRefusal);
           // Wallet money first: a credit applied to this invoice goes back to its note
           // (spendable again) instead of being stranded on a dead invoice.
@@ -5797,6 +5783,13 @@ export class InvoicesService {
     // SINGLE scope only re-prices this invoice's own lines in place, off each line's own numbers.
     if (dto.scope !== "SINGLE") {
       unitAware.assertNoUnitAwareLines(invoice.items, "re-priced across invoices");
+    }
+    // #2392 (d) / SA-478: the NSF bounce-fee line is a system charge, never re-priced by hand.
+    const nsfIds = new Set(invoice.items.filter((li) => isNsfLine(li)).map((li) => li.id));
+    if (dto.items.some((i) => nsfIds.has(i.itemId))) {
+      throw new BadRequestException(
+        "The NSF fee line can't be re-priced. Void the bounce or issue a credit note instead.",
+      );
     }
 
     // F03/R3: category (excise) tax follows the customer's exemption exactly like

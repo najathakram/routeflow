@@ -2052,11 +2052,30 @@ describe("#2440 subscription upkeep — match by subscription id, status mapping
     it("the warning email carries the billing-portal link", async () => {
       const { svc, stripe, email } = make({ sub: FAILING });
       await (svc as any).onPaymentFailed(failed());
-      expect(stripe.createBillingPortalSession).toHaveBeenCalledWith(
+      // The second argument (#2476's request cap) is pinned by its own test below.
+      expect(stripe.createBillingPortalSession.mock.calls[0][0]).toEqual(
         expect.objectContaining({ customerId: "cus_1" }),
       );
       expect(email.send).toHaveBeenCalledTimes(1);
       expect(email.send.mock.calls[0][0].html).toContain("https://billing.stripe.test/p/session_1");
+    });
+
+    // #2476 Opus MED fold: stripe-node's defaults (80 s timeout, network retries) could hold the
+    // webhook claim for minutes; the email's portal link is best-effort, so its call is capped.
+    it("#2476: the payment-failed portal call is capped (10 s, no network retries)", async () => {
+      const { svc, stripe } = make({ sub: FAILING });
+      await (svc as any).onPaymentFailed(failed());
+      expect(stripe.createBillingPortalSession).toHaveBeenCalledWith(
+        expect.objectContaining({ customerId: "cus_1" }),
+        { timeoutMs: 10_000, maxNetworkRetries: 0 },
+      );
+    });
+
+    it("#2476: the user-facing portal session keeps Stripe's default request options", async () => {
+      const { svc, stripe } = make({ sub: FAILING });
+      await svc.createBillingPortalSession("t1");
+      expect(stripe.createBillingPortalSession).toHaveBeenCalledTimes(1);
+      expect(stripe.createBillingPortalSession.mock.calls[0][1]).toBeUndefined();
     });
 
     it("a portal failure still sends the email, with today's fallback text", async () => {
@@ -2081,6 +2100,21 @@ describe("#2440 subscription upkeep — match by subscription id, status mapping
       await (svc as any).onPaymentFailed(failed());
       expect(prisma.tenantSubscription.update).not.toHaveBeenCalled();
       expect(email.send).not.toHaveBeenCalled();
+    });
+
+    // #2476 / SA-472: the increment is the event's effect; everything after it (admin lookup, portal,
+    // email) is non-throwing and logged — a later throw must never mark the event "error:" and make a
+    // redelivery re-run the increment.
+    it("#2476: an admin lookup that throws AFTER the increment never fails the handler (count once)", async () => {
+      const { svc, prisma, email } = make({ sub: FAILING });
+      prisma.user.findFirst.mockRejectedValue(new Error("db blip"));
+      const warn = jest.spyOn((svc as any).logger, "warn").mockImplementation(() => undefined);
+      await expect((svc as any).onPaymentFailed(failed())).resolves.toBeUndefined();
+      expect(prisma.tenantSubscription.update).toHaveBeenCalledTimes(1);
+      expect(email.send).not.toHaveBeenCalled();
+      expect(warn.mock.calls.some((c: any[]) => /payment-failed email/i.test(String(c[0])))).toBe(
+        true,
+      );
     });
 
     it("an invoice with no subscription (free pilot / one-off) is untouched", async () => {
