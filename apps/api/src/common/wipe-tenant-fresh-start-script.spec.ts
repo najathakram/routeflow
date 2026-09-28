@@ -175,7 +175,8 @@ describe("fresh-start target planner (#2500)", () => {
   });
 
   it("every excluded slug must resolve to a tenant: a typo or case variant aborts (fails closed)", () => {
-    expect(r.excl.ok).toEqual({ ok: true, lines: ["EXCLUDED (never wiped): Big Co (t-big)"] });
+    // SA-547b: ids only — never the business name (a client identifier).
+    expect(r.excl.ok).toEqual({ ok: true, lines: ["EXCLUDED (never wiped): tenant t-big"] });
     expect(r.excl.typo).toMatchObject({ ok: false });
     expect(r.excl.typo.reason).toMatch(/--exclude-tenant names no tenant: acmee/);
     expect(r.excl.caseVariant.reason).toMatch(/names no tenant: BIG/);
@@ -184,7 +185,8 @@ describe("fresh-start target planner (#2500)", () => {
 
   it("the target is refused when its tenant id is in the resolved exclusion set", () => {
     expect(r.excl.targetById).toMatchObject({ ok: false });
-    expect(r.excl.targetById.reason).toMatch(/Acme \(t-acme\) is excluded: it is never wiped/);
+    expect(r.excl.targetById.reason).toMatch(/tenant t-acme is excluded: it is never wiped/);
+    expect(r.excl.targetById.reason).not.toMatch(/Acme/);
   });
 
   it("no path flag, both path flags and no slug are usage errors (exit 2)", () => {

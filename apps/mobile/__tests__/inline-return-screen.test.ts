@@ -71,6 +71,16 @@ describe("reducer — flow", () => {
     s = run([{ type: "captured", result: record }], s);
     expect(s).toMatchObject({ step: "success", result: record });
   });
+  it("#2647: a key-reused refusal carries the recorded return; any other refusal carries none", () => {
+    const recorded = { returnId: "ret-9", returnNumber: "RET-2026-0042" };
+    expect(
+      run([quoted(), { type: "captureStarted" }, { type: "refused", message: "m", recorded }]),
+    ).toMatchObject({ step: "refused", recorded });
+    expect(
+      run([quoted(), { type: "captureStarted" }, { type: "refused", message: "m" }]),
+    ).toMatchObject({ step: "refused", recorded: null });
+  });
+
   it("a refusal lands on refused; edit returns to lines", () => {
     const s = run([quoted(), { type: "captureStarted" }, { type: "refused", message: "nope" }]);
     expect(s).toMatchObject({ step: "refused", message: "nope" });
