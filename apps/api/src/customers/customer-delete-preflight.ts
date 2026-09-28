@@ -16,6 +16,11 @@ import { CUSTOMER_DELETE_BLOCKING } from "../invoices/invoice-status-sets";
  *      alone is not enough: with no onDelete cascade, a leftover invoice would turn the
  *      customer delete into a raw FK error, a 500.)
  * `assertRecordFreeInTx` guards the single-customer hard-delete branch the same way.
+ *
+ * #2587 / SA-516: credit notes (any status), transaction payments, advance payments and invoice
+ * payments are never destroyed by a customer delete. `assertNoMoneyRecords` (pre-flight) and
+ * `assertNoMoneyRecordsInTx` (the in-tx re-check) refuse with a 409 naming the customers, and the
+ * delete paths remove those tables only through `deleteMoneyRecordCas`, which expects ZERO rows.
  */
 const MAX_LISTED_BLOCKERS = 10;
 const BLOCKED =
@@ -110,4 +115,160 @@ export async function assertRecordFreeInTx(tx: Db, customerId: string): Promise<
     throw new ConflictException(
       "This customer gained invoices or payments while being deleted — nothing was deleted; please retry.",
     );
+}
+
+const MONEY_BLOCKED =
+  "Delete blocked — the following customers hold credit notes, payments or advance payments that cannot be destroyed";
+
+/** Per-customer count of money records (#2587 / SA-516): credit notes of any status, transaction payments, advance payments, invoice payments. */
+export async function countMoneyRecords(
+  db: Db,
+  customerIds: string[],
+): Promise<Array<{ customerId: string; count: number }>> {
+  const inIds = { customerId: { in: customerIds } };
+  // #2597: aggregate in SQL. Never read every money row just to learn whose it is: on
+  // deleteAllCustomers the customer set is the whole tenant.
+  const byCustomer = { by: ["customerId"], where: inIds, _count: { _all: true } };
+  const [notes, advances, perTxn, perInvoice] = await Promise.all([
+    db.creditNote.groupBy(byCustomer),
+    db.advancePayment.groupBy(byCustomer),
+    db.payment.groupBy({
+      by: ["transactionId"],
+      where: { transaction: inIds },
+      _count: { _all: true },
+    }),
+    db.invoicePayment.groupBy({
+      by: ["invoiceId"],
+      where: { invoice: inIds },
+      _count: { _all: true },
+    }),
+  ]);
+  const counts = new Map<string, number>();
+  const add = (id: string, n: number) => counts.set(id, (counts.get(id) ?? 0) + n);
+  for (const r of [...notes, ...advances] as Array<{
+    customerId: string;
+    _count: { _all: number };
+  }>)
+    add(r.customerId, r._count._all);
+  // Payments are owned through their parent: read the owners of just the parents that have any.
+  const viaParent = async (
+    parent: { findMany(args: unknown): Promise<Array<{ id: string; customerId: string }>> },
+    groups: Array<Record<string, unknown> & { _count: { _all: number } }>,
+    key: string,
+  ) => {
+    if (groups.length === 0) return;
+    const n = new Map(groups.map((g) => [String(g[key]), g._count._all]));
+    const owners = await parent.findMany({
+      where: { id: { in: [...n.keys()] } },
+      select: { id: true, customerId: true },
+    });
+    for (const o of owners) add(o.customerId, n.get(o.id) ?? 0);
+  };
+  await viaParent(db.transaction, perTxn, "transactionId");
+  await viaParent(db.invoice, perInvoice, "invoiceId");
+  return [...counts].map(([customerId, count]) => ({ customerId, count }));
+}
+
+function moneyBlockedError(rows: Array<{ customerId: string; count: number }>): ConflictException {
+  const listed = rows
+    .slice(0, MAX_LISTED_BLOCKERS)
+    .map((b) => `${b.customerId}: ${b.count} record(s)`);
+  if (rows.length > MAX_LISTED_BLOCKERS)
+    listed.push(`and ${rows.length - MAX_LISTED_BLOCKERS} more`);
+  return new ConflictException(`${MONEY_BLOCKED}: ${listed.join("; ")}.`);
+}
+
+/** #2587 pre-flight (outside the tx): any money record for any of the customers is a 409. */
+export async function assertNoMoneyRecords(db: Db, customerIds: string[]): Promise<void> {
+  const rows = await countMoneyRecords(db, customerIds);
+  if (rows.length > 0) throw moneyBlockedError(rows);
+}
+
+/** #2587 in-tx twin: the same check on the transaction, before anything is deleted. */
+export async function assertNoMoneyRecordsInTx(tx: Db, customerIds: string[]): Promise<void> {
+  await assertNoMoneyRecords(tx, customerIds);
+}
+
+/**
+ * #2587 (and #2591, delivery history): a protected table is only ever "deleted" as a compare-and-set expecting ZERO rows, so
+ * a row that appeared after the re-check is a 409 and a rollback, never destroyed.
+ */
+export async function deleteMoneyRecordCas(
+  delegate: { deleteMany(args: unknown): Promise<{ count: number }> },
+  where: unknown,
+): Promise<void> {
+  const res = await delegate.deleteMany({ where });
+  if (res.count !== 0)
+    throw new ConflictException(
+      "Customer records that block a delete appeared while deleting — nothing was deleted; please retry.",
+    );
+}
+
+/**
+ * #2591 / SA-516b: a customer with delivery history (ANY RouteRunStop, its own or one on one of
+ * its RouteStops) is never hard-deleted — the history is refused, never destroyed (deleting the
+ * RouteStop under a RouteRunStop was an FK 500). History-free route template rows stay deletable.
+ */
+function deliveryHistoryWhere(customerIds: string[]) {
+  return {
+    OR: [{ customerId: { in: customerIds } }, { routeStop: { customerId: { in: customerIds } } }],
+  };
+}
+
+export async function countDeliveryHistory(db: Db, customerIds: string[]): Promise<string[]> {
+  // #2597: owners only, aggregated in SQL (the stops' own customer, and the owners of RouteStops
+  // that have runs) rather than every RouteRunStop row.
+  const [own, viaStops]: [
+    Array<{ customerId: string | null }>,
+    Array<{ customerId: string | null }>,
+  ] = await Promise.all([
+    db.routeRunStop.groupBy({ by: ["customerId"], where: { customerId: { in: customerIds } } }),
+    db.routeStop.findMany({
+      where: { customerId: { in: customerIds }, routeRunStops: { some: {} } },
+      select: { customerId: true },
+      distinct: ["customerId"],
+    }),
+  ]);
+  const owners = new Set<string>();
+  for (const r of [...own, ...viaStops])
+    if (r.customerId && customerIds.includes(r.customerId)) owners.add(r.customerId);
+  return [...owners];
+}
+
+/** Pre-flight (and, called with the tx, its in-tx twin): any delivery history is a 409. */
+export async function assertNoDeliveryHistory(db: Db, customerIds: string[]): Promise<void> {
+  const owners = await countDeliveryHistory(db, customerIds);
+  if (owners.length > 0) {
+    const listed = owners.slice(0, MAX_LISTED_BLOCKERS);
+    if (owners.length > MAX_LISTED_BLOCKERS)
+      listed.push(`and ${owners.length - MAX_LISTED_BLOCKERS} more`);
+    throw new ConflictException(
+      `Delete blocked — the following customers have delivery history that cannot be destroyed: ${listed.join("; ")}.`,
+    );
+  }
+}
+
+/** The RouteRunStop delete as a compare-and-set expecting ZERO rows. */
+export async function deleteDeliveryHistoryCas(tx: Db, customerIds: string[]): Promise<void> {
+  await deleteMoneyRecordCas(tx.routeRunStop, deliveryHistoryWhere(customerIds));
+}
+
+/**
+ * #2572: the guards above re-check what the delete READS, but a row INSERTed for a customer after
+ * those reads (a concurrent invoice create, say) is neither read nor deleted, so the customer-row
+ * delete itself fails on the foreign key: a raw Prisma P2003, which reached the client as a 500.
+ * Wrap ONLY the customer-row delete: a P2003 there is a 409 (the transaction still rolls back,
+ * nothing is deleted); any other error, including an FK error from any other statement, is
+ * rethrown unchanged.
+ */
+export async function deleteCustomerRowsFkRaceAs409<T>(del: Promise<T>): Promise<T> {
+  try {
+    return await del;
+  } catch (e) {
+    if ((e as { code?: unknown } | null)?.code === "P2003")
+      throw new ConflictException(
+        "Customer records changed while deleting — nothing was deleted; please retry.",
+      );
+    throw e;
+  }
 }
