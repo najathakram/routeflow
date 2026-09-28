@@ -367,6 +367,9 @@ export function InlineReturnSection({
                   value={productSearch}
                   onChange={(e) => setProductSearch(e.target.value)}
                   onKeyDown={(e) => {
+                    // The scanner button's wedge detector already handled (and preventDefault'd)
+                    // a scan's Enter — standing down here keeps ONE scan to ONE add (#2704).
+                    if (e.defaultPrevented) return;
                     if (e.key === "Enter") {
                       e.preventDefault();
                       handleProductSearchEnter();
