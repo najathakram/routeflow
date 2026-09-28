@@ -101,6 +101,17 @@ describe("#2662 createSplitInvoices — transaction timeout / missing invoice", 
     expect(String((err as Error).message)).toMatch(/nothing was saved.*retry/i);
   });
 
+  // #2624 (F-05 #2093) flags each created invoice with its group's restrictedLines right after the
+  // create. The #2662 guard must come FIRST: with the flag line above it, a null create throws a
+  // TypeError assigning onto null (the pre-guard 500) instead of the retryable 503.
+  it("a null create throws the retry 503 BEFORE any restrictedLines write (guard above the #2624 flag)", async () => {
+    prisma.invoice.create.mockResolvedValue(null);
+    const err = await service.createInvoiceFromOrder("ord-2662").catch((e: unknown) => e);
+    expect(err).not.toBeInstanceOf(TypeError);
+    expect(err).toBeInstanceOf(ServiceUnavailableException);
+    expect(String((err as Error).message)).toMatch(/nothing was saved.*retry/i);
+  });
+
   it("a create that yields no invoice stops cleanly (503) before anything reads it — never a TypeError", async () => {
     prisma.invoice.create.mockResolvedValue(undefined);
     const err = await service.createInvoiceFromOrder("ord-2662").catch((e: unknown) => e);
