@@ -6,6 +6,7 @@ import {
   IsIn,
   IsInt,
   IsNotEmpty,
+  IsNumber,
   IsOptional,
   IsString,
   Min,
@@ -63,6 +64,23 @@ export class CaptureInlineReturnItemDto {
   @IsOptional()
   @IsBoolean()
   restock?: boolean;
+
+  /**
+   * #2695 (SA-557): a staff (OPERATOR/TENANT_ADMIN) per-line CREDIT price, per SELLING unit (one
+   * box when the product is boxed), LOWER-ONLY — capped at the engine's own default for each
+   * chunk (`applyCreditOverride`). Requires `overrideReason`, on the quote AND the capture, so both
+   * price the same chunks; a DRIVER/CUSTOMER request carrying either field is a 400.
+   */
+  @IsOptional()
+  @IsNumber({ maxDecimalPlaces: 2, allowNaN: false, allowInfinity: false })
+  @Min(0)
+  creditUnitPrice?: number;
+
+  /** #2695: why the credit price was overridden — required with `creditUnitPrice` (trimmed, ≤ 200). */
+  @IsOptional()
+  @IsString()
+  @MaxLength(200)
+  overrideReason?: string;
 }
 
 /**

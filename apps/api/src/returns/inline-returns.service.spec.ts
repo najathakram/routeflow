@@ -627,6 +627,105 @@ describe("InlineReturnsService", () => {
     });
   });
 
+  describe("#2695 (SA-557): a staff credit-price override on capture", () => {
+    /** One matched chunk the engine lowered from $5.00 to $3.00 a piece (6 pieces). */
+    function pricedOverride() {
+      const base = priced(19.08, 18, 1.08, 0);
+      return {
+        ...base,
+        chunks: [
+          {
+            ...base.chunks[0],
+            priceSource: "MANUAL" as const,
+            unitPrice: 3,
+            originalPrice: 5,
+            overrideReason: "damaged in transit",
+            overriddenBy: "user-op-1",
+          },
+        ],
+      };
+    }
+    const OVERRIDE_DTO = {
+      ...CAPTURE_DTO,
+      items: [
+        { productId: "prod-1", qty: 6, creditUnitPrice: 3, overrideReason: "damaged in transit" },
+      ],
+    };
+
+    it("persists the MANUAL line with the DEFAULT replaced, and writes ONE in-tx price_override audit row", async () => {
+      quoteService.priceInlineReturn.mockResolvedValue(pricedOverride());
+      await service.capture(OVERRIDE_DTO as any, OPERATOR);
+
+      const item = prisma.return.create.mock.calls[0][0].data.items.create[0];
+      expect(item).toMatchObject({
+        priceSource: "MANUAL",
+        unitPrice: 3,
+        originalPrice: 5,
+        overrideReason: "damaged in transit",
+        overriddenBy: "user-op-1",
+      });
+      const rows = prisma.auditLog.create.mock.calls.filter(
+        ([a]: any[]) => a.data.action === "inline_return.price_override",
+      );
+      expect(rows).toHaveLength(1);
+      expect(rows[0][0].data).toEqual({
+        userId: "user-op-1",
+        action: "inline_return.price_override",
+        entityType: "Return",
+        entityId: "ret-1",
+        meta: {
+          orderId: "ord-carrying",
+          customerId: "cust-1",
+          items: [
+            {
+              productId: "prod-1",
+              pieces: 6,
+              defaultUnitPrice: 5,
+              unitPrice: 3,
+              reason: "damaged in transit",
+            },
+          ],
+        },
+      });
+    });
+
+    it("writes NO price_override row when nothing was overridden (a no-op for every existing client)", async () => {
+      quoteService.priceInlineReturn.mockResolvedValue(priced());
+      await service.capture(CAPTURE_DTO as any, OPERATOR);
+      expect(
+        prisma.auditLog.create.mock.calls.filter(
+          ([a]: any[]) => a.data.action === "inline_return.price_override",
+        ),
+      ).toHaveLength(0);
+    });
+
+    it("the #2424 fingerprint carries the override, so the same key with another price is a 409, not a replay", async () => {
+      const stored = inlineReturnItemsFingerprint(OVERRIDE_DTO.items as any);
+      expect(stored.items[0]).toMatchObject({
+        creditUnitPrice: 3,
+        overrideReason: "damaged in transit",
+      });
+      prisma.return.findFirst.mockResolvedValueOnce({
+        id: "ret-existing",
+        returnNumber: "RET-2026-0009",
+        returnKey: "nonce-1",
+        kind: "INLINE",
+        customerId: "cust-1",
+        orderId: "ord-carrying",
+        capturePayload: stored,
+        items: [],
+      });
+      const cheaper = {
+        ...OVERRIDE_DTO,
+        items: [{ ...OVERRIDE_DTO.items[0], creditUnitPrice: 2 }],
+      };
+      expect(await codeOf(service.capture(cheaper as any, OPERATOR))).toBe(
+        INLINE_RETURN_ERROR_CODES.RETURN_KEY_REUSED_WITH_DIFFERENT_ITEMS,
+      );
+      expect(prisma.return.create).not.toHaveBeenCalled();
+    });
+  });
+
   describe("MED-7: returnKey P2002 collision", () => {
     it("catches the conflict OUTSIDE the aborted transaction and replays when the raced row matches this (customerId, orderId)", async () => {
       prisma.tenantTransaction.mockImplementationOnce(async () => {

@@ -8,6 +8,7 @@
  * nothing here writes a Return/ReturnItem row (that's PR-1c/1d's capture path).
  */
 import {
+  BadRequestException,
   ConflictException,
   ForbiddenException,
   Injectable,
@@ -29,23 +30,84 @@ import { getTierPrice, packFromOwnSplit } from "@routeflow/pricing";
 import { returnedPiecesByProduct } from "./returns-pieces.util";
 import {
   allocateReturnedPieces,
+  applyCreditOverride,
   priceMatchedChunk,
   priceUnreferencedChunk,
   resolveReturnPackFactor,
   returnRequestPieces,
   totalChunks,
   type CandidateInvoiceLine,
+  type CreditOverride,
   type PricedChunk,
   type QuoteBreakdown,
   type RemainingSupply,
 } from "./inline-returns-pricing";
-import type { QuoteInlineReturnDto } from "./dto/quote-inline-return.dto";
+import type { QuoteInlineReturnDto, QuoteInlineReturnItemDto } from "./dto/quote-inline-return.dto";
 
 /** PR-1..3 ship fixed defaults (design.md §8) — config reading comes after
  * feature-grants PR-3a's EntitlementsService wiring. */
 const DEFAULT_SOLD_WINDOW_DAYS = 90;
 
 const DELIVERED_ORDER_STATUSES = [OrderStatus.DELIVERED, OrderStatus.PARTIALLY_DELIVERED];
+
+/** #2695 (SA-557): the 400 codes of a per-line credit price override. */
+export const RETURN_CREDIT_OVERRIDE_ERROR_CODES = {
+  /** A caller other than OPERATOR/TENANT_ADMIN sent an override field — refused, never dropped. */
+  FORBIDDEN: "RETURN_CREDIT_OVERRIDE_FORBIDDEN",
+  /** A price without a reason (or a reason without a price), or an unusable value. */
+  INVALID: "RETURN_CREDIT_OVERRIDE_INVALID",
+  /** Above the engine's default per-selling-unit price for a chunk: overrides only LOWER a credit. */
+  OVER_CAP: "RETURN_CREDIT_OVER_CAP",
+} as const;
+
+const CREDIT_OVERRIDE_ROLES: ReadonlySet<string> = new Set([
+  UserRole.OPERATOR,
+  UserRole.TENANT_ADMIN,
+]);
+
+/**
+ * #2695: each request item's validated override (undefined = none), keyed by the item. Runs
+ * before any read, on the quote and the capture alike (both reach `priceInlineReturn`), so the two
+ * can never price different chunks. `undefined` is "not sent"; any other value (null included) is
+ * a field the caller sent.
+ */
+export function creditOverridesOf(
+  items: readonly QuoteInlineReturnItemDto[],
+  user: JwtPayload,
+): Map<QuoteInlineReturnItemDto, CreditOverride> {
+  const out = new Map<QuoteInlineReturnItemDto, CreditOverride>();
+  for (const item of items) {
+    const price = item.creditUnitPrice;
+    const rawReason = item.overrideReason;
+    if (price === undefined && rawReason === undefined) continue;
+    if (!CREDIT_OVERRIDE_ROLES.has(user.role)) {
+      throw new BadRequestException({
+        code: RETURN_CREDIT_OVERRIDE_ERROR_CODES.FORBIDDEN,
+        message: "Only office staff can override a return's credit price.",
+      });
+    }
+    const reason = typeof rawReason === "string" ? rawReason.trim() : "";
+    if (
+      typeof price !== "number" ||
+      !Number.isFinite(price) ||
+      price < 0 ||
+      Math.round(price * 100) !== price * 100
+    ) {
+      throw new BadRequestException({
+        code: RETURN_CREDIT_OVERRIDE_ERROR_CODES.INVALID,
+        message: "A credit price override needs a price of $0.00 or more, in cents.",
+      });
+    }
+    if (reason.length === 0 || reason.length > 200) {
+      throw new BadRequestException({
+        code: RETURN_CREDIT_OVERRIDE_ERROR_CODES.INVALID,
+        message: "A credit price override needs a reason (up to 200 characters).",
+      });
+    }
+    out.set(item, { unitPrice: price, reason, overriddenBy: user.sub });
+  }
+  return out;
+}
 
 @Injectable()
 export class InlineReturnsQuoteService {
@@ -85,6 +147,8 @@ export class InlineReturnsQuoteService {
     if (user.role === UserRole.CUSTOMER) {
       throw new ForbiddenException("Buyers cannot capture returns at order entry");
     }
+    // #2695: a driver's override is a 400 before any read; staff overrides are validated here too.
+    const overrides = creditOverridesOf(dto.items, user);
 
     // M8 scoping (§7): a DRIVER may only quote for the customer of a stop on their
     // OWN currently-IN_PROGRESS run — mirrors orders.service.ts's B309 driver-
@@ -319,8 +383,11 @@ export class InlineReturnsQuoteService {
       const fallbackTaxRate =
         matchingSet.find((l) => l.productId === item.productId)?.taxRate ?? tenantTaxRate;
 
-      const chunks: PricedChunk[] = allocated.map((chunk) =>
-        chunk.line
+      const override = overrides.get(item);
+      // The pack an unreferenced chunk is priced (and so overridden) against.
+      const unreferencedUpb = product?.unitsPerBox ?? null;
+      const chunks: PricedChunk[] = allocated.map((chunk) => {
+        const priced = chunk.line
           ? priceMatchedChunk(chunk.line, chunk.pieces, customer.isTaxExempt)
           : priceUnreferencedChunk(
               item.productId,
@@ -328,12 +395,43 @@ export class InlineReturnsQuoteService {
               {
                 unitPrice: unreferencedPrice,
                 source: unreferencedSource,
-                unitsPerBox: product?.unitsPerBox ?? null,
+                unitsPerBox: unreferencedUpb,
               },
               fallbackTaxRate,
               customer.isTaxExempt,
-            ),
-      );
+            );
+        if (!override) return priced;
+        // #2695 (SA-557): lower-only, against THIS chunk's default, at the basis that priced it —
+        // a matched chunk's pack and InvoiceItem.taxRate snapshot (m-7: exempt when the invoice
+        // charged no tax), an unreferenced chunk's product pack and quote rate.
+        const result = applyCreditOverride(
+          priced,
+          override,
+          chunk.line
+            ? {
+                unitsPerBox: chunk.line.unitsPerBox,
+                taxRate: chunk.line.taxRate,
+                taxExempt: chunk.line.invoiceTaxAmount === 0 || customer.isTaxExempt,
+              }
+            : {
+                unitsPerBox: unreferencedUpb,
+                taxRate: fallbackTaxRate,
+                taxExempt: customer.isTaxExempt,
+              },
+        );
+        if (result.overCap) {
+          throw new BadRequestException({
+            code: RETURN_CREDIT_OVERRIDE_ERROR_CODES.OVER_CAP,
+            productId: item.productId,
+            creditUnitPrice: override.unitPrice,
+            defaultUnitPrice: result.defaultUnitPrice,
+            message:
+              `${productName}: a credit price can only be lowered — the most this return can ` +
+              `credit is $${result.defaultUnitPrice.toFixed(2)} per unit.`,
+          });
+        }
+        return result.chunk;
+      });
 
       productBreakdown[item.productId] = totalChunks(chunks);
       allChunks.push(...chunks);
