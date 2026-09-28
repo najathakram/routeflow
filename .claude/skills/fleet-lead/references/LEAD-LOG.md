@@ -1167,3 +1167,55 @@ Format: `## <date> <anchor>` then `- what:` `- cause:` `- guard:` `- rule:` (opt
 - what: The PC F prover's 'stopped' build job held the pc-slot 10:25–10:33Z, and its capture script then started a web image build during salvage's slot turn
 - cause: Background build chains outlive TaskStop on Windows Git-bash (U-po reported the same); the capture script didn't check slot ownership before each build step
 - guard: Capture/build scripts re-check 'pc-slot status' == own lane before EVERY heavy step and abort otherwise; lanes verify a stopped chain is dead by PID (Get-CimInstance) before re-queuing
+
+## 2026-09-28 #2685
+
+- what: The lead's fleet-lead skill + LEAD-LOG edits all day went to an UNTRACKED copy in the main checkout (branch ops/t6-a0-owner-batch lacks the skill), diverging from master's copy that bookkeeping edited
+- cause: The lead session's checkout isn't on master, so the skill dir is untracked there; lead-closeout.mjs writes to the cwd copy
+- guard: The lead runs lead-closeout.mjs from a master-tracking worktree (rf-work-sync or a dedicated one) and checks 'git ls-files .claude/skills/fleet-lead' is non-empty at session start; the SessionStart digest warns when the skill dir is untracked
+
+## 2026-09-28 #2653
+
+- what: N-kit burned two ~30-min pc-slot turns on its own check-types/repo-truth reds (a spec constructing AddonService with the old arg count; a report script naming DATABASE_URL)
+- cause: Lanes ran tsc on src only before queuing; the verify's spec ratchet and repo-truth lane catch what src-tsc misses
+- guard: Before taking the pc-slot, a lane runs the cheap gates locally: 'npm run check-types -w apps/api' (the spec ratchet) + the repo-truth jest lane; the slot is only for the full verify + push
+
+## 2026-09-28 #2680
+
+- what: PC Docker engine died at 12:20Z during the F prover's parallel capture image builds (WSL VM 8 GB cap), halting all PC captures ~40 min; the lead's log watcher also missed the 'running' state twice (pattern mismatch)
+- cause: Parallel web+mobile image builds plus the running compose/api stacks exceeded the WSL VM memory; the watcher grepped a log line that the current Docker version doesn't emit
+- guard: Capture image builds run strictly one at a time on the PC with old images pruned first; the Docker-up check is a single 'docker ps' after a fixed wait, not a log-pattern grep
+
+## 2026-09-28 #2301
+
+- what: #2301 passed lead Opus (jest 394 unit) + SA + F2 11/11, then ROLLED on CI: an existing DB spec (recompute-order-partial B785/SA-113a at-door reconcile) finds no draft invoice
+- cause: Both the lead's executed jest and F2's real-PG run covered only the PR's own specs; neither ran the module's full DB lane where the changed function has other callers
+- guard: A tier-1 gate on a shared money function includes the FULL db lane for the touched module(s) (npm run local:test:db filtered to invoices/orders/routes), not just the PR's new spec; the verdict states which DB suites ran
+
+## 2026-09-28 #2185
+
+- what: #2185 carried a PC 'full verify green' (api unit 10569) yet import-invoice-reimport.db.spec fails 12/12 on DI (ImportService gained ProductsService), found only when F2 ran #2190 stacked on it
+- cause: The PC verify runs unit lanes only; a constructor change on a tier-1 import service was never exercised by the module's DB specs before the verdicts
+- guard: A PR that changes a Nest service constructor lists every _.spec.ts/_.db.spec.ts that builds that service (git grep 'ServiceName' in createTestingModule) and F2 runs the module's full DB lane at the gated sha before any PASS
+- rule: Tier-1 money reviews run the module's FULL DB lane, not just the PR's spec
+
+## 2026-09-28 #2693
+
+- what: A Sonnet Explore context pack reported the web+mobile inline-returns UI 'does NOT exist' (grep clean); the owner was using it in prod, and git grep origin/master found InlineReturnSection.tsx + mobile returns/inline.tsx
+- cause: The agent's working-tree grep (Windows) missed the files, and a negative claim ('not found') was reported as fact without a pinned-ref search
+- guard: Before any spec or issue uses a context pack's absence claim, the lead runs git grep <string> origin/master -- apps packages itself; the pack brief requires 'NOT FOUND' lines to include the exact git grep command + ref used
+- rule: Never brief from an issue title or a PR title
+
+## 2026-09-28 #2554
+
+- what: The lead filed two janitor 'safety defects' (force-remove before junction unlink; a live lane classed merged) from a janitor report and source read in the MAIN checkout, which sits on the stale branch ops/t6-a0-owner-batch (janitor last touched 09-18); master already had B817 links-first and B748 dirty/idle guards, 122/122 self-test
+- cause: Tooling was run and read from the main checkout without checking which ref it was on; its copy was 10 days behind master
+- guard: The lead runs repo tooling and reads source only from a master-tracking worktree (rf-work-sync after git pull) or via git show origin/master:<path>; a finding cites the ref it was read at
+- rule: A fact restated in a second place is the copy that goes wrong; resolve against the primary source
+
+## 2026-09-28 #2686
+
+- what: The lead sent the owner to the F2 prover's chat to grant simulator access on the Mac Lead's relayed word; the owner found F2 was not waiting for anything
+- cause: An 'owner action needed' claim was relayed second-hand (Mac Lead about F2) and put to the owner without confirming with the acting session
+- guard: Before any owner action is requested on another session's behalf, the lead messages that session directly and gets its own statement of the exact blocking UI element; the owner request quotes the acting session, not a relay
+- rule: A fact restated in a second place is the copy that goes wrong; resolve against the primary source

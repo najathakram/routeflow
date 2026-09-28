@@ -283,4 +283,7 @@ A candidate becomes a SKILL.md rule after it appears in 3 log entries. `promoted
   key: never interrupt the pc slot holder
   first: 2026-09-28
   promoted: merge tree exit 0 proves no textual conflict never a green merged tree run the touched specs on the merge result (2026-09-28, 3x)
-  promoted: never brief from an issue title or a pr title (2026-09-28, 4x)
+- candidate: Tier-1 money reviews run the module's FULL DB lane, not just the PR's spec
+  key: tier 1 money reviews run the module s full db lane not just the pr s spec
+  first: 2026-09-28
+  promoted: never brief from an issue title or a pr title (2026-09-28, 5x)
