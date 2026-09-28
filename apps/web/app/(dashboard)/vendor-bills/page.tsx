@@ -123,7 +123,7 @@ function StatTile({
         ring === "danger" && "border-danger",
       )}
     >
-      <span className="overline block">{label}</span>
+      <span className="eyebrow-label block">{label}</span>
       <span
         className={cn(
           "mt-1.5 block text-2xl text-navy",
@@ -1284,7 +1284,7 @@ function InventoryPurchasesTab() {
                 : "border-surface-border bg-white",
           )}
         >
-          <span className="overline block">Unlinked Items{needsMappingOnly ? " ✕" : ""}</span>
+          <span className="eyebrow-label block">Unlinked Items{needsMappingOnly ? " ✕" : ""}</span>
           <span
             className={cn(
               "mt-1.5 block text-2xl font-semibold tracking-[-0.02em]",

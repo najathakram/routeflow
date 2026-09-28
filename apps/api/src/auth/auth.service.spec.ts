@@ -307,12 +307,15 @@ describe("AuthService", () => {
       expect(result.user.id).toBe("user-1");
     });
 
-    it("clicking the link twice is smooth — an already-ACTIVE user just logs in, no update call", async () => {
+    it("clicking the link twice is smooth — an already-ACTIVE user just logs in, no status update", async () => {
       prisma.user.findUnique.mockResolvedValue({ ...INACTIVE_USER, status: "ACTIVE" } as any);
 
       const result = await service.verifyEmailAndLogin("valid.jwt.token");
 
-      expect(prisma.user.update).not.toHaveBeenCalled();
+      // The only user write is login()'s lastLoginAt stamp (#2159 S1) — never a status change.
+      const writes = prisma.user.update.mock.calls.map((c: any[]) => c[0].data);
+      expect(writes.every((d: Record<string, unknown>) => !("status" in d))).toBe(true);
+      expect(writes).toEqual([{ lastLoginAt: expect.any(Date) }]);
       expect(result).toHaveProperty("accessToken");
     });
 

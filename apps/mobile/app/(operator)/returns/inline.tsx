@@ -25,6 +25,7 @@ import {
   extractRefusalMessage,
   groupQuoteChunks,
   isBoxedProduct,
+  keyReusedReturnOf,
   RETURNS_NOT_ENABLED_MESSAGE,
   sumChunkTotals,
   type ExcessOption,
@@ -83,6 +84,17 @@ export default function InlineReturnScreen() {
   const [lines, setLines] = useState<PrefilledReturnLine[]>([]);
   const [reason, setReason] = useState<ReturnReason | "">("");
   const [search, setSearch] = useState("");
+  /** #2647: a key-reused 409 means the earlier capture WAS recorded: clear the draft (the lines
+   *  re-seed from the order, the reason resets) so the same goods are not re-entered and credited
+   *  twice, and offer "Open RET-…". Any other refusal keeps the draft for a fix-and-retry. */
+  const refuse = (message: string, e: unknown) => {
+    const recorded = keyReusedReturnOf(e);
+    if (recorded) {
+      setLines([]);
+      setReason("");
+    }
+    dispatch({ type: "refused", message, recorded });
+  };
 
   const quoteMut = useInlineReturnQuote();
   const captureMut = useCaptureInlineReturn();
@@ -120,7 +132,7 @@ export default function InlineReturnScreen() {
   ) =>
     quoteMut.mutate(request, {
       onSuccess: build,
-      onError: (e) => dispatch({ type: "refused", message: extractRefusalMessage(e) }),
+      onError: (e) => refuse(extractRefusalMessage(e), e),
     });
 
   const getQuote = () =>
@@ -158,7 +170,7 @@ export default function InlineReturnScreen() {
         // REG-B308: an offline-queued capture is a pending success, not a failure.
         captureOutcomeFromError(e).kind === "queued"
           ? dispatch({ type: "queued" })
-          : dispatch({ type: "refused", message: captureFailureMessage(e) }),
+          : refuse(captureFailureMessage(e), e),
     });
   };
 
@@ -336,6 +348,14 @@ export default function InlineReturnScreen() {
             <Text style={styles.error} accessibilityRole="alert">
               {screen.message}
             </Text>
+            {screen.recorded && (
+              <PrimaryButton
+                label={`Open ${screen.recorded.returnNumber ?? "the recorded return"}`}
+                onPress={() =>
+                  router.replace(`/(operator)/returns/${screen.recorded!.returnId}` as any)
+                }
+              />
+            )}
             <PrimaryButton label="Back" onPress={() => dispatch({ type: "edit" })} />
           </View>
         )}
