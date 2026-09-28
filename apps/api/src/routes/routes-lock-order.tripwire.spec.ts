@@ -110,6 +110,16 @@ describe("routes lock order: STOP rows → RouteRun (#2631, SA-550)", () => {
     );
   });
 
+  // (v) SA-550g option (b): the stop-row-lock-first ORDER inside reorderRunStopsInTx is pinned ONCE,
+  // in #2691's run-stop-reorder.lock-order.spec.ts. This pins only what #2679 adds: the retry wrapper
+  // hands the tx STRAIGHT to reorderRunStopsInTx — no tx statement runs before its stop lock.
+  it("(v) reorderRunStops's retry callback's FIRST tx operation is reorderRunStopsInTx(tx, …)", () => {
+    const body = methodBody("reorderRunStops");
+    expect(body).toMatch(/tenantTransaction\(\(tx(?::\s*any)?\) =>\s*reorderRunStopsInTx\(tx,/);
+    const before = body.slice(0, at(body, /reorderRunStopsInTx\(tx,/));
+    expect(before).not.toMatch(/\btx\.|\$queryRaw|\$executeRaw/);
+  });
+
   it.each([
     [
       "optimizeRoute",
