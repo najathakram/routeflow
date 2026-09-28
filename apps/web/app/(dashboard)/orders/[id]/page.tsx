@@ -87,6 +87,7 @@ import { OrderLineItemsTable } from "./_components/OrderLineItemsTable";
 import { OrderLineItemCards } from "./_components/OrderLineItemCards";
 import { ActionTier } from "./_components/ActionTier";
 import { DemoteReasonModal } from "./_components/DemoteReasonModal";
+import { EditScanBar } from "./_components/EditScanBar";
 import {
   findLockedUnitLineEdit,
   LockedUnitLineBadge,
@@ -116,7 +117,6 @@ import { MoneyInput, DecimalInput } from "@/components/MoneyInput";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { InlineCreateProductModal } from "@/components/InlineCreateProductModal";
 import { resolveProductByCode } from "@/lib/barcode-resolve";
-import { BarcodeScannerButton } from "@/components/BarcodeScannerButton";
 import { ShipmentCard } from "@/components/ShipmentCard";
 import { SplitInvoiceModal } from "../_components/SplitInvoiceModal";
 import { InvoicePreviewModal, DivergenceNote } from "../../_components/LinkedDocPreviewModal";
@@ -1742,63 +1742,27 @@ export function EditableLineItems({
 
       {/* ── Add Item / Scan row ── */}
       <div ref={addRef} className="relative">
-        <div className="flex items-center gap-2 rounded-lg border border-dashed border-brand-300 bg-brand-50 px-3 py-2">
-          {addLoading ? (
-            <Loader2 className="h-4 w-4 shrink-0 animate-spin text-brand-400" />
-          ) : (
-            <Search className="h-4 w-4 shrink-0 text-brand-400" />
-          )}
-          <input
-            ref={addInputRef}
-            type="text"
-            placeholder="Scan barcode or type name…"
-            value={addSearch}
-            disabled={!pricingReady}
-            onChange={(e) => {
-              setAddSearch(e.target.value);
-              if (e.target.value) setAddOpen(true);
-              else setAddOpen(false);
-            }}
-            onFocus={() => {
-              if (addSearch) setAddOpen(true);
-            }}
-            onKeyDown={(e) => {
-              // #2715 PR-1: the scanner button's wedge detector already handled (and
-              // preventDefault'd) a scan's Enter — standing down keeps ONE scan to ONE add.
-              if (e.defaultPrevented) return;
-              if (e.key === "Enter") {
-                e.preventDefault();
-                e.stopPropagation();
-                handleScanCode(addSearch);
-              } else if (e.key === "Escape") {
-                setAddSearch("");
-                setAddOpen(false);
-              }
-            }}
-            className="flex-1 bg-transparent text-sm text-navy placeholder:text-navy/70 outline-none"
-          />
-          <BarcodeScannerButton
-            inputRef={addInputRef}
-            onScan={(code) => {
-              setAddSearch(code);
-              void handleScanCode(code);
-            }}
-            onError={(message) => toast({ variant: "error", title: message })}
-            className="h-9 min-h-[44px] w-9 min-w-[44px] shrink-0"
-            title="Scan barcode"
-          />
-          {!pricingReady && (
-            // shrink-0 + whitespace-nowrap keep this row exactly as tall as it is
-            // without the hint (ux-spec: no layout jump); below sm only the spinner
-            // shows, so the label can never wrap the row open on a phone.
-            <span className="flex shrink-0 items-center gap-1 text-xs text-navy/70">
-              <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" />
-              <span className="sr-only whitespace-nowrap sm:not-sr-only">
-                Loading customer pricing…
-              </span>
-            </span>
-          )}
-        </div>
+        <EditScanBar
+          inputRef={addInputRef}
+          value={addSearch}
+          loading={addLoading}
+          pricingReady={pricingReady}
+          onChange={(v) => {
+            setAddSearch(v);
+            setAddOpen(Boolean(v));
+          }}
+          onFocus={() => addSearch && setAddOpen(true)}
+          onEnter={() => handleScanCode(addSearch)}
+          onEscape={() => {
+            setAddSearch("");
+            setAddOpen(false);
+          }}
+          onScan={(code) => {
+            setAddSearch(code);
+            void handleScanCode(code);
+          }}
+          onError={(message) => toast({ variant: "error", title: message })}
+        />
         {addOpen && products.length > 0 && (
           <div className="absolute left-0 top-full z-50 mt-1 w-full rounded-lg border border-surface-border bg-white shadow-lg">
             <ul className="max-h-52 overflow-y-auto py-1">
