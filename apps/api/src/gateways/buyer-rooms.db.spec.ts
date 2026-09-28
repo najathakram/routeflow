@@ -460,6 +460,59 @@ describeDb("B104 / #2095 — buyer rooms and tracking against real Postgres", ()
     }
   });
 
+  // #2596 (follow-up to #2593, SA-515c/515d): executed on real Postgres — the absent-claim rule
+  // (a token without canActAsDriver asserts nothing, so it is not compared) and the token-TRUE /
+  // row-false mismatch at resync. On the pre-fold gateway (exact compare, 4891f55b) the first case
+  // disconnects.
+  it("#2596: canActAsDriver on real Postgres — an absent claim is not compared; a TRUE claim against a false row ends the socket", async () => {
+    const staffSocket = async (extra: Record<string, unknown>) => {
+      const s = socketFor(
+        jwt.sign(
+          {
+            sub: U_DRIVER,
+            username: U_DRIVER,
+            role: "DRIVER",
+            status: "ACTIVE",
+            forcePasswordChange: false,
+            tenantId: T_A,
+            tenantSlug: "acme",
+            ...extra,
+          },
+          { expiresIn: "15m" },
+        ),
+      );
+      await gateway.handleConnection(s as never);
+      return s;
+    };
+    const resyncOnly = async (socket: FakeSocket) => {
+      (gateway as unknown as { server: unknown }).server = {
+        local: { fetchSockets: async () => [socket] },
+      };
+      await gateway.resyncBuyerRooms();
+    };
+    const setFlag = (on: boolean) =>
+      prisma.user.update({ where: { id: U_DRIVER }, data: { canActAsDriver: on } });
+
+    try {
+      // (1) The row has canActAsDriver TRUE; the token carries no claim ⇒ connects and survives.
+      await setFlag(true);
+      const absent = await staffSocket({});
+      expect(roomsOf(absent)).toEqual([`tenant:${T_A}:driver:${U_DRIVER}`]);
+      expect(absent.disconnect).not.toHaveBeenCalled();
+      await resyncOnly(absent);
+      expect(absent.disconnect).not.toHaveBeenCalled();
+
+      // (2) A token asserting TRUE matches now; turning the row's flag OFF ends it at the resync.
+      const asserted = await staffSocket({ canActAsDriver: true });
+      expect(asserted.disconnect).not.toHaveBeenCalled();
+      await setFlag(false);
+      await resyncOnly(asserted);
+      expect(asserted.disconnect).toHaveBeenCalledWith(true);
+    } finally {
+      await setFlag(false); // the seeded default
+    }
+  });
+
   it("#2164: a connected CUSTOMER socket is disconnected at the next resync when its user, customer or seller stops being live", async () => {
     const resyncOnly = async (socket: FakeSocket) => {
       (gateway as unknown as { server: unknown }).server = {
