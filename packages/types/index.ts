@@ -170,6 +170,7 @@ export * from "./api/config-snapshots";
 export * from "./api/analytics-insights";
 export * from "./api/order-tracking";
 export * from "./api/onboarding";
+export * from "./api/order-tracking-view";
 export * from "./api/error-codes";
 
 // ─── Developer mode (hidden dispatch/driver/route addon) ──────────────────────
