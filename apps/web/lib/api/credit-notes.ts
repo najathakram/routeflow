@@ -33,6 +33,8 @@ export interface CreditNote {
   appliedAt?: string;
   /** P5-13: true if any application of this note happened via auto-apply at send. */
   autoApplied?: boolean;
+  /** #2648: the note's split across its source invoice's lines (empty for a lump-sum credit). */
+  items?: Array<{ invoiceItemId: string | null; amount: number; qty: number }>;
   createdAt: string;
   updatedAt: string;
 }
@@ -161,7 +163,7 @@ export function useUnapplyCreditNote() {
 }
 
 export interface UpdateCreditNoteDto {
-  /** Descriptive text — editable at ANY status, unlike expiresAt below. */
+  /** Descriptive text — editable on any non-VOID note (a VOID note is not editable: 409). */
   reason?: string;
   /** Only settable while the credit note is ISSUED (server rejects otherwise). */
   expiresAt?: string | null;
@@ -174,6 +176,66 @@ export function useUpdateCreditNote() {
     onSuccess: (_, { id }) => {
       qc.invalidateQueries({ queryKey: ["credit-notes"] });
       qc.invalidateQueries({ queryKey: ["credit-notes", id] });
+    },
+  });
+}
+
+/** SA-436 PR-2: what a void-with-reversal would un-apply, and any refusal. Read-only. */
+export interface VoidPreview {
+  refusal: string | null;
+  restoresTotal: number;
+  invoices: Array<{
+    invoiceId: string;
+    invoiceNumber: string;
+    amount: number;
+    statusBefore: string;
+    statusAfter: string;
+  }>;
+}
+
+export function useVoidPreview(id: string, enabled: boolean) {
+  return useQuery<VoidPreview>({
+    queryKey: ["credit-notes", id, "void-preview"],
+    queryFn: () => apiClient.get(`/credit-notes/${id}/void-preview`).then((r) => r.data),
+    enabled: !!id && enabled,
+    staleTime: 0,
+  });
+}
+
+/** #2648 / SA-535(b): an amount/line edit. The server voids the note (with reversal) and issues
+ *  an unapplied replacement in one transaction; `idempotencyKey` makes a retry safe. */
+export interface ReissueCreditNoteDto {
+  amount: number;
+  items?: Array<{ invoiceItemId: string; amount: number }>;
+  reason?: string;
+  expiresAt?: string | null;
+}
+
+export interface ReissueResult {
+  voided: { id: string; creditNoteNumber: string };
+  creditNote: CreditNote;
+  unapplied: Array<{ invoiceId: string; invoiceNumber: string; amount: number }>;
+}
+
+export function useReissueCreditNote() {
+  const qc = useQueryClient();
+  return useMutation<
+    ReissueResult,
+    Error,
+    { id: string; idempotencyKey: string } & ReissueCreditNoteDto
+  >({
+    mutationFn: ({ id, idempotencyKey, ...dto }) =>
+      apiClient
+        .post(`/credit-notes/${id}/reissue`, dto, {
+          headers: { "Idempotency-Key": idempotencyKey },
+        })
+        .then((r) => r.data),
+    onSuccess: (data, { id }) => {
+      qc.invalidateQueries({ queryKey: ["credit-notes"] });
+      qc.invalidateQueries({ queryKey: ["credit-notes", id] });
+      qc.invalidateQueries({ queryKey: ["invoices"] });
+      qc.invalidateQueries({ queryKey: ["orders"] });
+      qc.invalidateQueries({ queryKey: ["customers", data.creditNote.customerId, "statement"] });
     },
   });
 }

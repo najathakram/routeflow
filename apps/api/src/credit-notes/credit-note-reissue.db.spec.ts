@@ -52,6 +52,8 @@ import { SellingRestrictionsService } from "../selling-restrictions/selling-rest
 import { EstimatesService } from "../estimates/estimates.service";
 import { NumberingService } from "../import/numbering.service";
 import { IdempotencyService } from "../common/idempotency.service";
+import { AuditService } from "../audit/audit.service";
+import { periodBucketOf } from "../regulated/period";
 import { describeDb, requireLocalDatabaseUrl } from "../common/testing/db-spec";
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
@@ -402,5 +404,179 @@ describeDb("#2648 credit-note reissue (SA-535b)", () => {
     await expect(run(tenantId, old.id, { amount: 25 }, "k-5")).rejects.toBeInstanceOf(
       ConflictException,
     );
+  }, 60_000);
+});
+
+/**
+ * SA-535c/d: a regulated, line-linked reissue on the REAL regulated ledger. The lifted void keeps
+ * #2536's shipped behaviour (unreverseCreditNoteEntries deletes the old note's REVERSAL rows;
+ * the locked-period counter-entry is #2541's, for every void path), so today the net filing for
+ * the period is exactly the new note's reversal. Also the executed proof of findOne's `items`.
+ */
+describeDb("#2648 regulated line-linked reissue on the real ledger (SA-535c/d)", () => {
+  let prisma: PrismaService;
+  let tenantCtx: TenantContextService;
+  let creditNotes: CreditNotesService;
+  let reissue: CreditNoteReissueService;
+  let idempotency: IdempotencyService;
+  const tenantIds: string[] = [];
+  const idemHashes: string[] = [];
+
+  beforeAll(async () => {
+    requireLocalDatabaseUrl();
+    tenantCtx = new TenantContextService();
+    prisma = new PrismaService(tenantCtx);
+    await prisma.$connect();
+    const mod = await Test.createTestingModule({
+      providers: [
+        CreditNotesService,
+        CreditNoteReissueService,
+        IdempotencyService,
+        NumberingService,
+        RegulatedLedgerService,
+        CommissionEngineService,
+        AuditService,
+        { provide: PrismaService, useValue: prisma },
+        { provide: EntitlementsService, useValue: { hasFlag: jest.fn().mockResolvedValue(false) } },
+        {
+          provide: RouteFlowGateway,
+          useValue: { emitCreditNoteCreated: jest.fn(), emitCreditNoteVoided: jest.fn() },
+        },
+      ],
+    }).compile();
+    creditNotes = mod.get(CreditNotesService);
+    reissue = mod.get(CreditNoteReissueService);
+    idempotency = mod.get(IdempotencyService);
+  });
+
+  afterAll(async () => {
+    const swallow = () => undefined; // a failed cleanup must never mask a test's result
+    if (idemHashes.length)
+      await prisma.idempotencyKey
+        .deleteMany({ where: { keyHash: { in: idemHashes } } })
+        .catch(swallow);
+    for (const tenantId of tenantIds) {
+      const where = { where: { tenantId } };
+      await prisma.regulatedSalesLedger.deleteMany(where).catch(swallow);
+      await prisma.creditNoteApplyBlock.deleteMany(where).catch(swallow);
+      await prisma.creditNoteItem.deleteMany(where).catch(swallow);
+      await prisma.creditNote.deleteMany(where).catch(swallow);
+      await prisma.numberingSequence.deleteMany(where).catch(swallow);
+      await prisma.invoiceItem.deleteMany(where).catch(swallow);
+      await prisma.invoice.deleteMany(where).catch(swallow);
+      await prisma.trackedCategory.deleteMany(where).catch(swallow);
+      await prisma.customer.deleteMany(where).catch(swallow);
+      await prisma.user.deleteMany(where).catch(swallow);
+      await prisma.auditLog.deleteMany(where).catch(swallow);
+      await prisma.tenant.delete({ where: { id: tenantId } }).catch(swallow);
+    }
+    await prisma?.$disconnect();
+  });
+
+  it("6: old REVERSAL rows deleted, new items + new REVERSAL rows written, net filing = the new amount", async () => {
+    const slug = assertTestTenant(`qa-2648-${RUN}-reg`, "credit-note-reissue.db.spec.ts");
+    const tenant = await prisma.tenant.create({ data: { slug, name: `#2648 ${slug}` } });
+    tenantIds.push(tenant.id);
+    const tenantId = tenant.id;
+    const user = await prisma.user.create({
+      data: { email: `${slug}@example.invalid`, username: slug, role: "CUSTOMER", tenantId },
+    });
+    const customer = await prisma.customer.create({
+      data: { userId: user.id, businessName: "c reg", contactName: "c reg", tenantId },
+    });
+    const cat = await prisma.trackedCategory.create({
+      data: { tenantId, name: "cat reg", taxType: "EXCISE_PER_UNIT", rate: 1 },
+    });
+    const invoice = await prisma.invoice.create({
+      data: {
+        tenantId,
+        customerId: customer.id,
+        invoiceNumber: `INV-2648-${RUN}-reg`,
+        status: "SENT",
+        subtotal: 50,
+        taxAmount: 5,
+        total: 55,
+      },
+    });
+    const reg = await prisma.invoiceItem.create({
+      data: {
+        tenantId,
+        invoiceId: invoice.id,
+        description: "regulated",
+        qty: 5,
+        unitPrice: 10,
+        subtotal: 50,
+        trackedCategoryId: cat.id,
+        categoryTaxAmount: 5,
+      },
+    });
+    const soldAt = new Date();
+    await prisma.regulatedSalesLedger.create({
+      data: {
+        tenantId,
+        trackedCategoryId: cat.id,
+        entryType: "SALE",
+        invoiceId: invoice.id,
+        invoiceItemId: reg.id,
+        qty: 5,
+        unitBasisQty: 5,
+        netSales: 50,
+        categoryTax: 5,
+        soldAt,
+        periodBucket: periodBucketOf(soldAt),
+      },
+    });
+
+    const old = await tenantCtx.run(tenantId, () =>
+      creditNotes.create({
+        customerId: customer.id,
+        invoiceId: invoice.id,
+        amount: 20,
+        items: [{ invoiceItemId: reg.id, amount: 20 }],
+      } as any),
+    );
+    const reversals = (creditNoteId?: string) =>
+      prisma.regulatedSalesLedger.findMany({
+        where: { tenantId, entryType: "REVERSAL", ...(creditNoteId ? { creditNoteId } : {}) },
+      });
+    const net = (rows: Array<{ netSales: unknown }>) =>
+      Math.round(rows.reduce((t, r) => t + Math.abs(Number(r.netSales)), 0) * 100) / 100;
+    expect(net(await reversals(old.id))).toBe(20);
+
+    // findOne returns the line split the Edit form prefills (SA-535c, executed proof).
+    const read = await tenantCtx.run(tenantId, () => creditNotes.findOne(old.id));
+    expect(
+      (read as any).items.map((i: any) => [i.invoiceItemId, Number(i.amount), Number(i.qty)]),
+    ).toEqual([[reg.id, 20, 2]]);
+
+    // A header-only reissue of a line-linked note is refused before anything is reserved.
+    const key0 = "k-6a";
+    idemHashes.push(idempotency.hashFor(key0, tenantId, `creditNoteReissue:${old.id}`));
+    await expect(
+      tenantCtx.run(tenantId, () => reissue.reissue(old.id, { amount: 30 }, key0, null)),
+    ).rejects.toThrow(/give the new amount for each line/);
+    expect(net(await reversals(old.id))).toBe(20);
+
+    const key = "k-6b";
+    idemHashes.push(idempotency.hashFor(key, tenantId, `creditNoteReissue:${old.id}`));
+    const res = await tenantCtx.run(tenantId, () =>
+      reissue.reissue(
+        old.id,
+        { amount: 30, items: [{ invoiceItemId: reg.id, amount: 30 }] },
+        key,
+        null,
+      ),
+    );
+
+    expect(await reversals(old.id)).toHaveLength(0); // #2536 as shipped: deleted, not counter-entered
+    const fresh = await reversals(res.creditNote.id);
+    expect(net(fresh)).toBe(30);
+    expect(net(await reversals())).toBe(30); // the period's net filing is the new amount's reversal
+    const items = await prisma.creditNoteItem.findMany({
+      where: { creditNoteId: res.creditNote.id },
+    });
+    expect(items.map((i) => [i.invoiceItemId, i.trackedCategoryId, Number(i.amount)])).toEqual([
+      [reg.id, cat.id, 30],
+    ]);
   }, 60_000);
 });

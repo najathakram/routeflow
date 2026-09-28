@@ -17,15 +17,11 @@ import {
 } from "lucide-react";
 import { Button, Badge, Card, Modal, cn, useToast } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
-import {
-  useCreditNote,
-  useApplyCreditNote,
-  useVoidCreditNote,
-  useUpdateCreditNote,
-} from "@/lib/api/credit-notes";
+import { useCreditNote, useApplyCreditNote, useVoidCreditNote } from "@/lib/api/credit-notes";
 import { useInvoices } from "@/lib/api/invoices";
 import { fmt, fmtCalendarDate, fmtDate } from "@/lib/formatting";
 import { DocumentLetterhead } from "@/components/DocumentLetterhead";
+import { EditCreditNoteModal } from "./_components/EditCreditNoteModal";
 
 // ─── Void confirm modal ───────────────────────────────────────────────────────
 
@@ -202,13 +198,11 @@ export default function CreditNoteDetailPage() {
   const { data: cn, isLoading, isError } = useCreditNote(id);
   const applyCreditNote = useApplyCreditNote();
   const voidCreditNote = useVoidCreditNote();
-  const updateCreditNote = useUpdateCreditNote();
 
   const [isVoidOpen, setIsVoidOpen] = React.useState(false);
   const [isApplyOpen, setIsApplyOpen] = React.useState(false);
-  // Inline reason edit — editable at ANY status (descriptive text).
-  const [isEditingReason, setIsEditingReason] = React.useState(false);
-  const [reasonDraft, setReasonDraft] = React.useState("");
+  // #2648: one Edit form for reason, expiry and amount (an amount change reissues the note).
+  const [isEditOpen, setIsEditOpen] = React.useState(false);
 
   React.useEffect(() => {
     if (cn) setTitle(cn.creditNoteNumber);
@@ -263,27 +257,6 @@ export default function CreditNoteDetailPage() {
         });
       },
     });
-  };
-
-  const handleSaveReason = () => {
-    const reason = reasonDraft.trim();
-    if (!reason) return;
-    updateCreditNote.mutate(
-      { id: cn.id, reason },
-      {
-        onSuccess: () => {
-          setIsEditingReason(false);
-          toast({ title: "Reason updated", variant: "success" });
-        },
-        onError: (err: any) => {
-          toast({
-            title: "Failed to update reason",
-            description: err?.response?.data?.message ?? "Please try again.",
-            variant: "error",
-          });
-        },
-      },
-    );
   };
 
   const handleApply = (invoiceId: string) => {
@@ -346,6 +319,16 @@ export default function CreditNoteDetailPage() {
 
         {/* Actions */}
         <div className="flex flex-wrap items-center gap-2">
+          {status !== "VOID" && (
+            <Button
+              size="sm"
+              variant="secondary"
+              leftIcon={<Pencil className="h-4 w-4" />}
+              onClick={() => setIsEditOpen(true)}
+            >
+              Edit
+            </Button>
+          )}
           {status === "ISSUED" && (
             <>
               <Button
@@ -453,58 +436,13 @@ export default function CreditNoteDetailPage() {
               </div>
             </div>
 
-            {/* Reason — editable at ANY status; rendered live via the relation
-                everywhere it's shown (order/invoice/PDF), so this edit is the
-                one place it needs to be changed. */}
+            {/* Reason — rendered live via the relation everywhere it's shown (order/invoice/PDF);
+                edited through the Edit form (#2648). */}
             <div className="mt-6 border-t border-surface-border pt-4">
-              <div className="mb-1 flex items-center justify-between gap-2">
-                <p className="text-xs font-semibold uppercase tracking-wider text-navy/70">
-                  Reason
-                </p>
-                {!isEditingReason && (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setReasonDraft(cn.reason);
-                      setIsEditingReason(true);
-                    }}
-                    className="rounded p-1 text-navy/40 hover:text-brand-500 transition-colors"
-                    title="Edit reason"
-                  >
-                    <Pencil className="h-3.5 w-3.5" />
-                  </button>
-                )}
-              </div>
-              {isEditingReason ? (
-                <div className="space-y-2">
-                  <textarea
-                    rows={2}
-                    value={reasonDraft}
-                    onChange={(e) => setReasonDraft(e.target.value)}
-                    className="w-full resize-none rounded-lg border border-surface-border bg-white px-3 py-2 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
-                  />
-                  <div className="flex justify-end gap-2">
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => setIsEditingReason(false)}
-                      disabled={updateCreditNote.isPending}
-                    >
-                      Cancel
-                    </Button>
-                    <Button
-                      size="sm"
-                      loading={updateCreditNote.isPending}
-                      disabled={!reasonDraft.trim()}
-                      onClick={handleSaveReason}
-                    >
-                      Save
-                    </Button>
-                  </div>
-                </div>
-              ) : (
-                <p className="text-sm text-navy/80 whitespace-pre-line">{cn.reason}</p>
-              )}
+              <p className="mb-1 text-xs font-semibold uppercase tracking-wider text-navy/70">
+                Reason
+              </p>
+              <p className="text-sm text-navy/80 whitespace-pre-line">{cn.reason}</p>
             </div>
 
             {/* Notes */}
@@ -611,6 +549,10 @@ export default function CreditNoteDetailPage() {
         cnNumber={cn.creditNoteNumber}
         isPending={voidCreditNote.isPending}
       />
+
+      {status !== "VOID" && (
+        <EditCreditNoteModal open={isEditOpen} onClose={() => setIsEditOpen(false)} note={cn} />
+      )}
 
       <ApplyToInvoiceModal
         isOpen={isApplyOpen}
