@@ -15,6 +15,7 @@ import {
   claimStopStatusChange,
 } from "./delivery-lines.util";
 import { PrismaService } from "../prisma/prisma.service";
+import { reorderRunStopsInTx } from "./run-stop-reorder";
 import { JwtPayload } from "../auth/jwt-payload.interface";
 import {
   UserRole,
@@ -584,33 +585,8 @@ export class RoutesService {
   }
 
   async reorderRunStops(runId: string, order: { id: string; stopNumber: number }[]) {
-    const run = await this.prisma.forTenant().routeRun.findUnique({ where: { id: runId } });
-    if (!run) throw new NotFoundException("Route run not found");
-    if (run.status === "IN_PROGRESS" || run.status === "COMPLETED") {
-      throw new BadRequestException("Cannot reorder stops on an active or completed route run");
-    }
-    const allStops = await this.prisma.forTenant().routeRunStop.findMany({
-      where: { routeRunId: runId },
-      select: { id: true, stopNumber: true },
-    });
-    const offset = allStops.length + order.length + 100;
-    await this.prisma.$transaction([
-      ...allStops.map((s) =>
-        this.prisma.forTenant().routeRunStop.update({
-          where: { id: s.id },
-          data: { stopNumber: s.stopNumber + offset },
-        }),
-      ),
-      ...order.map(({ id, stopNumber }) =>
-        this.prisma.forTenant().routeRunStop.update({ where: { id }, data: { stopNumber } }),
-      ),
-      // The polyline lives on the parent route but is what this run's map
-      // draws — a hand reorder here makes it wrong too. See
-      // clearPlannedPolyline.
-      this.prisma
-        .forTenant()
-        .route.update({ where: { id: run.routeId }, data: { plannedPolyline: null } }),
-    ]);
+    await this.prisma.tenantTransaction((tx: any) => reorderRunStopsInTx(tx, runId, order));
+    // #2095: post-commit — announce only after the reorder transaction has committed.
     await this.live.runProgress(runId);
     return { success: true };
   }

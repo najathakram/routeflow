@@ -82,6 +82,8 @@ describe("InvoicesService — B652 unit-line partial billing", () => {
 
   beforeEach(async () => {
     prisma = createMockPrisma();
+    // #2070: createPartialFromOrder's invoicedQty bump is a CAS (updateMany); a clean read matches 1.
+    prisma.orderItem.updateMany.mockResolvedValue({ count: 1 } as any);
     prisma.invoice.findFirst.mockResolvedValue({ items: [] });
 
     const module: TestingModule = await Test.createTestingModule({
@@ -169,8 +171,8 @@ describe("InvoicesService — B652 unit-line partial billing", () => {
         unitsPerBox: 12,
       });
       expect(Number(line.subtotal)).toBe(520); // 960 x 52/96
-      expect(prisma.orderItem.update).toHaveBeenCalledWith({
-        where: { id: "oi-1" },
+      expect(prisma.orderItem.updateMany).toHaveBeenCalledWith({
+        where: expect.objectContaining({ id: "oi-1", status: { not: "CANCELLED" } }),
         data: { invoicedQty: { increment: 52 } },
       });
     });

@@ -32,6 +32,7 @@ import { ios } from "@routeflow/ui/tokens";
 import { useAuthStore } from "../lib/auth-store";
 import { useTenantStore } from "../lib/tenant-store";
 import { useBuyerSessionStore } from "../lib/buyer-session-store";
+import { rootBuyerGate } from "../lib/buyer-route-guard";
 import { useDeveloperMode } from "../lib/api/addons";
 import { ConfirmModal } from "../components/ConfirmModal";
 import { initSentry } from "../lib/sentry";
@@ -88,12 +89,16 @@ function RootLayoutNav() {
   useEffect(() => {
     if (isLoading || tenantLoading || buyerLoading) return;
 
-    // Buyer portal: if logged in as buyer (and not also as staff), route to customer section
-    // RF-218: land on the dashboard home tab.
-    if (buyer && activeSeller && !user) {
-      if (segments[0] !== "(customer)") {
-        router.replace("/(customer)/(tabs)/home");
-      }
+    // Buyer portal (buyer signed in, no staff session): with a seller → customer section
+    // (RF-218: home tab); with 0 sellers → sellers/connect only (#2341).
+    const buyerGate = rootBuyerGate({
+      hasBuyer: !!buyer,
+      hasSeller: !!activeSeller,
+      hasStaff: !!user,
+      segments,
+    });
+    if (buyerGate.handled) {
+      if (buyerGate.to) router.replace(buyerGate.to as any);
       return;
     }
 

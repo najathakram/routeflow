@@ -37,6 +37,7 @@ const EXPECTED_NAMES = [
   "billing.reviewExpiredOverrides",
   "billing.revokeExpiredOverrides",
   "invoices.markOverdue",
+  "onboarding.refreshAutoChecks",
   "mailbox-alert.sweepPending",
 ].sort();
 
@@ -115,7 +116,7 @@ describe("no bare @Cron in apps/api/src (T2, R2)", () => {
     expect(offenders).toEqual([]);
   });
 
-  it("has exactly 21 `@LeaderCron(` sites, every one of them well-formed", () => {
+  it("has exactly 22 `@LeaderCron(` sites, every one of them well-formed", () => {
     const declared = sources.reduce((n, s) => n + countMatches(s.text, LEADER_CRON), 0);
     const wellFormed = sources.reduce((n, s) => n + countMatches(s.text, LEADER_CRON_SITE), 0);
 
@@ -123,8 +124,9 @@ describe("no bare @Cron in apps/api/src (T2, R2)", () => {
     // independently bumped 15 -> 16; merged together the true count was 17. Feature grants v2
     // brief B (2026-09-17) added billing.reviewExpiredOverrides, bumping 17 -> 18; B569 added billing.revokeExpiredOverrides, 18 -> 19.
     // #2520 (SA-495a) scheduled invoices.markOverdue per tenant zone, 19 -> 20.
-    // #2113 (SA-528) added mailbox-alert.sweepPending, 20 -> 21.
-    expect(declared).toBe(21);
+    // #2159 S1 added onboarding.refreshAutoChecks, 20 -> 21.
+    // #2113 (SA-528) added mailbox-alert.sweepPending, 21 -> 22.
+    expect(declared).toBe(22);
     // A site that does not match the full `(expr, "name")` shape would be invisible to the name
     // assertions below, so pin the two counts together.
     expect(wellFormed).toBe(declared);
@@ -158,7 +160,7 @@ describe("no bare @Cron in apps/api/src (T2, R2)", () => {
     });
   });
 
-  it("registers the 20 expected job names, all unique", () => {
+  it("registers the 22 expected job names, all unique", () => {
     const names: string[] = [];
     for (const s of sources) {
       const re = new RegExp(LEADER_CRON_SITE.source, "g");
