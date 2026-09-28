@@ -369,8 +369,21 @@ describeDb(
       const id = await makeTenant("switch", TenantStatus.TRIAL);
       await activate(id);
       expect(await figures(id)).toEqual({ snapshot: price.STARTER, ledger: price.STARTER });
+      const seen = (
+        await prisma.billingEvent.findMany({ where: { tenantId: id }, select: { id: true } })
+      ).map((e) => e.id);
 
       await activate(id, "GROWTH");
+
+      // #2570 (the lead's nit on #2568): the switch books EXACTLY ONE plan.changed, at
+      // +(GROWTH − STARTER) — not merely a ledger sum that happens to agree.
+      const booked = await prisma.billingEvent.findMany({
+        where: { tenantId: id, id: { notIn: seen } },
+        select: { type: true, amountDelta: true },
+      });
+      expect(booked.map((e) => [e.type, Number(e.amountDelta ?? 0)])).toEqual([
+        ["plan.changed", price.GROWTH - price.STARTER],
+      ]);
 
       const sub = await prisma.tenantSubscription.findUniqueOrThrow({ where: { tenantId: id } });
       expect(sub.planKey).toBe("GROWTH");

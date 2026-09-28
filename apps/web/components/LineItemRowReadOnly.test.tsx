@@ -229,6 +229,19 @@ describe("LineItemRowReadOnly — SKU, thumbnail, status, delivery, note", () =>
     expect(none.container.textContent).not.toMatch(/delivered/);
   });
 
+  it("a CANCELLED line shows no delivery progress, but a PENDING short line still does (B669)", () => {
+    const cancelled = renderRow({
+      lineStatus: "CANCELLED",
+      deliveredQty: "0.000",
+      qty: "8.000",
+      showDeliveryProgress: true,
+    });
+    expect(cancelled.container.textContent).not.toMatch(/delivered/);
+    cancelled.unmount();
+    renderRow({ lineStatus: "PENDING", deliveredQty: 6, qty: 8, showDeliveryProgress: true });
+    expect(screen.getByText("6 of 8 delivered")).toBeInTheDocument();
+  });
+
   it("deliveredQty is 0 (not null) on an undelivered line: silent until the caller opts in", () => {
     const off = renderRow({ deliveredQty: "0.000", qty: "8.000" });
     expect(off.container.textContent).not.toMatch(/delivered/);
