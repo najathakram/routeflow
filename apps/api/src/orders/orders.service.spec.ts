@@ -5904,16 +5904,14 @@ describe("OrdersService", () => {
       );
     });
 
-    it("(r4-1) B465 fix round 4 (Opus BLOCK item 1, HIGH, revert-probe): the staff create-merge's own auto-merge (isCreateMerge) lets a NEW line for a SPECIAL customer through with no reason, storing the sent price", async () => {
-      // Separate create (POST /orders with no existing PENDING order to merge
-      // into) has no reason requirement in this PR (the B465 follow-up covers
-      // it). The auto-merge branch of that SAME create endpoint folds a fresh
-      // scan into an EXISTING order via replaceAll:true — a line brand-new to
-      // that order (no existing counterpart at all) must be treated identically
-      // to separate create, not like an operator's own edit of an existing
-      // order. orders.controller.ts's create-merge call site is the ONLY
-      // caller that ever sets opts.isCreateMerge; a plain replaceAll:true from
-      // the edit screen never does, per test (item3)/(item3b) above.
+    it("(r4-1) #2696(c) SA-558d (i): the staff create-merge's own auto-merge (isCreateMerge) treats a NEW line exactly as separate create — rule A: an off-tier price on a SPECIAL line needs a reason (400), with one it is DISCOUNTED", async () => {
+      // B465 round 4 let this line through with no reason because separate create
+      // (POST /orders with no existing PENDING order to merge into) had no reason
+      // requirement then. #2696(c) gives create rule A (decideStaffOverride), and this
+      // arm follows it: a fresh order and a folded one price the same payload the same.
+      // orders.controller.ts's create-merge call site is the ONLY caller that ever sets
+      // opts.isCreateMerge; a plain replaceAll:true from the edit screen never does, per
+      // test (item3)/(item3b) above.
       prisma.order.findUnique.mockResolvedValue({
         ...MOCK_ORDER,
         status: "DRAFT" as const,
@@ -5924,11 +5922,22 @@ describe("OrdersService", () => {
       prisma.product.findMany.mockResolvedValue([TIERED_PRODUCT]);
       prisma.orderItem.findMany.mockResolvedValue([{ subtotal: 12, status: "PENDING" }]);
 
+      await expect(
+        service.updateOrderItems(
+          "ord-1",
+          { items: [{ productId: "prod-1", qty: 2, unitPrice: 6 }], replaceAll: true },
+          operatorPayload,
+          { isCreateMerge: true },
+        ),
+      ).rejects.toThrow(/Tiered Widget/);
+      expect(prisma.orderItem.create).not.toHaveBeenCalled();
+
       await service.updateOrderItems(
         "ord-1",
-        // A discounted price with NO reason -- would 400 on a plain edit-screen
-        // replaceAll (see (item3)), but this is the create path's own merge.
-        { items: [{ productId: "prod-1", qty: 2, unitPrice: 6 }], replaceAll: true },
+        {
+          items: [{ productId: "prod-1", qty: 2, unitPrice: 6, overrideReason: " bent box " }],
+          replaceAll: true,
+        },
         operatorPayload,
         { isCreateMerge: true },
       );
@@ -5940,6 +5949,10 @@ describe("OrdersService", () => {
             qty: 2,
             unitPrice: 6,
             subtotal: 12,
+            priceType: "DISCOUNTED",
+            originalPrice: 10,
+            overrideReason: "bent box",
+            overriddenBy: "user-op",
           }),
         }),
       );

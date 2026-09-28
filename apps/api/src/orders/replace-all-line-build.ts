@@ -20,6 +20,7 @@ import {
 } from "@routeflow/pricing";
 import { PriceType } from "@prisma/client";
 import { isSpecialTier, rescaleBogoFreeUnits, resolveBuyerLinePrice } from "./buyer-merge-pricing";
+import { decideTierOverride } from "./staff-override";
 import type { UpdateOrderItemsDto } from "./dto/update-order-items.dto";
 
 interface ExistingLineForReplaceAll {
@@ -207,6 +208,17 @@ export function buildReplaceAllLineData(
   // own replaceAll:true edit of an EXISTING order (isCreateMerge
   // unset) still needs the guard for a brand-new OR ambiguous line.
   const skipAsCreateMergeNewLine = !!ctx.isCreateMerge && replaceAllExisting == null;
+  // #2696(c) SA-558d (i): that NEW line IS a staff create, so it takes create's rule A
+  // (decideTierOverride: tier baseline, the sent reason, the same 400; within ½¢ of tier ⇒ the
+  // tier ladder below) — a fresh order and a folded one price the same payload identically. The
+  // existing-line pairing (B60) and the operator's own replaceAll edit arm are untouched.
+  const createMergeDecision =
+    skipAsCreateMergeNewLine && overridePrice !== null && !bogoPriceUnchanged
+      ? decideTierOverride(product, replaceAllTierForProduct, overridePrice, item.overrideReason)
+      : null;
+  const createMergeOverride = createMergeDecision?.overridden ? createMergeDecision : null;
+  // In-band on that arm = no typed price (the ladder), exactly as create() does.
+  const pricedOverride = createMergeDecision && !createMergeOverride ? null : overridePrice;
   if (
     !bogoPriceUnchanged &&
     !replaceAllPriceUnchanged &&
@@ -226,8 +238,9 @@ export function buildReplaceAllLineData(
   // price at all falls through to the tier ladder, and only for staff. A price
   // the BOGO branch above already treated as unchanged is never a MANUAL
   // override either, even if it differs from today's catalog list price.
-  const isManualOverride =
-    !bogoPriceUnchanged && overridePrice !== null && overridePrice !== catalogPrice;
+  const isManualOverride = createMergeDecision
+    ? !!createMergeOverride
+    : !bogoPriceUnchanged && overridePrice !== null && overridePrice !== catalogPrice;
   const upb = Number(product.unitsPerBox ?? 0);
   // B661-sweep: box-unaware multiply, converts to regulatedUnitBasis in a follow-up PR.
   const qtyPieces = boxes != null ? qty : upb > 1 ? qty * upb : qty;
@@ -258,31 +271,38 @@ export function buildReplaceAllLineData(
           newUnits: boxes != null ? boxes : qty,
         }),
       }
-    : overridePrice !== null
+    : createMergeOverride
       ? {
-          unitPrice: overridePrice,
-          originalPrice: isManualOverride ? catalogPrice : null,
-          priceType: isManualOverride ? PriceType.MANUAL : PriceType.STANDARD,
+          unitPrice: createMergeOverride.unitPrice,
+          originalPrice: createMergeOverride.originalPrice,
+          priceType: PriceType[createMergeOverride.priceType],
           freeUnits: 0,
         }
-      : ctx.isStaffEdit
-        ? resolveBuyerLinePrice(
-            product,
-            ctx.operatorCpMap.get(productId) ?? ctx.operatorDefaultTier,
-            ctx.buyerPromos,
-            qtyPieces,
-            qtyUnits,
-            null,
-            // REG-B109: the exact denomination this line bills with below.
-            { boxes, pieces, unitsPerBox: upb },
-          )
-        : {
-            // Non-staff caller: legacy list pricing, no tier resolution.
-            unitPrice: catalogPrice,
-            originalPrice: null as number | null,
-            priceType: PriceType.STANDARD,
+      : pricedOverride !== null
+        ? {
+            unitPrice: pricedOverride,
+            originalPrice: isManualOverride ? catalogPrice : null,
+            priceType: isManualOverride ? PriceType.MANUAL : PriceType.STANDARD,
             freeUnits: 0,
-          };
+          }
+        : ctx.isStaffEdit
+          ? resolveBuyerLinePrice(
+              product,
+              ctx.operatorCpMap.get(productId) ?? ctx.operatorDefaultTier,
+              ctx.buyerPromos,
+              qtyPieces,
+              qtyUnits,
+              null,
+              // REG-B109: the exact denomination this line bills with below.
+              { boxes, pieces, unitsPerBox: upb },
+            )
+          : {
+              // Non-staff caller: legacy list pricing, no tier resolution.
+              unitPrice: catalogPrice,
+              originalPrice: null as number | null,
+              priceType: PriceType.STANDARD,
+              freeUnits: 0,
+            };
   const unitPrice = priced.unitPrice;
   const subtotal = computeLineSubtotal({
     unitPrice,
@@ -317,7 +337,9 @@ export function buildReplaceAllLineData(
     // incremental UPDATE branch's identical fix.
     overrideReason: isManualOverride
       ? item.overrideReason?.trim()
-        ? item.overrideReason
+        ? createMergeOverride
+          ? item.overrideReason.trim()
+          : item.overrideReason
         : (replaceAllExisting?.overrideReason ?? null)
       : (preservedOverride?.overrideReason ?? null),
     overriddenBy: isManualOverride

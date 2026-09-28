@@ -427,3 +427,79 @@ describe("#2696(c) staff price override — updateOrderItems", () => {
     });
   });
 });
+
+describe("#2696(c) SA-558d (i) — the create auto-merge's NEW line is a create", () => {
+  const PICK = ["unitPrice", "priceType", "originalPrice", "overrideReason", "overriddenBy"];
+  const pick = (d: Record<string, unknown>) =>
+    Object.fromEntries(PICK.map((k) => [k, d[k] ?? null]));
+
+  /** The line POST /orders writes for a fresh order. */
+  const viaCreate = async (item: Record<string, unknown>) => {
+    const h = await buildOrdersService();
+    h.prisma.customer.findFirst.mockResolvedValue({ id: "cust-1", pricingTier: 3 });
+    h.prisma.customer.findUnique.mockResolvedValue({
+      id: "cust-1",
+      pricingTier: 3,
+      user: { status: "ACTIVE" },
+      deletedAt: null,
+    });
+    h.prisma.customerPrice.findMany.mockResolvedValue([]);
+    h.prisma.product.findMany.mockResolvedValue([TIERED]);
+    h.prisma.order.create.mockImplementation((args: any) =>
+      Promise.resolve({
+        id: "o",
+        orderNumber: "1",
+        createdAt: new Date(),
+        customer: { businessName: "Acme" },
+        urgent: false,
+        ...args.data,
+        lineItems: [],
+      }),
+    );
+    await h.service.create(
+      { customerId: "cust-1", items: [{ productId: "prod-1", qty: 2, ...item }] } as never,
+      staff,
+    );
+    return pick(h.prisma.order.create.mock.calls[0][0].data.lineItems.create[0]);
+  };
+
+  /** The line the same payload writes when it folds into a pending order (isCreateMerge). */
+  const viaMerge = async (item: Record<string, unknown>) => {
+    const h = await buildOrdersService();
+    h.prisma.order.findUnique.mockResolvedValue({
+      id: "ord-1",
+      customerId: "cust-1",
+      status: "PENDING",
+      lineItems: [],
+      customer: { businessName: "Acme" },
+    });
+    h.prisma.customer.findFirst.mockResolvedValue({ pricingTier: 3 });
+    h.prisma.customerPrice.findMany.mockResolvedValue([]);
+    h.prisma.product.findMany.mockResolvedValue([TIERED]);
+    h.prisma.orderItem.findMany.mockResolvedValue([{ subtotal: 16, status: "PENDING" }]);
+    await h.service.updateOrderItems(
+      "ord-1",
+      { items: [{ productId: "prod-1", qty: 2, ...item }], replaceAll: true } as never,
+      operatorPayload as never,
+      { isCreateMerge: true },
+    );
+    return pick(h.prisma.orderItem.create.mock.calls[0][0].data);
+  };
+
+  it.each([
+    ["the tier price", { unitPrice: 8 }],
+    ["in-band 8.004", { unitPrice: 8.004 }],
+    ["below list + reason", { unitPrice: 6, overrideReason: " bent box " }],
+    ["at list + reason", { unitPrice: 10, overrideReason: "list" }],
+    ["above list + reason, unrounded", { unitPrice: 12.456, overrideReason: "rush" }],
+    ["no price", {}],
+  ])("parity, %s: a fresh order and a folded one store the same line", async (_n, item) => {
+    const fresh = await viaCreate(item);
+    expect(await viaMerge(item)).toEqual(fresh);
+  });
+
+  it("an off-tier price with no reason is refused on both paths", async () => {
+    await expect(viaCreate({ unitPrice: 6 })).rejects.toThrow(/Tiered Widget/);
+    await expect(viaMerge({ unitPrice: 6 })).rejects.toThrow(/Tiered Widget/);
+  });
+});
