@@ -35,6 +35,8 @@ import { useFinanceDashboard } from "@/lib/api/finance";
 import { useInvoices, type Invoice } from "@/lib/api/invoices";
 import { useRoutesAccess, useDeliveryAccess } from "@/lib/api/addons";
 import { DriverAppBanner } from "./DriverAppBanner";
+import { GettingStartedBanner } from "./GettingStartedBanner";
+import { useTenantOnboarding } from "@/lib/api/onboarding";
 
 // ─── Column definitions (stable refs, defined outside component) ───────────────
 
@@ -520,6 +522,10 @@ export default function DashboardPage() {
     user.role === "TENANT_ADMIN";
   const isCustomer = user?.role === "CUSTOMER";
   const baseIsDriver = user?.role === "DRIVER";
+  // #2159 S4: the onboarding banner is for the workspace's own staff only.
+  const onboardingQuery = useTenantOnboarding(
+    user?.role === "TENANT_ADMIN" || user?.role === "OPERATOR",
+  );
   // #2254: /orders is OPERATOR+CUSTOMER only; /invoices and /bookkeeping/finance-dashboard are
   // OPERATOR only. A DRIVER fired all five here (403s) and saw "Could not load recent orders."
   const readsBusinessData = !baseIsDriver;
@@ -648,6 +654,9 @@ export default function DashboardPage() {
 
   return (
     <div className="space-y-6 p-6">
+      {/* ── Onboarding in progress (#2159 S4) ── */}
+      <GettingStartedBanner onboarding={onboardingQuery.data?.onboarding} />
+
       {/* ── Driver-app nudge (DRIVER-role account, web) ── */}
       <DriverAppBanner
         visible={baseIsDriver && !driverBannerDismissed}

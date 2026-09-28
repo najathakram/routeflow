@@ -358,6 +358,65 @@ describe("RecordInlineReturnDialog — refusals render the API's own message (AC
     });
     await screen.findByText("A different return already used this capture key");
   });
+
+  // #2647: a key-reused 409 means the earlier capture WAS recorded: link it, clear the draft.
+  it("#2647: a key-reused 409 links the recorded return and starts a fresh attempt (new returnKey)", async () => {
+    await openToStep1();
+    await enterQtyAndGetQuote("10");
+    resolveNextQuote(quoteResponse([chunk()]));
+    await screen.findByText(/issue credit note and receive goods/i);
+    fireEvent.click(screen.getByRole("button", { name: /issue credit note and receive goods/i }));
+    await waitFor(() => expect(captureMutate).toHaveBeenCalledTimes(1));
+    const firstKey = captureMutate.mock.calls[0][0].returnKey;
+
+    rejectNextCapture({
+      response: {
+        status: 409,
+        data: {
+          code: "INLINE_RETURN_KEY_REUSED_WITH_DIFFERENT_ITEMS",
+          returnId: "ret-9",
+          returnNumber: "RET-2026-0042",
+          message:
+            "Return RET-2026-0042 was already recorded with this capture key, with different items.",
+        },
+      },
+    });
+    const link = await screen.findByTestId("inline-return-recorded-link");
+    expect(link).toHaveTextContent("Open RET-2026-0042");
+    expect(link).toHaveAttribute("href", "/returns/ret-9");
+
+    // Back lands on a FRESH draft: the section re-seeded (no quote, the typed qty cleared).
+    fireEvent.click(screen.getByRole("button", { name: /back/i }));
+    expect(
+      screen.queryByRole("button", { name: /issue credit note and receive goods/i }),
+    ).toBeNull();
+    expect((screen.getByLabelText(/qty \(pieces\)/i) as HTMLInputElement).value).not.toBe("10");
+    // and a new attempt is a NEW capture key (the old one was spent on the recorded return)
+    fireEvent.change(screen.getByLabelText(/qty \(pieces\)/i), { target: { value: "4" } });
+    fireEvent.change(screen.getByLabelText(/^reason$/i), { target: { value: "DAMAGED" } });
+    fireEvent.click(screen.getByRole("button", { name: /get quote/i }));
+    await waitFor(() => expect(quoteMutate).toHaveBeenCalledTimes(2));
+    resolveNextQuote(quoteResponse([chunk()]));
+    fireEvent.click(
+      await screen.findByRole("button", { name: /issue credit note and receive goods/i }),
+    );
+    await waitFor(() => expect(captureMutate).toHaveBeenCalledTimes(2));
+    expect(captureMutate.mock.calls[1][0].returnKey).not.toBe(firstKey);
+  });
+
+  it("#2647: any other 409 shows its message but no 'Open RET' link", async () => {
+    await openToStep1();
+    await enterQtyAndGetQuote("10");
+    resolveNextQuote(quoteResponse([chunk()]));
+    await screen.findByText(/issue credit note and receive goods/i);
+    fireEvent.click(screen.getByRole("button", { name: /issue credit note and receive goods/i }));
+    await waitFor(() => expect(captureMutate).toHaveBeenCalledTimes(1));
+    rejectNextCapture({
+      response: { status: 409, data: { code: "INLINE_RETURN_KEY_CONFLICT", message: "Taken" } },
+    });
+    await screen.findByText("Taken");
+    expect(screen.queryByTestId("inline-return-recorded-link")).toBeNull();
+  });
 });
 
 describe("RecordInlineReturnDialog — 403 copy (AC6)", () => {

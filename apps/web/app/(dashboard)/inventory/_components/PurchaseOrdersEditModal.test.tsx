@@ -38,7 +38,7 @@ function po(over: Partial<PurchaseOrder> = {}): PurchaseOrder {
     poNumber: "PO-2026-0001",
     supplier: suppliers[0],
     status: "RECEIVED",
-    total: 30,
+    totalAmount: "30.00",
     expectedDate: "2026-10-01T00:00:00.000Z",
     notes: "Dock 3",
     createdAt: "2026-09-01",

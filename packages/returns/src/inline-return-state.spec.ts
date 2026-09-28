@@ -9,6 +9,8 @@ import {
   groupQuoteChunks,
   hasAnyQtyEntered,
   isBoxedProduct,
+  keyReusedReturnOf,
+  INLINE_RETURN_KEY_REUSED_CODE,
   mintReturnKey,
   RETURNS_NOT_ENABLED_MESSAGE,
   sumChunkTotals,
@@ -501,5 +503,30 @@ describe("extractRefusalMessage", () => {
 
   it("falls back for a shape with no response body", () => {
     expect(extractRefusalMessage(new Error("network down"), "fallback text")).toBe("fallback text");
+  });
+});
+
+describe("keyReusedReturnOf (#2647)", () => {
+  const err = (data: unknown, status = 409) => ({ response: { status, data } });
+  it("returns the recorded return from a key-reused 409 body", () => {
+    expect(
+      keyReusedReturnOf(
+        err({ code: INLINE_RETURN_KEY_REUSED_CODE, returnId: "r1", returnNumber: "RET-1" }),
+      ),
+    ).toEqual({ returnId: "r1", returnNumber: "RET-1" });
+  });
+  it("a missing returnNumber is null, not undefined", () => {
+    expect(keyReusedReturnOf(err({ code: INLINE_RETURN_KEY_REUSED_CODE, returnId: "r1" }))).toEqual(
+      { returnId: "r1", returnNumber: null },
+    );
+  });
+  it.each([
+    ["another code", err({ code: "INLINE_RETURN_KEY_CONFLICT", returnId: "r1" })],
+    ["no returnId", err({ code: INLINE_RETURN_KEY_REUSED_CODE })],
+    ["an empty returnId", err({ code: INLINE_RETURN_KEY_REUSED_CODE, returnId: "" })],
+    ["no response", new Error("network")],
+    ["undefined", undefined],
+  ])("%s ⇒ null", (_n, e) => {
+    expect(keyReusedReturnOf(e)).toBeNull();
   });
 });
