@@ -27,6 +27,8 @@ jest.mock("../invoices/invoices.service", () => ({
     // (testing/orders-service-harness.ts:102) already carries it; this manual mock missed it,
     // which is why F2's first run of (b) threw "findOpenOrderDraft is not a function".
     findOpenOrderDraft: jest.fn().mockResolvedValue(null),
+    // #2696(c) SA-558e: createSale's step 3 (the invoice itself is not what these cases pin).
+    createInvoiceFromOrder: jest.fn().mockResolvedValue([{ id: "inv-1" }]),
   })),
 }));
 jest.mock("../notifications/notifications.service", () => ({
@@ -348,4 +350,36 @@ describeDb("#2696(c) staff price override — real Postgres", () => {
       expect(cols(await lineOf(pending.id))).toEqual(cols(await lineOf(freshOrder.id)));
     },
   );
+
+  // SA-558e: New sale (POST /orders/sell → createSale → create()) takes the same rule A.
+  const sell = (customerId: string, item: Record<string, unknown>) =>
+    tenantCtx.run(tenantId, () =>
+      svc.createSale(
+        {
+          customerId,
+          items: [{ productId: product.id, qty: 2, ...item }],
+          deliveredNow: false,
+        } as never,
+        staff(),
+      ),
+    );
+
+  it("SALE (SA-558e): off the special price WITH a reason persists the override on the sale's order", async () => {
+    const c = await customer();
+    await sell(c.id, { unitPrice: 6, overrideReason: "dented" });
+    const order = await raw.order.findFirstOrThrow({ where: { tenantId, customerId: c.id } });
+    expect(cols(await lineOf(order.id))).toEqual({
+      unitPrice: 6,
+      priceType: "DISCOUNTED",
+      originalPrice: 10,
+      overrideReason: "dented",
+      overriddenBy: operatorPayload.sub,
+    });
+  });
+
+  it("SALE (SA-558e): off the special price with NO reason is a 400; no order written", async () => {
+    const c = await customer();
+    await expect(sell(c.id, { unitPrice: 6 })).rejects.toThrow(/reason is required/);
+    expect(await raw.order.count({ where: { tenantId, customerId: c.id } })).toBe(0);
+  });
 });
