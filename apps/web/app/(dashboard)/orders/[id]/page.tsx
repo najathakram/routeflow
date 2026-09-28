@@ -106,6 +106,7 @@ import { useProducts } from "@/lib/api/products";
 import {
   computeLineSubtotal,
   getTierPrice,
+  needsOverrideReason,
   normalizeBoxesPieces,
   roundMoney,
 } from "@routeflow/pricing";
@@ -575,7 +576,7 @@ function isPriceOverridden(it: { unitPrice: number; basePrice: number }): boolea
  * initial resolved price, :1062) — undefined only defensively, where there is
  * no baseline to compare against and therefore nothing provably changed.
  */
-function needsSpecialTierReason(
+export function needsSpecialTierReason(
   it: {
     unitPrice: number;
     originalUnitPrice?: number;
@@ -590,8 +591,16 @@ function needsSpecialTierReason(
   isSpecial: boolean,
 ): boolean {
   const baseline = it.reasonBaselinePrice ?? it.originalUnitPrice;
-  const priceChanged = baseline != null && Math.abs(it.unitPrice - baseline) > 0.0001;
-  return !it.isUnlisted && isSpecial && priceChanged && !(it.overrideReason ?? "").trim();
+  if (it.isUnlisted || baseline == null) return false;
+  // #2696(c) SA-558b(4): the server's own predicate with THIS act's baseline — the stored price
+  // (and the reason on file, seeded into overrideReason) for an existing line, the tier price for
+  // an add or a substitution; ½¢ tolerance, the server's.
+  return needsOverrideReason({
+    overridePrice: it.unitPrice,
+    baselinePrice: baseline,
+    isSpecialTier: isSpecial,
+    hasReason: !!(it.overrideReason ?? "").trim(),
+  });
 }
 
 /**

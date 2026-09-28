@@ -23,6 +23,11 @@ import { apiClient } from "@/lib/api-client";
 import { orderCreatedToast } from "./order-created-toast";
 import { mergeQtyIntoLine, mergedLineMessage, newLineQty } from "./add-line-merge";
 import { getTierPrice, computeLineSubtotal, normalizeBoxesPieces } from "@routeflow/pricing";
+import {
+  applyTypedPrice,
+  lineNeedsReason,
+  reasonRequiredMessage,
+} from "@/lib/staff-price-override";
 import { useMarginConfig, floorForCategory } from "@/lib/api/margin";
 import { MoneyInput, DecimalInput } from "@/components/MoneyInput";
 import { displayProductName } from "@/lib/product-display";
@@ -101,6 +106,7 @@ interface LineItem {
   listPrice: number; // standard pricePerUnit from product catalog
   specialPrice?: number; // permanent customer-specific price (from CustomerPrice)
   discountedPrice?: number; // one-time ad-hoc override (below list = discount, above = upsell)
+  overrideReason?: string; // #2696(c): required when the price moves off a special price
   unitPrice: number; // effective price used for display totals
   priceType: "STANDARD" | "SPECIAL" | "DISCOUNTED" | "MANUAL";
   qty: number; // total pieces (authoritative)
@@ -846,40 +852,24 @@ export function CreateOrderModal({
           return {
             ...li,
             discountedPrice: undefined,
+            overrideReason: undefined,
             unitPrice: revertPrice,
             priceType: li.specialPrice != null ? "SPECIAL" : "STANDARD",
           };
         }
-        const enteredPrice = Math.max(0, value);
-        if (enteredPrice < li.listPrice) {
-          return {
-            ...li,
-            discountedPrice: enteredPrice,
-            unitPrice: enteredPrice,
-            priceType: "DISCOUNTED",
-          };
-        }
-        if (enteredPrice > li.listPrice) {
-          // Upsell: sold ABOVE list. Stored as MANUAL; the base is hidden from the
-          // customer server-side and shown green ("Upsell") to the operator.
-          return {
-            ...li,
-            discountedPrice: enteredPrice,
-            unitPrice: enteredPrice,
-            priceType: "MANUAL",
-          };
-        }
-        // Entered price == list price → no override
-        const revertPrice = li.specialPrice ?? li.listPrice;
-        return {
-          ...li,
-          discountedPrice: undefined,
-          unitPrice: revertPrice,
-          priceType: li.specialPrice != null ? "SPECIAL" : "STANDARD",
-        };
+        // #2696(c): the server's own rule A (@routeflow/pricing decideStaffOverride) — within ½¢
+        // of the special / list price is no override; below list DISCOUNTED, at/above MANUAL (an
+        // upsell: the base is hidden from the customer server-side, shown green to the operator).
+        const next = applyTypedPrice(li, value);
+        return next.discountedPrice == null ? { ...next, overrideReason: undefined } : next;
       }),
     );
   };
+
+  const setOverrideReason = (tempId: string, reason: string) =>
+    setLineItems((prev) =>
+      prev.map((li) => (li.tempId === tempId ? { ...li, overrideReason: reason } : li)),
+    );
 
   // ── Submit ────────────────────────────────────────────────────────────────
 
@@ -1121,6 +1111,14 @@ export function CreateOrderModal({
       toast({ title: RETURN_SAVE_BLOCKED[inlineReturn], variant: "error" });
       return;
     }
+    // #2696(c): never send what the server refuses — an off-special price needs its reason first.
+    const needsReason = lineItems.find(lineNeedsReason);
+    if (needsReason) {
+      setMergePrompt(null);
+      toast({ title: reasonRequiredMessage(needsReason.productName), variant: "error" });
+      setEditingLineId(needsReason.tempId);
+      return;
+    }
     const itemsForSubmit = (
       asDraft
         ? lineItems.filter(
@@ -1143,7 +1141,12 @@ export function CreateOrderModal({
             // (backend handles those via CustomerPrice).
             ...((li.priceType === "DISCOUNTED" || li.priceType === "MANUAL") &&
             li.discountedPrice != null
-              ? { unitPrice: li.discountedPrice }
+              ? {
+                  unitPrice: li.discountedPrice,
+                  ...(li.overrideReason?.trim()
+                    ? { overrideReason: li.overrideReason.trim() }
+                    : {}),
+                }
               : {}),
             ...note,
           };
@@ -1342,6 +1345,8 @@ export function CreateOrderModal({
       onAckFloor={() => ackFloor(li.tempId)}
       onToggleCostRevealed={() => toggleCostRevealed(li.tempId)}
       onClose={close}
+      reasonRequired={lineNeedsReason(li)}
+      onSetOverrideReason={(reason) => setOverrideReason(li.tempId, reason)}
     />
   );
 
@@ -1812,11 +1817,9 @@ export function CreateOrderModal({
               <ul className="divide-y divide-surface-border overflow-hidden rounded-lg border border-surface-border">
                 {lineItems.map((li) =>
                   renderLine(li, {
-                    // #2696 (b): tap the price → the line's price/qty sheet. NOT on a SPECIAL-priced
-                    // line until #2696(c) lands (SA-558): an editor over a price the app refuses to
-                    // change is exactly B721 — keep it untappable.
-                    onTapPrice:
-                      li.priceType === "SPECIAL" ? undefined : () => setEditingLineId(li.tempId),
+                    // #2696 (b)/(c): tap the price → the line's price/qty sheet, a SPECIAL-priced line
+                    // too — moving off the special price takes a reason there (SA-558).
+                    onTapPrice: () => setEditingLineId(li.tempId),
                   }),
                 )}
               </ul>
