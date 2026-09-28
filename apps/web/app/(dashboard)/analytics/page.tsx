@@ -1180,7 +1180,7 @@ export default function AnalyticsPage() {
       <PageHeader
         title="Analytics"
         action={
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center justify-end gap-2">
             <Calendar className="h-4 w-4 text-navy/70 flex-shrink-0" />
             <input
               type="date"

@@ -28,7 +28,7 @@ import type { BuyerSeller } from "../../lib/buyer-auth";
 export default function SellersScreen() {
   const router = useRouter();
   const qc = useQueryClient();
-  const { activeSeller, setActiveSeller } = useBuyerSessionStore();
+  const { activeSeller, setActiveSeller, signOut } = useBuyerSessionStore();
   const { data: sellers, isLoading, refetch, isRefetching } = useBuyerSellers();
   const cancelMut = useDisconnectSeller();
 
@@ -65,7 +65,22 @@ export default function SellersScreen() {
     <SafeAreaView style={styles.safe} edges={["top", "left", "right"]}>
       <NavBar
         inlineTitle="Your Sellers"
-        leading={<NavBackButton label="Back" onPress={() => router.back()} />}
+        leading={
+          // #2341: a buyer with no seller yet can't go "back" into the portal —
+          // this screen and connect are all they may reach, so offer sign-out.
+          activeSeller ? (
+            <NavBackButton label="Back" onPress={() => router.back()} />
+          ) : (
+            <Pressable
+              onPress={() => void signOut()}
+              hitSlop={8}
+              accessibilityRole="button"
+              accessibilityLabel="Sign out"
+            >
+              <Text style={styles.signOut}>Sign out</Text>
+            </Pressable>
+          )
+        }
         trailing={
           <Pressable onPress={() => router.push("/(customer)/sellers/connect")} hitSlop={8}>
             <Ionicons name="add" size={24} color={ios.brand} />
@@ -163,6 +178,7 @@ export default function SellersScreen() {
 
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: ios.bg },
+  signOut: { fontSize: 17, fontFamily: "Inter_400Regular", color: ios.brand },
   center: { padding: 60, alignItems: "center" },
   empty: { padding: 40, alignItems: "center", gap: 10 },
   emptyTitle: { fontSize: 16, fontFamily: "Inter_600SemiBold", color: ios.label, marginTop: 4 },

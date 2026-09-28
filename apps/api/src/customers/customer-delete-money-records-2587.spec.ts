@@ -27,14 +27,6 @@ import { EmailService } from "../email/email.service";
 type Kind = "creditNote" | "advancePayment" | "payment" | "invoicePayment";
 const KINDS: Kind[] = ["creditNote", "advancePayment", "payment", "invoicePayment"];
 
-/** A money-record row owned by `customerId`, in the shape each count query selects. */
-function row(kind: Kind, customerId: string): Record<string, unknown> {
-  if (kind === "payment") return { transaction: { customerId } };
-  if (kind === "invoicePayment") return { invoice: { customerId } };
-  // creditNote rows also feed deleteCustomer's open-credit read: a fully used note (not "open").
-  return { customerId, amount: 10, amountUsed: 10 };
-}
-
 const MONEY_TABLES: Kind[] = KINDS;
 
 describe("customer deletes never destroy a money record (#2587, SA-516)", () => {
@@ -94,6 +86,32 @@ describe("customer deletes never destroy a money record (#2587, SA-516)", () => 
     service = module.get<CustomersService>(CustomersService);
   });
 
+  /**
+   * One money record of `kind` owned by `customerId`, in the shape the aggregated counts read
+   * (#2597): a groupBy per customer for credit notes / advances, a groupBy per parent plus the
+   * parent's owner for payments. The first `skip` count reads see nothing (a record that appears
+   * after the pre-flight).
+   */
+  const seedMoney = (kind: Kind, customerId: string, skip = 0) => {
+    let calls = 0;
+    const hit = () => calls++ >= skip;
+    const m = prisma as any;
+    if (kind === "creditNote" || kind === "advancePayment") {
+      m[kind].groupBy.mockImplementation(async () =>
+        hit() ? [{ customerId, _count: { _all: 1 } }] : [],
+      );
+      return;
+    }
+    const [fk, parent] =
+      kind === "payment" ? ["transactionId", "transaction"] : ["invoiceId", "invoice"];
+    m[kind].groupBy.mockImplementation(async () =>
+      hit() ? [{ [fk]: "parent-1", _count: { _all: 1 } }] : [],
+    );
+    m[parent].findMany.mockImplementation(async (args: any) =>
+      args?.where?.id?.in?.includes("parent-1") ? [{ id: "parent-1", customerId }] : [],
+    );
+  };
+
   const noMoneyDeleted = () => {
     for (const t of MONEY_TABLES) expect((prisma as any)[t].deleteMany).not.toHaveBeenCalled();
     expect(prisma.orderCreditNote.deleteMany).not.toHaveBeenCalled();
@@ -101,7 +119,7 @@ describe("customer deletes never destroy a money record (#2587, SA-516)", () => 
 
   const BULK: Array<[string, () => Promise<unknown>, string]> = [
     ["deleteAllCustomers", () => service.deleteAllCustomers(), "cust-1"],
-    ["deleteImportedCustomers", () => service.deleteImportedCustomers(), "cust-1"],
+    ["deleteImportedCustomers", () => service.runImportedCustomersCleanup(), "cust-1"],
   ];
 
   const seedBulk = () =>
@@ -115,7 +133,7 @@ describe("customer deletes never destroy a money record (#2587, SA-516)", () => 
       "a %s ⇒ the pre-flight refuses naming the customer, nothing deleted",
       async (kind) => {
         seedBulk();
-        ((prisma as any)[kind].findMany as jest.Mock).mockResolvedValue([row(kind, blocked)]);
+        seedMoney(kind, blocked);
         const caught: any = await run().catch((e) => e);
         expect(caught).toBeInstanceOf(ConflictException);
         expect(caught.message).toContain(`${blocked}: 1 record(s)`);
@@ -128,9 +146,7 @@ describe("customer deletes never destroy a money record (#2587, SA-516)", () => 
       "a %s appearing after the pre-flight ⇒ the in-tx re-check refuses before any delete",
       async (kind) => {
         seedBulk();
-        ((prisma as any)[kind].findMany as jest.Mock)
-          .mockResolvedValueOnce([])
-          .mockResolvedValue([row(kind, blocked)]);
+        seedMoney(kind, blocked, 1);
         const caught: any = await run().catch((e) => e);
         expect(caught).toBeInstanceOf(ConflictException);
         expect(prisma.tenantTransaction).toHaveBeenCalledTimes(1);
@@ -163,8 +179,8 @@ describe("customer deletes never destroy a money record (#2587, SA-516)", () => 
 
   it("cleanup imported checks only the non-ACTIVE-linked customers it would delete", async () => {
     seedBulk();
-    await service.deleteImportedCustomers();
-    expect((prisma.creditNote.findMany as jest.Mock).mock.calls[0][0].where).toEqual({
+    await service.runImportedCustomersCleanup();
+    expect((prisma.creditNote.groupBy as jest.Mock).mock.calls[0][0].where).toEqual({
       customerId: { in: ["cust-1"] },
     });
   });
@@ -173,7 +189,6 @@ describe("customer deletes never destroy a money record (#2587, SA-516)", () => 
   // cleared the order↔credit-note links before DELETING the customer's credit notes. SA-516 forbids
   // deleting them, so each site now refuses: a 409 naming the customer, the note and its links kept.
   describe("REG-B189 inverse — a credit note blocks the delete and is kept (SA-516c)", () => {
-    const cn = { customerId: "cust-1", amount: 10, amountUsed: 10 };
     const kept = () => {
       expect(prisma.creditNote.deleteMany).not.toHaveBeenCalled();
       expect(prisma.orderCreditNote.deleteMany).not.toHaveBeenCalled();
@@ -181,7 +196,7 @@ describe("customer deletes never destroy a money record (#2587, SA-516)", () => 
 
     it("REG-B189 deleteAllCustomers: 409 naming the customer, credit note and links kept", async () => {
       seedBulk();
-      prisma.creditNote.findMany.mockResolvedValue([cn] as any);
+      seedMoney("creditNote", "cust-1");
       const caught: any = await service.deleteAllCustomers().catch((e) => e);
       expect(caught).toBeInstanceOf(ConflictException);
       expect(caught.message).toContain("cust-1: 1 record(s)");
@@ -190,8 +205,8 @@ describe("customer deletes never destroy a money record (#2587, SA-516)", () => 
 
     it("REG-B189 deleteImportedCustomers: 409 naming the customer, credit note and links kept", async () => {
       seedBulk();
-      prisma.creditNote.findMany.mockResolvedValue([cn] as any);
-      const caught: any = await service.deleteImportedCustomers().catch((e) => e);
+      seedMoney("creditNote", "cust-1");
+      const caught: any = await service.runImportedCustomersCleanup().catch((e) => e);
       expect(caught).toBeInstanceOf(ConflictException);
       expect(caught.message).toContain("cust-1: 1 record(s)");
       kept();
@@ -204,7 +219,7 @@ describe("customer deletes never destroy a money record (#2587, SA-516)", () => 
         deletedAt: null,
         user: { status: "ACTIVE", username: "shop" },
       } as any);
-      prisma.creditNote.findMany.mockResolvedValue([cn] as any);
+      seedMoney("creditNote", "cust-1");
       const caught: any = await service.deleteCustomer("cust-1").catch((e) => e);
       expect(caught).toBeInstanceOf(ConflictException);
       expect(caught.message).toContain("credit notes, payments or advance payments");
@@ -223,7 +238,7 @@ describe("customer deletes never destroy a money record (#2587, SA-516)", () => 
     });
 
     it.each(KINDS)("a %s without force ⇒ 409, nothing deleted or soft-deleted", async (kind) => {
-      ((prisma as any)[kind].findMany as jest.Mock).mockResolvedValue([row(kind, "cust-1")]);
+      seedMoney(kind, "cust-1");
       const caught: any = await service.deleteCustomer("cust-1").catch((e) => e);
       expect(caught).toBeInstanceOf(ConflictException);
       expect(caught.message).toContain("Cannot delete customer with existing financial records");
@@ -236,7 +251,7 @@ describe("customer deletes never destroy a money record (#2587, SA-516)", () => 
     it.each(KINDS)(
       "a %s with force (batch shape) ⇒ the soft delete, records preserved",
       async (kind) => {
-        ((prisma as any)[kind].findMany as jest.Mock).mockResolvedValue([row(kind, "cust-1")]);
+        seedMoney(kind, "cust-1");
         await expect(
           service.deleteCustomer("cust-1", true, { hardDeleteWhenRecordFree: true }),
         ).resolves.toEqual({
@@ -252,11 +267,7 @@ describe("customer deletes never destroy a money record (#2587, SA-516)", () => 
     it.each(KINDS)(
       "a %s appearing before the hard branch's tx ⇒ its in-tx twin refuses",
       async (kind) => {
-        const m = ((prisma as any)[kind].findMany as jest.Mock).mockResolvedValue([
-          row(kind, "cust-1"),
-        ]);
-        // the pre-flight reads credit notes twice (the open-credit read + the money-record count)
-        for (let i = 0; i < (kind === "creditNote" ? 2 : 1); i++) m.mockResolvedValueOnce([]);
+        seedMoney(kind, "cust-1", 1);
         const caught: any = await service
           .deleteCustomer("cust-1", true, { hardDeleteWhenRecordFree: true })
           .catch((e) => e);
@@ -270,18 +281,23 @@ describe("customer deletes never destroy a money record (#2587, SA-516)", () => 
   // #2591 / SA-516b: delivery history (ANY RouteRunStop, the customer's own or one on its
   // RouteStop) is refused, never deleted. Pre-fix, cleanup-imported hit an FK 500 on the RouteStop.
   describe("delivery history (#2591, SA-516b)", () => {
-    const HISTORY: Array<[string, Record<string, unknown>]> = [
-      ["its own RouteRunStop", { customerId: "cust-1", routeStop: { customerId: null } }],
-      [
-        "a RouteRunStop on its RouteStop",
-        { customerId: null, routeStop: { customerId: "cust-1" } },
-      ],
+    const HISTORY: Array<[string, "own" | "stop"]> = [
+      ["its own RouteRunStop", "own"],
+      ["a RouteRunStop on its RouteStop", "stop"],
     ];
+    /** Delivery history for `cust-1`, seen by every count read after the first `skip` (#2597 shapes). */
+    const seedHistory = (via: "own" | "stop", skip = 0) => {
+      let calls = 0;
+      const hit = () => calls++ >= skip;
+      const rows = async () => (hit() ? [{ customerId: "cust-1" }] : []);
+      if (via === "own") (prisma.routeRunStop.groupBy as jest.Mock).mockImplementation(rows);
+      else (prisma.routeStop.findMany as jest.Mock).mockImplementation(rows);
+    };
 
     describe.each(BULK)("%s", (_name, run) => {
-      it.each(HISTORY)("%s ⇒ the pre-flight refuses naming the customer", async (_k, stop) => {
+      it.each(HISTORY)("%s ⇒ the pre-flight refuses naming the customer", async (_k, via) => {
         seedBulk();
-        prisma.routeRunStop.findMany.mockResolvedValue([stop] as any);
+        seedHistory(via);
         const caught: any = await run().catch((e) => e);
         expect(caught).toBeInstanceOf(ConflictException);
         expect(caught.message).toContain("delivery history");
@@ -293,9 +309,7 @@ describe("customer deletes never destroy a money record (#2587, SA-516)", () => 
 
       it("history appearing after the pre-flight ⇒ the in-tx twin refuses before any delete", async () => {
         seedBulk();
-        prisma.routeRunStop.findMany
-          .mockResolvedValueOnce([])
-          .mockResolvedValue([HISTORY[1][1]] as any);
+        seedHistory("stop", 1);
         const caught: any = await run().catch((e) => e);
         expect(caught).toBeInstanceOf(ConflictException);
         expect(prisma.tenantTransaction).toHaveBeenCalledTimes(1);
@@ -336,7 +350,7 @@ describe("customer deletes never destroy a money record (#2587, SA-516)", () => 
         deletedAt: null,
         user: { status: "ACTIVE", username: "shop" },
       } as any);
-      prisma.routeRunStop.findMany.mockResolvedValue([HISTORY[1][1]] as any);
+      seedHistory("stop");
       const caught: any = await service.deleteCustomer("cust-1").catch((e) => e);
       expect(caught).toBeInstanceOf(ConflictException);
       expect(caught.message).toContain("delivery history");

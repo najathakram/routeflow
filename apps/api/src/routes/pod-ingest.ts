@@ -68,14 +68,20 @@ export async function ingestPodCapture(
   dto: { signatureUrl?: string; podPhotoUrls?: string[] },
   stopId: string,
 ): Promise<void> {
-  // #2542: every schemeless value is a storage key and must be exactly this tenant's pod key —
-  // refused (400) before anything is uploaded or written.
-  const values = [dto.signatureUrl, ...(dto.podPhotoUrls ?? [])].filter((v) => v !== undefined);
+  // #2542/#2550: every schemeless value is a storage key and must be exactly this tenant's pod key
+  // for THIS stop — refused (400) before anything is uploaded or written.
+  // #2585 / SA-519: the 400 names the field (a blank entry is refused, never skipped).
+  const values: Array<[string, unknown]> = [
+    ...(dto.signatureUrl !== undefined
+      ? [["signatureUrl", dto.signatureUrl] as [string, unknown]]
+      : []),
+    ...(dto.podPhotoUrls ?? []).map((v, i) => [`podPhotoUrls[${i}]`, v] as [string, unknown]),
+  ];
   if (values.length > 0) {
     const tenantId = requirePodTenantId(deps.prisma);
-    for (const v of values) {
-      const why = podCaptureValueRefusal(v, tenantId);
-      if (why) throw new BadRequestException(why);
+    for (const [field, v] of values) {
+      const why = podCaptureValueRefusal(v, tenantId, stopId); // #2550: this stop's own keys only
+      if (why) throw new BadRequestException(`${field}: ${why}`);
     }
   }
   if (dto.signatureUrl) {
