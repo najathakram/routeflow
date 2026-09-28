@@ -25,6 +25,7 @@ import {
   normalizeBoxesPieces,
   isBlockingPayment,
   remainingCapacity,
+  inferredGoodsFlatRate,
 } from "@routeflow/pricing";
 import { computeDepositFields } from "./deposit-fields";
 import { orderLineShape, orderLineUnchanged } from "./order-backsync-lines";
@@ -101,7 +102,6 @@ import {
   buildPriceAdjustmentUpdates,
   commitPriceAdjustment,
   loadPriceAdjustmentReference,
-  inferredGoodsFlatRate,
   lockInvoiceForPriceAdjustment,
 } from "./price-adjustment-ledger";
 import { AuthorizationGuardService } from "../authorizations/authorization-guard.service";
@@ -5834,7 +5834,7 @@ export class InvoicesService {
       // B662: item writes, invoice totals and the regulated-ledger sync commit or fail TOGETHER.
       await this.prisma.tenantTransaction(async (tx: any) => {
         const live = await lockInvoiceForPriceAdjustment(tx, inv); // Invoice FIRST, then its rows
-        const inferred = inferredGoodsFlatRate(live); // #2243: goods only, never the NSF fee line
+        const inferred = inferredGoodsFlatRate({ ...live, lines: live.items }); // #2656: goods only
         const { categoriesById, unitsPerBoxByProduct } = await loadPriceAdjustmentReference(
           tx,
           live.items,
