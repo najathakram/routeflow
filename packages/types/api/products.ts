@@ -8,22 +8,25 @@ export interface InventoryValuation {
 }
 
 export interface RecomputeCostsResult {
+  /** B562 PR-3: true unless the caller sent `dryRun: false` — dry run is the default. */
   dryRun: boolean;
   processed: number;
+  /** Products whose average this call corrected (always 0 on a dry run). */
   updated: number;
   noHistory: { productId: string; name: string }[];
   /** B562: products whose StockMovement ledger can't account for their real
-   *  currentStock (order sales/edits write no movement row) — the replay
-   *  would be sales-blind, so nothing was written for these; `stockDrift` is
-   *  the unaccounted quantity. */
+   *  currentStock — the replay would run on a wrong stock balance, so nothing
+   *  is written for these; `stockDrift` is the unaccounted quantity. */
   gapsDetected: { productId: string; name: string; stockDrift: number }[];
+  /** B562 PR-3 (SA-136 §4): per product, the replayed average and — on an apply that changed it —
+   *  the id of the one appended COST_BASIS correction row. No existing row is ever rewritten. */
   results: {
     productId: string;
     name: string;
+    gap: number;
     oldAvgCost: number | null;
     newAvgCost: number | null;
-    stockDrift: number;
-    movementsBackfilled: number;
+    correctionId: string | null;
   }[];
 }
 
@@ -85,7 +88,8 @@ export interface VariantAssignResult {
 
 /** Per-buyer sales history for the product-detail Sales card. Backed by
  *  `GET /analytics/product-sales/:productId?limit=` — reads INVOICED sales only
- *  (DRAFT/VOID/WRITTEN_OFF excluded), newest first. `lineTotal`/`unitPrice` are
+ *  (DRAFT/VOID excluded; WRITTEN_OFF included and badged via `writtenOff`, #2118),
+ *  newest first, at most `limit` LINES. `lineTotal`/`unitPrice` are
  *  authoritative — never re-derive from qty × unitPrice (would over-charge a
  *  boxed line by `unitsPerBox`). */
 export interface ProductSaleLine {
@@ -114,6 +118,9 @@ export interface ProductSaleLine {
   originalPrice: number | null;
   /** True when the line carries a non-STANDARD price (override/promo/tier). */
   overridden: boolean;
+  /** True when the invoice was written off — still a sale (accrual basis), badged.
+   *  Optional so older fixtures stay valid; the API always sends it. */
+  writtenOff?: boolean;
 }
 
 export interface ProductSalesSummary {

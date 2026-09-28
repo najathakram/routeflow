@@ -114,6 +114,25 @@ export function packFromOwnSplit(input: {
   return Number.isInteger(pack) && pack > 1 ? pack : null;
 }
 
+/**
+ * Does a stored box/piece split add up to its qty? True only when the pack is known and greater than 1 and
+ * `boxes x pack + pieces === qty` (tolerance 1e-6 on qty). A split with no pack (null, 0 or 1) is never
+ * "matching": it cannot be checked. ONE definition, used by the invoice edit plan and the invoice -> order
+ * back-sync (SA-257), so a split one writes is never one the other would refuse.
+ */
+export function splitMatchesQty(input: {
+  qty: number;
+  boxes?: number | null;
+  pieces?: number | null;
+  unitsPerBox?: number | null;
+}): boolean {
+  const pack = Number(input.unitsPerBox ?? 0);
+  if (!(pack > 1)) return false;
+  const boxes = Number(input.boxes ?? 0);
+  const pieces = Number(input.pieces ?? 0);
+  return Math.abs(boxes * pack + pieces - Number(input.qty ?? 0)) < 1e-6;
+}
+
 export interface LineSubtotalInput {
   unitPrice: number;
   /**

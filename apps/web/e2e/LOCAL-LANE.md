@@ -55,6 +55,19 @@ unchanged) or when a human sets `E2E_ALLOW_REMOTE_AUTH=1` for that run. **An age
 variable and never targets a non-local host** — a refusal is the guard working, not a bug to route
 around.
 
+### The proof-stack guard (stale image, #2491)
+
+A proof is only as current as the images it hits. `npm run local:up` / `local:build` stamp both
+images with the commit they were built from (`org.routeflow.sha`, plus `org.routeflow.dirty`). Every
+stack-backed lane (`local:validate`, `local:validate:features`, `local:e2e`, `local:e2e:all`) first
+prints a `proof-stack:` line with both shas. It then refuses with **stale image** unless each image
+was built from a descendant of the commit under proof: `PROOF_STACK_REQUIRE=<PR merge or head sha>`,
+or this checkout's HEAD when that is unset. An unlabelled image (built outside `local:up`) is
+refused too, and so is an image built from a dirty tree when `PROOF_STACK_REQUIRE` is set (a PR
+proof needs committed code; the HEAD dev loop only warns). The fix is always `npm run local:up`; never prove on the old image. A lane that drives
+Playwright or curl by hand runs `npm run local:proof-stack` first and quotes its line in the proof.
+Every check is appended to `local-assets/proof-stack.jsonl`.
+
 ## The allow-list (`local:e2e`)
 
 `setup` plus the money/guard projects, trimmed to stay ≤ 10 min wall clock on this machine:
@@ -75,6 +88,8 @@ Projects needing `PLAYWRIGHT_SA_*` (`super-admin`, `impersonation-signout`) are 
 the allow-list — those secrets are not expected to be present on every contributor's machine.
 `local:e2e:all` runs everything (no `--project` filter) and is a **report**, not a gate: a
 failure in a project outside the allow-list above is recorded in the PR, not fixed by this lane.
+
+**Local super-admin (D-03, #1803).** `npm run local:sa` mints a throwaway `local-sa` SUPER_ADMIN in the **local** compose DB only (it refuses any non-local database; there is no override) with a random per-run password, written to the gitignored, mode-600 `local-assets/local-sa.env`. `npm run local:e2e` then loads `PLAYWRIGHT_SA_USERNAME` / `PLAYWRIGHT_SA_PASSWORD` from it (an owner-only file on POSIX). **It WINS over an exported `PLAYWRIGHT_SA_*`**: the local lane targets only the local stack, and an exported value for some other target used to shadow it silently and fail the setup login with a 401. When it overrides an exported value, `local-env` prints a loud warning naming the variable (never a value); unset the exported one to silence it, so the `super-admin` and `impersonation-signout` projects can run locally. Re-running `local:sa` rotates the password (and clears any lockout on it); re-run it after `npm run local:reset`, which wipes the DB and the user. The target is resolved by the same parser `pg` uses and any `?host=` / `?hostaddr=` / `?service=` query, multi-host list or socket path is refused. **Windows:** POSIX mode bits do not exist there (Node reports 666), so the 0600 is a no-op and the folder's ACLs (your user profile) are what protect `local-assets/local-sa.env`; `local-env` loads it without the mode check. No API path, no fixed credential, nothing prod-capable.
 
 If a future addition pushes `local:e2e` past 10 minutes, trim the allow-list here **and** in
 root `package.json`'s `local:e2e` script, and say in the PR what was dropped and why.

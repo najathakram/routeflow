@@ -76,7 +76,7 @@ export interface EnableReadiness {
 }
 
 /** The address columns the governing-state resolver reads. */
-const ADDRESS_SELECT = {
+export const ADDRESS_SELECT = {
   isDefault: true,
   addressType: true,
   stateCode: true,

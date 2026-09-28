@@ -41,6 +41,7 @@ const fsModule = require("fs") as typeof fs;
 import { UploadsController } from "./uploads.controller";
 import { UploadsAccessGuard } from "./uploads-access.guard";
 import { PrismaService } from "../prisma/prisma.service";
+import { listenOnLoopback } from "../common/testing/listen-loopback";
 
 describe("UploadsController — JWT-path tenant scoping", () => {
   let app: INestApplication;
@@ -167,7 +168,7 @@ describe("UploadsController — JWT-path tenant scoping", () => {
       .compile();
 
     app = module.createNestApplication();
-    await app.init();
+    await listenOnLoopback(app);
   });
 
   afterAll(async () => {

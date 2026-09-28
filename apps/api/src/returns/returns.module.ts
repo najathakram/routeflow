@@ -38,6 +38,6 @@ import { SystemConfigModule } from "../system-config/system-config.module";
     InlineReturnsService,
     ParkedRestockResolutionService,
   ],
-  exports: [ReturnsService],
+  exports: [ReturnsService, InlineReturnsService],
 })
 export class ReturnsModule {}

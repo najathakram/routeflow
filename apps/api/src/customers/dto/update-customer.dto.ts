@@ -14,6 +14,7 @@ import { Transform } from "class-transformer";
 import { FulfillPath } from "@prisma/client";
 import { StripHtml } from "../../common/transforms/strip-html.transform";
 import { emptyToNull } from "../../common/dto-transforms";
+import { MAX_DECIMAL_10_2 } from "../../common/decimal-bounds.constant";
 import { VALID_TERMS } from "../../system-config/dto/update-invoice-settings.dto";
 
 // Canonical list plus "" to CLEAR a previously-set override back to "use the
@@ -46,7 +47,12 @@ export class UpdateCustomerDto {
   // Never consulted for security mail. Also exposed on UpdateBuyerProfileDto
   // so the buyer themself can toggle it via PATCH /buyer/me.
   @IsOptional() @IsBoolean() orderStatusEmails?: boolean;
-  @IsOptional() creditLimit?: number;
+  // SA-423: scale is part of the Decimal(10,2) bound — refuse a third decimal, never round it.
+  @IsOptional()
+  @IsNumber({ maxDecimalPlaces: 2 })
+  @Min(0)
+  @Max(MAX_DECIMAL_10_2)
+  creditLimit?: number;
   @IsOptional() @IsString() currency?: string;
   @IsOptional() @IsInt() @Min(1) @Max(5) pricingTier?: number;
   /**

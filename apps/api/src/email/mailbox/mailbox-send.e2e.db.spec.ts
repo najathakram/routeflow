@@ -6,7 +6,7 @@
  * external boundary (Gmail/Graph's HTTP API — mocked here, since a real send needs live
  * OAuth credentials this suite can't hold and must never touch a real inbox).
  *
- * WHY THE DB LANE: `ensureAccessToken` takes a real Postgres advisory lock
+ * WHY THE DB LANE: `prepareSend` takes a real Postgres advisory lock
  * (`withAdvisoryLock`, db-locks.ts) around its read — a mocked Prisma object was never
  * going to exercise that. `EncryptionService` runs for real (AES-256-GCM), so this also
  * proves a token written through the real encrypt path is legible read back.
@@ -82,12 +82,15 @@ describeDb("D-14: tenant-own-mailbox send — real Postgres round trip", () => {
   });
 
   async function cleanupTenant(tenantId: string): Promise<void> {
+    // F-10a: a state change on one of these tenants writes an audit row — none of the cases
+    // below should, but a regression that did must not leave rows behind.
+    await prisma.auditLog.deleteMany({ where: { tenantId } });
     await prisma.mailboxConnection.deleteMany({ where: { tenantId } });
     await prisma.tenant.delete({ where: { id: tenantId } });
   }
 
   /** A tenant with a CONNECTED Google mailbox, its access token encrypted for real and
-   *  still valid (so `ensureAccessToken` reads it straight back — no refresh call needed). */
+   *  still valid (so `prepareSend` reads it straight back — no refresh call needed). */
   async function seedConnectedTenant(label: string) {
     const slug = freshTenantSlug(label);
     const tenant = await prisma.tenant.create({ data: { slug, name: `D-14 ${slug}` } });

@@ -5,6 +5,7 @@ import * as nodemailer from "nodemailer";
 import { PrismaService } from "../prisma/prisma.service";
 import { EncryptionService } from "../common/encryption.service";
 import { MailboxSendService } from "./mailbox/mailbox-send.service";
+import { mailboxRevokedCopy } from "./mailbox/mailbox-alert.copy";
 import { escapeHtml, safeLinkHref } from "../common/html-escape";
 // F03/R9: ONE original-price display decision shared with the PDF, so the two
 // customer-facing documents of the same send can never disagree (a pure helper —
@@ -1903,6 +1904,67 @@ export class EmailService {
     });
   }
 
+  /**
+   * #2439: the new-workspace welcome email. It carries the workspace, the username, a single-use
+   * set-password link (never a password), the login URL and — when self-serve checkout is allowed
+   * for the plan — a STABLE "Pay now" link (login → /settings/billing, which mints a fresh Stripe
+   * checkout on click), so nothing in it goes stale in 24h. Platform sender only.
+   */
+  async sendTenantWelcomeEmail(params: {
+    to: string;
+    username: string;
+    businessName: string;
+    workspace: string;
+    setPasswordUrl: string;
+    expiryHours: number;
+    loginUrl: string;
+    payUrl: string | null;
+    trialDays: number;
+  }) {
+    const p = (html: string) =>
+      `<p style="margin:0 0 16px;font-size:15px;color:#374151;">${html}</p>`;
+    const paySection = params.payUrl
+      ? `${p(
+          params.trialDays === 0
+            ? "Complete payment to activate your workspace:"
+            : `Your trial runs for ${params.trialDays} days. Complete payment any time to keep going:`,
+        )}
+    ${renderBrandButton("Pay now", params.payUrl)}
+    ${p('<span style="font-size:13px;color:#6b7280;">Sign in, then you\'ll go straight to billing.</span>')}`
+      : "";
+    const body = `${p(`Hi ${escapeHtml(params.username)},`)}
+    ${p(`Your RouteFlow workspace for <strong>${escapeHtml(params.businessName)}</strong> is ready.`)}
+    ${p(`<strong>Workspace:</strong> ${escapeHtml(params.workspace)}<br/><strong>Username:</strong> ${escapeHtml(params.username)}`)}
+    ${p("Start by setting your password:")}
+    ${renderBrandButton("Set your password", params.setPasswordUrl)}
+    ${p(`<span style="font-size:13px;color:#6b7280;">This link works once and expires in ${params.expiryHours} hours.</span>`)}
+    ${renderBrandButton("Sign in", params.loginUrl)}
+    ${paySection}`;
+    const { html, text } = renderBrandedEmail({
+      headerHtml: brandHeaderHtml(),
+      heading: "Your RouteFlow workspace is ready",
+      bodyHtml: body,
+      bodyText: [
+        `Hi ${params.username},`,
+        `Your RouteFlow workspace for ${params.businessName} is ready.`,
+        `Workspace: ${params.workspace}`,
+        `Username: ${params.username}`,
+        `Set your password (works once, expires in ${params.expiryHours} hours): ${params.setPasswordUrl}`,
+        `Sign in: ${params.loginUrl}`,
+        ...(params.payUrl
+          ? [`Pay now (sign in, then you'll go straight to billing): ${params.payUrl}`]
+          : []),
+      ],
+      footerNote: "RouteFlow Platform — this is an automated account email.",
+    });
+    return this.sendPlatform({
+      to: params.to,
+      subject: `Welcome to RouteFlow — your ${params.businessName} workspace is ready`,
+      html,
+      text,
+    });
+  }
+
   /** Notice to a user's OLD address after their login email is changed — never opt-out. */
   async sendEmailChangedNotice(params: { to: string; username: string; newEmail: string }) {
     const body = `<p style="margin:0 0 16px;font-size:15px;color:#374151;">Hi ${escapeHtml(params.username)},</p>
@@ -1980,6 +2042,48 @@ export class EmailService {
       subject: "Your RouteFlow role was changed",
       html,
       text,
+    });
+  }
+
+  // ─── F-10a: connected mailbox revoked (platform-sent, tenant-admin-facing) ─────
+
+  /**
+   * Tells a tenant admin that RouteFlow can no longer send from their connected Gmail/Outlook
+   * mailbox (`MailboxAlertService`, once per revocation). ALWAYS the platform sender class: the
+   * mailbox this is about is exactly the one that can't send, and the notice is RouteFlow talking
+   * to its own customer, not tenant-branded mail — so it never reaches the connected mailbox or
+   * the tenant's SMTP, whatever tenant context is active. The words come from
+   * `mailboxRevokedCopy`, the same source as the in-app notification. Never throws (`send()` is
+   * honest-by-result).
+   */
+  async sendMailboxRevokedNotice(params: {
+    to: string;
+    username: string;
+    accountEmail: string;
+    provider: "GOOGLE" | "MICROSOFT";
+    /** Whether a fallback sender exists (`isEmailConfigured()`), so the copy never promises one
+     *  that doesn't. */
+    hasFallback: boolean;
+  }) {
+    const copy = mailboxRevokedCopy(params);
+    // The same destination MailboxController sends the admin back to after (re)connecting.
+    const settingsUrl = `${(this.config.get<string>("WEB_URL") ?? "http://localhost:3001").replace(/\/$/, "")}/settings?tab=email`;
+    const body = `<p style="margin:0 0 16px;font-size:15px;color:#374151;">Hi ${escapeHtml(params.username)},</p>
+    ${copy.paragraphs.map((line) => `<p style="margin:0 0 16px;font-size:15px;color:#374151;">${escapeHtml(line)}</p>`).join("")}
+    ${renderBrandButton(copy.cta, settingsUrl)}`;
+    const { html, text } = renderBrandedEmail({
+      headerHtml: brandHeaderHtml(),
+      heading: copy.heading,
+      bodyHtml: body,
+      bodyText: [`Hi ${params.username},`, ...copy.paragraphs, `${copy.cta}: ${settingsUrl}`],
+      footerNote: "RouteFlow Platform — automated notification.",
+    });
+    return this.send({
+      to: params.to,
+      subject: copy.subject,
+      html,
+      text,
+      senderClass: "platform",
     });
   }
 

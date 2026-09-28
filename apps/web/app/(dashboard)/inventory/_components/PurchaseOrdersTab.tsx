@@ -255,14 +255,14 @@ export function PurchaseOrdersTab({
           value={dateFrom}
           onChange={(e) => setDateFrom(e.target.value)}
           placeholder="From"
-          className="rounded border border-surface-border px-3 py-1.5 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
+          className="w-36 rounded border border-surface-border px-3 py-1.5 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
         />
         <input
           type="date"
           value={dateTo}
           onChange={(e) => setDateTo(e.target.value)}
           placeholder="To"
-          className="rounded border border-surface-border px-3 py-1.5 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
+          className="w-36 rounded border border-surface-border px-3 py-1.5 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
         />
         {(statusFilter || supplierFilter || dateFrom || dateTo) && (
           <button

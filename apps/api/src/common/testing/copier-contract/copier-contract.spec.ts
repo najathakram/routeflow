@@ -43,7 +43,13 @@ import * as fs from "fs";
 import * as path from "path";
 import { Prisma } from "@prisma/client";
 import { copyCategoryTaxSnapshot } from "@routeflow/pricing";
-import { SPREAD_HELPER_KEYS, writeSites, writtenKeys, findFunctions } from "./copier-ast";
+import {
+  SPREAD_HELPER_KEYS,
+  optionsPassedKeys,
+  writeSites,
+  writtenKeys,
+  findFunctions,
+} from "./copier-ast";
 import { COPIERS, Copier, INFRA, Model, NOT_A_COPIER, NOT_SALES_FILES } from "./copier-registry";
 
 /** Pinned on purpose: adding a registry-only copier must be a visible diff HERE, not just in the registry. */
@@ -87,6 +93,7 @@ export function evaluate(w: World): string[] {
       ["carried", words(c.carried)],
       ["reset", words(c.reset)],
       ["rederived", words(c.rederived)],
+      ["viaOptions", words(c.viaOptions)],
       ["na", words(c.na)],
       ["gaps", Object.keys(c.gaps ?? {})],
     ];
@@ -102,7 +109,7 @@ export function evaluate(w: World): string[] {
     for (const col of cols)
       if (!seen.has(col))
         bad.push(
-          `${at}: NEW/UNCLASSIFIED ${c.target}.${col} — classify it as carried, reset, rederived, na or gaps`,
+          `${at}: NEW/UNCLASSIFIED ${c.target}.${col} — classify it as carried, viaOptions, reset, rederived, na or gaps`,
         );
     const keys = c.anchor ? writtenKeys(src, { name: c.fn, anchor: c.anchor }) : null;
     if (!keys || keys.size === 0) {
@@ -111,6 +118,12 @@ export function evaluate(w: World): string[] {
       );
       continue;
     }
+    const passed = optionsPassedKeys(src, c.fn, "sourceLines");
+    for (const col of words(c.viaOptions))
+      if (!passed.has(col))
+        bad.push(
+          `${at}: "${col}" is classified viaOptions but is no longer passed in the sourceLines literal (regression)`,
+        );
     for (const col of words(c.carried))
       if (!keys.has(col))
         bad.push(`${at}: "${col}" is classified carried but is no longer written (regression)`);

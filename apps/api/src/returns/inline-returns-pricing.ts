@@ -174,9 +174,11 @@ export function resolveReturnPackFactor(
 // ─── §3.1 matching / allocation ────────────────────────────────────────────────
 
 /** Converts a return-request DTO qty (raw qty, or an explicit boxes/pieces split) into
- * pieces, the SAME rule OrderItem/InvoiceItem storage already uses — `boxes != null` means
- * the DTO qty is already pieces; otherwise multiply by the unitsPerBox snapshot (falling
- * back to the raw qty when no box size is known). */
+ * pieces, the SAME rule OrderItem/InvoiceItem storage already uses — `boxes != null` (or
+ * `pieces != null`) means the caller supplied an explicit split: `qty` is IGNORED entirely
+ * and the piece count is `boxes * unitsPerBox + pieces`. Otherwise (a bare `qty`, no split),
+ * a boxed product's `qty` means BOXES (multiplied by the unitsPerBox snapshot) and a
+ * non-boxed product's `qty` is already pieces. */
 export function returnRequestPieces(input: {
   qty: number;
   boxes?: number | null;

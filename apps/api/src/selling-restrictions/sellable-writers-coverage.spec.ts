@@ -46,22 +46,33 @@ const TABLE: Record<string, Row> = {
   [ord("updateOrderItems")]: G,
   [ord("approveChangeRequestAtStop")]: G,
   [ord("changeStatus")]: G,
-  [ord("reopenOrder")]: P("2a: reopen (revives cancelled lines)"),
-  [ord("mergeAllPendingForCustomer")]: P("2a: merge (channel from buyerInitiated)"),
-  [ord("forceConsolidateCustomer")]: P("2a: consolidate (staff)"),
-  [tpl("createOrderFromTemplate")]: P("2b: standing orders (buyer-owned = BUYER_PORTAL)"),
+  [ord("reopenOrder")]: G,
+  [ord("mergeAllPendingForCustomer")]: X(
+    "owner ruling 2026-09-25 (#2093) / SA-255: MERGE AND WARN — folds orders each checked when placed, never blocked; warns via merge-restriction-warning.ts (pinned in orders.merge-warn.spec.ts)",
+  ),
+  [ord("forceConsolidateCustomer")]: X(
+    "owner ruling 2026-09-25 (#2093) / SA-255: MERGE AND WARN — folds orders each checked when placed, never blocked; warns via merge-restriction-warning.ts (pinned in orders.merge-warn.spec.ts)",
+  ),
+  [tpl("createOrderFromTemplate")]: G,
   [ord("recomputeLineCategoryTaxes")]: X("categoryTaxAmount only"),
   [ord("deleteOrder")]: X("removes lines"),
-  [rt("completeWithPayment")]: P(
-    "ruling: at-door deliveredQty is uncapped against qty and is the billing basis",
+  // Owner ruling 2026-09-25 (#2093): at-door delivery of an order placed before a ban delivers up to the
+  // ordered quantity; any increase, added line or substitution is blocked. That ceiling is
+  // `assertDeliveriesFitStop` (pinned in routes/delivery-lines.util.spec.ts), so the path cannot sell more.
+  [rt("completeWithPayment")]: X(
+    "owner ruling 2026-09-25 (#2093): deliver up to the ordered qty, 0 for a cancelled line/order; the ceiling is assertDeliveriesFitStop (pinned)",
   ),
-  [rt("reopenStop")]: P("2a: reopen stop (revives cancelled lines, like reopenOrder)"),
+  // reopenStop resets delivery state on lines the order already carried; a cancelled line stays cancelled
+  // (pinned in routes.reopen-cancelled-lines.spec.ts), so it adds no sellable quantity of any product.
+  [rt("reopenStop")]: X(
+    "owner ruling 2026-09-25 (#2093) companion: nothing not ordered is sold; reopen undoes a delivery, never a cancel (routes.reopen-cancelled-lines.spec.ts)",
+  ),
   // ── invoices / estimates / import (step 2b remainder) ──────────────────────────────────────
-  [inv("create")]: P("2b: invoice create"),
-  [inv("update")]: P("2b: invoice update"),
-  [inv("duplicate")]: P("2b: invoice duplicate"),
+  [inv("create")]: G,
+  [inv("update")]: G,
+  [inv("duplicate")]: G,
   [inv("createSplitInvoices")]: P("2b: split invoices"),
-  "estimates/estimates.service.ts::EstimatesService.convertToInvoice": P("2b: estimate -> invoice"),
+  "estimates/estimates.service.ts::EstimatesService.convertToInvoice": G,
   "import/import.service.ts::ImportService.importInvoices": P(
     "ruling: historical invoice import (do bans apply to past sales?)",
   ),
@@ -93,7 +104,7 @@ const TABLE: Record<string, Row> = {
   [tpl("update")]: X("OrderTemplateItem"),
   [rec("create")]: X("RecurringInvoiceItem"),
   [rec("update")]: X("RecurringInvoiceItem"),
-  "returns/inline-returns.service.ts::InlineReturnsService.capture": X("ReturnItem"),
+  "returns/inline-returns.service.ts::InlineReturnsService.captureInTx": X("ReturnItem"),
   "returns/returns.service.ts::ReturnsService.create": X("ReturnItem"),
   [vb("create")]: X("VendorBillItem"),
   [vb("update")]: X("VendorBillItem"),
@@ -102,9 +113,9 @@ const TABLE: Record<string, Row> = {
 };
 
 /** The RATCHET: how many rows are still PENDING. Lower it in the PR that flips a row to GUARDED. */
-const PENDING_BASELINE = 12;
+const PENDING_BASELINE = 2; // master's 4 (merge + consolidate EXEMPT, #2149), minus invoice update + duplicate flipped GUARDED (F-05 PR2)
 /** GUARDED + PENDING: reclassifying a PENDING row to EXEMPT (an escape, not progress) must change THIS. */
-const ENFORCEMENT_POINTS = 16;
+const ENFORCEMENT_POINTS = 12; // -2 (#2093): completeWithPayment and reopenStop EXEMPT with written reasons; -2 more: merge and consolidate EXEMPT (merge-and-warn, SA-255)
 const CHOKE_POINT = ["assertLinesSellable", "checkLinesSellable"];
 
 // ─── scanner (same rules as orders/unit-line-writers.ast.spec.ts; exercised on inline source) ──
@@ -441,5 +452,15 @@ describe("every order/invoice line writer is classified for selling restrictions
       ([, r]) => r.kind === "EXEMPT" && !(r as { why: string }).why,
     );
     expect(missing).toEqual([]);
+  });
+
+  it("custom (productless) lines are EXEMPT by owner ruling 2026-09-25, and the uncategorised-lines report row reviews them", () => {
+    // The ban check ignores a line with no catalog product (a tenant that wants one checked adds it to the
+    // catalog). That exemption is only acceptable because this standing review list exists: if the report
+    // code or its wiring goes, this fails and the exemption must be revisited with the owner.
+    const src = (rel: string) => fs.readFileSync(path.join(__dirname, "..", rel), "utf8");
+    expect(src("regulated/report-types.ts")).toContain("UNCATEGORISED_LINE_IN_RULE_STATE");
+    expect(src("regulated/uncategorised-lines.ts")).toContain("productId: null");
+    expect(src("regulated/regulated-report.service.ts")).toContain("uncategorisedLineWarnings(");
   });
 });

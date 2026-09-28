@@ -9,6 +9,7 @@ import {
   IsOptional,
   IsString,
   Min,
+  MaxLength,
   ValidateNested,
 } from "class-validator";
 import { RequireBoxesOrPiecesPositive } from "./require-boxes-or-pieces.validator";
@@ -70,18 +71,7 @@ export class CaptureInlineReturnItemDto {
  * /returns/inline/quote` uses), restocks, reverses the regulated ledger, and either issues a
  * standalone credit note or holds the whole credit for approval above the driver cap (N-5).
  */
-export class CaptureInlineReturnDto {
-  @IsString()
-  @IsNotEmpty()
-  customerId!: string;
-
-  /** The order that CARRIES the credit — never the (possibly different) order(s) the
-   * returned goods were originally sold on (`ReturnItem.sourceOrderId`, resolved by the
-   * matching engine per item). */
-  @IsString()
-  @IsNotEmpty()
-  orderId!: string;
-
+export class InlineReturnLinesDto {
   @IsArray()
   @ArrayMinSize(1)
   @ValidateNested({ each: true })
@@ -100,6 +90,7 @@ export class CaptureInlineReturnDto {
    * rather than opting in later. */
   @IsString()
   @IsNotEmpty()
+  @MaxLength(128)
   returnKey!: string;
 
   @IsOptional()
@@ -113,4 +104,22 @@ export class CaptureInlineReturnDto {
   @IsOptional()
   @IsArray()
   photoUrls?: string[];
+}
+
+/**
+ * The standalone capture: an inline return against an EXISTING carrying order. Inside an order
+ * create/edit the same lines arrive nested as `inlineReturn` (#2094, SA-194) with customer and
+ * order DERIVED from the document, so neither is ever client-supplied there.
+ */
+export class CaptureInlineReturnDto extends InlineReturnLinesDto {
+  @IsString()
+  @IsNotEmpty()
+  customerId!: string;
+
+  /** The order that CARRIES the credit — never the (possibly different) order(s) the
+   * returned goods were originally sold on (`ReturnItem.sourceOrderId`, resolved by the
+   * matching engine per item). */
+  @IsString()
+  @IsNotEmpty()
+  orderId!: string;
 }
