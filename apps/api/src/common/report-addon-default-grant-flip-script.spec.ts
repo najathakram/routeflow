@@ -194,3 +194,54 @@ describe("report-addon-default-grant-flip.mjs contract (SA-540)", () => {
     });
   });
 });
+
+describe("#2700 (SA-559(3i)/559a): the LITE row across the v13 publish, and the paying sub-count", () => {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const classify = require(
+    path.resolve(API_DIR, "scripts/lib/addon-default-grant-flip-classify.cjs"),
+  );
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const { effectivePlanFlagsMirror } = require(
+    path.resolve(API_DIR, "scripts/lib/feature-registry-mirror.cjs"),
+  );
+  const LITE_V12 = { planKey: "LITE", featureFlags: [] as string[] };
+  const bucketFor = (published: { id: string; definitions: unknown[] }) =>
+    classify.classifyTenant({
+      hasActiveRow: false,
+      activeAddonSet: new Set(),
+      entFlags: effectivePlanFlagsMirror(LITE_V12, "v12", published),
+      overrides: new Map(),
+    });
+
+  it("a v12-pinned LITE tenant is REQUIRES_UNMET before the v13 publish and FLIPS_ON after (no re-pin)", () => {
+    expect(bucketFor({ id: "v12", definitions: [LITE_V12] })).toBe("REQUIRES_UNMET");
+    expect(
+      bucketFor({ id: "v13", definitions: [{ planKey: "LITE", featureFlags: ["flag.returns"] }] }),
+    ).toBe("FLIPS_ON");
+  });
+
+  it("counts PAYING and PAYING_FLIPS_ON per plan, and prints the owner's one line (counts only)", () => {
+    const result = classify.aggregate([
+      { planKey: "LITE", bucket: "FLIPS_ON", hasInactiveRow: false, paying: true },
+      { planKey: "LITE", bucket: "REQUIRES_UNMET", hasInactiveRow: false, paying: true },
+      { planKey: "LITE", bucket: "FLIPS_ON", hasInactiveRow: false, paying: false },
+      { planKey: "STARTER", bucket: "FLIPS_ON", hasInactiveRow: false, paying: true },
+    ]);
+    const lite = result.byPlan.find((r: { planKey: string }) => r.planKey === "LITE");
+    expect(lite).toMatchObject({ PAYING: 2, PAYING_FLIPS_ON: 1, FLIPS_ON: 2, total: 3 });
+    expect(result.totals).toMatchObject({ PAYING: 3, PAYING_FLIPS_ON: 2 });
+    expect(classify.payingOnLiteLine(result)).toBe(
+      "paying tenants on LITE: 2 (of which FLIPS_ON: 1)",
+    );
+    expect(classify.payingOnLiteLine(classify.aggregate([]))).toBe(
+      "paying tenants on LITE: 0 (of which FLIPS_ON: 0)",
+    );
+  });
+
+  it("the script decides 'paying' with the shared isPayingTenant, never an inline predicate", () => {
+    const code = codeLines().join("\n");
+    expect(code).toContain('require_("./lib/paying-tenant.cjs")');
+    expect(code).toContain("paying: isPayingTenant(tenant, tenant.subPlanKey)");
+    expect(code).toContain("payingOnLiteLine(result)");
+  });
+});
