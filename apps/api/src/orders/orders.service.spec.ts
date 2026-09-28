@@ -5926,7 +5926,7 @@ describe("OrdersService", () => {
         service.updateOrderItems(
           "ord-1",
           { items: [{ productId: "prod-1", qty: 2, unitPrice: 6 }], replaceAll: true },
-          operatorPayload,
+          operatorPayload as never,
           { isCreateMerge: true },
         ),
       ).rejects.toThrow(/Tiered Widget/);
