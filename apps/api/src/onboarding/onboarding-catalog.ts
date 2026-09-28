@@ -17,6 +17,12 @@ import type { OnboardingStage, OnboardingStepOwner } from "@routeflow/types";
  */
 export const CATALOG_VERSION = 1;
 
+/**
+ * The customer's written sign-off (VERIFY_TRAIN). The tenant-side sign-off (S4) marks exactly
+ * this step; pinned equal to `ONBOARDING_SIGN_OFF_STEP_KEY` in @routeflow/types.
+ */
+export const SIGN_OFF_STEP_KEY = "verify.signOff";
+
 export const STAGE_ORDER: readonly OnboardingStage[] = [
   "FOLLOW_UP",
   "AGREE",

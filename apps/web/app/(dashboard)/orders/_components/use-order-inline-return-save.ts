@@ -1,5 +1,10 @@
 import * as React from "react";
-import { buildCaptureRequest, extractRefusalMessage, mintReturnKey } from "@routeflow/returns";
+import {
+  buildCaptureRequest,
+  extractRefusalMessage,
+  keyReusedReturnOf,
+  mintReturnKey,
+} from "@routeflow/returns";
 import type { InlineReturnLinesRequest } from "@routeflow/types";
 import type { OrderInlineReturnsSectionHandle } from "./OrderInlineReturnsSection";
 import { parseRegulatedAuthError } from "@/lib/api/authorizations";
@@ -25,6 +30,9 @@ export function isGuardHandledRefusal(err: unknown): boolean {
 // pinned by common/size-ratchet.spec.ts, doesn't have to inline it).
 export interface OrderInlineReturnSave {
   refusalMessage: string;
+  /** #2647: the return the server says was ALREADY recorded under this capture key (a key-reused
+   *  409): the Returns section offers "Open RET-…", and the draft was cleared. Null otherwise. */
+  refusalReturn: { returnId: string; returnNumber: string | null } | null;
   /** Reads the Returns section's current draft. `undefined` = no return on this save;
    *  `"missing-reason"` = lines were entered but no reason picked yet — the caller should
    *  block the save and toast, same as the standalone dialog's own guard. */
@@ -64,9 +72,12 @@ export function useOrderInlineReturnSave(
   const idemRef = React.useRef("");
   const genRef = React.useRef(0);
   const [refusalMessage, setRefusalMessage] = React.useState("");
+  const [refusalReturn, setRefusalReturn] =
+    React.useState<OrderInlineReturnSave["refusalReturn"]>(null);
 
   const api: OrderInlineReturnSave = {
     refusalMessage,
+    refusalReturn,
     prepare(customerId, orderId) {
       const built = api.build(customerId, orderId);
       if (built !== "missing-reason" && built !== "needs-quote") return built;
@@ -121,6 +132,11 @@ export function useOrderInlineReturnSave(
         keyRef.current = "";
         idemRef.current = "";
         setRefusalMessage(extractRefusalMessage(err));
+        // #2647: the earlier capture WAS recorded: point at it, and clear the draft so the same
+        // goods are not re-entered as a "new" return (and credited twice).
+        const recorded = keyReusedReturnOf(err);
+        setRefusalReturn(recorded);
+        if (recorded) returnsRef.current?.reset();
       }
     },
   };
