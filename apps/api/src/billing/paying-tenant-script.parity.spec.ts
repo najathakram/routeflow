@@ -31,3 +31,29 @@ describe("#2639 scripts/lib/paying-tenant.cjs agrees with mrr.service's isPaying
     }
   }
 });
+
+describe("#2639 / SA-547 isProtectedTenant = paying ∨ (Stripe-linked ∧ not deleted)", () => {
+  const active = { status: "ACTIVE", class: "PRODUCTION", deletedAt: null };
+  it("a paying tenant is protected on the 'paying' arm", () => {
+    expect(lib.protectedArm(active, { planKey: "STARTER" })).toBe("paying");
+    expect(lib.isProtectedTenant(active, { planKey: "STARTER" })).toBe(true);
+  });
+  it("the Stripe arm ALONE protects — TEST class, no planKey, not ACTIVE", () => {
+    const t = { status: "READ_ONLY", class: "TEST", deletedAt: null };
+    const sub = { planKey: null, stripeSubscriptionId: "sub_fake_qa" };
+    expect(lib.protectedArm(t, sub)).toBe("stripe-linked");
+    expect(lib.isProtectedTenant(t, sub)).toBe(true);
+  });
+  it("a soft-deleted Stripe-linked tenant is NOT protected", () => {
+    const t = { status: "ACTIVE", class: "TEST", deletedAt: new Date() };
+    expect(lib.isProtectedTenant(t, { planKey: null, stripeSubscriptionId: "sub_fake_qa" })).toBe(
+      false,
+    );
+  });
+  it("a non-paying, unlinked tenant (or no subscription row) is unprotected", () => {
+    const t = { status: "ACTIVE", class: "TEST", deletedAt: null };
+    expect(lib.protectedArm(t, { planKey: "STARTER", stripeSubscriptionId: null })).toBeNull();
+    expect(lib.protectedArm(t, null)).toBeNull();
+    expect(lib.protectedArm(active, undefined)).toBeNull();
+  });
+});

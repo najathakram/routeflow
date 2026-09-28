@@ -30,4 +30,24 @@ function isPayingTenant(tenant, planKey) {
   );
 }
 
-module.exports = { PAYING_TENANT_CONDITIONS, isPayingTenant };
+/**
+ * SA-547: what a destructive script REFUSES by default — wider than "paying" (which keeps its one MRR
+ * meaning, SA-513): a paying tenant, OR any non-deleted tenant whose subscription is linked to Stripe
+ * (any class, any status). Returns which arm fired, so the refusal can name it; null = unprotected.
+ *
+ * @param {{ status: string, deletedAt: Date | null | undefined, class: string }} tenant
+ * @param {{ planKey?: string | null, stripeSubscriptionId?: string | null } | null | undefined} sub
+ * @returns {"paying" | "stripe-linked" | null}
+ */
+function protectedArm(tenant, sub) {
+  if (isPayingTenant(tenant, sub?.planKey ?? null)) return "paying";
+  if (sub?.stripeSubscriptionId != null && tenant.deletedAt == null) return "stripe-linked";
+  return null;
+}
+
+/** SA-547: isPayingTenant ∨ (stripeSubscriptionId ≠ null ∧ not deleted). */
+function isProtectedTenant(tenant, sub) {
+  return protectedArm(tenant, sub) !== null;
+}
+
+module.exports = { PAYING_TENANT_CONDITIONS, isPayingTenant, isProtectedTenant, protectedArm };
