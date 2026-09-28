@@ -90,8 +90,8 @@ const TrayRowItem = React.memo(function TrayRowItem({
   onIncrement,
   onDecrement,
   onRemove,
-  onEditPrice,
   hideMoney,
+  onEditPrice,
 }: RowProps) {
   const anim = React.useRef(new Animated.Value(0)).current;
 
