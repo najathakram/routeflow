@@ -93,8 +93,9 @@ function addonSkuCodeOf(row, legacyMap) {
 async function main() {
   const databaseUrl = resolveReportDbUrl("report-addon-default-grant-flip");
   if (!databaseUrl) {
+    // B768: the resolver above already printed why (it owns the env-var name); only say how to run.
     console.error(
-      "report-addon-default-grant-flip: DATABASE_URL is required (not set) — run via " +
+      "report-addon-default-grant-flip: no database target — run via " +
         "`railway run --service postgres node apps/api/scripts/report-addon-default-grant-flip.mjs`",
     );
     process.exit(2);
