@@ -361,7 +361,10 @@ describe("InvoicesService — B652 unit-line partial billing", () => {
         },
         customer: { findFirst: jest.fn().mockResolvedValue({ isTaxExempt: false }) },
         trackedCategory: { findMany: jest.fn().mockResolvedValue([]) },
-        orderItem: { update: jest.fn().mockResolvedValue({}) },
+        orderItem: {
+          update: jest.fn().mockResolvedValue({}),
+          updateMany: jest.fn().mockResolvedValue({ count: 1 }), // #2612: the CAS bump
+        },
         // B760: no DeliveryMutation evidence — remaining stays qty - invoicedQty.
         deliveryMutation: { findMany: jest.fn().mockResolvedValue([]) },
         $executeRaw: jest.fn().mockResolvedValue(0),
@@ -383,8 +386,8 @@ describe("InvoicesService — B652 unit-line partial billing", () => {
       await service.createInvoiceFromOrder("ord-c2", tx);
       const line = tx.invoice.create.mock.calls[0][0].data.items.create[0];
       expect(line).toMatchObject({ unitLabel: "Case", qty: 52, boxes: 4, pieces: 4 });
-      expect(tx.orderItem.update).toHaveBeenCalledWith({
-        where: { id: "oi-1" },
+      expect(tx.orderItem.updateMany).toHaveBeenCalledWith({
+        where: expect.objectContaining({ id: "oi-1", invoicedQty: 44 }),
         data: { invoicedQty: { increment: 52 } },
       });
     });
@@ -396,6 +399,7 @@ describe("InvoicesService — B652 unit-line partial billing", () => {
       );
       expect(tx.invoice.create).not.toHaveBeenCalled();
       expect(tx.orderItem.update).not.toHaveBeenCalled();
+      expect(tx.orderItem.updateMany).not.toHaveBeenCalled();
     });
   });
 
