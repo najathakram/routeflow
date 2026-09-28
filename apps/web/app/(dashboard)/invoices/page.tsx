@@ -215,7 +215,7 @@ function StatTile({
 }) {
   const content = (
     <>
-      <span className="overline block">{label}</span>
+      <span className="eyebrow-label block">{label}</span>
       <span
         className={cn(
           "mt-1.5 block text-2xl text-navy",

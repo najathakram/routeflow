@@ -2414,7 +2414,7 @@ export default function InvoiceDetailPage() {
                 />
                 {balanceDue > 0 && (
                   <div className="text-right">
-                    <p className="overline">Balance Due</p>
+                    <p className="eyebrow-label">Balance Due</p>
                     <p className="money text-2xl font-semibold text-danger">{fmt(balanceDue)}</p>
                   </div>
                 )}
@@ -2427,7 +2427,7 @@ export default function InvoiceDetailPage() {
             {/* Billing + dates */}
             <div className="mb-6 grid grid-cols-1 gap-6 border-t border-surface-border pt-4 sm:grid-cols-2">
               <div>
-                <p className="overline mb-1.5">Bill To</p>
+                <p className="eyebrow-label mb-1.5">Bill To</p>
                 <p className="text-sm font-semibold text-navy">
                   {invoice.customer?.businessName ?? "—"}
                 </p>
@@ -2441,7 +2441,7 @@ export default function InvoiceDetailPage() {
                 )}
               </div>
               <div className="text-right space-y-1">
-                <p className="overline mb-1.5">Invoice Details</p>
+                <p className="eyebrow-label mb-1.5">Invoice Details</p>
                 <p className="text-sm text-navy/70">
                   <span className="font-medium text-navy">Issue Date:</span>{" "}
                   {fmtCalendarDate(invoice.issueDate ?? invoice.createdAt)}
@@ -2489,10 +2489,10 @@ export default function InvoiceDetailPage() {
               <table className="w-full text-sm">
                 <thead className="border-y border-surface-border bg-surface-raised">
                   <tr>
-                    <th className="overline px-8 py-2.5 text-left">Item</th>
-                    <th className="overline px-4 py-2.5 text-right">Qty</th>
-                    <th className="overline px-4 py-2.5 text-right">Unit Price</th>
-                    <th className="overline px-8 py-2.5 text-right">Amount</th>
+                    <th className="eyebrow-label px-8 py-2.5 text-left">Item</th>
+                    <th className="eyebrow-label px-4 py-2.5 text-right">Qty</th>
+                    <th className="eyebrow-label px-4 py-2.5 text-right">Unit Price</th>
+                    <th className="eyebrow-label px-8 py-2.5 text-right">Amount</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-surface-border">
@@ -2654,7 +2654,7 @@ export default function InvoiceDetailPage() {
             {/* Notes */}
             {invoice.notes && (
               <div className="mt-6 border-t border-surface-border pt-4">
-                <p className="overline mb-1.5">Notes</p>
+                <p className="eyebrow-label mb-1.5">Notes</p>
                 <p className="text-sm text-navy/70 whitespace-pre-line">{invoice.notes}</p>
               </div>
             )}
