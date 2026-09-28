@@ -286,6 +286,7 @@ export function CartRow({
               ) : (
                 <Pressable
                   onPress={() => setLooseUnitsOpen(true)}
+                  hitSlop={8}
                   style={styles.looseAdd}
                   accessibilityRole="button"
                   accessibilityLabel="Add extra loose units"

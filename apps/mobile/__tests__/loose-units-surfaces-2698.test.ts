@@ -27,6 +27,12 @@ const SURFACES: Array<{ name: string; file: string; pieces: RegExp; setPiecesZer
     setPiecesZero: /onChangePieces\(0\)/,
   },
   {
+    name: "invoices/[id]/edit.tsx line card (SA-564a)",
+    file: "app/(operator)/(tabs)/invoices/[id]/edit.tsx",
+    pieces: /looseUnitsVisible\(\s*looseUnitsOpen,\s*line\.pieces\s*\)/,
+    setPiecesZero: /onSetPieces\(0\)/,
+  },
+  {
     name: "DraftItemCard",
     file: "components/edit-items/DraftItemCard.tsx",
     pieces: /looseUnitsVisible\(\s*looseUnitsOpen,\s*item\.pieces\s*\)/,
@@ -65,5 +71,19 @@ describe("#2698 PR-2 — lead nit on CartRow (#2706)", () => {
     const src = read("components/CartRow.tsx");
     const block = src.slice(src.indexOf("setLooseUnitsOpen(true)") - 200, src.indexOf("+ units"));
     expect(block).toMatch(/hitSlop=\{8\}/);
+  });
+});
+
+// SA-564a (a): BoxedQtyBand changes ONCE and every consumer follows — each renders the shared band
+// for its Cases + Loose pair, never a second, band-local loose stepper.
+describe.each([
+  ["NewOrderScreen (the picker)", "components/NewOrderScreen.tsx"],
+  ["invoices/new.tsx (the picker)", "app/(operator)/(tabs)/invoices/new.tsx"],
+  ["VariantSplitSheet", "components/VariantSplitSheet.tsx"],
+])("#2698 PR-2 — %s uses the shared BoxedQtyBand", (_name, file) => {
+  it("renders <BoxedQtyBand (which carries the opt-in rule)", () => {
+    const src = read(file);
+    expect(src).toMatch(/import \{ BoxedQtyBand \} from "[./]+\/?(components\/)?BoxedQtyBand"/);
+    expect(src).toMatch(/<BoxedQtyBand/);
   });
 });
