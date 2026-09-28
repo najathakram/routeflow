@@ -3,12 +3,19 @@
 import type {
   AuthorizationSource,
   AuthorizationStatus,
+  ChangeRequestStatus,
   ChangeRequestType,
   CheckStatus,
+  InvoiceStatus,
+  ItemStatus,
+  OrderStatusValue,
   PaymentStatus,
   PromotionScope,
   PromotionType,
+  PriceType,
+  RouteRunStatusValue,
 } from "./enums";
+import type { DecimalWire } from "./decimal";
 
 export interface LockedCategory {
   id: string;
@@ -245,4 +252,107 @@ export interface BuyerFavoriteProduct {
   imageKeys: string[];
   unitsPerBox: number | null;
   createdAt: string;
+}
+
+// ─── Orders (#2703, SA-562/562a: server truth, one declaration) ────────────────
+
+/** `ChangeRequest.resolution` is a free `String?` column; these are the values the API writes. */
+export type ChangeRequestResolution = "MERGED_AT_STOP" | "NEXT_DELIVERY" | "DECLINED";
+
+/** A post-dispatch order change request (P5-09) — the full row, shared by the buyer portal,
+ *  the operator surface and mobile's buyer order detail. `payload` narrows a Json column. */
+export interface ChangeRequest {
+  id: string;
+  orderId: string;
+  orderItemId: string | null;
+  productId: string | null;
+  type: ChangeRequestType;
+  status: ChangeRequestStatus;
+  /**
+   * Typed delta. ADD_ITEM {productId,qty,boxes,pieces,productName};
+   * CHANGE_QTY {orderItemId,newQty}; REMOVE_ITEM {orderItemId}; NOTE {text}.
+   */
+  payload: {
+    productId?: string;
+    qty?: number;
+    boxes?: number | null;
+    pieces?: number | null;
+    productName?: string;
+    orderItemId?: string;
+    newQty?: number;
+    text?: string;
+  };
+  note: string | null;
+  requestedByName: string | null;
+  requestedByRole: string | null;
+  resolvedByName: string | null;
+  resolvedByRole: string | null;
+  resolution: ChangeRequestResolution | null;
+  resolutionReason: string | null;
+  nextOrderId: string | null;
+  resolvedAt: string | null;
+  createdAt: string;
+}
+
+/** An order line as GET /buyer/orders and /buyer/orders/:id return it. The detail's product
+ *  carries `unitsPerBox`; the list's product select does not. */
+export interface BuyerOrderLine {
+  id: string;
+  /** Null for a staff-added custom (unlisted) line — which has no `product` either. */
+  productId: string | null;
+  /** Free-text label of a custom line. */
+  name: string | null;
+  qty: DecimalWire;
+  unitPrice: DecimalWire;
+  subtotal: DecimalWire;
+  priceType: PriceType;
+  originalPrice: DecimalWire | null;
+  status: ItemStatus;
+  deliveredQty: DecimalWire;
+  boxes: number | null;
+  pieces: number | null;
+  /** BUY_N_GET_M: whole free SELLING units on this line (names the reduced subtotal). */
+  promoFreeUnits: number | null;
+  /** RF-4: regulated category tax folded into the order total. */
+  categoryTaxAmount: DecimalWire;
+  /** units_v1: sold by a non-pack unit (Case, Pallet, Piece…) — null = the pack. */
+  unitLabel: string | null;
+  /** Per-line note, buyer-visible. */
+  notes: string | null;
+  product: { id: string; name: string; unit: string; unitsPerBox?: number | null } | null;
+}
+
+/** GET /buyer/orders — one row of the paginated list (OrdersService.findAll). */
+export interface BuyerOrderListItem {
+  id: string;
+  orderNumber: string | null;
+  status: OrderStatusValue;
+  createdAt: string;
+  requestedDeliveryDate: string | null;
+  deliveredAt: string | null;
+  notes: string | null;
+  urgent: boolean;
+  subtotal: DecimalWire;
+  tax: DecimalWire;
+  total: DecimalWire;
+  discountAmount: DecimalWire;
+  customer: { id: string; businessName: string };
+  lineItems: BuyerOrderLine[];
+}
+
+/** P5-08: the server's edit window — editing closes when the order's run dispatches. */
+export interface BuyerOrderEditWindow {
+  editable: boolean;
+  editableUntil: string | null;
+  closedReason: "DISPATCHED" | "STATUS" | null;
+}
+
+/** GET /buyer/orders/:id — the list row plus the detail-only relations (OrdersService.findOne). */
+export interface BuyerOrder extends BuyerOrderListItem {
+  invoices: Array<{ id: string; invoiceNumber: string; status: InvoiceStatus; total: DecimalWire }>;
+  /** P5-09: post-dispatch change requests, newest first. */
+  changeRequests: ChangeRequest[];
+  editWindow: BuyerOrderEditWindow;
+  /** Run state backing the edit window (null until the order is on a run). */
+  routeRun: { status: RouteRunStatusValue; startedAt: string | null } | null;
 }

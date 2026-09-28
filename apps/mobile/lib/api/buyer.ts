@@ -17,8 +17,10 @@ import type {
   BuyerAuthorizationRow,
   BuyerCreateChangeRequestInput,
   BuyerFavoriteProduct,
+  BuyerOrder,
   BuyerPayment,
   BuyerProduct,
+  ChangeRequest,
   BuyerProductDetailExtras,
   BuyerPromotion,
   BuyerRemittance,
@@ -54,86 +56,19 @@ export type { ChangeRequestStatus, ChangeRequestType } from "./change-requests";
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 // #2703 (SA-562): the catalog row + favorites shapes are ONE declaration in @routeflow/types.
-export type { BuyerFavoriteProduct, BuyerProduct } from "@routeflow/types";
+export type {
+  BuyerFavoriteProduct,
+  BuyerOrder,
+  BuyerOrderLine,
+  BuyerOrderListItem,
+  BuyerProduct,
+  ChangeRequest,
+} from "@routeflow/types";
 
-// ─── Change requests (P5-09/10 twin — P5-16b) ─────────────────────────────────
-// Type/Status/Resolution are identical to `./change-requests`'s (which now
-// sources Type/Status from `@routeflow/types`) — imported, not redeclared
-// (wave E / imp-10b R2 intra-app dedup). `ChangeRequest` itself is NOT
-// deduped: this buyer-facing shape carries resolver-name/reason fields
-// `./change-requests`'s driver-flow shape lacks — a real divergence the sweep
-// undercounted, kept local on both sides.
-
-export interface ChangeRequest {
-  id: string;
-  orderId: string;
-  orderItemId: string | null;
-  productId: string | null;
-  type: ChangeRequestType;
-  status: ChangeRequestStatus;
-  payload: {
-    productId?: string;
-    qty?: number;
-    boxes?: number | null;
-    pieces?: number | null;
-    productName?: string;
-    orderItemId?: string;
-    newQty?: number;
-    text?: string;
-  };
-  note: string | null;
-  requestedByName: string | null;
-  requestedByRole: string | null;
-  resolvedByName: string | null;
-  resolvedByRole: string | null;
-  resolution: ChangeRequestResolution | null;
-  resolutionReason: string | null;
-  nextOrderId: string | null;
-  resolvedAt: string | null;
-  createdAt: string;
-}
-
-export interface BuyerOrder {
-  id: string;
-  orderNumber?: string;
-  status: string;
-  createdAt: string;
-  requestedDeliveryDate?: string;
-  notes?: string;
-  urgent?: boolean;
-  subtotal?: number;
-  tax?: number;
-  total?: number;
-  lineItems: Array<{
-    id: string;
-    productId: string;
-    qty: number;
-    unitPrice: number;
-    subtotal?: number;
-    boxes?: number | null;
-    pieces?: number | null;
-    status?: string;
-    deliveredQty?: number;
-    categoryTaxAmount?: number; // RF-4: regulated category tax folded into order.total
-    /** BUY_N_GET_M: whole free SELLING units on this line — names the reduced
-     *  `subtotal` so it doesn't read as a pricing error. */
-    promoFreeUnits?: number | null;
-    /** Per-line note, buyer-visible. */
-    notes?: string | null;
-    /** units_v1: sold by a non-pack unit (Case, Pallet, Piece…) — null/absent = the pack. */
-    unitLabel?: string | null;
-    product?: { id: string; name: string; unit?: string };
-  }>;
-  /** P5-09: post-dispatch change requests, newest first. */
-  changeRequests?: ChangeRequest[];
-  /** P5-08: server edit window — closes when the order's run dispatches. */
-  editWindow?: {
-    editable: boolean;
-    editableUntil: string | null;
-    closedReason: "DISPATCHED" | "STATUS" | null;
-  };
-  routeRun?: { status: string; startedAt?: string | null } | null;
-}
+// ─── Orders + change requests: shared (#2703) ─────────────────────────────────
+// BuyerOrder / BuyerOrderListItem and the buyer-facing ChangeRequest row are ONE declaration in
+// @routeflow/types (SA-562). `./change-requests`' ChangeRequest is the narrower DRIVER-flow shape
+// and stays separate.
 
 export interface BuyerInvoiceItem {
   id: string;
