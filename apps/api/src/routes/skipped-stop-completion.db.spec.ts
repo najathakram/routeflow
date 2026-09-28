@@ -297,7 +297,9 @@ describeDb("#2409 a SKIPPED stop refuses a replayed completion — real Postgres
 
   it("#2415: skip vs complete race on a real PENDING row — exactly one winner, never COMPLETED→SKIPPED", async () => {
     for (let round = 0; round < 5; round++) {
-      const s = await seedSkippedStop(`race${round}`);
+      // SA-533a: a TWO-stop run — on one stop the completion also completes the run, and #2514's
+      // run re-check then refuses the skip before it can meet the #2415 stop CAS pinned here.
+      const s = await seedSkippedStop(`race${round}`, { secondStop: true });
       await setStopStatus(s.stopId, "PENDING");
       const [complete, skip] = await Promise.allSettled([
         tenantCtx.run(s.tenantId, () =>
