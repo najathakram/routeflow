@@ -7,3 +7,12 @@
 export function looseUnitsVisible(open: boolean, pieces: number | null | undefined): boolean {
   return open || Number(pieces ?? 0) > 0;
 }
+
+/**
+ * SA-563 (identical to web #2699(d)): "Remove extra units" exists only when the line has at least
+ * one case. With 0 cases the loose units ARE the line — the control is hidden (not disabled, no
+ * invented case, no dialog), so remove-line stays the only way to remove a line.
+ */
+export function canRemoveLooseUnits(boxes: number | null | undefined): boolean {
+  return Number(boxes ?? 0) >= 1;
+}

@@ -19,7 +19,7 @@ import { SellByToggle } from "./SellByToggle";
 import { CostHistorySheet } from "./CostHistorySheet";
 import { UnitPickerRow } from "./UnitPickerRow";
 import { CartStepperRow } from "./CartStepperRow";
-import { looseUnitsVisible } from "../lib/loose-units";
+import { canRemoveLooseUnits, looseUnitsVisible } from "../lib/loose-units";
 
 /**
  * Moved out of NewOrderScreen.tsx (size-ratchet: that file was 3 lines under its cap before
@@ -268,18 +268,20 @@ export function CartRow({
                       hint={`${product.unit ?? "units"} · ${upb} per case`}
                     />
                   </View>
-                  <Pressable
-                    onPress={() => {
-                      onChangePieces(0);
-                      setLooseUnitsOpen(false);
-                    }}
-                    hitSlop={8}
-                    style={styles.looseRemove}
-                    accessibilityRole="button"
-                    accessibilityLabel="Remove extra units"
-                  >
-                    <Ionicons name="close" size={16} color={ios.label2} />
-                  </Pressable>
+                  {canRemoveLooseUnits(line.boxes) ? (
+                    <Pressable
+                      onPress={() => {
+                        onChangePieces(0);
+                        setLooseUnitsOpen(false);
+                      }}
+                      hitSlop={8}
+                      style={styles.looseRemove}
+                      accessibilityRole="button"
+                      accessibilityLabel="Remove extra units"
+                    >
+                      <Ionicons name="close" size={16} color={ios.label2} />
+                    </Pressable>
+                  ) : null}
                 </View>
               ) : (
                 <Pressable
