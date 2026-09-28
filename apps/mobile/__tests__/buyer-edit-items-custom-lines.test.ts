@@ -57,6 +57,23 @@ describe("B889: seller-added custom lines on the buyer edit-items screen", () =>
     if (plan.kind === "replace") expect(plan.items.every((i) => !!i.productId)).toBe(true);
   });
 
+  // Lead fold (#2709): "custom" is productId null ONLY. A CATALOG line whose product relation is
+  // missing (productId set, product null) must stay — the replace-by-product Save would otherwise
+  // delete it.
+  it("a catalog line with a missing product relation stays in the draft AND the Save plan", () => {
+    const orphan = catalogLine({ id: "L9", productId: "p9", product: null, qty: 4 });
+    const draft = hydrateBuyerDraft([catalogLine(), orphan]);
+    expect(Object.keys(draft).sort()).toEqual(["p1", "p9"]);
+    expect(buyerSavePlan([catalogLine(), orphan], draft)).toEqual({
+      kind: "replace",
+      items: [
+        { productId: "p1", qty: 1 },
+        { productId: "p9", qty: 4 },
+      ],
+    });
+    expect(customLineCount([orphan])).toBe(0);
+  });
+
   it("counts live custom lines for the note; a cancelled one does not count", () => {
     expect(customLineCount(lines)).toBe(2);
     expect(customLineCount([catalogLine(), customLine({ status: "CANCELLED" })])).toBe(0);

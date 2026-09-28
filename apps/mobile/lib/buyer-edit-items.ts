@@ -43,8 +43,10 @@ export interface BuyerDraftItem {
  * server's buyer replace preserves it and ignores any payload entry for it, B51), so the draft
  * skips it and the screen says so, exactly as web does (buyer orders/[id]/page.tsx).
  */
-export function isCustomLine(li: Pick<BuyerOrderLineLike, "productId" | "product">): boolean {
-  return !li.productId || !li.product;
+export function isCustomLine(li: Pick<BuyerOrderLineLike, "productId">): boolean {
+  // productId ONLY (lead fold, #2709): a CATALOG line whose product relation is missing must stay,
+  // or the replace-by-product Save would delete it.
+  return !li.productId;
 }
 
 /** Live (non-cancelled) custom lines on the order — the note shows when this is > 0. */
@@ -89,7 +91,7 @@ export function hydrateBuyerDraft(
     if (li.status === "CANCELLED") continue;
     // B889: a custom line was keyed "null" (several collapsed into one "Product" row) and its edit
     // was silently ignored server-side. It stays on the order untouched; the screen notes it.
-    if (isCustomLine(li) || !li.productId) continue;
+    if (isCustomLine(li) || !li.productId) continue; // (!li.productId narrows the type)
     const unitLine = isBuyerUnitLine(li);
     const count = unitLine ? unitLineCount(li) : null;
     draft[li.productId] = {
