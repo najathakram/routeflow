@@ -759,6 +759,32 @@ describe("PlatformAdminService — audit provenance", () => {
       });
     });
 
+    // #2549: on a 409 the tx rolled back, so the post-commit cache invalidations and the admin audit
+    // row must be SKIPPED too — a lost race changed nothing.
+    const nothingAfterCommit = () => {
+      expect(planTransition.invalidateCaches).not.toHaveBeenCalled();
+      expect(entitlementsService.invalidate).not.toHaveBeenCalled();
+      expect(auditLog).not.toHaveBeenCalled();
+    };
+
+    it("#2549: two concurrent first-plan writes — the loser's create hits P2002 ⇒ the same 409, nothing written after", async () => {
+      catalog();
+      tenant("STARTER");
+      (prisma as any).tenantSubscription.findUnique.mockResolvedValue(null);
+      (prisma as any).tenantSubscription.create.mockRejectedValueOnce(
+        new Prisma.PrismaClientKnownRequestError("Unique constraint failed", {
+          code: "P2002",
+          clientVersion: "test",
+        }),
+      );
+      const err = await service
+        .updatePlan(TENANT_ID, { plan: "PROFESSIONAL" } as any, ADMIN_ID)
+        .catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(ConflictException);
+      expect(billingEventService.emit).not.toHaveBeenCalled();
+      nothingAfterCommit();
+    });
+
     it("SA-485b: the guarded subscription write misses (a Pricing change since the read) ⇒ 409, nothing booked", async () => {
       catalog();
       tenant("STARTER");
@@ -769,6 +795,7 @@ describe("PlatformAdminService — audit provenance", () => {
         .catch((e: unknown) => e);
       expect(err).toBeInstanceOf(ConflictException);
       expect(billingEventService.emit).not.toHaveBeenCalled();
+      nothingAfterCommit(); // #2549
     });
 
     it("SA-485b: the tenant row changed status since the read (P2025 on the guarded update) ⇒ 409", async () => {
@@ -786,6 +813,7 @@ describe("PlatformAdminService — audit provenance", () => {
         .catch((e: unknown) => e);
       expect(err).toBeInstanceOf(ConflictException);
       expect(billingEventService.emit).not.toHaveBeenCalled();
+      nothingAfterCommit(); // #2549
     });
 
     it("SA-485b: no subscription row before ⇒ it is CREATED (never a guarded update of nothing)", async () => {
@@ -3267,6 +3295,25 @@ describe("PlatformAdminService — audit provenance", () => {
           expect(upsertUpdate()).not.toHaveProperty("basePriceSnapshot");
         else expect(upsertUpdate().basePriceSnapshot).toBe(expectedSnap);
         expect(planDeltas()).toEqual(deltas);
+      },
+    );
+
+    // #2570 (the lead's nit on #2568): round every monetary write — a 3dp negotiated fee is written
+    // and booked at cents, on the plan-switch and on the crossing alike.
+    it.each([
+      ["a plan-switch", "ACTIVE", 100, 123.46 - 100],
+      ["a crossing", "TRIAL", null, 123.46],
+    ])(
+      "#2570: %s writes and books a 3dp override rounded to cents",
+      async (_l, status, stored, delta) => {
+        setup(status, {
+          planKey: "STARTER",
+          basePriceSnapshot: stored,
+          priceOverrideMonthly: 123.456,
+        });
+        await activate("GROWTH");
+        expect(upsertUpdate().basePriceSnapshot).toBe(123.46);
+        expect(planDeltas()).toEqual([Math.round(delta * 100) / 100]);
       },
     );
 

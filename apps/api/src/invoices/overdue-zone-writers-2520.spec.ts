@@ -230,6 +230,10 @@ describe("#2520 — persisted OVERDUE in the tenant zone", () => {
       expect(due < cutoffFor(prisma.invoice.updateMany, "t-chi")).toBe(false);
       expect(due < cutoffFor(prisma.invoice.updateMany, "t-tyo")).toBe(true);
       expect(due < cutoffFor(prisma.invoice.updateMany, "t-utc")).toBe(true);
+      // #2567: the write itself: one updateMany per tenant, and it sets OVERDUE and nothing else.
+      expect(prisma.invoice.updateMany).toHaveBeenCalledTimes(3);
+      for (const c of prisma.invoice.updateMany.mock.calls)
+        expect(c[0].data).toEqual({ status: "OVERDUE" });
     });
 
     it("B2: only SENT and VIEWED are ever flipped (never PARTIAL)", async () => {
@@ -280,6 +284,22 @@ describe("#2520 — persisted OVERDUE in the tenant zone", () => {
       expect(prisma.invoice.updateMany).not.toHaveBeenCalled();
       expect(prisma.invoice.count).toHaveBeenCalledTimes(3);
       expect(overdueSweepMode({ OVERDUE_SWEEP_MODE: " Enforced " }).mode).toBe("enforced");
+    });
+
+    // #2567: a set-but-blank value ("" or whitespace) is a misconfiguration: it runs dark WITH the
+    // warning. Only a truly unset variable is the silent default.
+    it.each(["", "  ", "\t"])("a blank value %j runs dark with a warning", async (v) => {
+      process.env.OVERDUE_SWEEP_MODE = v;
+      expect(overdueSweepMode()).toEqual({ mode: "dark", unknown: v });
+      const { svc, warn } = sweep();
+      await svc.runScheduled();
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(warn.mock.calls[0][0]).toMatch(/is not off\|dark\|enforced; running dark/);
+      expect(prisma.invoice.updateMany).not.toHaveBeenCalled();
+    });
+
+    it("an unset value is the silent dark default", () => {
+      expect(overdueSweepMode({})).toEqual({ mode: "dark", unknown: null });
     });
 
     it("one tenant failing never stops the others", async () => {

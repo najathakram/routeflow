@@ -893,7 +893,16 @@ export class PlatformAdminService {
         });
         if (count === 0) throw conflict();
       } else {
-        await tx.tenantSubscription.create({ data: { tenantId: id, ...subWrite } });
+        // #2549: two concurrent first-plan writes both read "no row"; the loser's create hits the
+        // tenantId unique key (P2002) — the same lost race as a guarded-update miss, so the same 409
+        // (the tx rolls back: nothing written, nothing booked).
+        await tx.tenantSubscription
+          .create({ data: { tenantId: id, ...subWrite } })
+          .catch((e: unknown) => {
+            if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === "P2002")
+              throw conflict();
+            throw e;
+          });
       }
 
       // Moving the snapshot run-rate without a matching ledger delta makes `mrr` and
@@ -1038,11 +1047,12 @@ export class PlatformAdminService {
         isPaying &&
         normalizePlanKey(before.subscription?.planKey) !== definition.planKey;
       const override = before.subscription?.priceOverrideMonthly;
+      // #2570: round every monetary write — the snapshot (and so the delta booked from it) at cents.
       const newBase =
         override != null
-          ? Number(override)
+          ? roundMoney(Number(override))
           : definition.monthlyPrice != null
-            ? Number(definition.monthlyPrice)
+            ? roundMoney(Number(definition.monthlyPrice))
             : null;
       const snapshotWrite = crossingIn || planSwitch ? { basePriceSnapshot: newBase } : {};
 
