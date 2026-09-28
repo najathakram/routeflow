@@ -8,7 +8,7 @@
  * (the stats snapshot is cleared before every poll). T2 then flips the invoice to OVERDUE and
  * commits, and T1's delete re-evaluates the row it waited on:
  *   - fixed code: the delete is a compare-and-set scoped to the non-blocking statuses, so it
- *     removes 0 of the 1 row it read ⇒ 409, rollback: invoice, payment and customer byte-identical;
+ *     removes 0 of the 1 row it read ⇒ 409, rollback: invoice, its item and the customer byte-identical;
  *   - pre-fix code (e35abb0b): the delete is scoped by customer only, so the OVERDUE invoice is
  *     destroyed and the call resolves ⇒ RED.
  *
@@ -39,7 +39,7 @@ describeDb(
     let service: CustomersService;
     let tenantId: string;
     let invoiceId: string;
-    let paymentId: string;
+    let itemId: string;
     let customerId: string;
 
     /** The whole row as Postgres stores it, for a byte-identical comparison. */
@@ -85,9 +85,19 @@ describeDb(
           },
         })
       ).id;
-      paymentId = (
-        await prisma.invoicePayment.create({
-          data: { tenantId, invoiceId, amount: 10, method: "CASH" },
+      // #2594 / SA-516: the child is an InvoiceItem, NOT an InvoicePayment. A payment is a money
+      // record, which the delete's pre-flight now refuses outright, so T1 would never reach the
+      // CAS this race exercises.
+      itemId = (
+        await prisma.invoiceItem.create({
+          data: {
+            tenantId,
+            invoiceId,
+            description: "2558 race line",
+            qty: 1,
+            unitPrice: 50,
+            subtotal: 50,
+          },
         })
       ).id;
 
@@ -106,7 +116,7 @@ describeDb(
     });
 
     afterAll(async () => {
-      await prisma.invoicePayment.deleteMany({ where: { tenantId } });
+      await prisma.invoiceItem.deleteMany({ where: { tenantId } });
       await prisma.invoice.deleteMany({ where: { tenantId } });
       await prisma.customer.deleteMany({ where: { tenantId } });
       await prisma.user.deleteMany({ where: { tenantId } });
@@ -116,9 +126,9 @@ describeDb(
     });
 
     it("T2 holds the invoice, T1's delete blocks on it, T2 flips it to OVERDUE and commits: 409, nothing destroyed", async () => {
-      const paymentBefore = await rowJson("InvoicePayment", paymentId);
+      const itemBefore = await rowJson("InvoiceItem", itemId);
       const customerBefore = await rowJson("Customer", customerId);
-      expect(paymentBefore).not.toBeNull();
+      expect(itemBefore).not.toBeNull();
       expect(customerBefore).not.toBeNull();
 
       const t2 = new Client({ connectionString: url });
@@ -168,7 +178,7 @@ describeDb(
       expect(outcome.ok).toBe(false);
       expect((outcome as { e: unknown }).e).toBeInstanceOf(ConflictException);
       expect(await rowJson("Invoice", invoiceId)).toBe(invoiceAfterFlip);
-      expect(await rowJson("InvoicePayment", paymentId)).toBe(paymentBefore);
+      expect(await rowJson("InvoiceItem", itemId)).toBe(itemBefore);
       expect(await rowJson("Customer", customerId)).toBe(customerBefore);
     });
   },
