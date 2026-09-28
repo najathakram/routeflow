@@ -230,6 +230,7 @@ const MODEL_DOMAIN = {
   AddonSku: "platform",
   MeterUsage: "platform",
   BillingEvent: "platform",
+  StripeBillingEvent: "platform",
   RfInvoice: "platform",
   SystemConfig: "platform",
   Message: "platform",
@@ -255,6 +256,10 @@ const MODEL_DOMAIN = {
   OnboardingCase: "platform",
   OnboardingStep: "platform",
   OnboardingEvent: "platform",
+  IntakeSection: "platform",
+  IntakeFile: "platform",
+  IntakeAccessToken: "platform",
+  OrderAcceptance: "platform",
 
   // ─── compliance ────────────────────────────────────────────────────────────
   TobaccoReport: "compliance",

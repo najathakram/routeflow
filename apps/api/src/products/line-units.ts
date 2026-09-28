@@ -99,7 +99,11 @@ export function resolveLineUnits(
     level = resolveLadderLevel(ladderProduct, units, asked || null);
   } catch (e) {
     if (e instanceof UnknownUnitError) {
-      throw new BadRequestException(`"${e.unitLabel}" is not a unit of this product.`);
+      // #2277: the same code as a held unit the product no longer offers (unit-line-build.ts).
+      throw new BadRequestException({
+        code: "UNIT_NOT_OFFERED",
+        message: `"${e.unitLabel}" is not a unit of this product.`,
+      });
     }
     throw e;
   }

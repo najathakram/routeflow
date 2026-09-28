@@ -3,6 +3,7 @@ import { PriceType } from "@prisma/client";
 import {
   AmbiguousLineError,
   InvalidTierError,
+  UnknownUnitError,
   buildLine,
   categoryTaxSnapshotOf,
   computeCategoryTax,
@@ -310,6 +311,15 @@ export function buildUnitLine(input: {
       throw new BadRequestException(
         "This customer's pricing tier is invalid (must be 1-5) — fix it on the customer first.",
       );
+    }
+    // #2277: a line HELD in a unit the product no longer offers (removed after the order was
+    // placed) keeps its snapshot factor through resolveLineUnits, but has no ladder price — a 400
+    // with a remedy, never an UnknownUnitError escaping as a 500.
+    if (e instanceof UnknownUnitError) {
+      throw new BadRequestException({
+        code: "UNIT_NOT_OFFERED",
+        message: `The ${e.unitLabel} is no longer offered for this product — choose another unit, or ask an admin to add it back.`,
+      });
     }
     throw e;
   }

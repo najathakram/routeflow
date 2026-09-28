@@ -202,4 +202,51 @@ describe("#2439 create-tenant success panel", () => {
     expect(status).toHaveTextContent(/NOT delivered/);
     expect(status).toHaveTextContent(/Reset admin password/);
   });
+
+  // #2438: the Pay-now link is one unbroken monospace token; it ran off the card on a phone.
+  it("wraps the Pay-now link inside the card (break-all) and gives it its own Copy button", async () => {
+    const payUrl = "https://app.example/login?redirect=%2Fsettings%2Fbilling";
+    Object.assign(navigator, { clipboard: { writeText: jest.fn().mockResolvedValue(undefined) } });
+    await submitWith({
+      id: "t1",
+      slug: "acme",
+      payUrl,
+      welcomeEmail: { to: "o@acme.example", delivered: true, transport: "smtp" },
+    });
+    expect(screen.getByRole("link", { name: /login\?redirect/ })).toHaveClass("break-all");
+    const copy = screen.getByRole("button", { name: "Copy Pay-now link" });
+    fireEvent.click(copy);
+    expect(navigator.clipboard.writeText).toHaveBeenCalledWith(payUrl);
+    await waitFor(() => expect(copy).toHaveTextContent("Copied"));
+  });
+
+  // #2598 review: a false "Copied" leaves the PREVIOUS clipboard (maybe another tenant's link) to be
+  // pasted into the client's email. A failed copy must say so and select the link instead.
+  it("a failed copy of the Pay-now link says so and selects the link, never 'Copied'", async () => {
+    const payUrl = "https://app.example/login?redirect=%2Fsettings%2Fbilling";
+    Object.assign(navigator, {
+      clipboard: { writeText: jest.fn().mockRejectedValue(new Error("denied")) },
+    });
+    await submitWith({
+      id: "t1",
+      slug: "acme",
+      payUrl,
+      welcomeEmail: { to: "o@acme.example", delivered: true, transport: "smtp" },
+    });
+    const copy = screen.getByRole("button", { name: "Copy Pay-now link" });
+    fireEvent.click(copy);
+    await waitFor(() => expect(copy).toHaveTextContent("Copy failed — select the link"));
+    expect(copy).not.toHaveTextContent("Copied");
+    expect(window.getSelection()?.toString()).toBe(payUrl);
+  });
+
+  it("renders no Copy button when there is no Pay-now link", async () => {
+    await submitWith({
+      id: "t1",
+      slug: "acme",
+      payUrl: null,
+      welcomeEmail: { to: "o@acme.example", delivered: true, transport: "smtp" },
+    });
+    expect(screen.queryByRole("button", { name: "Copy Pay-now link" })).not.toBeInTheDocument();
+  });
 });

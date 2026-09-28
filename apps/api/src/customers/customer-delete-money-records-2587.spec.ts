@@ -121,7 +121,7 @@ describe("customer deletes never destroy a money record (#2587, SA-516)", () => 
 
   const BULK: Array<[string, () => Promise<unknown>, string]> = [
     ["deleteAllCustomers", () => service.deleteAllCustomers(), "cust-1"],
-    ["deleteImportedCustomers", () => service.deleteImportedCustomers(), "cust-1"],
+    ["deleteImportedCustomers", () => service.runImportedCustomersCleanup(), "cust-1"],
   ];
 
   const seedBulk = () =>
@@ -181,7 +181,7 @@ describe("customer deletes never destroy a money record (#2587, SA-516)", () => 
 
   it("cleanup imported checks only the non-ACTIVE-linked customers it would delete", async () => {
     seedBulk();
-    await service.deleteImportedCustomers();
+    await service.runImportedCustomersCleanup();
     expect((prisma.creditNote.groupBy as jest.Mock).mock.calls[0][0].where).toEqual({
       customerId: { in: ["cust-1"] },
     });
@@ -208,7 +208,7 @@ describe("customer deletes never destroy a money record (#2587, SA-516)", () => 
     it("REG-B189 deleteImportedCustomers: 409 naming the customer, credit note and links kept", async () => {
       seedBulk();
       seedMoney("creditNote", "cust-1");
-      const caught: any = await service.deleteImportedCustomers().catch((e) => e);
+      const caught: any = await service.runImportedCustomersCleanup().catch((e) => e);
       expect(caught).toBeInstanceOf(ConflictException);
       expect(caught.message).toContain("cust-1: 1 record(s)");
       kept();

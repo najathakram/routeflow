@@ -104,7 +104,7 @@ describe("customer deletes: a late FK insert is a 409, not a raw P2003 500 (#257
 
   it("deleteImportedCustomers: a P2003 on the customer delete ⇒ 409, the users are not deleted", async () => {
     prisma.customer.deleteMany.mockRejectedValue(fkViolation());
-    refused(await service.deleteImportedCustomers().catch((e) => e));
+    refused(await service.runImportedCustomersCleanup().catch((e) => e));
     expect(prisma.user.deleteMany).not.toHaveBeenCalled();
   });
 

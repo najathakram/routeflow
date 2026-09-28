@@ -112,7 +112,7 @@ import { MessagingService } from "../messaging/messaging.service";
 import { formatDate, formatMoney } from "../messaging/messaging.helpers";
 import { CommissionEngineService } from "../sales-agents/commission-engine.service";
 import { NSF_FEE_DESCRIPTION_PREFIX } from "../sales-agents/commission-math";
-import { InvoiceItemSystemKind, notNsfLineWhere } from "./nsf-line";
+import { InvoiceItemSystemKind, isNsfLine, notNsfLineWhere } from "./nsf-line";
 import { preservedNsfLines } from "./nsf-preserve";
 import { partitionInvoiceLines, planResyncPairs } from "./resync-plan";
 import {
@@ -151,6 +151,7 @@ import {
   writeOffRefusal,
 } from "./invoice-send-guard";
 import { selectEditRevertedInvoices } from "./order-edit-revert-set";
+import { assertPartialRequestShape, bumpInvoicedQtyCas } from "./partial-invoice-cas";
 
 const TERM_DAYS: Record<string, number> = {
   "Due on Receipt": 0,
@@ -1248,13 +1249,13 @@ export class InvoicesService {
           db: tx,
         });
       }
-      // Bump invoicedQty once per order item (each belongs to exactly one group).
-      for (const { li, remainingQty } of remainingItems) {
-        await tx.orderItem.update({
-          where: { id: li.id },
-          data: { invoicedQty: { increment: remainingQty } },
-        });
-      }
+      // Bump invoicedQty once per order item (each belongs to exactly one group). #2612 / SA-523:
+      // a CAS on the values read, so a concurrent split or partial is a 409, never an over-bill.
+      await bumpInvoicedQtyCas(
+        tx,
+        remainingItems.map(({ li, remainingQty }) => ({ orderItemId: li.id, qty: remainingQty })),
+        new Map(remainingItems.map(({ li }) => [li.id, li])),
+      );
       // Apply any order-selected credit notes to the freshly created invoice(s).
       // Pass the effective tenantId explicitly: this runs on an unwrapped tx in the
       // fire-and-forget path (createInvoiceFromOrderWithTenant), where the tenant
@@ -2634,6 +2635,7 @@ export class InvoicesService {
     const itemById = new Map(order.lineItems.map((li: any) => [li.id, li]));
 
     // Validate every requested item exists on the order and qty is within remaining.
+    assertPartialRequestShape(dto.items); // #2070 / SA-523: no duplicate lines, qty > 0
     const itemsData: any[] = [];
     let subtotal = 0;
     for (const req of dto.items) {
@@ -2790,13 +2792,8 @@ export class InvoicesService {
         throw err;
       }
 
-      // Increment invoicedQty on each chosen order item.
-      for (const req of dto.items) {
-        await tx.orderItem.update({
-          where: { id: req.orderItemId },
-          data: { invoicedQty: { increment: req.qty } },
-        });
-      }
+      // #2070 / SA-523: each line's bump is a CAS on what was read; any miss rolls back the partial.
+      await bumpInvoicedQtyCas(tx, dto.items, itemById);
 
       await this.creditNotes.settleOrderCreditsInTx(tx, order.id, tenantId);
       return created;
@@ -5803,6 +5800,13 @@ export class InvoicesService {
     // SINGLE scope only re-prices this invoice's own lines in place, off each line's own numbers.
     if (dto.scope !== "SINGLE") {
       unitAware.assertNoUnitAwareLines(invoice.items, "re-priced across invoices");
+    }
+    // #2392 (d) / SA-478: the NSF bounce-fee line is a system charge, never re-priced by hand.
+    const nsfIds = new Set(invoice.items.filter((li) => isNsfLine(li)).map((li) => li.id));
+    if (dto.items.some((i) => nsfIds.has(i.itemId))) {
+      throw new BadRequestException(
+        "The NSF fee line can't be re-priced. Void the bounce or issue a credit note instead.",
+      );
     }
 
     // F03/R3: category (excise) tax follows the customer's exemption exactly like
