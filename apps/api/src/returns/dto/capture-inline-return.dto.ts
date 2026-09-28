@@ -1,4 +1,4 @@
-import { Type } from "class-transformer";
+import { Transform, Type } from "class-transformer";
 import {
   ArrayMinSize,
   IsArray,
@@ -76,8 +76,10 @@ export class CaptureInlineReturnItemDto {
   @Min(0)
   creditUnitPrice?: number;
 
-  /** #2695: why the credit price was overridden — required with `creditUnitPrice` (trimmed, ≤ 200). */
+  /** #2695: why the credit price was overridden — required with `creditUnitPrice`. Trimmed BEFORE
+   * the length check, so 200 real characters padded with spaces are not refused. */
   @IsOptional()
+  @Transform(({ value }) => (typeof value === "string" ? value.trim() : value))
   @IsString()
   @MaxLength(200)
   overrideReason?: string;

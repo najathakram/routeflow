@@ -699,6 +699,54 @@ describe("InlineReturnsService", () => {
       ).toHaveLength(0);
     });
 
+    it("the audit row is written on the capture's OWN tx client, never the root prisma", async () => {
+      const tx = createMockPrisma();
+      tx.order.findFirst.mockResolvedValue({
+        id: "ord-carrying",
+        customerId: "cust-1",
+        total: 1000,
+        status: "PENDING",
+        routeRunId: "run-1",
+      });
+      tx.return.findFirst.mockResolvedValue(null);
+      tx.return.findMany.mockResolvedValue([]);
+      tx.return.create.mockImplementation(async ({ data }: any) => ({
+        id: "ret-1",
+        ...data,
+        items: (data.items?.create ?? []).map((i: any, idx: number) => ({ id: `ri-${idx}`, ...i })),
+      }));
+      quoteService.priceInlineReturn.mockResolvedValue(pricedOverride());
+
+      await service.captureInTx(tx, OVERRIDE_DTO as any, OPERATOR);
+
+      const onTx = tx.auditLog.create.mock.calls.filter(
+        ([a]: any[]) => a.data.action === "inline_return.price_override",
+      );
+      expect(onTx).toHaveLength(1);
+      expect(prisma.auditLog.create).not.toHaveBeenCalled();
+    });
+
+    it("the same key with the same price but a DIFFERENT reason is a 409 too (the reason is fingerprinted)", async () => {
+      prisma.return.findFirst.mockResolvedValueOnce({
+        id: "ret-existing",
+        returnNumber: "RET-2026-0009",
+        returnKey: "nonce-1",
+        kind: "INLINE",
+        customerId: "cust-1",
+        orderId: "ord-carrying",
+        capturePayload: inlineReturnItemsFingerprint(OVERRIDE_DTO.items as any),
+        items: [],
+      });
+      const reworded = {
+        ...OVERRIDE_DTO,
+        items: [{ ...OVERRIDE_DTO.items[0], overrideReason: "customer goodwill" }],
+      };
+      expect(await codeOf(service.capture(reworded as any, OPERATOR))).toBe(
+        INLINE_RETURN_ERROR_CODES.RETURN_KEY_REUSED_WITH_DIFFERENT_ITEMS,
+      );
+      expect(prisma.return.create).not.toHaveBeenCalled();
+    });
+
     it("the #2424 fingerprint carries the override, so the same key with another price is a 409, not a replay", async () => {
       const stored = inlineReturnItemsFingerprint(OVERRIDE_DTO.items as any);
       expect(stored.items[0]).toMatchObject({

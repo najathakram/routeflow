@@ -26,7 +26,7 @@ import { SystemConfigService } from "../system-config/system-config.service";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
 import { REAL_INVOICE_STATUSES } from "../common/invoiced-sales";
 import { currentTaxRate } from "../common/tax-rate";
-import { getTierPrice, packFromOwnSplit } from "@routeflow/pricing";
+import { getTierPrice, isWholeCents, packFromOwnSplit } from "@routeflow/pricing";
 import { returnedPiecesByProduct } from "./returns-pieces.util";
 import {
   allocateReturnedPieces,
@@ -89,9 +89,9 @@ export function creditOverridesOf(
     const reason = typeof rawReason === "string" ? rawReason.trim() : "";
     if (
       typeof price !== "number" ||
-      !Number.isFinite(price) ||
       price < 0 ||
-      Math.round(price * 100) !== price * 100
+      // SA-557c: the one shared cents predicate (finite + roundMoney-exact), never a hand-rolled cents multiply.
+      !isWholeCents(price)
     ) {
       throw new BadRequestException({
         code: RETURN_CREDIT_OVERRIDE_ERROR_CODES.INVALID,

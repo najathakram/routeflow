@@ -4,9 +4,12 @@
  * Pricing math itself is covered exhaustively by inline-returns-pricing.spec.ts;
  * these tests focus on the scoping gate and basic service wiring.
  */
+import { readFileSync } from "fs";
+import { join } from "path";
 import { Test, TestingModule } from "@nestjs/testing";
 import { ConflictException, ForbiddenException, NotFoundException } from "@nestjs/common";
 import {
+  creditOverridesOf,
   InlineReturnsQuoteService,
   RETURN_CREDIT_OVERRIDE_ERROR_CODES,
 } from "./inline-returns-quote.service";
@@ -1107,6 +1110,79 @@ describe("InlineReturnsQuoteService — #2695 (SA-557): a staff per-line credit 
     await expect(quote({ creditUnitPrice: 1, overrideReason: "x" }, CUSTOMER)).rejects.toThrow(
       ForbiddenException,
     );
+  });
+
+  it("whole-cent prices are accepted even where x*100 is inexact in floats (19.99*100 = 1998.9999999999998)", async () => {
+    for (const creditUnitPrice of [19.99, 1.1, 4.35, 0.07, 2.3, 0.29]) {
+      const r = await refusal(quote({ creditUnitPrice, overrideReason: "x" }));
+      // Accepted past validation: the only refusal left is the lower-only cap ($5.00 default).
+      if (creditUnitPrice <= 5) expect(r).toBeNull();
+      else expect(r?.code).toBe(RETURN_CREDIT_OVERRIDE_ERROR_CODES.OVER_CAP);
+    }
+  });
+
+  it("every whole-cent value from $0.00 to $100.00 passes validation (the lead's 10,001-value sweep)", () => {
+    const refused: number[] = [];
+    for (let cents = 0; cents <= 10000; cents++) {
+      const creditUnitPrice = cents / 100;
+      try {
+        creditOverridesOf(
+          [{ productId: "p", boxes: 0, pieces: 1, creditUnitPrice, overrideReason: "x" }],
+          OPERATOR,
+        );
+      } catch {
+        refused.push(creditUnitPrice);
+      }
+    }
+    expect(refused).toEqual([]); // 475b41e9 refused 1,146 of them (19.99, 1.10, 4.35, 0.07, …)
+  });
+
+  it("SA-557c tripwire: the cents check is the shared isWholeCents — no local `* 100` comparison here", () => {
+    const src = readFileSync(join(__dirname, "inline-returns-quote.service.ts"), "utf8");
+    expect(src).toContain("isWholeCents(price)");
+    expect(src).not.toMatch(/\*\s*100\b/);
+  });
+
+  it("a $19.99 override prices as $19.99 (a $25.00 default line)", async () => {
+    (db.invoice.findMany as jest.Mock).mockResolvedValue([
+      {
+        orderId: "order-1",
+        subtotal: 250,
+        discount: 0,
+        taxAmount: 0,
+        items: [
+          {
+            id: "invitem-1",
+            orderItemId: "oi-1",
+            productId: "prod-1",
+            qty: 10,
+            unitPrice: 25,
+            subtotal: 250,
+            boxes: null,
+            pieces: null,
+            unitsPerBox: null,
+            promoFreeUnits: null,
+            taxRate: 0,
+            categoryTaxAmount: null,
+          },
+        ],
+      },
+    ]);
+    const result = await quote({ creditUnitPrice: 19.99, overrideReason: "x" });
+    expect(result.chunks[0]).toMatchObject({
+      priceSource: "MANUAL",
+      unitPrice: 19.99,
+      subtotal: 79.96,
+      originalPrice: 25,
+    });
+  });
+
+  it("sub-cent prices are refused INVALID, before the cap", async () => {
+    for (const creditUnitPrice of [1.005, 19.999, 0.001, NaN, Infinity, -0.01]) {
+      expect((await refusal(quote({ creditUnitPrice, overrideReason: "x" })))?.code).toBe(
+        RETURN_CREDIT_OVERRIDE_ERROR_CODES.INVALID,
+      );
+    }
   });
 
   it("a price without a reason, a blank reason, a reason without a price, or a sub-cent price ⇒ 400 INVALID", async () => {
