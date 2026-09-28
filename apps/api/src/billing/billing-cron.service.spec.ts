@@ -35,8 +35,11 @@ function make(
   // A scanned row matched the scan's filter, so it is ARMED: default the schedule fields it implies.
   const past = new Date("2026-01-01T00:00:00.000Z");
   const scanned = new Map<string, any>([
-    ...(data.downgrades ?? []).map((r: any) => [r.tenantId, { downgradeEffectiveAt: past, ...r }]),
-    ...(data.cancellations ?? []).map((r: any) => [
+    ...(data.downgrades ?? []).map((r: any): [string, any] => [
+      r.tenantId,
+      { downgradeEffectiveAt: past, ...r },
+    ]),
+    ...(data.cancellations ?? []).map((r: any): [string, any] => [
       r.tenantId,
       { cancelAtPeriodEnd: true, periodEnd: past, ...r },
     ]),
