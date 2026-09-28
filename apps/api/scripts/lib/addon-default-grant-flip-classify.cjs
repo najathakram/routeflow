@@ -55,8 +55,11 @@ function classifyTenant(ctx) {
 
 /**
  * Pure aggregation — no DB, no I/O. `rows` is one entry per tenant:
- * `{ planKey: string, bucket: BUCKETS[number], hasInactiveRow: boolean }`.
- * Returns counts only — never a tenant id/slug/name.
+ * `{ planKey: string, bucket: BUCKETS[number], hasInactiveRow: boolean, paying?: boolean }`.
+ * Returns counts only — never a tenant id/slug/name. #2700 (SA-559a): `PAYING` counts the row's
+ * paying tenants (scripts/lib/paying-tenant.cjs `isPayingTenant`, decided by the caller) and
+ * `PAYING_FLIPS_ON` those of them in FLIPS_ON — the owner's "paying tenants on LITE: n" line,
+ * before and after a publish.
  */
 function aggregate(rows) {
   const emptyPlanRow = () => ({
@@ -65,6 +68,8 @@ function aggregate(rows) {
     DENIED: 0,
     REQUIRES_UNMET: 0,
     INACTIVE_ROW: 0,
+    PAYING: 0,
+    PAYING_FLIPS_ON: 0,
     total: 0,
   });
 
@@ -81,6 +86,15 @@ function aggregate(rows) {
     totals[row.bucket] += 1;
     totals.total += 1;
 
+    if (row.paying) {
+      planRow.PAYING += 1;
+      totals.PAYING += 1;
+      if (row.bucket === "FLIPS_ON") {
+        planRow.PAYING_FLIPS_ON += 1;
+        totals.PAYING_FLIPS_ON += 1;
+      }
+    }
+
     if (row.hasInactiveRow) {
       planRow.INACTIVE_ROW += 1;
       totals.INACTIVE_ROW += 1;
@@ -94,8 +108,17 @@ function aggregate(rows) {
   };
 }
 
+/** #2700 (SA-559a): the owner's one-line LITE paying count, from an `aggregate` result. */
+function payingOnLiteLine(result) {
+  const lite = result.byPlan.find((r) => r.planKey === "LITE");
+  const n = lite ? lite.PAYING : 0;
+  const flipped = lite ? lite.PAYING_FLIPS_ON : 0;
+  return `paying tenants on LITE: ${n} (of which FLIPS_ON: ${flipped})`;
+}
+
 module.exports = {
   TARGET_KEY,
+  payingOnLiteLine,
   BUCKETS,
   classifyTenant,
   aggregate,
